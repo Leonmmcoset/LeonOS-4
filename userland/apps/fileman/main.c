@@ -1,5 +1,6 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/launch.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -10,16 +11,29 @@
 #define FILEMAN_MAX_ENTRIES 24
 #define TOOLBAR_Y 40
 #define LIST_X 8
-#define LIST_Y 78
-#define LIST_W (FILEMAN_W - 16)
+#define LIST_Y 82
+#define LIST_W (FILEMAN_W - 34)
 #define ROW_H (LEONOS_FONT_H + 8)
+#define STATUS_H 28
+#define LIST_VISIBLE_ROWS 9
+#define MENU_BAR_H 28
+#define MENU_ITEM_H (LEONOS_FONT_H + 8)
+
+enum {
+    FILEMAN_MENU_NONE = 0,
+    FILEMAN_MENU_FILE = 1,
+    FILEMAN_MENU_VIEW = 2,
+};
 
 static uint32_t pixels[FILEMAN_W * FILEMAN_H];
 static struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
 static char current_path[LEONOS_FS_PATH_LEN] = "0:/";
 static char status_text[96] = "Ready";
 static uint32_t entry_count;
-static int32_t selected_index = -1;
+static struct leonos_ui_listview_state file_list;
+static int32_t last_click_index = -1;
+static unsigned long last_click_ms;
+static uint8_t menu_open;
 
 static void copy_text(char *dst, uint32_t dst_len, const char *src)
 {
@@ -55,6 +69,11 @@ static int text_eq(const char *a, const char *b)
         ++b;
     }
     return *a == 0 && *b == 0;
+}
+
+static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
+{
+    return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
 }
 
 static int ends_with(const char *text, const char *suffix)
@@ -169,17 +188,39 @@ static const char *entry_type_name(const struct leonos_dir_entry *entry)
 
 static int reload_dir(void)
 {
+    int fd = open(current_path, 0, 0);
+    int ret = 0;
     uint32_t count = 0;
-    int ret = leonos_list_dir(current_path, entries, FILEMAN_MAX_ENTRIES, &count);
-    if (ret < 0) {
+    if (fd < 0) {
         entry_count = 0;
-        selected_index = -1;
-        set_status_code("List failed ", ret);
-        printf("[fileman.elf] list path=%s ret=%d\n", current_path, ret);
-        return ret;
+        leonos_ui_listview_state_set_count(&file_list, 0);
+        set_status_code("Open dir failed ", fd);
+        printf("[fileman.elf] list path=%s open=%d\n", current_path, fd);
+        return fd;
     }
+    leonos_ui_listview_state_set_count(&file_list, 0);
+    while (count < FILEMAN_MAX_ENTRIES) {
+        ret = leonos_readdir(fd, &entries[count]);
+        if (ret < 0) {
+            close(fd);
+            entry_count = 0;
+            leonos_ui_listview_state_set_count(&file_list, 0);
+            set_status_code("Read dir failed ", ret);
+            printf("[fileman.elf] list path=%s readdir=%d\n", current_path, ret);
+            return ret;
+        }
+        if (ret == 0) {
+            break;
+        }
+        ++count;
+    }
+    close(fd);
     entry_count = count;
-    selected_index = -1;
+    leonos_ui_listview_state_set_count(&file_list, entry_count);
+    file_list.selected = entry_count ? 0 : -1;
+    file_list.scroll = 0;
+    last_click_index = -1;
+    last_click_ms = 0;
     char buf[96];
     uint32_t pos = 0;
     buf[0] = 0;
@@ -188,58 +229,88 @@ static int reload_dir(void)
     append_text(buf, &pos, sizeof(buf), " in ");
     append_text(buf, &pos, sizeof(buf), current_path);
     set_status(buf);
-    printf("[fileman.elf] list path=%s count=%d\n", current_path, ret);
-    return ret;
+    printf("[fileman.elf] list path=%s count=%d\n", current_path, (int)count);
+    return 0;
 }
 
 static void draw_fileman(struct leonos_ui_surface *ui)
 {
-    char line[96];
+    struct leonos_ui_list_column cols[] = {
+        {"Type", 58},
+        {"Name", LIST_W - 58},
+    };
     leonos_ui_rect(ui, 0, 0, FILEMAN_W, FILEMAN_H, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, 10, 10, "LeonOS File Manager", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, 10, 28, "Real GUI app over LeonOS directory listing", LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_menubar(ui, 0, 0, FILEMAN_W);
+    leonos_ui_menubar_item(ui, 8, 0, 54, "File", menu_open == FILEMAN_MENU_FILE);
+    leonos_ui_menubar_item(ui, 64, 0, 54, "View", menu_open == FILEMAN_MENU_VIEW);
 
-    leonos_ui_button(ui, 8, TOOLBAR_Y, 54, LEONOS_UI_BUTTON_H, "Up", 0);
-    leonos_ui_button(ui, 72, TOOLBAR_Y, 60, LEONOS_UI_BUTTON_H, "Open", 0);
-    leonos_ui_button(ui, 142, TOOLBAR_Y, 76, LEONOS_UI_BUTTON_H, "Refresh", 0);
-    leonos_ui_text_field(ui, 230, TOOLBAR_Y, FILEMAN_W - 238, current_path, 0);
+    leonos_ui_toolbar(ui, 0, 30, FILEMAN_W, 42);
+    leonos_ui_toolbar_button(ui, 8, TOOLBAR_Y, 54, "Up", 0);
+    leonos_ui_toolbar_button(ui, 72, TOOLBAR_Y, 60, "Open", 0);
+    leonos_ui_toolbar_button(ui, 142, TOOLBAR_Y, 76, "Refresh", 0);
+    leonos_ui_edit(ui, 230, TOOLBAR_Y, FILEMAN_W - 238, current_path, text_len(current_path), 0, LEONOS_UI_EDIT_READONLY);
 
-    leonos_ui_list_header(ui, LIST_X, LIST_Y, LIST_W, "Type Name");
-    for (uint32_t i = 0; i < entry_count; ++i) {
-        uint32_t pos = 0;
-        line[0] = 0;
-        append_text(line, &pos, sizeof(line), entry_type_name(&entries[i]));
-        append_text(line, &pos, sizeof(line), " ");
-        append_text(line, &pos, sizeof(line), entries[i].name);
-        leonos_ui_list_row(ui, LIST_X, LIST_Y + 28 + i * ROW_H, LIST_W, line,
-                           selected_index == (int32_t)i ? LEONOS_UI_MENU_SELECTED : 0);
+    leonos_ui_scroll_view_frame(ui, LIST_X, LIST_Y, FILEMAN_W - 16, FILEMAN_H - LIST_Y - STATUS_H - 6);
+    leonos_ui_listview_header(ui, LIST_X + 2, LIST_Y + 2, LIST_W, cols, 2);
+    for (uint32_t row = 0; row < file_list.visible_rows; ++row) {
+        uint32_t i = file_list.scroll + row;
+        const char *cells[2];
+        if (i >= entry_count) {
+            break;
+        }
+        cells[0] = entry_type_name(&entries[i]);
+        cells[1] = entries[i].name;
+        leonos_ui_listview_row(ui, LIST_X + 2, LIST_Y + 30 + row * ROW_H, LIST_W, cols, cells, 2,
+                               file_list.selected == (int32_t)i ? LEONOS_UI_MENU_SELECTED : 0);
     }
+    leonos_ui_vscrollbar(ui, FILEMAN_W - 26, LIST_Y + 2, 18,
+                         FILEMAN_H - LIST_Y - STATUS_H - 10,
+                         file_list.scroll, entry_count > LIST_VISIBLE_ROWS ? entry_count : LIST_VISIBLE_ROWS,
+                         LIST_VISIBLE_ROWS,
+                         entry_count <= LIST_VISIBLE_ROWS ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
 
-    leonos_ui_panel(ui, 8, FILEMAN_H - 34, FILEMAN_W - 16, 22, LEONOS_UI_LIGHT);
-    leonos_ui_text(ui, 12, FILEMAN_H - 31, status_text, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    leonos_ui_statusbar(ui, FILEMAN_H - STATUS_H, STATUS_H, status_text);
+
+    if (menu_open == FILEMAN_MENU_FILE) {
+        leonos_ui_menu(ui, 8, MENU_BAR_H, 154, 112);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 116, "Open", 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 116, "Up", 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 116, "Refresh", 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 116, "About", 0);
+    } else if (menu_open == FILEMAN_MENU_VIEW) {
+        leonos_ui_menu(ui, 64, MENU_BAR_H, 154, 86);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 8, 116, "Refresh", 0);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 34, 116, "Root", 0);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 60, 116, "About", 0);
+    }
 }
 
 static void open_selected_entry(void)
 {
     char path[LEONOS_FS_PATH_LEN];
     int pid;
-    if (selected_index < 0 || (uint32_t)selected_index >= entry_count) {
+    if (file_list.selected < 0 || (uint32_t)file_list.selected >= entry_count) {
         set_status("Select an item");
         return;
     }
-    build_child_path(path, sizeof(path), entries[selected_index].name);
-    if (entries[selected_index].type == LEONOS_FS_TYPE_DIR) {
+    build_child_path(path, sizeof(path), entries[file_list.selected].name);
+    if (entries[file_list.selected].type == LEONOS_FS_TYPE_DIR) {
         copy_text(current_path, sizeof(current_path), path);
+        chdir(current_path);
+        getcwd(current_path, sizeof(current_path));
         reload_dir();
         return;
     }
-    if (!ends_with(entries[selected_index].name, ".elf")) {
-        set_status("Open only supports directories and ELF programs");
-        return;
+    {
+        char *argv[] = {path, 0};
+        pid = leonos_launch_argv(argv);
     }
-    pid = execve(path, 0, 0);
     if (pid < 0) {
-        set_status_code("Launch failed ", pid);
+        if (pid <= LEONOS_LAUNCH_ERR_EMPTY && pid >= LEONOS_LAUNCH_ERR_NO_ASSOCIATION) {
+            set_status(leonos_launch_error_text(pid));
+        } else {
+            set_status_code("Launch failed ", pid);
+        }
     } else {
         char buf[96];
         uint32_t pos = 0;
@@ -247,7 +318,7 @@ static void open_selected_entry(void)
         append_text(buf, &pos, sizeof(buf), "Launched pid ");
         append_dec(buf, &pos, sizeof(buf), (uint32_t)pid);
         append_text(buf, &pos, sizeof(buf), " from ");
-        append_text(buf, &pos, sizeof(buf), entries[selected_index].name);
+        append_text(buf, &pos, sizeof(buf), entries[file_list.selected].name);
         set_status(buf);
     }
     printf("[fileman.elf] open path=%s pid=%d\n", path, pid);
@@ -262,11 +333,85 @@ static void navigate_up(void)
     }
     build_parent_path(path, sizeof(path));
     copy_text(current_path, sizeof(current_path), path);
+    chdir(current_path);
+    getcwd(current_path, sizeof(current_path));
     reload_dir();
+}
+
+static void navigate_root(void)
+{
+    copy_text(current_path, sizeof(current_path), "0:/");
+    chdir(current_path);
+    getcwd(current_path, sizeof(current_path));
+    reload_dir();
+}
+
+static int handle_menu_click(int32_t x, int32_t y)
+{
+    if (y >= 0 && y < (int32_t)MENU_BAR_H) {
+        if (hit_rect_i(x, y, 8, 0, 54, (int32_t)MENU_BAR_H)) {
+            menu_open = menu_open == FILEMAN_MENU_FILE ? FILEMAN_MENU_NONE : FILEMAN_MENU_FILE;
+            return 1;
+        }
+        if (hit_rect_i(x, y, 64, 0, 54, (int32_t)MENU_BAR_H)) {
+            menu_open = menu_open == FILEMAN_MENU_VIEW ? FILEMAN_MENU_NONE : FILEMAN_MENU_VIEW;
+            return 1;
+        }
+        menu_open = FILEMAN_MENU_NONE;
+        return 1;
+    }
+    if (menu_open == FILEMAN_MENU_FILE) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 8, 116, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            open_selected_entry();
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 34, 116, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            navigate_up();
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 60, 116, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            reload_dir();
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 86, 116, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            leonos_ui_show_message_box("File Manager", "Browse FAT32 files and launch apps.", "OK");
+            return 1;
+        }
+        menu_open = FILEMAN_MENU_NONE;
+        return 1;
+    }
+    if (menu_open == FILEMAN_MENU_VIEW) {
+        if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 8, 116, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            reload_dir();
+            return 1;
+        }
+        if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 34, 116, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            navigate_root();
+            return 1;
+        }
+        if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 60, 116, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            leonos_ui_show_message_box("File Manager", "Double-click entries to open them.", "OK");
+            return 1;
+        }
+        menu_open = FILEMAN_MENU_NONE;
+        return 1;
+    }
+    return 0;
 }
 
 static void handle_click(int32_t x, int32_t y)
 {
+    if (handle_menu_click(x, y)) {
+        return;
+    }
+    menu_open = FILEMAN_MENU_NONE;
     if (x >= 8 && x < 62 && y >= TOOLBAR_Y && y < TOOLBAR_Y + (int32_t)LEONOS_UI_BUTTON_H) {
         navigate_up();
         return;
@@ -279,38 +424,85 @@ static void handle_click(int32_t x, int32_t y)
         reload_dir();
         return;
     }
-    if (x < LIST_X || x >= LIST_X + LIST_W || y < LIST_Y + 28) {
-        selected_index = -1;
+    if (x >= FILEMAN_W - 26 && y >= LIST_Y + 2 &&
+        y < FILEMAN_H - STATUS_H - 8) {
+        leonos_ui_vscrollbar_handle_mouse(&file_list.scroll,
+                                          entry_count > LIST_VISIBLE_ROWS ? entry_count : LIST_VISIBLE_ROWS,
+                                          LIST_VISIBLE_ROWS,
+                                          FILEMAN_W - 26, LIST_Y + 2, 18,
+                                          FILEMAN_H - LIST_Y - STATUS_H - 10,
+                                          x, y);
         return;
     }
-    uint32_t row = (uint32_t)(y - (LIST_Y + 28)) / ROW_H;
-    if (row >= entry_count) {
-        selected_index = -1;
-        return;
-    }
-    if (selected_index == (int32_t)row) {
-        open_selected_entry();
-    } else {
-        selected_index = (int32_t)row;
-        set_status(entries[row].name);
+    {
+        uint32_t activate = 0;
+        int32_t before = file_list.selected;
+        unsigned long now = leonos_uptime_ms();
+        int32_t row = (y - (int32_t)(LIST_Y + 30)) / (int32_t)ROW_H;
+        uint32_t index;
+        if (row < 0) {
+            return;
+        }
+        index = file_list.scroll + (uint32_t)row;
+        if (index >= entry_count) {
+            last_click_index = -1;
+            last_click_ms = 0;
+            return;
+        }
+        if (!leonos_ui_listview_state_handle_mouse(&file_list, x, y, LIST_X + 2,
+                                                   LIST_Y + 30, LIST_W, &activate)) {
+            return;
+        }
+        activate = before == file_list.selected &&
+                   file_list.selected >= 0 &&
+                   last_click_index == file_list.selected &&
+                   now - last_click_ms <= 500;
+        last_click_index = file_list.selected;
+        last_click_ms = now;
+        if (activate) {
+            open_selected_entry();
+        } else if (file_list.selected >= 0 && (uint32_t)file_list.selected < entry_count) {
+            set_status(entries[file_list.selected].name);
+        }
     }
 }
 
-int main(void)
+static void handle_key(uint8_t keycode)
+{
+    uint32_t activate = 0;
+    if (leonos_ui_listview_state_handle_key(&file_list, keycode, &activate)) {
+        if (activate) {
+            open_selected_entry();
+        } else if (file_list.selected >= 0 && (uint32_t)file_list.selected < entry_count) {
+            set_status(entries[file_list.selected].name);
+        }
+    }
+}
+
+int main(int argc, char **argv, char **envp)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     int window_id;
+    (void)envp;
 
     puts("[fileman.elf] file manager starting");
     printf("[fileman.elf] pid=%d creating GUI window\n", getpid());
-    window_id = leonos_gui_create_app_window("File Manager", "LeonOS file browser", FILEMAN_W, FILEMAN_H);
+    window_id = leonos_gui_create_app_window_ex("File Manager", "LeonOS file browser",
+                                                FILEMAN_W, FILEMAN_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[fileman.elf] create window failed=%d\n", window_id);
         return 1;
     }
 
     leonos_ui_bind(&ui, pixels, FILEMAN_W, FILEMAN_H, FILEMAN_W);
+    leonos_ui_listview_state_init(&file_list, LIST_VISIBLE_ROWS, ROW_H);
+    file_list.focused = 1;
+    if (argc > 1 && argv && argv[1] && argv[1][0]) {
+        copy_text(current_path, sizeof(current_path), argv[1]);
+    }
+    chdir(current_path);
+    getcwd(current_path, sizeof(current_path));
     reload_dir();
     draw_fileman(&ui);
     leonos_gui_present_window((uint32_t)window_id, FILEMAN_W, FILEMAN_H, FILEMAN_W, pixels);
@@ -323,6 +515,12 @@ int main(void)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1)) {
                 handle_click(event.x, event.y);
+                file_list.focused = 1;
+                draw_fileman(&ui);
+                leonos_gui_present_window((uint32_t)window_id, FILEMAN_W, FILEMAN_H, FILEMAN_W, pixels);
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
+                handle_key(event.keycode);
                 draw_fileman(&ui);
                 leonos_gui_present_window((uint32_t)window_id, FILEMAN_W, FILEMAN_H, FILEMAN_W, pixels);
             }

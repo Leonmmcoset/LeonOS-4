@@ -10,6 +10,7 @@
 #include <ntclks/osmlayer.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
+#include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
 #include <ntclks/userland.h>
@@ -69,6 +70,10 @@ static void mouse_status_line(void)
     line[pos++] = '=';
     line[pos++] = m->present ? '1' : '0';
     line[pos++] = ' ';
+    line[pos++] = 'm';
+    line[pos++] = '=';
+    line[pos++] = m->absolute ? 'a' : 'r';
+    line[pos++] = ' ';
     line[pos++] = 's';
     line[pos++] = '=';
     status_hex8(line, &pos, mouse_last_status());
@@ -127,6 +132,7 @@ void kernel_main(uint32_t magic, uint32_t multiboot_info)
     arch_userland_init(kernel_ring0_stack + sizeof(kernel_ring0_stack));
     idt_init();
     irq_init();
+    storage_init();
     osmlayer_bridge_init(&boot);
     osmlayer_bridge_selftest();
     userland_init(&boot);

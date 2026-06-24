@@ -20,12 +20,26 @@
 #define LEONOS_GUI_IOCTL_FETCH_WINDOW 0x4c475746UL
 #define LEONOS_GUI_IOCTL_WINDOW_EVENT 0x4c475745UL
 #define LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT 0x4c475753UL
+#define LEONOS_GUI_IOCTL_DESTROY_WINDOW 0x4c475744UL
 
 #define LEONOS_TASK_NAME_LEN 32U
-#define LEONOS_TASK_MAX 32U
+#define LEONOS_TASK_MAX 64U
 
 #define LEONOS_INPUT_MOUSE 1U
 #define LEONOS_INPUT_KEYBOARD 2U
+
+#define LEONOS_KEY_BACKSPACE 14U
+#define LEONOS_KEY_TAB 15U
+#define LEONOS_KEY_ENTER 28U
+#define LEONOS_KEY_LEFT_SHIFT 42U
+#define LEONOS_KEY_RIGHT_SHIFT 54U
+#define LEONOS_KEY_LEFT_ALT 56U
+#define LEONOS_KEY_SPACE 57U
+#define LEONOS_KEY_LEFT_WIN 112U
+#define LEONOS_KEY_RIGHT_WIN 113U
+#define LEONOS_KEY_MENU 114U
+#define LEONOS_KEY_RIGHT_ALT 115U
+#define LEONOS_KEY_RIGHT_CTRL 116U
 
 #define LEONOS_GUI_APP_EVENT_CLOSE 1U
 #define LEONOS_GUI_APP_EVENT_FOCUS 2U
@@ -36,12 +50,15 @@
 #define LEONOS_GUI_APP_EVENT_KEY_DOWN 7U
 #define LEONOS_GUI_APP_EVENT_KEY_UP 8U
 
+#define LEONOS_GUI_WINDOW_NO_RESIZE 0x00000001U
+
 struct leonos_gui_window {
     uint32_t id;
     uint32_t width;
     uint32_t height;
     const char *title;
     const char *text;
+    uint32_t flags;
 };
 
 struct leonos_input_event {
@@ -92,6 +109,7 @@ struct leonos_gui_create {
     uint32_t height;
     const char *title;
     const char *text;
+    uint32_t flags;
 };
 
 struct leonos_gui_window_msg {
@@ -169,6 +187,8 @@ int leonos_fb_text(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32
 uint32_t leonos_fb_pixel(uint32_t x, uint32_t y);
 int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t stride, const uint32_t *pixels);
 int leonos_gui_create_app_window(const char *title, const char *text, uint32_t width, uint32_t height);
+int leonos_gui_create_app_window_ex(const char *title, const char *text, uint32_t width, uint32_t height, uint32_t flags);
+int leonos_gui_destroy_app_window(uint32_t window_id);
 int leonos_gui_poll_window(struct leonos_gui_window_msg *message);
 int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t height,
                               uint32_t stride, const uint32_t *pixels);

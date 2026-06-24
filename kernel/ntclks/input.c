@@ -1,6 +1,6 @@
 #include <ntclks/input.h>
 
-#define INPUT_QUEUE_CAP 128
+#define INPUT_QUEUE_CAP 512
 
 static struct input_event queue[INPUT_QUEUE_CAP];
 static volatile uint32_t head;
@@ -14,6 +14,16 @@ void input_init(void)
 
 static void push_event(const struct input_event *event)
 {
+    if (event && event->type == INPUT_EVENT_MOUSE && head != tail) {
+        uint32_t prev = (head + INPUT_QUEUE_CAP - 1) % INPUT_QUEUE_CAP;
+        if (queue[prev].type == INPUT_EVENT_MOUSE && queue[prev].buttons == event->buttons) {
+            queue[prev].x = event->x;
+            queue[prev].y = event->y;
+            queue[prev].dx += event->dx;
+            queue[prev].dy += event->dy;
+            return;
+        }
+    }
     uint32_t next = (head + 1) % INPUT_QUEUE_CAP;
     if (next == tail) {
         tail = (tail + 1) % INPUT_QUEUE_CAP;

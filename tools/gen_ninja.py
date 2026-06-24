@@ -125,7 +125,7 @@ def main() -> int:
     write_line(lines, "  description = GRUB.EFI $out")
     write_line(lines)
     write_line(lines, "rule iso")
-    write_line(lines, "  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/system build/iso/userland build/iso/etc && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/x86_64/ntclks.elf build/iso/boot/ntclks.elf && cp build/esp/system/osmlayer.manifest build/iso/system/osmlayer.manifest && cp build/userland/init.elf build/iso/userland/init.elf && cp build/userland/desktop.elf build/iso/userland/desktop.elf && cp build/userland/hello.elf build/iso/userland/hello.elf && cp build/userland/uidemo.elf build/iso/userland/uidemo.elf && cp build/userland/taskmgr.elf build/iso/userland/taskmgr.elf && cp build/userland/fileman.elf build/iso/userland/fileman.elf && cp build/userland/terminal.elf build/iso/userland/terminal.elf && cp build/userland/shell.elf build/iso/userland/shell.elf && cp configs/default.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso")
+    write_line(lines, "  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/system build/iso/userland build/iso/etc && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/x86_64/ntclks.elf build/iso/boot/ntclks.elf && cp build/esp/system/osmlayer.manifest build/iso/system/osmlayer.manifest && cp build/userland/init.elf build/iso/userland/init.elf && cp build/userland/desktop.elf build/iso/userland/desktop.elf && cp build/userland/hello.elf build/iso/userland/hello.elf && cp build/userland/uidemo.elf build/iso/userland/uidemo.elf && cp build/userland/taskmgr.elf build/iso/userland/taskmgr.elf && cp build/userland/fileman.elf build/iso/userland/fileman.elf && cp build/userland/terminal.elf build/iso/userland/terminal.elf && cp build/userland/shell.elf build/iso/userland/shell.elf && cp build/userland/notepad.elf build/iso/userland/notepad.elf && cp build/userland/calc.elf build/iso/userland/calc.elf && cp build/userland/run.elf build/iso/userland/run.elf && cp configs/default.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso")
     write_line(lines, "  description = ISO $out")
     write_line(lines)
     write_line(lines, "rule image")
@@ -189,7 +189,7 @@ def main() -> int:
     write_line(lines, f"build {r(libc_a)}: ar {' '.join(r(o) for o in libc_objects)}")
 
     user_elfs: list[Path] = []
-    for app in ["init", "desktop", "hello", "uidemo", "taskmgr", "fileman", "terminal", "shell"]:
+    for app in ["init", "desktop", "hello", "uidemo", "taskmgr", "fileman", "terminal", "shell", "notepad", "calc", "run"]:
         src = ROOT / "userland" / "apps" / app / "main.c"
         obj = obj_for(src, f"user-{app}")
         elf = ROOT / "build" / "userland" / f"{app}.elf"
@@ -212,6 +212,9 @@ def main() -> int:
         ROOT / "build/esp/userland/fileman.elf",
         ROOT / "build/esp/userland/terminal.elf",
         ROOT / "build/esp/userland/shell.elf",
+        ROOT / "build/esp/userland/notepad.elf",
+        ROOT / "build/esp/userland/calc.elf",
+        ROOT / "build/esp/userland/run.elf",
         ROOT / "build/esp/etc/leonos.conf",
     ]
     write_line(lines, f"build {r(esp_outputs[0])}: grub_efi boot/grub/grub.cfg | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh")
@@ -226,6 +229,9 @@ def main() -> int:
     write_line(lines, f"build {r(esp_outputs[9])}: copy {r(user_elfs[5])}")
     write_line(lines, f"build {r(esp_outputs[10])}: copy {r(user_elfs[6])}")
     write_line(lines, f"build {r(esp_outputs[11])}: copy {r(user_elfs[7])}")
+    write_line(lines, f"build {r(esp_outputs[12])}: copy {r(user_elfs[8])}")
+    write_line(lines, f"build {r(esp_outputs[13])}: copy {r(user_elfs[9])}")
+    write_line(lines, f"build {r(esp_outputs[14])}: copy {r(user_elfs[10])}")
     write_line(lines, "build build/esp/etc/leonos.conf: copy configs/default.conf")
     write_line(lines, f"build esp: phony {' '.join(r(p) for p in esp_outputs)}")
 

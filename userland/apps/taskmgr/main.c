@@ -6,11 +6,23 @@
 
 #define TASKMGR_W 620
 #define TASKMGR_H 300
+#define TASKMGR_STATUS_H 28
+#define TASKMGR_VISIBLE_ROWS 7
+#define TASKMGR_MENU_BAR_H 28
+#define TASKMGR_MENU_ITEM_H (LEONOS_FONT_H + 8)
+
+enum {
+    TASKMGR_MENU_NONE = 0,
+    TASKMGR_MENU_FILE = 1,
+    TASKMGR_MENU_OPTIONS = 2,
+};
 
 static uint32_t pixels[TASKMGR_W * TASKMGR_H];
 static struct leonos_task_info tasks[LEONOS_TASK_MAX];
 static uint32_t task_count;
 static uint64_t task_tick;
+static struct leonos_ui_listview_state task_list;
+static uint8_t menu_open;
 
 static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -53,6 +65,11 @@ static void append_hex_fixed(char *buf, uint32_t *pos, uint32_t cap, uint64_t va
     }
 }
 
+static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
+{
+    return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
+}
+
 static const char *state_name(uint32_t state)
 {
     switch (state) {
@@ -93,29 +110,146 @@ static void task_line(char *buf, uint32_t cap, const struct leonos_task_info *ta
     append_text(buf, &pos, cap, task->name);
 }
 
+static void refresh_tasks(void)
+{
+    int count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &task_tick);
+    task_count = count > 0 ? (uint32_t)count : 0;
+    leonos_ui_listview_state_set_count(&task_list, task_count);
+    if (task_list.selected < 0 && task_count) {
+        task_list.selected = 0;
+    }
+}
+
 static void draw_taskmgr(struct leonos_ui_surface *ui)
 {
     char line[128];
     uint32_t pos = 0;
     uint32_t rows;
+    struct leonos_ui_list_column cols[] = {
+        {"PID", 44},
+        {"PPID", 50},
+        {"STATE", 58},
+        {"KIND", 52},
+        {"CR3", 104},
+        {"WAKE", 70},
+        {"NAME", TASKMGR_W - 16 - 44 - 50 - 58 - 52 - 104 - 70},
+    };
 
     leonos_ui_rect(ui, 0, 0, TASKMGR_W, TASKMGR_H, LEONOS_UI_WHITE);
+    leonos_ui_menubar(ui, 0, 0, TASKMGR_W);
+    leonos_ui_menubar_item(ui, 8, 0, 64, "File", menu_open == TASKMGR_MENU_FILE);
+    leonos_ui_menubar_item(ui, 74, 0, 80, "Options", menu_open == TASKMGR_MENU_OPTIONS);
+    leonos_ui_toolbar(ui, 0, 28, TASKMGR_W, 36);
+    leonos_ui_toolbar_button(ui, 8, 34, 88, "Refresh", 0);
+    leonos_ui_toolbar_button(ui, 104, 34, 94, "Processes", LEONOS_UI_BUTTON_PRESSED);
+
     line[0] = 0;
     append_text(line, &pos, sizeof(line), "tick=");
     append_dec(line, &pos, sizeof(line), task_tick);
     append_text(line, &pos, sizeof(line), " tasks=");
     append_dec(line, &pos, sizeof(line), task_count);
-    leonos_ui_text(ui, 10, 10, line, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 216, 40, line, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
 
-    leonos_ui_list_header(ui, 8, 34, TASKMGR_W - 16, "PID PPID STATE KIND CR3        WAKE NAME");
-    rows = task_count;
-    if (rows > 10) {
-        rows = 10;
-    }
-    for (uint32_t i = 0; i < rows; ++i) {
+    leonos_ui_scroll_view_frame(ui, 8, 72, TASKMGR_W - 16, TASKMGR_H - 72 - TASKMGR_STATUS_H - 4);
+    leonos_ui_listview_header(ui, 10, 74, TASKMGR_W - 38, cols, 7);
+    rows = task_count > task_list.visible_rows ? task_list.visible_rows : task_count;
+    for (uint32_t row = 0; row < rows; ++row) {
+        uint32_t i = task_list.scroll + row;
+        char pid[16];
+        char ppid[16];
+        char cr3[24];
+        char wake[24];
+        uint32_t p = 0;
+        const char *cells[7];
+        if (i >= task_count) {
+            break;
+        }
+        pid[0] = 0;
+        append_dec(pid, &p, sizeof(pid), tasks[i].pid);
+        p = 0;
+        ppid[0] = 0;
+        append_dec(ppid, &p, sizeof(ppid), tasks[i].parent_pid);
+        p = 0;
+        cr3[0] = 0;
+        append_hex_fixed(cr3, &p, sizeof(cr3), tasks[i].cr3, 8);
+        p = 0;
+        wake[0] = 0;
+        append_dec(wake, &p, sizeof(wake), tasks[i].wake_tick);
+        cells[0] = pid;
+        cells[1] = ppid;
+        cells[2] = state_name(tasks[i].state);
+        cells[3] = kind_name(tasks[i].kind);
+        cells[4] = cr3;
+        cells[5] = wake;
+        cells[6] = tasks[i].name;
         task_line(line, sizeof(line), &tasks[i]);
-        leonos_ui_list_row(ui, 8, 64 + i * 24, TASKMGR_W - 16, line, 0);
+        leonos_ui_listview_row(ui, 10, 102 + row * 24, TASKMGR_W - 38, cols, cells, 7,
+                               task_list.selected == (int32_t)i ? LEONOS_UI_MENU_SELECTED : 0);
     }
+    leonos_ui_vscrollbar(ui, TASKMGR_W - 26, 74, 18, TASKMGR_H - 104,
+                         task_list.scroll, task_count > TASKMGR_VISIBLE_ROWS ? task_count : TASKMGR_VISIBLE_ROWS,
+                         TASKMGR_VISIBLE_ROWS,
+                         task_count <= TASKMGR_VISIBLE_ROWS ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
+    leonos_ui_statusbar(ui, TASKMGR_H - TASKMGR_STATUS_H, TASKMGR_STATUS_H, line);
+
+    if (menu_open == TASKMGR_MENU_FILE) {
+        leonos_ui_menu(ui, 8, TASKMGR_MENU_BAR_H, 154, 60);
+        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 8, 116, "Refresh", 0);
+        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 34, 116, "About", 0);
+    } else if (menu_open == TASKMGR_MENU_OPTIONS) {
+        leonos_ui_menu(ui, 74, TASKMGR_MENU_BAR_H, 178, 60);
+        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 8, 140, "Processes", LEONOS_UI_MENU_SELECTED);
+        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 34, 140, "About", 0);
+    }
+}
+
+static int handle_menu_click(int32_t x, int32_t y)
+{
+    if (y >= 0 && y < (int32_t)TASKMGR_MENU_BAR_H) {
+        if (hit_rect_i(x, y, 8, 0, 64, (int32_t)TASKMGR_MENU_BAR_H)) {
+            menu_open = menu_open == TASKMGR_MENU_FILE ? TASKMGR_MENU_NONE : TASKMGR_MENU_FILE;
+            return 1;
+        }
+        if (hit_rect_i(x, y, 74, 0, 80, (int32_t)TASKMGR_MENU_BAR_H)) {
+            menu_open = menu_open == TASKMGR_MENU_OPTIONS ? TASKMGR_MENU_NONE : TASKMGR_MENU_OPTIONS;
+            return 1;
+        }
+        menu_open = TASKMGR_MENU_NONE;
+        return 1;
+    }
+    if (menu_open == TASKMGR_MENU_FILE) {
+        if (hit_rect_i(x, y, 42, (int32_t)TASKMGR_MENU_BAR_H + 8, 116,
+                       (int32_t)TASKMGR_MENU_ITEM_H)) {
+            menu_open = TASKMGR_MENU_NONE;
+            refresh_tasks();
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)TASKMGR_MENU_BAR_H + 34, 116,
+                       (int32_t)TASKMGR_MENU_ITEM_H)) {
+            menu_open = TASKMGR_MENU_NONE;
+            leonos_ui_show_message_box("Task Manager", "Live task snapshot from the scheduler.", "OK");
+            return 1;
+        }
+        menu_open = TASKMGR_MENU_NONE;
+        return 1;
+    }
+    if (menu_open == TASKMGR_MENU_OPTIONS) {
+        if (hit_rect_i(x, y, 108, (int32_t)TASKMGR_MENU_BAR_H + 8, 140,
+                       (int32_t)TASKMGR_MENU_ITEM_H)) {
+            menu_open = TASKMGR_MENU_NONE;
+            refresh_tasks();
+            return 1;
+        }
+        if (hit_rect_i(x, y, 108, (int32_t)TASKMGR_MENU_BAR_H + 34, 140,
+                       (int32_t)TASKMGR_MENU_ITEM_H)) {
+            menu_open = TASKMGR_MENU_NONE;
+            leonos_ui_show_message_box("Task Manager", "Shows runnable, sleeping, and exited tasks.", "OK");
+            return 1;
+        }
+        menu_open = TASKMGR_MENU_NONE;
+        return 1;
+    }
+    return 0;
 }
 
 int main(void)
@@ -127,13 +261,16 @@ int main(void)
 
     puts("[taskmgr.elf] task manager starting");
     printf("[taskmgr.elf] pid=%d creating GUI window\n", getpid());
-    window_id = leonos_gui_create_app_window("Task Manager", "Task snapshot", TASKMGR_W, TASKMGR_H);
+    window_id = leonos_gui_create_app_window_ex("Task Manager", "Task snapshot",
+                                                TASKMGR_W, TASKMGR_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[taskmgr.elf] create window failed=%d\n", window_id);
         return 1;
     }
 
     leonos_ui_bind(&ui, pixels, TASKMGR_W, TASKMGR_H, TASKMGR_W);
+    leonos_ui_listview_state_init(&task_list, TASKMGR_VISIBLE_ROWS, 24);
+    task_list.focused = 1;
     for (;;) {
         unsigned long now = leonos_uptime_ms();
         event.window_id = (uint32_t)window_id;
@@ -141,11 +278,42 @@ int main(void)
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 return 0;
             }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
+                if (handle_menu_click(event.x, event.y)) {
+                    draw_taskmgr(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, TASKMGR_W, TASKMGR_H, TASKMGR_W, pixels);
+                    continue;
+                }
+                menu_open = TASKMGR_MENU_NONE;
+                if (event.x >= (int32_t)(TASKMGR_W - 26) && event.y >= 74 &&
+                    event.y < (int32_t)(TASKMGR_H - TASKMGR_STATUS_H)) {
+                    leonos_ui_vscrollbar_handle_mouse(&task_list.scroll,
+                                                      task_count > TASKMGR_VISIBLE_ROWS ? task_count : TASKMGR_VISIBLE_ROWS,
+                                                      TASKMGR_VISIBLE_ROWS,
+                                                      TASKMGR_W - 26, 74, 18, TASKMGR_H - 104,
+                                                      event.x, event.y);
+                } else {
+                    uint32_t activate = 0;
+                    leonos_ui_listview_state_handle_mouse(&task_list, event.x, event.y,
+                                                          10, 102, TASKMGR_W - 38, &activate);
+                    (void)activate;
+                }
+                task_list.focused = 1;
+                draw_taskmgr(&ui);
+                leonos_gui_present_window((uint32_t)window_id, TASKMGR_W, TASKMGR_H, TASKMGR_W, pixels);
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
+                menu_open = TASKMGR_MENU_NONE;
+                uint32_t activate = 0;
+                if (leonos_ui_listview_state_handle_key(&task_list, event.keycode, &activate)) {
+                    draw_taskmgr(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, TASKMGR_W, TASKMGR_H, TASKMGR_W, pixels);
+                }
+            }
             event.window_id = (uint32_t)window_id;
         }
         if (now - last_refresh >= 500) {
-            int count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &task_tick);
-            task_count = count > 0 ? (uint32_t)count : 0;
+            refresh_tasks();
             draw_taskmgr(&ui);
             leonos_gui_present_window((uint32_t)window_id, TASKMGR_W, TASKMGR_H, TASKMGR_W, pixels);
             last_refresh = now;

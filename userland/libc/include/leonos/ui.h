@@ -22,8 +22,17 @@
 #define LEONOS_UI_BUTTON_ACTIVE 0x02u
 #define LEONOS_UI_BUTTON_DISABLED 0x04u
 #define LEONOS_UI_WINDOW_ACTIVE 0x01u
+#define LEONOS_UI_WINDOW_NO_RESIZE 0x02u
 #define LEONOS_UI_MENU_SEPARATOR 0x01u
 #define LEONOS_UI_MENU_SELECTED 0x02u
+#define LEONOS_UI_EDIT_FOCUSED 0x01u
+#define LEONOS_UI_EDIT_READONLY 0x02u
+#define LEONOS_UI_EDIT_DISABLED 0x04u
+#define LEONOS_UI_SCROLLBAR_DISABLED 0x01u
+#define LEONOS_UI_TAB_ACTIVE 0x01u
+#define LEONOS_UI_TOOLBAR_BUTTON_ACTIVE LEONOS_UI_BUTTON_ACTIVE
+#define LEONOS_UI_TOOLBAR_BUTTON_PRESSED LEONOS_UI_BUTTON_PRESSED
+#define LEONOS_UI_TOOLBAR_BUTTON_DISABLED LEONOS_UI_BUTTON_DISABLED
 
 struct leonos_ui_surface {
     uint32_t *pixels;
@@ -47,15 +56,61 @@ struct leonos_ui_window_parts {
     struct leonos_ui_rect close;
 };
 
+struct leonos_ui_list_column {
+    const char *label;
+    uint32_t width;
+};
+
+struct leonos_ui_edit_state {
+    char *buffer;
+    uint32_t capacity;
+    uint32_t length;
+    uint32_t cursor;
+    uint32_t scroll;
+    uint32_t selection_anchor;
+    uint8_t focused;
+    uint8_t readonly;
+    uint8_t selecting;
+};
+
+struct leonos_ui_text_area_state {
+    char *buffer;
+    uint32_t capacity;
+    uint32_t length;
+    uint32_t cursor;
+    uint32_t scroll_line;
+    uint32_t preferred_column;
+    uint32_t line_count;
+    uint8_t focused;
+    uint8_t readonly;
+};
+
+struct leonos_ui_listview_state {
+    uint32_t row_count;
+    uint32_t visible_rows;
+    uint32_t row_height;
+    uint32_t scroll;
+    int32_t selected;
+    uint8_t focused;
+};
+
 void leonos_ui_bind(struct leonos_ui_surface *surface, uint32_t *pixels,
                     uint32_t width, uint32_t height, uint32_t stride);
+uint32_t leonos_ui_text_width(const char *text);
+uint32_t leonos_ui_text_fit_chars(uint32_t pixel_width);
+int leonos_ui_hit(uint32_t px, uint32_t py, int32_t x, int32_t y, uint32_t w, uint32_t h);
+int leonos_ui_keycode_to_char(uint8_t keycode, char *out);
 void leonos_ui_pixel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t color);
 void leonos_ui_rect(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     uint32_t w, uint32_t h, uint32_t color);
 void leonos_ui_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     const char *text, uint32_t fg, uint32_t bg);
+void leonos_ui_text_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                            uint32_t w, const char *text, uint32_t fg, uint32_t bg);
 void leonos_ui_text_transparent(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                                 const char *text, uint32_t fg);
+void leonos_ui_text_transparent_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                                        uint32_t w, const char *text, uint32_t fg);
 void leonos_ui_bevel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      uint32_t w, uint32_t h, uint32_t fill, uint32_t flags);
 void leonos_ui_inset(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
@@ -89,5 +144,112 @@ void leonos_ui_list_header(struct leonos_ui_surface *surface, uint32_t x, uint32
                            uint32_t w, const char *label);
 void leonos_ui_list_row(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, const char *text, uint32_t flags);
+void leonos_ui_vscrollbar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                          uint32_t w, uint32_t h, uint32_t value, uint32_t max,
+                          uint32_t page, uint32_t flags);
+void leonos_ui_hscrollbar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                          uint32_t w, uint32_t h, uint32_t value, uint32_t max,
+                          uint32_t page, uint32_t flags);
+void leonos_ui_scroll_view_frame(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                                 uint32_t w, uint32_t h);
+void leonos_ui_edit(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                    uint32_t w, const char *text, uint32_t cursor, uint32_t scroll,
+                    uint32_t flags);
+void leonos_ui_edit_state_init(struct leonos_ui_edit_state *state, char *buffer,
+                               uint32_t capacity);
+void leonos_ui_edit_state_sync(struct leonos_ui_edit_state *state);
+void leonos_ui_edit_state_draw(struct leonos_ui_surface *surface, uint32_t x,
+                               uint32_t y, uint32_t w,
+                               struct leonos_ui_edit_state *state,
+                               uint32_t flags);
+int leonos_ui_edit_state_handle_key(struct leonos_ui_edit_state *state,
+                                    uint8_t keycode);
+int leonos_ui_edit_state_handle_mouse(struct leonos_ui_edit_state *state,
+                                      int32_t px, int32_t py, uint32_t x,
+                                      uint32_t y, uint32_t w, uint32_t buttons);
+void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                         uint32_t w, uint32_t h, const char *text, uint32_t cursor,
+                         uint32_t scroll_line, uint32_t flags);
+void leonos_ui_text_area_state_init(struct leonos_ui_text_area_state *state,
+                                    char *buffer, uint32_t capacity);
+void leonos_ui_text_area_state_sync(struct leonos_ui_text_area_state *state,
+                                    uint32_t w);
+void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t x,
+                                    uint32_t y, uint32_t w, uint32_t h,
+                                    struct leonos_ui_text_area_state *state,
+                                    uint32_t flags);
+int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state,
+                                         uint8_t keycode, uint32_t w,
+                                         uint32_t h);
+int leonos_ui_text_area_state_handle_mouse(struct leonos_ui_text_area_state *state,
+                                           int32_t px, int32_t py, uint32_t x,
+                                           uint32_t y, uint32_t w, uint32_t h,
+                                           uint32_t buttons);
+uint32_t leonos_ui_text_area_line_count(struct leonos_ui_text_area_state *state,
+                                        uint32_t w);
+void leonos_ui_listview_header(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                               uint32_t w, const struct leonos_ui_list_column *cols,
+                               uint32_t count);
+void leonos_ui_listview_row(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                            uint32_t w, const struct leonos_ui_list_column *cols,
+                            const char *const cells[], uint32_t count, uint32_t flags);
+void leonos_ui_listview_state_init(struct leonos_ui_listview_state *state,
+                                   uint32_t visible_rows, uint32_t row_height);
+void leonos_ui_listview_state_set_count(struct leonos_ui_listview_state *state,
+                                        uint32_t row_count);
+int leonos_ui_listview_state_handle_key(struct leonos_ui_listview_state *state,
+                                        uint8_t keycode, uint32_t *activated);
+int leonos_ui_listview_state_handle_mouse(struct leonos_ui_listview_state *state,
+                                          int32_t px, int32_t py, uint32_t x,
+                                          uint32_t rows_y, uint32_t w,
+                                          uint32_t *activated);
+int leonos_ui_vscrollbar_handle_mouse(uint32_t *value, uint32_t max, uint32_t page,
+                                      uint32_t x, uint32_t y, uint32_t w,
+                                      uint32_t h, int32_t px, int32_t py);
+int leonos_ui_hscrollbar_handle_mouse(uint32_t *value, uint32_t max, uint32_t page,
+                                      uint32_t x, uint32_t y, uint32_t w,
+                                      uint32_t h, int32_t px, int32_t py);
+void leonos_ui_dialog(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                      uint32_t w, uint32_t h, const char *title);
+void leonos_ui_message_box(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                           uint32_t w, uint32_t h, const char *title,
+                           const char *message, const char *button);
+void leonos_ui_confirm_dialog(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                              uint32_t w, uint32_t h, const char *title,
+                              const char *message, uint32_t default_yes);
+void leonos_ui_input_dialog(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                            uint32_t w, uint32_t h, const char *title,
+                            const char *label, const char *value, uint32_t flags);
+int leonos_ui_show_message_box(const char *title, const char *message,
+                               const char *button);
+int leonos_ui_show_confirm_dialog(const char *title, const char *message,
+                                  uint32_t default_yes);
+int leonos_ui_show_input_dialog(const char *title, const char *label,
+                                char *value, uint32_t capacity);
+void leonos_ui_combobox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                        uint32_t w, const char *text, uint32_t open, uint32_t flags);
+void leonos_ui_radio(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                     const char *label, int checked, uint32_t flags);
+void leonos_ui_groupbox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                        uint32_t w, uint32_t h, const char *title);
+void leonos_ui_tabs(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                    uint32_t w, const char *const labels[], uint32_t count,
+                    uint32_t active);
+int leonos_ui_tabs_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                       uint32_t w, const char *const labels[], uint32_t count);
+void leonos_ui_tab_body(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                        uint32_t w, uint32_t h);
+void leonos_ui_statusbar(struct leonos_ui_surface *surface, uint32_t y, uint32_t h,
+                         const char *text);
+void leonos_ui_toolbar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                       uint32_t w, uint32_t h);
+void leonos_ui_toolbar_button(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                              uint32_t w, const char *label, uint32_t flags);
+void leonos_ui_splitter(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                        uint32_t w, uint32_t h, uint32_t vertical);
+void leonos_ui_menubar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                       uint32_t w);
+void leonos_ui_menubar_item(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                            uint32_t w, const char *label, uint32_t active);
 
 #endif

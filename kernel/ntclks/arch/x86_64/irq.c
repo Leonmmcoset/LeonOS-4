@@ -18,6 +18,7 @@
 #define PS2_DATA 0x60
 
 static uint8_t key_states[128];
+static uint8_t e0_prefix;
 
 static void io_wait(void)
 {
@@ -89,11 +90,37 @@ struct task *irq_dispatch(struct trap_frame *frame)
         return from_user ? userland_schedule_from_frame(frame) : NULL;
     } else if (vector == 0x21) {
         uint8_t scancode = x86_64_inb(PS2_DATA);
-        uint8_t keycode = scancode & 0x7f;
-        uint8_t pressed = (scancode & 0x80) == 0;
-        if (keycode < sizeof(key_states) && key_states[keycode] != pressed) {
-            key_states[keycode] = pressed;
-            input_push_key(keycode, pressed);
+        if (scancode == 0xe0) {
+            e0_prefix = 1;
+        } else if (scancode != 0xe1) {
+            uint8_t keycode = scancode & 0x7f;
+            uint8_t pressed = (scancode & 0x80) == 0;
+            if (e0_prefix) {
+                switch (keycode) {
+                case 0x1d:
+                    keycode = 116;
+                    break;
+                case 0x38:
+                    keycode = 115;
+                    break;
+                case 0x5b:
+                    keycode = 112;
+                    break;
+                case 0x5c:
+                    keycode = 113;
+                    break;
+                case 0x5d:
+                    keycode = 114;
+                    break;
+                default:
+                    break;
+                }
+                e0_prefix = 0;
+            }
+            if (keycode < sizeof(key_states) && key_states[keycode] != pressed) {
+                key_states[keycode] = pressed;
+                input_push_key(keycode, pressed);
+            }
         }
         pic_send_eoi(1);
     } else if (vector == 0x2c) {

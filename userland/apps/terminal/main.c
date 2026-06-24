@@ -192,12 +192,14 @@ static void pump_pty_output(void)
     } while (got > 0);
 }
 
-int main(void)
+int main(int argc, char **argv, char **envp)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     int window_id;
     int shell_pid;
+    char *shell_argv[4];
+    (void)envp;
 
     puts("[terminal.elf] terminal starting");
     pty_id = (uint32_t)leonos_pty_create();
@@ -207,12 +209,17 @@ int main(void)
         return 1;
     }
 
-    window_id = leonos_gui_create_app_window("Terminal", "LeonOS terminal", TERM_W, TERM_H);
+    window_id = leonos_gui_create_app_window_ex("Terminal", "LeonOS terminal",
+                                                TERM_W, TERM_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[terminal.elf] create window failed=%d\n", window_id);
         return 1;
     }
-    shell_pid = leonos_pty_spawn("0:/userland/shell.elf", pty_id);
+    shell_argv[0] = "0:/userland/shell.elf";
+    shell_argv[1] = (argc > 1 && argv && argv[1] && argv[1][0]) ? argv[1] : 0;
+    shell_argv[2] = (argc > 2 && argv && argv[2] && argv[2][0]) ? argv[2] : 0;
+    shell_argv[3] = 0;
+    shell_pid = leonos_pty_spawn_argv("0:/userland/shell.elf", pty_id, shell_argv, 0);
     printf("[terminal.elf] spawn shell pid=%d\n", shell_pid);
 
     leonos_ui_bind(&ui, pixels, TERM_W, TERM_H, TERM_W);

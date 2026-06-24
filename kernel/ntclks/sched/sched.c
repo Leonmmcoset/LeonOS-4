@@ -3,7 +3,7 @@
 #include <ntclks/paging.h>
 #include <ntclks/sched.h>
 
-static struct task tasks[32];
+static struct task tasks[SCHED_TASK_MAX];
 static uint32_t task_count;
 static uint32_t next_pid = 1;
 static uint32_t current_pid;
@@ -37,6 +37,22 @@ static void task_copy_name(struct task *task, const char *name)
     task->name = task->name_storage;
 }
 
+static void task_copy_cwd(struct task *task, const char *cwd)
+{
+    size_t i = 0;
+    if (!task) {
+        return;
+    }
+    if (!cwd || !cwd[0]) {
+        cwd = "0:/";
+    }
+    while (i + 1 < sizeof(task->cwd) && cwd[i]) {
+        task->cwd[i] = cwd[i];
+        ++i;
+    }
+    task->cwd[i] = 0;
+}
+
 void sched_init(void)
 {
     task_count = 0;
@@ -46,12 +62,38 @@ void sched_init(void)
     console_printf("[ntclks] scheduler initialized\n");
 }
 
+static void task_zero(struct task *task)
+{
+    if (!task) {
+        return;
+    }
+    for (size_t i = 0; i < sizeof(*task); ++i) {
+        ((uint8_t *)task)[i] = 0;
+    }
+}
+
+static struct task *alloc_task_slot(void)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i].state == TASK_EXITED) {
+            sched_release_task_resources(&tasks[i]);
+            task_zero(&tasks[i]);
+            return &tasks[i];
+        }
+    }
+    if (task_count >= SCHED_TASK_MAX) {
+        return NULL;
+    }
+    return &tasks[task_count++];
+}
+
 uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
 {
-    if (task_count >= 32) {
+    struct task *task = alloc_task_slot();
+    if (!task) {
         return 0;
     }
-    struct task *task = &tasks[task_count++];
+    task_zero(task);
     task->pid = next_pid++;
     task->parent_pid = 0;
     task_copy_name(task, name);
@@ -71,6 +113,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task->kind = TASK_KIND_KERNEL;
     task->flags = 0;
     task->pty_id = 0;
+    task_copy_cwd(task, "0:/");
     console_printf("[ntclks] task pid=%u name=%s entry=0x%llx\n",
                    task->pid, task->name, (unsigned long long)task->entry);
     return task->pid;
@@ -79,13 +122,11 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags)
 {
-    if (task_count >= 32) {
+    struct task *task = alloc_task_slot();
+    if (!task) {
         return 0;
     }
-    struct task *task = &tasks[task_count++];
-    for (size_t i = 0; i < sizeof(*task); ++i) {
-        ((uint8_t *)task)[i] = 0;
-    }
+    task_zero(task);
     task->pid = next_pid++;
     task->parent_pid = parent_pid;
     task_copy_name(task, name);
@@ -98,7 +139,13 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     if (!address_space_create(&task->as) ||
         !address_space_map_user_stack(&task->as, stack_top)) {
         address_space_destroy(&task->as);
-        --task_count;
+        task_copy_name(task, "failed");
+        task->entry = 0;
+        task->stack_top = 0;
+        task->image = NULL;
+        task->image_len = 0;
+        task->state = TASK_EXITED;
+        task->flags = TASK_FLAG_RESOURCES_RELEASED;
         return 0;
     }
     task->frame.rip = entry;
@@ -109,6 +156,13 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->state = TASK_READY;
     task->kind = TASK_KIND_USER;
     task->flags = flags;
+    task_copy_cwd(task, "0:/");
+    if (parent_pid) {
+        struct task *parent = sched_find(parent_pid);
+        if (parent) {
+            task_copy_cwd(task, parent->cwd);
+        }
+    }
     console_printf("[ntclks] task pid=%u ppid=%u name=%s user entry=0x%llx stack=0x%llx flags=0x%x\n",
                    task->pid,
                    task->parent_pid,
@@ -129,12 +183,72 @@ void sched_set_task_image(uint32_t pid, const void *image, size_t image_len)
     task->image_len = image_len;
 }
 
-void sched_create_idle_task(void)
+void sched_set_task_exec_params(uint32_t pid,
+                                uint32_t argc, char *const argv[],
+                                uint32_t envc, char *const envp[],
+                                const char *data, uint32_t data_len)
 {
-    if (task_count >= 32) {
+    struct task *task = sched_find(pid);
+    uintptr_t src_base;
+    uintptr_t src_end;
+    if (!task) {
         return;
     }
-    struct task *task = &tasks[task_count++];
+    if (argc > SCHED_EXEC_ARG_MAX) {
+        argc = SCHED_EXEC_ARG_MAX;
+    }
+    if (envc > SCHED_EXEC_ENV_MAX) {
+        envc = SCHED_EXEC_ENV_MAX;
+    }
+    if (data_len > sizeof(task->exec_data)) {
+        data_len = sizeof(task->exec_data);
+    }
+    task->exec_argc = argc;
+    task->exec_envc = envc;
+    task->exec_data_len = data_len;
+    for (uint32_t i = 0; i < SCHED_EXEC_ARG_MAX + 1; ++i) {
+        task->exec_argv[i] = 0;
+    }
+    for (uint32_t i = 0; i < SCHED_EXEC_ENV_MAX + 1; ++i) {
+        task->exec_envp[i] = 0;
+    }
+    for (uint32_t i = 0; i < data_len; ++i) {
+        task->exec_data[i] = data ? data[i] : 0;
+    }
+    for (uint32_t i = data_len; i < sizeof(task->exec_data); ++i) {
+        task->exec_data[i] = 0;
+    }
+    src_base = (uintptr_t)data;
+    src_end = src_base + data_len;
+    for (uint32_t i = 0; i < argc; ++i) {
+        task->exec_argv[i] = 0;
+        if (!argv || !argv[i]) {
+            continue;
+        }
+        uintptr_t ptr = (uintptr_t)argv[i];
+        if (ptr >= src_base && ptr < src_end) {
+            task->exec_argv[i] = task->exec_data + (ptr - src_base);
+        }
+    }
+    for (uint32_t i = 0; i < envc; ++i) {
+        task->exec_envp[i] = 0;
+        if (!envp || !envp[i]) {
+            continue;
+        }
+        uintptr_t ptr = (uintptr_t)envp[i];
+        if (ptr >= src_base && ptr < src_end) {
+            task->exec_envp[i] = task->exec_data + (ptr - src_base);
+        }
+    }
+}
+
+void sched_create_idle_task(void)
+{
+    struct task *task = alloc_task_slot();
+    if (!task) {
+        return;
+    }
+    task_zero(task);
     task->pid = 0;
     task->parent_pid = 0;
     task_copy_name(task, "idle");
@@ -154,6 +268,7 @@ void sched_create_idle_task(void)
     task->kind = TASK_KIND_KERNEL;
     task->flags = 0;
     task->pty_id = 0;
+    task_copy_cwd(task, "0:/");
 }
 
 void sched_set_running(uint32_t pid)
@@ -330,6 +445,12 @@ int64_t sched_wait_reap(uint32_t waiter_pid, uint32_t wanted_pid, uint64_t *exit
             task->image = NULL;
             task->image_len = 0;
             task->pty_id = 0;
+            task_copy_cwd(task, "0:/");
+            for (size_t j = 0; j < SCHED_TASK_FILE_MAX; ++j) {
+                task->files[j].used = 0;
+                task->files[j].offset = 0;
+                task->files[j].aux = 0;
+            }
             console_printf("[ntclks] scheduler wait reaped pid=%u by pid=%u\n", pid, waiter_pid);
             return pid;
         }

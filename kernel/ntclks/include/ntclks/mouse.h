@@ -8,6 +8,7 @@ struct mouse_state {
     int32_t y;
     uint8_t buttons;
     bool present;
+    bool absolute;
 };
 
 void mouse_init(void);

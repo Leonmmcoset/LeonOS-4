@@ -1,6 +1,7 @@
 #ifndef LEONOS_SYSCALL_H
 #define LEONOS_SYSCALL_H
 
+#include <leonos/fs.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -14,6 +15,7 @@
 #define SYS_mmap 9
 #define SYS_munmap 11
 #define SYS_ioctl 16
+#define SYS_sched_yield 24
 #define SYS_nanosleep 35
 #define SYS_getpid 39
 #define SYS_execve 59
@@ -32,12 +34,16 @@ int open(const char *path, int flags, int mode);
 long read(int fd, void *buf, size_t len);
 long write(int fd, const void *buf, size_t len);
 int close(int fd);
+long lseek(int fd, long offset, int whence);
 void exit(int code) __attribute__((noreturn));
 int chdir(const char *path);
 char *getcwd(char *buf, size_t len);
 int ioctl(int fd, unsigned long request, void *arg);
+int sched_yield(void);
 int sleep_ms(unsigned long ms);
 int getpid(void);
+int stat(const char *path, struct leonos_stat *st);
+int fstat(int fd, struct leonos_stat *st);
 int wait4(int pid, int *status, int options, void *rusage);
 int execve(const char *path, char *const argv[], char *const envp[]);
 void *memcpy(void *dst, const void *src, size_t len);

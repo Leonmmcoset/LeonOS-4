@@ -80,6 +80,21 @@ x86_64_inb:
     in %dx, %al
     ret
 
+.global x86_64_outl
+.type x86_64_outl, @function
+x86_64_outl:
+    mov %edi, %eax
+    mov %si, %dx
+    out %eax, %dx
+    ret
+
+.global x86_64_inl
+.type x86_64_inl, @function
+x86_64_inl:
+    mov %di, %dx
+    in %dx, %eax
+    ret
+
 .global x86_64_halt
 .type x86_64_halt, @function
 x86_64_halt:
@@ -187,9 +202,37 @@ arch_enter_user_frame:
 .endm
 
 ISR_NOERR isr0_stub 0
+ISR_NOERR isr1_stub 1
+ISR_NOERR isr2_stub 2
+ISR_NOERR isr3_stub 3
+ISR_NOERR isr4_stub 4
+ISR_NOERR isr5_stub 5
 ISR_NOERR isr6_stub 6
+ISR_NOERR isr7_stub 7
+ISR_ERR isr8_stub 8
+ISR_NOERR isr9_stub 9
+ISR_ERR isr10_stub 10
+ISR_ERR isr11_stub 11
+ISR_ERR isr12_stub 12
 ISR_ERR isr13_stub 13
 ISR_ERR isr14_stub 14
+ISR_NOERR isr15_stub 15
+ISR_NOERR isr16_stub 16
+ISR_ERR isr17_stub 17
+ISR_NOERR isr18_stub 18
+ISR_NOERR isr19_stub 19
+ISR_NOERR isr20_stub 20
+ISR_ERR isr21_stub 21
+ISR_NOERR isr22_stub 22
+ISR_NOERR isr23_stub 23
+ISR_NOERR isr24_stub 24
+ISR_NOERR isr25_stub 25
+ISR_NOERR isr26_stub 26
+ISR_NOERR isr27_stub 27
+ISR_NOERR isr28_stub 28
+ISR_ERR isr29_stub 29
+ISR_ERR isr30_stub 30
+ISR_NOERR isr31_stub 31
 
 .macro PUSH_TRAP_FRAME vector error
     pushq $\error

@@ -53,6 +53,11 @@ int close(int fd)
     return (int)syscall1(SYS_close, fd);
 }
 
+long lseek(int fd, long offset, int whence)
+{
+    return syscall3(SYS_lseek, fd, offset, whence);
+}
+
 void exit(int code)
 {
     syscall1(SYS_exit, code);
@@ -76,6 +81,11 @@ int ioctl(int fd, unsigned long request, void *arg)
     return (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
 }
 
+int sched_yield(void)
+{
+    return (int)syscall0(SYS_sched_yield);
+}
+
 int sleep_ms(unsigned long ms)
 {
     return (int)syscall2(SYS_nanosleep, (long)ms, 0);
@@ -84,6 +94,16 @@ int sleep_ms(unsigned long ms)
 int getpid(void)
 {
     return (int)syscall0(SYS_getpid);
+}
+
+int stat(const char *path, struct leonos_stat *st)
+{
+    return (int)syscall2(SYS_stat, (long)path, (long)st);
+}
+
+int fstat(int fd, struct leonos_stat *st)
+{
+    return (int)syscall2(SYS_fstat, fd, (long)st);
 }
 
 int wait4(int pid, int *status, int options, void *rusage)
@@ -184,7 +204,8 @@ int leonos_gui_create_window(const struct leonos_gui_window *window)
     if (!window || !window->width || !window->height || !window->title || !window->text) {
         return -1;
     }
-    return leonos_gui_create_app_window(window->title, window->text, window->width, window->height);
+    return leonos_gui_create_app_window_ex(window->title, window->text,
+                                           window->width, window->height, window->flags);
 }
 
 int leonos_gui_next_event(struct leonos_input_event *event)
@@ -252,13 +273,25 @@ int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint
 
 int leonos_gui_create_app_window(const char *title, const char *text, uint32_t width, uint32_t height)
 {
+    return leonos_gui_create_app_window_ex(title, text, width, height, 0);
+}
+
+int leonos_gui_create_app_window_ex(const char *title, const char *text,
+                                    uint32_t width, uint32_t height, uint32_t flags)
+{
     struct leonos_gui_create cmd = {
         .width = width,
         .height = height,
         .title = title,
         .text = text,
+        .flags = flags,
     };
     return ioctl(3, LEONOS_GUI_IOCTL_CREATE_WINDOW, &cmd);
+}
+
+int leonos_gui_destroy_app_window(uint32_t window_id)
+{
+    return ioctl(3, LEONOS_GUI_IOCTL_DESTROY_WINDOW, (void *)(unsigned long)window_id);
 }
 
 int leonos_gui_poll_window(struct leonos_gui_window_msg *message)
@@ -343,6 +376,22 @@ int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
     return ret;
 }
 
+int leonos_readdir(int fd, struct leonos_dir_entry *entry)
+{
+    long got;
+    if (!entry) {
+        return -1;
+    }
+    got = read(fd, entry, sizeof(*entry));
+    if (got < 0) {
+        return (int)got;
+    }
+    if (got == 0) {
+        return 0;
+    }
+    return got == (long)sizeof(*entry) ? 1 : -1;
+}
+
 int leonos_pty_create(void)
 {
     return ioctl(3, LEONOS_PTY_IOCTL_CREATE, 0);
@@ -370,9 +419,17 @@ int leonos_pty_write_input(uint32_t pty_id, const char *buffer, uint32_t length)
 
 int leonos_pty_spawn(const char *path, uint32_t pty_id)
 {
+    return leonos_pty_spawn_argv(path, pty_id, 0, 0);
+}
+
+int leonos_pty_spawn_argv(const char *path, uint32_t pty_id,
+                          char *const argv[], char *const envp[])
+{
     struct leonos_pty_spawn spawn = {
         .pty_id = pty_id,
         .path = path,
+        .argv = argv,
+        .envp = envp,
     };
     return ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
 }

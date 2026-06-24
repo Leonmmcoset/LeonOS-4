@@ -28,7 +28,8 @@ int main(void)
     uint32_t hover = 0;
     puts("[hello.elf] hello from LeonOS 4 Ring-3 ELF");
     printf("[hello.elf] pid=%d creating GUI window\n", getpid());
-    window_id = leonos_gui_create_app_window("Hello", "Hello from hello.elf process", HELLO_W, HELLO_H);
+    window_id = leonos_gui_create_app_window_ex("Hello", "Hello from hello.elf process",
+                                                HELLO_W, HELLO_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[hello.elf] create window failed=%d\n", window_id);
         return 1;

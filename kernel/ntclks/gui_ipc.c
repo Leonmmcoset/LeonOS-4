@@ -3,7 +3,7 @@
 #include <ntclks/usercopy.h>
 
 #define GUI_IPC_QUEUE_CAP 32
-#define GUI_IPC_MAX_WINDOWS 16
+#define GUI_IPC_MAX_WINDOWS 32
 #define GUI_IPC_WINDOW_EVENT_CAP 32
 
 static struct gui_ipc_window queue[GUI_IPC_QUEUE_CAP];
@@ -17,6 +17,7 @@ struct gui_window_slot {
     uint32_t owner_pid;
     uint32_t width;
     uint32_t height;
+    uint32_t flags;
     uint32_t buffer_pages;
     uint64_t buffer_phys;
     struct gui_ipc_app_event events[GUI_IPC_WINDOW_EVENT_CAP];
@@ -137,7 +138,7 @@ static int push_message(uint32_t type, const struct gui_window_slot *slot)
     msg->window_id = slot->id;
     msg->width = slot->width;
     msg->height = slot->height;
-    msg->flags = 0;
+    msg->flags = slot->flags;
     copy_kernel_string(msg->title, sizeof(msg->title), slot->title);
     copy_kernel_string(msg->text, sizeof(msg->text), slot->text);
     head = next;
@@ -157,7 +158,7 @@ void gui_ipc_init(void)
 }
 
 int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
-                              const char *title, const char *text)
+                              const char *title, const char *text, uint32_t flags)
 {
     struct gui_window_slot *slot;
     uint32_t id;
@@ -176,6 +177,7 @@ int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
     slot->owner_pid = pid;
     slot->width = width;
     slot->height = height;
+    slot->flags = flags;
     slot->event_head = 0;
     slot->event_tail = 0;
     copy_user_string(slot->title, sizeof(slot->title), title);
@@ -217,6 +219,27 @@ int gui_ipc_present_window(uint32_t pid, uint32_t window_id, uint32_t width, uin
     slot->width = width;
     slot->height = height;
     return push_message(GUI_IPC_WINDOW_MSG_DIRTY, slot);
+}
+
+int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
+{
+    struct gui_window_slot *slot = find_window(window_id);
+    if (!slot || slot->owner_pid != pid) {
+        return 0;
+    }
+    (void)push_message(GUI_IPC_WINDOW_MSG_CLOSE, slot);
+    free_window_buffer(slot);
+    slot->used = 0;
+    slot->id = 0;
+    slot->owner_pid = 0;
+    slot->width = 0;
+    slot->height = 0;
+    slot->flags = 0;
+    slot->event_head = 0;
+    slot->event_tail = 0;
+    slot->title[0] = 0;
+    slot->text[0] = 0;
+    return 1;
 }
 
 int gui_ipc_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_t capacity_height,
@@ -288,6 +311,7 @@ void gui_ipc_destroy_owner(uint32_t pid)
         slot->owner_pid = 0;
         slot->width = 0;
         slot->height = 0;
+        slot->flags = 0;
         slot->event_head = 0;
         slot->event_tail = 0;
         slot->title[0] = 0;

@@ -1,14 +1,24 @@
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
-#include <ntclks/efi_fs.h>
 #include <ntclks/elf.h>
 #include <ntclks/kernel.h>
 #include <ntclks/mm.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
+#include <ntclks/storage.h>
 #include <ntclks/userland.h>
 
 #define USER_STACK_TOP 0x0000000000fff000ULL
+#define EXEC_STACK_ALIGN 16ULL
+
+struct exec_launch {
+    uint32_t argc;
+    uint32_t envc;
+    uint32_t data_len;
+    const char *argv[SCHED_EXEC_ARG_MAX + 1];
+    const char *envp[SCHED_EXEC_ENV_MAX + 1];
+    char data[SCHED_EXEC_DATA_MAX];
+};
 
 static uint32_t init_pid;
 static uint32_t desktop_pid;
@@ -97,6 +107,150 @@ static void free_image_buffer(const void *image, size_t image_len)
     mm_free_pages((uint64_t)(uintptr_t)image, pages);
 }
 
+static uint32_t copy_exec_vector(char *dst[], uint32_t dst_cap,
+                                 const char *const src[], char *data,
+                                 uint32_t data_cap, uint32_t *data_len)
+{
+    uint32_t count = 0;
+    if (!dst || !dst_cap || !data || !data_len) {
+        return 0;
+    }
+    if (src) {
+        while (src[count] && count + 1 < dst_cap) {
+            uint32_t start = *data_len;
+            uint32_t len = 0;
+            while (src[count][len]) {
+                if (*data_len + len + 1 >= data_cap) {
+                    return 0xffffffffu;
+                }
+                data[*data_len + len] = src[count][len];
+                ++len;
+            }
+            data[*data_len + len] = 0;
+            dst[count] = data + start;
+            *data_len += len + 1;
+            ++count;
+        }
+        if (src[count]) {
+            return 0xffffffffu;
+        }
+    }
+    dst[count] = 0;
+    return count;
+}
+
+static int build_exec_launch(struct exec_launch *launch, const char *path,
+                             const char *const argv[], const char *const envp[])
+{
+    uint32_t data_len = 0;
+    uint32_t argc;
+    uint32_t envc;
+    if (!launch || !path || !path[0]) {
+        return -22;
+    }
+    for (uint32_t i = 0; i < SCHED_EXEC_ARG_MAX + 1; ++i) {
+        launch->argv[i] = 0;
+    }
+    for (uint32_t i = 0; i < SCHED_EXEC_ENV_MAX + 1; ++i) {
+        launch->envp[i] = 0;
+    }
+    if (!argv || !argv[0]) {
+        argv = (const char *const[]){path, 0};
+    }
+    argc = copy_exec_vector((char **)launch->argv, SCHED_EXEC_ARG_MAX + 1,
+                            argv, launch->data, sizeof(launch->data), &data_len);
+    if (argc == 0xffffffffu) {
+        return -7;
+    }
+    envc = copy_exec_vector((char **)launch->envp, SCHED_EXEC_ENV_MAX + 1,
+                            envp, launch->data, sizeof(launch->data), &data_len);
+    if (envc == 0xffffffffu) {
+        return -7;
+    }
+    launch->argc = argc;
+    launch->envc = envc;
+    launch->data_len = data_len;
+    return 0;
+}
+
+static void *user_ptr_for_phys(const struct address_space *as, uint64_t vaddr)
+{
+    uint64_t phys = address_space_user_page_phys(as, vaddr);
+    if (!phys) {
+        return 0;
+    }
+    return (void *)(uintptr_t)(phys + (vaddr & 0xfffULL));
+}
+
+static int write_user_u64(const struct address_space *as, uint64_t vaddr, uint64_t value)
+{
+    for (uint32_t i = 0; i < sizeof(value); ++i) {
+        uint8_t *dst = (uint8_t *)user_ptr_for_phys(as, vaddr + i);
+        if (!dst) {
+            return -12;
+        }
+        *dst = (uint8_t)((value >> (i * 8)) & 0xffu);
+    }
+    return 0;
+}
+
+static int prepare_user_exec_stack(struct task *task)
+{
+    uint64_t sp;
+    uint64_t argv_base;
+    uint64_t envp_base;
+    uint64_t strings_base;
+    uint64_t argv_bytes;
+    uint64_t envp_bytes;
+    if (!task) {
+        return -22;
+    }
+    sp = task->stack_top;
+    strings_base = (sp - task->exec_data_len) & ~(EXEC_STACK_ALIGN - 1ULL);
+    argv_bytes = (uint64_t)(task->exec_argc + 1) * sizeof(uint64_t);
+    argv_base = (strings_base - argv_bytes) & ~(EXEC_STACK_ALIGN - 1ULL);
+    envp_bytes = (uint64_t)(task->exec_envc + 1) * sizeof(uint64_t);
+    envp_base = (argv_base - envp_bytes) & ~(EXEC_STACK_ALIGN - 1ULL);
+    if (envp_base < task->stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL) {
+        return -12;
+    }
+
+    for (uint32_t i = 0; i < task->exec_data_len; ++i) {
+        char *dst = (char *)user_ptr_for_phys(&task->as, strings_base + i);
+        if (!dst) {
+            return -12;
+        }
+        *dst = task->exec_data[i];
+    }
+
+    for (uint32_t i = 0; i < task->exec_argc; ++i) {
+        uint64_t offset = (uint64_t)(uintptr_t)task->exec_argv[i] - (uint64_t)(uintptr_t)task->exec_data;
+        if (write_user_u64(&task->as, argv_base + (uint64_t)i * sizeof(uint64_t),
+                           strings_base + offset) < 0) {
+            return -12;
+        }
+    }
+    if (write_user_u64(&task->as, argv_base + (uint64_t)task->exec_argc * sizeof(uint64_t), 0) < 0) {
+        return -12;
+    }
+    for (uint32_t i = 0; i < task->exec_envc; ++i) {
+        uint64_t offset = (uint64_t)(uintptr_t)task->exec_envp[i] - (uint64_t)(uintptr_t)task->exec_data;
+        if (write_user_u64(&task->as, envp_base + (uint64_t)i * sizeof(uint64_t),
+                           strings_base + offset) < 0) {
+            return -12;
+        }
+    }
+    if (write_user_u64(&task->as, envp_base + (uint64_t)task->exec_envc * sizeof(uint64_t), 0) < 0) {
+        return -12;
+    }
+
+    task->frame.rsp = envp_base;
+    task->frame.rdi = task->exec_argc;
+    task->frame.rsi = argv_base;
+    task->frame.rdx = envp_base;
+    return 0;
+}
+
 static bool userland_load_task_image(struct task *task)
 {
     struct elf_image_info loaded;
@@ -118,6 +272,13 @@ static bool userland_load_task_image(struct task *task)
     task->frame.rflags = 0x202;
     task->frame.cs = NTCLKS_USER_CS;
     task->frame.ss = NTCLKS_USER_DS;
+    if (prepare_user_exec_stack(task) < 0) {
+        console_printf("[ntclks] failed to prepare argv/envp for %s\n", task->name);
+        free_image_buffer(task->image, task->image_len);
+        task->image = NULL;
+        task->image_len = 0;
+        return false;
+    }
     free_image_buffer(task->image, task->image_len);
     task->image = NULL;
     task->image_len = 0;
@@ -131,6 +292,7 @@ static bool userland_load_task_image(struct task *task)
 }
 
 static int64_t spawn_loaded_image(const char *task_name, const void *image, size_t image_len,
+                                  const struct exec_launch *launch,
                                   uint32_t parent, uint32_t flags, uint32_t pty_id)
 {
     uint32_t pid = sched_create_user_task(task_name, 0, USER_STACK_TOP, parent, flags);
@@ -139,6 +301,11 @@ static int64_t spawn_loaded_image(const char *task_name, const void *image, size
         return -12;
     }
     sched_set_task_image(pid, image, image_len);
+    if (launch) {
+        sched_set_task_exec_params(pid, launch->argc, (char *const *)launch->argv,
+                                   launch->envc, (char *const *)launch->envp,
+                                   launch->data, launch->data_len);
+    }
     if (pty_id) {
         struct task *task = sched_find(pid);
         if (task) {
@@ -149,16 +316,17 @@ static int64_t spawn_loaded_image(const char *task_name, const void *image, size
 }
 
 static int64_t spawn_path_internal(const char *path, const char *task_name,
+                                   const struct exec_launch *launch,
                                    uint32_t parent, uint32_t flags, uint32_t pty_id)
 {
     const void *image = NULL;
     size_t image_len = 0;
-    int ret = efi_fs_read_file(path, &image, &image_len);
+    int ret = storage_read_file(path, &image, &image_len);
     if (ret < 0) {
         console_printf("[ntclks] spawn read failed path=%s ret=%d\n", path, ret);
         return ret;
     }
-    return spawn_loaded_image(task_name, image, image_len, parent, flags, pty_id);
+    return spawn_loaded_image(task_name, image, image_len, launch, parent, flags, pty_id);
 }
 
 static void wait_for_runnable_task(void)
@@ -218,7 +386,7 @@ void userland_init(const struct boot_info *boot)
 {
     int64_t pid;
 
-    console_printf("[ntclks] userland FAT32 load started modules=%u\n",
+    console_printf("[ntclks] userland storage load started modules=%u\n",
                    boot ? boot->module_count : 0);
     autospawn_hello = boot && name_contains(boot->cmdline, "autospawn=hello");
     autospawn_uidemo = boot && name_contains(boot->cmdline, "autospawn=uidemo");
@@ -233,13 +401,12 @@ void userland_init(const struct boot_info *boot)
         console_printf("[ntclks] debug autospawn terminal enabled\n");
     }
 
-    efi_fs_init(boot ? boot->efi_system_table : 0);
-    if (!efi_fs_ready()) {
-        console_printf("[ntclks] no EFI FAT32 filesystem available for userland\n");
+    if (!storage_ready()) {
+        console_printf("[ntclks] no block-backed FAT32 filesystem available for userland\n");
         kernel_idle_loop();
     }
 
-    pid = spawn_path_internal("0:/userland/init.elf", "init.elf", 0, 0, 0);
+    pid = spawn_path_internal("0:/userland/init.elf", "init.elf", 0, 0, 0, 0);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load init.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
@@ -247,7 +414,7 @@ void userland_init(const struct boot_info *boot)
     init_pid = (uint32_t)pid;
 
     pid = spawn_path_internal("0:/userland/desktop.elf", "desktop.elf window server",
-                              init_pid, TASK_FLAG_SERVICE, 0);
+                              0, init_pid, TASK_FLAG_SERVICE, 0);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load desktop.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
@@ -274,11 +441,16 @@ void userland_process_exit(uint64_t code)
     sched_exit(pid, code);
 }
 
-int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id)
+int64_t userland_spawn_path_argv(const char *path,
+                                 const char *const argv[],
+                                 const char *const envp[],
+                                 uint32_t pty_id)
 {
     char task_name[SCHED_TASK_NAME_LEN];
+    struct exec_launch launch;
     uint32_t parent = sched_current_pid();
     int64_t pid;
+    int ret;
 
     if (!path || !path[0]) {
         return -22;
@@ -288,7 +460,12 @@ int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id)
         return -22;
     }
 
-    pid = spawn_path_internal(path, task_name, parent, 0, pty_id);
+    ret = build_exec_launch(&launch, path, argv, envp);
+    if (ret < 0) {
+        return ret;
+    }
+
+    pid = spawn_path_internal(path, task_name, &launch, parent, 0, pty_id);
     if (pid > 0) {
         console_printf("[ntclks] spawn path=%s pid=%u parent=%u\n",
                        path,
@@ -296,6 +473,11 @@ int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id)
                        parent);
     }
     return pid;
+}
+
+int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id)
+{
+    return userland_spawn_path_argv(path, 0, 0, pty_id);
 }
 
 int64_t userland_spawn_path(const char *path)
@@ -341,21 +523,7 @@ int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
         return (int)count;
     }
 
-    ret = efi_fs_list_dir(path, entries, capacity, &count);
-    if (ret < 0) {
-        *out_count = 0;
-        return ret;
-    }
-    if (path_eq(path, "0:/") && count < capacity) {
-        if (entries) {
-            entries[count].type = LEONOS_FS_TYPE_DIR;
-            copy_text(entries[count].name, sizeof(entries[count].name), "dev");
-        }
-        ++count;
-    }
-    if (count > capacity) {
-        count = capacity;
-    }
+    ret = storage_list_dir(path, entries, capacity, &count);
     *out_count = count;
-    return (int)count;
+    return ret;
 }

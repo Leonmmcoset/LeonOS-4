@@ -14,6 +14,7 @@
 #define LINUX_SYS_MMAP 9
 #define LINUX_SYS_MUNMAP 11
 #define LINUX_SYS_IOCTL 16
+#define LINUX_SYS_SCHED_YIELD 24
 #define LINUX_SYS_GETPID 39
 #define LINUX_SYS_GETCWD 79
 #define LINUX_SYS_CHDIR 80
@@ -28,6 +29,11 @@
 #define LEONOS_ECHILD 10
 #define LEONOS_ENOENT 2
 #define LEONOS_ENOMEM 12
+#define LEONOS_EBADF 9
+#define LEONOS_ENOTDIR 20
+#define LEONOS_EISDIR 21
+#define LEONOS_EMFILE 24
+#define LEONOS_E2BIG 7
 
 struct syscall_frame {
     uint64_t number;

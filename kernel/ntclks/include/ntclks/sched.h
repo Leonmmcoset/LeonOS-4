@@ -2,10 +2,23 @@
 #define NTCLKS_SCHED_H
 
 #include <ntclks/paging.h>
+#include <ntclks/storage.h>
 #include <ntclks/trap.h>
 #include <ntclks/types.h>
 
 #define SCHED_TASK_NAME_LEN 32u
+#define SCHED_TASK_MAX 64u
+#define SCHED_TASK_FILE_MAX 12u
+#define SCHED_EXEC_ARG_MAX 8u
+#define SCHED_EXEC_ENV_MAX 8u
+#define SCHED_EXEC_DATA_MAX 512u
+
+struct task_file {
+    uint32_t used;
+    struct storage_node node;
+    uint64_t offset;
+    uint64_t aux;
+};
 
 enum task_state {
     TASK_READY = 0,
@@ -40,6 +53,14 @@ struct task {
     enum task_kind kind;
     uint32_t flags;
     uint32_t pty_id;
+    char cwd[LEONOS_FS_PATH_LEN];
+    uint32_t exec_argc;
+    uint32_t exec_envc;
+    uint32_t exec_data_len;
+    char *exec_argv[SCHED_EXEC_ARG_MAX + 1];
+    char *exec_envp[SCHED_EXEC_ENV_MAX + 1];
+    char exec_data[SCHED_EXEC_DATA_MAX];
+    struct task_file files[SCHED_TASK_FILE_MAX];
 };
 
 struct task_snapshot_info {
@@ -60,6 +81,10 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry);
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags);
 void sched_set_task_image(uint32_t pid, const void *image, size_t image_len);
+void sched_set_task_exec_params(uint32_t pid,
+                                uint32_t argc, char *const argv[],
+                                uint32_t envc, char *const envp[],
+                                const char *data, uint32_t data_len);
 void sched_create_idle_task(void);
 void sched_set_running(uint32_t pid);
 void sched_exit(uint32_t pid, uint64_t code);
