@@ -1,0 +1,141 @@
+#include <ntclks/arch.h>
+#include <ntclks/console.h>
+#include <ntclks/framebuffer.h>
+#include <ntclks/gui_ipc.h>
+#include <ntclks/input.h>
+#include <ntclks/kernel.h>
+#include <ntclks/mm.h>
+#include <ntclks/mouse.h>
+#include <ntclks/multiboot2.h>
+#include <ntclks/osmlayer.h>
+#include <ntclks/pty.h>
+#include <ntclks/sched.h>
+#include <ntclks/syscall.h>
+#include <ntclks/time.h>
+#include <ntclks/userland.h>
+
+#include "arch/x86_64/idt.h"
+
+static uint8_t kernel_ring0_stack[65536] __attribute__((aligned(16)));
+
+static void status_u32(char *buf, uint32_t *pos, uint32_t value)
+{
+    char tmp[10];
+    uint32_t n = 0;
+    if (value == 0) {
+        buf[(*pos)++] = '0';
+        return;
+    }
+    while (value && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + value % 10);
+        value /= 10;
+    }
+    while (n) {
+        buf[(*pos)++] = tmp[--n];
+    }
+}
+
+static void status_hex8(char *buf, uint32_t *pos, uint8_t value)
+{
+    const char *digits = "0123456789abcdef";
+    buf[(*pos)++] = digits[(value >> 4) & 0xf];
+    buf[(*pos)++] = digits[value & 0xf];
+}
+
+static void mouse_status_line(void)
+{
+    const struct mouse_state *m = mouse_get_state();
+    char line[80];
+    uint32_t pos = 0;
+    const char *prefix = "Mouse x=";
+    for (uint32_t i = 0; prefix[i]; ++i) {
+        line[pos++] = prefix[i];
+    }
+    status_u32(line, &pos, (uint32_t)m->x);
+    line[pos++] = ' ';
+    line[pos++] = 'y';
+    line[pos++] = '=';
+    status_u32(line, &pos, (uint32_t)m->y);
+    line[pos++] = ' ';
+    line[pos++] = 'b';
+    line[pos++] = '=';
+    status_u32(line, &pos, m->buttons);
+    line[pos++] = ' ';
+    line[pos++] = 'e';
+    line[pos++] = '=';
+    status_u32(line, &pos, mouse_event_count());
+    line[pos++] = ' ';
+    line[pos++] = 'p';
+    line[pos++] = '=';
+    line[pos++] = m->present ? '1' : '0';
+    line[pos++] = ' ';
+    line[pos++] = 's';
+    line[pos++] = '=';
+    status_hex8(line, &pos, mouse_last_status());
+    line[pos++] = ' ';
+    line[pos++] = 'd';
+    line[pos++] = '=';
+    status_hex8(line, &pos, mouse_last_data());
+    line[pos++] = ' ';
+    line[pos++] = 'a';
+    line[pos++] = '=';
+    status_hex8(line, &pos, mouse_last_ack());
+    while (pos < 79) {
+        line[pos++] = ' ';
+    }
+    line[pos] = 0;
+
+    const struct framebuffer *fb = framebuffer_get();
+    if (fb->available) {
+        uint32_t y = fb->height > 18 ? fb->height - 18 : 0;
+        framebuffer_rect(0, y, 640, 10, 0x00c0c0c0);
+        framebuffer_text(4, y + 1, line, 0x00000000, 0x00c0c0c0);
+    } else {
+        vga_write_at(0, 24, line);
+    }
+}
+
+void kernel_idle_loop(void)
+{
+    for (;;) {
+        __asm__ volatile("hlt");
+    }
+}
+
+void kernel_main(uint32_t magic, uint32_t multiboot_info)
+{
+    __asm__ volatile("cli");
+    console_init();
+    console_printf("LeonOS 4 ntclks booting\n");
+
+    struct boot_info boot;
+    multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
+
+    arch_init();
+    framebuffer_init(&boot);
+    console_enable_framebuffer();
+    console_enable_vga_fallback();
+    mm_init(&boot);
+    time_init();
+    input_init();
+    pty_init();
+    gui_ipc_init();
+    mouse_init();
+    sched_init();
+    sched_create_idle_task();
+    syscall_init();
+    arch_userland_init(kernel_ring0_stack + sizeof(kernel_ring0_stack));
+    idt_init();
+    irq_init();
+    osmlayer_bridge_init(&boot);
+    osmlayer_bridge_selftest();
+    userland_init(&boot);
+    sched_dump();
+    framebuffer_clear(0x00008080);
+    framebuffer_text(24, 24, "LeonOS 4 starting Ring-3 desktop.elf...", 0x00ffffff, 0x00008080);
+    mouse_status_line();
+
+    console_printf("[ntclks] boot complete: root=0:/ fs=FAT32 desktop=desktop.elf\n");
+    userland_enter_first();
+    kernel_idle_loop();
+}

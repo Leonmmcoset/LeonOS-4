@@ -1,0 +1,35 @@
+menu "LeonOS 4"
+
+config ARCH_X86_64
+    bool "x86_64 UEFI target"
+    default y
+
+config SERIAL_LOG
+    bool "Enable COM1 serial logging"
+    default y
+
+config VGA_TEXT_FALLBACK
+    bool "Enable VGA text fallback console"
+    default y
+
+config FRAMEBUFFER_DESKTOP
+    bool "Draw Win98-style boot desktop in framebuffer"
+    default y
+
+config FAT32_WRITE
+    bool "Enable FAT32 basic write API"
+    default y
+
+config USERLAND_RING3
+    bool "Build Ring-3 userland ELF programs"
+    default y
+
+config GUI_WINDOW_SERVER
+    bool "Start desktop.elf as the Ring-3 window server"
+    default y
+
+config KERNEL_RUST_OSMLAYER
+    bool "Link Rust no_std osmlayer static library"
+    default y
+
+endmenu

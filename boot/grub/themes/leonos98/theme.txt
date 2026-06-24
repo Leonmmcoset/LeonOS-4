@@ -1,0 +1,25 @@
+title-text: ""
+title-font: "Unknown Regular 16"
+title-color: "#ffffff"
+desktop-image: "background.tga"
+desktop-color: "#0000aa"
+terminal-font: "Unknown Regular 16"
+terminal-left: "14%"
+terminal-top: "70%"
+terminal-width: "72%"
+terminal-height: "12%"
+terminal-border: "0"
+
++ boot_menu {
+  left = 19%
+  top = 27%
+  width = 62%
+  height = 118
+  item_font = "Unknown Regular 16"
+  item_color = "#ffffff"
+  selected_item_color = "#0000aa"
+  selected_item_pixmap_style = "none"
+  item_height = 34
+  item_padding = 8
+  item_spacing = 0
+}

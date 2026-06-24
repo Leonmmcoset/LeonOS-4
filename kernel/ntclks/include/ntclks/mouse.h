@@ -1,0 +1,21 @@
+#ifndef NTCLKS_MOUSE_H
+#define NTCLKS_MOUSE_H
+
+#include <ntclks/types.h>
+
+struct mouse_state {
+    int32_t x;
+    int32_t y;
+    uint8_t buttons;
+    bool present;
+};
+
+void mouse_init(void);
+void mouse_poll(void);
+const struct mouse_state *mouse_get_state(void);
+uint32_t mouse_event_count(void);
+uint8_t mouse_last_status(void);
+uint8_t mouse_last_data(void);
+uint8_t mouse_last_ack(void);
+
+#endif

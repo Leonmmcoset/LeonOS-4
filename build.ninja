@@ -1,0 +1,173 @@
+ninja_required_version = 1.10
+cc = clang
+rustc = rustc
+ar = llvm-ar
+ld = ld.lld
+
+rule kconfig_sync
+  command = python3 tools/kconfig_sync.py
+  description = KCONFIG sync
+
+rule cc_kernel
+  command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -mcmodel=kernel -Wall -Wextra -Ikernel/ntclks/include -Iinclude -Iinclude/generated -MMD -MF $out.d -c $in -o $out
+  depfile = $out.d
+  deps = gcc
+  description = CC.KERNEL $out
+
+rule as_kernel
+  command = $cc -target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Ikernel/ntclks/include -Iinclude -MMD -MF $out.d -c $in -o $out
+  depfile = $out.d
+  deps = gcc
+  description = AS.KERNEL $out
+
+rule rust_osmlayer
+  command = $rustc --crate-type staticlib --target x86_64-unknown-none -C panic=abort -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C target-feature=-sse,-sse2 -C opt-level=1 --emit link=$out $in
+  description = RUST.OSMLAYER $out
+
+rule link_kernel
+  command = $ld -nostdlib -z max-page-size=0x1000 -T kernel/ntclks/arch/x86_64/linker.ld -o $out $in
+  description = LD.KERNEL $out
+
+rule cc_user
+  command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iuserland/libc/include -Iinclude -MMD -MF $out.d -c $in -o $out
+  depfile = $out.d
+  deps = gcc
+  description = CC.USER $out
+
+rule as_user
+  command = $cc -target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Iuserland/libc/include -Iinclude -MMD -MF $out.d -c $in -o $out
+  depfile = $out.d
+  deps = gcc
+  description = AS.USER $out
+
+rule ar
+  command = $ar rcs $out $in
+  description = AR $out
+
+rule link_user
+  command = $ld -nostdlib -z max-page-size=0x1000 -T userland/linker.ld -o $out $in
+  description = LD.USER $out
+
+rule copy
+  command = mkdir -p `dirname $out` && cp $in $out
+  description = COPY $out
+
+rule mkdir
+  command = mkdir -p $out
+  description = MKDIR $out
+
+rule manifest
+  command = mkdir -p `dirname $out` && printf 'name=osmlayer\nabi=1\nroot=0:/\nfs=fat32\ngui=desktop.elf\n' > $out
+  description = MANIFEST $out
+
+rule grub_efi
+  command = mkdir -p `dirname $out` && grub-mkstandalone -d build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal' boot/grub/grub.cfg=boot/grub/grub.cfg
+  description = GRUB.EFI $out
+
+rule iso
+  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/system build/iso/userland build/iso/etc && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/x86_64/ntclks.elf build/iso/boot/ntclks.elf && cp build/esp/system/osmlayer.manifest build/iso/system/osmlayer.manifest && cp build/userland/init.elf build/iso/userland/init.elf && cp build/userland/desktop.elf build/iso/userland/desktop.elf && cp build/userland/hello.elf build/iso/userland/hello.elf && cp build/userland/uidemo.elf build/iso/userland/uidemo.elf && cp build/userland/taskmgr.elf build/iso/userland/taskmgr.elf && cp build/userland/fileman.elf build/iso/userland/fileman.elf && cp build/userland/terminal.elf build/iso/userland/terminal.elf && cp build/userland/shell.elf build/iso/userland/shell.elf && cp configs/default.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso
+  description = ISO $out
+
+rule image
+  command = python3 tools/make_image.py --out $out --raw build/images/leonos4.raw --esp-tree build/esp
+  description = IMAGE $out
+
+rule run
+  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display gtk,grab-on-hover=on,show-cursor=off -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0
+  description = RUN LeonOS 4
+
+rule run_debug
+  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display none -no-reboot -no-shutdown -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0
+  description = RUN.DEBUG LeonOS 4
+
+rule run_iso
+  command = qemu-system-x86_64 -m 512M -serial stdio -display none -no-reboot -no-shutdown -cdrom build/images/leonos4.iso -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0
+  description = RUN.ISO LeonOS 4
+
+rule menuconfig_rule
+  command = python3 tools/menuconfig.py && python3 tools/kconfig_sync.py
+  description = MENUCONFIG
+
+rule clean_rule
+  command = rm -rf build include/generated .config
+  description = CLEAN
+
+build include/generated/autoconf.h include/generated/rustcfg.args: kconfig_sync tools/kconfig_sync.py configs/default.conf | .config
+build config-sync: phony include/generated/autoconf.h include/generated/rustcfg.args
+build build/obj/kernel/kernel/ntclks/arch/x86_64/arch.c.o: cc_kernel kernel/ntclks/arch/x86_64/arch.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/arch/x86_64/boot.S.o: as_kernel kernel/ntclks/arch/x86_64/boot.S
+build build/obj/kernel/kernel/ntclks/arch/x86_64/gdt.c.o: cc_kernel kernel/ntclks/arch/x86_64/gdt.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/arch/x86_64/idt.c.o: cc_kernel kernel/ntclks/arch/x86_64/idt.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/arch/x86_64/irq.c.o: cc_kernel kernel/ntclks/arch/x86_64/irq.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/arch/x86_64/paging.c.o: cc_kernel kernel/ntclks/arch/x86_64/paging.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/drivers/console.c.o: cc_kernel kernel/ntclks/drivers/console.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/drivers/efi_fs.c.o: cc_kernel kernel/ntclks/drivers/efi_fs.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/drivers/framebuffer.c.o: cc_kernel kernel/ntclks/drivers/framebuffer.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/drivers/mouse.c.o: cc_kernel kernel/ntclks/drivers/mouse.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/drivers/serial.c.o: cc_kernel kernel/ntclks/drivers/serial.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/drivers/vga.c.o: cc_kernel kernel/ntclks/drivers/vga.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/gui_ipc.c.o: cc_kernel kernel/ntclks/gui_ipc.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/input.c.o: cc_kernel kernel/ntclks/input.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/kernel.c.o: cc_kernel kernel/ntclks/kernel.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/lib/panic.c.o: cc_kernel kernel/ntclks/lib/panic.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/lib/string.c.o: cc_kernel kernel/ntclks/lib/string.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/mm/mm.c.o: cc_kernel kernel/ntclks/mm/mm.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/multiboot2.c.o: cc_kernel kernel/ntclks/multiboot2.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/osmlayer_bridge.c.o: cc_kernel kernel/ntclks/osmlayer_bridge.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/pty.c.o: cc_kernel kernel/ntclks/pty.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/sched/sched.c.o: cc_kernel kernel/ntclks/sched/sched.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/syscall.c.o: cc_kernel kernel/ntclks/syscall.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/time.c.o: cc_kernel kernel/ntclks/time.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/user/elf.c.o: cc_kernel kernel/ntclks/user/elf.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/user/usercopy.c.o: cc_kernel kernel/ntclks/user/usercopy.c | include/generated/autoconf.h
+build build/obj/kernel/kernel/ntclks/user/userland.c.o: cc_kernel kernel/ntclks/user/userland.c | include/generated/autoconf.h
+build build/x86_64/libosmlayer.a: rust_osmlayer middlelayer/osmlayer/src/lib.rs | include/generated/rustcfg.args middlelayer/osmlayer/src/gui.rs middlelayer/osmlayer/src/ipc.rs middlelayer/osmlayer/src/lib.rs middlelayer/osmlayer/src/posix.rs middlelayer/osmlayer/src/vfs.rs
+build build/x86_64/ntclks.elf: link_kernel build/obj/kernel/kernel/ntclks/arch/x86_64/arch.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/boot.S.o build/obj/kernel/kernel/ntclks/arch/x86_64/gdt.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/idt.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/irq.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/paging.c.o build/obj/kernel/kernel/ntclks/drivers/console.c.o build/obj/kernel/kernel/ntclks/drivers/efi_fs.c.o build/obj/kernel/kernel/ntclks/drivers/framebuffer.c.o build/obj/kernel/kernel/ntclks/drivers/mouse.c.o build/obj/kernel/kernel/ntclks/drivers/serial.c.o build/obj/kernel/kernel/ntclks/drivers/vga.c.o build/obj/kernel/kernel/ntclks/gui_ipc.c.o build/obj/kernel/kernel/ntclks/input.c.o build/obj/kernel/kernel/ntclks/kernel.c.o build/obj/kernel/kernel/ntclks/lib/panic.c.o build/obj/kernel/kernel/ntclks/lib/string.c.o build/obj/kernel/kernel/ntclks/mm/mm.c.o build/obj/kernel/kernel/ntclks/multiboot2.c.o build/obj/kernel/kernel/ntclks/osmlayer_bridge.c.o build/obj/kernel/kernel/ntclks/pty.c.o build/obj/kernel/kernel/ntclks/sched/sched.c.o build/obj/kernel/kernel/ntclks/syscall.c.o build/obj/kernel/kernel/ntclks/time.c.o build/obj/kernel/kernel/ntclks/user/elf.c.o build/obj/kernel/kernel/ntclks/user/usercopy.c.o build/obj/kernel/kernel/ntclks/user/userland.c.o build/x86_64/libosmlayer.a
+build kernel: phony build/x86_64/ntclks.elf
+build build/obj/userlib/userland/libc/src/crt0.S.o: as_user userland/libc/src/crt0.S
+build build/obj/userlib/userland/libc/src/libc.c.o: cc_user userland/libc/src/libc.c
+build build/obj/userlib/userland/libc/src/syscall.S.o: as_user userland/libc/src/syscall.S
+build build/obj/userlib/userland/libc/src/ui.c.o: cc_user userland/libc/src/ui.c
+build build/userland/libc.a: ar build/obj/userlib/userland/libc/src/crt0.S.o build/obj/userlib/userland/libc/src/libc.c.o build/obj/userlib/userland/libc/src/syscall.S.o build/obj/userlib/userland/libc/src/ui.c.o
+build build/obj/user-init/userland/apps/init/main.c.o: cc_user userland/apps/init/main.c
+build build/userland/init.elf: link_user build/obj/user-init/userland/apps/init/main.c.o build/userland/libc.a
+build build/obj/user-desktop/userland/apps/desktop/main.c.o: cc_user userland/apps/desktop/main.c
+build build/userland/desktop.elf: link_user build/obj/user-desktop/userland/apps/desktop/main.c.o build/userland/libc.a
+build build/obj/user-hello/userland/apps/hello/main.c.o: cc_user userland/apps/hello/main.c
+build build/userland/hello.elf: link_user build/obj/user-hello/userland/apps/hello/main.c.o build/userland/libc.a
+build build/obj/user-uidemo/userland/apps/uidemo/main.c.o: cc_user userland/apps/uidemo/main.c
+build build/userland/uidemo.elf: link_user build/obj/user-uidemo/userland/apps/uidemo/main.c.o build/userland/libc.a
+build build/obj/user-taskmgr/userland/apps/taskmgr/main.c.o: cc_user userland/apps/taskmgr/main.c
+build build/userland/taskmgr.elf: link_user build/obj/user-taskmgr/userland/apps/taskmgr/main.c.o build/userland/libc.a
+build build/obj/user-fileman/userland/apps/fileman/main.c.o: cc_user userland/apps/fileman/main.c
+build build/userland/fileman.elf: link_user build/obj/user-fileman/userland/apps/fileman/main.c.o build/userland/libc.a
+build build/obj/user-terminal/userland/apps/terminal/main.c.o: cc_user userland/apps/terminal/main.c
+build build/userland/terminal.elf: link_user build/obj/user-terminal/userland/apps/terminal/main.c.o build/userland/libc.a
+build build/obj/user-shell/userland/apps/shell/main.c.o: cc_user userland/apps/shell/main.c
+build build/userland/shell.elf: link_user build/obj/user-shell/userland/apps/shell/main.c.o build/userland/libc.a
+build userland: phony build/userland/init.elf build/userland/desktop.elf build/userland/hello.elf build/userland/uidemo.elf build/userland/taskmgr.elf build/userland/fileman.elf build/userland/terminal.elf build/userland/shell.elf
+build build/esp/EFI/BOOT/BOOTX64.EFI: grub_efi boot/grub/grub.cfg | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh
+build build/esp/boot/grub/grub.cfg: copy boot/grub/grub.cfg
+build build/esp/boot/ntclks.elf: copy build/x86_64/ntclks.elf
+build build/esp/system/osmlayer.manifest: manifest
+build build/esp/userland/init.elf: copy build/userland/init.elf
+build build/esp/userland/desktop.elf: copy build/userland/desktop.elf
+build build/esp/userland/hello.elf: copy build/userland/hello.elf
+build build/esp/userland/uidemo.elf: copy build/userland/uidemo.elf
+build build/esp/userland/taskmgr.elf: copy build/userland/taskmgr.elf
+build build/esp/userland/fileman.elf: copy build/userland/fileman.elf
+build build/esp/userland/terminal.elf: copy build/userland/terminal.elf
+build build/esp/userland/shell.elf: copy build/userland/shell.elf
+build build/esp/etc/leonos.conf: copy configs/default.conf
+build esp: phony build/esp/EFI/BOOT/BOOTX64.EFI build/esp/boot/grub/grub.cfg build/esp/boot/ntclks.elf build/esp/system/osmlayer.manifest build/esp/userland/init.elf build/esp/userland/desktop.elf build/esp/userland/hello.elf build/esp/userland/uidemo.elf build/esp/userland/taskmgr.elf build/esp/userland/fileman.elf build/esp/userland/terminal.elf build/esp/userland/shell.elf build/esp/etc/leonos.conf
+build build/images/leonos4.vmdk: image build/esp/EFI/BOOT/BOOTX64.EFI build/esp/boot/grub/grub.cfg build/esp/boot/ntclks.elf build/esp/system/osmlayer.manifest build/esp/userland/init.elf build/esp/userland/desktop.elf build/esp/userland/hello.elf build/esp/userland/uidemo.elf build/esp/userland/taskmgr.elf build/esp/userland/fileman.elf build/esp/userland/terminal.elf build/esp/userland/shell.elf build/esp/etc/leonos.conf | tools/make_image.py
+build build/images/leonos4.iso: iso build/x86_64/ntclks.elf build/userland/init.elf build/userland/desktop.elf build/userland/hello.elf build/userland/uidemo.elf build/userland/taskmgr.elf build/userland/fileman.elf build/userland/terminal.elf build/userland/shell.elf build/esp/system/osmlayer.manifest boot/grub/grub.cfg configs/default.conf
+build image-vmdk: phony build/images/leonos4.vmdk
+build image-iso: phony build/images/leonos4.iso
+build all: phony kernel userland esp
+build run: run build/images/leonos4.vmdk
+build run-debug: run_debug build/images/leonos4.vmdk
+build run-iso: run_iso build/images/leonos4.iso build/images/leonos4.vmdk
+build menuconfig: menuconfig_rule tools/menuconfig.py tools/kconfig_sync.py Kconfig configs/default.conf
+build clean: clean_rule
+default all
