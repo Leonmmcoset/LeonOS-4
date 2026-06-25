@@ -145,7 +145,7 @@ def main() -> int:
     write_line(lines, "  description = RUN.ISO LeonOS 4")
     write_line(lines)
     write_line(lines, "rule menuconfig_rule")
-    write_line(lines, "  command = python3 tools/menuconfig.py && python3 tools/kconfig_sync.py")
+    write_line(lines, "  command = test -f .config || cp configs/default.conf .config && kconfig-mconf Kconfig && python3 tools/kconfig_sync.py")
     write_line(lines, "  description = MENUCONFIG")
     write_line(lines)
     write_line(lines, "rule clean_rule")
@@ -245,7 +245,7 @@ def main() -> int:
     write_line(lines, f"build run: run {r(vmdk)}")
     write_line(lines, f"build run-debug: run_debug {r(vmdk)}")
     write_line(lines, f"build run-iso: run_iso {r(iso)} {r(vmdk)}")
-    write_line(lines, "build menuconfig: menuconfig_rule tools/menuconfig.py tools/kconfig_sync.py Kconfig configs/default.conf")
+    write_line(lines, "build menuconfig: menuconfig_rule tools/kconfig_sync.py Kconfig configs/default.conf")
     write_line(lines, "build clean: clean_rule")
     write_line(lines, "default all")
 

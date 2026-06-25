@@ -15,9 +15,11 @@
 
 struct task_file {
     uint32_t used;
+    uint32_t flags;
     struct storage_node node;
     uint64_t offset;
     uint64_t aux;
+    char path[LEONOS_FS_PATH_LEN];
 };
 
 enum task_state {

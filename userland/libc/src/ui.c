@@ -12,6 +12,12 @@ static uint32_t ui_strlen(const char *text)
     return n;
 }
 
+static uint8_t ui_shift_down;
+
+static int ui_is_shift_key(uint8_t keycode)
+{
+    return keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT;
+}
 uint32_t leonos_ui_text_width(const char *text)
 {
     return ui_strlen(text) * LEONOS_FONT_W;
@@ -31,6 +37,11 @@ int leonos_ui_hit(uint32_t px, uint32_t py, int32_t x, int32_t y, uint32_t w, ui
 
 int leonos_ui_keycode_to_char(uint8_t keycode, char *out)
 {
+    return leonos_ui_keycode_to_char_shift(keycode, ui_shift_down, out);
+}
+
+int leonos_ui_keycode_to_char_shift(uint8_t keycode, uint8_t shifted, char *out)
+{
     if (!out) {
         return 0;
     }
@@ -38,59 +49,58 @@ int leonos_ui_keycode_to_char(uint8_t keycode, char *out)
     case LEONOS_KEY_BACKSPACE: *out = '\b'; return 1;
     case LEONOS_KEY_TAB: *out = '\t'; return 1;
     case LEONOS_KEY_ENTER: *out = '\n'; return 1;
-    case 2: *out = '1'; return 1;
-    case 3: *out = '2'; return 1;
-    case 4: *out = '3'; return 1;
-    case 5: *out = '4'; return 1;
-    case 6: *out = '5'; return 1;
-    case 7: *out = '6'; return 1;
-    case 8: *out = '7'; return 1;
-    case 9: *out = '8'; return 1;
-    case 10: *out = '9'; return 1;
-    case 11: *out = '0'; return 1;
-    case 12: *out = '-'; return 1;
-    case 13: *out = '='; return 1;
-    case 16: *out = 'q'; return 1;
-    case 17: *out = 'w'; return 1;
-    case 18: *out = 'e'; return 1;
-    case 19: *out = 'r'; return 1;
-    case 20: *out = 't'; return 1;
-    case 21: *out = 'y'; return 1;
-    case 22: *out = 'u'; return 1;
-    case 23: *out = 'i'; return 1;
-    case 24: *out = 'o'; return 1;
-    case 25: *out = 'p'; return 1;
-    case 26: *out = '['; return 1;
-    case 27: *out = ']'; return 1;
-    case 30: *out = 'a'; return 1;
-    case 31: *out = 's'; return 1;
-    case 32: *out = 'd'; return 1;
-    case 33: *out = 'f'; return 1;
-    case 34: *out = 'g'; return 1;
-    case 35: *out = 'h'; return 1;
-    case 36: *out = 'j'; return 1;
-    case 37: *out = 'k'; return 1;
-    case 38: *out = 'l'; return 1;
-    case 39: *out = ';'; return 1;
-    case 40: *out = '\''; return 1;
-    case 41: *out = '`'; return 1;
-    case 43: *out = '\\'; return 1;
-    case 44: *out = 'z'; return 1;
-    case 45: *out = 'x'; return 1;
-    case 46: *out = 'c'; return 1;
-    case 47: *out = 'v'; return 1;
-    case 48: *out = 'b'; return 1;
-    case 49: *out = 'n'; return 1;
-    case 50: *out = 'm'; return 1;
-    case 51: *out = ','; return 1;
-    case 52: *out = '.'; return 1;
-    case 53: *out = '/'; return 1;
+    case 2: *out = shifted ? '!' : '1'; return 1;
+    case 3: *out = shifted ? '@' : '2'; return 1;
+    case 4: *out = shifted ? '#' : '3'; return 1;
+    case 5: *out = shifted ? '$' : '4'; return 1;
+    case 6: *out = shifted ? '%' : '5'; return 1;
+    case 7: *out = shifted ? '^' : '6'; return 1;
+    case 8: *out = shifted ? '&' : '7'; return 1;
+    case 9: *out = shifted ? '*' : '8'; return 1;
+    case 10: *out = shifted ? '(' : '9'; return 1;
+    case 11: *out = shifted ? ')' : '0'; return 1;
+    case 12: *out = shifted ? '_' : '-'; return 1;
+    case 13: *out = shifted ? '+' : '='; return 1;
+    case 16: *out = shifted ? 'Q' : 'q'; return 1;
+    case 17: *out = shifted ? 'W' : 'w'; return 1;
+    case 18: *out = shifted ? 'E' : 'e'; return 1;
+    case 19: *out = shifted ? 'R' : 'r'; return 1;
+    case 20: *out = shifted ? 'T' : 't'; return 1;
+    case 21: *out = shifted ? 'Y' : 'y'; return 1;
+    case 22: *out = shifted ? 'U' : 'u'; return 1;
+    case 23: *out = shifted ? 'I' : 'i'; return 1;
+    case 24: *out = shifted ? 'O' : 'o'; return 1;
+    case 25: *out = shifted ? 'P' : 'p'; return 1;
+    case 26: *out = shifted ? '{' : '['; return 1;
+    case 27: *out = shifted ? '}' : ']'; return 1;
+    case 30: *out = shifted ? 'A' : 'a'; return 1;
+    case 31: *out = shifted ? 'S' : 's'; return 1;
+    case 32: *out = shifted ? 'D' : 'd'; return 1;
+    case 33: *out = shifted ? 'F' : 'f'; return 1;
+    case 34: *out = shifted ? 'G' : 'g'; return 1;
+    case 35: *out = shifted ? 'H' : 'h'; return 1;
+    case 36: *out = shifted ? 'J' : 'j'; return 1;
+    case 37: *out = shifted ? 'K' : 'k'; return 1;
+    case 38: *out = shifted ? 'L' : 'l'; return 1;
+    case 39: *out = shifted ? ':' : ';'; return 1;
+    case 40: *out = shifted ? '"' : '\''; return 1;
+    case 41: *out = shifted ? '~' : '`'; return 1;
+    case 43: *out = shifted ? '|' : '\\'; return 1;
+    case 44: *out = shifted ? 'Z' : 'z'; return 1;
+    case 45: *out = shifted ? 'X' : 'x'; return 1;
+    case 46: *out = shifted ? 'C' : 'c'; return 1;
+    case 47: *out = shifted ? 'V' : 'v'; return 1;
+    case 48: *out = shifted ? 'B' : 'b'; return 1;
+    case 49: *out = shifted ? 'N' : 'n'; return 1;
+    case 50: *out = shifted ? 'M' : 'm'; return 1;
+    case 51: *out = shifted ? '<' : ','; return 1;
+    case 52: *out = shifted ? '>' : '.'; return 1;
+    case 53: *out = shifted ? '?' : '/'; return 1;
     case LEONOS_KEY_SPACE: *out = ' '; return 1;
     default:
         return 0;
     }
 }
-
 void leonos_ui_bind(struct leonos_ui_surface *surface, uint32_t *pixels,
                     uint32_t width, uint32_t height, uint32_t stride)
 {
@@ -653,10 +663,17 @@ static int edit_insert_char(struct leonos_ui_edit_state *state, char ch)
 }
 
 int leonos_ui_edit_state_handle_key(struct leonos_ui_edit_state *state,
-                                    uint8_t keycode)
+                                    uint8_t keycode, uint8_t pressed)
 {
     char ch;
-    if (!state || !state->focused) {
+    if (!state) {
+        return 0;
+    }
+    if (ui_is_shift_key(keycode)) {
+        ui_shift_down = pressed ? 1 : 0;
+        return 0;
+    }
+    if (!pressed) {
         return 0;
     }
     leonos_ui_edit_state_sync(state);
@@ -704,13 +721,12 @@ int leonos_ui_edit_state_handle_key(struct leonos_ui_edit_state *state,
         edit_clear_selection(state);
         return 1;
     default:
-        if (leonos_ui_keycode_to_char(keycode, &ch) && ch >= 32) {
+        if (leonos_ui_keycode_to_char_shift(keycode, ui_shift_down, &ch) && ch >= 32) {
             return edit_insert_char(state, ch);
         }
         return 0;
     }
 }
-
 int leonos_ui_edit_state_handle_mouse(struct leonos_ui_edit_state *state,
                                       int32_t px, int32_t py, uint32_t x,
                                       uint32_t y, uint32_t w, uint32_t buttons)
@@ -1034,15 +1050,27 @@ static int text_area_insert_char(struct leonos_ui_text_area_state *state, char c
     return 1;
 }
 
+static int text_area_delete_char(struct leonos_ui_text_area_state *state, uint32_t index)
+{
+    return text_area_delete_range(state, index, index + 1);
+}
+
 int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state,
-                                         uint8_t keycode, uint32_t w,
+                                         uint8_t keycode, uint8_t pressed, uint32_t w,
                                          uint32_t h)
 {
     char ch;
     uint32_t line;
     uint32_t col;
-    uint32_t rows = text_area_rows(h);
-    if (!state || !state->focused) {
+    uint32_t rows;
+    if (!state) {
+        return 0;
+    }
+    if (ui_is_shift_key(keycode)) {
+        ui_shift_down = pressed ? 1 : 0;
+        return 0;
+    }
+    if (!pressed) {
         return 0;
     }
     leonos_ui_text_area_state_sync(state, w);
@@ -1053,8 +1081,11 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
             return 0;
         }
         if (state->cursor > 0) {
-            if (text_area_delete_range(state, state->cursor - 1, state->cursor)) {
-                leonos_ui_text_area_state_sync(state, w);
+            if (text_area_delete_char(state, state->cursor - 1)) {
+                if (col > 0) {
+                    --col;
+                }
+                state->preferred_column = col;
                 text_area_ensure_cursor_visible(state, w, h);
                 return 1;
             }
@@ -1065,7 +1096,7 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
             return 0;
         }
         if (text_area_insert_char(state, '\n')) {
-            leonos_ui_text_area_state_sync(state, w);
+            state->preferred_column = 0xffffffffu;
             text_area_ensure_cursor_visible(state, w, h);
             return 1;
         }
@@ -1089,27 +1120,28 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         }
         return 0;
     case 72:
-        if (line > 0) {
-            state->cursor = text_area_cursor_from_line_col(state, w, line - 1,
-                                                           state->preferred_column == 0xffffffffu ? col : state->preferred_column);
-            text_area_ensure_cursor_visible(state, w, h);
-            return 1;
-        }
-        return 0;
+        line = line > 0 ? line - 1 : 0;
+        state->cursor = text_area_cursor_from_line_col(state, w, line,
+                                                       state->preferred_column == 0xffffffffu ? col : state->preferred_column);
+        text_area_ensure_cursor_visible(state, w, h);
+        return 1;
     case 80:
-        if (line + 1 < state->line_count) {
-            state->cursor = text_area_cursor_from_line_col(state, w, line + 1,
-                                                           state->preferred_column == 0xffffffffu ? col : state->preferred_column);
-            text_area_ensure_cursor_visible(state, w, h);
-            return 1;
+        line += 1;
+        if (line >= state->line_count) {
+            line = state->line_count ? state->line_count - 1 : 0;
         }
-        return 0;
+        state->cursor = text_area_cursor_from_line_col(state, w, line,
+                                                       state->preferred_column == 0xffffffffu ? col : state->preferred_column);
+        text_area_ensure_cursor_visible(state, w, h);
+        return 1;
     case 73:
+        rows = text_area_rows(h);
         line = line > rows ? line - rows : 0;
         state->cursor = text_area_cursor_from_line_col(state, w, line, col);
         text_area_ensure_cursor_visible(state, w, h);
         return 1;
     case 81:
+        rows = text_area_rows(h);
         line += rows ? rows : 1;
         if (line >= state->line_count) {
             line = state->line_count ? state->line_count - 1 : 0;
@@ -1129,7 +1161,7 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         text_area_ensure_cursor_visible(state, w, h);
         return 1;
     default:
-        if (leonos_ui_keycode_to_char(keycode, &ch)) {
+        if (leonos_ui_keycode_to_char_shift(keycode, ui_shift_down, &ch)) {
             if (state->readonly) {
                 return 0;
             }
@@ -1150,7 +1182,6 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         return 0;
     }
 }
-
 int leonos_ui_text_area_state_handle_mouse(struct leonos_ui_text_area_state *state,
                                            int32_t px, int32_t py, uint32_t x,
                                            uint32_t y, uint32_t w, uint32_t h,
@@ -1542,12 +1573,12 @@ int leonos_ui_show_confirm_dialog(const char *title, const char *message,
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
-                if (event.keycode == LEONOS_KEY_ENTER) {
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                if (event.pressed && event.keycode == LEONOS_KEY_ENTER) {
                     result = default_yes ? 1 : 0;
                     break;
                 }
-                if (event.keycode == 1) {
+                if (event.pressed && event.keycode == 1) {
                     break;
                 }
             }
@@ -1613,15 +1644,15 @@ int leonos_ui_show_input_dialog(const char *title, const char *label,
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
-                if (event.keycode == LEONOS_KEY_ENTER) {
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                if (event.pressed && event.keycode == LEONOS_KEY_ENTER) {
                     result = 1;
                     break;
                 }
-                if (event.keycode == 1) {
+                if (event.pressed && event.keycode == 1) {
                     break;
                 }
-                leonos_ui_edit_state_handle_key(&edit, event.keycode);
+                leonos_ui_edit_state_handle_key(&edit, event.keycode, event.pressed);
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
                 if (event.x >= (int32_t)(W - 168) && event.x < (int32_t)(W - 96) &&
@@ -1649,6 +1680,564 @@ int leonos_ui_show_input_dialog(const char *title, const char *label,
         value[i] = 0;
     }
     return result;
+}
+
+struct ui_file_dialog_entry {
+    struct leonos_dir_entry dir_entry;
+    char display[LEONOS_FS_NAME_LEN + 4];
+};
+
+static void ui_copy_text(char *dst, uint32_t capacity, const char *src)
+{
+    uint32_t i = 0;
+    if (!dst || capacity == 0) {
+        return;
+    }
+    if (src) {
+        while (i + 1 < capacity && src[i]) {
+            dst[i] = src[i];
+            ++i;
+        }
+    }
+    dst[i] = 0;
+}
+
+static void ui_append_char(char *dst, uint32_t *pos, uint32_t capacity, char ch)
+{
+    if (!dst || !pos || *pos + 1 >= capacity) {
+        return;
+    }
+    dst[*pos] = ch;
+    ++(*pos);
+    dst[*pos] = 0;
+}
+
+static void ui_append_text(char *dst, uint32_t *pos, uint32_t capacity, const char *src)
+{
+    uint32_t i = 0;
+    while (src && src[i]) {
+        ui_append_char(dst, pos, capacity, src[i]);
+        ++i;
+    }
+}
+
+static int ui_text_eq(const char *a, const char *b)
+{
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+
+static char ui_ascii_lower(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z') {
+        return (char)(ch - 'A' + 'a');
+    }
+    return ch;
+}
+
+static int ui_text_eq_ignore_case(const char *a, const char *b)
+{
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b && ui_ascii_lower(*a) == ui_ascii_lower(*b)) {
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+
+static int ui_path_is_root(const char *path)
+{
+    return ui_text_eq(path, "0:/");
+}
+
+static void ui_build_parent_path(char *dst, uint32_t capacity, const char *path)
+{
+    uint32_t len;
+    ui_copy_text(dst, capacity, path);
+    if (ui_path_is_root(dst)) {
+        return;
+    }
+    len = ui_strlen(dst);
+    while (len > 3 && dst[len - 1] != '/') {
+        dst[--len] = 0;
+    }
+    if (len > 3) {
+        dst[len - 1] = 0;
+    } else {
+        ui_copy_text(dst, capacity, "0:/");
+    }
+}
+
+static void ui_build_child_path(char *dst, uint32_t capacity,
+                                const char *dir, const char *name)
+{
+    uint32_t pos = 0;
+    if (!dst || capacity == 0) {
+        return;
+    }
+    dst[0] = 0;
+    ui_append_text(dst, &pos, capacity, dir);
+    if (!ui_path_is_root(dir)) {
+        ui_append_char(dst, &pos, capacity, '/');
+    }
+    ui_append_text(dst, &pos, capacity, name);
+}
+
+static const char *ui_path_basename(const char *path)
+{
+    const char *base = path;
+    for (uint32_t i = 0; path && path[i]; ++i) {
+        if (path[i] == '/') {
+            base = path + i + 1;
+        }
+    }
+    return base ? base : "";
+}
+
+static int ui_path_extension_matches(const char *name, const char *filter_ext)
+{
+    uint32_t name_len;
+    uint32_t ext_len;
+    if (!filter_ext || !filter_ext[0]) {
+        return 1;
+    }
+    name_len = ui_strlen(name);
+    ext_len = ui_strlen(filter_ext);
+    if (ext_len > name_len) {
+        return 0;
+    }
+    return ui_text_eq_ignore_case(name + name_len - ext_len, filter_ext);
+}
+
+static void ui_file_dialog_entry_text(struct ui_file_dialog_entry *entry)
+{
+    uint32_t pos = 0;
+    entry->display[0] = 0;
+    if (entry->dir_entry.type == LEONOS_FS_TYPE_DIR) {
+        ui_append_text(entry->display, &pos, sizeof(entry->display), "[");
+        ui_append_text(entry->display, &pos, sizeof(entry->display), entry->dir_entry.name);
+        ui_append_text(entry->display, &pos, sizeof(entry->display), "]");
+    } else {
+        ui_copy_text(entry->display, sizeof(entry->display), entry->dir_entry.name);
+    }
+}
+
+static int ui_file_dialog_load_entries(const char *path,
+                                       struct ui_file_dialog_entry *entries,
+                                       uint32_t capacity,
+                                       uint32_t *out_count,
+                                       const char *filter_ext)
+{
+    int fd;
+    uint32_t count = 0;
+    if (!entries || !out_count) {
+        return -1;
+    }
+    *out_count = 0;
+    fd = open(path, 0, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    while (count < capacity) {
+        int ret = leonos_readdir(fd, &entries[count].dir_entry);
+        if (ret < 0) {
+            close(fd);
+            return ret;
+        }
+        if (ret == 0) {
+            break;
+        }
+        if (entries[count].dir_entry.type == LEONOS_FS_TYPE_FILE &&
+            !ui_path_extension_matches(entries[count].dir_entry.name, filter_ext)) {
+            continue;
+        }
+        ui_file_dialog_entry_text(&entries[count]);
+        ++count;
+    }
+    close(fd);
+    *out_count = count;
+    return 0;
+}
+
+static void ui_file_dialog_status(char *status, uint32_t capacity,
+                                  const char *prefix, const char *path)
+{
+    uint32_t pos = 0;
+    if (!status || capacity == 0) {
+        return;
+    }
+    status[0] = 0;
+    ui_append_text(status, &pos, capacity, prefix);
+    ui_append_text(status, &pos, capacity, path);
+}
+
+static void ui_file_dialog_select_entry(const char *dir_path,
+                                        const struct ui_file_dialog_entry *entry,
+                                        char *filename, uint32_t filename_cap)
+{
+    (void)dir_path;
+    if (!entry || !filename || filename_cap == 0) {
+        return;
+    }
+    if (entry->dir_entry.type == LEONOS_FS_TYPE_FILE) {
+        ui_copy_text(filename, filename_cap, entry->dir_entry.name);
+    }
+}
+
+static int ui_file_dialog_activate(const char *title, int save_mode,
+                                   char *dir_path, uint32_t dir_cap,
+                                   char *filename, uint32_t file_cap,
+                                   struct ui_file_dialog_entry *entries,
+                                   uint32_t entry_cap,
+                                   uint32_t *entry_count,
+                                   struct leonos_ui_listview_state *list_state,
+                                   const char *filter_ext,
+                                   char *status, uint32_t status_cap)
+{
+    char full_path[LEONOS_FS_PATH_LEN];
+    struct leonos_stat st;
+    int ret;
+    if (!save_mode) {
+        if (list_state->selected < 0 || (uint32_t)list_state->selected >= *entry_count) {
+            ui_file_dialog_status(status, status_cap, "Select a file in ", dir_path);
+            return 0;
+        }
+        if (entries[list_state->selected].dir_entry.type == LEONOS_FS_TYPE_DIR) {
+            ui_build_child_path(full_path, sizeof(full_path), dir_path,
+                                entries[list_state->selected].dir_entry.name);
+            ui_copy_text(dir_path, dir_cap, full_path);
+            ui_copy_text(filename, file_cap, "");
+            ret = ui_file_dialog_load_entries(dir_path, entries, entry_cap,
+                                              entry_count, filter_ext);
+            if (ret < 0) {
+                ui_file_dialog_status(status, status_cap, "Open dir failed ", dir_path);
+                return 0;
+            }
+            leonos_ui_listview_state_set_count(list_state, *entry_count);
+            list_state->selected = *entry_count ? 0 : -1;
+            list_state->scroll = 0;
+            ui_file_dialog_status(status, status_cap, "Opened ", dir_path);
+            return 0;
+        }
+        ui_build_child_path(full_path, sizeof(full_path), dir_path, filename);
+        if (stat(full_path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE) {
+            ui_file_dialog_status(status, status_cap, "File not found ", full_path);
+            return 0;
+        }
+        ui_copy_text(filename, file_cap, full_path);
+        return 1;
+    }
+    if (!filename[0]) {
+        ui_file_dialog_status(status, status_cap, "Enter a file name in ", dir_path);
+        return 0;
+    }
+    if (!ui_path_extension_matches(filename, filter_ext)) {
+        ui_file_dialog_status(status, status_cap, "File type must match ", filter_ext ? filter_ext : "");
+        return 0;
+    }
+    if (filename[0] == '0' && filename[1] == ':' && filename[2] == '/') {
+        ui_copy_text(full_path, sizeof(full_path), filename);
+    } else {
+        ui_build_child_path(full_path, sizeof(full_path), dir_path, filename);
+    }
+    if (stat(full_path, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
+        if (!leonos_ui_show_confirm_dialog(title ? title : "Save As",
+                                           "This file already exists. Replace it?",
+                                           0)) {
+            ui_file_dialog_status(status, status_cap, "Overwrite canceled for ", full_path);
+            return 0;
+        }
+    }
+    ui_copy_text(filename, file_cap, full_path);
+    return 1;
+}
+
+static void ui_file_dialog_draw(struct leonos_ui_surface *surface,
+                                const char *title, int save_mode,
+                                const char *dir_path,
+                                const char *filter_label,
+                                const char *status,
+                                struct ui_file_dialog_entry *entries,
+                                uint32_t entry_count,
+                                struct leonos_ui_listview_state *list_state,
+                                struct leonos_ui_edit_state *name_edit)
+{
+    enum {
+        DLG_W = 520,
+        DLG_H = 340,
+        LIST_X = 16,
+        LIST_Y = 94,
+        LIST_W = 406,
+        LIST_H = 176,
+        BTN_W = 78
+    };
+    uint32_t file_y = LIST_Y + LIST_H + 18;
+    leonos_ui_rect(surface, 0, 0, DLG_W, DLG_H, LEONOS_UI_GRAY);
+    leonos_ui_dialog(surface, 0, 0, DLG_W, DLG_H, title ? title : (save_mode ? "Save As" : "Open"));
+    leonos_ui_text(surface, 16, 42, "Look in:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 72, 38, DLG_W - 88, dir_path, ui_strlen(dir_path), 0, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_text(surface, 16, 68, "Files:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_scroll_view_frame(surface, LIST_X, LIST_Y, LIST_W + 18, LIST_H);
+    for (uint32_t row = 0; row < list_state->visible_rows; ++row) {
+        uint32_t index = list_state->scroll + row;
+        if (index >= entry_count) {
+            break;
+        }
+        leonos_ui_list_row(surface, LIST_X + 2, LIST_Y + 2 + row * list_state->row_height,
+                           LIST_W - 2, entries[index].display,
+                           list_state->selected == (int32_t)index ? LEONOS_UI_MENU_SELECTED : 0);
+    }
+    leonos_ui_vscrollbar(surface, LIST_X + LIST_W, LIST_Y, 18, LIST_H,
+                         list_state->scroll,
+                         entry_count > list_state->visible_rows ? entry_count : list_state->visible_rows,
+                         list_state->visible_rows,
+                         entry_count <= list_state->visible_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
+    leonos_ui_button(surface, DLG_W - 78, 38, 54, LEONOS_UI_BUTTON_H, "Up", 0);
+    leonos_ui_button(surface, DLG_W - 78, 66, 54, LEONOS_UI_BUTTON_H, "Root", 0);
+    leonos_ui_text(surface, 16, file_y, save_mode ? "File name:" : "Selection:",
+                   LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit_state_draw(surface, 92, file_y - 4, DLG_W - 108, name_edit, 0);
+    leonos_ui_text(surface, 16, file_y + 28, "Files of type:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 108, file_y + 24, DLG_W - 124,
+                   filter_label ? filter_label : "All files",
+                   ui_strlen(filter_label ? filter_label : "All files"),
+                   0, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_statusbar(surface, DLG_H - 58, 24, status);
+    leonos_ui_button(surface, DLG_W - 180, DLG_H - 30, BTN_W, LEONOS_UI_BUTTON_H,
+                     save_mode ? "Save" : "Open", 0);
+    leonos_ui_button(surface, DLG_W - 94, DLG_H - 30, BTN_W, LEONOS_UI_BUTTON_H, "Cancel", 0);
+}
+
+static int ui_show_file_dialog_common(const char *title, int save_mode,
+                                      char *path, uint32_t capacity,
+                                      const char *filter_label,
+                                      const char *filter_ext)
+{
+    enum {
+        W = 520,
+        H = 340,
+        MAX_ENTRIES = 64
+    };
+    static uint32_t pixels[W * H];
+    struct leonos_ui_surface surface;
+    struct leonos_gui_app_event event;
+    struct ui_file_dialog_entry entries[MAX_ENTRIES];
+    struct leonos_ui_listview_state list_state;
+    struct leonos_ui_edit_state name_edit;
+    char original[LEONOS_FS_PATH_LEN];
+    char dir_path[LEONOS_FS_PATH_LEN];
+    char file_name[LEONOS_FS_PATH_LEN];
+    char status[128];
+    uint32_t entry_count = 0;
+    int result = 0;
+    int window_id;
+    int load_ret;
+    if (!path || capacity == 0) {
+        return -1;
+    }
+    ui_copy_text(original, sizeof(original), path);
+    if (path[0] == '0' && path[1] == ':' && path[2] == '/') {
+        ui_build_parent_path(dir_path, sizeof(dir_path), path);
+        ui_copy_text(file_name, sizeof(file_name), ui_path_basename(path));
+    } else {
+        ui_copy_text(dir_path, sizeof(dir_path), "0:/");
+        ui_copy_text(file_name, sizeof(file_name), path);
+    }
+    window_id = leonos_gui_create_app_window_ex(title ? title : (save_mode ? "Save As" : "Open"),
+                                                dir_path, W, H, LEONOS_GUI_WINDOW_NO_RESIZE);
+    if (window_id <= 0) {
+        return window_id;
+    }
+    leonos_ui_bind(&surface, pixels, W, H, W);
+    leonos_ui_listview_state_init(&list_state, 9, LEONOS_FONT_H + 4);
+    list_state.focused = 1;
+    leonos_ui_edit_state_init(&name_edit, file_name, sizeof(file_name));
+    name_edit.focused = save_mode ? 1 : 0;
+    load_ret = ui_file_dialog_load_entries(dir_path, entries, MAX_ENTRIES, &entry_count, filter_ext);
+    if (load_ret < 0) {
+        ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
+    } else {
+        ui_file_dialog_status(status, sizeof(status), "Ready in ", dir_path);
+    }
+    leonos_ui_listview_state_set_count(&list_state, entry_count);
+    list_state.selected = entry_count ? 0 : -1;
+    for (;;) {
+        ui_file_dialog_draw(&surface, title, save_mode, dir_path, filter_label, status,
+                            entries, entry_count, &list_state, &name_edit);
+        leonos_gui_present_window((uint32_t)window_id, W, H, W, pixels);
+        event.window_id = (uint32_t)window_id;
+        if (leonos_gui_poll_app_event(&event) > 0) {
+            if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
+                break;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                uint32_t activated = 0;
+                if (event.pressed && event.keycode == 1) {
+                    break;
+                }
+                if (event.pressed && event.keycode == LEONOS_KEY_TAB) {
+                    name_edit.focused = name_edit.focused ? 0 : 1;
+                    list_state.focused = name_edit.focused ? 0 : 1;
+                    continue;
+                }
+                if (event.pressed && event.keycode == LEONOS_KEY_ENTER) {
+                    if (ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
+                                                file_name, sizeof(file_name), entries, MAX_ENTRIES,
+                                                &entry_count, &list_state, filter_ext,
+                                                status, sizeof(status))) {
+                        ui_copy_text(path, capacity, file_name);
+                        result = 1;
+                        break;
+                    }
+                    leonos_ui_listview_state_set_count(&list_state, entry_count);
+                    continue;
+                }
+                if (name_edit.focused) {
+                    leonos_ui_edit_state_handle_key(&name_edit, event.keycode, event.pressed);
+                } else if (leonos_ui_listview_state_handle_key(&list_state, event.keycode, &activated)) {
+                    if (list_state.selected >= 0 && (uint32_t)list_state.selected < entry_count) {
+                        ui_file_dialog_select_entry(dir_path, &entries[list_state.selected],
+                                                    file_name, sizeof(file_name));
+                    }
+                    if (activated &&
+                        ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
+                                                file_name, sizeof(file_name), entries, MAX_ENTRIES,
+                                                &entry_count, &list_state, filter_ext,
+                                                status, sizeof(status))) {
+                        ui_copy_text(path, capacity, file_name);
+                        result = 1;
+                        break;
+                    }
+                    leonos_ui_listview_state_set_count(&list_state, entry_count);
+                }
+                continue;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
+                uint32_t activated = 0;
+                if (event.x >= (int32_t)(W - 180) && event.x < (int32_t)(W - 102) &&
+                    event.y >= (int32_t)(H - 30) && event.y < (int32_t)(H - 30 + LEONOS_UI_BUTTON_H)) {
+                    if (ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
+                                                file_name, sizeof(file_name), entries, MAX_ENTRIES,
+                                                &entry_count, &list_state, filter_ext,
+                                                status, sizeof(status))) {
+                        ui_copy_text(path, capacity, file_name);
+                        result = 1;
+                        break;
+                    }
+                    leonos_ui_listview_state_set_count(&list_state, entry_count);
+                    continue;
+                }
+                if (event.x >= (int32_t)(W - 94) && event.x < (int32_t)(W - 16) &&
+                    event.y >= (int32_t)(H - 30) && event.y < (int32_t)(H - 30 + LEONOS_UI_BUTTON_H)) {
+                    break;
+                }
+                if (event.x >= (int32_t)(W - 78) && event.x < (int32_t)(W - 24) &&
+                    event.y >= 38 && event.y < (int32_t)(38 + LEONOS_UI_BUTTON_H)) {
+                    ui_build_parent_path(dir_path, sizeof(dir_path), dir_path);
+                    ui_copy_text(file_name, sizeof(file_name), "");
+                    load_ret = ui_file_dialog_load_entries(dir_path, entries, MAX_ENTRIES,
+                                                           &entry_count, filter_ext);
+                    if (load_ret < 0) {
+                        ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
+                    } else {
+                        ui_file_dialog_status(status, sizeof(status), "Opened ", dir_path);
+                    }
+                    leonos_ui_listview_state_set_count(&list_state, entry_count);
+                    list_state.selected = entry_count ? 0 : -1;
+                    list_state.scroll = 0;
+                    continue;
+                }
+                if (event.x >= (int32_t)(W - 78) && event.x < (int32_t)(W - 24) &&
+                    event.y >= 66 && event.y < (int32_t)(66 + LEONOS_UI_BUTTON_H)) {
+                    ui_copy_text(dir_path, sizeof(dir_path), "0:/");
+                    ui_copy_text(file_name, sizeof(file_name), "");
+                    load_ret = ui_file_dialog_load_entries(dir_path, entries, MAX_ENTRIES,
+                                                           &entry_count, filter_ext);
+                    if (load_ret < 0) {
+                        ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
+                    } else {
+                        ui_file_dialog_status(status, sizeof(status), "Opened ", dir_path);
+                    }
+                    leonos_ui_listview_state_set_count(&list_state, entry_count);
+                    list_state.selected = entry_count ? 0 : -1;
+                    list_state.scroll = 0;
+                    continue;
+                }
+                if (leonos_ui_edit_state_handle_mouse(&name_edit, event.x, event.y,
+                                                      92, 284, W - 108, event.buttons)) {
+                    name_edit.focused = 1;
+                    list_state.focused = 0;
+                    continue;
+                }
+                if (event.x >= 16 + 406 && event.x < 16 + 406 + 18 &&
+                    event.y >= 94 && event.y < 94 + 176) {
+                    leonos_ui_vscrollbar_handle_mouse(&list_state.scroll,
+                                                      entry_count > list_state.visible_rows ? entry_count : list_state.visible_rows,
+                                                      list_state.visible_rows,
+                                                      16 + 406, 94, 18, 176,
+                                                      event.x, event.y);
+                    continue;
+                }
+                if (leonos_ui_listview_state_handle_mouse(&list_state, event.x, event.y,
+                                                          18, 96, 404, &activated)) {
+                    name_edit.focused = 0;
+                    list_state.focused = 1;
+                    if (list_state.selected >= 0 && (uint32_t)list_state.selected < entry_count) {
+                        ui_file_dialog_select_entry(dir_path, &entries[list_state.selected],
+                                                    file_name, sizeof(file_name));
+                    }
+                    if (activated &&
+                        ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
+                                                file_name, sizeof(file_name), entries, MAX_ENTRIES,
+                                                &entry_count, &list_state, filter_ext,
+                                                status, sizeof(status))) {
+                        ui_copy_text(path, capacity, file_name);
+                        result = 1;
+                        break;
+                    }
+                    leonos_ui_listview_state_set_count(&list_state, entry_count);
+                }
+            }
+        } else {
+            sleep_ms(10);
+        }
+    }
+    leonos_gui_destroy_app_window((uint32_t)window_id);
+    if (!result) {
+        ui_copy_text(path, capacity, original);
+    }
+    return result;
+}
+
+int leonos_ui_show_open_dialog(const char *title, char *path, uint32_t capacity,
+                               const char *filter_label, const char *filter_ext)
+{
+    return ui_show_file_dialog_common(title ? title : "Open", 0,
+                                      path, capacity, filter_label, filter_ext);
+}
+
+int leonos_ui_show_save_dialog_ex(const char *title, char *value, uint32_t capacity,
+                                  const char *filter_label, const char *filter_ext)
+{
+    return ui_show_file_dialog_common(title ? title : "Save As", 1,
+                                      value, capacity, filter_label, filter_ext);
+}
+
+int leonos_ui_show_save_dialog(const char *title, char *value, uint32_t capacity)
+{
+    return leonos_ui_show_save_dialog_ex(title ? title : "Save As",
+                                         value,
+                                         capacity,
+                                         "All files (*.*)",
+                                         0);
 }
 
 void leonos_ui_combobox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,

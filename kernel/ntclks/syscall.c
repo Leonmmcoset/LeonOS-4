@@ -113,6 +113,8 @@ static void clear_task_file(struct task_file *file)
     file->node.size = 0;
     file->offset = 0;
     file->aux = 0;
+    file->flags = 0;
+    file->path[0] = 0;
 }
 
 static void clear_task_files(struct task *task)
@@ -134,7 +136,7 @@ static struct task_file *task_file_for_fd(struct task *task, int fd)
     return file->used ? file : NULL;
 }
 
-static int alloc_task_fd(struct task *task, const struct storage_node *node)
+static int alloc_task_fd(struct task *task, const struct storage_node *node, uint32_t flags, const char *path)
 {
     if (!task || !node) {
         return -LEONOS_EINVAL;
@@ -147,9 +149,23 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node)
         task->files[i].node = *node;
         task->files[i].offset = 0;
         task->files[i].aux = 0;
+        task->files[i].flags = flags;
+        copy_text(task->files[i].path, sizeof(task->files[i].path), path);
         return (int)i + 4;
     }
     return -LEONOS_EMFILE;
+}
+
+static int file_can_read(const struct task_file *file)
+{
+    uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
+    return acc == LEONOS_O_RDONLY || acc == LEONOS_O_RDWR;
+}
+
+static int file_can_write(const struct task_file *file)
+{
+    uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
+    return acc == LEONOS_O_WRONLY || acc == LEONOS_O_RDWR;
 }
 
 static int copy_user_path(char *dst, uint32_t cap, uint64_t user_ptr)
@@ -364,18 +380,43 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     (void)a5;
 
     if (number == LINUX_SYS_WRITE) {
+        struct task *task = sched_current_task();
         if (!user_range_ok(a1, a2)) {
             return -LEONOS_EFAULT;
         }
-        struct task *task = sched_current_task();
         if (task && task->pty_id && (a0 == 1 || a0 == 2)) {
             return pty_write_output(task->pty_id, (const char *)(uintptr_t)a1, (uint32_t)a2);
         }
-        if (a0 != 1 && a0 != 2) {
-            return -LEONOS_EINVAL;
+        if (a0 == 1 || a0 == 2) {
+            console_write_len((const char *)(uintptr_t)a1, (size_t)a2);
+            return (int64_t)a2;
         }
-        console_write_len((const char *)(uintptr_t)a1, (size_t)a2);
-        return (int64_t)a2;
+        struct task_file *file = task_file_for_fd(task, (int)a0);
+        uint32_t wrote = 0;
+        int ret;
+        if (!file) {
+            return -LEONOS_EBADF;
+        }
+        if (!file_can_write(file)) {
+            return -LEONOS_EBADF;
+        }
+        if (file->node.type == LEONOS_FS_TYPE_DIR) {
+            return -LEONOS_EISDIR;
+        }
+        if (file->node.type != LEONOS_FS_TYPE_FILE || !file->path[0]) {
+            return -LEONOS_EBADF;
+        }
+        if (file->flags & LEONOS_O_APPEND) {
+            file->offset = file->node.size;
+        }
+        ret = storage_write_node(file->path, file->offset,
+                                 (const void *)(uintptr_t)a1, (uint32_t)a2, &wrote);
+        if (ret < 0) {
+            return ret;
+        }
+        file->offset += wrote;
+        file->node.size = file->offset > file->node.size ? file->offset : file->node.size;
+        return (int64_t)wrote;
     }
 
     if (number == LINUX_SYS_READ) {
@@ -414,6 +455,9 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return (int64_t)sizeof(entry);
         }
         if (file->node.type != LEONOS_FS_TYPE_FILE) {
+            return -LEONOS_EBADF;
+        }
+        if (!file_can_read(file)) {
             return -LEONOS_EBADF;
         }
         if (storage_read_node(&file->node, file->offset, (void *)(uintptr_t)a1, (uint32_t)a2, &got) < 0) {
@@ -459,18 +503,48 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         struct task *task = sched_current_task();
         struct storage_node node;
         char path[LEONOS_FS_PATH_LEN];
+        uint32_t flags = (uint32_t)a1;
         int ret = resolve_user_path(task, a0, path, sizeof(path));
         if (ret < 0) {
             return ret;
         }
         ret = storage_lookup_path(path, &node);
         if (ret < 0) {
-            return ret == -2 ? -LEONOS_ENOENT : ret;
+            if (ret == -2 && (flags & LEONOS_O_CREAT)) {
+                ret = storage_write_file(path, "", 0);
+                if (ret < 0) {
+                    return ret;
+                }
+                ret = storage_lookup_path(path, &node);
+            }
+            if (ret < 0) {
+                return ret == -2 ? -LEONOS_ENOENT : ret;
+            }
         }
         if ((node.flags & STORAGE_NODE_FLAG_DEV_FB0) != 0) {
             return 3;
         }
-        return alloc_task_fd(task, &node);
+        if (node.type == LEONOS_FS_TYPE_DIR && ((flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY)) {
+            return -LEONOS_EISDIR;
+        }
+        if (node.type == LEONOS_FS_TYPE_FILE && (flags & LEONOS_O_TRUNC) && file_can_write(&(struct task_file){.flags = flags})) {
+            ret = storage_write_file(path, "", 0);
+            if (ret < 0) {
+                return ret;
+            }
+            ret = storage_lookup_path(path, &node);
+            if (ret < 0) {
+                return ret == -2 ? -LEONOS_ENOENT : ret;
+            }
+        }
+        int fd = alloc_task_fd(task, &node, flags, path);
+        if (fd >= 0 && (flags & LEONOS_O_APPEND)) {
+            struct task_file *file = task_file_for_fd(task, fd);
+            if (file && file->node.type == LEONOS_FS_TYPE_FILE) {
+                file->offset = file->node.size;
+            }
+        }
+        return fd;
     }
 
     if (number == LINUX_SYS_CLOSE) {

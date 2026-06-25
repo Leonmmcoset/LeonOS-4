@@ -122,10 +122,10 @@ int main(int argc, char **argv, char **envp)
                 }
                 continue;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
-                if (event.keycode == LEONOS_KEY_ENTER) {
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                if (event.pressed && event.keycode == LEONOS_KEY_ENTER) {
                     launch_path(window_id);
-                } else if (!leonos_ui_edit_state_handle_key(&input_edit, event.keycode)) {
+                } else if (!leonos_ui_edit_state_handle_key(&input_edit, event.keycode, event.pressed)) {
                     continue;
                 }
                 draw_run(&ui);

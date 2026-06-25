@@ -464,35 +464,17 @@ static const char *button_label_by_index(int index)
     return "";
 }
 
-static int map_keycode(uint8_t keycode, char *out)
+static int map_keycode(uint8_t keycode, uint8_t pressed, char *out)
 {
-    switch (keycode) {
-    case 2: *out = '1'; return 1;
-    case 3: *out = '2'; return 1;
-    case 4: *out = '3'; return 1;
-    case 5: *out = '4'; return 1;
-    case 6: *out = '5'; return 1;
-    case 7: *out = '6'; return 1;
-    case 8: *out = '7'; return 1;
-    case 9: *out = '8'; return 1;
-    case 10: *out = '9'; return 1;
-    case 11: *out = '0'; return 1;
-    case 12: *out = '-'; return 1;
-    case 13: *out = '='; return 1;
-    case 14: *out = '\b'; return 1;
-    case 26: *out = '['; return 1;
-    case 27: *out = ']'; return 1;
-    case 28: *out = '\n'; return 1;
-    case 39: *out = ';'; return 1;
-    case 43: *out = '\\'; return 1;
-    case 51: *out = ','; return 1;
-    case 52: *out = '.'; return 1;
-    case 53: *out = '/'; return 1;
-    case 55: *out = '*'; return 1;
-    case 57: *out = ' '; return 1;
-    default:
+    static uint8_t shift_down;
+    if (keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT) {
+        shift_down = pressed ? 1 : 0;
         return 0;
     }
+    if (!pressed) {
+        return 0;
+    }
+    return leonos_ui_keycode_to_char_shift(keycode, shift_down, out);
 }
 
 static void apply_key(char ch)
@@ -577,9 +559,9 @@ int main(void)
                 leonos_gui_present_window((uint32_t)window_id, CALC_W, CALC_H, CALC_W, pixels);
                 continue;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
                 char ch;
-                if (map_keycode(event.keycode, &ch)) {
+                if (map_keycode(event.keycode, event.pressed, &ch)) {
                     apply_key(ch);
                     draw_calc(&ui, pressed);
                     leonos_gui_present_window((uint32_t)window_id, CALC_W, CALC_H, CALC_W, pixels);

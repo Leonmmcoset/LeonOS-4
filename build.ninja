@@ -85,7 +85,7 @@ rule run_iso
   description = RUN.ISO LeonOS 4
 
 rule menuconfig_rule
-  command = python3 tools/menuconfig.py && python3 tools/kconfig_sync.py
+  command = test -f .config || cp configs/default.conf .config && kconfig-mconf Kconfig && python3 tools/kconfig_sync.py
   description = MENUCONFIG
 
 rule clean_rule
@@ -180,6 +180,6 @@ build all: phony kernel userland esp
 build run: run build/images/leonos4.vmdk
 build run-debug: run_debug build/images/leonos4.vmdk
 build run-iso: run_iso build/images/leonos4.iso build/images/leonos4.vmdk
-build menuconfig: menuconfig_rule tools/menuconfig.py tools/kconfig_sync.py Kconfig configs/default.conf
+build menuconfig: menuconfig_rule tools/kconfig_sync.py Kconfig configs/default.conf
 build clean: clean_rule
 default all

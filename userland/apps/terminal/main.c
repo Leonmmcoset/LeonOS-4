@@ -120,62 +120,15 @@ static void draw_terminal(struct leonos_ui_surface *ui)
 
 static int map_keycode(uint8_t keycode, uint8_t pressed, char *out)
 {
-    (void)pressed;
-    switch (keycode) {
-    case 2: *out = '1'; return 1;
-    case 3: *out = '2'; return 1;
-    case 4: *out = '3'; return 1;
-    case 5: *out = '4'; return 1;
-    case 6: *out = '5'; return 1;
-    case 7: *out = '6'; return 1;
-    case 8: *out = '7'; return 1;
-    case 9: *out = '8'; return 1;
-    case 10: *out = '9'; return 1;
-    case 11: *out = '0'; return 1;
-    case 12: *out = '-'; return 1;
-    case 13: *out = '='; return 1;
-    case 14: *out = '\b'; return 1;
-    case 15: *out = '\t'; return 1;
-    case 16: *out = 'q'; return 1;
-    case 17: *out = 'w'; return 1;
-    case 18: *out = 'e'; return 1;
-    case 19: *out = 'r'; return 1;
-    case 20: *out = 't'; return 1;
-    case 21: *out = 'y'; return 1;
-    case 22: *out = 'u'; return 1;
-    case 23: *out = 'i'; return 1;
-    case 24: *out = 'o'; return 1;
-    case 25: *out = 'p'; return 1;
-    case 26: *out = '['; return 1;
-    case 27: *out = ']'; return 1;
-    case 28: *out = '\n'; return 1;
-    case 30: *out = 'a'; return 1;
-    case 31: *out = 's'; return 1;
-    case 32: *out = 'd'; return 1;
-    case 33: *out = 'f'; return 1;
-    case 34: *out = 'g'; return 1;
-    case 35: *out = 'h'; return 1;
-    case 36: *out = 'j'; return 1;
-    case 37: *out = 'k'; return 1;
-    case 38: *out = 'l'; return 1;
-    case 39: *out = ';'; return 1;
-    case 40: *out = '\''; return 1;
-    case 41: *out = '`'; return 1;
-    case 43: *out = '\\'; return 1;
-    case 44: *out = 'z'; return 1;
-    case 45: *out = 'x'; return 1;
-    case 46: *out = 'c'; return 1;
-    case 47: *out = 'v'; return 1;
-    case 48: *out = 'b'; return 1;
-    case 49: *out = 'n'; return 1;
-    case 50: *out = 'm'; return 1;
-    case 51: *out = ','; return 1;
-    case 52: *out = '.'; return 1;
-    case 53: *out = '/'; return 1;
-    case 57: *out = ' '; return 1;
-    default:
+    static uint8_t shift_down;
+    if (keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT) {
+        shift_down = pressed ? 1 : 0;
         return 0;
     }
+    if (!pressed) {
+        return 0;
+    }
+    return leonos_ui_keycode_to_char_shift(keycode, shift_down, out);
 }
 
 static void pump_pty_output(void)
@@ -236,7 +189,7 @@ int main(int argc, char **argv, char **envp)
                 sleep_ms(40);
                 return 0;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
                 char ch;
                 if (map_keycode(event.keycode, event.pressed, &ch)) {
                     leonos_pty_write_input(pty_id, &ch, 1);

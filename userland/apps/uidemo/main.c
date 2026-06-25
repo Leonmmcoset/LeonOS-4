@@ -290,13 +290,13 @@ int main(void)
                     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
                 }
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
                 int changed = 0;
                 uint32_t activate = 0;
                 menu_open = DEMO_MENU_NONE;
                 if (page == 0) {
-                    changed |= leonos_ui_edit_state_handle_key(&sample_edit, event.keycode);
-                    changed |= leonos_ui_text_area_state_handle_key(&sample_area, event.keycode, 204, 44);
+                    changed |= leonos_ui_edit_state_handle_key(&sample_edit, event.keycode, event.pressed);
+                    changed |= leonos_ui_text_area_state_handle_key(&sample_area, event.keycode, event.pressed, 204, 44);
                 } else if (page == 1) {
                     changed |= leonos_ui_listview_state_handle_key(&sample_list, event.keycode, &activate);
                     (void)activate;

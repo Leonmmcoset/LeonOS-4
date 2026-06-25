@@ -12,6 +12,25 @@ static uint32_t cursor_x;
 static uint32_t cursor_y;
 static bool cursor_visible;
 
+static const char cursor_art[CURSOR_H][CURSOR_W + 1] = {
+    "X...............",
+    "XO..............",
+    "XOX.............",
+    "XOOX............",
+    "XOOOX...........",
+    "XOOOOX..........",
+    "XOOOOOX.........",
+    "XOOOOOOX........",
+    "XOOOOOOOX.......",
+    "XOOOOOOOOX......",
+    "XOOOOOOOOOX.....",
+    "XOOOOX..........",
+    "XOOOOX..........",
+    "XOOOOX..........",
+    "XOOOXX..........",
+    "XXXXX...........",
+};
+
 #define DESKTOP_MAX_WINDOWS 3
 #define DESKTOP_TASKBAR_H 34
 #define DESKTOP_TITLEBAR_H 26
@@ -936,20 +955,16 @@ void desktop_draw_mouse(uint32_t x, uint32_t y)
         }
     }
 
-    const uint32_t white = 0x00ffffff;
-    const uint32_t black = 0x00000000;
-    for (uint32_t i = 0; i < 15; ++i) {
-        framebuffer_rect(x, y + i, 1, 1, black);
-        if (i < 11) {
-            framebuffer_rect(x + i, y + i, 1, 1, black);
+    for (uint32_t yy = 0; yy < CURSOR_H; ++yy) {
+        for (uint32_t xx = 0; xx < CURSOR_W; ++xx) {
+            char cell = cursor_art[yy][xx];
+            if (cell == 'X') {
+                framebuffer_put_pixel(x + xx, y + yy, 0x00000000);
+            } else if (cell == 'O') {
+                framebuffer_put_pixel(x + xx, y + yy, 0x00ffffff);
+            }
         }
     }
-    for (uint32_t i = 1; i < 10; ++i) {
-        framebuffer_rect(x + 1, y + i, i, 1, white);
-    }
-    framebuffer_rect(x + 5, y + 11, 3, 1, black);
-    framebuffer_rect(x + 6, y + 12, 3, 1, black);
-    framebuffer_rect(x + 7, y + 13, 3, 1, black);
     cursor_x = x;
     cursor_y = y;
     cursor_visible = true;

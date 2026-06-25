@@ -104,6 +104,25 @@ static uint32_t app_client_scratch[APP_CLIENT_MAX_W * APP_CLIENT_MAX_H];
 
 static uint32_t screen[MAX_FB_W * MAX_FB_H];
 
+static const char cursor_art[CURSOR_H][CURSOR_W + 1] = {
+    "X...............",
+    "XO..............",
+    "XOX.............",
+    "XOOX............",
+    "XOOOX...........",
+    "XOOOOX..........",
+    "XOOOOOX.........",
+    "XOOOOOOX........",
+    "XOOOOOOOX.......",
+    "XOOOOOOOOX......",
+    "XOOOOOOOOOX.....",
+    "XOOOOX..........",
+    "XOOOOX..........",
+    "XOOOOX..........",
+    "XOOOXX..........",
+    "XXXXX...........",
+};
+
 static void send_app_event(uint8_t slot, uint32_t type, int32_t x, int32_t y,
                            int32_t dx, int32_t dy, uint8_t buttons,
                            uint8_t keycode, uint8_t pressed);
@@ -953,18 +972,16 @@ static void draw_cursor_shape(uint32_t x, uint32_t y)
     if (y + CURSOR_H > fb_h()) {
         y = fb_h() > CURSOR_H ? fb_h() - CURSOR_H : 0;
     }
-    for (uint32_t i = 0; i < 15; ++i) {
-        put_pixel(x, y + i, 0x00000000);
-        if (i < 11) {
-            put_pixel(x + i, y + i, 0x00000000);
+    for (uint32_t row = 0; row < CURSOR_H; ++row) {
+        for (uint32_t col = 0; col < CURSOR_W; ++col) {
+            char cell = cursor_art[row][col];
+            if (cell == 'X') {
+                put_pixel(x + col, y + row, 0x00000000);
+            } else if (cell == 'O') {
+                put_pixel(x + col, y + row, 0x00ffffff);
+            }
         }
     }
-    for (uint32_t i = 1; i < 10; ++i) {
-        rect_fill(x + 1, y + i, i, 1, 0x00ffffff);
-    }
-    rect_fill(x + 5, y + 11, 3, 1, 0x00000000);
-    rect_fill(x + 6, y + 12, 3, 1, 0x00000000);
-    rect_fill(x + 7, y + 13, 3, 1, 0x00000000);
 }
 
 static void redraw_region(struct rect dirty)
