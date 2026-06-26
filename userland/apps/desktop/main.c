@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/fs.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -12,10 +13,18 @@
 #define TITLEBAR_H LEONOS_UI_TITLEBAR_H
 #define MIN_W 180
 #define MIN_H 96
-#define CURSOR_W 16
-#define CURSOR_H 16
-#define START_MENU_H 286
-#define START_MENU_DIRTY_H (START_MENU_H + TASKBAR_H + 8)
+#define FALLBACK_CURSOR_W 16
+#define FALLBACK_CURSOR_H 16
+#define CURSOR_MAX_W 64
+#define CURSOR_MAX_H 64
+#define CURSOR_BMP_MAX_BYTES (CURSOR_MAX_W * CURSOR_MAX_H * 4 + 128)
+#define CURSOR_BMP_PATH "0:/system/resources/mouse.bmp"
+#define START_MENU_W 246
+#define START_MENU_MAX_H 340
+#define START_MENU_ANIM_MS 160UL
+#define START_MENU_ITEM_H 26
+#define START_MENU_DIRTY_H (START_MENU_MAX_H + TASKBAR_H + 8)
+#define START_MENU_MAX_APPS 16
 #define APP_WINDOW_SLOTS (MAX_WINDOWS - BUILTIN_WINDOWS)
 #define APP_CLIENT_MAX_W 760
 #define APP_CLIENT_MAX_H 540
@@ -23,6 +32,8 @@
 #define ALT_TAB_MAX_WINDOWS MAX_WINDOWS
 #define ALT_TAB_W 336
 #define WIN_TAP_MAX_MS 500UL
+#define WINDOW_RECOVERABLE_W 96
+#define WINDOW_RECOVERABLE_TITLEBAR_H 8
 
 #define DRAG_NONE 0
 #define DRAG_MOVE 1
@@ -78,6 +89,13 @@ static uint32_t drag_origin_w;
 static uint32_t drag_origin_h;
 static uint8_t previous_buttons;
 static uint8_t start_menu_open;
+static uint8_t start_menu_animating;
+static uint8_t start_menu_opening;
+static unsigned long start_menu_anim_start;
+static uint8_t start_menu_apps_loaded;
+static uint32_t start_menu_app_count;
+static char start_menu_app_labels[START_MENU_MAX_APPS][32];
+static char start_menu_app_paths[START_MENU_MAX_APPS][LEONOS_FS_PATH_LEN];
 static uint8_t snap_preview_mode;
 static uint8_t alt_left_down;
 static uint8_t alt_right_down;
@@ -91,7 +109,11 @@ static uint8_t alt_tab_selected;
 static uint8_t alt_tab_ids[ALT_TAB_MAX_WINDOWS];
 static uint32_t cursor_x;
 static uint32_t cursor_y;
+static uint32_t cursor_width = FALLBACK_CURSOR_W;
+static uint32_t cursor_height = FALLBACK_CURSOR_H;
+static uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
 static uint8_t cursor_visible;
+static uint8_t cursor_bitmap_loaded;
 static uint8_t full_redraw_pending;
 static char app_titles[MAX_WINDOWS][48];
 static char app_texts[MAX_WINDOWS][96];
@@ -104,7 +126,7 @@ static uint32_t app_client_scratch[APP_CLIENT_MAX_W * APP_CLIENT_MAX_H];
 
 static uint32_t screen[MAX_FB_W * MAX_FB_H];
 
-static const char cursor_art[CURSOR_H][CURSOR_W + 1] = {
+static const char cursor_art[FALLBACK_CURSOR_H][FALLBACK_CURSOR_W + 1] = {
     "X...............",
     "XO..............",
     "XOX.............",
@@ -167,9 +189,86 @@ static int text_eq(const char *a, const char *b)
     return *a == 0 && *b == 0;
 }
 
+static uint16_t read_le16(const uint8_t *p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t read_le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static int32_t read_le32s(const uint8_t *p)
+{
+    return (int32_t)read_le32(p);
+}
+
 static int hit_rect(uint32_t x, uint32_t y, int rx, int ry, uint32_t rw, uint32_t rh)
 {
     return (int)x >= rx && (int)y >= ry && (int)x < rx + (int)rw && (int)y < ry + (int)rh;
+}
+
+static int text_ends_with(const char *text, const char *suffix)
+{
+    uint32_t text_len = 0;
+    uint32_t suffix_len = 0;
+    while (text && text[text_len]) {
+        ++text_len;
+    }
+    while (suffix && suffix[suffix_len]) {
+        ++suffix_len;
+    }
+    if (suffix_len == 0 || suffix_len > text_len) {
+        return 0;
+    }
+    return text_eq(text + text_len - suffix_len, suffix);
+}
+
+static void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
+{
+    uint32_t i = 0;
+    uint32_t len = 0;
+    if (!dst || dst_len == 0) {
+        return;
+    }
+    if (text_eq(name, "fileman.elf")) {
+        copy_text(dst, dst_len, "File Manager");
+        return;
+    }
+    if (text_eq(name, "taskmgr.elf")) {
+        copy_text(dst, dst_len, "Task Manager");
+        return;
+    }
+    if (text_eq(name, "uidemo.elf")) {
+        copy_text(dst, dst_len, "UI Components");
+        return;
+    }
+    if (text_eq(name, "osver.elf")) {
+        copy_text(dst, dst_len, "OS Version");
+        return;
+    }
+    while (name && name[len]) {
+        ++len;
+    }
+    if (len > 4 && text_ends_with(name, ".elf")) {
+        len -= 4;
+    }
+    while (name && i < len && i + 1 < dst_len) {
+        dst[i] = name[i] == '_' ? ' ' : name[i];
+        ++i;
+    }
+    if (i == 0) {
+        copy_text(dst, dst_len, name ? name : "Application");
+    } else {
+        dst[i] = 0;
+    }
+    if (dst[0] >= 'a' && dst[0] <= 'z') {
+        dst[0] = (char)(dst[0] - 'a' + 'A');
+    }
 }
 
 static uint32_t taskbar_y(void)
@@ -186,6 +285,40 @@ static uint32_t running_window_count(void)
         }
     }
     return count;
+}
+
+static void start_menu_set_open(uint8_t open)
+{
+    if (start_menu_open == open && !start_menu_animating) {
+        return;
+    }
+    if (open) {
+        start_menu_apps_loaded = 0;
+    }
+    start_menu_open = open;
+    start_menu_opening = open;
+    start_menu_animating = 1;
+    start_menu_anim_start = leonos_uptime_ms();
+    full_redraw_pending = 1;
+}
+
+static void start_menu_toggle(void)
+{
+    start_menu_set_open(start_menu_open ? 0 : 1);
+}
+
+static uint32_t start_menu_progress(void)
+{
+    if (!start_menu_animating) {
+        return start_menu_open ? 100 : 0;
+    }
+    unsigned long elapsed = leonos_uptime_ms() - start_menu_anim_start;
+    if (elapsed >= START_MENU_ANIM_MS) {
+        start_menu_animating = 0;
+        return start_menu_open ? 100 : 0;
+    }
+    uint32_t p = (uint32_t)((elapsed * 100UL) / START_MENU_ANIM_MS);
+    return start_menu_opening ? p : 100u - p;
 }
 
 static uint32_t taskbar_button_width(uint32_t count)
@@ -230,7 +363,7 @@ static struct rect window_rect(uint8_t id)
 
 static struct rect cursor_rect_at(uint32_t x, uint32_t y)
 {
-    return rect_make((int)x, (int)y, CURSOR_W, CURSOR_H);
+    return rect_make((int)x, (int)y, (int)cursor_width, (int)cursor_height);
 }
 
 static struct rect rect_union(struct rect a, struct rect b)
@@ -296,14 +429,114 @@ static void put_pixel(uint32_t x, uint32_t y, uint32_t color)
     leonos_ui_pixel(&ui, x, y, color);
 }
 
+static void put_pixel_i(int x, int y, uint32_t color)
+{
+    if (x < 0 || y < 0 || x >= (int)fb_w() || y >= (int)fb_h()) {
+        return;
+    }
+    leonos_ui_pixel(&ui, (uint32_t)x, (uint32_t)y, color);
+}
+
 static void rect_fill(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color)
 {
     leonos_ui_rect(&ui, x, y, w, h, color);
 }
 
+static void rect_fill_i(int x, int y, int w, int h, uint32_t color)
+{
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    struct rect r = rect_clip(rect_make(x, y, w, h));
+    if (r.w <= 0 || r.h <= 0) {
+        return;
+    }
+    leonos_ui_rect(&ui, (uint32_t)r.x, (uint32_t)r.y, (uint32_t)r.w, (uint32_t)r.h, color);
+}
+
+static void bevel_i(int x, int y, int w, int h, uint32_t fill, uint32_t flags)
+{
+    uint32_t tl = (flags & LEONOS_UI_BUTTON_PRESSED) ? LEONOS_UI_DARK : LEONOS_UI_WHITE;
+    uint32_t br = (flags & LEONOS_UI_BUTTON_PRESSED) ? LEONOS_UI_WHITE : LEONOS_UI_DARK;
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    rect_fill_i(x, y, w, h, fill);
+    rect_fill_i(x, y, w, 1, tl);
+    rect_fill_i(x, y, 1, h, tl);
+    rect_fill_i(x + w - 1, y, 1, h, br);
+    rect_fill_i(x, y + h - 1, w, 1, br);
+    if (w > 2 && h > 2) {
+        rect_fill_i(x + 1, y + 1, w - 2, 1,
+                    (flags & LEONOS_UI_BUTTON_PRESSED) ? LEONOS_UI_BLACK : LEONOS_UI_LIGHT);
+        rect_fill_i(x + 1, y + 1, 1, h - 2,
+                    (flags & LEONOS_UI_BUTTON_PRESSED) ? LEONOS_UI_BLACK : LEONOS_UI_LIGHT);
+        rect_fill_i(x + w - 2, y + 1, 1, h - 2,
+                    (flags & LEONOS_UI_BUTTON_PRESSED) ? LEONOS_UI_LIGHT : LEONOS_UI_DARK);
+        rect_fill_i(x + 1, y + h - 2, w - 2, 1,
+                    (flags & LEONOS_UI_BUTTON_PRESSED) ? LEONOS_UI_LIGHT : LEONOS_UI_DARK);
+    }
+}
+
 static void text_draw(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg)
 {
     leonos_ui_text(&ui, x, y, text, fg, bg);
+}
+
+static void text_draw_i(int x, int y, const char *text, uint32_t fg, uint32_t bg)
+{
+    for (uint32_t i = 0; text && text[i]; ++i) {
+        int gx = x + (int)i * (int)LEONOS_FONT_W;
+        if (gx + (int)LEONOS_FONT_W <= 0 || gx >= (int)fb_w() ||
+            y + (int)LEONOS_FONT_H <= 0 || y >= (int)fb_h()) {
+            continue;
+        }
+        for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
+            for (uint32_t col = 0; col < LEONOS_FONT_W; ++col) {
+                uint32_t color = bg;
+                const uint8_t *glyph = leonos_psf_glyph(text[i]);
+                if (glyph[row] & (uint8_t)(0x80u >> col)) {
+                    color = fg;
+                }
+                put_pixel_i(gx + (int)col, y + (int)row, color);
+            }
+        }
+    }
+}
+
+static void text_draw_transparent_i(int x, int y, const char *text, uint32_t fg)
+{
+    for (uint32_t i = 0; text && text[i]; ++i) {
+        int gx = x + (int)i * (int)LEONOS_FONT_W;
+        if (gx + (int)LEONOS_FONT_W <= 0 || gx >= (int)fb_w() ||
+            y + (int)LEONOS_FONT_H <= 0 || y >= (int)fb_h()) {
+            continue;
+        }
+        const uint8_t *glyph = leonos_psf_glyph(text[i]);
+        for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
+            for (uint32_t col = 0; col < LEONOS_FONT_W; ++col) {
+                if (glyph[row] & (uint8_t)(0x80u >> col)) {
+                    put_pixel_i(gx + (int)col, y + (int)row, fg);
+                }
+            }
+        }
+    }
+}
+
+static void window_button_i(int x, int y, char label, uint32_t flags)
+{
+    char text[2] = {label, 0};
+    int pressed = (flags & LEONOS_UI_BUTTON_PRESSED) != 0;
+    int text_x = x + ((int)LEONOS_UI_WINDOW_BUTTON_W - (int)LEONOS_FONT_W) / 2;
+    int text_y = y + ((int)LEONOS_UI_WINDOW_BUTTON_H - (int)LEONOS_FONT_H) / 2 - 2;
+    if (label != '_') {
+        text_y += 1;
+    }
+    bevel_i(x, y, LEONOS_UI_WINDOW_BUTTON_W, LEONOS_UI_WINDOW_BUTTON_H,
+            LEONOS_UI_GRAY, flags);
+    text_draw_transparent_i(text_x + pressed, text_y + pressed, text,
+                            (flags & LEONOS_UI_BUTTON_DISABLED) ?
+                            LEONOS_UI_DARK : LEONOS_UI_BLACK);
 }
 
 static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
@@ -345,6 +578,97 @@ static void append_hex_fixed(char *buf, uint32_t *pos, uint32_t cap, uint64_t va
     for (int32_t shift = (int32_t)(digits * 4); shift > 0; shift -= 4) {
         append_char(buf, pos, cap, hex[(value >> (uint32_t)(shift - 4)) & 0xf]);
     }
+}
+
+static int load_cursor_bmp(void)
+{
+    static uint8_t bmp[CURSOR_BMP_MAX_BYTES];
+    int fd;
+    struct leonos_stat st;
+    uint32_t len = 0;
+    uint32_t pixel_offset;
+    uint32_t dib_size;
+    int32_t width;
+    int32_t height_signed;
+    uint32_t height;
+    uint16_t planes;
+    uint16_t bpp;
+    uint32_t compression;
+    uint32_t row_stride;
+    int top_down;
+
+    cursor_bitmap_loaded = 0;
+    cursor_width = FALLBACK_CURSOR_W;
+    cursor_height = FALLBACK_CURSOR_H;
+
+    if (stat(CURSOR_BMP_PATH, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
+        st.size < 54 || st.size > sizeof(bmp)) {
+        return 0;
+    }
+    fd = open(CURSOR_BMP_PATH, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    while (len < st.size && len < sizeof(bmp)) {
+        long got = read(fd, bmp + len, (uint32_t)st.size - len);
+        if (got < 0) {
+            close(fd);
+            return 0;
+        }
+        if (got == 0) {
+            break;
+        }
+        len += (uint32_t)got;
+    }
+    close(fd);
+    if (len < 54 || bmp[0] != 'B' || bmp[1] != 'M') {
+        return 0;
+    }
+
+    pixel_offset = read_le32(bmp + 10);
+    dib_size = read_le32(bmp + 14);
+    if (dib_size < 40 || pixel_offset >= len) {
+        return 0;
+    }
+    width = read_le32s(bmp + 18);
+    height_signed = read_le32s(bmp + 22);
+    planes = read_le16(bmp + 26);
+    bpp = read_le16(bmp + 28);
+    compression = read_le32(bmp + 30);
+    if (width <= 0 || height_signed == 0 || planes != 1 ||
+        (bpp != 24 && bpp != 32) || compression != 0) {
+        return 0;
+    }
+    top_down = height_signed < 0;
+    height = top_down ? (uint32_t)(-height_signed) : (uint32_t)height_signed;
+    if ((uint32_t)width > CURSOR_MAX_W || height > CURSOR_MAX_H) {
+        return 0;
+    }
+    row_stride = ((((uint32_t)width * bpp) + 31u) / 32u) * 4u;
+    if (pixel_offset + row_stride * height > len) {
+        return 0;
+    }
+    for (uint32_t y = 0; y < height; ++y) {
+        uint32_t src_y = top_down ? y : height - 1u - y;
+        const uint8_t *row = bmp + pixel_offset + src_y * row_stride;
+        for (uint32_t x = 0; x < (uint32_t)width; ++x) {
+            const uint8_t *px = row + x * (bpp / 8u);
+            uint32_t b = px[0];
+            uint32_t g = px[1];
+            uint32_t r = px[2];
+            uint32_t a = bpp == 32 ? px[3] : 0xffu;
+            if (bpp == 24 && r == 0xffu && g == 0 && b == 0xffu) {
+                a = 0;
+            }
+            cursor_pixels[y * CURSOR_MAX_W + x] = (a << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+    cursor_width = (uint32_t)width;
+    cursor_height = height;
+    cursor_bitmap_loaded = 1;
+    printf("[desktop.elf] loaded cursor bmp %s %dx%d bpp=%d\n",
+           CURSOR_BMP_PATH, (int)cursor_width, (int)cursor_height, (int)bpp);
+    return 1;
 }
 
 static char lower_ascii(char ch)
@@ -449,7 +773,12 @@ static void refresh_task_snapshot(void)
     last_task_refresh = leonos_uptime_ms();
 }
 
-static void clamp_window(struct desktop_window *w)
+static uint32_t min_u32(uint32_t a, uint32_t b)
+{
+    return a < b ? a : b;
+}
+
+static void clamp_window_size(struct desktop_window *w)
 {
     if (w->width < MIN_W) {
         w->width = MIN_W;
@@ -457,33 +786,53 @@ static void clamp_window(struct desktop_window *w)
     if (w->height < MIN_H) {
         w->height = MIN_H;
     }
-    if (w->width > fb_w()) {
-        w->width = fb_w();
+    uint32_t max_w = fb_w() ? fb_w() * 2 : MAX_FB_W;
+    uint32_t max_h = taskbar_y() ? taskbar_y() * 2 : fb_h() * 2;
+    if (max_w < MIN_W) {
+        max_w = MIN_W;
     }
-    uint32_t max_h = taskbar_y() > 8 ? taskbar_y() - 8 : fb_h();
+    if (max_h < MIN_H) {
+        max_h = MIN_H;
+    }
+    if (w->width > max_w) {
+        w->width = max_w;
+    }
     if (w->height > max_h) {
         w->height = max_h;
     }
-    int max_x = (int)fb_w() - (int)w->width;
-    int max_y = (int)taskbar_y() - (int)w->height;
-    if (max_x < 0) {
-        max_x = 0;
+}
+
+static void clamp_window_position_recoverable(struct desktop_window *w)
+{
+    uint32_t visible_w = min_u32(w->width, WINDOW_RECOVERABLE_W);
+    uint32_t visible_title_h = min_u32(TITLEBAR_H, WINDOW_RECOVERABLE_TITLEBAR_H);
+    int min_x = -(int)w->width + (int)visible_w;
+    int max_x = (int)fb_w() - (int)visible_w;
+    int min_y = -(int)TITLEBAR_H + (int)visible_title_h;
+    int max_y = (int)taskbar_y() - (int)visible_title_h;
+
+    if (max_x < min_x) {
+        max_x = min_x;
     }
-    if (max_y < 0) {
-        max_y = 0;
+    if (max_y < min_y) {
+        max_y = min_y;
     }
-    if (w->x < 0) {
-        w->x = 0;
-    }
-    if (w->y < 0) {
-        w->y = 0;
-    }
-    if (w->x > max_x) {
+    if (w->x < min_x) {
+        w->x = min_x;
+    } else if (w->x > max_x) {
         w->x = max_x;
     }
-    if (w->y > max_y) {
+    if (w->y < min_y) {
+        w->y = min_y;
+    } else if (w->y > max_y) {
         w->y = max_y;
     }
+}
+
+static void clamp_window(struct desktop_window *w)
+{
+    clamp_window_size(w);
+    clamp_window_position_recoverable(w);
 }
 
 static void bring_to_front(uint8_t id)
@@ -651,30 +1000,41 @@ static void fetch_window_surface(uint8_t slot)
     }
 }
 
-static void draw_app_surface(uint8_t id, uint32_t body_x, uint32_t body_y,
-                             uint32_t body_w, uint32_t body_h)
+static void draw_app_surface_i(uint8_t id, int body_x, int body_y,
+                               uint32_t body_w, uint32_t body_h)
 {
-    struct desktop_window *w = &windows[id];
-    uint32_t copy_w;
-    uint32_t copy_h;
+    struct rect clip;
     uint32_t out_w = 0;
     uint32_t out_h = 0;
-    uint32_t cap_w = body_w < APP_CLIENT_MAX_W ? body_w : APP_CLIENT_MAX_W;
-    uint32_t cap_h = body_h < APP_CLIENT_MAX_H ? body_h : APP_CLIENT_MAX_H;
-    if (!w->window_id || cap_w == 0 || cap_h == 0 ||
-        leonos_gui_fetch_window(w->window_id, cap_w, cap_h, APP_CLIENT_MAX_W,
-                                app_client_scratch, &out_w, &out_h) <= 0) {
-        text_draw(body_x + 16, body_y + 18, w->app_text ? w->app_text : "Application window",
-                  LEONOS_UI_BLACK, w->body_color);
+    if (!windows[id].window_id) {
         return;
     }
-    w->client_width = out_w;
-    w->client_height = out_h;
-    copy_w = out_w < body_w ? out_w : body_w;
-    copy_h = out_h < body_h ? out_h : body_h;
-    for (uint32_t yy = 0; yy < copy_h; ++yy) {
-        for (uint32_t xx = 0; xx < copy_w; ++xx) {
-            put_pixel(body_x + xx, body_y + yy, app_client_scratch[(uint64_t)yy * APP_CLIENT_MAX_W + xx]);
+    if (body_w > APP_CLIENT_MAX_W) {
+        body_w = APP_CLIENT_MAX_W;
+    }
+    if (body_h > APP_CLIENT_MAX_H) {
+        body_h = APP_CLIENT_MAX_H;
+    }
+    if (body_w == 0 || body_h == 0) {
+        return;
+    }
+    if (leonos_gui_fetch_window(windows[id].window_id, body_w, body_h,
+                                APP_CLIENT_MAX_W,
+                                app_client_scratch, &out_w, &out_h) <= 0) {
+        text_draw_i(body_x + 16, body_y + 18,
+                    windows[id].app_text ? windows[id].app_text : "Application window",
+                    LEONOS_UI_BLACK, windows[id].body_color);
+        return;
+    }
+    windows[id].client_width = out_w;
+    windows[id].client_height = out_h;
+    clip = rect_clip(rect_make(body_x, body_y, (int)out_w, (int)out_h));
+    for (int yy = 0; yy < clip.h; ++yy) {
+        uint32_t src_y = (uint32_t)(clip.y - body_y + yy);
+        for (int xx = 0; xx < clip.w; ++xx) {
+            uint32_t src_x = (uint32_t)(clip.x - body_x + xx);
+            put_pixel((uint32_t)(clip.x + xx), (uint32_t)(clip.y + yy),
+                      app_client_scratch[(uint64_t)src_y * APP_CLIENT_MAX_W + src_x]);
         }
     }
 }
@@ -763,20 +1123,48 @@ static void draw_window(uint8_t id)
         return;
     }
 
-    struct leonos_ui_window_parts parts;
     uint32_t window_flags = active_window == id ? LEONOS_UI_WINDOW_ACTIVE : 0;
     if (!window_allows_resize(w)) {
         window_flags |= LEONOS_UI_WINDOW_NO_RESIZE;
     }
-    leonos_ui_window_ex(&ui, (uint32_t)w->x, (uint32_t)w->y, w->width, w->height, w->title,
-                        w->maximized ? 'r' : 'M',
-                        window_flags, &parts);
+    uint32_t title_color = (window_flags & LEONOS_UI_WINDOW_ACTIVE) ?
+        LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_INACTIVE_TITLE;
+    rect_fill_i(w->x, w->y, (int)w->width, (int)w->height, LEONOS_UI_GRAY);
+    rect_fill_i(w->x, w->y, (int)w->width, 1, LEONOS_UI_WHITE);
+    rect_fill_i(w->x, w->y, 1, (int)w->height, LEONOS_UI_WHITE);
+    rect_fill_i(w->x + (int)w->width - 1, w->y, 1, (int)w->height, LEONOS_UI_BLACK);
+    rect_fill_i(w->x, w->y + (int)w->height - 1, (int)w->width, 1, LEONOS_UI_BLACK);
+    rect_fill_i(w->x + 1, w->y + 1, (int)w->width - 2, 1, LEONOS_UI_LIGHT);
+    rect_fill_i(w->x + 1, w->y + 1, 1, (int)w->height - 2, LEONOS_UI_LIGHT);
+    rect_fill_i(w->x + (int)w->width - 2, w->y + 1, 1, (int)w->height - 2, LEONOS_UI_DARK);
+    rect_fill_i(w->x + 1, w->y + (int)w->height - 2, (int)w->width - 2, 1, LEONOS_UI_DARK);
+    rect_fill_i(w->x + 4, w->y + 4, (int)w->width - 8, TITLEBAR_H, title_color);
+    text_draw_i(w->x + 10, w->y + 9, w->title, LEONOS_UI_WHITE, title_color);
+    int bx_i = w->x + (int)w->width - 64;
+    int by_i = w->y + 6;
+    window_button_i(bx_i, by_i, '_', 0);
+    window_button_i(bx_i + 20, by_i, w->maximized ? 'r' : 'M',
+                    window_allows_resize(w) ? 0 : LEONOS_UI_BUTTON_DISABLED);
+    window_button_i(bx_i + 40, by_i, 'X', 0);
 
-    uint32_t body_x = (uint32_t)parts.body.x;
-    uint32_t body_y = (uint32_t)parts.body.y;
-    uint32_t body_w = parts.body.w;
-    uint32_t body_h = parts.body.h;
-    leonos_ui_inset(&ui, body_x, body_y, body_w, body_h, w->body_color);
+    int body_x_i = w->x + 8;
+    int body_y_i = w->y + TITLEBAR_H + 10;
+    uint32_t body_w = w->width > 16 ? w->width - 16 : 0;
+    uint32_t body_h = w->height > TITLEBAR_H + 18 ? w->height - TITLEBAR_H - 18 : 0;
+    rect_fill_i(body_x_i, body_y_i, (int)body_w, (int)body_h, w->body_color);
+    rect_fill_i(body_x_i, body_y_i, (int)body_w, 1, LEONOS_UI_DARK);
+    rect_fill_i(body_x_i, body_y_i, 1, (int)body_h, LEONOS_UI_DARK);
+    rect_fill_i(body_x_i + (int)body_w - 1, body_y_i, 1, (int)body_h, LEONOS_UI_WHITE);
+    rect_fill_i(body_x_i, body_y_i + (int)body_h - 1, (int)body_w, 1, LEONOS_UI_WHITE);
+    if (w->window_id) {
+        draw_app_surface_i(id, body_x_i, body_y_i, body_w, body_h);
+        goto draw_resize_grip;
+    }
+    if (body_x_i < 0 || body_y_i < 0) {
+        goto draw_resize_grip;
+    }
+    uint32_t body_x = (uint32_t)body_x_i;
+    uint32_t body_y = (uint32_t)body_y_i;
 
     if (id == 0) {
         text_draw(body_x + 16, body_y + 18, "Ring-3 desktop shadow blit", 0x00000000, w->body_color);
@@ -814,8 +1202,6 @@ static void draw_window(uint8_t id)
             leonos_ui_list_row(&ui, body_x + 8, body_y + 60 + i * (LEONOS_FONT_H + 4),
                                body_w > 16 ? body_w - 16 : 0, line, 0);
         }
-    } else if (w->window_id) {
-        draw_app_surface(id, body_x, body_y, body_w, body_h);
     } else if (window_is_ui_demo(w)) {
         draw_ui_demo_gallery(body_x, body_y, body_w, body_h, w->body_color);
     } else {
@@ -824,11 +1210,14 @@ static void draw_window(uint8_t id)
         text_draw(body_x + 16, body_y + 66, "App exited, desktop owns surface", 0x00000000, w->body_color);
     }
 
+draw_resize_grip:
     if (window_allows_resize(w) && !w->maximized) {
-        rect_fill((uint32_t)w->x + w->width - 13, (uint32_t)w->y + w->height - 13, 9, 1, 0x00808080);
-        rect_fill((uint32_t)w->x + w->width - 9, (uint32_t)w->y + w->height - 17, 1, 9, 0x00808080);
-        rect_fill((uint32_t)w->x + w->width - 10, (uint32_t)w->y + w->height - 10, 6, 1, 0x00000000);
-        rect_fill((uint32_t)w->x + w->width - 6, (uint32_t)w->y + w->height - 14, 1, 6, 0x00000000);
+        int grip_x = w->x + (int)w->width;
+        int grip_y = w->y + (int)w->height;
+        rect_fill_i(grip_x - 13, grip_y - 13, 9, 1, 0x00808080);
+        rect_fill_i(grip_x - 9, grip_y - 17, 1, 9, 0x00808080);
+        rect_fill_i(grip_x - 10, grip_y - 10, 6, 1, 0x00000000);
+        rect_fill_i(grip_x - 6, grip_y - 14, 1, 6, 0x00000000);
     }
 }
 
@@ -942,38 +1331,191 @@ static void draw_alt_tab_overlay(void)
     }
 }
 
-static void draw_start_menu(void)
+enum start_action_type {
+    START_ACTION_RESTORE = 1,
+    START_ACTION_SPAWN = 2,
+    START_ACTION_SEPARATOR = 3,
+};
+
+struct start_menu_item {
+    const char *label;
+    enum start_action_type type;
+    uint8_t window_id;
+    const char *path;
+};
+
+struct start_menu_layout {
+    uint32_t x;
+    uint32_t y;
+    uint32_t w;
+    uint32_t full_h;
+    uint32_t visible_h;
+    uint32_t visible_start;
+};
+
+static int start_menu_is_hidden_app(const char *name)
 {
-    if (!start_menu_open) {
+    return text_eq(name, "init.elf") ||
+           text_eq(name, "desktop.elf") ||
+           text_eq(name, "shell.elf");
+}
+
+static void start_menu_load_apps(void)
+{
+    struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
+    uint32_t count = 0;
+    start_menu_app_count = 0;
+    start_menu_apps_loaded = 1;
+    if (leonos_list_dir("0:/userland", entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
         return;
     }
-    uint32_t y = taskbar_y();
-    uint32_t menu_h = START_MENU_H;
-    uint32_t menu_y = y > menu_h ? y - menu_h : 0;
-    leonos_ui_menu(&ui, 6, menu_y, 226, menu_h);
-    leonos_ui_menu_item(&ui, 40, menu_y + 10, 182, "Desktop Server", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 36, 182, "File Manager", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 62, 182, "Settings", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 88, 182, "Task Manager", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 114, 182, "", LEONOS_UI_MENU_SEPARATOR);
-    leonos_ui_menu_item(&ui, 40, menu_y + 122, 182, "Programs > Hello", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 148, 182, "UI Components", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 174, 182, "Terminal", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 200, 182, "Notepad", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 226, 182, "Calculator", 0);
-    leonos_ui_menu_item(&ui, 40, menu_y + 252, 182, "Run...", 0);
+    for (uint32_t i = 0; i < count && start_menu_app_count < START_MENU_MAX_APPS; ++i) {
+        if (entries[i].type != LEONOS_FS_TYPE_FILE ||
+            !text_ends_with(entries[i].name, ".elf") ||
+            start_menu_is_hidden_app(entries[i].name)) {
+            continue;
+        }
+        copy_app_label_from_elf(start_menu_app_labels[start_menu_app_count],
+                                sizeof(start_menu_app_labels[start_menu_app_count]),
+                                entries[i].name);
+        copy_text(start_menu_app_paths[start_menu_app_count],
+                  sizeof(start_menu_app_paths[start_menu_app_count]),
+                  "0:/userland/");
+        uint32_t pos = 0;
+        while (start_menu_app_paths[start_menu_app_count][pos]) {
+            ++pos;
+        }
+        append_text(start_menu_app_paths[start_menu_app_count], &pos,
+                    sizeof(start_menu_app_paths[start_menu_app_count]),
+                    entries[i].name);
+        ++start_menu_app_count;
+    }
+}
+
+static void start_menu_ensure_apps(void)
+{
+    if (!start_menu_apps_loaded) {
+        start_menu_load_apps();
+    }
+}
+
+static uint32_t build_start_menu_items(struct start_menu_item *items, uint32_t cap)
+{
+    uint32_t count = 0;
+#define ADD_ITEM(label_, type_, win_, path_) do { \
+        if (count < cap) { \
+            items[count++] = (struct start_menu_item){label_, type_, win_, path_}; \
+        } \
+    } while (0)
+    ADD_ITEM("Desktop Server", START_ACTION_RESTORE, 0, 0);
+    ADD_ITEM("Settings", START_ACTION_RESTORE, 2, 0);
+    ADD_ITEM("", START_ACTION_SEPARATOR, 0, 0);
+    start_menu_ensure_apps();
+    for (uint32_t i = 0; i < start_menu_app_count; ++i) {
+        ADD_ITEM(start_menu_app_labels[i], START_ACTION_SPAWN, 0, start_menu_app_paths[i]);
+    }
+    uint32_t before_minimized = count;
+    for (int zi = MAX_WINDOWS - 1; zi >= 0; --zi) {
+        uint8_t id = z_order[zi];
+        if (windows[id].visible && windows[id].minimized && count < cap) {
+            if (count == before_minimized) {
+                ADD_ITEM("", START_ACTION_SEPARATOR, 0, 0);
+            }
+            items[count++] = (struct start_menu_item){
+                windows[id].title ? windows[id].title : "Window",
+                START_ACTION_RESTORE,
+                id,
+                0,
+            };
+        }
+    }
+#undef ADD_ITEM
+    return count;
+}
+
+static uint32_t start_menu_height_for_count(uint32_t count)
+{
+    uint32_t h = 16 + count * START_MENU_ITEM_H;
+    if (h > START_MENU_MAX_H) {
+        h = START_MENU_MAX_H;
+    }
+    if (h < 80) {
+        h = 80;
+    }
+    return h;
+}
+
+static struct start_menu_layout start_menu_layout_for_count(uint32_t count)
+{
+    struct start_menu_layout layout;
+    uint32_t progress = start_menu_progress();
+    layout.x = 6;
+    layout.w = START_MENU_W;
+    layout.full_h = start_menu_height_for_count(count);
+    layout.visible_h = (layout.full_h * progress + 99) / 100;
+    if (layout.visible_h < 12 && (start_menu_open || start_menu_animating)) {
+        layout.visible_h = 12;
+    }
+    layout.y = taskbar_y() > layout.visible_h ? taskbar_y() - layout.visible_h : 0;
+    layout.visible_start = layout.full_h > layout.visible_h ? layout.full_h - layout.visible_h : 0;
+    return layout;
+}
+
+static void draw_start_menu(void)
+{
+    if (!start_menu_open && !start_menu_animating) {
+        return;
+    }
+    struct start_menu_item items[24];
+    uint32_t count = build_start_menu_items(items, 24);
+    struct start_menu_layout layout = start_menu_layout_for_count(count);
+    leonos_ui_menu(&ui, layout.x, layout.y, layout.w, layout.visible_h);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t item_y_full = 8 + i * START_MENU_ITEM_H;
+        if (item_y_full + START_MENU_ITEM_H <= layout.visible_start) {
+            continue;
+        }
+        int item_y = (int)layout.y + (int)item_y_full - (int)layout.visible_start;
+        if (item_y < (int)layout.y + 4 ||
+            item_y + START_MENU_ITEM_H > (int)layout.y + (int)layout.visible_h) {
+            continue;
+        }
+        if (items[i].type == START_ACTION_SEPARATOR) {
+            leonos_ui_menu_item(&ui, layout.x + 34, (uint32_t)item_y + 8,
+                                layout.w - 52,
+                                "", LEONOS_UI_MENU_SEPARATOR);
+        } else {
+            leonos_ui_menu_item(&ui, layout.x + 34, (uint32_t)item_y,
+                                layout.w - 52,
+                                items[i].label, 0);
+        }
+    }
+    if (start_menu_animating) {
+        full_redraw_pending = 1;
+    }
 }
 
 static void draw_cursor_shape(uint32_t x, uint32_t y)
 {
-    if (x + CURSOR_W > fb_w()) {
-        x = fb_w() > CURSOR_W ? fb_w() - CURSOR_W : 0;
+    if (x + cursor_width > fb_w()) {
+        x = fb_w() > cursor_width ? fb_w() - cursor_width : 0;
     }
-    if (y + CURSOR_H > fb_h()) {
-        y = fb_h() > CURSOR_H ? fb_h() - CURSOR_H : 0;
+    if (y + cursor_height > fb_h()) {
+        y = fb_h() > cursor_height ? fb_h() - cursor_height : 0;
     }
-    for (uint32_t row = 0; row < CURSOR_H; ++row) {
-        for (uint32_t col = 0; col < CURSOR_W; ++col) {
+    if (cursor_bitmap_loaded) {
+        for (uint32_t row = 0; row < cursor_height; ++row) {
+            for (uint32_t col = 0; col < cursor_width; ++col) {
+                uint32_t px = cursor_pixels[row * CURSOR_MAX_W + col];
+                if ((px >> 24) != 0) {
+                    put_pixel(x + col, y + row, px & 0x00ffffffu);
+                }
+            }
+        }
+        return;
+    }
+    for (uint32_t row = 0; row < FALLBACK_CURSOR_H; ++row) {
+        for (uint32_t col = 0; col < FALLBACK_CURSOR_W; ++col) {
             char cell = cursor_art[row][col];
             if (cell == 'X') {
                 put_pixel(x + col, y + row, 0x00000000);
@@ -1128,8 +1670,7 @@ static int handle_global_key(uint8_t keycode, uint8_t pressed)
         }
         if (!pressed && win_left_down && !win_right_down && !win_combo_used &&
             leonos_uptime_ms() - win_down_ms <= WIN_TAP_MAX_MS) {
-            start_menu_open = !start_menu_open;
-            full_redraw_pending = 1;
+            start_menu_toggle();
         }
         win_left_down = pressed;
         if (!win_left_down && !win_right_down) {
@@ -1144,8 +1685,7 @@ static int handle_global_key(uint8_t keycode, uint8_t pressed)
         }
         if (!pressed && win_right_down && !win_left_down && !win_combo_used &&
             leonos_uptime_ms() - win_down_ms <= WIN_TAP_MAX_MS) {
-            start_menu_open = !start_menu_open;
-            full_redraw_pending = 1;
+            start_menu_toggle();
         }
         win_right_down = pressed;
         if (!win_left_down && !win_right_down) {
@@ -1165,7 +1705,7 @@ static int handle_global_key(uint8_t keycode, uint8_t pressed)
         win_combo_used = 1;
         ch = lower_ascii(ch);
         if (ch == 'r') {
-            start_menu_open = 0;
+            start_menu_set_open(0);
             spawn_program_path("0:/userland/run.elf");
             full_redraw_pending = 1;
             return 1;
@@ -1335,53 +1875,49 @@ static void handle_start_click(uint32_t x, uint32_t y)
 {
     uint32_t tb_y = taskbar_y();
     if (hit_rect(x, y, 6, (int)tb_y + 5, 86, 24)) {
-        start_menu_open = !start_menu_open;
-        full_redraw_pending = 1;
+        start_menu_toggle();
         return;
     }
-    if (!start_menu_open) {
+    if (!start_menu_open && !start_menu_animating) {
         return;
     }
-    uint32_t menu_h = START_MENU_H;
-    uint32_t menu_y = tb_y > menu_h ? tb_y - menu_h : 0;
-    if (!hit_rect(x, y, 6, (int)menu_y, 226, menu_h)) {
-        start_menu_open = 0;
-        full_redraw_pending = 1;
+    struct start_menu_item items[24];
+    uint32_t count = build_start_menu_items(items, 24);
+    struct start_menu_layout layout = start_menu_layout_for_count(count);
+    if (!hit_rect(x, y, (int)layout.x, (int)layout.y, layout.w, layout.visible_h)) {
+        start_menu_set_open(0);
         return;
     }
-    if (hit_rect(x, y, 40, (int)menu_y + 8, 166, 24)) {
-        restore_window(0);
-    } else if (hit_rect(x, y, 40, (int)menu_y + 34, 166, 24)) {
-        spawn_program_path("0:/userland/fileman.elf");
-    } else if (hit_rect(x, y, 40, (int)menu_y + 60, 166, 24)) {
-        restore_window(2);
-    } else if (hit_rect(x, y, 40, (int)menu_y + 86, 166, 24)) {
-        spawn_program_path("0:/userland/taskmgr.elf");
-    } else if (hit_rect(x, y, 40, (int)menu_y + 120, 182, 24)) {
-        spawn_program_path("0:/userland/hello.elf");
-    } else if (hit_rect(x, y, 40, (int)menu_y + 146, 182, 24)) {
-        spawn_program_path("0:/userland/uidemo.elf");
-    } else if (hit_rect(x, y, 40, (int)menu_y + 172, 182, 24)) {
-        spawn_program_path("0:/userland/terminal.elf");
-    } else if (hit_rect(x, y, 40, (int)menu_y + 198, 182, 24)) {
-        spawn_program_path("0:/userland/notepad.elf");
-    } else if (hit_rect(x, y, 40, (int)menu_y + 224, 182, 24)) {
-        spawn_program_path("0:/userland/calc.elf");
-    } else if (hit_rect(x, y, 40, (int)menu_y + 250, 182, 24)) {
-        spawn_program_path("0:/userland/run.elf");
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t item_y_full = 8 + i * START_MENU_ITEM_H;
+        if (item_y_full + START_MENU_ITEM_H <= layout.visible_start) {
+            continue;
+        }
+        int item_y = (int)layout.y + (int)item_y_full - (int)layout.visible_start;
+        if (item_y < (int)layout.y + 4 ||
+            item_y + START_MENU_ITEM_H > (int)layout.y + (int)layout.visible_h ||
+            !hit_rect(x, y, (int)layout.x + 34, item_y, layout.w - 52, START_MENU_ITEM_H)) {
+            continue;
+        }
+        if (items[i].type == START_ACTION_RESTORE) {
+            restore_window(items[i].window_id);
+        } else if (items[i].type == START_ACTION_SPAWN) {
+            spawn_program_path(items[i].path);
+        }
+        break;
     }
-    start_menu_open = 0;
-    full_redraw_pending = 1;
+    start_menu_set_open(0);
 }
 
 static int hit_start_menu_area(uint32_t x, uint32_t y)
 {
-    if (!start_menu_open) {
+    if (!start_menu_open && !start_menu_animating) {
         return 0;
     }
-    uint32_t tb_y = taskbar_y();
-    uint32_t menu_y = tb_y > START_MENU_H ? tb_y - START_MENU_H : 0;
-    return hit_rect(x, y, 6, (int)menu_y, 226, START_MENU_H);
+    struct start_menu_item items[24];
+    uint32_t count = build_start_menu_items(items, 24);
+    struct start_menu_layout layout = start_menu_layout_for_count(count);
+    return hit_rect(x, y, (int)layout.x, (int)layout.y, layout.w, layout.visible_h);
 }
 
 static int handle_taskbar_click(uint32_t x, uint32_t y)
@@ -1405,13 +1941,13 @@ static int handle_taskbar_click(uint32_t x, uint32_t y)
                 } else {
                     restore_window(i);
                 }
-                start_menu_open = 0;
+                start_menu_set_open(0);
                 return 1;
             }
             bx += button_w;
         }
     }
-    start_menu_open = 0;
+    start_menu_set_open(0);
     return 1;
 }
 
@@ -1501,7 +2037,7 @@ static void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
 
     if (left && !was_left) {
         if (handle_taskbar_click(x, y)) {
-            int menu_top = (int)taskbar_y() - START_MENU_H - 8;
+            int menu_top = (int)taskbar_y() - START_MENU_MAX_H - 8;
             if (menu_top < 0) {
                 menu_top = 0;
             }
@@ -1512,15 +2048,15 @@ static void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                 struct rect old_rect = window_rect((uint8_t)id);
                 struct desktop_window *w = &windows[id];
                 bring_to_front((uint8_t)id);
-                start_menu_open = 0;
+                start_menu_set_open(0);
                 dirty = rect_union(dirty, rect_pad(old_rect, 4));
-                uint32_t bx = (uint32_t)w->x + w->width - 64;
-                uint32_t by = (uint32_t)w->y + 7;
-                if (hit_rect(x, y, (int)bx, (int)by, 18, 20)) {
+                int bx = w->x + (int)w->width - 64;
+                int by = w->y + 7;
+                if (hit_rect(x, y, bx, by, 18, 20)) {
                     minimize_window((uint8_t)id);
-                } else if (hit_rect(x, y, (int)bx + 20, (int)by, 18, 20) && window_allows_resize(w)) {
+                } else if (hit_rect(x, y, bx + 20, by, 18, 20) && window_allows_resize(w)) {
                     toggle_maximize((uint8_t)id);
-                } else if (hit_rect(x, y, (int)bx + 40, (int)by, 18, 20)) {
+                } else if (hit_rect(x, y, bx + 40, by, 18, 20)) {
                     request_close_window((uint8_t)id);
                 } else if (window_allows_resize(w) &&
                            hit_rect(x, y, w->x + (int)w->width - 18, w->y + (int)w->height - 18, 18, 18) &&
@@ -1546,9 +2082,9 @@ static void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                 }
                 dirty = rect_union(dirty, rect_pad(window_rect((uint8_t)id), 4));
                 dirty = rect_union(dirty, rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));
-            } else if (start_menu_open) {
-                start_menu_open = 0;
-                int menu_top = (int)taskbar_y() - START_MENU_H - 8;
+            } else if (start_menu_open || start_menu_animating) {
+                start_menu_set_open(0);
+                int menu_top = (int)taskbar_y() - START_MENU_MAX_H - 8;
                 if (menu_top < 0) {
                     menu_top = 0;
                 }
@@ -1612,6 +2148,7 @@ static void init_desktop(void)
     cursor_x = 320;
     cursor_y = 240;
     cursor_visible = 1;
+    load_cursor_bmp();
     full_redraw_pending = 1;
     refresh_task_snapshot();
     redraw_all();

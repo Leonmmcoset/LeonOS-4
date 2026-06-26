@@ -1,0 +1,8 @@
+--cfg=config_arch_x86_64
+--cfg=config_fat32_write
+--cfg=config_framebuffer_desktop
+--cfg=config_gui_window_server
+--cfg=config_kernel_rust_osmlayer
+--cfg=config_serial_log
+--cfg=config_userland_ring3
+--cfg=config_vga_text_fallback

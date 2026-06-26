@@ -1,12 +1,8 @@
-ENTRY(kernel_entry)
+ENTRY(osmlayer_module_init)
 
 SECTIONS
 {
-    . = 16M;
-
-    .multiboot ALIGN(8) : {
-        KEEP(*(.multiboot))
-    }
+    . = 24M;
 
     .text ALIGN(4K) : {
         *(.text .text.*)

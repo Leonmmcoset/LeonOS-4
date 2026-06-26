@@ -21,6 +21,7 @@
 #define LEONOS_GUI_IOCTL_WINDOW_EVENT 0x4c475745UL
 #define LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT 0x4c475753UL
 #define LEONOS_GUI_IOCTL_DESTROY_WINDOW 0x4c475744UL
+#define LEONOS_GUI_IOCTL_TASK_KILL 0x4c544b49UL
 
 #define LEONOS_TASK_NAME_LEN 32U
 #define LEONOS_TASK_MAX 64U
@@ -198,5 +199,6 @@ int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_
 int leonos_gui_poll_app_event(struct leonos_gui_app_event *event);
 int leonos_gui_send_app_event(const struct leonos_gui_app_event *event);
 int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint64_t *tick);
+int leonos_task_kill(uint32_t pid);
 
 #endif

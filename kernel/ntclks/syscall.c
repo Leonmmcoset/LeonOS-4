@@ -10,9 +10,11 @@
 #include <ntclks/time.h>
 #include <ntclks/usercopy.h>
 #include <ntclks/userland.h>
+#include <ntclks/version.h>
 
 #include <leonos/fs.h>
 #include <leonos/pty.h>
+#include <leonos/system.h>
 
 #define LEONOS_GUI_IOCTL_EVENT 0x4c455654ULL
 #define LEONOS_GUI_IOCTL_UPTIME_MS 0x4c555054ULL
@@ -30,6 +32,7 @@
 #define LEONOS_GUI_IOCTL_WINDOW_EVENT 0x4c475745ULL
 #define LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT 0x4c475753ULL
 #define LEONOS_GUI_IOCTL_DESTROY_WINDOW 0x4c475744ULL
+#define LEONOS_GUI_IOCTL_TASK_KILL 0x4c544b49ULL
 
 struct task_snapshot_user {
     uint32_t capacity;
@@ -900,6 +903,19 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return (int64_t)snap->count;
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_TASK_KILL) {
+        int ret = sched_kill_user_task((uint32_t)a2, 137);
+        if (ret == -2) {
+            return -LEONOS_ENOENT;
+        }
+        if (ret < 0) {
+            return -LEONOS_EINVAL;
+        }
+        gui_ipc_destroy_owner((uint32_t)a2);
+        pty_process_exit((uint32_t)a2);
+        return 0;
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_LIST_DIR) {
         char path[LEONOS_FS_PATH_LEN];
         size_t len;
@@ -938,6 +954,14 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         int ret = userland_list_dir(path, query->entries, query->capacity, &count);
         query->count = count;
         return ret;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_SYSTEM_INFO) {
+        if (!user_range_ok(a2, sizeof(struct leonos_system_info))) {
+            return -LEONOS_EFAULT;
+        }
+        *(struct leonos_system_info *)(uintptr_t)a2 = *ntclks_system_info();
+        return 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_CREATE) {

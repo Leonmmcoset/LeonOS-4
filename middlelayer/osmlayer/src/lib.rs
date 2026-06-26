@@ -32,7 +32,11 @@ pub struct BootInfo {
     mmap_addr: u64,
     mmap_entry_size: u32,
     mmap_entry_count: u32,
+    efi_mmap_addr: u64,
+    efi_mmap_entry_size: u32,
+    efi_mmap_entry_count: u32,
     rsdp_addr: u64,
+    efi_system_table: u64,
     modules: [BootModule; 16],
     module_count: u32,
 }
@@ -51,8 +55,62 @@ pub struct OsmlayerBootSummary {
     root_drive: u32,
 }
 
+#[repr(C)]
+pub struct LeonosBootModuleInfo {
+    start: u64,
+    end: u64,
+    entry: u64,
+    path: *const c_char,
+}
+
+#[repr(C)]
+pub struct LeonosBootHandoff {
+    magic: u32,
+    version: u32,
+    multiboot_magic: u32,
+    reserved: u32,
+    multiboot_info: u64,
+    cmdline: *const c_char,
+    bootloader: *const c_char,
+    framebuffer_addr: u64,
+    framebuffer_width: u32,
+    framebuffer_height: u32,
+    framebuffer_pitch: u32,
+    framebuffer_bpp: u8,
+    reserved_fb: [u8; 7],
+    mmap_addr: u64,
+    mmap_entry_size: u32,
+    mmap_entry_count: u32,
+    efi_mmap_addr: u64,
+    efi_mmap_entry_size: u32,
+    efi_mmap_entry_count: u32,
+    rsdp_addr: u64,
+    efi_system_table: u64,
+    kernel: LeonosBootModuleInfo,
+    middlelayer: LeonosBootModuleInfo,
+    middlelayer_api: u64,
+}
+
+#[repr(C)]
+pub struct LeonosKernelServices {
+    version: u32,
+    reserved: u32,
+    log: Option<extern "C" fn(*const c_char)>,
+    log_len: Option<extern "C" fn(*const c_char, u64)>,
+}
+
+#[repr(C)]
+pub struct LeonosMiddlelayerApi {
+    version: u32,
+    reserved: u32,
+    init: extern "C" fn(*const BootInfo) -> OsmlayerBootSummary,
+    syscall: extern "C" fn(*const SyscallFrame) -> i64,
+    selftest: extern "C" fn() -> u32,
+}
+
 const ENOSYS: i64 = 38;
 const EINVAL: i64 = 22;
+const LEONOS_MIDDLELAYER_API_VERSION: u32 = 1;
 
 static mut SUMMARY: OsmlayerBootSummary = OsmlayerBootSummary {
     abi_version: 1,
@@ -61,14 +119,37 @@ static mut SUMMARY: OsmlayerBootSummary = OsmlayerBootSummary {
     root_drive: 0,
 };
 
-unsafe extern "C" {
-    fn console_printf(fmt: *const c_char, ...);
-}
+static mut SERVICES: *const LeonosKernelServices = core::ptr::null();
+
+static API: LeonosMiddlelayerApi = LeonosMiddlelayerApi {
+    version: LEONOS_MIDDLELAYER_API_VERSION,
+    reserved: 0,
+    init: osmlayer_rust_init,
+    syscall: osmlayer_rust_syscall,
+    selftest: osmlayer_rust_selftest,
+};
 
 macro_rules! klog {
     ($s:expr) => {{
-        unsafe { console_printf(concat!($s, "\0").as_ptr().cast::<c_char>()) }
+        unsafe {
+            let services = SERVICES.as_ref();
+            if let Some(log) = services.and_then(|s| s.log) {
+                log(concat!($s, "\0").as_ptr().cast::<c_char>());
+            }
+        }
     }};
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn osmlayer_module_init(
+    services: *const LeonosKernelServices,
+    _handoff: *const LeonosBootHandoff,
+) -> *const LeonosMiddlelayerApi {
+    unsafe {
+        SERVICES = services;
+    }
+    klog!("[osmlayer] module ABI bound\n");
+    &API
 }
 
 #[unsafe(no_mangle)]

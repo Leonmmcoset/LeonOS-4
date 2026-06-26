@@ -14,6 +14,7 @@
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
 #include <ntclks/userland.h>
+#include <ntclks/version.h>
 
 #include "arch/x86_64/idt.h"
 
@@ -107,11 +108,23 @@ void kernel_idle_loop(void)
     }
 }
 
-void kernel_main(uint32_t magic, uint32_t multiboot_info)
+static void kernel_start(uint32_t magic, uint32_t multiboot_info,
+                         const struct leonos_boot_handoff *handoff)
 {
     __asm__ volatile("cli");
     console_init();
-    console_printf("LeonOS 4 ntclks booting\n");
+    const struct leonos_system_info *system = ntclks_system_info();
+    console_printf("LeonOS 4 %s %s booting\n",
+                   system->kernel_name,
+                   system->kernel_version);
+    if (handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC) {
+        console_printf("[ntclks] loader handoff kernel=%p-%p middlelayer=%p-%p entry=%p\n",
+                       (void *)(uintptr_t)handoff->kernel.start,
+                       (void *)(uintptr_t)handoff->kernel.end,
+                       (void *)(uintptr_t)handoff->middlelayer.start,
+                       (void *)(uintptr_t)handoff->middlelayer.end,
+                       (void *)(uintptr_t)handoff->middlelayer.entry);
+    }
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
@@ -133,7 +146,7 @@ void kernel_main(uint32_t magic, uint32_t multiboot_info)
     idt_init();
     irq_init();
     storage_init();
-    osmlayer_bridge_init(&boot);
+    osmlayer_bridge_init(&boot, handoff);
     osmlayer_bridge_selftest();
     userland_init(&boot);
     sched_dump();
@@ -141,7 +154,21 @@ void kernel_main(uint32_t magic, uint32_t multiboot_info)
     framebuffer_text(24, 24, "LeonOS 4 starting Ring-3 desktop.elf...", 0x00ffffff, 0x00008080);
     mouse_status_line();
 
-    console_printf("[ntclks] boot complete: root=0:/ fs=FAT32 desktop=desktop.elf\n");
+    console_printf("[ntclks] boot complete: version=%s root=0:/ fs=FAT32 desktop=desktop.elf\n",
+                   system->kernel_version);
     userland_enter_first();
     kernel_idle_loop();
+}
+
+void kernel_entry(const struct leonos_boot_handoff *handoff)
+{
+    if (!handoff || handoff->magic != LEONOS_BOOT_HANDOFF_MAGIC) {
+        kernel_start(0, 0, handoff);
+    }
+    kernel_start(handoff->multiboot_magic, (uint32_t)handoff->multiboot_info, handoff);
+}
+
+void kernel_main(uint32_t magic, uint32_t multiboot_info)
+{
+    kernel_start(magic, multiboot_info, 0);
 }

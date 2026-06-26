@@ -25,6 +25,7 @@ static const struct builtin_program builtin_programs[] = {
     {"notepad", "0:/userland/notepad.elf"},
     {"calc", "0:/userland/calc.elf"},
     {"run", "0:/userland/run.elf"},
+    {"osver", "0:/userland/osver.elf"},
 };
 
 static const struct builtin_assoc builtin_assocs[] = {
@@ -297,12 +298,27 @@ static int parse_assoc_line(const char *line, uint32_t len,
     if (left_end <= left_start || right_end <= right_start) {
         return 0;
     }
-    if (!normalize_extension(line + left_start, ext, ext_cap)) {
+    while (left_start < left_end && is_space_char(line[left_start])) {
+        ++left_start;
+    }
+    if (left_end <= left_start) {
+        return 0;
+    }
+    if (line[left_start] != '.') {
+        pos = 0;
+        append_char(ext, &pos, ext_cap, '.');
+    }
+    while (left_start < left_end && pos + 1 < ext_cap) {
+        append_char(ext, &pos, ext_cap, ascii_tolower(line[left_start]));
+        ++left_start;
+    }
+    if (pos <= 1) {
         return 0;
     }
     if (!program || program_cap == 0) {
         return 1;
     }
+    pos = 0;
     program[0] = 0;
     while (right_start < right_end && pos + 1 < program_cap) {
         program[pos++] = line[right_start++];

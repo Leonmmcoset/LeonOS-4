@@ -101,6 +101,11 @@ static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, 
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
 }
 
+static uint32_t max_u32(uint32_t a, uint32_t b)
+{
+    return a > b ? a : b;
+}
+
 static int ends_with(const char *text, const char *suffix)
 {
     uint32_t text_n = text_len(text);
@@ -374,16 +379,17 @@ static int commit_open_with_selected(void)
         return pid;
     }
 
-    pid = leonos_launch_file_with_app(open_with_path, app->program_path);
-    if (pid >= 0 && open_with_remember && open_with_can_remember && open_with_extension[0]) {
+    if (open_with_remember && open_with_can_remember && open_with_extension[0]) {
         int ret = leonos_launch_set_extension_association(open_with_extension, app->program_path);
         if (ret < 0) {
             set_status_code("Save association failed ", ret);
+            return ret;
         } else {
             copy_text(open_with_current_default, sizeof(open_with_current_default), app->name);
         }
     }
 
+    pid = leonos_launch_file_with_app(open_with_path, app->program_path);
     printf("[fileman.elf] open-with path=%s app=%s pid=%d\n",
            open_with_path, app->name, pid);
     if (pid < 0) {
@@ -417,6 +423,8 @@ static void draw_open_with_dialog(struct leonos_ui_surface *ui)
     uint32_t list_y = OPEN_WITH_Y + 170;
     uint32_t list_w = OPEN_WITH_W - 32;
     uint32_t list_h = open_with_list.visible_rows * OPEN_WITH_ROW_H + 8;
+    uint32_t scrollbar_x = list_x + list_w - 18;
+    uint32_t row_w = list_w - 26;
     char default_program[LEONOS_FS_PATH_LEN];
     const char *default_label = open_with_app_label(open_with_current_default,
                                                     default_program,
@@ -453,20 +461,34 @@ static void draw_open_with_dialog(struct leonos_ui_surface *ui)
     leonos_ui_text(ui, OPEN_WITH_X + 16, OPEN_WITH_Y + 144, "Programs:",
                    LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_inset(ui, list_x, list_y, list_w, list_h, LEONOS_UI_WHITE);
-    for (uint32_t i = 0; i < open_with_app_count; ++i) {
+    for (uint32_t row = 0; row < open_with_list.visible_rows; ++row) {
+        uint32_t i = open_with_list.scroll + row;
         uint32_t row_x = list_x + 4;
-        uint32_t row_y = list_y + 4 + i * OPEN_WITH_ROW_H;
-        uint32_t row_w = list_w - 8;
-        uint32_t selected = open_with_selected == (int32_t)i;
-        uint32_t bg = selected ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE;
-        uint32_t fg = selected ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
-        uint32_t detail_fg = selected ? LEONOS_UI_LIGHT : LEONOS_UI_DARK;
+        uint32_t row_y = list_y + 4 + row * OPEN_WITH_ROW_H;
+        uint32_t selected;
+        uint32_t bg;
+        uint32_t fg;
+        uint32_t detail_fg;
+        if (i >= open_with_app_count) {
+            break;
+        }
+        selected = open_with_list.selected == (int32_t)i;
+        bg = selected ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE;
+        fg = selected ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
+        detail_fg = selected ? LEONOS_UI_LIGHT : LEONOS_UI_DARK;
         leonos_ui_rect(ui, row_x, row_y, row_w, OPEN_WITH_ROW_H, bg);
         leonos_ui_text_clipped(ui, row_x + 8, row_y + 3, row_w - 16,
                                open_with_apps[i].name, fg, bg);
         leonos_ui_text_clipped(ui, row_x + 8, row_y + 18, row_w - 16,
                                open_with_apps[i].detail, detail_fg, bg);
     }
+    leonos_ui_vscrollbar(ui, scrollbar_x, list_y, 18, list_h,
+                         open_with_list.scroll,
+                         max_u32(open_with_app_count, open_with_list.visible_rows),
+                         open_with_list.visible_rows,
+                         open_with_app_count <= open_with_list.visible_rows
+                             ? LEONOS_UI_SCROLLBAR_DISABLED
+                             : 0);
     leonos_ui_button(ui, OPEN_WITH_X + OPEN_WITH_W - 194, OPEN_WITH_Y + OPEN_WITH_H - 38,
                      96, LEONOS_UI_BUTTON_H,
                      open_with_mode == OPEN_WITH_MODE_DEFAULT ? "Set Default" : "Open", 0);
@@ -711,6 +733,8 @@ static int handle_open_with_click(int32_t x, int32_t y)
     int32_t list_y = OPEN_WITH_Y + 170;
     int32_t list_w = OPEN_WITH_W - 32;
     int32_t list_h = (int32_t)(open_with_list.visible_rows * OPEN_WITH_ROW_H + 8);
+    int32_t scrollbar_x = list_x + list_w - 18;
+    uint32_t activated = 0;
     if (!open_with_active) {
         return 0;
     }
@@ -730,11 +754,24 @@ static int handle_open_with_click(int32_t x, int32_t y)
         open_with_remember = open_with_remember ? 0 : 1;
         return 1;
     }
+    if (hit_rect_i(x, y, scrollbar_x, list_y, 18, list_h)) {
+        leonos_ui_vscrollbar_handle_mouse(&open_with_list.scroll,
+                                          max_u32(open_with_app_count, open_with_list.visible_rows),
+                                          open_with_list.visible_rows,
+                                          (uint32_t)scrollbar_x, (uint32_t)list_y, 18, (uint32_t)list_h,
+                                          x, y);
+        return 1;
+    }
     if (hit_rect_i(x, y, list_x, list_y, list_w, list_h)) {
-        int32_t row = (y - (list_y + 4)) / (int32_t)OPEN_WITH_ROW_H;
-        if (row >= 0 && (uint32_t)row < open_with_app_count) {
-            open_with_list.selected = row;
-            open_with_selected = row;
+        if (leonos_ui_listview_state_handle_mouse(&open_with_list, x, y,
+                                                  (uint32_t)(list_x + 4),
+                                                  (uint32_t)(list_y + 4),
+                                                  (uint32_t)(list_w - 26),
+                                                  &activated)) {
+            open_with_selected = open_with_list.selected;
+            if (activated) {
+                commit_open_with_selected();
+            }
         }
         return 1;
     }
@@ -755,15 +792,15 @@ static int handle_open_with_key(uint8_t keycode)
         return 1;
     }
     if (keycode == FILEMAN_KEY_UP) {
-        if (open_with_list.selected > 0) {
-            --open_with_list.selected;
+        uint32_t activated = 0;
+        if (leonos_ui_listview_state_handle_key(&open_with_list, keycode, &activated)) {
             open_with_selected = open_with_list.selected;
         }
         return 1;
     }
     if (keycode == FILEMAN_KEY_DOWN) {
-        if ((uint32_t)open_with_list.selected + 1 < open_with_app_count) {
-            ++open_with_list.selected;
+        uint32_t activated = 0;
+        if (leonos_ui_listview_state_handle_key(&open_with_list, keycode, &activated)) {
             open_with_selected = open_with_list.selected;
         }
         return 1;

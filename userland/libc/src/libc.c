@@ -2,6 +2,7 @@
 #include <leonos/gui.h>
 #include <leonos/pty.h>
 #include <leonos/stdio.h>
+#include <leonos/system.h>
 #include <leonos/syscall.h>
 #include <stdarg.h>
 
@@ -360,6 +361,11 @@ int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint
     return ret < 0 ? ret : (int)snapshot.count;
 }
 
+int leonos_task_kill(uint32_t pid)
+{
+    return ioctl(3, LEONOS_GUI_IOCTL_TASK_KILL, (void *)(uintptr_t)pid);
+}
+
 int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
                     uint32_t capacity, uint32_t *out_count)
 {
@@ -374,6 +380,14 @@ int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
         *out_count = query.count;
     }
     return ret;
+}
+
+int leonos_system_info(struct leonos_system_info *info)
+{
+    if (!info) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_IOCTL_SYSTEM_INFO, info);
 }
 
 int leonos_readdir(int fd, struct leonos_dir_entry *entry)

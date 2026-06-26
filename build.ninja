@@ -8,6 +8,10 @@ rule kconfig_sync
   command = python3 tools/kconfig_sync.py
   description = KCONFIG sync
 
+rule build_info
+  command = python3 tools/build_info.py --header $out --state build/version/build_number.txt
+  description = BUILD.INFO $out
+
 rule cc_kernel
   command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -mcmodel=kernel -Wall -Wextra -Ikernel/ntclks/include -Iinclude -Iinclude/generated -MMD -MF $out.d -c $in -o $out
   depfile = $out.d
@@ -20,13 +24,33 @@ rule as_kernel
   deps = gcc
   description = AS.KERNEL $out
 
+rule cc_loader
+  command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iinclude -MMD -MF $out.d -c $in -o $out
+  depfile = $out.d
+  deps = gcc
+  description = CC.LOADER $out
+
+rule as_loader
+  command = $cc -target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Iinclude -MMD -MF $out.d -c $in -o $out
+  depfile = $out.d
+  deps = gcc
+  description = AS.LOADER $out
+
 rule rust_osmlayer
-  command = $rustc --crate-type staticlib --target x86_64-unknown-none -C panic=abort -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C target-feature=-sse,-sse2 -C opt-level=1 --emit link=$out $in
+  command = $rustc --crate-type lib --target x86_64-unknown-none -C panic=abort -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C target-feature=-sse,-sse2 -C opt-level=1 --emit obj=$out $in
   description = RUST.OSMLAYER $out
+
+rule link_loader
+  command = $ld -nostdlib -z max-page-size=0x1000 -T boot/loader/linker.ld -o $out $in
+  description = LD.LOADER $out
 
 rule link_kernel
   command = $ld -nostdlib -z max-page-size=0x1000 -T kernel/ntclks/arch/x86_64/linker.ld -o $out $in
   description = LD.KERNEL $out
+
+rule link_middlelayer
+  command = $ld -nostdlib -z max-page-size=0x1000 -T middlelayer/osmlayer/linker.ld -o $out $in
+  description = LD.MIDDLELAYER $out
 
 rule cc_user
   command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iuserland/libc/include -Iinclude -MMD -MF $out.d -c $in -o $out
@@ -61,15 +85,15 @@ rule manifest
   description = MANIFEST $out
 
 rule grub_efi
-  command = mkdir -p `dirname $out` && grub-mkstandalone -d build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal' boot/grub/grub.cfg=boot/grub/grub.cfg
+  command = mkdir -p `dirname $out` && grub-mkstandalone -d build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal' boot/grub/grub.cfg=boot/grub/embedded.cfg
   description = GRUB.EFI $out
 
 rule iso
-  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/system build/iso/userland build/iso/etc && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/x86_64/ntclks.elf build/iso/boot/ntclks.elf && cp build/esp/system/osmlayer.manifest build/iso/system/osmlayer.manifest && cp build/userland/init.elf build/iso/userland/init.elf && cp build/userland/desktop.elf build/iso/userland/desktop.elf && cp build/userland/hello.elf build/iso/userland/hello.elf && cp build/userland/uidemo.elf build/iso/userland/uidemo.elf && cp build/userland/taskmgr.elf build/iso/userland/taskmgr.elf && cp build/userland/fileman.elf build/iso/userland/fileman.elf && cp build/userland/terminal.elf build/iso/userland/terminal.elf && cp build/userland/shell.elf build/iso/userland/shell.elf && cp build/userland/notepad.elf build/iso/userland/notepad.elf && cp build/userland/calc.elf build/iso/userland/calc.elf && cp build/userland/run.elf build/iso/userland/run.elf && cp configs/default.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso
+  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/boot build/iso/system build/iso/userland build/iso/etc && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/boot/loader.elf build/iso/boot/loader.elf && cp build/system/kernel.sys build/iso/system/kernel.sys && cp build/system/middlelayer.sys build/iso/system/middlelayer.sys && mkdir -p build/iso/system && cp build/esp/system/osmlayer.manifest build/iso/system/osmlayer.manifest && mkdir -p build/iso/system/fonts && cp build/esp/system/fonts/system.psf build/iso/system/fonts/system.psf && mkdir -p build/iso/system/resources && cp build/esp/system/resources/mouse.bmp build/iso/system/resources/mouse.bmp && cp build/userland/init.elf build/iso/userland/init.elf && cp build/userland/desktop.elf build/iso/userland/desktop.elf && cp build/userland/hello.elf build/iso/userland/hello.elf && cp build/userland/uidemo.elf build/iso/userland/uidemo.elf && cp build/userland/taskmgr.elf build/iso/userland/taskmgr.elf && cp build/userland/fileman.elf build/iso/userland/fileman.elf && cp build/userland/terminal.elf build/iso/userland/terminal.elf && cp build/userland/shell.elf build/iso/userland/shell.elf && cp build/userland/notepad.elf build/iso/userland/notepad.elf && cp build/userland/calc.elf build/iso/userland/calc.elf && cp build/userland/run.elf build/iso/userland/run.elf && cp build/userland/osver.elf build/iso/userland/osver.elf && cp configs/default.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso
   description = ISO $out
 
 rule image
-  command = python3 tools/make_image.py --out $out --raw build/images/leonos4.raw --esp-tree build/esp
+  command = rm -f build/esp/boot/ntclks.elf && python3 tools/make_image.py --out $out --raw build/images/leonos4.raw --esp-tree build/esp
   description = IMAGE $out
 
 rule run
@@ -94,6 +118,13 @@ rule clean_rule
 
 build include/generated/autoconf.h include/generated/rustcfg.args: kconfig_sync tools/kconfig_sync.py configs/default.conf | .config
 build config-sync: phony include/generated/autoconf.h include/generated/rustcfg.args
+build build/version/always: phony
+build include/generated/build_info.h: build_info build/version/always | tools/build_info.py
+build build-info: phony include/generated/build_info.h
+build build/obj/loader/boot/loader/boot.S.o: as_loader boot/loader/boot.S
+build build/obj/loader/boot/loader/main.c.o: cc_loader boot/loader/main.c
+build build/boot/loader.elf: link_loader build/obj/loader/boot/loader/boot.S.o build/obj/loader/boot/loader/main.c.o
+build loader: phony build/boot/loader.elf
 build build/obj/kernel/kernel/ntclks/arch/x86_64/arch.c.o: cc_kernel kernel/ntclks/arch/x86_64/arch.c | include/generated/autoconf.h
 build build/obj/kernel/kernel/ntclks/arch/x86_64/boot.S.o: as_kernel kernel/ntclks/arch/x86_64/boot.S
 build build/obj/kernel/kernel/ntclks/arch/x86_64/gdt.c.o: cc_kernel kernel/ntclks/arch/x86_64/gdt.c | include/generated/autoconf.h
@@ -123,9 +154,13 @@ build build/obj/kernel/kernel/ntclks/time.c.o: cc_kernel kernel/ntclks/time.c | 
 build build/obj/kernel/kernel/ntclks/user/elf.c.o: cc_kernel kernel/ntclks/user/elf.c | include/generated/autoconf.h
 build build/obj/kernel/kernel/ntclks/user/usercopy.c.o: cc_kernel kernel/ntclks/user/usercopy.c | include/generated/autoconf.h
 build build/obj/kernel/kernel/ntclks/user/userland.c.o: cc_kernel kernel/ntclks/user/userland.c | include/generated/autoconf.h
-build build/x86_64/libosmlayer.a: rust_osmlayer middlelayer/osmlayer/src/lib.rs | include/generated/rustcfg.args middlelayer/osmlayer/src/gui.rs middlelayer/osmlayer/src/ipc.rs middlelayer/osmlayer/src/lib.rs middlelayer/osmlayer/src/posix.rs middlelayer/osmlayer/src/vfs.rs
-build build/x86_64/ntclks.elf: link_kernel build/obj/kernel/kernel/ntclks/arch/x86_64/arch.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/boot.S.o build/obj/kernel/kernel/ntclks/arch/x86_64/gdt.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/idt.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/irq.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/paging.c.o build/obj/kernel/kernel/ntclks/drivers/console.c.o build/obj/kernel/kernel/ntclks/drivers/efi_fs.c.o build/obj/kernel/kernel/ntclks/drivers/framebuffer.c.o build/obj/kernel/kernel/ntclks/drivers/mouse.c.o build/obj/kernel/kernel/ntclks/drivers/serial.c.o build/obj/kernel/kernel/ntclks/drivers/storage.c.o build/obj/kernel/kernel/ntclks/drivers/vga.c.o build/obj/kernel/kernel/ntclks/gui_ipc.c.o build/obj/kernel/kernel/ntclks/input.c.o build/obj/kernel/kernel/ntclks/kernel.c.o build/obj/kernel/kernel/ntclks/lib/bugcheck.c.o build/obj/kernel/kernel/ntclks/lib/panic.c.o build/obj/kernel/kernel/ntclks/lib/string.c.o build/obj/kernel/kernel/ntclks/mm/mm.c.o build/obj/kernel/kernel/ntclks/multiboot2.c.o build/obj/kernel/kernel/ntclks/osmlayer_bridge.c.o build/obj/kernel/kernel/ntclks/pty.c.o build/obj/kernel/kernel/ntclks/sched/sched.c.o build/obj/kernel/kernel/ntclks/syscall.c.o build/obj/kernel/kernel/ntclks/time.c.o build/obj/kernel/kernel/ntclks/user/elf.c.o build/obj/kernel/kernel/ntclks/user/usercopy.c.o build/obj/kernel/kernel/ntclks/user/userland.c.o build/x86_64/libosmlayer.a
-build kernel: phony build/x86_64/ntclks.elf
+build build/obj/kernel/kernel/ntclks/version.c.o: cc_kernel kernel/ntclks/version.c | include/generated/autoconf.h include/generated/build_info.h kernel/ntclks/arch/x86_64/arch.c kernel/ntclks/arch/x86_64/boot.S kernel/ntclks/arch/x86_64/gdt.c kernel/ntclks/arch/x86_64/idt.c kernel/ntclks/arch/x86_64/irq.c kernel/ntclks/arch/x86_64/paging.c kernel/ntclks/drivers/console.c kernel/ntclks/drivers/efi_fs.c kernel/ntclks/drivers/framebuffer.c kernel/ntclks/drivers/mouse.c kernel/ntclks/drivers/serial.c kernel/ntclks/drivers/storage.c kernel/ntclks/drivers/vga.c kernel/ntclks/gui_ipc.c kernel/ntclks/input.c kernel/ntclks/kernel.c kernel/ntclks/lib/bugcheck.c kernel/ntclks/lib/panic.c kernel/ntclks/lib/string.c kernel/ntclks/mm/mm.c kernel/ntclks/multiboot2.c kernel/ntclks/osmlayer_bridge.c kernel/ntclks/pty.c kernel/ntclks/sched/sched.c kernel/ntclks/syscall.c kernel/ntclks/time.c kernel/ntclks/user/elf.c kernel/ntclks/user/usercopy.c kernel/ntclks/user/userland.c middlelayer/osmlayer/src/fat32.rs middlelayer/osmlayer/src/gui.rs middlelayer/osmlayer/src/ipc.rs middlelayer/osmlayer/src/lib.rs middlelayer/osmlayer/src/posix.rs middlelayer/osmlayer/src/vfs.rs
+build build/obj/middlelayer/middlelayer/osmlayer/runtime.c.o: cc_kernel middlelayer/osmlayer/runtime.c | include/generated/autoconf.h
+build build/obj/middlelayer/osmlayer.o: rust_osmlayer middlelayer/osmlayer/src/lib.rs | include/generated/rustcfg.args middlelayer/osmlayer/src/fat32.rs middlelayer/osmlayer/src/gui.rs middlelayer/osmlayer/src/ipc.rs middlelayer/osmlayer/src/posix.rs middlelayer/osmlayer/src/vfs.rs
+build build/system/middlelayer.sys: link_middlelayer build/obj/middlelayer/osmlayer.o build/obj/middlelayer/middlelayer/osmlayer/runtime.c.o
+build middlelayer: phony build/system/middlelayer.sys
+build build/system/kernel.sys: link_kernel build/obj/kernel/kernel/ntclks/arch/x86_64/arch.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/boot.S.o build/obj/kernel/kernel/ntclks/arch/x86_64/gdt.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/idt.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/irq.c.o build/obj/kernel/kernel/ntclks/arch/x86_64/paging.c.o build/obj/kernel/kernel/ntclks/drivers/console.c.o build/obj/kernel/kernel/ntclks/drivers/efi_fs.c.o build/obj/kernel/kernel/ntclks/drivers/framebuffer.c.o build/obj/kernel/kernel/ntclks/drivers/mouse.c.o build/obj/kernel/kernel/ntclks/drivers/serial.c.o build/obj/kernel/kernel/ntclks/drivers/storage.c.o build/obj/kernel/kernel/ntclks/drivers/vga.c.o build/obj/kernel/kernel/ntclks/gui_ipc.c.o build/obj/kernel/kernel/ntclks/input.c.o build/obj/kernel/kernel/ntclks/kernel.c.o build/obj/kernel/kernel/ntclks/lib/bugcheck.c.o build/obj/kernel/kernel/ntclks/lib/panic.c.o build/obj/kernel/kernel/ntclks/lib/string.c.o build/obj/kernel/kernel/ntclks/mm/mm.c.o build/obj/kernel/kernel/ntclks/multiboot2.c.o build/obj/kernel/kernel/ntclks/osmlayer_bridge.c.o build/obj/kernel/kernel/ntclks/pty.c.o build/obj/kernel/kernel/ntclks/sched/sched.c.o build/obj/kernel/kernel/ntclks/syscall.c.o build/obj/kernel/kernel/ntclks/time.c.o build/obj/kernel/kernel/ntclks/user/elf.c.o build/obj/kernel/kernel/ntclks/user/usercopy.c.o build/obj/kernel/kernel/ntclks/user/userland.c.o build/obj/kernel/kernel/ntclks/version.c.o
+build kernel: phony build/system/kernel.sys
 build build/obj/userlib/userland/libc/src/crt0.S.o: as_user userland/libc/src/crt0.S
 build build/obj/userlib/userland/libc/src/launch.c.o: cc_user userland/libc/src/launch.c
 build build/obj/userlib/userland/libc/src/libc.c.o: cc_user userland/libc/src/libc.c
@@ -154,11 +189,17 @@ build build/obj/user-calc/userland/apps/calc/main.c.o: cc_user userland/apps/cal
 build build/userland/calc.elf: link_user build/obj/user-calc/userland/apps/calc/main.c.o build/userland/libc.a
 build build/obj/user-run/userland/apps/run/main.c.o: cc_user userland/apps/run/main.c
 build build/userland/run.elf: link_user build/obj/user-run/userland/apps/run/main.c.o build/userland/libc.a
-build userland: phony build/userland/init.elf build/userland/desktop.elf build/userland/hello.elf build/userland/uidemo.elf build/userland/taskmgr.elf build/userland/fileman.elf build/userland/terminal.elf build/userland/shell.elf build/userland/notepad.elf build/userland/calc.elf build/userland/run.elf
-build build/esp/EFI/BOOT/BOOTX64.EFI: grub_efi boot/grub/grub.cfg | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh
+build build/obj/user-osver/userland/apps/osver/main.c.o: cc_user userland/apps/osver/main.c
+build build/userland/osver.elf: link_user build/obj/user-osver/userland/apps/osver/main.c.o build/userland/libc.a
+build userland: phony build/userland/init.elf build/userland/desktop.elf build/userland/hello.elf build/userland/uidemo.elf build/userland/taskmgr.elf build/userland/fileman.elf build/userland/terminal.elf build/userland/shell.elf build/userland/notepad.elf build/userland/calc.elf build/userland/run.elf build/userland/osver.elf
+build build/esp/EFI/BOOT/BOOTX64.EFI: grub_efi boot/grub/embedded.cfg | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh
 build build/esp/boot/grub/grub.cfg: copy boot/grub/grub.cfg
-build build/esp/boot/ntclks.elf: copy build/x86_64/ntclks.elf
+build build/esp/boot/loader.elf: copy build/boot/loader.elf
+build build/esp/system/kernel.sys: copy build/system/kernel.sys
+build build/esp/system/middlelayer.sys: copy build/system/middlelayer.sys
 build build/esp/system/osmlayer.manifest: manifest
+build build/esp/system/fonts/system.psf: copy system/fonts/system.psf
+build build/esp/system/resources/mouse.bmp: copy system/resources/mouse.bmp
 build build/esp/userland/init.elf: copy build/userland/init.elf
 build build/esp/userland/desktop.elf: copy build/userland/desktop.elf
 build build/esp/userland/hello.elf: copy build/userland/hello.elf
@@ -170,13 +211,14 @@ build build/esp/userland/shell.elf: copy build/userland/shell.elf
 build build/esp/userland/notepad.elf: copy build/userland/notepad.elf
 build build/esp/userland/calc.elf: copy build/userland/calc.elf
 build build/esp/userland/run.elf: copy build/userland/run.elf
+build build/esp/userland/osver.elf: copy build/userland/osver.elf
 build build/esp/etc/leonos.conf: copy configs/default.conf
-build esp: phony build/esp/EFI/BOOT/BOOTX64.EFI build/esp/boot/grub/grub.cfg build/esp/boot/ntclks.elf build/esp/system/osmlayer.manifest build/esp/userland/init.elf build/esp/userland/desktop.elf build/esp/userland/hello.elf build/esp/userland/uidemo.elf build/esp/userland/taskmgr.elf build/esp/userland/fileman.elf build/esp/userland/terminal.elf build/esp/userland/shell.elf build/esp/userland/notepad.elf build/esp/userland/calc.elf build/esp/userland/run.elf build/esp/etc/leonos.conf
-build build/images/leonos4.vmdk: image build/esp/EFI/BOOT/BOOTX64.EFI build/esp/boot/grub/grub.cfg build/esp/boot/ntclks.elf build/esp/system/osmlayer.manifest build/esp/userland/init.elf build/esp/userland/desktop.elf build/esp/userland/hello.elf build/esp/userland/uidemo.elf build/esp/userland/taskmgr.elf build/esp/userland/fileman.elf build/esp/userland/terminal.elf build/esp/userland/shell.elf build/esp/userland/notepad.elf build/esp/userland/calc.elf build/esp/userland/run.elf build/esp/etc/leonos.conf | tools/make_image.py
-build build/images/leonos4.iso: iso build/x86_64/ntclks.elf build/userland/init.elf build/userland/desktop.elf build/userland/hello.elf build/userland/uidemo.elf build/userland/taskmgr.elf build/userland/fileman.elf build/userland/terminal.elf build/userland/shell.elf build/userland/notepad.elf build/userland/calc.elf build/userland/run.elf build/esp/system/osmlayer.manifest boot/grub/grub.cfg configs/default.conf
+build esp: phony build/esp/EFI/BOOT/BOOTX64.EFI build/esp/boot/grub/grub.cfg build/esp/boot/loader.elf build/esp/system/kernel.sys build/esp/system/middlelayer.sys build/esp/system/osmlayer.manifest build/esp/system/fonts/system.psf build/esp/system/resources/mouse.bmp build/esp/userland/init.elf build/esp/userland/desktop.elf build/esp/userland/hello.elf build/esp/userland/uidemo.elf build/esp/userland/taskmgr.elf build/esp/userland/fileman.elf build/esp/userland/terminal.elf build/esp/userland/shell.elf build/esp/userland/notepad.elf build/esp/userland/calc.elf build/esp/userland/run.elf build/esp/userland/osver.elf build/esp/etc/leonos.conf
+build build/images/leonos4.vmdk: image build/esp/EFI/BOOT/BOOTX64.EFI build/esp/boot/grub/grub.cfg build/esp/boot/loader.elf build/esp/system/kernel.sys build/esp/system/middlelayer.sys build/esp/system/osmlayer.manifest build/esp/system/fonts/system.psf build/esp/system/resources/mouse.bmp build/esp/userland/init.elf build/esp/userland/desktop.elf build/esp/userland/hello.elf build/esp/userland/uidemo.elf build/esp/userland/taskmgr.elf build/esp/userland/fileman.elf build/esp/userland/terminal.elf build/esp/userland/shell.elf build/esp/userland/notepad.elf build/esp/userland/calc.elf build/esp/userland/run.elf build/esp/userland/osver.elf build/esp/etc/leonos.conf | tools/make_image.py
+build build/images/leonos4.iso: iso build/boot/loader.elf build/system/kernel.sys build/system/middlelayer.sys build/userland/init.elf build/userland/desktop.elf build/userland/hello.elf build/userland/uidemo.elf build/userland/taskmgr.elf build/userland/fileman.elf build/userland/terminal.elf build/userland/shell.elf build/userland/notepad.elf build/userland/calc.elf build/userland/run.elf build/userland/osver.elf build/esp/system/osmlayer.manifest build/esp/system/fonts/system.psf build/esp/system/resources/mouse.bmp boot/grub/grub.cfg configs/default.conf
 build image-vmdk: phony build/images/leonos4.vmdk
 build image-iso: phony build/images/leonos4.iso
-build all: phony kernel userland esp
+build all: phony loader kernel middlelayer userland esp
 build run: run build/images/leonos4.vmdk
 build run-debug: run_debug build/images/leonos4.vmdk
 build run-iso: run_iso build/images/leonos4.iso build/images/leonos4.vmdk

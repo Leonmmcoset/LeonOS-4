@@ -278,11 +278,16 @@ static int load_document(const char *path)
 static int save_document_to_path(const char *path)
 {
     int fd;
+    uint32_t flags;
     long wrote;
     if (!path || !path[0]) {
         return 0;
     }
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    flags = LEONOS_O_WRONLY | LEONOS_O_CREAT;
+    if (!document.length) {
+        flags |= LEONOS_O_TRUNC;
+    }
+    fd = open(path, flags, 0);
     if (fd < 0) {
         set_error_status("save open failed ", fd);
         return 0;
@@ -410,9 +415,7 @@ static int handle_toolbar_click(int32_t x, int32_t y)
 {
     if (hit_rect_i(x, y, 78, 30, 64, (int32_t)LEONOS_UI_BUTTON_H)) {
         menu_open = NOTEPAD_MENU_NONE;
-        if (open_document_via_dialog()) {
-            rebuild_status();
-        }
+        save_document();
         return 1;
     }
     if (hit_rect_i(x, y, 8, 30, 64, (int32_t)LEONOS_UI_BUTTON_H)) {

@@ -3,6 +3,12 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
+#define UI_SYSTEM_FONT_MAX 8192U
+
+static uint8_t ui_system_font[UI_SYSTEM_FONT_MAX];
+static uint8_t ui_system_font_checked;
+static struct leonos_psf_view ui_font_view;
+
 static uint32_t ui_strlen(const char *text)
 {
     uint32_t n = 0;
@@ -18,6 +24,36 @@ static int ui_is_shift_key(uint8_t keycode)
 {
     return keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT;
 }
+
+static const uint8_t *ui_font_glyph(char ch)
+{
+    if (!ui_system_font_checked) {
+        struct leonos_stat st;
+        ui_system_font_checked = 1;
+        if (stat(LEONOS_SYSTEM_FONT_PATH, &st) == 0 &&
+            st.type == LEONOS_FS_TYPE_FILE &&
+            st.size > 0 && st.size <= sizeof(ui_system_font)) {
+            int fd = open(LEONOS_SYSTEM_FONT_PATH, LEONOS_O_RDONLY, 0);
+            if (fd >= 0) {
+                uint32_t len = 0;
+                while (len < st.size) {
+                    long got = read(fd, ui_system_font + len, (uint32_t)st.size - len);
+                    if (got <= 0) {
+                        break;
+                    }
+                    len += (uint32_t)got;
+                }
+                close(fd);
+                leonos_psf_view_from_memory(ui_system_font, len, &ui_font_view);
+            }
+        }
+    }
+    if (ui_font_view.glyphs) {
+        return leonos_psf_view_glyph(&ui_font_view, ch);
+    }
+    return leonos_psf_glyph(ch);
+}
+
 uint32_t leonos_ui_text_width(const char *text)
 {
     return ui_strlen(text) * LEONOS_FONT_W;
@@ -144,7 +180,7 @@ void leonos_ui_rect(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
 static void ui_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     char ch, uint32_t fg, uint32_t bg, int transparent)
 {
-    const uint8_t *glyph = leonos_psf_glyph(ch);
+    const uint8_t *glyph = ui_font_glyph(ch);
     for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
         for (uint32_t col = 0; col < LEONOS_FONT_W; ++col) {
             if (glyph[row] & (uint8_t)(0x80u >> col)) {
@@ -1687,6 +1723,40 @@ struct ui_file_dialog_entry {
     char display[LEONOS_FS_NAME_LEN + 4];
 };
 
+enum {
+    UI_FILE_DIALOG_W = 520,
+    UI_FILE_DIALOG_H = 404,
+    UI_FILE_DIALOG_MAX_ENTRIES = 64,
+    UI_FILE_DIALOG_MARGIN = 16,
+    UI_FILE_DIALOG_NAV_BUTTON_X = UI_FILE_DIALOG_W - 78,
+    UI_FILE_DIALOG_NAV_BUTTON_W = 54,
+    UI_FILE_DIALOG_UP_Y = 38,
+    UI_FILE_DIALOG_ROOT_Y = 66,
+    UI_FILE_DIALOG_LIST_X = 16,
+    UI_FILE_DIALOG_LIST_Y = 94,
+    UI_FILE_DIALOG_LIST_ROWS = 8,
+    UI_FILE_DIALOG_ROW_H = LEONOS_FONT_H + 4,
+    UI_FILE_DIALOG_LIST_BODY_X = UI_FILE_DIALOG_LIST_X + 2,
+    UI_FILE_DIALOG_LIST_BODY_Y = UI_FILE_DIALOG_LIST_Y + 2,
+    UI_FILE_DIALOG_LIST_BODY_W = 404,
+    UI_FILE_DIALOG_SCROLL_W = 18,
+    UI_FILE_DIALOG_SCROLL_X = UI_FILE_DIALOG_LIST_BODY_X + UI_FILE_DIALOG_LIST_BODY_W,
+    UI_FILE_DIALOG_LIST_H = UI_FILE_DIALOG_LIST_ROWS * UI_FILE_DIALOG_ROW_H + 4,
+    UI_FILE_DIALOG_LIST_FRAME_W = UI_FILE_DIALOG_LIST_BODY_W + UI_FILE_DIALOG_SCROLL_W + 2,
+    UI_FILE_DIALOG_NAME_LABEL_Y = UI_FILE_DIALOG_LIST_Y + UI_FILE_DIALOG_LIST_H + 18,
+    UI_FILE_DIALOG_NAME_EDIT_X = 108,
+    UI_FILE_DIALOG_NAME_EDIT_Y = UI_FILE_DIALOG_NAME_LABEL_Y - 4,
+    UI_FILE_DIALOG_NAME_EDIT_W = UI_FILE_DIALOG_W - UI_FILE_DIALOG_NAME_EDIT_X - UI_FILE_DIALOG_MARGIN,
+    UI_FILE_DIALOG_TYPE_LABEL_Y = UI_FILE_DIALOG_NAME_LABEL_Y + 32,
+    UI_FILE_DIALOG_TYPE_EDIT_X = 132,
+    UI_FILE_DIALOG_TYPE_EDIT_Y = UI_FILE_DIALOG_TYPE_LABEL_Y - 4,
+    UI_FILE_DIALOG_TYPE_EDIT_W = UI_FILE_DIALOG_W - UI_FILE_DIALOG_TYPE_EDIT_X - UI_FILE_DIALOG_MARGIN,
+    UI_FILE_DIALOG_STATUS_Y = UI_FILE_DIALOG_TYPE_LABEL_Y + 24,
+    UI_FILE_DIALOG_STATUS_H = 24,
+    UI_FILE_DIALOG_BUTTON_W = 78,
+    UI_FILE_DIALOG_BUTTON_Y = UI_FILE_DIALOG_H - 38
+};
+
 static void ui_copy_text(char *dst, uint32_t capacity, const char *src)
 {
     uint32_t i = 0;
@@ -1889,7 +1959,21 @@ static void ui_file_dialog_select_entry(const char *dir_path,
     }
     if (entry->dir_entry.type == LEONOS_FS_TYPE_FILE) {
         ui_copy_text(filename, filename_cap, entry->dir_entry.name);
+    } else {
+        ui_copy_text(filename, filename_cap, "");
     }
+}
+
+static void ui_file_dialog_sync_name_edit(struct leonos_ui_edit_state *state)
+{
+    if (!state) {
+        return;
+    }
+    leonos_ui_edit_state_sync(state);
+    state->cursor = state->length;
+    state->selection_anchor = state->cursor;
+    state->scroll = 0;
+    state->selecting = 0;
 }
 
 static int ui_file_dialog_activate(const char *title, int save_mode,
@@ -1970,50 +2054,54 @@ static void ui_file_dialog_draw(struct leonos_ui_surface *surface,
                                 struct leonos_ui_listview_state *list_state,
                                 struct leonos_ui_edit_state *name_edit)
 {
-    enum {
-        DLG_W = 520,
-        DLG_H = 340,
-        LIST_X = 16,
-        LIST_Y = 94,
-        LIST_W = 406,
-        LIST_H = 176,
-        BTN_W = 78
-    };
-    uint32_t file_y = LIST_Y + LIST_H + 18;
-    leonos_ui_rect(surface, 0, 0, DLG_W, DLG_H, LEONOS_UI_GRAY);
-    leonos_ui_dialog(surface, 0, 0, DLG_W, DLG_H, title ? title : (save_mode ? "Save As" : "Open"));
+    leonos_ui_rect(surface, 0, 0, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H, LEONOS_UI_GRAY);
+    leonos_ui_dialog(surface, 0, 0, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H,
+                     title ? title : (save_mode ? "Save As" : "Open"));
     leonos_ui_text(surface, 16, 42, "Look in:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, 72, 38, DLG_W - 88, dir_path, ui_strlen(dir_path), 0, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_edit(surface, 72, 38, UI_FILE_DIALOG_W - 88, dir_path, ui_strlen(dir_path),
+                   0, LEONOS_UI_EDIT_READONLY);
     leonos_ui_text(surface, 16, 68, "Files:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_scroll_view_frame(surface, LIST_X, LIST_Y, LIST_W + 18, LIST_H);
+    leonos_ui_scroll_view_frame(surface, UI_FILE_DIALOG_LIST_X, UI_FILE_DIALOG_LIST_Y,
+                                UI_FILE_DIALOG_LIST_FRAME_W, UI_FILE_DIALOG_LIST_H);
     for (uint32_t row = 0; row < list_state->visible_rows; ++row) {
         uint32_t index = list_state->scroll + row;
         if (index >= entry_count) {
             break;
         }
-        leonos_ui_list_row(surface, LIST_X + 2, LIST_Y + 2 + row * list_state->row_height,
-                           LIST_W - 2, entries[index].display,
+        leonos_ui_list_row(surface, UI_FILE_DIALOG_LIST_BODY_X,
+                           UI_FILE_DIALOG_LIST_BODY_Y + row * list_state->row_height,
+                           UI_FILE_DIALOG_LIST_BODY_W, entries[index].display,
                            list_state->selected == (int32_t)index ? LEONOS_UI_MENU_SELECTED : 0);
     }
-    leonos_ui_vscrollbar(surface, LIST_X + LIST_W, LIST_Y, 18, LIST_H,
+    leonos_ui_vscrollbar(surface, UI_FILE_DIALOG_SCROLL_X, UI_FILE_DIALOG_LIST_Y,
+                         UI_FILE_DIALOG_SCROLL_W, UI_FILE_DIALOG_LIST_H,
                          list_state->scroll,
                          entry_count > list_state->visible_rows ? entry_count : list_state->visible_rows,
                          list_state->visible_rows,
                          entry_count <= list_state->visible_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
-    leonos_ui_button(surface, DLG_W - 78, 38, 54, LEONOS_UI_BUTTON_H, "Up", 0);
-    leonos_ui_button(surface, DLG_W - 78, 66, 54, LEONOS_UI_BUTTON_H, "Root", 0);
-    leonos_ui_text(surface, 16, file_y, save_mode ? "File name:" : "Selection:",
+    leonos_ui_button(surface, UI_FILE_DIALOG_NAV_BUTTON_X, UI_FILE_DIALOG_UP_Y,
+                     UI_FILE_DIALOG_NAV_BUTTON_W, LEONOS_UI_BUTTON_H, "Up", 0);
+    leonos_ui_button(surface, UI_FILE_DIALOG_NAV_BUTTON_X, UI_FILE_DIALOG_ROOT_Y,
+                     UI_FILE_DIALOG_NAV_BUTTON_W, LEONOS_UI_BUTTON_H, "Root", 0);
+    leonos_ui_text(surface, 16, UI_FILE_DIALOG_NAME_LABEL_Y,
+                   save_mode ? "File name:" : "Selection:",
                    LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit_state_draw(surface, 92, file_y - 4, DLG_W - 108, name_edit, 0);
-    leonos_ui_text(surface, 16, file_y + 28, "Files of type:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, 108, file_y + 24, DLG_W - 124,
+    leonos_ui_edit_state_draw(surface, UI_FILE_DIALOG_NAME_EDIT_X,
+                              UI_FILE_DIALOG_NAME_EDIT_Y,
+                              UI_FILE_DIALOG_NAME_EDIT_W, name_edit, 0);
+    leonos_ui_text(surface, 16, UI_FILE_DIALOG_TYPE_LABEL_Y, "Files of type:",
+                   LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, UI_FILE_DIALOG_TYPE_EDIT_X, UI_FILE_DIALOG_TYPE_EDIT_Y,
+                   UI_FILE_DIALOG_TYPE_EDIT_W,
                    filter_label ? filter_label : "All files",
                    ui_strlen(filter_label ? filter_label : "All files"),
                    0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_statusbar(surface, DLG_H - 58, 24, status);
-    leonos_ui_button(surface, DLG_W - 180, DLG_H - 30, BTN_W, LEONOS_UI_BUTTON_H,
+    leonos_ui_statusbar(surface, UI_FILE_DIALOG_STATUS_Y, UI_FILE_DIALOG_STATUS_H, status);
+    leonos_ui_button(surface, UI_FILE_DIALOG_W - 180, UI_FILE_DIALOG_BUTTON_Y,
+                     UI_FILE_DIALOG_BUTTON_W, LEONOS_UI_BUTTON_H,
                      save_mode ? "Save" : "Open", 0);
-    leonos_ui_button(surface, DLG_W - 94, DLG_H - 30, BTN_W, LEONOS_UI_BUTTON_H, "Cancel", 0);
+    leonos_ui_button(surface, UI_FILE_DIALOG_W - 94, UI_FILE_DIALOG_BUTTON_Y,
+                     UI_FILE_DIALOG_BUTTON_W, LEONOS_UI_BUTTON_H, "Cancel", 0);
 }
 
 static int ui_show_file_dialog_common(const char *title, int save_mode,
@@ -2021,15 +2109,10 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                                       const char *filter_label,
                                       const char *filter_ext)
 {
-    enum {
-        W = 520,
-        H = 340,
-        MAX_ENTRIES = 64
-    };
-    static uint32_t pixels[W * H];
+    static uint32_t pixels[UI_FILE_DIALOG_W * UI_FILE_DIALOG_H];
     struct leonos_ui_surface surface;
     struct leonos_gui_app_event event;
-    struct ui_file_dialog_entry entries[MAX_ENTRIES];
+    struct ui_file_dialog_entry entries[UI_FILE_DIALOG_MAX_ENTRIES];
     struct leonos_ui_listview_state list_state;
     struct leonos_ui_edit_state name_edit;
     char original[LEONOS_FS_PATH_LEN];
@@ -2052,16 +2135,21 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
         ui_copy_text(file_name, sizeof(file_name), path);
     }
     window_id = leonos_gui_create_app_window_ex(title ? title : (save_mode ? "Save As" : "Open"),
-                                                dir_path, W, H, LEONOS_GUI_WINDOW_NO_RESIZE);
+                                                dir_path, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H,
+                                                LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         return window_id;
     }
-    leonos_ui_bind(&surface, pixels, W, H, W);
-    leonos_ui_listview_state_init(&list_state, 9, LEONOS_FONT_H + 4);
+    leonos_ui_bind(&surface, pixels, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H,
+                   UI_FILE_DIALOG_W);
+    leonos_ui_listview_state_init(&list_state, UI_FILE_DIALOG_LIST_ROWS,
+                                  UI_FILE_DIALOG_ROW_H);
     list_state.focused = 1;
     leonos_ui_edit_state_init(&name_edit, file_name, sizeof(file_name));
     name_edit.focused = save_mode ? 1 : 0;
-    load_ret = ui_file_dialog_load_entries(dir_path, entries, MAX_ENTRIES, &entry_count, filter_ext);
+    ui_file_dialog_sync_name_edit(&name_edit);
+    load_ret = ui_file_dialog_load_entries(dir_path, entries, UI_FILE_DIALOG_MAX_ENTRIES,
+                                           &entry_count, filter_ext);
     if (load_ret < 0) {
         ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
     } else {
@@ -2069,10 +2157,16 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
     }
     leonos_ui_listview_state_set_count(&list_state, entry_count);
     list_state.selected = entry_count ? 0 : -1;
+    if (!save_mode && list_state.selected >= 0) {
+        ui_file_dialog_select_entry(dir_path, &entries[list_state.selected],
+                                    file_name, sizeof(file_name));
+        ui_file_dialog_sync_name_edit(&name_edit);
+    }
     for (;;) {
         ui_file_dialog_draw(&surface, title, save_mode, dir_path, filter_label, status,
                             entries, entry_count, &list_state, &name_edit);
-        leonos_gui_present_window((uint32_t)window_id, W, H, W, pixels);
+        leonos_gui_present_window((uint32_t)window_id, UI_FILE_DIALOG_W,
+                                  UI_FILE_DIALOG_H, UI_FILE_DIALOG_W, pixels);
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_poll_app_event(&event) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
@@ -2090,13 +2184,15 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                 }
                 if (event.pressed && event.keycode == LEONOS_KEY_ENTER) {
                     if (ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
-                                                file_name, sizeof(file_name), entries, MAX_ENTRIES,
+                                                file_name, sizeof(file_name), entries,
+                                                UI_FILE_DIALOG_MAX_ENTRIES,
                                                 &entry_count, &list_state, filter_ext,
                                                 status, sizeof(status))) {
                         ui_copy_text(path, capacity, file_name);
                         result = 1;
                         break;
                     }
+                    ui_file_dialog_sync_name_edit(&name_edit);
                     leonos_ui_listview_state_set_count(&list_state, entry_count);
                     continue;
                 }
@@ -2106,44 +2202,57 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                     if (list_state.selected >= 0 && (uint32_t)list_state.selected < entry_count) {
                         ui_file_dialog_select_entry(dir_path, &entries[list_state.selected],
                                                     file_name, sizeof(file_name));
+                        ui_file_dialog_sync_name_edit(&name_edit);
                     }
                     if (activated &&
                         ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
-                                                file_name, sizeof(file_name), entries, MAX_ENTRIES,
+                                                file_name, sizeof(file_name), entries,
+                                                UI_FILE_DIALOG_MAX_ENTRIES,
                                                 &entry_count, &list_state, filter_ext,
                                                 status, sizeof(status))) {
                         ui_copy_text(path, capacity, file_name);
                         result = 1;
                         break;
                     }
+                    ui_file_dialog_sync_name_edit(&name_edit);
                     leonos_ui_listview_state_set_count(&list_state, entry_count);
                 }
                 continue;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
                 uint32_t activated = 0;
-                if (event.x >= (int32_t)(W - 180) && event.x < (int32_t)(W - 102) &&
-                    event.y >= (int32_t)(H - 30) && event.y < (int32_t)(H - 30 + LEONOS_UI_BUTTON_H)) {
+                if (event.x >= (int32_t)(UI_FILE_DIALOG_W - 180) &&
+                    event.x < (int32_t)(UI_FILE_DIALOG_W - 102) &&
+                    event.y >= (int32_t)UI_FILE_DIALOG_BUTTON_Y &&
+                    event.y < (int32_t)(UI_FILE_DIALOG_BUTTON_Y + LEONOS_UI_BUTTON_H)) {
                     if (ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
-                                                file_name, sizeof(file_name), entries, MAX_ENTRIES,
+                                                file_name, sizeof(file_name), entries,
+                                                UI_FILE_DIALOG_MAX_ENTRIES,
                                                 &entry_count, &list_state, filter_ext,
                                                 status, sizeof(status))) {
                         ui_copy_text(path, capacity, file_name);
                         result = 1;
                         break;
                     }
+                    ui_file_dialog_sync_name_edit(&name_edit);
                     leonos_ui_listview_state_set_count(&list_state, entry_count);
                     continue;
                 }
-                if (event.x >= (int32_t)(W - 94) && event.x < (int32_t)(W - 16) &&
-                    event.y >= (int32_t)(H - 30) && event.y < (int32_t)(H - 30 + LEONOS_UI_BUTTON_H)) {
+                if (event.x >= (int32_t)(UI_FILE_DIALOG_W - 94) &&
+                    event.x < (int32_t)(UI_FILE_DIALOG_W - 16) &&
+                    event.y >= (int32_t)UI_FILE_DIALOG_BUTTON_Y &&
+                    event.y < (int32_t)(UI_FILE_DIALOG_BUTTON_Y + LEONOS_UI_BUTTON_H)) {
                     break;
                 }
-                if (event.x >= (int32_t)(W - 78) && event.x < (int32_t)(W - 24) &&
-                    event.y >= 38 && event.y < (int32_t)(38 + LEONOS_UI_BUTTON_H)) {
+                if (event.x >= (int32_t)UI_FILE_DIALOG_NAV_BUTTON_X &&
+                    event.x < (int32_t)(UI_FILE_DIALOG_NAV_BUTTON_X + UI_FILE_DIALOG_NAV_BUTTON_W) &&
+                    event.y >= (int32_t)UI_FILE_DIALOG_UP_Y &&
+                    event.y < (int32_t)(UI_FILE_DIALOG_UP_Y + LEONOS_UI_BUTTON_H)) {
                     ui_build_parent_path(dir_path, sizeof(dir_path), dir_path);
                     ui_copy_text(file_name, sizeof(file_name), "");
-                    load_ret = ui_file_dialog_load_entries(dir_path, entries, MAX_ENTRIES,
+                    ui_file_dialog_sync_name_edit(&name_edit);
+                    load_ret = ui_file_dialog_load_entries(dir_path, entries,
+                                                           UI_FILE_DIALOG_MAX_ENTRIES,
                                                            &entry_count, filter_ext);
                     if (load_ret < 0) {
                         ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
@@ -2155,11 +2264,15 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                     list_state.scroll = 0;
                     continue;
                 }
-                if (event.x >= (int32_t)(W - 78) && event.x < (int32_t)(W - 24) &&
-                    event.y >= 66 && event.y < (int32_t)(66 + LEONOS_UI_BUTTON_H)) {
+                if (event.x >= (int32_t)UI_FILE_DIALOG_NAV_BUTTON_X &&
+                    event.x < (int32_t)(UI_FILE_DIALOG_NAV_BUTTON_X + UI_FILE_DIALOG_NAV_BUTTON_W) &&
+                    event.y >= (int32_t)UI_FILE_DIALOG_ROOT_Y &&
+                    event.y < (int32_t)(UI_FILE_DIALOG_ROOT_Y + LEONOS_UI_BUTTON_H)) {
                     ui_copy_text(dir_path, sizeof(dir_path), "0:/");
                     ui_copy_text(file_name, sizeof(file_name), "");
-                    load_ret = ui_file_dialog_load_entries(dir_path, entries, MAX_ENTRIES,
+                    ui_file_dialog_sync_name_edit(&name_edit);
+                    load_ret = ui_file_dialog_load_entries(dir_path, entries,
+                                                           UI_FILE_DIALOG_MAX_ENTRIES,
                                                            &entry_count, filter_ext);
                     if (load_ret < 0) {
                         ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
@@ -2171,38 +2284,57 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                     list_state.scroll = 0;
                     continue;
                 }
-                if (leonos_ui_edit_state_handle_mouse(&name_edit, event.x, event.y,
-                                                      92, 284, W - 108, event.buttons)) {
+                if (leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  UI_FILE_DIALOG_NAME_EDIT_X,
+                                  UI_FILE_DIALOG_NAME_EDIT_Y,
+                                  UI_FILE_DIALOG_NAME_EDIT_W,
+                                  LEONOS_FONT_H + 8) &&
+                    leonos_ui_edit_state_handle_mouse(&name_edit, event.x, event.y,
+                                                      UI_FILE_DIALOG_NAME_EDIT_X,
+                                                      UI_FILE_DIALOG_NAME_EDIT_Y,
+                                                      UI_FILE_DIALOG_NAME_EDIT_W,
+                                                      event.buttons)) {
                     name_edit.focused = 1;
                     list_state.focused = 0;
                     continue;
                 }
-                if (event.x >= 16 + 406 && event.x < 16 + 406 + 18 &&
-                    event.y >= 94 && event.y < 94 + 176) {
+                if (event.x >= (int32_t)UI_FILE_DIALOG_SCROLL_X &&
+                    event.x < (int32_t)(UI_FILE_DIALOG_SCROLL_X + UI_FILE_DIALOG_SCROLL_W) &&
+                    event.y >= (int32_t)UI_FILE_DIALOG_LIST_Y &&
+                    event.y < (int32_t)(UI_FILE_DIALOG_LIST_Y + UI_FILE_DIALOG_LIST_H)) {
                     leonos_ui_vscrollbar_handle_mouse(&list_state.scroll,
-                                                      entry_count > list_state.visible_rows ? entry_count : list_state.visible_rows,
-                                                      list_state.visible_rows,
-                                                      16 + 406, 94, 18, 176,
-                                                      event.x, event.y);
+                                                       entry_count > list_state.visible_rows ? entry_count : list_state.visible_rows,
+                                                       list_state.visible_rows,
+                                                       UI_FILE_DIALOG_SCROLL_X,
+                                                       UI_FILE_DIALOG_LIST_Y,
+                                                       UI_FILE_DIALOG_SCROLL_W,
+                                                       UI_FILE_DIALOG_LIST_H,
+                                                       event.x, event.y);
                     continue;
                 }
                 if (leonos_ui_listview_state_handle_mouse(&list_state, event.x, event.y,
-                                                          18, 96, 404, &activated)) {
+                                                          UI_FILE_DIALOG_LIST_BODY_X,
+                                                          UI_FILE_DIALOG_LIST_BODY_Y,
+                                                          UI_FILE_DIALOG_LIST_BODY_W,
+                                                          &activated)) {
                     name_edit.focused = 0;
                     list_state.focused = 1;
                     if (list_state.selected >= 0 && (uint32_t)list_state.selected < entry_count) {
                         ui_file_dialog_select_entry(dir_path, &entries[list_state.selected],
                                                     file_name, sizeof(file_name));
+                        ui_file_dialog_sync_name_edit(&name_edit);
                     }
                     if (activated &&
                         ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
-                                                file_name, sizeof(file_name), entries, MAX_ENTRIES,
+                                                file_name, sizeof(file_name), entries,
+                                                UI_FILE_DIALOG_MAX_ENTRIES,
                                                 &entry_count, &list_state, filter_ext,
                                                 status, sizeof(status))) {
                         ui_copy_text(path, capacity, file_name);
                         result = 1;
                         break;
                     }
+                    ui_file_dialog_sync_name_edit(&name_edit);
                     leonos_ui_listview_state_set_count(&list_state, entry_count);
                 }
             }

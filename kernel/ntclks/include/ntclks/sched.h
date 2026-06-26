@@ -102,6 +102,7 @@ struct trap_frame *sched_task_frame(struct task *task);
 uint64_t sched_task_cr3(struct task *task);
 void sched_mark_ready(uint32_t pid);
 void sched_sleep_current_until(uint64_t wake_tick);
+int sched_kill_user_task(uint32_t pid, uint64_t code);
 int64_t sched_wait_reap(uint32_t waiter_pid, uint32_t wanted_pid, uint64_t *exit_code);
 uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint64_t *tick);
 void sched_dump(void);

@@ -421,6 +421,20 @@ void sched_sleep_current_until(uint64_t wake_tick)
     task->state = TASK_BLOCKED;
 }
 
+int sched_kill_user_task(uint32_t pid, uint64_t code)
+{
+    struct task *task = sched_find(pid);
+    if (!task || task->pid == 0) {
+        return -2;
+    }
+    if (task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
+        (task->flags & TASK_FLAG_SERVICE) || pid == current_pid) {
+        return -1;
+    }
+    sched_exit(pid, code);
+    return 0;
+}
+
 int64_t sched_wait_reap(uint32_t waiter_pid, uint32_t wanted_pid, uint64_t *exit_code)
 {
     for (uint32_t i = 0; i < task_count; ++i) {

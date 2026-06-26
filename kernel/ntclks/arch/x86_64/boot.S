@@ -1,3 +1,4 @@
+#ifdef LEONOS_KERNEL_LEGACY_MULTIBOOT
 .section .multiboot, "a"
 .align 8
 multiboot2_header:
@@ -64,6 +65,7 @@ _start:
     cli
     hlt
     jmp .halt
+#endif
 
 .global x86_64_outb
 .type x86_64_outb, @function

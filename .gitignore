@@ -1,5 +1,4 @@
 build/
 .config
-include/generated/
 *.log
 *.tmp

@@ -1838,6 +1838,16 @@ int storage_write_node(const char *path, uint64_t offset,
         return -28;
     }
     total_len = (uint32_t)end64;
+    if (offset == 0) {
+        ret = storage_write_file(path, buf, total_len);
+        if (ret < 0) {
+            return ret;
+        }
+        if (out_written) {
+            *out_written = len;
+        }
+        return 0;
+    }
     pages = total_len ? (uint32_t)((total_len + 4095u) / 4096u) : 1u;
     phys = mm_alloc_pages(pages);
     if (!phys) {

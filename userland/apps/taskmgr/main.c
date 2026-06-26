@@ -10,6 +10,7 @@
 #define TASKMGR_VISIBLE_ROWS 7
 #define TASKMGR_MENU_BAR_H 28
 #define TASKMGR_MENU_ITEM_H (LEONOS_FONT_H + 8)
+#define LEONOS_KEY_DELETE 83U
 
 enum {
     TASKMGR_MENU_NONE = 0,
@@ -23,6 +24,7 @@ static uint32_t task_count;
 static uint64_t task_tick;
 static struct leonos_ui_listview_state task_list;
 static uint8_t menu_open;
+static char status_text[96] = "Ready";
 
 static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -120,6 +122,55 @@ static void refresh_tasks(void)
     }
 }
 
+static void set_status(const char *text)
+{
+    uint32_t i = 0;
+    while (text && text[i] && i + 1 < sizeof(status_text)) {
+        status_text[i] = text[i];
+        ++i;
+    }
+    status_text[i] = 0;
+}
+
+static struct leonos_task_info *selected_task(void)
+{
+    if (task_list.selected < 0 || (uint32_t)task_list.selected >= task_count) {
+        return 0;
+    }
+    return &tasks[task_list.selected];
+}
+
+static int selected_task_killable(void)
+{
+    struct leonos_task_info *task = selected_task();
+    if (!task || task->pid == 0 || task->kind != 1 || task->state == 3 ||
+        (task->flags & 1u) || task->pid == (uint32_t)getpid()) {
+        return 0;
+    }
+    return 1;
+}
+
+static void kill_selected_task(void)
+{
+    struct leonos_task_info *task = selected_task();
+    uint32_t pid;
+    if (!task) {
+        set_status("No task selected");
+        return;
+    }
+    if (!selected_task_killable()) {
+        set_status("Cannot end protected or non-user task");
+        return;
+    }
+    pid = task->pid;
+    if (leonos_task_kill(pid) < 0) {
+        set_status("End Task failed");
+        return;
+    }
+    set_status("Task ended");
+    refresh_tasks();
+}
+
 static void draw_taskmgr(struct leonos_ui_surface *ui)
 {
     char line[128];
@@ -142,13 +193,15 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
     leonos_ui_toolbar(ui, 0, 28, TASKMGR_W, 36);
     leonos_ui_toolbar_button(ui, 8, 34, 88, "Refresh", 0);
     leonos_ui_toolbar_button(ui, 104, 34, 94, "Processes", LEONOS_UI_BUTTON_PRESSED);
+    leonos_ui_toolbar_button(ui, 206, 34, 86, "End Task",
+                             selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
 
     line[0] = 0;
     append_text(line, &pos, sizeof(line), "tick=");
     append_dec(line, &pos, sizeof(line), task_tick);
     append_text(line, &pos, sizeof(line), " tasks=");
     append_dec(line, &pos, sizeof(line), task_count);
-    leonos_ui_text(ui, 216, 40, line, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 306, 40, line, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
 
     leonos_ui_scroll_view_frame(ui, 8, 72, TASKMGR_W - 16, TASKMGR_H - 72 - TASKMGR_STATUS_H - 4);
     leonos_ui_listview_header(ui, 10, 74, TASKMGR_W - 38, cols, 7);
@@ -190,12 +243,14 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
                          task_list.scroll, task_count > TASKMGR_VISIBLE_ROWS ? task_count : TASKMGR_VISIBLE_ROWS,
                          TASKMGR_VISIBLE_ROWS,
                          task_count <= TASKMGR_VISIBLE_ROWS ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
-    leonos_ui_statusbar(ui, TASKMGR_H - TASKMGR_STATUS_H, TASKMGR_STATUS_H, line);
+    leonos_ui_statusbar(ui, TASKMGR_H - TASKMGR_STATUS_H, TASKMGR_STATUS_H, status_text);
 
     if (menu_open == TASKMGR_MENU_FILE) {
-        leonos_ui_menu(ui, 8, TASKMGR_MENU_BAR_H, 154, 60);
+        leonos_ui_menu(ui, 8, TASKMGR_MENU_BAR_H, 154, 86);
         leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 8, 116, "Refresh", 0);
-        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 34, 116, "About", 0);
+        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 34, 116, "End Task",
+                            selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
+        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 60, 116, "About", 0);
     } else if (menu_open == TASKMGR_MENU_OPTIONS) {
         leonos_ui_menu(ui, 74, TASKMGR_MENU_BAR_H, 178, 60);
         leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 8, 140, "Processes", LEONOS_UI_MENU_SELECTED);
@@ -225,6 +280,12 @@ static int handle_menu_click(int32_t x, int32_t y)
             return 1;
         }
         if (hit_rect_i(x, y, 42, (int32_t)TASKMGR_MENU_BAR_H + 34, 116,
+                       (int32_t)TASKMGR_MENU_ITEM_H)) {
+            menu_open = TASKMGR_MENU_NONE;
+            kill_selected_task();
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)TASKMGR_MENU_BAR_H + 60, 116,
                        (int32_t)TASKMGR_MENU_ITEM_H)) {
             menu_open = TASKMGR_MENU_NONE;
             leonos_ui_show_message_box("Task Manager", "Live task snapshot from the scheduler.", "OK");
@@ -285,6 +346,12 @@ int main(void)
                     continue;
                 }
                 menu_open = TASKMGR_MENU_NONE;
+                if (hit_rect_i(event.x, event.y, 206, 34, 86, LEONOS_UI_BUTTON_H)) {
+                    kill_selected_task();
+                    draw_taskmgr(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, TASKMGR_W, TASKMGR_H, TASKMGR_W, pixels);
+                    continue;
+                }
                 if (event.x >= (int32_t)(TASKMGR_W - 26) && event.y >= 74 &&
                     event.y < (int32_t)(TASKMGR_H - TASKMGR_STATUS_H)) {
                     leonos_ui_vscrollbar_handle_mouse(&task_list.scroll,
@@ -305,6 +372,12 @@ int main(void)
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
                 menu_open = TASKMGR_MENU_NONE;
                 uint32_t activate = 0;
+                if (event.keycode == LEONOS_KEY_DELETE) {
+                    kill_selected_task();
+                    draw_taskmgr(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, TASKMGR_W, TASKMGR_H, TASKMGR_W, pixels);
+                    continue;
+                }
                 if (leonos_ui_listview_state_handle_key(&task_list, event.keycode, &activate)) {
                     draw_taskmgr(&ui);
                     leonos_gui_present_window((uint32_t)window_id, TASKMGR_W, TASKMGR_H, TASKMGR_W, pixels);
