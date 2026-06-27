@@ -2,6 +2,7 @@
 #include <leonos/fs.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
+#include <leonos/system.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
@@ -25,6 +26,7 @@
 #define START_MENU_ITEM_H 26
 #define START_MENU_DIRTY_H (START_MENU_MAX_H + TASKBAR_H + 8)
 #define START_MENU_MAX_APPS 16
+#define START_MENU_MAX_ITEMS 32
 #define APP_WINDOW_SLOTS (MAX_WINDOWS - BUILTIN_WINDOWS)
 #define APP_CLIENT_MAX_W 760
 #define APP_CLIENT_MAX_H 540
@@ -1335,6 +1337,8 @@ enum start_action_type {
     START_ACTION_RESTORE = 1,
     START_ACTION_SPAWN = 2,
     START_ACTION_SEPARATOR = 3,
+    START_ACTION_REBOOT = 4,
+    START_ACTION_SHUTDOWN = 5,
 };
 
 struct start_menu_item {
@@ -1429,6 +1433,9 @@ static uint32_t build_start_menu_items(struct start_menu_item *items, uint32_t c
             };
         }
     }
+    ADD_ITEM("", START_ACTION_SEPARATOR, 0, 0);
+    ADD_ITEM("Restart", START_ACTION_REBOOT, 0, 0);
+    ADD_ITEM("Shut Down", START_ACTION_SHUTDOWN, 0, 0);
 #undef ADD_ITEM
     return count;
 }
@@ -1466,8 +1473,8 @@ static void draw_start_menu(void)
     if (!start_menu_open && !start_menu_animating) {
         return;
     }
-    struct start_menu_item items[24];
-    uint32_t count = build_start_menu_items(items, 24);
+    struct start_menu_item items[START_MENU_MAX_ITEMS];
+    uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
     struct start_menu_layout layout = start_menu_layout_for_count(count);
     leonos_ui_menu(&ui, layout.x, layout.y, layout.w, layout.visible_h);
     for (uint32_t i = 0; i < count; ++i) {
@@ -1871,6 +1878,18 @@ static int spawn_program_path(const char *path)
     return pid;
 }
 
+static void desktop_reboot(void)
+{
+    printf("[desktop.elf] restart requested from Start menu\n");
+    leonos_system_reboot();
+}
+
+static void desktop_shutdown(void)
+{
+    printf("[desktop.elf] shutdown requested from Start menu\n");
+    leonos_system_shutdown();
+}
+
 static void handle_start_click(uint32_t x, uint32_t y)
 {
     uint32_t tb_y = taskbar_y();
@@ -1881,8 +1900,8 @@ static void handle_start_click(uint32_t x, uint32_t y)
     if (!start_menu_open && !start_menu_animating) {
         return;
     }
-    struct start_menu_item items[24];
-    uint32_t count = build_start_menu_items(items, 24);
+    struct start_menu_item items[START_MENU_MAX_ITEMS];
+    uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
     struct start_menu_layout layout = start_menu_layout_for_count(count);
     if (!hit_rect(x, y, (int)layout.x, (int)layout.y, layout.w, layout.visible_h)) {
         start_menu_set_open(0);
@@ -1903,6 +1922,14 @@ static void handle_start_click(uint32_t x, uint32_t y)
             restore_window(items[i].window_id);
         } else if (items[i].type == START_ACTION_SPAWN) {
             spawn_program_path(items[i].path);
+        } else if (items[i].type == START_ACTION_REBOOT) {
+            start_menu_set_open(0);
+            desktop_reboot();
+            return;
+        } else if (items[i].type == START_ACTION_SHUTDOWN) {
+            start_menu_set_open(0);
+            desktop_shutdown();
+            return;
         }
         break;
     }
@@ -1914,8 +1941,8 @@ static int hit_start_menu_area(uint32_t x, uint32_t y)
     if (!start_menu_open && !start_menu_animating) {
         return 0;
     }
-    struct start_menu_item items[24];
-    uint32_t count = build_start_menu_items(items, 24);
+    struct start_menu_item items[START_MENU_MAX_ITEMS];
+    uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
     struct start_menu_layout layout = start_menu_layout_for_count(count);
     return hit_rect(x, y, (int)layout.x, (int)layout.y, layout.w, layout.visible_h);
 }

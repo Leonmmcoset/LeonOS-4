@@ -1300,6 +1300,45 @@ static int fat32_update_dirent(const struct fat32_dir_ref *ref)
     return 0;
 }
 
+static int fat32_name_needs_lfn(const char *name, uint8_t short_name[11], uint8_t *need_lfn)
+{
+    int ret = fat32_make_short_name(name, short_name);
+    if (!need_lfn) {
+        return -22;
+    }
+    *need_lfn = 0;
+    if (ret == 0) {
+        char rendered[LEONOS_FS_NAME_LEN];
+        uint32_t pos = 0;
+        for (uint32_t i = 0; i < 8 && short_name[i] != ' '; ++i) {
+            char ch = (char)short_name[i];
+            if (ch >= 'A' && ch <= 'Z') {
+                ch = (char)(ch - 'A' + 'a');
+            }
+            if (pos + 1 < sizeof(rendered)) {
+                rendered[pos++] = ch;
+            }
+        }
+        if (short_name[8] != ' ' && pos + 1 < sizeof(rendered)) {
+            rendered[pos++] = '.';
+        }
+        for (uint32_t i = 8; i < 11 && short_name[i] != ' '; ++i) {
+            char ch = (char)short_name[i];
+            if (ch >= 'A' && ch <= 'Z') {
+                ch = (char)(ch - 'A' + 'a');
+            }
+            if (pos + 1 < sizeof(rendered)) {
+                rendered[pos++] = ch;
+            }
+        }
+        rendered[pos] = 0;
+        *need_lfn = storage_text_eq(name, rendered) ? 0u : 1u;
+        return 0;
+    }
+    *need_lfn = 1;
+    return 1;
+}
+
 static int fat32_find_free_dirent_span(uint32_t dir_cluster, uint32_t slots,
                                        struct fat32_dir_span *out)
 {
@@ -1351,6 +1390,184 @@ static int fat32_find_free_dirent_span(uint32_t dir_cluster, uint32_t slots,
                 out->entry_cluster = new_cluster;
                 out->entry_offset = 0;
                 return 0;
+            }
+            cluster = next;
+        }
+    }
+}
+
+static int fat32_create_dirent(uint32_t parent_cluster, const char *name, uint8_t attr,
+                               uint32_t first_cluster, uint32_t size)
+{
+    struct fat32_dir_span span;
+    struct fat32_dirent dirent;
+    uint8_t short_name[11];
+    uint8_t need_lfn = 0;
+    uint32_t lfn_count = 0;
+    int ret;
+
+    ret = fat32_name_needs_lfn(name, short_name, &need_lfn);
+    if (ret < 0) {
+        return ret;
+    }
+    if (need_lfn) {
+        ret = fat32_make_short_alias(parent_cluster, name, short_name);
+        if (ret < 0) {
+            return ret;
+        }
+        lfn_count = fat32_lfn_entry_count(name);
+        if (lfn_count > 20u) {
+            return -22;
+        }
+    }
+    ret = fat32_find_free_dirent_span(parent_cluster, lfn_count + 1u, &span);
+    if (ret < 0) {
+        return ret;
+    }
+    storage_memzero(&dirent, sizeof(dirent));
+    storage_memcpy(dirent.name, short_name, 11);
+    dirent.attr = attr;
+    dirent.first_cluster_hi = (uint16_t)(first_cluster >> 16);
+    dirent.first_cluster_lo = (uint16_t)(first_cluster & 0xffffu);
+    dirent.size = size;
+
+    if (fat32_read_cluster(span.entry_cluster, storage_cluster_buf) < 0) {
+        return -5;
+    }
+    if (need_lfn) {
+        uint32_t name_len = (uint32_t)storage_strlen(name);
+        uint8_t checksum = fat32_short_name_checksum(short_name);
+        for (uint32_t i = 0; i < lfn_count; ++i) {
+            struct fat32_lfn *lfn = (struct fat32_lfn *)(void *)(storage_cluster_buf +
+                span.entry_offset + i * sizeof(struct fat32_dirent));
+            uint32_t part = lfn_count - i - 1u;
+            fat32_fill_lfn_entry(lfn, name, name_len, part, lfn_count, checksum);
+        }
+    }
+    *(struct fat32_dirent *)(void *)(storage_cluster_buf +
+        span.entry_offset + lfn_count * sizeof(struct fat32_dirent)) = dirent;
+    if (fat32_write_cluster(span.entry_cluster, storage_cluster_buf) < 0) {
+        return -5;
+    }
+    return 0;
+}
+
+static int fat32_delete_dirent(uint32_t dir_cluster, const char *name,
+                               struct fat32_dirent *deleted)
+{
+    uint32_t cluster = dir_cluster;
+    char lfn_parts[20][14];
+    uint32_t lfn_count = 0;
+    uint32_t lfn_start = 0xffffffffu;
+    for (;;) {
+        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
+            return -5;
+        }
+        for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
+            struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
+            if (de->name[0] == 0x00) {
+                return -2;
+            }
+            if (de->name[0] == 0xe5) {
+                lfn_count = 0;
+                lfn_start = 0xffffffffu;
+                continue;
+            }
+            if (de->attr == FAT32_ATTR_LFN) {
+                const struct fat32_lfn *lfn = (const struct fat32_lfn *)(const void *)de;
+                uint8_t order = lfn->order & 0x1fu;
+                if (lfn_start == 0xffffffffu) {
+                    lfn_start = off;
+                }
+                if (order == 0 || order > 20) {
+                    lfn_count = 0;
+                    continue;
+                }
+                storage_memzero(lfn_parts[order - 1], sizeof(lfn_parts[0]));
+                {
+                    uint32_t len = 0;
+                    fat32_lfn_extract(lfn, lfn_parts[order - 1], &len, sizeof(lfn_parts[0]));
+                }
+                if (order > lfn_count) {
+                    lfn_count = order;
+                }
+                continue;
+            }
+            if ((de->attr & 0x08u) != 0) {
+                lfn_count = 0;
+                lfn_start = 0xffffffffu;
+                continue;
+            }
+            {
+                int matched;
+                if (lfn_count) {
+                    char full[LEONOS_FS_NAME_LEN];
+                    fat32_build_lfn_name(lfn_parts, lfn_count, full, sizeof(full));
+                    matched = storage_text_eq_ci(full, name) || fat32_name_match_short(de, name);
+                } else {
+                    matched = fat32_name_match_short(de, name);
+                }
+                if (!matched) {
+                    lfn_count = 0;
+                    lfn_start = 0xffffffffu;
+                    continue;
+                }
+                if (deleted) {
+                    *deleted = *de;
+                }
+                uint32_t start = lfn_start == 0xffffffffu ? off : lfn_start;
+                for (uint32_t clear = start; clear <= off; clear += sizeof(struct fat32_dirent)) {
+                    struct fat32_dirent *clear_de =
+                        (struct fat32_dirent *)(void *)(storage_cluster_buf + clear);
+                    clear_de->name[0] = 0xe5u;
+                }
+                if (fat32_write_cluster(cluster, storage_cluster_buf) < 0) {
+                    return -5;
+                }
+                return 0;
+            }
+        }
+        {
+            uint32_t next = 0;
+            if (fat32_read_fat_entry(cluster, &next) < 0) {
+                return -5;
+            }
+            if (next >= FAT32_EOC) {
+                return -2;
+            }
+            cluster = next;
+        }
+    }
+}
+
+static int fat32_dir_is_empty(uint32_t dir_cluster)
+{
+    uint32_t cluster = dir_cluster;
+    for (;;) {
+        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
+            return -5;
+        }
+        for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
+            struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
+            if (de->name[0] == 0x00) {
+                return 1;
+            }
+            if (de->name[0] == 0xe5 || de->attr == FAT32_ATTR_LFN || (de->attr & 0x08u) != 0) {
+                continue;
+            }
+            if (de->name[0] == '.' &&
+                (de->name[1] == ' ' || (de->name[1] == '.' && de->name[2] == ' '))) {
+                continue;
+            }
+            return 0;
+        }
+        {
+            uint32_t next = 0;
+            if (fat32_read_fat_entry(cluster, &next) < 0) {
+                return -5;
+            }
+            if (next >= FAT32_EOC) {
+                return 1;
             }
             cluster = next;
         }
@@ -2061,6 +2278,262 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
         }
     } else if (fat32_update_dirent(&ref) < 0) {
         return -5;
+    }
+    return 0;
+}
+
+int storage_mkdir(const char *path)
+{
+    char resolved[LEONOS_FS_PATH_LEN];
+    char parent[LEONOS_FS_PATH_LEN];
+    char name[LEONOS_FS_NAME_LEN];
+    struct storage_node parent_node;
+    struct storage_node existing;
+    uint32_t cluster = 0;
+    int ret;
+    if (!path) {
+        return -22;
+    }
+    if (!storage_ready()) {
+        return -2;
+    }
+    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0 ||
+        storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
+        return -22;
+    }
+    ret = storage_lookup_path(parent, &parent_node);
+    if (ret < 0) {
+        return ret;
+    }
+    if (parent_node.type != LEONOS_FS_TYPE_DIR) {
+        return -20;
+    }
+    if (parent_node.flags & STORAGE_NODE_FLAG_DEV_DIR) {
+        return -21;
+    }
+    ret = fat32_validate_name(name);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = storage_lookup_path(resolved, &existing);
+    if (ret == 0) {
+        return -17;
+    }
+    if (ret != -2) {
+        return ret;
+    }
+    ret = fat32_find_free_cluster(&cluster);
+    if (ret < 0) {
+        return ret;
+    }
+    if (fat32_write_fat_entry(cluster, FAT32_EOC) < 0) {
+        return -5;
+    }
+    storage_memzero(storage_cluster_buf, g_storage.cluster_bytes);
+    {
+        struct fat32_dirent *dot = (struct fat32_dirent *)(void *)storage_cluster_buf;
+        struct fat32_dirent *dotdot =
+            (struct fat32_dirent *)(void *)(storage_cluster_buf + sizeof(struct fat32_dirent));
+        storage_memzero(dot, sizeof(*dot));
+        storage_memzero(dotdot, sizeof(*dotdot));
+        dot->name[0] = '.';
+        for (uint32_t i = 1; i < 11; ++i) {
+            dot->name[i] = ' ';
+        }
+        dot->attr = FAT32_ATTR_DIRECTORY;
+        dot->first_cluster_hi = (uint16_t)(cluster >> 16);
+        dot->first_cluster_lo = (uint16_t)(cluster & 0xffffu);
+        dotdot->name[0] = '.';
+        dotdot->name[1] = '.';
+        for (uint32_t i = 2; i < 11; ++i) {
+            dotdot->name[i] = ' ';
+        }
+        dotdot->attr = FAT32_ATTR_DIRECTORY;
+        dotdot->first_cluster_hi = (uint16_t)(parent_node.first_cluster >> 16);
+        dotdot->first_cluster_lo = (uint16_t)(parent_node.first_cluster & 0xffffu);
+    }
+    if (fat32_write_cluster(cluster, storage_cluster_buf) < 0) {
+        (void)fat32_write_fat_entry(cluster, 0);
+        return -5;
+    }
+    ret = fat32_create_dirent(parent_node.first_cluster, name, FAT32_ATTR_DIRECTORY, cluster, 0);
+    if (ret < 0) {
+        (void)fat32_free_chain(cluster);
+        return ret;
+    }
+    return 0;
+}
+
+int storage_unlink(const char *path)
+{
+    char resolved[LEONOS_FS_PATH_LEN];
+    char parent[LEONOS_FS_PATH_LEN];
+    char name[LEONOS_FS_NAME_LEN];
+    struct storage_node parent_node;
+    struct storage_node node;
+    struct fat32_dirent deleted;
+    uint32_t first_cluster;
+    int ret;
+    if (!path) {
+        return -22;
+    }
+    if (!storage_ready()) {
+        return -2;
+    }
+    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0 ||
+        storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
+        return -22;
+    }
+    ret = storage_lookup_path(parent, &parent_node);
+    if (ret < 0) {
+        return ret;
+    }
+    if (parent_node.type != LEONOS_FS_TYPE_DIR || (parent_node.flags & STORAGE_NODE_FLAG_DEV_DIR)) {
+        return -20;
+    }
+    ret = storage_lookup_path(resolved, &node);
+    if (ret < 0) {
+        return ret;
+    }
+    if (node.type == LEONOS_FS_TYPE_DIR) {
+        return -21;
+    }
+    ret = fat32_delete_dirent(parent_node.first_cluster, name, &deleted);
+    if (ret < 0) {
+        return ret;
+    }
+    first_cluster = ((uint32_t)deleted.first_cluster_hi << 16) | deleted.first_cluster_lo;
+    if (first_cluster >= 2) {
+        ret = fat32_free_chain(first_cluster);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
+int storage_rmdir(const char *path)
+{
+    char resolved[LEONOS_FS_PATH_LEN];
+    char parent[LEONOS_FS_PATH_LEN];
+    char name[LEONOS_FS_NAME_LEN];
+    struct storage_node parent_node;
+    struct storage_node node;
+    struct fat32_dirent deleted;
+    int empty;
+    int ret;
+    if (!path) {
+        return -22;
+    }
+    if (!storage_ready()) {
+        return -2;
+    }
+    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0 ||
+        storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
+        return -22;
+    }
+    if (storage_text_eq_ci(resolved, "0:/") || storage_text_eq_ci(resolved, "0:/dev")) {
+        return -22;
+    }
+    ret = storage_lookup_path(parent, &parent_node);
+    if (ret < 0) {
+        return ret;
+    }
+    if (parent_node.type != LEONOS_FS_TYPE_DIR || (parent_node.flags & STORAGE_NODE_FLAG_DEV_DIR)) {
+        return -20;
+    }
+    ret = storage_lookup_path(resolved, &node);
+    if (ret < 0) {
+        return ret;
+    }
+    if (node.type != LEONOS_FS_TYPE_DIR || (node.flags & STORAGE_NODE_FLAG_DEV_DIR)) {
+        return -20;
+    }
+    empty = fat32_dir_is_empty(node.first_cluster);
+    if (empty < 0) {
+        return empty;
+    }
+    if (!empty) {
+        return -39;
+    }
+    ret = fat32_delete_dirent(parent_node.first_cluster, name, &deleted);
+    if (ret < 0) {
+        return ret;
+    }
+    if (node.first_cluster >= 2) {
+        ret = fat32_free_chain(node.first_cluster);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
+int storage_rename(const char *old_path, const char *new_path)
+{
+    char old_resolved[LEONOS_FS_PATH_LEN];
+    char new_resolved[LEONOS_FS_PATH_LEN];
+    char old_parent[LEONOS_FS_PATH_LEN];
+    char new_parent[LEONOS_FS_PATH_LEN];
+    char old_name[LEONOS_FS_NAME_LEN];
+    char new_name[LEONOS_FS_NAME_LEN];
+    struct storage_node parent_node;
+    struct storage_node node;
+    struct storage_node existing;
+    struct fat32_dirent deleted;
+    uint32_t first_cluster;
+    int ret;
+    if (!old_path || !new_path) {
+        return -22;
+    }
+    if (!storage_ready()) {
+        return -2;
+    }
+    if (storage_resolve_path("0:/", old_path, old_resolved, sizeof(old_resolved)) < 0 ||
+        storage_resolve_path("0:/", new_path, new_resolved, sizeof(new_resolved)) < 0 ||
+        storage_parent_path(old_resolved, old_parent, sizeof(old_parent), old_name, sizeof(old_name)) < 0 ||
+        storage_parent_path(new_resolved, new_parent, sizeof(new_parent), new_name, sizeof(new_name)) < 0) {
+        return -22;
+    }
+    if (!storage_text_eq_ci(old_parent, new_parent)) {
+        return -22;
+    }
+    if (storage_text_eq_ci(old_name, new_name)) {
+        return 0;
+    }
+    ret = fat32_validate_name(new_name);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = storage_lookup_path(old_parent, &parent_node);
+    if (ret < 0) {
+        return ret;
+    }
+    if (parent_node.type != LEONOS_FS_TYPE_DIR || (parent_node.flags & STORAGE_NODE_FLAG_DEV_DIR)) {
+        return -20;
+    }
+    ret = storage_lookup_path(old_resolved, &node);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = storage_lookup_path(new_resolved, &existing);
+    if (ret == 0) {
+        return -17;
+    }
+    if (ret != -2) {
+        return ret;
+    }
+    first_cluster = node.first_cluster;
+    ret = fat32_create_dirent(parent_node.first_cluster, new_name,
+                              node.type == LEONOS_FS_TYPE_DIR ? FAT32_ATTR_DIRECTORY : FAT32_ATTR_ARCHIVE,
+                              first_cluster, node.type == LEONOS_FS_TYPE_FILE ? (uint32_t)node.size : 0);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = fat32_delete_dirent(parent_node.first_cluster, old_name, &deleted);
+    if (ret < 0) {
+        (void)fat32_delete_dirent(parent_node.first_cluster, new_name, 0);
+        return ret;
     }
     return 0;
 }

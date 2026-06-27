@@ -24,5 +24,7 @@ struct leonos_system_info {
 };
 
 int leonos_system_info(struct leonos_system_info *info);
+int leonos_system_reboot(void);
+int leonos_system_shutdown(void);
 
 #endif

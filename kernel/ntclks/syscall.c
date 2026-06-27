@@ -3,6 +3,7 @@
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
 #include <ntclks/osmlayer.h>
+#include <ntclks/power.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
@@ -33,6 +34,8 @@
 #define LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT 0x4c475753ULL
 #define LEONOS_GUI_IOCTL_DESTROY_WINDOW 0x4c475744ULL
 #define LEONOS_GUI_IOCTL_TASK_KILL 0x4c544b49ULL
+#define LEONOS_GUI_IOCTL_REBOOT 0x4c524254ULL
+#define LEONOS_GUI_IOCTL_SHUTDOWN 0x4c534844ULL
 
 struct task_snapshot_user {
     uint32_t capacity;
@@ -200,6 +203,26 @@ static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, ui
     }
     normalize_dir_path(out);
     return 0;
+}
+
+static int storage_errno(int ret)
+{
+    if (ret == -2) {
+        return -LEONOS_ENOENT;
+    }
+    if (ret == -17) {
+        return -LEONOS_EEXIST;
+    }
+    if (ret == -20) {
+        return -LEONOS_ENOTDIR;
+    }
+    if (ret == -21) {
+        return -LEONOS_EISDIR;
+    }
+    if (ret == -39) {
+        return -LEONOS_ENOTEMPTY;
+    }
+    return ret;
 }
 
 static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr, uint32_t *out_len)
@@ -677,6 +700,55 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return 0;
     }
 
+    if (number == LINUX_SYS_MKDIR) {
+        struct task *task = sched_current_task();
+        char path[LEONOS_FS_PATH_LEN];
+        int ret = resolve_user_path(task, a0, path, sizeof(path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_mkdir(path);
+        return ret < 0 ? storage_errno(ret) : 0;
+    }
+
+    if (number == LINUX_SYS_UNLINK) {
+        struct task *task = sched_current_task();
+        char path[LEONOS_FS_PATH_LEN];
+        int ret = resolve_user_path(task, a0, path, sizeof(path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_unlink(path);
+        return ret < 0 ? storage_errno(ret) : 0;
+    }
+
+    if (number == LINUX_SYS_RMDIR) {
+        struct task *task = sched_current_task();
+        char path[LEONOS_FS_PATH_LEN];
+        int ret = resolve_user_path(task, a0, path, sizeof(path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_rmdir(path);
+        return ret < 0 ? storage_errno(ret) : 0;
+    }
+
+    if (number == LINUX_SYS_RENAME) {
+        struct task *task = sched_current_task();
+        char old_path[LEONOS_FS_PATH_LEN];
+        char new_path[LEONOS_FS_PATH_LEN];
+        int ret = resolve_user_path(task, a0, old_path, sizeof(old_path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = resolve_user_path(task, a1, new_path, sizeof(new_path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_rename(old_path, new_path);
+        return ret < 0 ? storage_errno(ret) : 0;
+    }
+
     if (number == LINUX_SYS_GETPID) {
         return (int64_t)sched_current_pid();
     }
@@ -914,6 +986,14 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         gui_ipc_destroy_owner((uint32_t)a2);
         pty_process_exit((uint32_t)a2);
         return 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_REBOOT) {
+        power_reboot();
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_SHUTDOWN) {
+        power_shutdown();
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_LIST_DIR) {

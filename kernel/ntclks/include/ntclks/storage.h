@@ -31,5 +31,9 @@ int storage_write_node(const char *path, uint64_t offset,
 int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
                      uint32_t capacity, uint32_t *out_count);
 int storage_stat_path(const char *path, struct leonos_stat *st);
+int storage_mkdir(const char *path);
+int storage_unlink(const char *path);
+int storage_rmdir(const char *path);
+int storage_rename(const char *old_path, const char *new_path);
 
 #endif

@@ -117,6 +117,26 @@ int execve(const char *path, char *const argv[], char *const envp[])
     return (int)syscall3(SYS_execve, (long)path, (long)argv, (long)envp);
 }
 
+int mkdir(const char *path, int mode)
+{
+    return (int)syscall2(SYS_mkdir, (long)path, mode);
+}
+
+int unlink(const char *path)
+{
+    return (int)syscall1(SYS_unlink, (long)path);
+}
+
+int rmdir(const char *path)
+{
+    return (int)syscall1(SYS_rmdir, (long)path);
+}
+
+int rename(const char *old_path, const char *new_path)
+{
+    return (int)syscall2(SYS_rename, (long)old_path, (long)new_path);
+}
+
 int puts(const char *s)
 {
     size_t len = strlen(s);
@@ -388,6 +408,16 @@ int leonos_system_info(struct leonos_system_info *info)
         return -1;
     }
     return ioctl(3, LEONOS_IOCTL_SYSTEM_INFO, info);
+}
+
+int leonos_system_reboot(void)
+{
+    return ioctl(3, LEONOS_GUI_IOCTL_REBOOT, 0);
+}
+
+int leonos_system_shutdown(void)
+{
+    return ioctl(3, LEONOS_GUI_IOCTL_SHUTDOWN, 0);
 }
 
 int leonos_readdir(int fd, struct leonos_dir_entry *entry)

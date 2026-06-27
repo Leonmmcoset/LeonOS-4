@@ -25,6 +25,7 @@
 #define LEONOS_UI_WINDOW_NO_RESIZE 0x02u
 #define LEONOS_UI_MENU_SEPARATOR 0x01u
 #define LEONOS_UI_MENU_SELECTED 0x02u
+#define LEONOS_UI_MENU_DISABLED 0x04u
 #define LEONOS_UI_EDIT_FOCUSED 0x01u
 #define LEONOS_UI_EDIT_READONLY 0x02u
 #define LEONOS_UI_EDIT_DISABLED 0x04u
@@ -94,6 +95,40 @@ struct leonos_ui_listview_state {
     uint8_t focused;
 };
 
+struct leonos_ui_context_menu_item {
+    const char *label;
+    uint32_t id;
+    uint32_t flags;
+};
+
+struct leonos_ui_dropdown_item {
+    const char *label;
+    uint32_t id;
+    uint32_t flags;
+};
+
+struct leonos_ui_layout {
+    uint32_t x;
+    uint32_t y;
+    uint32_t w;
+    uint32_t h;
+    uint32_t gap;
+    uint32_t cursor_x;
+    uint32_t cursor_y;
+    uint32_t row_h;
+};
+
+struct leonos_ui_tree_item {
+    const char *label;
+    uint32_t id;
+    uint32_t depth;
+    uint32_t flags;
+};
+
+#define LEONOS_UI_TREE_EXPANDED 0x01u
+#define LEONOS_UI_TREE_SELECTED 0x02u
+#define LEONOS_UI_TREE_LEAF 0x04u
+
 void leonos_ui_bind(struct leonos_ui_surface *surface, uint32_t *pixels,
                     uint32_t width, uint32_t height, uint32_t stride);
 uint32_t leonos_ui_text_width(const char *text);
@@ -133,6 +168,29 @@ void leonos_ui_menu(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     uint32_t w, uint32_t h);
 void leonos_ui_menu_item(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                          uint32_t w, const char *label, uint32_t flags);
+uint32_t leonos_ui_context_menu_height(uint32_t count);
+void leonos_ui_context_menu(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                            uint32_t w, const struct leonos_ui_context_menu_item *items,
+                            uint32_t count);
+int leonos_ui_context_menu_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                               uint32_t w, const struct leonos_ui_context_menu_item *items,
+                               uint32_t count, uint32_t *out_id);
+void leonos_ui_layout_begin(struct leonos_ui_layout *layout, uint32_t x, uint32_t y,
+                            uint32_t w, uint32_t h, uint32_t gap);
+struct leonos_ui_rect leonos_ui_layout_next(struct leonos_ui_layout *layout,
+                                            uint32_t preferred_w, uint32_t preferred_h);
+uint32_t leonos_ui_anim_progress(unsigned long now, unsigned long start,
+                                 unsigned long duration_ms);
+uint32_t leonos_ui_anim_ease_out(uint32_t progress);
+uint32_t leonos_ui_anim_lerp(uint32_t from, uint32_t to, uint32_t progress);
+void leonos_ui_activity_bar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                            uint32_t w, uint32_t h, uint32_t progress);
+void leonos_ui_tree(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                    uint32_t w, const struct leonos_ui_tree_item *items,
+                    uint32_t count, uint32_t row_h);
+int leonos_ui_tree_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                       uint32_t w, const struct leonos_ui_tree_item *items,
+                       uint32_t count, uint32_t row_h, uint32_t *out_id);
 void leonos_ui_panel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      uint32_t w, uint32_t h, uint32_t color);
 void leonos_ui_checkbox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
@@ -234,6 +292,16 @@ int leonos_ui_show_save_dialog_ex(const char *title, char *value, uint32_t capac
 int leonos_ui_show_save_dialog(const char *title, char *value, uint32_t capacity);
 void leonos_ui_combobox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, const char *text, uint32_t open, uint32_t flags);
+uint32_t leonos_ui_dropdown_height(uint32_t count, uint32_t row_h,
+                                   uint32_t progress);
+void leonos_ui_dropdown(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                        uint32_t w, const struct leonos_ui_dropdown_item *items,
+                        uint32_t count, uint32_t selected_id, uint32_t row_h,
+                        uint32_t progress);
+int leonos_ui_dropdown_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                           uint32_t w, const struct leonos_ui_dropdown_item *items,
+                           uint32_t count, uint32_t row_h, uint32_t progress,
+                           uint32_t *out_id);
 void leonos_ui_radio(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      const char *label, int checked, uint32_t flags);
 void leonos_ui_groupbox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,

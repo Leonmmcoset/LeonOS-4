@@ -26,6 +26,10 @@
 #define OPEN_WITH_W 432
 #define OPEN_WITH_H 296
 #define OPEN_WITH_ROW_H 34
+#define FILEMAN_CONTEXT_MENU_W 176
+#define FILEMAN_CONTEXT_MENU_COUNT 9
+#define FILEMAN_DETAILS_W 430
+#define FILEMAN_DETAILS_H 190
 
 enum {
     FILEMAN_MENU_NONE = 0,
@@ -38,7 +42,20 @@ enum {
     OPEN_WITH_MODE_DEFAULT = 1,
 };
 
+enum {
+    FILEMAN_ACTION_OPEN = 1,
+    FILEMAN_ACTION_OPEN_WITH = 2,
+    FILEMAN_ACTION_DEFAULT_PROGRAM = 3,
+    FILEMAN_ACTION_DETAILS = 4,
+    FILEMAN_ACTION_RENAME = 5,
+    FILEMAN_ACTION_DELETE = 6,
+    FILEMAN_ACTION_NEW_FOLDER = 7,
+    FILEMAN_ACTION_UP = 8,
+    FILEMAN_ACTION_REFRESH = 9,
+};
+
 static uint32_t pixels[FILEMAN_W * FILEMAN_H];
+static uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
 static struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
 static char current_path[LEONOS_FS_PATH_LEN] = "0:/";
 static char status_text[96] = "Ready";
@@ -58,6 +75,9 @@ static uint8_t open_with_can_remember;
 static uint8_t open_with_remember;
 static uint8_t menu_open;
 static uint8_t open_with_active;
+static uint8_t context_menu_active;
+static uint32_t context_menu_x;
+static uint32_t context_menu_y;
 static int32_t open_with_selected;
 
 static void copy_text(char *dst, uint32_t dst_len, const char *src)
@@ -148,9 +168,60 @@ static void append_dec(char *buf, uint32_t *pos, uint32_t cap, uint32_t value)
     }
 }
 
+static void append_size(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
+{
+    char tmp[24];
+    uint32_t n = 0;
+    if (value == 0) {
+        append_char(buf, pos, cap, '0');
+        return;
+    }
+    while (value && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+    while (n) {
+        append_char(buf, pos, cap, tmp[--n]);
+    }
+}
+
 static int is_root_path(const char *path)
 {
     return text_eq(path, "0:/");
+}
+
+static int selected_entry_valid(void)
+{
+    return file_list.selected >= 0 && (uint32_t)file_list.selected < entry_count;
+}
+
+static int selected_entry_is_file(void)
+{
+    return selected_entry_valid() && entries[file_list.selected].type == LEONOS_FS_TYPE_FILE;
+}
+
+static int selected_entry_is_mutable(void)
+{
+    return selected_entry_valid() && entries[file_list.selected].type != LEONOS_FS_TYPE_DEVICE;
+}
+
+static int list_index_at(int32_t x, int32_t y)
+{
+    int32_t row;
+    uint32_t index;
+    if (!hit_rect_i(x, y, LIST_X + 2, LIST_Y + 30, LIST_W,
+                    (int32_t)(LIST_VISIBLE_ROWS * ROW_H))) {
+        return -1;
+    }
+    row = (y - (int32_t)(LIST_Y + 30)) / (int32_t)ROW_H;
+    if (row < 0) {
+        return -1;
+    }
+    index = file_list.scroll + (uint32_t)row;
+    if (index >= entry_count) {
+        return -1;
+    }
+    return (int)index;
 }
 
 static const struct leonos_launch_assoc_app *find_open_with_app(const char *program_path)
@@ -267,6 +338,112 @@ static const char *entry_type_name(const struct leonos_dir_entry *entry)
         return "ELF ";
     }
     return "FILE";
+}
+
+static void build_context_menu_items(struct leonos_ui_context_menu_item *items,
+                                     uint32_t count)
+{
+    uint32_t has_item = selected_entry_valid();
+    uint32_t has_file = selected_entry_is_file();
+    uint32_t has_mutable = selected_entry_is_mutable();
+    if (!items || count < FILEMAN_CONTEXT_MENU_COUNT) {
+        return;
+    }
+    items[0] = (struct leonos_ui_context_menu_item){
+        "Open", FILEMAN_ACTION_OPEN, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[1] = (struct leonos_ui_context_menu_item){
+        "Open With...", FILEMAN_ACTION_OPEN_WITH, has_file ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[2] = (struct leonos_ui_context_menu_item){
+        "Default Program...", FILEMAN_ACTION_DEFAULT_PROGRAM,
+        has_file ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[3] = (struct leonos_ui_context_menu_item){
+        "Details", FILEMAN_ACTION_DETAILS, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[4] = (struct leonos_ui_context_menu_item){
+        "Rename", FILEMAN_ACTION_RENAME, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[5] = (struct leonos_ui_context_menu_item){
+        "Delete", FILEMAN_ACTION_DELETE, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[6] = (struct leonos_ui_context_menu_item){
+        "", 0, LEONOS_UI_MENU_SEPARATOR};
+    items[7] = (struct leonos_ui_context_menu_item){
+        "New Folder", FILEMAN_ACTION_NEW_FOLDER, 0};
+    items[8] = (struct leonos_ui_context_menu_item){
+        "Refresh", FILEMAN_ACTION_REFRESH, 0};
+}
+
+static void details_add_line(struct leonos_ui_surface *ui, uint32_t y,
+                             const char *label, const char *value)
+{
+    leonos_ui_text(ui, 18, y, label, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text_clipped(ui, 96, y, FILEMAN_DETAILS_W - 114,
+                           value ? value : "", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+}
+
+static void show_details_selected(void)
+{
+    struct leonos_ui_surface ui;
+    struct leonos_gui_app_event event;
+    struct leonos_stat st;
+    char path[LEONOS_FS_PATH_LEN];
+    char size_text[32];
+    char size_line[56];
+    uint32_t pos = 0;
+    int window_id;
+    if (!selected_entry_valid()) {
+        set_status("Select an item");
+        return;
+    }
+    build_child_path(path, sizeof(path), entries[file_list.selected].name);
+    if (stat(path, &st) < 0) {
+        set_status("Details stat failed");
+        return;
+    }
+    size_text[0] = 0;
+    size_line[0] = 0;
+    append_size(size_text, &pos, sizeof(size_text), st.size);
+    pos = 0;
+    append_text(size_line, &pos, sizeof(size_line), size_text);
+    append_text(size_line, &pos, sizeof(size_line), " bytes");
+
+    window_id = leonos_gui_create_app_window_ex("Properties", path,
+                                                FILEMAN_DETAILS_W, FILEMAN_DETAILS_H,
+                                                LEONOS_GUI_WINDOW_NO_RESIZE);
+    if (window_id <= 0) {
+        set_status_code("Details failed ", window_id);
+        return;
+    }
+    leonos_ui_bind(&ui, details_pixels, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H,
+                   FILEMAN_DETAILS_W);
+    for (;;) {
+        leonos_ui_rect(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, LEONOS_UI_GRAY);
+        leonos_ui_dialog(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, "Properties");
+        details_add_line(&ui, 48, "Name:", entries[file_list.selected].name);
+        details_add_line(&ui, 72, "Type:", entry_type_name(&entries[file_list.selected]));
+        details_add_line(&ui, 96, "Path:", path);
+        details_add_line(&ui, 120, "Size:", size_line);
+        leonos_ui_button(&ui, FILEMAN_DETAILS_W - 90, FILEMAN_DETAILS_H - 38,
+                         72, LEONOS_UI_BUTTON_H, "OK", 0);
+        leonos_gui_present_window((uint32_t)window_id, FILEMAN_DETAILS_W,
+                                  FILEMAN_DETAILS_H, FILEMAN_DETAILS_W,
+                                  details_pixels);
+        event.window_id = (uint32_t)window_id;
+        if (leonos_gui_poll_app_event(&event) > 0) {
+            if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
+                break;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN &&
+                (event.keycode == LEONOS_KEY_ENTER || event.keycode == FILEMAN_KEY_ESCAPE)) {
+                break;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u) &&
+                hit_rect_i(event.x, event.y, FILEMAN_DETAILS_W - 90, FILEMAN_DETAILS_H - 38,
+                           72, (int32_t)LEONOS_UI_BUTTON_H)) {
+                break;
+            }
+        } else {
+            sleep_ms(10);
+        }
+    }
+    leonos_gui_destroy_app_window((uint32_t)window_id);
 }
 
 static void set_open_with_state(const char *path, const char *title, uint8_t remember)
@@ -529,6 +706,7 @@ static int reload_dir(void)
     leonos_ui_listview_state_set_count(&file_list, entry_count);
     file_list.selected = entry_count ? 0 : -1;
     file_list.scroll = 0;
+    context_menu_active = 0;
     last_click_index = -1;
     last_click_ms = 0;
     char buf[96];
@@ -582,17 +760,36 @@ static void draw_fileman(struct leonos_ui_surface *ui)
     leonos_ui_statusbar(ui, FILEMAN_H - STATUS_H, STATUS_H, status_text);
 
     if (menu_open == FILEMAN_MENU_FILE) {
-        leonos_ui_menu(ui, 8, MENU_BAR_H, 154, 138);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 116, "Open", 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 116, "Open With...", 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 116, "Default Program...", 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 116, "Up", 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 112, 116, "Refresh", 0);
+        uint32_t has_item = selected_entry_valid();
+        uint32_t has_file = selected_entry_is_file();
+        uint32_t has_mutable = selected_entry_is_mutable();
+        leonos_ui_menu(ui, 8, MENU_BAR_H, 174, 242);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 132, "Open",
+                            has_item ? 0 : LEONOS_UI_MENU_DISABLED);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 132, "Open With...",
+                            has_file ? 0 : LEONOS_UI_MENU_DISABLED);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 132, "Default Program...",
+                            has_file ? 0 : LEONOS_UI_MENU_DISABLED);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 132, "Details",
+                            has_item ? 0 : LEONOS_UI_MENU_DISABLED);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 112, 132, "Rename",
+                            has_mutable ? 0 : LEONOS_UI_MENU_DISABLED);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 138, 132, "Delete",
+                            has_mutable ? 0 : LEONOS_UI_MENU_DISABLED);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 164, 132, "", LEONOS_UI_MENU_SEPARATOR);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 190, 132, "New Folder", 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 216, 132, "Refresh", 0);
     } else if (menu_open == FILEMAN_MENU_VIEW) {
         leonos_ui_menu(ui, 64, MENU_BAR_H, 154, 86);
         leonos_ui_menu_item(ui, 98, MENU_BAR_H + 8, 116, "Refresh", 0);
         leonos_ui_menu_item(ui, 98, MENU_BAR_H + 34, 116, "Root", 0);
         leonos_ui_menu_item(ui, 98, MENU_BAR_H + 60, 116, "About", 0);
+    }
+    if (context_menu_active) {
+        struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
+        build_context_menu_items(items, FILEMAN_CONTEXT_MENU_COUNT);
+        leonos_ui_context_menu(ui, context_menu_x, context_menu_y, FILEMAN_CONTEXT_MENU_W,
+                               items, FILEMAN_CONTEXT_MENU_COUNT);
     }
     if (open_with_active) {
         draw_open_with_dialog(ui);
@@ -662,6 +859,145 @@ static void navigate_root(void)
     reload_dir();
 }
 
+static void create_new_folder(void)
+{
+    char name[LEONOS_FS_NAME_LEN] = "New Folder";
+    char path[LEONOS_FS_PATH_LEN];
+    int ret;
+    if (!leonos_ui_show_input_dialog("New Folder", "Folder name:", name, sizeof(name))) {
+        set_status("New folder canceled");
+        return;
+    }
+    if (!name[0]) {
+        set_status("Folder name is empty");
+        return;
+    }
+    build_child_path(path, sizeof(path), name);
+    ret = mkdir(path, 0);
+    if (ret < 0) {
+        set_status_code("Create folder failed ", ret);
+        return;
+    }
+    reload_dir();
+    for (uint32_t i = 0; i < entry_count; ++i) {
+        if (text_eq(entries[i].name, name)) {
+            file_list.selected = (int32_t)i;
+            if (i >= file_list.visible_rows) {
+                file_list.scroll = i - file_list.visible_rows + 1;
+            }
+            break;
+        }
+    }
+    set_status("Folder created");
+}
+
+static void rename_selected_entry(void)
+{
+    char old_path[LEONOS_FS_PATH_LEN];
+    char new_path[LEONOS_FS_PATH_LEN];
+    char name[LEONOS_FS_NAME_LEN];
+    int ret;
+    if (!selected_entry_valid()) {
+        set_status("Select an item");
+        return;
+    }
+    copy_text(name, sizeof(name), entries[file_list.selected].name);
+    if (!leonos_ui_show_input_dialog("Rename", "New name:", name, sizeof(name))) {
+        set_status("Rename canceled");
+        return;
+    }
+    if (!name[0]) {
+        set_status("New name is empty");
+        return;
+    }
+    build_child_path(old_path, sizeof(old_path), entries[file_list.selected].name);
+    build_child_path(new_path, sizeof(new_path), name);
+    ret = rename(old_path, new_path);
+    if (ret < 0) {
+        set_status_code("Rename failed ", ret);
+        return;
+    }
+    reload_dir();
+    for (uint32_t i = 0; i < entry_count; ++i) {
+        if (text_eq(entries[i].name, name)) {
+            file_list.selected = (int32_t)i;
+            if (i >= file_list.scroll + file_list.visible_rows) {
+                file_list.scroll = i - file_list.visible_rows + 1;
+            }
+            break;
+        }
+    }
+    set_status("Renamed");
+}
+
+static void delete_selected_entry(void)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    char message[96];
+    uint32_t pos = 0;
+    int ret;
+    if (!selected_entry_valid()) {
+        set_status("Select an item");
+        return;
+    }
+    message[0] = 0;
+    append_text(message, &pos, sizeof(message), "Delete ");
+    append_text(message, &pos, sizeof(message), entries[file_list.selected].name);
+    append_char(message, &pos, sizeof(message), '?');
+    if (!leonos_ui_show_confirm_dialog("Delete", message, 0)) {
+        set_status("Delete canceled");
+        return;
+    }
+    build_child_path(path, sizeof(path), entries[file_list.selected].name);
+    ret = entries[file_list.selected].type == LEONOS_FS_TYPE_DIR ? rmdir(path) : unlink(path);
+    if (ret < 0) {
+        if (ret == -39) {
+            set_status("Delete failed: directory not empty");
+        } else {
+            set_status_code("Delete failed ", ret);
+        }
+        return;
+    }
+    reload_dir();
+    set_status("Deleted");
+}
+
+static void execute_action(uint32_t action)
+{
+    context_menu_active = 0;
+    switch (action) {
+    case FILEMAN_ACTION_OPEN:
+        open_selected_entry();
+        break;
+    case FILEMAN_ACTION_OPEN_WITH:
+        show_open_with_selected();
+        break;
+    case FILEMAN_ACTION_DEFAULT_PROGRAM:
+        show_default_program_for_selected();
+        break;
+    case FILEMAN_ACTION_DETAILS:
+        show_details_selected();
+        break;
+    case FILEMAN_ACTION_RENAME:
+        rename_selected_entry();
+        break;
+    case FILEMAN_ACTION_DELETE:
+        delete_selected_entry();
+        break;
+    case FILEMAN_ACTION_NEW_FOLDER:
+        create_new_folder();
+        break;
+    case FILEMAN_ACTION_UP:
+        navigate_up();
+        break;
+    case FILEMAN_ACTION_REFRESH:
+        reload_dir();
+        break;
+    default:
+        break;
+    }
+}
+
 static int handle_menu_click(int32_t x, int32_t y)
 {
     if (y >= 0 && y < (int32_t)MENU_BAR_H) {
@@ -677,29 +1013,56 @@ static int handle_menu_click(int32_t x, int32_t y)
         return 1;
     }
     if (menu_open == FILEMAN_MENU_FILE) {
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 8, 116, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 8, 132, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            open_selected_entry();
+            if (selected_entry_valid()) {
+                execute_action(FILEMAN_ACTION_OPEN);
+            }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 34, 116, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 34, 132, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            show_open_with_selected();
+            if (selected_entry_is_file()) {
+                execute_action(FILEMAN_ACTION_OPEN_WITH);
+            }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 60, 116, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 60, 132, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            show_default_program_for_selected();
+            if (selected_entry_is_file()) {
+                execute_action(FILEMAN_ACTION_DEFAULT_PROGRAM);
+            }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 86, 116, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 86, 132, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            navigate_up();
+            if (selected_entry_valid()) {
+                execute_action(FILEMAN_ACTION_DETAILS);
+            }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 112, 116, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 112, 132, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            reload_dir();
+            if (selected_entry_is_mutable()) {
+                execute_action(FILEMAN_ACTION_RENAME);
+            }
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 138, 132, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            if (selected_entry_is_mutable()) {
+                execute_action(FILEMAN_ACTION_DELETE);
+            }
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 190, 132, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            execute_action(FILEMAN_ACTION_NEW_FOLDER);
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 216, 132, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            execute_action(FILEMAN_ACTION_REFRESH);
             return 1;
         }
         menu_open = FILEMAN_MENU_NONE;
@@ -708,17 +1071,17 @@ static int handle_menu_click(int32_t x, int32_t y)
     if (menu_open == FILEMAN_MENU_VIEW) {
         if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 8, 116, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            leonos_ui_show_message_box("File Manager", "Browse FAT32 files and launch apps.", "OK");
+            reload_dir();
             return 1;
         }
         if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 34, 116, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            reload_dir();
+            navigate_root();
             return 1;
         }
         if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 60, 116, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            navigate_root();
+            leonos_ui_show_message_box("File Manager", "Browse FAT32 files and launch apps.", "OK");
             return 1;
         }
         menu_open = FILEMAN_MENU_NONE;
@@ -812,15 +1175,89 @@ static int handle_open_with_key(uint8_t keycode)
     return 1;
 }
 
+static int handle_context_menu_click(int32_t x, int32_t y)
+{
+    struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
+    uint32_t action = 0;
+    if (!context_menu_active) {
+        return 0;
+    }
+    build_context_menu_items(items, FILEMAN_CONTEXT_MENU_COUNT);
+    if (leonos_ui_context_menu_hit(x, y, context_menu_x, context_menu_y,
+                                   FILEMAN_CONTEXT_MENU_W, items,
+                                   FILEMAN_CONTEXT_MENU_COUNT, &action)) {
+        context_menu_active = 0;
+        if (action) {
+            execute_action(action);
+        }
+        return 1;
+    }
+    context_menu_active = 0;
+    return 0;
+}
+
+static void show_context_menu_at(int32_t x, int32_t y, int32_t target)
+{
+    uint32_t menu_h = leonos_ui_context_menu_height(FILEMAN_CONTEXT_MENU_COUNT);
+    menu_open = FILEMAN_MENU_NONE;
+    open_with_active = 0;
+    if (target >= 0 && (uint32_t)target < entry_count) {
+        file_list.selected = target;
+        if ((uint32_t)target < file_list.scroll) {
+            file_list.scroll = (uint32_t)target;
+        } else if ((uint32_t)target >= file_list.scroll + file_list.visible_rows) {
+            file_list.scroll = (uint32_t)target - file_list.visible_rows + 1;
+        }
+    } else {
+        file_list.selected = -1;
+    }
+    if (x < 0) {
+        x = 0;
+    }
+    if (y < 0) {
+        y = 0;
+    }
+    context_menu_x = (uint32_t)x;
+    context_menu_y = (uint32_t)y;
+    if (context_menu_x + FILEMAN_CONTEXT_MENU_W > FILEMAN_W) {
+        context_menu_x = FILEMAN_W - FILEMAN_CONTEXT_MENU_W;
+    }
+    if (context_menu_y + menu_h > FILEMAN_H - STATUS_H) {
+        context_menu_y = FILEMAN_H - STATUS_H > menu_h
+                             ? FILEMAN_H - STATUS_H - menu_h
+                             : 0;
+    }
+    context_menu_active = 1;
+}
+
+static void handle_right_click(int32_t x, int32_t y)
+{
+    int32_t index = list_index_at(x, y);
+    if (open_with_active) {
+        return;
+    }
+    if (index >= 0) {
+        set_status(entries[index].name);
+    } else {
+        set_status("Folder actions");
+    }
+    show_context_menu_at(x, y, index);
+}
+
 static void handle_click(int32_t x, int32_t y)
 {
     if (handle_open_with_click(x, y)) {
         return;
     }
+    if (handle_context_menu_click(x, y)) {
+        return;
+    }
     if (handle_menu_click(x, y)) {
+        context_menu_active = 0;
         return;
     }
     menu_open = FILEMAN_MENU_NONE;
+    context_menu_active = 0;
     if (x >= 8 && x < 62 && y >= TOOLBAR_Y && y < TOOLBAR_Y + (int32_t)LEONOS_UI_BUTTON_H) {
         navigate_up();
         return;
@@ -925,8 +1362,12 @@ int main(int argc, char **argv, char **envp)
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 return 0;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1)) {
-                handle_click(event.x, event.y);
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 3u)) {
+                if (event.buttons & 2u) {
+                    handle_right_click(event.x, event.y);
+                } else {
+                    handle_click(event.x, event.y);
+                }
                 file_list.focused = 1;
                 draw_fileman(&ui);
                 leonos_gui_present_window((uint32_t)window_id, FILEMAN_W, FILEMAN_H, FILEMAN_W, pixels);

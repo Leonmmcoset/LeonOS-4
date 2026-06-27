@@ -8,6 +8,10 @@
 #define DEMO_H 520
 #define DEMO_MENU_BAR_H 28
 #define DEMO_MENU_ITEM_H (LEONOS_FONT_H + 8)
+#define DEMO_CONTEXT_MENU_W 148
+#define DEMO_TREE_ROW_H 24
+#define DEMO_DROPDOWN_ROW_H 24
+#define DEMO_DROPDOWN_ANIM_MS 140UL
 
 enum {
     DEMO_MENU_NONE = 0,
@@ -16,14 +20,45 @@ enum {
     DEMO_MENU_HELP = 3,
 };
 
+enum {
+    DEMO_CTX_OPEN = 1,
+    DEMO_CTX_RENAME = 2,
+    DEMO_CTX_DISABLED = 3,
+};
+
+enum {
+    DEMO_DROP_NORMAL = 1,
+    DEMO_DROP_HIGH = 2,
+    DEMO_DROP_LOW = 3,
+    DEMO_DROP_DISABLED = 4,
+};
+
 static uint32_t pixels[DEMO_W * DEMO_H];
 
-static const char *tab_labels[] = {"Controls", "Data", "Dialogs"};
+static const char *tab_labels[] = {"Controls", "Data", "Dialogs", "Advanced"};
+static const struct leonos_ui_dropdown_item priority_items[] = {
+    {"Normal priority", DEMO_DROP_NORMAL, 0},
+    {"High priority", DEMO_DROP_HIGH, 0},
+    {"Low priority", DEMO_DROP_LOW, 0},
+    {"Unavailable", DEMO_DROP_DISABLED, LEONOS_UI_MENU_DISABLED},
+};
 static char sample_path[96] = "0:/userland/notepad.elf";
 static char sample_text[160] = "Line one\nLine two\nLine three";
+static char demo_status[96] = "Click inside the top tabs to switch pages";
 static struct leonos_ui_edit_state sample_edit;
 static struct leonos_ui_text_area_state sample_area;
 static struct leonos_ui_listview_state sample_list;
+static uint32_t tree_selected_id = 12;
+static unsigned long anim_start_ms;
+static unsigned long last_anim_redraw_ms;
+static uint8_t context_menu_open;
+static uint32_t context_menu_x = 540;
+static uint32_t context_menu_y = 188;
+static uint8_t dropdown_open;
+static uint8_t dropdown_animating;
+static uint8_t dropdown_opening;
+static unsigned long dropdown_anim_start_ms;
+static uint32_t dropdown_selected = DEMO_DROP_NORMAL;
 static uint8_t menu_open;
 
 static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
@@ -31,8 +66,60 @@ static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, 
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
 }
 
+static void copy_text(char *dst, uint32_t capacity, const char *src)
+{
+    uint32_t i = 0;
+    if (!dst || capacity == 0) {
+        return;
+    }
+    if (src) {
+        while (i + 1 < capacity && src[i]) {
+            dst[i] = src[i];
+            ++i;
+        }
+    }
+    dst[i] = 0;
+}
+
+static const char *dropdown_selected_label(void)
+{
+    for (uint32_t i = 0; i < sizeof(priority_items) / sizeof(priority_items[0]); ++i) {
+        if (priority_items[i].id == dropdown_selected) {
+            return priority_items[i].label;
+        }
+    }
+    return "Normal priority";
+}
+
+static void dropdown_set_open(uint8_t open)
+{
+    if (dropdown_open == open && !dropdown_animating) {
+        return;
+    }
+    dropdown_open = open;
+    dropdown_opening = open;
+    dropdown_animating = 1;
+    dropdown_anim_start_ms = leonos_uptime_ms();
+}
+
+static uint32_t dropdown_progress(void)
+{
+    uint32_t raw;
+    if (!dropdown_animating) {
+        return dropdown_open ? 1000 : 0;
+    }
+    raw = leonos_ui_anim_progress(leonos_uptime_ms(), dropdown_anim_start_ms,
+                                  DEMO_DROPDOWN_ANIM_MS);
+    if (raw >= 1000) {
+        dropdown_animating = 0;
+        return dropdown_open ? 1000 : 0;
+    }
+    return dropdown_opening ? raw : 1000 - raw;
+}
+
 static void draw_controls_page(struct leonos_ui_surface *ui)
 {
+    uint32_t drop_progress = dropdown_progress();
     leonos_ui_groupbox(ui, 12, 80, 230, 152, "Buttons and Inputs");
     leonos_ui_button(ui, 26, 106, 74, LEONOS_UI_BUTTON_H, "OK", 0);
     leonos_ui_button(ui, 108, 106, 92, LEONOS_UI_BUTTON_H, "Pressed", LEONOS_UI_BUTTON_PRESSED);
@@ -42,8 +129,12 @@ static void draw_controls_page(struct leonos_ui_surface *ui)
 
     leonos_ui_groupbox(ui, 258, 80, 246, 152, "Editors");
     leonos_ui_edit_state_draw(ui, 274, 106, 204, &sample_edit, 0);
-    leonos_ui_combobox(ui, 274, 140, 204, "Normal priority", 0, 0);
+    leonos_ui_combobox(ui, 274, 140, 204, dropdown_selected_label(),
+                       drop_progress > 0, 0);
     leonos_ui_text_area_state_draw(ui, 274, 174, 204, 44, &sample_area, 0);
+    leonos_ui_dropdown(ui, 274, 164, 204, priority_items,
+                       sizeof(priority_items) / sizeof(priority_items[0]),
+                       dropdown_selected, DEMO_DROPDOWN_ROW_H, drop_progress);
 
     leonos_ui_groupbox(ui, 520, 80, 220, 152, "Progress");
     leonos_ui_progress(ui, 536, 110, 172, 18, 65, 100);
@@ -102,6 +193,76 @@ static void draw_dialogs_page(struct leonos_ui_surface *ui)
     leonos_ui_statusbar(ui, DEMO_H - 28, 28, "Statusbar: UI gallery shows every control in libc/ui.c");
 }
 
+static void draw_advanced_page(struct leonos_ui_surface *ui)
+{
+    struct leonos_ui_layout layout;
+    struct leonos_ui_rect rect;
+    uint32_t progress = leonos_ui_anim_progress(leonos_uptime_ms(), anim_start_ms, 1200);
+    uint32_t eased = leonos_ui_anim_ease_out(progress);
+    uint32_t width = leonos_ui_anim_lerp(48, 172, eased);
+    struct leonos_ui_tree_item tree_items[] = {
+        {"0:/", 10, 0, LEONOS_UI_TREE_EXPANDED},
+        {"system", 11, 1, LEONOS_UI_TREE_EXPANDED},
+        {"fonts", 12, 2, LEONOS_UI_TREE_LEAF},
+        {"resources", 13, 2, LEONOS_UI_TREE_LEAF},
+        {"userland", 20, 1, LEONOS_UI_TREE_EXPANDED},
+        {"fileman.elf", 21, 2, LEONOS_UI_TREE_LEAF},
+        {"uidemo.elf", 22, 2, LEONOS_UI_TREE_LEAF},
+    };
+    struct leonos_ui_context_menu_item context_items[] = {
+        {"Open", DEMO_CTX_OPEN, 0},
+        {"Rename", DEMO_CTX_RENAME, 0},
+        {"Disabled item", DEMO_CTX_DISABLED, LEONOS_UI_MENU_DISABLED},
+    };
+
+    for (uint32_t i = 0; i < sizeof(tree_items) / sizeof(tree_items[0]); ++i) {
+        if (tree_items[i].id == tree_selected_id) {
+            tree_items[i].flags |= LEONOS_UI_TREE_SELECTED;
+        }
+    }
+
+    leonos_ui_groupbox(ui, 12, 80, 336, 164, "Automatic Layout");
+    leonos_ui_layout_begin(&layout, 30, 108, 296, 104, 8);
+    rect = leonos_ui_layout_next(&layout, 86, LEONOS_UI_BUTTON_H);
+    leonos_ui_button(ui, (uint32_t)rect.x, (uint32_t)rect.y, rect.w, rect.h, "Alpha", 0);
+    rect = leonos_ui_layout_next(&layout, 112, LEONOS_UI_BUTTON_H);
+    leonos_ui_button(ui, (uint32_t)rect.x, (uint32_t)rect.y, rect.w, rect.h, "Long Button", 0);
+    rect = leonos_ui_layout_next(&layout, 92, LEONOS_UI_BUTTON_H);
+    leonos_ui_button(ui, (uint32_t)rect.x, (uint32_t)rect.y, rect.w, rect.h, "Wrap", 0);
+    rect = leonos_ui_layout_next(&layout, 132, LEONOS_UI_BUTTON_H);
+    leonos_ui_combobox(ui, (uint32_t)rect.x, (uint32_t)rect.y, rect.w, "Auto row", 0, 0);
+    rect = leonos_ui_layout_next(&layout, 120, LEONOS_UI_BUTTON_H);
+    leonos_ui_text_field(ui, (uint32_t)rect.x, (uint32_t)rect.y, rect.w, "Field", 0);
+    rect = leonos_ui_layout_next(&layout, 72, LEONOS_UI_BUTTON_H);
+    leonos_ui_button(ui, (uint32_t)rect.x, (uint32_t)rect.y, rect.w, rect.h, "End", 0);
+
+    leonos_ui_groupbox(ui, 370, 80, 364, 164, "Animation and Context Menu");
+    leonos_ui_text(ui, 388, 110, "Animation:", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_activity_bar(ui, 476, 106, 220, 20, progress);
+    leonos_ui_bevel(ui, 388, 144, 172, 18, LEONOS_UI_WHITE, 0);
+    leonos_ui_rect(ui, 390, 146, width > 4 ? width - 4 : width, 14, LEONOS_UI_ACTIVE_TITLE);
+    leonos_ui_button(ui, 388, 184, 128, LEONOS_UI_BUTTON_H, "Right Click Area", 0);
+    leonos_ui_text(ui, 388, 216, "Right-click here to open a reusable menu.",
+                   LEONOS_UI_DARK, LEONOS_UI_WHITE);
+
+    leonos_ui_groupbox(ui, 12, 268, 336, 154, "Tree Selection");
+    leonos_ui_scroll_view_frame(ui, 30, 296, 296, 112);
+    leonos_ui_tree(ui, 32, 298, 292, tree_items,
+                   sizeof(tree_items) / sizeof(tree_items[0]), DEMO_TREE_ROW_H);
+
+    leonos_ui_groupbox(ui, 370, 268, 364, 154, "Reusable Right-click Menu");
+    leonos_ui_context_menu(ui, 392, 300, 180, context_items,
+                           sizeof(context_items) / sizeof(context_items[0]));
+    leonos_ui_text(ui, 592, 304, "The same component is used by Fileman.",
+                   LEONOS_UI_DARK, LEONOS_UI_WHITE);
+
+    if (context_menu_open) {
+        leonos_ui_context_menu(ui, context_menu_x, context_menu_y, DEMO_CONTEXT_MENU_W,
+                               context_items,
+                               sizeof(context_items) / sizeof(context_items[0]));
+    }
+}
+
 static void draw_demo(struct leonos_ui_surface *ui, uint32_t page)
 {
     leonos_ui_rect(ui, 0, 0, DEMO_W, DEMO_H, LEONOS_UI_WHITE);
@@ -111,25 +272,28 @@ static void draw_demo(struct leonos_ui_surface *ui, uint32_t page)
     leonos_ui_menubar_item(ui, 120, 0, 54, "Help", menu_open == DEMO_MENU_HELP);
     leonos_ui_text(ui, 12, 36, "LeonOS UI Component Library", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, 12, 54, "Win32-style reusable drawing controls", LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_tabs(ui, 236, 36, 300, tab_labels, 3, page);
+    leonos_ui_tabs(ui, 236, 36, 410, tab_labels, 4, page);
     if (page == 0) {
         draw_controls_page(ui);
     } else if (page == 1) {
         draw_data_page(ui);
-    } else {
+    } else if (page == 2) {
         draw_dialogs_page(ui);
+    } else {
+        draw_advanced_page(ui);
     }
-    leonos_ui_statusbar(ui, DEMO_H - 28, 28, "Click inside the top tabs to switch pages");
+    leonos_ui_statusbar(ui, DEMO_H - 28, 28, demo_status);
 
     if (menu_open == DEMO_MENU_FILE) {
         leonos_ui_menu(ui, 8, DEMO_MENU_BAR_H, 154, 60);
         leonos_ui_menu_item(ui, 42, DEMO_MENU_BAR_H + 8, 116, "Message", 0);
         leonos_ui_menu_item(ui, 42, DEMO_MENU_BAR_H + 34, 116, "Input", 0);
     } else if (menu_open == DEMO_MENU_VIEW) {
-        leonos_ui_menu(ui, 64, DEMO_MENU_BAR_H, 154, 86);
+        leonos_ui_menu(ui, 64, DEMO_MENU_BAR_H, 154, 112);
         leonos_ui_menu_item(ui, 98, DEMO_MENU_BAR_H + 8, 116, "Controls", page == 0 ? LEONOS_UI_MENU_SELECTED : 0);
         leonos_ui_menu_item(ui, 98, DEMO_MENU_BAR_H + 34, 116, "Data", page == 1 ? LEONOS_UI_MENU_SELECTED : 0);
         leonos_ui_menu_item(ui, 98, DEMO_MENU_BAR_H + 60, 116, "Dialogs", page == 2 ? LEONOS_UI_MENU_SELECTED : 0);
+        leonos_ui_menu_item(ui, 98, DEMO_MENU_BAR_H + 86, 116, "Advanced", page == 3 ? LEONOS_UI_MENU_SELECTED : 0);
     } else if (menu_open == DEMO_MENU_HELP) {
         leonos_ui_menu(ui, 120, DEMO_MENU_BAR_H, 154, 34);
         leonos_ui_menu_item(ui, 154, DEMO_MENU_BAR_H + 8, 116, "About", 0);
@@ -189,6 +353,12 @@ static int handle_menu_click(int32_t x, int32_t y, uint32_t *page)
             menu_open = DEMO_MENU_NONE;
             return 1;
         }
+        if (hit_rect_i(x, y, 98, (int32_t)DEMO_MENU_BAR_H + 86, 116,
+                       (int32_t)DEMO_MENU_ITEM_H)) {
+            *page = 3;
+            menu_open = DEMO_MENU_NONE;
+            return 1;
+        }
         menu_open = DEMO_MENU_NONE;
         return 1;
     }
@@ -203,6 +373,120 @@ static int handle_menu_click(int32_t x, int32_t y, uint32_t *page)
         return 1;
     }
     return 0;
+}
+
+static int handle_advanced_mouse(int32_t x, int32_t y, uint32_t buttons)
+{
+    struct leonos_ui_tree_item tree_items[] = {
+        {"0:/", 10, 0, LEONOS_UI_TREE_EXPANDED},
+        {"system", 11, 1, LEONOS_UI_TREE_EXPANDED},
+        {"fonts", 12, 2, LEONOS_UI_TREE_LEAF},
+        {"resources", 13, 2, LEONOS_UI_TREE_LEAF},
+        {"userland", 20, 1, LEONOS_UI_TREE_EXPANDED},
+        {"fileman.elf", 21, 2, LEONOS_UI_TREE_LEAF},
+        {"uidemo.elf", 22, 2, LEONOS_UI_TREE_LEAF},
+    };
+    struct leonos_ui_context_menu_item context_items[] = {
+        {"Open", DEMO_CTX_OPEN, 0},
+        {"Rename", DEMO_CTX_RENAME, 0},
+        {"Disabled item", DEMO_CTX_DISABLED, LEONOS_UI_MENU_DISABLED},
+    };
+    uint32_t id = 0;
+    if ((buttons & 1u) && context_menu_open) {
+        if (leonos_ui_context_menu_hit(x, y, context_menu_x, context_menu_y,
+                                       DEMO_CONTEXT_MENU_W, context_items,
+                                       sizeof(context_items) / sizeof(context_items[0]), &id)) {
+            context_menu_open = 0;
+            if (id == DEMO_CTX_OPEN) {
+                copy_text(demo_status, sizeof(demo_status), "Context menu command: Open");
+            } else if (id == DEMO_CTX_RENAME) {
+                copy_text(demo_status, sizeof(demo_status), "Context menu command: Rename");
+            }
+            return 1;
+        }
+        context_menu_open = 0;
+        return 1;
+    }
+    if (buttons & 2u) {
+        if (x < 0) {
+            x = 0;
+        }
+        if (y < 0) {
+            y = 0;
+        }
+        context_menu_x = (uint32_t)x;
+        context_menu_y = (uint32_t)y;
+        if (context_menu_x + DEMO_CONTEXT_MENU_W > DEMO_W) {
+            context_menu_x = DEMO_W - DEMO_CONTEXT_MENU_W;
+        }
+        if (context_menu_y + leonos_ui_context_menu_height(sizeof(context_items) / sizeof(context_items[0])) >
+            DEMO_H - 28) {
+            context_menu_y = DEMO_H - 28 -
+                leonos_ui_context_menu_height(sizeof(context_items) / sizeof(context_items[0]));
+        }
+        context_menu_open = 1;
+        copy_text(demo_status, sizeof(demo_status), "Reusable context menu opened");
+        return 1;
+    }
+    if (buttons & 1u) {
+        if (leonos_ui_tree_hit(x, y, 32, 298, 292, tree_items,
+                               sizeof(tree_items) / sizeof(tree_items[0]),
+                               DEMO_TREE_ROW_H, &id)) {
+            if (id) {
+                tree_selected_id = id;
+                copy_text(demo_status, sizeof(demo_status), "Tree selection changed");
+            }
+            context_menu_open = 0;
+            return 1;
+        }
+        context_menu_open = 0;
+    }
+    return 0;
+}
+
+static int handle_controls_mouse(int32_t x, int32_t y, uint32_t buttons)
+{
+    int changed = 0;
+    uint32_t id = 0;
+    if (!(buttons & 1u)) {
+        return 0;
+    }
+    if (dropdown_open || dropdown_animating) {
+        if (leonos_ui_dropdown_hit(x, y, 274, 164, 204, priority_items,
+                                   sizeof(priority_items) / sizeof(priority_items[0]),
+                                   DEMO_DROPDOWN_ROW_H, dropdown_progress(), &id)) {
+            if (id) {
+                dropdown_selected = id;
+                copy_text(demo_status, sizeof(demo_status), "Dropdown selection changed");
+            }
+            dropdown_set_open(0);
+            return 1;
+        }
+    }
+    if (hit_rect_i(x, y, 274, 140, 204, (int32_t)(LEONOS_FONT_H + 8))) {
+        sample_edit.focused = 0;
+        sample_area.focused = 0;
+        dropdown_set_open(dropdown_open ? 0 : 1);
+        copy_text(demo_status, sizeof(demo_status),
+                  dropdown_open ? "Dropdown opening" : "Dropdown closing");
+        return 1;
+    }
+    dropdown_set_open(0);
+    if (x >= 274 && x < 478 &&
+        y >= 106 && y < 106 + (int32_t)(LEONOS_FONT_H + 8)) {
+        sample_area.focused = 0;
+        changed |= leonos_ui_edit_state_handle_mouse(&sample_edit, x, y,
+                                                     274, 106, 204, buttons);
+    } else if (x >= 274 && x < 478 && y >= 174 && y < 218) {
+        sample_edit.focused = 0;
+        changed |= leonos_ui_text_area_state_handle_mouse(&sample_area, x, y,
+                                                          274, 174, 204, 44, buttons);
+    } else {
+        sample_edit.focused = 0;
+        sample_area.focused = 0;
+        changed = 1;
+    }
+    return changed;
 }
 
 int main(void)
@@ -226,6 +510,7 @@ int main(void)
     leonos_ui_listview_state_init(&sample_list, 3, 24);
     leonos_ui_listview_state_set_count(&sample_list, 3);
     sample_list.selected = 1;
+    anim_start_ms = leonos_uptime_ms();
     draw_demo(&ui, page);
     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
     for (;;) {
@@ -234,36 +519,30 @@ int main(void)
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 3u)) {
                 if (handle_menu_click(event.x, event.y, &page)) {
+                    context_menu_open = 0;
+                    draw_demo(&ui, page);
+                    leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
+                    continue;
+                }
+                if (page == 3 && handle_advanced_mouse(event.x, event.y, event.buttons)) {
                     draw_demo(&ui, page);
                     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
                     continue;
                 }
                 menu_open = DEMO_MENU_NONE;
-                int next = leonos_ui_tabs_hit(event.x, event.y, 236, 36, 300, tab_labels, 3);
+                int next = leonos_ui_tabs_hit(event.x, event.y, 236, 36, 410, tab_labels, 4);
                 if (next >= 0) {
                     page = (uint32_t)next;
+                    context_menu_open = 0;
                     draw_demo(&ui, page);
                     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
                     continue;
                 }
+                context_menu_open = 0;
                 if (page == 0) {
-                    int changed = 0;
-                    if (event.x >= 274 && event.x < 478 &&
-                        event.y >= 106 && event.y < 106 + (int32_t)(LEONOS_FONT_H + 8)) {
-                        sample_area.focused = 0;
-                        changed |= leonos_ui_edit_state_handle_mouse(&sample_edit, event.x, event.y,
-                                                                     274, 106, 204, event.buttons);
-                    } else if (event.x >= 274 && event.x < 478 && event.y >= 174 && event.y < 218) {
-                        sample_edit.focused = 0;
-                        changed |= leonos_ui_text_area_state_handle_mouse(&sample_area, event.x, event.y,
-                                                                          274, 174, 204, 44, event.buttons);
-                    } else {
-                        sample_edit.focused = 0;
-                        sample_area.focused = 0;
-                        changed = 1;
-                    }
+                    int changed = handle_controls_mouse(event.x, event.y, event.buttons);
                     if (changed) {
                         draw_demo(&ui, page);
                         leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
@@ -286,6 +565,9 @@ int main(void)
                                event.y < 252 + (int32_t)LEONOS_UI_BUTTON_H) {
                         leonos_ui_show_input_dialog("Input", "Path:", sample_path, sizeof(sample_path));
                     }
+                    draw_demo(&ui, page);
+                    leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
+                } else if (page == 3) {
                     draw_demo(&ui, page);
                     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
                 }
@@ -311,6 +593,17 @@ int main(void)
                 leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
             }
         } else {
+            if (page == 3 || dropdown_animating) {
+                unsigned long now = leonos_uptime_ms();
+                if (now - last_anim_redraw_ms >= 50) {
+                    last_anim_redraw_ms = now;
+                    draw_demo(&ui, page);
+                    leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
+                    if (now - anim_start_ms >= 1200) {
+                        anim_start_ms = now;
+                    }
+                }
+            }
             sleep_ms(10);
         }
     }

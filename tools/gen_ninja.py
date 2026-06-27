@@ -18,6 +18,7 @@ USER_APPS = [
     "shell",
     "notepad",
     "calc",
+    "minesweeper",
     "run",
     "osver",
 ]

@@ -23,6 +23,10 @@
 #define SYS_wait4 61
 #define SYS_getcwd 79
 #define SYS_chdir 80
+#define SYS_rename 82
+#define SYS_mkdir 83
+#define SYS_rmdir 84
+#define SYS_unlink 87
 
 long syscall0(long n);
 long syscall1(long n, long a0);
@@ -46,6 +50,10 @@ int stat(const char *path, struct leonos_stat *st);
 int fstat(int fd, struct leonos_stat *st);
 int wait4(int pid, int *status, int options, void *rusage);
 int execve(const char *path, char *const argv[], char *const envp[]);
+int mkdir(const char *path, int mode);
+int unlink(const char *path);
+int rmdir(const char *path);
+int rename(const char *old_path, const char *new_path);
 void *memcpy(void *dst, const void *src, size_t len);
 void *memset(void *dst, int value, size_t len);
 

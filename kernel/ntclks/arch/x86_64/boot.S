@@ -82,6 +82,14 @@ x86_64_inb:
     in %dx, %al
     ret
 
+.global x86_64_outw
+.type x86_64_outw, @function
+x86_64_outw:
+    mov %di, %ax
+    mov %si, %dx
+    out %ax, %dx
+    ret
+
 .global x86_64_outl
 .type x86_64_outl, @function
 x86_64_outl:

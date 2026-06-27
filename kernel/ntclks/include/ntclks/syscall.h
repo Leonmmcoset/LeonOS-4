@@ -18,6 +18,10 @@
 #define LINUX_SYS_GETPID 39
 #define LINUX_SYS_GETCWD 79
 #define LINUX_SYS_CHDIR 80
+#define LINUX_SYS_RENAME 82
+#define LINUX_SYS_MKDIR 83
+#define LINUX_SYS_RMDIR 84
+#define LINUX_SYS_UNLINK 87
 #define LINUX_SYS_NANOSLEEP 35
 #define LINUX_SYS_EXECVE 59
 #define LINUX_SYS_EXIT 60
@@ -34,6 +38,8 @@
 #define LEONOS_EISDIR 21
 #define LEONOS_EMFILE 24
 #define LEONOS_E2BIG 7
+#define LEONOS_EEXIST 17
+#define LEONOS_ENOTEMPTY 39
 
 struct syscall_frame {
     uint64_t number;
