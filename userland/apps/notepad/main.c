@@ -589,6 +589,31 @@ int main(int argc, char **argv, char **envp)
                 }
                 continue;
             }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_MOVE) {
+                if (event.buttons & 1u) {
+                    uint32_t before = document.scroll_line;
+                    leonos_ui_text_area_state_handle_mouse(&document, event.x, event.y,
+                                                           VIEW_X, VIEW_Y, VIEW_W, VIEW_H,
+                                                           event.buttons);
+                    if (before != document.scroll_line || document.focused) {
+                        draw_notepad(&ui);
+                        leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                    }
+                } else if (document.selecting) {
+                    leonos_ui_text_area_state_handle_mouse(&document, event.x, event.y,
+                                                           VIEW_X, VIEW_Y, VIEW_W, VIEW_H, 0);
+                }
+                continue;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                if (leonos_ui_vscrollbar_handle_wheel(&document.scroll_line,
+                                                      document.line_count, visible_rows(),
+                                                      event.dy)) {
+                    draw_notepad(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                }
+                continue;
+            }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
                 uint32_t before_hash = document_hash();
                 menu_open = NOTEPAD_MENU_NONE;

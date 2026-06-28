@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 USER_APPS = [
     "init",
     "desktop",
+    "oobe",
     "hello",
     "uidemo",
     "taskmgr",
@@ -282,12 +283,19 @@ def main() -> int:
 
     user_elfs: list[Path] = []
     for app in USER_APPS:
-        src = ROOT / "userland" / "apps" / app / "main.c"
-        obj = obj_for(src, f"user-{app}")
+        app_sources = collect([
+            f"userland/apps/{app}/*.c",
+            f"userland/apps/{app}/*.S",
+        ])
+        app_objects: list[Path] = []
         elf = ROOT / "build" / "userland" / f"{app}.elf"
         user_elfs.append(elf)
-        write_line(lines, f"build {r(obj)}: cc_user {r(src)}")
-        write_line(lines, f"build {r(elf)}: link_user {r(obj)} {r(libc_a)}")
+        for src in app_sources:
+            obj = obj_for(src, f"user-{app}")
+            app_objects.append(obj)
+            rule = "as_user" if src.suffix == ".S" else "cc_user"
+            write_line(lines, f"build {r(obj)}: {rule} {r(src)}")
+        write_line(lines, f"build {r(elf)}: link_user {' '.join(r(o) for o in app_objects)} {r(libc_a)}")
 
     write_line(lines, f"build userland: phony {' '.join(r(e) for e in user_elfs)}")
 

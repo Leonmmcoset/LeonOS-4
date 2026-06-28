@@ -381,11 +381,30 @@ void leonos_ui_context_menu(struct leonos_ui_surface *surface, uint32_t x, uint3
                             uint32_t w, const struct leonos_ui_context_menu_item *items,
                             uint32_t count)
 {
+    leonos_ui_context_menu_animated(surface, x, y, w, items, count, 1000);
+}
+
+void leonos_ui_context_menu_animated(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                                     uint32_t w, const struct leonos_ui_context_menu_item *items,
+                                     uint32_t count, uint32_t progress)
+{
     uint32_t row_h = LEONOS_FONT_H + 8;
     uint32_t h = leonos_ui_context_menu_height(count);
-    leonos_ui_bevel(surface, x, y, w, h, LEONOS_UI_GRAY, 0);
+    uint32_t visible_h;
+    if (progress > 1000) {
+        progress = 1000;
+    }
+    progress = (progress * (2000 - progress)) / 1000;
+    visible_h = (h * progress + 999) / 1000;
+    if (!visible_h) {
+        return;
+    }
+    leonos_ui_bevel(surface, x, y, w, visible_h, LEONOS_UI_GRAY, 0);
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t row_y = y + 4 + i * row_h;
+        if (row_y + row_h > y + visible_h - 2) {
+            break;
+        }
         uint32_t flags = items ? items[i].flags : LEONOS_UI_MENU_DISABLED;
         const char *label = items ? items[i].label : "";
         if (flags & LEONOS_UI_MENU_SEPARATOR) {
@@ -1200,11 +1219,36 @@ void leonos_ui_text_area_state_init(struct leonos_ui_text_area_state *state,
         buffer[state->length] = 0;
     }
     state->cursor = state->length;
+    state->selection_anchor = state->cursor;
     state->scroll_line = 0;
     state->preferred_column = 0xffffffffu;
     state->line_count = 1;
     state->focused = 0;
     state->readonly = 0;
+    state->selecting = 0;
+}
+
+static int text_area_has_selection(const struct leonos_ui_text_area_state *state)
+{
+    return state && state->selection_anchor != state->cursor &&
+           state->selection_anchor <= state->length && state->cursor <= state->length;
+}
+
+static void text_area_selection_range(const struct leonos_ui_text_area_state *state,
+                                      uint32_t *start, uint32_t *end)
+{
+    if (state->selection_anchor < state->cursor) {
+        *start = state->selection_anchor;
+        *end = state->cursor;
+    } else {
+        *start = state->cursor;
+        *end = state->selection_anchor;
+    }
+}
+
+static void text_area_clear_selection(struct leonos_ui_text_area_state *state)
+{
+    state->selection_anchor = state->cursor;
 }
 
 uint32_t leonos_ui_text_area_line_count(struct leonos_ui_text_area_state *state,
@@ -1249,6 +1293,9 @@ void leonos_ui_text_area_state_sync(struct leonos_ui_text_area_state *state,
     if (state->cursor > state->length) {
         state->cursor = state->length;
     }
+    if (state->selection_anchor > state->length) {
+        state->selection_anchor = state->cursor;
+    }
     state->line_count = leonos_ui_text_area_line_count(state, w);
     if (state->scroll_line >= state->line_count) {
         state->scroll_line = state->line_count ? state->line_count - 1 : 0;
@@ -1263,7 +1310,10 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
     uint32_t cursor_line;
     uint32_t cursor_col;
     uint32_t rows = text_area_rows(h);
+    uint32_t cols = text_area_cols(w);
     uint32_t draw_flags = flags;
+    uint32_t sel_start = 0;
+    uint32_t sel_end = 0;
     if (!state) {
         leonos_ui_text_area(surface, x, y, w, h, "", 0, 0, flags);
         return;
@@ -1275,8 +1325,51 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
     if (state->readonly) {
         draw_flags |= LEONOS_UI_EDIT_READONLY;
     }
-    leonos_ui_text_area(surface, x, y, w, h, state->buffer, state->cursor,
-                        state->scroll_line, draw_flags & ~LEONOS_UI_EDIT_FOCUSED);
+    leonos_ui_scroll_view_frame(surface, x, y, w, h);
+    if (text_area_has_selection(state)) {
+        text_area_selection_range(state, &sel_start, &sel_end);
+    }
+    for (uint32_t row = 0; row < rows; ++row) {
+        uint32_t line = state->scroll_line + row;
+        uint32_t pos = text_area_cursor_from_line_col(state, w, line, 0);
+        for (uint32_t col = 0; col < cols && x + 4 + col * LEONOS_FONT_W < x + w - 2; ++col) {
+            uint32_t ch_bg = LEONOS_UI_WHITE;
+            uint32_t ch_fg = (draw_flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
+            char ch = ' ';
+            uint32_t next_line;
+            uint32_t next_col;
+            if (pos < state->length) {
+                char raw = state->buffer[pos];
+                if (raw == '\r') {
+                    ++pos;
+                    --col;
+                    continue;
+                }
+                if (raw == '\n') {
+                    if (pos >= sel_start && pos < sel_end && text_area_has_selection(state)) {
+                        ch_bg = LEONOS_UI_ACTIVE_TITLE;
+                        ch_fg = LEONOS_UI_WHITE;
+                    }
+                    ui_char(surface, x + 4 + col * LEONOS_FONT_W,
+                            y + 4 + row * LEONOS_FONT_H, ' ', ch_fg, ch_bg, 0);
+                    break;
+                }
+                text_area_cursor_line_col(state, w, pos, &next_line, &next_col);
+                (void)next_col;
+                if (next_line != line) {
+                    break;
+                }
+                ch = raw < 32 ? '?' : raw;
+                if (pos >= sel_start && pos < sel_end && text_area_has_selection(state)) {
+                    ch_bg = LEONOS_UI_ACTIVE_TITLE;
+                    ch_fg = LEONOS_UI_WHITE;
+                }
+                ++pos;
+            }
+            ui_char(surface, x + 4 + col * LEONOS_FONT_W,
+                    y + 4 + row * LEONOS_FONT_H, ch, ch_fg, ch_bg, 0);
+        }
+    }
     if ((draw_flags & LEONOS_UI_EDIT_FOCUSED) && !(draw_flags & LEONOS_UI_EDIT_DISABLED)) {
         text_area_cursor_line_col(state, w, state->cursor, &cursor_line, &cursor_col);
         if (cursor_line >= state->scroll_line && cursor_line < state->scroll_line + rows) {
@@ -1300,13 +1393,22 @@ static int text_area_delete_range(struct leonos_ui_text_area_state *state,
     }
     state->length -= end - start;
     state->cursor = start;
+    text_area_clear_selection(state);
     return 1;
 }
 
 static int text_area_insert_char(struct leonos_ui_text_area_state *state, char ch)
 {
-    if (!state || !state->buffer || state->readonly || state->capacity == 0 ||
-        state->length + 1 >= state->capacity) {
+    if (!state || !state->buffer || state->readonly || state->capacity == 0) {
+        return 0;
+    }
+    if (text_area_has_selection(state)) {
+        uint32_t start;
+        uint32_t end;
+        text_area_selection_range(state, &start, &end);
+        text_area_delete_range(state, start, end);
+    }
+    if (state->length + 1 >= state->capacity) {
         return 0;
     }
     for (uint32_t i = state->length + 1; i > state->cursor; --i) {
@@ -1314,6 +1416,7 @@ static int text_area_insert_char(struct leonos_ui_text_area_state *state, char c
     }
     state->buffer[state->cursor++] = ch;
     ++state->length;
+    text_area_clear_selection(state);
     return 1;
 }
 
@@ -1347,6 +1450,16 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         if (state->readonly) {
             return 0;
         }
+        if (text_area_has_selection(state)) {
+            uint32_t start;
+            uint32_t end;
+            text_area_selection_range(state, &start, &end);
+            if (text_area_delete_range(state, start, end)) {
+                text_area_ensure_cursor_visible(state, w, h);
+                return 1;
+            }
+            return 0;
+        }
         if (state->cursor > 0) {
             if (text_area_delete_char(state, state->cursor - 1)) {
                 if (col > 0) {
@@ -1371,6 +1484,7 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
     case 75:
         if (state->cursor > 0) {
             --state->cursor;
+            text_area_clear_selection(state);
             text_area_cursor_line_col(state, w, state->cursor, &line, &col);
             state->preferred_column = col;
             text_area_ensure_cursor_visible(state, w, h);
@@ -1380,6 +1494,7 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
     case 77:
         if (state->cursor < state->length) {
             ++state->cursor;
+            text_area_clear_selection(state);
             text_area_cursor_line_col(state, w, state->cursor, &line, &col);
             state->preferred_column = col;
             text_area_ensure_cursor_visible(state, w, h);
@@ -1390,6 +1505,7 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         line = line > 0 ? line - 1 : 0;
         state->cursor = text_area_cursor_from_line_col(state, w, line,
                                                        state->preferred_column == 0xffffffffu ? col : state->preferred_column);
+        text_area_clear_selection(state);
         text_area_ensure_cursor_visible(state, w, h);
         return 1;
     case 80:
@@ -1399,12 +1515,14 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         }
         state->cursor = text_area_cursor_from_line_col(state, w, line,
                                                        state->preferred_column == 0xffffffffu ? col : state->preferred_column);
+        text_area_clear_selection(state);
         text_area_ensure_cursor_visible(state, w, h);
         return 1;
     case 73:
         rows = text_area_rows(h);
         line = line > rows ? line - rows : 0;
         state->cursor = text_area_cursor_from_line_col(state, w, line, col);
+        text_area_clear_selection(state);
         text_area_ensure_cursor_visible(state, w, h);
         return 1;
     case 81:
@@ -1414,15 +1532,18 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
             line = state->line_count ? state->line_count - 1 : 0;
         }
         state->cursor = text_area_cursor_from_line_col(state, w, line, col);
+        text_area_clear_selection(state);
         text_area_ensure_cursor_visible(state, w, h);
         return 1;
     case 71:
         state->cursor = text_area_cursor_from_line_col(state, w, line, 0);
+        text_area_clear_selection(state);
         state->preferred_column = 0;
         text_area_ensure_cursor_visible(state, w, h);
         return 1;
     case 79:
         state->cursor = text_area_cursor_from_line_col(state, w, line, 0xffffffffu);
+        text_area_clear_selection(state);
         text_area_cursor_line_col(state, w, state->cursor, &line, &col);
         state->preferred_column = col;
         text_area_ensure_cursor_visible(state, w, h);
@@ -1456,7 +1577,11 @@ int leonos_ui_text_area_state_handle_mouse(struct leonos_ui_text_area_state *sta
 {
     uint32_t line;
     uint32_t col;
-    if (!state || !(buttons & 1u)) {
+    if (!state) {
+        return 0;
+    }
+    if (!(buttons & 1u)) {
+        state->selecting = 0;
         return 0;
     }
     if (!leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)y, w, h)) {
@@ -1472,7 +1597,14 @@ int leonos_ui_text_area_state_handle_mouse(struct leonos_ui_text_area_state *sta
     if (px > (int32_t)x + 4) {
         col = ((uint32_t)px - x - 4) / LEONOS_FONT_W;
     }
-    state->cursor = text_area_cursor_from_line_col(state, w, line, col);
+    {
+        uint32_t next = text_area_cursor_from_line_col(state, w, line, col);
+        if (!state->selecting) {
+            state->selection_anchor = next;
+            state->selecting = 1;
+        }
+        state->cursor = next;
+    }
     state->preferred_column = col;
     return 1;
 }
@@ -1675,6 +1807,34 @@ int leonos_ui_listview_state_handle_mouse(struct leonos_ui_listview_state *state
     return 1;
 }
 
+int leonos_ui_listview_state_handle_wheel(struct leonos_ui_listview_state *state,
+                                          int32_t wheel_delta)
+{
+    uint32_t old;
+    uint32_t max_scroll;
+    uint32_t visible;
+    uint32_t steps;
+    if (!state || wheel_delta == 0) {
+        return 0;
+    }
+    visible = state->visible_rows ? state->visible_rows : 1;
+    if (state->row_count <= visible) {
+        return 0;
+    }
+    old = state->scroll;
+    max_scroll = state->row_count - visible;
+    steps = wheel_delta < 0 ? (uint32_t)(-wheel_delta) : (uint32_t)wheel_delta;
+    if (steps == 0) {
+        steps = 1;
+    }
+    if (wheel_delta > 0) {
+        state->scroll = state->scroll > steps ? state->scroll - steps : 0;
+    } else {
+        state->scroll = state->scroll + steps < max_scroll ? state->scroll + steps : max_scroll;
+    }
+    return old != state->scroll;
+}
+
 int leonos_ui_vscrollbar_handle_mouse(uint32_t *value, uint32_t max, uint32_t page,
                                       uint32_t x, uint32_t y, uint32_t w,
                                       uint32_t h, int32_t px, int32_t py)
@@ -1700,6 +1860,29 @@ int leonos_ui_vscrollbar_handle_mouse(uint32_t *value, uint32_t max, uint32_t pa
         *value = *value > page ? *value - page : 0;
     } else {
         *value = *value + page < max_value ? *value + page : max_value;
+    }
+    return old != *value;
+}
+
+int leonos_ui_vscrollbar_handle_wheel(uint32_t *value, uint32_t max, uint32_t page,
+                                      int32_t wheel_delta)
+{
+    uint32_t old;
+    uint32_t max_value;
+    uint32_t steps;
+    if (!value || max <= page || wheel_delta == 0) {
+        return 0;
+    }
+    old = *value;
+    max_value = max - page;
+    steps = wheel_delta < 0 ? (uint32_t)(-wheel_delta) : (uint32_t)wheel_delta;
+    if (steps == 0) {
+        steps = 1;
+    }
+    if (wheel_delta > 0) {
+        *value = *value > steps ? *value - steps : 0;
+    } else {
+        *value = *value + steps < max_value ? *value + steps : max_value;
     }
     return old != *value;
 }
@@ -1745,8 +1928,35 @@ void leonos_ui_message_box(struct leonos_ui_surface *surface, uint32_t x, uint32
                            uint32_t w, uint32_t h, const char *title,
                            const char *message, const char *button)
 {
+    uint32_t line_y = y + 46;
+    uint32_t line_start = 0;
+    uint32_t line_len = 0;
+    uint32_t max_chars = leonos_ui_text_fit_chars(w > 32 ? w - 32 : w);
     leonos_ui_dialog(surface, x, y, w, h, title);
-    leonos_ui_text_clipped(surface, x + 16, y + 46, w > 32 ? w - 32 : w, message, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    for (uint32_t i = 0; message && line_y + LEONOS_FONT_H < y + h - 44; ++i) {
+        char ch = message[i];
+        if (ch != '\n' && ch != 0 && line_len < max_chars) {
+            ++line_len;
+            continue;
+        }
+        {
+            char line[96];
+            uint32_t n = 0;
+            while (n < line_len && n + 1 < sizeof(line)) {
+                line[n] = message[line_start + n];
+                ++n;
+            }
+            line[n] = 0;
+            leonos_ui_text_clipped(surface, x + 16, line_y, w > 32 ? w - 32 : w,
+                                   line, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+        }
+        line_y += LEONOS_FONT_H + 2;
+        if (ch == 0) {
+            break;
+        }
+        line_start = ch == '\n' ? i + 1 : i;
+        line_len = 0;
+    }
     leonos_ui_button(surface, x + w / 2 - 36, y + h - 38, 72, LEONOS_UI_BUTTON_H, button ? button : "OK", 0);
 }
 
@@ -1776,7 +1986,7 @@ void leonos_ui_input_dialog(struct leonos_ui_surface *surface, uint32_t x, uint3
 int leonos_ui_show_message_box(const char *title, const char *message,
                                const char *button)
 {
-    enum { W = 300, H = 150 };
+    enum { W = 360, H = 240 };
     static uint32_t pixels[W * H];
     struct leonos_ui_surface surface;
     struct leonos_gui_app_event event;

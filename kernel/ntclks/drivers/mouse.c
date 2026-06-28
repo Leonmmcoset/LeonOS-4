@@ -38,8 +38,9 @@ static struct mouse_state state = {
     .absolute = false,
 };
 
-static uint8_t packet[3];
+static uint8_t packet[4];
 static uint8_t packet_index;
+static uint8_t packet_size = 3;
 static uint32_t events;
 static uint8_t last_status;
 static uint8_t last_data;
@@ -138,6 +139,24 @@ static void mouse_publish(int32_t new_x, int32_t new_y, uint8_t buttons, const c
     }
 }
 
+static void mouse_publish_wheel(int8_t wheel, const char *tag)
+{
+    if (wheel == 0) {
+        return;
+    }
+    ++events;
+    input_push_mouse_wheel(state.x, state.y, wheel, state.buttons);
+    if (events <= 8) {
+        console_printf("[ntclks] %s mouse wheel #%u delta=%d pos=%d,%d buttons=%u\n",
+                       tag,
+                       events,
+                       (int)wheel,
+                       state.x,
+                       state.y,
+                       state.buttons);
+    }
+}
+
 static int wait_input_clear(void)
 {
     for (int i = 0; i < 100000; ++i) {
@@ -233,6 +252,24 @@ static int mouse_write_value_ack(uint8_t value)
 static int mouse_write_param(uint8_t command, uint8_t value)
 {
     return mouse_write_ack(command) && mouse_write_value_ack(value);
+}
+
+static uint8_t mouse_get_device_id(void)
+{
+    if (!mouse_write_ack(0xf2)) {
+        return 0;
+    }
+    return ps2_read_data();
+}
+
+static int mouse_enable_wheel(void)
+{
+    if (!mouse_write_param(0xf3, 200) ||
+        !mouse_write_param(0xf3, 100) ||
+        !mouse_write_param(0xf3, 80)) {
+        return 0;
+    }
+    return mouse_get_device_id() == 3;
 }
 
 static uint8_t vmware_buttons(uint32_t status)
@@ -354,17 +391,20 @@ void mouse_init(void)
     int scale_ok = mouse_write_ack(0xe6);
     int resolution_ok = mouse_write_param(0xe8, 0x03);
     int sample_ok = mouse_write_param(0xf3, 200);
+    int wheel_ok = mouse_enable_wheel();
+    packet_size = wheel_ok ? 4 : 3;
     int enable_ok = mouse_write_ack(0xf4);
     state.present = defaults_ok && enable_ok;
     vmware_backdoor = vmware_detect();
     if (vmware_backdoor) {
         vmware_absolute = vmware_enable_absolute();
     }
-    console_printf("[ntclks] mouse init ps2 defaults=%d scale=%d res=%d sample=%d enable=%d vmware=%d absolute=%d version=0x%x at %d,%d\n",
+    console_printf("[ntclks] mouse init ps2 defaults=%d scale=%d res=%d sample=%d wheel=%d enable=%d vmware=%d absolute=%d version=0x%x at %d,%d\n",
                    defaults_ok,
                    scale_ok,
                    resolution_ok,
                    sample_ok,
+                   wheel_ok,
                    enable_ok,
                    vmware_backdoor ? 1 : 0,
                    vmware_absolute ? 1 : 0,
@@ -396,7 +436,7 @@ void mouse_poll(void)
             continue;
         }
         packet[packet_index++] = data;
-        if (packet_index < 3) {
+        if (packet_index < packet_size) {
             continue;
         }
         packet_index = 0;
@@ -404,6 +444,13 @@ void mouse_poll(void)
         int dx = (int8_t)packet[1];
         int dy = (int8_t)packet[2];
         mouse_publish(state.x + dx, state.y - dy, packet[0] & 0x07, "ps2");
+        if (packet_size == 4) {
+            int8_t wheel = (int8_t)(packet[3] & 0x0f);
+            if (wheel & 0x08) {
+                wheel = (int8_t)(wheel | 0xf0);
+            }
+            mouse_publish_wheel(wheel, "ps2");
+        }
     }
 
     if (vmware_absolute && saw_aux_data) {

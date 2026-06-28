@@ -2,7 +2,7 @@
 #include <ntclks/mm.h>
 #include <ntclks/usercopy.h>
 
-#define GUI_IPC_QUEUE_CAP 32
+#define GUI_IPC_QUEUE_CAP 128
 #define GUI_IPC_MAX_WINDOWS 32
 #define GUI_IPC_WINDOW_EVENT_CAP 32
 
@@ -125,14 +125,9 @@ static int ensure_window_buffer(struct gui_window_slot *slot, uint32_t width, ui
     return 1;
 }
 
-static int push_message(uint32_t type, const struct gui_window_slot *slot)
+static void fill_message(struct gui_ipc_window *msg, uint32_t type,
+                         const struct gui_window_slot *slot)
 {
-    uint32_t next = (head + 1) % GUI_IPC_QUEUE_CAP;
-    struct gui_ipc_window *msg;
-    if (!slot || next == tail) {
-        return 0;
-    }
-    msg = &queue[head];
     msg->type = type;
     msg->pid = slot->owner_pid;
     msg->window_id = slot->id;
@@ -141,6 +136,42 @@ static int push_message(uint32_t type, const struct gui_window_slot *slot)
     msg->flags = slot->flags;
     copy_kernel_string(msg->title, sizeof(msg->title), slot->title);
     copy_kernel_string(msg->text, sizeof(msg->text), slot->text);
+}
+
+static int coalesce_dirty_message(uint32_t type, const struct gui_window_slot *slot)
+{
+    uint32_t i;
+    if (type != GUI_IPC_WINDOW_MSG_DIRTY || !slot) {
+        return 0;
+    }
+    i = tail;
+    while (i != head) {
+        struct gui_ipc_window *msg = &queue[i];
+        if (msg->type == GUI_IPC_WINDOW_MSG_DIRTY &&
+            msg->window_id == slot->id) {
+            fill_message(msg, type, slot);
+            return 1;
+        }
+        i = (i + 1) % GUI_IPC_QUEUE_CAP;
+    }
+    return 0;
+}
+
+static int push_message(uint32_t type, const struct gui_window_slot *slot)
+{
+    uint32_t next = (head + 1) % GUI_IPC_QUEUE_CAP;
+    struct gui_ipc_window *msg;
+    if (!slot) {
+        return 0;
+    }
+    if (coalesce_dirty_message(type, slot)) {
+        return 1;
+    }
+    if (next == tail) {
+        tail = (tail + 1) % GUI_IPC_QUEUE_CAP;
+    }
+    msg = &queue[head];
+    fill_message(msg, type, slot);
     head = next;
     return 1;
 }

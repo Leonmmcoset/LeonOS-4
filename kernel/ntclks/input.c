@@ -45,6 +45,18 @@ void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t butt
     push_event(&event);
 }
 
+void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons)
+{
+    struct input_event event = {
+        .type = INPUT_EVENT_MOUSE_WHEEL,
+        .x = x,
+        .y = y,
+        .dy = wheel,
+        .buttons = buttons,
+    };
+    push_event(&event);
+}
+
 void input_push_key(uint8_t keycode, uint8_t pressed)
 {
     struct input_event event = {

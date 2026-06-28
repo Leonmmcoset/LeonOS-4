@@ -1,0 +1,74 @@
+#include "desktop.h"
+
+struct leonos_fb_info fb;
+struct desktop_window windows[MAX_WINDOWS];
+uint8_t z_order[MAX_WINDOWS];
+int active_window;
+int drag_window;
+uint8_t drag_mode;
+int drag_dx;
+int drag_dy;
+int drag_origin_x;
+int drag_origin_y;
+uint32_t drag_origin_w;
+uint32_t drag_origin_h;
+uint8_t previous_buttons;
+uint8_t start_menu_open;
+uint8_t start_menu_animating;
+uint8_t start_menu_opening;
+uint8_t start_menu_programs_open;
+uint32_t start_menu_programs_scroll;
+unsigned long start_menu_anim_start;
+uint8_t start_menu_apps_loaded;
+uint32_t start_menu_app_count;
+char start_menu_app_labels[START_MENU_MAX_APPS][32];
+char start_menu_app_paths[START_MENU_MAX_APPS][LEONOS_FS_PATH_LEN];
+uint8_t snap_preview_mode;
+uint8_t alt_left_down;
+uint8_t alt_right_down;
+uint8_t win_left_down;
+uint8_t win_right_down;
+uint8_t win_combo_used;
+unsigned long win_down_ms;
+uint8_t alt_tab_active;
+uint8_t alt_tab_count;
+uint8_t alt_tab_selected;
+uint8_t alt_tab_ids[ALT_TAB_MAX_WINDOWS];
+uint32_t cursor_x;
+uint32_t cursor_y;
+uint32_t cursor_width = FALLBACK_CURSOR_W;
+uint32_t cursor_height = FALLBACK_CURSOR_H;
+uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
+uint8_t cursor_visible;
+uint8_t cursor_bitmap_loaded;
+uint8_t full_redraw_pending;
+uint8_t oobe_lock_active;
+unsigned long oobe_last_spawn_ms;
+char app_titles[MAX_WINDOWS][48];
+char app_texts[MAX_WINDOWS][96];
+struct leonos_task_info task_infos[LEONOS_TASK_MAX];
+uint32_t task_info_count;
+uint64_t task_info_tick;
+unsigned long last_task_refresh;
+struct leonos_ui_surface ui;
+uint32_t app_client_scratch[APP_CLIENT_MAX_W * APP_CLIENT_MAX_H];
+uint32_t screen[MAX_FB_W * MAX_FB_H];
+
+const char cursor_art[FALLBACK_CURSOR_H][FALLBACK_CURSOR_W + 1] = {
+    "X...............",
+    "XO..............",
+    "XOX.............",
+    "XOOX............",
+    "XOOOX...........",
+    "XOOOOX..........",
+    "XOOOOOX.........",
+    "XOOOOOOX........",
+    "XOOOOOOOX.......",
+    "XOOOOOOOOX......",
+    "XOOOOOOOOOX.....",
+    "XOOOOX..........",
+    "XOOOOX..........",
+    "XOOOOX..........",
+    "XOOOXX..........",
+    "XXXXX...........",
+};

@@ -8,14 +8,16 @@
 
 #define FILEMAN_W 560
 #define FILEMAN_H 360
-#define FILEMAN_MAX_ENTRIES 24
+#define FILEMAN_MAX_W 1264
+#define FILEMAN_MAX_H 746
+#define FILEMAN_MAX_ENTRIES LEONOS_FS_MAX_ENTRIES
 #define TOOLBAR_Y 40
 #define LIST_X 8
 #define LIST_Y 82
-#define LIST_W (FILEMAN_W - 34)
 #define ROW_H (LEONOS_FONT_H + 8)
 #define STATUS_H 28
-#define LIST_VISIBLE_ROWS 9
+#define TREE_W 132
+#define TREE_ROW_H 24
 #define MENU_BAR_H 28
 #define MENU_ITEM_H (LEONOS_FONT_H + 8)
 #define FILEMAN_KEY_ESCAPE 1U
@@ -54,7 +56,7 @@ enum {
     FILEMAN_ACTION_REFRESH = 9,
 };
 
-static uint32_t pixels[FILEMAN_W * FILEMAN_H];
+static uint32_t pixels[FILEMAN_MAX_W * FILEMAN_MAX_H];
 static uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
 static struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
 static char current_path[LEONOS_FS_PATH_LEN] = "0:/";
@@ -76,9 +78,53 @@ static uint8_t open_with_remember;
 static uint8_t menu_open;
 static uint8_t open_with_active;
 static uint8_t context_menu_active;
+static uint8_t context_menu_animating;
+static uint8_t context_menu_opening;
+static unsigned long context_menu_anim_start;
 static uint32_t context_menu_x;
 static uint32_t context_menu_y;
 static int32_t open_with_selected;
+static uint32_t view_w = FILEMAN_W;
+static uint32_t view_h = FILEMAN_H;
+
+struct fileman_layout {
+    uint32_t tree_x;
+    uint32_t tree_y;
+    uint32_t tree_w;
+    uint32_t tree_h;
+    uint32_t list_x;
+    uint32_t list_y;
+    uint32_t list_w;
+    uint32_t list_h;
+    uint32_t rows_y;
+    uint32_t rows_h;
+    uint32_t visible_rows;
+    uint32_t scrollbar_x;
+    uint32_t scrollbar_h;
+};
+
+static struct fileman_layout current_layout(void)
+{
+    struct fileman_layout l;
+    uint32_t content_h = view_h > LIST_Y + STATUS_H + 10 ? view_h - LIST_Y - STATUS_H - 10 : ROW_H * 2;
+    l.tree_x = 8;
+    l.tree_y = LIST_Y;
+    l.tree_w = view_w > 430 ? TREE_W : 0;
+    l.tree_h = content_h + 4;
+    l.list_x = l.tree_w ? l.tree_x + l.tree_w + 8 : 8;
+    l.list_y = LIST_Y;
+    l.list_w = view_w > l.list_x + 34 ? view_w - l.list_x - 26 : 220;
+    l.list_h = content_h + 4;
+    l.rows_y = l.list_y + 30;
+    l.rows_h = l.list_h > 34 ? l.list_h - 34 : ROW_H;
+    l.visible_rows = l.rows_h / ROW_H;
+    if (!l.visible_rows) {
+        l.visible_rows = 1;
+    }
+    l.scrollbar_x = l.list_x + l.list_w + 2;
+    l.scrollbar_h = l.list_h;
+    return l;
+}
 
 static void copy_text(char *dst, uint32_t dst_len, const char *src)
 {
@@ -207,13 +253,14 @@ static int selected_entry_is_mutable(void)
 
 static int list_index_at(int32_t x, int32_t y)
 {
+    struct fileman_layout l = current_layout();
     int32_t row;
     uint32_t index;
-    if (!hit_rect_i(x, y, LIST_X + 2, LIST_Y + 30, LIST_W,
-                    (int32_t)(LIST_VISIBLE_ROWS * ROW_H))) {
+    if (!hit_rect_i(x, y, (int32_t)(l.list_x + 2), (int32_t)l.rows_y,
+                    (int32_t)l.list_w, (int32_t)(l.visible_rows * ROW_H))) {
         return -1;
     }
-    row = (y - (int32_t)(LIST_Y + 30)) / (int32_t)ROW_H;
+    row = (y - (int32_t)l.rows_y) / (int32_t)ROW_H;
     if (row < 0) {
         return -1;
     }
@@ -222,6 +269,37 @@ static int list_index_at(int32_t x, int32_t y)
         return -1;
     }
     return (int)index;
+}
+
+static void format_size_text(char *buf, uint32_t cap, uint64_t bytes)
+{
+    static const char *units[] = {"Byte", "KB", "MB", "GB", "TB"};
+    uint64_t whole = bytes;
+    uint64_t frac = 0;
+    uint32_t unit = 0;
+    uint32_t pos = 0;
+    while (whole >= 1024 && unit + 1 < sizeof(units) / sizeof(units[0])) {
+        frac = ((whole % 1024) * 100) / 1024;
+        whole /= 1024;
+        ++unit;
+    }
+    buf[0] = 0;
+    append_size(buf, &pos, cap, whole);
+    if (unit > 0 && frac > 0) {
+        append_char(buf, &pos, cap, '.');
+        append_char(buf, &pos, cap, (char)('0' + frac / 10));
+        append_char(buf, &pos, cap, (char)('0' + frac % 10));
+    }
+    append_char(buf, &pos, cap, ' ');
+    append_text(buf, &pos, cap, units[unit]);
+    if (unit == 0 && bytes != 1) {
+        append_char(buf, &pos, cap, 's');
+    }
+    if (unit > 0) {
+        append_text(buf, &pos, cap, " (");
+        append_size(buf, &pos, cap, bytes);
+        append_text(buf, &pos, cap, " bytes)");
+    }
 }
 
 static const struct leonos_launch_assoc_app *find_open_with_app(const char *program_path)
@@ -294,6 +372,17 @@ static void set_status_code(const char *prefix, int value)
     }
     append_dec(buf, &pos, sizeof(buf), (uint32_t)value);
     set_status(buf);
+}
+
+static void context_menu_set_active(uint8_t active)
+{
+    if (context_menu_active == active && !context_menu_animating) {
+        return;
+    }
+    context_menu_active = active;
+    context_menu_opening = active;
+    context_menu_animating = 1;
+    context_menu_anim_start = leonos_uptime_ms();
 }
 
 static void build_child_path(char *dst, uint32_t dst_len, const char *name)
@@ -384,9 +473,7 @@ static void show_details_selected(void)
     struct leonos_gui_app_event event;
     struct leonos_stat st;
     char path[LEONOS_FS_PATH_LEN];
-    char size_text[32];
     char size_line[56];
-    uint32_t pos = 0;
     int window_id;
     if (!selected_entry_valid()) {
         set_status("Select an item");
@@ -397,12 +484,7 @@ static void show_details_selected(void)
         set_status("Details stat failed");
         return;
     }
-    size_text[0] = 0;
-    size_line[0] = 0;
-    append_size(size_text, &pos, sizeof(size_text), st.size);
-    pos = 0;
-    append_text(size_line, &pos, sizeof(size_line), size_text);
-    append_text(size_line, &pos, sizeof(size_line), " bytes");
+    format_size_text(size_line, sizeof(size_line), st.size);
 
     window_id = leonos_gui_create_app_window_ex("Properties", path,
                                                 FILEMAN_DETAILS_W, FILEMAN_DETAILS_H,
@@ -706,7 +788,7 @@ static int reload_dir(void)
     leonos_ui_listview_state_set_count(&file_list, entry_count);
     file_list.selected = entry_count ? 0 : -1;
     file_list.scroll = 0;
-    context_menu_active = 0;
+    context_menu_set_active(0);
     last_click_index = -1;
     last_click_ms = 0;
     char buf[96];
@@ -723,23 +805,48 @@ static int reload_dir(void)
 
 static void draw_fileman(struct leonos_ui_surface *ui)
 {
+    struct fileman_layout l = current_layout();
     struct leonos_ui_list_column cols[] = {
         {"Type", 58},
-        {"Name", LIST_W - 58},
+        {"Name", l.list_w > 58 ? l.list_w - 58 : 120},
     };
-    leonos_ui_rect(ui, 0, 0, FILEMAN_W, FILEMAN_H, LEONOS_UI_WHITE);
-    leonos_ui_menubar(ui, 0, 0, FILEMAN_W);
+    struct leonos_ui_tree_item tree_items[] = {
+        {"0:/", 1, 0, LEONOS_UI_TREE_EXPANDED},
+        {"system", 2, 1, LEONOS_UI_TREE_LEAF},
+        {"fonts", 3, 2, LEONOS_UI_TREE_LEAF},
+        {"resources", 4, 2, LEONOS_UI_TREE_LEAF},
+        {"userland", 5, 1, LEONOS_UI_TREE_LEAF},
+    };
+    for (uint32_t i = 0; i < sizeof(tree_items) / sizeof(tree_items[0]); ++i) {
+        const char *path = i == 0 ? "0:/" :
+                           i == 1 ? "0:/system" :
+                           i == 2 ? "0:/system/fonts" :
+                           i == 3 ? "0:/system/resources" : "0:/userland";
+        if (text_eq(current_path, path)) {
+            tree_items[i].flags |= LEONOS_UI_TREE_SELECTED;
+        }
+    }
+    file_list.visible_rows = l.visible_rows;
+    leonos_ui_listview_state_set_count(&file_list, entry_count);
+    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
+    leonos_ui_menubar(ui, 0, 0, view_w);
     leonos_ui_menubar_item(ui, 8, 0, 54, "File", menu_open == FILEMAN_MENU_FILE);
     leonos_ui_menubar_item(ui, 64, 0, 54, "View", menu_open == FILEMAN_MENU_VIEW);
 
-    leonos_ui_toolbar(ui, 0, 30, FILEMAN_W, 42);
+    leonos_ui_toolbar(ui, 0, 30, view_w, 42);
     leonos_ui_toolbar_button(ui, 8, TOOLBAR_Y, 54, "Up", 0);
     leonos_ui_toolbar_button(ui, 72, TOOLBAR_Y, 60, "Open", 0);
     leonos_ui_toolbar_button(ui, 142, TOOLBAR_Y, 76, "Refresh", 0);
-    leonos_ui_edit(ui, 230, TOOLBAR_Y, FILEMAN_W - 238, current_path, text_len(current_path), 0, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_edit(ui, 230, TOOLBAR_Y, view_w > 238 ? view_w - 238 : 120,
+                   current_path, text_len(current_path), 0, LEONOS_UI_EDIT_READONLY);
 
-    leonos_ui_scroll_view_frame(ui, LIST_X, LIST_Y, FILEMAN_W - 16, FILEMAN_H - LIST_Y - STATUS_H - 6);
-    leonos_ui_listview_header(ui, LIST_X + 2, LIST_Y + 2, LIST_W, cols, 2);
+    if (l.tree_w) {
+        leonos_ui_scroll_view_frame(ui, l.tree_x, l.tree_y, l.tree_w, l.tree_h);
+        leonos_ui_tree(ui, l.tree_x + 2, l.tree_y + 4, l.tree_w - 4, tree_items,
+                       sizeof(tree_items) / sizeof(tree_items[0]), TREE_ROW_H);
+    }
+    leonos_ui_scroll_view_frame(ui, l.list_x, l.list_y, l.list_w + 22, l.list_h);
+    leonos_ui_listview_header(ui, l.list_x + 2, l.list_y + 2, l.list_w, cols, 2);
     for (uint32_t row = 0; row < file_list.visible_rows; ++row) {
         uint32_t i = file_list.scroll + row;
         const char *cells[2];
@@ -748,16 +855,15 @@ static void draw_fileman(struct leonos_ui_surface *ui)
         }
         cells[0] = entry_type_name(&entries[i]);
         cells[1] = entries[i].name;
-        leonos_ui_listview_row(ui, LIST_X + 2, LIST_Y + 30 + row * ROW_H, LIST_W, cols, cells, 2,
+        leonos_ui_listview_row(ui, l.list_x + 2, l.rows_y + row * ROW_H, l.list_w, cols, cells, 2,
                                file_list.selected == (int32_t)i ? LEONOS_UI_MENU_SELECTED : 0);
     }
-    leonos_ui_vscrollbar(ui, FILEMAN_W - 26, LIST_Y + 2, 18,
-                         FILEMAN_H - LIST_Y - STATUS_H - 10,
-                         file_list.scroll, entry_count > LIST_VISIBLE_ROWS ? entry_count : LIST_VISIBLE_ROWS,
-                         LIST_VISIBLE_ROWS,
-                         entry_count <= LIST_VISIBLE_ROWS ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
+    leonos_ui_vscrollbar(ui, l.scrollbar_x, l.list_y + 2, 18, l.scrollbar_h - 4,
+                         file_list.scroll, entry_count > l.visible_rows ? entry_count : l.visible_rows,
+                         l.visible_rows,
+                         entry_count <= l.visible_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
 
-    leonos_ui_statusbar(ui, FILEMAN_H - STATUS_H, STATUS_H, status_text);
+    leonos_ui_statusbar(ui, view_h - STATUS_H, STATUS_H, status_text);
 
     if (menu_open == FILEMAN_MENU_FILE) {
         uint32_t has_item = selected_entry_valid();
@@ -785,11 +891,20 @@ static void draw_fileman(struct leonos_ui_surface *ui)
         leonos_ui_menu_item(ui, 98, MENU_BAR_H + 34, 116, "Root", 0);
         leonos_ui_menu_item(ui, 98, MENU_BAR_H + 60, 116, "About", 0);
     }
-    if (context_menu_active) {
+    if (context_menu_active || context_menu_animating) {
         struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
         build_context_menu_items(items, FILEMAN_CONTEXT_MENU_COUNT);
-        leonos_ui_context_menu(ui, context_menu_x, context_menu_y, FILEMAN_CONTEXT_MENU_W,
-                               items, FILEMAN_CONTEXT_MENU_COUNT);
+        uint32_t progress = context_menu_animating
+                                ? leonos_ui_anim_progress(leonos_uptime_ms(), context_menu_anim_start, 120)
+                                : 1000;
+        if (progress >= 1000) {
+            context_menu_animating = 0;
+            progress = context_menu_active ? 1000 : 0;
+        } else if (!context_menu_opening) {
+            progress = 1000 - progress;
+        }
+        leonos_ui_context_menu_animated(ui, context_menu_x, context_menu_y, FILEMAN_CONTEXT_MENU_W,
+                                        items, FILEMAN_CONTEXT_MENU_COUNT, progress);
     }
     if (open_with_active) {
         draw_open_with_dialog(ui);
@@ -964,7 +1079,7 @@ static void delete_selected_entry(void)
 
 static void execute_action(uint32_t action)
 {
-    context_menu_active = 0;
+    context_menu_set_active(0);
     switch (action) {
     case FILEMAN_ACTION_OPEN:
         open_selected_entry();
@@ -1186,13 +1301,13 @@ static int handle_context_menu_click(int32_t x, int32_t y)
     if (leonos_ui_context_menu_hit(x, y, context_menu_x, context_menu_y,
                                    FILEMAN_CONTEXT_MENU_W, items,
                                    FILEMAN_CONTEXT_MENU_COUNT, &action)) {
-        context_menu_active = 0;
+        context_menu_set_active(0);
         if (action) {
             execute_action(action);
         }
         return 1;
     }
-    context_menu_active = 0;
+    context_menu_set_active(0);
     return 0;
 }
 
@@ -1219,15 +1334,15 @@ static void show_context_menu_at(int32_t x, int32_t y, int32_t target)
     }
     context_menu_x = (uint32_t)x;
     context_menu_y = (uint32_t)y;
-    if (context_menu_x + FILEMAN_CONTEXT_MENU_W > FILEMAN_W) {
-        context_menu_x = FILEMAN_W - FILEMAN_CONTEXT_MENU_W;
+    if (context_menu_x + FILEMAN_CONTEXT_MENU_W > view_w) {
+        context_menu_x = view_w > FILEMAN_CONTEXT_MENU_W ? view_w - FILEMAN_CONTEXT_MENU_W : 0;
     }
-    if (context_menu_y + menu_h > FILEMAN_H - STATUS_H) {
-        context_menu_y = FILEMAN_H - STATUS_H > menu_h
-                             ? FILEMAN_H - STATUS_H - menu_h
+    if (context_menu_y + menu_h > view_h - STATUS_H) {
+        context_menu_y = view_h - STATUS_H > menu_h
+                             ? view_h - STATUS_H - menu_h
                              : 0;
     }
-    context_menu_active = 1;
+    context_menu_set_active(1);
 }
 
 static void handle_right_click(int32_t x, int32_t y)
@@ -1246,6 +1361,7 @@ static void handle_right_click(int32_t x, int32_t y)
 
 static void handle_click(int32_t x, int32_t y)
 {
+    struct fileman_layout l = current_layout();
     if (handle_open_with_click(x, y)) {
         return;
     }
@@ -1253,11 +1369,11 @@ static void handle_click(int32_t x, int32_t y)
         return;
     }
     if (handle_menu_click(x, y)) {
-        context_menu_active = 0;
+        context_menu_set_active(0);
         return;
     }
     menu_open = FILEMAN_MENU_NONE;
-    context_menu_active = 0;
+    context_menu_set_active(0);
     if (x >= 8 && x < 62 && y >= TOOLBAR_Y && y < TOOLBAR_Y + (int32_t)LEONOS_UI_BUTTON_H) {
         navigate_up();
         return;
@@ -1270,13 +1386,40 @@ static void handle_click(int32_t x, int32_t y)
         reload_dir();
         return;
     }
-    if (x >= FILEMAN_W - 26 && y >= LIST_Y + 2 &&
-        y < FILEMAN_H - STATUS_H - 8) {
+    if (l.tree_w && hit_rect_i(x, y, (int32_t)l.tree_x, (int32_t)l.tree_y,
+                               (int32_t)l.tree_w, (int32_t)l.tree_h)) {
+        struct leonos_ui_tree_item tree_items[] = {
+            {"0:/", 1, 0, LEONOS_UI_TREE_EXPANDED},
+            {"system", 2, 1, LEONOS_UI_TREE_LEAF},
+            {"fonts", 3, 2, LEONOS_UI_TREE_LEAF},
+            {"resources", 4, 2, LEONOS_UI_TREE_LEAF},
+            {"userland", 5, 1, LEONOS_UI_TREE_LEAF},
+        };
+        uint32_t id = 0;
+        if (leonos_ui_tree_hit(x, y, l.tree_x + 2, l.tree_y + 4, l.tree_w - 4,
+                               tree_items, sizeof(tree_items) / sizeof(tree_items[0]),
+                               TREE_ROW_H, &id)) {
+            const char *path = id == 1 ? "0:/" :
+                               id == 2 ? "0:/system" :
+                               id == 3 ? "0:/system/fonts" :
+                               id == 4 ? "0:/system/resources" :
+                               id == 5 ? "0:/userland" : 0;
+            if (path) {
+                copy_text(current_path, sizeof(current_path), path);
+                chdir(current_path);
+                getcwd(current_path, sizeof(current_path));
+                reload_dir();
+            }
+        }
+        return;
+    }
+    if (x >= (int32_t)l.scrollbar_x && y >= (int32_t)(l.list_y + 2) &&
+        y < (int32_t)(l.list_y + l.scrollbar_h)) {
         leonos_ui_vscrollbar_handle_mouse(&file_list.scroll,
-                                          entry_count > LIST_VISIBLE_ROWS ? entry_count : LIST_VISIBLE_ROWS,
-                                          LIST_VISIBLE_ROWS,
-                                          FILEMAN_W - 26, LIST_Y + 2, 18,
-                                          FILEMAN_H - LIST_Y - STATUS_H - 10,
+                                          entry_count > l.visible_rows ? entry_count : l.visible_rows,
+                                          l.visible_rows,
+                                          l.scrollbar_x, l.list_y + 2, 18,
+                                          l.scrollbar_h - 4,
                                           x, y);
         return;
     }
@@ -1284,7 +1427,7 @@ static void handle_click(int32_t x, int32_t y)
         uint32_t activate = 0;
         int32_t before = file_list.selected;
         unsigned long now = leonos_uptime_ms();
-        int32_t row = (y - (int32_t)(LIST_Y + 30)) / (int32_t)ROW_H;
+        int32_t row = (y - (int32_t)l.rows_y) / (int32_t)ROW_H;
         uint32_t index;
         if (row < 0) {
             return;
@@ -1295,8 +1438,8 @@ static void handle_click(int32_t x, int32_t y)
             last_click_ms = 0;
             return;
         }
-        if (!leonos_ui_listview_state_handle_mouse(&file_list, x, y, LIST_X + 2,
-                                                   LIST_Y + 30, LIST_W, &activate)) {
+        if (!leonos_ui_listview_state_handle_mouse(&file_list, x, y, l.list_x + 2,
+                                                   l.rows_y, l.list_w, &activate)) {
             return;
         }
         activate = before == file_list.selected &&
@@ -1328,6 +1471,26 @@ static void handle_key(uint8_t keycode)
     }
 }
 
+static int handle_wheel(int32_t x, int32_t y, int32_t wheel)
+{
+    struct fileman_layout l = current_layout();
+    if (open_with_active) {
+        return leonos_ui_listview_state_handle_wheel(&open_with_list, wheel);
+    }
+    if (hit_rect_i(x, y, (int32_t)l.list_x, (int32_t)l.list_y,
+                   (int32_t)(l.list_w + 24), (int32_t)l.list_h)) {
+        return leonos_ui_listview_state_handle_wheel(&file_list, wheel);
+    }
+    return 0;
+}
+
+static void present_fileman(uint32_t window_id, struct leonos_ui_surface *ui)
+{
+    leonos_ui_bind(ui, pixels, view_w, view_h, FILEMAN_MAX_W);
+    draw_fileman(ui);
+    leonos_gui_present_window(window_id, view_w, view_h, FILEMAN_MAX_W, pixels);
+}
+
 int main(int argc, char **argv, char **envp)
 {
     struct leonos_ui_surface ui;
@@ -1338,14 +1501,14 @@ int main(int argc, char **argv, char **envp)
     puts("[fileman.elf] file manager starting");
     printf("[fileman.elf] pid=%d creating GUI window\n", getpid());
     window_id = leonos_gui_create_app_window_ex("File Manager", "LeonOS file browser",
-                                                FILEMAN_W, FILEMAN_H, LEONOS_GUI_WINDOW_NO_RESIZE);
+                                                FILEMAN_W, FILEMAN_H, 0);
     if (window_id <= 0) {
         printf("[fileman.elf] create window failed=%d\n", window_id);
         return 1;
     }
 
-    leonos_ui_bind(&ui, pixels, FILEMAN_W, FILEMAN_H, FILEMAN_W);
-    leonos_ui_listview_state_init(&file_list, LIST_VISIBLE_ROWS, ROW_H);
+    leonos_ui_bind(&ui, pixels, view_w, view_h, FILEMAN_MAX_W);
+    leonos_ui_listview_state_init(&file_list, current_layout().visible_rows, ROW_H);
     file_list.focused = 1;
     if (argc > 1 && argv && argv[1] && argv[1][0]) {
         copy_text(current_path, sizeof(current_path), argv[1]);
@@ -1353,8 +1516,7 @@ int main(int argc, char **argv, char **envp)
     chdir(current_path);
     getcwd(current_path, sizeof(current_path));
     reload_dir();
-    draw_fileman(&ui);
-    leonos_gui_present_window((uint32_t)window_id, FILEMAN_W, FILEMAN_H, FILEMAN_W, pixels);
+    present_fileman((uint32_t)window_id, &ui);
 
     for (;;) {
         event.window_id = (uint32_t)window_id;
@@ -1369,19 +1531,33 @@ int main(int argc, char **argv, char **envp)
                     handle_click(event.x, event.y);
                 }
                 file_list.focused = 1;
-                draw_fileman(&ui);
-                leonos_gui_present_window((uint32_t)window_id, FILEMAN_W, FILEMAN_H, FILEMAN_W, pixels);
+                present_fileman((uint32_t)window_id, &ui);
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
                 handle_key(event.keycode);
-                draw_fileman(&ui);
-                leonos_gui_present_window((uint32_t)window_id, FILEMAN_W, FILEMAN_H, FILEMAN_W, pixels);
+                present_fileman((uint32_t)window_id, &ui);
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                if (handle_wheel(event.x, event.y, event.dy)) {
+                    present_fileman((uint32_t)window_id, &ui);
+                }
             }
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE ||
                 event.type == LEONOS_GUI_APP_EVENT_FOCUS) {
-                draw_fileman(&ui);
-                leonos_gui_present_window((uint32_t)window_id, FILEMAN_W, FILEMAN_H, FILEMAN_W, pixels);
+                if (event.width >= 320) {
+                    view_w = event.width > FILEMAN_MAX_W ? FILEMAN_MAX_W : event.width;
+                }
+                if (event.height >= 240) {
+                    view_h = event.height > FILEMAN_MAX_H ? FILEMAN_MAX_H : event.height;
+                }
+                file_list.visible_rows = current_layout().visible_rows;
+                leonos_ui_listview_state_set_count(&file_list, entry_count);
+                present_fileman((uint32_t)window_id, &ui);
             }
+        } else if (context_menu_animating) {
+            present_fileman((uint32_t)window_id, &ui);
+            sleep_ms(10);
+            continue;
         } else {
             sleep_ms(10);
         }

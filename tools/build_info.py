@@ -42,7 +42,7 @@ def main() -> int:
     version = f"{args.major}.{args.minor}.{args.patch}-{build_suffix}"
     build_time = now.strftime("%Y-%m-%d %H:%M:%S")
     copyright_text = (
-        f"Copyright LeonMMcoset 2021-{now.year}. All rights reserved."
+        f"(C) LeonMMcoset 2021-{now.year}. All rights reserved."
     )
 
     text = f"""#ifndef LEONOS_GENERATED_BUILD_INFO_H

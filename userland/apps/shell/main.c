@@ -93,6 +93,16 @@ static void list_dir(const char *path)
     close(fd);
 }
 
+static void run_ansi_test(void)
+{
+    puts("\x1b[2J\x1b[HANSI test");
+    puts("\x1b[31mred\x1b[0m \x1b[32mgreen\x1b[0m \x1b[34mblue\x1b[0m \x1b[93mbright yellow\x1b[0m");
+    puts("\x1b[44;97mwhite on blue\x1b[0m \x1b[101;30mblack on bright red\x1b[0m");
+    puts("line clear demo: keep this\x1b[10D\x1b[Kcleared");
+    puts("\x1b[6;1Hcursor moved to row 6");
+    puts("\x1b[8;1Hdone");
+}
+
 static void run_command(char *line)
 {
     char *argv[LEONOS_LAUNCH_MAX_ARGS + 1];
@@ -105,7 +115,11 @@ static void run_command(char *line)
         return;
     }
     if (text_eq(argv[0], "help")) {
-        puts("help clear echo ps pwd cd ls cat hello uidemo taskmgr fileman terminal notepad calc run exit");
+        puts("help clear ansi echo ps pwd cd ls cat hello uidemo taskmgr fileman terminal notepad calc run exit");
+        return;
+    }
+    if (text_eq(argv[0], "ansi")) {
+        run_ansi_test();
         return;
     }
     if (text_eq(argv[0], "clear")) {

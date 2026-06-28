@@ -12,6 +12,7 @@
 #define DEMO_TREE_ROW_H 24
 #define DEMO_DROPDOWN_ROW_H 24
 #define DEMO_DROPDOWN_ANIM_MS 140UL
+#define DEMO_CONTEXT_ANIM_MS 120UL
 
 enum {
     DEMO_MENU_NONE = 0,
@@ -42,6 +43,16 @@ static const struct leonos_ui_dropdown_item priority_items[] = {
     {"Low priority", DEMO_DROP_LOW, 0},
     {"Unavailable", DEMO_DROP_DISABLED, LEONOS_UI_MENU_DISABLED},
 };
+static const char *const data_rows[][4] = {
+    {"fileman.elf", "Program", "Running", "Uses toolbar, listview, statusbar"},
+    {"notepad.elf", "Program", "Running", "Uses menubar, text area, scrollbar"},
+    {"taskmgr.elf", "Program", "Idle", "Uses listview and live status"},
+    {"terminal.elf", "Program", "Running", "Uses ANSI text rendering"},
+    {"uidemo.elf", "Program", "Running", "Exercises reusable controls"},
+    {"minesweeper.elf", "Program", "Idle", "Resizable game window"},
+    {"calc.elf", "Program", "Idle", "Keyboard input and buttons"},
+    {"osver.elf", "Program", "Idle", "System version dialog"},
+};
 static char sample_path[96] = "0:/userland/notepad.elf";
 static char sample_text[160] = "Line one\nLine two\nLine three";
 static char demo_status[96] = "Click inside the top tabs to switch pages";
@@ -52,6 +63,9 @@ static uint32_t tree_selected_id = 12;
 static unsigned long anim_start_ms;
 static unsigned long last_anim_redraw_ms;
 static uint8_t context_menu_open;
+static uint8_t context_menu_animating;
+static uint8_t context_menu_opening;
+static unsigned long context_menu_anim_start_ms;
 static uint32_t context_menu_x = 540;
 static uint32_t context_menu_y = 188;
 static uint8_t dropdown_open;
@@ -117,6 +131,32 @@ static uint32_t dropdown_progress(void)
     return dropdown_opening ? raw : 1000 - raw;
 }
 
+static void context_menu_set_open(uint8_t open)
+{
+    if (context_menu_open == open && !context_menu_animating) {
+        return;
+    }
+    context_menu_open = open;
+    context_menu_opening = open;
+    context_menu_animating = 1;
+    context_menu_anim_start_ms = leonos_uptime_ms();
+}
+
+static uint32_t context_menu_progress(void)
+{
+    uint32_t raw;
+    if (!context_menu_animating) {
+        return context_menu_open ? 1000 : 0;
+    }
+    raw = leonos_ui_anim_progress(leonos_uptime_ms(), context_menu_anim_start_ms,
+                                  DEMO_CONTEXT_ANIM_MS);
+    if (raw >= 1000) {
+        context_menu_animating = 0;
+        return context_menu_open ? 1000 : 0;
+    }
+    return context_menu_opening ? raw : 1000 - raw;
+}
+
 static void draw_controls_page(struct leonos_ui_surface *ui)
 {
     uint32_t drop_progress = dropdown_progress();
@@ -150,9 +190,7 @@ static void draw_data_page(struct leonos_ui_surface *ui)
         {"State", 120},
         {"Info", 240},
     };
-    const char *row0[] = {"fileman.elf", "Program", "Running", "Uses toolbar, listview, statusbar"};
-    const char *row1[] = {"notepad.elf", "Program", "Running", "Uses menubar, scroll view, statusbar"};
-    const char *row2[] = {"taskmgr.elf", "Program", "Idle", "Uses listview and live status"};
+    uint32_t row_count = sizeof(data_rows) / sizeof(data_rows[0]);
 
     leonos_ui_toolbar(ui, 12, 82, DEMO_W - 24, 34);
     leonos_ui_toolbar_button(ui, 20, 87, 72, "New", 0);
@@ -163,12 +201,16 @@ static void draw_data_page(struct leonos_ui_surface *ui)
 
     leonos_ui_scroll_view_frame(ui, 12, 128, DEMO_W - 42, 116);
     leonos_ui_listview_header(ui, 14, 130, DEMO_W - 46, cols, 4);
-    const char *const *rows[] = {row0, row1, row2};
-    for (uint32_t i = 0; i < 3; ++i) {
-        leonos_ui_listview_row(ui, 14, 158 + i * 24, DEMO_W - 46, cols, rows[i], 4,
+    for (uint32_t row = 0; row < sample_list.visible_rows; ++row) {
+        uint32_t i = sample_list.scroll + row;
+        if (i >= row_count) {
+            break;
+        }
+        leonos_ui_listview_row(ui, 14, 158 + row * 24, DEMO_W - 46, cols, data_rows[i], 4,
                                sample_list.selected == (int32_t)i ? LEONOS_UI_MENU_SELECTED : 0);
     }
-    leonos_ui_vscrollbar(ui, DEMO_W - 28, 128, 18, 116, sample_list.scroll, 12, 4, 0);
+    leonos_ui_vscrollbar(ui, DEMO_W - 28, 128, 18, 116, sample_list.scroll,
+                         row_count, sample_list.visible_rows, 0);
 
     leonos_ui_groupbox(ui, 12, 268, 300, 92, "Tabs and Splitter");
     leonos_ui_tabs(ui, 28, 294, 268, tab_labels, 3, 1);
@@ -256,10 +298,11 @@ static void draw_advanced_page(struct leonos_ui_surface *ui)
     leonos_ui_text(ui, 592, 304, "The same component is used by Fileman.",
                    LEONOS_UI_DARK, LEONOS_UI_WHITE);
 
-    if (context_menu_open) {
-        leonos_ui_context_menu(ui, context_menu_x, context_menu_y, DEMO_CONTEXT_MENU_W,
-                               context_items,
-                               sizeof(context_items) / sizeof(context_items[0]));
+    if (context_menu_open || context_menu_animating) {
+        leonos_ui_context_menu_animated(ui, context_menu_x, context_menu_y, DEMO_CONTEXT_MENU_W,
+                                        context_items,
+                                        sizeof(context_items) / sizeof(context_items[0]),
+                                        context_menu_progress());
     }
 }
 
@@ -396,7 +439,7 @@ static int handle_advanced_mouse(int32_t x, int32_t y, uint32_t buttons)
         if (leonos_ui_context_menu_hit(x, y, context_menu_x, context_menu_y,
                                        DEMO_CONTEXT_MENU_W, context_items,
                                        sizeof(context_items) / sizeof(context_items[0]), &id)) {
-            context_menu_open = 0;
+            context_menu_set_open(0);
             if (id == DEMO_CTX_OPEN) {
                 copy_text(demo_status, sizeof(demo_status), "Context menu command: Open");
             } else if (id == DEMO_CTX_RENAME) {
@@ -404,7 +447,7 @@ static int handle_advanced_mouse(int32_t x, int32_t y, uint32_t buttons)
             }
             return 1;
         }
-        context_menu_open = 0;
+        context_menu_set_open(0);
         return 1;
     }
     if (buttons & 2u) {
@@ -424,7 +467,7 @@ static int handle_advanced_mouse(int32_t x, int32_t y, uint32_t buttons)
             context_menu_y = DEMO_H - 28 -
                 leonos_ui_context_menu_height(sizeof(context_items) / sizeof(context_items[0]));
         }
-        context_menu_open = 1;
+        context_menu_set_open(1);
         copy_text(demo_status, sizeof(demo_status), "Reusable context menu opened");
         return 1;
     }
@@ -436,10 +479,10 @@ static int handle_advanced_mouse(int32_t x, int32_t y, uint32_t buttons)
                 tree_selected_id = id;
                 copy_text(demo_status, sizeof(demo_status), "Tree selection changed");
             }
-            context_menu_open = 0;
+            context_menu_set_open(0);
             return 1;
         }
-        context_menu_open = 0;
+        context_menu_set_open(0);
     }
     return 0;
 }
@@ -508,7 +551,7 @@ int main(void)
     sample_edit.focused = 1;
     leonos_ui_text_area_state_init(&sample_area, sample_text, sizeof(sample_text));
     leonos_ui_listview_state_init(&sample_list, 3, 24);
-    leonos_ui_listview_state_set_count(&sample_list, 3);
+    leonos_ui_listview_state_set_count(&sample_list, sizeof(data_rows) / sizeof(data_rows[0]));
     sample_list.selected = 1;
     anim_start_ms = leonos_uptime_ms();
     draw_demo(&ui, page);
@@ -521,7 +564,7 @@ int main(void)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 3u)) {
                 if (handle_menu_click(event.x, event.y, &page)) {
-                    context_menu_open = 0;
+                    context_menu_set_open(0);
                     draw_demo(&ui, page);
                     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
                     continue;
@@ -535,12 +578,12 @@ int main(void)
                 int next = leonos_ui_tabs_hit(event.x, event.y, 236, 36, 410, tab_labels, 4);
                 if (next >= 0) {
                     page = (uint32_t)next;
-                    context_menu_open = 0;
+                    context_menu_set_open(0);
                     draw_demo(&ui, page);
                     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
                     continue;
                 }
-                context_menu_open = 0;
+                context_menu_set_open(0);
                 if (page == 0) {
                     int changed = handle_controls_mouse(event.x, event.y, event.buttons);
                     if (changed) {
@@ -572,6 +615,39 @@ int main(void)
                     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
                 }
             }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_MOVE) {
+                int changed = 0;
+                if (page == 0 && (event.buttons & 1u)) {
+                    changed = handle_controls_mouse(event.x, event.y, event.buttons);
+                } else if (page == 0) {
+                    if (sample_edit.selecting) {
+                        changed |= leonos_ui_edit_state_handle_mouse(&sample_edit, event.x, event.y,
+                                                                     274, 106, 204, 0);
+                    }
+                    if (sample_area.selecting) {
+                        changed |= leonos_ui_text_area_state_handle_mouse(&sample_area, event.x, event.y,
+                                                                          274, 174, 204, 44, 0);
+                    }
+                }
+                if (changed) {
+                    draw_demo(&ui, page);
+                    leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
+                }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                int changed = 0;
+                if (page == 0 && sample_area.focused) {
+                    changed = leonos_ui_vscrollbar_handle_wheel(&sample_area.scroll_line,
+                                                               sample_area.line_count, 2,
+                                                               event.dy);
+                } else if (page == 1) {
+                    changed = leonos_ui_listview_state_handle_wheel(&sample_list, event.dy);
+                }
+                if (changed) {
+                    draw_demo(&ui, page);
+                    leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
+                }
+            }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
                 int changed = 0;
                 uint32_t activate = 0;
@@ -593,7 +669,7 @@ int main(void)
                 leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
             }
         } else {
-            if (page == 3 || dropdown_animating) {
+            if (page == 3 || dropdown_animating || context_menu_animating) {
                 unsigned long now = leonos_uptime_ms();
                 if (now - last_anim_redraw_ms >= 50) {
                     last_anim_redraw_ms = now;

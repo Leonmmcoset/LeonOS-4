@@ -79,11 +79,13 @@ struct leonos_ui_text_area_state {
     uint32_t capacity;
     uint32_t length;
     uint32_t cursor;
+    uint32_t selection_anchor;
     uint32_t scroll_line;
     uint32_t preferred_column;
     uint32_t line_count;
     uint8_t focused;
     uint8_t readonly;
+    uint8_t selecting;
 };
 
 struct leonos_ui_listview_state {
@@ -172,6 +174,9 @@ uint32_t leonos_ui_context_menu_height(uint32_t count);
 void leonos_ui_context_menu(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                             uint32_t w, const struct leonos_ui_context_menu_item *items,
                             uint32_t count);
+void leonos_ui_context_menu_animated(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                                     uint32_t w, const struct leonos_ui_context_menu_item *items,
+                                     uint32_t count, uint32_t progress);
 int leonos_ui_context_menu_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
                                uint32_t w, const struct leonos_ui_context_menu_item *items,
                                uint32_t count, uint32_t *out_id);
@@ -262,9 +267,13 @@ int leonos_ui_listview_state_handle_mouse(struct leonos_ui_listview_state *state
                                           int32_t px, int32_t py, uint32_t x,
                                           uint32_t rows_y, uint32_t w,
                                           uint32_t *activated);
+int leonos_ui_listview_state_handle_wheel(struct leonos_ui_listview_state *state,
+                                          int32_t wheel_delta);
 int leonos_ui_vscrollbar_handle_mouse(uint32_t *value, uint32_t max, uint32_t page,
                                       uint32_t x, uint32_t y, uint32_t w,
                                       uint32_t h, int32_t px, int32_t py);
+int leonos_ui_vscrollbar_handle_wheel(uint32_t *value, uint32_t max, uint32_t page,
+                                      int32_t wheel_delta);
 int leonos_ui_hscrollbar_handle_mouse(uint32_t *value, uint32_t max, uint32_t page,
                                       uint32_t x, uint32_t y, uint32_t w,
                                       uint32_t h, int32_t px, int32_t py);
