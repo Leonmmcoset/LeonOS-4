@@ -26,6 +26,8 @@
 #define OOBE_DONE_PATH "0:/etc/oobe.done"
 #define OOBE_APP_PATH "0:/userland/oobe.elf"
 #define OOBE_WINDOW_TITLE "LeonOS Setup"
+#define OOBE_WINDOW_TEXT "First-run setup"
+#define OOBE_RESPAWN_MS 1000UL
 #define START_MENU_W 246
 #define START_PROGRAMS_W 220
 #define START_MENU_MAX_H 340
