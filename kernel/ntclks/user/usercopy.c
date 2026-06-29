@@ -1,14 +1,12 @@
 #include <ntclks/usercopy.h>
-
-#define USER_LOW 0x0000000000400000ULL
-#define USER_HIGH 0x0000000001000000ULL
+#include <ntclks/paging.h>
 
 bool user_range_ok(uint64_t ptr, uint64_t len)
 {
-    if (ptr < USER_LOW || ptr > USER_HIGH) {
+    if (ptr < NTCLKS_USER_BASE || ptr > NTCLKS_USER_TOP) {
         return false;
     }
-    if (len > USER_HIGH - ptr) {
+    if (len > NTCLKS_USER_TOP - ptr) {
         return false;
     }
     return true;

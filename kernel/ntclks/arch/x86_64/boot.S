@@ -190,6 +190,15 @@ arch_enter_user_frame:
     mov 0(%rsp), %rdx
     mov 8(%rsp), %rcx
     mov 16(%rsp), %r8
+    mov $0, %r9
+    sub $8, %rsp
+    movq $0, (%rsp)
+    test $3, %cl
+    jz 2f
+    mov 24+8(%rsp), %r9
+    mov 32+8(%rsp), %rax
+    mov %rax, (%rsp)
+2:
     call exception_dispatch
 1:
     hlt
@@ -205,6 +214,15 @@ arch_enter_user_frame:
     mov 8(%rsp), %rdx
     mov 16(%rsp), %rcx
     mov 24(%rsp), %r8
+    mov $0, %r9
+    sub $8, %rsp
+    movq $0, (%rsp)
+    test $3, %cl
+    jz 2f
+    mov 32+8(%rsp), %r9
+    mov 40+8(%rsp), %rax
+    mov %rax, (%rsp)
+2:
     call exception_dispatch
 1:
     hlt

@@ -34,6 +34,7 @@
 #define LEONOS_UI_TOOLBAR_BUTTON_ACTIVE LEONOS_UI_BUTTON_ACTIVE
 #define LEONOS_UI_TOOLBAR_BUTTON_PRESSED LEONOS_UI_BUTTON_PRESSED
 #define LEONOS_UI_TOOLBAR_BUTTON_DISABLED LEONOS_UI_BUTTON_DISABLED
+#define LEONOS_UI_OPEN_WITH_SET_DEFAULT 0x01u
 
 struct leonos_ui_surface {
     uint32_t *pixels;
@@ -296,6 +297,9 @@ int leonos_ui_show_input_dialog(const char *title, const char *label,
                                 char *value, uint32_t capacity);
 int leonos_ui_show_open_dialog(const char *title, char *path, uint32_t capacity,
                                const char *filter_label, const char *filter_ext);
+int leonos_ui_show_open_with_dialog(const char *title, const char *path,
+                                    char *program_path, uint32_t capacity,
+                                    uint32_t *remember, uint32_t flags);
 int leonos_ui_show_save_dialog_ex(const char *title, char *value, uint32_t capacity,
                                   const char *filter_label, const char *filter_ext);
 int leonos_ui_show_save_dialog(const char *title, char *value, uint32_t capacity);

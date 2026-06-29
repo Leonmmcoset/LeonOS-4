@@ -37,6 +37,7 @@ struct leonos_boot_handoff {
     uint32_t efi_mmap_entry_count;
     uint64_t rsdp_addr;
     uint64_t efi_system_table;
+    struct leonos_boot_module_info loader;
     struct leonos_boot_module_info kernel;
     struct leonos_boot_module_info middlelayer;
     uint64_t middlelayer_api;

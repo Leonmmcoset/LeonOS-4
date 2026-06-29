@@ -234,8 +234,4 @@ void draw_start_menu(void)
         }
     }
     draw_start_programs_menu(layout);
-    if (start_menu_animating) {
-        full_redraw_pending = 1;
-    }
 }
-

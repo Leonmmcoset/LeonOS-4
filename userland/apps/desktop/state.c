@@ -1,6 +1,15 @@
 #include "desktop.h"
 
 struct leonos_fb_info fb;
+uint32_t desktop_scale = 1;
+uint32_t desktop_logical_w = MAX_FB_W;
+uint32_t desktop_logical_h = MAX_FB_H;
+uint8_t desktop_mode_index;
+uint8_t desktop_scale_index;
+uint8_t desktop_pending_confirm;
+uint8_t desktop_previous_mode_index;
+uint8_t desktop_previous_scale_index;
+unsigned long desktop_confirm_deadline_ms;
 struct desktop_window windows[MAX_WINDOWS];
 uint8_t z_order[MAX_WINDOWS];
 int active_window;
@@ -72,3 +81,13 @@ const char cursor_art[FALLBACK_CURSOR_H][FALLBACK_CURSOR_W + 1] = {
     "XOOOXX..........",
     "XXXXX...........",
 };
+
+const struct desktop_display_mode desktop_display_modes[DESKTOP_MODE_COUNT] = {
+    {1920, 1080, "1920 x 1080"},
+    {1600, 900, "1600 x 900"},
+    {1280, 800, "1280 x 800"},
+    {1280, 720, "1280 x 720"},
+    {1024, 768, "1024 x 768"},
+};
+
+const uint32_t desktop_scale_options[DESKTOP_SCALE_COUNT] = {1, 2, 3};

@@ -115,7 +115,7 @@ static void clear_task_file(struct task_file *file)
     file->node.type = 0;
     file->node.flags = 0;
     file->node.first_cluster = 0;
-    file->node.reserved = 0;
+    file->node.drive = 0;
     file->node.size = 0;
     file->offset = 0;
     file->aux = 0;

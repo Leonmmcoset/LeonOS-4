@@ -20,6 +20,7 @@ pub struct BootModule {
 #[repr(C)]
 pub struct BootInfo {
     magic: u32,
+    multiboot_info: u64,
     cmdline: *const c_char,
     bootloader: *const c_char,
     framebuffer_addr: u64,
@@ -86,6 +87,7 @@ pub struct LeonosBootHandoff {
     efi_mmap_entry_count: u32,
     rsdp_addr: u64,
     efi_system_table: u64,
+    loader: LeonosBootModuleInfo,
     kernel: LeonosBootModuleInfo,
     middlelayer: LeonosBootModuleInfo,
     middlelayer_api: u64,

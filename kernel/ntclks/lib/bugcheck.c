@@ -116,6 +116,26 @@ static const char *exception_name(uint64_t vector)
     }
 }
 
+static const char *fault_mode(const struct bugcheck_info *info)
+{
+    return info && (info->cs & 3u) == 3u ? "user" : "kernel";
+}
+
+static void append_page_fault_flags(char *line, uint32_t *pos, uint32_t cap,
+                                    uint64_t error)
+{
+    append_text(line, pos, cap, "P=");
+    append_char(line, pos, cap, (error & 1u) ? '1' : '0');
+    append_text(line, pos, cap, " W=");
+    append_char(line, pos, cap, (error & 2u) ? '1' : '0');
+    append_text(line, pos, cap, " U=");
+    append_char(line, pos, cap, (error & 4u) ? '1' : '0');
+    append_text(line, pos, cap, " RSVD=");
+    append_char(line, pos, cap, (error & 8u) ? '1' : '0');
+    append_text(line, pos, cap, " IF=");
+    append_char(line, pos, cap, (error & 16u) ? '1' : '0');
+}
+
 static void collect_bugcheck_info(struct bugcheck_info *info)
 {
     struct task *task;
@@ -159,6 +179,8 @@ static void draw_bugcheck_vga(const struct bugcheck_info *info)
     append_u64_dec(line, &pos, sizeof(line), info->pid);
     append_text(line, &pos, sizeof(line), " TASK ");
     append_text(line, &pos, sizeof(line), info->task_name);
+    append_text(line, &pos, sizeof(line), " MODE ");
+    append_text(line, &pos, sizeof(line), fault_mode(info));
     vga_write_at(0, 7, line);
 
     pos = 0;
@@ -176,6 +198,14 @@ static void draw_bugcheck_vga(const struct bugcheck_info *info)
     append_text(line, &pos, sizeof(line), "  VEC ");
     append_u64_dec(line, &pos, sizeof(line), info->vector);
     vga_write_at(0, 9, line);
+
+    if (info->vector == 14) {
+        pos = 0;
+        line[0] = 0;
+        append_text(line, &pos, sizeof(line), "PF ");
+        append_page_fault_flags(line, &pos, sizeof(line), info->error);
+        vga_write_at(0, 10, line);
+    }
 }
 
 static void draw_bugcheck_fb(const struct bugcheck_info *info)
@@ -227,6 +257,8 @@ static void draw_bugcheck_fb(const struct bugcheck_info *info)
         append_u64_dec(line, &pos, sizeof(line), info->pid);
         append_text(line, &pos, sizeof(line), "  TASK ");
         append_text(line, &pos, sizeof(line), info->task_name);
+        append_text(line, &pos, sizeof(line), "  MODE ");
+        append_text(line, &pos, sizeof(line), fault_mode(info));
         framebuffer_text(x + 18, y + 18 + lh * row++, line, BUGCHECK_FG, BUGCHECK_PANEL);
 
         pos = 0; line[0] = 0;
@@ -259,6 +291,13 @@ static void draw_bugcheck_fb(const struct bugcheck_info *info)
         append_text(line, &pos, sizeof(line), "CR2 ");
         append_u64_hex(line, &pos, sizeof(line), info->cr2);
         framebuffer_text(x + 18, y + 18 + lh * row++, line, BUGCHECK_FG, BUGCHECK_PANEL);
+
+        if (info->vector == 14) {
+            pos = 0; line[0] = 0;
+            append_text(line, &pos, sizeof(line), "PF FLAGS ");
+            append_page_fault_flags(line, &pos, sizeof(line), info->error);
+            framebuffer_text(x + 18, y + 18 + lh * row++, line, BUGCHECK_FG, BUGCHECK_PANEL);
+        }
 
         pos = 0; line[0] = 0;
         append_text(line, &pos, sizeof(line), "TICKS ");
@@ -298,14 +337,29 @@ static __attribute__((noreturn)) void bugcheck_commit(struct bugcheck_info *info
     if (info->detail) {
         console_printf("[bugcheck] detail=%s\n", info->detail);
     }
-    console_printf("[bugcheck] pid=%u task=%s vec=%llu err=0x%llx rip=0x%llx cr2=0x%llx rsp=0x%llx\n",
+    console_printf("[bugcheck] pid=%u task=%s mode=%s vec=%llu err=0x%llx rip=0x%llx cr2=0x%llx rsp=0x%llx ss=0x%llx cs=0x%llx rflags=0x%llx ticks=%llu uptime_ms=%llu\n",
                    info->pid,
                    info->task_name,
+                   fault_mode(info),
                    (unsigned long long)info->vector,
                    (unsigned long long)info->error,
                    (unsigned long long)info->rip,
                    (unsigned long long)info->cr2,
-                   (unsigned long long)info->rsp);
+                   (unsigned long long)info->rsp,
+                   (unsigned long long)info->ss,
+                   (unsigned long long)info->cs,
+                   (unsigned long long)info->rflags,
+                   (unsigned long long)info->ticks,
+                   (unsigned long long)info->uptime_ms);
+    if (info->vector == 14) {
+        char pf_line[96];
+        uint32_t pos = 0;
+        pf_line[0] = 0;
+        append_page_fault_flags(pf_line, &pos, sizeof(pf_line), info->error);
+        console_printf("[bugcheck] page_fault cr2=0x%llx %s\n",
+                       (unsigned long long)info->cr2,
+                       pf_line);
+    }
     draw_bugcheck_fb(info);
     bugcheck_halt_forever();
 }

@@ -636,10 +636,15 @@ int main(void)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
                 int changed = 0;
-                if (page == 0 && sample_area.focused) {
+                if (page == 0 &&
+                    (sample_area.focused ||
+                     hit_rect_i(event.x, event.y, 274, 174, 204, 44))) {
                     changed = leonos_ui_vscrollbar_handle_wheel(&sample_area.scroll_line,
                                                                sample_area.line_count, 2,
                                                                event.dy);
+                    if (changed) {
+                        sample_area.focused = 1;
+                    }
                 } else if (page == 1) {
                     changed = leonos_ui_listview_state_handle_wheel(&sample_list, event.dy);
                 }

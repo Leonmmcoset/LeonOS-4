@@ -3,6 +3,7 @@ ENTRY(_start)
 SECTIONS
 {
     . = 1M;
+    __loader_start = .;
 
     .multiboot ALIGN(8) : {
         KEEP(*(.multiboot))
@@ -24,6 +25,7 @@ SECTIONS
         *(COMMON)
         *(.bss .bss.*)
     }
+    __loader_end = .;
 
     /DISCARD/ : {
         *(.eh_frame)

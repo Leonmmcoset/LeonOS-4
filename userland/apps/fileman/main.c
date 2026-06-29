@@ -23,11 +23,6 @@
 #define FILEMAN_KEY_ESCAPE 1U
 #define FILEMAN_KEY_UP 72U
 #define FILEMAN_KEY_DOWN 80U
-#define OPEN_WITH_X 64
-#define OPEN_WITH_Y 56
-#define OPEN_WITH_W 432
-#define OPEN_WITH_H 296
-#define OPEN_WITH_ROW_H 34
 #define FILEMAN_CONTEXT_MENU_W 176
 #define FILEMAN_CONTEXT_MENU_COUNT 9
 #define FILEMAN_DETAILS_W 430
@@ -37,11 +32,6 @@ enum {
     FILEMAN_MENU_NONE = 0,
     FILEMAN_MENU_FILE = 1,
     FILEMAN_MENU_VIEW = 2,
-};
-
-enum {
-    OPEN_WITH_MODE_TEMP = 0,
-    OPEN_WITH_MODE_DEFAULT = 1,
 };
 
 enum {
@@ -61,29 +51,17 @@ static uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
 static struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
 static char current_path[LEONOS_FS_PATH_LEN] = "0:/";
 static char status_text[96] = "Ready";
-static char open_with_path[LEONOS_FS_PATH_LEN];
-static char open_with_extension[16];
-static char open_with_current_default[LEONOS_FS_PATH_LEN];
-static char open_with_title[32];
 static uint32_t entry_count;
-static uint32_t open_with_app_count;
-static const struct leonos_launch_assoc_app *open_with_apps;
 static struct leonos_ui_listview_state file_list;
-static struct leonos_ui_listview_state open_with_list;
 static int32_t last_click_index = -1;
 static unsigned long last_click_ms;
-static uint8_t open_with_mode;
-static uint8_t open_with_can_remember;
-static uint8_t open_with_remember;
 static uint8_t menu_open;
-static uint8_t open_with_active;
 static uint8_t context_menu_active;
 static uint8_t context_menu_animating;
 static uint8_t context_menu_opening;
 static unsigned long context_menu_anim_start;
 static uint32_t context_menu_x;
 static uint32_t context_menu_y;
-static int32_t open_with_selected;
 static uint32_t view_w = FILEMAN_W;
 static uint32_t view_h = FILEMAN_H;
 
@@ -165,11 +143,6 @@ static int text_eq(const char *a, const char *b)
 static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
 {
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
-}
-
-static uint32_t max_u32(uint32_t a, uint32_t b)
-{
-    return a > b ? a : b;
 }
 
 static int ends_with(const char *text, const char *suffix)
@@ -300,59 +273,6 @@ static void format_size_text(char *buf, uint32_t cap, uint64_t bytes)
         append_size(buf, &pos, cap, bytes);
         append_text(buf, &pos, cap, " bytes)");
     }
-}
-
-static const struct leonos_launch_assoc_app *find_open_with_app(const char *program_path)
-{
-    uint32_t i;
-    for (i = 0; i < open_with_app_count; ++i) {
-        if (text_eq(open_with_apps[i].program_path, program_path)) {
-            return &open_with_apps[i];
-        }
-    }
-    return 0;
-}
-
-static int find_open_with_index(const char *program_path)
-{
-    uint32_t i;
-    for (i = 0; i < open_with_app_count; ++i) {
-        if (text_eq(open_with_apps[i].program_path, program_path)) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
-
-static const char *open_with_app_label(const char *program_path, char *buf, uint32_t cap)
-{
-    const struct leonos_launch_assoc_app *app = find_open_with_app(program_path);
-    if (app) {
-        return app->name;
-    }
-    if (!program_path || !program_path[0]) {
-        return "None";
-    }
-    copy_text(buf, cap, program_path);
-    return buf;
-}
-
-static int has_extension(const char *path)
-{
-    uint32_t i = 0;
-    int seen_dot = 0;
-    if (!path || !path[0]) {
-        return 0;
-    }
-    while (path[i]) {
-        if (path[i] == '/') {
-            seen_dot = 0;
-        } else if (path[i] == '.') {
-            seen_dot = 1;
-        }
-        ++i;
-    }
-    return seen_dot;
 }
 
 static void set_status(const char *text)
@@ -528,47 +448,68 @@ static void show_details_selected(void)
     leonos_gui_destroy_app_window((uint32_t)window_id);
 }
 
-static void set_open_with_state(const char *path, const char *title, uint8_t remember)
+static void show_open_with_for_path(const char *path, uint8_t set_default_only)
 {
-    copy_text(open_with_path, sizeof(open_with_path), path);
-    open_with_apps = leonos_launch_assoc_apps(&open_with_app_count);
-    open_with_selected = 0;
-    open_with_mode = remember ? OPEN_WITH_MODE_DEFAULT : OPEN_WITH_MODE_TEMP;
-    open_with_can_remember = has_extension(path);
-    open_with_remember = remember && open_with_can_remember;
-    copy_text(open_with_title, sizeof(open_with_title), title ? title : "Open With");
-    open_with_extension[0] = 0;
-    leonos_launch_get_extension_for_path(path, open_with_extension, sizeof(open_with_extension));
-    leonos_ui_listview_state_init(&open_with_list, open_with_app_count > 4 ? 4 : open_with_app_count,
-                                  OPEN_WITH_ROW_H);
-    leonos_ui_listview_state_set_count(&open_with_list, open_with_app_count);
-    open_with_list.scroll = 0;
-    open_with_list.selected = -1;
-    open_with_list.focused = 1;
-    {
-        const char *default_program = leonos_launch_resolve_default_app_for_path(path);
-        copy_text(open_with_current_default, sizeof(open_with_current_default),
-                  open_with_app_label(default_program, open_with_current_default,
-                                      sizeof(open_with_current_default)));
-        if (default_program) {
-            int index = find_open_with_index(default_program);
-            if (index >= 0) {
-                open_with_selected = index;
+    char program[LEONOS_FS_PATH_LEN];
+    char extension[16];
+    uint32_t remember = set_default_only ? 1 : 0;
+    uint32_t flags = set_default_only ? LEONOS_UI_OPEN_WITH_SET_DEFAULT : 0;
+    int ret;
+    int pid;
+    program[0] = 0;
+    extension[0] = 0;
+    menu_open = FILEMAN_MENU_NONE;
+    context_menu_set_active(0);
+    ret = leonos_ui_show_open_with_dialog(set_default_only ? "Default Program" : "Open With",
+                                          path, program, sizeof(program),
+                                          &remember, flags);
+    if (ret < 0) {
+        set_status_code("Open With failed ", ret);
+        return;
+    }
+    if (ret == 0) {
+        set_status("Open With canceled");
+        return;
+    }
+    if (set_default_only || remember) {
+        int assoc_ret;
+        if (!leonos_launch_get_extension_for_path(path, extension, sizeof(extension))) {
+            if (set_default_only) {
+                set_status("This file has no extension to remember");
+                return;
+            }
+        } else {
+            assoc_ret = leonos_launch_set_extension_association(extension, program);
+            if (assoc_ret < 0) {
+                set_status_code("Save association failed ", assoc_ret);
+                return;
+            }
+            if (set_default_only) {
+                char buf[96];
+                uint32_t pos = 0;
+                buf[0] = 0;
+                append_text(buf, &pos, sizeof(buf), "Default app set for ");
+                append_text(buf, &pos, sizeof(buf), extension);
+                set_status(buf);
+                return;
             }
         }
     }
-    if (open_with_selected < 0) {
-        open_with_selected = 0;
+
+    pid = leonos_launch_file_with_app(path, program);
+    printf("[fileman.elf] open-with path=%s app=%s pid=%d\n", path, program, pid);
+    if (pid < 0) {
+        set_status_code("Open With failed ", pid);
+        return;
     }
-    open_with_list.selected = open_with_selected;
-    open_with_active = 1;
-    menu_open = FILEMAN_MENU_NONE;
-    if (open_with_mode == OPEN_WITH_MODE_DEFAULT) {
-        set_status("Choose a default program for this file type");
-    } else {
-        set_status("Choose a program to open this file");
+    {
+        char buf[96];
+        uint32_t pos = 0;
+        buf[0] = 0;
+        append_text(buf, &pos, sizeof(buf), "Open With launched pid ");
+        append_dec(buf, &pos, sizeof(buf), (uint32_t)pid);
+        set_status(buf);
     }
-    printf("[fileman.elf] open-with request path=%s\n", open_with_path);
 }
 
 static void show_open_with_selected(void)
@@ -583,7 +524,7 @@ static void show_open_with_selected(void)
         return;
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
-    set_open_with_state(path, "Open With", 0);
+    show_open_with_for_path(path, 0);
 }
 
 static void show_default_program_for_selected(void)
@@ -598,161 +539,7 @@ static void show_default_program_for_selected(void)
         return;
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
-    set_open_with_state(path, "Default Program", 1);
-}
-
-static int commit_open_with_selected(void)
-{
-    const struct leonos_launch_assoc_app *app;
-    int pid = LEONOS_LAUNCH_ERR_NOT_FOUND;
-    if (!open_with_active) {
-        return 0;
-    }
-    if (open_with_list.selected < 0 || (uint32_t)open_with_list.selected >= open_with_app_count) {
-        set_status("Choose a program");
-        return LEONOS_LAUNCH_ERR_EMPTY;
-    }
-
-    app = &open_with_apps[open_with_list.selected];
-    if (open_with_mode == OPEN_WITH_MODE_DEFAULT) {
-        if (!open_with_extension[0]) {
-            set_status("This file has no extension to remember");
-            return LEONOS_LAUNCH_ERR_NO_ASSOCIATION;
-        }
-        pid = leonos_launch_set_extension_association(open_with_extension, app->program_path);
-        if (pid < 0) {
-            set_status_code("Save association failed ", pid);
-            return pid;
-        }
-        {
-            char buf[96];
-            uint32_t pos = 0;
-            buf[0] = 0;
-            append_text(buf, &pos, sizeof(buf), "Default app set to ");
-            append_text(buf, &pos, sizeof(buf), app->name);
-            append_text(buf, &pos, sizeof(buf), " for ");
-            append_text(buf, &pos, sizeof(buf), open_with_extension);
-            set_status(buf);
-        }
-        open_with_active = 0;
-        return pid;
-    }
-
-    if (open_with_remember && open_with_can_remember && open_with_extension[0]) {
-        int ret = leonos_launch_set_extension_association(open_with_extension, app->program_path);
-        if (ret < 0) {
-            set_status_code("Save association failed ", ret);
-            return ret;
-        } else {
-            copy_text(open_with_current_default, sizeof(open_with_current_default), app->name);
-        }
-    }
-
-    pid = leonos_launch_file_with_app(open_with_path, app->program_path);
-    printf("[fileman.elf] open-with path=%s app=%s pid=%d\n",
-           open_with_path, app->name, pid);
-    if (pid < 0) {
-        set_status_code("Open With failed ", pid);
-        return pid;
-    }
-
-    {
-        char buf[96];
-        uint32_t pos = 0;
-        buf[0] = 0;
-        append_text(buf, &pos, sizeof(buf), "Open With launched ");
-        append_text(buf, &pos, sizeof(buf), app->name);
-        append_text(buf, &pos, sizeof(buf), " pid ");
-        append_dec(buf, &pos, sizeof(buf), (uint32_t)pid);
-        set_status(buf);
-    }
-    open_with_active = 0;
-    return pid;
-}
-
-static void cancel_open_with(void)
-{
-    open_with_active = 0;
-    set_status("Open With canceled");
-}
-
-static void draw_open_with_dialog(struct leonos_ui_surface *ui)
-{
-    uint32_t list_x = OPEN_WITH_X + 16;
-    uint32_t list_y = OPEN_WITH_Y + 170;
-    uint32_t list_w = OPEN_WITH_W - 32;
-    uint32_t list_h = open_with_list.visible_rows * OPEN_WITH_ROW_H + 8;
-    uint32_t scrollbar_x = list_x + list_w - 18;
-    uint32_t row_w = list_w - 26;
-    char default_program[LEONOS_FS_PATH_LEN];
-    const char *default_label = open_with_app_label(open_with_current_default,
-                                                    default_program,
-                                                    sizeof(default_program));
-    leonos_ui_dialog(ui, OPEN_WITH_X, OPEN_WITH_Y, OPEN_WITH_W, OPEN_WITH_H, open_with_title);
-    leonos_ui_text_clipped(ui, OPEN_WITH_X + 16, OPEN_WITH_Y + 44, OPEN_WITH_W - 32,
-                           open_with_mode == OPEN_WITH_MODE_DEFAULT
-                               ? "Choose a default program for this file type:"
-                               : "Choose a program to open this file:",
-                           LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, OPEN_WITH_X + 16, OPEN_WITH_Y + 68, "File:",
-                   LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(ui, OPEN_WITH_X + 58, OPEN_WITH_Y + 64, OPEN_WITH_W - 74,
-                   open_with_path, text_len(open_with_path), 0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_text(ui, OPEN_WITH_X + 16, OPEN_WITH_Y + 92, "Extension:",
-                   LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(ui, OPEN_WITH_X + 82, OPEN_WITH_Y + 88, 84,
-                   open_with_extension[0] ? open_with_extension : "(none)",
-                   text_len(open_with_extension[0] ? open_with_extension : "(none)"),
-                   0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_text(ui, OPEN_WITH_X + 180, OPEN_WITH_Y + 92, "Default:",
-                   LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(ui, OPEN_WITH_X + 244, OPEN_WITH_Y + 88, OPEN_WITH_W - 260,
-                   default_label, text_len(default_label), 0, LEONOS_UI_EDIT_READONLY);
-    if (open_with_mode == OPEN_WITH_MODE_TEMP) {
-        leonos_ui_checkbox(ui, OPEN_WITH_X + 16, OPEN_WITH_Y + 118,
-                           "Always use this app",
-                           open_with_can_remember ? open_with_remember : 0, 0);
-    } else {
-        leonos_ui_checkbox(ui, OPEN_WITH_X + 16, OPEN_WITH_Y + 118,
-                           "Update default program",
-                           1, LEONOS_UI_BUTTON_DISABLED);
-    }
-    leonos_ui_text(ui, OPEN_WITH_X + 16, OPEN_WITH_Y + 144, "Programs:",
-                   LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_inset(ui, list_x, list_y, list_w, list_h, LEONOS_UI_WHITE);
-    for (uint32_t row = 0; row < open_with_list.visible_rows; ++row) {
-        uint32_t i = open_with_list.scroll + row;
-        uint32_t row_x = list_x + 4;
-        uint32_t row_y = list_y + 4 + row * OPEN_WITH_ROW_H;
-        uint32_t selected;
-        uint32_t bg;
-        uint32_t fg;
-        uint32_t detail_fg;
-        if (i >= open_with_app_count) {
-            break;
-        }
-        selected = open_with_list.selected == (int32_t)i;
-        bg = selected ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE;
-        fg = selected ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
-        detail_fg = selected ? LEONOS_UI_LIGHT : LEONOS_UI_DARK;
-        leonos_ui_rect(ui, row_x, row_y, row_w, OPEN_WITH_ROW_H, bg);
-        leonos_ui_text_clipped(ui, row_x + 8, row_y + 3, row_w - 16,
-                               open_with_apps[i].name, fg, bg);
-        leonos_ui_text_clipped(ui, row_x + 8, row_y + 18, row_w - 16,
-                               open_with_apps[i].detail, detail_fg, bg);
-    }
-    leonos_ui_vscrollbar(ui, scrollbar_x, list_y, 18, list_h,
-                         open_with_list.scroll,
-                         max_u32(open_with_app_count, open_with_list.visible_rows),
-                         open_with_list.visible_rows,
-                         open_with_app_count <= open_with_list.visible_rows
-                             ? LEONOS_UI_SCROLLBAR_DISABLED
-                             : 0);
-    leonos_ui_button(ui, OPEN_WITH_X + OPEN_WITH_W - 194, OPEN_WITH_Y + OPEN_WITH_H - 38,
-                     96, LEONOS_UI_BUTTON_H,
-                     open_with_mode == OPEN_WITH_MODE_DEFAULT ? "Set Default" : "Open", 0);
-    leonos_ui_button(ui, OPEN_WITH_X + OPEN_WITH_W - 88, OPEN_WITH_Y + OPEN_WITH_H - 38,
-                     72, LEONOS_UI_BUTTON_H, "Cancel", 0);
+    show_open_with_for_path(path, 1);
 }
 
 static int reload_dir(void)
@@ -906,9 +693,6 @@ static void draw_fileman(struct leonos_ui_surface *ui)
         leonos_ui_context_menu_animated(ui, context_menu_x, context_menu_y, FILEMAN_CONTEXT_MENU_W,
                                         items, FILEMAN_CONTEXT_MENU_COUNT, progress);
     }
-    if (open_with_active) {
-        draw_open_with_dialog(ui);
-    }
 }
 
 static void open_selected_entry(void)
@@ -933,7 +717,7 @@ static void open_selected_entry(void)
     }
     if (pid < 0) {
         if (pid == LEONOS_LAUNCH_ERR_NO_ASSOCIATION) {
-            set_open_with_state(path, "Open With", 0);
+            show_open_with_for_path(path, 0);
         } else if (pid <= LEONOS_LAUNCH_ERR_EMPTY && pid >= LEONOS_LAUNCH_ERR_NO_ASSOCIATION) {
             set_status(leonos_launch_error_text(pid));
         } else {
@@ -1205,91 +989,6 @@ static int handle_menu_click(int32_t x, int32_t y)
     return 0;
 }
 
-static int handle_open_with_click(int32_t x, int32_t y)
-{
-    int32_t list_x = OPEN_WITH_X + 16;
-    int32_t list_y = OPEN_WITH_Y + 170;
-    int32_t list_w = OPEN_WITH_W - 32;
-    int32_t list_h = (int32_t)(open_with_list.visible_rows * OPEN_WITH_ROW_H + 8);
-    int32_t scrollbar_x = list_x + list_w - 18;
-    uint32_t activated = 0;
-    if (!open_with_active) {
-        return 0;
-    }
-    if (hit_rect_i(x, y, OPEN_WITH_X + OPEN_WITH_W - 194, OPEN_WITH_Y + OPEN_WITH_H - 38,
-                   96, (int32_t)LEONOS_UI_BUTTON_H)) {
-        commit_open_with_selected();
-        return 1;
-    }
-    if (hit_rect_i(x, y, OPEN_WITH_X + OPEN_WITH_W - 88, OPEN_WITH_Y + OPEN_WITH_H - 38,
-                   72, (int32_t)LEONOS_UI_BUTTON_H)) {
-        cancel_open_with();
-        return 1;
-    }
-    if (open_with_mode == OPEN_WITH_MODE_TEMP &&
-        open_with_can_remember &&
-        hit_rect_i(x, y, OPEN_WITH_X + 16, OPEN_WITH_Y + 118, 180, (int32_t)LEONOS_FONT_H + 8)) {
-        open_with_remember = open_with_remember ? 0 : 1;
-        return 1;
-    }
-    if (hit_rect_i(x, y, scrollbar_x, list_y, 18, list_h)) {
-        leonos_ui_vscrollbar_handle_mouse(&open_with_list.scroll,
-                                          max_u32(open_with_app_count, open_with_list.visible_rows),
-                                          open_with_list.visible_rows,
-                                          (uint32_t)scrollbar_x, (uint32_t)list_y, 18, (uint32_t)list_h,
-                                          x, y);
-        return 1;
-    }
-    if (hit_rect_i(x, y, list_x, list_y, list_w, list_h)) {
-        if (leonos_ui_listview_state_handle_mouse(&open_with_list, x, y,
-                                                  (uint32_t)(list_x + 4),
-                                                  (uint32_t)(list_y + 4),
-                                                  (uint32_t)(list_w - 26),
-                                                  &activated)) {
-            open_with_selected = open_with_list.selected;
-            if (activated) {
-                commit_open_with_selected();
-            }
-        }
-        return 1;
-    }
-    return 1;
-}
-
-static int handle_open_with_key(uint8_t keycode)
-{
-    if (!open_with_active) {
-        return 0;
-    }
-    if (keycode == LEONOS_KEY_ENTER) {
-        commit_open_with_selected();
-        return 1;
-    }
-    if (keycode == FILEMAN_KEY_ESCAPE) {
-        cancel_open_with();
-        return 1;
-    }
-    if (keycode == FILEMAN_KEY_UP) {
-        uint32_t activated = 0;
-        if (leonos_ui_listview_state_handle_key(&open_with_list, keycode, &activated)) {
-            open_with_selected = open_with_list.selected;
-        }
-        return 1;
-    }
-    if (keycode == FILEMAN_KEY_DOWN) {
-        uint32_t activated = 0;
-        if (leonos_ui_listview_state_handle_key(&open_with_list, keycode, &activated)) {
-            open_with_selected = open_with_list.selected;
-        }
-        return 1;
-    }
-    if (keycode == LEONOS_KEY_SPACE && open_with_mode == OPEN_WITH_MODE_TEMP && open_with_can_remember) {
-        open_with_remember = open_with_remember ? 0 : 1;
-        return 1;
-    }
-    return 1;
-}
-
 static int handle_context_menu_click(int32_t x, int32_t y)
 {
     struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
@@ -1315,7 +1014,6 @@ static void show_context_menu_at(int32_t x, int32_t y, int32_t target)
 {
     uint32_t menu_h = leonos_ui_context_menu_height(FILEMAN_CONTEXT_MENU_COUNT);
     menu_open = FILEMAN_MENU_NONE;
-    open_with_active = 0;
     if (target >= 0 && (uint32_t)target < entry_count) {
         file_list.selected = target;
         if ((uint32_t)target < file_list.scroll) {
@@ -1348,9 +1046,6 @@ static void show_context_menu_at(int32_t x, int32_t y, int32_t target)
 static void handle_right_click(int32_t x, int32_t y)
 {
     int32_t index = list_index_at(x, y);
-    if (open_with_active) {
-        return;
-    }
     if (index >= 0) {
         set_status(entries[index].name);
     } else {
@@ -1362,9 +1057,6 @@ static void handle_right_click(int32_t x, int32_t y)
 static void handle_click(int32_t x, int32_t y)
 {
     struct fileman_layout l = current_layout();
-    if (handle_open_with_click(x, y)) {
-        return;
-    }
     if (handle_context_menu_click(x, y)) {
         return;
     }
@@ -1459,9 +1151,6 @@ static void handle_click(int32_t x, int32_t y)
 static void handle_key(uint8_t keycode)
 {
     uint32_t activate = 0;
-    if (handle_open_with_key(keycode)) {
-        return;
-    }
     if (leonos_ui_listview_state_handle_key(&file_list, keycode, &activate)) {
         if (activate) {
             open_selected_entry();
@@ -1474,9 +1163,6 @@ static void handle_key(uint8_t keycode)
 static int handle_wheel(int32_t x, int32_t y, int32_t wheel)
 {
     struct fileman_layout l = current_layout();
-    if (open_with_active) {
-        return leonos_ui_listview_state_handle_wheel(&open_with_list, wheel);
-    }
     if (hit_rect_i(x, y, (int32_t)l.list_x, (int32_t)l.list_y,
                    (int32_t)(l.list_w + 24), (int32_t)l.list_h)) {
         return leonos_ui_listview_state_handle_wheel(&file_list, wheel);

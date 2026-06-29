@@ -2,7 +2,7 @@ ENTRY(osmlayer_module_init)
 
 SECTIONS
 {
-    . = 24M;
+    . = 144M;
 
     .text ALIGN(4K) : {
         *(.text .text.*)

@@ -77,10 +77,102 @@ void draw_ui_demo_gallery(uint32_t body_x, uint32_t body_y,
     }
 }
 
+static void draw_settings_button(uint32_t x, uint32_t y, uint32_t w,
+                                 const char *label, int selected, int disabled)
+{
+    uint32_t flags = selected ? LEONOS_UI_BUTTON_PRESSED : 0;
+    if (disabled) {
+        flags |= LEONOS_UI_BUTTON_DISABLED;
+    }
+    leonos_ui_button(&ui, x, y, w, LEONOS_UI_BUTTON_H, label, flags);
+}
+
+void draw_settings_panel(uint32_t body_x, uint32_t body_y,
+                         uint32_t body_w, uint32_t body_h, uint32_t bg)
+{
+    char line[80];
+    uint32_t pos = 0;
+    uint32_t scale_x;
+    uint32_t confirm_y;
+    if (body_w < 320 || body_h < 180) {
+        text_draw(body_x + 10, body_y + 12, "Resize Settings to change display", LEONOS_UI_BLACK, bg);
+        return;
+    }
+    text_draw(body_x + 16, body_y + 16, "Display", LEONOS_UI_BLACK, bg);
+
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), "Framebuffer ");
+    append_dec(line, &pos, sizeof(line), fb.width);
+    append_char(line, &pos, sizeof(line), 'x');
+    append_dec(line, &pos, sizeof(line), fb.height);
+    append_text(line, &pos, sizeof(line), "  Desktop ");
+    append_dec(line, &pos, sizeof(line), fb_w());
+    append_char(line, &pos, sizeof(line), 'x');
+    append_dec(line, &pos, sizeof(line), fb_h());
+    append_text(line, &pos, sizeof(line), " @ ");
+    append_dec(line, &pos, sizeof(line), desktop_scale);
+    append_char(line, &pos, sizeof(line), 'x');
+    text_draw(body_x + 16, body_y + 36, line, LEONOS_UI_DARK, bg);
+
+    text_draw(body_x + 16, body_y + 66, "Resolution", LEONOS_UI_BLACK, bg);
+    for (uint8_t i = 0; i < DESKTOP_MODE_COUNT; ++i) {
+        int disabled = !desktop_display_mode_supported(i, desktop_scale_index);
+        draw_settings_button(body_x + 16, body_y + 86 + i * 30, 130,
+                             desktop_display_modes[i].label,
+                             i == desktop_mode_index, disabled);
+    }
+
+    scale_x = body_w > 290 ? body_x + 176 : body_x + 156;
+    text_draw(scale_x, body_y + 66, "Scale", LEONOS_UI_BLACK, bg);
+    for (uint8_t i = 0; i < DESKTOP_SCALE_COUNT; ++i) {
+        char label[8];
+        uint32_t label_pos = 0;
+        label[0] = 0;
+        append_dec(label, &label_pos, sizeof(label), desktop_scale_options[i]);
+        append_char(label, &label_pos, sizeof(label), 'x');
+        draw_settings_button(scale_x, body_y + 86 + i * 30, 78, label,
+                             i == desktop_scale_index,
+                             !desktop_display_mode_supported(desktop_mode_index, i));
+    }
+
+    confirm_y = body_y + 86 + DESKTOP_MODE_COUNT * 30 + 14;
+    if (confirm_y + 72 > body_y + body_h) {
+        confirm_y = body_y + body_h > 76 ? body_y + body_h - 76 : body_y + 132;
+    }
+    if (desktop_pending_confirm) {
+        unsigned long now = leonos_uptime_ms();
+        unsigned long remaining = desktop_confirm_deadline_ms > now
+                                      ? desktop_confirm_deadline_ms - now
+                                      : 0;
+        uint32_t seconds = (uint32_t)((remaining + 999UL) / 1000UL);
+        uint32_t panel_w = body_w > 32 ? body_w - 32 : body_w;
+        pos = 0;
+        line[0] = 0;
+        append_text(line, &pos, sizeof(line), "Keep these display settings? Reverting in ");
+        append_dec(line, &pos, sizeof(line), seconds);
+        append_text(line, &pos, sizeof(line), "s");
+        leonos_ui_panel(&ui, body_x + 16, confirm_y, panel_w, 62, LEONOS_UI_LIGHT);
+        text_draw(body_x + 26, confirm_y + 10, line, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+        draw_settings_button(body_x + 26, confirm_y + 34, 82, "Keep", 0, 0);
+        draw_settings_button(body_x + 118, confirm_y + 34, 82, "Revert", 0, 0);
+    } else if (confirm_y + 20 < body_y + body_h) {
+        text_draw(body_x + 16, confirm_y + 4,
+                  "Changes are applied temporarily until you keep them.",
+                  LEONOS_UI_DARK, bg);
+    }
+}
+
 void draw_window(uint8_t id)
 {
     struct desktop_window *w = &windows[id];
     if (!w->visible || w->minimized) {
+        return;
+    }
+    if (window_is_fullscreen(w)) {
+        rect_fill_i(w->x, w->y, (int)w->width, (int)w->height, w->body_color);
+        if (w->window_id) {
+            draw_app_surface_i(id, w->x, w->y, w->width, w->height);
+        }
         return;
     }
 
@@ -136,9 +228,7 @@ void draw_window(uint8_t id)
         text_draw(body_x + 16, body_y + 42, "boot  system  userland", 0x00000000, w->body_color);
         text_draw(body_x + 16, body_y + 66, "FAT32 root drive view", 0x00000000, w->body_color);
     } else if (id == 2) {
-        text_draw(body_x + 16, body_y + 18, "Settings", 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 42, "Win98 style controls", 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 66, "Window state in userland", 0x00000000, w->body_color);
+        draw_settings_panel(body_x, body_y, body_w, body_h, w->body_color);
     } else if (id == 3) {
         char line[112];
         uint32_t pos = 0;
@@ -215,4 +305,3 @@ void draw_snap_preview(void)
                   (uint32_t)target.w - 4, (uint32_t)target.h - 4, 0x00cce6ff);
     }
 }
-

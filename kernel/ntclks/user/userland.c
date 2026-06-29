@@ -8,7 +8,7 @@
 #include <ntclks/storage.h>
 #include <ntclks/userland.h>
 
-#define USER_STACK_TOP 0x0000000000fff000ULL
+#define USER_STACK_TOP (NTCLKS_USER_TOP - 0x1000ULL)
 #define EXEC_STACK_ALIGN 16ULL
 
 struct exec_launch {

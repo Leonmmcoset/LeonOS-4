@@ -247,6 +247,9 @@ struct elf64_phdr {
 };
 
 extern void loader_outb(uint8_t value, uint16_t port);
+extern uint8_t __loader_start[];
+extern uint8_t __loader_end[];
+void loader_main(uint32_t magic, uint32_t multiboot_info);
 
 static uint8_t read_buffer[READ_BUFFER_SIZE] __attribute__((aligned(4096)));
 static struct leonos_boot_handoff handoff;
@@ -514,6 +517,10 @@ static void parse_multiboot2(uint32_t magic, uint32_t info_addr)
     handoff.version = LEONOS_BOOT_HANDOFF_VERSION;
     handoff.multiboot_magic = magic;
     handoff.multiboot_info = info_addr;
+    handoff.loader.start = (uint64_t)(uintptr_t)__loader_start;
+    handoff.loader.end = (uint64_t)(uintptr_t)__loader_end;
+    handoff.loader.entry = (uint64_t)(uintptr_t)loader_main;
+    handoff.loader.path = "0:/boot/loader.elf";
     if (magic != MULTIBOOT2_BOOTLOADER_MAGIC || !info_addr) {
         serial_write("[loader] invalid Multiboot2 handoff\n");
         return;

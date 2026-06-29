@@ -57,6 +57,43 @@ void clamp_window(struct desktop_window *w)
     clamp_window_position_recoverable(w);
 }
 
+void desktop_reflow_after_display_change(void)
+{
+    for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
+        struct desktop_window *w = &windows[i];
+        if (!w->visible) {
+            continue;
+        }
+        if (window_is_fullscreen(w) || w->maximized || w->snap_mode == SNAP_TOP) {
+            w->x = 0;
+            w->y = 0;
+            w->width = fb_w();
+            w->height = taskbar_y();
+        } else if (w->snap_mode == SNAP_LEFT) {
+            w->x = 0;
+            w->y = 0;
+            w->width = fb_w() / 2;
+            w->height = taskbar_y();
+        } else if (w->snap_mode == SNAP_RIGHT) {
+            w->width = fb_w() - fb_w() / 2;
+            w->height = taskbar_y();
+            w->x = (int)(fb_w() - w->width);
+            w->y = 0;
+        }
+        clamp_window(w);
+        if (w->window_id) {
+            send_app_event(i, LEONOS_GUI_APP_EVENT_RESIZE, 0, 0, 0, 0, 0, 0, 0);
+        }
+    }
+    if (cursor_x >= fb_w()) {
+        cursor_x = fb_w() ? fb_w() - 1 : 0;
+    }
+    if (cursor_y >= fb_h()) {
+        cursor_y = fb_h() ? fb_h() - 1 : 0;
+    }
+    full_redraw_pending = 1;
+}
+
 void bring_to_front(uint8_t id)
 {
     int previous_active = active_window;
@@ -98,17 +135,55 @@ int find_window_slot_by_window_id(uint32_t window_id)
 
 uint32_t window_body_width(const struct desktop_window *w)
 {
+    if (window_is_fullscreen(w)) {
+        return w->width;
+    }
     return w && w->width > 16 ? w->width - 16 : 0;
 }
 
 uint32_t window_body_height(const struct desktop_window *w)
 {
+    if (window_is_fullscreen(w)) {
+        return w->height;
+    }
     return w && w->height > TITLEBAR_H + 18 ? w->height - TITLEBAR_H - 18 : 0;
+}
+
+int window_is_fullscreen(const struct desktop_window *w)
+{
+    return w && (w->flags & LEONOS_GUI_WINDOW_FULLSCREEN) != 0;
+}
+
+int active_window_is_fullscreen(void)
+{
+    return active_window >= BUILTIN_WINDOWS && active_window < MAX_WINDOWS &&
+           window_is_fullscreen(&windows[active_window]) &&
+           windows[active_window].visible && !windows[active_window].minimized;
 }
 
 int window_allows_resize(const struct desktop_window *w)
 {
-    return w && (w->flags & LEONOS_GUI_WINDOW_NO_RESIZE) == 0;
+    return w && !window_is_fullscreen(w) &&
+           (w->flags & LEONOS_GUI_WINDOW_NO_RESIZE) == 0;
+}
+
+void window_client_origin(const struct desktop_window *w, int *x, int *y)
+{
+    if (window_is_fullscreen(w)) {
+        if (x) {
+            *x = w ? w->x : 0;
+        }
+        if (y) {
+            *y = w ? w->y : 0;
+        }
+        return;
+    }
+    if (x) {
+        *x = w ? w->x + 8 : 0;
+    }
+    if (y) {
+        *y = w ? w->y + TITLEBAR_H + 10 : 0;
+    }
 }
 
 int window_is_snap_candidate(const struct desktop_window *w)
@@ -167,11 +242,34 @@ void request_close_window(uint8_t slot)
     full_redraw_pending = 1;
 }
 
+void send_app_event_to_window(uint32_t window_id, uint32_t type,
+                              int32_t x, int32_t y, int32_t dx, int32_t dy,
+                              uint32_t width, uint32_t height,
+                              uint8_t buttons, uint8_t keycode, uint8_t pressed)
+{
+    struct leonos_gui_app_event event;
+    if (!window_id) {
+        return;
+    }
+    event.window_id = window_id;
+    event.type = type;
+    event.x = x;
+    event.y = y;
+    event.dx = dx;
+    event.dy = dy;
+    event.width = width;
+    event.height = height;
+    event.buttons = buttons;
+    event.keycode = keycode;
+    event.pressed = pressed;
+    event.reserved = 0;
+    leonos_gui_send_app_event(&event);
+}
+
 void send_app_event(uint8_t slot, uint32_t type, int32_t x, int32_t y,
                            int32_t dx, int32_t dy, uint8_t buttons,
                            uint8_t keycode, uint8_t pressed)
 {
-    struct leonos_gui_app_event event;
     uint32_t client_w;
     uint32_t client_h;
     if (slot >= MAX_WINDOWS || !windows[slot].visible || !windows[slot].window_id) {
@@ -179,19 +277,8 @@ void send_app_event(uint8_t slot, uint32_t type, int32_t x, int32_t y,
     }
     client_w = window_body_width(&windows[slot]);
     client_h = window_body_height(&windows[slot]);
-    event.window_id = windows[slot].window_id;
-    event.type = type;
-    event.x = x;
-    event.y = y;
-    event.dx = dx;
-    event.dy = dy;
-    event.width = client_w;
-    event.height = client_h;
-    event.buttons = buttons;
-    event.keycode = keycode;
-    event.pressed = pressed;
-    event.reserved = 0;
-    leonos_gui_send_app_event(&event);
+    send_app_event_to_window(windows[slot].window_id, type, x, y, dx, dy,
+                             client_w, client_h, buttons, keycode, pressed);
 }
 
 void fetch_window_surface(uint8_t slot)
@@ -260,4 +347,3 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
         }
     }
 }
-

@@ -2,7 +2,7 @@ ENTRY(kernel_entry)
 
 SECTIONS
 {
-    . = 16M;
+    . = 128M;
 
     .multiboot ALIGN(8) : {
         KEEP(*(.multiboot))

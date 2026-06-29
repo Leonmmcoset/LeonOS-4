@@ -19,8 +19,8 @@ multiboot2_header:
     .short 0
     .long 20
     .long 0
-    .long 1024
-    .long 768
+    .long 0
+    .long 0
     .long 32
 
     .align 8

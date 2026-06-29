@@ -207,22 +207,23 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
 
     copy_text(app_titles[slot], sizeof(app_titles[slot]), msg->title[0] ? msg->title : "Application");
     copy_text(app_texts[slot], sizeof(app_texts[slot]), msg->text[0] ? msg->text : "Application window");
-    uint32_t width = msg->width + 16;
-    uint32_t height = msg->height + TITLEBAR_H + 18;
-    if (width < MIN_W) {
+    uint32_t fullscreen = (msg->flags & LEONOS_GUI_WINDOW_FULLSCREEN) != 0;
+    uint32_t width = fullscreen ? fb_w() : msg->width + 16;
+    uint32_t height = fullscreen ? fb_h() : msg->height + TITLEBAR_H + 18;
+    if (!fullscreen && width < MIN_W) {
         width = MIN_W;
     }
-    if (height < MIN_H) {
+    if (!fullscreen && height < MIN_H) {
         height = MIN_H;
     }
     uint32_t offset = (slot - BUILTIN_WINDOWS) * 34;
     windows[slot] = (struct desktop_window){
-        .x = 220 + (int)offset,
-        .y = 170 + (int)offset,
+        .x = fullscreen ? 0 : 220 + (int)offset,
+        .y = fullscreen ? 0 : 170 + (int)offset,
         .width = width,
         .height = height,
-        .restore_x = 220 + (int)offset,
-        .restore_y = 170 + (int)offset,
+        .restore_x = fullscreen ? 0 : 220 + (int)offset,
+        .restore_y = fullscreen ? 0 : 170 + (int)offset,
         .restore_width = width,
         .restore_height = height,
         .title = app_titles[slot],
@@ -236,7 +237,7 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
         .close_requested = 0,
         .visible = 1,
         .minimized = 0,
-        .maximized = 0,
+        .maximized = fullscreen ? 1 : 0,
     };
     clamp_window(&windows[slot]);
     bring_to_front(slot);
@@ -390,6 +391,62 @@ int handle_taskbar_click(uint32_t x, uint32_t y)
     return 1;
 }
 
+int handle_settings_click(uint8_t id, uint32_t x, uint32_t y)
+{
+    struct desktop_window *w = &windows[id];
+    int origin_x;
+    int origin_y;
+    if (id != 2 || !w->visible || w->minimized) {
+        return 0;
+    }
+    window_client_origin(w, &origin_x, &origin_y);
+    if (x < (uint32_t)origin_x || y < (uint32_t)origin_y) {
+        return 0;
+    }
+    uint32_t body_w = window_body_width(w);
+    uint32_t rel_x = x - (uint32_t)origin_x;
+    uint32_t rel_y = y - (uint32_t)origin_y;
+    uint32_t scale_x = body_w > 290 ? 176 : 156;
+    uint32_t confirm_y = 86 + DESKTOP_MODE_COUNT * 30 + 14;
+    uint32_t body_h = window_body_height(w);
+    if (confirm_y + 72 > body_h) {
+        confirm_y = body_h > 76 ? body_h - 76 : 132;
+    }
+    if (desktop_pending_confirm) {
+        if (rel_y >= confirm_y + 34 && rel_y < confirm_y + 34 + LEONOS_UI_BUTTON_H &&
+            rel_x >= 26 && rel_x < 108) {
+            desktop_confirm_display_settings();
+            return 1;
+        }
+        if (rel_y >= confirm_y + 34 && rel_y < confirm_y + 34 + LEONOS_UI_BUTTON_H &&
+            rel_x >= 118 && rel_x < 200) {
+            desktop_revert_display_settings();
+            return 1;
+        }
+    }
+    for (uint8_t i = 0; i < DESKTOP_MODE_COUNT; ++i) {
+        uint32_t by = 86 + i * 30;
+        if (rel_x >= 16 && rel_x < 146 &&
+            rel_y >= by && rel_y < by + LEONOS_UI_BUTTON_H) {
+            if (desktop_display_mode_supported(i, desktop_scale_index)) {
+                desktop_apply_display_settings_pending(i, desktop_scale_index);
+            }
+            return 1;
+        }
+    }
+    for (uint8_t i = 0; i < DESKTOP_SCALE_COUNT; ++i) {
+        uint32_t by = 86 + i * 30;
+        if (rel_x >= scale_x && rel_x < scale_x + 78 &&
+            rel_y >= by && rel_y < by + LEONOS_UI_BUTTON_H) {
+            if (desktop_display_mode_supported(desktop_mode_index, i)) {
+                desktop_apply_display_settings_pending(desktop_mode_index, i);
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void update_snap_preview(uint32_t x, uint32_t y)
 {
     uint8_t next = SNAP_NONE;
@@ -418,12 +475,36 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
     struct rect dirty = cursor_visible ? cursor_rect_at(cursor_x, cursor_y) : rect_make(0, 0, 0, 0);
     dirty = rect_union(dirty, cursor_rect_at(x, y));
 
+    if (active_window_is_fullscreen() &&
+        windows[active_window].window_id) {
+        send_app_event((uint8_t)active_window, 5, (int32_t)x, (int32_t)y,
+                       (int32_t)x - (int32_t)cursor_x, (int32_t)y - (int32_t)cursor_y,
+                       buttons, 0, left ? 1 : 0);
+        if (buttons != previous_buttons) {
+            send_app_event((uint8_t)active_window, 6, (int32_t)x, (int32_t)y,
+                           0, 0, buttons, 0, left ? 1 : 0);
+        }
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        if (full_redraw_pending) {
+            redraw_all();
+        } else {
+            repaint_and_flush(rect_pad(dirty, 2));
+        }
+        return;
+    }
+
     if (!(left && !was_left) &&
         hover_id >= BUILTIN_WINDOWS && hover_id < MAX_WINDOWS && windows[hover_id].window_id &&
         !(left && drag_window >= 0)) {
         struct desktop_window *hover = &windows[hover_id];
-        int client_x = (int)x - (hover->x + 8);
-        int client_y = (int)y - (hover->y + TITLEBAR_H + 10);
+        int origin_x;
+        int origin_y;
+        window_client_origin(hover, &origin_x, &origin_y);
+        int client_x = (int)x - origin_x;
+        int client_y = (int)y - origin_y;
         if (client_x >= 0 && client_y >= 0) {
             send_app_event((uint8_t)hover_id, 5, client_x, client_y,
                            (int32_t)x - (int32_t)cursor_x, (int32_t)y - (int32_t)cursor_y,
@@ -490,14 +571,20 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                 bring_to_front((uint8_t)id);
                 start_menu_set_open(0);
                 dirty = rect_union(dirty, rect_pad(old_rect, 4));
+                int origin_x;
+                int origin_y;
+                window_client_origin(w, &origin_x, &origin_y);
                 int bx = w->x + (int)w->width - 64;
                 int by = w->y + 7;
-                if (hit_rect(x, y, bx, by, 18, 20)) {
+                if (!window_is_fullscreen(w) && hit_rect(x, y, bx, by, 18, 20)) {
                     minimize_window((uint8_t)id);
-                } else if (hit_rect(x, y, bx + 20, by, 18, 20) && window_allows_resize(w)) {
+                } else if (!window_is_fullscreen(w) &&
+                           hit_rect(x, y, bx + 20, by, 18, 20) && window_allows_resize(w)) {
                     toggle_maximize((uint8_t)id);
-                } else if (hit_rect(x, y, bx + 40, by, 18, 20)) {
+                } else if (!window_is_fullscreen(w) && hit_rect(x, y, bx + 40, by, 18, 20)) {
                     request_close_window((uint8_t)id);
+                } else if (handle_settings_click((uint8_t)id, x, y)) {
+                    dirty = rect_union(dirty, rect_make(0, 0, (int)fb_w(), (int)fb_h()));
                 } else if (window_allows_resize(w) &&
                            hit_rect(x, y, w->x + (int)w->width - 18, w->y + (int)w->height - 18, 18, 18) &&
                            !w->maximized) {
@@ -507,15 +594,16 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                     drag_origin_y = (int)y;
                     drag_origin_w = w->width;
                     drag_origin_h = w->height;
-                } else if (hit_rect(x, y, w->x + 4, w->y + 4, w->width > 8 ? w->width - 8 : 0, TITLEBAR_H) && !w->maximized) {
+                } else if (!window_is_fullscreen(w) &&
+                           hit_rect(x, y, w->x + 4, w->y + 4, w->width > 8 ? w->width - 8 : 0, TITLEBAR_H) && !w->maximized) {
                     drag_window = id;
                     drag_mode = DRAG_MOVE;
                     drag_dx = (int)x - w->x;
                     drag_dy = (int)y - w->y;
                     snap_preview_mode = SNAP_NONE;
                 } else if (w->window_id) {
-                    int client_x = (int)x - (w->x + 8);
-                    int client_y = (int)y - (w->y + TITLEBAR_H + 10);
+                    int client_x = (int)x - origin_x;
+                    int client_y = (int)y - origin_y;
                     if (client_x >= 0 && client_y >= 0) {
                         send_app_event((uint8_t)id, 6, client_x, client_y, 0, 0, buttons, 0, left ? 1 : 0);
                     }
@@ -552,6 +640,12 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
     if (y >= fb_h()) {
         y = fb_h() ? fb_h() - 1 : 0;
     }
+    if (active_window_is_fullscreen() &&
+        windows[active_window].window_id) {
+        send_app_event((uint8_t)active_window, LEONOS_GUI_APP_EVENT_MOUSE_WHEEL,
+                       (int32_t)x, (int32_t)y, 0, wheel, buttons, 0, 0);
+        return;
+    }
     if (start_menu_open && start_menu_programs_open && wheel != 0) {
         struct start_menu_item items[START_MENU_MAX_ITEMS];
         uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
@@ -581,12 +675,14 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
     int hover_id = hit_window(x, y);
     if (hover_id >= BUILTIN_WINDOWS && hover_id < MAX_WINDOWS && windows[hover_id].window_id) {
         struct desktop_window *hover = &windows[hover_id];
-        int client_x = (int)x - (hover->x + 8);
-        int client_y = (int)y - (hover->y + TITLEBAR_H + 10);
+        int origin_x;
+        int origin_y;
+        window_client_origin(hover, &origin_x, &origin_y);
+        int client_x = (int)x - origin_x;
+        int client_y = (int)y - origin_y;
         if (client_x >= 0 && client_y >= 0) {
             send_app_event((uint8_t)hover_id, LEONOS_GUI_APP_EVENT_MOUSE_WHEEL,
                            client_x, client_y, 0, wheel, buttons, 0, 0);
         }
     }
 }
-

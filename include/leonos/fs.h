@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 #define LEONOS_IOCTL_LIST_DIR 0x4c444952UL
+#define LEONOS_INSTALL_IOCTL_LIST_DISKS 0x4c49444bUL
+#define LEONOS_INSTALL_IOCTL_FORMAT_ESP 0x4c49464dUL
+#define LEONOS_INSTALL_IOCTL_MOUNT_TARGET 0x4c494d54UL
 
 #define LEONOS_FS_NAME_LEN 48U
 #define LEONOS_FS_PATH_LEN 96U
@@ -43,8 +46,31 @@ struct leonos_dir_list {
     struct leonos_dir_entry *entries;
 };
 
+#define LEONOS_INSTALL_MAX_DISKS 8U
+#define LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT 0x00000001U
+#define LEONOS_INSTALL_DISK_FLAG_TARGET_MOUNTED 0x00000002U
+
+struct leonos_install_disk {
+    uint32_t id;
+    uint32_t port;
+    uint32_t sector_size;
+    uint32_t flags;
+    uint64_t sector_count;
+    char name[32];
+};
+
+struct leonos_install_disk_list {
+    uint32_t capacity;
+    uint32_t count;
+    struct leonos_install_disk *disks;
+};
+
 int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
                     uint32_t capacity, uint32_t *out_count);
+int leonos_install_list_disks(struct leonos_install_disk *disks,
+                              uint32_t capacity, uint32_t *out_count);
+int leonos_install_format_esp(uint32_t disk_id);
+int leonos_install_mount_target(uint32_t disk_id);
 int stat(const char *path, struct leonos_stat *st);
 int fstat(int fd, struct leonos_stat *st);
 long lseek(int fd, long offset, int whence);

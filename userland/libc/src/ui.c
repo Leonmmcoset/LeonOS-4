@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/launch.h>
 #include <leonos/psf_font.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
@@ -2232,6 +2233,11 @@ static void ui_append_text(char *dst, uint32_t *pos, uint32_t capacity, const ch
     }
 }
 
+static uint32_t ui_max_u32(uint32_t a, uint32_t b)
+{
+    return a > b ? a : b;
+}
+
 static int ui_text_eq(const char *a, const char *b)
 {
     if (!a || !b) {
@@ -2779,6 +2785,23 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                     leonos_ui_listview_state_set_count(&list_state, entry_count);
                 }
             }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                if (leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  UI_FILE_DIALOG_LIST_BODY_X,
+                                  UI_FILE_DIALOG_LIST_BODY_Y,
+                                  UI_FILE_DIALOG_LIST_BODY_W,
+                                  UI_FILE_DIALOG_LIST_ROWS * UI_FILE_DIALOG_ROW_H) ||
+                    leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  UI_FILE_DIALOG_SCROLL_X,
+                                  UI_FILE_DIALOG_LIST_Y,
+                                  UI_FILE_DIALOG_SCROLL_W,
+                                  UI_FILE_DIALOG_LIST_H)) {
+                    if (leonos_ui_listview_state_handle_wheel(&list_state, event.dy)) {
+                        list_state.focused = 1;
+                        name_edit.focused = 0;
+                    }
+                }
+            }
         } else {
             sleep_ms(10);
         }
@@ -2795,6 +2818,338 @@ int leonos_ui_show_open_dialog(const char *title, char *path, uint32_t capacity,
 {
     return ui_show_file_dialog_common(title ? title : "Open", 0,
                                       path, capacity, filter_label, filter_ext);
+}
+
+enum {
+    UI_OPEN_WITH_W = 432,
+    UI_OPEN_WITH_H = 296,
+    UI_OPEN_WITH_X = 0,
+    UI_OPEN_WITH_Y = 0,
+    UI_OPEN_WITH_ROW_H = 34,
+    UI_OPEN_WITH_VISIBLE_ROWS = 4,
+    UI_OPEN_WITH_LIST_X = 16,
+    UI_OPEN_WITH_LIST_Y = 170,
+    UI_OPEN_WITH_LIST_W = UI_OPEN_WITH_W - 32,
+    UI_OPEN_WITH_SCROLL_W = 18,
+    UI_OPEN_WITH_ROW_W = UI_OPEN_WITH_LIST_W - 26,
+    UI_OPEN_WITH_BUTTON_Y = UI_OPEN_WITH_H - 38
+};
+
+static const struct leonos_launch_assoc_app *ui_open_with_find_app(
+    const struct leonos_launch_assoc_app *apps,
+    uint32_t app_count,
+    const char *program_path)
+{
+    for (uint32_t i = 0; i < app_count; ++i) {
+        if (ui_text_eq(apps[i].program_path, program_path)) {
+            return &apps[i];
+        }
+    }
+    return 0;
+}
+
+static int ui_open_with_find_index(const struct leonos_launch_assoc_app *apps,
+                                   uint32_t app_count,
+                                   const char *program_path)
+{
+    for (uint32_t i = 0; i < app_count; ++i) {
+        if (ui_text_eq(apps[i].program_path, program_path)) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static const char *ui_open_with_app_label(const struct leonos_launch_assoc_app *apps,
+                                          uint32_t app_count,
+                                          const char *program_path,
+                                          char *buffer,
+                                          uint32_t capacity)
+{
+    const struct leonos_launch_assoc_app *app =
+        ui_open_with_find_app(apps, app_count, program_path);
+    if (app) {
+        return app->name;
+    }
+    if (!program_path || !program_path[0]) {
+        return "None";
+    }
+    ui_copy_text(buffer, capacity, program_path);
+    return buffer;
+}
+
+static void ui_open_with_draw(struct leonos_ui_surface *surface,
+                              const char *title,
+                              const char *path,
+                              const char *extension,
+                              const char *default_label,
+                              const struct leonos_launch_assoc_app *apps,
+                              uint32_t app_count,
+                              const struct leonos_ui_listview_state *list_state,
+                              uint32_t remember,
+                              uint32_t can_remember,
+                              uint32_t set_default_mode)
+{
+    uint32_t list_h = list_state->visible_rows * UI_OPEN_WITH_ROW_H + 8;
+    uint32_t scrollbar_x = UI_OPEN_WITH_LIST_X + UI_OPEN_WITH_LIST_W - UI_OPEN_WITH_SCROLL_W;
+    leonos_ui_rect(surface, 0, 0, UI_OPEN_WITH_W, UI_OPEN_WITH_H, LEONOS_UI_GRAY);
+    leonos_ui_dialog(surface, UI_OPEN_WITH_X, UI_OPEN_WITH_Y,
+                     UI_OPEN_WITH_W, UI_OPEN_WITH_H, title ? title : "Open With");
+    leonos_ui_text_clipped(surface, 16, 44, UI_OPEN_WITH_W - 32,
+                           set_default_mode
+                               ? "Choose a default program for this file type:"
+                               : "Choose a program to open this file:",
+                           LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, 16, 68, "File:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 58, 64, UI_OPEN_WITH_W - 74, path ? path : "",
+                   ui_strlen(path), 0, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_text(surface, 16, 92, "Extension:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 82, 88, 84,
+                   extension && extension[0] ? extension : "(none)",
+                   ui_strlen(extension && extension[0] ? extension : "(none)"),
+                   0, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_text(surface, 180, 92, "Default:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 244, 88, UI_OPEN_WITH_W - 260,
+                   default_label ? default_label : "None",
+                   ui_strlen(default_label ? default_label : "None"),
+                   0, LEONOS_UI_EDIT_READONLY);
+    if (set_default_mode) {
+        leonos_ui_checkbox(surface, 16, 118, "Update default program", 1,
+                           LEONOS_UI_BUTTON_DISABLED);
+    } else {
+        leonos_ui_checkbox(surface, 16, 118, "Always use this app",
+                           can_remember ? (int)remember : 0,
+                           can_remember ? 0 : LEONOS_UI_BUTTON_DISABLED);
+    }
+    leonos_ui_text(surface, 16, 144, "Programs:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_inset(surface, UI_OPEN_WITH_LIST_X, UI_OPEN_WITH_LIST_Y,
+                    UI_OPEN_WITH_LIST_W, list_h, LEONOS_UI_WHITE);
+    for (uint32_t row = 0; row < list_state->visible_rows; ++row) {
+        uint32_t i = list_state->scroll + row;
+        uint32_t row_x = UI_OPEN_WITH_LIST_X + 4;
+        uint32_t row_y = UI_OPEN_WITH_LIST_Y + 4 + row * UI_OPEN_WITH_ROW_H;
+        uint32_t selected;
+        uint32_t bg;
+        uint32_t fg;
+        uint32_t detail_fg;
+        if (i >= app_count) {
+            break;
+        }
+        selected = list_state->selected == (int32_t)i;
+        bg = selected ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE;
+        fg = selected ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
+        detail_fg = selected ? LEONOS_UI_LIGHT : LEONOS_UI_DARK;
+        leonos_ui_rect(surface, row_x, row_y, UI_OPEN_WITH_ROW_W,
+                       UI_OPEN_WITH_ROW_H, bg);
+        leonos_ui_text_clipped(surface, row_x + 8, row_y + 3,
+                               UI_OPEN_WITH_ROW_W - 16, apps[i].name, fg, bg);
+        leonos_ui_text_clipped(surface, row_x + 8, row_y + 18,
+                               UI_OPEN_WITH_ROW_W - 16, apps[i].detail,
+                               detail_fg, bg);
+    }
+    leonos_ui_vscrollbar(surface, scrollbar_x, UI_OPEN_WITH_LIST_Y,
+                         UI_OPEN_WITH_SCROLL_W, list_h,
+                         list_state->scroll,
+                         ui_max_u32(app_count, list_state->visible_rows),
+                         list_state->visible_rows,
+                         app_count <= list_state->visible_rows
+                             ? LEONOS_UI_SCROLLBAR_DISABLED
+                             : 0);
+    leonos_ui_button(surface, UI_OPEN_WITH_W - 194, UI_OPEN_WITH_BUTTON_Y,
+                     96, LEONOS_UI_BUTTON_H,
+                     set_default_mode ? "Set Default" : "Open", 0);
+    leonos_ui_button(surface, UI_OPEN_WITH_W - 88, UI_OPEN_WITH_BUTTON_Y,
+                     72, LEONOS_UI_BUTTON_H, "Cancel", 0);
+}
+
+int leonos_ui_show_open_with_dialog(const char *title, const char *path,
+                                    char *program_path, uint32_t capacity,
+                                    uint32_t *remember, uint32_t flags)
+{
+    static uint32_t pixels[UI_OPEN_WITH_W * UI_OPEN_WITH_H];
+    struct leonos_ui_surface surface;
+    struct leonos_gui_app_event event;
+    struct leonos_ui_listview_state list_state;
+    const struct leonos_launch_assoc_app *apps;
+    uint32_t app_count = 0;
+    uint32_t remember_value = remember ? *remember : 0;
+    uint32_t set_default_mode = (flags & LEONOS_UI_OPEN_WITH_SET_DEFAULT) != 0;
+    uint32_t can_remember;
+    char extension[16];
+    char default_program[LEONOS_FS_PATH_LEN];
+    char default_label_buf[LEONOS_FS_PATH_LEN];
+    const char *default_program_ptr;
+    const char *default_label;
+    int selected = 0;
+    int result = 0;
+    int window_id;
+
+    if (!path || !path[0] || !program_path || capacity == 0) {
+        return -1;
+    }
+    apps = leonos_launch_assoc_apps(&app_count);
+    if (!apps || app_count == 0) {
+        return -1;
+    }
+    extension[0] = 0;
+    can_remember = leonos_launch_get_extension_for_path(path, extension,
+                                                        sizeof(extension)) != 0;
+    default_program[0] = 0;
+    default_program_ptr = leonos_launch_resolve_default_app_for_path(path);
+    if (default_program_ptr) {
+        ui_copy_text(default_program, sizeof(default_program), default_program_ptr);
+        selected = ui_open_with_find_index(apps, app_count, default_program);
+        if (selected < 0) {
+            selected = 0;
+        }
+    }
+    default_label = ui_open_with_app_label(apps, app_count, default_program,
+                                           default_label_buf,
+                                           sizeof(default_label_buf));
+    if (!can_remember) {
+        remember_value = 0;
+    }
+    leonos_ui_listview_state_init(&list_state,
+                                  app_count > UI_OPEN_WITH_VISIBLE_ROWS
+                                      ? UI_OPEN_WITH_VISIBLE_ROWS
+                                      : app_count,
+                                  UI_OPEN_WITH_ROW_H);
+    leonos_ui_listview_state_set_count(&list_state, app_count);
+    list_state.selected = selected;
+    list_state.focused = 1;
+
+    window_id = leonos_gui_create_app_window_ex(title ? title : "Open With",
+                                                path,
+                                                UI_OPEN_WITH_W, UI_OPEN_WITH_H,
+                                                LEONOS_GUI_WINDOW_NO_RESIZE);
+    if (window_id <= 0) {
+        return window_id;
+    }
+    leonos_ui_bind(&surface, pixels, UI_OPEN_WITH_W, UI_OPEN_WITH_H,
+                   UI_OPEN_WITH_W);
+    for (;;) {
+        uint32_t activated = 0;
+        ui_open_with_draw(&surface, title ? title : "Open With", path,
+                          extension, default_label, apps, app_count,
+                          &list_state, remember_value, can_remember,
+                          set_default_mode);
+        leonos_gui_present_window((uint32_t)window_id, UI_OPEN_WITH_W,
+                                  UI_OPEN_WITH_H, UI_OPEN_WITH_W, pixels);
+        event.window_id = (uint32_t)window_id;
+        if (leonos_gui_poll_app_event(&event) > 0) {
+            if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
+                break;
+            }
+            if ((event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN ||
+                 event.type == LEONOS_GUI_APP_EVENT_KEY_UP) && event.pressed) {
+                if (event.keycode == LEONOS_KEY_ENTER) {
+                    result = 1;
+                    break;
+                }
+                if (event.keycode == 1) {
+                    break;
+                }
+                if (event.keycode == LEONOS_KEY_SPACE &&
+                    !set_default_mode && can_remember) {
+                    remember_value = remember_value ? 0 : 1;
+                    continue;
+                }
+                if (leonos_ui_listview_state_handle_key(&list_state,
+                                                        event.keycode,
+                                                        &activated)) {
+                    if (activated) {
+                        result = 1;
+                        break;
+                    }
+                    continue;
+                }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON &&
+                (event.buttons & 1u)) {
+                uint32_t list_h = list_state.visible_rows * UI_OPEN_WITH_ROW_H + 8;
+                uint32_t scrollbar_x = UI_OPEN_WITH_LIST_X +
+                                       UI_OPEN_WITH_LIST_W -
+                                       UI_OPEN_WITH_SCROLL_W;
+                if (event.x >= (int32_t)(UI_OPEN_WITH_W - 194) &&
+                    event.x < (int32_t)(UI_OPEN_WITH_W - 98) &&
+                    event.y >= (int32_t)UI_OPEN_WITH_BUTTON_Y &&
+                    event.y < (int32_t)(UI_OPEN_WITH_BUTTON_Y + LEONOS_UI_BUTTON_H)) {
+                    result = 1;
+                    break;
+                }
+                if (event.x >= (int32_t)(UI_OPEN_WITH_W - 88) &&
+                    event.x < (int32_t)(UI_OPEN_WITH_W - 16) &&
+                    event.y >= (int32_t)UI_OPEN_WITH_BUTTON_Y &&
+                    event.y < (int32_t)(UI_OPEN_WITH_BUTTON_Y + LEONOS_UI_BUTTON_H)) {
+                    break;
+                }
+                if (!set_default_mode && can_remember &&
+                    leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  16, 118, 180, LEONOS_FONT_H + 8)) {
+                    remember_value = remember_value ? 0 : 1;
+                    continue;
+                }
+                if (leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  scrollbar_x, UI_OPEN_WITH_LIST_Y,
+                                  UI_OPEN_WITH_SCROLL_W, list_h)) {
+                    leonos_ui_vscrollbar_handle_mouse(&list_state.scroll,
+                                                       ui_max_u32(app_count,
+                                                                  list_state.visible_rows),
+                                                       list_state.visible_rows,
+                                                       scrollbar_x,
+                                                       UI_OPEN_WITH_LIST_Y,
+                                                       UI_OPEN_WITH_SCROLL_W,
+                                                       list_h,
+                                                       event.x, event.y);
+                    continue;
+                }
+                if (leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  UI_OPEN_WITH_LIST_X, UI_OPEN_WITH_LIST_Y,
+                                  UI_OPEN_WITH_LIST_W, list_h)) {
+                    if (leonos_ui_listview_state_handle_mouse(&list_state,
+                                                              event.x, event.y,
+                                                              UI_OPEN_WITH_LIST_X + 4,
+                                                              UI_OPEN_WITH_LIST_Y + 4,
+                                                              UI_OPEN_WITH_ROW_W,
+                                                              &activated) &&
+                        activated) {
+                        result = 1;
+                        break;
+                    }
+                    continue;
+                }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                uint32_t list_h = list_state.visible_rows * UI_OPEN_WITH_ROW_H + 8;
+                uint32_t scrollbar_x = UI_OPEN_WITH_LIST_X +
+                                       UI_OPEN_WITH_LIST_W -
+                                       UI_OPEN_WITH_SCROLL_W;
+                if (leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  UI_OPEN_WITH_LIST_X, UI_OPEN_WITH_LIST_Y,
+                                  UI_OPEN_WITH_LIST_W, list_h) ||
+                    leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  scrollbar_x, UI_OPEN_WITH_LIST_Y,
+                                  UI_OPEN_WITH_SCROLL_W, list_h)) {
+                    leonos_ui_listview_state_handle_wheel(&list_state, event.dy);
+                    continue;
+                }
+            }
+        } else {
+            sleep_ms(10);
+        }
+    }
+    leonos_gui_destroy_app_window((uint32_t)window_id);
+    if (!result) {
+        return 0;
+    }
+    if (list_state.selected < 0 || (uint32_t)list_state.selected >= app_count) {
+        return -1;
+    }
+    ui_copy_text(program_path, capacity, apps[list_state.selected].program_path);
+    if (remember) {
+        *remember = set_default_mode ? 1 : remember_value;
+    }
+    return 1;
 }
 
 int leonos_ui_show_save_dialog_ex(const char *title, char *value, uint32_t capacity,

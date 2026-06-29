@@ -15,9 +15,9 @@ void init_desktop(void)
                                          .restore_x = 190, .restore_y = 150,
                                          .restore_width = 360, .restore_height = 190,
                                          .title = "File Manager", .body_color = 0x00ffffff};
-    windows[2] = (struct desktop_window){.x = 270, .y = 210, .width = 320, .height = 170,
-                                         .restore_x = 270, .restore_y = 210,
-                                         .restore_width = 320, .restore_height = 170,
+    windows[2] = (struct desktop_window){.x = 270, .y = 190, .width = 520, .height = 330,
+                                         .restore_x = 270, .restore_y = 190,
+                                         .restore_width = 520, .restore_height = 330,
                                          .title = "Settings", .body_color = 0x00dfdfdf};
     windows[3] = (struct desktop_window){.x = 90, .y = 118, .width = 620, .height = 300,
                                          .restore_x = 90, .restore_y = 118,
@@ -64,9 +64,10 @@ void desktop_run(void)
         }
     }
     printf("[desktop.elf] framebuffer %dx%d bpp=%d\n", fb.width, fb.height, fb.bpp);
-    if (fb.width > MAX_FB_W || fb.height > MAX_FB_H) {
-        printf("[desktop.elf] framebuffer clipped to %dx%d shadow buffer\n", MAX_FB_W, MAX_FB_H);
-    }
+    desktop_load_display_config();
+    printf("[desktop.elf] display mode %s scale=%dx logical=%dx%d\n",
+           desktop_display_modes[desktop_mode_index].label,
+           (int)desktop_scale, fb_w(), fb_h());
     leonos_ui_bind(&ui, screen, fb_w(), fb_h(), MAX_FB_W);
 
     init_desktop();
@@ -86,14 +87,24 @@ void desktop_run(void)
         struct leonos_input_event event;
         while (leonos_gui_next_event(&event) > 0) {
             did_work = 1;
+            if (desktop_scale > 1) {
+                event.x /= (int32_t)desktop_scale;
+                event.y /= (int32_t)desktop_scale;
+                event.dx /= (int32_t)desktop_scale;
+                event.dy = event.type == LEONOS_INPUT_MOUSE_WHEEL
+                               ? event.dy
+                               : event.dy / (int32_t)desktop_scale;
+            }
             if (event.type == LEONOS_INPUT_MOUSE) {
                 handle_mouse((uint32_t)event.x, (uint32_t)event.y, event.buttons);
             } else if (event.type == LEONOS_INPUT_MOUSE_WHEEL) {
                 handle_mouse_wheel((uint32_t)event.x, (uint32_t)event.y,
                                    event.dy, event.buttons);
             } else if (event.type == LEONOS_INPUT_KEYBOARD) {
-                if (handle_global_key(event.keycode, event.pressed)) {
-                    continue;
+                if (!active_window_is_fullscreen()) {
+                    if (handle_global_key(event.keycode, event.pressed)) {
+                        continue;
+                    }
                 }
                 if (alt_tab_active) {
                     continue;
@@ -124,6 +135,7 @@ void desktop_run(void)
             puts("[desktop.elf] window server alive");
             last_log = now;
         }
+        desktop_update_display_confirmation();
         if (did_work) {
             idle_spins = 0;
             continue;

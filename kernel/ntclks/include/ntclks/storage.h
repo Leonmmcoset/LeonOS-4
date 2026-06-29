@@ -8,7 +8,7 @@ struct storage_node {
     uint32_t type;
     uint32_t flags;
     uint32_t first_cluster;
-    uint32_t reserved;
+    uint32_t drive;
     uint64_t size;
 };
 
@@ -16,8 +16,12 @@ struct storage_node {
 #define STORAGE_NODE_FLAG_DEV_DIR 0x00000002u
 #define STORAGE_NODE_FLAG_DEV_FB0 0x00000004u
 
+struct boot_info;
+
 void storage_init(void);
+void storage_init_installer_root(const struct boot_info *boot);
 bool storage_ready(void);
+int storage_mount_ramdisk_root(const void *image, uint64_t len);
 int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t cap);
 int storage_lookup_path(const char *path, struct storage_node *out);
 int storage_read_node(const struct storage_node *node, uint64_t offset,
@@ -35,5 +39,9 @@ int storage_mkdir(const char *path);
 int storage_unlink(const char *path);
 int storage_rmdir(const char *path);
 int storage_rename(const char *old_path, const char *new_path);
+int storage_install_list_disks(struct leonos_install_disk *disks,
+                               uint32_t capacity, uint32_t *out_count);
+int storage_install_format_esp(uint32_t disk_id);
+int storage_install_mount_target(uint32_t disk_id);
 
 #endif

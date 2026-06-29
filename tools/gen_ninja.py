@@ -22,6 +22,7 @@ USER_APPS = [
     "minesweeper",
     "run",
     "osver",
+    "bugtest",
 ]
 
 SYSTEM_FILES = [
@@ -172,7 +173,7 @@ def main() -> int:
     write_line(lines, "  description = MANIFEST $out")
     write_line(lines)
     write_line(lines, "rule grub_efi")
-    write_line(lines, "  command = mkdir -p `dirname $out` && grub-mkstandalone -d build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal' boot/grub/grub.cfg=boot/grub/embedded.cfg")
+    write_line(lines, "  command = mkdir -p `dirname $out` && grub-mkstandalone -d build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm' boot/grub/grub.cfg=boot/grub/embedded.cfg")
     write_line(lines, "  description = GRUB.EFI $out")
     write_line(lines)
     write_line(lines, "rule iso")
@@ -192,15 +193,15 @@ def main() -> int:
     write_line(lines, "  description = IMAGE $out")
     write_line(lines)
     write_line(lines, "rule run")
-    write_line(lines, "  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display gtk,grab-on-hover=on,show-cursor=off -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, "  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display gtk,grab-on-hover=on,show-cursor=off -device VGA,xres=1920,yres=1080 -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN LeonOS 4")
     write_line(lines)
     write_line(lines, "rule run_debug")
-    write_line(lines, "  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display none -no-reboot -no-shutdown -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, "  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display none -device VGA,xres=1920,yres=1080 -no-reboot -no-shutdown -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN.DEBUG LeonOS 4")
     write_line(lines)
     write_line(lines, "rule run_iso")
-    write_line(lines, "  command = qemu-system-x86_64 -m 512M -serial stdio -display none -no-reboot -no-shutdown -cdrom build/images/leonos4.iso -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, "  command = qemu-system-x86_64 -m 512M -serial stdio -display none -device VGA,xres=1920,yres=1080 -no-reboot -no-shutdown -cdrom build/images/leonos4.iso -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN.ISO LeonOS 4")
     write_line(lines)
     write_line(lines, "rule menuconfig_rule")
@@ -229,7 +230,7 @@ def main() -> int:
         rule = "as_loader" if src.suffix == ".S" else "cc_loader"
         write_line(lines, f"build {r(obj)}: {rule} {r(src)}")
     loader_elf = ROOT / "build" / "boot" / "loader.elf"
-    write_line(lines, f"build {r(loader_elf)}: link_loader {' '.join(r(o) for o in loader_objects)}")
+    write_line(lines, f"build {r(loader_elf)}: link_loader {' '.join(r(o) for o in loader_objects)} | boot/loader/linker.ld")
     write_line(lines, f"build loader: phony {r(loader_elf)}")
 
     kernel_sources = collect([
@@ -263,12 +264,12 @@ def main() -> int:
     )
     write_line(lines, f"build {r(rust_obj)}: rust_osmlayer {r(ROOT / 'middlelayer/osmlayer/src/lib.rs')} | include/generated/rustcfg.args {rust_implicit}")
     middlelayer_sys = ROOT / "build" / "system" / "middlelayer.sys"
-    write_line(lines, f"build {r(middlelayer_sys)}: link_middlelayer {r(rust_obj)} {r(middlelayer_runtime_obj)}")
+    write_line(lines, f"build {r(middlelayer_sys)}: link_middlelayer {r(rust_obj)} {r(middlelayer_runtime_obj)} | middlelayer/osmlayer/linker.ld")
     write_line(lines, f"build middlelayer: phony {r(middlelayer_sys)}")
 
     kernel_sys = ROOT / "build" / "system" / "kernel.sys"
     all_kernel_inputs = " ".join(r(o) for o in kernel_objects)
-    write_line(lines, f"build {r(kernel_sys)}: link_kernel {all_kernel_inputs}")
+    write_line(lines, f"build {r(kernel_sys)}: link_kernel {all_kernel_inputs} | kernel/ntclks/arch/x86_64/linker.ld")
     write_line(lines, f"build kernel: phony {r(kernel_sys)}")
 
     libc_sources = collect(["userland/libc/src/*.c", "userland/libc/src/*.S"])

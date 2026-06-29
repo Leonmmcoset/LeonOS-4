@@ -12,6 +12,7 @@ void multiboot2_parse(uint32_t magic, uintptr_t info_addr, struct boot_info *out
         ((uint8_t *)out)[i] = 0;
     }
     out->magic = magic;
+    out->multiboot_info = (uint64_t)info_addr;
 
     if (magic != MULTIBOOT2_BOOTLOADER_MAGIC || info_addr == 0) {
         console_printf("[ntclks] invalid multiboot2 handoff magic=0x%x info=%p\n",

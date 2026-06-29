@@ -92,6 +92,7 @@ struct boot_module {
 
 struct boot_info {
     uint32_t magic;
+    uint64_t multiboot_info;
     const char *cmdline;
     const char *bootloader;
     uint64_t framebuffer_addr;

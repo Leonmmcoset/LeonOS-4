@@ -4,8 +4,11 @@
 #include <ntclks/types.h>
 
 #define NTCLKS_USER_BASE 0x0000000000400000ULL
-#define NTCLKS_USER_TOP  0x0000000001000000ULL
+#define NTCLKS_USER_TOP  0x0000000004000000ULL
 #define NTCLKS_USER_STACK_PAGES 16u
+#define NTCLKS_USER_PD_BYTES 0x200000ULL
+#define NTCLKS_USER_PD_START (NTCLKS_USER_BASE / NTCLKS_USER_PD_BYTES)
+#define NTCLKS_USER_PD_COUNT ((NTCLKS_USER_TOP - NTCLKS_USER_BASE) / NTCLKS_USER_PD_BYTES)
 
 #define NTCLKS_PAGE_PRESENT 0x001ULL
 #define NTCLKS_PAGE_WRITABLE 0x002ULL
@@ -15,7 +18,7 @@ struct address_space {
     uint64_t *pml4;
     uint64_t *pdpt;
     uint64_t *pd[4];
-    uint64_t *user_pt[6];
+    uint64_t *user_pt[NTCLKS_USER_PD_COUNT];
     uint64_t cr3;
 };
 

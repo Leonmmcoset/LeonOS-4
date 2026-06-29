@@ -40,6 +40,16 @@ void redraw_region(struct rect dirty)
 
     rect_fill((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h, 0x00008080);
 
+    if (active_window_is_fullscreen()) {
+        if (rect_intersects(dirty, window_rect((uint8_t)active_window))) {
+            draw_window((uint8_t)active_window);
+        }
+        if (cursor_visible) {
+            draw_cursor_shape(cursor_x, cursor_y);
+        }
+        return;
+    }
+
     if (rect_intersects(dirty, rect_make(8, 32, 72, 58))) {
         rect_fill(24, 32, 48, 38, 0x00c0c0c0);
         rect_fill(24, 32, 48, 2, 0x00ffffff);
@@ -93,8 +103,50 @@ void flush_region(struct rect dirty)
     if (dirty.w <= 0 || dirty.h <= 0) {
         return;
     }
-    const uint32_t *src = screen + (uint64_t)dirty.y * MAX_FB_W + dirty.x;
-    leonos_fb_blit((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h, MAX_FB_W, src);
+    if (desktop_scale <= 1) {
+        const uint32_t *src = screen + (uint64_t)dirty.y * MAX_FB_W + dirty.x;
+        leonos_fb_blit((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h, MAX_FB_W, src);
+        return;
+    }
+    uint32_t scale = desktop_scale;
+    static uint32_t scaled[384 * 384];
+    const uint32_t max_out_w = 384;
+    const uint32_t max_out_h = 384;
+    for (uint32_t chunk_y = 0; chunk_y < (uint32_t)dirty.h;) {
+        uint32_t logical_h = (uint32_t)dirty.h - chunk_y;
+        if (logical_h * scale > max_out_h) {
+            logical_h = max_out_h / scale;
+        }
+        if (!logical_h) {
+            logical_h = 1;
+        }
+        for (uint32_t chunk_x = 0; chunk_x < (uint32_t)dirty.w;) {
+            uint32_t logical_w = (uint32_t)dirty.w - chunk_x;
+            if (logical_w * scale > max_out_w) {
+                logical_w = max_out_w / scale;
+            }
+            if (!logical_w) {
+                logical_w = 1;
+            }
+            for (uint32_t y = 0; y < logical_h; ++y) {
+                const uint32_t *src = screen + (uint64_t)(dirty.y + (int)chunk_y + (int)y) * MAX_FB_W + dirty.x + (int)chunk_x;
+                for (uint32_t sy = 0; sy < scale; ++sy) {
+                    uint32_t *dst = scaled + (uint64_t)(y * scale + sy) * max_out_w;
+                    for (uint32_t x = 0; x < logical_w; ++x) {
+                        for (uint32_t sx = 0; sx < scale; ++sx) {
+                            dst[x * scale + sx] = src[x];
+                        }
+                    }
+                }
+            }
+            leonos_fb_blit((uint32_t)(dirty.x + (int)chunk_x) * scale,
+                           (uint32_t)(dirty.y + (int)chunk_y) * scale,
+                           logical_w * scale, logical_h * scale,
+                           max_out_w, scaled);
+            chunk_x += logical_w;
+        }
+        chunk_y += logical_h;
+    }
 }
 
 void repaint_and_flush(struct rect dirty)
@@ -107,9 +159,19 @@ void repaint_and_flush(struct rect dirty)
 void redraw_all(void)
 {
     struct rect full = rect_make(0, 0, (int)fb_w(), (int)fb_h());
+    if (fb.width > fb_w() * desktop_scale) {
+        leonos_fb_rect(fb_w() * desktop_scale, 0,
+                       fb.width - fb_w() * desktop_scale,
+                       fb.height, 0x00000000);
+    }
+    if (fb.height > fb_h() * desktop_scale) {
+        leonos_fb_rect(0, fb_h() * desktop_scale,
+                       fb.width,
+                       fb.height - fb_h() * desktop_scale, 0x00000000);
+    }
     redraw_region(full);
     flush_region(full);
-    full_redraw_pending = 0;
+    full_redraw_pending = start_menu_animating ? 1 : 0;
 }
 
 int hit_window(uint32_t x, uint32_t y)
@@ -123,4 +185,3 @@ int hit_window(uint32_t x, uint32_t y)
     }
     return -1;
 }
-

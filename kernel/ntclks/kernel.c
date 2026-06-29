@@ -133,7 +133,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     framebuffer_init(&boot);
     console_enable_framebuffer();
     console_enable_vga_fallback();
-    mm_init(&boot);
+    mm_init(&boot, handoff);
     time_init();
     input_init();
     pty_init();

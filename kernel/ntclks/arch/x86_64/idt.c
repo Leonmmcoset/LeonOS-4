@@ -123,18 +123,32 @@ void idt_init(void)
     x86_64_lidt(&ptr);
 }
 
-void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t cs, uint64_t rflags)
+void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t cs,
+                        uint64_t rflags, uint64_t rsp, uint64_t ss)
 {
-    console_printf("[ntclks] exception vector=%llu error=0x%llx rip=0x%llx cs=0x%llx rflags=0x%llx\n",
+    uint64_t cr2 = x86_64_read_cr2();
+    const char *mode = (cs & 3u) == 3u ? "user" : "kernel";
+    console_printf("[ntclks] exception vector=%llu error=0x%llx rip=0x%llx cs=0x%llx rflags=0x%llx rsp=0x%llx ss=0x%llx\n",
                    (unsigned long long)vector,
                    (unsigned long long)error,
                    (unsigned long long)rip,
                    (unsigned long long)cs,
-                   (unsigned long long)rflags);
-    console_printf("[ntclks] exception cr2=0x%llx ticks=%llu\n",
-                   (unsigned long long)x86_64_read_cr2(),
+                   (unsigned long long)rflags,
+                   (unsigned long long)rsp,
+                   (unsigned long long)ss);
+    console_printf("[ntclks] exception mode=%s cr2=0x%llx ticks=%llu\n",
+                   mode,
+                   (unsigned long long)cr2,
                    (unsigned long long)time_ticks());
-    bugcheck_exception(vector, error, rip, cs, rflags, 0, 0, x86_64_read_cr2());
+    if (vector == 14) {
+        console_printf("[ntclks] page fault flags present=%u write=%u user=%u reserved=%u fetch=%u\n",
+                       (unsigned)(error & 1u),
+                       (unsigned)((error >> 1) & 1u),
+                       (unsigned)((error >> 2) & 1u),
+                       (unsigned)((error >> 3) & 1u),
+                       (unsigned)((error >> 4) & 1u));
+    }
+    bugcheck_exception(vector, error, rip, cs, rflags, rsp, ss, cr2);
 }
 
 struct task *int80_dispatch(struct trap_frame *frame)

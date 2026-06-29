@@ -11,8 +11,10 @@
 
 #define MAX_WINDOWS 32
 #define BUILTIN_WINDOWS 4
-#define MAX_FB_W 1280
-#define MAX_FB_H 800
+#define MAX_FB_W 1920
+#define MAX_FB_H 1080
+#define DESKTOP_MODE_COUNT 5
+#define DESKTOP_SCALE_COUNT 3
 #define TASKBAR_H LEONOS_UI_TASKBAR_H
 #define TITLEBAR_H LEONOS_UI_TITLEBAR_H
 #define MIN_W 180
@@ -28,6 +30,8 @@
 #define OOBE_WINDOW_TITLE "LeonOS Setup"
 #define OOBE_WINDOW_TEXT "First-run setup"
 #define OOBE_RESPAWN_MS 1000UL
+#define DISPLAY_CONFIG_PATH "0:/etc/display.conf"
+#define DISPLAY_CONFIRM_MS 10000UL
 #define START_MENU_W 246
 #define START_PROGRAMS_W 220
 #define START_MENU_MAX_H 340
@@ -37,8 +41,8 @@
 #define START_MENU_MAX_APPS LEONOS_FS_MAX_ENTRIES
 #define START_MENU_MAX_ITEMS 32
 #define APP_WINDOW_SLOTS (MAX_WINDOWS - BUILTIN_WINDOWS)
-#define APP_CLIENT_MAX_W 1280
-#define APP_CLIENT_MAX_H 800
+#define APP_CLIENT_MAX_W 1920
+#define APP_CLIENT_MAX_H 1080
 #define SNAP_MARGIN 24
 #define ALT_TAB_MAX_WINDOWS MAX_WINDOWS
 #define ALT_TAB_W 336
@@ -121,7 +125,22 @@ struct start_programs_layout {
     uint32_t visible_count;
 };
 
+struct desktop_display_mode {
+    uint32_t width;
+    uint32_t height;
+    const char *label;
+};
+
 extern struct leonos_fb_info fb;
+extern uint32_t desktop_scale;
+extern uint32_t desktop_logical_w;
+extern uint32_t desktop_logical_h;
+extern uint8_t desktop_mode_index;
+extern uint8_t desktop_scale_index;
+extern uint8_t desktop_pending_confirm;
+extern uint8_t desktop_previous_mode_index;
+extern uint8_t desktop_previous_scale_index;
+extern unsigned long desktop_confirm_deadline_ms;
 extern struct desktop_window windows[MAX_WINDOWS];
 extern uint8_t z_order[MAX_WINDOWS];
 extern int active_window;
@@ -177,9 +196,22 @@ extern uint32_t app_client_scratch[APP_CLIENT_MAX_W * APP_CLIENT_MAX_H];
 extern uint32_t screen[MAX_FB_W * MAX_FB_H];
 
 extern const char cursor_art[FALLBACK_CURSOR_H][FALLBACK_CURSOR_W + 1];
+extern const struct desktop_display_mode desktop_display_modes[DESKTOP_MODE_COUNT];
+extern const uint32_t desktop_scale_options[DESKTOP_SCALE_COUNT];
 
 uint32_t fb_w(void);
 uint32_t fb_h(void);
+uint32_t desktop_scale_for_framebuffer(uint32_t width, uint32_t height);
+uint32_t desktop_scale_fit_for_mode(uint32_t width, uint32_t height);
+int desktop_display_mode_supported(uint8_t mode_index, uint8_t scale_index);
+void desktop_apply_display_settings(uint8_t mode_index, uint8_t scale_index);
+void desktop_apply_display_settings_pending(uint8_t mode_index, uint8_t scale_index);
+void desktop_confirm_display_settings(void);
+void desktop_revert_display_settings(void);
+void desktop_update_display_confirmation(void);
+void desktop_load_display_config(void);
+int desktop_save_display_config(void);
+void desktop_reflow_after_display_change(void);
 void copy_text(char *dst, uint32_t dst_len, const char *src);
 int text_eq(const char *a, const char *b);
 uint16_t read_le16(const uint8_t *p);
@@ -232,9 +264,11 @@ int find_window_slot_by_window_id(uint32_t window_id);
 uint32_t window_body_width(const struct desktop_window *w);
 uint32_t window_body_height(const struct desktop_window *w);
 int window_is_fullscreen(const struct desktop_window *w);
+int active_window_is_fullscreen(void);
 int window_allows_resize(const struct desktop_window *w);
 int window_is_snap_candidate(const struct desktop_window *w);
 uint8_t snap_mode_for_pointer(uint32_t x, uint32_t y, const struct desktop_window *w);
+void window_client_origin(const struct desktop_window *w, int *x, int *y);
 void remove_window_slot(uint8_t slot);
 void request_close_window(uint8_t slot);
 void send_app_event_to_window(uint32_t window_id, uint32_t type,
@@ -251,6 +285,8 @@ int window_is_ui_demo(const struct desktop_window *w);
 void draw_ui_demo_label(uint32_t x, uint32_t y, const char *label, uint32_t bg);
 void draw_ui_demo_gallery(uint32_t body_x, uint32_t body_y,
                           uint32_t body_w, uint32_t body_h, uint32_t bg);
+void draw_settings_panel(uint32_t body_x, uint32_t body_y,
+                         uint32_t body_w, uint32_t body_h, uint32_t bg);
 void draw_window(uint8_t id);
 void draw_taskbar_button(uint8_t id, uint32_t x, uint32_t y, uint32_t w);
 void draw_snap_preview(void);
@@ -296,6 +332,7 @@ void desktop_shutdown(void);
 void handle_start_click(uint32_t x, uint32_t y);
 int hit_start_menu_area(uint32_t x, uint32_t y);
 int handle_taskbar_click(uint32_t x, uint32_t y);
+int handle_settings_click(uint8_t id, uint32_t x, uint32_t y);
 void update_snap_preview(uint32_t x, uint32_t y);
 void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons);
 void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);

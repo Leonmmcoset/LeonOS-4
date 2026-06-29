@@ -5,8 +5,6 @@
 #define PAGE_SIZE_2M 0x200000ULL
 #define PAGE_SIZE_FLAG 0x080ULL
 #define USER_PDPT_INDEX 0
-#define USER_PD_START 2
-#define USER_PD_COUNT 6
 #define LOW_PD_INDEX 0
 
 static uint64_t kernel_pml4[512] __attribute__((aligned(4096)));
@@ -110,7 +108,7 @@ bool address_space_create(struct address_space *as)
     }
     as->pdpt[USER_PDPT_INDEX] = low_pd_phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_USER;
 
-    for (uint32_t i = 0; i < USER_PD_COUNT; ++i) {
+    for (uint32_t i = 0; i < NTCLKS_USER_PD_COUNT; ++i) {
         uint64_t pt_phys = alloc_table();
         if (!pt_phys) {
             if (pt_phys) {
@@ -120,7 +118,7 @@ bool address_space_create(struct address_space *as)
             return false;
         }
         as->user_pt[i] = (uint64_t *)(uintptr_t)pt_phys;
-        as->pd[LOW_PD_INDEX][USER_PD_START + i] =
+        as->pd[LOW_PD_INDEX][NTCLKS_USER_PD_START + i] =
             pt_phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_USER;
     }
 
@@ -132,7 +130,7 @@ void address_space_destroy(struct address_space *as)
     if (!as) {
         return;
     }
-    for (uint32_t table = 0; table < USER_PD_COUNT; ++table) {
+    for (uint32_t table = 0; table < NTCLKS_USER_PD_COUNT; ++table) {
         if (as->user_pt[table]) {
             for (uint32_t i = 0; i < 512; ++i) {
                 uint64_t entry = as->user_pt[table][i];
@@ -170,7 +168,7 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
     uint64_t index = (page - NTCLKS_USER_BASE) / PAGE_SIZE;
     uint64_t table = index / 512;
     uint64_t slot = index % 512;
-    if (table >= USER_PD_COUNT || !as->user_pt[table]) {
+    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) {
         return false;
     }
     if (as->user_pt[table][slot] & NTCLKS_PAGE_PRESENT) {
@@ -192,7 +190,7 @@ uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t v
     uint64_t index = (page - NTCLKS_USER_BASE) / PAGE_SIZE;
     uint64_t table = index / 512;
     uint64_t slot = index % 512;
-    if (table >= USER_PD_COUNT || !as->user_pt[table]) {
+    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) {
         return 0;
     }
     uint64_t entry = as->user_pt[table][slot];
