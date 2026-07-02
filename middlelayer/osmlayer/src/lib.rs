@@ -5,6 +5,7 @@ mod fat32;
 mod gui;
 mod ipc;
 mod posix;
+mod unicode;
 mod vfs;
 
 use core::ffi::c_char;
@@ -108,11 +109,13 @@ pub struct LeonosMiddlelayerApi {
     init: extern "C" fn(*const BootInfo) -> OsmlayerBootSummary,
     syscall: extern "C" fn(*const SyscallFrame) -> i64,
     selftest: extern "C" fn() -> u32,
+    mount_policy: extern "C" fn(*const BootInfo, *mut vfs::LeonosMountPolicy) -> i32,
+    unicode_op: extern "C" fn(u32, *mut core::ffi::c_void) -> i32,
 }
 
 const ENOSYS: i64 = 38;
 const EINVAL: i64 = 22;
-const LEONOS_MIDDLELAYER_API_VERSION: u32 = 1;
+const LEONOS_MIDDLELAYER_API_VERSION: u32 = 3;
 
 static mut SUMMARY: OsmlayerBootSummary = OsmlayerBootSummary {
     abi_version: 1,
@@ -129,6 +132,8 @@ static API: LeonosMiddlelayerApi = LeonosMiddlelayerApi {
     init: osmlayer_rust_init,
     syscall: osmlayer_rust_syscall,
     selftest: osmlayer_rust_selftest,
+    mount_policy: osmlayer_rust_mount_policy,
+    unicode_op: osmlayer_rust_unicode_op,
 };
 
 macro_rules! klog {
@@ -161,17 +166,18 @@ pub extern "C" fn osmlayer_rust_init(boot: *const BootInfo) -> OsmlayerBootSumma
     let memory_kib = boot
         .map(|b| b.memory_lower_kib.saturating_add(b.memory_upper_kib))
         .unwrap_or(0);
+    vfs::init_root(boot);
+    let root_drive = vfs::root_drive();
 
     unsafe {
         SUMMARY = OsmlayerBootSummary {
             abi_version: 1,
             module_count,
             memory_kib,
-            root_drive: 0,
+            root_drive,
         };
     }
 
-    vfs::init_root();
     fat32::init_root_partition();
     ipc::init_registry();
     gui::init_protocol();
@@ -190,11 +196,30 @@ pub extern "C" fn osmlayer_rust_init(boot: *const BootInfo) -> OsmlayerBootSumma
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn osmlayer_rust_mount_policy(
+    boot: *const BootInfo,
+    out: *mut vfs::LeonosMountPolicy,
+) -> i32 {
+    let Some(out) = (unsafe { out.as_mut() }) else {
+        return -22;
+    };
+    let boot = unsafe { boot.as_ref() };
+    vfs::init_root(boot);
+    *out = vfs::current_policy();
+    0
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn osmlayer_rust_syscall(frame: *const SyscallFrame) -> i64 {
     let Some(frame) = (unsafe { frame.as_ref() }) else {
         return -EINVAL;
     };
     posix::dispatch(frame.number, &frame.args)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn osmlayer_rust_unicode_op(op: u32, arg: *mut core::ffi::c_void) -> i32 {
+    unicode::dispatch(op, arg)
 }
 
 #[unsafe(no_mangle)]

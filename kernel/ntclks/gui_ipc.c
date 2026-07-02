@@ -1,5 +1,6 @@
 #include <ntclks/gui_ipc.h>
 #include <ntclks/mm.h>
+#include <ntclks/osmlayer.h>
 #include <ntclks/usercopy.h>
 
 #define GUI_IPC_QUEUE_CAP 128
@@ -29,6 +30,67 @@ struct gui_window_slot {
 
 static struct gui_window_slot windows[GUI_IPC_MAX_WINDOWS];
 
+static int utf8_cont(uint8_t byte)
+{
+    return (byte & 0xc0u) == 0x80u;
+}
+
+static uint32_t user_utf8_sequence_len(const char *src)
+{
+    uint8_t b0;
+    uint8_t b1;
+    uint8_t b2;
+    uint8_t b3;
+    if (!user_range_ok((uint64_t)(uintptr_t)src, 1)) {
+        return 0;
+    }
+    b0 = (uint8_t)src[0];
+    if (b0 == 0) {
+        return 0;
+    }
+    if (b0 < 0x80u) {
+        return 1;
+    }
+    if (b0 < 0xc2u) {
+        return 0;
+    }
+    if (b0 < 0xe0u) {
+        if (!user_range_ok((uint64_t)(uintptr_t)(src + 1), 1)) {
+            return 0;
+        }
+        b1 = (uint8_t)src[1];
+        return utf8_cont(b1) ? 2u : 0u;
+    }
+    if (b0 < 0xf0u) {
+        if (!user_range_ok((uint64_t)(uintptr_t)(src + 1), 2)) {
+            return 0;
+        }
+        b1 = (uint8_t)src[1];
+        b2 = (uint8_t)src[2];
+        if (!utf8_cont(b1) || !utf8_cont(b2) ||
+            (b0 == 0xe0u && b1 < 0xa0u) ||
+            (b0 == 0xedu && b1 >= 0xa0u)) {
+            return 0;
+        }
+        return 3;
+    }
+    if (b0 < 0xf5u) {
+        if (!user_range_ok((uint64_t)(uintptr_t)(src + 1), 3)) {
+            return 0;
+        }
+        b1 = (uint8_t)src[1];
+        b2 = (uint8_t)src[2];
+        b3 = (uint8_t)src[3];
+        if (!utf8_cont(b1) || !utf8_cont(b2) || !utf8_cont(b3) ||
+            (b0 == 0xf0u && b1 < 0x90u) ||
+            (b0 == 0xf4u && b1 >= 0x90u)) {
+            return 0;
+        }
+        return 4;
+    }
+    return 0;
+}
+
 static void copy_user_string(char *dst, size_t dst_len, const char *src)
 {
     if (!dst || dst_len == 0) {
@@ -36,9 +98,15 @@ static void copy_user_string(char *dst, size_t dst_len, const char *src)
     }
     size_t i = 0;
     if (src) {
-        while (i + 1 < dst_len && user_range_ok((uint64_t)(uintptr_t)(src + i), 1) && src[i]) {
-            dst[i] = src[i];
-            ++i;
+        size_t src_pos = 0;
+        while (i + 1 < dst_len) {
+            uint32_t len = user_utf8_sequence_len(src + src_pos);
+            if (len == 0 || i + len >= dst_len) {
+                break;
+            }
+            for (uint32_t j = 0; j < len; ++j) {
+                dst[i++] = src[src_pos++];
+            }
         }
     }
     dst[i] = 0;
@@ -51,7 +119,8 @@ static void copy_kernel_string(char *dst, size_t dst_len, const char *src)
         return;
     }
     if (src) {
-        while (i + 1 < dst_len && src[i]) {
+        size_t safe = osmlayer_unicode_safe_truncate_utf8(src, (uint32_t)dst_len);
+        while (i < safe) {
             dst[i] = src[i];
             ++i;
         }

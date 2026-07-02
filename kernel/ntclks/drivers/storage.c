@@ -1,6 +1,7 @@
 #include <ntclks/console.h>
 #include <ntclks/mm.h>
 #include <ntclks/multiboot2.h>
+#include <ntclks/osmlayer.h>
 #include <ntclks/storage.h>
 
 #include "../arch/x86_64/port.h"
@@ -34,6 +35,7 @@
 
 #define AHCI_CMDH_PRDTL 1u
 #define AHCI_MAX_SECTORS 8u
+#define AHCI_WAIT_SPINS 40000000u
 
 #define SECTOR_SIZE 512u
 #define GPT_ENTRY_COUNT 128u
@@ -46,9 +48,10 @@
 #define FAT32_DIR_ENTRY_BYTES 32u
 
 #define STORAGE_SCRATCH_SECTORS 8u
-#define FAT32_MAX_FILE_CLUSTERS 256u
+#define FAT32_MAX_FILE_CLUSTERS 16384u
 #define STORAGE_MAX_DRIVES 2u
 #define STORAGE_MAX_INSTALL_DISKS LEONOS_INSTALL_MAX_DISKS
+#define INSTALL_ESP_FIRST_LBA 2048ULL
 
 enum storage_volume_kind {
     STORAGE_VOLUME_NONE = 0,
@@ -251,6 +254,7 @@ struct storage_volume {
     uint32_t total_sectors;
     uint32_t data_cluster_count;
     uint32_t root_cluster;
+    uint32_t next_free_cluster;
 };
 
 struct install_disk_state {
@@ -272,12 +276,15 @@ static struct storage_volume *g_active_volume = &g_volumes[0];
 
 static struct install_disk_state g_install_disks[STORAGE_MAX_INSTALL_DISKS];
 static uint32_t g_install_disk_count;
+static uint8_t g_devfs_enabled = 1;
 
 static uint8_t ahci_received_fis[256] __attribute__((aligned(256)));
 static uint8_t ahci_cmd_table_buf[256] __attribute__((aligned(128)));
 static struct ahci_cmd_header ahci_cmd_headers[32] __attribute__((aligned(1024)));
 static uint8_t storage_scratch[STORAGE_SCRATCH_SECTORS * SECTOR_SIZE] __attribute__((aligned(4096)));
 static uint8_t storage_cluster_buf[64 * SECTOR_SIZE] __attribute__((aligned(4096)));
+static uint32_t storage_old_chain[FAT32_MAX_FILE_CLUSTERS];
+static uint32_t storage_new_chain[FAT32_MAX_FILE_CLUSTERS];
 
 static int fat32_mount(void);
 
@@ -406,13 +413,25 @@ static int storage_select_drive(uint32_t drive)
     return 0;
 }
 
-static int storage_select_drive_for_path(const char *path)
+static int storage_select_node_drive(const struct storage_node *node,
+                                     struct storage_volume **old_volume)
 {
-    int drive = storage_drive_id_from_path(path);
-    if (drive < 0) {
-        return storage_select_drive(0);
+    if (!node || node->drive >= STORAGE_MAX_DRIVES ||
+        !g_volumes[node->drive].ready) {
+        return -2;
     }
-    return storage_select_drive((uint32_t)drive);
+    if (old_volume) {
+        *old_volume = g_active_volume;
+    }
+    g_active_volume = &g_volumes[node->drive];
+    return 0;
+}
+
+static void storage_restore_volume(struct storage_volume *old_volume)
+{
+    if (old_volume) {
+        g_active_volume = old_volume;
+    }
 }
 
 static int storage_parent_path(const char *path, char *parent, uint32_t parent_cap,
@@ -488,24 +507,42 @@ static uint32_t fat_offset_for_cluster(uint32_t cluster)
     return (cluster * 4u) % g_storage.bytes_per_sector;
 }
 
+static void ahci_cpu_relax(void)
+{
+    __asm__ volatile("pause");
+}
+
 static int ahci_wait_idle(struct ahci_hba_port *port)
 {
-    for (uint32_t i = 0; i < 1000000u; ++i) {
+    for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
         if ((port->tfd & (AHCI_PORT_TFD_BSY | AHCI_PORT_TFD_DRQ)) == 0) {
             return 0;
         }
+        ahci_cpu_relax();
     }
     return -1;
+}
+
+static int ahci_wait_cmd_slot(struct ahci_hba_port *port)
+{
+    for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
+        if ((port->ci | port->sact) == 0) {
+            return 0;
+        }
+        ahci_cpu_relax();
+    }
+    return -5;
 }
 
 static void ahci_stop_port(struct ahci_hba_port *port)
 {
     port->cmd &= ~AHCI_PORT_CMD_ST;
     port->cmd &= ~AHCI_PORT_CMD_FRE;
-    for (uint32_t i = 0; i < 1000000u; ++i) {
+    for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
         if ((port->cmd & (AHCI_PORT_CMD_FR | AHCI_PORT_CMD_CR)) == 0) {
             break;
         }
+        ahci_cpu_relax();
     }
 }
 
@@ -576,17 +613,19 @@ static int ahci_read_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sect
     fis->countl = (uint8_t)(sector_count & 0xffu);
     fis->counth = (uint8_t)((sector_count >> 8) & 0xffu);
 
-    while (port->ci != 0 || port->sact != 0) {
+    if (ahci_wait_cmd_slot(port) < 0) {
+        return -5;
     }
     port->ci = 1u;
 
-    for (uint32_t i = 0; i < 4000000u; ++i) {
+    for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
         if ((port->ci & 1u) == 0) {
             if (port->is & AHCI_PORT_IS_TFES) {
                 return -5;
             }
             return 0;
         }
+        ahci_cpu_relax();
     }
     return -5;
 }
@@ -631,17 +670,19 @@ static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sec
     fis->countl = (uint8_t)(sector_count & 0xffu);
     fis->counth = (uint8_t)((sector_count >> 8) & 0xffu);
 
-    while (port->ci != 0 || port->sact != 0) {
+    if (ahci_wait_cmd_slot(port) < 0) {
+        return -5;
     }
     port->ci = 1u;
 
-    for (uint32_t i = 0; i < 4000000u; ++i) {
+    for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
         if ((port->ci & 1u) == 0) {
             if (port->is & AHCI_PORT_IS_TFES) {
                 return -5;
             }
             return 0;
         }
+        ahci_cpu_relax();
     }
     return -5;
 }
@@ -738,19 +779,6 @@ static int gpt_find_esp(void)
     return -2;
 }
 
-static int fat32_mount_volume(struct storage_volume *volume)
-{
-    struct storage_volume *old = g_active_volume;
-    int ret;
-    if (!volume) {
-        return -22;
-    }
-    g_active_volume = volume;
-    ret = fat32_mount();
-    g_active_volume = old;
-    return ret;
-}
-
 static int fat32_mount(void)
 {
     struct fat32_bpb *bpb = (struct fat32_bpb *)(void *)storage_scratch;
@@ -771,6 +799,7 @@ static int fat32_mount(void)
     g_storage.fat_sector_count = bpb->fat_size32;
     g_storage.data_start_sector = bpb->reserved_sector_count + (uint32_t)bpb->fat_count * bpb->fat_size32;
     g_storage.root_cluster = bpb->root_cluster;
+    g_storage.next_free_cluster = bpb->root_cluster + 1u;
     total_sectors = bpb->total_sectors32 ? bpb->total_sectors32 : bpb->total_sectors16;
     g_storage.total_sectors = total_sectors;
     if (total_sectors <= g_storage.data_start_sector) {
@@ -835,7 +864,7 @@ static int fat32_write_cluster(uint32_t cluster, const void *buffer)
 
 static int storage_install_identify(struct install_disk_state *disk, uint64_t *out_sectors)
 {
-    uint32_t *id = (uint32_t *)storage_scratch;
+    uint16_t *id = (uint16_t *)storage_scratch;
     if (!disk || !disk->hba_port || !out_sectors) {
         return -22;
     }
@@ -852,26 +881,34 @@ static int storage_install_identify(struct install_disk_state *disk, uint64_t *o
     {
         struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)(void *)ahci_cmd_table_buf;
         struct fis_reg_h2d *fis = (struct fis_reg_h2d *)(void *)tbl->cfis;
+        storage_memzero(tbl, sizeof(ahci_cmd_table_buf));
         tbl->prdt[0].dba = (uint32_t)(uintptr_t)storage_scratch;
         tbl->prdt[0].dbau = 0;
         tbl->prdt[0].dbc = SECTOR_SIZE - 1u;
-        storage_memzero(tbl, sizeof(ahci_cmd_table_buf));
         fis->fis_type = FIS_TYPE_REG_H2D;
         fis->c = 1;
         fis->command = ATA_CMD_IDENTIFY_DEVICE;
         fis->device = 0;
         fis->countl = 1;
-        while (disk->hba_port->ci != 0 || disk->hba_port->sact != 0) {
+        if (ahci_wait_cmd_slot(disk->hba_port) < 0) {
+            return -5;
         }
         disk->hba_port->ci = 1u;
-        for (uint32_t i = 0; i < 4000000u; ++i) {
+        for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
             if ((disk->hba_port->ci & 1u) == 0) {
                 if (disk->hba_port->is & AHCI_PORT_IS_TFES) {
                     return -5;
                 }
-                *out_sectors = ((uint64_t)id[61] << 16) | id[60];
+                *out_sectors = ((uint64_t)id[103] << 48) |
+                               ((uint64_t)id[102] << 32) |
+                               ((uint64_t)id[101] << 16) |
+                               id[100];
+                if (*out_sectors == 0) {
+                    *out_sectors = ((uint64_t)id[61] << 16) | id[60];
+                }
                 return 0;
             }
+            ahci_cpu_relax();
         }
     }
     return -5;
@@ -942,18 +979,28 @@ static int fat32_short_name_eq(const uint8_t lhs[11], const uint8_t rhs[11])
 static int fat32_find_free_cluster(uint32_t *out_cluster)
 {
     uint32_t max_cluster;
+    uint32_t start;
     if (!out_cluster) {
         return -22;
     }
     max_cluster = g_storage.data_cluster_count + 1u;
-    for (uint32_t cluster = 2; cluster <= max_cluster; ++cluster) {
-        uint32_t value = 0;
-        if (fat32_read_fat_entry(cluster, &value) < 0) {
-            return -5;
-        }
-        if (value == 0) {
-            *out_cluster = cluster;
-            return 0;
+    start = g_storage.next_free_cluster;
+    if (start < 2 || start > max_cluster) {
+        start = 2;
+    }
+    for (uint32_t pass = 0; pass < 2; ++pass) {
+        uint32_t begin = pass == 0 ? start : 2;
+        uint32_t end = pass == 0 ? max_cluster : (start > 2 ? start - 1u : 1u);
+        for (uint32_t cluster = begin; cluster <= end; ++cluster) {
+            uint32_t value = 0;
+            if (fat32_read_fat_entry(cluster, &value) < 0) {
+                return -5;
+            }
+            if (value == 0) {
+                *out_cluster = cluster;
+                g_storage.next_free_cluster = cluster < max_cluster ? cluster + 1u : 2u;
+                return 0;
+            }
         }
     }
     return -28;
@@ -991,6 +1038,10 @@ static int fat32_collect_chain(uint32_t first_cluster, uint32_t chain[FAT32_MAX_
 static int fat32_free_chain(uint32_t first_cluster)
 {
     uint32_t cluster = first_cluster;
+    if (first_cluster >= 2 &&
+        (g_storage.next_free_cluster < 2 || first_cluster < g_storage.next_free_cluster)) {
+        g_storage.next_free_cluster = first_cluster;
+    }
     while (cluster >= 2 && cluster < FAT32_EOC) {
         uint32_t next = 0;
         if (fat32_read_fat_entry(cluster, &next) < 0) {
@@ -1037,7 +1088,8 @@ static int fat32_name_match_short(const struct fat32_dirent *de, const char *nam
     return storage_text_eq_ci(short_name, name);
 }
 
-static void fat32_lfn_extract(const struct fat32_lfn *lfn, char *dst, uint32_t *len, uint32_t cap)
+static void fat32_lfn_extract_utf16(const struct fat32_lfn *lfn, uint16_t *dst,
+                                    uint32_t *len, uint32_t cap)
 {
     const uint16_t *parts[3] = {lfn->name1, lfn->name2, lfn->name3};
     const uint32_t counts[3] = {5, 6, 2};
@@ -1047,35 +1099,50 @@ static void fat32_lfn_extract(const struct fat32_lfn *lfn, char *dst, uint32_t *
             if (ch == 0x0000 || ch == 0xffff) {
                 return;
             }
-            if (*len + 1 < cap) {
-                char out = (ch >= 32 && ch < 127) ? (char)ch : '?';
-                dst[(*len)++] = out;
-                dst[*len] = 0;
+            if (*len < cap) {
+                dst[(*len)++] = ch;
             }
         }
     }
 }
 
-static void fat32_build_lfn_name(const char lfn_parts[20][14], uint32_t lfn_count,
+static void fat32_build_lfn_name(const uint16_t lfn_parts[20][13], uint32_t lfn_count,
                                  char *dst, uint32_t cap)
 {
-    uint32_t pos = 0;
+    uint16_t utf16[260];
+    uint32_t len = 0;
+    struct leonos_unicode_utf16_to_utf8 cmd;
     if (!dst || cap == 0) {
         return;
     }
     dst[0] = 0;
     for (uint32_t i = 0; i < lfn_count; ++i) {
-        for (uint32_t j = 0; lfn_parts[i][j] && pos + 1 < cap; ++j) {
-            dst[pos++] = lfn_parts[i][j];
+        for (uint32_t j = 0; j < 13 && len < sizeof(utf16) / sizeof(utf16[0]); ++j) {
+            uint16_t ch = lfn_parts[i][j];
+            if (ch == 0) {
+                break;
+            }
+            utf16[len++] = ch;
         }
     }
-    dst[pos] = 0;
+    cmd.utf16 = utf16;
+    cmd.utf16_len = len;
+    cmd.utf8 = dst;
+    cmd.utf8_capacity = cap;
+    cmd.utf8_len = 0;
+    if (osmlayer_unicode_utf16le_to_utf8(&cmd) < 0) {
+        dst[0] = 0;
+        return;
+    }
+    if (cmd.utf8_len >= cap) {
+        dst[cap - 1] = 0;
+    }
 }
 
 static int fat32_is_lfn_char_valid(char ch)
 {
     unsigned char uch = (unsigned char)ch;
-    if (uch < 32 || uch >= 127) {
+    if (uch < 32) {
         return 0;
     }
     switch (ch) {
@@ -1097,6 +1164,8 @@ static int fat32_is_lfn_char_valid(char ch)
 static int fat32_validate_name(const char *name)
 {
     uint32_t len = (uint32_t)storage_strlen(name);
+    uint16_t utf16[260];
+    struct leonos_unicode_utf8_to_utf16 cmd;
     if (!name || !name[0] || len >= LEONOS_FS_NAME_LEN) {
         return -22;
     }
@@ -1110,6 +1179,15 @@ static int fat32_validate_name(const char *name)
         if (!fat32_is_lfn_char_valid(name[i])) {
             return -22;
         }
+    }
+    cmd.utf8 = name;
+    cmd.utf8_len = len;
+    cmd.utf16 = utf16;
+    cmd.utf16_capacity = sizeof(utf16) / sizeof(utf16[0]);
+    cmd.utf16_len = 0;
+    if (osmlayer_unicode_utf8_to_utf16le(&cmd) < 0 ||
+        cmd.utf16_len == 0 || cmd.utf16_len > 255u) {
+        return -22;
     }
     return 0;
 }
@@ -1253,13 +1331,30 @@ static uint8_t fat32_short_name_checksum(const uint8_t short_name[11])
     return sum;
 }
 
+static uint32_t fat32_utf16_name(const char *name, uint16_t *utf16, uint32_t cap)
+{
+    struct leonos_unicode_utf8_to_utf16 cmd = {
+        .utf8 = name,
+        .utf8_len = (uint32_t)storage_strlen(name),
+        .utf16 = utf16,
+        .utf16_capacity = cap,
+        .utf16_len = 0,
+    };
+    if (osmlayer_unicode_utf8_to_utf16le(&cmd) < 0) {
+        return 0;
+    }
+    return cmd.utf16_len;
+}
+
 static uint32_t fat32_lfn_entry_count(const char *name)
 {
-    return ((uint32_t)storage_strlen(name) + 12u) / 13u;
+    uint16_t utf16[260];
+    uint32_t len = fat32_utf16_name(name, utf16, sizeof(utf16) / sizeof(utf16[0]));
+    return (len + 12u) / 13u;
 }
 
 static void fat32_fill_lfn_entry(struct fat32_lfn *lfn,
-                                 const char *name, uint32_t name_len,
+                                 const uint16_t *name, uint32_t name_len,
                                  uint32_t part_index, uint32_t part_count,
                                  uint8_t checksum)
 {
@@ -1282,7 +1377,7 @@ static void fat32_fill_lfn_entry(struct fat32_lfn *lfn,
         for (uint32_t i = 0; i < slot_counts[part]; ++i) {
             uint16_t value = 0xffffu;
             if (cursor < name_len) {
-                value = (uint16_t)(uint8_t)name[cursor++];
+                value = name[cursor++];
             } else if (!terminated) {
                 value = 0x0000u;
                 terminated = 1;
@@ -1295,7 +1390,7 @@ static void fat32_fill_lfn_entry(struct fat32_lfn *lfn,
 static int fat32_find_in_dir(uint32_t dir_cluster, const char *name, struct storage_node *out)
 {
     uint32_t cluster = dir_cluster;
-    char lfn_parts[20][14];
+    uint16_t lfn_parts[20][13];
     uint32_t lfn_count = 0;
     for (;;) {
         if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
@@ -1319,7 +1414,7 @@ static int fat32_find_in_dir(uint32_t dir_cluster, const char *name, struct stor
                 }
                 storage_memzero(lfn_parts[order - 1], sizeof(lfn_parts[0]));
                 uint32_t len = 0;
-                fat32_lfn_extract(lfn, lfn_parts[order - 1], &len, sizeof(lfn_parts[0]));
+                fat32_lfn_extract_utf16(lfn, lfn_parts[order - 1], &len, 13);
                 if (order > lfn_count) {
                     lfn_count = order;
                 }
@@ -1346,7 +1441,6 @@ static int fat32_find_in_dir(uint32_t dir_cluster, const char *name, struct stor
                 out->size = de->size;
                 out->first_cluster = ((uint32_t)de->first_cluster_hi << 16) | de->first_cluster_lo;
                 out->flags = 0;
-                out->reserved = 0;
             }
             return 0;
         }
@@ -1364,7 +1458,7 @@ static int fat32_find_in_dir(uint32_t dir_cluster, const char *name, struct stor
 static int fat32_find_dirent_ref_in_dir(uint32_t dir_cluster, const char *name, struct fat32_dir_ref *out)
 {
     uint32_t cluster = dir_cluster;
-    char lfn_parts[20][14];
+    uint16_t lfn_parts[20][13];
     uint32_t lfn_count = 0;
     for (;;) {
         if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
@@ -1389,7 +1483,7 @@ static int fat32_find_dirent_ref_in_dir(uint32_t dir_cluster, const char *name, 
                 storage_memzero(lfn_parts[order - 1], sizeof(lfn_parts[0]));
                 {
                     uint32_t len = 0;
-                    fat32_lfn_extract(lfn, lfn_parts[order - 1], &len, sizeof(lfn_parts[0]));
+                    fat32_lfn_extract_utf16(lfn, lfn_parts[order - 1], &len, 13);
                 }
                 if (order > lfn_count) {
                     lfn_count = order;
@@ -1584,13 +1678,15 @@ static int fat32_create_dirent(uint32_t parent_cluster, const char *name, uint8_
         return -5;
     }
     if (need_lfn) {
-        uint32_t name_len = (uint32_t)storage_strlen(name);
+        uint16_t utf16_name[260];
+        uint32_t name_len = fat32_utf16_name(name, utf16_name,
+                                             sizeof(utf16_name) / sizeof(utf16_name[0]));
         uint8_t checksum = fat32_short_name_checksum(short_name);
         for (uint32_t i = 0; i < lfn_count; ++i) {
             struct fat32_lfn *lfn = (struct fat32_lfn *)(void *)(storage_cluster_buf +
                 span.entry_offset + i * sizeof(struct fat32_dirent));
             uint32_t part = lfn_count - i - 1u;
-            fat32_fill_lfn_entry(lfn, name, name_len, part, lfn_count, checksum);
+            fat32_fill_lfn_entry(lfn, utf16_name, name_len, part, lfn_count, checksum);
         }
     }
     *(struct fat32_dirent *)(void *)(storage_cluster_buf +
@@ -1605,7 +1701,7 @@ static int fat32_delete_dirent(uint32_t dir_cluster, const char *name,
                                struct fat32_dirent *deleted)
 {
     uint32_t cluster = dir_cluster;
-    char lfn_parts[20][14];
+    uint16_t lfn_parts[20][13];
     uint32_t lfn_count = 0;
     uint32_t lfn_start = 0xffffffffu;
     for (;;) {
@@ -1635,7 +1731,7 @@ static int fat32_delete_dirent(uint32_t dir_cluster, const char *name,
                 storage_memzero(lfn_parts[order - 1], sizeof(lfn_parts[0]));
                 {
                     uint32_t len = 0;
-                    fat32_lfn_extract(lfn, lfn_parts[order - 1], &len, sizeof(lfn_parts[0]));
+                    fat32_lfn_extract_utf16(lfn, lfn_parts[order - 1], &len, 13);
                 }
                 if (order > lfn_count) {
                     lfn_count = order;
@@ -1727,7 +1823,7 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
 {
     uint32_t cluster = dir_cluster;
     uint64_t emitted = 0;
-    char lfn_parts[20][14];
+    uint16_t lfn_parts[20][13];
     uint32_t lfn_count = 0;
     for (;;) {
         if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
@@ -1748,7 +1844,7 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
                 if (order && order <= 20) {
                     storage_memzero(lfn_parts[order - 1], sizeof(lfn_parts[0]));
                     uint32_t len = 0;
-                    fat32_lfn_extract(lfn, lfn_parts[order - 1], &len, sizeof(lfn_parts[0]));
+                    fat32_lfn_extract_utf16(lfn, lfn_parts[order - 1], &len, 13);
                     if (order > lfn_count) {
                         lfn_count = order;
                     }
@@ -1817,6 +1913,7 @@ void storage_init(void)
     storage_memzero(g_volumes, sizeof(g_volumes));
     storage_memzero(g_install_disks, sizeof(g_install_disks));
     g_install_disk_count = 0;
+    g_devfs_enabled = 1;
     g_active_volume = &g_volumes[0];
 
     for (uint16_t bus = 0; bus < 256; ++bus) {
@@ -1903,27 +2000,102 @@ void storage_init(void)
     console_printf("[ntclks] storage init failed: no AHCI FAT32 ESP found\n");
 }
 
+void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
+{
+    uint32_t count = 0;
+    int root_ramdisk_status = 0;
+    if (!policy || policy->version != LEONOS_MOUNT_POLICY_VERSION) {
+        console_printf("[ntclks] storage using legacy mount policy fallback\n");
+        storage_init();
+        return;
+    }
+
+    console_printf("[ntclks] storage applying middlelayer mount policy entries=%u root=%u:/\n",
+                   policy->count,
+                   policy->root_drive);
+
+    storage_init();
+    g_devfs_enabled = 0;
+    count = policy->count;
+    if (count > LEONOS_MOUNT_MAX_ENTRIES) {
+        count = LEONOS_MOUNT_MAX_ENTRIES;
+    }
+
+    for (uint32_t i = 0; i < count; ++i) {
+        const struct leonos_mount_entry *entry = &policy->entries[i];
+        switch (entry->kind) {
+        case LEONOS_MOUNT_KIND_FAT32_BOOT:
+            console_printf("[ntclks] mount policy %s kind=ahci-esp flags=0x%x\n",
+                           entry->path,
+                           entry->flags);
+            break;
+        case LEONOS_MOUNT_KIND_FAT32_RAMDISK:
+            if (entry->drive != 0 || !entry->module_start || !entry->module_len) {
+                root_ramdisk_status = -2;
+            } else {
+                root_ramdisk_status =
+                    storage_mount_ramdisk_root((const void *)(uintptr_t)entry->module_start,
+                                               entry->module_len);
+            }
+            console_printf("[ntclks] mount policy %s kind=ramdisk source=%s ret=%d\n",
+                           entry->path,
+                           entry->source,
+                           root_ramdisk_status);
+            if (root_ramdisk_status < 0) {
+                storage_memzero(g_volumes, sizeof(g_volumes));
+                g_active_volume = &g_volumes[0];
+            }
+            break;
+        case LEONOS_MOUNT_KIND_DEVFS:
+            if (entry->drive == 0) {
+                g_devfs_enabled = 1;
+            }
+            console_printf("[ntclks] mount policy %s kind=devfs enabled=%u\n",
+                           entry->path,
+                           g_devfs_enabled);
+            break;
+        case LEONOS_MOUNT_KIND_TARGET_ESP:
+            console_printf("[ntclks] mount policy %s kind=installer-target flags=0x%x\n",
+                           entry->path,
+                           entry->flags);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
 int storage_mount_ramdisk_root(const void *image, uint64_t len)
 {
     struct storage_volume *root = &g_volumes[0];
+    uint64_t copy_phys;
+    uint32_t copy_pages;
     storage_memzero(root, sizeof(*root));
     g_active_volume = root;
     if (!image || len < SECTOR_SIZE || (len % SECTOR_SIZE) != 0) {
         return -22;
     }
+    copy_pages = (uint32_t)((len + 4095ULL) / 4096ULL);
+    copy_phys = mm_alloc_pages(copy_pages);
+    if (!copy_phys) {
+        return -12;
+    }
+    storage_memcpy((void *)(uintptr_t)copy_phys, image, (size_t)len);
     root->drive = 0;
     root->kind = STORAGE_VOLUME_RAM;
-    root->ram_base = (uint8_t *)(uintptr_t)image;
+    root->ram_base = (uint8_t *)(uintptr_t)copy_phys;
     root->ram_bytes = len;
     root->esp_start_lba = 0;
     root->esp_sector_count = len / SECTOR_SIZE;
     if (fat32_mount() < 0) {
         storage_memzero(root, sizeof(*root));
+        mm_free_pages(copy_phys, copy_pages);
         return -2;
     }
     root->ready = true;
-    console_printf("[ntclks] storage installer root ready ramdisk=%p bytes=%llu fat32_root=%u\n",
+    console_printf("[ntclks] storage installer root ready ramdisk=%p copy=%p bytes=%llu fat32_root=%u\n",
                    image,
+                   (void *)(uintptr_t)copy_phys,
                    (unsigned long long)len,
                    root->root_cluster);
     return 0;
@@ -1932,8 +2104,6 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
 void storage_init_installer_root(const struct boot_info *boot)
 {
     storage_memzero(g_volumes, sizeof(g_volumes));
-    storage_memzero(g_install_disks, sizeof(g_install_disks));
-    g_install_disk_count = 0;
     g_active_volume = &g_volumes[0];
     if (boot) {
         for (uint32_t i = 0; i < boot->module_count; ++i) {
@@ -1959,6 +2129,7 @@ int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t
     char parts[16][LEONOS_FS_NAME_LEN];
     uint32_t part_count = 0;
     char drive = '0';
+    uint8_t use_cwd = 1;
     if (!input || !out || cap < 4) {
         return -22;
     }
@@ -1966,12 +2137,14 @@ int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t
         input[1] == ':' && input[2] == '/') {
         drive = input[0];
         cwd = input;
+        use_cwd = 0;
     } else if (input[0] == '/') {
         if (cwd && cwd[0] >= '0' && cwd[0] < (char)('0' + STORAGE_MAX_DRIVES) &&
             cwd[1] == ':' && cwd[2] == '/') {
             drive = cwd[0];
         }
         cwd = drive == '1' ? "1:/" : "0:/";
+        use_cwd = 0;
     } else if (!cwd || cwd[0] < '0' || cwd[0] >= (char)('0' + STORAGE_MAX_DRIVES) ||
                cwd[1] != ':' || cwd[2] != '/') {
         cwd = "0:/";
@@ -1980,7 +2153,7 @@ int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t
     }
 
     const char *sources[2] = {
-        cwd + 3,
+        use_cwd ? cwd + 3 : "",
         (input[0] >= '0' && input[0] < (char)('0' + STORAGE_MAX_DRIVES) &&
          input[1] == ':' && input[2] == '/') ? input + 3 : (input[0] == '/' ? input + 1 : input)
     };
@@ -2067,7 +2240,7 @@ int storage_lookup_path(const char *path, struct storage_node *out)
         }
         return 0;
     }
-    if (storage_text_eq_ci(resolved, "0:/dev")) {
+    if (g_devfs_enabled && storage_text_eq_ci(resolved, "0:/dev")) {
         if (out) {
             out->type = LEONOS_FS_TYPE_DIR;
             out->flags = STORAGE_NODE_FLAG_DEV_DIR;
@@ -2077,7 +2250,7 @@ int storage_lookup_path(const char *path, struct storage_node *out)
         }
         return 0;
     }
-    if (storage_text_eq_ci(resolved, "0:/dev/fb0")) {
+    if (g_devfs_enabled && storage_text_eq_ci(resolved, "0:/dev/fb0")) {
         if (out) {
             out->type = LEONOS_FS_TYPE_DEVICE;
             out->flags = STORAGE_NODE_FLAG_DEV_FB0;
@@ -2139,6 +2312,8 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
 {
     uint8_t *dst = (uint8_t *)buf;
     uint32_t done = 0;
+    struct storage_volume *old_volume = 0;
+    int ret;
     if (out_read) {
         *out_read = 0;
     }
@@ -2154,6 +2329,10 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     if (offset >= node->size || len == 0) {
         return 0;
     }
+    ret = storage_select_node_drive(node, &old_volume);
+    if (ret < 0) {
+        return ret;
+    }
     if (len > node->size - offset) {
         len = (uint32_t)(node->size - offset);
     }
@@ -2164,9 +2343,11 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     while (skip_clusters--) {
         uint32_t next = 0;
         if (fat32_read_fat_entry(cluster, &next) < 0) {
+            storage_restore_volume(old_volume);
             return -5;
         }
         if (next >= FAT32_EOC) {
+            storage_restore_volume(old_volume);
             return -5;
         }
         cluster = next;
@@ -2174,6 +2355,7 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
 
     while (done < len) {
         if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
+            storage_restore_volume(old_volume);
             return -5;
         }
         uint32_t take = g_storage.cluster_bytes - cluster_off;
@@ -2188,6 +2370,7 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
         }
         uint32_t next = 0;
         if (fat32_read_fat_entry(cluster, &next) < 0) {
+            storage_restore_volume(old_volume);
             return -5;
         }
         if (next >= FAT32_EOC) {
@@ -2198,12 +2381,15 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     if (out_read) {
         *out_read = done;
     }
+    storage_restore_volume(old_volume);
     return 0;
 }
 
 int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
                          struct leonos_dir_entry *entry)
 {
+    struct storage_volume *old_volume = 0;
+    int ret;
     if (!node || !cursor || !entry) {
         return -22;
     }
@@ -2219,17 +2405,20 @@ int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
         }
         return 0;
     }
-    {
-        int ret = fat32_iter_dir_entry(node->first_cluster, *cursor, entry);
-        if (ret == 0) {
-            ++(*cursor);
-            return 1;
-        }
-        if (ret == -2) {
-            return 0;
-        }
+    ret = storage_select_node_drive(node, &old_volume);
+    if (ret < 0) {
         return ret;
     }
+    ret = fat32_iter_dir_entry(node->first_cluster, *cursor, entry);
+    storage_restore_volume(old_volume);
+    if (ret == 0) {
+        ++(*cursor);
+        return 1;
+    }
+    if (ret == -2) {
+        return 0;
+    }
+    return ret;
 }
 
 int storage_read_file(const char *path, const void **out_data, size_t *out_len)
@@ -2271,6 +2460,13 @@ int storage_write_node(const char *path, uint64_t offset,
     struct storage_node node;
     uint64_t end64;
     uint32_t total_len;
+    uint32_t final_len;
+    uint32_t old_count = 0;
+    uint32_t clusters_needed;
+    uint32_t first_cluster;
+    const uint8_t *src = (const uint8_t *)buf;
+    uint64_t pos;
+    uint32_t remaining;
     uint32_t read_len = 0;
     uint64_t phys = 0;
     uint32_t pages = 0;
@@ -2303,6 +2499,94 @@ int storage_write_node(const char *path, uint64_t offset,
         }
         return 0;
     }
+    if (len == 0) {
+        return 0;
+    }
+    if (offset <= node.size) {
+        char parent[LEONOS_FS_PATH_LEN];
+        char name[LEONOS_FS_NAME_LEN];
+        struct storage_node parent_node;
+        struct fat32_dir_ref ref;
+
+        final_len = total_len > node.size ? total_len : (uint32_t)node.size;
+        clusters_needed = final_len ?
+            (final_len + g_storage.cluster_bytes - 1u) / g_storage.cluster_bytes : 0;
+        if (clusters_needed > FAT32_MAX_FILE_CLUSTERS) {
+            return -28;
+        }
+        if (node.first_cluster >= 2) {
+            ret = fat32_collect_chain(node.first_cluster, storage_old_chain, &old_count);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+        for (uint32_t i = old_count; i < clusters_needed; ++i) {
+            ret = fat32_find_free_cluster(&storage_old_chain[i]);
+            if (ret < 0) {
+                return ret;
+            }
+            if (fat32_write_fat_entry(storage_old_chain[i], FAT32_EOC) < 0) {
+                return -5;
+            }
+            storage_memzero(storage_cluster_buf, g_storage.cluster_bytes);
+            if (fat32_write_cluster(storage_old_chain[i], storage_cluster_buf) < 0) {
+                return -5;
+            }
+        }
+        for (uint32_t i = 0; i < clusters_needed; ++i) {
+            uint32_t next = (i + 1u < clusters_needed) ? storage_old_chain[i + 1u] : FAT32_EOC;
+            if (fat32_write_fat_entry(storage_old_chain[i], next) < 0) {
+                return -5;
+            }
+        }
+
+        pos = offset;
+        remaining = len;
+        while (remaining) {
+            uint32_t cluster_index = (uint32_t)(pos / g_storage.cluster_bytes);
+            uint32_t cluster_off = (uint32_t)(pos % g_storage.cluster_bytes);
+            uint32_t take = min_u32(g_storage.cluster_bytes - cluster_off, remaining);
+            if (cluster_index >= clusters_needed) {
+                return -5;
+            }
+            if (cluster_off != 0 || take != g_storage.cluster_bytes) {
+                if (fat32_read_cluster(storage_old_chain[cluster_index], storage_cluster_buf) < 0) {
+                    return -5;
+                }
+            }
+            storage_memcpy(storage_cluster_buf + cluster_off, src, take);
+            if (fat32_write_cluster(storage_old_chain[cluster_index], storage_cluster_buf) < 0) {
+                return -5;
+            }
+            pos += take;
+            src += take;
+            remaining -= take;
+        }
+
+        first_cluster = clusters_needed ? storage_old_chain[0] : 0;
+        if (storage_parent_path(path, parent, sizeof(parent), name, sizeof(name)) < 0) {
+            return -22;
+        }
+        ret = storage_lookup_path(parent, &parent_node);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = fat32_find_dirent_ref_in_dir(parent_node.first_cluster, name, &ref);
+        if (ret < 0) {
+            return ret;
+        }
+        ref.dirent.first_cluster_hi = (uint16_t)(first_cluster >> 16);
+        ref.dirent.first_cluster_lo = (uint16_t)(first_cluster & 0xffffu);
+        ref.dirent.size = final_len;
+        if (fat32_update_dirent(&ref) < 0) {
+            return -5;
+        }
+        if (out_written) {
+            *out_written = len;
+        }
+        return 0;
+    }
+
     pages = total_len ? (uint32_t)((total_len + 4095u) / 4096u) : 1u;
     phys = mm_alloc_pages(pages);
     if (!phys) {
@@ -2344,9 +2628,7 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
     uint8_t short_name[11];
     uint8_t need_lfn = 0;
     uint32_t clusters_needed = 0;
-    uint32_t old_chain[FAT32_MAX_FILE_CLUSTERS];
     uint32_t old_count = 0;
-    uint32_t new_chain[FAT32_MAX_FILE_CLUSTERS];
     uint32_t data_written = 0;
     uint32_t start_cluster = 0;
     uint8_t creating = 0;
@@ -2444,7 +2726,7 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
     }
 
     if (existing.first_cluster >= 2) {
-        ret = fat32_collect_chain(existing.first_cluster, old_chain, &old_count);
+        ret = fat32_collect_chain(existing.first_cluster, storage_old_chain, &old_count);
         if (ret < 0) {
             return ret;
         }
@@ -2457,29 +2739,29 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
         }
         for (uint32_t i = 0; i < clusters_needed; ++i) {
             if (i < old_count) {
-                new_chain[i] = old_chain[i];
+                storage_new_chain[i] = storage_old_chain[i];
             } else {
-                ret = fat32_find_free_cluster(&new_chain[i]);
+                ret = fat32_find_free_cluster(&storage_new_chain[i]);
                 if (ret < 0) {
                     return ret;
                 }
-                if (fat32_write_fat_entry(new_chain[i], FAT32_EOC) < 0) {
+                if (fat32_write_fat_entry(storage_new_chain[i], FAT32_EOC) < 0) {
                     return -5;
                 }
             }
         }
         for (uint32_t i = 0; i < clusters_needed; ++i) {
-            uint32_t next = (i + 1u < clusters_needed) ? new_chain[i + 1u] : FAT32_EOC;
-            if (fat32_write_fat_entry(new_chain[i], next) < 0) {
+            uint32_t next = (i + 1u < clusters_needed) ? storage_new_chain[i + 1u] : FAT32_EOC;
+            if (fat32_write_fat_entry(storage_new_chain[i], next) < 0) {
                 return -5;
             }
         }
-        start_cluster = new_chain[0];
+        start_cluster = storage_new_chain[0];
         for (uint32_t i = 0; i < clusters_needed; ++i) {
             uint32_t take = min_u32(g_storage.cluster_bytes, len - data_written);
             storage_memzero(storage_cluster_buf, g_storage.cluster_bytes);
             storage_memcpy(storage_cluster_buf, (const uint8_t *)buf + data_written, take);
-            if (fat32_write_cluster(new_chain[i], storage_cluster_buf) < 0) {
+            if (fat32_write_cluster(storage_new_chain[i], storage_cluster_buf) < 0) {
                 return -5;
             }
             data_written += take;
@@ -2487,7 +2769,7 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
     }
 
     if (old_count > clusters_needed) {
-        if (fat32_free_chain(old_chain[clusters_needed]) < 0) {
+        if (fat32_free_chain(storage_old_chain[clusters_needed]) < 0) {
             return -5;
         }
     }
@@ -2501,13 +2783,15 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
             return -5;
         }
         if (need_lfn) {
-            uint32_t name_len = (uint32_t)storage_strlen(name);
+            uint16_t utf16_name[260];
+            uint32_t name_len = fat32_utf16_name(name, utf16_name,
+                                                 sizeof(utf16_name) / sizeof(utf16_name[0]));
             uint8_t checksum = fat32_short_name_checksum(short_name);
             for (uint32_t i = 0; i < lfn_count; ++i) {
                 struct fat32_lfn *lfn = (struct fat32_lfn *)(void *)(storage_cluster_buf +
                     span.entry_offset + i * sizeof(struct fat32_dirent));
                 uint32_t part = lfn_count - i - 1u;
-                fat32_fill_lfn_entry(lfn, name, name_len, part, lfn_count, checksum);
+                fat32_fill_lfn_entry(lfn, utf16_name, name_len, part, lfn_count, checksum);
             }
         }
         *(struct fat32_dirent *)(void *)(storage_cluster_buf + ref.entry_offset) = ref.dirent;
@@ -2670,7 +2954,8 @@ int storage_rmdir(const char *path)
         storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
         return -22;
     }
-    if (storage_text_eq_ci(resolved, "0:/") || storage_text_eq_ci(resolved, "0:/dev")) {
+    if (storage_text_eq_ci(resolved, "0:/") ||
+        (g_devfs_enabled && storage_text_eq_ci(resolved, "0:/dev"))) {
         return -22;
     }
     ret = storage_lookup_path(parent, &parent_node);
@@ -2807,7 +3092,8 @@ int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
         }
         ++count;
     }
-    if ((node.flags & STORAGE_NODE_FLAG_ROOT) && count < capacity) {
+    if (g_devfs_enabled && node.drive == 0 &&
+        (node.flags & STORAGE_NODE_FLAG_ROOT) && count < capacity) {
         if (entries) {
             entries[count].type = LEONOS_FS_TYPE_DIR;
             storage_copy_text(entries[count].name, sizeof(entries[count].name), "dev");
@@ -2832,4 +3118,393 @@ int storage_stat_path(const char *path, struct leonos_stat *st)
     st->reserved = 0;
     st->size = node.size;
     return 0;
+}
+
+static void storage_put_u32(uint8_t *p, uint32_t value)
+{
+    p[0] = (uint8_t)(value & 0xffu);
+    p[1] = (uint8_t)((value >> 8) & 0xffu);
+    p[2] = (uint8_t)((value >> 16) & 0xffu);
+    p[3] = (uint8_t)((value >> 24) & 0xffu);
+}
+
+static uint32_t storage_crc32(const void *data, uint32_t len)
+{
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t crc = 0xffffffffu;
+    for (uint32_t i = 0; i < len; ++i) {
+        crc ^= p[i];
+        for (uint32_t bit = 0; bit < 8; ++bit) {
+            crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+        }
+    }
+    return ~crc;
+}
+
+static int install_write_sectors(struct install_disk_state *disk, uint64_t lba,
+                                 uint32_t sector_count, const void *buffer)
+{
+    const uint8_t *src = (const uint8_t *)buffer;
+    if (!disk || !disk->present || !disk->hba_port || !buffer) {
+        return -22;
+    }
+    while (sector_count) {
+        uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
+        int ret = ahci_write_lba(disk->hba_port, lba, chunk, src);
+        if (ret < 0) {
+            return ret;
+        }
+        lba += chunk;
+        sector_count -= chunk;
+        src += chunk * SECTOR_SIZE;
+    }
+    return 0;
+}
+
+static int install_clear_sectors(struct install_disk_state *disk, uint64_t lba,
+                                 uint64_t sector_count)
+{
+    storage_memzero(storage_scratch, sizeof(storage_scratch));
+    while (sector_count) {
+        uint32_t chunk = (uint32_t)min_u64(sector_count, STORAGE_SCRATCH_SECTORS);
+        int ret = install_write_sectors(disk, lba, chunk, storage_scratch);
+        if (ret < 0) {
+            return ret;
+        }
+        lba += chunk;
+        sector_count -= chunk;
+    }
+    return 0;
+}
+
+static uint32_t install_choose_fat32_spc(uint64_t total_sectors)
+{
+    if (total_sectors < 16ULL * 1024ULL * 1024ULL) {
+        return 8;
+    }
+    if (total_sectors < 32ULL * 1024ULL * 1024ULL) {
+        return 16;
+    }
+    if (total_sectors < 64ULL * 1024ULL * 1024ULL) {
+        return 32;
+    }
+    return 32;
+}
+
+static int install_format_fat32(struct install_disk_state *disk, uint64_t start_lba,
+                                uint64_t sector_count)
+{
+    const uint32_t reserved = 32;
+    const uint32_t fat_count = 2;
+    uint32_t total_sectors;
+    uint32_t sectors_per_cluster;
+    uint32_t fat_size = 1;
+    uint32_t data_start;
+    uint32_t data_sectors;
+    uint32_t clusters = 0;
+    if (!disk || sector_count > 0xffffffffULL || sector_count < 65536ULL) {
+        return -28;
+    }
+    total_sectors = (uint32_t)sector_count;
+    sectors_per_cluster = install_choose_fat32_spc(sector_count);
+    for (uint32_t i = 0; i < 16; ++i) {
+        uint32_t next_fat_size;
+        if (total_sectors <= reserved + fat_count * fat_size) {
+            return -28;
+        }
+        data_sectors = total_sectors - reserved - fat_count * fat_size;
+        clusters = data_sectors / sectors_per_cluster;
+        next_fat_size = ((clusters + 2u) * 4u + SECTOR_SIZE - 1u) / SECTOR_SIZE;
+        if (next_fat_size == fat_size) {
+            break;
+        }
+        fat_size = next_fat_size;
+    }
+    data_start = reserved + fat_count * fat_size;
+    if (clusters < 2 || data_start >= total_sectors) {
+        return -28;
+    }
+
+    if (install_clear_sectors(disk, start_lba, (uint64_t)data_start + sectors_per_cluster) < 0) {
+        return -5;
+    }
+
+    storage_memzero(storage_scratch, SECTOR_SIZE);
+    struct fat32_bpb *bpb = (struct fat32_bpb *)(void *)storage_scratch;
+    bpb->jump[0] = 0xeb;
+    bpb->jump[1] = 0x58;
+    bpb->jump[2] = 0x90;
+    storage_memcpy(bpb->oem, "LEONOS4 ", 8);
+    bpb->bytes_per_sector = SECTOR_SIZE;
+    bpb->sectors_per_cluster = (uint8_t)sectors_per_cluster;
+    bpb->reserved_sector_count = reserved;
+    bpb->fat_count = fat_count;
+    bpb->root_entry_count = 0;
+    bpb->total_sectors16 = 0;
+    bpb->media = 0xf8;
+    bpb->fat_size16 = 0;
+    bpb->sectors_per_track = 63;
+    bpb->head_count = 255;
+    bpb->hidden_sectors = (uint32_t)start_lba;
+    bpb->total_sectors32 = total_sectors;
+    bpb->fat_size32 = fat_size;
+    bpb->root_cluster = 2;
+    bpb->fs_info = 1;
+    bpb->backup_boot_sector = 6;
+    bpb->drive_number = 0x80;
+    bpb->boot_signature = 0x29;
+    bpb->volume_id = 0x4c454f34u;
+    storage_memcpy(bpb->volume_label, "LEONOS4    ", 11);
+    storage_memcpy(bpb->fs_type, "FAT32   ", 8);
+    storage_scratch[510] = 0x55;
+    storage_scratch[511] = 0xaa;
+    if (install_write_sectors(disk, start_lba, 1, storage_scratch) < 0 ||
+        install_write_sectors(disk, start_lba + 6, 1, storage_scratch) < 0) {
+        return -5;
+    }
+
+    storage_memzero(storage_scratch, SECTOR_SIZE);
+    storage_put_u32(storage_scratch + 0, 0x41615252u);
+    storage_put_u32(storage_scratch + 484, 0x61417272u);
+    storage_put_u32(storage_scratch + 488, 0xffffffffu);
+    storage_put_u32(storage_scratch + 492, 3u);
+    storage_put_u32(storage_scratch + 508, 0xaa550000u);
+    if (install_write_sectors(disk, start_lba + 1, 1, storage_scratch) < 0 ||
+        install_write_sectors(disk, start_lba + 7, 1, storage_scratch) < 0) {
+        return -5;
+    }
+
+    for (uint32_t fat = 0; fat < fat_count; ++fat) {
+        uint64_t fat_lba = start_lba + reserved + (uint64_t)fat * fat_size;
+        storage_memzero(storage_scratch, SECTOR_SIZE);
+        storage_put_u32(storage_scratch + 0, 0x0ffffff8u);
+        storage_put_u32(storage_scratch + 4, 0xffffffffu);
+        storage_put_u32(storage_scratch + 8, FAT32_EOC);
+        if (install_write_sectors(disk, fat_lba, 1, storage_scratch) < 0) {
+            return -5;
+        }
+    }
+
+    return 0;
+}
+
+static void install_utf16_name(uint16_t dst[36], const char *name)
+{
+    uint32_t i = 0;
+    for (; i < 36 && name && name[i]; ++i) {
+        dst[i] = (uint16_t)(uint8_t)name[i];
+    }
+    for (; i < 36; ++i) {
+        dst[i] = 0;
+    }
+}
+
+static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_count,
+                             uint64_t *out_first_lba, uint64_t *out_sector_count)
+{
+    static const uint8_t disk_guid[16] = {
+        0x4c, 0x65, 0x6f, 0x6e, 0x4f, 0x53, 0x34, 0x49,
+        0x6e, 0x73, 0x74, 0x61, 0x6c, 0x6c, 0x00, 0x01,
+    };
+    static const uint8_t part_guid[16] = {
+        0x4c, 0x65, 0x6f, 0x6e, 0x4f, 0x53, 0x34, 0x45,
+        0x53, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    };
+    uint64_t last_lba;
+    uint64_t backup_entries_lba;
+    uint64_t first_usable;
+    uint64_t last_usable;
+    uint32_t table_bytes = GPT_ENTRY_COUNT * GPT_ENTRY_SIZE;
+    uint32_t table_sectors = table_bytes / SECTOR_SIZE;
+    uint32_t table_crc;
+    if (!disk || !out_first_lba || !out_sector_count || sector_count < 131072ULL) {
+        return -28;
+    }
+    last_lba = sector_count - 1u;
+    backup_entries_lba = last_lba - table_sectors;
+    first_usable = INSTALL_ESP_FIRST_LBA;
+    last_usable = backup_entries_lba - 1u;
+    if (last_usable <= first_usable || last_usable - first_usable + 1u < 65536ULL) {
+        return -28;
+    }
+
+    if (install_clear_sectors(disk, 0, first_usable) < 0 ||
+        install_clear_sectors(disk, backup_entries_lba, table_sectors + 1u) < 0) {
+        return -5;
+    }
+
+    storage_memzero(storage_scratch, SECTOR_SIZE);
+    storage_scratch[446 + 4] = 0xee;
+    storage_put_u32(storage_scratch + 446 + 8, 1);
+    storage_put_u32(storage_scratch + 446 + 12,
+                    sector_count - 1u > 0xffffffffULL ? 0xffffffffu : (uint32_t)(sector_count - 1u));
+    storage_scratch[510] = 0x55;
+    storage_scratch[511] = 0xaa;
+    if (install_write_sectors(disk, 0, 1, storage_scratch) < 0) {
+        return -5;
+    }
+
+    storage_memzero(storage_cluster_buf, table_bytes);
+    struct gpt_entry *entry = (struct gpt_entry *)(void *)storage_cluster_buf;
+    storage_memcpy(entry->type_guid, esp_guid, sizeof(entry->type_guid));
+    storage_memcpy(entry->unique_guid, part_guid, sizeof(entry->unique_guid));
+    entry->unique_guid[15] ^= disk->port;
+    entry->first_lba = first_usable;
+    entry->last_lba = last_usable;
+    entry->attrs = 0;
+    install_utf16_name(entry->name, "LeonOS 4 ESP");
+    table_crc = storage_crc32(storage_cluster_buf, table_bytes);
+    if (install_write_sectors(disk, 2, table_sectors, storage_cluster_buf) < 0 ||
+        install_write_sectors(disk, backup_entries_lba, table_sectors, storage_cluster_buf) < 0) {
+        return -5;
+    }
+
+    storage_memzero(storage_scratch, SECTOR_SIZE);
+    struct gpt_header *hdr = (struct gpt_header *)(void *)storage_scratch;
+    hdr->signature = 0x5452415020494645ULL;
+    hdr->revision = 0x00010000u;
+    hdr->header_size = sizeof(struct gpt_header);
+    hdr->current_lba = 1;
+    hdr->backup_lba = last_lba;
+    hdr->first_usable_lba = first_usable;
+    hdr->last_usable_lba = last_usable;
+    storage_memcpy(hdr->disk_guid, disk_guid, sizeof(hdr->disk_guid));
+    hdr->disk_guid[15] ^= disk->port;
+    hdr->partition_entries_lba = 2;
+    hdr->partition_entry_count = GPT_ENTRY_COUNT;
+    hdr->partition_entry_size = GPT_ENTRY_SIZE;
+    hdr->partition_entries_crc32 = table_crc;
+    hdr->header_crc32 = 0;
+    hdr->header_crc32 = storage_crc32(hdr, hdr->header_size);
+    if (install_write_sectors(disk, 1, 1, storage_scratch) < 0) {
+        return -5;
+    }
+
+    hdr->header_crc32 = 0;
+    hdr->current_lba = last_lba;
+    hdr->backup_lba = 1;
+    hdr->partition_entries_lba = backup_entries_lba;
+    hdr->header_crc32 = storage_crc32(hdr, hdr->header_size);
+    if (install_write_sectors(disk, last_lba, 1, storage_scratch) < 0) {
+        return -5;
+    }
+
+    *out_first_lba = first_usable;
+    *out_sector_count = last_usable - first_usable + 1u;
+    return 0;
+}
+
+int storage_install_list_disks(struct leonos_install_disk *disks,
+                               uint32_t capacity, uint32_t *out_count)
+{
+    if (!out_count) {
+        return -22;
+    }
+    *out_count = g_install_disk_count;
+    if (capacity > g_install_disk_count) {
+        capacity = g_install_disk_count;
+    }
+    if (capacity && !disks) {
+        return -22;
+    }
+    for (uint32_t i = 0; i < capacity; ++i) {
+        struct install_disk_state *src = &g_install_disks[i];
+        if (src->present && src->sector_count == 0) {
+            uint64_t sectors = 0;
+            if (storage_install_identify(src, &sectors) == 0) {
+                src->sector_count = sectors;
+            }
+        }
+        disks[i].id = i;
+        disks[i].port = src->port;
+        disks[i].sector_size = SECTOR_SIZE;
+        disks[i].flags = 0;
+        if (src->boot_root) {
+            disks[i].flags |= LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT;
+        }
+        if (src->target_mounted) {
+            disks[i].flags |= LEONOS_INSTALL_DISK_FLAG_TARGET_MOUNTED;
+        }
+        disks[i].sector_count = src->sector_count;
+        storage_copy_text(disks[i].name, sizeof(disks[i].name), "SATA/AHCI Disk");
+    }
+    return 0;
+}
+
+int storage_install_format_esp(uint32_t disk_id)
+{
+    uint64_t sector_count;
+    uint64_t esp_lba = 0;
+    uint64_t esp_sectors = 0;
+    int ret;
+    if (disk_id >= g_install_disk_count || !g_install_disks[disk_id].present) {
+        return -2;
+    }
+    struct install_disk_state *disk = &g_install_disks[disk_id];
+    if (ahci_setup_port(disk->hba_port) < 0) {
+        return -5;
+    }
+    sector_count = disk->sector_count;
+    if (sector_count == 0) {
+        ret = storage_install_identify(disk, &sector_count);
+        if (ret < 0) {
+            return ret;
+        }
+        disk->sector_count = sector_count;
+    }
+    ret = install_write_gpt(disk, sector_count, &esp_lba, &esp_sectors);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = install_format_fat32(disk, esp_lba, esp_sectors);
+    if (ret < 0) {
+        return ret;
+    }
+    disk->target_mounted = 0;
+    storage_memzero(&g_volumes[1], sizeof(g_volumes[1]));
+    if (g_active_volume == &g_volumes[1]) {
+        g_active_volume = &g_volumes[0];
+    }
+    return 0;
+}
+
+int storage_install_mount_target(uint32_t disk_id)
+{
+    if (disk_id >= g_install_disk_count || !g_install_disks[disk_id].present) {
+        return -2;
+    }
+    struct install_disk_state *disk = &g_install_disks[disk_id];
+    struct storage_volume *target = &g_volumes[1];
+    struct storage_volume *old = g_active_volume;
+    storage_memzero(target, sizeof(*target));
+    target->drive = 1;
+    target->kind = STORAGE_VOLUME_AHCI;
+    target->bus = disk->bus;
+    target->slot = disk->slot;
+    target->function = disk->function;
+    target->port = disk->port;
+    target->abar = disk->abar;
+    target->hba_port = disk->hba_port;
+    if (ahci_setup_port(disk->hba_port) < 0) {
+        g_active_volume = old;
+        return -5;
+    }
+    g_active_volume = target;
+    int ret = gpt_find_esp();
+    if (ret == 0) {
+        ret = fat32_mount();
+    }
+    if (ret == 0) {
+        target->ready = true;
+        disk->target_mounted = 1;
+        console_printf("[ntclks] installer target mounted drive=1 disk=%u port=%u esp_lba=%llu\n",
+                       disk_id,
+                       disk->port,
+                       (unsigned long long)target->esp_start_lba);
+    } else {
+        storage_memzero(target, sizeof(*target));
+        disk->target_mounted = 0;
+    }
+    g_active_volume = old;
+    return ret;
 }

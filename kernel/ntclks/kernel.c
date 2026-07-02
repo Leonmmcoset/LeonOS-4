@@ -108,6 +108,25 @@ void kernel_idle_loop(void)
     }
 }
 
+static int cmdline_has(const struct boot_info *boot, const char *needle)
+{
+    if (!boot || !boot->cmdline || !needle) {
+        return 0;
+    }
+    for (const char *p = boot->cmdline; *p; ++p) {
+        const char *a = p;
+        const char *b = needle;
+        while (*a && *b && *a == *b) {
+            ++a;
+            ++b;
+        }
+        if (*b == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                          const struct leonos_boot_handoff *handoff)
 {
@@ -145,8 +164,23 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     arch_userland_init(kernel_ring0_stack + sizeof(kernel_ring0_stack));
     idt_init();
     irq_init();
-    storage_init();
     osmlayer_bridge_init(&boot, handoff);
+    {
+        struct leonos_mount_policy mount_policy;
+        int policy_ret = osmlayer_bridge_mount_policy(&boot, &mount_policy);
+        if (policy_ret == 0) {
+            storage_apply_mount_policy(&mount_policy);
+        } else if (cmdline_has(&boot, "mode=installer")) {
+            console_printf("[ntclks] middlelayer mount policy unavailable ret=%d, using installer fallback\n",
+                           policy_ret);
+            storage_init();
+            storage_init_installer_root(&boot);
+        } else {
+            console_printf("[ntclks] middlelayer mount policy unavailable ret=%d, using boot root fallback\n",
+                           policy_ret);
+            storage_init();
+        }
+    }
     osmlayer_bridge_selftest();
     userland_init(&boot);
     sched_dump();

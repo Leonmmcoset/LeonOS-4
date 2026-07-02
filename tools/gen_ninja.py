@@ -7,12 +7,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-USER_APPS = [
+NORMAL_USER_APPS = [
     "init",
     "desktop",
     "oobe",
     "hello",
     "uidemo",
+    "cjktest",
     "taskmgr",
     "fileman",
     "terminal",
@@ -24,10 +25,18 @@ USER_APPS = [
     "osver",
     "bugtest",
 ]
+INSTALLER_USER_APPS = [
+    "desktop",
+    "installer",
+]
+USER_APPS = NORMAL_USER_APPS + [
+    app for app in INSTALLER_USER_APPS if app not in NORMAL_USER_APPS
+]
 
 SYSTEM_FILES = [
     ("system/osmlayer.manifest", None),
     ("system/fonts/system.psf", "system/fonts/system.psf"),
+    ("system/fonts/cjk16.lbf", "system/fonts/cjk16.lbf"),
     ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
 ]
 
@@ -179,7 +188,7 @@ def main() -> int:
     write_line(lines, "rule iso")
     iso_copy_apps = " && ".join(
         f"cp build/userland/{app}.elf build/iso/userland/{app}.elf"
-        for app in USER_APPS
+        for app in NORMAL_USER_APPS
     )
     iso_copy_system = " && ".join(
         f"mkdir -p build/iso/{Path(dst).parent.as_posix()} && cp build/esp/{dst} build/iso/{dst}"
@@ -188,12 +197,20 @@ def main() -> int:
     write_line(lines, f"  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/boot build/iso/system build/iso/userland build/iso/etc && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/boot/loader.elf build/iso/boot/loader.elf && cp build/system/kernel.sys build/iso/system/kernel.sys && cp build/system/middlelayer.sys build/iso/system/middlelayer.sys && {iso_copy_system} && {iso_copy_apps} && cp configs/default.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso")
     write_line(lines, "  description = ISO $out")
     write_line(lines)
+    write_line(lines, "rule installer_root")
+    write_line(lines, "  command = python3 tools/make_installer_root.py --out $out --stage build/install/root --esp-tree build/esp")
+    write_line(lines, "  description = INSTALLER.ROOT $out")
+    write_line(lines)
+    write_line(lines, "rule installer_iso")
+    write_line(lines, "  command = python3 tools/make_installer_iso.py --out $out --stage build/installer-iso --boot-image build/install/installer-efiboot.img")
+    write_line(lines, "  description = INSTALLER.ISO $out")
+    write_line(lines)
     write_line(lines, "rule image")
     write_line(lines, "  command = rm -f build/esp/boot/ntclks.elf && python3 tools/make_image.py --out $out --raw build/images/leonos4.raw --esp-tree build/esp")
     write_line(lines, "  description = IMAGE $out")
     write_line(lines)
     write_line(lines, "rule run")
-    write_line(lines, "  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display gtk,grab-on-hover=on,show-cursor=off -device VGA,xres=1920,yres=1080 -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, "  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display \"$${LEONOS_QEMU_DISPLAY:-sdl}\" -device VGA,xres=1920,yres=1080 -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN LeonOS 4")
     write_line(lines)
     write_line(lines, "rule run_debug")
@@ -283,6 +300,7 @@ def main() -> int:
     write_line(lines, f"build {r(libc_a)}: ar {' '.join(r(o) for o in libc_objects)}")
 
     user_elfs: list[Path] = []
+    user_elfs_by_app: dict[str, Path] = {}
     for app in USER_APPS:
         app_sources = collect([
             f"userland/apps/{app}/*.c",
@@ -291,6 +309,7 @@ def main() -> int:
         app_objects: list[Path] = []
         elf = ROOT / "build" / "userland" / f"{app}.elf"
         user_elfs.append(elf)
+        user_elfs_by_app[app] = elf
         for src in app_sources:
             obj = obj_for(src, f"user-{app}")
             app_objects.append(obj)
@@ -299,6 +318,7 @@ def main() -> int:
         write_line(lines, f"build {r(elf)}: link_user {' '.join(r(o) for o in app_objects)} {r(libc_a)}")
 
     write_line(lines, f"build userland: phony {' '.join(r(e) for e in user_elfs)}")
+    normal_user_elfs = [user_elfs_by_app[app] for app in NORMAL_USER_APPS]
 
     esp_outputs = [
         ROOT / "build/esp/EFI/BOOT/BOOTX64.EFI",
@@ -307,7 +327,7 @@ def main() -> int:
         ROOT / "build/esp/system/kernel.sys",
         ROOT / "build/esp/system/middlelayer.sys",
         *(ROOT / "build/esp" / dst for dst, _ in SYSTEM_FILES),
-        *(ROOT / f"build/esp/userland/{app}.elf" for app in USER_APPS),
+        *(ROOT / f"build/esp/userland/{app}.elf" for app in NORMAL_USER_APPS),
         ROOT / "build/esp/etc/leonos.conf",
     ]
     write_line(lines, f"build {r(esp_outputs[0])}: grub_efi boot/grub/embedded.cfg | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh")
@@ -320,7 +340,7 @@ def main() -> int:
         if src:
             write_line(lines, f"build {r(ROOT / 'build/esp' / dst)}: copy {src}")
     system_output_count = len(SYSTEM_FILES)
-    for output, elf in zip(esp_outputs[5 + system_output_count:-1], user_elfs):
+    for output, elf in zip(esp_outputs[5 + system_output_count:-1], normal_user_elfs):
         write_line(lines, f"build {r(output)}: copy {r(elf)}")
     write_line(lines, "build build/esp/etc/leonos.conf: copy configs/default.conf")
     write_line(lines, f"build esp: phony {' '.join(r(p) for p in esp_outputs)}")
@@ -329,9 +349,15 @@ def main() -> int:
     write_line(lines, f"build {r(vmdk)}: image {' '.join(r(p) for p in esp_outputs)} | tools/make_image.py")
     iso = ROOT / "build/images/leonos4.iso"
     system_deps = " ".join(r(ROOT / "build/esp" / dst) for dst, _ in SYSTEM_FILES)
-    write_line(lines, f"build {r(iso)}: iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {' '.join(r(e) for e in user_elfs)} {system_deps} boot/grub/grub.cfg configs/default.conf")
+    write_line(lines, f"build {r(iso)}: iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {' '.join(r(e) for e in normal_user_elfs)} {system_deps} boot/grub/grub.cfg configs/default.conf")
+    installer_root = ROOT / "build/install/root.fat"
+    installer_elf_deps = " ".join(r(user_elfs_by_app[app]) for app in INSTALLER_USER_APPS)
+    write_line(lines, f"build {r(installer_root)}: installer_root {' '.join(r(p) for p in esp_outputs)} {installer_elf_deps} tools/make_installer_root.py")
+    installer_iso = ROOT / "build/images/leonos4-installer.iso"
+    write_line(lines, f"build {r(installer_iso)}: installer_iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {r(installer_root)} boot/grub/installer.cfg boot/grub/installer_embedded.cfg tools/make_installer_iso.py | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh")
     write_line(lines, f"build image-vmdk: phony {r(vmdk)}")
     write_line(lines, f"build image-iso: phony {r(iso)}")
+    write_line(lines, f"build installer: phony {r(installer_iso)}")
     write_line(lines, f"build all: phony loader kernel middlelayer userland esp")
     write_line(lines, f"build run: run {r(vmdk)}")
     write_line(lines, f"build run-debug: run_debug {r(vmdk)}")

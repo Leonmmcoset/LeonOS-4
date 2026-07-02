@@ -6,6 +6,7 @@
 #define MULTIBOOT2_TAG_TYPE_END 0
 #define MULTIBOOT2_TAG_TYPE_CMDLINE 1
 #define MULTIBOOT2_TAG_TYPE_BOOT_LOADER_NAME 2
+#define MULTIBOOT2_TAG_TYPE_MODULE 3
 #define MULTIBOOT2_TAG_TYPE_BASIC_MEMINFO 4
 #define MULTIBOOT2_TAG_TYPE_MMAP 6
 #define MULTIBOOT2_TAG_TYPE_FRAMEBUFFER 8
@@ -41,6 +42,14 @@ struct multiboot2_tag {
 struct multiboot2_tag_string {
     uint32_t type;
     uint32_t size;
+    char string[];
+};
+
+struct multiboot2_tag_module {
+    uint32_t type;
+    uint32_t size;
+    uint32_t mod_start;
+    uint32_t mod_end;
     char string[];
 };
 
@@ -256,6 +265,15 @@ static struct leonos_boot_handoff handoff;
 static struct efi_boot_services *boot_services;
 static struct efi_file_protocol *root_dir;
 
+struct loader_module {
+    uint64_t start;
+    uint64_t end;
+    const char *name;
+};
+
+static struct loader_module loader_modules[16];
+static uint32_t loader_module_count;
+
 static struct efi_guid sfs_guid = {
     0x964e5b22,
     0x6459,
@@ -329,6 +347,28 @@ static void serial_init(void)
     loader_outb(0x0b, 0x3fc);
 }
 
+static int text_eq(const char *a, const char *b)
+{
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+
+static const struct loader_module *find_loader_module(const char *name)
+{
+    for (uint32_t i = 0; i < loader_module_count; ++i) {
+        if (text_eq(loader_modules[i].name, name)) {
+            return &loader_modules[i];
+        }
+    }
+    return 0;
+}
+
 static int build_efi_path(const char *path, uint16_t *out, uint32_t cap)
 {
     uint32_t pos = 0;
@@ -350,11 +390,30 @@ static int build_efi_path(const char *path, uint16_t *out, uint32_t cap)
     return 0;
 }
 
+static int efi_root_has_file(struct efi_file_protocol *volume, const char *path)
+{
+    uint16_t efi_path[256];
+    struct efi_file_protocol *file = 0;
+    efi_status_t status;
+    if (!volume || !volume->open || build_efi_path(path, efi_path, 256) < 0) {
+        return 0;
+    }
+    status = volume->open(volume, &file, efi_path, EFI_FILE_MODE_READ, 0);
+    if (status != EFI_SUCCESS || !file) {
+        return 0;
+    }
+    if (file->close) {
+        file->close(file);
+    }
+    return 1;
+}
+
 static int efi_open_root(uint64_t system_table_addr)
 {
     struct efi_system_table *st = (struct efi_system_table *)(uintptr_t)system_table_addr;
     uint64_t handle_count = 0;
     efi_handle_t *handles = 0;
+    struct efi_file_protocol *fallback = 0;
     efi_status_t status;
 
     if (!st || !st->boot_services || !st->boot_services->locate_handle_buffer ||
@@ -378,10 +437,25 @@ static int efi_open_root(uint64_t system_table_addr)
         }
         status = fs->open_volume(fs, &volume);
         if (status == EFI_SUCCESS && volume) {
-            root_dir = volume;
-            serial_write("[loader] EFI SimpleFS root ready\n");
-            return 0;
+            if (efi_root_has_file(volume, KERNEL_PATH)) {
+                if (fallback && fallback->close) {
+                    fallback->close(fallback);
+                }
+                root_dir = volume;
+                serial_write("[loader] EFI SimpleFS LeonOS root ready\n");
+                return 0;
+            }
+            if (!fallback) {
+                fallback = volume;
+            } else if (volume->close) {
+                volume->close(volume);
+            }
         }
+    }
+    if (fallback) {
+        root_dir = fallback;
+        serial_write("[loader] EFI SimpleFS fallback root ready\n");
+        return 0;
     }
     serial_write("[loader] no readable EFI FAT volume\n");
     return -1;
@@ -513,6 +587,7 @@ static int elf_load_exec(const void *image, uint64_t len,
 static void parse_multiboot2(uint32_t magic, uint32_t info_addr)
 {
     memset_local(&handoff, 0, sizeof(handoff));
+    loader_module_count = 0;
     handoff.magic = LEONOS_BOOT_HANDOFF_MAGIC;
     handoff.version = LEONOS_BOOT_HANDOFF_VERSION;
     handoff.multiboot_magic = magic;
@@ -541,6 +616,17 @@ static void parse_multiboot2(uint32_t magic, uint32_t info_addr)
         case MULTIBOOT2_TAG_TYPE_BOOT_LOADER_NAME:
             handoff.bootloader = ((const struct multiboot2_tag_string *)tag)->string;
             break;
+        case MULTIBOOT2_TAG_TYPE_MODULE: {
+            const struct multiboot2_tag_module *mod =
+                (const struct multiboot2_tag_module *)tag;
+            if (loader_module_count < 16) {
+                loader_modules[loader_module_count].start = mod->mod_start;
+                loader_modules[loader_module_count].end = mod->mod_end;
+                loader_modules[loader_module_count].name = mod->string;
+                ++loader_module_count;
+            }
+            break;
+        }
         case MULTIBOOT2_TAG_TYPE_MMAP: {
             const struct multiboot2_tag_mmap *mmap = (const struct multiboot2_tag_mmap *)tag;
             handoff.mmap_addr = (uint64_t)(uintptr_t)mmap->entries;
@@ -587,19 +673,42 @@ static void parse_multiboot2(uint32_t magic, uint32_t info_addr)
 void loader_main(uint32_t magic, uint32_t multiboot_info)
 {
     uint64_t len;
+    const struct loader_module *kernel_module;
+    const struct loader_module *middlelayer_module;
 
     serial_init();
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
-    if (!handoff.efi_system_table || efi_open_root(handoff.efi_system_table) < 0) {
-        serial_write("[loader] unable to open EFI filesystem\n");
-        for (;;) {
-            __asm__ volatile("hlt");
+
+    kernel_module = find_loader_module("leonos-kernel");
+    if (kernel_module) {
+        len = kernel_module->end - kernel_module->start;
+        serial_write("[loader] using module leonos-kernel bytes=");
+        serial_write_hex(len);
+        serial_write("\n");
+        if (elf_load_exec((const void *)(uintptr_t)kernel_module->start, len,
+                          &handoff.kernel) < 0) {
+            serial_write("[loader] kernel module load failed\n");
+            for (;;) {
+                __asm__ volatile("hlt");
+            }
+        }
+    } else {
+        if (!handoff.efi_system_table || efi_open_root(handoff.efi_system_table) < 0) {
+            serial_write("[loader] unable to open EFI filesystem\n");
+            for (;;) {
+                __asm__ volatile("hlt");
+            }
+        }
+        if (efi_read_file(KERNEL_PATH, read_buffer, sizeof(read_buffer), &len) < 0 ||
+            elf_load_exec(read_buffer, len, &handoff.kernel) < 0) {
+            serial_write("[loader] kernel.sys load failed\n");
+            for (;;) {
+                __asm__ volatile("hlt");
+            }
         }
     }
-
-    if (efi_read_file(KERNEL_PATH, read_buffer, sizeof(read_buffer), &len) < 0 ||
-        elf_load_exec(read_buffer, len, &handoff.kernel) < 0) {
+    if (!handoff.kernel.entry) {
         serial_write("[loader] kernel.sys load failed\n");
         for (;;) {
             __asm__ volatile("hlt");
@@ -614,8 +723,35 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_write_hex(handoff.kernel.end);
     serial_write("\n");
 
-    if (efi_read_file(MIDDLELAYER_PATH, read_buffer, sizeof(read_buffer), &len) < 0 ||
-        elf_load_exec(read_buffer, len, &handoff.middlelayer) < 0) {
+    middlelayer_module = find_loader_module("leonos-middlelayer");
+    if (middlelayer_module) {
+        len = middlelayer_module->end - middlelayer_module->start;
+        serial_write("[loader] using module leonos-middlelayer bytes=");
+        serial_write_hex(len);
+        serial_write("\n");
+        if (elf_load_exec((const void *)(uintptr_t)middlelayer_module->start, len,
+                          &handoff.middlelayer) < 0) {
+            serial_write("[loader] middlelayer module load failed\n");
+            for (;;) {
+                __asm__ volatile("hlt");
+            }
+        }
+    } else {
+        if (!root_dir && (!handoff.efi_system_table || efi_open_root(handoff.efi_system_table) < 0)) {
+            serial_write("[loader] unable to open EFI filesystem\n");
+            for (;;) {
+                __asm__ volatile("hlt");
+            }
+        }
+        if (efi_read_file(MIDDLELAYER_PATH, read_buffer, sizeof(read_buffer), &len) < 0 ||
+            elf_load_exec(read_buffer, len, &handoff.middlelayer) < 0) {
+            serial_write("[loader] middlelayer.sys load failed\n");
+            for (;;) {
+                __asm__ volatile("hlt");
+            }
+        }
+    }
+    if (!handoff.middlelayer.entry) {
         serial_write("[loader] middlelayer.sys load failed\n");
         for (;;) {
             __asm__ volatile("hlt");

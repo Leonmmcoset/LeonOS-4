@@ -256,6 +256,12 @@ int spawn_program_path(const char *path)
 void maybe_launch_oobe(void)
 {
     struct leonos_stat st;
+    if (stat("0:/userland/installer.elf", &st) == 0 &&
+        st.type == LEONOS_FS_TYPE_FILE &&
+        stat(OOBE_APP_PATH, &st) < 0) {
+        puts("[desktop.elf] installer runtime detected; OOBE disabled");
+        return;
+    }
     if (stat(OOBE_DONE_PATH, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
         return;
     }

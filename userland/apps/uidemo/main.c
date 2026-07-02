@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/fs.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -54,7 +55,7 @@ static const char *const data_rows[][4] = {
     {"osver.elf", "Program", "Idle", "System version dialog"},
 };
 static char sample_path[96] = "0:/userland/notepad.elf";
-static char sample_text[160] = "Line one\nLine two\nLine three";
+static char sample_text[160] = "Line one\n你好，LeonOS 4。中文显示测试。\nLine three";
 static char demo_status[96] = "Click inside the top tabs to switch pages";
 static struct leonos_ui_edit_state sample_edit;
 static struct leonos_ui_text_area_state sample_area;
@@ -93,6 +94,37 @@ static void copy_text(char *dst, uint32_t capacity, const char *src)
         }
     }
     dst[i] = 0;
+}
+
+static void run_unicode_file_test(void)
+{
+    const char *dir = "0:/测试目录";
+    const char *path = "0:/测试目录/你好.txt";
+    const char *content = "你好，LeonOS 4。中文显示测试。\n";
+    struct leonos_stat st;
+    struct leonos_dir_entry entry;
+    int ret = mkdir(dir, 0);
+    printf("[uidemo.elf] unicode mkdir %s ret=%d\n", dir, ret);
+    int fd = open(path, LEONOS_O_CREAT | LEONOS_O_TRUNC | LEONOS_O_WRONLY, 0);
+    printf("[uidemo.elf] unicode open-write %s fd=%d\n", path, fd);
+    if (fd >= 0) {
+        long wrote = write(fd, content, strlen(content));
+        close(fd);
+        printf("[uidemo.elf] unicode write bytes=%d\n", (int)wrote);
+    }
+    ret = stat(path, &st);
+    printf("[uidemo.elf] unicode stat %s ret=%d type=%d size=%d\n",
+           path, ret, ret == 0 ? (int)st.type : -1, ret == 0 ? (int)st.size : -1);
+    fd = open(dir, LEONOS_O_RDONLY, 0);
+    printf("[uidemo.elf] unicode open-dir %s fd=%d\n", dir, fd);
+    if (fd >= 0) {
+        while ((ret = leonos_readdir(fd, &entry)) > 0) {
+            printf("[uidemo.elf] unicode readdir name=%s type=%d\n",
+                   entry.name, (int)entry.type);
+        }
+        close(fd);
+        printf("[uidemo.elf] unicode readdir done ret=%d\n", ret);
+    }
 }
 
 static const char *dropdown_selected_label(void)
@@ -315,6 +347,7 @@ static void draw_demo(struct leonos_ui_surface *ui, uint32_t page)
     leonos_ui_menubar_item(ui, 120, 0, 54, "Help", menu_open == DEMO_MENU_HELP);
     leonos_ui_text(ui, 12, 36, "LeonOS UI Component Library", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, 12, 54, "Win32-style reusable drawing controls", LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 420, 54, "你好，LeonOS 4。中文显示测试。", LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_tabs(ui, 236, 36, 410, tab_labels, 4, page);
     if (page == 0) {
         draw_controls_page(ui);
@@ -539,6 +572,7 @@ int main(void)
     int window_id;
     uint32_t page = 0;
     puts("[uidemo.elf] UI component gallery starting");
+    run_unicode_file_test();
     printf("[uidemo.elf] pid=%d creating UI Components window\n", getpid());
     window_id = leonos_gui_create_app_window_ex("UI Components", "LeonOS UI component gallery",
                                                 DEMO_W, DEMO_H, LEONOS_GUI_WINDOW_NO_RESIZE);

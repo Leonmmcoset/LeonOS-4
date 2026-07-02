@@ -16,6 +16,7 @@
 #include <leonos/fs.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
+#include <leonos/text.h>
 
 #define LEONOS_GUI_IOCTL_EVENT 0x4c455654ULL
 #define LEONOS_GUI_IOCTL_UPTIME_MS 0x4c555054ULL
@@ -36,6 +37,8 @@
 #define LEONOS_GUI_IOCTL_TASK_KILL 0x4c544b49ULL
 #define LEONOS_GUI_IOCTL_REBOOT 0x4c524254ULL
 #define LEONOS_GUI_IOCTL_SHUTDOWN 0x4c534844ULL
+#define LEONOS_TEXT_LAYOUT_MAX_BYTES 4096U
+#define LEONOS_TEXT_LAYOUT_MAX_GLYPHS 512U
 
 struct task_snapshot_user {
     uint32_t capacity;
@@ -994,6 +997,100 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_SHUTDOWN) {
         power_shutdown();
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_TEXT_IOCTL_LAYOUT_UTF8) {
+        static char text_buf[LEONOS_TEXT_LAYOUT_MAX_BYTES];
+        static struct leonos_text_glyph glyph_buf[LEONOS_TEXT_LAYOUT_MAX_GLYPHS];
+        struct leonos_text_layout *query;
+        struct leonos_text_layout layout;
+        uint32_t len;
+        uint32_t capacity;
+        uint32_t copy_count;
+        if (!user_range_ok(a2, sizeof(struct leonos_text_layout))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_text_layout *)(uintptr_t)a2;
+        layout = *query;
+        if (!layout.text) {
+            return -LEONOS_EFAULT;
+        }
+        len = layout.byte_len;
+        if (len == 0) {
+            len = (uint32_t)user_strlen(layout.text, LEONOS_TEXT_LAYOUT_MAX_BYTES);
+            if (len == LEONOS_TEXT_LAYOUT_MAX_BYTES) {
+                return -LEONOS_E2BIG;
+            }
+        }
+        if (len > LEONOS_TEXT_LAYOUT_MAX_BYTES ||
+            !user_range_ok((uint64_t)(uintptr_t)layout.text, len)) {
+            return -LEONOS_EFAULT;
+        }
+        capacity = layout.capacity;
+        if (capacity > LEONOS_TEXT_LAYOUT_MAX_GLYPHS) {
+            capacity = LEONOS_TEXT_LAYOUT_MAX_GLYPHS;
+        }
+        if (capacity && (!layout.glyphs ||
+            !user_range_ok((uint64_t)(uintptr_t)layout.glyphs,
+                           (uint64_t)capacity * sizeof(struct leonos_text_glyph)))) {
+            return -LEONOS_EFAULT;
+        }
+        for (uint32_t i = 0; i < len; ++i) {
+            text_buf[i] = layout.text[i];
+        }
+        layout.text = text_buf;
+        layout.byte_len = len;
+        layout.capacity = capacity;
+        layout.glyphs = glyph_buf;
+        if (osmlayer_unicode_layout_utf8(&layout) < 0) {
+            return -LEONOS_EINVAL;
+        }
+        copy_count = layout.count < capacity ? layout.count : capacity;
+        for (uint32_t i = 0; i < copy_count; ++i) {
+            query->glyphs[i] = glyph_buf[i];
+        }
+        query->byte_len = len;
+        query->count = layout.count;
+        query->total_cells = layout.total_cells;
+        query->total_px = layout.total_px;
+        return 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_LIST_DISKS) {
+        struct leonos_install_disk_list *query;
+        struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
+        uint32_t count = LEONOS_INSTALL_MAX_DISKS;
+        if (!user_range_ok(a2, sizeof(struct leonos_install_disk_list))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_install_disk_list *)(uintptr_t)a2;
+        if (query->capacity > LEONOS_INSTALL_MAX_DISKS) {
+            query->capacity = LEONOS_INSTALL_MAX_DISKS;
+        }
+        if (query->capacity && (!query->disks ||
+            !user_range_ok((uint64_t)(uintptr_t)query->disks,
+                           (uint64_t)query->capacity * sizeof(struct leonos_install_disk)))) {
+            return -LEONOS_EFAULT;
+        }
+        if (storage_install_list_disks(disks, count, &count) < 0) {
+            return -LEONOS_EINVAL;
+        }
+        query->count = count;
+        if (query->capacity < count) {
+            count = query->capacity;
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            ((struct leonos_install_disk *)(uintptr_t)query->disks)[i] = disks[i];
+        }
+        return 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_FORMAT_ESP) {
+        return storage_install_format_esp((uint32_t)a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_MOUNT_TARGET) {
+        return storage_install_mount_target((uint32_t)a2);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_LIST_DIR) {

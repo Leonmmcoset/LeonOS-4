@@ -4,6 +4,7 @@
 #include <leonos/stdio.h>
 #include <leonos/system.h>
 #include <leonos/syscall.h>
+#include <leonos/text.h>
 #include <stdarg.h>
 
 size_t strlen(const char *s)
@@ -400,6 +401,52 @@ int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
         *out_count = query.count;
     }
     return ret;
+}
+
+int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
+                            struct leonos_text_glyph *glyphs,
+                            uint32_t capacity,
+                            struct leonos_text_layout *out_layout)
+{
+    struct leonos_text_layout query = {
+        .text = text,
+        .byte_len = byte_len,
+        .capacity = capacity,
+        .count = 0,
+        .total_cells = 0,
+        .total_px = 0,
+        .glyphs = glyphs,
+    };
+    int ret = ioctl(3, LEONOS_TEXT_IOCTL_LAYOUT_UTF8, &query);
+    if (out_layout) {
+        *out_layout = query;
+    }
+    return ret;
+}
+
+int leonos_install_list_disks(struct leonos_install_disk *disks,
+                              uint32_t capacity, uint32_t *out_count)
+{
+    struct leonos_install_disk_list query = {
+        .capacity = capacity,
+        .count = 0,
+        .disks = disks,
+    };
+    int ret = ioctl(3, LEONOS_INSTALL_IOCTL_LIST_DISKS, &query);
+    if (out_count) {
+        *out_count = query.count;
+    }
+    return ret;
+}
+
+int leonos_install_format_esp(uint32_t disk_id)
+{
+    return ioctl(3, LEONOS_INSTALL_IOCTL_FORMAT_ESP, (void *)(uintptr_t)disk_id);
+}
+
+int leonos_install_mount_target(uint32_t disk_id)
+{
+    return ioctl(3, LEONOS_INSTALL_IOCTL_MOUNT_TARGET, (void *)(uintptr_t)disk_id);
 }
 
 int leonos_system_info(struct leonos_system_info *info)

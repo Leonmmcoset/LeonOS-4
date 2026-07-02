@@ -2,12 +2,23 @@
 #include <leonos/launch.h>
 #include <leonos/psf_font.h>
 #include <leonos/syscall.h>
+#include <leonos/text.h>
 #include <leonos/ui.h>
 
 #define UI_SYSTEM_FONT_MAX 8192U
+#define UI_CJK_FONT_MAX 131072U
+#define UI_LAYOUT_GLYPH_MAX 512U
+#define UI_CJK_FONT_PATH "0:/system/fonts/cjk16.lbf"
 
 static uint8_t ui_system_font[UI_SYSTEM_FONT_MAX];
+static uint8_t ui_cjk_font[UI_CJK_FONT_MAX];
 static uint8_t ui_system_font_checked;
+static uint8_t ui_cjk_font_checked;
+static uint32_t ui_cjk_font_len;
+static uint32_t ui_cjk_font_count;
+static uint32_t ui_cjk_index_offset;
+static uint32_t ui_cjk_bitmap_offset;
+static uint32_t ui_cjk_glyph_bytes;
 static struct leonos_psf_view ui_font_view;
 
 static uint32_t ui_strlen(const char *text)
@@ -55,9 +66,328 @@ static const uint8_t *ui_font_glyph(char ch)
     return leonos_psf_glyph(ch);
 }
 
+static uint16_t ui_read_le16(const uint8_t *p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t ui_read_le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void ui_load_cjk_font(void)
+{
+    if (ui_cjk_font_checked) {
+        return;
+    }
+    ui_cjk_font_checked = 1;
+    struct leonos_stat st;
+    if (stat(UI_CJK_FONT_PATH, &st) != 0 ||
+        st.type != LEONOS_FS_TYPE_FILE ||
+        st.size < 24 || st.size > sizeof(ui_cjk_font)) {
+        return;
+    }
+    int fd = open(UI_CJK_FONT_PATH, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return;
+    }
+    uint32_t len = 0;
+    while (len < st.size) {
+        long got = read(fd, ui_cjk_font + len, (uint32_t)st.size - len);
+        if (got <= 0) {
+            break;
+        }
+        len += (uint32_t)got;
+    }
+    close(fd);
+    if (len < 24 ||
+        ui_cjk_font[0] != 'L' || ui_cjk_font[1] != 'B' ||
+        ui_cjk_font[2] != 'F' || ui_cjk_font[3] != '1' ||
+        ui_read_le16(ui_cjk_font + 4) != 16 ||
+        ui_read_le16(ui_cjk_font + 6) != 16) {
+        return;
+    }
+    ui_cjk_glyph_bytes = ui_read_le16(ui_cjk_font + 8);
+    ui_cjk_font_count = ui_read_le32(ui_cjk_font + 12);
+    ui_cjk_index_offset = ui_read_le32(ui_cjk_font + 16);
+    ui_cjk_bitmap_offset = ui_read_le32(ui_cjk_font + 20);
+    if (ui_cjk_glyph_bytes != 32 ||
+        ui_cjk_index_offset + ui_cjk_font_count * 8u > len ||
+        ui_cjk_bitmap_offset > len) {
+        ui_cjk_font_count = 0;
+        return;
+    }
+    ui_cjk_font_len = len;
+}
+
+static const uint8_t *ui_cjk_glyph(uint32_t codepoint)
+{
+    ui_load_cjk_font();
+    if (!ui_cjk_font_count) {
+        return 0;
+    }
+    uint32_t lo = 0;
+    uint32_t hi = ui_cjk_font_count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2u;
+        const uint8_t *entry = ui_cjk_font + ui_cjk_index_offset + mid * 8u;
+        uint32_t cp = ui_read_le32(entry);
+        uint32_t off = ui_read_le32(entry + 4);
+        if (cp == codepoint) {
+            if (off + ui_cjk_glyph_bytes <= ui_cjk_font_len) {
+                return ui_cjk_font + off;
+            }
+            return 0;
+        }
+        if (cp < codepoint) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return 0;
+}
+
+static int ui_utf8_cont(uint8_t byte)
+{
+    return (byte & 0xc0u) == 0x80u;
+}
+
+static uint32_t ui_decode_utf8(const char *text, uint32_t len,
+                               uint32_t off, uint32_t *byte_len)
+{
+    const uint8_t *s = (const uint8_t *)text;
+    uint8_t b0;
+    if (byte_len) {
+        *byte_len = 1;
+    }
+    if (!text || off >= len) {
+        return LEONOS_TEXT_REPLACEMENT_CHAR;
+    }
+    b0 = s[off];
+    if (b0 < 0x80u) {
+        return b0;
+    }
+    if (b0 < 0xc2u) {
+        return LEONOS_TEXT_REPLACEMENT_CHAR;
+    }
+    if (b0 < 0xe0u) {
+        if (off + 1u >= len || !ui_utf8_cont(s[off + 1u])) {
+            return LEONOS_TEXT_REPLACEMENT_CHAR;
+        }
+        if (byte_len) {
+            *byte_len = 2;
+        }
+        return ((uint32_t)(b0 & 0x1fu) << 6) | (uint32_t)(s[off + 1u] & 0x3fu);
+    }
+    if (b0 < 0xf0u) {
+        uint8_t b1;
+        uint8_t b2;
+        if (off + 2u >= len) {
+            return LEONOS_TEXT_REPLACEMENT_CHAR;
+        }
+        b1 = s[off + 1u];
+        b2 = s[off + 2u];
+        if (!ui_utf8_cont(b1) || !ui_utf8_cont(b2) ||
+            (b0 == 0xe0u && b1 < 0xa0u) ||
+            (b0 == 0xedu && b1 >= 0xa0u)) {
+            return LEONOS_TEXT_REPLACEMENT_CHAR;
+        }
+        if (byte_len) {
+            *byte_len = 3;
+        }
+        return ((uint32_t)(b0 & 0x0fu) << 12) |
+               ((uint32_t)(b1 & 0x3fu) << 6) |
+               (uint32_t)(b2 & 0x3fu);
+    }
+    if (b0 < 0xf5u) {
+        uint8_t b1;
+        uint8_t b2;
+        uint8_t b3;
+        if (off + 3u >= len) {
+            return LEONOS_TEXT_REPLACEMENT_CHAR;
+        }
+        b1 = s[off + 1u];
+        b2 = s[off + 2u];
+        b3 = s[off + 3u];
+        if (!ui_utf8_cont(b1) || !ui_utf8_cont(b2) || !ui_utf8_cont(b3) ||
+            (b0 == 0xf0u && b1 < 0x90u) ||
+            (b0 == 0xf4u && b1 >= 0x90u)) {
+            return LEONOS_TEXT_REPLACEMENT_CHAR;
+        }
+        if (byte_len) {
+            *byte_len = 4;
+        }
+        return ((uint32_t)(b0 & 0x07u) << 18) |
+               ((uint32_t)(b1 & 0x3fu) << 12) |
+               ((uint32_t)(b2 & 0x3fu) << 6) |
+               (uint32_t)(b3 & 0x3fu);
+    }
+    return LEONOS_TEXT_REPLACEMENT_CHAR;
+}
+
+static int ui_is_wide_codepoint(uint32_t cp)
+{
+    return (cp >= 0x1100u && cp <= 0x115fu) ||
+           cp == 0x2329u || cp == 0x232au ||
+           (cp >= 0x2e80u && cp <= 0xa4cfu) ||
+           (cp >= 0xac00u && cp <= 0xd7a3u) ||
+           (cp >= 0xf900u && cp <= 0xfaffu) ||
+           (cp >= 0xfe10u && cp <= 0xfe19u) ||
+           (cp >= 0xfe30u && cp <= 0xfe6fu) ||
+           (cp >= 0xff00u && cp <= 0xff60u) ||
+           (cp >= 0xffe0u && cp <= 0xffe6u);
+}
+
+static uint32_t ui_cell_width(uint32_t cp)
+{
+    if (cp == 0 || cp == '\n' || cp == '\r') {
+        return 0;
+    }
+    if (cp == '\t') {
+        return 4;
+    }
+    return ui_is_wide_codepoint(cp) ? 2u : 1u;
+}
+
+static int ui_layout_utf8(const char *text, uint32_t byte_len,
+                          struct leonos_text_glyph *glyphs, uint32_t capacity,
+                          struct leonos_text_layout *out)
+{
+    if (!text) {
+        if (out) {
+            out->text = text;
+            out->byte_len = 0;
+            out->capacity = capacity;
+            out->count = 0;
+            out->total_cells = 0;
+            out->total_px = 0;
+            out->glyphs = glyphs;
+        }
+        return 0;
+    }
+    if (byte_len == 0) {
+        byte_len = ui_strlen(text);
+    }
+    if (leonos_text_layout_utf8(text, byte_len, glyphs, capacity, out) == 0) {
+        return 0;
+    }
+    uint32_t off = 0;
+    uint32_t count = 0;
+    uint32_t cells = 0;
+    while (off < byte_len) {
+        uint32_t len = 1;
+        uint32_t cp = ui_decode_utf8(text, byte_len, off, &len);
+        uint32_t cw = ui_cell_width(cp);
+        if (count < capacity) {
+            glyphs[count].codepoint = cp;
+            glyphs[count].byte_offset = off;
+            glyphs[count].byte_len = len;
+            glyphs[count].cell_width = cw;
+            glyphs[count].pixel_width = cw * LEONOS_FONT_W;
+        }
+        cells += cw;
+        ++count;
+        off += len;
+    }
+    if (out) {
+        out->text = text;
+        out->byte_len = byte_len;
+        out->capacity = capacity;
+        out->count = count;
+        out->total_cells = cells;
+        out->total_px = cells * LEONOS_FONT_W;
+        out->glyphs = glyphs;
+    }
+    return 0;
+}
+
+static uint32_t ui_next_codepoint_offset(const char *text, uint32_t len, uint32_t pos)
+{
+    uint32_t byte_len = 1;
+    if (!text || pos >= len) {
+        return len;
+    }
+    (void)ui_decode_utf8(text, len, pos, &byte_len);
+    if (byte_len == 0) {
+        byte_len = 1;
+    }
+    pos += byte_len;
+    return pos > len ? len : pos;
+}
+
+static uint32_t ui_prev_codepoint_offset(const char *text, uint32_t pos)
+{
+    uint32_t prev = 0;
+    uint32_t cur = 0;
+    uint32_t len = ui_strlen(text);
+    if (!text || pos == 0) {
+        return 0;
+    }
+    if (pos > len) {
+        pos = len;
+    }
+    while (cur < pos) {
+        prev = cur;
+        cur = ui_next_codepoint_offset(text, len, cur);
+        if (cur <= prev) {
+            break;
+        }
+    }
+    return prev;
+}
+
+static uint32_t ui_text_cells_between(const char *text, uint32_t start, uint32_t end)
+{
+    uint32_t cells = 0;
+    uint32_t len = ui_strlen(text);
+    if (!text) {
+        return 0;
+    }
+    if (start > len) {
+        start = len;
+    }
+    if (end > len) {
+        end = len;
+    }
+    while (start < end) {
+        uint32_t byte_len = 1;
+        uint32_t cp = ui_decode_utf8(text, len, start, &byte_len);
+        cells += ui_cell_width(cp);
+        start += byte_len ? byte_len : 1u;
+    }
+    return cells;
+}
+
+static uint32_t ui_byte_offset_for_cell(const char *text, uint32_t len,
+                                        uint32_t start, uint32_t target_cell)
+{
+    uint32_t pos = start;
+    uint32_t cell = 0;
+    while (pos < len) {
+        uint32_t byte_len = 1;
+        uint32_t cp = ui_decode_utf8(text, len, pos, &byte_len);
+        uint32_t cw = ui_cell_width(cp);
+        if (cell + cw > target_cell) {
+            return pos;
+        }
+        cell += cw;
+        pos += byte_len ? byte_len : 1u;
+        if (cell >= target_cell) {
+            return pos;
+        }
+    }
+    return len;
+}
+
 uint32_t leonos_ui_text_width(const char *text)
 {
-    return ui_strlen(text) * LEONOS_FONT_W;
+    struct leonos_text_layout layout;
+    struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
+    ui_layout_utf8(text, 0, glyphs, UI_LAYOUT_GLYPH_MAX, &layout);
+    return layout.total_px;
 }
 
 uint32_t leonos_ui_text_fit_chars(uint32_t pixel_width)
@@ -193,45 +523,119 @@ static void ui_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
     }
 }
 
+static void ui_tofu(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                    uint32_t fg, uint32_t bg, int transparent, uint32_t pixels_w)
+{
+    if (!transparent) {
+        leonos_ui_rect(surface, x, y, pixels_w, LEONOS_FONT_H, bg);
+    }
+    if (pixels_w < 4) {
+        return;
+    }
+    for (uint32_t col = 1; col + 1 < pixels_w; ++col) {
+        leonos_ui_pixel(surface, x + col, y + 1, fg);
+        leonos_ui_pixel(surface, x + col, y + LEONOS_FONT_H - 2, fg);
+    }
+    for (uint32_t row = 1; row + 1 < LEONOS_FONT_H; ++row) {
+        leonos_ui_pixel(surface, x + 1, y + row, fg);
+        leonos_ui_pixel(surface, x + pixels_w - 2, y + row, fg);
+    }
+}
+
+static void ui_cjk_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                        uint32_t codepoint, uint32_t fg, uint32_t bg, int transparent)
+{
+    const uint8_t *glyph = ui_cjk_glyph(codepoint);
+    if (!glyph) {
+        ui_tofu(surface, x, y, fg, bg, transparent, LEONOS_FONT_W * 2u);
+        return;
+    }
+    for (uint32_t row = 0; row < 16; ++row) {
+        uint8_t hi = glyph[row * 2u];
+        uint8_t lo = glyph[row * 2u + 1u];
+        uint16_t bits = ((uint16_t)hi << 8) | lo;
+        for (uint32_t col = 0; col < 16; ++col) {
+            if (bits & (uint16_t)(0x8000u >> col)) {
+                leonos_ui_pixel(surface, x + col, y + row, fg);
+            } else if (!transparent) {
+                leonos_ui_pixel(surface, x + col, y + row, bg);
+            }
+        }
+    }
+}
+
+static void ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                         uint32_t codepoint, uint32_t cell_width,
+                         uint32_t fg, uint32_t bg, int transparent)
+{
+    uint32_t pixels_w = cell_width * LEONOS_FONT_W;
+    if (cell_width == 0) {
+        return;
+    }
+    if (codepoint == '\t') {
+        if (!transparent) {
+            leonos_ui_rect(surface, x, y, pixels_w, LEONOS_FONT_H, bg);
+        }
+        return;
+    }
+    if (codepoint >= 32u && codepoint < 127u && cell_width == 1u) {
+        ui_char(surface, x, y, (char)codepoint, fg, bg, transparent);
+        return;
+    }
+    if (cell_width >= 2u) {
+        ui_cjk_char(surface, x, y, codepoint, fg, bg, transparent);
+        return;
+    }
+    ui_char(surface, x, y, '?', fg, bg, transparent);
+}
+
+static void ui_draw_layout_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                                uint32_t w, const char *text,
+                                uint32_t fg, uint32_t bg,
+                                int transparent, int clipped)
+{
+    struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
+    struct leonos_text_layout layout;
+    uint32_t draw_x = x;
+    uint32_t count;
+    if (!transparent && clipped) {
+        leonos_ui_rect(surface, x, y, w, LEONOS_FONT_H, bg);
+    }
+    ui_layout_utf8(text ? text : "", 0, glyphs, UI_LAYOUT_GLYPH_MAX, &layout);
+    count = layout.count < UI_LAYOUT_GLYPH_MAX ? layout.count : UI_LAYOUT_GLYPH_MAX;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t px = glyphs[i].pixel_width;
+        if (clipped && draw_x + px > x + w) {
+            break;
+        }
+        ui_codepoint(surface, draw_x, y, glyphs[i].codepoint, glyphs[i].cell_width,
+                     fg, bg, transparent || clipped);
+        draw_x += px;
+    }
+}
+
 void leonos_ui_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     const char *text, uint32_t fg, uint32_t bg)
 {
-    for (uint32_t i = 0; text && text[i]; ++i) {
-        ui_char(surface, x + i * LEONOS_FONT_W, y, text[i], fg, bg, 0);
-    }
+    ui_draw_layout_text(surface, x, y, 0, text, fg, bg, 0, 0);
 }
 
 void leonos_ui_text_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                             uint32_t w, const char *text, uint32_t fg, uint32_t bg)
 {
-    uint32_t max = leonos_ui_text_fit_chars(w);
-    for (uint32_t i = 0; i < max; ++i) {
-        char ch = text && text[i] ? text[i] : ' ';
-        ui_char(surface, x + i * LEONOS_FONT_W, y, ch, fg, bg, 0);
-        if (!text || !text[i]) {
-            for (++i; i < max; ++i) {
-                ui_char(surface, x + i * LEONOS_FONT_W, y, ' ', fg, bg, 0);
-            }
-            return;
-        }
-    }
+    ui_draw_layout_text(surface, x, y, w, text, fg, bg, 0, 1);
 }
 
 void leonos_ui_text_transparent(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                                 const char *text, uint32_t fg)
 {
-    for (uint32_t i = 0; text && text[i]; ++i) {
-        ui_char(surface, x + i * LEONOS_FONT_W, y, text[i], fg, 0, 1);
-    }
+    ui_draw_layout_text(surface, x, y, 0, text, fg, 0, 1, 0);
 }
 
 void leonos_ui_text_transparent_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                                         uint32_t w, const char *text, uint32_t fg)
 {
-    uint32_t max = leonos_ui_text_fit_chars(w);
-    for (uint32_t i = 0; text && text[i] && i < max; ++i) {
-        ui_char(surface, x + i * LEONOS_FONT_W, y, text[i], fg, 0, 1);
-    }
+    ui_draw_layout_text(surface, x, y, w, text, fg, 0, 1, 1);
 }
 
 void leonos_ui_bevel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
@@ -273,8 +677,7 @@ void leonos_ui_button(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
     if (!label) {
         return;
     }
-    uint32_t len = ui_strlen(label);
-    uint32_t text_w = len * LEONOS_FONT_W;
+    uint32_t text_w = leonos_ui_text_width(label);
     uint32_t tx = text_w < w ? x + (w - text_w) / 2 : x + 4;
     uint32_t ty = LEONOS_FONT_H < h ? y + (h - LEONOS_FONT_H) / 2 : y + 2;
     if (pressed) {
@@ -759,23 +1162,20 @@ void leonos_ui_edit(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
     uint32_t h = LEONOS_FONT_H + 8;
     uint32_t bg = (flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_LIGHT : LEONOS_UI_WHITE;
     uint32_t fg = (flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
-    uint32_t max_chars;
     const char *visible = text ? text : "";
     uint32_t len = ui_strlen(visible);
     if (scroll > len) {
         scroll = len;
     }
-    max_chars = w > 8 ? leonos_ui_text_fit_chars(w - 8) : 0;
     leonos_ui_inset(surface, x, y, w, h, bg);
     leonos_ui_text_clipped(surface, x + 4, y + 4, w > 8 ? w - 8 : w, visible + scroll, fg, bg);
     if ((flags & LEONOS_UI_EDIT_FOCUSED) && !(flags & LEONOS_UI_EDIT_DISABLED)) {
         if (cursor < scroll) {
             cursor = scroll;
         }
-        if (cursor > scroll + max_chars) {
-            cursor = scroll + max_chars;
-        }
-        leonos_ui_rect(surface, x + 4 + (cursor - scroll) * LEONOS_FONT_W, y + 4, 1, LEONOS_FONT_H, LEONOS_UI_BLACK);
+        leonos_ui_rect(surface,
+                       x + 4 + ui_text_cells_between(visible, scroll, cursor) * LEONOS_FONT_W,
+                       y + 4, 1, LEONOS_FONT_H, LEONOS_UI_BLACK);
     }
 }
 
@@ -823,8 +1223,9 @@ static void edit_ensure_cursor_visible(struct leonos_ui_edit_state *state, uint3
     if (state->cursor < state->scroll) {
         state->scroll = state->cursor;
     }
-    if (state->cursor > state->scroll + cols) {
-        state->scroll = state->cursor - cols;
+    while (ui_text_cells_between(state->buffer, state->scroll, state->cursor) > cols &&
+           state->scroll < state->cursor) {
+        state->scroll = ui_next_codepoint_offset(state->buffer, state->length, state->scroll);
     }
 }
 
@@ -880,8 +1281,12 @@ void leonos_ui_edit_state_draw(struct leonos_ui_surface *surface, uint32_t x,
     uint32_t text_x = x + 4;
     uint32_t text_y = y + 4;
     uint32_t cols = w > 8 ? leonos_ui_text_fit_chars(w - 8) : 0;
+    struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
+    struct leonos_text_layout layout;
     uint32_t sel_start = 0;
     uint32_t sel_end = 0;
+    uint32_t draw_x;
+    uint32_t draw_count;
     uint32_t fg;
     uint32_t bg;
     if (!state) {
@@ -902,26 +1307,33 @@ void leonos_ui_edit_state_draw(struct leonos_ui_surface *surface, uint32_t x,
     if (edit_has_selection(state)) {
         edit_selection_range(state, &sel_start, &sel_end);
     }
-    for (uint32_t i = 0; i < cols; ++i) {
-        uint32_t idx = state->scroll + i;
-        char ch = idx < state->length ? state->buffer[idx] : ' ';
+    draw_x = text_x;
+    ui_layout_utf8(state->buffer + state->scroll, state->length - state->scroll,
+                   glyphs, UI_LAYOUT_GLYPH_MAX, &layout);
+    draw_count = layout.count < UI_LAYOUT_GLYPH_MAX ? layout.count : UI_LAYOUT_GLYPH_MAX;
+    for (uint32_t i = 0; i < draw_count && draw_x < text_x + cols * LEONOS_FONT_W; ++i) {
+        uint32_t idx = state->scroll + glyphs[i].byte_offset;
+        uint32_t px = glyphs[i].pixel_width;
         uint32_t ch_bg = bg;
         uint32_t ch_fg = fg;
-        if (idx >= sel_start && idx < sel_end && edit_has_selection(state)) {
+        if (draw_x + px > text_x + cols * LEONOS_FONT_W) {
+            break;
+        }
+        if (idx < sel_end && idx + glyphs[i].byte_len > sel_start && edit_has_selection(state)) {
             ch_bg = LEONOS_UI_ACTIVE_TITLE;
             ch_fg = LEONOS_UI_WHITE;
         }
-        ui_char(surface, text_x + i * LEONOS_FONT_W, text_y, ch, ch_fg, ch_bg, 0);
+        ui_codepoint(surface, draw_x, text_y, glyphs[i].codepoint, glyphs[i].cell_width,
+                     ch_fg, ch_bg, 0);
+        draw_x += px;
     }
     if ((draw_flags & LEONOS_UI_EDIT_FOCUSED) && !(draw_flags & LEONOS_UI_EDIT_DISABLED)) {
         uint32_t cursor = state->cursor;
         if (cursor < state->scroll) {
             cursor = state->scroll;
         }
-        if (cursor > state->scroll + cols) {
-            cursor = state->scroll + cols;
-        }
-        leonos_ui_rect(surface, text_x + (cursor - state->scroll) * LEONOS_FONT_W,
+        leonos_ui_rect(surface,
+                       text_x + ui_text_cells_between(state->buffer, state->scroll, cursor) * LEONOS_FONT_W,
                        text_y, 1, LEONOS_FONT_H, LEONOS_UI_BLACK);
     }
 }
@@ -978,7 +1390,8 @@ int leonos_ui_edit_state_handle_key(struct leonos_ui_edit_state *state,
             return 1;
         }
         if (state->cursor > 0) {
-            edit_delete_range(state, state->cursor - 1, state->cursor);
+            edit_delete_range(state, ui_prev_codepoint_offset(state->buffer, state->cursor),
+                              state->cursor);
             edit_clear_selection(state);
             return 1;
         }
@@ -987,14 +1400,14 @@ int leonos_ui_edit_state_handle_key(struct leonos_ui_edit_state *state,
         return 0;
     case 75:
         if (state->cursor > 0) {
-            --state->cursor;
+            state->cursor = ui_prev_codepoint_offset(state->buffer, state->cursor);
             edit_clear_selection(state);
             return 1;
         }
         return 0;
     case 77:
         if (state->cursor < state->length) {
-            ++state->cursor;
+            state->cursor = ui_next_codepoint_offset(state->buffer, state->length, state->cursor);
             edit_clear_selection(state);
             return 1;
         }
@@ -1039,7 +1452,8 @@ int leonos_ui_edit_state_handle_mouse(struct leonos_ui_edit_state *state,
     state->focused = 1;
     idx = state->scroll;
     if (px > (int32_t)x + 4) {
-        idx += ((uint32_t)px - x - 4) / LEONOS_FONT_W;
+        idx = ui_byte_offset_for_cell(state->buffer, state->length, state->scroll,
+                                      ((uint32_t)px - x - 4) / LEONOS_FONT_W);
     }
     if (idx > state->length) {
         idx = state->length;
@@ -1049,31 +1463,48 @@ int leonos_ui_edit_state_handle_mouse(struct leonos_ui_edit_state *state,
         state->selection_anchor = state->cursor;
         state->selecting = 1;
     }
-    if (cols && state->cursor > state->scroll + cols) {
-        state->scroll = state->cursor - cols;
-    }
+    (void)cols;
+    edit_ensure_cursor_visible(state, w);
     return 1;
 }
+
+static uint32_t text_area_cols(uint32_t w);
 
 void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                          uint32_t w, uint32_t h, const char *text, uint32_t cursor,
                          uint32_t scroll_line, uint32_t flags)
 {
     uint32_t rows = h > 8 ? (h - 8) / LEONOS_FONT_H : 0;
+    uint32_t cols = text_area_cols(w);
     uint32_t current = 0;
     uint32_t row = 0;
     uint32_t line_len = 0;
+    uint32_t line_cells = 0;
     uint32_t text_pos = 0;
     char line[128];
     (void)cursor;
     leonos_ui_scroll_view_frame(surface, x, y, w, h);
     while (text && row < rows) {
-        char ch = text[text_pos++];
-        if (ch == '\r') {
+        uint32_t byte_len = 1;
+        uint32_t cp = ui_decode_utf8(text, ui_strlen(text), text_pos, &byte_len);
+        uint32_t cw = ui_cell_width(cp);
+        if (text[text_pos] == 0) {
+            line[line_len] = 0;
+            if (current >= scroll_line) {
+                leonos_ui_text_clipped(surface, x + 4, y + 4 + row * LEONOS_FONT_H,
+                                      w > 8 ? w - 8 : w, line,
+                                      (flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK,
+                                      LEONOS_UI_WHITE);
+                ++row;
+            }
+            break;
+        }
+        if (cp == '\r') {
+            text_pos += byte_len;
             continue;
         }
-        if (ch == '\n' || ch == 0 || line_len + 1 >= sizeof(line) ||
-            line_len >= leonos_ui_text_fit_chars(w > 8 ? w - 8 : w)) {
+        if (cp == '\n' || line_len + byte_len >= sizeof(line) ||
+            (line_cells + cw > cols && line_len != 0)) {
             line[line_len] = 0;
             if (current >= scroll_line) {
                 leonos_ui_text_clipped(surface, x + 4, y + 4 + row * LEONOS_FONT_H,
@@ -1084,15 +1515,17 @@ void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t
             }
             ++current;
             line_len = 0;
-            if (ch == 0) {
-                break;
-            }
-            if (ch != '\n') {
-                --text_pos;
+            line_cells = 0;
+            if (cp == '\n') {
+                text_pos += byte_len;
             }
             continue;
         }
-        line[line_len++] = ch < 32 ? '?' : ch;
+        for (uint32_t i = 0; i < byte_len && line_len + 1 < sizeof(line); ++i) {
+            line[line_len++] = text[text_pos + i];
+        }
+        line_cells += cw;
+        text_pos += byte_len;
     }
     if ((flags & LEONOS_UI_EDIT_FOCUSED) && row < rows) {
         leonos_ui_rect(surface, x + 4, y + 4 + row * LEONOS_FONT_H, 1, LEONOS_FONT_H, LEONOS_UI_BLACK);
@@ -1125,21 +1558,26 @@ static void text_area_cursor_line_col(struct leonos_ui_text_area_state *state,
     if (cursor > state->length) {
         cursor = state->length;
     }
-    for (uint32_t i = 0; i < cursor; ++i) {
-        char ch = state->buffer[i];
-        if (ch == '\r') {
+    for (uint32_t i = 0; i < cursor;) {
+        uint32_t byte_len = 1;
+        uint32_t cp = ui_decode_utf8(state->buffer, state->length, i, &byte_len);
+        uint32_t cw = ui_cell_width(cp);
+        if (cp == '\r') {
+            i += byte_len;
             continue;
         }
-        if (ch == '\n') {
+        if (cp == '\n') {
             ++line;
             col = 0;
+            i += byte_len;
             continue;
         }
-        if (col >= cols) {
+        if (col + cw > cols && col != 0) {
             ++line;
             col = 0;
         }
-        ++col;
+        col += cw;
+        i += byte_len;
     }
     *out_line = line;
     *out_col = col;
@@ -1162,10 +1600,15 @@ static uint32_t text_area_cursor_from_line_col(struct leonos_ui_text_area_state 
         if (pos == state->length) {
             return state->length;
         }
-        if (state->buffer[pos] == '\r') {
+        uint32_t byte_len = 1;
+        uint32_t cp;
+        uint32_t cw;
+        cp = ui_decode_utf8(state->buffer, state->length, pos, &byte_len);
+        cw = ui_cell_width(cp);
+        if (cp == '\r') {
             continue;
         }
-        if (state->buffer[pos] == '\n') {
+        if (cp == '\n') {
             if (line == target_line) {
                 return pos;
             }
@@ -1173,7 +1616,7 @@ static uint32_t text_area_cursor_from_line_col(struct leonos_ui_text_area_state 
             col = 0;
             continue;
         }
-        if (col >= cols) {
+        if (col + cw > cols && col != 0) {
             ++line;
             col = 0;
             if (line > target_line) {
@@ -1183,7 +1626,13 @@ static uint32_t text_area_cursor_from_line_col(struct leonos_ui_text_area_state 
                 return pos;
             }
         }
-        ++col;
+        if (line == target_line && col + cw > target_col) {
+            return pos;
+        }
+        col += cw;
+        if (byte_len > 1) {
+            pos += byte_len - 1u;
+        }
     }
     return state->length;
 }
@@ -1261,21 +1710,26 @@ uint32_t leonos_ui_text_area_line_count(struct leonos_ui_text_area_state *state,
     if (!state || !state->buffer) {
         return 1;
     }
-    for (uint32_t i = 0; i < state->length; ++i) {
-        char ch = state->buffer[i];
-        if (ch == '\r') {
+    for (uint32_t i = 0; i < state->length;) {
+        uint32_t byte_len = 1;
+        uint32_t cp = ui_decode_utf8(state->buffer, state->length, i, &byte_len);
+        uint32_t cw = ui_cell_width(cp);
+        if (cp == '\r') {
+            i += byte_len;
             continue;
         }
-        if (ch == '\n') {
+        if (cp == '\n') {
             ++lines;
             col = 0;
+            i += byte_len;
             continue;
         }
-        if (col >= cols) {
+        if (col + cw > cols && col != 0) {
             ++lines;
             col = 0;
         }
-        ++col;
+        col += cw;
+        i += byte_len;
     }
     return lines ? lines : 1;
 }
@@ -1333,42 +1787,43 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
     for (uint32_t row = 0; row < rows; ++row) {
         uint32_t line = state->scroll_line + row;
         uint32_t pos = text_area_cursor_from_line_col(state, w, line, 0);
-        for (uint32_t col = 0; col < cols && x + 4 + col * LEONOS_FONT_W < x + w - 2; ++col) {
+        uint32_t draw_x = x + 4;
+        uint32_t draw_right = x + 4 + cols * LEONOS_FONT_W;
+        while (pos < state->length && draw_x < draw_right) {
+            uint32_t byte_len = 1;
+            uint32_t cp = ui_decode_utf8(state->buffer, state->length, pos, &byte_len);
+            uint32_t cw = ui_cell_width(cp);
+            uint32_t px = cw * LEONOS_FONT_W;
             uint32_t ch_bg = LEONOS_UI_WHITE;
             uint32_t ch_fg = (draw_flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
-            char ch = ' ';
             uint32_t next_line;
             uint32_t next_col;
-            if (pos < state->length) {
-                char raw = state->buffer[pos];
-                if (raw == '\r') {
-                    ++pos;
-                    --col;
-                    continue;
-                }
-                if (raw == '\n') {
-                    if (pos >= sel_start && pos < sel_end && text_area_has_selection(state)) {
-                        ch_bg = LEONOS_UI_ACTIVE_TITLE;
-                        ch_fg = LEONOS_UI_WHITE;
-                    }
-                    ui_char(surface, x + 4 + col * LEONOS_FONT_W,
-                            y + 4 + row * LEONOS_FONT_H, ' ', ch_fg, ch_bg, 0);
-                    break;
-                }
-                text_area_cursor_line_col(state, w, pos, &next_line, &next_col);
-                (void)next_col;
-                if (next_line != line) {
-                    break;
-                }
-                ch = raw < 32 ? '?' : raw;
+            if (cp == '\r') {
+                pos += byte_len;
+                continue;
+            }
+            if (cp == '\n') {
                 if (pos >= sel_start && pos < sel_end && text_area_has_selection(state)) {
                     ch_bg = LEONOS_UI_ACTIVE_TITLE;
                     ch_fg = LEONOS_UI_WHITE;
                 }
-                ++pos;
+                ui_char(surface, draw_x, y + 4 + row * LEONOS_FONT_H,
+                        ' ', ch_fg, ch_bg, 0);
+                break;
             }
-            ui_char(surface, x + 4 + col * LEONOS_FONT_W,
-                    y + 4 + row * LEONOS_FONT_H, ch, ch_fg, ch_bg, 0);
+            text_area_cursor_line_col(state, w, pos, &next_line, &next_col);
+            (void)next_col;
+            if (next_line != line || draw_x + px > draw_right) {
+                break;
+            }
+            if (pos < sel_end && pos + byte_len > sel_start && text_area_has_selection(state)) {
+                ch_bg = LEONOS_UI_ACTIVE_TITLE;
+                ch_fg = LEONOS_UI_WHITE;
+            }
+            ui_codepoint(surface, draw_x, y + 4 + row * LEONOS_FONT_H,
+                         cp, cw, ch_fg, ch_bg, 0);
+            draw_x += px;
+            pos += byte_len;
         }
     }
     if ((draw_flags & LEONOS_UI_EDIT_FOCUSED) && !(draw_flags & LEONOS_UI_EDIT_DISABLED)) {
@@ -1423,7 +1878,13 @@ static int text_area_insert_char(struct leonos_ui_text_area_state *state, char c
 
 static int text_area_delete_char(struct leonos_ui_text_area_state *state, uint32_t index)
 {
-    return text_area_delete_range(state, index, index + 1);
+    if (!state) {
+        return 0;
+    }
+    return text_area_delete_range(state, index,
+                                  ui_next_codepoint_offset(state->buffer,
+                                                           state->length,
+                                                           index));
 }
 
 int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state,
@@ -1462,7 +1923,8 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
             return 0;
         }
         if (state->cursor > 0) {
-            if (text_area_delete_char(state, state->cursor - 1)) {
+            if (text_area_delete_char(state, ui_prev_codepoint_offset(state->buffer,
+                                                                      state->cursor))) {
                 if (col > 0) {
                     --col;
                 }
@@ -1484,7 +1946,7 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         return 0;
     case 75:
         if (state->cursor > 0) {
-            --state->cursor;
+            state->cursor = ui_prev_codepoint_offset(state->buffer, state->cursor);
             text_area_clear_selection(state);
             text_area_cursor_line_col(state, w, state->cursor, &line, &col);
             state->preferred_column = col;
@@ -1494,7 +1956,7 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         return 0;
     case 77:
         if (state->cursor < state->length) {
-            ++state->cursor;
+            state->cursor = ui_next_codepoint_offset(state->buffer, state->length, state->cursor);
             text_area_clear_selection(state);
             text_area_cursor_line_col(state, w, state->cursor, &line, &col);
             state->preferred_column = col;

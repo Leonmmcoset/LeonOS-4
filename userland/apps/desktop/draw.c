@@ -138,6 +138,10 @@ void text_draw(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t b
 
 void text_draw_i(int x, int y, const char *text, uint32_t fg, uint32_t bg)
 {
+    if (x >= 0 && y >= 0) {
+        leonos_ui_text(&ui, (uint32_t)x, (uint32_t)y, text, fg, bg);
+        return;
+    }
     for (uint32_t i = 0; text && text[i]; ++i) {
         int gx = x + (int)i * (int)LEONOS_FONT_W;
         if (gx + (int)LEONOS_FONT_W <= 0 || gx >= (int)fb_w() ||
@@ -159,6 +163,10 @@ void text_draw_i(int x, int y, const char *text, uint32_t fg, uint32_t bg)
 
 void text_draw_transparent_i(int x, int y, const char *text, uint32_t fg)
 {
+    if (x >= 0 && y >= 0) {
+        leonos_ui_text_transparent(&ui, (uint32_t)x, (uint32_t)y, text, fg);
+        return;
+    }
     for (uint32_t i = 0; text && text[i]; ++i) {
         int gx = x + (int)i * (int)LEONOS_FONT_W;
         if (gx + (int)LEONOS_FONT_W <= 0 || gx >= (int)fb_w() ||
@@ -430,4 +438,3 @@ uint32_t min_u32(uint32_t a, uint32_t b)
 {
     return a < b ? a : b;
 }
-

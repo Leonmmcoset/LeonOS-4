@@ -1,6 +1,7 @@
 #ifndef NTCLKS_STORAGE_H
 #define NTCLKS_STORAGE_H
 
+#include <leonos/boot_handoff.h>
 #include <leonos/fs.h>
 #include <ntclks/types.h>
 
@@ -20,6 +21,7 @@ struct boot_info;
 
 void storage_init(void);
 void storage_init_installer_root(const struct boot_info *boot);
+void storage_apply_mount_policy(const struct leonos_mount_policy *policy);
 bool storage_ready(void);
 int storage_mount_ramdisk_root(const void *image, uint64_t len);
 int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t cap);

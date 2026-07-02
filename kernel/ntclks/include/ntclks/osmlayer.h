@@ -2,6 +2,7 @@
 #define NTCLKS_OSMLAYER_H
 
 #include <leonos/boot_handoff.h>
+#include <leonos/text.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/syscall.h>
 #include <ntclks/types.h>
@@ -15,6 +16,12 @@ struct osmlayer_boot_summary {
 
 void osmlayer_bridge_init(const struct boot_info *boot,
                           const struct leonos_boot_handoff *handoff);
+int osmlayer_bridge_mount_policy(const struct boot_info *boot,
+                                 struct leonos_mount_policy *policy);
+int osmlayer_unicode_layout_utf8(struct leonos_text_layout *layout);
+int osmlayer_unicode_utf8_to_utf16le(struct leonos_unicode_utf8_to_utf16 *cmd);
+int osmlayer_unicode_utf16le_to_utf8(struct leonos_unicode_utf16_to_utf8 *cmd);
+uint32_t osmlayer_unicode_safe_truncate_utf8(const char *text, uint32_t cap);
 int64_t osmlayer_bridge_syscall(const struct syscall_frame *frame);
 void osmlayer_bridge_selftest(void);
 
