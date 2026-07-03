@@ -24,6 +24,7 @@ NORMAL_USER_APPS = [
     "run",
     "osver",
     "bugtest",
+    "settings",
 ]
 INSTALLER_USER_APPS = [
     "desktop",

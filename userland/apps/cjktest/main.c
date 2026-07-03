@@ -116,7 +116,7 @@ static void draw(struct leonos_ui_surface *ui)
     leonos_ui_progress(ui, 338, 130, 220, 18, sample_w, 220);
 
     leonos_ui_groupbox(ui, 28, 164, 664, 170, "UTF-8 文本域");
-    leonos_ui_text_area_state_draw(ui, 42, 190, 636, 118, &text_state, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_text_area_state_draw(ui, 42, 190, 636, 118, &text_state, 0);
 
     leonos_ui_statusbar(ui, CJKTEST_H - 36, 28, status_line);
 }
@@ -140,7 +140,6 @@ int main(void)
 
     leonos_ui_bind(&ui, pixels, CJKTEST_W, CJKTEST_H, CJKTEST_W);
     leonos_ui_text_area_state_init(&text_state, text_buffer, sizeof(text_buffer));
-    text_state.readonly = 1;
 
     draw(&ui);
     leonos_gui_present_window((uint32_t)window_id, CJKTEST_W, CJKTEST_H, CJKTEST_W, pixels);
@@ -150,6 +149,52 @@ int main(void)
         if (leonos_gui_poll_app_event(&event) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON ||
+                event.type == LEONOS_GUI_APP_EVENT_MOUSE_MOVE) {
+                if (leonos_ui_text_area_state_handle_mouse(&text_state,
+                                                           event.x,
+                                                           event.y,
+                                                           42,
+                                                           190,
+                                                           636,
+                                                           118,
+                                                           event.buttons)) {
+                    draw(&ui);
+                    leonos_gui_present_window((uint32_t)window_id,
+                                              CJKTEST_W,
+                                              CJKTEST_H,
+                                              CJKTEST_W,
+                                              pixels);
+                }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                if (leonos_ui_vscrollbar_handle_wheel(&text_state.scroll_line,
+                                                      text_state.line_count,
+                                                      6,
+                                                      event.dy)) {
+                    draw(&ui);
+                    leonos_gui_present_window((uint32_t)window_id,
+                                              CJKTEST_W,
+                                              CJKTEST_H,
+                                              CJKTEST_W,
+                                              pixels);
+                }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN ||
+                event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                if (leonos_ui_text_area_state_handle_key(&text_state,
+                                                         event.keycode,
+                                                         event.pressed,
+                                                         636,
+                                                         118)) {
+                    draw(&ui);
+                    leonos_gui_present_window((uint32_t)window_id,
+                                              CJKTEST_W,
+                                              CJKTEST_H,
+                                              CJKTEST_W,
+                                              pixels);
+                }
             }
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE ||
                 event.type == LEONOS_GUI_APP_EVENT_FOCUS) {

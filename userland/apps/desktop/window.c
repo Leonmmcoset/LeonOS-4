@@ -220,9 +220,129 @@ void remove_window_slot(uint8_t slot)
     windows[slot].client_width = 0;
     windows[slot].client_height = 0;
     windows[slot].flags = 0;
+    windows[slot].anim = WINDOW_ANIM_NONE;
+    windows[slot].anim_start_ms = 0;
+    windows[slot].anim_from_x = 0;
+    windows[slot].anim_from_y = 0;
+    windows[slot].anim_from_w = 0;
+    windows[slot].anim_from_h = 0;
+    windows[slot].anim_to_x = 0;
+    windows[slot].anim_to_y = 0;
+    windows[slot].anim_to_w = 0;
+    windows[slot].anim_to_h = 0;
     app_titles[slot][0] = 0;
     app_texts[slot][0] = 0;
     full_redraw_pending = 1;
+}
+
+static struct rect window_center_min_rect(const struct desktop_window *w)
+{
+    uint32_t min_w = w && w->width < 96 ? w->width : 96;
+    uint32_t min_h = w && w->height < 54 ? w->height : 54;
+    int x = w ? w->x + ((int)w->width - (int)min_w) / 2 : 0;
+    int y = w ? w->y + ((int)w->height - (int)min_h) / 2 : 0;
+    return rect_make(x, y, (int)min_w, (int)min_h);
+}
+
+static struct rect window_taskbar_target_rect(uint8_t slot)
+{
+    uint32_t tb_y = taskbar_y();
+    uint32_t button_w = taskbar_button_width(running_window_count());
+    uint32_t x = 106;
+    if (button_w > 0) {
+        for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
+            if (!windows[i].visible) {
+                continue;
+            }
+            if (i == slot) {
+                return rect_make((int)x, (int)tb_y + 5,
+                                 (int)(button_w > 8 ? button_w - 8 : button_w),
+                                 LEONOS_UI_BUTTON_H);
+            }
+            x += button_w;
+        }
+    }
+    return rect_make(106, (int)tb_y + 5, 86, LEONOS_UI_BUTTON_H);
+}
+
+void begin_window_rect_animation(uint8_t slot, uint8_t anim,
+                                 int from_x, int from_y, uint32_t from_w, uint32_t from_h,
+                                 int to_x, int to_y, uint32_t to_w, uint32_t to_h)
+{
+    if (slot >= MAX_WINDOWS || !windows[slot].visible) {
+        return;
+    }
+    windows[slot].anim = anim;
+    windows[slot].anim_start_ms = leonos_uptime_ms();
+    windows[slot].anim_from_x = from_x;
+    windows[slot].anim_from_y = from_y;
+    windows[slot].anim_from_w = from_w;
+    windows[slot].anim_from_h = from_h;
+    windows[slot].anim_to_x = to_x;
+    windows[slot].anim_to_y = to_y;
+    windows[slot].anim_to_w = to_w;
+    windows[slot].anim_to_h = to_h;
+    full_redraw_pending = 1;
+}
+
+void begin_window_open_animation(uint8_t slot)
+{
+    struct rect from;
+    if (slot >= MAX_WINDOWS || !windows[slot].visible || window_is_fullscreen(&windows[slot])) {
+        return;
+    }
+    from = window_center_min_rect(&windows[slot]);
+    begin_window_rect_animation(slot, WINDOW_ANIM_OPEN,
+                                from.x, from.y, (uint32_t)from.w, (uint32_t)from.h,
+                                windows[slot].x, windows[slot].y,
+                                windows[slot].width, windows[slot].height);
+}
+
+void begin_window_close_animation(uint8_t slot, uint8_t send_close_event)
+{
+    struct rect to;
+    if (slot >= MAX_WINDOWS || !windows[slot].visible) {
+        return;
+    }
+    if (window_is_fullscreen(&windows[slot])) {
+        if (send_close_event && windows[slot].window_id) {
+            send_app_event(slot, 1, 0, 0, 0, 0, 0, 0, 0);
+        }
+        remove_window_slot(slot);
+        return;
+    }
+    windows[slot].close_requested = send_close_event;
+    to = window_center_min_rect(&windows[slot]);
+    begin_window_rect_animation(slot, WINDOW_ANIM_CLOSE,
+                                windows[slot].x, windows[slot].y,
+                                windows[slot].width, windows[slot].height,
+                                to.x, to.y, (uint32_t)to.w, (uint32_t)to.h);
+}
+
+void begin_window_minimize_animation(uint8_t slot)
+{
+    struct rect to;
+    if (slot >= MAX_WINDOWS || !windows[slot].visible || windows[slot].minimized) {
+        return;
+    }
+    to = window_taskbar_target_rect(slot);
+    begin_window_rect_animation(slot, WINDOW_ANIM_MINIMIZE,
+                                windows[slot].x, windows[slot].y,
+                                windows[slot].width, windows[slot].height,
+                                to.x, to.y, (uint32_t)to.w, (uint32_t)to.h);
+}
+
+void begin_window_restore_animation(uint8_t slot)
+{
+    struct rect from;
+    if (slot >= MAX_WINDOWS || !windows[slot].visible || !windows[slot].minimized) {
+        return;
+    }
+    from = window_taskbar_target_rect(slot);
+    begin_window_rect_animation(slot, WINDOW_ANIM_RESTORE,
+                                from.x, from.y, (uint32_t)from.w, (uint32_t)from.h,
+                                windows[slot].x, windows[slot].y,
+                                windows[slot].width, windows[slot].height);
 }
 
 void request_close_window(uint8_t slot)
@@ -231,15 +351,14 @@ void request_close_window(uint8_t slot)
         return;
     }
     if (windows[slot].window_id) {
-        windows[slot].close_requested = 1;
+        if (windows[slot].anim == WINDOW_ANIM_CLOSE) {
+            return;
+        }
         printf("[desktop.elf] request close wid=%d title=%s\n", windows[slot].window_id, windows[slot].title);
-        send_app_event(slot, 1, 0, 0, 0, 0, 0, 0, 0);
-        full_redraw_pending = 1;
+        begin_window_close_animation(slot, 1);
         return;
     }
-    windows[slot].visible = 0;
-    windows[slot].minimized = 0;
-    full_redraw_pending = 1;
+    begin_window_close_animation(slot, 0);
 }
 
 void send_app_event_to_window(uint32_t window_id, uint32_t type,
@@ -331,7 +450,7 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
                                 APP_CLIENT_MAX_W,
                                 app_client_scratch, &out_w, &out_h) <= 0) {
         text_draw_i(body_x + 16, body_y + 18,
-                    windows[id].app_text ? windows[id].app_text : "Application window",
+                    windows[id].app_text ? windows[id].app_text : leonos_i18n("Application window", "应用程序窗口"),
                     LEONOS_UI_BLACK, windows[id].body_color);
         return;
     }

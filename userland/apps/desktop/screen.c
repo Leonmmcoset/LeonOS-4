@@ -64,11 +64,11 @@ void redraw_region(struct rect dirty)
         rect_fill(24, 112, 2, 38, 0x00ffffff);
         rect_fill(70, 112, 2, 38, 0x00000000);
         rect_fill(24, 148, 48, 2, 0x00000000);
-        text_draw(8, 158, "Apps", 0x00ffffff, 0x00008080);
+        text_draw(8, 158, leonos_i18n("Apps", "应用"), 0x00ffffff, 0x00008080);
     }
 
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
-        if (rect_intersects(dirty, window_rect(z_order[i]))) {
+        if (!windows[z_order[i]].anim && rect_intersects(dirty, window_rect(z_order[i]))) {
             draw_window(z_order[i]);
         }
     }
@@ -78,7 +78,7 @@ void redraw_region(struct rect dirty)
     uint32_t tb_y = taskbar_y();
     if ((uint32_t)(dirty.y + dirty.h) >= tb_y) {
         leonos_ui_taskbar(&ui, tb_y, TASKBAR_H);
-        leonos_ui_button(&ui, 6, tb_y + 5, 86, LEONOS_UI_BUTTON_H, "Start",
+        leonos_ui_button(&ui, 6, tb_y + 5, 86, LEONOS_UI_BUTTON_H, leonos_i18n("Start", "开始"),
                          start_menu_open ? LEONOS_UI_BUTTON_PRESSED : 0);
         uint32_t x = 106;
         uint32_t button_w = taskbar_button_width(running_window_count());
@@ -90,11 +90,46 @@ void redraw_region(struct rect dirty)
         }
     }
 
+    for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
+        if (windows[z_order[i]].anim) {
+            draw_window(z_order[i]);
+        }
+    }
+
     draw_start_menu();
     draw_alt_tab_overlay();
+    draw_power_confirm();
     if (cursor_visible) {
         draw_cursor_shape(cursor_x, cursor_y);
     }
+}
+
+void draw_power_confirm(void)
+{
+    enum { W = 360, H = 150 };
+    uint32_t x;
+    uint32_t y;
+    const char *title;
+    const char *message;
+    if (!power_confirm_action) {
+        return;
+    }
+    x = fb_w() > W ? (fb_w() - W) / 2 : 0;
+    y = fb_h() > H ? (fb_h() - H) / 2 : 0;
+    title = power_confirm_action == POWER_CONFIRM_REBOOT
+                ? leonos_i18n("Confirm Restart", "确认重启")
+                : leonos_i18n("Confirm Shut Down", "确认关机");
+    message = power_confirm_action == POWER_CONFIRM_REBOOT
+                  ? leonos_i18n("Restart LeonOS now?", "是否立即重启 LeonOS？")
+                  : leonos_i18n("Shut down LeonOS now?", "是否立即关闭 LeonOS？");
+    rect_fill_i((int)x + 5, (int)y + 5, W, H, 0x00404040);
+    leonos_ui_dialog(&ui, x, y, W, H, title);
+    leonos_ui_text_clipped(&ui, x + 20, y + 50, W - 40, message,
+                           LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_button(&ui, x + W - 168, y + H - 38, 72, LEONOS_UI_BUTTON_H,
+                     leonos_i18n("Yes", "是"), 0);
+    leonos_ui_button(&ui, x + W - 88, y + H - 38, 72, LEONOS_UI_BUTTON_H,
+                     leonos_i18n("No", "否"), 0);
 }
 
 void flush_region(struct rect dirty)
@@ -171,7 +206,7 @@ void redraw_all(void)
     }
     redraw_region(full);
     flush_region(full);
-    full_redraw_pending = start_menu_animating ? 1 : 0;
+    full_redraw_pending = (start_menu_animating || desktop_window_animation_active()) ? 1 : 0;
 }
 
 int hit_window(uint32_t x, uint32_t y)
@@ -179,7 +214,8 @@ int hit_window(uint32_t x, uint32_t y)
     for (int zi = MAX_WINDOWS - 1; zi >= 0; --zi) {
         uint8_t id = z_order[zi];
         struct desktop_window *w = &windows[id];
-        if (w->visible && !w->minimized && hit_rect(x, y, w->x, w->y, w->width, w->height)) {
+        if (w->visible && !w->minimized && w->anim != WINDOW_ANIM_CLOSE &&
+            hit_rect(x, y, w->x, w->y, w->width, w->height)) {
             return id;
         }
     }

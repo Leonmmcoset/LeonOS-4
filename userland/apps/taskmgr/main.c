@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -18,6 +19,7 @@
 #define TASKMGR_CONTEXT_MENU_COUNT 3
 #define TASKMGR_KEY_ESCAPE 1U
 #define LEONOS_KEY_DELETE 83U
+#define T(en, zh) leonos_i18n((en), (zh))
 
 enum {
     TASKMGR_ACTION_END = 1,
@@ -195,29 +197,29 @@ static void kill_selected_task(void)
     struct leonos_task_info *task = selected_task();
     uint32_t pid;
     if (!task) {
-        set_status("No task selected");
+        set_status(T("No task selected", "未选择任务"));
         return;
     }
     if (!selected_task_killable()) {
-        set_status("Cannot end protected or non-user task");
+        set_status(T("Cannot end protected or non-user task", "无法结束受保护或非用户任务"));
         return;
     }
     pid = task->pid;
     if (leonos_task_kill(pid) < 0) {
-        set_status("End Task failed");
+        set_status(T("End Task failed", "结束任务失败"));
         return;
     }
-    set_status("Task ended");
+    set_status(T("Task ended", "任务已结束"));
     refresh_tasks();
 }
 
 static void build_context_menu_items(struct leonos_ui_context_menu_item *items)
 {
-    items[0] = (struct leonos_ui_context_menu_item){"End Task", TASKMGR_ACTION_END,
+    items[0] = (struct leonos_ui_context_menu_item){T("End Task", "结束任务"), TASKMGR_ACTION_END,
                                                     selected_task_killable() ? 0 : LEONOS_UI_MENU_DISABLED};
-    items[1] = (struct leonos_ui_context_menu_item){"Details", TASKMGR_ACTION_DETAILS,
+    items[1] = (struct leonos_ui_context_menu_item){T("Details", "详细信息"), TASKMGR_ACTION_DETAILS,
                                                     selected_task() ? 0 : LEONOS_UI_MENU_DISABLED};
-    items[2] = (struct leonos_ui_context_menu_item){"Refresh", TASKMGR_ACTION_REFRESH, 0};
+    items[2] = (struct leonos_ui_context_menu_item){T("Refresh", "刷新"), TASKMGR_ACTION_REFRESH, 0};
 }
 
 static void details_add_line(struct leonos_ui_surface *ui, uint32_t y,
@@ -242,7 +244,7 @@ static void show_task_details(void)
     uint32_t pos;
     int window_id;
     if (!task) {
-        set_status("No task selected");
+        set_status(T("No task selected", "未选择任务"));
         return;
     }
     snapshot = *task;
@@ -262,11 +264,11 @@ static void show_task_details(void)
     wake[0] = 0;
     append_dec(wake, &pos, sizeof(wake), snapshot.wake_tick);
 
-    window_id = leonos_gui_create_app_window_ex("Task Details", snapshot.name,
+    window_id = leonos_gui_create_app_window_ex(T("Task Details", "任务详细信息"), snapshot.name,
                                                 TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
                                                 LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
-        set_status("Details failed");
+        set_status(T("Details failed", "详细信息打开失败"));
         return;
     }
     leonos_ui_bind(&ui, details_pixels, TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
@@ -275,15 +277,15 @@ static void show_task_details(void)
         leonos_ui_rect(&ui, 0, 0, TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
                        LEONOS_UI_GRAY);
         leonos_ui_dialog(&ui, 0, 0, TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
-                         "Task Details");
-        details_add_line(&ui, 44, "Name:", snapshot.name);
+                         T("Task Details", "任务详细信息"));
+        details_add_line(&ui, 44, T("Name:", "名称:"), snapshot.name);
         details_add_line(&ui, 66, "PID:", pid);
-        details_add_line(&ui, 88, "Parent PID:", ppid);
-        details_add_line(&ui, 110, "State:", state_name(snapshot.state));
-        details_add_line(&ui, 132, "Kind:", kind_name(snapshot.kind));
+        details_add_line(&ui, 88, T("Parent PID:", "父 PID:"), ppid);
+        details_add_line(&ui, 110, T("State:", "状态:"), state_name(snapshot.state));
+        details_add_line(&ui, 132, T("Kind:", "类型:"), kind_name(snapshot.kind));
         details_add_line(&ui, 154, "CR3:", cr3);
         details_add_line(&ui, 176, "Entry:", entry);
-        details_add_line(&ui, 198, "Wake tick:", wake);
+        details_add_line(&ui, 198, T("Wake tick:", "唤醒 tick:"), wake);
         leonos_ui_button(&ui, TASKMGR_DETAILS_W - 90, TASKMGR_DETAILS_H - 38,
                          72, LEONOS_UI_BUTTON_H, "OK", 0);
         leonos_gui_present_window((uint32_t)window_id, TASKMGR_DETAILS_W,
@@ -346,12 +348,12 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
 
     leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
     leonos_ui_menubar(ui, 0, 0, view_w);
-    leonos_ui_menubar_item(ui, 8, 0, 64, "File", menu_open == TASKMGR_MENU_FILE);
-    leonos_ui_menubar_item(ui, 74, 0, 80, "Options", menu_open == TASKMGR_MENU_OPTIONS);
+    leonos_ui_menubar_item(ui, 8, 0, 64, T("File", "文件"), menu_open == TASKMGR_MENU_FILE);
+    leonos_ui_menubar_item(ui, 74, 0, 80, T("Options", "选项"), menu_open == TASKMGR_MENU_OPTIONS);
     leonos_ui_toolbar(ui, 0, 28, view_w, 36);
-    leonos_ui_toolbar_button(ui, 8, 34, 88, "Refresh", 0);
-    leonos_ui_toolbar_button(ui, 104, 34, 94, "Processes", LEONOS_UI_BUTTON_PRESSED);
-    leonos_ui_toolbar_button(ui, 206, 34, 86, "End Task",
+    leonos_ui_toolbar_button(ui, 8, 34, 88, T("Refresh", "刷新"), 0);
+    leonos_ui_toolbar_button(ui, 104, 34, 94, T("Processes", "进程"), LEONOS_UI_BUTTON_PRESSED);
+    leonos_ui_toolbar_button(ui, 206, 34, 86, T("End Task", "结束任务"),
                              selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
 
     line[0] = 0;
@@ -405,14 +407,14 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
 
     if (menu_open == TASKMGR_MENU_FILE) {
         leonos_ui_menu(ui, 8, TASKMGR_MENU_BAR_H, 154, 86);
-        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 8, 116, "Refresh", 0);
-        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 34, 116, "End Task",
+        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 8, 116, T("Refresh", "刷新"), 0);
+        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 34, 116, T("End Task", "结束任务"),
                             selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
-        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 60, 116, "About", 0);
+        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 60, 116, T("About", "关于"), 0);
     } else if (menu_open == TASKMGR_MENU_OPTIONS) {
         leonos_ui_menu(ui, 74, TASKMGR_MENU_BAR_H, 178, 60);
-        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 8, 140, "Processes", LEONOS_UI_MENU_SELECTED);
-        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 34, 140, "About", 0);
+        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 8, 140, T("Processes", "进程"), LEONOS_UI_MENU_SELECTED);
+        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 34, 140, T("About", "关于"), 0);
     }
     if (context_menu_active || context_menu_animating) {
         struct leonos_ui_context_menu_item items[TASKMGR_CONTEXT_MENU_COUNT];
@@ -462,7 +464,7 @@ static int handle_menu_click(int32_t x, int32_t y)
         if (hit_rect_i(x, y, 42, (int32_t)TASKMGR_MENU_BAR_H + 60, 116,
                        (int32_t)TASKMGR_MENU_ITEM_H)) {
             menu_open = TASKMGR_MENU_NONE;
-            leonos_ui_show_message_box("Task Manager", "Live task snapshot from the scheduler.", "OK");
+            leonos_ui_show_message_box(T("Task Manager", "任务管理器"), T("Live task snapshot from the scheduler.", "来自调度器的实时任务快照。"), "OK");
             return 1;
         }
         menu_open = TASKMGR_MENU_NONE;
@@ -478,7 +480,7 @@ static int handle_menu_click(int32_t x, int32_t y)
         if (hit_rect_i(x, y, 108, (int32_t)TASKMGR_MENU_BAR_H + 34, 140,
                        (int32_t)TASKMGR_MENU_ITEM_H)) {
             menu_open = TASKMGR_MENU_NONE;
-            leonos_ui_show_message_box("Task Manager", "Shows runnable, sleeping, and exited tasks.", "OK");
+            leonos_ui_show_message_box(T("Task Manager", "任务管理器"), T("Shows runnable, sleeping, and exited tasks.", "显示可运行、睡眠和已退出任务。"), "OK");
             return 1;
         }
         menu_open = TASKMGR_MENU_NONE;
@@ -548,7 +550,7 @@ int main(void)
 
     puts("[taskmgr.elf] task manager starting");
     printf("[taskmgr.elf] pid=%d creating GUI window\n", getpid());
-    window_id = leonos_gui_create_app_window_ex("Task Manager", "Task snapshot",
+    window_id = leonos_gui_create_app_window_ex(T("Task Manager", "任务管理器"), T("Task snapshot", "任务快照"),
                                                 TASKMGR_W, TASKMGR_H, 0);
     if (window_id <= 0) {
         printf("[taskmgr.elf] create window failed=%d\n", window_id);

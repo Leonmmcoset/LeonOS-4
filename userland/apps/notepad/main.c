@@ -1,5 +1,6 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -21,6 +22,7 @@
 #define MENU_BAR_H 28
 #define MENU_ITEM_H (LEONOS_FONT_H + 8)
 #define UNTITLED_NAME "Untitled"
+#define T(en, zh) leonos_i18n((en), (zh))
 
 enum {
     NOTEPAD_MENU_NONE = 0,
@@ -31,7 +33,7 @@ enum {
 
 static uint32_t pixels[NOTEPAD_W * NOTEPAD_H];
 static char file_path[PATH_CAP] = UNTITLED_NAME;
-static char status_text[STATUS_CAP] = "Open a text file from File Manager or Run";
+static char status_text[STATUS_CAP];
 static char text_data[NOTEPAD_TEXT_CAP];
 static uint8_t truncated;
 static uint8_t menu_open;
@@ -134,18 +136,18 @@ static void rebuild_status(void)
     uint32_t pos = 0;
     leonos_ui_text_area_state_sync(&document, VIEW_W);
     status_text[0] = 0;
-    append_text(status_text, &pos, sizeof(status_text), "Lines ");
+    append_text(status_text, &pos, sizeof(status_text), T("Lines ", "行数 "));
     append_u32(status_text, &pos, sizeof(status_text), document.line_count);
-    append_text(status_text, &pos, sizeof(status_text), "  Bytes ");
+    append_text(status_text, &pos, sizeof(status_text), T("  Bytes ", "  字节 "));
     append_u32(status_text, &pos, sizeof(status_text), document.length);
     if (document_dirty) {
-        append_text(status_text, &pos, sizeof(status_text), "  Modified");
+        append_text(status_text, &pos, sizeof(status_text), T("  Modified", "  已修改"));
     }
     if (truncated) {
-        append_text(status_text, &pos, sizeof(status_text), "  Truncated");
+        append_text(status_text, &pos, sizeof(status_text), T("  Truncated", "  已截断"));
     }
     if (document.length == 0) {
-        append_text(status_text, &pos, sizeof(status_text), "  Empty");
+        append_text(status_text, &pos, sizeof(status_text), T("  Empty", "  空文件"));
     }
 }
 
@@ -221,20 +223,20 @@ static int load_document(const char *path)
     }
     ret = stat(path, &st);
     if (ret < 0) {
-        set_error_status("stat failed ", ret);
+        set_error_status(T("stat failed ", "状态读取失败 "), ret);
         saved_hash = document_hash();
         document_dirty = 0;
         return ret;
     }
     if (st.type != LEONOS_FS_TYPE_FILE) {
-        copy_text(status_text, sizeof(status_text), "Selected path is not a file");
+        copy_text(status_text, sizeof(status_text), T("Selected path is not a file", "所选路径不是文件"));
         saved_hash = document_hash();
         document_dirty = 0;
         return -1;
     }
     fd = open(path, LEONOS_O_RDONLY, 0);
     if (fd < 0) {
-        set_error_status("open failed ", fd);
+        set_error_status(T("open failed ", "打开失败 "), fd);
         saved_hash = document_hash();
         document_dirty = 0;
         return fd;
@@ -249,7 +251,7 @@ static int load_document(const char *path)
         got = read(fd, text_data + document.length, free_bytes);
         if (got < 0) {
             close(fd);
-            set_error_status("read failed ", (int)got);
+            set_error_status(T("read failed ", "读取失败 "), (int)got);
             saved_hash = document_hash();
             document_dirty = 0;
             return (int)got;
@@ -289,7 +291,7 @@ static int save_document_to_path(const char *path)
     }
     fd = open(path, flags, 0);
     if (fd < 0) {
-        set_error_status("save open failed ", fd);
+        set_error_status(T("save open failed ", "保存打开失败 "), fd);
         return 0;
     }
     wrote = 0;
@@ -297,12 +299,12 @@ static int save_document_to_path(const char *path)
         wrote = write(fd, text_data, document.length);
         if (wrote < 0) {
             close(fd);
-            set_error_status("save write failed ", (int)wrote);
+            set_error_status(T("save write failed ", "保存写入失败 "), (int)wrote);
             return 0;
         }
         if ((uint32_t)wrote != document.length) {
             close(fd);
-            copy_text(status_text, sizeof(status_text), "save write incomplete");
+            copy_text(status_text, sizeof(status_text), T("save write incomplete", "保存写入不完整"));
             return 0;
         }
     }
@@ -321,8 +323,8 @@ static int save_document_as(void)
     } else {
         copy_text(path, sizeof(path), file_path);
     }
-    if (leonos_ui_show_save_dialog_ex("Save As", path, sizeof(path),
-                                      "Text files (*.txt)",
+    if (leonos_ui_show_save_dialog_ex(T("Save As", "另存为"), path, sizeof(path),
+                                      T("Text files (*.txt)", "文本文件 (*.txt)"),
                                       ".txt") <= 0) {
         return 0;
     }
@@ -336,8 +338,8 @@ static int open_document_via_dialog(void)
 {
     char path[PATH_CAP];
     path[0] = 0;
-    if (leonos_ui_show_open_dialog("Open", path, sizeof(path),
-                                   "Text files (*.txt)",
+    if (leonos_ui_show_open_dialog(T("Open", "打开"), path, sizeof(path),
+                                   T("Text files (*.txt)", "文本文件 (*.txt)"),
                                    ".txt") <= 0) {
         return 0;
     }
@@ -360,7 +362,7 @@ static int confirm_dirty_action(const char *message)
     if (!document_dirty) {
         return 1;
     }
-    if (!leonos_ui_show_confirm_dialog("Notepad", message, 1)) {
+    if (!leonos_ui_show_confirm_dialog(T("Notepad", "记事本"), message, 1)) {
         return 1;
     }
     return save_document() && !document_dirty;
@@ -379,12 +381,12 @@ static void draw_notepad(struct leonos_ui_surface *ui)
     }
     leonos_ui_rect(ui, 0, 0, NOTEPAD_W, NOTEPAD_H, LEONOS_UI_WHITE);
     leonos_ui_menubar(ui, 0, 0, NOTEPAD_W);
-    leonos_ui_menubar_item(ui, 8, 0, 54, "File", menu_open == NOTEPAD_MENU_FILE);
-    leonos_ui_menubar_item(ui, 64, 0, 54, "Edit", menu_open == NOTEPAD_MENU_EDIT);
-    leonos_ui_menubar_item(ui, 120, 0, 54, "View", menu_open == NOTEPAD_MENU_VIEW);
+    leonos_ui_menubar_item(ui, 8, 0, 54, T("File", "文件"), menu_open == NOTEPAD_MENU_FILE);
+    leonos_ui_menubar_item(ui, 64, 0, 54, T("Edit", "编辑"), menu_open == NOTEPAD_MENU_EDIT);
+    leonos_ui_menubar_item(ui, 120, 0, 54, T("View", "查看"), menu_open == NOTEPAD_MENU_VIEW);
     leonos_ui_toolbar(ui, 0, 28, NOTEPAD_W, 26);
-    leonos_ui_toolbar_button(ui, 8, 30, 64, "Open", 0);
-    leonos_ui_toolbar_button(ui, 78, 30, 64, "Save",
+    leonos_ui_toolbar_button(ui, 8, 30, 64, T("Open", "打开"), 0);
+    leonos_ui_toolbar_button(ui, 78, 30, 64, T("Save", "保存"),
                              document_dirty ? LEONOS_UI_TOOLBAR_BUTTON_ACTIVE : 0);
     leonos_ui_text_clipped(ui, 154, 36, NOTEPAD_W - 164, path_label, LEONOS_UI_DARK, LEONOS_UI_GRAY);
     leonos_ui_text_area_state_draw(ui, VIEW_X, VIEW_Y, VIEW_W, VIEW_H, &document, 0);
@@ -395,19 +397,19 @@ static void draw_notepad(struct leonos_ui_surface *ui)
 
     if (menu_open == NOTEPAD_MENU_FILE) {
         leonos_ui_menu(ui, 8, MENU_BAR_H, 154, 112);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 116, "Open", 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 116, "New", 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 116, "Save", 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 116, "Save As", 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 116, T("Open", "打开"), 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 116, T("New", "新建"), 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 116, T("Save", "保存"), 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 116, T("Save As", "另存为"), 0);
     } else if (menu_open == NOTEPAD_MENU_EDIT) {
         leonos_ui_menu(ui, 64, MENU_BAR_H, 154, 86);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 8, 116, "Clear", 0);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 34, 116, "Home", 0);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 60, 116, "End", 0);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 8, 116, T("Clear", "清空"), 0);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 34, 116, T("Home", "开头"), 0);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 60, 116, T("End", "末尾"), 0);
     } else if (menu_open == NOTEPAD_MENU_VIEW) {
         leonos_ui_menu(ui, 120, MENU_BAR_H, 154, 60);
-        leonos_ui_menu_item(ui, 154, MENU_BAR_H + 8, 116, "Top", 0);
-        leonos_ui_menu_item(ui, 154, MENU_BAR_H + 34, 116, "About", 0);
+        leonos_ui_menu_item(ui, 154, MENU_BAR_H + 8, 116, T("Top", "顶部"), 0);
+        leonos_ui_menu_item(ui, 154, MENU_BAR_H + 34, 116, T("About", "关于"), 0);
     }
 }
 
@@ -457,7 +459,7 @@ static int handle_menu_click(int32_t x, int32_t y)
         }
         if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 34, 116, (int32_t)MENU_ITEM_H)) {
             menu_open = NOTEPAD_MENU_NONE;
-            if (confirm_dirty_action("Save changes before creating a new file?")) {
+            if (confirm_dirty_action(T("Save changes before creating a new file?", "新建文件前保存更改？"))) {
                 begin_new_document();
             }
             return 1;
@@ -478,7 +480,7 @@ static int handle_menu_click(int32_t x, int32_t y)
     if (menu_open == NOTEPAD_MENU_EDIT) {
         if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 8, 116, (int32_t)MENU_ITEM_H)) {
             menu_open = NOTEPAD_MENU_NONE;
-            if (confirm_dirty_action("Save changes before clearing this file?")) {
+            if (confirm_dirty_action(T("Save changes before clearing this file?", "清空文件前保存更改？"))) {
                 clear_document_contents();
                 refresh_document_dirty();
             }
@@ -509,7 +511,7 @@ static int handle_menu_click(int32_t x, int32_t y)
         }
         if (hit_rect_i(x, y, 154, (int32_t)MENU_BAR_H + 34, 116, (int32_t)MENU_ITEM_H)) {
             menu_open = NOTEPAD_MENU_NONE;
-            leonos_ui_show_message_box("Notepad", "Open files from File Manager or Run.", "OK");
+            leonos_ui_show_message_box(T("Notepad", "记事本"), T("Open files from File Manager or Run.", "从文件管理器或运行打开文件。"), T("OK", "确定"));
             return 1;
         }
         menu_open = NOTEPAD_MENU_NONE;
@@ -526,7 +528,8 @@ int main(int argc, char **argv, char **envp)
     (void)envp;
 
     puts("[notepad.elf] notepad starting");
-    window_id = leonos_gui_create_app_window_ex("Notepad", "LeonOS text viewer",
+    copy_text(status_text, sizeof(status_text), T("Open a text file from File Manager or Run", "从文件管理器或运行打开文本文件"));
+    window_id = leonos_gui_create_app_window_ex(T("Notepad", "记事本"), T("LeonOS text viewer", "LeonOS 文本查看器"),
                                                 NOTEPAD_W, NOTEPAD_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[notepad.elf] create window failed=%d\n", window_id);
@@ -548,7 +551,7 @@ int main(int argc, char **argv, char **envp)
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_poll_app_event(&event) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
-                if (confirm_dirty_action("Save changes before closing?")) {
+                if (confirm_dirty_action(T("Save changes before closing?", "关闭前保存更改？"))) {
                     return 0;
                 }
                 draw_notepad(&ui);

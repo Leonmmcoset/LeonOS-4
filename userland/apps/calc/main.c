@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -18,6 +19,7 @@
 #define GRID_COLS 4
 #define GRID_ROWS 5
 #define EXPR_MAX 120
+#define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[CALC_W * CALC_H];
 static char expr[EXPR_MAX];
@@ -352,12 +354,12 @@ static void evaluate_expr(void)
         return;
     }
     if (!parse_expr(&p, &value)) {
-        set_result_error("Error");
+        set_result_error(T("Error", "错误"));
         return;
     }
     skip_spaces(&p);
     if (*p != 0) {
-        set_result_error("Error");
+        set_result_error(T("Error", "错误"));
         return;
     }
     format_i64(value, result_text, sizeof(result_text));
@@ -429,7 +431,7 @@ static void draw_calc(struct leonos_ui_surface *ui, int pressed_index)
                              idx == pressed_index ? LEONOS_UI_BUTTON_PRESSED : 0);
         }
     }
-    leonos_ui_text(ui, 16, CALC_H - 22, "Integer calculator", LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 16, CALC_H - 22, T("Integer calculator", "整数计算器"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
 }
 
 static int hit_button(int x, int y)
@@ -524,7 +526,7 @@ int main(void)
 
     puts("[calc.elf] calculator starting");
     printf("[calc.elf] pid=%d creating Calculator window\n", getpid());
-    window_id = leonos_gui_create_app_window_ex("Calculator", "Integer calculator",
+    window_id = leonos_gui_create_app_window_ex(T("Calculator", "计算器"), T("Integer calculator", "整数计算器"),
                                                 CALC_W, CALC_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[calc.elf] create window failed=%d\n", window_id);

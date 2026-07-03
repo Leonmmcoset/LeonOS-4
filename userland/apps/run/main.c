@@ -1,5 +1,6 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/launch.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
@@ -9,10 +10,11 @@
 #define RUN_W 360
 #define RUN_H 148
 #define PATH_MAX_LEN LEONOS_FS_PATH_LEN
+#define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[RUN_W * RUN_H];
 static char input_path[PATH_MAX_LEN] = "0:/userland/";
-static char status_text[96] = "Enter a file path and press Enter";
+static char status_text[96];
 static struct leonos_ui_edit_state input_edit;
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
@@ -60,9 +62,9 @@ static void append_text(char *dst, uint32_t cap, const char *prefix, int value)
 static void draw_run(struct leonos_ui_surface *ui)
 {
     leonos_ui_rect(ui, 0, 0, RUN_W, RUN_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, RUN_W, RUN_H, "Run");
-    leonos_ui_text(ui, 12, 38, "Open LeonOS program or file path", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 12, 62, "Path:", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_dialog(ui, 0, 0, RUN_W, RUN_H, T("Run", "运行"));
+    leonos_ui_text(ui, 12, 38, T("Open LeonOS program or file path", "打开 LeonOS 程序或文件路径"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 12, 62, T("Path:", "路径:"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_edit_state_draw(ui, 56, 58, RUN_W - 68, &input_edit, 0);
     leonos_ui_statusbar(ui, RUN_H - 28, 28, status_text);
 }
@@ -76,7 +78,7 @@ static void launch_path(int window_id)
         if (pid <= LEONOS_LAUNCH_ERR_EMPTY && pid >= LEONOS_LAUNCH_ERR_NO_ASSOCIATION) {
             copy_text(status_text, sizeof(status_text), leonos_launch_error_text(pid));
         } else {
-            append_text(status_text, sizeof(status_text), "Launch failed ", pid);
+            append_text(status_text, sizeof(status_text), T("Launch failed ", "启动失败 "), pid);
         }
         return;
     }
@@ -95,7 +97,8 @@ int main(int argc, char **argv, char **envp)
     (void)envp;
 
     puts("[run.elf] run dialog starting");
-    window_id = leonos_gui_create_app_window_ex("Run", "Open file path",
+    copy_text(status_text, sizeof(status_text), T("Enter a file path and press Enter", "输入文件路径并按回车"));
+    window_id = leonos_gui_create_app_window_ex(T("Run", "运行"), T("Open file path", "打开文件路径"),
                                                 RUN_W, RUN_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[run.elf] create window failed=%d\n", window_id);

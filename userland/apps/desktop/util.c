@@ -58,6 +58,43 @@ void desktop_apply_display_settings(uint8_t mode_index, uint8_t scale_index)
     if (windows[0].visible || windows[1].visible || windows[2].visible || windows[3].visible) {
         desktop_reflow_after_display_change();
     }
+    desktop_publish_display_state();
+}
+
+void desktop_publish_display_state(void)
+{
+    struct leonos_display_state state;
+    unsigned long now = leonos_uptime_ms();
+    state.fb_width = fb.width;
+    state.fb_height = fb.height;
+    state.logical_width = fb_w();
+    state.logical_height = fb_h();
+    state.scale = desktop_scale;
+    state.mode_index = desktop_mode_index;
+    state.scale_index = desktop_scale_index;
+    state.pending_confirm = desktop_pending_confirm;
+    state.confirm_remaining_ms = desktop_pending_confirm && desktop_confirm_deadline_ms > now
+                                     ? (uint32_t)(desktop_confirm_deadline_ms - now)
+                                     : 0;
+    (void)leonos_display_publish_state(&state);
+}
+
+void desktop_handle_display_requests(void)
+{
+    struct leonos_display_request request;
+    while (leonos_display_poll_request(&request) > 0) {
+        if (request.action == LEONOS_DISPLAY_REQUEST_APPLY) {
+            desktop_apply_display_settings_pending((uint8_t)request.mode_index,
+                                                   (uint8_t)request.scale_index);
+        } else if (request.action == LEONOS_DISPLAY_REQUEST_KEEP) {
+            desktop_confirm_display_settings();
+        } else if (request.action == LEONOS_DISPLAY_REQUEST_REVERT) {
+            desktop_revert_display_settings();
+        } else if (request.action == LEONOS_DISPLAY_REQUEST_REFRESH) {
+            full_redraw_pending = 1;
+        }
+        desktop_publish_display_state();
+    }
 }
 
 static void desktop_choose_default_display(void)
@@ -88,15 +125,22 @@ static int parse_display_config(const char *buf, uint8_t *mode, uint8_t *scale)
     uint32_t height = 0;
     uint32_t scale_value = 0;
     for (uint32_t i = 0; buf && buf[i]; ++i) {
-        if (buf[i] == 'w' && buf[i + 1] == '=') {
+        if ((buf[i] == 'w' && buf[i + 1] == '=') ||
+            (buf[i] == 'w' && buf[i + 1] == 'i' && buf[i + 2] == 'd' &&
+             buf[i + 3] == 't' && buf[i + 4] == 'h' && buf[i + 5] == '=')) {
             width = 0;
-            for (i += 2; buf[i] >= '0' && buf[i] <= '9'; ++i) {
+            i += buf[i + 1] == '=' ? 2 : 6;
+            for (; buf[i] >= '0' && buf[i] <= '9'; ++i) {
                 width = width * 10 + (uint32_t)(buf[i] - '0');
             }
         }
-        if (buf[i] == 'h' && buf[i + 1] == '=') {
+        if ((buf[i] == 'h' && buf[i + 1] == '=') ||
+            (buf[i] == 'h' && buf[i + 1] == 'e' && buf[i + 2] == 'i' &&
+             buf[i + 3] == 'g' && buf[i + 4] == 'h' && buf[i + 5] == 't' &&
+             buf[i + 6] == '=')) {
             height = 0;
-            for (i += 2; buf[i] >= '0' && buf[i] <= '9'; ++i) {
+            i += buf[i + 1] == '=' ? 2 : 7;
+            for (; buf[i] >= '0' && buf[i] <= '9'; ++i) {
                 height = height * 10 + (uint32_t)(buf[i] - '0');
             }
         }
@@ -199,6 +243,7 @@ void desktop_confirm_display_settings(void)
     }
     desktop_pending_confirm = 0;
     full_redraw_pending = 1;
+    desktop_publish_display_state();
 }
 
 void desktop_revert_display_settings(void)
@@ -209,12 +254,15 @@ void desktop_revert_display_settings(void)
     desktop_pending_confirm = 0;
     desktop_apply_display_settings(desktop_previous_mode_index, desktop_previous_scale_index);
     full_redraw_pending = 1;
+    desktop_publish_display_state();
 }
 
 void desktop_update_display_confirmation(void)
 {
     if (desktop_pending_confirm && leonos_uptime_ms() >= desktop_confirm_deadline_ms) {
         desktop_revert_display_settings();
+    } else {
+        desktop_publish_display_state();
     }
 }
 
@@ -284,6 +332,70 @@ int text_ends_with(const char *text, const char *suffix)
     return text_eq(text + text_len - suffix_len, suffix);
 }
 
+uint8_t desktop_icon_for_elf(const char *name)
+{
+    if (text_eq(name, "terminal.elf")) {
+        return DESKTOP_ICON_TERMINAL;
+    }
+    if (text_eq(name, "notepad.elf")) {
+        return DESKTOP_ICON_NOTEPAD;
+    }
+    if (text_eq(name, "settings.elf")) {
+        return DESKTOP_ICON_SETTINGS;
+    }
+    if (text_eq(name, "calc.elf")) {
+        return DESKTOP_ICON_CALC;
+    }
+    if (text_eq(name, "minesweeper.elf")) {
+        return DESKTOP_ICON_MINESWEEPER;
+    }
+    if (text_eq(name, "fileman.elf")) {
+        return DESKTOP_ICON_FILEMAN;
+    }
+    if (text_eq(name, "taskmgr.elf")) {
+        return DESKTOP_ICON_TASKMGR;
+    }
+    if (text_eq(name, "run.elf")) {
+        return DESKTOP_ICON_RUN;
+    }
+    if (text_eq(name, "desktop.elf")) {
+        return DESKTOP_ICON_DESKTOP;
+    }
+    return DESKTOP_ICON_APP;
+}
+
+uint8_t desktop_icon_for_title(const char *title)
+{
+    if (text_eq(title, "Terminal") || text_eq(title, "LeonOS Terminal") || text_eq(title, "终端") || text_eq(title, "LeonOS 终端")) {
+        return DESKTOP_ICON_TERMINAL;
+    }
+    if (text_eq(title, "Notepad") || text_eq(title, "记事本")) {
+        return DESKTOP_ICON_NOTEPAD;
+    }
+    if (text_eq(title, "Settings") || text_eq(title, "设置")) {
+        return DESKTOP_ICON_SETTINGS;
+    }
+    if (text_eq(title, "Calculator") || text_eq(title, "计算器")) {
+        return DESKTOP_ICON_CALC;
+    }
+    if (text_eq(title, "Minesweeper") || text_eq(title, "扫雷")) {
+        return DESKTOP_ICON_MINESWEEPER;
+    }
+    if (text_eq(title, "File Manager") || text_eq(title, "文件管理器")) {
+        return DESKTOP_ICON_FILEMAN;
+    }
+    if (text_eq(title, "Task Manager") || text_eq(title, "任务管理器")) {
+        return DESKTOP_ICON_TASKMGR;
+    }
+    if (text_eq(title, "Run") || text_eq(title, "运行")) {
+        return DESKTOP_ICON_RUN;
+    }
+    if (text_eq(title, "Desktop Server") || text_eq(title, "桌面服务")) {
+        return DESKTOP_ICON_DESKTOP;
+    }
+    return DESKTOP_ICON_APP;
+}
+
 void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
 {
     uint32_t i = 0;
@@ -292,27 +404,59 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         return;
     }
     if (text_eq(name, "fileman.elf")) {
-        copy_text(dst, dst_len, "File Manager");
+        copy_text(dst, dst_len, leonos_i18n("File Manager", "文件管理器"));
         return;
     }
     if (text_eq(name, "taskmgr.elf")) {
-        copy_text(dst, dst_len, "Task Manager");
+        copy_text(dst, dst_len, leonos_i18n("Task Manager", "任务管理器"));
         return;
     }
     if (text_eq(name, "uidemo.elf")) {
-        copy_text(dst, dst_len, "UI Components");
+        copy_text(dst, dst_len, leonos_i18n("UI Components", "界面组件"));
         return;
     }
     if (text_eq(name, "osver.elf")) {
-        copy_text(dst, dst_len, "OS Version");
+        copy_text(dst, dst_len, leonos_i18n("OS Version", "系统版本"));
         return;
     }
     if (text_eq(name, "bugtest.elf")) {
-        copy_text(dst, dst_len, "Kernel Bug Test");
+        copy_text(dst, dst_len, leonos_i18n("Kernel Bug Test", "内核错误测试"));
+        return;
+    }
+    if (text_eq(name, "settings.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Settings", "设置"));
+        return;
+    }
+    if (text_eq(name, "notepad.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Notepad", "记事本"));
+        return;
+    }
+    if (text_eq(name, "terminal.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Terminal", "终端"));
+        return;
+    }
+    if (text_eq(name, "calc.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Calculator", "计算器"));
+        return;
+    }
+    if (text_eq(name, "minesweeper.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Minesweeper", "扫雷"));
+        return;
+    }
+    if (text_eq(name, "run.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Run", "运行"));
+        return;
+    }
+    if (text_eq(name, "hello.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Hello", "你好"));
+        return;
+    }
+    if (text_eq(name, "cjktest.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("CJK Test", "中文测试"));
         return;
     }
     if (text_eq(name, "oobe.elf")) {
-        copy_text(dst, dst_len, "Setup");
+        copy_text(dst, dst_len, leonos_i18n("Setup", "设置向导"));
         return;
     }
     while (name && name[len]) {
@@ -326,7 +470,7 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         ++i;
     }
     if (i == 0) {
-        copy_text(dst, dst_len, name ? name : "Application");
+        copy_text(dst, dst_len, name ? name : leonos_i18n("Application", "应用程序"));
     } else {
         dst[i] = 0;
     }
@@ -385,7 +529,75 @@ uint32_t start_menu_progress(void)
         return start_menu_open ? 100 : 0;
     }
     uint32_t p = (uint32_t)((elapsed * 100UL) / START_MENU_ANIM_MS);
+    p = desktop_ease_percent(p);
     return start_menu_opening ? p : 100u - p;
+}
+
+uint32_t desktop_ease_percent(uint32_t percent)
+{
+    uint32_t inv;
+    if (percent >= 100) {
+        return 100;
+    }
+    inv = 100 - percent;
+    return 100 - (inv * inv) / 100;
+}
+
+int desktop_window_animation_active(void)
+{
+    unsigned long now = leonos_uptime_ms();
+    for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
+        if (windows[i].visible && windows[i].anim &&
+            now - windows[i].anim_start_ms < WINDOW_ANIM_MS) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void desktop_update_window_animations(void)
+{
+    unsigned long now = leonos_uptime_ms();
+    for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
+        if (!windows[i].visible || !windows[i].anim ||
+            now - windows[i].anim_start_ms < WINDOW_ANIM_MS) {
+            continue;
+        }
+        if (windows[i].anim == WINDOW_ANIM_CLOSE) {
+            uint8_t send_close = windows[i].close_requested;
+            uint32_t window_id = windows[i].window_id;
+            windows[i].anim = WINDOW_ANIM_NONE;
+            windows[i].close_requested = 0;
+            if (send_close && window_id) {
+                send_app_event(i, 1, 0, 0, 0, 0, 0, 0, 0);
+            }
+            remove_window_slot(i);
+        } else if (windows[i].anim == WINDOW_ANIM_MINIMIZE) {
+            windows[i].anim = WINDOW_ANIM_NONE;
+            windows[i].minimized = 1;
+            if (active_window == i) {
+                active_window = -1;
+                for (int zi = MAX_WINDOWS - 1; zi >= 0; --zi) {
+                    uint8_t next = z_order[zi];
+                    if (windows[next].visible && !windows[next].minimized &&
+                        windows[next].anim != WINDOW_ANIM_CLOSE) {
+                        active_window = next;
+                        break;
+                    }
+                }
+            }
+        } else if (windows[i].anim == WINDOW_ANIM_RESTORE) {
+            windows[i].anim = WINDOW_ANIM_NONE;
+            windows[i].minimized = 0;
+            bring_to_front(i);
+            if (windows[i].window_id) {
+                send_app_event(i, 4, 0, 0, 0, 0, 0, 0, 0);
+            }
+        } else {
+            windows[i].anim = WINDOW_ANIM_NONE;
+        }
+        full_redraw_pending = 1;
+    }
 }
 
 uint32_t taskbar_button_width(uint32_t count)

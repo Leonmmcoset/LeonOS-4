@@ -2,7 +2,7 @@
 
 int window_is_ui_demo(const struct desktop_window *w)
 {
-    return w && text_eq(w->title, "UI Components");
+    return w && (text_eq(w->title, "UI Components") || text_eq(w->title, "界面组件"));
 }
 
 void draw_ui_demo_label(uint32_t x, uint32_t y, const char *label, uint32_t bg)
@@ -16,7 +16,9 @@ void draw_ui_demo_gallery(uint32_t body_x, uint32_t body_y,
 {
     uint32_t pad = 14;
     if (body_w < 300 || body_h < 220) {
-        text_draw(body_x + 10, body_y + 12, "Resize window to view all components", LEONOS_UI_BLACK, bg);
+        text_draw(body_x + 10, body_y + 12,
+                  leonos_i18n("Resize window to view all components", "调整窗口大小以查看所有组件"),
+                  LEONOS_UI_BLACK, bg);
         return;
     }
 
@@ -26,146 +28,114 @@ void draw_ui_demo_gallery(uint32_t body_x, uint32_t body_y,
     uint32_t col_w = body_w / 2 > pad * 2 ? body_w / 2 - pad * 2 : 120;
     uint32_t top = body_y + pad;
 
-    text_draw(left_x, top, "LeonOS UI Component Library", LEONOS_UI_BLACK, bg);
-    text_draw(left_x, top + 18, "Buttons, inputs, lists, menus, panels, windows", LEONOS_UI_DARK, bg);
+    text_draw(left_x, top, leonos_i18n("LeonOS UI Component Library", "LeonOS 界面组件库"), LEONOS_UI_BLACK, bg);
+    text_draw(left_x, top + 18, leonos_i18n("Buttons, inputs, lists, menus, panels, windows", "按钮、输入框、列表、菜单、面板、窗口"), LEONOS_UI_DARK, bg);
 
     uint32_t y = top + header_h + 8;
-    draw_ui_demo_label(left_x, y, "Buttons", bg);
-    leonos_ui_button(&ui, left_x, y + 18, 74, LEONOS_UI_BUTTON_H, "OK", 0);
-    leonos_ui_button(&ui, left_x + 84, y + 18, 88, LEONOS_UI_BUTTON_H, "Pressed", LEONOS_UI_BUTTON_PRESSED);
-    leonos_ui_button(&ui, left_x + 182, y + 18, 92, LEONOS_UI_BUTTON_H, "Disabled", LEONOS_UI_BUTTON_DISABLED);
+    draw_ui_demo_label(left_x, y, leonos_i18n("Buttons", "按钮"), bg);
+    leonos_ui_button(&ui, left_x, y + 18, 74, LEONOS_UI_BUTTON_H, leonos_i18n("OK", "确定"), 0);
+    leonos_ui_button(&ui, left_x + 84, y + 18, 88, LEONOS_UI_BUTTON_H, leonos_i18n("Pressed", "已按下"), LEONOS_UI_BUTTON_PRESSED);
+    leonos_ui_button(&ui, left_x + 182, y + 18, 92, LEONOS_UI_BUTTON_H, leonos_i18n("Disabled", "已禁用"), LEONOS_UI_BUTTON_DISABLED);
 
     y += 56;
-    draw_ui_demo_label(left_x, y, "Checks and Fields", bg);
-    leonos_ui_checkbox(&ui, left_x, y + 20, "Checked", 1, 0);
-    leonos_ui_checkbox(&ui, left_x, y + 44, "Unchecked", 0, 0);
-    leonos_ui_text_field(&ui, left_x + 136, y + 18, col_w > 146 ? col_w - 146 : 120, "Sample text", 0);
+    draw_ui_demo_label(left_x, y, leonos_i18n("Checks and Fields", "复选框和输入框"), bg);
+    leonos_ui_checkbox(&ui, left_x, y + 20, leonos_i18n("Checked", "已选中"), 1, 0);
+    leonos_ui_checkbox(&ui, left_x, y + 44, leonos_i18n("Unchecked", "未选中"), 0, 0);
+    leonos_ui_text_field(&ui, left_x + 136, y + 18, col_w > 146 ? col_w - 146 : 120, leonos_i18n("Sample text", "示例文本"), 0);
 
     y += 86;
-    draw_ui_demo_label(left_x, y, "Progress", bg);
+    draw_ui_demo_label(left_x, y, leonos_i18n("Progress", "进度"), bg);
     leonos_ui_progress(&ui, left_x, y + 20, col_w > 24 ? col_w - 24 : 160, 18, 65, 100);
-    text_draw(left_x, y + 46, "65 percent", LEONOS_UI_DARK, bg);
+    text_draw(left_x, y + 46, leonos_i18n("65 percent", "65%"), LEONOS_UI_DARK, bg);
 
     y += 76;
-    draw_ui_demo_label(left_x, y, "Panel", bg);
+    draw_ui_demo_label(left_x, y, leonos_i18n("Panel", "面板"), bg);
     leonos_ui_panel(&ui, left_x, y + 18, col_w > 24 ? col_w - 24 : 160, 54, LEONOS_UI_LIGHT);
-    text_draw(left_x + 10, y + 34, "Inset content panel", LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    text_draw(left_x + 10, y + 34, leonos_i18n("Inset content panel", "内嵌内容面板"), LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
 
     y = top + header_h + 8;
-    draw_ui_demo_label(right_x, y, "Menu", bg);
+    draw_ui_demo_label(right_x, y, leonos_i18n("Menu", "菜单"), bg);
     leonos_ui_menu(&ui, right_x, y + 18, col_w > 16 ? col_w - 16 : 180, 90);
-    leonos_ui_menu_item(&ui, right_x + 34, y + 28, col_w > 54 ? col_w - 54 : 140, "Normal item", 0);
-    leonos_ui_menu_item(&ui, right_x + 34, y + 52, col_w > 54 ? col_w - 54 : 140, "Selected item", LEONOS_UI_MENU_SELECTED);
+    leonos_ui_menu_item(&ui, right_x + 34, y + 28, col_w > 54 ? col_w - 54 : 140, leonos_i18n("Normal item", "普通项目"), 0);
+    leonos_ui_menu_item(&ui, right_x + 34, y + 52, col_w > 54 ? col_w - 54 : 140, leonos_i18n("Selected item", "选中项目"), LEONOS_UI_MENU_SELECTED);
     leonos_ui_menu_item(&ui, right_x + 34, y + 76, col_w > 54 ? col_w - 54 : 140, "", LEONOS_UI_MENU_SEPARATOR);
 
     y += 122;
-    draw_ui_demo_label(right_x, y, "List", bg);
-    leonos_ui_list_header(&ui, right_x, y + 18, col_w > 16 ? col_w - 16 : 180, "Name        State");
-    leonos_ui_list_row(&ui, right_x, y + 46, col_w > 16 ? col_w - 16 : 180, "Button      ready", 0);
-    leonos_ui_list_row(&ui, right_x, y + 70, col_w > 16 ? col_w - 16 : 180, "TextField   selected", LEONOS_UI_MENU_SELECTED);
-    leonos_ui_list_row(&ui, right_x, y + 94, col_w > 16 ? col_w - 16 : 180, "Progress    ready", 0);
+    draw_ui_demo_label(right_x, y, leonos_i18n("List", "列表"), bg);
+    leonos_ui_list_header(&ui, right_x, y + 18, col_w > 16 ? col_w - 16 : 180, leonos_i18n("Name        State", "名称        状态"));
+    leonos_ui_list_row(&ui, right_x, y + 46, col_w > 16 ? col_w - 16 : 180, leonos_i18n("Button      ready", "按钮        就绪"), 0);
+    leonos_ui_list_row(&ui, right_x, y + 70, col_w > 16 ? col_w - 16 : 180, leonos_i18n("TextField   selected", "输入框      已选中"), LEONOS_UI_MENU_SELECTED);
+    leonos_ui_list_row(&ui, right_x, y + 94, col_w > 16 ? col_w - 16 : 180, leonos_i18n("Progress    ready", "进度        就绪"), 0);
 
     y += 138;
     if (y + 54 < body_y + body_h) {
-        draw_ui_demo_label(right_x, y, "Window and Taskbar", bg);
+        draw_ui_demo_label(right_x, y, leonos_i18n("Window and Taskbar", "窗口和任务栏"), bg);
         leonos_ui_window_button(&ui, right_x, y + 20, '_', 0);
         leonos_ui_window_button(&ui, right_x + 24, y + 20, 'M', 0);
         leonos_ui_window_button(&ui, right_x + 48, y + 20, 'X', 0);
         leonos_ui_taskbar_button(&ui, right_x + 86, y + 18,
-                                 col_w > 116 ? col_w - 116 : 110, "Task Button",
+                                 col_w > 116 ? col_w - 116 : 110, leonos_i18n("Task Button", "任务按钮"),
                                  LEONOS_UI_BUTTON_ACTIVE);
     }
 }
 
-static void draw_settings_button(uint32_t x, uint32_t y, uint32_t w,
-                                 const char *label, int selected, int disabled)
+static uint32_t window_animation_percent(const struct desktop_window *w)
 {
-    uint32_t flags = selected ? LEONOS_UI_BUTTON_PRESSED : 0;
-    if (disabled) {
-        flags |= LEONOS_UI_BUTTON_DISABLED;
+    unsigned long elapsed;
+    uint32_t raw;
+    uint32_t eased;
+    if (!w || !w->anim) {
+        return 100;
     }
-    leonos_ui_button(&ui, x, y, w, LEONOS_UI_BUTTON_H, label, flags);
+    elapsed = leonos_uptime_ms() - w->anim_start_ms;
+    raw = elapsed >= WINDOW_ANIM_MS ? 100 : (uint32_t)((elapsed * 100UL) / WINDOW_ANIM_MS);
+    eased = desktop_ease_percent(raw);
+    return eased;
 }
 
-void draw_settings_panel(uint32_t body_x, uint32_t body_y,
-                         uint32_t body_w, uint32_t body_h, uint32_t bg)
+static uint32_t interp_u32(uint32_t from, uint32_t to, uint32_t percent)
 {
-    char line[80];
-    uint32_t pos = 0;
-    uint32_t scale_x;
-    uint32_t confirm_y;
-    if (body_w < 320 || body_h < 180) {
-        text_draw(body_x + 10, body_y + 12, "Resize Settings to change display", LEONOS_UI_BLACK, bg);
+    int64_t value = (int64_t)from + ((int64_t)to - (int64_t)from) * percent / 100;
+    return value <= 0 ? 0 : (uint32_t)value;
+}
+
+static void draw_window_animation_frame(const struct desktop_window *w)
+{
+    uint32_t percent = window_animation_percent(w);
+    int x = w->anim_from_x + (int)(((int64_t)w->anim_to_x - w->anim_from_x) * percent / 100);
+    int y = w->anim_from_y + (int)(((int64_t)w->anim_to_y - w->anim_from_y) * percent / 100);
+    uint32_t anim_w = interp_u32(w->anim_from_w, w->anim_to_w, percent);
+    uint32_t anim_h = interp_u32(w->anim_from_h, w->anim_to_h, percent);
+    uint32_t title_color = (active_window >= 0 && &windows[active_window] == w)
+                               ? LEONOS_UI_ACTIVE_TITLE
+                               : LEONOS_UI_INACTIVE_TITLE;
+    if (anim_w < 8 || anim_h < 8) {
         return;
     }
-    text_draw(body_x + 16, body_y + 16, "Display", LEONOS_UI_BLACK, bg);
-
-    line[0] = 0;
-    append_text(line, &pos, sizeof(line), "Framebuffer ");
-    append_dec(line, &pos, sizeof(line), fb.width);
-    append_char(line, &pos, sizeof(line), 'x');
-    append_dec(line, &pos, sizeof(line), fb.height);
-    append_text(line, &pos, sizeof(line), "  Desktop ");
-    append_dec(line, &pos, sizeof(line), fb_w());
-    append_char(line, &pos, sizeof(line), 'x');
-    append_dec(line, &pos, sizeof(line), fb_h());
-    append_text(line, &pos, sizeof(line), " @ ");
-    append_dec(line, &pos, sizeof(line), desktop_scale);
-    append_char(line, &pos, sizeof(line), 'x');
-    text_draw(body_x + 16, body_y + 36, line, LEONOS_UI_DARK, bg);
-
-    text_draw(body_x + 16, body_y + 66, "Resolution", LEONOS_UI_BLACK, bg);
-    for (uint8_t i = 0; i < DESKTOP_MODE_COUNT; ++i) {
-        int disabled = !desktop_display_mode_supported(i, desktop_scale_index);
-        draw_settings_button(body_x + 16, body_y + 86 + i * 30, 130,
-                             desktop_display_modes[i].label,
-                             i == desktop_mode_index, disabled);
-    }
-
-    scale_x = body_w > 290 ? body_x + 176 : body_x + 156;
-    text_draw(scale_x, body_y + 66, "Scale", LEONOS_UI_BLACK, bg);
-    for (uint8_t i = 0; i < DESKTOP_SCALE_COUNT; ++i) {
-        char label[8];
-        uint32_t label_pos = 0;
-        label[0] = 0;
-        append_dec(label, &label_pos, sizeof(label), desktop_scale_options[i]);
-        append_char(label, &label_pos, sizeof(label), 'x');
-        draw_settings_button(scale_x, body_y + 86 + i * 30, 78, label,
-                             i == desktop_scale_index,
-                             !desktop_display_mode_supported(desktop_mode_index, i));
-    }
-
-    confirm_y = body_y + 86 + DESKTOP_MODE_COUNT * 30 + 14;
-    if (confirm_y + 72 > body_y + body_h) {
-        confirm_y = body_y + body_h > 76 ? body_y + body_h - 76 : body_y + 132;
-    }
-    if (desktop_pending_confirm) {
-        unsigned long now = leonos_uptime_ms();
-        unsigned long remaining = desktop_confirm_deadline_ms > now
-                                      ? desktop_confirm_deadline_ms - now
-                                      : 0;
-        uint32_t seconds = (uint32_t)((remaining + 999UL) / 1000UL);
-        uint32_t panel_w = body_w > 32 ? body_w - 32 : body_w;
-        pos = 0;
-        line[0] = 0;
-        append_text(line, &pos, sizeof(line), "Keep these display settings? Reverting in ");
-        append_dec(line, &pos, sizeof(line), seconds);
-        append_text(line, &pos, sizeof(line), "s");
-        leonos_ui_panel(&ui, body_x + 16, confirm_y, panel_w, 62, LEONOS_UI_LIGHT);
-        text_draw(body_x + 26, confirm_y + 10, line, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
-        draw_settings_button(body_x + 26, confirm_y + 34, 82, "Keep", 0, 0);
-        draw_settings_button(body_x + 118, confirm_y + 34, 82, "Revert", 0, 0);
-    } else if (confirm_y + 20 < body_y + body_h) {
-        text_draw(body_x + 16, confirm_y + 4,
-                  "Changes are applied temporarily until you keep them.",
-                  LEONOS_UI_DARK, bg);
+    rect_fill_i(x, y, (int)anim_w, (int)anim_h, LEONOS_UI_GRAY);
+    rect_fill_i(x, y, (int)anim_w, 1, LEONOS_UI_WHITE);
+    rect_fill_i(x, y, 1, (int)anim_h, LEONOS_UI_WHITE);
+    rect_fill_i(x + (int)anim_w - 1, y, 1, (int)anim_h, LEONOS_UI_BLACK);
+    rect_fill_i(x, y + (int)anim_h - 1, (int)anim_w, 1, LEONOS_UI_BLACK);
+    if (anim_w > 16 && anim_h > TITLEBAR_H + 10) {
+        rect_fill_i(x + 4, y + 4, (int)anim_w - 8, TITLEBAR_H, title_color);
+        if (anim_w > 48) {
+            draw_app_icon(w->icon_id, x + 8, y + 7);
+        }
+        if (anim_w > 120 && w->title) {
+            text_draw_i(x + 28, y + 9, w->title, LEONOS_UI_WHITE, title_color);
+        }
     }
 }
 
 void draw_window(uint8_t id)
 {
     struct desktop_window *w = &windows[id];
-    if (!w->visible || w->minimized) {
+    if (!w->visible || (w->minimized && w->anim != WINDOW_ANIM_RESTORE)) {
+        return;
+    }
+    if (w->anim) {
+        draw_window_animation_frame(w);
         return;
     }
     if (window_is_fullscreen(w)) {
@@ -192,7 +162,8 @@ void draw_window(uint8_t id)
     rect_fill_i(w->x + (int)w->width - 2, w->y + 1, 1, (int)w->height - 2, LEONOS_UI_DARK);
     rect_fill_i(w->x + 1, w->y + (int)w->height - 2, (int)w->width - 2, 1, LEONOS_UI_DARK);
     rect_fill_i(w->x + 4, w->y + 4, (int)w->width - 8, TITLEBAR_H, title_color);
-    text_draw_i(w->x + 10, w->y + 9, w->title, LEONOS_UI_WHITE, title_color);
+    draw_app_icon(w->icon_id, w->x + 8, w->y + 7);
+    text_draw_i(w->x + 28, w->y + 9, w->title, LEONOS_UI_WHITE, title_color);
     int bx_i = w->x + (int)w->width - 64;
     int by_i = w->y + 6;
     window_button_i(bx_i, by_i, '_', 0);
@@ -220,15 +191,13 @@ void draw_window(uint8_t id)
     uint32_t body_y = (uint32_t)body_y_i;
 
     if (id == 0) {
-        text_draw(body_x + 16, body_y + 18, "Ring-3 desktop shadow blit", 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 42, "Dirty redraw reduces flicker", 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 66, "Drag and resize window", 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 18, leonos_i18n("Ring-3 desktop shadow blit", "Ring-3 桌面阴影缓冲绘制"), 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 42, leonos_i18n("Dirty redraw reduces flicker", "脏区重绘减少闪烁"), 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 66, leonos_i18n("Drag and resize window", "拖动并调整窗口大小"), 0x00000000, w->body_color);
     } else if (id == 1) {
         text_draw(body_x + 16, body_y + 18, "0:/", 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 42, "boot  system  userland", 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 66, "FAT32 root drive view", 0x00000000, w->body_color);
-    } else if (id == 2) {
-        draw_settings_panel(body_x, body_y, body_w, body_h, w->body_color);
+        text_draw(body_x + 16, body_y + 42, leonos_i18n("boot  system  userland", "boot  system  userland"), 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 66, leonos_i18n("FAT32 root drive view", "FAT32 根驱动器视图"), 0x00000000, w->body_color);
     } else if (id == 3) {
         char line[112];
         uint32_t pos = 0;
@@ -240,7 +209,7 @@ void draw_window(uint8_t id)
         text_draw(body_x + 10, body_y + 12, line, 0x00000000, w->body_color);
         leonos_ui_list_header(&ui, body_x + 8, body_y + 30,
                               body_w > 16 ? body_w - 16 : 0,
-                              "PID PPID STATE KIND CR3        WAKE NAME");
+                              leonos_i18n("PID PPID STATE KIND CR3        WAKE NAME", "PID PPID 状态 类型 CR3        唤醒 名称"));
         uint32_t max_rows = (body_h > 70) ? (body_h - 70) / (LEONOS_FONT_H + 2) : 0;
         if (max_rows > task_info_count) {
             max_rows = task_info_count;
@@ -256,9 +225,9 @@ void draw_window(uint8_t id)
     } else if (window_is_ui_demo(w)) {
         draw_ui_demo_gallery(body_x, body_y, body_w, body_h, w->body_color);
     } else {
-        text_draw(body_x + 16, body_y + 18, w->app_text ? w->app_text : "Application window", 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 42, "Process window via GUI IPC", 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 66, "App exited, desktop owns surface", 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 18, w->app_text ? w->app_text : leonos_i18n("Application window", "应用程序窗口"), 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 42, leonos_i18n("Process window via GUI IPC", "通过 GUI IPC 的进程窗口"), 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 66, leonos_i18n("App exited, desktop owns surface", "应用已退出，桌面保留表面"), 0x00000000, w->body_color);
     }
 
 draw_resize_grip:
@@ -278,8 +247,16 @@ void draw_taskbar_button(uint8_t id, uint32_t x, uint32_t y, uint32_t w)
         return;
     }
     int active = active_window == id && !windows[id].minimized;
-    leonos_ui_taskbar_button(&ui, x, y, w > 8 ? w - 8 : w, windows[id].title,
+    uint32_t button_w = w > 8 ? w - 8 : w;
+    leonos_ui_taskbar_button(&ui, x, y, button_w, "",
                              active ? LEONOS_UI_BUTTON_ACTIVE : 0);
+    if (button_w >= 26) {
+        draw_app_icon(windows[id].icon_id, (int)x + 6, (int)y + 4);
+    }
+    if (button_w >= 48) {
+        leonos_ui_text_clipped(&ui, x + 28, y + 5, button_w - 32, windows[id].title,
+                               LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    }
 }
 
 void draw_snap_preview(void)

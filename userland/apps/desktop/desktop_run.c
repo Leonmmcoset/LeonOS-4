@@ -9,20 +9,21 @@ void init_desktop(void)
     windows[0] = (struct desktop_window){.x = 120, .y = 84, .width = 420, .height = 220,
                                          .restore_x = 120, .restore_y = 84,
                                          .restore_width = 420, .restore_height = 220,
-                                         .title = "Desktop Server", .body_color = 0x00c0c0c0,
-                                         .visible = 1};
+                                         .title = leonos_i18n("Desktop Server", "桌面服务"), .body_color = 0x00c0c0c0,
+                                         .icon_id = DESKTOP_ICON_DESKTOP,
+                                         .visible = 0};
     windows[1] = (struct desktop_window){.x = 190, .y = 150, .width = 360, .height = 190,
                                          .restore_x = 190, .restore_y = 150,
                                          .restore_width = 360, .restore_height = 190,
-                                         .title = "File Manager", .body_color = 0x00ffffff};
-    windows[2] = (struct desktop_window){.x = 270, .y = 190, .width = 520, .height = 330,
-                                         .restore_x = 270, .restore_y = 190,
-                                         .restore_width = 520, .restore_height = 330,
-                                         .title = "Settings", .body_color = 0x00dfdfdf};
+                                         .title = leonos_i18n("File Manager", "文件管理器"), .body_color = 0x00ffffff,
+                                         .icon_id = DESKTOP_ICON_FILEMAN};
+    windows[2] = (struct desktop_window){.title = leonos_i18n("Settings", "设置"), .body_color = 0x00dfdfdf,
+                                         .icon_id = DESKTOP_ICON_SETTINGS};
     windows[3] = (struct desktop_window){.x = 90, .y = 118, .width = 620, .height = 300,
                                          .restore_x = 90, .restore_y = 118,
                                          .restore_width = 620, .restore_height = 300,
-                                         .title = "Task Manager", .body_color = 0x00ffffff};
+                                         .title = leonos_i18n("Task Manager", "任务管理器"), .body_color = 0x00ffffff,
+                                         .icon_id = DESKTOP_ICON_TASKMGR};
     z_order[0] = 4;
     z_order[1] = 5;
     z_order[2] = 6;
@@ -69,6 +70,7 @@ void desktop_run(void)
            desktop_display_modes[desktop_mode_index].label,
            (int)desktop_scale, fb_w(), fb_h());
     leonos_ui_bind(&ui, screen, fb_w(), fb_h(), MAX_FB_W);
+    desktop_publish_display_state();
 
     init_desktop();
     puts("[desktop.elf] Ring-3 desktop uses shadow framebuffer blit");
@@ -83,6 +85,8 @@ void desktop_run(void)
             open_app_window_from_msg(&window_msg);
             did_work = 1;
         }
+        desktop_handle_display_requests();
+        desktop_update_window_animations();
 
         struct leonos_input_event event;
         while (leonos_gui_next_event(&event) > 0) {

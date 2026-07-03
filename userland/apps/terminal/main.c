@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/psf_font.h>
 #include <leonos/pty.h>
 #include <leonos/stdio.h>
@@ -15,6 +16,7 @@
 #define TERM_DEFAULT_FG 0x00ffffffu
 #define TERM_DEFAULT_BG 0x00000000u
 #define TERM_CSI_MAX_PARAMS 8
+#define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[TERM_W * TERM_H];
 static char screen_chars[TERM_ROWS][TERM_COLS];
@@ -403,7 +405,7 @@ int main(int argc, char **argv, char **envp)
         return 1;
     }
 
-    window_id = leonos_gui_create_app_window_ex("Terminal", "LeonOS terminal",
+    window_id = leonos_gui_create_app_window_ex(T("Terminal", "终端"), T("LeonOS terminal", "LeonOS 终端"),
                                                 TERM_W, TERM_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[terminal.elf] create window failed=%d\n", window_id);
@@ -419,7 +421,7 @@ int main(int argc, char **argv, char **envp)
     leonos_ui_bind(&ui, pixels, TERM_W, TERM_H, TERM_W);
     reset_attrs();
     clear_screen_chars();
-    copy_text(title_text, sizeof(title_text), "LeonOS Terminal");
+    copy_text(title_text, sizeof(title_text), T("LeonOS Terminal", "LeonOS 终端"));
     draw_terminal(&ui);
     leonos_gui_present_window((uint32_t)window_id, TERM_W, TERM_H, TERM_W, pixels);
 

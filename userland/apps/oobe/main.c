@@ -1,5 +1,6 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
@@ -15,6 +16,8 @@ static uint32_t pixels[OOBE_MAX_W * OOBE_MAX_H];
 static uint32_t surface_w = OOBE_INITIAL_W;
 static uint32_t surface_h = OOBE_INITIAL_H;
 static uint32_t page_index;
+static uint8_t marker_written;
+static uint8_t marker_write_pending;
 
 struct oobe_layout {
     uint32_t header_h;
@@ -88,29 +91,30 @@ static struct oobe_layout get_oobe_layout(void)
 
 static void draw_oobe(struct leonos_ui_surface *ui)
 {
-    const char *title = "Welcome to LeonOS";
-    const char *line1 = "This first-run setup will prepare your system.";
-    const char *line2 = "Click Next to continue.";
-    const char *button = page_index + 1 >= OOBE_PAGE_COUNT ? "Finish" : "Next";
+    const char *title = leonos_i18n("Welcome to LeonOS", "欢迎使用 LeonOS");
+    const char *line1 = leonos_i18n("This first-run setup will prepare your system.", "首次运行设置将准备你的系统。");
+    const char *line2 = leonos_i18n("Click Next to continue.", "点击下一步继续。");
+    const char *button = page_index + 1 >= OOBE_PAGE_COUNT ? leonos_i18n("Finish", "完成") : leonos_i18n("Next", "下一步");
     struct oobe_layout layout = get_oobe_layout();
 
     leonos_ui_rect(ui, 0, 0, surface_w, surface_h, LEONOS_UI_GRAY);
     leonos_ui_rect(ui, 0, 0, surface_w, layout.header_h, LEONOS_UI_ACTIVE_TITLE);
     leonos_ui_text(ui, 24, 24, "LeonOS 4", LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
-    leonos_ui_text(ui, 24, 48, "Out-of-box experience", LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
+    leonos_ui_text(ui, 24, 48, leonos_i18n("Out-of-box experience", "开箱体验"), LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
     if (surface_h > 520) {
-        leonos_ui_text(ui, 24, 74, "First-run setup", LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
+        leonos_ui_text(ui, 24, 74, leonos_i18n("First-run setup", "首次运行设置"), LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
     }
     leonos_ui_panel(ui, layout.panel_x, layout.panel_y, layout.panel_w, layout.panel_h, LEONOS_UI_LIGHT);
 
     if (page_index == 1) {
-        title = "Test Step 1";
-        line1 = "This is a placeholder page for future setup options.";
-        line2 = "The OOBE flow already supports multiple pages.";
+        title = leonos_i18n("Test Step 1", "测试步骤 1");
+        line1 = leonos_i18n("This is a placeholder page for future setup options.", "这是未来设置选项的占位页面。");
+        line2 = leonos_i18n("The OOBE flow already supports multiple pages.", "OOBE 流程已经支持多页。");
     } else if (page_index == 2) {
-        title = "Test Step 2";
-        line1 = "Finish will write the OOBE completion marker.";
-        line2 = "After reboot, setup will not open again.";
+        title = leonos_i18n("Setup is ready", "设置已准备就绪");
+        line1 = marker_written ? leonos_i18n("The completion marker has been saved.", "完成标记已保存。")
+                               : leonos_i18n("Saving the completion marker...", "正在保存完成标记...");
+        line2 = leonos_i18n("After reboot, setup will not open again.", "重启后设置不会再次打开。");
     }
     leonos_ui_text(ui, layout.panel_x + 20, layout.panel_y + 22, title, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
     leonos_ui_text(ui, layout.panel_x + 20, layout.panel_y + 58, line1, LEONOS_UI_DARK, LEONOS_UI_LIGHT);
@@ -141,9 +145,15 @@ static int advance_or_finish(void)
 {
     if (page_index + 1 < OOBE_PAGE_COUNT) {
         ++page_index;
+        if (page_index + 1 >= OOBE_PAGE_COUNT && !marker_written) {
+            marker_write_pending = 1;
+        }
         return 0;
     }
-    return write_completion_marker() == 0 ? 1 : 0;
+    if (!marker_written && write_completion_marker() == 0) {
+        marker_written = 1;
+    }
+    return marker_written ? 1 : 0;
 }
 
 int main(void)
@@ -166,6 +176,13 @@ int main(void)
         draw_oobe(&ui);
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                                   OOBE_MAX_W, pixels);
+        if (marker_write_pending) {
+            marker_write_pending = 0;
+            marker_written = write_completion_marker() == 0 ? 1 : 0;
+            draw_oobe(&ui);
+            leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
+                                      OOBE_MAX_W, pixels);
+        }
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_poll_app_event(&event) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {

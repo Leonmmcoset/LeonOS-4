@@ -67,12 +67,11 @@ void draw_alt_tab_overlay(void)
     uint32_t x = fb_w() > ALT_TAB_W ? (fb_w() - ALT_TAB_W) / 2 : 4;
     uint32_t y = fb_h() > box_h + TASKBAR_H ? (fb_h() - TASKBAR_H - box_h) / 2 : 4;
     leonos_ui_bevel(&ui, x, y, ALT_TAB_W, box_h, LEONOS_UI_GRAY, 0);
-    leonos_ui_text(&ui, x + 10, y + 8, "Switch To", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(&ui, x + 10, y + 8, leonos_i18n("Switch To", "切换到"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     for (uint32_t i = 0; i < alt_tab_count; ++i) {
         uint8_t id = alt_tab_ids[i];
         uint32_t flags = i == alt_tab_selected ? LEONOS_UI_MENU_SELECTED : 0;
         leonos_ui_list_row(&ui, x + 8, y + 24 + i * row_h, ALT_TAB_W - 16,
-                           windows[id].title ? windows[id].title : "Window", flags);
+                           windows[id].title ? windows[id].title : leonos_i18n("Window", "窗口"), flags);
     }
 }
-

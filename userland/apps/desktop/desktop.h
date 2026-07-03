@@ -3,6 +3,7 @@
 
 #include <leonos/gui.h>
 #include <leonos/fs.h>
+#include <leonos/i18n.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/system.h>
@@ -36,6 +37,7 @@
 #define START_PROGRAMS_W 220
 #define START_MENU_MAX_H 340
 #define START_MENU_ANIM_MS 160UL
+#define WINDOW_ANIM_MS 190UL
 #define START_MENU_ITEM_H 26
 #define START_MENU_DIRTY_H (START_MENU_MAX_H + TASKBAR_H + 8)
 #define START_MENU_MAX_APPS LEONOS_FS_MAX_ENTRIES
@@ -59,6 +61,28 @@
 #define SNAP_LEFT 2
 #define SNAP_RIGHT 3
 
+#define WINDOW_ANIM_NONE 0
+#define WINDOW_ANIM_OPEN 1
+#define WINDOW_ANIM_CLOSE 2
+#define WINDOW_ANIM_MINIMIZE 3
+#define WINDOW_ANIM_RESTORE 4
+#define WINDOW_ANIM_MAXIMIZE 5
+
+#define POWER_CONFIRM_NONE 0
+#define POWER_CONFIRM_REBOOT 1
+#define POWER_CONFIRM_SHUTDOWN 2
+
+#define DESKTOP_ICON_APP 0
+#define DESKTOP_ICON_TERMINAL 1
+#define DESKTOP_ICON_NOTEPAD 2
+#define DESKTOP_ICON_SETTINGS 3
+#define DESKTOP_ICON_CALC 4
+#define DESKTOP_ICON_MINESWEEPER 5
+#define DESKTOP_ICON_FILEMAN 6
+#define DESKTOP_ICON_TASKMGR 7
+#define DESKTOP_ICON_RUN 8
+#define DESKTOP_ICON_DESKTOP 9
+
 struct desktop_window {
     int x;
     int y;
@@ -81,6 +105,17 @@ struct desktop_window {
     uint8_t minimized;
     uint8_t maximized;
     uint8_t snap_mode;
+    uint8_t icon_id;
+    uint8_t anim;
+    unsigned long anim_start_ms;
+    int anim_from_x;
+    int anim_from_y;
+    uint32_t anim_from_w;
+    uint32_t anim_from_h;
+    int anim_to_x;
+    int anim_to_y;
+    uint32_t anim_to_w;
+    uint32_t anim_to_h;
 };
 
 struct rect {
@@ -97,12 +132,14 @@ enum start_action_type {
     START_ACTION_REBOOT = 4,
     START_ACTION_SHUTDOWN = 5,
     START_ACTION_PROGRAMS = 6,
+    START_ACTION_SPAWN_ONCE = 7,
 };
 
 struct start_menu_item {
     const char *label;
     enum start_action_type type;
     uint8_t window_id;
+    uint8_t icon_id;
     const char *path;
 };
 
@@ -163,6 +200,7 @@ extern uint8_t start_menu_apps_loaded;
 extern uint32_t start_menu_app_count;
 extern char start_menu_app_labels[START_MENU_MAX_APPS][32];
 extern char start_menu_app_paths[START_MENU_MAX_APPS][LEONOS_FS_PATH_LEN];
+extern uint8_t start_menu_app_icons[START_MENU_MAX_APPS];
 extern uint8_t snap_preview_mode;
 extern uint8_t alt_left_down;
 extern uint8_t alt_right_down;
@@ -182,6 +220,7 @@ extern uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
 extern uint8_t cursor_visible;
 extern uint8_t cursor_bitmap_loaded;
 extern uint8_t full_redraw_pending;
+extern uint8_t power_confirm_action;
 extern uint8_t oobe_lock_active;
 extern unsigned long oobe_last_spawn_ms;
 extern char app_titles[MAX_WINDOWS][48];
@@ -220,11 +259,16 @@ int32_t read_le32s(const uint8_t *p);
 int hit_rect(uint32_t x, uint32_t y, int rx, int ry, uint32_t rw, uint32_t rh);
 int text_ends_with(const char *text, const char *suffix);
 void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name);
+uint8_t desktop_icon_for_elf(const char *name);
+uint8_t desktop_icon_for_title(const char *title);
 uint32_t taskbar_y(void);
 uint32_t running_window_count(void);
 void start_menu_set_open(uint8_t open);
 void start_menu_toggle(void);
 uint32_t start_menu_progress(void);
+uint32_t desktop_ease_percent(uint32_t percent);
+int desktop_window_animation_active(void);
+void desktop_update_window_animations(void);
 uint32_t taskbar_button_width(uint32_t count);
 int is_alt_down(void);
 int is_win_down(void);
@@ -243,6 +287,7 @@ void bevel_i(int x, int y, int w, int h, uint32_t fill, uint32_t flags);
 void text_draw(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg);
 void text_draw_i(int x, int y, const char *text, uint32_t fg, uint32_t bg);
 void text_draw_transparent_i(int x, int y, const char *text, uint32_t fg);
+void draw_app_icon(uint8_t icon_id, int x, int y);
 void window_button_i(int x, int y, char label, uint32_t flags);
 void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch);
 void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text);
@@ -270,6 +315,13 @@ int window_is_snap_candidate(const struct desktop_window *w);
 uint8_t snap_mode_for_pointer(uint32_t x, uint32_t y, const struct desktop_window *w);
 void window_client_origin(const struct desktop_window *w, int *x, int *y);
 void remove_window_slot(uint8_t slot);
+void begin_window_open_animation(uint8_t slot);
+void begin_window_rect_animation(uint8_t slot, uint8_t anim,
+                                 int from_x, int from_y, uint32_t from_w, uint32_t from_h,
+                                 int to_x, int to_y, uint32_t to_w, uint32_t to_h);
+void begin_window_minimize_animation(uint8_t slot);
+void begin_window_restore_animation(uint8_t slot);
+void begin_window_close_animation(uint8_t slot, uint8_t send_close_event);
 void request_close_window(uint8_t slot);
 void send_app_event_to_window(uint32_t window_id, uint32_t type,
                               int32_t x, int32_t y, int32_t dx, int32_t dy,
@@ -285,8 +337,6 @@ int window_is_ui_demo(const struct desktop_window *w);
 void draw_ui_demo_label(uint32_t x, uint32_t y, const char *label, uint32_t bg);
 void draw_ui_demo_gallery(uint32_t body_x, uint32_t body_y,
                           uint32_t body_w, uint32_t body_h, uint32_t bg);
-void draw_settings_panel(uint32_t body_x, uint32_t body_y,
-                         uint32_t body_w, uint32_t body_h, uint32_t bg);
 void draw_window(uint8_t id);
 void draw_taskbar_button(uint8_t id, uint32_t x, uint32_t y, uint32_t w);
 void draw_snap_preview(void);
@@ -304,6 +354,7 @@ struct start_menu_layout start_menu_layout_for_count(uint32_t count);
 struct start_programs_layout start_programs_layout_for_menu(struct start_menu_layout menu);
 void draw_start_programs_menu(struct start_menu_layout menu);
 void draw_start_menu(void);
+void draw_power_confirm(void);
 void draw_cursor_shape(uint32_t x, uint32_t y);
 void redraw_region(struct rect dirty);
 void flush_region(struct rect dirty);
@@ -329,10 +380,13 @@ int handle_oobe_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons);
 int handle_oobe_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);
 void desktop_reboot(void);
 void desktop_shutdown(void);
+void desktop_request_power_confirm(uint8_t action);
+int desktop_handle_power_confirm_click(uint32_t x, uint32_t y);
 void handle_start_click(uint32_t x, uint32_t y);
 int hit_start_menu_area(uint32_t x, uint32_t y);
 int handle_taskbar_click(uint32_t x, uint32_t y);
-int handle_settings_click(uint8_t id, uint32_t x, uint32_t y);
+void desktop_publish_display_state(void);
+void desktop_handle_display_requests(void);
 void update_snap_preview(uint32_t x, uint32_t y);
 void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons);
 void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);

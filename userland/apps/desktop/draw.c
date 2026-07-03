@@ -131,6 +131,83 @@ void bevel_i(int x, int y, int w, int h, uint32_t fill, uint32_t flags)
     }
 }
 
+void draw_app_icon(uint8_t icon_id, int x, int y)
+{
+    rect_fill_i(x, y, 16, 16, LEONOS_UI_GRAY);
+    rect_fill_i(x, y, 16, 1, LEONOS_UI_WHITE);
+    rect_fill_i(x, y, 1, 16, LEONOS_UI_WHITE);
+    rect_fill_i(x + 15, y, 1, 16, LEONOS_UI_BLACK);
+    rect_fill_i(x, y + 15, 16, 1, LEONOS_UI_BLACK);
+    switch (icon_id) {
+    case DESKTOP_ICON_TERMINAL:
+        rect_fill_i(x + 2, y + 3, 12, 10, 0x00000000);
+        rect_fill_i(x + 3, y + 4, 10, 1, 0x0000aa00);
+        rect_fill_i(x + 4, y + 7, 3, 1, 0x0000ff00);
+        rect_fill_i(x + 6, y + 8, 1, 1, 0x0000ff00);
+        rect_fill_i(x + 8, y + 10, 4, 1, 0x0000ff00);
+        break;
+    case DESKTOP_ICON_NOTEPAD:
+        rect_fill_i(x + 4, y + 2, 9, 12, 0x00ffffff);
+        rect_fill_i(x + 11, y + 2, 2, 2, 0x00d8d8d8);
+        rect_fill_i(x + 5, y + 5, 7, 1, 0x000000cc);
+        rect_fill_i(x + 5, y + 8, 7, 1, 0x000000cc);
+        rect_fill_i(x + 5, y + 11, 5, 1, 0x000000cc);
+        break;
+    case DESKTOP_ICON_SETTINGS:
+        rect_fill_i(x + 7, y + 2, 2, 12, 0x00808080);
+        rect_fill_i(x + 2, y + 7, 12, 2, 0x00808080);
+        rect_fill_i(x + 4, y + 4, 8, 8, 0x00c0c0c0);
+        rect_fill_i(x + 6, y + 6, 4, 4, 0x00000000);
+        rect_fill_i(x + 7, y + 7, 2, 2, LEONOS_UI_GRAY);
+        break;
+    case DESKTOP_ICON_CALC:
+        rect_fill_i(x + 3, y + 2, 10, 12, 0x00808080);
+        rect_fill_i(x + 4, y + 3, 8, 3, 0x00d8f0ff);
+        for (int yy = 0; yy < 2; ++yy) {
+            for (int xx = 0; xx < 3; ++xx) {
+                rect_fill_i(x + 4 + xx * 3, y + 8 + yy * 3, 2, 2, 0x00ffffff);
+            }
+        }
+        break;
+    case DESKTOP_ICON_MINESWEEPER:
+        rect_fill_i(x + 3, y + 3, 10, 10, 0x00000000);
+        rect_fill_i(x + 5, y + 2, 6, 12, 0x00000000);
+        rect_fill_i(x + 2, y + 6, 12, 4, 0x00000000);
+        rect_fill_i(x + 6, y + 6, 2, 2, 0x00ffffff);
+        break;
+    case DESKTOP_ICON_FILEMAN:
+        rect_fill_i(x + 2, y + 5, 12, 8, 0x00ffd060);
+        rect_fill_i(x + 3, y + 3, 5, 3, 0x00ffe090);
+        rect_fill_i(x + 2, y + 6, 12, 1, 0x00fff0a0);
+        break;
+    case DESKTOP_ICON_TASKMGR:
+        rect_fill_i(x + 2, y + 3, 12, 10, 0x00ffffff);
+        rect_fill_i(x + 3, y + 4, 10, 1, 0x00000080);
+        rect_fill_i(x + 4, y + 10, 2, 2, 0x0000a000);
+        rect_fill_i(x + 7, y + 7, 2, 5, 0x0000a000);
+        rect_fill_i(x + 10, y + 5, 2, 7, 0x0000a000);
+        break;
+    case DESKTOP_ICON_RUN:
+        rect_fill_i(x + 3, y + 4, 10, 8, 0x000060c0);
+        rect_fill_i(x + 6, y + 6, 4, 1, 0x00ffffff);
+        rect_fill_i(x + 9, y + 5, 1, 3, 0x00ffffff);
+        rect_fill_i(x + 10, y + 6, 1, 1, 0x00ffffff);
+        break;
+    case DESKTOP_ICON_DESKTOP:
+        rect_fill_i(x + 2, y + 3, 12, 8, 0x00008080);
+        rect_fill_i(x + 3, y + 4, 10, 6, 0x0000a0a0);
+        rect_fill_i(x + 6, y + 12, 4, 1, 0x00808080);
+        rect_fill_i(x + 5, y + 13, 6, 1, 0x00808080);
+        break;
+    default:
+        rect_fill_i(x + 4, y + 3, 8, 10, 0x00ffffff);
+        rect_fill_i(x + 10, y + 3, 2, 2, 0x00d8d8d8);
+        rect_fill_i(x + 5, y + 6, 6, 1, 0x00000080);
+        rect_fill_i(x + 5, y + 9, 6, 1, 0x00000080);
+        break;
+    }
+}
+
 void text_draw(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg)
 {
     leonos_ui_text(&ui, x, y, text, fg, bg);
@@ -391,13 +468,13 @@ const char *task_state_name(uint32_t state)
 {
     switch (state) {
     case 0:
-        return "ready";
+        return leonos_i18n("ready", "就绪");
     case 1:
-        return "run";
+        return leonos_i18n("run", "运行");
     case 2:
-        return "sleep";
+        return leonos_i18n("sleep", "睡眠");
     case 3:
-        return "exit";
+        return leonos_i18n("exit", "退出");
     default:
         return "?";
     }
@@ -405,7 +482,7 @@ const char *task_state_name(uint32_t state)
 
 const char *task_kind_name(uint32_t kind)
 {
-    return kind == 1 ? "user" : "kern";
+    return kind == 1 ? leonos_i18n("user", "用户") : leonos_i18n("kern", "内核");
 }
 
 void task_line(char *buf, uint32_t cap, const struct leonos_task_info *task)

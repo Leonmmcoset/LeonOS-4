@@ -2,30 +2,22 @@
 
 void minimize_window(uint8_t id)
 {
-    windows[id].minimized = 1;
-    if (active_window == id) {
-        active_window = -1;
-        for (int zi = MAX_WINDOWS - 1; zi >= 0; --zi) {
-            uint8_t next = z_order[zi];
-            if (windows[next].visible && !windows[next].minimized) {
-                active_window = next;
-                break;
-            }
-        }
-    }
-    full_redraw_pending = 1;
+    begin_window_minimize_animation(id);
 }
 
 void restore_window(uint8_t id)
 {
     windows[id].visible = 1;
-    windows[id].minimized = 0;
     bring_to_front(id);
     clamp_window(&windows[id]);
-    if (windows[id].window_id) {
-        send_app_event(id, 4, 0, 0, 0, 0, 0, 0, 0);
+    if (windows[id].minimized) {
+        begin_window_restore_animation(id);
+    } else {
+        if (windows[id].window_id) {
+            send_app_event(id, 4, 0, 0, 0, 0, 0, 0, 0);
+        }
+        full_redraw_pending = 1;
     }
-    full_redraw_pending = 1;
 }
 
 int handle_global_key(uint8_t keycode, uint8_t pressed)
@@ -98,9 +90,17 @@ int handle_global_key(uint8_t keycode, uint8_t pressed)
 void toggle_maximize(uint8_t id)
 {
     struct desktop_window *w = &windows[id];
+    int from_x;
+    int from_y;
+    uint32_t from_w;
+    uint32_t from_h;
     if (!window_allows_resize(w)) {
         return;
     }
+    from_x = w->x;
+    from_y = w->y;
+    from_w = w->width;
+    from_h = w->height;
     if (w->maximized) {
         w->x = w->restore_x;
         w->y = w->restore_y;
@@ -112,6 +112,9 @@ void toggle_maximize(uint8_t id)
         if (w->window_id) {
             send_app_event(id, 4, 0, 0, 0, 0, 0, 0, 0);
         }
+        begin_window_rect_animation(id, WINDOW_ANIM_MAXIMIZE,
+                                    from_x, from_y, from_w, from_h,
+                                    w->x, w->y, w->width, w->height);
         full_redraw_pending = 1;
         return;
     }
@@ -128,6 +131,9 @@ void toggle_maximize(uint8_t id)
     if (w->window_id) {
         send_app_event(id, 4, 0, 0, 0, 0, 0, 0, 0);
     }
+    begin_window_rect_animation(id, WINDOW_ANIM_MAXIMIZE,
+                                from_x, from_y, from_w, from_h,
+                                w->x, w->y, w->width, w->height);
     full_redraw_pending = 1;
 }
 
@@ -185,7 +191,7 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
     if (msg->type == 3) {
         existing = find_window_slot_by_window_id(msg->window_id);
         if (existing >= 0) {
-            remove_window_slot((uint8_t)existing);
+            begin_window_close_animation((uint8_t)existing, 0);
         }
         return;
     }
@@ -205,8 +211,10 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
         return;
     }
 
-    copy_text(app_titles[slot], sizeof(app_titles[slot]), msg->title[0] ? msg->title : "Application");
-    copy_text(app_texts[slot], sizeof(app_texts[slot]), msg->text[0] ? msg->text : "Application window");
+    copy_text(app_titles[slot], sizeof(app_titles[slot]),
+              msg->title[0] ? msg->title : leonos_i18n("Application", "应用程序"));
+    copy_text(app_texts[slot], sizeof(app_texts[slot]),
+              msg->text[0] ? msg->text : leonos_i18n("Application window", "应用程序窗口"));
     uint32_t fullscreen = (msg->flags & LEONOS_GUI_WINDOW_FULLSCREEN) != 0;
     uint32_t width = fullscreen ? fb_w() : msg->width + 16;
     uint32_t height = fullscreen ? fb_h() : msg->height + TITLEBAR_H + 18;
@@ -238,9 +246,11 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
         .visible = 1,
         .minimized = 0,
         .maximized = fullscreen ? 1 : 0,
+        .icon_id = desktop_icon_for_title(app_titles[slot]),
     };
     clamp_window(&windows[slot]);
     bring_to_front(slot);
+    begin_window_open_animation(slot);
     send_app_event(slot, 4, 0, 0, 0, 0, 0, 0, 0);
     fetch_window_surface(slot);
     printf("[desktop.elf] GUI window from pid=%d wid=%d title=%s\n", msg->pid, msg->window_id, windows[slot].title);
@@ -279,6 +289,46 @@ void desktop_shutdown(void)
 {
     printf("[desktop.elf] shutdown requested from Start menu\n");
     leonos_system_shutdown();
+}
+
+void desktop_request_power_confirm(uint8_t action)
+{
+    if (action != POWER_CONFIRM_REBOOT && action != POWER_CONFIRM_SHUTDOWN) {
+        return;
+    }
+    power_confirm_action = action;
+    start_menu_set_open(0);
+    full_redraw_pending = 1;
+}
+
+int desktop_handle_power_confirm_click(uint32_t x, uint32_t y)
+{
+    enum { W = 360, H = 150 };
+    uint32_t dialog_x = fb_w() > W ? (fb_w() - W) / 2 : 0;
+    uint32_t dialog_y = fb_h() > H ? (fb_h() - H) / 2 : 0;
+    uint8_t action = power_confirm_action;
+    if (!action) {
+        return 0;
+    }
+    if (hit_rect(x, y, (int)dialog_x + W - 168, (int)dialog_y + H - 38,
+                 72, LEONOS_UI_BUTTON_H)) {
+        power_confirm_action = POWER_CONFIRM_NONE;
+        full_redraw_pending = 1;
+        if (action == POWER_CONFIRM_REBOOT) {
+            desktop_reboot();
+        } else {
+            desktop_shutdown();
+        }
+        return 1;
+    }
+    if (hit_rect(x, y, (int)dialog_x + W - 88, (int)dialog_y + H - 38,
+                 72, LEONOS_UI_BUTTON_H) ||
+        !hit_rect(x, y, (int)dialog_x, (int)dialog_y, W, H)) {
+        power_confirm_action = POWER_CONFIRM_NONE;
+        full_redraw_pending = 1;
+        return 1;
+    }
+    return 1;
 }
 
 void handle_start_click(uint32_t x, uint32_t y)
@@ -329,18 +379,18 @@ void handle_start_click(uint32_t x, uint32_t y)
             restore_window(items[i].window_id);
         } else if (items[i].type == START_ACTION_SPAWN) {
             spawn_program_path(items[i].path);
+        } else if (items[i].type == START_ACTION_SPAWN_ONCE) {
+            spawn_program_path(items[i].path);
         } else if (items[i].type == START_ACTION_PROGRAMS) {
             start_menu_programs_open = start_menu_programs_open ? 0 : 1;
             start_menu_programs_scroll = 0;
             full_redraw_pending = 1;
             return;
         } else if (items[i].type == START_ACTION_REBOOT) {
-            start_menu_set_open(0);
-            desktop_reboot();
+            desktop_request_power_confirm(POWER_CONFIRM_REBOOT);
             return;
         } else if (items[i].type == START_ACTION_SHUTDOWN) {
-            start_menu_set_open(0);
-            desktop_shutdown();
+            desktop_request_power_confirm(POWER_CONFIRM_SHUTDOWN);
             return;
         }
         break;
@@ -397,62 +447,6 @@ int handle_taskbar_click(uint32_t x, uint32_t y)
     return 1;
 }
 
-int handle_settings_click(uint8_t id, uint32_t x, uint32_t y)
-{
-    struct desktop_window *w = &windows[id];
-    int origin_x;
-    int origin_y;
-    if (id != 2 || !w->visible || w->minimized) {
-        return 0;
-    }
-    window_client_origin(w, &origin_x, &origin_y);
-    if (x < (uint32_t)origin_x || y < (uint32_t)origin_y) {
-        return 0;
-    }
-    uint32_t body_w = window_body_width(w);
-    uint32_t rel_x = x - (uint32_t)origin_x;
-    uint32_t rel_y = y - (uint32_t)origin_y;
-    uint32_t scale_x = body_w > 290 ? 176 : 156;
-    uint32_t confirm_y = 86 + DESKTOP_MODE_COUNT * 30 + 14;
-    uint32_t body_h = window_body_height(w);
-    if (confirm_y + 72 > body_h) {
-        confirm_y = body_h > 76 ? body_h - 76 : 132;
-    }
-    if (desktop_pending_confirm) {
-        if (rel_y >= confirm_y + 34 && rel_y < confirm_y + 34 + LEONOS_UI_BUTTON_H &&
-            rel_x >= 26 && rel_x < 108) {
-            desktop_confirm_display_settings();
-            return 1;
-        }
-        if (rel_y >= confirm_y + 34 && rel_y < confirm_y + 34 + LEONOS_UI_BUTTON_H &&
-            rel_x >= 118 && rel_x < 200) {
-            desktop_revert_display_settings();
-            return 1;
-        }
-    }
-    for (uint8_t i = 0; i < DESKTOP_MODE_COUNT; ++i) {
-        uint32_t by = 86 + i * 30;
-        if (rel_x >= 16 && rel_x < 146 &&
-            rel_y >= by && rel_y < by + LEONOS_UI_BUTTON_H) {
-            if (desktop_display_mode_supported(i, desktop_scale_index)) {
-                desktop_apply_display_settings_pending(i, desktop_scale_index);
-            }
-            return 1;
-        }
-    }
-    for (uint8_t i = 0; i < DESKTOP_SCALE_COUNT; ++i) {
-        uint32_t by = 86 + i * 30;
-        if (rel_x >= scale_x && rel_x < scale_x + 78 &&
-            rel_y >= by && rel_y < by + LEONOS_UI_BUTTON_H) {
-            if (desktop_display_mode_supported(desktop_mode_index, i)) {
-                desktop_apply_display_settings_pending(desktop_mode_index, i);
-            }
-            return 1;
-        }
-    }
-    return 0;
-}
-
 void update_snap_preview(uint32_t x, uint32_t y)
 {
     uint8_t next = SNAP_NONE;
@@ -480,6 +474,22 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
     int hover_id = hit_window(x, y);
     struct rect dirty = cursor_visible ? cursor_rect_at(cursor_x, cursor_y) : rect_make(0, 0, 0, 0);
     dirty = rect_union(dirty, cursor_rect_at(x, y));
+
+    if (power_confirm_action) {
+        if (left && !was_left) {
+            (void)desktop_handle_power_confirm_click(x, y);
+        }
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        if (full_redraw_pending) {
+            redraw_all();
+        } else {
+            repaint_and_flush(rect_pad(dirty, 2));
+        }
+        return;
+    }
 
     if (active_window_is_fullscreen() &&
         windows[active_window].window_id) {
@@ -589,8 +599,6 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                     toggle_maximize((uint8_t)id);
                 } else if (!window_is_fullscreen(w) && hit_rect(x, y, bx + 40, by, 18, 20)) {
                     request_close_window((uint8_t)id);
-                } else if (handle_settings_click((uint8_t)id, x, y)) {
-                    dirty = rect_union(dirty, rect_make(0, 0, (int)fb_w(), (int)fb_h()));
                 } else if (window_allows_resize(w) &&
                            hit_rect(x, y, w->x + (int)w->width - 18, w->y + (int)w->height - 18, 18, 18) &&
                            !w->maximized) {
@@ -645,6 +653,9 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
     }
     if (y >= fb_h()) {
         y = fb_h() ? fb_h() - 1 : 0;
+    }
+    if (power_confirm_action) {
+        return;
     }
     if (active_window_is_fullscreen() &&
         windows[active_window].window_id) {

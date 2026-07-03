@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/system.h>
@@ -7,10 +8,11 @@
 
 #define OSVER_W 520
 #define OSVER_H 260
+#define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[OSVER_W * OSVER_H];
 static struct leonos_system_info info;
-static char status_text[96] = "System version information";
+static char status_text[96];
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -47,15 +49,15 @@ static void draw_label_value(struct leonos_ui_surface *ui, uint32_t y,
 static void draw_osver(struct leonos_ui_surface *ui)
 {
     leonos_ui_rect(ui, 0, 0, OSVER_W, OSVER_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, OSVER_W, OSVER_H, "About LeonOS");
+    leonos_ui_dialog(ui, 0, 0, OSVER_W, OSVER_H, T("About LeonOS", "关于 LeonOS"));
     leonos_ui_text(ui, 28, 42, "LeonOS 4", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 28, 62, "Kernel and middle layer build details", LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 28, 62, T("Kernel and middle layer build details", "内核和中间层构建详情"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
 
-    draw_label_value(ui, 94, "Kernel name:", info.kernel_name);
-    draw_label_value(ui, 122, "Kernel version:", info.kernel_version);
-    draw_label_value(ui, 150, "Middle layer:", info.middlelayer_name);
-    draw_label_value(ui, 178, "Build time:", info.build_time);
-    draw_label_value(ui, 206, "Copyright:", info.copyright);
+    draw_label_value(ui, 94, T("Kernel name:", "内核名称:"), info.kernel_name);
+    draw_label_value(ui, 122, T("Kernel version:", "内核版本:"), info.kernel_version);
+    draw_label_value(ui, 150, T("Middle layer:", "中间层:"), info.middlelayer_name);
+    draw_label_value(ui, 178, T("Build time:", "构建时间:"), info.build_time);
+    draw_label_value(ui, 206, T("Copyright:", "版权:"), info.copyright);
     leonos_ui_statusbar(ui, OSVER_H - 28, 28, status_text);
 }
 
@@ -69,7 +71,7 @@ int main(void)
     puts("[osver.elf] system version viewer starting");
     ret = leonos_system_info(&info);
     if (ret < 0) {
-        copy_text(status_text, sizeof(status_text), "Could not read system version information");
+        copy_text(status_text, sizeof(status_text), T("Could not read system version information", "无法读取系统版本信息"));
         copy_text(info.kernel_name, sizeof(info.kernel_name), "unknown");
         copy_text(info.kernel_version, sizeof(info.kernel_version), "0.0.0-0000");
         copy_text(info.middlelayer_name, sizeof(info.middlelayer_name), "unknown");
@@ -78,7 +80,10 @@ int main(void)
                   "Copyright LeonMMcoset 2021-2026. All rights reserved.");
     }
 
-    window_id = leonos_gui_create_app_window_ex("About LeonOS", "System version",
+    if (!status_text[0]) {
+        copy_text(status_text, sizeof(status_text), T("System version information", "系统版本信息"));
+    }
+    window_id = leonos_gui_create_app_window_ex(T("About LeonOS", "关于 LeonOS"), T("System version", "系统版本"),
                                                 OSVER_W, OSVER_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[osver.elf] create window failed=%d\n", window_id);

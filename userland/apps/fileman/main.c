@@ -1,5 +1,6 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/launch.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
@@ -27,6 +28,7 @@
 #define FILEMAN_CONTEXT_MENU_COUNT 9
 #define FILEMAN_DETAILS_W 430
 #define FILEMAN_DETAILS_H 190
+#define T(en, zh) leonos_i18n((en), (zh))
 
 enum {
     FILEMAN_MENU_NONE = 0,
@@ -359,24 +361,24 @@ static void build_context_menu_items(struct leonos_ui_context_menu_item *items,
         return;
     }
     items[0] = (struct leonos_ui_context_menu_item){
-        "Open", FILEMAN_ACTION_OPEN, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Open", "打开"), FILEMAN_ACTION_OPEN, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
     items[1] = (struct leonos_ui_context_menu_item){
-        "Open With...", FILEMAN_ACTION_OPEN_WITH, has_file ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Open With...", "打开方式..."), FILEMAN_ACTION_OPEN_WITH, has_file ? 0 : LEONOS_UI_MENU_DISABLED};
     items[2] = (struct leonos_ui_context_menu_item){
-        "Default Program...", FILEMAN_ACTION_DEFAULT_PROGRAM,
+        T("Default Program...", "默认程序..."), FILEMAN_ACTION_DEFAULT_PROGRAM,
         has_file ? 0 : LEONOS_UI_MENU_DISABLED};
     items[3] = (struct leonos_ui_context_menu_item){
-        "Details", FILEMAN_ACTION_DETAILS, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Details", "详细信息"), FILEMAN_ACTION_DETAILS, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
     items[4] = (struct leonos_ui_context_menu_item){
-        "Rename", FILEMAN_ACTION_RENAME, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Rename", "重命名"), FILEMAN_ACTION_RENAME, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
     items[5] = (struct leonos_ui_context_menu_item){
-        "Delete", FILEMAN_ACTION_DELETE, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Delete", "删除"), FILEMAN_ACTION_DELETE, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
     items[6] = (struct leonos_ui_context_menu_item){
         "", 0, LEONOS_UI_MENU_SEPARATOR};
     items[7] = (struct leonos_ui_context_menu_item){
-        "New Folder", FILEMAN_ACTION_NEW_FOLDER, 0};
+        T("New Folder", "新建文件夹"), FILEMAN_ACTION_NEW_FOLDER, 0};
     items[8] = (struct leonos_ui_context_menu_item){
-        "Refresh", FILEMAN_ACTION_REFRESH, 0};
+        T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0};
 }
 
 static void details_add_line(struct leonos_ui_surface *ui, uint32_t y,
@@ -396,7 +398,7 @@ static void show_details_selected(void)
     char size_line[56];
     int window_id;
     if (!selected_entry_valid()) {
-        set_status("Select an item");
+        set_status(T("Select an item", "请选择一个项目"));
         return;
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
@@ -406,7 +408,7 @@ static void show_details_selected(void)
     }
     format_size_text(size_line, sizeof(size_line), st.size);
 
-    window_id = leonos_gui_create_app_window_ex("Properties", path,
+    window_id = leonos_gui_create_app_window_ex(T("Properties", "属性"), path,
                                                 FILEMAN_DETAILS_W, FILEMAN_DETAILS_H,
                                                 LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
@@ -417,11 +419,11 @@ static void show_details_selected(void)
                    FILEMAN_DETAILS_W);
     for (;;) {
         leonos_ui_rect(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, LEONOS_UI_GRAY);
-        leonos_ui_dialog(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, "Properties");
-        details_add_line(&ui, 48, "Name:", entries[file_list.selected].name);
-        details_add_line(&ui, 72, "Type:", entry_type_name(&entries[file_list.selected]));
-        details_add_line(&ui, 96, "Path:", path);
-        details_add_line(&ui, 120, "Size:", size_line);
+        leonos_ui_dialog(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, T("Properties", "属性"));
+        details_add_line(&ui, 48, T("Name:", "名称:"), entries[file_list.selected].name);
+        details_add_line(&ui, 72, T("Type:", "类型:"), entry_type_name(&entries[file_list.selected]));
+        details_add_line(&ui, 96, T("Path:", "路径:"), path);
+        details_add_line(&ui, 120, T("Size:", "大小:"), size_line);
         leonos_ui_button(&ui, FILEMAN_DETAILS_W - 90, FILEMAN_DETAILS_H - 38,
                          72, LEONOS_UI_BUTTON_H, "OK", 0);
         leonos_gui_present_window((uint32_t)window_id, FILEMAN_DETAILS_W,
@@ -460,7 +462,7 @@ static void show_open_with_for_path(const char *path, uint8_t set_default_only)
     extension[0] = 0;
     menu_open = FILEMAN_MENU_NONE;
     context_menu_set_active(0);
-    ret = leonos_ui_show_open_with_dialog(set_default_only ? "Default Program" : "Open With",
+    ret = leonos_ui_show_open_with_dialog(set_default_only ? T("Default Program", "默认程序") : T("Open With", "打开方式"),
                                           path, program, sizeof(program),
                                           &remember, flags);
     if (ret < 0) {
@@ -468,7 +470,7 @@ static void show_open_with_for_path(const char *path, uint8_t set_default_only)
         return;
     }
     if (ret == 0) {
-        set_status("Open With canceled");
+        set_status(T("Open With canceled", "已取消打开方式"));
         return;
     }
     if (set_default_only || remember) {
@@ -516,11 +518,11 @@ static void show_open_with_selected(void)
 {
     char path[LEONOS_FS_PATH_LEN];
     if (file_list.selected < 0 || (uint32_t)file_list.selected >= entry_count) {
-        set_status("Select a file");
+        set_status(T("Select a file", "请选择一个文件"));
         return;
     }
     if (entries[file_list.selected].type != LEONOS_FS_TYPE_FILE) {
-        set_status("Open With is for files");
+        set_status(T("Open With is for files", "打开方式仅用于文件"));
         return;
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
@@ -531,11 +533,11 @@ static void show_default_program_for_selected(void)
 {
     char path[LEONOS_FS_PATH_LEN];
     if (file_list.selected < 0 || (uint32_t)file_list.selected >= entry_count) {
-        set_status("Select a file");
+        set_status(T("Select a file", "请选择一个文件"));
         return;
     }
     if (entries[file_list.selected].type != LEONOS_FS_TYPE_FILE) {
-        set_status("Default program is for files");
+        set_status(T("Default program is for files", "默认程序仅用于文件"));
         return;
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
@@ -581,7 +583,7 @@ static int reload_dir(void)
     char buf[96];
     uint32_t pos = 0;
     buf[0] = 0;
-    append_text(buf, &pos, sizeof(buf), "Items ");
+    append_text(buf, &pos, sizeof(buf), T("Items ", "项目 "));
     append_dec(buf, &pos, sizeof(buf), entry_count);
     append_text(buf, &pos, sizeof(buf), " in ");
     append_text(buf, &pos, sizeof(buf), current_path);
@@ -594,8 +596,8 @@ static void draw_fileman(struct leonos_ui_surface *ui)
 {
     struct fileman_layout l = current_layout();
     struct leonos_ui_list_column cols[] = {
-        {"Type", 58},
-        {"Name", l.list_w > 58 ? l.list_w - 58 : 120},
+        {T("Type", "类型"), 58},
+        {T("Name", "名称"), l.list_w > 58 ? l.list_w - 58 : 120},
     };
     struct leonos_ui_tree_item tree_items[] = {
         {"0:/", 1, 0, LEONOS_UI_TREE_EXPANDED},
@@ -617,13 +619,13 @@ static void draw_fileman(struct leonos_ui_surface *ui)
     leonos_ui_listview_state_set_count(&file_list, entry_count);
     leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
     leonos_ui_menubar(ui, 0, 0, view_w);
-    leonos_ui_menubar_item(ui, 8, 0, 54, "File", menu_open == FILEMAN_MENU_FILE);
-    leonos_ui_menubar_item(ui, 64, 0, 54, "View", menu_open == FILEMAN_MENU_VIEW);
+    leonos_ui_menubar_item(ui, 8, 0, 54, T("File", "文件"), menu_open == FILEMAN_MENU_FILE);
+    leonos_ui_menubar_item(ui, 64, 0, 54, T("View", "查看"), menu_open == FILEMAN_MENU_VIEW);
 
     leonos_ui_toolbar(ui, 0, 30, view_w, 42);
-    leonos_ui_toolbar_button(ui, 8, TOOLBAR_Y, 54, "Up", 0);
-    leonos_ui_toolbar_button(ui, 72, TOOLBAR_Y, 60, "Open", 0);
-    leonos_ui_toolbar_button(ui, 142, TOOLBAR_Y, 76, "Refresh", 0);
+    leonos_ui_toolbar_button(ui, 8, TOOLBAR_Y, 54, T("Up", "上级"), 0);
+    leonos_ui_toolbar_button(ui, 72, TOOLBAR_Y, 60, T("Open", "打开"), 0);
+    leonos_ui_toolbar_button(ui, 142, TOOLBAR_Y, 76, T("Refresh", "刷新"), 0);
     leonos_ui_edit(ui, 230, TOOLBAR_Y, view_w > 238 ? view_w - 238 : 120,
                    current_path, text_len(current_path), 0, LEONOS_UI_EDIT_READONLY);
 
@@ -657,26 +659,26 @@ static void draw_fileman(struct leonos_ui_surface *ui)
         uint32_t has_file = selected_entry_is_file();
         uint32_t has_mutable = selected_entry_is_mutable();
         leonos_ui_menu(ui, 8, MENU_BAR_H, 174, 242);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 132, "Open",
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 132, T("Open", "打开"),
                             has_item ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 132, "Open With...",
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 132, T("Open With...", "打开方式..."),
                             has_file ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 132, "Default Program...",
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 132, T("Default Program...", "默认程序..."),
                             has_file ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 132, "Details",
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 132, T("Details", "详细信息"),
                             has_item ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 112, 132, "Rename",
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 112, 132, T("Rename", "重命名"),
                             has_mutable ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 138, 132, "Delete",
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 138, 132, T("Delete", "删除"),
                             has_mutable ? 0 : LEONOS_UI_MENU_DISABLED);
         leonos_ui_menu_item(ui, 42, MENU_BAR_H + 164, 132, "", LEONOS_UI_MENU_SEPARATOR);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 190, 132, "New Folder", 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 216, 132, "Refresh", 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 190, 132, T("New Folder", "新建文件夹"), 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 216, 132, T("Refresh", "刷新"), 0);
     } else if (menu_open == FILEMAN_MENU_VIEW) {
         leonos_ui_menu(ui, 64, MENU_BAR_H, 154, 86);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 8, 116, "Refresh", 0);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 34, 116, "Root", 0);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 60, 116, "About", 0);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 8, 116, T("Refresh", "刷新"), 0);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 34, 116, T("Root", "根目录"), 0);
+        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 60, 116, T("About", "关于"), 0);
     }
     if (context_menu_active || context_menu_animating) {
         struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
@@ -700,7 +702,7 @@ static void open_selected_entry(void)
     char path[LEONOS_FS_PATH_LEN];
     int pid;
     if (file_list.selected < 0 || (uint32_t)file_list.selected >= entry_count) {
-        set_status("Select an item");
+        set_status(T("Select an item", "请选择一个项目"));
         return;
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
@@ -763,12 +765,12 @@ static void create_new_folder(void)
     char name[LEONOS_FS_NAME_LEN] = "New Folder";
     char path[LEONOS_FS_PATH_LEN];
     int ret;
-    if (!leonos_ui_show_input_dialog("New Folder", "Folder name:", name, sizeof(name))) {
-        set_status("New folder canceled");
+    if (!leonos_ui_show_input_dialog(T("New Folder", "新建文件夹"), T("Folder name:", "文件夹名称:"), name, sizeof(name))) {
+        set_status(T("New folder canceled", "已取消新建文件夹"));
         return;
     }
     if (!name[0]) {
-        set_status("Folder name is empty");
+        set_status(T("Folder name is empty", "文件夹名称为空"));
         return;
     }
     build_child_path(path, sizeof(path), name);
@@ -787,7 +789,7 @@ static void create_new_folder(void)
             break;
         }
     }
-    set_status("Folder created");
+    set_status(T("Folder created", "文件夹已创建"));
 }
 
 static void rename_selected_entry(void)
@@ -797,16 +799,16 @@ static void rename_selected_entry(void)
     char name[LEONOS_FS_NAME_LEN];
     int ret;
     if (!selected_entry_valid()) {
-        set_status("Select an item");
+        set_status(T("Select an item", "请选择一个项目"));
         return;
     }
     copy_text(name, sizeof(name), entries[file_list.selected].name);
-    if (!leonos_ui_show_input_dialog("Rename", "New name:", name, sizeof(name))) {
-        set_status("Rename canceled");
+    if (!leonos_ui_show_input_dialog(T("Rename", "重命名"), T("New name:", "新名称:"), name, sizeof(name))) {
+        set_status(T("Rename canceled", "已取消重命名"));
         return;
     }
     if (!name[0]) {
-        set_status("New name is empty");
+        set_status(T("New name is empty", "新名称为空"));
         return;
     }
     build_child_path(old_path, sizeof(old_path), entries[file_list.selected].name);
@@ -826,7 +828,7 @@ static void rename_selected_entry(void)
             break;
         }
     }
-    set_status("Renamed");
+    set_status(T("Renamed", "已重命名"));
 }
 
 static void delete_selected_entry(void)
@@ -836,29 +838,29 @@ static void delete_selected_entry(void)
     uint32_t pos = 0;
     int ret;
     if (!selected_entry_valid()) {
-        set_status("Select an item");
+        set_status(T("Select an item", "请选择一个项目"));
         return;
     }
     message[0] = 0;
-    append_text(message, &pos, sizeof(message), "Delete ");
+    append_text(message, &pos, sizeof(message), T("Delete ", "删除 "));
     append_text(message, &pos, sizeof(message), entries[file_list.selected].name);
     append_char(message, &pos, sizeof(message), '?');
-    if (!leonos_ui_show_confirm_dialog("Delete", message, 0)) {
-        set_status("Delete canceled");
+    if (!leonos_ui_show_confirm_dialog(T("Delete", "删除"), message, 0)) {
+        set_status(T("Delete canceled", "已取消删除"));
         return;
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
     ret = entries[file_list.selected].type == LEONOS_FS_TYPE_DIR ? rmdir(path) : unlink(path);
     if (ret < 0) {
         if (ret == -39) {
-            set_status("Delete failed: directory not empty");
+            set_status(T("Delete failed: directory not empty", "删除失败：目录非空"));
         } else {
             set_status_code("Delete failed ", ret);
         }
         return;
     }
     reload_dir();
-    set_status("Deleted");
+    set_status(T("Deleted", "已删除"));
 }
 
 static void execute_action(uint32_t action)
@@ -980,7 +982,7 @@ static int handle_menu_click(int32_t x, int32_t y)
         }
         if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 60, 116, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
-            leonos_ui_show_message_box("File Manager", "Browse FAT32 files and launch apps.", "OK");
+            leonos_ui_show_message_box(T("File Manager", "文件资源管理器"), T("Browse FAT32 files and launch apps.", "浏览 FAT32 文件并启动应用。"), "OK");
             return 1;
         }
         menu_open = FILEMAN_MENU_NONE;
@@ -1186,7 +1188,7 @@ int main(int argc, char **argv, char **envp)
 
     puts("[fileman.elf] file manager starting");
     printf("[fileman.elf] pid=%d creating GUI window\n", getpid());
-    window_id = leonos_gui_create_app_window_ex("File Manager", "LeonOS file browser",
+    window_id = leonos_gui_create_app_window_ex(T("File Manager", "文件资源管理器"), T("LeonOS file browser", "LeonOS 文件浏览器"),
                                                 FILEMAN_W, FILEMAN_H, 0);
     if (window_id <= 0) {
         printf("[fileman.elf] create window failed=%d\n", window_id);

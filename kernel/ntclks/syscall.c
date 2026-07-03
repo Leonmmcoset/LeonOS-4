@@ -37,6 +37,10 @@
 #define LEONOS_GUI_IOCTL_TASK_KILL 0x4c544b49ULL
 #define LEONOS_GUI_IOCTL_REBOOT 0x4c524254ULL
 #define LEONOS_GUI_IOCTL_SHUTDOWN 0x4c534844ULL
+#define LEONOS_GUI_IOCTL_DISPLAY_STATE 0x4c445350ULL
+#define LEONOS_GUI_IOCTL_DISPLAY_REQUEST 0x4c445351ULL
+#define LEONOS_GUI_IOCTL_POLL_DISPLAY_REQUEST 0x4c445352ULL
+#define LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE 0x4c445353ULL
 #define LEONOS_TEXT_LAYOUT_MAX_BYTES 4096U
 #define LEONOS_TEXT_LAYOUT_MAX_GLYPHS 512U
 
@@ -997,6 +1001,34 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_SHUTDOWN) {
         power_shutdown();
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_DISPLAY_STATE) {
+        if (!user_range_ok(a2, sizeof(struct gui_ipc_display_state))) {
+            return -LEONOS_EFAULT;
+        }
+        return gui_ipc_display_state((struct gui_ipc_display_state *)(uintptr_t)a2) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_DISPLAY_REQUEST) {
+        if (!user_range_ok(a2, sizeof(struct gui_ipc_display_request))) {
+            return -LEONOS_EFAULT;
+        }
+        return gui_ipc_request_display((const struct gui_ipc_display_request *)(uintptr_t)a2) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_POLL_DISPLAY_REQUEST) {
+        if (!user_range_ok(a2, sizeof(struct gui_ipc_display_request))) {
+            return -LEONOS_EFAULT;
+        }
+        return gui_ipc_pop_display_request((struct gui_ipc_display_request *)(uintptr_t)a2) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE) {
+        if (!user_range_ok(a2, sizeof(struct gui_ipc_display_state))) {
+            return -LEONOS_EFAULT;
+        }
+        return gui_ipc_publish_display_state((const struct gui_ipc_display_state *)(uintptr_t)a2) ? 1 : 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_TEXT_IOCTL_LAYOUT_UTF8) {

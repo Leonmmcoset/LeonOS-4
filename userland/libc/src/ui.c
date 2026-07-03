@@ -1,12 +1,15 @@
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/launch.h>
 #include <leonos/psf_font.h>
 #include <leonos/syscall.h>
 #include <leonos/text.h>
 #include <leonos/ui.h>
 
+#define UI_T(en, zh) leonos_i18n((en), (zh))
+
 #define UI_SYSTEM_FONT_MAX 8192U
-#define UI_CJK_FONT_MAX 131072U
+#define UI_CJK_FONT_MAX 524288U
 #define UI_LAYOUT_GLYPH_MAX 512U
 #define UI_CJK_FONT_PATH "0:/system/fonts/cjk16.lbf"
 
@@ -3284,11 +3287,11 @@ int leonos_ui_show_open_dialog(const char *title, char *path, uint32_t capacity,
 
 enum {
     UI_OPEN_WITH_W = 432,
-    UI_OPEN_WITH_H = 296,
+    UI_OPEN_WITH_H = 340,
     UI_OPEN_WITH_X = 0,
     UI_OPEN_WITH_Y = 0,
     UI_OPEN_WITH_ROW_H = 34,
-    UI_OPEN_WITH_VISIBLE_ROWS = 4,
+    UI_OPEN_WITH_VISIBLE_ROWS = 3,
     UI_OPEN_WITH_LIST_X = 16,
     UI_OPEN_WITH_LIST_Y = 170,
     UI_OPEN_WITH_LIST_W = UI_OPEN_WITH_W - 32,
@@ -3334,7 +3337,7 @@ static const char *ui_open_with_app_label(const struct leonos_launch_assoc_app *
         return app->name;
     }
     if (!program_path || !program_path[0]) {
-        return "None";
+        return UI_T("None", "无");
     }
     ui_copy_text(buffer, capacity, program_path);
     return buffer;
@@ -3356,34 +3359,36 @@ static void ui_open_with_draw(struct leonos_ui_surface *surface,
     uint32_t scrollbar_x = UI_OPEN_WITH_LIST_X + UI_OPEN_WITH_LIST_W - UI_OPEN_WITH_SCROLL_W;
     leonos_ui_rect(surface, 0, 0, UI_OPEN_WITH_W, UI_OPEN_WITH_H, LEONOS_UI_GRAY);
     leonos_ui_dialog(surface, UI_OPEN_WITH_X, UI_OPEN_WITH_Y,
-                     UI_OPEN_WITH_W, UI_OPEN_WITH_H, title ? title : "Open With");
+                     UI_OPEN_WITH_W, UI_OPEN_WITH_H, title ? title : UI_T("Open With", "打开方式"));
     leonos_ui_text_clipped(surface, 16, 44, UI_OPEN_WITH_W - 32,
                            set_default_mode
-                               ? "Choose a default program for this file type:"
-                               : "Choose a program to open this file:",
+                               ? UI_T("Choose a default program for this file type:",
+                                      "选择此文件类型的默认程序:")
+                               : UI_T("Choose a program to open this file:",
+                                      "选择用于打开此文件的程序:"),
                            LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(surface, 16, 68, "File:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, 16, 68, UI_T("File:", "文件:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_edit(surface, 58, 64, UI_OPEN_WITH_W - 74, path ? path : "",
                    ui_strlen(path), 0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_text(surface, 16, 92, "Extension:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, 16, 92, UI_T("Extension:", "扩展名:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_edit(surface, 82, 88, 84,
-                   extension && extension[0] ? extension : "(none)",
-                   ui_strlen(extension && extension[0] ? extension : "(none)"),
+                   extension && extension[0] ? extension : UI_T("(none)", "(无)"),
+                   ui_strlen(extension && extension[0] ? extension : UI_T("(none)", "(无)")),
                    0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_text(surface, 180, 92, "Default:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, 180, 92, UI_T("Default:", "默认:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_edit(surface, 244, 88, UI_OPEN_WITH_W - 260,
-                   default_label ? default_label : "None",
-                   ui_strlen(default_label ? default_label : "None"),
+                   default_label ? default_label : UI_T("None", "无"),
+                   ui_strlen(default_label ? default_label : UI_T("None", "无")),
                    0, LEONOS_UI_EDIT_READONLY);
     if (set_default_mode) {
-        leonos_ui_checkbox(surface, 16, 118, "Update default program", 1,
+        leonos_ui_checkbox(surface, 16, 118, UI_T("Update default program", "更新默认程序"), 1,
                            LEONOS_UI_BUTTON_DISABLED);
     } else {
-        leonos_ui_checkbox(surface, 16, 118, "Always use this app",
+        leonos_ui_checkbox(surface, 16, 118, UI_T("Always use this app", "始终使用此应用"),
                            can_remember ? (int)remember : 0,
                            can_remember ? 0 : LEONOS_UI_BUTTON_DISABLED);
     }
-    leonos_ui_text(surface, 16, 144, "Programs:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, 16, 144, UI_T("Programs:", "程序:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_inset(surface, UI_OPEN_WITH_LIST_X, UI_OPEN_WITH_LIST_Y,
                     UI_OPEN_WITH_LIST_W, list_h, LEONOS_UI_WHITE);
     for (uint32_t row = 0; row < list_state->visible_rows; ++row) {
@@ -3419,9 +3424,9 @@ static void ui_open_with_draw(struct leonos_ui_surface *surface,
                              : 0);
     leonos_ui_button(surface, UI_OPEN_WITH_W - 194, UI_OPEN_WITH_BUTTON_Y,
                      96, LEONOS_UI_BUTTON_H,
-                     set_default_mode ? "Set Default" : "Open", 0);
+                     set_default_mode ? UI_T("Set Default", "设为默认") : UI_T("Open", "打开"), 0);
     leonos_ui_button(surface, UI_OPEN_WITH_W - 88, UI_OPEN_WITH_BUTTON_Y,
-                     72, LEONOS_UI_BUTTON_H, "Cancel", 0);
+                     72, LEONOS_UI_BUTTON_H, UI_T("Cancel", "取消"), 0);
 }
 
 int leonos_ui_show_open_with_dialog(const char *title, const char *path,
@@ -3480,7 +3485,7 @@ int leonos_ui_show_open_with_dialog(const char *title, const char *path,
     list_state.selected = selected;
     list_state.focused = 1;
 
-    window_id = leonos_gui_create_app_window_ex(title ? title : "Open With",
+    window_id = leonos_gui_create_app_window_ex(title ? title : UI_T("Open With", "打开方式"),
                                                 path,
                                                 UI_OPEN_WITH_W, UI_OPEN_WITH_H,
                                                 LEONOS_GUI_WINDOW_NO_RESIZE);
@@ -3491,7 +3496,7 @@ int leonos_ui_show_open_with_dialog(const char *title, const char *path,
                    UI_OPEN_WITH_W);
     for (;;) {
         uint32_t activated = 0;
-        ui_open_with_draw(&surface, title ? title : "Open With", path,
+        ui_open_with_draw(&surface, title ? title : UI_T("Open With", "打开方式"), path,
                           extension, default_label, apps, app_count,
                           &list_state, remember_value, can_remember,
                           set_default_mode);

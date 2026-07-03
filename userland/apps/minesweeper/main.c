@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -18,6 +19,7 @@
 #define CELL_MINE 0x01u
 #define CELL_REVEALED 0x02u
 #define CELL_FLAGGED 0x04u
+#define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[MS_W * MS_H];
 static uint8_t cells[MS_ROWS][MS_COLS];
@@ -32,6 +34,28 @@ static uint32_t rng_state;
 static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
 {
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
+}
+
+static void copy_text(char *dst, uint32_t cap, const char *src)
+{
+    uint32_t i = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    while (src && src[i] && i + 1 < cap) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = 0;
+}
+
+static uint32_t text_len(const char *text)
+{
+    uint32_t n = 0;
+    while (text && text[n]) {
+        ++n;
+    }
+    return n;
 }
 
 static uint32_t color_for_number(uint8_t n)
@@ -225,33 +249,29 @@ static void draw_tile(struct leonos_ui_surface *ui, uint32_t gx, uint32_t gy)
 static void draw_game(struct leonos_ui_surface *ui)
 {
     char mines_text[32];
-    const char *status = "Ready";
+    const char *status = T("Ready", "准备");
     int mines_left = (int)MS_MINES - (int)flagged_count;
     leonos_ui_rect(ui, 0, 0, MS_W, MS_H, LEONOS_UI_LIGHT);
-    leonos_ui_text(ui, 18, 16, "Minesweeper", LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
-    leonos_ui_button(ui, MS_W - 88, 12, 70, LEONOS_UI_BUTTON_H, "New", 0);
+    leonos_ui_text(ui, 18, 16, T("Minesweeper", "扫雷"), LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    leonos_ui_button(ui, MS_W - 88, 12, 70, LEONOS_UI_BUTTON_H, T("New", "新游戏"), 0);
     if (game_over) {
-        status = won ? "You won" : "Boom";
+        status = won ? T("You won", "胜利") : T("Boom", "爆炸");
     } else if (mines_placed) {
-        status = "Playing";
+        status = T("Playing", "游戏中");
     }
-    mines_text[0] = 'M';
-    mines_text[1] = 'i';
-    mines_text[2] = 'n';
-    mines_text[3] = 'e';
-    mines_text[4] = 's';
-    mines_text[5] = ':';
-    mines_text[6] = ' ';
+    copy_text(mines_text, sizeof(mines_text), T("Mines: ", "地雷: "));
     if (mines_left < 0) {
-        mines_text[7] = '-';
+        uint32_t p = text_len(mines_text);
+        mines_text[p] = '-';
         mines_left = -mines_left;
-        mines_text[8] = (char)('0' + (mines_left / 10) % 10);
-        mines_text[9] = (char)('0' + mines_left % 10);
-        mines_text[10] = 0;
+        mines_text[p + 1] = (char)('0' + (mines_left / 10) % 10);
+        mines_text[p + 2] = (char)('0' + mines_left % 10);
+        mines_text[p + 3] = 0;
     } else {
-        mines_text[7] = (char)('0' + (mines_left / 10) % 10);
-        mines_text[8] = (char)('0' + mines_left % 10);
-        mines_text[9] = 0;
+        uint32_t p = text_len(mines_text);
+        mines_text[p] = (char)('0' + (mines_left / 10) % 10);
+        mines_text[p + 1] = (char)('0' + mines_left % 10);
+        mines_text[p + 2] = 0;
     }
     leonos_ui_text(ui, 18, 42, mines_text, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
     leonos_ui_text(ui, 130, 42, status, LEONOS_UI_DARK, LEONOS_UI_LIGHT);
@@ -283,7 +303,7 @@ int main(void)
     struct leonos_gui_app_event event;
     int window_id;
     puts("[minesweeper.elf] starting");
-    window_id = leonos_gui_create_app_window_ex("Minesweeper", "LeonOS Minesweeper",
+    window_id = leonos_gui_create_app_window_ex(T("Minesweeper", "扫雷"), T("LeonOS Minesweeper", "LeonOS 扫雷"),
                                                 MS_W, MS_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         printf("[minesweeper.elf] create window failed=%d\n", window_id);

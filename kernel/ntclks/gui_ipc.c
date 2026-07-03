@@ -11,6 +11,10 @@ static struct gui_ipc_window queue[GUI_IPC_QUEUE_CAP];
 static uint32_t head;
 static uint32_t tail;
 static uint32_t next_window_id;
+static struct gui_ipc_display_request display_request;
+static uint8_t display_request_pending;
+static struct gui_ipc_display_state display_state;
+static uint8_t display_state_valid;
 
 struct gui_window_slot {
     uint8_t used;
@@ -250,11 +254,52 @@ void gui_ipc_init(void)
     head = 0;
     tail = 0;
     next_window_id = 1;
+    display_request_pending = 0;
+    display_state_valid = 0;
     for (uint32_t i = 0; i < GUI_IPC_MAX_WINDOWS; ++i) {
         windows[i].used = 0;
         windows[i].buffer_phys = 0;
         windows[i].buffer_pages = 0;
     }
+}
+
+int gui_ipc_display_state(struct gui_ipc_display_state *out)
+{
+    if (!out || !display_state_valid) {
+        return 0;
+    }
+    *out = display_state;
+    return 1;
+}
+
+int gui_ipc_publish_display_state(const struct gui_ipc_display_state *state)
+{
+    if (!state) {
+        return 0;
+    }
+    display_state = *state;
+    display_state_valid = 1;
+    return 1;
+}
+
+int gui_ipc_request_display(const struct gui_ipc_display_request *request)
+{
+    if (!request) {
+        return 0;
+    }
+    display_request = *request;
+    display_request_pending = 1;
+    return 1;
+}
+
+int gui_ipc_pop_display_request(struct gui_ipc_display_request *out)
+{
+    if (!out || !display_request_pending) {
+        return 0;
+    }
+    *out = display_request;
+    display_request_pending = 0;
+    return 1;
 }
 
 int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,

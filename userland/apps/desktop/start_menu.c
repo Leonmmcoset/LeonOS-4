@@ -26,6 +26,7 @@ void start_menu_load_apps(void)
         copy_app_label_from_elf(start_menu_app_labels[start_menu_app_count],
                                 sizeof(start_menu_app_labels[start_menu_app_count]),
                                 entries[i].name);
+        start_menu_app_icons[start_menu_app_count] = desktop_icon_for_elf(entries[i].name);
         copy_text(start_menu_app_paths[start_menu_app_count],
                   sizeof(start_menu_app_paths[start_menu_app_count]),
                   "0:/userland/");
@@ -50,34 +51,35 @@ void start_menu_ensure_apps(void)
 uint32_t build_start_menu_items(struct start_menu_item *items, uint32_t cap)
 {
     uint32_t count = 0;
-#define ADD_ITEM(label_, type_, win_, path_) do { \
+#define ADD_ITEM(label_, type_, win_, icon_, path_) do { \
         if (count < cap) { \
-            items[count++] = (struct start_menu_item){label_, type_, win_, path_}; \
+            items[count++] = (struct start_menu_item){label_, type_, win_, icon_, path_}; \
         } \
     } while (0)
-    ADD_ITEM("Desktop Server", START_ACTION_RESTORE, 0, 0);
-    ADD_ITEM("Settings", START_ACTION_RESTORE, 2, 0);
-    ADD_ITEM("", START_ACTION_SEPARATOR, 0, 0);
+    ADD_ITEM(leonos_i18n("Desktop Server", "桌面服务"), START_ACTION_RESTORE, 0, DESKTOP_ICON_DESKTOP, 0);
+    ADD_ITEM(leonos_i18n("Settings", "设置"), START_ACTION_SPAWN_ONCE, 0, DESKTOP_ICON_SETTINGS, "0:/userland/settings.elf");
+    ADD_ITEM("", START_ACTION_SEPARATOR, 0, DESKTOP_ICON_APP, 0);
     start_menu_ensure_apps();
-    ADD_ITEM("Programs >", START_ACTION_PROGRAMS, 0, 0);
+    ADD_ITEM(leonos_i18n("Programs >", "程序 >"), START_ACTION_PROGRAMS, 0, DESKTOP_ICON_APP, 0);
     uint32_t before_minimized = count;
     for (int zi = MAX_WINDOWS - 1; zi >= 0; --zi) {
         uint8_t id = z_order[zi];
         if (windows[id].visible && windows[id].minimized && count < cap) {
             if (count == before_minimized) {
-                ADD_ITEM("", START_ACTION_SEPARATOR, 0, 0);
+                ADD_ITEM("", START_ACTION_SEPARATOR, 0, DESKTOP_ICON_APP, 0);
             }
             items[count++] = (struct start_menu_item){
-                windows[id].title ? windows[id].title : "Window",
+                windows[id].title ? windows[id].title : leonos_i18n("Window", "窗口"),
                 START_ACTION_RESTORE,
                 id,
+                windows[id].icon_id,
                 0,
             };
         }
     }
-    ADD_ITEM("", START_ACTION_SEPARATOR, 0, 0);
-    ADD_ITEM("Restart", START_ACTION_REBOOT, 0, 0);
-    ADD_ITEM("Shut Down", START_ACTION_SHUTDOWN, 0, 0);
+    ADD_ITEM("", START_ACTION_SEPARATOR, 0, DESKTOP_ICON_APP, 0);
+    ADD_ITEM(leonos_i18n("Restart", "重启"), START_ACTION_REBOOT, 0, DESKTOP_ICON_RUN, 0);
+    ADD_ITEM(leonos_i18n("Shut Down", "关机"), START_ACTION_SHUTDOWN, 0, DESKTOP_ICON_RUN, 0);
 #undef ADD_ITEM
     return count;
 }
@@ -187,7 +189,7 @@ void draw_start_programs_menu(struct start_menu_layout menu)
     leonos_ui_menu(&ui, layout.x, layout.y, layout.w, layout.h);
     if (!start_menu_app_count) {
         leonos_ui_menu_item(&ui, layout.x + 34, layout.y + 8,
-                            START_PROGRAMS_W - 44, "No programs", LEONOS_UI_MENU_DISABLED);
+                            START_PROGRAMS_W - 44, leonos_i18n("No programs", "没有程序"), LEONOS_UI_MENU_DISABLED);
         return;
     }
     for (uint32_t visible = 0; visible < layout.visible_count; ++visible) {
@@ -199,6 +201,7 @@ void draw_start_programs_menu(struct start_menu_layout menu)
         if (i >= start_menu_app_count) {
             break;
         }
+        draw_app_icon(start_menu_app_icons[i], (int)item_x - 22, (int)item_y + 4);
         leonos_ui_menu_item(&ui, item_x, item_y, START_PROGRAMS_W - 44,
                             start_menu_app_labels[i], 0);
     }
@@ -228,6 +231,7 @@ void draw_start_menu(void)
                                 layout.w - 52,
                                 "", LEONOS_UI_MENU_SEPARATOR);
         } else {
+            draw_app_icon(items[i].icon_id, (int)layout.x + 10, item_y + 4);
             leonos_ui_menu_item(&ui, layout.x + 34, (uint32_t)item_y,
                                 layout.w - 52,
                                 items[i].label, 0);

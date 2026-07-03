@@ -24,6 +24,15 @@
 #define LEONOS_GUI_IOCTL_TASK_KILL 0x4c544b49UL
 #define LEONOS_GUI_IOCTL_REBOOT 0x4c524254UL
 #define LEONOS_GUI_IOCTL_SHUTDOWN 0x4c534844UL
+#define LEONOS_GUI_IOCTL_DISPLAY_STATE 0x4c445350UL
+#define LEONOS_GUI_IOCTL_DISPLAY_REQUEST 0x4c445351UL
+#define LEONOS_GUI_IOCTL_POLL_DISPLAY_REQUEST 0x4c445352UL
+#define LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE 0x4c445353UL
+
+#define LEONOS_DISPLAY_REQUEST_APPLY 1U
+#define LEONOS_DISPLAY_REQUEST_KEEP 2U
+#define LEONOS_DISPLAY_REQUEST_REVERT 3U
+#define LEONOS_DISPLAY_REQUEST_REFRESH 4U
 
 #define LEONOS_TASK_NAME_LEN 32U
 #define LEONOS_TASK_MAX 64U
@@ -182,6 +191,24 @@ struct leonos_task_snapshot {
     struct leonos_task_info *tasks;
 };
 
+struct leonos_display_state {
+    uint32_t fb_width;
+    uint32_t fb_height;
+    uint32_t logical_width;
+    uint32_t logical_height;
+    uint32_t scale;
+    uint32_t mode_index;
+    uint32_t scale_index;
+    uint32_t pending_confirm;
+    uint32_t confirm_remaining_ms;
+};
+
+struct leonos_display_request {
+    uint32_t action;
+    uint32_t mode_index;
+    uint32_t scale_index;
+};
+
 int leonos_gui_connect(void);
 int leonos_gui_create_window(const struct leonos_gui_window *window);
 int leonos_gui_next_event(struct leonos_input_event *event);
@@ -205,5 +232,9 @@ int leonos_gui_poll_app_event(struct leonos_gui_app_event *event);
 int leonos_gui_send_app_event(const struct leonos_gui_app_event *event);
 int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint64_t *tick);
 int leonos_task_kill(uint32_t pid);
+int leonos_display_get_state(struct leonos_display_state *state);
+int leonos_display_request(const struct leonos_display_request *request);
+int leonos_display_poll_request(struct leonos_display_request *request);
+int leonos_display_publish_state(const struct leonos_display_state *state);
 
 #endif
