@@ -1,0 +1,345 @@
+#include <leonos/device.h>
+#include <leonos/gui.h>
+#include <leonos/i18n.h>
+#include <leonos/psf_font.h>
+#include <leonos/stdio.h>
+#include <leonos/syscall.h>
+#include <leonos/ui.h>
+
+#define DEVMGR_W 720
+#define DEVMGR_H 420
+#define DEVMGR_MAX_W 1264
+#define DEVMGR_MAX_H 746
+#define DEVMGR_ROW_H 24
+#define DEVMGR_STATUS_H 28
+#define DEVMGR_DETAIL_PANEL_H 82
+#define DEVMGR_KEY_ESCAPE 1U
+#define T(en, zh) leonos_i18n((en), (zh))
+
+static uint32_t pixels[DEVMGR_MAX_W * DEVMGR_MAX_H];
+static struct leonos_device_info devices[LEONOS_DEVICE_MAX];
+static const char *class_text[LEONOS_DEVICE_MAX];
+static char flags_text[LEONOS_DEVICE_MAX][48];
+static uint32_t device_count;
+static struct leonos_ui_listview_state device_list;
+static char status_text[128] = "Ready";
+static uint32_t view_w = DEVMGR_W;
+static uint32_t view_h = DEVMGR_H;
+
+static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
+{
+    if (buf && pos && *pos + 1 < cap) {
+        buf[(*pos)++] = ch;
+        buf[*pos] = 0;
+    }
+}
+
+static void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
+{
+    while (text && *text) {
+        append_char(buf, pos, cap, *text++);
+    }
+}
+
+static void append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
+{
+    char tmp[24];
+    uint32_t n = 0;
+    if (value == 0) {
+        append_char(buf, pos, cap, '0');
+        return;
+    }
+    while (value && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+    while (n) {
+        append_char(buf, pos, cap, tmp[--n]);
+    }
+}
+
+static void set_status_code(const char *prefix, int value)
+{
+    uint32_t pos = 0;
+    status_text[0] = 0;
+    append_text(status_text, &pos, sizeof(status_text), prefix);
+    append_text(status_text, &pos, sizeof(status_text), " ret=");
+    if (value < 0) {
+        append_char(status_text, &pos, sizeof(status_text), '-');
+        value = -value;
+    }
+    append_u64(status_text, &pos, sizeof(status_text), (uint32_t)value);
+}
+
+static const char *device_class_name(uint32_t cls)
+{
+    switch (cls) {
+    case LEONOS_DEVICE_CLASS_SYSTEM:
+        return T("System", "系统");
+    case LEONOS_DEVICE_CLASS_INPUT:
+        return T("Input", "输入");
+    case LEONOS_DEVICE_CLASS_DISPLAY:
+        return T("Display", "显示");
+    case LEONOS_DEVICE_CLASS_STORAGE:
+        return T("Storage", "存储");
+    case LEONOS_DEVICE_CLASS_SERIAL:
+        return T("Serial", "串口");
+    default:
+        return T("Other", "其它");
+    }
+}
+
+static void format_flags(char *buf, uint32_t cap, uint32_t flags)
+{
+    uint32_t pos = 0;
+    buf[0] = 0;
+    if (flags & LEONOS_DEVICE_FLAG_PRESENT) {
+        append_text(buf, &pos, cap, T("Present", "存在"));
+    }
+    if (flags & LEONOS_DEVICE_FLAG_ACTIVE) {
+        if (pos) {
+            append_text(buf, &pos, cap, ", ");
+        }
+        append_text(buf, &pos, cap, T("Active", "活动"));
+    }
+    if (flags & LEONOS_DEVICE_FLAG_BOOT) {
+        if (pos) {
+            append_text(buf, &pos, cap, ", ");
+        }
+        append_text(buf, &pos, cap, T("Boot", "启动"));
+    }
+    if (!pos) {
+        append_text(buf, &pos, cap, T("None", "无"));
+    }
+}
+
+static void refresh_devices(void)
+{
+    uint32_t count = LEONOS_DEVICE_MAX;
+    int ret = leonos_device_list(devices, LEONOS_DEVICE_MAX, &count);
+    if (ret < 0) {
+        device_count = 0;
+        device_list.selected = -1;
+        leonos_ui_listview_state_set_count(&device_list, 0);
+        set_status_code(T("Device refresh failed", "设备刷新失败"), ret);
+        return;
+    }
+    device_count = count > LEONOS_DEVICE_MAX ? LEONOS_DEVICE_MAX : count;
+    for (uint32_t i = 0; i < device_count; ++i) {
+        class_text[i] = device_class_name(devices[i].device_class);
+        format_flags(flags_text[i], sizeof(flags_text[i]), devices[i].flags);
+    }
+    leonos_ui_listview_state_set_count(&device_list, device_count);
+    if (device_count && device_list.selected < 0) {
+        device_list.selected = 0;
+    }
+    if ((uint32_t)device_list.selected >= device_count) {
+        device_list.selected = device_count ? (int32_t)(device_count - 1) : -1;
+    }
+    {
+        uint32_t pos = 0;
+        status_text[0] = 0;
+        append_text(status_text, &pos, sizeof(status_text), T("Devices refreshed: ", "设备已刷新: "));
+        append_u64(status_text, &pos, sizeof(status_text), device_count);
+    }
+}
+
+static const struct leonos_device_info *selected_device(void)
+{
+    if (device_list.selected < 0 || (uint32_t)device_list.selected >= device_count) {
+        return 0;
+    }
+    return &devices[device_list.selected];
+}
+
+static uint32_t details_y(void)
+{
+    return view_h > DEVMGR_STATUS_H + DEVMGR_DETAIL_PANEL_H + 10
+               ? view_h - DEVMGR_STATUS_H - DEVMGR_DETAIL_PANEL_H - 10
+               : 300;
+}
+
+static uint32_t list_frame_h(void)
+{
+    uint32_t bottom = details_y();
+    return bottom > 92 ? bottom - 92 : 96;
+}
+
+static uint32_t list_scroll_h(void)
+{
+    uint32_t bottom = details_y();
+    return bottom > 96 ? bottom - 96 : 80;
+}
+
+static uint32_t visible_rows(void)
+{
+    uint32_t bottom = details_y();
+    uint32_t rows = bottom > 116 ? (bottom - 116) / DEVMGR_ROW_H : 1;
+    return rows ? rows : 1;
+}
+
+static void update_device_list_layout(void)
+{
+    device_list.visible_rows = visible_rows();
+    leonos_ui_listview_state_set_count(&device_list, device_count);
+}
+
+static void draw_info_line(struct leonos_ui_surface *ui, uint32_t y,
+                           const char *label, const char *value)
+{
+    leonos_ui_text(ui, 20, y, label, LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text_clipped(ui, 118, y, view_w > 136 ? view_w - 136 : 120,
+                           value ? value : "",
+                           LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+}
+
+static void draw_devmgr(struct leonos_ui_surface *ui)
+{
+    uint32_t panel_y = details_y();
+    uint32_t frame_h = list_frame_h();
+    uint32_t scroll_h = list_scroll_h();
+    uint32_t list_w = view_w > 52 ? view_w - 52 : 668;
+    struct leonos_ui_list_column cols[] = {
+        {T("Class", "类别"), 86},
+        {T("Device", "设备"), 138},
+        {T("Status", "状态"), 98},
+        {T("Flags", "标志"), 128},
+        {T("Details", "详情"), list_w > 86 + 138 + 98 + 128
+                                  ? list_w - 86 - 138 - 98 - 128
+                                  : 120},
+    };
+    update_device_list_layout();
+    uint32_t rows = device_count > device_list.visible_rows ? device_list.visible_rows : device_count;
+    const struct leonos_device_info *selected;
+    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
+    leonos_ui_dialog(ui, 0, 0, view_w, view_h, T("Device Manager", "设备管理器"));
+    leonos_ui_toolbar(ui, 8, 34, view_w > 16 ? view_w - 16 : view_w, 36);
+    leonos_ui_toolbar_button(ui, 18, 40, 88, T("Refresh", "刷新"), 0);
+    leonos_ui_text(ui, 120, 46, T("Hardware detected by the kernel", "内核检测到的硬件设备"),
+                   LEONOS_UI_DARK, LEONOS_UI_GRAY);
+
+    leonos_ui_scroll_view_frame(ui, 12, 82, view_w > 24 ? view_w - 24 : view_w, frame_h);
+    leonos_ui_listview_header(ui, 14, 84, list_w, cols, 5);
+    for (uint32_t row = 0; row < rows; ++row) {
+        uint32_t i = device_list.scroll + row;
+        const char *cells[5];
+        if (i >= device_count) {
+            break;
+        }
+        cells[0] = class_text[i];
+        cells[1] = devices[i].name;
+        cells[2] = devices[i].status;
+        cells[3] = flags_text[i];
+        cells[4] = devices[i].detail;
+        leonos_ui_listview_row(ui, 14, 112 + row * DEVMGR_ROW_H, list_w,
+                               cols, cells, 5,
+                               device_list.selected == (int32_t)i ? LEONOS_UI_MENU_SELECTED : 0);
+    }
+    leonos_ui_vscrollbar(ui, view_w > 30 ? view_w - 30 : 690, 84, 18, scroll_h,
+                         device_list.scroll,
+                         device_count > device_list.visible_rows ? device_count : device_list.visible_rows,
+                         device_list.visible_rows,
+                         device_count <= device_list.visible_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
+
+    leonos_ui_panel(ui, 12, panel_y, view_w > 24 ? view_w - 24 : view_w,
+                    DEVMGR_DETAIL_PANEL_H, LEONOS_UI_GRAY);
+    selected = selected_device();
+    if (selected) {
+        draw_info_line(ui, panel_y + 14, T("Device:", "设备:"), selected->name);
+        draw_info_line(ui, panel_y + 36, T("Status:", "状态:"), selected->status);
+        draw_info_line(ui, panel_y + 58, T("Details:", "详情:"), selected->detail);
+    } else {
+        leonos_ui_text(ui, 20, panel_y + 30, T("No device selected", "未选择设备"),
+                       LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    }
+    leonos_ui_statusbar(ui, view_h - DEVMGR_STATUS_H, DEVMGR_STATUS_H, status_text);
+}
+
+static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
+{
+    return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
+}
+
+int main(void)
+{
+    struct leonos_ui_surface ui;
+    struct leonos_gui_app_event event;
+    int window_id;
+    puts("[devmgr.elf] device manager starting");
+    window_id = leonos_gui_create_app_window_ex(T("Device Manager", "设备管理器"),
+                                                T("Kernel device list", "内核设备列表"),
+                                                DEVMGR_W, DEVMGR_H, 0);
+    if (window_id <= 0) {
+        printf("[devmgr.elf] create window failed=%d\n", window_id);
+        return 1;
+    }
+    leonos_ui_bind(&ui, pixels, view_w, view_h, DEVMGR_MAX_W);
+    leonos_ui_listview_state_init(&device_list, visible_rows(), DEVMGR_ROW_H);
+    device_list.focused = 1;
+    refresh_devices();
+    draw_devmgr(&ui);
+    leonos_gui_present_window((uint32_t)window_id, view_w, view_h, DEVMGR_MAX_W, pixels);
+
+    for (;;) {
+        event.window_id = (uint32_t)window_id;
+        while (leonos_gui_poll_app_event(&event) > 0) {
+            if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
+                return 0;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
+                if (hit_rect_i(event.x, event.y, 18, 40, 88, LEONOS_UI_BUTTON_H)) {
+                    refresh_devices();
+                } else if (event.x >= (int32_t)(view_w > 30 ? view_w - 30 : 690) &&
+                           event.y >= 84 && event.y < (int32_t)(84 + list_scroll_h())) {
+                    leonos_ui_vscrollbar_handle_mouse(&device_list.scroll,
+                                                      device_count > device_list.visible_rows
+                                                          ? device_count
+                                                          : device_list.visible_rows,
+                                                      device_list.visible_rows,
+                                                      view_w > 30 ? view_w - 30 : 690, 84, 18,
+                                                      list_scroll_h(),
+                                                      event.x, event.y);
+                } else {
+                    uint32_t activate = 0;
+                    leonos_ui_listview_state_handle_mouse(&device_list, event.x, event.y,
+                                                          14, 112,
+                                                          view_w > 52 ? view_w - 52 : 668,
+                                                          &activate);
+                    (void)activate;
+                }
+                draw_devmgr(&ui);
+                leonos_gui_present_window((uint32_t)window_id, view_w, view_h, DEVMGR_MAX_W, pixels);
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                if (leonos_ui_listview_state_handle_wheel(&device_list, event.dy)) {
+                    draw_devmgr(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, view_w, view_h, DEVMGR_MAX_W, pixels);
+                }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
+                uint32_t activate = 0;
+                if (event.keycode == DEVMGR_KEY_ESCAPE) {
+                    return 0;
+                }
+                if (leonos_ui_listview_state_handle_key(&device_list, event.keycode, &activate)) {
+                    draw_devmgr(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, view_w, view_h, DEVMGR_MAX_W, pixels);
+                }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_RESIZE ||
+                event.type == LEONOS_GUI_APP_EVENT_FOCUS) {
+                if (event.width >= DEVMGR_W) {
+                    view_w = event.width > DEVMGR_MAX_W ? DEVMGR_MAX_W : event.width;
+                }
+                if (event.height >= DEVMGR_H) {
+                    view_h = event.height > DEVMGR_MAX_H ? DEVMGR_MAX_H : event.height;
+                }
+                update_device_list_layout();
+                leonos_ui_bind(&ui, pixels, view_w, view_h, DEVMGR_MAX_W);
+                draw_devmgr(&ui);
+                leonos_gui_present_window((uint32_t)window_id, view_w, view_h, DEVMGR_MAX_W, pixels);
+            }
+        }
+        sleep_ms(20);
+    }
+}

@@ -2,6 +2,7 @@
 #define LEONOS_SYSCALL_H
 
 #include <leonos/fs.h>
+#include <leonos/auth.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -27,6 +28,18 @@
 #define SYS_mkdir 83
 #define SYS_rmdir 84
 #define SYS_unlink 87
+
+#define LEONOS_PROT_READ 0x1
+#define LEONOS_PROT_WRITE 0x2
+#define LEONOS_PROT_EXEC 0x4
+
+#define LEONOS_MAP_PRIVATE 0x02
+#define LEONOS_MAP_FIXED 0x10
+#define LEONOS_MAP_ANONYMOUS 0x20
+#define LEONOS_MAP_FAILED ((void *)-1)
+
+#define LEONOS_EPERM 1
+#define LEONOS_EACCES 13
 
 long syscall0(long n);
 long syscall1(long n, long a0);
@@ -54,6 +67,12 @@ int mkdir(const char *path, int mode);
 int unlink(const char *path);
 int rmdir(const char *path);
 int rename(const char *old_path, const char *new_path);
+void *mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
+int munmap(void *addr, size_t len);
+void *malloc(size_t size);
+void *calloc(size_t nmemb, size_t size);
+void *realloc(void *ptr, size_t size);
+void free(void *ptr);
 void *memcpy(void *dst, const void *src, size_t len);
 void *memset(void *dst, int value, size_t len);
 

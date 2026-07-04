@@ -1,4 +1,5 @@
 #include <leonos/boot_handoff.h>
+#include <generated/loader_integrity.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -19,6 +20,7 @@
 #define EFI_FILE_MODE_READ 0x0000000000000001ULL
 #define EFI_SUCCESS 0ULL
 #define EFI_BUFFER_TOO_SMALL 0x8000000000000005ULL
+#define EFI_NOT_READY 0x8000000000000006ULL
 
 #define EI_NIDENT 16
 #define ET_EXEC 2
@@ -109,6 +111,8 @@ typedef efi_status_t (__attribute__((ms_abi)) *efi_locate_handle_buffer_fn)(
     void *search_key,
     uint64_t *no_handles,
     efi_handle_t **buffer);
+typedef efi_status_t (__attribute__((ms_abi)) *efi_stall_fn)(
+    uint64_t microseconds);
 
 struct efi_boot_services {
     struct efi_table_header hdr;
@@ -130,7 +134,7 @@ struct efi_boot_services {
     efi_status_t (*unload_image)(void);
     efi_status_t (*exit_boot_services)(void);
     efi_status_t (*get_next_monotonic_count)(void);
-    efi_status_t (*stall)(void);
+    efi_stall_fn stall;
     efi_status_t (*set_watchdog_timer)(void);
     efi_status_t (*connect_controller)(void);
     efi_status_t (*disconnect_controller)(void);
@@ -178,6 +182,12 @@ typedef efi_status_t (__attribute__((ms_abi)) *efi_file_get_info_fn)(
     struct efi_guid *information_type,
     uint64_t *buffer_size,
     void *buffer);
+typedef efi_status_t (__attribute__((ms_abi)) *efi_text_output_string_fn)(
+    void *self,
+    uint16_t *string);
+typedef efi_status_t (__attribute__((ms_abi)) *efi_text_input_read_key_fn)(
+    void *self,
+    void *key);
 
 struct efi_simple_file_system_protocol {
     uint64_t revision;
@@ -200,6 +210,21 @@ struct efi_file_protocol {
     void *read_ex;
     void *write_ex;
     void *flush_ex;
+};
+
+struct efi_simple_text_output_protocol {
+    void *reset;
+    efi_text_output_string_fn output_string;
+};
+
+struct efi_simple_input_key {
+    uint16_t scan_code;
+    uint16_t unicode_char;
+};
+
+struct efi_simple_text_input_protocol {
+    void *reset;
+    efi_text_input_read_key_fn read_key_stroke;
 };
 
 struct efi_time {
@@ -256,6 +281,7 @@ struct elf64_phdr {
 };
 
 extern void loader_outb(uint8_t value, uint16_t port);
+extern uint8_t loader_inb(uint16_t port);
 extern uint8_t __loader_start[];
 extern uint8_t __loader_end[];
 void loader_main(uint32_t magic, uint32_t multiboot_info);
@@ -264,6 +290,8 @@ static uint8_t read_buffer[READ_BUFFER_SIZE] __attribute__((aligned(4096)));
 static struct leonos_boot_handoff handoff;
 static struct efi_boot_services *boot_services;
 static struct efi_file_protocol *root_dir;
+static struct efi_simple_text_output_protocol *text_out;
+static struct efi_simple_text_input_protocol *text_in;
 
 struct loader_module {
     uint64_t start;
@@ -312,6 +340,173 @@ static void *memcpy_local(void *dst, const void *src, size_t len)
     return dst;
 }
 
+struct sha256_ctx {
+    uint8_t data[64];
+    uint32_t data_len;
+    uint64_t bit_len;
+    uint32_t state[8];
+};
+
+static const uint32_t sha256_k[64] = {
+    0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u,
+    0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
+    0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u,
+    0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
+    0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu,
+    0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
+    0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u,
+    0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u,
+    0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u,
+    0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u,
+    0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u,
+    0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
+    0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u,
+    0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
+    0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u,
+    0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u,
+};
+
+static uint32_t rotr32(uint32_t value, uint32_t count)
+{
+    return (value >> count) | (value << (32u - count));
+}
+
+static void sha256_transform(struct sha256_ctx *ctx, const uint8_t data[64])
+{
+    uint32_t a, b, c, d, e, f, g, h;
+    uint32_t m[64];
+
+    for (uint32_t i = 0; i < 16; ++i) {
+        m[i] = ((uint32_t)data[i * 4u] << 24) |
+               ((uint32_t)data[i * 4u + 1u] << 16) |
+               ((uint32_t)data[i * 4u + 2u] << 8) |
+               (uint32_t)data[i * 4u + 3u];
+    }
+    for (uint32_t i = 16; i < 64; ++i) {
+        uint32_t s0 = rotr32(m[i - 15u], 7) ^ rotr32(m[i - 15u], 18) ^ (m[i - 15u] >> 3);
+        uint32_t s1 = rotr32(m[i - 2u], 17) ^ rotr32(m[i - 2u], 19) ^ (m[i - 2u] >> 10);
+        m[i] = m[i - 16u] + s0 + m[i - 7u] + s1;
+    }
+
+    a = ctx->state[0];
+    b = ctx->state[1];
+    c = ctx->state[2];
+    d = ctx->state[3];
+    e = ctx->state[4];
+    f = ctx->state[5];
+    g = ctx->state[6];
+    h = ctx->state[7];
+
+    for (uint32_t i = 0; i < 64; ++i) {
+        uint32_t s1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25);
+        uint32_t ch = (e & f) ^ ((~e) & g);
+        uint32_t temp1 = h + s1 + ch + sha256_k[i] + m[i];
+        uint32_t s0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t temp2 = s0 + maj;
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    ctx->state[0] += a;
+    ctx->state[1] += b;
+    ctx->state[2] += c;
+    ctx->state[3] += d;
+    ctx->state[4] += e;
+    ctx->state[5] += f;
+    ctx->state[6] += g;
+    ctx->state[7] += h;
+}
+
+static void sha256_init(struct sha256_ctx *ctx)
+{
+    ctx->data_len = 0;
+    ctx->bit_len = 0;
+    ctx->state[0] = 0x6a09e667u;
+    ctx->state[1] = 0xbb67ae85u;
+    ctx->state[2] = 0x3c6ef372u;
+    ctx->state[3] = 0xa54ff53au;
+    ctx->state[4] = 0x510e527fu;
+    ctx->state[5] = 0x9b05688cu;
+    ctx->state[6] = 0x1f83d9abu;
+    ctx->state[7] = 0x5be0cd19u;
+}
+
+static void sha256_update(struct sha256_ctx *ctx, const void *input, uint64_t len)
+{
+    const uint8_t *data = (const uint8_t *)input;
+    for (uint64_t i = 0; i < len; ++i) {
+        ctx->data[ctx->data_len++] = data[i];
+        if (ctx->data_len == 64u) {
+            sha256_transform(ctx, ctx->data);
+            ctx->bit_len += 512u;
+            ctx->data_len = 0;
+        }
+    }
+}
+
+static void sha256_final(struct sha256_ctx *ctx, uint8_t hash[32])
+{
+    uint32_t i = ctx->data_len;
+
+    ctx->data[i++] = 0x80u;
+    if (i > 56u) {
+        while (i < 64u) {
+            ctx->data[i++] = 0;
+        }
+        sha256_transform(ctx, ctx->data);
+        i = 0;
+    }
+    while (i < 56u) {
+        ctx->data[i++] = 0;
+    }
+
+    ctx->bit_len += (uint64_t)ctx->data_len * 8u;
+    ctx->data[56] = (uint8_t)(ctx->bit_len >> 56);
+    ctx->data[57] = (uint8_t)(ctx->bit_len >> 48);
+    ctx->data[58] = (uint8_t)(ctx->bit_len >> 40);
+    ctx->data[59] = (uint8_t)(ctx->bit_len >> 32);
+    ctx->data[60] = (uint8_t)(ctx->bit_len >> 24);
+    ctx->data[61] = (uint8_t)(ctx->bit_len >> 16);
+    ctx->data[62] = (uint8_t)(ctx->bit_len >> 8);
+    ctx->data[63] = (uint8_t)ctx->bit_len;
+    sha256_transform(ctx, ctx->data);
+
+    for (i = 0; i < 4u; ++i) {
+        hash[i] = (uint8_t)(ctx->state[0] >> (24u - i * 8u));
+        hash[i + 4u] = (uint8_t)(ctx->state[1] >> (24u - i * 8u));
+        hash[i + 8u] = (uint8_t)(ctx->state[2] >> (24u - i * 8u));
+        hash[i + 12u] = (uint8_t)(ctx->state[3] >> (24u - i * 8u));
+        hash[i + 16u] = (uint8_t)(ctx->state[4] >> (24u - i * 8u));
+        hash[i + 20u] = (uint8_t)(ctx->state[5] >> (24u - i * 8u));
+        hash[i + 24u] = (uint8_t)(ctx->state[6] >> (24u - i * 8u));
+        hash[i + 28u] = (uint8_t)(ctx->state[7] >> (24u - i * 8u));
+    }
+}
+
+static void sha256_digest(const void *input, uint64_t len, uint8_t hash[32])
+{
+    struct sha256_ctx ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, input, len);
+    sha256_final(&ctx, hash);
+}
+
+static int bytes_eq(const uint8_t *a, const uint8_t *b, uint64_t len)
+{
+    uint8_t diff = 0;
+    for (uint64_t i = 0; i < len; ++i) {
+        diff |= a[i] ^ b[i];
+    }
+    return diff == 0;
+}
+
 static void serial_putc(char ch)
 {
     loader_outb((uint8_t)ch, 0x3f8);
@@ -336,6 +531,14 @@ static void serial_write_hex(uint64_t value)
     }
 }
 
+static int serial_poll_char(void)
+{
+    if ((loader_inb(0x3fdu) & 0x01u) == 0) {
+        return 0;
+    }
+    return (int)loader_inb(0x3f8u);
+}
+
 static void serial_init(void)
 {
     loader_outb(0x00, 0x3f9);
@@ -345,6 +548,159 @@ static void serial_init(void)
     loader_outb(0x03, 0x3fb);
     loader_outb(0xc7, 0x3fa);
     loader_outb(0x0b, 0x3fc);
+}
+
+static void efi_console_init(void)
+{
+    struct efi_system_table *st =
+        (struct efi_system_table *)(uintptr_t)handoff.efi_system_table;
+    text_out = 0;
+    text_in = 0;
+    if (!st) {
+        return;
+    }
+    if (st->boot_services) {
+        boot_services = st->boot_services;
+    }
+    text_out = (struct efi_simple_text_output_protocol *)st->con_out;
+    text_in = (struct efi_simple_text_input_protocol *)st->con_in;
+}
+
+static void efi_console_write(const char *s)
+{
+    uint16_t buf[96];
+    uint32_t pos = 0;
+
+    if (!text_out || !text_out->output_string || !s) {
+        return;
+    }
+    while (*s) {
+        char ch = *s++;
+        if (ch == '\n') {
+            buf[pos++] = '\r';
+            if (pos + 2u >= 96u) {
+                buf[pos] = 0;
+                text_out->output_string(text_out, buf);
+                pos = 0;
+            }
+        }
+        buf[pos++] = (uint8_t)ch;
+        if (pos + 2u >= 96u) {
+            buf[pos] = 0;
+            text_out->output_string(text_out, buf);
+            pos = 0;
+        }
+    }
+    if (pos) {
+        buf[pos] = 0;
+        text_out->output_string(text_out, buf);
+    }
+}
+
+static void boot_write(const char *s)
+{
+    serial_write(s);
+    efi_console_write(s);
+}
+
+static void boot_write_sha256(const uint8_t digest[32])
+{
+    const char *digits = "0123456789abcdef";
+    char text[65];
+    for (uint32_t i = 0; i < 32u; ++i) {
+        text[i * 2u] = digits[(digest[i] >> 4) & 0xfu];
+        text[i * 2u + 1u] = digits[digest[i] & 0xfu];
+    }
+    text[64] = 0;
+    boot_write(text);
+}
+
+static int efi_poll_char(void)
+{
+    struct efi_simple_input_key key;
+    efi_status_t status;
+
+    if (!text_in || !text_in->read_key_stroke) {
+        return 0;
+    }
+    key.scan_code = 0;
+    key.unicode_char = 0;
+    status = text_in->read_key_stroke(text_in, &key);
+    if (status == EFI_NOT_READY) {
+        return 0;
+    }
+    if (status != EFI_SUCCESS || key.unicode_char == 0) {
+        return 0;
+    }
+    return (int)key.unicode_char;
+}
+
+static int ascii_lower(int ch)
+{
+    if (ch >= 'A' && ch <= 'Z') {
+        return ch + ('a' - 'A');
+    }
+    return ch;
+}
+
+static void wait_input_tick(void)
+{
+    if (boot_services && boot_services->stall) {
+        boot_services->stall(10000);
+    } else {
+        for (volatile uint32_t i = 0; i < 1000000u; ++i) {
+            __asm__ volatile("pause");
+        }
+    }
+}
+
+static int confirm_integrity_bypass(void)
+{
+    boot_write("Continue boot? Press Y to continue, N to stop: ");
+    for (;;) {
+        int ch = efi_poll_char();
+        if (!ch) {
+            ch = serial_poll_char();
+        }
+        ch = ascii_lower(ch);
+        if (ch == 'y') {
+            boot_write("Y\n");
+            return 1;
+        }
+        if (ch == 'n' || ch == 27) {
+            boot_write("N\n");
+            return 0;
+        }
+        wait_input_tick();
+    }
+}
+
+static int verify_image_integrity(const char *label, const void *image,
+                                  uint64_t len, const uint8_t expected[32])
+{
+    uint8_t actual[32];
+
+    sha256_digest(image, len, actual);
+    if (bytes_eq(actual, expected, 32u)) {
+        serial_write("[loader] integrity ok ");
+        serial_write(label);
+        serial_write("\n");
+        return 0;
+    }
+
+    boot_write("\n[loader] WARNING: boot component hash mismatch: ");
+    boot_write(label);
+    boot_write("\n[loader] Expected SHA256: ");
+    boot_write_sha256(expected);
+    boot_write("\n[loader] Actual   SHA256: ");
+    boot_write_sha256(actual);
+    boot_write("\n[loader] The kernel files may have been changed after this loader was built.\n");
+    if (confirm_integrity_bypass()) {
+        boot_write("[loader] User confirmed boot with changed component.\n");
+        return 0;
+    }
+    boot_write("[loader] Boot stopped by integrity policy.\n");
+    return -1;
 }
 
 static int text_eq(const char *a, const char *b)
@@ -679,6 +1035,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_init();
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
+    efi_console_init();
 
     kernel_module = find_loader_module("leonos-kernel");
     if (kernel_module) {
@@ -686,6 +1043,14 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
         serial_write("[loader] using module leonos-kernel bytes=");
         serial_write_hex(len);
         serial_write("\n");
+        if (verify_image_integrity("kernel.sys",
+                                   (const void *)(uintptr_t)kernel_module->start,
+                                   len,
+                                   LEONOS_LOADER_KERNEL_SHA256) < 0) {
+            for (;;) {
+                __asm__ volatile("hlt");
+            }
+        }
         if (elf_load_exec((const void *)(uintptr_t)kernel_module->start, len,
                           &handoff.kernel) < 0) {
             serial_write("[loader] kernel module load failed\n");
@@ -701,6 +1066,10 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
             }
         }
         if (efi_read_file(KERNEL_PATH, read_buffer, sizeof(read_buffer), &len) < 0 ||
+            verify_image_integrity("kernel.sys",
+                                   read_buffer,
+                                   len,
+                                   LEONOS_LOADER_KERNEL_SHA256) < 0 ||
             elf_load_exec(read_buffer, len, &handoff.kernel) < 0) {
             serial_write("[loader] kernel.sys load failed\n");
             for (;;) {
@@ -729,6 +1098,14 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
         serial_write("[loader] using module leonos-middlelayer bytes=");
         serial_write_hex(len);
         serial_write("\n");
+        if (verify_image_integrity("middlelayer.sys",
+                                   (const void *)(uintptr_t)middlelayer_module->start,
+                                   len,
+                                   LEONOS_LOADER_MIDDLELAYER_SHA256) < 0) {
+            for (;;) {
+                __asm__ volatile("hlt");
+            }
+        }
         if (elf_load_exec((const void *)(uintptr_t)middlelayer_module->start, len,
                           &handoff.middlelayer) < 0) {
             serial_write("[loader] middlelayer module load failed\n");
@@ -744,6 +1121,10 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
             }
         }
         if (efi_read_file(MIDDLELAYER_PATH, read_buffer, sizeof(read_buffer), &len) < 0 ||
+            verify_image_integrity("middlelayer.sys",
+                                   read_buffer,
+                                   len,
+                                   LEONOS_LOADER_MIDDLELAYER_SHA256) < 0 ||
             elf_load_exec(read_buffer, len, &handoff.middlelayer) < 0) {
             serial_write("[loader] middlelayer.sys load failed\n");
             for (;;) {

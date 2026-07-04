@@ -358,6 +358,9 @@ uint8_t desktop_icon_for_elf(const char *name)
     if (text_eq(name, "run.elf")) {
         return DESKTOP_ICON_RUN;
     }
+    if (text_eq(name, "devmgr.elf")) {
+        return DESKTOP_ICON_SETTINGS;
+    }
     if (text_eq(name, "desktop.elf")) {
         return DESKTOP_ICON_DESKTOP;
     }
@@ -389,6 +392,9 @@ uint8_t desktop_icon_for_title(const char *title)
     }
     if (text_eq(title, "Run") || text_eq(title, "运行")) {
         return DESKTOP_ICON_RUN;
+    }
+    if (text_eq(title, "Device Manager") || text_eq(title, "设备管理器")) {
+        return DESKTOP_ICON_SETTINGS;
     }
     if (text_eq(title, "Desktop Server") || text_eq(title, "桌面服务")) {
         return DESKTOP_ICON_DESKTOP;
@@ -425,6 +431,10 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
     }
     if (text_eq(name, "settings.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Settings", "设置"));
+        return;
+    }
+    if (text_eq(name, "devmgr.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Device Manager", "设备管理器"));
         return;
     }
     if (text_eq(name, "notepad.elf")) {
@@ -602,7 +612,7 @@ void desktop_update_window_animations(void)
 
 uint32_t taskbar_button_width(uint32_t count)
 {
-    uint32_t available = fb_w() > 112 ? fb_w() - 112 : 0;
+    uint32_t available = fb_w() > 112 + TASKBAR_CLOCK_W ? fb_w() - 112 - TASKBAR_CLOCK_W : 0;
     if (count == 0 || available == 0) {
         return 0;
     }

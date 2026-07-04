@@ -23,6 +23,11 @@ void serial_init(void)
     serial_ready = 1;
 }
 
+int serial_is_ready(void)
+{
+    return serial_ready;
+}
+
 static void serial_putc(char ch)
 {
     if (!serial_ready) {

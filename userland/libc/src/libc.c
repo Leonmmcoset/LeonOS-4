@@ -1,3 +1,5 @@
+#include <leonos/device.h>
+#include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
@@ -7,6 +9,25 @@
 #include <leonos/syscall.h>
 #include <leonos/text.h>
 #include <stdarg.h>
+
+#define HEAP_BLOCK_MAGIC 0x4c48454150424c4bULL
+#define MALLOC_ALIGN 16UL
+#define HEAP_PAGE_SIZE 4096UL
+#define HEAP_ARENA_SIZE (64UL * 1024UL)
+#define HEAP_BLOCK_FREE 0x00000001u
+#define HEAP_MIN_SPLIT 16UL
+
+struct heap_block {
+    uint64_t magic;
+    size_t size;
+    uint32_t flags;
+    uint32_t reserved;
+    struct heap_block *prev;
+    struct heap_block *next;
+    uint64_t reserved2;
+};
+
+static struct heap_block *heap_blocks;
 
 size_t strlen(const char *s)
 {
@@ -137,6 +158,283 @@ int rmdir(const char *path)
 int rename(const char *old_path, const char *new_path)
 {
     return (int)syscall2(SYS_rename, (long)old_path, (long)new_path);
+}
+
+void *mmap(void *addr, size_t len, int prot, int flags, int fd, long offset)
+{
+    long ret = syscall6(SYS_mmap, (long)addr, (long)len, prot, flags, fd, offset);
+    return ret < 0 ? LEONOS_MAP_FAILED : (void *)ret;
+}
+
+int munmap(void *addr, size_t len)
+{
+    return (int)syscall2(SYS_munmap, (long)addr, (long)len);
+}
+
+static size_t malloc_align_up(size_t value)
+{
+    return (value + MALLOC_ALIGN - 1) & ~(MALLOC_ALIGN - 1);
+}
+
+static size_t page_align_up(size_t value)
+{
+    return (value + HEAP_PAGE_SIZE - 1) & ~(HEAP_PAGE_SIZE - 1);
+}
+
+static uint8_t *block_payload(struct heap_block *block)
+{
+    return (uint8_t *)(block + 1);
+}
+
+static int blocks_adjacent(struct heap_block *left, struct heap_block *right)
+{
+    return left && right &&
+           block_payload(left) + left->size == (uint8_t *)right;
+}
+
+static int block_is_page_aligned(struct heap_block *block)
+{
+    return (((uint64_t)(uintptr_t)block) & (HEAP_PAGE_SIZE - 1UL)) == 0;
+}
+
+static void heap_insert_sorted(struct heap_block *block)
+{
+    struct heap_block *cur = heap_blocks;
+    struct heap_block *prev = 0;
+    while (cur && cur < block) {
+        prev = cur;
+        cur = cur->next;
+    }
+    block->prev = prev;
+    block->next = cur;
+    if (prev) {
+        prev->next = block;
+    } else {
+        heap_blocks = block;
+    }
+    if (cur) {
+        cur->prev = block;
+    }
+}
+
+static void split_block(struct heap_block *block, size_t size)
+{
+    if (!block || block->size < size + sizeof(struct heap_block) + HEAP_MIN_SPLIT) {
+        return;
+    }
+    struct heap_block *rest =
+        (struct heap_block *)(void *)(block_payload(block) + size);
+    rest->magic = HEAP_BLOCK_MAGIC;
+    rest->size = block->size - size - sizeof(struct heap_block);
+    rest->flags = HEAP_BLOCK_FREE;
+    rest->reserved = 0;
+    rest->reserved2 = 0;
+    rest->prev = block;
+    rest->next = block->next;
+    if (rest->next) {
+        rest->next->prev = rest;
+    }
+    block->next = rest;
+    block->size = size;
+}
+
+static struct heap_block *coalesce_block(struct heap_block *block)
+{
+    if (!block) {
+        return 0;
+    }
+    for (;;) {
+        if (block->prev && (block->prev->flags & HEAP_BLOCK_FREE) &&
+            blocks_adjacent(block->prev, block)) {
+            struct heap_block *prev = block->prev;
+            prev->size += sizeof(struct heap_block) + block->size;
+            prev->next = block->next;
+            if (prev->next) {
+                prev->next->prev = prev;
+            }
+            block->magic = 0;
+            block = prev;
+            continue;
+        }
+        if (block->next && (block->next->flags & HEAP_BLOCK_FREE) &&
+            blocks_adjacent(block, block->next)) {
+            struct heap_block *next = block->next;
+            block->size += sizeof(struct heap_block) + next->size;
+            block->next = next->next;
+            if (block->next) {
+                block->next->prev = block;
+            }
+            next->magic = 0;
+            continue;
+        }
+        break;
+    }
+    return block;
+}
+
+static void heap_release_block(struct heap_block *block)
+{
+    if (!block || !(block->flags & HEAP_BLOCK_FREE) || !block_is_page_aligned(block)) {
+        return;
+    }
+    if (block->size > (size_t)-1 - sizeof(struct heap_block)) {
+        return;
+    }
+    size_t len = block->size + sizeof(struct heap_block);
+    if (len < HEAP_ARENA_SIZE || (len & (HEAP_PAGE_SIZE - 1UL)) != 0) {
+        return;
+    }
+
+    struct heap_block *prev = block->prev;
+    struct heap_block *next = block->next;
+    if (munmap(block, len) < 0) {
+        return;
+    }
+    if (prev) {
+        prev->next = next;
+    } else {
+        heap_blocks = next;
+    }
+    if (next) {
+        next->prev = prev;
+    }
+}
+
+static struct heap_block *heap_find_free(size_t size)
+{
+    for (struct heap_block *block = heap_blocks; block; block = block->next) {
+        if ((block->flags & HEAP_BLOCK_FREE) && block->size >= size) {
+            return block;
+        }
+    }
+    return 0;
+}
+
+static struct heap_block *heap_expand(size_t size)
+{
+    if (size > (size_t)-1 - sizeof(struct heap_block)) {
+        return 0;
+    }
+    size_t need = size + sizeof(struct heap_block);
+    size_t arena_len = need < HEAP_ARENA_SIZE ? HEAP_ARENA_SIZE : page_align_up(need);
+    if (arena_len < need) {
+        return 0;
+    }
+    void *base = mmap(0, arena_len,
+                      LEONOS_PROT_READ | LEONOS_PROT_WRITE,
+                      LEONOS_MAP_PRIVATE | LEONOS_MAP_ANONYMOUS,
+                      -1, 0);
+    if (base == LEONOS_MAP_FAILED) {
+        return 0;
+    }
+    struct heap_block *block = (struct heap_block *)base;
+    block->magic = HEAP_BLOCK_MAGIC;
+    block->size = arena_len - sizeof(struct heap_block);
+    block->flags = HEAP_BLOCK_FREE;
+    block->reserved = 0;
+    block->reserved2 = 0;
+    block->prev = 0;
+    block->next = 0;
+    heap_insert_sorted(block);
+    return coalesce_block(block);
+}
+
+void *malloc(size_t size)
+{
+    if (size == 0) {
+        size = 1;
+    }
+    size_t aligned = malloc_align_up(size);
+    if (aligned < size) {
+        return 0;
+    }
+    struct heap_block *block = heap_find_free(aligned);
+    if (!block) {
+        block = heap_expand(aligned);
+        if (!block) {
+            return 0;
+        }
+        block = heap_find_free(aligned);
+        if (!block) {
+            return 0;
+        }
+    }
+    split_block(block, aligned);
+    block->flags &= ~HEAP_BLOCK_FREE;
+    return block_payload(block);
+}
+
+void *calloc(size_t nmemb, size_t size)
+{
+    if (size && nmemb > (size_t)-1 / size) {
+        return 0;
+    }
+    size_t total = nmemb * size;
+    void *ptr = malloc(total);
+    if (ptr) {
+        memset(ptr, 0, total);
+    }
+    return ptr;
+}
+
+void *realloc(void *ptr, size_t size)
+{
+    if (!ptr) {
+        return malloc(size);
+    }
+    if (size == 0) {
+        free(ptr);
+        return 0;
+    }
+
+    struct heap_block *block = ((struct heap_block *)ptr) - 1;
+    if (block->magic != HEAP_BLOCK_MAGIC || (block->flags & HEAP_BLOCK_FREE)) {
+        return 0;
+    }
+
+    size_t aligned = malloc_align_up(size);
+    if (aligned < size) {
+        return 0;
+    }
+    if (block->size >= aligned) {
+        split_block(block, aligned);
+        return ptr;
+    }
+    if (block->next && (block->next->flags & HEAP_BLOCK_FREE) &&
+        blocks_adjacent(block, block->next) &&
+        block->size + sizeof(struct heap_block) + block->next->size >= aligned) {
+        struct heap_block *next = block->next;
+        block->size += sizeof(struct heap_block) + next->size;
+        block->next = next->next;
+        if (block->next) {
+            block->next->prev = block;
+        }
+        next->magic = 0;
+        split_block(block, aligned);
+        block->flags &= ~HEAP_BLOCK_FREE;
+        return ptr;
+    }
+
+    void *new_ptr = malloc(size);
+    if (!new_ptr) {
+        return 0;
+    }
+    memcpy(new_ptr, ptr, block->size < size ? block->size : size);
+    free(ptr);
+    return new_ptr;
+}
+
+void free(void *ptr)
+{
+    if (!ptr) {
+        return;
+    }
+    struct heap_block *block = ((struct heap_block *)ptr) - 1;
+    if (block->magic != HEAP_BLOCK_MAGIC || (block->flags & HEAP_BLOCK_FREE)) {
+        return;
+    }
+    block->flags |= HEAP_BLOCK_FREE;
+    heap_release_block(coalesce_block(block));
 }
 
 int puts(const char *s)
@@ -482,12 +780,148 @@ int leonos_install_mount_target(uint32_t disk_id)
     return ioctl(3, LEONOS_INSTALL_IOCTL_MOUNT_TARGET, (void *)(uintptr_t)disk_id);
 }
 
+int leonos_device_list(struct leonos_device_info *devices,
+                       uint32_t capacity, uint32_t *out_count)
+{
+    struct leonos_device_list query = {
+        .capacity = capacity,
+        .count = 0,
+        .devices = devices,
+    };
+    int ret = ioctl(3, LEONOS_IOCTL_DEVICE_LIST, &query);
+    if (out_count) {
+        *out_count = query.count;
+    }
+    return ret;
+}
+
+static void libc_copy_fixed(char *dst, uint32_t cap, const char *src)
+{
+    uint32_t i = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    while (src && src[i] && i + 1 < cap) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = 0;
+}
+
+int leonos_auth_status(struct leonos_auth_status *status)
+{
+    if (!status) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_AUTH_IOCTL_STATUS, status);
+}
+
+int leonos_auth_current(struct leonos_user_info *user)
+{
+    if (!user) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_AUTH_IOCTL_CURRENT, user);
+}
+
+int leonos_auth_list_users(struct leonos_user_info *users, uint32_t capacity,
+                           uint32_t include_disabled, uint32_t *out_count)
+{
+    struct leonos_user_list query = {
+        .actor_uid = 0,
+        .actor_role = 0,
+        .include_disabled = include_disabled,
+        .capacity = capacity,
+        .count = 0,
+        .reserved = 0,
+        .users = users,
+    };
+    int ret = ioctl(3, LEONOS_AUTH_IOCTL_LIST_USERS, &query);
+    if (out_count) {
+        *out_count = query.count;
+    }
+    return ret;
+}
+
+int leonos_auth_login(const char *username, const char *password,
+                      struct leonos_user_info *user)
+{
+    struct leonos_auth_login login;
+    login = (struct leonos_auth_login){0};
+    libc_copy_fixed(login.username, sizeof(login.username), username);
+    libc_copy_fixed(login.password, sizeof(login.password), password);
+    int ret = ioctl(3, LEONOS_AUTH_IOCTL_LOGIN, &login);
+    if (ret == 0 && user) {
+        *user = login.user;
+    }
+    return ret;
+}
+
+int leonos_auth_logout(void)
+{
+    return ioctl(3, LEONOS_AUTH_IOCTL_LOGOUT, 0);
+}
+
+int leonos_auth_create_user(const char *username, const char *password,
+                            uint32_t role, struct leonos_user_info *user)
+{
+    struct leonos_auth_create create;
+    create = (struct leonos_auth_create){0};
+    create.role = role;
+    libc_copy_fixed(create.username, sizeof(create.username), username);
+    libc_copy_fixed(create.password, sizeof(create.password), password);
+    int ret = ioctl(3, LEONOS_AUTH_IOCTL_CREATE_USER, &create);
+    if (ret == 0 && user) {
+        *user = create.user;
+    }
+    return ret;
+}
+
+int leonos_auth_update_user(uint32_t uid, uint32_t mask, uint32_t role,
+                            uint32_t flags)
+{
+    struct leonos_auth_update update;
+    update = (struct leonos_auth_update){0};
+    update.uid = uid;
+    update.mask = mask;
+    update.role = role;
+    update.flags = flags;
+    return ioctl(3, LEONOS_AUTH_IOCTL_UPDATE_USER, &update);
+}
+
+int leonos_auth_change_password(uint32_t uid, const char *old_password,
+                                const char *new_password)
+{
+    struct leonos_auth_password password;
+    password = (struct leonos_auth_password){0};
+    password.uid = uid;
+    libc_copy_fixed(password.old_password, sizeof(password.old_password), old_password);
+    libc_copy_fixed(password.new_password, sizeof(password.new_password), new_password);
+    return ioctl(3, LEONOS_AUTH_IOCTL_CHANGE_PASSWORD, &password);
+}
+
 int leonos_system_info(struct leonos_system_info *info)
 {
     if (!info) {
         return -1;
     }
     return ioctl(3, LEONOS_IOCTL_SYSTEM_INFO, info);
+}
+
+int leonos_perf_info(struct leonos_perf_info *info)
+{
+    if (!info) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_IOCTL_PERF_INFO, info);
+}
+
+int leonos_time_info(struct leonos_time_info *info)
+{
+    if (!info) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_IOCTL_TIME_INFO, info);
 }
 
 int leonos_system_reboot(void)

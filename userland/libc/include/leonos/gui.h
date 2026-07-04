@@ -177,11 +177,14 @@ struct leonos_task_info {
     uint32_t state;
     uint32_t kind;
     uint32_t flags;
-    uint32_t reserved;
+    uint32_t uid;
+    uint32_t role;
+    uint32_t session_id;
     uint64_t wake_tick;
     uint64_t entry;
     uint64_t cr3;
     char name[LEONOS_TASK_NAME_LEN];
+    char username[32];
 };
 
 struct leonos_task_snapshot {

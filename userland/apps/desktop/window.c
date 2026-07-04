@@ -211,6 +211,8 @@ void remove_window_slot(uint8_t slot)
     if (windows[slot].window_id) {
         printf("[desktop.elf] remove window wid=%d title=%s\n", windows[slot].window_id, windows[slot].title);
     }
+    oobe_lock_on_window_removed(slot);
+    login_lock_on_window_removed(slot);
     windows[slot].visible = 0;
     windows[slot].minimized = 0;
     windows[slot].maximized = 0;

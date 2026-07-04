@@ -1,3 +1,4 @@
+#include <leonos/auth.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/psf_font.h>
@@ -5,12 +6,19 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
-#define SETTINGS_W 480
-#define SETTINGS_H 300
+#define SETTINGS_W 620
+#define SETTINGS_H 420
 #define SETTINGS_DROPDOWN_ROW_H 28
 #define SETTINGS_MODE_COUNT 5
 #define SETTINGS_SCALE_COUNT 3
+#define SETTINGS_USER_ROWS 7
+#define SETTINGS_KEY_ESCAPE 1U
 #define T(en, zh) leonos_i18n((en), (zh))
+
+enum {
+    PAGE_DISPLAY = 0,
+    PAGE_USERS = 1,
+};
 
 enum {
     DROP_NONE = 0,
@@ -21,8 +29,13 @@ enum {
 
 static uint32_t pixels[SETTINGS_W * SETTINGS_H];
 static struct leonos_display_state display_state;
+static struct leonos_user_info current_user;
+static struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
+static uint32_t user_count;
+static uint32_t selected_user;
+static uint8_t active_page;
 static uint8_t active_drop;
-static char status_text[128] = "Ready";
+static char status_text[160] = "Ready";
 
 static const char *mode_labels[SETTINGS_MODE_COUNT] = {
     "1920 x 1080",
@@ -87,6 +100,11 @@ static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, 
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
 }
 
+static const char *role_label(uint32_t role)
+{
+    return role == LEONOS_AUTH_ROLE_ADMIN ? T("Administrator", "管理员") : T("User", "用户");
+}
+
 static int mode_supported(uint32_t mode, uint32_t scale_index)
 {
     uint32_t scale;
@@ -98,15 +116,9 @@ static int mode_supported(uint32_t mode, uint32_t scale_index)
            mode_heights[mode] * scale <= display_state.fb_height;
 }
 
-static int scale_supported(uint32_t mode, uint32_t scale_index)
-{
-    return mode_supported(mode, scale_index);
-}
-
 static void refresh_display_state(void)
 {
-    int ret = leonos_display_get_state(&display_state);
-    if (ret <= 0) {
+    if (leonos_display_get_state(&display_state) <= 0) {
         display_state.fb_width = 1920;
         display_state.fb_height = 1080;
         display_state.logical_width = 1280;
@@ -119,6 +131,23 @@ static void refresh_display_state(void)
     }
 }
 
+static void refresh_users(void)
+{
+    uint32_t count = 0;
+    current_user = (struct leonos_user_info){0};
+    (void)leonos_auth_current(&current_user);
+    if (current_user.role == LEONOS_AUTH_ROLE_ADMIN) {
+        (void)leonos_auth_list_users(users, LEONOS_AUTH_MAX_USERS, 1, &count);
+    } else if (current_user.uid) {
+        users[0] = current_user;
+        count = 1;
+    }
+    user_count = count > LEONOS_AUTH_MAX_USERS ? LEONOS_AUTH_MAX_USERS : count;
+    if (selected_user >= user_count) {
+        selected_user = user_count ? user_count - 1 : 0;
+    }
+}
+
 static void request_display(uint32_t action, uint32_t mode, uint32_t scale)
 {
     struct leonos_display_request request;
@@ -126,19 +155,6 @@ static void request_display(uint32_t action, uint32_t mode, uint32_t scale)
     request.mode_index = mode;
     request.scale_index = scale;
     (void)leonos_display_request(&request);
-}
-
-static void set_status_mode(void)
-{
-    uint32_t pos = 0;
-    status_text[0] = 0;
-    append_text(status_text, &pos, sizeof(status_text), T("Display ", "显示 "));
-    append_dec(status_text, &pos, sizeof(status_text), display_state.logical_width);
-    append_char(status_text, &pos, sizeof(status_text), 'x');
-    append_dec(status_text, &pos, sizeof(status_text), display_state.logical_height);
-    append_text(status_text, &pos, sizeof(status_text), " @ ");
-    append_dec(status_text, &pos, sizeof(status_text), display_state.scale);
-    append_char(status_text, &pos, sizeof(status_text), 'x');
 }
 
 static const char *mode_label(void)
@@ -160,36 +176,26 @@ static const char *language_label(void)
     return leonos_i18n_language() == LEONOS_LANG_ZH ? "中文" : "English";
 }
 
-static void draw_settings(struct leonos_ui_surface *ui)
+static void draw_display_page(struct leonos_ui_surface *ui)
 {
     char line[128];
     uint32_t pos = 0;
     struct leonos_ui_dropdown_item mode_items[SETTINGS_MODE_COUNT];
     struct leonos_ui_dropdown_item scale_items[SETTINGS_SCALE_COUNT];
     struct leonos_ui_dropdown_item lang_items[2];
-
     for (uint32_t i = 0; i < SETTINGS_MODE_COUNT; ++i) {
         mode_items[i].label = mode_labels[i];
         mode_items[i].id = i;
-        mode_items[i].flags = mode_supported(i, display_state.scale_index)
-                                  ? 0
-                                  : LEONOS_UI_MENU_DISABLED;
+        mode_items[i].flags = mode_supported(i, display_state.scale_index) ? 0 : LEONOS_UI_MENU_DISABLED;
     }
     for (uint32_t i = 0; i < SETTINGS_SCALE_COUNT; ++i) {
         scale_items[i].label = scale_labels[i];
         scale_items[i].id = i;
-        scale_items[i].flags = scale_supported(display_state.mode_index, i)
-                                   ? 0
-                                   : LEONOS_UI_MENU_DISABLED;
+        scale_items[i].flags = mode_supported(display_state.mode_index, i) ? 0 : LEONOS_UI_MENU_DISABLED;
     }
     lang_items[0] = (struct leonos_ui_dropdown_item){"English", LEONOS_LANG_EN, 0};
     lang_items[1] = (struct leonos_ui_dropdown_item){"中文", LEONOS_LANG_ZH, 0};
 
-    leonos_ui_rect(ui, 0, 0, SETTINGS_W, SETTINGS_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, SETTINGS_W, SETTINGS_H, T("Settings", "设置"));
-    leonos_ui_text(ui, 18, 42, T("Display", "显示"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-
-    line[0] = 0;
     append_text(line, &pos, sizeof(line), T("Framebuffer ", "帧缓冲 "));
     append_dec(line, &pos, sizeof(line), display_state.fb_width);
     append_char(line, &pos, sizeof(line), 'x');
@@ -199,15 +205,13 @@ static void draw_settings(struct leonos_ui_surface *ui)
     append_dec(line, &pos, sizeof(line), display_state.logical_width);
     append_char(line, &pos, sizeof(line), 'x');
     append_dec(line, &pos, sizeof(line), display_state.logical_height);
-    leonos_ui_text_clipped(ui, 18, 66, SETTINGS_W - 36, line, LEONOS_UI_DARK, LEONOS_UI_GRAY);
-
-    leonos_ui_text(ui, 24, 102, T("Resolution", "分辨率"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_combobox(ui, 132, 96, 180, mode_label(), active_drop == DROP_RESOLUTION, 0);
-    leonos_ui_text(ui, 24, 138, T("Scale", "缩放"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_combobox(ui, 132, 132, 180, scale_label(), active_drop == DROP_SCALE, 0);
-    leonos_ui_text(ui, 24, 174, T("Language", "语言"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_combobox(ui, 132, 168, 180, language_label(), active_drop == DROP_LANGUAGE, 0);
-
+    leonos_ui_text_clipped(ui, 34, 92, SETTINGS_W - 68, line, LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 44, 132, T("Resolution", "分辨率"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 160, 126, 190, mode_label(), active_drop == DROP_RESOLUTION, 0);
+    leonos_ui_text(ui, 44, 172, T("Scale", "缩放"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 160, 166, 190, scale_label(), active_drop == DROP_SCALE, 0);
+    leonos_ui_text(ui, 44, 212, T("Language", "语言"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 160, 206, 190, language_label(), active_drop == DROP_LANGUAGE, 0);
     if (display_state.pending_confirm) {
         uint32_t seconds = (display_state.confirm_remaining_ms + 999) / 1000;
         pos = 0;
@@ -216,29 +220,82 @@ static void draw_settings(struct leonos_ui_surface *ui)
                                                 "保留这些显示设置？将在 "));
         append_dec(line, &pos, sizeof(line), seconds);
         append_text(line, &pos, sizeof(line), T("s", " 秒后还原"));
-        leonos_ui_panel(ui, 24, 214, SETTINGS_W - 48, 54, LEONOS_UI_LIGHT);
-        leonos_ui_text_clipped(ui, 34, 224, SETTINGS_W - 68, line, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
-        leonos_ui_button(ui, 34, 244, 82, LEONOS_UI_BUTTON_H, T("Keep", "保留"), 0);
-        leonos_ui_button(ui, 126, 244, 82, LEONOS_UI_BUTTON_H, T("Revert", "还原"), 0);
-    } else {
-        leonos_ui_text_clipped(ui, 24, 224, SETTINGS_W - 48,
-                               T("Display changes apply temporarily until kept.",
-                                 "显示更改会临时应用，保留后保存。"),
-                               LEONOS_UI_DARK, LEONOS_UI_WHITE);
+        leonos_ui_panel(ui, 44, 260, SETTINGS_W - 88, 64, LEONOS_UI_LIGHT);
+        leonos_ui_text_clipped(ui, 54, 272, SETTINGS_W - 108, line, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+        leonos_ui_button(ui, 54, 294, 82, LEONOS_UI_BUTTON_H, T("Keep", "保留"), 0);
+        leonos_ui_button(ui, 146, 294, 82, LEONOS_UI_BUTTON_H, T("Revert", "还原"), 0);
     }
-
-    leonos_ui_statusbar(ui, SETTINGS_H - 28, 28, status_text);
-
     if (active_drop == DROP_LANGUAGE) {
-        leonos_ui_dropdown(ui, 132, 192, 180, lang_items, 2,
+        leonos_ui_dropdown(ui, 160, 230, 190, lang_items, 2,
                            (uint32_t)leonos_i18n_language(), SETTINGS_DROPDOWN_ROW_H, 1000);
     } else if (active_drop == DROP_SCALE) {
-        leonos_ui_dropdown(ui, 132, 156, 180, scale_items, SETTINGS_SCALE_COUNT,
+        leonos_ui_dropdown(ui, 160, 190, 190, scale_items, SETTINGS_SCALE_COUNT,
                            display_state.scale_index, SETTINGS_DROPDOWN_ROW_H, 1000);
     } else if (active_drop == DROP_RESOLUTION) {
-        leonos_ui_dropdown(ui, 132, 120, 180, mode_items, SETTINGS_MODE_COUNT,
+        leonos_ui_dropdown(ui, 160, 150, 190, mode_items, SETTINGS_MODE_COUNT,
                            display_state.mode_index, SETTINGS_DROPDOWN_ROW_H, 1000);
     }
+}
+
+static void draw_users_page(struct leonos_ui_surface *ui)
+{
+    const struct leonos_ui_list_column cols[] = {
+        {T("User", "用户"), 180},
+        {T("Role", "权限"), 130},
+        {T("State", "状态"), 120},
+    };
+    char state[32];
+    leonos_ui_text(ui, 34, 92,
+                   current_user.role == LEONOS_AUTH_ROLE_ADMIN
+                       ? T("Administrators can create and manage local accounts.", "管理员可以创建和管理本地账户。")
+                       : T("You can change your password.", "你可以修改自己的密码。"),
+                   LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_listview_header(ui, 34, 126, 430, cols, 3);
+    for (uint32_t i = 0; i < user_count && i < SETTINGS_USER_ROWS; ++i) {
+        const char *cells[3];
+        copy_text(state, sizeof(state),
+                  (users[i].flags & LEONOS_AUTH_USER_DISABLED)
+                      ? T("Disabled", "已禁用")
+                      : T("Enabled", "已启用"));
+        cells[0] = users[i].username;
+        cells[1] = role_label(users[i].role);
+        cells[2] = state;
+        leonos_ui_listview_row(ui, 34, 154 + i * 28, 430, cols, cells, 3,
+                               i == selected_user ? LEONOS_UI_MENU_SELECTED : 0);
+    }
+    if (current_user.role == LEONOS_AUTH_ROLE_ADMIN) {
+        leonos_ui_button(ui, 484, 126, 104, LEONOS_UI_BUTTON_H, T("New User", "新建用户"), 0);
+        leonos_ui_button(ui, 484, 158, 104, LEONOS_UI_BUTTON_H, T("New Admin", "新建管理员"), 0);
+        leonos_ui_button(ui, 484, 206, 104, LEONOS_UI_BUTTON_H,
+                         users[selected_user].flags & LEONOS_AUTH_USER_DISABLED
+                             ? T("Enable", "启用")
+                             : T("Disable", "禁用"),
+                         user_count ? 0 : LEONOS_UI_BUTTON_DISABLED);
+        leonos_ui_button(ui, 484, 238, 104, LEONOS_UI_BUTTON_H,
+                         users[selected_user].role == LEONOS_AUTH_ROLE_ADMIN
+                             ? T("Make User", "改为用户")
+                             : T("Make Admin", "改为管理员"),
+                         user_count ? 0 : LEONOS_UI_BUTTON_DISABLED);
+        leonos_ui_button(ui, 484, 286, 104, LEONOS_UI_BUTTON_H, T("Reset Pass", "重置密码"),
+                         user_count ? 0 : LEONOS_UI_BUTTON_DISABLED);
+    }
+    leonos_ui_button(ui, 34, 352, 150, LEONOS_UI_BUTTON_H, T("Change Password", "修改密码"),
+                     current_user.uid ? 0 : LEONOS_UI_BUTTON_DISABLED);
+}
+
+static void draw_settings(struct leonos_ui_surface *ui)
+{
+    const char *tabs[] = {T("Display", "显示"), T("Users", "用户")};
+    leonos_ui_rect(ui, 0, 0, SETTINGS_W, SETTINGS_H, LEONOS_UI_WHITE);
+    leonos_ui_dialog(ui, 0, 0, SETTINGS_W, SETTINGS_H, T("Settings", "设置"));
+    leonos_ui_tabs(ui, 18, 42, SETTINGS_W - 36, tabs, 2, active_page);
+    leonos_ui_tab_body(ui, 18, 72, SETTINGS_W - 36, SETTINGS_H - 112);
+    if (active_page == PAGE_DISPLAY) {
+        draw_display_page(ui);
+    } else {
+        draw_users_page(ui);
+    }
+    leonos_ui_statusbar(ui, SETTINGS_H - 28, 28, status_text);
 }
 
 static int handle_open_dropdown_hit(int32_t x, int32_t y)
@@ -250,22 +307,17 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
     for (uint32_t i = 0; i < SETTINGS_MODE_COUNT; ++i) {
         mode_items[i].label = mode_labels[i];
         mode_items[i].id = i;
-        mode_items[i].flags = mode_supported(i, display_state.scale_index)
-                                  ? 0
-                                  : LEONOS_UI_MENU_DISABLED;
+        mode_items[i].flags = mode_supported(i, display_state.scale_index) ? 0 : LEONOS_UI_MENU_DISABLED;
     }
     for (uint32_t i = 0; i < SETTINGS_SCALE_COUNT; ++i) {
         scale_items[i].label = scale_labels[i];
         scale_items[i].id = i;
-        scale_items[i].flags = scale_supported(display_state.mode_index, i)
-                                   ? 0
-                                   : LEONOS_UI_MENU_DISABLED;
+        scale_items[i].flags = mode_supported(display_state.mode_index, i) ? 0 : LEONOS_UI_MENU_DISABLED;
     }
     lang_items[0] = (struct leonos_ui_dropdown_item){"English", LEONOS_LANG_EN, 0};
     lang_items[1] = (struct leonos_ui_dropdown_item){"中文", LEONOS_LANG_ZH, 0};
-
     if (active_drop == DROP_RESOLUTION &&
-        leonos_ui_dropdown_hit(x, y, 132, 120, 180, mode_items, SETTINGS_MODE_COUNT,
+        leonos_ui_dropdown_hit(x, y, 160, 150, 190, mode_items, SETTINGS_MODE_COUNT,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
         active_drop = DROP_NONE;
         if (id < SETTINGS_MODE_COUNT && mode_supported(id, display_state.scale_index)) {
@@ -275,17 +327,17 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
         return 1;
     }
     if (active_drop == DROP_SCALE &&
-        leonos_ui_dropdown_hit(x, y, 132, 156, 180, scale_items, SETTINGS_SCALE_COUNT,
+        leonos_ui_dropdown_hit(x, y, 160, 190, 190, scale_items, SETTINGS_SCALE_COUNT,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
         active_drop = DROP_NONE;
-        if (id < SETTINGS_SCALE_COUNT && scale_supported(display_state.mode_index, id)) {
+        if (id < SETTINGS_SCALE_COUNT && mode_supported(display_state.mode_index, id)) {
             request_display(LEONOS_DISPLAY_REQUEST_APPLY, display_state.mode_index, id);
             copy_text(status_text, sizeof(status_text), T("Scale changed", "缩放已更改"));
         }
         return 1;
     }
     if (active_drop == DROP_LANGUAGE &&
-        leonos_ui_dropdown_hit(x, y, 132, 192, 180, lang_items, 2,
+        leonos_ui_dropdown_hit(x, y, 160, 230, 190, lang_items, 2,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
         active_drop = DROP_NONE;
         if (id == LEONOS_LANG_EN || id == LEONOS_LANG_ZH) {
@@ -299,32 +351,147 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
     return 0;
 }
 
-static void handle_click(int32_t x, int32_t y)
+static void create_user_dialog(uint32_t role)
+{
+    char name[LEONOS_AUTH_USERNAME_LEN] = "";
+    char pass[LEONOS_AUTH_PASSWORD_LEN] = "";
+    struct leonos_user_info user;
+    if (leonos_ui_show_input_dialog(T("Create user", "创建用户"), T("Username", "用户名"),
+                                    name, sizeof(name)) <= 0) {
+        return;
+    }
+    if (leonos_ui_show_input_dialog(T("Create user", "创建用户"), T("Password", "密码"),
+                                    pass, sizeof(pass)) <= 0) {
+        return;
+    }
+    if (leonos_auth_create_user(name, pass, role, &user) == 0) {
+        copy_text(status_text, sizeof(status_text), T("User created", "用户已创建"));
+        refresh_users();
+    } else {
+        copy_text(status_text, sizeof(status_text), T("Could not create user", "无法创建用户"));
+    }
+}
+
+static void reset_password_dialog(uint32_t uid)
+{
+    char pass[LEONOS_AUTH_PASSWORD_LEN] = "";
+    if (leonos_ui_show_input_dialog(T("Reset password", "重置密码"), T("New password", "新密码"),
+                                    pass, sizeof(pass)) <= 0) {
+        return;
+    }
+    if (leonos_auth_change_password(uid, "", pass) == 0) {
+        copy_text(status_text, sizeof(status_text), T("Password reset", "密码已重置"));
+    } else {
+        copy_text(status_text, sizeof(status_text), T("Password reset failed", "重置密码失败"));
+    }
+}
+
+static void change_my_password(void)
+{
+    char old_pass[LEONOS_AUTH_PASSWORD_LEN] = "";
+    char new_pass[LEONOS_AUTH_PASSWORD_LEN] = "";
+    if (!current_user.uid) {
+        return;
+    }
+    if (leonos_ui_show_input_dialog(T("Change password", "修改密码"), T("Old password", "旧密码"),
+                                    old_pass, sizeof(old_pass)) <= 0) {
+        return;
+    }
+    if (leonos_ui_show_input_dialog(T("Change password", "修改密码"), T("New password", "新密码"),
+                                    new_pass, sizeof(new_pass)) <= 0) {
+        return;
+    }
+    if (leonos_auth_change_password(current_user.uid, old_pass, new_pass) == 0) {
+        copy_text(status_text, sizeof(status_text), T("Password changed", "密码已修改"));
+    } else {
+        copy_text(status_text, sizeof(status_text), T("Password change failed", "修改密码失败"));
+    }
+}
+
+static void handle_users_click(int32_t x, int32_t y)
+{
+    for (uint32_t i = 0; i < user_count && i < SETTINGS_USER_ROWS; ++i) {
+        if (hit_rect_i(x, y, 34, 154 + (int32_t)i * 28, 430, 28)) {
+            selected_user = i;
+            return;
+        }
+    }
+    if (current_user.role == LEONOS_AUTH_ROLE_ADMIN) {
+        if (hit_rect_i(x, y, 484, 126, 104, LEONOS_UI_BUTTON_H)) {
+            create_user_dialog(LEONOS_AUTH_ROLE_USER);
+        } else if (hit_rect_i(x, y, 484, 158, 104, LEONOS_UI_BUTTON_H)) {
+            create_user_dialog(LEONOS_AUTH_ROLE_ADMIN);
+        } else if (user_count && hit_rect_i(x, y, 484, 206, 104, LEONOS_UI_BUTTON_H)) {
+            uint32_t flags = users[selected_user].flags ^ LEONOS_AUTH_USER_DISABLED;
+            if (leonos_auth_update_user(users[selected_user].uid, LEONOS_AUTH_UPDATE_FLAGS,
+                                        users[selected_user].role, flags) == 0) {
+                copy_text(status_text, sizeof(status_text), T("User state updated", "用户状态已更新"));
+            } else {
+                copy_text(status_text, sizeof(status_text), T("User state change denied", "用户状态更改被拒绝"));
+            }
+            refresh_users();
+        } else if (user_count && hit_rect_i(x, y, 484, 238, 104, LEONOS_UI_BUTTON_H)) {
+            uint32_t role = users[selected_user].role == LEONOS_AUTH_ROLE_ADMIN
+                                ? LEONOS_AUTH_ROLE_USER
+                                : LEONOS_AUTH_ROLE_ADMIN;
+            if (leonos_auth_update_user(users[selected_user].uid, LEONOS_AUTH_UPDATE_ROLE,
+                                        role, users[selected_user].flags) == 0) {
+                copy_text(status_text, sizeof(status_text), T("Role updated", "权限已更新"));
+            } else {
+                copy_text(status_text, sizeof(status_text), T("Role change denied", "权限更改被拒绝"));
+            }
+            refresh_users();
+        } else if (user_count && hit_rect_i(x, y, 484, 286, 104, LEONOS_UI_BUTTON_H)) {
+            reset_password_dialog(users[selected_user].uid);
+        }
+    }
+    if (hit_rect_i(x, y, 34, 352, 150, LEONOS_UI_BUTTON_H)) {
+        change_my_password();
+    }
+}
+
+static void handle_display_click(int32_t x, int32_t y)
 {
     if (active_drop && handle_open_dropdown_hit(x, y)) {
         return;
     }
     active_drop = DROP_NONE;
-    if (hit_rect_i(x, y, 132, 96, 180, LEONOS_FONT_H + 8)) {
+    if (hit_rect_i(x, y, 160, 126, 190, LEONOS_FONT_H + 8)) {
         active_drop = DROP_RESOLUTION;
         return;
     }
-    if (hit_rect_i(x, y, 132, 132, 180, LEONOS_FONT_H + 8)) {
+    if (hit_rect_i(x, y, 160, 166, 190, LEONOS_FONT_H + 8)) {
         active_drop = DROP_SCALE;
         return;
     }
-    if (hit_rect_i(x, y, 132, 168, 180, LEONOS_FONT_H + 8)) {
+    if (hit_rect_i(x, y, 160, 206, 190, LEONOS_FONT_H + 8)) {
         active_drop = DROP_LANGUAGE;
         return;
     }
-    if (display_state.pending_confirm && hit_rect_i(x, y, 34, 244, 82, LEONOS_UI_BUTTON_H)) {
+    if (display_state.pending_confirm && hit_rect_i(x, y, 54, 294, 82, LEONOS_UI_BUTTON_H)) {
         request_display(LEONOS_DISPLAY_REQUEST_KEEP, display_state.mode_index, display_state.scale_index);
         copy_text(status_text, sizeof(status_text), T("Display settings saved", "显示设置已保存"));
         return;
     }
-    if (display_state.pending_confirm && hit_rect_i(x, y, 126, 244, 82, LEONOS_UI_BUTTON_H)) {
+    if (display_state.pending_confirm && hit_rect_i(x, y, 146, 294, 82, LEONOS_UI_BUTTON_H)) {
         request_display(LEONOS_DISPLAY_REQUEST_REVERT, display_state.mode_index, display_state.scale_index);
         copy_text(status_text, sizeof(status_text), T("Display settings reverted", "显示设置已还原"));
+    }
+}
+
+static void handle_click(int32_t x, int32_t y)
+{
+    const char *tabs[] = {T("Display", "显示"), T("Users", "用户")};
+    int tab = leonos_ui_tabs_hit(x, y, 18, 42, SETTINGS_W - 36, tabs, 2);
+    if (tab >= 0) {
+        active_page = (uint8_t)tab;
+        active_drop = DROP_NONE;
+        return;
+    }
+    if (active_page == PAGE_DISPLAY) {
+        handle_display_click(x, y);
+    } else {
+        handle_users_click(x, y);
     }
 }
 
@@ -334,7 +501,6 @@ int main(void)
     struct leonos_gui_app_event event;
     int window_id;
     unsigned long last_refresh = 0;
-
     puts("[settings.elf] settings starting");
     window_id = leonos_gui_create_app_window_ex(T("Settings", "设置"),
                                                 T("System settings", "系统设置"),
@@ -344,13 +510,11 @@ int main(void)
         printf("[settings.elf] create window failed=%d\n", window_id);
         return 1;
     }
-
     leonos_ui_bind(&ui, pixels, SETTINGS_W, SETTINGS_H, SETTINGS_W);
     refresh_display_state();
-    set_status_mode();
+    refresh_users();
     draw_settings(&ui);
     leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
-
     for (;;) {
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_poll_app_event(&event) > 0) {
@@ -360,14 +524,17 @@ int main(void)
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
                 handle_click(event.x, event.y);
                 refresh_display_state();
+                refresh_users();
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event.pressed && event.keycode == 1) {
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event.pressed &&
+                event.keycode == SETTINGS_KEY_ESCAPE) {
                 return 0;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_FOCUS || event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
                 refresh_display_state();
+                refresh_users();
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
             }
@@ -375,6 +542,7 @@ int main(void)
             unsigned long now = leonos_uptime_ms();
             if (now - last_refresh >= 250) {
                 refresh_display_state();
+                refresh_users();
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
                 last_refresh = now;

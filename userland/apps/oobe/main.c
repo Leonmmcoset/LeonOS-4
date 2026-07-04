@@ -1,6 +1,8 @@
+#include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
@@ -10,31 +12,36 @@
 #define OOBE_INITIAL_W 800
 #define OOBE_INITIAL_H 600
 #define OOBE_DONE_PATH "0:/etc/oobe.done"
-#define OOBE_PAGE_COUNT 3
+#define OOBE_KEY_ESCAPE 1U
+#define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[OOBE_MAX_W * OOBE_MAX_H];
 static uint32_t surface_w = OOBE_INITIAL_W;
 static uint32_t surface_h = OOBE_INITIAL_H;
-static uint32_t page_index;
-static uint8_t marker_written;
-static uint8_t marker_write_pending;
-
-struct oobe_layout {
-    uint32_t header_h;
-    uint32_t panel_x;
-    uint32_t panel_y;
-    uint32_t panel_w;
-    uint32_t panel_h;
-    uint32_t button_x;
-    uint32_t button_y;
-    uint32_t button_w;
-    uint32_t button_h;
-};
+static char username[LEONOS_AUTH_USERNAME_LEN] = "admin";
+static char password[LEONOS_AUTH_PASSWORD_LEN];
+static struct leonos_ui_edit_state username_edit;
+static struct leonos_ui_edit_state password_edit;
+static uint8_t active_field;
+static char status_text[128] = "Create the first administrator account";
 
 static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry,
                       int32_t rw, int32_t rh)
 {
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
+}
+
+static void copy_text(char *dst, uint32_t cap, const char *src)
+{
+    uint32_t i = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    while (src && src[i] && i + 1 < cap) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = 0;
 }
 
 static void update_surface_size(uint32_t width, uint32_t height)
@@ -47,14 +54,8 @@ static void update_surface_size(uint32_t width, uint32_t height)
         width /= scale;
         height /= scale;
     }
-    if (width == 0 || width > OOBE_MAX_W) {
-        width = OOBE_MAX_W;
-    }
-    if (height == 0 || height > OOBE_MAX_H) {
-        height = OOBE_MAX_H;
-    }
-    surface_w = width;
-    surface_h = height;
+    surface_w = width ? width : OOBE_INITIAL_W;
+    surface_h = height ? height : OOBE_INITIAL_H;
 }
 
 static void update_surface_size_from_framebuffer(void)
@@ -65,72 +66,9 @@ static void update_surface_size_from_framebuffer(void)
     }
 }
 
-static struct oobe_layout get_oobe_layout(void)
-{
-    struct oobe_layout layout;
-    uint32_t panel_right;
-    layout.header_h = surface_h > 420 ? 118 : 84;
-    layout.panel_w = surface_w > 720 ? 640 : surface_w > 64 ? surface_w - 40 : surface_w;
-    layout.panel_h = surface_h > 420 ? 220 : 176;
-    layout.panel_x = surface_w > layout.panel_w ? (surface_w - layout.panel_w) / 2 : 0;
-    layout.panel_y = layout.header_h + 42;
-    layout.button_h = LEONOS_UI_BUTTON_H;
-    layout.button_w = surface_w > 112 ? 96 : surface_w > 16 ? surface_w - 16 : surface_w;
-    panel_right = layout.panel_x + layout.panel_w;
-    if (panel_right > layout.button_w + 20) {
-        layout.button_x = panel_right - layout.button_w - 20;
-    } else {
-        layout.button_x = surface_w > layout.button_w ? (surface_w - layout.button_w) / 2 : 0;
-    }
-    if (layout.button_x + layout.button_w > surface_w) {
-        layout.button_x = surface_w > layout.button_w ? surface_w - layout.button_w : 0;
-    }
-    layout.button_y = surface_h > layout.button_h + 18 ? surface_h - layout.button_h - 18 : 0;
-    return layout;
-}
-
-static void draw_oobe(struct leonos_ui_surface *ui)
-{
-    const char *title = leonos_i18n("Welcome to LeonOS", "欢迎使用 LeonOS");
-    const char *line1 = leonos_i18n("This first-run setup will prepare your system.", "首次运行设置将准备你的系统。");
-    const char *line2 = leonos_i18n("Click Next to continue.", "点击下一步继续。");
-    const char *button = page_index + 1 >= OOBE_PAGE_COUNT ? leonos_i18n("Finish", "完成") : leonos_i18n("Next", "下一步");
-    struct oobe_layout layout = get_oobe_layout();
-
-    leonos_ui_rect(ui, 0, 0, surface_w, surface_h, LEONOS_UI_GRAY);
-    leonos_ui_rect(ui, 0, 0, surface_w, layout.header_h, LEONOS_UI_ACTIVE_TITLE);
-    leonos_ui_text(ui, 24, 24, "LeonOS 4", LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
-    leonos_ui_text(ui, 24, 48, leonos_i18n("Out-of-box experience", "开箱体验"), LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
-    if (surface_h > 520) {
-        leonos_ui_text(ui, 24, 74, leonos_i18n("First-run setup", "首次运行设置"), LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
-    }
-    leonos_ui_panel(ui, layout.panel_x, layout.panel_y, layout.panel_w, layout.panel_h, LEONOS_UI_LIGHT);
-
-    if (page_index == 1) {
-        title = leonos_i18n("Test Step 1", "测试步骤 1");
-        line1 = leonos_i18n("This is a placeholder page for future setup options.", "这是未来设置选项的占位页面。");
-        line2 = leonos_i18n("The OOBE flow already supports multiple pages.", "OOBE 流程已经支持多页。");
-    } else if (page_index == 2) {
-        title = leonos_i18n("Setup is ready", "设置已准备就绪");
-        line1 = marker_written ? leonos_i18n("The completion marker has been saved.", "完成标记已保存。")
-                               : leonos_i18n("Saving the completion marker...", "正在保存完成标记...");
-        line2 = leonos_i18n("After reboot, setup will not open again.", "重启后设置不会再次打开。");
-    }
-    leonos_ui_text(ui, layout.panel_x + 20, layout.panel_y + 22, title, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
-    leonos_ui_text(ui, layout.panel_x + 20, layout.panel_y + 58, line1, LEONOS_UI_DARK, LEONOS_UI_LIGHT);
-    leonos_ui_text(ui, layout.panel_x + 20, layout.panel_y + 82, line2, LEONOS_UI_DARK, LEONOS_UI_LIGHT);
-
-    for (uint32_t i = 0; i < OOBE_PAGE_COUNT; ++i) {
-        uint32_t x = layout.panel_x + 20 + i * 22;
-        uint32_t color = i == page_index ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_DARK;
-        leonos_ui_rect(ui, x, layout.panel_y + layout.panel_h - 34, 14, 14, color);
-    }
-    leonos_ui_button(ui, layout.button_x, layout.button_y, layout.button_w, layout.button_h, button, 0);
-}
-
 static int write_completion_marker(void)
 {
-    static const char done[] = "OOBE已完成\n";
+    static const char done[] = "OOBE done\n";
     int fd = open(OOBE_DONE_PATH, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
     long wrote;
     if (fd < 0) {
@@ -141,28 +79,116 @@ static int write_completion_marker(void)
     return wrote == (long)(sizeof(done) - 1) ? 0 : -1;
 }
 
-static int advance_or_finish(void)
+static void password_mask(char *dst, uint32_t cap)
 {
-    if (page_index + 1 < OOBE_PAGE_COUNT) {
-        ++page_index;
-        if (page_index + 1 >= OOBE_PAGE_COUNT && !marker_written) {
-            marker_write_pending = 1;
+    uint32_t i = 0;
+    while (password[i] && i + 1 < cap) {
+        dst[i] = '*';
+        ++i;
+    }
+    dst[i] = 0;
+}
+
+static int username_valid(void)
+{
+    uint32_t len = 0;
+    while (username[len]) {
+        char ch = username[len];
+        if (!((ch >= 'a' && ch <= 'z') ||
+              (ch >= '0' && ch <= '9') ||
+              ch == '_')) {
+            return 0;
         }
+        ++len;
+    }
+    return len > 0;
+}
+
+static void draw_oobe(struct leonos_ui_surface *ui)
+{
+    uint32_t panel_w = surface_w > 680 ? 560 : surface_w > 48 ? surface_w - 40 : surface_w;
+    uint32_t panel_h = 320;
+    uint32_t panel_x = surface_w > panel_w ? (surface_w - panel_w) / 2 : 0;
+    uint32_t panel_y = surface_h > panel_h ? (surface_h - panel_h) / 2 : 0;
+    char masked[LEONOS_AUTH_PASSWORD_LEN];
+    leonos_ui_rect(ui, 0, 0, surface_w, surface_h, LEONOS_UI_GRAY);
+    leonos_ui_rect(ui, 0, 0, surface_w, surface_h > 116 ? 116 : surface_h,
+                   LEONOS_UI_ACTIVE_TITLE);
+    leonos_ui_text(ui, 24, 24, "LeonOS 4", LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
+    leonos_ui_text(ui, 24, 52, T("Out-of-box experience", "开箱体验"),
+                   LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
+    leonos_ui_panel(ui, panel_x, panel_y, panel_w, panel_h, LEONOS_UI_LIGHT);
+    leonos_ui_text(ui, panel_x + 24, panel_y + 24,
+                   T("Create administrator", "创建管理员"),
+                   LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    leonos_ui_text(ui, panel_x + 24, panel_y + 58,
+                   T("The first account controls system settings and users.",
+                     "第一个账户将管理系统设置和用户。"),
+                   LEONOS_UI_DARK, LEONOS_UI_LIGHT);
+    leonos_ui_text(ui, panel_x + 24, panel_y + 112, T("Username", "用户名"),
+                   LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    leonos_ui_edit_state_draw(ui, panel_x + 132, panel_y + 106, panel_w - 164,
+                              &username_edit,
+                              active_field == 0 ? LEONOS_UI_EDIT_FOCUSED : 0);
+    leonos_ui_text(ui, panel_x + 24, panel_y + 152, T("Password", "密码"),
+                   LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    password_mask(masked, sizeof(masked));
+    leonos_ui_edit(ui, panel_x + 132, panel_y + 146, panel_w - 164,
+                   masked, password_edit.cursor, password_edit.scroll,
+                   active_field == 1 ? LEONOS_UI_EDIT_FOCUSED : 0);
+    leonos_ui_button(ui, panel_x + panel_w - 148, panel_y + panel_h - 54,
+                     120, LEONOS_UI_BUTTON_H, T("Create", "创建"), 0);
+    leonos_ui_text_clipped(ui, panel_x + 24, panel_y + panel_h - 48,
+                           panel_w - 184, status_text,
+                           LEONOS_UI_DARK, LEONOS_UI_LIGHT);
+}
+
+static int create_admin(void)
+{
+    struct leonos_user_info user;
+    if (!username_valid()) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Use lowercase letters, digits, and underscore only.",
+                    "用户名只能包含小写字母、数字和下划线。"));
         return 0;
     }
-    if (!marker_written && write_completion_marker() == 0) {
-        marker_written = 1;
+    if (!password[0]) {
+        copy_text(status_text, sizeof(status_text), T("Password required.", "请输入密码。"));
+        return 0;
     }
-    return marker_written ? 1 : 0;
+    if (leonos_auth_create_user(username, password, LEONOS_AUTH_ROLE_ADMIN, &user) < 0) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Could not create administrator.", "无法创建管理员。"));
+        return 0;
+    }
+    if (leonos_auth_login(username, password, &user) < 0) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Created account, but sign-in failed.", "账户已创建，但登录失败。"));
+        return 0;
+    }
+    if (write_completion_marker() < 0) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Created account, but setup marker failed.", "账户已创建，但完成标记写入失败。"));
+        return 0;
+    }
+    return 1;
 }
 
 int main(void)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
+    struct leonos_auth_status status;
     int window_id;
     puts("[oobe.elf] starting first-run setup");
+    status = (struct leonos_auth_status){0};
+    if (leonos_auth_status(&status) == 0 && status.has_admin) {
+        (void)write_completion_marker();
+        return 0;
+    }
     update_surface_size_from_framebuffer();
+    leonos_ui_edit_state_init(&username_edit, username, sizeof(username));
+    leonos_ui_edit_state_init(&password_edit, password, sizeof(password));
     window_id = leonos_gui_create_app_window_ex("LeonOS Setup", "First-run setup",
                                                 surface_w, surface_h,
                                                 LEONOS_GUI_WINDOW_FULLSCREEN);
@@ -170,44 +196,57 @@ int main(void)
         printf("[oobe.elf] create window failed=%d\n", window_id);
         return 1;
     }
-    leonos_ui_bind(&ui, pixels, surface_w, surface_h, OOBE_MAX_W);
     for (;;) {
         leonos_ui_bind(&ui, pixels, surface_w, surface_h, OOBE_MAX_W);
         draw_oobe(&ui);
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                                   OOBE_MAX_W, pixels);
-        if (marker_write_pending) {
-            marker_write_pending = 0;
-            marker_written = write_completion_marker() == 0 ? 1 : 0;
-            draw_oobe(&ui);
-            leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
-                                      OOBE_MAX_W, pixels);
-        }
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_poll_app_event(&event) > 0) {
-            if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
-                break;
-            }
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
                 update_surface_size(event.width, event.height);
                 continue;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
-                if (event.keycode == LEONOS_KEY_ENTER && advance_or_finish()) {
-                    break;
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event.pressed) {
+                if (event.keycode == LEONOS_KEY_TAB) {
+                    active_field = active_field ? 0 : 1;
+                } else if (event.keycode == LEONOS_KEY_ENTER) {
+                    if (create_admin()) {
+                        break;
+                    }
+                } else if (event.keycode != OOBE_KEY_ESCAPE) {
+                    if (active_field == 0) {
+                        (void)leonos_ui_edit_state_handle_key(&username_edit,
+                                                              event.keycode, event.pressed);
+                    } else {
+                        (void)leonos_ui_edit_state_handle_key(&password_edit,
+                                                              event.keycode, event.pressed);
+                    }
                 }
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON &&
-                (event.buttons & 1u)) {
-                struct oobe_layout layout = get_oobe_layout();
-                if (hit_rect_i(event.x, event.y, (int32_t)layout.button_x, (int32_t)layout.button_y,
-                               (int32_t)layout.button_w, (int32_t)layout.button_h) &&
-                    advance_or_finish()) {
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
+                uint32_t panel_w = surface_w > 680 ? 560 : surface_w > 48 ? surface_w - 40 : surface_w;
+                uint32_t panel_h = 320;
+                uint32_t panel_x = surface_w > panel_w ? (surface_w - panel_w) / 2 : 0;
+                uint32_t panel_y = surface_h > panel_h ? (surface_h - panel_h) / 2 : 0;
+                if (hit_rect_i(event.x, event.y, (int32_t)(panel_x + 132),
+                               (int32_t)(panel_y + 106), (int32_t)(panel_w - 164),
+                               LEONOS_FONT_H + 8)) {
+                    active_field = 0;
+                } else if (hit_rect_i(event.x, event.y, (int32_t)(panel_x + 132),
+                                      (int32_t)(panel_y + 146), (int32_t)(panel_w - 164),
+                                      LEONOS_FONT_H + 8)) {
+                    active_field = 1;
+                } else if (hit_rect_i(event.x, event.y,
+                                      (int32_t)(panel_x + panel_w - 148),
+                                      (int32_t)(panel_y + panel_h - 54),
+                                      120, LEONOS_UI_BUTTON_H) &&
+                           create_admin()) {
                     break;
                 }
             }
         } else {
-            sleep_ms(10);
+            sleep_ms(20);
         }
     }
     leonos_gui_destroy_app_window((uint32_t)window_id);

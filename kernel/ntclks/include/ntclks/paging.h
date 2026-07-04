@@ -5,6 +5,7 @@
 
 #define NTCLKS_USER_BASE 0x0000000000400000ULL
 #define NTCLKS_USER_TOP  0x0000000004000000ULL
+#define NTCLKS_USER_MMAP_BASE 0x0000000002000000ULL
 #define NTCLKS_USER_STACK_PAGES 16u
 #define NTCLKS_USER_PD_BYTES 0x200000ULL
 #define NTCLKS_USER_PD_START (NTCLKS_USER_BASE / NTCLKS_USER_PD_BYTES)
@@ -30,6 +31,7 @@ bool address_space_create(struct address_space *as);
 void address_space_destroy(struct address_space *as);
 bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
                                  uint64_t phys, uint64_t flags);
+uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr);
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr);
 bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top);
 

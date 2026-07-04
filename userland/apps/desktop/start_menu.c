@@ -5,6 +5,7 @@ int start_menu_is_hidden_app(const char *name)
     return text_eq(name, "init.elf") ||
            text_eq(name, "desktop.elf") ||
            text_eq(name, "oobe.elf") ||
+           text_eq(name, "login.elf") ||
            text_eq(name, "shell.elf");
 }
 
@@ -78,6 +79,9 @@ uint32_t build_start_menu_items(struct start_menu_item *items, uint32_t cap)
         }
     }
     ADD_ITEM("", START_ACTION_SEPARATOR, 0, DESKTOP_ICON_APP, 0);
+    if (desktop_session_logged_in()) {
+        ADD_ITEM(leonos_i18n("Log Out", "注销"), START_ACTION_LOGOUT, 0, DESKTOP_ICON_RUN, 0);
+    }
     ADD_ITEM(leonos_i18n("Restart", "重启"), START_ACTION_REBOOT, 0, DESKTOP_ICON_RUN, 0);
     ADD_ITEM(leonos_i18n("Shut Down", "关机"), START_ACTION_SHUTDOWN, 0, DESKTOP_ICON_RUN, 0);
 #undef ADD_ITEM

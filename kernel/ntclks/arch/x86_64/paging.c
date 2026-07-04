@@ -12,6 +12,7 @@ static uint64_t kernel_pdpt[512] __attribute__((aligned(4096)));
 static uint64_t kernel_pd[4][512] __attribute__((aligned(4096)));
 
 extern void x86_64_load_cr3(uint64_t cr3);
+extern void x86_64_invlpg(uint64_t addr);
 
 static uint64_t align_down(uint64_t value, uint64_t align)
 {
@@ -175,7 +176,32 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
         return false;
     }
     as->user_pt[table][slot] = phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER | flags;
+    x86_64_invlpg(page);
     return true;
+}
+
+uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
+{
+    if (!as) {
+        return 0;
+    }
+    uint64_t page = align_down(vaddr, PAGE_SIZE);
+    if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
+        return 0;
+    }
+    uint64_t index = (page - NTCLKS_USER_BASE) / PAGE_SIZE;
+    uint64_t table = index / 512;
+    uint64_t slot = index % 512;
+    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) {
+        return 0;
+    }
+    uint64_t entry = as->user_pt[table][slot];
+    if (!(entry & NTCLKS_PAGE_PRESENT)) {
+        return 0;
+    }
+    as->user_pt[table][slot] = 0;
+    x86_64_invlpg(page);
+    return entry & ~0xfffULL;
 }
 
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr)

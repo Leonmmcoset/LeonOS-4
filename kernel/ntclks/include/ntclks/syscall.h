@@ -40,6 +40,8 @@
 #define LEONOS_E2BIG 7
 #define LEONOS_EEXIST 17
 #define LEONOS_ENOTEMPTY 39
+#define LEONOS_EPERM 1
+#define LEONOS_EACCES 13
 
 struct syscall_frame {
     uint64_t number;
@@ -49,5 +51,6 @@ struct syscall_frame {
 void syscall_init(void);
 int64_t syscall_dispatch(const struct syscall_frame *frame);
 void syscall_dispatch_frame(struct trap_frame *frame);
+int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error);
 
 #endif

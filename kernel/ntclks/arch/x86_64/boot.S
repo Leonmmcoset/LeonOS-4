@@ -143,6 +143,12 @@ x86_64_read_cr2:
     mov %cr2, %rax
     ret
 
+.global x86_64_invlpg
+.type x86_64_invlpg, @function
+x86_64_invlpg:
+    invlpg (%rdi)
+    ret
+
 .global x86_64_load_segments
 .type x86_64_load_segments, @function
 x86_64_load_segments:
@@ -243,7 +249,6 @@ ISR_ERR isr10_stub 10
 ISR_ERR isr11_stub 11
 ISR_ERR isr12_stub 12
 ISR_ERR isr13_stub 13
-ISR_ERR isr14_stub 14
 ISR_NOERR isr15_stub 15
 ISR_NOERR isr16_stub 16
 ISR_ERR isr17_stub 17
@@ -261,6 +266,29 @@ ISR_NOERR isr28_stub 28
 ISR_ERR isr29_stub 29
 ISR_ERR isr30_stub 30
 ISR_NOERR isr31_stub 31
+
+.global isr14_stub
+.type isr14_stub, @function
+isr14_stub:
+    pushq $14
+    pushq %rax
+    pushq %rbx
+    pushq %rcx
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+    pushq %rbp
+    pushq %r8
+    pushq %r9
+    pushq %r10
+    pushq %r11
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    mov %rsp, %rdi
+    call page_fault_dispatch
+    jmp trap_restore_frame
 
 .macro PUSH_TRAP_FRAME vector error
     pushq $\error

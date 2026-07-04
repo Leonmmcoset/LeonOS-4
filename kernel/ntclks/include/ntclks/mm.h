@@ -7,6 +7,7 @@
 
 void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *handoff);
 uint64_t mm_total_memory_kib(void);
+uint64_t mm_free_memory_kib(void);
 uint64_t mm_alloc_page(void);
 uint64_t mm_alloc_pages(uint32_t page_count);
 void mm_free_page(uint64_t phys);

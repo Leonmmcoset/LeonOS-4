@@ -1,6 +1,7 @@
 use crate::BootInfo;
 use core::ffi::c_char;
 
+
 pub const MOUNT_POLICY_VERSION: u32 = 1;
 pub const MOUNT_MAX_ENTRIES: usize = 8;
 pub const MOUNT_PATH_LEN: usize = 16;

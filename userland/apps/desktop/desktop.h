@@ -2,6 +2,7 @@
 #define LEONOS_DESKTOP_H
 
 #include <leonos/gui.h>
+#include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/i18n.h>
 #include <leonos/psf_font.h>
@@ -17,6 +18,7 @@
 #define DESKTOP_MODE_COUNT 5
 #define DESKTOP_SCALE_COUNT 3
 #define TASKBAR_H LEONOS_UI_TASKBAR_H
+#define TASKBAR_CLOCK_W 92
 #define TITLEBAR_H LEONOS_UI_TITLEBAR_H
 #define MIN_W 180
 #define MIN_H 96
@@ -31,6 +33,10 @@
 #define OOBE_WINDOW_TITLE "LeonOS Setup"
 #define OOBE_WINDOW_TEXT "First-run setup"
 #define OOBE_RESPAWN_MS 1000UL
+#define LOGIN_APP_PATH "0:/userland/login.elf"
+#define LOGIN_WINDOW_TITLE "LeonOS Login"
+#define LOGIN_WINDOW_TEXT "Sign in"
+#define LOGIN_RESPAWN_MS 1000UL
 #define DISPLAY_CONFIG_PATH "0:/etc/display.conf"
 #define DISPLAY_CONFIRM_MS 10000UL
 #define START_MENU_W 246
@@ -133,6 +139,7 @@ enum start_action_type {
     START_ACTION_SHUTDOWN = 5,
     START_ACTION_PROGRAMS = 6,
     START_ACTION_SPAWN_ONCE = 7,
+    START_ACTION_LOGOUT = 8,
 };
 
 struct start_menu_item {
@@ -223,6 +230,8 @@ extern uint8_t full_redraw_pending;
 extern uint8_t power_confirm_action;
 extern uint8_t oobe_lock_active;
 extern unsigned long oobe_last_spawn_ms;
+extern uint8_t login_lock_active;
+extern unsigned long login_last_spawn_ms;
 extern char app_titles[MAX_WINDOWS][48];
 extern char app_texts[MAX_WINDOWS][96];
 extern struct leonos_task_info task_infos[LEONOS_TASK_MAX];
@@ -378,8 +387,19 @@ void oobe_lock_on_window_removed(uint8_t slot);
 int oobe_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg);
 int handle_oobe_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons);
 int handle_oobe_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);
+void maybe_launch_login(void);
+int desktop_session_logged_in(void);
+int window_is_login(const struct desktop_window *w);
+int window_msg_is_login(const struct leonos_gui_window_msg *msg);
+int login_window_slot(void);
+void login_lock_update(void);
+void login_lock_on_window_removed(uint8_t slot);
+int login_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg);
+int handle_login_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons);
+int handle_login_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);
 void desktop_reboot(void);
 void desktop_shutdown(void);
+void desktop_logout(void);
 void desktop_request_power_confirm(uint8_t action);
 int desktop_handle_power_confirm_click(uint32_t x, uint32_t y);
 void handle_start_click(uint32_t x, uint32_t y);

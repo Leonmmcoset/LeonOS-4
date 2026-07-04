@@ -55,6 +55,8 @@ uint8_t full_redraw_pending;
 uint8_t power_confirm_action;
 uint8_t oobe_lock_active;
 unsigned long oobe_last_spawn_ms;
+uint8_t login_lock_active;
+unsigned long login_last_spawn_ms;
 char app_titles[MAX_WINDOWS][48];
 char app_texts[MAX_WINDOWS][96];
 struct leonos_task_info task_infos[LEONOS_TASK_MAX];

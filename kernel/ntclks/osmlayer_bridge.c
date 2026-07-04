@@ -1,6 +1,7 @@
 #include <ntclks/console.h>
 #include <ntclks/mm.h>
 #include <ntclks/osmlayer.h>
+#include <ntclks/storage.h>
 
 static struct osmlayer_boot_summary summary;
 static const struct leonos_middlelayer_api *api;
@@ -10,6 +11,10 @@ static uint32_t (*middlelayer_selftest)(void);
 static int32_t (*middlelayer_mount_policy)(const struct boot_info *boot,
                                            struct leonos_mount_policy *policy);
 static int32_t (*middlelayer_unicode_op)(uint32_t op, void *arg);
+static int32_t (*middlelayer_vfs_op)(uint32_t op, void *arg);
+static int32_t (*middlelayer_device_catalog)(struct leonos_device_catalog_query *query);
+static int32_t (*middlelayer_auth_op)(uint32_t op, void *arg);
+static struct leonos_kernel_services kernel_services;
 
 static int is_utf8_cont(uint8_t byte)
 {
@@ -287,6 +292,55 @@ static void osmlayer_log_len(const char *message, uint64_t len)
     }
 }
 
+static int32_t osmlayer_read_file_service(const char *path, void *buf,
+                                          uint32_t capacity, uint32_t *out_len)
+{
+    const void *data = 0;
+    size_t len = 0;
+    int ret;
+    uint32_t pages;
+    if (out_len) {
+        *out_len = 0;
+    }
+    if (!path || (!buf && capacity != 0)) {
+        return -22;
+    }
+    ret = storage_read_file(path, &data, &len);
+    if (ret < 0) {
+        return ret;
+    }
+    if (out_len) {
+        *out_len = (uint32_t)len;
+    }
+    if (len > capacity) {
+        pages = (uint32_t)(((len ? len : 1u) + 4095u) / 4096u);
+        mm_free_pages((uint64_t)(uintptr_t)data, pages);
+        return -7;
+    }
+    for (uint32_t i = 0; i < (uint32_t)len; ++i) {
+        ((uint8_t *)buf)[i] = ((const uint8_t *)data)[i];
+    }
+    pages = (uint32_t)(((len ? len : 1u) + 4095u) / 4096u);
+    mm_free_pages((uint64_t)(uintptr_t)data, pages);
+    return 0;
+}
+
+static int32_t osmlayer_write_file_service(const char *path, const void *buf, uint32_t len)
+{
+    if (!path || (!buf && len != 0)) {
+        return -22;
+    }
+    return storage_write_file(path, buf ? buf : "", len);
+}
+
+static int32_t osmlayer_mkdir_service(const char *path)
+{
+    if (!path) {
+        return -22;
+    }
+    return storage_mkdir(path);
+}
+
 void osmlayer_bridge_init(const struct boot_info *boot,
                           const struct leonos_boot_handoff *handoff)
 {
@@ -297,18 +351,21 @@ void osmlayer_bridge_init(const struct boot_info *boot,
         return;
     }
 
-    struct leonos_kernel_services services = {
+    kernel_services = (struct leonos_kernel_services){
         .version = LEONOS_KERNEL_SERVICES_VERSION,
         .reserved = 0,
         .log = osmlayer_log,
         .log_len = osmlayer_log_len,
+        .read_file = osmlayer_read_file_service,
+        .write_file = osmlayer_write_file_service,
+        .mkdir = osmlayer_mkdir_service,
     };
     leonos_middlelayer_module_init_fn module_init =
         (leonos_middlelayer_module_init_fn)(uintptr_t)handoff->middlelayer.entry;
-    api = module_init(&services, handoff);
+    api = module_init(&kernel_services, handoff);
     if (!api || api->version != LEONOS_MIDDLELAYER_API_VERSION ||
         !api->init || !api->syscall || !api->selftest || !api->mount_policy ||
-        !api->unicode_op) {
+        !api->unicode_op || !api->vfs_op || !api->device_catalog || !api->auth_op) {
         console_printf("[osmlayer] middlelayer ABI rejected api=%p version=%u\n",
                        (void *)api,
                        api ? api->version : 0);
@@ -326,6 +383,12 @@ void osmlayer_bridge_init(const struct boot_info *boot,
                      struct leonos_mount_policy *))(uintptr_t)api->mount_policy;
     middlelayer_unicode_op =
         (int32_t (*)(uint32_t, void *))(uintptr_t)api->unicode_op;
+    middlelayer_vfs_op =
+        (int32_t (*)(uint32_t, void *))(uintptr_t)api->vfs_op;
+    middlelayer_device_catalog =
+        (int32_t (*)(struct leonos_device_catalog_query *))(uintptr_t)api->device_catalog;
+    middlelayer_auth_op =
+        (int32_t (*)(uint32_t, void *))(uintptr_t)api->auth_op;
     summary = middlelayer_init(boot);
     console_printf("[osmlayer] bridge init returned\n");
     if (summary.memory_kib == 0) {
@@ -393,6 +456,30 @@ uint32_t osmlayer_unicode_safe_truncate_utf8(const char *text, uint32_t cap)
     return off;
 }
 
+int osmlayer_vfs_resolve_path(struct leonos_vfs_resolve_path *query)
+{
+    if (!middlelayer_vfs_op || !query) {
+        return -38;
+    }
+    return middlelayer_vfs_op(LEONOS_VFS_OP_RESOLVE_PATH, query);
+}
+
+int osmlayer_device_catalog(struct leonos_device_catalog_query *query)
+{
+    if (!middlelayer_device_catalog || !query) {
+        return -38;
+    }
+    return middlelayer_device_catalog(query);
+}
+
+int osmlayer_auth_op(uint32_t op, void *arg)
+{
+    if (!middlelayer_auth_op) {
+        return -38;
+    }
+    return middlelayer_auth_op(op, arg);
+}
+
 int64_t osmlayer_bridge_syscall(const struct syscall_frame *frame)
 {
     if (!middlelayer_syscall) {
@@ -408,5 +495,5 @@ void osmlayer_bridge_selftest(void)
         return;
     }
     uint32_t passed = middlelayer_selftest();
-    console_printf("[osmlayer] selftest passed=%u/4 (vfs fat32 ipc gui)\n", passed);
+    console_printf("[osmlayer] selftest passed=%u/5 (vfs fat32 ipc gui device)\n", passed);
 }

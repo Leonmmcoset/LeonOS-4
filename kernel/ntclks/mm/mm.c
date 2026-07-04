@@ -317,6 +317,17 @@ uint64_t mm_total_memory_kib(void)
     return total_kib;
 }
 
+uint64_t mm_free_memory_kib(void)
+{
+    uint64_t free_kib = 0;
+    for (uint32_t i = 0; i < free_range_count; ++i) {
+        if (free_ranges[i].end > free_ranges[i].start) {
+            free_kib += (free_ranges[i].end - free_ranges[i].start) / 1024ULL;
+        }
+    }
+    return free_kib;
+}
+
 uint64_t mm_alloc_pages(uint32_t page_count)
 {
     if (!page_count) {

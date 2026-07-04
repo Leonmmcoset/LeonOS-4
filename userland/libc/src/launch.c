@@ -26,6 +26,9 @@ static const struct builtin_program builtin_programs[] = {
     {"calc", "0:/userland/calc.elf"},
     {"run", "0:/userland/run.elf"},
     {"osver", "0:/userland/osver.elf"},
+    {"memtest", "0:/userland/memtest.elf"},
+    {"diskmgr", "0:/userland/diskmgr.elf"},
+    {"devmgr", "0:/userland/devmgr.elf"},
 };
 
 static const struct builtin_assoc builtin_assocs[] = {

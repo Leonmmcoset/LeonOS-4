@@ -7,7 +7,10 @@ static struct task tasks[SCHED_TASK_MAX];
 static uint32_t task_count;
 static uint32_t next_pid = 1;
 static uint32_t current_pid;
+static uint32_t next_session_id = 1;
 static uint64_t scheduler_ticks;
+static uint64_t scheduler_busy_ticks;
+static uint64_t scheduler_idle_ticks;
 
 static int str_eq(const char *a, const char *b)
 {
@@ -53,12 +56,52 @@ static void task_copy_cwd(struct task *task, const char *cwd)
     task->cwd[i] = 0;
 }
 
+static void task_copy_identity_text(char *dst, size_t cap, const char *src)
+{
+    size_t i = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    while (src && src[i] && i + 1 < cap) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = 0;
+}
+
+static void task_clear_identity(struct task *task)
+{
+    if (!task) {
+        return;
+    }
+    task->uid = 0;
+    task->role = LEONOS_AUTH_ROLE_NONE;
+    task->session_id = 0;
+    task->username[0] = 0;
+    task->home[0] = 0;
+}
+
+static void task_copy_identity_from_parent(struct task *task, const struct task *parent)
+{
+    if (!task || !parent) {
+        return;
+    }
+    task->uid = parent->uid;
+    task->role = parent->role;
+    task->session_id = parent->session_id;
+    task_copy_identity_text(task->username, sizeof(task->username), parent->username);
+    task_copy_identity_text(task->home, sizeof(task->home), parent->home);
+}
+
 void sched_init(void)
 {
     task_count = 0;
     next_pid = 1;
     current_pid = 0;
+    next_session_id = 1;
     scheduler_ticks = 0;
+    scheduler_busy_ticks = 0;
+    scheduler_idle_ticks = 0;
     console_printf("[ntclks] scheduler initialized\n");
 }
 
@@ -113,6 +156,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task->kind = TASK_KIND_KERNEL;
     task->flags = 0;
     task->pty_id = 0;
+    task_clear_identity(task);
     task_copy_cwd(task, "0:/");
     console_printf("[ntclks] task pid=%u name=%s entry=0x%llx\n",
                    task->pid, task->name, (unsigned long long)task->entry);
@@ -156,11 +200,13 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->state = TASK_READY;
     task->kind = TASK_KIND_USER;
     task->flags = flags;
+    task_clear_identity(task);
     task_copy_cwd(task, "0:/");
     if (parent_pid) {
         struct task *parent = sched_find(parent_pid);
         if (parent) {
             task_copy_cwd(task, parent->cwd);
+            task_copy_identity_from_parent(task, parent);
         }
     }
     console_printf("[ntclks] task pid=%u ppid=%u name=%s user entry=0x%llx stack=0x%llx flags=0x%x\n",
@@ -268,6 +314,7 @@ void sched_create_idle_task(void)
     task->kind = TASK_KIND_KERNEL;
     task->flags = 0;
     task->pty_id = 0;
+    task_clear_identity(task);
     task_copy_cwd(task, "0:/");
 }
 
@@ -319,6 +366,11 @@ void sched_release_task_resources(struct task *task)
 void sched_on_tick(void)
 {
     ++scheduler_ticks;
+    if (current_pid == 0) {
+        ++scheduler_idle_ticks;
+    } else {
+        ++scheduler_busy_ticks;
+    }
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i].state == TASK_BLOCKED && tasks[i].wake_tick &&
             tasks[i].wake_tick <= scheduler_ticks) {
@@ -331,6 +383,45 @@ void sched_on_tick(void)
 uint64_t sched_tick_count(void)
 {
     return scheduler_ticks;
+}
+
+void sched_cpu_ticks(uint64_t *busy_ticks, uint64_t *idle_ticks)
+{
+    if (busy_ticks) {
+        *busy_ticks = scheduler_busy_ticks;
+    }
+    if (idle_ticks) {
+        *idle_ticks = scheduler_idle_ticks;
+    }
+}
+
+void sched_task_counts(uint32_t *out_task_count, uint32_t *running_tasks,
+                       uint32_t *ready_tasks, uint32_t *sleeping_tasks)
+{
+    uint32_t running = 0;
+    uint32_t ready = 0;
+    uint32_t sleeping = 0;
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i].state == TASK_RUNNING) {
+            ++running;
+        } else if (tasks[i].state == TASK_READY) {
+            ++ready;
+        } else if (tasks[i].state == TASK_BLOCKED) {
+            ++sleeping;
+        }
+    }
+    if (out_task_count) {
+        *out_task_count = task_count;
+    }
+    if (running_tasks) {
+        *running_tasks = running;
+    }
+    if (ready_tasks) {
+        *ready_tasks = ready;
+    }
+    if (sleeping_tasks) {
+        *sleeping_tasks = sleeping;
+    }
 }
 
 uint32_t sched_current_pid(void)
@@ -435,6 +526,27 @@ int sched_kill_user_task(uint32_t pid, uint64_t code)
     return 0;
 }
 
+int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
+                                     uint32_t keep_pid, uint64_t code)
+{
+    int killed = 0;
+    if (!uid || !session_id) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = &tasks[i];
+        if (task->pid == 0 || task->pid == keep_pid ||
+            task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
+            task->uid != uid || task->session_id != session_id ||
+            (task->flags & TASK_FLAG_SERVICE)) {
+            continue;
+        }
+        sched_exit(task->pid, code);
+        ++killed;
+    }
+    return killed;
+}
+
 int64_t sched_wait_reap(uint32_t waiter_pid, uint32_t wanted_pid, uint64_t *exit_code)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
@@ -459,6 +571,7 @@ int64_t sched_wait_reap(uint32_t waiter_pid, uint32_t wanted_pid, uint64_t *exit
             task->image = NULL;
             task->image_len = 0;
             task->pty_id = 0;
+            task_clear_identity(task);
             task_copy_cwd(task, "0:/");
             for (size_t j = 0; j < SCHED_TASK_FILE_MAX; ++j) {
                 task->files[j].used = 0;
@@ -503,22 +616,81 @@ uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint6
         dst->state = (uint32_t)tasks[i].state;
         dst->kind = (uint32_t)tasks[i].kind;
         dst->flags = tasks[i].flags;
-        dst->reserved = 0;
+        dst->uid = tasks[i].uid;
+        dst->role = tasks[i].role;
+        dst->session_id = tasks[i].session_id;
         dst->wake_tick = tasks[i].wake_tick;
         dst->entry = tasks[i].entry;
         dst->cr3 = tasks[i].as.cr3;
         snapshot_name(dst->name, sizeof(dst->name), tasks[i].name);
+        snapshot_name(dst->username, sizeof(dst->username), tasks[i].username);
     }
     return n;
+}
+
+void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
+                             uint32_t session_id)
+{
+    struct task *task = sched_find(pid);
+    if (!task) {
+        return;
+    }
+    if (!user || !user->uid) {
+        task_clear_identity(task);
+        task_copy_cwd(task, "0:/");
+        return;
+    }
+    task->uid = user->uid;
+    task->role = user->role;
+    task->session_id = session_id;
+    task_copy_identity_text(task->username, sizeof(task->username), user->username);
+    task_copy_identity_text(task->home, sizeof(task->home), user->home);
+    if (user->home[0]) {
+        task_copy_cwd(task, user->home);
+    }
+}
+
+void sched_set_session_identity(uint32_t parent_pid, const struct leonos_user_info *user,
+                                uint32_t session_id)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = &tasks[i];
+        if (task->pid == parent_pid || task->parent_pid == parent_pid) {
+            sched_set_task_identity(task->pid, user, session_id);
+        }
+    }
+}
+
+void sched_clear_session_identity(uint32_t session_id)
+{
+    if (!session_id) {
+        return;
+    }
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i].session_id == session_id) {
+            task_clear_identity(&tasks[i]);
+            task_copy_cwd(&tasks[i], "0:/");
+        }
+    }
+}
+
+uint32_t sched_next_session_id(void)
+{
+    if (next_session_id == 0) {
+        next_session_id = 1;
+    }
+    return next_session_id++;
 }
 
 void sched_dump(void)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        console_printf("[ntclks] task[%u] pid=%u ppid=%u name=%s state=%u kind=%u flags=0x%x\n",
+        console_printf("[ntclks] task[%u] pid=%u ppid=%u uid=%u role=%u name=%s state=%u kind=%u flags=0x%x\n",
                        i,
                        tasks[i].pid,
                        tasks[i].parent_pid,
+                       tasks[i].uid,
+                       tasks[i].role,
                        tasks[i].name,
                        tasks[i].state,
                        tasks[i].kind,

@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 mod fat32;
+mod device;
 mod gui;
 mod ipc;
 mod posix;
@@ -100,6 +101,9 @@ pub struct LeonosKernelServices {
     reserved: u32,
     log: Option<extern "C" fn(*const c_char)>,
     log_len: Option<extern "C" fn(*const c_char, u64)>,
+    read_file: Option<extern "C" fn(*const c_char, *mut core::ffi::c_void, u32, *mut u32) -> i32>,
+    write_file: Option<extern "C" fn(*const c_char, *const core::ffi::c_void, u32) -> i32>,
+    mkdir: Option<extern "C" fn(*const c_char) -> i32>,
 }
 
 #[repr(C)]
@@ -111,11 +115,14 @@ pub struct LeonosMiddlelayerApi {
     selftest: extern "C" fn() -> u32,
     mount_policy: extern "C" fn(*const BootInfo, *mut vfs::LeonosMountPolicy) -> i32,
     unicode_op: extern "C" fn(u32, *mut core::ffi::c_void) -> i32,
+    vfs_op: extern "C" fn(u32, *mut core::ffi::c_void) -> i32,
+    device_catalog: extern "C" fn(*mut device::LeonosDeviceCatalogQuery) -> i32,
+    auth_op: extern "C" fn(u32, *mut core::ffi::c_void) -> i32,
 }
 
 const ENOSYS: i64 = 38;
 const EINVAL: i64 = 22;
-const LEONOS_MIDDLELAYER_API_VERSION: u32 = 3;
+const LEONOS_MIDDLELAYER_API_VERSION: u32 = 5;
 
 static mut SUMMARY: OsmlayerBootSummary = OsmlayerBootSummary {
     abi_version: 1,
@@ -134,6 +141,9 @@ static API: LeonosMiddlelayerApi = LeonosMiddlelayerApi {
     selftest: osmlayer_rust_selftest,
     mount_policy: osmlayer_rust_mount_policy,
     unicode_op: osmlayer_rust_unicode_op,
+    vfs_op: osmlayer_c_vfs_op,
+    device_catalog: osmlayer_c_device_catalog,
+    auth_op: osmlayer_c_auth_op,
 };
 
 macro_rules! klog {
@@ -147,6 +157,14 @@ macro_rules! klog {
     }};
 }
 
+unsafe extern "C" {
+    safe fn osmlayer_c_vfs_op(op: u32, arg: *mut core::ffi::c_void) -> i32;
+    safe fn osmlayer_c_device_catalog(query: *mut device::LeonosDeviceCatalogQuery) -> i32;
+    safe fn osmlayer_c_auth_op(op: u32, arg: *mut core::ffi::c_void) -> i32;
+    safe fn osmlayer_c_bind_services(services: *const LeonosKernelServices);
+    safe fn osmlayer_c_services_selftest() -> i32;
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn osmlayer_module_init(
     services: *const LeonosKernelServices,
@@ -155,6 +173,7 @@ pub extern "C" fn osmlayer_module_init(
     unsafe {
         SERVICES = services;
     }
+    osmlayer_c_bind_services(services);
     klog!("[osmlayer] module ABI bound\n");
     &API
 }
@@ -235,6 +254,9 @@ pub extern "C" fn osmlayer_rust_selftest() -> u32 {
         passed += 1;
     }
     if gui::client_api_version() == 1 {
+        passed += 1;
+    }
+    if osmlayer_c_services_selftest() == 1 {
         passed += 1;
     }
     passed

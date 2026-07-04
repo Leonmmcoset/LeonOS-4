@@ -1,5 +1,11 @@
 #include "desktop.h"
 
+#define TITLEBAR_DOUBLE_CLICK_MS 350UL
+
+static uint8_t last_title_click_valid;
+static uint8_t last_title_click_window;
+static unsigned long last_title_click_ms;
+
 void minimize_window(uint8_t id)
 {
     begin_window_minimize_animation(id);
@@ -198,6 +204,9 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
     if (msg->type != 1) {
         return;
     }
+    if (oobe_lock_blocks_window_msg(msg) || login_lock_blocks_window_msg(msg)) {
+        return;
+    }
     uint8_t slot = MAX_WINDOWS;
     for (uint8_t i = BUILTIN_WINDOWS; i < MAX_WINDOWS; ++i) {
         if (!windows[i].visible) {
@@ -266,17 +275,231 @@ int spawn_program_path(const char *path)
 void maybe_launch_oobe(void)
 {
     struct leonos_stat st;
+    struct leonos_auth_status auth_status;
     if (stat("0:/userland/installer.elf", &st) == 0 &&
         st.type == LEONOS_FS_TYPE_FILE &&
         stat(OOBE_APP_PATH, &st) < 0) {
         puts("[desktop.elf] installer runtime detected; OOBE disabled");
         return;
     }
-    if (stat(OOBE_DONE_PATH, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
+    if (oobe_done_marker_exists()) {
+        puts("[desktop.elf] OOBE done; launching login");
+        maybe_launch_login();
         return;
     }
-    puts("[desktop.elf] OOBE completion marker missing; launching oobe.elf");
+    auth_status = (struct leonos_auth_status){0};
+    (void)leonos_auth_status(&auth_status);
+    puts(auth_status.has_admin
+             ? "[desktop.elf] OOBE completion marker missing; launching oobe.elf"
+             : "[desktop.elf] administrator account missing; launching oobe.elf");
+    oobe_lock_active = 1;
+    oobe_last_spawn_ms = leonos_uptime_ms();
     spawn_program_path(OOBE_APP_PATH);
+}
+
+int oobe_done_marker_exists(void)
+{
+    struct leonos_stat st;
+    struct leonos_auth_status status;
+    status = (struct leonos_auth_status){0};
+    if (leonos_auth_status(&status) < 0 || !status.has_admin) {
+        return 0;
+    }
+    return stat(OOBE_DONE_PATH, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE;
+}
+
+int window_is_oobe(const struct desktop_window *w)
+{
+    return w && w->visible && text_eq(w->title, OOBE_WINDOW_TITLE) &&
+           text_eq(w->app_text, OOBE_WINDOW_TEXT);
+}
+
+int window_msg_is_oobe(const struct leonos_gui_window_msg *msg)
+{
+    return msg && text_eq(msg->title, OOBE_WINDOW_TITLE) &&
+           text_eq(msg->text, OOBE_WINDOW_TEXT);
+}
+
+int oobe_window_slot(void)
+{
+    for (uint8_t i = BUILTIN_WINDOWS; i < MAX_WINDOWS; ++i) {
+        if (window_is_oobe(&windows[i])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void oobe_lock_update(void)
+{
+    unsigned long now;
+    if (!oobe_lock_active) {
+        return;
+    }
+    if (oobe_done_marker_exists()) {
+        oobe_lock_active = 0;
+        full_redraw_pending = 1;
+        maybe_launch_login();
+        return;
+    }
+    if (oobe_window_slot() >= 0) {
+        return;
+    }
+    now = leonos_uptime_ms();
+    if (now - oobe_last_spawn_ms >= OOBE_RESPAWN_MS) {
+        oobe_last_spawn_ms = now;
+        spawn_program_path(OOBE_APP_PATH);
+    }
+}
+
+void oobe_lock_on_window_removed(uint8_t slot)
+{
+    (void)slot;
+    if (oobe_lock_active) {
+        oobe_last_spawn_ms = 0;
+    }
+}
+
+int oobe_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg)
+{
+    return oobe_lock_active && !window_msg_is_oobe(msg);
+}
+
+int handle_oobe_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons)
+{
+    int slot;
+    (void)x;
+    (void)y;
+    (void)buttons;
+    if (!oobe_lock_active) {
+        return 0;
+    }
+    slot = oobe_window_slot();
+    if (slot >= 0) {
+        bring_to_front((uint8_t)slot);
+    }
+    start_menu_set_open(0);
+    return 1;
+}
+
+int handle_oobe_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
+{
+    (void)x;
+    (void)y;
+    (void)wheel;
+    (void)buttons;
+    return oobe_lock_active ? 1 : 0;
+}
+
+int desktop_session_logged_in(void)
+{
+    struct leonos_user_info user;
+    user = (struct leonos_user_info){0};
+    return leonos_auth_current(&user) == 0 && user.uid != 0;
+}
+
+void maybe_launch_login(void)
+{
+    struct leonos_auth_status status;
+    if (!oobe_done_marker_exists()) {
+        return;
+    }
+    if (desktop_session_logged_in()) {
+        login_lock_active = 0;
+        return;
+    }
+    status = (struct leonos_auth_status){0};
+    if (leonos_auth_status(&status) < 0 || !status.has_admin) {
+        maybe_launch_oobe();
+        return;
+    }
+    login_lock_active = 1;
+    if (login_window_slot() < 0) {
+        login_last_spawn_ms = leonos_uptime_ms();
+        spawn_program_path(LOGIN_APP_PATH);
+    }
+}
+
+int window_is_login(const struct desktop_window *w)
+{
+    return w && w->visible && text_eq(w->title, LOGIN_WINDOW_TITLE) &&
+           text_eq(w->app_text, LOGIN_WINDOW_TEXT);
+}
+
+int window_msg_is_login(const struct leonos_gui_window_msg *msg)
+{
+    return msg && text_eq(msg->title, LOGIN_WINDOW_TITLE) &&
+           text_eq(msg->text, LOGIN_WINDOW_TEXT);
+}
+
+int login_window_slot(void)
+{
+    for (uint8_t i = BUILTIN_WINDOWS; i < MAX_WINDOWS; ++i) {
+        if (window_is_login(&windows[i])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void login_lock_update(void)
+{
+    unsigned long now;
+    if (!login_lock_active) {
+        return;
+    }
+    if (desktop_session_logged_in()) {
+        login_lock_active = 0;
+        full_redraw_pending = 1;
+        return;
+    }
+    if (login_window_slot() >= 0) {
+        return;
+    }
+    now = leonos_uptime_ms();
+    if (now - login_last_spawn_ms >= LOGIN_RESPAWN_MS) {
+        login_last_spawn_ms = now;
+        spawn_program_path(LOGIN_APP_PATH);
+    }
+}
+
+void login_lock_on_window_removed(uint8_t slot)
+{
+    (void)slot;
+    if (login_lock_active) {
+        login_last_spawn_ms = 0;
+    }
+}
+
+int login_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg)
+{
+    return login_lock_active && !window_msg_is_login(msg);
+}
+
+int handle_login_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons)
+{
+    int slot;
+    (void)x;
+    (void)y;
+    (void)buttons;
+    if (!login_lock_active) {
+        return 0;
+    }
+    slot = login_window_slot();
+    if (slot >= 0) {
+        bring_to_front((uint8_t)slot);
+    }
+    start_menu_set_open(0);
+    return 1;
+}
+
+int handle_login_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
+{
+    (void)x;
+    (void)y;
+    (void)wheel;
+    (void)buttons;
+    return login_lock_active ? 1 : 0;
 }
 
 void desktop_reboot(void)
@@ -289,6 +512,17 @@ void desktop_shutdown(void)
 {
     printf("[desktop.elf] shutdown requested from Start menu\n");
     leonos_system_shutdown();
+}
+
+void desktop_logout(void)
+{
+    printf("[desktop.elf] logout requested from Start menu\n");
+    leonos_auth_logout();
+    login_lock_active = 1;
+    login_last_spawn_ms = 0;
+    start_menu_set_open(0);
+    maybe_launch_login();
+    full_redraw_pending = 1;
 }
 
 void desktop_request_power_confirm(uint8_t action)
@@ -391,6 +625,9 @@ void handle_start_click(uint32_t x, uint32_t y)
             return;
         } else if (items[i].type == START_ACTION_SHUTDOWN) {
             desktop_request_power_confirm(POWER_CONFIRM_SHUTDOWN);
+            return;
+        } else if (items[i].type == START_ACTION_LOGOUT) {
+            desktop_logout();
             return;
         }
         break;
@@ -512,6 +749,20 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         return;
     }
 
+    if ((oobe_lock_active && handle_oobe_lock_mouse(x, y, buttons)) ||
+        (login_lock_active && handle_login_lock_mouse(x, y, buttons))) {
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        if (full_redraw_pending) {
+            redraw_all();
+        } else {
+            repaint_and_flush(rect_pad(dirty, 2));
+        }
+        return;
+    }
+
     if (!(left && !was_left) &&
         hover_id >= BUILTIN_WINDOWS && hover_id < MAX_WINDOWS && windows[hover_id].window_id &&
         !(left && drag_window >= 0)) {
@@ -609,12 +860,29 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                     drag_origin_w = w->width;
                     drag_origin_h = w->height;
                 } else if (!window_is_fullscreen(w) &&
-                           hit_rect(x, y, w->x + 4, w->y + 4, w->width > 8 ? w->width - 8 : 0, TITLEBAR_H) && !w->maximized) {
-                    drag_window = id;
-                    drag_mode = DRAG_MOVE;
-                    drag_dx = (int)x - w->x;
-                    drag_dy = (int)y - w->y;
-                    snap_preview_mode = SNAP_NONE;
+                           hit_rect(x, y, w->x + 4, w->y + 4,
+                                    w->width > 8 ? w->width - 8 : 0, TITLEBAR_H)) {
+                    unsigned long now = leonos_uptime_ms();
+                    if (window_allows_resize(w) &&
+                        last_title_click_valid &&
+                        last_title_click_window == (uint8_t)id &&
+                        now - last_title_click_ms <= TITLEBAR_DOUBLE_CLICK_MS) {
+                        last_title_click_valid = 0;
+                        drag_window = -1;
+                        drag_mode = DRAG_NONE;
+                        toggle_maximize((uint8_t)id);
+                    } else {
+                        last_title_click_valid = 1;
+                        last_title_click_window = (uint8_t)id;
+                        last_title_click_ms = now;
+                        if (window_allows_resize(w) && !w->maximized) {
+                            drag_window = id;
+                            drag_mode = DRAG_MOVE;
+                            drag_dx = (int)x - w->x;
+                            drag_dy = (int)y - w->y;
+                            snap_preview_mode = SNAP_NONE;
+                        }
+                    }
                 } else if (w->window_id) {
                     int client_x = (int)x - origin_x;
                     int client_y = (int)y - origin_y;
@@ -661,6 +929,10 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
         windows[active_window].window_id) {
         send_app_event((uint8_t)active_window, LEONOS_GUI_APP_EVENT_MOUSE_WHEEL,
                        (int32_t)x, (int32_t)y, 0, wheel, buttons, 0, 0);
+        return;
+    }
+    if ((oobe_lock_active && handle_oobe_lock_mouse_wheel(x, y, wheel, buttons)) ||
+        (login_lock_active && handle_login_lock_mouse_wheel(x, y, wheel, buttons))) {
         return;
     }
     if (start_menu_open && start_menu_programs_open && wheel != 0) {

@@ -277,6 +277,7 @@ static struct storage_volume *g_active_volume = &g_volumes[0];
 static struct install_disk_state g_install_disks[STORAGE_MAX_INSTALL_DISKS];
 static uint32_t g_install_disk_count;
 static uint8_t g_devfs_enabled = 1;
+static uint8_t g_installer_root_active;
 
 static uint8_t ahci_received_fis[256] __attribute__((aligned(256)));
 static uint8_t ahci_cmd_table_buf[256] __attribute__((aligned(128)));
@@ -1914,6 +1915,7 @@ void storage_init(void)
     storage_memzero(g_install_disks, sizeof(g_install_disks));
     g_install_disk_count = 0;
     g_devfs_enabled = 1;
+    g_installer_root_active = 0;
     g_active_volume = &g_volumes[0];
 
     for (uint16_t bus = 0; bus < 256; ++bus) {
@@ -2072,6 +2074,7 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
     uint32_t copy_pages;
     storage_memzero(root, sizeof(*root));
     g_active_volume = root;
+    g_installer_root_active = 0;
     if (!image || len < SECTOR_SIZE || (len % SECTOR_SIZE) != 0) {
         return -22;
     }
@@ -2093,6 +2096,7 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
         return -2;
     }
     root->ready = true;
+    g_installer_root_active = 1;
     console_printf("[ntclks] storage installer root ready ramdisk=%p copy=%p bytes=%llu fat32_root=%u\n",
                    image,
                    (void *)(uintptr_t)copy_phys,
@@ -2105,6 +2109,7 @@ void storage_init_installer_root(const struct boot_info *boot)
 {
     storage_memzero(g_volumes, sizeof(g_volumes));
     g_active_volume = &g_volumes[0];
+    g_installer_root_active = 0;
     if (boot) {
         for (uint32_t i = 0; i < boot->module_count; ++i) {
             const struct boot_module *mod = &boot->modules[i];
@@ -2124,14 +2129,33 @@ bool storage_ready(void)
     return g_volumes[0].ready;
 }
 
+bool storage_installer_root_active(void)
+{
+    return g_installer_root_active != 0;
+}
+
 int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t cap)
 {
     char parts[16][LEONOS_FS_NAME_LEN];
     uint32_t part_count = 0;
     char drive = '0';
     uint8_t use_cwd = 1;
+    struct leonos_vfs_resolve_path query;
     if (!input || !out || cap < 4) {
         return -22;
+    }
+    query = (struct leonos_vfs_resolve_path){
+        .cwd = cwd,
+        .input = input,
+        .out = out,
+        .capacity = cap,
+        .drive = 0,
+        .node_kind = LEONOS_VFS_NODE_UNKNOWN,
+        .flags = 0,
+        .reserved = 0,
+    };
+    if (osmlayer_vfs_resolve_path(&query) == 0) {
+        return 0;
     }
     if (input[0] >= '0' && input[0] < (char)('0' + STORAGE_MAX_DRIVES) &&
         input[1] == ':' && input[2] == '/') {

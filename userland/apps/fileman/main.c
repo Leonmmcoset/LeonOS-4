@@ -1,3 +1,4 @@
+#include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
@@ -27,7 +28,9 @@
 #define FILEMAN_CONTEXT_MENU_W 176
 #define FILEMAN_CONTEXT_MENU_COUNT 9
 #define FILEMAN_DETAILS_W 430
-#define FILEMAN_DETAILS_H 190
+#define FILEMAN_DETAILS_H 220
+#define FILEMAN_FOLDER_SIZE_MAX_DEPTH 16
+#define FILEMAN_FOLDER_SIZE_MAX_ITEMS 2048
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum {
@@ -52,6 +55,7 @@ static uint32_t pixels[FILEMAN_MAX_W * FILEMAN_MAX_H];
 static uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
 static struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
 static char current_path[LEONOS_FS_PATH_LEN] = "0:/";
+static char home_path[LEONOS_AUTH_HOME_LEN];
 static char status_text[96] = "Ready";
 static uint32_t entry_count;
 static struct leonos_ui_listview_state file_list;
@@ -81,6 +85,14 @@ struct fileman_layout {
     uint32_t visible_rows;
     uint32_t scrollbar_x;
     uint32_t scrollbar_h;
+};
+
+struct folder_size_info {
+    uint64_t bytes;
+    uint32_t files;
+    uint32_t folders;
+    uint32_t visited;
+    uint8_t partial;
 };
 
 static struct fileman_layout current_layout(void)
@@ -296,6 +308,31 @@ static void set_status_code(const char *prefix, int value)
     set_status(buf);
 }
 
+static int permission_error(int value)
+{
+    return value == -LEONOS_EPERM || value == -LEONOS_EACCES;
+}
+
+static void set_status_error(const char *prefix, int value)
+{
+    if (permission_error(value)) {
+        set_status(T("Permission denied", "权限被拒绝"));
+    } else {
+        set_status_code(prefix, value);
+    }
+}
+
+static int refresh_home_path(void)
+{
+    struct leonos_user_info user;
+    home_path[0] = 0;
+    if (leonos_auth_current(&user) == 0 && user.uid && user.home[0]) {
+        copy_text(home_path, sizeof(home_path), user.home);
+        return 1;
+    }
+    return 0;
+}
+
 static void context_menu_set_active(uint8_t active)
 {
     if (context_menu_active == active && !context_menu_animating) {
@@ -313,6 +350,17 @@ static void build_child_path(char *dst, uint32_t dst_len, const char *name)
     dst[0] = 0;
     append_text(dst, &pos, dst_len, current_path);
     if (!is_root_path(current_path)) {
+        append_char(dst, &pos, dst_len, '/');
+    }
+    append_text(dst, &pos, dst_len, name);
+}
+
+static void build_path_join(char *dst, uint32_t dst_len, const char *parent, const char *name)
+{
+    uint32_t pos = 0;
+    dst[0] = 0;
+    append_text(dst, &pos, dst_len, parent);
+    if (!text_eq(parent, "0:/")) {
         append_char(dst, &pos, dst_len, '/');
     }
     append_text(dst, &pos, dst_len, name);
@@ -389,6 +437,71 @@ static void details_add_line(struct leonos_ui_surface *ui, uint32_t y,
                            value ? value : "", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
 }
 
+static void format_contains_text(char *buf, uint32_t cap, const struct folder_size_info *info)
+{
+    uint32_t pos = 0;
+    buf[0] = 0;
+    append_dec(buf, &pos, cap, info ? info->files : 0);
+    append_text(buf, &pos, cap, T(" files, ", " 个文件, "));
+    append_dec(buf, &pos, cap, info ? info->folders : 0);
+    append_text(buf, &pos, cap, T(" folders", " 个文件夹"));
+    if (info && info->partial) {
+        append_text(buf, &pos, cap, T(" (partial)", " (部分)"));
+    }
+}
+
+static int accumulate_folder_size(const char *path, struct folder_size_info *info, uint32_t depth)
+{
+    struct leonos_dir_entry entry;
+    int fd;
+    int ret;
+    if (!path || !info) {
+        return -1;
+    }
+    if (depth >= FILEMAN_FOLDER_SIZE_MAX_DEPTH ||
+        info->visited >= FILEMAN_FOLDER_SIZE_MAX_ITEMS) {
+        info->partial = 1;
+        return 0;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        info->partial = 1;
+        return fd;
+    }
+    for (;;) {
+        char child[LEONOS_FS_PATH_LEN];
+        struct leonos_stat st;
+        ret = leonos_readdir(fd, &entry);
+        if (ret < 0) {
+            info->partial = 1;
+            close(fd);
+            return ret;
+        }
+        if (ret == 0) {
+            break;
+        }
+        if (info->visited >= FILEMAN_FOLDER_SIZE_MAX_ITEMS) {
+            info->partial = 1;
+            break;
+        }
+        ++info->visited;
+        build_path_join(child, sizeof(child), path, entry.name);
+        if (stat(child, &st) < 0) {
+            info->partial = 1;
+            continue;
+        }
+        if (st.type == LEONOS_FS_TYPE_DIR) {
+            ++info->folders;
+            (void)accumulate_folder_size(child, info, depth + 1);
+        } else if (st.type == LEONOS_FS_TYPE_FILE) {
+            ++info->files;
+            info->bytes += st.size;
+        }
+    }
+    close(fd);
+    return 0;
+}
+
 static void show_details_selected(void)
 {
     struct leonos_ui_surface ui;
@@ -396,6 +509,8 @@ static void show_details_selected(void)
     struct leonos_stat st;
     char path[LEONOS_FS_PATH_LEN];
     char size_line[56];
+    char contains_line[72];
+    struct folder_size_info folder_info = {0};
     int window_id;
     if (!selected_entry_valid()) {
         set_status(T("Select an item", "请选择一个项目"));
@@ -406,7 +521,14 @@ static void show_details_selected(void)
         set_status("Details stat failed");
         return;
     }
-    format_size_text(size_line, sizeof(size_line), st.size);
+    if (st.type == LEONOS_FS_TYPE_DIR) {
+        (void)accumulate_folder_size(path, &folder_info, 0);
+        format_size_text(size_line, sizeof(size_line), folder_info.bytes);
+        format_contains_text(contains_line, sizeof(contains_line), &folder_info);
+    } else {
+        format_size_text(size_line, sizeof(size_line), st.size);
+        contains_line[0] = 0;
+    }
 
     window_id = leonos_gui_create_app_window_ex(T("Properties", "属性"), path,
                                                 FILEMAN_DETAILS_W, FILEMAN_DETAILS_H,
@@ -424,6 +546,9 @@ static void show_details_selected(void)
         details_add_line(&ui, 72, T("Type:", "类型:"), entry_type_name(&entries[file_list.selected]));
         details_add_line(&ui, 96, T("Path:", "路径:"), path);
         details_add_line(&ui, 120, T("Size:", "大小:"), size_line);
+        if (st.type == LEONOS_FS_TYPE_DIR) {
+            details_add_line(&ui, 144, T("Contains:", "包含:"), contains_line);
+        }
         leonos_ui_button(&ui, FILEMAN_DETAILS_W - 90, FILEMAN_DETAILS_H - 38,
                          72, LEONOS_UI_BUTTON_H, "OK", 0);
         leonos_gui_present_window((uint32_t)window_id, FILEMAN_DETAILS_W,
@@ -552,7 +677,7 @@ static int reload_dir(void)
     if (fd < 0) {
         entry_count = 0;
         leonos_ui_listview_state_set_count(&file_list, 0);
-        set_status_code("Open dir failed ", fd);
+        set_status_error("Open dir failed ", fd);
         printf("[fileman.elf] list path=%s open=%d\n", current_path, fd);
         return fd;
     }
@@ -563,7 +688,7 @@ static int reload_dir(void)
             close(fd);
             entry_count = 0;
             leonos_ui_listview_state_set_count(&file_list, 0);
-            set_status_code("Read dir failed ", ret);
+            set_status_error("Read dir failed ", ret);
             printf("[fileman.elf] list path=%s readdir=%d\n", current_path, ret);
             return ret;
         }
@@ -592,6 +717,64 @@ static int reload_dir(void)
     return 0;
 }
 
+static uint32_t build_tree_items(struct leonos_ui_tree_item *items, uint32_t cap)
+{
+    uint32_t count = 0;
+    if (!items || cap < 5) {
+        return 0;
+    }
+    items[count++] = (struct leonos_ui_tree_item){"0:/", 1, 0, LEONOS_UI_TREE_EXPANDED};
+    if (home_path[0] && count < cap) {
+        items[count++] = (struct leonos_ui_tree_item){T("Home", "主页"), 2, 1, LEONOS_UI_TREE_LEAF};
+    }
+    items[count++] = (struct leonos_ui_tree_item){"system", 3, 1, LEONOS_UI_TREE_LEAF};
+    items[count++] = (struct leonos_ui_tree_item){"fonts", 4, 2, LEONOS_UI_TREE_LEAF};
+    items[count++] = (struct leonos_ui_tree_item){"resources", 5, 2, LEONOS_UI_TREE_LEAF};
+    items[count++] = (struct leonos_ui_tree_item){"userland", 6, 1, LEONOS_UI_TREE_LEAF};
+    return count;
+}
+
+static const char *tree_path_for_id(uint32_t id)
+{
+    switch (id) {
+    case 1:
+        return "0:/";
+    case 2:
+        return home_path[0] ? home_path : 0;
+    case 3:
+        return "0:/system";
+    case 4:
+        return "0:/system/fonts";
+    case 5:
+        return "0:/system/resources";
+    case 6:
+        return "0:/userland";
+    default:
+        return 0;
+    }
+}
+
+static int navigate_to_path(const char *path)
+{
+    char old_path[LEONOS_FS_PATH_LEN];
+    char target[LEONOS_FS_PATH_LEN];
+    int ret;
+    if (!path || !path[0]) {
+        return -1;
+    }
+    copy_text(old_path, sizeof(old_path), current_path);
+    copy_text(target, sizeof(target), path);
+    ret = chdir(target);
+    if (ret < 0) {
+        copy_text(current_path, sizeof(current_path), old_path);
+        set_status_error("Open dir failed ", ret);
+        return ret;
+    }
+    copy_text(current_path, sizeof(current_path), target);
+    getcwd(current_path, sizeof(current_path));
+    return reload_dir();
+}
+
 static void draw_fileman(struct leonos_ui_surface *ui)
 {
     struct fileman_layout l = current_layout();
@@ -599,18 +782,10 @@ static void draw_fileman(struct leonos_ui_surface *ui)
         {T("Type", "类型"), 58},
         {T("Name", "名称"), l.list_w > 58 ? l.list_w - 58 : 120},
     };
-    struct leonos_ui_tree_item tree_items[] = {
-        {"0:/", 1, 0, LEONOS_UI_TREE_EXPANDED},
-        {"system", 2, 1, LEONOS_UI_TREE_LEAF},
-        {"fonts", 3, 2, LEONOS_UI_TREE_LEAF},
-        {"resources", 4, 2, LEONOS_UI_TREE_LEAF},
-        {"userland", 5, 1, LEONOS_UI_TREE_LEAF},
-    };
-    for (uint32_t i = 0; i < sizeof(tree_items) / sizeof(tree_items[0]); ++i) {
-        const char *path = i == 0 ? "0:/" :
-                           i == 1 ? "0:/system" :
-                           i == 2 ? "0:/system/fonts" :
-                           i == 3 ? "0:/system/resources" : "0:/userland";
+    struct leonos_ui_tree_item tree_items[6];
+    uint32_t tree_count = build_tree_items(tree_items, sizeof(tree_items) / sizeof(tree_items[0]));
+    for (uint32_t i = 0; i < tree_count; ++i) {
+        const char *path = tree_path_for_id(tree_items[i].id);
         if (text_eq(current_path, path)) {
             tree_items[i].flags |= LEONOS_UI_TREE_SELECTED;
         }
@@ -632,7 +807,7 @@ static void draw_fileman(struct leonos_ui_surface *ui)
     if (l.tree_w) {
         leonos_ui_scroll_view_frame(ui, l.tree_x, l.tree_y, l.tree_w, l.tree_h);
         leonos_ui_tree(ui, l.tree_x + 2, l.tree_y + 4, l.tree_w - 4, tree_items,
-                       sizeof(tree_items) / sizeof(tree_items[0]), TREE_ROW_H);
+                       tree_count, TREE_ROW_H);
     }
     leonos_ui_scroll_view_frame(ui, l.list_x, l.list_y, l.list_w + 22, l.list_h);
     leonos_ui_listview_header(ui, l.list_x + 2, l.list_y + 2, l.list_w, cols, 2);
@@ -707,10 +882,7 @@ static void open_selected_entry(void)
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
     if (entries[file_list.selected].type == LEONOS_FS_TYPE_DIR) {
-        copy_text(current_path, sizeof(current_path), path);
-        chdir(current_path);
-        getcwd(current_path, sizeof(current_path));
-        reload_dir();
+        navigate_to_path(path);
         return;
     }
     {
@@ -747,17 +919,12 @@ static void navigate_up(void)
     }
     build_parent_path(path, sizeof(path));
     copy_text(current_path, sizeof(current_path), path);
-    chdir(current_path);
-    getcwd(current_path, sizeof(current_path));
-    reload_dir();
+    navigate_to_path(current_path);
 }
 
 static void navigate_root(void)
 {
-    copy_text(current_path, sizeof(current_path), "0:/");
-    chdir(current_path);
-    getcwd(current_path, sizeof(current_path));
-    reload_dir();
+    navigate_to_path("0:/");
 }
 
 static void create_new_folder(void)
@@ -776,7 +943,7 @@ static void create_new_folder(void)
     build_child_path(path, sizeof(path), name);
     ret = mkdir(path, 0);
     if (ret < 0) {
-        set_status_code("Create folder failed ", ret);
+        set_status_error("Create folder failed ", ret);
         return;
     }
     reload_dir();
@@ -815,7 +982,7 @@ static void rename_selected_entry(void)
     build_child_path(new_path, sizeof(new_path), name);
     ret = rename(old_path, new_path);
     if (ret < 0) {
-        set_status_code("Rename failed ", ret);
+        set_status_error("Rename failed ", ret);
         return;
     }
     reload_dir();
@@ -855,7 +1022,7 @@ static void delete_selected_entry(void)
         if (ret == -39) {
             set_status(T("Delete failed: directory not empty", "删除失败：目录非空"));
         } else {
-            set_status_code("Delete failed ", ret);
+            set_status_error("Delete failed ", ret);
         }
         return;
     }
@@ -1082,27 +1249,15 @@ static void handle_click(int32_t x, int32_t y)
     }
     if (l.tree_w && hit_rect_i(x, y, (int32_t)l.tree_x, (int32_t)l.tree_y,
                                (int32_t)l.tree_w, (int32_t)l.tree_h)) {
-        struct leonos_ui_tree_item tree_items[] = {
-            {"0:/", 1, 0, LEONOS_UI_TREE_EXPANDED},
-            {"system", 2, 1, LEONOS_UI_TREE_LEAF},
-            {"fonts", 3, 2, LEONOS_UI_TREE_LEAF},
-            {"resources", 4, 2, LEONOS_UI_TREE_LEAF},
-            {"userland", 5, 1, LEONOS_UI_TREE_LEAF},
-        };
+        struct leonos_ui_tree_item tree_items[6];
+        uint32_t tree_count = build_tree_items(tree_items, sizeof(tree_items) / sizeof(tree_items[0]));
         uint32_t id = 0;
         if (leonos_ui_tree_hit(x, y, l.tree_x + 2, l.tree_y + 4, l.tree_w - 4,
-                               tree_items, sizeof(tree_items) / sizeof(tree_items[0]),
+                               tree_items, tree_count,
                                TREE_ROW_H, &id)) {
-            const char *path = id == 1 ? "0:/" :
-                               id == 2 ? "0:/system" :
-                               id == 3 ? "0:/system/fonts" :
-                               id == 4 ? "0:/system/resources" :
-                               id == 5 ? "0:/userland" : 0;
+            const char *path = tree_path_for_id(id);
             if (path) {
-                copy_text(current_path, sizeof(current_path), path);
-                chdir(current_path);
-                getcwd(current_path, sizeof(current_path));
-                reload_dir();
+                navigate_to_path(path);
             }
         }
         return;
@@ -1198,12 +1353,15 @@ int main(int argc, char **argv, char **envp)
     leonos_ui_bind(&ui, pixels, view_w, view_h, FILEMAN_MAX_W);
     leonos_ui_listview_state_init(&file_list, current_layout().visible_rows, ROW_H);
     file_list.focused = 1;
+    refresh_home_path();
     if (argc > 1 && argv && argv[1] && argv[1][0]) {
         copy_text(current_path, sizeof(current_path), argv[1]);
+    } else if (home_path[0]) {
+        copy_text(current_path, sizeof(current_path), home_path);
     }
-    chdir(current_path);
-    getcwd(current_path, sizeof(current_path));
-    reload_dir();
+    if (navigate_to_path(current_path) < 0 && !text_eq(current_path, "0:/")) {
+        navigate_to_path("0:/");
+    }
     present_fileman((uint32_t)window_id, &ui);
 
     for (;;) {

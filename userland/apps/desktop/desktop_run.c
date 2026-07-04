@@ -77,6 +77,7 @@ void desktop_run(void)
     maybe_launch_oobe();
 
     unsigned long last_log = 0;
+    unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
     unsigned idle_spins = 0;
     for (;;) {
         struct leonos_gui_window_msg window_msg;
@@ -86,6 +87,8 @@ void desktop_run(void)
             did_work = 1;
         }
         desktop_handle_display_requests();
+        oobe_lock_update();
+        login_lock_update();
         desktop_update_window_animations();
 
         struct leonos_input_event event;
@@ -128,6 +131,11 @@ void desktop_run(void)
         }
 
         unsigned long now = leonos_uptime_ms();
+        if (now / 1000UL != last_clock_second) {
+            last_clock_second = now / 1000UL;
+            repaint_and_flush(rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));
+            did_work = 1;
+        }
         if (now - last_task_refresh >= 500) {
             refresh_task_snapshot();
             if (windows[3].visible && !windows[3].minimized) {

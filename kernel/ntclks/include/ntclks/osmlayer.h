@@ -2,6 +2,7 @@
 #define NTCLKS_OSMLAYER_H
 
 #include <leonos/boot_handoff.h>
+#include <leonos/auth.h>
 #include <leonos/text.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/syscall.h>
@@ -22,6 +23,9 @@ int osmlayer_unicode_layout_utf8(struct leonos_text_layout *layout);
 int osmlayer_unicode_utf8_to_utf16le(struct leonos_unicode_utf8_to_utf16 *cmd);
 int osmlayer_unicode_utf16le_to_utf8(struct leonos_unicode_utf16_to_utf8 *cmd);
 uint32_t osmlayer_unicode_safe_truncate_utf8(const char *text, uint32_t cap);
+int osmlayer_vfs_resolve_path(struct leonos_vfs_resolve_path *query);
+int osmlayer_device_catalog(struct leonos_device_catalog_query *query);
+int osmlayer_auth_op(uint32_t op, void *arg);
 int64_t osmlayer_bridge_syscall(const struct syscall_frame *frame);
 void osmlayer_bridge_selftest(void);
 

@@ -25,6 +25,7 @@ static uint32_t desktop_pid;
 static bool autospawn_hello;
 static bool autospawn_uidemo;
 static bool autospawn_terminal;
+static bool autospawn_memtest;
 static bool autospawn_installer;
 
 static int name_contains(const char *name, const char *needle)
@@ -363,6 +364,7 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
         return userland_schedule_from_frame(NULL);
     }
     sched_set_running(next->pid);
+    userland_yield_if_runnable();
     return next;
 }
 
@@ -392,6 +394,7 @@ void userland_init(const struct boot_info *boot)
     autospawn_hello = boot && name_contains(boot->cmdline, "autospawn=hello");
     autospawn_uidemo = boot && name_contains(boot->cmdline, "autospawn=uidemo");
     autospawn_terminal = boot && name_contains(boot->cmdline, "autospawn=terminal");
+    autospawn_memtest = boot && name_contains(boot->cmdline, "autospawn=memtest");
     autospawn_installer = boot && name_contains(boot->cmdline, "autospawn=installer");
     if (autospawn_hello) {
         console_printf("[ntclks] debug autospawn hello enabled\n");
@@ -401,6 +404,9 @@ void userland_init(const struct boot_info *boot)
     }
     if (autospawn_terminal) {
         console_printf("[ntclks] debug autospawn terminal enabled\n");
+    }
+    if (autospawn_memtest) {
+        console_printf("[ntclks] debug autospawn memtest enabled\n");
     }
     if (autospawn_installer) {
         console_printf("[ntclks] installer autospawn enabled\n");
@@ -518,6 +524,11 @@ void userland_yield_if_runnable(void)
         autospawn_terminal = false;
         int64_t pid = userland_spawn_path("0:/userland/terminal.elf");
         console_printf("[ntclks] debug autospawn terminal pid=%lld\n", (long long)pid);
+    }
+    if (autospawn_memtest && sched_current_pid() == desktop_pid) {
+        autospawn_memtest = false;
+        int64_t pid = userland_spawn_path("0:/userland/memtest.elf");
+        console_printf("[ntclks] debug autospawn memtest pid=%lld\n", (long long)pid);
     }
     if (autospawn_installer && sched_current_pid() == desktop_pid) {
         autospawn_installer = false;

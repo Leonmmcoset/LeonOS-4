@@ -2,6 +2,8 @@
 #include <ntclks/framebuffer.h>
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
+#include <ntclks/mm.h>
+#include <ntclks/mouse.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/power.h>
 #include <ntclks/pty.h>
@@ -13,6 +15,8 @@
 #include <ntclks/userland.h>
 #include <ntclks/version.h>
 
+#include <leonos/device.h>
+#include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
@@ -43,6 +47,20 @@
 #define LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE 0x4c445353ULL
 #define LEONOS_TEXT_LAYOUT_MAX_BYTES 4096U
 #define LEONOS_TEXT_LAYOUT_MAX_GLYPHS 512U
+#define PAGE_SIZE 4096ULL
+#define LINUX_PROT_READ 0x1u
+#define LINUX_PROT_WRITE 0x2u
+#define LINUX_PROT_EXEC 0x4u
+#define LINUX_MAP_PRIVATE 0x02u
+#define LINUX_MAP_FIXED 0x10u
+#define LINUX_MAP_ANONYMOUS 0x20u
+#define LINUX_MAP_SUPPORTED (LINUX_MAP_PRIVATE | LINUX_MAP_FIXED | LINUX_MAP_ANONYMOUS)
+#define TASK_VMA_FLAG_PRIVATE 0x00000001u
+#define TASK_VMA_FLAG_ANON    0x00000002u
+#define TASK_VMA_FLAG_FILE    0x00000004u
+#define TASK_VMA_FLAG_LAZY    0x00000008u
+
+static struct leonos_user_info auth_user_scratch[LEONOS_AUTH_MAX_USERS];
 
 struct task_snapshot_user {
     uint32_t capacity;
@@ -50,6 +68,172 @@ struct task_snapshot_user {
     uint64_t tick;
     struct task_snapshot_info *tasks;
 };
+
+static void device_copy_text(char *dst, uint32_t cap, const char *src)
+{
+    uint32_t i = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    while (src && src[i] && i + 1 < cap) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = 0;
+}
+
+static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
+{
+    if (buf && pos && *pos + 1 < cap) {
+        buf[(*pos)++] = ch;
+        buf[*pos] = 0;
+    }
+}
+
+static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
+{
+    while (text && *text) {
+        device_append_char(buf, pos, cap, *text++);
+    }
+}
+
+static void device_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
+{
+    char tmp[24];
+    uint32_t n = 0;
+    if (value == 0) {
+        device_append_char(buf, pos, cap, '0');
+        return;
+    }
+    while (value && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+    while (n) {
+        device_append_char(buf, pos, cap, tmp[--n]);
+    }
+}
+
+static void device_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t value)
+{
+    if (value < 0) {
+        device_append_char(buf, pos, cap, '-');
+        value = -value;
+    }
+    device_append_u64(buf, pos, cap, (uint32_t)value);
+}
+
+static void device_add(struct leonos_device_info *devices, uint32_t capacity,
+                       uint32_t *count, uint32_t device_class, uint32_t flags,
+                       const char *name, const char *status, const char *detail,
+                       uint64_t value0, uint64_t value1)
+{
+    uint32_t index;
+    if (!count) {
+        return;
+    }
+    index = *count;
+    *count = index + 1;
+    if (!devices || index >= capacity) {
+        return;
+    }
+    devices[index] = (struct leonos_device_info){0};
+    devices[index].id = index;
+    devices[index].device_class = device_class;
+    devices[index].flags = flags;
+    devices[index].value0 = value0;
+    devices[index].value1 = value1;
+    device_copy_text(devices[index].name, sizeof(devices[index].name), name);
+    device_copy_text(devices[index].status, sizeof(devices[index].status), status);
+    device_copy_text(devices[index].detail, sizeof(devices[index].detail), detail);
+}
+
+static void raw_device_add(struct leonos_raw_device_info *raw, uint32_t *count,
+                           uint32_t kind, uint32_t flags, uint32_t aux0, uint32_t aux1,
+                           uint64_t value0, uint64_t value1)
+{
+    uint32_t index;
+    if (!raw || !count || *count >= LEONOS_RAW_DEVICE_MAX) {
+        return;
+    }
+    index = (*count)++;
+    raw[index] = (struct leonos_raw_device_info){
+        .kind = kind,
+        .flags = flags,
+        .aux0 = aux0,
+        .aux1 = aux1,
+        .value0 = value0,
+        .value1 = value1,
+    };
+}
+
+static void device_format_fb(char *buf, uint32_t cap, const struct framebuffer *fb)
+{
+    uint32_t pos = 0;
+    buf[0] = 0;
+    if (!fb || !fb->available) {
+        device_append_text(buf, &pos, cap, "No GOP framebuffer");
+        return;
+    }
+    device_append_u64(buf, &pos, cap, fb->width);
+    device_append_char(buf, &pos, cap, 'x');
+    device_append_u64(buf, &pos, cap, fb->height);
+    device_append_text(buf, &pos, cap, " bpp=");
+    device_append_u64(buf, &pos, cap, fb->bpp);
+    device_append_text(buf, &pos, cap, " pitch=");
+    device_append_u64(buf, &pos, cap, fb->pitch);
+}
+
+static void device_format_mouse(char *buf, uint32_t cap, const struct mouse_state *mouse)
+{
+    uint32_t pos = 0;
+    buf[0] = 0;
+    if (!mouse || !mouse->present) {
+        device_append_text(buf, &pos, cap, "PS/2 mouse not detected");
+        return;
+    }
+    device_append_text(buf, &pos, cap, mouse->absolute ? "absolute " : "relative ");
+    device_append_text(buf, &pos, cap, "x=");
+    device_append_i32(buf, &pos, cap, mouse->x);
+    device_append_text(buf, &pos, cap, " y=");
+    device_append_i32(buf, &pos, cap, mouse->y);
+    device_append_text(buf, &pos, cap, " buttons=");
+    device_append_u64(buf, &pos, cap, mouse->buttons);
+}
+
+static void device_format_disk(char *buf, uint32_t cap, const struct leonos_install_disk *disk)
+{
+    uint32_t pos = 0;
+    uint64_t mib = disk ? (disk->sector_count * (uint64_t)disk->sector_size) / (1024ULL * 1024ULL) : 0;
+    buf[0] = 0;
+    device_append_text(buf, &pos, cap, "AHCI port ");
+    device_append_u64(buf, &pos, cap, disk ? disk->port : 0);
+    device_append_text(buf, &pos, cap, ", ");
+    device_append_u64(buf, &pos, cap, mib);
+    device_append_text(buf, &pos, cap, " MiB, sector ");
+    device_append_u64(buf, &pos, cap, disk ? disk->sector_size : 0);
+}
+
+static void device_format_time(char *buf, uint32_t cap, const struct leonos_time_info *time)
+{
+    uint32_t pos = 0;
+    buf[0] = 0;
+    if (!time || !time->valid) {
+        device_append_text(buf, &pos, cap, "CMOS RTC unavailable");
+        return;
+    }
+    device_append_u64(buf, &pos, cap, time->year);
+    device_append_char(buf, &pos, cap, '-');
+    device_append_u64(buf, &pos, cap, time->month);
+    device_append_char(buf, &pos, cap, '-');
+    device_append_u64(buf, &pos, cap, time->day);
+    device_append_char(buf, &pos, cap, ' ');
+    device_append_u64(buf, &pos, cap, time->hour);
+    device_append_char(buf, &pos, cap, ':');
+    device_append_u64(buf, &pos, cap, time->minute);
+    device_append_char(buf, &pos, cap, ':');
+    device_append_u64(buf, &pos, cap, time->second);
+}
 
 struct gui_create_window_user {
     uint32_t width;
@@ -254,6 +438,218 @@ static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr, ui
     return 0;
 }
 
+static uint32_t kernel_string_len_cap(const char *text, uint32_t cap)
+{
+    uint32_t len = 0;
+    while (text && len < cap && text[len]) {
+        ++len;
+    }
+    return len;
+}
+
+static int auth_copy_current_user(struct leonos_user_info *user, const struct task *task)
+{
+    if (!user) {
+        return -LEONOS_EINVAL;
+    }
+    *user = (struct leonos_user_info){0};
+    if (!task || !task->uid) {
+        user->role = LEONOS_AUTH_ROLE_NONE;
+        return 0;
+    }
+    user->uid = task->uid;
+    user->role = task->role;
+    copy_text(user->username, sizeof(user->username), task->username);
+    copy_text(user->home, sizeof(user->home), task->home);
+    return 0;
+}
+
+static int authz_check_path(const struct task *task, uint32_t op,
+                            const char *path, uint32_t target_uid,
+                            uint32_t target_role)
+{
+    struct leonos_authz_request req;
+    int ret;
+    if (storage_installer_root_active() &&
+        (op == LEONOS_AUTHZ_READ || op == LEONOS_AUTHZ_WRITE ||
+         op == LEONOS_AUTHZ_EXEC || op == LEONOS_AUTHZ_INSTALL)) {
+        return 0;
+    }
+    req = (struct leonos_authz_request){0};
+    if (task) {
+        req.uid = task->uid;
+        req.role = task->role;
+        req.session_id = task->session_id;
+        copy_text(req.username, sizeof(req.username), task->username);
+        copy_text(req.home, sizeof(req.home), task->home);
+    }
+    req.op = op;
+    req.target_uid = target_uid;
+    req.target_role = target_role;
+    if (path) {
+        copy_text(req.path, sizeof(req.path), path);
+    }
+    ret = osmlayer_auth_op(LEONOS_AUTH_OP_AUTHORIZE, &req);
+    if (ret < 0) {
+        return ret;
+    }
+    return req.allowed ? 0 : -LEONOS_EACCES;
+}
+
+static int authz_check_install(const struct task *task)
+{
+    return authz_check_path(task, LEONOS_AUTHZ_INSTALL, 0, 0, 0);
+}
+
+static void auth_apply_session_login(struct task *caller,
+                                     const struct leonos_user_info *user)
+{
+    uint32_t session_id;
+    uint32_t root_pid;
+    if (!caller || !user || !user->uid) {
+        return;
+    }
+    session_id = sched_next_session_id();
+    root_pid = caller->parent_pid ? caller->parent_pid : caller->pid;
+    sched_set_session_identity(root_pid, user, session_id);
+    sched_set_task_identity(caller->pid, user, session_id);
+}
+
+static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
+{
+    struct task *task = sched_current_task();
+    if (request == LEONOS_AUTH_IOCTL_STATUS) {
+        struct leonos_auth_status status;
+        int ret;
+        if (!user_range_ok(user_arg, sizeof(status))) {
+            return -LEONOS_EFAULT;
+        }
+        status = (struct leonos_auth_status){0};
+        ret = osmlayer_auth_op(LEONOS_AUTH_OP_STATUS, &status);
+        if (ret < 0) {
+            return ret;
+        }
+        *(struct leonos_auth_status *)(uintptr_t)user_arg = status;
+        return 0;
+    }
+    if (request == LEONOS_AUTH_IOCTL_CURRENT) {
+        struct leonos_user_info user;
+        if (!user_range_ok(user_arg, sizeof(user))) {
+            return -LEONOS_EFAULT;
+        }
+        auth_copy_current_user(&user, task);
+        *(struct leonos_user_info *)(uintptr_t)user_arg = user;
+        return 0;
+    }
+    if (request == LEONOS_AUTH_IOCTL_LIST_USERS) {
+        struct leonos_user_list *user_list;
+        struct leonos_user_list list;
+        struct leonos_user_info *users = auth_user_scratch;
+        uint32_t copy_count;
+        int ret;
+        if (!user_range_ok(user_arg, sizeof(list))) {
+            return -LEONOS_EFAULT;
+        }
+        user_list = (struct leonos_user_list *)(uintptr_t)user_arg;
+        list = *user_list;
+        if (list.capacity > LEONOS_AUTH_MAX_USERS) {
+            list.capacity = LEONOS_AUTH_MAX_USERS;
+        }
+        if (list.capacity && (!list.users ||
+            !user_range_ok((uint64_t)(uintptr_t)list.users,
+                           (uint64_t)list.capacity * sizeof(struct leonos_user_info)))) {
+            return -LEONOS_EFAULT;
+        }
+        list.actor_uid = task ? task->uid : 0;
+        list.actor_role = task ? task->role : LEONOS_AUTH_ROLE_NONE;
+        list.users = users;
+        ret = osmlayer_auth_op(LEONOS_AUTH_OP_LIST_USERS, &list);
+        user_list->count = list.count;
+        if (ret < 0) {
+            return ret;
+        }
+        copy_count = list.count < list.capacity ? list.count : list.capacity;
+        for (uint32_t i = 0; i < copy_count; ++i) {
+            ((struct leonos_user_info *)(uintptr_t)user_list->users)[i] = users[i];
+        }
+        return 0;
+    }
+    if (request == LEONOS_AUTH_IOCTL_LOGIN) {
+        struct leonos_auth_login login;
+        int ret;
+        if (!user_range_ok(user_arg, sizeof(login))) {
+            return -LEONOS_EFAULT;
+        }
+        login = *(struct leonos_auth_login *)(uintptr_t)user_arg;
+        if (kernel_string_len_cap(login.username, sizeof(login.username)) >= sizeof(login.username) ||
+            kernel_string_len_cap(login.password, sizeof(login.password)) >= sizeof(login.password)) {
+            return -LEONOS_EFAULT;
+        }
+        ret = osmlayer_auth_op(LEONOS_AUTH_OP_LOGIN, &login);
+        if (ret < 0) {
+            return ret;
+        }
+        auth_apply_session_login(task, &login.user);
+        *(struct leonos_auth_login *)(uintptr_t)user_arg = login;
+        return 0;
+    }
+    if (request == LEONOS_AUTH_IOCTL_LOGOUT) {
+        uint32_t uid = task ? task->uid : 0;
+        uint32_t session_id = task ? task->session_id : 0;
+        if (uid && session_id) {
+            (void)sched_kill_user_tasks_for_logout(uid, session_id,
+                                                   task ? task->pid : 0, 0);
+            sched_clear_session_identity(session_id);
+        }
+        return 0;
+    }
+    if (request == LEONOS_AUTH_IOCTL_CREATE_USER) {
+        struct leonos_auth_create create;
+        int ret;
+        if (!user_range_ok(user_arg, sizeof(create))) {
+            return -LEONOS_EFAULT;
+        }
+        create = *(struct leonos_auth_create *)(uintptr_t)user_arg;
+        if (kernel_string_len_cap(create.username, sizeof(create.username)) >= sizeof(create.username) ||
+            kernel_string_len_cap(create.password, sizeof(create.password)) >= sizeof(create.password)) {
+            return -LEONOS_EFAULT;
+        }
+        create.actor_uid = task ? task->uid : 0;
+        create.actor_role = task ? task->role : LEONOS_AUTH_ROLE_NONE;
+        ret = osmlayer_auth_op(LEONOS_AUTH_OP_CREATE_USER, &create);
+        if (ret < 0) {
+            return ret;
+        }
+        *(struct leonos_auth_create *)(uintptr_t)user_arg = create;
+        return 0;
+    }
+    if (request == LEONOS_AUTH_IOCTL_UPDATE_USER) {
+        struct leonos_auth_update update;
+        if (!user_range_ok(user_arg, sizeof(update))) {
+            return -LEONOS_EFAULT;
+        }
+        update = *(struct leonos_auth_update *)(uintptr_t)user_arg;
+        update.actor_uid = task ? task->uid : 0;
+        update.actor_role = task ? task->role : LEONOS_AUTH_ROLE_NONE;
+        return osmlayer_auth_op(LEONOS_AUTH_OP_UPDATE_USER, &update);
+    }
+    if (request == LEONOS_AUTH_IOCTL_CHANGE_PASSWORD) {
+        struct leonos_auth_password password;
+        if (!user_range_ok(user_arg, sizeof(password))) {
+            return -LEONOS_EFAULT;
+        }
+        password = *(struct leonos_auth_password *)(uintptr_t)user_arg;
+        if (kernel_string_len_cap(password.old_password, sizeof(password.old_password)) >= sizeof(password.old_password) ||
+            kernel_string_len_cap(password.new_password, sizeof(password.new_password)) >= sizeof(password.new_password)) {
+            return -LEONOS_EFAULT;
+        }
+        password.actor_uid = task ? task->uid : 0;
+        password.actor_role = task ? task->role : LEONOS_AUTH_ROLE_NONE;
+        return osmlayer_auth_op(LEONOS_AUTH_OP_CHANGE_PASSWORD, &password);
+    }
+    return -LEONOS_ENOSYS;
+}
+
 static int copy_user_vector(uint64_t user_ptr, uint32_t max_count,
                             char *out_ptrs[], char *data,
                             uint32_t data_cap, uint32_t *out_count, uint32_t *data_len)
@@ -370,6 +766,475 @@ static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
     return 0;
 }
 
+static uint64_t align_up_page(uint64_t value)
+{
+    return (value + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+}
+
+static uint64_t align_down_page(uint64_t value)
+{
+    return value & ~(PAGE_SIZE - 1ULL);
+}
+
+static int align_user_len(uint64_t len, uint64_t *out)
+{
+    if (!len || len > NTCLKS_USER_TOP - NTCLKS_USER_BASE) {
+        return -LEONOS_EINVAL;
+    }
+    if (len > UINT64_MAX - (PAGE_SIZE - 1ULL)) {
+        return -LEONOS_EINVAL;
+    }
+    *out = align_up_page(len);
+    return *out ? 0 : -LEONOS_EINVAL;
+}
+
+static uint64_t task_mmap_top(const struct task *task)
+{
+    uint64_t stack_top = (task && task->stack_top) ? task->stack_top : NTCLKS_USER_TOP - PAGE_SIZE;
+    uint64_t stack_low = stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE;
+    if (stack_low > NTCLKS_USER_BASE + PAGE_SIZE) {
+        return stack_low - PAGE_SIZE;
+    }
+    return stack_low;
+}
+
+static struct task_vma *task_vma_free_slot(struct task *task)
+{
+    if (!task) {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        if (!task->vmas[i].used) {
+            return &task->vmas[i];
+        }
+    }
+    return NULL;
+}
+
+static int task_vma_attrs_match(const struct task_vma *vma, uint64_t prot, uint32_t flags)
+{
+    return vma && vma->used && vma->prot == (uint32_t)prot && vma->flags == flags;
+}
+
+static int storage_nodes_equal(const struct storage_node *a, const struct storage_node *b)
+{
+    return a && b &&
+           a->type == b->type &&
+           a->flags == b->flags &&
+           a->first_cluster == b->first_cluster &&
+           a->drive == b->drive &&
+           a->size == b->size;
+}
+
+static int task_vma_file_attrs_match(const struct task_vma *vma,
+                                     const struct storage_node *file_node)
+{
+    if (!vma || !(vma->flags & TASK_VMA_FLAG_FILE)) {
+        return 1;
+    }
+    return storage_nodes_equal(&vma->file_node, file_node);
+}
+
+static void task_vma_clear(struct task_vma *vma)
+{
+    if (vma) {
+        *vma = (struct task_vma){0};
+    }
+}
+
+static struct task_vma *task_vma_containing(struct task *task, uint64_t start, uint64_t end)
+{
+    if (!task) {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        if (task->vmas[i].used && start >= task->vmas[i].start && end <= task->vmas[i].end) {
+            return &task->vmas[i];
+        }
+    }
+    return NULL;
+}
+
+static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start,
+                                                uint64_t prot, uint32_t flags,
+                                                const struct storage_node *file_node,
+                                                uint64_t file_offset)
+{
+    if (!task) {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        struct task_vma *vma = &task->vmas[i];
+        if (task_vma_attrs_match(&task->vmas[i], prot, flags) &&
+            vma->end == start &&
+            task_vma_file_attrs_match(vma, file_node) &&
+            (!(flags & TASK_VMA_FLAG_FILE) ||
+             vma->file_offset + (vma->end - vma->start) == file_offset)) {
+            return vma;
+        }
+    }
+    return NULL;
+}
+
+static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
+                                                 uint64_t prot, uint32_t flags,
+                                                 const struct storage_node *file_node,
+                                                 uint64_t file_offset,
+                                                 uint64_t len)
+{
+    if (!task) {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        struct task_vma *vma = &task->vmas[i];
+        if (task_vma_attrs_match(&task->vmas[i], prot, flags) &&
+            vma->start == end &&
+            task_vma_file_attrs_match(vma, file_node) &&
+            (!(flags & TASK_VMA_FLAG_FILE) ||
+             file_offset + len == vma->file_offset)) {
+            return vma;
+        }
+    }
+    return NULL;
+}
+
+static int task_vma_can_record_mapping(struct task *task, uint64_t start, uint64_t end,
+                                       uint64_t prot, uint32_t flags,
+                                       const struct storage_node *file_node,
+                                       uint64_t file_offset)
+{
+    uint64_t len = end - start;
+    return task_vma_left_adjacent(task, start, prot, flags, file_node, file_offset) ||
+           task_vma_right_adjacent(task, end, prot, flags, file_node, file_offset, len) ||
+           task_vma_free_slot(task);
+}
+
+static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t end,
+                                   uint64_t prot, uint32_t flags,
+                                   const struct storage_node *file_node,
+                                   uint64_t file_offset)
+{
+    uint64_t len = end - start;
+    struct task_vma *left = task_vma_left_adjacent(task, start, prot, flags, file_node, file_offset);
+    struct task_vma *right = task_vma_right_adjacent(task, end, prot, flags, file_node, file_offset, len);
+    if (left && right && left != right) {
+        left->end = right->end;
+        task_vma_clear(right);
+        return 0;
+    }
+    if (left) {
+        left->end = end;
+        return 0;
+    }
+    if (right) {
+        right->start = start;
+        return 0;
+    }
+
+    struct task_vma *slot = task_vma_free_slot(task);
+    if (!slot) {
+        return -LEONOS_ENOMEM;
+    }
+    slot->used = 1;
+    slot->prot = (uint32_t)prot;
+    slot->flags = flags;
+    slot->reserved = 0;
+    slot->start = start;
+    slot->end = end;
+    slot->file_offset = file_offset;
+    if (file_node) {
+        slot->file_node = *file_node;
+    } else {
+        slot->file_node = (struct storage_node){0};
+    }
+    return 0;
+}
+
+static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t end)
+{
+    if (!task) {
+        return 1;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        if (task->vmas[i].used && start < task->vmas[i].end && end > task->vmas[i].start) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int task_user_pages_free(const struct task *task, uint64_t start, uint64_t end)
+{
+    if (!task || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP) {
+        return 0;
+    }
+    if (task_vma_overlaps(task, start, end)) {
+        return 0;
+    }
+    for (uint64_t page = start; page < end; page += PAGE_SIZE) {
+        if (address_space_user_page_phys(&task->as, page)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
+{
+    uint64_t top = task_mmap_top(task);
+    if (top <= NTCLKS_USER_MMAP_BASE || len > top - NTCLKS_USER_MMAP_BASE) {
+        return 0;
+    }
+    for (uint64_t start = NTCLKS_USER_MMAP_BASE; start + len <= top; start += PAGE_SIZE) {
+        if (task_user_pages_free(task, start, start + len)) {
+            return start;
+        }
+    }
+    return 0;
+}
+
+static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
+{
+    if (!task) {
+        return;
+    }
+    for (uint64_t page = start; page < end; page += PAGE_SIZE) {
+        uint64_t phys = address_space_unmap_user_page(&task->as, page);
+        if (phys) {
+            mm_free_page(phys);
+        }
+    }
+}
+
+static void zero_phys_page(uint64_t phys)
+{
+    uint8_t *ptr = (uint8_t *)(uintptr_t)phys;
+    for (uint64_t i = 0; i < PAGE_SIZE; ++i) {
+        ptr[i] = 0;
+    }
+}
+
+static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t end,
+                                    uint64_t page_flags)
+{
+    for (uint64_t page = start; page < end; page += PAGE_SIZE) {
+        uint64_t phys = mm_alloc_page();
+        if (!phys || !address_space_map_user_page(&task->as, page, phys, page_flags)) {
+            if (phys) {
+                mm_free_page(phys);
+            }
+            task_unmap_pages(task, start, page);
+            return -LEONOS_ENOMEM;
+        }
+    }
+    return 0;
+}
+
+static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
+                                  uint64_t page)
+{
+    if (!task || !vma || !(vma->flags & TASK_VMA_FLAG_FILE)) {
+        return -LEONOS_EINVAL;
+    }
+    uint64_t phys = mm_alloc_page();
+    if (!phys) {
+        return -LEONOS_ENOMEM;
+    }
+    zero_phys_page(phys);
+
+    uint64_t file_offset = vma->file_offset + (page - vma->start);
+    if (file_offset < vma->file_node.size) {
+        uint64_t available = vma->file_node.size - file_offset;
+        uint32_t want = available < PAGE_SIZE ? (uint32_t)available : (uint32_t)PAGE_SIZE;
+        uint32_t got = 0;
+        int ret = storage_read_node(&vma->file_node, file_offset, (void *)(uintptr_t)phys, want, &got);
+        if (ret < 0 || got != want) {
+            mm_free_page(phys);
+            return ret < 0 ? storage_errno(ret) : -LEONOS_EINVAL;
+        }
+    }
+
+    uint64_t page_flags = (vma->prot & LINUX_PROT_WRITE) ? NTCLKS_PAGE_WRITABLE : 0;
+    if (!address_space_map_user_page(&task->as, page, phys, page_flags)) {
+        mm_free_page(phys);
+        return -LEONOS_ENOMEM;
+    }
+    return 0;
+}
+
+int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
+{
+    if (error & 0x9ULL) {
+        return 0;
+    }
+    if ((error & 0x2ULL) || (error & 0x10ULL)) {
+        return 0;
+    }
+    struct task *task = sched_current_task();
+    if (!task || task->kind != TASK_KIND_USER) {
+        return 0;
+    }
+    uint64_t page = align_down_page(fault_addr);
+    if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
+        return 0;
+    }
+    if (address_space_user_page_phys(&task->as, page)) {
+        return 0;
+    }
+    struct task_vma *vma = task_vma_containing(task, page, page + PAGE_SIZE);
+    if (!vma || !(vma->flags & TASK_VMA_FLAG_LAZY) || !(vma->flags & TASK_VMA_FLAG_FILE)) {
+        return 0;
+    }
+    return task_map_file_vma_page(task, vma, page) == 0;
+}
+
+static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
+                        uint64_t flags, uint64_t fd, uint64_t offset)
+{
+    struct task *task = sched_current_task();
+    struct task_file *file = NULL;
+    uint64_t mapped_len;
+    uint64_t start;
+    uint64_t end;
+    uint64_t page_flags = 0;
+    uint32_t vma_flags = TASK_VMA_FLAG_PRIVATE;
+    int anonymous;
+    int ret;
+
+    if (!task || task->kind != TASK_KIND_USER) {
+        return -LEONOS_EINVAL;
+    }
+    if (align_user_len(len, &mapped_len) < 0) {
+        return -LEONOS_EINVAL;
+    }
+    if ((prot & ~(uint64_t)(LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) != 0 ||
+        (prot & (LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) == 0) {
+        return -LEONOS_EINVAL;
+    }
+    if ((flags & ~((uint64_t)LINUX_MAP_SUPPORTED)) != 0 || (flags & LINUX_MAP_PRIVATE) == 0) {
+        return -LEONOS_EINVAL;
+    }
+    anonymous = (flags & LINUX_MAP_ANONYMOUS) != 0;
+    vma_flags |= anonymous ? TASK_VMA_FLAG_ANON :
+        (TASK_VMA_FLAG_FILE | TASK_VMA_FLAG_LAZY);
+    if (anonymous) {
+        if (fd != UINT64_MAX || offset != 0) {
+            return -LEONOS_EINVAL;
+        }
+    } else {
+        if (offset & (PAGE_SIZE - 1ULL)) {
+            return -LEONOS_EINVAL;
+        }
+        if (offset > UINT64_MAX - mapped_len) {
+            return -LEONOS_EINVAL;
+        }
+        if (prot != LINUX_PROT_READ) {
+            return -LEONOS_ENOSYS;
+        }
+        if (fd > INT32_MAX) {
+            return -LEONOS_EBADF;
+        }
+        file = task_file_for_fd(task, (int)fd);
+        if (!file || !file_can_read(file)) {
+            return -LEONOS_EBADF;
+        }
+        if (file->node.type != LEONOS_FS_TYPE_FILE) {
+            return -LEONOS_EINVAL;
+        }
+    }
+
+    if (flags & LINUX_MAP_FIXED) {
+        if ((addr & (PAGE_SIZE - 1ULL)) != 0) {
+            return -LEONOS_EINVAL;
+        }
+        start = addr;
+    } else {
+        start = task_find_mmap_region(task, mapped_len);
+        if (!start) {
+            return -LEONOS_ENOMEM;
+        }
+    }
+    if (start < NTCLKS_USER_BASE || start >= NTCLKS_USER_TOP || mapped_len > NTCLKS_USER_TOP - start) {
+        return -LEONOS_EINVAL;
+    }
+    end = start + mapped_len;
+    if (end > task_mmap_top(task) || !task_user_pages_free(task, start, end)) {
+        return (flags & LINUX_MAP_FIXED) ? -LEONOS_EINVAL : -LEONOS_ENOMEM;
+    }
+    if (!task_vma_can_record_mapping(task, start, end, prot, vma_flags,
+                                     file ? &file->node : NULL, offset)) {
+        return -LEONOS_ENOMEM;
+    }
+
+    if (prot & LINUX_PROT_WRITE) {
+        page_flags |= NTCLKS_PAGE_WRITABLE;
+    }
+    if (anonymous) {
+        ret = task_map_anonymous_pages(task, start, end, page_flags);
+    } else {
+        ret = 0;
+    }
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (task_vma_record_mapping(task, start, end, prot, vma_flags,
+                                file ? &file->node : NULL, offset) < 0) {
+        task_unmap_pages(task, start, end);
+        return -LEONOS_ENOMEM;
+    }
+    return (int64_t)start;
+}
+
+static int64_t sys_munmap(uint64_t addr, uint64_t len)
+{
+    struct task *task = sched_current_task();
+    struct task_vma *vma;
+    uint64_t mapped_len;
+    uint64_t start = addr;
+    uint64_t end;
+
+    if (!task || task->kind != TASK_KIND_USER || (start & (PAGE_SIZE - 1ULL)) != 0 ||
+        start < NTCLKS_USER_BASE || start >= NTCLKS_USER_TOP) {
+        return -LEONOS_EINVAL;
+    }
+    if (align_user_len(len, &mapped_len) < 0 || mapped_len > NTCLKS_USER_TOP - start) {
+        return -LEONOS_EINVAL;
+    }
+    end = start + mapped_len;
+    vma = task_vma_containing(task, start, end);
+    if (!vma) {
+        return -LEONOS_EINVAL;
+    }
+    if (start > vma->start && end < vma->end && !task_vma_free_slot(task)) {
+        return -LEONOS_ENOMEM;
+    }
+
+    uint64_t old_start = vma->start;
+    uint64_t old_end = vma->end;
+    task_unmap_pages(task, start, end);
+    if (start == vma->start && end == old_end) {
+        task_vma_clear(vma);
+    } else if (start == vma->start) {
+        vma->start = end;
+        if (vma->flags & TASK_VMA_FLAG_FILE) {
+            vma->file_offset += end - old_start;
+        }
+    } else if (end == old_end) {
+        vma->end = start;
+    } else {
+        struct task_vma *right = task_vma_free_slot(task);
+        *right = *vma;
+        right->start = end;
+        right->end = old_end;
+        if (right->flags & TASK_VMA_FLAG_FILE) {
+            right->file_offset += end - old_start;
+        }
+        vma->end = start;
+    }
+    return 0;
+}
+
 void syscall_init(void)
 {
     console_printf("[ntclks] Linux x86_64 syscall ABI registered\n");
@@ -395,11 +1260,14 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
     case LINUX_SYS_WAIT4:
     case LINUX_SYS_EXIT:
     case LINUX_SYS_NANOSLEEP:
-    case LINUX_SYS_MMAP:
-    case LINUX_SYS_MUNMAP:
     case LINUX_SYS_IOCTL:
     case LINUX_SYS_GETPID:
         return osmlayer_bridge_syscall(frame);
+    case LINUX_SYS_MMAP:
+        return sys_mmap(frame->args[0], frame->args[1], frame->args[2],
+                        frame->args[3], frame->args[4], frame->args[5]);
+    case LINUX_SYS_MUNMAP:
+        return sys_munmap(frame->args[0], frame->args[1]);
     default:
         return -LEONOS_ENOSYS;
     }
@@ -408,9 +1276,17 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
 static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, uint64_t a2,
                                      uint64_t a3, uint64_t a4, uint64_t a5)
 {
-    (void)a3;
-    (void)a4;
-    (void)a5;
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == LEONOS_AUTH_IOCTL_STATUS ||
+         a1 == LEONOS_AUTH_IOCTL_CURRENT ||
+         a1 == LEONOS_AUTH_IOCTL_LIST_USERS ||
+         a1 == LEONOS_AUTH_IOCTL_LOGIN ||
+         a1 == LEONOS_AUTH_IOCTL_LOGOUT ||
+         a1 == LEONOS_AUTH_IOCTL_CREATE_USER ||
+         a1 == LEONOS_AUTH_IOCTL_UPDATE_USER ||
+         a1 == LEONOS_AUTH_IOCTL_CHANGE_PASSWORD)) {
+        return auth_handle_ioctl(a1, a2);
+    }
 
     if (number == LINUX_SYS_WRITE) {
         struct task *task = sched_current_task();
@@ -439,6 +1315,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (file->node.type != LEONOS_FS_TYPE_FILE || !file->path[0]) {
             return -LEONOS_EBADF;
         }
+        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, file->path, 0, 0);
+        if (ret < 0) {
+            return ret;
+        }
         if (file->flags & LEONOS_O_APPEND) {
             file->offset = file->node.size;
         }
@@ -465,6 +1345,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         file = task_file_for_fd(task, (int)a0);
         if (!file) {
             return -LEONOS_EBADF;
+        }
+        if (file->path[0]) {
+            int ret = authz_check_path(task, LEONOS_AUTHZ_READ, file->path, 0, 0);
+            if (ret < 0) {
+                return ret;
+            }
         }
         if (file->node.type == LEONOS_FS_TYPE_DIR) {
             struct leonos_dir_entry entry;
@@ -516,6 +1402,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
+        ret = authz_check_path(task, LEONOS_AUTHZ_EXEC, path, 0, 0);
+        if (ret < 0) {
+            return ret;
+        }
         int64_t pid = userland_spawn_path_argv(path,
                                                (const char *const *)params.argv,
                                                (const char *const *)params.envp,
@@ -538,6 +1428,15 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         char path[LEONOS_FS_PATH_LEN];
         uint32_t flags = (uint32_t)a1;
         int ret = resolve_user_path(task, a0, path, sizeof(path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = authz_check_path(task,
+                               ((flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY ||
+                                (flags & (LEONOS_O_CREAT | LEONOS_O_TRUNC)))
+                                   ? LEONOS_AUTHZ_WRITE
+                                   : LEONOS_AUTHZ_READ,
+                               path, 0, 0);
         if (ret < 0) {
             return ret;
         }
@@ -602,6 +1501,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         ret = resolve_user_path(task, a0, path, sizeof(path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = authz_check_path(task, LEONOS_AUTHZ_READ, path, 0, 0);
         if (ret < 0) {
             return ret;
         }
@@ -694,6 +1597,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
+        ret = authz_check_path(task, LEONOS_AUTHZ_READ, path, 0, 0);
+        if (ret < 0) {
+            return ret;
+        }
         ret = storage_lookup_path(path, &node);
         if (ret < 0) {
             return ret == -2 ? -LEONOS_ENOENT : ret;
@@ -714,6 +1621,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
+        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, path, 0, 0);
+        if (ret < 0) {
+            return ret;
+        }
         ret = storage_mkdir(path);
         return ret < 0 ? storage_errno(ret) : 0;
     }
@@ -725,6 +1636,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
+        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, path, 0, 0);
+        if (ret < 0) {
+            return ret;
+        }
         ret = storage_unlink(path);
         return ret < 0 ? storage_errno(ret) : 0;
     }
@@ -733,6 +1648,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         struct task *task = sched_current_task();
         char path[LEONOS_FS_PATH_LEN];
         int ret = resolve_user_path(task, a0, path, sizeof(path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, path, 0, 0);
         if (ret < 0) {
             return ret;
         }
@@ -749,6 +1668,14 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return ret;
         }
         ret = resolve_user_path(task, a1, new_path, sizeof(new_path));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, old_path, 0, 0);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, new_path, 0, 0);
         if (ret < 0) {
             return ret;
         }
@@ -778,6 +1705,14 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         sched_sleep_current_until(time_ticks() + delta);
         userland_yield_if_runnable();
         return 0;
+    }
+
+    if (number == LINUX_SYS_MMAP) {
+        return sys_mmap(a0, a1, a2, a3, a4, a5);
+    }
+
+    if (number == LINUX_SYS_MUNMAP) {
+        return sys_munmap(a0, a1);
     }
 
     if (number == LINUX_SYS_WAIT4) {
@@ -967,6 +1902,11 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_TASKS) {
+        struct task *viewer_task = sched_current_task();
+        struct task_snapshot_info temp[SCHED_TASK_MAX];
+        uint64_t tick = 0;
+        uint32_t total;
+        uint32_t visible = 0;
         if (!user_range_ok(a2, sizeof(struct task_snapshot_user))) {
             return -LEONOS_EFAULT;
         }
@@ -978,12 +1918,35 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                                              (uint64_t)snap->capacity * sizeof(struct task_snapshot_info))) {
             return -LEONOS_EFAULT;
         }
-        snap->count = sched_snapshot(snap->tasks, snap->capacity, &snap->tick);
+        total = sched_snapshot(temp, SCHED_TASK_MAX, &tick);
+        for (uint32_t i = 0; i < total && i < SCHED_TASK_MAX; ++i) {
+            if (viewer_task && viewer_task->role != LEONOS_AUTH_ROLE_ADMIN &&
+                (!viewer_task->uid || temp[i].uid != viewer_task->uid)) {
+                continue;
+            }
+            if (snap->tasks && visible < snap->capacity) {
+                snap->tasks[visible] = temp[i];
+            }
+            ++visible;
+        }
+        snap->tick = tick;
+        snap->count = visible;
         return (int64_t)snap->count;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_TASK_KILL) {
-        int ret = sched_kill_user_task((uint32_t)a2, 137);
+        struct task *viewer_task = sched_current_task();
+        struct task *target_task = sched_find((uint32_t)a2);
+        int ret;
+        if (!target_task) {
+            return -LEONOS_ENOENT;
+        }
+        ret = authz_check_path(viewer_task, LEONOS_AUTHZ_KILL_TASK, 0,
+                               target_task->uid, target_task->role);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = sched_kill_user_task((uint32_t)a2, 137);
         if (ret == -2) {
             return -LEONOS_ENOENT;
         }
@@ -1118,10 +2081,18 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_FORMAT_ESP) {
+        int ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
         return storage_install_format_esp((uint32_t)a2);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_MOUNT_TARGET) {
+        int ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
         return storage_install_mount_target((uint32_t)a2);
     }
 
@@ -1148,6 +2119,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                                  path, path, sizeof(path)) < 0) {
             return -LEONOS_EINVAL;
         }
+        {
+            int ret = authz_check_path(sched_current_task(), LEONOS_AUTHZ_READ, path, 0, 0);
+            if (ret < 0) {
+                return ret;
+            }
+        }
         if (query->capacity > LEONOS_FS_MAX_ENTRIES) {
             query->capacity = LEONOS_FS_MAX_ENTRIES;
         }
@@ -1170,6 +2147,211 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         *(struct leonos_system_info *)(uintptr_t)a2 = *ntclks_system_info();
+        return 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_TIME_INFO) {
+        if (!user_range_ok(a2, sizeof(struct leonos_time_info))) {
+            return -LEONOS_EFAULT;
+        }
+        return time_wall_clock((struct leonos_time_info *)(uintptr_t)a2) == 0
+                   ? 0
+                   : -LEONOS_EINVAL;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DEVICE_LIST) {
+        struct leonos_device_list *query;
+        struct leonos_device_info *devices;
+        struct leonos_time_info time_info = {0};
+        struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
+        struct leonos_raw_device_info raw[LEONOS_RAW_DEVICE_MAX];
+        uint32_t disk_count = LEONOS_INSTALL_MAX_DISKS;
+        uint32_t raw_count = 0;
+        uint32_t count = 0;
+        char detail[LEONOS_DEVICE_DETAIL_LEN];
+        if (!user_range_ok(a2, sizeof(struct leonos_device_list))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_device_list *)(uintptr_t)a2;
+        if (query->capacity > LEONOS_DEVICE_MAX) {
+            query->capacity = LEONOS_DEVICE_MAX;
+        }
+        if (query->capacity) {
+            if (!query->devices ||
+                !user_range_ok((uint64_t)(uintptr_t)query->devices,
+                               (uint64_t)query->capacity * sizeof(struct leonos_device_info))) {
+                return -LEONOS_EFAULT;
+            }
+        }
+        devices = query->devices;
+
+        if (time_wall_clock(&time_info) == 0) {
+            uint32_t date = ((uint32_t)time_info.year << 16) |
+                            ((uint32_t)time_info.month << 8) |
+                            (uint32_t)time_info.day;
+            uint32_t clock = ((uint32_t)time_info.hour << 16) |
+                             ((uint32_t)time_info.minute << 8) |
+                             (uint32_t)time_info.second;
+            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_RTC,
+                           LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE,
+                           date, clock, time_info.unix_seconds, time_info.uptime_ms);
+        } else {
+            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_RTC, 0, 0, 0, 0, 0);
+        }
+        raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_KEYBOARD,
+                       LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE,
+                       1, 0, 1, 0);
+        {
+            const struct mouse_state *mouse = mouse_get_state();
+            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_MOUSE,
+                           mouse && mouse->present
+                               ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                               : 0,
+                           mouse ? mouse->buttons : 0,
+                           mouse && mouse->absolute ? 1u : 0u,
+                           mouse ? (uint64_t)(uint32_t)mouse->x : 0,
+                           mouse ? (uint64_t)(uint32_t)mouse->y : 0);
+        }
+        {
+            const struct framebuffer *fb = framebuffer_get();
+            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_FRAMEBUFFER,
+                           fb && fb->available
+                               ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                               : 0,
+                           fb ? fb->bpp : 0,
+                           fb ? fb->pitch : 0,
+                           fb ? fb->width : 0,
+                           fb ? fb->height : 0);
+        }
+        if (storage_install_list_disks(disks, LEONOS_INSTALL_MAX_DISKS, &disk_count) < 0) {
+            disk_count = 0;
+        }
+        raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_AHCI,
+                       storage_ready()
+                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                           : 0,
+                       0, 0, disk_count, 0);
+        for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
+            uint32_t flags = LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE;
+            if (disks[i].flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT) {
+                flags |= LEONOS_DEVICE_FLAG_BOOT;
+            }
+            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_DISK,
+                           flags, disks[i].port, (uint32_t)i,
+                           disks[i].sector_count, disks[i].sector_size);
+        }
+        raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_SERIAL,
+                       serial_is_ready()
+                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                           : 0,
+                       0x3f8, 0, 0x3f8, 0);
+        {
+            struct leonos_device_catalog_query catalog = {
+                .raw = raw,
+                .raw_count = raw_count,
+                .capacity = query->capacity,
+                .devices = devices,
+                .count = 0,
+                .reserved = 0,
+            };
+            if (osmlayer_device_catalog(&catalog) == 0) {
+                query->count = catalog.count;
+                return 0;
+            }
+        }
+
+        if (time_wall_clock(&time_info) == 0) {
+            device_format_time(detail, sizeof(detail), &time_info);
+            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_SYSTEM,
+                       LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE,
+                       "RTC", "Running", detail, time_info.unix_seconds, time_info.uptime_ms);
+        } else {
+            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_SYSTEM,
+                       0, "RTC", "Unavailable", "CMOS wall clock not available", 0, 0);
+        }
+
+        device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_INPUT,
+                   LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE,
+                   "PS/2 Keyboard", "Running", "IRQ1 scancode input", 1, 0);
+
+        {
+            const struct mouse_state *mouse = mouse_get_state();
+            device_format_mouse(detail, sizeof(detail), mouse);
+            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_INPUT,
+                       mouse && mouse->present
+                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                           : 0,
+                       "PS/2 Mouse", mouse && mouse->present ? "Running" : "Unavailable",
+                       detail, mouse ? (uint64_t)(uint32_t)mouse->x : 0,
+                       mouse ? (uint64_t)(uint32_t)mouse->y : 0);
+        }
+
+        {
+            const struct framebuffer *fb = framebuffer_get();
+            device_format_fb(detail, sizeof(detail), fb);
+            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_DISPLAY,
+                       fb && fb->available
+                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                           : 0,
+                       "Framebuffer", fb && fb->available ? "Running" : "Unavailable",
+                       detail, fb ? fb->width : 0, fb ? fb->height : 0);
+        }
+
+        {
+            uint32_t pos = 0;
+            detail[0] = 0;
+            device_append_text(detail, &pos, sizeof(detail), "SATA/AHCI controller, disks=");
+            device_append_u64(detail, &pos, sizeof(detail), disk_count);
+            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_STORAGE,
+                       storage_ready()
+                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                           : 0,
+                       "AHCI Controller", storage_ready() ? "Running" : "Unavailable",
+                       detail, disk_count, 0);
+        }
+
+        for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
+            char name[LEONOS_DEVICE_NAME_LEN];
+            uint32_t pos = 0;
+            uint32_t flags = LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE;
+            name[0] = 0;
+            device_append_text(name, &pos, sizeof(name), "Disk ");
+            device_append_u64(name, &pos, sizeof(name), i);
+            device_format_disk(detail, sizeof(detail), &disks[i]);
+            if (disks[i].flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT) {
+                flags |= LEONOS_DEVICE_FLAG_BOOT;
+            }
+            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_STORAGE,
+                       flags, name,
+                       (disks[i].flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT)
+                           ? "Boot root"
+                           : "Ready",
+                       detail, disks[i].sector_count, disks[i].sector_size);
+        }
+
+        device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_SERIAL,
+                   serial_is_ready()
+                       ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                       : 0,
+                   "Serial COM1", serial_is_ready() ? "Running" : "Unavailable",
+                   "I/O port 0x3f8 debug console", 0x3f8, 0);
+
+        query->count = count;
+        return 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_PERF_INFO) {
+        struct leonos_perf_info *info;
+        if (!user_range_ok(a2, sizeof(struct leonos_perf_info))) {
+            return -LEONOS_EFAULT;
+        }
+        info = (struct leonos_perf_info *)(uintptr_t)a2;
+        info->uptime_ms = time_uptime_ms();
+        info->total_memory_kib = mm_total_memory_kib();
+        info->free_memory_kib = mm_free_memory_kib();
+        sched_cpu_ticks(&info->busy_ticks, &info->idle_ticks);
+        sched_task_counts(&info->task_count, &info->running_tasks,
+                          &info->ready_tasks, &info->sleeping_tasks);
         return 0;
     }
 
@@ -1234,6 +2416,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                                                  (uint64_t)(uintptr_t)spawn->argv,
                                                  (uint64_t)(uintptr_t)spawn->envp,
                                                  path, sizeof(path), &params);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+        {
+            int ret = authz_check_path(sched_current_task(), LEONOS_AUTHZ_EXEC, path, 0, 0);
             if (ret < 0) {
                 return ret;
             }

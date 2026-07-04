@@ -151,6 +151,29 @@ void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t 
     bugcheck_exception(vector, error, rip, cs, rflags, rsp, ss, cr2);
 }
 
+void page_fault_dispatch(struct trap_frame *frame)
+{
+    uint64_t cr2 = x86_64_read_cr2();
+    if (frame && syscall_handle_user_page_fault(cr2, frame->error)) {
+        return;
+    }
+    if (!frame) {
+        bugcheck_exception(14, 0, 0, 0, 0, 0, 0, cr2);
+    }
+    console_printf("[ntclks] page fault unhandled cr2=0x%llx error=0x%llx rip=0x%llx cs=0x%llx\n",
+                   (unsigned long long)cr2,
+                   (unsigned long long)frame->error,
+                   (unsigned long long)frame->rip,
+                   (unsigned long long)frame->cs);
+    console_printf("[ntclks] page fault flags present=%u write=%u user=%u reserved=%u fetch=%u\n",
+                   (unsigned)(frame->error & 1u),
+                   (unsigned)((frame->error >> 1) & 1u),
+                   (unsigned)((frame->error >> 2) & 1u),
+                   (unsigned)((frame->error >> 3) & 1u),
+                   (unsigned)((frame->error >> 4) & 1u));
+    bugcheck_trap("Unhandled Page Fault", frame, cr2);
+}
+
 struct task *int80_dispatch(struct trap_frame *frame)
 {
     syscall_dispatch_frame(frame);

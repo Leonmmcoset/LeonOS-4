@@ -1,5 +1,53 @@
 #include "desktop.h"
 
+static void format_taskbar_clock(char *buf, uint32_t cap)
+{
+    struct leonos_time_info time_info;
+    unsigned long total_seconds = 0;
+    uint32_t hours;
+    uint32_t minutes;
+    uint32_t seconds;
+    uint32_t pos = 0;
+    if (leonos_time_info(&time_info) == 0 && time_info.valid) {
+        hours = time_info.hour;
+        minutes = time_info.minute;
+        seconds = time_info.second;
+    } else {
+        total_seconds = leonos_uptime_ms() / 1000UL;
+        hours = (uint32_t)((total_seconds / 3600UL) % 24UL);
+        minutes = (uint32_t)((total_seconds / 60UL) % 60UL);
+        seconds = (uint32_t)(total_seconds % 60UL);
+    }
+    buf[0] = 0;
+    if (hours < 10) {
+        append_char(buf, &pos, cap, '0');
+    }
+    append_dec(buf, &pos, cap, hours);
+    append_char(buf, &pos, cap, ':');
+    if (minutes < 10) {
+        append_char(buf, &pos, cap, '0');
+    }
+    append_dec(buf, &pos, cap, minutes);
+    append_char(buf, &pos, cap, ':');
+    if (seconds < 10) {
+        append_char(buf, &pos, cap, '0');
+    }
+    append_dec(buf, &pos, cap, seconds);
+}
+
+static void draw_taskbar_clock(uint32_t tb_y)
+{
+    char clock[16];
+    uint32_t x;
+    if (fb_w() < TASKBAR_CLOCK_W + 8) {
+        return;
+    }
+    x = fb_w() - TASKBAR_CLOCK_W;
+    format_taskbar_clock(clock, sizeof(clock));
+    leonos_ui_button(&ui, x + 4, tb_y + 5, TASKBAR_CLOCK_W - 10,
+                     LEONOS_UI_BUTTON_H, clock, LEONOS_UI_BUTTON_PRESSED);
+}
+
 void draw_cursor_shape(uint32_t x, uint32_t y)
 {
     if (x + cursor_width > fb_w()) {
@@ -88,6 +136,7 @@ void redraw_region(struct rect dirty)
                 x += button_w;
             }
         }
+        draw_taskbar_clock(tb_y);
     }
 
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {

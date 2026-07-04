@@ -12,6 +12,7 @@ void console_enable_framebuffer(void);
 void console_disable_framebuffer(void);
 void console_enable_vga_fallback(void);
 void serial_init(void);
+int serial_is_ready(void);
 void serial_write(const char *s);
 void vga_init(void);
 void vga_putc(char ch);

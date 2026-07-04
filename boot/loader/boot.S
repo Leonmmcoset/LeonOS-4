@@ -70,3 +70,10 @@ loader_outb:
     mov %si, %dx
     out %al, %dx
     ret
+
+.global loader_inb
+.type loader_inb, @function
+loader_inb:
+    mov %di, %dx
+    in %dx, %al
+    ret

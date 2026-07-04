@@ -11,6 +11,7 @@ NORMAL_USER_APPS = [
     "init",
     "desktop",
     "oobe",
+    "login",
     "hello",
     "uidemo",
     "cjktest",
@@ -23,8 +24,11 @@ NORMAL_USER_APPS = [
     "minesweeper",
     "run",
     "osver",
+    "memtest",
     "bugtest",
     "settings",
+    "diskmgr",
+    "devmgr",
 ]
 INSTALLER_USER_APPS = [
     "desktop",
@@ -109,6 +113,10 @@ def main() -> int:
     write_line(lines, "rule build_info")
     write_line(lines, "  command = python3 tools/build_info.py --header $out --state build/version/build_number.txt")
     write_line(lines, "  description = BUILD.INFO $out")
+    write_line(lines)
+    write_line(lines, "rule loader_integrity")
+    write_line(lines, "  command = python3 tools/gen_loader_integrity.py --kernel build/system/kernel.sys --middlelayer build/system/middlelayer.sys --out $out")
+    write_line(lines, "  description = LOADER.INTEGRITY $out")
     write_line(lines)
     write_line(lines, "rule cc_kernel")
     write_line(lines, f"  command = $cc {cflags_kernel} -MMD -MF $out.d -c $in -o $out")
@@ -237,6 +245,12 @@ def main() -> int:
     write_line(lines, "build include/generated/build_info.h: build_info build/version/always | tools/build_info.py")
     write_line(lines, "build build-info: phony include/generated/build_info.h")
 
+    loader_elf = ROOT / "build" / "boot" / "loader.elf"
+    kernel_sys = ROOT / "build" / "system" / "kernel.sys"
+    middlelayer_sys = ROOT / "build" / "system" / "middlelayer.sys"
+    loader_integrity_h = ROOT / "include" / "generated" / "loader_integrity.h"
+    write_line(lines, f"build {r(loader_integrity_h)}: loader_integrity {r(kernel_sys)} {r(middlelayer_sys)} | tools/gen_loader_integrity.py")
+
     loader_sources = collect([
         "boot/loader/**/*.c",
         "boot/loader/**/*.S",
@@ -246,8 +260,8 @@ def main() -> int:
         obj = obj_for(src, "loader")
         loader_objects.append(obj)
         rule = "as_loader" if src.suffix == ".S" else "cc_loader"
-        write_line(lines, f"build {r(obj)}: {rule} {r(src)}")
-    loader_elf = ROOT / "build" / "boot" / "loader.elf"
+        implicit = f" | {r(loader_integrity_h)}" if src.suffix == ".c" else ""
+        write_line(lines, f"build {r(obj)}: {rule} {r(src)}{implicit}")
     write_line(lines, f"build {r(loader_elf)}: link_loader {' '.join(r(o) for o in loader_objects)} | boot/loader/linker.ld")
     write_line(lines, f"build loader: phony {r(loader_elf)}")
 
@@ -281,11 +295,9 @@ def main() -> int:
         if s != ROOT / "middlelayer" / "osmlayer" / "src" / "lib.rs"
     )
     write_line(lines, f"build {r(rust_obj)}: rust_osmlayer {r(ROOT / 'middlelayer/osmlayer/src/lib.rs')} | include/generated/rustcfg.args {rust_implicit}")
-    middlelayer_sys = ROOT / "build" / "system" / "middlelayer.sys"
     write_line(lines, f"build {r(middlelayer_sys)}: link_middlelayer {r(rust_obj)} {r(middlelayer_runtime_obj)} | middlelayer/osmlayer/linker.ld")
     write_line(lines, f"build middlelayer: phony {r(middlelayer_sys)}")
 
-    kernel_sys = ROOT / "build" / "system" / "kernel.sys"
     all_kernel_inputs = " ".join(r(o) for o in kernel_objects)
     write_line(lines, f"build {r(kernel_sys)}: link_kernel {all_kernel_inputs} | kernel/ntclks/arch/x86_64/linker.ld")
     write_line(lines, f"build kernel: phony {r(kernel_sys)}")

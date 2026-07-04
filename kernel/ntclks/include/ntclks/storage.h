@@ -23,6 +23,7 @@ void storage_init(void);
 void storage_init_installer_root(const struct boot_info *boot);
 void storage_apply_mount_policy(const struct leonos_mount_policy *policy);
 bool storage_ready(void);
+bool storage_installer_root_active(void);
 int storage_mount_ramdisk_root(const void *image, uint64_t len);
 int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t cap);
 int storage_lookup_path(const char *path, struct storage_node *out);

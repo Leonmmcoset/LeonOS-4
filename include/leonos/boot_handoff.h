@@ -2,11 +2,12 @@
 #define LEONOS_BOOT_HANDOFF_H
 
 #include <stdint.h>
+#include <leonos/auth.h>
 
 #define LEONOS_BOOT_HANDOFF_MAGIC 0x4c424f54u
 #define LEONOS_BOOT_HANDOFF_VERSION 1u
-#define LEONOS_KERNEL_SERVICES_VERSION 1u
-#define LEONOS_MIDDLELAYER_API_VERSION 3u
+#define LEONOS_KERNEL_SERVICES_VERSION 2u
+#define LEONOS_MIDDLELAYER_API_VERSION 5u
 
 #define LEONOS_MOUNT_POLICY_VERSION 1u
 #define LEONOS_MOUNT_MAX_ENTRIES 8u
@@ -23,6 +24,23 @@
 #define LEONOS_MOUNT_FLAG_RUNTIME_ROOT 0x00000002u
 #define LEONOS_MOUNT_FLAG_DEVICE_TREE 0x00000004u
 #define LEONOS_MOUNT_FLAG_OPTIONAL 0x00000008u
+
+#define LEONOS_VFS_OP_RESOLVE_PATH 1u
+#define LEONOS_VFS_NODE_UNKNOWN 0u
+#define LEONOS_VFS_NODE_DIRECTORY 1u
+#define LEONOS_VFS_NODE_FILE 2u
+#define LEONOS_VFS_NODE_DEVICE 3u
+
+#define LEONOS_RAW_DEVICE_MAX 24u
+#define LEONOS_RAW_DEVICE_KIND_RTC 1u
+#define LEONOS_RAW_DEVICE_KIND_KEYBOARD 2u
+#define LEONOS_RAW_DEVICE_KIND_MOUSE 3u
+#define LEONOS_RAW_DEVICE_KIND_FRAMEBUFFER 4u
+#define LEONOS_RAW_DEVICE_KIND_AHCI 5u
+#define LEONOS_RAW_DEVICE_KIND_DISK 6u
+#define LEONOS_RAW_DEVICE_KIND_SERIAL 7u
+
+struct leonos_device_info;
 
 struct leonos_boot_module_info {
     uint64_t start;
@@ -64,6 +82,10 @@ struct leonos_kernel_services {
     uint32_t reserved;
     void (*log)(const char *message);
     void (*log_len)(const char *message, uint64_t len);
+    int32_t (*read_file)(const char *path, void *buf, uint32_t capacity,
+                         uint32_t *out_len);
+    int32_t (*write_file)(const char *path, const void *buf, uint32_t len);
+    int32_t (*mkdir)(const char *path);
 };
 
 struct leonos_mount_entry {
@@ -85,6 +107,35 @@ struct leonos_mount_policy {
     struct leonos_mount_entry entries[LEONOS_MOUNT_MAX_ENTRIES];
 };
 
+struct leonos_vfs_resolve_path {
+    const char *cwd;
+    const char *input;
+    char *out;
+    uint32_t capacity;
+    uint32_t drive;
+    uint32_t node_kind;
+    uint32_t flags;
+    uint32_t reserved;
+};
+
+struct leonos_raw_device_info {
+    uint32_t kind;
+    uint32_t flags;
+    uint32_t aux0;
+    uint32_t aux1;
+    uint64_t value0;
+    uint64_t value1;
+};
+
+struct leonos_device_catalog_query {
+    const struct leonos_raw_device_info *raw;
+    uint32_t raw_count;
+    uint32_t capacity;
+    struct leonos_device_info *devices;
+    uint32_t count;
+    uint32_t reserved;
+};
+
 struct leonos_middlelayer_api {
     uint32_t version;
     uint32_t reserved;
@@ -93,6 +144,9 @@ struct leonos_middlelayer_api {
     void *selftest;
     void *mount_policy;
     void *unicode_op;
+    void *vfs_op;
+    void *device_catalog;
+    void *auth_op;
 };
 
 typedef const struct leonos_middlelayer_api *(*leonos_middlelayer_module_init_fn)(

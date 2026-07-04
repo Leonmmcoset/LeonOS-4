@@ -8,6 +8,10 @@
 
 #define NOTEPAD_W 720
 #define NOTEPAD_H 460
+#define NOTEPAD_MIN_W 320
+#define NOTEPAD_MIN_H 240
+#define NOTEPAD_MAX_W 1264
+#define NOTEPAD_MAX_H 746
 #define NOTEPAD_TEXT_CAP 32768
 #define STATUS_CAP 128
 #define PATH_CAP LEONOS_FS_PATH_LEN
@@ -16,8 +20,6 @@
 #define PATH_Y 56
 #define VIEW_X 10
 #define VIEW_Y 82
-#define VIEW_W (NOTEPAD_W - 38)
-#define VIEW_H (NOTEPAD_H - 120)
 #define STATUS_H 28
 #define MENU_BAR_H 28
 #define MENU_ITEM_H (LEONOS_FONT_H + 8)
@@ -31,7 +33,7 @@ enum {
     NOTEPAD_MENU_VIEW = 3,
 };
 
-static uint32_t pixels[NOTEPAD_W * NOTEPAD_H];
+static uint32_t pixels[NOTEPAD_MAX_W * NOTEPAD_MAX_H];
 static char file_path[PATH_CAP] = UNTITLED_NAME;
 static char status_text[STATUS_CAP];
 static char text_data[NOTEPAD_TEXT_CAP];
@@ -40,6 +42,8 @@ static uint8_t menu_open;
 static uint8_t document_dirty;
 static uint32_t saved_hash;
 static struct leonos_ui_text_area_state document;
+static uint32_t view_w = NOTEPAD_W;
+static uint32_t view_h = NOTEPAD_H;
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -114,9 +118,25 @@ static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, 
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
 }
 
+static uint32_t text_view_w(void)
+{
+    return view_w > VIEW_X + 28 ? view_w - VIEW_X - 28 : 80;
+}
+
+static uint32_t text_view_h(void)
+{
+    return view_h > VIEW_Y + STATUS_H + 10 ? view_h - VIEW_Y - STATUS_H - 10 : LEONOS_FONT_H;
+}
+
+static uint32_t scrollbar_x(void)
+{
+    return view_w > 26 ? view_w - 26 : VIEW_X + text_view_w() + 2;
+}
+
 static uint32_t visible_rows(void)
 {
-    return VIEW_H / LEONOS_FONT_H;
+    uint32_t rows = text_view_h() / LEONOS_FONT_H;
+    return rows ? rows : 1;
 }
 
 static uint32_t document_hash(void)
@@ -134,7 +154,7 @@ static uint32_t document_hash(void)
 static void rebuild_status(void)
 {
     uint32_t pos = 0;
-    leonos_ui_text_area_state_sync(&document, VIEW_W);
+    leonos_ui_text_area_state_sync(&document, text_view_w());
     status_text[0] = 0;
     append_text(status_text, &pos, sizeof(status_text), T("Lines ", "行数 "));
     append_u32(status_text, &pos, sizeof(status_text), document.line_count);
@@ -154,7 +174,7 @@ static void rebuild_status(void)
 static void clamp_scroll(void)
 {
     uint32_t rows = visible_rows();
-    leonos_ui_text_area_state_sync(&document, VIEW_W);
+    leonos_ui_text_area_state_sync(&document, text_view_w());
     if (rows == 0) {
         document.scroll_line = 0;
         return;
@@ -200,7 +220,7 @@ static void clear_document_contents(void)
     document.scroll_line = 0;
     text_data[0] = 0;
     truncated = 0;
-    leonos_ui_text_area_state_sync(&document, VIEW_W);
+    leonos_ui_text_area_state_sync(&document, text_view_w());
 }
 
 static void begin_new_document(void)
@@ -269,7 +289,7 @@ static int load_document(const char *path)
     close(fd);
     document.cursor = 0;
     document.scroll_line = 0;
-    leonos_ui_text_area_state_sync(&document, VIEW_W);
+    leonos_ui_text_area_state_sync(&document, text_view_w());
     clamp_scroll();
     mark_document_clean();
     printf("[notepad.elf] open path=%s bytes=%d lines=%d truncated=%d\n",
@@ -371,29 +391,33 @@ static int confirm_dirty_action(const char *message)
 static void draw_notepad(struct leonos_ui_surface *ui)
 {
     uint32_t rows = visible_rows();
+    uint32_t edit_w = text_view_w();
+    uint32_t edit_h = text_view_h();
+    uint32_t scroll_x = scrollbar_x();
     char path_label[PATH_CAP + 4];
     uint32_t path_pos = 0;
-    leonos_ui_text_area_state_sync(&document, VIEW_W);
+    leonos_ui_text_area_state_sync(&document, edit_w);
     path_label[0] = 0;
     append_text(path_label, &path_pos, sizeof(path_label), file_path);
     if (document_dirty) {
         append_text(path_label, &path_pos, sizeof(path_label), " *");
     }
-    leonos_ui_rect(ui, 0, 0, NOTEPAD_W, NOTEPAD_H, LEONOS_UI_WHITE);
-    leonos_ui_menubar(ui, 0, 0, NOTEPAD_W);
+    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
+    leonos_ui_menubar(ui, 0, 0, view_w);
     leonos_ui_menubar_item(ui, 8, 0, 54, T("File", "文件"), menu_open == NOTEPAD_MENU_FILE);
     leonos_ui_menubar_item(ui, 64, 0, 54, T("Edit", "编辑"), menu_open == NOTEPAD_MENU_EDIT);
     leonos_ui_menubar_item(ui, 120, 0, 54, T("View", "查看"), menu_open == NOTEPAD_MENU_VIEW);
-    leonos_ui_toolbar(ui, 0, 28, NOTEPAD_W, 26);
+    leonos_ui_toolbar(ui, 0, 28, view_w, 26);
     leonos_ui_toolbar_button(ui, 8, 30, 64, T("Open", "打开"), 0);
     leonos_ui_toolbar_button(ui, 78, 30, 64, T("Save", "保存"),
                              document_dirty ? LEONOS_UI_TOOLBAR_BUTTON_ACTIVE : 0);
-    leonos_ui_text_clipped(ui, 154, 36, NOTEPAD_W - 164, path_label, LEONOS_UI_DARK, LEONOS_UI_GRAY);
-    leonos_ui_text_area_state_draw(ui, VIEW_X, VIEW_Y, VIEW_W, VIEW_H, &document, 0);
-    leonos_ui_vscrollbar(ui, NOTEPAD_W - 26, VIEW_Y, 18, VIEW_H, document.scroll_line,
+    leonos_ui_text_clipped(ui, 154, 36, view_w > 164 ? view_w - 164 : 80,
+                           path_label, LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text_area_state_draw(ui, VIEW_X, VIEW_Y, edit_w, edit_h, &document, 0);
+    leonos_ui_vscrollbar(ui, scroll_x, VIEW_Y, 18, edit_h, document.scroll_line,
                          document.line_count > 0 ? document.line_count : 1, rows,
                          document.line_count <= rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
-    leonos_ui_statusbar(ui, NOTEPAD_H - STATUS_H, STATUS_H, status_text);
+    leonos_ui_statusbar(ui, view_h - STATUS_H, STATUS_H, status_text);
 
     if (menu_open == NOTEPAD_MENU_FILE) {
         leonos_ui_menu(ui, 8, MENU_BAR_H, 154, 112);
@@ -411,6 +435,13 @@ static void draw_notepad(struct leonos_ui_surface *ui)
         leonos_ui_menu_item(ui, 154, MENU_BAR_H + 8, 116, T("Top", "顶部"), 0);
         leonos_ui_menu_item(ui, 154, MENU_BAR_H + 34, 116, T("About", "关于"), 0);
     }
+}
+
+static void present_notepad(uint32_t window_id, struct leonos_ui_surface *ui)
+{
+    leonos_ui_bind(ui, pixels, view_w, view_h, NOTEPAD_MAX_W);
+    draw_notepad(ui);
+    leonos_gui_present_window(window_id, view_w, view_h, NOTEPAD_MAX_W, pixels);
 }
 
 static int handle_toolbar_click(int32_t x, int32_t y)
@@ -530,13 +561,13 @@ int main(int argc, char **argv, char **envp)
     puts("[notepad.elf] notepad starting");
     copy_text(status_text, sizeof(status_text), T("Open a text file from File Manager or Run", "从文件管理器或运行打开文本文件"));
     window_id = leonos_gui_create_app_window_ex(T("Notepad", "记事本"), T("LeonOS text viewer", "LeonOS 文本查看器"),
-                                                NOTEPAD_W, NOTEPAD_H, LEONOS_GUI_WINDOW_NO_RESIZE);
+                                                NOTEPAD_W, NOTEPAD_H, 0);
     if (window_id <= 0) {
         printf("[notepad.elf] create window failed=%d\n", window_id);
         return 1;
     }
 
-    leonos_ui_bind(&ui, pixels, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W);
+    leonos_ui_bind(&ui, pixels, view_w, view_h, NOTEPAD_MAX_W);
     leonos_ui_text_area_state_init(&document, text_data, sizeof(text_data));
     document.focused = 1;
     document.readonly = 0;
@@ -544,8 +575,7 @@ int main(int argc, char **argv, char **envp)
     if (argc > 1 && argv && argv[1] && argv[1][0]) {
         load_document(argv[1]);
     }
-    draw_notepad(&ui);
-    leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+    present_notepad((uint32_t)window_id, &ui);
 
     for (;;) {
         event.window_id = (uint32_t)window_id;
@@ -554,39 +584,38 @@ int main(int argc, char **argv, char **envp)
                 if (confirm_dirty_action(T("Save changes before closing?", "关闭前保存更改？"))) {
                     return 0;
                 }
-                draw_notepad(&ui);
-                leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                present_notepad((uint32_t)window_id, &ui);
                 continue;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
                 if (event.buttons & 1u) {
                     if (handle_menu_click(event.x, event.y)) {
-                        draw_notepad(&ui);
-                        leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                        present_notepad((uint32_t)window_id, &ui);
                         continue;
                     }
                     menu_open = NOTEPAD_MENU_NONE;
                     if (handle_toolbar_click(event.x, event.y)) {
-                        draw_notepad(&ui);
-                        leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                        present_notepad((uint32_t)window_id, &ui);
                         continue;
                     }
                     {
                         uint32_t before = document.scroll_line;
-                        if (event.x >= (int32_t)(NOTEPAD_W - 26) && event.y >= VIEW_Y &&
-                            event.y < (int32_t)(VIEW_Y + VIEW_H)) {
+                        uint32_t edit_w = text_view_w();
+                        uint32_t edit_h = text_view_h();
+                        uint32_t scroll_x = scrollbar_x();
+                        if (event.x >= (int32_t)scroll_x && event.y >= VIEW_Y &&
+                            event.y < (int32_t)(VIEW_Y + edit_h)) {
                             leonos_ui_vscrollbar_handle_mouse(&document.scroll_line,
                                                               document.line_count, visible_rows(),
-                                                              NOTEPAD_W - 26, VIEW_Y, 18, VIEW_H,
+                                                              scroll_x, VIEW_Y, 18, edit_h,
                                                               event.x, event.y);
                         } else {
                             leonos_ui_text_area_state_handle_mouse(&document, event.x, event.y,
-                                                                   VIEW_X, VIEW_Y, VIEW_W, VIEW_H,
+                                                                   VIEW_X, VIEW_Y, edit_w, edit_h,
                                                                    event.buttons);
                         }
                         if (before != document.scroll_line || document.focused) {
-                            draw_notepad(&ui);
-                            leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                            present_notepad((uint32_t)window_id, &ui);
                         }
                     }
                 }
@@ -596,15 +625,14 @@ int main(int argc, char **argv, char **envp)
                 if (event.buttons & 1u) {
                     uint32_t before = document.scroll_line;
                     leonos_ui_text_area_state_handle_mouse(&document, event.x, event.y,
-                                                           VIEW_X, VIEW_Y, VIEW_W, VIEW_H,
+                                                           VIEW_X, VIEW_Y, text_view_w(), text_view_h(),
                                                            event.buttons);
                     if (before != document.scroll_line || document.focused) {
-                        draw_notepad(&ui);
-                        leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                        present_notepad((uint32_t)window_id, &ui);
                     }
                 } else if (document.selecting) {
                     leonos_ui_text_area_state_handle_mouse(&document, event.x, event.y,
-                                                           VIEW_X, VIEW_Y, VIEW_W, VIEW_H, 0);
+                                                           VIEW_X, VIEW_Y, text_view_w(), text_view_h(), 0);
                 }
                 continue;
             }
@@ -612,29 +640,40 @@ int main(int argc, char **argv, char **envp)
                 if (leonos_ui_vscrollbar_handle_wheel(&document.scroll_line,
                                                       document.line_count, visible_rows(),
                                                       event.dy)) {
-                    draw_notepad(&ui);
-                    leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                    present_notepad((uint32_t)window_id, &ui);
                 }
                 continue;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
                 uint32_t before_hash = document_hash();
                 menu_open = NOTEPAD_MENU_NONE;
-                if (leonos_ui_text_area_state_handle_key(&document, event.keycode, event.pressed, VIEW_W, VIEW_H)) {
+                if (leonos_ui_text_area_state_handle_key(&document, event.keycode, event.pressed,
+                                                         text_view_w(), text_view_h())) {
                     clamp_scroll();
                     if (before_hash != document_hash()) {
                         refresh_document_dirty();
                     } else {
                         rebuild_status();
                     }
-                    draw_notepad(&ui);
-                    leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                    present_notepad((uint32_t)window_id, &ui);
                 }
                 continue;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE || event.type == LEONOS_GUI_APP_EVENT_FOCUS) {
-                draw_notepad(&ui);
-                leonos_gui_present_window((uint32_t)window_id, NOTEPAD_W, NOTEPAD_H, NOTEPAD_W, pixels);
+                if (event.width) {
+                    view_w = event.width > NOTEPAD_MAX_W ? NOTEPAD_MAX_W : event.width;
+                    if (view_w < NOTEPAD_MIN_W) {
+                        view_w = NOTEPAD_MIN_W;
+                    }
+                }
+                if (event.height) {
+                    view_h = event.height > NOTEPAD_MAX_H ? NOTEPAD_MAX_H : event.height;
+                    if (view_h < NOTEPAD_MIN_H) {
+                        view_h = NOTEPAD_MIN_H;
+                    }
+                }
+                clamp_scroll();
+                present_notepad((uint32_t)window_id, &ui);
             }
         } else {
             sleep_ms(10);
