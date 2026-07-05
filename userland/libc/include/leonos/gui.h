@@ -2,6 +2,7 @@
 #define LEONOS_GUI_H
 
 #include <stdint.h>
+#include <leonos/fs.h>
 
 #define LEONOS_GUI_IOCTL_VERSION 0x4c475549UL
 #define LEONOS_GUI_IOCTL_PATH_TEST 0x4c504154UL
@@ -136,6 +137,7 @@ struct leonos_gui_window_msg {
     uint32_t flags;
     char title[48];
     char text[96];
+    char app_path[LEONOS_FS_PATH_LEN];
 };
 
 struct leonos_gui_present {

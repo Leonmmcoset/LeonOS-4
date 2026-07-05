@@ -332,74 +332,28 @@ int text_ends_with(const char *text, const char *suffix)
     return text_eq(text + text_len - suffix_len, suffix);
 }
 
-uint8_t desktop_icon_for_elf(const char *name)
+void desktop_icon_path_for_app(const char *app_path, char *dst, uint32_t dst_len)
 {
-    if (text_eq(name, "terminal.elf")) {
-        return DESKTOP_ICON_TERMINAL;
+    uint32_t len = 0;
+    if (!dst || dst_len == 0) {
+        return;
     }
-    if (text_eq(name, "notepad.elf")) {
-        return DESKTOP_ICON_NOTEPAD;
+    dst[0] = 0;
+    if (!app_path || !app_path[0] || !text_ends_with(app_path, ".elf")) {
+        return;
     }
-    if (text_eq(name, "settings.elf")) {
-        return DESKTOP_ICON_SETTINGS;
+    while (app_path[len] && len + 1 < dst_len) {
+        dst[len] = app_path[len];
+        ++len;
     }
-    if (text_eq(name, "calc.elf")) {
-        return DESKTOP_ICON_CALC;
+    if (app_path[len] || len < 4) {
+        dst[0] = 0;
+        return;
     }
-    if (text_eq(name, "minesweeper.elf")) {
-        return DESKTOP_ICON_MINESWEEPER;
-    }
-    if (text_eq(name, "fileman.elf")) {
-        return DESKTOP_ICON_FILEMAN;
-    }
-    if (text_eq(name, "taskmgr.elf")) {
-        return DESKTOP_ICON_TASKMGR;
-    }
-    if (text_eq(name, "run.elf")) {
-        return DESKTOP_ICON_RUN;
-    }
-    if (text_eq(name, "devmgr.elf")) {
-        return DESKTOP_ICON_SETTINGS;
-    }
-    if (text_eq(name, "desktop.elf")) {
-        return DESKTOP_ICON_DESKTOP;
-    }
-    return DESKTOP_ICON_APP;
-}
-
-uint8_t desktop_icon_for_title(const char *title)
-{
-    if (text_eq(title, "Terminal") || text_eq(title, "LeonOS Terminal") || text_eq(title, "终端") || text_eq(title, "LeonOS 终端")) {
-        return DESKTOP_ICON_TERMINAL;
-    }
-    if (text_eq(title, "Notepad") || text_eq(title, "记事本")) {
-        return DESKTOP_ICON_NOTEPAD;
-    }
-    if (text_eq(title, "Settings") || text_eq(title, "设置")) {
-        return DESKTOP_ICON_SETTINGS;
-    }
-    if (text_eq(title, "Calculator") || text_eq(title, "计算器")) {
-        return DESKTOP_ICON_CALC;
-    }
-    if (text_eq(title, "Minesweeper") || text_eq(title, "扫雷")) {
-        return DESKTOP_ICON_MINESWEEPER;
-    }
-    if (text_eq(title, "File Manager") || text_eq(title, "文件管理器")) {
-        return DESKTOP_ICON_FILEMAN;
-    }
-    if (text_eq(title, "Task Manager") || text_eq(title, "任务管理器")) {
-        return DESKTOP_ICON_TASKMGR;
-    }
-    if (text_eq(title, "Run") || text_eq(title, "运行")) {
-        return DESKTOP_ICON_RUN;
-    }
-    if (text_eq(title, "Device Manager") || text_eq(title, "设备管理器")) {
-        return DESKTOP_ICON_SETTINGS;
-    }
-    if (text_eq(title, "Desktop Server") || text_eq(title, "桌面服务")) {
-        return DESKTOP_ICON_DESKTOP;
-    }
-    return DESKTOP_ICON_APP;
+    dst[len - 3] = 'b';
+    dst[len - 2] = 'm';
+    dst[len - 1] = 'p';
+    dst[len] = 0;
 }
 
 void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
@@ -415,6 +369,10 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
     }
     if (text_eq(name, "taskmgr.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Task Manager", "任务管理器"));
+        return;
+    }
+    if (text_eq(name, "diskmgr.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Disk Manager", "磁盘管理器"));
         return;
     }
     if (text_eq(name, "uidemo.elf")) {
@@ -457,6 +415,10 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         copy_text(dst, dst_len, leonos_i18n("Run", "运行"));
         return;
     }
+    if (text_eq(name, "shell.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Shell", "命令行"));
+        return;
+    }
     if (text_eq(name, "hello.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Hello", "你好"));
         return;
@@ -467,6 +429,22 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
     }
     if (text_eq(name, "oobe.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Setup", "设置向导"));
+        return;
+    }
+    if (text_eq(name, "login.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Login", "登录"));
+        return;
+    }
+    if (text_eq(name, "installer.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Installer", "安装程序"));
+        return;
+    }
+    if (text_eq(name, "memtest.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Memory Test", "内存测试"));
+        return;
+    }
+    if (text_eq(name, "init.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Init", "初始化"));
         return;
     }
     while (name && name[len]) {

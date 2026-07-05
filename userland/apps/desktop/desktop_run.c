@@ -10,20 +10,25 @@ void init_desktop(void)
                                          .restore_x = 120, .restore_y = 84,
                                          .restore_width = 420, .restore_height = 220,
                                          .title = leonos_i18n("Desktop Server", "桌面服务"), .body_color = 0x00c0c0c0,
-                                         .icon_id = DESKTOP_ICON_DESKTOP,
                                          .visible = 0};
     windows[1] = (struct desktop_window){.x = 190, .y = 150, .width = 360, .height = 190,
                                          .restore_x = 190, .restore_y = 150,
                                          .restore_width = 360, .restore_height = 190,
-                                         .title = leonos_i18n("File Manager", "文件管理器"), .body_color = 0x00ffffff,
-                                         .icon_id = DESKTOP_ICON_FILEMAN};
+                                         .title = leonos_i18n("File Manager", "文件管理器"), .body_color = 0x00ffffff};
     windows[2] = (struct desktop_window){.title = leonos_i18n("Settings", "设置"), .body_color = 0x00dfdfdf,
-                                         .icon_id = DESKTOP_ICON_SETTINGS};
+                                         };
     windows[3] = (struct desktop_window){.x = 90, .y = 118, .width = 620, .height = 300,
                                          .restore_x = 90, .restore_y = 118,
                                          .restore_width = 620, .restore_height = 300,
-                                         .title = leonos_i18n("Task Manager", "任务管理器"), .body_color = 0x00ffffff,
-                                         .icon_id = DESKTOP_ICON_TASKMGR};
+                                         .title = leonos_i18n("Task Manager", "任务管理器"), .body_color = 0x00ffffff};
+    desktop_icon_path_for_app("0:/userland/desktop.elf", windows[0].icon_path,
+                              sizeof(windows[0].icon_path));
+    desktop_icon_path_for_app("0:/userland/fileman.elf", windows[1].icon_path,
+                              sizeof(windows[1].icon_path));
+    desktop_icon_path_for_app("0:/userland/settings.elf", windows[2].icon_path,
+                              sizeof(windows[2].icon_path));
+    desktop_icon_path_for_app("0:/userland/taskmgr.elf", windows[3].icon_path,
+                              sizeof(windows[3].icon_path));
     z_order[0] = 4;
     z_order[1] = 5;
     z_order[2] = 6;
@@ -46,6 +51,7 @@ void init_desktop(void)
     cursor_y = 240;
     cursor_visible = 1;
     load_cursor_bmp();
+    desktop_items_clear();
     full_redraw_pending = 1;
     refresh_task_snapshot();
     redraw_all();
@@ -108,6 +114,12 @@ void desktop_run(void)
                 handle_mouse_wheel((uint32_t)event.x, (uint32_t)event.y,
                                    event.dy, event.buttons);
             } else if (event.type == LEONOS_INPUT_KEYBOARD) {
+                if (desktop_handle_shortcut_input_key(event.keycode, event.pressed)) {
+                    continue;
+                }
+                if (desktop_handle_message_key(event.keycode, event.pressed)) {
+                    continue;
+                }
                 if (!active_window_is_fullscreen()) {
                     if (handle_global_key(event.keycode, event.pressed)) {
                         continue;

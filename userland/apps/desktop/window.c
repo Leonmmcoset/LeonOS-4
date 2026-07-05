@@ -222,6 +222,7 @@ void remove_window_slot(uint8_t slot)
     windows[slot].client_width = 0;
     windows[slot].client_height = 0;
     windows[slot].flags = 0;
+    windows[slot].icon_path[0] = 0;
     windows[slot].anim = WINDOW_ANIM_NONE;
     windows[slot].anim_start_ms = 0;
     windows[slot].anim_from_x = 0;

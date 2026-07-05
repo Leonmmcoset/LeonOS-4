@@ -57,11 +57,13 @@ def main() -> int:
 
     copy_file(ROOT / "build/userland/desktop.elf", stage / "userland/desktop.elf")
     copy_file(ROOT / "build/userland/installer.elf", stage / "userland/installer.elf")
+    copy_file(ROOT / "build/generated/app-icons/desktop.bmp", stage / "userland/desktop.bmp")
+    copy_file(ROOT / "build/generated/app-icons/installer.bmp", stage / "userland/installer.bmp")
     copy_file(ROOT / "configs/default.conf", stage / "etc/leonos.conf")
     copy_file(ROOT / "build/esp/system/osmlayer.manifest", stage / "system/osmlayer.manifest")
     copy_file(ROOT / "system/fonts/system.psf", stage / "system/fonts/system.psf")
     copy_file(ROOT / "system/fonts/cjk16.lbf", stage / "system/fonts/cjk16.lbf")
-    copy_file(ROOT / "system/resources/mouse.bmp", stage / "system/resources/mouse.bmp")
+    copy_tree(esp_tree / "system/resources", stage / "system/resources")
     copy_tree(esp_tree, stage / "install/esp")
 
     payload_bytes = sum(item.stat().st_size for item in stage.rglob("*") if item.is_file())

@@ -1,6 +1,7 @@
 #include <leonos/auth.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
@@ -14,6 +15,9 @@
 #define LOGIN_KEY_ESCAPE 1U
 #define LOGIN_KEY_UP 72U
 #define LOGIN_KEY_DOWN 80U
+#define LOGIN_LIST_HEADER_H (LEONOS_FONT_H + 8U)
+#define LOGIN_USER_ROW_H (LEONOS_FONT_H + 4U)
+#define LOGIN_VISIBLE_USERS 5U
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[LOGIN_MAX_W * LOGIN_MAX_H];
@@ -96,24 +100,23 @@ static void draw_login(struct leonos_ui_surface *ui)
     uint32_t panel_x = surface_w > panel_w ? (surface_w - panel_w) / 2 : 0;
     uint32_t panel_y = surface_h > panel_h ? (surface_h - panel_h) / 2 : 0;
     uint32_t list_x = panel_x + 24;
-    uint32_t list_y = panel_y + 86;
+    uint32_t list_y = panel_y + 112;
     uint32_t list_w = panel_w - 48;
-    uint32_t row_h = 28;
     char masked[LEONOS_AUTH_PASSWORD_LEN];
 
     leonos_ui_rect(ui, 0, 0, surface_w, surface_h, LEONOS_UI_DESKTOP);
     leonos_ui_panel(ui, panel_x, panel_y, panel_w, panel_h, LEONOS_UI_LIGHT);
     leonos_ui_text(ui, panel_x + 24, panel_y + 24, "LeonOS 4", LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
     leonos_ui_text(ui, panel_x + 24, panel_y + 50, T("Sign in", "登录"), LEONOS_UI_DARK, LEONOS_UI_LIGHT);
-    leonos_ui_list_header(ui, list_x, list_y - 24, list_w, T("Users", "用户"));
+    leonos_ui_list_header(ui, list_x, list_y - LOGIN_LIST_HEADER_H, list_w, T("Users", "用户"));
     if (user_count == 0) {
         leonos_ui_text(ui, list_x + 8, list_y + 8,
                        T("No enabled accounts", "没有可用账户"),
                        LEONOS_UI_DARK, LEONOS_UI_LIGHT);
     }
-    for (uint32_t i = 0; i < user_count && i < 5; ++i) {
+    for (uint32_t i = 0; i < user_count && i < LOGIN_VISIBLE_USERS; ++i) {
         uint32_t flags = i == selected_user ? LEONOS_UI_MENU_SELECTED : 0;
-        leonos_ui_list_row(ui, list_x, list_y + i * row_h, list_w,
+        leonos_ui_list_row(ui, list_x, list_y + i * LOGIN_USER_ROW_H, list_w,
                            users[i].username, flags);
     }
     leonos_ui_text(ui, list_x, panel_y + 238, T("Password", "密码"),
@@ -203,11 +206,12 @@ int main(void)
                 uint32_t panel_x = surface_w > panel_w ? (surface_w - panel_w) / 2 : 0;
                 uint32_t panel_y = surface_h > panel_h ? (surface_h - panel_h) / 2 : 0;
                 uint32_t list_x = panel_x + 24;
-                uint32_t list_y = panel_y + 86;
+                uint32_t list_y = panel_y + 112;
                 uint32_t list_w = panel_w - 48;
-                for (uint32_t i = 0; i < user_count && i < 5; ++i) {
+                for (uint32_t i = 0; i < user_count && i < LOGIN_VISIBLE_USERS; ++i) {
                     if (hit_rect_i(event.x, event.y, (int32_t)list_x,
-                                   (int32_t)(list_y + i * 28), (int32_t)list_w, 28)) {
+                                   (int32_t)(list_y + i * LOGIN_USER_ROW_H),
+                                   (int32_t)list_w, (int32_t)LOGIN_USER_ROW_H)) {
                         selected_user = i;
                         password[0] = 0;
                         leonos_ui_edit_state_init(&password_edit, password, sizeof(password));

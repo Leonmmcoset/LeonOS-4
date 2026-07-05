@@ -14,6 +14,13 @@
 #define DISKMGR_RIGHT_MARGIN 22
 #define DISKMGR_STATUS_H 28
 #define DISKMGR_ROW_H 24
+#define DISKMGR_DETAIL_Y 62
+#define DISKMGR_DETAIL_H 186
+#define DISKMGR_SUMMARY_Y 258
+#define DISKMGR_LOWER_PANEL_Y 286
+#define DISKMGR_LOWER_PANEL_H 132
+#define DISKMGR_CONFIRM_EDIT_Y (DISKMGR_LOWER_PANEL_Y + 64)
+#define DISKMGR_CONFIRM_BUTTON_Y (DISKMGR_LOWER_PANEL_Y + 98)
 #define DISKMGR_KEY_ESCAPE 1U
 #define T(en, zh) leonos_i18n((en), (zh))
 
@@ -318,8 +325,9 @@ static void draw_confirmation(struct leonos_ui_surface *ui)
 {
     int index = selected_disk_index();
     uint32_t right_x = right_panel_x();
-    leonos_ui_groupbox(ui, right_x, 270, DISKMGR_DETAIL_W, 132, T("Format confirmation", "格式化确认"));
-    leonos_ui_text_clipped(ui, right_x + 14, 294, DISKMGR_DETAIL_W - 32,
+    leonos_ui_groupbox(ui, right_x, DISKMGR_LOWER_PANEL_Y, DISKMGR_DETAIL_W,
+                       DISKMGR_LOWER_PANEL_H, T("Format confirmation", "格式化确认"));
+    leonos_ui_text_clipped(ui, right_x + 14, DISKMGR_LOWER_PANEL_Y + 24, DISKMGR_DETAIL_W - 32,
                            T("This will erase and recreate an ESP.", "这会擦除并重建 ESP。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     if (index >= 0) {
@@ -330,15 +338,18 @@ static void draw_confirmation(struct leonos_ui_surface *ui)
         append_u64(line, &pos, sizeof(line), disks[index].id);
         append_text(line, &pos, sizeof(line), " ");
         append_text(line, &pos, sizeof(line), disks[index].name);
-        leonos_ui_text_clipped(ui, right_x + 14, 314, DISKMGR_DETAIL_W - 32, line,
+        leonos_ui_text_clipped(ui, right_x + 14, DISKMGR_LOWER_PANEL_Y + 44,
+                               DISKMGR_DETAIL_W - 32, line,
                                LEONOS_UI_DARK, LEONOS_UI_WHITE);
     }
-    leonos_ui_text(ui, right_x + 14, 338, T("Confirm:", "确认:"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_edit_state_draw(ui, right_x + 86, 334, 150, &confirm_edit, 0);
-    leonos_ui_button(ui, right_x + 14, 368, 134, LEONOS_UI_BUTTON_H,
+    leonos_ui_text(ui, right_x + 14, DISKMGR_LOWER_PANEL_Y + 68, T("Confirm:", "确认:"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_edit_state_draw(ui, right_x + 86, DISKMGR_CONFIRM_EDIT_Y, 150, &confirm_edit, 0);
+    leonos_ui_button(ui, right_x + 14, DISKMGR_CONFIRM_BUTTON_Y, 134, LEONOS_UI_BUTTON_H,
                      confirm_armed ? T("Click again", "再次点击") : T("Format Now", "立即格式化"),
                      text_eq(confirm_text, "FORMAT") ? 0 : LEONOS_UI_BUTTON_DISABLED);
-    leonos_ui_button(ui, right_x + 158, 368, 78, LEONOS_UI_BUTTON_H, T("Cancel", "取消"), 0);
+    leonos_ui_button(ui, right_x + 158, DISKMGR_CONFIRM_BUTTON_Y, 78, LEONOS_UI_BUTTON_H,
+                     T("Cancel", "取消"), 0);
 }
 
 static void draw_diskmgr(struct leonos_ui_surface *ui)
@@ -392,7 +403,8 @@ static void draw_diskmgr(struct leonos_ui_surface *ui)
     leonos_ui_button(ui, 238, button_y, 118, LEONOS_UI_BUTTON_H, T("Mount Target", "挂载目标"),
                      selected_disk_index() < 0 ? LEONOS_UI_BUTTON_DISABLED : 0);
 
-    leonos_ui_groupbox(ui, right_x, 62, DISKMGR_DETAIL_W, 186, T("Selected disk", "选中磁盘"));
+    leonos_ui_groupbox(ui, right_x, DISKMGR_DETAIL_Y, DISKMGR_DETAIL_W, DISKMGR_DETAIL_H,
+                       T("Selected disk", "选中磁盘"));
     int index = selected_disk_index();
     if (index >= 0) {
         draw_detail_line(ui, 90, "ID:", disk_id_text[index]);
@@ -409,18 +421,23 @@ static void draw_diskmgr(struct leonos_ui_surface *ui)
     selected_line[0] = 0;
     append_text(selected_line, &pos, sizeof(selected_line), T("Detected disks: ", "检测到磁盘: "));
     append_u64(selected_line, &pos, sizeof(selected_line), disk_count);
-    leonos_ui_text(ui, right_x + 14, 258, selected_line, LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, right_x + 14, DISKMGR_SUMMARY_Y, selected_line, LEONOS_UI_DARK,
+                   LEONOS_UI_WHITE);
     if (confirm_open) {
         draw_confirmation(ui);
     } else {
-        leonos_ui_groupbox(ui, right_x, 270, DISKMGR_DETAIL_W, 132, T("Safety", "安全"));
-        leonos_ui_text_clipped(ui, right_x + 14, 296, DISKMGR_DETAIL_W - 32,
+        leonos_ui_groupbox(ui, right_x, DISKMGR_LOWER_PANEL_Y, DISKMGR_DETAIL_W,
+                           DISKMGR_LOWER_PANEL_H, T("Safety", "安全"));
+        leonos_ui_text_clipped(ui, right_x + 14, DISKMGR_LOWER_PANEL_Y + 26,
+                               DISKMGR_DETAIL_W - 32,
                                T("Formatting is allowed for every disk.", "所有磁盘都允许格式化。"),
                                LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-        leonos_ui_text_clipped(ui, right_x + 14, 318, DISKMGR_DETAIL_W - 32,
+        leonos_ui_text_clipped(ui, right_x + 14, DISKMGR_LOWER_PANEL_Y + 48,
+                               DISKMGR_DETAIL_W - 32,
                                T("Type FORMAT and click twice to erase.", "输入 FORMAT 并点击两次才会擦除。"),
                                LEONOS_UI_DARK, LEONOS_UI_WHITE);
-        leonos_ui_text_clipped(ui, right_x + 14, 350, DISKMGR_DETAIL_W - 32,
+        leonos_ui_text_clipped(ui, right_x + 14, DISKMGR_LOWER_PANEL_Y + 80,
+                               DISKMGR_DETAIL_W - 32,
                                T("Mounting is manual after formatting.", "格式化后需要手动挂载。"),
                                LEONOS_UI_DARK, LEONOS_UI_WHITE);
     }
@@ -447,7 +464,8 @@ static int handle_mouse(uint32_t window_id, struct leonos_ui_surface *ui,
     uint32_t button_y = disk_button_y();
     if (confirm_open &&
         leonos_ui_edit_state_handle_mouse(&confirm_edit, event->x, event->y,
-                                          right_x + 86, 334, 150, event->buttons)) {
+                                          right_x + 86, DISKMGR_CONFIRM_EDIT_Y, 150,
+                                          event->buttons)) {
         confirm_armed = 0;
         present_diskmgr(window_id, ui);
         return 1;
@@ -467,12 +485,14 @@ static int handle_mouse(uint32_t window_id, struct leonos_ui_surface *ui,
         present_diskmgr(window_id, ui);
         return 1;
     }
-    if (confirm_open && hit_rect_i(event->x, event->y, right_x + 14, 368, 134, LEONOS_UI_BUTTON_H)) {
+    if (confirm_open && hit_rect_i(event->x, event->y, right_x + 14, DISKMGR_CONFIRM_BUTTON_Y,
+                                   134, LEONOS_UI_BUTTON_H)) {
         do_format_selected();
         present_diskmgr(window_id, ui);
         return 1;
     }
-    if (confirm_open && hit_rect_i(event->x, event->y, right_x + 158, 368, 78, LEONOS_UI_BUTTON_H)) {
+    if (confirm_open && hit_rect_i(event->x, event->y, right_x + 158, DISKMGR_CONFIRM_BUTTON_Y,
+                                   78, LEONOS_UI_BUTTON_H)) {
         reset_confirm();
         copy_text(status_text, sizeof(status_text), T("Format cancelled", "已取消格式化"));
         present_diskmgr(window_id, ui);

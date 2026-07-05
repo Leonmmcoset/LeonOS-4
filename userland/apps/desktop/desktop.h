@@ -5,6 +5,7 @@
 #include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/i18n.h>
+#include <leonos/launch.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/system.h>
@@ -28,6 +29,15 @@
 #define CURSOR_MAX_H 64
 #define CURSOR_BMP_MAX_BYTES (CURSOR_MAX_W * CURSOR_MAX_H * 4 + 128)
 #define CURSOR_BMP_PATH "0:/system/resources/mouse.bmp"
+#define APP_ICON_SMALL_W 16
+#define APP_ICON_SMALL_H 16
+#define APP_ICON_LARGE_W 32
+#define APP_ICON_LARGE_H 32
+#define APP_ICON_MAX_W APP_ICON_LARGE_W
+#define APP_ICON_MAX_H APP_ICON_LARGE_H
+#define APP_ICON_W APP_ICON_SMALL_W
+#define APP_ICON_H APP_ICON_SMALL_H
+#define APP_ICON_BMP_MAX_BYTES (APP_ICON_MAX_W * APP_ICON_MAX_H * 4 + 128)
 #define OOBE_DONE_PATH "0:/etc/oobe.done"
 #define OOBE_APP_PATH "0:/userland/oobe.elf"
 #define OOBE_WINDOW_TITLE "LeonOS Setup"
@@ -57,6 +67,21 @@
 #define WIN_TAP_MAX_MS 500UL
 #define WINDOW_RECOVERABLE_W 96
 #define WINDOW_RECOVERABLE_TITLEBAR_H 8
+#define DESKTOP_ITEM_MAX LEONOS_FS_MAX_ENTRIES
+#define DESKTOP_ITEM_CELL_W 96
+#define DESKTOP_ITEM_CELL_H 96
+#define DESKTOP_ITEM_GRID_X 8
+#define DESKTOP_ITEM_GRID_Y 24
+#define DESKTOP_ITEM_DOUBLE_CLICK_MS 500UL
+#define DESKTOP_CONTEXT_MENU_W 204
+#define DESKTOP_CONTEXT_MENU_COUNT 3
+#define DESKTOP_CONTEXT_ACTION_REFRESH 1
+#define DESKTOP_CONTEXT_ACTION_OPEN_FOLDER 2
+#define DESKTOP_CONTEXT_ACTION_CREATE_SHORTCUT 3
+#define DESKTOP_MESSAGE_TITLE_LEN 48
+#define DESKTOP_MESSAGE_TEXT_LEN 160
+#define DESKTOP_SHORTCUT_INPUT_W 480
+#define DESKTOP_SHORTCUT_INPUT_H 170
 
 #define DRAG_NONE 0
 #define DRAG_MOVE 1
@@ -77,17 +102,6 @@
 #define POWER_CONFIRM_NONE 0
 #define POWER_CONFIRM_REBOOT 1
 #define POWER_CONFIRM_SHUTDOWN 2
-
-#define DESKTOP_ICON_APP 0
-#define DESKTOP_ICON_TERMINAL 1
-#define DESKTOP_ICON_NOTEPAD 2
-#define DESKTOP_ICON_SETTINGS 3
-#define DESKTOP_ICON_CALC 4
-#define DESKTOP_ICON_MINESWEEPER 5
-#define DESKTOP_ICON_FILEMAN 6
-#define DESKTOP_ICON_TASKMGR 7
-#define DESKTOP_ICON_RUN 8
-#define DESKTOP_ICON_DESKTOP 9
 
 struct desktop_window {
     int x;
@@ -111,7 +125,7 @@ struct desktop_window {
     uint8_t minimized;
     uint8_t maximized;
     uint8_t snap_mode;
-    uint8_t icon_id;
+    char icon_path[LEONOS_FS_PATH_LEN];
     uint8_t anim;
     unsigned long anim_start_ms;
     int anim_from_x;
@@ -146,7 +160,6 @@ struct start_menu_item {
     const char *label;
     enum start_action_type type;
     uint8_t window_id;
-    uint8_t icon_id;
     const char *path;
 };
 
@@ -173,6 +186,12 @@ struct desktop_display_mode {
     uint32_t width;
     uint32_t height;
     const char *label;
+};
+
+struct desktop_item {
+    struct leonos_dir_entry entry;
+    char path[LEONOS_FS_PATH_LEN];
+    char icon_path[LEONOS_FS_PATH_LEN];
 };
 
 extern struct leonos_fb_info fb;
@@ -207,7 +226,24 @@ extern uint8_t start_menu_apps_loaded;
 extern uint32_t start_menu_app_count;
 extern char start_menu_app_labels[START_MENU_MAX_APPS][32];
 extern char start_menu_app_paths[START_MENU_MAX_APPS][LEONOS_FS_PATH_LEN];
-extern uint8_t start_menu_app_icons[START_MENU_MAX_APPS];
+extern struct desktop_item desktop_items[DESKTOP_ITEM_MAX];
+extern uint32_t desktop_item_count;
+extern char desktop_folder_path[LEONOS_FS_PATH_LEN];
+extern int32_t desktop_selected_item;
+extern int32_t desktop_last_click_item;
+extern unsigned long desktop_last_click_ms;
+extern uint8_t desktop_context_menu_active;
+extern uint8_t desktop_context_menu_animating;
+extern uint8_t desktop_context_menu_opening;
+extern unsigned long desktop_context_menu_anim_start;
+extern uint32_t desktop_context_menu_x;
+extern uint32_t desktop_context_menu_y;
+extern uint8_t desktop_message_active;
+extern char desktop_message_title[DESKTOP_MESSAGE_TITLE_LEN];
+extern char desktop_message_text[DESKTOP_MESSAGE_TEXT_LEN];
+extern uint8_t desktop_shortcut_input_active;
+extern uint8_t desktop_shortcut_shift_down;
+extern char desktop_shortcut_target[LEONOS_FS_PATH_LEN];
 extern uint8_t snap_preview_mode;
 extern uint8_t alt_left_down;
 extern uint8_t alt_right_down;
@@ -268,8 +304,7 @@ int32_t read_le32s(const uint8_t *p);
 int hit_rect(uint32_t x, uint32_t y, int rx, int ry, uint32_t rw, uint32_t rh);
 int text_ends_with(const char *text, const char *suffix);
 void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name);
-uint8_t desktop_icon_for_elf(const char *name);
-uint8_t desktop_icon_for_title(const char *title);
+void desktop_icon_path_for_app(const char *app_path, char *dst, uint32_t dst_len);
 uint32_t taskbar_y(void);
 uint32_t running_window_count(void);
 void start_menu_set_open(uint8_t open);
@@ -296,7 +331,8 @@ void bevel_i(int x, int y, int w, int h, uint32_t fill, uint32_t flags);
 void text_draw(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg);
 void text_draw_i(int x, int y, const char *text, uint32_t fg, uint32_t bg);
 void text_draw_transparent_i(int x, int y, const char *text, uint32_t fg);
-void draw_app_icon(uint8_t icon_id, int x, int y);
+void draw_app_icon(const char *icon_path, int x, int y);
+void draw_app_icon_large(const char *icon_path, int x, int y);
 void window_button_i(int x, int y, char label, uint32_t flags);
 void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch);
 void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text);
@@ -363,6 +399,20 @@ struct start_menu_layout start_menu_layout_for_count(uint32_t count);
 struct start_programs_layout start_programs_layout_for_menu(struct start_menu_layout menu);
 void draw_start_programs_menu(struct start_menu_layout menu);
 void draw_start_menu(void);
+void desktop_items_clear(void);
+int desktop_refresh_items(void);
+void draw_desktop_items(struct rect dirty);
+void draw_desktop_context_menu(void);
+void draw_desktop_message(void);
+void draw_desktop_shortcut_input(void);
+void desktop_show_message(const char *title, const char *message);
+int desktop_handle_message_click(uint32_t x, uint32_t y);
+int desktop_handle_message_key(uint8_t keycode, uint8_t pressed);
+int desktop_handle_shortcut_input_click(uint32_t x, uint32_t y);
+int desktop_handle_shortcut_input_key(uint8_t keycode, uint8_t pressed);
+int desktop_handle_context_menu_click(uint32_t x, uint32_t y);
+int desktop_handle_background_click(uint32_t x, uint32_t y);
+int desktop_handle_background_right_click(uint32_t x, uint32_t y);
 void draw_power_confirm(void);
 void draw_cursor_shape(uint32_t x, uint32_t y);
 void redraw_region(struct rect dirty);

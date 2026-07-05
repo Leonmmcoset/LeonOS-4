@@ -46,6 +46,10 @@ creates the first administrator, creates the home layout, writes
 `login.elf`. If `oobe.done` exists but middlelayer cannot find an enabled
 administrator in `accounts.db`, desktop launches OOBE again.
 
+New account creation seeds the user's desktop with `File Manager.lnk` and
+`Task Manager.lnk`, pointing to `0:/userland/fileman.elf` and
+`0:/userland/taskmgr.elf`.
+
 ## Supported operations
 
 Current FAT32 and syscall support includes:

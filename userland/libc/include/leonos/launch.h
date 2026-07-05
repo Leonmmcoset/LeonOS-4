@@ -10,6 +10,9 @@
 #define LEONOS_LAUNCH_ERR_UNCLOSED_QUOTE -1003
 #define LEONOS_LAUNCH_ERR_NOT_FOUND -1004
 #define LEONOS_LAUNCH_ERR_NO_ASSOCIATION -1005
+#define LEONOS_LAUNCH_ERR_INVALID_SHORTCUT -1006
+#define LEONOS_LAUNCH_ERR_SHORTCUT_LOOP -1007
+#define LEONOS_LAUNCH_ERR_EXISTS -1008
 #define LEONOS_LAUNCH_ASSOC_COUNT 3U
 
 struct leonos_launch_assoc_app {
@@ -33,6 +36,11 @@ const struct leonos_launch_assoc_app *leonos_launch_assoc_apps(uint32_t *count);
 int leonos_launch_set_extension_association(const char *extension, const char *program_path);
 int leonos_launch_get_extension_association(const char *extension, char *program_path,
                                             uint32_t capacity);
+void leonos_launch_default_shortcut_name(const char *target_path, char *buffer,
+                                         uint32_t capacity);
+int leonos_launch_create_shortcut(const char *shortcut_path, const char *target_path);
+int leonos_launch_create_shortcut_in_dir(const char *dir_path, const char *target_path,
+                                         char *out_path, uint32_t out_capacity);
 int leonos_launch_argv(char *argv[]);
 int leonos_launch_command_line(char *line, char *argv[], uint32_t max_args);
 const char *leonos_launch_error_text(int code);

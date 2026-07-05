@@ -131,81 +131,140 @@ void bevel_i(int x, int y, int w, int h, uint32_t fill, uint32_t flags)
     }
 }
 
-void draw_app_icon(uint8_t icon_id, int x, int y)
+#define APP_ICON_CACHE_MAX 64
+
+struct app_icon_cache_entry {
+    uint8_t used;
+    char path[LEONOS_FS_PATH_LEN];
+    uint32_t width;
+    uint32_t height;
+    uint32_t pixels[APP_ICON_MAX_W * APP_ICON_MAX_H];
+};
+
+static struct app_icon_cache_entry app_icon_cache[APP_ICON_CACHE_MAX];
+static uint32_t app_icon_cache_next;
+
+static int load_bmp_argb(const char *path, uint32_t max_w, uint32_t max_h,
+                         uint32_t max_bytes, uint32_t *out_pixels,
+                         uint32_t out_stride, uint32_t *out_w, uint32_t *out_h);
+
+static int draw_icon_pixels(const struct app_icon_cache_entry *entry, int x, int y,
+                            uint32_t draw_w, uint32_t draw_h)
 {
-    rect_fill_i(x, y, 16, 16, LEONOS_UI_GRAY);
-    rect_fill_i(x, y, 16, 1, LEONOS_UI_WHITE);
-    rect_fill_i(x, y, 1, 16, LEONOS_UI_WHITE);
-    rect_fill_i(x + 15, y, 1, 16, LEONOS_UI_BLACK);
-    rect_fill_i(x, y + 15, 16, 1, LEONOS_UI_BLACK);
-    switch (icon_id) {
-    case DESKTOP_ICON_TERMINAL:
-        rect_fill_i(x + 2, y + 3, 12, 10, 0x00000000);
-        rect_fill_i(x + 3, y + 4, 10, 1, 0x0000aa00);
-        rect_fill_i(x + 4, y + 7, 3, 1, 0x0000ff00);
-        rect_fill_i(x + 6, y + 8, 1, 1, 0x0000ff00);
-        rect_fill_i(x + 8, y + 10, 4, 1, 0x0000ff00);
-        break;
-    case DESKTOP_ICON_NOTEPAD:
-        rect_fill_i(x + 4, y + 2, 9, 12, 0x00ffffff);
-        rect_fill_i(x + 11, y + 2, 2, 2, 0x00d8d8d8);
-        rect_fill_i(x + 5, y + 5, 7, 1, 0x000000cc);
-        rect_fill_i(x + 5, y + 8, 7, 1, 0x000000cc);
-        rect_fill_i(x + 5, y + 11, 5, 1, 0x000000cc);
-        break;
-    case DESKTOP_ICON_SETTINGS:
-        rect_fill_i(x + 7, y + 2, 2, 12, 0x00808080);
-        rect_fill_i(x + 2, y + 7, 12, 2, 0x00808080);
-        rect_fill_i(x + 4, y + 4, 8, 8, 0x00c0c0c0);
-        rect_fill_i(x + 6, y + 6, 4, 4, 0x00000000);
-        rect_fill_i(x + 7, y + 7, 2, 2, LEONOS_UI_GRAY);
-        break;
-    case DESKTOP_ICON_CALC:
-        rect_fill_i(x + 3, y + 2, 10, 12, 0x00808080);
-        rect_fill_i(x + 4, y + 3, 8, 3, 0x00d8f0ff);
-        for (int yy = 0; yy < 2; ++yy) {
-            for (int xx = 0; xx < 3; ++xx) {
-                rect_fill_i(x + 4 + xx * 3, y + 8 + yy * 3, 2, 2, 0x00ffffff);
-            }
-        }
-        break;
-    case DESKTOP_ICON_MINESWEEPER:
-        rect_fill_i(x + 3, y + 3, 10, 10, 0x00000000);
-        rect_fill_i(x + 5, y + 2, 6, 12, 0x00000000);
-        rect_fill_i(x + 2, y + 6, 12, 4, 0x00000000);
-        rect_fill_i(x + 6, y + 6, 2, 2, 0x00ffffff);
-        break;
-    case DESKTOP_ICON_FILEMAN:
-        rect_fill_i(x + 2, y + 5, 12, 8, 0x00ffd060);
-        rect_fill_i(x + 3, y + 3, 5, 3, 0x00ffe090);
-        rect_fill_i(x + 2, y + 6, 12, 1, 0x00fff0a0);
-        break;
-    case DESKTOP_ICON_TASKMGR:
-        rect_fill_i(x + 2, y + 3, 12, 10, 0x00ffffff);
-        rect_fill_i(x + 3, y + 4, 10, 1, 0x00000080);
-        rect_fill_i(x + 4, y + 10, 2, 2, 0x0000a000);
-        rect_fill_i(x + 7, y + 7, 2, 5, 0x0000a000);
-        rect_fill_i(x + 10, y + 5, 2, 7, 0x0000a000);
-        break;
-    case DESKTOP_ICON_RUN:
-        rect_fill_i(x + 3, y + 4, 10, 8, 0x000060c0);
-        rect_fill_i(x + 6, y + 6, 4, 1, 0x00ffffff);
-        rect_fill_i(x + 9, y + 5, 1, 3, 0x00ffffff);
-        rect_fill_i(x + 10, y + 6, 1, 1, 0x00ffffff);
-        break;
-    case DESKTOP_ICON_DESKTOP:
-        rect_fill_i(x + 2, y + 3, 12, 8, 0x00008080);
-        rect_fill_i(x + 3, y + 4, 10, 6, 0x0000a0a0);
-        rect_fill_i(x + 6, y + 12, 4, 1, 0x00808080);
-        rect_fill_i(x + 5, y + 13, 6, 1, 0x00808080);
-        break;
-    default:
-        rect_fill_i(x + 4, y + 3, 8, 10, 0x00ffffff);
-        rect_fill_i(x + 10, y + 3, 2, 2, 0x00d8d8d8);
-        rect_fill_i(x + 5, y + 6, 6, 1, 0x00000080);
-        rect_fill_i(x + 5, y + 9, 6, 1, 0x00000080);
-        break;
+    if (!entry || !entry->used || !entry->width || !entry->height ||
+        !draw_w || !draw_h) {
+        return 0;
     }
+    for (uint32_t yy = 0; yy < draw_h; ++yy) {
+        uint32_t src_y = yy * entry->height / draw_h;
+        if (src_y >= entry->height) {
+            src_y = entry->height - 1;
+        }
+        for (uint32_t xx = 0; xx < draw_w; ++xx) {
+            uint32_t src_x = xx * entry->width / draw_w;
+            uint32_t argb;
+            if (src_x >= entry->width) {
+                src_x = entry->width - 1;
+            }
+            argb = entry->pixels[src_y * APP_ICON_MAX_W + src_x];
+            if ((argb >> 24) == 0) {
+                continue;
+            }
+            put_pixel_i(x + (int)xx, y + (int)yy, argb & 0x00ffffffu);
+        }
+    }
+    return 1;
+}
+
+static const struct app_icon_cache_entry *load_cached_app_icon(const char *icon_path)
+{
+    struct app_icon_cache_entry *entry;
+    if (!icon_path || !icon_path[0]) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < APP_ICON_CACHE_MAX; ++i) {
+        if (app_icon_cache[i].used && text_eq(app_icon_cache[i].path, icon_path)) {
+            return &app_icon_cache[i];
+        }
+    }
+    entry = &app_icon_cache[app_icon_cache_next++ % APP_ICON_CACHE_MAX];
+    entry->used = 0;
+    entry->path[0] = 0;
+    entry->width = 0;
+    entry->height = 0;
+    if (!load_bmp_argb(icon_path, APP_ICON_MAX_W, APP_ICON_MAX_H,
+                       APP_ICON_BMP_MAX_BYTES, entry->pixels,
+                       APP_ICON_MAX_W, &entry->width, &entry->height)) {
+        return 0;
+    }
+    copy_text(entry->path, sizeof(entry->path), icon_path);
+    entry->used = 1;
+    return entry;
+}
+
+static void draw_fallback_app_icon(int x, int y, uint32_t w, uint32_t h)
+{
+    int doc_w;
+    int doc_h;
+    int doc_x;
+    int doc_y;
+    int fold;
+    if (w < 8 || h < 8) {
+        return;
+    }
+    rect_fill_i(x, y, (int)w, (int)h, LEONOS_UI_GRAY);
+    rect_fill_i(x, y, (int)w, 1, LEONOS_UI_WHITE);
+    rect_fill_i(x, y, 1, (int)h, LEONOS_UI_WHITE);
+    rect_fill_i(x + (int)w - 1, y, 1, (int)h, LEONOS_UI_BLACK);
+    rect_fill_i(x, y + (int)h - 1, (int)w, 1, LEONOS_UI_BLACK);
+
+    doc_w = (int)w / 2;
+    doc_h = (int)h * 5 / 8;
+    if (doc_w < 8) {
+        doc_w = 8;
+    }
+    if (doc_h < 10) {
+        doc_h = 10;
+    }
+    if (doc_w + 4 > (int)w) {
+        doc_w = (int)w - 4;
+    }
+    if (doc_h + 4 > (int)h) {
+        doc_h = (int)h - 4;
+    }
+    doc_x = x + ((int)w - doc_w) / 2;
+    doc_y = y + ((int)h - doc_h) / 2;
+    fold = doc_w / 4;
+    if (fold < 2) {
+        fold = 2;
+    }
+    rect_fill_i(doc_x, doc_y, doc_w, doc_h, 0x00ffffff);
+    rect_fill_i(doc_x, doc_y, doc_w, 1, LEONOS_UI_DARK);
+    rect_fill_i(doc_x, doc_y, 1, doc_h, LEONOS_UI_DARK);
+    rect_fill_i(doc_x + doc_w - 1, doc_y, 1, doc_h, LEONOS_UI_DARK);
+    rect_fill_i(doc_x, doc_y + doc_h - 1, doc_w, 1, LEONOS_UI_DARK);
+    rect_fill_i(doc_x + doc_w - fold, doc_y + 1, fold - 1, fold - 1, 0x00d8d8d8);
+    rect_fill_i(doc_x + 2, doc_y + doc_h / 3, doc_w - 4, 1, 0x00000080);
+    rect_fill_i(doc_x + 2, doc_y + doc_h / 2, doc_w - 5, 1, 0x00000080);
+}
+
+static void draw_app_icon_sized(const char *icon_path, int x, int y,
+                                uint32_t draw_w, uint32_t draw_h)
+{
+    if (draw_icon_pixels(load_cached_app_icon(icon_path), x, y, draw_w, draw_h)) {
+        return;
+    }
+    draw_fallback_app_icon(x, y, draw_w, draw_h);
+}
+
+void draw_app_icon(const char *icon_path, int x, int y)
+{
+    draw_app_icon_sized(icon_path, x, y, APP_ICON_SMALL_W, APP_ICON_SMALL_H);
+}
+
+void draw_app_icon_large(const char *icon_path, int x, int y)
+{
+    draw_app_icon_sized(icon_path, x, y, APP_ICON_LARGE_W, APP_ICON_LARGE_H);
 }
 
 void text_draw(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg)
@@ -318,7 +377,9 @@ void append_hex_fixed(char *buf, uint32_t *pos, uint32_t cap, uint64_t value, ui
     }
 }
 
-int load_cursor_bmp(void)
+static int load_bmp_argb(const char *path, uint32_t max_w, uint32_t max_h,
+                         uint32_t max_bytes, uint32_t *out_pixels,
+                         uint32_t out_stride, uint32_t *out_w, uint32_t *out_h)
 {
     uint8_t bmp[CURSOR_BMP_MAX_BYTES];
     int fd;
@@ -335,19 +396,19 @@ int load_cursor_bmp(void)
     uint32_t row_stride;
     int top_down;
 
-    cursor_bitmap_loaded = 0;
-    cursor_width = FALLBACK_CURSOR_W;
-    cursor_height = FALLBACK_CURSOR_H;
-
-    if (stat(CURSOR_BMP_PATH, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
-        st.size < 54 || st.size > sizeof(bmp)) {
+    if (!path || !out_pixels || max_w == 0 || max_h == 0 ||
+        out_stride < max_w || max_bytes > sizeof(bmp)) {
         return 0;
     }
-    fd = open(CURSOR_BMP_PATH, LEONOS_O_RDONLY, 0);
+    if (stat(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
+        st.size < 54 || st.size > max_bytes) {
+        return 0;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
     if (fd < 0) {
         return 0;
     }
-    while (len < st.size && len < sizeof(bmp)) {
+    while (len < st.size && len < max_bytes) {
         long got = read(fd, bmp + len, (uint32_t)st.size - len);
         if (got < 0) {
             close(fd);
@@ -379,12 +440,17 @@ int load_cursor_bmp(void)
     }
     top_down = height_signed < 0;
     height = top_down ? (uint32_t)(-height_signed) : (uint32_t)height_signed;
-    if ((uint32_t)width > CURSOR_MAX_W || height > CURSOR_MAX_H) {
+    if ((uint32_t)width > max_w || height > max_h) {
         return 0;
     }
     row_stride = ((((uint32_t)width * bpp) + 31u) / 32u) * 4u;
     if (pixel_offset + row_stride * height > len) {
         return 0;
+    }
+    for (uint32_t y = 0; y < max_h; ++y) {
+        for (uint32_t x = 0; x < max_w; ++x) {
+            out_pixels[y * out_stride + x] = 0;
+        }
     }
     for (uint32_t y = 0; y < height; ++y) {
         uint32_t src_y = top_down ? y : height - 1u - y;
@@ -398,14 +464,31 @@ int load_cursor_bmp(void)
             if (bpp == 24 && r == 0xffu && g == 0 && b == 0xffu) {
                 a = 0;
             }
-            cursor_pixels[y * CURSOR_MAX_W + x] = (a << 24) | (r << 16) | (g << 8) | b;
+            out_pixels[y * out_stride + x] = (a << 24) | (r << 16) | (g << 8) | b;
         }
     }
-    cursor_width = (uint32_t)width;
-    cursor_height = height;
+    if (out_w) {
+        *out_w = (uint32_t)width;
+    }
+    if (out_h) {
+        *out_h = height;
+    }
+    return 1;
+}
+
+int load_cursor_bmp(void)
+{
+    cursor_bitmap_loaded = 0;
+    cursor_width = FALLBACK_CURSOR_W;
+    cursor_height = FALLBACK_CURSOR_H;
+    if (!load_bmp_argb(CURSOR_BMP_PATH, CURSOR_MAX_W, CURSOR_MAX_H,
+                       CURSOR_BMP_MAX_BYTES, cursor_pixels, CURSOR_MAX_W,
+                       &cursor_width, &cursor_height)) {
+        return 0;
+    }
     cursor_bitmap_loaded = 1;
-    printf("[desktop.elf] loaded cursor bmp %s %dx%d bpp=%d\n",
-           CURSOR_BMP_PATH, (int)cursor_width, (int)cursor_height, (int)bpp);
+    printf("[desktop.elf] loaded cursor bmp %s %dx%d\n",
+           CURSOR_BMP_PATH, (int)cursor_width, (int)cursor_height);
     return 1;
 }
 

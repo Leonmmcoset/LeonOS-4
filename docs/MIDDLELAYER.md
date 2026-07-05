@@ -86,6 +86,9 @@ Middlelayer also creates and repairs:
 - `0:/users/<name>/downloads`
 - `0:/tmp`
 
+On new account creation, middlelayer also seeds `0:/users/<name>/desktop`
+with launcher shortcuts for File Manager and Task Manager.
+
 First account creation is only allowed when no enabled administrator exists,
 and that first account must be an administrator. Later account creation,
 enable/disable, role switching, and admin password resets require an

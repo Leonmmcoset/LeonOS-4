@@ -2390,39 +2390,182 @@ void leonos_ui_dialog(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
     leonos_ui_text_clipped(surface, x + 10, y + 9, w > 20 ? w - 20 : w, title, LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
 }
 
+#define UI_MESSAGE_TEXT_TOP 46u
+#define UI_MESSAGE_BOTTOM_PAD 44u
+#define UI_MESSAGE_LINE_STEP (LEONOS_FONT_H + 2u)
+#define UI_MESSAGE_MIN_W 180u
+#define UI_MESSAGE_DEFAULT_W 360u
+#define UI_CONFIRM_DEFAULT_W 320u
+#define UI_MESSAGE_MIN_H 150u
+#define UI_MESSAGE_MAX_H 420u
+
+static uint32_t ui_message_inner_width(uint32_t w)
+{
+    return w > 32 ? w - 32 : w;
+}
+
+static uint32_t ui_message_max_cells(uint32_t w)
+{
+    uint32_t cells = leonos_ui_text_fit_chars(ui_message_inner_width(w));
+    return cells ? cells : 1u;
+}
+
+static uint32_t ui_message_skip_wrap_spaces(const char *text, uint32_t len, uint32_t pos)
+{
+    while (pos < len && (text[pos] == ' ' || text[pos] == '\t')) {
+        ++pos;
+    }
+    return pos;
+}
+
+static void ui_message_next_line(const char *text, uint32_t len, uint32_t start,
+                                 uint32_t max_cells, uint32_t *line_end,
+                                 uint32_t *next)
+{
+    uint32_t pos = start;
+    uint32_t cells = 0;
+    uint32_t last_break = 0;
+    uint32_t last_break_next = 0;
+    uint8_t has_break = 0;
+    if (!line_end || !next) {
+        return;
+    }
+    *line_end = start;
+    *next = len;
+    if (!text || start >= len) {
+        return;
+    }
+    while (pos < len) {
+        uint32_t byte_len = 1;
+        uint32_t cp = ui_decode_utf8(text, len, pos, &byte_len);
+        uint32_t cw;
+        if (cp == '\r' || cp == '\n') {
+            *line_end = pos;
+            *next = pos + (byte_len ? byte_len : 1u);
+            if (cp == '\r' && *next < len && text[*next] == '\n') {
+                ++(*next);
+            }
+            return;
+        }
+        cw = ui_cell_width(cp);
+        if (!cw) {
+            cw = 1;
+        }
+        if (cells && cells + cw > max_cells) {
+            if (has_break && last_break > start) {
+                *line_end = last_break;
+                *next = ui_message_skip_wrap_spaces(text, len, last_break_next);
+            } else {
+                *line_end = pos;
+                *next = pos;
+            }
+            return;
+        }
+        cells += cw;
+        pos += byte_len ? byte_len : 1u;
+        *line_end = pos;
+        *next = pos;
+        if (cp == ' ' || cp == '\t') {
+            has_break = 1;
+            last_break = pos - (byte_len ? byte_len : 1u);
+            last_break_next = pos;
+        }
+    }
+}
+
+static uint32_t ui_message_line_count(const char *message, uint32_t max_cells)
+{
+    uint32_t len = ui_strlen(message);
+    uint32_t pos = 0;
+    uint32_t count = 0;
+    if (!message || !message[0]) {
+        return 1;
+    }
+    while (pos < len && count < 512) {
+        uint32_t end = pos;
+        uint32_t next = pos;
+        ui_message_next_line(message, len, pos, max_cells, &end, &next);
+        pos = next > pos ? next : pos + 1;
+        ++count;
+    }
+    return count ? count : 1;
+}
+
+static void ui_message_copy_line(char *line, uint32_t capacity,
+                                 const char *message, uint32_t start,
+                                 uint32_t end, uint32_t max_cells,
+                                 uint8_t truncated)
+{
+    uint32_t n = 0;
+    uint32_t src;
+    if (!line || !capacity) {
+        return;
+    }
+    if (truncated) {
+        uint32_t prefix_cells = max_cells > 3 ? max_cells - 3 : 0;
+        end = prefix_cells ? ui_byte_offset_for_cell(message, end, start, prefix_cells) : start;
+    }
+    src = start;
+    while (message && src < end && n + 1 < capacity) {
+        line[n++] = message[src++];
+    }
+    if (truncated && capacity > 4) {
+        while (n + 4 > capacity && n > 0) {
+            --n;
+        }
+        line[n++] = '.';
+        line[n++] = '.';
+        line[n++] = '.';
+    }
+    line[n < capacity ? n : capacity - 1] = 0;
+}
+
+static void ui_message_draw_wrapped(struct leonos_ui_surface *surface,
+                                    uint32_t x, uint32_t y, uint32_t w,
+                                    uint32_t h, const char *message)
+{
+    uint32_t inner_w = ui_message_inner_width(w);
+    uint32_t max_cells = ui_message_max_cells(w);
+    uint32_t line_y = y + UI_MESSAGE_TEXT_TOP;
+    uint32_t text_len = ui_strlen(message);
+    uint32_t pos = 0;
+    uint32_t bottom = h > UI_MESSAGE_BOTTOM_PAD ? y + h - UI_MESSAGE_BOTTOM_PAD : y + h;
+    uint32_t visible_lines = bottom > line_y ? (bottom - line_y) / UI_MESSAGE_LINE_STEP : 0;
+    uint32_t drawn = 0;
+    if (!message || !message[0]) {
+        leonos_ui_text_clipped(surface, x + 16, line_y, inner_w, "",
+                               LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+        return;
+    }
+    while (pos < text_len && drawn < visible_lines) {
+        char line[384];
+        uint32_t start = pos;
+        uint32_t end = pos;
+        uint32_t next = pos;
+        uint8_t truncated;
+        ui_message_next_line(message, text_len, pos, max_cells, &end, &next);
+        if (end == start && next == start && next < text_len) {
+            uint32_t byte_len = 1;
+            (void)ui_decode_utf8(message, text_len, next, &byte_len);
+            end = next + (byte_len ? byte_len : 1u);
+            next = end;
+        }
+        truncated = (drawn + 1 >= visible_lines && next < text_len) ? 1 : 0;
+        ui_message_copy_line(line, sizeof(line), message, start, end, max_cells, truncated);
+        leonos_ui_text_clipped(surface, x + 16, line_y, inner_w,
+                               line, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+        pos = next > pos ? next : pos + 1;
+        line_y += UI_MESSAGE_LINE_STEP;
+        ++drawn;
+    }
+}
+
 void leonos_ui_message_box(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                            uint32_t w, uint32_t h, const char *title,
                            const char *message, const char *button)
 {
-    uint32_t line_y = y + 46;
-    uint32_t line_start = 0;
-    uint32_t line_len = 0;
-    uint32_t max_chars = leonos_ui_text_fit_chars(w > 32 ? w - 32 : w);
     leonos_ui_dialog(surface, x, y, w, h, title);
-    for (uint32_t i = 0; message && line_y + LEONOS_FONT_H < y + h - 44; ++i) {
-        char ch = message[i];
-        if (ch != '\n' && ch != 0 && line_len < max_chars) {
-            ++line_len;
-            continue;
-        }
-        {
-            char line[96];
-            uint32_t n = 0;
-            while (n < line_len && n + 1 < sizeof(line)) {
-                line[n] = message[line_start + n];
-                ++n;
-            }
-            line[n] = 0;
-            leonos_ui_text_clipped(surface, x + 16, line_y, w > 32 ? w - 32 : w,
-                                   line, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-        }
-        line_y += LEONOS_FONT_H + 2;
-        if (ch == 0) {
-            break;
-        }
-        line_start = ch == '\n' ? i + 1 : i;
-        line_len = 0;
-    }
+    ui_message_draw_wrapped(surface, x, y, w, h, message);
     leonos_ui_button(surface, x + w / 2 - 36, y + h - 38, 72, LEONOS_UI_BUTTON_H, button ? button : "OK", 0);
 }
 
@@ -2431,7 +2574,7 @@ void leonos_ui_confirm_dialog(struct leonos_ui_surface *surface, uint32_t x, uin
                               const char *message, uint32_t default_yes)
 {
     leonos_ui_dialog(surface, x, y, w, h, title);
-    leonos_ui_text_clipped(surface, x + 16, y + 46, w > 32 ? w - 32 : w, message, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    ui_message_draw_wrapped(surface, x, y, w, h, message);
     leonos_ui_button(surface, x + w - 168, y + h - 38, 72, LEONOS_UI_BUTTON_H, "Yes",
                      default_yes ? LEONOS_UI_BUTTON_PRESSED : 0);
     leonos_ui_button(surface, x + w - 88, y + h - 38, 72, LEONOS_UI_BUTTON_H, "No",
@@ -2452,22 +2595,60 @@ void leonos_ui_input_dialog(struct leonos_ui_surface *surface, uint32_t x, uint3
 int leonos_ui_show_message_box(const char *title, const char *message,
                                const char *button)
 {
-    enum { W = 360, H = 240 };
-    static uint32_t pixels[W * H];
+    enum { MAX_W = UI_MESSAGE_DEFAULT_W, MAX_H = UI_MESSAGE_MAX_H };
+    static uint32_t pixels[MAX_W * MAX_H];
     struct leonos_ui_surface surface;
     struct leonos_gui_app_event event;
+    struct leonos_display_state display;
+    uint32_t screen_w = 640;
+    uint32_t screen_h = 480;
+    uint32_t max_w;
+    uint32_t max_h;
+    uint32_t w;
+    uint32_t h;
+    uint32_t line_count;
+    uint32_t needed_h;
     int result = 0;
+    if (leonos_display_get_state(&display) == 0 &&
+        display.logical_width && display.logical_height) {
+        screen_w = display.logical_width;
+        screen_h = display.logical_height;
+    }
+    max_w = screen_w > 40 ? screen_w - 40 : screen_w;
+    if (max_w > MAX_W) {
+        max_w = MAX_W;
+    }
+    if (max_w < UI_MESSAGE_MIN_W) {
+        max_w = UI_MESSAGE_MIN_W;
+    }
+    max_h = screen_h > 60 ? screen_h - 60 : screen_h;
+    if (max_h > MAX_H) {
+        max_h = MAX_H;
+    }
+    if (max_h < 110) {
+        max_h = 110;
+    }
+    w = UI_MESSAGE_DEFAULT_W;
+    if (w > max_w) {
+        w = max_w;
+    }
+    line_count = ui_message_line_count(message ? message : "", ui_message_max_cells(w));
+    needed_h = UI_MESSAGE_TEXT_TOP + line_count * UI_MESSAGE_LINE_STEP + 50;
+    h = needed_h < UI_MESSAGE_MIN_H ? UI_MESSAGE_MIN_H : needed_h;
+    if (h > max_h) {
+        h = max_h;
+    }
     int window_id = leonos_gui_create_app_window_ex(title ? title : "Message",
                                                     message ? message : "",
-                                                    W, H, LEONOS_GUI_WINDOW_NO_RESIZE);
+                                                    w, h, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         return window_id;
     }
-    leonos_ui_bind(&surface, pixels, W, H, W);
-    leonos_ui_rect(&surface, 0, 0, W, H, LEONOS_UI_GRAY);
-    leonos_ui_message_box(&surface, 0, 0, W, H, title ? title : "Message",
+    leonos_ui_bind(&surface, pixels, w, h, MAX_W);
+    leonos_ui_rect(&surface, 0, 0, w, h, LEONOS_UI_GRAY);
+    leonos_ui_message_box(&surface, 0, 0, w, h, title ? title : "Message",
                           message ? message : "", button ? button : "OK");
-    leonos_gui_present_window((uint32_t)window_id, W, H, W, pixels);
+    leonos_gui_present_window((uint32_t)window_id, w, h, MAX_W, pixels);
     for (;;) {
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_poll_app_event(&event) > 0) {
@@ -2479,8 +2660,8 @@ int leonos_ui_show_message_box(const char *title, const char *message,
                 break;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u) &&
-                event.x >= (int32_t)(W / 2 - 36) && event.x < (int32_t)(W / 2 + 36) &&
-                event.y >= (int32_t)(H - 38) && event.y < (int32_t)(H - 38 + LEONOS_UI_BUTTON_H)) {
+                event.x >= (int32_t)(w / 2 - 36) && event.x < (int32_t)(w / 2 + 36) &&
+                event.y >= (int32_t)(h - 38) && event.y < (int32_t)(h - 38 + LEONOS_UI_BUTTON_H)) {
                 break;
             }
         } else {
@@ -2494,22 +2675,60 @@ int leonos_ui_show_message_box(const char *title, const char *message,
 int leonos_ui_show_confirm_dialog(const char *title, const char *message,
                                   uint32_t default_yes)
 {
-    enum { W = 320, H = 150 };
-    static uint32_t pixels[W * H];
+    enum { MAX_W = UI_CONFIRM_DEFAULT_W, MAX_H = UI_MESSAGE_MAX_H };
+    static uint32_t pixels[MAX_W * MAX_H];
     struct leonos_ui_surface surface;
     struct leonos_gui_app_event event;
+    struct leonos_display_state display;
+    uint32_t screen_w = 640;
+    uint32_t screen_h = 480;
+    uint32_t max_w;
+    uint32_t max_h;
+    uint32_t w;
+    uint32_t h;
+    uint32_t line_count;
+    uint32_t needed_h;
     int result = 0;
+    if (leonos_display_get_state(&display) == 0 &&
+        display.logical_width && display.logical_height) {
+        screen_w = display.logical_width;
+        screen_h = display.logical_height;
+    }
+    max_w = screen_w > 40 ? screen_w - 40 : screen_w;
+    if (max_w > MAX_W) {
+        max_w = MAX_W;
+    }
+    if (max_w < UI_MESSAGE_MIN_W) {
+        max_w = UI_MESSAGE_MIN_W;
+    }
+    max_h = screen_h > 60 ? screen_h - 60 : screen_h;
+    if (max_h > MAX_H) {
+        max_h = MAX_H;
+    }
+    if (max_h < 110) {
+        max_h = 110;
+    }
+    w = UI_CONFIRM_DEFAULT_W;
+    if (w > max_w) {
+        w = max_w;
+    }
+    line_count = ui_message_line_count(message ? message : "", ui_message_max_cells(w));
+    needed_h = UI_MESSAGE_TEXT_TOP + line_count * UI_MESSAGE_LINE_STEP + 50;
+    h = needed_h < UI_MESSAGE_MIN_H ? UI_MESSAGE_MIN_H : needed_h;
+    if (h > max_h) {
+        h = max_h;
+    }
     int window_id = leonos_gui_create_app_window_ex(title ? title : "Confirm",
                                                     message ? message : "",
-                                                    W, H, LEONOS_GUI_WINDOW_NO_RESIZE);
+                                                    w, h, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         return window_id;
     }
-    leonos_ui_bind(&surface, pixels, W, H, W);
-    leonos_ui_rect(&surface, 0, 0, W, H, LEONOS_UI_GRAY);
-    leonos_ui_confirm_dialog(&surface, 0, 0, W, H, title ? title : "Confirm",
+    leonos_ui_bind(&surface, pixels, w, h, MAX_W);
+    leonos_ui_rect(&surface, 0, 0, w, h, LEONOS_UI_GRAY);
+    leonos_ui_confirm_dialog(&surface, 0, 0, w, h, title ? title : "Confirm",
                              message ? message : "", default_yes);
-    leonos_gui_present_window((uint32_t)window_id, W, H, W, pixels);
+    leonos_gui_present_window((uint32_t)window_id, w, h, MAX_W, pixels);
     for (;;) {
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_poll_app_event(&event) > 0) {
@@ -2526,13 +2745,13 @@ int leonos_ui_show_confirm_dialog(const char *title, const char *message,
                 }
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
-                if (event.x >= (int32_t)(W - 168) && event.x < (int32_t)(W - 96) &&
-                    event.y >= (int32_t)(H - 38) && event.y < (int32_t)(H - 38 + LEONOS_UI_BUTTON_H)) {
+                if (event.x >= (int32_t)(w - 168) && event.x < (int32_t)(w - 96) &&
+                    event.y >= (int32_t)(h - 38) && event.y < (int32_t)(h - 38 + LEONOS_UI_BUTTON_H)) {
                     result = 1;
                     break;
                 }
-                if (event.x >= (int32_t)(W - 88) && event.x < (int32_t)(W - 16) &&
-                    event.y >= (int32_t)(H - 38) && event.y < (int32_t)(H - 38 + LEONOS_UI_BUTTON_H)) {
+                if (event.x >= (int32_t)(w - 88) && event.x < (int32_t)(w - 16) &&
+                    event.y >= (int32_t)(h - 38) && event.y < (int32_t)(h - 38 + LEONOS_UI_BUTTON_H)) {
                     break;
                 }
             }

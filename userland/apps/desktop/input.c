@@ -255,8 +255,9 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
         .visible = 1,
         .minimized = 0,
         .maximized = fullscreen ? 1 : 0,
-        .icon_id = desktop_icon_for_title(app_titles[slot]),
     };
+    desktop_icon_path_for_app(msg->app_path, windows[slot].icon_path,
+                              sizeof(windows[slot].icon_path));
     clamp_window(&windows[slot]);
     bring_to_front(slot);
     begin_window_open_animation(slot);
@@ -406,6 +407,8 @@ void maybe_launch_login(void)
     }
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
+        (void)desktop_refresh_items();
+        full_redraw_pending = 1;
         return;
     }
     status = (struct leonos_auth_status){0};
@@ -450,6 +453,7 @@ void login_lock_update(void)
     }
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
+        (void)desktop_refresh_items();
         full_redraw_pending = 1;
         return;
     }
@@ -518,6 +522,10 @@ void desktop_logout(void)
 {
     printf("[desktop.elf] logout requested from Start menu\n");
     leonos_auth_logout();
+    desktop_items_clear();
+    desktop_message_active = 0;
+    desktop_shortcut_input_active = 0;
+    desktop_shortcut_target[0] = 0;
     login_lock_active = 1;
     login_last_spawn_ms = 0;
     start_menu_set_open(0);
@@ -708,12 +716,48 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
 
     uint8_t left = buttons & 1;
     uint8_t was_left = previous_buttons & 1;
+    uint8_t right = buttons & 2;
+    uint8_t was_right = previous_buttons & 2;
+    uint8_t new_left = left && !was_left;
+    uint8_t new_right = right && !was_right;
     int hover_id = hit_window(x, y);
     struct rect dirty = cursor_visible ? cursor_rect_at(cursor_x, cursor_y) : rect_make(0, 0, 0, 0);
     dirty = rect_union(dirty, cursor_rect_at(x, y));
 
+    if (desktop_shortcut_input_active) {
+        if (new_left || new_right) {
+            (void)desktop_handle_shortcut_input_click(x, y);
+        }
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        if (full_redraw_pending) {
+            redraw_all();
+        } else {
+            repaint_and_flush(rect_pad(dirty, 2));
+        }
+        return;
+    }
+
+    if (desktop_message_active) {
+        if (new_left || new_right) {
+            (void)desktop_handle_message_click(x, y);
+        }
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        if (full_redraw_pending) {
+            redraw_all();
+        } else {
+            repaint_and_flush(rect_pad(dirty, 2));
+        }
+        return;
+    }
+
     if (power_confirm_action) {
-        if (left && !was_left) {
+        if (new_left) {
             (void)desktop_handle_power_confirm_click(x, y);
         }
         previous_buttons = buttons;
@@ -751,6 +795,34 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
 
     if ((oobe_lock_active && handle_oobe_lock_mouse(x, y, buttons)) ||
         (login_lock_active && handle_login_lock_mouse(x, y, buttons))) {
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        if (full_redraw_pending) {
+            redraw_all();
+        } else {
+            repaint_and_flush(rect_pad(dirty, 2));
+        }
+        return;
+    }
+
+    if (desktop_context_menu_active && (new_left || new_right)) {
+        (void)desktop_handle_context_menu_click(x, y);
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        if (full_redraw_pending) {
+            redraw_all();
+        } else {
+            repaint_and_flush(rect_pad(dirty, 2));
+        }
+        return;
+    }
+
+    if (new_right && hover_id < 0 && y < taskbar_y()) {
+        (void)desktop_handle_background_right_click(x, y);
         previous_buttons = buttons;
         cursor_x = x;
         cursor_y = y;
@@ -822,7 +894,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         }
     }
 
-    if (left && !was_left) {
+    if (new_left) {
         if (handle_taskbar_click(x, y)) {
             full_redraw_pending = 1;
             int menu_top = (int)taskbar_y() - START_MENU_MAX_H - 8;
@@ -875,7 +947,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                         last_title_click_valid = 1;
                         last_title_click_window = (uint8_t)id;
                         last_title_click_ms = now;
-                        if (window_allows_resize(w) && !w->maximized) {
+                        if (!w->maximized) {
                             drag_window = id;
                             drag_mode = DRAG_MOVE;
                             drag_dx = (int)x - w->x;
@@ -899,6 +971,8 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                     menu_top = 0;
                 }
                 dirty = rect_union(dirty, rect_make(0, menu_top, (int)fb_w(), START_MENU_DIRTY_H));
+            } else if (desktop_handle_background_click(x, y)) {
+                dirty = rect_union(dirty, rect_make(0, 0, (int)fb_w(), (int)taskbar_y()));
             }
         }
     }
@@ -923,6 +997,9 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
         y = fb_h() ? fb_h() - 1 : 0;
     }
     if (power_confirm_action) {
+        return;
+    }
+    if (desktop_shortcut_input_active || desktop_message_active || desktop_context_menu_active) {
         return;
     }
     if (active_window_is_fullscreen() &&

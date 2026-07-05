@@ -120,7 +120,7 @@ static void draw_window_animation_frame(const struct desktop_window *w)
     if (anim_w > 16 && anim_h > TITLEBAR_H + 10) {
         rect_fill_i(x + 4, y + 4, (int)anim_w - 8, TITLEBAR_H, title_color);
         if (anim_w > 48) {
-            draw_app_icon(w->icon_id, x + 8, y + 7);
+            draw_app_icon(w->icon_path, x + 8, y + 7);
         }
         if (anim_w > 120 && w->title) {
             text_draw_i(x + 28, y + 9, w->title, LEONOS_UI_WHITE, title_color);
@@ -162,7 +162,7 @@ void draw_window(uint8_t id)
     rect_fill_i(w->x + (int)w->width - 2, w->y + 1, 1, (int)w->height - 2, LEONOS_UI_DARK);
     rect_fill_i(w->x + 1, w->y + (int)w->height - 2, (int)w->width - 2, 1, LEONOS_UI_DARK);
     rect_fill_i(w->x + 4, w->y + 4, (int)w->width - 8, TITLEBAR_H, title_color);
-    draw_app_icon(w->icon_id, w->x + 8, w->y + 7);
+    draw_app_icon(w->icon_path, w->x + 8, w->y + 7);
     text_draw_i(w->x + 28, w->y + 9, w->title, LEONOS_UI_WHITE, title_color);
     int bx_i = w->x + (int)w->width - 64;
     int by_i = w->y + 6;
@@ -251,7 +251,7 @@ void draw_taskbar_button(uint8_t id, uint32_t x, uint32_t y, uint32_t w)
     leonos_ui_taskbar_button(&ui, x, y, button_w, "",
                              active ? LEONOS_UI_BUTTON_ACTIVE : 0);
     if (button_w >= 26) {
-        draw_app_icon(windows[id].icon_id, (int)x + 6, (int)y + 4);
+        draw_app_icon(windows[id].icon_path, (int)x + 6, (int)y + 4);
     }
     if (button_w >= 48) {
         leonos_ui_text_clipped(&ui, x + 28, y + 5, button_w - 32, windows[id].title,

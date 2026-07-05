@@ -293,7 +293,8 @@ static bool userland_load_task_image(struct task *task)
     return true;
 }
 
-static int64_t spawn_loaded_image(const char *task_name, const void *image, size_t image_len,
+static int64_t spawn_loaded_image(const char *path, const char *task_name,
+                                  const void *image, size_t image_len,
                                   const struct exec_launch *launch,
                                   uint32_t parent, uint32_t flags, uint32_t pty_id)
 {
@@ -303,6 +304,7 @@ static int64_t spawn_loaded_image(const char *task_name, const void *image, size
         return -12;
     }
     sched_set_task_image(pid, image, image_len);
+    sched_set_task_path(pid, path);
     if (launch) {
         sched_set_task_exec_params(pid, launch->argc, (char *const *)launch->argv,
                                    launch->envc, (char *const *)launch->envp,
@@ -328,7 +330,7 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
         console_printf("[ntclks] spawn read failed path=%s ret=%d\n", path, ret);
         return ret;
     }
-    return spawn_loaded_image(task_name, image, image_len, launch, parent, flags, pty_id);
+    return spawn_loaded_image(path, task_name, image, image_len, launch, parent, flags, pty_id);
 }
 
 static void wait_for_runnable_task(void)

@@ -1,6 +1,7 @@
 #include <ntclks/gui_ipc.h>
 #include <ntclks/mm.h>
 #include <ntclks/osmlayer.h>
+#include <ntclks/sched.h>
 #include <ntclks/usercopy.h>
 
 #define GUI_IPC_QUEUE_CAP 128
@@ -30,6 +31,7 @@ struct gui_window_slot {
     uint32_t event_tail;
     char title[GUI_IPC_WINDOW_TITLE_MAX];
     char text[GUI_IPC_WINDOW_TEXT_MAX];
+    char app_path[GUI_IPC_WINDOW_PATH_MAX];
 };
 
 static struct gui_window_slot windows[GUI_IPC_MAX_WINDOWS];
@@ -209,6 +211,7 @@ static void fill_message(struct gui_ipc_window *msg, uint32_t type,
     msg->flags = slot->flags;
     copy_kernel_string(msg->title, sizeof(msg->title), slot->title);
     copy_kernel_string(msg->text, sizeof(msg->text), slot->text);
+    copy_kernel_string(msg->app_path, sizeof(msg->app_path), slot->app_path);
 }
 
 static int coalesce_dirty_message(uint32_t type, const struct gui_window_slot *slot)
@@ -327,6 +330,11 @@ int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
     slot->event_tail = 0;
     copy_user_string(slot->title, sizeof(slot->title), title);
     copy_user_string(slot->text, sizeof(slot->text), text);
+    {
+        struct task *owner = sched_find(pid);
+        copy_kernel_string(slot->app_path, sizeof(slot->app_path),
+                           owner ? owner->path : "");
+    }
     if (!push_message(GUI_IPC_WINDOW_MSG_CREATE, slot)) {
         slot->used = 0;
         return 0;
@@ -384,6 +392,7 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
     slot->event_tail = 0;
     slot->title[0] = 0;
     slot->text[0] = 0;
+    slot->app_path[0] = 0;
     return 1;
 }
 
@@ -461,5 +470,6 @@ void gui_ipc_destroy_owner(uint32_t pid)
         slot->event_tail = 0;
         slot->title[0] = 0;
         slot->text[0] = 0;
+        slot->app_path[0] = 0;
     }
 }

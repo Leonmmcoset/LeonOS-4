@@ -56,6 +56,19 @@ static void task_copy_cwd(struct task *task, const char *cwd)
     task->cwd[i] = 0;
 }
 
+static void task_copy_path(struct task *task, const char *path)
+{
+    size_t i = 0;
+    if (!task) {
+        return;
+    }
+    while (path && path[i] && i + 1 < sizeof(task->path)) {
+        task->path[i] = path[i];
+        ++i;
+    }
+    task->path[i] = 0;
+}
+
 static void task_copy_identity_text(char *dst, size_t cap, const char *src)
 {
     size_t i = 0;
@@ -227,6 +240,11 @@ void sched_set_task_image(uint32_t pid, const void *image, size_t image_len)
     }
     task->image = image;
     task->image_len = image_len;
+}
+
+void sched_set_task_path(uint32_t pid, const char *path)
+{
+    task_copy_path(sched_find(pid), path);
 }
 
 void sched_set_task_exec_params(uint32_t pid,

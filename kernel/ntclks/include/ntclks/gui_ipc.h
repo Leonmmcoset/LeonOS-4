@@ -2,9 +2,11 @@
 #define NTCLKS_GUI_IPC_H
 
 #include <ntclks/types.h>
+#include <leonos/fs.h>
 
 #define GUI_IPC_WINDOW_TITLE_MAX 48u
 #define GUI_IPC_WINDOW_TEXT_MAX 96u
+#define GUI_IPC_WINDOW_PATH_MAX LEONOS_FS_PATH_LEN
 
 #define GUI_IPC_WINDOW_MSG_CREATE 1u
 #define GUI_IPC_WINDOW_MSG_DIRTY 2u
@@ -37,6 +39,7 @@ struct gui_ipc_window {
     uint32_t flags;
     char title[GUI_IPC_WINDOW_TITLE_MAX];
     char text[GUI_IPC_WINDOW_TEXT_MAX];
+    char app_path[GUI_IPC_WINDOW_PATH_MAX];
 };
 
 struct gui_ipc_app_event {

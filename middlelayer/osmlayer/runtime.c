@@ -849,6 +849,46 @@ static int osmlayer_ensure_user_dirs(const char *username)
     return 0;
 }
 
+static int osmlayer_write_desktop_shortcut(const char *home,
+                                           const char *name,
+                                           const char *target)
+{
+    char path[LEONOS_AUTH_HOME_LEN + 48];
+    char body[160];
+    uint32_t pos = 0;
+    uint32_t body_pos = 0;
+    if (!home || !home[0] || !name || !name[0] || !target || !target[0]) {
+        return -22;
+    }
+    path[0] = 0;
+    osmlayer_append_text(path, &pos, sizeof(path), home);
+    osmlayer_append_text(path, &pos, sizeof(path), "/desktop/");
+    osmlayer_append_text(path, &pos, sizeof(path), name);
+    body[0] = 0;
+    osmlayer_append_text(body, &body_pos, sizeof(body), "# LeonOS shortcut\n");
+    osmlayer_append_text(body, &body_pos, sizeof(body), "target=");
+    osmlayer_append_text(body, &body_pos, sizeof(body), target);
+    osmlayer_append_char(body, &body_pos, sizeof(body), '\n');
+    return osmlayer_service_write_file(path, body, body_pos);
+}
+
+static int osmlayer_seed_desktop_shortcuts(const char *username)
+{
+    char home[LEONOS_AUTH_HOME_LEN];
+    int ret;
+    if (!osmlayer_username_valid(username)) {
+        return -22;
+    }
+    osmlayer_home_for_user(home, sizeof(home), username);
+    ret = osmlayer_write_desktop_shortcut(home, "File Manager.lnk",
+                                          "0:/userland/fileman.elf");
+    if (ret < 0) {
+        return ret;
+    }
+    return osmlayer_write_desktop_shortcut(home, "Task Manager.lnk",
+                                           "0:/userland/taskmgr.elf");
+}
+
 static int osmlayer_auth_status(struct leonos_auth_status *status)
 {
     struct osmlayer_account *accounts = osmlayer_auth_accounts;
@@ -971,6 +1011,10 @@ static int osmlayer_auth_create(struct leonos_auth_create *create)
     osmlayer_make_salt(account->salt, create->username, create->password, account->uid);
     osmlayer_hash_password(account->salt, create->password, account->hash);
     ret = osmlayer_ensure_user_dirs(account->username);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = osmlayer_seed_desktop_shortcuts(account->username);
     if (ret < 0) {
         return ret;
     }

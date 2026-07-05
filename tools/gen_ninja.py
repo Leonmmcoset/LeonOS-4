@@ -38,6 +38,8 @@ USER_APPS = NORMAL_USER_APPS + [
     app for app in INSTALLER_USER_APPS if app not in NORMAL_USER_APPS
 ]
 
+APP_ICON_APPS = USER_APPS
+
 SYSTEM_FILES = [
     ("system/osmlayer.manifest", None),
     ("system/fonts/system.psf", "system/fonts/system.psf"),
@@ -182,6 +184,10 @@ def main() -> int:
     write_line(lines, "  command = mkdir -p `dirname $out` && cp $in $out")
     write_line(lines, "  description = COPY $out")
     write_line(lines)
+    write_line(lines, "rule app_icons")
+    write_line(lines, "  command = python3 tools/make_app_icons.py --out-dir build/generated/app-icons --apps $apps")
+    write_line(lines, "  description = APP.ICONS build/generated/app-icons")
+    write_line(lines)
     write_line(lines, "rule mkdir")
     write_line(lines, "  command = mkdir -p $out")
     write_line(lines, "  description = MKDIR $out")
@@ -196,7 +202,7 @@ def main() -> int:
     write_line(lines)
     write_line(lines, "rule iso")
     iso_copy_apps = " && ".join(
-        f"cp build/userland/{app}.elf build/iso/userland/{app}.elf"
+        f"cp build/userland/{app}.elf build/iso/userland/{app}.elf && cp build/esp/userland/{app}.bmp build/iso/userland/{app}.bmp"
         for app in NORMAL_USER_APPS
     )
     iso_copy_system = " && ".join(
@@ -207,7 +213,7 @@ def main() -> int:
     write_line(lines, "  description = ISO $out")
     write_line(lines)
     write_line(lines, "rule installer_root")
-    write_line(lines, "  command = python3 tools/make_installer_root.py --out $out --stage build/install/root --esp-tree build/esp")
+    write_line(lines, "  command = rm -rf build/esp/system/resources/icons && python3 tools/make_installer_root.py --out $out --stage build/install/root --esp-tree build/esp")
     write_line(lines, "  description = INSTALLER.ROOT $out")
     write_line(lines)
     write_line(lines, "rule installer_iso")
@@ -215,7 +221,7 @@ def main() -> int:
     write_line(lines, "  description = INSTALLER.ISO $out")
     write_line(lines)
     write_line(lines, "rule image")
-    write_line(lines, "  command = rm -f build/esp/boot/ntclks.elf && python3 tools/make_image.py --out $out --raw build/images/leonos4.raw --esp-tree build/esp")
+    write_line(lines, "  command = rm -f build/esp/boot/ntclks.elf && rm -rf build/esp/system/resources/icons && python3 tools/make_image.py --out $out --raw build/images/leonos4.raw --esp-tree build/esp")
     write_line(lines, "  description = IMAGE $out")
     write_line(lines)
     write_line(lines, "rule run")
@@ -244,6 +250,12 @@ def main() -> int:
     write_line(lines, "build build/version/always: phony")
     write_line(lines, "build include/generated/build_info.h: build_info build/version/always | tools/build_info.py")
     write_line(lines, "build build-info: phony include/generated/build_info.h")
+    app_icon_outputs = [
+        ROOT / "build" / "generated" / "app-icons" / f"{name}.bmp"
+        for name in APP_ICON_APPS
+    ]
+    write_line(lines, f"build {' '.join(r(p) for p in app_icon_outputs)}: app_icons tools/make_app_icons.py")
+    write_line(lines, f"  apps = {' '.join(APP_ICON_APPS)}")
 
     loader_elf = ROOT / "build" / "boot" / "loader.elf"
     kernel_sys = ROOT / "build" / "system" / "kernel.sys"
@@ -332,6 +344,10 @@ def main() -> int:
 
     write_line(lines, f"build userland: phony {' '.join(r(e) for e in user_elfs)}")
     normal_user_elfs = [user_elfs_by_app[app] for app in NORMAL_USER_APPS]
+    normal_user_icon_sources = [
+        ROOT / "build" / "generated" / "app-icons" / f"{app}.bmp"
+        for app in NORMAL_USER_APPS
+    ]
 
     esp_outputs = [
         ROOT / "build/esp/EFI/BOOT/BOOTX64.EFI",
@@ -341,6 +357,7 @@ def main() -> int:
         ROOT / "build/esp/system/middlelayer.sys",
         *(ROOT / "build/esp" / dst for dst, _ in SYSTEM_FILES),
         *(ROOT / f"build/esp/userland/{app}.elf" for app in NORMAL_USER_APPS),
+        *(ROOT / f"build/esp/userland/{app}.bmp" for app in NORMAL_USER_APPS),
         ROOT / "build/esp/etc/leonos.conf",
     ]
     write_line(lines, f"build {r(esp_outputs[0])}: grub_efi boot/grub/embedded.cfg | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh")
@@ -353,8 +370,13 @@ def main() -> int:
         if src:
             write_line(lines, f"build {r(ROOT / 'build/esp' / dst)}: copy {src}")
     system_output_count = len(SYSTEM_FILES)
-    for output, elf in zip(esp_outputs[5 + system_output_count:-1], normal_user_elfs):
+    app_output_start = 5 + system_output_count
+    app_output_end = app_output_start + len(normal_user_elfs)
+    for output, elf in zip(esp_outputs[app_output_start:app_output_end], normal_user_elfs):
         write_line(lines, f"build {r(output)}: copy {r(elf)}")
+    icon_output_end = app_output_end + len(normal_user_icon_sources)
+    for output, icon in zip(esp_outputs[app_output_end:icon_output_end], normal_user_icon_sources):
+        write_line(lines, f"build {r(output)}: copy {r(icon)}")
     write_line(lines, "build build/esp/etc/leonos.conf: copy configs/default.conf")
     write_line(lines, f"build esp: phony {' '.join(r(p) for p in esp_outputs)}")
 
@@ -362,10 +384,15 @@ def main() -> int:
     write_line(lines, f"build {r(vmdk)}: image {' '.join(r(p) for p in esp_outputs)} | tools/make_image.py")
     iso = ROOT / "build/images/leonos4.iso"
     system_deps = " ".join(r(ROOT / "build/esp" / dst) for dst, _ in SYSTEM_FILES)
-    write_line(lines, f"build {r(iso)}: iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {' '.join(r(e) for e in normal_user_elfs)} {system_deps} boot/grub/grub.cfg configs/default.conf")
+    normal_user_icon_deps = [ROOT / f"build/esp/userland/{app}.bmp" for app in NORMAL_USER_APPS]
+    write_line(lines, f"build {r(iso)}: iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {' '.join(r(e) for e in normal_user_elfs)} {' '.join(r(p) for p in normal_user_icon_deps)} {system_deps} boot/grub/grub.cfg configs/default.conf")
     installer_root = ROOT / "build/install/root.fat"
     installer_elf_deps = " ".join(r(user_elfs_by_app[app]) for app in INSTALLER_USER_APPS)
-    write_line(lines, f"build {r(installer_root)}: installer_root {' '.join(r(p) for p in esp_outputs)} {installer_elf_deps} tools/make_installer_root.py")
+    installer_icon_deps = " ".join(
+        r(ROOT / "build" / "generated" / "app-icons" / f"{app}.bmp")
+        for app in INSTALLER_USER_APPS
+    )
+    write_line(lines, f"build {r(installer_root)}: installer_root {' '.join(r(p) for p in esp_outputs)} {installer_elf_deps} {installer_icon_deps} tools/make_installer_root.py")
     installer_iso = ROOT / "build/images/leonos4-installer.iso"
     write_line(lines, f"build {r(installer_iso)}: installer_iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {r(installer_root)} boot/grub/installer.cfg boot/grub/installer_embedded.cfg tools/make_installer_iso.py | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh")
     write_line(lines, f"build image-vmdk: phony {r(vmdk)}")

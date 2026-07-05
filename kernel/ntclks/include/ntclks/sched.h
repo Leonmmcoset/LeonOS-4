@@ -74,6 +74,7 @@ struct task {
     char username[LEONOS_AUTH_USERNAME_LEN];
     char home[LEONOS_AUTH_HOME_LEN];
     char cwd[LEONOS_FS_PATH_LEN];
+    char path[LEONOS_FS_PATH_LEN];
     uint32_t exec_argc;
     uint32_t exec_envc;
     uint32_t exec_data_len;
@@ -105,6 +106,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry);
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags);
 void sched_set_task_image(uint32_t pid, const void *image, size_t image_len);
+void sched_set_task_path(uint32_t pid, const char *path);
 void sched_set_task_exec_params(uint32_t pid,
                                 uint32_t argc, char *const argv[],
                                 uint32_t envc, char *const envp[],

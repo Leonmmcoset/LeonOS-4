@@ -25,8 +25,8 @@
 #define FILEMAN_KEY_ESCAPE 1U
 #define FILEMAN_KEY_UP 72U
 #define FILEMAN_KEY_DOWN 80U
-#define FILEMAN_CONTEXT_MENU_W 176
-#define FILEMAN_CONTEXT_MENU_COUNT 9
+#define FILEMAN_CONTEXT_MENU_W 206
+#define FILEMAN_CONTEXT_MENU_COUNT 10
 #define FILEMAN_DETAILS_W 430
 #define FILEMAN_DETAILS_H 220
 #define FILEMAN_FOLDER_SIZE_MAX_DEPTH 16
@@ -49,6 +49,7 @@ enum {
     FILEMAN_ACTION_NEW_FOLDER = 7,
     FILEMAN_ACTION_UP = 8,
     FILEMAN_ACTION_REFRESH = 9,
+    FILEMAN_ACTION_CREATE_SHORTCUT = 10,
 };
 
 static uint32_t pixels[FILEMAN_MAX_W * FILEMAN_MAX_H];
@@ -382,6 +383,20 @@ static void build_parent_path(char *dst, uint32_t dst_len)
     }
 }
 
+static const char *path_basename(const char *path)
+{
+    const char *base = path;
+    if (!path) {
+        return "";
+    }
+    for (uint32_t i = 0; path[i]; ++i) {
+        if (path[i] == '/') {
+            base = path + i + 1;
+        }
+    }
+    return base ? base : "";
+}
+
 static const char *entry_type_name(const struct leonos_dir_entry *entry)
 {
     if (!entry) {
@@ -395,6 +410,9 @@ static const char *entry_type_name(const struct leonos_dir_entry *entry)
     }
     if (ends_with(entry->name, ".elf")) {
         return "ELF ";
+    }
+    if (ends_with(entry->name, ".lnk")) {
+        return "LNK ";
     }
     return "FILE";
 }
@@ -416,16 +434,19 @@ static void build_context_menu_items(struct leonos_ui_context_menu_item *items,
         T("Default Program...", "默认程序..."), FILEMAN_ACTION_DEFAULT_PROGRAM,
         has_file ? 0 : LEONOS_UI_MENU_DISABLED};
     items[3] = (struct leonos_ui_context_menu_item){
-        T("Details", "详细信息"), FILEMAN_ACTION_DETAILS, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Create Shortcut", "创建快捷方式"), FILEMAN_ACTION_CREATE_SHORTCUT,
+        has_file ? 0 : LEONOS_UI_MENU_DISABLED};
     items[4] = (struct leonos_ui_context_menu_item){
-        T("Rename", "重命名"), FILEMAN_ACTION_RENAME, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Details", "详细信息"), FILEMAN_ACTION_DETAILS, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
     items[5] = (struct leonos_ui_context_menu_item){
-        T("Delete", "删除"), FILEMAN_ACTION_DELETE, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Rename", "重命名"), FILEMAN_ACTION_RENAME, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
     items[6] = (struct leonos_ui_context_menu_item){
-        "", 0, LEONOS_UI_MENU_SEPARATOR};
+        T("Delete", "删除"), FILEMAN_ACTION_DELETE, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
     items[7] = (struct leonos_ui_context_menu_item){
-        T("New Folder", "新建文件夹"), FILEMAN_ACTION_NEW_FOLDER, 0};
+        "", 0, LEONOS_UI_MENU_SEPARATOR};
     items[8] = (struct leonos_ui_context_menu_item){
+        T("New Folder", "新建文件夹"), FILEMAN_ACTION_NEW_FOLDER, 0};
+    items[9] = (struct leonos_ui_context_menu_item){
         T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0};
 }
 
@@ -833,22 +854,24 @@ static void draw_fileman(struct leonos_ui_surface *ui)
         uint32_t has_item = selected_entry_valid();
         uint32_t has_file = selected_entry_is_file();
         uint32_t has_mutable = selected_entry_is_mutable();
-        leonos_ui_menu(ui, 8, MENU_BAR_H, 174, 242);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 132, T("Open", "打开"),
+        leonos_ui_menu(ui, 8, MENU_BAR_H, 204, 268);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 162, T("Open", "打开"),
                             has_item ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 132, T("Open With...", "打开方式..."),
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 162, T("Open With...", "打开方式..."),
                             has_file ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 132, T("Default Program...", "默认程序..."),
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 162, T("Default Program...", "默认程序..."),
                             has_file ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 132, T("Details", "详细信息"),
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 162, T("Create Shortcut", "创建快捷方式"),
+                            has_file ? 0 : LEONOS_UI_MENU_DISABLED);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 112, 162, T("Details", "详细信息"),
                             has_item ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 112, 132, T("Rename", "重命名"),
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 138, 162, T("Rename", "重命名"),
                             has_mutable ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 138, 132, T("Delete", "删除"),
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 164, 162, T("Delete", "删除"),
                             has_mutable ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 164, 132, "", LEONOS_UI_MENU_SEPARATOR);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 190, 132, T("New Folder", "新建文件夹"), 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 216, 132, T("Refresh", "刷新"), 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 190, 162, "", LEONOS_UI_MENU_SEPARATOR);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 216, 162, T("New Folder", "新建文件夹"), 0);
+        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 242, 162, T("Refresh", "刷新"), 0);
     } else if (menu_open == FILEMAN_MENU_VIEW) {
         leonos_ui_menu(ui, 64, MENU_BAR_H, 154, 86);
         leonos_ui_menu_item(ui, 98, MENU_BAR_H + 8, 116, T("Refresh", "刷新"), 0);
@@ -892,7 +915,7 @@ static void open_selected_entry(void)
     if (pid < 0) {
         if (pid == LEONOS_LAUNCH_ERR_NO_ASSOCIATION) {
             show_open_with_for_path(path, 0);
-        } else if (pid <= LEONOS_LAUNCH_ERR_EMPTY && pid >= LEONOS_LAUNCH_ERR_NO_ASSOCIATION) {
+        } else if (pid <= LEONOS_LAUNCH_ERR_EMPTY && pid >= LEONOS_LAUNCH_ERR_EXISTS) {
             set_status(leonos_launch_error_text(pid));
         } else {
             set_status_code("Launch failed ", pid);
@@ -957,6 +980,64 @@ static void create_new_folder(void)
         }
     }
     set_status(T("Folder created", "文件夹已创建"));
+}
+
+static void create_shortcut_for_selected(void)
+{
+    char target_path[LEONOS_FS_PATH_LEN];
+    char dest_dir[LEONOS_FS_PATH_LEN];
+    char shortcut_path[LEONOS_FS_PATH_LEN];
+    const char *created_name;
+    int to_desktop;
+    int ret;
+    if (!selected_entry_is_file()) {
+        set_status(T("Select a file", "请选择一个文件"));
+        return;
+    }
+    build_child_path(target_path, sizeof(target_path), entries[file_list.selected].name);
+    to_desktop = leonos_ui_show_confirm_dialog(
+        T("Create Shortcut", "创建快捷方式"),
+        T("Place shortcut on Desktop? No creates it here.",
+          "是否放到桌面？选择“否”则放在当前目录。"),
+        1);
+    if (to_desktop) {
+        if (!home_path[0]) {
+            refresh_home_path();
+        }
+        if (!home_path[0]) {
+            set_status(T("Desktop folder unavailable", "桌面文件夹不可用"));
+            return;
+        }
+        build_path_join(dest_dir, sizeof(dest_dir), home_path, "desktop");
+    } else {
+        copy_text(dest_dir, sizeof(dest_dir), current_path);
+    }
+    ret = leonos_launch_create_shortcut_in_dir(dest_dir, target_path,
+                                               shortcut_path, sizeof(shortcut_path));
+    if (ret < 0) {
+        if (ret <= LEONOS_LAUNCH_ERR_EMPTY && ret >= LEONOS_LAUNCH_ERR_EXISTS) {
+            set_status(leonos_launch_error_text(ret));
+        } else {
+            set_status_error("Create shortcut failed ", ret);
+        }
+        return;
+    }
+    if (text_eq(dest_dir, current_path)) {
+        reload_dir();
+        created_name = path_basename(shortcut_path);
+        for (uint32_t i = 0; i < entry_count; ++i) {
+            if (text_eq(entries[i].name, created_name)) {
+                file_list.selected = (int32_t)i;
+                if (i < file_list.scroll) {
+                    file_list.scroll = i;
+                } else if (i >= file_list.scroll + file_list.visible_rows) {
+                    file_list.scroll = i - file_list.visible_rows + 1;
+                }
+                break;
+            }
+        }
+    }
+    set_status(T("Shortcut created", "快捷方式已创建"));
 }
 
 static void rename_selected_entry(void)
@@ -1040,6 +1121,9 @@ static void execute_action(uint32_t action)
     case FILEMAN_ACTION_OPEN_WITH:
         show_open_with_selected();
         break;
+    case FILEMAN_ACTION_CREATE_SHORTCUT:
+        create_shortcut_for_selected();
+        break;
     case FILEMAN_ACTION_DEFAULT_PROGRAM:
         show_default_program_for_selected();
         break;
@@ -1081,54 +1165,61 @@ static int handle_menu_click(int32_t x, int32_t y)
         return 1;
     }
     if (menu_open == FILEMAN_MENU_FILE) {
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 8, 132, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 8, 162, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
             if (selected_entry_valid()) {
                 execute_action(FILEMAN_ACTION_OPEN);
             }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 34, 132, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 34, 162, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
             if (selected_entry_is_file()) {
                 execute_action(FILEMAN_ACTION_OPEN_WITH);
             }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 60, 132, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 60, 162, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
             if (selected_entry_is_file()) {
                 execute_action(FILEMAN_ACTION_DEFAULT_PROGRAM);
             }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 86, 132, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 86, 162, (int32_t)MENU_ITEM_H)) {
+            menu_open = FILEMAN_MENU_NONE;
+            if (selected_entry_is_file()) {
+                execute_action(FILEMAN_ACTION_CREATE_SHORTCUT);
+            }
+            return 1;
+        }
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 112, 162, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
             if (selected_entry_valid()) {
                 execute_action(FILEMAN_ACTION_DETAILS);
             }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 112, 132, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 138, 162, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
             if (selected_entry_is_mutable()) {
                 execute_action(FILEMAN_ACTION_RENAME);
             }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 138, 132, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 164, 162, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
             if (selected_entry_is_mutable()) {
                 execute_action(FILEMAN_ACTION_DELETE);
             }
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 190, 132, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 216, 162, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
             execute_action(FILEMAN_ACTION_NEW_FOLDER);
             return 1;
         }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 216, 132, (int32_t)MENU_ITEM_H)) {
+        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 242, 162, (int32_t)MENU_ITEM_H)) {
             menu_open = FILEMAN_MENU_NONE;
             execute_action(FILEMAN_ACTION_REFRESH);
             return 1;

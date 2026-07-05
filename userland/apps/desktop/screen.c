@@ -98,22 +98,7 @@ void redraw_region(struct rect dirty)
         return;
     }
 
-    if (rect_intersects(dirty, rect_make(8, 32, 72, 58))) {
-        rect_fill(24, 32, 48, 38, 0x00c0c0c0);
-        rect_fill(24, 32, 48, 2, 0x00ffffff);
-        rect_fill(24, 32, 2, 38, 0x00ffffff);
-        rect_fill(70, 32, 2, 38, 0x00000000);
-        rect_fill(24, 68, 48, 2, 0x00000000);
-        text_draw(16, 78, "0:/", 0x00ffffff, 0x00008080);
-    }
-    if (rect_intersects(dirty, rect_make(8, 112, 72, 58))) {
-        rect_fill(24, 112, 48, 38, 0x00c0c0c0);
-        rect_fill(24, 112, 48, 2, 0x00ffffff);
-        rect_fill(24, 112, 2, 38, 0x00ffffff);
-        rect_fill(70, 112, 2, 38, 0x00000000);
-        rect_fill(24, 148, 48, 2, 0x00000000);
-        text_draw(8, 158, leonos_i18n("Apps", "应用"), 0x00ffffff, 0x00008080);
-    }
+    draw_desktop_items(dirty);
 
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
         if (!windows[z_order[i]].anim && rect_intersects(dirty, window_rect(z_order[i]))) {
@@ -146,8 +131,11 @@ void redraw_region(struct rect dirty)
     }
 
     draw_start_menu();
+    draw_desktop_context_menu();
     draw_alt_tab_overlay();
     draw_power_confirm();
+    draw_desktop_shortcut_input();
+    draw_desktop_message();
     if (cursor_visible) {
         draw_cursor_shape(cursor_x, cursor_y);
     }
@@ -255,7 +243,9 @@ void redraw_all(void)
     }
     redraw_region(full);
     flush_region(full);
-    full_redraw_pending = (start_menu_animating || desktop_window_animation_active()) ? 1 : 0;
+    full_redraw_pending =
+        (start_menu_animating || desktop_context_menu_animating ||
+         desktop_window_animation_active()) ? 1 : 0;
 }
 
 int hit_window(uint32_t x, uint32_t y)

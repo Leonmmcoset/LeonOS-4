@@ -5,6 +5,8 @@
 
 #define LEONOS_ASSOC_CONFIG_PATH "0:/etc/fileassoc.cfg"
 #define LEONOS_ASSOC_CONFIG_MAX 1024U
+#define LEONOS_SHORTCUT_MAX_BYTES 384U
+#define LEONOS_SHORTCUT_MAX_DEPTH 8U
 
 struct builtin_program {
     const char *name;
@@ -131,6 +133,20 @@ static int ends_with_ignore_case(const char *text, const char *suffix)
     return text_eq_ignore_case(text + text_n - suffix_n, suffix);
 }
 
+static const char *path_basename(const char *path)
+{
+    const char *base = path;
+    if (!path) {
+        return "";
+    }
+    for (uint32_t i = 0; path[i]; ++i) {
+        if (path[i] == '/') {
+            base = path + i + 1;
+        }
+    }
+    return base ? base : "";
+}
+
 static int is_space_char(char ch)
 {
     return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
@@ -151,6 +167,21 @@ static void build_parent_path(char *dst, uint32_t capacity, const char *path)
     }
 }
 
+static void build_child_path(char *dst, uint32_t capacity,
+                             const char *parent, const char *name)
+{
+    uint32_t pos = 0;
+    if (!dst || capacity == 0) {
+        return;
+    }
+    dst[0] = 0;
+    append_text(dst, &pos, capacity, parent);
+    if (!text_eq(parent, "0:/")) {
+        append_char(dst, &pos, capacity, '/');
+    }
+    append_text(dst, &pos, capacity, name);
+}
+
 static void build_cat_command(char *dst, uint32_t capacity, const char *path)
 {
     uint32_t pos = 0;
@@ -161,6 +192,112 @@ static void build_cat_command(char *dst, uint32_t capacity, const char *path)
     append_text(dst, &pos, capacity, "cat \"");
     append_text(dst, &pos, capacity, path);
     append_char(dst, &pos, capacity, '"');
+}
+
+void leonos_launch_default_shortcut_name(const char *target_path, char *buffer,
+                                         uint32_t capacity)
+{
+    uint32_t pos = 0;
+    const char *base = path_basename(target_path);
+    if (!buffer || capacity == 0) {
+        return;
+    }
+    buffer[0] = 0;
+    if (!base || !base[0]) {
+        base = "Shortcut";
+    }
+    append_text(buffer, &pos, capacity, base);
+    if (!ends_with_ignore_case(buffer, ".lnk")) {
+        append_text(buffer, &pos, capacity, ".lnk");
+    }
+}
+
+static void build_numbered_shortcut_name(char *dst, uint32_t capacity,
+                                         const char *target_path, uint32_t number)
+{
+    uint32_t pos = 0;
+    const char *base = path_basename(target_path);
+    if (!dst || capacity == 0) {
+        return;
+    }
+    dst[0] = 0;
+    if (!base || !base[0]) {
+        base = "Shortcut";
+    }
+    append_text(dst, &pos, capacity, base);
+    append_char(dst, &pos, capacity, ' ');
+    if (number >= 10) {
+        append_char(dst, &pos, capacity, (char)('0' + (number / 10) % 10));
+    }
+    append_char(dst, &pos, capacity, (char)('0' + number % 10));
+    append_text(dst, &pos, capacity, ".lnk");
+}
+
+int leonos_launch_create_shortcut(const char *shortcut_path, const char *target_path)
+{
+    struct leonos_stat st;
+    char body[LEONOS_SHORTCUT_MAX_BYTES];
+    uint32_t pos = 0;
+    int fd;
+    long wrote;
+    if (!shortcut_path || !shortcut_path[0] || !target_path || !target_path[0]) {
+        return LEONOS_LAUNCH_ERR_EMPTY;
+    }
+    if (!ends_with_ignore_case(shortcut_path, ".lnk")) {
+        return LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
+    }
+    if (stat(target_path, &st) < 0) {
+        return LEONOS_LAUNCH_ERR_NOT_FOUND;
+    }
+    if (stat(shortcut_path, &st) == 0) {
+        return LEONOS_LAUNCH_ERR_EXISTS;
+    }
+    body[0] = 0;
+    append_text(body, &pos, sizeof(body), "# LeonOS shortcut\n");
+    append_text(body, &pos, sizeof(body), "target=");
+    append_text(body, &pos, sizeof(body), target_path);
+    append_char(body, &pos, sizeof(body), '\n');
+    fd = open(shortcut_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    wrote = write(fd, body, pos);
+    close(fd);
+    if (wrote < 0) {
+        return (int)wrote;
+    }
+    return (uint32_t)wrote == pos ? 0 : -1;
+}
+
+int leonos_launch_create_shortcut_in_dir(const char *dir_path, const char *target_path,
+                                         char *out_path, uint32_t out_capacity)
+{
+    struct leonos_stat st;
+    char name[LEONOS_FS_NAME_LEN];
+    char path[LEONOS_FS_PATH_LEN];
+    int ret;
+    if (!dir_path || !dir_path[0] || !target_path || !target_path[0]) {
+        return LEONOS_LAUNCH_ERR_EMPTY;
+    }
+    if (stat(dir_path, &st) < 0 || st.type != LEONOS_FS_TYPE_DIR) {
+        return LEONOS_LAUNCH_ERR_NOT_FOUND;
+    }
+    leonos_launch_default_shortcut_name(target_path, name, sizeof(name));
+    for (uint32_t i = 0; i < 100; ++i) {
+        if (i > 0) {
+            build_numbered_shortcut_name(name, sizeof(name), target_path, i + 1);
+        }
+        build_child_path(path, sizeof(path), dir_path, name);
+        if (stat(path, &st) == 0) {
+            continue;
+        }
+        ret = leonos_launch_create_shortcut(path, target_path);
+        if (ret == 0 && out_path && out_capacity) {
+            copy_text(out_path, out_capacity, path);
+        }
+        return ret;
+    }
+    return LEONOS_LAUNCH_ERR_EXISTS;
 }
 
 static const struct leonos_launch_assoc_app *find_assoc_app(const char *program_path)
@@ -509,6 +646,97 @@ const char *leonos_launch_resolve_default_app_for_path(const char *path)
     return builtin_program ? builtin_program : 0;
 }
 
+static int shortcut_line_starts_with(const char *line, uint32_t len, const char *prefix)
+{
+    uint32_t i = 0;
+    while (prefix && prefix[i]) {
+        if (i >= len || line[i] != prefix[i]) {
+            return 0;
+        }
+        ++i;
+    }
+    return i > 0;
+}
+
+static int parse_shortcut_target(const char *buffer, uint32_t len,
+                                 char *target, uint32_t capacity)
+{
+    uint32_t pos = 0;
+    if (!target || capacity == 0) {
+        return LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
+    }
+    target[0] = 0;
+    while (pos < len) {
+        uint32_t start = pos;
+        uint32_t line_len;
+        uint32_t text_start;
+        uint32_t text_end;
+        uint32_t out = 0;
+        while (pos < len && buffer[pos] != '\n' && buffer[pos] != '\r') {
+            ++pos;
+        }
+        line_len = pos - start;
+        while (pos < len && (buffer[pos] == '\n' || buffer[pos] == '\r')) {
+            ++pos;
+        }
+        text_start = start;
+        text_end = start + line_len;
+        while (text_start < text_end && is_space_char(buffer[text_start])) {
+            ++text_start;
+        }
+        while (text_end > text_start && is_space_char(buffer[text_end - 1])) {
+            --text_end;
+        }
+        if (text_start >= text_end || buffer[text_start] == '#') {
+            continue;
+        }
+        if (shortcut_line_starts_with(buffer + text_start, text_end - text_start, "target=")) {
+            text_start += 7;
+        }
+        while (text_start < text_end && out + 1 < capacity) {
+            target[out++] = buffer[text_start++];
+        }
+        target[out] = 0;
+        return target[0] ? 0 : LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
+    }
+    return LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
+}
+
+static int read_shortcut_target(const char *shortcut_path, char *target, uint32_t capacity)
+{
+    char buffer[LEONOS_SHORTCUT_MAX_BYTES];
+    uint32_t len = 0;
+    int fd;
+    int ret;
+    struct leonos_stat st;
+    if (!shortcut_path || !target || capacity == 0) {
+        return LEONOS_LAUNCH_ERR_EMPTY;
+    }
+    target[0] = 0;
+    fd = open(shortcut_path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    while (len + 1 < sizeof(buffer)) {
+        long got = read(fd, buffer + len, sizeof(buffer) - len - 1);
+        if (got < 0) {
+            close(fd);
+            return (int)got;
+        }
+        if (got == 0) {
+            break;
+        }
+        len += (uint32_t)got;
+    }
+    close(fd);
+    buffer[len] = 0;
+    ret = parse_shortcut_target(buffer, len, target, capacity);
+    if (ret < 0) {
+        return ret;
+    }
+    return stat(target, &st) < 0 ? LEONOS_LAUNCH_ERR_NOT_FOUND : 0;
+}
+
 int leonos_launch_file_with_app(const char *target_path, const char *program_path)
 {
     const char *resolved_program;
@@ -603,7 +831,7 @@ int leonos_cmdline_split(char *line, char *argv[], uint32_t max_args)
     return (int)argc;
 }
 
-int leonos_launch_argv(char *argv[])
+static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
 {
     struct leonos_stat st;
     char extension[16];
@@ -615,6 +843,26 @@ int leonos_launch_argv(char *argv[])
     path = argv[0];
     path = (char *)leonos_launch_builtin_path(path);
     argv[0] = path;
+    if (ends_with_ignore_case(path, ".lnk")) {
+        char target[LEONOS_FS_PATH_LEN];
+        char *target_argv[LEONOS_LAUNCH_MAX_ARGS];
+        uint32_t i = 1;
+        int ret;
+        if (depth >= LEONOS_SHORTCUT_MAX_DEPTH) {
+            return LEONOS_LAUNCH_ERR_SHORTCUT_LOOP;
+        }
+        ret = read_shortcut_target(path, target, sizeof(target));
+        if (ret < 0) {
+            return ret;
+        }
+        target_argv[0] = target;
+        while (i + 1 < LEONOS_LAUNCH_MAX_ARGS && argv[i]) {
+            target_argv[i] = argv[i];
+            ++i;
+        }
+        target_argv[i] = 0;
+        return leonos_launch_argv_depth(target_argv, depth + 1);
+    }
     if (stat(path, &st) < 0) {
         return LEONOS_LAUNCH_ERR_NOT_FOUND;
     }
@@ -641,6 +889,11 @@ int leonos_launch_argv(char *argv[])
     return LEONOS_LAUNCH_ERR_NO_ASSOCIATION;
 }
 
+int leonos_launch_argv(char *argv[])
+{
+    return leonos_launch_argv_depth(argv, 0);
+}
+
 int leonos_launch_command_line(char *line, char *argv[], uint32_t max_args)
 {
     int argc = leonos_cmdline_split(line, argv, max_args);
@@ -663,6 +916,12 @@ const char *leonos_launch_error_text(int code)
         return "Program or path not found";
     case LEONOS_LAUNCH_ERR_NO_ASSOCIATION:
         return "No file association for this item";
+    case LEONOS_LAUNCH_ERR_INVALID_SHORTCUT:
+        return "Invalid shortcut";
+    case LEONOS_LAUNCH_ERR_SHORTCUT_LOOP:
+        return "Shortcut loop detected";
+    case LEONOS_LAUNCH_ERR_EXISTS:
+        return "Shortcut already exists";
     default:
         return "Launch failed";
     }
