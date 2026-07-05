@@ -50,6 +50,7 @@ enum task_kind {
 #define TASK_FLAG_SERVICE 0x00000001u
 #define TASK_FLAG_STARTED 0x00000002u
 #define TASK_FLAG_RESOURCES_RELEASED 0x00000004u
+#define TASK_FLAG_WINDOW_SERVER 0x00000008u
 
 struct task {
     uint32_t pid;
@@ -124,6 +125,8 @@ uint32_t sched_current_pid(void);
 struct task *sched_current_task(void);
 struct task *sched_find(uint32_t pid);
 struct task *sched_find_by_name(const char *name);
+struct task *sched_find_by_path_basename(const char *basename);
+struct task *sched_find_window_server(void);
 struct task *sched_select_next_user(void);
 struct trap_frame *sched_task_frame(struct task *task);
 uint64_t sched_task_cr3(struct task *task);

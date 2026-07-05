@@ -4,6 +4,7 @@
 #include <ntclks/input.h>
 #include <ntclks/mm.h>
 #include <ntclks/mouse.h>
+#include <ntclks/net.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/power.h>
 #include <ntclks/pty.h>
@@ -18,6 +19,7 @@
 #include <leonos/device.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
+#include <leonos/net.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
 #include <leonos/text.h>
@@ -121,6 +123,17 @@ static void device_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t va
         value = -value;
     }
     device_append_u64(buf, pos, cap, (uint32_t)value);
+}
+
+static void device_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t ip)
+{
+    device_append_u64(buf, pos, cap, (ip >> 24) & 0xffu);
+    device_append_char(buf, pos, cap, '.');
+    device_append_u64(buf, pos, cap, (ip >> 16) & 0xffu);
+    device_append_char(buf, pos, cap, '.');
+    device_append_u64(buf, pos, cap, (ip >> 8) & 0xffu);
+    device_append_char(buf, pos, cap, '.');
+    device_append_u64(buf, pos, cap, ip & 0xffu);
 }
 
 static void device_add(struct leonos_device_info *devices, uint32_t capacity,
@@ -322,6 +335,11 @@ static void clear_task_files(struct task *task)
     for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
         clear_task_file(&task->files[i]);
     }
+}
+
+void syscall_release_task_files(struct task *task)
+{
+    clear_task_files(task);
 }
 
 static struct task_file *task_file_for_fd(struct task *task, int fd)
@@ -1819,7 +1837,8 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (!cmd->title || !cmd->text) {
             return -LEONOS_EFAULT;
         }
-        if (user_strlen(cmd->title, 47) == 47 || user_strlen(cmd->text, 95) == 95) {
+        if (user_strlen(cmd->title, GUI_IPC_WINDOW_TITLE_MAX - 1) == GUI_IPC_WINDOW_TITLE_MAX - 1 ||
+            user_strlen(cmd->text, GUI_IPC_WINDOW_TEXT_MAX - 1) == GUI_IPC_WINDOW_TEXT_MAX - 1) {
             return -LEONOS_EFAULT;
         }
         return gui_ipc_create_window(sched_current_pid(),
@@ -2159,6 +2178,41 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                    : -LEONOS_EINVAL;
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_PING) {
+        if (!user_range_ok(a2, sizeof(struct leonos_net_ping))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_ping((struct leonos_net_ping *)(uintptr_t)a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_CONFIG) {
+        if (!user_range_ok(a2, sizeof(struct leonos_net_config))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_get_config((struct leonos_net_config *)(uintptr_t)a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_DHCP) {
+        if (!user_range_ok(a2, sizeof(struct leonos_net_dhcp))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_dhcp_renew((struct leonos_net_dhcp *)(uintptr_t)a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_DNS) {
+        if (!user_range_ok(a2, sizeof(struct leonos_net_dns))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_dns_resolve((struct leonos_net_dns *)(uintptr_t)a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_HTTP_GET) {
+        if (!user_range_ok(a2, sizeof(struct leonos_net_http_get))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_http_get((struct leonos_net_http_get *)(uintptr_t)a2);
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DEVICE_LIST) {
         struct leonos_device_list *query;
         struct leonos_device_info *devices;
@@ -2245,6 +2299,18 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                            ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
                            : 0,
                        0x3f8, 0, 0x3f8, 0);
+        {
+            uint32_t net_flags = 0;
+            uint64_t net_mac = 0;
+            uint32_t net_ip = 0;
+            struct leonos_net_config net_cfg;
+            net_device_info(&net_flags, &net_mac, &net_ip);
+            if (net_get_config(&net_cfg) < 0) {
+                net_cfg = (struct leonos_net_config){0};
+            }
+            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_E1000,
+                           net_flags, net_ip, net_cfg.source, net_mac, net_cfg.gateway_ip);
+        }
         {
             struct leonos_device_catalog_query catalog = {
                 .raw = raw,
@@ -2335,6 +2401,30 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                        : 0,
                    "Serial COM1", serial_is_ready() ? "Running" : "Unavailable",
                    "I/O port 0x3f8 debug console", 0x3f8, 0);
+
+        {
+            uint32_t net_flags = 0;
+            uint64_t net_mac = 0;
+            uint32_t net_ip = 0;
+            struct leonos_net_config net_cfg;
+            uint32_t pos = 0;
+            net_device_info(&net_flags, &net_mac, &net_ip);
+            if (net_get_config(&net_cfg) < 0) {
+                net_cfg = (struct leonos_net_config){0};
+            }
+            detail[0] = 0;
+            device_append_text(detail, &pos, sizeof(detail), "Intel e1000, ");
+            device_append_text(detail, &pos, sizeof(detail),
+                               net_cfg.source == LEONOS_NET_CONFIG_SOURCE_DHCP ? "DHCP IPv4 " : "static IPv4 ");
+            device_append_ipv4(detail, &pos, sizeof(detail), net_cfg.local_ip);
+            device_append_text(detail, &pos, sizeof(detail), ", gateway ");
+            device_append_ipv4(detail, &pos, sizeof(detail), net_cfg.gateway_ip);
+            device_append_text(detail, &pos, sizeof(detail), ", DNS ");
+            device_append_ipv4(detail, &pos, sizeof(detail), net_cfg.dns_ip);
+            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_NETWORK,
+                       net_flags, "Intel e1000", net_is_ready() ? "Running" : "Unavailable",
+                       detail, net_mac, net_ip);
+        }
 
         query->count = count;
         return 0;

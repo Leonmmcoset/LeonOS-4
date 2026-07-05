@@ -6,6 +6,7 @@
 #include <leonos/fs.h>
 #include <leonos/i18n.h>
 #include <leonos/launch.h>
+#include <leonos/net.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/system.h>
@@ -20,6 +21,8 @@
 #define DESKTOP_SCALE_COUNT 3
 #define TASKBAR_H LEONOS_UI_TASKBAR_H
 #define TASKBAR_CLOCK_W 92
+#define TASKBAR_NET_W 34
+#define TASKBAR_TRAY_W (TASKBAR_CLOCK_W + TASKBAR_NET_W)
 #define TITLEBAR_H LEONOS_UI_TITLEBAR_H
 #define MIN_W 180
 #define MIN_H 96
@@ -61,6 +64,7 @@
 #define APP_WINDOW_SLOTS (MAX_WINDOWS - BUILTIN_WINDOWS)
 #define APP_CLIENT_MAX_W 1920
 #define APP_CLIENT_MAX_H 1080
+#define DESKTOP_APP_TEXT_LEN 1024
 #define SNAP_MARGIN 24
 #define ALT_TAB_MAX_WINDOWS MAX_WINDOWS
 #define ALT_TAB_W 336
@@ -269,7 +273,7 @@ extern unsigned long oobe_last_spawn_ms;
 extern uint8_t login_lock_active;
 extern unsigned long login_last_spawn_ms;
 extern char app_titles[MAX_WINDOWS][48];
-extern char app_texts[MAX_WINDOWS][96];
+extern char app_texts[MAX_WINDOWS][DESKTOP_APP_TEXT_LEN];
 extern struct leonos_task_info task_infos[LEONOS_TASK_MAX];
 extern uint32_t task_info_count;
 extern uint64_t task_info_tick;

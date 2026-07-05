@@ -114,6 +114,14 @@ File mappings currently require:
 File mappings are lazy. The page fault handler maps file-backed pages on first
 read. Writable file-backed mappings are still `-ENOSYS`.
 
+If a page fault cannot be recovered by the lazy mapping path, kernel-mode faults
+and the desktop window-server fault path still go to bugcheck. Ordinary Ring-3
+applications are terminated instead: the kernel releases their open file state,
+destroys their GUI/PTY ownership, records exit code `0x8000000e`, schedules the
+next runnable user task, and posts an `Application Page Fault` desktop window
+with PID, path, user, fault address, error flags, RIP/RSP/RBP, general registers,
+CS, RFLAGS, and tick details.
+
 `munmap(addr, len)` requires a page-aligned start address inside user space and
 an existing VMA that fully covers the requested range. It can trim the front or
 back of a VMA, remove a whole VMA, or split a VMA in the middle.
@@ -147,6 +155,7 @@ dedicated syscall numbers. Current request groups:
 - Filesystem and installer storage: `include/leonos/fs.h`
 - System, performance, and RTC time: `include/leonos/system.h`
 - Device inventory: `include/leonos/device.h`
+- Minimal networking: `include/leonos/net.h`
 - Text layout and Unicode services: `include/leonos/text.h`
 - PTY creation, I/O, and spawn: `include/leonos/pty.h`
 
@@ -166,12 +175,54 @@ Important requests include:
 - `LEONOS_IOCTL_SYSTEM_INFO`, `LEONOS_IOCTL_PERF_INFO`,
   `LEONOS_IOCTL_TIME_INFO`
 - `LEONOS_IOCTL_DEVICE_LIST`
+- `LEONOS_IOCTL_NET_CONFIG`, `LEONOS_IOCTL_NET_DHCP`,
+  `LEONOS_IOCTL_NET_DNS`, `LEONOS_IOCTL_NET_PING`,
+  `LEONOS_IOCTL_NET_HTTP_GET`
 - `LEONOS_INSTALL_IOCTL_LIST_DISKS`, `LEONOS_INSTALL_IOCTL_FORMAT_ESP`,
   `LEONOS_INSTALL_IOCTL_MOUNT_TARGET`
 - `LEONOS_TEXT_IOCTL_LAYOUT_UTF8`
 - `LEONOS_PTY_IOCTL_CREATE`, `LEONOS_PTY_IOCTL_SELF`,
   `LEONOS_PTY_IOCTL_READ_OUTPUT`, `LEONOS_PTY_IOCTL_WRITE_INPUT`,
   `LEONOS_PTY_IOCTL_SPAWN`
+
+## Minimal Networking
+
+The first network ABI is intentionally narrow and does not expose sockets yet.
+It is defined in `include/leonos/net.h`; libc wraps it as:
+
+- `leonos_net_config`
+- `leonos_net_dhcp_renew`
+- `leonos_net_dns_resolve`
+- `leonos_net_http_get`
+- `leonos_net_ping`
+
+IPv4 values are host-order packed addresses. For example, `10.0.2.2` is
+`0x0a000202`.
+
+The kernel currently supports a polling Intel e1000 MMIO driver, ARP, IPv4,
+ICMP Echo, a small DHCP client, UDP transmit/receive for DHCP/DNS, DNS A record
+lookups, a minimal active-open TCP client path, and `HTTP/1.0` GET over TCP.
+Boot starts with the QEMU user-network fallback so early networking is usable,
+then automatically tries DHCP three times. If DHCP succeeds, the active config
+switches to the lease; if it fails, the fallback remains active:
+
+- guest IPv4: `10.0.2.15/24`
+- gateway: `10.0.2.2`
+- DNS: `10.0.2.3`
+
+`netctl.elf` can still issue `leonos_net_dhcp_renew` after the desktop is
+running to manually renew or recover a lease.
+
+`httpget.elf` uses `leonos_net_http_get` to resolve a host, open a TCP
+connection to port 80 by default, send a `GET`, and show the raw HTTP response.
+`browser.elf` uses the same ABI for `http://` page loads and local files for
+`.html`/`.htm` rendering. The response is copied through a fixed-size ABI
+buffer, so this is a diagnostic and small-request API rather than a streaming
+download interface.
+
+The network ioctls return `0` when the request structure was processed. Per
+operation results are reported in the structure `status` field. Timeouts are
+bounded by the kernel even if a larger value is requested.
 
 ## Authentication and Authorization
 
@@ -200,6 +251,8 @@ remain available to any logged-in user.
 ## Current Limitations
 
 - There is no `fork`, `clone`, `pipe`, `socket`, `poll`, or signal ABI.
+- Networking has no generic socket API, TCP listener/server mode, TLS/HTTPS, or
+  retransmission/window-management surface yet.
 - `execve` spawns a child process instead of replacing the caller.
 - File-backed `mmap` is private and read-only.
 - Open permissions are simple capability checks, not a full Unix permission

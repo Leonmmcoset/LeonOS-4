@@ -117,6 +117,7 @@ static int fallback_is_wide(uint32_t cp)
            (cp >= 0x2e80u && cp <= 0xa4cfu) ||
            (cp >= 0xac00u && cp <= 0xd7a3u) ||
            (cp >= 0xf900u && cp <= 0xfaffu) ||
+           (cp >= 0x20000u && cp <= 0x3fffdu) ||
            (cp >= 0xfe10u && cp <= 0xfe19u) ||
            (cp >= 0xfe30u && cp <= 0xfe6fu) ||
            (cp >= 0xff00u && cp <= 0xff60u) ||

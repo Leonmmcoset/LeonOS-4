@@ -31,6 +31,8 @@ The kernel still owns the low-level and privileged work:
 - Physical page allocation, VMA tracking, page tables, and user mappings.
 - Scheduler, tasks, and syscall dispatch.
 - Framebuffer, PS/2, RTC, disk, and serial facts.
+- Intel e1000 probing plus the v1 polling ARP/IPv4/ICMP, UDP DHCP/DNS, TCP
+  active-open, and HTTP GET stack.
 - Persisting task `uid`, `role`, `session_id`, `username`, and `home` after a
   successful login, plus hard syscall/ioctl denial for unauthorized operations.
 - User pointer validation and copying.

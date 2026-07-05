@@ -14,3 +14,5 @@ when changing the kernel, loader, middlelayer, installer, or user ABI.
   kernel/middlelayer responsibility split.
 - [Build and Installer](BUILD_AND_INSTALLER.md): generated build graph,
   packaging outputs, installer payload layout, and WSL validation commands.
+- [Browser](BROWSER.md): `browser.elf`, current HTML renderer limits, and the
+  staged path toward a full litehtml port.

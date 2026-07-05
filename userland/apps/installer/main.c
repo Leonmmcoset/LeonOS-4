@@ -16,18 +16,30 @@
 #define BUTTON_W 84
 #define BUTTON_H LEONOS_UI_BUTTON_H
 #define KEY_ESCAPE 1U
+#define KEY_SPACE 57U
 #define KEY_UP 72U
 #define KEY_DOWN 80U
 #define COPY_BUF_SIZE (256U * 1024U)
+#define SHA256_HASH_LEN 32U
+#define UPDATE_APP_ROW_H 24U
+#define UPDATE_APP_MAX LEONOS_FS_MAX_ENTRIES
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum installer_page {
     PAGE_LANGUAGE = 0,
     PAGE_WELCOME,
+    PAGE_MODE,
     PAGE_DISK,
+    PAGE_UPDATE_APPS,
     PAGE_CONFIRM,
     PAGE_PROGRESS,
     PAGE_FINISH,
+    PAGE_COUNT,
+};
+
+enum installer_mode {
+    INSTALL_MODE_FRESH = 0,
+    INSTALL_MODE_UPDATE = 1,
 };
 
 struct installer_layout {
@@ -52,16 +64,32 @@ struct installer_layout {
     uint32_t confirm_edit_y;
 };
 
+struct update_app_entry {
+    char name[LEONOS_FS_NAME_LEN];
+    char src_elf[LEONOS_FS_PATH_LEN];
+    char dst_elf[LEONOS_FS_PATH_LEN];
+    char src_icon[LEONOS_FS_PATH_LEN];
+    char dst_icon[LEONOS_FS_PATH_LEN];
+    uint8_t selected;
+    uint8_t missing;
+    uint8_t elf_diff;
+    uint8_t icon_diff;
+};
+
 static uint32_t pixels[INSTALLER_MAX_W * INSTALLER_MAX_H];
 static uint32_t surface_w = INSTALLER_INITIAL_W;
 static uint32_t surface_h = INSTALLER_INITIAL_H;
 static uint8_t page = PAGE_LANGUAGE;
+static uint8_t install_mode = INSTALL_MODE_FRESH;
 static uint8_t installer_lang = LEONOS_LANG_EN;
 static struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
 static uint32_t disk_count;
 static int32_t selected_disk = -1;
 static char confirm_text[16];
 static struct leonos_ui_edit_state confirm_edit;
+static struct update_app_entry update_apps[UPDATE_APP_MAX];
+static uint32_t update_app_count;
+static struct leonos_ui_listview_state update_app_list;
 static char status_text[128] = "Ready";
 static char detail_text[128] = "";
 static uint32_t progress_value;
@@ -89,6 +117,25 @@ static int text_eq(const char *a, const char *b)
 static int name_is_dot(const char *name)
 {
     return text_eq(name, ".") || text_eq(name, "..");
+}
+
+static uint32_t text_len(const char *text)
+{
+    uint32_t len = 0;
+    while (text && text[len]) {
+        ++len;
+    }
+    return len;
+}
+
+static int text_ends_with(const char *text, const char *suffix)
+{
+    uint32_t text_n = text_len(text);
+    uint32_t suffix_n = text_len(suffix);
+    if (!suffix_n || suffix_n > text_n) {
+        return 0;
+    }
+    return text_eq(text + text_n - suffix_n, suffix);
 }
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
@@ -155,6 +202,20 @@ static int append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t value)
         mag = (uint32_t)value;
     }
     return append_u64(buf, pos, cap, mag);
+}
+
+static void copy_replace_extension(char *dst, uint32_t cap,
+                                   const char *path, const char *extension)
+{
+    uint32_t len;
+    copy_text(dst, cap, path);
+    len = text_len(dst);
+    if (!extension || !text_ends_with(dst, ".elf") || len < 4) {
+        return;
+    }
+    dst[len - 4] = 0;
+    len -= 4;
+    (void)append_text(dst, &len, cap, extension);
 }
 
 static void set_status(const char *status, const char *detail)
@@ -258,6 +319,36 @@ static int path_join(char *dst, uint32_t cap, const char *base, const char *name
     return append_text(dst, &pos, cap, name);
 }
 
+static const char *mode_action_text(void)
+{
+    return install_mode == INSTALL_MODE_UPDATE ? T("Update", "更新") : T("Install", "安装");
+}
+
+static const char *mode_progress_title(void)
+{
+    return install_mode == INSTALL_MODE_UPDATE ? T("Updating LeonOS 4", "正在更新 LeonOS 4")
+                                               : T("Installing LeonOS 4", "正在安装 LeonOS 4");
+}
+
+static void set_disk_select_status(void)
+{
+    if (install_mode == INSTALL_MODE_UPDATE) {
+        set_status(T("Select the SATA/AHCI disk to update", "请选择要更新的 SATA/AHCI 硬盘"),
+                   T("Setup will check for an existing LeonOS 4 system.", "安装程序会检测现有 LeonOS 4 系统。"));
+    } else {
+        set_status(T("Select the target SATA/AHCI disk", "请选择目标 SATA/AHCI 硬盘"),
+                   T("The selected disk will be erased.", "所选硬盘将被清空。"));
+    }
+}
+
+static void reset_update_app_list(void)
+{
+    update_app_count = 0;
+    leonos_ui_listview_state_set_count(&update_app_list, 0);
+    update_app_list.selected = -1;
+    update_app_list.scroll = 0;
+}
+
 static void format_disk_line(char *buf, uint32_t cap,
                              const struct leonos_install_disk *disk)
 {
@@ -300,7 +391,8 @@ static void reset_confirm(void)
 
 static int confirmation_ok(void)
 {
-    return text_eq(confirm_text, "INSTALL");
+    return install_mode == INSTALL_MODE_UPDATE ? text_eq(confirm_text, "UPDATE")
+                                               : text_eq(confirm_text, "INSTALL");
 }
 
 static void refresh_disks(void)
@@ -322,7 +414,7 @@ static void refresh_disks(void)
         if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
             selected_disk = 0;
         }
-        set_status(T("Select the target SATA/AHCI disk", "请选择目标 SATA/AHCI 硬盘"), T("The selected disk will be erased.", "所选硬盘将被清空。"));
+        set_disk_select_status();
     }
     dirty = 1;
 }
@@ -336,7 +428,7 @@ static void draw_sidebar(struct leonos_ui_surface *ui)
     leonos_ui_rect(ui, 0, 0, l.sidebar_w, surface_h, LEONOS_UI_ACTIVE_TITLE);
     leonos_ui_text(ui, 18, 24, "LeonOS 4", LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
     leonos_ui_text(ui, 18, 48, T("Setup", "安装"), LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
-    for (uint32_t i = 0; i < 6; ++i) {
+    for (uint32_t i = 0; i < PAGE_COUNT; ++i) {
         uint32_t y = 104 + i * 34;
         uint32_t fg = i == page ? LEONOS_UI_BLACK : LEONOS_UI_WHITE;
         uint32_t bg = i == page ? LEONOS_UI_LIGHT : LEONOS_UI_ACTIVE_TITLE;
@@ -348,12 +440,16 @@ static void draw_sidebar(struct leonos_ui_surface *ui)
             label = T("Language", "语言");
         } else if (i == PAGE_WELCOME) {
             label = T("Welcome", "欢迎");
+        } else if (i == PAGE_MODE) {
+            label = T("Mode", "模式");
         } else if (i == PAGE_DISK) {
             label = T("Disk", "硬盘");
+        } else if (i == PAGE_UPDATE_APPS) {
+            label = T("Apps", "程序");
         } else if (i == PAGE_CONFIRM) {
             label = T("Confirm", "确认");
         } else if (i == PAGE_PROGRESS) {
-            label = T("Install", "安装");
+            label = mode_action_text();
         } else if (i == PAGE_FINISH) {
             label = T("Finish", "完成");
         }
@@ -389,7 +485,8 @@ static uint32_t primary_disabled(void)
 static const char *primary_label(void)
 {
     if (page == PAGE_CONFIRM) {
-        return T("Install", "安装");
+        return install_mode == INSTALL_MODE_UPDATE ? T("Update", "更新")
+                                                   : T("Install", "安装");
     }
     if (page == PAGE_FINISH && install_success) {
         return T("Restart", "重启");
@@ -434,17 +531,42 @@ static void draw_language_page(struct leonos_ui_surface *ui)
 static void draw_welcome(struct leonos_ui_surface *ui)
 {
     struct installer_layout l = get_layout();
-    draw_title(ui, T("Install LeonOS 4", "安装 LeonOS 4"), T("This wizard will install LeonOS onto a SATA disk.", "此向导会将 LeonOS 安装到 SATA 硬盘。"));
-    leonos_ui_text(ui, l.content_x, l.content_y + 84, T("The installer will copy the full normal system payload", "安装程序会复制完整的普通系统文件"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, l.content_x, l.content_y + 108, T("from the installation media to the selected disk.", "从安装介质到所选硬盘。"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    draw_title(ui, T("LeonOS 4 Setup", "LeonOS 4 安装程序"), T("Install a new system or update an existing LeonOS 4 disk.", "全新安装系统，或更新现有 LeonOS 4 硬盘。"));
+    leonos_ui_text(ui, l.content_x, l.content_y + 84, T("Setup can copy the full normal system payload", "安装程序可以复制完整的普通系统文件"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, l.content_x, l.content_y + 108, T("or replace the boot/system files on an existing installation.", "也可以替换现有安装中的启动和系统文件。"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, l.content_x, l.content_y + 164, T("Only SATA/AHCI target disks are supported by this build.", "当前版本仅支持 SATA/AHCI 目标硬盘。"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+}
+
+static void draw_mode_page(struct leonos_ui_surface *ui)
+{
+    struct installer_layout l = get_layout();
+    uint32_t card_w = l.content_w > 620 ? 280 : l.content_w;
+    draw_title(ui, T("Choose Setup Mode", "选择安装模式"), T("Fresh install erases the disk. Update keeps existing users and extra programs.", "全新安装会清空硬盘；更新会保留用户和额外程序。"));
+    leonos_ui_button(ui, l.content_x, l.content_y + 84, card_w, BUTTON_H,
+                     T("Fresh Install", "全新安装"),
+                     install_mode == INSTALL_MODE_FRESH ? LEONOS_UI_BUTTON_PRESSED : 0);
+    leonos_ui_text_clipped(ui, l.content_x, l.content_y + 122, card_w,
+                           T("Format the selected disk and copy a clean LeonOS 4 system.",
+                             "格式化所选硬盘并复制干净的 LeonOS 4 系统。"),
+                           LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_button(ui, l.content_x, l.content_y + 180, card_w, BUTTON_H,
+                     T("Update Existing System", "更新现有系统"),
+                     install_mode == INSTALL_MODE_UPDATE ? LEONOS_UI_BUTTON_PRESSED : 0);
+    leonos_ui_text_clipped(ui, l.content_x, l.content_y + 218, l.content_w,
+                           T("Replace boot, system and EFI. Then choose changed or missing system apps.",
+                             "替换 boot、system 和 EFI，然后选择变化或缺失的系统程序。"),
+                           LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
 static void draw_disk_page(struct leonos_ui_surface *ui)
 {
     struct installer_layout l = get_layout();
     char line[128];
-    draw_title(ui, T("Select Installation Disk", "选择安装硬盘"), T("Choose the SATA/AHCI disk that will receive LeonOS.", "选择用于安装 LeonOS 的 SATA/AHCI 硬盘。"));
+    draw_title(ui,
+               install_mode == INSTALL_MODE_UPDATE ? T("Select Disk to Update", "选择要更新的硬盘")
+                                                   : T("Select Installation Disk", "选择安装硬盘"),
+               install_mode == INSTALL_MODE_UPDATE ? T("Choose the SATA/AHCI disk that already contains LeonOS 4.", "选择已经包含 LeonOS 4 的 SATA/AHCI 硬盘。")
+                                                   : T("Choose the SATA/AHCI disk that will receive LeonOS.", "选择用于安装 LeonOS 的 SATA/AHCI 硬盘。"));
     leonos_ui_button(ui, l.disk_refresh_x, l.disk_refresh_y, 92, BUTTON_H, T("Refresh", "刷新"), 0);
     leonos_ui_list_header(ui, l.content_x, l.disk_header_y, l.table_w, T("Available SATA/AHCI disks", "可用 SATA/AHCI 硬盘"));
     leonos_ui_inset(ui, l.content_x, l.disk_list_y, l.table_w, l.disk_list_h, LEONOS_UI_WHITE);
@@ -468,11 +590,101 @@ static void draw_disk_page(struct leonos_ui_surface *ui)
     leonos_ui_text_clipped(ui, l.content_x, l.disk_detail_y, l.table_w, detail_text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
+static void format_update_reason(char *buf, uint32_t cap,
+                                 const struct update_app_entry *entry)
+{
+    uint32_t pos = 0;
+    buf[0] = 0;
+    if (!entry) {
+        return;
+    }
+    append_text(buf, &pos, cap, entry->name);
+    append_text(buf, &pos, cap, "  -  ");
+    if (entry->missing) {
+        append_text(buf, &pos, cap, T("missing on target", "目标中缺失"));
+    } else if (entry->elf_diff && entry->icon_diff) {
+        append_text(buf, &pos, cap, T("program and icon differ", "程序和图标不同"));
+    } else if (entry->elf_diff) {
+        append_text(buf, &pos, cap, T("program differs", "程序不同"));
+    } else if (entry->icon_diff) {
+        append_text(buf, &pos, cap, T("icon differs", "图标不同"));
+    } else {
+        append_text(buf, &pos, cap, T("will be replaced", "将被替换"));
+    }
+}
+
+static void sync_update_list_layout(uint32_t list_h)
+{
+    uint32_t visible_rows = list_h / UPDATE_APP_ROW_H;
+    if (visible_rows == 0) {
+        visible_rows = 1;
+    }
+    update_app_list.visible_rows = visible_rows;
+    update_app_list.row_height = UPDATE_APP_ROW_H;
+    leonos_ui_listview_state_set_count(&update_app_list, update_app_count);
+}
+
+static void draw_update_apps_page(struct leonos_ui_surface *ui)
+{
+    struct installer_layout l = get_layout();
+    uint32_t header_y = l.content_y + 112;
+    uint32_t list_y = header_y + 24;
+    uint32_t list_h = l.content_h > 220 ? l.content_h - 178 : 120;
+    uint32_t list_w = l.table_w > 22 ? l.table_w - 22 : l.table_w;
+    char line[160];
+    sync_update_list_layout(list_h);
+    draw_title(ui, T("Userland Program Updates", "用户程序更新"),
+               T("Changed or missing system programs are selected by default.", "变化或缺失的系统程序已默认勾选。"));
+    leonos_ui_text_clipped(ui, l.content_x, l.content_y + 72, l.content_w,
+                           T("boot, system and EFI will always be replaced. Extra target programs are kept.",
+                             "boot、system 和 EFI 总会被替换；目标中多出的程序会保留。"),
+                           LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_list_header(ui, l.content_x, header_y, list_w,
+                          T("Programs to replace", "要替换的程序"));
+    leonos_ui_inset(ui, l.content_x, list_y, list_w, list_h, LEONOS_UI_WHITE);
+    if (update_app_count == 0) {
+        leonos_ui_text(ui, l.content_x + 12, list_y + 20,
+                       T("No userland program differences were found.", "未发现用户程序差异。"),
+                       LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    }
+    for (uint32_t row = 0; row < update_app_list.visible_rows; ++row) {
+        uint32_t i = update_app_list.scroll + row;
+        uint32_t row_y = list_y + 2 + row * UPDATE_APP_ROW_H;
+        uint32_t selected = update_app_list.selected == (int32_t)i;
+        uint32_t bg = selected ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE;
+        uint32_t fg = selected ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
+        if (i >= update_app_count || row_y + UPDATE_APP_ROW_H > list_y + list_h) {
+            break;
+        }
+        leonos_ui_rect(ui, l.content_x + 2, row_y,
+                       list_w > 4 ? list_w - 4 : list_w, UPDATE_APP_ROW_H, bg);
+        leonos_ui_checkbox(ui, l.content_x + 8, row_y + 3, "",
+                           update_apps[i].selected, 0);
+        format_update_reason(line, sizeof(line), &update_apps[i]);
+        leonos_ui_text_clipped(ui, l.content_x + 34, row_y + 5,
+                               list_w > 42 ? list_w - 42 : list_w,
+                               line, fg, bg);
+    }
+    leonos_ui_vscrollbar(ui, l.content_x + list_w, list_y, 18, list_h,
+                         update_app_list.scroll,
+                         update_app_count > update_app_list.visible_rows
+                             ? update_app_count : update_app_list.visible_rows,
+                         update_app_list.visible_rows,
+                         update_app_count <= update_app_list.visible_rows
+                             ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
+    leonos_ui_text_clipped(ui, l.content_x, list_y + list_h + 14, l.content_w,
+                           status_text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
+}
+
 static void draw_confirm_page(struct leonos_ui_surface *ui)
 {
     struct installer_layout l = get_layout();
     char line[128];
-    draw_title(ui, T("Confirm Installation", "确认安装"), T("This operation is destructive.", "此操作会清空目标硬盘。"));
+    draw_title(ui,
+               install_mode == INSTALL_MODE_UPDATE ? T("Confirm Update", "确认更新")
+                                                   : T("Confirm Installation", "确认安装"),
+               install_mode == INSTALL_MODE_UPDATE ? T("System folders will be replaced.", "系统文件夹将被替换。")
+                                                   : T("This operation is destructive.", "此操作会清空目标硬盘。"));
     if (selected_disk >= 0 && (uint32_t)selected_disk < disk_count) {
         format_disk_line(line, sizeof(line), &disks[selected_disk]);
         leonos_ui_text(ui, l.content_x, l.content_y + 78, T("Target:", "目标:"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
@@ -481,17 +693,24 @@ static void draw_confirm_page(struct leonos_ui_surface *ui)
                                line, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     }
     leonos_ui_text_clipped(ui, l.content_x, l.content_y + 130, l.content_w,
-                           T("The selected disk will be erased and formatted as one FAT32 ESP.",
-                             "所选硬盘会被清空并格式化为一个 FAT32 ESP。"),
+                           install_mode == INSTALL_MODE_UPDATE
+                               ? T("boot, system and EFI will be replaced. Selected userland apps will be refreshed.",
+                                   "boot、system 和 EFI 会被替换；已选用户程序会刷新。")
+                               : T("The selected disk will be erased and formatted as one FAT32 ESP.",
+                                   "所选硬盘会被清空并格式化为一个 FAT32 ESP。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, l.content_x, l.content_y + 174, T("Type INSTALL to enable the Install button.", "输入 INSTALL 以启用安装按钮。"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, l.content_x, l.content_y + 174,
+                   install_mode == INSTALL_MODE_UPDATE
+                       ? T("Type UPDATE to enable the Update button.", "输入 UPDATE 以启用更新按钮。")
+                       : T("Type INSTALL to enable the Install button.", "输入 INSTALL 以启用安装按钮。"),
+                   LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_edit_state_draw(ui, l.content_x, l.confirm_edit_y, 220, &confirm_edit, 0);
 }
 
 static void draw_progress_page(struct leonos_ui_surface *ui)
 {
     struct installer_layout l = get_layout();
-    draw_title(ui, T("Installing LeonOS 4", "正在安装 LeonOS 4"), T("Do not turn off this machine.", "请勿关闭此计算机。"));
+    draw_title(ui, mode_progress_title(), T("Do not turn off this machine.", "请勿关闭此计算机。"));
     leonos_ui_text(ui, l.content_x, l.content_y + 94, status_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_progress(ui, l.content_x, l.content_y + 130, l.content_w, 24, progress_value, 100);
     leonos_ui_text_clipped(ui, l.content_x, l.content_y + 174, l.content_w, detail_text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
@@ -501,10 +720,17 @@ static void draw_finish_page(struct leonos_ui_surface *ui)
 {
     struct installer_layout l = get_layout();
     if (install_success) {
-        draw_title(ui, T("Installation Complete", "安装完成"), T("LeonOS was installed to the selected disk.", "LeonOS 已安装到所选硬盘。"));
+        draw_title(ui,
+                   install_mode == INSTALL_MODE_UPDATE ? T("Update Complete", "更新完成")
+                                                       : T("Installation Complete", "安装完成"),
+                   install_mode == INSTALL_MODE_UPDATE ? T("LeonOS was updated on the selected disk.", "所选硬盘上的 LeonOS 已更新。")
+                                                       : T("LeonOS was installed to the selected disk.", "LeonOS 已安装到所选硬盘。"));
         leonos_ui_text(ui, l.content_x, l.content_y + 96, T("Remove the installation media, then restart.", "移除安装介质，然后重启。"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     } else {
-        draw_title(ui, T("Installation Failed", "安装失败"), T("No writes will continue after this error.", "出现此错误后不会继续写入。"));
+        draw_title(ui,
+                   install_mode == INSTALL_MODE_UPDATE ? T("Update Failed", "更新失败")
+                                                       : T("Installation Failed", "安装失败"),
+                   T("No writes will continue after this error.", "出现此错误后不会继续写入。"));
         leonos_ui_text(ui, l.content_x, l.content_y + 96, status_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
         leonos_ui_text_clipped(ui, l.content_x, l.content_y + 130, l.content_w, detail_text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
     }
@@ -521,8 +747,14 @@ static void draw_installer(struct leonos_ui_surface *ui)
     case PAGE_WELCOME:
         draw_welcome(ui);
         break;
+    case PAGE_MODE:
+        draw_mode_page(ui);
+        break;
     case PAGE_DISK:
         draw_disk_page(ui);
+        break;
+    case PAGE_UPDATE_APPS:
+        draw_update_apps_page(ui);
         break;
     case PAGE_CONFIRM:
         draw_confirm_page(ui);
@@ -609,6 +841,329 @@ static int count_files_recursive(const char *src, uint32_t *out_count)
         }
     }
     return 0;
+}
+
+static int path_has_type(const char *path, uint32_t type)
+{
+    struct leonos_stat st;
+    int ret = stat(path, &st);
+    if (ret < 0) {
+        return ret;
+    }
+    return st.type == type ? 0 : -20;
+}
+
+static int source_file_exists(const char *path)
+{
+    return path_has_type(path, LEONOS_FS_TYPE_FILE) == 0;
+}
+
+static int add_file_copy_work(const char *path)
+{
+    struct leonos_stat st;
+    int ret = stat(path, &st);
+    if (ret < 0) {
+        return ret;
+    }
+    if (st.type != LEONOS_FS_TYPE_FILE) {
+        return -20;
+    }
+    ++copy_total;
+    copy_total_bytes += st.size;
+    return 0;
+}
+
+struct installer_sha256_ctx {
+    uint8_t data[64];
+    uint32_t datalen;
+    uint64_t bitlen;
+    uint32_t state[8];
+};
+
+static const uint32_t installer_sha256_k[64] = {
+    0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u,
+    0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
+    0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u,
+    0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
+    0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu,
+    0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
+    0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u,
+    0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u,
+    0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u,
+    0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u,
+    0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u,
+    0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
+    0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u,
+    0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
+    0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u,
+    0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u,
+};
+
+static uint32_t installer_rotr32(uint32_t value, uint32_t bits)
+{
+    return (value >> bits) | (value << (32u - bits));
+}
+
+static void installer_sha256_transform(struct installer_sha256_ctx *ctx,
+                                       const uint8_t data[64])
+{
+    uint32_t m[64];
+    uint32_t a, b, c, d, e, f, g, h;
+    for (uint32_t i = 0, j = 0; i < 16; ++i, j += 4) {
+        m[i] = ((uint32_t)data[j] << 24) |
+               ((uint32_t)data[j + 1] << 16) |
+               ((uint32_t)data[j + 2] << 8) |
+               (uint32_t)data[j + 3];
+    }
+    for (uint32_t i = 16; i < 64; ++i) {
+        uint32_t s0 = installer_rotr32(m[i - 15], 7) ^
+                      installer_rotr32(m[i - 15], 18) ^
+                      (m[i - 15] >> 3);
+        uint32_t s1 = installer_rotr32(m[i - 2], 17) ^
+                      installer_rotr32(m[i - 2], 19) ^
+                      (m[i - 2] >> 10);
+        m[i] = m[i - 16] + s0 + m[i - 7] + s1;
+    }
+    a = ctx->state[0];
+    b = ctx->state[1];
+    c = ctx->state[2];
+    d = ctx->state[3];
+    e = ctx->state[4];
+    f = ctx->state[5];
+    g = ctx->state[6];
+    h = ctx->state[7];
+    for (uint32_t i = 0; i < 64; ++i) {
+        uint32_t s1 = installer_rotr32(e, 6) ^ installer_rotr32(e, 11) ^
+                      installer_rotr32(e, 25);
+        uint32_t ch = (e & f) ^ ((~e) & g);
+        uint32_t temp1 = h + s1 + ch + installer_sha256_k[i] + m[i];
+        uint32_t s0 = installer_rotr32(a, 2) ^ installer_rotr32(a, 13) ^
+                      installer_rotr32(a, 22);
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t temp2 = s0 + maj;
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+    ctx->state[0] += a;
+    ctx->state[1] += b;
+    ctx->state[2] += c;
+    ctx->state[3] += d;
+    ctx->state[4] += e;
+    ctx->state[5] += f;
+    ctx->state[6] += g;
+    ctx->state[7] += h;
+}
+
+static void installer_sha256_init(struct installer_sha256_ctx *ctx)
+{
+    ctx->datalen = 0;
+    ctx->bitlen = 0;
+    ctx->state[0] = 0x6a09e667u;
+    ctx->state[1] = 0xbb67ae85u;
+    ctx->state[2] = 0x3c6ef372u;
+    ctx->state[3] = 0xa54ff53au;
+    ctx->state[4] = 0x510e527fu;
+    ctx->state[5] = 0x9b05688cu;
+    ctx->state[6] = 0x1f83d9abu;
+    ctx->state[7] = 0x5be0cd19u;
+}
+
+static void installer_sha256_update(struct installer_sha256_ctx *ctx,
+                                    const void *input, uint32_t len)
+{
+    const uint8_t *data = (const uint8_t *)input;
+    for (uint32_t i = 0; i < len; ++i) {
+        ctx->data[ctx->datalen++] = data[i];
+        if (ctx->datalen == 64) {
+            installer_sha256_transform(ctx, ctx->data);
+            ctx->bitlen += 512;
+            ctx->datalen = 0;
+        }
+    }
+}
+
+static void installer_sha256_zero(uint8_t *data, uint32_t len)
+{
+    for (uint32_t i = 0; i < len; ++i) {
+        data[i] = 0;
+    }
+}
+
+static void installer_sha256_final(struct installer_sha256_ctx *ctx,
+                                   uint8_t hash[SHA256_HASH_LEN])
+{
+    uint32_t i = ctx->datalen;
+    if (ctx->datalen < 56) {
+        ctx->data[i++] = 0x80u;
+        while (i < 56) {
+            ctx->data[i++] = 0;
+        }
+    } else {
+        ctx->data[i++] = 0x80u;
+        while (i < 64) {
+            ctx->data[i++] = 0;
+        }
+        installer_sha256_transform(ctx, ctx->data);
+        installer_sha256_zero(ctx->data, 56);
+    }
+    ctx->bitlen += (uint64_t)ctx->datalen * 8u;
+    ctx->data[63] = (uint8_t)(ctx->bitlen);
+    ctx->data[62] = (uint8_t)(ctx->bitlen >> 8);
+    ctx->data[61] = (uint8_t)(ctx->bitlen >> 16);
+    ctx->data[60] = (uint8_t)(ctx->bitlen >> 24);
+    ctx->data[59] = (uint8_t)(ctx->bitlen >> 32);
+    ctx->data[58] = (uint8_t)(ctx->bitlen >> 40);
+    ctx->data[57] = (uint8_t)(ctx->bitlen >> 48);
+    ctx->data[56] = (uint8_t)(ctx->bitlen >> 56);
+    installer_sha256_transform(ctx, ctx->data);
+    for (i = 0; i < 4; ++i) {
+        hash[i] = (uint8_t)(ctx->state[0] >> (24u - i * 8u));
+        hash[i + 4u] = (uint8_t)(ctx->state[1] >> (24u - i * 8u));
+        hash[i + 8u] = (uint8_t)(ctx->state[2] >> (24u - i * 8u));
+        hash[i + 12u] = (uint8_t)(ctx->state[3] >> (24u - i * 8u));
+        hash[i + 16u] = (uint8_t)(ctx->state[4] >> (24u - i * 8u));
+        hash[i + 20u] = (uint8_t)(ctx->state[5] >> (24u - i * 8u));
+        hash[i + 24u] = (uint8_t)(ctx->state[6] >> (24u - i * 8u));
+        hash[i + 28u] = (uint8_t)(ctx->state[7] >> (24u - i * 8u));
+    }
+}
+
+static int hash_file(const char *path, uint8_t hash[SHA256_HASH_LEN])
+{
+    struct installer_sha256_ctx ctx;
+    int fd = open(path, LEONOS_O_RDONLY, 0);
+    long got;
+    if (fd < 0) {
+        return fd;
+    }
+    installer_sha256_init(&ctx);
+    while ((got = read(fd, copy_buf, sizeof(copy_buf))) > 0) {
+        installer_sha256_update(&ctx, copy_buf, (uint32_t)got);
+    }
+    close(fd);
+    if (got < 0) {
+        return (int)got;
+    }
+    installer_sha256_final(&ctx, hash);
+    return 0;
+}
+
+static int buffers_equal(const uint8_t *a, const uint8_t *b, uint32_t len)
+{
+    for (uint32_t i = 0; i < len; ++i) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int files_equal(const char *src, const char *dst, uint8_t *out_missing,
+                       uint8_t *out_diff)
+{
+    uint8_t src_hash[SHA256_HASH_LEN];
+    uint8_t dst_hash[SHA256_HASH_LEN];
+    struct leonos_stat src_st;
+    struct leonos_stat dst_st;
+    int ret;
+    if (out_missing) {
+        *out_missing = 0;
+    }
+    if (out_diff) {
+        *out_diff = 1;
+    }
+    if (stat(src, &src_st) < 0 || src_st.type != LEONOS_FS_TYPE_FILE) {
+        return -2;
+    }
+    if (stat(dst, &dst_st) < 0 || dst_st.type != LEONOS_FS_TYPE_FILE) {
+        if (out_missing) {
+            *out_missing = 1;
+        }
+        return 0;
+    }
+    ret = hash_file(src, src_hash);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = hash_file(dst, dst_hash);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!buffers_equal(src_hash, dst_hash, SHA256_HASH_LEN)) {
+        return 0;
+    }
+    if (out_diff) {
+        *out_diff = 0;
+    }
+    return 0;
+}
+
+static int remove_path_recursive(const char *path)
+{
+    struct leonos_stat st;
+    int ret = stat(path, &st);
+    if (ret < 0) {
+        return ret == -2 ? 0 : ret;
+    }
+    if (st.type == LEONOS_FS_TYPE_FILE) {
+        return unlink(path);
+    }
+    if (st.type != LEONOS_FS_TYPE_DIR) {
+        return -20;
+    }
+    {
+        struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
+        uint32_t count = 0;
+        ret = leonos_list_dir(path, entries, LEONOS_FS_MAX_ENTRIES, &count);
+        if (ret < 0) {
+            return ret;
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            char child[LEONOS_FS_PATH_LEN];
+            if (name_is_dot(entries[i].name)) {
+                continue;
+            }
+            if (path_join(child, sizeof(child), path, entries[i].name) < 0) {
+                return -1;
+            }
+            ret = remove_path_recursive(child);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+    }
+    return rmdir(path);
+}
+
+static int copy_dir_recursive(const char *src, const char *dst,
+                              int window_id, struct leonos_ui_surface *ui);
+
+static int replace_payload_dir(const char *name, int window_id,
+                               struct leonos_ui_surface *ui)
+{
+    char src[LEONOS_FS_PATH_LEN];
+    char dst[LEONOS_FS_PATH_LEN];
+    int ret;
+    if (path_join(src, sizeof(src), "0:/install/esp", name) < 0 ||
+        path_join(dst, sizeof(dst), "1:/", name) < 0) {
+        return -1;
+    }
+    show_copy_progress(window_id, ui, dst);
+    ret = remove_path_recursive(dst);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = mkdir(dst, 0);
+    if (ret < 0 && ret != -17) {
+        return ret;
+    }
+    return copy_dir_recursive(src, dst, window_id, ui);
 }
 
 static int copy_file_path(const char *src, const char *dst,
@@ -728,7 +1283,209 @@ static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
             return ret;
         }
     }
-    return copy_payload_child("efi", window_id, ui);
+    return copy_payload_child("EFI", window_id, ui);
+}
+
+static int check_update_target_required(void)
+{
+    static const char *const required_dirs[] = {
+        "1:/boot",
+        "1:/system",
+        "1:/EFI",
+        "1:/userland",
+    };
+    static const char *const required_files[] = {
+        "1:/boot/loader.elf",
+        "1:/system/kernel.sys",
+        "1:/system/middlelayer.sys",
+        "1:/userland/desktop.elf",
+    };
+    for (uint32_t i = 0; i < sizeof(required_dirs) / sizeof(required_dirs[0]); ++i) {
+        int ret = path_has_type(required_dirs[i], LEONOS_FS_TYPE_DIR);
+        if (ret < 0) {
+            set_status(T("Existing LeonOS 4 was not detected", "未检测到现有 LeonOS 4"),
+                       required_dirs[i]);
+            return ret;
+        }
+    }
+    for (uint32_t i = 0; i < sizeof(required_files) / sizeof(required_files[0]); ++i) {
+        int ret = path_has_type(required_files[i], LEONOS_FS_TYPE_FILE);
+        if (ret < 0) {
+            set_status(T("Existing LeonOS 4 was not detected", "未检测到现有 LeonOS 4"),
+                       required_files[i]);
+            return ret;
+        }
+    }
+    return 0;
+}
+
+static int check_update_payload_required(void)
+{
+    static const char *const required_dirs[] = {
+        "0:/install/esp/boot",
+        "0:/install/esp/system",
+        "0:/install/esp/EFI",
+        "0:/install/esp/userland",
+    };
+    for (uint32_t i = 0; i < sizeof(required_dirs) / sizeof(required_dirs[0]); ++i) {
+        int ret = path_has_type(required_dirs[i], LEONOS_FS_TYPE_DIR);
+        if (ret < 0) {
+            set_status(T("Installation media is incomplete", "安装介质不完整"),
+                       required_dirs[i]);
+            return ret;
+        }
+    }
+    return 0;
+}
+
+static int add_update_app_entry(const char *name,
+                                const char *src_elf,
+                                const char *dst_elf,
+                                const char *src_icon,
+                                const char *dst_icon,
+                                uint8_t missing,
+                                uint8_t elf_diff,
+                                uint8_t icon_diff)
+{
+    struct update_app_entry *entry;
+    if (update_app_count >= UPDATE_APP_MAX) {
+        return -28;
+    }
+    entry = &update_apps[update_app_count++];
+    copy_text(entry->name, sizeof(entry->name), name);
+    copy_text(entry->src_elf, sizeof(entry->src_elf), src_elf);
+    copy_text(entry->dst_elf, sizeof(entry->dst_elf), dst_elf);
+    copy_text(entry->src_icon, sizeof(entry->src_icon), src_icon);
+    copy_text(entry->dst_icon, sizeof(entry->dst_icon), dst_icon);
+    entry->selected = 1;
+    entry->missing = missing;
+    entry->elf_diff = elf_diff;
+    entry->icon_diff = icon_diff;
+    return 0;
+}
+
+static int scan_update_apps(void)
+{
+    struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
+    uint32_t count = 0;
+    int ret;
+    reset_update_app_list();
+    ret = leonos_list_dir("0:/install/esp/userland", entries,
+                          LEONOS_FS_MAX_ENTRIES, &count);
+    if (ret < 0) {
+        return ret;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        char src_elf[LEONOS_FS_PATH_LEN];
+        char dst_elf[LEONOS_FS_PATH_LEN];
+        char src_icon[LEONOS_FS_PATH_LEN];
+        char dst_icon[LEONOS_FS_PATH_LEN];
+        uint8_t missing = 0;
+        uint8_t elf_diff = 1;
+        uint8_t icon_missing = 0;
+        uint8_t icon_diff = 0;
+        if (entries[i].type != LEONOS_FS_TYPE_FILE ||
+            !text_ends_with(entries[i].name, ".elf")) {
+            continue;
+        }
+        if (path_join(src_elf, sizeof(src_elf), "0:/install/esp/userland",
+                      entries[i].name) < 0 ||
+            path_join(dst_elf, sizeof(dst_elf), "1:/userland",
+                      entries[i].name) < 0) {
+            return -1;
+        }
+        copy_replace_extension(src_icon, sizeof(src_icon), src_elf, ".bmp");
+        copy_replace_extension(dst_icon, sizeof(dst_icon), dst_elf, ".bmp");
+        ret = files_equal(src_elf, dst_elf, &missing, &elf_diff);
+        if (ret < 0) {
+            return ret;
+        }
+        if (source_file_exists(src_icon)) {
+            ret = files_equal(src_icon, dst_icon, &icon_missing, &icon_diff);
+            if (ret < 0) {
+                return ret;
+            }
+            if (icon_missing) {
+                icon_diff = 1;
+            }
+        } else {
+            src_icon[0] = 0;
+            dst_icon[0] = 0;
+        }
+        if (missing || elf_diff || icon_diff) {
+            ret = add_update_app_entry(entries[i].name, src_elf, dst_elf,
+                                       src_icon, dst_icon, missing,
+                                       elf_diff, icon_diff);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+    }
+    leonos_ui_listview_state_set_count(&update_app_list, update_app_count);
+    update_app_list.selected = update_app_count ? 0 : -1;
+    if (update_app_count) {
+        char line[128];
+        uint32_t pos = 0;
+        line[0] = 0;
+        append_u64(line, &pos, sizeof(line), update_app_count);
+        append_text(line, &pos, sizeof(line),
+                    T(" userland program update(s) found.", " 个用户程序更新。"));
+        set_status(line, T("All are selected by default.", "默认全部勾选。"));
+    } else {
+        set_status(T("No userland program differences were found.", "未发现用户程序差异。"),
+                   T("Core boot/system/EFI files can still be updated.", "仍可更新核心 boot/system/EFI 文件。"));
+    }
+    return 0;
+}
+
+static int count_selected_update_work(void)
+{
+    int ret;
+    for (uint32_t i = 0; i < update_app_count; ++i) {
+        if (!update_apps[i].selected) {
+            continue;
+        }
+        ret = add_file_copy_work(update_apps[i].src_elf);
+        if (ret < 0) {
+            return ret;
+        }
+        if (update_apps[i].src_icon[0] && source_file_exists(update_apps[i].src_icon)) {
+            ret = add_file_copy_work(update_apps[i].src_icon);
+            if (ret < 0) {
+                return ret;
+            }
+        }
+    }
+    return 0;
+}
+
+static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui)
+{
+    int ret;
+    ret = mkdir("1:/userland", 0);
+    if (ret < 0 && ret != -17) {
+        return ret;
+    }
+    for (uint32_t i = 0; i < update_app_count; ++i) {
+        if (!update_apps[i].selected) {
+            continue;
+        }
+        ret = copy_file_path(update_apps[i].src_elf, update_apps[i].dst_elf,
+                             window_id, ui);
+        if (ret < 0) {
+            return ret;
+        }
+        ++copy_done;
+        if (update_apps[i].src_icon[0] && source_file_exists(update_apps[i].src_icon)) {
+            ret = copy_file_path(update_apps[i].src_icon, update_apps[i].dst_icon,
+                                 window_id, ui);
+            if (ret < 0) {
+                return ret;
+            }
+            ++copy_done;
+        }
+    }
+    return 0;
 }
 
 static void write_target_locale(void)
@@ -753,12 +1510,63 @@ static void finish_install(int window_id, struct leonos_ui_surface *ui, int ret,
         set_error_status(prefix, ret);
         progress_value = 0;
     } else {
-        printf("[installer.elf] installation completed successfully\n");
+        printf("[installer.elf] %s completed successfully\n",
+               install_mode == INSTALL_MODE_UPDATE ? "update" : "installation");
         install_success = 1;
         progress_value = 100;
-        write_target_locale();
-        set_status(T("Installation completed successfully", "安装成功完成"), T("Press Restart to boot from the installed disk.", "点击重启从已安装硬盘启动。"));
+        if (install_mode == INSTALL_MODE_FRESH) {
+            write_target_locale();
+        }
+        set_status(install_mode == INSTALL_MODE_UPDATE
+                       ? T("Update completed successfully", "更新成功完成")
+                       : T("Installation completed successfully", "安装成功完成"),
+                   T("Press Restart to boot from the installed disk.", "点击重启从已安装硬盘启动。"));
     }
+    present_installer(window_id, ui);
+}
+
+static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
+{
+    uint32_t disk_id;
+    int ret;
+    if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
+        return;
+    }
+    disk_id = disks[selected_disk].id;
+    page = PAGE_PROGRESS;
+    progress_value = 0;
+    reset_update_app_list();
+    show_progress(window_id, ui, 5,
+                  T("Mounting target ESP", "正在挂载目标 ESP"),
+                  T("Mount point: 1:/", "挂载点: 1:/"));
+    ret = leonos_install_mount_target(disk_id);
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Mount failed", "挂载失败"));
+        return;
+    }
+    show_progress(window_id, ui, 18,
+                  T("Checking existing LeonOS 4", "正在检测现有 LeonOS 4"),
+                  T("Target: 1:/", "目标: 1:/"));
+    ret = check_update_payload_required();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Payload check failed", "负载检测失败"));
+        return;
+    }
+    ret = check_update_target_required();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Existing system check failed", "现有系统检测失败"));
+        return;
+    }
+    show_progress(window_id, ui, 30,
+                  T("Scanning userland programs", "正在扫描用户程序"),
+                  T("Comparing 0:/install/esp/userland with 1:/userland", "正在比较安装介质和目标 userland"));
+    ret = scan_update_apps();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Userland scan failed", "用户程序扫描失败"));
+        return;
+    }
+    page = PAGE_UPDATE_APPS;
+    dirty = 1;
     present_installer(window_id, ui);
 }
 
@@ -810,14 +1618,104 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
     finish_install(window_id, ui, 0, "");
 }
 
+static void perform_update(int window_id, struct leonos_ui_surface *ui)
+{
+    static const char *const core_dirs[] = {
+        "boot",
+        "system",
+        "EFI",
+    };
+    uint32_t disk_id;
+    int ret;
+    if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
+        return;
+    }
+    disk_id = disks[selected_disk].id;
+    install_running = 1;
+    install_success = 0;
+    page = PAGE_PROGRESS;
+    copy_total = 0;
+    copy_done = 0;
+    copy_total_bytes = 0;
+    copy_done_bytes = 0;
+
+    show_progress(window_id, ui, 2, T("Mounting target ESP", "正在挂载目标 ESP"),
+                  T("Mount point: 1:/", "挂载点: 1:/"));
+    ret = leonos_install_mount_target(disk_id);
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Mount failed", "挂载失败"));
+        return;
+    }
+
+    show_progress(window_id, ui, 10, T("Checking existing LeonOS 4", "正在检测现有 LeonOS 4"),
+                  T("Target: 1:/", "目标: 1:/"));
+    ret = check_update_payload_required();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Payload check failed", "负载检测失败"));
+        return;
+    }
+    ret = check_update_target_required();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Existing system check failed", "现有系统检测失败"));
+        return;
+    }
+
+    show_progress(window_id, ui, 18, T("Scanning update payload", "正在扫描更新负载"),
+                  T("Source: 0:/install/esp", "来源: 0:/install/esp"));
+    for (uint32_t i = 0; i < sizeof(core_dirs) / sizeof(core_dirs[0]); ++i) {
+        char src[LEONOS_FS_PATH_LEN];
+        if (path_join(src, sizeof(src), "0:/install/esp", core_dirs[i]) < 0) {
+            finish_install(window_id, ui, -1, T("Payload path is too long", "负载路径过长"));
+            return;
+        }
+        ret = count_files_recursive(src, &copy_total);
+        if (ret < 0) {
+            finish_install(window_id, ui, ret, T("Payload scan failed", "扫描安装负载失败"));
+            return;
+        }
+    }
+    ret = count_selected_update_work();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Payload scan failed", "扫描安装负载失败"));
+        return;
+    }
+
+    show_progress(window_id, ui, 35, T("Replacing core system files", "正在替换核心系统文件"),
+                  T("boot, system, EFI", "boot、system、EFI"));
+    for (uint32_t i = 0; i < sizeof(core_dirs) / sizeof(core_dirs[0]); ++i) {
+        ret = replace_payload_dir(core_dirs[i], window_id, ui);
+        if (ret < 0) {
+            finish_install(window_id, ui, ret, T("Core update failed", "核心系统更新失败"));
+            return;
+        }
+    }
+
+    show_progress(window_id, ui, copy_progress_percent(),
+                  T("Updating selected programs", "正在更新已选程序"),
+                  T("Destination: 1:/userland", "目标: 1:/userland"));
+    ret = copy_selected_update_apps(window_id, ui);
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Userland update failed", "用户程序更新失败"));
+        return;
+    }
+
+    show_progress(window_id, ui, 100, T("Update completed successfully", "更新成功完成"),
+                  T("Target disk is ready.", "目标硬盘已准备就绪。"));
+    finish_install(window_id, ui, 0, "");
+}
+
 static void go_back(void)
 {
     if (page == PAGE_WELCOME) {
         page = PAGE_LANGUAGE;
-    } else if (page == PAGE_DISK) {
+    } else if (page == PAGE_MODE) {
         page = PAGE_WELCOME;
-    } else if (page == PAGE_CONFIRM) {
+    } else if (page == PAGE_DISK) {
+        page = PAGE_MODE;
+    } else if (page == PAGE_UPDATE_APPS) {
         page = PAGE_DISK;
+    } else if (page == PAGE_CONFIRM) {
+        page = install_mode == INSTALL_MODE_UPDATE ? PAGE_UPDATE_APPS : PAGE_DISK;
     } else if (page == PAGE_FINISH && !install_success) {
         page = PAGE_DISK;
     }
@@ -835,19 +1733,38 @@ static int go_primary(int window_id, struct leonos_ui_surface *ui)
         return 0;
     }
     if (page == PAGE_WELCOME) {
+        page = PAGE_MODE;
+        dirty = 1;
+        return 0;
+    }
+    if (page == PAGE_MODE) {
         page = PAGE_DISK;
         refresh_disks();
         dirty = 1;
         return 0;
     }
     if (page == PAGE_DISK) {
+        if (install_mode == INSTALL_MODE_UPDATE) {
+            prepare_update_target(window_id, ui);
+            return 0;
+        }
+        page = PAGE_CONFIRM;
+        reset_confirm();
+        dirty = 1;
+        return 0;
+    }
+    if (page == PAGE_UPDATE_APPS) {
         page = PAGE_CONFIRM;
         reset_confirm();
         dirty = 1;
         return 0;
     }
     if (page == PAGE_CONFIRM) {
-        perform_install(window_id, ui);
+        if (install_mode == INSTALL_MODE_UPDATE) {
+            perform_update(window_id, ui);
+        } else {
+            perform_install(window_id, ui);
+        }
         return 0;
     }
     if (page == PAGE_FINISH && install_success) {
@@ -872,9 +1789,26 @@ static void handle_disk_click(int32_t x, int32_t y)
         int32_t row = (y - (int32_t)l.disk_list_y - 2) / 24;
         if (row >= 0 && (uint32_t)row < disk_count) {
             selected_disk = row;
-            set_status(T("Select the target SATA/AHCI disk", "请选择目标 SATA/AHCI 硬盘"), T("The selected disk will be erased.", "所选硬盘将被清空。"));
+            set_disk_select_status();
             dirty = 1;
         }
+    }
+}
+
+static void handle_mode_click(int32_t x, int32_t y)
+{
+    struct installer_layout l = get_layout();
+    uint32_t card_w = l.content_w > 620 ? 280 : l.content_w;
+    if (hit_rect_i(x, y, (int32_t)l.content_x, (int32_t)l.content_y + 84,
+                   (int32_t)card_w, BUTTON_H)) {
+        install_mode = INSTALL_MODE_FRESH;
+        reset_update_app_list();
+        dirty = 1;
+    } else if (hit_rect_i(x, y, (int32_t)l.content_x, (int32_t)l.content_y + 180,
+                          (int32_t)card_w, BUTTON_H)) {
+        install_mode = INSTALL_MODE_UPDATE;
+        reset_update_app_list();
+        dirty = 1;
     }
 }
 
@@ -888,6 +1822,46 @@ static void handle_language_click(int32_t x, int32_t y)
     } else if (hit_rect_i(x, y, (int32_t)l.content_x + 156, (int32_t)l.content_y + 88, 140, BUTTON_H)) {
         installer_lang = LEONOS_LANG_ZH;
         (void)leonos_i18n_set_language(LEONOS_LANG_ZH);
+        dirty = 1;
+    }
+}
+
+static void handle_update_apps_click(int32_t x, int32_t y)
+{
+    struct installer_layout l = get_layout();
+    uint32_t header_y = l.content_y + 112;
+    uint32_t list_y = header_y + 24;
+    uint32_t list_h = l.content_h > 220 ? l.content_h - 178 : 120;
+    uint32_t list_w = l.table_w > 22 ? l.table_w - 22 : l.table_w;
+    sync_update_list_layout(list_h);
+    if (leonos_ui_vscrollbar_handle_mouse(&update_app_list.scroll,
+                                           update_app_count > update_app_list.visible_rows
+                                               ? update_app_count : update_app_list.visible_rows,
+                                           update_app_list.visible_rows,
+                                           l.content_x + list_w, list_y, 18, list_h, x, y)) {
+        dirty = 1;
+        return;
+    }
+    if (hit_rect_i(x, y, (int32_t)l.content_x, (int32_t)list_y,
+                   (int32_t)list_w, (int32_t)list_h)) {
+        int32_t row = (y - (int32_t)list_y - 2) / (int32_t)UPDATE_APP_ROW_H;
+        uint32_t index;
+        if (row < 0) {
+            return;
+        }
+        index = update_app_list.scroll + (uint32_t)row;
+        if (index >= update_app_count) {
+            return;
+        }
+        update_app_list.selected = (int32_t)index;
+        update_apps[index].selected = update_apps[index].selected ? 0 : 1;
+        dirty = 1;
+    }
+}
+
+static void handle_update_apps_wheel(int32_t delta)
+{
+    if (leonos_ui_listview_state_handle_wheel(&update_app_list, delta)) {
         dirty = 1;
     }
 }
@@ -906,6 +1880,12 @@ static int handle_mouse(int window_id, struct leonos_ui_surface *ui,
     }
     if (page == PAGE_DISK) {
         handle_disk_click(event->x, event->y);
+    }
+    if (page == PAGE_MODE) {
+        handle_mode_click(event->x, event->y);
+    }
+    if (page == PAGE_UPDATE_APPS) {
+        handle_update_apps_click(event->x, event->y);
     }
     if (page == PAGE_LANGUAGE) {
         handle_language_click(event->x, event->y);
@@ -936,6 +1916,24 @@ static int handle_key(int window_id, struct leonos_ui_surface *ui,
     if (event->type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event->pressed) {
         if (event->keycode == KEY_ESCAPE && page != PAGE_PROGRESS) {
             return 1;
+        }
+        if (page == PAGE_UPDATE_APPS) {
+            uint32_t activated = 0;
+            if (event->keycode == KEY_SPACE) {
+                if (update_app_list.selected >= 0 &&
+                    (uint32_t)update_app_list.selected < update_app_count) {
+                    uint32_t i = (uint32_t)update_app_list.selected;
+                    update_apps[i].selected = update_apps[i].selected ? 0 : 1;
+                    dirty = 1;
+                }
+                return 0;
+            }
+            if (event->keycode != LEONOS_KEY_ENTER &&
+                leonos_ui_listview_state_handle_key(&update_app_list,
+                                                    event->keycode, &activated)) {
+                dirty = 1;
+                return 0;
+            }
         }
         if (page == PAGE_DISK) {
             if (event->keycode == KEY_UP && selected_disk > 0) {
@@ -983,6 +1981,7 @@ int main(void)
 
     leonos_ui_bind(&ui, pixels, surface_w, surface_h, INSTALLER_MAX_W);
     installer_lang = (uint8_t)leonos_i18n_language();
+    leonos_ui_listview_state_init(&update_app_list, 1, UPDATE_APP_ROW_H);
     refresh_disks();
     page = PAGE_LANGUAGE;
     present_installer(window_id, &ui);
@@ -1004,6 +2003,10 @@ int main(void)
                 handle_mouse(window_id, &ui, &event)) {
                 leonos_gui_destroy_app_window((uint32_t)window_id);
                 return 0;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL &&
+                page == PAGE_UPDATE_APPS) {
+                handle_update_apps_wheel(event.dy);
             }
             if ((event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN ||
                  event.type == LEONOS_GUI_APP_EVENT_KEY_UP) &&

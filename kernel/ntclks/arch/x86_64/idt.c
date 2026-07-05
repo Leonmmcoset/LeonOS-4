@@ -1,6 +1,8 @@
 #include <ntclks/bugcheck.h>
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
+#include <ntclks/gui_ipc.h>
+#include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
@@ -151,11 +153,168 @@ void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t 
     bugcheck_exception(vector, error, rip, cs, rflags, rsp, ss, cr2);
 }
 
-void page_fault_dispatch(struct trap_frame *frame)
+static void pf_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
+{
+    if (!buf || !pos || cap == 0 || *pos + 1 >= cap) {
+        return;
+    }
+    buf[*pos] = ch;
+    ++(*pos);
+    buf[*pos] = 0;
+}
+
+static void pf_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
+{
+    if (!text) {
+        return;
+    }
+    while (*text) {
+        pf_append_char(buf, pos, cap, *text++);
+    }
+}
+
+static void pf_append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
+{
+    char tmp[21];
+    uint32_t n = 0;
+    if (value == 0) {
+        pf_append_char(buf, pos, cap, '0');
+        return;
+    }
+    while (value && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10ULL));
+        value /= 10ULL;
+    }
+    while (n) {
+        pf_append_char(buf, pos, cap, tmp[--n]);
+    }
+}
+
+static void pf_append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
+{
+    static const char hex[] = "0123456789abcdef";
+    int started = 0;
+    pf_append_text(buf, pos, cap, "0x");
+    for (int shift = 60; shift >= 0; shift -= 4) {
+        uint8_t nibble = (uint8_t)((value >> shift) & 0xfu);
+        if (nibble || started || shift == 0) {
+            pf_append_char(buf, pos, cap, hex[nibble]);
+            started = 1;
+        }
+    }
+}
+
+static void format_user_page_fault_report(char *buf, uint32_t cap,
+                                          const struct task *task,
+                                          const struct trap_frame *frame,
+                                          uint64_t cr2)
+{
+    uint32_t pos = 0;
+    if (!buf || cap == 0 || !frame) {
+        return;
+    }
+    buf[0] = 0;
+    pf_append_text(buf, &pos, cap, "A user application caused an unrecoverable Page Fault.\n");
+    pf_append_text(buf, &pos, cap, "PID: ");
+    pf_append_u64_dec(buf, &pos, cap, task ? task->pid : 0);
+    pf_append_text(buf, &pos, cap, "  Name: ");
+    pf_append_text(buf, &pos, cap, task && task->name ? task->name : "(unknown)");
+    pf_append_char(buf, &pos, cap, '\n');
+    pf_append_text(buf, &pos, cap, "Path: ");
+    pf_append_text(buf, &pos, cap, task && task->path[0] ? task->path : "(unknown)");
+    pf_append_char(buf, &pos, cap, '\n');
+    pf_append_text(buf, &pos, cap, "User: ");
+    pf_append_text(buf, &pos, cap, task && task->username[0] ? task->username : "(none)");
+    pf_append_text(buf, &pos, cap, "  UID: ");
+    pf_append_u64_dec(buf, &pos, cap, task ? task->uid : 0);
+    pf_append_text(buf, &pos, cap, "  Role: ");
+    pf_append_text(buf, &pos, cap,
+                   task && task->role == LEONOS_AUTH_ROLE_ADMIN ? "Administrator" : "User");
+    pf_append_char(buf, &pos, cap, '\n');
+    pf_append_text(buf, &pos, cap, "Fault address: ");
+    pf_append_u64_hex(buf, &pos, cap, cr2);
+    pf_append_text(buf, &pos, cap, "  Error: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->error);
+    pf_append_char(buf, &pos, cap, '\n');
+    pf_append_text(buf, &pos, cap, "Flags: present=");
+    pf_append_u64_dec(buf, &pos, cap, frame->error & 1ULL);
+    pf_append_text(buf, &pos, cap, " write=");
+    pf_append_u64_dec(buf, &pos, cap, (frame->error >> 1) & 1ULL);
+    pf_append_text(buf, &pos, cap, " user=");
+    pf_append_u64_dec(buf, &pos, cap, (frame->error >> 2) & 1ULL);
+    pf_append_text(buf, &pos, cap, " reserved=");
+    pf_append_u64_dec(buf, &pos, cap, (frame->error >> 3) & 1ULL);
+    pf_append_text(buf, &pos, cap, " fetch=");
+    pf_append_u64_dec(buf, &pos, cap, (frame->error >> 4) & 1ULL);
+    pf_append_char(buf, &pos, cap, '\n');
+    pf_append_text(buf, &pos, cap, "RIP: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rip);
+    pf_append_text(buf, &pos, cap, "  RSP: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rsp);
+    pf_append_text(buf, &pos, cap, "  RBP: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rbp);
+    pf_append_char(buf, &pos, cap, '\n');
+    pf_append_text(buf, &pos, cap, "RAX: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rax);
+    pf_append_text(buf, &pos, cap, "  RBX: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rbx);
+    pf_append_text(buf, &pos, cap, "  RCX: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rcx);
+    pf_append_char(buf, &pos, cap, '\n');
+    pf_append_text(buf, &pos, cap, "RDX: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rdx);
+    pf_append_text(buf, &pos, cap, "  RSI: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rsi);
+    pf_append_text(buf, &pos, cap, "  RDI: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rdi);
+    pf_append_char(buf, &pos, cap, '\n');
+    pf_append_text(buf, &pos, cap, "CS: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->cs);
+    pf_append_text(buf, &pos, cap, "  RFLAGS: ");
+    pf_append_u64_hex(buf, &pos, cap, frame->rflags);
+    pf_append_text(buf, &pos, cap, "  Ticks: ");
+    pf_append_u64_dec(buf, &pos, cap, time_ticks());
+}
+
+static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_t cr2)
+{
+    struct task *task = sched_current_task();
+    struct task *window_server = sched_find_window_server();
+    char report[GUI_IPC_WINDOW_TEXT_MAX];
+    if (!task || task->kind != TASK_KIND_USER) {
+        bugcheck_trap("Unhandled Page Fault", frame, cr2);
+    }
+    if (task->flags & TASK_FLAG_WINDOW_SERVER) {
+        console_printf("[ntclks] window server page fault pid=%u, falling back to bugcheck\n",
+                       task->pid);
+        bugcheck_trap("Window Server Page Fault", frame, cr2);
+    }
+    format_user_page_fault_report(report, sizeof(report), task, frame, cr2);
+    console_printf("[ntclks] user page fault killed pid=%u name=%s cr2=0x%llx rip=0x%llx error=0x%llx\n",
+                   task->pid,
+                   task->name,
+                   (unsigned long long)cr2,
+                   (unsigned long long)frame->rip,
+                   (unsigned long long)frame->error);
+    syscall_release_task_files(task);
+    gui_ipc_destroy_owner(task->pid);
+    pty_process_exit(task->pid);
+    if (window_server && window_server->pid != task->pid) {
+        (void)gui_ipc_post_system_window(window_server->pid, 560, 270,
+                                         "Application Page Fault",
+                                         report,
+                                         task->path,
+                                         0);
+    }
+    sched_exit(task->pid, 0x8000000eULL);
+    return userland_schedule_from_frame(NULL);
+}
+
+struct task *page_fault_dispatch(struct trap_frame *frame)
 {
     uint64_t cr2 = x86_64_read_cr2();
     if (frame && syscall_handle_user_page_fault(cr2, frame->error)) {
-        return;
+        return NULL;
     }
     if (!frame) {
         bugcheck_exception(14, 0, 0, 0, 0, 0, 0, cr2);
@@ -171,6 +330,9 @@ void page_fault_dispatch(struct trap_frame *frame)
                    (unsigned)((frame->error >> 2) & 1u),
                    (unsigned)((frame->error >> 3) & 1u),
                    (unsigned)((frame->error >> 4) & 1u));
+    if ((frame->cs & 3ULL) == 3ULL) {
+        return abort_user_page_fault_task(frame, cr2);
+    }
     bugcheck_trap("Unhandled Page Fault", frame, cr2);
 }
 

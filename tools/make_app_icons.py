@@ -12,10 +12,13 @@ FONT3 = {
     "A": ["111", "101", "111", "101", "101"],
     "C": ["111", "100", "100", "100", "111"],
     "D": ["110", "101", "101", "101", "110"],
+    "E": ["111", "100", "111", "100", "111"],
+    "G": ["111", "100", "101", "101", "111"],
     "I": ["111", "010", "010", "010", "111"],
     "M": ["101", "111", "111", "101", "101"],
     "O": ["111", "101", "101", "101", "111"],
     "S": ["111", "100", "111", "001", "111"],
+    "T": ["111", "010", "010", "010", "010"],
     "U": ["101", "101", "101", "101", "111"],
     "$": ["111", "110", "111", "011", "111"],
     "!": ["010", "010", "010", "000", "010"],
@@ -232,6 +235,51 @@ def icon_bugtest(c: list[list[tuple[int, int, int, int]]]) -> None:
     text3(c, 7, 7, "!", BLACK)
 
 
+def icon_ping(c: list[list[tuple[int, int, int, int]]]) -> None:
+    fill(c, 2, 7, 3, 2, GREEN)
+    fill(c, 11, 7, 3, 2, GREEN)
+    rect(c, 2, 7, 3, 2, DARK)
+    rect(c, 11, 7, 3, 2, DARK)
+    line(c, 5, 8, 7, 6, BLUE)
+    line(c, 7, 6, 9, 6, BLUE)
+    line(c, 9, 6, 11, 8, BLUE)
+    line(c, 5, 8, 7, 10, CYAN)
+    line(c, 7, 10, 9, 10, CYAN)
+    line(c, 9, 10, 11, 8, CYAN)
+
+
+def icon_netctl(c: list[list[tuple[int, int, int, int]]]) -> None:
+    fill(c, 2, 3, 12, 10, WHITE)
+    rect(c, 2, 3, 12, 10, DARK)
+    fill(c, 3, 4, 10, 2, BLUE)
+    fill(c, 4, 8, 2, 2, GREEN)
+    fill(c, 10, 8, 2, 2, GREEN)
+    line(c, 6, 9, 8, 7, CYAN)
+    line(c, 8, 7, 10, 9, CYAN)
+    put(c, 8, 11, ORANGE)
+    put(c, 7, 12, ORANGE)
+    put(c, 9, 12, ORANGE)
+
+
+def icon_httpget(c: list[list[tuple[int, int, int, int]]]) -> None:
+    fill(c, 2, 4, 12, 8, WHITE)
+    rect(c, 2, 4, 12, 8, DARK)
+    fill(c, 3, 5, 10, 2, CYAN)
+    text3(c, 4, 8, "GET", BLUE)
+    put(c, 12, 11, GREEN)
+
+
+def icon_browser(c: list[list[tuple[int, int, int, int]]]) -> None:
+    fill(c, 2, 3, 12, 10, WHITE)
+    rect(c, 2, 3, 12, 10, DARK)
+    fill(c, 3, 4, 10, 2, BLUE)
+    fill(c, 4, 8, 8, 1, CYAN)
+    fill(c, 4, 10, 5, 1, CYAN)
+    line(c, 10, 9, 13, 12, ORANGE)
+    line(c, 13, 12, 12, 13, ORANGE)
+    put(c, 11, 10, ORANGE)
+
+
 def icon_diskmgr(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 3, 4, 10, 2, LIGHT)
     rect(c, 3, 4, 10, 2, DARK)
@@ -317,6 +365,14 @@ def draw_icon(name: str) -> list[list[tuple[int, int, int, int]]]:
         icon_memtest(c)
     elif name == "bugtest":
         icon_bugtest(c)
+    elif name == "ping":
+        icon_ping(c)
+    elif name == "netctl":
+        icon_netctl(c)
+    elif name == "httpget":
+        icon_httpget(c)
+    elif name == "browser":
+        icon_browser(c)
     elif name == "diskmgr":
         icon_diskmgr(c)
     elif name == "devmgr":

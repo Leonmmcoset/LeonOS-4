@@ -136,7 +136,7 @@ struct leonos_gui_window_msg {
     uint32_t height;
     uint32_t flags;
     char title[48];
-    char text[96];
+    char text[1024];
     char app_path[LEONOS_FS_PATH_LEN];
 };
 

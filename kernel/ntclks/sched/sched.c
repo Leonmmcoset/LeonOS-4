@@ -69,6 +69,20 @@ static void task_copy_path(struct task *task, const char *path)
     task->path[i] = 0;
 }
 
+static const char *task_path_basename(const char *path)
+{
+    const char *base = path;
+    if (!path) {
+        return "";
+    }
+    for (const char *p = path; *p; ++p) {
+        if (*p == '/') {
+            base = p + 1;
+        }
+    }
+    return base ? base : "";
+}
+
 static void task_copy_identity_text(char *dst, size_t cap, const char *src)
 {
     size_t i = 0;
@@ -461,6 +475,30 @@ struct task *sched_find_by_name(const char *name)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
         if (str_eq(tasks[i].name, name)) {
+            return &tasks[i];
+        }
+    }
+    return NULL;
+}
+
+struct task *sched_find_by_path_basename(const char *basename)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i].pid && tasks[i].kind == TASK_KIND_USER &&
+            tasks[i].state != TASK_EXITED &&
+            str_eq(task_path_basename(tasks[i].path), basename)) {
+            return &tasks[i];
+        }
+    }
+    return NULL;
+}
+
+struct task *sched_find_window_server(void)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i].pid && tasks[i].kind == TASK_KIND_USER &&
+            tasks[i].state != TASK_EXITED &&
+            (tasks[i].flags & TASK_FLAG_WINDOW_SERVER)) {
             return &tasks[i];
         }
     }

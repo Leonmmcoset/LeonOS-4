@@ -75,7 +75,7 @@ unsigned long oobe_last_spawn_ms;
 uint8_t login_lock_active;
 unsigned long login_last_spawn_ms;
 char app_titles[MAX_WINDOWS][48];
-char app_texts[MAX_WINDOWS][96];
+char app_texts[MAX_WINDOWS][DESKTOP_APP_TEXT_LEN];
 struct leonos_task_info task_infos[LEONOS_TASK_MAX];
 uint32_t task_info_count;
 uint64_t task_info_tick;

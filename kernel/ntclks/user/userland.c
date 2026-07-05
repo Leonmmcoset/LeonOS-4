@@ -6,6 +6,7 @@
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
+#include <ntclks/syscall.h>
 #include <ntclks/userland.h>
 
 #define USER_STACK_TOP (NTCLKS_USER_TOP - 0x1000ULL)
@@ -59,6 +60,26 @@ static int path_eq(const char *a, const char *b)
     return *a == 0 && *b == 0;
 }
 
+static char ascii_tolower(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z') {
+        return (char)(ch - 'A' + 'a');
+    }
+    return ch;
+}
+
+static int path_eq_ignore_case(const char *a, const char *b)
+{
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b && ascii_tolower(*a) == ascii_tolower(*b)) {
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+
 static void copy_text(char *dst, uint32_t dst_len, const char *src)
 {
     uint32_t i = 0;
@@ -87,6 +108,11 @@ static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
         }
     }
     copy_text(dst, dst_len, name);
+}
+
+static int path_is_system_desktop(const char *path)
+{
+    return path_eq_ignore_case(path, "0:/userland/desktop.elf");
 }
 
 static void dir_add(struct leonos_dir_entry *entries, uint32_t capacity, uint32_t *count,
@@ -325,7 +351,15 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
 {
     const void *image = NULL;
     size_t image_len = 0;
-    int ret = storage_read_file(path, &image, &image_len);
+    int ret;
+    if (path_is_system_desktop(path)) {
+        flags |= TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER;
+    }
+    if ((flags & TASK_FLAG_WINDOW_SERVER) && sched_find_window_server()) {
+        console_printf("[ntclks] refusing second desktop instance path=%s\n", path);
+        return -LEONOS_EEXIST;
+    }
+    ret = storage_read_file(path, &image, &image_len);
     if (ret < 0) {
         console_printf("[ntclks] spawn read failed path=%s ret=%d\n", path, ret);
         return ret;
@@ -421,7 +455,7 @@ void userland_init(const struct boot_info *boot)
 
     if (boot && name_contains(boot->cmdline, "mode=installer")) {
         pid = spawn_path_internal("0:/userland/desktop.elf", "desktop.elf window server",
-                                  0, 0, TASK_FLAG_SERVICE, 0);
+                                  0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
             kernel_idle_loop();
@@ -439,7 +473,7 @@ void userland_init(const struct boot_info *boot)
     init_pid = (uint32_t)pid;
 
     pid = spawn_path_internal("0:/userland/desktop.elf", "desktop.elf window server",
-                              0, init_pid, TASK_FLAG_SERVICE, 0);
+                              0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load desktop.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();

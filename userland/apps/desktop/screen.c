@@ -48,6 +48,53 @@ static void draw_taskbar_clock(uint32_t tb_y)
                      LEONOS_UI_BUTTON_H, clock, LEONOS_UI_BUTTON_PRESSED);
 }
 
+static void draw_taskbar_network_icon(uint32_t tb_y)
+{
+    struct leonos_net_config config;
+    uint32_t x;
+    uint32_t icon_x;
+    uint32_t icon_y;
+    uint32_t color = 0x00c00000u;
+    uint8_t connected = 0;
+    if (fb_w() < TASKBAR_TRAY_W + 8) {
+        return;
+    }
+    if (leonos_net_config(&config) == 0 &&
+        (config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE) &&
+        config.local_ip && config.gateway_ip) {
+        connected = 1;
+        color = 0x0000a000u;
+    }
+    x = fb_w() - TASKBAR_TRAY_W;
+    icon_x = x + 10;
+    icon_y = tb_y + 11;
+    leonos_ui_button(&ui, x + 4, tb_y + 5, TASKBAR_NET_W - 6,
+                     LEONOS_UI_BUTTON_H, "", LEONOS_UI_BUTTON_PRESSED);
+
+    leonos_ui_rect(&ui, icon_x, icon_y, 8, 6, LEONOS_UI_WHITE);
+    leonos_ui_rect(&ui, icon_x, icon_y, 8, 1, LEONOS_UI_BLACK);
+    leonos_ui_rect(&ui, icon_x, icon_y, 1, 6, LEONOS_UI_BLACK);
+    leonos_ui_rect(&ui, icon_x + 7, icon_y, 1, 6, LEONOS_UI_BLACK);
+    leonos_ui_rect(&ui, icon_x, icon_y + 5, 8, 1, LEONOS_UI_BLACK);
+    leonos_ui_rect(&ui, icon_x + 3, icon_y + 6, 2, 2, LEONOS_UI_BLACK);
+
+    leonos_ui_rect(&ui, icon_x + 11, icon_y + 3, 8, 6, LEONOS_UI_WHITE);
+    leonos_ui_rect(&ui, icon_x + 11, icon_y + 3, 8, 1, LEONOS_UI_BLACK);
+    leonos_ui_rect(&ui, icon_x + 11, icon_y + 3, 1, 6, LEONOS_UI_BLACK);
+    leonos_ui_rect(&ui, icon_x + 18, icon_y + 3, 1, 6, LEONOS_UI_BLACK);
+    leonos_ui_rect(&ui, icon_x + 11, icon_y + 8, 8, 1, LEONOS_UI_BLACK);
+    leonos_ui_rect(&ui, icon_x + 14, icon_y + 9, 2, 2, LEONOS_UI_BLACK);
+
+    if (connected) {
+        leonos_ui_rect(&ui, icon_x + 7, icon_y + 8, 6, 1, color);
+        leonos_ui_rect(&ui, icon_x + 10, icon_y + 6, 1, 5, color);
+    } else {
+        leonos_ui_rect(&ui, icon_x + 8, icon_y + 5, 8, 2, color);
+        leonos_ui_rect(&ui, icon_x + 11, icon_y + 2, 2, 8, color);
+    }
+    leonos_ui_rect(&ui, icon_x + 20, icon_y + 11, 4, 4, color);
+}
+
 void draw_cursor_shape(uint32_t x, uint32_t y)
 {
     if (x + cursor_width > fb_w()) {
@@ -121,6 +168,7 @@ void redraw_region(struct rect dirty)
                 x += button_w;
             }
         }
+        draw_taskbar_network_icon(tb_y);
         draw_taskbar_clock(tb_y);
     }
 

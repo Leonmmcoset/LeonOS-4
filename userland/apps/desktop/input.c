@@ -363,7 +363,8 @@ void oobe_lock_on_window_removed(uint8_t slot)
 
 int oobe_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg)
 {
-    return oobe_lock_active && !window_msg_is_oobe(msg);
+    return oobe_lock_active && !window_msg_is_oobe(msg) &&
+           !(msg && text_eq(msg->title, "Application Page Fault"));
 }
 
 int handle_oobe_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons)
@@ -477,7 +478,8 @@ void login_lock_on_window_removed(uint8_t slot)
 
 int login_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg)
 {
-    return login_lock_active && !window_msg_is_login(msg);
+    return login_lock_active && !window_msg_is_login(msg) &&
+           !(msg && text_eq(msg->title, "Application Page Fault"));
 }
 
 int handle_login_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons)

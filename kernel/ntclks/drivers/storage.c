@@ -2,16 +2,12 @@
 #include <ntclks/mm.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/osmlayer.h>
+#include <ntclks/pci.h>
 #include <ntclks/storage.h>
-
-#include "../arch/x86_64/port.h"
 
 #define ATA_CLASS_MASS_STORAGE 0x01u
 #define ATA_SUBCLASS_SATA 0x06u
 #define ATA_PROGIF_AHCI 0x01u
-
-#define PCI_CONFIG_ADDR 0xcf8u
-#define PCI_CONFIG_DATA 0xcfcu
 
 #define AHCI_GHC_AE 0x80000000u
 #define AHCI_PORT_CMD_ST 0x0001u
@@ -473,22 +469,6 @@ static int storage_parent_path(const char *path, char *parent, uint32_t parent_c
     }
     storage_copy_text(name, name_cap, resolved + slash + 1);
     return 0;
-}
-
-static uint32_t pci_cfg_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
-{
-    uint32_t addr = 0x80000000u |
-                    ((uint32_t)bus << 16) |
-                    ((uint32_t)slot << 11) |
-                    ((uint32_t)func << 8) |
-                    (offset & 0xfcu);
-    x86_64_outl(addr, PCI_CONFIG_ADDR);
-    return x86_64_inl(PCI_CONFIG_DATA);
-}
-
-static uint16_t pci_vendor_id(uint8_t bus, uint8_t slot, uint8_t func)
-{
-    return (uint16_t)(pci_cfg_read(bus, slot, func, 0x00) & 0xffffu);
 }
 
 static uint64_t cluster_to_lba(uint32_t cluster)
@@ -1921,13 +1901,13 @@ void storage_init(void)
     for (uint16_t bus = 0; bus < 256; ++bus) {
         for (uint8_t slot = 0; slot < 32; ++slot) {
             for (uint8_t func = 0; func < 8; ++func) {
-                if (pci_vendor_id((uint8_t)bus, slot, func) == 0xffffu) {
+                if (pci_config_read16((uint8_t)bus, slot, func, 0x00) == 0xffffu) {
                     if (func == 0) {
                         break;
                     }
                     continue;
                 }
-                uint32_t class_reg = pci_cfg_read((uint8_t)bus, slot, func, 0x08);
+                uint32_t class_reg = pci_config_read32((uint8_t)bus, slot, func, 0x08);
                 uint8_t class_code = (uint8_t)(class_reg >> 24);
                 uint8_t subclass = (uint8_t)(class_reg >> 16);
                 uint8_t progif = (uint8_t)(class_reg >> 8);
@@ -1936,8 +1916,8 @@ void storage_init(void)
                     progif != ATA_PROGIF_AHCI) {
                     continue;
                 }
-                uint32_t abar_lo = pci_cfg_read((uint8_t)bus, slot, func, 0x24);
-                uint32_t abar_hi = pci_cfg_read((uint8_t)bus, slot, func, 0x28);
+                uint32_t abar_lo = pci_config_read32((uint8_t)bus, slot, func, 0x24);
+                uint32_t abar_hi = pci_config_read32((uint8_t)bus, slot, func, 0x28);
                 uint64_t abar_phys = ((uint64_t)abar_hi << 32) | (abar_lo & ~0x0fu);
                 if (!abar_phys) {
                     continue;

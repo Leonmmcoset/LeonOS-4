@@ -99,6 +99,56 @@ static uint32_t interp_u32(uint32_t from, uint32_t to, uint32_t percent)
     return value <= 0 ? 0 : (uint32_t)value;
 }
 
+static void draw_window_text_block(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                                   const char *text, uint32_t fg, uint32_t bg)
+{
+    char line[160];
+    const char *src = text && text[0] ? text : leonos_i18n("Application window", "应用程序窗口");
+    uint32_t yy = y;
+    uint32_t max_chars;
+    if (!w || !h) {
+        return;
+    }
+    max_chars = w / LEONOS_FONT_W;
+    if (max_chars == 0) {
+        return;
+    }
+    if (max_chars >= sizeof(line)) {
+        max_chars = sizeof(line) - 1;
+    }
+    while (*src && yy + LEONOS_FONT_H <= y + h) {
+        uint32_t n = 0;
+        uint32_t draw_n;
+        uint32_t last_space = 0;
+        while (src[n] && src[n] != '\n' && n < max_chars) {
+            if (src[n] == ' ') {
+                last_space = n;
+            }
+            ++n;
+        }
+        draw_n = n;
+        if (src[n] && src[n] != '\n' && last_space > 0) {
+            draw_n = last_space;
+        }
+        for (uint32_t i = 0; i < draw_n; ++i) {
+            line[i] = src[i];
+        }
+        line[draw_n] = 0;
+        leonos_ui_text_clipped(&ui, x, yy, w, line, fg, bg);
+        if (src[draw_n] == '\n') {
+            src += draw_n + 1;
+        } else if (draw_n < n && src[draw_n] == ' ') {
+            src += draw_n + 1;
+        } else {
+            src += n;
+        }
+        while (*src == ' ') {
+            ++src;
+        }
+        yy += LEONOS_FONT_H + 3;
+    }
+}
+
 static void draw_window_animation_frame(const struct desktop_window *w)
 {
     uint32_t percent = window_animation_percent(w);
@@ -225,9 +275,12 @@ void draw_window(uint8_t id)
     } else if (window_is_ui_demo(w)) {
         draw_ui_demo_gallery(body_x, body_y, body_w, body_h, w->body_color);
     } else {
-        text_draw(body_x + 16, body_y + 18, w->app_text ? w->app_text : leonos_i18n("Application window", "应用程序窗口"), 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 42, leonos_i18n("Process window via GUI IPC", "通过 GUI IPC 的进程窗口"), 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 66, leonos_i18n("App exited, desktop owns surface", "应用已退出，桌面保留表面"), 0x00000000, w->body_color);
+        draw_window_text_block(body_x + 16, body_y + 18,
+                               body_w > 32 ? body_w - 32 : body_w,
+                               body_h > 36 ? body_h - 36 : body_h,
+                               w->app_text,
+                               0x00000000,
+                               w->body_color);
     }
 
 draw_resize_grip:

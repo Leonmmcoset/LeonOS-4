@@ -26,6 +26,10 @@ NORMAL_USER_APPS = [
     "osver",
     "memtest",
     "bugtest",
+    "ping",
+    "netctl",
+    "httpget",
+    "browser",
     "settings",
     "diskmgr",
     "devmgr",
@@ -225,15 +229,16 @@ def main() -> int:
     write_line(lines, "  description = IMAGE $out")
     write_line(lines)
     write_line(lines, "rule run")
-    write_line(lines, "  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display \"$${LEONOS_QEMU_DISPLAY:-sdl}\" -device VGA,xres=1920,yres=1080 -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    qemu_net = "-netdev user,id=net0 -device e1000,netdev=net0"
+    write_line(lines, f"  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display \"$${{LEONOS_QEMU_DISPLAY:-sdl}}\" -device VGA,xres=1920,yres=1080 {qemu_net} -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN LeonOS 4")
     write_line(lines)
     write_line(lines, "rule run_debug")
-    write_line(lines, "  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display none -device VGA,xres=1920,yres=1080 -no-reboot -no-shutdown -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, f"  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display none -device VGA,xres=1920,yres=1080 -no-reboot -no-shutdown {qemu_net} -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN.DEBUG LeonOS 4")
     write_line(lines)
     write_line(lines, "rule run_iso")
-    write_line(lines, "  command = qemu-system-x86_64 -m 512M -serial stdio -display none -device VGA,xres=1920,yres=1080 -no-reboot -no-shutdown -cdrom build/images/leonos4.iso -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, f"  command = qemu-system-x86_64 -m 512M -serial stdio -display none -device VGA,xres=1920,yres=1080 -no-reboot -no-shutdown {qemu_net} -cdrom build/images/leonos4.iso -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN.ISO LeonOS 4")
     write_line(lines)
     write_line(lines, "rule menuconfig_rule")

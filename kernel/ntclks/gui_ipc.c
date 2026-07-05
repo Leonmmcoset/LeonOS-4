@@ -252,6 +252,32 @@ static int push_message(uint32_t type, const struct gui_window_slot *slot)
     return 1;
 }
 
+static int push_system_window_message(uint32_t pid, uint32_t width, uint32_t height,
+                                      const char *title, const char *text,
+                                      const char *app_path, uint32_t flags)
+{
+    uint32_t next = (head + 1) % GUI_IPC_QUEUE_CAP;
+    struct gui_ipc_window *msg;
+    if (!pid || !width || !height) {
+        return 0;
+    }
+    if (next == tail) {
+        tail = (tail + 1) % GUI_IPC_QUEUE_CAP;
+    }
+    msg = &queue[head];
+    msg->type = GUI_IPC_WINDOW_MSG_CREATE;
+    msg->pid = pid;
+    msg->window_id = 0;
+    msg->width = width;
+    msg->height = height;
+    msg->flags = flags;
+    copy_kernel_string(msg->title, sizeof(msg->title), title);
+    copy_kernel_string(msg->text, sizeof(msg->text), text);
+    copy_kernel_string(msg->app_path, sizeof(msg->app_path), app_path);
+    head = next;
+    return 1;
+}
+
 void gui_ipc_init(void)
 {
     head = 0;
@@ -340,6 +366,16 @@ int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
         return 0;
     }
     return (int32_t)id;
+}
+
+int gui_ipc_post_system_window(uint32_t pid, uint32_t width, uint32_t height,
+                               const char *title, const char *text,
+                               const char *app_path, uint32_t flags)
+{
+    if (!sched_find(pid)) {
+        return 0;
+    }
+    return push_system_window_message(pid, width, height, title, text, app_path, flags);
 }
 
 int gui_ipc_pop_window(struct gui_ipc_window *out)

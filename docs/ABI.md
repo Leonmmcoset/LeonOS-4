@@ -133,3 +133,18 @@ Current raw device kinds:
 - AHCI controller
 - Disk
 - Serial COM1
+- Intel e1000 network adapter
+
+The e1000 entry is classified as `LEONOS_DEVICE_CLASS_NETWORK`. Its detail text
+reports whether the active IPv4 configuration came from DHCP or the static
+fallback, and its raw values carry the MAC address, local IPv4 address, and
+gateway for device-manager style tools.
+
+## Network ABI
+
+`include/leonos/net.h` exposes the current minimal network ioctl ABI. It covers
+configuration, DHCP renew, DNS A lookups, ICMP ping, and a fixed-buffer
+`leonos_net_http_get` helper that performs an active TCP connection and
+`HTTP/1.0` GET. `httpget.elf` and `browser.elf` both use this helper. This is
+not a socket ABI yet: applications cannot listen for TCP connections, stream
+arbitrary byte ranges, or use TLS/HTTPS through the kernel network interface.

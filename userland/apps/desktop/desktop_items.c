@@ -96,6 +96,7 @@ static int desktop_is_wide_codepoint(uint32_t cp)
            (cp >= 0x2e80u && cp <= 0xa4cfu) ||
            (cp >= 0xac00u && cp <= 0xd7a3u) ||
            (cp >= 0xf900u && cp <= 0xfaffu) ||
+           (cp >= 0x20000u && cp <= 0x3fffdu) ||
            (cp >= 0xfe10u && cp <= 0xfe19u) ||
            (cp >= 0xfe30u && cp <= 0xfe6fu) ||
            (cp >= 0xff00u && cp <= 0xff60u) ||
@@ -496,6 +497,8 @@ static const char *desktop_launch_error_text(int code)
         return leonos_i18n("Shortcut loop detected.", "检测到快捷方式循环。");
     case LEONOS_LAUNCH_ERR_EXISTS:
         return leonos_i18n("Shortcut already exists.", "快捷方式已存在。");
+    case LEONOS_LAUNCH_ERR_ALREADY_RUNNING:
+        return leonos_i18n("Desktop is already running.", "桌面已在运行。");
     default:
         return 0;
     }

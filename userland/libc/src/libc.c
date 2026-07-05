@@ -3,6 +3,7 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/net.h>
 #include <leonos/pty.h>
 #include <leonos/stdio.h>
 #include <leonos/system.h>
@@ -792,6 +793,99 @@ int leonos_device_list(struct leonos_device_info *devices,
     if (out_count) {
         *out_count = query.count;
     }
+    return ret;
+}
+
+int leonos_net_config(struct leonos_net_config *config)
+{
+    if (!config) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_IOCTL_NET_CONFIG, config);
+}
+
+int leonos_net_dhcp_renew(uint32_t timeout_ms, struct leonos_net_dhcp *result)
+{
+    struct leonos_net_dhcp query = {
+        .timeout_ms = timeout_ms,
+        .status = LEONOS_NET_STATUS_DHCP_FAILED,
+    };
+    int ret;
+    if (!result) {
+        return -1;
+    }
+    ret = ioctl(3, LEONOS_IOCTL_NET_DHCP, &query);
+    *result = query;
+    return ret;
+}
+
+int leonos_net_ping(uint32_t target_ip, uint32_t timeout_ms,
+                    struct leonos_net_ping *result)
+{
+    struct leonos_net_ping query = {
+        .target_ip = target_ip,
+        .timeout_ms = timeout_ms,
+        .sequence = 0,
+        .status = LEONOS_NET_STATUS_BAD_ARGUMENT,
+    };
+    int ret;
+    if (!result) {
+        return -1;
+    }
+    ret = ioctl(3, LEONOS_IOCTL_NET_PING, &query);
+    *result = query;
+    return ret;
+}
+
+int leonos_net_dns_resolve(const char *name, uint32_t timeout_ms,
+                           struct leonos_net_dns *result)
+{
+    struct leonos_net_dns query;
+    uint32_t i = 0;
+    int ret;
+    if (!name || !result) {
+        return -1;
+    }
+    query = (struct leonos_net_dns){0};
+    query.timeout_ms = timeout_ms;
+    query.status = LEONOS_NET_STATUS_DNS_FAILED;
+    while (name[i] && i + 1 < sizeof(query.name)) {
+        query.name[i] = name[i];
+        ++i;
+    }
+    query.name[i] = 0;
+    ret = ioctl(3, LEONOS_IOCTL_NET_DNS, &query);
+    *result = query;
+    return ret;
+}
+
+int leonos_net_http_get(const char *host, const char *path,
+                        uint32_t port, uint32_t timeout_ms,
+                        struct leonos_net_http_get *result)
+{
+    struct leonos_net_http_get query;
+    uint32_t i = 0;
+    int ret;
+    if (!host || !result) {
+        return -1;
+    }
+    query = (struct leonos_net_http_get){0};
+    query.port = port;
+    query.timeout_ms = timeout_ms;
+    query.status = LEONOS_NET_STATUS_HTTP_FAILED;
+    while (host[i] && i + 1 < sizeof(query.host)) {
+        query.host[i] = host[i];
+        ++i;
+    }
+    query.host[i] = 0;
+    i = 0;
+    while (path && path[i] && i + 1 < sizeof(query.path)) {
+        query.path[i] = path[i];
+        ++i;
+    }
+    query.path[i] = 0;
+    ret = ioctl(3, LEONOS_IOCTL_NET_HTTP_GET, &query);
+    *result = query;
     return ret;
 }
 

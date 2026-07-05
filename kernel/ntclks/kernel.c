@@ -7,6 +7,7 @@
 #include <ntclks/mm.h>
 #include <ntclks/mouse.h>
 #include <ntclks/multiboot2.h>
+#include <ntclks/net.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
@@ -181,6 +182,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
             storage_init();
         }
     }
+    net_init();
     osmlayer_bridge_selftest();
     userland_init(&boot);
     sched_dump();

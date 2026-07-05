@@ -18,10 +18,13 @@
 #define OSMLAYER_DEVICE_CLASS_DISPLAY 3u
 #define OSMLAYER_DEVICE_CLASS_STORAGE 4u
 #define OSMLAYER_DEVICE_CLASS_SERIAL 5u
+#define OSMLAYER_DEVICE_CLASS_NETWORK 6u
 
 #define OSMLAYER_DEVICE_FLAG_PRESENT 0x00000001u
 #define OSMLAYER_DEVICE_FLAG_ACTIVE 0x00000002u
 #define OSMLAYER_DEVICE_FLAG_BOOT 0x00000004u
+
+#define OSMLAYER_NET_CONFIG_SOURCE_DHCP 2u
 
 #define OSMLAYER_RAW_DEVICE_KIND_RTC 1u
 #define OSMLAYER_RAW_DEVICE_KIND_KEYBOARD 2u
@@ -30,6 +33,7 @@
 #define OSMLAYER_RAW_DEVICE_KIND_AHCI 5u
 #define OSMLAYER_RAW_DEVICE_KIND_DISK 6u
 #define OSMLAYER_RAW_DEVICE_KIND_SERIAL 7u
+#define OSMLAYER_RAW_DEVICE_KIND_E1000 8u
 
 struct osmlayer_vfs_resolve_path {
     const char *cwd;
@@ -252,6 +256,17 @@ static void osmlayer_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t 
         value = -value;
     }
     osmlayer_append_u64(buf, pos, cap, (uint32_t)value);
+}
+
+static void osmlayer_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t ip)
+{
+    osmlayer_append_u64(buf, pos, cap, (ip >> 24) & 0xffu);
+    osmlayer_append_char(buf, pos, cap, '.');
+    osmlayer_append_u64(buf, pos, cap, (ip >> 16) & 0xffu);
+    osmlayer_append_char(buf, pos, cap, '.');
+    osmlayer_append_u64(buf, pos, cap, (ip >> 8) & 0xffu);
+    osmlayer_append_char(buf, pos, cap, '.');
+    osmlayer_append_u64(buf, pos, cap, ip & 0xffu);
 }
 
 static int osmlayer_abs_drive_path(const char *path)
@@ -1332,6 +1347,28 @@ static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
                              "Serial COM1",
                              osmlayer_active(raw->flags) ? "Running" : "Unavailable",
                              "I/O port 0x3f8 debug console", raw->value0, raw->value1);
+        break;
+    case OSMLAYER_RAW_DEVICE_KIND_E1000:
+        pos = 0;
+        detail[0] = 0;
+        if (osmlayer_active(raw->flags)) {
+            osmlayer_append_text(detail, &pos, sizeof(detail), "Intel e1000, ");
+            osmlayer_append_text(detail, &pos, sizeof(detail),
+                                  raw->aux1 == OSMLAYER_NET_CONFIG_SOURCE_DHCP
+                                      ? "DHCP IPv4 "
+                                      : "static IPv4 ");
+            osmlayer_append_ipv4(detail, &pos, sizeof(detail), raw->aux0);
+            osmlayer_append_text(detail, &pos, sizeof(detail), ", gateway ");
+            osmlayer_append_ipv4(detail, &pos, sizeof(detail), (uint32_t)raw->value1);
+        } else if (raw->flags & OSMLAYER_DEVICE_FLAG_PRESENT) {
+            osmlayer_copy_text(detail, sizeof(detail), "Intel e1000 detected but not active");
+        } else {
+            osmlayer_copy_text(detail, sizeof(detail), "No Intel e1000 adapter detected");
+        }
+        osmlayer_catalog_add(query, OSMLAYER_DEVICE_CLASS_NETWORK, raw->flags,
+                             "Intel e1000",
+                             osmlayer_active(raw->flags) ? "Running" : "Unavailable",
+                             detail, raw->value0, raw->value1);
         break;
     default:
         break;

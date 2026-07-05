@@ -5,7 +5,7 @@
 #include <leonos/fs.h>
 
 #define GUI_IPC_WINDOW_TITLE_MAX 48u
-#define GUI_IPC_WINDOW_TEXT_MAX 96u
+#define GUI_IPC_WINDOW_TEXT_MAX 1024u
 #define GUI_IPC_WINDOW_PATH_MAX LEONOS_FS_PATH_LEN
 
 #define GUI_IPC_WINDOW_MSG_CREATE 1u
@@ -78,6 +78,9 @@ struct gui_ipc_display_request {
 void gui_ipc_init(void);
 int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
                               const char *title, const char *text, uint32_t flags);
+int gui_ipc_post_system_window(uint32_t pid, uint32_t width, uint32_t height,
+                               const char *title, const char *text,
+                               const char *app_path, uint32_t flags);
 int gui_ipc_pop_window(struct gui_ipc_window *out);
 int gui_ipc_present_window(uint32_t pid, uint32_t window_id, uint32_t width, uint32_t height,
                            uint32_t stride, const uint32_t *pixels);

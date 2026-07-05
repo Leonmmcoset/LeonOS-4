@@ -288,6 +288,22 @@ isr14_stub:
     pushq %r15
     mov %rsp, %rdi
     call page_fault_dispatch
+    test %rax, %rax
+    jz 1f
+    mov %rax, %r12
+    mov %rax, %rdi
+    call sched_task_cr3
+    mov %rax, %r13
+    mov %r12, %rdi
+    call sched_task_frame
+    mov %rax, %rdi
+    mov %r13, %rsi
+    test %rdi, %rdi
+    jz 1f
+    mov %rsi, %cr3
+    mov %rdi, %rsp
+    jmp trap_restore_frame
+1:
     jmp trap_restore_frame
 
 .macro PUSH_TRAP_FRAME vector error

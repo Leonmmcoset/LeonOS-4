@@ -5,16 +5,17 @@
 #include <leonos/syscall.h>
 #include <leonos/text.h>
 #include <leonos/ui.h>
+#include <stdlib.h>
 
 #define UI_T(en, zh) leonos_i18n((en), (zh))
 
 #define UI_SYSTEM_FONT_MAX 8192U
-#define UI_CJK_FONT_MAX 524288U
+#define UI_CJK_FONT_MAX (2U * 1024U * 1024U)
 #define UI_LAYOUT_GLYPH_MAX 512U
 #define UI_CJK_FONT_PATH "0:/system/fonts/cjk16.lbf"
 
 static uint8_t ui_system_font[UI_SYSTEM_FONT_MAX];
-static uint8_t ui_cjk_font[UI_CJK_FONT_MAX];
+static uint8_t *ui_cjk_font;
 static uint8_t ui_system_font_checked;
 static uint8_t ui_cjk_font_checked;
 static uint32_t ui_cjk_font_len;
@@ -89,11 +90,17 @@ static void ui_load_cjk_font(void)
     struct leonos_stat st;
     if (stat(UI_CJK_FONT_PATH, &st) != 0 ||
         st.type != LEONOS_FS_TYPE_FILE ||
-        st.size < 24 || st.size > sizeof(ui_cjk_font)) {
+        st.size < 24 || st.size > UI_CJK_FONT_MAX) {
+        return;
+    }
+    ui_cjk_font = malloc((size_t)st.size);
+    if (!ui_cjk_font) {
         return;
     }
     int fd = open(UI_CJK_FONT_PATH, LEONOS_O_RDONLY, 0);
     if (fd < 0) {
+        free(ui_cjk_font);
+        ui_cjk_font = 0;
         return;
     }
     uint32_t len = 0;
@@ -110,6 +117,8 @@ static void ui_load_cjk_font(void)
         ui_cjk_font[2] != 'F' || ui_cjk_font[3] != '1' ||
         ui_read_le16(ui_cjk_font + 4) != 16 ||
         ui_read_le16(ui_cjk_font + 6) != 16) {
+        free(ui_cjk_font);
+        ui_cjk_font = 0;
         return;
     }
     ui_cjk_glyph_bytes = ui_read_le16(ui_cjk_font + 8);
@@ -120,6 +129,8 @@ static void ui_load_cjk_font(void)
         ui_cjk_index_offset + ui_cjk_font_count * 8u > len ||
         ui_cjk_bitmap_offset > len) {
         ui_cjk_font_count = 0;
+        free(ui_cjk_font);
+        ui_cjk_font = 0;
         return;
     }
     ui_cjk_font_len = len;
@@ -238,6 +249,7 @@ static int ui_is_wide_codepoint(uint32_t cp)
            (cp >= 0x2e80u && cp <= 0xa4cfu) ||
            (cp >= 0xac00u && cp <= 0xd7a3u) ||
            (cp >= 0xf900u && cp <= 0xfaffu) ||
+           (cp >= 0x20000u && cp <= 0x3fffdu) ||
            (cp >= 0xfe10u && cp <= 0xfe19u) ||
            (cp >= 0xfe30u && cp <= 0xfe6fu) ||
            (cp >= 0xff00u && cp <= 0xff60u) ||

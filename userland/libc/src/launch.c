@@ -29,11 +29,17 @@ static const struct builtin_program builtin_programs[] = {
     {"run", "0:/userland/run.elf"},
     {"osver", "0:/userland/osver.elf"},
     {"memtest", "0:/userland/memtest.elf"},
+    {"ping", "0:/userland/ping.elf"},
+    {"netctl", "0:/userland/netctl.elf"},
+    {"httpget", "0:/userland/httpget.elf"},
+    {"browser", "0:/userland/browser.elf"},
     {"diskmgr", "0:/userland/diskmgr.elf"},
     {"devmgr", "0:/userland/devmgr.elf"},
 };
 
 static const struct builtin_assoc builtin_assocs[] = {
+    {".html", "0:/userland/browser.elf"},
+    {".htm", "0:/userland/browser.elf"},
     {".txt", "0:/userland/notepad.elf"},
     {".md", "0:/userland/notepad.elf"},
     {".log", "0:/userland/notepad.elf"},
@@ -43,6 +49,7 @@ static const struct builtin_assoc builtin_assocs[] = {
 };
 
 static const struct leonos_launch_assoc_app assoc_apps[] = {
+    {"LeonOS Browser", "Open the HTML page", "0:/userland/browser.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
     {"Notepad", "Open the file as text", "0:/userland/notepad.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
     {"Terminal", "Run cat in a terminal window", "0:/userland/terminal.elf", LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT},
     {"Run", "Pass the path to the Run dialog", "0:/userland/run.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
@@ -131,6 +138,11 @@ static int ends_with_ignore_case(const char *text, const char *suffix)
         return 0;
     }
     return text_eq_ignore_case(text + text_n - suffix_n, suffix);
+}
+
+static int is_system_desktop_path(const char *path)
+{
+    return text_eq_ignore_case(path, "0:/userland/desktop.elf");
 }
 
 static const char *path_basename(const char *path)
@@ -874,7 +886,11 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         return execve(dir_argv[0], dir_argv, 0);
     }
     if (ends_with_ignore_case(path, ".elf")) {
-        return execve(path, argv, 0);
+        int ret = execve(path, argv, 0);
+        if (ret == -LEONOS_EEXIST && is_system_desktop_path(path)) {
+            return LEONOS_LAUNCH_ERR_ALREADY_RUNNING;
+        }
+        return ret;
     }
     default_program = leonos_launch_resolve_default_app_for_path(path);
     if (default_program) {
@@ -922,6 +938,8 @@ const char *leonos_launch_error_text(int code)
         return "Shortcut loop detected";
     case LEONOS_LAUNCH_ERR_EXISTS:
         return "Shortcut already exists";
+    case LEONOS_LAUNCH_ERR_ALREADY_RUNNING:
+        return "Desktop is already running";
     default:
         return "Launch failed";
     }

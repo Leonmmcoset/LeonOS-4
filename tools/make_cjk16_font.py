@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import struct
 import subprocess
 from pathlib import Path
@@ -13,6 +14,32 @@ DEFAULT_FALLBACK_FONTS = [
     "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 ]
+TILE_W = 16
+TILE_H = 16
+BATCH_TILE_COLS = 32
+BATCH_GLYPHS = 512
+
+CJK_SYMBOL_RANGES = (
+    (0x2E80, 0x2EFF),  # CJK Radicals Supplement
+    (0x2F00, 0x2FDF),  # Kangxi Radicals
+    (0x2FF0, 0x2FFF),  # Ideographic Description Characters
+    (0x3000, 0x303F),  # CJK Symbols and Punctuation
+    (0x31C0, 0x31EF),  # CJK Strokes
+    (0x3200, 0x32FF),  # Enclosed CJK Letters and Months
+    (0x3300, 0x33FF),  # CJK Compatibility
+    (0xFE10, 0xFE1F),  # Vertical Forms
+    (0xFE30, 0xFE4F),  # CJK Compatibility Forms
+    (0xFF00, 0xFFEF),  # Halfwidth and Fullwidth Forms
+)
+CJK_UNIFIED_RANGES = (
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+)
+CJK_BMP_RANGES = (
+    *CJK_SYMBOL_RANGES,
+    (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
+    *CJK_UNIFIED_RANGES,
+    (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+)
 
 DEFAULT_CHARS = (
     "的一是在不了有人和国中大为上个民我以要他时来用们生到作地于出就分对成会可主发年"
@@ -47,6 +74,25 @@ def gb2312_level1_chars() -> str:
             except UnicodeDecodeError:
                 pass
     return "".join(chars)
+
+
+def codepoints_for_ranges(ranges: tuple[tuple[int, int], ...]) -> set[int]:
+    cps: set[int] = set()
+    for start, end in ranges:
+        cps.update(range(start, end + 1))
+    return cps
+
+
+def coverage_codepoints(name: str) -> set[int]:
+    if name == "manual":
+        return set()
+    if name == "gb2312-level1":
+        return {ord(ch) for ch in gb2312_level1_chars()}
+    if name == "cjk-unified":
+        return codepoints_for_ranges(CJK_SYMBOL_RANGES + CJK_UNIFIED_RANGES)
+    if name == "cjk-bmp":
+        return codepoints_for_ranges(CJK_BMP_RANGES)
+    raise ValueError(f"unknown coverage: {name}")
 
 
 def tofu_glyph() -> bytes:
@@ -113,6 +159,91 @@ def render_char(ch: str, fonts: list[str], point_size: int) -> bytes:
     return tofu_glyph()
 
 
+def render_batch_with_font(chars: list[str], font: str, point_size: int) -> list[bytes]:
+    if not chars:
+        return []
+    cols = min(BATCH_TILE_COLS, len(chars))
+    rows = math.ceil(len(chars) / cols)
+    cmd = [
+        "montage",
+        "-background",
+        "black",
+        "-fill",
+        "white",
+        "-font",
+        font,
+        "-pointsize",
+        str(point_size),
+        "-size",
+        f"{TILE_W}x{TILE_H}",
+        "-gravity",
+        "center",
+    ]
+    cmd.extend(f"caption:{ch}" for ch in chars)
+    cmd += [
+        "-tile",
+        f"{cols}x",
+        "-geometry",
+        f"{TILE_W}x{TILE_H}+0+0",
+        "png:-",
+    ]
+    montage = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if montage.returncode != 0 or b"unable to read font" in montage.stderr.lower():
+        raise subprocess.CalledProcessError(montage.returncode, cmd, montage.stdout,
+                                            montage.stderr)
+    convert = subprocess.run(
+        ["convert", "png:-", "-threshold", "50%", "-depth", "8", "gray:-"],
+        input=montage.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if convert.returncode != 0:
+        raise subprocess.CalledProcessError(convert.returncode, convert.args,
+                                            convert.stdout, convert.stderr)
+    width = cols * TILE_W
+    height = rows * TILE_H
+    pixels = convert.stdout
+    if len(pixels) != width * height:
+        raise subprocess.CalledProcessError(1, convert.args, convert.stdout,
+                                            f"unexpected raw size {len(pixels)}".encode())
+    glyphs: list[bytes] = []
+    for idx in range(len(chars)):
+        tile_x = (idx % cols) * TILE_W
+        tile_y = (idx // cols) * TILE_H
+        data = bytearray()
+        for y in range(TILE_H):
+            bits = 0
+            base = (tile_y + y) * width + tile_x
+            for x in range(TILE_W):
+                if pixels[base + x]:
+                    bits |= 0x8000 >> x
+            data.append((bits >> 8) & 0xFF)
+            data.append(bits & 0xFF)
+        glyphs.append(bytes(data))
+    return glyphs
+
+
+def render_chars(cps: list[int], fonts: list[str], point_size: int) -> dict[int, bytes]:
+    rendered: dict[int, bytes] = {}
+    primary = fonts[0] if fonts else DEFAULT_FONT
+    for start in range(0, len(cps), BATCH_GLYPHS):
+        batch = cps[start:start + BATCH_GLYPHS]
+        chars = [chr(cp) for cp in batch]
+        try:
+            glyphs = render_batch_with_font(chars, primary, point_size)
+        except subprocess.CalledProcessError:
+            glyphs = []
+        if len(glyphs) != len(batch):
+            glyphs = [render_char(ch, fonts, point_size) for ch in chars]
+        for cp, ch, glyph in zip(batch, chars, glyphs):
+            if not any(glyph) and cp != 0x3000:
+                glyph = render_char(ch, fonts, point_size)
+            rendered[cp] = glyph
+        done = min(start + BATCH_GLYPHS, len(cps))
+        print(f"rendered {done}/{len(cps)} glyphs", flush=True)
+    return rendered
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate LeonOS 16x16 CJK LBF font")
     parser.add_argument("--out", default="system/fonts/cjk16.lbf")
@@ -120,24 +251,30 @@ def main() -> int:
     parser.add_argument("--fallback-font", action="append", default=[])
     parser.add_argument("--point-size", type=int, default=14)
     parser.add_argument("--chars", default=DEFAULT_CHARS)
+    parser.add_argument("--coverage", default="cjk-bmp",
+                        choices=("manual", "gb2312-level1", "cjk-unified", "cjk-bmp"),
+                        help="Unicode range set to merge with --chars")
     parser.add_argument("--no-gb2312-level1", action="store_true",
-                        help="Only emit --chars instead of merging GB2312 level-1 Hanzi")
+                        help="Deprecated alias for --coverage manual")
     args = parser.parse_args()
 
     out = ROOT / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
-    chars = args.chars if args.no_gb2312_level1 else args.chars + gb2312_level1_chars()
+    coverage = "manual" if args.no_gb2312_level1 else args.coverage
     fonts = [args.font] + args.fallback_font + DEFAULT_FALLBACK_FONTS
-    cps = sorted({ord(ch) for ch in chars if ord(ch) >= 0x80})
+    cp_set = {ord(ch) for ch in args.chars if ord(ch) >= 0x80}
+    cp_set.update(coverage_codepoints(coverage))
+    cps = sorted(cp_set)
     header_size = 24
     index_offset = header_size
     bitmap_offset = index_offset + len(cps) * 8
     bitmaps = bytearray()
     index = bytearray()
+    rendered = render_chars(cps, fonts, args.point_size)
     for cp in cps:
         glyph_offset = bitmap_offset + len(bitmaps)
         index += struct.pack("<II", cp, glyph_offset)
-        bitmaps += render_char(chr(cp), fonts, args.point_size)
+        bitmaps += rendered.get(cp, tofu_glyph())
     header = b"LBF1" + struct.pack("<HHHHIII", 16, 16, 32, 0, len(cps), index_offset, bitmap_offset)
     out.write_bytes(header + index + bitmaps)
     print(f"wrote {out} glyphs={len(cps)} bytes={out.stat().st_size}")

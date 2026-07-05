@@ -443,6 +443,22 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         copy_text(dst, dst_len, leonos_i18n("Memory Test", "内存测试"));
         return;
     }
+    if (text_eq(name, "ping.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Ping", "Ping"));
+        return;
+    }
+    if (text_eq(name, "netctl.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Network Controller", "网络控制器"));
+        return;
+    }
+    if (text_eq(name, "httpget.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("HTTP GET", "HTTP GET"));
+        return;
+    }
+    if (text_eq(name, "browser.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("LeonOS Browser", "LeonOS 浏览器"));
+        return;
+    }
     if (text_eq(name, "init.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Init", "初始化"));
         return;
@@ -590,7 +606,7 @@ void desktop_update_window_animations(void)
 
 uint32_t taskbar_button_width(uint32_t count)
 {
-    uint32_t available = fb_w() > 112 + TASKBAR_CLOCK_W ? fb_w() - 112 - TASKBAR_CLOCK_W : 0;
+    uint32_t available = fb_w() > 112 + TASKBAR_TRAY_W ? fb_w() - 112 - TASKBAR_TRAY_W : 0;
     if (count == 0 || available == 0) {
         return 0;
     }
