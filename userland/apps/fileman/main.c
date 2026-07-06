@@ -66,7 +66,7 @@ int main(int argc, char **argv, char **envp)
                 leonos_ui_listview_state_set_count(&file_list, entry_count);
                 present_fileman((uint32_t)window_id, &ui);
             }
-        } else if (context_menu_animating) {
+        } else if (context_menu_animating || fileman_toast.active) {
             present_fileman((uint32_t)window_id, &ui);
             sleep_ms(10);
             continue;

@@ -3,6 +3,10 @@
 void draw_fileman(struct leonos_ui_surface *ui)
 {
     struct fileman_layout l = current_layout();
+    struct leonos_ui_menubar_item menu_items[] = {
+        {T("File", "文件"), FILEMAN_MENU_FILE, 54, 0},
+        {T("View", "查看"), FILEMAN_MENU_VIEW, 54, 0},
+    };
     struct leonos_ui_list_column cols[] = {
         {T("Type", "类型"), 58},
         {T("Name", "名称"), l.list_w > 58 ? l.list_w - 58 : 120},
@@ -18,9 +22,9 @@ void draw_fileman(struct leonos_ui_surface *ui)
     file_list.visible_rows = l.visible_rows;
     leonos_ui_listview_state_set_count(&file_list, entry_count);
     leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
-    leonos_ui_menubar(ui, 0, 0, view_w);
-    leonos_ui_menubar_item(ui, 8, 0, 54, T("File", "文件"), menu_open == FILEMAN_MENU_FILE);
-    leonos_ui_menubar_item(ui, 64, 0, 54, T("View", "查看"), menu_open == FILEMAN_MENU_VIEW);
+    leonos_ui_menubar_draw(ui, 0, 0, view_w, menu_items,
+                           sizeof(menu_items) / sizeof(menu_items[0]),
+                           menu_open);
 
     leonos_ui_toolbar(ui, 0, 30, view_w, 42);
     leonos_ui_toolbar_button(ui, 8, TOOLBAR_Y, 54, T("Up", "上级"), 0);
@@ -33,6 +37,9 @@ void draw_fileman(struct leonos_ui_surface *ui)
         leonos_ui_scroll_view_frame(ui, l.tree_x, l.tree_y, l.tree_w, l.tree_h);
         leonos_ui_tree(ui, l.tree_x + 2, l.tree_y + 4, l.tree_w - 4, tree_items,
                        tree_count, TREE_ROW_H);
+        leonos_ui_splitter(ui, l.tree_x + l.tree_w, l.tree_y,
+                           l.list_x > l.tree_x + l.tree_w ? l.list_x - l.tree_x - l.tree_w : 8,
+                           l.tree_h, LEONOS_UI_SPLIT_VERTICAL);
     }
     leonos_ui_scroll_view_frame(ui, l.list_x, l.list_y, l.list_w + 22, l.list_h);
     leonos_ui_listview_header(ui, l.list_x + 2, l.list_y + 2, l.list_w, cols, 2);
@@ -55,32 +62,26 @@ void draw_fileman(struct leonos_ui_surface *ui)
     leonos_ui_statusbar(ui, view_h - STATUS_H, STATUS_H, status_text);
 
     if (menu_open == FILEMAN_MENU_FILE) {
-        uint32_t has_item = selected_entry_valid();
-        uint32_t has_file = selected_entry_is_file();
-        uint32_t has_mutable = selected_entry_is_mutable();
-        leonos_ui_menu(ui, 8, MENU_BAR_H, 204, 268);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 8, 162, T("Open", "打开"),
-                            has_item ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 34, 162, T("Open With...", "打开方式..."),
-                            has_file ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 60, 162, T("Default Program...", "默认程序..."),
-                            has_file ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 86, 162, T("Create Shortcut", "创建快捷方式"),
-                            has_file ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 112, 162, T("Details", "详细信息"),
-                            has_item ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 138, 162, T("Rename", "重命名"),
-                            has_mutable ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 164, 162, T("Delete", "删除"),
-                            has_mutable ? 0 : LEONOS_UI_MENU_DISABLED);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 190, 162, "", LEONOS_UI_MENU_SEPARATOR);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 216, 162, T("New Folder", "新建文件夹"), 0);
-        leonos_ui_menu_item(ui, 42, MENU_BAR_H + 242, 162, T("Refresh", "刷新"), 0);
+        struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
+        struct leonos_ui_rect r;
+        build_context_menu_items(items, FILEMAN_CONTEXT_MENU_COUNT);
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    FILEMAN_MENU_FILE, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, MENU_BAR_H, 204,
+                             items, FILEMAN_CONTEXT_MENU_COUNT, 0);
     } else if (menu_open == FILEMAN_MENU_VIEW) {
-        leonos_ui_menu(ui, 64, MENU_BAR_H, 154, 86);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 8, 116, T("Refresh", "刷新"), 0);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 34, 116, T("Root", "根目录"), 0);
-        leonos_ui_menu_item(ui, 98, MENU_BAR_H + 60, 116, T("About", "关于"), 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0},
+            {T("Root", "根目录"), FILEMAN_ACTION_ROOT, 0},
+            {T("About", "关于"), FILEMAN_ACTION_ABOUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    FILEMAN_MENU_VIEW, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, MENU_BAR_H, 154,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     }
     if (context_menu_active || context_menu_animating) {
         struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
@@ -97,6 +98,7 @@ void draw_fileman(struct leonos_ui_surface *ui)
         leonos_ui_context_menu_animated(ui, context_menu_x, context_menu_y, FILEMAN_CONTEXT_MENU_W,
                                         items, FILEMAN_CONTEXT_MENU_COUNT, progress);
     }
+    leonos_ui_toast_draw(ui, &fileman_toast, leonos_uptime_ms());
 }
 
 
@@ -106,4 +108,3 @@ void present_fileman(uint32_t window_id, struct leonos_ui_surface *ui)
     draw_fileman(ui);
     leonos_gui_present_window(window_id, view_w, view_h, FILEMAN_MAX_W, pixels);
 }
-

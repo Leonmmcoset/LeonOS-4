@@ -434,38 +434,65 @@ void draw_document_lines(void)
 
 void draw_browser_menu(void)
 {
+    struct leonos_ui_menubar_item top_items[] = {
+        {T("File", "文件"), BROWSER_MENU_FILE, BROWSER_MENU_FILE_W, 0},
+        {T("Edit", "编辑"), BROWSER_MENU_EDIT, BROWSER_MENU_EDIT_W, 0},
+        {T("View", "查看"), BROWSER_MENU_VIEW, BROWSER_MENU_VIEW_W, 0},
+        {T("Favorites", "收藏夹"), BROWSER_MENU_FAVORITES, BROWSER_MENU_FAVORITES_W, 0},
+        {T("Help", "帮助"), BROWSER_MENU_HELP, BROWSER_MENU_HELP_W, 0},
+    };
+    struct leonos_ui_rect r;
     if (menu_open == BROWSER_MENU_FILE) {
-        leonos_ui_menu(&ui, BROWSER_MENU_FILE_X, BROWSER_MENU_H, 188U, 86U);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_FILE_X + 34U, menu_row_y(0), 146U,
-                            T("Home", "主页"), 0);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_FILE_X + 34U, menu_row_y(1), 146U,
-                            T("Refresh", "刷新"), 0);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_FILE_X + 34U, menu_row_y(2), 146U,
-                            T("Close", "关闭"), 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Home", "主页"), BROWSER_CMD_HOME, 0},
+            {T("Refresh", "刷新"), BROWSER_CMD_REFRESH, 0},
+            {T("Close", "关闭"), BROWSER_CMD_CLOSE, 0},
+        };
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    BROWSER_MENU_FILE, &r);
+        leonos_ui_menu_popup(&ui, (uint32_t)r.x, BROWSER_MENU_H, 188U,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     } else if (menu_open == BROWSER_MENU_EDIT) {
-        leonos_ui_menu(&ui, BROWSER_MENU_EDIT_X, BROWSER_MENU_H, 192U, 60U);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_EDIT_X + 34U, menu_row_y(0), 150U,
-                            T("Select Address", "选中地址"), 0);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_EDIT_X + 34U, menu_row_y(1), 150U,
-                            T("Clear Address", "清空地址"), 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Select Address", "选中地址"), BROWSER_CMD_SELECT_ADDRESS, 0},
+            {T("Clear Address", "清空地址"), BROWSER_CMD_CLEAR_ADDRESS, 0},
+        };
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    BROWSER_MENU_EDIT, &r);
+        leonos_ui_menu_popup(&ui, (uint32_t)r.x, BROWSER_MENU_H, 192U,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     } else if (menu_open == BROWSER_MENU_VIEW) {
-        leonos_ui_menu(&ui, BROWSER_MENU_VIEW_X, BROWSER_MENU_H, 166U, 86U);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_VIEW_X + 34U, menu_row_y(0), 124U,
-                            T("Refresh", "刷新"), 0);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_VIEW_X + 34U, menu_row_y(1), 124U,
-                            T("Top", "顶部"), 0);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_VIEW_X + 34U, menu_row_y(2), 124U,
-                            T("Bottom", "底部"), 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Refresh", "刷新"), BROWSER_CMD_REFRESH, 0},
+            {T("Top", "顶部"), BROWSER_CMD_TOP, 0},
+            {T("Bottom", "底部"), BROWSER_CMD_BOTTOM, 0},
+        };
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    BROWSER_MENU_VIEW, &r);
+        leonos_ui_menu_popup(&ui, (uint32_t)r.x, BROWSER_MENU_H, 166U,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     } else if (menu_open == BROWSER_MENU_FAVORITES) {
-        leonos_ui_menu(&ui, BROWSER_MENU_FAVORITES_X, BROWSER_MENU_H, 204U, 60U);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_FAVORITES_X + 34U, menu_row_y(0), 162U,
-                            T("LeonOS Home", "LeonOS 主页"), 0);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_FAVORITES_X + 34U, menu_row_y(1), 162U,
-                            "example.com", 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {T("LeonOS Home", "LeonOS 主页"), BROWSER_CMD_FAV_HOME, 0},
+            {"example.com", BROWSER_CMD_FAV_EXAMPLE, 0},
+        };
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    BROWSER_MENU_FAVORITES, &r);
+        leonos_ui_menu_popup(&ui, (uint32_t)r.x, BROWSER_MENU_H, 204U,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     } else if (menu_open == BROWSER_MENU_HELP) {
-        leonos_ui_menu(&ui, BROWSER_MENU_HELP_X, BROWSER_MENU_H, 176U, 34U);
-        leonos_ui_menu_item(&ui, BROWSER_MENU_HELP_X + 34U, menu_row_y(0), 134U,
-                            T("About Browser", "关于浏览器"), 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {T("About Browser", "关于浏览器"), BROWSER_CMD_ABOUT, 0},
+        };
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    BROWSER_MENU_HELP, &r);
+        leonos_ui_menu_popup(&ui, (uint32_t)r.x, BROWSER_MENU_H, 176U,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     }
 }
 
@@ -479,18 +506,17 @@ void draw_browser(void)
     uint32_t can_forward = history_index >= 0 && (uint32_t)history_index + 1U < history_count;
     char title_line[BROWSER_TITLE_CAP + 32U];
     uint32_t pos = 0;
+    struct leonos_ui_menubar_item top_items[] = {
+        {T("File", "文件"), BROWSER_MENU_FILE, BROWSER_MENU_FILE_W, 0},
+        {T("Edit", "编辑"), BROWSER_MENU_EDIT, BROWSER_MENU_EDIT_W, 0},
+        {T("View", "查看"), BROWSER_MENU_VIEW, BROWSER_MENU_VIEW_W, 0},
+        {T("Favorites", "收藏夹"), BROWSER_MENU_FAVORITES, BROWSER_MENU_FAVORITES_W, 0},
+        {T("Help", "帮助"), BROWSER_MENU_HELP, BROWSER_MENU_HELP_W, 0},
+    };
     leonos_ui_rect(&ui, 0, 0, view_w, view_h, LEONOS_UI_GRAY);
-    leonos_ui_menubar(&ui, 0, 0, view_w);
-    leonos_ui_menubar_item(&ui, BROWSER_MENU_FILE_X, 0, BROWSER_MENU_FILE_W,
-                           T("File", "文件"), menu_open == BROWSER_MENU_FILE);
-    leonos_ui_menubar_item(&ui, BROWSER_MENU_EDIT_X, 0, BROWSER_MENU_EDIT_W,
-                           T("Edit", "编辑"), menu_open == BROWSER_MENU_EDIT);
-    leonos_ui_menubar_item(&ui, BROWSER_MENU_VIEW_X, 0, BROWSER_MENU_VIEW_W,
-                           T("View", "查看"), menu_open == BROWSER_MENU_VIEW);
-    leonos_ui_menubar_item(&ui, BROWSER_MENU_FAVORITES_X, 0, BROWSER_MENU_FAVORITES_W,
-                           T("Favorites", "收藏夹"), menu_open == BROWSER_MENU_FAVORITES);
-    leonos_ui_menubar_item(&ui, BROWSER_MENU_HELP_X, 0, BROWSER_MENU_HELP_W,
-                           T("Help", "帮助"), menu_open == BROWSER_MENU_HELP);
+    leonos_ui_menubar_draw(&ui, 0, 0, view_w, top_items,
+                           sizeof(top_items) / sizeof(top_items[0]),
+                           menu_open);
     leonos_ui_toolbar(&ui, 0, BROWSER_MENU_H, view_w, BROWSER_TOOLBAR_H);
     draw_toolbar_button(BROWSER_BACK_X, BROWSER_BACK_W, T("Back", "后退"), !can_back);
     draw_toolbar_button(toolbar_forward_x(), BROWSER_FORWARD_W, T("Forward", "前进"), !can_forward);
@@ -526,6 +552,7 @@ void draw_browser(void)
         leonos_ui_statusbar(&ui, view_h - BROWSER_STATUS_H, BROWSER_STATUS_H, status_text);
     }
     draw_browser_menu();
+    leonos_ui_toast_draw(&ui, &browser_toast, leonos_uptime_ms());
 }
 
 void present_browser(void)

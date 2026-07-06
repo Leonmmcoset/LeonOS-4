@@ -2,95 +2,60 @@
 
 int handle_menu_click(int32_t x, int32_t y)
 {
-    if (y >= 0 && y < (int32_t)MENU_BAR_H) {
-        if (hit_rect_i(x, y, 8, 0, 54, (int32_t)MENU_BAR_H)) {
-            menu_open = menu_open == FILEMAN_MENU_FILE ? FILEMAN_MENU_NONE : FILEMAN_MENU_FILE;
-            return 1;
-        }
-        if (hit_rect_i(x, y, 64, 0, 54, (int32_t)MENU_BAR_H)) {
-            menu_open = menu_open == FILEMAN_MENU_VIEW ? FILEMAN_MENU_NONE : FILEMAN_MENU_VIEW;
+    struct leonos_ui_menubar_item menu_items[] = {
+        {T("File", "文件"), FILEMAN_MENU_FILE, 54, 0},
+        {T("View", "查看"), FILEMAN_MENU_VIEW, 54, 0},
+    };
+    uint32_t action = 0;
+    if (leonos_ui_menubar_hit(x, y, 0, 0, menu_items,
+                              sizeof(menu_items) / sizeof(menu_items[0]),
+                              &action)) {
+        if (action) {
+            menu_open = menu_open == action ? FILEMAN_MENU_NONE : (uint8_t)action;
             return 1;
         }
         menu_open = FILEMAN_MENU_NONE;
         return 1;
     }
     if (menu_open == FILEMAN_MENU_FILE) {
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 8, 162, (int32_t)MENU_ITEM_H)) {
+        struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
+        struct leonos_ui_rect r;
+        build_context_menu_items(items, FILEMAN_CONTEXT_MENU_COUNT);
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    FILEMAN_MENU_FILE, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, MENU_BAR_H, 204,
+                                     items, FILEMAN_CONTEXT_MENU_COUNT, &action)) {
             menu_open = FILEMAN_MENU_NONE;
-            if (selected_entry_valid()) {
-                execute_action(FILEMAN_ACTION_OPEN);
+            if (action) {
+                execute_action(action);
             }
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 34, 162, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            if (selected_entry_is_file()) {
-                execute_action(FILEMAN_ACTION_OPEN_WITH);
-            }
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 60, 162, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            if (selected_entry_is_file()) {
-                execute_action(FILEMAN_ACTION_DEFAULT_PROGRAM);
-            }
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 86, 162, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            if (selected_entry_is_file()) {
-                execute_action(FILEMAN_ACTION_CREATE_SHORTCUT);
-            }
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 112, 162, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            if (selected_entry_valid()) {
-                execute_action(FILEMAN_ACTION_DETAILS);
-            }
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 138, 162, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            if (selected_entry_is_mutable()) {
-                execute_action(FILEMAN_ACTION_RENAME);
-            }
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 164, 162, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            if (selected_entry_is_mutable()) {
-                execute_action(FILEMAN_ACTION_DELETE);
-            }
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 216, 162, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            execute_action(FILEMAN_ACTION_NEW_FOLDER);
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 242, 162, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            execute_action(FILEMAN_ACTION_REFRESH);
             return 1;
         }
         menu_open = FILEMAN_MENU_NONE;
         return 1;
     }
     if (menu_open == FILEMAN_MENU_VIEW) {
-        if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 8, 116, (int32_t)MENU_ITEM_H)) {
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0},
+            {T("Root", "根目录"), FILEMAN_ACTION_ROOT, 0},
+            {T("About", "关于"), FILEMAN_ACTION_ABOUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    FILEMAN_MENU_VIEW, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, MENU_BAR_H, 154,
+                                     items, sizeof(items) / sizeof(items[0]),
+                                     &action)) {
             menu_open = FILEMAN_MENU_NONE;
-            reload_dir();
-            return 1;
-        }
-        if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 34, 116, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            navigate_root();
-            return 1;
-        }
-        if (hit_rect_i(x, y, 98, (int32_t)MENU_BAR_H + 60, 116, (int32_t)MENU_ITEM_H)) {
-            menu_open = FILEMAN_MENU_NONE;
-            leonos_ui_show_message_box(T("File Manager", "文件资源管理器"), T("Browse FAT32 files and launch apps.", "浏览 FAT32 文件并启动应用。"), "OK");
+            if (action == FILEMAN_ACTION_REFRESH) {
+                reload_dir();
+            } else if (action == FILEMAN_ACTION_ROOT) {
+                navigate_root();
+            } else if (action == FILEMAN_ACTION_ABOUT) {
+                leonos_ui_show_message_box(T("File Manager", "文件资源管理器"), T("Browse FAT32 files and launch apps.", "浏览 FAT32 文件并启动应用。"), "OK");
+            }
             return 1;
         }
         menu_open = FILEMAN_MENU_NONE;
@@ -267,4 +232,3 @@ int handle_wheel(int32_t x, int32_t y, int32_t wheel)
     }
     return 0;
 }
-

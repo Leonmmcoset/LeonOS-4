@@ -74,6 +74,10 @@ void format_size_text(char *buf, uint32_t cap, uint64_t bytes)
 void set_status(const char *text)
 {
     copy_text(status_text, sizeof(status_text), text);
+    if (text && text[0]) {
+        leonos_ui_toast_show(&fileman_toast, text, leonos_uptime_ms(),
+                             2200, LEONOS_UI_TOAST_INFO);
+    }
 }
 
 void set_status_code(const char *prefix, int value)
@@ -87,7 +91,9 @@ void set_status_code(const char *prefix, int value)
         value = -value;
     }
     append_dec(buf, &pos, sizeof(buf), (uint32_t)value);
-    set_status(buf);
+    copy_text(status_text, sizeof(status_text), buf);
+    leonos_ui_toast_show(&fileman_toast, buf, leonos_uptime_ms(),
+                         2600, LEONOS_UI_TOAST_ERROR);
 }
 
 int permission_error(int value)
@@ -98,7 +104,9 @@ int permission_error(int value)
 void set_status_error(const char *prefix, int value)
 {
     if (permission_error(value)) {
-        set_status(T("Permission denied", "权限被拒绝"));
+        copy_text(status_text, sizeof(status_text), T("Permission denied", "权限被拒绝"));
+        leonos_ui_toast_show(&fileman_toast, status_text, leonos_uptime_ms(),
+                             2600, LEONOS_UI_TOAST_ERROR);
     } else {
         set_status_code(prefix, value);
     }
@@ -231,14 +239,6 @@ void build_context_menu_items(struct leonos_ui_context_menu_item *items,
         T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0};
 }
 
-void details_add_line(struct leonos_ui_surface *ui, uint32_t y,
-                             const char *label, const char *value)
-{
-    leonos_ui_text(ui, 18, y, label, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text_clipped(ui, 96, y, FILEMAN_DETAILS_W - 114,
-                           value ? value : "", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-}
-
 void format_contains_text(char *buf, uint32_t cap, const struct folder_size_info *info)
 {
     uint32_t pos = 0;
@@ -342,15 +342,19 @@ void show_details_selected(void)
     leonos_ui_bind(&ui, details_pixels, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H,
                    FILEMAN_DETAILS_W);
     for (;;) {
+        struct leonos_ui_property_item props[5];
+        uint32_t prop_count = 4;
+        props[0] = (struct leonos_ui_property_item){T("Name:", "名称:"), entries[file_list.selected].name, 0};
+        props[1] = (struct leonos_ui_property_item){T("Type:", "类型:"), entry_type_name(&entries[file_list.selected]), 0};
+        props[2] = (struct leonos_ui_property_item){T("Path:", "路径:"), path, 0};
+        props[3] = (struct leonos_ui_property_item){T("Size:", "大小:"), size_line, 0};
+        if (st.type == LEONOS_FS_TYPE_DIR) {
+            props[prop_count++] = (struct leonos_ui_property_item){T("Contains:", "包含:"), contains_line, 0};
+        }
         leonos_ui_rect(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, LEONOS_UI_GRAY);
         leonos_ui_dialog(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, T("Properties", "属性"));
-        details_add_line(&ui, 48, T("Name:", "名称:"), entries[file_list.selected].name);
-        details_add_line(&ui, 72, T("Type:", "类型:"), entry_type_name(&entries[file_list.selected]));
-        details_add_line(&ui, 96, T("Path:", "路径:"), path);
-        details_add_line(&ui, 120, T("Size:", "大小:"), size_line);
-        if (st.type == LEONOS_FS_TYPE_DIR) {
-            details_add_line(&ui, 144, T("Contains:", "包含:"), contains_line);
-        }
+        leonos_ui_property_grid(&ui, 16, 46, FILEMAN_DETAILS_W - 32,
+                                props, prop_count, 86, 24);
         leonos_ui_button(&ui, FILEMAN_DETAILS_W - 90, FILEMAN_DETAILS_H - 38,
                          72, LEONOS_UI_BUTTON_H, "OK", 0);
         leonos_gui_present_window((uint32_t)window_id, FILEMAN_DETAILS_W,
@@ -576,4 +580,3 @@ int navigate_to_path(const char *path)
     getcwd(current_path, sizeof(current_path));
     return reload_dir();
 }
-

@@ -26,6 +26,9 @@ enum {
     TASKMGR_ACTION_END = 1,
     TASKMGR_ACTION_DETAILS = 2,
     TASKMGR_ACTION_REFRESH = 3,
+    TASKMGR_ACTION_ABOUT = 4,
+    TASKMGR_ACTION_PROCESSES = 5,
+    TASKMGR_ACTION_PERFORMANCE = 6,
 };
 
 enum {
@@ -283,14 +286,6 @@ static void build_context_menu_items(struct leonos_ui_context_menu_item *items)
     items[2] = (struct leonos_ui_context_menu_item){T("Refresh", "刷新"), TASKMGR_ACTION_REFRESH, 0};
 }
 
-static void details_add_line(struct leonos_ui_surface *ui, uint32_t y,
-                             const char *label, const char *value)
-{
-    leonos_ui_text(ui, 18, y, label, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text_clipped(ui, 112, y, TASKMGR_DETAILS_W - 130,
-                           value ? value : "", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-}
-
 static void show_task_details(void)
 {
     struct leonos_task_info *task = selected_task();
@@ -335,18 +330,23 @@ static void show_task_details(void)
     leonos_ui_bind(&ui, details_pixels, TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
                    TASKMGR_DETAILS_W);
     for (;;) {
+        struct leonos_ui_property_item props[] = {
+            {T("Name:", "名称:"), snapshot.name, 0},
+            {"PID:", pid, 0},
+            {T("Parent PID:", "父 PID:"), ppid, 0},
+            {T("State:", "状态:"), state_name(snapshot.state), 0},
+            {T("Kind:", "类型:"), kind_name(snapshot.kind), 0},
+            {"CR3:", cr3, 0},
+            {"Entry:", entry, 0},
+            {T("Wake tick:", "唤醒 tick:"), wake, 0},
+        };
         leonos_ui_rect(&ui, 0, 0, TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
                        LEONOS_UI_GRAY);
         leonos_ui_dialog(&ui, 0, 0, TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
                          T("Task Details", "任务详细信息"));
-        details_add_line(&ui, 44, T("Name:", "名称:"), snapshot.name);
-        details_add_line(&ui, 66, "PID:", pid);
-        details_add_line(&ui, 88, T("Parent PID:", "父 PID:"), ppid);
-        details_add_line(&ui, 110, T("State:", "状态:"), state_name(snapshot.state));
-        details_add_line(&ui, 132, T("Kind:", "类型:"), kind_name(snapshot.kind));
-        details_add_line(&ui, 154, "CR3:", cr3);
-        details_add_line(&ui, 176, "Entry:", entry);
-        details_add_line(&ui, 198, T("Wake tick:", "唤醒 tick:"), wake);
+        leonos_ui_property_grid(&ui, 16, 44, TASKMGR_DETAILS_W - 32,
+                                props, sizeof(props) / sizeof(props[0]),
+                                110, 23);
         leonos_ui_button(&ui, TASKMGR_DETAILS_W - 90, TASKMGR_DETAILS_H - 38,
                          72, LEONOS_UI_BUTTON_H, "OK", 0);
         leonos_gui_present_window((uint32_t)window_id, TASKMGR_DETAILS_W,
@@ -514,19 +514,21 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
         {"NAME", list_w > 44 + 50 + 58 + 52 + 104 + 70 ?
                      list_w - 44 - 50 - 58 - 52 - 104 - 70 : 80},
     };
+    struct leonos_ui_menubar_item menu_items[] = {
+        {T("File", "文件"), TASKMGR_MENU_FILE, 64, 0},
+        {T("Options", "选项"), TASKMGR_MENU_OPTIONS, 80, 0},
+    };
+    const char *tabs[] = {T("Processes", "进程"), T("Performance", "性能")};
     task_list.visible_rows = vis_rows;
     leonos_ui_listview_state_set_count(&task_list, task_count);
 
     leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
-    leonos_ui_menubar(ui, 0, 0, view_w);
-    leonos_ui_menubar_item(ui, 8, 0, 64, T("File", "文件"), menu_open == TASKMGR_MENU_FILE);
-    leonos_ui_menubar_item(ui, 74, 0, 80, T("Options", "选项"), menu_open == TASKMGR_MENU_OPTIONS);
+    leonos_ui_menubar_draw(ui, 0, 0, view_w, menu_items,
+                           sizeof(menu_items) / sizeof(menu_items[0]),
+                           menu_open);
     leonos_ui_toolbar(ui, 0, 28, view_w, 36);
     leonos_ui_toolbar_button(ui, 8, 34, 88, T("Refresh", "刷新"), 0);
-    leonos_ui_toolbar_button(ui, 104, 34, 94, T("Processes", "进程"),
-                             active_tab == TASKMGR_TAB_PROCESSES ? LEONOS_UI_BUTTON_PRESSED : 0);
-    leonos_ui_toolbar_button(ui, 206, 34, 112, T("Performance", "性能"),
-                             active_tab == TASKMGR_TAB_PERFORMANCE ? LEONOS_UI_BUTTON_PRESSED : 0);
+    leonos_ui_tabbar(ui, 104, 34, 214, tabs, 2, active_tab);
     leonos_ui_toolbar_button(ui, 326, 34, 86, T("End Task", "结束任务"),
                              selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
 
@@ -587,18 +589,33 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
     leonos_ui_statusbar(ui, view_h - TASKMGR_STATUS_H, TASKMGR_STATUS_H, status_text);
 
     if (menu_open == TASKMGR_MENU_FILE) {
-        leonos_ui_menu(ui, 8, TASKMGR_MENU_BAR_H, 154, 86);
-        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 8, 116, T("Refresh", "刷新"), 0);
-        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 34, 116, T("End Task", "结束任务"),
-                            selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
-        leonos_ui_menu_item(ui, 42, TASKMGR_MENU_BAR_H + 60, 116, T("About", "关于"), 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Refresh", "刷新"), TASKMGR_ACTION_REFRESH, 0},
+            {T("End Task", "结束任务"), TASKMGR_ACTION_END,
+             selected_task_killable() ? 0 : LEONOS_UI_MENU_DISABLED},
+            {T("About", "关于"), TASKMGR_ACTION_ABOUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    TASKMGR_MENU_FILE, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, TASKMGR_MENU_BAR_H, 154,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     } else if (menu_open == TASKMGR_MENU_OPTIONS) {
-        leonos_ui_menu(ui, 74, TASKMGR_MENU_BAR_H, 178, 86);
-        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 8, 140, T("Processes", "进程"),
-                            active_tab == TASKMGR_TAB_PROCESSES ? LEONOS_UI_MENU_SELECTED : 0);
-        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 34, 140, T("Performance", "性能"),
-                            active_tab == TASKMGR_TAB_PERFORMANCE ? LEONOS_UI_MENU_SELECTED : 0);
-        leonos_ui_menu_item(ui, 108, TASKMGR_MENU_BAR_H + 60, 140, T("About", "关于"), 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Processes", "进程"), TASKMGR_ACTION_PROCESSES, 0},
+            {T("Performance", "性能"), TASKMGR_ACTION_PERFORMANCE, 0},
+            {T("About", "关于"), TASKMGR_ACTION_ABOUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    TASKMGR_MENU_OPTIONS, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, TASKMGR_MENU_BAR_H, 178,
+                             items, sizeof(items) / sizeof(items[0]),
+                             active_tab == TASKMGR_TAB_PROCESSES
+                                 ? TASKMGR_ACTION_PROCESSES
+                                 : TASKMGR_ACTION_PERFORMANCE);
     }
     if (context_menu_active || context_menu_animating) {
         struct leonos_ui_context_menu_item items[TASKMGR_CONTEXT_MENU_COUNT];
@@ -620,59 +637,73 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
 
 static int handle_menu_click(int32_t x, int32_t y)
 {
-    if (y >= 0 && y < (int32_t)TASKMGR_MENU_BAR_H) {
-        if (hit_rect_i(x, y, 8, 0, 64, (int32_t)TASKMGR_MENU_BAR_H)) {
-            menu_open = menu_open == TASKMGR_MENU_FILE ? TASKMGR_MENU_NONE : TASKMGR_MENU_FILE;
-            return 1;
-        }
-        if (hit_rect_i(x, y, 74, 0, 80, (int32_t)TASKMGR_MENU_BAR_H)) {
-            menu_open = menu_open == TASKMGR_MENU_OPTIONS ? TASKMGR_MENU_NONE : TASKMGR_MENU_OPTIONS;
+    struct leonos_ui_menubar_item menu_items[] = {
+        {T("File", "文件"), TASKMGR_MENU_FILE, 64, 0},
+        {T("Options", "选项"), TASKMGR_MENU_OPTIONS, 80, 0},
+    };
+    uint32_t action = 0;
+    if (leonos_ui_menubar_hit(x, y, 0, 0, menu_items,
+                              sizeof(menu_items) / sizeof(menu_items[0]),
+                              &action)) {
+        if (action) {
+            menu_open = menu_open == action ? TASKMGR_MENU_NONE : (uint8_t)action;
             return 1;
         }
         menu_open = TASKMGR_MENU_NONE;
         return 1;
     }
     if (menu_open == TASKMGR_MENU_FILE) {
-        if (hit_rect_i(x, y, 42, (int32_t)TASKMGR_MENU_BAR_H + 8, 116,
-                       (int32_t)TASKMGR_MENU_ITEM_H)) {
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Refresh", "刷新"), TASKMGR_ACTION_REFRESH, 0},
+            {T("End Task", "结束任务"), TASKMGR_ACTION_END,
+             selected_task_killable() ? 0 : LEONOS_UI_MENU_DISABLED},
+            {T("About", "关于"), TASKMGR_ACTION_ABOUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    TASKMGR_MENU_FILE, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x,
+                                     TASKMGR_MENU_BAR_H, 154,
+                                     items, sizeof(items) / sizeof(items[0]),
+                                     &action)) {
             menu_open = TASKMGR_MENU_NONE;
-            refresh_all();
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)TASKMGR_MENU_BAR_H + 34, 116,
-                       (int32_t)TASKMGR_MENU_ITEM_H)) {
-            menu_open = TASKMGR_MENU_NONE;
-            kill_selected_task();
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)TASKMGR_MENU_BAR_H + 60, 116,
-                       (int32_t)TASKMGR_MENU_ITEM_H)) {
-            menu_open = TASKMGR_MENU_NONE;
-            leonos_ui_show_message_box(T("Task Manager", "任务管理器"), T("Live task snapshot from the scheduler.", "来自调度器的实时任务快照。"), "OK");
+            if (action == TASKMGR_ACTION_REFRESH) {
+                refresh_all();
+            } else if (action == TASKMGR_ACTION_END) {
+                kill_selected_task();
+            } else if (action == TASKMGR_ACTION_ABOUT) {
+                leonos_ui_show_message_box(T("Task Manager", "任务管理器"), T("Live task snapshot from the scheduler.", "来自调度器的实时任务快照。"), "OK");
+            }
             return 1;
         }
         menu_open = TASKMGR_MENU_NONE;
         return 1;
     }
     if (menu_open == TASKMGR_MENU_OPTIONS) {
-        if (hit_rect_i(x, y, 108, (int32_t)TASKMGR_MENU_BAR_H + 8, 140,
-                       (int32_t)TASKMGR_MENU_ITEM_H)) {
+        struct leonos_ui_context_menu_item items[] = {
+            {T("Processes", "进程"), TASKMGR_ACTION_PROCESSES, 0},
+            {T("Performance", "性能"), TASKMGR_ACTION_PERFORMANCE, 0},
+            {T("About", "关于"), TASKMGR_ACTION_ABOUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    TASKMGR_MENU_OPTIONS, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x,
+                                     TASKMGR_MENU_BAR_H, 178,
+                                     items, sizeof(items) / sizeof(items[0]),
+                                     &action)) {
             menu_open = TASKMGR_MENU_NONE;
-            active_tab = TASKMGR_TAB_PROCESSES;
-            refresh_all();
-            return 1;
-        }
-        if (hit_rect_i(x, y, 108, (int32_t)TASKMGR_MENU_BAR_H + 34, 140,
-                       (int32_t)TASKMGR_MENU_ITEM_H)) {
-            menu_open = TASKMGR_MENU_NONE;
-            active_tab = TASKMGR_TAB_PERFORMANCE;
-            refresh_all();
-            return 1;
-        }
-        if (hit_rect_i(x, y, 108, (int32_t)TASKMGR_MENU_BAR_H + 60, 140,
-                       (int32_t)TASKMGR_MENU_ITEM_H)) {
-            menu_open = TASKMGR_MENU_NONE;
-            leonos_ui_show_message_box(T("Task Manager", "任务管理器"), T("Shows runnable, sleeping, and exited tasks.", "显示可运行、睡眠和已退出任务。"), "OK");
+            if (action == TASKMGR_ACTION_PROCESSES) {
+                active_tab = TASKMGR_TAB_PROCESSES;
+                refresh_all();
+            } else if (action == TASKMGR_ACTION_PERFORMANCE) {
+                active_tab = TASKMGR_TAB_PERFORMANCE;
+                refresh_all();
+            } else if (action == TASKMGR_ACTION_ABOUT) {
+                leonos_ui_show_message_box(T("Task Manager", "任务管理器"), T("Shows runnable, sleeping, and exited tasks.", "显示可运行、睡眠和已退出任务。"), "OK");
+            }
             return 1;
         }
         menu_open = TASKMGR_MENU_NONE;
@@ -787,17 +818,15 @@ int main(void)
                     present_taskmgr((uint32_t)window_id, &ui);
                     continue;
                 }
-                if (hit_rect_i(event.x, event.y, 104, 34, 94, LEONOS_UI_BUTTON_H)) {
-                    active_tab = TASKMGR_TAB_PROCESSES;
-                    refresh_all();
-                    present_taskmgr((uint32_t)window_id, &ui);
-                    continue;
-                }
-                if (hit_rect_i(event.x, event.y, 206, 34, 112, LEONOS_UI_BUTTON_H)) {
-                    active_tab = TASKMGR_TAB_PERFORMANCE;
-                    refresh_all();
-                    present_taskmgr((uint32_t)window_id, &ui);
-                    continue;
+                {
+                    const char *tabs[] = {T("Processes", "进程"), T("Performance", "性能")};
+                    int tab = leonos_ui_tabbar_hit(event.x, event.y, 104, 34, 214, tabs, 2);
+                    if (tab >= 0) {
+                        active_tab = (uint8_t)tab;
+                        refresh_all();
+                        present_taskmgr((uint32_t)window_id, &ui);
+                        continue;
+                    }
                 }
                 if (hit_rect_i(event.x, event.y, 326, 34, 86, LEONOS_UI_BUTTON_H)) {
                     kill_selected_task();

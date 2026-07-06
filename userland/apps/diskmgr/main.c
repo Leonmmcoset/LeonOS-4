@@ -311,16 +311,6 @@ static void do_format_selected(void)
     copy_text(status_text, sizeof(status_text), T("Format complete; target is not mounted", "格式化完成；目标盘未自动挂载"));
 }
 
-static void draw_detail_line(struct leonos_ui_surface *ui, uint32_t y,
-                             const char *label, const char *value)
-{
-    uint32_t right_x = right_panel_x();
-    leonos_ui_text(ui, right_x + 14, y, label, LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_text_clipped(ui, right_x + 112, y,
-                           DISKMGR_DETAIL_W > 126 ? DISKMGR_DETAIL_W - 126 : 80,
-                           value ? value : "", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-}
-
 static void draw_confirmation(struct leonos_ui_surface *ui)
 {
     int index = selected_disk_index();
@@ -407,12 +397,18 @@ static void draw_diskmgr(struct leonos_ui_surface *ui)
                        T("Selected disk", "选中磁盘"));
     int index = selected_disk_index();
     if (index >= 0) {
-        draw_detail_line(ui, 90, "ID:", disk_id_text[index]);
-        draw_detail_line(ui, 116, T("Name:", "名称:"), disks[index].name);
-        draw_detail_line(ui, 142, T("Port:", "端口:"), disk_port_text[index]);
-        draw_detail_line(ui, 168, T("Size:", "容量:"), disk_size_text[index]);
-        draw_detail_line(ui, 194, T("Sector:", "扇区:"), disk_sector_text[index]);
-        draw_detail_line(ui, 220, T("Status:", "状态:"), disk_flags_text[index]);
+        struct leonos_ui_property_item props[] = {
+            {"ID:", disk_id_text[index], 0},
+            {T("Name:", "名称:"), disks[index].name, 0},
+            {T("Port:", "端口:"), disk_port_text[index], 0},
+            {T("Size:", "容量:"), disk_size_text[index], 0},
+            {T("Sector:", "扇区:"), disk_sector_text[index], 0},
+            {T("Status:", "状态:"), disk_flags_text[index], 0},
+        };
+        leonos_ui_property_grid(ui, right_x + 10, 84,
+                                DISKMGR_DETAIL_W > 20 ? DISKMGR_DETAIL_W - 20 : DISKMGR_DETAIL_W,
+                                props, sizeof(props) / sizeof(props[0]),
+                                74, 24);
     } else {
         leonos_ui_text(ui, right_x + 14, 92, T("No disk selected.", "未选择磁盘。"),
                        LEONOS_UI_DARK, LEONOS_UI_WHITE);

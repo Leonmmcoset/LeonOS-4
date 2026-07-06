@@ -35,6 +35,12 @@
 #define LEONOS_UI_TOOLBAR_BUTTON_PRESSED LEONOS_UI_BUTTON_PRESSED
 #define LEONOS_UI_TOOLBAR_BUTTON_DISABLED LEONOS_UI_BUTTON_DISABLED
 #define LEONOS_UI_OPEN_WITH_SET_DEFAULT 0x01u
+#define LEONOS_UI_TOAST_INFO 0u
+#define LEONOS_UI_TOAST_SUCCESS 1u
+#define LEONOS_UI_TOAST_WARNING 2u
+#define LEONOS_UI_TOAST_ERROR 3u
+#define LEONOS_UI_SPLIT_VERTICAL 1u
+#define LEONOS_UI_SPLIT_HORIZONTAL 0u
 
 struct leonos_ui_surface {
     uint32_t *pixels;
@@ -104,6 +110,13 @@ struct leonos_ui_context_menu_item {
     uint32_t flags;
 };
 
+struct leonos_ui_menubar_item {
+    const char *label;
+    uint32_t id;
+    uint32_t width;
+    uint32_t flags;
+};
+
 struct leonos_ui_dropdown_item {
     const char *label;
     uint32_t id;
@@ -126,6 +139,32 @@ struct leonos_ui_tree_item {
     uint32_t id;
     uint32_t depth;
     uint32_t flags;
+};
+
+struct leonos_ui_property_item {
+    const char *label;
+    const char *value;
+    uint32_t flags;
+};
+
+struct leonos_ui_split_pane_state {
+    uint32_t vertical;
+    uint32_t split;
+    uint32_t min_first;
+    uint32_t min_second;
+    uint32_t splitter_size;
+    uint8_t dragging;
+    struct leonos_ui_rect first;
+    struct leonos_ui_rect splitter;
+    struct leonos_ui_rect second;
+};
+
+struct leonos_ui_toast_state {
+    char message[160];
+    unsigned long start_ms;
+    uint32_t duration_ms;
+    uint32_t kind;
+    uint8_t active;
 };
 
 #define LEONOS_UI_TREE_EXPANDED 0x01u
@@ -328,6 +367,11 @@ void leonos_ui_tabs(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     uint32_t active);
 int leonos_ui_tabs_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
                        uint32_t w, const char *const labels[], uint32_t count);
+void leonos_ui_tabbar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                      uint32_t w, const char *const labels[], uint32_t count,
+                      uint32_t active);
+int leonos_ui_tabbar_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                         uint32_t w, const char *const labels[], uint32_t count);
 void leonos_ui_tab_body(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, uint32_t h);
 void leonos_ui_statusbar(struct leonos_ui_surface *surface, uint32_t y, uint32_t h,
@@ -342,6 +386,54 @@ void leonos_ui_menubar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y
                        uint32_t w);
 void leonos_ui_menubar_item(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                             uint32_t w, const char *label, uint32_t active);
+void leonos_ui_menubar_draw(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                            uint32_t w, const struct leonos_ui_menubar_item *items,
+                            uint32_t count, uint32_t active_id);
+int leonos_ui_menubar_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                          const struct leonos_ui_menubar_item *items,
+                          uint32_t count, uint32_t *out_id);
+int leonos_ui_menubar_item_rect(uint32_t x, uint32_t y,
+                                const struct leonos_ui_menubar_item *items,
+                                uint32_t count, uint32_t id,
+                                struct leonos_ui_rect *out_rect);
+uint32_t leonos_ui_menu_popup_height(uint32_t count);
+void leonos_ui_menu_popup(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                          uint32_t w, const struct leonos_ui_context_menu_item *items,
+                          uint32_t count, uint32_t selected_id);
+int leonos_ui_menu_popup_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                             uint32_t w, const struct leonos_ui_context_menu_item *items,
+                             uint32_t count, uint32_t *out_id);
+void leonos_ui_property_grid(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                             uint32_t w, const struct leonos_ui_property_item *items,
+                             uint32_t count, uint32_t label_w, uint32_t row_h);
+void leonos_ui_split_pane_init(struct leonos_ui_split_pane_state *state,
+                               uint32_t vertical, uint32_t split,
+                               uint32_t min_first, uint32_t min_second);
+void leonos_ui_split_pane_layout(struct leonos_ui_split_pane_state *state,
+                                 uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+void leonos_ui_split_pane_draw(struct leonos_ui_surface *surface,
+                               const struct leonos_ui_split_pane_state *state);
+int leonos_ui_split_pane_handle_mouse(struct leonos_ui_split_pane_state *state,
+                                      int32_t px, int32_t py, uint32_t buttons);
+void leonos_ui_slider(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                      uint32_t w, uint32_t h, uint32_t value, uint32_t max,
+                      uint32_t flags);
+int leonos_ui_slider_handle_mouse(uint32_t *value, uint32_t max,
+                                  uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                                  int32_t px, int32_t py);
+void leonos_ui_stepper(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                       uint32_t w, uint32_t h, int32_t value, int32_t min,
+                       int32_t max, uint32_t flags);
+int leonos_ui_stepper_handle_mouse(int32_t *value, int32_t min, int32_t max,
+                                   int32_t step, uint32_t x, uint32_t y,
+                                   uint32_t w, uint32_t h, int32_t px, int32_t py);
+void leonos_ui_toast_show(struct leonos_ui_toast_state *state, const char *message,
+                          unsigned long now, uint32_t duration_ms, uint32_t kind);
+void leonos_ui_toast_clear(struct leonos_ui_toast_state *state);
+int leonos_ui_toast_active(struct leonos_ui_toast_state *state, unsigned long now);
+void leonos_ui_toast_draw(struct leonos_ui_surface *surface,
+                          struct leonos_ui_toast_state *state,
+                          unsigned long now);
 
 #endif
 

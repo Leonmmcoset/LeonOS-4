@@ -210,6 +210,10 @@ static void draw_display_page(struct leonos_ui_surface *ui)
     leonos_ui_combobox(ui, 160, 126, 190, mode_label(), active_drop == DROP_RESOLUTION, 0);
     leonos_ui_text(ui, 44, 172, T("Scale", "缩放"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_combobox(ui, 160, 166, 190, scale_label(), active_drop == DROP_SCALE, 0);
+    leonos_ui_slider(ui, 370, 166, 150, LEONOS_UI_BUTTON_H,
+                     display_state.scale_index,
+                     SETTINGS_SCALE_COUNT > 1 ? SETTINGS_SCALE_COUNT - 1 : 1,
+                     0);
     leonos_ui_text(ui, 44, 212, T("Language", "语言"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_combobox(ui, 160, 206, 190, language_label(), active_drop == DROP_LANGUAGE, 0);
     if (display_state.pending_confirm) {
@@ -462,6 +466,20 @@ static void handle_display_click(int32_t x, int32_t y)
     }
     if (hit_rect_i(x, y, 160, 166, 190, LEONOS_FONT_H + 8)) {
         active_drop = DROP_SCALE;
+        return;
+    }
+    if (hit_rect_i(x, y, 370, 166, 150, LEONOS_UI_BUTTON_H)) {
+        uint32_t next = display_state.scale_index;
+        if (leonos_ui_slider_handle_mouse(&next,
+                                          SETTINGS_SCALE_COUNT > 1 ? SETTINGS_SCALE_COUNT - 1 : 1,
+                                          370, 166, 150, LEONOS_UI_BUTTON_H,
+                                          x, y) &&
+            next < SETTINGS_SCALE_COUNT &&
+            mode_supported(display_state.mode_index, next)) {
+            request_display(LEONOS_DISPLAY_REQUEST_APPLY,
+                            display_state.mode_index, next);
+            copy_text(status_text, sizeof(status_text), T("Scale changed", "缩放已更改"));
+        }
         return;
     }
     if (hit_rect_i(x, y, 160, 206, 190, LEONOS_FONT_H + 8)) {

@@ -1718,3 +1718,540 @@ void leonos_ui_menubar_item(struct leonos_ui_surface *surface, uint32_t x, uint3
     }
     leonos_ui_text_transparent_clipped(surface, x + 8, y + 4, w > 16 ? w - 16 : w, label, LEONOS_UI_BLACK);
 }
+
+static uint32_t ui_menubar_h(void)
+{
+    return LEONOS_FONT_H + 8;
+}
+
+static uint32_t ui_menu_row_h(void)
+{
+    return LEONOS_FONT_H + 8;
+}
+
+static uint32_t ui_menubar_item_w(const struct leonos_ui_menubar_item *item)
+{
+    uint32_t w;
+    if (!item) {
+        return 0;
+    }
+    if (item->width) {
+        return item->width;
+    }
+    w = leonos_ui_text_width(item->label ? item->label : "") + 18;
+    return w < 36 ? 36 : w;
+}
+
+void leonos_ui_menubar_draw(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                            uint32_t w, const struct leonos_ui_menubar_item *items,
+                            uint32_t count, uint32_t active_id)
+{
+    uint32_t item_x = x + 6;
+    leonos_ui_menubar(surface, x, y, w);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t iw = ui_menubar_item_w(items ? &items[i] : 0);
+        uint32_t flags = items ? items[i].flags : LEONOS_UI_MENU_DISABLED;
+        if (!iw || item_x >= x + w) {
+            break;
+        }
+        if (item_x + iw > x + w) {
+            iw = x + w - item_x;
+        }
+        leonos_ui_menubar_item(surface, item_x, y, iw,
+                               items ? items[i].label : "",
+                               items && items[i].id == active_id);
+        if (flags & LEONOS_UI_MENU_DISABLED) {
+            leonos_ui_text_transparent_clipped(surface, item_x + 8, y + 4,
+                                               iw > 16 ? iw - 16 : iw,
+                                               items ? items[i].label : "",
+                                               LEONOS_UI_DARK);
+        }
+        item_x += iw + 2;
+    }
+}
+
+int leonos_ui_menubar_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                          const struct leonos_ui_menubar_item *items,
+                          uint32_t count, uint32_t *out_id)
+{
+    uint32_t item_x = x + 6;
+    if (out_id) {
+        *out_id = 0;
+    }
+    if (px < 0 || py < 0 || (uint32_t)py < y ||
+        (uint32_t)py >= y + ui_menubar_h()) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t iw = ui_menubar_item_w(items ? &items[i] : 0);
+        if (!iw) {
+            break;
+        }
+        if ((uint32_t)px >= item_x && (uint32_t)px < item_x + iw) {
+            if (items && !(items[i].flags & LEONOS_UI_MENU_DISABLED) && out_id) {
+                *out_id = items[i].id;
+            }
+            return 1;
+        }
+        item_x += iw + 2;
+    }
+    return 1;
+}
+
+int leonos_ui_menubar_item_rect(uint32_t x, uint32_t y,
+                                const struct leonos_ui_menubar_item *items,
+                                uint32_t count, uint32_t id,
+                                struct leonos_ui_rect *out_rect)
+{
+    uint32_t item_x = x + 6;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t iw = ui_menubar_item_w(items ? &items[i] : 0);
+        if (!iw) {
+            break;
+        }
+        if (items && items[i].id == id) {
+            if (out_rect) {
+                *out_rect = (struct leonos_ui_rect){(int32_t)item_x, (int32_t)y, iw, ui_menubar_h()};
+            }
+            return 1;
+        }
+        item_x += iw + 2;
+    }
+    if (out_rect) {
+        *out_rect = (struct leonos_ui_rect){(int32_t)x, (int32_t)y, 0, 0};
+    }
+    return 0;
+}
+
+uint32_t leonos_ui_menu_popup_height(uint32_t count)
+{
+    return 8 + count * ui_menu_row_h();
+}
+
+void leonos_ui_menu_popup(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                          uint32_t w, const struct leonos_ui_context_menu_item *items,
+                          uint32_t count, uint32_t selected_id)
+{
+    uint32_t row_h = ui_menu_row_h();
+    uint32_t h = leonos_ui_menu_popup_height(count);
+    leonos_ui_menu(surface, x, y, w, h);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t row_y = y + 4 + i * row_h;
+        uint32_t flags = items ? items[i].flags : LEONOS_UI_MENU_DISABLED;
+        if (items && items[i].id == selected_id && !(flags & LEONOS_UI_MENU_DISABLED)) {
+            flags |= LEONOS_UI_MENU_SELECTED;
+        }
+        leonos_ui_menu_item(surface, x + 34, row_y, w > 42 ? w - 42 : w,
+                            items ? items[i].label : "", flags);
+    }
+}
+
+int leonos_ui_menu_popup_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                             uint32_t w, const struct leonos_ui_context_menu_item *items,
+                             uint32_t count, uint32_t *out_id)
+{
+    uint32_t row_h = ui_menu_row_h();
+    uint32_t h = leonos_ui_menu_popup_height(count);
+    uint32_t index;
+    if (out_id) {
+        *out_id = 0;
+    }
+    if (px < 0 || py < 0 ||
+        !leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)y, w, h)) {
+        return 0;
+    }
+    if ((uint32_t)py < y + 4) {
+        return 1;
+    }
+    index = ((uint32_t)py - y - 4) / row_h;
+    if (!items || index >= count ||
+        (items[index].flags & (LEONOS_UI_MENU_SEPARATOR | LEONOS_UI_MENU_DISABLED))) {
+        return 1;
+    }
+    if (out_id) {
+        *out_id = items[index].id;
+    }
+    return 1;
+}
+
+void leonos_ui_property_grid(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                             uint32_t w, const struct leonos_ui_property_item *items,
+                             uint32_t count, uint32_t label_w, uint32_t row_h)
+{
+    uint32_t h;
+    if (row_h < LEONOS_FONT_H + 8) {
+        row_h = LEONOS_FONT_H + 8;
+    }
+    if (label_w < 48) {
+        label_w = 48;
+    }
+    if (label_w + 16 > w) {
+        label_w = w > 16 ? w - 16 : w;
+    }
+    h = count * row_h + 4;
+    leonos_ui_inset(surface, x, y, w, h, LEONOS_UI_WHITE);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t row_y = y + 2 + i * row_h;
+        uint32_t value_x = x + 2 + label_w;
+        uint32_t value_w = w > label_w + 4 ? w - label_w - 4 : 0;
+        uint32_t fill = (i & 1u) ? 0x00f7f7f7u : LEONOS_UI_WHITE;
+        leonos_ui_rect(surface, x + 2, row_y, w > 4 ? w - 4 : w, row_h, fill);
+        leonos_ui_rect(surface, value_x, row_y, 1, row_h, LEONOS_UI_LIGHT);
+        leonos_ui_text_transparent_clipped(surface, x + 8, row_y + 4,
+                                           label_w > 12 ? label_w - 12 : label_w,
+                                           items ? items[i].label : "",
+                                           LEONOS_UI_DARK);
+        leonos_ui_text_transparent_clipped(surface, value_x + 8, row_y + 4,
+                                           value_w > 12 ? value_w - 12 : value_w,
+                                           items ? items[i].value : "",
+                                           items && (items[i].flags & LEONOS_UI_MENU_DISABLED)
+                                               ? LEONOS_UI_DARK
+                                               : LEONOS_UI_BLACK);
+    }
+}
+
+void leonos_ui_split_pane_init(struct leonos_ui_split_pane_state *state,
+                               uint32_t vertical, uint32_t split,
+                               uint32_t min_first, uint32_t min_second)
+{
+    if (!state) {
+        return;
+    }
+    state->vertical = vertical ? 1 : 0;
+    state->split = split;
+    state->min_first = min_first;
+    state->min_second = min_second;
+    state->splitter_size = 6;
+    state->dragging = 0;
+    state->first = (struct leonos_ui_rect){0, 0, 0, 0};
+    state->splitter = (struct leonos_ui_rect){0, 0, 0, 0};
+    state->second = (struct leonos_ui_rect){0, 0, 0, 0};
+}
+
+static uint32_t ui_split_clamp(uint32_t value, uint32_t total,
+                               uint32_t splitter, uint32_t min_first,
+                               uint32_t min_second)
+{
+    uint32_t max_first;
+    if (splitter > total) {
+        splitter = total;
+    }
+    max_first = total > splitter + min_second ? total - splitter - min_second : 0;
+    if (value < min_first) {
+        value = min_first;
+    }
+    if (max_first && value > max_first) {
+        value = max_first;
+    }
+    if (!max_first && value > total) {
+        value = total;
+    }
+    return value;
+}
+
+void leonos_ui_split_pane_layout(struct leonos_ui_split_pane_state *state,
+                                 uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    uint32_t splitter;
+    uint32_t total;
+    uint32_t split;
+    if (!state) {
+        return;
+    }
+    splitter = state->splitter_size ? state->splitter_size : 6;
+    if (state->vertical) {
+        total = w;
+        split = ui_split_clamp(state->split, total, splitter,
+                               state->min_first, state->min_second);
+        state->split = split;
+        state->first = (struct leonos_ui_rect){(int32_t)x, (int32_t)y, split, h};
+        state->splitter = (struct leonos_ui_rect){(int32_t)(x + split), (int32_t)y,
+                                                  splitter, h};
+        state->second = (struct leonos_ui_rect){(int32_t)(x + split + splitter),
+                                                (int32_t)y,
+                                                w > split + splitter ? w - split - splitter : 0,
+                                                h};
+    } else {
+        total = h;
+        split = ui_split_clamp(state->split, total, splitter,
+                               state->min_first, state->min_second);
+        state->split = split;
+        state->first = (struct leonos_ui_rect){(int32_t)x, (int32_t)y, w, split};
+        state->splitter = (struct leonos_ui_rect){(int32_t)x, (int32_t)(y + split),
+                                                  w, splitter};
+        state->second = (struct leonos_ui_rect){(int32_t)x,
+                                                (int32_t)(y + split + splitter),
+                                                w,
+                                                h > split + splitter ? h - split - splitter : 0};
+    }
+}
+
+void leonos_ui_split_pane_draw(struct leonos_ui_surface *surface,
+                               const struct leonos_ui_split_pane_state *state)
+{
+    if (!state) {
+        return;
+    }
+    leonos_ui_splitter(surface, (uint32_t)state->splitter.x,
+                       (uint32_t)state->splitter.y, state->splitter.w,
+                       state->splitter.h, state->vertical);
+}
+
+int leonos_ui_split_pane_handle_mouse(struct leonos_ui_split_pane_state *state,
+                                      int32_t px, int32_t py, uint32_t buttons)
+{
+    uint32_t new_split;
+    if (!state) {
+        return 0;
+    }
+    if (!(buttons & 1u)) {
+        state->dragging = 0;
+        return 0;
+    }
+    if (px < 0 || py < 0) {
+        return 0;
+    }
+    if (!state->dragging &&
+        !leonos_ui_hit((uint32_t)px, (uint32_t)py, state->splitter.x,
+                       state->splitter.y, state->splitter.w, state->splitter.h)) {
+        return 0;
+    }
+    state->dragging = 1;
+    if (state->vertical) {
+        new_split = px > state->first.x ? (uint32_t)(px - state->first.x) : 0;
+        state->split = ui_split_clamp(new_split,
+                                      state->first.w + state->splitter.w + state->second.w,
+                                      state->splitter.w, state->min_first,
+                                      state->min_second);
+    } else {
+        new_split = py > state->first.y ? (uint32_t)(py - state->first.y) : 0;
+        state->split = ui_split_clamp(new_split,
+                                      state->first.h + state->splitter.h + state->second.h,
+                                      state->splitter.h, state->min_first,
+                                      state->min_second);
+    }
+    return 1;
+}
+
+void leonos_ui_slider(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                      uint32_t w, uint32_t h, uint32_t value, uint32_t max,
+                      uint32_t flags)
+{
+    uint32_t track_y;
+    uint32_t thumb_w = 10;
+    uint32_t usable;
+    uint32_t thumb_x;
+    uint32_t disabled = flags & LEONOS_UI_BUTTON_DISABLED;
+    if (h < 16) {
+        h = 16;
+    }
+    if (w < thumb_w + 4) {
+        w = thumb_w + 4;
+    }
+    if (max && value > max) {
+        value = max;
+    }
+    track_y = y + h / 2;
+    usable = w > thumb_w ? w - thumb_w : 0;
+    thumb_x = x + (max ? (usable * value) / max : 0);
+    leonos_ui_inset(surface, x, track_y, w, 4, disabled ? LEONOS_UI_LIGHT : LEONOS_UI_WHITE);
+    leonos_ui_bevel(surface, thumb_x, y + 2, thumb_w, h > 4 ? h - 4 : h,
+                    disabled ? LEONOS_UI_LIGHT : LEONOS_UI_GRAY,
+                    disabled ? LEONOS_UI_BUTTON_DISABLED : 0);
+}
+
+int leonos_ui_slider_handle_mouse(uint32_t *value, uint32_t max,
+                                  uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                                  int32_t px, int32_t py)
+{
+    uint32_t thumb_w = 10;
+    uint32_t usable;
+    uint32_t rel;
+    if (!value || max == 0 || px < 0 || py < 0 ||
+        !leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)y, w, h)) {
+        return 0;
+    }
+    usable = w > thumb_w ? w - thumb_w : 1;
+    rel = (uint32_t)px > x + thumb_w / 2 ? (uint32_t)px - x - thumb_w / 2 : 0;
+    if (rel > usable) {
+        rel = usable;
+    }
+    *value = (rel * max + usable / 2) / usable;
+    return 1;
+}
+
+static void ui_format_i32(char *buf, uint32_t cap, int32_t value)
+{
+    char tmp[16];
+    uint32_t n = 0;
+    uint32_t pos = 0;
+    uint32_t v;
+    if (!buf || !cap) {
+        return;
+    }
+    buf[0] = 0;
+    if (value < 0) {
+        if (pos + 1 < cap) {
+            buf[pos++] = '-';
+        }
+        value = -value;
+    }
+    v = (uint32_t)value;
+    if (v == 0) {
+        if (pos + 1 < cap) {
+            buf[pos++] = '0';
+        }
+    } else {
+        while (v && n < sizeof(tmp)) {
+            tmp[n++] = (char)('0' + (v % 10));
+            v /= 10;
+        }
+        while (n && pos + 1 < cap) {
+            buf[pos++] = tmp[--n];
+        }
+    }
+    buf[pos < cap ? pos : cap - 1] = 0;
+}
+
+void leonos_ui_stepper(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                       uint32_t w, uint32_t h, int32_t value, int32_t min,
+                       int32_t max, uint32_t flags)
+{
+    char text[24];
+    uint32_t button_w = h;
+    uint32_t edit_w = w > button_w * 2 ? w - button_w * 2 : w / 2;
+    uint32_t disabled = flags & LEONOS_UI_BUTTON_DISABLED;
+    if (value < min) {
+        value = min;
+    }
+    if (value > max) {
+        value = max;
+    }
+    ui_format_i32(text, sizeof(text), value);
+    leonos_ui_edit(surface, x, y, edit_w, text, ui_strlen(text), 0,
+                   disabled ? LEONOS_UI_EDIT_DISABLED : LEONOS_UI_EDIT_READONLY);
+    leonos_ui_button(surface, x + edit_w, y, button_w, h, "-",
+                     disabled || value <= min ? LEONOS_UI_BUTTON_DISABLED : 0);
+    leonos_ui_button(surface, x + edit_w + button_w, y, button_w, h, "+",
+                     disabled || value >= max ? LEONOS_UI_BUTTON_DISABLED : 0);
+}
+
+int leonos_ui_stepper_handle_mouse(int32_t *value, int32_t min, int32_t max,
+                                   int32_t step, uint32_t x, uint32_t y,
+                                   uint32_t w, uint32_t h, int32_t px, int32_t py)
+{
+    uint32_t button_w = h;
+    uint32_t edit_w = w > button_w * 2 ? w - button_w * 2 : w / 2;
+    if (!value || step <= 0 || px < 0 || py < 0 ||
+        !leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)y, w, h)) {
+        return 0;
+    }
+    if (leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)(x + edit_w),
+                      (int32_t)y, button_w, h)) {
+        *value -= step;
+        if (*value < min) {
+            *value = min;
+        }
+        return 1;
+    }
+    if (leonos_ui_hit((uint32_t)px, (uint32_t)py,
+                      (int32_t)(x + edit_w + button_w), (int32_t)y,
+                      button_w, h)) {
+        *value += step;
+        if (*value > max) {
+            *value = max;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+void leonos_ui_tabbar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                      uint32_t w, const char *const labels[], uint32_t count,
+                      uint32_t active)
+{
+    leonos_ui_tabs(surface, x, y, w, labels, count, active);
+}
+
+int leonos_ui_tabbar_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
+                         uint32_t w, const char *const labels[], uint32_t count)
+{
+    return leonos_ui_tabs_hit(px, py, x, y, w, labels, count);
+}
+
+void leonos_ui_toast_show(struct leonos_ui_toast_state *state, const char *message,
+                          unsigned long now, uint32_t duration_ms, uint32_t kind)
+{
+    uint32_t i = 0;
+    if (!state) {
+        return;
+    }
+    while (message && message[i] && i + 1 < sizeof(state->message)) {
+        state->message[i] = message[i];
+        ++i;
+    }
+    state->message[i] = 0;
+    state->start_ms = now;
+    state->duration_ms = duration_ms ? duration_ms : 2200;
+    state->kind = kind;
+    state->active = 1;
+}
+
+void leonos_ui_toast_clear(struct leonos_ui_toast_state *state)
+{
+    if (!state) {
+        return;
+    }
+    state->active = 0;
+    state->message[0] = 0;
+}
+
+int leonos_ui_toast_active(struct leonos_ui_toast_state *state, unsigned long now)
+{
+    if (!state || !state->active) {
+        return 0;
+    }
+    if (now - state->start_ms >= state->duration_ms) {
+        state->active = 0;
+        return 0;
+    }
+    return 1;
+}
+
+void leonos_ui_toast_draw(struct leonos_ui_surface *surface,
+                          struct leonos_ui_toast_state *state,
+                          unsigned long now)
+{
+    uint32_t text_w;
+    uint32_t w;
+    uint32_t h = LEONOS_FONT_H + 16;
+    uint32_t x;
+    uint32_t y;
+    uint32_t stripe;
+    if (!surface || !leonos_ui_toast_active(state, now) || !state->message[0]) {
+        return;
+    }
+    text_w = leonos_ui_text_width(state->message);
+    w = text_w + 34;
+    if (w < 180) {
+        w = 180;
+    }
+    if (surface->width > 24 && w > surface->width - 24) {
+        w = surface->width - 24;
+    }
+    x = surface->width > w + 12 ? surface->width - w - 12 : 4;
+    y = surface->height > h + 40 ? surface->height - h - 40 : 8;
+    stripe = LEONOS_UI_ACTIVE_TITLE;
+    if (state->kind == LEONOS_UI_TOAST_SUCCESS) {
+        stripe = 0x00008000u;
+    } else if (state->kind == LEONOS_UI_TOAST_WARNING) {
+        stripe = 0x000080c0u;
+    } else if (state->kind == LEONOS_UI_TOAST_ERROR) {
+        stripe = 0x000000c0u;
+    }
+    leonos_ui_bevel(surface, x, y, w, h, LEONOS_UI_LIGHT, 0);
+    leonos_ui_rect(surface, x + 4, y + 4, 6, h > 8 ? h - 8 : h, stripe);
+    leonos_ui_text_transparent_clipped(surface, x + 16, y + 8,
+                                       w > 24 ? w - 24 : w,
+                                       state->message, LEONOS_UI_BLACK);
+}

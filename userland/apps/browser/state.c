@@ -24,6 +24,7 @@ int32_t history_index = -1;
 uint8_t menu_open;
 uint8_t browser_should_exit;
 struct leonos_net_http_get http_result;
+struct leonos_ui_toast_state browser_toast;
 
 uint32_t page_y(void)
 {
@@ -107,4 +108,8 @@ void clamp_scroll(void)
 void set_status(const char *text)
 {
     copy_text(status_text, sizeof(status_text), text);
+    if (text && text[0]) {
+        leonos_ui_toast_show(&browser_toast, text, leonos_uptime_ms(),
+                             2200, LEONOS_UI_TOAST_INFO);
+    }
 }

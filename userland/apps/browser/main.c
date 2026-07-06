@@ -73,6 +73,9 @@ int main(int argc, char **argv, char **envp)
                 present_browser();
                 continue;
             }
+        } else if (browser_toast.active) {
+            present_browser();
+            sleep_ms(10);
         } else {
             sleep_ms(10);
         }

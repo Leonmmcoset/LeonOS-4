@@ -19,19 +19,37 @@ uint32_t context_menu_x;
 uint32_t context_menu_y;
 uint32_t view_w = FILEMAN_W;
 uint32_t view_h = FILEMAN_H;
+struct leonos_ui_toast_state fileman_toast;
 
 struct fileman_layout current_layout(void)
 {
     struct fileman_layout l;
     uint32_t content_h = view_h > LIST_Y + STATUS_H + 10 ? view_h - LIST_Y - STATUS_H - 10 : ROW_H * 2;
-    l.tree_x = 8;
-    l.tree_y = LIST_Y;
-    l.tree_w = view_w > 430 ? TREE_W : 0;
-    l.tree_h = content_h + 4;
-    l.list_x = l.tree_w ? l.tree_x + l.tree_w + 8 : 8;
-    l.list_y = LIST_Y;
-    l.list_w = view_w > l.list_x + 34 ? view_w - l.list_x - 26 : 220;
-    l.list_h = content_h + 4;
+    struct leonos_ui_split_pane_state split;
+    if (view_w > 430) {
+        leonos_ui_split_pane_init(&split, LEONOS_UI_SPLIT_VERTICAL, TREE_W, 96, 220);
+        split.splitter_size = 8;
+        leonos_ui_split_pane_layout(&split, 8, LIST_Y,
+                                    view_w > 34 ? view_w - 34 : view_w,
+                                    content_h + 4);
+        l.tree_x = (uint32_t)split.first.x;
+        l.tree_y = (uint32_t)split.first.y;
+        l.tree_w = split.first.w;
+        l.tree_h = split.first.h;
+        l.list_x = (uint32_t)split.second.x;
+        l.list_y = (uint32_t)split.second.y;
+        l.list_w = split.second.w > 22 ? split.second.w - 22 : split.second.w;
+        l.list_h = split.second.h;
+    } else {
+        l.tree_x = 8;
+        l.tree_y = LIST_Y;
+        l.tree_w = 0;
+        l.tree_h = content_h + 4;
+        l.list_x = 8;
+        l.list_y = LIST_Y;
+        l.list_w = view_w > l.list_x + 34 ? view_w - l.list_x - 26 : 220;
+        l.list_h = content_h + 4;
+    }
     l.rows_y = l.list_y + 30;
     l.rows_h = l.list_h > 34 ? l.list_h - 34 : ROW_H;
     l.visible_rows = l.rows_h / ROW_H;
@@ -42,4 +60,3 @@ struct fileman_layout current_layout(void)
     l.scrollbar_h = l.list_h;
     return l;
 }
-

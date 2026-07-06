@@ -35,6 +35,16 @@ enum {
     DEMO_DROP_DISABLED = 4,
 };
 
+enum {
+    DEMO_FILE_MESSAGE = 101,
+    DEMO_FILE_INPUT = 102,
+    DEMO_VIEW_CONTROLS = 201,
+    DEMO_VIEW_DATA = 202,
+    DEMO_VIEW_DIALOGS = 203,
+    DEMO_VIEW_ADVANCED = 204,
+    DEMO_HELP_ABOUT = 301,
+};
+
 static uint32_t pixels[DEMO_W * DEMO_H];
 
 static const char *tab_labels[] = {"Controls", "Data", "Dialogs", "Advanced"};
@@ -75,6 +85,9 @@ static uint8_t dropdown_opening;
 static unsigned long dropdown_anim_start_ms;
 static uint32_t dropdown_selected = DEMO_DROP_NORMAL;
 static uint8_t menu_open;
+static uint32_t demo_slider_value = 65;
+static int32_t demo_stepper_value = 2;
+static struct leonos_ui_toast_state demo_toast;
 
 static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
 {
@@ -192,6 +205,11 @@ static uint32_t context_menu_progress(void)
 static void draw_controls_page(struct leonos_ui_surface *ui)
 {
     uint32_t drop_progress = dropdown_progress();
+    struct leonos_ui_property_item props[] = {
+        {"Menu Bar", "shared dropdown hit logic", 0},
+        {"Split Pane", "first / splitter / second", 0},
+        {"Toast", "non-blocking message", 0},
+    };
     leonos_ui_groupbox(ui, 12, 80, 230, 152, "Buttons and Inputs");
     leonos_ui_button(ui, 26, 106, 74, LEONOS_UI_BUTTON_H, "OK", 0);
     leonos_ui_button(ui, 108, 106, 92, LEONOS_UI_BUTTON_H, "Pressed", LEONOS_UI_BUTTON_PRESSED);
@@ -209,9 +227,15 @@ static void draw_controls_page(struct leonos_ui_surface *ui)
                        dropdown_selected, DEMO_DROPDOWN_ROW_H, drop_progress);
 
     leonos_ui_groupbox(ui, 520, 80, 220, 152, "Progress");
-    leonos_ui_progress(ui, 536, 110, 172, 18, 65, 100);
+    leonos_ui_progress(ui, 536, 110, 172, 18, demo_slider_value, 100);
+    leonos_ui_slider(ui, 536, 142, 172, 22, demo_slider_value, 100, 0);
+    leonos_ui_stepper(ui, 536, 176, 126, LEONOS_UI_BUTTON_H,
+                      demo_stepper_value, 1, 5, 0);
     leonos_ui_vscrollbar(ui, 710, 104, 18, 96, 4, 20, 8, 0);
     leonos_ui_hscrollbar(ui, 536, 204, 172, 18, 6, 20, 8, 0);
+
+    leonos_ui_property_grid(ui, 12, 250, 360, props,
+                            sizeof(props) / sizeof(props[0]), 100, 24);
 }
 
 static void draw_data_page(struct leonos_ui_surface *ui)
@@ -222,6 +246,12 @@ static void draw_data_page(struct leonos_ui_surface *ui)
         {"State", 120},
         {"Info", 240},
     };
+    struct leonos_ui_menubar_item menu_items[] = {
+        {"File", DEMO_MENU_FILE, 52, 0},
+        {"Edit", 99, 52, LEONOS_UI_MENU_DISABLED},
+        {"View", DEMO_MENU_VIEW, 52, 0},
+    };
+    struct leonos_ui_split_pane_state split;
     uint32_t row_count = sizeof(data_rows) / sizeof(data_rows[0]);
 
     leonos_ui_toolbar(ui, 12, 82, DEMO_W - 24, 34);
@@ -245,15 +275,21 @@ static void draw_data_page(struct leonos_ui_surface *ui)
                          row_count, sample_list.visible_rows, 0);
 
     leonos_ui_groupbox(ui, 12, 268, 300, 92, "Tabs and Splitter");
-    leonos_ui_tabs(ui, 28, 294, 268, tab_labels, 3, 1);
+    leonos_ui_tabbar(ui, 28, 294, 268, tab_labels, 3, 1);
     leonos_ui_tab_body(ui, 28, 324, 268, 26);
     leonos_ui_text(ui, 36, 330, "Tab body frame", LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_split_pane_init(&split, LEONOS_UI_SPLIT_VERTICAL, 118, 64, 64);
+    leonos_ui_split_pane_layout(&split, 30, 366, 266, 34);
+    leonos_ui_inset(ui, (uint32_t)split.first.x, (uint32_t)split.first.y,
+                    split.first.w, split.first.h, LEONOS_UI_WHITE);
+    leonos_ui_inset(ui, (uint32_t)split.second.x, (uint32_t)split.second.y,
+                    split.second.w, split.second.h, LEONOS_UI_WHITE);
+    leonos_ui_split_pane_draw(ui, &split);
 
     leonos_ui_groupbox(ui, 332, 268, 300, 92, "Menus");
-    leonos_ui_menubar(ui, 348, 294, 254);
-    leonos_ui_menubar_item(ui, 354, 294, 52, "File", 1);
-    leonos_ui_menubar_item(ui, 410, 294, 52, "Edit", 0);
-    leonos_ui_menubar_item(ui, 466, 294, 52, "View", 0);
+    leonos_ui_menubar_draw(ui, 348, 294, 254, menu_items,
+                           sizeof(menu_items) / sizeof(menu_items[0]),
+                           DEMO_MENU_FILE);
 }
 
 static void draw_dialogs_page(struct leonos_ui_surface *ui)
@@ -340,11 +376,15 @@ static void draw_advanced_page(struct leonos_ui_surface *ui)
 
 static void draw_demo(struct leonos_ui_surface *ui, uint32_t page)
 {
+    struct leonos_ui_menubar_item top_items[] = {
+        {"File", DEMO_MENU_FILE, 54, 0},
+        {"View", DEMO_MENU_VIEW, 54, 0},
+        {"Help", DEMO_MENU_HELP, 54, 0},
+    };
     leonos_ui_rect(ui, 0, 0, DEMO_W, DEMO_H, LEONOS_UI_WHITE);
-    leonos_ui_menubar(ui, 0, 0, DEMO_W);
-    leonos_ui_menubar_item(ui, 8, 0, 54, "File", menu_open == DEMO_MENU_FILE);
-    leonos_ui_menubar_item(ui, 64, 0, 54, "View", menu_open == DEMO_MENU_VIEW);
-    leonos_ui_menubar_item(ui, 120, 0, 54, "Help", menu_open == DEMO_MENU_HELP);
+    leonos_ui_menubar_draw(ui, 0, 0, DEMO_W, top_items,
+                           sizeof(top_items) / sizeof(top_items[0]),
+                           menu_open);
     leonos_ui_text(ui, 12, 36, "LeonOS UI Component Library", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, 12, 54, "Win32-style reusable drawing controls", LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, 420, 54, "你好，LeonOS 4。中文显示测试。", LEONOS_UI_DARK, LEONOS_UI_WHITE);
@@ -361,77 +401,104 @@ static void draw_demo(struct leonos_ui_surface *ui, uint32_t page)
     leonos_ui_statusbar(ui, DEMO_H - 28, 28, demo_status);
 
     if (menu_open == DEMO_MENU_FILE) {
-        leonos_ui_menu(ui, 8, DEMO_MENU_BAR_H, 154, 60);
-        leonos_ui_menu_item(ui, 42, DEMO_MENU_BAR_H + 8, 116, "Message", 0);
-        leonos_ui_menu_item(ui, 42, DEMO_MENU_BAR_H + 34, 116, "Input", 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {"Message", DEMO_FILE_MESSAGE, 0},
+            {"Input", DEMO_FILE_INPUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    DEMO_MENU_FILE, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, DEMO_MENU_BAR_H, 154,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     } else if (menu_open == DEMO_MENU_VIEW) {
-        leonos_ui_menu(ui, 64, DEMO_MENU_BAR_H, 154, 112);
-        leonos_ui_menu_item(ui, 98, DEMO_MENU_BAR_H + 8, 116, "Controls", page == 0 ? LEONOS_UI_MENU_SELECTED : 0);
-        leonos_ui_menu_item(ui, 98, DEMO_MENU_BAR_H + 34, 116, "Data", page == 1 ? LEONOS_UI_MENU_SELECTED : 0);
-        leonos_ui_menu_item(ui, 98, DEMO_MENU_BAR_H + 60, 116, "Dialogs", page == 2 ? LEONOS_UI_MENU_SELECTED : 0);
-        leonos_ui_menu_item(ui, 98, DEMO_MENU_BAR_H + 86, 116, "Advanced", page == 3 ? LEONOS_UI_MENU_SELECTED : 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {"Controls", DEMO_VIEW_CONTROLS, 0},
+            {"Data", DEMO_VIEW_DATA, 0},
+            {"Dialogs", DEMO_VIEW_DIALOGS, 0},
+            {"Advanced", DEMO_VIEW_ADVANCED, 0},
+        };
+        struct leonos_ui_rect r;
+        uint32_t selected = page == 0 ? DEMO_VIEW_CONTROLS
+                          : page == 1 ? DEMO_VIEW_DATA
+                          : page == 2 ? DEMO_VIEW_DIALOGS
+                                      : DEMO_VIEW_ADVANCED;
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    DEMO_MENU_VIEW, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, DEMO_MENU_BAR_H, 154,
+                             items, sizeof(items) / sizeof(items[0]), selected);
     } else if (menu_open == DEMO_MENU_HELP) {
-        leonos_ui_menu(ui, 120, DEMO_MENU_BAR_H, 154, 34);
-        leonos_ui_menu_item(ui, 154, DEMO_MENU_BAR_H + 8, 116, "About", 0);
+        struct leonos_ui_context_menu_item items[] = {
+            {"About", DEMO_HELP_ABOUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    DEMO_MENU_HELP, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, DEMO_MENU_BAR_H, 154,
+                             items, sizeof(items) / sizeof(items[0]), 0);
     }
+    leonos_ui_toast_draw(ui, &demo_toast, leonos_uptime_ms());
 }
 
 static int handle_menu_click(int32_t x, int32_t y, uint32_t *page)
 {
-    if (y >= 0 && y < (int32_t)DEMO_MENU_BAR_H) {
-        if (hit_rect_i(x, y, 8, 0, 54, (int32_t)DEMO_MENU_BAR_H)) {
-            menu_open = menu_open == DEMO_MENU_FILE ? DEMO_MENU_NONE : DEMO_MENU_FILE;
-            return 1;
-        }
-        if (hit_rect_i(x, y, 64, 0, 54, (int32_t)DEMO_MENU_BAR_H)) {
-            menu_open = menu_open == DEMO_MENU_VIEW ? DEMO_MENU_NONE : DEMO_MENU_VIEW;
-            return 1;
-        }
-        if (hit_rect_i(x, y, 120, 0, 54, (int32_t)DEMO_MENU_BAR_H)) {
-            menu_open = menu_open == DEMO_MENU_HELP ? DEMO_MENU_NONE : DEMO_MENU_HELP;
+    struct leonos_ui_menubar_item top_items[] = {
+        {"File", DEMO_MENU_FILE, 54, 0},
+        {"View", DEMO_MENU_VIEW, 54, 0},
+        {"Help", DEMO_MENU_HELP, 54, 0},
+    };
+    uint32_t id = 0;
+    if (leonos_ui_menubar_hit(x, y, 0, 0, top_items,
+                              sizeof(top_items) / sizeof(top_items[0]), &id)) {
+        if (id) {
+            menu_open = menu_open == id ? DEMO_MENU_NONE : (uint8_t)id;
             return 1;
         }
         menu_open = DEMO_MENU_NONE;
         return 1;
     }
     if (menu_open == DEMO_MENU_FILE) {
-        if (hit_rect_i(x, y, 42, (int32_t)DEMO_MENU_BAR_H + 8, 116,
-                       (int32_t)DEMO_MENU_ITEM_H)) {
+        struct leonos_ui_context_menu_item items[] = {
+            {"Message", DEMO_FILE_MESSAGE, 0},
+            {"Input", DEMO_FILE_INPUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    DEMO_MENU_FILE, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, DEMO_MENU_BAR_H,
+                                     154, items,
+                                     sizeof(items) / sizeof(items[0]), &id)) {
             menu_open = DEMO_MENU_NONE;
-            leonos_ui_show_message_box("UI Components", "This is a standalone dialog window.", "OK");
-            return 1;
-        }
-        if (hit_rect_i(x, y, 42, (int32_t)DEMO_MENU_BAR_H + 34, 116,
-                       (int32_t)DEMO_MENU_ITEM_H)) {
-            menu_open = DEMO_MENU_NONE;
-            leonos_ui_show_input_dialog("Input", "Path:", sample_path, sizeof(sample_path));
+            if (id == DEMO_FILE_MESSAGE) {
+                leonos_ui_show_message_box("UI Components", "This is a standalone dialog window.", "OK");
+            } else if (id == DEMO_FILE_INPUT) {
+                leonos_ui_show_input_dialog("Input", "Path:", sample_path, sizeof(sample_path));
+            }
             return 1;
         }
         menu_open = DEMO_MENU_NONE;
         return 1;
     }
     if (menu_open == DEMO_MENU_VIEW) {
-        if (hit_rect_i(x, y, 98, (int32_t)DEMO_MENU_BAR_H + 8, 116,
-                       (int32_t)DEMO_MENU_ITEM_H)) {
-            *page = 0;
-            menu_open = DEMO_MENU_NONE;
-            return 1;
-        }
-        if (hit_rect_i(x, y, 98, (int32_t)DEMO_MENU_BAR_H + 34, 116,
-                       (int32_t)DEMO_MENU_ITEM_H)) {
-            *page = 1;
-            menu_open = DEMO_MENU_NONE;
-            return 1;
-        }
-        if (hit_rect_i(x, y, 98, (int32_t)DEMO_MENU_BAR_H + 60, 116,
-                       (int32_t)DEMO_MENU_ITEM_H)) {
-            *page = 2;
-            menu_open = DEMO_MENU_NONE;
-            return 1;
-        }
-        if (hit_rect_i(x, y, 98, (int32_t)DEMO_MENU_BAR_H + 86, 116,
-                       (int32_t)DEMO_MENU_ITEM_H)) {
-            *page = 3;
+        struct leonos_ui_context_menu_item items[] = {
+            {"Controls", DEMO_VIEW_CONTROLS, 0},
+            {"Data", DEMO_VIEW_DATA, 0},
+            {"Dialogs", DEMO_VIEW_DIALOGS, 0},
+            {"Advanced", DEMO_VIEW_ADVANCED, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    DEMO_MENU_VIEW, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, DEMO_MENU_BAR_H,
+                                     154, items,
+                                     sizeof(items) / sizeof(items[0]), &id)) {
+            if (id >= DEMO_VIEW_CONTROLS && id <= DEMO_VIEW_ADVANCED) {
+                *page = id - DEMO_VIEW_CONTROLS;
+            }
             menu_open = DEMO_MENU_NONE;
             return 1;
         }
@@ -439,10 +506,20 @@ static int handle_menu_click(int32_t x, int32_t y, uint32_t *page)
         return 1;
     }
     if (menu_open == DEMO_MENU_HELP) {
-        if (hit_rect_i(x, y, 154, (int32_t)DEMO_MENU_BAR_H + 8, 116,
-                       (int32_t)DEMO_MENU_ITEM_H)) {
+        struct leonos_ui_context_menu_item items[] = {
+            {"About", DEMO_HELP_ABOUT, 0},
+        };
+        struct leonos_ui_rect r;
+        leonos_ui_menubar_item_rect(0, 0, top_items,
+                                    sizeof(top_items) / sizeof(top_items[0]),
+                                    DEMO_MENU_HELP, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, DEMO_MENU_BAR_H,
+                                     154, items,
+                                     sizeof(items) / sizeof(items[0]), &id)) {
             menu_open = DEMO_MENU_NONE;
-            leonos_ui_show_message_box("UI Components", "Gallery for LeonOS UI controls.", "OK");
+            if (id == DEMO_HELP_ABOUT) {
+                leonos_ui_show_message_box("UI Components", "Gallery for LeonOS UI controls.", "OK");
+            }
             return 1;
         }
         menu_open = DEMO_MENU_NONE;
@@ -545,6 +622,20 @@ static int handle_controls_mouse(int32_t x, int32_t y, uint32_t buttons)
         dropdown_set_open(dropdown_open ? 0 : 1);
         copy_text(demo_status, sizeof(demo_status),
                   dropdown_open ? "Dropdown opening" : "Dropdown closing");
+        return 1;
+    }
+    if (leonos_ui_slider_handle_mouse(&demo_slider_value, 100, 536, 142, 172, 22, x, y)) {
+        copy_text(demo_status, sizeof(demo_status), "Slider changed");
+        leonos_ui_toast_show(&demo_toast, "Slider value updated",
+                             leonos_uptime_ms(), 1800, LEONOS_UI_TOAST_INFO);
+        return 1;
+    }
+    if (leonos_ui_stepper_handle_mouse(&demo_stepper_value, 1, 5, 1,
+                                       536, 176, 126, LEONOS_UI_BUTTON_H,
+                                       x, y)) {
+        copy_text(demo_status, sizeof(demo_status), "Stepper changed");
+        leonos_ui_toast_show(&demo_toast, "Stepper changed",
+                             leonos_uptime_ms(), 1800, LEONOS_UI_TOAST_SUCCESS);
         return 1;
     }
     dropdown_set_open(0);
@@ -708,7 +799,7 @@ int main(void)
                 leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
             }
         } else {
-            if (page == 3 || dropdown_animating || context_menu_animating) {
+            if (page == 3 || dropdown_animating || context_menu_animating || demo_toast.active) {
                 unsigned long now = leonos_uptime_ms();
                 if (now - last_anim_redraw_ms >= 50) {
                     last_anim_redraw_ms = now;

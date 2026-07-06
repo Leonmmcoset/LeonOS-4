@@ -73,6 +73,19 @@ enum browser_menu {
     BROWSER_MENU_HELP = 5,
 };
 
+enum browser_menu_command {
+    BROWSER_CMD_HOME = 101,
+    BROWSER_CMD_REFRESH = 102,
+    BROWSER_CMD_CLOSE = 103,
+    BROWSER_CMD_SELECT_ADDRESS = 201,
+    BROWSER_CMD_CLEAR_ADDRESS = 202,
+    BROWSER_CMD_TOP = 301,
+    BROWSER_CMD_BOTTOM = 302,
+    BROWSER_CMD_FAV_HOME = 401,
+    BROWSER_CMD_FAV_EXAMPLE = 402,
+    BROWSER_CMD_ABOUT = 501,
+};
+
 struct parsed_http_url {
     char host[LEONOS_NET_HOSTNAME_LEN];
     char path[LEONOS_NET_HTTP_PATH_LEN];
@@ -103,6 +116,7 @@ extern int32_t history_index;
 extern uint8_t menu_open;
 extern uint8_t browser_should_exit;
 extern struct leonos_net_http_get http_result;
+extern struct leonos_ui_toast_state browser_toast;
 
 void copy_text(char *dst, uint32_t cap, const char *src);
 char ascii_tolower(char ch);

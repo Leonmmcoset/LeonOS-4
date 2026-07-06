@@ -53,6 +53,8 @@ enum {
     FILEMAN_ACTION_UP = 8,
     FILEMAN_ACTION_REFRESH = 9,
     FILEMAN_ACTION_CREATE_SHORTCUT = 10,
+    FILEMAN_ACTION_ROOT = 11,
+    FILEMAN_ACTION_ABOUT = 12,
 };
 
 struct fileman_layout {
@@ -98,6 +100,7 @@ extern uint32_t context_menu_x;
 extern uint32_t context_menu_y;
 extern uint32_t view_w;
 extern uint32_t view_h;
+extern struct leonos_ui_toast_state fileman_toast;
 
 struct fileman_layout current_layout(void);
 void copy_text(char *dst, uint32_t dst_len, const char *src);
@@ -127,7 +130,6 @@ void build_parent_path(char *dst, uint32_t dst_len);
 const char *path_basename(const char *path);
 const char *entry_type_name(const struct leonos_dir_entry *entry);
 void build_context_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count);
-void details_add_line(struct leonos_ui_surface *ui, uint32_t y, const char *label, const char *value);
 void format_contains_text(char *buf, uint32_t cap, const struct folder_size_info *info);
 int accumulate_folder_size(const char *path, struct folder_size_info *info, uint32_t depth);
 void show_details_selected(void);

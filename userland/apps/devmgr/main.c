@@ -186,15 +186,6 @@ static void update_device_list_layout(void)
     leonos_ui_listview_state_set_count(&device_list, device_count);
 }
 
-static void draw_info_line(struct leonos_ui_surface *ui, uint32_t y,
-                           const char *label, const char *value)
-{
-    leonos_ui_text(ui, 20, y, label, LEONOS_UI_DARK, LEONOS_UI_GRAY);
-    leonos_ui_text_clipped(ui, 118, y, view_w > 136 ? view_w - 136 : 120,
-                           value ? value : "",
-                           LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-}
-
 static void draw_devmgr(struct leonos_ui_surface *ui)
 {
     uint32_t panel_y = details_y();
@@ -247,9 +238,15 @@ static void draw_devmgr(struct leonos_ui_surface *ui)
                     DEVMGR_DETAIL_PANEL_H, LEONOS_UI_GRAY);
     selected = selected_device();
     if (selected) {
-        draw_info_line(ui, panel_y + 14, T("Device:", "设备:"), selected->name);
-        draw_info_line(ui, panel_y + 36, T("Status:", "状态:"), selected->status);
-        draw_info_line(ui, panel_y + 58, T("Details:", "详情:"), selected->detail);
+        struct leonos_ui_property_item props[] = {
+            {T("Device:", "设备:"), selected->name, 0},
+            {T("Status:", "状态:"), selected->status, 0},
+            {T("Details:", "详情:"), selected->detail, 0},
+        };
+        leonos_ui_property_grid(ui, 20, panel_y + 10,
+                                view_w > 40 ? view_w - 40 : view_w,
+                                props, sizeof(props) / sizeof(props[0]),
+                                86, 22);
     } else {
         leonos_ui_text(ui, 20, panel_y + 30, T("No device selected", "未选择设备"),
                        LEONOS_UI_BLACK, LEONOS_UI_GRAY);
