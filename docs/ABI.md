@@ -145,6 +145,9 @@ gateway for device-manager style tools.
 `include/leonos/net.h` exposes the current minimal network ioctl ABI. It covers
 configuration, DHCP renew, DNS A lookups, ICMP ping, and a fixed-buffer
 `leonos_net_http_get` helper that performs an active TCP connection and
-`HTTP/1.0` GET. `httpget.elf` and `browser.elf` both use this helper. This is
-not a socket ABI yet: applications cannot listen for TCP connections, stream
-arbitrary byte ranges, or use TLS/HTTPS through the kernel network interface.
+`HTTP/1.0` GET. The helper keeps a small ARP cache for repeated gateway access
+and tries each returned DNS A record until a TCP attempt succeeds or all
+addresses fail. `httpget.elf` and `browser.elf` both use this helper with a
+10-second timeout. This is not a socket ABI yet: applications cannot listen for
+TCP connections, stream arbitrary byte ranges, or use TLS/HTTPS through the
+kernel network interface.

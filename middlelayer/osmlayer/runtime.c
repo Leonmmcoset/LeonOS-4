@@ -890,18 +890,27 @@ static int osmlayer_write_desktop_shortcut(const char *home,
 static int osmlayer_seed_desktop_shortcuts(const char *username)
 {
     char home[LEONOS_AUTH_HOME_LEN];
-    int ret;
+    static const struct {
+        const char *name;
+        const char *target;
+    } shortcuts[] = {
+        {"File Manager.lnk", "0:/userland/fileman.elf"},
+        {"Task Manager.lnk", "0:/userland/taskmgr.elf"},
+        {"Settings.lnk", "0:/userland/settings.elf"},
+        {"Browser.lnk", "0:/userland/browser.elf"},
+    };
     if (!osmlayer_username_valid(username)) {
         return -22;
     }
     osmlayer_home_for_user(home, sizeof(home), username);
-    ret = osmlayer_write_desktop_shortcut(home, "File Manager.lnk",
-                                          "0:/userland/fileman.elf");
-    if (ret < 0) {
-        return ret;
+    for (uint32_t i = 0; i < sizeof(shortcuts) / sizeof(shortcuts[0]); ++i) {
+        int ret = osmlayer_write_desktop_shortcut(home, shortcuts[i].name,
+                                                  shortcuts[i].target);
+        if (ret < 0) {
+            return ret;
+        }
     }
-    return osmlayer_write_desktop_shortcut(home, "Task Manager.lnk",
-                                           "0:/userland/taskmgr.elf");
+    return 0;
 }
 
 static int osmlayer_auth_status(struct leonos_auth_status *status)

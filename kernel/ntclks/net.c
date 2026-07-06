@@ -41,6 +41,9 @@
 #define NET_TCP_MSS 1460u
 #define NET_TCP_SYN_RETRANSMIT_MS 500u
 #define NET_TCP_DATA_RETRANSMIT_MS 750u
+#define NET_ARP_CACHE_SIZE 8u
+#define NET_HTTP_DEFAULT_TIMEOUT_MS 8000u
+#define NET_HTTP_MAX_TIMEOUT_MS 10000u
 
 struct net_arp_wait {
     uint32_t ip;
@@ -91,10 +94,17 @@ struct net_dhcp_offer {
     uint32_t lease_seconds;
 };
 
+struct net_arp_cache_entry {
+    uint32_t ip;
+    uint8_t mac[6];
+};
+
 static const uint8_t net_broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 static uint32_t net_sequence = 1;
 static uint16_t net_ipv4_id = 1;
 static struct leonos_net_config net_config;
+static struct net_arp_cache_entry net_arp_cache[NET_ARP_CACHE_SIZE];
+static uint32_t net_arp_cache_next;
 
 static void net_cpu_relax(void)
 {
@@ -125,6 +135,11 @@ static uint32_t net_strlen(const char *text, uint32_t cap)
         ++len;
     }
     return len;
+}
+
+static int net_mac_is_zero(const uint8_t mac[6])
+{
+    return (mac[0] | mac[1] | mac[2] | mac[3] | mac[4] | mac[5]) == 0;
 }
 
 static int net_memeq(const uint8_t *a, const uint8_t *b, uint32_t len)
@@ -269,6 +284,46 @@ static int net_timeout_expired(uint64_t start_ms, uint32_t timeout_ms,
     return spins >= spin_limit;
 }
 
+static void net_arp_cache_clear(void)
+{
+    net_memzero(net_arp_cache, sizeof(net_arp_cache));
+    net_arp_cache_next = 0;
+}
+
+static int net_arp_cache_lookup(uint32_t ip, uint8_t mac[6])
+{
+    if (!ip || !mac) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < NET_ARP_CACHE_SIZE; ++i) {
+        if (net_arp_cache[i].ip == ip &&
+            !net_mac_is_zero(net_arp_cache[i].mac)) {
+            net_memcpy(mac, net_arp_cache[i].mac, 6);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void net_arp_cache_store(uint32_t ip, const uint8_t mac[6])
+{
+    uint32_t slot;
+    if (!ip || !mac || net_mac_is_zero(mac) ||
+        ip == 0xffffffffu || net_memeq(mac, net_broadcast_mac, 6)) {
+        return;
+    }
+    for (uint32_t i = 0; i < NET_ARP_CACHE_SIZE; ++i) {
+        if (net_arp_cache[i].ip == ip || net_arp_cache[i].ip == 0) {
+            net_arp_cache[i].ip = ip;
+            net_memcpy(net_arp_cache[i].mac, mac, 6);
+            return;
+        }
+    }
+    slot = net_arp_cache_next++ % NET_ARP_CACHE_SIZE;
+    net_arp_cache[slot].ip = ip;
+    net_memcpy(net_arp_cache[slot].mac, mac, 6);
+}
+
 static void net_update_config_flags(void)
 {
     uint32_t flags = 0;
@@ -287,6 +342,7 @@ static void net_update_config_flags(void)
 
 static void net_set_static_fallback(void)
 {
+    net_arp_cache_clear();
     net_config = (struct leonos_net_config){
         .flags = 0,
         .source = LEONOS_NET_CONFIG_SOURCE_STATIC,
@@ -302,6 +358,7 @@ static void net_set_static_fallback(void)
 
 static void net_apply_dhcp_offer(const struct net_dhcp_offer *offer)
 {
+    net_arp_cache_clear();
     net_config.local_ip = offer->yiaddr;
     net_config.subnet_mask = offer->subnet_mask ? offer->subnet_mask : LEONOS_NET_DEFAULT_SUBNET_MASK;
     net_config.gateway_ip = offer->router_ip ? offer->router_ip : LEONOS_NET_DEFAULT_GATEWAY_IP;
@@ -484,6 +541,7 @@ static void net_handle_arp(const uint8_t *frame, uint32_t len,
     sender_mac = frame + 22;
     sender_ip = net_get_u32(frame + 28);
     target_ip = net_get_u32(frame + 38);
+    net_arp_cache_store(sender_ip, sender_mac);
     if (op == ARP_OPER_REQUEST && target_ip == net_config.local_ip) {
         (void)net_send_arp_reply(sender_mac, sender_ip);
         return;
@@ -740,6 +798,9 @@ static int net_resolve_mac(uint32_t ip, uint32_t timeout_ms, uint8_t *out_mac)
     uint32_t spins = 0;
     wait = (struct net_arp_wait){0};
     wait.ip = ip;
+    if (net_arp_cache_lookup(ip, out_mac)) {
+        return 0;
+    }
     while (!net_timeout_expired(start, timeout_ms, spins++)) {
         uint64_t now = time_uptime_ms();
         if (now >= next_request) {
@@ -751,6 +812,7 @@ static int net_resolve_mac(uint32_t ip, uint32_t timeout_ms, uint8_t *out_mac)
         net_poll_once(&wait, 0, 0, 0);
         if (wait.done) {
             net_memcpy(out_mac, wait.mac, 6);
+            net_arp_cache_store(ip, wait.mac);
             return 0;
         }
         net_cpu_relax();
@@ -970,13 +1032,13 @@ static uint32_t net_dhcp_request(uint32_t timeout_ms,
     return LEONOS_NET_STATUS_OK;
 }
 
-static uint32_t net_ensure_dhcp_lease(uint32_t timeout_ms)
+static uint32_t net_ensure_ipv4_config(uint32_t timeout_ms, int require_dns)
 {
     if (!e1000_is_ready()) {
         return LEONOS_NET_STATUS_NO_DEVICE;
     }
-    if (net_config.source == LEONOS_NET_CONFIG_SOURCE_DHCP &&
-        net_config.local_ip && net_config.gateway_ip) {
+    if (net_config.local_ip && net_config.gateway_ip &&
+        (!require_dns || net_config.dns_ip)) {
         return LEONOS_NET_STATUS_OK;
     }
     return net_dhcp_request(timeout_ms, 0);
@@ -1082,7 +1144,7 @@ int net_ping(struct leonos_net_ping *request)
         timeout_ms = LEONOS_NET_MAX_TIMEOUT_MS;
     }
     {
-        uint32_t lease_status = net_ensure_dhcp_lease(timeout_ms);
+        uint32_t lease_status = net_ensure_ipv4_config(timeout_ms, 0);
         if (lease_status != LEONOS_NET_STATUS_OK) {
             request->status = lease_status;
             return 0;
@@ -1287,7 +1349,7 @@ int net_dns_resolve(struct leonos_net_dns *request)
         timeout_ms = 10000u;
     }
     {
-        uint32_t lease_status = net_ensure_dhcp_lease(timeout_ms);
+        uint32_t lease_status = net_ensure_ipv4_config(timeout_ms, 1);
         if (lease_status != LEONOS_NET_STATUS_OK) {
             request->status = lease_status;
             return 0;
@@ -1373,12 +1435,20 @@ static int net_parse_ipv4_literal(const char *text, uint32_t len,
     return 0;
 }
 
-static int net_http_resolve_host(const char *host, uint32_t host_len,
-                                 uint32_t timeout_ms, uint32_t *out_ip,
-                                 uint32_t *out_status)
+static int net_http_resolve_hosts(const char *host, uint32_t host_len,
+                                  uint32_t timeout_ms, uint32_t *out_ips,
+                                  uint32_t *out_count,
+                                  uint32_t *out_status)
 {
     struct leonos_net_dns dns;
-    if (net_parse_ipv4_literal(host, host_len, out_ip) == 0) {
+    uint32_t literal_ip;
+    if (!out_ips || !out_count) {
+        return -1;
+    }
+    *out_count = 0;
+    if (net_parse_ipv4_literal(host, host_len, &literal_ip) == 0) {
+        out_ips[0] = literal_ip;
+        *out_count = 1;
         return 0;
     }
     dns = (struct leonos_net_dns){0};
@@ -1399,7 +1469,18 @@ static int net_http_resolve_host(const char *host, uint32_t host_len,
         }
         return -1;
     }
-    *out_ip = dns.addresses[0];
+    for (uint32_t i = 0; i < dns.address_count &&
+             *out_count < LEONOS_NET_DNS_MAX_ADDRESSES; ++i) {
+        if (dns.addresses[i]) {
+            out_ips[(*out_count)++] = dns.addresses[i];
+        }
+    }
+    if (*out_count == 0) {
+        if (out_status) {
+            *out_status = LEONOS_NET_STATUS_DNS_NO_ANSWER;
+        }
+        return -1;
+    }
     return 0;
 }
 
@@ -1463,18 +1544,16 @@ static uint32_t net_http_parse_status(const char *response, uint32_t len)
     return status;
 }
 
-int net_http_get(struct leonos_net_http_get *request)
+static uint32_t net_http_exchange_ip(struct leonos_net_http_get *request,
+                                     const char *http_request,
+                                     uint32_t http_len,
+                                     uint32_t remote_ip,
+                                     uint32_t port,
+                                     uint32_t timeout_ms)
 {
     uint8_t dst_mac[6];
-    char http_request[NET_HTTP_REQUEST_MAX];
     struct net_tcp_wait wait;
-    uint32_t timeout_ms;
-    uint32_t host_len;
-    uint32_t path_len;
-    uint32_t port;
-    uint32_t remote_ip = 0;
     uint32_t arp_ip;
-    uint32_t http_len;
     uint32_t syn_seq;
     uint32_t local_seq;
     uint32_t acked_remote_seq;
@@ -1484,55 +1563,18 @@ int net_http_get(struct leonos_net_http_get *request)
     uint32_t spins;
     int ret;
 
-    if (!request) {
-        return -1;
-    }
-    host_len = net_strlen(request->host, LEONOS_NET_HOSTNAME_LEN);
-    path_len = net_strlen(request->path, LEONOS_NET_HTTP_PATH_LEN);
-    request->status = LEONOS_NET_STATUS_HTTP_FAILED;
-    request->remote_ip = 0;
+    request->status = LEONOS_NET_STATUS_TCP_FAILED;
+    request->remote_ip = remote_ip;
     request->http_status = 0;
     request->response_len = 0;
     request->response[0] = 0;
-    if (host_len == 0 || host_len >= LEONOS_NET_HOSTNAME_LEN ||
-        path_len >= LEONOS_NET_HTTP_PATH_LEN ||
-        request->port > 65535u) {
-        request->status = LEONOS_NET_STATUS_BAD_ARGUMENT;
-        return 0;
-    }
-    if (!e1000_is_ready()) {
-        request->status = LEONOS_NET_STATUS_NO_DEVICE;
-        return 0;
-    }
-    timeout_ms = request->timeout_ms ? request->timeout_ms : 4000u;
-    if (timeout_ms > 10000u) {
-        timeout_ms = 10000u;
-    }
-    {
-        uint32_t lease_status = net_ensure_dhcp_lease(timeout_ms);
-        if (lease_status != LEONOS_NET_STATUS_OK) {
-            request->status = lease_status;
-            return 0;
-        }
-    }
-    port = request->port ? request->port : NET_HTTP_PORT;
-    http_len = net_http_build_request(http_request, sizeof(http_request),
-                                      request->host, request->path, port);
-    if (!http_len) {
-        request->status = LEONOS_NET_STATUS_BAD_ARGUMENT;
-        return 0;
-    }
-    if (net_http_resolve_host(request->host, host_len, timeout_ms,
-                              &remote_ip, &request->status) < 0) {
-        return 0;
-    }
-    request->remote_ip = remote_ip;
+
     arp_ip = net_route_arp_ip(remote_ip);
     ret = net_resolve_mac(arp_ip, timeout_ms, dst_mac);
     if (ret < 0) {
         request->status = ret == -1 ? LEONOS_NET_STATUS_TX_FAILED
                                     : LEONOS_NET_STATUS_ARP_TIMEOUT;
-        return 0;
+        return request->status;
     }
 
     local_seq = 0x4c4e0000u ^ (net_sequence++ << 8) ^
@@ -1551,7 +1593,7 @@ int net_http_get(struct leonos_net_http_get *request)
                             local_port, (uint16_t)port, local_seq, 0,
                             TCP_FLAG_SYN, 0, 0) < 0) {
         request->status = LEONOS_NET_STATUS_TX_FAILED;
-        return 0;
+        return request->status;
     }
     ++local_seq;
     start = time_uptime_ms();
@@ -1562,7 +1604,7 @@ int net_http_get(struct leonos_net_http_get *request)
         net_poll_once(0, 0, 0, &wait);
         if (wait.reset) {
             request->status = LEONOS_NET_STATUS_TCP_RESET;
-            return 0;
+            return request->status;
         }
         if ((wait.flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) ==
                 (TCP_FLAG_SYN | TCP_FLAG_ACK) &&
@@ -1575,7 +1617,7 @@ int net_http_get(struct leonos_net_http_get *request)
                                     local_port, (uint16_t)port, syn_seq, 0,
                                     TCP_FLAG_SYN, 0, 0) < 0) {
                 request->status = LEONOS_NET_STATUS_TX_FAILED;
-                return 0;
+                return request->status;
             }
             next_retransmit = now + NET_TCP_SYN_RETRANSMIT_MS;
         }
@@ -1583,13 +1625,13 @@ int net_http_get(struct leonos_net_http_get *request)
     }
     if (!wait.remote_seq || wait.acked_seq != local_seq) {
         request->status = LEONOS_NET_STATUS_TCP_TIMEOUT;
-        return 0;
+        return request->status;
     }
     if (net_send_tcp_to_mac(dst_mac, net_config.local_ip, remote_ip,
                             local_port, (uint16_t)port, local_seq,
                             wait.remote_seq, TCP_FLAG_ACK, 0, 0) < 0) {
         request->status = LEONOS_NET_STATUS_TX_FAILED;
-        return 0;
+        return request->status;
     }
 
     if (net_send_tcp_to_mac(dst_mac, net_config.local_ip, remote_ip,
@@ -1597,7 +1639,7 @@ int net_http_get(struct leonos_net_http_get *request)
                             wait.remote_seq, TCP_FLAG_PSH | TCP_FLAG_ACK,
                             (const uint8_t *)http_request, http_len) < 0) {
         request->status = LEONOS_NET_STATUS_TX_FAILED;
-        return 0;
+        return request->status;
     }
     local_seq += http_len;
     acked_remote_seq = wait.remote_seq;
@@ -1610,7 +1652,7 @@ int net_http_get(struct leonos_net_http_get *request)
         net_poll_once(0, 0, 0, &wait);
         if (wait.reset) {
             request->status = LEONOS_NET_STATUS_TCP_RESET;
-            return 0;
+            return request->status;
         }
         if (wait.changed != before && wait.remote_seq != acked_remote_seq) {
             (void)net_send_tcp_to_mac(dst_mac, net_config.local_ip, remote_ip,
@@ -1665,6 +1707,78 @@ int net_http_get(struct leonos_net_http_get *request)
                               local_port, (uint16_t)port, local_seq,
                               wait.remote_seq, TCP_FLAG_FIN | TCP_FLAG_ACK,
                               0, 0);
+    return request->status;
+}
+
+int net_http_get(struct leonos_net_http_get *request)
+{
+    char http_request[NET_HTTP_REQUEST_MAX];
+    uint32_t remote_ips[LEONOS_NET_DNS_MAX_ADDRESSES];
+    uint32_t remote_count = 0;
+    uint32_t timeout_ms;
+    uint32_t host_len;
+    uint32_t path_len;
+    uint32_t port;
+    uint32_t http_len;
+    uint32_t last_status = LEONOS_NET_STATUS_HTTP_FAILED;
+
+    if (!request) {
+        return -1;
+    }
+    host_len = net_strlen(request->host, LEONOS_NET_HOSTNAME_LEN);
+    path_len = net_strlen(request->path, LEONOS_NET_HTTP_PATH_LEN);
+    request->status = LEONOS_NET_STATUS_HTTP_FAILED;
+    request->remote_ip = 0;
+    request->http_status = 0;
+    request->response_len = 0;
+    request->response[0] = 0;
+    if (host_len == 0 || host_len >= LEONOS_NET_HOSTNAME_LEN ||
+        path_len >= LEONOS_NET_HTTP_PATH_LEN ||
+        request->port > 65535u) {
+        request->status = LEONOS_NET_STATUS_BAD_ARGUMENT;
+        return 0;
+    }
+    if (!e1000_is_ready()) {
+        request->status = LEONOS_NET_STATUS_NO_DEVICE;
+        return 0;
+    }
+    timeout_ms = request->timeout_ms ? request->timeout_ms
+                                     : NET_HTTP_DEFAULT_TIMEOUT_MS;
+    if (timeout_ms > NET_HTTP_MAX_TIMEOUT_MS) {
+        timeout_ms = NET_HTTP_MAX_TIMEOUT_MS;
+    }
+    {
+        uint32_t config_status = net_ensure_ipv4_config(timeout_ms, 1);
+        if (config_status != LEONOS_NET_STATUS_OK) {
+            request->status = config_status;
+            return 0;
+        }
+    }
+    port = request->port ? request->port : NET_HTTP_PORT;
+    http_len = net_http_build_request(http_request, sizeof(http_request),
+                                      request->host, request->path, port);
+    if (!http_len) {
+        request->status = LEONOS_NET_STATUS_BAD_ARGUMENT;
+        return 0;
+    }
+    if (net_http_resolve_hosts(request->host, host_len, timeout_ms,
+                               remote_ips, &remote_count,
+                               &request->status) < 0) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < remote_count; ++i) {
+        last_status = net_http_exchange_ip(request, http_request, http_len,
+                                          remote_ips[i], port, timeout_ms);
+        if (last_status == LEONOS_NET_STATUS_OK ||
+            last_status == LEONOS_NET_STATUS_HTTP_TOO_LARGE ||
+            last_status == LEONOS_NET_STATUS_HTTP_FAILED ||
+            last_status == LEONOS_NET_STATUS_BAD_ARGUMENT ||
+            last_status == LEONOS_NET_STATUS_TX_FAILED ||
+            last_status == LEONOS_NET_STATUS_ARP_TIMEOUT) {
+            return 0;
+        }
+    }
+    request->status = last_status;
     return 0;
 }
 

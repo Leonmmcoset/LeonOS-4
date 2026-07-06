@@ -189,7 +189,7 @@ static void run_http_get(void)
         return;
     }
     copy_text(status_text, sizeof(status_text), T("Sending HTTP GET...", "正在发送 HTTP GET..."));
-    ret = leonos_net_http_get(host_input, path_input, port, 5000, &result);
+    ret = leonos_net_http_get(host_input, path_input, port, 10000, &result);
     if (ret < 0) {
         set_status_ret(T("HTTP ioctl failed", "HTTP ioctl 失败"), ret);
         copy_text(summary_text, sizeof(summary_text), status_text);

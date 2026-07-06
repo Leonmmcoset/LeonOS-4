@@ -115,6 +115,95 @@ static int core_is_space(char ch)
     return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
 }
 
+static int core_utf8_cont(uint8_t byte)
+{
+    return (byte & 0xc0u) == 0x80u;
+}
+
+static int core_is_wide_codepoint(uint32_t cp)
+{
+    return (cp >= 0x1100u && cp <= 0x115fu) ||
+           cp == 0x2329u || cp == 0x232au ||
+           (cp >= 0x2e80u && cp <= 0xa4cfu) ||
+           (cp >= 0xac00u && cp <= 0xd7a3u) ||
+           (cp >= 0xf900u && cp <= 0xfaffu) ||
+           (cp >= 0x20000u && cp <= 0x3fffdu) ||
+           (cp >= 0xfe10u && cp <= 0xfe19u) ||
+           (cp >= 0xfe30u && cp <= 0xfe6fu) ||
+           (cp >= 0xff00u && cp <= 0xff60u) ||
+           (cp >= 0xffe0u && cp <= 0xffe6u);
+}
+
+static uint32_t core_codepoint_cells(uint32_t cp)
+{
+    if (cp == 0 || cp == '\n' || cp == '\r') {
+        return 0;
+    }
+    if (cp == '\t') {
+        return 4;
+    }
+    return core_is_wide_codepoint(cp) ? 2U : 1U;
+}
+
+static int core_codepoint_is_space(uint32_t cp)
+{
+    return cp == ' ' || cp == '\t' || cp == '\r' || cp == '\n';
+}
+
+static uint32_t core_decode_utf8_at(const char *text, uint32_t pos,
+                                    uint32_t *byte_len, uint32_t *cells)
+{
+    const uint8_t *s = (const uint8_t *)text;
+    uint8_t b0;
+    uint32_t cp;
+    uint32_t len = 1;
+    if (!text || !text[pos]) {
+        if (byte_len) {
+            *byte_len = 0;
+        }
+        if (cells) {
+            *cells = 0;
+        }
+        return 0;
+    }
+    b0 = s[pos];
+    if (b0 < 0x80u) {
+        cp = b0;
+    } else if ((b0 & 0xe0u) == 0xc0u &&
+               s[pos + 1U] && core_utf8_cont(s[pos + 1U])) {
+        cp = ((uint32_t)(b0 & 0x1fu) << 6) |
+             (uint32_t)(s[pos + 1U] & 0x3fu);
+        len = 2;
+    } else if ((b0 & 0xf0u) == 0xe0u &&
+               s[pos + 1U] && s[pos + 2U] &&
+               core_utf8_cont(s[pos + 1U]) &&
+               core_utf8_cont(s[pos + 2U])) {
+        cp = ((uint32_t)(b0 & 0x0fu) << 12) |
+             ((uint32_t)(s[pos + 1U] & 0x3fu) << 6) |
+             (uint32_t)(s[pos + 2U] & 0x3fu);
+        len = 3;
+    } else if ((b0 & 0xf8u) == 0xf0u &&
+               s[pos + 1U] && s[pos + 2U] && s[pos + 3U] &&
+               core_utf8_cont(s[pos + 1U]) &&
+               core_utf8_cont(s[pos + 2U]) &&
+               core_utf8_cont(s[pos + 3U])) {
+        cp = ((uint32_t)(b0 & 0x07u) << 18) |
+             ((uint32_t)(s[pos + 1U] & 0x3fu) << 12) |
+             ((uint32_t)(s[pos + 2U] & 0x3fu) << 6) |
+             (uint32_t)(s[pos + 3U] & 0x3fu);
+        len = 4;
+    } else {
+        cp = 0xfffdu;
+    }
+    if (byte_len) {
+        *byte_len = len;
+    }
+    if (cells) {
+        *cells = core_codepoint_cells(cp);
+    }
+    return cp;
+}
+
 static int core_is_digit(char ch)
 {
     return ch >= '0' && ch <= '9';
@@ -165,6 +254,14 @@ static void core_append_char(char *dst, uint32_t *pos, uint32_t cap, char ch)
         dst[*pos] = ch;
         ++(*pos);
         dst[*pos] = 0;
+    }
+}
+
+static void core_append_bytes(char *dst, uint32_t *pos, uint32_t cap,
+                              const char *src, uint32_t len)
+{
+    for (uint32_t i = 0; src && i < len; ++i) {
+        core_append_char(dst, pos, cap, src[i]);
     }
 }
 
@@ -225,6 +322,7 @@ static void core_clear_line(struct litehtml_core_view *view, uint32_t index)
     }
     view->lines[index].text[0] = 0;
     view->lines[index].len = 0;
+    view->lines[index].cells = 0;
     view->lines[index].kind = BROWSER_LINE_NORMAL;
     view->lines[index].indent = 0;
     view->lines[index].align = BROWSER_ALIGN_LEFT;
@@ -235,6 +333,7 @@ static void core_clear_line(struct litehtml_core_view *view, uint32_t index)
         view->lines[index].style[i] = 0;
         view->lines[index].fg[i] = BROWSER_COLOR_UNSET;
         view->lines[index].bg[i] = BROWSER_COLOR_UNSET;
+        view->lines[index].cell_width[i] = 0;
     }
 }
 
@@ -351,6 +450,7 @@ static void core_emit_empty_line(struct core_render_ctx *ctx, uint8_t kind)
     line->line_bg = ctx->text_bg;
     line->border_color = ctx->border_color;
     line->len = 0;
+    line->cells = 0;
     line->text[0] = 0;
     core_render_newline(ctx, 1);
 }
@@ -369,14 +469,18 @@ static uint8_t core_add_link(struct litehtml_core_view *view, const char *href)
     return (uint8_t)index;
 }
 
-static void core_render_raw_char(struct core_render_ctx *ctx, char ch)
+static void core_render_raw_codepoint(struct core_render_ctx *ctx,
+                                      const char *bytes,
+                                      uint32_t byte_len,
+                                      uint32_t cells,
+                                      uint32_t codepoint)
 {
     struct litehtml_core_view *view;
     struct browser_line *line;
     uint32_t count;
     uint32_t cap;
     uint8_t link_id = 0;
-    if (!ctx || !ctx->view) {
+    if (!ctx || !ctx->view || !bytes || byte_len == 0) {
         return;
     }
     view = ctx->view;
@@ -384,16 +488,16 @@ static void core_render_raw_char(struct core_render_ctx *ctx, char ch)
     if (cap == 0 || cap > sizeof(view->lines[0].text)) {
         cap = (uint32_t)sizeof(view->lines[0].text);
     }
-    if (ch == '\r') {
+    if (codepoint == '\r') {
         return;
     }
-    if (ch == '\n') {
+    if (codepoint == '\n') {
         core_render_newline(ctx, 1);
         return;
     }
-    if (ch == '\t') {
-        core_render_raw_char(ctx, ' ');
-        core_render_raw_char(ctx, ' ');
+    if (codepoint == '\t') {
+        core_render_raw_codepoint(ctx, " ", 1, 1, ' ');
+        core_render_raw_codepoint(ctx, " ", 1, 1, ' ');
         return;
     }
     count = core_line_count(view);
@@ -404,13 +508,15 @@ static void core_render_raw_char(struct core_render_ctx *ctx, char ch)
     }
     line = &view->lines[count - 1U];
     core_apply_current_style(ctx, line);
-    if (line->len >= core_current_cols(ctx, line) || line->len + 1U >= cap) {
+    if (line->cells + cells > core_current_cols(ctx, line) ||
+        line->len + byte_len >= cap) {
         core_render_newline(ctx, 1);
         count = core_line_count(view);
         line = &view->lines[count - 1U];
         core_apply_current_style(ctx, line);
     }
-    if (line->len >= core_current_cols(ctx, line) || line->len + 1U >= cap) {
+    if (line->cells + cells > core_current_cols(ctx, line) ||
+        line->len + byte_len >= cap) {
         core_set_truncated(view);
         return;
     }
@@ -418,31 +524,51 @@ static void core_render_raw_char(struct core_render_ctx *ctx, char ch)
         link_id = (uint8_t)(ctx->link_id + 1U);
     }
     line->kind = ctx->kind;
-    line->text[line->len] = ch >= 32 ? ch : ' ';
-    line->link[line->len] = link_id;
-    line->style[line->len] = ctx->text_style;
-    line->fg[line->len] = ctx->text_fg;
-    line->bg[line->len] = ctx->text_bg;
-    ++line->len;
+    for (uint32_t i = 0; i < byte_len; ++i) {
+        uint32_t dst = line->len + i;
+        line->text[dst] = codepoint >= 32 || byte_len > 1U
+                              ? bytes[i]
+                              : ' ';
+        line->link[dst] = link_id;
+        line->style[dst] = ctx->text_style;
+        line->fg[dst] = ctx->text_fg;
+        line->bg[dst] = ctx->text_bg;
+        line->cell_width[dst] = i == 0 ? (uint8_t)cells : 0;
+    }
+    line->len += byte_len;
+    line->cells += cells;
     line->text[line->len] = 0;
 }
 
-static void core_render_html_char(struct core_render_ctx *ctx, char ch)
+static void core_render_html_codepoint(struct core_render_ctx *ctx,
+                                       const char *bytes,
+                                       uint32_t byte_len,
+                                       uint32_t cells,
+                                       uint32_t codepoint)
 {
     uint32_t count;
     if (!ctx || !ctx->view) {
         return;
     }
-    if (core_is_space(ch)) {
+    if (core_codepoint_is_space(codepoint)) {
         ctx->pending_space = 1;
         return;
     }
     count = core_line_count(ctx->view);
     if (ctx->pending_space && count && ctx->view->lines[count - 1U].len > 0) {
-        core_render_raw_char(ctx, ' ');
+        core_render_raw_codepoint(ctx, " ", 1, 1, ' ');
     }
     ctx->pending_space = 0;
-    core_render_raw_char(ctx, ch);
+    core_render_raw_codepoint(ctx, bytes, byte_len, cells, codepoint);
+}
+
+static void core_render_html_char(struct core_render_ctx *ctx, char ch)
+{
+    char bytes[1];
+    bytes[0] = ch;
+    core_render_html_codepoint(ctx, bytes, 1,
+                               core_codepoint_cells((uint8_t)ch),
+                               (uint8_t)ch);
 }
 
 static int core_tag_name_eq(const char *tag, const char *name);
@@ -480,11 +606,16 @@ static void core_restore_flow_style(struct core_render_ctx *ctx)
 
 static void core_render_literal(struct core_render_ctx *ctx, const char *text)
 {
+    uint32_t pos = 0;
     if (ctx) {
         ctx->pending_space = 0;
     }
-    while (text && *text) {
-        core_render_raw_char(ctx, *text++);
+    while (text && text[pos]) {
+        uint32_t byte_len = 1;
+        uint32_t cells = 1;
+        uint32_t cp = core_decode_utf8_at(text, pos, &byte_len, &cells);
+        core_render_raw_codepoint(ctx, text + pos, byte_len, cells, cp);
+        pos += byte_len;
     }
     if (ctx) {
         ctx->pending_space = 0;
@@ -499,7 +630,10 @@ static uint8_t core_tag_heading_kind(const char *tag)
     if (core_tag_name_eq(tag, "h2")) {
         return BROWSER_LINE_HEADING2;
     }
-    if (core_tag_name_eq(tag, "h3")) {
+    if (core_tag_name_eq(tag, "h3") ||
+        core_tag_name_eq(tag, "h4") ||
+        core_tag_name_eq(tag, "h5") ||
+        core_tag_name_eq(tag, "h6")) {
         return BROWSER_LINE_HEADING3;
     }
     return 0;
@@ -1737,21 +1871,28 @@ void litehtml_core_render_html(struct litehtml_core_view *view,
                 continue;
             }
         }
-        if (ctx.in_title && view->page_title && view->page_title_cap) {
-            if (!core_is_space(source[i])) {
-                uint32_t pos = (uint32_t)strlen(view->page_title);
-                core_append_char(view->page_title, &pos,
-                                 view->page_title_cap, source[i]);
-            } else if (view->page_title[0] &&
-                       view->page_title[strlen(view->page_title) - 1U] != ' ') {
-                uint32_t pos = (uint32_t)strlen(view->page_title);
-                core_append_char(view->page_title, &pos,
-                                 view->page_title_cap, ' ');
+        {
+            uint32_t byte_len = 1;
+            uint32_t cells = 1;
+            uint32_t cp = core_decode_utf8_at(source, i, &byte_len, &cells);
+            if (ctx.in_title && view->page_title && view->page_title_cap) {
+                if (!core_codepoint_is_space(cp)) {
+                    uint32_t pos = (uint32_t)strlen(view->page_title);
+                    core_append_bytes(view->page_title, &pos,
+                                      view->page_title_cap,
+                                      source + i, byte_len);
+                } else if (view->page_title[0] &&
+                           view->page_title[strlen(view->page_title) - 1U] != ' ') {
+                    uint32_t pos = (uint32_t)strlen(view->page_title);
+                    core_append_char(view->page_title, &pos,
+                                     view->page_title_cap, ' ');
+                }
+            } else if (!ctx.skip_content) {
+                core_render_html_codepoint(&ctx, source + i, byte_len,
+                                           cells, cp);
             }
-        } else if (!ctx.skip_content) {
-            core_render_html_char(&ctx, source[i]);
+            i += byte_len;
         }
-        ++i;
     }
 }
 
@@ -1789,6 +1930,10 @@ void litehtml_core_render_plain(struct litehtml_core_view *view,
     ctx.style_text[0] = 0;
     ctx.css_rule_count = 0;
     while (source && source[i]) {
-        core_render_raw_char(&ctx, source[i++]);
+        uint32_t byte_len = 1;
+        uint32_t cells = 1;
+        uint32_t cp = core_decode_utf8_at(source, i, &byte_len, &cells);
+        core_render_raw_codepoint(&ctx, source + i, byte_len, cells, cp);
+        i += byte_len;
     }
 }

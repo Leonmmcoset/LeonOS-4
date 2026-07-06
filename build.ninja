@@ -194,7 +194,14 @@ build build/obj/userlib/userland/libc/src/launch.c.o: cc_user userland/libc/src/
 build build/obj/userlib/userland/libc/src/libc.c.o: cc_user userland/libc/src/libc.c
 build build/obj/userlib/userland/libc/src/syscall.S.o: as_user userland/libc/src/syscall.S
 build build/obj/userlib/userland/libc/src/ui.c.o: cc_user userland/libc/src/ui.c
-build build/userland/libc.a: ar build/obj/userlib/userland/libc/src/crt0.S.o build/obj/userlib/userland/libc/src/launch.c.o build/obj/userlib/userland/libc/src/libc.c.o build/obj/userlib/userland/libc/src/syscall.S.o build/obj/userlib/userland/libc/src/ui.c.o
+build build/obj/userlib/userland/libc/src/ui_edit.c.o: cc_user userland/libc/src/ui_edit.c
+build build/obj/userlib/userland/libc/src/ui_input.c.o: cc_user userland/libc/src/ui_input.c
+build build/obj/userlib/userland/libc/src/ui_listview.c.o: cc_user userland/libc/src/ui_listview.c
+build build/obj/userlib/userland/libc/src/ui_surface.c.o: cc_user userland/libc/src/ui_surface.c
+build build/obj/userlib/userland/libc/src/ui_text.c.o: cc_user userland/libc/src/ui_text.c
+build build/obj/userlib/userland/libc/src/ui_widgets.c.o: cc_user userland/libc/src/ui_widgets.c
+build build/obj/userlib/userland/libc/src/ui_window_buttons.c.o: cc_user userland/libc/src/ui_window_buttons.c
+build build/userland/libc.a: ar build/obj/userlib/userland/libc/src/crt0.S.o build/obj/userlib/userland/libc/src/launch.c.o build/obj/userlib/userland/libc/src/libc.c.o build/obj/userlib/userland/libc/src/syscall.S.o build/obj/userlib/userland/libc/src/ui.c.o build/obj/userlib/userland/libc/src/ui_edit.c.o build/obj/userlib/userland/libc/src/ui_input.c.o build/obj/userlib/userland/libc/src/ui_listview.c.o build/obj/userlib/userland/libc/src/ui_surface.c.o build/obj/userlib/userland/libc/src/ui_text.c.o build/obj/userlib/userland/libc/src/ui_widgets.c.o build/obj/userlib/userland/libc/src/ui_window_buttons.c.o
 build build/obj/user-init/userland/apps/init/main.c.o: cc_user userland/apps/init/main.c
 build build/userland/init.elf: link_user build/obj/user-init/userland/apps/init/main.c.o build/userland/libc.a
 build build/obj/user-desktop/userland/apps/desktop/desktop_items.c.o: cc_user userland/apps/desktop/desktop_items.c
@@ -222,8 +229,14 @@ build build/obj/user-cjktest/userland/apps/cjktest/main.c.o: cc_user userland/ap
 build build/userland/cjktest.elf: link_user build/obj/user-cjktest/userland/apps/cjktest/main.c.o build/userland/libc.a
 build build/obj/user-taskmgr/userland/apps/taskmgr/main.c.o: cc_user userland/apps/taskmgr/main.c
 build build/userland/taskmgr.elf: link_user build/obj/user-taskmgr/userland/apps/taskmgr/main.c.o build/userland/libc.a
+build build/obj/user-fileman/userland/apps/fileman/actions.c.o: cc_user userland/apps/fileman/actions.c
+build build/obj/user-fileman/userland/apps/fileman/input.c.o: cc_user userland/apps/fileman/input.c
 build build/obj/user-fileman/userland/apps/fileman/main.c.o: cc_user userland/apps/fileman/main.c
-build build/userland/fileman.elf: link_user build/obj/user-fileman/userland/apps/fileman/main.c.o build/userland/libc.a
+build build/obj/user-fileman/userland/apps/fileman/model.c.o: cc_user userland/apps/fileman/model.c
+build build/obj/user-fileman/userland/apps/fileman/state.c.o: cc_user userland/apps/fileman/state.c
+build build/obj/user-fileman/userland/apps/fileman/util.c.o: cc_user userland/apps/fileman/util.c
+build build/obj/user-fileman/userland/apps/fileman/view.c.o: cc_user userland/apps/fileman/view.c
+build build/userland/fileman.elf: link_user build/obj/user-fileman/userland/apps/fileman/actions.c.o build/obj/user-fileman/userland/apps/fileman/input.c.o build/obj/user-fileman/userland/apps/fileman/main.c.o build/obj/user-fileman/userland/apps/fileman/model.c.o build/obj/user-fileman/userland/apps/fileman/state.c.o build/obj/user-fileman/userland/apps/fileman/util.c.o build/obj/user-fileman/userland/apps/fileman/view.c.o build/userland/libc.a
 build build/obj/user-terminal/userland/apps/terminal/main.c.o: cc_user userland/apps/terminal/main.c
 build build/userland/terminal.elf: link_user build/obj/user-terminal/userland/apps/terminal/main.c.o build/userland/libc.a
 build build/obj/user-shell/userland/apps/shell/main.c.o: cc_user userland/apps/shell/main.c
@@ -248,9 +261,14 @@ build build/obj/user-netctl/userland/apps/netctl/main.c.o: cc_user userland/apps
 build build/userland/netctl.elf: link_user build/obj/user-netctl/userland/apps/netctl/main.c.o build/userland/libc.a
 build build/obj/user-httpget/userland/apps/httpget/main.c.o: cc_user userland/apps/httpget/main.c
 build build/userland/httpget.elf: link_user build/obj/user-httpget/userland/apps/httpget/main.c.o build/userland/libc.a
+build build/obj/user-browser/userland/apps/browser/input.c.o: cc_user userland/apps/browser/input.c
 build build/obj/user-browser/userland/apps/browser/litehtml_core.c.o: cc_user userland/apps/browser/litehtml_core.c
 build build/obj/user-browser/userland/apps/browser/main.c.o: cc_user userland/apps/browser/main.c
-build build/userland/browser.elf: link_user build/obj/user-browser/userland/apps/browser/litehtml_core.c.o build/obj/user-browser/userland/apps/browser/main.c.o build/userland/libc.a
+build build/obj/user-browser/userland/apps/browser/navigation.c.o: cc_user userland/apps/browser/navigation.c
+build build/obj/user-browser/userland/apps/browser/state.c.o: cc_user userland/apps/browser/state.c
+build build/obj/user-browser/userland/apps/browser/util.c.o: cc_user userland/apps/browser/util.c
+build build/obj/user-browser/userland/apps/browser/view.c.o: cc_user userland/apps/browser/view.c
+build build/userland/browser.elf: link_user build/obj/user-browser/userland/apps/browser/input.c.o build/obj/user-browser/userland/apps/browser/litehtml_core.c.o build/obj/user-browser/userland/apps/browser/main.c.o build/obj/user-browser/userland/apps/browser/navigation.c.o build/obj/user-browser/userland/apps/browser/state.c.o build/obj/user-browser/userland/apps/browser/util.c.o build/obj/user-browser/userland/apps/browser/view.c.o build/userland/libc.a
 build build/obj/user-settings/userland/apps/settings/main.c.o: cc_user userland/apps/settings/main.c
 build build/userland/settings.elf: link_user build/obj/user-settings/userland/apps/settings/main.c.o build/userland/libc.a
 build build/obj/user-diskmgr/userland/apps/diskmgr/main.c.o: cc_user userland/apps/diskmgr/main.c

@@ -1,0 +1,45 @@
+#include "fileman.h"
+
+uint32_t pixels[FILEMAN_MAX_W * FILEMAN_MAX_H];
+uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
+struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
+char current_path[LEONOS_FS_PATH_LEN] = "0:/";
+char home_path[LEONOS_AUTH_HOME_LEN];
+char status_text[96] = "Ready";
+uint32_t entry_count;
+struct leonos_ui_listview_state file_list;
+int32_t last_click_index = -1;
+unsigned long last_click_ms;
+uint8_t menu_open;
+uint8_t context_menu_active;
+uint8_t context_menu_animating;
+uint8_t context_menu_opening;
+unsigned long context_menu_anim_start;
+uint32_t context_menu_x;
+uint32_t context_menu_y;
+uint32_t view_w = FILEMAN_W;
+uint32_t view_h = FILEMAN_H;
+
+struct fileman_layout current_layout(void)
+{
+    struct fileman_layout l;
+    uint32_t content_h = view_h > LIST_Y + STATUS_H + 10 ? view_h - LIST_Y - STATUS_H - 10 : ROW_H * 2;
+    l.tree_x = 8;
+    l.tree_y = LIST_Y;
+    l.tree_w = view_w > 430 ? TREE_W : 0;
+    l.tree_h = content_h + 4;
+    l.list_x = l.tree_w ? l.tree_x + l.tree_w + 8 : 8;
+    l.list_y = LIST_Y;
+    l.list_w = view_w > l.list_x + 34 ? view_w - l.list_x - 26 : 220;
+    l.list_h = content_h + 4;
+    l.rows_y = l.list_y + 30;
+    l.rows_h = l.list_h > 34 ? l.list_h - 34 : ROW_H;
+    l.visible_rows = l.rows_h / ROW_H;
+    if (!l.visible_rows) {
+        l.visible_rows = 1;
+    }
+    l.scrollbar_x = l.list_x + l.list_w + 2;
+    l.scrollbar_h = l.list_h;
+    return l;
+}
+

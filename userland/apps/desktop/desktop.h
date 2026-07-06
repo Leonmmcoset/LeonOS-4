@@ -200,6 +200,7 @@ struct desktop_display_mode {
 
 struct desktop_item {
     struct leonos_dir_entry entry;
+    char label[LEONOS_FS_NAME_LEN + 1];
     char path[LEONOS_FS_PATH_LEN];
     char icon_path[LEONOS_FS_PATH_LEN];
 };

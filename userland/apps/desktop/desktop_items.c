@@ -325,6 +325,31 @@ static void desktop_icon_path_for_entry(const struct leonos_dir_entry *entry,
     }
 }
 
+static void desktop_copy_item_label(char *dst, uint32_t dst_len,
+                                    const struct leonos_dir_entry *entry)
+{
+    uint32_t len;
+    if (!dst || dst_len == 0) {
+        return;
+    }
+    dst[0] = 0;
+    if (!entry || !entry->name[0]) {
+        return;
+    }
+    len = desktop_text_len(entry->name);
+    if (entry->type == LEONOS_FS_TYPE_FILE &&
+        text_ends_with(entry->name, ".lnk") && len > 4U) {
+        len -= 4U;
+    }
+    if (len >= dst_len) {
+        len = dst_len - 1U;
+    }
+    for (uint32_t i = 0; i < len; ++i) {
+        dst[i] = entry->name[i];
+    }
+    dst[len] = 0;
+}
+
 static uint32_t desktop_label_next_line(const char *text, uint32_t len,
                                         uint32_t start, uint32_t max_cells)
 {
@@ -712,6 +737,8 @@ int desktop_refresh_items(void)
             break;
         }
         desktop_items[count].entry = entry;
+        desktop_copy_item_label(desktop_items[count].label,
+                                sizeof(desktop_items[count].label), &entry);
         desktop_build_child_path(desktop_items[count].path,
                                  sizeof(desktop_items[count].path),
                                  desktop_folder_path, entry.name);
@@ -735,7 +762,7 @@ void draw_desktop_items(struct rect dirty)
         int icon_y = r.y + 8;
         int label_y = r.y + 48;
         uint32_t label_w = r.w > 8 ? (uint32_t)r.w - 8 : 0;
-        uint32_t label_lines = desktop_label_visible_lines(desktop_items[i].entry.name, label_w);
+        uint32_t label_lines = desktop_label_visible_lines(desktop_items[i].label, label_w);
         if (!rect_intersects(dirty, r)) {
             continue;
         }
@@ -744,7 +771,7 @@ void draw_desktop_items(struct rect dirty)
                         (int)(label_lines * LEONOS_FONT_H + 4), 0x000060a8);
         }
         draw_app_icon_large(desktop_items[i].icon_path, icon_x, icon_y);
-        desktop_draw_item_label(desktop_items[i].entry.name,
+        desktop_draw_item_label(desktop_items[i].label,
                                 (uint32_t)r.x + 4, (uint32_t)label_y,
                                 label_w, selected);
     }

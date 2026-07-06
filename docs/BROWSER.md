@@ -13,7 +13,7 @@ existing GUI, libc, launch, filesystem, and network ABIs.
 Current features:
 
 - IE-style menu/toolbar/address/status layout.
-- `about:leonos` start page.
+- Bilingual `about:leonos` start page.
 - `http://` navigation through `leonos_net_http_get`.
 - Local `.html` and `.htm` file loading.
 - A `userland/apps/browser/litehtml_core.c` document layout layer for headings,

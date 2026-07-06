@@ -201,10 +201,11 @@ IPv4 values are host-order packed addresses. For example, `10.0.2.2` is
 
 The kernel currently supports a polling Intel e1000 MMIO driver, ARP, IPv4,
 ICMP Echo, a small DHCP client, UDP transmit/receive for DHCP/DNS, DNS A record
-lookups, a minimal active-open TCP client path, and `HTTP/1.0` GET over TCP.
-Boot starts with the QEMU user-network fallback so early networking is usable,
-then automatically tries DHCP three times. If DHCP succeeds, the active config
-switches to the lease; if it fails, the fallback remains active:
+lookups, a small ARP cache, a minimal active-open TCP client path, and
+`HTTP/1.0` GET over TCP. Boot starts with the QEMU user-network fallback so
+early networking is usable, then automatically tries DHCP three times. If DHCP
+succeeds, the active config switches to the lease; if it fails, the fallback
+remains active:
 
 - guest IPv4: `10.0.2.15/24`
 - gateway: `10.0.2.2`
@@ -213,16 +214,17 @@ switches to the lease; if it fails, the fallback remains active:
 `netctl.elf` can still issue `leonos_net_dhcp_renew` after the desktop is
 running to manually renew or recover a lease.
 
-`httpget.elf` uses `leonos_net_http_get` to resolve a host, open a TCP
-connection to port 80 by default, send a `GET`, and show the raw HTTP response.
-`browser.elf` uses the same ABI for `http://` page loads and local files for
-`.html`/`.htm` rendering. The response is copied through a fixed-size ABI
-buffer, so this is a diagnostic and small-request API rather than a streaming
-download interface.
+`httpget.elf` uses `leonos_net_http_get` to resolve a host, try each returned A
+record, open a TCP connection to port 80 by default, send a `GET`, and show the
+raw HTTP response. `browser.elf` uses the same ABI for `http://` page loads and
+local files for `.html`/`.htm` rendering. The response is copied through a
+fixed-size ABI buffer, so this is a diagnostic and small-request API rather
+than a streaming download interface.
 
 The network ioctls return `0` when the request structure was processed. Per
 operation results are reported in the structure `status` field. Timeouts are
-bounded by the kernel even if a larger value is requested.
+bounded by the kernel even if a larger value is requested; HTTP/DNS/DHCP paths
+currently cap requested waits at 10000 ms.
 
 ## Authentication and Authorization
 

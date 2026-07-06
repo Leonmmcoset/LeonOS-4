@@ -146,6 +146,10 @@ void leonos_ui_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     const char *text, uint32_t fg, uint32_t bg);
 void leonos_ui_text_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                             uint32_t w, const char *text, uint32_t fg, uint32_t bg);
+void leonos_ui_text_resized_clipped(struct leonos_ui_surface *surface,
+                                    uint32_t x, uint32_t y, uint32_t w,
+                                    const char *text, uint32_t fg, uint32_t bg,
+                                    uint32_t cell_w, uint32_t cell_h);
 void leonos_ui_text_transparent(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                                 const char *text, uint32_t fg);
 void leonos_ui_text_transparent_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
