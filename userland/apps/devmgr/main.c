@@ -12,7 +12,7 @@
 #define DEVMGR_MAX_H 746
 #define DEVMGR_ROW_H 24
 #define DEVMGR_STATUS_H 28
-#define DEVMGR_DETAIL_PANEL_H 82
+#define DEVMGR_DETAIL_PANEL_H 96
 #define DEVMGR_KEY_ESCAPE 1U
 #define T(en, zh) leonos_i18n((en), (zh))
 

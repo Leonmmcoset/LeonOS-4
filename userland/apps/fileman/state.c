@@ -19,7 +19,6 @@ uint32_t context_menu_x;
 uint32_t context_menu_y;
 uint32_t view_w = FILEMAN_W;
 uint32_t view_h = FILEMAN_H;
-struct leonos_ui_toast_state fileman_toast;
 
 struct fileman_layout current_layout(void)
 {

@@ -74,10 +74,6 @@ void format_size_text(char *buf, uint32_t cap, uint64_t bytes)
 void set_status(const char *text)
 {
     copy_text(status_text, sizeof(status_text), text);
-    if (text && text[0]) {
-        leonos_ui_toast_show(&fileman_toast, text, leonos_uptime_ms(),
-                             2200, LEONOS_UI_TOAST_INFO);
-    }
 }
 
 void set_status_code(const char *prefix, int value)
@@ -91,9 +87,7 @@ void set_status_code(const char *prefix, int value)
         value = -value;
     }
     append_dec(buf, &pos, sizeof(buf), (uint32_t)value);
-    copy_text(status_text, sizeof(status_text), buf);
-    leonos_ui_toast_show(&fileman_toast, buf, leonos_uptime_ms(),
-                         2600, LEONOS_UI_TOAST_ERROR);
+    set_status(buf);
 }
 
 int permission_error(int value)
@@ -104,9 +98,7 @@ int permission_error(int value)
 void set_status_error(const char *prefix, int value)
 {
     if (permission_error(value)) {
-        copy_text(status_text, sizeof(status_text), T("Permission denied", "权限被拒绝"));
-        leonos_ui_toast_show(&fileman_toast, status_text, leonos_uptime_ms(),
-                             2600, LEONOS_UI_TOAST_ERROR);
+        set_status(T("Permission denied", "权限被拒绝"));
     } else {
         set_status_code(prefix, value);
     }

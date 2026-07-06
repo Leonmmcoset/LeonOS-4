@@ -100,7 +100,6 @@ extern uint32_t context_menu_x;
 extern uint32_t context_menu_y;
 extern uint32_t view_w;
 extern uint32_t view_h;
-extern struct leonos_ui_toast_state fileman_toast;
 
 struct fileman_layout current_layout(void);
 void copy_text(char *dst, uint32_t dst_len, const char *src);

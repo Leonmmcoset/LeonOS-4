@@ -98,7 +98,6 @@ void draw_fileman(struct leonos_ui_surface *ui)
         leonos_ui_context_menu_animated(ui, context_menu_x, context_menu_y, FILEMAN_CONTEXT_MENU_W,
                                         items, FILEMAN_CONTEXT_MENU_COUNT, progress);
     }
-    leonos_ui_toast_draw(ui, &fileman_toast, leonos_uptime_ms());
 }
 
 
