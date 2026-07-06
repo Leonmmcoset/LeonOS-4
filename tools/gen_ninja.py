@@ -44,11 +44,22 @@ USER_APPS = NORMAL_USER_APPS + [
 
 APP_ICON_APPS = USER_APPS
 
+WINDOW_BUTTON_ICONS = [
+    "window-button-minimize.bmp",
+    "window-button-maximize.bmp",
+    "window-button-restore.bmp",
+    "window-button-close.bmp",
+]
+
 SYSTEM_FILES = [
     ("system/osmlayer.manifest", None),
     ("system/fonts/system.psf", "system/fonts/system.psf"),
     ("system/fonts/cjk16.lbf", "system/fonts/cjk16.lbf"),
     ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
+    *(
+        (f"system/resources/{name}", f"build/generated/window-buttons/{name}")
+        for name in WINDOW_BUTTON_ICONS
+    ),
 ]
 
 
@@ -192,6 +203,10 @@ def main() -> int:
     write_line(lines, "  command = python3 tools/make_app_icons.py --out-dir build/generated/app-icons --apps $apps")
     write_line(lines, "  description = APP.ICONS build/generated/app-icons")
     write_line(lines)
+    write_line(lines, "rule window_button_icons")
+    write_line(lines, "  command = python3 tools/make_window_button_icons.py --out-dir build/generated/window-buttons")
+    write_line(lines, "  description = WINDOW.ICONS build/generated/window-buttons")
+    write_line(lines)
     write_line(lines, "rule mkdir")
     write_line(lines, "  command = mkdir -p $out")
     write_line(lines, "  description = MKDIR $out")
@@ -261,6 +276,11 @@ def main() -> int:
     ]
     write_line(lines, f"build {' '.join(r(p) for p in app_icon_outputs)}: app_icons tools/make_app_icons.py")
     write_line(lines, f"  apps = {' '.join(APP_ICON_APPS)}")
+    window_button_icon_outputs = [
+        ROOT / "build" / "generated" / "window-buttons" / name
+        for name in WINDOW_BUTTON_ICONS
+    ]
+    write_line(lines, f"build {' '.join(r(p) for p in window_button_icon_outputs)}: window_button_icons tools/make_window_button_icons.py")
 
     loader_elf = ROOT / "build" / "boot" / "loader.elf"
     kernel_sys = ROOT / "build" / "system" / "kernel.sys"

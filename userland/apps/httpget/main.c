@@ -139,6 +139,10 @@ static const char *status_name(uint32_t status)
         return T("Bad argument", "参数无效");
     case LEONOS_NET_STATUS_TX_FAILED:
         return T("Transmit failed", "发送失败");
+    case LEONOS_NET_STATUS_DHCP_TIMEOUT:
+        return T("DHCP timeout", "DHCP 超时");
+    case LEONOS_NET_STATUS_DHCP_FAILED:
+        return T("DHCP failed", "DHCP 失败");
     case LEONOS_NET_STATUS_DNS_TIMEOUT:
         return T("DNS timeout", "DNS 超时");
     case LEONOS_NET_STATUS_DNS_FAILED:

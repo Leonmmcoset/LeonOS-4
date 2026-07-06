@@ -20,102 +20,102 @@
     },
     "build/userland/diskmgr.elf": {
       "ipo_ts": 1783147002714,
-      "edit_count": 17,
-      "last_lines": 210,
-      "last_ts": 1783258069393,
+      "edit_count": 20,
+      "last_lines": 212,
+      "last_ts": 1783328552864,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "caec8f1c"
+      "last_content_hash": "cdb1a982"
     },
     "build/esp/userland/diskmgr.elf": {
       "ipo_ts": 1783147050359,
-      "edit_count": 16,
-      "last_lines": 210,
-      "last_ts": 1783258069536,
+      "edit_count": 19,
+      "last_lines": 212,
+      "last_ts": 1783328552476,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "caec8f1c"
+      "last_content_hash": "cdb1a982"
     },
     ".ninja_deps": {
       "ipo_ts": 1783147052051,
-      "edit_count": 82,
-      "last_lines": 279,
-      "last_ts": 1783260728445,
+      "edit_count": 102,
+      "last_lines": 311,
+      "last_ts": 1783328556785,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "5332ed73"
+      "last_content_hash": "982b7354"
     },
     ".ninja_log": {
       "ipo_ts": 1783147052061,
-      "edit_count": 186,
-      "last_lines": 429,
-      "last_ts": 1783260817272,
+      "edit_count": 235,
+      "last_lines": 363,
+      "last_ts": 1783328619558,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "52f23fd9"
+      "last_content_hash": "5b369243"
     },
     "build/images/leonos4.raw": {
       "ipo_ts": 1783147116001,
-      "edit_count": 90,
-      "last_lines": 35035,
-      "last_ts": 1783260817256,
+      "edit_count": 115,
+      "last_lines": 35195,
+      "last_ts": 1783328619228,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f5c70d32"
+      "last_content_hash": "89183f35"
     },
     "build/esp/system/kernel.sys": {
       "ipo_ts": 1783147165757,
-      "edit_count": 66,
-      "last_lines": 565,
-      "last_ts": 1783260725858,
+      "edit_count": 81,
+      "last_lines": 582,
+      "last_ts": 1783328552304,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "9ef8356f"
+      "last_content_hash": "1ac4dfeb"
     },
     "build/obj/kernel/kernel/ntclks/version.c.o": {
       "ipo_ts": 1783147166818,
-      "edit_count": 71,
+      "edit_count": 86,
       "last_lines": 1,
-      "last_ts": 1783260725553,
+      "last_ts": 1783328551649,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d02b5544"
+      "last_content_hash": "a2d012"
     },
     "build/system/kernel.sys": {
       "ipo_ts": 1783147166846,
-      "edit_count": 70,
-      "last_lines": 565,
-      "last_ts": 1783260725888,
+      "edit_count": 85,
+      "last_lines": 582,
+      "last_ts": 1783328551705,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "9ef8356f"
+      "last_content_hash": "1ac4dfeb"
     },
     "build/version/build_number.txt": {
       "ipo_ts": 1783147166855,
-      "edit_count": 71,
+      "edit_count": 86,
       "last_lines": 1,
-      "last_ts": 1783260725339,
+      "last_ts": 1783328551833,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "178b7b"
+      "last_content_hash": "178fd7"
     },
     "include/generated/build_info.h": {
       "ipo_ts": 1783147166863,
-      "edit_count": 71,
+      "edit_count": 86,
       "last_lines": 15,
-      "last_ts": 1783260725322,
+      "last_ts": 1783328551810,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "9ca9ce07"
+      "last_content_hash": "90c58206"
     },
     "build/images/esp.fat": {
       "ipo_ts": 1783147168874,
-      "edit_count": 48,
-      "last_lines": 35035,
-      "last_ts": 1783260732343,
+      "edit_count": 60,
+      "last_lines": 35195,
+      "last_ts": 1783328558327,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e480fae0"
+      "last_content_hash": "81799a11"
     },
     "userland/apps/taskmgr/main.c": {
       "ipo_ts": 1783148135480,
@@ -128,66 +128,66 @@
     },
     "build/userland/libc.a": {
       "ipo_ts": 1783148473094,
-      "edit_count": 14,
-      "last_lines": 216,
-      "last_ts": 1783258068386,
+      "edit_count": 17,
+      "last_lines": 222,
+      "last_ts": 1783328551754,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "df21dc73"
+      "last_content_hash": "a44cbfb"
     },
     "build/esp/userland/cjktest.elf": {
       "ipo_ts": 1783148474114,
-      "edit_count": 13,
-      "last_lines": 216,
-      "last_ts": 1783258069492,
+      "edit_count": 16,
+      "last_lines": 225,
+      "last_ts": 1783328552386,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bd49867f"
+      "last_content_hash": "a751075"
     },
     "build/esp/userland/fileman.elf": {
       "ipo_ts": 1783148474127,
-      "edit_count": 15,
-      "last_lines": 251,
-      "last_ts": 1783258069549,
+      "edit_count": 18,
+      "last_lines": 262,
+      "last_ts": 1783328552493,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "27742935"
+      "last_content_hash": "9cb9578c"
     },
     "build/esp/userland/hello.elf": {
       "ipo_ts": 1783148474137,
-      "edit_count": 13,
-      "last_lines": 207,
-      "last_ts": 1783258069561,
+      "edit_count": 16,
+      "last_lines": 211,
+      "last_ts": 1783328552508,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c9586497"
+      "last_content_hash": "72a4550b"
     },
     "build/esp/userland/init.elf": {
       "ipo_ts": 1783148474146,
-      "edit_count": 6,
+      "edit_count": 8,
       "last_lines": 28,
-      "last_ts": 1783256657106,
+      "last_ts": 1783312602132,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "852c3666"
     },
     "build/esp/userland/notepad.elf": {
       "ipo_ts": 1783148474159,
-      "edit_count": 13,
-      "last_lines": 224,
-      "last_ts": 1783258069625,
+      "edit_count": 16,
+      "last_lines": 226,
+      "last_ts": 1783328552601,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f52ade60"
+      "last_content_hash": "471e032b"
     },
     "build/esp/userland/oobe.elf": {
       "ipo_ts": 1783148474171,
-      "edit_count": 13,
-      "last_lines": 207,
-      "last_ts": 1783258069638,
+      "edit_count": 16,
+      "last_lines": 217,
+      "last_ts": 1783328552617,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "40097f91"
+      "last_content_hash": "593044d3"
     },
     "build/esp/userland/shell.elf": {
       "ipo_ts": 1783148474180,
@@ -200,210 +200,210 @@
     },
     "build/esp/userland/taskmgr.elf": {
       "ipo_ts": 1783148474195,
-      "edit_count": 14,
-      "last_lines": 215,
-      "last_ts": 1783258069708,
+      "edit_count": 17,
+      "last_lines": 228,
+      "last_ts": 1783328552734,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "76c0100f"
+      "last_content_hash": "e1c56f63"
     },
     "build/esp/userland/uidemo.elf": {
       "ipo_ts": 1783148474207,
-      "edit_count": 13,
-      "last_lines": 212,
-      "last_ts": 1783258069734,
+      "edit_count": 16,
+      "last_lines": 222,
+      "last_ts": 1783328552770,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4de59726"
+      "last_content_hash": "578befc6"
     },
     "build/userland/bugtest.elf": {
       "ipo_ts": 1783148474218,
-      "edit_count": 13,
-      "last_lines": 212,
-      "last_ts": 1783258068862,
+      "edit_count": 16,
+      "last_lines": 223,
+      "last_ts": 1783328552826,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6695838c"
+      "last_content_hash": "faee9eae"
     },
     "build/userland/calc.elf": {
       "ipo_ts": 1783148474230,
-      "edit_count": 13,
-      "last_lines": 221,
-      "last_ts": 1783258068875,
+      "edit_count": 16,
+      "last_lines": 223,
+      "last_ts": 1783328552120,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "77feb077"
+      "last_content_hash": "4a3bf0c3"
     },
     "build/userland/cjktest.elf": {
       "ipo_ts": 1783148474243,
-      "edit_count": 13,
-      "last_lines": 216,
-      "last_ts": 1783258068889,
+      "edit_count": 16,
+      "last_lines": 225,
+      "last_ts": 1783328551723,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bd49867f"
+      "last_content_hash": "a751075"
     },
     "build/userland/desktop.elf": {
       "ipo_ts": 1783148474258,
-      "edit_count": 27,
-      "last_lines": 426,
-      "last_ts": 1783259429285,
+      "edit_count": 31,
+      "last_lines": 389,
+      "last_ts": 1783328552140,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8e41984e"
+      "last_content_hash": "e781c606"
     },
     "build/userland/fileman.elf": {
       "ipo_ts": 1783148474283,
-      "edit_count": 15,
-      "last_lines": 251,
-      "last_ts": 1783258068918,
+      "edit_count": 18,
+      "last_lines": 262,
+      "last_ts": 1783328552155,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "27742935"
+      "last_content_hash": "9cb9578c"
     },
     "build/userland/hello.elf": {
       "ipo_ts": 1783148474294,
-      "edit_count": 13,
-      "last_lines": 207,
-      "last_ts": 1783258068930,
+      "edit_count": 16,
+      "last_lines": 211,
+      "last_ts": 1783328551739,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c9586497"
+      "last_content_hash": "72a4550b"
     },
     "build/userland/init.elf": {
       "ipo_ts": 1783148474303,
-      "edit_count": 6,
+      "edit_count": 8,
       "last_lines": 28,
-      "last_ts": 1783256656568,
+      "last_ts": 1783312602364,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "852c3666"
     },
     "build/userland/memtest.elf": {
       "ipo_ts": 1783148474311,
-      "edit_count": 6,
+      "edit_count": 8,
       "last_lines": 17,
-      "last_ts": 1783256656993,
+      "last_ts": 1783328552165,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "c8048ec7"
     },
     "build/userland/minesweeper.elf": {
       "ipo_ts": 1783148474323,
-      "edit_count": 13,
-      "last_lines": 223,
-      "last_ts": 1783258068957,
+      "edit_count": 16,
+      "last_lines": 229,
+      "last_ts": 1783328552919,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "18b80ea8"
+      "last_content_hash": "fc73cbbd"
     },
     "build/userland/notepad.elf": {
       "ipo_ts": 1783148474334,
-      "edit_count": 14,
-      "last_lines": 224,
-      "last_ts": 1783258068976,
+      "edit_count": 17,
+      "last_lines": 226,
+      "last_ts": 1783328552181,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f52ade60"
+      "last_content_hash": "471e032b"
     },
     "build/userland/oobe.elf": {
       "ipo_ts": 1783148474346,
-      "edit_count": 13,
-      "last_lines": 207,
-      "last_ts": 1783258068992,
+      "edit_count": 16,
+      "last_lines": 217,
+      "last_ts": 1783328551783,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "40097f91"
+      "last_content_hash": "593044d3"
     },
     "build/userland/osver.elf": {
       "ipo_ts": 1783148474357,
-      "edit_count": 13,
-      "last_lines": 203,
-      "last_ts": 1783258069005,
+      "edit_count": 16,
+      "last_lines": 213,
+      "last_ts": 1783328552196,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4b3005b7"
+      "last_content_hash": "5c65b503"
     },
     "build/userland/run.elf": {
       "ipo_ts": 1783148474369,
-      "edit_count": 14,
-      "last_lines": 203,
-      "last_ts": 1783258069030,
+      "edit_count": 17,
+      "last_lines": 207,
+      "last_ts": 1783328552210,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "154edb79"
+      "last_content_hash": "29b5a9d8"
     },
     "build/userland/settings.elf": {
       "ipo_ts": 1783148474380,
-      "edit_count": 13,
-      "last_lines": 212,
-      "last_ts": 1783258069769,
+      "edit_count": 16,
+      "last_lines": 206,
+      "last_ts": 1783328552978,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ff8bf59b"
+      "last_content_hash": "fbd4b542"
     },
     "build/userland/shell.elf": {
       "ipo_ts": 1783148474389,
-      "edit_count": 10,
+      "edit_count": 12,
       "last_lines": 79,
-      "last_ts": 1783258069041,
+      "last_ts": 1783328552221,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "dc9ad704"
     },
     "build/userland/taskmgr.elf": {
       "ipo_ts": 1783148474401,
-      "edit_count": 14,
-      "last_lines": 215,
-      "last_ts": 1783258069055,
+      "edit_count": 17,
+      "last_lines": 228,
+      "last_ts": 1783328552236,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "76c0100f"
+      "last_content_hash": "e1c56f63"
     },
     "build/userland/terminal.elf": {
       "ipo_ts": 1783148474413,
-      "edit_count": 13,
-      "last_lines": 226,
-      "last_ts": 1783258069071,
+      "edit_count": 16,
+      "last_lines": 227,
+      "last_ts": 1783328552256,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bd2239a7"
+      "last_content_hash": "c3b0d991"
     },
     "build/userland/uidemo.elf": {
       "ipo_ts": 1783148474425,
-      "edit_count": 13,
-      "last_lines": 212,
-      "last_ts": 1783258069085,
+      "edit_count": 16,
+      "last_lines": 222,
+      "last_ts": 1783328551798,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4de59726"
+      "last_content_hash": "578befc6"
     },
     "build/esp/userland/bugtest.elf": {
       "ipo_ts": 1783148474443,
-      "edit_count": 13,
-      "last_lines": 212,
-      "last_ts": 1783258069467,
+      "edit_count": 16,
+      "last_lines": 223,
+      "last_ts": 1783328552340,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6695838c"
+      "last_content_hash": "faee9eae"
     },
     "build/esp/userland/calc.elf": {
       "ipo_ts": 1783148474455,
-      "edit_count": 13,
-      "last_lines": 221,
-      "last_ts": 1783258069480,
+      "edit_count": 16,
+      "last_lines": 223,
+      "last_ts": 1783328552363,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "77feb077"
+      "last_content_hash": "4a3bf0c3"
     },
     "build/esp/userland/desktop.elf": {
       "ipo_ts": 1783148474471,
-      "edit_count": 25,
-      "last_lines": 426,
-      "last_ts": 1783259429258,
+      "edit_count": 29,
+      "last_lines": 389,
+      "last_ts": 1783328552408,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8e41984e"
+      "last_content_hash": "e781c606"
     },
     "build/esp/userland/memtest.elf": {
       "ipo_ts": 1783148474490,
@@ -416,48 +416,48 @@
     },
     "build/esp/userland/minesweeper.elf": {
       "ipo_ts": 1783148474501,
-      "edit_count": 13,
-      "last_lines": 223,
-      "last_ts": 1783258069602,
+      "edit_count": 16,
+      "last_lines": 229,
+      "last_ts": 1783328552569,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "18b80ea8"
+      "last_content_hash": "fc73cbbd"
     },
     "build/esp/userland/osver.elf": {
       "ipo_ts": 1783148474512,
-      "edit_count": 13,
-      "last_lines": 203,
-      "last_ts": 1783258069650,
+      "edit_count": 16,
+      "last_lines": 213,
+      "last_ts": 1783328552642,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4b3005b7"
+      "last_content_hash": "5c65b503"
     },
     "build/esp/userland/run.elf": {
       "ipo_ts": 1783148474525,
-      "edit_count": 13,
-      "last_lines": 203,
-      "last_ts": 1783258069674,
+      "edit_count": 16,
+      "last_lines": 207,
+      "last_ts": 1783328552697,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "154edb79"
+      "last_content_hash": "29b5a9d8"
     },
     "build/esp/userland/settings.elf": {
       "ipo_ts": 1783148474537,
-      "edit_count": 13,
-      "last_lines": 212,
-      "last_ts": 1783258069686,
+      "edit_count": 16,
+      "last_lines": 206,
+      "last_ts": 1783328552715,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ff8bf59b"
+      "last_content_hash": "fbd4b542"
     },
     "build/esp/userland/terminal.elf": {
       "ipo_ts": 1783148474549,
-      "edit_count": 12,
-      "last_lines": 226,
-      "last_ts": 1783258069722,
+      "edit_count": 15,
+      "last_lines": 227,
+      "last_ts": 1783328552754,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bd2239a7"
+      "last_content_hash": "c3b0d991"
     },
     "include/leonos/system.h": {
       "ipo_ts": 1783149060273,
@@ -488,12 +488,12 @@
     },
     "userland/apps/desktop/screen.c": {
       "ipo_ts": 1783149174737,
-      "edit_count": 4,
-      "last_lines": 310,
-      "last_ts": 1783259409418,
+      "edit_count": 5,
+      "last_lines": 312,
+      "last_ts": 1783312470545,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c09a44eb"
+      "last_content_hash": "30eb1b09"
     },
     "build/obj/kernel/kernel/ntclks/syscall.c.o": {
       "ipo_ts": 1783149190639,
@@ -515,12 +515,12 @@
     },
     "build/obj/user-desktop/userland/apps/desktop/screen.c.o": {
       "ipo_ts": 1783149190668,
-      "edit_count": 5,
-      "last_lines": 45,
-      "last_ts": 1783259429088,
+      "edit_count": 7,
+      "last_lines": 44,
+      "last_ts": 1783327022708,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "dca4c7f4"
+      "last_content_hash": "f5a6e9f"
     },
     "build/obj/userlib/userland/libc/src/libc.c.o": {
       "ipo_ts": 1783149190680,
@@ -560,12 +560,12 @@
     },
     "tools/gen_ninja.py": {
       "ipo_ts": 1783156233166,
-      "edit_count": 12,
-      "last_lines": 421,
-      "last_ts": 1783257927082,
+      "edit_count": 13,
+      "last_lines": 441,
+      "last_ts": 1783326682253,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c4e88883"
+      "last_content_hash": "7eaf5779"
     },
     "userland/apps/desktop/util.c": {
       "ipo_ts": 1783156233172,
@@ -587,12 +587,12 @@
     },
     "build.ninja": {
       "ipo_ts": 1783156247258,
-      "edit_count": 11,
-      "last_lines": 331,
-      "last_ts": 1783258066947,
+      "edit_count": 13,
+      "last_lines": 341,
+      "last_ts": 1783327002224,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "5efd98d"
+      "last_content_hash": "4cbbad92"
     },
     "build/obj/user-devmgr/userland/apps/devmgr/main.c.o": {
       "ipo_ts": 1783156248408,
@@ -623,21 +623,21 @@
     },
     "build/esp/userland/devmgr.elf": {
       "ipo_ts": 1783156249488,
-      "edit_count": 12,
-      "last_lines": 207,
-      "last_ts": 1783258069523,
+      "edit_count": 15,
+      "last_lines": 212,
+      "last_ts": 1783328552460,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "3e9c6251"
+      "last_content_hash": "77575287"
     },
     "build/userland/devmgr.elf": {
       "ipo_ts": 1783156249504,
-      "edit_count": 13,
-      "last_lines": 207,
-      "last_ts": 1783258069756,
+      "edit_count": 16,
+      "last_lines": 212,
+      "last_ts": 1783328552846,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "3e9c6251"
+      "last_content_hash": "77575287"
     },
     "tools/gen_loader_integrity.py": {
       "ipo_ts": 1783157529955,
@@ -677,21 +677,21 @@
     },
     "include/generated/loader_integrity.h": {
       "ipo_ts": 1783157961938,
-      "edit_count": 55,
+      "edit_count": 70,
       "last_lines": 8,
-      "last_ts": 1783260726035,
+      "last_ts": 1783328551823,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "dc01974"
+      "last_content_hash": "b18ba58c"
     },
     "build/obj/loader/boot/loader/main.c.o": {
       "ipo_ts": 1783157998801,
-      "edit_count": 53,
+      "edit_count": 68,
       "last_lines": 55,
-      "last_ts": 1783260726517,
+      "last_ts": 1783328552780,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7629b366"
+      "last_content_hash": "ac9924bb"
     },
     "build/install/root/install/esp/etc/leonos.conf": {
       "ipo_ts": 1783158000714,
@@ -704,12 +704,12 @@
     },
     "build/install/root/install/esp/system/kernel.sys": {
       "ipo_ts": 1783158000726,
-      "edit_count": 30,
-      "last_lines": 555,
-      "last_ts": 1783259521337,
+      "edit_count": 39,
+      "last_lines": 582,
+      "last_ts": 1783328554557,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "349f376c"
+      "last_content_hash": "1ac4dfeb"
     },
     "build/install/root/install/esp/system/middlelayer.sys": {
       "ipo_ts": 1783158000732,
@@ -731,75 +731,75 @@
     },
     "build/install/root/install/esp/userland/bugtest.elf": {
       "ipo_ts": 1783158000748,
-      "edit_count": 15,
-      "last_lines": 212,
-      "last_ts": 1783258071708,
+      "edit_count": 18,
+      "last_lines": 223,
+      "last_ts": 1783328554595,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6695838c"
+      "last_content_hash": "faee9eae"
     },
     "build/install/root/install/esp/userland/calc.elf": {
       "ipo_ts": 1783158000757,
-      "edit_count": 15,
-      "last_lines": 221,
-      "last_ts": 1783258071720,
+      "edit_count": 18,
+      "last_lines": 223,
+      "last_ts": 1783328554610,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "77feb077"
+      "last_content_hash": "4a3bf0c3"
     },
     "build/install/root/install/esp/userland/cjktest.elf": {
       "ipo_ts": 1783158000765,
-      "edit_count": 15,
-      "last_lines": 216,
-      "last_ts": 1783258071731,
+      "edit_count": 18,
+      "last_lines": 225,
+      "last_ts": 1783328554626,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bd49867f"
+      "last_content_hash": "a751075"
     },
     "build/install/root/install/esp/userland/desktop.elf": {
       "ipo_ts": 1783158000775,
-      "edit_count": 23,
-      "last_lines": 426,
-      "last_ts": 1783259522343,
+      "edit_count": 27,
+      "last_lines": 389,
+      "last_ts": 1783328556495,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8e41984e"
+      "last_content_hash": "e781c606"
     },
     "build/install/root/install/esp/userland/devmgr.elf": {
       "ipo_ts": 1783158000784,
-      "edit_count": 15,
-      "last_lines": 207,
-      "last_ts": 1783258071758,
+      "edit_count": 18,
+      "last_lines": 212,
+      "last_ts": 1783328556507,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "3e9c6251"
+      "last_content_hash": "77575287"
     },
     "build/install/root/install/esp/userland/diskmgr.elf": {
       "ipo_ts": 1783158000793,
-      "edit_count": 15,
-      "last_lines": 210,
-      "last_ts": 1783258071771,
+      "edit_count": 18,
+      "last_lines": 212,
+      "last_ts": 1783328556522,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "caec8f1c"
+      "last_content_hash": "cdb1a982"
     },
     "build/install/root/install/esp/userland/fileman.elf": {
       "ipo_ts": 1783158000802,
-      "edit_count": 15,
-      "last_lines": 251,
-      "last_ts": 1783258071785,
+      "edit_count": 18,
+      "last_lines": 262,
+      "last_ts": 1783328556535,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "27742935"
+      "last_content_hash": "9cb9578c"
     },
     "build/install/root/install/esp/userland/hello.elf": {
       "ipo_ts": 1783158000811,
-      "edit_count": 15,
-      "last_lines": 207,
-      "last_ts": 1783258071798,
+      "edit_count": 18,
+      "last_lines": 211,
+      "last_ts": 1783328556548,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c9586497"
+      "last_content_hash": "72a4550b"
     },
     "build/install/root/install/esp/boot/grub/grub.cfg": {
       "ipo_ts": 1783158000816,
@@ -830,57 +830,57 @@
     },
     "build/install/root/install/esp/userland/minesweeper.elf": {
       "ipo_ts": 1783158000841,
-      "edit_count": 15,
-      "last_lines": 223,
-      "last_ts": 1783258073834,
+      "edit_count": 18,
+      "last_lines": 229,
+      "last_ts": 1783328558352,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "18b80ea8"
+      "last_content_hash": "fc73cbbd"
     },
     "build/install/root/install/esp/userland/notepad.elf": {
       "ipo_ts": 1783158000850,
-      "edit_count": 15,
-      "last_lines": 224,
-      "last_ts": 1783258075539,
+      "edit_count": 18,
+      "last_lines": 226,
+      "last_ts": 1783328558380,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f52ade60"
+      "last_content_hash": "471e032b"
     },
     "build/install/root/install/esp/userland/oobe.elf": {
       "ipo_ts": 1783158000859,
-      "edit_count": 15,
-      "last_lines": 207,
-      "last_ts": 1783258075552,
+      "edit_count": 18,
+      "last_lines": 217,
+      "last_ts": 1783328558395,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "40097f91"
+      "last_content_hash": "593044d3"
     },
     "build/install/root/install/esp/userland/osver.elf": {
       "ipo_ts": 1783158000867,
-      "edit_count": 15,
-      "last_lines": 203,
-      "last_ts": 1783258075585,
+      "edit_count": 18,
+      "last_lines": 213,
+      "last_ts": 1783328558411,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4b3005b7"
+      "last_content_hash": "5c65b503"
     },
     "build/install/root/install/esp/userland/run.elf": {
       "ipo_ts": 1783158000876,
-      "edit_count": 15,
-      "last_lines": 203,
-      "last_ts": 1783258075615,
+      "edit_count": 18,
+      "last_lines": 207,
+      "last_ts": 1783328558442,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "154edb79"
+      "last_content_hash": "29b5a9d8"
     },
     "build/install/root/install/esp/userland/settings.elf": {
       "ipo_ts": 1783158000884,
-      "edit_count": 15,
-      "last_lines": 212,
-      "last_ts": 1783258075637,
+      "edit_count": 18,
+      "last_lines": 206,
+      "last_ts": 1783328558458,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ff8bf59b"
+      "last_content_hash": "fbd4b542"
     },
     "build/install/root/install/esp/userland/shell.elf": {
       "ipo_ts": 1783158000892,
@@ -893,30 +893,30 @@
     },
     "build/install/root/install/esp/userland/taskmgr.elf": {
       "ipo_ts": 1783158000902,
-      "edit_count": 15,
-      "last_lines": 215,
-      "last_ts": 1783258075661,
+      "edit_count": 18,
+      "last_lines": 228,
+      "last_ts": 1783328558509,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "76c0100f"
+      "last_content_hash": "e1c56f63"
     },
     "build/install/root/install/esp/userland/terminal.elf": {
       "ipo_ts": 1783158000911,
-      "edit_count": 15,
-      "last_lines": 226,
-      "last_ts": 1783258075679,
+      "edit_count": 18,
+      "last_lines": 227,
+      "last_ts": 1783328558478,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bd2239a7"
+      "last_content_hash": "c3b0d991"
     },
     "build/install/root/install/esp/userland/uidemo.elf": {
       "ipo_ts": 1783158000920,
-      "edit_count": 15,
-      "last_lines": 212,
-      "last_ts": 1783258075695,
+      "edit_count": 18,
+      "last_lines": 222,
+      "last_ts": 1783328558493,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4de59726"
+      "last_content_hash": "578befc6"
     },
     "build/install/root/install/esp/system/fonts/cjk16.lbf": {
       "ipo_ts": 1783158001595,
@@ -956,12 +956,12 @@
     },
     "build/install/root.fat": {
       "ipo_ts": 1783158005029,
-      "edit_count": 30,
-      "last_lines": 41422,
-      "last_ts": 1783259526302,
+      "edit_count": 39,
+      "last_lines": 41554,
+      "last_ts": 1783328559652,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b9612af"
+      "last_content_hash": "8e8f4e16"
     },
     "build/installer-iso/boot/grub/grub.cfg": {
       "ipo_ts": 1783158005281,
@@ -983,21 +983,21 @@
     },
     "build/installer-iso/boot/loader.elf": {
       "ipo_ts": 1783158005295,
-      "edit_count": 29,
+      "edit_count": 38,
       "last_lines": 42,
-      "last_ts": 1783259528763,
+      "last_ts": 1783328562062,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "370a456a"
+      "last_content_hash": "867f1c4f"
     },
     "build/installer-iso/system/kernel.sys": {
       "ipo_ts": 1783158005307,
-      "edit_count": 29,
-      "last_lines": 555,
-      "last_ts": 1783259528776,
+      "edit_count": 38,
+      "last_lines": 582,
+      "last_ts": 1783328562089,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "349f376c"
+      "last_content_hash": "1ac4dfeb"
     },
     "build/installer-iso/system/middlelayer.sys": {
       "ipo_ts": 1783158005315,
@@ -1010,30 +1010,30 @@
     },
     "build/installer-iso/install/root.fat": {
       "ipo_ts": 1783158008283,
-      "edit_count": 30,
-      "last_lines": 41422,
-      "last_ts": 1783259529881,
+      "edit_count": 39,
+      "last_lines": 41554,
+      "last_ts": 1783328563666,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b9612af"
+      "last_content_hash": "8e8f4e16"
     },
     "build/installer-iso/boot/efiboot.img": {
       "ipo_ts": 1783158008511,
-      "edit_count": 30,
+      "edit_count": 39,
       "last_lines": 23375,
-      "last_ts": 1783259530158,
+      "last_ts": 1783328564024,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4431132d"
+      "last_content_hash": "7594e0bf"
     },
     "build/images/leonos4-installer.iso": {
       "ipo_ts": 1783158016145,
-      "edit_count": 108,
-      "last_lines": 88396,
-      "last_ts": 1783259539020,
+      "edit_count": 136,
+      "last_lines": 88555,
+      "last_ts": 1783328571099,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "90ea1ade"
+      "last_content_hash": "2d3b9751"
     },
     "build/integrity-test/esp/boot/grub/grub.cfg": {
       "ipo_ts": 1783158229527,
@@ -1415,12 +1415,12 @@
     },
     "docs/README.md": {
       "ipo_ts": 1783161608018,
-      "edit_count": 3,
-      "last_lines": 18,
-      "last_ts": 1783258028524,
+      "edit_count": 4,
+      "last_lines": 20,
+      "last_ts": 1783319063734,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2ae0ba41"
+      "last_content_hash": "40a53b50"
     },
     "docs/SYSCALLS.md": {
       "ipo_ts": 1783162131435,
@@ -1433,12 +1433,12 @@
     },
     "build/vmlog.txt": {
       "ipo_ts": 1783162293064,
-      "edit_count": 548,
-      "last_lines": 167,
-      "last_ts": 1783260899004,
+      "edit_count": 626,
+      "last_lines": 188,
+      "last_ts": 1783329193186,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b33e5c5b"
+      "last_content_hash": "e1dd9197"
     },
     "userland/apps/notepad/main.c": {
       "ipo_ts": 1783168963048,
@@ -1478,21 +1478,21 @@
     },
     "build/boot/loader.elf": {
       "ipo_ts": 1783222314871,
-      "edit_count": 45,
+      "edit_count": 60,
       "last_lines": 42,
-      "last_ts": 1783260726486,
+      "last_ts": 1783328552270,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "28a257c8"
+      "last_content_hash": "867f1c4f"
     },
     "build/esp/boot/loader.elf": {
       "ipo_ts": 1783222314880,
-      "edit_count": 45,
+      "edit_count": 60,
       "last_lines": 42,
-      "last_ts": 1783260726503,
+      "last_ts": 1783328552282,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "28a257c8"
+      "last_content_hash": "867f1c4f"
     },
     "userland/apps/fileman/main.c": {
       "ipo_ts": 1783223188172,
@@ -1514,120 +1514,126 @@
     },
     "userland/libc/src/ui.c": {
       "ipo_ts": 1783224428904,
-      "edit_count": 6,
-      "last_lines": 4105,
-      "last_ts": 1783250357276,
+      "edit_count": 10,
+      "last_lines": 4360,
+      "last_ts": 1783328534246,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "a9bc7619"
+      "last_content_hash": "15d6c944"
     },
     "build/obj/userlib/userland/libc/src/ui.c.o": {
       "ipo_ts": 1783224485805,
-      "edit_count": 3,
-      "last_lines": 149,
-      "last_ts": 1783251151003,
+      "edit_count": 6,
+      "last_lines": 155,
+      "last_ts": 1783328551685,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "446fd594"
+      "last_content_hash": "ef99cc89"
     },
     "build/esp/userland/login.elf": {
       "ipo_ts": 1783224549725,
-      "edit_count": 9,
-      "last_lines": 207,
-      "last_ts": 1783258069586,
+      "edit_count": 12,
+      "last_lines": 215,
+      "last_ts": 1783328552547,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d7c8dd03"
+      "last_content_hash": "d2f6e10f"
     },
     "build/userland/login.elf": {
       "ipo_ts": 1783224549954,
-      "edit_count": 9,
-      "last_lines": 207,
-      "last_ts": 1783258068942,
+      "edit_count": 12,
+      "last_lines": 215,
+      "last_ts": 1783328551769,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d7c8dd03"
+      "last_content_hash": "d2f6e10f"
     },
     "build/images/leonos4.vmdk": {
       "ipo_ts": 1783225279535,
-      "edit_count": 76,
-      "last_lines": 35087,
-      "last_ts": 1783260860239,
+      "edit_count": 119,
+      "last_lines": 35229,
+      "last_ts": 1783329193176,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f33468b8"
+      "last_content_hash": "de6f89bc"
     },
     "build/images/leonos4.vmdk.lck/M31081.lck": {
       "ipo_ts": 1783225707303,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783225707303,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "51e97585"
+      "last_content_hash": "51e97585",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/images/leonos4.vmdk.lck/M39151.lck": {
       "ipo_ts": 1783226118746,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783226118746,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "8c07d9e3"
+      "last_content_hash": "8c07d9e3",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/userland/login.elf": {
       "ipo_ts": 1783226207694,
-      "edit_count": 11,
-      "last_lines": 207,
-      "last_ts": 1783258073821,
+      "edit_count": 14,
+      "last_lines": 215,
+      "last_ts": 1783328556774,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d7c8dd03"
+      "last_content_hash": "d2f6e10f"
     },
     "build/install/root/install/esp/boot/loader.elf": {
       "ipo_ts": 1783226595146,
-      "edit_count": 25,
+      "edit_count": 34,
       "last_lines": 42,
-      "last_ts": 1783259521318,
+      "last_ts": 1783328554537,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "370a456a"
+      "last_content_hash": "867f1c4f"
     },
     "build/install/installer-efiboot.img": {
       "ipo_ts": 1783226600154,
-      "edit_count": 24,
+      "edit_count": 33,
       "last_lines": 23375,
-      "last_ts": 1783259528722,
+      "last_ts": 1783328562047,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4431132d"
+      "last_content_hash": "7594e0bf"
     },
     "build/images/leonos4.vmdk.lck/M07597.lck": {
       "ipo_ts": 1783227087166,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227087166,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "d78ff681"
+      "last_content_hash": "d78ff681",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "userland/apps/desktop/draw.c": {
       "ipo_ts": 1783227517033,
-      "edit_count": 5,
-      "last_lines": 600,
-      "last_ts": 1783231966854,
+      "edit_count": 8,
+      "last_lines": 690,
+      "last_ts": 1783328519404,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "35ec120f"
+      "last_content_hash": "15e1b740"
     },
     "userland/apps/desktop/desktop.h": {
       "ipo_ts": 1783227580095,
-      "edit_count": 6,
-      "last_lines": 470,
-      "last_ts": 1783259369171,
+      "edit_count": 7,
+      "last_lines": 476,
+      "last_ts": 1783326695970,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d11fefb0"
+      "last_content_hash": "ca66329d"
     },
     "tools/make_app_icons.py": {
       "ipo_ts": 1783227710514,
@@ -1643,216 +1649,264 @@
       "edit_count": 1,
       "last_lines": 117,
       "last_ts": 1783227859809,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "838c6d3f"
+      "last_content_hash": "838c6d3f",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/app.bmp": {
       "ipo_ts": 1783227897550,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897550,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "546986a5"
+      "last_content_hash": "546986a5",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/bugtest.bmp": {
       "ipo_ts": 1783227897557,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897557,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "55e07756"
+      "last_content_hash": "55e07756",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/calc.bmp": {
       "ipo_ts": 1783227897566,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897566,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "ccbcfa86"
+      "last_content_hash": "ccbcfa86",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/cjktest.bmp": {
       "ipo_ts": 1783227897574,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897574,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9438e60f"
+      "last_content_hash": "9438e60f",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/desktop.bmp": {
       "ipo_ts": 1783227897583,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897583,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "e7e2726"
+      "last_content_hash": "e7e2726",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/devmgr.bmp": {
       "ipo_ts": 1783227897590,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897590,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "5e442502"
+      "last_content_hash": "5e442502",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/diskmgr.bmp": {
       "ipo_ts": 1783227897597,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897597,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "72d16251"
+      "last_content_hash": "72d16251",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/fileman.bmp": {
       "ipo_ts": 1783227897605,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897605,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "b2c54b46"
+      "last_content_hash": "b2c54b46",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/hello.bmp": {
       "ipo_ts": 1783227897611,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897611,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "38424a74"
+      "last_content_hash": "38424a74",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/init.bmp": {
       "ipo_ts": 1783227897617,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897617,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "7a1146f8"
+      "last_content_hash": "7a1146f8",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/installer.bmp": {
       "ipo_ts": 1783227897624,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897624,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "6f6657bb"
+      "last_content_hash": "6f6657bb",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/login.bmp": {
       "ipo_ts": 1783227897631,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897631,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "aa6cfc10"
+      "last_content_hash": "aa6cfc10",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/memtest.bmp": {
       "ipo_ts": 1783227897638,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897638,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "fc139546"
+      "last_content_hash": "fc139546",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/minesweeper.bmp": {
       "ipo_ts": 1783227897644,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897644,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9219f0c4"
+      "last_content_hash": "9219f0c4",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/notepad.bmp": {
       "ipo_ts": 1783227897652,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897652,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9f0be505"
+      "last_content_hash": "9f0be505",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/oobe.bmp": {
       "ipo_ts": 1783227897660,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897660,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1972bf4a"
+      "last_content_hash": "1972bf4a",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/osver.bmp": {
       "ipo_ts": 1783227897668,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897668,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1e02890"
+      "last_content_hash": "1e02890",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/run.bmp": {
       "ipo_ts": 1783227897677,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897677,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "52906872"
+      "last_content_hash": "52906872",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/settings.bmp": {
       "ipo_ts": 1783227897684,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897684,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "ce094fa2"
+      "last_content_hash": "ce094fa2",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/shell.bmp": {
       "ipo_ts": 1783227897691,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897691,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1d7a55db"
+      "last_content_hash": "1d7a55db",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/taskmgr.bmp": {
       "ipo_ts": 1783227897699,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897699,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "883438ba"
+      "last_content_hash": "883438ba",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/terminal.bmp": {
       "ipo_ts": 1783227897706,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897706,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "776f6aff"
+      "last_content_hash": "776f6aff",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/esp/system/resources/icons/uidemo.bmp": {
       "ipo_ts": 1783227897713,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227897713,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "223405ca"
+      "last_content_hash": "223405ca",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/generated/app-icons/app.bmp": {
       "ipo_ts": 1783227897720,
@@ -2075,414 +2129,504 @@
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190252,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "546986a5"
+      "last_content_hash": "546986a5",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/bugtest.bmp": {
       "ipo_ts": 1783227898447,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190260,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "55e07756"
+      "last_content_hash": "55e07756",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/calc.bmp": {
       "ipo_ts": 1783227898455,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190267,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "ccbcfa86"
+      "last_content_hash": "ccbcfa86",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/cjktest.bmp": {
       "ipo_ts": 1783227898462,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190275,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9438e60f"
+      "last_content_hash": "9438e60f",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/userland/desktop.elf": {
       "ipo_ts": 1783227899904,
-      "edit_count": 15,
-      "last_lines": 426,
-      "last_ts": 1783259520810,
+      "edit_count": 19,
+      "last_lines": 389,
+      "last_ts": 1783328554450,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8e41984e"
+      "last_content_hash": "e781c606"
     },
     "build/install/root/system/resources/icons/desktop.bmp": {
       "ipo_ts": 1783227899936,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190284,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "e7e2726"
+      "last_content_hash": "e7e2726",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/devmgr.bmp": {
       "ipo_ts": 1783227899942,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190293,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "5e442502"
+      "last_content_hash": "5e442502",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/diskmgr.bmp": {
       "ipo_ts": 1783227899949,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190302,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "72d16251"
+      "last_content_hash": "72d16251",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/fileman.bmp": {
       "ipo_ts": 1783227899956,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190310,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "b2c54b46"
+      "last_content_hash": "b2c54b46",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/hello.bmp": {
       "ipo_ts": 1783227899964,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190318,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "38424a74"
+      "last_content_hash": "38424a74",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/init.bmp": {
       "ipo_ts": 1783227899971,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190326,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "7a1146f8"
+      "last_content_hash": "7a1146f8",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/installer.bmp": {
       "ipo_ts": 1783227899977,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190334,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "6f6657bb"
+      "last_content_hash": "6f6657bb",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/login.bmp": {
       "ipo_ts": 1783227899984,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190445,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "aa6cfc10"
+      "last_content_hash": "aa6cfc10",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/memtest.bmp": {
       "ipo_ts": 1783227899991,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190360,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "fc139546"
+      "last_content_hash": "fc139546",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/minesweeper.bmp": {
       "ipo_ts": 1783227899998,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190369,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9219f0c4"
+      "last_content_hash": "9219f0c4",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/notepad.bmp": {
       "ipo_ts": 1783227900005,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190378,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9f0be505"
+      "last_content_hash": "9f0be505",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/oobe.bmp": {
       "ipo_ts": 1783227900012,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190387,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1972bf4a"
+      "last_content_hash": "1972bf4a",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/run.bmp": {
       "ipo_ts": 1783227900046,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190405,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "52906872"
+      "last_content_hash": "52906872",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/settings.bmp": {
       "ipo_ts": 1783227900053,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190414,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "ce094fa2"
+      "last_content_hash": "ce094fa2",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/shell.bmp": {
       "ipo_ts": 1783227900060,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190424,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1d7a55db"
+      "last_content_hash": "1d7a55db",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/taskmgr.bmp": {
       "ipo_ts": 1783227900067,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190431,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "883438ba"
+      "last_content_hash": "883438ba",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/terminal.bmp": {
       "ipo_ts": 1783227900074,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190438,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "776f6aff"
+      "last_content_hash": "776f6aff",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/system/resources/icons/osver.bmp": {
       "ipo_ts": 1783227900098,
       "edit_count": 2,
       "last_lines": 1,
       "last_ts": 1783230190395,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1e02890"
+      "last_content_hash": "1e02890",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/app.bmp": {
       "ipo_ts": 1783227903337,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903337,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "546986a5"
+      "last_content_hash": "546986a5",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/bugtest.bmp": {
       "ipo_ts": 1783227903346,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903346,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "55e07756"
+      "last_content_hash": "55e07756",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/calc.bmp": {
       "ipo_ts": 1783227903355,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903355,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "ccbcfa86"
+      "last_content_hash": "ccbcfa86",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/desktop.bmp": {
       "ipo_ts": 1783227903408,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903408,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "e7e2726"
+      "last_content_hash": "e7e2726",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/devmgr.bmp": {
       "ipo_ts": 1783227903416,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903416,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "5e442502"
+      "last_content_hash": "5e442502",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/diskmgr.bmp": {
       "ipo_ts": 1783227903425,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903425,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "72d16251"
+      "last_content_hash": "72d16251",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/fileman.bmp": {
       "ipo_ts": 1783227903434,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903434,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "b2c54b46"
+      "last_content_hash": "b2c54b46",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/hello.bmp": {
       "ipo_ts": 1783227903443,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903443,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "38424a74"
+      "last_content_hash": "38424a74",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/init.bmp": {
       "ipo_ts": 1783227903466,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903466,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "7a1146f8"
+      "last_content_hash": "7a1146f8",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/installer.bmp": {
       "ipo_ts": 1783227903477,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903477,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "6f6657bb"
+      "last_content_hash": "6f6657bb",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/login.bmp": {
       "ipo_ts": 1783227903487,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903487,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "aa6cfc10"
+      "last_content_hash": "aa6cfc10",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/memtest.bmp": {
       "ipo_ts": 1783227903497,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903497,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "fc139546"
+      "last_content_hash": "fc139546",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/cjktest.bmp": {
       "ipo_ts": 1783227903507,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903507,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9438e60f"
+      "last_content_hash": "9438e60f",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/notepad.bmp": {
       "ipo_ts": 1783227903517,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903517,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9f0be505"
+      "last_content_hash": "9f0be505",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/oobe.bmp": {
       "ipo_ts": 1783227903536,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903536,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1972bf4a"
+      "last_content_hash": "1972bf4a",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/osver.bmp": {
       "ipo_ts": 1783227903546,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903546,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1e02890"
+      "last_content_hash": "1e02890",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/run.bmp": {
       "ipo_ts": 1783227903562,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903562,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "52906872"
+      "last_content_hash": "52906872",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/settings.bmp": {
       "ipo_ts": 1783227903577,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903577,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "ce094fa2"
+      "last_content_hash": "ce094fa2",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/shell.bmp": {
       "ipo_ts": 1783227903591,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903591,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1d7a55db"
+      "last_content_hash": "1d7a55db",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/taskmgr.bmp": {
       "ipo_ts": 1783227903608,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903608,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "883438ba"
+      "last_content_hash": "883438ba",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/terminal.bmp": {
       "ipo_ts": 1783227903619,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903619,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "776f6aff"
+      "last_content_hash": "776f6aff",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/uidemo.bmp": {
       "ipo_ts": 1783227903630,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903630,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "223405ca"
+      "last_content_hash": "223405ca",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/system/resources/icons/minesweeper.bmp": {
       "ipo_ts": 1783227903639,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783227903639,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9219f0c4"
+      "last_content_hash": "9219f0c4",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "kernel/ntclks/include/ntclks/gui_ipc.h": {
       "ipo_ts": 1783229455051,
@@ -2702,18 +2846,18 @@
     },
     "build/install/root/userland/desktop.bmp": {
       "ipo_ts": 1783230188661,
-      "edit_count": 5,
+      "edit_count": 6,
       "last_lines": 1,
-      "last_ts": 1783256662138,
+      "last_ts": 1783327027396,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "5e6ed206"
     },
     "build/install/root/userland/installer.bmp": {
       "ipo_ts": 1783230188669,
-      "edit_count": 5,
+      "edit_count": 7,
       "last_lines": 1,
-      "last_ts": 1783256662169,
+      "last_ts": 1783328554525,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "46a5b55a"
@@ -2741,9 +2885,11 @@
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783230190506,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "223405ca"
+      "last_content_hash": "223405ca",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/install/root/install/esp/userland/cjktest.bmp": {
       "ipo_ts": 1783230192230,
@@ -2963,84 +3109,98 @@
     },
     "build/install/root/userland/installer.elf": {
       "ipo_ts": 1783230318706,
-      "edit_count": 9,
-      "last_lines": 249,
-      "last_ts": 1783258071607,
+      "edit_count": 12,
+      "last_lines": 248,
+      "last_ts": 1783328554466,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7e81bf94"
+      "last_content_hash": "e150dd3b"
     },
     "build/images/leonos4.vmdk.lck/M33634.lck": {
       "ipo_ts": 1783230767980,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783230767980,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "d6b9f3f4"
+      "last_content_hash": "d6b9f3f4",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/tmp-icon-check/desktop.bmp": {
       "ipo_ts": 1783231829416,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783231829416,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "5e6ed206"
+      "last_content_hash": "5e6ed206",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/tmp-icon-check/fileman.bmp": {
       "ipo_ts": 1783231829421,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783231829421,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "63fde286"
+      "last_content_hash": "63fde286",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/tmp-icon-check/taskmgr.bmp": {
       "ipo_ts": 1783231829427,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783231829427,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "b717a056"
+      "last_content_hash": "b717a056",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/obj/user-desktop/userland/apps/desktop/draw.c.o": {
       "ipo_ts": 1783231980631,
-      "edit_count": 1,
-      "last_lines": 25,
-      "last_ts": 1783231980631,
+      "edit_count": 4,
+      "last_lines": 28,
+      "last_ts": 1783328551665,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "10b3f9ef"
+      "last_content_hash": "86ed888f"
     },
     "build/images/leonos4.vmdk.lck/M55074.lck": {
       "ipo_ts": 1783232365881,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783232365881,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "f2ad7d6e"
+      "last_content_hash": "f2ad7d6e",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/images/leonos4.vmdk.lck/M56364.lck": {
       "ipo_ts": 1783233307916,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783233307916,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "70d5ed29"
+      "last_content_hash": "70d5ed29",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/images/leonos4.vmdk.lck/M57953.lck": {
       "ipo_ts": 1783233345280,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783233345280,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "d7974c19"
+      "last_content_hash": "d7974c19",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "userland/apps/installer/main.c": {
       "ipo_ts": 1783233982458,
@@ -3056,9 +3216,11 @@
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783245321945,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "2654e02a"
+      "last_content_hash": "2654e02a",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "kernel/ntclks/include/ntclks/sched.h": {
       "ipo_ts": 1783246337765,
@@ -3116,21 +3278,23 @@
     },
     "build/userland/installer.elf": {
       "ipo_ts": 1783246534369,
-      "edit_count": 6,
-      "last_lines": 249,
-      "last_ts": 1783258069422,
+      "edit_count": 9,
+      "last_lines": 248,
+      "last_ts": 1783328552903,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7e81bf94"
+      "last_content_hash": "e150dd3b"
     },
     "build/images/leonos4.vmdk.lck/M64913.lck": {
       "ipo_ts": 1783246933461,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783246933461,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9ea95b66"
+      "last_content_hash": "9ea95b66",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "kernel/ntclks/arch/x86_64/idt.c": {
       "ipo_ts": 1783248122156,
@@ -3227,18 +3391,22 @@
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783249101743,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "19b6aa3a"
+      "last_content_hash": "19b6aa3a",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "tools/__pycache__/make_cjk16_font.cpython-312.pyc": {
       "ipo_ts": 1783249886343,
       "edit_count": 2,
       "last_lines": 70,
       "last_ts": 1783250339480,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "66cd9af0"
+      "last_content_hash": "66cd9af0",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "tools/make_cjk16_font.py": {
       "ipo_ts": 1783250260641,
@@ -3281,9 +3449,11 @@
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783251436673,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "1eb6718b"
+      "last_content_hash": "1eb6718b",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "kernel/ntclks/arch/x86_64/pci.c": {
       "ipo_ts": 1783251922967,
@@ -3323,12 +3493,12 @@
     },
     "kernel/ntclks/drivers/e1000.c": {
       "ipo_ts": 1783252226341,
-      "edit_count": 4,
-      "last_lines": 428,
-      "last_ts": 1783260700484,
+      "edit_count": 5,
+      "last_lines": 419,
+      "last_ts": 1783310562697,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "3b8342e1"
+      "last_content_hash": "1ec695e"
     },
     "kernel/ntclks/include/ntclks/e1000.h": {
       "ipo_ts": 1783252226359,
@@ -3350,21 +3520,21 @@
     },
     "kernel/ntclks/net.c": {
       "ipo_ts": 1783252226408,
-      "edit_count": 15,
-      "last_lines": 1609,
-      "last_ts": 1783259044618,
+      "edit_count": 20,
+      "last_lines": 1691,
+      "last_ts": 1783312377801,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "729a5c76"
+      "last_content_hash": "3c939830"
     },
     "userland/apps/ping/main.c": {
       "ipo_ts": 1783252458119,
-      "edit_count": 3,
-      "last_lines": 311,
-      "last_ts": 1783254401418,
+      "edit_count": 4,
+      "last_lines": 315,
+      "last_ts": 1783312498276,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bc5c615b"
+      "last_content_hash": "c4a73bda"
     },
     "build/obj/kernel/kernel/ntclks/arch/x86_64/pci.c.o": {
       "ipo_ts": 1783252590314,
@@ -3377,30 +3547,30 @@
     },
     "build/obj/kernel/kernel/ntclks/drivers/e1000.c.o": {
       "ipo_ts": 1783252590322,
-      "edit_count": 4,
-      "last_lines": 20,
-      "last_ts": 1783260725537,
+      "edit_count": 5,
+      "last_lines": 19,
+      "last_ts": 1783310781454,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "dfb4bd69"
+      "last_content_hash": "9bab3234"
     },
     "build/obj/kernel/kernel/ntclks/net.c.o": {
       "ipo_ts": 1783252590327,
-      "edit_count": 7,
-      "last_lines": 53,
-      "last_ts": 1783259061989,
+      "edit_count": 9,
+      "last_lines": 63,
+      "last_ts": 1783312602182,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "aa9caedf"
+      "last_content_hash": "98fa1fcb"
     },
     "build/obj/user-ping/userland/apps/ping/main.c.o": {
       "ipo_ts": 1783252590336,
-      "edit_count": 3,
+      "edit_count": 4,
       "last_lines": 29,
-      "last_ts": 1783254420132,
+      "last_ts": 1783312602283,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "44065719"
+      "last_content_hash": "3da9c378"
     },
     "build/obj/kernel/kernel/ntclks/drivers/storage.c.o": {
       "ipo_ts": 1783252590349,
@@ -3431,12 +3601,12 @@
     },
     "build/userland/ping.elf": {
       "ipo_ts": 1783252590481,
-      "edit_count": 6,
-      "last_lines": 203,
-      "last_ts": 1783258069017,
+      "edit_count": 10,
+      "last_lines": 217,
+      "last_ts": 1783328552959,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d35a3c8"
+      "last_content_hash": "cd05038e"
     },
     "build/generated/app-icons/ping.bmp": {
       "ipo_ts": 1783252673165,
@@ -3458,12 +3628,12 @@
     },
     "build/esp/userland/ping.elf": {
       "ipo_ts": 1783252673712,
-      "edit_count": 4,
-      "last_lines": 203,
-      "last_ts": 1783258069660,
+      "edit_count": 8,
+      "last_lines": 217,
+      "last_ts": 1783328552679,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d35a3c8"
+      "last_content_hash": "cd05038e"
     },
     "build/install/root/install/esp/userland/ping.bmp": {
       "ipo_ts": 1783252678493,
@@ -3476,12 +3646,12 @@
     },
     "build/install/root/install/esp/userland/ping.elf": {
       "ipo_ts": 1783252678503,
-      "edit_count": 4,
-      "last_lines": 203,
-      "last_ts": 1783258075599,
+      "edit_count": 8,
+      "last_lines": 217,
+      "last_ts": 1783328558427,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d35a3c8"
+      "last_content_hash": "cd05038e"
     },
     "build/logs/e1000-smoke.log": {
       "ipo_ts": 1783252823680,
@@ -3512,21 +3682,21 @@
     },
     "userland/apps/netctl/main.c": {
       "ipo_ts": 1783254352159,
-      "edit_count": 1,
-      "last_lines": 340,
-      "last_ts": 1783254352159,
+      "edit_count": 2,
+      "last_lines": 345,
+      "last_ts": 1783312549035,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "da8bc362"
+      "last_content_hash": "4870ffb1"
     },
     "build/obj/user-netctl/userland/apps/netctl/main.c.o": {
       "ipo_ts": 1783254420099,
-      "edit_count": 1,
-      "last_lines": 35,
-      "last_ts": 1783254420099,
+      "edit_count": 2,
+      "last_lines": 33,
+      "last_ts": 1783312602271,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "69ac76c8"
+      "last_content_hash": "d063b5be"
     },
     "build/generated/app-icons/netctl.bmp": {
       "ipo_ts": 1783254420315,
@@ -3548,12 +3718,12 @@
     },
     "build/userland/netctl.elf": {
       "ipo_ts": 1783254420805,
-      "edit_count": 3,
-      "last_lines": 223,
-      "last_ts": 1783258069435,
+      "edit_count": 7,
+      "last_lines": 224,
+      "last_ts": 1783328552937,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "10a1bfde"
+      "last_content_hash": "7a3b6fbd"
     },
     "build/esp/system/middlelayer.sys": {
       "ipo_ts": 1783254481173,
@@ -3566,12 +3736,12 @@
     },
     "build/esp/userland/netctl.elf": {
       "ipo_ts": 1783254481704,
-      "edit_count": 3,
-      "last_lines": 223,
-      "last_ts": 1783258069613,
+      "edit_count": 7,
+      "last_lines": 224,
+      "last_ts": 1783328552586,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "10a1bfde"
+      "last_content_hash": "7a3b6fbd"
     },
     "build/install/root/install/esp/userland/netctl.bmp": {
       "ipo_ts": 1783254490905,
@@ -3584,12 +3754,12 @@
     },
     "build/install/root/install/esp/userland/netctl.elf": {
       "ipo_ts": 1783254490931,
-      "edit_count": 3,
-      "last_lines": 223,
-      "last_ts": 1783258073846,
+      "edit_count": 7,
+      "last_lines": 224,
+      "last_ts": 1783328558366,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "10a1bfde"
+      "last_content_hash": "7a3b6fbd"
     },
     "build/logs/net-dhcp-dns-smoke.log": {
       "ipo_ts": 1783254629021,
@@ -3605,18 +3775,20 @@
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783255490639,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "8b51e95a"
+      "last_content_hash": "8b51e95a",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "userland/apps/httpget/main.c": {
       "ipo_ts": 1783256484479,
-      "edit_count": 1,
-      "last_lines": 373,
-      "last_ts": 1783256484479,
+      "edit_count": 2,
+      "last_lines": 377,
+      "last_ts": 1783312390028,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "1f8f47f5"
+      "last_content_hash": "d22361b4"
     },
     "build/generated/app-icons/httpget.bmp": {
       "ipo_ts": 1783256655313,
@@ -3629,12 +3801,12 @@
     },
     "build/obj/user-httpget/userland/apps/httpget/main.c.o": {
       "ipo_ts": 1783256655340,
-      "edit_count": 1,
+      "edit_count": 2,
       "last_lines": 25,
-      "last_ts": 1783256655340,
+      "last_ts": 1783312602245,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b801d881"
+      "last_content_hash": "75110a20"
     },
     "build/esp/userland/httpget.bmp": {
       "ipo_ts": 1783256655958,
@@ -3647,21 +3819,21 @@
     },
     "build/userland/httpget.elf": {
       "ipo_ts": 1783256656979,
-      "edit_count": 2,
-      "last_lines": 209,
-      "last_ts": 1783258069406,
+      "edit_count": 6,
+      "last_lines": 215,
+      "last_ts": 1783328552886,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2b1df742"
+      "last_content_hash": "517ba019"
     },
     "build/esp/userland/httpget.elf": {
       "ipo_ts": 1783256657489,
-      "edit_count": 2,
-      "last_lines": 209,
-      "last_ts": 1783258069572,
+      "edit_count": 6,
+      "last_lines": 215,
+      "last_ts": 1783328552527,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2b1df742"
+      "last_content_hash": "517ba019"
     },
     "build/install/root/install/esp/userland/httpget.bmp": {
       "ipo_ts": 1783256666505,
@@ -3674,21 +3846,23 @@
     },
     "build/install/root/install/esp/userland/httpget.elf": {
       "ipo_ts": 1783256666518,
-      "edit_count": 2,
-      "last_lines": 209,
-      "last_ts": 1783258075526,
+      "edit_count": 6,
+      "last_lines": 215,
+      "last_ts": 1783328556757,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2b1df742"
+      "last_content_hash": "517ba019"
     },
     "build/images/leonos4.vmdk.lck/M26771.lck": {
       "ipo_ts": 1783257013566,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783257013566,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "238b22ce"
+      "last_content_hash": "238b22ce",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/deps/litehtml-src/.clang-format": {
       "ipo_ts": 1783257169822,
@@ -5807,21 +5981,21 @@
     },
     "userland/apps/browser/main.c": {
       "ipo_ts": 1783257916579,
-      "edit_count": 2,
-      "last_lines": 1495,
-      "last_ts": 1783258428558,
+      "edit_count": 28,
+      "last_lines": 1525,
+      "last_ts": 1783324966842,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "3ef90a90"
+      "last_content_hash": "46b2134"
     },
     "docs/BROWSER.md": {
       "ipo_ts": 1783258021299,
-      "edit_count": 1,
-      "last_lines": 70,
-      "last_ts": 1783258021299,
+      "edit_count": 4,
+      "last_lines": 84,
+      "last_ts": 1783324869980,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2827ffdf"
+      "last_content_hash": "df7f13c1"
     },
     "build/generated/app-icons/browser.bmp": {
       "ipo_ts": 1783258068316,
@@ -5834,12 +6008,12 @@
     },
     "build/obj/user-browser/userland/apps/browser/main.c.o": {
       "ipo_ts": 1783258068330,
-      "edit_count": 2,
-      "last_lines": 51,
-      "last_ts": 1783258441869,
+      "edit_count": 10,
+      "last_lines": 57,
+      "last_ts": 1783324998176,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "1271877e"
+      "last_content_hash": "67145b6f"
     },
     "build/esp/userland/browser.bmp": {
       "ipo_ts": 1783258069354,
@@ -5852,21 +6026,21 @@
     },
     "build/esp/userland/browser.elf": {
       "ipo_ts": 1783258069371,
-      "edit_count": 2,
-      "last_lines": 237,
-      "last_ts": 1783258441831,
+      "edit_count": 13,
+      "last_lines": 290,
+      "last_ts": 1783328552321,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ede2f593"
+      "last_content_hash": "ecdce826"
     },
     "build/userland/browser.elf": {
       "ipo_ts": 1783258069382,
-      "edit_count": 2,
-      "last_lines": 237,
-      "last_ts": 1783258441892,
+      "edit_count": 14,
+      "last_lines": 290,
+      "last_ts": 1783328552798,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ede2f593"
+      "last_content_hash": "ecdce826"
     },
     "build/install/root/install/esp/userland/browser.bmp": {
       "ipo_ts": 1783258071684,
@@ -5879,39 +6053,45 @@
     },
     "build/install/root/install/esp/userland/browser.elf": {
       "ipo_ts": 1783258071696,
-      "edit_count": 1,
-      "last_lines": 235,
-      "last_ts": 1783258071696,
+      "edit_count": 9,
+      "last_lines": 290,
+      "last_ts": 1783328554577,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "a3ebf6a0"
+      "last_content_hash": "ecdce826"
     },
     "build/images/leonos4.vmdk.lck/M49760.lck": {
       "ipo_ts": 1783258640253,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783258640253,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "9923744f"
+      "last_content_hash": "9923744f",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/images/leonos4.vmdk.lck/M24448.lck": {
       "ipo_ts": 1783259184931,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783259184931,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "566f4d6f"
+      "last_content_hash": "566f4d6f",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/images/leonos4.vmdk.lck/M14340.lck": {
       "ipo_ts": 1783259958683,
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783259958683,
-      "delisted": false,
+      "delisted": true,
       "last_source": "onEdit",
-      "last_content_hash": "7a47cfad"
+      "last_content_hash": "7a47cfad",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
     },
     "build/net-debug.pcap": {
       "ipo_ts": 1783260361468,
@@ -5927,9 +6107,2531 @@
       "edit_count": 1,
       "last_lines": 1,
       "last_ts": 1783260848181,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "da3749f9",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/images/leonos4.vmdk.lck/M16613.lck": {
+      "ipo_ts": 1783309056928,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783309056928,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "2bb70b54",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/images/leonos4.vmdk.lck/M49882.lck": {
+      "ipo_ts": 1783311437184,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783311437184,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "6a609c94",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/http-debug.pcap": {
+      "ipo_ts": 1783311920929,
+      "edit_count": 2,
+      "last_lines": 76,
+      "last_ts": 1783312004199,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "da3749f9"
+      "last_content_hash": "e56cbabc"
+    },
+    "userland/apps/init/main.c": {
+      "ipo_ts": 1783312283182,
+      "edit_count": 1,
+      "last_lines": 53,
+      "last_ts": 1783312283182,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d2c57443"
+    },
+    "build/obj/user-init/userland/apps/init/main.c.o": {
+      "ipo_ts": 1783312602258,
+      "edit_count": 1,
+      "last_lines": 20,
+      "last_ts": 1783312602258,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "561f6484"
+    },
+    "build/images/leonos4.vmdk.lck/M50076.lck": {
+      "ipo_ts": 1783313464055,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783313464055,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "e1d90095",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/images/leonos4.vmdk.lck/M58485.lck": {
+      "ipo_ts": 1783314473436,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783314473436,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "980bacd1",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/images/leonos4.vmdk.lck/M53161.lck": {
+      "ipo_ts": 1783315639591,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783315639591,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "d8727342",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/images/leonos4.vmdk.lck/M65339.lck": {
+      "ipo_ts": 1783316484991,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783316484991,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "1c363217",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/images/leonos4.vmdk.lck/M14487.lck": {
+      "ipo_ts": 1783317902306,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783317902306,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "ff0fb7af",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "third_party/litehtml/.git": {
+      "ipo_ts": 1783318126523,
+      "edit_count": 2,
+      "last_lines": 1,
+      "last_ts": 1783318135232,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "334da71e"
+    },
+    "third_party/litehtml/.clang-format": {
+      "ipo_ts": 1783318132981,
+      "edit_count": 1,
+      "last_lines": 61,
+      "last_ts": 1783318132981,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f44b2465"
+    },
+    "third_party/litehtml/.clang-tidy": {
+      "ipo_ts": 1783318132992,
+      "edit_count": 1,
+      "last_lines": 86,
+      "last_ts": 1783318132992,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "85dc8a0c"
+    },
+    "third_party/litehtml/.github/FUNDING.yml": {
+      "ipo_ts": 1783318133002,
+      "edit_count": 1,
+      "last_lines": 13,
+      "last_ts": 1783318133002,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "1f517ebd"
+    },
+    "third_party/litehtml/.github/workflows/cmake.yml": {
+      "ipo_ts": 1783318133013,
+      "edit_count": 1,
+      "last_lines": 45,
+      "last_ts": 1783318133013,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c9a8c219"
+    },
+    "third_party/litehtml/.gitignore": {
+      "ipo_ts": 1783318133021,
+      "edit_count": 1,
+      "last_lines": 192,
+      "last_ts": 1783318133021,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b69b638f"
+    },
+    "third_party/litehtml/CMakeLists.txt": {
+      "ipo_ts": 1783318133031,
+      "edit_count": 1,
+      "last_lines": 238,
+      "last_ts": 1783318133031,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9aa87999"
+    },
+    "third_party/litehtml/LICENSE": {
+      "ipo_ts": 1783318133042,
+      "edit_count": 1,
+      "last_lines": 24,
+      "last_ts": 1783318133042,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3eb11b25"
+    },
+    "third_party/litehtml/README.md": {
+      "ipo_ts": 1783318133051,
+      "edit_count": 1,
+      "last_lines": 38,
+      "last_ts": 1783318133051,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c7318f95"
+    },
+    "third_party/litehtml/cmake/litehtmlConfig.cmake": {
+      "ipo_ts": 1783318133061,
+      "edit_count": 1,
+      "last_lines": 3,
+      "last_ts": 1783318133061,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c62c606"
+    },
+    "third_party/litehtml/containers/cairo/cairo_borders.cpp": {
+      "ipo_ts": 1783318133073,
+      "edit_count": 1,
+      "last_lines": 318,
+      "last_ts": 1783318133073,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e2bc5902"
+    },
+    "third_party/litehtml/containers/cairo/cairo_borders.h": {
+      "ipo_ts": 1783318133082,
+      "edit_count": 1,
+      "last_lines": 74,
+      "last_ts": 1783318133082,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c65bba66"
+    },
+    "third_party/litehtml/containers/cairo/cairo_images_cache.h": {
+      "ipo_ts": 1783318133093,
+      "edit_count": 1,
+      "last_lines": 103,
+      "last_ts": 1783318133093,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b8115bb1"
+    },
+    "third_party/litehtml/containers/cairo/conic_gradient.cpp": {
+      "ipo_ts": 1783318133103,
+      "edit_count": 1,
+      "last_lines": 95,
+      "last_ts": 1783318133103,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "90310f97"
+    },
+    "third_party/litehtml/containers/cairo/conic_gradient.h": {
+      "ipo_ts": 1783318133114,
+      "edit_count": 1,
+      "last_lines": 12,
+      "last_ts": 1783318133114,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "33f30adc"
+    },
+    "third_party/litehtml/containers/cairo/container_cairo.cpp": {
+      "ipo_ts": 1783318133131,
+      "edit_count": 1,
+      "last_lines": 767,
+      "last_ts": 1783318133131,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6dd877a9"
+    },
+    "third_party/litehtml/containers/cairo/container_cairo.h": {
+      "ipo_ts": 1783318133141,
+      "edit_count": 1,
+      "last_lines": 94,
+      "last_ts": 1783318133141,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a2692144"
+    },
+    "third_party/litehtml/containers/cairo/container_cairo_pango.cpp": {
+      "ipo_ts": 1783318133151,
+      "edit_count": 1,
+      "last_lines": 454,
+      "last_ts": 1783318133151,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c95b7d0"
+    },
+    "third_party/litehtml/containers/cairo/container_cairo_pango.h": {
+      "ipo_ts": 1783318133161,
+      "edit_count": 1,
+      "last_lines": 52,
+      "last_ts": 1783318133161,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "29d846d4"
+    },
+    "third_party/litehtml/containers/cairo/render2png.cpp": {
+      "ipo_ts": 1783318133170,
+      "edit_count": 1,
+      "last_lines": 360,
+      "last_ts": 1783318133170,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "30ee3cbf"
+    },
+    "third_party/litehtml/containers/cairo/render2png.h": {
+      "ipo_ts": 1783318133179,
+      "edit_count": 1,
+      "last_lines": 59,
+      "last_ts": 1783318133179,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f0b37131"
+    },
+    "third_party/litehtml/containers/haiku/container_haiku.cpp": {
+      "ipo_ts": 1783318133188,
+      "edit_count": 1,
+      "last_lines": 557,
+      "last_ts": 1783318133188,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b16903f3"
+    },
+    "third_party/litehtml/containers/haiku/container_haiku.h": {
+      "ipo_ts": 1783318133206,
+      "edit_count": 1,
+      "last_lines": 103,
+      "last_ts": 1783318133206,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "bd92e17b"
+    },
+    "third_party/litehtml/containers/test/Bitmap.cpp": {
+      "ipo_ts": 1783318133215,
+      "edit_count": 1,
+      "last_lines": 185,
+      "last_ts": 1783318133215,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9a855528"
+    },
+    "third_party/litehtml/containers/test/Bitmap.h": {
+      "ipo_ts": 1783318133225,
+      "edit_count": 1,
+      "last_lines": 96,
+      "last_ts": 1783318133225,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "667057aa"
+    },
+    "third_party/litehtml/containers/test/Font.cpp": {
+      "ipo_ts": 1783318133236,
+      "edit_count": 1,
+      "last_lines": 278,
+      "last_ts": 1783318133236,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8c0ab732"
+    },
+    "third_party/litehtml/containers/test/Font.h": {
+      "ipo_ts": 1783318133246,
+      "edit_count": 1,
+      "last_lines": 46,
+      "last_ts": 1783318133246,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "523d9511"
+    },
+    "third_party/litehtml/containers/test/canvas_ity.hpp": {
+      "ipo_ts": 1783318133258,
+      "edit_count": 1,
+      "last_lines": 3654,
+      "last_ts": 1783318133258,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "1b48a117"
+    },
+    "third_party/litehtml/containers/test/fonts/OFL.txt": {
+      "ipo_ts": 1783318133266,
+      "edit_count": 1,
+      "last_lines": 94,
+      "last_ts": 1783318133266,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "4f5c9088"
+    },
+    "third_party/litehtml/containers/test/fonts/ahem-README": {
+      "ipo_ts": 1783318133275,
+      "edit_count": 1,
+      "last_lines": 49,
+      "last_ts": 1783318133275,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "84c2e7cc"
+    },
+    "third_party/litehtml/containers/test/fonts/ahem.ttf": {
+      "ipo_ts": 1783318133283,
+      "edit_count": 1,
+      "last_lines": 31,
+      "last_ts": 1783318133283,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "524f26"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-12px.yaff": {
+      "ipo_ts": 1783318133303,
+      "edit_count": 1,
+      "last_lines": 1478,
+      "last_ts": 1783318133303,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "638841ae"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-14px.yaff": {
+      "ipo_ts": 1783318133312,
+      "edit_count": 1,
+      "last_lines": 1672,
+      "last_ts": 1783318133312,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "1c6126d4"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-16px-bold.yaff": {
+      "ipo_ts": 1783318133322,
+      "edit_count": 1,
+      "last_lines": 1866,
+      "last_ts": 1783318133322,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "454793da"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-16px.yaff": {
+      "ipo_ts": 1783318133330,
+      "edit_count": 1,
+      "last_lines": 1866,
+      "last_ts": 1783318133330,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "5a262880"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-18px.yaff": {
+      "ipo_ts": 1783318133340,
+      "edit_count": 1,
+      "last_lines": 2060,
+      "last_ts": 1783318133340,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ea13cb41"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-20px.yaff": {
+      "ipo_ts": 1783318133350,
+      "edit_count": 1,
+      "last_lines": 2254,
+      "last_ts": 1783318133350,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "80ed58ea"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-22px.yaff": {
+      "ipo_ts": 1783318133359,
+      "edit_count": 1,
+      "last_lines": 2448,
+      "last_ts": 1783318133359,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "98af152f"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-24px.yaff": {
+      "ipo_ts": 1783318133369,
+      "edit_count": 1,
+      "last_lines": 2642,
+      "last_ts": 1783318133369,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "fe2a204b"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-28px.yaff": {
+      "ipo_ts": 1783318133380,
+      "edit_count": 1,
+      "last_lines": 3030,
+      "last_ts": 1783318133380,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e7dedc4d"
+    },
+    "third_party/litehtml/containers/test/fonts/terminus-32px.yaff": {
+      "ipo_ts": 1783318133389,
+      "edit_count": 1,
+      "last_lines": 3418,
+      "last_ts": 1783318133389,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "2a686281"
+    },
+    "third_party/litehtml/containers/test/lodepng.cpp": {
+      "ipo_ts": 1783318133401,
+      "edit_count": 1,
+      "last_lines": 9112,
+      "last_ts": 1783318133401,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "86066286"
+    },
+    "third_party/litehtml/containers/test/lodepng.h": {
+      "ipo_ts": 1783318133410,
+      "edit_count": 1,
+      "last_lines": 2052,
+      "last_ts": 1783318133410,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "2af4c397"
+    },
+    "third_party/litehtml/containers/test/test_container.cpp": {
+      "ipo_ts": 1783318133419,
+      "edit_count": 1,
+      "last_lines": 409,
+      "last_ts": 1783318133419,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "785c7d6e"
+    },
+    "third_party/litehtml/containers/test/test_container.h": {
+      "ipo_ts": 1783318133428,
+      "edit_count": 1,
+      "last_lines": 64,
+      "last_ts": 1783318133428,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9d7d027b"
+    },
+    "third_party/litehtml/containers/windows/cairo/cairo_font.cpp": {
+      "ipo_ts": 1783318133438,
+      "edit_count": 1,
+      "last_lines": 384,
+      "last_ts": 1783318133438,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e2e1b6e2"
+    },
+    "third_party/litehtml/containers/windows/cairo/cairo_font.h": {
+      "ipo_ts": 1783318133448,
+      "edit_count": 1,
+      "last_lines": 123,
+      "last_ts": 1783318133448,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "56a1fa62"
+    },
+    "third_party/litehtml/containers/windows/cairo/windows_container.cpp": {
+      "ipo_ts": 1783318133462,
+      "edit_count": 1,
+      "last_lines": 199,
+      "last_ts": 1783318133462,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8424efe1"
+    },
+    "third_party/litehtml/containers/windows/cairo/windows_container.h": {
+      "ipo_ts": 1783318133471,
+      "edit_count": 1,
+      "last_lines": 42,
+      "last_ts": 1783318133471,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "14c5c757"
+    },
+    "third_party/litehtml/containers/windows/gdiplus/gdiplus_container.cpp": {
+      "ipo_ts": 1783318133481,
+      "edit_count": 1,
+      "last_lines": 258,
+      "last_ts": 1783318133481,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a30cb5c3"
+    },
+    "third_party/litehtml/containers/windows/gdiplus/gdiplus_container.h": {
+      "ipo_ts": 1783318133492,
+      "edit_count": 1,
+      "last_lines": 27,
+      "last_ts": 1783318133492,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "32e6c329"
+    },
+    "third_party/litehtml/containers/windows/win32/win32_container.cpp": {
+      "ipo_ts": 1783318133500,
+      "edit_count": 1,
+      "last_lines": 509,
+      "last_ts": 1783318133500,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "283e8052"
+    },
+    "third_party/litehtml/containers/windows/win32/win32_container.h": {
+      "ipo_ts": 1783318133509,
+      "edit_count": 1,
+      "last_lines": 96,
+      "last_ts": 1783318133509,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f7772b46"
+    },
+    "third_party/litehtml/doc/document_container.md": {
+      "ipo_ts": 1783318133519,
+      "edit_count": 1,
+      "last_lines": 523,
+      "last_ts": 1783318133519,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c1ef5cf"
+    },
+    "third_party/litehtml/doc/document_createFromString.md": {
+      "ipo_ts": 1783318133528,
+      "edit_count": 1,
+      "last_lines": 75,
+      "last_ts": 1783318133528,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f170457f"
+    },
+    "third_party/litehtml/doc/using.md": {
+      "ipo_ts": 1783318133536,
+      "edit_count": 1,
+      "last_lines": 181,
+      "last_ts": 1783318133536,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "83f6646c"
+    },
+    "third_party/litehtml/include/litehtml.h": {
+      "ipo_ts": 1783318133546,
+      "edit_count": 1,
+      "last_lines": 12,
+      "last_ts": 1783318133546,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "86688f1a"
+    },
+    "third_party/litehtml/include/litehtml/background.h": {
+      "ipo_ts": 1783318133555,
+      "edit_count": 1,
+      "last_lines": 161,
+      "last_ts": 1783318133555,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3cd964c"
+    },
+    "third_party/litehtml/include/litehtml/borders.h": {
+      "ipo_ts": 1783318133565,
+      "edit_count": 1,
+      "last_lines": 220,
+      "last_ts": 1783318133565,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "208b2481"
+    },
+    "third_party/litehtml/include/litehtml/codepoint.h": {
+      "ipo_ts": 1783318133574,
+      "edit_count": 1,
+      "last_lines": 48,
+      "last_ts": 1783318133574,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "375635ef"
+    },
+    "third_party/litehtml/include/litehtml/css_length.h": {
+      "ipo_ts": 1783318133584,
+      "edit_count": 1,
+      "last_lines": 121,
+      "last_ts": 1783318133584,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3260a019"
+    },
+    "third_party/litehtml/include/litehtml/css_margins.h": {
+      "ipo_ts": 1783318133593,
+      "edit_count": 1,
+      "last_lines": 23,
+      "last_ts": 1783318133593,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f474c07c"
+    },
+    "third_party/litehtml/include/litehtml/css_offsets.h": {
+      "ipo_ts": 1783318133604,
+      "edit_count": 1,
+      "last_lines": 23,
+      "last_ts": 1783318133604,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "aab690bc"
+    },
+    "third_party/litehtml/include/litehtml/css_parser.h": {
+      "ipo_ts": 1783318133612,
+      "edit_count": 1,
+      "last_lines": 57,
+      "last_ts": 1783318133612,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "4ce2cfaa"
+    },
+    "third_party/litehtml/include/litehtml/css_position.h": {
+      "ipo_ts": 1783318133621,
+      "edit_count": 1,
+      "last_lines": 32,
+      "last_ts": 1783318133621,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6423640c"
+    },
+    "third_party/litehtml/include/litehtml/css_properties.h": {
+      "ipo_ts": 1783318133631,
+      "edit_count": 1,
+      "last_lines": 740,
+      "last_ts": 1783318133631,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "87adffdb"
+    },
+    "third_party/litehtml/include/litehtml/css_tokenizer.h": {
+      "ipo_ts": 1783318133657,
+      "edit_count": 1,
+      "last_lines": 250,
+      "last_ts": 1783318133657,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "2273321b"
+    },
+    "third_party/litehtml/include/litehtml/css_values.h": {
+      "ipo_ts": 1783318133666,
+      "edit_count": 1,
+      "last_lines": 776,
+      "last_ts": 1783318133666,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "60eb6385"
+    },
+    "third_party/litehtml/include/litehtml/document.h": {
+      "ipo_ts": 1783318133674,
+      "edit_count": 1,
+      "last_lines": 168,
+      "last_ts": 1783318133674,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "85f0a147"
+    },
+    "third_party/litehtml/include/litehtml/document_container.h": {
+      "ipo_ts": 1783318133682,
+      "edit_count": 1,
+      "last_lines": 92,
+      "last_ts": 1783318133682,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "42694f8b"
+    },
+    "third_party/litehtml/include/litehtml/el_anchor.h": {
+      "ipo_ts": 1783318133691,
+      "edit_count": 1,
+      "last_lines": 18,
+      "last_ts": 1783318133691,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "12c7ff88"
+    },
+    "third_party/litehtml/include/litehtml/el_base.h": {
+      "ipo_ts": 1783318133701,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318133701,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "385a9639"
+    },
+    "third_party/litehtml/include/litehtml/el_before_after.h": {
+      "ipo_ts": 1783318133712,
+      "edit_count": 1,
+      "last_lines": 40,
+      "last_ts": 1783318133712,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "535f05e8"
+    },
+    "third_party/litehtml/include/litehtml/el_body.h": {
+      "ipo_ts": 1783318133721,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318133721,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "711805e9"
+    },
+    "third_party/litehtml/include/litehtml/el_break.h": {
+      "ipo_ts": 1783318133731,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318133731,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "865ad801"
+    },
+    "third_party/litehtml/include/litehtml/el_cdata.h": {
+      "ipo_ts": 1783318133743,
+      "edit_count": 1,
+      "last_lines": 20,
+      "last_ts": 1783318133743,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "2bf61209"
+    },
+    "third_party/litehtml/include/litehtml/el_comment.h": {
+      "ipo_ts": 1783318133752,
+      "edit_count": 1,
+      "last_lines": 26,
+      "last_ts": 1783318133752,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9118baff"
+    },
+    "third_party/litehtml/include/litehtml/el_div.h": {
+      "ipo_ts": 1783318133761,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318133761,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a791071b"
+    },
+    "third_party/litehtml/include/litehtml/el_font.h": {
+      "ipo_ts": 1783318133769,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318133769,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3ff4a17b"
+    },
+    "third_party/litehtml/include/litehtml/el_image.h": {
+      "ipo_ts": 1783318133778,
+      "edit_count": 1,
+      "last_lines": 34,
+      "last_ts": 1783318133778,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ac2848ee"
+    },
+    "third_party/litehtml/include/litehtml/el_link.h": {
+      "ipo_ts": 1783318133786,
+      "edit_count": 1,
+      "last_lines": 18,
+      "last_ts": 1783318133786,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8a8c195e"
+    },
+    "third_party/litehtml/include/litehtml/el_para.h": {
+      "ipo_ts": 1783318133796,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318133796,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "560b638a"
+    },
+    "third_party/litehtml/include/litehtml/el_script.h": {
+      "ipo_ts": 1783318133805,
+      "edit_count": 1,
+      "last_lines": 22,
+      "last_ts": 1783318133805,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "240b2e9c"
+    },
+    "third_party/litehtml/include/litehtml/el_space.h": {
+      "ipo_ts": 1783318133813,
+      "edit_count": 1,
+      "last_lines": 21,
+      "last_ts": 1783318133813,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f308c942"
+    },
+    "third_party/litehtml/include/litehtml/el_style.h": {
+      "ipo_ts": 1783318133825,
+      "edit_count": 1,
+      "last_lines": 23,
+      "last_ts": 1783318133825,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ff3c8866"
+    },
+    "third_party/litehtml/include/litehtml/el_table.h": {
+      "ipo_ts": 1783318133833,
+      "edit_count": 1,
+      "last_lines": 18,
+      "last_ts": 1783318133833,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "59d7abb5"
+    },
+    "third_party/litehtml/include/litehtml/el_td.h": {
+      "ipo_ts": 1783318133842,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318133842,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "319d403a"
+    },
+    "third_party/litehtml/include/litehtml/el_text.h": {
+      "ipo_ts": 1783318133851,
+      "edit_count": 1,
+      "last_lines": 39,
+      "last_ts": 1783318133851,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "410976fd"
+    },
+    "third_party/litehtml/include/litehtml/el_title.h": {
+      "ipo_ts": 1783318133860,
+      "edit_count": 1,
+      "last_lines": 18,
+      "last_ts": 1783318133860,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b542087a"
+    },
+    "third_party/litehtml/include/litehtml/el_tr.h": {
+      "ipo_ts": 1783318133869,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318133869,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ca9ca3ec"
+    },
+    "third_party/litehtml/include/litehtml/element.h": {
+      "ipo_ts": 1783318133877,
+      "edit_count": 1,
+      "last_lines": 242,
+      "last_ts": 1783318133877,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9c167f79"
+    },
+    "third_party/litehtml/include/litehtml/encodings.h": {
+      "ipo_ts": 1783318133886,
+      "edit_count": 1,
+      "last_lines": 101,
+      "last_ts": 1783318133886,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "833524ed"
+    },
+    "third_party/litehtml/include/litehtml/flex_item.h": {
+      "ipo_ts": 1783318133897,
+      "edit_count": 1,
+      "last_lines": 148,
+      "last_ts": 1783318133897,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "64f82fb6"
+    },
+    "third_party/litehtml/include/litehtml/flex_line.h": {
+      "ipo_ts": 1783318133905,
+      "edit_count": 1,
+      "last_lines": 46,
+      "last_ts": 1783318133905,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "1c143d81"
+    },
+    "third_party/litehtml/include/litehtml/font_description.h": {
+      "ipo_ts": 1783318133913,
+      "edit_count": 1,
+      "last_lines": 47,
+      "last_ts": 1783318133913,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "22dcd406"
+    },
+    "third_party/litehtml/include/litehtml/formatting_context.h": {
+      "ipo_ts": 1783318133921,
+      "edit_count": 1,
+      "last_lines": 76,
+      "last_ts": 1783318133921,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c83749cb"
+    },
+    "third_party/litehtml/include/litehtml/gradient.h": {
+      "ipo_ts": 1783318133929,
+      "edit_count": 1,
+      "last_lines": 167,
+      "last_ts": 1783318133929,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "be6b477c"
+    },
+    "third_party/litehtml/include/litehtml/html.h": {
+      "ipo_ts": 1783318133937,
+      "edit_count": 1,
+      "last_lines": 214,
+      "last_ts": 1783318133937,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e802584"
+    },
+    "third_party/litehtml/include/litehtml/html_microsyntaxes.h": {
+      "ipo_ts": 1783318133946,
+      "edit_count": 1,
+      "last_lines": 22,
+      "last_ts": 1783318133946,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9ccda15"
+    },
+    "third_party/litehtml/include/litehtml/html_tag.h": {
+      "ipo_ts": 1783318133954,
+      "edit_count": 1,
+      "last_lines": 173,
+      "last_ts": 1783318133954,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9fe9863b"
+    },
+    "third_party/litehtml/include/litehtml/iterators.h": {
+      "ipo_ts": 1783318133963,
+      "edit_count": 1,
+      "last_lines": 84,
+      "last_ts": 1783318133963,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e4b35624"
+    },
+    "third_party/litehtml/include/litehtml/line_box.h": {
+      "ipo_ts": 1783318133972,
+      "edit_count": 1,
+      "last_lines": 266,
+      "last_ts": 1783318133972,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "68371c29"
+    },
+    "third_party/litehtml/include/litehtml/master_css.h": {
+      "ipo_ts": 1783318133981,
+      "edit_count": 1,
+      "last_lines": 378,
+      "last_ts": 1783318133981,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8713e15a"
+    },
+    "third_party/litehtml/include/litehtml/media_query.h": {
+      "ipo_ts": 1783318133992,
+      "edit_count": 1,
+      "last_lines": 152,
+      "last_ts": 1783318133992,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "59f71da5"
+    },
+    "third_party/litehtml/include/litehtml/num_cvt.h": {
+      "ipo_ts": 1783318134004,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318134004,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b2f1a4fd"
+    },
+    "third_party/litehtml/include/litehtml/os_types.h": {
+      "ipo_ts": 1783318134011,
+      "edit_count": 1,
+      "last_lines": 16,
+      "last_ts": 1783318134011,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3e4c2c5e"
+    },
+    "third_party/litehtml/include/litehtml/pixel_type.h": {
+      "ipo_ts": 1783318134019,
+      "edit_count": 1,
+      "last_lines": 278,
+      "last_ts": 1783318134019,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "cc57789d"
+    },
+    "third_party/litehtml/include/litehtml/render_block.h": {
+      "ipo_ts": 1783318134028,
+      "edit_count": 1,
+      "last_lines": 52,
+      "last_ts": 1783318134028,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "146f93f3"
+    },
+    "third_party/litehtml/include/litehtml/render_block_context.h": {
+      "ipo_ts": 1783318134036,
+      "edit_count": 1,
+      "last_lines": 34,
+      "last_ts": 1783318134036,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "82024b31"
+    },
+    "third_party/litehtml/include/litehtml/render_flex.h": {
+      "ipo_ts": 1783318134044,
+      "edit_count": 1,
+      "last_lines": 36,
+      "last_ts": 1783318134044,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c3e4a6aa"
+    },
+    "third_party/litehtml/include/litehtml/render_image.h": {
+      "ipo_ts": 1783318134052,
+      "edit_count": 1,
+      "last_lines": 28,
+      "last_ts": 1783318134052,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e7e3bb57"
+    },
+    "third_party/litehtml/include/litehtml/render_inline.h": {
+      "ipo_ts": 1783318134060,
+      "edit_count": 1,
+      "last_lines": 98,
+      "last_ts": 1783318134060,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e1ef9632"
+    },
+    "third_party/litehtml/include/litehtml/render_inline_context.h": {
+      "ipo_ts": 1783318134067,
+      "edit_count": 1,
+      "last_lines": 67,
+      "last_ts": 1783318134067,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "71f18bd9"
+    },
+    "third_party/litehtml/include/litehtml/render_item.h": {
+      "ipo_ts": 1783318134077,
+      "edit_count": 1,
+      "last_lines": 509,
+      "last_ts": 1783318134077,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8d989104"
+    },
+    "third_party/litehtml/include/litehtml/render_table.h": {
+      "ipo_ts": 1783318134085,
+      "edit_count": 1,
+      "last_lines": 64,
+      "last_ts": 1783318134085,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "bcce9a13"
+    },
+    "third_party/litehtml/include/litehtml/scroll_view.h": {
+      "ipo_ts": 1783318134093,
+      "edit_count": 1,
+      "last_lines": 114,
+      "last_ts": 1783318134093,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d5e04ea"
+    },
+    "third_party/litehtml/include/litehtml/string_id.h": {
+      "ipo_ts": 1783318134103,
+      "edit_count": 1,
+      "last_lines": 117,
+      "last_ts": 1783318134103,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6d41022"
+    },
+    "third_party/litehtml/include/litehtml/style.h": {
+      "ipo_ts": 1783318134112,
+      "edit_count": 1,
+      "last_lines": 135,
+      "last_ts": 1783318134112,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "514a89da"
+    },
+    "third_party/litehtml/include/litehtml/stylesheet.h": {
+      "ipo_ts": 1783318134120,
+      "edit_count": 1,
+      "last_lines": 93,
+      "last_ts": 1783318134120,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "5e1d87e1"
+    },
+    "third_party/litehtml/include/litehtml/table.h": {
+      "ipo_ts": 1783318134129,
+      "edit_count": 1,
+      "last_lines": 270,
+      "last_ts": 1783318134129,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d468419e"
+    },
+    "third_party/litehtml/include/litehtml/types.h": {
+      "ipo_ts": 1783318134138,
+      "edit_count": 1,
+      "last_lines": 654,
+      "last_ts": 1783318134138,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "347627f1"
+    },
+    "third_party/litehtml/include/litehtml/url.h": {
+      "ipo_ts": 1783318134147,
+      "edit_count": 1,
+      "last_lines": 139,
+      "last_ts": 1783318134147,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "2f033134"
+    },
+    "third_party/litehtml/include/litehtml/url_path.h": {
+      "ipo_ts": 1783318134156,
+      "edit_count": 1,
+      "last_lines": 49,
+      "last_ts": 1783318134156,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8ae6d5c6"
+    },
+    "third_party/litehtml/include/litehtml/utf8_strings.h": {
+      "ipo_ts": 1783318134164,
+      "edit_count": 1,
+      "last_lines": 45,
+      "last_ts": 1783318134164,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b8c5707a"
+    },
+    "third_party/litehtml/include/litehtml/web_color.h": {
+      "ipo_ts": 1783318134173,
+      "edit_count": 1,
+      "last_lines": 53,
+      "last_ts": 1783318134173,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "476ac4ae"
+    },
+    "third_party/litehtml/litehtml.vcxproj": {
+      "ipo_ts": 1783318134181,
+      "edit_count": 1,
+      "last_lines": 375,
+      "last_ts": 1783318134181,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8890b5c3"
+    },
+    "third_party/litehtml/litehtml.vcxproj.filters": {
+      "ipo_ts": 1783318134193,
+      "edit_count": 1,
+      "last_lines": 452,
+      "last_ts": 1783318134193,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a21b90ae"
+    },
+    "third_party/litehtml/src/background.cpp": {
+      "ipo_ts": 1783318134201,
+      "edit_count": 1,
+      "last_lines": 966,
+      "last_ts": 1783318134201,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "2a772047"
+    },
+    "third_party/litehtml/src/codepoint.cpp": {
+      "ipo_ts": 1783318134211,
+      "edit_count": 1,
+      "last_lines": 81,
+      "last_ts": 1783318134211,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "57fbe2d4"
+    },
+    "third_party/litehtml/src/css_borders.cpp": {
+      "ipo_ts": 1783318134218,
+      "edit_count": 1,
+      "last_lines": 9,
+      "last_ts": 1783318134218,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ab83f454"
+    },
+    "third_party/litehtml/src/css_length.cpp": {
+      "ipo_ts": 1783318134228,
+      "edit_count": 1,
+      "last_lines": 100,
+      "last_ts": 1783318134228,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b33a4fef"
+    },
+    "third_party/litehtml/src/css_parser.cpp": {
+      "ipo_ts": 1783318134237,
+      "edit_count": 1,
+      "last_lines": 661,
+      "last_ts": 1783318134237,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c35b4e80"
+    },
+    "third_party/litehtml/src/css_properties.cpp": {
+      "ipo_ts": 1783318134246,
+      "edit_count": 1,
+      "last_lines": 682,
+      "last_ts": 1783318134246,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b1a5eb8c"
+    },
+    "third_party/litehtml/src/css_selector.cpp": {
+      "ipo_ts": 1783318134256,
+      "edit_count": 1,
+      "last_lines": 812,
+      "last_ts": 1783318134256,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7b6a1114"
+    },
+    "third_party/litehtml/src/css_tokenizer.cpp": {
+      "ipo_ts": 1783318134268,
+      "edit_count": 1,
+      "last_lines": 853,
+      "last_ts": 1783318134268,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9cf0d4ab"
+    },
+    "third_party/litehtml/src/document.cpp": {
+      "ipo_ts": 1783318134279,
+      "edit_count": 1,
+      "last_lines": 1186,
+      "last_ts": 1783318134279,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "bcc4b40d"
+    },
+    "third_party/litehtml/src/document_container.cpp": {
+      "ipo_ts": 1783318134287,
+      "edit_count": 1,
+      "last_lines": 42,
+      "last_ts": 1783318134287,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b0c9249d"
+    },
+    "third_party/litehtml/src/el_anchor.cpp": {
+      "ipo_ts": 1783318134297,
+      "edit_count": 1,
+      "last_lines": 27,
+      "last_ts": 1783318134297,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c46b2de0"
+    },
+    "third_party/litehtml/src/el_base.cpp": {
+      "ipo_ts": 1783318134305,
+      "edit_count": 1,
+      "last_lines": 13,
+      "last_ts": 1783318134305,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "34a51501"
+    },
+    "third_party/litehtml/src/el_before_after.cpp": {
+      "ipo_ts": 1783318134316,
+      "edit_count": 1,
+      "last_lines": 220,
+      "last_ts": 1783318134316,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "33ea9795"
+    },
+    "third_party/litehtml/src/el_body.cpp": {
+      "ipo_ts": 1783318134325,
+      "edit_count": 1,
+      "last_lines": 12,
+      "last_ts": 1783318134325,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "19209bae"
+    },
+    "third_party/litehtml/src/el_break.cpp": {
+      "ipo_ts": 1783318134333,
+      "edit_count": 1,
+      "last_lines": 11,
+      "last_ts": 1783318134333,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "272788b2"
+    },
+    "third_party/litehtml/src/el_cdata.cpp": {
+      "ipo_ts": 1783318134342,
+      "edit_count": 1,
+      "last_lines": 20,
+      "last_ts": 1783318134342,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7312b288"
+    },
+    "third_party/litehtml/src/el_comment.cpp": {
+      "ipo_ts": 1783318134352,
+      "edit_count": 1,
+      "last_lines": 25,
+      "last_ts": 1783318134352,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "52a40819"
+    },
+    "third_party/litehtml/src/el_div.cpp": {
+      "ipo_ts": 1783318134362,
+      "edit_count": 1,
+      "last_lines": 17,
+      "last_ts": 1783318134362,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b27f4625"
+    },
+    "third_party/litehtml/src/el_font.cpp": {
+      "ipo_ts": 1783318134371,
+      "edit_count": 1,
+      "last_lines": 59,
+      "last_ts": 1783318134371,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "5a6081b0"
+    },
+    "third_party/litehtml/src/el_image.cpp": {
+      "ipo_ts": 1783318134382,
+      "edit_count": 1,
+      "last_lines": 94,
+      "last_ts": 1783318134382,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "995e00a"
+    },
+    "third_party/litehtml/src/el_link.cpp": {
+      "ipo_ts": 1783318134394,
+      "edit_count": 1,
+      "last_lines": 39,
+      "last_ts": 1783318134394,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "49bb9849"
+    },
+    "third_party/litehtml/src/el_para.cpp": {
+      "ipo_ts": 1783318134404,
+      "edit_count": 1,
+      "last_lines": 18,
+      "last_ts": 1783318134404,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a8e5438c"
+    },
+    "third_party/litehtml/src/el_script.cpp": {
+      "ipo_ts": 1783318134413,
+      "edit_count": 1,
+      "last_lines": 28,
+      "last_ts": 1783318134413,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "374d7f6"
+    },
+    "third_party/litehtml/src/el_space.cpp": {
+      "ipo_ts": 1783318134423,
+      "edit_count": 1,
+      "last_lines": 37,
+      "last_ts": 1783318134423,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "bf4f4825"
+    },
+    "third_party/litehtml/src/el_style.cpp": {
+      "ipo_ts": 1783318134433,
+      "edit_count": 1,
+      "last_lines": 43,
+      "last_ts": 1783318134433,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "18a6d289"
+    },
+    "third_party/litehtml/src/el_table.cpp": {
+      "ipo_ts": 1783318134443,
+      "edit_count": 1,
+      "last_lines": 65,
+      "last_ts": 1783318134443,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "47d8752b"
+    },
+    "third_party/litehtml/src/el_td.cpp": {
+      "ipo_ts": 1783318134452,
+      "edit_count": 1,
+      "last_lines": 59,
+      "last_ts": 1783318134452,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "fd853cc4"
+    },
+    "third_party/litehtml/src/el_text.cpp": {
+      "ipo_ts": 1783318134462,
+      "edit_count": 1,
+      "last_lines": 145,
+      "last_ts": 1783318134462,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ef0dc3f0"
+    },
+    "third_party/litehtml/src/el_title.cpp": {
+      "ipo_ts": 1783318134472,
+      "edit_count": 1,
+      "last_lines": 15,
+      "last_ts": 1783318134472,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "989746a0"
+    },
+    "third_party/litehtml/src/el_tr.cpp": {
+      "ipo_ts": 1783318134481,
+      "edit_count": 1,
+      "last_lines": 34,
+      "last_ts": 1783318134481,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6bed74b2"
+    },
+    "third_party/litehtml/src/element.cpp": {
+      "ipo_ts": 1783318134491,
+      "edit_count": 1,
+      "last_lines": 510,
+      "last_ts": 1783318134491,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "5bf4f029"
+    },
+    "third_party/litehtml/src/encodings.cpp": {
+      "ipo_ts": 1783318134509,
+      "edit_count": 1,
+      "last_lines": 8313,
+      "last_ts": 1783318134509,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3ef8fca0"
+    },
+    "third_party/litehtml/src/flex_item.cpp": {
+      "ipo_ts": 1783318134519,
+      "edit_count": 1,
+      "last_lines": 516,
+      "last_ts": 1783318134519,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "764ccc42"
+    },
+    "third_party/litehtml/src/flex_line.cpp": {
+      "ipo_ts": 1783318134529,
+      "edit_count": 1,
+      "last_lines": 597,
+      "last_ts": 1783318134529,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f26655c8"
+    },
+    "third_party/litehtml/src/formatting_context.cpp": {
+      "ipo_ts": 1783318134543,
+      "edit_count": 1,
+      "last_lines": 600,
+      "last_ts": 1783318134543,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3b81e967"
+    },
+    "third_party/litehtml/src/gradient.cpp": {
+      "ipo_ts": 1783318134553,
+      "edit_count": 1,
+      "last_lines": 654,
+      "last_ts": 1783318134553,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6d230e8b"
+    },
+    "third_party/litehtml/src/gumbo/CMakeLists.txt": {
+      "ipo_ts": 1783318134563,
+      "edit_count": 1,
+      "last_lines": 79,
+      "last_ts": 1783318134563,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "bbc84ebb"
+    },
+    "third_party/litehtml/src/gumbo/LICENSE": {
+      "ipo_ts": 1783318134575,
+      "edit_count": 1,
+      "last_lines": 202,
+      "last_ts": 1783318134575,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9b6835e7"
+    },
+    "third_party/litehtml/src/gumbo/attribute.c": {
+      "ipo_ts": 1783318134584,
+      "edit_count": 1,
+      "last_lines": 44,
+      "last_ts": 1783318134584,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a1056361"
+    },
+    "third_party/litehtml/src/gumbo/char_ref.c": {
+      "ipo_ts": 1783318134603,
+      "edit_count": 1,
+      "last_lines": 23069,
+      "last_ts": 1783318134603,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "74237fe"
+    },
+    "third_party/litehtml/src/gumbo/char_ref.rl": {
+      "ipo_ts": 1783318134617,
+      "edit_count": 1,
+      "last_lines": 2554,
+      "last_ts": 1783318134617,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a88193e7"
+    },
+    "third_party/litehtml/src/gumbo/error.c": {
+      "ipo_ts": 1783318134637,
+      "edit_count": 1,
+      "last_lines": 286,
+      "last_ts": 1783318134637,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d69cfe82"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo.h": {
+      "ipo_ts": 1783318134647,
+      "edit_count": 1,
+      "last_lines": 674,
+      "last_ts": 1783318134647,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9df0e7af"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/attribute.h": {
+      "ipo_ts": 1783318134658,
+      "edit_count": 1,
+      "last_lines": 37,
+      "last_ts": 1783318134658,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "4a02f3b3"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/char_ref.h": {
+      "ipo_ts": 1783318134666,
+      "edit_count": 1,
+      "last_lines": 60,
+      "last_ts": 1783318134666,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7094d4f4"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/error.h": {
+      "ipo_ts": 1783318134677,
+      "edit_count": 1,
+      "last_lines": 225,
+      "last_ts": 1783318134677,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e92e93d8"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/insertion_mode.h": {
+      "ipo_ts": 1783318134687,
+      "edit_count": 1,
+      "last_lines": 57,
+      "last_ts": 1783318134687,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "114b56d4"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/parser.h": {
+      "ipo_ts": 1783318134696,
+      "edit_count": 1,
+      "last_lines": 57,
+      "last_ts": 1783318134696,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "155f6c11"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/string_buffer.h": {
+      "ipo_ts": 1783318134705,
+      "edit_count": 1,
+      "last_lines": 84,
+      "last_ts": 1783318134705,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "37ccd5e7"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/string_piece.h": {
+      "ipo_ts": 1783318134714,
+      "edit_count": 1,
+      "last_lines": 38,
+      "last_ts": 1783318134714,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6921796a"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/tag_enum.h": {
+      "ipo_ts": 1783318134725,
+      "edit_count": 1,
+      "last_lines": 156,
+      "last_ts": 1783318134725,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b99db8f0"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/tag_gperf.h": {
+      "ipo_ts": 1783318134733,
+      "edit_count": 1,
+      "last_lines": 331,
+      "last_ts": 1783318134733,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3da2a8bd"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/tag_sizes.h": {
+      "ipo_ts": 1783318134744,
+      "edit_count": 1,
+      "last_lines": 4,
+      "last_ts": 1783318134744,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "83e43e10"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/tag_strings.h": {
+      "ipo_ts": 1783318134756,
+      "edit_count": 1,
+      "last_lines": 156,
+      "last_ts": 1783318134756,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "1a0782e6"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/token_type.h": {
+      "ipo_ts": 1783318134765,
+      "edit_count": 1,
+      "last_lines": 41,
+      "last_ts": 1783318134765,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "1fc83513"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/tokenizer.h": {
+      "ipo_ts": 1783318134774,
+      "edit_count": 1,
+      "last_lines": 123,
+      "last_ts": 1783318134774,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6df82e47"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/tokenizer_states.h": {
+      "ipo_ts": 1783318134782,
+      "edit_count": 1,
+      "last_lines": 103,
+      "last_ts": 1783318134782,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6374638e"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/utf8.h": {
+      "ipo_ts": 1783318134792,
+      "edit_count": 1,
+      "last_lines": 132,
+      "last_ts": 1783318134792,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f20ad575"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/util.h": {
+      "ipo_ts": 1783318134803,
+      "edit_count": 1,
+      "last_lines": 60,
+      "last_ts": 1783318134803,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "545eef43"
+    },
+    "third_party/litehtml/src/gumbo/include/gumbo/vector.h": {
+      "ipo_ts": 1783318134812,
+      "edit_count": 1,
+      "last_lines": 67,
+      "last_ts": 1783318134812,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "30017772"
+    },
+    "third_party/litehtml/src/gumbo/parser.c": {
+      "ipo_ts": 1783318134821,
+      "edit_count": 1,
+      "last_lines": 4113,
+      "last_ts": 1783318134821,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6b05e759"
+    },
+    "third_party/litehtml/src/gumbo/string_buffer.c": {
+      "ipo_ts": 1783318134830,
+      "edit_count": 1,
+      "last_lines": 110,
+      "last_ts": 1783318134830,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "22944d56"
+    },
+    "third_party/litehtml/src/gumbo/string_piece.c": {
+      "ipo_ts": 1783318134840,
+      "edit_count": 1,
+      "last_lines": 48,
+      "last_ts": 1783318134840,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b370b9a6"
+    },
+    "third_party/litehtml/src/gumbo/tag.c": {
+      "ipo_ts": 1783318134852,
+      "edit_count": 1,
+      "last_lines": 94,
+      "last_ts": 1783318134852,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "da17ec35"
+    },
+    "third_party/litehtml/src/gumbo/tag.in": {
+      "ipo_ts": 1783318134863,
+      "edit_count": 1,
+      "last_lines": 152,
+      "last_ts": 1783318134863,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "801cc11a"
+    },
+    "third_party/litehtml/src/gumbo/tokenizer.c": {
+      "ipo_ts": 1783318134872,
+      "edit_count": 1,
+      "last_lines": 2898,
+      "last_ts": 1783318134872,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "5b6e8c7e"
+    },
+    "third_party/litehtml/src/gumbo/utf8.c": {
+      "ipo_ts": 1783318134880,
+      "edit_count": 1,
+      "last_lines": 270,
+      "last_ts": 1783318134880,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "45ce6ffc"
+    },
+    "third_party/litehtml/src/gumbo/util.c": {
+      "ipo_ts": 1783318134890,
+      "edit_count": 1,
+      "last_lines": 58,
+      "last_ts": 1783318134890,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9ed0d90c"
+    },
+    "third_party/litehtml/src/gumbo/vector.c": {
+      "ipo_ts": 1783318134899,
+      "edit_count": 1,
+      "last_lines": 123,
+      "last_ts": 1783318134899,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "57d310ca"
+    },
+    "third_party/litehtml/src/gumbo/visualc/include/strings.h": {
+      "ipo_ts": 1783318134911,
+      "edit_count": 1,
+      "last_lines": 4,
+      "last_ts": 1783318134911,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "4be59583"
+    },
+    "third_party/litehtml/src/html.cpp": {
+      "ipo_ts": 1783318134920,
+      "edit_count": 1,
+      "last_lines": 272,
+      "last_ts": 1783318134920,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "75a7c7f4"
+    },
+    "third_party/litehtml/src/html_microsyntaxes.cpp": {
+      "ipo_ts": 1783318134930,
+      "edit_count": 1,
+      "last_lines": 123,
+      "last_ts": 1783318134930,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "69bf96d4"
+    },
+    "third_party/litehtml/src/html_tag.cpp": {
+      "ipo_ts": 1783318134939,
+      "edit_count": 1,
+      "last_lines": 1633,
+      "last_ts": 1783318134939,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8e5b05ae"
+    },
+    "third_party/litehtml/src/internal.h": {
+      "ipo_ts": 1783318134948,
+      "edit_count": 1,
+      "last_lines": 25,
+      "last_ts": 1783318134948,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "4150773"
+    },
+    "third_party/litehtml/src/iterators.cpp": {
+      "ipo_ts": 1783318134957,
+      "edit_count": 1,
+      "last_lines": 79,
+      "last_ts": 1783318134957,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "813eda12"
+    },
+    "third_party/litehtml/src/line_box.cpp": {
+      "ipo_ts": 1783318134969,
+      "edit_count": 1,
+      "last_lines": 915,
+      "last_ts": 1783318134969,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "51275fa7"
+    },
+    "third_party/litehtml/src/media_query.cpp": {
+      "ipo_ts": 1783318134979,
+      "edit_count": 1,
+      "last_lines": 867,
+      "last_ts": 1783318134979,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "4825fcf7"
+    },
+    "third_party/litehtml/src/num_cvt.cpp": {
+      "ipo_ts": 1783318134988,
+      "edit_count": 1,
+      "last_lines": 130,
+      "last_ts": 1783318134988,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "398c60ab"
+    },
+    "third_party/litehtml/src/render_block.cpp": {
+      "ipo_ts": 1783318134996,
+      "edit_count": 1,
+      "last_lines": 355,
+      "last_ts": 1783318134996,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a755aab2"
+    },
+    "third_party/litehtml/src/render_block_context.cpp": {
+      "ipo_ts": 1783318135007,
+      "edit_count": 1,
+      "last_lines": 175,
+      "last_ts": 1783318135007,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "2efd179e"
+    },
+    "third_party/litehtml/src/render_flex.cpp": {
+      "ipo_ts": 1783318135018,
+      "edit_count": 1,
+      "last_lines": 457,
+      "last_ts": 1783318135018,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "abf910df"
+    },
+    "third_party/litehtml/src/render_image.cpp": {
+      "ipo_ts": 1783318135028,
+      "edit_count": 1,
+      "last_lines": 153,
+      "last_ts": 1783318135028,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b05a560b"
+    },
+    "third_party/litehtml/src/render_inline_context.cpp": {
+      "ipo_ts": 1783318135037,
+      "edit_count": 1,
+      "last_lines": 379,
+      "last_ts": 1783318135037,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "564a208c"
+    },
+    "third_party/litehtml/src/render_item.cpp": {
+      "ipo_ts": 1783318135048,
+      "edit_count": 1,
+      "last_lines": 1609,
+      "last_ts": 1783318135048,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "21a60a9e"
+    },
+    "third_party/litehtml/src/render_table.cpp": {
+      "ipo_ts": 1783318135057,
+      "edit_count": 1,
+      "last_lines": 553,
+      "last_ts": 1783318135057,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f2a2258"
+    },
+    "third_party/litehtml/src/string_id.cpp": {
+      "ipo_ts": 1783318135068,
+      "edit_count": 1,
+      "last_lines": 57,
+      "last_ts": 1783318135068,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9b1fb8f8"
+    },
+    "third_party/litehtml/src/strtod.cpp": {
+      "ipo_ts": 1783318135079,
+      "edit_count": 1,
+      "last_lines": 268,
+      "last_ts": 1783318135079,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "5a41cfaf"
+    },
+    "third_party/litehtml/src/style.cpp": {
+      "ipo_ts": 1783318135090,
+      "edit_count": 1,
+      "last_lines": 1948,
+      "last_ts": 1783318135090,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c5e7d717"
+    },
+    "third_party/litehtml/src/stylesheet.cpp": {
+      "ipo_ts": 1783318135102,
+      "edit_count": 1,
+      "last_lines": 157,
+      "last_ts": 1783318135102,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b5637fba"
+    },
+    "third_party/litehtml/src/table.cpp": {
+      "ipo_ts": 1783318135115,
+      "edit_count": 1,
+      "last_lines": 614,
+      "last_ts": 1783318135115,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f3447af8"
+    },
+    "third_party/litehtml/src/url.cpp": {
+      "ipo_ts": 1783318135129,
+      "edit_count": 1,
+      "last_lines": 227,
+      "last_ts": 1783318135129,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8aa8f9f8"
+    },
+    "third_party/litehtml/src/url_path.cpp": {
+      "ipo_ts": 1783318135139,
+      "edit_count": 1,
+      "last_lines": 89,
+      "last_ts": 1783318135139,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3cb0890c"
+    },
+    "third_party/litehtml/src/utf8_strings.cpp": {
+      "ipo_ts": 1783318135152,
+      "edit_count": 1,
+      "last_lines": 108,
+      "last_ts": 1783318135152,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "48247e02"
+    },
+    "third_party/litehtml/src/web_color.cpp": {
+      "ipo_ts": 1783318135163,
+      "edit_count": 1,
+      "last_lines": 553,
+      "last_ts": 1783318135163,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "1d99552"
+    },
+    "third_party/litehtml/support/README.md": {
+      "ipo_ts": 1783318135174,
+      "edit_count": 1,
+      "last_lines": 309,
+      "last_ts": 1783318135174,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c94bc74f"
+    },
+    "third_party/litehtml/support/draw_buffer/draw_buffer.cpp": {
+      "ipo_ts": 1783318135185,
+      "edit_count": 1,
+      "last_lines": 150,
+      "last_ts": 1783318135185,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "52be0c9e"
+    },
+    "third_party/litehtml/support/draw_buffer/draw_buffer.h": {
+      "ipo_ts": 1783318135194,
+      "edit_count": 1,
+      "last_lines": 204,
+      "last_ts": 1783318135194,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "1ac9e750"
+    },
+    "third_party/litehtml/support/gtkmm4/html_widget.cpp": {
+      "ipo_ts": 1783318135203,
+      "edit_count": 1,
+      "last_lines": 797,
+      "last_ts": 1783318135203,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c839e0a9"
+    },
+    "third_party/litehtml/support/gtkmm4/html_widget.h": {
+      "ipo_ts": 1783318135213,
+      "edit_count": 1,
+      "last_lines": 327,
+      "last_ts": 1783318135213,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "85fc662a"
+    },
+    "third_party/litehtml/support/webpage/html_host.h": {
+      "ipo_ts": 1783318135223,
+      "edit_count": 1,
+      "last_lines": 40,
+      "last_ts": 1783318135223,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a318c9a7"
+    },
+    ".gitmodules": {
+      "ipo_ts": 1783318135243,
+      "edit_count": 1,
+      "last_lines": 3,
+      "last_ts": 1783318135243,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "2468211d"
+    },
+    "third_party/litehtml/support/webpage/http_request.h": {
+      "ipo_ts": 1783318135252,
+      "edit_count": 1,
+      "last_lines": 84,
+      "last_ts": 1783318135252,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "732773eb"
+    },
+    "third_party/litehtml/support/webpage/http_requests_pool.cpp": {
+      "ipo_ts": 1783318135264,
+      "edit_count": 1,
+      "last_lines": 109,
+      "last_ts": 1783318135264,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "5669f541"
+    },
+    "third_party/litehtml/support/webpage/http_requests_pool.h": {
+      "ipo_ts": 1783318135275,
+      "edit_count": 1,
+      "last_lines": 72,
+      "last_ts": 1783318135275,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "fd1b567b"
+    },
+    "third_party/litehtml/support/webpage/web_history.cpp": {
+      "ipo_ts": 1783318135284,
+      "edit_count": 1,
+      "last_lines": 67,
+      "last_ts": 1783318135284,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3c08ae42"
+    },
+    "third_party/litehtml/support/webpage/web_history.h": {
+      "ipo_ts": 1783318135294,
+      "edit_count": 1,
+      "last_lines": 29,
+      "last_ts": 1783318135294,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7bfe9380"
+    },
+    "third_party/litehtml/support/webpage/web_page.cpp": {
+      "ipo_ts": 1783318135303,
+      "edit_count": 1,
+      "last_lines": 333,
+      "last_ts": 1783318135303,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d73fdb3e"
+    },
+    "third_party/litehtml/support/webpage/web_page.h": {
+      "ipo_ts": 1783318135314,
+      "edit_count": 1,
+      "last_lines": 251,
+      "last_ts": 1783318135314,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "869d2a9c"
+    },
+    "third_party/litehtml/support/webpage/http_request.cpp": {
+      "ipo_ts": 1783318135324,
+      "edit_count": 1,
+      "last_lines": 133,
+      "last_ts": 1783318135324,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "763ae551"
+    },
+    "userland/apps/browser/litehtml_core.h": {
+      "ipo_ts": 1783318289183,
+      "edit_count": 4,
+      "last_lines": 73,
+      "last_ts": 1783324142983,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "675476eb"
+    },
+    "userland/apps/browser/litehtml_core.c": {
+      "ipo_ts": 1783318583111,
+      "edit_count": 20,
+      "last_lines": 1794,
+      "last_ts": 1783324937728,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d20c0d88"
+    },
+    "build/obj/user-browser/userland/apps/browser/litehtml_core.c.o": {
+      "ipo_ts": 1783318687589,
+      "edit_count": 5,
+      "last_lines": 46,
+      "last_ts": 1783324997564,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "aa14cd3c"
+    },
+    "docs/THIRD_PARTY.md": {
+      "ipo_ts": 1783319026337,
+      "edit_count": 1,
+      "last_lines": 22,
+      "last_ts": 1783319026337,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "407f59f2"
+    },
+    "tools/browser_test_page/folder/page.html": {
+      "ipo_ts": 1783319740035,
+      "edit_count": 1,
+      "last_lines": 11,
+      "last_ts": 1783319740035,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3deb2db"
+    },
+    "tools/browser_test_page/index.html": {
+      "ipo_ts": 1783319740044,
+      "edit_count": 3,
+      "last_lines": 71,
+      "last_ts": 1783324836853,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7c5ab1d5"
+    },
+    "tools/browser_test_page/plain.txt": {
+      "ipo_ts": 1783319740054,
+      "edit_count": 1,
+      "last_lines": 4,
+      "last_ts": 1783319740054,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e71abc38"
+    },
+    "tools/browser_test_page/relative-page.html": {
+      "ipo_ts": 1783319740066,
+      "edit_count": 1,
+      "last_lines": 11,
+      "last_ts": 1783319740066,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9ef01d7b"
+    },
+    "tools/browser_test_page/root-path.html": {
+      "ipo_ts": 1783319740075,
+      "edit_count": 1,
+      "last_lines": 11,
+      "last_ts": 1783319740075,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c6944dcf"
+    },
+    "build/images/leonos4.vmdk.lck/M04450.lck": {
+      "ipo_ts": 1783320823035,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783320823035,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "aaca7fba",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/images/leonos4.vmdk.lck/M14930.lck": {
+      "ipo_ts": 1783323654892,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783323654892,
+      "delisted": true,
+      "last_source": "onEdit",
+      "last_content_hash": "72867b04",
+      "delisted_at": 1783325072487,
+      "delist_rounds": 0
+    },
+    "build/images/leonos4.vmdk.lck/M48620.lck": {
+      "ipo_ts": 1783325507615,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783325507615,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e2efa88f"
+    },
+    "tools/make_window_button_icons.py": {
+      "ipo_ts": 1783326647211,
+      "edit_count": 3,
+      "last_lines": 123,
+      "last_ts": 1783328503452,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "a0e7f571"
+    },
+    "build/esp/system/resources/window-button-close.bmp": {
+      "ipo_ts": 1783327022252,
+      "edit_count": 3,
+      "last_lines": 1,
+      "last_ts": 1783328551620,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7af2e0d7"
+    },
+    "build/esp/system/resources/window-button-maximize.bmp": {
+      "ipo_ts": 1783327022279,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327022279,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b106d8e0"
+    },
+    "build/esp/system/resources/window-button-minimize.bmp": {
+      "ipo_ts": 1783327022315,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327022315,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f11279a2"
+    },
+    "build/esp/system/resources/window-button-restore.bmp": {
+      "ipo_ts": 1783327022336,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327022336,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3844e2a7"
+    },
+    "build/generated/window-buttons/window-button-close.bmp": {
+      "ipo_ts": 1783327022362,
+      "edit_count": 3,
+      "last_lines": 1,
+      "last_ts": 1783328551634,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7af2e0d7"
+    },
+    "build/generated/window-buttons/window-button-maximize.bmp": {
+      "ipo_ts": 1783327022384,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327022384,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b106d8e0"
+    },
+    "build/generated/window-buttons/window-button-minimize.bmp": {
+      "ipo_ts": 1783327022403,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327022403,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f11279a2"
+    },
+    "build/generated/window-buttons/window-button-restore.bmp": {
+      "ipo_ts": 1783327022429,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327022429,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3844e2a7"
+    },
+    "build/install/root/system/resources/window-button-close.bmp": {
+      "ipo_ts": 1783327027499,
+      "edit_count": 3,
+      "last_lines": 1,
+      "last_ts": 1783328554512,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7af2e0d7"
+    },
+    "build/install/root/system/resources/window-button-maximize.bmp": {
+      "ipo_ts": 1783327027515,
+      "edit_count": 2,
+      "last_lines": 1,
+      "last_ts": 1783328050140,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b106d8e0"
+    },
+    "build/install/root/system/resources/window-button-minimize.bmp": {
+      "ipo_ts": 1783327027533,
+      "edit_count": 2,
+      "last_lines": 1,
+      "last_ts": 1783328050152,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f11279a2"
+    },
+    "build/install/root/system/resources/window-button-restore.bmp": {
+      "ipo_ts": 1783327027553,
+      "edit_count": 2,
+      "last_lines": 1,
+      "last_ts": 1783328050165,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3844e2a7"
+    },
+    "build/install/root/install/esp/system/resources/window-button-close.bmp": {
+      "ipo_ts": 1783327032634,
+      "edit_count": 3,
+      "last_lines": 1,
+      "last_ts": 1783328558528,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7af2e0d7"
+    },
+    "build/install/root/install/esp/system/resources/window-button-maximize.bmp": {
+      "ipo_ts": 1783327032651,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327032651,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b106d8e0"
+    },
+    "build/install/root/install/esp/system/resources/window-button-minimize.bmp": {
+      "ipo_ts": 1783327032672,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327032672,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f11279a2"
+    },
+    "build/install/root/install/esp/system/resources/window-button-restore.bmp": {
+      "ipo_ts": 1783327032691,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327032691,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3844e2a7"
+    },
+    "build/images/leonos4.vmdk.lck/M15313.lck": {
+      "ipo_ts": 1783327780461,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783327780461,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "b36ef1cd"
+    },
+    "build/images/leonos4.vmdk.lck/M19795.lck": {
+      "ipo_ts": 1783328307875,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783328307875,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f4506584"
+    },
+    "build/images/leonos4.vmdk.lck/M52671.lck": {
+      "ipo_ts": 1783328976727,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783328976727,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "c370d827"
     }
   }
 }

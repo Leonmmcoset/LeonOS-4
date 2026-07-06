@@ -1,0 +1,4 @@
+LeonOS Browser Plain Text Test
+
+This file verifies the non-HTML text renderer.
+Long plain text should flow across multiple browser lines without needing HTML tags.

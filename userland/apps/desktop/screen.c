@@ -61,6 +61,8 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
     }
     if (leonos_net_config(&config) == 0 &&
         (config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE) &&
+        (config.flags & LEONOS_NET_CONFIG_FLAG_DHCP) &&
+        config.source == LEONOS_NET_CONFIG_SOURCE_DHCP &&
         config.local_ip && config.gateway_ip) {
         connected = 1;
         color = 0x0000a000u;

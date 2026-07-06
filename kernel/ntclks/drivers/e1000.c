@@ -362,7 +362,6 @@ int e1000_send(const void *frame, uint32_t len)
 
 int e1000_poll(void *frame, uint32_t capacity, uint32_t *out_len)
 {
-    static uint32_t debug_rx_prints;
     uint32_t index;
     uint32_t len;
     uint8_t status;
@@ -376,14 +375,6 @@ int e1000_poll(void *frame, uint32_t capacity, uint32_t *out_len)
     status = g_e1000.rx[index].status;
     if ((status & E1000_RX_STATUS_DD) == 0) {
         return 0;
-    }
-    if (debug_rx_prints < 8) {
-        console_printf("[ntclks] e1000 rx desc=%u status=0x%x errors=0x%x len=%u rdh=%u rdt=%u\n",
-                       index, status, g_e1000.rx[index].errors,
-                       g_e1000.rx[index].length,
-                       e1000_reg_read(E1000_REG_RDH),
-                       e1000_reg_read(E1000_REG_RDT));
-        ++debug_rx_prints;
     }
     len = g_e1000.rx[index].length;
     if ((status & E1000_RX_STATUS_EOP) == 0 || g_e1000.rx[index].errors) {

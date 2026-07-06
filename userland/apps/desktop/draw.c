@@ -320,20 +320,110 @@ void text_draw_transparent_i(int x, int y, const char *text, uint32_t fg)
     }
 }
 
+static const char *window_button_icon_path(char label)
+{
+    switch (label) {
+    case '_':
+        return WINDOW_BUTTON_MINIMIZE_ICON_PATH;
+    case 'M':
+    case 'm':
+        return WINDOW_BUTTON_MAXIMIZE_ICON_PATH;
+    case 'r':
+    case 'R':
+        return WINDOW_BUTTON_RESTORE_ICON_PATH;
+    case 'X':
+    case 'x':
+        return WINDOW_BUTTON_CLOSE_ICON_PATH;
+    default:
+        return 0;
+    }
+}
+
+static int draw_window_button_icon(const char *icon_path, int x, int y,
+                                   uint32_t draw_w, uint32_t draw_h,
+                                   uint32_t color)
+{
+    const struct app_icon_cache_entry *entry = load_cached_app_icon(icon_path);
+    if (!entry || !entry->used || !entry->width || !entry->height ||
+        !draw_w || !draw_h) {
+        return 0;
+    }
+    for (uint32_t yy = 0; yy < draw_h; ++yy) {
+        uint32_t src_y = yy * entry->height / draw_h;
+        if (src_y >= entry->height) {
+            src_y = entry->height - 1;
+        }
+        for (uint32_t xx = 0; xx < draw_w; ++xx) {
+            uint32_t src_x = xx * entry->width / draw_w;
+            uint32_t argb;
+            if (src_x >= entry->width) {
+                src_x = entry->width - 1;
+            }
+            argb = entry->pixels[src_y * APP_ICON_MAX_W + src_x];
+            if ((argb >> 24) == 0) {
+                continue;
+            }
+            put_pixel_i(x + (int)xx, y + (int)yy, color);
+        }
+    }
+    return 1;
+}
+
+static void draw_window_button_outline_symbol(int x, int y, int w, int h,
+                                              uint32_t color)
+{
+    rect_fill_i(x, y, w, 1, color);
+    rect_fill_i(x, y, 1, h, color);
+    rect_fill_i(x + w - 1, y, 1, h, color);
+    rect_fill_i(x, y + h - 1, w, 1, color);
+}
+
+static void draw_fallback_window_button_symbol(int x, int y, char label,
+                                               uint32_t color)
+{
+    switch (label) {
+    case '_':
+        rect_fill_i(x + 3, y + 12, 10, 2, color);
+        break;
+    case 'M':
+    case 'm':
+        draw_window_button_outline_symbol(x + 3, y + 3, 10, 9, color);
+        rect_fill_i(x + 4, y + 4, 8, 1, color);
+        break;
+    case 'r':
+    case 'R':
+        draw_window_button_outline_symbol(x + 5, y + 3, 8, 7, color);
+        rect_fill_i(x + 6, y + 4, 6, 1, color);
+        draw_window_button_outline_symbol(x + 3, y + 6, 8, 7, color);
+        rect_fill_i(x + 4, y + 7, 6, 1, color);
+        break;
+    case 'X':
+    case 'x':
+        for (int i = 0; i < 8; ++i) {
+            rect_fill_i(x + 4 + i, y + 4 + i, 2, 2, color);
+            rect_fill_i(x + 4 + i, y + 11 - i, 2, 2, color);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 void window_button_i(int x, int y, char label, uint32_t flags)
 {
-    char text[2] = {label, 0};
     int pressed = (flags & LEONOS_UI_BUTTON_PRESSED) != 0;
-    int text_x = x + ((int)LEONOS_UI_WINDOW_BUTTON_W - (int)LEONOS_FONT_W) / 2;
-    int text_y = y + ((int)LEONOS_UI_WINDOW_BUTTON_H - (int)LEONOS_FONT_H) / 2 - 2;
-    if (label != '_') {
-        text_y += 1;
-    }
+    uint32_t icon_color = (flags & LEONOS_UI_BUTTON_DISABLED) ?
+        LEONOS_UI_DARK : LEONOS_UI_BLACK;
+    int icon_x = x + ((int)LEONOS_UI_WINDOW_BUTTON_W - WINDOW_BUTTON_ICON_W) / 2 + pressed;
+    int icon_y = y + ((int)LEONOS_UI_WINDOW_BUTTON_H - WINDOW_BUTTON_ICON_H) / 2 + pressed;
+    const char *icon_path = window_button_icon_path(label);
     bevel_i(x, y, LEONOS_UI_WINDOW_BUTTON_W, LEONOS_UI_WINDOW_BUTTON_H,
             LEONOS_UI_GRAY, flags);
-    text_draw_transparent_i(text_x + pressed, text_y + pressed, text,
-                            (flags & LEONOS_UI_BUTTON_DISABLED) ?
-                            LEONOS_UI_DARK : LEONOS_UI_BLACK);
+    if (!draw_window_button_icon(icon_path, icon_x, icon_y,
+                                 WINDOW_BUTTON_ICON_W, WINDOW_BUTTON_ICON_H,
+                                 icon_color)) {
+        draw_fallback_window_button_symbol(icon_x, icon_y, label, icon_color);
+    }
 }
 
 void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)

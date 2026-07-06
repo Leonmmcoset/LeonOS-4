@@ -242,9 +242,14 @@ static void draw_netctl(struct leonos_ui_surface *ui)
     leonos_ui_dialog(ui, 0, 0, NETCTL_W, NETCTL_H, T("Network Controller", "网络控制器"));
     leonos_ui_text(ui, 24, 40, T("Intel e1000 Network", "Intel e1000 网络"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
 
-    draw_row(ui, 74, T("State:", "状态:"), (config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE)
-                                               ? T("Active", "活动")
-                                               : T("Unavailable", "不可用"));
+    draw_row(ui, 74, T("State:", "状态:"),
+             ((config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE) &&
+              (config.flags & LEONOS_NET_CONFIG_FLAG_DHCP) &&
+              config.source == LEONOS_NET_CONFIG_SOURCE_DHCP)
+                 ? T("Active", "活动")
+                 : ((config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE)
+                        ? T("No DHCP lease", "没有 DHCP 租约")
+                        : T("Unavailable", "不可用")));
     draw_row(ui, 98, T("MAC:", "MAC:"), mac);
     draw_row(ui, 122, T("Config:", "配置:"), source_name(config.source));
     draw_row(ui, 146, T("IPv4:", "IPv4:"), ip);

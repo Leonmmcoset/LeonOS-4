@@ -32,6 +32,12 @@
 #define CURSOR_MAX_H 64
 #define CURSOR_BMP_MAX_BYTES (CURSOR_MAX_W * CURSOR_MAX_H * 4 + 128)
 #define CURSOR_BMP_PATH "0:/system/resources/mouse.bmp"
+#define WINDOW_BUTTON_ICON_W 16
+#define WINDOW_BUTTON_ICON_H 16
+#define WINDOW_BUTTON_MINIMIZE_ICON_PATH "0:/system/resources/window-button-minimize.bmp"
+#define WINDOW_BUTTON_MAXIMIZE_ICON_PATH "0:/system/resources/window-button-maximize.bmp"
+#define WINDOW_BUTTON_RESTORE_ICON_PATH "0:/system/resources/window-button-restore.bmp"
+#define WINDOW_BUTTON_CLOSE_ICON_PATH "0:/system/resources/window-button-close.bmp"
 #define APP_ICON_SMALL_W 16
 #define APP_ICON_SMALL_H 16
 #define APP_ICON_LARGE_W 32

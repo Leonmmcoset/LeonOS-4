@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <title>LeonOS Browser Format Test</title>
+  <style>
+    body { color: #202020; background-color: #ffffff; }
+    h1 { color: navy; text-decoration: underline; }
+    h2 { color: #005a9c; }
+    h3 { color: purple; }
+    .css-box { color: #102030; background-color: #e8f4ff; border-left: 4px solid #2b6cb0; margin-left: 16px; }
+    .centered { text-align: center; color: teal; font-weight: bold; }
+    .right-note { text-align: right; color: maroon; font-style: italic; }
+    .highlight { color: white; background-color: #7a3db8; }
+    #special-css { color: #004400; background-color: #ddffdd; border-left: 4px solid green; }
+    .hidden-by-core { display: none; }
+  </style>
+  <script>
+    document.body.innerHTML = "script should not run";
+  </script>
+</head>
+<body>
+  <h1>LeonOS Browser Format Test</h1>
+  <p>This page covers every HTML/text format currently supported by the LeonOS browser core.</p>
+
+  <h2>Text Blocks</h2>
+  <p>Paragraph text with entities: &amp; &lt; &gt; &quot; &apos; &nbsp; &#65; &#x42;.</p>
+  <p>Inline formats: <strong>strong text</strong>, <b>bold text</b>, <em>emphasis text</em>, <i>italic text</i>, and <code>code text</code>.</p>
+  <p>Inline CSS: <span class="highlight">class highlight</span> and <span style="color: blue; background-color: yellow; text-decoration: underline;">inline style</span>.</p>
+  <div>Div block text starts as a block.</div>
+  <section>Section block text.</section>
+  <article>Article block text.</article>
+  <blockquote>Blockquote block text.</blockquote>
+
+  <h2>CSS Blocks</h2>
+  <p class="css-box">Class selector with background, border-left, and margin-left.</p>
+  <p id="special-css">ID selector with green text, pale background, and border-left.</p>
+  <p class="centered">Centered CSS text.</p>
+  <p class="right-note">Right aligned italic CSS text.</p>
+  <p style="color: red; background-color: #ffeeee; border-left: 4px solid red; margin-left: 24px;">Inline style block.</p>
+
+  <h3>Breaks and Rules</h3>
+  <p>Line one before br<br>Line two after br.</p>
+  <hr>
+
+  <h2>List</h2>
+  <ul>
+    <li>First list item</li>
+    <li>Second list item with a <a href="relative-page.html">relative link</a></li>
+    <li>Third list item with entities &amp; wrapped text for flow testing</li>
+  </ul>
+
+  <h2>Table Rows</h2>
+  <table>
+    <tr><td>Row 1 col A</td><td>Row 1 col B</td></tr>
+    <tr><td>Row 2 col A</td><td>Row 2 col B</td></tr>
+  </table>
+
+  <h2>Links</h2>
+  <p><a href="http://example.com/">Absolute http link</a></p>
+  <p><a href="/root-path.html">Root-relative link</a></p>
+  <p><a href="folder/page.html">Folder relative link</a></p>
+  <p><a href="#top">Fragment link stays on this page</a></p>
+  <p><a href="plain.txt">Plain text response link</a></p>
+
+  <h2>Image Alt Text</h2>
+  <p><img src="missing.bmp" alt="Image alt text should appear in brackets"></p>
+
+  <h2>Hidden Content Check</h2>
+  <p>The style/script contents above should not appear in the rendered page.</p>
+</body>
+</html>

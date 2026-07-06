@@ -142,6 +142,10 @@ static const char *status_name(uint32_t status)
         return T("Bad target address", "目标地址无效");
     case LEONOS_NET_STATUS_TX_FAILED:
         return T("Transmit failed", "发送失败");
+    case LEONOS_NET_STATUS_DHCP_TIMEOUT:
+        return T("DHCP timeout", "DHCP 超时");
+    case LEONOS_NET_STATUS_DHCP_FAILED:
+        return T("DHCP failed", "DHCP 失败");
     default:
         return T("Unknown network status", "未知网络状态");
     }

@@ -38,6 +38,9 @@
 #define NET_DHCP_NAK 6u
 #define NET_BOOT_DHCP_ATTEMPTS 3u
 #define NET_BOOT_DHCP_TIMEOUT_MS 4000u
+#define NET_TCP_MSS 1460u
+#define NET_TCP_SYN_RETRANSMIT_MS 500u
+#define NET_TCP_DATA_RETRANSMIT_MS 750u
 
 struct net_arp_wait {
     uint32_t ip;
@@ -159,6 +162,11 @@ static void net_put_u32(uint8_t *p, uint32_t value)
     p[1] = (uint8_t)(value >> 16);
     p[2] = (uint8_t)(value >> 8);
     p[3] = (uint8_t)value;
+}
+
+static int net_tcp_seq_after_or_equal(uint32_t a, uint32_t b)
+{
+    return (int32_t)(a - b) >= 0;
 }
 
 static uint16_t net_checksum(const uint8_t *data, uint32_t len)
@@ -416,14 +424,16 @@ static int net_send_tcp_to_mac(const uint8_t *dst_mac, uint32_t src_ip,
     uint8_t frame[NET_FRAME_MAX];
     uint8_t *ip = frame + 14;
     uint8_t *tcp = frame + 34;
+    uint32_t tcp_header_len = (flags & TCP_FLAG_SYN) ? 24u : 20u;
     uint16_t tcp_len;
     uint16_t total_len;
-    if (payload_len > NET_FRAME_MAX - 54u || (payload_len && !payload)) {
+    if (payload_len > NET_FRAME_MAX - 34u - tcp_header_len ||
+        (payload_len && !payload)) {
         return -1;
     }
-    tcp_len = (uint16_t)(20u + payload_len);
+    tcp_len = (uint16_t)(tcp_header_len + payload_len);
     total_len = (uint16_t)(20u + tcp_len);
-    net_memzero(frame, 54u + payload_len);
+    net_memzero(frame, 34u + tcp_header_len + payload_len);
     net_write_eth(frame, dst_mac, ETH_TYPE_IPV4);
     ip[0] = 0x45;
     ip[1] = 0;
@@ -440,13 +450,18 @@ static int net_send_tcp_to_mac(const uint8_t *dst_mac, uint32_t src_ip,
     net_put_u16(tcp + 2, dst_port);
     net_put_u32(tcp + 4, seq);
     net_put_u32(tcp + 8, ack);
-    tcp[12] = 5u << 4;
+    tcp[12] = (uint8_t)((tcp_header_len / 4u) << 4);
     tcp[13] = flags;
     net_put_u16(tcp + 14, 4096);
     net_put_u16(tcp + 16, 0);
     net_put_u16(tcp + 18, 0);
+    if (flags & TCP_FLAG_SYN) {
+        tcp[20] = 2;
+        tcp[21] = 4;
+        net_put_u16(tcp + 22, NET_TCP_MSS);
+    }
     if (payload_len) {
-        net_memcpy(tcp + 20, payload, payload_len);
+        net_memcpy(tcp + tcp_header_len, payload, payload_len);
     }
     net_put_u16(tcp + 16, net_tcp_checksum(src_ip, dst_ip, tcp, tcp_len));
     return e1000_send(frame, 14u + total_len);
@@ -588,7 +603,10 @@ static void net_handle_tcp(const uint8_t *ip, uint32_t total_len,
     payload_len = tcp_len - hdr_len;
     tcp_wait->flags |= flags;
     if (flags & TCP_FLAG_ACK) {
-        tcp_wait->acked_seq = ack;
+        if (!tcp_wait->acked_seq ||
+            net_tcp_seq_after_or_equal(ack, tcp_wait->acked_seq)) {
+            tcp_wait->acked_seq = ack;
+        }
     }
     if (flags & TCP_FLAG_RST) {
         tcp_wait->reset = 1;
@@ -952,6 +970,18 @@ static uint32_t net_dhcp_request(uint32_t timeout_ms,
     return LEONOS_NET_STATUS_OK;
 }
 
+static uint32_t net_ensure_dhcp_lease(uint32_t timeout_ms)
+{
+    if (!e1000_is_ready()) {
+        return LEONOS_NET_STATUS_NO_DEVICE;
+    }
+    if (net_config.source == LEONOS_NET_CONFIG_SOURCE_DHCP &&
+        net_config.local_ip && net_config.gateway_ip) {
+        return LEONOS_NET_STATUS_OK;
+    }
+    return net_dhcp_request(timeout_ms, 0);
+}
+
 static void net_console_ipv4(uint32_t ip)
 {
     console_printf("%u.%u.%u.%u",
@@ -1050,6 +1080,13 @@ int net_ping(struct leonos_net_ping *request)
     timeout_ms = request->timeout_ms ? request->timeout_ms : LEONOS_NET_DEFAULT_TIMEOUT_MS;
     if (timeout_ms > LEONOS_NET_MAX_TIMEOUT_MS) {
         timeout_ms = LEONOS_NET_MAX_TIMEOUT_MS;
+    }
+    {
+        uint32_t lease_status = net_ensure_dhcp_lease(timeout_ms);
+        if (lease_status != LEONOS_NET_STATUS_OK) {
+            request->status = lease_status;
+            return 0;
+        }
     }
     target_ip = request->target_ip;
     arp_ip = net_route_arp_ip(target_ip);
@@ -1245,13 +1282,20 @@ int net_dns_resolve(struct leonos_net_dns *request)
         request->status = LEONOS_NET_STATUS_NO_DEVICE;
         return 0;
     }
-    if (!net_config.dns_ip) {
-        request->status = LEONOS_NET_STATUS_DNS_FAILED;
-        return 0;
-    }
     timeout_ms = request->timeout_ms ? request->timeout_ms : 3000u;
     if (timeout_ms > 10000u) {
         timeout_ms = 10000u;
+    }
+    {
+        uint32_t lease_status = net_ensure_dhcp_lease(timeout_ms);
+        if (lease_status != LEONOS_NET_STATUS_OK) {
+            request->status = lease_status;
+            return 0;
+        }
+    }
+    if (!net_config.dns_ip) {
+        request->status = LEONOS_NET_STATUS_DNS_FAILED;
+        return 0;
     }
     ident = (uint16_t)(net_sequence++ & 0xffffu);
     local_port = (uint16_t)(49152u + (ident & 0x3fffu));
@@ -1431,10 +1475,12 @@ int net_http_get(struct leonos_net_http_get *request)
     uint32_t remote_ip = 0;
     uint32_t arp_ip;
     uint32_t http_len;
+    uint32_t syn_seq;
     uint32_t local_seq;
     uint32_t acked_remote_seq;
     uint16_t local_port;
     uint64_t start;
+    uint64_t next_retransmit;
     uint32_t spins;
     int ret;
 
@@ -1462,6 +1508,13 @@ int net_http_get(struct leonos_net_http_get *request)
     if (timeout_ms > 10000u) {
         timeout_ms = 10000u;
     }
+    {
+        uint32_t lease_status = net_ensure_dhcp_lease(timeout_ms);
+        if (lease_status != LEONOS_NET_STATUS_OK) {
+            request->status = lease_status;
+            return 0;
+        }
+    }
     port = request->port ? request->port : NET_HTTP_PORT;
     http_len = net_http_build_request(http_request, sizeof(http_request),
                                       request->host, request->path, port);
@@ -1485,6 +1538,7 @@ int net_http_get(struct leonos_net_http_get *request)
     local_seq = 0x4c4e0000u ^ (net_sequence++ << 8) ^
                 (uint32_t)time_uptime_ms();
     local_port = (uint16_t)(49152u + (local_seq & 0x3fffu));
+    syn_seq = local_seq;
     wait = (struct net_tcp_wait){
         .src_ip = remote_ip,
         .src_port = (uint16_t)port,
@@ -1501,8 +1555,10 @@ int net_http_get(struct leonos_net_http_get *request)
     }
     ++local_seq;
     start = time_uptime_ms();
+    next_retransmit = start + NET_TCP_SYN_RETRANSMIT_MS;
     spins = 0;
     while (!net_timeout_expired(start, timeout_ms, spins++)) {
+        uint64_t now;
         net_poll_once(0, 0, 0, &wait);
         if (wait.reset) {
             request->status = LEONOS_NET_STATUS_TCP_RESET;
@@ -1512,6 +1568,16 @@ int net_http_get(struct leonos_net_http_get *request)
                 (TCP_FLAG_SYN | TCP_FLAG_ACK) &&
             wait.acked_seq == local_seq && wait.remote_seq) {
             break;
+        }
+        now = time_uptime_ms();
+        if (now >= next_retransmit) {
+            if (net_send_tcp_to_mac(dst_mac, net_config.local_ip, remote_ip,
+                                    local_port, (uint16_t)port, syn_seq, 0,
+                                    TCP_FLAG_SYN, 0, 0) < 0) {
+                request->status = LEONOS_NET_STATUS_TX_FAILED;
+                return 0;
+            }
+            next_retransmit = now + NET_TCP_SYN_RETRANSMIT_MS;
         }
         net_cpu_relax();
     }
@@ -1536,9 +1602,11 @@ int net_http_get(struct leonos_net_http_get *request)
     local_seq += http_len;
     acked_remote_seq = wait.remote_seq;
     start = time_uptime_ms();
+    next_retransmit = start + NET_TCP_DATA_RETRANSMIT_MS;
     spins = 0;
     while (!net_timeout_expired(start, timeout_ms, spins++)) {
         uint32_t before = wait.changed;
+        uint64_t now;
         net_poll_once(0, 0, 0, &wait);
         if (wait.reset) {
             request->status = LEONOS_NET_STATUS_TCP_RESET;
@@ -1557,6 +1625,20 @@ int net_http_get(struct leonos_net_http_get *request)
         if (wait.fin) {
             request->status = LEONOS_NET_STATUS_OK;
             break;
+        }
+        now = time_uptime_ms();
+        if (wait.length == 0 && !wait.fin && wait.acked_seq != local_seq &&
+            now >= next_retransmit) {
+            if (net_send_tcp_to_mac(dst_mac, net_config.local_ip, remote_ip,
+                                    local_port, (uint16_t)port,
+                                    local_seq - http_len, wait.remote_seq,
+                                    TCP_FLAG_PSH | TCP_FLAG_ACK,
+                                    (const uint8_t *)http_request,
+                                    http_len) < 0) {
+                request->status = LEONOS_NET_STATUS_TX_FAILED;
+                break;
+            }
+            next_retransmit = now + NET_TCP_DATA_RETRANSMIT_MS;
         }
         net_cpu_relax();
     }

@@ -16,3 +16,5 @@ when changing the kernel, loader, middlelayer, installer, or user ABI.
   packaging outputs, installer payload layout, and WSL validation commands.
 - [Browser](BROWSER.md): `browser.elf`, current HTML renderer limits, and the
   staged path toward a full litehtml port.
+- [Third-Party Code](THIRD_PARTY.md): submodule paths, upstream licenses, and
+  integration status for bundled external code.
