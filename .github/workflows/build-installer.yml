@@ -1,0 +1,69 @@
+name: Build LeonOS Installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            ninja-build \
+            clang \
+            llvm \
+            lld \
+            grub-efi-amd64-bin \
+            grub-pc-bin \
+            grub-common \
+            xorriso \
+            mtools \
+            dosfstools \
+            ovmf \
+            qemu-system-x86 \
+            python3 \
+            python3-pip \
+            python3-pil \
+            git \
+            make \
+            curl
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable
+          rustup default stable
+          rustup target add x86_64-unknown-none
+
+      - name: Verify Tools
+        run: |
+          clang --version
+          ld.lld --version
+          llvm-ar --version
+          rustc --version
+          cargo --version
+          ninja --version
+
+      - name: Build Installer
+        run: |
+          ninja installer
+
+      - name: Upload Installer ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: LeonOS-Installer
+          path: |
+            build/images/leonos4-installer.iso
+            build/install/root.fat
+          if-no-files-found: error
