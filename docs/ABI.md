@@ -68,6 +68,37 @@ Authentication requests use `ioctl` IDs:
 
 Task snapshots now include `uid`, `role`, `session_id`, and `username`.
 Children inherit identity and current directory from the parent task.
+Protected service tasks are marked with `LEONOS_AUTHZ_ACTOR_SERVICE` when the
+kernel asks middlelayer authorization policy. That lets the policy distinguish
+system service runtime writes from ordinary user writes without granting broad
+access to unauthenticated tasks.
+
+File authorization operations include `LEONOS_AUTHZ_READ`,
+`LEONOS_AUTHZ_WRITE`, `LEONOS_AUTHZ_EXEC`, `LEONOS_AUTHZ_DELETE`, and
+`LEONOS_AUTHZ_MANAGE`. Middlelayer handles them through the same `auth_op`
+policy callback.
+
+## Filesystem ACL ABI
+
+Filesystem ACL types are defined in `include/leonos/fs.h`. Userland calls:
+
+- `leonos_fs_acl_get`
+- `leonos_fs_acl_set`
+- `leonos_fs_acl_take_ownership`
+- `leonos_fs_acl_repair`
+
+The libc wrappers use these ioctls:
+
+- `LEONOS_FS_IOCTL_ACL_GET`
+- `LEONOS_FS_IOCTL_ACL_SET`
+- `LEONOS_FS_IOCTL_ACL_TAKE_OWNERSHIP`
+- `LEONOS_FS_IOCTL_ACL_REPAIR`
+
+`struct leonos_fs_acl` contains the owner uid and up to
+`LEONOS_FS_ACL_MAX_ACE` ACE rows. Supported principals are Owner, System,
+Administrators, Users, and Everyone. Supported permission bits are Read/List,
+Write/Create, Execute/Traverse, Delete, and Manage Permissions. ACL rows only
+grant allowed permissions; an unchecked permission bit means no grant.
 
 ## Middlelayer ABI v5
 
@@ -188,11 +219,17 @@ Current companion applications:
   the current user's `0:/users/<name>/downloads` directory.
 - `imageview.elf`: opens uncompressed 24/32-bit BMP files, supports Fit/1x/2x
   zoom, and can move to previous/next BMP siblings in the same directory.
-- `servicemgr.elf`: edits `0:/etc/services.cfg`, the v1 startup/service policy
-  file used by service-aware components.
+- `serviced.elf`: protected background service runtime. Desktop starts it once
+  after the window server is ready. It writes `0:/var/run/services.state`,
+  consumes `0:/var/run/services.cmd`, logs to `0:/var/log/services.log`, and
+  keeps retrying DHCP while the static fallback is active.
+- `servicemgr.elf`: edits `0:/etc/services.cfg`, reads the runtime state file,
+  and queues administrator start/stop/restart commands through
+  `0:/var/run/services.cmd`.
 
 The current service keys are `desktop`, `dhcp`, `network_icon`, `rtc_clock`,
 and `ntp_sync`. `desktop` is fixed on. `dhcp` controls whether kernel boot
-network initialization attempts DHCP before keeping the static fallback.
-`network_icon` and `rtc_clock` are read by the desktop taskbar. `ntp_sync` is a
-reserved switch for a future time-sync service.
+network initialization attempts DHCP before keeping the static fallback and is
+also supervised by `serviced.elf` after the desktop starts. `network_icon` and
+`rtc_clock` are read by the desktop taskbar. `ntp_sync` is wired into service
+state reporting but remains failed/reserved until a kernel set-time ABI exists.

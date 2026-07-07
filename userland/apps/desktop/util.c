@@ -451,6 +451,10 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         copy_text(dst, dst_len, leonos_i18n("Network Controller", "网络控制器"));
         return;
     }
+    if (text_eq(name, "serviced.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Service Runtime", "服务运行时"));
+        return;
+    }
     if (text_eq(name, "servicemgr.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Service Manager", "服务管理器"));
         return;

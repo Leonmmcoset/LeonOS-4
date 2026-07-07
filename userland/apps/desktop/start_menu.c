@@ -4,6 +4,7 @@ int start_menu_is_hidden_app(const char *name)
 {
     return text_eq(name, "init.elf") ||
            text_eq(name, "desktop.elf") ||
+           text_eq(name, "serviced.elf") ||
            text_eq(name, "oobe.elf") ||
            text_eq(name, "login.elf") ||
            text_eq(name, "shell.elf");

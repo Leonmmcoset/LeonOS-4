@@ -36,6 +36,11 @@ Multi-user v1 uses these fixed paths:
 - `0:/etc/oobe.done`: first-run completion marker.
 - `0:/etc/fileassoc.cfg`: optional launcher file-association overrides.
 - `0:/etc/services.cfg`: optional startup/service policy overrides.
+- `0:/var/run/services.state`: service runtime state written by
+  `serviced.elf`.
+- `0:/var/run/services.cmd`: one-shot service control command file written by
+  administrator tools.
+- `0:/var/log/services.log`: service runtime log.
 - `0:/users/<name>`: user home directory.
 - `0:/users/<name>/desktop`
 - `0:/users/<name>/documents`
@@ -72,23 +77,46 @@ Current FAT32 and syscall support includes:
 
 ## Permission Model
 
-FAT32 still has no persisted owner or mode fields. LeonOS v1 permissions are
-enforced at syscall and ioctl boundaries:
+LeonOS v1 stores Windows-style ACL metadata beside FAT32 directory entries.
+Each directory may contain a hidden/system `LEONACL.SYS` file. The kernel hides
+that file from normal directory enumeration and denies direct user-task access;
+middlelayer reads and writes it through trusted kernel file services.
 
-- All users can read system programs/resources under `0:/system`,
-  `0:/userland`, and `0:/dev`.
-- Normal users can write their own `0:/users/<name>` tree and `0:/tmp`.
-- Administrators can access and manage other user directories.
-- `0:/etc/accounts.db` is denied to user tasks, including administrators; auth
-  APIs are the supported access path.
-- User management and installer format/mount operations require administrator
-  policy approval in normal boots.
-- Installer RAM-root boots are a special controlled runtime and may copy the
-  normal ESP payload to target drive paths such as `1:/`.
+`LEONACL.SYS` is a LeonOS TLV binary file:
+
+- Header: `LACL` magic, version `1`, record count, checksum.
+- Record TLV: directory-entry name, owner uid, flags, and up to
+  `LEONOS_FS_ACL_MAX_ACE` ACEs.
+- ACE principals: Owner, System, Administrators, Users, Everyone.
+- ACE permissions: Read/List, Write/Create, Execute/Traverse, Delete, and
+  Manage Permissions.
+
+ACL rows only grant allowed permissions; an unchecked permission bit means no
+grant. Explicit parent ACL records dynamically affect children; synthetic
+built-in defaults are used for missing metadata but are not written until an
+object is changed. A child may add explicit ACL entries but v1 does not
+implement a "disable inherited permissions" switch.
+
+Default policy:
+
+- `0:/boot`, `0:/system`, `0:/userland`, and `0:/etc`: System and
+  Administrators get full control; Users get read/execute.
+- `0:/users/<name>` and descendants: Owner, System, and Administrators get full
+  control by default. Other normal users are not granted access.
+- `0:/tmp`: Users, System, and Administrators get read/write/execute/delete.
+- `0:/etc/accounts.db` and `LEONACL.SYS` are denied to user tasks; supported
+  access goes through auth and ACL APIs.
+- Installer RAM-root boots bypass normal policy so installation/update code can
+  copy the ESP payload to target drive paths such as `1:/`.
+
+If an ACL file is missing, middlelayer synthesizes the default ACL. If an ACL
+file is corrupt, normal users are denied and administrators can repair it from
+File Manager properties.
 
 ## Current limits
 
 - No journaling or crash recovery.
 - FAT32 long-file-name behavior is still conservative.
 - Devfs only exposes the framebuffer node today.
-- Permission bits and ownership are not a real security model yet.
+- ACL metadata is LeonOS-specific and is not compatible with external FAT32
+  permission tools.

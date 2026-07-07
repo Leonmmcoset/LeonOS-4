@@ -28,6 +28,7 @@ NORMAL_USER_APPS = [
     "bugtest",
     "ping",
     "netctl",
+    "serviced",
     "servicemgr",
     "httpget",
     "downloadmgr",

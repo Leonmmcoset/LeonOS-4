@@ -76,3 +76,22 @@ int desktop_load_service_config(void)
     desktop_service_rtc_clock = rtc_clock;
     return changed;
 }
+
+void desktop_service_daemon_update(void)
+{
+    unsigned long now;
+    int pid;
+    if (desktop_service_daemon_started) {
+        return;
+    }
+    now = leonos_uptime_ms();
+    if (desktop_service_daemon_last_spawn_ms &&
+        now - desktop_service_daemon_last_spawn_ms < SERVICE_DAEMON_RETRY_MS) {
+        return;
+    }
+    desktop_service_daemon_last_spawn_ms = now;
+    pid = spawn_program_path(SERVICE_DAEMON_PATH);
+    if (pid > 0 || pid == -LEONOS_EEXIST) {
+        desktop_service_daemon_started = 1;
+    }
+}

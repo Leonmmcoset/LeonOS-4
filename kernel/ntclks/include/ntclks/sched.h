@@ -125,6 +125,7 @@ uint32_t sched_current_pid(void);
 struct task *sched_current_task(void);
 struct task *sched_find(uint32_t pid);
 struct task *sched_find_by_name(const char *name);
+struct task *sched_find_by_path(const char *path);
 struct task *sched_find_by_path_basename(const char *basename);
 struct task *sched_find_window_server(void);
 struct task *sched_select_next_user(void);

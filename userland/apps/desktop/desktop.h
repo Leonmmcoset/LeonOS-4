@@ -56,6 +56,8 @@
 #define LOGIN_WINDOW_TITLE "LeonOS Login"
 #define LOGIN_WINDOW_TEXT "Sign in"
 #define LOGIN_RESPAWN_MS 1000UL
+#define SERVICE_DAEMON_PATH "0:/userland/serviced.elf"
+#define SERVICE_DAEMON_RETRY_MS 2000UL
 #define DISPLAY_CONFIG_PATH "0:/etc/display.conf"
 #define SERVICES_CONFIG_PATH "0:/etc/services.cfg"
 #define SERVICES_CONFIG_MAX 512U
@@ -277,6 +279,8 @@ extern uint8_t cursor_visible;
 extern uint8_t cursor_bitmap_loaded;
 extern uint8_t desktop_service_network_icon;
 extern uint8_t desktop_service_rtc_clock;
+extern uint8_t desktop_service_daemon_started;
+extern unsigned long desktop_service_daemon_last_spawn_ms;
 extern uint8_t full_redraw_pending;
 extern uint8_t power_confirm_action;
 extern uint8_t oobe_lock_active;
@@ -324,6 +328,7 @@ uint32_t taskbar_y(void);
 uint32_t desktop_tray_width(void);
 uint32_t running_window_count(void);
 int desktop_load_service_config(void);
+void desktop_service_daemon_update(void);
 void start_menu_set_open(uint8_t open);
 void start_menu_toggle(void);
 uint32_t start_menu_progress(void);

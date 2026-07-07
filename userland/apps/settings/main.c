@@ -84,13 +84,15 @@ static struct service_row service_rows[SETTINGS_SERVICE_ROWS] = {
     {"desktop", "Desktop window service", "桌面窗口服务",
      "Required system shell. Cannot be disabled here.", "必需的系统外壳，不能在这里禁用。", 1, 1},
     {"dhcp", "DHCP auto connect", "DHCP 自动连接",
-     "Network startup should request an address automatically.", "网络启动时自动请求地址。", 1, 0},
+     "Boot and service runtime should request an address automatically.",
+     "启动和服务运行时自动请求地址。", 1, 0},
     {"network_icon", "Taskbar network icon", "任务栏网络图标",
      "Show network state in the desktop taskbar.", "在桌面任务栏显示网络状态。", 1, 0},
     {"rtc_clock", "RTC taskbar clock", "RTC 任务栏时钟",
      "Show the hardware clock in the taskbar.", "在任务栏显示硬件时钟。", 1, 0},
     {"ntp_sync", "NTP time sync", "NTP 时间同步",
-     "Reserved for the future network time service.", "预留给后续网络校时服务。", 0, 0},
+     "Reserved until kernel set-time support exists.",
+     "等待内核支持设置时间后启用。", 0, 0},
 };
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
@@ -515,8 +517,8 @@ static void draw_assoc_page(struct leonos_ui_surface *ui)
 static void draw_services_page(struct leonos_ui_surface *ui)
 {
     leonos_ui_text(ui, 34, 92,
-                   T("Startup/service policy is saved for service-aware system components.",
-                     "启动项/服务策略会保存给支持服务配置的系统组件使用。"),
+                   T("Startup policy is saved here; Service Manager shows runtime state.",
+                     "这里保存启动策略；服务管理器显示运行状态。"),
                    LEONOS_UI_DARK, LEONOS_UI_GRAY);
     for (uint32_t i = 0; i < SETTINGS_SERVICE_ROWS; ++i) {
         uint32_t y = 126 + i * 48;

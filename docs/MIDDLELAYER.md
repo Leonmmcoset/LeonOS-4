@@ -13,6 +13,10 @@ Middlelayer currently owns:
 - Device catalog formatting from raw kernel device facts.
 - Local account storage, salted SHA-256 password checks, session/user policy,
   and path/task/install authorization decisions.
+- FAT32 ACL policy through hidden `LEONACL.SYS` metadata files, including
+  default ACL synthesis, corrupt-ACL handling, and owner/role checks.
+- Service-runtime authorization for protected service tasks writing
+  `0:/var` state/log files and `0:/etc/services.cfg`.
 - Boot-time self-test coverage for FAT32/mount policy, IPC, GUI, VFS, and
   device catalog services.
 
@@ -79,6 +83,24 @@ The database is accessed through trusted kernel services:
 User tasks cannot open `0:/etc/accounts.db` directly. Auth operations go through
 `auth_op`, and the kernel passes bounded structs after validating user pointers.
 
+## Filesystem ACL Service
+
+Middlelayer owns the policy for hidden `LEONACL.SYS` files. The kernel owns the
+FAT32 mutations and blocks direct user-task access, while middlelayer parses and
+writes the TLV metadata through trusted `read_file` and `write_file` services.
+
+The ACL service supports:
+
+- Get/set ACL for a path.
+- Administrator take-ownership.
+- Administrator repair for corrupt ACL metadata.
+- Best-effort create/delete/rename notifications so directory ACL records track
+  file operations.
+
+When metadata is missing, middlelayer synthesizes defaults for system trees,
+user homes, and `0:/tmp`. When metadata is corrupt, ordinary access is denied
+and administrators can repair the object from File Manager.
+
 Middlelayer also creates and repairs:
 
 - `0:/users`
@@ -96,6 +118,14 @@ and that first account must be an administrator. Later account creation,
 enable/disable, role switching, and admin password resets require an
 administrator. The policy refuses to disable or demote the current
 administrator and refuses to remove the last enabled administrator.
+
+Protected system services are marked by the kernel with
+`LEONOS_AUTHZ_ACTOR_SERVICE` during authorization checks. Middlelayer uses that
+flag to allow `serviced.elf` to create and update
+`0:/var/run/services.state`, `0:/var/run/services.cmd`,
+`0:/var/log/services.log`, and `0:/etc/services.cfg` without making those
+writes available to ordinary unauthenticated tasks. `0:/var` remains readable
+so user tools can show runtime service state.
 
 ## ABI v5 callbacks
 

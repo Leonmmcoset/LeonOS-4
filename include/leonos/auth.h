@@ -30,6 +30,7 @@
 #define LEONOS_AUTH_OP_UPDATE_USER 5U
 #define LEONOS_AUTH_OP_CHANGE_PASSWORD 6U
 #define LEONOS_AUTH_OP_AUTHORIZE 7U
+#define LEONOS_AUTH_OP_FSPERM 8U
 
 #define LEONOS_AUTH_UPDATE_ROLE 0x00000001U
 #define LEONOS_AUTH_UPDATE_FLAGS 0x00000002U
@@ -40,6 +41,10 @@
 #define LEONOS_AUTHZ_USER_ADMIN 4U
 #define LEONOS_AUTHZ_INSTALL 5U
 #define LEONOS_AUTHZ_KILL_TASK 6U
+#define LEONOS_AUTHZ_DELETE 7U
+#define LEONOS_AUTHZ_MANAGE 8U
+
+#define LEONOS_AUTHZ_ACTOR_SERVICE 0x00000001U
 
 struct leonos_user_info {
     uint32_t uid;
@@ -109,7 +114,7 @@ struct leonos_authz_request {
     uint32_t target_uid;
     uint32_t target_role;
     uint32_t allowed;
-    uint32_t reserved;
+    uint32_t actor_flags;
     char username[LEONOS_AUTH_USERNAME_LEN];
     char home[LEONOS_AUTH_HOME_LEN];
     char path[256];

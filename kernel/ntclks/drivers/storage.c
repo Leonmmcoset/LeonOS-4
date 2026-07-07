@@ -40,6 +40,8 @@
 #define FAT32_EOC 0x0ffffff8u
 #define FAT32_ATTR_DIRECTORY 0x10u
 #define FAT32_ATTR_LFN 0x0fu
+#define FAT32_ATTR_HIDDEN 0x02u
+#define FAT32_ATTR_SYSTEM 0x04u
 #define FAT32_ATTR_ARCHIVE 0x20u
 #define FAT32_DIR_ENTRY_BYTES 32u
 
@@ -380,6 +382,11 @@ static int storage_text_eq_ci(const char *a, const char *b)
         ++b;
     }
     return *a == 0 && *b == 0;
+}
+
+static int storage_is_acl_metadata_name(const char *name)
+{
+    return storage_text_eq_ci(name, "LEONACL.SYS");
 }
 
 static uint32_t min_u32(uint32_t a, uint32_t b)
@@ -1871,6 +1878,9 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
                 (name[0] == '.' && name[1] == '.' && name[2] == 0)) {
                 continue;
             }
+            if (storage_is_acl_metadata_name(name)) {
+                continue;
+            }
             if (emitted++ != index) {
                 continue;
             }
@@ -2722,7 +2732,9 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
         ref.entry_offset = span.entry_offset + lfn_count * sizeof(struct fat32_dirent);
         storage_memzero(&ref.dirent, sizeof(ref.dirent));
         storage_memcpy(ref.dirent.name, short_name, 11);
-        ref.dirent.attr = FAT32_ATTR_ARCHIVE;
+        ref.dirent.attr = storage_is_acl_metadata_name(name)
+                               ? (FAT32_ATTR_HIDDEN | FAT32_ATTR_SYSTEM | FAT32_ATTR_ARCHIVE)
+                               : FAT32_ATTR_ARCHIVE;
         existing.first_cluster = 0;
         existing.size = 0;
     } else {

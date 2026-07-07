@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <leonos/auth.h>
 #include <leonos/boot_handoff.h>
+#include <leonos/fs.h>
 
 #define OSMLAYER_VFS_OP_RESOLVE_PATH 1u
 #define OSMLAYER_FS_NAME_LEN 128u
@@ -833,6 +834,728 @@ static int osmlayer_find_account_by_uid(struct osmlayer_account *accounts,
     return -1;
 }
 
+static int osmlayer_path_is_accounts_db(const char *path);
+
+#define OSMLAYER_ACL_FILE_NAME "LEONACL.SYS"
+#define OSMLAYER_ACL_MAGIC 0x4c43414cU
+#define OSMLAYER_ACL_MAX_BYTES 8192U
+#define OSMLAYER_ACL_MAX_RECORDS 64U
+#define OSMLAYER_ACL_TLV_RECORD 1U
+#define OSMLAYER_ACL_LEGACY_ACE_DENY 0x00000001U
+
+struct osmlayer_acl_record {
+    char name[LEONOS_FS_NAME_LEN];
+    uint32_t owner_uid;
+    uint32_t flags;
+    uint32_t ace_count;
+    struct leonos_fs_acl_ace aces[LEONOS_FS_ACL_MAX_ACE];
+};
+
+struct osmlayer_acl_dir {
+    uint32_t count;
+    uint32_t corrupt;
+    struct osmlayer_acl_record records[OSMLAYER_ACL_MAX_RECORDS];
+};
+
+static char osmlayer_acl_buf[OSMLAYER_ACL_MAX_BYTES];
+
+static char osmlayer_lower(char ch)
+{
+    return (ch >= 'A' && ch <= 'Z') ? (char)(ch - 'A' + 'a') : ch;
+}
+
+static int osmlayer_text_eq_ci(const char *a, const char *b)
+{
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b && osmlayer_lower(*a) == osmlayer_lower(*b)) {
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+
+static int osmlayer_path_is_acl_file(const char *path)
+{
+    const char *base = path;
+    if (!path) {
+        return 0;
+    }
+    for (uint32_t i = 0; path[i]; ++i) {
+        if (path[i] == '/') {
+            base = path + i + 1u;
+        }
+    }
+    return osmlayer_text_eq_ci(base, OSMLAYER_ACL_FILE_NAME);
+}
+
+static uint16_t osmlayer_get_u16(const uint8_t *p)
+{
+    return (uint16_t)p[0] | (uint16_t)((uint16_t)p[1] << 8);
+}
+
+static uint32_t osmlayer_get_u32(const uint8_t *p)
+{
+    return (uint32_t)p[0] |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static void osmlayer_put_u16(uint8_t *p, uint16_t value)
+{
+    p[0] = (uint8_t)(value & 0xffu);
+    p[1] = (uint8_t)((value >> 8) & 0xffu);
+}
+
+static void osmlayer_put_u32(uint8_t *p, uint32_t value)
+{
+    p[0] = (uint8_t)(value & 0xffu);
+    p[1] = (uint8_t)((value >> 8) & 0xffu);
+    p[2] = (uint8_t)((value >> 16) & 0xffu);
+    p[3] = (uint8_t)((value >> 24) & 0xffu);
+}
+
+static uint32_t osmlayer_acl_checksum(const uint8_t *buf, uint32_t len)
+{
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 16; i < len; ++i) {
+        h ^= buf[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static int osmlayer_path_parent_name(const char *path, char *parent,
+                                     uint32_t parent_cap, char *name,
+                                     uint32_t name_cap)
+{
+    uint32_t len = osmlayer_strlen(path);
+    uint32_t slash = 0;
+    uint32_t pos = 0;
+    if (!path || !osmlayer_abs_drive_path(path) || !parent || !name ||
+        parent_cap < 4 || name_cap == 0) {
+        return -22;
+    }
+    if (len == 3 && path[2] == '/') {
+        osmlayer_copy_text(parent, parent_cap, "0:/");
+        osmlayer_copy_text(name, name_cap, ".");
+        return 0;
+    }
+    for (uint32_t i = 3; path[i]; ++i) {
+        if (path[i] == '/') {
+            slash = i;
+        }
+    }
+    if (slash == 0) {
+        osmlayer_copy_text(parent, parent_cap, "0:/");
+        slash = 2;
+    } else {
+        if (slash + 1u > parent_cap) {
+            return -22;
+        }
+        for (uint32_t i = 0; i < slash; ++i) {
+            parent[i] = path[i];
+        }
+        parent[slash] = 0;
+    }
+    for (uint32_t i = slash + 1u; path[i]; ++i) {
+        if (pos + 1u >= name_cap) {
+            return -22;
+        }
+        name[pos++] = path[i];
+    }
+    name[pos] = 0;
+    return name[0] ? 0 : -22;
+}
+
+static void osmlayer_acl_file_path(const char *dir, char *out, uint32_t cap)
+{
+    uint32_t pos = 0;
+    if (!out || cap == 0) {
+        return;
+    }
+    out[0] = 0;
+    osmlayer_append_text(out, &pos, cap, dir && dir[0] ? dir : "0:/");
+    if (!osmlayer_text_eq(out, "0:/")) {
+        osmlayer_append_char(out, &pos, cap, '/');
+    }
+    osmlayer_append_text(out, &pos, cap, OSMLAYER_ACL_FILE_NAME);
+}
+
+static int osmlayer_acl_find_record(struct osmlayer_acl_dir *dir, const char *name)
+{
+    if (!dir || !name) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < dir->count; ++i) {
+        if (osmlayer_text_eq_ci(dir->records[i].name, name)) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int osmlayer_acl_load_dir(const char *dir_path, struct osmlayer_acl_dir *dir)
+{
+    char acl_path[LEONOS_FS_PATH_LEN];
+    uint32_t len = 0;
+    int ret;
+    if (!dir) {
+        return -22;
+    }
+    memset(dir, 0, sizeof(*dir));
+    osmlayer_acl_file_path(dir_path, acl_path, sizeof(acl_path));
+    ret = osmlayer_service_read_file(acl_path, osmlayer_acl_buf,
+                                     sizeof(osmlayer_acl_buf), &len);
+    if (ret == -2) {
+        return 0;
+    }
+    if (ret < 0) {
+        return ret;
+    }
+    if (len < 16 ||
+        osmlayer_get_u32((const uint8_t *)osmlayer_acl_buf) != OSMLAYER_ACL_MAGIC ||
+        osmlayer_get_u32((const uint8_t *)osmlayer_acl_buf + 4) != LEONOS_FS_ACL_VERSION ||
+        osmlayer_get_u32((const uint8_t *)osmlayer_acl_buf + 12) !=
+            osmlayer_acl_checksum((const uint8_t *)osmlayer_acl_buf, len)) {
+        dir->corrupt = 1;
+        return 0;
+    }
+    uint32_t pos = 16;
+    while (pos + 4u <= len && dir->count < OSMLAYER_ACL_MAX_RECORDS) {
+        uint16_t type = osmlayer_get_u16((const uint8_t *)osmlayer_acl_buf + pos);
+        uint16_t tlv_len = osmlayer_get_u16((const uint8_t *)osmlayer_acl_buf + pos + 2u);
+        uint32_t end = pos + 4u + tlv_len;
+        if (tlv_len < 12u || end > len) {
+            dir->corrupt = 1;
+            return 0;
+        }
+        if (type == OSMLAYER_ACL_TLV_RECORD) {
+            const uint8_t *p = (const uint8_t *)osmlayer_acl_buf + pos + 4u;
+            uint16_t name_len = osmlayer_get_u16(p);
+            uint16_t ace_count = osmlayer_get_u16(p + 2u);
+            uint32_t need = 12u + (uint32_t)name_len + (uint32_t)ace_count * 12u;
+            if (name_len == 0 || name_len >= LEONOS_FS_NAME_LEN ||
+                ace_count > LEONOS_FS_ACL_MAX_ACE || need > tlv_len) {
+                dir->corrupt = 1;
+                return 0;
+            }
+            struct osmlayer_acl_record *rec = &dir->records[dir->count++];
+            rec->owner_uid = osmlayer_get_u32(p + 4u);
+            rec->flags = osmlayer_get_u32(p + 8u);
+            rec->ace_count = ace_count;
+            for (uint32_t i = 0; i < name_len; ++i) {
+                rec->name[i] = (char)p[12u + i];
+            }
+            rec->name[name_len] = 0;
+            const uint8_t *ace = p + 12u + name_len;
+            for (uint32_t i = 0; i < ace_count; ++i) {
+                uint32_t legacy_flags = osmlayer_get_u32(ace + i * 12u + 4u);
+                rec->aces[i].principal = osmlayer_get_u32(ace + i * 12u);
+                rec->aces[i].flags = 0;
+                rec->aces[i].permissions =
+                    (legacy_flags & OSMLAYER_ACL_LEGACY_ACE_DENY)
+                        ? 0
+                        : osmlayer_get_u32(ace + i * 12u + 8u);
+                rec->aces[i].reserved = 0;
+            }
+        }
+        pos = end;
+    }
+    return 0;
+}
+
+static int osmlayer_acl_save_dir(const char *dir_path, const struct osmlayer_acl_dir *dir)
+{
+    char acl_path[LEONOS_FS_PATH_LEN];
+    uint8_t *buf = (uint8_t *)osmlayer_acl_buf;
+    uint32_t pos = 16;
+    if (!dir) {
+        return -22;
+    }
+    memset(osmlayer_acl_buf, 0, sizeof(osmlayer_acl_buf));
+    osmlayer_put_u32(buf, OSMLAYER_ACL_MAGIC);
+    osmlayer_put_u32(buf + 4u, LEONOS_FS_ACL_VERSION);
+    osmlayer_put_u32(buf + 8u, dir->count);
+    for (uint32_t r = 0; r < dir->count; ++r) {
+        const struct osmlayer_acl_record *rec = &dir->records[r];
+        uint32_t name_len = osmlayer_strlen(rec->name);
+        uint32_t payload_len = 12u + name_len + rec->ace_count * 12u;
+        if (!name_len || name_len >= LEONOS_FS_NAME_LEN ||
+            rec->ace_count > LEONOS_FS_ACL_MAX_ACE ||
+            pos + 4u + payload_len > sizeof(osmlayer_acl_buf)) {
+            return -7;
+        }
+        osmlayer_put_u16(buf + pos, OSMLAYER_ACL_TLV_RECORD);
+        osmlayer_put_u16(buf + pos + 2u, (uint16_t)payload_len);
+        pos += 4u;
+        osmlayer_put_u16(buf + pos, (uint16_t)name_len);
+        osmlayer_put_u16(buf + pos + 2u, (uint16_t)rec->ace_count);
+        osmlayer_put_u32(buf + pos + 4u, rec->owner_uid);
+        osmlayer_put_u32(buf + pos + 8u, rec->flags);
+        pos += 12u;
+        for (uint32_t i = 0; i < name_len; ++i) {
+            buf[pos++] = (uint8_t)rec->name[i];
+        }
+        for (uint32_t i = 0; i < rec->ace_count; ++i) {
+            osmlayer_put_u32(buf + pos, rec->aces[i].principal);
+            osmlayer_put_u32(buf + pos + 4u, 0);
+            osmlayer_put_u32(buf + pos + 8u,
+                             rec->aces[i].permissions & LEONOS_FS_PERM_FULL);
+            pos += 12u;
+        }
+    }
+    osmlayer_put_u32(buf + 12u, osmlayer_acl_checksum(buf, pos));
+    osmlayer_acl_file_path(dir_path, acl_path, sizeof(acl_path));
+    return osmlayer_service_write_file(acl_path, osmlayer_acl_buf, pos);
+}
+
+static void osmlayer_acl_add_ace(struct leonos_fs_acl *acl, uint32_t principal,
+                                 uint32_t flags, uint32_t permissions)
+{
+    if (!acl || !permissions || acl->ace_count >= LEONOS_FS_ACL_MAX_ACE) {
+        return;
+    }
+    acl->aces[acl->ace_count++] = (struct leonos_fs_acl_ace){
+        .principal = principal,
+        .flags = flags,
+        .permissions = permissions & LEONOS_FS_PERM_FULL,
+        .reserved = 0,
+    };
+}
+
+static uint32_t osmlayer_owner_for_path(const char *path,
+                                        struct osmlayer_account *accounts,
+                                        uint32_t count)
+{
+    char prefix[LEONOS_AUTH_HOME_LEN];
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!accounts[i].used) {
+            continue;
+        }
+        osmlayer_home_for_user(prefix, sizeof(prefix), accounts[i].username);
+        if (osmlayer_text_eq(path, prefix) || osmlayer_path_under(path, prefix)) {
+            return accounts[i].uid;
+        }
+    }
+    return 0;
+}
+
+static int osmlayer_path_is_system_tree(const char *path)
+{
+    return osmlayer_text_eq(path, "0:/") ||
+           osmlayer_text_eq(path, "0:/boot") || osmlayer_path_under(path, "0:/boot") ||
+           osmlayer_text_eq(path, "0:/system") || osmlayer_path_under(path, "0:/system") ||
+           osmlayer_text_eq(path, "0:/userland") || osmlayer_path_under(path, "0:/userland") ||
+           osmlayer_text_eq(path, "0:/etc") || osmlayer_path_under(path, "0:/etc") ||
+           osmlayer_text_eq(path, "0:/users") ||
+           osmlayer_text_eq(path, "0:/var") || osmlayer_path_under(path, "0:/var") ||
+           osmlayer_text_eq(path, "0:/dev") || osmlayer_path_under(path, "0:/dev");
+}
+
+static void osmlayer_acl_default_for_path(const char *path,
+                                          struct osmlayer_account *accounts,
+                                          uint32_t count,
+                                          struct leonos_fs_acl *acl)
+{
+    uint32_t owner = osmlayer_owner_for_path(path, accounts, count);
+    memset(acl, 0, sizeof(*acl));
+    acl->version = LEONOS_FS_ACL_VERSION;
+    acl->owner_uid = owner;
+    acl->flags = LEONOS_FS_ACL_FLAG_SYNTHETIC;
+    osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_SYSTEM, 0, LEONOS_FS_PERM_FULL);
+    osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_ADMINISTRATORS, 0, LEONOS_FS_PERM_FULL);
+    if (owner != 0) {
+        osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_OWNER, 0, LEONOS_FS_PERM_FULL);
+        return;
+    }
+    if (osmlayer_text_eq(path, "0:/tmp") || osmlayer_path_under(path, "0:/tmp")) {
+        osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0, LEONOS_FS_PERM_FULL);
+        return;
+    }
+    if (osmlayer_text_eq(path, "0:/etc/display.conf") ||
+        osmlayer_text_eq(path, "0:/etc/locale.conf") ||
+        osmlayer_text_eq(path, "0:/etc/oobe.done")) {
+        osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0,
+                             LEONOS_FS_PERM_READ | LEONOS_FS_PERM_WRITE);
+        return;
+    }
+    if (osmlayer_path_is_system_tree(path)) {
+        osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0,
+                             LEONOS_FS_PERM_READ | LEONOS_FS_PERM_EXEC);
+    }
+}
+
+static int osmlayer_acl_get_explicit_or_default(const char *path,
+                                                struct osmlayer_account *accounts,
+                                                uint32_t count,
+                                                struct leonos_fs_acl *acl)
+{
+    char parent[LEONOS_FS_PATH_LEN];
+    char name[LEONOS_FS_NAME_LEN];
+    struct osmlayer_acl_dir dir;
+    int ret;
+    if (osmlayer_path_parent_name(path, parent, sizeof(parent), name, sizeof(name)) < 0) {
+        return -22;
+    }
+    ret = osmlayer_acl_load_dir(parent, &dir);
+    if (ret < 0) {
+        return ret;
+    }
+    if (dir.corrupt) {
+        osmlayer_acl_default_for_path(path, accounts, count, acl);
+        acl->flags |= LEONOS_FS_ACL_FLAG_CORRUPT;
+        return 0;
+    }
+    int idx = osmlayer_acl_find_record(&dir, name);
+    if (idx >= 0) {
+        const struct osmlayer_acl_record *rec = &dir.records[idx];
+        memset(acl, 0, sizeof(*acl));
+        acl->version = LEONOS_FS_ACL_VERSION;
+        acl->owner_uid = rec->owner_uid;
+        acl->flags = rec->flags;
+        acl->ace_count = rec->ace_count;
+        for (uint32_t i = 0; i < rec->ace_count; ++i) {
+            acl->aces[i] = rec->aces[i];
+        }
+        return 0;
+    }
+    osmlayer_acl_default_for_path(path, accounts, count, acl);
+    return 0;
+}
+
+static int osmlayer_acl_store(const char *path, const struct leonos_fs_acl *acl)
+{
+    char parent[LEONOS_FS_PATH_LEN];
+    char name[LEONOS_FS_NAME_LEN];
+    struct osmlayer_acl_dir dir;
+    int ret;
+    int idx;
+    if (!acl || acl->version != LEONOS_FS_ACL_VERSION ||
+        acl->ace_count > LEONOS_FS_ACL_MAX_ACE ||
+        osmlayer_path_parent_name(path, parent, sizeof(parent), name, sizeof(name)) < 0) {
+        return -22;
+    }
+    ret = osmlayer_acl_load_dir(parent, &dir);
+    if (ret < 0) {
+        return ret;
+    }
+    if (dir.corrupt) {
+        memset(&dir, 0, sizeof(dir));
+    }
+    idx = osmlayer_acl_find_record(&dir, name);
+    if (idx < 0) {
+        if (dir.count >= OSMLAYER_ACL_MAX_RECORDS) {
+            return -28;
+        }
+        idx = (int)dir.count++;
+    }
+    struct osmlayer_acl_record *rec = &dir.records[idx];
+    memset(rec, 0, sizeof(*rec));
+    osmlayer_copy_text(rec->name, sizeof(rec->name), name);
+    rec->owner_uid = acl->owner_uid;
+    rec->flags = acl->flags & ~(LEONOS_FS_ACL_FLAG_CORRUPT | LEONOS_FS_ACL_FLAG_SYNTHETIC);
+    rec->ace_count = acl->ace_count;
+    for (uint32_t i = 0; i < rec->ace_count; ++i) {
+        rec->aces[i] = acl->aces[i];
+        rec->aces[i].flags = 0;
+        rec->aces[i].permissions &= LEONOS_FS_PERM_FULL;
+    }
+    return osmlayer_acl_save_dir(parent, &dir);
+}
+
+static int osmlayer_acl_remove(const char *path)
+{
+    char parent[LEONOS_FS_PATH_LEN];
+    char name[LEONOS_FS_NAME_LEN];
+    struct osmlayer_acl_dir dir;
+    int ret;
+    int idx;
+    if (osmlayer_path_parent_name(path, parent, sizeof(parent), name, sizeof(name)) < 0) {
+        return -22;
+    }
+    ret = osmlayer_acl_load_dir(parent, &dir);
+    if (ret < 0 || dir.corrupt) {
+        return ret;
+    }
+    idx = osmlayer_acl_find_record(&dir, name);
+    if (idx < 0) {
+        return 0;
+    }
+    for (uint32_t i = (uint32_t)idx; i + 1u < dir.count; ++i) {
+        dir.records[i] = dir.records[i + 1u];
+    }
+    --dir.count;
+    return osmlayer_acl_save_dir(parent, &dir);
+}
+
+static int osmlayer_acl_rename(const char *old_path, const char *new_path)
+{
+    char old_parent[LEONOS_FS_PATH_LEN];
+    char new_parent[LEONOS_FS_PATH_LEN];
+    char old_name[LEONOS_FS_NAME_LEN];
+    char new_name[LEONOS_FS_NAME_LEN];
+    struct osmlayer_acl_dir dir;
+    int ret;
+    int idx;
+    if (osmlayer_path_parent_name(old_path, old_parent, sizeof(old_parent), old_name, sizeof(old_name)) < 0 ||
+        osmlayer_path_parent_name(new_path, new_parent, sizeof(new_parent), new_name, sizeof(new_name)) < 0 ||
+        !osmlayer_text_eq_ci(old_parent, new_parent)) {
+        return 0;
+    }
+    ret = osmlayer_acl_load_dir(old_parent, &dir);
+    if (ret < 0 || dir.corrupt) {
+        return ret;
+    }
+    idx = osmlayer_acl_find_record(&dir, old_name);
+    if (idx < 0) {
+        return 0;
+    }
+    osmlayer_copy_text(dir.records[idx].name, sizeof(dir.records[idx].name), new_name);
+    return osmlayer_acl_save_dir(old_parent, &dir);
+}
+
+static int osmlayer_acl_principal_matches(const struct leonos_fs_acl_ace *ace,
+                                          uint32_t actor_uid, uint32_t actor_role,
+                                          uint32_t actor_flags, uint32_t owner_uid)
+{
+    if (!ace) {
+        return 0;
+    }
+    switch (ace->principal) {
+    case LEONOS_FS_ACL_PRINCIPAL_OWNER:
+        return actor_uid != 0 && actor_uid == owner_uid;
+    case LEONOS_FS_ACL_PRINCIPAL_SYSTEM:
+        return actor_uid == 0 || (actor_flags & LEONOS_AUTHZ_ACTOR_SERVICE);
+    case LEONOS_FS_ACL_PRINCIPAL_ADMINISTRATORS:
+        return actor_role == LEONOS_AUTH_ROLE_ADMIN;
+    case LEONOS_FS_ACL_PRINCIPAL_USERS:
+        return actor_role == LEONOS_AUTH_ROLE_USER;
+    case LEONOS_FS_ACL_PRINCIPAL_EVERYONE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static uint32_t osmlayer_acl_actor_permissions(const struct leonos_fs_acl *acl,
+                                               uint32_t actor_uid,
+                                               uint32_t actor_role,
+                                               uint32_t actor_flags)
+{
+    uint32_t allow = 0;
+    if (!acl) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
+        const struct leonos_fs_acl_ace *ace = &acl->aces[i];
+        if (!osmlayer_acl_principal_matches(ace, actor_uid, actor_role,
+                                            actor_flags, acl->owner_uid)) {
+            continue;
+        }
+        allow |= ace->permissions;
+    }
+    if (actor_uid != 0 && actor_uid == acl->owner_uid) {
+        allow |= LEONOS_FS_PERM_MANAGE;
+    }
+    return allow;
+}
+
+static void osmlayer_acl_actor_allow(const struct leonos_fs_acl *acl,
+                                     uint32_t actor_uid, uint32_t actor_role,
+                                     uint32_t actor_flags, uint32_t *allow)
+{
+    if (!acl || !allow) {
+        return;
+    }
+    for (uint32_t i = 0; i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
+        const struct leonos_fs_acl_ace *ace = &acl->aces[i];
+        if (!osmlayer_acl_principal_matches(ace, actor_uid, actor_role,
+                                            actor_flags, acl->owner_uid)) {
+            continue;
+        }
+        *allow |= ace->permissions;
+    }
+    if (actor_uid != 0 && actor_uid == acl->owner_uid) {
+        *allow |= LEONOS_FS_PERM_MANAGE;
+    }
+}
+
+static uint32_t osmlayer_authz_permission_bit(uint32_t op)
+{
+    switch (op) {
+    case LEONOS_AUTHZ_READ:
+        return LEONOS_FS_PERM_READ;
+    case LEONOS_AUTHZ_WRITE:
+        return LEONOS_FS_PERM_WRITE;
+    case LEONOS_AUTHZ_EXEC:
+        return LEONOS_FS_PERM_EXEC;
+    case LEONOS_AUTHZ_DELETE:
+        return LEONOS_FS_PERM_DELETE;
+    case LEONOS_AUTHZ_MANAGE:
+        return LEONOS_FS_PERM_MANAGE;
+    default:
+        return 0;
+    }
+}
+
+static int osmlayer_acl_path_has_permission(const char *path,
+                                            struct osmlayer_account *accounts,
+                                            uint32_t count,
+                                            const struct leonos_authz_request *req,
+                                            uint32_t needed)
+{
+    char parts[16][OSMLAYER_FS_NAME_LEN];
+    char current[LEONOS_FS_PATH_LEN];
+    uint32_t part_count = 0;
+    uint32_t pos = 3;
+    uint32_t inherited_allow = 0;
+    if (!path || !req || !needed) {
+        return 0;
+    }
+    if (osmlayer_push_path_parts(parts, &part_count, path + 3) < 0) {
+        return 0;
+    }
+    osmlayer_copy_text(current, sizeof(current), "0:/");
+    for (uint32_t i = 0; i < part_count; ++i) {
+        struct leonos_fs_acl acl;
+        if (pos > 3) {
+            osmlayer_append_char(current, &pos, sizeof(current), '/');
+        }
+        osmlayer_append_text(current, &pos, sizeof(current), parts[i]);
+        if (osmlayer_acl_get_explicit_or_default(current, accounts, count, &acl) < 0) {
+            return 0;
+        }
+        if (acl.flags & LEONOS_FS_ACL_FLAG_CORRUPT) {
+            return req->role == LEONOS_AUTH_ROLE_ADMIN && needed == LEONOS_FS_PERM_MANAGE;
+        }
+        if (i + 1u == part_count || !(acl.flags & LEONOS_FS_ACL_FLAG_SYNTHETIC)) {
+            osmlayer_acl_actor_allow(&acl, req->uid, req->role, req->actor_flags,
+                                     &inherited_allow);
+        }
+        if (i + 1u != part_count &&
+            (osmlayer_acl_actor_permissions(&acl, req->uid, req->role,
+                                            req->actor_flags) & LEONOS_FS_PERM_EXEC) !=
+                LEONOS_FS_PERM_EXEC) {
+            return 0;
+        }
+    }
+    if (part_count == 0) {
+        struct leonos_fs_acl acl;
+        if (osmlayer_acl_get_explicit_or_default("0:/", accounts, count, &acl) < 0 ||
+            (acl.flags & LEONOS_FS_ACL_FLAG_CORRUPT)) {
+            return req->role == LEONOS_AUTH_ROLE_ADMIN && needed == LEONOS_FS_PERM_MANAGE;
+        }
+        return (osmlayer_acl_actor_permissions(&acl, req->uid, req->role,
+                                               req->actor_flags) & needed) == needed;
+    }
+    return (inherited_allow & needed) == needed;
+}
+
+static int osmlayer_fsacl_authorize(struct leonos_authz_request *req)
+{
+    struct osmlayer_account *accounts = osmlayer_auth_accounts;
+    uint32_t count = 0;
+    uint32_t needed;
+    if (!req || !req->path[0]) {
+        return 0;
+    }
+    if (osmlayer_path_is_accounts_db(req->path) || osmlayer_path_is_acl_file(req->path)) {
+        req->allowed = 0;
+        return 0;
+    }
+    if (osmlayer_accounts_load(accounts, &count) < 0) {
+        req->allowed = 0;
+        return 0;
+    }
+    needed = osmlayer_authz_permission_bit(req->op);
+    req->allowed = osmlayer_acl_path_has_permission(req->path, accounts, count,
+                                                    req, needed) ? 1u : 0u;
+    return 0;
+}
+
+static int osmlayer_fsacl_handle(struct leonos_fs_acl_request *req)
+{
+    struct osmlayer_account *accounts = osmlayer_auth_accounts;
+    uint32_t count = 0;
+    struct leonos_fs_acl acl;
+    if (!req || !req->path[0]) {
+        return -22;
+    }
+    int ret = osmlayer_accounts_load(accounts, &count);
+    if (ret < 0) {
+        return ret;
+    }
+    if (req->action == LEONOS_FS_ACL_ACTION_GET) {
+        ret = osmlayer_acl_get_explicit_or_default(req->path, accounts, count, &req->acl);
+        if (ret < 0) {
+            return ret;
+        }
+        if ((req->acl.flags & LEONOS_FS_ACL_FLAG_CORRUPT) &&
+            req->actor_role != LEONOS_AUTH_ROLE_ADMIN) {
+            return -13;
+        }
+        return 0;
+    }
+    if (req->action == LEONOS_FS_ACL_ACTION_SET) {
+        req->acl.version = LEONOS_FS_ACL_VERSION;
+        return osmlayer_acl_store(req->path, &req->acl);
+    }
+    if (req->action == LEONOS_FS_ACL_ACTION_TAKE_OWNERSHIP) {
+        if (req->actor_role != LEONOS_AUTH_ROLE_ADMIN || req->actor_uid == 0) {
+            return -1;
+        }
+        ret = osmlayer_acl_get_explicit_or_default(req->path, accounts, count, &acl);
+        if (ret < 0) {
+            return ret;
+        }
+        acl.version = LEONOS_FS_ACL_VERSION;
+        acl.owner_uid = req->actor_uid;
+        acl.flags &= ~(LEONOS_FS_ACL_FLAG_CORRUPT | LEONOS_FS_ACL_FLAG_SYNTHETIC);
+        osmlayer_acl_add_ace(&acl, LEONOS_FS_ACL_PRINCIPAL_OWNER, 0, LEONOS_FS_PERM_FULL);
+        ret = osmlayer_acl_store(req->path, &acl);
+        if (ret == 0) {
+            req->acl = acl;
+        }
+        return ret;
+    }
+    if (req->action == LEONOS_FS_ACL_ACTION_REPAIR) {
+        if (req->actor_role != LEONOS_AUTH_ROLE_ADMIN) {
+            return -1;
+        }
+        osmlayer_acl_default_for_path(req->path, accounts, count, &acl);
+        acl.flags = 0;
+        ret = osmlayer_acl_store(req->path, &acl);
+        if (ret == 0) {
+            req->acl = acl;
+        }
+        return ret;
+    }
+    if (req->action == LEONOS_FS_ACL_ACTION_NOTE_CREATE) {
+        ret = osmlayer_acl_get_explicit_or_default(req->path, accounts, count, &acl);
+        if (ret < 0) {
+            return ret;
+        }
+        if (acl.flags & LEONOS_FS_ACL_FLAG_SYNTHETIC) {
+            acl.flags = 0;
+            if (req->actor_uid != 0) {
+                acl.owner_uid = req->actor_uid;
+            }
+            return osmlayer_acl_store(req->path, &acl);
+        }
+        return 0;
+    }
+    if (req->action == LEONOS_FS_ACL_ACTION_NOTE_DELETE) {
+        return osmlayer_acl_remove(req->path);
+    }
+    if (req->action == LEONOS_FS_ACL_ACTION_NOTE_RENAME) {
+        return req->path2[0] ? osmlayer_acl_rename(req->path, req->path2) : 0;
+    }
+    return -38;
+}
+
 static int osmlayer_ensure_user_dirs(const char *username)
 {
     char home[LEONOS_AUTH_HOME_LEN];
@@ -1132,29 +1855,6 @@ static int osmlayer_path_is_accounts_db(const char *path)
     return osmlayer_text_eq(path, OSMLAYER_ACCOUNTS_PATH);
 }
 
-static int osmlayer_path_is_public_read(const char *path)
-{
-    return osmlayer_text_eq(path, "0:/") ||
-           osmlayer_path_under(path, "0:/system") ||
-           osmlayer_path_under(path, "0:/userland") ||
-           osmlayer_path_under(path, "0:/dev") ||
-           osmlayer_text_eq(path, "0:/system") ||
-           osmlayer_text_eq(path, "0:/userland") ||
-           osmlayer_text_eq(path, "0:/dev") ||
-           osmlayer_text_eq(path, "0:/etc") ||
-           osmlayer_text_eq(path, "0:/etc/leonos.conf") ||
-           osmlayer_text_eq(path, "0:/etc/oobe.done") ||
-           osmlayer_text_eq(path, "0:/etc/display.conf") ||
-           osmlayer_text_eq(path, "0:/etc/locale.conf");
-}
-
-static int osmlayer_path_is_public_write(const char *path)
-{
-    return osmlayer_text_eq(path, "0:/etc/oobe.done") ||
-           osmlayer_text_eq(path, "0:/etc/display.conf") ||
-           osmlayer_text_eq(path, "0:/etc/locale.conf");
-}
-
 static int osmlayer_auth_authorize(struct leonos_authz_request *req)
 {
     if (!req) {
@@ -1170,33 +1870,12 @@ static int osmlayer_auth_authorize(struct leonos_authz_request *req)
                        (req->uid != 0 && req->target_uid == req->uid);
         return 0;
     }
-    if (osmlayer_path_is_accounts_db(req->path)) {
-        req->allowed = 0;
-        return 0;
-    }
-    if (req->role == LEONOS_AUTH_ROLE_ADMIN) {
-        req->allowed = 1;
-        return 0;
-    }
-    if (req->op == LEONOS_AUTHZ_EXEC || req->op == LEONOS_AUTHZ_READ) {
-        if (osmlayer_path_is_public_read(req->path) ||
-            (req->home[0] && osmlayer_path_under(req->path, req->home)) ||
-            (req->home[0] && osmlayer_text_eq(req->path, req->home)) ||
-            osmlayer_path_under(req->path, "0:/tmp") ||
-            osmlayer_text_eq(req->path, "0:/tmp")) {
-            req->allowed = 1;
-        }
-        return 0;
-    }
-    if (req->op == LEONOS_AUTHZ_WRITE) {
-        if (osmlayer_path_is_public_write(req->path) ||
-            (req->home[0] && osmlayer_path_under(req->path, req->home)) ||
-            (req->home[0] && osmlayer_text_eq(req->path, req->home)) ||
-            osmlayer_path_under(req->path, "0:/tmp") ||
-            osmlayer_text_eq(req->path, "0:/tmp")) {
-            req->allowed = 1;
-        }
-        return 0;
+    if (req->op == LEONOS_AUTHZ_READ ||
+        req->op == LEONOS_AUTHZ_WRITE ||
+        req->op == LEONOS_AUTHZ_EXEC ||
+        req->op == LEONOS_AUTHZ_DELETE ||
+        req->op == LEONOS_AUTHZ_MANAGE) {
+        return osmlayer_fsacl_authorize(req);
     }
     return 0;
 }
@@ -1218,6 +1897,8 @@ int osmlayer_c_auth_op(uint32_t op, void *arg)
         return osmlayer_auth_change_password((struct leonos_auth_password *)arg);
     case LEONOS_AUTH_OP_AUTHORIZE:
         return osmlayer_auth_authorize((struct leonos_authz_request *)arg);
+    case LEONOS_AUTH_OP_FSPERM:
+        return osmlayer_fsacl_handle((struct leonos_fs_acl_request *)arg);
     default:
         return -38;
     }

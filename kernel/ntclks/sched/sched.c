@@ -229,7 +229,8 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->flags = flags;
     task_clear_identity(task);
     task_copy_cwd(task, "0:/");
-    if (parent_pid) {
+    if (parent_pid &&
+        (!(flags & TASK_FLAG_SERVICE) || (flags & TASK_FLAG_WINDOW_SERVER))) {
         struct task *parent = sched_find(parent_pid);
         if (parent) {
             task_copy_cwd(task, parent->cwd);
@@ -481,6 +482,17 @@ struct task *sched_find_by_name(const char *name)
     return NULL;
 }
 
+struct task *sched_find_by_path(const char *path)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i].pid && tasks[i].kind == TASK_KIND_USER &&
+            tasks[i].state != TASK_EXITED && str_eq(tasks[i].path, path)) {
+            return &tasks[i];
+        }
+    }
+    return NULL;
+}
+
 struct task *sched_find_by_path_basename(const char *basename)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
@@ -711,7 +723,9 @@ void sched_set_session_identity(uint32_t parent_pid, const struct leonos_user_in
 {
     for (uint32_t i = 0; i < task_count; ++i) {
         struct task *task = &tasks[i];
-        if (task->pid == parent_pid || task->parent_pid == parent_pid) {
+        if (((task->flags & TASK_FLAG_SERVICE) == 0 ||
+             (task->flags & TASK_FLAG_WINDOW_SERVER)) &&
+            (task->pid == parent_pid || task->parent_pid == parent_pid)) {
             sched_set_task_identity(task->pid, user, session_id);
         }
     }
@@ -723,7 +737,9 @@ void sched_clear_session_identity(uint32_t session_id)
         return;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].session_id == session_id) {
+        if (tasks[i].session_id == session_id &&
+            ((tasks[i].flags & TASK_FLAG_SERVICE) == 0 ||
+             (tasks[i].flags & TASK_FLAG_WINDOW_SERVER))) {
             task_clear_identity(&tasks[i]);
             task_copy_cwd(&tasks[i], "0:/");
         }

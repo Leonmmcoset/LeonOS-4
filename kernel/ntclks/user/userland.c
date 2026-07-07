@@ -115,6 +115,11 @@ static int path_is_system_desktop(const char *path)
     return path_eq_ignore_case(path, "0:/userland/desktop.elf");
 }
 
+static int path_is_system_service_daemon(const char *path)
+{
+    return path_eq_ignore_case(path, "0:/userland/serviced.elf");
+}
+
 static void dir_add(struct leonos_dir_entry *entries, uint32_t capacity, uint32_t *count,
                     uint32_t type, const char *name)
 {
@@ -354,9 +359,15 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
     int ret;
     if (path_is_system_desktop(path)) {
         flags |= TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER;
+    } else if (path_is_system_service_daemon(path)) {
+        flags |= TASK_FLAG_SERVICE;
     }
     if ((flags & TASK_FLAG_WINDOW_SERVER) && sched_find_window_server()) {
         console_printf("[ntclks] refusing second desktop instance path=%s\n", path);
+        return -LEONOS_EEXIST;
+    }
+    if (path_is_system_service_daemon(path) && sched_find_by_path(path)) {
+        console_printf("[ntclks] refusing second service daemon path=%s\n", path);
         return -LEONOS_EEXIST;
     }
     ret = storage_read_file(path, &image, &image_len);

@@ -228,6 +228,12 @@ running to manually renew or recover a lease. It also queries
 `leonos_net_connections` and displays TCP client sockets in `SYN_SENT`,
 `ESTABLISHED`, `TIME_WAIT`, or `CLOSED`.
 
+`serviced.elf` now runs as a protected service task started by the desktop. It
+uses the same `leonos_net_config` and `leonos_net_dhcp_renew` wrappers to keep
+retrying DHCP in the background when `0:/etc/services.cfg` has `dhcp=1` and the
+kernel is still using the static fallback. It publishes status to
+`0:/var/run/services.state` for `servicemgr.elf`.
+
 `leonos_socket_tcp` returns an integer socket handle owned by the current task.
 `leonos_socket_connect` accepts a host name or IPv4 literal, resolves DNS A
 records when needed, tries each returned address, and records the selected
@@ -273,9 +279,18 @@ task and inherited by child applications. Logout clears the session identity and
 kills ordinary user tasks in the session, then desktop returns to `login.elf`.
 
 The kernel asks middlelayer policy before file, task-kill, user-management, and
-installer-storage operations. Normal users can read system programs/resources,
-write their own home and `0:/tmp`, and see or kill only their own tasks.
-Administrators can manage users and other user directories. Shutdown and reboot
+installer-storage operations. File authorization now uses the FAT32-side
+`LEONACL.SYS` ACL model. The mapping is:
+
+- `stat`, directory reads, and file reads: Read/List.
+- `open` create/truncate, `write`, and `mkdir`: Write/Create.
+- `execve` and path traversal: Execute/Traverse.
+- `unlink`, `rmdir`, and the source side of `rename`: Delete.
+- ACL set operations: Manage Permissions.
+
+Normal users can access their own home through Owner permissions and shared
+temporary files through the `0:/tmp` default ACL. Administrators can manage
+users and can take ownership or repair corrupt ACL metadata. Shutdown and reboot
 remain available to any logged-in user.
 
 ## Current Limitations
@@ -285,9 +300,9 @@ remain available to any logged-in user.
   socket API, TLS/HTTPS, or full retransmission/window-management surface yet.
 - `execve` spawns a child process instead of replacing the caller.
 - File-backed `mmap` is private and read-only.
-- Open permissions are simple capability checks, not a full Unix permission
-  model.
-- FAT32 does not store real owner/mode metadata; v1 permissions are enforced at
-  syscall/ioctl boundaries through the kernel and middlelayer policy.
+- Open permissions are ACL checks, not a full Unix permission model.
+- FAT32 does not store standard owner/mode metadata; LeonOS stores ACL metadata
+  in hidden `LEONACL.SYS` sidecar files and enforces it at syscall/ioctl
+  boundaries.
 - `ioctl` is intentionally broad and should be split into dedicated syscalls or
   narrower devices as the ABI stabilizes.

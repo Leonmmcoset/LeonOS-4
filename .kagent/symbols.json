@@ -20,102 +20,102 @@
     },
     "build/userland/diskmgr.elf": {
       "ipo_ts": 1783147002714,
-      "edit_count": 27,
-      "last_lines": 273,
-      "last_ts": 1783406483015,
+      "edit_count": 30,
+      "last_lines": 285,
+      "last_ts": 1783422493123,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8a02fff2"
+      "last_content_hash": "615cca5d"
     },
     "build/esp/userland/diskmgr.elf": {
       "ipo_ts": 1783147050359,
-      "edit_count": 26,
-      "last_lines": 273,
-      "last_ts": 1783406483121,
+      "edit_count": 28,
+      "last_lines": 285,
+      "last_ts": 1783419924914,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8a02fff2"
+      "last_content_hash": "615cca5d"
     },
     ".ninja_deps": {
       "ipo_ts": 1783147052051,
-      "edit_count": 135,
-      "last_lines": 563,
-      "last_ts": 1783408147631,
+      "edit_count": 147,
+      "last_lines": 125,
+      "last_ts": 1783422838553,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "958e1bdd"
+      "last_content_hash": "7b68c294"
     },
     ".ninja_log": {
       "ipo_ts": 1783147052061,
-      "edit_count": 295,
-      "last_lines": 485,
-      "last_ts": 1783408200845,
+      "edit_count": 318,
+      "last_lines": 475,
+      "last_ts": 1783422861429,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "fd93b023"
+      "last_content_hash": "81e0e98a"
     },
     "build/images/leonos4.raw": {
       "ipo_ts": 1783147116001,
-      "edit_count": 149,
-      "last_lines": 36868,
-      "last_ts": 1783408200561,
+      "edit_count": 164,
+      "last_lines": 37113,
+      "last_ts": 1783422818042,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "efadd87c"
+      "last_content_hash": "26683ee4"
     },
     "build/esp/system/kernel.sys": {
       "ipo_ts": 1783147165757,
-      "edit_count": 108,
-      "last_lines": 528,
-      "last_ts": 1783408139616,
+      "edit_count": 119,
+      "last_lines": 539,
+      "last_ts": 1783422836270,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e1cbef3"
+      "last_content_hash": "dd850cea"
     },
     "build/obj/kernel/kernel/ntclks/version.c.o": {
       "ipo_ts": 1783147166818,
-      "edit_count": 114,
+      "edit_count": 125,
       "last_lines": 1,
-      "last_ts": 1783408139189,
+      "last_ts": 1783422836280,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4088d987"
+      "last_content_hash": "c3044875"
     },
     "build/system/kernel.sys": {
       "ipo_ts": 1783147166846,
-      "edit_count": 112,
-      "last_lines": 528,
-      "last_ts": 1783408139648,
+      "edit_count": 123,
+      "last_lines": 539,
+      "last_ts": 1783422836298,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e1cbef3"
+      "last_content_hash": "dd850cea"
     },
     "build/version/build_number.txt": {
       "ipo_ts": 1783147166855,
-      "edit_count": 114,
+      "edit_count": 125,
       "last_lines": 1,
-      "last_ts": 1783408139201,
+      "last_ts": 1783422835660,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "17e9b1"
+      "last_content_hash": "17ed91"
     },
     "include/generated/build_info.h": {
       "ipo_ts": 1783147166863,
-      "edit_count": 114,
+      "edit_count": 125,
       "last_lines": 15,
-      "last_ts": 1783408139212,
+      "last_ts": 1783422835671,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b86e7d8d"
+      "last_content_hash": "c14122f4"
     },
     "build/images/esp.fat": {
       "ipo_ts": 1783147168874,
-      "edit_count": 77,
-      "last_lines": 36868,
-      "last_ts": 1783408144187,
+      "edit_count": 85,
+      "last_lines": 37113,
+      "last_ts": 1783422736002,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "81f67420"
+      "last_content_hash": "d4533849"
     },
     "userland/apps/taskmgr/main.c": {
       "ipo_ts": 1783148135480,
@@ -128,336 +128,336 @@
     },
     "build/userland/libc.a": {
       "ipo_ts": 1783148473094,
-      "edit_count": 24,
+      "edit_count": 26,
       "last_lines": 328,
-      "last_ts": 1783406481644,
+      "last_ts": 1783419922559,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "9cded09a"
+      "last_content_hash": "2a18acdb"
     },
     "build/esp/userland/cjktest.elf": {
       "ipo_ts": 1783148474114,
-      "edit_count": 23,
-      "last_lines": 286,
-      "last_ts": 1783406482621,
+      "edit_count": 25,
+      "last_lines": 287,
+      "last_ts": 1783419924233,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "874cf039"
+      "last_content_hash": "a112ddc5"
     },
     "build/esp/userland/fileman.elf": {
       "ipo_ts": 1783148474127,
-      "edit_count": 27,
-      "last_lines": 334,
-      "last_ts": 1783406482652,
+      "edit_count": 31,
+      "last_lines": 333,
+      "last_ts": 1783422730644,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "83a1101a"
+      "last_content_hash": "814c6e4f"
     },
     "build/esp/userland/hello.elf": {
       "ipo_ts": 1783148474137,
-      "edit_count": 21,
+      "edit_count": 22,
       "last_lines": 143,
-      "last_ts": 1783404421169,
+      "last_ts": 1783419924299,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "75bdb330"
+      "last_content_hash": "68c8e266"
     },
     "build/esp/userland/init.elf": {
       "ipo_ts": 1783148474146,
-      "edit_count": 10,
-      "last_lines": 68,
-      "last_ts": 1783404421191,
+      "edit_count": 11,
+      "last_lines": 69,
+      "last_ts": 1783419924323,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "1f139249"
+      "last_content_hash": "1650da61"
     },
     "build/esp/userland/notepad.elf": {
       "ipo_ts": 1783148474159,
-      "edit_count": 23,
-      "last_lines": 287,
-      "last_ts": 1783406483170,
+      "edit_count": 25,
+      "last_lines": 293,
+      "last_ts": 1783419924422,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8e179c95"
+      "last_content_hash": "f3bcddce"
     },
     "build/esp/userland/oobe.elf": {
       "ipo_ts": 1783148474171,
-      "edit_count": 21,
+      "edit_count": 22,
       "last_lines": 165,
-      "last_ts": 1783404421267,
+      "last_ts": 1783419924437,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "dd2fb222"
+      "last_content_hash": "7448ac51"
     },
     "build/esp/userland/shell.elf": {
       "ipo_ts": 1783148474180,
-      "edit_count": 13,
+      "edit_count": 15,
       "last_lines": 123,
-      "last_ts": 1783406483245,
+      "last_ts": 1783419924516,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7e855dd7"
+      "last_content_hash": "9a6a10e2"
     },
     "build/esp/userland/taskmgr.elf": {
       "ipo_ts": 1783148474195,
-      "edit_count": 25,
-      "last_lines": 287,
-      "last_ts": 1783406482671,
+      "edit_count": 27,
+      "last_lines": 292,
+      "last_ts": 1783419924540,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e19b4cf9"
+      "last_content_hash": "1d4d7e99"
     },
     "build/esp/userland/uidemo.elf": {
       "ipo_ts": 1783148474207,
-      "edit_count": 23,
-      "last_lines": 280,
-      "last_ts": 1783406482686,
+      "edit_count": 25,
+      "last_lines": 283,
+      "last_ts": 1783419924626,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6cd78b07"
+      "last_content_hash": "5c2348ea"
     },
     "build/userland/bugtest.elf": {
       "ipo_ts": 1783148474218,
-      "edit_count": 23,
-      "last_lines": 280,
-      "last_ts": 1783406482713,
+      "edit_count": 25,
+      "last_lines": 286,
+      "last_ts": 1783419923602,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "dd388e37"
+      "last_content_hash": "e9e44b1"
     },
     "build/userland/calc.elf": {
       "ipo_ts": 1783148474230,
-      "edit_count": 21,
-      "last_lines": 178,
-      "last_ts": 1783404421446,
+      "edit_count": 22,
+      "last_lines": 180,
+      "last_ts": 1783419923619,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "624ad983"
+      "last_content_hash": "8a4ae2e8"
     },
     "build/userland/cjktest.elf": {
       "ipo_ts": 1783148474243,
-      "edit_count": 23,
-      "last_lines": 286,
-      "last_ts": 1783406482730,
+      "edit_count": 25,
+      "last_lines": 287,
+      "last_ts": 1783419923076,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "874cf039"
+      "last_content_hash": "a112ddc5"
     },
     "build/userland/desktop.elf": {
       "ipo_ts": 1783148474258,
-      "edit_count": 38,
-      "last_lines": 470,
-      "last_ts": 1783406482524,
+      "edit_count": 40,
+      "last_lines": 472,
+      "last_ts": 1783419923098,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b79fd15a"
+      "last_content_hash": "eb23e0d3"
     },
     "build/userland/fileman.elf": {
       "ipo_ts": 1783148474283,
-      "edit_count": 27,
-      "last_lines": 334,
-      "last_ts": 1783406482745,
+      "edit_count": 31,
+      "last_lines": 333,
+      "last_ts": 1783422730684,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "83a1101a"
+      "last_content_hash": "814c6e4f"
     },
     "build/userland/hello.elf": {
       "ipo_ts": 1783148474294,
-      "edit_count": 22,
+      "edit_count": 23,
       "last_lines": 143,
-      "last_ts": 1783406482549,
+      "last_ts": 1783419923115,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "75bdb330"
+      "last_content_hash": "68c8e266"
     },
     "build/userland/init.elf": {
       "ipo_ts": 1783148474303,
-      "edit_count": 10,
-      "last_lines": 68,
-      "last_ts": 1783404421565,
+      "edit_count": 11,
+      "last_lines": 69,
+      "last_ts": 1783419923133,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "1f139249"
+      "last_content_hash": "1650da61"
     },
     "build/userland/memtest.elf": {
       "ipo_ts": 1783148474311,
-      "edit_count": 10,
-      "last_lines": 60,
-      "last_ts": 1783404421590,
+      "edit_count": 11,
+      "last_lines": 64,
+      "last_ts": 1783419923653,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "fa1bde71"
+      "last_content_hash": "69e5c04d"
     },
     "build/userland/minesweeper.elf": {
       "ipo_ts": 1783148474323,
-      "edit_count": 21,
+      "edit_count": 22,
       "last_lines": 177,
-      "last_ts": 1783404421604,
+      "last_ts": 1783419923668,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ef1a426"
+      "last_content_hash": "d1380c51"
     },
     "build/userland/notepad.elf": {
       "ipo_ts": 1783148474334,
-      "edit_count": 24,
-      "last_lines": 287,
-      "last_ts": 1783406482791,
+      "edit_count": 26,
+      "last_lines": 293,
+      "last_ts": 1783419923700,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8e179c95"
+      "last_content_hash": "f3bcddce"
     },
     "build/userland/oobe.elf": {
       "ipo_ts": 1783148474346,
-      "edit_count": 21,
+      "edit_count": 22,
       "last_lines": 165,
-      "last_ts": 1783404421648,
+      "last_ts": 1783419923181,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "dd2fb222"
+      "last_content_hash": "7448ac51"
     },
     "build/userland/osver.elf": {
       "ipo_ts": 1783148474357,
-      "edit_count": 23,
-      "last_lines": 270,
-      "last_ts": 1783406482807,
+      "edit_count": 25,
+      "last_lines": 273,
+      "last_ts": 1783419923719,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d5df158d"
+      "last_content_hash": "21b430aa"
     },
     "build/userland/run.elf": {
       "ipo_ts": 1783148474369,
-      "edit_count": 24,
-      "last_lines": 273,
-      "last_ts": 1783406482836,
+      "edit_count": 26,
+      "last_lines": 271,
+      "last_ts": 1783419923736,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d87b5df6"
+      "last_content_hash": "dc299c92"
     },
     "build/userland/settings.elf": {
       "ipo_ts": 1783148474380,
-      "edit_count": 23,
+      "edit_count": 25,
       "last_lines": 353,
-      "last_ts": 1783406483030,
+      "last_ts": 1783419925138,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "43bd29ae"
+      "last_content_hash": "6a70d6cd"
     },
     "build/userland/shell.elf": {
       "ipo_ts": 1783148474389,
-      "edit_count": 15,
+      "edit_count": 17,
       "last_lines": 123,
-      "last_ts": 1783406482847,
+      "last_ts": 1783419923748,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7e855dd7"
+      "last_content_hash": "9a6a10e2"
     },
     "build/userland/taskmgr.elf": {
       "ipo_ts": 1783148474401,
-      "edit_count": 25,
-      "last_lines": 287,
-      "last_ts": 1783406482864,
+      "edit_count": 27,
+      "last_lines": 292,
+      "last_ts": 1783419923203,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e19b4cf9"
+      "last_content_hash": "1d4d7e99"
     },
     "build/userland/terminal.elf": {
       "ipo_ts": 1783148474413,
-      "edit_count": 21,
-      "last_lines": 177,
-      "last_ts": 1783404421739,
+      "edit_count": 23,
+      "last_lines": 179,
+      "last_ts": 1783422491697,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "26ccc14f"
+      "last_content_hash": "d9b4ce56"
     },
     "build/userland/uidemo.elf": {
       "ipo_ts": 1783148474425,
-      "edit_count": 23,
-      "last_lines": 280,
-      "last_ts": 1783406482881,
+      "edit_count": 25,
+      "last_lines": 283,
+      "last_ts": 1783419923223,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6cd78b07"
+      "last_content_hash": "5c2348ea"
     },
     "build/esp/userland/bugtest.elf": {
       "ipo_ts": 1783148474443,
-      "edit_count": 23,
-      "last_lines": 280,
-      "last_ts": 1783406483084,
+      "edit_count": 25,
+      "last_lines": 286,
+      "last_ts": 1783419924196,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "dd388e37"
+      "last_content_hash": "e9e44b1"
     },
     "build/esp/userland/calc.elf": {
       "ipo_ts": 1783148474455,
-      "edit_count": 21,
-      "last_lines": 178,
-      "last_ts": 1783404421083,
+      "edit_count": 22,
+      "last_lines": 180,
+      "last_ts": 1783419924212,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "624ad983"
+      "last_content_hash": "8a4ae2e8"
     },
     "build/esp/userland/desktop.elf": {
       "ipo_ts": 1783148474471,
-      "edit_count": 36,
-      "last_lines": 470,
-      "last_ts": 1783406482637,
+      "edit_count": 38,
+      "last_lines": 472,
+      "last_ts": 1783419924259,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b79fd15a"
+      "last_content_hash": "eb23e0d3"
     },
     "build/esp/userland/memtest.elf": {
       "ipo_ts": 1783148474490,
-      "edit_count": 8,
-      "last_lines": 60,
-      "last_ts": 1783404421216,
+      "edit_count": 9,
+      "last_lines": 64,
+      "last_ts": 1783419924364,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "fa1bde71"
+      "last_content_hash": "69e5c04d"
     },
     "build/esp/userland/minesweeper.elf": {
       "ipo_ts": 1783148474501,
-      "edit_count": 21,
+      "edit_count": 22,
       "last_lines": 177,
-      "last_ts": 1783404421228,
+      "last_ts": 1783419924380,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ef1a426"
+      "last_content_hash": "d1380c51"
     },
     "build/esp/userland/osver.elf": {
       "ipo_ts": 1783148474512,
-      "edit_count": 23,
-      "last_lines": 270,
-      "last_ts": 1783406483188,
+      "edit_count": 25,
+      "last_lines": 273,
+      "last_ts": 1783419924456,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d5df158d"
+      "last_content_hash": "21b430aa"
     },
     "build/esp/userland/run.elf": {
       "ipo_ts": 1783148474525,
-      "edit_count": 23,
-      "last_lines": 273,
-      "last_ts": 1783406483217,
+      "edit_count": 25,
+      "last_lines": 271,
+      "last_ts": 1783419924500,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d87b5df6"
+      "last_content_hash": "dc299c92"
     },
     "build/esp/userland/settings.elf": {
       "ipo_ts": 1783148474537,
-      "edit_count": 23,
+      "edit_count": 25,
       "last_lines": 353,
-      "last_ts": 1783406483234,
+      "last_ts": 1783419925038,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "43bd29ae"
+      "last_content_hash": "6a70d6cd"
     },
     "build/esp/userland/terminal.elf": {
       "ipo_ts": 1783148474549,
-      "edit_count": 20,
-      "last_lines": 177,
-      "last_ts": 1783404421360,
+      "edit_count": 21,
+      "last_lines": 179,
+      "last_ts": 1783419924595,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "26ccc14f"
+      "last_content_hash": "d9b4ce56"
     },
     "include/leonos/system.h": {
       "ipo_ts": 1783149060273,
@@ -470,21 +470,21 @@
     },
     "userland/libc/src/libc.c": {
       "ipo_ts": 1783149060279,
-      "edit_count": 10,
-      "last_lines": 2056,
-      "last_ts": 1783404094735,
+      "edit_count": 12,
+      "last_lines": 2110,
+      "last_ts": 1783419179280,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "67842527"
+      "last_content_hash": "a73ed3db"
     },
     "kernel/ntclks/syscall.c": {
       "ipo_ts": 1783149174730,
-      "edit_count": 16,
-      "last_lines": 2631,
-      "last_ts": 1783401942088,
+      "edit_count": 20,
+      "last_lines": 2766,
+      "last_ts": 1783419363105,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "98b7dcf7"
+      "last_content_hash": "f19555c0"
     },
     "userland/apps/desktop/screen.c": {
       "ipo_ts": 1783149174737,
@@ -497,12 +497,12 @@
     },
     "build/obj/kernel/kernel/ntclks/syscall.c.o": {
       "ipo_ts": 1783149190639,
-      "edit_count": 10,
-      "last_lines": 39,
-      "last_ts": 1783402359970,
+      "edit_count": 13,
+      "last_lines": 41,
+      "last_ts": 1783419921518,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "929a3303"
+      "last_content_hash": "3600aa05"
     },
     "build/obj/kernel/kernel/ntclks/time.c.o": {
       "ipo_ts": 1783149190646,
@@ -524,12 +524,12 @@
     },
     "build/obj/userlib/userland/libc/src/libc.c.o": {
       "ipo_ts": 1783149190680,
-      "edit_count": 7,
+      "edit_count": 8,
       "last_lines": 54,
-      "last_ts": 1783404420554,
+      "last_ts": 1783419922089,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6d084af6"
+      "last_content_hash": "2802e10d"
     },
     "kernel/ntclks/time.c": {
       "ipo_ts": 1783149325435,
@@ -560,39 +560,39 @@
     },
     "tools/gen_ninja.py": {
       "ipo_ts": 1783156233166,
-      "edit_count": 15,
-      "last_lines": 444,
-      "last_ts": 1783406349102,
+      "edit_count": 16,
+      "last_lines": 445,
+      "last_ts": 1783415026261,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "87d195de"
+      "last_content_hash": "2a50220f"
     },
     "userland/apps/desktop/util.c": {
       "ipo_ts": 1783156233172,
-      "edit_count": 13,
-      "last_lines": 656,
-      "last_ts": 1783406446793,
+      "edit_count": 14,
+      "last_lines": 660,
+      "last_ts": 1783415447568,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b786f6d"
+      "last_content_hash": "a5008d82"
     },
     "userland/libc/src/launch.c": {
       "ipo_ts": 1783156233178,
-      "edit_count": 13,
-      "last_lines": 952,
-      "last_ts": 1783406355392,
+      "edit_count": 14,
+      "last_lines": 953,
+      "last_ts": 1783415041318,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "62e490e1"
+      "last_content_hash": "adda2c72"
     },
     "build.ninja": {
       "ipo_ts": 1783156247258,
-      "edit_count": 16,
-      "last_lines": 372,
-      "last_ts": 1783406479880,
+      "edit_count": 17,
+      "last_lines": 376,
+      "last_ts": 1783415463062,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e6d9cf73"
+      "last_content_hash": "fbbb2883"
     },
     "build/obj/user-devmgr/userland/apps/devmgr/main.c.o": {
       "ipo_ts": 1783156248408,
@@ -605,39 +605,39 @@
     },
     "build/obj/user-desktop/userland/apps/desktop/util.c.o": {
       "ipo_ts": 1783156248435,
-      "edit_count": 9,
+      "edit_count": 10,
       "last_lines": 28,
-      "last_ts": 1783406481608,
+      "last_ts": 1783415465949,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7fca4713"
+      "last_content_hash": "cb55fbaf"
     },
     "build/obj/userlib/userland/libc/src/launch.c.o": {
       "ipo_ts": 1783156248441,
-      "edit_count": 9,
+      "edit_count": 10,
       "last_lines": 48,
-      "last_ts": 1783406481621,
+      "last_ts": 1783415465532,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "5a7c1776"
+      "last_content_hash": "5ecc88b3"
     },
     "build/esp/userland/devmgr.elf": {
       "ipo_ts": 1783156249488,
-      "edit_count": 23,
-      "last_lines": 275,
-      "last_ts": 1783406483104,
+      "edit_count": 25,
+      "last_lines": 271,
+      "last_ts": 1783419924887,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d77c08bf"
+      "last_content_hash": "2ac5994d"
     },
     "build/userland/devmgr.elf": {
       "ipo_ts": 1783156249504,
-      "edit_count": 24,
-      "last_lines": 275,
-      "last_ts": 1783406483001,
+      "edit_count": 26,
+      "last_lines": 271,
+      "last_ts": 1783419925088,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d77c08bf"
+      "last_content_hash": "2ac5994d"
     },
     "tools/gen_loader_integrity.py": {
       "ipo_ts": 1783157529955,
@@ -677,21 +677,21 @@
     },
     "include/generated/loader_integrity.h": {
       "ipo_ts": 1783157961938,
-      "edit_count": 97,
+      "edit_count": 108,
       "last_lines": 8,
-      "last_ts": 1783408139658,
+      "last_ts": 1783422836312,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7215a2c8"
+      "last_content_hash": "da35d456"
     },
     "build/obj/loader/boot/loader/main.c.o": {
       "ipo_ts": 1783157998801,
-      "edit_count": 95,
-      "last_lines": 55,
-      "last_ts": 1783408139630,
+      "edit_count": 106,
+      "last_lines": 56,
+      "last_ts": 1783422836470,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7bdb5616"
+      "last_content_hash": "7fee53e8"
     },
     "build/install/root/install/esp/etc/leonos.conf": {
       "ipo_ts": 1783158000714,
@@ -704,21 +704,21 @@
     },
     "build/install/root/install/esp/system/kernel.sys": {
       "ipo_ts": 1783158000726,
-      "edit_count": 50,
-      "last_lines": 584,
-      "last_ts": 1783347757967,
+      "edit_count": 53,
+      "last_lines": 539,
+      "last_ts": 1783422838030,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "81b9a966"
+      "last_content_hash": "dd850cea"
     },
     "build/install/root/install/esp/system/middlelayer.sys": {
       "ipo_ts": 1783158000732,
-      "edit_count": 10,
-      "last_lines": 127,
-      "last_ts": 1783332801817,
+      "edit_count": 12,
+      "last_lines": 140,
+      "last_ts": 1783422635185,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "998e3913"
+      "last_content_hash": "7a702188"
     },
     "build/install/root/install/esp/system/osmlayer.manifest": {
       "ipo_ts": 1783158000738,
@@ -731,75 +731,75 @@
     },
     "build/install/root/install/esp/userland/bugtest.elf": {
       "ipo_ts": 1783158000748,
-      "edit_count": 22,
-      "last_lines": 238,
-      "last_ts": 1783347758493,
+      "edit_count": 24,
+      "last_lines": 286,
+      "last_ts": 1783422635889,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e47685e2"
+      "last_content_hash": "e9e44b1"
     },
     "build/install/root/install/esp/userland/calc.elf": {
       "ipo_ts": 1783158000757,
-      "edit_count": 21,
-      "last_lines": 113,
-      "last_ts": 1783332802302,
+      "edit_count": 23,
+      "last_lines": 180,
+      "last_ts": 1783422636225,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "84b93559"
+      "last_content_hash": "8a4ae2e8"
     },
     "build/install/root/install/esp/userland/cjktest.elf": {
       "ipo_ts": 1783158000765,
-      "edit_count": 22,
-      "last_lines": 243,
-      "last_ts": 1783347758511,
+      "edit_count": 24,
+      "last_lines": 287,
+      "last_ts": 1783422636260,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2ac39ba5"
+      "last_content_hash": "a112ddc5"
     },
     "build/install/root/install/esp/userland/desktop.elf": {
       "ipo_ts": 1783158000775,
-      "edit_count": 31,
-      "last_lines": 404,
-      "last_ts": 1783347758530,
+      "edit_count": 33,
+      "last_lines": 472,
+      "last_ts": 1783422636451,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bb008283"
+      "last_content_hash": "eb23e0d3"
     },
     "build/install/root/install/esp/userland/devmgr.elf": {
       "ipo_ts": 1783158000784,
-      "edit_count": 22,
-      "last_lines": 232,
-      "last_ts": 1783347758547,
+      "edit_count": 24,
+      "last_lines": 271,
+      "last_ts": 1783422636782,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8e53a040"
+      "last_content_hash": "2ac5994d"
     },
     "build/install/root/install/esp/userland/diskmgr.elf": {
       "ipo_ts": 1783158000793,
-      "edit_count": 22,
-      "last_lines": 232,
-      "last_ts": 1783347758987,
+      "edit_count": 24,
+      "last_lines": 285,
+      "last_ts": 1783422637012,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2d610454"
+      "last_content_hash": "615cca5d"
     },
     "build/install/root/install/esp/userland/fileman.elf": {
       "ipo_ts": 1783158000802,
-      "edit_count": 22,
-      "last_lines": 273,
-      "last_ts": 1783347759001,
+      "edit_count": 25,
+      "last_lines": 333,
+      "last_ts": 1783422839030,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "26e8b7dd"
+      "last_content_hash": "814c6e4f"
     },
     "build/install/root/install/esp/userland/hello.elf": {
       "ipo_ts": 1783158000811,
-      "edit_count": 21,
-      "last_lines": 103,
-      "last_ts": 1783332802860,
+      "edit_count": 23,
+      "last_lines": 143,
+      "last_ts": 1783422637599,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bdca17df"
+      "last_content_hash": "68c8e266"
     },
     "build/install/root/install/esp/boot/grub/grub.cfg": {
       "ipo_ts": 1783158000816,
@@ -812,111 +812,111 @@
     },
     "build/install/root/install/esp/userland/init.elf": {
       "ipo_ts": 1783158000823,
-      "edit_count": 11,
-      "last_lines": 28,
-      "last_ts": 1783256666529,
+      "edit_count": 13,
+      "last_lines": 69,
+      "last_ts": 1783422638289,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "852c3666"
+      "last_content_hash": "1650da61"
     },
     "build/install/root/install/esp/userland/memtest.elf": {
       "ipo_ts": 1783158000830,
-      "edit_count": 11,
-      "last_lines": 17,
-      "last_ts": 1783256666552,
+      "edit_count": 13,
+      "last_lines": 64,
+      "last_ts": 1783422638347,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c8048ec7"
+      "last_content_hash": "69e5c04d"
     },
     "build/install/root/install/esp/userland/minesweeper.elf": {
       "ipo_ts": 1783158000841,
-      "edit_count": 21,
-      "last_lines": 122,
-      "last_ts": 1783332803308,
+      "edit_count": 22,
+      "last_lines": 177,
+      "last_ts": 1783422638508,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "30012fa7"
+      "last_content_hash": "d1380c51"
     },
     "build/install/root/install/esp/userland/notepad.elf": {
       "ipo_ts": 1783158000850,
-      "edit_count": 22,
-      "last_lines": 246,
-      "last_ts": 1783347759490,
+      "edit_count": 24,
+      "last_lines": 293,
+      "last_ts": 1783422638663,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f648d6b4"
+      "last_content_hash": "f3bcddce"
     },
     "build/install/root/install/esp/userland/oobe.elf": {
       "ipo_ts": 1783158000859,
-      "edit_count": 21,
-      "last_lines": 107,
-      "last_ts": 1783332803351,
+      "edit_count": 23,
+      "last_lines": 165,
+      "last_ts": 1783422639078,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ee085f3d"
+      "last_content_hash": "7448ac51"
     },
     "build/install/root/install/esp/userland/osver.elf": {
       "ipo_ts": 1783158000867,
-      "edit_count": 22,
-      "last_lines": 232,
-      "last_ts": 1783347759503,
+      "edit_count": 23,
+      "last_lines": 273,
+      "last_ts": 1783420110152,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "45589c44"
+      "last_content_hash": "21b430aa"
     },
     "build/install/root/install/esp/userland/run.elf": {
       "ipo_ts": 1783158000876,
-      "edit_count": 22,
-      "last_lines": 226,
-      "last_ts": 1783347760034,
+      "edit_count": 23,
+      "last_lines": 271,
+      "last_ts": 1783420110192,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "287989bb"
+      "last_content_hash": "dc299c92"
     },
     "build/install/root/install/esp/userland/settings.elf": {
       "ipo_ts": 1783158000884,
-      "edit_count": 22,
-      "last_lines": 235,
-      "last_ts": 1783347760046,
+      "edit_count": 23,
+      "last_lines": 353,
+      "last_ts": 1783420110586,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "435b1a71"
+      "last_content_hash": "6a70d6cd"
     },
     "build/install/root/install/esp/userland/shell.elf": {
       "ipo_ts": 1783158000892,
-      "edit_count": 14,
-      "last_lines": 79,
-      "last_ts": 1783258075648,
+      "edit_count": 15,
+      "last_lines": 123,
+      "last_ts": 1783420110598,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "dc9ad704"
+      "last_content_hash": "9a6a10e2"
     },
     "build/install/root/install/esp/userland/taskmgr.elf": {
       "ipo_ts": 1783158000902,
-      "edit_count": 22,
-      "last_lines": 242,
-      "last_ts": 1783347760059,
+      "edit_count": 23,
+      "last_lines": 292,
+      "last_ts": 1783420110615,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2a2270c9"
+      "last_content_hash": "1d4d7e99"
     },
     "build/install/root/install/esp/userland/terminal.elf": {
       "ipo_ts": 1783158000911,
-      "edit_count": 21,
-      "last_lines": 118,
-      "last_ts": 1783332804113,
+      "edit_count": 22,
+      "last_lines": 179,
+      "last_ts": 1783420110629,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "cec935bb"
+      "last_content_hash": "d9b4ce56"
     },
     "build/install/root/install/esp/userland/uidemo.elf": {
       "ipo_ts": 1783158000920,
-      "edit_count": 22,
-      "last_lines": 244,
-      "last_ts": 1783347760075,
+      "edit_count": 23,
+      "last_lines": 283,
+      "last_ts": 1783420110647,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "ad335679"
+      "last_content_hash": "5c2348ea"
     },
     "build/install/root/install/esp/system/fonts/cjk16.lbf": {
       "ipo_ts": 1783158001595,
@@ -956,12 +956,12 @@
     },
     "build/install/root.fat": {
       "ipo_ts": 1783158005029,
-      "edit_count": 50,
-      "last_lines": 41112,
-      "last_ts": 1783347762607,
+      "edit_count": 53,
+      "last_lines": 43513,
+      "last_ts": 1783422844490,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d93a7244"
+      "last_content_hash": "98448cb"
     },
     "build/installer-iso/boot/grub/grub.cfg": {
       "ipo_ts": 1783158005281,
@@ -983,57 +983,57 @@
     },
     "build/installer-iso/boot/loader.elf": {
       "ipo_ts": 1783158005295,
-      "edit_count": 49,
-      "last_lines": 42,
-      "last_ts": 1783347764626,
+      "edit_count": 52,
+      "last_lines": 43,
+      "last_ts": 1783422847094,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "1759aba6"
+      "last_content_hash": "c651208a"
     },
     "build/installer-iso/system/kernel.sys": {
       "ipo_ts": 1783158005307,
-      "edit_count": 49,
-      "last_lines": 584,
-      "last_ts": 1783347764647,
+      "edit_count": 52,
+      "last_lines": 539,
+      "last_ts": 1783422847114,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "81b9a966"
+      "last_content_hash": "dd850cea"
     },
     "build/installer-iso/system/middlelayer.sys": {
       "ipo_ts": 1783158005315,
-      "edit_count": 7,
-      "last_lines": 127,
-      "last_ts": 1783332809452,
+      "edit_count": 9,
+      "last_lines": 140,
+      "last_ts": 1783422651898,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "998e3913"
+      "last_content_hash": "7a702188"
     },
     "build/installer-iso/install/root.fat": {
       "ipo_ts": 1783158008283,
-      "edit_count": 50,
-      "last_lines": 41112,
-      "last_ts": 1783347765899,
+      "edit_count": 53,
+      "last_lines": 43513,
+      "last_ts": 1783422849979,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d93a7244"
+      "last_content_hash": "98448cb"
     },
     "build/installer-iso/boot/efiboot.img": {
       "ipo_ts": 1783158008511,
-      "edit_count": 50,
+      "edit_count": 53,
       "last_lines": 23375,
-      "last_ts": 1783347766261,
+      "last_ts": 1783422850326,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "28f9ee78"
+      "last_content_hash": "919ea659"
     },
     "build/images/leonos4-installer.iso": {
       "ipo_ts": 1783158016145,
-      "edit_count": 155,
-      "last_lines": 88118,
-      "last_ts": 1783347775192,
+      "edit_count": 160,
+      "last_lines": 90485,
+      "last_ts": 1783422861413,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "a819b5c5"
+      "last_content_hash": "306a085e"
     },
     "build/integrity-test/esp/boot/grub/grub.cfg": {
       "ipo_ts": 1783158229527,
@@ -1397,21 +1397,21 @@
     },
     "docs/MIDDLELAYER.md": {
       "ipo_ts": 1783161504112,
-      "edit_count": 6,
-      "last_lines": 115,
-      "last_ts": 1783332705448,
+      "edit_count": 8,
+      "last_lines": 145,
+      "last_ts": 1783420089533,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8d6450f6"
+      "last_content_hash": "ecb9b6"
     },
     "docs/ABI.md": {
       "ipo_ts": 1783161568255,
-      "edit_count": 10,
-      "last_lines": 198,
-      "last_ts": 1783406622635,
+      "edit_count": 13,
+      "last_lines": 235,
+      "last_ts": 1783422454745,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7a96fbf"
+      "last_content_hash": "a8e3905"
     },
     "docs/README.md": {
       "ipo_ts": 1783161608018,
@@ -1424,21 +1424,21 @@
     },
     "docs/SYSCALLS.md": {
       "ipo_ts": 1783162131435,
-      "edit_count": 11,
-      "last_lines": 293,
-      "last_ts": 1783406646031,
+      "edit_count": 13,
+      "last_lines": 308,
+      "last_ts": 1783420089546,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "3c004578"
+      "last_content_hash": "dd9b8dab"
     },
     "build/vmlog.txt": {
       "ipo_ts": 1783162293064,
-      "edit_count": 699,
-      "last_lines": 154,
-      "last_ts": 1783408287231,
+      "edit_count": 712,
+      "last_lines": 493,
+      "last_ts": 1783423228158,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c9822e78"
+      "last_content_hash": "6e7b5a7c"
     },
     "userland/apps/notepad/main.c": {
       "ipo_ts": 1783168963048,
@@ -1478,21 +1478,21 @@
     },
     "build/boot/loader.elf": {
       "ipo_ts": 1783222314871,
-      "edit_count": 87,
-      "last_lines": 42,
-      "last_ts": 1783408139580,
+      "edit_count": 98,
+      "last_lines": 43,
+      "last_ts": 1783422836447,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b7c7fa6a"
+      "last_content_hash": "c651208a"
     },
     "build/esp/boot/loader.elf": {
       "ipo_ts": 1783222314880,
-      "edit_count": 87,
-      "last_lines": 42,
-      "last_ts": 1783408139593,
+      "edit_count": 98,
+      "last_lines": 43,
+      "last_ts": 1783422836459,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b7c7fa6a"
+      "last_content_hash": "c651208a"
     },
     "userland/apps/fileman/main.c": {
       "ipo_ts": 1783223188172,
@@ -1532,30 +1532,30 @@
     },
     "build/esp/userland/login.elf": {
       "ipo_ts": 1783224549725,
-      "edit_count": 17,
-      "last_lines": 170,
-      "last_ts": 1783404421205,
+      "edit_count": 18,
+      "last_lines": 172,
+      "last_ts": 1783419924345,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "cc4a0b84"
+      "last_content_hash": "9e9c0832"
     },
     "build/userland/login.elf": {
       "ipo_ts": 1783224549954,
-      "edit_count": 18,
-      "last_lines": 170,
-      "last_ts": 1783406482574,
+      "edit_count": 19,
+      "last_lines": 172,
+      "last_ts": 1783419923164,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "cc4a0b84"
+      "last_content_hash": "9e9c0832"
     },
     "build/images/leonos4.vmdk": {
       "ipo_ts": 1783225279535,
-      "edit_count": 162,
-      "last_lines": 36906,
-      "last_ts": 1783408287665,
+      "edit_count": 174,
+      "last_lines": 37164,
+      "last_ts": 1783423228144,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "4ebbefbb"
+      "last_content_hash": "4f44be53"
     },
     "build/images/leonos4.vmdk.lck/M31081.lck": {
       "ipo_ts": 1783225707303,
@@ -1581,30 +1581,30 @@
     },
     "build/install/root/install/esp/userland/login.elf": {
       "ipo_ts": 1783226207694,
-      "edit_count": 17,
-      "last_lines": 108,
-      "last_ts": 1783332802886,
+      "edit_count": 19,
+      "last_lines": 172,
+      "last_ts": 1783422638317,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "18c06b72"
+      "last_content_hash": "9e9c0832"
     },
     "build/install/root/install/esp/boot/loader.elf": {
       "ipo_ts": 1783226595146,
-      "edit_count": 45,
-      "last_lines": 42,
-      "last_ts": 1783347757947,
+      "edit_count": 48,
+      "last_lines": 43,
+      "last_ts": 1783422837496,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "1759aba6"
+      "last_content_hash": "c651208a"
     },
     "build/install/installer-efiboot.img": {
       "ipo_ts": 1783226600154,
-      "edit_count": 44,
+      "edit_count": 47,
       "last_lines": 23375,
-      "last_ts": 1783347764076,
+      "last_ts": 1783422846915,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "28f9ee78"
+      "last_content_hash": "919ea659"
     },
     "build/images/leonos4.vmdk.lck/M07597.lck": {
       "ipo_ts": 1783227087166,
@@ -1628,21 +1628,21 @@
     },
     "userland/apps/desktop/desktop.h": {
       "ipo_ts": 1783227580095,
-      "edit_count": 9,
-      "last_lines": 483,
-      "last_ts": 1783406193199,
+      "edit_count": 10,
+      "last_lines": 488,
+      "last_ts": 1783414954123,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "44aee6dd"
+      "last_content_hash": "e0605bf3"
     },
     "tools/make_app_icons.py": {
       "ipo_ts": 1783227710514,
-      "edit_count": 10,
-      "last_lines": 458,
-      "last_ts": 1783406366718,
+      "edit_count": 11,
+      "last_lines": 460,
+      "last_ts": 1783415053462,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "fca49ba4"
+      "last_content_hash": "baa70ce7"
     },
     "tools/__pycache__/make_app_icons.cpython-312.pyc": {
       "ipo_ts": 1783227859809,
@@ -2170,12 +2170,12 @@
     },
     "build/install/root/userland/desktop.elf": {
       "ipo_ts": 1783227899904,
-      "edit_count": 23,
-      "last_lines": 404,
-      "last_ts": 1783347757459,
+      "edit_count": 24,
+      "last_lines": 472,
+      "last_ts": 1783420106507,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "bb008283"
+      "last_content_hash": "eb23e0d3"
     },
     "build/install/root/system/resources/icons/desktop.bmp": {
       "ipo_ts": 1783227899936,
@@ -2648,12 +2648,12 @@
     },
     "userland/apps/desktop/start_menu.c": {
       "ipo_ts": 1783229681523,
-      "edit_count": 1,
-      "last_lines": 252,
-      "last_ts": 1783229681523,
+      "edit_count": 2,
+      "last_lines": 253,
+      "last_ts": 1783415012196,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d623d8af"
+      "last_content_hash": "a2b6fe05"
     },
     "build/esp/userland/desktop.bmp": {
       "ipo_ts": 1783230187636,
@@ -2855,27 +2855,27 @@
     },
     "build/install/root/userland/installer.bmp": {
       "ipo_ts": 1783230188669,
-      "edit_count": 7,
+      "edit_count": 9,
       "last_lines": 1,
-      "last_ts": 1783328554525,
+      "last_ts": 1783422634182,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "46a5b55a"
     },
     "build/install/root/install/esp/userland/bugtest.bmp": {
       "ipo_ts": 1783230190486,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691467,
+      "last_ts": 1783422635872,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "f4362ac6"
     },
     "build/install/root/install/esp/userland/calc.bmp": {
       "ipo_ts": 1783230190497,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691485,
+      "last_ts": 1783422635904,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "9df59f86"
@@ -2893,117 +2893,117 @@
     },
     "build/install/root/install/esp/userland/cjktest.bmp": {
       "ipo_ts": 1783230192230,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691503,
+      "last_ts": 1783422636241,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "9ce9dcaa"
     },
     "build/install/root/install/esp/userland/desktop.bmp": {
       "ipo_ts": 1783230192242,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691520,
+      "last_ts": 1783422636425,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "5e6ed206"
     },
     "build/install/root/install/esp/userland/devmgr.bmp": {
       "ipo_ts": 1783230192270,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691535,
+      "last_ts": 1783422636560,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "3ba62976"
     },
     "build/install/root/install/esp/userland/diskmgr.bmp": {
       "ipo_ts": 1783230192280,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691552,
+      "last_ts": 1783422636996,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "36eb7fb2"
     },
     "build/install/root/install/esp/userland/fileman.bmp": {
       "ipo_ts": 1783230192296,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691570,
+      "last_ts": 1783422637291,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "63fde286"
     },
     "build/install/root/install/esp/userland/hello.bmp": {
       "ipo_ts": 1783230192309,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691590,
+      "last_ts": 1783422637580,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "e76853e"
     },
     "build/install/root/install/esp/userland/init.bmp": {
       "ipo_ts": 1783230192320,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691609,
+      "last_ts": 1783422638275,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "f080bb4e"
     },
     "build/install/root/install/esp/userland/login.bmp": {
       "ipo_ts": 1783230193838,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691627,
+      "last_ts": 1783422638301,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "4bd84bae"
     },
     "build/install/root/install/esp/userland/memtest.bmp": {
       "ipo_ts": 1783230193847,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246693080,
+      "last_ts": 1783422638332,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "e4608a86"
     },
     "build/install/root/install/esp/userland/minesweeper.bmp": {
       "ipo_ts": 1783230193857,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691668,
+      "last_ts": 1783422638360,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "7177e47e"
     },
     "build/install/root/install/esp/userland/notepad.bmp": {
       "ipo_ts": 1783230193871,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691692,
+      "last_ts": 1783422638646,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "2c194e82"
     },
     "build/install/root/install/esp/userland/oobe.bmp": {
       "ipo_ts": 1783230193881,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691712,
+      "last_ts": 1783422638677,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "a146fe96"
     },
     "build/install/root/install/esp/userland/osver.bmp": {
       "ipo_ts": 1783230193891,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 1,
-      "last_ts": 1783246691733,
+      "last_ts": 1783422639106,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "16525ae"
@@ -3109,12 +3109,12 @@
     },
     "build/install/root/userland/installer.elf": {
       "ipo_ts": 1783230318706,
-      "edit_count": 15,
-      "last_lines": 161,
-      "last_ts": 1783332801288,
+      "edit_count": 16,
+      "last_lines": 207,
+      "last_ts": 1783420106521,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6ece649e"
+      "last_content_hash": "b4dd81f4"
     },
     "build/images/leonos4.vmdk.lck/M33634.lck": {
       "ipo_ts": 1783230767980,
@@ -3224,48 +3224,48 @@
     },
     "kernel/ntclks/include/ntclks/sched.h": {
       "ipo_ts": 1783246337765,
-      "edit_count": 1,
-      "last_lines": 148,
-      "last_ts": 1783246337765,
+      "edit_count": 2,
+      "last_lines": 149,
+      "last_ts": 1783414702382,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c84ae1d6"
+      "last_content_hash": "6038e471"
     },
     "kernel/ntclks/sched/sched.c": {
       "ipo_ts": 1783246347515,
-      "edit_count": 1,
-      "last_lines": 755,
-      "last_ts": 1783246347515,
+      "edit_count": 5,
+      "last_lines": 771,
+      "last_ts": 1783415653821,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d67382c"
+      "last_content_hash": "6a8e8d97"
     },
     "kernel/ntclks/user/userland.c": {
       "ipo_ts": 1783246361142,
-      "edit_count": 2,
-      "last_lines": 598,
-      "last_ts": 1783246674363,
+      "edit_count": 3,
+      "last_lines": 609,
+      "last_ts": 1783414804123,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e4e76f28"
+      "last_content_hash": "978fd2ff"
     },
     "build/obj/kernel/kernel/ntclks/sched/sched.c.o": {
       "ipo_ts": 1783246533484,
-      "edit_count": 1,
-      "last_lines": 17,
-      "last_ts": 1783246533484,
+      "edit_count": 3,
+      "last_lines": 18,
+      "last_ts": 1783415690147,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "5fec9e6a"
+      "last_content_hash": "2e294ab9"
     },
     "build/obj/kernel/kernel/ntclks/user/userland.c.o": {
       "ipo_ts": 1783246533496,
-      "edit_count": 2,
-      "last_lines": 47,
-      "last_ts": 1783248216300,
+      "edit_count": 3,
+      "last_lines": 48,
+      "last_ts": 1783415465473,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "da2693b1"
+      "last_content_hash": "28a46b9c"
     },
     "build/obj/user-installer/userland/apps/installer/main.c.o": {
       "ipo_ts": 1783246533519,
@@ -3278,12 +3278,12 @@
     },
     "build/userland/installer.elf": {
       "ipo_ts": 1783246534369,
-      "edit_count": 12,
-      "last_lines": 161,
-      "last_ts": 1783332800298,
+      "edit_count": 13,
+      "last_lines": 207,
+      "last_ts": 1783420105569,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6ece649e"
+      "last_content_hash": "b4dd81f4"
     },
     "build/images/leonos4.vmdk.lck/M64913.lck": {
       "ipo_ts": 1783246933461,
@@ -3316,12 +3316,12 @@
     },
     "build/obj/user-desktop/userland/apps/desktop/desktop_run.c.o": {
       "ipo_ts": 1783248216318,
-      "edit_count": 3,
-      "last_lines": 23,
-      "last_ts": 1783406481574,
+      "edit_count": 4,
+      "last_lines": 24,
+      "last_ts": 1783415465899,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "d974c453"
+      "last_content_hash": "88789930"
     },
     "build/obj/user-desktop/userland/apps/desktop/render.c.o": {
       "ipo_ts": 1783248216337,
@@ -3334,12 +3334,12 @@
     },
     "build/obj/user-desktop/userland/apps/desktop/state.c.o": {
       "ipo_ts": 1783248216346,
-      "edit_count": 4,
+      "edit_count": 5,
       "last_lines": 2,
-      "last_ts": 1783406481598,
+      "last_ts": 1783415465936,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "e201c3b4"
+      "last_content_hash": "2f4b0a19"
     },
     "build/obj/user-desktop/userland/apps/desktop/window.c.o": {
       "ipo_ts": 1783248216355,
@@ -3475,12 +3475,12 @@
     },
     "kernel/ntclks/drivers/storage.c": {
       "ipo_ts": 1783251953272,
-      "edit_count": 2,
-      "last_lines": 3514,
-      "last_ts": 1783251962913,
+      "edit_count": 3,
+      "last_lines": 3526,
+      "last_ts": 1783419196758,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8d5acdef"
+      "last_content_hash": "57fff3aa"
     },
     "include/leonos/net.h": {
       "ipo_ts": 1783252226301,
@@ -3574,12 +3574,12 @@
     },
     "build/obj/kernel/kernel/ntclks/drivers/storage.c.o": {
       "ipo_ts": 1783252590349,
-      "edit_count": 1,
-      "last_lines": 53,
-      "last_ts": 1783252590349,
+      "edit_count": 2,
+      "last_lines": 56,
+      "last_ts": 1783419921396,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "11da8080"
+      "last_content_hash": "e1c86920"
     },
     "build/obj/kernel/kernel/ntclks/kernel.c.o": {
       "ipo_ts": 1783252590358,
@@ -3592,21 +3592,21 @@
     },
     "build/system/middlelayer.sys": {
       "ipo_ts": 1783252590470,
-      "edit_count": 3,
-      "last_lines": 127,
-      "last_ts": 1783332723158,
+      "edit_count": 6,
+      "last_lines": 140,
+      "last_ts": 1783422489667,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "998e3913"
+      "last_content_hash": "7a702188"
     },
     "build/userland/ping.elf": {
       "ipo_ts": 1783252590481,
-      "edit_count": 17,
-      "last_lines": 270,
-      "last_ts": 1783406482821,
+      "edit_count": 19,
+      "last_lines": 277,
+      "last_ts": 1783419924753,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "9bc82e1a"
+      "last_content_hash": "cabe2da3"
     },
     "build/generated/app-icons/ping.bmp": {
       "ipo_ts": 1783252673165,
@@ -3628,12 +3628,12 @@
     },
     "build/esp/userland/ping.elf": {
       "ipo_ts": 1783252673712,
-      "edit_count": 15,
-      "last_lines": 270,
-      "last_ts": 1783406483203,
+      "edit_count": 17,
+      "last_lines": 277,
+      "last_ts": 1783419924479,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "9bc82e1a"
+      "last_content_hash": "cabe2da3"
     },
     "build/install/root/install/esp/userland/ping.bmp": {
       "ipo_ts": 1783252678493,
@@ -3646,12 +3646,12 @@
     },
     "build/install/root/install/esp/userland/ping.elf": {
       "ipo_ts": 1783252678503,
-      "edit_count": 12,
-      "last_lines": 235,
-      "last_ts": 1783347759513,
+      "edit_count": 13,
+      "last_lines": 277,
+      "last_ts": 1783420110173,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c716fde8"
+      "last_content_hash": "cabe2da3"
     },
     "build/logs/e1000-smoke.log": {
       "ipo_ts": 1783252823680,
@@ -3664,21 +3664,21 @@
     },
     "middlelayer/osmlayer/runtime.c": {
       "ipo_ts": 1783254225750,
-      "edit_count": 3,
-      "last_lines": 1448,
-      "last_ts": 1783332219676,
+      "edit_count": 14,
+      "last_lines": 2129,
+      "last_ts": 1783422454771,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f429ef86"
+      "last_content_hash": "43387486"
     },
     "build/obj/middlelayer/middlelayer/osmlayer/runtime.c.o": {
       "ipo_ts": 1783254264840,
-      "edit_count": 2,
-      "last_lines": 36,
-      "last_ts": 1783332723107,
+      "edit_count": 5,
+      "last_lines": 44,
+      "last_ts": 1783422489174,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "336e9f2"
+      "last_content_hash": "c37f2507"
     },
     "userland/apps/netctl/main.c": {
       "ipo_ts": 1783254352159,
@@ -3691,9 +3691,9 @@
     },
     "build/obj/user-netctl/userland/apps/netctl/main.c.o": {
       "ipo_ts": 1783254420099,
-      "edit_count": 3,
+      "edit_count": 4,
       "last_lines": 32,
-      "last_ts": 1783402360039,
+      "last_ts": 1783422492221,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "de5e60cd"
@@ -3718,48 +3718,48 @@
     },
     "build/userland/netctl.elf": {
       "ipo_ts": 1783254420805,
-      "edit_count": 14,
-      "last_lines": 274,
-      "last_ts": 1783406482777,
+      "edit_count": 16,
+      "last_lines": 279,
+      "last_ts": 1783419924732,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "15436a13"
+      "last_content_hash": "820adc13"
     },
     "build/esp/system/middlelayer.sys": {
       "ipo_ts": 1783254481173,
-      "edit_count": 2,
-      "last_lines": 127,
-      "last_ts": 1783332724112,
+      "edit_count": 5,
+      "last_lines": 140,
+      "last_ts": 1783422492731,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "998e3913"
+      "last_content_hash": "7a702188"
     },
     "build/esp/userland/netctl.elf": {
       "ipo_ts": 1783254481704,
-      "edit_count": 14,
-      "last_lines": 274,
-      "last_ts": 1783406483156,
+      "edit_count": 16,
+      "last_lines": 279,
+      "last_ts": 1783419924399,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "15436a13"
+      "last_content_hash": "820adc13"
     },
     "build/install/root/install/esp/userland/netctl.bmp": {
       "ipo_ts": 1783254490905,
-      "edit_count": 1,
+      "edit_count": 2,
       "last_lines": 1,
-      "last_ts": 1783254490905,
+      "last_ts": 1783422638519,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "37570b8a"
     },
     "build/install/root/install/esp/userland/netctl.elf": {
       "ipo_ts": 1783254490931,
-      "edit_count": 11,
-      "last_lines": 240,
-      "last_ts": 1783347759478,
+      "edit_count": 13,
+      "last_lines": 279,
+      "last_ts": 1783422638536,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f7771f60"
+      "last_content_hash": "820adc13"
     },
     "build/logs/net-dhcp-dns-smoke.log": {
       "ipo_ts": 1783254629021,
@@ -3819,39 +3819,39 @@
     },
     "build/userland/httpget.elf": {
       "ipo_ts": 1783256656979,
-      "edit_count": 14,
-      "last_lines": 271,
-      "last_ts": 1783406482760,
+      "edit_count": 16,
+      "last_lines": 281,
+      "last_ts": 1783419924686,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b0715560"
+      "last_content_hash": "5fed9ee"
     },
     "build/esp/userland/httpget.elf": {
       "ipo_ts": 1783256657489,
-      "edit_count": 14,
-      "last_lines": 271,
-      "last_ts": 1783406483137,
+      "edit_count": 16,
+      "last_lines": 281,
+      "last_ts": 1783419924962,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "b0715560"
+      "last_content_hash": "5fed9ee"
     },
     "build/install/root/install/esp/userland/httpget.bmp": {
       "ipo_ts": 1783256666505,
-      "edit_count": 1,
+      "edit_count": 2,
       "last_lines": 1,
-      "last_ts": 1783256666505,
+      "last_ts": 1783422637613,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "2a1c5f76"
     },
     "build/install/root/install/esp/userland/httpget.elf": {
       "ipo_ts": 1783256666518,
-      "edit_count": 11,
-      "last_lines": 230,
-      "last_ts": 1783347759020,
+      "edit_count": 13,
+      "last_lines": 281,
+      "last_ts": 1783422637639,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "180fb4a8"
+      "last_content_hash": "5fed9ee"
     },
     "build/images/leonos4.vmdk.lck/M26771.lck": {
       "ipo_ts": 1783257013566,
@@ -6026,39 +6026,39 @@
     },
     "build/esp/userland/browser.elf": {
       "ipo_ts": 1783258069371,
-      "edit_count": 23,
-      "last_lines": 368,
-      "last_ts": 1783406483070,
+      "edit_count": 25,
+      "last_lines": 372,
+      "last_ts": 1783419924864,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "9580fd5"
+      "last_content_hash": "2db4ae85"
     },
     "build/userland/browser.elf": {
       "ipo_ts": 1783258069382,
-      "edit_count": 24,
-      "last_lines": 368,
-      "last_ts": 1783406482986,
+      "edit_count": 26,
+      "last_lines": 372,
+      "last_ts": 1783419925067,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "9580fd5"
+      "last_content_hash": "2db4ae85"
     },
     "build/install/root/install/esp/userland/browser.bmp": {
       "ipo_ts": 1783258071684,
-      "edit_count": 1,
+      "edit_count": 2,
       "last_lines": 1,
-      "last_ts": 1783258071684,
+      "last_ts": 1783422635837,
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "2e52fd86"
     },
     "build/install/root/install/esp/userland/browser.elf": {
       "ipo_ts": 1783258071696,
-      "edit_count": 16,
-      "last_lines": 299,
-      "last_ts": 1783347758475,
+      "edit_count": 18,
+      "last_lines": 372,
+      "last_ts": 1783422635856,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "26df025d"
+      "last_content_hash": "2db4ae85"
     },
     "build/images/leonos4.vmdk.lck/M49760.lck": {
       "ipo_ts": 1783258640253,
@@ -8698,12 +8698,12 @@
     },
     "userland/apps/fileman/fileman.h": {
       "ipo_ts": 1783329858090,
-      "edit_count": 6,
+      "edit_count": 7,
       "last_lines": 160,
-      "last_ts": 1783347480159,
+      "last_ts": 1783419795269,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "703f8848"
+      "last_content_hash": "9cf42723"
     },
     "userland/apps/fileman/input.c": {
       "ipo_ts": 1783329858100,
@@ -8716,12 +8716,12 @@
     },
     "userland/apps/fileman/model.c": {
       "ipo_ts": 1783329858109,
-      "edit_count": 6,
-      "last_lines": 574,
-      "last_ts": 1783347505614,
+      "edit_count": 10,
+      "last_lines": 850,
+      "last_ts": 1783422717696,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "c0e250c9"
+      "last_content_hash": "82336039"
     },
     "userland/apps/fileman/state.c": {
       "ipo_ts": 1783329858119,
@@ -8824,21 +8824,21 @@
     },
     "build/obj/user-fileman/userland/apps/fileman/model.c.o": {
       "ipo_ts": 1783329926664,
-      "edit_count": 4,
-      "last_lines": 52,
-      "last_ts": 1783347559886,
+      "edit_count": 7,
+      "last_lines": 38,
+      "last_ts": 1783422730365,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "2693cf5a"
+      "last_content_hash": "5c342427"
     },
     "build/obj/user-fileman/userland/apps/fileman/state.c.o": {
       "ipo_ts": 1783329926679,
-      "edit_count": 3,
-      "last_lines": 4,
-      "last_ts": 1783347559895,
+      "edit_count": 4,
+      "last_lines": 5,
+      "last_ts": 1783419923049,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "8dfb21e3"
+      "last_content_hash": "ecc66694"
     },
     "build/obj/user-fileman/userland/apps/fileman/util.c.o": {
       "ipo_ts": 1783329926714,
@@ -9085,12 +9085,12 @@
     },
     "build/obj/user-settings/userland/apps/settings/main.c.o": {
       "ipo_ts": 1783346700143,
-      "edit_count": 2,
+      "edit_count": 3,
       "last_lines": 46,
-      "last_ts": 1783406482697,
+      "last_ts": 1783415467575,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "87af2d50"
+      "last_content_hash": "599324a3"
     },
     "build/images/leonos4.vmdk.lck/M42846.lck": {
       "ipo_ts": 1783347042895,
@@ -9157,30 +9157,30 @@
     },
     "userland/apps/settings/main.c": {
       "ipo_ts": 1783405801869,
-      "edit_count": 4,
-      "last_lines": 897,
-      "last_ts": 1783406384942,
+      "edit_count": 5,
+      "last_lines": 899,
+      "last_ts": 1783415434079,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "7b0c785f"
+      "last_content_hash": "66102294"
     },
     "userland/apps/desktop/services.c": {
       "ipo_ts": 1783406217533,
-      "edit_count": 1,
-      "last_lines": 78,
-      "last_ts": 1783406217533,
+      "edit_count": 2,
+      "last_lines": 97,
+      "last_ts": 1783414985772,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6f95b99d"
+      "last_content_hash": "3fe8c5b2"
     },
     "userland/apps/servicemgr/main.c": {
       "ipo_ts": 1783406340085,
-      "edit_count": 1,
-      "last_lines": 309,
-      "last_ts": 1783406340085,
+      "edit_count": 3,
+      "last_lines": 626,
+      "last_ts": 1783415239752,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "f073836"
+      "last_content_hash": "9aa4cfbd"
     },
     "build/generated/app-icons/downloadmgr.bmp": {
       "ipo_ts": 1783406481489,
@@ -9211,12 +9211,12 @@
     },
     "build/obj/user-desktop/userland/apps/desktop/services.c.o": {
       "ipo_ts": 1783406481525,
-      "edit_count": 1,
-      "last_lines": 6,
-      "last_ts": 1783406481525,
+      "edit_count": 2,
+      "last_lines": 8,
+      "last_ts": 1783415465914,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "201c426e"
+      "last_content_hash": "184bb6f"
     },
     "build/obj/user-downloadmgr/userland/apps/downloadmgr/main.c.o": {
       "ipo_ts": 1783406481984,
@@ -9238,39 +9238,39 @@
     },
     "build/obj/user-servicemgr/userland/apps/servicemgr/main.c.o": {
       "ipo_ts": 1783406482013,
-      "edit_count": 1,
-      "last_lines": 27,
-      "last_ts": 1783406482013,
+      "edit_count": 2,
+      "last_lines": 32,
+      "last_ts": 1783415466918,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "6a954ec1"
+      "last_content_hash": "ddfd369b"
     },
     "build/userland/downloadmgr.elf": {
       "ipo_ts": 1783406482537,
-      "edit_count": 1,
-      "last_lines": 273,
-      "last_ts": 1783406482537,
+      "edit_count": 4,
+      "last_lines": 278,
+      "last_ts": 1783422492672,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "a7d5c69b"
+      "last_content_hash": "91126a8c"
     },
     "build/userland/imageview.elf": {
       "ipo_ts": 1783406482563,
-      "edit_count": 3,
-      "last_lines": 275,
-      "last_ts": 1783408126436,
+      "edit_count": 5,
+      "last_lines": 316,
+      "last_ts": 1783419924709,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "166857a4"
+      "last_content_hash": "9c7358d1"
     },
     "build/userland/servicemgr.elf": {
       "ipo_ts": 1783406482587,
-      "edit_count": 1,
-      "last_lines": 275,
-      "last_ts": 1783406482587,
+      "edit_count": 3,
+      "last_lines": 285,
+      "last_ts": 1783419924816,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "18db33d"
+      "last_content_hash": "62a06537"
     },
     "build/esp/userland/downloadmgr.bmp": {
       "ipo_ts": 1783406482903,
@@ -9283,12 +9283,12 @@
     },
     "build/esp/userland/downloadmgr.elf": {
       "ipo_ts": 1783406482918,
-      "edit_count": 1,
-      "last_lines": 273,
-      "last_ts": 1783406482918,
+      "edit_count": 3,
+      "last_lines": 278,
+      "last_ts": 1783419924940,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "a7d5c69b"
+      "last_content_hash": "91126a8c"
     },
     "build/esp/userland/imageview.bmp": {
       "ipo_ts": 1783406482928,
@@ -9301,12 +9301,12 @@
     },
     "build/esp/userland/imageview.elf": {
       "ipo_ts": 1783406482941,
-      "edit_count": 3,
-      "last_lines": 275,
-      "last_ts": 1783408139176,
+      "edit_count": 5,
+      "last_lines": 316,
+      "last_ts": 1783419924980,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "166857a4"
+      "last_content_hash": "9c7358d1"
     },
     "build/esp/userland/servicemgr.bmp": {
       "ipo_ts": 1783406482953,
@@ -9319,12 +9319,12 @@
     },
     "build/esp/userland/servicemgr.elf": {
       "ipo_ts": 1783406482970,
-      "edit_count": 1,
-      "last_lines": 275,
-      "last_ts": 1783406482970,
+      "edit_count": 3,
+      "last_lines": 285,
+      "last_ts": 1783419925014,
       "delisted": false,
       "last_source": "onEdit",
-      "last_content_hash": "18db33d"
+      "last_content_hash": "62a06537"
     },
     "build/images/leonos4.vmdk.lck/M08437.lck": {
       "ipo_ts": 1783406811173,
@@ -9352,6 +9352,213 @@
       "delisted": false,
       "last_source": "onEdit",
       "last_content_hash": "6764752b"
+    },
+    "userland/apps/serviced/main.c": {
+      "ipo_ts": 1783414917315,
+      "edit_count": 2,
+      "last_lines": 501,
+      "last_ts": 1783414936435,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "6da11593"
+    },
+    "userland/apps/desktop/state.c": {
+      "ipo_ts": 1783414970103,
+      "edit_count": 1,
+      "last_lines": 118,
+      "last_ts": 1783414970103,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d9993cfa"
+    },
+    "userland/apps/desktop/desktop_run.c": {
+      "ipo_ts": 1783415000265,
+      "edit_count": 1,
+      "last_lines": 184,
+      "last_ts": 1783415000265,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "f0478723"
+    },
+    "docs/FILESYSTEM.md": {
+      "ipo_ts": 1783415263051,
+      "edit_count": 3,
+      "last_lines": 122,
+      "last_ts": 1783422454758,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "7e4125e"
+    },
+    "build/generated/app-icons/serviced.bmp": {
+      "ipo_ts": 1783415464896,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783415464896,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e28dbd3e"
+    },
+    "build/obj/user-desktop/userland/apps/desktop/start_menu.c.o": {
+      "ipo_ts": 1783415465925,
+      "edit_count": 1,
+      "last_lines": 22,
+      "last_ts": 1783415465925,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d6524a88"
+    },
+    "build/obj/user-serviced/userland/apps/serviced/main.c.o": {
+      "ipo_ts": 1783415466884,
+      "edit_count": 1,
+      "last_lines": 34,
+      "last_ts": 1783415466884,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "3315b90c"
+    },
+    "build/userland/serviced.elf": {
+      "ipo_ts": 1783415467395,
+      "edit_count": 2,
+      "last_lines": 94,
+      "last_ts": 1783419924783,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ff4bd403"
+    },
+    "build/esp/userland/serviced.bmp": {
+      "ipo_ts": 1783415467796,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783415467796,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e28dbd3e"
+    },
+    "build/esp/userland/serviced.elf": {
+      "ipo_ts": 1783415467810,
+      "edit_count": 2,
+      "last_lines": 94,
+      "last_ts": 1783419924994,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ff4bd403"
+    },
+    "build/images/leonos4.vmdk.lck/M45941.lck": {
+      "ipo_ts": 1783415950969,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783415950969,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "70b1206f"
+    },
+    "include/leonos/auth.h": {
+      "ipo_ts": 1783419130514,
+      "edit_count": 1,
+      "last_lines": 137,
+      "last_ts": 1783419130514,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8674f5f3"
+    },
+    "build/install/root/install/esp/userland/downloadmgr.bmp": {
+      "ipo_ts": 1783420109057,
+      "edit_count": 2,
+      "last_lines": 1,
+      "last_ts": 1783422637026,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e016374e"
+    },
+    "build/install/root/install/esp/userland/downloadmgr.elf": {
+      "ipo_ts": 1783420109082,
+      "edit_count": 2,
+      "last_lines": 278,
+      "last_ts": 1783422838539,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "91126a8c"
+    },
+    "build/install/root/install/esp/userland/imageview.bmp": {
+      "ipo_ts": 1783420109179,
+      "edit_count": 2,
+      "last_lines": 1,
+      "last_ts": 1783422637788,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "cdc235ee"
+    },
+    "build/install/root/install/esp/userland/imageview.elf": {
+      "ipo_ts": 1783420109197,
+      "edit_count": 2,
+      "last_lines": 316,
+      "last_ts": 1783422637810,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "9c7358d1"
+    },
+    "build/install/root/install/esp/userland/serviced.bmp": {
+      "ipo_ts": 1783420110202,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783420110202,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e28dbd3e"
+    },
+    "build/install/root/install/esp/userland/serviced.elf": {
+      "ipo_ts": 1783420110217,
+      "edit_count": 1,
+      "last_lines": 94,
+      "last_ts": 1783420110217,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "ff4bd403"
+    },
+    "build/install/root/install/esp/userland/servicemgr.bmp": {
+      "ipo_ts": 1783420110229,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783420110229,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "e28dbd3e"
+    },
+    "build/install/root/install/esp/userland/servicemgr.elf": {
+      "ipo_ts": 1783420110670,
+      "edit_count": 1,
+      "last_lines": 285,
+      "last_ts": 1783420110670,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "62a06537"
+    },
+    "build/images/leonos4.vmdk.lck/M57337.lck": {
+      "ipo_ts": 1783420570716,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783420570716,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "8d3cec2e"
+    },
+    "build/installer-iso/EFI/BOOT/BOOTX64.EFI": {
+      "ipo_ts": 1783422847082,
+      "edit_count": 1,
+      "last_lines": 22837,
+      "last_ts": 1783422847082,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "d10ce097"
+    },
+    "build/images/leonos4.vmdk.lck/M08607.lck": {
+      "ipo_ts": 1783423010326,
+      "edit_count": 1,
+      "last_lines": 1,
+      "last_ts": 1783423010326,
+      "delisted": false,
+      "last_source": "onEdit",
+      "last_content_hash": "5a46cb6c"
     }
   }
 }

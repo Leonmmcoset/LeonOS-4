@@ -493,7 +493,8 @@ static int authz_check_path(const struct task *task, uint32_t op,
     int ret;
     if (storage_installer_root_active() &&
         (op == LEONOS_AUTHZ_READ || op == LEONOS_AUTHZ_WRITE ||
-         op == LEONOS_AUTHZ_EXEC || op == LEONOS_AUTHZ_INSTALL)) {
+         op == LEONOS_AUTHZ_EXEC || op == LEONOS_AUTHZ_DELETE ||
+         op == LEONOS_AUTHZ_MANAGE || op == LEONOS_AUTHZ_INSTALL)) {
         return 0;
     }
     req = (struct leonos_authz_request){0};
@@ -501,6 +502,10 @@ static int authz_check_path(const struct task *task, uint32_t op,
         req.uid = task->uid;
         req.role = task->role;
         req.session_id = task->session_id;
+        if ((task->flags & TASK_FLAG_SERVICE) &&
+            !(task->flags & TASK_FLAG_WINDOW_SERVER)) {
+            req.actor_flags |= LEONOS_AUTHZ_ACTOR_SERVICE;
+        }
         copy_text(req.username, sizeof(req.username), task->username);
         copy_text(req.home, sizeof(req.home), task->home);
     }
@@ -520,6 +525,107 @@ static int authz_check_path(const struct task *task, uint32_t op,
 static int authz_check_install(const struct task *task)
 {
     return authz_check_path(task, LEONOS_AUTHZ_INSTALL, 0, 0, 0);
+}
+
+static void fs_acl_fill_actor(struct leonos_fs_acl_request *req,
+                              const struct task *task)
+{
+    if (!req) {
+        return;
+    }
+    if (task) {
+        req->actor_uid = task->uid;
+        req->actor_role = task->role;
+        if ((task->flags & TASK_FLAG_SERVICE) &&
+            !(task->flags & TASK_FLAG_WINDOW_SERVER)) {
+            req->actor_flags |= LEONOS_AUTHZ_ACTOR_SERVICE;
+        }
+        copy_text(req->username, sizeof(req->username), task->username);
+        copy_text(req->home, sizeof(req->home), task->home);
+    } else {
+        req->actor_role = LEONOS_AUTH_ROLE_NONE;
+    }
+}
+
+static int fs_acl_dispatch(struct leonos_fs_acl_request *req)
+{
+    if (!req) {
+        return -LEONOS_EINVAL;
+    }
+    return osmlayer_auth_op(LEONOS_AUTH_OP_FSPERM, req);
+}
+
+static void fs_acl_notify(uint32_t action, const struct task *task,
+                          const char *path, const char *path2)
+{
+    struct leonos_fs_acl_request req;
+    if (!path || !path[0]) {
+        return;
+    }
+    req = (struct leonos_fs_acl_request){0};
+    req.action = action;
+    copy_text(req.path, sizeof(req.path), path);
+    if (path2) {
+        copy_text(req.path2, sizeof(req.path2), path2);
+    }
+    fs_acl_fill_actor(&req, task);
+    (void)fs_acl_dispatch(&req);
+}
+
+static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
+{
+    struct task *task = sched_current_task();
+    struct leonos_fs_acl_request req;
+    int ret;
+    if (!user_range_ok(user_arg, sizeof(req))) {
+        return -LEONOS_EFAULT;
+    }
+    req = *(struct leonos_fs_acl_request *)(uintptr_t)user_arg;
+    if (kernel_string_len_cap(req.path, sizeof(req.path)) >= sizeof(req.path)) {
+        return -LEONOS_EFAULT;
+    }
+    if (storage_resolve_path(task ? task->cwd : "0:/", req.path,
+                             req.path, sizeof(req.path)) < 0) {
+        return -LEONOS_EINVAL;
+    }
+    req.actor_uid = 0;
+    req.actor_role = 0;
+    req.actor_flags = 0;
+    req.status = 0;
+    req.username[0] = 0;
+    req.home[0] = 0;
+    fs_acl_fill_actor(&req, task);
+
+    if (request == LEONOS_FS_IOCTL_ACL_GET) {
+        req.action = LEONOS_FS_ACL_ACTION_GET;
+        ret = authz_check_path(task, LEONOS_AUTHZ_READ, req.path, 0, 0);
+        if (ret < 0 && (!task || task->role != LEONOS_AUTH_ROLE_ADMIN)) {
+            return ret;
+        }
+    } else if (request == LEONOS_FS_IOCTL_ACL_SET) {
+        req.action = LEONOS_FS_ACL_ACTION_SET;
+        ret = authz_check_path(task, LEONOS_AUTHZ_MANAGE, req.path, 0, 0);
+        if (ret < 0) {
+            return ret;
+        }
+        if (req.acl.version != LEONOS_FS_ACL_VERSION ||
+            req.acl.ace_count > LEONOS_FS_ACL_MAX_ACE) {
+            return -LEONOS_EINVAL;
+        }
+    } else if (request == LEONOS_FS_IOCTL_ACL_TAKE_OWNERSHIP) {
+        req.action = LEONOS_FS_ACL_ACTION_TAKE_OWNERSHIP;
+    } else if (request == LEONOS_FS_IOCTL_ACL_REPAIR) {
+        req.action = LEONOS_FS_ACL_ACTION_REPAIR;
+    } else {
+        return -LEONOS_ENOSYS;
+    }
+
+    ret = fs_acl_dispatch(&req);
+    if (ret < 0) {
+        return ret;
+    }
+    *(struct leonos_fs_acl_request *)(uintptr_t)user_arg = req;
+    return 0;
 }
 
 static void auth_apply_session_login(struct task *caller,
@@ -1309,6 +1415,14 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return auth_handle_ioctl(a1, a2);
     }
 
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == LEONOS_FS_IOCTL_ACL_GET ||
+         a1 == LEONOS_FS_IOCTL_ACL_SET ||
+         a1 == LEONOS_FS_IOCTL_ACL_TAKE_OWNERSHIP ||
+         a1 == LEONOS_FS_IOCTL_ACL_REPAIR)) {
+        return fs_acl_handle_ioctl(a1, a2);
+    }
+
     if (number == LINUX_SYS_WRITE) {
         struct task *task = sched_current_task();
         if (!user_range_ok(a1, a2)) {
@@ -1450,6 +1564,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         struct storage_node node;
         char path[LEONOS_FS_PATH_LEN];
         uint32_t flags = (uint32_t)a1;
+        uint8_t created = 0;
         int ret = resolve_user_path(task, a0, path, sizeof(path));
         if (ret < 0) {
             return ret;
@@ -1470,6 +1585,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                 if (ret < 0) {
                     return ret;
                 }
+                created = 1;
                 ret = storage_lookup_path(path, &node);
             }
             if (ret < 0) {
@@ -1493,6 +1609,9 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             }
         }
         int fd = alloc_task_fd(task, &node, flags, path);
+        if (fd >= 0 && created) {
+            fs_acl_notify(LEONOS_FS_ACL_ACTION_NOTE_CREATE, task, path, 0);
+        }
         if (fd >= 0 && (flags & LEONOS_O_APPEND)) {
             struct task_file *file = task_file_for_fd(task, fd);
             if (file && file->node.type == LEONOS_FS_TYPE_FILE) {
@@ -1527,7 +1646,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
-        ret = authz_check_path(task, LEONOS_AUTHZ_READ, path, 0, 0);
+        ret = authz_check_path(task, LEONOS_AUTHZ_EXEC, path, 0, 0);
         if (ret < 0) {
             return ret;
         }
@@ -1649,7 +1768,11 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return ret;
         }
         ret = storage_mkdir(path);
-        return ret < 0 ? storage_errno(ret) : 0;
+        if (ret < 0) {
+            return storage_errno(ret);
+        }
+        fs_acl_notify(LEONOS_FS_ACL_ACTION_NOTE_CREATE, task, path, 0);
+        return 0;
     }
 
     if (number == LINUX_SYS_UNLINK) {
@@ -1659,12 +1782,16 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
-        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, path, 0, 0);
+        ret = authz_check_path(task, LEONOS_AUTHZ_DELETE, path, 0, 0);
         if (ret < 0) {
             return ret;
         }
         ret = storage_unlink(path);
-        return ret < 0 ? storage_errno(ret) : 0;
+        if (ret < 0) {
+            return storage_errno(ret);
+        }
+        fs_acl_notify(LEONOS_FS_ACL_ACTION_NOTE_DELETE, task, path, 0);
+        return 0;
     }
 
     if (number == LINUX_SYS_RMDIR) {
@@ -1674,12 +1801,16 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
-        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, path, 0, 0);
+        ret = authz_check_path(task, LEONOS_AUTHZ_DELETE, path, 0, 0);
         if (ret < 0) {
             return ret;
         }
         ret = storage_rmdir(path);
-        return ret < 0 ? storage_errno(ret) : 0;
+        if (ret < 0) {
+            return storage_errno(ret);
+        }
+        fs_acl_notify(LEONOS_FS_ACL_ACTION_NOTE_DELETE, task, path, 0);
+        return 0;
     }
 
     if (number == LINUX_SYS_RENAME) {
@@ -1694,7 +1825,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
-        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, old_path, 0, 0);
+        ret = authz_check_path(task, LEONOS_AUTHZ_DELETE, old_path, 0, 0);
         if (ret < 0) {
             return ret;
         }
@@ -1703,7 +1834,11 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return ret;
         }
         ret = storage_rename(old_path, new_path);
-        return ret < 0 ? storage_errno(ret) : 0;
+        if (ret < 0) {
+            return storage_errno(ret);
+        }
+        fs_acl_notify(LEONOS_FS_ACL_ACTION_NOTE_RENAME, task, old_path, new_path);
+        return 0;
     }
 
     if (number == LINUX_SYS_GETPID) {

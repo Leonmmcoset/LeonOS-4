@@ -736,6 +736,60 @@ int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
     return ret;
 }
 
+static int leonos_fs_acl_ioctl(unsigned long request, const char *path,
+                               const struct leonos_fs_acl *in_acl,
+                               struct leonos_fs_acl *out_acl)
+{
+    struct leonos_fs_acl_request query;
+    uint32_t i = 0;
+    query = (struct leonos_fs_acl_request){0};
+    while (path && path[i] && i + 1 < sizeof(query.path)) {
+        query.path[i] = path[i];
+        ++i;
+    }
+    query.path[i] = 0;
+    if (in_acl) {
+        query.acl = *in_acl;
+    }
+    int ret = ioctl(3, request, &query);
+    if (ret == 0 && out_acl) {
+        *out_acl = query.acl;
+    }
+    return ret;
+}
+
+int leonos_fs_acl_get(const char *path, struct leonos_fs_acl *acl)
+{
+    if (!path || !acl) {
+        return -1;
+    }
+    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_GET, path, 0, acl);
+}
+
+int leonos_fs_acl_set(const char *path, const struct leonos_fs_acl *acl)
+{
+    if (!path || !acl) {
+        return -1;
+    }
+    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_SET, path, acl, 0);
+}
+
+int leonos_fs_acl_take_ownership(const char *path, struct leonos_fs_acl *acl)
+{
+    if (!path) {
+        return -1;
+    }
+    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_TAKE_OWNERSHIP, path, 0, acl);
+}
+
+int leonos_fs_acl_repair(const char *path, struct leonos_fs_acl *acl)
+{
+    if (!path) {
+        return -1;
+    }
+    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_REPAIR, path, 0, acl);
+}
+
 int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
                             struct leonos_text_glyph *glyphs,
                             uint32_t capacity,
