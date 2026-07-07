@@ -220,7 +220,8 @@ def main() -> int:
     write_line(lines, "  description = MANIFEST $out")
     write_line(lines)
     write_line(lines, "rule grub_efi")
-    write_line(lines, "  command = mkdir -p `dirname $out` && grub-mkstandalone -d build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm' boot/grub/grub.cfg=boot/grub/embedded.cfg")
+    # 修改点1：删除 -d 参数，使用系统默认模块目录
+    write_line(lines, "  command = grub-mkstandalone -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm' boot/grub/grub.cfg=boot/grub/embedded.cfg")
     write_line(lines, "  description = GRUB.EFI $out")
     write_line(lines)
     write_line(lines, "rule iso")
@@ -389,7 +390,8 @@ def main() -> int:
         *(ROOT / f"build/esp/userland/{app}.bmp" for app in NORMAL_USER_APPS),
         ROOT / "build/esp/etc/leonos.conf",
     ]
-    write_line(lines, f"build {r(esp_outputs[0])}: grub_efi boot/grub/embedded.cfg | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh")
+    # 修改点2：删除隐式依赖 modinfo.sh
+    write_line(lines, f"build {r(esp_outputs[0])}: grub_efi boot/grub/embedded.cfg")
     write_line(lines, f"build {r(esp_outputs[1])}: copy boot/grub/grub.cfg")
     write_line(lines, f"build {r(esp_outputs[2])}: copy {r(loader_elf)}")
     write_line(lines, f"build {r(esp_outputs[3])}: copy {r(kernel_sys)}")
@@ -423,7 +425,8 @@ def main() -> int:
     )
     write_line(lines, f"build {r(installer_root)}: installer_root {' '.join(r(p) for p in esp_outputs)} {installer_elf_deps} {installer_icon_deps} tools/make_installer_root.py")
     installer_iso = ROOT / "build/images/leonos4-installer.iso"
-    write_line(lines, f"build {r(installer_iso)}: installer_iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {r(installer_root)} boot/grub/installer.cfg boot/grub/installer_embedded.cfg tools/make_installer_iso.py | build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi/modinfo.sh")
+    # 修改点3：删除隐式依赖 modinfo.sh
+    write_line(lines, f"build {r(installer_iso)}: installer_iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {r(installer_root)} boot/grub/installer.cfg boot/grub/installer_embedded.cfg tools/make_installer_iso.py")
     write_line(lines, f"build image-vmdk: phony {r(vmdk)}")
     write_line(lines, f"build image-iso: phony {r(iso)}")
     write_line(lines, f"build installer: phony {r(installer_iso)}")
