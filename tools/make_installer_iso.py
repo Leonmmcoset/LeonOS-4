@@ -30,8 +30,6 @@ def build_installer_boot_efi() -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     run([
         "grub-mkstandalone",
-        "-d",
-        str(GRUB_EFI_DIR),
         "-O",
         "x86_64-efi",
         "-o",
