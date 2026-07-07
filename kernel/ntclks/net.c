@@ -1,6 +1,7 @@
 #include <ntclks/console.h>
 #include <ntclks/e1000.h>
 #include <ntclks/net.h>
+#include <ntclks/sched.h>
 #include <ntclks/storage.h>
 #include <ntclks/time.h>
 
@@ -109,6 +110,7 @@ struct net_socket {
     uint32_t used;
     int32_t handle;
     uint32_t owner_pid;
+    uint32_t owner_uid;
     uint32_t state;
     uint32_t status;
     uint32_t local_ip;
@@ -1753,7 +1755,7 @@ static int net_http_resolve_hosts(const char *host, uint32_t host_len,
     return 0;
 }
 
-static struct net_socket *net_socket_alloc(uint32_t owner_pid)
+static struct net_socket *net_socket_alloc(uint32_t owner_pid, uint32_t owner_uid)
 {
     struct net_socket *slot = 0;
     net_socket_gc();
@@ -1789,6 +1791,7 @@ static struct net_socket *net_socket_alloc(uint32_t owner_pid)
         net_next_socket_handle = 1;
     }
     slot->owner_pid = owner_pid;
+    slot->owner_uid = owner_uid;
     slot->state = LEONOS_NET_TCP_CLOSED;
     slot->status = LEONOS_NET_STATUS_SOCKET_CLOSED;
     slot->created_ms = net_now32();
@@ -1807,7 +1810,8 @@ static uint32_t net_socket_clamp_timeout(uint32_t timeout_ms)
     return timeout_ms;
 }
 
-int net_socket_open(struct leonos_net_socket_open *request, uint32_t owner_pid)
+int net_socket_open(struct leonos_net_socket_open *request, uint32_t owner_pid,
+                    uint32_t owner_uid)
 {
     struct net_socket *socket;
     if (!request) {
@@ -1821,7 +1825,7 @@ int net_socket_open(struct leonos_net_socket_open *request, uint32_t owner_pid)
          request->protocol != LEONOS_NET_IPPROTO_TCP)) {
         return 0;
     }
-    socket = net_socket_alloc(owner_pid);
+    socket = net_socket_alloc(owner_pid, owner_uid);
     if (!socket) {
         request->status = LEONOS_NET_STATUS_SOCKET_LIMIT;
         return 0;
@@ -2166,7 +2170,24 @@ int net_socket_close(struct leonos_net_socket_close *request,
     return 0;
 }
 
-int net_connections(struct leonos_net_connection_list *request)
+static int net_connection_visible(const struct net_socket *socket,
+                                  const struct task *viewer)
+{
+    if (!socket || !viewer) {
+        return 0;
+    }
+    if (viewer->role == LEONOS_AUTH_ROLE_ADMIN) {
+        return 1;
+    }
+    if ((viewer->flags & TASK_FLAG_SERVICE) &&
+        !(viewer->flags & TASK_FLAG_WINDOW_SERVER)) {
+        return 1;
+    }
+    return viewer->uid != 0 && socket->owner_uid == viewer->uid;
+}
+
+int net_connections(struct leonos_net_connection_list *request,
+                    const struct task *viewer)
 {
     uint32_t now = net_now32();
     uint32_t count = 0;
@@ -2176,7 +2197,7 @@ int net_connections(struct leonos_net_connection_list *request)
     net_socket_gc();
     for (uint32_t i = 0; i < LEONOS_NET_SOCKET_MAX; ++i) {
         struct net_socket *socket = &net_sockets[i];
-        if (!socket->used) {
+        if (!socket->used || !net_connection_visible(socket, viewer)) {
             continue;
         }
         if (request->entries && count < request->capacity) {

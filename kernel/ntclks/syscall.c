@@ -92,6 +92,31 @@ static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
     }
 }
 
+static int require_window_server(void)
+{
+    struct task *task = sched_current_task();
+    if (!task || !(task->flags & TASK_FLAG_WINDOW_SERVER)) {
+        return -LEONOS_EPERM;
+    }
+    return 0;
+}
+
+static int require_network_config_access(void)
+{
+    struct task *task = sched_current_task();
+    if (storage_installer_root_active()) {
+        return 0;
+    }
+    if (task && task->role == LEONOS_AUTH_ROLE_ADMIN) {
+        return 0;
+    }
+    if (task && (task->flags & TASK_FLAG_SERVICE) &&
+        !(task->flags & TASK_FLAG_WINDOW_SERVER)) {
+        return 0;
+    }
+    return -LEONOS_EPERM;
+}
+
 static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
     while (text && *text) {
@@ -642,6 +667,37 @@ static void auth_apply_session_login(struct task *caller,
     sched_set_task_identity(caller->pid, user, session_id);
 }
 
+static void auth_cleanup_logged_out_task(uint32_t pid)
+{
+    net_close_owner_sockets(pid);
+    gui_ipc_destroy_owner(pid);
+    pty_process_exit(pid);
+}
+
+static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id,
+                                               uint32_t keep_pid)
+{
+    struct task_snapshot_info tasks[SCHED_TASK_MAX];
+    uint64_t tick;
+    uint32_t count;
+    if (!uid || !session_id) {
+        return;
+    }
+    count = sched_snapshot(tasks, SCHED_TASK_MAX, &tick);
+    for (uint32_t i = 0; i < count; ++i) {
+        const struct task_snapshot_info *task = &tasks[i];
+        if (task->pid == 0 || task->pid == keep_pid ||
+            task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
+            task->uid != uid || task->session_id != session_id ||
+            (task->flags & TASK_FLAG_SERVICE)) {
+            continue;
+        }
+        if (sched_kill_user_task(task->pid, 0) == 0) {
+            auth_cleanup_logged_out_task(task->pid);
+        }
+    }
+}
+
 static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
     struct task *task = sched_current_task();
@@ -724,8 +780,8 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
         uint32_t uid = task ? task->uid : 0;
         uint32_t session_id = task ? task->session_id : 0;
         if (uid && session_id) {
-            (void)sched_kill_user_tasks_for_logout(uid, session_id,
-                                                   task ? task->pid : 0, 0);
+            auth_kill_session_tasks_for_logout(uid, session_id,
+                                               task ? task->pid : 0);
             sched_clear_session_identity(session_id);
         }
         return 0;
@@ -1646,7 +1702,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
-        ret = authz_check_path(task, LEONOS_AUTHZ_EXEC, path, 0, 0);
+        ret = authz_check_path(task, LEONOS_AUTHZ_READ, path, 0, 0);
         if (ret < 0) {
             return ret;
         }
@@ -1892,6 +1948,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_EVENT) {
         struct input_event event;
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(event))) {
             return -LEONOS_EFAULT;
         }
@@ -1921,11 +1981,19 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FB_FILL) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         framebuffer_clear((uint32_t)a2);
         return 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FB_RECT) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct framebuffer_rect_cmd))) {
             return -LEONOS_EFAULT;
         }
@@ -1935,6 +2003,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FB_TEXT) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct framebuffer_text_cmd))) {
             return -LEONOS_EFAULT;
         }
@@ -1948,12 +2020,20 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FB_PIXEL) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         uint32_t x = (uint32_t)(a2 & 0xffffffffULL);
         uint32_t y = (uint32_t)(a2 >> 32);
         return (int64_t)framebuffer_get_pixel_public(x, y);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FB_BLIT) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct framebuffer_blit_cmd))) {
             return -LEONOS_EFAULT;
         }
@@ -1990,11 +2070,15 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_POLL_WINDOW) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct gui_ipc_window))) {
             return -LEONOS_EFAULT;
         }
         struct gui_ipc_window *dst = (struct gui_ipc_window *)(uintptr_t)a2;
-        return gui_ipc_pop_window(dst) ? 1 : 0;
+        return gui_ipc_pop_window(sched_current_pid(), dst) ? 1 : 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_PRESENT_WINDOW) {
@@ -2020,6 +2104,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FETCH_WINDOW) {
         struct gui_fetch_window_user *cmd;
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct gui_fetch_window_user))) {
             return -LEONOS_EFAULT;
         }
@@ -2031,7 +2119,8 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                            (uint64_t)cmd->stride * cmd->capacity_height * sizeof(uint32_t))) {
             return -LEONOS_EFAULT;
         }
-        return gui_ipc_fetch_window(cmd->window_id,
+        return gui_ipc_fetch_window(sched_current_pid(),
+                                    cmd->window_id,
                                     cmd->capacity_width,
                                     cmd->capacity_height,
                                     cmd->stride,
@@ -2053,11 +2142,15 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct gui_ipc_app_event))) {
             return -LEONOS_EFAULT;
         }
         const struct gui_ipc_app_event *src = (const struct gui_ipc_app_event *)(uintptr_t)a2;
-        return gui_ipc_push_event(src->window_id, src) ? 1 : 0;
+        return gui_ipc_push_event(sched_current_pid(), src->window_id, src) ? 1 : 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_TASKS) {
@@ -2141,17 +2234,27 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_POLL_DISPLAY_REQUEST) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct gui_ipc_display_request))) {
             return -LEONOS_EFAULT;
         }
-        return gui_ipc_pop_display_request((struct gui_ipc_display_request *)(uintptr_t)a2) ? 1 : 0;
+        return gui_ipc_pop_display_request(sched_current_pid(),
+                                           (struct gui_ipc_display_request *)(uintptr_t)a2) ? 1 : 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct gui_ipc_display_state))) {
             return -LEONOS_EFAULT;
         }
-        return gui_ipc_publish_display_state((const struct gui_ipc_display_state *)(uintptr_t)a2) ? 1 : 0;
+        return gui_ipc_publish_display_state(sched_current_pid(),
+                                             (const struct gui_ipc_display_state *)(uintptr_t)a2) ? 1 : 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_TEXT_IOCTL_LAYOUT_UTF8) {
@@ -2334,6 +2437,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_DHCP) {
+        int ret = require_network_config_access();
+        if (ret < 0) {
+            return ret;
+        }
         if (!user_range_ok(a2, sizeof(struct leonos_net_dhcp))) {
             return -LEONOS_EFAULT;
         }
@@ -2355,11 +2462,13 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_SOCKET_OPEN) {
+        struct task *task = sched_current_task();
         if (!user_range_ok(a2, sizeof(struct leonos_net_socket_open))) {
             return -LEONOS_EFAULT;
         }
         return net_socket_open((struct leonos_net_socket_open *)(uintptr_t)a2,
-                               sched_current_pid());
+                               task ? task->pid : 0,
+                               task ? task->uid : 0);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_SOCKET_CONNECT) {
@@ -2422,7 +2531,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                                 sizeof(struct leonos_net_connection_info)))) {
             return -LEONOS_EFAULT;
         }
-        return net_connections(query);
+        return net_connections(query, sched_current_task());
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DEVICE_LIST) {

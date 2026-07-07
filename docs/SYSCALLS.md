@@ -224,9 +224,14 @@ switches to the lease; if it fails or is disabled, the fallback remains active:
 - DNS: `10.0.2.3`
 
 `netctl.elf` can still issue `leonos_net_dhcp_renew` after the desktop is
-running to manually renew or recover a lease. It also queries
-`leonos_net_connections` and displays TCP client sockets in `SYN_SENT`,
-`ESTABLISHED`, `TIME_WAIT`, or `CLOSED`.
+running to manually renew or recover a lease when the caller is an
+administrator. Non-admin users may read network status and use DNS/HTTP/socket
+APIs, but DHCP renew changes the global IPv4 configuration and returns
+`EPERM` unless the caller is an administrator or trusted service task.
+`netctl.elf` also queries `leonos_net_connections` and displays TCP client
+sockets in `SYN_SENT`, `ESTABLISHED`, `TIME_WAIT`, or `CLOSED`. Administrators
+and trusted service tasks see the full socket table; normal users see only
+connections owned by their uid.
 
 `serviced.elf` now runs as a protected service task started by the desktop. It
 uses the same `leonos_net_config` and `leonos_net_dhcp_renew` wrappers to keep

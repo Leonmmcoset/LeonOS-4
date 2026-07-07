@@ -177,6 +177,11 @@ gateway for device-manager style tools.
 DHCP renew, DNS A lookups, ICMP ping, a compatibility fixed-buffer
 `leonos_net_http_get` helper, and TCP client sockets.
 
+Runtime DHCP renew mutates the global IPv4 configuration, so
+`LEONOS_IOCTL_NET_DHCP` is restricted to administrators and trusted service
+tasks. Ordinary users can still read network configuration and use DNS, HTTP,
+ping, and TCP client socket APIs.
+
 Socket requests use:
 
 - `LEONOS_IOCTL_NET_SOCKET_OPEN`
@@ -193,7 +198,9 @@ libc wraps those as `leonos_socket_tcp`, `leonos_socket_connect`,
 needed, and returns the selected remote IP and local port. `send` and `recv` are
 synchronous byte-stream operations with per-call timeouts and status fields.
 Connection states exported to userland are `SYN_SENT`, `ESTABLISHED`,
-`TIME_WAIT`, and `CLOSED`.
+`TIME_WAIT`, and `CLOSED`. `leonos_net_connections` is filtered by identity:
+administrators and trusted service tasks see all sockets, while normal users
+see only sockets owned by their uid.
 
 `include/leonos/http.h` adds a libc HTTP client on top of those sockets:
 `leonos_http_get`, `leonos_http_request`, and `leonos_http_resolve_url`.

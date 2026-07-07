@@ -165,6 +165,12 @@ static uint32_t *window_pixels(const struct gui_window_slot *slot)
     return slot && slot->buffer_phys ? (uint32_t *)(uintptr_t)slot->buffer_phys : NULL;
 }
 
+static int caller_is_window_server(uint32_t caller_pid)
+{
+    struct task *task = sched_find(caller_pid);
+    return task && (task->flags & TASK_FLAG_WINDOW_SERVER);
+}
+
 static void free_window_buffer(struct gui_window_slot *slot)
 {
     if (!slot || !slot->buffer_phys || !slot->buffer_pages) {
@@ -301,9 +307,10 @@ int gui_ipc_display_state(struct gui_ipc_display_state *out)
     return 1;
 }
 
-int gui_ipc_publish_display_state(const struct gui_ipc_display_state *state)
+int gui_ipc_publish_display_state(uint32_t caller_pid,
+                                  const struct gui_ipc_display_state *state)
 {
-    if (!state) {
+    if (!caller_is_window_server(caller_pid) || !state) {
         return 0;
     }
     display_state = *state;
@@ -321,9 +328,10 @@ int gui_ipc_request_display(const struct gui_ipc_display_request *request)
     return 1;
 }
 
-int gui_ipc_pop_display_request(struct gui_ipc_display_request *out)
+int gui_ipc_pop_display_request(uint32_t caller_pid,
+                                struct gui_ipc_display_request *out)
 {
-    if (!out || !display_request_pending) {
+    if (!caller_is_window_server(caller_pid) || !out || !display_request_pending) {
         return 0;
     }
     *out = display_request;
@@ -378,9 +386,9 @@ int gui_ipc_post_system_window(uint32_t pid, uint32_t width, uint32_t height,
     return push_system_window_message(pid, width, height, title, text, app_path, flags);
 }
 
-int gui_ipc_pop_window(struct gui_ipc_window *out)
+int gui_ipc_pop_window(uint32_t caller_pid, struct gui_ipc_window *out)
 {
-    if (!out || tail == head) {
+    if (!caller_is_window_server(caller_pid) || !out || tail == head) {
         return 0;
     }
     *out = queue[tail];
@@ -432,7 +440,8 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
     return 1;
 }
 
-int gui_ipc_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_t capacity_height,
+int gui_ipc_fetch_window(uint32_t caller_pid, uint32_t window_id,
+                         uint32_t capacity_width, uint32_t capacity_height,
                          uint32_t stride, uint32_t *pixels,
                          uint32_t *out_width, uint32_t *out_height)
 {
@@ -440,7 +449,8 @@ int gui_ipc_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_t c
     uint32_t copy_w;
     uint32_t copy_h;
     uint32_t *src;
-    if (!slot || !pixels || !slot->buffer_phys || !capacity_width || !capacity_height || stride < capacity_width) {
+    if (!caller_is_window_server(caller_pid) || !slot || !pixels || !slot->buffer_phys ||
+        !capacity_width || !capacity_height || stride < capacity_width) {
         return 0;
     }
     copy_w = min_u32(slot->width, capacity_width);
@@ -460,11 +470,12 @@ int gui_ipc_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_t c
     return 1;
 }
 
-int gui_ipc_push_event(uint32_t window_id, const struct gui_ipc_app_event *event)
+int gui_ipc_push_event(uint32_t caller_pid, uint32_t window_id,
+                       const struct gui_ipc_app_event *event)
 {
     struct gui_window_slot *slot = find_window(window_id);
     uint32_t next;
-    if (!slot || !event) {
+    if (!caller_is_window_server(caller_pid) || !slot || !event) {
         return 0;
     }
     next = (slot->event_head + 1) % GUI_IPC_WINDOW_EVENT_CAP;
