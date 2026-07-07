@@ -34,6 +34,8 @@ Multi-user v1 uses these fixed paths:
 
 - `0:/etc/accounts.db`: middlelayer-owned account database.
 - `0:/etc/oobe.done`: first-run completion marker.
+- `0:/etc/fileassoc.cfg`: optional launcher file-association overrides.
+- `0:/etc/services.cfg`: optional startup/service policy overrides.
 - `0:/users/<name>`: user home directory.
 - `0:/users/<name>/desktop`
 - `0:/users/<name>/documents`
@@ -50,6 +52,10 @@ New account creation seeds the user's desktop with `File Manager.lnk`,
 `Task Manager.lnk`, `Settings.lnk`, and `Browser.lnk`, pointing to
 `0:/userland/fileman.elf`, `0:/userland/taskmgr.elf`,
 `0:/userland/settings.elf`, and `0:/userland/browser.elf`.
+
+`downloadmgr.elf` saves successful downloads to `0:/users/<name>/downloads`
+when a user session is active, and falls back to `0:/tmp` when no home directory
+is available.
 
 ## Supported operations
 

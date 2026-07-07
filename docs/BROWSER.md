@@ -12,18 +12,24 @@ existing GUI, libc, launch, filesystem, and network ABIs.
 
 Current features:
 
-- IE-style menu/toolbar/address/status layout.
+- IE-style menu/toolbar/address layout with toast status messages.
 - Bilingual `about:leonos` start page.
-- `http://` navigation through `leonos_net_http_get`.
+- `http://` navigation through the libc HTTP client on top of TCP sockets.
 - Local `.html` and `.htm` file loading.
+- Download-link handoff: links ending in common binary/media/archive suffixes
+  launch `downloadmgr.elf`, which saves the response to the current user's
+  `Downloads` directory.
 - A `userland/apps/browser/litehtml_core.c` document layout layer for headings,
   paragraphs and block sections, lists, blockquotes, table rows/cells, breaks,
   horizontal rules, image placeholders with alt text, entities, links, and
   basic inline styles (`strong`/`b`, `em`/`i`, `code`).
-- A small CSS v1 parser for `<style>` blocks and inline `style=""`, covering
-  simple tag/class/id selectors plus `color`, `background-color`, `font-weight`,
+- A small CSS v1 parser for `<style>` blocks, inline `style=""`, and up to four
+  `http://` `<link rel="stylesheet">` stylesheets per page. It covers simple
+  tag/class/id selectors plus `color`, `background-color`, `font-weight`,
   `font-style`, `text-decoration`, `text-align`, left indent properties, and
   basic borders.
+- HTTP toast reporting, response content-type handling, bounded redirects,
+  chunked transfer decoding, final URL reporting, and truncation indicators.
 - Link hit testing, relative URL resolution, Back, Forward, Refresh, Home, and
   mouse-wheel scrolling.
 - Resize-aware reflow.
@@ -32,11 +38,12 @@ Current limits:
 
 - No HTTPS/TLS.
 - No JavaScript.
-- No image loading.
-- No full CSS cascade, box model, floats, flex/grid, media queries, or external
-  stylesheets.
-- No generic socket or streaming HTTP API; HTTP responses pass through the
-  fixed `LEONOS_NET_HTTP_RESPONSE_MAX` ABI buffer.
+- No inline image loading. Image links can be downloaded and opened with
+  `imageview.elf` when saved as BMP.
+- No full CSS cascade, box model, floats, flex/grid, or media queries.
+- HTTP is plain `HTTP/1.1` over TCP sockets with `Connection: close`; cache,
+  cookies, compression, true streaming downloads, and form submission are not
+  implemented yet.
 
 ## litehtml Status
 
@@ -79,6 +86,12 @@ The browser is registered as:
 - `0:/userland/browser.elf`
 - launch alias: `browser`
 - default app for `.html` and `.htm`
+
+Download and image companion apps are registered as:
+
+- `0:/userland/downloadmgr.elf`, launch alias `downloadmgr`
+- `0:/userland/imageview.elf`, launch alias `imageview`
+- default app for `.bmp` and `.dib`
 
 The generated icon is `0:/userland/browser.bmp`, following the existing
 same-directory/same-basename application icon convention.

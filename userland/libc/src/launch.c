@@ -31,8 +31,11 @@ static const struct builtin_program builtin_programs[] = {
     {"memtest", "0:/userland/memtest.elf"},
     {"ping", "0:/userland/ping.elf"},
     {"netctl", "0:/userland/netctl.elf"},
+    {"servicemgr", "0:/userland/servicemgr.elf"},
     {"httpget", "0:/userland/httpget.elf"},
+    {"downloadmgr", "0:/userland/downloadmgr.elf"},
     {"browser", "0:/userland/browser.elf"},
+    {"imageview", "0:/userland/imageview.elf"},
     {"diskmgr", "0:/userland/diskmgr.elf"},
     {"devmgr", "0:/userland/devmgr.elf"},
 };
@@ -46,11 +49,14 @@ static const struct builtin_assoc builtin_assocs[] = {
     {".cfg", "0:/userland/notepad.elf"},
     {".conf", "0:/userland/notepad.elf"},
     {".ini", "0:/userland/notepad.elf"},
+    {".bmp", "0:/userland/imageview.elf"},
+    {".dib", "0:/userland/imageview.elf"},
 };
 
 static const struct leonos_launch_assoc_app assoc_apps[] = {
     {"LeonOS Browser", "Open the HTML page", "0:/userland/browser.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
     {"Notepad", "Open the file as text", "0:/userland/notepad.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
+    {"Image Viewer", "Open BMP images", "0:/userland/imageview.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
     {"Terminal", "Run cat in a terminal window", "0:/userland/terminal.elf", LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT},
     {"Run", "Pass the path to the Run dialog", "0:/userland/run.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
 };

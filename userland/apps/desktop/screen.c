@@ -39,7 +39,7 @@ static void draw_taskbar_clock(uint32_t tb_y)
 {
     char clock[16];
     uint32_t x;
-    if (fb_w() < TASKBAR_CLOCK_W + 8) {
+    if (!desktop_service_rtc_clock || fb_w() < TASKBAR_CLOCK_W + 8) {
         return;
     }
     x = fb_w() - TASKBAR_CLOCK_W;
@@ -56,7 +56,8 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
     uint32_t icon_y;
     uint32_t color = 0x00c00000u;
     uint8_t connected = 0;
-    if (fb_w() < TASKBAR_TRAY_W + 8) {
+    uint32_t tray_w = desktop_tray_width();
+    if (!desktop_service_network_icon || fb_w() < tray_w + 8) {
         return;
     }
     if (leonos_net_config(&config) == 0 &&
@@ -67,7 +68,7 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
         connected = 1;
         color = 0x0000a000u;
     }
-    x = fb_w() - TASKBAR_TRAY_W;
+    x = fb_w() - tray_w;
     icon_x = x + 10;
     icon_y = tb_y + 11;
     leonos_ui_button(&ui, x + 4, tb_y + 5, TASKBAR_NET_W - 6,
@@ -170,8 +171,12 @@ void redraw_region(struct rect dirty)
                 x += button_w;
             }
         }
-        draw_taskbar_network_icon(tb_y);
-        draw_taskbar_clock(tb_y);
+        if (desktop_service_network_icon) {
+            draw_taskbar_network_icon(tb_y);
+        }
+        if (desktop_service_rtc_clock) {
+            draw_taskbar_clock(tb_y);
+        }
     }
 
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {

@@ -3,7 +3,9 @@
 
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/http.h>
 #include <leonos/i18n.h>
+#include <leonos/launch.h>
 #include <leonos/net.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
@@ -42,7 +44,6 @@
 #define BROWSER_MENU_HELP_X 280U
 #define BROWSER_MENU_HELP_W 52U
 #define BROWSER_PAGE_X 8U
-#define BROWSER_STATUS_H 28U
 #define BROWSER_LINE_H (LEONOS_FONT_H + 2U)
 #define BROWSER_SCROLL_W 18U
 #define BROWSER_NAV_GAP 4U
@@ -115,7 +116,6 @@ extern uint32_t history_count;
 extern int32_t history_index;
 extern uint8_t menu_open;
 extern uint8_t browser_should_exit;
-extern struct leonos_net_http_get http_result;
 extern struct leonos_ui_toast_state browser_toast;
 
 void copy_text(char *dst, uint32_t cap, const char *src);
@@ -153,7 +153,6 @@ void render_message_page(const char *title, const char *message, const char *det
 void push_history(const char *url);
 void format_ret_status(char *dst, uint32_t cap, const char *prefix, int32_t ret);
 void load_about(void);
-uint32_t response_body_offset(const char *data, uint32_t len);
 void load_http_url(const char *url);
 void load_local_file(const char *path);
 void navigate_to(const char *input, uint8_t add_to_history);

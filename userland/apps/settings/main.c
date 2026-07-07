@@ -1,23 +1,31 @@
 #include <leonos/auth.h>
+#include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/launch.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
-#define SETTINGS_W 620
-#define SETTINGS_H 420
+#define SETTINGS_W 720
+#define SETTINGS_H 470
 #define SETTINGS_DROPDOWN_ROW_H 28
 #define SETTINGS_MODE_COUNT 5
 #define SETTINGS_SCALE_COUNT 3
 #define SETTINGS_USER_ROWS 7
+#define SETTINGS_ASSOC_ROWS 5
+#define SETTINGS_SERVICE_ROWS 5
+#define SETTINGS_SERVICES_PATH "0:/etc/services.cfg"
+#define SETTINGS_SERVICES_CONFIG_MAX 512U
 #define SETTINGS_KEY_ESCAPE 1U
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum {
     PAGE_DISPLAY = 0,
     PAGE_USERS = 1,
+    PAGE_ASSOC = 2,
+    PAGE_SERVICES = 3,
 };
 
 enum {
@@ -37,6 +45,22 @@ static uint8_t active_page;
 static uint8_t active_drop;
 static char status_text[160] = "Ready";
 
+struct assoc_row {
+    const char *extension;
+    const char *description_en;
+    const char *description_zh;
+};
+
+struct service_row {
+    const char *key;
+    const char *name_en;
+    const char *name_zh;
+    const char *detail_en;
+    const char *detail_zh;
+    uint8_t enabled;
+    uint8_t locked;
+};
+
 static const char *mode_labels[SETTINGS_MODE_COUNT] = {
     "1920 x 1080",
     "1600 x 900",
@@ -49,6 +73,25 @@ static const uint32_t mode_widths[SETTINGS_MODE_COUNT] = {1920, 1600, 1280, 1280
 static const uint32_t mode_heights[SETTINGS_MODE_COUNT] = {1080, 900, 800, 720, 768};
 static const uint32_t scale_values[SETTINGS_SCALE_COUNT] = {1, 2, 3};
 static const char *scale_labels[SETTINGS_SCALE_COUNT] = {"1x", "2x", "3x"};
+static const struct assoc_row assoc_rows[SETTINGS_ASSOC_ROWS] = {
+    {".txt", "Text documents", "文本文档"},
+    {".md", "Markdown notes", "Markdown 文档"},
+    {".html", "HTML pages", "HTML 页面"},
+    {".htm", "HTML pages", "HTML 页面"},
+    {".bmp", "Bitmap images", "BMP 图片"},
+};
+static struct service_row service_rows[SETTINGS_SERVICE_ROWS] = {
+    {"desktop", "Desktop window service", "桌面窗口服务",
+     "Required system shell. Cannot be disabled here.", "必需的系统外壳，不能在这里禁用。", 1, 1},
+    {"dhcp", "DHCP auto connect", "DHCP 自动连接",
+     "Network startup should request an address automatically.", "网络启动时自动请求地址。", 1, 0},
+    {"network_icon", "Taskbar network icon", "任务栏网络图标",
+     "Show network state in the desktop taskbar.", "在桌面任务栏显示网络状态。", 1, 0},
+    {"rtc_clock", "RTC taskbar clock", "RTC 任务栏时钟",
+     "Show the hardware clock in the taskbar.", "在任务栏显示硬件时钟。", 1, 0},
+    {"ntp_sync", "NTP time sync", "NTP 时间同步",
+     "Reserved for the future network time service.", "预留给后续网络校时服务。", 0, 0},
+};
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -100,9 +143,156 @@ static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, 
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
 }
 
+static int text_eq(const char *a, const char *b)
+{
+    uint32_t i = 0;
+    if (!a || !b) {
+        return 0;
+    }
+    while (a[i] && b[i] && a[i] == b[i]) {
+        ++i;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
+static uint32_t text_len(const char *text)
+{
+    uint32_t n = 0;
+    while (text && text[n]) {
+        ++n;
+    }
+    return n;
+}
+
 static const char *role_label(uint32_t role)
 {
     return role == LEONOS_AUTH_ROLE_ADMIN ? T("Administrator", "管理员") : T("User", "用户");
+}
+
+static const char *program_label(const char *program)
+{
+    if (text_eq(program, "0:/userland/browser.elf")) {
+        return T("Browser", "浏览器");
+    }
+    if (text_eq(program, "0:/userland/notepad.elf")) {
+        return T("Notepad", "记事本");
+    }
+    if (text_eq(program, "0:/userland/imageview.elf")) {
+        return T("Image Viewer", "图片查看器");
+    }
+    if (text_eq(program, "0:/userland/terminal.elf")) {
+        return T("Terminal", "终端");
+    }
+    if (text_eq(program, "0:/userland/run.elf")) {
+        return T("Run", "运行");
+    }
+    return program && program[0] ? program : T("None", "无");
+}
+
+static void fake_path_for_extension(char *dst, uint32_t cap, const char *ext)
+{
+    uint32_t pos = 0;
+    dst[0] = 0;
+    append_text(dst, &pos, cap, "0:/sample");
+    append_text(dst, &pos, cap, ext);
+}
+
+static int service_line_matches(const char *line, uint32_t len,
+                                const char *key, uint8_t *value)
+{
+    uint32_t key_len = text_len(key);
+    uint32_t pos = 0;
+    if (!line || !key || !value || len <= key_len || line[key_len] != '=') {
+        return 0;
+    }
+    while (pos < key_len) {
+        if (line[pos] != key[pos]) {
+            return 0;
+        }
+        ++pos;
+    }
+    *value = line[key_len + 1U] == '1' ||
+             line[key_len + 1U] == 'y' ||
+             line[key_len + 1U] == 'Y';
+    return 1;
+}
+
+static void load_services_config(void)
+{
+    char cfg[SETTINGS_SERVICES_CONFIG_MAX];
+    uint32_t len = 0;
+    uint32_t pos = 0;
+    int fd = open(SETTINGS_SERVICES_PATH, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return;
+    }
+    while (len + 1U < sizeof(cfg)) {
+        long got = read(fd, cfg + len, sizeof(cfg) - len - 1U);
+        if (got < 0) {
+            close(fd);
+            return;
+        }
+        if (got == 0) {
+            break;
+        }
+        len += (uint32_t)got;
+    }
+    close(fd);
+    cfg[len] = 0;
+    while (pos < len) {
+        uint32_t start = pos;
+        uint32_t line_len;
+        while (pos < len && cfg[pos] != '\n' && cfg[pos] != '\r') {
+            ++pos;
+        }
+        line_len = pos - start;
+        while (pos < len && (cfg[pos] == '\n' || cfg[pos] == '\r')) {
+            ++pos;
+        }
+        for (uint32_t i = 0; i < SETTINGS_SERVICE_ROWS; ++i) {
+            uint8_t value = 0;
+            if (!service_rows[i].locked &&
+                service_line_matches(cfg + start, line_len,
+                                     service_rows[i].key, &value)) {
+                service_rows[i].enabled = value;
+            }
+        }
+    }
+}
+
+static void save_services_config(void)
+{
+    char cfg[SETTINGS_SERVICES_CONFIG_MAX];
+    uint32_t pos = 0;
+    int fd;
+    if (current_user.role != LEONOS_AUTH_ROLE_ADMIN) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Administrator rights required", "需要管理员权限"));
+        return;
+    }
+    cfg[0] = 0;
+    append_text(cfg, &pos, sizeof(cfg), "# LeonOS service startup settings\n");
+    for (uint32_t i = 0; i < SETTINGS_SERVICE_ROWS; ++i) {
+        append_text(cfg, &pos, sizeof(cfg), service_rows[i].key);
+        append_char(cfg, &pos, sizeof(cfg), '=');
+        append_char(cfg, &pos, sizeof(cfg), service_rows[i].enabled ? '1' : '0');
+        append_char(cfg, &pos, sizeof(cfg), '\n');
+    }
+    fd = open(SETTINGS_SERVICES_PATH,
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    if (fd < 0) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Could not save services.", "无法保存服务设置。"));
+        return;
+    }
+    if (write(fd, cfg, pos) < 0) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Could not save services.", "无法保存服务设置。"));
+    } else {
+        copy_text(status_text, sizeof(status_text),
+                  T("Service settings saved", "服务设置已保存"));
+    }
+    close(fd);
 }
 
 static int mode_supported(uint32_t mode, uint32_t scale_index)
@@ -287,17 +477,89 @@ static void draw_users_page(struct leonos_ui_surface *ui)
                      current_user.uid ? 0 : LEONOS_UI_BUTTON_DISABLED);
 }
 
+static void draw_assoc_page(struct leonos_ui_surface *ui)
+{
+    const struct leonos_ui_list_column cols[] = {
+        {T("Extension", "扩展名"), 82},
+        {T("Type", "类型"), 170},
+        {T("Default app", "默认应用"), 160},
+    };
+    leonos_ui_text(ui, 34, 92,
+                   T("Choose the default app used by File Manager and desktop shortcuts.",
+                     "选择文件资源管理器和桌面快捷方式打开文件时使用的默认应用。"),
+                   LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_listview_header(ui, 34, 124, 412, cols, 3);
+    for (uint32_t i = 0; i < SETTINGS_ASSOC_ROWS; ++i) {
+        char fake[LEONOS_FS_PATH_LEN];
+        const char *program;
+        const char *cells[3];
+        uint32_t y = 152 + i * 40;
+        fake_path_for_extension(fake, sizeof(fake), assoc_rows[i].extension);
+        program = leonos_launch_resolve_default_app_for_path(fake);
+        cells[0] = assoc_rows[i].extension;
+        cells[1] = T(assoc_rows[i].description_en, assoc_rows[i].description_zh);
+        cells[2] = program_label(program);
+        leonos_ui_listview_row(ui, 34, y, 412, cols, cells, 3, 0);
+        leonos_ui_button(ui, 466, y + 2, 74, LEONOS_UI_BUTTON_H,
+                         T("Browser", "浏览器"),
+                         text_eq(program, "0:/userland/browser.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+        leonos_ui_button(ui, 548, y + 2, 74, LEONOS_UI_BUTTON_H,
+                         T("Notepad", "记事本"),
+                         text_eq(program, "0:/userland/notepad.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+        leonos_ui_button(ui, 630, y + 2, 66, LEONOS_UI_BUTTON_H,
+                         T("Image", "图片"),
+                         text_eq(program, "0:/userland/imageview.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+    }
+}
+
+static void draw_services_page(struct leonos_ui_surface *ui)
+{
+    leonos_ui_text(ui, 34, 92,
+                   T("Startup/service policy is saved for service-aware system components.",
+                     "启动项/服务策略会保存给支持服务配置的系统组件使用。"),
+                   LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    for (uint32_t i = 0; i < SETTINGS_SERVICE_ROWS; ++i) {
+        uint32_t y = 126 + i * 48;
+        uint32_t flags = (service_rows[i].locked ||
+                          current_user.role != LEONOS_AUTH_ROLE_ADMIN)
+                             ? LEONOS_UI_BUTTON_DISABLED
+                             : 0;
+        leonos_ui_panel(ui, 34, y, SETTINGS_W - 68, 40, LEONOS_UI_WHITE);
+        leonos_ui_checkbox(ui, 44, y + 9,
+                           T(service_rows[i].name_en, service_rows[i].name_zh),
+                           service_rows[i].enabled, flags);
+        leonos_ui_text_clipped(ui, 274, y + 11, SETTINGS_W - 318,
+                               T(service_rows[i].detail_en, service_rows[i].detail_zh),
+                               service_rows[i].locked ? LEONOS_UI_DARK : LEONOS_UI_BLACK,
+                               LEONOS_UI_WHITE);
+    }
+    leonos_ui_button(ui, 34, SETTINGS_H - 66, 108, LEONOS_UI_BUTTON_H,
+                     T("Save", "保存"),
+                     current_user.role == LEONOS_AUTH_ROLE_ADMIN
+                         ? 0
+                         : LEONOS_UI_BUTTON_DISABLED);
+}
+
 static void draw_settings(struct leonos_ui_surface *ui)
 {
-    const char *tabs[] = {T("Display", "显示"), T("Users", "用户")};
+    const char *tabs[] = {
+        T("Display", "显示"),
+        T("Users", "用户"),
+        T("File Types", "文件类型"),
+        T("Services", "服务"),
+    };
     leonos_ui_rect(ui, 0, 0, SETTINGS_W, SETTINGS_H, LEONOS_UI_WHITE);
     leonos_ui_dialog(ui, 0, 0, SETTINGS_W, SETTINGS_H, T("Settings", "设置"));
-    leonos_ui_tabs(ui, 18, 42, SETTINGS_W - 36, tabs, 2, active_page);
+    leonos_ui_tabs(ui, 18, 42, SETTINGS_W - 36, tabs, 4, active_page);
     leonos_ui_tab_body(ui, 18, 72, SETTINGS_W - 36, SETTINGS_H - 112);
     if (active_page == PAGE_DISPLAY) {
         draw_display_page(ui);
-    } else {
+    } else if (active_page == PAGE_USERS) {
         draw_users_page(ui);
+    } else if (active_page == PAGE_ASSOC) {
+        draw_assoc_page(ui);
+    } else {
+        draw_services_page(ui);
     }
     leonos_ui_statusbar(ui, SETTINGS_H - 28, 28, status_text);
 }
@@ -497,10 +759,69 @@ static void handle_display_click(int32_t x, int32_t y)
     }
 }
 
+static void set_assoc_for_row(uint32_t row, const char *program)
+{
+    int ret;
+    if (row >= SETTINGS_ASSOC_ROWS) {
+        return;
+    }
+    ret = leonos_launch_set_extension_association(assoc_rows[row].extension,
+                                                  program);
+    if (ret == 0) {
+        copy_text(status_text, sizeof(status_text),
+                  T("File association saved", "文件关联已保存"));
+    } else {
+        copy_text(status_text, sizeof(status_text),
+                  T("Could not save file association", "无法保存文件关联"));
+    }
+}
+
+static void handle_assoc_click(int32_t x, int32_t y)
+{
+    for (uint32_t i = 0; i < SETTINGS_ASSOC_ROWS; ++i) {
+        int32_t row_y = 152 + (int32_t)i * 40;
+        if (hit_rect_i(x, y, 466, row_y + 2, 74, LEONOS_UI_BUTTON_H)) {
+            set_assoc_for_row(i, "0:/userland/browser.elf");
+            return;
+        }
+        if (hit_rect_i(x, y, 548, row_y + 2, 74, LEONOS_UI_BUTTON_H)) {
+            set_assoc_for_row(i, "0:/userland/notepad.elf");
+            return;
+        }
+        if (hit_rect_i(x, y, 630, row_y + 2, 66, LEONOS_UI_BUTTON_H)) {
+            set_assoc_for_row(i, "0:/userland/imageview.elf");
+            return;
+        }
+    }
+}
+
+static void handle_services_click(int32_t x, int32_t y)
+{
+    for (uint32_t i = 0; i < SETTINGS_SERVICE_ROWS; ++i) {
+        int32_t row_y = 126 + (int32_t)i * 48;
+        if (current_user.role == LEONOS_AUTH_ROLE_ADMIN &&
+            !service_rows[i].locked &&
+            hit_rect_i(x, y, 44, row_y + 4, 220, 32)) {
+            service_rows[i].enabled = service_rows[i].enabled ? 0 : 1;
+            copy_text(status_text, sizeof(status_text),
+                      T("Service setting changed", "服务设置已更改"));
+            return;
+        }
+    }
+    if (hit_rect_i(x, y, 34, SETTINGS_H - 66, 108, LEONOS_UI_BUTTON_H)) {
+        save_services_config();
+    }
+}
+
 static void handle_click(int32_t x, int32_t y)
 {
-    const char *tabs[] = {T("Display", "显示"), T("Users", "用户")};
-    int tab = leonos_ui_tabs_hit(x, y, 18, 42, SETTINGS_W - 36, tabs, 2);
+    const char *tabs[] = {
+        T("Display", "显示"),
+        T("Users", "用户"),
+        T("File Types", "文件类型"),
+        T("Services", "服务"),
+    };
+    int tab = leonos_ui_tabs_hit(x, y, 18, 42, SETTINGS_W - 36, tabs, 4);
     if (tab >= 0) {
         active_page = (uint8_t)tab;
         active_drop = DROP_NONE;
@@ -508,8 +829,12 @@ static void handle_click(int32_t x, int32_t y)
     }
     if (active_page == PAGE_DISPLAY) {
         handle_display_click(x, y);
-    } else {
+    } else if (active_page == PAGE_USERS) {
         handle_users_click(x, y);
+    } else if (active_page == PAGE_ASSOC) {
+        handle_assoc_click(x, y);
+    } else {
+        handle_services_click(x, y);
     }
 }
 
@@ -531,6 +856,7 @@ int main(void)
     leonos_ui_bind(&ui, pixels, SETTINGS_W, SETTINGS_H, SETTINGS_W);
     refresh_display_state();
     refresh_users();
+    load_services_config();
     draw_settings(&ui);
     leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
     for (;;) {

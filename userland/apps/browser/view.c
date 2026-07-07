@@ -542,15 +542,6 @@ void draw_browser(void)
                          p_y + 2U, BROWSER_SCROLL_W, p_h > 4U ? p_h - 4U : p_h,
                          scroll_line, line_count ? line_count : 1U, rows,
                          line_count <= rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
-    if (source_truncated) {
-        char truncated[BROWSER_STATUS_CAP];
-        copy_text(truncated, sizeof(truncated), status_text);
-        pos = (uint32_t)strlen(truncated);
-        append_text(truncated, &pos, sizeof(truncated), T("  Truncated", "  已截断"));
-        leonos_ui_statusbar(&ui, view_h - BROWSER_STATUS_H, BROWSER_STATUS_H, truncated);
-    } else {
-        leonos_ui_statusbar(&ui, view_h - BROWSER_STATUS_H, BROWSER_STATUS_H, status_text);
-    }
     draw_browser_menu();
     leonos_ui_toast_draw(&ui, &browser_toast, leonos_uptime_ms());
 }

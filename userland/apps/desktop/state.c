@@ -68,6 +68,8 @@ uint32_t cursor_height = FALLBACK_CURSOR_H;
 uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
 uint8_t cursor_visible;
 uint8_t cursor_bitmap_loaded;
+uint8_t desktop_service_network_icon = 1;
+uint8_t desktop_service_rtc_clock = 1;
 uint8_t full_redraw_pending;
 uint8_t power_confirm_action;
 uint8_t oobe_lock_active;

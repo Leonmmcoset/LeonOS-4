@@ -57,6 +57,8 @@
 #define LOGIN_WINDOW_TEXT "Sign in"
 #define LOGIN_RESPAWN_MS 1000UL
 #define DISPLAY_CONFIG_PATH "0:/etc/display.conf"
+#define SERVICES_CONFIG_PATH "0:/etc/services.cfg"
+#define SERVICES_CONFIG_MAX 512U
 #define DISPLAY_CONFIRM_MS 10000UL
 #define START_MENU_W 246
 #define START_PROGRAMS_W 220
@@ -273,6 +275,8 @@ extern uint32_t cursor_height;
 extern uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
 extern uint8_t cursor_visible;
 extern uint8_t cursor_bitmap_loaded;
+extern uint8_t desktop_service_network_icon;
+extern uint8_t desktop_service_rtc_clock;
 extern uint8_t full_redraw_pending;
 extern uint8_t power_confirm_action;
 extern uint8_t oobe_lock_active;
@@ -317,7 +321,9 @@ int text_ends_with(const char *text, const char *suffix);
 void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name);
 void desktop_icon_path_for_app(const char *app_path, char *dst, uint32_t dst_len);
 uint32_t taskbar_y(void);
+uint32_t desktop_tray_width(void);
 uint32_t running_window_count(void);
+int desktop_load_service_config(void);
 void start_menu_set_open(uint8_t open);
 void start_menu_toggle(void);
 uint32_t start_menu_progress(void);

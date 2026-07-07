@@ -2,6 +2,7 @@
 #include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/http.h>
 #include <leonos/i18n.h>
 #include <leonos/net.h>
 #include <leonos/pty.h>
@@ -887,6 +888,910 @@ int leonos_net_http_get(const char *host, const char *path,
     ret = ioctl(3, LEONOS_IOCTL_NET_HTTP_GET, &query);
     *result = query;
     return ret;
+}
+
+int leonos_socket_tcp(void)
+{
+    struct leonos_net_socket_open query = {
+        .domain = LEONOS_NET_AF_INET,
+        .type = LEONOS_NET_SOCK_STREAM,
+        .protocol = LEONOS_NET_IPPROTO_TCP,
+        .timeout_ms = 0,
+        .status = LEONOS_NET_STATUS_TCP_FAILED,
+        .socket = -1,
+    };
+    int ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_OPEN, &query);
+    if (ret < 0) {
+        return ret;
+    }
+    return query.status == LEONOS_NET_STATUS_OK ? query.socket : -1;
+}
+
+int leonos_socket_connect(int socket, const char *host,
+                          uint32_t port, uint32_t timeout_ms,
+                          struct leonos_net_socket_connect *result)
+{
+    struct leonos_net_socket_connect query;
+    uint32_t i = 0;
+    int ret;
+    if (!host || !result) {
+        return -1;
+    }
+    query = (struct leonos_net_socket_connect){0};
+    query.socket = socket;
+    query.port = port;
+    query.timeout_ms = timeout_ms;
+    query.status = LEONOS_NET_STATUS_TCP_FAILED;
+    while (host[i] && i + 1 < sizeof(query.host)) {
+        query.host[i] = host[i];
+        ++i;
+    }
+    query.host[i] = 0;
+    ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_CONNECT, &query);
+    *result = query;
+    return ret;
+}
+
+long leonos_socket_send(int socket, const void *buffer, uint32_t length,
+                        uint32_t timeout_ms, uint32_t *status)
+{
+    struct leonos_net_socket_io query = {
+        .socket = socket,
+        .buffer = (void *)buffer,
+        .length = length,
+        .timeout_ms = timeout_ms,
+        .status = LEONOS_NET_STATUS_TCP_FAILED,
+        .transferred = 0,
+    };
+    int ret;
+    if (length && !buffer) {
+        if (status) {
+            *status = LEONOS_NET_STATUS_BAD_ARGUMENT;
+        }
+        return -1;
+    }
+    ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_SEND, &query);
+    if (status) {
+        *status = query.status;
+    }
+    return ret < 0 ? ret : (long)query.transferred;
+}
+
+long leonos_socket_recv(int socket, void *buffer, uint32_t length,
+                        uint32_t timeout_ms, uint32_t *status)
+{
+    struct leonos_net_socket_io query = {
+        .socket = socket,
+        .buffer = buffer,
+        .length = length,
+        .timeout_ms = timeout_ms,
+        .status = LEONOS_NET_STATUS_TCP_FAILED,
+        .transferred = 0,
+    };
+    int ret;
+    if (length && !buffer) {
+        if (status) {
+            *status = LEONOS_NET_STATUS_BAD_ARGUMENT;
+        }
+        return -1;
+    }
+    ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_RECV, &query);
+    if (status) {
+        *status = query.status;
+    }
+    return ret < 0 ? ret : (long)query.transferred;
+}
+
+int leonos_socket_close(int socket)
+{
+    struct leonos_net_socket_close query = {
+        .socket = socket,
+        .status = LEONOS_NET_STATUS_SOCKET_CLOSED,
+    };
+    int ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_CLOSE, &query);
+    if (ret < 0) {
+        return ret;
+    }
+    return query.status == LEONOS_NET_STATUS_OK ? 0 : -1;
+}
+
+int leonos_net_connections(struct leonos_net_connection_info *entries,
+                           uint32_t capacity, uint32_t *out_count)
+{
+    struct leonos_net_connection_list query = {
+        .capacity = capacity,
+        .count = 0,
+        .entries = entries,
+    };
+    int ret = ioctl(3, LEONOS_IOCTL_NET_CONNECTIONS, &query);
+    if (out_count) {
+        *out_count = query.count;
+    }
+    return ret;
+}
+
+#define HTTP_REQUEST_MAX 1024U
+
+struct libc_http_url {
+    char host[LEONOS_NET_HOSTNAME_LEN];
+    char path[LEONOS_NET_HTTP_PATH_LEN];
+    uint32_t port;
+};
+
+static char http_tolower(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z') {
+        return (char)(ch - 'A' + 'a');
+    }
+    return ch;
+}
+
+static int http_starts_with_ignore_case(const char *text, const char *prefix)
+{
+    uint32_t i = 0;
+    if (!text || !prefix) {
+        return 0;
+    }
+    while (prefix[i]) {
+        if (http_tolower(text[i]) != http_tolower(prefix[i])) {
+            return 0;
+        }
+        ++i;
+    }
+    return 1;
+}
+
+static int http_text_eq_ignore_case_n(const char *a, const char *b,
+                                      uint32_t len)
+{
+    for (uint32_t i = 0; i < len; ++i) {
+        if (http_tolower(a[i]) != http_tolower(b[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int http_is_space(char ch)
+{
+    return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
+}
+
+static int http_is_digit(char ch)
+{
+    return ch >= '0' && ch <= '9';
+}
+
+static int http_is_hex(char ch)
+{
+    return (ch >= '0' && ch <= '9') ||
+           (ch >= 'a' && ch <= 'f') ||
+           (ch >= 'A' && ch <= 'F');
+}
+
+static uint32_t http_hex_value(char ch)
+{
+    if (ch >= '0' && ch <= '9') {
+        return (uint32_t)(ch - '0');
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return (uint32_t)(ch - 'a' + 10);
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return (uint32_t)(ch - 'A' + 10);
+    }
+    return 0;
+}
+
+static void http_copy_text(char *dst, uint32_t cap, const char *src)
+{
+    uint32_t i = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    while (src && src[i] && i + 1U < cap) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = 0;
+}
+
+static void http_copy_bytes(char *dst, uint32_t cap,
+                            const char *src, uint32_t len)
+{
+    uint32_t n = len;
+    if (!dst || cap == 0) {
+        return;
+    }
+    if (n + 1U > cap) {
+        n = cap - 1U;
+    }
+    for (uint32_t i = 0; i < n; ++i) {
+        dst[i] = src ? src[i] : 0;
+    }
+    dst[n] = 0;
+}
+
+static void http_append_char(char *dst, uint32_t *pos, uint32_t cap, char ch)
+{
+    if (dst && pos && *pos + 1U < cap) {
+        dst[*pos] = ch;
+        ++(*pos);
+        dst[*pos] = 0;
+    }
+}
+
+static void http_append_text(char *dst, uint32_t *pos, uint32_t cap,
+                             const char *src)
+{
+    while (src && *src) {
+        http_append_char(dst, pos, cap, *src++);
+    }
+}
+
+static void http_append_u32(char *dst, uint32_t *pos, uint32_t cap,
+                            uint32_t value)
+{
+    char tmp[12];
+    uint32_t n = 0;
+    if (value == 0) {
+        http_append_char(dst, pos, cap, '0');
+        return;
+    }
+    while (value && n < sizeof(tmp)) {
+        tmp[n++] = (char)('0' + (value % 10U));
+        value /= 10U;
+    }
+    while (n) {
+        http_append_char(dst, pos, cap, tmp[--n]);
+    }
+}
+
+static int http_parse_url(const char *url, struct libc_http_url *out)
+{
+    const char *p;
+    uint32_t host_pos = 0;
+    uint32_t path_pos = 0;
+    uint32_t port = 80;
+    if (!url || !out || !http_starts_with_ignore_case(url, "http://")) {
+        return 0;
+    }
+    p = url + 7;
+    while (*p && *p != '/' && *p != ':' && *p != '#' && *p != '?' &&
+           host_pos + 1U < sizeof(out->host)) {
+        out->host[host_pos++] = *p++;
+    }
+    out->host[host_pos] = 0;
+    if (!out->host[0]) {
+        return 0;
+    }
+    if (*p == ':') {
+        port = 0;
+        ++p;
+        while (http_is_digit(*p)) {
+            port = port * 10U + (uint32_t)(*p - '0');
+            if (port > 65535U) {
+                return 0;
+            }
+            ++p;
+        }
+        if (port == 0) {
+            return 0;
+        }
+    }
+    if (*p == '/') {
+        while (*p && *p != '#' && path_pos + 1U < sizeof(out->path)) {
+            out->path[path_pos++] = *p++;
+        }
+    } else if (*p == '?') {
+        out->path[path_pos++] = '/';
+        while (*p && *p != '#' && path_pos + 1U < sizeof(out->path)) {
+            out->path[path_pos++] = *p++;
+        }
+    }
+    if (path_pos == 0) {
+        out->path[path_pos++] = '/';
+    }
+    out->path[path_pos] = 0;
+    out->port = port;
+    return 1;
+}
+
+static void http_build_url(char *dst, uint32_t cap, const char *host,
+                           uint32_t port, const char *path)
+{
+    uint32_t pos = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    dst[0] = 0;
+    http_append_text(dst, &pos, cap, "http://");
+    http_append_text(dst, &pos, cap, host);
+    if (port != 80U) {
+        http_append_char(dst, &pos, cap, ':');
+        http_append_u32(dst, &pos, cap, port);
+    }
+    if (!path || path[0] != '/') {
+        http_append_char(dst, &pos, cap, '/');
+    }
+    http_append_text(dst, &pos, cap, path && path[0] ? path : "/");
+}
+
+static void http_parent_path(const char *path, char *dst, uint32_t cap)
+{
+    uint32_t last_slash = 0;
+    uint32_t i = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    if (!path || !path[0]) {
+        http_copy_text(dst, cap, "/");
+        return;
+    }
+    while (path[i] && path[i] != '?' && path[i] != '#') {
+        if (path[i] == '/') {
+            last_slash = i;
+        }
+        ++i;
+    }
+    if (last_slash == 0) {
+        http_copy_text(dst, cap, "/");
+        return;
+    }
+    http_copy_bytes(dst, cap, path, last_slash + 1U);
+}
+
+int leonos_http_resolve_url(const char *base_url, const char *location,
+                            char *out, uint32_t capacity)
+{
+    char base_copy[LEONOS_HTTP_URL_LEN];
+    char location_copy[LEONOS_HTTP_URL_LEN];
+    const char *base_text = base_url;
+    const char *location_text = location;
+    struct libc_http_url base;
+    char dir[LEONOS_NET_HTTP_PATH_LEN];
+    uint32_t pos = 0;
+    if (!out || capacity == 0) {
+        return -1;
+    }
+    if (base_url == out && base_url) {
+        http_copy_text(base_copy, sizeof(base_copy), base_url);
+        base_text = base_copy;
+    }
+    if (location == out && location) {
+        http_copy_text(location_copy, sizeof(location_copy), location);
+        location_text = location_copy;
+    }
+    out[0] = 0;
+    if (!location_text || !location_text[0]) {
+        http_copy_text(out, capacity, base_text);
+        return 0;
+    }
+    if (http_starts_with_ignore_case(location_text, "http://") ||
+        http_starts_with_ignore_case(location_text, "https://")) {
+        http_copy_text(out, capacity, location_text);
+        return 0;
+    }
+    if (location_text[0] == '/' && location_text[1] == '/') {
+        http_append_text(out, &pos, capacity, "http:");
+        http_append_text(out, &pos, capacity, location_text);
+        return 0;
+    }
+    if (!http_parse_url(base_text, &base)) {
+        http_copy_text(out, capacity, location_text);
+        return 0;
+    }
+    if (location_text[0] == '#') {
+        http_copy_text(out, capacity, base_text);
+        return 0;
+    }
+    if (location_text[0] == '/') {
+        http_build_url(out, capacity, base.host, base.port, location_text);
+        return 0;
+    }
+    http_parent_path(base.path, dir, sizeof(dir));
+    out[0] = 0;
+    http_append_text(out, &pos, capacity, "http://");
+    http_append_text(out, &pos, capacity, base.host);
+    if (base.port != 80U) {
+        http_append_char(out, &pos, capacity, ':');
+        http_append_u32(out, &pos, capacity, base.port);
+    }
+    http_append_text(out, &pos, capacity, dir);
+    http_append_text(out, &pos, capacity, location_text);
+    return 0;
+}
+
+static uint32_t http_find_body_offset(const char *data, uint32_t len)
+{
+    for (uint32_t i = 0; i + 3U < len; ++i) {
+        if (data[i] == '\r' && data[i + 1U] == '\n' &&
+            data[i + 2U] == '\r' && data[i + 3U] == '\n') {
+            return i + 4U;
+        }
+    }
+    for (uint32_t i = 0; i + 1U < len; ++i) {
+        if (data[i] == '\n' && data[i + 1U] == '\n') {
+            return i + 2U;
+        }
+    }
+    return 0;
+}
+
+static uint32_t http_parse_status_code(const char *headers, uint32_t len)
+{
+    uint32_t pos = 0;
+    uint32_t status = 0;
+    if (!headers || len < 12U ||
+        headers[0] != 'H' || headers[1] != 'T' ||
+        headers[2] != 'T' || headers[3] != 'P' ||
+        headers[4] != '/') {
+        return 0;
+    }
+    while (pos < len && headers[pos] != ' ' &&
+           headers[pos] != '\r' && headers[pos] != '\n') {
+        ++pos;
+    }
+    while (pos < len && headers[pos] == ' ') {
+        ++pos;
+    }
+    for (uint32_t i = 0; i < 3U && pos < len; ++i, ++pos) {
+        if (!http_is_digit(headers[pos])) {
+            return 0;
+        }
+        status = status * 10U + (uint32_t)(headers[pos] - '0');
+    }
+    return status;
+}
+
+static int http_header_value(const char *headers, uint32_t header_len,
+                             const char *name, char *out, uint32_t cap)
+{
+    uint32_t name_len = (uint32_t)strlen(name);
+    uint32_t i = 0;
+    if (out && cap) {
+        out[0] = 0;
+    }
+    if (!headers || !name || !name[0]) {
+        return 0;
+    }
+    while (i < header_len && headers[i] != '\n') {
+        ++i;
+    }
+    if (i < header_len) {
+        ++i;
+    }
+    while (i < header_len) {
+        uint32_t line_start = i;
+        uint32_t line_end;
+        uint32_t colon = i;
+        uint32_t value_start;
+        uint32_t value_end;
+        while (i < header_len && headers[i] != '\n' && headers[i] != '\r') {
+            ++i;
+        }
+        line_end = i;
+        while (i < header_len && (headers[i] == '\r' || headers[i] == '\n')) {
+            ++i;
+        }
+        if (line_end == line_start) {
+            break;
+        }
+        while (colon < line_end && headers[colon] != ':') {
+            ++colon;
+        }
+        if (colon == line_end || colon - line_start != name_len) {
+            continue;
+        }
+        if (!http_text_eq_ignore_case_n(headers + line_start, name, name_len)) {
+            continue;
+        }
+        value_start = colon + 1U;
+        while (value_start < line_end && http_is_space(headers[value_start])) {
+            ++value_start;
+        }
+        value_end = line_end;
+        while (value_end > value_start && http_is_space(headers[value_end - 1U])) {
+            --value_end;
+        }
+        http_copy_bytes(out, cap, headers + value_start, value_end - value_start);
+        return 1;
+    }
+    return 0;
+}
+
+static int http_contains_ignore_case(const char *text, const char *needle)
+{
+    uint32_t needle_len;
+    uint32_t text_len;
+    if (!text || !needle) {
+        return 0;
+    }
+    needle_len = (uint32_t)strlen(needle);
+    text_len = (uint32_t)strlen(text);
+    if (needle_len == 0 || needle_len > text_len) {
+        return 0;
+    }
+    for (uint32_t i = 0; i + needle_len <= text_len; ++i) {
+        if (http_text_eq_ignore_case_n(text + i, needle, needle_len)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static uint32_t http_parse_decimal(const char *text, int *ok)
+{
+    uint32_t value = 0;
+    uint32_t i = 0;
+    if (ok) {
+        *ok = 0;
+    }
+    while (text && http_is_space(text[i])) {
+        ++i;
+    }
+    if (!text || !http_is_digit(text[i])) {
+        return 0;
+    }
+    while (http_is_digit(text[i])) {
+        value = value * 10U + (uint32_t)(text[i] - '0');
+        ++i;
+    }
+    if (ok) {
+        *ok = 1;
+    }
+    return value;
+}
+
+static uint32_t http_decode_chunked(char *buffer, uint32_t body_offset,
+                                    uint32_t raw_len, uint32_t capacity,
+                                    uint32_t *flags)
+{
+    uint32_t src = body_offset;
+    uint32_t dst = 0;
+    while (src < raw_len) {
+        uint32_t chunk_size = 0;
+        uint32_t saw_hex = 0;
+        while (src < raw_len && (buffer[src] == '\r' || buffer[src] == '\n')) {
+            ++src;
+        }
+        while (src < raw_len && http_is_hex(buffer[src])) {
+            chunk_size = chunk_size * 16U + http_hex_value(buffer[src]);
+            ++src;
+            saw_hex = 1;
+        }
+        if (!saw_hex) {
+            break;
+        }
+        while (src < raw_len && buffer[src] != '\n') {
+            ++src;
+        }
+        if (src < raw_len && buffer[src] == '\n') {
+            ++src;
+        }
+        if (chunk_size == 0) {
+            break;
+        }
+        if (src + chunk_size > raw_len) {
+            chunk_size = raw_len > src ? raw_len - src : 0;
+            if (flags) {
+                *flags |= LEONOS_HTTP_FLAG_TRUNCATED;
+            }
+        }
+        for (uint32_t i = 0; i < chunk_size; ++i) {
+            if (dst + 1U >= capacity) {
+                if (flags) {
+                    *flags |= LEONOS_HTTP_FLAG_TRUNCATED;
+                }
+                break;
+            }
+            buffer[dst++] = buffer[src + i];
+        }
+        src += chunk_size;
+    }
+    if (capacity) {
+        buffer[dst < capacity ? dst : capacity - 1U] = 0;
+    }
+    return dst;
+}
+
+static uint32_t http_copy_body(char *buffer, uint32_t body_offset,
+                               uint32_t raw_len, uint32_t capacity,
+                               uint32_t wanted_len, uint32_t *flags)
+{
+    uint32_t available = body_offset < raw_len ? raw_len - body_offset : 0;
+    uint32_t copy_len = available;
+    if (wanted_len && wanted_len < copy_len) {
+        copy_len = wanted_len;
+    }
+    if (wanted_len && available < wanted_len && flags) {
+        *flags |= LEONOS_HTTP_FLAG_TRUNCATED;
+    }
+    if (copy_len + 1U > capacity) {
+        copy_len = capacity ? capacity - 1U : 0;
+        if (flags) {
+            *flags |= LEONOS_HTTP_FLAG_TRUNCATED;
+        }
+    }
+    for (uint32_t i = 0; i < copy_len; ++i) {
+        buffer[i] = buffer[body_offset + i];
+    }
+    if (capacity) {
+        buffer[copy_len] = 0;
+    }
+    return copy_len;
+}
+
+static uint32_t http_build_request_text(char *dst, uint32_t cap,
+                                        const struct libc_http_url *url,
+                                        const struct leonos_http_request *request)
+{
+    const char *method = request->method && request->method[0]
+                             ? request->method
+                             : "GET";
+    uint32_t pos = 0;
+    if (!dst || !cap || !url) {
+        return 0;
+    }
+    dst[0] = 0;
+    http_append_text(dst, &pos, cap, method);
+    http_append_char(dst, &pos, cap, ' ');
+    http_append_text(dst, &pos, cap, url->path[0] ? url->path : "/");
+    http_append_text(dst, &pos, cap, " HTTP/1.1\r\nHost: ");
+    http_append_text(dst, &pos, cap, url->host);
+    if (url->port != 80U) {
+        http_append_char(dst, &pos, cap, ':');
+        http_append_u32(dst, &pos, cap, url->port);
+    }
+    http_append_text(dst, &pos, cap,
+                     "\r\nUser-Agent: LeonOS/4\r\nAccept: */*\r\n"
+                     "Accept-Encoding: identity\r\nConnection: close\r\n");
+    if (request->request_body && request->request_body_len) {
+        http_append_text(dst, &pos, cap, "Content-Length: ");
+        http_append_u32(dst, &pos, cap, request->request_body_len);
+        http_append_text(dst, &pos, cap, "\r\n");
+    }
+    if (request->extra_headers && request->extra_headers[0]) {
+        http_append_text(dst, &pos, cap, request->extra_headers);
+        if (pos < 2U || dst[pos - 1U] != '\n') {
+            http_append_text(dst, &pos, cap, "\r\n");
+        }
+    }
+    http_append_text(dst, &pos, cap, "\r\n");
+    return pos + 1U < cap ? pos : 0;
+}
+
+static int http_fetch_once(const char *url_text,
+                           const struct leonos_http_request *request,
+                           struct leonos_http_response *response,
+                           char *location, uint32_t location_cap)
+{
+    struct libc_http_url url;
+    struct leonos_net_socket_connect conn;
+    char request_text[HTTP_REQUEST_MAX];
+    char transfer_encoding[48];
+    char content_length_text[32];
+    uint32_t request_len;
+    uint32_t net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+    uint32_t raw_len = 0;
+    uint32_t body_offset;
+    uint32_t header_len;
+    uint32_t timeout_ms = request->timeout_ms ? request->timeout_ms
+                                              : LEONOS_HTTP_DEFAULT_TIMEOUT_MS;
+    int socket;
+    int ret;
+
+    if (location && location_cap) {
+        location[0] = 0;
+    }
+    if (!http_starts_with_ignore_case(url_text, "http://")) {
+        response->net_status = LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED;
+        return 0;
+    }
+    if (!http_parse_url(url_text, &url)) {
+        response->net_status = LEONOS_NET_STATUS_BAD_ARGUMENT;
+        return 0;
+    }
+    request_len = http_build_request_text(request_text, sizeof(request_text),
+                                          &url, request);
+    if (!request_len) {
+        response->net_status = LEONOS_NET_STATUS_BAD_ARGUMENT;
+        return 0;
+    }
+    socket = leonos_socket_tcp();
+    if (socket < 0) {
+        response->net_status = LEONOS_NET_STATUS_SOCKET_LIMIT;
+        return 0;
+    }
+    ret = leonos_socket_connect(socket, url.host, url.port, timeout_ms, &conn);
+    if (ret < 0 || conn.status != LEONOS_NET_STATUS_OK) {
+        leonos_socket_close(socket);
+        response->net_status = ret < 0 ? LEONOS_NET_STATUS_TCP_FAILED
+                                       : conn.status;
+        return 0;
+    }
+    ret = (int)leonos_socket_send(socket, request_text, request_len,
+                                  timeout_ms, &net_status);
+    if (ret < 0 || net_status != LEONOS_NET_STATUS_OK ||
+        (uint32_t)ret != request_len) {
+        leonos_socket_close(socket);
+        response->net_status = net_status;
+        return 0;
+    }
+    if (request->request_body && request->request_body_len) {
+        ret = (int)leonos_socket_send(socket, request->request_body,
+                                      request->request_body_len,
+                                      timeout_ms, &net_status);
+        if (ret < 0 || net_status != LEONOS_NET_STATUS_OK ||
+            (uint32_t)ret != request->request_body_len) {
+            leonos_socket_close(socket);
+            response->net_status = net_status;
+            return 0;
+        }
+    }
+    while (raw_len + 1U < request->response_body_capacity) {
+        long got = leonos_socket_recv(socket,
+                                      request->response_body + raw_len,
+                                      request->response_body_capacity - raw_len - 1U,
+                                      raw_len ? 1200U : timeout_ms,
+                                      &net_status);
+        if (got < 0) {
+            leonos_socket_close(socket);
+            response->net_status = LEONOS_NET_STATUS_TCP_FAILED;
+            return 0;
+        }
+        if (got == 0) {
+            if (net_status == LEONOS_NET_STATUS_OK ||
+                (net_status == LEONOS_NET_STATUS_TCP_TIMEOUT && raw_len)) {
+                net_status = LEONOS_NET_STATUS_OK;
+            }
+            break;
+        }
+        raw_len += (uint32_t)got;
+    }
+    leonos_socket_close(socket);
+    request->response_body[raw_len] = 0;
+    response->net_status = net_status;
+    if (raw_len + 1U >= request->response_body_capacity) {
+        response->flags |= LEONOS_HTTP_FLAG_TRUNCATED;
+    }
+    if (net_status != LEONOS_NET_STATUS_OK) {
+        return 0;
+    }
+    body_offset = http_find_body_offset(request->response_body, raw_len);
+    if (!body_offset) {
+        response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+        return 0;
+    }
+    header_len = body_offset;
+    response->http_status = http_parse_status_code(request->response_body,
+                                                   header_len);
+    if (!response->http_status) {
+        response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+        return 0;
+    }
+    response->headers_len = header_len;
+    if (request->response_headers && request->response_headers_capacity) {
+        if (header_len + 1U > request->response_headers_capacity) {
+            response->headers_len = request->response_headers_capacity - 1U;
+            response->flags |= LEONOS_HTTP_FLAG_TRUNCATED;
+        }
+        http_copy_bytes(request->response_headers,
+                        request->response_headers_capacity,
+                        request->response_body,
+                        response->headers_len);
+    }
+    http_header_value(request->response_body, header_len, "Content-Type",
+                      response->content_type, sizeof(response->content_type));
+    http_header_value(request->response_body, header_len, "Location",
+                      location, location_cap);
+    transfer_encoding[0] = 0;
+    http_header_value(request->response_body, header_len, "Transfer-Encoding",
+                      transfer_encoding, sizeof(transfer_encoding));
+    content_length_text[0] = 0;
+    if (http_header_value(request->response_body, header_len, "Content-Length",
+                          content_length_text, sizeof(content_length_text))) {
+        int ok = 0;
+        response->content_length = http_parse_decimal(content_length_text, &ok);
+        if (ok) {
+            response->flags |= LEONOS_HTTP_FLAG_CONTENT_LENGTH;
+        }
+    }
+    if (http_contains_ignore_case(transfer_encoding, "chunked")) {
+        response->flags |= LEONOS_HTTP_FLAG_CHUNKED;
+        response->body_len = http_decode_chunked(request->response_body,
+                                                body_offset, raw_len,
+                                                request->response_body_capacity,
+                                                &response->flags);
+    } else {
+        response->body_len = http_copy_body(request->response_body,
+                                           body_offset, raw_len,
+                                           request->response_body_capacity,
+                                           response->content_length,
+                                           &response->flags);
+    }
+    return 0;
+}
+
+static int http_is_redirect(uint32_t status)
+{
+    return status == 301U || status == 302U || status == 303U ||
+           status == 307U || status == 308U;
+}
+
+int leonos_http_request(const struct leonos_http_request *request,
+                        struct leonos_http_response *response)
+{
+    char current_url[LEONOS_HTTP_URL_LEN];
+    char location[LEONOS_HTTP_URL_LEN];
+    char next_url[LEONOS_HTTP_URL_LEN];
+    uint32_t max_redirects;
+    if (!request || !response || !request->url ||
+        !request->response_body || request->response_body_capacity == 0) {
+        return -1;
+    }
+    *response = (struct leonos_http_response){0};
+    max_redirects = request->max_redirects ? request->max_redirects
+                                           : LEONOS_HTTP_DEFAULT_REDIRECTS;
+    http_copy_text(current_url, sizeof(current_url), request->url);
+    http_copy_text(response->final_url, sizeof(response->final_url),
+                   current_url);
+    for (;;) {
+        location[0] = 0;
+        uint32_t preserved_flags =
+            response->flags & LEONOS_HTTP_FLAG_REDIRECTED;
+        uint32_t redirect_count = response->redirect_count;
+        response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+        response->http_status = 0;
+        response->flags = preserved_flags;
+        response->body_len = 0;
+        response->headers_len = 0;
+        response->content_length = 0;
+        response->redirect_count = redirect_count;
+        response->content_type[0] = 0;
+        http_fetch_once(current_url, request, response,
+                        location, sizeof(location));
+        http_copy_text(response->final_url, sizeof(response->final_url),
+                       current_url);
+        if (response->net_status != LEONOS_NET_STATUS_OK ||
+            !http_is_redirect(response->http_status) ||
+            !location[0]) {
+            return 0;
+        }
+        if (response->redirect_count >= max_redirects) {
+            response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+            return 0;
+        }
+        if (leonos_http_resolve_url(current_url, location,
+                                    next_url, sizeof(next_url)) < 0) {
+            response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+            return 0;
+        }
+        http_copy_text(current_url, sizeof(current_url), next_url);
+        ++response->redirect_count;
+        response->flags |= LEONOS_HTTP_FLAG_REDIRECTED;
+    }
+}
+
+int leonos_http_get(const char *url, uint32_t timeout_ms,
+                    char *response_body, uint32_t response_body_capacity,
+                    char *response_headers, uint32_t response_headers_capacity,
+                    struct leonos_http_response *response)
+{
+    struct leonos_http_request request = {
+        .url = url,
+        .method = "GET",
+        .extra_headers = 0,
+        .request_body = 0,
+        .request_body_len = 0,
+        .timeout_ms = timeout_ms,
+        .max_redirects = LEONOS_HTTP_DEFAULT_REDIRECTS,
+        .response_body = response_body,
+        .response_body_capacity = response_body_capacity,
+        .response_headers = response_headers,
+        .response_headers_capacity = response_headers_capacity,
+    };
+    return leonos_http_request(&request, response);
 }
 
 static void libc_copy_fixed(char *dst, uint32_t cap, const char *src)

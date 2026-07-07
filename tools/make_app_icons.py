@@ -261,12 +261,32 @@ def icon_netctl(c: list[list[tuple[int, int, int, int]]]) -> None:
     put(c, 9, 12, ORANGE)
 
 
+def icon_servicemgr(c: list[list[tuple[int, int, int, int]]]) -> None:
+    fill(c, 3, 2, 10, 12, WHITE)
+    rect(c, 3, 2, 10, 12, DARK)
+    for y in (4, 7, 10):
+        rect(c, 5, y, 2, 2, BLUE)
+        fill(c, 8, y, 3, 1, DARK)
+    line(c, 5, 5, 6, 6, GREEN)
+    line(c, 6, 6, 8, 4, GREEN)
+    put(c, 11, 11, ORANGE)
+
+
 def icon_httpget(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 2, 4, 12, 8, WHITE)
     rect(c, 2, 4, 12, 8, DARK)
     fill(c, 3, 5, 10, 2, CYAN)
     text3(c, 4, 8, "GET", BLUE)
     put(c, 12, 11, GREEN)
+
+
+def icon_downloadmgr(c: list[list[tuple[int, int, int, int]]]) -> None:
+    fill(c, 3, 10, 10, 3, LIGHT)
+    rect(c, 3, 10, 10, 3, DARK)
+    fill(c, 7, 2, 2, 7, BLUE)
+    line(c, 4, 7, 8, 11, BLUE)
+    line(c, 12, 7, 8, 11, BLUE)
+    fill(c, 5, 13, 6, 1, GREEN)
 
 
 def icon_browser(c: list[list[tuple[int, int, int, int]]]) -> None:
@@ -278,6 +298,16 @@ def icon_browser(c: list[list[tuple[int, int, int, int]]]) -> None:
     line(c, 10, 9, 13, 12, ORANGE)
     line(c, 13, 12, 12, 13, ORANGE)
     put(c, 11, 10, ORANGE)
+
+
+def icon_imageview(c: list[list[tuple[int, int, int, int]]]) -> None:
+    fill(c, 2, 3, 12, 10, WHITE)
+    rect(c, 2, 3, 12, 10, DARK)
+    fill(c, 3, 4, 10, 8, rgba(204, 232, 246))
+    fill(c, 4, 10, 8, 2, GREEN)
+    line(c, 4, 11, 7, 8, GREEN)
+    line(c, 7, 8, 10, 11, GREEN)
+    fill(c, 10, 5, 2, 2, YELLOW)
 
 
 def icon_diskmgr(c: list[list[tuple[int, int, int, int]]]) -> None:
@@ -369,10 +399,16 @@ def draw_icon(name: str) -> list[list[tuple[int, int, int, int]]]:
         icon_ping(c)
     elif name == "netctl":
         icon_netctl(c)
+    elif name == "servicemgr":
+        icon_servicemgr(c)
     elif name == "httpget":
         icon_httpget(c)
+    elif name == "downloadmgr":
+        icon_downloadmgr(c)
     elif name == "browser":
         icon_browser(c)
+    elif name == "imageview":
+        icon_imageview(c)
     elif name == "diskmgr":
         icon_diskmgr(c)
     elif name == "devmgr":

@@ -72,6 +72,7 @@ void desktop_run(void)
     }
     printf("[desktop.elf] framebuffer %dx%d bpp=%d\n", fb.width, fb.height, fb.bpp);
     desktop_load_display_config();
+    (void)desktop_load_service_config();
     printf("[desktop.elf] display mode %s scale=%dx logical=%dx%d\n",
            desktop_display_modes[desktop_mode_index].label,
            (int)desktop_scale, fb_w(), fb_h());
@@ -84,6 +85,7 @@ void desktop_run(void)
 
     unsigned long last_log = 0;
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
+    unsigned long last_services_refresh = leonos_uptime_ms();
     unsigned idle_spins = 0;
     for (;;) {
         struct leonos_gui_window_msg window_msg;
@@ -147,6 +149,13 @@ void desktop_run(void)
             last_clock_second = now / 1000UL;
             repaint_and_flush(rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));
             did_work = 1;
+        }
+        if (now - last_services_refresh >= 2000UL) {
+            last_services_refresh = now;
+            if (desktop_load_service_config()) {
+                repaint_and_flush(rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));
+                did_work = 1;
+            }
         }
         if (now - last_task_refresh >= 500) {
             refresh_task_snapshot();

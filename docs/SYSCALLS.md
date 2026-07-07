@@ -178,6 +178,9 @@ Important requests include:
 - `LEONOS_IOCTL_NET_CONFIG`, `LEONOS_IOCTL_NET_DHCP`,
   `LEONOS_IOCTL_NET_DNS`, `LEONOS_IOCTL_NET_PING`,
   `LEONOS_IOCTL_NET_HTTP_GET`
+- `LEONOS_IOCTL_NET_SOCKET_OPEN`, `LEONOS_IOCTL_NET_SOCKET_CONNECT`,
+  `LEONOS_IOCTL_NET_SOCKET_SEND`, `LEONOS_IOCTL_NET_SOCKET_RECV`,
+  `LEONOS_IOCTL_NET_SOCKET_CLOSE`, `LEONOS_IOCTL_NET_CONNECTIONS`
 - `LEONOS_INSTALL_IOCTL_LIST_DISKS`, `LEONOS_INSTALL_IOCTL_FORMAT_ESP`,
   `LEONOS_INSTALL_IOCTL_MOUNT_TARGET`
 - `LEONOS_TEXT_IOCTL_LAYOUT_UTF8`
@@ -185,10 +188,10 @@ Important requests include:
   `LEONOS_PTY_IOCTL_READ_OUTPUT`, `LEONOS_PTY_IOCTL_WRITE_INPUT`,
   `LEONOS_PTY_IOCTL_SPAWN`
 
-## Minimal Networking
+## Networking
 
-The first network ABI is intentionally narrow and does not expose sockets yet.
-It is defined in `include/leonos/net.h`; libc wraps it as:
+The network ABI is defined in `include/leonos/net.h`. Legacy configuration and
+diagnostic helpers are wrapped by libc as:
 
 - `leonos_net_config`
 - `leonos_net_dhcp_renew`
@@ -196,35 +199,60 @@ It is defined in `include/leonos/net.h`; libc wraps it as:
 - `leonos_net_http_get`
 - `leonos_net_ping`
 
+The TCP client socket ABI is wrapped as:
+
+- `leonos_socket_tcp`
+- `leonos_socket_connect`
+- `leonos_socket_send`
+- `leonos_socket_recv`
+- `leonos_socket_close`
+- `leonos_net_connections`
+
 IPv4 values are host-order packed addresses. For example, `10.0.2.2` is
 `0x0a000202`.
 
 The kernel currently supports a polling Intel e1000 MMIO driver, ARP, IPv4,
 ICMP Echo, a small DHCP client, UDP transmit/receive for DHCP/DNS, DNS A record
-lookups, a small ARP cache, a minimal active-open TCP client path, and
-`HTTP/1.0` GET over TCP. Boot starts with the QEMU user-network fallback so
-early networking is usable, then automatically tries DHCP three times. If DHCP
-succeeds, the active config switches to the lease; if it fails, the fallback
-remains active:
+lookups, a small ARP cache, active-open TCP client sockets, and a compatibility
+`HTTP/1.0` GET helper over TCP. Boot starts with the QEMU user-network fallback so
+early networking is usable, then automatically tries DHCP three times unless
+`0:/etc/services.cfg` contains `dhcp=0`. If DHCP succeeds, the active config
+switches to the lease; if it fails or is disabled, the fallback remains active:
 
 - guest IPv4: `10.0.2.15/24`
 - gateway: `10.0.2.2`
 - DNS: `10.0.2.3`
 
 `netctl.elf` can still issue `leonos_net_dhcp_renew` after the desktop is
-running to manually renew or recover a lease.
+running to manually renew or recover a lease. It also queries
+`leonos_net_connections` and displays TCP client sockets in `SYN_SENT`,
+`ESTABLISHED`, `TIME_WAIT`, or `CLOSED`.
 
-`httpget.elf` uses `leonos_net_http_get` to resolve a host, try each returned A
-record, open a TCP connection to port 80 by default, send a `GET`, and show the
-raw HTTP response. `browser.elf` uses the same ABI for `http://` page loads and
-local files for `.html`/`.htm` rendering. The response is copied through a
-fixed-size ABI buffer, so this is a diagnostic and small-request API rather
-than a streaming download interface.
+`leonos_socket_tcp` returns an integer socket handle owned by the current task.
+`leonos_socket_connect` accepts a host name or IPv4 literal, resolves DNS A
+records when needed, tries each returned address, and records the selected
+remote IP and local port. `leonos_socket_send` and `leonos_socket_recv` are
+synchronous TCP byte-stream calls with per-call timeouts and explicit network
+status fields. `leonos_socket_close` moves established connections through
+`TIME_WAIT` before the kernel garbage-collects the socket record.
+
+`include/leonos/http.h` provides the higher-level userland HTTP client:
+`leonos_http_get`, `leonos_http_request`, and `leonos_http_resolve_url`.
+The client uses the socket wrappers, sends plain `HTTP/1.1` requests, follows
+bounded redirects, decodes chunked transfer responses, exposes response headers,
+content type, body length, final URL, redirect count, and truncation flags.
+`httpget.elf` and `browser.elf` use this library for `http://` page loads. The
+older `leonos_net_http_get` ioctl remains as a compatibility helper for small
+diagnostic callers.
+
+`downloadmgr.elf` also uses the HTTP client. It is currently fixed-buffer and
+reports oversized responses through the truncation flag instead of streaming
+large files incrementally.
 
 The network ioctls return `0` when the request structure was processed. Per
 operation results are reported in the structure `status` field. Timeouts are
-bounded by the kernel even if a larger value is requested; HTTP/DNS/DHCP paths
-currently cap requested waits at 10000 ms.
+bounded by the kernel even if a larger value is requested; socket, HTTP, DNS,
+and DHCP paths currently cap requested waits at 10000 ms.
 
 ## Authentication and Authorization
 
@@ -252,9 +280,9 @@ remain available to any logged-in user.
 
 ## Current Limitations
 
-- There is no `fork`, `clone`, `pipe`, `socket`, `poll`, or signal ABI.
-- Networking has no generic socket API, TCP listener/server mode, TLS/HTTPS, or
-  retransmission/window-management surface yet.
+- There is no `fork`, `clone`, `pipe`, `poll`, or signal ABI.
+- Networking has TCP client sockets, but no TCP listener/server mode, UDP
+  socket API, TLS/HTTPS, or full retransmission/window-management surface yet.
 - `execve` spawns a child process instead of replacing the caller.
 - File-backed `mmap` is private and read-only.
 - Open permissions are simple capability checks, not a full Unix permission

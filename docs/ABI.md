@@ -142,12 +142,57 @@ gateway for device-manager style tools.
 
 ## Network ABI
 
-`include/leonos/net.h` exposes the current minimal network ioctl ABI. It covers
-configuration, DHCP renew, DNS A lookups, ICMP ping, and a fixed-buffer
-`leonos_net_http_get` helper that performs an active TCP connection and
-`HTTP/1.0` GET. The helper keeps a small ARP cache for repeated gateway access
-and tries each returned DNS A record until a TCP attempt succeeds or all
-addresses fail. `httpget.elf` and `browser.elf` both use this helper with a
-10-second timeout. This is not a socket ABI yet: applications cannot listen for
-TCP connections, stream arbitrary byte ranges, or use TLS/HTTPS through the
-kernel network interface.
+`include/leonos/net.h` exposes the network ioctl ABI. It covers configuration,
+DHCP renew, DNS A lookups, ICMP ping, a compatibility fixed-buffer
+`leonos_net_http_get` helper, and TCP client sockets.
+
+Socket requests use:
+
+- `LEONOS_IOCTL_NET_SOCKET_OPEN`
+- `LEONOS_IOCTL_NET_SOCKET_CONNECT`
+- `LEONOS_IOCTL_NET_SOCKET_SEND`
+- `LEONOS_IOCTL_NET_SOCKET_RECV`
+- `LEONOS_IOCTL_NET_SOCKET_CLOSE`
+- `LEONOS_IOCTL_NET_CONNECTIONS`
+
+libc wraps those as `leonos_socket_tcp`, `leonos_socket_connect`,
+`leonos_socket_send`, `leonos_socket_recv`, `leonos_socket_close`, and
+`leonos_net_connections`. A socket is an integer task-owned TCP client handle.
+`connect` accepts a host name or IPv4 literal, resolves DNS A records when
+needed, and returns the selected remote IP and local port. `send` and `recv` are
+synchronous byte-stream operations with per-call timeouts and status fields.
+Connection states exported to userland are `SYN_SENT`, `ESTABLISHED`,
+`TIME_WAIT`, and `CLOSED`.
+
+`include/leonos/http.h` adds a libc HTTP client on top of those sockets:
+`leonos_http_get`, `leonos_http_request`, and `leonos_http_resolve_url`.
+It sends plain `HTTP/1.1` requests with `Connection: close`, follows bounded
+redirects, reports final URL/status/content type, copies response headers,
+decodes chunked transfer bodies, and returns truncation flags for callers with
+small buffers. `httpget.elf` and `browser.elf` use this library for `http://`
+traffic; lower-level tools such as `ping.elf` and `netctl.elf` continue to use
+ICMP/DHCP/DNS/socket status APIs directly. TCP server/listener sockets, UDP
+sockets, TLS/HTTPS, cookies, cache, and full TCP window management are still out
+of scope for this ABI version.
+
+## Application Services
+
+The launcher library in `leonos/launch.h` owns user-facing file launch policy.
+It supports `.lnk` shortcuts, built-in program aliases, and persistent extension
+associations stored in `0:/etc/fileassoc.cfg`. Settings can edit the common
+associations for `.txt`, `.md`, `.html`, `.htm`, and `.bmp`.
+
+Current companion applications:
+
+- `downloadmgr.elf`: uses the libc HTTP client and saves `http://` downloads to
+  the current user's `0:/users/<name>/downloads` directory.
+- `imageview.elf`: opens uncompressed 24/32-bit BMP files, supports Fit/1x/2x
+  zoom, and can move to previous/next BMP siblings in the same directory.
+- `servicemgr.elf`: edits `0:/etc/services.cfg`, the v1 startup/service policy
+  file used by service-aware components.
+
+The current service keys are `desktop`, `dhcp`, `network_icon`, `rtc_clock`,
+and `ntp_sync`. `desktop` is fixed on. `dhcp` controls whether kernel boot
+network initialization attempts DHCP before keeping the static fallback.
+`network_icon` and `rtc_clock` are read by the desktop taskbar. `ntp_sync` is a
+reserved switch for a future time-sync service.

@@ -8,6 +8,12 @@
 #define LEONOS_IOCTL_NET_DHCP 0x4c4e4448UL
 #define LEONOS_IOCTL_NET_DNS 0x4c4e444eUL
 #define LEONOS_IOCTL_NET_HTTP_GET 0x4c4e4854UL
+#define LEONOS_IOCTL_NET_SOCKET_OPEN 0x4c4e534fUL
+#define LEONOS_IOCTL_NET_SOCKET_CONNECT 0x4c4e5343UL
+#define LEONOS_IOCTL_NET_SOCKET_SEND 0x4c4e5353UL
+#define LEONOS_IOCTL_NET_SOCKET_RECV 0x4c4e5352UL
+#define LEONOS_IOCTL_NET_SOCKET_CLOSE 0x4c4e5358UL
+#define LEONOS_IOCTL_NET_CONNECTIONS 0x4c4e434eUL
 
 #define LEONOS_NET_STATUS_OK 0U
 #define LEONOS_NET_STATUS_NO_DEVICE 1U
@@ -25,6 +31,11 @@
 #define LEONOS_NET_STATUS_TCP_FAILED 13U
 #define LEONOS_NET_STATUS_HTTP_FAILED 14U
 #define LEONOS_NET_STATUS_HTTP_TOO_LARGE 15U
+#define LEONOS_NET_STATUS_SOCKET_LIMIT 16U
+#define LEONOS_NET_STATUS_SOCKET_BAD_HANDLE 17U
+#define LEONOS_NET_STATUS_SOCKET_NOT_CONNECTED 18U
+#define LEONOS_NET_STATUS_SOCKET_CLOSED 19U
+#define LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED 20U
 
 #define LEONOS_NET_DEFAULT_TIMEOUT_MS 1000U
 #define LEONOS_NET_MAX_TIMEOUT_MS 10000U
@@ -45,6 +56,16 @@
 #define LEONOS_NET_DNS_MAX_ADDRESSES 4U
 #define LEONOS_NET_HTTP_PATH_LEN 256U
 #define LEONOS_NET_HTTP_RESPONSE_MAX 4096U
+#define LEONOS_NET_SOCKET_MAX 16U
+
+#define LEONOS_NET_AF_INET 2U
+#define LEONOS_NET_SOCK_STREAM 1U
+#define LEONOS_NET_IPPROTO_TCP 6U
+
+#define LEONOS_NET_TCP_CLOSED 0U
+#define LEONOS_NET_TCP_SYN_SENT 1U
+#define LEONOS_NET_TCP_ESTABLISHED 2U
+#define LEONOS_NET_TCP_TIME_WAIT 3U
 
 struct leonos_net_config {
     uint32_t flags;
@@ -96,6 +117,60 @@ struct leonos_net_http_get {
     char response[LEONOS_NET_HTTP_RESPONSE_MAX];
 };
 
+struct leonos_net_socket_open {
+    uint32_t domain;
+    uint32_t type;
+    uint32_t protocol;
+    uint32_t timeout_ms;
+    uint32_t status;
+    int32_t socket;
+};
+
+struct leonos_net_socket_connect {
+    int32_t socket;
+    char host[LEONOS_NET_HOSTNAME_LEN];
+    uint32_t port;
+    uint32_t timeout_ms;
+    uint32_t status;
+    uint32_t remote_ip;
+    uint32_t local_ip;
+    uint32_t local_port;
+};
+
+struct leonos_net_socket_io {
+    int32_t socket;
+    void *buffer;
+    uint32_t length;
+    uint32_t timeout_ms;
+    uint32_t status;
+    uint32_t transferred;
+};
+
+struct leonos_net_socket_close {
+    int32_t socket;
+    uint32_t status;
+};
+
+struct leonos_net_connection_info {
+    int32_t socket;
+    uint32_t owner_pid;
+    uint32_t state;
+    uint32_t status;
+    uint32_t local_ip;
+    uint32_t remote_ip;
+    uint32_t local_port;
+    uint32_t remote_port;
+    uint32_t age_ms;
+    uint32_t tx_bytes;
+    uint32_t rx_bytes;
+};
+
+struct leonos_net_connection_list {
+    uint32_t capacity;
+    uint32_t count;
+    struct leonos_net_connection_info *entries;
+};
+
 int leonos_net_config(struct leonos_net_config *config);
 int leonos_net_dhcp_renew(uint32_t timeout_ms, struct leonos_net_dhcp *result);
 int leonos_net_ping(uint32_t target_ip, uint32_t timeout_ms,
@@ -105,5 +180,16 @@ int leonos_net_dns_resolve(const char *name, uint32_t timeout_ms,
 int leonos_net_http_get(const char *host, const char *path,
                         uint32_t port, uint32_t timeout_ms,
                         struct leonos_net_http_get *result);
+int leonos_socket_tcp(void);
+int leonos_socket_connect(int socket, const char *host,
+                          uint32_t port, uint32_t timeout_ms,
+                          struct leonos_net_socket_connect *result);
+long leonos_socket_send(int socket, const void *buffer, uint32_t length,
+                        uint32_t timeout_ms, uint32_t *status);
+long leonos_socket_recv(int socket, void *buffer, uint32_t length,
+                        uint32_t timeout_ms, uint32_t *status);
+int leonos_socket_close(int socket);
+int leonos_net_connections(struct leonos_net_connection_info *entries,
+                           uint32_t capacity, uint32_t *out_count);
 
 #endif

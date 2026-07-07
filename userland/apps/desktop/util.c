@@ -451,12 +451,24 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         copy_text(dst, dst_len, leonos_i18n("Network Controller", "网络控制器"));
         return;
     }
+    if (text_eq(name, "servicemgr.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Service Manager", "服务管理器"));
+        return;
+    }
     if (text_eq(name, "httpget.elf")) {
         copy_text(dst, dst_len, leonos_i18n("HTTP GET", "HTTP GET"));
         return;
     }
+    if (text_eq(name, "downloadmgr.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Download Manager", "下载管理器"));
+        return;
+    }
     if (text_eq(name, "browser.elf")) {
         copy_text(dst, dst_len, leonos_i18n("LeonOS Browser", "LeonOS 浏览器"));
+        return;
+    }
+    if (text_eq(name, "imageview.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Image Viewer", "图片查看器"));
         return;
     }
     if (text_eq(name, "init.elf")) {
@@ -606,7 +618,8 @@ void desktop_update_window_animations(void)
 
 uint32_t taskbar_button_width(uint32_t count)
 {
-    uint32_t available = fb_w() > 112 + TASKBAR_TRAY_W ? fb_w() - 112 - TASKBAR_TRAY_W : 0;
+    uint32_t tray_w = desktop_tray_width();
+    uint32_t available = fb_w() > 112 + tray_w ? fb_w() - 112 - tray_w : 0;
     if (count == 0 || available == 0) {
         return 0;
     }
@@ -616,6 +629,18 @@ uint32_t taskbar_button_width(uint32_t count)
     }
     if (w < 64 && available >= count * 64) {
         w = 64;
+    }
+    return w;
+}
+
+uint32_t desktop_tray_width(void)
+{
+    uint32_t w = 0;
+    if (desktop_service_network_icon) {
+        w += TASKBAR_NET_W;
+    }
+    if (desktop_service_rtc_clock) {
+        w += TASKBAR_CLOCK_W;
     }
     return w;
 }

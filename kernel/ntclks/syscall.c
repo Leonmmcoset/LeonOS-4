@@ -339,6 +339,9 @@ static void clear_task_files(struct task *task)
 
 void syscall_release_task_files(struct task *task)
 {
+    if (task) {
+        net_close_owner_sockets(task->pid);
+    }
     clear_task_files(task);
 }
 
@@ -1405,9 +1408,11 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_EXIT) {
+        uint32_t pid = sched_current_pid();
+        net_close_owner_sockets(pid);
         clear_task_files(sched_current_task());
-        gui_ipc_destroy_owner(sched_current_pid());
-        pty_process_exit(sched_current_pid());
+        gui_ipc_destroy_owner(pid);
+        pty_process_exit(pid);
         userland_process_exit(a0);
         return 0;
     }
@@ -1972,6 +1977,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return -LEONOS_EINVAL;
         }
+        net_close_owner_sockets((uint32_t)a2);
         gui_ipc_destroy_owner((uint32_t)a2);
         pty_process_exit((uint32_t)a2);
         return 0;
@@ -2211,6 +2217,77 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         return net_http_get((struct leonos_net_http_get *)(uintptr_t)a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_SOCKET_OPEN) {
+        if (!user_range_ok(a2, sizeof(struct leonos_net_socket_open))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_socket_open((struct leonos_net_socket_open *)(uintptr_t)a2,
+                               sched_current_pid());
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_SOCKET_CONNECT) {
+        if (!user_range_ok(a2, sizeof(struct leonos_net_socket_connect))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_socket_connect((struct leonos_net_socket_connect *)(uintptr_t)a2,
+                                  sched_current_pid());
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_SOCKET_SEND) {
+        struct leonos_net_socket_io *io;
+        if (!user_range_ok(a2, sizeof(struct leonos_net_socket_io))) {
+            return -LEONOS_EFAULT;
+        }
+        io = (struct leonos_net_socket_io *)(uintptr_t)a2;
+        if (io->length &&
+            (!io->buffer ||
+             !user_range_ok((uint64_t)(uintptr_t)io->buffer, io->length))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_socket_send(io, sched_current_pid());
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_SOCKET_RECV) {
+        struct leonos_net_socket_io *io;
+        if (!user_range_ok(a2, sizeof(struct leonos_net_socket_io))) {
+            return -LEONOS_EFAULT;
+        }
+        io = (struct leonos_net_socket_io *)(uintptr_t)a2;
+        if (io->length &&
+            (!io->buffer ||
+             !user_range_ok((uint64_t)(uintptr_t)io->buffer, io->length))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_socket_recv(io, sched_current_pid());
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_SOCKET_CLOSE) {
+        if (!user_range_ok(a2, sizeof(struct leonos_net_socket_close))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_socket_close((struct leonos_net_socket_close *)(uintptr_t)a2,
+                                sched_current_pid());
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_CONNECTIONS) {
+        struct leonos_net_connection_list *query;
+        if (!user_range_ok(a2, sizeof(struct leonos_net_connection_list))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_net_connection_list *)(uintptr_t)a2;
+        if (query->capacity > LEONOS_NET_SOCKET_MAX) {
+            query->capacity = LEONOS_NET_SOCKET_MAX;
+        }
+        if (query->capacity &&
+            (!query->entries ||
+             !user_range_ok((uint64_t)(uintptr_t)query->entries,
+                            (uint64_t)query->capacity *
+                                sizeof(struct leonos_net_connection_info)))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_connections(query);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DEVICE_LIST) {

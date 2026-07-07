@@ -1,5 +1,16 @@
 #include "browser.h"
 
+#define BROWSER_EXTERNAL_CSS_MAX 3072U
+#define BROWSER_CSS_FETCH_MAX 2048U
+#define BROWSER_CSS_LINK_MAX 4U
+#define BROWSER_TAG_TEXT_MAX 512U
+
+static char browser_http_headers[LEONOS_HTTP_HEADER_MAX + 1U];
+static char browser_css_headers[LEONOS_HTTP_HEADER_MAX + 1U];
+static char browser_css_body[BROWSER_CSS_FETCH_MAX + 1U];
+static char browser_external_css[BROWSER_EXTERNAL_CSS_MAX + 1U];
+static char browser_combined_source[BROWSER_SOURCE_CAP];
+
 void render_html_source(const char *source, const char *base_url)
 {
     struct litehtml_core_view view = {
@@ -154,29 +165,285 @@ void load_about(void)
     set_page_source("LeonOS Browser", about_html, 1, T("Ready", "就绪"));
 }
 
-uint32_t response_body_offset(const char *data, uint32_t len)
+static void browser_copy_bytes(char *dst, uint32_t cap,
+                               const char *src, uint32_t len)
 {
-    for (uint32_t i = 0; i + 3U < len; ++i) {
-        if (data[i] == '\r' && data[i + 1U] == '\n' &&
-            data[i + 2U] == '\r' && data[i + 3U] == '\n') {
-            return i + 4U;
-        }
+    uint32_t n = len;
+    if (!dst || cap == 0) {
+        return;
     }
-    for (uint32_t i = 0; i + 1U < len; ++i) {
-        if (data[i] == '\n' && data[i + 1U] == '\n') {
-            return i + 2U;
+    if (n + 1U > cap) {
+        n = cap - 1U;
+    }
+    for (uint32_t i = 0; i < n; ++i) {
+        dst[i] = src ? src[i] : 0;
+    }
+    dst[n] = 0;
+}
+
+static int browser_contains_ignore_case(const char *text, const char *needle)
+{
+    uint32_t text_len;
+    uint32_t needle_len;
+    if (!text || !needle) {
+        return 0;
+    }
+    text_len = (uint32_t)strlen(text);
+    needle_len = (uint32_t)strlen(needle);
+    if (needle_len == 0 || needle_len > text_len) {
+        return 0;
+    }
+    for (uint32_t i = 0; i + needle_len <= text_len; ++i) {
+        uint32_t j = 0;
+        while (j < needle_len &&
+               ascii_tolower(text[i + j]) == ascii_tolower(needle[j])) {
+            ++j;
+        }
+        if (j == needle_len) {
+            return 1;
         }
     }
     return 0;
 }
 
+static int browser_attr_name_eq(const char *text, uint32_t len,
+                                const char *name)
+{
+    uint32_t name_len = (uint32_t)strlen(name);
+    if (len != name_len) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < len; ++i) {
+        if (ascii_tolower(text[i]) != ascii_tolower(name[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int browser_extract_attr(const char *tag, const char *name,
+                                char *out, uint32_t cap)
+{
+    uint32_t i = 0;
+    if (out && cap) {
+        out[0] = 0;
+    }
+    if (!tag || !name || !out || cap == 0) {
+        return 0;
+    }
+    while (tag[i]) {
+        uint32_t name_start;
+        uint32_t name_end;
+        uint32_t value_start;
+        uint32_t value_end;
+        char quote = 0;
+        while (tag[i] && (is_space_char(tag[i]) || tag[i] == '<' ||
+                          tag[i] == '/' || tag[i] == '>')) {
+            ++i;
+        }
+        name_start = i;
+        while (tag[i] && !is_space_char(tag[i]) && tag[i] != '=' &&
+               tag[i] != '/' && tag[i] != '>') {
+            ++i;
+        }
+        name_end = i;
+        while (tag[i] && is_space_char(tag[i])) {
+            ++i;
+        }
+        if (tag[i] != '=') {
+            continue;
+        }
+        ++i;
+        while (tag[i] && is_space_char(tag[i])) {
+            ++i;
+        }
+        if (tag[i] == '"' || tag[i] == '\'') {
+            quote = tag[i++];
+        }
+        value_start = i;
+        if (quote) {
+            while (tag[i] && tag[i] != quote) {
+                ++i;
+            }
+        } else {
+            while (tag[i] && !is_space_char(tag[i]) && tag[i] != '>') {
+                ++i;
+            }
+        }
+        value_end = i;
+        if (quote && tag[i] == quote) {
+            ++i;
+        }
+        if (browser_attr_name_eq(tag + name_start, name_end - name_start,
+                                 name)) {
+            browser_copy_bytes(out, cap, tag + value_start,
+                               value_end - value_start);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int browser_tag_name_at(const char *source, const char *name)
+{
+    uint32_t i = 0;
+    uint32_t name_len = (uint32_t)strlen(name);
+    if (!source || source[0] != '<') {
+        return 0;
+    }
+    i = 1;
+    while (source[i] && is_space_char(source[i])) {
+        ++i;
+    }
+    if (source[i] == '/') {
+        return 0;
+    }
+    for (uint32_t n = 0; n < name_len; ++n) {
+        if (ascii_tolower(source[i + n]) != ascii_tolower(name[n])) {
+            return 0;
+        }
+    }
+    i += name_len;
+    return source[i] == 0 || source[i] == '>' || source[i] == '/' ||
+           is_space_char(source[i]);
+}
+
+static uint32_t browser_copy_tag_at(const char *source, char *tag,
+                                    uint32_t tag_cap)
+{
+    uint32_t i = 0;
+    if (!source || !tag || tag_cap == 0) {
+        return 0;
+    }
+    while (source[i] && source[i] != '>' && i + 1U < tag_cap) {
+        tag[i] = source[i];
+        ++i;
+    }
+    if (source[i] == '>' && i + 1U < tag_cap) {
+        tag[i++] = '>';
+    }
+    tag[i] = 0;
+    return i;
+}
+
+static uint32_t browser_fetch_external_css(const char *base_url)
+{
+    char tag[BROWSER_TAG_TEXT_MAX];
+    char rel[80];
+    char href[BROWSER_URL_CAP];
+    char resolved[BROWSER_URL_CAP];
+    uint32_t css_pos = 0;
+    uint32_t scan = 0;
+    uint32_t count = 0;
+    browser_external_css[0] = 0;
+    while (page_source[scan] && count < BROWSER_CSS_LINK_MAX) {
+        uint32_t tag_len;
+        struct leonos_http_response css_response;
+        if (page_source[scan] != '<' ||
+            !browser_tag_name_at(page_source + scan, "link")) {
+            ++scan;
+            continue;
+        }
+        tag_len = browser_copy_tag_at(page_source + scan, tag, sizeof(tag));
+        if (!tag_len) {
+            ++scan;
+            continue;
+        }
+        scan += tag_len;
+        rel[0] = 0;
+        href[0] = 0;
+        if (!browser_extract_attr(tag, "rel", rel, sizeof(rel)) ||
+            !browser_contains_ignore_case(rel, "stylesheet") ||
+            !browser_extract_attr(tag, "href", href, sizeof(href))) {
+            continue;
+        }
+        if (leonos_http_resolve_url(base_url, href, resolved,
+                                    sizeof(resolved)) < 0 ||
+            !starts_with_ignore_case(resolved, "http://")) {
+            continue;
+        }
+        browser_css_body[0] = 0;
+        browser_css_headers[0] = 0;
+        if (leonos_http_get(resolved, 5000,
+                            browser_css_body, sizeof(browser_css_body),
+                            browser_css_headers, sizeof(browser_css_headers),
+                            &css_response) < 0 ||
+            css_response.net_status != LEONOS_NET_STATUS_OK ||
+            css_response.http_status < 200U ||
+            css_response.http_status >= 400U) {
+            continue;
+        }
+        for (uint32_t i = 0; i < css_response.body_len; ++i) {
+            if (!browser_css_body[i]) {
+                browser_css_body[i] = ' ';
+            }
+        }
+        if (css_response.flags & LEONOS_HTTP_FLAG_TRUNCATED) {
+            source_truncated = 1;
+        }
+        append_text(browser_external_css, &css_pos,
+                    sizeof(browser_external_css), browser_css_body);
+        append_text(browser_external_css, &css_pos,
+                    sizeof(browser_external_css), "\n");
+        ++count;
+    }
+    return count;
+}
+
+static uint32_t browser_inject_external_css(const char *base_url)
+{
+    uint32_t css_count = browser_fetch_external_css(base_url);
+    uint32_t pos = 0;
+    uint32_t wrapper_len;
+    if (!css_count || !browser_external_css[0]) {
+        return 0;
+    }
+    browser_combined_source[0] = 0;
+    append_text(browser_combined_source, &pos,
+                sizeof(browser_combined_source), "<style>\n");
+    append_text(browser_combined_source, &pos,
+                sizeof(browser_combined_source), browser_external_css);
+    append_text(browser_combined_source, &pos,
+                sizeof(browser_combined_source), "</style>\n");
+    wrapper_len = pos;
+    append_text(browser_combined_source, &pos,
+                sizeof(browser_combined_source), page_source);
+    if (wrapper_len + (uint32_t)strlen(page_source) + 1U >
+        sizeof(browser_combined_source)) {
+        source_truncated = 1;
+    }
+    copy_text(page_source, sizeof(page_source), browser_combined_source);
+    return css_count;
+}
+
+static int browser_response_is_html(const struct leonos_http_response *response,
+                                    const char *url)
+{
+    if (response && response->content_type[0]) {
+        if (browser_contains_ignore_case(response->content_type, "text/plain") ||
+            browser_contains_ignore_case(response->content_type, "text/css") ||
+            browser_contains_ignore_case(response->content_type, "json")) {
+            return 0;
+        }
+        if (browser_contains_ignore_case(response->content_type, "html") ||
+            browser_contains_ignore_case(response->content_type, "xml")) {
+            return 1;
+        }
+    }
+    if (ends_with_ignore_case(url, ".txt") ||
+        ends_with_ignore_case(url, ".css") ||
+        ends_with_ignore_case(url, ".json")) {
+        return 0;
+    }
+    return 1;
+}
+
 void load_http_url(const char *url)
 {
     struct parsed_http_url parsed;
-    uint32_t body_offset;
-    uint32_t body_len;
-    uint32_t copy_len;
+    struct leonos_http_response response;
     uint32_t pos = 0;
+    uint32_t css_count = 0;
     int ret;
     char normalized[BROWSER_URL_CAP];
     char status[BROWSER_STATUS_CAP];
@@ -192,39 +459,68 @@ void load_http_url(const char *url)
     leonos_ui_edit_state_sync(&address_edit);
     set_status(T("Opening page...", "正在打开页面..."));
     present_browser();
-    ret = leonos_net_http_get(parsed.host, parsed.path, parsed.port, 10000, &http_result);
+    page_source[0] = 0;
+    browser_http_headers[0] = 0;
+    source_truncated = 0;
+    ret = leonos_http_get(normalized, LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
+                          page_source, sizeof(page_source),
+                          browser_http_headers, sizeof(browser_http_headers),
+                          &response);
     if (ret < 0) {
-        format_ret_status(status, sizeof(status), T("HTTP ioctl failed", "HTTP ioctl 失败"), ret);
+        format_ret_status(status, sizeof(status),
+                          T("HTTP client failed", "HTTP 客户端失败"), ret);
         render_message_page(T("Network Error", "网络错误"), status, normalized);
         return;
     }
-    status[0] = 0;
-    append_text(status, &pos, sizeof(status), net_status_name(http_result.status));
-    append_text(status, &pos, sizeof(status), "  HTTP ");
-    append_u32(status, &pos, sizeof(status), http_result.http_status);
-    append_text(status, &pos, sizeof(status), "  ");
-    append_u32(status, &pos, sizeof(status), http_result.response_len);
-    append_text(status, &pos, sizeof(status), " bytes");
-    if (http_result.status != LEONOS_NET_STATUS_OK) {
-        render_message_page(T("Network Error", "网络错误"), status, normalized);
-        return;
+    if (response.final_url[0]) {
+        copy_text(current_location, sizeof(current_location),
+                  response.final_url);
+        copy_text(address_input, sizeof(address_input), current_location);
+        leonos_ui_edit_state_sync(&address_edit);
     }
-    body_offset = response_body_offset(http_result.response, http_result.response_len);
-    body_len = body_offset < http_result.response_len
-                   ? http_result.response_len - body_offset
-                   : http_result.response_len;
-    copy_len = body_len;
-    if (copy_len >= sizeof(page_source)) {
-        copy_len = sizeof(page_source) - 1U;
+    for (uint32_t i = 0; i < response.body_len; ++i) {
+        if (!page_source[i]) {
+            page_source[i] = ' ';
+        }
+    }
+    if (response.flags & LEONOS_HTTP_FLAG_TRUNCATED) {
         source_truncated = 1;
     }
-    for (uint32_t i = 0; i < copy_len; ++i) {
-        char ch = http_result.response[body_offset + i];
-        page_source[i] = ch ? ch : ' ';
+    status[0] = 0;
+    append_text(status, &pos, sizeof(status), net_status_name(response.net_status));
+    append_text(status, &pos, sizeof(status), "  HTTP ");
+    append_u32(status, &pos, sizeof(status), response.http_status);
+    append_text(status, &pos, sizeof(status), "  ");
+    append_u32(status, &pos, sizeof(status), response.body_len);
+    append_text(status, &pos, sizeof(status), " bytes");
+    if (response.redirect_count) {
+        append_text(status, &pos, sizeof(status), "  redirects ");
+        append_u32(status, &pos, sizeof(status), response.redirect_count);
     }
-    page_source[copy_len] = 0;
-    copy_text(page_title, sizeof(page_title), parsed.host);
-    page_is_html = 1;
+    if (response.flags & LEONOS_HTTP_FLAG_CHUNKED) {
+        append_text(status, &pos, sizeof(status), "  chunked");
+    }
+    if (source_truncated) {
+        append_text(status, &pos, sizeof(status), "  truncated");
+    }
+    if (response.net_status != LEONOS_NET_STATUS_OK) {
+        render_message_page(T("Network Error", "网络错误"), status, normalized);
+        return;
+    }
+    page_is_html = (uint8_t)browser_response_is_html(&response,
+                                                     current_location);
+    if (page_is_html) {
+        css_count = browser_inject_external_css(current_location);
+        if (css_count) {
+            append_text(status, &pos, sizeof(status), "  css ");
+            append_u32(status, &pos, sizeof(status), css_count);
+        }
+    }
+    if (parse_http_url(current_location, &parsed)) {
+        copy_text(page_title, sizeof(page_title), parsed.host);
+    } else {
+        copy_text(page_title, sizeof(page_title), T("HTTP Page", "HTTP 页面"));
+    }
     rerender_page();
     set_status(status);
 }
@@ -272,6 +568,42 @@ void load_local_file(const char *path)
                                 : T("File loaded", "文件已打开"));
 }
 
+static int browser_should_download_http_url(const char *url)
+{
+    if (!url || !starts_with_ignore_case(url, "http://")) {
+        return 0;
+    }
+    return ends_with_ignore_case(url, ".bmp") ||
+           ends_with_ignore_case(url, ".png") ||
+           ends_with_ignore_case(url, ".jpg") ||
+           ends_with_ignore_case(url, ".jpeg") ||
+           ends_with_ignore_case(url, ".gif") ||
+           ends_with_ignore_case(url, ".zip") ||
+           ends_with_ignore_case(url, ".bin") ||
+           ends_with_ignore_case(url, ".elf") ||
+           ends_with_ignore_case(url, ".iso") ||
+           ends_with_ignore_case(url, ".vmdk") ||
+           ends_with_ignore_case(url, ".pdf") ||
+           ends_with_ignore_case(url, ".7z") ||
+           ends_with_ignore_case(url, ".tar") ||
+           ends_with_ignore_case(url, ".gz");
+}
+
+static void launch_download_for_url(const char *url)
+{
+    char target[LEONOS_HTTP_URL_LEN];
+    char *argv[3];
+    copy_text(target, sizeof(target), url);
+    argv[0] = "0:/userland/downloadmgr.elf";
+    argv[1] = target;
+    argv[2] = 0;
+    if (leonos_launch_argv(argv) < 0) {
+        set_status(T("Could not start Download Manager", "无法启动下载管理器"));
+    } else {
+        set_status(T("Download started", "下载已开始"));
+    }
+}
+
 void navigate_to(const char *input, uint8_t add_to_history)
 {
     char url[BROWSER_URL_CAP];
@@ -287,7 +619,12 @@ void navigate_to(const char *input, uint8_t add_to_history)
                               "这个版本的 LeonOS Browser 只能打开 http:// 页面。"),
                             url);
     } else if (starts_with_ignore_case(url, "http://")) {
-        load_http_url(url);
+        if (browser_should_download_http_url(url)) {
+            launch_download_for_url(url);
+            return;
+        } else {
+            load_http_url(url);
+        }
     } else if (is_drive_path(url)) {
         load_local_file(url);
     } else {

@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/http.h>
 #include <leonos/i18n.h>
 #include <leonos/net.h>
 #include <leonos/psf_font.h>
@@ -24,6 +25,7 @@
 #define RESPONSE_Y 134
 #define RESPONSE_W (HTTPGET_W - 48)
 #define RESPONSE_H 332
+#define HTTPGET_RESPONSE_MAX (LEONOS_HTTP_HEADER_MAX + LEONOS_HTTP_BODY_MAX + 4U)
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[HTTPGET_W * HTTPGET_H];
@@ -31,8 +33,10 @@ static char host_input[LEONOS_NET_HOSTNAME_LEN] = "example.com";
 static char path_input[LEONOS_NET_HTTP_PATH_LEN] = "/";
 static char port_input[8] = "80";
 static char status_text[160] = "Ready";
-static char summary_text[192] = "Enter a host and path, then send a HTTP/1.0 GET request.";
-static char response_text[LEONOS_NET_HTTP_RESPONSE_MAX + 1];
+static char summary_text[192] = "Enter a host and path, then send a HTTP GET request.";
+static char response_body[LEONOS_HTTP_BODY_MAX + 1];
+static char response_headers[LEONOS_HTTP_HEADER_MAX + 1];
+static char response_text[HTTPGET_RESPONSE_MAX + 1];
 static struct leonos_ui_edit_state host_edit;
 static struct leonos_ui_edit_state path_edit;
 static struct leonos_ui_edit_state port_edit;
@@ -113,19 +117,6 @@ static uint32_t parse_port(const char *text)
     return value;
 }
 
-static void format_ipv4(char *dst, uint32_t cap, uint32_t ip)
-{
-    uint32_t pos = 0;
-    dst[0] = 0;
-    append_u32(dst, &pos, cap, (ip >> 24) & 0xffu);
-    append_char(dst, &pos, cap, '.');
-    append_u32(dst, &pos, cap, (ip >> 16) & 0xffu);
-    append_char(dst, &pos, cap, '.');
-    append_u32(dst, &pos, cap, (ip >> 8) & 0xffu);
-    append_char(dst, &pos, cap, '.');
-    append_u32(dst, &pos, cap, ip & 0xffu);
-}
-
 static const char *status_name(uint32_t status)
 {
     switch (status) {
@@ -159,6 +150,16 @@ static const char *status_name(uint32_t status)
         return T("HTTP failed", "HTTP 失败");
     case LEONOS_NET_STATUS_HTTP_TOO_LARGE:
         return T("Response too large", "响应过大");
+    case LEONOS_NET_STATUS_SOCKET_LIMIT:
+        return T("Socket limit reached", "Socket 数量已满");
+    case LEONOS_NET_STATUS_SOCKET_BAD_HANDLE:
+        return T("Bad socket", "Socket 无效");
+    case LEONOS_NET_STATUS_SOCKET_NOT_CONNECTED:
+        return T("Socket not connected", "Socket 未连接");
+    case LEONOS_NET_STATUS_SOCKET_CLOSED:
+        return T("Socket closed", "Socket 已关闭");
+    case LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED:
+        return T("Protocol unsupported", "协议不支持");
     default:
         return T("Unknown status", "未知状态");
     }
@@ -173,14 +174,56 @@ static void set_status_ret(const char *prefix, int ret)
     append_i32(status_text, &pos, sizeof(status_text), ret);
 }
 
+static uint32_t build_http_url_text(char *dst, uint32_t cap,
+                                    const char *host, const char *path,
+                                    uint32_t port)
+{
+    uint32_t pos = 0;
+    if (!dst || !cap || !host || !host[0]) {
+        return 0;
+    }
+    dst[0] = 0;
+    append_text(dst, &pos, cap, "http://");
+    append_text(dst, &pos, cap, host);
+    if (port != 80U) {
+        append_char(dst, &pos, cap, ':');
+        append_u32(dst, &pos, cap, port);
+    }
+    if (!path || path[0] != '/') {
+        append_char(dst, &pos, cap, '/');
+    }
+    append_text(dst, &pos, cap, path && path[0] ? path : "/");
+    return pos + 1U < cap ? pos : 0;
+}
+
+static void sanitize_nuls(char *text, uint32_t len)
+{
+    for (uint32_t i = 0; text && i < len; ++i) {
+        if (!text[i]) {
+            text[i] = ' ';
+        }
+    }
+}
+
+static void append_http_response_text(const char *headers, const char *body)
+{
+    uint32_t pos = 0;
+    response_text[0] = 0;
+    append_text(response_text, &pos, sizeof(response_text), headers);
+    append_text(response_text, &pos, sizeof(response_text), "\n\n");
+    append_text(response_text, &pos, sizeof(response_text), body);
+}
+
 static void run_http_get(void)
 {
-    struct leonos_net_http_get result;
-    char ip[32];
+    struct leonos_http_response response;
+    char url[LEONOS_HTTP_URL_LEN];
     uint32_t port = parse_port(port_input);
     uint32_t pos = 0;
     int ret;
     response_text[0] = 0;
+    response_body[0] = 0;
+    response_headers[0] = 0;
     response_area.cursor = 0;
     response_area.scroll_line = 0;
     if (!port) {
@@ -188,32 +231,46 @@ static void run_http_get(void)
         copy_text(summary_text, sizeof(summary_text), status_text);
         return;
     }
-    copy_text(status_text, sizeof(status_text), T("Sending HTTP GET...", "正在发送 HTTP GET..."));
-    ret = leonos_net_http_get(host_input, path_input, port, 10000, &result);
-    if (ret < 0) {
-        set_status_ret(T("HTTP ioctl failed", "HTTP ioctl 失败"), ret);
+    if (!build_http_url_text(url, sizeof(url), host_input, path_input, port)) {
+        copy_text(status_text, sizeof(status_text),
+                  T("URL is too large", "URL 过大"));
         copy_text(summary_text, sizeof(summary_text), status_text);
         return;
     }
-    if (result.response_len) {
-        uint32_t copy_len = result.response_len;
-        if (copy_len >= sizeof(response_text)) {
-            copy_len = sizeof(response_text) - 1u;
-        }
-        for (uint32_t i = 0; i < copy_len; ++i) {
-            response_text[i] = result.response[i] ? result.response[i] : ' ';
-        }
-        response_text[copy_len] = 0;
+    copy_text(status_text, sizeof(status_text), T("Sending HTTP GET...", "正在发送 HTTP GET..."));
+    ret = leonos_http_get(url, LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
+                          response_body, sizeof(response_body),
+                          response_headers, sizeof(response_headers),
+                          &response);
+    if (ret < 0) {
+        set_status_ret(T("HTTP client failed", "HTTP 客户端失败"), ret);
+        copy_text(summary_text, sizeof(summary_text), status_text);
+        return;
     }
-    format_ipv4(ip, sizeof(ip), result.remote_ip);
+    sanitize_nuls(response_headers, response.headers_len);
+    sanitize_nuls(response_body, response.body_len);
+    append_http_response_text(response_headers, response_body);
     summary_text[0] = 0;
-    append_text(summary_text, &pos, sizeof(summary_text), status_name(result.status));
-    append_text(summary_text, &pos, sizeof(summary_text), "  IP ");
-    append_text(summary_text, &pos, sizeof(summary_text), ip);
+    append_text(summary_text, &pos, sizeof(summary_text), status_name(response.net_status));
     append_text(summary_text, &pos, sizeof(summary_text), "  HTTP ");
-    append_u32(summary_text, &pos, sizeof(summary_text), result.http_status);
-    append_text(summary_text, &pos, sizeof(summary_text), "  bytes ");
-    append_u32(summary_text, &pos, sizeof(summary_text), result.response_len);
+    append_u32(summary_text, &pos, sizeof(summary_text), response.http_status);
+    append_text(summary_text, &pos, sizeof(summary_text), "  body ");
+    append_u32(summary_text, &pos, sizeof(summary_text), response.body_len);
+    append_text(summary_text, &pos, sizeof(summary_text), " bytes");
+    if (response.redirect_count) {
+        append_text(summary_text, &pos, sizeof(summary_text), "  redirects ");
+        append_u32(summary_text, &pos, sizeof(summary_text), response.redirect_count);
+    }
+    if (response.flags & LEONOS_HTTP_FLAG_CHUNKED) {
+        append_text(summary_text, &pos, sizeof(summary_text), "  chunked");
+    }
+    if (response.flags & LEONOS_HTTP_FLAG_TRUNCATED) {
+        append_text(summary_text, &pos, sizeof(summary_text), "  truncated");
+    }
+    if (response.content_type[0]) {
+        append_text(summary_text, &pos, sizeof(summary_text), "  ");
+        append_text(summary_text, &pos, sizeof(summary_text), response.content_type);
+    }
     copy_text(status_text, sizeof(status_text), summary_text);
     leonos_ui_text_area_state_sync(&response_area, RESPONSE_W);
 }

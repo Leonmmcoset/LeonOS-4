@@ -180,6 +180,16 @@ const char *net_status_name(uint32_t status)
         return T("HTTP failed", "HTTP 失败");
     case LEONOS_NET_STATUS_HTTP_TOO_LARGE:
         return T("Response too large", "响应过大");
+    case LEONOS_NET_STATUS_SOCKET_LIMIT:
+        return T("Socket limit reached", "Socket 数量已满");
+    case LEONOS_NET_STATUS_SOCKET_BAD_HANDLE:
+        return T("Bad socket", "Socket 无效");
+    case LEONOS_NET_STATUS_SOCKET_NOT_CONNECTED:
+        return T("Socket not connected", "Socket 未连接");
+    case LEONOS_NET_STATUS_SOCKET_CLOSED:
+        return T("Socket closed", "Socket 已关闭");
+    case LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED:
+        return T("Protocol unsupported", "协议不支持");
     default:
         return T("Unknown network status", "未知网络状态");
     }
@@ -195,7 +205,7 @@ int parse_http_url(const char *url, struct parsed_http_url *out)
         return 0;
     }
     p = url + 7;
-    while (*p && *p != '/' && *p != ':' && *p != '#' &&
+    while (*p && *p != '/' && *p != ':' && *p != '#' && *p != '?' &&
            host_pos + 1U < sizeof(out->host)) {
         out->host[host_pos++] = *p++;
     }
@@ -218,6 +228,11 @@ int parse_http_url(const char *url, struct parsed_http_url *out)
         }
     }
     if (*p == '/') {
+        while (*p && *p != '#' && path_pos + 1U < sizeof(out->path)) {
+            out->path[path_pos++] = *p++;
+        }
+    } else if (*p == '?') {
+        out->path[path_pos++] = '/';
         while (*p && *p != '#' && path_pos + 1U < sizeof(out->path)) {
             out->path[path_pos++] = *p++;
         }
@@ -272,4 +287,3 @@ void normalize_location(const char *input, char *out, uint32_t cap)
     append_text(out, &pos, cap, "http://");
     append_text(out, &pos, cap, tmp);
 }
-

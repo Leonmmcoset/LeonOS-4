@@ -23,7 +23,6 @@ uint32_t history_count;
 int32_t history_index = -1;
 uint8_t menu_open;
 uint8_t browser_should_exit;
-struct leonos_net_http_get http_result;
 struct leonos_ui_toast_state browser_toast;
 
 uint32_t page_y(void)
@@ -39,10 +38,10 @@ uint32_t page_w(void)
 uint32_t page_h(void)
 {
     uint32_t y = page_y();
-    if (view_h <= y + BROWSER_STATUS_H + 4U) {
+    if (view_h <= y + 4U) {
         return BROWSER_LINE_H;
     }
-    return view_h - y - BROWSER_STATUS_H - 4U;
+    return view_h - y - 4U;
 }
 
 uint32_t text_x(void)

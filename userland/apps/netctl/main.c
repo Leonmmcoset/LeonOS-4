@@ -6,17 +6,26 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
-#define NETCTL_W 620
-#define NETCTL_H 360
+#define NETCTL_W 720
+#define NETCTL_H 500
 #define DOMAIN_LEN LEONOS_NET_HOSTNAME_LEN
+#define CONN_VISIBLE_ROWS 4U
+#define CONN_ROW_H (LEONOS_FONT_H + 4U)
+#define CONN_X 34U
+#define CONN_Y 354U
+#define CONN_W (NETCTL_W - 68U)
+#define CONN_ROWS_Y (CONN_Y + LEONOS_FONT_H + 8U)
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[NETCTL_W * NETCTL_H];
 static struct leonos_net_config config;
+static struct leonos_net_connection_info connections[LEONOS_NET_SOCKET_MAX];
+static uint32_t connection_count;
 static char domain_input[DOMAIN_LEN] = "example.com";
 static char status_text[128] = "Ready";
 static char dns_text[192] = "Enter a host name and resolve an A record.";
 static struct leonos_ui_edit_state domain_edit;
+static struct leonos_ui_listview_state connections_view;
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -99,6 +108,21 @@ static void format_ipv4(char *dst, uint32_t cap, uint32_t ip)
     append_u32(dst, &pos, cap, ip & 0xffu);
 }
 
+static void format_endpoint(char *dst, uint32_t cap, uint32_t ip, uint32_t port)
+{
+    uint32_t pos = 0;
+    dst[0] = 0;
+    append_u32(dst, &pos, cap, (ip >> 24) & 0xffu);
+    append_char(dst, &pos, cap, '.');
+    append_u32(dst, &pos, cap, (ip >> 16) & 0xffu);
+    append_char(dst, &pos, cap, '.');
+    append_u32(dst, &pos, cap, (ip >> 8) & 0xffu);
+    append_char(dst, &pos, cap, '.');
+    append_u32(dst, &pos, cap, ip & 0xffu);
+    append_char(dst, &pos, cap, ':');
+    append_u32(dst, &pos, cap, port);
+}
+
 static void format_mac(char *dst, uint32_t cap, const uint8_t mac[6])
 {
     uint32_t pos = 0;
@@ -134,8 +158,44 @@ static const char *status_name(uint32_t status)
         return T("DNS failed", "DNS 失败");
     case LEONOS_NET_STATUS_DNS_NO_ANSWER:
         return T("No A record", "没有 A 记录");
+    case LEONOS_NET_STATUS_TCP_TIMEOUT:
+        return T("TCP timeout", "TCP 超时");
+    case LEONOS_NET_STATUS_TCP_RESET:
+        return T("TCP reset", "TCP 复位");
+    case LEONOS_NET_STATUS_TCP_FAILED:
+        return T("TCP failed", "TCP 失败");
+    case LEONOS_NET_STATUS_HTTP_FAILED:
+        return T("HTTP failed", "HTTP 失败");
+    case LEONOS_NET_STATUS_HTTP_TOO_LARGE:
+        return T("Response too large", "响应过大");
+    case LEONOS_NET_STATUS_SOCKET_LIMIT:
+        return T("Socket limit reached", "Socket 数量已满");
+    case LEONOS_NET_STATUS_SOCKET_BAD_HANDLE:
+        return T("Bad socket", "Socket 无效");
+    case LEONOS_NET_STATUS_SOCKET_NOT_CONNECTED:
+        return T("Socket not connected", "Socket 未连接");
+    case LEONOS_NET_STATUS_SOCKET_CLOSED:
+        return T("Socket closed", "Socket 已关闭");
+    case LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED:
+        return T("Protocol unsupported", "协议不支持");
     default:
         return T("Unknown status", "未知状态");
+    }
+}
+
+static const char *connection_state_name(uint32_t state)
+{
+    switch (state) {
+    case LEONOS_NET_TCP_SYN_SENT:
+        return "SYN_SENT";
+    case LEONOS_NET_TCP_ESTABLISHED:
+        return "ESTABLISHED";
+    case LEONOS_NET_TCP_TIME_WAIT:
+        return "TIME_WAIT";
+    case LEONOS_NET_TCP_CLOSED:
+        return "CLOSED";
+    default:
+        return "UNKNOWN";
     }
 }
 
@@ -160,6 +220,8 @@ static void set_status_ret(const char *prefix, int ret)
     append_i32(status_text, &pos, sizeof(status_text), ret);
 }
 
+static void refresh_connections(void);
+
 static void refresh_config(void)
 {
     int ret = leonos_net_config(&config);
@@ -169,6 +231,19 @@ static void refresh_config(void)
         return;
     }
     copy_text(status_text, sizeof(status_text), T("Network configuration refreshed", "网络配置已刷新"));
+    refresh_connections();
+}
+
+static void refresh_connections(void)
+{
+    int ret = leonos_net_connections(connections, LEONOS_NET_SOCKET_MAX,
+                                     &connection_count);
+    if (ret < 0) {
+        connection_count = 0;
+        set_status_ret(T("Connection query failed", "读取连接失败"), ret);
+        return;
+    }
+    leonos_ui_listview_state_set_count(&connections_view, connection_count);
 }
 
 static void renew_dhcp(void)
@@ -180,6 +255,7 @@ static void renew_dhcp(void)
         return;
     }
     config = dhcp.config;
+    refresh_connections();
     copy_text(status_text, sizeof(status_text), status_name(dhcp.status));
 }
 
@@ -210,6 +286,7 @@ static void resolve_domain(void)
         append_text(dns_text, &pos, sizeof(dns_text), domain_input);
     }
     copy_text(status_text, sizeof(status_text), status_name(dns.status));
+    refresh_connections();
 }
 
 static void draw_row(struct leonos_ui_surface *ui, uint32_t y,
@@ -221,6 +298,14 @@ static void draw_row(struct leonos_ui_surface *ui, uint32_t y,
 
 static void draw_netctl(struct leonos_ui_surface *ui)
 {
+    static const struct leonos_ui_list_column conn_cols[] = {
+        { "Socket", 58 },
+        { "PID", 48 },
+        { "State", 112 },
+        { "Local", 138 },
+        { "Remote", 188 },
+        { "Bytes", 104 },
+    };
     char mac[32];
     char ip[32];
     char mask[32];
@@ -258,13 +343,68 @@ static void draw_netctl(struct leonos_ui_surface *ui)
     draw_row(ui, 218, T("DNS:", "DNS:"), dns);
     draw_row(ui, 242, T("Lease:", "租约:"), lease);
 
-    leonos_ui_button(ui, 24, 280, 88, LEONOS_UI_BUTTON_H, T("Refresh", "刷新"), 0);
-    leonos_ui_button(ui, 124, 280, 118, LEONOS_UI_BUTTON_H, T("Renew DHCP", "更新 DHCP"), 0);
-    leonos_ui_text(ui, 264, 284, T("Host:", "域名:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_edit_state_draw(ui, 308, 280, 178, &domain_edit, 0);
-    leonos_ui_button(ui, 498, 280, 86, LEONOS_UI_BUTTON_H, T("Resolve", "解析"), 0);
-    leonos_ui_text_clipped(ui, 24, 316, NETCTL_W - 48, dns_text,
+    leonos_ui_button(ui, 24, 274, 88, LEONOS_UI_BUTTON_H, T("Refresh", "刷新"), 0);
+    leonos_ui_button(ui, 124, 274, 118, LEONOS_UI_BUTTON_H, T("Renew DHCP", "更新 DHCP"), 0);
+    leonos_ui_text(ui, 274, 278, T("Host:", "域名:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_edit_state_draw(ui, 318, 274, 220, &domain_edit, 0);
+    leonos_ui_button(ui, 552, 274, 86, LEONOS_UI_BUTTON_H, T("Resolve", "解析"), 0);
+    leonos_ui_text_clipped(ui, 24, 310, NETCTL_W - 48, dns_text,
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+
+    leonos_ui_groupbox(ui, 24, 332, NETCTL_W - 48, 132,
+                       T("TCP Connections", "TCP 连接"));
+    leonos_ui_listview_header(ui, CONN_X, CONN_Y, CONN_W,
+                              conn_cols, 6);
+    if (connection_count == 0) {
+        leonos_ui_text(ui, CONN_X + 8, CONN_ROWS_Y + 8,
+                       T("No TCP client sockets.", "没有 TCP 客户端 socket。"),
+                       LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    } else {
+        for (uint32_t row = 0; row < CONN_VISIBLE_ROWS; ++row) {
+            uint32_t index = connections_view.scroll + row;
+            char socket_text[16];
+            char pid_text[16];
+            char local_text[40];
+            char remote_text[48];
+            char bytes_text[48];
+            const char *cells[6];
+            uint32_t bpos = 0;
+            if (index >= connection_count || index >= LEONOS_NET_SOCKET_MAX) {
+                break;
+            }
+            socket_text[0] = 0;
+            pid_text[0] = 0;
+            bytes_text[0] = 0;
+            append_u32(socket_text, &bpos, sizeof(socket_text),
+                       (uint32_t)connections[index].socket);
+            bpos = 0;
+            append_u32(pid_text, &bpos, sizeof(pid_text),
+                       connections[index].owner_pid);
+            format_endpoint(local_text, sizeof(local_text),
+                            connections[index].local_ip,
+                            connections[index].local_port);
+            format_endpoint(remote_text, sizeof(remote_text),
+                            connections[index].remote_ip,
+                            connections[index].remote_port);
+            bpos = 0;
+            append_u32(bytes_text, &bpos, sizeof(bytes_text),
+                       connections[index].tx_bytes);
+            append_char(bytes_text, &bpos, sizeof(bytes_text), '/');
+            append_u32(bytes_text, &bpos, sizeof(bytes_text),
+                       connections[index].rx_bytes);
+            cells[0] = socket_text;
+            cells[1] = pid_text;
+            cells[2] = connection_state_name(connections[index].state);
+            cells[3] = local_text;
+            cells[4] = remote_text;
+            cells[5] = bytes_text;
+            leonos_ui_listview_row(ui, CONN_X, CONN_ROWS_Y + row * CONN_ROW_H,
+                                   CONN_W, conn_cols, cells, 6,
+                                   connections_view.selected == (int32_t)index
+                                       ? LEONOS_UI_MENU_SELECTED
+                                       : 0);
+        }
+    }
     leonos_ui_statusbar(ui, NETCTL_H - 28, 28, status_text);
 }
 
@@ -292,6 +432,7 @@ int main(void)
     }
     leonos_ui_bind(&ui, pixels, NETCTL_W, NETCTL_H, NETCTL_W);
     leonos_ui_edit_state_init(&domain_edit, domain_input, sizeof(domain_input));
+    leonos_ui_listview_state_init(&connections_view, CONN_VISIBLE_ROWS, CONN_ROW_H);
     domain_edit.focused = 0;
     refresh_config();
     draw_netctl(&ui);
@@ -305,18 +446,33 @@ int main(void)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
                 if (leonos_ui_edit_state_handle_mouse(&domain_edit, event.x, event.y,
-                                                      308, 280, 178, event.buttons)) {
+                                                      318, 274, 220, event.buttons)) {
+                    draw_netctl(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
+                }
+                if (leonos_ui_listview_state_handle_mouse(&connections_view,
+                                                          event.x, event.y,
+                                                          CONN_X, CONN_ROWS_Y,
+                                                          CONN_W, 0)) {
                     draw_netctl(&ui);
                     leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
                 }
                 if (event.buttons & 1u) {
-                    if (hit_rect(event.x, event.y, 24, 280, 88, LEONOS_UI_BUTTON_H)) {
+                    if (hit_rect(event.x, event.y, 24, 274, 88, LEONOS_UI_BUTTON_H)) {
                         refresh_config();
-                    } else if (hit_rect(event.x, event.y, 124, 280, 118, LEONOS_UI_BUTTON_H)) {
+                    } else if (hit_rect(event.x, event.y, 124, 274, 118, LEONOS_UI_BUTTON_H)) {
                         renew_dhcp();
-                    } else if (hit_rect(event.x, event.y, 498, 280, 86, LEONOS_UI_BUTTON_H)) {
+                    } else if (hit_rect(event.x, event.y, 552, 274, 86, LEONOS_UI_BUTTON_H)) {
                         resolve_domain();
                     }
+                    draw_netctl(&ui);
+                    leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
+                }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                if (hit_rect(event.x, event.y, CONN_X, CONN_ROWS_Y,
+                             CONN_W, CONN_VISIBLE_ROWS * CONN_ROW_H) &&
+                    leonos_ui_listview_state_handle_wheel(&connections_view, event.dy)) {
                     draw_netctl(&ui);
                     leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
                 }
