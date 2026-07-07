@@ -1,0 +1,94 @@
+name: Build ISO and upload artifact
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      build_dir:
+        description: 'Build directory (example: build or out)'
+        required: false
+        default: 'build'
+      iso_glob:
+        description: 'Glob pattern to find ISO(s) after build'
+        required: false
+        default: 'build/*.iso'
+      artifact_name:
+        description: 'Artifact name to upload'
+        required: false
+        default: 'leonos-iso'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_DIR: build
+      ISO_GLOB: build/*.iso
+      ARTIFACT_NAME: leonos-iso
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Apply workflow_dispatch overrides
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        if [ -n "${{ github.event.inputs.build_dir }}" ]; then echo "BUILD_DIR=${{ github.event.inputs.build_dir }}" >> $GITHUB_ENV; fi
+        if [ -n "${{ github.event.inputs.iso_glob }}" ]; then echo "ISO_GLOB=${{ github.event.inputs.iso_glob }}" >> $GITHUB_ENV; fi
+        if [ -n "${{ github.event.inputs.artifact_name }}" ]; then echo "ARTIFACT_NAME=${{ github.event.inputs.artifact_name }}" >> $GITHUB_ENV; fi
+
+    - name: Install system packages and meson
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build xorriso squashfs-tools python3-pip || true
+        python3 -m pip install --upgrade meson
+
+    - name: Build (meson + ninja if available, otherwise ninja)
+      run: |
+        set -e
+        echo "BUILD_DIR=$BUILD_DIR"
+        # If meson.build exists, use meson+ninja flow
+        if [ -f meson.build ]; then
+          echo "Detected meson.build — using meson+ninja"
+          meson setup "$BUILD_DIR" --buildtype=release || meson configure "$BUILD_DIR"
+          ninja -C "$BUILD_DIR" || true
+          # try common installer targets if top-level ninja didn't produce iso
+          ninja -C "$BUILD_DIR" installer || ninja -C "$BUILD_DIR" iso || true
+        else
+          echo "No meson.build — trying ninja directly"
+          # if build dir has build.ninja, use it; otherwise try common ninja targets
+          if [ -f "$BUILD_DIR/build.ninja" ]; then
+            ninja -C "$BUILD_DIR" || true
+          else
+            ninja installer || ninja -C out installer || ninja || true
+          fi
+        fi
+
+    - name: Find generated ISO(s)
+      id: find_isos
+      run: |
+        set -e
+        echo "Searching for ISOs with pattern: $ISO_GLOB"
+        # Expand glob and print found files
+        matches=$(bash -lc "echo $ISO_GLOB")
+        # Use find fallback if glob doesn't match
+        ISOS=$(ls -1 $ISO_GLOB 2>/dev/null || true)
+        if [ -z "$ISOS" ]; then
+          ISOS=$(find . -type f -iname '*.iso' -maxdepth 6 -print | sed 's|^\./||' || true)
+        fi
+        if [ -z "$ISOS" ]; then
+          echo "No ISO found."
+          exit 1
+        fi
+        echo "Found ISOs:"
+        echo "$ISOS"
+        # Write newline-separated list to outputs for upload step
+        echo "$ISOS" > isos.list
+        echo "isos=$(cat isos.list | tr '\n' ';')" >> $GITHUB_OUTPUT
+
+    - name: Upload ISO artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARTIFACT_NAME }}
+        path: |
+          ${{ steps.find_isos.outputs.isos }}
