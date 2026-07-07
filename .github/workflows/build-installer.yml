@@ -59,6 +59,10 @@ jobs:
         run: |
           cp configs/default.conf .config
 
+      - name: Prepare build.ninja
+        run: |
+          python3 ./tools/gen_ninja.py
+
       - name: Build installer
         run: |
           ninja installer
