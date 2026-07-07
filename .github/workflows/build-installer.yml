@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
 
@@ -46,7 +46,7 @@ jobs:
           rustup default stable
           rustup target add x86_64-unknown-none
 
-      - name: Verify Tools
+      - name: Verify toolchain
         run: |
           clang --version
           ld.lld --version
@@ -55,15 +55,19 @@ jobs:
           cargo --version
           ninja --version
 
-      - name: Build Installer
+      - name: Prepare build configuration
+        run: |
+          cp configs/default.conf .config
+
+      - name: Build installer
         run: |
           ninja installer
 
-      - name: Upload Installer ISO
+      - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
           name: LeonOS-Installer
           path: |
             build/images/leonos4-installer.iso
-            build/install/root.fat
           if-no-files-found: error
+          compression-level: 0
