@@ -212,6 +212,16 @@ static int has_prefix(const char *text, const char *prefix)
     return 1;
 }
 
+static int has_substring(const char *text, const char *needle)
+{
+    for (int i = 0; text[i]; ++i) {
+        if (has_prefix(text + i, needle)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int run_file_mmap_tests(void)
 {
     int fd = open("0:/etc/leonos.conf", LEONOS_O_RDONLY, 0);
@@ -245,7 +255,7 @@ static int run_file_mmap_tests(void)
         close(fd);
         return fail("file-mmap", -1);
     }
-    if (!has_prefix(map, "CONFIG_ARCH_X86_64=y\n")) {
+    if (!has_substring(map, "CONFIG_LICENSE_SERVER_URL=")) {
         munmap(map, 8192);
         close(fd);
         return fail("file-mmap-prefix", -1);

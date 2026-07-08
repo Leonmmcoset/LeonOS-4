@@ -18,15 +18,27 @@ uint32_t line_count = 1;
 uint32_t scroll_line;
 struct browser_link links[BROWSER_MAX_LINKS];
 uint32_t link_count;
+struct browser_form browser_forms[BROWSER_MAX_FORMS];
+uint32_t browser_form_count;
+struct browser_form_control browser_form_controls[BROWSER_MAX_FORM_CONTROLS];
+uint32_t browser_form_control_count;
 char history[BROWSER_HISTORY_MAX][BROWSER_URL_CAP];
 uint32_t history_count;
 int32_t history_index = -1;
 uint8_t menu_open;
 uint8_t browser_should_exit;
+uint8_t browser_embedded;
+uint8_t browser_embed_edit_active;
+uint32_t browser_embed_edit_control;
+char browser_embed_edit_value[BROWSER_FORM_VALUE_CAP];
+struct leonos_ui_edit_state browser_embed_edit_state;
 struct leonos_ui_toast_state browser_toast;
 
 uint32_t page_y(void)
 {
+    if (browser_embedded) {
+        return BROWSER_TOOLBAR_H + 4U;
+    }
     return BROWSER_MENU_H + BROWSER_TOOLBAR_H + BROWSER_ADDR_H + 4U;
 }
 

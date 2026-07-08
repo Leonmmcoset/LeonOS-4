@@ -33,9 +33,13 @@ The current devfs surface is deliberately small:
 Multi-user v1 uses these fixed paths:
 
 - `0:/etc/accounts.db`: middlelayer-owned account database.
+- `0:/etc/license.dat`: local activation record with mode, email hash,
+  machine ID, key hash, and local HMAC; plaintext keys are not stored.
 - `0:/etc/oobe.done`: first-run completion marker.
 - `0:/etc/fileassoc.cfg`: optional launcher file-association overrides.
 - `0:/etc/services.cfg`: optional startup/service policy overrides.
+- `0:/docs`: bundled and third-party `.hlp` help containers shown by the
+  desktop Documents menu and opened by `oshlp.elf`.
 - `0:/var/run/services.state`: service runtime state written by
   `serviced.elf`.
 - `0:/var/run/services.cmd`: one-shot service control command file written by
@@ -47,11 +51,23 @@ Multi-user v1 uses these fixed paths:
 - `0:/users/<name>/downloads`
 - `0:/tmp`: shared temporary write area.
 
-The installed image does not pre-create `accounts.db`. On first boot, OOBE
+The installed image does not pre-create `accounts.db` or `license.dat`. On
+first boot, OOBE requires license activation first when the build's
+`LEONOS_LICENSE_REQUIRE` policy is enabled. Online activation posts email, key,
+and the machine ID to the license server compiled into the license binaries
+through `CONFIG_LICENSE_SERVER_URL`. The machine ID comes from stable platform
+identity: SMBIOS System UUID first, then boot GPT disk and ESP partition GUIDs
+when SMBIOS UUID is unavailable. Network adapter MAC addresses are not part of
+the license machine ID, so adding or removing an e1000 adapter does not change
+activation state. Offline activation validates a
+50-character key against the local RTC date and only checks the offline key's
+validity window at activation time. After the license is valid, or after the
+source/build configuration compiles a no-license policy into the binaries, OOBE
 creates the first administrator, creates the home layout, writes
 `0:/etc/oobe.done`, and enters the administrator desktop. Later boots enter
-`login.elf`. If `oobe.done` exists but middlelayer cannot find an enabled
-administrator in `accounts.db`, desktop launches OOBE again.
+`login.elf`. If `oobe.done` exists but desktop cannot find an enabled
+administrator, or cannot find a valid license when the compiled policy requires
+one, desktop launches OOBE again.
 
 New account creation seeds the user's desktop with `File Manager.lnk`,
 `Task Manager.lnk`, `Settings.lnk`, and `Browser.lnk`, pointing to
@@ -61,6 +77,18 @@ New account creation seeds the user's desktop with `File Manager.lnk`,
 `downloadmgr.elf` saves successful downloads to `0:/users/<name>/downloads`
 when a user session is active, and falls back to `0:/tmp` when no home directory
 is available.
+
+## Help Documents
+
+LeonOS help files use the `.hlp` extension and are plain-text containers with
+file metadata plus one or more Markdown document pages. The default system help
+file is `0:/docs/leonos.hlp`; `oshlp.elf <file.hlp> [doc.id]` opens a file and
+optionally jumps directly to one page.
+
+Each document page can provide `title.en`, `title.zh`, `path.en`, `path.zh`,
+`author`, and `version` metadata. `path.*` uses `/` separators to build the
+left-side tree in `oshlp.elf`. The desktop Start menu scans only top-level
+`0:/docs/*.hlp` files and displays the file-level title when it can be read.
 
 ## Supported operations
 
@@ -99,13 +127,14 @@ implement a "disable inherited permissions" switch.
 
 Default policy:
 
-- `0:/boot`, `0:/system`, `0:/userland`, and `0:/etc`: System and
+- `0:/boot`, `0:/docs`, `0:/system`, `0:/userland`, and `0:/etc`: System and
   Administrators get full control; Users get read/execute.
 - `0:/users/<name>` and descendants: Owner, System, and Administrators get full
   control by default. Other normal users are not granted access.
 - `0:/tmp`: Users, System, and Administrators get read/write/execute/delete.
 - `0:/etc/accounts.db` and `LEONACL.SYS` are denied to user tasks; supported
-  access goes through auth and ACL APIs.
+  access goes through auth and ACL APIs. License OOBE writes
+  `0:/etc/license.dat` before normal user login exists.
 - Installer RAM-root boots bypass normal policy so installation/update code can
   copy the ESP payload to target drive paths such as `1:/`.
 

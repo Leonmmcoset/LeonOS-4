@@ -7,7 +7,7 @@ when changing the kernel, loader, middlelayer, installer, or user ABI.
 - [Syscalls](SYSCALLS.md): syscall entry convention, syscall table,
   `mmap`/`munmap`, process calls, and ioctl groups.
 - [Filesystem](FILESYSTEM.md): numbered drives, mount policy, FAT32 support,
-  and current limits.
+  bundled `.hlp` help documents, and current limits.
 - [Boot and Integrity](BOOT_AND_INTEGRITY.md): loader boot flow, SHA-256
   component checks, installer compatibility, and trust boundary.
 - [Middlelayer](MIDDLELAYER.md): current middlelayer services, ABI files, and

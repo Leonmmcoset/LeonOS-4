@@ -1147,6 +1147,7 @@ static int osmlayer_path_is_system_tree(const char *path)
 {
     return osmlayer_text_eq(path, "0:/") ||
            osmlayer_text_eq(path, "0:/boot") || osmlayer_path_under(path, "0:/boot") ||
+           osmlayer_text_eq(path, "0:/docs") || osmlayer_path_under(path, "0:/docs") ||
            osmlayer_text_eq(path, "0:/system") || osmlayer_path_under(path, "0:/system") ||
            osmlayer_text_eq(path, "0:/userland") || osmlayer_path_under(path, "0:/userland") ||
            osmlayer_text_eq(path, "0:/etc") || osmlayer_path_under(path, "0:/etc") ||

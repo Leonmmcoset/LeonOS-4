@@ -14,7 +14,7 @@
 #define LEONOS_LAUNCH_ERR_SHORTCUT_LOOP -1007
 #define LEONOS_LAUNCH_ERR_EXISTS -1008
 #define LEONOS_LAUNCH_ERR_ALREADY_RUNNING -1009
-#define LEONOS_LAUNCH_ASSOC_COUNT 5U
+#define LEONOS_LAUNCH_ASSOC_COUNT 6U
 
 struct leonos_launch_assoc_app {
     const char *name;

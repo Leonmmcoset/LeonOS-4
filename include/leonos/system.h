@@ -6,11 +6,20 @@
 #define LEONOS_IOCTL_SYSTEM_INFO 0x4c535953UL
 #define LEONOS_IOCTL_PERF_INFO 0x4c504552UL
 #define LEONOS_IOCTL_TIME_INFO 0x4c54494dUL
+#define LEONOS_IOCTL_MACHINE_IDENTITY 0x4c4d4944UL
 
 #define LEONOS_SYSTEM_NAME_LEN 32U
 #define LEONOS_SYSTEM_VERSION_LEN 32U
 #define LEONOS_SYSTEM_TIME_LEN 32U
 #define LEONOS_SYSTEM_COPYRIGHT_LEN 96U
+#define LEONOS_MACHINE_IDENTITY_VERSION 1U
+#define LEONOS_MACHINE_IDENTITY_SOURCE_LEN 32U
+#define LEONOS_MACHINE_IDENTITY_UUID_LEN 37U
+#define LEONOS_MACHINE_IDENTITY_VENDOR_LEN 48U
+
+#define LEONOS_MACHINE_IDENTITY_FLAG_PLATFORM_UUID 0x00000001U
+#define LEONOS_MACHINE_IDENTITY_FLAG_BOOT_DISK_GUID 0x00000002U
+#define LEONOS_MACHINE_IDENTITY_FLAG_BOOT_PARTITION_GUID 0x00000004U
 
 struct leonos_system_info {
     char kernel_name[LEONOS_SYSTEM_NAME_LEN];
@@ -50,9 +59,22 @@ struct leonos_time_info {
     uint32_t reserved;
 };
 
+struct leonos_machine_identity {
+    uint32_t version;
+    uint32_t flags;
+    char source[LEONOS_MACHINE_IDENTITY_SOURCE_LEN];
+    char platform_uuid[LEONOS_MACHINE_IDENTITY_UUID_LEN];
+    char boot_disk_guid[LEONOS_MACHINE_IDENTITY_UUID_LEN];
+    char boot_partition_guid[LEONOS_MACHINE_IDENTITY_UUID_LEN];
+    char firmware_vendor[LEONOS_MACHINE_IDENTITY_VENDOR_LEN];
+    uint32_t firmware_revision;
+    uint32_t reserved;
+};
+
 int leonos_system_info(struct leonos_system_info *info);
 int leonos_perf_info(struct leonos_perf_info *info);
 int leonos_time_info(struct leonos_time_info *info);
+int leonos_machine_identity(struct leonos_machine_identity *identity);
 int leonos_system_reboot(void);
 int leonos_system_shutdown(void);
 

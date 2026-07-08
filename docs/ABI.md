@@ -171,6 +171,17 @@ reports whether the active IPv4 configuration came from DHCP or the static
 fallback, and its raw values carry the MAC address, local IPv4 address, and
 gateway for device-manager style tools.
 
+## Machine Identity ABI
+
+`LEONOS_IOCTL_MACHINE_IDENTITY` returns `struct leonos_machine_identity` from
+`include/leonos/system.h`. The kernel fills stable platform identity from SMBIOS
+System UUID when available and augments it with boot GPT disk and ESP partition
+GUIDs after storage is mounted. License code uses SMBIOS UUID as the primary
+machine binding and falls back to the boot GPT GUID pair when firmware does not
+provide a valid UUID. Network adapter MAC addresses are deliberately excluded
+from the license machine ID so hot-adding or removing e1000 hardware does not
+invalidate an existing activation.
+
 ## Network ABI
 
 `include/leonos/net.h` exposes the network ioctl ABI. It covers configuration,
@@ -179,8 +190,9 @@ DHCP renew, DNS A lookups, ICMP ping, a compatibility fixed-buffer
 
 Runtime DHCP renew mutates the global IPv4 configuration, so
 `LEONOS_IOCTL_NET_DHCP` is restricted to administrators and trusted service
-tasks. Ordinary users can still read network configuration and use DNS, HTTP,
-ping, and TCP client socket APIs.
+tasks. The license OOBE has a narrow pre-login exception: `0:/userland/oobe.elf`
+may renew DHCP only while `0:/etc/oobe.done` is absent. Ordinary users can still
+read network configuration and use DNS, HTTP, ping, and TCP client socket APIs.
 
 Socket requests use:
 
@@ -218,7 +230,10 @@ of scope for this ABI version.
 The launcher library in `leonos/launch.h` owns user-facing file launch policy.
 It supports `.lnk` shortcuts, built-in program aliases, and persistent extension
 associations stored in `0:/etc/fileassoc.cfg`. Settings can edit the common
-associations for `.txt`, `.md`, `.html`, `.htm`, and `.bmp`.
+associations for `.txt`, `.md`, `.html`, `.htm`, `.bmp`, and `.hlp`.
+The default `.hlp` handler is `0:/userland/oshlp.elf`; it accepts
+`oshlp.elf <file.hlp> [doc.id]` and opens a Markdown page inside a LeonOS help
+container.
 
 Current companion applications:
 
@@ -226,6 +241,9 @@ Current companion applications:
   the current user's `0:/users/<name>/downloads` directory.
 - `imageview.elf`: opens uncompressed 24/32-bit BMP files, supports Fit/1x/2x
   zoom, and can move to previous/next BMP siblings in the same directory.
+- `oshlp.elf`: opens LeonOS `.hlp` help containers from `0:/docs` or any path
+  passed by another app. The help viewer uses the current system language as its
+  default but language changes inside the window are local to that process.
 - `serviced.elf`: protected background service runtime. Desktop starts it once
   after the window server is ready. It writes `0:/var/run/services.state`,
   consumes `0:/var/run/services.cmd`, logs to `0:/var/log/services.log`, and

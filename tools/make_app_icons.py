@@ -411,6 +411,9 @@ def draw_icon(name: str) -> list[list[tuple[int, int, int, int]]]:
         icon_browser(c)
     elif name == "imageview":
         icon_imageview(c)
+    elif name == "oshlp":
+        draw_document(c, CYAN)
+        text3(c, 6, 6, "!", BLUE)
     elif name == "diskmgr":
         icon_diskmgr(c)
     elif name == "devmgr":

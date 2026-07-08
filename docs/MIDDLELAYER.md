@@ -97,9 +97,10 @@ The ACL service supports:
 - Best-effort create/delete/rename notifications so directory ACL records track
   file operations.
 
-When metadata is missing, middlelayer synthesizes defaults for system trees,
-user homes, and `0:/tmp`. When metadata is corrupt, ordinary access is denied
-and administrators can repair the object from File Manager.
+When metadata is missing, middlelayer synthesizes defaults for system trees
+including `0:/docs`, user homes, and `0:/tmp`. When metadata is corrupt,
+ordinary access is denied and administrators can repair the object from File
+Manager.
 
 Middlelayer also creates and repairs:
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 from pathlib import Path
 
 
@@ -34,6 +35,7 @@ NORMAL_USER_APPS = [
     "downloadmgr",
     "browser",
     "imageview",
+    "oshlp",
     "settings",
     "diskmgr",
     "devmgr",
@@ -41,6 +43,11 @@ NORMAL_USER_APPS = [
 INSTALLER_USER_APPS = [
     "desktop",
     "installer",
+]
+INSTALLER_POLICY_APPS = [
+    "desktop",
+    "oobe",
+    "settings",
 ]
 USER_APPS = NORMAL_USER_APPS + [
     app for app in INSTALLER_USER_APPS if app not in NORMAL_USER_APPS
@@ -66,6 +73,22 @@ SYSTEM_FILES = [
     ),
 ]
 
+CONFIG_DEFAULTS = {
+    "CONFIG_VMDK_REQUIRE_LICENSE": "y",
+    "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE": "y",
+    "CONFIG_IMAGE_SIZE_MIB": "96",
+    "CONFIG_INSTALLER_ROOT_SIZE_MIB": "64",
+    "CONFIG_NINJA_REGENERATE_BEFORE_BUILD": "n",
+    "CONFIG_QEMU_MEMORY_MB": "512",
+    "CONFIG_QEMU_DISPLAY_WIDTH": "1920",
+    "CONFIG_QEMU_DISPLAY_HEIGHT": "1080",
+    "CONFIG_QEMU_ENABLE_KVM": "y",
+    "CONFIG_QEMU_NET_DEVICE": '"e1000"',
+    "CONFIG_QEMU_OVMF_PATH": '"/usr/share/ovmf/OVMF.fd"',
+    "CONFIG_LICENSE_SERVER_URL": '"http://127.0.0.1:30301"',
+    "CONFIG_LICENSE_DEBUG_LOG": "y",
+}
+
 
 def r(path: Path | str) -> str:
     p = Path(path)
@@ -87,8 +110,72 @@ def obj_for(src: Path, prefix: str) -> Path:
     return ROOT / "build" / "obj" / prefix / rel.with_suffix(rel.suffix + suffix)
 
 
+def user_app_sources(app: str) -> list[Path]:
+    sources = collect([
+        f"userland/apps/{app}/*.c",
+        f"userland/apps/{app}/*.S",
+    ])
+    if app == "oobe":
+        browser_sources = [
+            src for src in collect(["userland/apps/browser/*.c"])
+            if src.name != "main.c"
+        ]
+        sources.extend(browser_sources)
+    return sorted(sources)
+
+
 def write_line(lines: list[str], line: str = "") -> None:
     lines.append(line)
+
+
+def read_config(path: Path) -> dict[str, str]:
+    values = dict(CONFIG_DEFAULTS)
+    if not path.exists():
+        return values
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("# CONFIG_") and line.endswith(" is not set"):
+            key = line[2 : -len(" is not set")]
+            if key in CONFIG_DEFAULTS:
+                values[key] = "n"
+            continue
+        if line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key in CONFIG_DEFAULTS:
+            values[key] = value.strip()
+    return values
+
+
+def config_bool(values: dict[str, str], key: str) -> bool:
+    return values.get(key, CONFIG_DEFAULTS[key]) == "y"
+
+
+def config_int(values: dict[str, str], key: str) -> int:
+    raw = values.get(key, CONFIG_DEFAULTS[key]).strip()
+    try:
+        return int(raw, 10)
+    except ValueError:
+        return int(CONFIG_DEFAULTS[key], 10)
+
+
+def config_string(values: dict[str, str], key: str) -> str:
+    raw = values.get(key, CONFIG_DEFAULTS[key]).strip()
+    if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+        raw = raw[1:-1]
+    return raw.replace('\\"', '"').replace("\\\\", "\\")
+
+
+def safe_qemu_device_model(value: str) -> str:
+    if not value:
+        return ""
+    for ch in value:
+        if not (ch.isalnum() or ch in "._-"):
+            return ""
+    return value
 
 
 def main() -> int:
@@ -98,6 +185,22 @@ def main() -> int:
 
     out = ROOT / args.out
     lines: list[str] = []
+    config = read_config(ROOT / ".config")
+    ninja_regen = config_bool(config, "CONFIG_NINJA_REGENERATE_BEFORE_BUILD")
+    image_size_mib = config_int(config, "CONFIG_IMAGE_SIZE_MIB")
+    installer_root_size_mib = config_int(config, "CONFIG_INSTALLER_ROOT_SIZE_MIB")
+    qemu_memory_mb = config_int(config, "CONFIG_QEMU_MEMORY_MB")
+    qemu_display_width = config_int(config, "CONFIG_QEMU_DISPLAY_WIDTH")
+    qemu_display_height = config_int(config, "CONFIG_QEMU_DISPLAY_HEIGHT")
+    qemu_kvm = "-enable-kvm " if config_bool(config, "CONFIG_QEMU_ENABLE_KVM") else ""
+    qemu_net_model = safe_qemu_device_model(config_string(config, "CONFIG_QEMU_NET_DEVICE"))
+    qemu_net = (
+        f"-netdev user,id=net0 -device {qemu_net_model},netdev=net0 "
+        if qemu_net_model else ""
+    )
+    qemu_ovmf_path = config_string(config, "CONFIG_QEMU_OVMF_PATH")
+    qemu_bios = f"-bios {shlex.quote(qemu_ovmf_path)} " if qemu_ovmf_path else ""
+    qemu_vga = f"-device VGA,xres={qemu_display_width},yres={qemu_display_height}"
 
     cc = os.environ.get("CC", "clang")
     rustc = os.environ.get("RUSTC", "rustc")
@@ -115,10 +218,12 @@ def main() -> int:
         "-fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iinclude"
     )
     asflags_loader = "-target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Iinclude"
-    cflags_user = (
+    cflags_user_base = (
         "-target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector "
         "-fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iuserland/libc/include -Iinclude"
     )
+    cflags_user = f"{cflags_user_base} -include include/generated/autoconf.h"
+    cflags_user_installer_policy = f"{cflags_user_base} -include include/generated/autoconf-installer.h"
     asflags_user = "-target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Iuserland/libc/include -Iinclude"
 
     write_line(lines, "ninja_required_version = 1.10")
@@ -130,6 +235,16 @@ def main() -> int:
     write_line(lines, "rule kconfig_sync")
     write_line(lines, "  command = python3 tools/kconfig_sync.py")
     write_line(lines, "  description = KCONFIG sync")
+    write_line(lines)
+    write_line(lines, "rule ensure_config")
+    write_line(lines, "  command = test -f $out || cp $in $out")
+    write_line(lines, "  restat = 1")
+    write_line(lines, "  description = CONFIG $out")
+    write_line(lines)
+    write_line(lines, "rule gen_build_ninja")
+    write_line(lines, "  command = python3 tools/gen_ninja.py --out $out")
+    write_line(lines, "  generator = 1")
+    write_line(lines, "  description = GEN.NINJA $out")
     write_line(lines)
     write_line(lines, "rule build_info")
     write_line(lines, "  command = python3 tools/build_info.py --header $out --state build/version/build_number.txt")
@@ -185,6 +300,12 @@ def main() -> int:
     write_line(lines, "  deps = gcc")
     write_line(lines, "  description = CC.USER $out")
     write_line(lines)
+    write_line(lines, "rule cc_user_installer_policy")
+    write_line(lines, f"  command = $cc {cflags_user_installer_policy} -MMD -MF $out.d -c $in -o $out")
+    write_line(lines, "  depfile = $out.d")
+    write_line(lines, "  deps = gcc")
+    write_line(lines, "  description = CC.USER.INSTALLER $out")
+    write_line(lines)
     write_line(lines, "rule as_user")
     write_line(lines, f"  command = $cc {asflags_user} -MMD -MF $out.d -c $in -o $out")
     write_line(lines, "  depfile = $out.d")
@@ -192,11 +313,11 @@ def main() -> int:
     write_line(lines, "  description = AS.USER $out")
     write_line(lines)
     write_line(lines, "rule ar")
-    write_line(lines, "  command = $ar rcs $out $in")
+    write_line(lines, "  command = mkdir -p `dirname $out` && $ar rcs $out $in")
     write_line(lines, "  description = AR $out")
     write_line(lines)
     write_line(lines, "rule link_user")
-    write_line(lines, "  command = $ld -nostdlib -z max-page-size=0x1000 -T userland/linker.ld -o $out $in")
+    write_line(lines, "  command = mkdir -p `dirname $out` && $ld -nostdlib -z max-page-size=0x1000 -T userland/linker.ld -o $out $in")
     write_line(lines, "  description = LD.USER $out")
     write_line(lines)
     write_line(lines, "rule copy")
@@ -219,9 +340,9 @@ def main() -> int:
     write_line(lines, "  command = mkdir -p `dirname $out` && printf 'name=osmlayer\\nabi=1\\nroot=0:/\\nfs=fat32\\ngui=desktop.elf\\n' > $out")
     write_line(lines, "  description = MANIFEST $out")
     write_line(lines)
+    grub_efi_dir = ROOT / "build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi"
     write_line(lines, "rule grub_efi")
-    # 修改点1：删除 -d 参数，使用系统默认模块目录
-    write_line(lines, "  command = grub-mkstandalone -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm' boot/grub/grub.cfg=boot/grub/embedded.cfg")
+    write_line(lines, f"  command = grub-mkstandalone -d {r(grub_efi_dir)} -O x86_64-efi -o $out --modules='part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm' boot/grub/grub.cfg=boot/grub/embedded.cfg")
     write_line(lines, "  description = GRUB.EFI $out")
     write_line(lines)
     write_line(lines, "rule iso")
@@ -233,11 +354,17 @@ def main() -> int:
         f"mkdir -p build/iso/{Path(dst).parent.as_posix()} && cp build/esp/{dst} build/iso/{dst}"
         for dst, _ in SYSTEM_FILES
     )
-    write_line(lines, f"  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/boot build/iso/system build/iso/userland build/iso/etc && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/boot/loader.elf build/iso/boot/loader.elf && cp build/system/kernel.sys build/iso/system/kernel.sys && cp build/system/middlelayer.sys build/iso/system/middlelayer.sys && {iso_copy_system} && {iso_copy_apps} && cp configs/default.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso")
+    iso_copy_docs = " && ".join(
+        f"cp build/esp/docs/{src.name} build/iso/docs/{src.name}"
+        for src in collect(["system/docs/*.hlp"])
+    )
+    if not iso_copy_docs:
+        iso_copy_docs = "true"
+    write_line(lines, f"  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/boot build/iso/system build/iso/userland build/iso/etc build/iso/docs && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/boot/loader.elf build/iso/boot/loader.elf && cp build/system/kernel.sys build/iso/system/kernel.sys && cp build/system/middlelayer.sys build/iso/system/middlelayer.sys && {iso_copy_system} && {iso_copy_apps} && {iso_copy_docs} && cp build/esp/etc/leonos.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso")
     write_line(lines, "  description = ISO $out")
     write_line(lines)
     write_line(lines, "rule installer_root")
-    write_line(lines, "  command = rm -rf build/esp/system/resources/icons && python3 tools/make_installer_root.py --out $out --stage build/install/root --esp-tree build/esp")
+    write_line(lines, f"  command = rm -f build/esp/etc/license.conf build/esp/etc/install.id && rm -rf build/esp/system/resources/icons && python3 tools/make_installer_root.py --out $out --stage build/install/root --esp-tree build/esp --installed-policy-dir build/userland-installer-policy --size-mib {installer_root_size_mib}")
     write_line(lines, "  description = INSTALLER.ROOT $out")
     write_line(lines)
     write_line(lines, "rule installer_iso")
@@ -245,24 +372,24 @@ def main() -> int:
     write_line(lines, "  description = INSTALLER.ISO $out")
     write_line(lines)
     write_line(lines, "rule image")
-    write_line(lines, "  command = rm -f build/esp/boot/ntclks.elf && rm -rf build/esp/system/resources/icons && python3 tools/make_image.py --out $out --raw build/images/leonos4.raw --esp-tree build/esp")
+    write_line(lines, f"  command = rm -f build/esp/boot/ntclks.elf build/esp/etc/license.conf build/esp/etc/install.id && rm -rf build/esp/system/resources/icons && python3 tools/make_image.py --out $out --raw build/images/leonos4.raw --esp-tree build/esp --size-mib {image_size_mib}")
     write_line(lines, "  description = IMAGE $out")
     write_line(lines)
     write_line(lines, "rule run")
-    qemu_net = "-netdev user,id=net0 -device e1000,netdev=net0"
-    write_line(lines, f"  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display \"$${{LEONOS_QEMU_DISPLAY:-sdl}}\" -device VGA,xres=1920,yres=1080 {qemu_net} -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, f"  command = qemu-system-x86_64 {qemu_kvm}-cpu host -machine q35 -m {qemu_memory_mb}M {qemu_bios}-serial stdio -display \"$${{LEONOS_QEMU_DISPLAY:-sdl}}\" {qemu_vga} {qemu_net}-drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN LeonOS 4")
     write_line(lines)
     write_line(lines, "rule run_debug")
-    write_line(lines, f"  command = qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -serial stdio -display none -device VGA,xres=1920,yres=1080 -no-reboot -no-shutdown {qemu_net} -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, f"  command = qemu-system-x86_64 {qemu_kvm}-cpu host -machine q35 -m {qemu_memory_mb}M {qemu_bios}-serial stdio -display none {qemu_vga} -no-reboot -no-shutdown {qemu_net}-drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN.DEBUG LeonOS 4")
     write_line(lines)
     write_line(lines, "rule run_iso")
-    write_line(lines, f"  command = qemu-system-x86_64 -m 512M -serial stdio -display none -device VGA,xres=1920,yres=1080 -no-reboot -no-shutdown {qemu_net} -cdrom build/images/leonos4.iso -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
+    write_line(lines, f"  command = qemu-system-x86_64 -m {qemu_memory_mb}M -serial stdio -display none {qemu_vga} -no-reboot -no-shutdown {qemu_net}-cdrom build/images/leonos4.iso -drive file=build/images/leonos4.vmdk,if=none,id=sata0,format=vmdk -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0")
     write_line(lines, "  description = RUN.ISO LeonOS 4")
     write_line(lines)
     write_line(lines, "rule menuconfig_rule")
-    write_line(lines, "  command = test -f .config || cp configs/default.conf .config && kconfig-mconf Kconfig && python3 tools/kconfig_sync.py")
+    write_line(lines, "  command = test -f .config || cp configs/default.conf .config && kconfig-mconf Kconfig && python3 tools/kconfig_sync.py && python3 tools/gen_ninja.py --out build.ninja")
+    write_line(lines, "  pool = console")
     write_line(lines, "  description = MENUCONFIG")
     write_line(lines)
     write_line(lines, "rule clean_rule")
@@ -270,8 +397,16 @@ def main() -> int:
     write_line(lines, "  description = CLEAN")
     write_line(lines)
 
-    write_line(lines, "build include/generated/autoconf.h include/generated/rustcfg.args: kconfig_sync tools/kconfig_sync.py configs/default.conf | .config")
-    write_line(lines, "build config-sync: phony include/generated/autoconf.h include/generated/rustcfg.args")
+    write_line(lines, "build .config: ensure_config configs/default.conf")
+    if ninja_regen:
+        write_line(lines, "build build.ninja: gen_build_ninja tools/gen_ninja.py Kconfig configs/default.conf .config")
+    config_outputs = [
+        ROOT / "include/generated/autoconf.h",
+        ROOT / "include/generated/autoconf-installer.h",
+        ROOT / "include/generated/rustcfg.args",
+    ]
+    write_line(lines, f"build {' '.join(r(p) for p in config_outputs)}: kconfig_sync tools/kconfig_sync.py configs/default.conf Kconfig .config")
+    write_line(lines, f"build config-sync: phony {' '.join(r(p) for p in config_outputs)}")
     write_line(lines, "build build/version/always: phony")
     write_line(lines, "build include/generated/build_info.h: build_info build/version/always | tools/build_info.py")
     write_line(lines, "build build-info: phony include/generated/build_info.h")
@@ -346,21 +481,30 @@ def main() -> int:
 
     libc_sources = collect(["userland/libc/src/*.c", "userland/libc/src/*.S"])
     libc_objects: list[Path] = []
+    installer_policy_libc_objects: list[Path] = []
     for src in libc_sources:
         obj = obj_for(src, "userlib")
         libc_objects.append(obj)
-        rule = "as_user" if src.suffix == ".S" else "cc_user"
-        write_line(lines, f"build {r(obj)}: {rule} {r(src)}")
+        if src.suffix == ".S":
+            write_line(lines, f"build {r(obj)}: as_user {r(src)}")
+        else:
+            write_line(lines, f"build {r(obj)}: cc_user {r(src)} | include/generated/autoconf.h")
+
+        installer_obj = obj_for(src, "userlib-installer-policy")
+        installer_policy_libc_objects.append(installer_obj)
+        if src.suffix == ".S":
+            write_line(lines, f"build {r(installer_obj)}: as_user {r(src)}")
+        else:
+            write_line(lines, f"build {r(installer_obj)}: cc_user_installer_policy {r(src)} | include/generated/autoconf-installer.h")
     libc_a = ROOT / "build" / "userland" / "libc.a"
     write_line(lines, f"build {r(libc_a)}: ar {' '.join(r(o) for o in libc_objects)}")
+    installer_policy_libc_a = ROOT / "build" / "userland-installer-policy" / "libc.a"
+    write_line(lines, f"build {r(installer_policy_libc_a)}: ar {' '.join(r(o) for o in installer_policy_libc_objects)}")
 
     user_elfs: list[Path] = []
     user_elfs_by_app: dict[str, Path] = {}
     for app in USER_APPS:
-        app_sources = collect([
-            f"userland/apps/{app}/*.c",
-            f"userland/apps/{app}/*.S",
-        ])
+        app_sources = user_app_sources(app)
         app_objects: list[Path] = []
         elf = ROOT / "build" / "userland" / f"{app}.elf"
         user_elfs.append(elf)
@@ -368,15 +512,37 @@ def main() -> int:
         for src in app_sources:
             obj = obj_for(src, f"user-{app}")
             app_objects.append(obj)
-            rule = "as_user" if src.suffix == ".S" else "cc_user"
-            write_line(lines, f"build {r(obj)}: {rule} {r(src)}")
+            if src.suffix == ".S":
+                write_line(lines, f"build {r(obj)}: as_user {r(src)}")
+            else:
+                write_line(lines, f"build {r(obj)}: cc_user {r(src)} | include/generated/autoconf.h")
         write_line(lines, f"build {r(elf)}: link_user {' '.join(r(o) for o in app_objects)} {r(libc_a)}")
+
+    installer_policy_elfs_by_app: dict[str, Path] = {}
+    for app in INSTALLER_POLICY_APPS:
+        app_sources = user_app_sources(app)
+        app_objects: list[Path] = []
+        elf = ROOT / "build" / "userland-installer-policy" / f"{app}.elf"
+        installer_policy_elfs_by_app[app] = elf
+        for src in app_sources:
+            obj = obj_for(src, f"user-installer-policy-{app}")
+            app_objects.append(obj)
+            if src.suffix == ".S":
+                write_line(lines, f"build {r(obj)}: as_user {r(src)}")
+            else:
+                write_line(lines, f"build {r(obj)}: cc_user_installer_policy {r(src)} | include/generated/autoconf-installer.h")
+        write_line(lines, f"build {r(elf)}: link_user {' '.join(r(o) for o in app_objects)} {r(installer_policy_libc_a)}")
 
     write_line(lines, f"build userland: phony {' '.join(r(e) for e in user_elfs)}")
     normal_user_elfs = [user_elfs_by_app[app] for app in NORMAL_USER_APPS]
     normal_user_icon_sources = [
         ROOT / "build" / "generated" / "app-icons" / f"{app}.bmp"
         for app in NORMAL_USER_APPS
+    ]
+    doc_sources = collect(["system/docs/*.hlp"])
+    doc_outputs = [
+        ROOT / "build" / "esp" / "docs" / src.name
+        for src in doc_sources
     ]
 
     esp_outputs = [
@@ -389,6 +555,7 @@ def main() -> int:
         *(ROOT / f"build/esp/userland/{app}.elf" for app in NORMAL_USER_APPS),
         *(ROOT / f"build/esp/userland/{app}.bmp" for app in NORMAL_USER_APPS),
         ROOT / "build/esp/etc/leonos.conf",
+        *doc_outputs,
     ]
     # 修改点2：删除隐式依赖 modinfo.sh
     write_line(lines, f"build {r(esp_outputs[0])}: grub_efi boot/grub/embedded.cfg")
@@ -408,7 +575,9 @@ def main() -> int:
     icon_output_end = app_output_end + len(normal_user_icon_sources)
     for output, icon in zip(esp_outputs[app_output_end:icon_output_end], normal_user_icon_sources):
         write_line(lines, f"build {r(output)}: copy {r(icon)}")
-    write_line(lines, "build build/esp/etc/leonos.conf: copy configs/default.conf")
+    write_line(lines, "build build/esp/etc/leonos.conf: copy .config")
+    for output, src in zip(doc_outputs, doc_sources):
+        write_line(lines, f"build {r(output)}: copy {r(src)}")
     write_line(lines, f"build esp: phony {' '.join(r(p) for p in esp_outputs)}")
 
     vmdk = ROOT / "build/images/leonos4.vmdk"
@@ -416,14 +585,17 @@ def main() -> int:
     iso = ROOT / "build/images/leonos4.iso"
     system_deps = " ".join(r(ROOT / "build/esp" / dst) for dst, _ in SYSTEM_FILES)
     normal_user_icon_deps = [ROOT / f"build/esp/userland/{app}.bmp" for app in NORMAL_USER_APPS]
-    write_line(lines, f"build {r(iso)}: iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {' '.join(r(e) for e in normal_user_elfs)} {' '.join(r(p) for p in normal_user_icon_deps)} {system_deps} boot/grub/grub.cfg configs/default.conf")
+    doc_deps = " ".join(r(p) for p in doc_outputs)
+    etc_deps = "build/esp/etc/leonos.conf"
+    write_line(lines, f"build {r(iso)}: iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {' '.join(r(e) for e in normal_user_elfs)} {' '.join(r(p) for p in normal_user_icon_deps)} {system_deps} {doc_deps} {etc_deps} boot/grub/grub.cfg")
     installer_root = ROOT / "build/install/root.fat"
     installer_elf_deps = " ".join(r(user_elfs_by_app[app]) for app in INSTALLER_USER_APPS)
     installer_icon_deps = " ".join(
         r(ROOT / "build" / "generated" / "app-icons" / f"{app}.bmp")
         for app in INSTALLER_USER_APPS
     )
-    write_line(lines, f"build {r(installer_root)}: installer_root {' '.join(r(p) for p in esp_outputs)} {installer_elf_deps} {installer_icon_deps} tools/make_installer_root.py")
+    installer_policy_deps = " ".join(r(elf) for elf in installer_policy_elfs_by_app.values())
+    write_line(lines, f"build {r(installer_root)}: installer_root {' '.join(r(p) for p in esp_outputs)} {installer_policy_deps} {installer_elf_deps} {installer_icon_deps} tools/make_installer_root.py")
     installer_iso = ROOT / "build/images/leonos4-installer.iso"
     # 修改点3：删除隐式依赖 modinfo.sh
     write_line(lines, f"build {r(installer_iso)}: installer_iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {r(installer_root)} boot/grub/installer.cfg boot/grub/installer_embedded.cfg tools/make_installer_iso.py")

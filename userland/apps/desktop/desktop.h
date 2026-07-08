@@ -5,6 +5,7 @@
 #include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/i18n.h>
+#include <leonos/license.h>
 #include <leonos/launch.h>
 #include <leonos/net.h>
 #include <leonos/psf_font.h>
@@ -64,12 +65,14 @@
 #define DISPLAY_CONFIRM_MS 10000UL
 #define START_MENU_W 246
 #define START_PROGRAMS_W 220
+#define START_DOCS_W 260
 #define START_MENU_MAX_H 340
 #define START_MENU_ANIM_MS 160UL
 #define WINDOW_ANIM_MS 190UL
 #define START_MENU_ITEM_H 26
 #define START_MENU_DIRTY_H (START_MENU_MAX_H + TASKBAR_H + 8)
 #define START_MENU_MAX_APPS LEONOS_FS_MAX_ENTRIES
+#define START_MENU_MAX_DOCS LEONOS_FS_MAX_ENTRIES
 #define START_MENU_MAX_ITEMS 32
 #define APP_WINDOW_SLOTS (MAX_WINDOWS - BUILTIN_WINDOWS)
 #define APP_CLIENT_MAX_W 1920
@@ -168,6 +171,7 @@ enum start_action_type {
     START_ACTION_PROGRAMS = 6,
     START_ACTION_SPAWN_ONCE = 7,
     START_ACTION_LOGOUT = 8,
+    START_ACTION_DOCUMENTS = 9,
 };
 
 struct start_menu_item {
@@ -235,12 +239,18 @@ extern uint8_t start_menu_open;
 extern uint8_t start_menu_animating;
 extern uint8_t start_menu_opening;
 extern uint8_t start_menu_programs_open;
+extern uint8_t start_menu_docs_open;
 extern uint32_t start_menu_programs_scroll;
+extern uint32_t start_menu_docs_scroll;
 extern unsigned long start_menu_anim_start;
 extern uint8_t start_menu_apps_loaded;
+extern uint8_t start_menu_docs_loaded;
 extern uint32_t start_menu_app_count;
+extern uint32_t start_menu_doc_count;
 extern char start_menu_app_labels[START_MENU_MAX_APPS][32];
 extern char start_menu_app_paths[START_MENU_MAX_APPS][LEONOS_FS_PATH_LEN];
+extern char start_menu_doc_labels[START_MENU_MAX_DOCS][48];
+extern char start_menu_doc_paths[START_MENU_MAX_DOCS][LEONOS_FS_PATH_LEN];
 extern struct desktop_item desktop_items[DESKTOP_ITEM_MAX];
 extern uint32_t desktop_item_count;
 extern char desktop_folder_path[LEONOS_FS_PATH_LEN];
@@ -415,11 +425,15 @@ void draw_alt_tab_overlay(void);
 int start_menu_is_hidden_app(const char *name);
 void start_menu_load_apps(void);
 void start_menu_ensure_apps(void);
+void start_menu_load_docs(void);
+void start_menu_ensure_docs(void);
 uint32_t build_start_menu_items(struct start_menu_item *items, uint32_t cap);
 uint32_t start_menu_height_for_count(uint32_t count);
 struct start_menu_layout start_menu_layout_for_count(uint32_t count);
 struct start_programs_layout start_programs_layout_for_menu(struct start_menu_layout menu);
+struct start_programs_layout start_docs_layout_for_menu(struct start_menu_layout menu);
 void draw_start_programs_menu(struct start_menu_layout menu);
+void draw_start_docs_menu(struct start_menu_layout menu);
 void draw_start_menu(void);
 void desktop_items_clear(void);
 int desktop_refresh_items(void);
@@ -449,6 +463,7 @@ void toggle_maximize(uint8_t id);
 void apply_snap_mode(uint8_t id, uint8_t snap_mode);
 void open_app_window_from_msg(const struct leonos_gui_window_msg *msg);
 int spawn_program_path(const char *path);
+int spawn_help_path(const char *path);
 void maybe_launch_oobe(void);
 int oobe_done_marker_exists(void);
 int window_is_oobe(const struct desktop_window *w);

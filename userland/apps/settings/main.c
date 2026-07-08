@@ -3,6 +3,7 @@
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/launch.h>
+#include <leonos/license.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -13,8 +14,9 @@
 #define SETTINGS_DROPDOWN_ROW_H 28
 #define SETTINGS_MODE_COUNT 5
 #define SETTINGS_SCALE_COUNT 3
+#define SETTINGS_TAB_COUNT 5
 #define SETTINGS_USER_ROWS 7
-#define SETTINGS_ASSOC_ROWS 5
+#define SETTINGS_ASSOC_ROWS 6
 #define SETTINGS_SERVICE_ROWS 5
 #define SETTINGS_SERVICES_PATH "0:/etc/services.cfg"
 #define SETTINGS_SERVICES_CONFIG_MAX 512U
@@ -26,6 +28,7 @@ enum {
     PAGE_USERS = 1,
     PAGE_ASSOC = 2,
     PAGE_SERVICES = 3,
+    PAGE_ACTIVATION = 4,
 };
 
 enum {
@@ -79,6 +82,7 @@ static const struct assoc_row assoc_rows[SETTINGS_ASSOC_ROWS] = {
     {".html", "HTML pages", "HTML 页面"},
     {".htm", "HTML pages", "HTML 页面"},
     {".bmp", "Bitmap images", "BMP 图片"},
+    {".hlp", "Help files", "帮助文件"},
 };
 static struct service_row service_rows[SETTINGS_SERVICE_ROWS] = {
     {"desktop", "Desktop window service", "桌面窗口服务",
@@ -182,6 +186,9 @@ static const char *program_label(const char *program)
     if (text_eq(program, "0:/userland/imageview.elf")) {
         return T("Image Viewer", "图片查看器");
     }
+    if (text_eq(program, "0:/userland/oshlp.elf")) {
+        return T("Help Viewer", "帮助查看器");
+    }
     if (text_eq(program, "0:/userland/terminal.elf")) {
         return T("Terminal", "终端");
     }
@@ -189,6 +196,50 @@ static const char *program_label(const char *program)
         return T("Run", "运行");
     }
     return program && program[0] ? program : T("None", "无");
+}
+
+static const char *license_status_label(uint32_t status)
+{
+    switch (status) {
+    case LEONOS_LICENSE_STATUS_OK:
+        return T("Activated", "已激活");
+    case LEONOS_LICENSE_STATUS_MISSING:
+        return T("Not activated", "未激活");
+    case LEONOS_LICENSE_STATUS_INVALID:
+        return T("Invalid activation", "激活无效");
+    case LEONOS_LICENSE_STATUS_NETWORK:
+        return T("Network failure", "网络失败");
+    case LEONOS_LICENSE_STATUS_CLOCK:
+        return T("Clock failure", "时钟失败");
+    case LEONOS_LICENSE_STATUS_DENIED:
+        return T("Activation denied", "激活被拒绝");
+    default:
+        return T("Unknown", "未知");
+    }
+}
+
+static const char *license_mode_label(const char *mode)
+{
+    if (text_eq(mode, "online")) {
+        return T("Online", "在线");
+    }
+    if (text_eq(mode, "offline")) {
+        return T("Offline", "离线");
+    }
+    return T("None", "无");
+}
+
+static const char *value_or_dash(const char *value)
+{
+    return value && value[0] ? value : "-";
+}
+
+static void draw_field(struct leonos_ui_surface *ui, int32_t y,
+                       const char *label, const char *value)
+{
+    leonos_ui_text(ui, 50, y, label, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text_clipped(ui, 176, y, SETTINGS_W - 226,
+                           value_or_dash(value), LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
 static void fake_path_for_extension(char *dst, uint32_t cap, const char *ext)
@@ -502,15 +553,18 @@ static void draw_assoc_page(struct leonos_ui_surface *ui)
         cells[1] = T(assoc_rows[i].description_en, assoc_rows[i].description_zh);
         cells[2] = program_label(program);
         leonos_ui_listview_row(ui, 34, y, 412, cols, cells, 3, 0);
-        leonos_ui_button(ui, 466, y + 2, 74, LEONOS_UI_BUTTON_H,
+        leonos_ui_button(ui, 450, y + 2, 64, LEONOS_UI_BUTTON_H,
                          T("Browser", "浏览器"),
                          text_eq(program, "0:/userland/browser.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
-        leonos_ui_button(ui, 548, y + 2, 74, LEONOS_UI_BUTTON_H,
+        leonos_ui_button(ui, 520, y + 2, 70, LEONOS_UI_BUTTON_H,
                          T("Notepad", "记事本"),
                          text_eq(program, "0:/userland/notepad.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
-        leonos_ui_button(ui, 630, y + 2, 66, LEONOS_UI_BUTTON_H,
+        leonos_ui_button(ui, 596, y + 2, 58, LEONOS_UI_BUTTON_H,
                          T("Image", "图片"),
                          text_eq(program, "0:/userland/imageview.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+        leonos_ui_button(ui, 660, y + 2, 50, LEONOS_UI_BUTTON_H,
+                         T("Help", "帮助"),
+                         text_eq(program, "0:/userland/oshlp.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
     }
 }
 
@@ -542,6 +596,51 @@ static void draw_services_page(struct leonos_ui_surface *ui)
                          : LEONOS_UI_BUTTON_DISABLED);
 }
 
+static void draw_activation_page(struct leonos_ui_surface *ui)
+{
+    struct leonos_license_info info;
+    char server[LEONOS_LICENSE_SERVER_URL_LEN];
+    const char *status;
+    uint32_t required;
+    uint32_t ok;
+    server[0] = 0;
+    (void)leonos_license_default_server(server, sizeof(server));
+    required = (uint32_t)leonos_license_required();
+    if (!required) {
+        info = (struct leonos_license_info){0};
+        copy_text(info.detail, sizeof(info.detail), T("License validation is disabled for this build.",
+                                                      "此构建已关闭许可证验证。"));
+        status = T("Not required", "不需要验证");
+        ok = 1;
+    } else if (leonos_license_status(&info) < 0) {
+        info = (struct leonos_license_info){0};
+        info.status = LEONOS_LICENSE_STATUS_INVALID;
+        copy_text(info.detail, sizeof(info.detail), "license status unavailable");
+        status = license_status_label(info.status);
+        ok = 0;
+    } else {
+        status = license_status_label(info.status);
+        ok = info.status == LEONOS_LICENSE_STATUS_OK;
+    }
+    leonos_ui_text(ui, 34, 92, T("Activation", "激活"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_panel(ui, 34, 122, SETTINGS_W - 68, 52,
+                    ok ? LEONOS_UI_WHITE : LEONOS_UI_LIGHT);
+    leonos_ui_text(ui, 50, 138, T("Computer", "此计算机"),
+                   LEONOS_UI_BLACK, ok ? LEONOS_UI_WHITE : LEONOS_UI_LIGHT);
+    leonos_ui_text_clipped(ui, 176, 138, SETTINGS_W - 226,
+                           status,
+                           ok ? LEONOS_UI_BLACK : LEONOS_UI_DARK,
+                           ok ? LEONOS_UI_WHITE : LEONOS_UI_LIGHT);
+    draw_field(ui, 198, T("Activation mode", "激活方式"),
+               !required ? T("Not required", "不需要验证") :
+               ok ? license_mode_label(info.mode) : "-");
+    draw_field(ui, 230, T("Machine ID", "机器码"), info.install_id);
+    draw_field(ui, 262, T("Email hash", "邮箱哈希"), info.email_hash);
+    draw_field(ui, 294, T("Detail", "详情"), info.detail);
+    draw_field(ui, 326, T("Server", "服务器"), server);
+    draw_field(ui, 358, T("License file", "许可证文件"), "0:/etc/license.dat");
+}
+
 static void draw_settings(struct leonos_ui_surface *ui)
 {
     const char *tabs[] = {
@@ -549,10 +648,11 @@ static void draw_settings(struct leonos_ui_surface *ui)
         T("Users", "用户"),
         T("File Types", "文件类型"),
         T("Services", "服务"),
+        T("Activation", "激活"),
     };
     leonos_ui_rect(ui, 0, 0, SETTINGS_W, SETTINGS_H, LEONOS_UI_WHITE);
     leonos_ui_dialog(ui, 0, 0, SETTINGS_W, SETTINGS_H, T("Settings", "设置"));
-    leonos_ui_tabs(ui, 18, 42, SETTINGS_W - 36, tabs, 4, active_page);
+    leonos_ui_tabs(ui, 18, 42, SETTINGS_W - 36, tabs, SETTINGS_TAB_COUNT, active_page);
     leonos_ui_tab_body(ui, 18, 72, SETTINGS_W - 36, SETTINGS_H - 112);
     if (active_page == PAGE_DISPLAY) {
         draw_display_page(ui);
@@ -560,8 +660,10 @@ static void draw_settings(struct leonos_ui_surface *ui)
         draw_users_page(ui);
     } else if (active_page == PAGE_ASSOC) {
         draw_assoc_page(ui);
-    } else {
+    } else if (active_page == PAGE_SERVICES) {
         draw_services_page(ui);
+    } else {
+        draw_activation_page(ui);
     }
     leonos_ui_statusbar(ui, SETTINGS_H - 28, 28, status_text);
 }
@@ -782,16 +884,20 @@ static void handle_assoc_click(int32_t x, int32_t y)
 {
     for (uint32_t i = 0; i < SETTINGS_ASSOC_ROWS; ++i) {
         int32_t row_y = 152 + (int32_t)i * 40;
-        if (hit_rect_i(x, y, 466, row_y + 2, 74, LEONOS_UI_BUTTON_H)) {
+        if (hit_rect_i(x, y, 450, row_y + 2, 64, LEONOS_UI_BUTTON_H)) {
             set_assoc_for_row(i, "0:/userland/browser.elf");
             return;
         }
-        if (hit_rect_i(x, y, 548, row_y + 2, 74, LEONOS_UI_BUTTON_H)) {
+        if (hit_rect_i(x, y, 520, row_y + 2, 70, LEONOS_UI_BUTTON_H)) {
             set_assoc_for_row(i, "0:/userland/notepad.elf");
             return;
         }
-        if (hit_rect_i(x, y, 630, row_y + 2, 66, LEONOS_UI_BUTTON_H)) {
+        if (hit_rect_i(x, y, 596, row_y + 2, 58, LEONOS_UI_BUTTON_H)) {
             set_assoc_for_row(i, "0:/userland/imageview.elf");
+            return;
+        }
+        if (hit_rect_i(x, y, 660, row_y + 2, 50, LEONOS_UI_BUTTON_H)) {
+            set_assoc_for_row(i, "0:/userland/oshlp.elf");
             return;
         }
     }
@@ -822,8 +928,9 @@ static void handle_click(int32_t x, int32_t y)
         T("Users", "用户"),
         T("File Types", "文件类型"),
         T("Services", "服务"),
+        T("Activation", "激活"),
     };
-    int tab = leonos_ui_tabs_hit(x, y, 18, 42, SETTINGS_W - 36, tabs, 4);
+    int tab = leonos_ui_tabs_hit(x, y, 18, 42, SETTINGS_W - 36, tabs, SETTINGS_TAB_COUNT);
     if (tab >= 0) {
         active_page = (uint8_t)tab;
         active_drop = DROP_NONE;
@@ -835,7 +942,7 @@ static void handle_click(int32_t x, int32_t y)
         handle_users_click(x, y);
     } else if (active_page == PAGE_ASSOC) {
         handle_assoc_click(x, y);
-    } else {
+    } else if (active_page == PAGE_SERVICES) {
         handle_services_click(x, y);
     }
 }

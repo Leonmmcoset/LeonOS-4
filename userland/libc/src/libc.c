@@ -1977,6 +1977,14 @@ int leonos_time_info(struct leonos_time_info *info)
     return ioctl(3, LEONOS_IOCTL_TIME_INFO, info);
 }
 
+int leonos_machine_identity(struct leonos_machine_identity *identity)
+{
+    if (!identity) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_IOCTL_MACHINE_IDENTITY, identity);
+}
+
 int leonos_system_reboot(void)
 {
     return ioctl(3, LEONOS_GUI_IOCTL_REBOOT, 0);

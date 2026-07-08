@@ -2,6 +2,9 @@
 
 uint32_t button_y(void)
 {
+    if (browser_embedded) {
+        return 3U;
+    }
     return BROWSER_MENU_H + 3U;
 }
 
@@ -434,6 +437,9 @@ void draw_document_lines(void)
 
 void draw_browser_menu(void)
 {
+    if (browser_embedded) {
+        return;
+    }
     struct leonos_ui_menubar_item top_items[] = {
         {T("File", "文件"), BROWSER_MENU_FILE, BROWSER_MENU_FILE_W, 0},
         {T("Edit", "编辑"), BROWSER_MENU_EDIT, BROWSER_MENU_EDIT_W, 0},
@@ -514,6 +520,26 @@ void draw_browser(void)
         {T("Help", "帮助"), BROWSER_MENU_HELP, BROWSER_MENU_HELP_W, 0},
     };
     leonos_ui_rect(&ui, 0, 0, view_w, view_h, LEONOS_UI_GRAY);
+    if (browser_embedded) {
+        leonos_ui_toolbar(&ui, 0, 0, view_w, BROWSER_TOOLBAR_H);
+        draw_toolbar_button(BROWSER_BACK_X, BROWSER_BACK_W, T("Back", "后退"), !can_back);
+        draw_toolbar_button(toolbar_forward_x(), BROWSER_FORWARD_W, T("Forward", "前进"), !can_forward);
+        draw_toolbar_button(toolbar_refresh_x(), BROWSER_REFRESH_W, T("Refresh", "刷新"), 0);
+        draw_toolbar_button(toolbar_home_x(), BROWSER_HOME_W,
+                            T("Setup", "返回设置"), 0);
+        leonos_ui_text_clipped(&ui, toolbar_stop_x(), button_y() + 5U,
+                               view_w > toolbar_stop_x() + 12U ? view_w - toolbar_stop_x() - 12U : 80U,
+                               T("License Website", "许可证网站"),
+                               BROWSER_TEXT_DARK, LEONOS_UI_GRAY);
+        leonos_ui_inset(&ui, BROWSER_PAGE_X, p_y, p_w, p_h, LEONOS_UI_WHITE);
+        draw_document_lines();
+        leonos_ui_vscrollbar(&ui, BROWSER_PAGE_X + p_w - BROWSER_SCROLL_W - 2U,
+                             p_y + 2U, BROWSER_SCROLL_W, p_h > 4U ? p_h - 4U : p_h,
+                             scroll_line, line_count ? line_count : 1U, rows,
+                             line_count <= rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
+        leonos_ui_toast_draw(&ui, &browser_toast, leonos_uptime_ms());
+        return;
+    }
     leonos_ui_menubar_draw(&ui, 0, 0, view_w, top_items,
                            sizeof(top_items) / sizeof(top_items[0]),
                            menu_open);
@@ -548,6 +574,10 @@ void draw_browser(void)
 
 void present_browser(void)
 {
+    if (browser_embedded) {
+        draw_browser();
+        return;
+    }
     if (window_id <= 0) {
         return;
     }

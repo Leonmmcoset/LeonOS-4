@@ -1,0 +1,168 @@
+%%HLP
+title.en: LeonOS Help
+title.zh: LeonOS 帮助
+author: LeonOS Team
+version: 1.0
+
+%%DOC welcome
+path.en: LeonOS/Welcome
+path.zh: LeonOS/欢迎
+title.en: Welcome
+title.zh: 欢迎
+author: LeonOS Team
+version: 1.0
+%%LANG en
+# Welcome to LeonOS Help
+
+LeonOS Help stores several Markdown pages inside one `.hlp` file. Use the tree on the left to choose a page, then read the document on the right.
+
+## Navigation
+
+- Use **Back** and **Forward** to jump between pages you have visited.
+- Use the language selector to switch this help window between English and Chinese.
+- Use the mouse wheel to scroll long documents.
+
+## Included topics
+
+| Topic | Purpose |
+| File permissions | Explains R, W, X, Delete and Manage |
+| Help file format | Shows how developers can write `.hlp` files |
+
+%%LANG zh
+# 欢迎使用 LeonOS 帮助
+
+LeonOS 帮助把多个 Markdown 页面放在同一个 `.hlp` 文件里。左边选择文档，右边阅读正文。
+
+## 导航
+
+- 使用 **后退** 和 **前进** 在访问过的页面之间跳转。
+- 使用语言选择器在当前帮助窗口内切换 English / 中文。
+- 使用鼠标滚轮滚动长文档。
+
+## 已包含主题
+
+| 主题 | 说明 |
+| 文件权限 | 解释 R、W、X、Delete、Manage |
+| 帮助文件格式 | 说明开发者如何编写 `.hlp` 文件 |
+
+%%ENDDOC
+
+%%DOC fs.permissions
+path.en: System/File permissions
+path.zh: 系统/文件权限
+title.en: File permissions
+title.zh: 文件权限
+author: LeonOS Team
+version: 1.0
+%%LANG en
+# File permissions
+
+LeonOS uses a Windows-style permission model for files and directories. The current v1 permission bits are stored in ACL metadata and checked by kernel file operations.
+
+## Permission bits
+
+| Bit | Meaning |
+| R / Read | Read a file, list a directory, or view basic metadata. |
+| W / Write | Create files, write existing files, or modify directory contents. |
+| X / Execute | Run an `.elf` file or traverse a directory while resolving a path. |
+| Delete | Remove or rename the object. |
+| Manage | Change permissions, repair ACL metadata, or take ownership when allowed. |
+
+## Important rules
+
+- Administrators can manage system-wide objects and repair broken ACL metadata.
+- Normal users are expected to control their own `0:/users/<name>` files.
+- Opening a shortcut checks permission on both the `.lnk` file and its target.
+- Missing ACL metadata falls back to system default rules.
+
+%%LANG zh
+# 文件权限
+
+LeonOS 使用类似 Windows 的文件和文件夹权限模型。当前 v1 权限位保存在 ACL 元数据里，并由内核文件操作进行检查。
+
+## 权限位
+
+| 位 | 含义 |
+| R / Read | 读取文件、列出目录，或查看基础属性。 |
+| W / Write | 创建文件、写入已有文件，或修改目录内容。 |
+| X / Execute | 运行 `.elf` 文件，或在路径解析时穿过目录。 |
+| Delete | 删除或重命名对象。 |
+| Manage | 修改权限、修复 ACL 元数据，或在允许时接管所有权。 |
+
+## 重要规则
+
+- 管理员可以管理系统对象，并修复损坏的 ACL 元数据。
+- 普通用户默认管理自己的 `0:/users/<name>` 文件。
+- 打开快捷方式时，会同时检查 `.lnk` 本身和目标文件的权限。
+- 缺失 ACL 元数据时，会按系统默认规则合成权限。
+
+%%ENDDOC
+
+%%DOC help.format
+path.en: Developers/Help file format
+path.zh: 开发者/帮助文件格式
+title.en: Help file format
+title.zh: 帮助文件格式
+author: LeonOS Team
+version: 1.0
+%%LANG en
+# Help file format
+
+A `.hlp` file is a plain text container. It starts with file metadata, then one or more document pages.
+
+```text
+    %%HLP
+    title.en: My Help
+    title.zh: 我的帮助
+    author: Example
+    version: 1.0
+
+    %%DOC page.id
+    path.en: Section/Page title
+    path.zh: 分类/页面标题
+    title.en: Page title
+    title.zh: 页面标题
+    author: Example
+    version: 1.0
+    %%LANG en
+    # Markdown page
+    Body text.
+    %%LANG zh
+    # Markdown 页面
+    正文。
+    %%ENDDOC
+```
+
+Document ids may contain letters, digits, `.`, `_` and `-`. The `path.en` and `path.zh` fields build the left-side tree.
+
+%%LANG zh
+# 帮助文件格式
+
+`.hlp` 文件是纯文本容器。文件开头是文件信息，后面可以包含多个文档页面。
+
+```text
+    %%HLP
+    title.en: My Help
+    title.zh: 我的帮助
+    author: Example
+    version: 1.0
+
+    %%DOC page.id
+    path.en: Section/Page title
+    path.zh: 分类/页面标题
+    title.en: Page title
+    title.zh: 页面标题
+    author: Example
+    version: 1.0
+    %%LANG en
+    # Markdown page
+    Body text.
+    %%LANG zh
+    # Markdown 页面
+    正文。
+    %%ENDDOC
+```
+
+文档 id 可以包含字母、数字、`.`、`_`、`-`。`path.en` 和 `path.zh` 会生成左侧目录树。
+
+%%ENDDOC

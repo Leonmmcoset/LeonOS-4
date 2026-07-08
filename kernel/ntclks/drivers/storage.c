@@ -253,6 +253,9 @@ struct storage_volume {
     uint32_t data_cluster_count;
     uint32_t root_cluster;
     uint32_t next_free_cluster;
+    uint8_t gpt_disk_guid[16];
+    uint8_t esp_unique_guid[16];
+    uint8_t has_gpt_identity;
 };
 
 struct install_disk_state {
@@ -382,6 +385,85 @@ static int storage_text_eq_ci(const char *a, const char *b)
         ++b;
     }
     return *a == 0 && *b == 0;
+}
+
+static uint64_t storage_rdtsc(void)
+{
+    uint32_t lo;
+    uint32_t hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+static uint64_t storage_mix64(uint64_t x)
+{
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
+}
+
+static void storage_make_guid(uint8_t guid[16], uint64_t tag,
+                              const struct install_disk_state *disk,
+                              uint64_t sector_count)
+{
+    uint64_t a = storage_mix64(storage_rdtsc() ^ tag ^
+                               ((uint64_t)(disk ? disk->port : 0) << 32) ^
+                               sector_count);
+    uint64_t b = storage_mix64(storage_rdtsc() ^ (tag << 1) ^
+                               ((uint64_t)(disk ? disk->bus : 0) << 40) ^
+                               ((uint64_t)(disk ? disk->slot : 0) << 24) ^
+                               ((uint64_t)(disk ? disk->function : 0) << 16));
+    for (uint32_t i = 0; i < 8U; ++i) {
+        guid[i] = (uint8_t)(a >> (i * 8U));
+        guid[8U + i] = (uint8_t)(b >> (i * 8U));
+    }
+    guid[6] = (uint8_t)((guid[6] & 0x0fU) | 0x40U);
+    guid[8] = (uint8_t)((guid[8] & 0x3fU) | 0x80U);
+}
+
+static void storage_guid_append_hex2(char *dst, uint32_t *pos,
+                                     uint32_t cap, uint8_t value)
+{
+    static const char hex[] = "0123456789abcdef";
+    if (!dst || !pos || *pos + 2U >= cap) {
+        return;
+    }
+    dst[(*pos)++] = hex[value >> 4];
+    dst[(*pos)++] = hex[value & 0x0fU];
+    dst[*pos] = 0;
+}
+
+static int storage_guid_valid(const uint8_t guid[16])
+{
+    uint8_t or_all = 0;
+    uint8_t and_all = 0xffU;
+    for (uint32_t i = 0; i < 16U; ++i) {
+        or_all |= guid[i];
+        and_all &= guid[i];
+    }
+    return or_all != 0 && and_all != 0xffU;
+}
+
+static void storage_format_guid(const uint8_t guid[16], char *out, uint32_t cap)
+{
+    uint32_t pos = 0;
+    if (!out || cap < LEONOS_MACHINE_IDENTITY_UUID_LEN) {
+        if (out && cap) {
+            out[0] = 0;
+        }
+        return;
+    }
+    out[0] = 0;
+    for (uint32_t i = 0; i < 16U; ++i) {
+        if (i == 4U || i == 6U || i == 8U || i == 10U) {
+            out[pos++] = '-';
+            out[pos] = 0;
+        }
+        storage_guid_append_hex2(out, &pos, cap, guid[i]);
+    }
 }
 
 static int storage_is_acl_metadata_name(const char *name)
@@ -759,6 +841,13 @@ static int gpt_find_esp(void)
             entry->first_lba && entry->last_lba >= entry->first_lba) {
             g_storage.esp_start_lba = entry->first_lba;
             g_storage.esp_sector_count = entry->last_lba - entry->first_lba + 1u;
+            storage_memcpy(g_storage.gpt_disk_guid, hdr->disk_guid,
+                           sizeof(g_storage.gpt_disk_guid));
+            storage_memcpy(g_storage.esp_unique_guid, entry->unique_guid,
+                           sizeof(g_storage.esp_unique_guid));
+            g_storage.has_gpt_identity =
+                storage_guid_valid(g_storage.gpt_disk_guid) &&
+                storage_guid_valid(g_storage.esp_unique_guid);
             mm_free_pages(phys, (total_sectors + 7u) / 8u);
             return 0;
         }
@@ -3318,14 +3407,8 @@ static void install_utf16_name(uint16_t dst[36], const char *name)
 static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_count,
                              uint64_t *out_first_lba, uint64_t *out_sector_count)
 {
-    static const uint8_t disk_guid[16] = {
-        0x4c, 0x65, 0x6f, 0x6e, 0x4f, 0x53, 0x34, 0x49,
-        0x6e, 0x73, 0x74, 0x61, 0x6c, 0x6c, 0x00, 0x01,
-    };
-    static const uint8_t part_guid[16] = {
-        0x4c, 0x65, 0x6f, 0x6e, 0x4f, 0x53, 0x34, 0x45,
-        0x53, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-    };
+    uint8_t disk_guid[16];
+    uint8_t part_guid[16];
     uint64_t last_lba;
     uint64_t backup_entries_lba;
     uint64_t first_usable;
@@ -3336,6 +3419,8 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
     if (!disk || !out_first_lba || !out_sector_count || sector_count < 131072ULL) {
         return -28;
     }
+    storage_make_guid(disk_guid, 0x4c3447494449534bULL, disk, sector_count);
+    storage_make_guid(part_guid, 0x4c34474944504152ULL, disk, sector_count);
     last_lba = sector_count - 1u;
     backup_entries_lba = last_lba - table_sectors;
     first_usable = INSTALL_ESP_FIRST_LBA;
@@ -3364,7 +3449,6 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
     struct gpt_entry *entry = (struct gpt_entry *)(void *)storage_cluster_buf;
     storage_memcpy(entry->type_guid, esp_guid, sizeof(entry->type_guid));
     storage_memcpy(entry->unique_guid, part_guid, sizeof(entry->unique_guid));
-    entry->unique_guid[15] ^= disk->port;
     entry->first_lba = first_usable;
     entry->last_lba = last_usable;
     entry->attrs = 0;
@@ -3385,7 +3469,6 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
     hdr->first_usable_lba = first_usable;
     hdr->last_usable_lba = last_usable;
     storage_memcpy(hdr->disk_guid, disk_guid, sizeof(hdr->disk_guid));
-    hdr->disk_guid[15] ^= disk->port;
     hdr->partition_entries_lba = 2;
     hdr->partition_entry_count = GPT_ENTRY_COUNT;
     hdr->partition_entry_size = GPT_ENTRY_SIZE;
@@ -3523,4 +3606,28 @@ int storage_install_mount_target(uint32_t disk_id)
     }
     g_active_volume = old;
     return ret;
+}
+
+void storage_boot_identity(struct leonos_machine_identity *identity)
+{
+    const struct storage_volume *root = &g_volumes[0];
+    if (!identity) {
+        return;
+    }
+    if (identity->version == 0) {
+        identity->version = LEONOS_MACHINE_IDENTITY_VERSION;
+    }
+    if (!root->ready || !root->has_gpt_identity) {
+        return;
+    }
+    storage_format_guid(root->gpt_disk_guid, identity->boot_disk_guid,
+                        sizeof(identity->boot_disk_guid));
+    storage_format_guid(root->esp_unique_guid, identity->boot_partition_guid,
+                        sizeof(identity->boot_partition_guid));
+    identity->flags |= LEONOS_MACHINE_IDENTITY_FLAG_BOOT_DISK_GUID |
+                       LEONOS_MACHINE_IDENTITY_FLAG_BOOT_PARTITION_GUID;
+    if (!(identity->flags & LEONOS_MACHINE_IDENTITY_FLAG_PLATFORM_UUID)) {
+        storage_copy_text(identity->source, sizeof(identity->source),
+                          "boot-gpt-guid");
+    }
 }

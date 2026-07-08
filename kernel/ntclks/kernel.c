@@ -9,6 +9,7 @@
 #include <ntclks/multiboot2.h>
 #include <ntclks/net.h>
 #include <ntclks/osmlayer.h>
+#include <ntclks/platform.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
@@ -148,6 +149,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
+    platform_identity_init(&boot);
 
     arch_init();
     framebuffer_init(&boot);

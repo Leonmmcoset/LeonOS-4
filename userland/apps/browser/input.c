@@ -59,11 +59,40 @@ void activate_link_at(int32_t mx, int32_t my)
     if (!link || (uint32_t)(link - 1U) >= link_count) {
         return;
     }
+    if (browser_form_handle_href(links[link - 1U].href)) {
+        return;
+    }
     navigate_to(links[link - 1U].href, 1);
 }
 
 int handle_toolbar_click(int32_t x, int32_t y)
 {
+    if (browser_embedded) {
+        if (!hit_rect_i(x, y, 0, 0, view_w, BROWSER_TOOLBAR_H)) {
+            return 0;
+        }
+        if (hit_rect_i(x, y, BROWSER_BACK_X, button_y(),
+                       BROWSER_BACK_W, LEONOS_UI_BUTTON_H)) {
+            go_back();
+            return 1;
+        }
+        if (hit_rect_i(x, y, toolbar_forward_x(), button_y(),
+                       BROWSER_FORWARD_W, LEONOS_UI_BUTTON_H)) {
+            go_forward();
+            return 1;
+        }
+        if (hit_rect_i(x, y, toolbar_refresh_x(), button_y(),
+                       BROWSER_REFRESH_W, LEONOS_UI_BUTTON_H)) {
+            navigate_to(current_location, 0);
+            return 1;
+        }
+        if (hit_rect_i(x, y, toolbar_home_x(), button_y(),
+                       BROWSER_HOME_W, LEONOS_UI_BUTTON_H)) {
+            browser_should_exit = 1;
+            return 1;
+        }
+        return 0;
+    }
     if (!hit_rect_i(x, y, 0, BROWSER_MENU_H, view_w, BROWSER_TOOLBAR_H + BROWSER_ADDR_H)) {
         return 0;
     }
@@ -92,6 +121,9 @@ int handle_toolbar_click(int32_t x, int32_t y)
 
 int address_edit_hit(int32_t x, int32_t y)
 {
+    if (browser_embedded) {
+        return 0;
+    }
     return hit_rect_i(x, y, 74, address_y(), address_w(), LEONOS_FONT_H + 8U);
 }
 
@@ -108,6 +140,9 @@ void select_address_text(void)
 
 int handle_menu_click(int32_t x, int32_t y)
 {
+    if (browser_embedded) {
+        return 0;
+    }
     struct leonos_ui_menubar_item top_items[] = {
         {T("File", "文件"), BROWSER_MENU_FILE, BROWSER_MENU_FILE_W, 0},
         {T("Edit", "编辑"), BROWSER_MENU_EDIT, BROWSER_MENU_EDIT_W, 0},
@@ -266,7 +301,7 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
     if (!(buttons & 1U)) {
         return;
     }
-    if (handle_menu_click(event->x, event->y)) {
+    if (!browser_embedded && handle_menu_click(event->x, event->y)) {
         present_browser();
         return;
     }
@@ -309,18 +344,23 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
 void handle_key(struct leonos_gui_app_event *event)
 {
     if (!event->pressed) {
-        leonos_ui_edit_state_handle_key(&address_edit, event->keycode, event->pressed);
+        if (!browser_embedded) {
+            leonos_ui_edit_state_handle_key(&address_edit, event->keycode,
+                                            event->pressed);
+        }
         return;
     }
     if (event->keycode == 1) {
         return;
     }
-    if (event->keycode == LEONOS_KEY_ENTER && address_edit.focused) {
+    if (!browser_embedded &&
+        event->keycode == LEONOS_KEY_ENTER && address_edit.focused) {
         navigate_to(address_input, 1);
         present_browser();
         return;
     }
-    if (leonos_ui_edit_state_handle_key(&address_edit, event->keycode, event->pressed)) {
+    if (!browser_embedded &&
+        leonos_ui_edit_state_handle_key(&address_edit, event->keycode, event->pressed)) {
         present_browser();
         return;
     }

@@ -475,6 +475,10 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         copy_text(dst, dst_len, leonos_i18n("Image Viewer", "图片查看器"));
         return;
     }
+    if (text_eq(name, "oshlp.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Help Viewer", "帮助查看器"));
+        return;
+    }
     if (text_eq(name, "init.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Init", "初始化"));
         return;
@@ -522,9 +526,12 @@ void start_menu_set_open(uint8_t open)
     }
     if (open) {
         start_menu_apps_loaded = 0;
+        start_menu_docs_loaded = 0;
     } else {
         start_menu_programs_open = 0;
+        start_menu_docs_open = 0;
         start_menu_programs_scroll = 0;
+        start_menu_docs_scroll = 0;
     }
     start_menu_open = open;
     start_menu_opening = open;

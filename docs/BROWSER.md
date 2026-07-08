@@ -32,6 +32,9 @@ Current features:
   chunked transfer decoding, final URL reporting, and truncation indicators.
 - Link hit testing, relative URL resolution, Back, Forward, Refresh, Home, and
   mouse-wheel scrolling.
+- Minimal form support for the license site: `form`, text/email/password/hidden
+  inputs, submit inputs/buttons, GET and POST, and
+  `application/x-www-form-urlencoded` bodies.
 - Resize-aware reflow.
 
 Current limits:
@@ -42,8 +45,7 @@ Current limits:
   `imageview.elf` when saved as BMP.
 - No full CSS cascade, box model, floats, flex/grid, or media queries.
 - HTTP is plain `HTTP/1.1` over TCP sockets with `Connection: close`; cache,
-  cookies, compression, true streaming downloads, and form submission are not
-  implemented yet.
+  cookies, compression, and true streaming downloads are not implemented yet.
 
 ## litehtml Status
 

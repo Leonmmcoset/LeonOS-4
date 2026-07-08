@@ -55,7 +55,9 @@ void rerender_page(void)
 {
     if (page_is_html) {
         render_html_source(page_source, current_location);
+        browser_forms_refresh();
     } else {
+        browser_forms_clear();
         render_plain_source(page_source);
     }
 }
@@ -85,6 +87,11 @@ void render_message_page(const char *title, const char *message,
         append_text(text, &pos, sizeof(text), detail);
     }
     set_page_source(title, text, 0, message);
+}
+
+static const char *browser_safe_detail(const char *detail)
+{
+    return browser_embedded ? "" : detail;
 }
 
 void push_history(const char *url)
@@ -438,6 +445,102 @@ static int browser_response_is_html(const struct leonos_http_response *response,
     return 1;
 }
 
+void load_http_form_post(const char *url, const char *body)
+{
+    struct parsed_http_url parsed;
+    struct leonos_http_response response;
+    struct leonos_http_request request;
+    uint32_t pos = 0;
+    uint32_t css_count = 0;
+    int ret;
+    char normalized[BROWSER_URL_CAP];
+    char status[BROWSER_STATUS_CAP];
+    if (!parse_http_url(url, &parsed)) {
+        render_message_page(T("Invalid URL", "无效地址"),
+                            T("The form action could not be parsed as HTTP.",
+                              "无法把表单提交地址解析为 HTTP。"),
+                            browser_safe_detail(url));
+        return;
+    }
+    build_http_url(normalized, sizeof(normalized), parsed.host, parsed.port, parsed.path);
+    copy_text(current_location, sizeof(current_location), normalized);
+    copy_text(address_input, sizeof(address_input), normalized);
+    leonos_ui_edit_state_sync(&address_edit);
+    set_status(T("Submitting form...", "正在提交表单..."));
+    present_browser();
+    page_source[0] = 0;
+    browser_http_headers[0] = 0;
+    source_truncated = 0;
+    request = (struct leonos_http_request){
+        .url = normalized,
+        .method = "POST",
+        .extra_headers = "Content-Type: application/x-www-form-urlencoded\r\n",
+        .request_body = body ? body : "",
+        .request_body_len = (uint32_t)strlen(body ? body : ""),
+        .timeout_ms = LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
+        .max_redirects = LEONOS_HTTP_DEFAULT_REDIRECTS,
+        .response_body = page_source,
+        .response_body_capacity = sizeof(page_source),
+        .response_headers = browser_http_headers,
+        .response_headers_capacity = sizeof(browser_http_headers),
+    };
+    ret = leonos_http_request(&request, &response);
+    if (ret < 0) {
+        format_ret_status(status, sizeof(status),
+                          T("HTTP client failed", "HTTP 客户端失败"), ret);
+        render_message_page(T("Network Error", "网络错误"), status,
+                            browser_safe_detail(normalized));
+        return;
+    }
+    if (response.final_url[0]) {
+        copy_text(current_location, sizeof(current_location), response.final_url);
+        copy_text(address_input, sizeof(address_input), current_location);
+        leonos_ui_edit_state_sync(&address_edit);
+    }
+    for (uint32_t i = 0; i < response.body_len; ++i) {
+        if (!page_source[i]) {
+            page_source[i] = ' ';
+        }
+    }
+    if (response.flags & LEONOS_HTTP_FLAG_TRUNCATED) {
+        source_truncated = 1;
+    }
+    status[0] = 0;
+    append_text(status, &pos, sizeof(status), net_status_name(response.net_status));
+    append_text(status, &pos, sizeof(status), "  HTTP ");
+    append_u32(status, &pos, sizeof(status), response.http_status);
+    append_text(status, &pos, sizeof(status), "  ");
+    append_u32(status, &pos, sizeof(status), response.body_len);
+    append_text(status, &pos, sizeof(status), " bytes");
+    if (response.redirect_count) {
+        append_text(status, &pos, sizeof(status), "  redirects ");
+        append_u32(status, &pos, sizeof(status), response.redirect_count);
+    }
+    if (source_truncated) {
+        append_text(status, &pos, sizeof(status), "  truncated");
+    }
+    if (response.net_status != LEONOS_NET_STATUS_OK) {
+        render_message_page(T("Network Error", "网络错误"), status,
+                            browser_safe_detail(normalized));
+        return;
+    }
+    page_is_html = (uint8_t)browser_response_is_html(&response, current_location);
+    if (page_is_html) {
+        css_count = browser_inject_external_css(current_location);
+        if (css_count) {
+            append_text(status, &pos, sizeof(status), "  css ");
+            append_u32(status, &pos, sizeof(status), css_count);
+        }
+    }
+    if (parse_http_url(current_location, &parsed)) {
+        copy_text(page_title, sizeof(page_title), parsed.host);
+    } else {
+        copy_text(page_title, sizeof(page_title), T("HTTP Page", "HTTP 页面"));
+    }
+    rerender_page();
+    set_status(status);
+}
+
 void load_http_url(const char *url)
 {
     struct parsed_http_url parsed;
@@ -450,7 +553,7 @@ void load_http_url(const char *url)
     if (!parse_http_url(url, &parsed)) {
         render_message_page(T("Invalid URL", "无效地址"),
                             T("The address could not be parsed as HTTP.", "无法把该地址解析为 HTTP。"),
-                            url);
+                            browser_safe_detail(url));
         return;
     }
     build_http_url(normalized, sizeof(normalized), parsed.host, parsed.port, parsed.path);
@@ -469,7 +572,8 @@ void load_http_url(const char *url)
     if (ret < 0) {
         format_ret_status(status, sizeof(status),
                           T("HTTP client failed", "HTTP 客户端失败"), ret);
-        render_message_page(T("Network Error", "网络错误"), status, normalized);
+        render_message_page(T("Network Error", "网络错误"), status,
+                            browser_safe_detail(normalized));
         return;
     }
     if (response.final_url[0]) {
@@ -504,7 +608,8 @@ void load_http_url(const char *url)
         append_text(status, &pos, sizeof(status), "  truncated");
     }
     if (response.net_status != LEONOS_NET_STATUS_OK) {
-        render_message_page(T("Network Error", "网络错误"), status, normalized);
+        render_message_page(T("Network Error", "网络错误"), status,
+                            browser_safe_detail(normalized));
         return;
     }
     page_is_html = (uint8_t)browser_response_is_html(&response,
@@ -617,7 +722,7 @@ void navigate_to(const char *input, uint8_t add_to_history)
         render_message_page(T("HTTPS Unsupported", "不支持 HTTPS"),
                             T("LeonOS Browser can only open http:// pages in this build.",
                               "这个版本的 LeonOS Browser 只能打开 http:// 页面。"),
-                            url);
+                            browser_safe_detail(url));
     } else if (starts_with_ignore_case(url, "http://")) {
         if (browser_should_download_http_url(url)) {
             launch_download_for_url(url);
@@ -631,7 +736,7 @@ void navigate_to(const char *input, uint8_t add_to_history)
         render_message_page(T("Unsupported Address", "不支持的地址"),
                             T("Use http://, about:, or a LeonOS file path such as 0:/file.html.",
                               "请使用 http://、about:，或类似 0:/file.html 的 LeonOS 文件路径。"),
-                            url);
+                            browser_safe_detail(url));
     }
     if (add_to_history) {
         push_history(current_location);

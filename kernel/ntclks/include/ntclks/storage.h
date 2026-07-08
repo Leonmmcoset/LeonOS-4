@@ -3,6 +3,7 @@
 
 #include <leonos/boot_handoff.h>
 #include <leonos/fs.h>
+#include <leonos/system.h>
 #include <ntclks/types.h>
 
 struct storage_node {
@@ -46,5 +47,6 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
                                uint32_t capacity, uint32_t *out_count);
 int storage_install_format_esp(uint32_t disk_id);
 int storage_install_mount_target(uint32_t disk_id);
+void storage_boot_identity(struct leonos_machine_identity *identity);
 
 #endif

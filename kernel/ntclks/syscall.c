@@ -6,6 +6,7 @@
 #include <ntclks/mouse.h>
 #include <ntclks/net.h>
 #include <ntclks/osmlayer.h>
+#include <ntclks/platform.h>
 #include <ntclks/power.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
@@ -61,6 +62,8 @@
 #define TASK_VMA_FLAG_ANON    0x00000002u
 #define TASK_VMA_FLAG_FILE    0x00000004u
 #define TASK_VMA_FLAG_LAZY    0x00000008u
+#define OOBE_DHCP_APP_PATH "0:/userland/oobe.elf"
+#define OOBE_DONE_MARKER_PATH "0:/etc/oobe.done"
 
 static struct leonos_user_info auth_user_scratch[LEONOS_AUTH_MAX_USERS];
 
@@ -92,6 +95,28 @@ static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
     }
 }
 
+static int text_eq_cstr(const char *a, const char *b)
+{
+    uint32_t i = 0;
+    if (!a || !b) {
+        return 0;
+    }
+    while (a[i] && b[i] && a[i] == b[i]) {
+        ++i;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
+static int oobe_dhcp_renew_allowed(const struct task *task)
+{
+    struct storage_node node;
+    if (!task || !text_eq_cstr(task->path, OOBE_DHCP_APP_PATH) ||
+        !storage_ready()) {
+        return 0;
+    }
+    return storage_lookup_path(OOBE_DONE_MARKER_PATH, &node) < 0;
+}
+
 static int require_window_server(void)
 {
     struct task *task = sched_current_task();
@@ -112,6 +137,9 @@ static int require_network_config_access(void)
     }
     if (task && (task->flags & TASK_FLAG_SERVICE) &&
         !(task->flags & TASK_FLAG_WINDOW_SERVER)) {
+        return 0;
+    }
+    if (oobe_dhcp_renew_allowed(task)) {
         return 0;
     }
     return -LEONOS_EPERM;
@@ -2420,6 +2448,17 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return time_wall_clock((struct leonos_time_info *)(uintptr_t)a2) == 0
                    ? 0
                    : -LEONOS_EINVAL;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_MACHINE_IDENTITY) {
+        struct leonos_machine_identity identity;
+        if (!user_range_ok(a2, sizeof(struct leonos_machine_identity))) {
+            return -LEONOS_EFAULT;
+        }
+        platform_machine_identity(&identity);
+        storage_boot_identity(&identity);
+        *(struct leonos_machine_identity *)(uintptr_t)a2 = identity;
+        return 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_PING) {

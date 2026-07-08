@@ -173,7 +173,7 @@ Important requests include:
 - `LEONOS_GUI_IOCTL_TASKS`, `LEONOS_GUI_IOCTL_TASK_KILL`
 - `LEONOS_IOCTL_LIST_DIR`
 - `LEONOS_IOCTL_SYSTEM_INFO`, `LEONOS_IOCTL_PERF_INFO`,
-  `LEONOS_IOCTL_TIME_INFO`
+  `LEONOS_IOCTL_TIME_INFO`, `LEONOS_IOCTL_MACHINE_IDENTITY`
 - `LEONOS_IOCTL_DEVICE_LIST`
 - `LEONOS_IOCTL_NET_CONFIG`, `LEONOS_IOCTL_NET_DHCP`,
   `LEONOS_IOCTL_NET_DNS`, `LEONOS_IOCTL_NET_PING`,
@@ -227,7 +227,9 @@ switches to the lease; if it fails or is disabled, the fallback remains active:
 running to manually renew or recover a lease when the caller is an
 administrator. Non-admin users may read network status and use DNS/HTTP/socket
 APIs, but DHCP renew changes the global IPv4 configuration and returns
-`EPERM` unless the caller is an administrator or trusted service task.
+`EPERM` unless the caller is an administrator or trusted service task. The only
+pre-login exception is `0:/userland/oobe.elf` while `0:/etc/oobe.done` is
+absent, so the license screen can expose a narrow `Renew DHCP` recovery button.
 `netctl.elf` also queries `leonos_net_connections` and displays TCP client
 sockets in `SYN_SENT`, `ESTABLISHED`, `TIME_WAIT`, or `CLOSED`. Administrators
 and trusted service tasks see the full socket table; normal users see only
@@ -294,7 +296,9 @@ installer-storage operations. File authorization now uses the FAT32-side
 - ACL set operations: Manage Permissions.
 
 Normal users can access their own home through Owner permissions and shared
-temporary files through the `0:/tmp` default ACL. Administrators can manage
+temporary files through the `0:/tmp` default ACL. Bundled help files under
+`0:/docs` are treated as a system tree: normal users receive read/execute access
+by default, while administrators retain full control. Administrators can manage
 users and can take ownership or repair corrupt ACL metadata. Shutdown and reboot
 remain available to any logged-in user.
 

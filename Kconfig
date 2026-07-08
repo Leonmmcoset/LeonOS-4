@@ -1,35 +1,74 @@
 menu "LeonOS 4"
 
-config ARCH_X86_64
-    bool "x86_64 UEFI target"
+menu "Build"
+
+config VMDK_REQUIRE_LICENSE
+    bool "Standalone VMDK requires license activation"
     default y
 
-config SERIAL_LOG
-    bool "Enable COM1 serial logging"
+config INSTALLER_INSTALLED_REQUIRE_LICENSE
+    bool "Installed system from installer ISO requires license activation"
     default y
 
-config VGA_TEXT_FALLBACK
-    bool "Enable VGA text fallback console"
+config IMAGE_SIZE_MIB
+    int "Standalone VMDK image size in MiB"
+    range 64 4096
+    default 96
+
+config INSTALLER_ROOT_SIZE_MIB
+    int "Installer runtime root size in MiB"
+    range 32 4096
+    default 64
+
+config NINJA_REGENERATE_BEFORE_BUILD
+    bool "Regenerate build.ninja before Ninja builds"
+    default n
+
+endmenu
+
+menu "QEMU Run"
+
+config QEMU_MEMORY_MB
+    int "QEMU memory size in MiB"
+    range 128 65536
+    default 512
+
+config QEMU_DISPLAY_WIDTH
+    int "QEMU VGA display width"
+    range 640 7680
+    default 1920
+
+config QEMU_DISPLAY_HEIGHT
+    int "QEMU VGA display height"
+    range 480 4320
+    default 1080
+
+config QEMU_ENABLE_KVM
+    bool "Enable KVM acceleration for QEMU run targets"
     default y
 
-config FRAMEBUFFER_DESKTOP
-    bool "Draw Win98-style boot desktop in framebuffer"
+config QEMU_NET_DEVICE
+    string "QEMU network device model"
+    default "e1000"
+    help
+      Leave empty to disable QEMU user networking for run targets.
+
+config QEMU_OVMF_PATH
+    string "QEMU OVMF firmware path"
+    default "/usr/share/ovmf/OVMF.fd"
+
+endmenu
+
+menu "System Configuration"
+
+config LICENSE_SERVER_URL
+    string "License platform URL"
+    default "http://127.0.0.1:30301"
+
+config LICENSE_DEBUG_LOG
+    bool "Enable license and OOBE activation debug logs"
     default y
 
-config FAT32_WRITE
-    bool "Enable FAT32 basic write API"
-    default y
-
-config USERLAND_RING3
-    bool "Build Ring-3 userland ELF programs"
-    default y
-
-config GUI_WINDOW_SERVER
-    bool "Start desktop.elf as the Ring-3 window server"
-    default y
-
-config KERNEL_RUST_OSMLAYER
-    bool "Link Rust no_std osmlayer static library"
-    default y
+endmenu
 
 endmenu

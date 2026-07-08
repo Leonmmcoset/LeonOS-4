@@ -8,9 +8,32 @@ generated output and regenerate it when the graph changes.
 Important generated files include:
 
 - `include/generated/autoconf.h`
+- `include/generated/autoconf-installer.h`
 - `include/generated/build_info.h`
 - `include/generated/loader_integrity.h`
-- `build/rustcfg.args`
+- `include/generated/rustcfg.args`
+
+## Configuration
+
+`Kconfig` currently exposes two groups:
+
+- `Build`
+- `System Configuration`
+
+The build group controls the source macro that is compiled into binaries for
+the standalone VMDK image, the source macro compiled into binaries installed
+from the installer ISO, and whether Ninja should regenerate `build.ninja`
+before builds. The default for both license gates is enabled; the default for
+Ninja regeneration is disabled.
+
+The system group controls the license platform URL that is compiled into
+userland binaries. The default is `http://127.0.0.1:30301`.
+
+`tools/kconfig_sync.py` normalizes `.config`, writes `autoconf.h` with the VMDK
+`LEONOS_LICENSE_REQUIRE` policy, writes `autoconf-installer.h` with the
+installer-installed-system policy, and writes `CONFIG_LICENSE_SERVER_URL` into
+both headers. License binaries read that compiled macro directly; there is no
+runtime `0:/etc/license.conf` server override.
 
 ## Main outputs
 
@@ -26,8 +49,9 @@ The runtime ESP staging tree is:
 - `build/esp`
 
 It contains the installed-system loader, kernel, middlelayer, resources,
-configuration, and userland applications. The normal application set includes
-`oobe.elf` and `login.elf`; the account database is intentionally not staged.
+configuration, bundled help documents under `docs/`, and userland applications.
+The normal application set includes `oobe.elf`, `login.elf`, and `oshlp.elf`;
+the account database is intentionally not staged.
 
 ## Installer packaging
 
@@ -37,8 +61,10 @@ The installer has two related payloads:
 - Installed-system payload: a copy of `build/esp` stored under `install/esp`
   inside `build/install/root.fat`.
 
-`tools/make_installer_root.py` creates `build/install/root.fat` and copies the
-normal ESP tree into the installer runtime at `0:/install/esp`.
+`tools/make_installer_root.py` creates `build/install/root.fat`, copies the
+normal ESP tree into the installer runtime at `0:/install/esp`, removes stale
+license override files from that payload if they exist, and overlays
+policy-sensitive binaries built with `autoconf-installer.h`.
 
 `tools/make_installer_iso.py` creates `build/images/leonos4-installer.iso` and
 stages:
@@ -54,7 +80,27 @@ component set.
 The installer runtime itself only needs `desktop.elf` and `installer.elf` under
 `0:/userland`. The installed-system payload under `0:/install/esp/userland`
 contains the normal app set, including `login.elf` and `oobe.elf`, so a fresh
-install boots into OOBE instead of requiring pre-created accounts.
+install boots into license OOBE and then first-administrator creation instead
+of requiring pre-created accounts.
+
+The policy-sensitive installed-system binaries are currently `desktop.elf`,
+`oobe.elf`, and `settings.elf`. They link a libc build that uses
+`autoconf-installer.h`, so disk files cannot turn off validation or redirect
+the license server. To build an image without license validation, change the
+corresponding source macro through Kconfig and regenerate/rebuild so the
+generated binaries contain `LEONOS_LICENSE_REQUIRE 0`.
+
+Installer update mode refreshes `boot`, `system`, `EFI`, selected changed or
+missing `userland` programs, and bundled docs from `0:/install/esp/docs`.
+Docs are merged: matching bundled `.hlp` files are overwritten, but extra
+third-party help files already present on the target `1:/docs` are kept.
+Update mode does not replace `1:/etc`, so local machine state such as
+`license.dat`, `accounts.db`, and `oobe.done` is preserved across an
+installer-driven update. The machine ID is derived from detected machine
+identity at runtime instead of being stored in `0:/etc/install.id`. The stable
+identity source is SMBIOS System UUID when firmware provides it, otherwise the
+boot GPT disk and ESP partition GUIDs. A fresh install formats and copies the
+staged `etc` tree instead, so it starts the license OOBE flow again.
 
 ## WSL validation commands
 
