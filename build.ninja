@@ -154,6 +154,7 @@ rule clean_rule
   description = CLEAN
 
 build .config: ensure_config configs/default.conf
+build build.ninja: gen_build_ninja tools/gen_ninja.py Kconfig configs/default.conf .config
 build include/generated/autoconf.h include/generated/autoconf-installer.h include/generated/rustcfg.args: kconfig_sync tools/kconfig_sync.py configs/default.conf Kconfig .config
 build config-sync: phony include/generated/autoconf.h include/generated/autoconf-installer.h include/generated/rustcfg.args
 build build/version/always: phony
