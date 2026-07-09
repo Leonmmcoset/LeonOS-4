@@ -1785,8 +1785,11 @@ int leonos_http_request(const struct leonos_http_request *request,
         return -1;
     }
     *response = (struct leonos_http_response){0};
-    max_redirects = request->max_redirects ? request->max_redirects
-                                           : LEONOS_HTTP_DEFAULT_REDIRECTS;
+    max_redirects = request->max_redirects == LEONOS_HTTP_NO_REDIRECTS
+                        ? 0
+                        : request->max_redirects
+                              ? request->max_redirects
+                              : LEONOS_HTTP_DEFAULT_REDIRECTS;
     http_copy_text(current_url, sizeof(current_url), request->url);
     http_copy_text(response->final_url, sizeof(response->final_url),
                    current_url);
@@ -1810,6 +1813,9 @@ int leonos_http_request(const struct leonos_http_request *request,
         if (response->net_status != LEONOS_NET_STATUS_OK ||
             !http_is_redirect(response->http_status) ||
             !location[0]) {
+            return 0;
+        }
+        if (max_redirects == 0) {
             return 0;
         }
         if (response->redirect_count >= max_redirects) {

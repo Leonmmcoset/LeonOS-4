@@ -16,10 +16,10 @@
 #define STATUS_CAP 128
 #define PATH_CAP LEONOS_FS_PATH_LEN
 #define HEADER_X 10
-#define HEADER_Y 38
-#define PATH_Y 56
+#define HEADER_Y 30
+#define PATH_Y 48
 #define VIEW_X 10
-#define VIEW_Y 82
+#define VIEW_Y 62
 #define STATUS_H 28
 #define MENU_BAR_H 28
 #define MENU_ITEM_H (LEONOS_FONT_H + 8)

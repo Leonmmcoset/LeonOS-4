@@ -21,8 +21,8 @@ Current features:
   `Downloads` directory.
 - A `userland/apps/browser/litehtml_core.c` document layout layer for headings,
   paragraphs and block sections, lists, blockquotes, table rows/cells, breaks,
-  horizontal rules, image placeholders with alt text, entities, links, and
-  basic inline styles (`strong`/`b`, `em`/`i`, `code`).
+  horizontal rules, image placeholders with alt text, entities, links, per-cell
+  table alignment, and basic inline styles (`strong`/`b`, `em`/`i`, `code`).
 - A small CSS v1 parser for `<style>` blocks, inline `style=""`, and up to four
   `http://` `<link rel="stylesheet">` stylesheets per page. It covers simple
   tag/class/id selectors plus `color`, `background-color`, `font-weight`,
@@ -32,9 +32,12 @@ Current features:
   chunked transfer decoding, final URL reporting, and truncation indicators.
 - Link hit testing, relative URL resolution, Back, Forward, Refresh, Home, and
   mouse-wheel scrolling.
-- Minimal form support for the license site: `form`, text/email/password/hidden
-  inputs, submit inputs/buttons, GET and POST, and
-  `application/x-www-form-urlencoded` bodies.
+- Inline form support: `form`, text/email/search/url/tel/number/password/hidden
+  inputs, checkbox/radio controls, single-choice `select`/`option`, one-line
+  `textarea`, placeholder text, submit/reset inputs and buttons,
+  disabled/read-only states, GET and POST, and
+  `application/x-www-form-urlencoded` bodies. Select controls cycle through
+  options when clicked.
 - Resize-aware reflow.
 
 Current limits:
@@ -44,8 +47,9 @@ Current limits:
 - No inline image loading. Image links can be downloaded and opened with
   `imageview.elf` when saved as BMP.
 - No full CSS cascade, box model, floats, flex/grid, or media queries.
-- HTTP is plain `HTTP/1.1` over TCP sockets with `Connection: close`; cache,
-  cookies, compression, and true streaming downloads are not implemented yet.
+- HTTP is plain `HTTP/1.1` over TCP sockets with `Connection: close`; cookie
+  storage is implemented for HTTP, while cache, compression, and true streaming
+  downloads are not implemented yet.
 
 ## litehtml Status
 

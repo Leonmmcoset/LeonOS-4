@@ -14,10 +14,13 @@
 #define DISKMGR_RIGHT_MARGIN 22
 #define DISKMGR_STATUS_H 28
 #define DISKMGR_ROW_H 24
-#define DISKMGR_DETAIL_Y 62
+#define DISKMGR_LIST_TITLE_Y 14
+#define DISKMGR_LIST_HEADER_Y 36
+#define DISKMGR_LIST_ROW_Y 60
+#define DISKMGR_DETAIL_Y 36
 #define DISKMGR_DETAIL_H 186
-#define DISKMGR_SUMMARY_Y 258
-#define DISKMGR_LOWER_PANEL_Y 286
+#define DISKMGR_SUMMARY_Y 232
+#define DISKMGR_LOWER_PANEL_Y 260
 #define DISKMGR_LOWER_PANEL_H 132
 #define DISKMGR_CONFIRM_EDIT_Y (DISKMGR_LOWER_PANEL_Y + 64)
 #define DISKMGR_CONFIRM_BUTTON_Y (DISKMGR_LOWER_PANEL_Y + 98)
@@ -187,7 +190,7 @@ static uint32_t disk_button_y(void)
 static uint32_t disk_list_h(void)
 {
     uint32_t button_y = disk_button_y();
-    return button_y > 104 ? button_y - 104 : 72;
+    return button_y > DISKMGR_LIST_ROW_Y + 18 ? button_y - DISKMGR_LIST_ROW_Y - 18 : 72;
 }
 
 static uint32_t disk_visible_rows(void)
@@ -360,13 +363,12 @@ static void draw_diskmgr(struct leonos_ui_surface *ui)
     uint32_t button_y = disk_button_y();
     update_disk_list_layout();
 
-    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, view_w, view_h, T("Disk Manager", "磁盘管理器"));
-    leonos_ui_text(ui, 16, 38, T("Disks", "磁盘"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_listview_header(ui, 16, 62, list_w, cols, sizeof(cols) / sizeof(cols[0]));
+    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 16, DISKMGR_LIST_TITLE_Y, T("Disks", "磁盘"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_listview_header(ui, 16, DISKMGR_LIST_HEADER_Y, list_w, cols, sizeof(cols) / sizeof(cols[0]));
     for (uint32_t row = 0; row < disk_list.visible_rows; ++row) {
         uint32_t i = disk_list.scroll + row;
-        uint32_t y = 86 + row * DISKMGR_ROW_H;
+        uint32_t y = DISKMGR_LIST_ROW_Y + row * DISKMGR_ROW_H;
         if (i >= disk_count) {
             leonos_ui_list_row(ui, 16, y, list_w, "", 0);
             continue;
@@ -383,7 +385,7 @@ static void draw_diskmgr(struct leonos_ui_surface *ui)
                                sizeof(cols) / sizeof(cols[0]),
                                (int32_t)i == disk_list.selected ? LEONOS_UI_MENU_SELECTED : 0);
     }
-    leonos_ui_vscrollbar(ui, 18 + list_w, 86, 18, list_h,
+    leonos_ui_vscrollbar(ui, 18 + list_w, DISKMGR_LIST_ROW_Y, 18, list_h,
                          disk_list.scroll, disk_count, disk_list.visible_rows,
                          disk_count <= disk_list.visible_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
 
@@ -405,12 +407,12 @@ static void draw_diskmgr(struct leonos_ui_surface *ui)
             {T("Sector:", "扇区:"), disk_sector_text[index], 0},
             {T("Status:", "状态:"), disk_flags_text[index], 0},
         };
-        leonos_ui_property_grid(ui, right_x + 10, 84,
+        leonos_ui_property_grid(ui, right_x + 10, DISKMGR_DETAIL_Y + 22,
                                 DISKMGR_DETAIL_W > 20 ? DISKMGR_DETAIL_W - 20 : DISKMGR_DETAIL_W,
                                 props, sizeof(props) / sizeof(props[0]),
                                 74, 24);
     } else {
-        leonos_ui_text(ui, right_x + 14, 92, T("No disk selected.", "未选择磁盘。"),
+        leonos_ui_text(ui, right_x + 14, DISKMGR_DETAIL_Y + 30, T("No disk selected.", "未选择磁盘。"),
                        LEONOS_UI_DARK, LEONOS_UI_WHITE);
     }
 
@@ -494,19 +496,19 @@ static int handle_mouse(uint32_t window_id, struct leonos_ui_surface *ui,
         present_diskmgr(window_id, ui);
         return 1;
     }
-    if (event->x >= (int32_t)(18 + list_w) && event->y >= 86 &&
-        event->y < (int32_t)(86 + list_h)) {
+    if (event->x >= (int32_t)(18 + list_w) && event->y >= DISKMGR_LIST_ROW_Y &&
+        event->y < (int32_t)(DISKMGR_LIST_ROW_Y + list_h)) {
         if (leonos_ui_vscrollbar_handle_mouse(&disk_list.scroll,
                                               disk_count > disk_list.visible_rows ? disk_count : disk_list.visible_rows,
                                               disk_list.visible_rows,
-                                              18 + list_w, 86, 18, list_h, event->x, event->y)) {
+                                              18 + list_w, DISKMGR_LIST_ROW_Y, 18, list_h, event->x, event->y)) {
             present_diskmgr(window_id, ui);
             return 1;
         }
     } else {
         uint32_t activate = 0;
         if (leonos_ui_listview_state_handle_mouse(&disk_list, event->x, event->y,
-                                                  16, 86, list_w, &activate)) {
+                                                  16, DISKMGR_LIST_ROW_Y, list_w, &activate)) {
             confirm_armed = 0;
             present_diskmgr(window_id, ui);
             return 1;

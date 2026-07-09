@@ -1117,12 +1117,16 @@ static int remove_path_recursive(const char *path)
     if (st.type != LEONOS_FS_TYPE_DIR) {
         return -20;
     }
-    {
+    for (;;) {
         struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
         uint32_t count = 0;
+        uint32_t removed = 0;
         ret = leonos_list_dir(path, entries, LEONOS_FS_MAX_ENTRIES, &count);
         if (ret < 0) {
             return ret;
+        }
+        if (count == 0) {
+            break;
         }
         for (uint32_t i = 0; i < count; ++i) {
             char child[LEONOS_FS_PATH_LEN];
@@ -1136,6 +1140,10 @@ static int remove_path_recursive(const char *path)
             if (ret < 0) {
                 return ret;
             }
+            removed = 1;
+        }
+        if (!removed) {
+            break;
         }
     }
     return rmdir(path);

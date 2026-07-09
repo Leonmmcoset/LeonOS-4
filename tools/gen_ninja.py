@@ -208,23 +208,23 @@ def main() -> int:
     ld = os.environ.get("LD", "ld.lld")
 
     cflags_kernel = (
-        "-target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector "
+        "-target x86_64-unknown-none -O2 -std=c11 -ffreestanding -fno-stack-protector "
         "-fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -mcmodel=kernel -Wall -Wextra "
         "-Ikernel/ntclks/include -Iinclude -Iinclude/generated"
     )
-    asflags_kernel = "-target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Ikernel/ntclks/include -Iinclude"
+    asflags_kernel = "-target x86_64-unknown-none -O2 -ffreestanding -mno-red-zone -mgeneral-regs-only -Ikernel/ntclks/include -Iinclude"
     cflags_loader = (
-        "-target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector "
+        "-target x86_64-unknown-none -O2 -std=c11 -ffreestanding -fno-stack-protector "
         "-fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iinclude"
     )
-    asflags_loader = "-target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Iinclude"
+    asflags_loader = "-target x86_64-unknown-none -O2 -ffreestanding -mno-red-zone -mgeneral-regs-only -Iinclude"
     cflags_user_base = (
-        "-target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector "
+        "-target x86_64-unknown-none -O2 -std=c11 -ffreestanding -fno-stack-protector "
         "-fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iuserland/libc/include -Iinclude"
     )
     cflags_user = f"{cflags_user_base} -include include/generated/autoconf.h"
     cflags_user_installer_policy = f"{cflags_user_base} -include include/generated/autoconf-installer.h"
-    asflags_user = "-target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Iuserland/libc/include -Iinclude"
+    asflags_user = "-target x86_64-unknown-none -O2 -ffreestanding -mno-red-zone -mgeneral-regs-only -Iuserland/libc/include -Iinclude"
 
     write_line(lines, "ninja_required_version = 1.10")
     write_line(lines, f"cc = {cc}")
@@ -279,7 +279,7 @@ def main() -> int:
     write_line(lines, "  description = AS.LOADER $out")
     write_line(lines)
     write_line(lines, "rule rust_osmlayer")
-    write_line(lines, "  command = $rustc --crate-type lib --target x86_64-unknown-none -C panic=abort -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C target-feature=-sse,-sse2 -C opt-level=1 --emit obj=$out $in")
+    write_line(lines, "  command = $rustc --crate-type lib --target x86_64-unknown-none -C panic=abort -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C target-feature=-sse,-sse2 -C opt-level=2 --emit obj=$out $in")
     write_line(lines, "  description = RUST.OSMLAYER $out")
     write_line(lines)
     write_line(lines, "rule link_loader")

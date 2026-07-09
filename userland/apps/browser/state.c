@@ -16,22 +16,24 @@ uint8_t source_truncated;
 struct browser_line lines[BROWSER_MAX_LINES];
 uint32_t line_count = 1;
 uint32_t scroll_line;
+uint32_t scroll_x;
 struct browser_link links[BROWSER_MAX_LINKS];
 uint32_t link_count;
 struct browser_form browser_forms[BROWSER_MAX_FORMS];
 uint32_t browser_form_count;
 struct browser_form_control browser_form_controls[BROWSER_MAX_FORM_CONTROLS];
 uint32_t browser_form_control_count;
+struct browser_form_option browser_form_options[BROWSER_MAX_FORM_OPTIONS];
+uint32_t browser_form_option_count;
 char history[BROWSER_HISTORY_MAX][BROWSER_URL_CAP];
 uint32_t history_count;
 int32_t history_index = -1;
 uint8_t menu_open;
 uint8_t browser_should_exit;
 uint8_t browser_embedded;
-uint8_t browser_embed_edit_active;
-uint32_t browser_embed_edit_control;
-char browser_embed_edit_value[BROWSER_FORM_VALUE_CAP];
-struct leonos_ui_edit_state browser_embed_edit_state;
+uint8_t browser_form_focus_active;
+uint32_t browser_form_focus_control;
+struct leonos_ui_edit_state browser_form_edit_state;
 struct leonos_ui_toast_state browser_toast;
 
 uint32_t page_y(void)
@@ -50,8 +52,13 @@ uint32_t page_w(void)
 uint32_t page_h(void)
 {
     uint32_t y = page_y();
+    uint32_t content_w;
     if (view_h <= y + 4U) {
         return BROWSER_LINE_H;
+    }
+    content_w = document_content_w();
+    if (content_w > document_text_w() && view_h > y + BROWSER_SCROLL_W + 8U) {
+        return view_h - y - BROWSER_SCROLL_W - 4U;
     }
     return view_h - y - 4U;
 }
@@ -93,7 +100,7 @@ uint32_t visible_rows(void)
     }
     h -= 16U;
     for (uint32_t i = scroll_line; i < line_count; ++i) {
-        uint32_t line_h = browser_line_height(lines[i].kind);
+        uint32_t line_h = browser_line_render_height(&lines[i]);
         if (rows && used + line_h > h) {
             break;
         }
@@ -109,10 +116,14 @@ uint32_t visible_rows(void)
 void clamp_scroll(void)
 {
     uint32_t rows = visible_rows();
+    uint32_t content_w = document_content_w();
     if (line_count <= rows) {
         scroll_line = 0;
     } else if (scroll_line + rows > line_count) {
         scroll_line = line_count - rows;
+    }
+    if (scroll_x + document_text_w() > content_w) {
+        scroll_x = content_w > document_text_w() ? content_w - document_text_w() : 0;
     }
 }
 

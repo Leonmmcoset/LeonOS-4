@@ -13,6 +13,11 @@
 #define DEVMGR_ROW_H 24
 #define DEVMGR_STATUS_H 28
 #define DEVMGR_DETAIL_PANEL_H 96
+#define DEVMGR_TOOLBAR_Y 8
+#define DEVMGR_BUTTON_Y 14
+#define DEVMGR_LIST_FRAME_Y 56
+#define DEVMGR_LIST_HEADER_Y 58
+#define DEVMGR_LIST_ROW_Y 86
 #define DEVMGR_KEY_ESCAPE 1U
 #define T(en, zh) leonos_i18n((en), (zh))
 
@@ -164,19 +169,19 @@ static uint32_t details_y(void)
 static uint32_t list_frame_h(void)
 {
     uint32_t bottom = details_y();
-    return bottom > 92 ? bottom - 92 : 96;
+    return bottom > DEVMGR_LIST_FRAME_Y + 10 ? bottom - DEVMGR_LIST_FRAME_Y - 10 : 96;
 }
 
 static uint32_t list_scroll_h(void)
 {
     uint32_t bottom = details_y();
-    return bottom > 96 ? bottom - 96 : 80;
+    return bottom > DEVMGR_LIST_HEADER_Y + 12 ? bottom - DEVMGR_LIST_HEADER_Y - 12 : 80;
 }
 
 static uint32_t visible_rows(void)
 {
     uint32_t bottom = details_y();
-    uint32_t rows = bottom > 116 ? (bottom - 116) / DEVMGR_ROW_H : 1;
+    uint32_t rows = bottom > DEVMGR_LIST_ROW_Y ? (bottom - DEVMGR_LIST_ROW_Y) / DEVMGR_ROW_H : 1;
     return rows ? rows : 1;
 }
 
@@ -204,15 +209,14 @@ static void draw_devmgr(struct leonos_ui_surface *ui)
     update_device_list_layout();
     uint32_t rows = device_count > device_list.visible_rows ? device_list.visible_rows : device_count;
     const struct leonos_device_info *selected;
-    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, view_w, view_h, T("Device Manager", "设备管理器"));
-    leonos_ui_toolbar(ui, 8, 34, view_w > 16 ? view_w - 16 : view_w, 36);
-    leonos_ui_toolbar_button(ui, 18, 40, 88, T("Refresh", "刷新"), 0);
-    leonos_ui_text(ui, 120, 46, T("Hardware detected by the kernel", "内核检测到的硬件设备"),
+    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_GRAY);
+    leonos_ui_toolbar(ui, 8, DEVMGR_TOOLBAR_Y, view_w > 16 ? view_w - 16 : view_w, 36);
+    leonos_ui_toolbar_button(ui, 18, DEVMGR_BUTTON_Y, 88, T("Refresh", "刷新"), 0);
+    leonos_ui_text(ui, 120, DEVMGR_BUTTON_Y + 6, T("Hardware detected by the kernel", "内核检测到的硬件设备"),
                    LEONOS_UI_DARK, LEONOS_UI_GRAY);
 
-    leonos_ui_scroll_view_frame(ui, 12, 82, view_w > 24 ? view_w - 24 : view_w, frame_h);
-    leonos_ui_listview_header(ui, 14, 84, list_w, cols, 5);
+    leonos_ui_scroll_view_frame(ui, 12, DEVMGR_LIST_FRAME_Y, view_w > 24 ? view_w - 24 : view_w, frame_h);
+    leonos_ui_listview_header(ui, 14, DEVMGR_LIST_HEADER_Y, list_w, cols, 5);
     for (uint32_t row = 0; row < rows; ++row) {
         uint32_t i = device_list.scroll + row;
         const char *cells[5];
@@ -224,11 +228,11 @@ static void draw_devmgr(struct leonos_ui_surface *ui)
         cells[2] = devices[i].status;
         cells[3] = flags_text[i];
         cells[4] = devices[i].detail;
-        leonos_ui_listview_row(ui, 14, 112 + row * DEVMGR_ROW_H, list_w,
+        leonos_ui_listview_row(ui, 14, DEVMGR_LIST_ROW_Y + row * DEVMGR_ROW_H, list_w,
                                cols, cells, 5,
                                device_list.selected == (int32_t)i ? LEONOS_UI_MENU_SELECTED : 0);
     }
-    leonos_ui_vscrollbar(ui, view_w > 30 ? view_w - 30 : 690, 84, 18, scroll_h,
+    leonos_ui_vscrollbar(ui, view_w > 30 ? view_w - 30 : 690, DEVMGR_LIST_HEADER_Y, 18, scroll_h,
                          device_list.scroll,
                          device_count > device_list.visible_rows ? device_count : device_list.visible_rows,
                          device_list.visible_rows,
@@ -286,22 +290,22 @@ int main(void)
                 return 0;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
-                if (hit_rect_i(event.x, event.y, 18, 40, 88, LEONOS_UI_BUTTON_H)) {
+                if (hit_rect_i(event.x, event.y, 18, DEVMGR_BUTTON_Y, 88, LEONOS_UI_BUTTON_H)) {
                     refresh_devices();
                 } else if (event.x >= (int32_t)(view_w > 30 ? view_w - 30 : 690) &&
-                           event.y >= 84 && event.y < (int32_t)(84 + list_scroll_h())) {
+                           event.y >= DEVMGR_LIST_HEADER_Y && event.y < (int32_t)(DEVMGR_LIST_HEADER_Y + list_scroll_h())) {
                     leonos_ui_vscrollbar_handle_mouse(&device_list.scroll,
                                                       device_count > device_list.visible_rows
                                                           ? device_count
                                                           : device_list.visible_rows,
                                                       device_list.visible_rows,
-                                                      view_w > 30 ? view_w - 30 : 690, 84, 18,
+                                                      view_w > 30 ? view_w - 30 : 690, DEVMGR_LIST_HEADER_Y, 18,
                                                       list_scroll_h(),
                                                       event.x, event.y);
                 } else {
                     uint32_t activate = 0;
                     leonos_ui_listview_state_handle_mouse(&device_list, event.x, event.y,
-                                                          14, 112,
+                                                          14, DEVMGR_LIST_ROW_Y,
                                                           view_w > 52 ? view_w - 52 : 668,
                                                           &activate);
                     (void)activate;

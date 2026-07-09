@@ -61,11 +61,10 @@ static void append_text(char *dst, uint32_t cap, const char *prefix, int value)
 
 static void draw_run(struct leonos_ui_surface *ui)
 {
-    leonos_ui_rect(ui, 0, 0, RUN_W, RUN_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, RUN_W, RUN_H, T("Run", "运行"));
-    leonos_ui_text(ui, 12, 38, T("Open LeonOS program or file path", "打开 LeonOS 程序或文件路径"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 12, 62, T("Path:", "路径:"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_edit_state_draw(ui, 56, 58, RUN_W - 68, &input_edit, 0);
+    leonos_ui_rect(ui, 0, 0, RUN_W, RUN_H, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 12, 14, T("Open LeonOS program or file path", "打开 LeonOS 程序或文件路径"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 12, 38, T("Path:", "路径:"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_edit_state_draw(ui, 56, 34, RUN_W - 68, &input_edit, 0);
     leonos_ui_statusbar(ui, RUN_H - 28, 28, status_text);
 }
 
@@ -119,7 +118,7 @@ int main(int argc, char **argv, char **envp)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
                 if (leonos_ui_edit_state_handle_mouse(&input_edit, event.x, event.y,
-                                                      56, 58, RUN_W - 68, event.buttons)) {
+                                                      56, 34, RUN_W - 68, event.buttons)) {
                     draw_run(&ui);
                     leonos_gui_present_window((uint32_t)window_id, RUN_W, RUN_H, RUN_W, pixels);
                 }

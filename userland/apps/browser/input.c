@@ -1,11 +1,12 @@
 #include "browser.h"
 
-void activate_link_at(int32_t mx, int32_t my)
+int activate_link_at(int32_t mx, int32_t my)
 {
     uint32_t row;
     uint32_t col;
     uint32_t byte_index;
     uint32_t doc_y;
+    uint32_t hit_x;
     uint32_t y_cursor = 0;
     uint32_t align_shift_px;
     uint32_t content_x;
@@ -15,12 +16,12 @@ void activate_link_at(int32_t mx, int32_t my)
     if (!hit_rect_i(mx, my, text_x(), text_y(),
                     document_text_w(),
                     page_h() > 16U ? page_h() - 16U : page_h())) {
-        return;
+        return 0;
     }
     doc_y = (uint32_t)my - text_y();
     row = scroll_line;
     while (row < line_count) {
-        uint32_t line_h = browser_line_height(lines[row].kind);
+        uint32_t line_h = browser_line_render_height(&lines[row]);
         if (doc_y < y_cursor + line_h) {
             break;
         }
@@ -28,41 +29,43 @@ void activate_link_at(int32_t mx, int32_t my)
         ++row;
     }
     if (row >= line_count) {
-        return;
+        return 0;
     }
     line = &lines[row];
+    hit_x = (uint32_t)mx + scroll_x;
     cell_w = browser_line_cell_w(line->kind);
     if (!cell_w) {
         cell_w = LEONOS_FONT_W;
     }
     content_x = text_x() + (uint32_t)line->indent * LEONOS_FONT_W;
     align_shift_px = line_align_shift_px(line, document_text_w());
-    if ((uint32_t)mx < content_x + align_shift_px) {
-        return;
+    if (hit_x < content_x + align_shift_px) {
+        return 0;
     }
-    col = ((uint32_t)mx - content_x - align_shift_px) / cell_w;
+    col = (hit_x - content_x - align_shift_px) / cell_w;
     if (line->kind == BROWSER_LINE_IMAGE) {
         uint32_t image_cols = 20U / LEONOS_FONT_W;
         if (col < image_cols) {
-            return;
+            return 0;
         }
         col -= image_cols;
     }
     if (col >= line->cells) {
-        return;
+        return 0;
     }
     byte_index = browser_line_byte_at_cell(line, col);
     if (byte_index >= line->len) {
-        return;
+        return 0;
     }
     link = line->link[byte_index];
     if (!link || (uint32_t)(link - 1U) >= link_count) {
-        return;
+        return 0;
     }
-    if (browser_form_handle_href(links[link - 1U].href)) {
-        return;
+    if (browser_form_handle_click(links[link - 1U].href, mx, my)) {
+        return 1;
     }
     navigate_to(links[link - 1U].href, 1);
+    return 1;
 }
 
 int handle_toolbar_click(int32_t x, int32_t y)
@@ -293,7 +296,8 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
     uint32_t p_y = page_y();
     uint32_t p_w = page_w();
     uint32_t p_h = page_h();
-    uint32_t scroll_x = BROWSER_PAGE_X + p_w - BROWSER_SCROLL_W - 2U;
+    uint32_t vscroll_x = BROWSER_PAGE_X + p_w - BROWSER_SCROLL_W - 2U;
+    uint32_t hscroll_y = text_y() + document_view_h();
     uint32_t buttons = event->buttons;
     if (event->pressed) {
         buttons |= 1U;
@@ -302,6 +306,7 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
         return;
     }
     if (!browser_embedded && handle_menu_click(event->x, event->y)) {
+        browser_form_clear_focus();
         present_browser();
         return;
     }
@@ -309,6 +314,7 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
         leonos_ui_edit_state_handle_mouse(&address_edit, event->x, event->y,
                                           74, address_y(), address_w(),
                                           buttons)) {
+        browser_form_clear_focus();
         present_browser();
         return;
     }
@@ -317,6 +323,7 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
         if (!address_edit_hit(event->x, event->y)) {
             address_edit.focused = 0;
         }
+        browser_form_clear_focus();
         present_browser();
         return;
     }
@@ -324,12 +331,12 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
         address_edit.focused = 0;
     }
     menu_open = BROWSER_MENU_NONE;
-    if (hit_rect_i(event->x, event->y, scroll_x, p_y + 2U,
+    if (hit_rect_i(event->x, event->y, vscroll_x, p_y + 2U,
                    BROWSER_SCROLL_W, p_h > 4U ? p_h - 4U : p_h)) {
         if (leonos_ui_vscrollbar_handle_mouse(&scroll_line,
                                               line_count ? line_count : 1U,
                                               visible_rows(),
-                                              scroll_x, p_y + 2U,
+                                              vscroll_x, p_y + 2U,
                                               BROWSER_SCROLL_W,
                                               p_h > 4U ? p_h - 4U : p_h,
                                               event->x, event->y)) {
@@ -337,12 +344,32 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
         }
         return;
     }
-    activate_link_at(event->x, event->y);
+    if (document_content_w() > document_text_w() &&
+        hit_rect_i(event->x, event->y, text_x(), hscroll_y,
+                   document_text_w(), BROWSER_SCROLL_W)) {
+        if (leonos_ui_hscrollbar_handle_mouse(&scroll_x,
+                                              document_content_w(),
+                                              document_text_w(),
+                                              text_x(), hscroll_y,
+                                              document_text_w(),
+                                              BROWSER_SCROLL_W,
+                                              event->x, event->y)) {
+            present_browser();
+        }
+        return;
+    }
+    if (!activate_link_at(event->x, event->y)) {
+        browser_form_clear_focus();
+    }
     present_browser();
 }
 
 void handle_key(struct leonos_gui_app_event *event)
 {
+    if (browser_form_handle_key(event)) {
+        present_browser();
+        return;
+    }
     if (!event->pressed) {
         if (!browser_embedded) {
             leonos_ui_edit_state_handle_key(&address_edit, event->keycode,

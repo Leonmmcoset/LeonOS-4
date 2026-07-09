@@ -14,7 +14,7 @@
 #define SERVICEMGR_COMMAND_PATH "0:/var/run/services.cmd"
 #define SERVICEMGR_CONFIG_MAX 512U
 #define SERVICEMGR_STATE_MAX 1024U
-#define SERVICEMGR_ROW_Y 84U
+#define SERVICEMGR_ROW_Y 60U
 #define SERVICEMGR_ROW_H 52U
 #define T(en, zh) leonos_i18n((en), (zh))
 
@@ -449,20 +449,18 @@ static const char *localized_state(const char *state)
 
 static void draw_servicemgr(struct leonos_ui_surface *ui)
 {
-    leonos_ui_rect(ui, 0, 0, SERVICEMGR_W, SERVICEMGR_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, SERVICEMGR_W, SERVICEMGR_H,
-                     T("Service Manager", "服务管理器"));
-    leonos_ui_text(ui, 24, 40,
+    leonos_ui_rect(ui, 0, 0, SERVICEMGR_W, SERVICEMGR_H, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 24, 16,
                    can_manage
                        ? T("View service runtime state and control startup services.",
                            "查看服务运行状态并控制启动服务。")
                        : T("Runtime state is visible. Administrator rights are required to control services.",
                            "可以查看运行状态，控制服务需要管理员权限。"),
                    LEONOS_UI_DARK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 36, 66, T("Service", "服务"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 300, 66, T("State", "状态"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 408, 66, "PID", LEONOS_UI_DARK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 462, 66, T("Detail", "详情"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 36, 42, T("Service", "服务"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 300, 42, T("State", "状态"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 408, 42, "PID", LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 462, 42, T("Detail", "详情"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
 
     for (uint32_t i = 0; i < SERVICEMGR_ROWS; ++i) {
         char pid_text[16];

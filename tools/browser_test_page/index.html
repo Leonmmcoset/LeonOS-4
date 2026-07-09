@@ -10,6 +10,9 @@
     .css-box { color: #102030; background-color: #e8f4ff; border-left: 4px solid #2b6cb0; margin-left: 16px; }
     .centered { text-align: center; color: teal; font-weight: bold; }
     .right-note { text-align: right; color: maroon; font-style: italic; }
+    .cell-left { text-align: left; }
+    .cell-center { text-align: center; }
+    .cell-right { text-align: right; }
     .highlight { color: white; background-color: #7a3db8; }
     #special-css { color: #004400; background-color: #ddffdd; border-left: 4px solid green; }
     .hidden-by-core { display: none; }
@@ -51,8 +54,9 @@
 
   <h2>Table Rows</h2>
   <table>
-    <tr><td>Row 1 col A</td><td>Row 1 col B</td></tr>
-    <tr><td>Row 2 col A</td><td>Row 2 col B</td></tr>
+    <tr><th>Left</th><th>Center</th><th>Right</th></tr>
+    <tr><td class="cell-left">Row 1 col A</td><td class="cell-center">Row 1 col B</td><td class="cell-right">Row 1 col C</td></tr>
+    <tr><td align="left">Row 2 col A</td><td align="center">Row 2 col B</td><td align="right">Row 2 col C</td></tr>
   </table>
 
   <h2>Links</h2>
@@ -64,6 +68,32 @@
 
   <h2>Image Alt Text</h2>
   <p><img src="missing.bmp" alt="Image alt text should appear in brackets"></p>
+
+  <h2>Forms</h2>
+  <form action="/form-submit" method="get">
+    <p>Name: <input type="text" name="name" value="Leon"></p>
+    <p>Nickname: <input type="text" name="nickname" placeholder="Shown when empty"></p>
+    <p>Password: <input type="password" name="password" value="secret"></p>
+    <p>Search: <input type="search" name="query" value="browser forms"></p>
+    <p>URL: <input type="url" name="site" value="http://localhost:30301"></p>
+    <p>Phone: <input type="tel" name="phone" value="12345"></p>
+    <p>Count: <input type="number" name="count" value="3"></p>
+    <p><label><input type="checkbox" name="enabled" value="yes" checked> Enabled checkbox</label></p>
+    <p><label><input type="checkbox" name="disabled_checkbox" value="yes" disabled checked> Disabled checkbox</label></p>
+    <p><label><input type="radio" name="mode" value="basic" checked> Basic radio</label></p>
+    <p><label><input type="radio" name="mode" value="advanced"> Advanced radio</label></p>
+    <p>Choice:
+      <select name="choice">
+        <option value="alpha">Alpha</option>
+        <option value="beta" selected>Beta</option>
+        <option>Gamma label value</option>
+      </select>
+    </p>
+    <p>Notes: <textarea name="notes">Line one &amp; line two</textarea></p>
+    <p>Read-only: <input type="text" name="readonly_field" value="kept" readonly></p>
+    <p>Disabled: <input type="text" name="disabled_field" value="not submitted" disabled></p>
+    <p><button type="reset">Reset</button> <button type="submit" name="button" value="button-submit">Submit Form</button></p>
+  </form>
 
   <h2>Hidden Content Check</h2>
   <p>The style/script contents above should not appear in the rendered page.</p>

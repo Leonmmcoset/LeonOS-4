@@ -26,6 +26,7 @@ LeonOS Help stores several Markdown pages inside one `.hlp` file. Use the tree o
 
 | Topic | Purpose |
 | File permissions | Explains R, W, X, Delete and Manage |
+| Blue screen errors | Explains STOP reasons, CPU vectors and Page Fault flags |
 | Help file format | Shows how developers can write `.hlp` files |
 
 %%LANG zh
@@ -43,7 +44,143 @@ LeonOS 帮助把多个 Markdown 页面放在同一个 `.hlp` 文件里。左边�
 
 | 主题 | 说明 |
 | 文件权限 | 解释 R、W、X、Delete、Manage |
+| 蓝屏错误 | 解释 STOP 原因、CPU 向量和 Page Fault 标志 |
 | 帮助文件格式 | 说明开发者如何编写 `.hlp` 文件 |
+
+%%ENDDOC
+
+%%DOC system.bugcheck
+path.en: System/Blue screen errors
+path.zh: 系统/蓝屏错误
+title.en: Blue screen errors
+title.zh: 蓝屏错误
+author: LeonOS Team
+version: 1.0
+%%LANG en
+# Blue screen errors
+
+LeonOS shows a blue bugcheck screen when the kernel cannot safely continue. The screen starts with a `STOP:` reason, then diagnostic fields such as `PID`, `TASK`, `MODE`, `VECTOR`, `ERROR`, `RIP`, `RSP`, `SS`, `CS`, `RFLAGS`, `CR2`, `TICKS` and `UPTIME_MS`.
+
+## How to read the screen
+
+| Field | Meaning |
+| STOP | The primary reason. Match this first. |
+| PID / TASK | The current task when the stop happened. |
+| MODE | `kernel` means kernel or trusted system code; `user` means a Ring-3 context was active. |
+| VECTOR | CPU exception vector number. `14` is Page Fault. |
+| ERROR | CPU error code. For Page Fault, use the `PF FLAGS` line. |
+| RIP / RSP | Instruction pointer and stack pointer at the fault. |
+| CR2 | Faulting virtual address for Page Fault. |
+| TICKS / UPTIME_MS | Time since boot, useful for matching serial logs. |
+
+## STOP reasons
+
+| STOP reason | Meaning | Usual next step |
+| KERNEL PANIC | Kernel code called `panic()` or `bugcheck_panic()`. The detail line is the panic message. | Search the message in the source tree or serial log. |
+| Unhandled Page Fault | A kernel-mode page fault, or a page fault that could not be recovered by lazy mapping. | Check `CR2`, `RIP`, and `PF FLAGS`. |
+| Window Server Page Fault | The desktop/window server faulted. LeonOS stops because continuing could corrupt GUI ownership. | Check the window server task and the faulting address. |
+| Divide By Zero | CPU vector 0. Code divided by zero. | Inspect the function at `RIP`. |
+| Debug Exception | CPU vector 1. Debug trap. | Usually a bad debug state or unexpected trap. |
+| Non Maskable Interrupt | CPU vector 2. NMI. | Treat as hardware or emulator-level interruption. |
+| Breakpoint | CPU vector 3. Breakpoint instruction reached. | Remove unintended breakpoint or inspect debug path. |
+| Overflow | CPU vector 4. Overflow trap. | Inspect arithmetic path near `RIP`. |
+| Bound Range Exceeded | CPU vector 5. Bound check failed. | Inspect array/range code. |
+| Invalid Opcode | CPU vector 6. Unknown or unsupported instruction. | Check compiler output, CPU feature use, or corrupted code. |
+| Device Not Available | CPU vector 7. FPU/SIMD device state not available. | Check task/FPU setup. |
+| Double Fault | CPU vector 8. The CPU faulted while handling another fault. | Often stack, IDT, TSS or severe memory corruption. |
+| Invalid TSS | CPU vector 10. Task-state segment is invalid. | Check TSS/GDT setup. |
+| Segment Not Present | CPU vector 11. Segment descriptor is unavailable. | Check GDT/segment selector state. |
+| Stack Segment Fault | CPU vector 12. Stack segment fault. | Check stack selector and stack pointer. |
+| General Protection Fault | CPU vector 13. Protection rule violation. | Check bad selectors, privilege transitions, invalid descriptors or privileged instructions. |
+| Page Fault | CPU vector 14. Memory translation or protection fault. | Decode `PF FLAGS` and `CR2`. |
+| x87 Floating Point Fault | CPU vector 16. x87 floating-point exception. | Check floating-point state and exception masks. |
+| Alignment Check | CPU vector 17. Alignment check exception. | Check unaligned memory access under alignment checking. |
+| Machine Check | CPU vector 18. CPU reported a machine check. | Treat as hardware/emulator fatal state. |
+| SIMD Floating Point Fault | CPU vector 19. SSE/SIMD floating-point exception. | Check SIMD state and exception masks. |
+| Virtualization Exception | CPU vector 20. Virtualization exception. | Check VM/emulator or virtualization feature use. |
+| Control Protection Exception | CPU vector 21. Control-flow protection exception. | Check control protection state if enabled. |
+| Hypervisor Injection Exception | CPU vector 28. Hypervisor-injected exception. | Check hypervisor/emulator state. |
+| VMM Communication Exception | CPU vector 29. VMM communication exception. | Check hypervisor communication path. |
+| Security Exception | CPU vector 30. CPU security exception. | Check CPU security feature state. |
+| CPU Exception | Any other vector. | Use `VECTOR`, `ERROR` and `RIP` to identify the source. |
+
+## Page Fault flags
+
+When `VECTOR` is `14`, the blue screen shows `PF FLAGS`.
+
+| Flag | Meaning when 1 | Meaning when 0 |
+| P | Protection violation on a present page. | Page was not present. |
+| W | Fault happened during a write. | Fault happened during a read. |
+| U | Fault came from user mode. | Fault came from supervisor/kernel mode. |
+| RSVD | Reserved page-table bit was set. | No reserved-bit violation. |
+| IF | Fault happened during instruction fetch. | Fault happened during data access. |
+
+## User application faults
+
+Most ordinary Ring-3 application page faults do not blue-screen the system. LeonOS terminates the application, uses exit code `0x8000000e`, and posts an `Application Page Fault` report on the desktop. A user-mode page fault becomes a blue screen mainly when the current task is the window server or when no safe recovery path exists.
+
+%%LANG zh
+# 蓝屏错误
+
+当内核无法安全继续运行时，LeonOS 会显示蓝屏 bugcheck。屏幕顶部会显示 `STOP:` 原因，后面是 `PID`、`TASK`、`MODE`、`VECTOR`、`ERROR`、`RIP`、`RSP`、`SS`、`CS`、`RFLAGS`、`CR2`、`TICKS`、`UPTIME_MS` 等诊断字段。
+
+## 如何阅读蓝屏
+
+| 字段 | 含义 |
+| STOP | 主要停止原因，优先匹配这一项。 |
+| PID / TASK | 触发停止时的当前任务。 |
+| MODE | `kernel` 表示内核或受信系统代码；`user` 表示当时处在 Ring-3 上下文。 |
+| VECTOR | CPU 异常向量号。`14` 表示 Page Fault。 |
+| ERROR | CPU 错误码。Page Fault 时主要看 `PF FLAGS` 行。 |
+| RIP / RSP | 出错时的指令指针和栈指针。 |
+| CR2 | Page Fault 时的出错虚拟地址。 |
+| TICKS / UPTIME_MS | 启动后的时间，方便和串口日志对应。 |
+
+## STOP 原因
+
+| STOP 原因 | 含义 | 通常怎么查 |
+| KERNEL PANIC | 内核代码调用了 `panic()` 或 `bugcheck_panic()`。detail 行就是 panic 消息。 | 在源码或串口日志里搜索该消息。 |
+| Unhandled Page Fault | 内核态页面错误，或懒加载映射无法恢复的页面错误。 | 查看 `CR2`、`RIP` 和 `PF FLAGS`。 |
+| Window Server Page Fault | 桌面/窗口服务出错。LeonOS 会停止，因为继续运行可能破坏 GUI 所有权。 | 检查窗口服务任务和出错地址。 |
+| Divide By Zero | CPU 向量 0，除零。 | 查看 `RIP` 附近的函数。 |
+| Debug Exception | CPU 向量 1，调试异常。 | 通常是错误的调试状态或意外 trap。 |
+| Non Maskable Interrupt | CPU 向量 2，不可屏蔽中断。 | 按硬件或模拟器层中断处理。 |
+| Breakpoint | CPU 向量 3，执行了断点指令。 | 移除意外断点，或检查调试路径。 |
+| Overflow | CPU 向量 4，溢出 trap。 | 检查 `RIP` 附近的算术逻辑。 |
+| Bound Range Exceeded | CPU 向量 5，范围检查失败。 | 检查数组或范围逻辑。 |
+| Invalid Opcode | CPU 向量 6，无效或不支持的指令。 | 检查编译输出、CPU 特性使用或代码损坏。 |
+| Device Not Available | CPU 向量 7，FPU/SIMD 设备状态不可用。 | 检查任务和 FPU 初始化。 |
+| Double Fault | CPU 向量 8，处理异常时再次异常。 | 常见原因是栈、IDT、TSS 或严重内存破坏。 |
+| Invalid TSS | CPU 向量 10，TSS 无效。 | 检查 TSS/GDT 设置。 |
+| Segment Not Present | CPU 向量 11，段描述符不存在。 | 检查 GDT 和段选择子状态。 |
+| Stack Segment Fault | CPU 向量 12，栈段异常。 | 检查栈选择子和栈指针。 |
+| General Protection Fault | CPU 向量 13，保护规则被违反。 | 检查错误选择子、特权级切换、无效描述符或特权指令。 |
+| Page Fault | CPU 向量 14，内存转换或权限错误。 | 解读 `PF FLAGS` 和 `CR2`。 |
+| x87 Floating Point Fault | CPU 向量 16，x87 浮点异常。 | 检查浮点状态和异常屏蔽。 |
+| Alignment Check | CPU 向量 17，对齐检查异常。 | 检查开启对齐检查后的非对齐内存访问。 |
+| Machine Check | CPU 向量 18，CPU 报告机器检查。 | 按硬件或模拟器致命状态处理。 |
+| SIMD Floating Point Fault | CPU 向量 19，SSE/SIMD 浮点异常。 | 检查 SIMD 状态和异常屏蔽。 |
+| Virtualization Exception | CPU 向量 20，虚拟化异常。 | 检查 VM/模拟器或虚拟化特性使用。 |
+| Control Protection Exception | CPU 向量 21，控制流保护异常。 | 如果启用了控制保护，检查对应状态。 |
+| Hypervisor Injection Exception | CPU 向量 28，Hypervisor 注入异常。 | 检查 hypervisor/模拟器状态。 |
+| VMM Communication Exception | CPU 向量 29，VMM 通信异常。 | 检查 hypervisor 通信路径。 |
+| Security Exception | CPU 向量 30，CPU 安全异常。 | 检查 CPU 安全特性状态。 |
+| CPU Exception | 其他向量。 | 用 `VECTOR`、`ERROR` 和 `RIP` 定位来源。 |
+
+## Page Fault 标志
+
+当 `VECTOR` 是 `14` 时，蓝屏会显示 `PF FLAGS`。
+
+| 标志 | 为 1 时 | 为 0 时 |
+| P | 页面存在，但发生权限违规。 | 页面不存在。 |
+| W | 写入时出错。 | 读取时出错。 |
+| U | 来自用户态。 | 来自 supervisor/内核态。 |
+| RSVD | 页表保留位被设置。 | 没有保留位违规。 |
+| IF | 取指令时出错。 | 数据访问时出错。 |
+
+## 用户程序页面错误
+
+普通 Ring-3 应用的 Page Fault 通常不会导致系统蓝屏。LeonOS 会结束该应用，退出码为 `0x8000000e`，并在桌面弹出 `Application Page Fault` 报告。用户态页面错误主要在当前任务是窗口服务，或没有安全恢复路径时才会变成蓝屏。
 
 %%ENDDOC
 

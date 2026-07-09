@@ -12,7 +12,7 @@
 #define CONN_VISIBLE_ROWS 4U
 #define CONN_ROW_H (LEONOS_FONT_H + 4U)
 #define CONN_X 34U
-#define CONN_Y 354U
+#define CONN_Y 330U
 #define CONN_W (NETCTL_W - 68U)
 #define CONN_ROWS_Y (CONN_Y + LEONOS_FONT_H + 8U)
 #define T(en, zh) leonos_i18n((en), (zh))
@@ -323,11 +323,10 @@ static void draw_netctl(struct leonos_ui_surface *ui)
     append_u32(lease, &pos, sizeof(lease), config.lease_seconds);
     append_text(lease, &pos, sizeof(lease), "s");
 
-    leonos_ui_rect(ui, 0, 0, NETCTL_W, NETCTL_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, NETCTL_W, NETCTL_H, T("Network Controller", "网络控制器"));
-    leonos_ui_text(ui, 24, 40, T("Intel e1000 Network", "Intel e1000 网络"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_rect(ui, 0, 0, NETCTL_W, NETCTL_H, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 24, 16, T("Intel e1000 Network", "Intel e1000 网络"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
 
-    draw_row(ui, 74, T("State:", "状态:"),
+    draw_row(ui, 50, T("State:", "状态:"),
              ((config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE) &&
               (config.flags & LEONOS_NET_CONFIG_FLAG_DHCP) &&
               config.source == LEONOS_NET_CONFIG_SOURCE_DHCP)
@@ -335,23 +334,23 @@ static void draw_netctl(struct leonos_ui_surface *ui)
                  : ((config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE)
                         ? T("No DHCP lease", "没有 DHCP 租约")
                         : T("Unavailable", "不可用")));
-    draw_row(ui, 98, T("MAC:", "MAC:"), mac);
-    draw_row(ui, 122, T("Config:", "配置:"), source_name(config.source));
-    draw_row(ui, 146, T("IPv4:", "IPv4:"), ip);
-    draw_row(ui, 170, T("Mask:", "掩码:"), mask);
-    draw_row(ui, 194, T("Gateway:", "网关:"), gateway);
-    draw_row(ui, 218, T("DNS:", "DNS:"), dns);
-    draw_row(ui, 242, T("Lease:", "租约:"), lease);
+    draw_row(ui, 74, T("MAC:", "MAC:"), mac);
+    draw_row(ui, 98, T("Config:", "配置:"), source_name(config.source));
+    draw_row(ui, 122, T("IPv4:", "IPv4:"), ip);
+    draw_row(ui, 146, T("Mask:", "掩码:"), mask);
+    draw_row(ui, 170, T("Gateway:", "网关:"), gateway);
+    draw_row(ui, 194, T("DNS:", "DNS:"), dns);
+    draw_row(ui, 218, T("Lease:", "租约:"), lease);
 
-    leonos_ui_button(ui, 24, 274, 88, LEONOS_UI_BUTTON_H, T("Refresh", "刷新"), 0);
-    leonos_ui_button(ui, 124, 274, 118, LEONOS_UI_BUTTON_H, T("Renew DHCP", "更新 DHCP"), 0);
-    leonos_ui_text(ui, 274, 278, T("Host:", "域名:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_edit_state_draw(ui, 318, 274, 220, &domain_edit, 0);
-    leonos_ui_button(ui, 552, 274, 86, LEONOS_UI_BUTTON_H, T("Resolve", "解析"), 0);
-    leonos_ui_text_clipped(ui, 24, 310, NETCTL_W - 48, dns_text,
+    leonos_ui_button(ui, 24, 250, 88, LEONOS_UI_BUTTON_H, T("Refresh", "刷新"), 0);
+    leonos_ui_button(ui, 124, 250, 118, LEONOS_UI_BUTTON_H, T("Renew DHCP", "更新 DHCP"), 0);
+    leonos_ui_text(ui, 274, 254, T("Host:", "域名:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_edit_state_draw(ui, 318, 250, 220, &domain_edit, 0);
+    leonos_ui_button(ui, 552, 250, 86, LEONOS_UI_BUTTON_H, T("Resolve", "解析"), 0);
+    leonos_ui_text_clipped(ui, 24, 286, NETCTL_W - 48, dns_text,
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
 
-    leonos_ui_groupbox(ui, 24, 332, NETCTL_W - 48, 132,
+    leonos_ui_groupbox(ui, 24, 308, NETCTL_W - 48, 132,
                        T("TCP Connections", "TCP 连接"));
     leonos_ui_listview_header(ui, CONN_X, CONN_Y, CONN_W,
                               conn_cols, 6);
@@ -446,7 +445,7 @@ int main(void)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
                 if (leonos_ui_edit_state_handle_mouse(&domain_edit, event.x, event.y,
-                                                      318, 274, 220, event.buttons)) {
+                                                      318, 250, 220, event.buttons)) {
                     draw_netctl(&ui);
                     leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
                 }
@@ -458,11 +457,11 @@ int main(void)
                     leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
                 }
                 if (event.buttons & 1u) {
-                    if (hit_rect(event.x, event.y, 24, 274, 88, LEONOS_UI_BUTTON_H)) {
+                    if (hit_rect(event.x, event.y, 24, 250, 88, LEONOS_UI_BUTTON_H)) {
                         refresh_config();
-                    } else if (hit_rect(event.x, event.y, 124, 274, 118, LEONOS_UI_BUTTON_H)) {
+                    } else if (hit_rect(event.x, event.y, 124, 250, 118, LEONOS_UI_BUTTON_H)) {
                         renew_dhcp();
-                    } else if (hit_rect(event.x, event.y, 552, 274, 86, LEONOS_UI_BUTTON_H)) {
+                    } else if (hit_rect(event.x, event.y, 552, 250, 86, LEONOS_UI_BUTTON_H)) {
                         resolve_domain();
                     }
                     draw_netctl(&ui);

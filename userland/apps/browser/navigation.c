@@ -13,6 +13,7 @@ static char browser_combined_source[BROWSER_SOURCE_CAP];
 
 void render_html_source(const char *source, const char *base_url)
 {
+    const char *inline_source;
     struct litehtml_core_view view = {
         .lines = lines,
         .max_lines = BROWSER_MAX_LINES,
@@ -27,7 +28,10 @@ void render_html_source(const char *source, const char *base_url)
         .source_truncated = &source_truncated,
         .cols = text_cols(),
     };
-    litehtml_core_render_html(&view, source, base_url);
+    inline_source = browser_forms_render_inline_source(source, base_url);
+    scroll_x = 0;
+    litehtml_core_render_html(&view, inline_source, base_url);
+    browser_form_rebind_focus();
     clamp_scroll();
 }
 
@@ -47,6 +51,7 @@ void render_plain_source(const char *source)
         .source_truncated = &source_truncated,
         .cols = text_cols(),
     };
+    scroll_x = 0;
     litehtml_core_render_plain(&view, source);
     clamp_scroll();
 }
@@ -55,9 +60,9 @@ void rerender_page(void)
 {
     if (page_is_html) {
         render_html_source(page_source, current_location);
-        browser_forms_refresh();
     } else {
         browser_forms_clear();
+        browser_form_clear_focus();
         render_plain_source(page_source);
     }
 }
@@ -65,6 +70,7 @@ void rerender_page(void)
 void set_page_source(const char *title, const char *source,
                             uint8_t is_html, const char *status)
 {
+    browser_form_clear_focus();
     copy_text(page_title, sizeof(page_title), title && title[0] ? title : T("Untitled", "无标题"));
     copy_text(page_source, sizeof(page_source), source ? source : "");
     page_is_html = is_html;
@@ -371,10 +377,12 @@ static uint32_t browser_fetch_external_css(const char *base_url)
         }
         browser_css_body[0] = 0;
         browser_css_headers[0] = 0;
-        if (leonos_http_get(resolved, 5000,
-                            browser_css_body, sizeof(browser_css_body),
-                            browser_css_headers, sizeof(browser_css_headers),
-                            &css_response) < 0 ||
+        if (browser_http_get_with_cookies(resolved, 5000,
+                                          browser_css_body,
+                                          sizeof(browser_css_body),
+                                          browser_css_headers,
+                                          sizeof(browser_css_headers),
+                                          &css_response) < 0 ||
             css_response.net_status != LEONOS_NET_STATUS_OK ||
             css_response.http_status < 200U ||
             css_response.http_status >= 400U) {
@@ -449,12 +457,12 @@ void load_http_form_post(const char *url, const char *body)
 {
     struct parsed_http_url parsed;
     struct leonos_http_response response;
-    struct leonos_http_request request;
     uint32_t pos = 0;
     uint32_t css_count = 0;
     int ret;
     char normalized[BROWSER_URL_CAP];
     char status[BROWSER_STATUS_CAP];
+    browser_form_clear_focus();
     if (!parse_http_url(url, &parsed)) {
         render_message_page(T("Invalid URL", "无效地址"),
                             T("The form action could not be parsed as HTTP.",
@@ -471,20 +479,11 @@ void load_http_form_post(const char *url, const char *body)
     page_source[0] = 0;
     browser_http_headers[0] = 0;
     source_truncated = 0;
-    request = (struct leonos_http_request){
-        .url = normalized,
-        .method = "POST",
-        .extra_headers = "Content-Type: application/x-www-form-urlencoded\r\n",
-        .request_body = body ? body : "",
-        .request_body_len = (uint32_t)strlen(body ? body : ""),
-        .timeout_ms = LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
-        .max_redirects = LEONOS_HTTP_DEFAULT_REDIRECTS,
-        .response_body = page_source,
-        .response_body_capacity = sizeof(page_source),
-        .response_headers = browser_http_headers,
-        .response_headers_capacity = sizeof(browser_http_headers),
-    };
-    ret = leonos_http_request(&request, &response);
+    ret = browser_http_post_with_cookies(normalized, body,
+                                         page_source, sizeof(page_source),
+                                         browser_http_headers,
+                                         sizeof(browser_http_headers),
+                                         &response);
     if (ret < 0) {
         format_ret_status(status, sizeof(status),
                           T("HTTP client failed", "HTTP 客户端失败"), ret);
@@ -550,6 +549,7 @@ void load_http_url(const char *url)
     int ret;
     char normalized[BROWSER_URL_CAP];
     char status[BROWSER_STATUS_CAP];
+    browser_form_clear_focus();
     if (!parse_http_url(url, &parsed)) {
         render_message_page(T("Invalid URL", "无效地址"),
                             T("The address could not be parsed as HTTP.", "无法把该地址解析为 HTTP。"),
@@ -565,10 +565,12 @@ void load_http_url(const char *url)
     page_source[0] = 0;
     browser_http_headers[0] = 0;
     source_truncated = 0;
-    ret = leonos_http_get(normalized, LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
-                          page_source, sizeof(page_source),
-                          browser_http_headers, sizeof(browser_http_headers),
-                          &response);
+    ret = browser_http_get_with_cookies(normalized,
+                                        LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
+                                        page_source, sizeof(page_source),
+                                        browser_http_headers,
+                                        sizeof(browser_http_headers),
+                                        &response);
     if (ret < 0) {
         format_ret_status(status, sizeof(status),
                           T("HTTP client failed", "HTTP 客户端失败"), ret);
@@ -636,6 +638,7 @@ void load_local_file(const char *path)
     uint32_t len = 0;
     char status[BROWSER_STATUS_CAP];
     source_truncated = 0;
+    browser_form_clear_focus();
     fd = open(path, LEONOS_O_RDONLY, 0);
     if (fd < 0) {
         format_ret_status(status, sizeof(status), T("Open failed", "打开失败"), fd);

@@ -48,16 +48,15 @@ static void draw_label_value(struct leonos_ui_surface *ui, uint32_t y,
 
 static void draw_osver(struct leonos_ui_surface *ui)
 {
-    leonos_ui_rect(ui, 0, 0, OSVER_W, OSVER_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, OSVER_W, OSVER_H, T("About LeonOS", "关于 LeonOS"));
-    leonos_ui_text(ui, 28, 42, "LeonOS 4", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 28, 62, T("Kernel and middle layer build details", "内核和中间层构建详情"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_rect(ui, 0, 0, OSVER_W, OSVER_H, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 28, 18, "LeonOS 4", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 28, 38, T("Kernel and middle layer build details", "内核和中间层构建详情"), LEONOS_UI_DARK, LEONOS_UI_GRAY);
 
-    draw_label_value(ui, 94, T("Kernel name:", "内核名称:"), info.kernel_name);
-    draw_label_value(ui, 122, T("Kernel version:", "内核版本:"), info.kernel_version);
-    draw_label_value(ui, 150, T("Middle layer:", "中间层:"), info.middlelayer_name);
-    draw_label_value(ui, 178, T("Build time:", "构建时间:"), info.build_time);
-    draw_label_value(ui, 206, T("Copyright:", "版权:"), info.copyright);
+    draw_label_value(ui, 70, T("Kernel name:", "内核名称:"), info.kernel_name);
+    draw_label_value(ui, 98, T("Kernel version:", "内核版本:"), info.kernel_version);
+    draw_label_value(ui, 126, T("Middle layer:", "中间层:"), info.middlelayer_name);
+    draw_label_value(ui, 154, T("Build time:", "构建时间:"), info.build_time);
+    draw_label_value(ui, 182, T("Copyright:", "版权:"), info.copyright);
     leonos_ui_statusbar(ui, OSVER_H - 28, 28, status_text);
 }
 

@@ -15,7 +15,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 
 DEFAULT_BIND = "127.0.0.1:30301"
@@ -24,6 +24,34 @@ DEFAULT_DB = "build/license-server/license.db"
 OFFLINE_SECRET = b"LeonOS4 offline license v1"
 ONLINE_KEY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 OFFLINE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+LANG_EN = "en"
+LANG_ZH = "zh"
+MESSAGE_ZH = {
+    "Registered.": "已注册。",
+    "Invalid email or password.": "邮箱或密码无效。",
+    "That email is already registered.": "该邮箱已注册。",
+    "Monthly online key limit reached.": "本月在线密钥生成次数已达上限。",
+    "Could not generate key.": "无法生成密钥。",
+    "Monthly offline request already exists.": "本月已经提交过离线密钥申领。",
+    "Offline request submitted.": "离线密钥申领已提交。",
+    "Invalid date range.": "日期范围无效。",
+    "Request not found.": "未找到申领。",
+    "Invalid login.": "登录信息无效。",
+}
+
+
+def normalize_lang(lang: str) -> str:
+    return LANG_ZH if lang == LANG_ZH else LANG_EN
+
+
+def tr(lang: str, en: str, zh: str) -> str:
+    return zh if normalize_lang(lang) == LANG_ZH else en
+
+
+def localized_message(message: str, lang: str) -> str:
+    if not message or normalize_lang(lang) != LANG_ZH:
+        return message
+    return MESSAGE_ZH.get(message, message)
 
 
 def now_month() -> str:
@@ -363,6 +391,16 @@ class LicenseHandler(BaseHTTPRequestHandler):
                 return value
         return ""
 
+    def lang(self) -> str:
+        query = parse_qs(urlparse(self.path).query)
+        return normalize_lang(query.get("lang", [""])[-1])
+
+    def text(self, en: str, zh: str) -> str:
+        return tr(self.lang(), en, zh)
+
+    def message(self, message: str) -> str:
+        return localized_message(message, self.lang())
+
     def session_user(self) -> sqlite3.Row | None:
         token = self.session_token()
         with self.session_lock:
@@ -378,12 +416,41 @@ class LicenseHandler(BaseHTTPRequestHandler):
         self.send_header("Set-Cookie", f"session={token}; Path=/; HttpOnly")
         return token
 
-    def url_with_sid(self, path: str, token: str | None = None) -> str:
+    def url_with_state(
+        self,
+        path: str,
+        token: str | None = None,
+        lang: str | None = None,
+        include_sid: bool = True,
+    ) -> str:
+        parsed = urlparse(path)
+        pairs: list[tuple[str, str]] = []
+        for key, values in parse_qs(parsed.query, keep_blank_values=True).items():
+            if key in ("sid", "lang"):
+                continue
+            pairs.extend((key, value) for value in values)
+        active_lang = normalize_lang(lang if lang is not None else self.lang())
+        if active_lang != LANG_EN:
+            pairs.append(("lang", active_lang))
         token = token if token is not None else self.session_token()
-        if not token:
-            return path
-        sep = "&" if "?" in path else "?"
-        return f"{path}{sep}sid={html.escape(token, quote=True)}"
+        if include_sid and token:
+            pairs.append(("sid", token))
+        query = urlencode(pairs)
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment))
+
+    def url_with_sid(self, path: str, token: str | None = None) -> str:
+        return self.url_with_state(path, token=token)
+
+    def language_switch_html(self) -> str:
+        path = urlparse(self.path).path or "/"
+        english = self.url_with_state(path, lang=LANG_EN)
+        chinese = self.url_with_state(path, lang=LANG_ZH)
+        return (
+            "<p class='lang'>"
+            f"<a href='{url_attr(english)}'>English</a> "
+            f"<a href='{url_attr(chinese)}'>中文</a>"
+            "</p>"
+        )
 
     def handle_logout(self) -> None:
         token = self.session_token()
@@ -391,7 +458,7 @@ class LicenseHandler(BaseHTTPRequestHandler):
             with self.session_lock:
                 self.sessions.pop(token, None)
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/")
+        self.send_header("Location", self.url_with_state("/", include_sid=False))
         self.send_header("Set-Cookie", "session=; Path=/; Max-Age=0")
         self.end_headers()
 
@@ -408,7 +475,7 @@ class LicenseHandler(BaseHTTPRequestHandler):
             self.redirect("/login")
             return
         if not user["is_admin"]:
-            self.page("Forbidden", "<p>Administrator access required.</p>")
+            self.page(self.text("Forbidden", "禁止访问"), f"<p>{esc(self.text('Administrator access required.', '需要管理员权限。'))}</p>")
             return
         handler(user)
 
@@ -426,7 +493,17 @@ class LicenseHandler(BaseHTTPRequestHandler):
                 self.send_header("Location", self.url_with_sid("/", token))
                 self.end_headers()
                 return
-        self.page("Register", form_html("/register", [("email", "Email"), ("password", "Password")], "Register", msg))
+        self.page(
+            self.text("Register", "注册"),
+            form_html(
+                self.url_with_state("/register", include_sid=False),
+                [("email", self.text("Email", "邮箱")), ("password", self.text("Password", "密码"))],
+                self.text("Register", "注册"),
+                self.message(msg),
+                self.url_with_state("/", include_sid=False),
+                self.text("Back", "返回"),
+            ),
+        )
 
     def handle_login(self) -> None:
         msg = ""
@@ -440,24 +517,43 @@ class LicenseHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             msg = "Invalid login."
-        self.page("Login", form_html("/login", [("email", "Email"), ("password", "Password")], "Login", msg))
+        self.page(
+            self.text("Login", "登录"),
+            form_html(
+                self.url_with_state("/login", include_sid=False),
+                [("email", self.text("Email", "邮箱")), ("password", self.text("Password", "密码"))],
+                self.text("Login", "登录"),
+                self.message(msg),
+                self.url_with_state("/", include_sid=False),
+                self.text("Back", "返回"),
+            ),
+        )
 
     def handle_generate_online(self, user: sqlite3.Row) -> None:
         if self.command != "POST":
             self.redirect("/")
             return
         ok, msg = self.store.generate_online_key(user["id"])
-        self.page("Online Key", f"<p>{esc(msg)}</p><p><a href='{self.url_with_sid('/')}'>Back</a></p>")
+        back_url = self.url_with_sid("/")
+        self.page(
+            self.text("Online Key", "在线密钥"),
+            f"<p>{esc(msg if ok else self.message(msg))}</p><p><a href='{url_attr(back_url)}'>{esc(self.text('Back', '返回'))}</a></p>",
+        )
 
     def handle_request_offline(self, user: sqlite3.Row) -> None:
         if self.command != "POST":
             self.redirect("/")
             return
         ok, msg = self.store.request_offline(user["id"])
-        self.page("Offline Request", f"<p>{esc(msg)}</p><p><a href='{self.url_with_sid('/')}'>Back</a></p>")
+        back_url = self.url_with_sid("/")
+        self.page(
+            self.text("Offline Request", "离线申领"),
+            f"<p>{esc(self.message(msg))}</p><p><a href='{url_attr(back_url)}'>{esc(self.text('Back', '返回'))}</a></p>",
+        )
 
     def handle_issue_offline(self, user: sqlite3.Row) -> None:
         msg = ""
+        ok = False
         if self.command == "POST":
             form = self.read_form()
             ok, msg = self.store.issue_offline(
@@ -465,7 +561,11 @@ class LicenseHandler(BaseHTTPRequestHandler):
                 form.get("start_date", ""),
                 form.get("end_date", ""),
             )
-        self.page("Issue Offline Key", f"<p>{esc(msg)}</p><p><a href='{self.url_with_sid('/')}'>Back</a></p>")
+        back_url = self.url_with_sid("/")
+        self.page(
+            self.text("Issue Offline Key", "签发离线密钥"),
+            f"<p>{esc(msg if ok else self.message(msg))}</p><p><a href='{url_attr(back_url)}'>{esc(self.text('Back', '返回'))}</a></p>",
+        )
 
     def handle_api_activate(self) -> None:
         form = self.read_form()
@@ -481,51 +581,73 @@ class LicenseHandler(BaseHTTPRequestHandler):
 
     def handle_home(self) -> None:
         user = self.session_user()
-        body = ["<p>LeonOS License Server</p>"]
+        body = [f"<p>{esc(self.text('LeonOS License Server', 'LeonOS 许可证服务器'))}</p>"]
         if not user:
-            body.append("<p><a href='/register'>Register</a> <a href='/login'>Login</a></p>")
-            self.page("LeonOS License", "\n".join(body))
+            register_url = self.url_with_state("/register", include_sid=False)
+            login_url = self.url_with_state("/login", include_sid=False)
+            body.append(
+                f"<p><a href='{url_attr(register_url)}'>{esc(self.text('Register', '注册'))}</a> "
+                f"<a href='{url_attr(login_url)}'>{esc(self.text('Login', '登录'))}</a></p>"
+            )
+            self.page(self.text("LeonOS License", "LeonOS 许可证"), "\n".join(body))
             return
-        body.append(f"<p>Signed in as {esc(user['email'])}. <a href='{self.url_with_sid('/logout')}'>Logout</a></p>")
-        body.append(f"<form method='post' action='{self.url_with_sid('/generate-online')}'><input type='hidden' name='sid' value='{esc(self.session_token())}'><button type='submit'>Generate online key</button></form>")
-        body.append(f"<form method='post' action='{self.url_with_sid('/request-offline')}'><input type='hidden' name='sid' value='{esc(self.session_token())}'><button type='submit'>Request offline key</button></form>")
-        body.append("<h2>Online keys</h2>")
+        logout_url = self.url_with_sid("/logout")
+        online_url = self.url_with_sid("/generate-online")
+        offline_url = self.url_with_sid("/request-offline")
+        body.append(
+            f"<p>{esc(self.text('Signed in as', '已登录为'))} {esc(user['email'])}. "
+            f"<a href='{url_attr(logout_url)}'>{esc(self.text('Logout', '退出登录'))}</a></p>"
+        )
+        body.append(
+            f"<form method='post' action='{url_attr(online_url)}'>"
+            f"<input type='hidden' name='sid' value='{esc(self.session_token())}'>"
+            f"<button type='submit'>{esc(self.text('Generate online key', '生成在线密钥'))}</button></form>"
+        )
+        body.append(
+            f"<form method='post' action='{url_attr(offline_url)}'>"
+            f"<input type='hidden' name='sid' value='{esc(self.session_token())}'>"
+            f"<button type='submit'>{esc(self.text('Request offline key', '申领离线密钥'))}</button></form>"
+        )
+        body.append(f"<h2>{esc(self.text('Online keys', '在线密钥'))}</h2>")
         rows = self.store.rows(
             "select * from online_keys where user_id=? order by id desc", (user["id"],)
         )
-        body.append(table(["Key", "Month", "Bound"], [[r["display_key"], r["issued_month"], r["bound_install_id"] or ""] for r in rows]))
-        body.append("<h2>Offline requests</h2>")
+        body.append(table([self.text("Key", "密钥"), self.text("Month", "月份"), self.text("Bound", "已绑定")], [[r["display_key"], r["issued_month"], r["bound_install_id"] or ""] for r in rows]))
+        body.append(f"<h2>{esc(self.text('Offline requests', '离线申领'))}</h2>")
         rows = self.store.rows(
             "select * from offline_requests where user_id=? order by id desc", (user["id"],)
         )
-        body.append(table(["ID", "Month", "Status", "Dates", "Key"], [[r["id"], r["issued_month"], r["status"], f"{r['start_date'] or ''}-{r['end_date'] or ''}", r["offline_key"] or ""] for r in rows]))
+        body.append(table([self.text("ID", "编号"), self.text("Month", "月份"), self.text("Status", "状态"), self.text("Dates", "日期"), self.text("Key", "密钥")], [[r["id"], r["issued_month"], r["status"], f"{r['start_date'] or ''}-{r['end_date'] or ''}", r["offline_key"] or ""] for r in rows]))
         if user["is_admin"]:
             pending = self.store.rows(
                 "select r.*, u.email from offline_requests r join users u on u.id=r.user_id order by r.id desc"
             )
-            body.append("<h2>Admin offline issuing</h2>")
+            body.append(f"<h2>{esc(self.text('Admin offline issuing', '管理员离线密钥签发'))}</h2>")
             for r in pending:
+                issue_url = self.url_with_sid("/admin/issue-offline")
                 body.append(
-                    f"<form method='post' action='{self.url_with_sid('/admin/issue-offline')}'>"
+                    f"<form method='post' action='{url_attr(issue_url)}'>"
                     f"<input type='hidden' name='sid' value='{esc(self.session_token())}'>"
                     f"<input type='hidden' name='request_id' value='{r['id']}'>"
                     f"<p>#{r['id']} {esc(r['email'])} {esc(r['status'])}</p>"
                     "<p><input name='start_date' placeholder='YYYYMMDD'> "
                     "<input name='end_date' placeholder='YYYYMMDD'> "
-                    "<button type='submit'>Issue</button></p>"
+                    f"<button type='submit'>{esc(self.text('Issue', '签发'))}</button></p>"
                     "</form>"
                 )
-        self.page("LeonOS License", "\n".join(body))
+        self.page(self.text("LeonOS License", "LeonOS 许可证"), "\n".join(body))
 
     def page(self, title: str, body: str) -> None:
+        language_switch = self.language_switch_html()
         content = (
             "<!doctype html><html><head><meta charset='utf-8'>"
             f"<title>{esc(title)}</title>"
             "<style>body{font-family:Arial,sans-serif;color:#202020;background:#fff;margin:24px;}"
             "input{border:1px solid #777;padding:4px;margin:3px;}button{padding:4px 10px;}"
             "table{border-collapse:collapse;margin:12px 0;}td,th{border:1px solid #999;padding:4px 8px;}"
-            "h1{font-size:24px;}h2{font-size:18px;margin-top:20px;}</style></head><body>"
-            f"<h1>{esc(title)}</h1>{body}</body></html>"
+            "h1{font-size:24px;}h2{font-size:18px;margin-top:20px;}"
+            ".lang{font-size:13px;margin-bottom:16px;}</style></head><body>"
+            f"{language_switch}<h1>{esc(title)}</h1>{body}</body></html>"
         )
         raw = content.encode("utf-8")
         self.send_response(HTTPStatus.OK)
@@ -536,12 +658,18 @@ class LicenseHandler(BaseHTTPRequestHandler):
 
     def redirect(self, location: str) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
+        if location.startswith("/"):
+            location = self.url_with_sid(location)
         self.send_header("Location", location)
         self.end_headers()
 
 
 def esc(value: Any) -> str:
     return html.escape(str(value), quote=True)
+
+
+def url_attr(value: str) -> str:
+    return html.escape(str(value), quote=True).replace("&amp;", "&")
 
 
 def table(headers: list[str], rows: list[list[Any]]) -> str:
@@ -556,12 +684,22 @@ def table(headers: list[str], rows: list[list[Any]]) -> str:
     return "".join(out)
 
 
-def form_html(action: str, fields: list[tuple[str, str]], submit: str, msg: str = "") -> str:
-    parts = [f"<p>{esc(msg)}</p>" if msg else "", f"<form method='post' action='{esc(action)}'>"]
+def form_html(
+    action: str,
+    fields: list[tuple[str, str]],
+    submit: str,
+    msg: str = "",
+    back_href: str = "/",
+    back_label: str = "Back",
+) -> str:
+    parts = [f"<p>{esc(msg)}</p>" if msg else "", f"<form method='post' action='{url_attr(action)}'>"]
     for name, label in fields:
         typ = "password" if "password" in name else "email" if name == "email" else "text"
         parts.append(f"<p>{esc(label)}<br><input type='{typ}' name='{esc(name)}'></p>")
-    parts.append(f"<p><button type='submit'>{esc(submit)}</button></p></form><p><a href='/'>Back</a></p>")
+    parts.append(
+        f"<p><button type='submit'>{esc(submit)}</button></p></form>"
+        f"<p><a href='{url_attr(back_href)}'>{esc(back_label)}</a></p>"
+    )
     return "".join(parts)
 
 

@@ -10,21 +10,21 @@
 #define HTTPGET_W 720
 #define HTTPGET_H 520
 #define HOST_X 76
-#define HOST_Y 62
+#define HOST_Y 38
 #define HOST_W 248
 #define PATH_X 396
-#define PATH_Y 62
+#define PATH_Y 38
 #define PATH_W 238
 #define PORT_X 76
-#define PORT_Y 96
+#define PORT_Y 72
 #define PORT_W 80
 #define GET_X 174
-#define GET_Y 96
+#define GET_Y 72
 #define GET_W 82
 #define RESPONSE_X 24
-#define RESPONSE_Y 134
+#define RESPONSE_Y 110
 #define RESPONSE_W (HTTPGET_W - 48)
-#define RESPONSE_H 332
+#define RESPONSE_H 356
 #define HTTPGET_RESPONSE_MAX (LEONOS_HTTP_HEADER_MAX + LEONOS_HTTP_BODY_MAX + 4U)
 #define T(en, zh) leonos_i18n((en), (zh))
 
@@ -277,21 +277,19 @@ static void run_http_get(void)
 
 static void draw_httpget(struct leonos_ui_surface *ui)
 {
-    leonos_ui_rect(ui, 0, 0, HTTPGET_W, HTTPGET_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, HTTPGET_W, HTTPGET_H,
-                     T("HTTP GET", "HTTP GET"));
-    leonos_ui_text(ui, 24, 38, T("HTTP GET over TCP", "通过 TCP 发送 HTTP GET"),
+    leonos_ui_rect(ui, 0, 0, HTTPGET_W, HTTPGET_H, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 24, 14, T("HTTP GET over TCP", "通过 TCP 发送 HTTP GET"),
                    LEONOS_UI_BLACK, LEONOS_UI_GRAY);
 
-    leonos_ui_text(ui, 24, 66, T("Host:", "主机:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 24, 42, T("Host:", "主机:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_edit_state_draw(ui, HOST_X, HOST_Y, HOST_W, &host_edit, 0);
-    leonos_ui_text(ui, 348, 66, T("Path:", "路径:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 348, 42, T("Path:", "路径:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_edit_state_draw(ui, PATH_X, PATH_Y, PATH_W, &path_edit, 0);
-    leonos_ui_text(ui, 24, 100, T("Port:", "端口:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 24, 76, T("Port:", "端口:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_edit_state_draw(ui, PORT_X, PORT_Y, PORT_W, &port_edit, 0);
     leonos_ui_button(ui, GET_X, GET_Y, GET_W, LEONOS_UI_BUTTON_H,
                      T("GET", "GET"), 0);
-    leonos_ui_text_clipped(ui, 276, 100, HTTPGET_W - 300, summary_text,
+    leonos_ui_text_clipped(ui, 276, 76, HTTPGET_W - 300, summary_text,
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text_area_state_draw(ui, RESPONSE_X, RESPONSE_Y,
                                    RESPONSE_W, RESPONSE_H,

@@ -225,17 +225,16 @@ static void run_ping(void)
 
 static void draw_ping(struct leonos_ui_surface *ui)
 {
-    leonos_ui_rect(ui, 0, 0, PING_W, PING_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, PING_W, PING_H, T("Ping", "Ping"));
-    leonos_ui_text(ui, 20, 42, T("Target IPv4:", "目标 IPv4:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit_state_draw(ui, 116, 38, 236, &input_edit, 0);
-    leonos_ui_button(ui, 370, 38, 92, LEONOS_UI_BUTTON_H, T("Ping", "Ping"), 0);
-    leonos_ui_text(ui, 20, 82, T("Network:", "网络:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_text_clipped(ui, 96, 82, PING_W - 120, detail_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, 20, 118, T("Result:", "结果:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_text_clipped(ui, 96, 118, PING_W - 120, result_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, 20, 150, T("Mode:", "模式:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, 96, 150, T("ARP + IPv4 + ICMP Echo over Intel e1000", "Intel e1000 上的 ARP + IPv4 + ICMP Echo"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_rect(ui, 0, 0, PING_W, PING_H, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 20, 18, T("Target IPv4:", "目标 IPv4:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit_state_draw(ui, 116, 14, 236, &input_edit, 0);
+    leonos_ui_button(ui, 370, 14, 92, LEONOS_UI_BUTTON_H, T("Ping", "Ping"), 0);
+    leonos_ui_text(ui, 20, 58, T("Network:", "网络:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text_clipped(ui, 96, 58, PING_W - 120, detail_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 20, 94, T("Result:", "结果:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text_clipped(ui, 96, 94, PING_W - 120, result_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 20, 126, T("Mode:", "模式:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 96, 126, T("ARP + IPv4 + ICMP Echo over Intel e1000", "Intel e1000 上的 ARP + IPv4 + ICMP Echo"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_statusbar(ui, PING_H - 28, 28, status_text);
 }
 
@@ -280,12 +279,12 @@ int main(int argc, char **argv, char **envp)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
                 if (leonos_ui_edit_state_handle_mouse(&input_edit, event.x, event.y,
-                                                      116, 38, 236, event.buttons)) {
+                                                      116, 14, 236, event.buttons)) {
                     draw_ping(&ui);
                     leonos_gui_present_window((uint32_t)window_id, PING_W, PING_H, PING_W, pixels);
                 }
                 if ((event.buttons & 1u) &&
-                    hit_rect(event.x, event.y, 370, 38, 92, LEONOS_UI_BUTTON_H)) {
+                    hit_rect(event.x, event.y, 370, 14, 92, LEONOS_UI_BUTTON_H)) {
                     run_ping();
                     draw_ping(&ui);
                     leonos_gui_present_window((uint32_t)window_id, PING_W, PING_H, PING_W, pixels);

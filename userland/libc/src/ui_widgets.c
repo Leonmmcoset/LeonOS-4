@@ -396,15 +396,17 @@ void leonos_ui_panel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
 void leonos_ui_checkbox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         const char *label, int checked, uint32_t flags)
 {
-    (void)flags;
-    leonos_ui_inset(surface, x, y + 2, 14, 14, LEONOS_UI_WHITE);
+    uint32_t disabled = flags & LEONOS_UI_BUTTON_DISABLED;
+    uint32_t bg = disabled ? LEONOS_UI_LIGHT : LEONOS_UI_WHITE;
+    uint32_t fg = disabled ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
+    leonos_ui_inset(surface, x, y + 2, 14, 14, bg);
     if (checked) {
-        leonos_ui_rect(surface, x + 3, y + 8, 2, 2, LEONOS_UI_BLACK);
-        leonos_ui_rect(surface, x + 5, y + 10, 2, 2, LEONOS_UI_BLACK);
-        leonos_ui_rect(surface, x + 7, y + 8, 2, 2, LEONOS_UI_BLACK);
-        leonos_ui_rect(surface, x + 9, y + 6, 2, 2, LEONOS_UI_BLACK);
+        leonos_ui_rect(surface, x + 3, y + 8, 2, 2, fg);
+        leonos_ui_rect(surface, x + 5, y + 10, 2, 2, fg);
+        leonos_ui_rect(surface, x + 7, y + 8, 2, 2, fg);
+        leonos_ui_rect(surface, x + 9, y + 6, 2, 2, fg);
     }
-    leonos_ui_text_transparent(surface, x + 22, y, label, LEONOS_UI_BLACK);
+    leonos_ui_text_transparent(surface, x + 22, y, label, fg);
 }
 
 void leonos_ui_progress(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,

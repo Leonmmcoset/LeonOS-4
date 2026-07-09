@@ -17,7 +17,7 @@ void leonos_ui_dialog(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
     leonos_ui_text_clipped(surface, x + 10, y + 9, w > 20 ? w - 20 : w, title, LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
 }
 
-#define UI_MESSAGE_TEXT_TOP 46u
+#define UI_MESSAGE_TEXT_TOP 18u
 #define UI_MESSAGE_BOTTOM_PAD 44u
 #define UI_MESSAGE_LINE_STEP (LEONOS_FONT_H + 2u)
 #define UI_MESSAGE_MIN_W 180u
@@ -191,7 +191,8 @@ void leonos_ui_message_box(struct leonos_ui_surface *surface, uint32_t x, uint32
                            uint32_t w, uint32_t h, const char *title,
                            const char *message, const char *button)
 {
-    leonos_ui_dialog(surface, x, y, w, h, title);
+    (void)title;
+    leonos_ui_rect(surface, x, y, w, h, LEONOS_UI_GRAY);
     ui_message_draw_wrapped(surface, x, y, w, h, message);
     leonos_ui_button(surface, x + w / 2 - 36, y + h - 38, 72, LEONOS_UI_BUTTON_H, button ? button : "OK", 0);
 }
@@ -200,7 +201,8 @@ void leonos_ui_confirm_dialog(struct leonos_ui_surface *surface, uint32_t x, uin
                               uint32_t w, uint32_t h, const char *title,
                               const char *message, uint32_t default_yes)
 {
-    leonos_ui_dialog(surface, x, y, w, h, title);
+    (void)title;
+    leonos_ui_rect(surface, x, y, w, h, LEONOS_UI_GRAY);
     ui_message_draw_wrapped(surface, x, y, w, h, message);
     leonos_ui_button(surface, x + w - 168, y + h - 38, 72, LEONOS_UI_BUTTON_H, "Yes",
                      default_yes ? LEONOS_UI_BUTTON_PRESSED : 0);
@@ -212,9 +214,10 @@ void leonos_ui_input_dialog(struct leonos_ui_surface *surface, uint32_t x, uint3
                             uint32_t w, uint32_t h, const char *title,
                             const char *label, const char *value, uint32_t flags)
 {
-    leonos_ui_dialog(surface, x, y, w, h, title);
-    leonos_ui_text_clipped(surface, x + 16, y + 46, w > 32 ? w - 32 : w, label, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, x + 16, y + 70, w > 32 ? w - 32 : w, value, ui_strlen(value), 0, flags);
+    (void)title;
+    leonos_ui_rect(surface, x, y, w, h, LEONOS_UI_GRAY);
+    leonos_ui_text_clipped(surface, x + 16, y + 20, w > 32 ? w - 32 : w, label, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, x + 16, y + 46, w > 32 ? w - 32 : w, value, ui_strlen(value), 0, flags);
     leonos_ui_button(surface, x + w - 168, y + h - 38, 72, LEONOS_UI_BUTTON_H, "OK", 0);
     leonos_ui_button(surface, x + w - 88, y + h - 38, 72, LEONOS_UI_BUTTON_H, "Cancel", 0);
 }
@@ -421,10 +424,9 @@ int leonos_ui_show_input_dialog(const char *title, const char *label,
     edit.focused = 1;
     for (;;) {
         leonos_ui_rect(&surface, 0, 0, W, H, LEONOS_UI_GRAY);
-        leonos_ui_dialog(&surface, 0, 0, W, H, title ? title : "Input");
-        leonos_ui_text_clipped(&surface, 16, 46, W - 32, label ? label : "",
+        leonos_ui_text_clipped(&surface, 16, 20, W - 32, label ? label : "",
                                LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-        leonos_ui_edit_state_draw(&surface, 16, 72, W - 32, &edit, 0);
+        leonos_ui_edit_state_draw(&surface, 16, 46, W - 32, &edit, 0);
         leonos_ui_button(&surface, W - 168, H - 38, 72, LEONOS_UI_BUTTON_H, "OK", 0);
         leonos_ui_button(&surface, W - 88, H - 38, 72, LEONOS_UI_BUTTON_H, "Cancel", 0);
         leonos_gui_present_window((uint32_t)window_id, W, H, W, pixels);
@@ -453,7 +455,7 @@ int leonos_ui_show_input_dialog(const char *title, const char *label,
                     event.y >= (int32_t)(H - 38) && event.y < (int32_t)(H - 38 + LEONOS_UI_BUTTON_H)) {
                     break;
                 }
-                leonos_ui_edit_state_handle_mouse(&edit, event.x, event.y, 16, 72, W - 32, event.buttons);
+                leonos_ui_edit_state_handle_mouse(&edit, event.x, event.y, 16, 46, W - 32, event.buttons);
             }
         } else {
             sleep_ms(10);
@@ -483,10 +485,10 @@ enum {
     UI_FILE_DIALOG_MARGIN = 16,
     UI_FILE_DIALOG_NAV_BUTTON_X = UI_FILE_DIALOG_W - 78,
     UI_FILE_DIALOG_NAV_BUTTON_W = 54,
-    UI_FILE_DIALOG_UP_Y = 38,
-    UI_FILE_DIALOG_ROOT_Y = 66,
+    UI_FILE_DIALOG_UP_Y = 14,
+    UI_FILE_DIALOG_ROOT_Y = 42,
     UI_FILE_DIALOG_LIST_X = 16,
-    UI_FILE_DIALOG_LIST_Y = 94,
+    UI_FILE_DIALOG_LIST_Y = 70,
     UI_FILE_DIALOG_LIST_ROWS = 8,
     UI_FILE_DIALOG_ROW_H = LEONOS_FONT_H + 4,
     UI_FILE_DIALOG_LIST_BODY_X = UI_FILE_DIALOG_LIST_X + 2,
@@ -812,13 +814,12 @@ static void ui_file_dialog_draw(struct leonos_ui_surface *surface,
                                 struct leonos_ui_listview_state *list_state,
                                 struct leonos_ui_edit_state *name_edit)
 {
+    (void)title;
     leonos_ui_rect(surface, 0, 0, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H, LEONOS_UI_GRAY);
-    leonos_ui_dialog(surface, 0, 0, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H,
-                     title ? title : (save_mode ? "Save As" : "Open"));
-    leonos_ui_text(surface, 16, 42, "Look in:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, 72, 38, UI_FILE_DIALOG_W - 88, dir_path, ui_strlen(dir_path),
+    leonos_ui_text(surface, 16, 18, "Look in:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 72, 14, UI_FILE_DIALOG_W - 88, dir_path, ui_strlen(dir_path),
                    0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_text(surface, 16, 68, "Files:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, 16, 44, "Files:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_scroll_view_frame(surface, UI_FILE_DIALOG_LIST_X, UI_FILE_DIALOG_LIST_Y,
                                 UI_FILE_DIALOG_LIST_FRAME_W, UI_FILE_DIALOG_LIST_H);
     for (uint32_t row = 0; row < list_state->visible_rows; ++row) {
@@ -1139,7 +1140,7 @@ enum {
     UI_OPEN_WITH_ROW_H = 34,
     UI_OPEN_WITH_VISIBLE_ROWS = 3,
     UI_OPEN_WITH_LIST_X = 16,
-    UI_OPEN_WITH_LIST_Y = 170,
+    UI_OPEN_WITH_LIST_Y = 146,
     UI_OPEN_WITH_LIST_W = UI_OPEN_WITH_W - 32,
     UI_OPEN_WITH_SCROLL_W = 18,
     UI_OPEN_WITH_ROW_W = UI_OPEN_WITH_LIST_W - 26,
@@ -1203,38 +1204,37 @@ static void ui_open_with_draw(struct leonos_ui_surface *surface,
 {
     uint32_t list_h = list_state->visible_rows * UI_OPEN_WITH_ROW_H + 8;
     uint32_t scrollbar_x = UI_OPEN_WITH_LIST_X + UI_OPEN_WITH_LIST_W - UI_OPEN_WITH_SCROLL_W;
+    (void)title;
     leonos_ui_rect(surface, 0, 0, UI_OPEN_WITH_W, UI_OPEN_WITH_H, LEONOS_UI_GRAY);
-    leonos_ui_dialog(surface, UI_OPEN_WITH_X, UI_OPEN_WITH_Y,
-                     UI_OPEN_WITH_W, UI_OPEN_WITH_H, title ? title : UI_T("Open With", "打开方式"));
-    leonos_ui_text_clipped(surface, 16, 44, UI_OPEN_WITH_W - 32,
+    leonos_ui_text_clipped(surface, 16, 20, UI_OPEN_WITH_W - 32,
                            set_default_mode
                                ? UI_T("Choose a default program for this file type:",
                                       "选择此文件类型的默认程序:")
                                : UI_T("Choose a program to open this file:",
                                       "选择用于打开此文件的程序:"),
                            LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(surface, 16, 68, UI_T("File:", "文件:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, 58, 64, UI_OPEN_WITH_W - 74, path ? path : "",
+    leonos_ui_text(surface, 16, 44, UI_T("File:", "文件:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 58, 40, UI_OPEN_WITH_W - 74, path ? path : "",
                    ui_strlen(path), 0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_text(surface, 16, 92, UI_T("Extension:", "扩展名:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, 82, 88, 84,
+    leonos_ui_text(surface, 16, 68, UI_T("Extension:", "扩展名:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 82, 64, 84,
                    extension && extension[0] ? extension : UI_T("(none)", "(无)"),
                    ui_strlen(extension && extension[0] ? extension : UI_T("(none)", "(无)")),
                    0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_text(surface, 180, 92, UI_T("Default:", "默认:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, 244, 88, UI_OPEN_WITH_W - 260,
+    leonos_ui_text(surface, 180, 68, UI_T("Default:", "默认:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, 244, 64, UI_OPEN_WITH_W - 260,
                    default_label ? default_label : UI_T("None", "无"),
                    ui_strlen(default_label ? default_label : UI_T("None", "无")),
                    0, LEONOS_UI_EDIT_READONLY);
     if (set_default_mode) {
-        leonos_ui_checkbox(surface, 16, 118, UI_T("Update default program", "更新默认程序"), 1,
+        leonos_ui_checkbox(surface, 16, 94, UI_T("Update default program", "更新默认程序"), 1,
                            LEONOS_UI_BUTTON_DISABLED);
     } else {
-        leonos_ui_checkbox(surface, 16, 118, UI_T("Always use this app", "始终使用此应用"),
+        leonos_ui_checkbox(surface, 16, 94, UI_T("Always use this app", "始终使用此应用"),
                            can_remember ? (int)remember : 0,
                            can_remember ? 0 : LEONOS_UI_BUTTON_DISABLED);
     }
-    leonos_ui_text(surface, 16, 144, UI_T("Programs:", "程序:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, 16, 120, UI_T("Programs:", "程序:"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_inset(surface, UI_OPEN_WITH_LIST_X, UI_OPEN_WITH_LIST_Y,
                     UI_OPEN_WITH_LIST_W, list_h, LEONOS_UI_WHITE);
     for (uint32_t row = 0; row < list_state->visible_rows; ++row) {
@@ -1398,7 +1398,7 @@ int leonos_ui_show_open_with_dialog(const char *title, const char *path,
                 }
                 if (!set_default_mode && can_remember &&
                     leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
-                                  16, 118, 180, LEONOS_FONT_H + 8)) {
+                                  16, 94, 180, LEONOS_FONT_H + 8)) {
                     remember_value = remember_value ? 0 : 1;
                     continue;
                 }
@@ -1595,12 +1595,12 @@ void leonos_ui_radio(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      const char *label, int checked, uint32_t flags)
 {
     uint32_t fg = (flags & LEONOS_UI_BUTTON_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
-    leonos_ui_rect(surface, x + 3, y + 2, 8, 1, LEONOS_UI_BLACK);
-    leonos_ui_rect(surface, x + 2, y + 3, 10, 1, LEONOS_UI_BLACK);
-    leonos_ui_rect(surface, x + 1, y + 4, 12, 8, LEONOS_UI_BLACK);
+    leonos_ui_rect(surface, x + 3, y + 2, 8, 1, fg);
+    leonos_ui_rect(surface, x + 2, y + 3, 10, 1, fg);
+    leonos_ui_rect(surface, x + 1, y + 4, 12, 8, fg);
     leonos_ui_rect(surface, x + 2, y + 5, 10, 6, LEONOS_UI_WHITE);
     if (checked) {
-        leonos_ui_rect(surface, x + 5, y + 7, 4, 2, LEONOS_UI_BLACK);
+        leonos_ui_rect(surface, x + 5, y + 7, 4, 2, fg);
     }
     leonos_ui_text_transparent(surface, x + 22, y, label, fg);
 }

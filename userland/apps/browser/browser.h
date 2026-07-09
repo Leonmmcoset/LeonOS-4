@@ -3,6 +3,7 @@
 
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/auth.h>
 #include <leonos/http.h>
 #include <leonos/i18n.h>
 #include <leonos/launch.h>
@@ -10,6 +11,7 @@
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
+#include <leonos/system.h>
 #include <leonos/ui.h>
 
 #include "litehtml_core.h"
@@ -30,10 +32,22 @@
 #define BROWSER_HISTORY_MAX 16U
 #define BROWSER_MAX_FORMS 8U
 #define BROWSER_MAX_FORM_CONTROLS 32U
+#define BROWSER_MAX_COOKIES 32U
+#define BROWSER_MAX_FORM_OPTIONS 64U
 #define BROWSER_FORM_NAME_CAP 48U
 #define BROWSER_FORM_VALUE_CAP 128U
 #define BROWSER_FORM_LABEL_CAP 72U
 #define BROWSER_FORM_METHOD_CAP 8U
+#define BROWSER_FORM_SELECT_CELLS 24U
+#define BROWSER_FORM_TEXTAREA_CELLS 32U
+#define BROWSER_COOKIE_NAME_CAP 48U
+#define BROWSER_COOKIE_VALUE_CAP 128U
+#define BROWSER_COOKIE_DOMAIN_CAP 80U
+#define BROWSER_COOKIE_PATH_CAP 96U
+#define BROWSER_COOKIE_HEADER_CAP 768U
+#define BROWSER_COOKIE_FILE_CAP 8192U
+#define BROWSER_FORM_INPUT_CELLS 22U
+#define BROWSER_FORM_WIDGET_H LEONOS_UI_BUTTON_H
 #define BROWSER_MENU_H 26U
 #define BROWSER_TOOLBAR_H 30U
 #define BROWSER_ADDR_H 34U
@@ -104,6 +118,18 @@ enum browser_form_control_kind {
     BROWSER_FORM_CONTROL_PASSWORD = 2,
     BROWSER_FORM_CONTROL_HIDDEN = 3,
     BROWSER_FORM_CONTROL_SUBMIT = 4,
+    BROWSER_FORM_CONTROL_CHECKBOX = 5,
+    BROWSER_FORM_CONTROL_RADIO = 6,
+    BROWSER_FORM_CONTROL_SELECT = 7,
+    BROWSER_FORM_CONTROL_TEXTAREA = 8,
+    BROWSER_FORM_CONTROL_RESET = 9,
+};
+
+enum browser_form_control_flags {
+    BROWSER_FORM_CONTROL_CHECKED = 0x00000001U,
+    BROWSER_FORM_CONTROL_DISABLED = 0x00000002U,
+    BROWSER_FORM_CONTROL_READONLY = 0x00000004U,
+    BROWSER_FORM_CONTROL_PLACEHOLDER = 0x00000008U,
 };
 
 struct browser_form {
@@ -116,9 +142,28 @@ struct browser_form {
 struct browser_form_control {
     uint8_t kind;
     uint8_t form_index;
+    uint16_t reserved;
+    uint32_t flags;
+    uint32_t first_option;
+    uint32_t option_count;
     char name[BROWSER_FORM_NAME_CAP];
     char value[BROWSER_FORM_VALUE_CAP];
     char label[BROWSER_FORM_LABEL_CAP];
+};
+
+struct browser_form_option {
+    uint32_t control_index;
+    char value[BROWSER_FORM_VALUE_CAP];
+    char label[BROWSER_FORM_LABEL_CAP];
+};
+
+struct browser_cookie {
+    char domain[BROWSER_COOKIE_DOMAIN_CAP];
+    char path[BROWSER_COOKIE_PATH_CAP];
+    char name[BROWSER_COOKIE_NAME_CAP];
+    char value[BROWSER_COOKIE_VALUE_CAP];
+    uint32_t flags;
+    uint64_t expires_unix;
 };
 
 extern uint32_t pixels[BROWSER_MAX_W * BROWSER_MAX_H];
@@ -137,22 +182,24 @@ extern uint8_t source_truncated;
 extern struct browser_line lines[BROWSER_MAX_LINES];
 extern uint32_t line_count;
 extern uint32_t scroll_line;
+extern uint32_t scroll_x;
 extern struct browser_link links[BROWSER_MAX_LINKS];
 extern uint32_t link_count;
 extern struct browser_form browser_forms[BROWSER_MAX_FORMS];
 extern uint32_t browser_form_count;
 extern struct browser_form_control browser_form_controls[BROWSER_MAX_FORM_CONTROLS];
 extern uint32_t browser_form_control_count;
+extern struct browser_form_option browser_form_options[BROWSER_MAX_FORM_OPTIONS];
+extern uint32_t browser_form_option_count;
 extern char history[BROWSER_HISTORY_MAX][BROWSER_URL_CAP];
 extern uint32_t history_count;
 extern int32_t history_index;
 extern uint8_t menu_open;
 extern uint8_t browser_should_exit;
 extern uint8_t browser_embedded;
-extern uint8_t browser_embed_edit_active;
-extern uint32_t browser_embed_edit_control;
-extern char browser_embed_edit_value[BROWSER_FORM_VALUE_CAP];
-extern struct leonos_ui_edit_state browser_embed_edit_state;
+extern uint8_t browser_form_focus_active;
+extern uint32_t browser_form_focus_control;
+extern struct leonos_ui_edit_state browser_form_edit_state;
 extern struct leonos_ui_toast_state browser_toast;
 
 void copy_text(char *dst, uint32_t cap, const char *src);
@@ -192,6 +239,18 @@ void format_ret_status(char *dst, uint32_t cap, const char *prefix, int32_t ret)
 void load_about(void);
 void load_http_url(const char *url);
 void load_http_form_post(const char *url, const char *body);
+int browser_http_get_with_cookies(const char *url, uint32_t timeout_ms,
+                                  char *response_body,
+                                  uint32_t response_body_capacity,
+                                  char *response_headers,
+                                  uint32_t response_headers_capacity,
+                                  struct leonos_http_response *response);
+int browser_http_post_with_cookies(const char *url, const char *body,
+                                   char *response_body,
+                                   uint32_t response_body_capacity,
+                                   char *response_headers,
+                                   uint32_t response_headers_capacity,
+                                   struct leonos_http_response *response);
 void load_local_file(const char *path);
 void navigate_to(const char *input, uint8_t add_to_history);
 void go_back(void);
@@ -218,6 +277,7 @@ uint8_t line_is_heading(uint8_t kind);
 uint32_t browser_line_cell_w(uint8_t kind);
 uint32_t browser_line_cell_h(uint8_t kind);
 uint32_t browser_line_height(uint8_t kind);
+uint32_t browser_line_render_height(const struct browser_line *line);
 uint32_t browser_line_cells_between(const struct browser_line *line,
                                     uint32_t start, uint32_t end);
 uint32_t browser_line_next_byte(const struct browser_line *line,
@@ -225,7 +285,9 @@ uint32_t browser_line_next_byte(const struct browser_line *line,
 uint32_t browser_line_byte_at_cell(const struct browser_line *line,
                                    uint32_t cell);
 uint32_t document_text_w(void);
-void draw_document_line_frame(const struct browser_line *line, uint32_t x, uint32_t y, uint32_t width);
+uint32_t document_view_h(void);
+uint32_t document_content_w(void);
+void draw_document_line_frame(const struct browser_line *line, int32_t x, uint32_t y, uint32_t width);
 uint32_t line_align_shift_px(const struct browser_line *line, uint32_t doc_w);
 void draw_document_lines(void);
 void draw_browser_menu(void);
@@ -240,11 +302,21 @@ void browser_embed_handle_key(struct leonos_gui_app_event *event);
 int browser_embed_should_exit(void);
 void browser_embed_clear_exit(void);
 int browser_embed_input_active(void);
-void browser_embed_start_form_edit(uint32_t control_index);
-void activate_link_at(int32_t mx, int32_t my);
+int activate_link_at(int32_t mx, int32_t my);
 void browser_forms_clear(void);
-void browser_forms_refresh(void);
-int browser_form_handle_href(const char *href);
+const char *browser_forms_render_inline_source(const char *source,
+                                               const char *base_url);
+void browser_form_clear_focus(void);
+void browser_form_rebind_focus(void);
+int browser_form_input_active(void);
+int browser_form_line_has_control(const struct browser_line *line);
+int browser_form_control_from_href(const char *href, uint32_t *control_index);
+void browser_form_control_rect(uint32_t control_index,
+                               struct leonos_ui_rect *rect);
+void browser_draw_form_control(uint32_t x, uint32_t y, uint32_t w,
+                               uint32_t control_index);
+int browser_form_handle_click(const char *href, int32_t mx, int32_t my);
+int browser_form_handle_key(struct leonos_gui_app_event *event);
 int handle_toolbar_click(int32_t x, int32_t y);
 int address_edit_hit(int32_t x, int32_t y);
 void select_address_text(void);

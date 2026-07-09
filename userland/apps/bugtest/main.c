@@ -307,7 +307,7 @@ static const struct bug_test extra_destructive_tests[] = {
 
 static uint32_t row_y(uint32_t index)
 {
-    return 62 + index * 18;
+    return 38 + index * 18;
 }
 
 static void draw_status_mark(struct leonos_ui_surface *ui, uint32_t index, uint32_t y)
@@ -332,9 +332,8 @@ static void draw_bugtest(struct leonos_ui_surface *ui)
 {
     char line[96];
     uint32_t pos;
-    leonos_ui_rect(ui, 0, 0, BUGTEST_W, BUGTEST_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, BUGTEST_W, BUGTEST_H, "Kernel Bug Test");
-    leonos_ui_text(ui, 18, 38, "Safe tests should return errors. Fault tests may crash current kernel.", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_rect(ui, 0, 0, BUGTEST_W, BUGTEST_H, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 18, 14, "Safe tests should return errors. Fault tests may crash current kernel.", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
 
     for (uint32_t i = 0; i < TEST_COUNT; ++i) {
         uint32_t y = row_y(i);
@@ -346,33 +345,33 @@ static void draw_bugtest(struct leonos_ui_surface *ui)
                                bg);
     }
 
-    leonos_ui_panel(ui, 344, 58, 258, 174, LEONOS_UI_LIGHT);
-    leonos_ui_text(ui, 358, 76, tests[selected_test].name, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
-    leonos_ui_text_clipped(ui, 358, 104, 220, tests[selected_test].desc, LEONOS_UI_DARK, LEONOS_UI_LIGHT);
-    leonos_ui_text_clipped(ui, 358, 126, 220, tests[selected_test].desc + (str_len(tests[selected_test].desc) > 32 ? 32 : str_len(tests[selected_test].desc)), LEONOS_UI_DARK, LEONOS_UI_LIGHT);
-    leonos_ui_button(ui, 358, 160, 108, LEONOS_UI_BUTTON_H, "Run Test", 0);
-    leonos_ui_button(ui, 478, 160, 108, LEONOS_UI_BUTTON_H, "Safe Suite", 0);
-    leonos_ui_button(ui, 358, 194, 108, LEONOS_UI_BUTTON_H, extra_destructive_tests[0].name, 0);
-    leonos_ui_button(ui, 478, 194, 108, LEONOS_UI_BUTTON_H, extra_destructive_tests[1].name, 0);
+    leonos_ui_panel(ui, 344, 34, 258, 174, LEONOS_UI_LIGHT);
+    leonos_ui_text(ui, 358, 52, tests[selected_test].name, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    leonos_ui_text_clipped(ui, 358, 80, 220, tests[selected_test].desc, LEONOS_UI_DARK, LEONOS_UI_LIGHT);
+    leonos_ui_text_clipped(ui, 358, 102, 220, tests[selected_test].desc + (str_len(tests[selected_test].desc) > 32 ? 32 : str_len(tests[selected_test].desc)), LEONOS_UI_DARK, LEONOS_UI_LIGHT);
+    leonos_ui_button(ui, 358, 136, 108, LEONOS_UI_BUTTON_H, "Run Test", 0);
+    leonos_ui_button(ui, 478, 136, 108, LEONOS_UI_BUTTON_H, "Safe Suite", 0);
+    leonos_ui_button(ui, 358, 170, 108, LEONOS_UI_BUTTON_H, extra_destructive_tests[0].name, 0);
+    leonos_ui_button(ui, 478, 170, 108, LEONOS_UI_BUTTON_H, extra_destructive_tests[1].name, 0);
 
-    leonos_ui_panel(ui, 344, 244, 258, 126, LEONOS_UI_LIGHT);
-    leonos_ui_text(ui, 358, 260, "Report", LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    leonos_ui_panel(ui, 344, 220, 258, 126, LEONOS_UI_LIGHT);
+    leonos_ui_text(ui, 358, 236, "Report", LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
     pos = 0;
     line[0] = 0;
     append_text(line, sizeof(line), &pos, "Safe ran ");
     append_dec(line, sizeof(line), &pos, (int)safe_ran_count);
     append_text(line, sizeof(line), &pos, " / ");
     append_dec(line, sizeof(line), &pos, (int)(TEST_COUNT - 1));
-    leonos_ui_text(ui, 358, 284, line, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+    leonos_ui_text(ui, 358, 260, line, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
     pos = 0;
     line[0] = 0;
     append_text(line, sizeof(line), &pos, "Pass ");
     append_dec(line, sizeof(line), &pos, (int)safe_pass_count);
     append_text(line, sizeof(line), &pos, "  Fail ");
     append_dec(line, sizeof(line), &pos, (int)safe_fail_count);
-    leonos_ui_text(ui, 358, 306, line, safe_fail_count ? 0x00800000u : 0x00008000u,
+    leonos_ui_text(ui, 358, 282, line, safe_fail_count ? 0x00800000u : 0x00008000u,
                    LEONOS_UI_LIGHT);
-    leonos_ui_text_clipped(ui, 358, 330, 226,
+    leonos_ui_text_clipped(ui, 358, 306, 226,
                            safe_ran_count ? status_text : "No report yet. Run Safe Suite.",
                            safe_fail_count ? 0x00800000u : LEONOS_UI_DARK,
                            LEONOS_UI_LIGHT);
@@ -472,13 +471,13 @@ int main(void)
                         selected_test = i;
                     }
                 }
-                if (hit_rect_i(event.x, event.y, 358, 160, 108, LEONOS_UI_BUTTON_H)) {
+                if (hit_rect_i(event.x, event.y, 358, 136, 108, LEONOS_UI_BUTTON_H)) {
                     run_test_index(selected_test);
-                } else if (hit_rect_i(event.x, event.y, 478, 160, 108, LEONOS_UI_BUTTON_H)) {
+                } else if (hit_rect_i(event.x, event.y, 478, 136, 108, LEONOS_UI_BUTTON_H)) {
                     run_safe_suite();
-                } else if (hit_rect_i(event.x, event.y, 358, 194, 108, LEONOS_UI_BUTTON_H)) {
+                } else if (hit_rect_i(event.x, event.y, 358, 170, 108, LEONOS_UI_BUTTON_H)) {
                     run_extra_destructive(0);
-                } else if (hit_rect_i(event.x, event.y, 478, 194, 108, LEONOS_UI_BUTTON_H)) {
+                } else if (hit_rect_i(event.x, event.y, 478, 170, 108, LEONOS_UI_BUTTON_H)) {
                     run_extra_destructive(1);
                 }
                 draw_bugtest(&ui);

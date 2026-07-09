@@ -342,9 +342,7 @@ static void show_task_details(void)
         };
         leonos_ui_rect(&ui, 0, 0, TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
                        LEONOS_UI_GRAY);
-        leonos_ui_dialog(&ui, 0, 0, TASKMGR_DETAILS_W, TASKMGR_DETAILS_H,
-                         T("Task Details", "任务详细信息"));
-        leonos_ui_property_grid(&ui, 16, 44, TASKMGR_DETAILS_W - 32,
+        leonos_ui_property_grid(&ui, 16, 16, TASKMGR_DETAILS_W - 32,
                                 props, sizeof(props) / sizeof(props[0]),
                                 110, 23);
         leonos_ui_button(&ui, TASKMGR_DETAILS_W - 90, TASKMGR_DETAILS_H - 38,

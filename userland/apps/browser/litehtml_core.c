@@ -41,6 +41,7 @@ struct core_style_state {
     uint8_t text_style;
     uint8_t css_indent;
     uint8_t css_align;
+    uint8_t table_cell_align;
     uint32_t text_fg;
     uint32_t text_bg;
     uint32_t border_color;
@@ -61,6 +62,7 @@ struct core_render_ctx {
     uint8_t table_depth;
     uint8_t in_table_row;
     uint8_t table_cell_count;
+    uint8_t table_cell_align;
     uint8_t css_indent;
     uint8_t css_align;
     uint8_t style_depth;
@@ -334,6 +336,7 @@ static void core_clear_line(struct litehtml_core_view *view, uint32_t index)
         view->lines[index].fg[i] = BROWSER_COLOR_UNSET;
         view->lines[index].bg[i] = BROWSER_COLOR_UNSET;
         view->lines[index].cell_width[i] = 0;
+        view->lines[index].cell_align[i] = BROWSER_ALIGN_LEFT;
     }
 }
 
@@ -534,6 +537,9 @@ static void core_render_raw_codepoint(struct core_render_ctx *ctx,
         line->fg[dst] = ctx->text_fg;
         line->bg[dst] = ctx->text_bg;
         line->cell_width[dst] = i == 0 ? (uint8_t)cells : 0;
+        line->cell_align[dst] = ctx->table_depth
+                                    ? ctx->table_cell_align
+                                    : ctx->css_align;
     }
     line->len += byte_len;
     line->cells += cells;
@@ -992,6 +998,23 @@ static void core_parse_css_declarations(const char *decl,
     }
 }
 
+static uint8_t core_parse_align_value(const char *value, uint8_t fallback)
+{
+    if (core_starts_with_ignore_case(value, "center") ||
+        core_starts_with_ignore_case(value, "middle")) {
+        return BROWSER_ALIGN_CENTER;
+    }
+    if (core_starts_with_ignore_case(value, "right") ||
+        core_starts_with_ignore_case(value, "end")) {
+        return BROWSER_ALIGN_RIGHT;
+    }
+    if (core_starts_with_ignore_case(value, "left") ||
+        core_starts_with_ignore_case(value, "start")) {
+        return BROWSER_ALIGN_LEFT;
+    }
+    return fallback;
+}
+
 static void core_parse_css_selector(struct core_css_rule *rule,
                                     const char *selector)
 {
@@ -1192,6 +1215,7 @@ static void core_push_style(struct core_render_ctx *ctx)
     state->text_style = ctx->text_style;
     state->css_indent = ctx->css_indent;
     state->css_align = ctx->css_align;
+    state->table_cell_align = ctx->table_cell_align;
     state->text_fg = ctx->text_fg;
     state->text_bg = ctx->text_bg;
     state->border_color = ctx->border_color;
@@ -1207,6 +1231,7 @@ static void core_pop_style(struct core_render_ctx *ctx)
     ctx->text_style = state->text_style;
     ctx->css_indent = state->css_indent;
     ctx->css_align = state->css_align;
+    ctx->table_cell_align = state->table_cell_align;
     ctx->text_fg = state->text_fg;
     ctx->text_bg = state->text_bg;
     ctx->border_color = state->border_color;
@@ -1414,6 +1439,7 @@ static void core_resolve_href(const char *base, const char *href,
     if (core_starts_with_ignore_case(href, "http://") ||
         core_starts_with_ignore_case(href, "https://") ||
         core_starts_with_ignore_case(href, "about:") ||
+        core_starts_with_ignore_case(href, "form:") ||
         core_is_drive_path(href)) {
         core_copy_text(out, cap, href);
         return;
@@ -1500,6 +1526,7 @@ static void core_parse_tag(struct core_render_ctx *ctx, const char *tag,
     char href[LEONOS_FS_PATH_LEN];
     char resolved[LEONOS_FS_PATH_LEN];
     char alt[128];
+    char align_attr[24];
     char tag_name[16];
     uint32_t i = 0;
     uint32_t name_pos = 0;
@@ -1704,6 +1731,18 @@ static void core_parse_tag(struct core_render_ctx *ctx, const char *tag,
     }
     if (core_text_eq_ignore_case(tag_name, "td") ||
         core_text_eq_ignore_case(tag_name, "th")) {
+        uint8_t inherited_align = ctx->style_depth
+                                      ? ctx->style_stack[ctx->style_depth - 1U].css_align
+                                      : BROWSER_ALIGN_LEFT;
+        uint8_t cell_align = ctx->css_align;
+        core_extract_attr(tag + i, "align", align_attr, sizeof(align_attr));
+        if (align_attr[0]) {
+            cell_align = core_parse_align_value(align_attr, cell_align);
+        } else if (core_text_eq_ignore_case(tag_name, "th") &&
+                   ctx->css_align == inherited_align) {
+            cell_align = BROWSER_ALIGN_CENTER;
+        }
+        ctx->table_cell_align = cell_align;
         if (!ctx->in_table_row) {
             ctx->in_table_row = 1;
             ctx->table_cell_count = 0;
@@ -1811,6 +1850,7 @@ void litehtml_core_render_html(struct litehtml_core_view *view,
     ctx.table_depth = 0;
     ctx.in_table_row = 0;
     ctx.table_cell_count = 0;
+    ctx.table_cell_align = BROWSER_ALIGN_LEFT;
     ctx.css_indent = 0;
     ctx.css_align = BROWSER_ALIGN_LEFT;
     ctx.style_depth = 0;
@@ -1919,6 +1959,7 @@ void litehtml_core_render_plain(struct litehtml_core_view *view,
     ctx.table_depth = 0;
     ctx.in_table_row = 0;
     ctx.table_cell_count = 0;
+    ctx.table_cell_align = BROWSER_ALIGN_LEFT;
     ctx.css_indent = 0;
     ctx.css_align = BROWSER_ALIGN_LEFT;
     ctx.style_depth = 0;

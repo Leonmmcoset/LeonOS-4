@@ -1165,6 +1165,16 @@ static int fat32_name_match_short(const struct fat32_dirent *de, const char *nam
     return storage_text_eq_ci(short_name, name);
 }
 
+static int fat32_dirent_is_acl_metadata(const struct fat32_dirent *de)
+{
+    if (!de || de->attr == FAT32_ATTR_LFN ||
+        (de->attr & FAT32_ATTR_DIRECTORY) != 0 ||
+        (de->attr & 0x08u) != 0) {
+        return 0;
+    }
+    return fat32_name_match_short(de, "LEONACL.SYS");
+}
+
 static void fat32_lfn_extract_utf16(const struct fat32_lfn *lfn, uint16_t *dst,
                                     uint32_t *len, uint32_t cap)
 {
@@ -1862,6 +1872,32 @@ static int fat32_delete_dirent(uint32_t dir_cluster, const char *name,
     }
 }
 
+static int fat32_delete_acl_metadata_file(uint32_t dir_cluster)
+{
+    struct storage_node meta;
+    int ret = fat32_find_in_dir(dir_cluster, "LEONACL.SYS", &meta);
+    if (ret == -2) {
+        return 0;
+    }
+    if (ret < 0) {
+        return ret;
+    }
+    if (meta.type != LEONOS_FS_TYPE_FILE) {
+        return 0;
+    }
+    ret = fat32_delete_dirent(dir_cluster, "LEONACL.SYS", 0);
+    if (ret < 0) {
+        return ret;
+    }
+    if (meta.first_cluster >= 2) {
+        ret = fat32_free_chain(meta.first_cluster);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
 static int fat32_dir_is_empty(uint32_t dir_cluster)
 {
     uint32_t cluster = dir_cluster;
@@ -1875,6 +1911,9 @@ static int fat32_dir_is_empty(uint32_t dir_cluster)
                 return 1;
             }
             if (de->name[0] == 0xe5 || de->attr == FAT32_ATTR_LFN || (de->attr & 0x08u) != 0) {
+                continue;
+            }
+            if (fat32_dirent_is_acl_metadata(de)) {
                 continue;
             }
             if (de->name[0] == '.' &&
@@ -3083,6 +3122,10 @@ int storage_rmdir(const char *path)
     }
     if (!empty) {
         return -39;
+    }
+    ret = fat32_delete_acl_metadata_file(node.first_cluster);
+    if (ret < 0) {
+        return ret;
     }
     ret = fat32_delete_dirent(parent_node.first_cluster, name, &deleted);
     if (ret < 0) {

@@ -451,14 +451,14 @@ static void draw_acl_security_page(struct leonos_ui_surface *ui,
     if (acl && (acl->flags & LEONOS_FS_ACL_FLAG_CORRUPT)) {
         append_text(state, &pos, sizeof(state), T("  corrupt", "  已损坏"));
     }
-    leonos_ui_text(ui, 24, 76, state, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 24, 100, T("Principal", "主体"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 180, 100, T("Allow", "允许"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 24, 50, state, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 24, 74, T("Principal", "主体"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 180, 74, T("Allow", "允许"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     for (uint32_t i = 0; i < 5; ++i) {
-        leonos_ui_text(ui, 174 + i * 28, 120, perm_labels[i], LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+        leonos_ui_text(ui, 174 + i * 28, 94, perm_labels[i], LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     }
     for (uint32_t r = 0; r < 5; ++r) {
-        uint32_t y = 144 + r * 30;
+        uint32_t y = 118 + r * 30;
         uint32_t allow = acl_permissions_for(acl, acl_principals[r]);
         leonos_ui_text_clipped(ui, 24, y + 3, 136,
                                acl_principal_label(acl_principals[r]),
@@ -467,7 +467,7 @@ static void draw_acl_security_page(struct leonos_ui_surface *ui,
             leonos_ui_checkbox(ui, 172 + p * 28, y, "", (allow & perms[p]) != 0, 0);
         }
     }
-    leonos_ui_text_clipped(ui, 24, 300, 330, message ? message : "",
+    leonos_ui_text_clipped(ui, 24, 274, 330, message ? message : "",
                            LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_button(ui, 24, FILEMAN_DETAILS_H - 38, 120, LEONOS_UI_BUTTON_H,
                      T("Take Owner", "接管所有权"), 0);
@@ -487,7 +487,7 @@ static int acl_security_hit(struct leonos_fs_acl *acl, int32_t x, int32_t y)
         LEONOS_FS_PERM_MANAGE,
     };
     for (uint32_t r = 0; r < 5; ++r) {
-        uint32_t row_y = 144 + r * 30;
+        uint32_t row_y = 118 + r * 30;
         for (uint32_t p = 0; p < 5; ++p) {
             if (hit_rect_i(x, y, 172 + (int32_t)p * 28, (int32_t)row_y, 18, 18)) {
                 acl_toggle_permission(acl, acl_principals[r], perms[p]);
@@ -558,19 +558,18 @@ void show_details_selected(void)
             props[prop_count++] = (struct leonos_ui_property_item){T("Contains:", "包含:"), contains_line, 0};
         }
         leonos_ui_rect(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, LEONOS_UI_GRAY);
-        leonos_ui_dialog(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, T("Properties", "属性"));
-        leonos_ui_tabs(&ui, 16, 36, FILEMAN_DETAILS_W - 32, tabs, 2, active_tab);
-        leonos_ui_tab_body(&ui, 16, 62, FILEMAN_DETAILS_W - 32, FILEMAN_DETAILS_H - 110);
+        leonos_ui_tabs(&ui, 16, 10, FILEMAN_DETAILS_W - 32, tabs, 2, active_tab);
+        leonos_ui_tab_body(&ui, 16, 36, FILEMAN_DETAILS_W - 32, FILEMAN_DETAILS_H - 84);
         if (active_tab == 0) {
-            leonos_ui_property_grid(&ui, 28, 82, FILEMAN_DETAILS_W - 56,
+            leonos_ui_property_grid(&ui, 28, 56, FILEMAN_DETAILS_W - 56,
                                     props, prop_count, 86, 24);
         } else if (acl_loaded == 0) {
             draw_acl_security_page(&ui, &acl, acl_message);
         } else {
-            leonos_ui_text(&ui, 28, 82, T("Permission information is unavailable.",
+            leonos_ui_text(&ui, 28, 56, T("Permission information is unavailable.",
                                           "权限信息不可用。"),
                            LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-            leonos_ui_text_clipped(&ui, 28, 110, FILEMAN_DETAILS_W - 56,
+            leonos_ui_text_clipped(&ui, 28, 84, FILEMAN_DETAILS_W - 56,
                                    acl_message, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
             leonos_ui_button(&ui, 152, FILEMAN_DETAILS_H - 38, 88, LEONOS_UI_BUTTON_H,
                              T("Repair", "修复"), 0);
@@ -590,7 +589,7 @@ void show_details_selected(void)
                 break;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
-                int tab = leonos_ui_tabs_hit(event.x, event.y, 16, 36,
+                int tab = leonos_ui_tabs_hit(event.x, event.y, 16, 10,
                                              FILEMAN_DETAILS_W - 32, tabs, 2);
                 if (tab >= 0) {
                     active_tab = (uint32_t)tab;

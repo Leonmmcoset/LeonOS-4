@@ -10,10 +10,10 @@
 #define DOWNLOAD_W 680U
 #define DOWNLOAD_H 300U
 #define URL_X 84U
-#define URL_Y 62U
+#define URL_Y 38U
 #define URL_W 470U
 #define BUTTON_X 568U
-#define BUTTON_Y 62U
+#define BUTTON_Y 38U
 #define BUTTON_W 86U
 #define T(en, zh) leonos_i18n((en), (zh))
 
@@ -351,10 +351,8 @@ static void perform_download(void)
 static void draw_downloadmgr(struct leonos_ui_surface *ui)
 {
     uint32_t state_color = failed ? 0x00b03030U : (done ? 0x00108040U : LEONOS_UI_DARK);
-    leonos_ui_rect(ui, 0, 0, DOWNLOAD_W, DOWNLOAD_H, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, DOWNLOAD_W, DOWNLOAD_H,
-                     T("Download Manager", "下载管理器"));
-    leonos_ui_text(ui, 24, 38,
+    leonos_ui_rect(ui, 0, 0, DOWNLOAD_W, DOWNLOAD_H, LEONOS_UI_GRAY);
+    leonos_ui_text(ui, 24, 14,
                    T("HTTP downloads are saved to the current user's Downloads folder.",
                      "HTTP 下载会保存到当前用户的 Downloads 文件夹。"),
                    LEONOS_UI_DARK, LEONOS_UI_GRAY);
@@ -362,15 +360,15 @@ static void draw_downloadmgr(struct leonos_ui_surface *ui)
     leonos_ui_edit_state_draw(ui, URL_X, URL_Y, URL_W, &url_edit, busy ? LEONOS_UI_EDIT_DISABLED : 0);
     leonos_ui_button(ui, BUTTON_X, BUTTON_Y, BUTTON_W, LEONOS_UI_BUTTON_H,
                      T("Download", "下载"), busy ? LEONOS_UI_BUTTON_DISABLED : 0);
-    leonos_ui_text(ui, 24, 112, T("Progress", "进度"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_progress(ui, 104, 108, DOWNLOAD_W - 142, 22,
+    leonos_ui_text(ui, 24, 88, T("Progress", "进度"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_progress(ui, 104, 84, DOWNLOAD_W - 142, 22,
                        progress_value, 100);
-    leonos_ui_text_clipped(ui, 24, 154, DOWNLOAD_W - 48,
+    leonos_ui_text_clipped(ui, 24, 130, DOWNLOAD_W - 48,
                            status_text, state_color, LEONOS_UI_WHITE);
-    leonos_ui_text_clipped(ui, 24, 182, DOWNLOAD_W - 48,
+    leonos_ui_text_clipped(ui, 24, 158, DOWNLOAD_W - 48,
                            detail_text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
     if (target_path[0]) {
-        leonos_ui_text_clipped(ui, 24, 212, DOWNLOAD_W - 48,
+        leonos_ui_text_clipped(ui, 24, 188, DOWNLOAD_W - 48,
                                target_path, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     }
     leonos_ui_statusbar(ui, DOWNLOAD_H - 28, 28, status_text);

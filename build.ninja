@@ -27,31 +27,31 @@ rule loader_integrity
   description = LOADER.INTEGRITY $out
 
 rule cc_kernel
-  command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -mcmodel=kernel -Wall -Wextra -Ikernel/ntclks/include -Iinclude -Iinclude/generated -MMD -MF $out.d -c $in -o $out
+  command = $cc -target x86_64-unknown-none -O2 -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -mcmodel=kernel -Wall -Wextra -Ikernel/ntclks/include -Iinclude -Iinclude/generated -MMD -MF $out.d -c $in -o $out
   depfile = $out.d
   deps = gcc
   description = CC.KERNEL $out
 
 rule as_kernel
-  command = $cc -target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Ikernel/ntclks/include -Iinclude -MMD -MF $out.d -c $in -o $out
+  command = $cc -target x86_64-unknown-none -O2 -ffreestanding -mno-red-zone -mgeneral-regs-only -Ikernel/ntclks/include -Iinclude -MMD -MF $out.d -c $in -o $out
   depfile = $out.d
   deps = gcc
   description = AS.KERNEL $out
 
 rule cc_loader
-  command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iinclude -MMD -MF $out.d -c $in -o $out
+  command = $cc -target x86_64-unknown-none -O2 -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iinclude -MMD -MF $out.d -c $in -o $out
   depfile = $out.d
   deps = gcc
   description = CC.LOADER $out
 
 rule as_loader
-  command = $cc -target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Iinclude -MMD -MF $out.d -c $in -o $out
+  command = $cc -target x86_64-unknown-none -O2 -ffreestanding -mno-red-zone -mgeneral-regs-only -Iinclude -MMD -MF $out.d -c $in -o $out
   depfile = $out.d
   deps = gcc
   description = AS.LOADER $out
 
 rule rust_osmlayer
-  command = $rustc --crate-type lib --target x86_64-unknown-none -C panic=abort -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C target-feature=-sse,-sse2 -C opt-level=1 --emit obj=$out $in
+  command = $rustc --crate-type lib --target x86_64-unknown-none -C panic=abort -C relocation-model=static -C code-model=kernel -C no-redzone=yes -C target-feature=-sse,-sse2 -C opt-level=2 --emit obj=$out $in
   description = RUST.OSMLAYER $out
 
 rule link_loader
@@ -67,19 +67,19 @@ rule link_middlelayer
   description = LD.MIDDLELAYER $out
 
 rule cc_user
-  command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iuserland/libc/include -Iinclude -include include/generated/autoconf.h -MMD -MF $out.d -c $in -o $out
+  command = $cc -target x86_64-unknown-none -O2 -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iuserland/libc/include -Iinclude -include include/generated/autoconf.h -MMD -MF $out.d -c $in -o $out
   depfile = $out.d
   deps = gcc
   description = CC.USER $out
 
 rule cc_user_installer_policy
-  command = $cc -target x86_64-unknown-none -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iuserland/libc/include -Iinclude -include include/generated/autoconf-installer.h -MMD -MF $out.d -c $in -o $out
+  command = $cc -target x86_64-unknown-none -O2 -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only -Wall -Wextra -Iuserland/libc/include -Iinclude -include include/generated/autoconf-installer.h -MMD -MF $out.d -c $in -o $out
   depfile = $out.d
   deps = gcc
   description = CC.USER.INSTALLER $out
 
 rule as_user
-  command = $cc -target x86_64-unknown-none -ffreestanding -mno-red-zone -mgeneral-regs-only -Iuserland/libc/include -Iinclude -MMD -MF $out.d -c $in -o $out
+  command = $cc -target x86_64-unknown-none -O2 -ffreestanding -mno-red-zone -mgeneral-regs-only -Iuserland/libc/include -Iinclude -MMD -MF $out.d -c $in -o $out
   depfile = $out.d
   deps = gcc
   description = AS.USER $out
@@ -253,6 +253,7 @@ build build/obj/user-desktop/userland/apps/desktop/switcher.c.o: cc_user userlan
 build build/obj/user-desktop/userland/apps/desktop/util.c.o: cc_user userland/apps/desktop/util.c | include/generated/autoconf.h
 build build/obj/user-desktop/userland/apps/desktop/window.c.o: cc_user userland/apps/desktop/window.c | include/generated/autoconf.h
 build build/userland/desktop.elf: link_user build/obj/user-desktop/userland/apps/desktop/desktop_items.c.o build/obj/user-desktop/userland/apps/desktop/desktop_run.c.o build/obj/user-desktop/userland/apps/desktop/draw.c.o build/obj/user-desktop/userland/apps/desktop/input.c.o build/obj/user-desktop/userland/apps/desktop/main.c.o build/obj/user-desktop/userland/apps/desktop/render.c.o build/obj/user-desktop/userland/apps/desktop/screen.c.o build/obj/user-desktop/userland/apps/desktop/services.c.o build/obj/user-desktop/userland/apps/desktop/start_menu.c.o build/obj/user-desktop/userland/apps/desktop/state.c.o build/obj/user-desktop/userland/apps/desktop/switcher.c.o build/obj/user-desktop/userland/apps/desktop/util.c.o build/obj/user-desktop/userland/apps/desktop/window.c.o build/userland/libc.a
+build build/obj/user-oobe/userland/apps/browser/cookies.c.o: cc_user userland/apps/browser/cookies.c | include/generated/autoconf.h
 build build/obj/user-oobe/userland/apps/browser/embed.c.o: cc_user userland/apps/browser/embed.c | include/generated/autoconf.h
 build build/obj/user-oobe/userland/apps/browser/forms.c.o: cc_user userland/apps/browser/forms.c | include/generated/autoconf.h
 build build/obj/user-oobe/userland/apps/browser/input.c.o: cc_user userland/apps/browser/input.c | include/generated/autoconf.h
@@ -262,7 +263,7 @@ build build/obj/user-oobe/userland/apps/browser/state.c.o: cc_user userland/apps
 build build/obj/user-oobe/userland/apps/browser/util.c.o: cc_user userland/apps/browser/util.c | include/generated/autoconf.h
 build build/obj/user-oobe/userland/apps/browser/view.c.o: cc_user userland/apps/browser/view.c | include/generated/autoconf.h
 build build/obj/user-oobe/userland/apps/oobe/main.c.o: cc_user userland/apps/oobe/main.c | include/generated/autoconf.h
-build build/userland/oobe.elf: link_user build/obj/user-oobe/userland/apps/browser/embed.c.o build/obj/user-oobe/userland/apps/browser/forms.c.o build/obj/user-oobe/userland/apps/browser/input.c.o build/obj/user-oobe/userland/apps/browser/litehtml_core.c.o build/obj/user-oobe/userland/apps/browser/navigation.c.o build/obj/user-oobe/userland/apps/browser/state.c.o build/obj/user-oobe/userland/apps/browser/util.c.o build/obj/user-oobe/userland/apps/browser/view.c.o build/obj/user-oobe/userland/apps/oobe/main.c.o build/userland/libc.a
+build build/userland/oobe.elf: link_user build/obj/user-oobe/userland/apps/browser/cookies.c.o build/obj/user-oobe/userland/apps/browser/embed.c.o build/obj/user-oobe/userland/apps/browser/forms.c.o build/obj/user-oobe/userland/apps/browser/input.c.o build/obj/user-oobe/userland/apps/browser/litehtml_core.c.o build/obj/user-oobe/userland/apps/browser/navigation.c.o build/obj/user-oobe/userland/apps/browser/state.c.o build/obj/user-oobe/userland/apps/browser/util.c.o build/obj/user-oobe/userland/apps/browser/view.c.o build/obj/user-oobe/userland/apps/oobe/main.c.o build/userland/libc.a
 build build/obj/user-login/userland/apps/login/main.c.o: cc_user userland/apps/login/main.c | include/generated/autoconf.h
 build build/userland/login.elf: link_user build/obj/user-login/userland/apps/login/main.c.o build/userland/libc.a
 build build/obj/user-hello/userland/apps/hello/main.c.o: cc_user userland/apps/hello/main.c | include/generated/autoconf.h
@@ -311,6 +312,7 @@ build build/obj/user-httpget/userland/apps/httpget/main.c.o: cc_user userland/ap
 build build/userland/httpget.elf: link_user build/obj/user-httpget/userland/apps/httpget/main.c.o build/userland/libc.a
 build build/obj/user-downloadmgr/userland/apps/downloadmgr/main.c.o: cc_user userland/apps/downloadmgr/main.c | include/generated/autoconf.h
 build build/userland/downloadmgr.elf: link_user build/obj/user-downloadmgr/userland/apps/downloadmgr/main.c.o build/userland/libc.a
+build build/obj/user-browser/userland/apps/browser/cookies.c.o: cc_user userland/apps/browser/cookies.c | include/generated/autoconf.h
 build build/obj/user-browser/userland/apps/browser/embed.c.o: cc_user userland/apps/browser/embed.c | include/generated/autoconf.h
 build build/obj/user-browser/userland/apps/browser/forms.c.o: cc_user userland/apps/browser/forms.c | include/generated/autoconf.h
 build build/obj/user-browser/userland/apps/browser/input.c.o: cc_user userland/apps/browser/input.c | include/generated/autoconf.h
@@ -320,7 +322,7 @@ build build/obj/user-browser/userland/apps/browser/navigation.c.o: cc_user userl
 build build/obj/user-browser/userland/apps/browser/state.c.o: cc_user userland/apps/browser/state.c | include/generated/autoconf.h
 build build/obj/user-browser/userland/apps/browser/util.c.o: cc_user userland/apps/browser/util.c | include/generated/autoconf.h
 build build/obj/user-browser/userland/apps/browser/view.c.o: cc_user userland/apps/browser/view.c | include/generated/autoconf.h
-build build/userland/browser.elf: link_user build/obj/user-browser/userland/apps/browser/embed.c.o build/obj/user-browser/userland/apps/browser/forms.c.o build/obj/user-browser/userland/apps/browser/input.c.o build/obj/user-browser/userland/apps/browser/litehtml_core.c.o build/obj/user-browser/userland/apps/browser/main.c.o build/obj/user-browser/userland/apps/browser/navigation.c.o build/obj/user-browser/userland/apps/browser/state.c.o build/obj/user-browser/userland/apps/browser/util.c.o build/obj/user-browser/userland/apps/browser/view.c.o build/userland/libc.a
+build build/userland/browser.elf: link_user build/obj/user-browser/userland/apps/browser/cookies.c.o build/obj/user-browser/userland/apps/browser/embed.c.o build/obj/user-browser/userland/apps/browser/forms.c.o build/obj/user-browser/userland/apps/browser/input.c.o build/obj/user-browser/userland/apps/browser/litehtml_core.c.o build/obj/user-browser/userland/apps/browser/main.c.o build/obj/user-browser/userland/apps/browser/navigation.c.o build/obj/user-browser/userland/apps/browser/state.c.o build/obj/user-browser/userland/apps/browser/util.c.o build/obj/user-browser/userland/apps/browser/view.c.o build/userland/libc.a
 build build/obj/user-imageview/userland/apps/imageview/main.c.o: cc_user userland/apps/imageview/main.c | include/generated/autoconf.h
 build build/userland/imageview.elf: link_user build/obj/user-imageview/userland/apps/imageview/main.c.o build/userland/libc.a
 build build/obj/user-oshlp/userland/apps/oshlp/main.c.o: cc_user userland/apps/oshlp/main.c | include/generated/autoconf.h
@@ -347,6 +349,7 @@ build build/obj/user-installer-policy-desktop/userland/apps/desktop/switcher.c.o
 build build/obj/user-installer-policy-desktop/userland/apps/desktop/util.c.o: cc_user_installer_policy userland/apps/desktop/util.c | include/generated/autoconf-installer.h
 build build/obj/user-installer-policy-desktop/userland/apps/desktop/window.c.o: cc_user_installer_policy userland/apps/desktop/window.c | include/generated/autoconf-installer.h
 build build/userland-installer-policy/desktop.elf: link_user build/obj/user-installer-policy-desktop/userland/apps/desktop/desktop_items.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/desktop_run.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/draw.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/input.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/main.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/render.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/screen.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/services.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/start_menu.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/state.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/switcher.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/util.c.o build/obj/user-installer-policy-desktop/userland/apps/desktop/window.c.o build/userland-installer-policy/libc.a
+build build/obj/user-installer-policy-oobe/userland/apps/browser/cookies.c.o: cc_user_installer_policy userland/apps/browser/cookies.c | include/generated/autoconf-installer.h
 build build/obj/user-installer-policy-oobe/userland/apps/browser/embed.c.o: cc_user_installer_policy userland/apps/browser/embed.c | include/generated/autoconf-installer.h
 build build/obj/user-installer-policy-oobe/userland/apps/browser/forms.c.o: cc_user_installer_policy userland/apps/browser/forms.c | include/generated/autoconf-installer.h
 build build/obj/user-installer-policy-oobe/userland/apps/browser/input.c.o: cc_user_installer_policy userland/apps/browser/input.c | include/generated/autoconf-installer.h
@@ -356,7 +359,7 @@ build build/obj/user-installer-policy-oobe/userland/apps/browser/state.c.o: cc_u
 build build/obj/user-installer-policy-oobe/userland/apps/browser/util.c.o: cc_user_installer_policy userland/apps/browser/util.c | include/generated/autoconf-installer.h
 build build/obj/user-installer-policy-oobe/userland/apps/browser/view.c.o: cc_user_installer_policy userland/apps/browser/view.c | include/generated/autoconf-installer.h
 build build/obj/user-installer-policy-oobe/userland/apps/oobe/main.c.o: cc_user_installer_policy userland/apps/oobe/main.c | include/generated/autoconf-installer.h
-build build/userland-installer-policy/oobe.elf: link_user build/obj/user-installer-policy-oobe/userland/apps/browser/embed.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/forms.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/input.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/litehtml_core.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/navigation.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/state.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/util.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/view.c.o build/obj/user-installer-policy-oobe/userland/apps/oobe/main.c.o build/userland-installer-policy/libc.a
+build build/userland-installer-policy/oobe.elf: link_user build/obj/user-installer-policy-oobe/userland/apps/browser/cookies.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/embed.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/forms.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/input.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/litehtml_core.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/navigation.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/state.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/util.c.o build/obj/user-installer-policy-oobe/userland/apps/browser/view.c.o build/obj/user-installer-policy-oobe/userland/apps/oobe/main.c.o build/userland-installer-policy/libc.a
 build build/obj/user-installer-policy-settings/userland/apps/settings/main.c.o: cc_user_installer_policy userland/apps/settings/main.c | include/generated/autoconf-installer.h
 build build/userland-installer-policy/settings.elf: link_user build/obj/user-installer-policy-settings/userland/apps/settings/main.c.o build/userland-installer-policy/libc.a
 build userland: phony build/userland/init.elf build/userland/desktop.elf build/userland/oobe.elf build/userland/login.elf build/userland/hello.elf build/userland/uidemo.elf build/userland/cjktest.elf build/userland/taskmgr.elf build/userland/fileman.elf build/userland/terminal.elf build/userland/shell.elf build/userland/notepad.elf build/userland/calc.elf build/userland/minesweeper.elf build/userland/run.elf build/userland/osver.elf build/userland/memtest.elf build/userland/bugtest.elf build/userland/ping.elf build/userland/netctl.elf build/userland/serviced.elf build/userland/servicemgr.elf build/userland/httpget.elf build/userland/downloadmgr.elf build/userland/browser.elf build/userland/imageview.elf build/userland/oshlp.elf build/userland/settings.elf build/userland/diskmgr.elf build/userland/devmgr.elf build/userland/installer.elf

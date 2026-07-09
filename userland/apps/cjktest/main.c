@@ -104,21 +104,19 @@ static void draw(struct leonos_ui_surface *ui)
 {
     uint32_t sample_w;
     leonos_ui_rect(ui, 0, 0, CJKTEST_W, CJKTEST_H, LEONOS_UI_WHITE);
-    leonos_ui_window(ui, 8, 8, CJKTEST_W - 16, CJKTEST_H - 16,
-                     "中文显示测试", LEONOS_UI_WINDOW_ACTIVE | LEONOS_UI_WINDOW_NO_RESIZE, 0);
 
-    leonos_ui_text(ui, 28, 48, "你好，LeonOS 4。中文显示测试。", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, 28, 74, "标点：，。！？；：《》【】（）", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, 28, 100, "ASCII ABC 123  |  中文宽字符  |  mixed 混排", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 18, 16, "你好，LeonOS 4。中文显示测试。", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 18, 42, "标点：，。！？；：《》【】（）", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 18, 68, "ASCII ABC 123  |  中文宽字符  |  mixed 混排", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
 
     sample_w = leonos_ui_text_width("你好，LeonOS 4。");
-    leonos_ui_text(ui, 28, 132, "leonos_ui_text_width(\"你好，LeonOS 4。\"):", LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_progress(ui, 338, 130, 220, 18, sample_w, 220);
+    leonos_ui_text(ui, 18, 100, "leonos_ui_text_width(\"你好，LeonOS 4。\"):", LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_progress(ui, 328, 98, 220, 18, sample_w, 220);
 
-    leonos_ui_groupbox(ui, 28, 164, 664, 170, "UTF-8 文本域");
-    leonos_ui_text_area_state_draw(ui, 42, 190, 636, 118, &text_state, 0);
+    leonos_ui_groupbox(ui, 18, 132, 684, 190, "UTF-8 文本域");
+    leonos_ui_text_area_state_draw(ui, 32, 158, 656, 138, &text_state, 0);
 
-    leonos_ui_statusbar(ui, CJKTEST_H - 36, 28, status_line);
+    leonos_ui_statusbar(ui, CJKTEST_H - 28, 28, status_line);
 }
 
 int main(void)
@@ -155,10 +153,10 @@ int main(void)
                 if (leonos_ui_text_area_state_handle_mouse(&text_state,
                                                            event.x,
                                                            event.y,
-                                                           42,
-                                                           190,
-                                                           636,
-                                                           118,
+                                                           32,
+                                                           158,
+                                                           656,
+                                                           138,
                                                            event.buttons)) {
                     draw(&ui);
                     leonos_gui_present_window((uint32_t)window_id,

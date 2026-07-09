@@ -1,0 +1,4 @@
+PySide6>=6.6
+unicorn>=2.0
+pyelftools>=0.31
+capstone>=5.0

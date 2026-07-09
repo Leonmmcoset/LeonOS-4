@@ -38,6 +38,7 @@ struct browser_line {
     uint32_t fg[176];
     uint32_t bg[176];
     uint8_t cell_width[176];
+    uint8_t cell_align[176];
     uint32_t len;
     uint32_t cells;
     uint8_t kind;

@@ -88,6 +88,39 @@ class LicenseServerTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_http_chinese_language_option_persists_after_register(self) -> None:
+        license_server.LicenseHandler.store = self.store
+        license_server.LicenseHandler.sessions = {}
+        server = license_server.ThreadingHTTPServer(("127.0.0.1", 0), license_server.LicenseHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+        def get(path: str) -> str:
+            with opener.open(base + path, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                return response.read().decode("utf-8")
+
+        def post(path: str, fields: dict[str, str]) -> str:
+            data = urllib.parse.urlencode(fields).encode("utf-8")
+            request = urllib.request.Request(base + path, data=data)
+            with opener.open(request, timeout=5) as response:
+                self.assertEqual(response.status, 200)
+                return response.read().decode("utf-8")
+
+        try:
+            body = get("/?lang=zh")
+            self.assertIn("注册", body)
+            self.assertIn("登录", body)
+            body = post("/register?lang=zh", {"email": "zh@example.com", "password": "pass1234"})
+            self.assertIn("已登录为 zh@example.com", body)
+            self.assertIn("生成在线密钥", body)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,4 +2,3 @@
 --cfg=config_license_debug_log
 --cfg=config_ninja_regenerate_before_build
 --cfg=config_qemu_enable_kvm
---cfg=config_vmdk_require_license

@@ -13,7 +13,7 @@
 #define IMAGEVIEW_MIN_H 300U
 #define IMAGEVIEW_MAX_W 1180U
 #define IMAGEVIEW_MAX_H 820U
-#define IMAGEVIEW_TOOLBAR_Y 30U
+#define IMAGEVIEW_TOOLBAR_Y 4U
 #define IMAGEVIEW_TOOLBAR_H 36U
 #define IMAGEVIEW_STATUS_H 28U
 #define IMAGEVIEW_DETAIL_H 22U
@@ -465,8 +465,7 @@ static void draw_scaled_image(struct leonos_ui_surface *ui)
 static void present(int window_id, struct leonos_ui_surface *ui)
 {
     leonos_ui_bind(ui, pixels, view_w, view_h, IMAGEVIEW_MAX_W);
-    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
-    leonos_ui_dialog(ui, 0, 0, view_w, view_h, T("Image Viewer", "图片查看器"));
+    leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_GRAY);
     leonos_ui_toolbar(ui, 0, IMAGEVIEW_TOOLBAR_Y, view_w, IMAGEVIEW_TOOLBAR_H);
     leonos_ui_button(ui, 12, IMAGEVIEW_TOOLBAR_Y + 6U, 72,
                      LEONOS_UI_BUTTON_H, T("Previous", "上一张"),
