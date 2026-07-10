@@ -1,4 +1,3 @@
---cfg=config_installer_installed_require_license
 --cfg=config_license_debug_log
 --cfg=config_ninja_regenerate_before_build
 --cfg=config_qemu_enable_kvm

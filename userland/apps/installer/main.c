@@ -23,10 +23,14 @@
 #define SHA256_HASH_LEN 32U
 #define UPDATE_APP_ROW_H 24U
 #define UPDATE_APP_MAX LEONOS_FS_MAX_ENTRIES
+#define POLICY_SCROLLBAR_W 18U
+#define POLICY_LINE_TEXT_MAX 256U
+#define POLICY_MAX_LINES 192U
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum installer_page {
     PAGE_LANGUAGE = 0,
+    PAGE_POLICY,
     PAGE_THEME,
     PAGE_WELCOME,
     PAGE_MODE,
@@ -41,6 +45,15 @@ enum installer_page {
 enum installer_mode {
     INSTALL_MODE_FRESH = 0,
     INSTALL_MODE_UPDATE = 1,
+};
+
+enum installer_markdown_line_kind {
+    POLICY_LINE_NORMAL = 0,
+    POLICY_LINE_H1,
+    POLICY_LINE_H2,
+    POLICY_LINE_BULLET,
+    POLICY_LINE_QUOTE,
+    POLICY_LINE_RULE,
 };
 
 struct installer_layout {
@@ -65,6 +78,21 @@ struct installer_layout {
     uint32_t confirm_edit_y;
 };
 
+struct installer_markdown_line {
+    char text[POLICY_LINE_TEXT_MAX];
+    uint8_t kind;
+};
+
+struct installer_policy_view {
+    uint32_t x;
+    uint32_t y;
+    uint32_t w;
+    uint32_t h;
+    uint32_t text_x;
+    uint32_t text_w;
+    uint32_t checkbox_y;
+};
+
 struct update_app_entry {
     char name[LEONOS_FS_NAME_LEN];
     char src_elf[LEONOS_FS_PATH_LEN];
@@ -85,6 +113,8 @@ static uint8_t install_mode = INSTALL_MODE_FRESH;
 static uint8_t installer_lang = LEONOS_LANG_EN;
 static uint8_t installer_theme = LEONOS_UI_THEME_METRO;
 static uint8_t installer_theme_explicit;
+static uint8_t policy_accepted;
+static uint32_t policy_scroll_y;
 static struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
 static uint32_t disk_count;
 static int32_t selected_disk = -1;
@@ -104,6 +134,56 @@ static uint8_t install_success;
 static uint8_t install_running;
 static uint8_t dirty = 1;
 static uint8_t copy_buf[COPY_BUF_SIZE];
+static struct installer_markdown_line policy_lines[POLICY_MAX_LINES];
+static uint32_t policy_line_count;
+
+static const char privacy_policy_en[] =
+    "# LeonOS 4 Privacy and Acceptable Use Policy\n"
+    "\n"
+    "**Effective date:** 10 July 2026\n"
+    "\n"
+    "## Privacy\n"
+    "- LeonOS is designed to run locally. Setup does not require an account and does not send personal data, hardware identifiers, or disk contents to LeonOS services.\n"
+    "- Setup reads the installation media and the disk you select. A fresh installation erases the selected disk; an update replaces the system items described later in Setup.\n"
+    "- Diagnostics, crash reports, and application logs remain on this device unless you choose to copy, upload, or otherwise share them.\n"
+    "- Network applications communicate with the destinations you choose. Their handling of data is governed by their own policies, and you decide what information to provide.\n"
+    "\n"
+    "## Acceptable use\n"
+    "- Use LeonOS only for lawful purposes and on devices, accounts, networks, and data that you own or are authorized to use.\n"
+    "- Do not use LeonOS to harm people or systems, bypass access controls, distribute malware, disrupt services, or violate privacy, intellectual-property, or other rights.\n"
+    "- Security testing is allowed only with clear authorization from the owner of the systems being tested.\n"
+    "- Respect the licenses and terms that apply to LeonOS, bundled software, and any third-party content you add or access.\n"
+    "\n"
+    "## Updates and responsibility\n"
+    "- Back up important files before installing or updating. You are responsible for reviewing the selected disk and protecting your data.\n"
+    "- LeonOS is provided as-is, without a promise that it will be uninterrupted, error-free, or suitable for every purpose.\n"
+    "- Policy updates may be included with future releases. The version shown by a newer installer replaces this version for that release.\n"
+    "\n"
+    "> Selecting Agree confirms that you have read and accept this Privacy and Acceptable Use Policy.\n";
+
+static const char privacy_policy_zh[] =
+    "# LeonOS 4 隐私与使用政策\n"
+    "\n"
+    "**生效日期：**2026 年 7 月 10 日\n"
+    "\n"
+    "## 隐私\n"
+    "- LeonOS 以本地运行为设计目标。安装程序不需要账户，也不会向 LeonOS 服务发送个人数据、硬件标识或磁盘内容。\n"
+    "- 安装程序会读取安装介质和你选择的硬盘。全新安装会清空所选硬盘；更新会替换后续安装步骤中说明的系统项目。\n"
+    "- 诊断信息、崩溃报告和应用日志默认保留在本设备上，除非你主动复制、上传或以其他方式共享它们。\n"
+    "- 网络应用会与您选择的目标通信。目标对数据的处理受其自身政策约束，你可以决定是否连接以及提供哪些信息。\n"
+    "\n"
+    "## 使用规范\n"
+    "- 只能将 LeonOS 用于合法目的，并且只能操作你拥有或已获授权使用的设备、账户、网络和数据。\n"
+    "- 不得使用 LeonOS 伤害他人或系统、绕过访问控制、传播恶意软件、干扰服务，或侵犯隐私、知识产权及其他权利。\n"
+    "- 安全测试仅限于已获得系统所有者明确授权的范围。\n"
+    "- 请遵守适用于 LeonOS、随附软件以及你添加或访问的第三方内容的许可与使用条款。\n"
+    "\n"
+    "## 更新与责任\n"
+    "- 安装或更新前请备份重要文件。你有责任核对所选硬盘并保护自己的数据。\n"
+    "- LeonOS 按现状提供，不保证服务不中断、没有错误，或适合所有用途。\n"
+    "- 后续版本可能附带更新后的政策。新安装程序显示的版本适用于对应发行版，并替代本版本。\n"
+    "\n"
+    "> 选择同意即表示你已阅读并接受本隐私与使用政策。\n";
 
 static int text_eq(const char *a, const char *b)
 {
@@ -207,6 +287,264 @@ static int append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t value)
     return append_u64(buf, pos, cap, mag);
 }
 
+static uint32_t policy_utf8_char(const char *text, uint32_t pos, uint32_t *out_cells)
+{
+    uint8_t first = (uint8_t)text[pos];
+    uint32_t bytes = 1;
+    if (out_cells) {
+        *out_cells = 1;
+    }
+    if (!first) {
+        return 0;
+    }
+    if ((first & 0xe0u) == 0xc0u && (text[pos + 1U] & 0xc0u) == 0x80u) {
+        bytes = 2;
+    } else if ((first & 0xf0u) == 0xe0u &&
+               (text[pos + 1U] & 0xc0u) == 0x80u &&
+               (text[pos + 2U] & 0xc0u) == 0x80u) {
+        bytes = 3;
+    } else if ((first & 0xf8u) == 0xf0u &&
+               (text[pos + 1U] & 0xc0u) == 0x80u &&
+               (text[pos + 2U] & 0xc0u) == 0x80u &&
+               (text[pos + 3U] & 0xc0u) == 0x80u) {
+        bytes = 4;
+    }
+    if (out_cells && bytes >= 3U) {
+        *out_cells = 2;
+    }
+    return bytes;
+}
+
+static uint32_t policy_text_cells(const char *text)
+{
+    uint32_t pos = 0;
+    uint32_t cells = 0;
+    while (text && text[pos]) {
+        uint32_t char_cells = 1;
+        uint32_t bytes = policy_utf8_char(text, pos, &char_cells);
+        if (!bytes) {
+            break;
+        }
+        cells += char_cells;
+        pos += bytes;
+    }
+    return cells;
+}
+
+static void policy_clean_inline(char *dst, uint32_t cap, const char *src)
+{
+    uint32_t out = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    dst[0] = 0;
+    for (uint32_t i = 0; src && src[i]; ++i) {
+        if (src[i] == '*' || src[i] == '_' || src[i] == '`') {
+            continue;
+        }
+        if (out + 1U < cap) {
+            dst[out++] = src[i];
+            dst[out] = 0;
+        }
+    }
+}
+
+static void policy_add_line(uint8_t kind, const char *text)
+{
+    if (policy_line_count >= POLICY_MAX_LINES) {
+        return;
+    }
+    policy_lines[policy_line_count].kind = kind;
+    copy_text(policy_lines[policy_line_count].text,
+              sizeof(policy_lines[policy_line_count].text), text ? text : "");
+    ++policy_line_count;
+}
+
+static int policy_line_is_rule(const char *line)
+{
+    uint32_t count = 0;
+    for (uint32_t i = 0; line && line[i]; ++i) {
+        if (line[i] == ' ' || line[i] == '\t') {
+            continue;
+        }
+        if (line[i] != '-') {
+            return 0;
+        }
+        ++count;
+    }
+    return count >= 3U;
+}
+
+static void policy_emit_wrapped(uint8_t kind, const char *prefix,
+                                const char *text, uint32_t width)
+{
+    char line[POLICY_LINE_TEXT_MAX];
+    uint32_t out = 0;
+    uint32_t pos = 0;
+    uint32_t max_cells = leonos_ui_text_fit_chars(width);
+    uint32_t prefix_cells = policy_text_cells(prefix);
+    uint32_t cells = prefix_cells;
+    if (max_cells < 16U) {
+        max_cells = 16U;
+    }
+    line[0] = 0;
+    (void)append_text(line, &out, sizeof(line), prefix);
+    while (text && text[pos]) {
+        uint32_t char_cells = 1;
+        uint32_t bytes = policy_utf8_char(text, pos, &char_cells);
+        if (!bytes) {
+            break;
+        }
+        if ((text[pos] == ' ' || text[pos] == '\t') && cells == prefix_cells) {
+            pos += bytes;
+            continue;
+        }
+        if (text[pos] != ' ' && text[pos] != '\t') {
+            uint32_t word_pos = pos;
+            uint32_t word_cells = 0;
+            while (text[word_pos] && text[word_pos] != ' ' && text[word_pos] != '\t') {
+                uint32_t next_cells = 1;
+                uint32_t next_bytes = policy_utf8_char(text, word_pos, &next_cells);
+                if (!next_bytes) {
+                    break;
+                }
+                word_cells += next_cells;
+                word_pos += next_bytes;
+            }
+            if (word_cells <= max_cells && cells > prefix_cells &&
+                cells + word_cells > max_cells) {
+                policy_add_line(kind, line);
+                out = 0;
+                line[0] = 0;
+                if (prefix_cells) {
+                    (void)append_text(line, &out, sizeof(line), "  ");
+                    cells = 2;
+                } else {
+                    cells = 0;
+                }
+                continue;
+            }
+        }
+        if (cells + char_cells > max_cells || out + bytes + 1U >= sizeof(line)) {
+            policy_add_line(kind, line);
+            out = 0;
+            line[0] = 0;
+            if (prefix_cells) {
+                (void)append_text(line, &out, sizeof(line), "  ");
+                cells = 2;
+            } else {
+                cells = 0;
+            }
+            if (text[pos] == ' ' || text[pos] == '\t') {
+                pos += bytes;
+                continue;
+            }
+        }
+        for (uint32_t i = 0; i < bytes && out + 1U < sizeof(line); ++i) {
+            line[out++] = text[pos + i];
+        }
+        line[out] = 0;
+        cells += char_cells;
+        pos += bytes;
+    }
+    if (out || prefix_cells) {
+        policy_add_line(kind, line);
+    }
+}
+
+static void policy_reflow(uint32_t width)
+{
+    const char *source = installer_lang == LEONOS_LANG_ZH ? privacy_policy_zh : privacy_policy_en;
+    uint32_t pos = 0;
+    policy_line_count = 0;
+    while (source[pos] && policy_line_count < POLICY_MAX_LINES) {
+        char raw[512];
+        char clean[POLICY_LINE_TEXT_MAX];
+        uint32_t line_start = pos;
+        uint32_t line_end;
+        uint32_t raw_len;
+        char *line;
+        while (source[pos] && source[pos] != '\n' && source[pos] != '\r') {
+            ++pos;
+        }
+        line_end = pos;
+        while (source[pos] == '\n' || source[pos] == '\r') {
+            ++pos;
+        }
+        raw_len = line_end - line_start;
+        if (raw_len >= sizeof(raw)) {
+            raw_len = sizeof(raw) - 1U;
+        }
+        for (uint32_t i = 0; i < raw_len; ++i) {
+            raw[i] = source[line_start + i];
+        }
+        raw[raw_len] = 0;
+        line = raw;
+        while (*line == ' ' || *line == '\t') {
+            ++line;
+        }
+        if (!line[0]) {
+            policy_add_line(POLICY_LINE_NORMAL, "");
+        } else if (line[0] == '#' && line[1] == '#' && line[2] == ' ') {
+            policy_clean_inline(clean, sizeof(clean), line + 3);
+            policy_emit_wrapped(POLICY_LINE_H2, "", clean, width);
+        } else if (line[0] == '#' && line[1] == ' ') {
+            policy_clean_inline(clean, sizeof(clean), line + 2);
+            policy_emit_wrapped(POLICY_LINE_H1, "", clean, width);
+        } else if (policy_line_is_rule(line)) {
+            policy_add_line(POLICY_LINE_RULE, "");
+        } else if (line[0] == '>' && (line[1] == ' ' || line[1] == '\t')) {
+            policy_clean_inline(clean, sizeof(clean), line + 2);
+            policy_emit_wrapped(POLICY_LINE_QUOTE, "", clean, width);
+        } else if ((line[0] == '-' || line[0] == '*') &&
+                   (line[1] == ' ' || line[1] == '\t')) {
+            policy_clean_inline(clean, sizeof(clean), line + 2);
+            policy_emit_wrapped(POLICY_LINE_BULLET, "- ", clean, width);
+        } else {
+            uint32_t ordered_end = 0;
+            while (line[ordered_end] >= '0' && line[ordered_end] <= '9') {
+                ++ordered_end;
+            }
+            if (ordered_end && line[ordered_end] == '.' && line[ordered_end + 1U] == ' ') {
+                char prefix[16];
+                uint32_t prefix_len = 0;
+                for (uint32_t i = 0; i < ordered_end + 2U && prefix_len + 1U < sizeof(prefix); ++i) {
+                    prefix[prefix_len++] = line[i];
+                }
+                prefix[prefix_len] = 0;
+                policy_clean_inline(clean, sizeof(clean), line + ordered_end + 2U);
+                policy_emit_wrapped(POLICY_LINE_BULLET, prefix, clean, width);
+            } else {
+                policy_clean_inline(clean, sizeof(clean), line);
+                policy_emit_wrapped(POLICY_LINE_NORMAL, "", clean, width);
+            }
+        }
+    }
+}
+
+static uint32_t policy_line_height(uint8_t kind)
+{
+    if (kind == POLICY_LINE_H1) {
+        return 24;
+    }
+    if (kind == POLICY_LINE_H2) {
+        return 21;
+    }
+    if (kind == POLICY_LINE_RULE) {
+        return 12;
+    }
+    return 18;
+}
+
+static uint32_t policy_total_height(void)
+{
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < policy_line_count; ++i) {
+        total += policy_line_height(policy_lines[i].kind);
+    }
+    return total;
+}
+
 static void copy_replace_extension(char *dst, uint32_t cap,
                                    const char *path, const char *extension)
 {
@@ -302,6 +640,25 @@ static struct installer_layout get_layout(void)
     l.disk_detail_y = l.disk_status_y + 32;
     l.confirm_edit_y = l.content_y + 200;
     return l;
+}
+
+static struct installer_policy_view get_policy_view(void)
+{
+    struct installer_layout l = get_layout();
+    struct installer_policy_view view;
+    view.x = l.content_x;
+    view.y = l.content_y + 56;
+    view.w = l.table_w;
+    view.checkbox_y = l.footer_y > 48 ? l.footer_y - 48 : view.y + 80;
+    if (view.checkbox_y < view.y + 80) {
+        view.checkbox_y = view.y + 80;
+    }
+    view.h = view.checkbox_y > view.y + 12 ? view.checkbox_y - view.y - 12 : 64;
+    view.text_x = view.x + 10;
+    view.text_w = view.w > POLICY_SCROLLBAR_W + 30
+                      ? view.w - POLICY_SCROLLBAR_W - 30
+                      : 80;
+    return view;
 }
 
 static int path_join(char *dst, uint32_t cap, const char *base, const char *name)
@@ -441,6 +798,8 @@ static void draw_sidebar(struct leonos_ui_surface *ui)
         const char *label = "";
         if (i == PAGE_LANGUAGE) {
             label = T("Language", "语言");
+        } else if (i == PAGE_POLICY) {
+            label = T("Policy", "政策");
         } else if (i == PAGE_THEME) {
             label = T("Style", "样式");
         } else if (i == PAGE_WELCOME) {
@@ -480,6 +839,9 @@ static uint32_t primary_disabled(void)
     }
     if (page == PAGE_DISK) {
         return selected_disk < 0 || (uint32_t)selected_disk >= disk_count;
+    }
+    if (page == PAGE_POLICY) {
+        return !policy_accepted;
     }
     if (page == PAGE_CONFIRM) {
         return !confirmation_ok();
@@ -531,6 +893,66 @@ static void draw_language_page(struct leonos_ui_surface *ui)
                    T("The installed system will use the same language.",
                      "安装后的操作系统将使用相同语言。"),
                    LEONOS_UI_DARK, LEONOS_UI_WHITE);
+}
+
+static void draw_policy_page(struct leonos_ui_surface *ui)
+{
+    struct installer_policy_view view = get_policy_view();
+    uint32_t total_h;
+    uint32_t max_scroll;
+    uint32_t offset = 0;
+    draw_title(ui, T("Privacy and Acceptable Use", "隐私与使用政策"),
+               T("Review the policy and agree before continuing.",
+                 "请阅读政策并同意后继续。"));
+    policy_reflow(view.text_w);
+    total_h = policy_total_height();
+    max_scroll = total_h > view.h ? total_h - view.h : 0;
+    if (policy_scroll_y > max_scroll) {
+        policy_scroll_y = max_scroll;
+    }
+    leonos_ui_scroll_view_frame(ui, view.x, view.y, view.w, view.h);
+    for (uint32_t i = 0; i < policy_line_count; ++i) {
+        uint32_t line_h = policy_line_height(policy_lines[i].kind);
+        int32_t line_y = (int32_t)view.y + (int32_t)offset - (int32_t)policy_scroll_y;
+        if (line_y >= (int32_t)view.y &&
+            line_y + (int32_t)line_h <= (int32_t)(view.y + view.h)) {
+            if (policy_lines[i].kind == POLICY_LINE_H1) {
+                leonos_ui_text_resized_clipped(ui, view.text_x, (uint32_t)line_y,
+                                                view.text_w, policy_lines[i].text,
+                                                LEONOS_UI_ACTIVE_TITLE, LEONOS_UI_WHITE, 9, 18);
+            } else if (policy_lines[i].kind == POLICY_LINE_H2) {
+                leonos_ui_text_resized_clipped(ui, view.text_x, (uint32_t)line_y,
+                                                view.text_w, policy_lines[i].text,
+                                                LEONOS_UI_ACTIVE_TITLE, LEONOS_UI_WHITE, 9, 17);
+            } else if (policy_lines[i].kind == POLICY_LINE_RULE) {
+                leonos_ui_rect(ui, view.text_x, (uint32_t)line_y + 5,
+                               view.text_w, 1, LEONOS_UI_DARK);
+            } else if (policy_lines[i].kind == POLICY_LINE_QUOTE) {
+                leonos_ui_rect(ui, view.text_x, (uint32_t)line_y + 1, 3,
+                               line_h > 2 ? line_h - 2 : line_h, LEONOS_UI_ACTIVE_TITLE);
+                leonos_ui_text_clipped(ui, view.text_x + 9, (uint32_t)line_y,
+                                       view.text_w > 9 ? view.text_w - 9 : view.text_w,
+                                       policy_lines[i].text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
+            } else {
+                leonos_ui_text_clipped(ui, view.text_x, (uint32_t)line_y,
+                                       view.text_w, policy_lines[i].text,
+                                       policy_lines[i].kind == POLICY_LINE_BULLET
+                                           ? LEONOS_UI_BLACK : LEONOS_UI_DARK,
+                                       LEONOS_UI_WHITE);
+            }
+        }
+        offset += line_h;
+    }
+    leonos_ui_vscrollbar(ui, view.x + view.w - POLICY_SCROLLBAR_W, view.y,
+                         POLICY_SCROLLBAR_W, view.h, policy_scroll_y,
+                         total_h > view.h ? total_h : view.h, view.h,
+                         total_h <= view.h ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
+    leonos_ui_checkbox(ui, view.x, view.checkbox_y, "", policy_accepted, 0);
+    leonos_ui_text_clipped(ui, view.x + 28, view.checkbox_y + 4,
+                           view.w > 28 ? view.w - 28 : view.w,
+                           T("I agree to the Privacy and Acceptable Use Policy.",
+                             "我同意本隐私与使用政策。"),
+                           LEONOS_UI_BLACK, LEONOS_UI_WHITE);
 }
 
 static void draw_theme_page(struct leonos_ui_surface *ui)
@@ -769,6 +1191,9 @@ static void draw_installer(struct leonos_ui_surface *ui)
     switch (page) {
     case PAGE_LANGUAGE:
         draw_language_page(ui);
+        break;
+    case PAGE_POLICY:
+        draw_policy_page(ui);
         break;
     case PAGE_THEME:
         draw_theme_page(ui);
@@ -1914,11 +2339,12 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
 
 static void go_back(void)
 {
-    if (page == PAGE_THEME) {
+    if (page == PAGE_POLICY) {
         page = PAGE_LANGUAGE;
+    } else if (page == PAGE_THEME) {
+        page = PAGE_POLICY;
     } else if (page == PAGE_WELCOME) {
         page = PAGE_THEME;
-        page = PAGE_LANGUAGE;
     } else if (page == PAGE_MODE) {
         page = PAGE_WELCOME;
     } else if (page == PAGE_DISK) {
@@ -1939,6 +2365,11 @@ static int go_primary(int window_id, struct leonos_ui_surface *ui)
         return 0;
     }
     if (page == PAGE_LANGUAGE) {
+        page = PAGE_POLICY;
+        dirty = 1;
+        return 0;
+    }
+    if (page == PAGE_POLICY) {
         page = PAGE_THEME;
         dirty = 1;
         return 0;
@@ -2031,13 +2462,58 @@ static void handle_mode_click(int32_t x, int32_t y)
 static void handle_language_click(int32_t x, int32_t y)
 {
     struct installer_layout l = get_layout();
+    uint8_t language = installer_lang;
     if (hit_rect_i(x, y, (int32_t)l.content_x, (int32_t)l.content_y + 88, 140, BUTTON_H)) {
-        installer_lang = LEONOS_LANG_EN;
-        (void)leonos_i18n_set_language(LEONOS_LANG_EN);
-        dirty = 1;
+        language = LEONOS_LANG_EN;
     } else if (hit_rect_i(x, y, (int32_t)l.content_x + 156, (int32_t)l.content_y + 88, 140, BUTTON_H)) {
-        installer_lang = LEONOS_LANG_ZH;
-        (void)leonos_i18n_set_language(LEONOS_LANG_ZH);
+        language = LEONOS_LANG_ZH;
+    }
+    if (language != installer_lang) {
+        installer_lang = language;
+        policy_accepted = 0;
+        policy_scroll_y = 0;
+        (void)leonos_i18n_set_language(language);
+        dirty = 1;
+    }
+}
+
+static void handle_policy_click(int32_t x, int32_t y)
+{
+    struct installer_policy_view view = get_policy_view();
+    uint32_t total_h;
+    policy_reflow(view.text_w);
+    total_h = policy_total_height();
+    if (leonos_ui_vscrollbar_handle_mouse(&policy_scroll_y,
+                                           total_h > view.h ? total_h : view.h,
+                                           view.h,
+                                           view.x + view.w - POLICY_SCROLLBAR_W,
+                                           view.y, POLICY_SCROLLBAR_W, view.h,
+                                           x, y)) {
+        dirty = 1;
+        return;
+    }
+    if (hit_rect_i(x, y, (int32_t)view.x, (int32_t)view.checkbox_y,
+                   (int32_t)view.w, BUTTON_H)) {
+        policy_accepted = policy_accepted ? 0 : 1;
+        dirty = 1;
+    }
+}
+
+static void handle_policy_wheel(int32_t delta)
+{
+    struct installer_policy_view view = get_policy_view();
+    uint32_t total_h;
+    uint32_t steps = delta < 0 ? (uint32_t)(-delta) : (uint32_t)delta;
+    int32_t pixels;
+    if (!steps) {
+        steps = 1;
+    }
+    policy_reflow(view.text_w);
+    total_h = policy_total_height();
+    pixels = delta > 0 ? (int32_t)(steps * 36U) : -(int32_t)(steps * 36U);
+    if (leonos_ui_vscrollbar_handle_wheel(&policy_scroll_y,
+                                          total_h > view.h ? total_h : view.h,
+                                          view.h, pixels)) {
         dirty = 1;
     }
 }
@@ -2128,6 +2604,9 @@ static int handle_mouse(int window_id, struct leonos_ui_surface *ui,
     if (page == PAGE_LANGUAGE) {
         handle_language_click(event->x, event->y);
     }
+    if (page == PAGE_POLICY) {
+        handle_policy_click(event->x, event->y);
+    }
     if (page == PAGE_THEME) {
         handle_theme_click(event->x, event->y);
     }
@@ -2157,6 +2636,11 @@ static int handle_key(int window_id, struct leonos_ui_surface *ui,
     if (event->type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event->pressed) {
         if (event->keycode == KEY_ESCAPE && page != PAGE_PROGRESS) {
             return 1;
+        }
+        if (page == PAGE_POLICY && event->keycode == KEY_SPACE) {
+            policy_accepted = policy_accepted ? 0 : 1;
+            dirty = 1;
+            return 0;
         }
         if (page == PAGE_UPDATE_APPS) {
             uint32_t activated = 0;
@@ -2246,9 +2730,12 @@ int main(void)
                 leonos_gui_destroy_app_window((uint32_t)window_id);
                 return 0;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL &&
-                page == PAGE_UPDATE_APPS) {
-                handle_update_apps_wheel(event.dy);
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
+                if (page == PAGE_UPDATE_APPS) {
+                    handle_update_apps_wheel(event.dy);
+                } else if (page == PAGE_POLICY) {
+                    handle_policy_wheel(event.dy);
+                }
             }
             if ((event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN ||
                  event.type == LEONOS_GUI_APP_EVENT_KEY_UP) &&
