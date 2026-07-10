@@ -456,6 +456,13 @@ static void desktop_draw_centered_label_line(const char *text, uint32_t x, uint3
         draw_x = x + inset;
         draw_w = w > inset ? w - inset : w;
     }
+    if (leonos_ui_theme() == LEONOS_UI_THEME_METRO && wallpaper_loaded &&
+        bg == LEONOS_UI_DESKTOP) {
+        text_draw_transparent_i((int)draw_x + 1, (int)y + 1, text ? text : "",
+                                0x00101d32u);
+        text_draw_transparent_i((int)draw_x, (int)y, text ? text : "", fg);
+        return;
+    }
     leonos_ui_text_clipped(&ui, draw_x, y, draw_w, text ? text : "", fg, bg);
 }
 
@@ -467,7 +474,11 @@ static void desktop_draw_item_label(const char *text, uint32_t x, uint32_t y,
     uint32_t line = 0;
     uint32_t max_cells = leonos_ui_text_fit_chars(w);
     uint32_t fg = LEONOS_UI_WHITE;
-    uint32_t bg = selected ? 0x000060a8 : 0x00008080;
+    uint32_t bg = selected
+                      ? (leonos_ui_theme() == LEONOS_UI_THEME_METRO
+                             ? LEONOS_UI_ACTIVE_TITLE
+                             : 0x000060a8u)
+                      : LEONOS_UI_DESKTOP;
     if (!max_cells) {
         max_cells = 1;
     }

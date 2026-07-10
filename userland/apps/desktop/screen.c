@@ -98,6 +98,30 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
     leonos_ui_rect(&ui, icon_x + 20, icon_y + 11, 4, 4, color);
 }
 
+static void draw_metro_wallpaper(struct rect dirty)
+{
+    uint32_t desktop_width = fb_w();
+    uint32_t desktop_height = fb_h();
+    if (!wallpaper_loaded || !wallpaper_width || !wallpaper_height ||
+        !desktop_width || !desktop_height) {
+        return;
+    }
+    for (int y = dirty.y; y < dirty.y + dirty.h; ++y) {
+        uint32_t source_y = (uint32_t)(((uint64_t)(uint32_t)y * wallpaper_height) / desktop_height);
+        if (source_y >= wallpaper_height) {
+            source_y = wallpaper_height - 1;
+        }
+        for (int x = dirty.x; x < dirty.x + dirty.w; ++x) {
+            uint32_t source_x = (uint32_t)(((uint64_t)(uint32_t)x * wallpaper_width) / desktop_width);
+            if (source_x >= wallpaper_width) {
+                source_x = wallpaper_width - 1;
+            }
+            put_pixel((uint32_t)x, (uint32_t)y,
+                      wallpaper_pixels[source_y * WALLPAPER_MAX_W + source_x] & 0x00ffffffu);
+        }
+    }
+}
+
 void draw_cursor_shape(uint32_t x, uint32_t y)
 {
     if (x + cursor_width > fb_w()) {
@@ -136,7 +160,12 @@ void redraw_region(struct rect dirty)
         return;
     }
 
-    rect_fill((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h, 0x00008080);
+    if (leonos_ui_theme() == LEONOS_UI_THEME_METRO && wallpaper_loaded) {
+        draw_metro_wallpaper(dirty);
+    } else {
+        rect_fill((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h,
+                  LEONOS_UI_DESKTOP);
+    }
 
     if (active_window_is_fullscreen()) {
         if (rect_intersects(dirty, window_rect((uint8_t)active_window))) {

@@ -24,6 +24,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--smoke", action="store_true", help="Stop successfully after the first presented frame")
     parser.add_argument("--self-test", action="store_true", help="Run los2w self-tests")
     parser.add_argument("--lang", choices=("en", "zh"), help="los2w UI and virtual guest locale")
+    parser.add_argument("--ui-theme", choices=("metro", "win95"),
+                        help="LeonOS application UI style for this launch")
     parser.add_argument("--report", help="Write a diagnostic JSON report to this path")
     parser.add_argument("--compat-report", action="store_true", help="Write a compatibility report to the los2w reports directory")
     return parser.parse_args(argv)
@@ -71,6 +73,8 @@ class MainWindowMixin:
         self.lang_combo.addItem(t("chinese", "zh"), "zh")
         idx = 1 if self.cfg.language == "zh" else 0
         self.lang_combo.setCurrentIndex(idx)
+        self.theme_combo = QComboBox()
+        self._refresh_theme_combo()
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         self.run_button = QPushButton()
@@ -92,6 +96,7 @@ class MainWindowMixin:
         self.root_label = QLabel()
         self.argv_label = QLabel()
         self.lang_label = QLabel()
+        self.theme_label = QLabel()
         grid.addWidget(self.elf_label, 0, 0)
         grid.addWidget(self.elf_edit, 0, 1)
         grid.addWidget(elf_button, 0, 2)
@@ -102,15 +107,17 @@ class MainWindowMixin:
         grid.addWidget(self.argv_edit, 2, 1, 1, 2)
         grid.addWidget(self.lang_label, 3, 0)
         grid.addWidget(self.lang_combo, 3, 1, 1, 2)
+        grid.addWidget(self.theme_label, 4, 0)
+        grid.addWidget(self.theme_combo, 4, 1, 1, 2)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         buttons.addWidget(self.run_button)
         buttons.addWidget(self.stop_button)
         buttons.addWidget(self.report_button)
-        grid.addLayout(buttons, 4, 0, 1, 3)
+        grid.addLayout(buttons, 5, 0, 1, 3)
         self.log_label = QLabel()
-        grid.addWidget(self.log_label, 5, 0, 1, 3)
-        grid.addWidget(self.log_box, 6, 0, 1, 3)
+        grid.addWidget(self.log_label, 6, 0, 1, 3)
+        grid.addWidget(self.log_box, 7, 0, 1, 3)
         grid.setColumnStretch(1, 1)
         root = QWidget()
         root.setLayout(grid)
@@ -122,13 +129,27 @@ class MainWindowMixin:
     def _lang(self) -> str:
         return self.lang_combo.currentData() or "en"
 
+    def _ui_theme(self) -> str:
+        return self.theme_combo.currentData() or "metro"
+
+    def _refresh_theme_combo(self) -> None:
+        selected = self.theme_combo.currentData() or self.cfg.ui_theme
+        self.theme_combo.blockSignals(True)
+        self.theme_combo.clear()
+        self.theme_combo.addItem(t("metro", self._lang()), "metro")
+        self.theme_combo.addItem(t("win95", self._lang()), "win95")
+        self.theme_combo.setCurrentIndex(1 if selected == "win95" else 0)
+        self.theme_combo.blockSignals(False)
+
     def _refresh_text(self) -> None:
         lang = self._lang()
+        self._refresh_theme_combo()
         self.setWindowTitle(t("app_title", lang))
         self.elf_label.setText(t("elf", lang))
         self.root_label.setText(t("root", lang))
         self.argv_label.setText(t("argv", lang))
         self.lang_label.setText(t("language", lang))
+        self.theme_label.setText(t("ui_style", lang))
         self.log_label.setText(t("log", lang))
         self.run_button.setText(t("run", lang))
         self.stop_button.setText(t("stop", lang))
@@ -153,6 +174,7 @@ class MainWindowMixin:
         self.cfg.last_elf = self.elf_edit.currentText().strip()
         self.cfg.root_dir = self.root_edit.currentText().strip()
         self.cfg.language = self._lang()
+        self.cfg.ui_theme = self._ui_theme()
         self.store.save(self.cfg)
         return self.cfg
 
@@ -173,7 +195,8 @@ class MainWindowMixin:
         try:
             from .gui import GUIManager
 
-            gui = GUIManager(logger=logger)
+            gui = GUIManager(logger=logger, ui_theme=cfg.ui_theme,
+                             allow_theme_changes=cfg.guest_admin)
             argv = [a for a in self.argv_edit.text().split(" ") if a]
             self.current_emulator = LeonOSEmulator(elf, root, argv, config=cfg, gui=gui, logger=logger)
             self.current_logger = logger
@@ -306,11 +329,13 @@ def run_elf_cli(args: argparse.Namespace) -> int:
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication(sys.argv)
-    cfg = HostConfig(root_dir=args.root or "", last_elf=args.elf or "", language=args.lang or "en")
+    cfg = HostConfig(root_dir=args.root or "", last_elf=args.elf or "",
+                     language=args.lang or "en", ui_theme=args.ui_theme or "metro")
     from .gui import GUIManager
 
     logger = LogBuffer(lambda line: print(line, flush=True))
-    gui = GUIManager(logger=logger)
+    gui = GUIManager(logger=logger, ui_theme=cfg.ui_theme,
+                     allow_theme_changes=cfg.guest_admin)
     emu = LeonOSEmulator(args.elf, args.root, args.arg, config=cfg, gui=gui, logger=logger)
     code = None
     fault: Exception | None = None

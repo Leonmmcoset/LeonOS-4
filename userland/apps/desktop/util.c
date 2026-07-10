@@ -79,6 +79,40 @@ void desktop_publish_display_state(void)
     (void)leonos_display_publish_state(&state);
 }
 
+void desktop_publish_appearance_state(void)
+{
+    struct leonos_appearance_state state = {.theme = leonos_ui_theme()};
+    (void)leonos_appearance_publish_state(&state);
+}
+
+void desktop_apply_theme(uint32_t theme)
+{
+    if (leonos_ui_theme_set(theme) < 0) {
+        return;
+    }
+    (void)desktop_save_display_config();
+    desktop_publish_appearance_state();
+    for (uint8_t slot = BUILTIN_WINDOWS; slot < MAX_WINDOWS; ++slot) {
+        if (windows[slot].visible && windows[slot].window_id) {
+            send_app_event_to_window(windows[slot].window_id,
+                                     LEONOS_GUI_APP_EVENT_THEME_CHANGED,
+                                     (int32_t)theme, 0, 0, 0,
+                                     window_body_width(&windows[slot]),
+                                     window_body_height(&windows[slot]),
+                                     0, 0, 0);
+        }
+    }
+    full_redraw_pending = 1;
+}
+
+void desktop_handle_appearance_requests(void)
+{
+    struct leonos_appearance_request request;
+    while (leonos_appearance_poll_request(&request) > 0) {
+        desktop_apply_theme(request.theme);
+    }
+}
+
 void desktop_handle_display_requests(void)
 {
     struct leonos_display_request request;
@@ -174,6 +208,7 @@ void desktop_load_display_config(void)
     char buf[128];
     uint8_t mode = 0;
     uint8_t scale = 0;
+    leonos_ui_theme_load_system();
     int fd = open(DISPLAY_CONFIG_PATH, 0, 0);
     if (fd >= 0) {
         long got = read(fd, buf, sizeof(buf) - 1);
@@ -204,6 +239,10 @@ int desktop_save_display_config(void)
     append_char(buf, &pos, sizeof(buf), '\n');
     append_text(buf, &pos, sizeof(buf), "scale=");
     append_dec(buf, &pos, sizeof(buf), desktop_scale_options[desktop_scale_index]);
+    append_char(buf, &pos, sizeof(buf), '\n');
+    append_text(buf, &pos, sizeof(buf), "theme=");
+    append_text(buf, &pos, sizeof(buf),
+                leonos_ui_theme() == LEONOS_UI_THEME_WIN95 ? "win95" : "metro");
     append_char(buf, &pos, sizeof(buf), '\n');
     fd = open(DISPLAY_CONFIG_PATH,
               LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);

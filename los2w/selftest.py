@@ -20,9 +20,10 @@ def run_self_tests() -> list[str]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "etc").mkdir()
+        (root / "etc" / "display.conf").write_text("width=1024\ntheme=win95\n", encoding="utf-8")
         (root / "docs").mkdir()
         (root / "docs" / "a.txt").write_text("hello", encoding="utf-8")
-        fs = GuestFS(root, language="zh", logger=logger)
+        fs = GuestFS(root, language="zh", ui_theme="metro", logger=logger)
 
         assert fs.guest_abs("docs/a.txt") == "0:/docs/a.txt"
         assert fs.guest_abs("0:/docs/../etc") == "0:/etc"
@@ -40,6 +41,19 @@ def run_self_tests() -> list[str]:
         fd = fs.open("0:/etc/locale.conf", C.O_RDONLY, 0)
         assert fd >= 4
         assert fs.read(fd, 32) == b"lang=zh\n"
+        assert fs.close(fd) == 0
+
+        fd = fs.open("0:/etc/display.conf", C.O_RDONLY, 0)
+        assert fd >= 4
+        assert fs.read(fd, 64) == b"width=1024\ntheme=metro\n"
+        assert fs.close(fd) == 0
+        assert (root / "etc" / "display.conf").read_text(encoding="utf-8") == "width=1024\ntheme=win95\n"
+
+        fs.set_ui_theme("win95")
+        fd = fs.open("0:/etc/display.conf", C.O_RDONLY, 0)
+        assert fd >= 4
+        assert fs.read(fd, 64) == b"width=1024\ntheme=win95\n"
+        assert fs.close(fd) == 0
 
         entries = fs.list_dir("0:/docs")
         assert not isinstance(entries, int)
@@ -59,11 +73,13 @@ def run_self_tests() -> list[str]:
 
         store = ConfigStore(root / "los2w-config.json")
         store.save(HostConfig(last_elf="browser.elf", root_dir="guest-root",
+                              ui_theme="win95",
                               recent_elfs=["oshlp.elf", "browser.elf"],
                               recent_roots=["old-root", "guest-root"]))
         cfg = store.load()
         assert cfg.recent_elfs == ["browser.elf", "oshlp.elf"]
         assert cfg.recent_roots == ["guest-root", "old-root"]
+        assert cfg.ui_theme == "win95"
 
         report = write_report(root / "report.json", logger, reason="self-test")
         assert json.loads(report.read_text(encoding="utf-8"))["reason"] == "self-test"

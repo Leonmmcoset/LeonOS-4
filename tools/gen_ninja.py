@@ -66,7 +66,9 @@ SYSTEM_FILES = [
     ("system/osmlayer.manifest", None),
     ("system/fonts/system.psf", "system/fonts/system.psf"),
     ("system/fonts/cjk16.lbf", "system/fonts/cjk16.lbf"),
+    ("system/fonts/metro-latin.lbf", "system/fonts/metro-latin.lbf"),
     ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
+    ("system/resources/wallpaper-metro.bmp", "system/resources/wallpaper-metro.bmp"),
     *(
         (f"system/resources/{name}", f"build/generated/window-buttons/{name}")
         for name in WINDOW_BUTTON_ICONS

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 
 from . import constants as C
 from . import structs
-from .errors import EINVAL, neg
+from .errors import EACCES, EINVAL, neg
 
 
 QT_KEY_TO_LEONOS = {
@@ -206,7 +206,7 @@ class GuestWindow(QLabel):
 
 
 class GUIManager:
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, *, ui_theme: str = "metro", allow_theme_changes: bool = True):
         self.logger = logger
         self.windows: dict[int, GuestWindow] = {}
         self.frames: dict[int, tuple[int, int, int, bytes]] = {}
@@ -216,6 +216,17 @@ class GUIManager:
         self.present_count = 0
         self._processing_events = False
         self._present_callback = None
+        self._theme_change_callback = None
+        self.appearance_theme = self._appearance_theme_value(ui_theme)
+        self.allow_theme_changes = allow_theme_changes
+
+    @staticmethod
+    def _appearance_theme_value(ui_theme: str) -> int:
+        return C.UI_THEME_WIN95 if ui_theme == "win95" else C.UI_THEME_METRO
+
+    @staticmethod
+    def _appearance_theme_name(theme: int) -> str:
+        return "win95" if theme == C.UI_THEME_WIN95 else "metro"
 
     def log(self, text: str) -> None:
         if self.logger:
@@ -223,6 +234,27 @@ class GUIManager:
 
     def set_present_callback(self, callback) -> None:
         self._present_callback = callback
+
+    def set_theme_change_callback(self, callback) -> None:
+        self._theme_change_callback = callback
+
+    def configure_appearance(self, ui_theme: str, allow_theme_changes: bool) -> None:
+        self.appearance_theme = self._appearance_theme_value(ui_theme)
+        self.allow_theme_changes = allow_theme_changes
+
+    def _set_appearance_theme(self, theme: int, *, notify: bool) -> int:
+        if theme not in (C.UI_THEME_WIN95, C.UI_THEME_METRO):
+            return neg(EINVAL)
+        changed = self.appearance_theme != theme
+        self.appearance_theme = theme
+        if self._theme_change_callback:
+            self._theme_change_callback(self._appearance_theme_name(theme))
+        if changed and notify:
+            for window_id in self.windows:
+                self.enqueue(structs.GuiAppEvent(window_id=window_id,
+                                                  type=C.APP_EVENT_THEME_CHANGED,
+                                                  x=theme))
+        return 1
 
     def enqueue(self, event: structs.GuiAppEvent) -> None:
         if event.type in (C.APP_EVENT_FOCUS, C.APP_EVENT_RESIZE):
@@ -285,6 +317,8 @@ class GUIManager:
             return self._fetch_window(memory, arg)
         if request == C.GUI_IOCTL_WINDOW_EVENT:
             return self._window_event(memory, arg)
+        if request == C.GUI_IOCTL_WAIT_WINDOW_EVENT:
+            return self._window_event(memory, arg)
         if request == C.GUI_IOCTL_SEND_WINDOW_EVENT:
             event = structs.GuiAppEvent.unpack(memory.read(arg, structs.GuiAppEvent.SIZE))
             self.enqueue(event)
@@ -301,6 +335,17 @@ class GUIManager:
         if request == C.GUI_IOCTL_DISPLAY_STATE:
             memory.write(arg, struct.pack("<IIIIIIIII", 1024, 768, 1024, 768, 1, 0, 0, 0, 0))
             return 0
+        if request == C.GUI_IOCTL_APPEARANCE_STATE:
+            memory.write_u32(arg, self.appearance_theme)
+            return 1
+        if request == C.GUI_IOCTL_APPEARANCE_REQUEST:
+            if not self.allow_theme_changes:
+                return neg(EACCES)
+            return self._set_appearance_theme(memory.read_u32(arg), notify=True)
+        if request == C.GUI_IOCTL_POLL_APPEARANCE_REQUEST:
+            return 0
+        if request == C.GUI_IOCTL_PUBLISH_APPEARANCE_STATE:
+            return self._set_appearance_theme(memory.read_u32(arg), notify=False)
         return None
 
     def _create_window(self, memory, arg: int) -> int:

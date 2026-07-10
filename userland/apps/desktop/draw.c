@@ -109,6 +109,17 @@ void rect_fill_i(int x, int y, int w, int h, uint32_t color)
 
 void bevel_i(int x, int y, int w, int h, uint32_t fill, uint32_t flags)
 {
+    if (leonos_ui_theme() == LEONOS_UI_THEME_METRO) {
+        uint32_t border = (flags & LEONOS_UI_BUTTON_PRESSED)
+                              ? LEONOS_UI_ACTIVE_TITLE
+                              : leonos_ui_color(LEONOS_UI_COLOR_BORDER);
+        rect_fill_i(x, y, w, h, fill);
+        rect_fill_i(x, y, w, 1, border);
+        rect_fill_i(x, y, 1, h, border);
+        rect_fill_i(x + w - 1, y, 1, h, border);
+        rect_fill_i(x, y + h - 1, w, 1, border);
+        return;
+    }
     uint32_t tl = (flags & LEONOS_UI_BUTTON_PRESSED) ? LEONOS_UI_DARK : LEONOS_UI_WHITE;
     uint32_t br = (flags & LEONOS_UI_BUTTON_PRESSED) ? LEONOS_UI_WHITE : LEONOS_UI_DARK;
     if (w <= 0 || h <= 0) {
@@ -143,6 +154,7 @@ struct app_icon_cache_entry {
 
 static struct app_icon_cache_entry app_icon_cache[APP_ICON_CACHE_MAX];
 static uint32_t app_icon_cache_next;
+static uint8_t bmp_scratch[WALLPAPER_BMP_MAX_BYTES];
 
 static int load_bmp_argb(const char *path, uint32_t max_w, uint32_t max_h,
                          uint32_t max_bytes, uint32_t *out_pixels,
@@ -471,7 +483,7 @@ static int load_bmp_argb(const char *path, uint32_t max_w, uint32_t max_h,
                          uint32_t max_bytes, uint32_t *out_pixels,
                          uint32_t out_stride, uint32_t *out_w, uint32_t *out_h)
 {
-    uint8_t bmp[CURSOR_BMP_MAX_BYTES];
+    uint8_t *bmp = bmp_scratch;
     int fd;
     struct leonos_stat st;
     uint32_t len = 0;
@@ -487,7 +499,7 @@ static int load_bmp_argb(const char *path, uint32_t max_w, uint32_t max_h,
     int top_down;
 
     if (!path || !out_pixels || max_w == 0 || max_h == 0 ||
-        out_stride < max_w || max_bytes > sizeof(bmp)) {
+        out_stride < max_w || max_bytes > sizeof(bmp_scratch)) {
         return 0;
     }
     if (stat(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
@@ -579,6 +591,22 @@ int load_cursor_bmp(void)
     cursor_bitmap_loaded = 1;
     printf("[desktop.elf] loaded cursor bmp %s %dx%d\n",
            CURSOR_BMP_PATH, (int)cursor_width, (int)cursor_height);
+    return 1;
+}
+
+int load_wallpaper_bmp(void)
+{
+    wallpaper_loaded = 0;
+    wallpaper_width = 0;
+    wallpaper_height = 0;
+    if (!load_bmp_argb(WALLPAPER_BMP_PATH, WALLPAPER_MAX_W, WALLPAPER_MAX_H,
+                       WALLPAPER_BMP_MAX_BYTES, wallpaper_pixels, WALLPAPER_MAX_W,
+                       &wallpaper_width, &wallpaper_height)) {
+        return 0;
+    }
+    wallpaper_loaded = 1;
+    printf("[desktop.elf] loaded Metro wallpaper %s %dx%d\n",
+           WALLPAPER_BMP_PATH, (int)wallpaper_width, (int)wallpaper_height);
     return 1;
 }
 

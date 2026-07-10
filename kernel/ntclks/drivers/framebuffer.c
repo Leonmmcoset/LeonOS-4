@@ -1,5 +1,6 @@
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
+#include <ntclks/gui_ipc.h>
 #include <leonos/psf_font.h>
 
 static struct framebuffer fb;
@@ -454,6 +455,16 @@ static void bring_to_front(uint8_t id)
 
 static void beveled_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t fill, int pressed)
 {
+    if (gui_ipc_appearance_theme() != 0u) {
+        uint32_t mapped_fill = fill == 0x00c0c0c0u ? 0x00f3f3f3u : fill;
+        uint32_t border = pressed ? 0x000078d4u : 0x00d0d0d0u;
+        framebuffer_rect(x, y, w, h, mapped_fill);
+        framebuffer_rect(x, y, w, 1, border);
+        framebuffer_rect(x, y, 1, h, border);
+        framebuffer_rect(x + w - 1, y, 1, h, border);
+        framebuffer_rect(x, y + h - 1, w, 1, border);
+        return;
+    }
     const uint32_t white = 0x00ffffff;
     const uint32_t dark = 0x00808080;
     const uint32_t black = 0x00000000;
@@ -585,9 +596,10 @@ static void desktop_redraw(void)
         return;
     }
 
-    const uint32_t teal = 0x00008080;
-    const uint32_t gray = 0x00c0c0c0;
-    const uint32_t dark = 0x00808080;
+    const uint32_t metro = gui_ipc_appearance_theme() != 0u;
+    const uint32_t teal = metro ? 0x000078d4u : 0x00008080u;
+    const uint32_t gray = metro ? 0x00f3f3f3u : 0x00c0c0c0u;
+    const uint32_t dark = metro ? 0x006b6b6bu : 0x00808080u;
     const uint32_t white = 0x00ffffff;
     const uint32_t black = 0x00000000;
 

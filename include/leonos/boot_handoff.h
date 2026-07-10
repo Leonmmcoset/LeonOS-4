@@ -5,7 +5,7 @@
 #include <leonos/auth.h>
 
 #define LEONOS_BOOT_HANDOFF_MAGIC 0x4c424f54u
-#define LEONOS_BOOT_HANDOFF_VERSION 1u
+#define LEONOS_BOOT_HANDOFF_VERSION 2u
 #define LEONOS_KERNEL_SERVICES_VERSION 2u
 #define LEONOS_MIDDLELAYER_API_VERSION 5u
 
@@ -54,7 +54,7 @@ struct leonos_boot_handoff {
     uint32_t magic;
     uint32_t version;
     uint32_t multiboot_magic;
-    uint32_t reserved;
+    uint32_t ui_theme;
     uint64_t multiboot_info;
     const char *cmdline;
     const char *bootloader;

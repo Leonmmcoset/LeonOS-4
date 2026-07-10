@@ -2325,6 +2325,49 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                                              (const struct gui_ipc_display_state *)(uintptr_t)a2) ? 1 : 0;
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_APPEARANCE_STATE) {
+        if (!user_range_ok(a2, sizeof(struct gui_ipc_appearance_state))) {
+            return -LEONOS_EFAULT;
+        }
+        return gui_ipc_appearance_state((struct gui_ipc_appearance_state *)(uintptr_t)a2) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_APPEARANCE_REQUEST) {
+        struct task *task = sched_current_task();
+        if (!task || task->role != LEONOS_AUTH_ROLE_ADMIN) {
+            return -LEONOS_EPERM;
+        }
+        if (!user_range_ok(a2, sizeof(struct gui_ipc_appearance_request))) {
+            return -LEONOS_EFAULT;
+        }
+        return gui_ipc_request_appearance(
+                   (const struct gui_ipc_appearance_request *)(uintptr_t)a2) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
+        if (!user_range_ok(a2, sizeof(struct gui_ipc_appearance_request))) {
+            return -LEONOS_EFAULT;
+        }
+        return gui_ipc_pop_appearance_request(sched_current_pid(),
+                                               (struct gui_ipc_appearance_request *)(uintptr_t)a2) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
+        if (!user_range_ok(a2, sizeof(struct gui_ipc_appearance_state))) {
+            return -LEONOS_EFAULT;
+        }
+        return gui_ipc_publish_appearance_state(sched_current_pid(),
+                                                 (const struct gui_ipc_appearance_state *)(uintptr_t)a2) ? 1 : 0;
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_TEXT_IOCTL_LAYOUT_UTF8) {
         static char text_buf[LEONOS_TEXT_LAYOUT_MAX_BYTES];
         static struct leonos_text_glyph glyph_buf[LEONOS_TEXT_LAYOUT_MAX_GLYPHS];

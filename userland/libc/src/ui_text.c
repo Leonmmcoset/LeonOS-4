@@ -7,9 +7,20 @@
 #define UI_SYSTEM_FONT_MAX 8192U
 #define UI_CJK_FONT_MAX (2U * 1024U * 1024U)
 #define UI_CJK_FONT_PATH "0:/system/fonts/cjk16.lbf"
+#define UI_METRO_LATIN_FONT_PATH "0:/system/fonts/metro-latin.lbf"
+#define UI_METRO_LATIN_FONT_WIDTH 8U
+#define UI_METRO_LATIN_FONT_HEIGHT 16U
+#define UI_METRO_LATIN_FONT_FIRST 32U
+#define UI_METRO_LATIN_FONT_COUNT 95U
+#define UI_METRO_LATIN_FONT_HEADER_SIZE 8U
+#define UI_METRO_LATIN_GLYPH_BYTES (UI_METRO_LATIN_FONT_WIDTH * UI_METRO_LATIN_FONT_HEIGHT)
+#define UI_METRO_LATIN_FONT_SIZE (UI_METRO_LATIN_FONT_HEADER_SIZE + UI_METRO_LATIN_FONT_COUNT * UI_METRO_LATIN_GLYPH_BYTES)
 static uint8_t ui_system_font[UI_SYSTEM_FONT_MAX];
+static uint8_t ui_metro_latin_font[UI_METRO_LATIN_FONT_SIZE];
 static uint8_t *ui_cjk_font;
 static uint8_t ui_system_font_checked;
+static uint8_t ui_metro_latin_font_checked;
+static uint8_t ui_metro_latin_font_ready;
 static uint8_t ui_cjk_font_checked;
 static uint32_t ui_cjk_font_len;
 static uint32_t ui_cjk_font_count;
@@ -54,6 +65,72 @@ static const uint8_t *ui_font_glyph(char ch)
         return leonos_psf_view_glyph(&ui_font_view, ch);
     }
     return leonos_psf_glyph(ch);
+}
+
+static const uint8_t *ui_metro_latin_glyph(char character)
+{
+    uint8_t codepoint = (uint8_t)character;
+    if (!ui_theme_is_metro() || codepoint < UI_METRO_LATIN_FONT_FIRST ||
+        codepoint >= UI_METRO_LATIN_FONT_FIRST + UI_METRO_LATIN_FONT_COUNT) {
+        return 0;
+    }
+    if (!ui_metro_latin_font_checked) {
+        struct leonos_stat stat_info;
+        ui_metro_latin_font_checked = 1;
+        if (stat(UI_METRO_LATIN_FONT_PATH, &stat_info) == 0 &&
+            stat_info.type == LEONOS_FS_TYPE_FILE &&
+            stat_info.size == sizeof(ui_metro_latin_font)) {
+            int fd = open(UI_METRO_LATIN_FONT_PATH, LEONOS_O_RDONLY, 0);
+            if (fd >= 0) {
+                uint32_t length = 0;
+                while (length < stat_info.size) {
+                    long got = read(fd, ui_metro_latin_font + length,
+                                    (uint32_t)stat_info.size - length);
+                    if (got <= 0) {
+                        break;
+                    }
+                    length += (uint32_t)got;
+                }
+                close(fd);
+                if (length == sizeof(ui_metro_latin_font) &&
+                    ui_metro_latin_font[0] == 'M' &&
+                    ui_metro_latin_font[1] == 'S' &&
+                    ui_metro_latin_font[2] == 'F' &&
+                    ui_metro_latin_font[3] == '1' &&
+                    ui_metro_latin_font[4] == UI_METRO_LATIN_FONT_WIDTH &&
+                    ui_metro_latin_font[5] == UI_METRO_LATIN_FONT_HEIGHT &&
+                    ui_metro_latin_font[6] == UI_METRO_LATIN_FONT_FIRST &&
+                    ui_metro_latin_font[7] == UI_METRO_LATIN_FONT_COUNT) {
+                    ui_metro_latin_font_ready = 1;
+                }
+            }
+        }
+    }
+    if (!ui_metro_latin_font_ready) {
+        return 0;
+    }
+    return ui_metro_latin_font + UI_METRO_LATIN_FONT_HEADER_SIZE +
+           (uint32_t)(codepoint - UI_METRO_LATIN_FONT_FIRST) * UI_METRO_LATIN_GLYPH_BYTES;
+}
+
+static uint32_t ui_blend_color(uint32_t background, uint32_t foreground, uint8_t alpha)
+{
+    uint32_t inverse = 255U - alpha;
+    uint32_t red = (((foreground >> 16) & 0xffU) * alpha +
+                    ((background >> 16) & 0xffU) * inverse + 127U) / 255U;
+    uint32_t green = (((foreground >> 8) & 0xffU) * alpha +
+                      ((background >> 8) & 0xffU) * inverse + 127U) / 255U;
+    uint32_t blue = ((foreground & 0xffU) * alpha +
+                     (background & 0xffU) * inverse + 127U) / 255U;
+    return (red << 16) | (green << 8) | blue;
+}
+
+static uint32_t ui_surface_color(const struct leonos_ui_surface *surface, uint32_t x, uint32_t y)
+{
+    if (!surface || !surface->pixels || x >= surface->width || y >= surface->height) {
+        return 0;
+    }
+    return surface->pixels[(uint64_t)y * surface->stride + x];
 }
 
 static uint16_t ui_read_le16(const uint8_t *p)
@@ -396,10 +473,31 @@ uint32_t leonos_ui_text_fit_chars(uint32_t pixel_width)
     return pixel_width / LEONOS_FONT_W;
 }
 
+static void ui_smooth_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                           const uint8_t *glyph, uint32_t fg, uint32_t bg, int transparent)
+{
+    for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
+        for (uint32_t col = 0; col < LEONOS_FONT_W; ++col) {
+            uint8_t alpha = glyph[row * LEONOS_FONT_W + col];
+            if (alpha) {
+                uint32_t background = transparent ? ui_surface_color(surface, x + col, y + row) : bg;
+                leonos_ui_pixel(surface, x + col, y + row, ui_blend_color(background, fg, alpha));
+            } else if (!transparent) {
+                leonos_ui_pixel(surface, x + col, y + row, bg);
+            }
+        }
+    }
+}
+
 void ui_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     char ch, uint32_t fg, uint32_t bg, int transparent)
 {
+    const uint8_t *smooth_glyph = ui_metro_latin_glyph(ch);
     const uint8_t *glyph = ui_font_glyph(ch);
+    if (smooth_glyph) {
+        ui_smooth_char(surface, x, y, smooth_glyph, fg, bg, transparent);
+        return;
+    }
     for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
         for (uint32_t col = 0; col < LEONOS_FONT_W; ++col) {
             if (glyph[row] & (uint8_t)(0x80u >> col)) {
@@ -521,6 +619,22 @@ static void ui_draw_bitmap_resized(struct leonos_ui_surface *surface,
     }
 }
 
+static void ui_draw_grayscale_bitmap_resized(struct leonos_ui_surface *surface,
+                                             uint32_t x, uint32_t y,
+                                             uint32_t dst_w, uint32_t dst_h,
+                                             const uint8_t *bitmap,
+                                             uint32_t fg, uint32_t bg)
+{
+    for (uint32_t yy = 0; yy < dst_h; ++yy) {
+        uint32_t source_y = yy * LEONOS_FONT_H / dst_h;
+        for (uint32_t xx = 0; xx < dst_w; ++xx) {
+            uint32_t source_x = xx * LEONOS_FONT_W / dst_w;
+            uint8_t alpha = bitmap[source_y * LEONOS_FONT_W + source_x];
+            leonos_ui_pixel(surface, x + xx, y + yy, ui_blend_color(bg, fg, alpha));
+        }
+    }
+}
+
 static void ui_codepoint_resized(struct leonos_ui_surface *surface,
                                  uint32_t x, uint32_t y,
                                  uint32_t codepoint, uint32_t cell_width,
@@ -536,6 +650,12 @@ static void ui_codepoint_resized(struct leonos_ui_surface *surface,
         return;
     }
     if (codepoint >= 32U && codepoint < 127U && cell_width == 1U) {
+        const uint8_t *smooth_glyph = ui_metro_latin_glyph((char)codepoint);
+        if (smooth_glyph) {
+            ui_draw_grayscale_bitmap_resized(surface, x, y, pixels_w, cell_h,
+                                             smooth_glyph, fg, bg);
+            return;
+        }
         ui_draw_bitmap_resized(surface, x, y, pixels_w, cell_h,
                                LEONOS_FONT_W, LEONOS_FONT_H,
                                ui_font_glyph((char)codepoint), 0,

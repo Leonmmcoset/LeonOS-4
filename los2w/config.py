@@ -35,6 +35,7 @@ class HostConfig:
     root_dir: str = ""
     last_elf: str = ""
     language: str = "en"
+    ui_theme: str = "metro"
     guest_username: str = "los2w"
     guest_home: str = "0:/users/los2w"
     guest_admin: bool = True
@@ -57,6 +58,8 @@ class ConfigStore:
                 setattr(cfg, key, data[key])
         if cfg.language not in ("en", "zh"):
             cfg.language = "en"
+        if cfg.ui_theme not in ("metro", "win95"):
+            cfg.ui_theme = "metro"
         cfg.recent_elfs = _recent(cfg.recent_elfs, cfg.last_elf)
         cfg.recent_roots = _recent(cfg.recent_roots, cfg.root_dir)
         return cfg

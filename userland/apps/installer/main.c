@@ -27,6 +27,7 @@
 
 enum installer_page {
     PAGE_LANGUAGE = 0,
+    PAGE_THEME,
     PAGE_WELCOME,
     PAGE_MODE,
     PAGE_DISK,
@@ -82,6 +83,8 @@ static uint32_t surface_h = INSTALLER_INITIAL_H;
 static uint8_t page = PAGE_LANGUAGE;
 static uint8_t install_mode = INSTALL_MODE_FRESH;
 static uint8_t installer_lang = LEONOS_LANG_EN;
+static uint8_t installer_theme = LEONOS_UI_THEME_METRO;
+static uint8_t installer_theme_explicit;
 static struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
 static uint32_t disk_count;
 static int32_t selected_disk = -1;
@@ -438,6 +441,8 @@ static void draw_sidebar(struct leonos_ui_surface *ui)
         const char *label = "";
         if (i == PAGE_LANGUAGE) {
             label = T("Language", "语言");
+        } else if (i == PAGE_THEME) {
+            label = T("Style", "样式");
         } else if (i == PAGE_WELCOME) {
             label = T("Welcome", "欢迎");
         } else if (i == PAGE_MODE) {
@@ -525,6 +530,27 @@ static void draw_language_page(struct leonos_ui_surface *ui)
     leonos_ui_text(ui, l.content_x, l.content_y + 140,
                    T("The installed system will use the same language.",
                      "安装后的操作系统将使用相同语言。"),
+                   LEONOS_UI_DARK, LEONOS_UI_WHITE);
+}
+
+static void draw_theme_page(struct leonos_ui_surface *ui)
+{
+    struct installer_layout l = get_layout();
+    draw_title(ui, T("Choose UI Style", "选择界面样式"),
+               T("Preview a style now and apply it to the installed system.",
+                 "可立即预览样式，安装后系统也会使用此样式。"));
+    leonos_ui_button(ui, l.content_x, l.content_y + 88, 140, BUTTON_H, "Metro",
+                     installer_theme == LEONOS_UI_THEME_METRO
+                         ? LEONOS_UI_BUTTON_PRESSED : 0);
+    leonos_ui_button(ui, l.content_x + 156, l.content_y + 88, 140, BUTTON_H, "Win95",
+                     installer_theme == LEONOS_UI_THEME_WIN95
+                         ? LEONOS_UI_BUTTON_PRESSED : 0);
+    leonos_ui_text(ui, l.content_x, l.content_y + 140,
+                   installer_theme == LEONOS_UI_THEME_METRO
+                       ? T("Metro uses the modern flat system appearance.",
+                           "Metro 使用现代扁平化系统外观。")
+                       : T("Win95 keeps the classic beveled system appearance.",
+                           "Win95 保留经典立体系统外观。"),
                    LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
@@ -743,6 +769,9 @@ static void draw_installer(struct leonos_ui_surface *ui)
     switch (page) {
     case PAGE_LANGUAGE:
         draw_language_page(ui);
+        break;
+    case PAGE_THEME:
+        draw_theme_page(ui);
         break;
     case PAGE_WELCOME:
         draw_welcome(ui);
@@ -1542,15 +1571,117 @@ static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui
     return 0;
 }
 
-static void write_target_locale(void)
+static int write_target_locale(void)
 {
     const char *text = installer_lang == LEONOS_LANG_ZH ? "lang=zh\n" : "lang=en\n";
     int fd = open("1:/etc/locale.conf",
                   LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
-    if (fd >= 0) {
-        (void)write(fd, text, strlen(text));
-        close(fd);
+    long wrote;
+    if (fd < 0) {
+        return fd;
     }
+    wrote = write(fd, text, strlen(text));
+    close(fd);
+    if (wrote < 0) {
+        return (int)wrote;
+    }
+    return wrote == (long)strlen(text) ? 0 : -5;
+}
+
+static int display_config_line_is_theme(const char *line, uint32_t len)
+{
+    return len >= 6 && line[0] == 't' && line[1] == 'h' && line[2] == 'e' &&
+           line[3] == 'm' && line[4] == 'e' && line[5] == '=';
+}
+
+static int write_target_theme(void)
+{
+    char input[384];
+    char output[512];
+    const char *theme = installer_theme == LEONOS_UI_THEME_WIN95 ? "win95" : "metro";
+    struct leonos_stat stat_info;
+    uint32_t input_len = 0;
+    uint32_t output_len = 0;
+    uint32_t offset = 0;
+    int ret = stat("1:/etc/display.conf", &stat_info);
+    if (ret == 0) {
+        int fd;
+        long got;
+        if (stat_info.type != LEONOS_FS_TYPE_FILE || stat_info.size >= sizeof(input)) {
+            return -27;
+        }
+        fd = open("1:/etc/display.conf", LEONOS_O_RDONLY, 0);
+        if (fd < 0) {
+            return fd;
+        }
+        got = read(fd, input, (uint32_t)stat_info.size);
+        close(fd);
+        if (got < 0) {
+            return (int)got;
+        }
+        input_len = (uint32_t)got;
+    } else if (ret != -2) {
+        return ret;
+    }
+    while (offset < input_len) {
+        uint32_t line_start = offset;
+        uint32_t line_end;
+        while (offset < input_len && input[offset] != '\n') {
+            ++offset;
+        }
+        line_end = offset;
+        if (line_end > line_start && input[line_end - 1] == '\r') {
+            --line_end;
+        }
+        if (offset < input_len) {
+            ++offset;
+        }
+        if (display_config_line_is_theme(input + line_start, line_end - line_start)) {
+            continue;
+        }
+        for (uint32_t index = line_start; index < line_end; ++index) {
+            if (append_char(output, &output_len, sizeof(output), input[index]) < 0) {
+                return -27;
+            }
+        }
+        if (append_char(output, &output_len, sizeof(output), '\n') < 0) {
+            return -27;
+        }
+    }
+    if (append_text(output, &output_len, sizeof(output), "theme=") < 0 ||
+        append_text(output, &output_len, sizeof(output), theme) < 0 ||
+        append_char(output, &output_len, sizeof(output), '\n') < 0) {
+        return -27;
+    }
+    {
+        int fd = open("1:/etc/display.conf",
+                      LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+        long wrote;
+        if (fd < 0) {
+            return fd;
+        }
+        wrote = write(fd, output, output_len);
+        close(fd);
+        if (wrote < 0) {
+            return (int)wrote;
+        }
+        return wrote == (long)output_len ? 0 : -5;
+    }
+}
+
+static int write_target_preferences(void)
+{
+    int ret;
+    if (install_mode == INSTALL_MODE_FRESH) {
+        ret = write_target_locale();
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    if (install_mode == INSTALL_MODE_FRESH || installer_theme_explicit) {
+        return write_target_theme();
+    }
+    return 0;
 }
 
 static void finish_install(int window_id, struct leonos_ui_surface *ui, int ret,
@@ -1568,9 +1699,6 @@ static void finish_install(int window_id, struct leonos_ui_surface *ui, int ret,
                install_mode == INSTALL_MODE_UPDATE ? "update" : "installation");
         install_success = 1;
         progress_value = 100;
-        if (install_mode == INSTALL_MODE_FRESH) {
-            write_target_locale();
-        }
         set_status(install_mode == INSTALL_MODE_UPDATE
                        ? T("Update completed successfully", "更新成功完成")
                        : T("Installation completed successfully", "安装成功完成"),
@@ -1665,6 +1793,12 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
     ret = copy_payload_ordered(window_id, ui);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Copy failed", "复制失败"));
+        return;
+    }
+
+    ret = write_target_preferences();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Could not save installed preferences", "无法保存安装后偏好设置"));
         return;
     }
 
@@ -1767,6 +1901,12 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
         return;
     }
 
+    ret = write_target_preferences();
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Could not save installed preferences", "无法保存安装后偏好设置"));
+        return;
+    }
+
     show_progress(window_id, ui, 100, T("Update completed successfully", "更新成功完成"),
                   T("Target disk is ready.", "目标硬盘已准备就绪。"));
     finish_install(window_id, ui, 0, "");
@@ -1774,7 +1914,10 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
 
 static void go_back(void)
 {
-    if (page == PAGE_WELCOME) {
+    if (page == PAGE_THEME) {
+        page = PAGE_LANGUAGE;
+    } else if (page == PAGE_WELCOME) {
+        page = PAGE_THEME;
         page = PAGE_LANGUAGE;
     } else if (page == PAGE_MODE) {
         page = PAGE_WELCOME;
@@ -1796,6 +1939,11 @@ static int go_primary(int window_id, struct leonos_ui_surface *ui)
         return 0;
     }
     if (page == PAGE_LANGUAGE) {
+        page = PAGE_THEME;
+        dirty = 1;
+        return 0;
+    }
+    if (page == PAGE_THEME) {
         page = PAGE_WELCOME;
         dirty = 1;
         return 0;
@@ -1894,6 +2042,28 @@ static void handle_language_click(int32_t x, int32_t y)
     }
 }
 
+static void handle_theme_click(int32_t x, int32_t y)
+{
+    struct installer_layout l = get_layout();
+    uint32_t theme = installer_theme;
+    uint8_t selected = 0;
+    if (hit_rect_i(x, y, (int32_t)l.content_x, (int32_t)l.content_y + 88,
+                   140, BUTTON_H)) {
+        theme = LEONOS_UI_THEME_METRO;
+        selected = 1;
+    } else if (hit_rect_i(x, y, (int32_t)l.content_x + 156,
+                          (int32_t)l.content_y + 88, 140, BUTTON_H)) {
+        theme = LEONOS_UI_THEME_WIN95;
+        selected = 1;
+    }
+    if (selected) {
+        installer_theme = (uint8_t)theme;
+        installer_theme_explicit = 1;
+        (void)leonos_ui_theme_set(theme);
+        dirty = 1;
+    }
+}
+
 static void handle_update_apps_click(int32_t x, int32_t y)
 {
     struct installer_layout l = get_layout();
@@ -1957,6 +2127,9 @@ static int handle_mouse(int window_id, struct leonos_ui_surface *ui,
     }
     if (page == PAGE_LANGUAGE) {
         handle_language_click(event->x, event->y);
+    }
+    if (page == PAGE_THEME) {
+        handle_theme_click(event->x, event->y);
     }
     if (!install_running &&
         hit_rect_i(event->x, event->y, (int32_t)l.back_x, (int32_t)l.button_y, BUTTON_W, BUTTON_H)) {
@@ -2049,6 +2222,7 @@ int main(void)
 
     leonos_ui_bind(&ui, pixels, surface_w, surface_h, INSTALLER_MAX_W);
     installer_lang = (uint8_t)leonos_i18n_language();
+    installer_theme = (uint8_t)leonos_ui_theme();
     leonos_ui_listview_state_init(&update_app_list, 1, UPDATE_APP_ROW_H);
     refresh_disks();
     page = PAGE_LANGUAGE;

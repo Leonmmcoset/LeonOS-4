@@ -431,6 +431,40 @@ void fetch_window_surface(uint8_t slot)
     }
 }
 
+static uint32_t desktop_map_legacy_ui_color(uint32_t color)
+{
+    if (leonos_ui_theme() != LEONOS_UI_THEME_METRO) {
+        return color;
+    }
+    if (color == 0x00c0c0c0u) {
+        return LEONOS_UI_GRAY;
+    }
+    if (color == 0x00dfdfdfu) {
+        return LEONOS_UI_LIGHT;
+    }
+    if (color == 0x00808080u) {
+        return LEONOS_UI_DARK;
+    }
+    if (color == 0x00000080u) {
+        return LEONOS_UI_ACTIVE_TITLE;
+    }
+    if (color == 0x00008080u) {
+        return LEONOS_UI_DESKTOP;
+    }
+    return color;
+}
+
+static void desktop_map_app_surface(uint32_t width, uint32_t height)
+{
+    uint32_t limit = width * height;
+    if (limit > APP_CLIENT_MAX_W * APP_CLIENT_MAX_H) {
+        limit = APP_CLIENT_MAX_W * APP_CLIENT_MAX_H;
+    }
+    for (uint32_t index = 0; index < limit; ++index) {
+        app_client_scratch[index] = desktop_map_legacy_ui_color(app_client_scratch[index]);
+    }
+}
+
 void draw_app_surface_i(uint8_t id, int body_x, int body_y,
                                uint32_t body_w, uint32_t body_h)
 {
@@ -457,6 +491,7 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
                     LEONOS_UI_BLACK, windows[id].body_color);
         return;
     }
+    desktop_map_app_surface(out_w, out_h);
     windows[id].client_width = out_w;
     windows[id].client_height = out_h;
     clip = rect_clip(rect_make(body_x, body_y, (int)out_w, (int)out_h));

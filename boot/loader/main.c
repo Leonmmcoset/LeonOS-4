@@ -886,6 +886,27 @@ static int efi_read_file(const char *path, void *buffer, uint64_t cap, uint64_t 
     return 0;
 }
 
+static void loader_load_ui_theme(void)
+{
+    char config[160];
+    uint64_t len = 0;
+    static const char win95[] = "theme=win95";
+    handoff.ui_theme = 1u;
+    if (efi_read_file("\\etc\\display.conf", config, sizeof(config), &len) < 0) {
+        return;
+    }
+    for (uint64_t index = 0; index + sizeof(win95) - 1u <= len; ++index) {
+        uint64_t matched = 0;
+        while (matched < sizeof(win95) - 1u && config[index + matched] == win95[matched]) {
+            ++matched;
+        }
+        if (matched == sizeof(win95) - 1u) {
+            handoff.ui_theme = 0u;
+            return;
+        }
+    }
+}
+
 static int elf_load_exec(const void *image, uint64_t len,
                          struct leonos_boot_module_info *module)
 {
@@ -1036,6 +1057,9 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
     efi_console_init();
+    if (handoff.efi_system_table && efi_open_root(handoff.efi_system_table) == 0) {
+        loader_load_ui_theme();
+    }
 
     kernel_module = find_loader_module("leonos-kernel");
     if (kernel_module) {

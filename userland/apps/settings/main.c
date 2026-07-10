@@ -39,10 +39,12 @@ enum {
     DROP_RESOLUTION = 1,
     DROP_SCALE = 2,
     DROP_LANGUAGE = 3,
+    DROP_THEME = 4,
 };
 
 static uint32_t pixels[SETTINGS_W * SETTINGS_H];
 static struct leonos_display_state display_state;
+static struct leonos_appearance_state appearance_state;
 static struct leonos_user_info current_user;
 static struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
 static uint32_t user_count;
@@ -446,6 +448,13 @@ static void refresh_display_state(void)
     }
 }
 
+static void refresh_appearance_state(void)
+{
+    if (leonos_appearance_get_state(&appearance_state) <= 0) {
+        appearance_state.theme = leonos_ui_theme();
+    }
+}
+
 static void refresh_users(void)
 {
     uint32_t count = 0;
@@ -491,6 +500,11 @@ static const char *language_label(void)
     return leonos_i18n_language() == LEONOS_LANG_ZH ? "中文" : "English";
 }
 
+static const char *theme_label(void)
+{
+    return appearance_state.theme == LEONOS_UI_THEME_WIN95 ? "Win95" : "Metro";
+}
+
 static void draw_display_page(struct leonos_ui_surface *ui)
 {
     char line[128];
@@ -498,6 +512,7 @@ static void draw_display_page(struct leonos_ui_surface *ui)
     struct leonos_ui_dropdown_item mode_items[SETTINGS_MODE_COUNT];
     struct leonos_ui_dropdown_item scale_items[SETTINGS_SCALE_COUNT];
     struct leonos_ui_dropdown_item lang_items[2];
+    struct leonos_ui_dropdown_item theme_items[2];
     for (uint32_t i = 0; i < SETTINGS_MODE_COUNT; ++i) {
         mode_items[i].label = mode_labels[i];
         mode_items[i].id = i;
@@ -510,6 +525,8 @@ static void draw_display_page(struct leonos_ui_surface *ui)
     }
     lang_items[0] = (struct leonos_ui_dropdown_item){"English", LEONOS_LANG_EN, 0};
     lang_items[1] = (struct leonos_ui_dropdown_item){"中文", LEONOS_LANG_ZH, 0};
+    theme_items[0] = (struct leonos_ui_dropdown_item){"Metro", LEONOS_UI_THEME_METRO, 0};
+    theme_items[1] = (struct leonos_ui_dropdown_item){"Win95", LEONOS_UI_THEME_WIN95, 0};
 
     append_text(line, &pos, sizeof(line), T("Framebuffer ", "帧缓冲 "));
     append_dec(line, &pos, sizeof(line), display_state.fb_width);
@@ -531,6 +548,13 @@ static void draw_display_page(struct leonos_ui_surface *ui)
                      0);
     leonos_ui_text(ui, 44, 184, T("Language", "语言"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_combobox(ui, 160, 178, 190, language_label(), active_drop == DROP_LANGUAGE, 0);
+    leonos_ui_text(ui, 44, 224, T("System style", "系统样式"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 160, 218, 190, theme_label(), active_drop == DROP_THEME,
+                        current_user.role == LEONOS_AUTH_ROLE_ADMIN ? 0 : LEONOS_UI_BUTTON_DISABLED);
+    if (current_user.role != LEONOS_AUTH_ROLE_ADMIN) {
+        leonos_ui_text(ui, 360, 224, T("Administrator only", "仅管理员可更改"),
+                       LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    }
     if (display_state.pending_confirm) {
         uint32_t seconds = (display_state.confirm_remaining_ms + 999) / 1000;
         pos = 0;
@@ -539,10 +563,10 @@ static void draw_display_page(struct leonos_ui_surface *ui)
                                                 "保留这些显示设置？将在 "));
         append_dec(line, &pos, sizeof(line), seconds);
         append_text(line, &pos, sizeof(line), T("s", " 秒后还原"));
-        leonos_ui_panel(ui, 44, 232, SETTINGS_W - 88, 64, LEONOS_UI_LIGHT);
-        leonos_ui_text_clipped(ui, 54, 244, SETTINGS_W - 108, line, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
-        leonos_ui_button(ui, 54, 266, 82, LEONOS_UI_BUTTON_H, T("Keep", "保留"), 0);
-        leonos_ui_button(ui, 146, 266, 82, LEONOS_UI_BUTTON_H, T("Revert", "还原"), 0);
+        leonos_ui_panel(ui, 44, 272, SETTINGS_W - 88, 64, LEONOS_UI_LIGHT);
+        leonos_ui_text_clipped(ui, 54, 284, SETTINGS_W - 108, line, LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
+        leonos_ui_button(ui, 54, 306, 82, LEONOS_UI_BUTTON_H, T("Keep", "保留"), 0);
+        leonos_ui_button(ui, 146, 306, 82, LEONOS_UI_BUTTON_H, T("Revert", "还原"), 0);
     }
     if (active_drop == DROP_LANGUAGE) {
         leonos_ui_dropdown(ui, 160, 202, 190, lang_items, 2,
@@ -553,6 +577,9 @@ static void draw_display_page(struct leonos_ui_surface *ui)
     } else if (active_drop == DROP_RESOLUTION) {
         leonos_ui_dropdown(ui, 160, 122, 190, mode_items, SETTINGS_MODE_COUNT,
                            display_state.mode_index, SETTINGS_DROPDOWN_ROW_H, 1000);
+    } else if (active_drop == DROP_THEME) {
+        leonos_ui_dropdown(ui, 160, 242, 190, theme_items, 2,
+                           appearance_state.theme, SETTINGS_DROPDOWN_ROW_H, 1000);
     }
 }
 
@@ -748,6 +775,7 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
     struct leonos_ui_dropdown_item mode_items[SETTINGS_MODE_COUNT];
     struct leonos_ui_dropdown_item scale_items[SETTINGS_SCALE_COUNT];
     struct leonos_ui_dropdown_item lang_items[2];
+    struct leonos_ui_dropdown_item theme_items[2];
     for (uint32_t i = 0; i < SETTINGS_MODE_COUNT; ++i) {
         mode_items[i].label = mode_labels[i];
         mode_items[i].id = i;
@@ -760,6 +788,8 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
     }
     lang_items[0] = (struct leonos_ui_dropdown_item){"English", LEONOS_LANG_EN, 0};
     lang_items[1] = (struct leonos_ui_dropdown_item){"中文", LEONOS_LANG_ZH, 0};
+    theme_items[0] = (struct leonos_ui_dropdown_item){"Metro", LEONOS_UI_THEME_METRO, 0};
+    theme_items[1] = (struct leonos_ui_dropdown_item){"Win95", LEONOS_UI_THEME_WIN95, 0};
     if (active_drop == DROP_RESOLUTION &&
         leonos_ui_dropdown_hit(x, y, 160, 122, 190, mode_items, SETTINGS_MODE_COUNT,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
@@ -789,6 +819,23 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
             request_display(LEONOS_DISPLAY_REQUEST_REFRESH, display_state.mode_index,
                             display_state.scale_index);
             copy_text(status_text, sizeof(status_text), T("Language changed", "语言已更改"));
+        }
+        return 1;
+    }
+    if (active_drop == DROP_THEME &&
+        leonos_ui_dropdown_hit(x, y, 160, 242, 190, theme_items, 2,
+                               SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
+        active_drop = DROP_NONE;
+        if (current_user.role == LEONOS_AUTH_ROLE_ADMIN &&
+            (id == LEONOS_UI_THEME_METRO || id == LEONOS_UI_THEME_WIN95)) {
+            struct leonos_appearance_request request = {.theme = id};
+            if (leonos_appearance_request_theme(&request) > 0) {
+                leonos_ui_theme_set(id);
+                appearance_state.theme = id;
+                copy_text(status_text, sizeof(status_text), T("System style changed", "系统样式已更改"));
+            } else {
+                copy_text(status_text, sizeof(status_text), T("Could not change system style", "无法更改系统样式"));
+            }
         }
         return 1;
     }
@@ -926,12 +973,17 @@ static void handle_display_click(int32_t x, int32_t y)
         active_drop = DROP_LANGUAGE;
         return;
     }
-    if (display_state.pending_confirm && hit_rect_i(x, y, 54, 266, 82, LEONOS_UI_BUTTON_H)) {
+    if (current_user.role == LEONOS_AUTH_ROLE_ADMIN &&
+        hit_rect_i(x, y, 160, 218, 190, LEONOS_FONT_H + 8)) {
+        active_drop = DROP_THEME;
+        return;
+    }
+    if (display_state.pending_confirm && hit_rect_i(x, y, 54, 306, 82, LEONOS_UI_BUTTON_H)) {
         request_display(LEONOS_DISPLAY_REQUEST_KEEP, display_state.mode_index, display_state.scale_index);
         copy_text(status_text, sizeof(status_text), T("Display settings saved", "显示设置已保存"));
         return;
     }
-    if (display_state.pending_confirm && hit_rect_i(x, y, 146, 266, 82, LEONOS_UI_BUTTON_H)) {
+    if (display_state.pending_confirm && hit_rect_i(x, y, 146, 306, 82, LEONOS_UI_BUTTON_H)) {
         request_display(LEONOS_DISPLAY_REQUEST_REVERT, display_state.mode_index, display_state.scale_index);
         copy_text(status_text, sizeof(status_text), T("Display settings reverted", "显示设置已还原"));
     }
@@ -1038,6 +1090,7 @@ int main(void)
     }
     leonos_ui_bind(&ui, pixels, SETTINGS_W, SETTINGS_H, SETTINGS_W);
     refresh_display_state();
+    refresh_appearance_state();
     refresh_users();
     load_services_config();
     refresh_ntp_runtime_state();
@@ -1049,9 +1102,17 @@ int main(void)
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 return 0;
             }
+            if (event.type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
+                (void)leonos_ui_theme_set((uint32_t)event.x);
+                appearance_state.theme = (uint32_t)event.x;
+                draw_settings(&ui);
+                leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
+                continue;
+            }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
                 handle_click(event.x, event.y);
                 refresh_display_state();
+                refresh_appearance_state();
                 refresh_users();
                 refresh_ntp_runtime_state();
                 draw_settings(&ui);
@@ -1063,6 +1124,7 @@ int main(void)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_FOCUS || event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
                 refresh_display_state();
+                refresh_appearance_state();
                 refresh_users();
                 refresh_ntp_runtime_state();
                 draw_settings(&ui);
@@ -1072,6 +1134,7 @@ int main(void)
             unsigned long now = leonos_uptime_ms();
             if (now - last_refresh >= 250) {
                 refresh_display_state();
+                refresh_appearance_state();
                 refresh_users();
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);

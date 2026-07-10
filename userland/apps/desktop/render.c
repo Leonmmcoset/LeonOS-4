@@ -162,11 +162,7 @@ static void draw_window_animation_frame(const struct desktop_window *w)
     if (anim_w < 8 || anim_h < 8) {
         return;
     }
-    rect_fill_i(x, y, (int)anim_w, (int)anim_h, LEONOS_UI_GRAY);
-    rect_fill_i(x, y, (int)anim_w, 1, LEONOS_UI_WHITE);
-    rect_fill_i(x, y, 1, (int)anim_h, LEONOS_UI_WHITE);
-    rect_fill_i(x + (int)anim_w - 1, y, 1, (int)anim_h, LEONOS_UI_BLACK);
-    rect_fill_i(x, y + (int)anim_h - 1, (int)anim_w, 1, LEONOS_UI_BLACK);
+    bevel_i(x, y, (int)anim_w, (int)anim_h, LEONOS_UI_GRAY, 0);
     if (anim_w > 16 && anim_h > TITLEBAR_H + 10) {
         rect_fill_i(x + 4, y + 4, (int)anim_w - 8, TITLEBAR_H, title_color);
         if (anim_w > 48) {
@@ -202,15 +198,7 @@ void draw_window(uint8_t id)
     }
     uint32_t title_color = (window_flags & LEONOS_UI_WINDOW_ACTIVE) ?
         LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_INACTIVE_TITLE;
-    rect_fill_i(w->x, w->y, (int)w->width, (int)w->height, LEONOS_UI_GRAY);
-    rect_fill_i(w->x, w->y, (int)w->width, 1, LEONOS_UI_WHITE);
-    rect_fill_i(w->x, w->y, 1, (int)w->height, LEONOS_UI_WHITE);
-    rect_fill_i(w->x + (int)w->width - 1, w->y, 1, (int)w->height, LEONOS_UI_BLACK);
-    rect_fill_i(w->x, w->y + (int)w->height - 1, (int)w->width, 1, LEONOS_UI_BLACK);
-    rect_fill_i(w->x + 1, w->y + 1, (int)w->width - 2, 1, LEONOS_UI_LIGHT);
-    rect_fill_i(w->x + 1, w->y + 1, 1, (int)w->height - 2, LEONOS_UI_LIGHT);
-    rect_fill_i(w->x + (int)w->width - 2, w->y + 1, 1, (int)w->height - 2, LEONOS_UI_DARK);
-    rect_fill_i(w->x + 1, w->y + (int)w->height - 2, (int)w->width - 2, 1, LEONOS_UI_DARK);
+    bevel_i(w->x, w->y, (int)w->width, (int)w->height, LEONOS_UI_GRAY, 0);
     rect_fill_i(w->x + 4, w->y + 4, (int)w->width - 8, TITLEBAR_H, title_color);
     draw_app_icon(w->icon_path, w->x + 8, w->y + 7);
     text_draw_i(w->x + 28, w->y + 9, w->title, LEONOS_UI_WHITE, title_color);
@@ -225,11 +213,15 @@ void draw_window(uint8_t id)
     int body_y_i = w->y + TITLEBAR_H + 10;
     uint32_t body_w = w->width > 16 ? w->width - 16 : 0;
     uint32_t body_h = w->height > TITLEBAR_H + 18 ? w->height - TITLEBAR_H - 18 : 0;
-    rect_fill_i(body_x_i, body_y_i, (int)body_w, (int)body_h, w->body_color);
-    rect_fill_i(body_x_i, body_y_i, (int)body_w, 1, LEONOS_UI_DARK);
-    rect_fill_i(body_x_i, body_y_i, 1, (int)body_h, LEONOS_UI_DARK);
-    rect_fill_i(body_x_i + (int)body_w - 1, body_y_i, 1, (int)body_h, LEONOS_UI_WHITE);
-    rect_fill_i(body_x_i, body_y_i + (int)body_h - 1, (int)body_w, 1, LEONOS_UI_WHITE);
+    if (leonos_ui_theme() == LEONOS_UI_THEME_METRO) {
+        bevel_i(body_x_i, body_y_i, (int)body_w, (int)body_h, w->body_color, 0);
+    } else {
+        rect_fill_i(body_x_i, body_y_i, (int)body_w, (int)body_h, w->body_color);
+        rect_fill_i(body_x_i, body_y_i, (int)body_w, 1, LEONOS_UI_DARK);
+        rect_fill_i(body_x_i, body_y_i, 1, (int)body_h, LEONOS_UI_DARK);
+        rect_fill_i(body_x_i + (int)body_w - 1, body_y_i, 1, (int)body_h, LEONOS_UI_WHITE);
+        rect_fill_i(body_x_i, body_y_i + (int)body_h - 1, (int)body_w, 1, LEONOS_UI_WHITE);
+    }
     if (w->window_id) {
         draw_app_surface_i(id, body_x_i, body_y_i, body_w, body_h);
         goto draw_resize_grip;
@@ -241,9 +233,9 @@ void draw_window(uint8_t id)
     uint32_t body_y = (uint32_t)body_y_i;
 
     if (id == 0) {
-        text_draw(body_x + 16, body_y + 18, leonos_i18n("Ring-3 desktop shadow blit", "Ring-3 桌面阴影缓冲绘制"), 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 42, leonos_i18n("Dirty redraw reduces flicker", "脏区重绘减少闪烁"), 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 66, leonos_i18n("Drag and resize window", "拖动并调整窗口大小"), 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 18, leonos_i18n("Ring-3 desktop shadow blit", "Ring-3 桌面阴影缓冲绘制"), LEONOS_UI_BLACK, w->body_color);
+        text_draw(body_x + 16, body_y + 42, leonos_i18n("Dirty redraw reduces flicker", "脏区重绘减少闪烁"), LEONOS_UI_BLACK, w->body_color);
+        text_draw(body_x + 16, body_y + 66, leonos_i18n("Drag and resize window", "拖动并调整窗口大小"), LEONOS_UI_BLACK, w->body_color);
     } else if (id == 1) {
         text_draw(body_x + 16, body_y + 18, "0:/", 0x00000000, w->body_color);
         text_draw(body_x + 16, body_y + 42, leonos_i18n("boot  system  userland", "boot  system  userland"), 0x00000000, w->body_color);

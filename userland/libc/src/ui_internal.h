@@ -33,4 +33,6 @@ void ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
 void ui_window_button_draw(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                            char label, uint32_t flags);
 
+int ui_theme_is_metro(void);
+
 #endif

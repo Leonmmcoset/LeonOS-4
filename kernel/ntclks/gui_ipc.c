@@ -16,6 +16,9 @@ static struct gui_ipc_display_request display_request;
 static uint8_t display_request_pending;
 static struct gui_ipc_display_state display_state;
 static uint8_t display_state_valid;
+static struct gui_ipc_appearance_state appearance_state = {.theme = 1u};
+static struct gui_ipc_appearance_request appearance_request;
+static uint8_t appearance_request_pending;
 
 struct gui_window_slot {
     uint8_t used;
@@ -337,6 +340,56 @@ int gui_ipc_pop_display_request(uint32_t caller_pid,
     *out = display_request;
     display_request_pending = 0;
     return 1;
+}
+
+int gui_ipc_appearance_state(struct gui_ipc_appearance_state *out)
+{
+    if (!out) {
+        return 0;
+    }
+    *out = appearance_state;
+    return 1;
+}
+
+int gui_ipc_publish_appearance_state(uint32_t caller_pid,
+                                     const struct gui_ipc_appearance_state *state)
+{
+    if (!caller_is_window_server(caller_pid) || !state || state->theme > 1u) {
+        return 0;
+    }
+    appearance_state = *state;
+    return 1;
+}
+
+int gui_ipc_request_appearance(const struct gui_ipc_appearance_request *request)
+{
+    if (!request || request->theme > 1u) {
+        return 0;
+    }
+    appearance_request = *request;
+    appearance_request_pending = 1;
+    return 1;
+}
+
+int gui_ipc_pop_appearance_request(uint32_t caller_pid,
+                                   struct gui_ipc_appearance_request *out)
+{
+    if (!caller_is_window_server(caller_pid) || !out || !appearance_request_pending) {
+        return 0;
+    }
+    *out = appearance_request;
+    appearance_request_pending = 0;
+    return 1;
+}
+
+void gui_ipc_set_boot_theme(uint32_t theme)
+{
+    appearance_state.theme = theme == 0u ? 0u : 1u;
+}
+
+uint32_t gui_ipc_appearance_theme(void)
+{
+    return appearance_state.theme;
 }
 
 int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,

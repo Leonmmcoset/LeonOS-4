@@ -49,6 +49,22 @@ Client applications talk to the window server through osmlayer IPC and GUI
 ioctls. System applications query device inventory through
 `LEONOS_IOCTL_DEVICE_LIST`.
 
+## Appearance ABI
+
+The system UI theme is a global Desktop-owned appearance state. `Metro` is the
+default (`LEONOS_UI_THEME_METRO`); `LEONOS_UI_THEME_WIN95` restores the legacy
+Win95 palette and bevelled controls. The persistent key is `theme=metro` or
+`theme=win95` in `0:/etc/display.conf`; a missing or invalid key selects Metro.
+
+`struct leonos_appearance_state` is read through
+`LEONOS_GUI_IOCTL_APPEARANCE_STATE`. Only administrator tasks may submit
+`struct leonos_appearance_request` through
+`LEONOS_GUI_IOCTL_APPEARANCE_REQUEST`; the window server polls and publishes
+the state through the paired appearance ioctls, then sends
+`LEONOS_GUI_APP_EVENT_THEME_CHANGED` to active application windows. The UEFI
+loader passes the persisted value to the kernel so early framebuffer output and
+bugcheck rendering use the selected style before Desktop starts.
+
 ## Authentication ABI
 
 Multi-user state is exposed through `include/leonos/auth.h` and libc wrappers

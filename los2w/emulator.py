@@ -43,12 +43,18 @@ class LeonOSEmulator:
         self.memory = GuestMemory(self.uc)
         self.memory.map_user_space()
         self.loaded: LoadedELF = ELFLoader(self.memory).load(self.elf_path)
-        self.fs = GuestFS(self.root_dir, language=self.config.language, logger=self.logger)
+        self.fs = GuestFS(self.root_dir, language=self.config.language,
+                          ui_theme=self.config.ui_theme, logger=self.logger)
         if gui is None:
             from .gui import GUIManager
 
-            gui = GUIManager(logger=self.logger)
+            gui = GUIManager(logger=self.logger, ui_theme=self.config.ui_theme,
+                             allow_theme_changes=self.config.guest_admin)
         self.gui = gui
+        if hasattr(self.gui, "configure_appearance"):
+            self.gui.configure_appearance(self.config.ui_theme, self.config.guest_admin)
+        if hasattr(self.gui, "set_theme_change_callback"):
+            self.gui.set_theme_change_callback(self.fs.set_ui_theme)
         if hasattr(self.gui, "set_present_callback"):
             self.gui.set_present_callback(self._stop_current_slice)
         self.net = NetworkManager(logger=self.logger)

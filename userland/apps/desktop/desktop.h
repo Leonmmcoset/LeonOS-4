@@ -33,6 +33,10 @@
 #define CURSOR_MAX_H 64
 #define CURSOR_BMP_MAX_BYTES (CURSOR_MAX_W * CURSOR_MAX_H * 4 + 128)
 #define CURSOR_BMP_PATH "0:/system/resources/mouse.bmp"
+#define WALLPAPER_MAX_W 1280
+#define WALLPAPER_MAX_H 720
+#define WALLPAPER_BMP_MAX_BYTES (WALLPAPER_MAX_W * WALLPAPER_MAX_H * 3 + 128)
+#define WALLPAPER_BMP_PATH "0:/system/resources/wallpaper-metro.bmp"
 #define WINDOW_BUTTON_ICON_W 16
 #define WINDOW_BUTTON_ICON_H 16
 #define WINDOW_BUTTON_MINIMIZE_ICON_PATH "0:/system/resources/window-button-minimize.bmp"
@@ -287,6 +291,10 @@ extern uint32_t cursor_height;
 extern uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
 extern uint8_t cursor_visible;
 extern uint8_t cursor_bitmap_loaded;
+extern uint32_t wallpaper_pixels[WALLPAPER_MAX_W * WALLPAPER_MAX_H];
+extern uint32_t wallpaper_width;
+extern uint32_t wallpaper_height;
+extern uint8_t wallpaper_loaded;
 extern uint8_t desktop_service_network_icon;
 extern uint8_t desktop_service_rtc_clock;
 extern uint8_t desktop_service_daemon_started;
@@ -371,6 +379,7 @@ void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text);
 void append_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t value);
 void append_hex_fixed(char *buf, uint32_t *pos, uint32_t cap, uint64_t value, uint32_t digits);
 int load_cursor_bmp(void);
+int load_wallpaper_bmp(void);
 char lower_ascii(char ch);
 int keycode_to_ascii(uint8_t keycode, char *out);
 const char *task_state_name(uint32_t state);
@@ -494,6 +503,9 @@ int hit_start_menu_area(uint32_t x, uint32_t y);
 int handle_taskbar_click(uint32_t x, uint32_t y);
 void desktop_publish_display_state(void);
 void desktop_handle_display_requests(void);
+void desktop_publish_appearance_state(void);
+void desktop_handle_appearance_requests(void);
+void desktop_apply_theme(uint32_t theme);
 void update_snap_preview(uint32_t x, uint32_t y);
 void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons);
 void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);

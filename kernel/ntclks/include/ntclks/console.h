@@ -11,6 +11,7 @@ void console_printf(const char *fmt, ...);
 void console_enable_framebuffer(void);
 void console_disable_framebuffer(void);
 void console_enable_vga_fallback(void);
+void console_set_ui_theme(uint32_t theme);
 void serial_init(void);
 int serial_is_ready(void);
 void serial_write(const char *s);

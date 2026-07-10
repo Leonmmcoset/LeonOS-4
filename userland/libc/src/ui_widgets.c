@@ -5,6 +5,17 @@
 void leonos_ui_bevel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      uint32_t w, uint32_t h, uint32_t fill, uint32_t flags)
 {
+    if (ui_theme_is_metro()) {
+        uint32_t border = (flags & LEONOS_UI_BUTTON_PRESSED)
+                              ? LEONOS_UI_ACTIVE_TITLE
+                              : leonos_ui_color(LEONOS_UI_COLOR_BORDER);
+        leonos_ui_rect(surface, x, y, w, h, fill);
+        leonos_ui_rect(surface, x, y, w, 1, border);
+        leonos_ui_rect(surface, x, y, 1, h, border);
+        leonos_ui_rect(surface, x + w - 1, y, 1, h, border);
+        leonos_ui_rect(surface, x, y + h - 1, w, 1, border);
+        return;
+    }
     int pressed = (flags & LEONOS_UI_BUTTON_PRESSED) != 0;
     uint32_t tl = pressed ? LEONOS_UI_DARK : LEONOS_UI_WHITE;
     uint32_t br = pressed ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
@@ -25,6 +36,15 @@ void leonos_ui_bevel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
 void leonos_ui_inset(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      uint32_t w, uint32_t h, uint32_t fill)
 {
+    if (ui_theme_is_metro()) {
+        uint32_t border = leonos_ui_color(LEONOS_UI_COLOR_BORDER);
+        leonos_ui_rect(surface, x, y, w, h, fill);
+        leonos_ui_rect(surface, x, y, w, 1, border);
+        leonos_ui_rect(surface, x, y, 1, h, border);
+        leonos_ui_rect(surface, x + w - 1, y, 1, h, border);
+        leonos_ui_rect(surface, x, y + h - 1, w, 1, border);
+        return;
+    }
     leonos_ui_rect(surface, x, y, w, h, fill);
     leonos_ui_rect(surface, x, y, w, 1, LEONOS_UI_DARK);
     leonos_ui_rect(surface, x, y, 1, h, LEONOS_UI_DARK);
@@ -101,6 +121,11 @@ void leonos_ui_window_ex(struct leonos_ui_surface *surface, uint32_t x, uint32_t
 void leonos_ui_taskbar(struct leonos_ui_surface *surface, uint32_t y, uint32_t h)
 {
     leonos_ui_rect(surface, 0, y, surface ? surface->width : 0, h, LEONOS_UI_GRAY);
+    if (ui_theme_is_metro()) {
+        leonos_ui_rect(surface, 0, y, surface ? surface->width : 0, 1,
+                       leonos_ui_color(LEONOS_UI_COLOR_BORDER));
+        return;
+    }
     leonos_ui_rect(surface, 0, y, surface ? surface->width : 0, 2, LEONOS_UI_WHITE);
     leonos_ui_rect(surface, 0, y + 2, surface ? surface->width : 0, 1, LEONOS_UI_DARK);
 }
@@ -116,7 +141,7 @@ void leonos_ui_menu(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     uint32_t w, uint32_t h)
 {
     leonos_ui_bevel(surface, x, y, w, h, LEONOS_UI_GRAY, 0);
-    if (h > 8) {
+    if (!ui_theme_is_metro() && h > 8) {
         leonos_ui_rect(surface, x + 4, y + 4, 26, h - 8, LEONOS_UI_ACTIVE_TITLE);
     }
 }

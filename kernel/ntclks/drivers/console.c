@@ -12,6 +12,17 @@ static bool fb_console_enabled;
 static bool vga_console_enabled;
 static uint32_t fb_col;
 static uint32_t fb_row;
+static uint32_t console_ui_theme = 1u;
+
+static uint32_t console_bg(void)
+{
+    return console_ui_theme == 0u ? 0x00000000u : 0x000078d4u;
+}
+
+static uint32_t console_fg(void)
+{
+    return console_ui_theme == 0u ? 0x0000ff00u : 0x00ffffffu;
+}
 
 static void log_store(char ch)
 {
@@ -33,8 +44,9 @@ static void fb_console_clear(void)
     }
     uint32_t w = fb->width < 800 ? fb->width : 800;
     uint32_t h = fb->height < 240 ? fb->height : 240;
-    framebuffer_rect(0, 0, w, h, 0x00000000);
-    framebuffer_rect(0, h > 2 ? h - 2 : 0, w, 2, 0x00808080);
+    framebuffer_rect(0, 0, w, h, console_bg());
+    framebuffer_rect(0, h > 2 ? h - 2 : 0, w, 2,
+                     console_ui_theme == 0u ? 0x00808080u : 0x005aa7e8u);
 }
 
 static void fb_console_newline(void)
@@ -62,9 +74,9 @@ static void fb_console_putc(char ch)
         fb_console_newline();
     }
     framebuffer_rect(fb_col * LEONOS_FONT_W, fb_row * (LEONOS_FONT_H + 1),
-                     LEONOS_FONT_W, LEONOS_FONT_H + 1, 0x00000000);
+                     LEONOS_FONT_W, LEONOS_FONT_H + 1, console_bg());
     framebuffer_text(fb_col * LEONOS_FONT_W, fb_row * (LEONOS_FONT_H + 1),
-                     (char[]){ch, 0}, 0x0000ff00, 0x00000000);
+                     (char[]){ch, 0}, console_fg(), console_bg());
     ++fb_col;
 }
 
@@ -91,6 +103,11 @@ static void print_unsigned(uint64_t value, unsigned base, bool upper)
 void console_init(void)
 {
     serial_init();
+}
+
+void console_set_ui_theme(uint32_t theme)
+{
+    console_ui_theme = theme == 0u ? 0u : 1u;
 }
 
 void console_putc(char ch)

@@ -1,16 +1,22 @@
 #include <ntclks/bugcheck.h>
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
+#include <ntclks/gui_ipc.h>
 #include <ntclks/sched.h>
 #include <ntclks/time.h>
 #include <leonos/psf_font.h>
 
 #include "../arch/x86_64/port.h"
 
-#define BUGCHECK_BG 0x000000aaU
-#define BUGCHECK_FG 0x00ffffffU
-#define BUGCHECK_SUB 0x00d8d8ffU
-#define BUGCHECK_PANEL 0x001c1cb8U
+static uint32_t bugcheck_color(uint32_t win95, uint32_t metro)
+{
+    return gui_ipc_appearance_theme() == 0u ? win95 : metro;
+}
+
+#define BUGCHECK_BG bugcheck_color(0x000000aaU, 0x000078d4U)
+#define BUGCHECK_FG bugcheck_color(0x00ffffffU, 0x00202020U)
+#define BUGCHECK_SUB bugcheck_color(0x00d8d8ffU, 0x006b6b6bU)
+#define BUGCHECK_PANEL bugcheck_color(0x001c1cb8U, 0x00f3f3f3U)
 static int g_bugcheck_active;
 
 struct bugcheck_info {

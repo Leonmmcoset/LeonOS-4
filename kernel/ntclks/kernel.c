@@ -153,13 +153,17 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     arch_init();
     framebuffer_init(&boot);
-    console_enable_framebuffer();
-    console_enable_vga_fallback();
     mm_init(&boot, handoff);
     time_init();
     input_init();
     pty_init();
     gui_ipc_init();
+    gui_ipc_set_boot_theme(handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC
+                               ? handoff->ui_theme
+                               : 1u);
+    console_set_ui_theme(gui_ipc_appearance_theme());
+    console_enable_framebuffer();
+    console_enable_vga_fallback();
     mouse_init();
     sched_init();
     sched_create_idle_task();
@@ -188,8 +192,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     osmlayer_bridge_selftest();
     userland_init(&boot);
     sched_dump();
-    framebuffer_clear(0x00008080);
-    framebuffer_text(24, 24, "LeonOS 4 starting Ring-3 desktop.elf...", 0x00ffffff, 0x00008080);
+    framebuffer_clear(gui_ipc_appearance_theme() == 0u ? 0x00008080u : 0x000078d4u);
+    framebuffer_text(24, 24, "LeonOS 4 starting Ring-3 desktop.elf...", 0x00ffffffu,
+                     gui_ipc_appearance_theme() == 0u ? 0x00008080u : 0x000078d4u);
     mouse_status_line();
 
     console_printf("[ntclks] boot complete: version=%s root=0:/ fs=FAT32 desktop=desktop.elf\n",

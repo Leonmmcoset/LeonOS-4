@@ -3,14 +3,28 @@
 
 #include <stdint.h>
 
-#define LEONOS_UI_BLACK 0x00000000u
-#define LEONOS_UI_WHITE 0x00ffffffu
-#define LEONOS_UI_GRAY 0x00c0c0c0u
-#define LEONOS_UI_LIGHT 0x00dfdfdfu
-#define LEONOS_UI_DARK 0x00808080u
-#define LEONOS_UI_ACTIVE_TITLE 0x00000080u
-#define LEONOS_UI_INACTIVE_TITLE 0x00808080u
-#define LEONOS_UI_DESKTOP 0x00008080u
+#define LEONOS_UI_THEME_WIN95 0u
+#define LEONOS_UI_THEME_METRO 1u
+
+#define LEONOS_UI_COLOR_TEXT 0u
+#define LEONOS_UI_COLOR_CONTENT 1u
+#define LEONOS_UI_COLOR_SURFACE 2u
+#define LEONOS_UI_COLOR_SUBTLE 3u
+#define LEONOS_UI_COLOR_MUTED 4u
+#define LEONOS_UI_COLOR_ACCENT 5u
+#define LEONOS_UI_COLOR_TITLE_INACTIVE 6u
+#define LEONOS_UI_COLOR_DESKTOP 7u
+#define LEONOS_UI_COLOR_BORDER 8u
+#define LEONOS_UI_COLOR_SELECTION 9u
+
+#define LEONOS_UI_BLACK leonos_ui_color(LEONOS_UI_COLOR_TEXT)
+#define LEONOS_UI_WHITE leonos_ui_color(LEONOS_UI_COLOR_CONTENT)
+#define LEONOS_UI_GRAY leonos_ui_color(LEONOS_UI_COLOR_SURFACE)
+#define LEONOS_UI_LIGHT leonos_ui_color(LEONOS_UI_COLOR_SUBTLE)
+#define LEONOS_UI_DARK leonos_ui_color(LEONOS_UI_COLOR_MUTED)
+#define LEONOS_UI_ACTIVE_TITLE leonos_ui_color(LEONOS_UI_COLOR_ACCENT)
+#define LEONOS_UI_INACTIVE_TITLE leonos_ui_color(LEONOS_UI_COLOR_TITLE_INACTIVE)
+#define LEONOS_UI_DESKTOP leonos_ui_color(LEONOS_UI_COLOR_DESKTOP)
 
 #define LEONOS_UI_TITLEBAR_H 26u
 #define LEONOS_UI_TASKBAR_H 34u
@@ -94,6 +108,11 @@ struct leonos_ui_text_area_state {
     uint8_t readonly;
     uint8_t selecting;
 };
+
+uint32_t leonos_ui_theme(void);
+int leonos_ui_theme_set(uint32_t theme);
+void leonos_ui_theme_load_system(void);
+uint32_t leonos_ui_color(uint32_t role);
 
 struct leonos_ui_listview_state {
     uint32_t row_count;

@@ -247,6 +247,9 @@ class SyscallDispatcher:
         return 0
 
     def _system_ioctl(self, request: int, arg: int) -> int | None:
+        if request == C.INSTALL_IOCTL_LIST_DISKS:
+            self.memory.write_u32(arg + 4, 0)
+            return 0
         if request == C.AUTH_IOCTL_STATUS:
             self.memory.write(arg, structs.pack_auth_status())
             return 0

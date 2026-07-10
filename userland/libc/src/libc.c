@@ -10,6 +10,7 @@
 #include <leonos/system.h>
 #include <leonos/syscall.h>
 #include <leonos/text.h>
+#include <leonos/ui.h>
 #include <stdarg.h>
 
 #define HEAP_BLOCK_MAGIC 0x4c48454150424c4bULL
@@ -660,7 +661,12 @@ int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_
 
 int leonos_gui_poll_app_event(struct leonos_gui_app_event *event)
 {
-    return ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, event);
+    int ret = ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, event);
+    if (ret > 0 && event && event->type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
+        (void)leonos_ui_theme_set((uint32_t)event->x);
+        event->type = LEONOS_GUI_APP_EVENT_RESIZE;
+    }
+    return ret;
 }
 
 int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeout_ms)
@@ -678,6 +684,10 @@ int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeo
     }
     if (ret > 0) {
         *event = wait.event;
+        if (event->type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
+            (void)leonos_ui_theme_set((uint32_t)event->x);
+            event->type = LEONOS_GUI_APP_EVENT_RESIZE;
+        }
     }
     return ret;
 }
@@ -737,6 +747,38 @@ int leonos_display_publish_state(const struct leonos_display_state *state)
         return -1;
     }
     return ioctl(3, LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE, (void *)state);
+}
+
+int leonos_appearance_get_state(struct leonos_appearance_state *state)
+{
+    if (!state) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_GUI_IOCTL_APPEARANCE_STATE, state);
+}
+
+int leonos_appearance_request_theme(const struct leonos_appearance_request *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_GUI_IOCTL_APPEARANCE_REQUEST, (void *)request);
+}
+
+int leonos_appearance_poll_request(struct leonos_appearance_request *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST, request);
+}
+
+int leonos_appearance_publish_state(const struct leonos_appearance_state *state)
+{
+    if (!state) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE, (void *)state);
 }
 
 int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,

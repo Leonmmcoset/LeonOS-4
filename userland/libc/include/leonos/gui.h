@@ -30,6 +30,10 @@
 #define LEONOS_GUI_IOCTL_DISPLAY_REQUEST 0x4c445351UL
 #define LEONOS_GUI_IOCTL_POLL_DISPLAY_REQUEST 0x4c445352UL
 #define LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE 0x4c445353UL
+#define LEONOS_GUI_IOCTL_APPEARANCE_STATE 0x4c415053UL
+#define LEONOS_GUI_IOCTL_APPEARANCE_REQUEST 0x4c415052UL
+#define LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST 0x4c415050UL
+#define LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE 0x4c415042UL
 
 #define LEONOS_DISPLAY_REQUEST_APPLY 1U
 #define LEONOS_DISPLAY_REQUEST_KEEP 2U
@@ -65,6 +69,7 @@
 #define LEONOS_GUI_APP_EVENT_KEY_DOWN 7U
 #define LEONOS_GUI_APP_EVENT_KEY_UP 8U
 #define LEONOS_GUI_APP_EVENT_MOUSE_WHEEL 9U
+#define LEONOS_GUI_APP_EVENT_THEME_CHANGED 10U
 #define LEONOS_GUI_IDLE_WAIT_MS 100U
 
 #define LEONOS_GUI_WINDOW_NO_RESIZE 0x00000001U
@@ -221,6 +226,14 @@ struct leonos_display_request {
     uint32_t scale_index;
 };
 
+struct leonos_appearance_state {
+    uint32_t theme;
+};
+
+struct leonos_appearance_request {
+    uint32_t theme;
+};
+
 int leonos_gui_connect(void);
 int leonos_gui_create_window(const struct leonos_gui_window *window);
 int leonos_gui_next_event(struct leonos_input_event *event);
@@ -249,5 +262,9 @@ int leonos_display_get_state(struct leonos_display_state *state);
 int leonos_display_request(const struct leonos_display_request *request);
 int leonos_display_poll_request(struct leonos_display_request *request);
 int leonos_display_publish_state(const struct leonos_display_state *state);
+int leonos_appearance_get_state(struct leonos_appearance_state *state);
+int leonos_appearance_request_theme(const struct leonos_appearance_request *request);
+int leonos_appearance_poll_request(struct leonos_appearance_request *request);
+int leonos_appearance_publish_state(const struct leonos_appearance_state *state);
 
 #endif

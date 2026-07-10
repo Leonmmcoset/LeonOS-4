@@ -386,7 +386,11 @@ static void draw_demo(struct leonos_ui_surface *ui, uint32_t page)
                            sizeof(top_items) / sizeof(top_items[0]),
                            menu_open);
     leonos_ui_text(ui, 12, 36, "LeonOS UI Component Library", LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, 12, 54, "Win32-style reusable drawing controls", LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 12, 54,
+                   leonos_ui_theme() == LEONOS_UI_THEME_METRO
+                       ? "Metro flat reusable drawing controls"
+                       : "Win95 reusable drawing controls",
+                   LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, 420, 54, "你好，LeonOS 4。中文显示测试。", LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_tabs(ui, 236, 36, 410, tab_labels, 4, page);
     if (page == 0) {

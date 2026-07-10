@@ -23,13 +23,18 @@ class DirectoryFD:
 class VirtualFD:
     data: io.BytesIO
     writable: bool = False
+    path: str | None = None
 
 
 class GuestFS:
-    def __init__(self, root: str | Path, *, language: str = "en", logger=None):
+    DISPLAY_CONFIG_PATH = "0:/etc/display.conf"
+
+    def __init__(self, root: str | Path, *, language: str = "en", ui_theme: str = "metro", logger=None):
         self.root = Path(root).resolve()
         self.cwd = "0:/"
         self.language = language
+        self.ui_theme = "win95" if ui_theme == "win95" else "metro"
+        self._display_config = self._load_display_config()
         self.logger = logger
         self.fds: dict[int, BinaryIO | DirectoryFD | VirtualFD | object] = {
             0: VirtualFD(io.BytesIO(), False),
@@ -45,6 +50,48 @@ class GuestFS:
 
     def set_language(self, language: str) -> None:
         self.language = "zh" if language == "zh" else "en"
+
+    def set_ui_theme(self, ui_theme: str) -> None:
+        self.ui_theme = "win95" if ui_theme == "win95" else "metro"
+        self._display_config = self._with_display_theme(self._display_config, self.ui_theme)
+
+    @staticmethod
+    def _with_display_theme(data: bytes, ui_theme: str) -> bytes:
+        lines = data.decode("utf-8", "replace").splitlines()
+        output: list[str] = []
+        found = False
+        for line in lines:
+            if line.strip().startswith("theme="):
+                if not found:
+                    output.append(f"theme={ui_theme}")
+                    found = True
+                continue
+            output.append(line)
+        if not found:
+            output.append(f"theme={ui_theme}")
+        return ("\n".join(output) + "\n").encode("utf-8")
+
+    def _load_display_config(self) -> bytes:
+        try:
+            data = self.host_path(self.DISPLAY_CONFIG_PATH).read_bytes()
+        except OSError:
+            data = b""
+        return self._with_display_theme(data, self.ui_theme)
+
+    @classmethod
+    def _is_display_config(cls, guest: str) -> bool:
+        return guest.lower() == cls.DISPLAY_CONFIG_PATH
+
+    def _open_virtual_display_config(self, flags: int) -> int:
+        write_mode = flags & C.O_ACCMODE
+        writable = write_mode != C.O_RDONLY
+        if flags & C.O_TRUNC and writable:
+            data = io.BytesIO()
+        else:
+            data = io.BytesIO(self._display_config)
+        if flags & C.O_APPEND:
+            data.seek(0, os.SEEK_END)
+        return self._alloc_fd(VirtualFD(data, writable, self.DISPLAY_CONFIG_PATH))
 
     def guest_abs(self, path: str) -> str:
         path = (path or "").replace("\\", "/")
@@ -96,6 +143,8 @@ class GuestFS:
             host = self.host_path(guest)
         except (ValueError, PermissionError):
             return neg(EACCES)
+        if self._is_display_config(guest):
+            return self._open_virtual_display_config(flags)
         if guest.lower() == "0:/etc/locale.conf" and not host.exists():
             text = "lang=zh\n" if self.language == "zh" else "lang=en\n"
             return self._alloc_fd(VirtualFD(io.BytesIO(text.encode("ascii")), False))
@@ -187,6 +236,8 @@ class GuestFS:
             return neg(EBADF)
         if hasattr(value, "close"):
             try:
+                if isinstance(value, VirtualFD) and value.path == self.DISPLAY_CONFIG_PATH:
+                    self._display_config = value.data.getvalue()
                 value.close()
             except OSError:
                 return neg(EINVAL)
@@ -211,6 +262,8 @@ class GuestFS:
             host = self.host_path(guest)
         except (ValueError, PermissionError):
             return neg(EACCES)
+        if self._is_display_config(guest):
+            return (C.FS_TYPE_FILE, len(self._display_config))
         if guest.lower() == "0:/etc/locale.conf" and not host.exists():
             return (C.FS_TYPE_FILE, len("lang=zh\n" if self.language == "zh" else "lang=en\n"))
         try:
@@ -231,10 +284,13 @@ class GuestFS:
         if not host.is_dir():
             return neg(ENOTDIR)
         try:
-            return [
+            entries = [
                 (C.FS_TYPE_DIR if child.is_dir() else C.FS_TYPE_FILE, child.name)
                 for child in sorted(host.iterdir(), key=lambda p: p.name.lower())
             ]
+            if self.guest_abs(path).lower() == "0:/etc" and not any(name.lower() == "display.conf" for _, name in entries):
+                entries.append((C.FS_TYPE_FILE, "display.conf"))
+            return entries
         except OSError:
             return neg(EACCES)
 
