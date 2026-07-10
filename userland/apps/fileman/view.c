@@ -6,6 +6,8 @@ void draw_fileman(struct leonos_ui_surface *ui)
     struct leonos_ui_menubar_item menu_items[] = {
         {T("File", "文件"), FILEMAN_MENU_FILE, 54, 0},
         {T("View", "查看"), FILEMAN_MENU_VIEW, 54, 0},
+        {T("Edit", "编辑"), FILEMAN_MENU_EDIT, 54, 0},
+        {T("Recycle", "回收站"), FILEMAN_MENU_RECYCLE, 70, 0},
     };
     struct leonos_ui_list_column cols[] = {
         {T("Type", "类型"), 58},
@@ -53,6 +55,11 @@ void draw_fileman(struct leonos_ui_surface *ui)
         cells[1] = entries[i].name;
         leonos_ui_listview_row(ui, l.list_x + 2, l.rows_y + row * ROW_H, l.list_w, cols, cells, 2,
                                file_list.selected == (int32_t)i ? LEONOS_UI_MENU_SELECTED : 0);
+        if (fileman_entry_marked(i)) {
+            leonos_ui_text(ui, l.list_x + l.list_w - 14, l.rows_y + row * ROW_H + 4,
+                           "*", 0x00007000U,
+                           file_list.selected == (int32_t)i ? 0x00e7f0ffU : LEONOS_UI_WHITE);
+        }
     }
     leonos_ui_vscrollbar(ui, l.scrollbar_x, l.list_y + 2, 18, l.scrollbar_h - 4,
                          file_list.scroll, entry_count > l.visible_rows ? entry_count : l.visible_rows,
@@ -60,16 +67,24 @@ void draw_fileman(struct leonos_ui_surface *ui)
                          entry_count <= l.visible_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
 
     leonos_ui_statusbar(ui, view_h - STATUS_H, STATUS_H, status_text);
+    if (fileman_operation_active) {
+        leonos_ui_progress(ui, 12, view_h - STATUS_H - 24, view_w > 24 ? view_w - 24 : 1,
+                           16, fileman_operation_percent, 100);
+        leonos_ui_text_clipped(ui, 16, view_h - STATUS_H - 46,
+                               view_w > 32 ? view_w - 32 : 1,
+                               fileman_operation_text, LEONOS_UI_DARK,
+                               LEONOS_UI_WHITE);
+    }
 
     if (menu_open == FILEMAN_MENU_FILE) {
-        struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
+        struct leonos_ui_context_menu_item items[FILEMAN_FILE_MENU_COUNT];
         struct leonos_ui_rect r;
-        build_context_menu_items(items, FILEMAN_CONTEXT_MENU_COUNT);
+        build_file_menu_items(items, FILEMAN_FILE_MENU_COUNT);
         leonos_ui_menubar_item_rect(0, 0, menu_items,
                                     sizeof(menu_items) / sizeof(menu_items[0]),
                                     FILEMAN_MENU_FILE, &r);
         leonos_ui_menu_popup(ui, (uint32_t)r.x, MENU_BAR_H, 204,
-                             items, FILEMAN_CONTEXT_MENU_COUNT, 0);
+                             items, FILEMAN_FILE_MENU_COUNT, 0);
     } else if (menu_open == FILEMAN_MENU_VIEW) {
         struct leonos_ui_context_menu_item items[] = {
             {T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0},
@@ -82,6 +97,24 @@ void draw_fileman(struct leonos_ui_surface *ui)
                                     FILEMAN_MENU_VIEW, &r);
         leonos_ui_menu_popup(ui, (uint32_t)r.x, MENU_BAR_H, 154,
                              items, sizeof(items) / sizeof(items[0]), 0);
+    } else if (menu_open == FILEMAN_MENU_EDIT) {
+        struct leonos_ui_context_menu_item items[FILEMAN_EDIT_MENU_COUNT];
+        struct leonos_ui_rect r;
+        build_edit_menu_items(items, FILEMAN_EDIT_MENU_COUNT);
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    FILEMAN_MENU_EDIT, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, MENU_BAR_H, 190,
+                             items, FILEMAN_EDIT_MENU_COUNT, 0);
+    } else if (menu_open == FILEMAN_MENU_RECYCLE) {
+        struct leonos_ui_context_menu_item items[FILEMAN_RECYCLE_MENU_COUNT];
+        struct leonos_ui_rect r;
+        build_recycle_menu_items(items, FILEMAN_RECYCLE_MENU_COUNT);
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    FILEMAN_MENU_RECYCLE, &r);
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, MENU_BAR_H, 204,
+                             items, FILEMAN_RECYCLE_MENU_COUNT, 0);
     }
     if (context_menu_active || context_menu_animating) {
         struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];

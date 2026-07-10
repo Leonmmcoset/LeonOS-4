@@ -39,6 +39,7 @@
 #define LEONOS_GUI_IOCTL_PRESENT_WINDOW 0x4c475046ULL
 #define LEONOS_GUI_IOCTL_FETCH_WINDOW 0x4c475746ULL
 #define LEONOS_GUI_IOCTL_WINDOW_EVENT 0x4c475745ULL
+#define LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT 0x4c475457ULL
 #define LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT 0x4c475753ULL
 #define LEONOS_GUI_IOCTL_DESTROY_WINDOW 0x4c475744ULL
 #define LEONOS_GUI_IOCTL_TASK_KILL 0x4c544b49ULL
@@ -143,6 +144,16 @@ static int require_network_config_access(void)
         return 0;
     }
     return -LEONOS_EPERM;
+}
+
+static int require_background_service(void)
+{
+    struct task *task = sched_current_task();
+    if (!task || !(task->flags & TASK_FLAG_SERVICE) ||
+        (task->flags & TASK_FLAG_WINDOW_SERVER)) {
+        return -LEONOS_EPERM;
+    }
+    return 0;
 }
 
 static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
@@ -325,6 +336,11 @@ struct gui_fetch_window_user {
     uint32_t out_width;
     uint32_t out_height;
     uint32_t *pixels;
+};
+
+struct gui_wait_app_event_user {
+    struct gui_ipc_app_event event;
+    uint32_t timeout_ms;
 };
 
 struct exec_params_kernel {
@@ -2169,6 +2185,30 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return gui_ipc_pop_event(sched_current_pid(), dst->window_id, dst) ? 1 : 0;
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT) {
+        struct gui_wait_app_event_user *wait;
+        uint64_t delta;
+        if (!user_range_ok(a2, sizeof(struct gui_wait_app_event_user))) {
+            return -LEONOS_EFAULT;
+        }
+        wait = (struct gui_wait_app_event_user *)(uintptr_t)a2;
+        if (!wait->event.window_id) {
+            return -LEONOS_EINVAL;
+        }
+        if (gui_ipc_pop_event(sched_current_pid(), wait->event.window_id, &wait->event)) {
+            return 1;
+        }
+        if (wait->timeout_ms == 0) {
+            return 0;
+        }
+        delta = ((uint64_t)wait->timeout_ms * NTCLKS_TICK_HZ + 999ULL) / 1000ULL;
+        if (delta == 0) {
+            delta = 1;
+        }
+        sched_wait_current_for_window_event(wait->event.window_id, time_ticks() + delta);
+        return 0;
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT) {
         int ret = require_window_server();
         if (ret < 0) {
@@ -2447,7 +2487,18 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         return time_wall_clock((struct leonos_time_info *)(uintptr_t)a2) == 0
                    ? 0
-                   : -LEONOS_EINVAL;
+                    : -LEONOS_EINVAL;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_TIME_NTP_SYNC) {
+        int ret = require_background_service();
+        if (ret < 0) {
+            return ret;
+        }
+        if (!user_range_ok(a2, sizeof(struct leonos_time_sync))) {
+            return -LEONOS_EFAULT;
+        }
+        return net_ntp_sync((struct leonos_time_sync *)(uintptr_t)a2);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_MACHINE_IDENTITY) {

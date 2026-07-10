@@ -692,7 +692,7 @@ int main(void)
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                                   OOBE_MAX_W, pixels);
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, 20U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
                 update_surface_size(event.width, event.height);
                 if (current_page == OOBE_PAGE_LICENSE_BROWSER) {

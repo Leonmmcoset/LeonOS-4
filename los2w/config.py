@@ -15,6 +15,21 @@ def _config_dir() -> Path:
     return Path.home() / ".los2w"
 
 
+def _recent(values: object, current: str, limit: int = 10) -> list[str]:
+    ordered: list[str] = []
+    if current:
+        ordered.append(current)
+    if isinstance(values, list):
+        ordered.extend(value for value in values if isinstance(value, str) and value)
+    result: list[str] = []
+    for value in ordered:
+        if value not in result:
+            result.append(value)
+        if len(result) >= limit:
+            break
+    return result
+
+
 @dataclass
 class HostConfig:
     root_dir: str = ""
@@ -23,6 +38,8 @@ class HostConfig:
     guest_username: str = "los2w"
     guest_home: str = "0:/users/los2w"
     guest_admin: bool = True
+    recent_elfs: list[str] | None = None
+    recent_roots: list[str] | None = None
 
 
 class ConfigStore:
@@ -40,8 +57,17 @@ class ConfigStore:
                 setattr(cfg, key, data[key])
         if cfg.language not in ("en", "zh"):
             cfg.language = "en"
+        cfg.recent_elfs = _recent(cfg.recent_elfs, cfg.last_elf)
+        cfg.recent_roots = _recent(cfg.recent_roots, cfg.root_dir)
         return cfg
 
     def save(self, cfg: HostConfig) -> None:
+        cfg.recent_elfs = _recent(cfg.recent_elfs, cfg.last_elf)
+        cfg.recent_roots = _recent(cfg.recent_roots, cfg.root_dir)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(asdict(cfg), ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def reports_dir(self) -> Path:
+        path = self.path.parent / "reports"
+        path.mkdir(parents=True, exist_ok=True)
+        return path

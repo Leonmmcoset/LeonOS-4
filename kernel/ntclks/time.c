@@ -226,6 +226,26 @@ int time_wall_clock(struct leonos_time_info *info)
     return 0;
 }
 
+int time_set_wall_clock(uint64_t unix_seconds)
+{
+    struct leonos_time_info info;
+    if (unix_seconds < 1ULL) {
+        return -1;
+    }
+    unix_to_datetime(unix_seconds, &info);
+    if (!rtc_datetime_valid(info.year, info.month, info.day, info.hour,
+                            info.minute, info.second)) {
+        return -1;
+    }
+    wall_unix_seconds = unix_seconds;
+    wall_subticks = 0;
+    wall_clock_valid = 1;
+    console_printf("[ntclks] wall clock set %u-%u-%u %u:%u:%u\n",
+                   info.year, info.month, info.day, info.hour,
+                   info.minute, info.second);
+    return 0;
+}
+
 void time_sleep_ms(uint64_t ms)
 {
     uint64_t delta = (ms * NTCLKS_TICK_HZ + 999ULL) / 1000ULL;

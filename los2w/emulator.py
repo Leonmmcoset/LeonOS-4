@@ -170,7 +170,11 @@ class LeonOSEmulator:
         return not self.stop_requested and self.exit_code is None
 
     def log_registers(self) -> None:
-        regs = {
+        regs = self.register_snapshot()
+        self.logger.write(" ".join(f"{name}=0x{value:x}" for name, value in regs.items()))
+
+    def register_snapshot(self) -> dict[str, int]:
+        return {
             "rip": self.uc.reg_read(UC_X86_REG_RIP),
             "rax": self.uc.reg_read(UC_X86_REG_RAX),
             "rdi": self.uc.reg_read(UC_X86_REG_RDI),
@@ -180,4 +184,3 @@ class LeonOSEmulator:
             "r8": self.uc.reg_read(UC_X86_REG_R8),
             "r9": self.uc.reg_read(UC_X86_REG_R9),
         }
-        self.logger.write(" ".join(f"{name}=0x{value:x}" for name, value in regs.items()))

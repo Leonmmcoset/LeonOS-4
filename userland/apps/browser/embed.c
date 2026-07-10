@@ -78,6 +78,7 @@ void browser_embed_init(uint32_t width, uint32_t height, const char *initial_url
     view_w = init_w;
     view_h = init_h;
     browser_embed_reset();
+    browser_bookmarks_load();
     copy_text(address_input, sizeof(address_input), initial_url ? initial_url : "");
     leonos_ui_edit_state_init(&address_edit, address_input, sizeof(address_input));
     address_edit.focused = 0;

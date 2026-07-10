@@ -2,6 +2,7 @@
 #define NTCLKS_NET_H
 
 #include <leonos/net.h>
+#include <leonos/system.h>
 #include <ntclks/types.h>
 
 struct task;
@@ -12,6 +13,7 @@ int net_get_config(struct leonos_net_config *config);
 int net_dhcp_renew(struct leonos_net_dhcp *request);
 int net_ping(struct leonos_net_ping *request);
 int net_dns_resolve(struct leonos_net_dns *request);
+int net_ntp_sync(struct leonos_time_sync *request);
 int net_http_get(struct leonos_net_http_get *request);
 int net_socket_open(struct leonos_net_socket_open *request, uint32_t owner_pid,
                     uint32_t owner_uid);

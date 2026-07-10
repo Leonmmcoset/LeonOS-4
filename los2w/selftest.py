@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
 from . import constants as C
 from . import structs
+from .config import ConfigStore, HostConfig
+from .diagnostics import write_report
 from .fs import GuestFS
 from .logging import LogBuffer
 
@@ -47,9 +50,23 @@ def run_self_tests() -> list[str]:
         assert structs.SocketIO.SIZE == 32
         assert structs.TextLayout.SIZE == 40
         assert structs.TEXT_GLYPH_SIZE == 20
+        assert structs.TimeSync.SIZE == 152
+        sync = structs.TimeSync(4000, C.NET_STATUS_OK, 0, 1, 1700000000, "pool.ntp.org")
+        assert structs.TimeSync.unpack(sync.pack()) == sync
         assert len(structs.pack_net_config()) == 40
         event = structs.GuiAppEvent(window_id=3, type=C.APP_EVENT_KEY_DOWN, keycode=C.KEY_LEFT_SHIFT, pressed=1)
         assert structs.GuiAppEvent.unpack(event.pack()) == event
+
+        store = ConfigStore(root / "los2w-config.json")
+        store.save(HostConfig(last_elf="browser.elf", root_dir="guest-root",
+                              recent_elfs=["oshlp.elf", "browser.elf"],
+                              recent_roots=["old-root", "guest-root"]))
+        cfg = store.load()
+        assert cfg.recent_elfs == ["browser.elf", "oshlp.elf"]
+        assert cfg.recent_roots == ["guest-root", "old-root"]
+
+        report = write_report(root / "report.json", logger, reason="self-test")
+        assert json.loads(report.read_text(encoding="utf-8"))["reason"] == "self-test"
 
     lines.append("self-test ok")
     return lines

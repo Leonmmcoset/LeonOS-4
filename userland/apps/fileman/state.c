@@ -5,7 +5,7 @@ uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
 struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
 char current_path[LEONOS_FS_PATH_LEN] = "0:/";
 char home_path[LEONOS_AUTH_HOME_LEN];
-char status_text[96] = "Ready";
+char status_text[160] = "Ready";
 uint32_t entry_count;
 struct leonos_ui_listview_state file_list;
 int32_t last_click_index = -1;
@@ -19,6 +19,12 @@ uint32_t context_menu_x;
 uint32_t context_menu_y;
 uint32_t view_w = FILEMAN_W;
 uint32_t view_h = FILEMAN_H;
+uint64_t selected_mask;
+uint32_t fileman_window_id;
+struct leonos_ui_surface fileman_ui;
+uint8_t fileman_operation_active;
+uint32_t fileman_operation_percent;
+char fileman_operation_text[160];
 
 struct fileman_layout current_layout(void)
 {

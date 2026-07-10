@@ -29,7 +29,10 @@
 #define FILEMAN_KEY_UP 72U
 #define FILEMAN_KEY_DOWN 80U
 #define FILEMAN_CONTEXT_MENU_W 206
-#define FILEMAN_CONTEXT_MENU_COUNT 10
+#define FILEMAN_CONTEXT_MENU_COUNT 12
+#define FILEMAN_FILE_MENU_COUNT 9
+#define FILEMAN_EDIT_MENU_COUNT 7
+#define FILEMAN_RECYCLE_MENU_COUNT 4
 #define FILEMAN_DETAILS_W 560
 #define FILEMAN_DETAILS_H 360
 #define FILEMAN_FOLDER_SIZE_MAX_DEPTH 16
@@ -40,6 +43,8 @@ enum {
     FILEMAN_MENU_NONE = 0,
     FILEMAN_MENU_FILE = 1,
     FILEMAN_MENU_VIEW = 2,
+    FILEMAN_MENU_EDIT = 3,
+    FILEMAN_MENU_RECYCLE = 4,
 };
 
 enum {
@@ -55,6 +60,16 @@ enum {
     FILEMAN_ACTION_CREATE_SHORTCUT = 10,
     FILEMAN_ACTION_ROOT = 11,
     FILEMAN_ACTION_ABOUT = 12,
+    FILEMAN_ACTION_COPY = 13,
+    FILEMAN_ACTION_CUT = 14,
+    FILEMAN_ACTION_PASTE = 15,
+    FILEMAN_ACTION_TOGGLE_MARK = 16,
+    FILEMAN_ACTION_SELECT_ALL = 17,
+    FILEMAN_ACTION_CLEAR_SELECTION = 18,
+    FILEMAN_ACTION_RECYCLE = 19,
+    FILEMAN_ACTION_DELETE_PERMANENT = 20,
+    FILEMAN_ACTION_RESTORE = 21,
+    FILEMAN_ACTION_EMPTY_RECYCLE = 22,
 };
 
 struct fileman_layout {
@@ -86,7 +101,7 @@ extern uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
 extern struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
 extern char current_path[LEONOS_FS_PATH_LEN];
 extern char home_path[LEONOS_AUTH_HOME_LEN];
-extern char status_text[96];
+extern char status_text[160];
 extern uint32_t entry_count;
 extern struct leonos_ui_listview_state file_list;
 extern int32_t last_click_index;
@@ -100,6 +115,12 @@ extern uint32_t context_menu_x;
 extern uint32_t context_menu_y;
 extern uint32_t view_w;
 extern uint32_t view_h;
+extern uint64_t selected_mask;
+extern uint32_t fileman_window_id;
+extern struct leonos_ui_surface fileman_ui;
+extern uint8_t fileman_operation_active;
+extern uint32_t fileman_operation_percent;
+extern char fileman_operation_text[160];
 
 struct fileman_layout current_layout(void);
 void copy_text(char *dst, uint32_t dst_len, const char *src);
@@ -115,6 +136,12 @@ int is_root_path(const char *path);
 int selected_entry_valid(void);
 int selected_entry_is_file(void);
 int selected_entry_is_mutable(void);
+int fileman_entry_marked(uint32_t index);
+uint32_t fileman_selected_count(void);
+void fileman_toggle_selected(void);
+void fileman_select_all(void);
+void fileman_clear_selection(void);
+int fileman_is_recycle_dir(void);
 int list_index_at(int32_t x, int32_t y);
 void format_size_text(char *buf, uint32_t cap, uint64_t bytes);
 void set_status(const char *text);
@@ -129,6 +156,9 @@ void build_parent_path(char *dst, uint32_t dst_len);
 const char *path_basename(const char *path);
 const char *entry_type_name(const struct leonos_dir_entry *entry);
 void build_context_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count);
+void build_file_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count);
+void build_edit_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count);
+void build_recycle_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count);
 void format_contains_text(char *buf, uint32_t cap, const struct folder_size_info *info);
 int accumulate_folder_size(const char *path, struct folder_size_info *info, uint32_t depth);
 void show_details_selected(void);
@@ -147,6 +177,14 @@ void create_new_folder(void);
 void create_shortcut_for_selected(void);
 void rename_selected_entry(void);
 void delete_selected_entry(void);
+void copy_selected_entries(uint8_t cut);
+void paste_clipboard(void);
+int fileman_clipboard_available(void);
+void recycle_selected_entries(void);
+void restore_selected_entry(void);
+void empty_recycle_bin(void);
+void permanent_delete_selected_entries(void);
+void fileman_present_progress(void);
 void execute_action(uint32_t action);
 int handle_menu_click(int32_t x, int32_t y);
 int handle_context_menu_click(int32_t x, int32_t y);

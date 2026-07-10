@@ -35,6 +35,12 @@ uint8_t browser_form_focus_active;
 uint32_t browser_form_focus_control;
 struct leonos_ui_edit_state browser_form_edit_state;
 struct leonos_ui_toast_state browser_toast;
+struct browser_bookmark browser_bookmarks[BROWSER_MAX_BOOKMARKS];
+uint32_t browser_bookmark_count;
+char browser_find_query[BROWSER_FIND_CAP];
+int32_t browser_find_row = -1;
+uint32_t browser_find_start;
+uint32_t browser_find_len;
 
 uint32_t page_y(void)
 {

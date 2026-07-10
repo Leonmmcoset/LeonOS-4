@@ -20,6 +20,57 @@ int selected_entry_is_mutable(void)
     return selected_entry_valid() && entries[file_list.selected].type != LEONOS_FS_TYPE_DEVICE;
 }
 
+int fileman_entry_marked(uint32_t index)
+{
+    return index < 64U && (selected_mask & (1ULL << index)) != 0;
+}
+
+uint32_t fileman_selected_count(void)
+{
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < entry_count && i < 64U; ++i) {
+        if (fileman_entry_marked(i)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+void fileman_toggle_selected(void)
+{
+    if (!selected_entry_valid() || file_list.selected >= 64) {
+        set_status(T("Select an item", "请选择一个项目"));
+        return;
+    }
+    selected_mask ^= 1ULL << (uint32_t)file_list.selected;
+    set_status(fileman_entry_marked((uint32_t)file_list.selected)
+                   ? T("Item marked", "已标记项目")
+                   : T("Item unmarked", "已取消标记项目"));
+}
+
+void fileman_select_all(void)
+{
+    selected_mask = entry_count >= 64U ? UINT64_MAX :
+                    (entry_count ? (1ULL << entry_count) - 1ULL : 0);
+    set_status(T("All items marked", "已标记所有项目"));
+}
+
+void fileman_clear_selection(void)
+{
+    selected_mask = 0;
+    set_status(T("Marks cleared", "已清除标记"));
+}
+
+int fileman_is_recycle_dir(void)
+{
+    char recycle[LEONOS_FS_PATH_LEN];
+    if (!home_path[0] && !refresh_home_path()) {
+        return 0;
+    }
+    build_path_join(recycle, sizeof(recycle), home_path, "recycle-bin");
+    return text_eq(current_path, recycle);
+}
+
 int list_index_at(int32_t x, int32_t y)
 {
     struct fileman_layout l = current_layout();
@@ -199,7 +250,7 @@ const char *entry_type_name(const struct leonos_dir_entry *entry)
 }
 
 void build_context_menu_items(struct leonos_ui_context_menu_item *items,
-                                     uint32_t count)
+                                      uint32_t count)
 {
     uint32_t has_item = selected_entry_valid();
     uint32_t has_file = selected_entry_is_file();
@@ -212,23 +263,97 @@ void build_context_menu_items(struct leonos_ui_context_menu_item *items,
     items[1] = (struct leonos_ui_context_menu_item){
         T("Open With...", "打开方式..."), FILEMAN_ACTION_OPEN_WITH, has_file ? 0 : LEONOS_UI_MENU_DISABLED};
     items[2] = (struct leonos_ui_context_menu_item){
-        T("Default Program...", "默认程序..."), FILEMAN_ACTION_DEFAULT_PROGRAM,
-        has_file ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Copy", "复制"), FILEMAN_ACTION_COPY, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
     items[3] = (struct leonos_ui_context_menu_item){
-        T("Create Shortcut", "创建快捷方式"), FILEMAN_ACTION_CREATE_SHORTCUT,
-        has_file ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Cut", "剪切"), FILEMAN_ACTION_CUT, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
     items[4] = (struct leonos_ui_context_menu_item){
-        T("Details", "详细信息"), FILEMAN_ACTION_DETAILS, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+        T("Paste", "粘贴"), FILEMAN_ACTION_PASTE,
+        fileman_clipboard_available() ? 0 : LEONOS_UI_MENU_DISABLED};
     items[5] = (struct leonos_ui_context_menu_item){
-        T("Rename", "重命名"), FILEMAN_ACTION_RENAME, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
-    items[6] = (struct leonos_ui_context_menu_item){
-        T("Delete", "删除"), FILEMAN_ACTION_DELETE, has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+        fileman_entry_marked((uint32_t)(file_list.selected < 0 ? 0 : file_list.selected))
+            ? T("Unmark", "取消标记") : T("Mark for Batch", "标记为批量操作"),
+        FILEMAN_ACTION_TOGGLE_MARK, has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[6] = (struct leonos_ui_context_menu_item){"", 0, LEONOS_UI_MENU_SEPARATOR};
     items[7] = (struct leonos_ui_context_menu_item){
-        "", 0, LEONOS_UI_MENU_SEPARATOR};
+        T("Rename", "重命名"), FILEMAN_ACTION_RENAME,
+        has_mutable && fileman_selected_count() <= 1U ? 0 : LEONOS_UI_MENU_DISABLED};
     items[8] = (struct leonos_ui_context_menu_item){
-        T("New Folder", "新建文件夹"), FILEMAN_ACTION_NEW_FOLDER, 0};
+        T("Move to Recycle Bin", "移到回收站"), FILEMAN_ACTION_RECYCLE,
+        has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
     items[9] = (struct leonos_ui_context_menu_item){
+        T("Delete Permanently", "永久删除"), FILEMAN_ACTION_DELETE_PERMANENT,
+        has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[10] = (struct leonos_ui_context_menu_item){
+        T("Details", "详细信息"), FILEMAN_ACTION_DETAILS,
+        has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[11] = (struct leonos_ui_context_menu_item){
         T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0};
+}
+
+void build_file_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count)
+{
+    uint32_t has_item = selected_entry_valid();
+    uint32_t has_file = selected_entry_is_file();
+    uint32_t has_mutable = selected_entry_is_mutable();
+    if (!items || count < FILEMAN_FILE_MENU_COUNT) {
+        return;
+    }
+    items[0] = (struct leonos_ui_context_menu_item){T("Open", "打开"), FILEMAN_ACTION_OPEN,
+                                                     has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[1] = (struct leonos_ui_context_menu_item){T("Open With...", "打开方式..."), FILEMAN_ACTION_OPEN_WITH,
+                                                     has_file ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[2] = (struct leonos_ui_context_menu_item){T("Default Program...", "默认程序..."), FILEMAN_ACTION_DEFAULT_PROGRAM,
+                                                     has_file ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[3] = (struct leonos_ui_context_menu_item){T("Create Shortcut", "创建快捷方式"), FILEMAN_ACTION_CREATE_SHORTCUT,
+                                                     has_file ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[4] = (struct leonos_ui_context_menu_item){T("Details", "详细信息"), FILEMAN_ACTION_DETAILS,
+                                                     has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[5] = (struct leonos_ui_context_menu_item){"", 0, LEONOS_UI_MENU_SEPARATOR};
+    items[6] = (struct leonos_ui_context_menu_item){T("Rename", "重命名"), FILEMAN_ACTION_RENAME,
+                                                     has_mutable && fileman_selected_count() <= 1U ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[7] = (struct leonos_ui_context_menu_item){T("New Folder", "新建文件夹"), FILEMAN_ACTION_NEW_FOLDER, 0};
+    items[8] = (struct leonos_ui_context_menu_item){T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0};
+}
+
+void build_edit_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count)
+{
+    uint32_t has_mutable = selected_entry_is_mutable();
+    if (!items || count < FILEMAN_EDIT_MENU_COUNT) {
+        return;
+    }
+    items[0] = (struct leonos_ui_context_menu_item){T("Copy", "复制"), FILEMAN_ACTION_COPY,
+                                                     has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[1] = (struct leonos_ui_context_menu_item){T("Cut", "剪切"), FILEMAN_ACTION_CUT,
+                                                     has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[2] = (struct leonos_ui_context_menu_item){T("Paste", "粘贴"), FILEMAN_ACTION_PASTE,
+                                                     fileman_clipboard_available() ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[3] = (struct leonos_ui_context_menu_item){"", 0, LEONOS_UI_MENU_SEPARATOR};
+    items[4] = (struct leonos_ui_context_menu_item){
+        fileman_entry_marked((uint32_t)(file_list.selected < 0 ? 0 : file_list.selected))
+            ? T("Unmark", "取消标记") : T("Mark for Batch", "标记为批量操作"),
+        FILEMAN_ACTION_TOGGLE_MARK, selected_entry_valid() ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[5] = (struct leonos_ui_context_menu_item){T("Mark All", "标记全部"), FILEMAN_ACTION_SELECT_ALL,
+                                                     entry_count ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[6] = (struct leonos_ui_context_menu_item){T("Clear Marks", "清除标记"), FILEMAN_ACTION_CLEAR_SELECTION,
+                                                     fileman_selected_count() ? 0 : LEONOS_UI_MENU_DISABLED};
+}
+
+void build_recycle_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count)
+{
+    uint32_t has_item = selected_entry_valid();
+    uint32_t has_mutable = selected_entry_is_mutable();
+    uint32_t recycle = fileman_is_recycle_dir();
+    if (!items || count < FILEMAN_RECYCLE_MENU_COUNT) {
+        return;
+    }
+    items[0] = (struct leonos_ui_context_menu_item){T("Move to Recycle Bin", "移到回收站"), FILEMAN_ACTION_RECYCLE,
+                                                     !recycle && has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[1] = (struct leonos_ui_context_menu_item){T("Restore", "还原"), FILEMAN_ACTION_RESTORE,
+                                                     recycle && has_item ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[2] = (struct leonos_ui_context_menu_item){T("Delete Permanently", "永久删除"), FILEMAN_ACTION_DELETE_PERMANENT,
+                                                     has_mutable ? 0 : LEONOS_UI_MENU_DISABLED};
+    items[3] = (struct leonos_ui_context_menu_item){T("Empty Recycle Bin", "清空回收站"), FILEMAN_ACTION_EMPTY_RECYCLE,
+                                                     recycle && entry_count ? 0 : LEONOS_UI_MENU_DISABLED};
 }
 
 void format_contains_text(char *buf, uint32_t cap, const struct folder_size_info *info)
@@ -580,7 +705,7 @@ void show_details_selected(void)
                                   FILEMAN_DETAILS_H, FILEMAN_DETAILS_W,
                                   details_pixels);
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
@@ -742,6 +867,55 @@ void show_default_program_for_selected(void)
     show_open_with_for_path(path, 1);
 }
 
+static char sort_fold_ascii(char ch)
+{
+    return ch >= 'A' && ch <= 'Z' ? (char)(ch + ('a' - 'A')) : ch;
+}
+
+static int compare_entry_names(const char *left, const char *right)
+{
+    uint32_t index = 0;
+    while (left[index] && right[index]) {
+        char a = sort_fold_ascii(left[index]);
+        char b = sort_fold_ascii(right[index]);
+        if (a != b) {
+            return (uint8_t)a < (uint8_t)b ? -1 : 1;
+        }
+        ++index;
+    }
+    if (left[index]) {
+        return 1;
+    }
+    if (right[index]) {
+        return -1;
+    }
+    return 0;
+}
+
+static int compare_entries(const struct leonos_dir_entry *left,
+                           const struct leonos_dir_entry *right)
+{
+    uint32_t left_is_dir = left->type == LEONOS_FS_TYPE_DIR;
+    uint32_t right_is_dir = right->type == LEONOS_FS_TYPE_DIR;
+    if (left_is_dir != right_is_dir) {
+        return left_is_dir ? -1 : 1;
+    }
+    return compare_entry_names(left->name, right->name);
+}
+
+static void sort_directory_entries(uint32_t count)
+{
+    for (uint32_t i = 1; i < count; ++i) {
+        struct leonos_dir_entry entry = entries[i];
+        uint32_t slot = i;
+        while (slot && compare_entries(&entry, &entries[slot - 1U]) < 0) {
+            entries[slot] = entries[slot - 1U];
+            --slot;
+        }
+        entries[slot] = entry;
+    }
+}
+
 int reload_dir(void)
 {
     int fd = open(current_path, 0, 0);
@@ -756,7 +930,8 @@ int reload_dir(void)
     }
     leonos_ui_listview_state_set_count(&file_list, 0);
     while (count < FILEMAN_MAX_ENTRIES) {
-        ret = leonos_readdir(fd, &entries[count]);
+        struct leonos_dir_entry entry;
+        ret = leonos_readdir(fd, &entry);
         if (ret < 0) {
             close(fd);
             entry_count = 0;
@@ -768,10 +943,16 @@ int reload_dir(void)
         if (ret == 0) {
             break;
         }
+        if (fileman_is_recycle_dir() && text_eq(entry.name, ".leon-recycle-map")) {
+            continue;
+        }
+        entries[count] = entry;
         ++count;
     }
     close(fd);
+    sort_directory_entries(count);
     entry_count = count;
+    selected_mask = 0;
     leonos_ui_listview_state_set_count(&file_list, entry_count);
     file_list.selected = entry_count ? 0 : -1;
     file_list.scroll = 0;

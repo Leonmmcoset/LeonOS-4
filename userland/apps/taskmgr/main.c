@@ -351,7 +351,7 @@ static void show_task_details(void)
                                   TASKMGR_DETAILS_H, TASKMGR_DETAILS_W,
                                   details_pixels);
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
@@ -784,7 +784,8 @@ int main(void)
     for (;;) {
         unsigned long now = leonos_uptime_ms();
         event.window_id = (uint32_t)window_id;
-        while (leonos_gui_poll_app_event(&event) > 0) {
+        while (leonos_gui_wait_app_event(&event,
+                                         context_menu_animating ? 20U : LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 return 0;
             }

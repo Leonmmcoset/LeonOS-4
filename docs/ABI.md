@@ -28,6 +28,15 @@ private file mappings; `munmap` supports whole or partial unmapping.
 See [Syscalls](SYSCALLS.md) for the detailed syscall table, ioctl groups, and
 current limitations.
 
+## Time Synchronization ABI
+
+`LEONOS_IOCTL_TIME_NTP_SYNC` accepts a `struct leonos_time_sync` from
+`include/leonos/system.h`. The request may leave `server` empty to use
+`pool.ntp.org`; the result returns the selected server, resolved IPv4 address,
+network status, validated Unix seconds, and `valid=1` only after the kernel
+updates its software wall clock. The ioctl is limited to trusted background
+service tasks, so ordinary applications cannot change system time.
+
 ## Device model
 
 The current devfs surface exposes the framebuffer as:
@@ -256,5 +265,8 @@ The current service keys are `desktop`, `dhcp`, `network_icon`, `rtc_clock`,
 and `ntp_sync`. `desktop` is fixed on. `dhcp` controls whether kernel boot
 network initialization attempts DHCP before keeping the static fallback and is
 also supervised by `serviced.elf` after the desktop starts. `network_icon` and
-`rtc_clock` are read by the desktop taskbar. `ntp_sync` is wired into service
-state reporting but remains failed/reserved until a kernel set-time ABI exists.
+`rtc_clock` are read by the desktop taskbar. `ntp_sync` asks the protected
+`serviced.elf` task to resolve `pool.ntp.org`, send an NTP UDP request, and set
+the kernel software wall clock after validating the server reply. It retries
+failed synchronization after five minutes and refreshes a successful sync every
+six hours. This updates the runtime clock only; it does not write the RTC/CMOS.

@@ -10,6 +10,7 @@ TEXT = {
     "browse": ("Browse", "浏览"),
     "run": ("Run", "运行"),
     "stop": ("Stop", "停止"),
+    "export_report": ("Export report", "导出报告"),
     "language": ("Language", "语言"),
     "english": ("English", "英文"),
     "chinese": ("Chinese", "中文"),
@@ -22,6 +23,8 @@ TEXT = {
     "select_root": ("Select 0:/ root", "选择 0:/ 根目录"),
     "smoke_ok": ("Smoke test reached a presented window.", "烟测已显示窗口。"),
     "smoke_timeout": ("Smoke timeout reached.", "烟测超时结束。"),
+    "report_saved": ("Diagnostic report saved:", "诊断报告已保存："),
+    "no_report": ("Run a guest application before exporting a report.", "请先运行一个来宾应用再导出报告。"),
 }
 
 

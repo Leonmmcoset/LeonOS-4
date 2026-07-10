@@ -2,7 +2,6 @@
 
 int main(int argc, char **argv, char **envp)
 {
-    struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     int window_id;
     (void)envp;
@@ -16,7 +15,8 @@ int main(int argc, char **argv, char **envp)
         return 1;
     }
 
-    leonos_ui_bind(&ui, pixels, view_w, view_h, FILEMAN_MAX_W);
+    fileman_window_id = (uint32_t)window_id;
+    leonos_ui_bind(&fileman_ui, pixels, view_w, view_h, FILEMAN_MAX_W);
     leonos_ui_listview_state_init(&file_list, current_layout().visible_rows, ROW_H);
     file_list.focused = 1;
     refresh_home_path();
@@ -28,11 +28,12 @@ int main(int argc, char **argv, char **envp)
     if (navigate_to_path(current_path) < 0 && !text_eq(current_path, "0:/")) {
         navigate_to_path("0:/");
     }
-    present_fileman((uint32_t)window_id, &ui);
+    present_fileman(fileman_window_id, &fileman_ui);
 
     for (;;) {
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event,
+                                      context_menu_animating ? 20U : LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 return 0;
             }
@@ -43,15 +44,15 @@ int main(int argc, char **argv, char **envp)
                     handle_click(event.x, event.y);
                 }
                 file_list.focused = 1;
-                present_fileman((uint32_t)window_id, &ui);
+                present_fileman(fileman_window_id, &fileman_ui);
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
                 handle_key(event.keycode);
-                present_fileman((uint32_t)window_id, &ui);
+                present_fileman(fileman_window_id, &fileman_ui);
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
                 if (handle_wheel(event.x, event.y, event.dy)) {
-                    present_fileman((uint32_t)window_id, &ui);
+                    present_fileman(fileman_window_id, &fileman_ui);
                 }
             }
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE ||
@@ -64,10 +65,10 @@ int main(int argc, char **argv, char **envp)
                 }
                 file_list.visible_rows = current_layout().visible_rows;
                 leonos_ui_listview_state_set_count(&file_list, entry_count);
-                present_fileman((uint32_t)window_id, &ui);
+                present_fileman(fileman_window_id, &fileman_ui);
             }
         } else if (context_menu_animating) {
-            present_fileman((uint32_t)window_id, &ui);
+            present_fileman(fileman_window_id, &fileman_ui);
             sleep_ms(10);
             continue;
         } else {

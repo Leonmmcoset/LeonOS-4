@@ -170,6 +170,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task->entry = entry;
     task->stack_top = 0;
     task->wake_tick = 0;
+    task->wait_window_id = 0;
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
@@ -204,6 +205,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->entry = entry;
     task->stack_top = stack_top;
     task->wake_tick = 0;
+    task->wait_window_id = 0;
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
@@ -334,6 +336,7 @@ void sched_create_idle_task(void)
     task->entry = 0;
     task->stack_top = 0;
     task->wake_tick = 0;
+    task->wait_window_id = 0;
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
@@ -398,16 +401,19 @@ void sched_release_task_resources(struct task *task)
 
 void sched_on_tick(void)
 {
+    struct task *current;
     ++scheduler_ticks;
-    if (current_pid == 0) {
-        ++scheduler_idle_ticks;
-    } else {
+    current = sched_find(current_pid);
+    if (current && current->state == TASK_RUNNING) {
         ++scheduler_busy_ticks;
+    } else {
+        ++scheduler_idle_ticks;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i].state == TASK_BLOCKED && tasks[i].wake_tick &&
             tasks[i].wake_tick <= scheduler_ticks) {
             tasks[i].wake_tick = 0;
+            tasks[i].wait_window_id = 0;
             tasks[i].state = TASK_READY;
         }
     }
@@ -567,6 +573,8 @@ void sched_mark_ready(uint32_t pid)
     if (!task || task->state == TASK_EXITED) {
         return;
     }
+    task->wake_tick = 0;
+    task->wait_window_id = 0;
     task->state = TASK_READY;
 }
 
@@ -576,8 +584,31 @@ void sched_sleep_current_until(uint64_t wake_tick)
     if (!task || task->pid == 0 || task->state == TASK_EXITED) {
         return;
     }
+    task->wait_window_id = 0;
     task->wake_tick = wake_tick;
     task->state = TASK_BLOCKED;
+}
+
+void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick)
+{
+    struct task *task = sched_current_task();
+    if (!task || task->pid == 0 || task->state == TASK_EXITED || !window_id) {
+        return;
+    }
+    task->wait_window_id = window_id;
+    task->wake_tick = wake_tick;
+    task->state = TASK_BLOCKED;
+}
+
+void sched_wake_window_event(uint32_t pid, uint32_t window_id)
+{
+    struct task *task = sched_find(pid);
+    if (!task || task->state != TASK_BLOCKED || task->wait_window_id != window_id) {
+        return;
+    }
+    task->wake_tick = 0;
+    task->wait_window_id = 0;
+    task->state = TASK_READY;
 }
 
 int sched_kill_user_task(uint32_t pid, uint64_t code)

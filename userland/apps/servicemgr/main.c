@@ -52,7 +52,7 @@ static struct service_row service_rows[SERVICEMGR_ROWS] = {
      "Desktop taskbar HH:MM:SS clock.", "桌面任务栏 HH:MM:SS 时钟。", 1, 0,
      "unknown", "runtime state unavailable", 0},
     {"ntp_sync", "Time sync", "网络校时",
-     "Reserved until a kernel set-time ABI exists.", "等待内核设置时间 ABI 后启用。", 0, 0,
+     "Synchronize the software clock through pool.ntp.org.", "通过 pool.ntp.org 同步软件时钟。", 0, 0,
      "unknown", "runtime state unavailable", 0},
 };
 
@@ -592,7 +592,7 @@ int main(void)
     present(window_id, &ui);
     for (;;) {
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 return 0;
             }

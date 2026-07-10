@@ -139,7 +139,7 @@ static void mouse_publish(int32_t new_x, int32_t new_y, uint8_t buttons, const c
     }
 }
 
-static void mouse_publish_wheel(int8_t wheel, const char *tag)
+static void mouse_publish_wheel(int32_t wheel, const char *tag)
 {
     if (wheel == 0) {
         return;
@@ -155,6 +155,18 @@ static void mouse_publish_wheel(int8_t wheel, const char *tag)
                        state.y,
                        state.buttons);
     }
+}
+
+static int32_t vmware_wheel_delta(uint32_t raw_wheel)
+{
+    int8_t wheel = (int8_t)(raw_wheel & 0xffu);
+    if (wheel > 0) {
+        return -1;
+    }
+    if (wheel < 0) {
+        return 1;
+    }
+    return 0;
 }
 
 static int wait_input_clear(void)
@@ -347,18 +359,21 @@ static void vmware_drain_events(void)
         struct vmware_call_regs data_regs = vmware_call(VMWARE_CMD_ABSPOINTER_DATA, 4);
         uint32_t status = data_regs.eax;
         uint8_t buttons = vmware_buttons(status);
+        int32_t wheel = vmware_wheel_delta(data_regs.edx);
 
         if (status & VMMOUSE_RELATIVE_PACKET) {
             mouse_publish(state.x + (int32_t)data_regs.ebx,
                           state.y - (int32_t)data_regs.ecx,
                           buttons,
                           "vmware-rel");
+            mouse_publish_wheel(wheel, "vmware-rel");
             continue;
         }
 
         int32_t new_x = max_x ? (int32_t)(((uint64_t)data_regs.ebx * max_x) / 0xffffu) : 0;
         int32_t new_y = max_y ? (int32_t)(((uint64_t)data_regs.ecx * max_y) / 0xffffu) : 0;
         mouse_publish(new_x, new_y, buttons, "vmware-abs");
+        mouse_publish_wheel(wheel, "vmware-abs");
     }
 }
 

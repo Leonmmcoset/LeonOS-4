@@ -87,7 +87,7 @@ void desktop_run(void)
     unsigned long last_log = 0;
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
     unsigned long last_services_refresh = leonos_uptime_ms();
-    unsigned idle_spins = 0;
+    unsigned idle_sleep_ms = 10;
     for (;;) {
         struct leonos_gui_window_msg window_msg;
         int did_work = 0;
@@ -172,13 +172,12 @@ void desktop_run(void)
         }
         desktop_update_display_confirmation();
         if (did_work) {
-            idle_spins = 0;
+            idle_sleep_ms = 10;
             continue;
         }
-        if ((idle_spins++ & 31u) == 31u) {
-            sleep_ms(1);
-        } else {
-            sched_yield();
+        sleep_ms(idle_sleep_ms);
+        if (idle_sleep_ms < 50) {
+            idle_sleep_ms += 10;
         }
     }
 }

@@ -3,3 +3,4 @@ build/
 *.log
 *.tmp
 .kagent
+dist/

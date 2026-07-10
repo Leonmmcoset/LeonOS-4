@@ -484,6 +484,7 @@ int gui_ipc_push_event(uint32_t caller_pid, uint32_t window_id,
     }
     slot->events[slot->event_head] = *event;
     slot->event_head = next;
+    sched_wake_window_event(slot->owner_pid, window_id);
     return 1;
 }
 

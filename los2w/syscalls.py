@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 import time
 import unicodedata
+from collections import Counter
 
 from unicorn.x86_const import UC_X86_REG_R10, UC_X86_REG_R8, UC_X86_REG_R9, UC_X86_REG_RAX, UC_X86_REG_RDI, UC_X86_REG_RDX, UC_X86_REG_RIP, UC_X86_REG_RSI
 
@@ -32,6 +33,10 @@ class SyscallDispatcher:
         self.config = config
         self.exit_code: int | None = None
         self.pid = 100
+        self.syscall_counts: Counter[str] = Counter()
+        self.ioctl_counts: Counter[str] = Counter()
+        self.unsupported_syscalls: set[str] = set()
+        self.unsupported_ioctls: set[str] = set()
 
     def dispatch_from_uc(self, uc) -> int:
         number = uc.reg_read(UC_X86_REG_RAX)
@@ -49,6 +54,8 @@ class SyscallDispatcher:
 
     def dispatch(self, number: int, args: tuple[int, int, int, int, int, int], uc=None) -> int:
         try:
+            syscall_name = C.SYSCALL_NAMES.get(number, f"syscall_{number}")
+            self.syscall_counts[syscall_name] += 1
             if number == C.SYS_READ:
                 return self._read(args[0], args[1], args[2])
             if number == C.SYS_WRITE:
@@ -104,8 +111,8 @@ class SyscallDispatcher:
                 return self.fs.rmdir(self.memory.read_cstr(args[0], C.FS_PATH_LEN))
             if number == C.SYS_UNLINK:
                 return self.fs.unlink(self.memory.read_cstr(args[0], C.FS_PATH_LEN))
-            name = C.SYSCALL_NAMES.get(number, f"syscall_{number}")
-            raise UnsupportedABI(f"unsupported syscall {name} ({number})")
+            self.unsupported_syscalls.add(syscall_name)
+            raise UnsupportedABI(f"unsupported syscall {syscall_name} ({number})")
         except UnsupportedABI:
             raise
         except Exception as exc:
@@ -164,6 +171,8 @@ class SyscallDispatcher:
         return buf
 
     def _ioctl(self, fd: int, request: int, arg: int) -> int:
+        name = C.IOCTL_NAMES.get(int(request), f"0x{int(request):x}")
+        self.ioctl_counts[name] += 1
         if request == C.IOCTL_LIST_DIR:
             return self._list_dir(arg)
         if request == C.TEXT_IOCTL_LAYOUT_UTF8:
@@ -177,8 +186,16 @@ class SyscallDispatcher:
         result = self._system_ioctl(int(request), int(arg))
         if result is not None:
             return result
-        name = C.IOCTL_NAMES.get(int(request), f"0x{int(request):x}")
+        self.unsupported_ioctls.add(name)
         raise UnsupportedABI(f"unsupported ioctl {name} fd={fd}")
+
+    def compatibility_snapshot(self) -> dict[str, object]:
+        return {
+            "syscalls": dict(sorted(self.syscall_counts.items())),
+            "ioctls": dict(sorted(self.ioctl_counts.items())),
+            "unsupported_syscalls": sorted(self.unsupported_syscalls),
+            "unsupported_ioctls": sorted(self.unsupported_ioctls),
+        }
 
     def _list_dir(self, arg: int) -> int:
         query = structs.DirList.unpack(self.memory.read(arg, structs.DirList.SIZE))
@@ -240,6 +257,22 @@ class SyscallDispatcher:
         if request == C.TIME_IOCTL_INFO:
             now = int(time.time())
             self.memory.write(arg, structs.pack_time_info(now, int((time.monotonic() - self.gui.start_time) * 1000), time.localtime(now)))
+            return 0
+        if request == C.TIME_IOCTL_NTP_SYNC:
+            sync = structs.TimeSync.unpack(self.memory.read(arg, structs.TimeSync.SIZE))
+            server = sync.server or "pool.ntp.org"
+            self.memory.write(
+                arg,
+                structs.TimeSync(
+                    timeout_ms=sync.timeout_ms,
+                    status=C.NET_STATUS_OK,
+                    server_ip=0,
+                    valid=1,
+                    unix_seconds=int(time.time()),
+                    server=server,
+                ).pack(),
+            )
+            self.logger.write(f"[los2w] NTP sync emulated with host clock server={server}")
             return 0
         if request == C.SYSTEM_IOCTL_INFO:
             data = (

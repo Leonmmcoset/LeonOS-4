@@ -697,7 +697,7 @@ static int browser_should_download_http_url(const char *url)
            ends_with_ignore_case(url, ".gz");
 }
 
-static void launch_download_for_url(const char *url)
+void browser_start_download(const char *url)
 {
     char target[LEONOS_HTTP_URL_LEN];
     char *argv[3];
@@ -728,7 +728,7 @@ void navigate_to(const char *input, uint8_t add_to_history)
                             browser_safe_detail(url));
     } else if (starts_with_ignore_case(url, "http://")) {
         if (browser_should_download_http_url(url)) {
-            launch_download_for_url(url);
+            browser_start_download(url);
             return;
         } else {
             load_http_url(url);

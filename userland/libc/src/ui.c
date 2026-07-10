@@ -281,7 +281,7 @@ int leonos_ui_show_message_box(const char *title, const char *message,
     leonos_gui_present_window((uint32_t)window_id, w, h, MAX_W, pixels);
     for (;;) {
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
@@ -361,7 +361,7 @@ int leonos_ui_show_confirm_dialog(const char *title, const char *message,
     leonos_gui_present_window((uint32_t)window_id, w, h, MAX_W, pixels);
     for (;;) {
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
@@ -431,7 +431,7 @@ int leonos_ui_show_input_dialog(const char *title, const char *label,
         leonos_ui_button(&surface, W - 88, H - 38, 72, LEONOS_UI_BUTTON_H, "Cancel", 0);
         leonos_gui_present_window((uint32_t)window_id, W, H, W, pixels);
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
@@ -469,6 +469,114 @@ int leonos_ui_show_input_dialog(const char *title, const char *label,
             ++i;
         }
         value[i] = 0;
+    }
+    return result;
+}
+
+int leonos_ui_show_password_dialog(const char *title, const char *label,
+                                   char *value, uint32_t capacity)
+{
+    enum { W = 360, H = 172 };
+    static uint32_t pixels[W * H];
+    struct leonos_ui_surface surface;
+    struct leonos_gui_app_event event;
+    struct leonos_ui_edit_state edit;
+    struct leonos_ui_edit_state shown;
+    char original[128];
+    char masked[128];
+    int result = 0;
+    int window_id;
+    if (!value || capacity == 0) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < sizeof(original); ++i) {
+        original[i] = 0;
+    }
+    for (uint32_t i = 0; i + 1 < sizeof(original) &&
+                         i + 1 < capacity && value[i]; ++i) {
+        original[i] = value[i];
+    }
+    window_id = leonos_gui_create_app_window_ex(title ? title : "Password",
+                                                 label ? label : "",
+                                                 W, H,
+                                                 LEONOS_GUI_WINDOW_NO_RESIZE);
+    if (window_id <= 0) {
+        return window_id;
+    }
+    leonos_ui_bind(&surface, pixels, W, H, W);
+    leonos_ui_edit_state_init(&edit, value, capacity);
+    edit.focused = 1;
+    for (;;) {
+        uint32_t mask_len = edit.length < sizeof(masked) - 1U
+                                ? edit.length : sizeof(masked) - 1U;
+        for (uint32_t i = 0; i < mask_len; ++i) {
+            masked[i] = '*';
+        }
+        masked[mask_len] = 0;
+        shown = edit;
+        shown.buffer = masked;
+        shown.capacity = sizeof(masked);
+        shown.length = mask_len;
+        leonos_ui_rect(&surface, 0, 0, W, H, LEONOS_UI_GRAY);
+        leonos_ui_text_clipped(&surface, 16, 20, W - 32, label ? label : "",
+                               LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+        leonos_ui_edit_state_draw(&surface, 16, 46, W - 32, &shown, 0);
+        leonos_ui_button(&surface, W - 168, H - 38, 72, LEONOS_UI_BUTTON_H,
+                         "OK", 0);
+        leonos_ui_button(&surface, W - 88, H - 38, 72, LEONOS_UI_BUTTON_H,
+                         "Cancel", 0);
+        leonos_gui_present_window((uint32_t)window_id, W, H, W, pixels);
+        event.window_id = (uint32_t)window_id;
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
+            if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
+                break;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN ||
+                event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                if (event.pressed && event.keycode == LEONOS_KEY_ENTER) {
+                    result = 1;
+                    break;
+                }
+                if (event.pressed && event.keycode == 1) {
+                    break;
+                }
+                leonos_ui_edit_state_handle_key(&edit, event.keycode,
+                                                event.pressed);
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON &&
+                (event.buttons & 1u)) {
+                if (event.x >= (int32_t)(W - 168) &&
+                    event.x < (int32_t)(W - 96) &&
+                    event.y >= (int32_t)(H - 38) &&
+                    event.y < (int32_t)(H - 38 + LEONOS_UI_BUTTON_H)) {
+                    result = 1;
+                    break;
+                }
+                if (event.x >= (int32_t)(W - 88) &&
+                    event.x < (int32_t)(W - 16) &&
+                    event.y >= (int32_t)(H - 38) &&
+                    event.y < (int32_t)(H - 38 + LEONOS_UI_BUTTON_H)) {
+                    break;
+                }
+                leonos_ui_edit_state_handle_mouse(&edit, event.x, event.y,
+                                                   16, 46, W - 32,
+                                                   event.buttons);
+            }
+        } else {
+            sleep_ms(10);
+        }
+    }
+    leonos_gui_destroy_app_window((uint32_t)window_id);
+    if (!result) {
+        uint32_t i = 0;
+        while (i + 1 < capacity && i + 1 < sizeof(original) && original[i]) {
+            value[i] = original[i];
+            ++i;
+        }
+        value[i] = 0;
+    }
+    for (uint32_t i = 0; i < sizeof(masked); ++i) {
+        masked[i] = 0;
     }
     return result;
 }
@@ -927,7 +1035,7 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
         leonos_gui_present_window((uint32_t)window_id, UI_FILE_DIALOG_W,
                                   UI_FILE_DIALOG_H, UI_FILE_DIALOG_W, pixels);
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }
@@ -1349,7 +1457,7 @@ int leonos_ui_show_open_with_dialog(const char *title, const char *path,
         leonos_gui_present_window((uint32_t)window_id, UI_OPEN_WITH_W,
                                   UI_OPEN_WITH_H, UI_OPEN_WITH_W, pixels);
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 break;
             }

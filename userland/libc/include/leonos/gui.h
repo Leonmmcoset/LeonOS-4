@@ -20,6 +20,7 @@
 #define LEONOS_GUI_IOCTL_PRESENT_WINDOW 0x4c475046UL
 #define LEONOS_GUI_IOCTL_FETCH_WINDOW 0x4c475746UL
 #define LEONOS_GUI_IOCTL_WINDOW_EVENT 0x4c475745UL
+#define LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT 0x4c475457UL
 #define LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT 0x4c475753UL
 #define LEONOS_GUI_IOCTL_DESTROY_WINDOW 0x4c475744UL
 #define LEONOS_GUI_IOCTL_TASK_KILL 0x4c544b49UL
@@ -64,6 +65,7 @@
 #define LEONOS_GUI_APP_EVENT_KEY_DOWN 7U
 #define LEONOS_GUI_APP_EVENT_KEY_UP 8U
 #define LEONOS_GUI_APP_EVENT_MOUSE_WHEEL 9U
+#define LEONOS_GUI_IDLE_WAIT_MS 100U
 
 #define LEONOS_GUI_WINDOW_NO_RESIZE 0x00000001U
 #define LEONOS_GUI_WINDOW_FULLSCREEN 0x00000002U
@@ -173,6 +175,11 @@ struct leonos_gui_app_event {
     uint8_t reserved;
 };
 
+struct leonos_gui_wait_app_event {
+    struct leonos_gui_app_event event;
+    uint32_t timeout_ms;
+};
+
 struct leonos_task_info {
     uint32_t pid;
     uint32_t parent_pid;
@@ -234,6 +241,7 @@ int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_
                             uint32_t stride, uint32_t *pixels,
                             uint32_t *out_width, uint32_t *out_height);
 int leonos_gui_poll_app_event(struct leonos_gui_app_event *event);
+int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeout_ms);
 int leonos_gui_send_app_event(const struct leonos_gui_app_event *event);
 int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint64_t *tick);
 int leonos_task_kill(uint32_t pid);

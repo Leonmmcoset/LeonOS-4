@@ -21,6 +21,7 @@
 #define SETTINGS_TAB_Y 14
 #define SETTINGS_BODY_Y 44
 #define SETTINGS_SERVICES_PATH "0:/etc/services.cfg"
+#define SETTINGS_SERVICES_STATE_PATH "0:/var/run/services.state"
 #define SETTINGS_SERVICES_CONFIG_MAX 512U
 #define SETTINGS_KEY_ESCAPE 1U
 #define T(en, zh) leonos_i18n((en), (zh))
@@ -49,6 +50,8 @@ static uint32_t selected_user;
 static uint8_t active_page;
 static uint8_t active_drop;
 static char status_text[160] = "Ready";
+static char ntp_runtime_state[16] = "unknown";
+static char ntp_runtime_detail[96] = "runtime state unavailable";
 
 struct assoc_row {
     const char *extension;
@@ -97,8 +100,8 @@ static struct service_row service_rows[SETTINGS_SERVICE_ROWS] = {
     {"rtc_clock", "RTC taskbar clock", "RTC 任务栏时钟",
      "Show the hardware clock in the taskbar.", "在任务栏显示硬件时钟。", 1, 0},
     {"ntp_sync", "NTP time sync", "NTP 时间同步",
-     "Reserved until kernel set-time support exists.",
-     "等待内核支持设置时间后启用。", 0, 0},
+     "Synchronize the system clock through pool.ntp.org.",
+     "通过 pool.ntp.org 同步系统时钟。", 0, 0},
 };
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
@@ -311,6 +314,73 @@ static void load_services_config(void)
                                      service_rows[i].key, &value)) {
                 service_rows[i].enabled = value;
             }
+        }
+    }
+}
+
+static void refresh_ntp_runtime_state(void)
+{
+    char state[1024];
+    uint32_t len = 0;
+    uint32_t pos = 0;
+    int fd = open(SETTINGS_SERVICES_STATE_PATH, LEONOS_O_RDONLY, 0);
+    copy_text(ntp_runtime_state, sizeof(ntp_runtime_state), "unknown");
+    copy_text(ntp_runtime_detail, sizeof(ntp_runtime_detail),
+              T("runtime state unavailable", "运行状态不可用"));
+    if (fd < 0) {
+        return;
+    }
+    while (len + 1U < sizeof(state)) {
+        long got = read(fd, state + len, sizeof(state) - len - 1U);
+        if (got <= 0) {
+            break;
+        }
+        len += (uint32_t)got;
+    }
+    close(fd);
+    state[len] = 0;
+    while (pos < len) {
+        uint32_t start = pos;
+        uint32_t first = len;
+        uint32_t second = len;
+        uint32_t third = len;
+        while (pos < len && state[pos] != '\n' && state[pos] != '\r') {
+            if (state[pos] == '|') {
+                if (first == len) {
+                    first = pos;
+                } else if (second == len) {
+                    second = pos;
+                } else if (third == len) {
+                    third = pos;
+                }
+            }
+            ++pos;
+        }
+        if (first > start && second < len && third < len &&
+            first - start == 8U && state[start] == 'n' && state[start + 1U] == 't' &&
+            state[start + 2U] == 'p' && state[start + 3U] == '_' &&
+            state[start + 4U] == 's' && state[start + 5U] == 'y' &&
+            state[start + 6U] == 'n' && state[start + 7U] == 'c') {
+            uint32_t state_len = second - first - 1U;
+            uint32_t detail_len = pos - third - 1U;
+            if (state_len >= sizeof(ntp_runtime_state)) {
+                state_len = sizeof(ntp_runtime_state) - 1U;
+            }
+            if (detail_len >= sizeof(ntp_runtime_detail)) {
+                detail_len = sizeof(ntp_runtime_detail) - 1U;
+            }
+            for (uint32_t i = 0; i < state_len; ++i) {
+                ntp_runtime_state[i] = state[first + 1U + i];
+            }
+            ntp_runtime_state[state_len] = 0;
+            for (uint32_t i = 0; i < detail_len; ++i) {
+                ntp_runtime_detail[i] = state[third + 1U + i];
+            }
+            ntp_runtime_detail[detail_len] = 0;
+            return;
+        }
+        while (pos < len && (state[pos] == '\n' || state[pos] == '\r')) {
+            ++pos;
         }
     }
 }
@@ -587,10 +657,17 @@ static void draw_services_page(struct leonos_ui_surface *ui)
                            T(service_rows[i].name_en, service_rows[i].name_zh),
                            service_rows[i].enabled, flags);
         leonos_ui_text_clipped(ui, 274, y + 11, SETTINGS_W - 318,
-                               T(service_rows[i].detail_en, service_rows[i].detail_zh),
+                               i == 4U ? ntp_runtime_detail :
+                                         T(service_rows[i].detail_en, service_rows[i].detail_zh),
                                service_rows[i].locked ? LEONOS_UI_DARK : LEONOS_UI_BLACK,
                                LEONOS_UI_WHITE);
     }
+    leonos_ui_text(ui, 34, 346, T("NTP runtime state:", "NTP 运行状态:"),
+                   LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_text_clipped(ui, 174, 346, SETTINGS_W - 208, ntp_runtime_state,
+                           text_eq(ntp_runtime_state, "failed") ? 0x00b03030U :
+                           text_eq(ntp_runtime_state, "running") ? 0x00108040U :
+                           LEONOS_UI_DARK, LEONOS_UI_GRAY);
     leonos_ui_button(ui, 34, SETTINGS_H - 66, 108, LEONOS_UI_BUTTON_H,
                      T("Save", "保存"),
                      current_user.role == LEONOS_AUTH_ROLE_ADMIN
@@ -963,11 +1040,12 @@ int main(void)
     refresh_display_state();
     refresh_users();
     load_services_config();
+    refresh_ntp_runtime_state();
     draw_settings(&ui);
     leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
     for (;;) {
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 return 0;
             }
@@ -975,6 +1053,7 @@ int main(void)
                 handle_click(event.x, event.y);
                 refresh_display_state();
                 refresh_users();
+                refresh_ntp_runtime_state();
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
             }
@@ -985,6 +1064,7 @@ int main(void)
             if (event.type == LEONOS_GUI_APP_EVENT_FOCUS || event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
                 refresh_display_state();
                 refresh_users();
+                refresh_ntp_runtime_state();
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
             }

@@ -5,6 +5,8 @@ int handle_menu_click(int32_t x, int32_t y)
     struct leonos_ui_menubar_item menu_items[] = {
         {T("File", "文件"), FILEMAN_MENU_FILE, 54, 0},
         {T("View", "查看"), FILEMAN_MENU_VIEW, 54, 0},
+        {T("Edit", "编辑"), FILEMAN_MENU_EDIT, 54, 0},
+        {T("Recycle", "回收站"), FILEMAN_MENU_RECYCLE, 70, 0},
     };
     uint32_t action = 0;
     if (leonos_ui_menubar_hit(x, y, 0, 0, menu_items,
@@ -18,14 +20,14 @@ int handle_menu_click(int32_t x, int32_t y)
         return 1;
     }
     if (menu_open == FILEMAN_MENU_FILE) {
-        struct leonos_ui_context_menu_item items[FILEMAN_CONTEXT_MENU_COUNT];
+        struct leonos_ui_context_menu_item items[FILEMAN_FILE_MENU_COUNT];
         struct leonos_ui_rect r;
-        build_context_menu_items(items, FILEMAN_CONTEXT_MENU_COUNT);
+        build_file_menu_items(items, FILEMAN_FILE_MENU_COUNT);
         leonos_ui_menubar_item_rect(0, 0, menu_items,
                                     sizeof(menu_items) / sizeof(menu_items[0]),
                                     FILEMAN_MENU_FILE, &r);
         if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, MENU_BAR_H, 204,
-                                     items, FILEMAN_CONTEXT_MENU_COUNT, &action)) {
+                                     items, FILEMAN_FILE_MENU_COUNT, &action)) {
             menu_open = FILEMAN_MENU_NONE;
             if (action) {
                 execute_action(action);
@@ -55,6 +57,42 @@ int handle_menu_click(int32_t x, int32_t y)
                 navigate_root();
             } else if (action == FILEMAN_ACTION_ABOUT) {
                 leonos_ui_show_message_box(T("File Manager", "文件资源管理器"), T("Browse FAT32 files and launch apps.", "浏览 FAT32 文件并启动应用。"), "OK");
+            }
+            return 1;
+        }
+        menu_open = FILEMAN_MENU_NONE;
+        return 1;
+    }
+    if (menu_open == FILEMAN_MENU_EDIT) {
+        struct leonos_ui_context_menu_item items[FILEMAN_EDIT_MENU_COUNT];
+        struct leonos_ui_rect r;
+        build_edit_menu_items(items, FILEMAN_EDIT_MENU_COUNT);
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    FILEMAN_MENU_EDIT, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, MENU_BAR_H, 190,
+                                     items, FILEMAN_EDIT_MENU_COUNT, &action)) {
+            menu_open = FILEMAN_MENU_NONE;
+            if (action) {
+                execute_action(action);
+            }
+            return 1;
+        }
+        menu_open = FILEMAN_MENU_NONE;
+        return 1;
+    }
+    if (menu_open == FILEMAN_MENU_RECYCLE) {
+        struct leonos_ui_context_menu_item items[FILEMAN_RECYCLE_MENU_COUNT];
+        struct leonos_ui_rect r;
+        build_recycle_menu_items(items, FILEMAN_RECYCLE_MENU_COUNT);
+        leonos_ui_menubar_item_rect(0, 0, menu_items,
+                                    sizeof(menu_items) / sizeof(menu_items[0]),
+                                    FILEMAN_MENU_RECYCLE, &r);
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, MENU_BAR_H, 204,
+                                     items, FILEMAN_RECYCLE_MENU_COUNT, &action)) {
+            menu_open = FILEMAN_MENU_NONE;
+            if (action) {
+                execute_action(action);
             }
             return 1;
         }

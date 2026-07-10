@@ -427,7 +427,7 @@ int main(int argc, char **argv, char **envp)
 
     for (;;) {
         event.window_id = (uint32_t)window_id;
-        while (leonos_gui_poll_app_event(&event) > 0) {
+        while (leonos_gui_wait_app_event(&event, 20U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 leonos_pty_write_input(pty_id, "exit\n", 5);
                 sleep_ms(40);

@@ -739,6 +739,7 @@ static void browser_http_prepare_headers(const char *url,
         append_text(out, &pos, cap, cookie_header);
         append_text(out, &pos, cap, "\r\n");
     }
+    browser_auth_append_header(url, out, &pos, cap);
 }
 
 static int browser_http_request_with_cookies(
@@ -758,6 +759,7 @@ static int browser_http_request_with_cookies(
     uint32_t active_body_len = body_len;
     uint32_t redirect_count = 0;
     uint32_t preserved_flags = 0;
+    uint8_t auth_retry_done = 0;
     int ret;
     if (!url || !response || !response_body || response_body_capacity == 0) {
         return -1;
@@ -794,6 +796,13 @@ static int browser_http_request_with_cookies(
         }
         if (response->net_status != LEONOS_NET_STATUS_OK ||
             !browser_http_is_redirect(response->http_status)) {
+            if (response->net_status == LEONOS_NET_STATUS_OK &&
+                response->http_status == 401U && !auth_retry_done &&
+                browser_auth_retry_from_challenge(current_url,
+                                                  response_headers)) {
+                auth_retry_done = 1;
+                continue;
+            }
             return 0;
         }
         browser_http_header_value(response_headers, "Location",

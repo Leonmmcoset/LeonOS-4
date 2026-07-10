@@ -41,7 +41,7 @@ int main(void)
     leonos_gui_present_window((uint32_t)window_id, HELLO_W, HELLO_H, HELLO_W, pixels);
     for (;;) {
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == 1) {
                 break;
             }

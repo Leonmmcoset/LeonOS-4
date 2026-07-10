@@ -176,7 +176,7 @@ int main(void)
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                                   LOGIN_MAX_W, pixels);
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
                 update_surface_size(event.width, event.height);
                 continue;

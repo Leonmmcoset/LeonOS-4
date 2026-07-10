@@ -60,6 +60,7 @@ struct task {
     uint64_t entry;
     uint64_t stack_top;
     uint64_t wake_tick;
+    uint32_t wait_window_id;
     uint64_t exit_code;
     const void *image;
     size_t image_len;
@@ -133,6 +134,8 @@ struct trap_frame *sched_task_frame(struct task *task);
 uint64_t sched_task_cr3(struct task *task);
 void sched_mark_ready(uint32_t pid);
 void sched_sleep_current_until(uint64_t wake_tick);
+void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick);
+void sched_wake_window_event(uint32_t pid, uint32_t window_id);
 int sched_kill_user_task(uint32_t pid, uint64_t code);
 int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                      uint32_t keep_pid, uint64_t code);

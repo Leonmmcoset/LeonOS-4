@@ -241,6 +241,36 @@ void execute_action(uint32_t action)
     case FILEMAN_ACTION_DELETE:
         delete_selected_entry();
         break;
+    case FILEMAN_ACTION_COPY:
+        copy_selected_entries(0);
+        break;
+    case FILEMAN_ACTION_CUT:
+        copy_selected_entries(1);
+        break;
+    case FILEMAN_ACTION_PASTE:
+        paste_clipboard();
+        break;
+    case FILEMAN_ACTION_TOGGLE_MARK:
+        fileman_toggle_selected();
+        break;
+    case FILEMAN_ACTION_SELECT_ALL:
+        fileman_select_all();
+        break;
+    case FILEMAN_ACTION_CLEAR_SELECTION:
+        fileman_clear_selection();
+        break;
+    case FILEMAN_ACTION_RECYCLE:
+        recycle_selected_entries();
+        break;
+    case FILEMAN_ACTION_DELETE_PERMANENT:
+        permanent_delete_selected_entries();
+        break;
+    case FILEMAN_ACTION_RESTORE:
+        restore_selected_entry();
+        break;
+    case FILEMAN_ACTION_EMPTY_RECYCLE:
+        empty_recycle_bin();
+        break;
     case FILEMAN_ACTION_NEW_FOLDER:
         create_new_folder();
         break;
@@ -254,4 +284,3 @@ void execute_action(uint32_t action)
         break;
     }
 }
-

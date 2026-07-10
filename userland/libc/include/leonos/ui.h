@@ -338,6 +338,8 @@ int leonos_ui_show_confirm_dialog(const char *title, const char *message,
                                   uint32_t default_yes);
 int leonos_ui_show_input_dialog(const char *title, const char *label,
                                 char *value, uint32_t capacity);
+int leonos_ui_show_password_dialog(const char *title, const char *label,
+                                   char *value, uint32_t capacity);
 int leonos_ui_show_open_dialog(const char *title, char *path, uint32_t capacity,
                                const char *filter_label, const char *filter_ext);
 int leonos_ui_show_open_with_dialog(const char *title, const char *path,

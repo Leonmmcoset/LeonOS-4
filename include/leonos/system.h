@@ -1,11 +1,13 @@
 #ifndef LEONOS_SYSTEM_H
 #define LEONOS_SYSTEM_H
 
+#include <leonos/net.h>
 #include <stdint.h>
 
 #define LEONOS_IOCTL_SYSTEM_INFO 0x4c535953UL
 #define LEONOS_IOCTL_PERF_INFO 0x4c504552UL
 #define LEONOS_IOCTL_TIME_INFO 0x4c54494dUL
+#define LEONOS_IOCTL_TIME_NTP_SYNC 0x4c544e54UL
 #define LEONOS_IOCTL_MACHINE_IDENTITY 0x4c4d4944UL
 
 #define LEONOS_SYSTEM_NAME_LEN 32U
@@ -59,6 +61,15 @@ struct leonos_time_info {
     uint32_t reserved;
 };
 
+struct leonos_time_sync {
+    uint32_t timeout_ms;
+    uint32_t status;
+    uint32_t server_ip;
+    uint32_t valid;
+    uint64_t unix_seconds;
+    char server[LEONOS_NET_HOSTNAME_LEN];
+};
+
 struct leonos_machine_identity {
     uint32_t version;
     uint32_t flags;
@@ -74,6 +85,7 @@ struct leonos_machine_identity {
 int leonos_system_info(struct leonos_system_info *info);
 int leonos_perf_info(struct leonos_perf_info *info);
 int leonos_time_info(struct leonos_time_info *info);
+int leonos_time_ntp_sync(uint32_t timeout_ms, struct leonos_time_sync *result);
 int leonos_machine_identity(struct leonos_machine_identity *identity);
 int leonos_system_reboot(void);
 int leonos_system_shutdown(void);

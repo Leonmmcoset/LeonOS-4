@@ -33,6 +33,8 @@
 #define BROWSER_MAX_FORMS 8U
 #define BROWSER_MAX_FORM_CONTROLS 32U
 #define BROWSER_MAX_COOKIES 32U
+#define BROWSER_MAX_BOOKMARKS 16U
+#define BROWSER_MAX_AUTH 8U
 #define BROWSER_MAX_FORM_OPTIONS 64U
 #define BROWSER_FORM_NAME_CAP 48U
 #define BROWSER_FORM_VALUE_CAP 128U
@@ -46,6 +48,8 @@
 #define BROWSER_COOKIE_PATH_CAP 96U
 #define BROWSER_COOKIE_HEADER_CAP 768U
 #define BROWSER_COOKIE_FILE_CAP 8192U
+#define BROWSER_BOOKMARK_TITLE_CAP 64U
+#define BROWSER_FIND_CAP 64U
 #define BROWSER_FORM_INPUT_CELLS 22U
 #define BROWSER_FORM_WIDGET_H LEONOS_UI_BUTTON_H
 #define BROWSER_MENU_H 26U
@@ -100,10 +104,16 @@ enum browser_menu_command {
     BROWSER_CMD_CLOSE = 103,
     BROWSER_CMD_SELECT_ADDRESS = 201,
     BROWSER_CMD_CLEAR_ADDRESS = 202,
+    BROWSER_CMD_FIND = 203,
+    BROWSER_CMD_FIND_NEXT = 204,
     BROWSER_CMD_TOP = 301,
     BROWSER_CMD_BOTTOM = 302,
     BROWSER_CMD_FAV_HOME = 401,
     BROWSER_CMD_FAV_EXAMPLE = 402,
+    BROWSER_CMD_FAV_ADD = 403,
+    BROWSER_CMD_FAV_MANAGE = 404,
+    BROWSER_CMD_FAV_BOOKMARK_BASE = 420,
+    BROWSER_CMD_DOWNLOAD = 450,
     BROWSER_CMD_ABOUT = 501,
 };
 
@@ -166,6 +176,17 @@ struct browser_cookie {
     uint64_t expires_unix;
 };
 
+struct browser_bookmark {
+    char title[BROWSER_BOOKMARK_TITLE_CAP];
+    char url[BROWSER_URL_CAP];
+};
+
+struct browser_basic_auth {
+    char host[LEONOS_NET_HOSTNAME_LEN];
+    uint32_t port;
+    char header[256];
+};
+
 extern uint32_t pixels[BROWSER_MAX_W * BROWSER_MAX_H];
 extern struct leonos_ui_surface ui;
 extern int window_id;
@@ -201,6 +222,12 @@ extern uint8_t browser_form_focus_active;
 extern uint32_t browser_form_focus_control;
 extern struct leonos_ui_edit_state browser_form_edit_state;
 extern struct leonos_ui_toast_state browser_toast;
+extern struct browser_bookmark browser_bookmarks[BROWSER_MAX_BOOKMARKS];
+extern uint32_t browser_bookmark_count;
+extern char browser_find_query[BROWSER_FIND_CAP];
+extern int32_t browser_find_row;
+extern uint32_t browser_find_start;
+extern uint32_t browser_find_len;
 
 void copy_text(char *dst, uint32_t cap, const char *src);
 char ascii_tolower(char ch);
@@ -253,6 +280,7 @@ int browser_http_post_with_cookies(const char *url, const char *body,
                                    struct leonos_http_response *response);
 void load_local_file(const char *path);
 void navigate_to(const char *input, uint8_t add_to_history);
+void browser_start_download(const char *url);
 void go_back(void);
 void go_forward(void);
 uint32_t button_y(void);
@@ -323,5 +351,18 @@ void select_address_text(void);
 int handle_menu_click(int32_t x, int32_t y);
 void handle_mouse_button(struct leonos_gui_app_event *event);
 void handle_key(struct leonos_gui_app_event *event);
+void browser_bookmarks_load(void);
+void browser_bookmarks_add_current(void);
+int browser_show_bookmark_manager(char *out_url, uint32_t out_cap);
+void browser_bookmarks_build_menu(struct leonos_ui_context_menu_item *items,
+                                  uint32_t capacity, uint32_t *out_count);
+int browser_bookmarks_handle_command(uint32_t command, char *out_url,
+                                     uint32_t out_cap);
+void browser_auth_append_header(const char *url, char *dst, uint32_t *pos,
+                                uint32_t cap);
+int browser_auth_retry_from_challenge(const char *url, const char *headers);
+void browser_find_prompt(void);
+void browser_find_next(void);
+int browser_find_match_boundary(uint32_t row, uint32_t offset);
 
 #endif

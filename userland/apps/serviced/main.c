@@ -17,6 +17,9 @@
 #define SERVICE_COUNT 5U
 #define DHCP_RETRY_MS 30000UL
 #define DHCP_TIMEOUT_MS 4000U
+#define NTP_SUCCESS_INTERVAL_MS 21600000UL
+#define NTP_FAILURE_RETRY_MS 300000UL
+#define NTP_TIMEOUT_MS 4000U
 
 struct service_entry {
     const char *key;
@@ -39,6 +42,9 @@ static struct service_entry services[SERVICE_COUNT] = {
 static unsigned long last_dhcp_attempt_ms;
 static uint8_t dhcp_attempted;
 static uint8_t force_dhcp_renew;
+static unsigned long last_ntp_attempt_ms;
+static uint8_t ntp_attempted;
+static uint8_t ntp_last_result_ok;
 
 static uint32_t text_len(const char *text)
 {
@@ -199,6 +205,10 @@ static const char *net_status_name(uint32_t status)
         return "DHCP failed";
     case LEONOS_NET_STATUS_TX_FAILED:
         return "transmit failed";
+    case LEONOS_NET_STATUS_DNS_TIMEOUT:
+        return "DNS timeout";
+    case LEONOS_NET_STATUS_DNS_FAILED:
+        return "DNS failed";
     default:
         return "network error";
     }
@@ -332,6 +342,8 @@ static void apply_command_line(const char *line, uint32_t len)
         services[index].enabled = 1;
         if (text_eq(key, "dhcp")) {
             force_dhcp_renew = 1;
+        } else if (text_eq(key, "ntp_sync")) {
+            ntp_attempted = 0;
         }
     } else {
         return;
@@ -437,17 +449,45 @@ static void update_simple_services(void)
                                           : "disabled by policy",
                       0);
     if (!services[4].enabled) {
+        ntp_attempted = 0;
+        ntp_last_result_ok = 0;
         set_service_state(4, "stopped", "disabled by policy", 0);
-    } else {
-        struct leonos_time_info info;
-        if (leonos_time_info(&info) == 0 && info.valid) {
-            set_service_state(4, "failed", "clock read ok; set-time ABI unavailable",
-                              (uint32_t)getpid());
-        } else {
-            set_service_state(4, "failed", "RTC unavailable; set-time ABI unavailable",
-                              (uint32_t)getpid());
-        }
     }
+}
+
+static void update_ntp(unsigned long now)
+{
+    struct leonos_time_sync sync;
+    char detail[SERVICE_DETAIL_LEN];
+    uint32_t pos = 0;
+    int ret;
+    if (!services[4].enabled) {
+        return;
+    }
+    if (ntp_attempted &&
+        now - last_ntp_attempt_ms < (ntp_last_result_ok ? NTP_SUCCESS_INTERVAL_MS
+                                                        : NTP_FAILURE_RETRY_MS)) {
+        return;
+    }
+    last_ntp_attempt_ms = now;
+    ntp_attempted = 1;
+    sync = (struct leonos_time_sync){0};
+    ret = leonos_time_ntp_sync(NTP_TIMEOUT_MS, &sync);
+    if (ret == 0 && sync.status == LEONOS_NET_STATUS_OK && sync.valid) {
+        ntp_last_result_ok = 1;
+        detail[0] = 0;
+        append_text(detail, &pos, sizeof(detail), "synced from ");
+        append_text(detail, &pos, sizeof(detail), sync.server);
+        set_service_state(4, "running", detail, (uint32_t)getpid());
+        log_line("NTP clock synchronized");
+        return;
+    }
+    ntp_last_result_ok = 0;
+    detail[0] = 0;
+    append_text(detail, &pos, sizeof(detail), ret < 0 ? "NTP permission failure: " : "NTP ");
+    append_text(detail, &pos, sizeof(detail), net_status_name(sync.status));
+    set_service_state(4, "failed", detail, (uint32_t)getpid());
+    log_line("NTP clock synchronization failed");
 }
 
 static void update_services(void)
@@ -455,6 +495,7 @@ static void update_services(void)
     unsigned long now = leonos_uptime_ms();
     update_simple_services();
     update_dhcp(now);
+    update_ntp(now);
 }
 
 static void write_state(void)

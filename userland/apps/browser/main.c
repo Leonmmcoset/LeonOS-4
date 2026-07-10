@@ -19,6 +19,7 @@ int main(int argc, char **argv, char **envp)
     leonos_ui_bind(&ui, pixels, view_w, view_h, BROWSER_MAX_W);
     leonos_ui_edit_state_init(&address_edit, address_input, sizeof(address_input));
     address_edit.focused = 1;
+    browser_bookmarks_load();
     load_about();
     if (!text_eq(initial, "about:leonos")) {
         navigate_to(initial, 1);
@@ -28,7 +29,8 @@ int main(int argc, char **argv, char **envp)
     present_browser();
     for (;;) {
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_poll_app_event(&event) > 0) {
+        if (leonos_gui_wait_app_event(&event,
+                                      browser_toast.active ? 20U : LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 return 0;
             }

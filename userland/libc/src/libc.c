@@ -663,6 +663,25 @@ int leonos_gui_poll_app_event(struct leonos_gui_app_event *event)
     return ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, event);
 }
 
+int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeout_ms)
+{
+    struct leonos_gui_wait_app_event wait;
+    int ret;
+    if (!event) {
+        return -1;
+    }
+    wait.event = *event;
+    wait.timeout_ms = timeout_ms;
+    ret = ioctl(3, LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT, &wait);
+    if (ret == 0) {
+        ret = ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, &wait.event);
+    }
+    if (ret > 0) {
+        *event = wait.event;
+    }
+    return ret;
+}
+
 int leonos_gui_send_app_event(const struct leonos_gui_app_event *event)
 {
     return ioctl(3, LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT, (void *)event);
@@ -1981,6 +2000,16 @@ int leonos_time_info(struct leonos_time_info *info)
         return -1;
     }
     return ioctl(3, LEONOS_IOCTL_TIME_INFO, info);
+}
+
+int leonos_time_ntp_sync(uint32_t timeout_ms, struct leonos_time_sync *result)
+{
+    if (!result) {
+        return -1;
+    }
+    *result = (struct leonos_time_sync){0};
+    result->timeout_ms = timeout_ms;
+    return ioctl(3, LEONOS_IOCTL_TIME_NTP_SYNC, result);
 }
 
 int leonos_machine_identity(struct leonos_machine_identity *identity)

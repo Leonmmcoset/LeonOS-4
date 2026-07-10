@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from .config import ConfigStore, HostConfig
+from .diagnostics import default_report_path, write_report
 from .emulator import LeonOSEmulator
 from .errors import GuestFault
 from .i18n import t
@@ -23,6 +24,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--smoke", action="store_true", help="Stop successfully after the first presented frame")
     parser.add_argument("--self-test", action="store_true", help="Run los2w self-tests")
     parser.add_argument("--lang", choices=("en", "zh"), help="los2w UI and virtual guest locale")
+    parser.add_argument("--report", help="Write a diagnostic JSON report to this path")
+    parser.add_argument("--compat-report", action="store_true", help="Write a compatibility report to the los2w reports directory")
     return parser.parse_args(argv)
 
 
@@ -54,8 +57,14 @@ class MainWindowMixin:
         self.run_timer.setInterval(0)
         self.run_timer.timeout.connect(self._step_guest)
 
-        self.elf_edit = QLineEdit(self.cfg.last_elf)
-        self.root_edit = QLineEdit(self.cfg.root_dir)
+        self.elf_edit = QComboBox()
+        self.elf_edit.setEditable(True)
+        self.elf_edit.addItems(self.cfg.recent_elfs or [])
+        self.elf_edit.setCurrentText(self.cfg.last_elf)
+        self.root_edit = QComboBox()
+        self.root_edit.setEditable(True)
+        self.root_edit.addItems(self.cfg.recent_roots or [])
+        self.root_edit.setCurrentText(self.cfg.root_dir)
         self.argv_edit = QLineEdit("")
         self.lang_combo = QComboBox()
         self.lang_combo.addItem(t("english", "en"), "en")
@@ -67,6 +76,7 @@ class MainWindowMixin:
         self.run_button = QPushButton()
         self.stop_button = QPushButton()
         self.stop_button.setEnabled(False)
+        self.report_button = QPushButton()
 
         elf_button = QPushButton()
         root_button = QPushButton()
@@ -74,6 +84,7 @@ class MainWindowMixin:
         root_button.clicked.connect(self._browse_root)
         self.run_button.clicked.connect(self._run_guest)
         self.stop_button.clicked.connect(self._stop_guest)
+        self.report_button.clicked.connect(self._export_diagnostics)
         self.lang_combo.currentIndexChanged.connect(self._refresh_text)
 
         grid = QGridLayout()
@@ -95,6 +106,7 @@ class MainWindowMixin:
         buttons.addStretch(1)
         buttons.addWidget(self.run_button)
         buttons.addWidget(self.stop_button)
+        buttons.addWidget(self.report_button)
         grid.addLayout(buttons, 4, 0, 1, 3)
         self.log_label = QLabel()
         grid.addWidget(self.log_label, 5, 0, 1, 3)
@@ -120,32 +132,33 @@ class MainWindowMixin:
         self.log_label.setText(t("log", lang))
         self.run_button.setText(t("run", lang))
         self.stop_button.setText(t("stop", lang))
+        self.report_button.setText(t("export_report", lang))
         self._elf_button.setText(t("browse", lang))
         self._root_button.setText(t("browse", lang))
 
     def _browse_elf(self) -> None:
-        path, _ = self.QFileDialog.getOpenFileName(self, t("select_elf", self._lang()), self.elf_edit.text() or ".", "ELF (*.elf);;All files (*)")
+        path, _ = self.QFileDialog.getOpenFileName(self, t("select_elf", self._lang()), self.elf_edit.currentText() or ".", "ELF (*.elf);;All files (*)")
         if path:
-            self.elf_edit.setText(path)
+            self.elf_edit.setCurrentText(path)
 
     def _browse_root(self) -> None:
-        path = self.QFileDialog.getExistingDirectory(self, t("select_root", self._lang()), self.root_edit.text() or ".")
+        path = self.QFileDialog.getExistingDirectory(self, t("select_root", self._lang()), self.root_edit.currentText() or ".")
         if path:
-            self.root_edit.setText(path)
+            self.root_edit.setCurrentText(path)
 
     def _append_log(self, line: str) -> None:
         self.log_box.append(line)
 
     def _save_cfg(self) -> HostConfig:
-        self.cfg.last_elf = self.elf_edit.text().strip()
-        self.cfg.root_dir = self.root_edit.text().strip()
+        self.cfg.last_elf = self.elf_edit.currentText().strip()
+        self.cfg.root_dir = self.root_edit.currentText().strip()
         self.cfg.language = self._lang()
         self.store.save(self.cfg)
         return self.cfg
 
     def _run_guest(self) -> None:
-        elf = self.elf_edit.text().strip()
-        root = self.root_edit.text().strip()
+        elf = self.elf_edit.currentText().strip()
+        root = self.root_edit.currentText().strip()
         lang = self._lang()
         if not elf:
             self.QMessageBox.warning(self, t("app_title", lang), t("missing_elf", lang))
@@ -168,10 +181,12 @@ class MainWindowMixin:
             self.run_timer.start()
         except GuestFault as exc:
             logger.write(f"[los2w] failed: {exc}")
+            self._export_diagnostics(auto=True, reason=str(exc))
             self.QMessageBox.critical(self, t("failed", lang), str(exc))
             self._finish_guest()
         except Exception as exc:
             logger.write(f"[los2w] internal failure: {exc}")
+            self._export_diagnostics(auto=True, reason=f"internal failure: {exc}")
             self.QMessageBox.critical(self, t("failed", lang), str(exc))
             self._finish_guest()
 
@@ -189,6 +204,7 @@ class MainWindowMixin:
         except GuestFault as exc:
             if self.current_logger:
                 self.current_logger.write(f"[los2w] failed: {exc}")
+            self._export_diagnostics(auto=True, reason=str(exc))
             self.QMessageBox.critical(self, t("failed", lang), str(exc))
             self._finish_guest()
         finally:
@@ -241,6 +257,30 @@ class MainWindowMixin:
         self.stop_button.setEnabled(False)
         self.run_button.setEnabled(True)
 
+    def _export_diagnostics(self, checked: bool = False, *, auto: bool = False,
+                            reason: str | None = None) -> None:
+        del checked
+        emulator = self.current_emulator
+        logger = self.current_logger
+        if not emulator or not logger:
+            if not auto:
+                self.QMessageBox.information(self, t("app_title", self._lang()),
+                                              t("no_report", self._lang()))
+            return
+        if auto:
+            target = default_report_path(self.store.reports_dir(), "los2w-crash")
+        else:
+            default = str(default_report_path(self.store.reports_dir()))
+            selected, _ = self.QFileDialog.getSaveFileName(
+                self, t("export_report", self._lang()), default,
+                "JSON (*.json)",
+            )
+            if not selected:
+                return
+            target = Path(selected)
+        saved = write_report(target, logger, emulator, reason)
+        logger.write(f"[los2w] {t('report_saved', self._lang())} {saved}")
+
     def _stop_guest(self) -> None:
         if self.current_emulator:
             self.current_emulator.stop()
@@ -272,8 +312,25 @@ def run_elf_cli(args: argparse.Namespace) -> int:
     logger = LogBuffer(lambda line: print(line, flush=True))
     gui = GUIManager(logger=logger)
     emu = LeonOSEmulator(args.elf, args.root, args.arg, config=cfg, gui=gui, logger=logger)
-    code = emu.run(max_seconds=5.0 if args.smoke else None, smoke=args.smoke)
-    app.processEvents()
+    code = None
+    fault: Exception | None = None
+    try:
+        code = emu.run(max_seconds=5.0 if args.smoke else None, smoke=args.smoke)
+    except Exception as exc:
+        fault = exc
+        logger.write(f"[los2w] failed: {exc}")
+    finally:
+        app.processEvents()
+        report_target = Path(args.report) if args.report else None
+        if report_target is None and (args.compat_report or fault is not None):
+            report_target = default_report_path(ConfigStore().reports_dir(),
+                                                "los2w-crash" if fault else "los2w-compat")
+        if report_target is not None:
+            saved = write_report(report_target, logger, emu,
+                                 str(fault) if fault else "command line report")
+            print(f"[los2w] report saved: {saved}")
+    if fault is not None:
+        return 1
     if args.smoke:
         if gui.present_count > 0:
             print(t("smoke_ok", cfg.language))

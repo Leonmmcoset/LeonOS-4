@@ -193,6 +193,37 @@ def pack_time_info(unix_seconds: int, uptime_ms: int, parts) -> bytes:
     )
 
 
+@dataclass
+class TimeSync:
+    timeout_ms: int
+    status: int
+    server_ip: int
+    valid: int
+    unix_seconds: int
+    server: str
+
+    FORMAT = f"<IIIIQ{C.NET_HOSTNAME_LEN}s"
+    SIZE = struct.calcsize(FORMAT)
+
+    @classmethod
+    def unpack(cls, data: bytes) -> "TimeSync":
+        timeout_ms, status, server_ip, valid, unix_seconds, server = struct.unpack(
+            cls.FORMAT, data[: cls.SIZE]
+        )
+        return cls(timeout_ms, status, server_ip, valid, unix_seconds, fixed_text(server))
+
+    def pack(self) -> bytes:
+        return struct.pack(
+            self.FORMAT,
+            self.timeout_ms,
+            self.status,
+            self.server_ip,
+            self.valid,
+            self.unix_seconds,
+            zbytes(self.server, C.NET_HOSTNAME_LEN),
+        )
+
+
 def pack_net_config() -> bytes:
     mac = b"\x52\x54\x00\x12\x34\x56" + b"\0\0"
     return struct.pack(
