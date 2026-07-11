@@ -1,7 +1,26 @@
-#include <ntclks/console.h>
-#include <ntclks/e1000.h>
+#include <leonos/driver.h>
+
 #include <ntclks/mm.h>
 #include <ntclks/pci.h>
+
+static const struct leonos_driver_kernel_api *kernel_api;
+
+static void module_console_notice(void)
+{
+    if (kernel_api && kernel_api->console_write) {
+        kernel_api->console_write("[driver] e1000 state changed\n");
+    }
+}
+
+#define mm_alloc_pages(pages) kernel_api->alloc_pages((pages))
+#define mm_free_pages(address, pages) kernel_api->free_pages((address), (pages))
+#define pci_config_read16(bus, slot, function, offset) \
+    kernel_api->pci_read16((bus), (slot), (function), (offset))
+#define pci_config_write16(bus, slot, function, offset, value) \
+    kernel_api->pci_write16((bus), (slot), (function), (offset), (value))
+#define pci_config_read32(bus, slot, function, offset) \
+    kernel_api->pci_read32((bus), (slot), (function), (offset))
+#define console_printf(...) module_console_notice()
 
 #define E1000_VENDOR_INTEL 0x8086u
 #define E1000_DEVICE_82540EM 0x100eu
@@ -74,6 +93,17 @@ struct e1000_tx_desc {
     uint16_t special;
 } __attribute__((packed));
 
+struct module_e1000_info {
+    uint32_t present;
+    uint32_t active;
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint8_t bus;
+    uint8_t slot;
+    uint8_t function;
+    uint8_t mac[6];
+};
+
 struct e1000_state {
     uint32_t present;
     uint32_t active;
@@ -114,34 +144,31 @@ static void e1000_memcpy(void *dst, const void *src, uint32_t len)
     }
 }
 
-static int e1000_supported(uint16_t device_id)
-{
-    return device_id == E1000_DEVICE_82540EM ||
-           device_id == E1000_DEVICE_82545EM ||
-           device_id == E1000_DEVICE_82543GC ||
-           device_id == E1000_DEVICE_82544GC;
-}
-
 static int e1000_find(struct pci_device *out)
 {
-    for (uint16_t bus = 0; bus < 256; ++bus) {
-        for (uint8_t slot = 0; slot < 32; ++slot) {
-            for (uint8_t function = 0; function < 8; ++function) {
-                struct pci_device dev;
-                if (pci_read_device((uint8_t)bus, slot, function, &dev) < 0) {
-                    if (function == 0) {
-                        break;
-                    }
-                    continue;
-                }
-                if (dev.vendor_id == E1000_VENDOR_INTEL &&
-                    e1000_supported(dev.device_id)) {
-                    if (out) {
-                        *out = dev;
-                    }
-                    return 0;
-                }
+    static const uint16_t supported[] = {
+        E1000_DEVICE_82540EM,
+        E1000_DEVICE_82545EM,
+        E1000_DEVICE_82543GC,
+        E1000_DEVICE_82544GC,
+    };
+    for (uint32_t index = 0; index < sizeof(supported) / sizeof(supported[0]); ++index) {
+        struct leonos_driver_pci_device found;
+        if (kernel_api->pci_find(E1000_VENDOR_INTEL, supported[index], &found) == 0) {
+            if (out) {
+                *out = (struct pci_device){
+                    .bus = found.bus,
+                    .slot = found.slot,
+                    .function = found.function,
+                    .vendor_id = found.vendor_id,
+                    .device_id = found.device_id,
+                    .class_code = found.class_code,
+                    .subclass = found.subclass,
+                    .prog_if = found.prog_if,
+                    .revision = 0,
+                };
             }
+            return 0;
         }
     }
     return -1;
@@ -275,12 +302,12 @@ static void e1000_configure_rx_tx(void)
                         E1000_RCTL_SECRC);
 }
 
-void e1000_init(void)
+static void e1000_hardware_init(void)
 {
     struct pci_device dev;
     uint64_t mmio;
     uint16_t command;
-    g_e1000 = (struct e1000_state){0};
+    e1000_memzero(&g_e1000, sizeof(g_e1000));
 
     if (e1000_find(&dev) < 0) {
         console_printf("[ntclks] e1000 not found\n");
@@ -314,17 +341,17 @@ void e1000_init(void)
                    g_e1000.mac[3], g_e1000.mac[4], g_e1000.mac[5]);
 }
 
-int e1000_is_ready(void)
+static int e1000_is_ready(void)
 {
     return g_e1000.active != 0;
 }
 
-const uint8_t *e1000_mac(void)
+static const uint8_t *e1000_mac(void)
 {
     return g_e1000.mac;
 }
 
-int e1000_send(const void *frame, uint32_t len)
+static int e1000_send(const void *frame, uint32_t len)
 {
     uint32_t index;
     uint32_t next;
@@ -360,7 +387,7 @@ int e1000_send(const void *frame, uint32_t len)
     return -1;
 }
 
-int e1000_poll(void *frame, uint32_t capacity, uint32_t *out_len)
+static int e1000_poll(void *frame, uint32_t capacity, uint32_t *out_len)
 {
     uint32_t index;
     uint32_t len;
@@ -399,12 +426,12 @@ int e1000_poll(void *frame, uint32_t capacity, uint32_t *out_len)
     return len ? 1 : 0;
 }
 
-void e1000_get_info(struct e1000_info *info)
+static void e1000_get_info(struct module_e1000_info *info)
 {
     if (!info) {
         return;
     }
-    *info = (struct e1000_info){
+    *info = (struct module_e1000_info){
         .present = g_e1000.present,
         .active = g_e1000.active,
         .vendor_id = g_e1000.pci.vendor_id,
@@ -417,3 +444,90 @@ void e1000_get_info(struct e1000_info *info)
         info->mac[i] = g_e1000.mac[i];
     }
 }
+
+static void e1000_driver_get_info(struct leonos_driver_e1000_info *out)
+{
+    struct module_e1000_info info;
+    if (!out) {
+        return;
+    }
+    e1000_get_info(&info);
+    *out = (struct leonos_driver_e1000_info){
+        .present = info.present,
+        .active = info.active,
+        .vendor_id = info.vendor_id,
+        .device_id = info.device_id,
+        .bus = info.bus,
+        .slot = info.slot,
+        .function = info.function,
+        .reserved = 0,
+        .reserved2 = {0, 0},
+    };
+    for (uint32_t index = 0; index < 6; ++index) {
+        out->mac[index] = info.mac[index];
+    }
+}
+
+static void e1000_release_rings(void)
+{
+    for (uint32_t index = 0; index < E1000_RX_COUNT; ++index) {
+        if (g_e1000.rx_buf[index]) {
+            mm_free_pages((uint64_t)(uintptr_t)g_e1000.rx_buf[index], 1);
+        }
+    }
+    for (uint32_t index = 0; index < E1000_TX_COUNT; ++index) {
+        if (g_e1000.tx_buf[index]) {
+            mm_free_pages((uint64_t)(uintptr_t)g_e1000.tx_buf[index], 1);
+        }
+    }
+    if (g_e1000.rx_phys) {
+        mm_free_pages(g_e1000.rx_phys, 1);
+    }
+    if (g_e1000.tx_phys) {
+        mm_free_pages(g_e1000.tx_phys, 1);
+    }
+    e1000_memzero(&g_e1000, sizeof(g_e1000));
+}
+
+static int e1000_driver_init(const struct leonos_driver_kernel_api *api)
+{
+    static const struct leonos_driver_e1000_ops ops = {
+        .is_ready = e1000_is_ready,
+        .mac = e1000_mac,
+        .send = e1000_send,
+        .poll = e1000_poll,
+        .get_info = e1000_driver_get_info,
+    };
+    if (!api || api->abi_version != LEONOS_DRIVER_ABI_VERSION ||
+        api->struct_size < sizeof(*api)) {
+        return -22;
+    }
+    kernel_api = api;
+    e1000_hardware_init();
+    if (!e1000_is_ready()) {
+        return -19;
+    }
+    return kernel_api->register_e1000(&ops);
+}
+
+static void e1000_driver_fini(void)
+{
+    if (g_e1000.mmio_base) {
+        e1000_reg_write(E1000_REG_RCTL, 0);
+        e1000_reg_write(E1000_REG_TCTL, 0);
+        e1000_reg_write(E1000_REG_IMC, 0xffffffffu);
+    }
+    e1000_release_rings();
+}
+
+struct leonos_driver_module leonos_driver_module = {
+    .magic = LEONOS_DRIVER_MODULE_MAGIC,
+    .abi_version = LEONOS_DRIVER_ABI_VERSION,
+    .struct_size = sizeof(struct leonos_driver_module),
+    .kind = LEONOS_DRIVER_KIND_NETWORK,
+    .name = "e1000",
+    .version = 1U,
+    .reserved = 0,
+    .init = e1000_driver_init,
+    .fini = e1000_driver_fini,
+};

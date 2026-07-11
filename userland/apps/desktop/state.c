@@ -29,6 +29,7 @@ uint8_t start_menu_programs_open;
 uint8_t start_menu_docs_open;
 uint32_t start_menu_programs_scroll;
 uint32_t start_menu_docs_scroll;
+char start_menu_query[START_MENU_QUERY_MAX];
 unsigned long start_menu_anim_start;
 uint8_t start_menu_apps_loaded;
 uint8_t start_menu_docs_loaded;

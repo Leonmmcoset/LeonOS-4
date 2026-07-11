@@ -1,7 +1,7 @@
+#include <leonos/psf_font.h>
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/gui_ipc.h>
-#include <leonos/psf_font.h>
 
 static struct framebuffer fb;
 

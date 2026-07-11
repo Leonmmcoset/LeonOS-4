@@ -1,4 +1,5 @@
 #include <ntclks/console.h>
+#include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
@@ -18,6 +19,7 @@
 #include <ntclks/version.h>
 
 #include <leonos/device.h>
+#include <leonos/driver.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/net.h>
@@ -144,6 +146,12 @@ static int require_network_config_access(void)
         return 0;
     }
     return -LEONOS_EPERM;
+}
+
+static int require_driver_management(void)
+{
+    struct task *task = sched_current_task();
+    return task && task->role == LEONOS_AUTH_ROLE_ADMIN ? 0 : -LEONOS_EPERM;
 }
 
 static int require_background_service(void)
@@ -2665,6 +2673,39 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         return net_connections(query, sched_current_task());
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DRIVER_LIST) {
+        struct leonos_driver_list *query;
+        if (!user_range_ok(a2, sizeof(struct leonos_driver_list))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_driver_list *)(uintptr_t)a2;
+        if (query->capacity > LEONOS_DRIVER_MAX) {
+            query->capacity = LEONOS_DRIVER_MAX;
+        }
+        if (query->capacity &&
+            (!query->drivers ||
+             !user_range_ok((uint64_t)(uintptr_t)query->drivers,
+                            (uint64_t)query->capacity *
+                                sizeof(struct leonos_driver_info)))) {
+            return -LEONOS_EFAULT;
+        }
+        return driver_manager_list(query);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DRIVER_CONTROL) {
+        struct leonos_driver_control *request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(struct leonos_driver_control))) {
+            return -LEONOS_EFAULT;
+        }
+        ret = require_driver_management();
+        if (ret < 0) {
+            return ret;
+        }
+        request = (struct leonos_driver_control *)(uintptr_t)a2;
+        return driver_manager_control(request);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DEVICE_LIST) {

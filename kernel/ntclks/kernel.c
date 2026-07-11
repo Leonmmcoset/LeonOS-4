@@ -1,5 +1,6 @@
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
+#include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
@@ -164,7 +165,6 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     console_set_ui_theme(gui_ipc_appearance_theme());
     console_enable_framebuffer();
     console_enable_vga_fallback();
-    mouse_init();
     sched_init();
     sched_create_idle_task();
     syscall_init();
@@ -188,6 +188,8 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
             storage_init();
         }
     }
+    driver_manager_init();
+    driver_manager_autoload();
     net_init();
     osmlayer_bridge_selftest();
     userland_init(&boot);

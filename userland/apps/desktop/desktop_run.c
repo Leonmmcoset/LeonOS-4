@@ -134,6 +134,9 @@ void desktop_run(void)
                 if (alt_tab_active) {
                     continue;
                 }
+                if (start_menu_handle_key(event.keycode, event.pressed)) {
+                    continue;
+                }
                 if (active_window >= BUILTIN_WINDOWS && active_window < MAX_WINDOWS &&
                     windows[active_window].window_id) {
                     send_app_event((uint8_t)active_window,

@@ -1450,6 +1450,58 @@ static void clamp_scroll(void)
     }
 }
 
+static uint32_t render_line_at_scroll(uint32_t offset, uint32_t *out_top)
+{
+    uint32_t top = 0;
+    for (uint32_t index = 0; index < render_count; ++index) {
+        uint32_t height = render_line_height(render_lines[index].kind);
+        if (offset < top + height || index + 1U == render_count) {
+            if (out_top) {
+                *out_top = top;
+            }
+            return index;
+        }
+        top += height;
+    }
+    if (out_top) {
+        *out_top = 0;
+    }
+    return 0;
+}
+
+static void scroll_document_lines(uint8_t up, uint32_t steps)
+{
+    uint32_t line_top;
+    uint32_t line_index;
+    if (!render_count) {
+        scroll_y = 0;
+        return;
+    }
+    line_index = render_line_at_scroll(scroll_y, &line_top);
+    while (steps--) {
+        if (up) {
+            if (scroll_y > line_top) {
+                scroll_y = line_top;
+            } else if (line_index > 0) {
+                --line_index;
+                line_top -= render_line_height(render_lines[line_index].kind);
+                scroll_y = line_top;
+            } else {
+                scroll_y = 0;
+                break;
+            }
+        } else {
+            if (line_index + 1U >= render_count) {
+                break;
+            }
+            line_top += render_line_height(render_lines[line_index].kind);
+            ++line_index;
+            scroll_y = line_top;
+        }
+    }
+    clamp_scroll();
+}
+
 static void rect_clip(uint32_t clip_x, uint32_t clip_y, uint32_t clip_w,
                       uint32_t clip_h, int32_t x, int32_t y, uint32_t w,
                       uint32_t h, uint32_t color)
@@ -1873,12 +1925,7 @@ static void handle_wheel(const struct leonos_gui_app_event *event)
             tree_scroll = tree_scroll + steps < max_scroll ? tree_scroll + steps : max_scroll;
         }
     } else {
-        int32_t wheel = event->dy > 0 ? (int32_t)(steps * 32U) : -(int32_t)(steps * 32U);
-        (void)leonos_ui_vscrollbar_handle_wheel(&scroll_y,
-                                                render_total_h() > doc_view_h()
-                                                    ? render_total_h()
-                                                    : doc_view_h(),
-                                                doc_view_h(), wheel);
+        scroll_document_lines(event->dy > 0, steps);
     }
 }
 

@@ -613,14 +613,18 @@ void handle_start_click(uint32_t x, uint32_t y)
     struct start_programs_layout docs = start_docs_layout_for_menu(layout);
     if (start_menu_programs_open &&
         hit_rect(x, y, (int)programs.x, (int)programs.y, programs.w, programs.h)) {
-        if (start_menu_app_count && x >= programs.x + 34) {
+        uint32_t filtered_count = start_menu_filtered_app_count();
+        if (filtered_count && x >= programs.x + 34 &&
+            y >= programs.y + 8 + START_MENU_SEARCH_H) {
             uint32_t rel_x = x - programs.x - 34;
-            uint32_t rel_y = y > programs.y + 8 ? y - programs.y - 8 : 0;
+            uint32_t rel_y = y - programs.y - 8 - START_MENU_SEARCH_H;
             uint32_t col = rel_x / START_PROGRAMS_W;
             uint32_t row = rel_y / START_MENU_ITEM_H;
-            uint32_t index = start_menu_programs_scroll + col * programs.rows + row;
-            if (col < programs.cols && row < programs.rows && index < start_menu_app_count) {
-                spawn_program_path(start_menu_app_paths[index]);
+            uint32_t filtered_index = start_menu_programs_scroll + col * programs.rows + row;
+            uint32_t app_index = start_menu_filtered_app_index(filtered_index);
+            if (col < programs.cols && row < programs.rows &&
+                filtered_index < filtered_count && app_index < start_menu_app_count) {
+                spawn_program_path(start_menu_app_paths[app_index]);
                 start_menu_set_open(0);
             }
         }
@@ -658,9 +662,8 @@ void handle_start_click(uint32_t x, uint32_t y)
         }
         if (items[i].type == START_ACTION_RESTORE) {
             restore_window(items[i].window_id);
-        } else if (items[i].type == START_ACTION_SPAWN) {
-            spawn_program_path(items[i].path);
-        } else if (items[i].type == START_ACTION_SPAWN_ONCE) {
+        } else if (items[i].type == START_ACTION_SPAWN ||
+                   items[i].type == START_ACTION_SPAWN_ONCE) {
             spawn_program_path(items[i].path);
         } else if (items[i].type == START_ACTION_PROGRAMS) {
             start_menu_programs_open = start_menu_programs_open ? 0 : 1;
@@ -1073,10 +1076,11 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
         uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
         struct start_menu_layout menu = start_menu_layout_for_count(count);
         struct start_programs_layout programs = start_programs_layout_for_menu(menu);
+        uint32_t filtered_count = start_menu_filtered_app_count();
         if (hit_rect(x, y, (int)programs.x, (int)programs.y, programs.w, programs.h) &&
-            start_menu_app_count > programs.visible_count) {
+            filtered_count > programs.visible_count) {
             uint32_t steps = wheel < 0 ? (uint32_t)(-wheel) : (uint32_t)wheel;
-            uint32_t max_scroll = start_menu_app_count - programs.visible_count;
+            uint32_t max_scroll = filtered_count - programs.visible_count;
             if (steps == 0) {
                 steps = 1;
             }

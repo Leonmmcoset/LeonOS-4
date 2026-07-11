@@ -2334,6 +2334,14 @@ void net_close_owner_sockets(uint32_t owner_pid)
     }
 }
 
+void net_driver_detached(void)
+{
+    net_memzero(net_sockets, sizeof(net_sockets));
+    net_arp_cache_clear();
+    net_set_static_fallback();
+    net_update_config_flags();
+}
+
 static uint32_t net_http_build_request(char *dst, uint32_t cap,
                                        const char *host, const char *path,
                                        uint32_t port)

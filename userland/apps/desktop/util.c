@@ -434,6 +434,10 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         copy_text(dst, dst_len, leonos_i18n("Device Manager", "设备管理器"));
         return;
     }
+    if (text_eq(name, "drvmgr.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("Driver Manager", "驱动管理器"));
+        return;
+    }
     if (text_eq(name, "notepad.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Notepad", "记事本"));
         return;
@@ -566,11 +570,13 @@ void start_menu_set_open(uint8_t open)
     if (open) {
         start_menu_apps_loaded = 0;
         start_menu_docs_loaded = 0;
+        start_menu_query[0] = 0;
     } else {
         start_menu_programs_open = 0;
         start_menu_docs_open = 0;
         start_menu_programs_scroll = 0;
         start_menu_docs_scroll = 0;
+        start_menu_query[0] = 0;
     }
     start_menu_open = open;
     start_menu_opening = open;

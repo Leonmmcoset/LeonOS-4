@@ -49,6 +49,19 @@ Client applications talk to the window server through osmlayer IPC and GUI
 ioctls. System applications query device inventory through
 `LEONOS_IOCTL_DEVICE_LIST`.
 
+## Driver Module ABI
+
+Loadable Ring 0 driver modules use the public definitions in
+`include/leonos/driver.h`. `LEONOS_IOCTL_DRIVER_LIST` exposes the discovered
+module filename, ABI version, state, and diagnostic text to all user sessions.
+`LEONOS_IOCTL_DRIVER_CONTROL` accepts load, unload, forced-unload, rescan, and
+boot-enable actions, but the kernel permits it only for administrator tasks.
+
+The kernel loads unsigned ELF64 `ET_REL` files from `0:/drivers` after the
+root filesystem is mounted. The complete binary format, restricted kernel API,
+and persistent `0:/etc/drivers.conf` policy are documented in
+[Drivers](DRIVERS.md).
+
 ## Appearance ABI
 
 The system UI theme is a global Desktop-owned appearance state. `Metro` is the

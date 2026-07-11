@@ -31,6 +31,7 @@
 enum installer_page {
     PAGE_LANGUAGE = 0,
     PAGE_POLICY,
+    PAGE_THANKS,
     PAGE_THEME,
     PAGE_WELCOME,
     PAGE_MODE,
@@ -115,6 +116,7 @@ static uint8_t installer_theme = LEONOS_UI_THEME_METRO;
 static uint8_t installer_theme_explicit;
 static uint8_t policy_accepted;
 static uint32_t policy_scroll_y;
+static uint32_t acknowledgements_scroll_y;
 static struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
 static uint32_t disk_count;
 static int32_t selected_disk = -1;
@@ -184,6 +186,46 @@ static const char privacy_policy_zh[] =
     "- 后续版本可能附带更新后的政策。新安装程序显示的版本适用于对应发行版，并替代本版本。\n"
     "\n"
     "> 选择同意即表示你已阅读并接受本隐私与使用政策。\n";
+
+static const char acknowledgements_en[] =
+    "# Thank You\n"
+    "\n"
+    "LeonOS 4 thanks the creators and maintainers of the public resources and open-source projects recorded for this release.\n"
+    "\n"
+    "## Included and generated components\n"
+    "- GNU GRUB 2 - GPL-3.0-or-later. Provides the UEFI and Multiboot2 boot path used by the normal system and installer media.\n"
+    "- Noto Sans Mono - SIL Open Font License 1.1. Used to generate the Metro Latin grayscale font resource.\n"
+    "- Droid Sans Fallback - Apache License 2.0. Primary font in the configured CJK glyph-generation chain.\n"
+    "- Noto Sans CJK - SIL Open Font License 1.1. Fallback font in the configured CJK glyph-generation chain.\n"
+    "- NASA Image and Video Library, PIA18033 - NASA media usage guidelines. Source of the Metro desktop wallpaper, credited to NASA.\n"
+    "\n"
+    "## Checked-in source dependencies\n"
+    "- litehtml - BSD-3-Clause. Present as a source submodule for the browser integration path.\n"
+    "- Gumbo HTML Parser - Apache License 2.0. Included with the litehtml source tree; it is not executed by this release.\n"
+    "\n"
+    "## Project resources\n"
+    "- LeonOS-generated icons, cursor graphics, system font assets, and UI artwork are project resources and are not imported third-party media.\n"
+    "\n";
+
+static const char acknowledgements_zh[] =
+    "# 感谢\n"
+    "\n"
+    "LeonOS 4 感谢本发行版所记录的公共资源与开源项目的创作者和维护者。\n"
+    "\n"
+    "## 随发行版提供或生成的组件\n"
+    "- GNU GRUB 2 - GPL-3.0-or-later。为普通系统和安装介质提供 UEFI 与 Multiboot2 启动路径。\n"
+    "- Noto Sans Mono - SIL Open Font License 1.1。用于生成 Metro 拉丁文灰度字体资源。\n"
+    "- Droid Sans Fallback - Apache License 2.0。作为已配置 CJK 字形生成链的主字体。\n"
+    "- Noto Sans CJK - SIL Open Font License 1.1。作为已配置 CJK 字形生成链的后备字体。\n"
+    "- NASA Image and Video Library，PIA18033 - 遵循 NASA 媒体使用指南。Metro 桌面壁纸的来源，署名 NASA。\n"
+    "\n"
+    "## 仓库内的源码依赖\n"
+    "- litehtml - BSD-3-Clause。作为浏览器集成路径的源码子模块存在。\n"
+    "- Gumbo HTML Parser - Apache License 2.0。随 litehtml 源码树提供；本发行版不会执行它。\n"
+    "\n"
+    "## 项目资源\n"
+    "- LeonOS 生成的图标、光标图形、系统字体资产和 UI 美术资源属于项目资源，并非导入的第三方媒体。\n"
+    "\n";
 
 static int text_eq(const char *a, const char *b)
 {
@@ -452,9 +494,8 @@ static void policy_emit_wrapped(uint8_t kind, const char *prefix,
     }
 }
 
-static void policy_reflow(uint32_t width)
+static void markdown_reflow(const char *source, uint32_t width)
 {
-    const char *source = installer_lang == LEONOS_LANG_ZH ? privacy_policy_zh : privacy_policy_en;
     uint32_t pos = 0;
     policy_line_count = 0;
     while (source[pos] && policy_line_count < POLICY_MAX_LINES) {
@@ -520,6 +561,19 @@ static void policy_reflow(uint32_t width)
             }
         }
     }
+}
+
+static void policy_reflow(uint32_t width)
+{
+    markdown_reflow(installer_lang == LEONOS_LANG_ZH ? privacy_policy_zh : privacy_policy_en,
+                    width);
+}
+
+static void acknowledgements_reflow(uint32_t width)
+{
+    markdown_reflow(installer_lang == LEONOS_LANG_ZH
+                        ? acknowledgements_zh : acknowledgements_en,
+                    width);
 }
 
 static uint32_t policy_line_height(uint8_t kind)
@@ -658,6 +712,22 @@ static struct installer_policy_view get_policy_view(void)
     view.text_w = view.w > POLICY_SCROLLBAR_W + 30
                       ? view.w - POLICY_SCROLLBAR_W - 30
                       : 80;
+    return view;
+}
+
+static struct installer_policy_view get_acknowledgements_view(void)
+{
+    struct installer_layout l = get_layout();
+    struct installer_policy_view view;
+    view.x = l.content_x;
+    view.y = l.content_y + 56;
+    view.w = l.table_w;
+    view.h = l.footer_y > view.y + 12 ? l.footer_y - view.y - 12 : 64;
+    view.text_x = view.x + 10;
+    view.text_w = view.w > POLICY_SCROLLBAR_W + 30
+                      ? view.w - POLICY_SCROLLBAR_W - 30
+                      : 80;
+    view.checkbox_y = 0;
     return view;
 }
 
@@ -800,6 +870,8 @@ static void draw_sidebar(struct leonos_ui_surface *ui)
             label = T("Language", "语言");
         } else if (i == PAGE_POLICY) {
             label = T("Policy", "政策");
+        } else if (i == PAGE_THANKS) {
+            label = T("Thanks", "感谢");
         } else if (i == PAGE_THEME) {
             label = T("Style", "样式");
         } else if (i == PAGE_WELCOME) {
@@ -953,6 +1025,61 @@ static void draw_policy_page(struct leonos_ui_surface *ui)
                            T("I agree to the Privacy and Acceptable Use Policy.",
                              "我同意本隐私与使用政策。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+}
+
+static void draw_acknowledgements_page(struct leonos_ui_surface *ui)
+{
+    struct installer_policy_view view = get_acknowledgements_view();
+    uint32_t total_h;
+    uint32_t max_scroll;
+    uint32_t offset = 0;
+    draw_title(ui, T("Thank You", "感谢"),
+               T("Acknowledgements for public resources and open-source projects.",
+                 "公共资源与开源项目致谢。"));
+    acknowledgements_reflow(view.text_w);
+    total_h = policy_total_height();
+    max_scroll = total_h > view.h ? total_h - view.h : 0;
+    if (acknowledgements_scroll_y > max_scroll) {
+        acknowledgements_scroll_y = max_scroll;
+    }
+    leonos_ui_scroll_view_frame(ui, view.x, view.y, view.w, view.h);
+    for (uint32_t i = 0; i < policy_line_count; ++i) {
+        uint32_t line_h = policy_line_height(policy_lines[i].kind);
+        int32_t line_y = (int32_t)view.y + (int32_t)offset -
+                         (int32_t)acknowledgements_scroll_y;
+        if (line_y >= (int32_t)view.y &&
+            line_y + (int32_t)line_h <= (int32_t)(view.y + view.h)) {
+            if (policy_lines[i].kind == POLICY_LINE_H1) {
+                leonos_ui_text_resized_clipped(ui, view.text_x, (uint32_t)line_y,
+                                                view.text_w, policy_lines[i].text,
+                                                LEONOS_UI_ACTIVE_TITLE, LEONOS_UI_WHITE, 9, 18);
+            } else if (policy_lines[i].kind == POLICY_LINE_H2) {
+                leonos_ui_text_resized_clipped(ui, view.text_x, (uint32_t)line_y,
+                                                view.text_w, policy_lines[i].text,
+                                                LEONOS_UI_ACTIVE_TITLE, LEONOS_UI_WHITE, 9, 17);
+            } else if (policy_lines[i].kind == POLICY_LINE_RULE) {
+                leonos_ui_rect(ui, view.text_x, (uint32_t)line_y + 5,
+                               view.text_w, 1, LEONOS_UI_DARK);
+            } else if (policy_lines[i].kind == POLICY_LINE_QUOTE) {
+                leonos_ui_rect(ui, view.text_x, (uint32_t)line_y + 1, 3,
+                               line_h > 2 ? line_h - 2 : line_h, LEONOS_UI_ACTIVE_TITLE);
+                leonos_ui_text_clipped(ui, view.text_x + 9, (uint32_t)line_y,
+                                       view.text_w > 9 ? view.text_w - 9 : view.text_w,
+                                       policy_lines[i].text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
+            } else {
+                leonos_ui_text_clipped(ui, view.text_x, (uint32_t)line_y,
+                                       view.text_w, policy_lines[i].text,
+                                       policy_lines[i].kind == POLICY_LINE_BULLET
+                                           ? LEONOS_UI_BLACK : LEONOS_UI_DARK,
+                                       LEONOS_UI_WHITE);
+            }
+        }
+        offset += line_h;
+    }
+    leonos_ui_vscrollbar(ui, view.x + view.w - POLICY_SCROLLBAR_W, view.y,
+                         POLICY_SCROLLBAR_W, view.h, acknowledgements_scroll_y,
+                         total_h > view.h ? total_h : view.h, view.h,
+                         total_h <= view.h ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
 }
 
 static void draw_theme_page(struct leonos_ui_surface *ui)
@@ -1194,6 +1321,9 @@ static void draw_installer(struct leonos_ui_surface *ui)
         break;
     case PAGE_POLICY:
         draw_policy_page(ui);
+        break;
+    case PAGE_THANKS:
+        draw_acknowledgements_page(ui);
         break;
     case PAGE_THEME:
         draw_theme_page(ui);
@@ -2341,8 +2471,10 @@ static void go_back(void)
 {
     if (page == PAGE_POLICY) {
         page = PAGE_LANGUAGE;
-    } else if (page == PAGE_THEME) {
+    } else if (page == PAGE_THANKS) {
         page = PAGE_POLICY;
+    } else if (page == PAGE_THEME) {
+        page = PAGE_THANKS;
     } else if (page == PAGE_WELCOME) {
         page = PAGE_THEME;
     } else if (page == PAGE_MODE) {
@@ -2370,6 +2502,11 @@ static int go_primary(int window_id, struct leonos_ui_surface *ui)
         return 0;
     }
     if (page == PAGE_POLICY) {
+        page = PAGE_THANKS;
+        dirty = 1;
+        return 0;
+    }
+    if (page == PAGE_THANKS) {
         page = PAGE_THEME;
         dirty = 1;
         return 0;
@@ -2472,6 +2609,7 @@ static void handle_language_click(int32_t x, int32_t y)
         installer_lang = language;
         policy_accepted = 0;
         policy_scroll_y = 0;
+        acknowledgements_scroll_y = 0;
         (void)leonos_i18n_set_language(language);
         dirty = 1;
     }
@@ -2512,6 +2650,41 @@ static void handle_policy_wheel(int32_t delta)
     total_h = policy_total_height();
     pixels = delta > 0 ? (int32_t)(steps * 36U) : -(int32_t)(steps * 36U);
     if (leonos_ui_vscrollbar_handle_wheel(&policy_scroll_y,
+                                          total_h > view.h ? total_h : view.h,
+                                          view.h, pixels)) {
+        dirty = 1;
+    }
+}
+
+static void handle_acknowledgements_click(int32_t x, int32_t y)
+{
+    struct installer_policy_view view = get_acknowledgements_view();
+    uint32_t total_h;
+    acknowledgements_reflow(view.text_w);
+    total_h = policy_total_height();
+    if (leonos_ui_vscrollbar_handle_mouse(&acknowledgements_scroll_y,
+                                           total_h > view.h ? total_h : view.h,
+                                           view.h,
+                                           view.x + view.w - POLICY_SCROLLBAR_W,
+                                           view.y, POLICY_SCROLLBAR_W, view.h,
+                                           x, y)) {
+        dirty = 1;
+    }
+}
+
+static void handle_acknowledgements_wheel(int32_t delta)
+{
+    struct installer_policy_view view = get_acknowledgements_view();
+    uint32_t total_h;
+    uint32_t steps = delta < 0 ? (uint32_t)(-delta) : (uint32_t)delta;
+    int32_t pixels;
+    if (!steps) {
+        steps = 1;
+    }
+    acknowledgements_reflow(view.text_w);
+    total_h = policy_total_height();
+    pixels = delta > 0 ? (int32_t)(steps * 36U) : -(int32_t)(steps * 36U);
+    if (leonos_ui_vscrollbar_handle_wheel(&acknowledgements_scroll_y,
                                           total_h > view.h ? total_h : view.h,
                                           view.h, pixels)) {
         dirty = 1;
@@ -2606,6 +2779,9 @@ static int handle_mouse(int window_id, struct leonos_ui_surface *ui,
     }
     if (page == PAGE_POLICY) {
         handle_policy_click(event->x, event->y);
+    }
+    if (page == PAGE_THANKS) {
+        handle_acknowledgements_click(event->x, event->y);
     }
     if (page == PAGE_THEME) {
         handle_theme_click(event->x, event->y);
@@ -2735,6 +2911,8 @@ int main(void)
                     handle_update_apps_wheel(event.dy);
                 } else if (page == PAGE_POLICY) {
                     handle_policy_wheel(event.dy);
+                } else if (page == PAGE_THANKS) {
+                    handle_acknowledgements_wheel(event.dy);
                 }
             }
             if ((event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN ||

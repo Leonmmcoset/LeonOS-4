@@ -1,4 +1,5 @@
 #include <leonos/device.h>
+#include <leonos/driver.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
@@ -910,6 +911,45 @@ int leonos_device_list(struct leonos_device_info *devices,
         *out_count = query.count;
     }
     return ret;
+}
+
+int leonos_driver_list(struct leonos_driver_info *drivers, uint32_t capacity,
+                       uint32_t *out_count)
+{
+    struct leonos_driver_list query = {
+        .capacity = capacity,
+        .count = 0,
+        .drivers = drivers,
+    };
+    int ret = ioctl(3, LEONOS_IOCTL_DRIVER_LIST, &query);
+    if (out_count) {
+        *out_count = query.count;
+    }
+    return ret;
+}
+
+int leonos_driver_control(uint32_t action, const char *file)
+{
+    struct leonos_driver_control request = {
+        .action = action,
+        .flags = 0,
+        .status = -1,
+        .reserved = 0,
+        .file = {0},
+    };
+    uint32_t index = 0;
+    while (file && file[index] && index + 1U < sizeof(request.file)) {
+        request.file[index] = file[index];
+        ++index;
+    }
+    request.file[index] = 0;
+    if (action != LEONOS_DRIVER_CONTROL_RESCAN && !request.file[0]) {
+        return -1;
+    }
+    if (ioctl(3, LEONOS_IOCTL_DRIVER_CONTROL, &request) < 0) {
+        return request.status < 0 ? request.status : -1;
+    }
+    return request.status;
 }
 
 int leonos_net_config(struct leonos_net_config *config)

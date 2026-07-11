@@ -39,6 +39,7 @@ NORMAL_USER_APPS = [
     "settings",
     "diskmgr",
     "devmgr",
+    "drvmgr",
 ]
 INSTALLER_USER_APPS = [
     "desktop",
@@ -54,6 +55,12 @@ USER_APPS = NORMAL_USER_APPS + [
 ]
 
 APP_ICON_APPS = USER_APPS
+
+DRIVER_MODULES = [
+    "mouse",
+    "serial",
+    "e1000",
+]
 
 WINDOW_BUTTON_ICONS = [
     "window-button-minimize.bmp",
@@ -268,6 +275,12 @@ def main() -> int:
     write_line(lines, "  deps = gcc")
     write_line(lines, "  description = AS.KERNEL $out")
     write_line(lines)
+    write_line(lines, "rule cc_driver")
+    write_line(lines, f"  command = $cc {cflags_kernel} -MMD -MF $out.d -c $in -o $out")
+    write_line(lines, "  depfile = $out.d")
+    write_line(lines, "  deps = gcc")
+    write_line(lines, "  description = CC.DRIVER $out")
+    write_line(lines)
     write_line(lines, "rule cc_loader")
     write_line(lines, f"  command = $cc {cflags_loader} -MMD -MF $out.d -c $in -o $out")
     write_line(lines, "  depfile = $out.d")
@@ -291,6 +304,10 @@ def main() -> int:
     write_line(lines, "rule link_kernel")
     write_line(lines, "  command = $ld -nostdlib -z max-page-size=0x1000 -T kernel/ntclks/arch/x86_64/linker.ld -o $out $in")
     write_line(lines, "  description = LD.KERNEL $out")
+    write_line(lines)
+    write_line(lines, "rule link_driver")
+    write_line(lines, "  command = mkdir -p `dirname $out` && $ld -r -o $out $in")
+    write_line(lines, "  description = LD.DRIVER $out")
     write_line(lines)
     write_line(lines, "rule link_middlelayer")
     write_line(lines, "  command = $ld -nostdlib -z max-page-size=0x1000 -T middlelayer/osmlayer/linker.ld -o $out $in")
@@ -362,7 +379,13 @@ def main() -> int:
     )
     if not iso_copy_docs:
         iso_copy_docs = "true"
-    write_line(lines, f"  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/boot build/iso/system build/iso/userland build/iso/etc build/iso/docs && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/boot/loader.elf build/iso/boot/loader.elf && cp build/system/kernel.sys build/iso/system/kernel.sys && cp build/system/middlelayer.sys build/iso/system/middlelayer.sys && {iso_copy_system} && {iso_copy_apps} && {iso_copy_docs} && cp build/esp/etc/leonos.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso")
+    iso_copy_drivers = " && ".join(
+        f"cp build/esp/drivers/{name}.drv build/iso/drivers/{name}.drv"
+        for name in DRIVER_MODULES
+    )
+    if not iso_copy_drivers:
+        iso_copy_drivers = "true"
+    write_line(lines, f"  command = rm -rf build/iso && mkdir -p build/iso/boot/grub build/iso/boot build/iso/system build/iso/userland build/iso/drivers build/iso/etc build/iso/docs && cp boot/grub/grub.cfg build/iso/boot/grub/grub.cfg && cp build/boot/loader.elf build/iso/boot/loader.elf && cp build/system/kernel.sys build/iso/system/kernel.sys && cp build/system/middlelayer.sys build/iso/system/middlelayer.sys && {iso_copy_system} && {iso_copy_drivers} && {iso_copy_apps} && {iso_copy_docs} && cp build/esp/etc/leonos.conf build/iso/etc/leonos.conf && grub-mkrescue -o $out build/iso")
     write_line(lines, "  description = ISO $out")
     write_line(lines)
     write_line(lines, "rule installer_root")
@@ -447,6 +470,9 @@ def main() -> int:
     kernel_sources = collect([
         "kernel/ntclks/**/*.c",
         "kernel/ntclks/**/*.S",
+    ]) + collect([
+        "drivers/bootstrap/**/*.c",
+        "drivers/bootstrap/**/*.S",
     ])
     rust_sources = collect(["middlelayer/osmlayer/src/**/*.rs"])
     version_deps = " ".join(
@@ -480,6 +506,24 @@ def main() -> int:
     all_kernel_inputs = " ".join(r(o) for o in kernel_objects)
     write_line(lines, f"build {r(kernel_sys)}: link_kernel {all_kernel_inputs} | kernel/ntclks/arch/x86_64/linker.ld")
     write_line(lines, f"build kernel: phony {r(kernel_sys)}")
+
+    driver_modules: dict[str, Path] = {}
+    for driver in DRIVER_MODULES:
+        driver_sources = collect([
+            f"drivers/{driver}/**/*.c",
+            f"drivers/{driver}/**/*.S",
+        ])
+        driver_objects: list[Path] = []
+        module = ROOT / "build" / "drivers" / f"{driver}.drv"
+        driver_modules[driver] = module
+        for src in driver_sources:
+            obj = obj_for(src, f"driver-{driver}")
+            driver_objects.append(obj)
+            rule = "as_kernel" if src.suffix == ".S" else "cc_driver"
+            implicit = " | include/generated/autoconf.h" if src.suffix == ".c" else ""
+            write_line(lines, f"build {r(obj)}: {rule} {r(src)}{implicit}")
+        write_line(lines, f"build {r(module)}: link_driver {' '.join(r(obj) for obj in driver_objects)}")
+    write_line(lines, f"build drivers: phony {' '.join(r(module) for module in driver_modules.values())}")
 
     libc_sources = collect(["userland/libc/src/*.c", "userland/libc/src/*.S"])
     libc_objects: list[Path] = []
@@ -546,6 +590,10 @@ def main() -> int:
         ROOT / "build" / "esp" / "docs" / src.name
         for src in doc_sources
     ]
+    driver_esp_outputs = [
+        ROOT / "build" / "esp" / "drivers" / f"{name}.drv"
+        for name in DRIVER_MODULES
+    ]
 
     esp_outputs = [
         ROOT / "build/esp/EFI/BOOT/BOOTX64.EFI",
@@ -554,6 +602,7 @@ def main() -> int:
         ROOT / "build/esp/system/kernel.sys",
         ROOT / "build/esp/system/middlelayer.sys",
         *(ROOT / "build/esp" / dst for dst, _ in SYSTEM_FILES),
+        *driver_esp_outputs,
         *(ROOT / f"build/esp/userland/{app}.elf" for app in NORMAL_USER_APPS),
         *(ROOT / f"build/esp/userland/{app}.bmp" for app in NORMAL_USER_APPS),
         ROOT / "build/esp/etc/leonos.conf",
@@ -570,7 +619,12 @@ def main() -> int:
         if src:
             write_line(lines, f"build {r(ROOT / 'build/esp' / dst)}: copy {src}")
     system_output_count = len(SYSTEM_FILES)
-    app_output_start = 5 + system_output_count
+    driver_output_start = 5 + system_output_count
+    driver_output_end = driver_output_start + len(driver_esp_outputs)
+    for output, module in zip(esp_outputs[driver_output_start:driver_output_end],
+                              (driver_modules[name] for name in DRIVER_MODULES)):
+        write_line(lines, f"build {r(output)}: copy {r(module)}")
+    app_output_start = driver_output_end
     app_output_end = app_output_start + len(normal_user_elfs)
     for output, elf in zip(esp_outputs[app_output_start:app_output_end], normal_user_elfs):
         write_line(lines, f"build {r(output)}: copy {r(elf)}")
@@ -586,10 +640,11 @@ def main() -> int:
     write_line(lines, f"build {r(vmdk)}: image {' '.join(r(p) for p in esp_outputs)} | tools/make_image.py")
     iso = ROOT / "build/images/leonos4.iso"
     system_deps = " ".join(r(ROOT / "build/esp" / dst) for dst, _ in SYSTEM_FILES)
+    driver_deps = " ".join(r(output) for output in driver_esp_outputs)
     normal_user_icon_deps = [ROOT / f"build/esp/userland/{app}.bmp" for app in NORMAL_USER_APPS]
     doc_deps = " ".join(r(p) for p in doc_outputs)
     etc_deps = "build/esp/etc/leonos.conf"
-    write_line(lines, f"build {r(iso)}: iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {' '.join(r(e) for e in normal_user_elfs)} {' '.join(r(p) for p in normal_user_icon_deps)} {system_deps} {doc_deps} {etc_deps} boot/grub/grub.cfg")
+    write_line(lines, f"build {r(iso)}: iso {r(loader_elf)} {r(kernel_sys)} {r(middlelayer_sys)} {' '.join(r(e) for e in normal_user_elfs)} {' '.join(r(p) for p in normal_user_icon_deps)} {system_deps} {driver_deps} {doc_deps} {etc_deps} boot/grub/grub.cfg")
     installer_root = ROOT / "build/install/root.fat"
     installer_elf_deps = " ".join(r(user_elfs_by_app[app]) for app in INSTALLER_USER_APPS)
     installer_icon_deps = " ".join(
@@ -604,7 +659,7 @@ def main() -> int:
     write_line(lines, f"build image-vmdk: phony {r(vmdk)}")
     write_line(lines, f"build image-iso: phony {r(iso)}")
     write_line(lines, f"build installer: phony {r(installer_iso)}")
-    write_line(lines, f"build all: phony loader kernel middlelayer userland esp")
+    write_line(lines, f"build all: phony loader kernel drivers middlelayer userland esp")
     write_line(lines, f"build run: run {r(vmdk)}")
     write_line(lines, f"build run-debug: run_debug {r(vmdk)}")
     write_line(lines, f"build run-iso: run_iso {r(iso)} {r(vmdk)}")

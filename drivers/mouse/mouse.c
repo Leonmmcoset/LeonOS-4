@@ -1,9 +1,43 @@
-#include <ntclks/console.h>
+#include <leonos/driver.h>
+
 #include <ntclks/framebuffer.h>
 #include <ntclks/input.h>
 #include <ntclks/mouse.h>
 
-#include "../arch/x86_64/port.h"
+static const struct leonos_driver_kernel_api *kernel_api;
+static struct framebuffer module_framebuffer;
+
+static const struct framebuffer *module_framebuffer_get(void)
+{
+    uint32_t width = 1024;
+    uint32_t height = 768;
+    int available = kernel_api && kernel_api->framebuffer_size &&
+                    kernel_api->framebuffer_size(&width, &height) == 0;
+    module_framebuffer = (struct framebuffer){
+        .width = width,
+        .height = height,
+        .pitch = width * 4U,
+        .bpp = 32,
+        .available = available != 0,
+    };
+    return &module_framebuffer;
+}
+
+static void module_console_notice(void)
+{
+    if (kernel_api && kernel_api->console_write) {
+        kernel_api->console_write("[driver] mouse activity\n");
+    }
+}
+
+#define framebuffer_get() module_framebuffer_get()
+#define input_push_mouse(x, y, dx, dy, buttons) \
+    kernel_api->input_push_mouse((x), (y), (dx), (dy), (buttons))
+#define input_push_mouse_wheel(x, y, wheel, buttons) \
+    kernel_api->input_push_mouse_wheel((x), (y), (wheel), (buttons))
+#define x86_64_inb(port) kernel_api->inb((port))
+#define x86_64_outb(value, port) kernel_api->outb((port), (value))
+#define console_printf(...) module_console_notice()
 
 #define PS2_DATA 0x60
 #define PS2_STATUS 0x64
@@ -125,6 +159,7 @@ static void mouse_publish(int32_t new_x, int32_t new_y, uint8_t buttons, const c
     state.y = new_y;
     mouse_clamp_to_framebuffer();
     state.buttons = buttons;
+    (void)tag;
     ++events;
     input_push_mouse(state.x, state.y, state.x - old_x, state.y - old_y, state.buttons);
     if (events <= 8) {
@@ -144,6 +179,7 @@ static void mouse_publish_wheel(int32_t wheel, const char *tag)
     if (wheel == 0) {
         return;
     }
+    (void)tag;
     ++events;
     input_push_mouse_wheel(state.x, state.y, wheel, state.buttons);
     if (events <= 8) {
@@ -377,7 +413,7 @@ static void vmware_drain_events(void)
     }
 }
 
-void mouse_init(void)
+static void mouse_hardware_init(void)
 {
     packet_index = 0;
     events = 0;
@@ -414,6 +450,9 @@ void mouse_init(void)
     if (vmware_backdoor) {
         vmware_absolute = vmware_enable_absolute();
     }
+    (void)scale_ok;
+    (void)resolution_ok;
+    (void)sample_ok;
     console_printf("[ntclks] mouse init ps2 defaults=%d scale=%d res=%d sample=%d wheel=%d enable=%d vmware=%d absolute=%d version=0x%x at %d,%d\n",
                    defaults_ok,
                    scale_ok,
@@ -428,7 +467,7 @@ void mouse_init(void)
                    state.y);
 }
 
-void mouse_poll(void)
+static void mouse_hardware_poll(void)
 {
     int saw_aux_data = 0;
 
@@ -473,27 +512,89 @@ void mouse_poll(void)
     }
 }
 
-const struct mouse_state *mouse_get_state(void)
+static const struct mouse_state *mouse_hardware_get_state(void)
 {
     return &state;
 }
 
-uint32_t mouse_event_count(void)
+static uint32_t mouse_hardware_event_count(void)
 {
     return events;
 }
 
-uint8_t mouse_last_status(void)
+static uint8_t mouse_hardware_last_status(void)
 {
     return last_status;
 }
 
-uint8_t mouse_last_data(void)
+static uint8_t mouse_hardware_last_data(void)
 {
     return last_data;
 }
 
-uint8_t mouse_last_ack(void)
+static uint8_t mouse_hardware_last_ack(void)
 {
     return last_ack;
 }
+
+static void mouse_driver_poll(void)
+{
+    mouse_hardware_poll();
+}
+
+static void mouse_driver_get_state(struct leonos_driver_mouse_state *out)
+{
+    const struct mouse_state *source = mouse_hardware_get_state();
+    if (!out || !source) {
+        return;
+    }
+    *out = (struct leonos_driver_mouse_state){
+        .x = source->x,
+        .y = source->y,
+        .buttons = source->buttons,
+        .present = source->present ? 1U : 0U,
+        .absolute = source->absolute ? 1U : 0U,
+        .reserved = 0,
+        .event_count = mouse_hardware_event_count(),
+        .last_status = mouse_hardware_last_status(),
+        .last_data = mouse_hardware_last_data(),
+        .last_ack = mouse_hardware_last_ack(),
+        .reserved2 = 0,
+    };
+}
+
+static int mouse_driver_init(const struct leonos_driver_kernel_api *api)
+{
+    static const struct leonos_driver_mouse_ops ops = {
+        .poll = mouse_driver_poll,
+        .get_state = mouse_driver_get_state,
+    };
+    if (!api || api->abi_version != LEONOS_DRIVER_ABI_VERSION ||
+        api->struct_size < sizeof(*api)) {
+        return -22;
+    }
+    kernel_api = api;
+    mouse_hardware_init();
+    return kernel_api->register_mouse(&ops);
+}
+
+static void mouse_driver_fini(void)
+{
+    if (kernel_api) {
+        (void)mouse_write_ack(0xf5);
+    }
+    vmware_disable_absolute();
+    state.present = false;
+}
+
+struct leonos_driver_module leonos_driver_module = {
+    .magic = LEONOS_DRIVER_MODULE_MAGIC,
+    .abi_version = LEONOS_DRIVER_ABI_VERSION,
+    .struct_size = sizeof(struct leonos_driver_module),
+    .kind = LEONOS_DRIVER_KIND_INPUT,
+    .name = "mouse",
+    .version = 1U,
+    .reserved = 0,
+    .init = mouse_driver_init,
+    .fini = mouse_driver_fini,
+};

@@ -74,10 +74,12 @@
 #define START_MENU_ANIM_MS 160UL
 #define WINDOW_ANIM_MS 190UL
 #define START_MENU_ITEM_H 26
+#define START_MENU_SEARCH_H 32
 #define START_MENU_DIRTY_H (START_MENU_MAX_H + TASKBAR_H + 8)
 #define START_MENU_MAX_APPS LEONOS_FS_MAX_ENTRIES
 #define START_MENU_MAX_DOCS LEONOS_FS_MAX_ENTRIES
 #define START_MENU_MAX_ITEMS 32
+#define START_MENU_QUERY_MAX 48
 #define APP_WINDOW_SLOTS (MAX_WINDOWS - BUILTIN_WINDOWS)
 #define APP_CLIENT_MAX_W 1920
 #define APP_CLIENT_MAX_H 1080
@@ -246,6 +248,7 @@ extern uint8_t start_menu_programs_open;
 extern uint8_t start_menu_docs_open;
 extern uint32_t start_menu_programs_scroll;
 extern uint32_t start_menu_docs_scroll;
+extern char start_menu_query[START_MENU_QUERY_MAX];
 extern unsigned long start_menu_anim_start;
 extern uint8_t start_menu_apps_loaded;
 extern uint8_t start_menu_docs_loaded;
@@ -434,6 +437,8 @@ void draw_alt_tab_overlay(void);
 int start_menu_is_hidden_app(const char *name);
 void start_menu_load_apps(void);
 void start_menu_ensure_apps(void);
+uint32_t start_menu_filtered_app_count(void);
+uint32_t start_menu_filtered_app_index(uint32_t filtered_index);
 void start_menu_load_docs(void);
 void start_menu_ensure_docs(void);
 uint32_t build_start_menu_items(struct start_menu_item *items, uint32_t cap);
@@ -443,6 +448,7 @@ struct start_programs_layout start_programs_layout_for_menu(struct start_menu_la
 struct start_programs_layout start_docs_layout_for_menu(struct start_menu_layout menu);
 void draw_start_programs_menu(struct start_menu_layout menu);
 void draw_start_docs_menu(struct start_menu_layout menu);
+int start_menu_handle_key(uint8_t keycode, uint8_t pressed);
 void draw_start_menu(void);
 void desktop_items_clear(void);
 int desktop_refresh_items(void);

@@ -38,6 +38,8 @@ Multi-user v1 uses these fixed paths:
 - `0:/etc/oobe.done`: first-run completion marker.
 - `0:/etc/fileassoc.cfg`: optional launcher file-association overrides.
 - `0:/etc/services.cfg`: optional startup/service policy overrides.
+- `0:/etc/drivers.conf`: optional disabled loadable-driver list.
+- `0:/drivers`: unsigned Ring 0 `.drv` modules loaded after root mount.
 - `0:/docs`: bundled and third-party `.hlp` help containers shown by the
   desktop Documents menu and opened by `oshlp.elf`.
 - `0:/var/run/services.state`: service runtime state written by

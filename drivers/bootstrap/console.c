@@ -1,6 +1,6 @@
+#include <leonos/psf_font.h>
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
-#include <leonos/psf_font.h>
 
 #define CONSOLE_LOG_CAP 8192
 #define CONSOLE_COLS 96

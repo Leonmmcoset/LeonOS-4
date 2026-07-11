@@ -1,6 +1,6 @@
 #include <ntclks/console.h>
+#include <ntclks/driver_manager.h>
 #include <ntclks/input.h>
-#include <ntclks/mouse.h>
 #include <ntclks/sched.h>
 #include <ntclks/time.h>
 #include <ntclks/trap.h>
@@ -124,7 +124,7 @@ struct task *irq_dispatch(struct trap_frame *frame)
         }
         pic_send_eoi(1);
     } else if (vector == 0x2c) {
-        mouse_poll();
+        driver_manager_mouse_poll();
         pic_send_eoi(12);
     } else {
         pic_send_eoi(0);

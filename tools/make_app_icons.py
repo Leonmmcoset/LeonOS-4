@@ -333,6 +333,12 @@ def icon_devmgr(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 6, 6, 4, 4, rgba(190, 170, 230))
 
 
+def icon_drvmgr(c: list[list[tuple[int, int, int, int]]]) -> None:
+    icon_devmgr(c)
+    fill(c, 6, 6, 4, 4, BLUE)
+    text3(c, 6, 6, "D", WHITE)
+
+
 def icon_oobe(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 4, 3, 8, 10, WHITE)
     rect(c, 4, 3, 8, 10, DARK)
@@ -418,6 +424,8 @@ def draw_icon(name: str) -> list[list[tuple[int, int, int, int]]]:
         icon_diskmgr(c)
     elif name == "devmgr":
         icon_devmgr(c)
+    elif name == "drvmgr":
+        icon_drvmgr(c)
     elif name == "oobe":
         icon_oobe(c)
     elif name == "login":

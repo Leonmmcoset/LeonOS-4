@@ -1,5 +1,5 @@
-#include <ntclks/console.h>
 #include <ntclks/efi_fs.h>
+#include <ntclks/console.h>
 #include <ntclks/mm.h>
 
 #define EFI_BY_PROTOCOL 2ULL

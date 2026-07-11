@@ -8,6 +8,8 @@ when changing the kernel, loader, middlelayer, installer, or user ABI.
   `mmap`/`munmap`, process calls, and ioctl groups.
 - [Filesystem](FILESYSTEM.md): numbered drives, mount policy, FAT32 support,
   bundled `.hlp` help documents, and current limits.
+- [Drivers](DRIVERS.md): bootstrap drivers, loadable `.drv` modules, ABI, and
+  management policy.
 - [Boot and Integrity](BOOT_AND_INTEGRITY.md): loader boot flow, SHA-256
   component checks, installer compatibility, and trust boundary.
 - [Middlelayer](MIDDLELAYER.md): current middlelayer services, ABI files, and

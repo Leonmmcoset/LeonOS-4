@@ -1,7 +1,7 @@
-#include <ntclks/console.h>
-
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
+
+#include <ntclks/console.h>
 
 static volatile uint16_t *const vga = (volatile uint16_t *)0xb8000;
 static uint8_t row;

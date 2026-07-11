@@ -74,6 +74,7 @@ def main() -> int:
     copy_file(ROOT / "system/fonts/cjk16.lbf", stage / "system/fonts/cjk16.lbf")
     copy_file(ROOT / "system/fonts/metro-latin.lbf", stage / "system/fonts/metro-latin.lbf")
     copy_tree(esp_tree / "system/resources", stage / "system/resources")
+    copy_tree(esp_tree / "drivers", stage / "drivers")
     copy_tree(esp_tree, stage / "install/esp")
     remove_file(stage / "install/esp/etc/license.conf")
     remove_file(stage / "install/esp/etc/install.id")

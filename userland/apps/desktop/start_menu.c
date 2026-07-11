@@ -201,6 +201,59 @@ void start_menu_ensure_docs(void)
     }
 }
 
+static int start_menu_contains(const char *text, const char *query)
+{
+    if (!query || !query[0]) {
+        return 1;
+    }
+    for (uint32_t i = 0; text && text[i]; ++i) {
+        uint32_t j = 0;
+        while (query[j] && text[i + j] &&
+               lower_ascii(text[i + j]) == lower_ascii(query[j])) {
+            ++j;
+        }
+        if (!query[j]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int start_menu_app_matches(uint32_t index)
+{
+    return index < start_menu_app_count &&
+           (start_menu_contains(start_menu_app_labels[index], start_menu_query) ||
+            start_menu_contains(start_menu_app_paths[index], start_menu_query));
+}
+
+uint32_t start_menu_filtered_app_count(void)
+{
+    uint32_t count = 0;
+    start_menu_ensure_apps();
+    for (uint32_t i = 0; i < start_menu_app_count; ++i) {
+        if (start_menu_app_matches(i)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+uint32_t start_menu_filtered_app_index(uint32_t filtered_index)
+{
+    uint32_t count = 0;
+    start_menu_ensure_apps();
+    for (uint32_t i = 0; i < start_menu_app_count; ++i) {
+        if (!start_menu_app_matches(i)) {
+            continue;
+        }
+        if (count == filtered_index) {
+            return i;
+        }
+        ++count;
+    }
+    return start_menu_app_count;
+}
+
 uint32_t build_start_menu_items(struct start_menu_item *items, uint32_t cap)
 {
     uint32_t count = 0;
@@ -272,14 +325,18 @@ struct start_menu_layout start_menu_layout_for_count(uint32_t count)
 static struct start_programs_layout start_submenu_layout_for_menu(struct start_menu_layout menu,
                                                                   uint32_t item_count,
                                                                   uint32_t item_w,
-                                                                  uint32_t *scroll)
+                                                                  uint32_t *scroll,
+                                                                  uint32_t search_h)
 {
     struct start_programs_layout layout;
     uint32_t max_h = taskbar_y() > 12 ? taskbar_y() - 12 : START_MENU_MAX_H;
     uint32_t available_right;
     uint32_t available_left;
     uint32_t max_cols;
-    uint32_t rows = max_h > 16 ? (max_h - 16) / START_MENU_ITEM_H : 1;
+    uint32_t rows;
+    uint32_t chrome_h = 16 + search_h;
+    uint32_t item_area_h = max_h > chrome_h ? max_h - chrome_h : START_MENU_ITEM_H;
+    rows = item_area_h / START_MENU_ITEM_H;
     if (rows == 0) {
         rows = 1;
     }
@@ -306,8 +363,8 @@ static struct start_programs_layout start_submenu_layout_for_menu(struct start_m
         if (rows == 0) {
             rows = 1;
         }
-        if (rows * START_MENU_ITEM_H + 16 > max_h) {
-            rows = max_h > 16 ? (max_h - 16) / START_MENU_ITEM_H : 1;
+        if (rows * START_MENU_ITEM_H + chrome_h > max_h) {
+            rows = item_area_h / START_MENU_ITEM_H;
         }
         if (rows == 0) {
             rows = 1;
@@ -315,7 +372,7 @@ static struct start_programs_layout start_submenu_layout_for_menu(struct start_m
     }
     layout.rows = rows;
     layout.w = layout.cols * item_w;
-    layout.h = 16 + rows * START_MENU_ITEM_H;
+    layout.h = chrome_h + rows * START_MENU_ITEM_H;
     layout.visible_count = layout.rows * layout.cols;
     if (layout.visible_count == 0) {
         layout.visible_count = 1;
@@ -341,10 +398,10 @@ static struct start_programs_layout start_submenu_layout_for_menu(struct start_m
 
 struct start_programs_layout start_programs_layout_for_menu(struct start_menu_layout menu)
 {
-    start_menu_ensure_apps();
-    return start_submenu_layout_for_menu(menu, start_menu_app_count,
+    return start_submenu_layout_for_menu(menu, start_menu_filtered_app_count(),
                                          START_PROGRAMS_W,
-                                         &start_menu_programs_scroll);
+                                         &start_menu_programs_scroll,
+                                         START_MENU_SEARCH_H);
 }
 
 struct start_programs_layout start_docs_layout_for_menu(struct start_menu_layout menu)
@@ -352,35 +409,49 @@ struct start_programs_layout start_docs_layout_for_menu(struct start_menu_layout
     start_menu_ensure_docs();
     return start_submenu_layout_for_menu(menu, start_menu_doc_count,
                                          START_DOCS_W,
-                                         &start_menu_docs_scroll);
+                                         &start_menu_docs_scroll, 0);
 }
 
 void draw_start_programs_menu(struct start_menu_layout menu)
 {
+    uint32_t item_count;
+    struct start_programs_layout layout;
+    uint32_t search_y;
     if (!start_menu_programs_open) {
         return;
     }
-    struct start_programs_layout layout = start_programs_layout_for_menu(menu);
+    item_count = start_menu_filtered_app_count();
+    layout = start_programs_layout_for_menu(menu);
     leonos_ui_menu(&ui, layout.x, layout.y, layout.w, layout.h);
-    if (!start_menu_app_count) {
-        leonos_ui_menu_item(&ui, layout.x + 34, layout.y + 8,
-                            START_PROGRAMS_W - 44, leonos_i18n("No programs", "没有程序"), LEONOS_UI_MENU_DISABLED);
+    search_y = layout.y + 8;
+    leonos_ui_text_field(&ui, layout.x + 8, search_y, layout.w - 16,
+                         start_menu_query, LEONOS_UI_EDIT_FOCUSED);
+    if (!start_menu_query[0]) {
+        leonos_ui_text_clipped(&ui, layout.x + 15, search_y + 5, layout.w - 30,
+                               leonos_i18n("Search applications", "搜索应用"),
+                               LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    }
+    if (!item_count) {
+        leonos_ui_menu_item(&ui, layout.x + 34, search_y + START_MENU_SEARCH_H,
+                            START_PROGRAMS_W - 44, leonos_i18n("No programs", "没有程序"),
+                            LEONOS_UI_MENU_DISABLED);
         return;
     }
     for (uint32_t visible = 0; visible < layout.visible_count; ++visible) {
-        uint32_t i = start_menu_programs_scroll + visible;
+        uint32_t filtered_index = start_menu_programs_scroll + visible;
+        uint32_t app_index = start_menu_filtered_app_index(filtered_index);
         uint32_t col = visible / layout.rows;
         uint32_t row = visible % layout.rows;
         uint32_t item_x = layout.x + 34 + col * START_PROGRAMS_W;
-        uint32_t item_y = layout.y + 8 + row * START_MENU_ITEM_H;
-        if (i >= start_menu_app_count) {
+        uint32_t item_y = search_y + START_MENU_SEARCH_H + row * START_MENU_ITEM_H;
+        char icon_path[LEONOS_FS_PATH_LEN];
+        if (app_index >= start_menu_app_count) {
             break;
         }
-        char icon_path[LEONOS_FS_PATH_LEN];
-        desktop_icon_path_for_app(start_menu_app_paths[i], icon_path, sizeof(icon_path));
+        desktop_icon_path_for_app(start_menu_app_paths[app_index], icon_path, sizeof(icon_path));
         draw_app_icon(icon_path, (int)item_x - 22, (int)item_y + 4);
         leonos_ui_menu_item(&ui, item_x, item_y, START_PROGRAMS_W - 44,
-                            start_menu_app_labels[i], 0);
+                            start_menu_app_labels[app_index], 0);
     }
 }
 
@@ -410,6 +481,56 @@ void draw_start_docs_menu(struct start_menu_layout menu)
         leonos_ui_menu_item(&ui, item_x, item_y, START_DOCS_W - 44,
                             start_menu_doc_labels[i], 0);
     }
+}
+
+int start_menu_handle_key(uint8_t keycode, uint8_t pressed)
+{
+    char ch;
+    uint32_t len = 0;
+    if (!start_menu_open || start_menu_animating) {
+        return 0;
+    }
+    if (!pressed) {
+        return 1;
+    }
+    if (keycode == 1) {
+        start_menu_set_open(0);
+        return 1;
+    }
+    if (keycode == LEONOS_KEY_ENTER && start_menu_query[0]) {
+        uint32_t app_index = start_menu_filtered_app_index(0);
+        if (app_index < start_menu_app_count) {
+            spawn_program_path(start_menu_app_paths[app_index]);
+            start_menu_set_open(0);
+        }
+        return 1;
+    }
+    if (keycode == LEONOS_KEY_BACKSPACE) {
+        while (start_menu_query[len]) {
+            ++len;
+        }
+        if (len) {
+            start_menu_query[len - 1U] = 0;
+            start_menu_programs_scroll = 0;
+            full_redraw_pending = 1;
+        }
+        return 1;
+    }
+    if (keycode_to_ascii(keycode, &ch)) {
+        while (start_menu_query[len]) {
+            ++len;
+        }
+        if (len + 1U < sizeof(start_menu_query)) {
+            start_menu_query[len] = lower_ascii(ch);
+            start_menu_query[len + 1U] = 0;
+            start_menu_programs_open = 1;
+            start_menu_docs_open = 0;
+            start_menu_programs_scroll = 0;
+            full_redraw_pending = 1;
+        }
+        return 1;
+    }
+    return 1;
 }
 
 void draw_start_menu(void)

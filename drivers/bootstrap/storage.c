@@ -1,5 +1,5 @@
-#include <ntclks/console.h>
 #include <ntclks/mm.h>
+#include <ntclks/console.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/pci.h>

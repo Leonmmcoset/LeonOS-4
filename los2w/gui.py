@@ -211,6 +211,8 @@ class GUIManager:
         self.windows: dict[int, GuestWindow] = {}
         self.frames: dict[int, tuple[int, int, int, bytes]] = {}
         self.events: deque[structs.GuiAppEvent] = deque(maxlen=32)
+        self.input_events: deque[bytes] = deque(maxlen=64)
+        self.framebuffer = bytearray(1024 * 768 * 4)
         self.next_window_id = 1
         self.start_time = time.monotonic()
         self.present_count = 0
@@ -257,6 +259,22 @@ class GUIManager:
         return 1
 
     def enqueue(self, event: structs.GuiAppEvent) -> None:
+        if event.window_id == 0:
+            if event.type == C.APP_EVENT_MOUSE_BUTTON:
+                self.input_events.append(struct.pack("<IiiiiBBB1x", C.INPUT_MOUSE,
+                                                      event.x, event.y, 0, 0,
+                                                      event.buttons, 0, event.pressed))
+                return
+            if event.type == C.APP_EVENT_MOUSE_WHEEL:
+                self.input_events.append(struct.pack("<IiiiiBBB1x", C.INPUT_MOUSE_WHEEL,
+                                                      event.x, event.y, event.dx, event.dy,
+                                                      event.buttons, 0, 0))
+                return
+            if event.type in (C.APP_EVENT_KEY_DOWN, C.APP_EVENT_KEY_UP):
+                self.input_events.append(struct.pack("<IiiiiBBB1x", C.INPUT_KEYBOARD,
+                                                      0, 0, 0, 0, 0, event.keycode,
+                                                      event.pressed))
+                return
         if event.type in (C.APP_EVENT_FOCUS, C.APP_EVENT_RESIZE):
             for idx in range(len(self.events) - 1, -1, -1):
                 old = self.events[idx]
@@ -309,6 +327,8 @@ class GUIManager:
         if request == C.GUI_IOCTL_FB_INFO:
             memory.write(arg, struct.pack("<IIIb3x", 1024, 768, 1024, 32))
             return 0
+        if request == C.GUI_IOCTL_FB_BLIT:
+            return self._framebuffer_blit(memory, arg)
         if request == C.GUI_IOCTL_CREATE_WINDOW:
             return self._create_window(memory, arg)
         if request == C.GUI_IOCTL_PRESENT_WINDOW:
@@ -326,6 +346,9 @@ class GUIManager:
         if request == C.GUI_IOCTL_DESTROY_WINDOW:
             return self._destroy_window(arg)
         if request == C.GUI_IOCTL_EVENT:
+            if self.input_events:
+                memory.write(arg, self.input_events.popleft())
+                return 1
             return 0
         if request == C.GUI_IOCTL_POLL_WINDOW:
             return 0
@@ -335,6 +358,8 @@ class GUIManager:
         if request == C.GUI_IOCTL_DISPLAY_STATE:
             memory.write(arg, struct.pack("<IIIIIIIII", 1024, 768, 1024, 768, 1, 0, 0, 0, 0))
             return 0
+        if request == C.GUI_IOCTL_PUBLISH_DISPLAY_STATE:
+            return 1
         if request == C.GUI_IOCTL_APPEARANCE_STATE:
             memory.write_u32(arg, self.appearance_theme)
             return 1
@@ -362,6 +387,44 @@ class GUIManager:
         window._suppress_initial_events = False
         self.log(f"[gui] create window id={window_id} title={title!r} size={query.width}x{query.height}")
         return window_id
+
+    def _framebuffer_blit(self, memory, arg: int) -> int:
+        try:
+            x, y, width, height, stride, pixels_ptr = struct.unpack(
+                "<IIIII4xQ", memory.read(arg, 32)
+            )
+        except Exception:
+            return neg(EINVAL)
+        if not width or not height or stride < width or x >= 1024 or y >= 768:
+            return neg(EINVAL)
+        copy_width = min(width, 1024 - x)
+        copy_height = min(height, 768 - y)
+        try:
+            for row in range(copy_height):
+                source = memory.read(pixels_ptr + row * stride * 4, copy_width * 4)
+                offset = ((y + row) * 1024 + x) * 4
+                self.framebuffer[offset : offset + copy_width * 4] = source
+        except Exception:
+            return neg(EINVAL)
+        window = self.windows.get(0)
+        if window is None:
+            window = GuestWindow(self, 0, "LeonOS Desktop", 1024, 768)
+            self.windows[0] = window
+            window.show()
+            window.raise_()
+            window.activateWindow()
+            self.process_events()
+            window._suppress_initial_events = False
+        frame_data = bytearray(self.framebuffer)
+        frame_data[3::4] = b"\xff" * (len(frame_data) // 4)
+        image = QImage(frame_data, 1024, 768, 1024 * 4, QImage.Format.Format_RGB32).copy()
+        window.setPixmap(QPixmap.fromImage(image))
+        self.frames[0] = (1024, 768, 1024, bytes(frame_data))
+        self.present_count += 1
+        if self._present_callback:
+            self._present_callback()
+        self.process_events()
+        return 0
 
     def _present_window(self, memory, arg: int) -> int:
         query = structs.GuiPresent.unpack(memory.read(arg, structs.GuiPresent.SIZE))

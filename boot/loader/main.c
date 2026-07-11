@@ -1,4 +1,5 @@
 #include <leonos/boot_handoff.h>
+#include <leonos/psf_font.h>
 #include <generated/loader_integrity.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -293,6 +294,23 @@ static struct efi_file_protocol *root_dir;
 static struct efi_simple_text_output_protocol *text_out;
 static struct efi_simple_text_input_protocol *text_in;
 
+struct loader_framebuffer_console {
+    uint32_t *pixels;
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch_pixels;
+    uint32_t columns;
+    uint32_t rows;
+    uint32_t column;
+    uint32_t row;
+    uint32_t background;
+    uint32_t banner;
+    uint32_t text;
+    uint8_t enabled;
+};
+
+static struct loader_framebuffer_console framebuffer_console;
+
 struct loader_module {
     uint64_t start;
     uint64_t end;
@@ -507,9 +525,166 @@ static int bytes_eq(const uint8_t *a, const uint8_t *b, uint64_t len)
     return diff == 0;
 }
 
+static void loader_framebuffer_fill(uint32_t x, uint32_t y, uint32_t width,
+                                    uint32_t height, uint32_t color)
+{
+    if (!framebuffer_console.enabled || x >= framebuffer_console.width ||
+        y >= framebuffer_console.height) {
+        return;
+    }
+    if (width > framebuffer_console.width - x) {
+        width = framebuffer_console.width - x;
+    }
+    if (height > framebuffer_console.height - y) {
+        height = framebuffer_console.height - y;
+    }
+    for (uint32_t row = 0; row < height; ++row) {
+        uint32_t *line = framebuffer_console.pixels +
+                         (uint64_t)(y + row) * framebuffer_console.pitch_pixels + x;
+        for (uint32_t column = 0; column < width; ++column) {
+            line[column] = color;
+        }
+    }
+}
+
+static void loader_framebuffer_char(uint32_t x, uint32_t y, char ch,
+                                    uint32_t foreground, uint32_t background)
+{
+    const uint8_t *glyph;
+    if (!framebuffer_console.enabled || x + LEONOS_FONT_W > framebuffer_console.width ||
+        y + LEONOS_FONT_H > framebuffer_console.height) {
+        return;
+    }
+    glyph = leonos_psf_glyph(ch);
+    for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
+        uint32_t *line = framebuffer_console.pixels +
+                         (uint64_t)(y + row) * framebuffer_console.pitch_pixels + x;
+        for (uint32_t column = 0; column < LEONOS_FONT_W; ++column) {
+            line[column] = (glyph[row] & (uint8_t)(0x80u >> column))
+                               ? foreground : background;
+        }
+    }
+}
+
+static void loader_framebuffer_text(uint32_t x, uint32_t y, const char *text,
+                                    uint32_t foreground, uint32_t background)
+{
+    uint32_t column = 0;
+    while (text && text[column] && x + (column + 1U) * LEONOS_FONT_W <= framebuffer_console.width) {
+        loader_framebuffer_char(x + column * LEONOS_FONT_W, y, text[column],
+                                foreground, background);
+        ++column;
+    }
+}
+
+static void loader_framebuffer_clear_log(void)
+{
+    uint32_t log_y = 48U;
+    if (!framebuffer_console.enabled) {
+        return;
+    }
+    if (log_y < framebuffer_console.height) {
+        loader_framebuffer_fill(0, log_y, framebuffer_console.width,
+                                framebuffer_console.height - log_y,
+                                framebuffer_console.background);
+    }
+    framebuffer_console.column = 0;
+    framebuffer_console.row = 0;
+}
+
+static void loader_framebuffer_reset(void)
+{
+    if (!framebuffer_console.enabled) {
+        return;
+    }
+    loader_framebuffer_fill(0, 0, framebuffer_console.width,
+                            framebuffer_console.height, framebuffer_console.background);
+    loader_framebuffer_fill(0, 0, framebuffer_console.width, 36U,
+                            framebuffer_console.banner);
+    loader_framebuffer_text(20U, 10U, "LeonOS 4 Boot Loader",
+                            framebuffer_console.text, framebuffer_console.banner);
+    loader_framebuffer_clear_log();
+}
+
+static void loader_framebuffer_set_theme(uint32_t theme)
+{
+    if (!framebuffer_console.enabled) {
+        return;
+    }
+    if (theme == 0U) {
+        framebuffer_console.background = 0x00000000U;
+        framebuffer_console.banner = 0x00808080U;
+        framebuffer_console.text = 0x0000ff00U;
+    } else {
+        framebuffer_console.background = 0x000078d4U;
+        framebuffer_console.banner = 0x005aa7e8U;
+        framebuffer_console.text = 0x00ffffffU;
+    }
+    loader_framebuffer_reset();
+}
+
+static void loader_framebuffer_init(void)
+{
+    framebuffer_console = (struct loader_framebuffer_console){0};
+    if (!handoff.framebuffer_addr || handoff.framebuffer_bpp != 32U ||
+        handoff.framebuffer_width < LEONOS_FONT_W * 4U ||
+        handoff.framebuffer_height < LEONOS_FONT_H * 4U ||
+        handoff.framebuffer_pitch < handoff.framebuffer_width * 4U) {
+        return;
+    }
+    framebuffer_console.pixels = (uint32_t *)(uintptr_t)handoff.framebuffer_addr;
+    framebuffer_console.width = handoff.framebuffer_width;
+    framebuffer_console.height = handoff.framebuffer_height;
+    framebuffer_console.pitch_pixels = handoff.framebuffer_pitch / 4U;
+    framebuffer_console.columns = (handoff.framebuffer_width - 40U) / LEONOS_FONT_W;
+    framebuffer_console.rows = (handoff.framebuffer_height - 56U) / LEONOS_FONT_H;
+    framebuffer_console.enabled = framebuffer_console.columns && framebuffer_console.rows;
+    loader_framebuffer_set_theme(handoff.ui_theme);
+}
+
+static void loader_framebuffer_newline(void)
+{
+    framebuffer_console.column = 0;
+    ++framebuffer_console.row;
+    if (framebuffer_console.row >= framebuffer_console.rows) {
+        loader_framebuffer_clear_log();
+    }
+}
+
+static void loader_framebuffer_putc(char ch)
+{
+    uint32_t x;
+    uint32_t y;
+    if (!framebuffer_console.enabled || ch == '\r') {
+        return;
+    }
+    if (ch == '\n') {
+        loader_framebuffer_newline();
+        return;
+    }
+    if (ch == '\t') {
+        for (uint32_t count = 0; count < 4U; ++count) {
+            loader_framebuffer_putc(' ');
+        }
+        return;
+    }
+    if ((uint8_t)ch < 32U) {
+        ch = '?';
+    }
+    if (framebuffer_console.column >= framebuffer_console.columns) {
+        loader_framebuffer_newline();
+    }
+    x = 20U + framebuffer_console.column * LEONOS_FONT_W;
+    y = 48U + framebuffer_console.row * LEONOS_FONT_H;
+    loader_framebuffer_char(x, y, ch, framebuffer_console.text,
+                            framebuffer_console.background);
+    ++framebuffer_console.column;
+}
+
 static void serial_putc(char ch)
 {
     loader_outb((uint8_t)ch, 0x3f8);
+    loader_framebuffer_putc(ch);
 }
 
 static void serial_write(const char *s)
@@ -973,6 +1148,7 @@ static void parse_multiboot2(uint32_t magic, uint32_t info_addr)
     handoff.loader.end = (uint64_t)(uintptr_t)__loader_end;
     handoff.loader.entry = (uint64_t)(uintptr_t)loader_main;
     handoff.loader.path = "0:/boot/loader.elf";
+    handoff.ui_theme = 1u;
     if (magic != MULTIBOOT2_BOOTLOADER_MAGIC || !info_addr) {
         serial_write("[loader] invalid Multiboot2 handoff\n");
         return;
@@ -1056,10 +1232,13 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_init();
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
+    loader_framebuffer_init();
     efi_console_init();
     if (handoff.efi_system_table && efi_open_root(handoff.efi_system_table) == 0) {
         loader_load_ui_theme();
+        loader_framebuffer_set_theme(handoff.ui_theme);
     }
+    boot_write("[loader] framebuffer boot log active\n");
 
     kernel_module = find_loader_module("leonos-kernel");
     if (kernel_module) {
