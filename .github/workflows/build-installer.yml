@@ -60,7 +60,7 @@ jobs:
 
       - name: Build installer
         run: |
-          python3 ./build.py run image-iso
+          python3 ./build.py run installer
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
