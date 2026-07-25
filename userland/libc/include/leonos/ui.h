@@ -44,7 +44,8 @@
 #define LEONOS_UI_EDIT_READONLY 0x02u
 #define LEONOS_UI_EDIT_DISABLED 0x04u
 #define LEONOS_UI_SCROLLBAR_DISABLED 0x01u
-#define LEONOS_UI_TAB_ACTIVE 0x01u
+#define LEONOS_UI_TAB_DISABLED 0x01u
+#define LEONOS_UI_INPUT_DISABLED 0x01u
 #define LEONOS_UI_TOOLBAR_BUTTON_ACTIVE LEONOS_UI_BUTTON_ACTIVE
 #define LEONOS_UI_TOOLBAR_BUTTON_PRESSED LEONOS_UI_BUTTON_PRESSED
 #define LEONOS_UI_TOOLBAR_BUTTON_DISABLED LEONOS_UI_BUTTON_DISABLED
@@ -140,6 +141,34 @@ struct leonos_ui_dropdown_item {
     const char *label;
     uint32_t id;
     uint32_t flags;
+};
+
+struct leonos_ui_tab_item {
+    const char *label;
+    uint32_t id;
+    uint32_t flags;
+};
+
+struct leonos_ui_tab_state {
+    uint32_t selected_id;
+    uint32_t hovered_id;
+    uint8_t focused;
+};
+
+struct leonos_ui_color_input_state {
+    uint32_t color;
+    uint8_t open;
+    uint8_t focused;
+    uint8_t channel;
+};
+
+struct leonos_ui_date_input_state {
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t open;
+    uint8_t focused;
+    uint8_t part;
 };
 
 struct leonos_ui_layout {
@@ -383,18 +412,44 @@ void leonos_ui_radio(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      const char *label, int checked, uint32_t flags);
 void leonos_ui_groupbox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, uint32_t h, const char *title);
-void leonos_ui_tabs(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                    uint32_t w, const char *const labels[], uint32_t count,
-                    uint32_t active);
-int leonos_ui_tabs_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
-                       uint32_t w, const char *const labels[], uint32_t count);
-void leonos_ui_tabbar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                      uint32_t w, const char *const labels[], uint32_t count,
-                      uint32_t active);
-int leonos_ui_tabbar_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
-                         uint32_t w, const char *const labels[], uint32_t count);
+void leonos_ui_tab_state_init(struct leonos_ui_tab_state *state, uint32_t selected_id);
+uint32_t leonos_ui_tab_height(void);
+void leonos_ui_tab_control(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                           uint32_t w, const struct leonos_ui_tab_item *items,
+                           uint32_t count, const struct leonos_ui_tab_state *state);
+int leonos_ui_tab_control_handle_mouse(struct leonos_ui_tab_state *state,
+                                       int32_t px, int32_t py,
+                                       uint32_t x, uint32_t y, uint32_t w,
+                                       const struct leonos_ui_tab_item *items,
+                                       uint32_t count);
+int leonos_ui_tab_control_handle_key(struct leonos_ui_tab_state *state,
+                                     uint8_t keycode,
+                                     const struct leonos_ui_tab_item *items,
+                                     uint32_t count);
 void leonos_ui_tab_body(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, uint32_t h);
+void leonos_ui_color_input_state_init(struct leonos_ui_color_input_state *state,
+                                      uint32_t color);
+void leonos_ui_color_input(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                           uint32_t w, const struct leonos_ui_color_input_state *state,
+                           uint32_t flags);
+int leonos_ui_color_input_handle_mouse(struct leonos_ui_color_input_state *state,
+                                       int32_t px, int32_t py,
+                                       uint32_t x, uint32_t y, uint32_t w,
+                                       uint32_t flags);
+int leonos_ui_color_input_handle_key(struct leonos_ui_color_input_state *state,
+                                     uint8_t keycode, uint32_t flags);
+void leonos_ui_date_input_state_init(struct leonos_ui_date_input_state *state,
+                                     uint16_t year, uint8_t month, uint8_t day);
+void leonos_ui_date_input(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                          uint32_t w, const struct leonos_ui_date_input_state *state,
+                          uint32_t flags);
+int leonos_ui_date_input_handle_mouse(struct leonos_ui_date_input_state *state,
+                                      int32_t px, int32_t py,
+                                      uint32_t x, uint32_t y, uint32_t w,
+                                      uint32_t flags);
+int leonos_ui_date_input_handle_key(struct leonos_ui_date_input_state *state,
+                                    uint8_t keycode, uint32_t flags);
 void leonos_ui_statusbar(struct leonos_ui_surface *surface, uint32_t y, uint32_t h,
                          const char *text);
 void leonos_ui_toolbar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,

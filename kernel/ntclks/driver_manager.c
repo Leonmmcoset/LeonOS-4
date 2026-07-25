@@ -89,9 +89,11 @@ static int32_t loading_slot = -1;
 static const struct leonos_driver_mouse_ops *mouse_ops;
 static const struct leonos_driver_serial_ops *serial_ops;
 static const struct leonos_driver_e1000_ops *e1000_ops;
+static const struct leonos_driver_audio_ops *audio_ops;
 static uint32_t mouse_owner;
 static uint32_t serial_owner;
 static uint32_t e1000_owner;
+static uint32_t audio_owner;
 static struct mouse_state mouse_cache;
 static uint8_t e1000_empty_mac[6];
 
@@ -191,6 +193,16 @@ static int driver_name_compare(const char *left, const char *right)
         return left ? 1 : (right ? -1 : 0);
     }
     return (uint8_t)left[index] < (uint8_t)right[index] ? -1 : 1;
+}
+
+static int driver_load_order_compare(const char *left, const char *right)
+{
+    int left_is_serial = driver_text_equal(left, "serial.drv");
+    int right_is_serial = driver_text_equal(right, "serial.drv");
+    if (left_is_serial != right_is_serial) {
+        return left_is_serial ? -1 : 1;
+    }
+    return driver_name_compare(left, right);
 }
 
 static void driver_make_path(char *dst, uint32_t cap, const char *file)
@@ -557,6 +569,17 @@ static int driver_register_e1000(const struct leonos_driver_e1000_ops *ops)
     return 0;
 }
 
+static int driver_register_audio(const struct leonos_driver_audio_ops *ops)
+{
+    if (loading_slot < 0 || !ops || !ops->is_ready || !ops->configure ||
+        !ops->write || !ops->get_state) {
+        return -22;
+    }
+    audio_ops = ops;
+    audio_owner = (uint32_t)loading_slot;
+    return 0;
+}
+
 static uint8_t driver_api_inb(uint16_t port)
 {
     return x86_64_inb(port);
@@ -635,6 +658,7 @@ static const struct leonos_driver_kernel_api driver_kernel_api = {
     .register_mouse = driver_register_mouse,
     .register_serial = driver_register_serial,
     .register_e1000 = driver_register_e1000,
+    .register_audio = driver_register_audio,
 };
 
 static void driver_clear_services(uint32_t slot_id)
@@ -652,6 +676,10 @@ static void driver_clear_services(uint32_t slot_id)
         net_driver_detached();
         e1000_ops = 0;
         e1000_owner = 0;
+    }
+    if (audio_ops && audio_owner == slot_id) {
+        audio_ops = 0;
+        audio_owner = 0;
     }
 }
 
@@ -833,7 +861,7 @@ static void driver_scan(void)
     }
     for (uint32_t index = 0; index < count; ++index) {
         for (uint32_t next = index + 1U; next < count; ++next) {
-            if (driver_name_compare(entries[next].name, entries[index].name) < 0) {
+            if (driver_load_order_compare(entries[next].name, entries[index].name) < 0) {
                 struct leonos_dir_entry entry = entries[index];
                 entries[index] = entries[next];
                 entries[next] = entry;
@@ -1107,5 +1135,39 @@ void e1000_get_info(struct e1000_info *info)
     info->function = source.function;
     for (uint32_t index = 0; index < 6; ++index) {
         info->mac[index] = source.mac[index];
+    }
+}
+
+int driver_manager_audio_configure(const struct leonos_audio_format *format)
+{
+    if (!format || !audio_ops || !audio_ops->is_ready || !audio_ops->configure ||
+        !audio_ops->is_ready()) {
+        return -19;
+    }
+    return audio_ops->configure(format);
+}
+
+long driver_manager_audio_write(const void *data, uint32_t length,
+                                uint32_t *out_status)
+{
+    if (out_status) {
+        *out_status = LEONOS_AUDIO_STATUS_NO_DEVICE;
+    }
+    if (!audio_ops || !audio_ops->is_ready || !audio_ops->write ||
+        !audio_ops->is_ready()) {
+        return -19;
+    }
+    return audio_ops->write(data, length, out_status);
+}
+
+void driver_manager_audio_get_state(struct leonos_audio_state *out)
+{
+    if (!out) {
+        return;
+    }
+    *out = (struct leonos_audio_state){0};
+    if (audio_ops && audio_ops->is_ready && audio_ops->is_ready() &&
+        audio_ops->get_state) {
+        audio_ops->get_state(out);
     }
 }

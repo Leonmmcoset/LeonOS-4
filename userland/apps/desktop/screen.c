@@ -102,17 +102,44 @@ static void draw_metro_wallpaper(struct rect dirty)
 {
     uint32_t desktop_width = fb_w();
     uint32_t desktop_height = fb_h();
+    uint32_t source_x_start = 0;
+    uint32_t source_y_start = 0;
+    uint32_t source_width;
+    uint32_t source_height;
     if (!wallpaper_loaded || !wallpaper_width || !wallpaper_height ||
         !desktop_width || !desktop_height) {
         return;
     }
+    source_width = wallpaper_width;
+    source_height = wallpaper_height;
+    if ((uint64_t)desktop_width * wallpaper_height >
+        (uint64_t)desktop_height * wallpaper_width) {
+        source_height = (uint32_t)((uint64_t)wallpaper_width * desktop_height /
+                                   desktop_width);
+        if (!source_height) {
+            source_height = 1;
+        }
+        source_y_start = (wallpaper_height - source_height) / 2U;
+    } else if ((uint64_t)desktop_width * wallpaper_height <
+               (uint64_t)desktop_height * wallpaper_width) {
+        source_width = (uint32_t)((uint64_t)wallpaper_height * desktop_width /
+                                  desktop_height);
+        if (!source_width) {
+            source_width = 1;
+        }
+        source_x_start = (wallpaper_width - source_width) / 2U;
+    }
     for (int y = dirty.y; y < dirty.y + dirty.h; ++y) {
-        uint32_t source_y = (uint32_t)(((uint64_t)(uint32_t)y * wallpaper_height) / desktop_height);
+        uint32_t source_y = source_y_start +
+                            (uint32_t)(((uint64_t)(uint32_t)y * source_height) /
+                                       desktop_height);
         if (source_y >= wallpaper_height) {
             source_y = wallpaper_height - 1;
         }
         for (int x = dirty.x; x < dirty.x + dirty.w; ++x) {
-            uint32_t source_x = (uint32_t)(((uint64_t)(uint32_t)x * wallpaper_width) / desktop_width);
+            uint32_t source_x = source_x_start +
+                                (uint32_t)(((uint64_t)(uint32_t)x * source_width) /
+                                           desktop_width);
             if (source_x >= wallpaper_width) {
                 source_x = wallpaper_width - 1;
             }

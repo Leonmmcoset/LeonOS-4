@@ -60,6 +60,8 @@ char desktop_shortcut_target[LEONOS_FS_PATH_LEN];
 uint8_t snap_preview_mode;
 uint8_t alt_left_down;
 uint8_t alt_right_down;
+uint8_t desktop_left_shift_down;
+uint8_t desktop_right_shift_down;
 uint8_t win_left_down;
 uint8_t win_right_down;
 uint8_t win_combo_used;

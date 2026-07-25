@@ -155,6 +155,7 @@ dedicated syscall numbers. Current request groups:
 - Filesystem and installer storage: `include/leonos/fs.h`
 - System, performance, and RTC time: `include/leonos/system.h`
 - Device inventory: `include/leonos/device.h`
+- PCM audio playback: `include/leonos/audio.h`
 - Minimal networking: `include/leonos/net.h`
 - Text layout and Unicode services: `include/leonos/text.h`
 - PTY creation, I/O, and spawn: `include/leonos/pty.h`
@@ -182,6 +183,8 @@ Important requests include:
 - `LEONOS_IOCTL_SYSTEM_INFO`, `LEONOS_IOCTL_PERF_INFO`,
   `LEONOS_IOCTL_TIME_INFO`, `LEONOS_IOCTL_MACHINE_IDENTITY`
 - `LEONOS_IOCTL_DEVICE_LIST`
+- `LEONOS_IOCTL_AUDIO_CONFIGURE`, `LEONOS_IOCTL_AUDIO_WRITE`,
+  `LEONOS_IOCTL_AUDIO_GET_STATE`
 - `LEONOS_IOCTL_NET_CONFIG`, `LEONOS_IOCTL_NET_DHCP`,
   `LEONOS_IOCTL_NET_DNS`, `LEONOS_IOCTL_NET_PING`,
   `LEONOS_IOCTL_NET_HTTP_GET`
@@ -258,12 +261,13 @@ status fields. `leonos_socket_close` moves established connections through
 
 `include/leonos/http.h` provides the higher-level userland HTTP client:
 `leonos_http_get`, `leonos_http_request`, and `leonos_http_resolve_url`.
-The client uses the socket wrappers, sends plain `HTTP/1.1` requests, follows
-bounded redirects, decodes chunked transfer responses, exposes response headers,
-content type, body length, final URL, redirect count, and truncation flags.
-`httpget.elf` and `browser.elf` use this library for `http://` page loads. The
-older `leonos_net_http_get` ioctl remains as a compatibility helper for small
-diagnostic callers.
+The client uses the socket wrappers, follows bounded redirects, decodes chunked
+transfer responses, exposes response headers, content type, body length, final
+URL, redirect count, and truncation flags. It sends plain `HTTP/1.1` for
+`http://`, and uses Mbed TLS 2.28.8 for TLS 1.2, CA-chain, hostname, and clock
+validation of `https://`. `httpget.elf` and `browser.elf` use this library for
+both schemes. The older `leonos_net_http_get` ioctl remains as a compatibility
+helper for small diagnostic callers.
 
 `downloadmgr.elf` also uses the HTTP client. It is currently fixed-buffer and
 reports oversized responses through the truncation flag instead of streaming
@@ -312,8 +316,9 @@ remain available to any logged-in user.
 ## Current Limitations
 
 - There is no `fork`, `clone`, `pipe`, `poll`, or signal ABI.
-- Networking has TCP client sockets, but no TCP listener/server mode, UDP
-  socket API, TLS/HTTPS, or full retransmission/window-management surface yet.
+- Networking has TCP client sockets and a TLS 1.2 HTTPS client path, but no TCP
+  listener/server mode, UDP socket API, or full retransmission/window-management
+  surface yet.
 - `execve` spawns a child process instead of replacing the caller.
 - File-backed `mmap` is private and read-only.
 - Open permissions are ACL checks, not a full Unix permission model.

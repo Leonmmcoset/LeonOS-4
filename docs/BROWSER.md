@@ -14,7 +14,9 @@ Current features:
 
 - IE-style menu/toolbar/address layout with toast status messages.
 - Bilingual `about:leonos` start page.
-- `http://` navigation through the libc HTTP client on top of TCP sockets.
+- `http://` and `https://` navigation through the libc HTTP client on top of
+  TCP sockets. HTTPS uses TLS 1.2 with certificate, hostname, and system-clock
+  validation.
 - Local `.html` and `.htm` file loading.
 - Download-link handoff: links ending in common binary/media/archive suffixes
   launch `downloadmgr.elf`, which saves the response to the current user's
@@ -24,7 +26,7 @@ Current features:
   horizontal rules, image placeholders with alt text, entities, links, per-cell
   table alignment, and basic inline styles (`strong`/`b`, `em`/`i`, `code`).
 - A small CSS v1 parser for `<style>` blocks, inline `style=""`, and up to four
-  `http://` `<link rel="stylesheet">` stylesheets per page. It covers simple
+  HTTP or HTTPS `<link rel="stylesheet">` stylesheets per page. It covers simple
   tag/class/id selectors plus `color`, `background-color`, `font-weight`,
   `font-style`, `text-decoration`, `text-align`, left indent properties, and
   basic borders.
@@ -42,14 +44,13 @@ Current features:
 
 Current limits:
 
-- No HTTPS/TLS.
 - No JavaScript.
 - No inline image loading. Image links can be downloaded and opened with
   `imageview.elf` when saved as BMP.
 - No full CSS cascade, box model, floats, flex/grid, or media queries.
-- HTTP is plain `HTTP/1.1` over TCP sockets with `Connection: close`; cookie
-  storage is implemented for HTTP, while cache, compression, and true streaming
-  downloads are not implemented yet.
+- HTTP uses `HTTP/1.1` over TCP sockets with `Connection: close`; HTTPS uses a
+  TLS 1.2 client profile backed by Mbed TLS and the bundled CA roots. Cookies,
+  cache, compression, and true streaming downloads are not implemented yet.
 
 ## litehtml Status
 

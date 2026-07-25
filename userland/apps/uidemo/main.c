@@ -47,7 +47,17 @@ enum {
 
 static uint32_t pixels[DEMO_W * DEMO_H];
 
-static const char *tab_labels[] = {"Controls", "Data", "Dialogs", "Advanced"};
+static const struct leonos_ui_tab_item demo_tabs[] = {
+    {"Controls", 0, 0},
+    {"Data", 1, 0},
+    {"Dialogs", 2, 0},
+    {"Advanced", 3, 0},
+};
+static const struct leonos_ui_tab_item preview_tabs[] = {
+    {"Overview", 0, 0},
+    {"Details", 1, 0},
+    {"History", 2, 0},
+};
 static const struct leonos_ui_dropdown_item priority_items[] = {
     {"Normal priority", DEMO_DROP_NORMAL, 0},
     {"High priority", DEMO_DROP_HIGH, 0},
@@ -70,6 +80,10 @@ static char demo_status[96] = "Click inside the top tabs to switch pages";
 static struct leonos_ui_edit_state sample_edit;
 static struct leonos_ui_text_area_state sample_area;
 static struct leonos_ui_listview_state sample_list;
+static struct leonos_ui_tab_state demo_tab_state;
+static struct leonos_ui_tab_state preview_tab_state;
+static struct leonos_ui_color_input_state sample_color;
+static struct leonos_ui_date_input_state sample_date;
 static uint32_t tree_selected_id = 12;
 static unsigned long anim_start_ms;
 static unsigned long last_anim_redraw_ms;
@@ -236,6 +250,11 @@ static void draw_controls_page(struct leonos_ui_surface *ui)
 
     leonos_ui_property_grid(ui, 12, 250, 360, props,
                             sizeof(props) / sizeof(props[0]), 100, 24);
+    leonos_ui_groupbox(ui, 400, 250, 340, 230, "Color and Date Inputs");
+    leonos_ui_text(ui, 416, 270, "Date", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_date_input(ui, 416, 286, 300, &sample_date, 0);
+    leonos_ui_text(ui, 416, 360, "Color", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_color_input(ui, 416, 376, 300, &sample_color, 0);
 }
 
 static void draw_data_page(struct leonos_ui_surface *ui)
@@ -275,7 +294,7 @@ static void draw_data_page(struct leonos_ui_surface *ui)
                          row_count, sample_list.visible_rows, 0);
 
     leonos_ui_groupbox(ui, 12, 268, 300, 92, "Tabs and Splitter");
-    leonos_ui_tabbar(ui, 28, 294, 268, tab_labels, 3, 1);
+    leonos_ui_tab_control(ui, 28, 294, 268, preview_tabs, 3, &preview_tab_state);
     leonos_ui_tab_body(ui, 28, 324, 268, 26);
     leonos_ui_text(ui, 36, 330, "Tab body frame", LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_split_pane_init(&split, LEONOS_UI_SPLIT_VERTICAL, 118, 64, 64);
@@ -392,7 +411,8 @@ static void draw_demo(struct leonos_ui_surface *ui, uint32_t page)
                        : "Win95 reusable drawing controls",
                    LEONOS_UI_DARK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, 420, 54, "你好，LeonOS 4。中文显示测试。", LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_tabs(ui, 236, 36, 410, tab_labels, 4, page);
+    demo_tab_state.selected_id = page;
+    leonos_ui_tab_control(ui, 236, 36, 410, demo_tabs, 4, &demo_tab_state);
     if (page == 0) {
         draw_controls_page(ui);
     } else if (page == 1) {
@@ -608,6 +628,20 @@ static int handle_controls_mouse(int32_t x, int32_t y, uint32_t buttons)
     if (!(buttons & 1u)) {
         return 0;
     }
+    if (leonos_ui_date_input_handle_mouse(&sample_date, x, y, 416, 286, 300, 0)) {
+        sample_color.focused = 0;
+        sample_edit.focused = 0;
+        sample_area.focused = 0;
+        copy_text(demo_status, sizeof(demo_status), "Date input changed");
+        return 1;
+    }
+    if (leonos_ui_color_input_handle_mouse(&sample_color, x, y, 416, 376, 300, 0)) {
+        sample_date.focused = 0;
+        sample_edit.focused = 0;
+        sample_area.focused = 0;
+        copy_text(demo_status, sizeof(demo_status), "Color input changed");
+        return 1;
+    }
     if (dropdown_open || dropdown_animating) {
         if (leonos_ui_dropdown_hit(x, y, 274, 164, 204, priority_items,
                                    sizeof(priority_items) / sizeof(priority_items[0]),
@@ -682,6 +716,10 @@ int main(void)
     leonos_ui_listview_state_init(&sample_list, 3, 24);
     leonos_ui_listview_state_set_count(&sample_list, sizeof(data_rows) / sizeof(data_rows[0]));
     sample_list.selected = 1;
+    leonos_ui_tab_state_init(&demo_tab_state, 0);
+    leonos_ui_tab_state_init(&preview_tab_state, 1);
+    leonos_ui_color_input_state_init(&sample_color, 0x0070a0e0U);
+    leonos_ui_date_input_state_init(&sample_date, 2026, 7, 25);
     anim_start_ms = leonos_uptime_ms();
     draw_demo(&ui, page);
     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
@@ -704,9 +742,9 @@ int main(void)
                     continue;
                 }
                 menu_open = DEMO_MENU_NONE;
-                int next = leonos_ui_tabs_hit(event.x, event.y, 236, 36, 410, tab_labels, 4);
-                if (next >= 0) {
-                    page = (uint32_t)next;
+                if (leonos_ui_tab_control_handle_mouse(&demo_tab_state, event.x, event.y,
+                                                       236, 36, 410, demo_tabs, 4)) {
+                    page = demo_tab_state.selected_id;
                     context_menu_set_open(0);
                     draw_demo(&ui, page);
                     leonos_gui_present_window((uint32_t)window_id, DEMO_W, DEMO_H, DEMO_W, pixels);
@@ -789,6 +827,12 @@ int main(void)
                 if (page == 0) {
                     changed |= leonos_ui_edit_state_handle_key(&sample_edit, event.keycode, event.pressed);
                     changed |= leonos_ui_text_area_state_handle_key(&sample_area, event.keycode, event.pressed, 204, 44);
+                    if (sample_color.focused) {
+                        changed |= leonos_ui_color_input_handle_key(&sample_color, event.keycode, 0);
+                    }
+                    if (sample_date.focused) {
+                        changed |= leonos_ui_date_input_handle_key(&sample_date, event.keycode, 0);
+                    }
                 } else if (page == 1) {
                     changed |= leonos_ui_listview_state_handle_key(&sample_list, event.keycode, &activate);
                     (void)activate;

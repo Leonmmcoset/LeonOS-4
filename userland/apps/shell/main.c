@@ -1,258 +1,272 @@
-#include <leonos/pty.h>
 #include <leonos/fs.h>
 #include <leonos/launch.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 
-#define SHELL_LINE_MAX 120
+#define SHELL_LINE_CAP 192U
+#define SHELL_ARG_CAP 12U
 
-static void put_chr(char ch)
+static int shell_same(const char *left, const char *right)
 {
-    write(1, &ch, 1);
-}
-
-static void print_prompt(void)
-{
-    char cwd[LEONOS_FS_PATH_LEN];
-    if (!getcwd(cwd, sizeof(cwd))) {
-        write(1, "PS ?> ", 6);
-        return;
-    }
-    write(1, "PS ", 3);
-    write(1, cwd, strlen(cwd));
-    write(1, "> ", 2);
-}
-
-static int text_eq(const char *a, const char *b)
-{
-    if (!a || !b) {
+    if (!left || !right) {
         return 0;
     }
-    while (*a && *b && *a == *b) {
-        ++a;
-        ++b;
+    while (*left && *right && *left == *right) {
+        ++left;
+        ++right;
     }
-    return *a == 0 && *b == 0;
+    return *left == 0 && *right == 0;
 }
 
-static void trim_newline(char *line)
+static void shell_write(const char *text)
 {
-    size_t n = strlen(line);
-    while (n && (line[n - 1] == '\n' || line[n - 1] == '\r')) {
-        line[--n] = 0;
+    if (text) {
+        write(1, text, strlen(text));
     }
 }
 
-static void append_text(char *buf, size_t *pos, size_t cap, const char *text)
+static void shell_line(const char *text)
 {
-    while (text && *text && *pos + 1 < cap) {
-        buf[(*pos)++] = *text++;
-    }
-    buf[*pos] = 0;
+    shell_write(text);
+    shell_write("\n");
 }
 
-static void print_file(const char *path)
+static void shell_prompt(void)
 {
-    char buf[128];
-    int fd = open(path, 0, 0);
-    if (fd < 0) {
-        printf("open %s => %d\n", path, fd);
-        return;
+    char cwd[LEONOS_FS_PATH_LEN];
+    shell_write("\x1b[96mleonos\x1b[0m:");
+    if (getcwd(cwd, sizeof(cwd))) {
+        shell_write(cwd);
+    } else {
+        shell_write("?");
     }
-    for (;;) {
-        long got = read(fd, buf, sizeof(buf));
-        if (got < 0) {
-            printf("read %s => %d\n", path, (int)got);
+    shell_write("$ ");
+}
+
+static int shell_split(char *line, char *argv[SHELL_ARG_CAP + 1U])
+{
+    uint32_t argc = 0;
+    char *cursor = line;
+    while (cursor && *cursor) {
+        char quote = 0;
+        uint8_t quote_closed = 0;
+        char *start;
+        char *write_cursor;
+        while (*cursor == ' ' || *cursor == '\t') {
+            ++cursor;
+        }
+        if (!*cursor) {
             break;
         }
-        if (got == 0) {
-            break;
+        if (argc == SHELL_ARG_CAP) {
+            return -2;
         }
-        write(1, buf, (size_t)got);
+        start = cursor;
+        write_cursor = cursor;
+        if (*cursor == '\'' || *cursor == '"') {
+            quote = *cursor++;
+            start = cursor;
+            write_cursor = cursor;
+        }
+        argv[argc++] = start;
+        while (*cursor) {
+            if (quote) {
+                if (*cursor == quote) {
+                    ++cursor;
+                    quote_closed = 1;
+                    break;
+                }
+            } else if (*cursor == ' ' || *cursor == '\t') {
+                break;
+            }
+            if (*cursor == '\\' && cursor[1]) {
+                ++cursor;
+            }
+            *write_cursor++ = *cursor++;
+        }
+        if (quote && !quote_closed) {
+            return -1;
+        }
+        *write_cursor = 0;
+        while (*cursor == ' ' || *cursor == '\t') {
+            ++cursor;
+        }
     }
-    if (buf[0] != '\n') {
-        put_chr('\n');
-    }
-    close(fd);
+    argv[argc] = 0;
+    return (int)argc;
 }
 
-static void list_dir(const char *path)
+static void shell_list(const char *path)
 {
     struct leonos_dir_entry entry;
-    int fd = open(path && path[0] ? path : ".", 0, 0);
+    int fd = open(path && path[0] ? path : ".", LEONOS_O_RDONLY, 0);
     if (fd < 0) {
-        printf("open %s => %d\n", path && path[0] ? path : ".", fd);
+        printf("ls: cannot open %s (%d)\n", path && path[0] ? path : ".", fd);
         return;
     }
     while (leonos_readdir(fd, &entry) > 0) {
-        printf("%s %s\n",
-               entry.type == LEONOS_FS_TYPE_DIR ? "<DIR>" :
-               (entry.type == LEONOS_FS_TYPE_DEVICE ? "<DEV>" : "<FILE>"),
-               entry.name);
+        const char *kind = entry.type == LEONOS_FS_TYPE_DIR ? "dir "
+                         : entry.type == LEONOS_FS_TYPE_DEVICE ? "dev "
+                                                               : "file";
+        printf("%s  %s\n", kind, entry.name);
     }
     close(fd);
 }
 
-static void run_ansi_test(void)
+static void shell_cat(const char *path)
 {
-    puts("\x1b[2J\x1b[HANSI test");
-    puts("\x1b[31mred\x1b[0m \x1b[32mgreen\x1b[0m \x1b[34mblue\x1b[0m \x1b[93mbright yellow\x1b[0m");
-    puts("\x1b[44;97mwhite on blue\x1b[0m \x1b[101;30mblack on bright red\x1b[0m");
-    puts("line clear demo: keep this\x1b[10D\x1b[Kcleared");
-    puts("\x1b[6;1Hcursor moved to row 6");
-    puts("\x1b[8;1Hdone");
+    char buffer[192];
+    int fd;
+    long got;
+    if (!path || !path[0]) {
+        shell_line("cat: a file path is required");
+        return;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        printf("cat: cannot open %s (%d)\n", path, fd);
+        return;
+    }
+    while ((got = read(fd, buffer, sizeof(buffer))) > 0) {
+        write(1, buffer, (size_t)got);
+    }
+    if (got < 0) {
+        printf("cat: read failed (%d)\n", (int)got);
+    }
+    close(fd);
+    shell_write("\n");
 }
 
-static void run_command(char *line)
+static void shell_echo(char *const argv[])
 {
-    char *argv[LEONOS_LAUNCH_MAX_ARGS + 1];
-    int argc = leonos_cmdline_split(line, argv, LEONOS_LAUNCH_MAX_ARGS + 1);
-    if (argc == LEONOS_LAUNCH_ERR_EMPTY) {
+    for (uint32_t index = 1; argv[index]; ++index) {
+        if (index > 1) {
+            shell_write(" ");
+        }
+        shell_write(argv[index]);
+    }
+    shell_write("\n");
+}
+
+static void shell_start(char *argv[])
+{
+    int pid = leonos_launch_argv(argv);
+    if (pid >= 0) {
+        printf("started %s (pid %d)\n", argv[0], pid);
         return;
+    }
+    printf("unable to start %s: %s\n", argv[0], leonos_launch_error_text(pid));
+}
+
+static int shell_dispatch(char *line)
+{
+    char *argv[SHELL_ARG_CAP + 1U];
+    int argc = shell_split(line, argv);
+    if (argc == 0) {
+        return 0;
+    }
+    if (argc == -1) {
+        shell_line("shell: unmatched quote");
+        return 0;
     }
     if (argc < 0) {
-        puts(leonos_launch_error_text(argc));
-        return;
+        shell_line("shell: too many arguments");
+        return 0;
     }
-    if (text_eq(argv[0], "help")) {
-        puts("help clear ansi echo ps pwd cd ls cat hello uidemo taskmgr fileman terminal notepad calc run exit");
-        return;
-    }
-    if (text_eq(argv[0], "ansi")) {
-        run_ansi_test();
-        return;
-    }
-    if (text_eq(argv[0], "clear")) {
-        write(1, "\f", 1);
-        return;
-    }
-    if (text_eq(argv[0], "ps")) {
-        puts("shell is attached to PTY");
-        return;
-    }
-    if (text_eq(argv[0], "pwd")) {
+    if (shell_same(argv[0], "help")) {
+        shell_line("Built-ins: help clear pwd cd ls cat echo run exit");
+    } else if (shell_same(argv[0], "clear")) {
+        shell_write("\x1b[2J\x1b[H");
+    } else if (shell_same(argv[0], "pwd")) {
         char cwd[LEONOS_FS_PATH_LEN];
         if (getcwd(cwd, sizeof(cwd))) {
-            puts(cwd);
+            shell_line(cwd);
         }
-        return;
-    }
-    if (text_eq(argv[0], "cd")) {
-        int ret = chdir(argc > 1 ? argv[1] : "0:/");
-        printf("cd => %d\n", ret);
-        return;
-    }
-    if (text_eq(argv[0], "ls")) {
-        list_dir(argc > 1 ? argv[1] : ".");
-        return;
-    }
-    if (text_eq(argv[0], "cat")) {
+    } else if (shell_same(argv[0], "cd")) {
+        int result = chdir(argc > 1 ? argv[1] : "0:/");
+        if (result < 0) {
+            printf("cd: %s (%d)\n", argc > 1 ? argv[1] : "0:/", result);
+        }
+    } else if (shell_same(argv[0], "ls")) {
+        shell_list(argc > 1 ? argv[1] : ".");
+    } else if (shell_same(argv[0], "cat")) {
+        shell_cat(argc > 1 ? argv[1] : 0);
+    } else if (shell_same(argv[0], "echo")) {
+        shell_echo(argv);
+    } else if (shell_same(argv[0], "run")) {
         if (argc < 2) {
-            puts("cat needs a path");
-            return;
-        }
-        print_file(argv[1]);
-        return;
-    }
-    if (text_eq(argv[0], "exit")) {
-        puts("shell exit");
-        exit(0);
-    }
-    if (text_eq(argv[0], "echo")) {
-        if (argc > 1) {
-            puts(argv[1]);
+            shell_line("run: an application path is required");
         } else {
-            puts("");
+            shell_start(&argv[1]);
         }
-        return;
+    } else if (shell_same(argv[0], "exit")) {
+        shell_line("closing shell");
+        return 1;
+    } else {
+        shell_start(argv);
     }
-
-    {
-        int pid = leonos_launch_argv(argv);
-        if (pid >= 0) {
-            printf("spawn %s => %d\n", argv[0], pid);
-            return;
-        }
-        if (pid == LEONOS_LAUNCH_ERR_NOT_FOUND ||
-            pid == LEONOS_LAUNCH_ERR_NO_ASSOCIATION ||
-            pid == LEONOS_LAUNCH_ERR_TOO_MANY_ARGS ||
-            pid == LEONOS_LAUNCH_ERR_UNCLOSED_QUOTE) {
-            puts(leonos_launch_error_text(pid));
-            return;
-        }
-        {
-            char msg[160];
-            size_t pos = 0;
-            msg[0] = 0;
-            append_text(msg, &pos, sizeof(msg), "launch failed: ");
-            append_text(msg, &pos, sizeof(msg), argv[0]);
-            puts(msg);
-        }
-    }
+    return 0;
 }
 
 int main(int argc, char **argv, char **envp)
 {
-    char line[SHELL_LINE_MAX];
-    size_t line_len = 0;
-    int pty_id = leonos_pty_self();
-    char ch;
+    char line[SHELL_LINE_CAP];
+    uint32_t length = 0;
+    char input;
     (void)envp;
-
-    if (argc > 1 && argv && argv[1] && argv[1][0]) {
-        int ret = chdir(argv[1]);
-        printf("[shell.elf] chdir argv[1]=%s => %d\n", argv[1], ret);
+    if (argc > 1 && argv[1] && argv[1][0]) {
+        (void)chdir(argv[1]);
     }
-
-    printf("[shell.elf] pid=%d pty=%d starting\n", getpid(), pty_id);
-    puts("LeonOS Shell");
-    puts("Type help for commands.");
+    shell_line("LeonOS command shell 2");
+    shell_line("Type help to see available commands.");
     if (argc > 2 && argv[2] && argv[2][0]) {
-        char startup[SHELL_LINE_MAX];
-        size_t i = 0;
-        while (argv[2][i] && i + 1 < sizeof(startup)) {
-            startup[i] = argv[2][i];
-            ++i;
+        char startup[SHELL_LINE_CAP];
+        uint32_t index = 0;
+        while (argv[2][index] && index + 1U < sizeof(startup)) {
+            startup[index] = argv[2][index];
+            ++index;
         }
-        startup[i] = 0;
-        run_command(startup);
+        startup[index] = 0;
+        if (shell_dispatch(startup)) {
+            return 0;
+        }
     }
-    print_prompt();
-
+    shell_prompt();
     for (;;) {
-        long got = read(0, &ch, 1);
-        if (got <= 0) {
-            sleep_ms(10);
+        if (read(0, &input, 1) <= 0) {
+            sleep_ms(8);
             continue;
         }
-        if (ch == '\r') {
+        if (input == '\r') {
             continue;
         }
-        if (ch == '\n') {
-            write(1, "\n", 1);
-            line[line_len] = 0;
-            trim_newline(line);
-            run_command(line);
-            line_len = 0;
-            line[0] = 0;
-            print_prompt();
+        if (input == '\n') {
+            line[length] = 0;
+            shell_write("\n");
+            if (shell_dispatch(line)) {
+                return 0;
+            }
+            length = 0;
+            shell_prompt();
             continue;
         }
-        if (ch == '\b' || (unsigned char)ch == 127) {
-            if (line_len) {
-                --line_len;
-                line[line_len] = 0;
-                write(1, "\b \b", 3);
+        if (input == '\b' || (uint8_t)input == 127U) {
+            if (length > 0) {
+                --length;
+                shell_write("\b \b");
             }
             continue;
         }
-        if ((unsigned char)ch < 32) {
+        if ((uint8_t)input == 21U) {
+            while (length > 0) {
+                --length;
+                shell_write("\b \b");
+            }
             continue;
         }
-        if (line_len + 1 < sizeof(line)) {
-            line[line_len++] = ch;
-            line[line_len] = 0;
-            write(1, &ch, 1);
+        if ((uint8_t)input >= 32U && length + 1U < sizeof(line)) {
+            line[length++] = input;
+            write(1, &input, 1);
         }
     }
 }

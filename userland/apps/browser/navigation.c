@@ -151,21 +151,21 @@ void load_about(void)
         "<p class=\"hero\"><strong>New start page for LeonOS 4.</strong><br>"
         "LeonOS 4 新版浏览器主页。</p>"
         "<h2>Quick Start / 快速开始</h2>"
-        "<p>Open HTTP pages, local HTML documents, and files from LeonOS paths.</p>"
-        "<p>可以打开 HTTP 网页、本地 HTML 文档，以及 LeonOS 文件路径。</p>"
-        "<p><a href=\"http://example.com/\">Open example.com / 打开 example.com</a></p>"
+        "<p>Open HTTP and HTTPS pages, local HTML documents, and files from LeonOS paths.</p>"
+        "<p>可以打开 HTTP、HTTPS 网页、本地 HTML 文档，以及 LeonOS 文件路径。</p>"
+        "<p><a href=\"https://example.com/\">Open example.com / 打开 example.com</a></p>"
         "<h2>What Works / 当前支持</h2>"
         "<ul>"
-        "<li>HTTP GET, DNS, TCP, browser history, refresh, home, and scrolling.</li>"
-        "<li>HTTP GET、DNS、TCP、历史记录、刷新、主页和滚动。</li>"
+        "<li>HTTP/HTTPS GET, DNS, TCP, certificate validation, browser history, refresh, home, and scrolling.</li>"
+        "<li>HTTP/HTTPS GET、DNS、TCP、证书验证、历史记录、刷新、主页和滚动。</li>"
         "<li>Headings, links, lists, blockquotes, tables, inline styles, and basic CSS.</li>"
         "<li>标题、链接、列表、引用、表格、行内样式和基础 CSS。</li>"
         "</ul>"
         "<h2>Status / 状态</h2>"
         "<table>"
-        "<tr><td><strong>Network</strong></td><td class=\"ok\">HTTP enabled / HTTP 已启用</td></tr>"
+        "<tr><td><strong>Network</strong></td><td class=\"ok\">HTTP and HTTPS enabled / HTTP 和 HTTPS 已启用</td></tr>"
         "<tr><td><strong>Files</strong></td><td class=\"ok\">0:/ paths and .html files / 支持 0:/ 路径和 .html 文件</td></tr>"
-        "<tr><td><strong>Limit</strong></td><td class=\"warn\">No HTTPS or JavaScript yet / 暂不支持 HTTPS 和 JavaScript</td></tr>"
+        "<tr><td><strong>Limit</strong></td><td class=\"warn\">No JavaScript yet / 暂不支持 JavaScript</td></tr>"
         "</table>"
         "<h3>Tip / 提示</h3>"
         "<blockquote>Type a URL in the address bar, or open a local .html file from File Manager.<br>"
@@ -372,7 +372,8 @@ static uint32_t browser_fetch_external_css(const char *base_url)
         }
         if (leonos_http_resolve_url(base_url, href, resolved,
                                     sizeof(resolved)) < 0 ||
-            !starts_with_ignore_case(resolved, "http://")) {
+            (!starts_with_ignore_case(resolved, "http://") &&
+             !starts_with_ignore_case(resolved, "https://"))) {
             continue;
         }
         browser_css_body[0] = 0;
@@ -470,7 +471,8 @@ void load_http_form_post(const char *url, const char *body)
                             browser_safe_detail(url));
         return;
     }
-    build_http_url(normalized, sizeof(normalized), parsed.host, parsed.port, parsed.path);
+    build_http_url(normalized, sizeof(normalized), parsed.host, parsed.port,
+                   parsed.secure, parsed.path);
     copy_text(current_location, sizeof(current_location), normalized);
     copy_text(address_input, sizeof(address_input), normalized);
     leonos_ui_edit_state_sync(&address_edit);
@@ -556,7 +558,8 @@ void load_http_url(const char *url)
                             browser_safe_detail(url));
         return;
     }
-    build_http_url(normalized, sizeof(normalized), parsed.host, parsed.port, parsed.path);
+    build_http_url(normalized, sizeof(normalized), parsed.host, parsed.port,
+                   parsed.secure, parsed.path);
     copy_text(current_location, sizeof(current_location), normalized);
     copy_text(address_input, sizeof(address_input), normalized);
     leonos_ui_edit_state_sync(&address_edit);
@@ -678,7 +681,8 @@ void load_local_file(const char *path)
 
 static int browser_should_download_http_url(const char *url)
 {
-    if (!url || !starts_with_ignore_case(url, "http://")) {
+    if (!url || (!starts_with_ignore_case(url, "http://") &&
+                 !starts_with_ignore_case(url, "https://"))) {
         return 0;
     }
     return ends_with_ignore_case(url, ".bmp") ||
@@ -718,15 +722,8 @@ void navigate_to(const char *input, uint8_t add_to_history)
     normalize_location(input, url, sizeof(url));
     if (starts_with_ignore_case(url, "about:")) {
         load_about();
-    } else if (starts_with_ignore_case(url, "https://")) {
-        copy_text(current_location, sizeof(current_location), url);
-        copy_text(address_input, sizeof(address_input), url);
-        leonos_ui_edit_state_sync(&address_edit);
-        render_message_page(T("HTTPS Unsupported", "不支持 HTTPS"),
-                            T("LeonOS Browser can only open http:// pages in this build.",
-                              "这个版本的 LeonOS Browser 只能打开 http:// 页面。"),
-                            browser_safe_detail(url));
-    } else if (starts_with_ignore_case(url, "http://")) {
+    } else if (starts_with_ignore_case(url, "http://") ||
+               starts_with_ignore_case(url, "https://")) {
         if (browser_should_download_http_url(url)) {
             browser_start_download(url);
             return;
@@ -737,8 +734,8 @@ void navigate_to(const char *input, uint8_t add_to_history)
         load_local_file(url);
     } else {
         render_message_page(T("Unsupported Address", "不支持的地址"),
-                            T("Use http://, about:, or a LeonOS file path such as 0:/file.html.",
-                              "请使用 http://、about:，或类似 0:/file.html 的 LeonOS 文件路径。"),
+                            T("Use http://, https://, about:, or a LeonOS file path such as 0:/file.html.",
+                              "请使用 http://、https://、about:，或类似 0:/file.html 的 LeonOS 文件路径。"),
                             browser_safe_detail(url));
     }
     if (add_to_history) {

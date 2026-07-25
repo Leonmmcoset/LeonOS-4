@@ -190,6 +190,8 @@ const char *net_status_name(uint32_t status)
         return T("Socket closed", "Socket 已关闭");
     case LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED:
         return T("Protocol unsupported", "协议不支持");
+    case LEONOS_NET_STATUS_TLS_FAILED:
+        return T("TLS verification failed", "TLS 验证失败");
     default:
         return T("Unknown network status", "未知网络状态");
     }
@@ -200,11 +202,21 @@ int parse_http_url(const char *url, struct parsed_http_url *out)
     const char *p;
     uint32_t host_pos = 0;
     uint32_t path_pos = 0;
-    uint32_t port = 80;
-    if (!url || !out || !starts_with_ignore_case(url, "http://")) {
+    uint32_t port;
+    if (!url || !out) {
         return 0;
     }
-    p = url + 7;
+    if (starts_with_ignore_case(url, "https://")) {
+        out->secure = 1;
+        port = 443;
+        p = url + 8;
+    } else if (starts_with_ignore_case(url, "http://")) {
+        out->secure = 0;
+        port = 80;
+        p = url + 7;
+    } else {
+        return 0;
+    }
     while (*p && *p != '/' && *p != ':' && *p != '#' && *p != '?' &&
            host_pos + 1U < sizeof(out->host)) {
         out->host[host_pos++] = *p++;
@@ -246,13 +258,13 @@ int parse_http_url(const char *url, struct parsed_http_url *out)
 }
 
 void build_http_url(char *dst, uint32_t cap, const char *host,
-                           uint32_t port, const char *path)
+                    uint32_t port, uint8_t secure, const char *path)
 {
     uint32_t pos = 0;
     dst[0] = 0;
-    append_text(dst, &pos, cap, "http://");
+    append_text(dst, &pos, cap, secure ? "https://" : "http://");
     append_text(dst, &pos, cap, host);
-    if (port != 80U) {
+    if (port != (secure ? 443U : 80U)) {
         append_char(dst, &pos, cap, ':');
         append_u32(dst, &pos, cap, port);
     }

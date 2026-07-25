@@ -516,12 +516,14 @@ int start_menu_handle_key(uint8_t keycode, uint8_t pressed)
         }
         return 1;
     }
-    if (keycode_to_ascii(keycode, &ch)) {
+    if (leonos_ui_keycode_to_char_shift(keycode,
+                                        desktop_left_shift_down || desktop_right_shift_down,
+                                        &ch)) {
         while (start_menu_query[len]) {
             ++len;
         }
         if (len + 1U < sizeof(start_menu_query)) {
-            start_menu_query[len] = lower_ascii(ch);
+            start_menu_query[len] = ch;
             start_menu_query[len + 1U] = 0;
             start_menu_programs_open = 1;
             start_menu_docs_open = 0;

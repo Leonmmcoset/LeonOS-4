@@ -20,10 +20,6 @@ config INSTALLER_ROOT_SIZE_MIB
     range 32 4096
     default 64
 
-config NINJA_REGENERATE_BEFORE_BUILD
-    bool "Regenerate build.ninja before Ninja builds"
-    default n
-
 endmenu
 
 menu "QEMU Run"

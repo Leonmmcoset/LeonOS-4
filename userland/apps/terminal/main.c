@@ -1,448 +1,348 @@
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
-#include <leonos/psf_font.h>
 #include <leonos/pty.h>
+#include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
-#define TERM_W 640
-#define TERM_H 360
-#define TERM_COLS 78
-#define TERM_ROWS 18
-#define TERM_INPUT_MAX 64
-#define TERM_TEXT_X 14
-#define TERM_TEXT_Y 40
-#define TERM_DEFAULT_FG 0x00ffffffu
-#define TERM_DEFAULT_BG 0x00000000u
-#define TERM_CSI_MAX_PARAMS 8
+#define TERMINAL_W 760U
+#define TERMINAL_H 480U
+#define TERMINAL_HISTORY_ROWS 160U
+#define TERMINAL_LINE_CAP 128U
+#define TERMINAL_MARGIN 14U
+#define TERMINAL_HEADER_H 32U
+#define TERMINAL_STATUS_H 24U
 #define T(en, zh) leonos_i18n((en), (zh))
 
-static uint32_t pixels[TERM_W * TERM_H];
-static char screen_chars[TERM_ROWS][TERM_COLS];
-static uint32_t screen_fg[TERM_ROWS][TERM_COLS];
-static uint32_t screen_bg[TERM_ROWS][TERM_COLS];
-static uint32_t cursor_row;
-static uint32_t cursor_col;
-static uint32_t pty_id;
-static char title_text[96];
-static uint32_t term_fg = TERM_DEFAULT_FG;
-static uint32_t term_bg = TERM_DEFAULT_BG;
-static uint8_t term_bold;
-
-enum ansi_state {
-    ANSI_NORMAL,
-    ANSI_ESC,
-    ANSI_CSI,
+enum terminal_escape_state {
+    TERMINAL_TEXT,
+    TERMINAL_ESCAPE,
+    TERMINAL_CSI,
 };
 
-static enum ansi_state ansi_parser_state;
-static int csi_params[TERM_CSI_MAX_PARAMS];
-static uint32_t csi_count;
-static int csi_value;
+struct terminal_line {
+    char text[TERMINAL_LINE_CAP];
+    uint16_t length;
+    uint32_t color;
+};
+
+static uint32_t pixels[TERMINAL_W * TERMINAL_H];
+static struct terminal_line history[TERMINAL_HISTORY_ROWS];
+static uint32_t history_first;
+static uint32_t history_count;
+static uint32_t active_line;
+static uint32_t pty_id;
+static uint32_t text_color = 0x00d7e3f4U;
+static uint8_t text_bright;
+static uint8_t carriage_return_pending;
+static enum terminal_escape_state escape_state;
+static uint16_t csi_value;
 static uint8_t csi_has_value;
 
-static const uint32_t ansi_colors[8] = {
-    0x00000000u, 0x00aa0000u, 0x0000aa00u, 0x00aa5500u,
-    0x000000aaU, 0x00aa00aau, 0x0000aaaau, 0x00aaaaaau,
+static const uint32_t ansi_normal[8] = {
+    0x00708090U, 0x00d06060U, 0x006fc77aU, 0x00d5b85aU,
+    0x007f9ee8U, 0x00c38bd7U, 0x006bc8d8U, 0x00d7e3f4U,
 };
 
-static const uint32_t ansi_bright_colors[8] = {
-    0x00555555u, 0x00ff5555u, 0x0055ff55u, 0x00ffff55u,
-    0x005555ffu, 0x00ff55ffu, 0x0055ffffu, 0x00ffffffu,
+static const uint32_t ansi_bright[8] = {
+    0x0092a1b2U, 0x00ff8484U, 0x008de39aU, 0x00f0d37bU,
+    0x009bb7ffU, 0x00e8a5ffU, 0x0088e8faU, 0x00ffffffU,
 };
 
-static void reset_attrs(void)
+static void terminal_reset_style(void)
 {
-    term_fg = TERM_DEFAULT_FG;
-    term_bg = TERM_DEFAULT_BG;
-    term_bold = 0;
+    text_color = 0x00d7e3f4U;
+    text_bright = 0;
 }
 
-static void set_cell(uint32_t row, uint32_t col, char ch, uint32_t fg, uint32_t bg)
+static void terminal_clear(void)
 {
-    if (row >= TERM_ROWS || col >= TERM_COLS) {
-        return;
-    }
-    screen_chars[row][col] = ch;
-    screen_fg[row][col] = fg;
-    screen_bg[row][col] = bg;
+    history_first = 0;
+    history_count = 1;
+    active_line = 0;
+    history[0].length = 0;
+    history[0].text[0] = 0;
+    history[0].color = text_color;
+    carriage_return_pending = 0;
 }
 
-static void clear_cell(uint32_t row, uint32_t col)
+static struct terminal_line *terminal_current_line(void)
 {
-    set_cell(row, col, ' ', term_fg, term_bg);
+    return &history[active_line];
 }
 
-static void clamp_cursor(void)
+static void terminal_next_line(void)
 {
-    if (cursor_row >= TERM_ROWS) {
-        cursor_row = TERM_ROWS - 1;
+    if (history_count < TERMINAL_HISTORY_ROWS) {
+        active_line = (history_first + history_count) % TERMINAL_HISTORY_ROWS;
+        ++history_count;
+    } else {
+        history_first = (history_first + 1U) % TERMINAL_HISTORY_ROWS;
+        active_line = (history_first + history_count - 1U) % TERMINAL_HISTORY_ROWS;
     }
-    if (cursor_col >= TERM_COLS) {
-        cursor_col = TERM_COLS - 1;
-    }
+    history[active_line].length = 0;
+    history[active_line].text[0] = 0;
+    history[active_line].color = text_color;
 }
 
-static void clear_screen_chars(void)
+static void terminal_put_visible(char value)
 {
-    for (uint32_t y = 0; y < TERM_ROWS; ++y) {
-        for (uint32_t x = 0; x < TERM_COLS; ++x) {
-            clear_cell(y, x);
-        }
+    struct terminal_line *line = terminal_current_line();
+    if (line->length + 1U >= TERMINAL_LINE_CAP) {
+        terminal_next_line();
+        line = terminal_current_line();
     }
-    cursor_row = 0;
-    cursor_col = 0;
+    line->text[line->length++] = value;
+    line->text[line->length] = 0;
+    line->color = text_color;
 }
 
-static void clear_line_range(uint32_t row, uint32_t from, uint32_t to)
-{
-    if (row >= TERM_ROWS || from >= TERM_COLS) {
-        return;
-    }
-    if (to >= TERM_COLS) {
-        to = TERM_COLS - 1;
-    }
-    for (uint32_t x = from; x <= to; ++x) {
-        clear_cell(row, x);
-    }
-}
+static void terminal_put_char(char value);
 
-static void scroll_up(void)
+static void terminal_put_text(const char *text)
 {
-    for (uint32_t y = 1; y < TERM_ROWS; ++y) {
-        for (uint32_t x = 0; x < TERM_COLS; ++x) {
-            screen_chars[y - 1][x] = screen_chars[y][x];
-            screen_fg[y - 1][x] = screen_fg[y][x];
-            screen_bg[y - 1][x] = screen_bg[y][x];
-        }
-    }
-    for (uint32_t x = 0; x < TERM_COLS; ++x) {
-        clear_cell(TERM_ROWS - 1, x);
-    }
-    if (cursor_row) {
-        --cursor_row;
+    while (text && *text) {
+        terminal_put_char(*text++);
     }
 }
 
-static void newline(void)
+static void terminal_apply_sgr(uint16_t code)
 {
-    cursor_col = 0;
-    if (++cursor_row >= TERM_ROWS) {
-        cursor_row = TERM_ROWS - 1;
-        scroll_up();
+    if (code == 0) {
+        terminal_reset_style();
+    } else if (code == 1) {
+        text_bright = 1;
+    } else if (code == 22) {
+        text_bright = 0;
+    } else if (code == 39) {
+        text_color = 0x00d7e3f4U;
+    } else if (code >= 30 && code <= 37) {
+        text_color = (text_bright ? ansi_bright : ansi_normal)[code - 30U];
+    } else if (code >= 90 && code <= 97) {
+        text_color = ansi_bright[code - 90U];
     }
 }
 
-static void execute_sgr(void)
+static void terminal_finish_csi(char final)
 {
-    uint32_t count = csi_count;
-    if (csi_has_value && count < TERM_CSI_MAX_PARAMS) {
-        csi_params[count++] = csi_value;
+    if (final == 'm') {
+        terminal_apply_sgr(csi_has_value ? csi_value : 0);
+    } else if (final == 'J' && csi_value == 2) {
+        terminal_clear();
+    } else if (final == 'K') {
+        struct terminal_line *line = terminal_current_line();
+        line->length = 0;
+        line->text[0] = 0;
     }
-    if (count == 0) {
-        reset_attrs();
-        return;
-    }
-    for (uint32_t i = 0; i < count; ++i) {
-        int p = csi_params[i];
-        if (p == 0) {
-            reset_attrs();
-        } else if (p == 1) {
-            term_bold = 1;
-        } else if (p == 22) {
-            term_bold = 0;
-        } else if (p == 39) {
-            term_fg = TERM_DEFAULT_FG;
-        } else if (p == 49) {
-            term_bg = TERM_DEFAULT_BG;
-        } else if (p >= 30 && p <= 37) {
-            term_fg = term_bold ? ansi_bright_colors[p - 30] : ansi_colors[p - 30];
-        } else if (p >= 40 && p <= 47) {
-            term_bg = ansi_colors[p - 40];
-        } else if (p >= 90 && p <= 97) {
-            term_fg = ansi_bright_colors[p - 90];
-        } else if (p >= 100 && p <= 107) {
-            term_bg = ansi_bright_colors[p - 100];
-        }
-    }
-}
-
-static int csi_param_or(uint32_t index, int fallback)
-{
-    uint32_t count = csi_count;
-    if (csi_has_value && count < TERM_CSI_MAX_PARAMS) {
-        csi_params[count++] = csi_value;
-    }
-    if (index >= count || csi_params[index] == 0) {
-        return fallback;
-    }
-    return csi_params[index];
-}
-
-static void execute_csi(char final)
-{
-    int n;
-    switch (final) {
-    case 'm':
-        execute_sgr();
-        break;
-    case 'H':
-    case 'f':
-        n = csi_param_or(0, 1);
-        cursor_row = n > 0 ? (uint32_t)(n - 1) : 0;
-        n = csi_param_or(1, 1);
-        cursor_col = n > 0 ? (uint32_t)(n - 1) : 0;
-        clamp_cursor();
-        break;
-    case 'A':
-        n = csi_param_or(0, 1);
-        cursor_row = cursor_row > (uint32_t)n ? cursor_row - (uint32_t)n : 0;
-        break;
-    case 'B':
-        n = csi_param_or(0, 1);
-        cursor_row += (uint32_t)n;
-        clamp_cursor();
-        break;
-    case 'C':
-        n = csi_param_or(0, 1);
-        cursor_col += (uint32_t)n;
-        clamp_cursor();
-        break;
-    case 'D':
-        n = csi_param_or(0, 1);
-        cursor_col = cursor_col > (uint32_t)n ? cursor_col - (uint32_t)n : 0;
-        break;
-    case 'J':
-        n = csi_param_or(0, 0);
-        if (n == 2) {
-            clear_screen_chars();
-        } else if (n == 1) {
-            for (uint32_t row = 0; row < cursor_row; ++row) {
-                clear_line_range(row, 0, TERM_COLS - 1);
-            }
-            clear_line_range(cursor_row, 0, cursor_col);
-        } else {
-            clear_line_range(cursor_row, cursor_col, TERM_COLS - 1);
-            for (uint32_t row = cursor_row + 1; row < TERM_ROWS; ++row) {
-                clear_line_range(row, 0, TERM_COLS - 1);
-            }
-        }
-        break;
-    case 'K':
-        n = csi_param_or(0, 0);
-        if (n == 2) {
-            clear_line_range(cursor_row, 0, TERM_COLS - 1);
-        } else if (n == 1) {
-            clear_line_range(cursor_row, 0, cursor_col);
-        } else {
-            clear_line_range(cursor_row, cursor_col, TERM_COLS - 1);
-        }
-        break;
-    default:
-        break;
-    }
-}
-
-static void reset_csi(void)
-{
-    for (uint32_t i = 0; i < TERM_CSI_MAX_PARAMS; ++i) {
-        csi_params[i] = 0;
-    }
-    csi_count = 0;
     csi_value = 0;
     csi_has_value = 0;
+    escape_state = TERMINAL_TEXT;
 }
 
-static void put_plain_char(char ch)
+static void terminal_put_char(char value)
 {
-    if (ch == '\f') {
-        clear_screen_chars();
-        return;
-    }
-    if (ch == '\r') {
-        cursor_col = 0;
-        return;
-    }
-    if (ch == '\n') {
-        newline();
-        return;
-    }
-    if (ch == '\b' || (unsigned char)ch == 127) {
-        if (cursor_col) {
-            --cursor_col;
-            clear_cell(cursor_row, cursor_col);
+    uint8_t byte = (uint8_t)value;
+    if (escape_state == TERMINAL_ESCAPE) {
+        if (value == '[') {
+            escape_state = TERMINAL_CSI;
+            csi_value = 0;
+            csi_has_value = 0;
+        } else {
+            escape_state = TERMINAL_TEXT;
         }
         return;
     }
-    if ((unsigned char)ch < 32) {
-        return;
-    }
-    set_cell(cursor_row, cursor_col, ch, term_fg, term_bg);
-    if (++cursor_col >= TERM_COLS) {
-        newline();
-    }
-}
-
-static void put_term_char(char ch)
-{
-    unsigned char uch = (unsigned char)ch;
-    if (ansi_parser_state == ANSI_ESC) {
-        if (ch == '[') {
-            reset_csi();
-            ansi_parser_state = ANSI_CSI;
-            return;
-        }
-        ansi_parser_state = ANSI_NORMAL;
-        return;
-    }
-    if (ansi_parser_state == ANSI_CSI) {
-        if (uch >= '0' && uch <= '9') {
-            csi_value = csi_value * 10 + (int)(uch - '0');
+    if (escape_state == TERMINAL_CSI) {
+        if (byte >= '0' && byte <= '9') {
+            csi_value = (uint16_t)(csi_value * 10U + byte - '0');
             csi_has_value = 1;
             return;
         }
-        if (ch == ';') {
-            if (csi_count < TERM_CSI_MAX_PARAMS) {
-                csi_params[csi_count++] = csi_has_value ? csi_value : 0;
-            }
+        if (value == ';') {
+            terminal_apply_sgr(csi_has_value ? csi_value : 0);
             csi_value = 0;
             csi_has_value = 0;
             return;
         }
-        if (uch >= 0x40 && uch <= 0x7e) {
-            execute_csi(ch);
-            ansi_parser_state = ANSI_NORMAL;
-            return;
-        }
+        terminal_finish_csi(value);
         return;
     }
-    if (uch == 27) {
-        ansi_parser_state = ANSI_ESC;
-        return;
+    if (carriage_return_pending && value != '\n') {
+        struct terminal_line *line = terminal_current_line();
+        line->length = 0;
+        line->text[0] = 0;
+        carriage_return_pending = 0;
     }
-    put_plain_char(ch);
-}
-
-static void copy_text(char *dst, uint32_t dst_len, const char *src)
-{
-    uint32_t i = 0;
-    if (!dst || dst_len == 0) {
-        return;
-    }
-    if (src) {
-        while (i + 1 < dst_len && src[i]) {
-            dst[i] = src[i];
-            ++i;
+    if (byte == 27U) {
+        escape_state = TERMINAL_ESCAPE;
+    } else if (value == '\n') {
+        carriage_return_pending = 0;
+        terminal_next_line();
+    } else if (value == '\r') {
+        carriage_return_pending = 1;
+    } else if (value == '\b') {
+        struct terminal_line *line = terminal_current_line();
+        if (line->length) {
+            line->text[--line->length] = 0;
         }
-    }
-    dst[i] = 0;
-}
-
-static void draw_terminal(struct leonos_ui_surface *ui)
-{
-    leonos_ui_rect(ui, 0, 0, TERM_W, TERM_H, LEONOS_UI_WHITE);
-    leonos_ui_panel(ui, 8, 8, TERM_W - 16, TERM_H - 16, 0x00000000);
-    leonos_ui_text(ui, 18, 16, title_text, LEONOS_UI_WHITE, 0x00000000);
-    for (uint32_t row = 0; row < TERM_ROWS; ++row) {
-        for (uint32_t col = 0; col < TERM_COLS; ++col) {
-            char cell[2];
-            cell[0] = screen_chars[row][col];
-            cell[1] = 0;
-            leonos_ui_text(ui, TERM_TEXT_X + col * LEONOS_FONT_W,
-                           TERM_TEXT_Y + row * LEONOS_FONT_H,
-                           cell, screen_fg[row][col], screen_bg[row][col]);
+    } else if (value == '\f') {
+        terminal_clear();
+    } else if (value == '\t') {
+        for (uint32_t index = 0; index < 4; ++index) {
+            terminal_put_visible(' ');
         }
-    }
-    if (cursor_row < TERM_ROWS && cursor_col < TERM_COLS) {
-        leonos_ui_rect(ui, TERM_TEXT_X + cursor_col * LEONOS_FONT_W,
-                       TERM_TEXT_Y + cursor_row * LEONOS_FONT_H + LEONOS_FONT_H - 2,
-                       LEONOS_FONT_W, 2, LEONOS_UI_WHITE);
+    } else if (byte >= 32U) {
+        terminal_put_visible(value);
     }
 }
 
-static int map_keycode(uint8_t keycode, uint8_t pressed, char *out)
+static uint32_t terminal_visible_rows(void)
 {
-    static uint8_t shift_down;
+    uint32_t body_h = TERMINAL_H - TERMINAL_HEADER_H - TERMINAL_STATUS_H - TERMINAL_MARGIN * 2U;
+    return body_h / LEONOS_FONT_H;
+}
+
+static void terminal_draw(struct leonos_ui_surface *ui)
+{
+    uint32_t rows = terminal_visible_rows();
+    uint32_t first_visible = history_count > rows ? history_count - rows : 0;
+    uint32_t body_y = TERMINAL_HEADER_H + TERMINAL_MARGIN;
+    uint32_t body_h = TERMINAL_H - TERMINAL_HEADER_H - TERMINAL_STATUS_H - TERMINAL_MARGIN;
+    uint32_t active_visible = history_count ? history_count - 1U : 0;
+    leonos_ui_rect(ui, 0, 0, TERMINAL_W, TERMINAL_H, 0x00101822U);
+    leonos_ui_rect(ui, 0, 0, TERMINAL_W, TERMINAL_HEADER_H, 0x001b2b45U);
+    leonos_ui_text(ui, TERMINAL_MARGIN, 8, T("LeonOS Terminal", "LeonOS 终端"),
+                   LEONOS_UI_WHITE, 0x001b2b45U);
+    leonos_ui_text_transparent_clipped(ui, TERMINAL_W - 236, 8, 220,
+                                       T("PTY command session", "PTY 命令会话"), 0x00a6bddbU);
+    leonos_ui_inset(ui, TERMINAL_MARGIN, body_y, TERMINAL_W - TERMINAL_MARGIN * 2U,
+                    body_h, 0x000b1019U);
+    for (uint32_t row = first_visible; row < history_count; ++row) {
+        uint32_t line_index = (history_first + row) % TERMINAL_HISTORY_ROWS;
+        uint32_t draw_y = body_y + 4U + (row - first_visible) * LEONOS_FONT_H;
+        leonos_ui_text_clipped(ui, TERMINAL_MARGIN + 6U, draw_y,
+                               TERMINAL_W - TERMINAL_MARGIN * 2U - 12U,
+                               history[line_index].text, history[line_index].color,
+                               0x000b1019U);
+    }
+    if (active_visible >= first_visible && active_visible < history_count &&
+        (leonos_uptime_ms() / 450UL) % 2UL == 0UL) {
+        uint32_t line_index = active_line;
+        uint32_t cursor_x = TERMINAL_MARGIN + 6U +
+                            leonos_ui_text_width(history[line_index].text);
+        uint32_t cursor_y = body_y + 4U + (active_visible - first_visible) * LEONOS_FONT_H;
+        leonos_ui_rect(ui, cursor_x, cursor_y + LEONOS_FONT_H - 2U, LEONOS_FONT_W, 2,
+                       0x00d7e3f4U);
+    }
+    leonos_ui_rect(ui, 0, TERMINAL_H - TERMINAL_STATUS_H, TERMINAL_W,
+                   TERMINAL_STATUS_H, 0x001b2b45U);
+    leonos_ui_text(ui, TERMINAL_MARGIN, TERMINAL_H - TERMINAL_STATUS_H + 4,
+                   T("Ctrl+U clears the current command", "Ctrl+U 清除当前命令"),
+                   0x00a6bddbU, 0x001b2b45U);
+}
+
+static int terminal_pump_output(void)
+{
+    char buffer[256];
+    int changed = 0;
+    int received;
+    do {
+        received = leonos_pty_read_output(pty_id, buffer, sizeof(buffer));
+        if (received > 0) {
+            for (int index = 0; index < received; ++index) {
+                terminal_put_char(buffer[index]);
+            }
+            changed = 1;
+        }
+    } while (received > 0);
+    return changed;
+}
+
+static int terminal_send_key(uint8_t keycode, uint8_t pressed, uint8_t *shift_down)
+{
+    char character;
     if (keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT) {
-        shift_down = pressed ? 1 : 0;
+        *shift_down = pressed ? 1 : 0;
         return 0;
     }
     if (!pressed) {
         return 0;
     }
-    return leonos_ui_keycode_to_char_shift(keycode, shift_down, out);
-}
-
-static void pump_pty_output(void)
-{
-    char buf[256];
-    int got;
-    do {
-        got = leonos_pty_read_output(pty_id, buf, sizeof(buf));
-        if (got > 0) {
-            for (int i = 0; i < got; ++i) {
-                put_term_char(buf[i]);
-            }
-        }
-    } while (got > 0);
+    if (keycode == LEONOS_KEY_ENTER) {
+        character = '\n';
+    } else if (keycode == LEONOS_KEY_BACKSPACE) {
+        character = '\b';
+    } else if (keycode == LEONOS_KEY_TAB) {
+        character = '\t';
+    } else if (!leonos_ui_keycode_to_char_shift(keycode, *shift_down, &character)) {
+        return 0;
+    }
+    return leonos_pty_write_input(pty_id, &character, 1) > 0;
 }
 
 int main(int argc, char **argv, char **envp)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
-    int window_id;
-    int shell_pid;
     char *shell_argv[4];
+    uint8_t shift_down = 0;
+    uint8_t cursor_phase = 2;
+    int window_id;
+    int shell_result;
     (void)envp;
-
-    puts("[terminal.elf] terminal starting");
     pty_id = (uint32_t)leonos_pty_create();
-    printf("[terminal.elf] pid=%d pty=%d\n", getpid(), pty_id);
     if ((int)pty_id <= 0) {
-        printf("[terminal.elf] pty create failed=%d\n", (int)pty_id);
+        printf("terminal: PTY creation failed (%d)\n", (int)pty_id);
         return 1;
     }
-
-    window_id = leonos_gui_create_app_window_ex(T("Terminal", "终端"), T("LeonOS terminal", "LeonOS 终端"),
-                                                TERM_W, TERM_H, LEONOS_GUI_WINDOW_NO_RESIZE);
+    window_id = leonos_gui_create_app_window_ex(T("Terminal", "终端"),
+                                                T("PTY command terminal", "PTY 命令终端"),
+                                                TERMINAL_W, TERMINAL_H,
+                                                LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
-        printf("[terminal.elf] create window failed=%d\n", window_id);
+        printf("terminal: window creation failed (%d)\n", window_id);
         return 1;
     }
     shell_argv[0] = "0:/userland/shell.elf";
-    shell_argv[1] = (argc > 1 && argv && argv[1] && argv[1][0]) ? argv[1] : 0;
-    shell_argv[2] = (argc > 2 && argv && argv[2] && argv[2][0]) ? argv[2] : 0;
+    shell_argv[1] = argc > 1 && argv[1] && argv[1][0] ? argv[1] : 0;
+    shell_argv[2] = argc > 2 && argv[2] && argv[2][0] ? argv[2] : 0;
     shell_argv[3] = 0;
-    shell_pid = leonos_pty_spawn_argv("0:/userland/shell.elf", pty_id, shell_argv, 0);
-    printf("[terminal.elf] spawn shell pid=%d\n", shell_pid);
-
-    leonos_ui_bind(&ui, pixels, TERM_W, TERM_H, TERM_W);
-    reset_attrs();
-    clear_screen_chars();
-    copy_text(title_text, sizeof(title_text), T("LeonOS Terminal", "LeonOS 终端"));
-    draw_terminal(&ui);
-    leonos_gui_present_window((uint32_t)window_id, TERM_W, TERM_H, TERM_W, pixels);
-
+    shell_result = leonos_pty_spawn_argv(shell_argv[0], pty_id, shell_argv, 0);
+    leonos_ui_bind(&ui, pixels, TERMINAL_W, TERMINAL_H, TERMINAL_W);
+    terminal_reset_style();
+    terminal_clear();
+    if (shell_result < 0) {
+        terminal_put_text("! shell start failed");
+    }
+    terminal_draw(&ui);
+    leonos_gui_present_window((uint32_t)window_id, TERMINAL_W, TERMINAL_H,
+                              TERMINAL_W, pixels);
     for (;;) {
+        int redraw = terminal_pump_output();
+        uint8_t next_cursor_phase = (uint8_t)((leonos_uptime_ms() / 450UL) % 2UL);
+        if (next_cursor_phase != cursor_phase) {
+            cursor_phase = next_cursor_phase;
+            redraw = 1;
+        }
         event.window_id = (uint32_t)window_id;
-        while (leonos_gui_wait_app_event(&event, 20U) > 0) {
+        if (leonos_gui_wait_app_event(&event, 40U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
-                leonos_pty_write_input(pty_id, "exit\n", 5);
-                sleep_ms(40);
                 return 0;
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
-                char ch;
-                if (map_keycode(event.keycode, event.pressed, &ch)) {
-                    leonos_pty_write_input(pty_id, &ch, 1);
-                }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
+                redraw |= terminal_send_key(event.keycode, 1, &shift_down);
+            } else if (event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                (void)terminal_send_key(event.keycode, 0, &shift_down);
+            } else if (event.type == LEONOS_GUI_APP_EVENT_THEME_CHANGED ||
+                       event.type == LEONOS_GUI_APP_EVENT_FOCUS) {
+                redraw = 1;
             }
         }
-        pump_pty_output();
-        draw_terminal(&ui);
-        leonos_gui_present_window((uint32_t)window_id, TERM_W, TERM_H, TERM_W, pixels);
-        sleep_ms(20);
+        if (redraw) {
+            terminal_draw(&ui);
+            leonos_gui_present_window((uint32_t)window_id, TERMINAL_W, TERMINAL_H,
+                                      TERMINAL_W, pixels);
+        }
     }
 }

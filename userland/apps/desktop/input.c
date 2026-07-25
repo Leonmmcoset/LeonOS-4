@@ -29,6 +29,14 @@ void restore_window(uint8_t id)
 int handle_global_key(uint8_t keycode, uint8_t pressed)
 {
     char ch;
+    if (keycode == LEONOS_KEY_LEFT_SHIFT) {
+        desktop_left_shift_down = pressed;
+        return 0;
+    }
+    if (keycode == LEONOS_KEY_RIGHT_SHIFT) {
+        desktop_right_shift_down = pressed;
+        return 0;
+    }
     if (keycode == LEONOS_KEY_LEFT_ALT) {
         alt_left_down = pressed;
         if (!pressed && !is_alt_down()) {

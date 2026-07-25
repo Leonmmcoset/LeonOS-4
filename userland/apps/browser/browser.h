@@ -121,6 +121,7 @@ struct parsed_http_url {
     char host[LEONOS_NET_HOSTNAME_LEN];
     char path[LEONOS_NET_HTTP_PATH_LEN];
     uint32_t port;
+    uint8_t secure;
 };
 
 enum browser_form_control_kind {
@@ -253,7 +254,8 @@ void clamp_scroll(void);
 void set_status(const char *text);
 const char *net_status_name(uint32_t status);
 int parse_http_url(const char *url, struct parsed_http_url *out);
-void build_http_url(char *dst, uint32_t cap, const char *host, uint32_t port, const char *path);
+void build_http_url(char *dst, uint32_t cap, const char *host, uint32_t port,
+                    uint8_t secure, const char *path);
 int is_drive_path(const char *text);
 void normalize_location(const char *input, char *out, uint32_t cap);
 void render_html_source(const char *source, const char *base_url);

@@ -20,6 +20,7 @@
 #define OSMLAYER_DEVICE_CLASS_STORAGE 4u
 #define OSMLAYER_DEVICE_CLASS_SERIAL 5u
 #define OSMLAYER_DEVICE_CLASS_NETWORK 6u
+#define OSMLAYER_DEVICE_CLASS_AUDIO 7u
 
 #define OSMLAYER_DEVICE_FLAG_PRESENT 0x00000001u
 #define OSMLAYER_DEVICE_FLAG_ACTIVE 0x00000002u
@@ -35,6 +36,7 @@
 #define OSMLAYER_RAW_DEVICE_KIND_DISK 6u
 #define OSMLAYER_RAW_DEVICE_KIND_SERIAL 7u
 #define OSMLAYER_RAW_DEVICE_KIND_E1000 8u
+#define OSMLAYER_RAW_DEVICE_KIND_AC97 9u
 
 struct osmlayer_vfs_resolve_path {
     const char *cwd;
@@ -2058,6 +2060,28 @@ static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
         }
         osmlayer_catalog_add(query, OSMLAYER_DEVICE_CLASS_NETWORK, raw->flags,
                              "Intel e1000",
+                             osmlayer_active(raw->flags) ? "Running" : "Unavailable",
+                             detail, raw->value0, raw->value1);
+        break;
+    case OSMLAYER_RAW_DEVICE_KIND_AC97:
+        pos = 0;
+        detail[0] = 0;
+        if (osmlayer_active(raw->flags)) {
+            osmlayer_append_u64(detail, &pos, sizeof(detail), raw->aux0);
+            osmlayer_append_text(detail, &pos, sizeof(detail), " Hz, ");
+            osmlayer_append_u64(detail, &pos, sizeof(detail), raw->aux1 >> 16);
+            osmlayer_append_text(detail, &pos, sizeof(detail), " ch, ");
+            osmlayer_append_u64(detail, &pos, sizeof(detail), raw->aux1 & 0xffffu);
+            osmlayer_append_text(detail, &pos, sizeof(detail), "-bit PCM");
+        } else if (raw->flags & OSMLAYER_DEVICE_FLAG_PRESENT) {
+            osmlayer_copy_text(detail, sizeof(detail),
+                               "Intel ICH AC'97 detected but driver not active");
+        } else {
+            osmlayer_copy_text(detail, sizeof(detail),
+                               "No Intel ICH AC'97 audio device detected");
+        }
+        osmlayer_catalog_add(query, OSMLAYER_DEVICE_CLASS_AUDIO, raw->flags,
+                             "Intel ICH AC'97",
                              osmlayer_active(raw->flags) ? "Running" : "Unavailable",
                              detail, raw->value0, raw->value1);
         break;

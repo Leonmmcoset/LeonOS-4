@@ -3,6 +3,20 @@
 LeonOS keeps third-party source code in `third_party/` and records Git-backed
 dependencies as submodules.
 
+## Mbed TLS
+
+- Path: `third_party/mbedtls`
+- Upstream: `https://github.com/Mbed-TLS/mbedtls.git`
+- Version: `2.28.8`
+- Git submodule commit: `5a764e5555c64337ed17444410269ff21cb617b1` (`v2.28.8`)
+- License: Apache-2.0 (selected from the upstream dual Apache-2.0 or
+  GPL-2.0-or-later terms; see `third_party/mbedtls/LICENSE`).
+
+LeonOS builds a TLS 1.2 client profile with certificate and hostname
+verification for the shared HTTP client. The system image includes
+`0:/system/certs/cacert.pem`, the curl CA Extract from
+`https://curl.se/ca/cacert.pem`, to establish public Web PKI trust.
+
 ## GNU GRUB
 
 - Delivered component: UEFI and Multiboot2 boot support in normal and installer

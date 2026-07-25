@@ -55,6 +55,7 @@ static uint32_t mem_percent;
 static uint8_t perf_valid;
 static struct leonos_ui_listview_state task_list;
 static uint8_t active_tab = TASKMGR_TAB_PROCESSES;
+static struct leonos_ui_tab_state taskmgr_tabs;
 static uint8_t menu_open;
 static uint8_t context_menu_active;
 static uint8_t context_menu_animating;
@@ -62,6 +63,12 @@ static uint8_t context_menu_opening;
 static unsigned long context_menu_anim_start;
 static uint32_t context_menu_x;
 static uint32_t context_menu_y;
+
+static void taskmgr_tab_items(struct leonos_ui_tab_item items[2])
+{
+    items[0] = (struct leonos_ui_tab_item){T("Processes", "进程"), TASKMGR_TAB_PROCESSES, 0};
+    items[1] = (struct leonos_ui_tab_item){T("Performance", "性能"), TASKMGR_TAB_PERFORMANCE, 0};
+}
 static uint32_t view_w = TASKMGR_W;
 static uint32_t view_h = TASKMGR_H;
 static char status_text[96] = "Ready";
@@ -516,7 +523,8 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
         {T("File", "文件"), TASKMGR_MENU_FILE, 64, 0},
         {T("Options", "选项"), TASKMGR_MENU_OPTIONS, 80, 0},
     };
-    const char *tabs[] = {T("Processes", "进程"), T("Performance", "性能")};
+    struct leonos_ui_tab_item tabs[2];
+    taskmgr_tab_items(tabs);
     task_list.visible_rows = vis_rows;
     leonos_ui_listview_state_set_count(&task_list, task_count);
 
@@ -526,7 +534,8 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
                            menu_open);
     leonos_ui_toolbar(ui, 0, 28, view_w, 36);
     leonos_ui_toolbar_button(ui, 8, 34, 88, T("Refresh", "刷新"), 0);
-    leonos_ui_tabbar(ui, 104, 34, 214, tabs, 2, active_tab);
+    taskmgr_tabs.selected_id = active_tab;
+    leonos_ui_tab_control(ui, 104, 34, 214, tabs, 2, &taskmgr_tabs);
     leonos_ui_toolbar_button(ui, 326, 34, 86, T("End Task", "结束任务"),
                              selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
 
@@ -695,9 +704,11 @@ static int handle_menu_click(int32_t x, int32_t y)
             menu_open = TASKMGR_MENU_NONE;
             if (action == TASKMGR_ACTION_PROCESSES) {
                 active_tab = TASKMGR_TAB_PROCESSES;
+                taskmgr_tabs.selected_id = active_tab;
                 refresh_all();
             } else if (action == TASKMGR_ACTION_PERFORMANCE) {
                 active_tab = TASKMGR_TAB_PERFORMANCE;
+                taskmgr_tabs.selected_id = active_tab;
                 refresh_all();
             } else if (action == TASKMGR_ACTION_ABOUT) {
                 leonos_ui_show_message_box(T("Task Manager", "任务管理器"), T("Shows runnable, sleeping, and exited tasks.", "显示可运行、睡眠和已退出任务。"), "OK");
@@ -780,6 +791,7 @@ int main(void)
 
     leonos_ui_bind(&ui, pixels, view_w, view_h, TASKMGR_MAX_W);
     leonos_ui_listview_state_init(&task_list, visible_rows(), 24);
+    leonos_ui_tab_state_init(&taskmgr_tabs, TASKMGR_TAB_PROCESSES);
     task_list.focused = 1;
     for (;;) {
         unsigned long now = leonos_uptime_ms();
@@ -818,10 +830,11 @@ int main(void)
                     continue;
                 }
                 {
-                    const char *tabs[] = {T("Processes", "进程"), T("Performance", "性能")};
-                    int tab = leonos_ui_tabbar_hit(event.x, event.y, 104, 34, 214, tabs, 2);
-                    if (tab >= 0) {
-                        active_tab = (uint8_t)tab;
+                    struct leonos_ui_tab_item tabs[2];
+                    taskmgr_tab_items(tabs);
+                    if (leonos_ui_tab_control_handle_mouse(&taskmgr_tabs, event.x, event.y,
+                                                           104, 34, 214, tabs, 2)) {
+                        active_tab = (uint8_t)taskmgr_tabs.selected_id;
                         refresh_all();
                         present_taskmgr((uint32_t)window_id, &ui);
                         continue;

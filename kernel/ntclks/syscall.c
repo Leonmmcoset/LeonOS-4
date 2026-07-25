@@ -19,6 +19,7 @@
 #include <ntclks/version.h>
 
 #include <leonos/device.h>
+#include <leonos/audio.h>
 #include <leonos/driver.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
@@ -2708,6 +2709,42 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return driver_manager_control(request);
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_AUDIO_CONFIGURE) {
+        struct leonos_audio_format format;
+        if (!user_range_ok(a2, sizeof(struct leonos_audio_format))) {
+            return -LEONOS_EFAULT;
+        }
+        format = *(const struct leonos_audio_format *)(uintptr_t)a2;
+        return driver_manager_audio_configure(&format);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_AUDIO_WRITE) {
+        struct leonos_audio_write *request;
+        long ret;
+        if (!user_range_ok(a2, sizeof(struct leonos_audio_write))) {
+            return -LEONOS_EFAULT;
+        }
+        request = (struct leonos_audio_write *)(uintptr_t)a2;
+        if (request->length > LEONOS_AUDIO_MAX_WRITE ||
+            (request->length && (!request->data ||
+             !user_range_ok((uint64_t)(uintptr_t)request->data,
+                            request->length)))) {
+            return -LEONOS_EFAULT;
+        }
+        ret = driver_manager_audio_write(request->data, request->length,
+                                         &request->status);
+        request->transferred = ret > 0 ? (uint32_t)ret : 0;
+        return ret < 0 ? ret : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_AUDIO_GET_STATE) {
+        if (!user_range_ok(a2, sizeof(struct leonos_audio_state))) {
+            return -LEONOS_EFAULT;
+        }
+        driver_manager_audio_get_state((struct leonos_audio_state *)(uintptr_t)a2);
+        return 0;
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DEVICE_LIST) {
         struct leonos_device_list *query;
         struct leonos_device_info *devices;
@@ -2805,6 +2842,23 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             }
             raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_E1000,
                            net_flags, net_ip, net_cfg.source, net_mac, net_cfg.gateway_ip);
+        }
+        {
+            struct leonos_audio_state audio = {0};
+            uint32_t flags = 0;
+            driver_manager_audio_get_state(&audio);
+            if (audio.present) {
+                flags |= LEONOS_DEVICE_FLAG_PRESENT;
+            }
+            if (audio.active) {
+                flags |= LEONOS_DEVICE_FLAG_ACTIVE;
+            }
+            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_AC97, flags,
+                           audio.sample_rate,
+                           ((uint32_t)audio.channels << 16) | audio.bits_per_sample,
+                           ((uint64_t)audio.vendor_id << 16) | audio.device_id,
+                           ((uint64_t)audio.bus << 16) |
+                               ((uint64_t)audio.slot << 8) | audio.function);
         }
         {
             struct leonos_device_catalog_query catalog = {
@@ -2919,6 +2973,39 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_NETWORK,
                        net_flags, "Intel e1000", net_is_ready() ? "Running" : "Unavailable",
                        detail, net_mac, net_ip);
+        }
+
+        {
+            struct leonos_audio_state audio = {0};
+            uint32_t flags = 0;
+            uint32_t pos = 0;
+            driver_manager_audio_get_state(&audio);
+            if (audio.present) {
+                flags |= LEONOS_DEVICE_FLAG_PRESENT;
+            }
+            if (audio.active) {
+                flags |= LEONOS_DEVICE_FLAG_ACTIVE;
+            }
+            detail[0] = 0;
+            if (audio.active) {
+                device_append_u64(detail, &pos, sizeof(detail), audio.sample_rate);
+                device_append_text(detail, &pos, sizeof(detail), " Hz, ");
+                device_append_u64(detail, &pos, sizeof(detail), audio.channels);
+                device_append_text(detail, &pos, sizeof(detail), " ch, ");
+                device_append_u64(detail, &pos, sizeof(detail), audio.bits_per_sample);
+                device_append_text(detail, &pos, sizeof(detail), "-bit PCM");
+            } else if (audio.present) {
+                device_append_text(detail, &pos, sizeof(detail),
+                                   "Intel ICH AC'97 detected but driver not active");
+            } else {
+                device_append_text(detail, &pos, sizeof(detail),
+                                   "No Intel ICH AC'97 audio device detected");
+            }
+            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_AUDIO,
+                       flags, "Intel ICH AC'97", audio.active ? "Running" : "Unavailable",
+                       detail, ((uint64_t)audio.vendor_id << 16) | audio.device_id,
+                       ((uint64_t)audio.bus << 16) |
+                           ((uint64_t)audio.slot << 8) | audio.function);
         }
 
         query->count = count;

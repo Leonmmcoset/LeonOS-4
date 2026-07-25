@@ -21,7 +21,7 @@ static uint32_t pixels[DOWNLOAD_W * DOWNLOAD_H];
 static char url_input[LEONOS_HTTP_URL_LEN] = "http://example.com/";
 static char status_text[160] = "Ready";
 static char target_path[LEONOS_FS_PATH_LEN] = "";
-static char detail_text[192] = "Enter an http:// URL or open a download link from Browser.";
+static char detail_text[192] = "Enter an http:// or https:// URL or open a download link from Browser.";
 static char body[LEONOS_HTTP_BODY_MAX + 1U];
 static char headers[LEONOS_HTTP_HEADER_MAX + 1U];
 static struct leonos_ui_edit_state url_edit;
@@ -246,6 +246,8 @@ static const char *net_status_name(uint32_t status)
         return T("No DNS answer", "没有 DNS 应答");
     case LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED:
         return T("Protocol unsupported", "协议不支持");
+    case LEONOS_NET_STATUS_TLS_FAILED:
+        return T("TLS verification failed", "TLS 验证失败");
     default:
         return T("Network failed", "网络失败");
     }
@@ -288,12 +290,13 @@ static void perform_download(void)
     copy_text(detail_text, sizeof(detail_text), url_input);
     body[0] = 0;
     headers[0] = 0;
-    if (!starts_with_ignore_case(url_input, "http://")) {
+    if (!starts_with_ignore_case(url_input, "http://") &&
+        !starts_with_ignore_case(url_input, "https://")) {
         failed = 1;
         busy = 0;
         progress_value = 0;
         copy_text(status_text, sizeof(status_text),
-                  T("Only http:// downloads are supported.", "目前只支持 http:// 下载。"));
+                  T("Only http:// and https:// downloads are supported.", "目前只支持 http:// 和 https:// 下载。"));
         return;
     }
     ret = leonos_http_get(url_input, LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
@@ -353,8 +356,8 @@ static void draw_downloadmgr(struct leonos_ui_surface *ui)
     uint32_t state_color = failed ? 0x00b03030U : (done ? 0x00108040U : LEONOS_UI_DARK);
     leonos_ui_rect(ui, 0, 0, DOWNLOAD_W, DOWNLOAD_H, LEONOS_UI_GRAY);
     leonos_ui_text(ui, 24, 14,
-                   T("HTTP downloads are saved to the current user's Downloads folder.",
-                     "HTTP 下载会保存到当前用户的 Downloads 文件夹。"),
+                   T("Web downloads are saved to the current user's Downloads folder.",
+                     "网页下载会保存到当前用户的 Downloads 文件夹。"),
                    LEONOS_UI_DARK, LEONOS_UI_GRAY);
     leonos_ui_text(ui, 24, URL_Y + 4U, T("URL:", "地址:"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_edit_state_draw(ui, URL_X, URL_Y, URL_W, &url_edit, busy ? LEONOS_UI_EDIT_DISABLED : 0);
@@ -400,7 +403,7 @@ int main(int argc, char **argv, char **envp)
         auto_start = 1;
     }
     window_id = leonos_gui_create_app_window_ex(T("Download Manager", "下载管理器"),
-                                                T("HTTP downloads", "HTTP 下载"),
+                                                T("Web downloads", "网页下载"),
                                                 DOWNLOAD_W, DOWNLOAD_H,
                                                 LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {

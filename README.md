@@ -5,14 +5,37 @@
 > 本项目只能在 Linux 和 WSL 平台编译
 编译命令：
 ```bash
-python3 tools/gen_ninja.py --out build.ninja
-ninja -f build.ninja all image-vmdk
+python3 build.py run image-vmdk
 ```
 编译出来的产物位于`build/images/leonos4.vmdk`，可以通过
 ```
-ninja run
+python3 build.py run run
 ```
 来通过 QEMU + KVM 运行操作系统。
+
+`build.py` 是唯一受支持的构建入口，不再兼容 Ninja。常用命令包括：
+
+```bash
+python3 build.py help
+python3 build.py run all
+python3 build.py gen build/userland/browser.elf
+python3 build.py why build/userland/browser.elf
+python3 build.py affected userland/apps/browser/navigation.c
+python3 build.py profile all
+python3 build.py cache stats
+python3 build.py why kernel --json
+python3 build.py test all
+python3 build.py client run image-vmdk
+python3 build.py status <九位任务ID>
+```
+
+构建产物统一位于`build/`；构建核心、依赖缓存、配置、任务状态与日志位于
+`buildsystem/`。通过`python3 build.py settings`编辑并行设置；系统 Kconfig 配置继续使用
+`python3 build.py run menuconfig`。查询命令默认输出可读文本；传入`--json`
+（可置于命令前后）才输出机器可读 JSON。
+
+版本元数据头文件保留在`include/generated/build_info.h`，`python3 build.py run clean`
+不会删除它。每次 OS 构建、生成或 profile 任务都会递增构建号；清理、配置和纯主机测试不递增。
 
 ## 界面样式
 

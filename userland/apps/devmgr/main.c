@@ -91,6 +91,8 @@ static const char *device_class_name(uint32_t cls)
         return T("Serial", "串口");
     case LEONOS_DEVICE_CLASS_NETWORK:
         return T("Network", "网络");
+    case LEONOS_DEVICE_CLASS_AUDIO:
+        return T("Audio", "音频");
     default:
         return T("Other", "其它");
     }

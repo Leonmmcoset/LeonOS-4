@@ -13,6 +13,7 @@ struct core_http_url {
     char host[96];
     char path[LEONOS_FS_PATH_LEN];
     uint32_t port;
+    uint8_t secure;
 };
 
 struct core_css_style {
@@ -1334,11 +1335,21 @@ static int core_parse_http_url(const char *url, struct core_http_url *out)
     const char *p;
     uint32_t host_pos = 0;
     uint32_t path_pos = 0;
-    uint32_t port = 80;
-    if (!url || !out || !core_starts_with_ignore_case(url, "http://")) {
+    uint32_t port;
+    if (!url || !out) {
         return 0;
     }
-    p = url + 7;
+    if (core_starts_with_ignore_case(url, "https://")) {
+        out->secure = 1;
+        port = 443;
+        p = url + 8;
+    } else if (core_starts_with_ignore_case(url, "http://")) {
+        out->secure = 0;
+        port = 80;
+        p = url + 7;
+    } else {
+        return 0;
+    }
     while (*p && *p != '/' && *p != ':' && *p != '#' &&
            host_pos + 1U < sizeof(out->host)) {
         out->host[host_pos++] = *p++;
@@ -1375,16 +1386,17 @@ static int core_parse_http_url(const char *url, struct core_http_url *out)
 }
 
 static void core_build_http_url(char *dst, uint32_t cap, const char *host,
-                                uint32_t port, const char *path)
+                                uint32_t port, uint8_t secure,
+                                const char *path)
 {
     uint32_t pos = 0;
     if (!dst || cap == 0) {
         return;
     }
     dst[0] = 0;
-    core_append_text(dst, &pos, cap, "http://");
+    core_append_text(dst, &pos, cap, secure ? "https://" : "http://");
     core_append_text(dst, &pos, cap, host);
-    if (port != 80U) {
+    if (port != (secure ? 443U : 80U)) {
         core_append_char(dst, &pos, cap, ':');
         core_append_u32(dst, &pos, cap, port);
     }
@@ -1450,14 +1462,16 @@ static void core_resolve_href(const char *base, const char *href,
     }
     if (core_parse_http_url(base, &parsed)) {
         if (href[0] == '/') {
-            core_build_http_url(out, cap, parsed.host, parsed.port, href);
+            core_build_http_url(out, cap, parsed.host, parsed.port,
+                                parsed.secure, href);
             return;
         }
         core_parent_url_dir(parsed.path, dir, sizeof(dir));
         out[0] = 0;
-        core_append_text(out, &pos, cap, "http://");
+        core_append_text(out, &pos, cap,
+                         parsed.secure ? "https://" : "http://");
         core_append_text(out, &pos, cap, parsed.host);
-        if (parsed.port != 80U) {
+        if (parsed.port != (parsed.secure ? 443U : 80U)) {
             core_append_char(out, &pos, cap, ':');
             core_append_u32(out, &pos, cap, parsed.port);
         }

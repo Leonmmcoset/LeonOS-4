@@ -1,6 +1,7 @@
 #include <leonos/device.h>
 #include <leonos/driver.h>
 #include <leonos/auth.h>
+#include <leonos/audio.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/http.h>
@@ -11,6 +12,7 @@
 #include <leonos/system.h>
 #include <leonos/syscall.h>
 #include <leonos/text.h>
+#include <leonos/tls.h>
 #include <leonos/ui.h>
 #include <stdarg.h>
 
@@ -59,6 +61,103 @@ void *memset(void *dst, int value, size_t len)
         d[i] = (unsigned char)value;
     }
     return dst;
+}
+
+void *memmove(void *dst, const void *src, size_t len)
+{
+    unsigned char *d = (unsigned char *)dst;
+    const unsigned char *s = (const unsigned char *)src;
+    if (d < s) {
+        for (size_t i = 0; i < len; ++i) {
+            d[i] = s[i];
+        }
+    } else if (d > s) {
+        while (len) {
+            --len;
+            d[len] = s[len];
+        }
+    }
+    return dst;
+}
+
+int memcmp(const void *left, const void *right, size_t len)
+{
+    const unsigned char *a = (const unsigned char *)left;
+    const unsigned char *b = (const unsigned char *)right;
+    for (size_t i = 0; i < len; ++i) {
+        if (a[i] != b[i]) {
+            return a[i] < b[i] ? -1 : 1;
+        }
+    }
+    return 0;
+}
+
+int strcmp(const char *left, const char *right)
+{
+    while (*left && *left == *right) {
+        ++left;
+        ++right;
+    }
+    return (unsigned char)*left - (unsigned char)*right;
+}
+
+int strncmp(const char *left, const char *right, size_t len)
+{
+    while (len && *left && *left == *right) {
+        ++left;
+        ++right;
+        --len;
+    }
+    return len ? (unsigned char)*left - (unsigned char)*right : 0;
+}
+
+char *strcpy(char *dst, const char *src)
+{
+    char *result = dst;
+    while ((*dst++ = *src++) != 0) {
+    }
+    return result;
+}
+
+char *strncpy(char *dst, const char *src, size_t len)
+{
+    char *result = dst;
+    while (len && *src) {
+        *dst++ = *src++;
+        --len;
+    }
+    while (len) {
+        *dst++ = 0;
+        --len;
+    }
+    return result;
+}
+
+char *strchr(const char *text, int value)
+{
+    char target = (char)value;
+    while (*text) {
+        if (*text == target) {
+            return (char *)text;
+        }
+        ++text;
+    }
+    return target == 0 ? (char *)text : 0;
+}
+
+char *strstr(const char *text, const char *needle)
+{
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) {
+        return (char *)text;
+    }
+    while (*text) {
+        if (strncmp(text, needle, needle_len) == 0) {
+            return (char *)text;
+        }
+        ++text;
+    }
+    return 0;
 }
 
 long read(int fd, void *buf, size_t len)
@@ -952,6 +1051,42 @@ int leonos_driver_control(uint32_t action, const char *file)
     return request.status;
 }
 
+int leonos_audio_configure(const struct leonos_audio_format *format)
+{
+    if (!format) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_IOCTL_AUDIO_CONFIGURE, (void *)format);
+}
+
+long leonos_audio_write(const void *data, uint32_t length,
+                        uint32_t *out_status)
+{
+    struct leonos_audio_write request = {
+        .data = data,
+        .length = length,
+        .transferred = 0,
+        .status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED,
+    };
+    int ret;
+    if (length && !data) {
+        return -1;
+    }
+    ret = ioctl(3, LEONOS_IOCTL_AUDIO_WRITE, &request);
+    if (out_status) {
+        *out_status = request.status;
+    }
+    return ret < 0 ? ret : (long)request.transferred;
+}
+
+int leonos_audio_get_state(struct leonos_audio_state *state)
+{
+    if (!state) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_IOCTL_AUDIO_GET_STATE, state);
+}
+
 int leonos_net_config(struct leonos_net_config *config)
 {
     if (!config) {
@@ -1171,6 +1306,7 @@ struct libc_http_url {
     char host[LEONOS_NET_HOSTNAME_LEN];
     char path[LEONOS_NET_HTTP_PATH_LEN];
     uint32_t port;
+    uint8_t secure;
 };
 
 static char http_tolower(char ch)
@@ -1307,11 +1443,21 @@ static int http_parse_url(const char *url, struct libc_http_url *out)
     const char *p;
     uint32_t host_pos = 0;
     uint32_t path_pos = 0;
-    uint32_t port = 80;
-    if (!url || !out || !http_starts_with_ignore_case(url, "http://")) {
+    uint32_t port;
+    if (!url || !out) {
         return 0;
     }
-    p = url + 7;
+    if (http_starts_with_ignore_case(url, "https://")) {
+        out->secure = 1;
+        port = 443;
+        p = url + 8;
+    } else if (http_starts_with_ignore_case(url, "http://")) {
+        out->secure = 0;
+        port = 80;
+        p = url + 7;
+    } else {
+        return 0;
+    }
     while (*p && *p != '/' && *p != ':' && *p != '#' && *p != '?' &&
            host_pos + 1U < sizeof(out->host)) {
         out->host[host_pos++] = *p++;
@@ -1353,16 +1499,16 @@ static int http_parse_url(const char *url, struct libc_http_url *out)
 }
 
 static void http_build_url(char *dst, uint32_t cap, const char *host,
-                           uint32_t port, const char *path)
+                           uint32_t port, uint8_t secure, const char *path)
 {
     uint32_t pos = 0;
     if (!dst || cap == 0) {
         return;
     }
     dst[0] = 0;
-    http_append_text(dst, &pos, cap, "http://");
+    http_append_text(dst, &pos, cap, secure ? "https://" : "http://");
     http_append_text(dst, &pos, cap, host);
-    if (port != 80U) {
+    if (port != (secure ? 443U : 80U)) {
         http_append_char(dst, &pos, cap, ':');
         http_append_u32(dst, &pos, cap, port);
     }
@@ -1428,7 +1574,10 @@ int leonos_http_resolve_url(const char *base_url, const char *location,
         return 0;
     }
     if (location_text[0] == '/' && location_text[1] == '/') {
-        http_append_text(out, &pos, capacity, "http:");
+        http_append_text(out, &pos, capacity, base_text &&
+                         http_starts_with_ignore_case(base_text, "https://")
+                             ? "https:"
+                             : "http:");
         http_append_text(out, &pos, capacity, location_text);
         return 0;
     }
@@ -1441,14 +1590,16 @@ int leonos_http_resolve_url(const char *base_url, const char *location,
         return 0;
     }
     if (location_text[0] == '/') {
-        http_build_url(out, capacity, base.host, base.port, location_text);
+        http_build_url(out, capacity, base.host, base.port, base.secure,
+                       location_text);
         return 0;
     }
     http_parent_path(base.path, dir, sizeof(dir));
     out[0] = 0;
-    http_append_text(out, &pos, capacity, "http://");
+    http_append_text(out, &pos, capacity,
+                     base.secure ? "https://" : "http://");
     http_append_text(out, &pos, capacity, base.host);
-    if (base.port != 80U) {
+    if (base.port != (base.secure ? 443U : 80U)) {
         http_append_char(out, &pos, capacity, ':');
         http_append_u32(out, &pos, capacity, base.port);
     }
@@ -1694,7 +1845,7 @@ static uint32_t http_build_request_text(char *dst, uint32_t cap,
     http_append_text(dst, &pos, cap, url->path[0] ? url->path : "/");
     http_append_text(dst, &pos, cap, " HTTP/1.1\r\nHost: ");
     http_append_text(dst, &pos, cap, url->host);
-    if (url->port != 80U) {
+    if (url->port != (url->secure ? 443U : 80U)) {
         http_append_char(dst, &pos, cap, ':');
         http_append_u32(dst, &pos, cap, url->port);
     }
@@ -1739,7 +1890,8 @@ static int http_fetch_once(const char *url_text,
     if (location && location_cap) {
         location[0] = 0;
     }
-    if (!http_starts_with_ignore_case(url_text, "http://")) {
+    if (!http_starts_with_ignore_case(url_text, "http://") &&
+        !http_starts_with_ignore_case(url_text, "https://")) {
         response->net_status = LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED;
         return 0;
     }
@@ -1765,44 +1917,58 @@ static int http_fetch_once(const char *url_text,
                                        : conn.status;
         return 0;
     }
-    ret = (int)leonos_socket_send(socket, request_text, request_len,
-                                  timeout_ms, &net_status);
-    if (ret < 0 || net_status != LEONOS_NET_STATUS_OK ||
-        (uint32_t)ret != request_len) {
-        leonos_socket_close(socket);
-        response->net_status = net_status;
-        return 0;
-    }
-    if (request->request_body && request->request_body_len) {
-        ret = (int)leonos_socket_send(socket, request->request_body,
-                                      request->request_body_len,
+    if (url.secure) {
+        if (leonos_tls_http_exchange(socket, url.host, timeout_ms,
+                                     request_text, request_len,
+                                     request->request_body,
+                                     request->request_body_len,
+                                     request->response_body,
+                                     request->response_body_capacity,
+                                     &raw_len) < 0) {
+            leonos_socket_close(socket);
+            response->net_status = LEONOS_NET_STATUS_TLS_FAILED;
+            return 0;
+        }
+    } else {
+        ret = (int)leonos_socket_send(socket, request_text, request_len,
                                       timeout_ms, &net_status);
         if (ret < 0 || net_status != LEONOS_NET_STATUS_OK ||
-            (uint32_t)ret != request->request_body_len) {
+            (uint32_t)ret != request_len) {
             leonos_socket_close(socket);
             response->net_status = net_status;
             return 0;
         }
-    }
-    while (raw_len + 1U < request->response_body_capacity) {
-        long got = leonos_socket_recv(socket,
-                                      request->response_body + raw_len,
-                                      request->response_body_capacity - raw_len - 1U,
-                                      raw_len ? 1200U : timeout_ms,
-                                      &net_status);
-        if (got < 0) {
-            leonos_socket_close(socket);
-            response->net_status = LEONOS_NET_STATUS_TCP_FAILED;
-            return 0;
-        }
-        if (got == 0) {
-            if (net_status == LEONOS_NET_STATUS_OK ||
-                (net_status == LEONOS_NET_STATUS_TCP_TIMEOUT && raw_len)) {
-                net_status = LEONOS_NET_STATUS_OK;
+        if (request->request_body && request->request_body_len) {
+            ret = (int)leonos_socket_send(socket, request->request_body,
+                                          request->request_body_len,
+                                          timeout_ms, &net_status);
+            if (ret < 0 || net_status != LEONOS_NET_STATUS_OK ||
+                (uint32_t)ret != request->request_body_len) {
+                leonos_socket_close(socket);
+                response->net_status = net_status;
+                return 0;
             }
-            break;
         }
-        raw_len += (uint32_t)got;
+        while (raw_len + 1U < request->response_body_capacity) {
+            long got = leonos_socket_recv(socket,
+                                          request->response_body + raw_len,
+                                          request->response_body_capacity - raw_len - 1U,
+                                          raw_len ? 1200U : timeout_ms,
+                                          &net_status);
+            if (got < 0) {
+                leonos_socket_close(socket);
+                response->net_status = LEONOS_NET_STATUS_TCP_FAILED;
+                return 0;
+            }
+            if (got == 0) {
+                if (net_status == LEONOS_NET_STATUS_OK ||
+                    (net_status == LEONOS_NET_STATUS_TCP_TIMEOUT && raw_len)) {
+                    net_status = LEONOS_NET_STATUS_OK;
+                }
+                break;
+            }
+            raw_len += (uint32_t)got;
+        }
     }
     leonos_socket_close(socket);
     request->response_body[raw_len] = 0;

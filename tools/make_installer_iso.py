@@ -8,7 +8,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GRUB_EFI_DIR = ROOT / "build/deps/grub-efi-amd64-bin/usr/lib/grub/x86_64-efi"
 GRUB_MODULES = (
     "part_gpt fat iso9660 multiboot2 normal search search_fs_file configfile echo serial "
     "terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm"
@@ -25,13 +24,12 @@ def copy_file(src: Path, dst: Path) -> None:
     shutil.copy2(src, dst)
 
 
-def build_installer_boot_efi() -> Path:
-    out = ROOT / "build/install/installer-BOOTX64.EFI"
+def build_installer_boot_efi(out: Path, grub_efi_dir: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     run([
         "grub-mkstandalone",
         "-d",
-        str(GRUB_EFI_DIR),
+        str(grub_efi_dir),
         "-O",
         "x86_64-efi",
         "-o",
@@ -42,22 +40,29 @@ def build_installer_boot_efi() -> Path:
     return out
 
 
-def stage_installer_tree(stage: Path, boot_image: Path, boot_efi: Path) -> None:
+def stage_installer_tree(
+    stage: Path,
+    boot_image: Path,
+    boot_efi: Path,
+    loader: Path,
+    kernel: Path,
+    middlelayer: Path,
+    installer_root: Path,
+) -> None:
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
     copy_file(boot_efi, stage / "EFI/BOOT/BOOTX64.EFI")
     copy_file(ROOT / "boot/grub/installer.cfg", stage / "boot/grub/grub.cfg")
     (stage / "boot/leonos-installer-iso.marker").write_text("LeonOS installer ISO volume\n", encoding="ascii")
-    copy_file(ROOT / "build/boot/loader.elf", stage / "boot/loader.elf")
-    copy_file(ROOT / "build/system/kernel.sys", stage / "system/kernel.sys")
-    copy_file(ROOT / "build/system/middlelayer.sys", stage / "system/middlelayer.sys")
-    copy_file(ROOT / "build/install/root.fat", stage / "install/root.fat")
+    copy_file(loader, stage / "boot/loader.elf")
+    copy_file(kernel, stage / "system/kernel.sys")
+    copy_file(middlelayer, stage / "system/middlelayer.sys")
+    copy_file(installer_root, stage / "install/root.fat")
     copy_file(boot_image, stage / "boot/efiboot.img")
 
 
-def create_boot_image(boot_image: Path, boot_efi: Path) -> None:
-    boot_stage = ROOT / "build/install/efi-boot"
+def create_boot_image(boot_image: Path, boot_efi: Path, boot_stage: Path) -> None:
     if boot_stage.exists():
         shutil.rmtree(boot_stage)
     boot_stage.mkdir(parents=True)
@@ -83,19 +88,33 @@ def main() -> int:
     parser.add_argument("--out", default="build/images/leonos4-installer.iso")
     parser.add_argument("--stage", default="build/installer-iso")
     parser.add_argument("--boot-image", default="build/install/installer-efiboot.img")
+    parser.add_argument("--loader", default="build/boot/loader.elf")
+    parser.add_argument("--kernel", default="build/system/kernel.sys")
+    parser.add_argument("--middlelayer", default="build/system/middlelayer.sys")
+    parser.add_argument("--installer-root", default="build/install/root.fat")
+    parser.add_argument("--work-dir", default="build/install")
+    parser.add_argument("--grub-efi-dir", default="/usr/lib/grub/x86_64-efi")
     args = parser.parse_args()
 
     out = ROOT / args.out
     stage = ROOT / args.stage
     boot_image = ROOT / args.boot_image
+    loader = ROOT / args.loader
+    kernel = ROOT / args.kernel
+    middlelayer = ROOT / args.middlelayer
+    installer_root = ROOT / args.installer_root
+    work_dir = ROOT / args.work_dir
+    grub_efi_dir = Path(args.grub_efi_dir)
+    if not grub_efi_dir.is_absolute():
+        grub_efi_dir = ROOT / grub_efi_dir
 
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.exists():
         out.unlink()
 
-    boot_efi = build_installer_boot_efi()
-    create_boot_image(boot_image, boot_efi)
-    stage_installer_tree(stage, boot_image, boot_efi)
+    boot_efi = build_installer_boot_efi(work_dir / "installer-BOOTX64.EFI", grub_efi_dir)
+    create_boot_image(boot_image, boot_efi, work_dir / "efi-boot")
+    stage_installer_tree(stage, boot_image, boot_efi, loader, kernel, middlelayer, installer_root)
     run([
         "xorriso",
         "-as",

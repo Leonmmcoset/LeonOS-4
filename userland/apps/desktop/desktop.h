@@ -279,6 +279,8 @@ extern char desktop_shortcut_target[LEONOS_FS_PATH_LEN];
 extern uint8_t snap_preview_mode;
 extern uint8_t alt_left_down;
 extern uint8_t alt_right_down;
+extern uint8_t desktop_left_shift_down;
+extern uint8_t desktop_right_shift_down;
 extern uint8_t win_left_down;
 extern uint8_t win_right_down;
 extern uint8_t win_combo_used;

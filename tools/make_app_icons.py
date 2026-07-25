@@ -310,6 +310,16 @@ def icon_imageview(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 10, 5, 2, 2, YELLOW)
 
 
+def icon_wavplay(c: list[list[tuple[int, int, int, int]]]) -> None:
+    fill(c, 3, 6, 4, 5, BLUE)
+    fill(c, 6, 4, 3, 9, BLUE)
+    line(c, 9, 6, 12, 4, CYAN)
+    line(c, 9, 10, 12, 12, CYAN)
+    put(c, 4, 12, DARK)
+    put(c, 11, 7, GREEN)
+    put(c, 12, 8, GREEN)
+
+
 def icon_diskmgr(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 3, 4, 10, 2, LIGHT)
     rect(c, 3, 4, 10, 2, DARK)
@@ -417,6 +427,8 @@ def draw_icon(name: str) -> list[list[tuple[int, int, int, int]]]:
         icon_browser(c)
     elif name == "imageview":
         icon_imageview(c)
+    elif name == "wavplay":
+        icon_wavplay(c)
     elif name == "oshlp":
         draw_document(c, CYAN)
         text3(c, 6, 6, "!", BLUE)

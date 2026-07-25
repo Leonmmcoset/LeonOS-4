@@ -2,6 +2,7 @@
 #define NTCLKS_DRIVER_MANAGER_H
 
 #include <leonos/driver.h>
+#include <leonos/audio.h>
 #include <ntclks/mouse.h>
 #include <ntclks/types.h>
 
@@ -16,5 +17,9 @@ uint8_t driver_manager_mouse_last_status(void);
 uint8_t driver_manager_mouse_last_data(void);
 uint8_t driver_manager_mouse_last_ack(void);
 void driver_manager_mouse_poll(void);
+int driver_manager_audio_configure(const struct leonos_audio_format *format);
+long driver_manager_audio_write(const void *data, uint32_t length,
+                                uint32_t *out_status);
+void driver_manager_audio_get_state(struct leonos_audio_state *out);
 
 #endif

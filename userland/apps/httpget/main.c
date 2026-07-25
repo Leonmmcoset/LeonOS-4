@@ -21,6 +21,9 @@
 #define GET_X 174
 #define GET_Y 72
 #define GET_W 82
+#define HTTPS_X 270
+#define HTTPS_Y 76
+#define HTTPS_W 94
 #define RESPONSE_X 24
 #define RESPONSE_Y 110
 #define RESPONSE_W (HTTPGET_W - 48)
@@ -33,7 +36,7 @@ static char host_input[LEONOS_NET_HOSTNAME_LEN] = "example.com";
 static char path_input[LEONOS_NET_HTTP_PATH_LEN] = "/";
 static char port_input[8] = "80";
 static char status_text[160] = "Ready";
-static char summary_text[192] = "Enter a host and path, then send a HTTP GET request.";
+static char summary_text[192] = "Enter a host and path, then send an HTTP or HTTPS GET request.";
 static char response_body[LEONOS_HTTP_BODY_MAX + 1];
 static char response_headers[LEONOS_HTTP_HEADER_MAX + 1];
 static char response_text[HTTPGET_RESPONSE_MAX + 1];
@@ -41,6 +44,7 @@ static struct leonos_ui_edit_state host_edit;
 static struct leonos_ui_edit_state path_edit;
 static struct leonos_ui_edit_state port_edit;
 static struct leonos_ui_text_area_state response_area;
+static uint8_t secure_request;
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -160,6 +164,8 @@ static const char *status_name(uint32_t status)
         return T("Socket closed", "Socket 已关闭");
     case LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED:
         return T("Protocol unsupported", "协议不支持");
+    case LEONOS_NET_STATUS_TLS_FAILED:
+        return T("TLS verification failed", "TLS 验证失败");
     default:
         return T("Unknown status", "未知状态");
     }
@@ -176,16 +182,16 @@ static void set_status_ret(const char *prefix, int ret)
 
 static uint32_t build_http_url_text(char *dst, uint32_t cap,
                                     const char *host, const char *path,
-                                    uint32_t port)
+                                    uint32_t port, uint8_t secure)
 {
     uint32_t pos = 0;
     if (!dst || !cap || !host || !host[0]) {
         return 0;
     }
     dst[0] = 0;
-    append_text(dst, &pos, cap, "http://");
+    append_text(dst, &pos, cap, secure ? "https://" : "http://");
     append_text(dst, &pos, cap, host);
-    if (port != 80U) {
+    if (port != (secure ? 443U : 80U)) {
         append_char(dst, &pos, cap, ':');
         append_u32(dst, &pos, cap, port);
     }
@@ -231,13 +237,16 @@ static void run_http_get(void)
         copy_text(summary_text, sizeof(summary_text), status_text);
         return;
     }
-    if (!build_http_url_text(url, sizeof(url), host_input, path_input, port)) {
+    if (!build_http_url_text(url, sizeof(url), host_input, path_input, port,
+                             secure_request)) {
         copy_text(status_text, sizeof(status_text),
                   T("URL is too large", "URL 过大"));
         copy_text(summary_text, sizeof(summary_text), status_text);
         return;
     }
-    copy_text(status_text, sizeof(status_text), T("Sending HTTP GET...", "正在发送 HTTP GET..."));
+    copy_text(status_text, sizeof(status_text),
+              secure_request ? T("Sending HTTPS GET...", "正在发送 HTTPS GET...")
+                             : T("Sending HTTP GET...", "正在发送 HTTP GET..."));
     ret = leonos_http_get(url, LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
                           response_body, sizeof(response_body),
                           response_headers, sizeof(response_headers),
@@ -278,7 +287,7 @@ static void run_http_get(void)
 static void draw_httpget(struct leonos_ui_surface *ui)
 {
     leonos_ui_rect(ui, 0, 0, HTTPGET_W, HTTPGET_H, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 24, 14, T("HTTP GET over TCP", "通过 TCP 发送 HTTP GET"),
+    leonos_ui_text(ui, 24, 14, T("HTTP/HTTPS GET over TCP", "通过 TCP 发送 HTTP/HTTPS GET"),
                    LEONOS_UI_BLACK, LEONOS_UI_GRAY);
 
     leonos_ui_text(ui, 24, 42, T("Host:", "主机:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
@@ -289,7 +298,8 @@ static void draw_httpget(struct leonos_ui_surface *ui)
     leonos_ui_edit_state_draw(ui, PORT_X, PORT_Y, PORT_W, &port_edit, 0);
     leonos_ui_button(ui, GET_X, GET_Y, GET_W, LEONOS_UI_BUTTON_H,
                      T("GET", "GET"), 0);
-    leonos_ui_text_clipped(ui, 276, 76, HTTPGET_W - 300, summary_text,
+    leonos_ui_checkbox(ui, HTTPS_X, HTTPS_Y, "HTTPS", secure_request, 0);
+    leonos_ui_text_clipped(ui, 372, 76, HTTPGET_W - 396, summary_text,
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text_area_state_draw(ui, RESPONSE_X, RESPONSE_Y,
                                    RESPONSE_W, RESPONSE_H,
@@ -388,6 +398,21 @@ int main(int argc, char **argv, char **envp)
                     hit_rect(event.x, event.y, GET_X, GET_Y,
                              GET_W, LEONOS_UI_BUTTON_H)) {
                     run_http_get();
+                    changed = 1;
+                }
+                if ((event.buttons & 1u) &&
+                    hit_rect(event.x, event.y, HTTPS_X, HTTPS_Y,
+                             HTTPS_W, LEONOS_UI_BUTTON_H)) {
+                    secure_request = !secure_request;
+                    if ((secure_request && port_input[0] == '8' &&
+                         port_input[1] == '0' && port_input[2] == 0) ||
+                        (!secure_request && port_input[0] == '4' &&
+                         port_input[1] == '4' && port_input[2] == '3' &&
+                         port_input[3] == 0)) {
+                        copy_text(port_input, sizeof(port_input),
+                                  secure_request ? "443" : "80");
+                        leonos_ui_edit_state_sync(&port_edit);
+                    }
                     changed = 1;
                 }
                 if (changed) {

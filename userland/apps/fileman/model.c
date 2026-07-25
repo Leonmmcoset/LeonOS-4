@@ -635,6 +635,7 @@ void show_details_selected(void)
     char acl_message[96];
     struct folder_size_info folder_info = {0};
     uint32_t active_tab = 0;
+    struct leonos_ui_tab_state details_tabs;
     int acl_loaded;
     int window_id;
     if (!selected_entry_valid()) {
@@ -671,8 +672,12 @@ void show_details_selected(void)
     }
     leonos_ui_bind(&ui, details_pixels, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H,
                    FILEMAN_DETAILS_W);
+    leonos_ui_tab_state_init(&details_tabs, active_tab);
     for (;;) {
-        const char *tabs[] = {T("General", "常规"), T("Security", "安全")};
+        struct leonos_ui_tab_item tabs[] = {
+            {T("General", "常规"), 0, 0},
+            {T("Security", "安全"), 1, 0},
+        };
         struct leonos_ui_property_item props[5];
         uint32_t prop_count = 4;
         props[0] = (struct leonos_ui_property_item){T("Name:", "名称:"), entries[file_list.selected].name, 0};
@@ -683,7 +688,9 @@ void show_details_selected(void)
             props[prop_count++] = (struct leonos_ui_property_item){T("Contains:", "包含:"), contains_line, 0};
         }
         leonos_ui_rect(&ui, 0, 0, FILEMAN_DETAILS_W, FILEMAN_DETAILS_H, LEONOS_UI_GRAY);
-        leonos_ui_tabs(&ui, 16, 10, FILEMAN_DETAILS_W - 32, tabs, 2, active_tab);
+        details_tabs.selected_id = active_tab;
+        leonos_ui_tab_control(&ui, 16, 10, FILEMAN_DETAILS_W - 32, tabs, 2,
+                              &details_tabs);
         leonos_ui_tab_body(&ui, 16, 36, FILEMAN_DETAILS_W - 32, FILEMAN_DETAILS_H - 84);
         if (active_tab == 0) {
             leonos_ui_property_grid(&ui, 28, 56, FILEMAN_DETAILS_W - 56,
@@ -714,10 +721,10 @@ void show_details_selected(void)
                 break;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
-                int tab = leonos_ui_tabs_hit(event.x, event.y, 16, 10,
-                                             FILEMAN_DETAILS_W - 32, tabs, 2);
-                if (tab >= 0) {
-                    active_tab = (uint32_t)tab;
+                if (leonos_ui_tab_control_handle_mouse(&details_tabs, event.x, event.y,
+                                                       16, 10, FILEMAN_DETAILS_W - 32,
+                                                       tabs, 2)) {
+                    active_tab = details_tabs.selected_id;
                     continue;
                 }
                 if (hit_rect_i(event.x, event.y, FILEMAN_DETAILS_W - 90,

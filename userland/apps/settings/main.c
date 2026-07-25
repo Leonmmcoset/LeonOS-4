@@ -51,6 +51,7 @@ static uint32_t user_count;
 static uint32_t selected_user;
 static uint8_t active_page;
 static uint8_t active_drop;
+static struct leonos_ui_tab_state settings_tabs;
 static char status_text[160] = "Ready";
 static char ntp_runtime_state[16] = "unknown";
 static char ntp_runtime_detail[96] = "runtime state unavailable";
@@ -745,15 +746,17 @@ static void draw_activation_page(struct leonos_ui_surface *ui)
 
 static void draw_settings(struct leonos_ui_surface *ui)
 {
-    const char *tabs[] = {
-        T("Display", "显示"),
-        T("Users", "用户"),
-        T("File Types", "文件类型"),
-        T("Services", "服务"),
-        T("Activation", "激活"),
+    struct leonos_ui_tab_item tabs[] = {
+        {T("Display", "显示"), PAGE_DISPLAY, 0},
+        {T("Users", "用户"), PAGE_USERS, 0},
+        {T("File Types", "文件类型"), PAGE_ASSOC, 0},
+        {T("Services", "服务"), PAGE_SERVICES, 0},
+        {T("Activation", "激活"), PAGE_ACTIVATION, 0},
     };
     leonos_ui_rect(ui, 0, 0, SETTINGS_W, SETTINGS_H, LEONOS_UI_GRAY);
-    leonos_ui_tabs(ui, 18, SETTINGS_TAB_Y, SETTINGS_W - 36, tabs, SETTINGS_TAB_COUNT, active_page);
+    settings_tabs.selected_id = active_page;
+    leonos_ui_tab_control(ui, 18, SETTINGS_TAB_Y, SETTINGS_W - 36, tabs,
+                          SETTINGS_TAB_COUNT, &settings_tabs);
     leonos_ui_tab_body(ui, 18, SETTINGS_BODY_Y, SETTINGS_W - 36, SETTINGS_H - 84);
     if (active_page == PAGE_DISPLAY) {
         draw_display_page(ui);
@@ -1049,16 +1052,17 @@ static void handle_services_click(int32_t x, int32_t y)
 
 static void handle_click(int32_t x, int32_t y)
 {
-    const char *tabs[] = {
-        T("Display", "显示"),
-        T("Users", "用户"),
-        T("File Types", "文件类型"),
-        T("Services", "服务"),
-        T("Activation", "激活"),
+    struct leonos_ui_tab_item tabs[] = {
+        {T("Display", "显示"), PAGE_DISPLAY, 0},
+        {T("Users", "用户"), PAGE_USERS, 0},
+        {T("File Types", "文件类型"), PAGE_ASSOC, 0},
+        {T("Services", "服务"), PAGE_SERVICES, 0},
+        {T("Activation", "激活"), PAGE_ACTIVATION, 0},
     };
-    int tab = leonos_ui_tabs_hit(x, y, 18, SETTINGS_TAB_Y, SETTINGS_W - 36, tabs, SETTINGS_TAB_COUNT);
-    if (tab >= 0) {
-        active_page = (uint8_t)tab;
+    if (leonos_ui_tab_control_handle_mouse(&settings_tabs, x, y, 18,
+                                           SETTINGS_TAB_Y, SETTINGS_W - 36,
+                                           tabs, SETTINGS_TAB_COUNT)) {
+        active_page = (uint8_t)settings_tabs.selected_id;
         active_drop = DROP_NONE;
         return;
     }
@@ -1080,6 +1084,7 @@ int main(void)
     int window_id;
     unsigned long last_refresh = 0;
     puts("[settings.elf] settings starting");
+    leonos_ui_tab_state_init(&settings_tabs, PAGE_DISPLAY);
     window_id = leonos_gui_create_app_window_ex(T("Settings", "设置"),
                                                 T("System settings", "系统设置"),
                                                 SETTINGS_W, SETTINGS_H,

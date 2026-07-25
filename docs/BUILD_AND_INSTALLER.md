@@ -107,16 +107,10 @@ staged `etc` tree instead, so it starts the license OOBE flow again.
 For this checkout, validate Linux-targeted build and QEMU behavior through WSL.
 Native Windows build-tool output is not the authoritative proof path.
 
-Regenerate the graph:
-
-```sh
-wsl -e bash -lc 'cd "/mnt/d/Projects/C/LeonOS 4" && python3 tools/gen_ninja.py --out build.ninja'
-```
-
 Build the normal disk image and installer ISO:
 
 ```sh
-wsl -e bash -lc 'cd "/mnt/d/Projects/C/LeonOS 4" && ninja -f build.ninja build/images/leonos4.vmdk build/images/leonos4-installer.iso'
+wsl -e bash -lc 'cd "/mnt/d/Projects/C/LeonOS 4" && python3 build.py run image-vmdk && python3 build.py run installer'
 ```
 
 For docs-only changes, a full image rebuild is normally unnecessary. At minimum

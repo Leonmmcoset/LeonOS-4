@@ -518,6 +518,10 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
         copy_text(dst, dst_len, leonos_i18n("Image Viewer", "图片查看器"));
         return;
     }
+    if (text_eq(name, "wavplay.elf")) {
+        copy_text(dst, dst_len, leonos_i18n("WAV Player", "WAV 播放器"));
+        return;
+    }
     if (text_eq(name, "oshlp.elf")) {
         copy_text(dst, dst_len, leonos_i18n("Help Viewer", "帮助查看器"));
         return;

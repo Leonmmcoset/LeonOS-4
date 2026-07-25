@@ -1,5 +1,12 @@
 build/
+buildsystem/state/*
+!buildsystem/state/build_number.txt
+buildsystem/logs/
+buildsystem/tmp/
+buildsystem/config/
+buildsystem/deps/
 .config
+__pycache__/
 *.log
 *.tmp
 .kagent

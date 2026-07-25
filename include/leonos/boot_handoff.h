@@ -40,6 +40,7 @@
 #define LEONOS_RAW_DEVICE_KIND_DISK 6u
 #define LEONOS_RAW_DEVICE_KIND_SERIAL 7u
 #define LEONOS_RAW_DEVICE_KIND_E1000 8u
+#define LEONOS_RAW_DEVICE_KIND_AC97 9u
 
 struct leonos_device_info;
 

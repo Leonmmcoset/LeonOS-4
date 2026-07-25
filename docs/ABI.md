@@ -254,31 +254,44 @@ see only sockets owned by their uid.
 
 `include/leonos/http.h` adds a libc HTTP client on top of those sockets:
 `leonos_http_get`, `leonos_http_request`, and `leonos_http_resolve_url`.
-It sends plain `HTTP/1.1` requests with `Connection: close`, follows bounded
-redirects, reports final URL/status/content type, copies response headers,
-decodes chunked transfer bodies, and returns truncation flags for callers with
-small buffers. `httpget.elf` and `browser.elf` use this library for `http://`
-traffic; lower-level tools such as `ping.elf` and `netctl.elf` continue to use
-ICMP/DHCP/DNS/socket status APIs directly. TCP server/listener sockets, UDP
-sockets, TLS/HTTPS, cookies, cache, and full TCP window management are still out
-of scope for this ABI version.
+It follows bounded redirects, reports final URL/status/content type, copies
+response headers, decodes chunked transfer bodies, and returns truncation flags
+for callers with small buffers. `httpget.elf`, `browser.elf`, and
+`downloadmgr.elf` use this library for `http://` and `https://` traffic;
+lower-level tools such as `ping.elf` and `netctl.elf` continue to use
+ICMP/DHCP/DNS/socket status APIs directly. HTTPS uses a TLS 1.2 Mbed TLS client
+profile, a bundled CA store, hostname validation, and a valid system clock. TCP
+server/listener sockets, UDP sockets, cookies, cache, and full TCP window
+management are still out of scope for this ABI version.
+
+## Audio ABI
+
+`include/leonos/audio.h` exposes a synchronous PCM playback interface backed by
+autoloaded audio driver modules. `LEONOS_IOCTL_AUDIO_CONFIGURE` selects the
+stream format, `LEONOS_IOCTL_AUDIO_WRITE` plays at most 64 KiB per call, and
+`LEONOS_IOCTL_AUDIO_GET_STATE` returns device and stream state. The initial
+`ac97.drv` target is QEMU's Intel ICH AC'97 controller and accepts only
+16-bit, stereo PCM at 8000–48000 Hz. `wavplay.elf` opens matching PCM WAV files
+and is the default `.wav` handler; without a path it plays a short test melody.
 
 ## Application Services
 
 The launcher library in `leonos/launch.h` owns user-facing file launch policy.
 It supports `.lnk` shortcuts, built-in program aliases, and persistent extension
 associations stored in `0:/etc/fileassoc.cfg`. Settings can edit the common
-associations for `.txt`, `.md`, `.html`, `.htm`, `.bmp`, and `.hlp`.
+associations for `.txt`, `.md`, `.html`, `.htm`, `.bmp`, `.wav`, and `.hlp`.
 The default `.hlp` handler is `0:/userland/oshlp.elf`; it accepts
 `oshlp.elf <file.hlp> [doc.id]` and opens a Markdown page inside a LeonOS help
 container.
 
 Current companion applications:
 
-- `downloadmgr.elf`: uses the libc HTTP client and saves `http://` downloads to
+- `downloadmgr.elf`: uses the libc HTTP client and saves HTTP/HTTPS downloads to
   the current user's `0:/users/<name>/downloads` directory.
 - `imageview.elf`: opens uncompressed 24/32-bit BMP files, supports Fit/1x/2x
   zoom, and can move to previous/next BMP siblings in the same directory.
+- `wavplay.elf`: plays 16-bit stereo PCM WAV files through the AC'97 audio
+  driver, or a built-in test melody when started without a file.
 - `oshlp.elf`: opens LeonOS `.hlp` help containers from `0:/docs` or any path
   passed by another app. The help viewer uses the current system language as its
   default but language changes inside the window are local to that process.

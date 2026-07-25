@@ -1724,57 +1724,6 @@ void leonos_ui_groupbox(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
     leonos_ui_text_transparent(surface, x + 12, y, title, LEONOS_UI_BLACK);
 }
 
-void leonos_ui_tabs(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                    uint32_t w, const char *const labels[], uint32_t count,
-                    uint32_t active)
-{
-    uint32_t tab_x = x;
-    uint32_t tab_h = LEONOS_FONT_H + 10;
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t tw = leonos_ui_text_width(labels[i]) + 22;
-        if (tab_x + tw > x + w) {
-            tw = x + w - tab_x;
-        }
-        leonos_ui_bevel(surface, tab_x, y, tw, tab_h, i == active ? LEONOS_UI_WHITE : LEONOS_UI_GRAY, 0);
-        leonos_ui_text_transparent_clipped(surface, tab_x + 10, y + 5, tw > 20 ? tw - 20 : tw,
-                                           labels[i], LEONOS_UI_BLACK);
-        tab_x += tw;
-        if (tab_x >= x + w) {
-            break;
-        }
-    }
-}
-
-int leonos_ui_tabs_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
-                       uint32_t w, const char *const labels[], uint32_t count)
-{
-    uint32_t tab_x = x;
-    uint32_t tab_h = LEONOS_FONT_H + 10;
-    if (!leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)y, w, tab_h)) {
-        return -1;
-    }
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t tw = leonos_ui_text_width(labels[i]) + 22;
-        if (tab_x + tw > x + w) {
-            tw = x + w - tab_x;
-        }
-        if ((uint32_t)px >= tab_x && (uint32_t)px < tab_x + tw) {
-            return (int)i;
-        }
-        tab_x += tw;
-        if (tab_x >= x + w) {
-            break;
-        }
-    }
-    return -1;
-}
-
-void leonos_ui_tab_body(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                        uint32_t w, uint32_t h)
-{
-    leonos_ui_inset(surface, x, y, w, h, LEONOS_UI_WHITE);
-}
-
 void leonos_ui_statusbar(struct leonos_ui_surface *surface, uint32_t y, uint32_t h,
                          const char *text)
 {
@@ -2272,19 +2221,6 @@ int leonos_ui_stepper_handle_mouse(int32_t *value, int32_t min, int32_t max,
         return 1;
     }
     return 0;
-}
-
-void leonos_ui_tabbar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                      uint32_t w, const char *const labels[], uint32_t count,
-                      uint32_t active)
-{
-    leonos_ui_tabs(surface, x, y, w, labels, count, active);
-}
-
-int leonos_ui_tabbar_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
-                         uint32_t w, const char *const labels[], uint32_t count)
-{
-    return leonos_ui_tabs_hit(px, py, x, y, w, labels, count);
 }
 
 void leonos_ui_toast_show(struct leonos_ui_toast_state *state, const char *message,

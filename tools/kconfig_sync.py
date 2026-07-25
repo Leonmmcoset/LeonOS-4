@@ -11,7 +11,6 @@ KNOWN_KEYS = {
     "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE": "y",
     "CONFIG_IMAGE_SIZE_MIB": "96",
     "CONFIG_INSTALLER_ROOT_SIZE_MIB": "64",
-    "CONFIG_NINJA_REGENERATE_BEFORE_BUILD": "n",
     "CONFIG_QEMU_MEMORY_MB": "512",
     "CONFIG_QEMU_DISPLAY_WIDTH": "1920",
     "CONFIG_QEMU_DISPLAY_HEIGHT": "1080",
@@ -81,7 +80,17 @@ def write_config(path: Path, values: dict[str, str]) -> None:
             lines.append(f"# {key} is not set")
         else:
             lines.append(f"{key}={value}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_if_changed(path, "\n".join(lines) + "\n")
+
+
+def write_if_changed(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return
+    except FileNotFoundError:
+        pass
+    path.write_text(text, encoding="utf-8")
 
 
 def write_header(path: Path, guard: str, values: dict[str, str], require_key: str) -> None:
@@ -108,11 +117,10 @@ def write_header(path: Path, guard: str, values: dict[str, str], require_key: st
         f"#define LEONOS_LICENSE_REQUIRE {1 if bool_value(values, require_key) else 0}",
     ])
     header_lines.extend(["", "#endif", ""])
-    path.write_text("\n".join(header_lines), encoding="utf-8")
+    write_if_changed(path, "\n".join(header_lines))
 
 
-def write_outputs(values: dict[str, str]) -> None:
-    generated = ROOT / "include" / "generated"
+def write_outputs(values: dict[str, str], generated: Path) -> None:
     generated.mkdir(parents=True, exist_ok=True)
 
     header = generated / "autoconf.h"
@@ -131,24 +139,26 @@ def write_outputs(values: dict[str, str]) -> None:
         values,
         "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE",
     )
-    rustcfg.write_text("\n".join(rust_lines) + ("\n" if rust_lines else ""), encoding="utf-8")
+    write_if_changed(rustcfg, "\n".join(rust_lines) + ("\n" if rust_lines else ""))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Synchronize LeonOS 4 Kconfig outputs")
     parser.add_argument("--config", default=".config")
     parser.add_argument("--defaults", default="configs/default.conf")
+    parser.add_argument("--out-dir", default="include/generated")
     args = parser.parse_args()
 
     config = ROOT / args.config
     defaults = ROOT / args.defaults
+    generated = ROOT / args.out_dir
 
     if not config.exists():
         config.write_text(defaults.read_text(encoding="utf-8"), encoding="utf-8")
 
     values = normalize_values(parse_config(config))
     write_config(config, values)
-    write_outputs(values)
+    write_outputs(values, generated)
     return 0
 
 

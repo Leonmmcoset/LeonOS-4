@@ -194,6 +194,7 @@ static const char acknowledgements_en[] =
     "\n"
     "## List of Projects and Components Used by This Operating System\n"
     "- GNU GRUB 2 - GPL-3.0-or-later\n"
+    "- Mbed TLS 2.28.8 - Apache License 2.0\n"
     "- Noto Sans Mono - SIL Open Font License 1.1\n"
     "- Droid Sans Fallback - Apache License 2.0\n"
     "- Noto Sans CJK - SIL Open Font License 1.1\n"
@@ -209,6 +210,7 @@ static const char acknowledgements_zh[] =
     "\n"
     "## 本操作系统所使用的项目和组件列表\n"
     "- GNU GRUB 2 - GPL-3.0-or-later\n"
+    "- Mbed TLS 2.28.8 - Apache License 2.0\n"
     "- Noto Sans Mono - SIL Open Font License 1.1\n"
     "- Droid Sans Fallback - Apache License 2.0\n"
     "- Noto Sans CJK - SIL Open Font License 1.1\n"
@@ -1198,11 +1200,12 @@ static void draw_update_apps_page(struct leonos_ui_surface *ui)
     uint32_t list_w = l.table_w > 22 ? l.table_w - 22 : l.table_w;
     char line[160];
     sync_update_list_layout(list_h);
-    draw_title(ui, T("Userland Program Updates", "用户程序更新"),
-               T("Changed or missing system programs are selected by default.", "变化或缺失的系统程序已默认勾选。"));
+    draw_title(ui, T("Program and Driver Updates", "程序和驱动程序更新"),
+               T("Changed or missing programs are selected; changed drivers are refreshed automatically.",
+                 "变化或缺失的程序默认勾选；变化的驱动程序会自动刷新。"));
     leonos_ui_text_clipped(ui, l.content_x, l.content_y + 72, l.content_w,
-                           T("boot, system, EFI and bundled docs will be refreshed. Extra target programs are kept.",
-                             "boot、system、EFI 和内置文档会刷新；目标中多出的程序会保留。"),
+                           T("boot, system, EFI, docs, and drivers will be refreshed. Extra target programs and drivers are kept.",
+                             "boot、system、EFI、内置文档和驱动程序会刷新；目标中多出的程序和驱动会保留。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_list_header(ui, l.content_x, header_y, list_w,
                           T("Programs to replace", "要替换的程序"));
@@ -1876,6 +1879,91 @@ static int merge_dir_recursive(const char *src, const char *dst,
     return 0;
 }
 
+static int count_changed_files_recursive(const char *src, const char *dst)
+{
+    struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
+    uint32_t count = 0;
+    int ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    if (ret < 0) {
+        return ret;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        char src_child[LEONOS_FS_PATH_LEN];
+        char dst_child[LEONOS_FS_PATH_LEN];
+        if (name_is_dot(entries[i].name)) {
+            continue;
+        }
+        if (path_join(src_child, sizeof(src_child), src, entries[i].name) < 0 ||
+            path_join(dst_child, sizeof(dst_child), dst, entries[i].name) < 0) {
+            set_status(T("Installation failed", "安装失败"), T("Copy path is too long", "复制路径过长"));
+            return -1;
+        }
+        if (entries[i].type == LEONOS_FS_TYPE_DIR) {
+            ret = count_changed_files_recursive(src_child, dst_child);
+        } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
+            uint8_t missing;
+            uint8_t different;
+            ret = files_equal(src_child, dst_child, &missing, &different);
+            if (ret >= 0 && (missing || different)) {
+                ret = add_file_copy_work(src_child);
+            }
+        } else {
+            continue;
+        }
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
+static int copy_changed_dir_recursive(const char *src, const char *dst,
+                                      int window_id, struct leonos_ui_surface *ui)
+{
+    struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
+    uint32_t count = 0;
+    int ret = mkdir(dst, 0);
+    if (ret < 0 && ret != -17) {
+        return ret;
+    }
+    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    if (ret < 0) {
+        return ret;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        char src_child[LEONOS_FS_PATH_LEN];
+        char dst_child[LEONOS_FS_PATH_LEN];
+        if (name_is_dot(entries[i].name)) {
+            continue;
+        }
+        if (path_join(src_child, sizeof(src_child), src, entries[i].name) < 0 ||
+            path_join(dst_child, sizeof(dst_child), dst, entries[i].name) < 0) {
+            set_status(T("Installation failed", "安装失败"), T("Copy path is too long", "复制路径过长"));
+            return -1;
+        }
+        if (entries[i].type == LEONOS_FS_TYPE_DIR) {
+            ret = copy_changed_dir_recursive(src_child, dst_child, window_id, ui);
+        } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
+            uint8_t missing;
+            uint8_t different;
+            ret = files_equal(src_child, dst_child, &missing, &different);
+            if (ret >= 0 && (missing || different)) {
+                ret = copy_file_path(src_child, dst_child, window_id, ui);
+                if (ret >= 0) {
+                    ++copy_done;
+                    show_copy_progress(window_id, ui, dst_child);
+                }
+            }
+        } else {
+            continue;
+        }
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
 static int copy_payload_child(const char *name, int window_id,
                               struct leonos_ui_surface *ui)
 {
@@ -1900,6 +1988,7 @@ static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
         "etc",
         "docs",
         "system",
+        "drivers",
         "userland",
         "boot",
     };
@@ -1952,6 +2041,7 @@ static int check_update_payload_required(void)
         "0:/install/esp/docs",
         "0:/install/esp/system",
         "0:/install/esp/EFI",
+        "0:/install/esp/drivers",
         "0:/install/esp/userland",
     };
     for (uint32_t i = 0; i < sizeof(required_dirs) / sizeof(required_dirs[0]); ++i) {
@@ -2060,8 +2150,8 @@ static int scan_update_apps(void)
         set_status(line, T("All are selected by default.", "默认全部勾选。"));
     } else {
         set_status(T("No userland program differences were found.", "未发现用户程序差异。"),
-                   T("Core boot/system/EFI files and bundled docs can still be updated.",
-                     "仍可更新核心 boot/system/EFI 文件和内置文档。"));
+                   T("Core files, bundled docs, and drivers can still be updated.",
+                     "仍可更新核心文件、内置文档和驱动程序。"));
     }
     return 0;
 }
@@ -2286,7 +2376,7 @@ static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
     }
     show_progress(window_id, ui, 30,
                   T("Scanning userland programs", "正在扫描用户程序"),
-                  T("Comparing 0:/install/esp/userland with 1:/userland", "正在比较安装介质和目标 userland"));
+                  T("Drivers will also be synchronized during the update.", "更新时也会同步驱动程序。"));
     ret = scan_update_apps();
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Userland scan failed", "用户程序扫描失败"));
@@ -2412,6 +2502,11 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
         finish_install(window_id, ui, ret, T("Payload scan failed", "扫描安装负载失败"));
         return;
     }
+    ret = count_changed_files_recursive("0:/install/esp/drivers", "1:/drivers");
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Driver scan failed", "驱动程序扫描失败"));
+        return;
+    }
     ret = count_selected_update_work();
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Payload scan failed", "扫描安装负载失败"));
@@ -2434,6 +2529,17 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
     ret = merge_dir_recursive("0:/install/esp/docs", "1:/docs", window_id, ui);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Help document update failed", "帮助文档更新失败"));
+        return;
+    }
+
+    show_progress(window_id, ui, copy_progress_percent(),
+                  T("Updating hardware drivers", "正在更新硬件驱动程序"),
+                  T("Destination: 1:/drivers; extra files are kept.",
+                    "目标：1:/drivers；多出的文件会保留。"));
+    ret = copy_changed_dir_recursive("0:/install/esp/drivers", "1:/drivers",
+                                     window_id, ui);
+    if (ret < 0) {
+        finish_install(window_id, ui, ret, T("Driver update failed", "驱动程序更新失败"));
         return;
     }
 

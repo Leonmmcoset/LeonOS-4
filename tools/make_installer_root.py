@@ -44,6 +44,9 @@ def main() -> int:
     parser.add_argument("--stage", default="build/install/root")
     parser.add_argument("--esp-tree", default="build/esp")
     parser.add_argument("--installed-policy-dir", default="build/userland-installer-policy")
+    parser.add_argument("--userland-dir", default="build/userland")
+    parser.add_argument("--generated-icons-dir", default="build/generated/app-icons")
+    parser.add_argument("--manifest", default="build/esp/system/osmlayer.manifest")
     parser.add_argument("--size-mib", type=int, default=64)
     args = parser.parse_args()
 
@@ -51,11 +54,16 @@ def main() -> int:
     stage = ROOT / args.stage
     esp_tree = ROOT / args.esp_tree
     installed_policy_dir = ROOT / args.installed_policy_dir
+    userland_dir = ROOT / args.userland_dir
+    generated_icons_dir = ROOT / args.generated_icons_dir
+    manifest = ROOT / args.manifest
 
     if not esp_tree.exists():
         raise FileNotFoundError(f"missing normal ESP payload: {esp_tree}")
     if not installed_policy_dir.exists():
         raise FileNotFoundError(f"missing installed policy directory: {installed_policy_dir}")
+    if not userland_dir.exists() or not generated_icons_dir.exists() or not manifest.exists():
+        raise FileNotFoundError("missing installer build inputs")
 
     if stage.exists():
         shutil.rmtree(stage)
@@ -64,15 +72,16 @@ def main() -> int:
     if out.exists():
         out.unlink()
 
-    copy_file(ROOT / "build/userland/desktop.elf", stage / "userland/desktop.elf")
-    copy_file(ROOT / "build/userland/installer.elf", stage / "userland/installer.elf")
-    copy_file(ROOT / "build/generated/app-icons/desktop.bmp", stage / "userland/desktop.bmp")
-    copy_file(ROOT / "build/generated/app-icons/installer.bmp", stage / "userland/installer.bmp")
+    copy_file(userland_dir / "desktop.elf", stage / "userland/desktop.elf")
+    copy_file(userland_dir / "installer.elf", stage / "userland/installer.elf")
+    copy_file(generated_icons_dir / "desktop.bmp", stage / "userland/desktop.bmp")
+    copy_file(generated_icons_dir / "installer.bmp", stage / "userland/installer.bmp")
     copy_file(esp_tree / "etc/leonos.conf", stage / "etc/leonos.conf")
-    copy_file(ROOT / "build/esp/system/osmlayer.manifest", stage / "system/osmlayer.manifest")
+    copy_file(manifest, stage / "system/osmlayer.manifest")
     copy_file(ROOT / "system/fonts/system.psf", stage / "system/fonts/system.psf")
     copy_file(ROOT / "system/fonts/cjk16.lbf", stage / "system/fonts/cjk16.lbf")
     copy_file(ROOT / "system/fonts/metro-latin.lbf", stage / "system/fonts/metro-latin.lbf")
+    copy_tree(esp_tree / "system/certs", stage / "system/certs")
     copy_tree(esp_tree / "system/resources", stage / "system/resources")
     copy_tree(esp_tree / "drivers", stage / "drivers")
     copy_tree(esp_tree, stage / "install/esp")

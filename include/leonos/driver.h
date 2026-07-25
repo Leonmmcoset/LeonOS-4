@@ -2,6 +2,7 @@
 #define LEONOS_DRIVER_H
 
 #include <stdint.h>
+#include <leonos/audio.h>
 
 #define LEONOS_DRIVER_ABI_VERSION 1U
 #define LEONOS_DRIVER_MODULE_MAGIC 0x4c445256U
@@ -16,6 +17,7 @@
 #define LEONOS_DRIVER_KIND_INPUT 1U
 #define LEONOS_DRIVER_KIND_SERIAL 2U
 #define LEONOS_DRIVER_KIND_NETWORK 3U
+#define LEONOS_DRIVER_KIND_AUDIO 4U
 
 #define LEONOS_DRIVER_STATE_UNLOADED 0U
 #define LEONOS_DRIVER_STATE_LOADING 1U
@@ -92,6 +94,13 @@ struct leonos_driver_e1000_ops {
     void (*get_info)(struct leonos_driver_e1000_info *out);
 };
 
+struct leonos_driver_audio_ops {
+    int (*is_ready)(void);
+    int (*configure)(const struct leonos_audio_format *format);
+    long (*write)(const void *data, uint32_t length, uint32_t *out_status);
+    void (*get_state)(struct leonos_audio_state *out);
+};
+
 struct leonos_driver_kernel_api {
     uint32_t abi_version;
     uint32_t struct_size;
@@ -118,6 +127,7 @@ struct leonos_driver_kernel_api {
     int (*register_mouse)(const struct leonos_driver_mouse_ops *ops);
     int (*register_serial)(const struct leonos_driver_serial_ops *ops);
     int (*register_e1000)(const struct leonos_driver_e1000_ops *ops);
+    int (*register_audio)(const struct leonos_driver_audio_ops *ops);
 };
 
 struct leonos_driver_module {
