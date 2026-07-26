@@ -595,10 +595,15 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         paths.config.mkdir(parents=True, exist_ok=True)
         if not paths.kconfig.exists():
             shutil.copy2(ROOT / "configs/default.conf", paths.kconfig)
-        context.run(("kconfig-mconf", "Kconfig"), environment={"KCONFIG_CONFIG": str(paths.kconfig)}, announce=True)
+        context.run(
+            ("kconfig-mconf", "Kconfig"),
+            environment={"KCONFIG_CONFIG": str(paths.kconfig)},
+            announce=True,
+            interactive=True,
+        )
         context.run((PYTHON, "tools/kconfig_sync.py", "--config", relative(paths.kconfig), "--defaults", "configs/default.conf", "--out-dir", relative(generated)), announce=True)
 
-    graph.add(Target(name="menuconfig", inputs=(ROOT / "Kconfig", ROOT / "configs/default.conf", ROOT / "tools/kconfig_sync.py"), kind="command", action=menuconfig, action_key="menuconfig-v2", always=True))
+    graph.add(Target(name="menuconfig", inputs=(ROOT / "Kconfig", ROOT / "configs/default.conf", ROOT / "tools/kconfig_sync.py"), kind="command", action=menuconfig, action_key="menuconfig-v3", always=True))
 
     def clean(context: ActionContext) -> None:
         for directory in (paths.out, paths.legacy_out, paths.target_state, paths.tmp):

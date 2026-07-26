@@ -126,6 +126,22 @@ class ProgressRenderer:
             self._draw_progress_locked()
             sys.stdout.flush()
 
+    def suspend(self) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self._active = False
+            self._clear_progress_locked()
+            sys.stdout.flush()
+
+    def resume(self) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self._active = True
+            self._draw_progress_locked()
+            sys.stdout.flush()
+
     def _draw_progress_locked(self) -> None:
         if self._active and self._progress_line is not None:
             sys.stdout.write(f"\r\x1b[2K{self._progress_line}")
@@ -325,6 +341,7 @@ class ActionContext:
         cwd: Path | None = None,
         environment: dict[str, str] | None = None,
         announce: bool = True,
+        interactive: bool = False,
     ) -> None:
         self.runner.run_process(
             tuple(str(part) for part in command),
@@ -332,6 +349,7 @@ class ActionContext:
             cwd=cwd,
             environment=environment,
             announce=announce,
+            interactive=interactive,
         )
 
     def copy(self, source: Path, destination: Path) -> None:
@@ -710,28 +728,44 @@ class BuildRunner:
         cwd: Path | None = None,
         environment: dict[str, str] | None = None,
         announce: bool = True,
+        interactive: bool = False,
     ) -> None:
         if announce:
             self.logger.command(worker, command)
         merged_environment = os.environ.copy()
         if environment:
             merged_environment.update(environment)
-        with self._processes:
-            process = subprocess.Popen(
-                command,
-                cwd=str(cwd or self.paths.root),
-                env=merged_environment,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-            )
-            assert process.stdout is not None
-            for line in process.stdout:
-                self.logger.child_output(line.rstrip("\n"))
-            returncode = process.wait()
+        if interactive:
+            if not sys.stdin.isatty() or not sys.stdout.isatty() or not sys.stderr.isatty():
+                raise BuildFailure("interactive command requires a TTY: " + " ".join(command))
+            self.logger.progress.suspend()
+            try:
+                with self._processes:
+                    process = subprocess.Popen(
+                        command,
+                        cwd=str(cwd or self.paths.root),
+                        env=merged_environment,
+                    )
+                    returncode = process.wait()
+            finally:
+                self.logger.progress.resume()
+        else:
+            with self._processes:
+                process = subprocess.Popen(
+                    command,
+                    cwd=str(cwd or self.paths.root),
+                    env=merged_environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                )
+                assert process.stdout is not None
+                for line in process.stdout:
+                    self.logger.child_output(line.rstrip("\n"))
+                returncode = process.wait()
         if returncode != 0:
             raise CommandError(command, returncode)
 
