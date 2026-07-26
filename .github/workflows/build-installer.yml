@@ -53,19 +53,14 @@ jobs:
           llvm-ar --version
           rustc --version
           cargo --version
-          ninja --version
 
       - name: Prepare build configuration
         run: |
           cp configs/default.conf .config
 
-      - name: Prepare build.ninja
-        run: |
-          python3 ./tools/gen_ninja.py
-
       - name: Build installer
         run: |
-          ninja installer
+          python3 ./build.py run installer
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4

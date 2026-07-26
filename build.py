@@ -102,7 +102,14 @@ def root_path(value: str | Path) -> Path:
 
 
 def relative(path: Path) -> str:
-    return root_path(path).relative_to(ROOT).as_posix()
+    # 如果路径是绝对路径且不在 ROOT 下，保持绝对路径
+    if path.is_absolute():
+        try:
+            return path.relative_to(ROOT).as_posix()
+        except ValueError:
+            # 路径不在 ROOT 下，返回绝对路径
+            return path.as_posix()
+    return path.as_posix()
 
 
 def collect(*patterns: str) -> list[Path]:
@@ -292,8 +299,10 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     loader_integrity = generated / "loader_integrity.h"
     grub_efi_dir = paths.deps / "grub-efi-amd64-bin/usr/lib/grub/x86_64-efi"
     system_grub_efi_dir = Path("/usr/lib/grub/x86_64-efi")
+    using_system_grub = False
     if not (grub_efi_dir / "modinfo.sh").exists() and (system_grub_efi_dir / "modinfo.sh").exists():
         grub_efi_dir = system_grub_efi_dir
+        using_system_grub = True
 
     def sync_config(context: ActionContext) -> None:
         context.run(
@@ -512,7 +521,9 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     graph.add(Target(name="userland", depends_on=tuple(user_targets), group=True, kind="aggregate"))
 
     grub_efi = paths.staging / "EFI/BOOT/BOOTX64.EFI"
-    graph.add(Target(name="grub-efi", outputs=(grub_efi,), inputs=(ROOT / "boot/grub/embedded.cfg", grub_efi_dir / "modinfo.sh"), kind="generate", command=("grub-mkstandalone", "-d", relative(grub_efi_dir), "-O", "x86_64-efi", "-o", relative(grub_efi), "--modules=part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm", "boot/grub/grub.cfg=boot/grub/embedded.cfg")))
+    # 如果是系统 GRUB 路径，使用绝对路径；否则使用相对路径
+    grub_dir_arg = str(grub_efi_dir) if using_system_grub else relative(grub_efi_dir)
+    graph.add(Target(name="grub-efi", outputs=(grub_efi,), inputs=(ROOT / "boot/grub/embedded.cfg", grub_efi_dir / "modinfo.sh"), kind="generate", command=("grub-mkstandalone", "-d", grub_dir_arg, "-O", "x86_64-efi", "-o", relative(grub_efi), "--modules=part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm", "boot/grub/grub.cfg=boot/grub/embedded.cfg")))
     esp_names = ["grub-efi"]
     esp_outputs: list[Path] = [grub_efi]
     for source, destination_rel in [(ROOT / "boot/grub/grub.cfg", "boot/grub/grub.cfg"), (loader_elf, "boot/loader.elf"), (kernel_sys, "system/kernel.sys"), (middle_sys, "system/middlelayer.sys")]:
