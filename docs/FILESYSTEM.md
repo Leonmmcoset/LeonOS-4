@@ -32,13 +32,13 @@ The current devfs surface is deliberately small:
 
 Multi-user v1 uses these fixed paths:
 
-- `0:/etc/accounts.db`: middlelayer-owned account database.
-- `0:/etc/license.dat`: local activation record with mode, email hash,
+- `0:/system/state/accounts.db`: middlelayer-owned account database.
+- `0:/system/state/license.dat`: local activation record with mode, email hash,
   machine ID, key hash, and local HMAC; plaintext keys are not stored.
-- `0:/etc/oobe.done`: first-run completion marker.
-- `0:/etc/fileassoc.cfg`: optional launcher file-association overrides.
-- `0:/etc/services.cfg`: optional startup/service policy overrides.
-- `0:/etc/drivers.conf`: optional disabled loadable-driver list.
+- `0:/system/state/oobe.done`: first-run completion marker.
+- `0:/system/config/fileassoc.cfg`: optional launcher file-association overrides.
+- `0:/system/config/services.cfg`: optional startup/service policy overrides.
+- `0:/system/config/drivers.conf`: optional disabled loadable-driver list.
 - `0:/drivers`: unsigned Ring 0 `.drv` modules loaded after root mount.
 - `0:/docs`: bundled and third-party `.hlp` help containers shown by the
   desktop Documents menu and opened by `oshlp.elf`.
@@ -66,15 +66,15 @@ activation state. Offline activation validates a
 validity window at activation time. After the license is valid, or after the
 source/build configuration compiles a no-license policy into the binaries, OOBE
 creates the first administrator, creates the home layout, writes
-`0:/etc/oobe.done`, and enters the administrator desktop. Later boots enter
+`0:/system/state/oobe.done`, and enters the administrator desktop. Later boots enter
 `login.elf`. If `oobe.done` exists but desktop cannot find an enabled
 administrator, or cannot find a valid license when the compiled policy requires
 one, desktop launches OOBE again.
 
 New account creation seeds the user's desktop with `File Manager.lnk`,
 `Task Manager.lnk`, `Settings.lnk`, and `Browser.lnk`, pointing to
-`0:/userland/fileman.elf`, `0:/userland/taskmgr.elf`,
-`0:/userland/settings.elf`, and `0:/userland/browser.elf`.
+`0:/system/apps/fileman/fileman.elf`, `0:/system/apps/taskmgr/taskmgr.elf`,
+`0:/system/apps/settings/settings.elf`, and `0:/programs/browser/browser.elf`.
 
 `downloadmgr.elf` saves successful downloads to `0:/users/<name>/downloads`
 when a user session is active, and falls back to `0:/tmp` when no home directory
@@ -129,14 +129,14 @@ implement a "disable inherited permissions" switch.
 
 Default policy:
 
-- `0:/boot`, `0:/docs`, `0:/system`, `0:/userland`, and `0:/etc`: System and
+- `0:/boot`, `0:/docs`, `0:/system`, and `0:/programs`: System and
   Administrators get full control; Users get read/execute.
 - `0:/users/<name>` and descendants: Owner, System, and Administrators get full
   control by default. Other normal users are not granted access.
 - `0:/tmp`: Users, System, and Administrators get read/write/execute/delete.
-- `0:/etc/accounts.db` and `LEONACL.SYS` are denied to user tasks; supported
+- `0:/system/state/accounts.db` and `LEONACL.SYS` are denied to user tasks; supported
   access goes through auth and ACL APIs. License OOBE writes
-  `0:/etc/license.dat` before normal user login exists.
+  `0:/system/state/license.dat` before normal user login exists.
 - Installer RAM-root boots bypass normal policy so installation/update code can
   copy the ESP payload to target drive paths such as `1:/`.
 
