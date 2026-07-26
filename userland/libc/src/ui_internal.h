@@ -22,8 +22,11 @@ int ui_layout_utf8(const char *text, uint32_t byte_len,
 uint32_t ui_next_codepoint_offset(const char *text, uint32_t len, uint32_t pos);
 uint32_t ui_prev_codepoint_offset(const char *text, uint32_t pos);
 uint32_t ui_text_cells_between(const char *text, uint32_t start, uint32_t end);
+uint32_t ui_text_pixels_between(const char *text, uint32_t start, uint32_t end);
 uint32_t ui_byte_offset_for_cell(const char *text, uint32_t len,
                                  uint32_t start, uint32_t target_cell);
+uint32_t ui_byte_offset_for_pixel(const char *text, uint32_t len,
+                                  uint32_t start, uint32_t target_pixel);
 void ui_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
              char ch, uint32_t fg, uint32_t bg, int transparent);
 void ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,

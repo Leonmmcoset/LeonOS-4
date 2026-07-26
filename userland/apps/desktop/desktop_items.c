@@ -293,7 +293,7 @@ static void desktop_icon_path_for_target(const char *path, char *dst, uint32_t d
         return;
     }
     if (stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR) {
-        desktop_icon_path_for_app("0:/userland/fileman.elf", dst, dst_len);
+        desktop_icon_path_for_app("0:/system/apps/fileman/fileman.elf", dst, dst_len);
         return;
     }
     app_path = leonos_launch_resolve_default_app_for_path(path);

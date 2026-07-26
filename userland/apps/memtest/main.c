@@ -224,7 +224,7 @@ static int has_substring(const char *text, const char *needle)
 
 static int run_file_mmap_tests(void)
 {
-    int fd = open("0:/etc/leonos.conf", LEONOS_O_RDONLY, 0);
+    int fd = open("0:/system/config/leonos.conf", LEONOS_O_RDONLY, 0);
     if (fd < 0) {
         return fail("file-open", fd);
     }

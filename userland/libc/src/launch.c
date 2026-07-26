@@ -3,7 +3,7 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 
-#define LEONOS_ASSOC_CONFIG_PATH "0:/etc/fileassoc.cfg"
+#define LEONOS_ASSOC_CONFIG_PATH "0:/system/config/fileassoc.cfg"
 #define LEONOS_ASSOC_CONFIG_MAX 1024U
 #define LEONOS_SHORTCUT_MAX_BYTES 384U
 #define LEONOS_SHORTCUT_MAX_DEPTH 8U
@@ -19,53 +19,53 @@ struct builtin_assoc {
 };
 
 static const struct builtin_program builtin_programs[] = {
-    {"hello", "0:/userland/hello.elf"},
-    {"uidemo", "0:/userland/uidemo.elf"},
-    {"taskmgr", "0:/userland/taskmgr.elf"},
-    {"fileman", "0:/userland/fileman.elf"},
-    {"terminal", "0:/userland/terminal.elf"},
-    {"notepad", "0:/userland/notepad.elf"},
-    {"calc", "0:/userland/calc.elf"},
-    {"run", "0:/userland/run.elf"},
-    {"osver", "0:/userland/osver.elf"},
-    {"memtest", "0:/userland/memtest.elf"},
-    {"ping", "0:/userland/ping.elf"},
-    {"netctl", "0:/userland/netctl.elf"},
-    {"serviced", "0:/userland/serviced.elf"},
-    {"servicemgr", "0:/userland/servicemgr.elf"},
-    {"httpget", "0:/userland/httpget.elf"},
-    {"downloadmgr", "0:/userland/downloadmgr.elf"},
-    {"browser", "0:/userland/browser.elf"},
-    {"imageview", "0:/userland/imageview.elf"},
-    {"wavplay", "0:/userland/wavplay.elf"},
-    {"oshlp", "0:/userland/oshlp.elf"},
-    {"diskmgr", "0:/userland/diskmgr.elf"},
-    {"devmgr", "0:/userland/devmgr.elf"},
+    {"hello", "0:/programs/hello/hello.elf"},
+    {"uidemo", "0:/programs/uidemo/uidemo.elf"},
+    {"taskmgr", "0:/system/apps/taskmgr/taskmgr.elf"},
+    {"fileman", "0:/system/apps/fileman/fileman.elf"},
+    {"terminal", "0:/system/apps/terminal/terminal.elf"},
+    {"notepad", "0:/programs/notepad/notepad.elf"},
+    {"calc", "0:/programs/calc/calc.elf"},
+    {"run", "0:/system/apps/run/run.elf"},
+    {"osver", "0:/system/apps/osver/osver.elf"},
+    {"memtest", "0:/programs/memtest/memtest.elf"},
+    {"ping", "0:/programs/ping/ping.elf"},
+    {"netctl", "0:/system/apps/netctl/netctl.elf"},
+    {"serviced", "0:/system/apps/serviced/serviced.elf"},
+    {"servicemgr", "0:/system/apps/servicemgr/servicemgr.elf"},
+    {"httpget", "0:/programs/httpget/httpget.elf"},
+    {"downloadmgr", "0:/programs/downloadmgr/downloadmgr.elf"},
+    {"browser", "0:/programs/browser/browser.elf"},
+    {"imageview", "0:/programs/imageview/imageview.elf"},
+    {"wavplay", "0:/programs/wavplay/wavplay.elf"},
+    {"oshlp", "0:/programs/oshlp/oshlp.elf"},
+    {"diskmgr", "0:/system/apps/diskmgr/diskmgr.elf"},
+    {"devmgr", "0:/system/apps/devmgr/devmgr.elf"},
 };
 
 static const struct builtin_assoc builtin_assocs[] = {
-    {".html", "0:/userland/browser.elf"},
-    {".htm", "0:/userland/browser.elf"},
-    {".txt", "0:/userland/notepad.elf"},
-    {".md", "0:/userland/notepad.elf"},
-    {".log", "0:/userland/notepad.elf"},
-    {".cfg", "0:/userland/notepad.elf"},
-    {".conf", "0:/userland/notepad.elf"},
-    {".ini", "0:/userland/notepad.elf"},
-    {".bmp", "0:/userland/imageview.elf"},
-    {".dib", "0:/userland/imageview.elf"},
-    {".wav", "0:/userland/wavplay.elf"},
-    {".hlp", "0:/userland/oshlp.elf"},
+    {".html", "0:/programs/browser/browser.elf"},
+    {".htm", "0:/programs/browser/browser.elf"},
+    {".txt", "0:/programs/notepad/notepad.elf"},
+    {".md", "0:/programs/notepad/notepad.elf"},
+    {".log", "0:/programs/notepad/notepad.elf"},
+    {".cfg", "0:/programs/notepad/notepad.elf"},
+    {".conf", "0:/programs/notepad/notepad.elf"},
+    {".ini", "0:/programs/notepad/notepad.elf"},
+    {".bmp", "0:/programs/imageview/imageview.elf"},
+    {".dib", "0:/programs/imageview/imageview.elf"},
+    {".wav", "0:/programs/wavplay/wavplay.elf"},
+    {".hlp", "0:/programs/oshlp/oshlp.elf"},
 };
 
 static const struct leonos_launch_assoc_app assoc_apps[] = {
-    {"LeonOS Browser", "Open the HTML page", "0:/userland/browser.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"Notepad", "Open the file as text", "0:/userland/notepad.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"Image Viewer", "Open BMP images", "0:/userland/imageview.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"WAV Player", "Play PCM WAV audio", "0:/userland/wavplay.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"Help Viewer", "Open LeonOS help files", "0:/userland/oshlp.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"Terminal", "Run cat in a terminal window", "0:/userland/terminal.elf", LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT},
-    {"Run", "Pass the path to the Run dialog", "0:/userland/run.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
+    {"LeonOS Browser", "Open the HTML page", "0:/programs/browser/browser.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
+    {"Notepad", "Open the file as text", "0:/programs/notepad/notepad.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
+    {"Image Viewer", "Open BMP images", "0:/programs/imageview/imageview.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
+    {"WAV Player", "Play PCM WAV audio", "0:/programs/wavplay/wavplay.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
+    {"Help Viewer", "Open LeonOS help files", "0:/programs/oshlp/oshlp.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
+    {"Terminal", "Run cat in a terminal window", "0:/system/apps/terminal/terminal.elf", LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT},
+    {"Run", "Pass the path to the Run dialog", "0:/system/apps/run/run.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
 };
 
 static uint32_t text_len(const char *text)
@@ -155,7 +155,7 @@ static int ends_with_ignore_case(const char *text, const char *suffix)
 
 static int is_system_desktop_path(const char *path)
 {
-    return text_eq_ignore_case(path, "0:/userland/desktop.elf");
+    return text_eq_ignore_case(path, "0:/system/apps/desktop/desktop.elf");
 }
 
 static const char *path_basename(const char *path)
@@ -893,7 +893,7 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
     }
     if (st.type == LEONOS_FS_TYPE_DIR) {
         char *dir_argv[3];
-        dir_argv[0] = "0:/userland/fileman.elf";
+        dir_argv[0] = "0:/system/apps/fileman/fileman.elf";
         dir_argv[1] = path;
         dir_argv[2] = 0;
         return execve(dir_argv[0], dir_argv, 0);

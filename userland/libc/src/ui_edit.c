@@ -21,7 +21,7 @@ void leonos_ui_edit(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
             cursor = scroll;
         }
         leonos_ui_rect(surface,
-                       x + 4 + ui_text_cells_between(visible, scroll, cursor) * LEONOS_FONT_W,
+                       x + 4 + ui_text_pixels_between(visible, scroll, cursor),
                        y + 4, 1, LEONOS_FONT_H, LEONOS_UI_BLACK);
     }
 }
@@ -63,14 +63,14 @@ static void edit_clear_selection(struct leonos_ui_edit_state *state)
 
 static void edit_ensure_cursor_visible(struct leonos_ui_edit_state *state, uint32_t w)
 {
-    uint32_t cols = w > 8 ? leonos_ui_text_fit_chars(w - 8) : 0;
-    if (!state || cols == 0) {
+    uint32_t visible_width = w > 8 ? w - 8 : 0;
+    if (!state || visible_width == 0) {
         return;
     }
     if (state->cursor < state->scroll) {
         state->scroll = state->cursor;
     }
-    while (ui_text_cells_between(state->buffer, state->scroll, state->cursor) > cols &&
+    while (ui_text_pixels_between(state->buffer, state->scroll, state->cursor) > visible_width &&
            state->scroll < state->cursor) {
         state->scroll = ui_next_codepoint_offset(state->buffer, state->length, state->scroll);
     }
@@ -127,7 +127,7 @@ void leonos_ui_edit_state_draw(struct leonos_ui_surface *surface, uint32_t x,
     uint32_t h = LEONOS_FONT_H + 8;
     uint32_t text_x = x + 4;
     uint32_t text_y = y + 4;
-    uint32_t cols = w > 8 ? leonos_ui_text_fit_chars(w - 8) : 0;
+    uint32_t text_width = w > 8 ? w - 8 : 0;
     struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
     struct leonos_text_layout layout;
     uint32_t sel_start = 0;
@@ -158,12 +158,12 @@ void leonos_ui_edit_state_draw(struct leonos_ui_surface *surface, uint32_t x,
     ui_layout_utf8(state->buffer + state->scroll, state->length - state->scroll,
                    glyphs, UI_LAYOUT_GLYPH_MAX, &layout);
     draw_count = layout.count < UI_LAYOUT_GLYPH_MAX ? layout.count : UI_LAYOUT_GLYPH_MAX;
-    for (uint32_t i = 0; i < draw_count && draw_x < text_x + cols * LEONOS_FONT_W; ++i) {
+    for (uint32_t i = 0; i < draw_count && draw_x < text_x + text_width; ++i) {
         uint32_t idx = state->scroll + glyphs[i].byte_offset;
         uint32_t px = glyphs[i].pixel_width;
         uint32_t ch_bg = bg;
         uint32_t ch_fg = fg;
-        if (draw_x + px > text_x + cols * LEONOS_FONT_W) {
+        if (draw_x + px > text_x + text_width) {
             break;
         }
         if (idx < sel_end && idx + glyphs[i].byte_len > sel_start && edit_has_selection(state)) {
@@ -180,7 +180,7 @@ void leonos_ui_edit_state_draw(struct leonos_ui_surface *surface, uint32_t x,
             cursor = state->scroll;
         }
         leonos_ui_rect(surface,
-                       text_x + ui_text_cells_between(state->buffer, state->scroll, cursor) * LEONOS_FONT_W,
+                       text_x + ui_text_pixels_between(state->buffer, state->scroll, cursor),
                        text_y, 1, LEONOS_FONT_H, LEONOS_UI_BLACK);
     }
 }
@@ -299,8 +299,8 @@ int leonos_ui_edit_state_handle_mouse(struct leonos_ui_edit_state *state,
     state->focused = 1;
     idx = state->scroll;
     if (px > (int32_t)x + 4) {
-        idx = ui_byte_offset_for_cell(state->buffer, state->length, state->scroll,
-                                      ((uint32_t)px - x - 4) / LEONOS_FONT_W);
+        idx = ui_byte_offset_for_pixel(state->buffer, state->length, state->scroll,
+                                       (uint32_t)px - x - 4);
     }
     if (idx > state->length) {
         idx = state->length;

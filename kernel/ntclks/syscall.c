@@ -66,8 +66,8 @@
 #define TASK_VMA_FLAG_ANON    0x00000002u
 #define TASK_VMA_FLAG_FILE    0x00000004u
 #define TASK_VMA_FLAG_LAZY    0x00000008u
-#define OOBE_DHCP_APP_PATH "0:/userland/oobe.elf"
-#define OOBE_DONE_MARKER_PATH "0:/etc/oobe.done"
+#define OOBE_DHCP_APP_PATH "0:/system/apps/oobe/oobe.elf"
+#define OOBE_DONE_MARKER_PATH "0:/system/state/oobe.done"
 
 static struct leonos_user_info auth_user_scratch[LEONOS_AUTH_MAX_USERS];
 

@@ -59,7 +59,7 @@ boot-enable actions, but the kernel permits it only for administrator tasks.
 
 The kernel loads unsigned ELF64 `ET_REL` files from `0:/drivers` after the
 root filesystem is mounted. The complete binary format, restricted kernel API,
-and persistent `0:/etc/drivers.conf` policy are documented in
+and persistent `0:/system/config/drivers.conf` policy are documented in
 [Drivers](DRIVERS.md).
 
 ## Appearance ABI
@@ -67,7 +67,7 @@ and persistent `0:/etc/drivers.conf` policy are documented in
 The system UI theme is a global Desktop-owned appearance state. `Metro` is the
 default (`LEONOS_UI_THEME_METRO`); `LEONOS_UI_THEME_WIN95` restores the legacy
 Win95 palette and bevelled controls. The persistent key is `theme=metro` or
-`theme=win95` in `0:/etc/display.conf`; a missing or invalid key selects Metro.
+`theme=win95` in `0:/system/config/display.conf`; a missing or invalid key selects Metro.
 
 `struct leonos_appearance_state` is read through
 `LEONOS_GUI_IOCTL_APPEARANCE_STATE`. Only administrator tasks may submit
@@ -169,7 +169,7 @@ Middlelayer owns higher-level policy or semantic services that can run on top
 of those kernel facts.
 
 The file services are trusted kernel-to-middlelayer calls. They are used by the
-auth service to own `0:/etc/accounts.db` and to create or repair
+auth service to own `0:/system/state/accounts.db` and to create or repair
 `0:/users/<name>` home directories without exposing direct account-database
 access to ordinary user tasks.
 
@@ -184,7 +184,7 @@ access to ordinary user tasks.
 - `node_kind`: coarse directory/file/device classification.
 
 The service resolves `cwd + input` into a normalized numbered-drive path such as
-`0:/userland/desktop.elf`. Kernel storage code calls this first and keeps a C
+`0:/system/apps/desktop/desktop.elf`. Kernel storage code calls this first and keeps a C
 fallback resolver for bootstrapping and compatibility.
 
 ## Device catalog service
@@ -228,8 +228,8 @@ DHCP renew, DNS A lookups, ICMP ping, a compatibility fixed-buffer
 
 Runtime DHCP renew mutates the global IPv4 configuration, so
 `LEONOS_IOCTL_NET_DHCP` is restricted to administrators and trusted service
-tasks. The license OOBE has a narrow pre-login exception: `0:/userland/oobe.elf`
-may renew DHCP only while `0:/etc/oobe.done` is absent. Ordinary users can still
+tasks. The license OOBE has a narrow pre-login exception: `0:/system/apps/oobe/oobe.elf`
+may renew DHCP only while `0:/system/state/oobe.done` is absent. Ordinary users can still
 read network configuration and use DNS, HTTP, ping, and TCP client socket APIs.
 
 Socket requests use:
@@ -278,9 +278,9 @@ and is the default `.wav` handler; without a path it plays a short test melody.
 
 The launcher library in `leonos/launch.h` owns user-facing file launch policy.
 It supports `.lnk` shortcuts, built-in program aliases, and persistent extension
-associations stored in `0:/etc/fileassoc.cfg`. Settings can edit the common
+associations stored in `0:/system/config/fileassoc.cfg`. Settings can edit the common
 associations for `.txt`, `.md`, `.html`, `.htm`, `.bmp`, `.wav`, and `.hlp`.
-The default `.hlp` handler is `0:/userland/oshlp.elf`; it accepts
+The default `.hlp` handler is `0:/programs/oshlp/oshlp.elf`; it accepts
 `oshlp.elf <file.hlp> [doc.id]` and opens a Markdown page inside a LeonOS help
 container.
 
@@ -299,7 +299,7 @@ Current companion applications:
   after the window server is ready. It writes `0:/var/run/services.state`,
   consumes `0:/var/run/services.cmd`, logs to `0:/var/log/services.log`, and
   keeps retrying DHCP while the static fallback is active.
-- `servicemgr.elf`: edits `0:/etc/services.cfg`, reads the runtime state file,
+- `servicemgr.elf`: edits `0:/system/config/services.cfg`, reads the runtime state file,
   and queues administrator start/stop/restart commands through
   `0:/var/run/services.cmd`.
 

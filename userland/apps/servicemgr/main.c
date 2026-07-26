@@ -9,7 +9,7 @@
 #define SERVICEMGR_W 780U
 #define SERVICEMGR_H 430U
 #define SERVICEMGR_ROWS 5U
-#define SERVICEMGR_CONFIG_PATH "0:/etc/services.cfg"
+#define SERVICEMGR_CONFIG_PATH "0:/system/config/services.cfg"
 #define SERVICEMGR_STATE_PATH "0:/var/run/services.state"
 #define SERVICEMGR_COMMAND_PATH "0:/var/run/services.cmd"
 #define SERVICEMGR_CONFIG_MAX 512U

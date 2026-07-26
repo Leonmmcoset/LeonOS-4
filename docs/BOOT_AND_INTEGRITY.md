@@ -60,7 +60,7 @@ serial output is mirrored to this panel, including component discovery,
 integrity results, load failures, and the kernel handoff.
 
 The panel uses Metro blue by default and switches to the persisted Win95 or
-Metro theme after the loader reads `0:/etc/display.conf`. It requires a 32-bit
+Metro theme after the loader reads `0:/system/config/display.conf`. It requires a 32-bit
 linear framebuffer; serial logging remains available when GOP/framebuffer
 output is unavailable.
 

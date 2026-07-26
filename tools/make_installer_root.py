@@ -72,15 +72,14 @@ def main() -> int:
     if out.exists():
         out.unlink()
 
-    copy_file(userland_dir / "desktop.elf", stage / "userland/desktop.elf")
-    copy_file(userland_dir / "installer.elf", stage / "userland/installer.elf")
-    copy_file(generated_icons_dir / "desktop.bmp", stage / "userland/desktop.bmp")
-    copy_file(generated_icons_dir / "installer.bmp", stage / "userland/installer.bmp")
-    copy_file(esp_tree / "etc/leonos.conf", stage / "etc/leonos.conf")
+    copy_file(userland_dir / "desktop.elf", stage / "system/apps/desktop/desktop.elf")
+    copy_file(userland_dir / "installer.elf", stage / "system/apps/installer/installer.elf")
+    copy_file(generated_icons_dir / "desktop.bmp", stage / "system/apps/desktop/desktop.bmp")
+    copy_file(generated_icons_dir / "installer.bmp", stage / "system/apps/installer/installer.bmp")
+    copy_file(esp_tree / "system/config/leonos.conf", stage / "system/config/leonos.conf")
     copy_file(manifest, stage / "system/osmlayer.manifest")
-    copy_file(ROOT / "system/fonts/system.psf", stage / "system/fonts/system.psf")
-    copy_file(ROOT / "system/fonts/cjk16.lbf", stage / "system/fonts/cjk16.lbf")
-    copy_file(ROOT / "system/fonts/metro-latin.lbf", stage / "system/fonts/metro-latin.lbf")
+    copy_file(esp_tree / "system/fonts/leonos-metro.ttf", stage / "system/fonts/leonos-metro.ttf")
+    copy_file(esp_tree / "system/fonts/leonos-win95.ttf", stage / "system/fonts/leonos-win95.ttf")
     copy_tree(esp_tree / "system/certs", stage / "system/certs")
     copy_tree(esp_tree / "system/resources", stage / "system/resources")
     copy_tree(esp_tree / "drivers", stage / "drivers")
@@ -88,7 +87,9 @@ def main() -> int:
     remove_file(stage / "install/esp/etc/license.conf")
     remove_file(stage / "install/esp/etc/install.id")
     for name in ("desktop.elf", "oobe.elf", "settings.elf"):
-        copy_file(installed_policy_dir / name, stage / "install/esp/userland" / name)
+        app = name.removesuffix(".elf")
+        copy_file(installed_policy_dir / name,
+                  stage / "install/esp/system/apps" / app / name)
 
     payload_bytes = sum(item.stat().st_size for item in stage.rglob("*") if item.is_file())
     required_mib = (payload_bytes + (1024 * 1024 - 1)) // (1024 * 1024)

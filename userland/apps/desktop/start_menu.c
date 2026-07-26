@@ -10,36 +10,66 @@ int start_menu_is_hidden_app(const char *name)
            text_eq(name, "shell.elf");
 }
 
-void start_menu_load_apps(void)
+static void start_menu_add_package(const char *root, const char *package)
+{
+    char elf_name[LEONOS_FS_PATH_LEN];
+    char path[LEONOS_FS_PATH_LEN];
+    uint32_t pos = 0;
+    struct leonos_stat st;
+    if (!root || !package || !package[0] ||
+        start_menu_app_count >= START_MENU_MAX_APPS) {
+        return;
+    }
+    copy_text(elf_name, sizeof(elf_name), package);
+    pos = 0;
+    while (elf_name[pos]) {
+        ++pos;
+    }
+    append_text(elf_name, &pos, sizeof(elf_name), ".elf");
+    if (start_menu_is_hidden_app(elf_name)) {
+        return;
+    }
+    copy_text(path, sizeof(path), root);
+    pos = 0;
+    while (path[pos]) {
+        ++pos;
+    }
+    append_char(path, &pos, sizeof(path), '/');
+    append_text(path, &pos, sizeof(path), package);
+    append_char(path, &pos, sizeof(path), '/');
+    append_text(path, &pos, sizeof(path), elf_name);
+    if (stat(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE) {
+        return;
+    }
+    copy_app_label_from_elf(start_menu_app_labels[start_menu_app_count],
+                            sizeof(start_menu_app_labels[start_menu_app_count]),
+                            elf_name);
+    copy_text(start_menu_app_paths[start_menu_app_count],
+              sizeof(start_menu_app_paths[start_menu_app_count]), path);
+    ++start_menu_app_count;
+}
+
+static void start_menu_load_root(const char *root)
 {
     struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
     uint32_t count = 0;
-    start_menu_app_count = 0;
-    start_menu_apps_loaded = 1;
-    if (leonos_list_dir("0:/userland", entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
+    if (leonos_list_dir(root, entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
         return;
     }
     for (uint32_t i = 0; i < count && start_menu_app_count < START_MENU_MAX_APPS; ++i) {
-        if (entries[i].type != LEONOS_FS_TYPE_FILE ||
-            !text_ends_with(entries[i].name, ".elf") ||
-            start_menu_is_hidden_app(entries[i].name)) {
+        if (entries[i].type != LEONOS_FS_TYPE_DIR) {
             continue;
         }
-        copy_app_label_from_elf(start_menu_app_labels[start_menu_app_count],
-                                sizeof(start_menu_app_labels[start_menu_app_count]),
-                                entries[i].name);
-        copy_text(start_menu_app_paths[start_menu_app_count],
-                  sizeof(start_menu_app_paths[start_menu_app_count]),
-                  "0:/userland/");
-        uint32_t pos = 0;
-        while (start_menu_app_paths[start_menu_app_count][pos]) {
-            ++pos;
-        }
-        append_text(start_menu_app_paths[start_menu_app_count], &pos,
-                    sizeof(start_menu_app_paths[start_menu_app_count]),
-                    entries[i].name);
-        ++start_menu_app_count;
+        start_menu_add_package(root, entries[i].name);
     }
+}
+
+void start_menu_load_apps(void)
+{
+    start_menu_app_count = 0;
+    start_menu_apps_loaded = 1;
+    start_menu_load_root("0:/system/apps");
+    start_menu_load_root("0:/programs");
 }
 
 void start_menu_ensure_apps(void)
@@ -263,7 +293,8 @@ uint32_t build_start_menu_items(struct start_menu_item *items, uint32_t cap)
         } \
     } while (0)
     ADD_ITEM(leonos_i18n("Desktop Server", "桌面服务"), START_ACTION_RESTORE, 0, 0);
-    ADD_ITEM(leonos_i18n("Settings", "设置"), START_ACTION_SPAWN_ONCE, 0, "0:/userland/settings.elf");
+    ADD_ITEM(leonos_i18n("Settings", "设置"), START_ACTION_SPAWN_ONCE, 0,
+             "0:/system/apps/settings/settings.elf");
     ADD_ITEM("", START_ACTION_SEPARATOR, 0, 0);
     start_menu_ensure_apps();
     ADD_ITEM(leonos_i18n("Programs >", "程序 >"), START_ACTION_PROGRAMS, 0, 0);
@@ -477,7 +508,7 @@ void draw_start_docs_menu(struct start_menu_layout menu)
         if (i >= start_menu_doc_count) {
             break;
         }
-        draw_app_icon("0:/userland/oshlp.bmp", (int)item_x - 22, (int)item_y + 4);
+        draw_app_icon("0:/programs/oshlp/oshlp.bmp", (int)item_x - 22, (int)item_y + 4);
         leonos_ui_menu_item(&ui, item_x, item_y, START_DOCS_W - 44,
                             start_menu_doc_labels[i], 0);
     }

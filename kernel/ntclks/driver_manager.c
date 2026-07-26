@@ -11,7 +11,7 @@
 #include "arch/x86_64/port.h"
 
 #define DRIVER_DIRECTORY "0:/drivers"
-#define DRIVER_CONFIG_PATH "0:/etc/drivers.conf"
+#define DRIVER_CONFIG_PATH "0:/system/config/drivers.conf"
 #define DRIVER_CONFIG_CAP 1024U
 #define DRIVER_ELF_MAX_SECTIONS 64U
 #define DRIVER_ELF_MAX_IMAGE (4U * 1024U * 1024U)

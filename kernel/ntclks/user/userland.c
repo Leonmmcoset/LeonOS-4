@@ -112,12 +112,12 @@ static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
 
 static int path_is_system_desktop(const char *path)
 {
-    return path_eq_ignore_case(path, "0:/userland/desktop.elf");
+    return path_eq_ignore_case(path, "0:/system/apps/desktop/desktop.elf");
 }
 
 static int path_is_system_service_daemon(const char *path)
 {
-    return path_eq_ignore_case(path, "0:/userland/serviced.elf");
+    return path_eq_ignore_case(path, "0:/system/apps/serviced/serviced.elf");
 }
 
 static void dir_add(struct leonos_dir_entry *entries, uint32_t capacity, uint32_t *count,
@@ -465,7 +465,7 @@ void userland_init(const struct boot_info *boot)
     }
 
     if (boot && name_contains(boot->cmdline, "mode=installer")) {
-        pid = spawn_path_internal("0:/userland/desktop.elf", "desktop.elf window server",
+        pid = spawn_path_internal("0:/system/apps/desktop/desktop.elf", "desktop.elf window server",
                                   0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
@@ -476,14 +476,14 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
-    pid = spawn_path_internal("0:/userland/init.elf", "init.elf", 0, 0, 0, 0);
+    pid = spawn_path_internal("0:/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load init.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
     }
     init_pid = (uint32_t)pid;
 
-    pid = spawn_path_internal("0:/userland/desktop.elf", "desktop.elf window server",
+    pid = spawn_path_internal("0:/system/apps/desktop/desktop.elf", "desktop.elf window server",
                               0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load desktop.elf ret=%lld\n", (long long)pid);
@@ -559,27 +559,27 @@ void userland_yield_if_runnable(void)
 {
     if (autospawn_hello && sched_current_pid() == desktop_pid) {
         autospawn_hello = false;
-        int64_t pid = userland_spawn_path("0:/userland/hello.elf");
+        int64_t pid = userland_spawn_path("0:/programs/hello/hello.elf");
         console_printf("[ntclks] debug autospawn hello pid=%lld\n", (long long)pid);
     }
     if (autospawn_uidemo && sched_current_pid() == desktop_pid) {
         autospawn_uidemo = false;
-        int64_t pid = userland_spawn_path("0:/userland/uidemo.elf");
+        int64_t pid = userland_spawn_path("0:/programs/uidemo/uidemo.elf");
         console_printf("[ntclks] debug autospawn uidemo pid=%lld\n", (long long)pid);
     }
     if (autospawn_terminal && sched_current_pid() == desktop_pid) {
         autospawn_terminal = false;
-        int64_t pid = userland_spawn_path("0:/userland/terminal.elf");
+        int64_t pid = userland_spawn_path("0:/system/apps/terminal/terminal.elf");
         console_printf("[ntclks] debug autospawn terminal pid=%lld\n", (long long)pid);
     }
     if (autospawn_memtest && sched_current_pid() == desktop_pid) {
         autospawn_memtest = false;
-        int64_t pid = userland_spawn_path("0:/userland/memtest.elf");
+        int64_t pid = userland_spawn_path("0:/programs/memtest/memtest.elf");
         console_printf("[ntclks] debug autospawn memtest pid=%lld\n", (long long)pid);
     }
     if (autospawn_installer && sched_current_pid() == desktop_pid) {
         autospawn_installer = false;
-        int64_t pid = userland_spawn_path("0:/userland/installer.elf");
+        int64_t pid = userland_spawn_path("0:/system/apps/installer/installer.elf");
         console_printf("[ntclks] installer autospawn pid=%lld\n", (long long)pid);
     }
 }

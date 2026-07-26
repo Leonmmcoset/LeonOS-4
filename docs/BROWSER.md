@@ -90,15 +90,15 @@ To integrate real litehtml, do these in order:
 
 The browser is registered as:
 
-- `0:/userland/browser.elf`
+- `0:/programs/browser/browser.elf`
 - launch alias: `browser`
 - default app for `.html` and `.htm`
 
 Download and image companion apps are registered as:
 
-- `0:/userland/downloadmgr.elf`, launch alias `downloadmgr`
-- `0:/userland/imageview.elf`, launch alias `imageview`
+- `0:/programs/downloadmgr/downloadmgr.elf`, launch alias `downloadmgr`
+- `0:/programs/imageview/imageview.elf`, launch alias `imageview`
 - default app for `.bmp` and `.dib`
 
-The generated icon is `0:/userland/browser.bmp`, following the existing
+The generated icon is `0:/programs/browser/browser.bmp`, following the existing
 same-directory/same-basename application icon convention.

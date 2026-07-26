@@ -93,7 +93,7 @@ int handle_global_key(uint8_t keycode, uint8_t pressed)
         ch = lower_ascii(ch);
         if (ch == 'r') {
             start_menu_set_open(0);
-            spawn_program_path("0:/userland/run.elf");
+            spawn_program_path("0:/system/apps/run/run.elf");
             full_redraw_pending = 1;
             return 1;
         }
@@ -285,7 +285,7 @@ int spawn_help_path(const char *path)
 {
     char *argv[3];
     int pid;
-    argv[0] = "0:/userland/oshlp.elf";
+    argv[0] = "0:/programs/oshlp/oshlp.elf";
     argv[1] = (char *)path;
     argv[2] = 0;
     pid = execve(argv[0], argv, 0);
@@ -297,7 +297,7 @@ void maybe_launch_oobe(void)
 {
     struct leonos_stat st;
     struct leonos_auth_status auth_status;
-    if (stat("0:/userland/installer.elf", &st) == 0 &&
+    if (stat("0:/system/apps/installer/installer.elf", &st) == 0 &&
         st.type == LEONOS_FS_TYPE_FILE &&
         stat(OOBE_APP_PATH, &st) < 0) {
         puts("[desktop.elf] installer runtime detected; OOBE disabled");

@@ -1,7 +1,0 @@
-Metro Latin font resource source
-
-Derived from Noto Sans Mono Regular at 13 px and rasterized to an 8x16 grayscale
-coverage grid by tools/make_metro_latin_font.py.
-
-Upstream: https://fonts.google.com/noto/specimen/Noto+Sans+Mono
-License: SIL Open Font License 1.1

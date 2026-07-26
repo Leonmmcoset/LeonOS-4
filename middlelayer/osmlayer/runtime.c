@@ -89,7 +89,7 @@ struct osmlayer_account {
     uint8_t hash[32];
 };
 
-#define OSMLAYER_ACCOUNTS_PATH "0:/etc/accounts.db"
+#define OSMLAYER_ACCOUNTS_PATH "0:/system/state/accounts.db"
 #define OSMLAYER_ACCOUNT_DB_MAX 8192u
 
 static const struct leonos_kernel_services *osmlayer_services;
@@ -1151,8 +1151,7 @@ static int osmlayer_path_is_system_tree(const char *path)
            osmlayer_text_eq(path, "0:/boot") || osmlayer_path_under(path, "0:/boot") ||
            osmlayer_text_eq(path, "0:/docs") || osmlayer_path_under(path, "0:/docs") ||
            osmlayer_text_eq(path, "0:/system") || osmlayer_path_under(path, "0:/system") ||
-           osmlayer_text_eq(path, "0:/userland") || osmlayer_path_under(path, "0:/userland") ||
-           osmlayer_text_eq(path, "0:/etc") || osmlayer_path_under(path, "0:/etc") ||
+           osmlayer_text_eq(path, "0:/programs") || osmlayer_path_under(path, "0:/programs") ||
            osmlayer_text_eq(path, "0:/users") ||
            osmlayer_text_eq(path, "0:/var") || osmlayer_path_under(path, "0:/var") ||
            osmlayer_text_eq(path, "0:/dev") || osmlayer_path_under(path, "0:/dev");
@@ -1178,9 +1177,9 @@ static void osmlayer_acl_default_for_path(const char *path,
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0, LEONOS_FS_PERM_FULL);
         return;
     }
-    if (osmlayer_text_eq(path, "0:/etc/display.conf") ||
-        osmlayer_text_eq(path, "0:/etc/locale.conf") ||
-        osmlayer_text_eq(path, "0:/etc/oobe.done")) {
+    if (osmlayer_text_eq(path, "0:/system/config/display.conf") ||
+        osmlayer_text_eq(path, "0:/system/config/locale.conf") ||
+        osmlayer_text_eq(path, "0:/system/state/oobe.done")) {
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0,
                              LEONOS_FS_PERM_READ | LEONOS_FS_PERM_WRITE);
         return;
@@ -1620,10 +1619,10 @@ static int osmlayer_seed_desktop_shortcuts(const char *username)
         const char *name;
         const char *target;
     } shortcuts[] = {
-        {"File Manager.lnk", "0:/userland/fileman.elf"},
-        {"Task Manager.lnk", "0:/userland/taskmgr.elf"},
-        {"Settings.lnk", "0:/userland/settings.elf"},
-        {"Browser.lnk", "0:/userland/browser.elf"},
+        {"File Manager.lnk", "0:/system/apps/fileman/fileman.elf"},
+        {"Task Manager.lnk", "0:/system/apps/taskmgr/taskmgr.elf"},
+        {"Settings.lnk", "0:/system/apps/settings/settings.elf"},
+        {"Browser.lnk", "0:/programs/browser/browser.elf"},
     };
     if (!osmlayer_username_valid(username)) {
         return -22;
@@ -1647,6 +1646,7 @@ static int osmlayer_auth_status(struct leonos_auth_status *status)
     if (ret < 0) {
         return ret;
     }
+    (void)osmlayer_service_mkdir("0:/system/state");
     (void)osmlayer_service_mkdir("0:/users");
     (void)osmlayer_service_mkdir("0:/tmp");
     if (status) {
@@ -2114,8 +2114,8 @@ int osmlayer_c_services_selftest(void)
 {
     char path[OSMLAYER_FS_PATH_LEN];
     struct osmlayer_vfs_resolve_path vfs = {
-        .cwd = "0:/etc",
-        .input = "../userland/desktop.elf",
+        .cwd = "0:/system/config",
+        .input = "../apps/desktop/desktop.elf",
         .out = path,
         .capacity = sizeof(path),
         .drive = 0,
@@ -2124,7 +2124,7 @@ int osmlayer_c_services_selftest(void)
         .reserved = 0,
     };
     if (osmlayer_resolve_path(&vfs) < 0 ||
-        !osmlayer_text_eq(path, "0:/userland/desktop.elf")) {
+        !osmlayer_text_eq(path, "0:/system/apps/desktop/desktop.elf")) {
         return 0;
     }
 

@@ -57,7 +57,7 @@ The kernel-side numbers and errno constants are in:
 
 ## File and Directory Calls
 
-Paths use LeonOS numbered-drive syntax such as `0:/userland/desktop.elf`.
+Paths use LeonOS numbered-drive syntax such as `0:/system/apps/desktop/desktop.elf`.
 Relative paths are resolved against the task current directory through the
 middlelayer VFS resolver when available, with a kernel fallback.
 
@@ -226,7 +226,7 @@ ICMP Echo, a small DHCP client, UDP transmit/receive for DHCP/DNS, DNS A record
 lookups, a small ARP cache, active-open TCP client sockets, and a compatibility
 `HTTP/1.0` GET helper over TCP. Boot starts with the QEMU user-network fallback so
 early networking is usable, then automatically tries DHCP three times unless
-`0:/etc/services.cfg` contains `dhcp=0`. If DHCP succeeds, the active config
+`0:/system/config/services.cfg` contains `dhcp=0`. If DHCP succeeds, the active config
 switches to the lease; if it fails or is disabled, the fallback remains active:
 
 - guest IPv4: `10.0.2.15/24`
@@ -238,7 +238,7 @@ running to manually renew or recover a lease when the caller is an
 administrator. Non-admin users may read network status and use DNS/HTTP/socket
 APIs, but DHCP renew changes the global IPv4 configuration and returns
 `EPERM` unless the caller is an administrator or trusted service task. The only
-pre-login exception is `0:/userland/oobe.elf` while `0:/etc/oobe.done` is
+pre-login exception is `0:/system/apps/oobe/oobe.elf` while `0:/system/state/oobe.done` is
 absent, so the license screen can expose a narrow `Renew DHCP` recovery button.
 `netctl.elf` also queries `leonos_net_connections` and displays TCP client
 sockets in `SYN_SENT`, `ESTABLISHED`, `TIME_WAIT`, or `CLOSED`. Administrators
@@ -247,7 +247,7 @@ connections owned by their uid.
 
 `serviced.elf` now runs as a protected service task started by the desktop. It
 uses the same `leonos_net_config` and `leonos_net_dhcp_renew` wrappers to keep
-retrying DHCP in the background when `0:/etc/services.cfg` has `dhcp=1` and the
+retrying DHCP in the background when `0:/system/config/services.cfg` has `dhcp=1` and the
 kernel is still using the static fallback. It publishes status to
 `0:/var/run/services.state` for `servicemgr.elf`.
 

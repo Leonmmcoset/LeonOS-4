@@ -52,19 +52,19 @@
 #define APP_ICON_W APP_ICON_SMALL_W
 #define APP_ICON_H APP_ICON_SMALL_H
 #define APP_ICON_BMP_MAX_BYTES (APP_ICON_MAX_W * APP_ICON_MAX_H * 4 + 128)
-#define OOBE_DONE_PATH "0:/etc/oobe.done"
-#define OOBE_APP_PATH "0:/userland/oobe.elf"
+#define OOBE_DONE_PATH "0:/system/state/oobe.done"
+#define OOBE_APP_PATH "0:/system/apps/oobe/oobe.elf"
 #define OOBE_WINDOW_TITLE "LeonOS Setup"
 #define OOBE_WINDOW_TEXT "First-run setup"
 #define OOBE_RESPAWN_MS 1000UL
-#define LOGIN_APP_PATH "0:/userland/login.elf"
+#define LOGIN_APP_PATH "0:/system/apps/login/login.elf"
 #define LOGIN_WINDOW_TITLE "LeonOS Login"
 #define LOGIN_WINDOW_TEXT "Sign in"
 #define LOGIN_RESPAWN_MS 1000UL
-#define SERVICE_DAEMON_PATH "0:/userland/serviced.elf"
+#define SERVICE_DAEMON_PATH "0:/system/apps/serviced/serviced.elf"
 #define SERVICE_DAEMON_RETRY_MS 2000UL
-#define DISPLAY_CONFIG_PATH "0:/etc/display.conf"
-#define SERVICES_CONFIG_PATH "0:/etc/services.cfg"
+#define DISPLAY_CONFIG_PATH "0:/system/config/display.conf"
+#define SERVICES_CONFIG_PATH "0:/system/config/services.cfg"
 #define SERVICES_CONFIG_MAX 512U
 #define DISPLAY_CONFIRM_MS 10000UL
 #define START_MENU_W 246
