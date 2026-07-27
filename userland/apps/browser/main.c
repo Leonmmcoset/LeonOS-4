@@ -16,6 +16,8 @@ int main(int argc, char **argv, char **envp)
         printf("[browser.elf] create window failed=%d\n", window_id);
         return 1;
     }
+    leonos_ui_set_font_path(BROWSER_FONT_PATH);
+    leonos_ui_set_font_fallback_path(BROWSER_FONT_FALLBACK_PATH);
     leonos_ui_bind(&ui, pixels, view_w, view_h, BROWSER_MAX_W);
     leonos_ui_edit_state_init(&address_edit, address_input, sizeof(address_input));
     address_edit.focused = 1;

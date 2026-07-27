@@ -304,7 +304,7 @@ int main(int argc, char **argv, char **envp)
         printf("terminal: window creation failed (%d)\n", window_id);
         return 1;
     }
-    shell_argv[0] = "0:/userland/shell.elf";
+    shell_argv[0] = "0:/system/apps/shell/shell.elf";
     shell_argv[1] = argc > 1 && argv[1] && argv[1][0] ? argv[1] : 0;
     shell_argv[2] = argc > 2 && argv[2] && argv[2][0] ? argv[2] : 0;
     shell_argv[3] = 0;

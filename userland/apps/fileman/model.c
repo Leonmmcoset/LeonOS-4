@@ -991,7 +991,7 @@ uint32_t build_tree_items(struct leonos_ui_tree_item *items, uint32_t cap)
     items[count++] = (struct leonos_ui_tree_item){"system", 3, 1, LEONOS_UI_TREE_LEAF};
     items[count++] = (struct leonos_ui_tree_item){"fonts", 4, 2, LEONOS_UI_TREE_LEAF};
     items[count++] = (struct leonos_ui_tree_item){"resources", 5, 2, LEONOS_UI_TREE_LEAF};
-    items[count++] = (struct leonos_ui_tree_item){"userland", 6, 1, LEONOS_UI_TREE_LEAF};
+    items[count++] = (struct leonos_ui_tree_item){"programs", 6, 1, LEONOS_UI_TREE_LEAF};
     return count;
 }
 
@@ -1009,7 +1009,7 @@ const char *tree_path_for_id(uint32_t id)
     case 5:
         return "0:/system/resources";
     case 6:
-        return "0:/userland";
+        return "0:/programs";
     default:
         return 0;
     }

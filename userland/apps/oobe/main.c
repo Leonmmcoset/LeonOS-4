@@ -13,7 +13,7 @@
 #define OOBE_MAX_H 1080
 #define OOBE_INITIAL_W 800
 #define OOBE_INITIAL_H 600
-#define OOBE_DONE_PATH "0:/etc/oobe.done"
+#define OOBE_DONE_PATH "0:/system/state/oobe.done"
 #define OOBE_KEY_ESCAPE 1U
 #define T(en, zh) leonos_i18n((en), (zh))
 

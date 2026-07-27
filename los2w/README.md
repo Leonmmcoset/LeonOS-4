@@ -28,7 +28,7 @@ The GUI records the ten most recent ELF and root-directory choices in its host
 configuration. Use **App UI style** to start the selected application with the
 modern Metro UI or classic Win95 UI; Metro is the default and the choice is
 saved for later launches. The selected style is exposed only for the running
-guest through `0:/etc/display.conf`, so the mapped image directory is not
+guest through `0:/system/config/display.conf`, so the mapped image directory is not
 modified. Command-line launches can select the same style with
 `--ui-theme metro` or `--ui-theme win95`.
 

@@ -74,7 +74,7 @@ static const char *const data_rows[][4] = {
     {"calc.elf", "Program", "Idle", "Keyboard input and buttons"},
     {"osver.elf", "Program", "Idle", "System version dialog"},
 };
-static char sample_path[96] = "0:/userland/notepad.elf";
+static char sample_path[96] = "0:/programs/notepad/notepad.elf";
 static char sample_text[160] = "Line one\n你好，LeonOS 4。中文显示测试。\nLine three";
 static char demo_status[96] = "Click inside the top tabs to switch pages";
 static struct leonos_ui_edit_state sample_edit;

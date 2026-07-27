@@ -1,463 +1,1270 @@
-#include <leonos/psf_font.h>
 #include <leonos/syscall.h>
 #include <stdlib.h>
 
 #include "ui_internal.h"
 
-#define UI_SYSTEM_FONT_MAX 8192U
-#define UI_CJK_FONT_MAX (2U * 1024U * 1024U)
-#define UI_CJK_FONT_PATH "0:/system/fonts/cjk16.lbf"
-#define UI_METRO_LATIN_FONT_PATH "0:/system/fonts/metro-latin.lbf"
-#define UI_METRO_LATIN_FONT_WIDTH 8U
-#define UI_METRO_LATIN_FONT_HEIGHT 16U
-#define UI_METRO_LATIN_FONT_FIRST 32U
-#define UI_METRO_LATIN_FONT_COUNT 95U
-#define UI_METRO_LATIN_FONT_HEADER_SIZE 8U
-#define UI_METRO_LATIN_GLYPH_BYTES (UI_METRO_LATIN_FONT_WIDTH * UI_METRO_LATIN_FONT_HEIGHT)
-#define UI_METRO_LATIN_FONT_SIZE (UI_METRO_LATIN_FONT_HEADER_SIZE + UI_METRO_LATIN_FONT_COUNT * UI_METRO_LATIN_GLYPH_BYTES)
-static uint8_t ui_system_font[UI_SYSTEM_FONT_MAX];
-static uint8_t ui_metro_latin_font[UI_METRO_LATIN_FONT_SIZE];
-static uint8_t *ui_cjk_font;
-static uint8_t ui_system_font_checked;
-static uint8_t ui_metro_latin_font_checked;
-static uint8_t ui_metro_latin_font_ready;
-static uint8_t ui_cjk_font_checked;
-static uint32_t ui_cjk_font_len;
-static uint32_t ui_cjk_font_count;
-static uint32_t ui_cjk_index_offset;
-static uint32_t ui_cjk_bitmap_offset;
-static uint32_t ui_cjk_glyph_bytes;
-static struct leonos_psf_view ui_font_view;
+#define UI_TTF_METRO_PATH "0:/system/fonts/leonos-metro.ttf"
+#define UI_TTF_WIN95_PATH "0:/system/fonts/leonos-win95.ttf"
+#define UI_TTF_PATH_MAX 128U
+#define UI_TTF_MAX (20U * 1024U * 1024U)
+#define UI_TTF_POINTS_MAX 2048U
+#define UI_TTF_EDGES_MAX 8192U
+#define UI_TTF_MASK_CACHE_ENTRIES 256U
+#define UI_TTF_MASK_CACHE_DIMENSION 32U
+#define UI_TTF_METRIC_CACHE_ENTRIES 256U
+#define UI_TTF_RASTER_WIDTH_MAX 2048U
 
-uint32_t ui_strlen(const char *text)
+struct ui_ttf_font {
+    uint8_t *data;
+    uint32_t len;
+    uint32_t face;
+    uint32_t cmap;
+    uint32_t cmap_len;
+    uint32_t glyf;
+    uint32_t loca;
+    uint32_t hmtx;
+    uint16_t units_per_em;
+    int16_t ascender;
+    int16_t descender;
+    uint16_t glyph_count;
+    uint16_t hmetrics_count;
+    uint8_t long_loca;
+};
+
+struct ui_ttf_point {
+    int32_t x;
+    int32_t y;
+    uint8_t on_curve;
+};
+
+struct ui_ttf_edge {
+    int32_t x0;
+    int32_t y0;
+    int32_t x1;
+    int32_t y1;
+};
+
+struct ui_ttf_mask_cache_entry {
+    uint32_t codepoint;
+    uint32_t stamp;
+    uint16_t width;
+    uint16_t height;
+    uint8_t metro;
+    uint8_t fallback;
+    uint8_t state;
+};
+
+struct ui_ttf_metric_cache_entry {
+    uint32_t codepoint;
+    uint16_t glyph;
+    uint16_t width;
+    uint8_t metro;
+    uint8_t fallback;
+    uint8_t glyph_state;
+    uint8_t state;
+};
+
+struct ui_ttf_intersection {
+    int32_t x;
+    int8_t winding;
+};
+
+static struct ui_ttf_font ui_ttf;
+static struct ui_ttf_font ui_ttf_primary;
+static struct ui_ttf_font ui_ttf_fallback;
+static struct ui_ttf_point ui_ttf_scratch_points[UI_TTF_POINTS_MAX];
+static uint16_t ui_ttf_scratch_contours[UI_TTF_POINTS_MAX];
+static struct ui_ttf_point ui_ttf_points[UI_TTF_POINTS_MAX];
+static uint16_t ui_ttf_contours[UI_TTF_POINTS_MAX];
+static uint8_t ui_ttf_flags[UI_TTF_POINTS_MAX];
+static struct ui_ttf_edge ui_ttf_edges[UI_TTF_EDGES_MAX];
+static struct ui_ttf_mask_cache_entry ui_ttf_mask_cache[UI_TTF_MASK_CACHE_ENTRIES];
+static uint8_t ui_ttf_mask_data[UI_TTF_MASK_CACHE_ENTRIES]
+                                [UI_TTF_MASK_CACHE_DIMENSION * UI_TTF_MASK_CACHE_DIMENSION];
+static struct ui_ttf_metric_cache_entry ui_ttf_metric_cache[UI_TTF_METRIC_CACHE_ENTRIES];
+static struct ui_ttf_intersection ui_ttf_intersections[UI_TTF_EDGES_MAX];
+static uint8_t ui_ttf_row_coverage[UI_TTF_RASTER_WIDTH_MAX];
+static uint32_t ui_ttf_mask_clock;
+static uint8_t ui_ttf_checked;
+static uint8_t ui_ttf_metro;
+static uint8_t ui_ttf_active_fallback;
+static char ui_ttf_override_path[UI_TTF_PATH_MAX];
+static char ui_ttf_fallback_path[UI_TTF_PATH_MAX];
+
+static const char *ui_ttf_default_path(void)
 {
-    uint32_t n = 0;
-    while (text && text[n]) {
-        ++n;
-    }
-    return n;
+    return ui_theme_is_metro() ? UI_TTF_METRO_PATH : UI_TTF_WIN95_PATH;
 }
 
-static const uint8_t *ui_font_glyph(char ch)
+static const char *ui_ttf_primary_path(void)
 {
-    if (!ui_system_font_checked) {
-        struct leonos_stat st;
-        ui_system_font_checked = 1;
-        if (stat(LEONOS_SYSTEM_FONT_PATH, &st) == 0 &&
-            st.type == LEONOS_FS_TYPE_FILE &&
-            st.size > 0 && st.size <= sizeof(ui_system_font)) {
-            int fd = open(LEONOS_SYSTEM_FONT_PATH, LEONOS_O_RDONLY, 0);
-            if (fd >= 0) {
-                uint32_t len = 0;
-                while (len < st.size) {
-                    long got = read(fd, ui_system_font + len, (uint32_t)st.size - len);
-                    if (got <= 0) {
-                        break;
-                    }
-                    len += (uint32_t)got;
+    return ui_ttf_override_path[0] ? ui_ttf_override_path : ui_ttf_default_path();
+}
+
+static uint16_t ui_be16(const uint8_t *p)
+{
+    return ((uint16_t)p[0] << 8) | p[1];
+}
+
+static int16_t ui_be16s(const uint8_t *p)
+{
+    return (int16_t)ui_be16(p);
+}
+
+static uint32_t ui_be32(const uint8_t *p)
+{
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | p[3];
+}
+
+static int ui_ttf_range(uint32_t offset, uint32_t length)
+{
+    return offset <= ui_ttf.len && length <= ui_ttf.len - offset;
+}
+
+static uint32_t ui_ttf_table(const char tag[4], uint32_t *length)
+{
+    uint16_t count;
+    if (!ui_ttf.data || ui_ttf.face > ui_ttf.len - 12U) {
+        return 0;
+    }
+    count = ui_be16(ui_ttf.data + ui_ttf.face + 4U);
+    if (!ui_ttf_range(ui_ttf.face + 12U, (uint32_t)count * 16U)) {
+        return 0;
+    }
+    for (uint16_t i = 0; i < count; ++i) {
+        const uint8_t *record = ui_ttf.data + ui_ttf.face + 12U + (uint32_t)i * 16U;
+        if (record[0] == (uint8_t)tag[0] && record[1] == (uint8_t)tag[1] &&
+            record[2] == (uint8_t)tag[2] && record[3] == (uint8_t)tag[3]) {
+            uint32_t offset = ui_be32(record + 8);
+            uint32_t size = ui_be32(record + 12);
+            if (ui_ttf_range(offset, size)) {
+                if (length) {
+                    *length = size;
                 }
-                close(fd);
-                leonos_psf_view_from_memory(ui_system_font, len, &ui_font_view);
+                return offset;
             }
         }
     }
-    if (ui_font_view.glyphs) {
-        return leonos_psf_view_glyph(&ui_font_view, ch);
-    }
-    return leonos_psf_glyph(ch);
+    return 0;
 }
 
-static const uint8_t *ui_metro_latin_glyph(char character)
+static void ui_ttf_unload_font(struct ui_ttf_font *font)
 {
-    uint8_t codepoint = (uint8_t)character;
-    if (!ui_theme_is_metro() || codepoint < UI_METRO_LATIN_FONT_FIRST ||
-        codepoint >= UI_METRO_LATIN_FONT_FIRST + UI_METRO_LATIN_FONT_COUNT) {
+    if (!font || !font->data) {
+        return;
+    }
+    free(font->data);
+    *font = (struct ui_ttf_font){0};
+}
+
+static void ui_ttf_reset(void)
+{
+    ui_ttf_unload_font(&ui_ttf_primary);
+    ui_ttf_unload_font(&ui_ttf_fallback);
+    ui_ttf = (struct ui_ttf_font){0};
+    ui_ttf_active_fallback = 0;
+    ui_ttf_checked = 0;
+    ui_ttf_metro = 0;
+    ui_ttf_mask_clock = 0;
+    for (uint32_t index = 0; index < UI_TTF_MASK_CACHE_ENTRIES; ++index) {
+        ui_ttf_mask_cache[index] = (struct ui_ttf_mask_cache_entry){0};
+    }
+    for (uint32_t index = 0; index < UI_TTF_METRIC_CACHE_ENTRIES; ++index) {
+        ui_ttf_metric_cache[index] = (struct ui_ttf_metric_cache_entry){0};
+    }
+}
+
+static int ui_ttf_set_path(char *target, const char *path)
+{
+    uint32_t length = 0;
+    if (path) {
+        while (path[length]) {
+            if (length + 1U >= UI_TTF_PATH_MAX) {
+                return -1;
+            }
+            ++length;
+        }
+    }
+    for (uint32_t index = 0; index < length; ++index) {
+        target[index] = path[index];
+    }
+    target[length] = 0;
+    ui_ttf_reset();
+    return 0;
+}
+
+int leonos_ui_set_font_path(const char *path)
+{
+    return ui_ttf_set_path(ui_ttf_override_path, path);
+}
+
+int leonos_ui_set_font_fallback_path(const char *path)
+{
+    return ui_ttf_set_path(ui_ttf_fallback_path, path);
+}
+
+static int ui_ttf_read_file(struct ui_ttf_font *font, const char *path)
+{
+    struct leonos_stat st;
+    int fd;
+    uint32_t length = 0;
+    if (stat(path, &st) != 0 || st.type != LEONOS_FS_TYPE_FILE ||
+        st.size < 12 || st.size > UI_TTF_MAX) {
         return 0;
     }
-    if (!ui_metro_latin_font_checked) {
-        struct leonos_stat stat_info;
-        ui_metro_latin_font_checked = 1;
-        if (stat(UI_METRO_LATIN_FONT_PATH, &stat_info) == 0 &&
-            stat_info.type == LEONOS_FS_TYPE_FILE &&
-            stat_info.size == sizeof(ui_metro_latin_font)) {
-            int fd = open(UI_METRO_LATIN_FONT_PATH, LEONOS_O_RDONLY, 0);
-            if (fd >= 0) {
-                uint32_t length = 0;
-                while (length < stat_info.size) {
-                    long got = read(fd, ui_metro_latin_font + length,
-                                    (uint32_t)stat_info.size - length);
-                    if (got <= 0) {
-                        break;
-                    }
-                    length += (uint32_t)got;
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    font->data = malloc((size_t)st.size);
+    if (!font->data) {
+        close(fd);
+        return 0;
+    }
+    while (length < st.size) {
+        long got = read(fd, font->data + length, (size_t)st.size - length);
+        if (got <= 0) {
+            break;
+        }
+        length += (uint32_t)got;
+    }
+    close(fd);
+    font->len = length;
+    if (length == st.size) {
+        return 1;
+    }
+    ui_ttf_unload_font(font);
+    return 0;
+}
+
+static int ui_ttf_load_font(struct ui_ttf_font *font, const char *path)
+{
+    uint32_t head_len, hhea_len, maxp_len, cmap_len, loca_len, glyf_len, hmtx_len;
+    uint32_t head, hhea, maxp;
+    ui_ttf = (struct ui_ttf_font){0};
+    if (!ui_ttf_read_file(&ui_ttf, path)) {
+        return 0;
+    }
+    if (ui_ttf.data[0] == 't' && ui_ttf.data[1] == 't' &&
+        ui_ttf.data[2] == 'c' && ui_ttf.data[3] == 'f') {
+        uint32_t face_count;
+        if (ui_ttf.len < 16U) {
+            ui_ttf_unload_font(&ui_ttf);
+            return 0;
+        }
+        face_count = ui_be32(ui_ttf.data + 8);
+        ui_ttf.face = ui_be32(ui_ttf.data + 12);
+        if (!face_count || face_count > (ui_ttf.len - 12U) / 4U ||
+            ui_ttf.face > ui_ttf.len - 12U) {
+            ui_ttf_unload_font(&ui_ttf);
+            return 0;
+        }
+    }
+    head = ui_ttf_table("head", &head_len);
+    hhea = ui_ttf_table("hhea", &hhea_len);
+    maxp = ui_ttf_table("maxp", &maxp_len);
+    ui_ttf.cmap = ui_ttf_table("cmap", &cmap_len);
+    ui_ttf.loca = ui_ttf_table("loca", &loca_len);
+    ui_ttf.glyf = ui_ttf_table("glyf", &glyf_len);
+    ui_ttf.hmtx = ui_ttf_table("hmtx", &hmtx_len);
+    if (!head || !hhea || !maxp || !ui_ttf.cmap || !ui_ttf.loca || !ui_ttf.glyf || !ui_ttf.hmtx ||
+        head_len < 54 || hhea_len < 36 || maxp_len < 6 || cmap_len < 4 ||
+        ui_be32(ui_ttf.data + ui_ttf.face) != 0x00010000U) {
+        ui_ttf_unload_font(&ui_ttf);
+        return 0;
+    }
+    ui_ttf.units_per_em = ui_be16(ui_ttf.data + head + 18);
+    ui_ttf.long_loca = ui_be16(ui_ttf.data + head + 50) != 0;
+    ui_ttf.ascender = ui_be16s(ui_ttf.data + hhea + 4);
+    ui_ttf.descender = ui_be16s(ui_ttf.data + hhea + 6);
+    ui_ttf.hmetrics_count = ui_be16(ui_ttf.data + hhea + 34);
+    ui_ttf.glyph_count = ui_be16(ui_ttf.data + maxp + 4);
+    ui_ttf.cmap_len = cmap_len;
+    if (!ui_ttf.units_per_em || ui_ttf.ascender <= ui_ttf.descender ||
+        !ui_ttf.glyph_count || !ui_ttf.hmetrics_count) {
+        ui_ttf_unload_font(&ui_ttf);
+        return 0;
+    }
+    *font = ui_ttf;
+    return 1;
+}
+
+static void ui_ttf_load(void)
+{
+    uint8_t metro = (uint8_t)ui_theme_is_metro();
+    if (ui_ttf_checked && ui_ttf_metro == metro) {
+        return;
+    }
+    ui_ttf_unload_font(&ui_ttf_primary);
+    ui_ttf_unload_font(&ui_ttf_fallback);
+    ui_ttf = (struct ui_ttf_font){0};
+    ui_ttf_checked = 1;
+    ui_ttf_metro = metro;
+    if (!ui_ttf_load_font(&ui_ttf_primary, ui_ttf_primary_path()) &&
+        (!ui_ttf_override_path[0] ||
+         !ui_ttf_load_font(&ui_ttf_primary, ui_ttf_default_path()))) {
+        return;
+    }
+    if (ui_ttf_fallback_path[0]) {
+        (void)ui_ttf_load_font(&ui_ttf_fallback, ui_ttf_fallback_path);
+    }
+    ui_ttf = ui_ttf_primary;
+    ui_ttf_active_fallback = 0;
+}
+
+static uint16_t ui_ttf_glyph_uncached(uint32_t codepoint)
+{
+    uint16_t tables;
+    uint32_t selected = 0;
+    uint16_t selected_format = 0;
+    if (!ui_ttf.data || codepoint > 0xffffU || ui_ttf.cmap_len < 4) {
+        return 0;
+    }
+    tables = ui_be16(ui_ttf.data + ui_ttf.cmap + 2);
+    if (4U + (uint32_t)tables * 8U > ui_ttf.cmap_len) {
+        return 0;
+    }
+    for (uint16_t i = 0; i < tables; ++i) {
+        const uint8_t *record = ui_ttf.data + ui_ttf.cmap + 4U + (uint32_t)i * 8U;
+        uint32_t offset = ui_be32(record + 4);
+        uint32_t pos = ui_ttf.cmap + offset;
+        uint16_t format;
+        if (offset >= ui_ttf.cmap_len || !ui_ttf_range(pos, 8)) {
+            continue;
+        }
+        format = ui_be16(ui_ttf.data + pos);
+        if (ui_be16(record) == 3 && ui_be16(record + 2) == 10 && format == 12) {
+            selected = pos;
+            selected_format = format;
+            break;
+        }
+        if (!selected && ui_be16(record) == 3 && ui_be16(record + 2) == 1 && format == 4) {
+            selected = pos;
+            selected_format = format;
+        }
+    }
+    if (!selected) {
+        return 0;
+    }
+    if (selected_format == 12) {
+        uint32_t length = ui_be32(ui_ttf.data + selected + 4);
+        uint32_t groups = ui_be32(ui_ttf.data + selected + 12);
+        uint32_t lo = 0;
+        uint32_t hi = groups;
+        if (length < 16 || !ui_ttf_range(selected, length) || groups > (length - 16U) / 12U) return 0;
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2U;
+            const uint8_t *group = ui_ttf.data + selected + 16U + mid * 12U;
+            uint32_t start = ui_be32(group);
+            uint32_t end = ui_be32(group + 4);
+            if (codepoint < start) hi = mid;
+            else if (codepoint > end) lo = mid + 1U;
+            else return (uint16_t)(ui_be32(group + 8) + codepoint - start);
+        }
+        return 0;
+    }
+    {
+        const uint8_t *map = ui_ttf.data + selected;
+        uint16_t length = ui_be16(map + 2);
+        uint16_t segments = ui_be16(map + 6) / 2U;
+        uint32_t end_offset = selected + 14;
+        uint32_t start_offset = end_offset + (uint32_t)segments * 2U + 2U;
+        uint32_t delta_offset = start_offset + (uint32_t)segments * 2U;
+        uint32_t range_offset = delta_offset + (uint32_t)segments * 2U;
+        if (length < 16 || !ui_ttf_range(selected, length) ||
+            range_offset + (uint32_t)segments * 2U > selected + length) {
+            return 0;
+        }
+        for (uint16_t i = 0; i < segments; ++i) {
+            uint16_t end = ui_be16(ui_ttf.data + end_offset + (uint32_t)i * 2U);
+            uint16_t start = ui_be16(ui_ttf.data + start_offset + (uint32_t)i * 2U);
+            uint16_t delta = ui_be16(ui_ttf.data + delta_offset + (uint32_t)i * 2U);
+            uint16_t range = ui_be16(ui_ttf.data + range_offset + (uint32_t)i * 2U);
+            if (codepoint > end) {
+                continue;
+            }
+            if (codepoint < start) {
+                return 0;
+            }
+            if (!range) {
+                return (uint16_t)(codepoint + delta);
+            }
+            {
+                uint32_t glyph_pos = range_offset + (uint32_t)i * 2U + range +
+                                     (codepoint - start) * 2U;
+                if (!ui_ttf_range(glyph_pos, 2) || glyph_pos + 2U > selected + length) {
+                    return 0;
                 }
-                close(fd);
-                if (length == sizeof(ui_metro_latin_font) &&
-                    ui_metro_latin_font[0] == 'M' &&
-                    ui_metro_latin_font[1] == 'S' &&
-                    ui_metro_latin_font[2] == 'F' &&
-                    ui_metro_latin_font[3] == '1' &&
-                    ui_metro_latin_font[4] == UI_METRO_LATIN_FONT_WIDTH &&
-                    ui_metro_latin_font[5] == UI_METRO_LATIN_FONT_HEIGHT &&
-                    ui_metro_latin_font[6] == UI_METRO_LATIN_FONT_FIRST &&
-                    ui_metro_latin_font[7] == UI_METRO_LATIN_FONT_COUNT) {
-                    ui_metro_latin_font_ready = 1;
+                {
+                    uint16_t glyph = ui_be16(ui_ttf.data + glyph_pos);
+                    return glyph ? (uint16_t)(glyph + delta) : 0;
                 }
             }
         }
     }
-    if (!ui_metro_latin_font_ready) {
+    return 0;
+}
+
+static uint16_t ui_ttf_glyph(uint32_t codepoint)
+{
+    uint32_t cache_index = (codepoint * 2654435761U) &
+                           (UI_TTF_METRIC_CACHE_ENTRIES - 1U);
+    struct ui_ttf_metric_cache_entry *entry = &ui_ttf_metric_cache[cache_index];
+    uint8_t metro = (uint8_t)ui_theme_is_metro();
+    uint16_t glyph;
+    ui_ttf_load();
+    if (!ui_ttf_primary.data) {
         return 0;
     }
-    return ui_metro_latin_font + UI_METRO_LATIN_FONT_HEADER_SIZE +
-           (uint32_t)(codepoint - UI_METRO_LATIN_FONT_FIRST) * UI_METRO_LATIN_GLYPH_BYTES;
+    if (entry->glyph_state && entry->codepoint == codepoint && entry->metro == metro) {
+        ui_ttf_active_fallback = entry->fallback;
+        ui_ttf = entry->fallback ? ui_ttf_fallback : ui_ttf_primary;
+        return entry->glyph;
+    }
+    ui_ttf = ui_ttf_primary;
+    ui_ttf_active_fallback = 0;
+    glyph = ui_ttf_glyph_uncached(codepoint);
+    if (!glyph && ui_ttf_fallback.data) {
+        ui_ttf = ui_ttf_fallback;
+        ui_ttf_active_fallback = 1;
+        glyph = ui_ttf_glyph_uncached(codepoint);
+    }
+    entry->codepoint = codepoint;
+    entry->glyph = glyph;
+    entry->metro = metro;
+    entry->fallback = ui_ttf_active_fallback;
+    entry->glyph_state = 1;
+    entry->state = 0;
+    return glyph;
+}
+
+static int ui_ttf_glyph_range(uint16_t glyph, uint32_t *offset, uint32_t *length)
+{
+    uint32_t first, last;
+    uint32_t entry = ui_ttf.loca + (uint32_t)glyph * (ui_ttf.long_loca ? 4U : 2U);
+    if (!ui_ttf.data || glyph >= ui_ttf.glyph_count || !ui_ttf_range(entry, ui_ttf.long_loca ? 8 : 4)) {
+        return 0;
+    }
+    first = ui_ttf.long_loca ? ui_be32(ui_ttf.data + entry) : (uint32_t)ui_be16(ui_ttf.data + entry) * 2U;
+    last = ui_ttf.long_loca ? ui_be32(ui_ttf.data + entry + 4) : (uint32_t)ui_be16(ui_ttf.data + entry + 2) * 2U;
+    if (last < first || !ui_ttf_range(ui_ttf.glyf + first, last - first)) {
+        return 0;
+    }
+    *offset = ui_ttf.glyf + first;
+    *length = last - first;
+    return 1;
+}
+
+static uint16_t ui_ttf_advance(uint16_t glyph, int16_t *bearing)
+{
+    uint32_t pos;
+    uint16_t advance;
+    if (glyph >= ui_ttf.glyph_count) {
+        return 0;
+    }
+    if (glyph < ui_ttf.hmetrics_count) {
+        pos = ui_ttf.hmtx + (uint32_t)glyph * 4U;
+        if (!ui_ttf_range(pos, 4)) {
+            return 0;
+        }
+        advance = ui_be16(ui_ttf.data + pos);
+        *bearing = ui_be16s(ui_ttf.data + pos + 2);
+        return advance;
+    }
+    pos = ui_ttf.hmtx + (uint32_t)(ui_ttf.hmetrics_count - 1U) * 4U;
+    if (!ui_ttf_range(pos, 4)) {
+        return 0;
+    }
+    advance = ui_be16(ui_ttf.data + pos);
+    pos = ui_ttf.hmtx + (uint32_t)ui_ttf.hmetrics_count * 4U +
+          (uint32_t)(glyph - ui_ttf.hmetrics_count) * 2U;
+    if (!ui_ttf_range(pos, 2)) {
+        return 0;
+    }
+    *bearing = ui_be16s(ui_ttf.data + pos);
+    return advance;
+}
+
+static uint32_t ui_ttf_pixel_width(uint32_t codepoint, uint32_t height,
+                                   uint32_t fallback)
+{
+    uint16_t glyph;
+    uint16_t advance;
+    int16_t bearing;
+    int32_t line_height;
+    uint64_t scaled;
+    uint32_t cache_index;
+    struct ui_ttf_metric_cache_entry *cache_entry;
+    if (!height) {
+        return 0;
+    }
+    if (codepoint == '\n' || codepoint == '\r') {
+        return 0;
+    }
+    if (codepoint == '\t') {
+        uint32_t space = ui_ttf_pixel_width(' ', height, fallback);
+        return space <= UINT32_MAX / 4U ? space * 4U : UINT32_MAX;
+    }
+    if (height == LEONOS_FONT_H) {
+        cache_index = (codepoint * 2654435761U) & (UI_TTF_METRIC_CACHE_ENTRIES - 1U);
+        cache_entry = &ui_ttf_metric_cache[cache_index];
+        if (cache_entry->state && cache_entry->codepoint == codepoint &&
+            cache_entry->metro == (uint8_t)ui_theme_is_metro()) {
+            return cache_entry->width;
+        }
+    } else {
+        cache_entry = 0;
+    }
+    glyph = ui_ttf_glyph(codepoint);
+    if (!glyph && codepoint != '?') {
+        glyph = ui_ttf_glyph('?');
+    }
+    if (!glyph || !ui_ttf.data) {
+        scaled = fallback;
+    } else {
+        advance = ui_ttf_advance(glyph, &bearing);
+        line_height = ui_ttf.ascender - ui_ttf.descender;
+        if (!advance || line_height <= 0) {
+            scaled = fallback;
+        } else {
+            scaled = ((uint64_t)advance * height + (uint32_t)line_height / 2U) /
+                     (uint32_t)line_height;
+            if (!scaled) {
+                scaled = 1U;
+            }
+        }
+    }
+    if (cache_entry && scaled <= UINT16_MAX) {
+        cache_entry->codepoint = codepoint;
+        cache_entry->width = (uint16_t)scaled;
+        cache_entry->metro = (uint8_t)ui_theme_is_metro();
+        cache_entry->fallback = ui_ttf_active_fallback;
+        cache_entry->state = 1;
+    }
+    return (uint32_t)scaled;
+}
+
+static int ui_ttf_simple_points(uint16_t glyph, uint16_t *point_count, uint16_t *contour_count)
+{
+    uint32_t offset, length, pos;
+    int16_t contours;
+    uint16_t count;
+    int32_t coordinate;
+    if (!ui_ttf_glyph_range(glyph, &offset, &length) || length < 10) {
+        return 0;
+    }
+    contours = ui_be16s(ui_ttf.data + offset);
+    if (contours < 0 || (uint16_t)contours > UI_TTF_POINTS_MAX) {
+        return 0;
+    }
+    if (contours == 0) {
+        *point_count = 0;
+        *contour_count = 0;
+        return 1;
+    }
+    pos = offset + 10;
+    if (!ui_ttf_range(pos, (uint32_t)contours * 2U + 2U) || pos + (uint32_t)contours * 2U + 2U > offset + length) {
+        return 0;
+    }
+    for (uint16_t i = 0; i < (uint16_t)contours; ++i) {
+        ui_ttf_scratch_contours[i] = ui_be16(ui_ttf.data + pos + (uint32_t)i * 2U);
+    }
+    count = (uint16_t)(ui_ttf_scratch_contours[contours - 1] + 1U);
+    if (!count || count > UI_TTF_POINTS_MAX) {
+        return 0;
+    }
+    pos += (uint32_t)contours * 2U;
+    {
+        uint16_t instructions = ui_be16(ui_ttf.data + pos);
+        pos += 2U + instructions;
+    }
+    if (pos > offset + length) {
+        return 0;
+    }
+    for (uint16_t i = 0; i < count;) {
+        uint8_t flag;
+        if (pos >= offset + length) {
+            return 0;
+        }
+        flag = ui_ttf.data[pos++];
+        ui_ttf_flags[i++] = flag;
+        if (flag & 0x08U) {
+            uint8_t repeat;
+            if (pos >= offset + length) {
+                return 0;
+            }
+            repeat = ui_ttf.data[pos++];
+            if ((uint32_t)i + repeat > count) {
+                return 0;
+            }
+            while (repeat--) {
+                ui_ttf_flags[i++] = flag;
+            }
+        }
+    }
+    coordinate = 0;
+    for (uint16_t i = 0; i < count; ++i) {
+        uint8_t flag = ui_ttf_flags[i];
+        if (flag & 0x02U) {
+            if (pos >= offset + length) return 0;
+            coordinate += (flag & 0x10U) ? ui_ttf.data[pos] : -(int32_t)ui_ttf.data[pos];
+            ++pos;
+        } else if (!(flag & 0x10U)) {
+            if (pos + 2U > offset + length) return 0;
+            coordinate += ui_be16s(ui_ttf.data + pos);
+            pos += 2U;
+        }
+        ui_ttf_scratch_points[i].x = coordinate;
+        ui_ttf_scratch_points[i].on_curve = (flag & 0x01U) != 0;
+    }
+    coordinate = 0;
+    for (uint16_t i = 0; i < count; ++i) {
+        uint8_t flag = ui_ttf_flags[i];
+        if (flag & 0x04U) {
+            if (pos >= offset + length) return 0;
+            coordinate += (flag & 0x20U) ? ui_ttf.data[pos] : -(int32_t)ui_ttf.data[pos];
+            ++pos;
+        } else if (!(flag & 0x20U)) {
+            if (pos + 2U > offset + length) return 0;
+            coordinate += ui_be16s(ui_ttf.data + pos);
+            pos += 2U;
+        }
+        ui_ttf_scratch_points[i].y = coordinate;
+    }
+    *point_count = count;
+    *contour_count = (uint16_t)contours;
+    return 1;
+}
+
+static int ui_ttf_append_glyph(uint16_t glyph, int32_t a, int32_t b, int32_t c, int32_t d,
+                               int32_t tx, int32_t ty, uint16_t depth,
+                               uint16_t *point_count, uint16_t *contour_count)
+{
+    uint32_t offset, length;
+    int16_t contours;
+    if (depth > 8 || !ui_ttf_glyph_range(glyph, &offset, &length) || length < 10) return 0;
+    contours = ui_be16s(ui_ttf.data + offset);
+    if (contours >= 0) {
+        uint16_t points, contour_total;
+        uint16_t base = *point_count;
+        if (!ui_ttf_simple_points(glyph, &points, &contour_total) ||
+            points > UI_TTF_POINTS_MAX - base || contour_total > UI_TTF_POINTS_MAX - *contour_count) return 0;
+        for (uint16_t index = 0; index < points; ++index) {
+            int32_t source_x = ui_ttf_scratch_points[index].x;
+            int32_t source_y = ui_ttf_scratch_points[index].y;
+            ui_ttf_points[base + index].x = (int32_t)(((int64_t)a * source_x + (int64_t)b * source_y) >> 14) + tx;
+            ui_ttf_points[base + index].y = (int32_t)(((int64_t)c * source_x + (int64_t)d * source_y) >> 14) + ty;
+            ui_ttf_points[base + index].on_curve = ui_ttf_scratch_points[index].on_curve;
+        }
+        for (uint16_t index = 0; index < contour_total; ++index)
+            ui_ttf_contours[*contour_count + index] = (uint16_t)(base + ui_ttf_scratch_contours[index]);
+        *point_count = (uint16_t)(base + points);
+        *contour_count = (uint16_t)(*contour_count + contour_total);
+        return 1;
+    }
+    if (contours != -1) return 0;
+    {
+        uint32_t pos = offset + 10;
+        uint16_t flags;
+        do {
+            uint16_t component;
+            int32_t arg_x = 0, arg_y = 0;
+            int32_t ca = 16384, cb = 0, cc = 0, cd = 16384;
+            if (pos + 4U > offset + length) return 0;
+            flags = ui_be16(ui_ttf.data + pos);
+            component = ui_be16(ui_ttf.data + pos + 2);
+            pos += 4U;
+            if (flags & 0x0001U) {
+                if (pos + 4U > offset + length) return 0;
+                arg_x = ui_be16s(ui_ttf.data + pos);
+                arg_y = ui_be16s(ui_ttf.data + pos + 2);
+                pos += 4U;
+            } else {
+                if (pos + 2U > offset + length) return 0;
+                arg_x = (int8_t)ui_ttf.data[pos];
+                arg_y = (int8_t)ui_ttf.data[pos + 1];
+                pos += 2U;
+            }
+            if (!(flags & 0x0002U)) return 0;
+            if (flags & 0x0008U) {
+                if (pos + 2U > offset + length) return 0;
+                ca = cd = ui_be16s(ui_ttf.data + pos);
+                pos += 2U;
+            } else if (flags & 0x0040U) {
+                if (pos + 4U > offset + length) return 0;
+                ca = ui_be16s(ui_ttf.data + pos);
+                cd = ui_be16s(ui_ttf.data + pos + 2);
+                pos += 4U;
+            } else if (flags & 0x0080U) {
+                if (pos + 8U > offset + length) return 0;
+                ca = ui_be16s(ui_ttf.data + pos);
+                cb = ui_be16s(ui_ttf.data + pos + 2);
+                cc = ui_be16s(ui_ttf.data + pos + 4);
+                cd = ui_be16s(ui_ttf.data + pos + 6);
+                pos += 8U;
+            }
+            if (!ui_ttf_append_glyph(component,
+                                     (int32_t)(((int64_t)a * ca + (int64_t)b * cc) >> 14),
+                                     (int32_t)(((int64_t)a * cb + (int64_t)b * cd) >> 14),
+                                     (int32_t)(((int64_t)c * ca + (int64_t)d * cc) >> 14),
+                                     (int32_t)(((int64_t)c * cb + (int64_t)d * cd) >> 14),
+                                     (int32_t)(((int64_t)a * arg_x + (int64_t)b * arg_y) >> 14) + tx,
+                                     (int32_t)(((int64_t)c * arg_x + (int64_t)d * arg_y) >> 14) + ty,
+                                     (uint16_t)(depth + 1U), point_count, contour_count)) return 0;
+        } while (flags & 0x0020U);
+    }
+    return 1;
+}
+
+static int ui_ttf_points_for_glyph(uint16_t glyph, uint16_t *point_count, uint16_t *contour_count)
+{
+    *point_count = 0;
+    *contour_count = 0;
+    return ui_ttf_append_glyph(glyph, 16384, 0, 0, 16384, 0, 0, 0, point_count, contour_count);
+}
+
+static int32_t ui_ttf_scale_point(int32_t value, int32_t scale)
+{
+    return (int32_t)((int64_t)value * scale);
+}
+
+static int ui_ttf_add_edge(uint32_t *count, int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+{
+    if (*count >= UI_TTF_EDGES_MAX || (x0 == x1 && y0 == y1)) {
+        return *count < UI_TTF_EDGES_MAX;
+    }
+    ui_ttf_edges[*count].x0 = x0;
+    ui_ttf_edges[*count].y0 = y0;
+    ui_ttf_edges[*count].x1 = x1;
+    ui_ttf_edges[*count].y1 = y1;
+    ++*count;
+    return 1;
+}
+
+static int ui_ttf_add_quad(uint32_t *count, struct ui_ttf_point a, struct ui_ttf_point b,
+                           struct ui_ttf_point c, int32_t origin_x, int32_t origin_y,
+                           int32_t scale, int32_t baseline)
+{
+    int32_t previous_x = origin_x + ui_ttf_scale_point(a.x, scale);
+    int32_t previous_y = origin_y + baseline - ui_ttf_scale_point(a.y, scale);
+    for (int32_t step = 1; step <= 4; ++step) {
+        int32_t left = 4 - step;
+        int32_t px = (left * left * a.x + 2 * left * step * b.x + step * step * c.x) / 16;
+        int32_t py = (left * left * a.y + 2 * left * step * b.y + step * step * c.y) / 16;
+        int32_t next_x = origin_x + ui_ttf_scale_point(px, scale);
+        int32_t next_y = origin_y + baseline - ui_ttf_scale_point(py, scale);
+        if (!ui_ttf_add_edge(count, previous_x, previous_y, next_x, next_y)) return 0;
+        previous_x = next_x;
+        previous_y = next_y;
+    }
+    return 1;
+}
+
+static int ui_ttf_build_edges(uint16_t glyph, uint32_t cell_h, uint32_t x, uint32_t y, uint32_t *edge_count)
+{
+    uint16_t points, contours;
+    int16_t bearing;
+    uint16_t advance = ui_ttf_advance(glyph, &bearing);
+    int32_t line_height = ui_ttf.ascender - ui_ttf.descender;
+    int32_t scale, baseline, origin_x, origin_y;
+    uint32_t edges = 0;
+    if (!advance || !line_height || !ui_ttf_points_for_glyph(glyph, &points, &contours)) return 0;
+    scale = (int32_t)(((uint64_t)cell_h << 16) / line_height);
+    if (scale <= 0) return 0;
+    (void)bearing;
+    origin_x = (int32_t)x << 16;
+    origin_y = ((int32_t)y << 16) + (((int32_t)cell_h << 16) - ui_ttf_scale_point(line_height, scale)) / 2;
+    baseline = ui_ttf_scale_point(ui_ttf.ascender, scale);
+    for (uint16_t contour = 0, start = 0; contour < contours; ++contour) {
+        uint16_t end = ui_ttf_contours[contour];
+        struct ui_ttf_point first = ui_ttf_points[start];
+        struct ui_ttf_point last = ui_ttf_points[end];
+        struct ui_ttf_point previous;
+        struct ui_ttf_point off_curve;
+        struct ui_ttf_point contour_start;
+        uint8_t has_off_curve = 0;
+        if (first.on_curve) previous = first;
+        else if (last.on_curve) previous = last;
+        else {
+            previous.x = (first.x + last.x) / 2;
+            previous.y = (first.y + last.y) / 2;
+            previous.on_curve = 1;
+        }
+        contour_start = previous;
+        for (uint16_t index = start; index <= end; ++index) {
+            struct ui_ttf_point point = ui_ttf_points[index];
+            if (point.on_curve) {
+                if (has_off_curve) {
+                    if (!ui_ttf_add_quad(&edges, previous, off_curve, point, origin_x, origin_y, scale, baseline)) return 0;
+                    has_off_curve = 0;
+                } else if (!ui_ttf_add_edge(&edges,
+                           origin_x + ui_ttf_scale_point(previous.x, scale), origin_y + baseline - ui_ttf_scale_point(previous.y, scale),
+                           origin_x + ui_ttf_scale_point(point.x, scale), origin_y + baseline - ui_ttf_scale_point(point.y, scale))) return 0;
+                previous = point;
+            } else if (has_off_curve) {
+                struct ui_ttf_point middle;
+                middle.x = (off_curve.x + point.x) / 2;
+                middle.y = (off_curve.y + point.y) / 2;
+                middle.on_curve = 1;
+                if (!ui_ttf_add_quad(&edges, previous, off_curve, middle, origin_x, origin_y, scale, baseline)) return 0;
+                previous = middle;
+                off_curve = point;
+            } else {
+                off_curve = point;
+                has_off_curve = 1;
+            }
+        }
+        if (has_off_curve) {
+            if (!ui_ttf_add_quad(&edges, previous, off_curve, contour_start,
+                                 origin_x, origin_y, scale, baseline)) return 0;
+        } else if (!ui_ttf_add_edge(&edges,
+                   origin_x + ui_ttf_scale_point(previous.x, scale), origin_y + baseline - ui_ttf_scale_point(previous.y, scale),
+                   origin_x + ui_ttf_scale_point(contour_start.x, scale), origin_y + baseline - ui_ttf_scale_point(contour_start.y, scale))) return 0;
+        start = (uint16_t)(end + 1U);
+    }
+    *edge_count = edges;
+    return 1;
 }
 
 static uint32_t ui_blend_color(uint32_t background, uint32_t foreground, uint8_t alpha)
 {
     uint32_t inverse = 255U - alpha;
-    uint32_t red = (((foreground >> 16) & 0xffU) * alpha +
-                    ((background >> 16) & 0xffU) * inverse + 127U) / 255U;
-    uint32_t green = (((foreground >> 8) & 0xffU) * alpha +
-                      ((background >> 8) & 0xffU) * inverse + 127U) / 255U;
-    uint32_t blue = ((foreground & 0xffU) * alpha +
-                     (background & 0xffU) * inverse + 127U) / 255U;
+    uint32_t red = (((foreground >> 16) & 0xffU) * alpha + ((background >> 16) & 0xffU) * inverse + 127U) / 255U;
+    uint32_t green = (((foreground >> 8) & 0xffU) * alpha + ((background >> 8) & 0xffU) * inverse + 127U) / 255U;
+    uint32_t blue = ((foreground & 0xffU) * alpha + (background & 0xffU) * inverse + 127U) / 255U;
     return (red << 16) | (green << 8) | blue;
 }
 
 static uint32_t ui_surface_color(const struct leonos_ui_surface *surface, uint32_t x, uint32_t y)
 {
-    if (!surface || !surface->pixels || x >= surface->width || y >= surface->height) {
+    return (!surface || !surface->pixels || x >= surface->width || y >= surface->height) ? 0 : surface->pixels[(uint64_t)y * surface->stride + x];
+}
+
+static void ui_tofu(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t fg, uint32_t bg, int transparent)
+{
+    if (!transparent) leonos_ui_rect(surface, x, y, w, h, bg);
+    if (w < 3 || h < 3) return;
+    leonos_ui_rect(surface, x + 1, y + 1, w - 2, 1, fg);
+    leonos_ui_rect(surface, x + 1, y + h - 2, w - 2, 1, fg);
+    leonos_ui_rect(surface, x + 1, y + 1, 1, h - 2, fg);
+    leonos_ui_rect(surface, x + w - 2, y + 1, 1, h - 2, fg);
+}
+
+static void ui_ttf_sort_intersections(int32_t low, int32_t high)
+{
+    while (low < high) {
+        int32_t left = low;
+        int32_t right = high;
+        int32_t pivot = ui_ttf_intersections[low + (high - low) / 2].x;
+        while (left <= right) {
+            while (ui_ttf_intersections[left].x < pivot) {
+                ++left;
+            }
+            while (ui_ttf_intersections[right].x > pivot) {
+                --right;
+            }
+            if (left <= right) {
+                struct ui_ttf_intersection swap = ui_ttf_intersections[left];
+                ui_ttf_intersections[left] = ui_ttf_intersections[right];
+                ui_ttf_intersections[right] = swap;
+                ++left;
+                --right;
+            }
+        }
+        if (right - low < high - left) {
+            if (low < right) {
+                ui_ttf_sort_intersections(low, right);
+            }
+            low = left;
+        } else {
+            if (left < high) {
+                ui_ttf_sort_intersections(left, high);
+            }
+            high = right;
+        }
+    }
+}
+
+static uint32_t ui_ttf_intersections_at(const struct ui_ttf_edge *edge_data,
+                                        uint32_t edges, int32_t sample_y)
+{
+    uint32_t count = 0;
+    for (uint32_t index = 0; index < edges; ++index) {
+        const struct ui_ttf_edge *edge = &edge_data[index];
+        int32_t dy = edge->y1 - edge->y0;
+        if (!dy || !((edge->y0 <= sample_y && sample_y < edge->y1) ||
+                     (edge->y1 <= sample_y && sample_y < edge->y0))) {
+            continue;
+        }
+        if (count < UI_TTF_EDGES_MAX) {
+            int64_t numerator = (int64_t)(sample_y - edge->y0) *
+                                (edge->x1 - edge->x0);
+            ui_ttf_intersections[count].x = edge->x0 + (int32_t)(numerator / dy);
+            ui_ttf_intersections[count].winding = dy > 0 ? 1 : -1;
+            ++count;
+        }
+    }
+    if (count > 1) {
+        ui_ttf_sort_intersections(0, (int32_t)count - 1);
+    }
+    return count;
+}
+
+static void ui_ttf_accumulate_row(uint8_t *coverage, uint32_t width, uint32_t edges,
+                                  uint32_t origin_x, uint32_t origin_y, uint32_t row,
+                                  int metro, const struct ui_ttf_edge *edge_data)
+{
+    uint32_t samples = metro ? 2U : 1U;
+    for (uint32_t sy = 0; sy < samples; ++sy) {
+        int32_t offset = samples == 1U ? 32768 : (sy ? 49152 : 16384);
+        uint32_t intersections = ui_ttf_intersections_at(
+            edge_data, edges, ((int32_t)(origin_y + row) << 16) + offset);
+        uint32_t intersection = 0;
+        int winding = 0;
+        for (uint32_t column = 0; column < width; ++column) {
+            for (uint32_t sx = 0; sx < samples; ++sx) {
+                int32_t sample_x = ((int32_t)(origin_x + column) << 16) +
+                                   (samples == 1U ? 32768 : (sx ? 49152 : 16384));
+                while (intersection < intersections &&
+                       ui_ttf_intersections[intersection].x <= sample_x) {
+                    winding += ui_ttf_intersections[intersection].winding;
+                    ++intersection;
+                }
+                if (winding) {
+                    ++coverage[column];
+                }
+            }
+        }
+    }
+}
+
+static void ui_ttf_mask_row_to_alpha(uint8_t *coverage, uint32_t width, int metro)
+{
+    for (uint32_t col = 0; col < width; ++col) {
+        coverage[col] = metro
+                            ? (uint8_t)((coverage[col] * 255U + 2U) / 4U)
+                            : (coverage[col] ? 255U : 0U);
+    }
+}
+
+static int ui_ttf_build_codepoint_edges(uint32_t codepoint, uint32_t h,
+                                        uint32_t x, uint32_t y, uint32_t *edges)
+{
+    uint16_t glyph = ui_ttf_glyph(codepoint);
+    if (!glyph) {
+        glyph = ui_ttf_glyph('?');
+    }
+    return glyph && ui_ttf_build_edges(glyph, h, x, y, edges);
+}
+
+static int ui_ttf_render_mask(uint8_t *mask, uint32_t w, uint32_t h,
+                              uint32_t codepoint)
+{
+    uint16_t glyph = ui_ttf_glyph(codepoint);
+    uint32_t edges;
+    if (!glyph) {
+        glyph = ui_ttf_glyph('?');
+    }
+    if (!glyph || !ui_ttf_build_edges(glyph, h, 0, 0, &edges)) {
         return 0;
     }
-    return surface->pixels[(uint64_t)y * surface->stride + x];
+    for (uint32_t row = 0; row < h; ++row) {
+        uint8_t *coverage = mask + row * w;
+        for (uint32_t col = 0; col < w; ++col) {
+            coverage[col] = 0;
+        }
+        ui_ttf_accumulate_row(coverage, w, edges, 0, 0, row,
+                              ui_theme_is_metro(), ui_ttf_edges);
+        ui_ttf_mask_row_to_alpha(coverage, w, ui_theme_is_metro());
+    }
+    return 1;
 }
 
-static uint16_t ui_read_le16(const uint8_t *p)
+static struct ui_ttf_mask_cache_entry *ui_ttf_mask_cache_get(uint32_t codepoint,
+                                                               uint32_t w, uint32_t h,
+                                                               uint8_t fallback)
 {
-    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-}
-
-static uint32_t ui_read_le32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static void ui_load_cjk_font(void)
-{
-    if (ui_cjk_font_checked) {
-        return;
+    uint32_t oldest = 0;
+    uint32_t oldest_stamp = UINT32_MAX;
+    uint8_t metro = (uint8_t)ui_theme_is_metro();
+    struct ui_ttf_mask_cache_entry *entry;
+    ++ui_ttf_mask_clock;
+    if (!ui_ttf_mask_clock) {
+        ui_ttf_mask_clock = 1;
     }
-    ui_cjk_font_checked = 1;
-    struct leonos_stat st;
-    if (stat(UI_CJK_FONT_PATH, &st) != 0 ||
-        st.type != LEONOS_FS_TYPE_FILE ||
-        st.size < 24 || st.size > UI_CJK_FONT_MAX) {
-        return;
-    }
-    ui_cjk_font = malloc((size_t)st.size);
-    if (!ui_cjk_font) {
-        return;
-    }
-    int fd = open(UI_CJK_FONT_PATH, LEONOS_O_RDONLY, 0);
-    if (fd < 0) {
-        free(ui_cjk_font);
-        ui_cjk_font = 0;
-        return;
-    }
-    uint32_t len = 0;
-    while (len < st.size) {
-        long got = read(fd, ui_cjk_font + len, (uint32_t)st.size - len);
-        if (got <= 0) {
+    for (uint32_t index = 0; index < UI_TTF_MASK_CACHE_ENTRIES; ++index) {
+        entry = &ui_ttf_mask_cache[index];
+        if (entry->state && entry->codepoint == codepoint && entry->width == w &&
+            entry->height == h && entry->metro == metro && entry->fallback == fallback) {
+            entry->stamp = ui_ttf_mask_clock;
+            return entry;
+        }
+        if (!entry->state) {
+            oldest = index;
+            oldest_stamp = 0;
             break;
         }
-        len += (uint32_t)got;
+        if (entry->stamp < oldest_stamp) {
+            oldest_stamp = entry->stamp;
+            oldest = index;
+        }
     }
-    close(fd);
-    if (len < 24 ||
-        ui_cjk_font[0] != 'L' || ui_cjk_font[1] != 'B' ||
-        ui_cjk_font[2] != 'F' || ui_cjk_font[3] != '1' ||
-        ui_read_le16(ui_cjk_font + 4) != 16 ||
-        ui_read_le16(ui_cjk_font + 6) != 16) {
-        free(ui_cjk_font);
-        ui_cjk_font = 0;
-        return;
-    }
-    ui_cjk_glyph_bytes = ui_read_le16(ui_cjk_font + 8);
-    ui_cjk_font_count = ui_read_le32(ui_cjk_font + 12);
-    ui_cjk_index_offset = ui_read_le32(ui_cjk_font + 16);
-    ui_cjk_bitmap_offset = ui_read_le32(ui_cjk_font + 20);
-    if (ui_cjk_glyph_bytes != 32 ||
-        ui_cjk_index_offset + ui_cjk_font_count * 8u > len ||
-        ui_cjk_bitmap_offset > len) {
-        ui_cjk_font_count = 0;
-        free(ui_cjk_font);
-        ui_cjk_font = 0;
-        return;
-    }
-    ui_cjk_font_len = len;
+    entry = &ui_ttf_mask_cache[oldest];
+    entry->codepoint = codepoint;
+    entry->width = (uint16_t)w;
+    entry->height = (uint16_t)h;
+    entry->metro = metro;
+    entry->fallback = fallback;
+    entry->stamp = ui_ttf_mask_clock;
+    entry->state = ui_ttf_render_mask(ui_ttf_mask_data[oldest], w, h, codepoint) ? 1 : 2;
+    return entry;
 }
 
-static const uint8_t *ui_cjk_glyph(uint32_t codepoint)
+static void ui_ttf_blit_mask(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                             uint32_t w, uint32_t h, const uint8_t *mask,
+                             uint32_t fg, uint32_t bg, int transparent)
 {
-    ui_load_cjk_font();
-    if (!ui_cjk_font_count) {
-        return 0;
+    if (!transparent) {
+        leonos_ui_rect(surface, x, y, w, h, bg);
     }
-    uint32_t lo = 0;
-    uint32_t hi = ui_cjk_font_count;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2u;
-        const uint8_t *entry = ui_cjk_font + ui_cjk_index_offset + mid * 8u;
-        uint32_t cp = ui_read_le32(entry);
-        uint32_t off = ui_read_le32(entry + 4);
-        if (cp == codepoint) {
-            if (off + ui_cjk_glyph_bytes <= ui_cjk_font_len) {
-                return ui_cjk_font + off;
+    for (uint32_t row = 0; row < h; ++row) {
+        for (uint32_t col = 0; col < w; ++col) {
+            uint8_t alpha = mask[row * w + col];
+            if (alpha) {
+                uint32_t base = transparent ? ui_surface_color(surface, x + col, y + row) : bg;
+                leonos_ui_pixel(surface, x + col, y + row, ui_blend_color(base, fg, alpha));
             }
-            return 0;
-        }
-        if (cp < codepoint) {
-            lo = mid + 1u;
-        } else {
-            hi = mid;
         }
     }
-    return 0;
+}
+
+static void ui_ttf_raster_surface(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                                  uint32_t w, uint32_t h, uint32_t edges,
+                                  uint32_t fg, uint32_t bg, int transparent)
+{
+    uint8_t *coverage = ui_ttf_row_coverage;
+    int dynamic_coverage = 0;
+    if (w > UI_TTF_RASTER_WIDTH_MAX) {
+        coverage = malloc(w);
+        if (!coverage) {
+            return;
+        }
+        dynamic_coverage = 1;
+    }
+    if (!transparent) {
+        leonos_ui_rect(surface, x, y, w, h, bg);
+    }
+    for (uint32_t row = 0; row < h; ++row) {
+        for (uint32_t col = 0; col < w; ++col) {
+            coverage[col] = 0;
+        }
+        ui_ttf_accumulate_row(coverage, w, edges, x, y, row, ui_theme_is_metro(),
+                              ui_ttf_edges);
+        for (uint32_t col = 0; col < w; ++col) {
+            uint8_t alpha = ui_theme_is_metro()
+                                ? (uint8_t)((coverage[col] * 255U + 2U) / 4U)
+                                : (coverage[col] ? 255U : 0U);
+            if (alpha) {
+                uint32_t base = transparent ? ui_surface_color(surface, x + col, y + row) : bg;
+                leonos_ui_pixel(surface, x + col, y + row, ui_blend_color(base, fg, alpha));
+            }
+        }
+    }
+    if (dynamic_coverage) {
+        free(coverage);
+    }
+}
+
+static void ui_ttf_draw_direct(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                               uint32_t w, uint32_t h, uint32_t codepoint,
+                               uint32_t fg, uint32_t bg, int transparent)
+{
+    uint32_t edges;
+    if (!ui_ttf_build_codepoint_edges(codepoint, h, x, y, &edges)) {
+        ui_tofu(surface, x, y, w, h, fg, bg, transparent);
+        return;
+    }
+    ui_ttf_raster_surface(surface, x, y, w, h, edges, fg, bg, transparent);
+}
+
+static void ui_ttf_draw(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                        uint32_t codepoint, uint32_t fg, uint32_t bg, int transparent)
+{
+    const uint8_t *mask_data;
+    uint16_t glyph;
+    if (codepoint == ' ' || codepoint == '\t') {
+        if (!transparent) {
+            leonos_ui_rect(surface, x, y, w, h, bg);
+        }
+        return;
+    }
+    if (!w || !h) {
+        return;
+    }
+    if (w > UI_TTF_MASK_CACHE_DIMENSION || h > UI_TTF_MASK_CACHE_DIMENSION) {
+        ui_ttf_draw_direct(surface, x, y, w, h, codepoint, fg, bg, transparent);
+        return;
+    }
+    glyph = ui_ttf_glyph(codepoint);
+    if (!glyph && codepoint != '?') {
+        (void)ui_ttf_glyph('?');
+    }
+    struct ui_ttf_mask_cache_entry *entry = ui_ttf_mask_cache_get(
+        codepoint, w, h, ui_ttf_active_fallback);
+    if (entry->state != 1) {
+        ui_tofu(surface, x, y, w, h, fg, bg, transparent);
+        return;
+    }
+    mask_data = ui_ttf_mask_data[entry - ui_ttf_mask_cache];
+    ui_ttf_blit_mask(surface, x, y, w, h, mask_data, fg, bg, transparent);
+}
+
+uint32_t ui_strlen(const char *text)
+{
+    uint32_t length = 0;
+    while (text && text[length]) ++length;
+    return length;
 }
 
 static int ui_utf8_cont(uint8_t byte)
 {
-    return (byte & 0xc0u) == 0x80u;
+    return (byte & 0xc0U) == 0x80U;
 }
 
-uint32_t ui_decode_utf8(const char *text, uint32_t len,
-                               uint32_t off, uint32_t *byte_len)
+uint32_t ui_decode_utf8(const char *text, uint32_t len, uint32_t off, uint32_t *byte_len)
 {
-    const uint8_t *s = (const uint8_t *)text;
-    uint8_t b0;
-    if (byte_len) {
-        *byte_len = 1;
+    const uint8_t *bytes = (const uint8_t *)text;
+    uint8_t first;
+    if (byte_len) *byte_len = 1;
+    if (!text || off >= len) return LEONOS_TEXT_REPLACEMENT_CHAR;
+    first = bytes[off];
+    if (first < 0x80U) return first;
+    if (first < 0xc2U) return LEONOS_TEXT_REPLACEMENT_CHAR;
+    if (first < 0xe0U && off + 1U < len && ui_utf8_cont(bytes[off + 1U])) {
+        if (byte_len) *byte_len = 2;
+        return ((uint32_t)(first & 0x1fU) << 6) | (bytes[off + 1U] & 0x3fU);
     }
-    if (!text || off >= len) {
-        return LEONOS_TEXT_REPLACEMENT_CHAR;
+    if (first < 0xf0U && off + 2U < len && ui_utf8_cont(bytes[off + 1U]) && ui_utf8_cont(bytes[off + 2U]) &&
+        !(first == 0xe0U && bytes[off + 1U] < 0xa0U) && !(first == 0xedU && bytes[off + 1U] >= 0xa0U)) {
+        if (byte_len) *byte_len = 3;
+        return ((uint32_t)(first & 0x0fU) << 12) | ((uint32_t)(bytes[off + 1U] & 0x3fU) << 6) | (bytes[off + 2U] & 0x3fU);
     }
-    b0 = s[off];
-    if (b0 < 0x80u) {
-        return b0;
-    }
-    if (b0 < 0xc2u) {
-        return LEONOS_TEXT_REPLACEMENT_CHAR;
-    }
-    if (b0 < 0xe0u) {
-        if (off + 1u >= len || !ui_utf8_cont(s[off + 1u])) {
-            return LEONOS_TEXT_REPLACEMENT_CHAR;
-        }
-        if (byte_len) {
-            *byte_len = 2;
-        }
-        return ((uint32_t)(b0 & 0x1fu) << 6) | (uint32_t)(s[off + 1u] & 0x3fu);
-    }
-    if (b0 < 0xf0u) {
-        uint8_t b1;
-        uint8_t b2;
-        if (off + 2u >= len) {
-            return LEONOS_TEXT_REPLACEMENT_CHAR;
-        }
-        b1 = s[off + 1u];
-        b2 = s[off + 2u];
-        if (!ui_utf8_cont(b1) || !ui_utf8_cont(b2) ||
-            (b0 == 0xe0u && b1 < 0xa0u) ||
-            (b0 == 0xedu && b1 >= 0xa0u)) {
-            return LEONOS_TEXT_REPLACEMENT_CHAR;
-        }
-        if (byte_len) {
-            *byte_len = 3;
-        }
-        return ((uint32_t)(b0 & 0x0fu) << 12) |
-               ((uint32_t)(b1 & 0x3fu) << 6) |
-               (uint32_t)(b2 & 0x3fu);
-    }
-    if (b0 < 0xf5u) {
-        uint8_t b1;
-        uint8_t b2;
-        uint8_t b3;
-        if (off + 3u >= len) {
-            return LEONOS_TEXT_REPLACEMENT_CHAR;
-        }
-        b1 = s[off + 1u];
-        b2 = s[off + 2u];
-        b3 = s[off + 3u];
-        if (!ui_utf8_cont(b1) || !ui_utf8_cont(b2) || !ui_utf8_cont(b3) ||
-            (b0 == 0xf0u && b1 < 0x90u) ||
-            (b0 == 0xf4u && b1 >= 0x90u)) {
-            return LEONOS_TEXT_REPLACEMENT_CHAR;
-        }
-        if (byte_len) {
-            *byte_len = 4;
-        }
-        return ((uint32_t)(b0 & 0x07u) << 18) |
-               ((uint32_t)(b1 & 0x3fu) << 12) |
-               ((uint32_t)(b2 & 0x3fu) << 6) |
-               (uint32_t)(b3 & 0x3fu);
+    if (first < 0xf5U && off + 3U < len && ui_utf8_cont(bytes[off + 1U]) && ui_utf8_cont(bytes[off + 2U]) && ui_utf8_cont(bytes[off + 3U]) &&
+        !(first == 0xf0U && bytes[off + 1U] < 0x90U) && !(first == 0xf4U && bytes[off + 1U] >= 0x90U)) {
+        if (byte_len) *byte_len = 4;
+        return ((uint32_t)(first & 7U) << 18) | ((uint32_t)(bytes[off + 1U] & 0x3fU) << 12) |
+               ((uint32_t)(bytes[off + 2U] & 0x3fU) << 6) | (bytes[off + 3U] & 0x3fU);
     }
     return LEONOS_TEXT_REPLACEMENT_CHAR;
 }
 
-static int ui_is_wide_codepoint(uint32_t cp)
+static int ui_is_wide_codepoint(uint32_t codepoint)
 {
-    return (cp >= 0x1100u && cp <= 0x115fu) ||
-           cp == 0x2329u || cp == 0x232au ||
-           (cp >= 0x2e80u && cp <= 0xa4cfu) ||
-           (cp >= 0xac00u && cp <= 0xd7a3u) ||
-           (cp >= 0xf900u && cp <= 0xfaffu) ||
-           (cp >= 0x20000u && cp <= 0x3fffdu) ||
-           (cp >= 0xfe10u && cp <= 0xfe19u) ||
-           (cp >= 0xfe30u && cp <= 0xfe6fu) ||
-           (cp >= 0xff00u && cp <= 0xff60u) ||
-           (cp >= 0xffe0u && cp <= 0xffe6u);
+    return (codepoint >= 0x1100U && codepoint <= 0x115fU) || codepoint == 0x2329U || codepoint == 0x232aU ||
+           (codepoint >= 0x2e80U && codepoint <= 0xa4cfU) || (codepoint >= 0xac00U && codepoint <= 0xd7a3U) ||
+           (codepoint >= 0xf900U && codepoint <= 0xfaffU) || (codepoint >= 0x20000U && codepoint <= 0x3fffdU) ||
+           (codepoint >= 0xfe10U && codepoint <= 0xfe6fU) || (codepoint >= 0xff00U && codepoint <= 0xffe6U);
 }
 
-uint32_t ui_cell_width(uint32_t cp)
+uint32_t ui_cell_width(uint32_t codepoint)
 {
-    if (cp == 0 || cp == '\n' || cp == '\r') {
-        return 0;
-    }
-    if (cp == '\t') {
-        return 4;
-    }
-    return ui_is_wide_codepoint(cp) ? 2u : 1u;
+    if (!codepoint || codepoint == '\n' || codepoint == '\r') return 0;
+    if (codepoint == '\t') return 4;
+    return ui_is_wide_codepoint(codepoint) ? 2U : 1U;
 }
 
-int ui_layout_utf8(const char *text, uint32_t byte_len,
-                          struct leonos_text_glyph *glyphs, uint32_t capacity,
-                          struct leonos_text_layout *out)
+uint32_t ui_codepoint_pixel_width(uint32_t codepoint)
 {
+    uint32_t cell_width = ui_cell_width(codepoint);
+    return ui_ttf_pixel_width(codepoint, LEONOS_FONT_H, cell_width * LEONOS_FONT_W);
+}
+
+int ui_layout_utf8(const char *text, uint32_t byte_len, struct leonos_text_glyph *glyphs, uint32_t capacity, struct leonos_text_layout *out)
+{
+    uint32_t offset = 0, count = 0, cells = 0, pixels = 0;
     if (!text) {
-        if (out) {
-            out->text = text;
-            out->byte_len = 0;
-            out->capacity = capacity;
-            out->count = 0;
-            out->total_cells = 0;
-            out->total_px = 0;
-            out->glyphs = glyphs;
-        }
+        if (out) { out->text = text; out->byte_len = 0; out->capacity = capacity; out->count = 0; out->total_cells = 0; out->total_px = 0; out->glyphs = glyphs; }
         return 0;
     }
-    if (byte_len == 0) {
-        byte_len = ui_strlen(text);
-    }
-    if (leonos_text_layout_utf8(text, byte_len, glyphs, capacity, out) == 0) {
-        return 0;
-    }
-    uint32_t off = 0;
-    uint32_t count = 0;
-    uint32_t cells = 0;
-    while (off < byte_len) {
-        uint32_t len = 1;
-        uint32_t cp = ui_decode_utf8(text, byte_len, off, &len);
-        uint32_t cw = ui_cell_width(cp);
-        if (count < capacity) {
-            glyphs[count].codepoint = cp;
-            glyphs[count].byte_offset = off;
-            glyphs[count].byte_len = len;
-            glyphs[count].cell_width = cw;
-            glyphs[count].pixel_width = cw * LEONOS_FONT_W;
-        }
-        cells += cw;
+    if (!byte_len) byte_len = ui_strlen(text);
+    while (offset < byte_len) {
+        uint32_t size = 1;
+        uint32_t codepoint = ui_decode_utf8(text, byte_len, offset, &size);
+        uint32_t width = ui_cell_width(codepoint);
+        uint32_t pixel_width = ui_codepoint_pixel_width(codepoint);
+        if (count < capacity) { glyphs[count].codepoint = codepoint; glyphs[count].byte_offset = offset; glyphs[count].byte_len = size; glyphs[count].cell_width = width; glyphs[count].pixel_width = pixel_width; }
+        cells += width;
+        pixels += pixel_width;
         ++count;
-        off += len;
+        offset += size;
     }
-    if (out) {
-        out->text = text;
-        out->byte_len = byte_len;
-        out->capacity = capacity;
-        out->count = count;
-        out->total_cells = cells;
-        out->total_px = cells * LEONOS_FONT_W;
-        out->glyphs = glyphs;
-    }
+    if (out) { out->text = text; out->byte_len = byte_len; out->capacity = capacity; out->count = count; out->total_cells = cells; out->total_px = pixels; out->glyphs = glyphs; }
     return 0;
 }
 
 uint32_t ui_next_codepoint_offset(const char *text, uint32_t len, uint32_t pos)
 {
-    uint32_t byte_len = 1;
-    if (!text || pos >= len) {
-        return len;
-    }
-    (void)ui_decode_utf8(text, len, pos, &byte_len);
-    if (byte_len == 0) {
-        byte_len = 1;
-    }
-    pos += byte_len;
-    return pos > len ? len : pos;
+    uint32_t size = 1;
+    if (!text || pos >= len) return len;
+    (void)ui_decode_utf8(text, len, pos, &size);
+    return pos + size > len ? len : pos + size;
 }
 
 uint32_t ui_prev_codepoint_offset(const char *text, uint32_t pos)
 {
-    uint32_t prev = 0;
-    uint32_t cur = 0;
-    uint32_t len = ui_strlen(text);
-    if (!text || pos == 0) {
-        return 0;
-    }
-    if (pos > len) {
-        pos = len;
-    }
-    while (cur < pos) {
-        prev = cur;
-        cur = ui_next_codepoint_offset(text, len, cur);
-        if (cur <= prev) {
-            break;
-        }
-    }
-    return prev;
+    uint32_t previous = 0, current = 0, len = ui_strlen(text);
+    if (!text || !pos) return 0;
+    if (pos > len) pos = len;
+    while (current < pos) { previous = current; current = ui_next_codepoint_offset(text, len, current); }
+    return previous;
 }
 
 uint32_t ui_text_cells_between(const char *text, uint32_t start, uint32_t end)
 {
-    uint32_t cells = 0;
-    uint32_t len = ui_strlen(text);
-    if (!text) {
-        return 0;
-    }
-    if (start > len) {
-        start = len;
-    }
-    if (end > len) {
-        end = len;
-    }
-    while (start < end) {
-        uint32_t byte_len = 1;
-        uint32_t cp = ui_decode_utf8(text, len, start, &byte_len);
-        cells += ui_cell_width(cp);
-        start += byte_len ? byte_len : 1u;
-    }
+    uint32_t cells = 0, len = ui_strlen(text);
+    if (!text) return 0;
+    if (start > len) start = len;
+    if (end > len) end = len;
+    while (start < end) { uint32_t size = 1; cells += ui_cell_width(ui_decode_utf8(text, len, start, &size)); start += size; }
     return cells;
 }
 
-uint32_t ui_byte_offset_for_cell(const char *text, uint32_t len,
-                                        uint32_t start, uint32_t target_cell)
+uint32_t ui_text_pixels_between(const char *text, uint32_t start, uint32_t end)
 {
-    uint32_t pos = start;
-    uint32_t cell = 0;
-    while (pos < len) {
-        uint32_t byte_len = 1;
-        uint32_t cp = ui_decode_utf8(text, len, pos, &byte_len);
-        uint32_t cw = ui_cell_width(cp);
-        if (cell + cw > target_cell) {
-            return pos;
-        }
-        cell += cw;
-        pos += byte_len ? byte_len : 1u;
-        if (cell >= target_cell) {
-            return pos;
-        }
+    uint32_t pixels = 0, len = ui_strlen(text);
+    if (!text) return 0;
+    if (start > len) start = len;
+    if (end > len) end = len;
+    while (start < end) {
+        uint32_t size = 1;
+        uint32_t codepoint = ui_decode_utf8(text, len, start, &size);
+        pixels += ui_codepoint_pixel_width(codepoint);
+        start += size;
     }
-    return len;
+    return pixels;
+}
+
+uint32_t ui_byte_offset_for_cell(const char *text, uint32_t len, uint32_t start, uint32_t target_cell)
+{
+    uint32_t cells = 0;
+    while (text && start < len) { uint32_t size = 1, width = ui_cell_width(ui_decode_utf8(text, len, start, &size)); if (cells + width > target_cell) break; cells += width; start += size; if (cells >= target_cell) break; }
+    return start;
+}
+
+uint32_t ui_byte_offset_for_pixel(const char *text, uint32_t len, uint32_t start,
+                                  uint32_t target_pixel)
+{
+    uint32_t pixels = 0;
+    while (text && start < len) {
+        uint32_t size = 1;
+        uint32_t codepoint = ui_decode_utf8(text, len, start, &size);
+        uint32_t width = ui_codepoint_pixel_width(codepoint);
+        if (pixels + width > target_pixel) break;
+        pixels += width;
+        start += size;
+    }
+    return start;
 }
 
 uint32_t leonos_ui_text_width(const char *text)
@@ -473,288 +1280,67 @@ uint32_t leonos_ui_text_fit_chars(uint32_t pixel_width)
     return pixel_width / LEONOS_FONT_W;
 }
 
-static void ui_smooth_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                           const uint8_t *glyph, uint32_t fg, uint32_t bg, int transparent)
+void ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t codepoint, uint32_t cell_width, uint32_t fg, uint32_t bg, int transparent)
 {
-    for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
-        for (uint32_t col = 0; col < LEONOS_FONT_W; ++col) {
-            uint8_t alpha = glyph[row * LEONOS_FONT_W + col];
-            if (alpha) {
-                uint32_t background = transparent ? ui_surface_color(surface, x + col, y + row) : bg;
-                leonos_ui_pixel(surface, x + col, y + row, ui_blend_color(background, fg, alpha));
-            } else if (!transparent) {
-                leonos_ui_pixel(surface, x + col, y + row, bg);
-            }
-        }
-    }
+    uint32_t pixel_width;
+    if (!cell_width) return;
+    pixel_width = ui_codepoint_pixel_width(codepoint);
+    ui_ttf_draw(surface, x, y, pixel_width, LEONOS_FONT_H, codepoint, fg, bg, transparent);
 }
 
-void ui_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                    char ch, uint32_t fg, uint32_t bg, int transparent)
+void ui_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, char character, uint32_t fg, uint32_t bg, int transparent)
 {
-    const uint8_t *smooth_glyph = ui_metro_latin_glyph(ch);
-    const uint8_t *glyph = ui_font_glyph(ch);
-    if (smooth_glyph) {
-        ui_smooth_char(surface, x, y, smooth_glyph, fg, bg, transparent);
-        return;
-    }
-    for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
-        for (uint32_t col = 0; col < LEONOS_FONT_W; ++col) {
-            if (glyph[row] & (uint8_t)(0x80u >> col)) {
-                leonos_ui_pixel(surface, x + col, y + row, fg);
-            } else if (!transparent) {
-                leonos_ui_pixel(surface, x + col, y + row, bg);
-            }
-        }
-    }
+    ui_codepoint(surface, x, y, (uint8_t)character, 1, fg, bg, transparent);
 }
 
-static void ui_tofu(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                    uint32_t fg, uint32_t bg, int transparent, uint32_t pixels_w)
+static void ui_draw_layout_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w, const char *text, uint32_t fg, uint32_t bg, int transparent, int clipped)
 {
-    if (!transparent) {
-        leonos_ui_rect(surface, x, y, pixels_w, LEONOS_FONT_H, bg);
-    }
-    if (pixels_w < 4) {
-        return;
-    }
-    for (uint32_t col = 1; col + 1 < pixels_w; ++col) {
-        leonos_ui_pixel(surface, x + col, y + 1, fg);
-        leonos_ui_pixel(surface, x + col, y + LEONOS_FONT_H - 2, fg);
-    }
-    for (uint32_t row = 1; row + 1 < LEONOS_FONT_H; ++row) {
-        leonos_ui_pixel(surface, x + 1, y + row, fg);
-        leonos_ui_pixel(surface, x + pixels_w - 2, y + row, fg);
-    }
-}
-
-static void ui_cjk_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                        uint32_t codepoint, uint32_t fg, uint32_t bg, int transparent)
-{
-    const uint8_t *glyph = ui_cjk_glyph(codepoint);
-    if (!glyph) {
-        ui_tofu(surface, x, y, fg, bg, transparent, LEONOS_FONT_W * 2u);
-        return;
-    }
-    for (uint32_t row = 0; row < 16; ++row) {
-        uint8_t hi = glyph[row * 2u];
-        uint8_t lo = glyph[row * 2u + 1u];
-        uint16_t bits = ((uint16_t)hi << 8) | lo;
-        for (uint32_t col = 0; col < 16; ++col) {
-            if (bits & (uint16_t)(0x8000u >> col)) {
-                leonos_ui_pixel(surface, x + col, y + row, fg);
-            } else if (!transparent) {
-                leonos_ui_pixel(surface, x + col, y + row, bg);
-            }
-        }
-    }
-}
-
-void ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                         uint32_t codepoint, uint32_t cell_width,
-                         uint32_t fg, uint32_t bg, int transparent)
-{
-    uint32_t pixels_w = cell_width * LEONOS_FONT_W;
-    if (cell_width == 0) {
-        return;
-    }
-    if (codepoint == '\t') {
-        if (!transparent) {
-            leonos_ui_rect(surface, x, y, pixels_w, LEONOS_FONT_H, bg);
-        }
-        return;
-    }
-    if (codepoint >= 32u && codepoint < 127u && cell_width == 1u) {
-        ui_char(surface, x, y, (char)codepoint, fg, bg, transparent);
-        return;
-    }
-    if (cell_width >= 2u) {
-        ui_cjk_char(surface, x, y, codepoint, fg, bg, transparent);
-        return;
-    }
-    ui_char(surface, x, y, '?', fg, bg, transparent);
-}
-
-static void ui_tofu_resized(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                            uint32_t pixels_w, uint32_t pixels_h,
-                            uint32_t fg, uint32_t bg)
-{
-    if (!pixels_w || !pixels_h) {
-        return;
-    }
-    leonos_ui_rect(surface, x, y, pixels_w, pixels_h, bg);
-    if (pixels_w < 4 || pixels_h < 4) {
-        return;
-    }
-    leonos_ui_rect(surface, x + 1, y + 1, pixels_w - 2, 1, fg);
-    leonos_ui_rect(surface, x + 1, y + pixels_h - 2, pixels_w - 2, 1, fg);
-    leonos_ui_rect(surface, x + 1, y + 1, 1, pixels_h - 2, fg);
-    leonos_ui_rect(surface, x + pixels_w - 2, y + 1, 1, pixels_h - 2, fg);
-}
-
-static void ui_draw_bitmap_resized(struct leonos_ui_surface *surface,
-                                   uint32_t x, uint32_t y,
-                                   uint32_t dst_w, uint32_t dst_h,
-                                   uint32_t src_w, uint32_t src_h,
-                                   const uint8_t *bitmap, uint8_t cjk,
-                                   uint32_t fg, uint32_t bg)
-{
-    if (!surface || !dst_w || !dst_h || !src_w || !src_h || !bitmap) {
-        return;
-    }
-    for (uint32_t yy = 0; yy < dst_h; ++yy) {
-        uint32_t sy = yy * src_h / dst_h;
-        for (uint32_t xx = 0; xx < dst_w; ++xx) {
-            uint32_t sx = xx * src_w / dst_w;
-            uint8_t on;
-            if (cjk) {
-                uint16_t bits = ((uint16_t)bitmap[sy * 2U] << 8) |
-                                (uint16_t)bitmap[sy * 2U + 1U];
-                on = (bits & (uint16_t)(0x8000U >> sx)) ? 1U : 0U;
-            } else {
-                on = (bitmap[sy] & (uint8_t)(0x80U >> sx)) ? 1U : 0U;
-            }
-            leonos_ui_pixel(surface, x + xx, y + yy, on ? fg : bg);
-        }
-    }
-}
-
-static void ui_draw_grayscale_bitmap_resized(struct leonos_ui_surface *surface,
-                                             uint32_t x, uint32_t y,
-                                             uint32_t dst_w, uint32_t dst_h,
-                                             const uint8_t *bitmap,
-                                             uint32_t fg, uint32_t bg)
-{
-    for (uint32_t yy = 0; yy < dst_h; ++yy) {
-        uint32_t source_y = yy * LEONOS_FONT_H / dst_h;
-        for (uint32_t xx = 0; xx < dst_w; ++xx) {
-            uint32_t source_x = xx * LEONOS_FONT_W / dst_w;
-            uint8_t alpha = bitmap[source_y * LEONOS_FONT_W + source_x];
-            leonos_ui_pixel(surface, x + xx, y + yy, ui_blend_color(bg, fg, alpha));
-        }
-    }
-}
-
-static void ui_codepoint_resized(struct leonos_ui_surface *surface,
-                                 uint32_t x, uint32_t y,
-                                 uint32_t codepoint, uint32_t cell_width,
-                                 uint32_t fg, uint32_t bg,
-                                 uint32_t cell_w, uint32_t cell_h)
-{
-    uint32_t pixels_w = cell_width * cell_w;
-    if (cell_width == 0 || !cell_w || !cell_h) {
-        return;
-    }
-    if (codepoint == '\t') {
-        leonos_ui_rect(surface, x, y, pixels_w, cell_h, bg);
-        return;
-    }
-    if (codepoint >= 32U && codepoint < 127U && cell_width == 1U) {
-        const uint8_t *smooth_glyph = ui_metro_latin_glyph((char)codepoint);
-        if (smooth_glyph) {
-            ui_draw_grayscale_bitmap_resized(surface, x, y, pixels_w, cell_h,
-                                             smooth_glyph, fg, bg);
-            return;
-        }
-        ui_draw_bitmap_resized(surface, x, y, pixels_w, cell_h,
-                               LEONOS_FONT_W, LEONOS_FONT_H,
-                               ui_font_glyph((char)codepoint), 0,
-                               fg, bg);
-        return;
-    }
-    if (cell_width >= 2U) {
-        const uint8_t *glyph = ui_cjk_glyph(codepoint);
-        if (glyph) {
-            ui_draw_bitmap_resized(surface, x, y, pixels_w, cell_h,
-                                   16U, 16U, glyph, 1, fg, bg);
-        } else {
-            ui_tofu_resized(surface, x, y, pixels_w, cell_h, fg, bg);
-        }
-        return;
-    }
-    ui_draw_bitmap_resized(surface, x, y, pixels_w, cell_h,
-                           LEONOS_FONT_W, LEONOS_FONT_H,
-                           ui_font_glyph('?'), 0, fg, bg);
-}
-
-static void ui_draw_layout_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                                uint32_t w, const char *text,
-                                uint32_t fg, uint32_t bg,
-                                int transparent, int clipped)
-{
-    struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
     struct leonos_text_layout layout;
+    struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
     uint32_t draw_x = x;
-    uint32_t count;
-    if (!transparent && clipped) {
-        leonos_ui_rect(surface, x, y, w, LEONOS_FONT_H, bg);
-    }
+    if (!transparent && clipped) leonos_ui_rect(surface, x, y, w, LEONOS_FONT_H, bg);
     ui_layout_utf8(text ? text : "", 0, glyphs, UI_LAYOUT_GLYPH_MAX, &layout);
-    count = layout.count < UI_LAYOUT_GLYPH_MAX ? layout.count : UI_LAYOUT_GLYPH_MAX;
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t px = glyphs[i].pixel_width;
-        if (clipped && draw_x + px > x + w) {
-            break;
-        }
-        ui_codepoint(surface, draw_x, y, glyphs[i].codepoint, glyphs[i].cell_width,
-                     fg, bg, transparent || clipped);
-        draw_x += px;
+    for (uint32_t i = 0; i < layout.count && i < UI_LAYOUT_GLYPH_MAX; ++i) {
+        if (clipped && draw_x + glyphs[i].pixel_width > x + w) break;
+        ui_codepoint(surface, draw_x, y, glyphs[i].codepoint, glyphs[i].cell_width, fg, bg, transparent || clipped);
+        draw_x += glyphs[i].pixel_width;
     }
 }
 
-void leonos_ui_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                    const char *text, uint32_t fg, uint32_t bg)
+void leonos_ui_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg)
 {
     ui_draw_layout_text(surface, x, y, 0, text, fg, bg, 0, 0);
 }
 
-void leonos_ui_text_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                            uint32_t w, const char *text, uint32_t fg, uint32_t bg)
+void leonos_ui_text_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w, const char *text, uint32_t fg, uint32_t bg)
 {
     ui_draw_layout_text(surface, x, y, w, text, fg, bg, 0, 1);
 }
 
-void leonos_ui_text_resized_clipped(struct leonos_ui_surface *surface,
-                                    uint32_t x, uint32_t y, uint32_t w,
-                                    const char *text, uint32_t fg, uint32_t bg,
-                                    uint32_t cell_w, uint32_t cell_h)
+void leonos_ui_text_resized_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w, const char *text, uint32_t fg, uint32_t bg, uint32_t cell_w, uint32_t cell_h)
 {
-    struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
     struct leonos_text_layout layout;
+    struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
     uint32_t draw_x = x;
-    uint32_t count;
-    if (!cell_w) {
-        cell_w = LEONOS_FONT_W;
-    }
-    if (!cell_h) {
-        cell_h = LEONOS_FONT_H;
-    }
-    if (cell_w == LEONOS_FONT_W && cell_h == LEONOS_FONT_H) {
-        leonos_ui_text_clipped(surface, x, y, w, text, fg, bg);
-        return;
-    }
+    if (!cell_w) cell_w = LEONOS_FONT_W;
+    if (!cell_h) cell_h = LEONOS_FONT_H;
     leonos_ui_rect(surface, x, y, w, cell_h, bg);
     ui_layout_utf8(text ? text : "", 0, glyphs, UI_LAYOUT_GLYPH_MAX, &layout);
-    count = layout.count < UI_LAYOUT_GLYPH_MAX ? layout.count : UI_LAYOUT_GLYPH_MAX;
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t px = glyphs[i].cell_width * cell_w;
-        if (draw_x + px > x + w) {
-            break;
-        }
-        ui_codepoint_resized(surface, draw_x, y, glyphs[i].codepoint,
-                             glyphs[i].cell_width, fg, bg, cell_w, cell_h);
-        draw_x += px;
+    for (uint32_t i = 0; i < layout.count && i < UI_LAYOUT_GLYPH_MAX; ++i) {
+        uint32_t glyph_w = (glyphs[i].pixel_width * cell_w + LEONOS_FONT_W / 2U) /
+                           LEONOS_FONT_W;
+        if (draw_x + glyph_w > x + w) break;
+        if (glyphs[i].codepoint != '\t') ui_ttf_draw(surface, draw_x, y, glyph_w, cell_h, glyphs[i].codepoint, fg, bg, 0);
+        draw_x += glyph_w;
     }
 }
 
-void leonos_ui_text_transparent(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                                const char *text, uint32_t fg)
+void leonos_ui_text_transparent(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, const char *text, uint32_t fg)
 {
     ui_draw_layout_text(surface, x, y, 0, text, fg, 0, 1, 0);
 }
 
-void leonos_ui_text_transparent_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
-                                        uint32_t w, const char *text, uint32_t fg)
+void leonos_ui_text_transparent_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w, const char *text, uint32_t fg)
 {
     ui_draw_layout_text(surface, x, y, w, text, fg, 0, 1, 1);
 }

@@ -13,6 +13,9 @@ existing GUI, libc, launch, filesystem, and network ABIs.
 Current features:
 
 - IE-style menu/toolbar/address layout with toast status messages.
+- Times New Roman as the browser's Latin font, with SimSun as the Chinese
+  fallback; both are loaded at runtime from external font files rather than
+  embedded in `browser.elf`.
 - Bilingual `about:leonos` start page.
 - `http://` and `https://` navigation through the libc HTTP client on top of
   TCP sockets. HTTPS uses TLS 1.2 with certificate, hostname, and system-clock
@@ -52,6 +55,11 @@ Current limits:
   TLS 1.2 client profile backed by Mbed TLS and the bundled CA roots. Cookies,
   cache, compression, and true streaming downloads are not implemented yet.
 
+The repository owns the font build inputs: `system/fonts/times.ttf` is copied
+to `0:/system/fonts/times-new-roman.ttf`, and `system/fonts/simsun.ttc` is
+packaged as `0:/system/fonts/simsun.ttc`. Local and GitHub Actions builds use
+these same repository files.
+
 ## litehtml Status
 
 Upstream litehtml is checked out as:
@@ -90,15 +98,15 @@ To integrate real litehtml, do these in order:
 
 The browser is registered as:
 
-- `0:/userland/browser.elf`
+- `0:/programs/browser/browser.elf`
 - launch alias: `browser`
 - default app for `.html` and `.htm`
 
 Download and image companion apps are registered as:
 
-- `0:/userland/downloadmgr.elf`, launch alias `downloadmgr`
-- `0:/userland/imageview.elf`, launch alias `imageview`
+- `0:/programs/downloadmgr/downloadmgr.elf`, launch alias `downloadmgr`
+- `0:/programs/imageview/imageview.elf`, launch alias `imageview`
 - default app for `.bmp` and `.dib`
 
-The generated icon is `0:/userland/browser.bmp`, following the existing
+The generated icon is `0:/programs/browser/browser.bmp`, following the existing
 same-directory/same-basename application icon convention.

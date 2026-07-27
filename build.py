@@ -12,6 +12,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable, Iterable
@@ -36,13 +37,17 @@ from buildsystem.core.state import utc_now
 ROOT = Path(__file__).resolve().parent
 PYTHON = sys.executable
 
-NORMAL_USER_APPS = [
-    "init", "desktop", "oobe", "login", "hello", "uidemo", "cjktest", "taskmgr",
-    "fileman", "terminal", "shell", "notepad", "calc", "minesweeper", "run", "osver",
-    "memtest", "bugtest", "ping", "netctl", "serviced", "servicemgr", "httpget",
-    "downloadmgr", "browser", "imageview", "wavplay", "oshlp", "settings", "diskmgr",
-    "devmgr", "drvmgr",
+SYSTEM_APPS = [
+    "init", "desktop", "oobe", "login", "serviced", "installer", "shell", "fileman",
+    "taskmgr", "settings", "terminal", "run", "osver", "netctl", "servicemgr",
+    "diskmgr", "devmgr", "drvmgr",
 ]
+PROGRAM_APPS = [
+    "hello", "uidemo", "cjktest", "notepad", "calc", "minesweeper", "memtest",
+    "bugtest", "ping", "httpget", "downloadmgr", "browser", "imageview", "wavplay",
+    "oshlp",
+]
+NORMAL_USER_APPS = [app for app in SYSTEM_APPS if app != "installer"] + PROGRAM_APPS
 INSTALLER_USER_APPS = ["desktop", "installer"]
 INSTALLER_POLICY_APPS = ["desktop", "oobe", "settings"]
 USER_APPS = NORMAL_USER_APPS + [app for app in INSTALLER_USER_APPS if app not in NORMAL_USER_APPS]
@@ -61,19 +66,21 @@ WINDOW_BUTTON_ICONS = [
     "window-button-close.bmp",
 ]
 SYSTEM_FILES = [
-    ("system/fonts/system.psf", "system/fonts/system.psf"),
-    ("system/fonts/cjk16.lbf", "system/fonts/cjk16.lbf"),
-    ("system/fonts/metro-latin.lbf", "system/fonts/metro-latin.lbf"),
     ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
     ("system/resources/wallpaper-metro.bmp", "system/resources/wallpaper-metro.bmp"),
     ("system/certs/cacert.pem", "system/certs/cacert.pem"),
 ]
 
+
+def runtime_app_relative(app: str, extension: str) -> Path:
+    root = "system/apps" if app in SYSTEM_APPS else "programs"
+    return Path(root) / app / f"{app}.{extension}"
+
 KCONFIG_DEFAULTS = {
     "CONFIG_VMDK_REQUIRE_LICENSE": "y",
     "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE": "y",
     "CONFIG_IMAGE_SIZE_MIB": "96",
-    "CONFIG_INSTALLER_ROOT_SIZE_MIB": "64",
+    "CONFIG_INSTALLER_ROOT_SIZE_MIB": "128",
     "CONFIG_QEMU_MEMORY_MB": "512",
     "CONFIG_QEMU_DISPLAY_WIDTH": "1920",
     "CONFIG_QEMU_DISPLAY_HEIGHT": "1080",
@@ -514,10 +521,25 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         user_targets.append(name)
 
     app_icons = tuple(paths.out / f"generated/app-icons/{app}.bmp" for app in USER_APPS)
+    ui_metro_font = paths.out / "generated/fonts/leonos-metro.ttf"
+    ui_win95_font = paths.out / "generated/fonts/leonos-win95.ttf"
+    browser_font = paths.out / "generated/fonts/times-new-roman.ttf"
+    browser_font_source = ROOT / "system/fonts/times.ttf"
+    browser_cjk_font_source = ROOT / "system/fonts/simsun.ttc"
+    graph.add(Target(name="ui-font", outputs=(ui_metro_font, ui_win95_font),
+                     inputs=(ROOT / "tools/prepare_ui_font.py", ROOT / "system/fonts/Deng.ttf",
+                             ROOT / "system/fonts/system.psf"),
+                     kind="generate", command=(PYTHON, "tools/prepare_ui_font.py", "--metro-out", relative(ui_metro_font),
+                                                   "--win95-out", relative(ui_win95_font))))
+    graph.add(Target(name="browser-font", outputs=(browser_font,),
+                     inputs=(ROOT / "tools/prepare_browser_font.py", browser_font_source), kind="generate",
+                     command=(PYTHON, "tools/prepare_browser_font.py", "--font",
+                              relative(browser_font_source), "--out",
+                              relative(browser_font))))
     graph.add(Target(name="app-icons", outputs=app_icons, inputs=(ROOT / "tools/make_app_icons.py",), kind="generate", command=(PYTHON, "tools/make_app_icons.py", "--out-dir", relative(paths.out / "generated/app-icons"), "--apps", *USER_APPS)))
     button_icons = tuple(paths.out / f"generated/window-buttons/{name}" for name in WINDOW_BUTTON_ICONS)
     graph.add(Target(name="window-button-icons", outputs=button_icons, inputs=(ROOT / "tools/make_window_button_icons.py",), kind="generate", command=(PYTHON, "tools/make_window_button_icons.py", "--out-dir", relative(paths.out / "generated/window-buttons"))))
-    user_targets += ["app-icons", "window-button-icons"]
+    user_targets += ["app-icons", "window-button-icons", "ui-font", "browser-font"]
     graph.add(Target(name="userland", depends_on=tuple(user_targets), group=True, kind="aggregate"))
 
     grub_efi = paths.staging / "EFI/BOOT/BOOTX64.EFI"
@@ -541,6 +563,30 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    ui_metro_font_destination = paths.staging / "system/fonts/leonos-metro.ttf"
+    ui_win95_font_destination = paths.staging / "system/fonts/leonos-win95.ttf"
+    browser_font_destination = paths.staging / "system/fonts/times-new-roman.ttf"
+    browser_cjk_font_destination = paths.staging / "system/fonts/simsun.ttc"
+
+    def sync_ui_font(context: ActionContext) -> None:
+        for legacy_dir in ("etc", "userland"):
+            shutil.rmtree(paths.staging / legacy_dir, ignore_errors=True)
+        for legacy_name in ("system.psf", "cjk16.lbf", "metro-latin.lbf", "leonos.lbf", "leonos-ui.ttf"):
+            (ui_metro_font_destination.parent / legacy_name).unlink(missing_ok=True)
+        ui_metro_font_destination.parent.mkdir(parents=True, exist_ok=True)
+        (paths.staging / "system/state").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ui_metro_font, ui_metro_font_destination)
+        shutil.copyfile(ui_win95_font, ui_win95_font_destination)
+        shutil.copyfile(browser_font, browser_font_destination)
+        shutil.copyfile(browser_cjk_font_source, browser_cjk_font_destination)
+
+    target = graph.add(Target(name="esp:system-font", outputs=(ui_metro_font_destination, ui_win95_font_destination,
+                                                                 browser_font_destination, browser_cjk_font_destination),
+                              inputs=(ui_metro_font, ui_win95_font, browser_font, browser_cjk_font_source), kind="generate", action=sync_ui_font,
+                              action_key="sync-ui-font-v7"))
+    esp_names.append(target.name)
+    esp_outputs.extend((ui_metro_font_destination, ui_win95_font_destination,
+                        browser_font_destination, browser_cjk_font_destination))
     for source, icon in zip(button_icons, WINDOW_BUTTON_ICONS):
         destination = paths.staging / "system/resources" / icon
         target = add_copy(graph, f"esp:window-icon:{icon}", source, destination)
@@ -552,20 +598,25 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         esp_names.append(target.name)
         esp_outputs.append(destination)
     for app in NORMAL_USER_APPS:
-        destination = paths.staging / f"userland/{app}.elf"
+        destination = paths.staging / runtime_app_relative(app, "elf")
         target = add_copy(graph, f"esp:app:{app}", app_elfs[app], destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
     for app in NORMAL_USER_APPS:
         source = paths.out / f"generated/app-icons/{app}.bmp"
-        destination = paths.staging / f"userland/{app}.bmp"
+        destination = paths.staging / runtime_app_relative(app, "bmp")
         target = add_copy(graph, f"esp:icon:{app}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
-    config_destination = paths.staging / "etc/leonos.conf"
+    config_destination = paths.staging / "system/config/leonos.conf"
     target = add_copy(graph, "esp:config", paths.kconfig, config_destination)
     esp_names.append(target.name)
     esp_outputs.append(config_destination)
+    for source in collect("system/config/*"):
+        destination = paths.staging / "system/config" / source.name
+        target = add_copy(graph, f"esp:config:{source.name}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
     for source in collect("system/docs/*.hlp"):
         destination = paths.staging / "docs" / source.name
         target = add_copy(graph, f"esp:doc:{source.name}", source, destination)
@@ -594,7 +645,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--userland-dir", relative(paths.out / "userland"), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--manifest", relative(manifest), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
     installer_iso = paths.images / "leonos4-installer.iso"
     installer_boot_image = paths.out / "install/installer-efiboot.img"
-    graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--work-dir", relative(paths.out / "install"))))
+    graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
 
     graph.add(Target(name="all", depends_on=("config-sync", "build-info", "loader", "kernel", "drivers", "middlelayer", "userland", "esp"), group=True, kind="aggregate"))
     graph.add(Target(name="run", inputs=(vmdk,), depends_on=("image-vmdk",), kind="command", command=qemu_command(paths, values)))
@@ -629,7 +680,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     graph.add(Target(name="test-los2w", inputs=tuple(collect("los2w/*.py")), kind="command", command=(PYTHON, "-c", "from los2w.selftest import run_self_tests; print('\\n'.join(run_self_tests()))")))
 
     def qmp_test(context: ActionContext) -> None:
-        socket = paths.tmp / f"qmp-{context.runner.task_id}.sock"
+        socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}.sock"
         socket.unlink(missing_ok=True)
         command = list(qemu_command(paths, values, debug=True))
         command += ["-qmp", f"unix:{socket},server=on,wait=off"]
@@ -649,7 +700,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
                     process.kill()
             socket.unlink(missing_ok=True)
 
-    graph.add(Target(name="test-qmp-terminal", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v1"))
+    graph.add(Target(name="test-qmp-terminal", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v2"))
     graph.add(Target(name="test-all", depends_on=("test-license-server", "test-los2w", "test-qmp-terminal"), group=True, kind="aggregate"))
     return graph
 

@@ -30,7 +30,7 @@ After `0:/` is mounted, the kernel scans the direct files in `0:/drivers`.
 Every valid, enabled `.drv` is loaded in deterministic directory order. A
 failed module is retried once, then recorded as failed while boot continues.
 
-`0:/etc/drivers.conf` is optional. It uses UTF-8 text with a `version=1` line
+`0:/system/config/drivers.conf` is optional. It uses UTF-8 text with a `version=1` line
 and one `disabled=<file>.drv` line per module excluded from automatic startup.
 Absent entries are enabled by default.
 

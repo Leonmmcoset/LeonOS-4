@@ -19,14 +19,14 @@ def run_self_tests() -> list[str]:
     logger = LogBuffer(lines.append)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "etc").mkdir()
-        (root / "etc" / "display.conf").write_text("width=1024\ntheme=win95\n", encoding="utf-8")
+        (root / "system" / "config").mkdir(parents=True)
+        (root / "system" / "config" / "display.conf").write_text("width=1024\ntheme=win95\n", encoding="utf-8")
         (root / "docs").mkdir()
         (root / "docs" / "a.txt").write_text("hello", encoding="utf-8")
         fs = GuestFS(root, language="zh", ui_theme="metro", logger=logger)
 
         assert fs.guest_abs("docs/a.txt") == "0:/docs/a.txt"
-        assert fs.guest_abs("0:/docs/../etc") == "0:/etc"
+        assert fs.guest_abs("0:/docs/../system/config") == "0:/system/config"
         try:
             fs.host_path("1:/bad")
             raise AssertionError("drive 1: unexpectedly accepted")
@@ -38,19 +38,19 @@ def run_self_tests() -> list[str]:
         assert fs.read(fd, 5) == b"hello"
         assert fs.close(fd) == 0
 
-        fd = fs.open("0:/etc/locale.conf", C.O_RDONLY, 0)
+        fd = fs.open("0:/system/config/locale.conf", C.O_RDONLY, 0)
         assert fd >= 4
         assert fs.read(fd, 32) == b"lang=zh\n"
         assert fs.close(fd) == 0
 
-        fd = fs.open("0:/etc/display.conf", C.O_RDONLY, 0)
+        fd = fs.open("0:/system/config/display.conf", C.O_RDONLY, 0)
         assert fd >= 4
         assert fs.read(fd, 64) == b"width=1024\ntheme=metro\n"
         assert fs.close(fd) == 0
-        assert (root / "etc" / "display.conf").read_text(encoding="utf-8") == "width=1024\ntheme=win95\n"
+        assert (root / "system" / "config" / "display.conf").read_text(encoding="utf-8") == "width=1024\ntheme=win95\n"
 
         fs.set_ui_theme("win95")
-        fd = fs.open("0:/etc/display.conf", C.O_RDONLY, 0)
+        fd = fs.open("0:/system/config/display.conf", C.O_RDONLY, 0)
         assert fd >= 4
         assert fs.read(fd, 64) == b"width=1024\ntheme=win95\n"
         assert fs.close(fd) == 0

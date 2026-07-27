@@ -17,10 +17,10 @@ int main(void)
     printf("[init.elf] chdir root => %d\n", ret);
     printf("[init.elf] getcwd => %x\n", (unsigned int)(uintptr_t)getcwd(cwd, sizeof(cwd)));
     printf("[init.elf] cwd=%s\n", cwd);
-    ret = stat("0:/etc/leonos.conf", &st);
+    ret = stat("0:/system/config/leonos.conf", &st);
     printf("[init.elf] stat leonos.conf => %d type=%d size=%d\n", ret, (int)st.type, (int)st.size);
-    ret = chdir("0:/etc");
-    printf("[init.elf] chdir etc => %d\n", ret);
+    ret = chdir("0:/system/config");
+    printf("[init.elf] chdir system config => %d\n", ret);
     printf("[init.elf] getcwd after chdir => %x\n", (unsigned int)(uintptr_t)getcwd(cwd, sizeof(cwd)));
     printf("[init.elf] cwd after chdir=%s\n", cwd);
     fd = open(".", 0, 0);

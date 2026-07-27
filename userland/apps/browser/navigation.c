@@ -706,7 +706,7 @@ void browser_start_download(const char *url)
     char target[LEONOS_HTTP_URL_LEN];
     char *argv[3];
     copy_text(target, sizeof(target), url);
-    argv[0] = "0:/userland/downloadmgr.elf";
+    argv[0] = "0:/programs/downloadmgr/downloadmgr.elf";
     argv[1] = target;
     argv[2] = 0;
     if (leonos_launch_argv(argv) < 0) {

@@ -33,7 +33,7 @@ userland binaries. The default is `http://127.0.0.1:30301`.
 `LEONOS_LICENSE_REQUIRE` policy, writes `autoconf-installer.h` with the
 installer-installed-system policy, and writes `CONFIG_LICENSE_SERVER_URL` into
 both headers. License binaries read that compiled macro directly; there is no
-runtime `0:/etc/license.conf` server override.
+runtime `0:/system/config/license.conf` server override.
 
 ## Main outputs
 
@@ -49,7 +49,8 @@ The runtime ESP staging tree is:
 - `build/esp`
 
 It contains the installed-system loader, kernel, middlelayer, resources,
-configuration, bundled help documents under `docs/`, and userland applications.
+configuration, bundled help documents under `docs/`, system application packages,
+and application packages under `programs/`.
 The normal application set includes `oobe.elf`, `login.elf`, and `oshlp.elf`;
 the account database is intentionally not staged.
 
@@ -78,8 +79,9 @@ This keeps installer boot and installed-system boot on the same matched
 component set.
 
 The installer runtime itself only needs `desktop.elf` and `installer.elf` under
-`0:/userland`. The installed-system payload under `0:/install/esp/userland`
-contains the normal app set, including `login.elf` and `oobe.elf`, so a fresh
+`0:/system/apps`. The installed-system payload under `0:/install/esp/system/apps`
+and `0:/install/esp/programs` contains the normal app set, including `login.elf`
+and `oobe.elf`, so a fresh
 install boots into license OOBE and then first-administrator creation instead
 of requiring pre-created accounts.
 
@@ -90,17 +92,17 @@ the license server. To build an image without license validation, change the
 corresponding source macro through Kconfig and regenerate/rebuild so the
 generated binaries contain `LEONOS_LICENSE_REQUIRE 0`.
 
-Installer update mode refreshes `boot`, `system`, `EFI`, selected changed or
-missing `userland` programs, and bundled docs from `0:/install/esp/docs`.
+Installer update mode refreshes `boot`, immutable `system` files, `EFI`, selected
+changed or missing `programs` packages, and bundled docs from `0:/install/esp/docs`.
 Docs are merged: matching bundled `.hlp` files are overwritten, but extra
 third-party help files already present on the target `1:/docs` are kept.
-Update mode does not replace `1:/etc`, so local machine state such as
+Update mode does not replace `1:/system/config` or `1:/system/state`, so local machine state such as
 `license.dat`, `accounts.db`, and `oobe.done` is preserved across an
 installer-driven update. The machine ID is derived from detected machine
-identity at runtime instead of being stored in `0:/etc/install.id`. The stable
+identity at runtime instead of being stored in `0:/system/config/install.id`. The stable
 identity source is SMBIOS System UUID when firmware provides it, otherwise the
 boot GPT disk and ESP partition GUIDs. A fresh install formats and copies the
-staged `etc` tree instead, so it starts the license OOBE flow again.
+staged `system/config` tree and creates `system/state` instead, so it starts the license OOBE flow again.
 
 ## WSL validation commands
 

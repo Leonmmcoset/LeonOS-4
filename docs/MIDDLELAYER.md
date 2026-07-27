@@ -16,7 +16,7 @@ Middlelayer currently owns:
 - FAT32 ACL policy through hidden `LEONACL.SYS` metadata files, including
   default ACL synthesis, corrupt-ACL handling, and owner/role checks.
 - Service-runtime authorization for protected service tasks writing
-  `0:/var` state/log files and `0:/etc/services.cfg`.
+  `0:/var` state/log files and `0:/system/config/services.cfg`.
 - Boot-time self-test coverage for FAT32/mount policy, IPC, GUI, VFS, and
   device catalog services.
 
@@ -68,7 +68,7 @@ helpers.
 
 ## Account and Policy Service
 
-Middlelayer owns `0:/etc/accounts.db`. The v1 serialized line format is:
+Middlelayer owns `0:/system/state/accounts.db`. The v1 serialized line format is:
 
 ```text
 uid|role|flags|username|salt_hex|hash_hex
@@ -80,7 +80,7 @@ The database is accessed through trusted kernel services:
 - `write_file`
 - `mkdir`
 
-User tasks cannot open `0:/etc/accounts.db` directly. Auth operations go through
+User tasks cannot open `0:/system/state/accounts.db` directly. Auth operations go through
 `auth_op`, and the kernel passes bounded structs after validating user pointers.
 
 ## Filesystem ACL Service
@@ -124,7 +124,7 @@ Protected system services are marked by the kernel with
 `LEONOS_AUTHZ_ACTOR_SERVICE` during authorization checks. Middlelayer uses that
 flag to allow `serviced.elf` to create and update
 `0:/var/run/services.state`, `0:/var/run/services.cmd`,
-`0:/var/log/services.log`, and `0:/etc/services.cfg` without making those
+`0:/var/log/services.log`, and `0:/system/config/services.cfg` without making those
 writes available to ordinary unauthenticated tasks. `0:/var` remains readable
 so user tools can show runtime service state.
 

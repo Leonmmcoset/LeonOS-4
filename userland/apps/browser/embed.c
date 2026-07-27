@@ -74,6 +74,8 @@ void browser_embed_init(uint32_t width, uint32_t height, const char *initial_url
                                    BROWSER_MAX_W);
     init_h = browser_embed_min_u32(height ? height : BROWSER_INITIAL_H,
                                    BROWSER_MAX_H);
+    leonos_ui_set_font_path(BROWSER_FONT_PATH);
+    leonos_ui_set_font_fallback_path(BROWSER_FONT_FALLBACK_PATH);
     leonos_ui_bind(&ui, pixels, init_w, init_h, BROWSER_MAX_W);
     view_w = init_w;
     view_h = init_h;

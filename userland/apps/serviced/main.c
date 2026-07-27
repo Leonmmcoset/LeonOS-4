@@ -5,7 +5,7 @@
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 
-#define SERVICE_CONFIG_PATH "0:/etc/services.cfg"
+#define SERVICE_CONFIG_PATH "0:/system/config/services.cfg"
 #define SERVICE_STATE_PATH "0:/var/run/services.state"
 #define SERVICE_COMMAND_PATH "0:/var/run/services.cmd"
 #define SERVICE_LOG_PATH "0:/var/log/services.log"

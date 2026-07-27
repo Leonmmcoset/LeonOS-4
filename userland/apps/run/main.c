@@ -13,7 +13,7 @@
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[RUN_W * RUN_H];
-static char input_path[PATH_MAX_LEN] = "0:/userland/";
+static char input_path[PATH_MAX_LEN] = "0:/programs/";
 static char status_text[96];
 static struct leonos_ui_edit_state input_edit;
 

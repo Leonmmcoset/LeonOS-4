@@ -244,7 +244,7 @@ pub extern "C" fn osmlayer_rust_unicode_op(op: u32, arg: *mut core::ffi::c_void)
 #[unsafe(no_mangle)]
 pub extern "C" fn osmlayer_rust_selftest() -> u32 {
     let mut passed = 0;
-    if vfs::resolve_drive_path("0:/userland/desktop.elf").is_some() {
+    if vfs::resolve_drive_path("0:/system/apps/desktop/desktop.elf").is_some() {
         passed += 1;
     }
     if fat32::supports_basic_write() {

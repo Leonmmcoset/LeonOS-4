@@ -181,7 +181,7 @@ static int leonos_tls_load_roots(void)
     ret = mbedtls_x509_crt_parse(&leonos_tls_roots, pem, (size_t)length + 1U);
     mbedtls_platform_zeroize(pem, (size_t)length + 1U);
     free(pem);
-    if (ret != 0) {
+    if (ret < 0 || leonos_tls_roots.version == 0) {
         mbedtls_x509_crt_free(&leonos_tls_roots);
         return -1;
     }
