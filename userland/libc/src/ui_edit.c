@@ -315,18 +315,18 @@ int leonos_ui_edit_state_handle_mouse(struct leonos_ui_edit_state *state,
     return 1;
 }
 
-static uint32_t text_area_cols(uint32_t w);
+static uint32_t text_area_text_width(uint32_t w);
 
 void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                          uint32_t w, uint32_t h, const char *text, uint32_t cursor,
                          uint32_t scroll_line, uint32_t flags)
 {
     uint32_t rows = h > 8 ? (h - 8) / LEONOS_FONT_H : 0;
-    uint32_t cols = text_area_cols(w);
+    uint32_t text_width = text_area_text_width(w);
     uint32_t current = 0;
     uint32_t row = 0;
     uint32_t line_len = 0;
-    uint32_t line_cells = 0;
+    uint32_t line_pixels = 0;
     uint32_t text_pos = 0;
     char line[128];
     (void)cursor;
@@ -334,7 +334,7 @@ void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t
     while (text && row < rows) {
         uint32_t byte_len = 1;
         uint32_t cp = ui_decode_utf8(text, ui_strlen(text), text_pos, &byte_len);
-        uint32_t cw = ui_cell_width(cp);
+        uint32_t pixel_width = ui_codepoint_pixel_width(cp);
         if (text[text_pos] == 0) {
             line[line_len] = 0;
             if (current >= scroll_line) {
@@ -351,7 +351,7 @@ void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t
             continue;
         }
         if (cp == '\n' || line_len + byte_len >= sizeof(line) ||
-            (line_cells + cw > cols && line_len != 0)) {
+            (line_pixels + pixel_width > text_width && line_len != 0)) {
             line[line_len] = 0;
             if (current >= scroll_line) {
                 leonos_ui_text_clipped(surface, x + 4, y + 4 + row * LEONOS_FONT_H,
@@ -362,7 +362,7 @@ void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t
             }
             ++current;
             line_len = 0;
-            line_cells = 0;
+            line_pixels = 0;
             if (cp == '\n') {
                 text_pos += byte_len;
             }
@@ -371,7 +371,7 @@ void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t
         for (uint32_t i = 0; i < byte_len && line_len + 1 < sizeof(line); ++i) {
             line[line_len++] = text[text_pos + i];
         }
-        line_cells += cw;
+        line_pixels += pixel_width;
         text_pos += byte_len;
     }
     if ((flags & LEONOS_UI_EDIT_FOCUSED) && row < rows) {
@@ -379,10 +379,9 @@ void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t
     }
 }
 
-static uint32_t text_area_cols(uint32_t w)
+static uint32_t text_area_text_width(uint32_t w)
 {
-    uint32_t cols = w > 8 ? leonos_ui_text_fit_chars(w - 8) : 0;
-    return cols ? cols : 1;
+    return w > 8 ? w - 8 : 1;
 }
 
 static uint32_t text_area_rows(uint32_t h)
@@ -394,7 +393,7 @@ static void text_area_cursor_line_col(struct leonos_ui_text_area_state *state,
                                       uint32_t w, uint32_t cursor,
                                       uint32_t *out_line, uint32_t *out_col)
 {
-    uint32_t cols = text_area_cols(w);
+    uint32_t text_width = text_area_text_width(w);
     uint32_t line = 0;
     uint32_t col = 0;
     if (!state || !state->buffer) {
@@ -408,7 +407,7 @@ static void text_area_cursor_line_col(struct leonos_ui_text_area_state *state,
     for (uint32_t i = 0; i < cursor;) {
         uint32_t byte_len = 1;
         uint32_t cp = ui_decode_utf8(state->buffer, state->length, i, &byte_len);
-        uint32_t cw = ui_cell_width(cp);
+        uint32_t pixel_width = ui_codepoint_pixel_width(cp);
         if (cp == '\r') {
             i += byte_len;
             continue;
@@ -419,11 +418,11 @@ static void text_area_cursor_line_col(struct leonos_ui_text_area_state *state,
             i += byte_len;
             continue;
         }
-        if (col + cw > cols && col != 0) {
+        if (col + pixel_width > text_width && col != 0) {
             ++line;
             col = 0;
         }
-        col += cw;
+        col += pixel_width;
         i += byte_len;
     }
     *out_line = line;
@@ -434,7 +433,7 @@ static uint32_t text_area_cursor_from_line_col(struct leonos_ui_text_area_state 
                                                uint32_t w, uint32_t target_line,
                                                uint32_t target_col)
 {
-    uint32_t cols = text_area_cols(w);
+    uint32_t text_width = text_area_text_width(w);
     uint32_t line = 0;
     uint32_t col = 0;
     if (!state || !state->buffer) {
@@ -449,9 +448,9 @@ static uint32_t text_area_cursor_from_line_col(struct leonos_ui_text_area_state 
         }
         uint32_t byte_len = 1;
         uint32_t cp;
-        uint32_t cw;
+        uint32_t pixel_width;
         cp = ui_decode_utf8(state->buffer, state->length, pos, &byte_len);
-        cw = ui_cell_width(cp);
+        pixel_width = ui_codepoint_pixel_width(cp);
         if (cp == '\r') {
             continue;
         }
@@ -463,7 +462,7 @@ static uint32_t text_area_cursor_from_line_col(struct leonos_ui_text_area_state 
             col = 0;
             continue;
         }
-        if (col + cw > cols && col != 0) {
+        if (col + pixel_width > text_width && col != 0) {
             ++line;
             col = 0;
             if (line > target_line) {
@@ -473,10 +472,10 @@ static uint32_t text_area_cursor_from_line_col(struct leonos_ui_text_area_state 
                 return pos;
             }
         }
-        if (line == target_line && col + cw > target_col) {
+        if (line == target_line && col + pixel_width > target_col) {
             return pos;
         }
-        col += cw;
+        col += pixel_width;
         if (byte_len > 1) {
             pos += byte_len - 1u;
         }
@@ -551,7 +550,7 @@ static void text_area_clear_selection(struct leonos_ui_text_area_state *state)
 uint32_t leonos_ui_text_area_line_count(struct leonos_ui_text_area_state *state,
                                         uint32_t w)
 {
-    uint32_t cols = text_area_cols(w);
+    uint32_t text_width = text_area_text_width(w);
     uint32_t lines = 1;
     uint32_t col = 0;
     if (!state || !state->buffer) {
@@ -560,7 +559,7 @@ uint32_t leonos_ui_text_area_line_count(struct leonos_ui_text_area_state *state,
     for (uint32_t i = 0; i < state->length;) {
         uint32_t byte_len = 1;
         uint32_t cp = ui_decode_utf8(state->buffer, state->length, i, &byte_len);
-        uint32_t cw = ui_cell_width(cp);
+        uint32_t pixel_width = ui_codepoint_pixel_width(cp);
         if (cp == '\r') {
             i += byte_len;
             continue;
@@ -571,11 +570,11 @@ uint32_t leonos_ui_text_area_line_count(struct leonos_ui_text_area_state *state,
             i += byte_len;
             continue;
         }
-        if (col + cw > cols && col != 0) {
+        if (col + pixel_width > text_width && col != 0) {
             ++lines;
             col = 0;
         }
-        col += cw;
+        col += pixel_width;
         i += byte_len;
     }
     return lines ? lines : 1;
@@ -612,7 +611,7 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
     uint32_t cursor_line;
     uint32_t cursor_col;
     uint32_t rows = text_area_rows(h);
-    uint32_t cols = text_area_cols(w);
+    uint32_t text_width = text_area_text_width(w);
     uint32_t draw_flags = flags;
     uint32_t sel_start = 0;
     uint32_t sel_end = 0;
@@ -635,12 +634,11 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
         uint32_t line = state->scroll_line + row;
         uint32_t pos = text_area_cursor_from_line_col(state, w, line, 0);
         uint32_t draw_x = x + 4;
-        uint32_t draw_right = x + 4 + cols * LEONOS_FONT_W;
+        uint32_t draw_right = x + 4 + text_width;
         while (pos < state->length && draw_x < draw_right) {
             uint32_t byte_len = 1;
             uint32_t cp = ui_decode_utf8(state->buffer, state->length, pos, &byte_len);
-            uint32_t cw = ui_cell_width(cp);
-            uint32_t px = cw * LEONOS_FONT_W;
+            uint32_t px = ui_codepoint_pixel_width(cp);
             uint32_t ch_bg = LEONOS_UI_WHITE;
             uint32_t ch_fg = (draw_flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
             uint32_t next_line;
@@ -668,7 +666,7 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
                 ch_fg = LEONOS_UI_WHITE;
             }
             ui_codepoint(surface, draw_x, y + 4 + row * LEONOS_FONT_H,
-                         cp, cw, ch_fg, ch_bg, 0);
+                         cp, ui_cell_width(cp), ch_fg, ch_bg, 0);
             draw_x += px;
             pos += byte_len;
         }
@@ -676,7 +674,7 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
     if ((draw_flags & LEONOS_UI_EDIT_FOCUSED) && !(draw_flags & LEONOS_UI_EDIT_DISABLED)) {
         text_area_cursor_line_col(state, w, state->cursor, &cursor_line, &cursor_col);
         if (cursor_line >= state->scroll_line && cursor_line < state->scroll_line + rows) {
-            uint32_t cx = x + 4 + cursor_col * LEONOS_FONT_W;
+            uint32_t cx = x + 4 + cursor_col;
             uint32_t cy = y + 4 + (cursor_line - state->scroll_line) * LEONOS_FONT_H;
             if (cx < x + w - 2) {
                 leonos_ui_rect(surface, cx, cy, 1, LEONOS_FONT_H, LEONOS_UI_BLACK);
@@ -772,9 +770,7 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         if (state->cursor > 0) {
             if (text_area_delete_char(state, ui_prev_codepoint_offset(state->buffer,
                                                                       state->cursor))) {
-                if (col > 0) {
-                    --col;
-                }
+                text_area_cursor_line_col(state, w, state->cursor, &line, &col);
                 state->preferred_column = col;
                 text_area_ensure_cursor_visible(state, w, h);
                 return 1;
@@ -905,7 +901,7 @@ int leonos_ui_text_area_state_handle_mouse(struct leonos_ui_text_area_state *sta
     }
     col = 0;
     if (px > (int32_t)x + 4) {
-        col = ((uint32_t)px - x - 4) / LEONOS_FONT_W;
+        col = (uint32_t)px - x - 4;
     }
     {
         uint32_t next = text_area_cursor_from_line_col(state, w, line, col);

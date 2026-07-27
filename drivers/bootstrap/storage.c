@@ -30,7 +30,8 @@
 #define FIS_TYPE_REG_H2D 0x27u
 
 #define AHCI_CMDH_PRDTL 1u
-#define AHCI_MAX_SECTORS 8u
+#define AHCI_MAX_SECTORS 64u
+#define STORAGE_WRITE_MAX_SECTORS 8u
 #define AHCI_WAIT_SPINS 40000000u
 
 #define SECTOR_SIZE 512u
@@ -46,6 +47,8 @@
 #define FAT32_DIR_ENTRY_BYTES 32u
 
 #define STORAGE_SCRATCH_SECTORS 8u
+#define STORAGE_FAT_CACHE_SECTORS 8u
+#define STORAGE_READAHEAD_SECTORS 64u
 #define FAT32_MAX_FILE_CLUSTERS 16384u
 #define STORAGE_MAX_DRIVES 2u
 #define STORAGE_MAX_INSTALL_DISKS LEONOS_INSTALL_MAX_DISKS
@@ -285,8 +288,22 @@ static uint8_t ahci_cmd_table_buf[256] __attribute__((aligned(128)));
 static struct ahci_cmd_header ahci_cmd_headers[32] __attribute__((aligned(1024)));
 static uint8_t storage_scratch[STORAGE_SCRATCH_SECTORS * SECTOR_SIZE] __attribute__((aligned(4096)));
 static uint8_t storage_cluster_buf[64 * SECTOR_SIZE] __attribute__((aligned(4096)));
+static uint8_t storage_fat_cache_data[STORAGE_FAT_CACHE_SECTORS * SECTOR_SIZE]
+    __attribute__((aligned(4096)));
+static uint8_t storage_read_cache_data[STORAGE_READAHEAD_SECTORS * SECTOR_SIZE]
+    __attribute__((aligned(4096)));
 static uint32_t storage_old_chain[FAT32_MAX_FILE_CLUSTERS];
 static uint32_t storage_new_chain[FAT32_MAX_FILE_CLUSTERS];
+
+struct storage_sector_cache {
+    struct storage_volume *volume;
+    uint64_t first_lba;
+    uint32_t sector_count;
+    uint8_t valid;
+};
+
+static struct storage_sector_cache storage_fat_cache;
+static struct storage_sector_cache storage_read_cache;
 
 static int fat32_mount(void);
 
@@ -307,6 +324,12 @@ static void storage_memzero(void *dst, size_t len)
     for (size_t i = 0; i < len; ++i) {
         p[i] = 0;
     }
+}
+
+static void storage_cache_invalidate(void)
+{
+    storage_fat_cache.valid = 0;
+    storage_read_cache.valid = 0;
 }
 
 static void storage_memcpy(void *dst, const void *src, size_t len)
@@ -786,6 +809,7 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
 static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void *buffer)
 {
     const uint8_t *src = (const uint8_t *)buffer;
+    storage_cache_invalidate();
     if (g_storage.kind == STORAGE_VOLUME_RAM) {
         uint64_t offset = lba * SECTOR_SIZE;
         uint64_t bytes = (uint64_t)sector_count * SECTOR_SIZE;
@@ -797,7 +821,7 @@ static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void
         return 0;
     }
     while (sector_count) {
-        uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
+        uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
         int ret = ahci_write_lba(g_storage.hba_port, lba, chunk, src);
         if (ret < 0) {
             return ret;
@@ -895,11 +919,108 @@ static int fat32_read_fat_entry(uint32_t cluster, uint32_t *out_next)
 {
     uint32_t sector = fat_sector_for_cluster(cluster);
     uint32_t offset = fat_offset_for_cluster(cluster);
-    if (storage_read_sectors(sector, 1, storage_scratch) < 0) {
+    uint64_t fat_start = g_storage.esp_start_lba + g_storage.fat_start_sector;
+    uint64_t fat_end = fat_start + g_storage.fat_sector_count;
+    uint64_t cache_start;
+    uint32_t cache_sectors;
+    if (!out_next || sector < fat_start || sector >= fat_end) {
+        return -22;
+    }
+    if (!storage_fat_cache.valid || storage_fat_cache.volume != g_active_volume ||
+        sector < storage_fat_cache.first_lba ||
+        sector >= storage_fat_cache.first_lba + storage_fat_cache.sector_count) {
+        cache_start = fat_start +
+                      ((sector - fat_start) / STORAGE_FAT_CACHE_SECTORS) *
+                          STORAGE_FAT_CACHE_SECTORS;
+        cache_sectors = (uint32_t)min_u64(STORAGE_FAT_CACHE_SECTORS,
+                                          fat_end - cache_start);
+        storage_fat_cache.valid = 0;
+        if (storage_read_sectors(cache_start, cache_sectors, storage_fat_cache_data) < 0) {
+            return -5;
+        }
+        storage_fat_cache.volume = g_active_volume;
+        storage_fat_cache.first_lba = cache_start;
+        storage_fat_cache.sector_count = cache_sectors;
+        storage_fat_cache.valid = 1;
+    }
+    offset += (uint32_t)(sector - storage_fat_cache.first_lba) * SECTOR_SIZE;
+    if (offset + sizeof(uint32_t) > storage_fat_cache.sector_count * SECTOR_SIZE) {
         return -5;
     }
-    uint32_t value = *(const uint32_t *)(const void *)(storage_scratch + offset);
+    uint32_t value = *(const uint32_t *)(const void *)(storage_fat_cache_data + offset);
     *out_next = value & 0x0fffffffu;
+    return 0;
+}
+
+static int storage_read_cache_lookup(uint32_t cluster, uint32_t *out_offset,
+                                     uint32_t *out_clusters)
+{
+    uint64_t lba;
+    uint32_t sector_offset;
+    uint32_t sectors_left;
+    if (!storage_read_cache.valid || storage_read_cache.volume != g_active_volume ||
+        !out_offset || !out_clusters || cluster < 2) {
+        return 0;
+    }
+    lba = cluster_to_lba(cluster);
+    if (lba < storage_read_cache.first_lba ||
+        lba >= storage_read_cache.first_lba + storage_read_cache.sector_count) {
+        return 0;
+    }
+    sector_offset = (uint32_t)(lba - storage_read_cache.first_lba);
+    sectors_left = storage_read_cache.sector_count - sector_offset;
+    if (sector_offset % g_storage.sectors_per_cluster ||
+        sectors_left < g_storage.sectors_per_cluster) {
+        return 0;
+    }
+    *out_offset = sector_offset * SECTOR_SIZE;
+    *out_clusters = sectors_left / g_storage.sectors_per_cluster;
+    return 1;
+}
+
+static int storage_read_contiguous_clusters(uint32_t first_cluster,
+                                            uint32_t max_clusters,
+                                            uint32_t *out_clusters,
+                                            uint32_t *out_next)
+{
+    uint32_t cluster = first_cluster;
+    uint32_t count = 1;
+    uint32_t next = FAT32_EOC;
+    if (!out_clusters || !out_next || first_cluster < 2 || max_clusters == 0) {
+        return -22;
+    }
+    for (;;) {
+        if (fat32_read_fat_entry(cluster, &next) < 0) {
+            return -5;
+        }
+        if (count >= max_clusters || next >= FAT32_EOC || next != cluster + 1u) {
+            *out_clusters = count;
+            *out_next = next;
+            return 0;
+        }
+        cluster = next;
+        ++count;
+    }
+}
+
+static int storage_read_cache_fill(uint32_t first_cluster, uint32_t clusters)
+{
+    uint32_t sectors;
+    uint64_t lba;
+    if (first_cluster < 2 || clusters == 0 ||
+        clusters > STORAGE_READAHEAD_SECTORS / g_storage.sectors_per_cluster) {
+        return -22;
+    }
+    sectors = clusters * g_storage.sectors_per_cluster;
+    lba = cluster_to_lba(first_cluster);
+    storage_read_cache.valid = 0;
+    if (storage_read_sectors(lba, sectors, storage_read_cache_data) < 0) {
+        return -5;
+    }
+    storage_read_cache.volume = g_active_volume;
+    storage_read_cache.first_lba = lba;
+    storage_read_cache.sector_count = sectors;
+    storage_read_cache.valid = 1;
     return 0;
 }
 
@@ -925,8 +1046,18 @@ static int fat32_write_fat_entry(uint32_t cluster, uint32_t value)
 
 static int fat32_read_cluster(uint32_t cluster, void *buffer)
 {
+    uint32_t cache_offset;
+    uint32_t cache_clusters;
     if (cluster < 2) {
         return -2;
+    }
+    if (!buffer) {
+        return -22;
+    }
+    if (storage_read_cache_lookup(cluster, &cache_offset, &cache_clusters)) {
+        storage_memcpy(buffer, storage_read_cache_data + cache_offset,
+                       g_storage.cluster_bytes);
+        return 0;
     }
     return storage_read_sectors(cluster_to_lba(cluster), g_storage.sectors_per_cluster, buffer);
 }
@@ -2035,6 +2166,7 @@ void storage_init(void)
     g_devfs_enabled = 1;
     g_installer_root_active = 0;
     g_active_volume = &g_volumes[0];
+    storage_cache_invalidate();
 
     for (uint16_t bus = 0; bus < 256; ++bus) {
         for (uint8_t slot = 0; slot < 32; ++slot) {
@@ -2193,6 +2325,7 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
     storage_memzero(root, sizeof(*root));
     g_active_volume = root;
     g_installer_root_active = 0;
+    storage_cache_invalidate();
     if (!image || len < SECTOR_SIZE || (len % SECTOR_SIZE) != 0) {
         return -22;
     }
@@ -2228,6 +2361,7 @@ void storage_init_installer_root(const struct boot_info *boot)
     storage_memzero(g_volumes, sizeof(g_volumes));
     g_active_volume = &g_volumes[0];
     g_installer_root_active = 0;
+    storage_cache_invalidate();
     if (boot) {
         for (uint32_t i = 0; i < boot->module_count; ++i) {
             const struct boot_module *mod = &boot->modules[i];
@@ -2496,29 +2630,50 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     }
 
     while (done < len) {
-        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
-            storage_restore_volume(old_volume);
-            return -5;
+        uint64_t cluster_file_offset = offset + done - cluster_off;
+        uint64_t bytes_from_cluster = node->size - cluster_file_offset;
+        uint32_t max_clusters = (uint32_t)((bytes_from_cluster +
+                                             g_storage.cluster_bytes - 1u) /
+                                            g_storage.cluster_bytes);
+        uint32_t cache_offset;
+        uint32_t cache_clusters;
+        uint32_t next;
+        uint32_t take;
+        if (max_clusters > STORAGE_READAHEAD_SECTORS / g_storage.sectors_per_cluster) {
+            max_clusters = STORAGE_READAHEAD_SECTORS / g_storage.sectors_per_cluster;
         }
-        uint32_t take = g_storage.cluster_bytes - cluster_off;
+        if (storage_read_cache_lookup(cluster, &cache_offset, &cache_clusters)) {
+            if (cache_clusters > max_clusters) {
+                cache_clusters = max_clusters;
+            }
+            if (fat32_read_fat_entry(cluster + cache_clusters - 1u, &next) < 0) {
+                storage_restore_volume(old_volume);
+                return -5;
+            }
+        } else {
+            if (storage_read_contiguous_clusters(cluster, max_clusters,
+                                                 &cache_clusters, &next) < 0 ||
+                storage_read_cache_fill(cluster, cache_clusters) < 0) {
+                storage_restore_volume(old_volume);
+                return -5;
+            }
+            cache_offset = 0;
+        }
+        take = cache_clusters * g_storage.cluster_bytes - cluster_off;
         if (take > len - done) {
             take = len - done;
         }
-        storage_memcpy(dst + done, storage_cluster_buf + cluster_off, take);
+        storage_memcpy(dst + done, storage_read_cache_data + cache_offset + cluster_off,
+                       take);
         done += take;
-        cluster_off = 0;
         if (done >= len) {
             break;
-        }
-        uint32_t next = 0;
-        if (fat32_read_fat_entry(cluster, &next) < 0) {
-            storage_restore_volume(old_volume);
-            return -5;
         }
         if (next >= FAT32_EOC) {
             break;
         }
         cluster = next;
+        cluster_off = 0;
     }
     if (out_read) {
         *out_read = done;
@@ -3296,8 +3451,9 @@ static int install_write_sectors(struct install_disk_state *disk, uint64_t lba,
     if (!disk || !disk->present || !disk->hba_port || !buffer) {
         return -22;
     }
+    storage_cache_invalidate();
     while (sector_count) {
-        uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
+        uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
         int ret = ahci_write_lba(disk->hba_port, lba, chunk, src);
         if (ret < 0) {
             return ret;
@@ -3618,6 +3774,7 @@ int storage_install_mount_target(uint32_t disk_id)
     struct install_disk_state *disk = &g_install_disks[disk_id];
     struct storage_volume *target = &g_volumes[1];
     struct storage_volume *old = g_active_volume;
+    storage_cache_invalidate();
     storage_memzero(target, sizeof(*target));
     target->drive = 1;
     target->kind = STORAGE_VOLUME_AHCI;

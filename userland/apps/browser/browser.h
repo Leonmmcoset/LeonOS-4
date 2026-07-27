@@ -78,7 +78,9 @@
 #define BROWSER_HOME_W 62U
 #define BROWSER_STOP_W 58U
 #define BROWSER_GO_W 54U
-#define BROWSER_LINK_BLUE 0x000000ccU
+#define BROWSER_FONT_PATH "0:/system/fonts/times-new-roman.ttf"
+#define BROWSER_FONT_FALLBACK_PATH "0:/system/fonts/simsun.ttc"
+#define BROWSER_LINK_BLUE 0x000000eeU
 #define BROWSER_TEXT_DARK 0x00202020U
 #define BROWSER_IE_NAVY 0x00000080U
 #define BROWSER_IE_SKY 0x00d8e8f8U

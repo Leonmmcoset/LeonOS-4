@@ -13,6 +13,9 @@ existing GUI, libc, launch, filesystem, and network ABIs.
 Current features:
 
 - IE-style menu/toolbar/address layout with toast status messages.
+- Times New Roman as the browser's Latin font, with SimSun as the Chinese
+  fallback; both are loaded at runtime from external font files rather than
+  embedded in `browser.elf`.
 - Bilingual `about:leonos` start page.
 - `http://` and `https://` navigation through the libc HTTP client on top of
   TCP sockets. HTTPS uses TLS 1.2 with certificate, hostname, and system-clock
@@ -51,6 +54,11 @@ Current limits:
 - HTTP uses `HTTP/1.1` over TCP sockets with `Connection: close`; HTTPS uses a
   TLS 1.2 client profile backed by Mbed TLS and the bundled CA roots. Cookies,
   cache, compression, and true streaming downloads are not implemented yet.
+
+The repository owns the font build inputs: `system/fonts/times.ttf` is copied
+to `0:/system/fonts/times-new-roman.ttf`, and `system/fonts/simsun.ttc` is
+packaged as `0:/system/fonts/simsun.ttc`. Local and GitHub Actions builds use
+these same repository files.
 
 ## litehtml Status
 

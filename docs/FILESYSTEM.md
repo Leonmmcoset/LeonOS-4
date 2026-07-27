@@ -36,9 +36,12 @@ Multi-user v1 uses these fixed paths:
 - `0:/system/state/license.dat`: local activation record with mode, email hash,
   machine ID, key hash, and local HMAC; plaintext keys are not stored.
 - `0:/system/state/oobe.done`: first-run completion marker.
-- `0:/system/config/fileassoc.cfg`: optional launcher file-association overrides.
-- `0:/system/config/services.cfg`: optional startup/service policy overrides.
-- `0:/system/config/drivers.conf`: optional disabled loadable-driver list.
+- `0:/system/config/leonos.conf`: build and kernel configuration.
+- `0:/system/config/display.conf`: default Metro appearance and display policy.
+- `0:/system/config/drivers.conf`: loadable-driver policy; all drivers are enabled by default.
+- `0:/system/config/fileassoc.cfg`: user-defined launcher file-association overrides.
+- `0:/system/config/locale.conf`: default UI language.
+- `0:/system/config/services.cfg`: default startup and service policy.
 - `0:/drivers`: unsigned Ring 0 `.drv` modules loaded after root mount.
 - `0:/docs`: bundled and third-party `.hlp` help containers shown by the
   desktop Documents menu and opened by `oshlp.elf`.

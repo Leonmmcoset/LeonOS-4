@@ -221,6 +221,8 @@ struct leonos_ui_toast_state {
 
 void leonos_ui_bind(struct leonos_ui_surface *surface, uint32_t *pixels,
                     uint32_t width, uint32_t height, uint32_t stride);
+int leonos_ui_set_font_path(const char *path);
+int leonos_ui_set_font_fallback_path(const char *path);
 uint32_t leonos_ui_text_width(const char *text);
 uint32_t leonos_ui_text_fit_chars(uint32_t pixel_width);
 int leonos_ui_hit(uint32_t px, uint32_t py, int32_t x, int32_t y, uint32_t w, uint32_t h);

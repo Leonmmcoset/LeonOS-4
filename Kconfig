@@ -18,7 +18,7 @@ config IMAGE_SIZE_MIB
 config INSTALLER_ROOT_SIZE_MIB
     int "Installer runtime root size in MiB"
     range 32 4096
-    default 64
+    default 128
 
 endmenu
 

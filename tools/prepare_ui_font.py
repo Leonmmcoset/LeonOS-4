@@ -7,10 +7,12 @@ import struct
 from pathlib import Path
 
 
-DEFAULT_FONT = Path("/mnt/c/Windows/Fonts/Deng.ttf")
+DEFAULT_FONT = Path("system/fonts/Deng.ttf")
+DEFAULT_WIN95_FONT = Path("system/fonts/Deng.ttf")
 DEFAULT_PIXEL_SOURCE = Path("system/fonts/system.psf")
 PIXEL_FIRST = 0x20
 PIXEL_LAST = 0x7E
+MAX_RUNTIME_FONT_SIZE = 20 * 1024 * 1024
 
 
 def be16(data: bytes, offset: int) -> int:
@@ -35,21 +37,28 @@ def checksum(data: bytes) -> int:
 
 
 def font_tables(data: bytes) -> tuple[bytes, list[bytes], dict[bytes, bytes]]:
-    if len(data) < 12 or be32(data, 0) != 0x00010000:
+    if len(data) < 12:
         raise ValueError("source font is not a TrueType glyf font")
-    count = be16(data, 4)
-    if len(data) < 12 + count * 16:
+    face_offset = 0
+    if data[:4] == b"ttcf":
+        if len(data) < 16 or be32(data, 8) < 1 or be32(data, 8) > (len(data) - 12) // 4:
+            raise ValueError("invalid TrueType font collection")
+        face_offset = be32(data, 12)
+    if face_offset > len(data) - 12 or be32(data, face_offset) != 0x00010000:
+        raise ValueError("source font is not a TrueType glyf font")
+    count = be16(data, face_offset + 4)
+    if len(data) < face_offset + 12 + count * 16:
         raise ValueError("truncated TrueType table directory")
     order: list[bytes] = []
     tables: dict[bytes, bytes] = {}
     for index in range(count):
-        offset = 12 + index * 16
+        offset = face_offset + 12 + index * 16
         tag, _, table_offset, length = struct.unpack_from(">4sIII", data, offset)
         if table_offset > len(data) or length > len(data) - table_offset:
             raise ValueError(f"truncated TrueType table {tag.decode('ascii', 'replace')}")
         order.append(tag)
         tables[tag] = data[table_offset:table_offset + length]
-    return data[:12], order, tables
+    return data[face_offset:face_offset + 12], order, tables
 
 
 def cmap_format4_glyph(table: bytes, codepoint: int) -> int:
@@ -119,7 +128,13 @@ def psf_ascii_glyphs(path: Path) -> dict[int, bytes]:
 def pixel_glyph(bitmap: bytes, ascender: int, descender: int, advance: int) -> bytes:
     contours: list[list[tuple[int, int]]] = []
     line_height = ascender - descender
+    bold_bitmap = bytearray(16)
     for row, bits in enumerate(bitmap):
+        expanded = bits | (bits >> 1)
+        bold_bitmap[row] |= expanded
+        if row + 1 < len(bold_bitmap):
+            bold_bitmap[row + 1] |= expanded
+    for row, bits in enumerate(bold_bitmap):
         for column in range(8):
             if not bits & (0x80 >> column):
                 continue
@@ -146,6 +161,42 @@ def pixel_glyph(bitmap: bytes, ascender: int, descender: int, advance: int) -> b
         previous = y
     align4(output)
     return bytes(output)
+
+
+def ensure_runtime_font_size(path: Path) -> None:
+    size = path.stat().st_size
+    if size > MAX_RUNTIME_FONT_SIZE:
+        raise ValueError(f"runtime font exceeds {MAX_RUNTIME_FONT_SIZE} bytes: {path} ({size} bytes)")
+
+
+def rebuild_font(header: bytes, order: list[bytes], tables: dict[bytes, bytes]) -> bytes:
+    head = bytearray(tables[b"head"])
+    head[8:12] = b"\0\0\0\0"
+    tables = dict(tables)
+    tables[b"head"] = bytes(head)
+    output = bytearray(header)
+    output.extend(b"\0" * (16 * len(order)))
+    offsets_out: dict[bytes, int] = {}
+    checksums: dict[bytes, int] = {}
+    for tag in order:
+        align4(output)
+        offsets_out[tag] = len(output)
+        payload = tables[tag]
+        checksums[tag] = checksum(payload)
+        output.extend(payload)
+    for index, tag in enumerate(order):
+        struct.pack_into(">4sIII", output, 12 + index * 16, tag, checksums[tag], offsets_out[tag], len(tables[tag]))
+    adjustment = (0xB1B0AFBA - checksum(bytes(output))) & 0xFFFFFFFF
+    struct.pack_into(">I", output, offsets_out[b"head"] + 8, adjustment)
+    return bytes(output)
+
+
+def resolve_font(path: Path) -> Path:
+    if path.is_file():
+        return path
+    raise FileNotFoundError(
+        f"missing repository UI font: {path}; restore system/fonts/Deng.ttf or pass --font PATH"
+    )
 
 
 def loca_offsets(data: bytes, glyph_count: int, long_loca: bool) -> list[int]:
@@ -203,22 +254,8 @@ def build_win95_font(source: Path, pixel_source: Path, target: Path) -> None:
     head[8:12] = b"\0\0\0\0"
     tables[b"head"] = bytes(head)
 
-    output = bytearray(header)
-    output.extend(b"\0" * (16 * len(order)))
-    offsets_out: dict[bytes, int] = {}
-    checksums: dict[bytes, int] = {}
-    for tag in order:
-        align4(output)
-        offsets_out[tag] = len(output)
-        payload = tables[tag]
-        checksums[tag] = checksum(payload)
-        output.extend(payload)
-    for index, tag in enumerate(order):
-        struct.pack_into(">4sIII", output, 12 + index * 16, tag, checksums[tag], offsets_out[tag], len(tables[tag]))
-    adjustment = (0xB1B0AFBA - checksum(bytes(output))) & 0xFFFFFFFF
-    struct.pack_into(">I", output, offsets_out[b"head"] + 8, adjustment)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(output)
+    target.write_bytes(rebuild_font(header, order, tables))
 
 
 def main() -> int:
@@ -227,19 +264,28 @@ def main() -> int:
     parser.add_argument("--win95-out", required=True)
     parser.add_argument("--font", default=str(DEFAULT_FONT))
     parser.add_argument("--pixel-source", default=str(DEFAULT_PIXEL_SOURCE))
+    parser.add_argument("--win95-font", default=str(DEFAULT_WIN95_FONT))
     args = parser.parse_args()
 
-    source = Path(args.font)
-    if not source.is_file():
-        raise FileNotFoundError(f"missing unified UI TTF: {source}")
+    source = resolve_font(Path(args.font))
+    win95_source = Path(args.win95_font)
+    if not win95_source.is_file():
+        win95_source = source
     pixel_source = Path(args.pixel_source)
     if not pixel_source.is_file():
         raise FileNotFoundError(f"missing Win95 pixel source: {pixel_source}")
     metro_out = Path(args.metro_out)
     metro_out.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, metro_out)
-    build_win95_font(source, pixel_source, Path(args.win95_out))
-    print(f"prepared {metro_out} and {args.win95_out} from {source}")
+    source_data = source.read_bytes()
+    metro_header, metro_order, metro_tables = font_tables(source_data)
+    if source_data[:4] == b"ttcf":
+        metro_out.write_bytes(rebuild_font(metro_header, metro_order, metro_tables))
+    else:
+        shutil.copyfile(source, metro_out)
+    build_win95_font(win95_source, pixel_source, Path(args.win95_out))
+    ensure_runtime_font_size(metro_out)
+    ensure_runtime_font_size(Path(args.win95_out))
+    print(f"prepared {metro_out} from {source} and {args.win95_out} from {win95_source}")
     return 0
 
 
