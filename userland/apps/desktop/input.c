@@ -270,6 +270,11 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
     bring_to_front(slot);
     begin_window_open_animation(slot);
     send_app_event(slot, 4, 0, 0, 0, 0, 0, 0, 0);
+    send_app_event(slot, LEONOS_GUI_APP_EVENT_THEME_CHANGED,
+                   (int32_t)leonos_ui_theme(),
+                   (int32_t)desktop_metro_color_scheme,
+                   (int32_t)desktop_win95_color_scheme,
+                   0, 0, 0, 0);
     fetch_window_surface(slot);
     printf("[desktop.elf] GUI window from pid=%d wid=%d title=%s\n", msg->pid, msg->window_id, windows[slot].title);
 }
@@ -437,7 +442,9 @@ void maybe_launch_login(void)
     }
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
+        desktop_load_appearance_config();
         (void)desktop_refresh_items();
+        desktop_launch_startup_apps();
         full_redraw_pending = 1;
         return;
     }
@@ -483,7 +490,9 @@ void login_lock_update(void)
     }
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
+        desktop_load_appearance_config();
         (void)desktop_refresh_items();
+        desktop_launch_startup_apps();
         full_redraw_pending = 1;
         return;
     }
@@ -553,15 +562,28 @@ void desktop_logout(void)
 {
     printf("[desktop.elf] logout requested from Start menu\n");
     leonos_auth_logout();
+    desktop_load_appearance_config();
     desktop_items_clear();
     desktop_message_active = 0;
     desktop_shortcut_input_active = 0;
     desktop_shortcut_target[0] = 0;
     login_lock_active = 1;
     login_last_spawn_ms = 0;
+    desktop_startup_launched = 0;
     start_menu_set_open(0);
     maybe_launch_login();
     full_redraw_pending = 1;
+}
+
+void desktop_launch_startup_apps(void)
+{
+    int launched;
+    if (desktop_startup_launched) {
+        return;
+    }
+    desktop_startup_launched = 1;
+    launched = leonos_startup_launch_current_user();
+    printf("[desktop.elf] user startup applications launched=%d\n", launched);
 }
 
 void desktop_request_power_confirm(uint8_t action)

@@ -35,8 +35,8 @@
 #define CURSOR_BMP_PATH "0:/system/resources/mouse.bmp"
 #define WALLPAPER_MAX_W 1280
 #define WALLPAPER_MAX_H 720
-#define WALLPAPER_BMP_MAX_BYTES (WALLPAPER_MAX_W * WALLPAPER_MAX_H * 3 + 128)
-#define WALLPAPER_BMP_PATH "0:/system/resources/wallpaper-metro.bmp"
+#define WALLPAPER_BMP_MAX_BYTES (WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4 + 128)
+#define DESKTOP_DEFAULT_WALLPAPER_PATH "0:/system/resources/wallpaper-metro.bmp"
 #define WINDOW_BUTTON_ICON_W 16
 #define WINDOW_BUTTON_ICON_H 16
 #define WINDOW_BUTTON_MINIMIZE_ICON_PATH "0:/system/resources/window-button-minimize.bmp"
@@ -64,6 +64,7 @@
 #define SERVICE_DAEMON_PATH "0:/system/apps/serviced/serviced.elf"
 #define SERVICE_DAEMON_RETRY_MS 2000UL
 #define DISPLAY_CONFIG_PATH "0:/system/config/display.conf"
+#define APPEARANCE_CONFIG_NAME "appearance.conf"
 #define SERVICES_CONFIG_PATH "0:/system/config/services.cfg"
 #define SERVICES_CONFIG_MAX 512U
 #define DISPLAY_CONFIRM_MS 10000UL
@@ -300,6 +301,11 @@ extern uint32_t wallpaper_pixels[WALLPAPER_MAX_W * WALLPAPER_MAX_H];
 extern uint32_t wallpaper_width;
 extern uint32_t wallpaper_height;
 extern uint8_t wallpaper_loaded;
+extern uint8_t desktop_boot_theme_default;
+extern uint8_t desktop_metro_color_scheme;
+extern uint8_t desktop_win95_color_scheme;
+extern uint8_t desktop_wallpaper_mode;
+extern char desktop_wallpaper_path[LEONOS_FS_PATH_LEN];
 extern uint8_t desktop_service_network_icon;
 extern uint8_t desktop_service_rtc_clock;
 extern uint8_t desktop_service_daemon_started;
@@ -310,6 +316,7 @@ extern uint8_t oobe_lock_active;
 extern unsigned long oobe_last_spawn_ms;
 extern uint8_t login_lock_active;
 extern unsigned long login_last_spawn_ms;
+extern uint8_t desktop_startup_launched;
 extern char app_titles[MAX_WINDOWS][48];
 extern char app_texts[MAX_WINDOWS][DESKTOP_APP_TEXT_LEN];
 extern struct leonos_task_info task_infos[LEONOS_TASK_MAX];
@@ -337,6 +344,8 @@ void desktop_revert_display_settings(void);
 void desktop_update_display_confirmation(void);
 void desktop_load_display_config(void);
 int desktop_save_display_config(void);
+void desktop_load_appearance_config(void);
+int desktop_save_appearance_config(void);
 void desktop_reflow_after_display_change(void);
 void copy_text(char *dst, uint32_t dst_len, const char *src);
 int text_eq(const char *a, const char *b);
@@ -501,6 +510,7 @@ void login_lock_on_window_removed(uint8_t slot);
 int login_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg);
 int handle_login_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons);
 int handle_login_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);
+void desktop_launch_startup_apps(void);
 void desktop_reboot(void);
 void desktop_shutdown(void);
 void desktop_logout(void);
@@ -514,6 +524,7 @@ void desktop_handle_display_requests(void);
 void desktop_publish_appearance_state(void);
 void desktop_handle_appearance_requests(void);
 void desktop_apply_theme(uint32_t theme);
+void desktop_apply_appearance(const struct leonos_appearance_request *request);
 void update_snap_preview(uint32_t x, uint32_t y);
 void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons);
 void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);

@@ -174,10 +174,12 @@ Important requests include:
   `LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT`
 - `LEONOS_GUI_IOCTL_APPEARANCE_STATE`, `LEONOS_GUI_IOCTL_APPEARANCE_REQUEST`,
   `LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST`,
-  `LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE`. Appearance requests carry a
-  `LEONOS_UI_THEME_METRO` or `LEONOS_UI_THEME_WIN95` value and are accepted
-  only from administrator tasks; the Desktop window server is the sole state
-  publisher and broadcasts `LEONOS_GUI_APP_EVENT_THEME_CHANGED` to clients.
+  `LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE`. Appearance requests carry the
+  theme, independent Metro and Win95 basic color scheme IDs, wallpaper display
+  mode, and wallpaper path. They are accepted from logged-in user tasks; the
+  Desktop window server is the sole state publisher, saves the current user's
+  personalization file, and broadcasts `LEONOS_GUI_APP_EVENT_THEME_CHANGED` to
+  clients.
 - `LEONOS_GUI_IOCTL_TASKS`, `LEONOS_GUI_IOCTL_TASK_KILL`
 - `LEONOS_IOCTL_LIST_DIR`
 - `LEONOS_IOCTL_SYSTEM_INFO`, `LEONOS_IOCTL_PERF_INFO`,

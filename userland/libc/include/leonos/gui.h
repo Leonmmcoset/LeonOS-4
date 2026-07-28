@@ -40,6 +40,13 @@
 #define LEONOS_DISPLAY_REQUEST_REVERT 3U
 #define LEONOS_DISPLAY_REQUEST_REFRESH 4U
 
+#define LEONOS_WALLPAPER_MODE_FILL 0U
+#define LEONOS_WALLPAPER_MODE_FIT 1U
+#define LEONOS_WALLPAPER_MODE_CENTER 2U
+#define LEONOS_WALLPAPER_MODE_TILE 3U
+#define LEONOS_WALLPAPER_MODE_STRETCH 4U
+#define LEONOS_WALLPAPER_MODE_COUNT 5U
+
 #define LEONOS_TASK_NAME_LEN 32U
 #define LEONOS_TASK_MAX 64U
 
@@ -228,10 +235,18 @@ struct leonos_display_request {
 
 struct leonos_appearance_state {
     uint32_t theme;
+    uint32_t metro_color_scheme;
+    uint32_t win95_color_scheme;
+    uint32_t wallpaper_mode;
+    char wallpaper_path[LEONOS_FS_PATH_LEN];
 };
 
 struct leonos_appearance_request {
     uint32_t theme;
+    uint32_t metro_color_scheme;
+    uint32_t win95_color_scheme;
+    uint32_t wallpaper_mode;
+    char wallpaper_path[LEONOS_FS_PATH_LEN];
 };
 
 int leonos_gui_connect(void);

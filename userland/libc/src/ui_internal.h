@@ -38,5 +38,6 @@ void ui_window_button_draw(struct leonos_ui_surface *surface, uint32_t x, uint32
                            char label, uint32_t flags);
 
 int ui_theme_is_metro(void);
+void ui_theme_ensure_loaded(void);
 
 #endif

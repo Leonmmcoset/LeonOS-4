@@ -58,7 +58,7 @@ void draw_fileman(struct leonos_ui_surface *ui)
         if (fileman_entry_marked(i)) {
             leonos_ui_text(ui, l.list_x + l.list_w - 14, l.rows_y + row * ROW_H + 4,
                            "*", 0x00007000U,
-                           file_list.selected == (int32_t)i ? 0x00e7f0ffU : LEONOS_UI_WHITE);
+                           file_list.selected == (int32_t)i ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE);
         }
     }
     leonos_ui_vscrollbar(ui, l.scrollbar_x, l.list_y + 2, 18, l.scrollbar_h - 4,

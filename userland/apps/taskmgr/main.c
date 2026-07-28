@@ -1,6 +1,8 @@
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/auth.h>
 #include <leonos/psf_font.h>
+#include <leonos/startup.h>
 #include <leonos/stdio.h>
 #include <leonos/system.h>
 #include <leonos/syscall.h>
@@ -13,11 +15,11 @@
 #define TASKMGR_DETAILS_W 430
 #define TASKMGR_DETAILS_H 292
 #define TASKMGR_STATUS_H 28
-#define TASKMGR_VISIBLE_ROWS 7
 #define TASKMGR_MENU_BAR_H 28
 #define TASKMGR_MENU_ITEM_H (LEONOS_FONT_H + 8)
 #define TASKMGR_CONTEXT_MENU_W 140
 #define TASKMGR_CONTEXT_MENU_COUNT 3
+#define TASKMGR_STARTUP_USER_ROW_H 24U
 #define TASKMGR_KEY_ESCAPE 1U
 #define LEONOS_KEY_DELETE 83U
 #define T(en, zh) leonos_i18n((en), (zh))
@@ -29,6 +31,7 @@ enum {
     TASKMGR_ACTION_ABOUT = 4,
     TASKMGR_ACTION_PROCESSES = 5,
     TASKMGR_ACTION_PERFORMANCE = 6,
+    TASKMGR_ACTION_STARTUP = 7,
 };
 
 enum {
@@ -40,6 +43,7 @@ enum {
 enum {
     TASKMGR_TAB_PROCESSES = 0,
     TASKMGR_TAB_PERFORMANCE = 1,
+    TASKMGR_TAB_STARTUP = 2,
 };
 
 static uint32_t pixels[TASKMGR_MAX_W * TASKMGR_MAX_H];
@@ -54,6 +58,14 @@ static uint32_t cpu_percent;
 static uint32_t mem_percent;
 static uint8_t perf_valid;
 static struct leonos_ui_listview_state task_list;
+static struct leonos_startup_entry startup_entries[LEONOS_STARTUP_MAX_ENTRIES];
+static uint32_t startup_entry_count;
+static struct leonos_ui_listview_state startup_list;
+static struct leonos_user_info startup_users[LEONOS_AUTH_MAX_USERS];
+static uint32_t startup_user_count;
+static uint32_t startup_selected_uid;
+static uint8_t startup_user_dropdown_open;
+static uint32_t startup_user_dropdown_scroll;
 static uint8_t active_tab = TASKMGR_TAB_PROCESSES;
 static struct leonos_ui_tab_state taskmgr_tabs;
 static uint8_t menu_open;
@@ -64,10 +76,11 @@ static unsigned long context_menu_anim_start;
 static uint32_t context_menu_x;
 static uint32_t context_menu_y;
 
-static void taskmgr_tab_items(struct leonos_ui_tab_item items[2])
+static void taskmgr_tab_items(struct leonos_ui_tab_item items[3])
 {
     items[0] = (struct leonos_ui_tab_item){T("Processes", "进程"), TASKMGR_TAB_PROCESSES, 0};
     items[1] = (struct leonos_ui_tab_item){T("Performance", "性能"), TASKMGR_TAB_PERFORMANCE, 0};
+    items[2] = (struct leonos_ui_tab_item){T("Startup Apps", "启动应用"), TASKMGR_TAB_STARTUP, 0};
 }
 static uint32_t view_w = TASKMGR_W;
 static uint32_t view_h = TASKMGR_H;
@@ -78,6 +91,25 @@ static uint32_t visible_rows(void)
     uint32_t h = view_h > 102 + TASKMGR_STATUS_H + 8 ? view_h - 102 - TASKMGR_STATUS_H - 8 : 24;
     uint32_t rows = h / 24;
     return rows ? rows : 1;
+}
+
+static uint32_t startup_visible_rows(void)
+{
+    uint32_t h = view_h > 142 + TASKMGR_STATUS_H + 8 ?
+                     view_h - 142 - TASKMGR_STATUS_H - 8 : 24;
+    uint32_t rows = h / 24;
+    return rows ? rows : 1;
+}
+
+static uint32_t toolbar_tab_width(void)
+{
+    uint32_t available = view_w > 104 ? view_w - 104 : 0;
+    return available > 340 ? 340 : available;
+}
+
+static uint32_t toolbar_action_x(void)
+{
+    return 104 + toolbar_tab_width() + 8;
 }
 
 static void context_menu_set_active(uint8_t active)
@@ -187,6 +219,69 @@ static void refresh_tasks(void)
     }
 }
 
+static void refresh_startup_users(void)
+{
+    struct leonos_user_info current;
+    uint32_t count = 0;
+    current = (struct leonos_user_info){0};
+    startup_user_count = 0;
+    if (leonos_auth_current(&current) < 0 || !current.uid) {
+        startup_selected_uid = 0;
+        return;
+    }
+    if (current.role == LEONOS_AUTH_ROLE_ADMIN &&
+        leonos_auth_list_users(startup_users, LEONOS_AUTH_MAX_USERS, 0, &count) == 0) {
+        startup_user_count = count > LEONOS_AUTH_MAX_USERS ? LEONOS_AUTH_MAX_USERS : count;
+    } else {
+        startup_users[0] = current;
+        startup_user_count = 1;
+    }
+    if (!startup_selected_uid) {
+        startup_selected_uid = current.uid;
+    }
+    for (uint32_t i = 0; i < startup_user_count; ++i) {
+        if (startup_users[i].uid == startup_selected_uid) {
+            return;
+        }
+    }
+    startup_selected_uid = startup_user_count ? startup_users[0].uid : 0;
+}
+
+static const char *startup_selected_username(void)
+{
+    for (uint32_t i = 0; i < startup_user_count; ++i) {
+        if (startup_users[i].uid == startup_selected_uid) {
+            return startup_users[i].username;
+        }
+    }
+    return "";
+}
+
+static void refresh_startup_entries(void)
+{
+    uint32_t count = 0;
+    if (!startup_selected_uid) {
+        startup_entry_count = 0;
+        return;
+    }
+    if (leonos_startup_list(startup_selected_uid, startup_entries,
+                            LEONOS_STARTUP_MAX_ENTRIES, &count) < 0) {
+        count = 0;
+    }
+    startup_entry_count = count > LEONOS_STARTUP_MAX_ENTRIES ?
+                              LEONOS_STARTUP_MAX_ENTRIES : count;
+    leonos_ui_listview_state_set_count(&startup_list, startup_entry_count);
+    if (startup_list.selected < 0 && startup_entry_count) {
+        startup_list.selected = 0;
+    }
+}
+
+static void refresh_startup(void)
+{
+    refresh_startup_users();
+    refresh_startup_entries();
+}
+
 static void set_status(const char *text)
 {
     uint32_t i = 0;
@@ -240,6 +335,9 @@ static void refresh_all(void)
 {
     refresh_tasks();
     refresh_performance();
+    if (active_tab == TASKMGR_TAB_STARTUP) {
+        refresh_startup();
+    }
 }
 
 static struct leonos_task_info *selected_task(void)
@@ -251,6 +349,50 @@ static struct leonos_task_info *selected_task(void)
         return 0;
     }
     return &tasks[task_list.selected];
+}
+
+static struct leonos_startup_entry *selected_startup_entry(void)
+{
+    if (active_tab != TASKMGR_TAB_STARTUP || startup_list.selected < 0 ||
+        (uint32_t)startup_list.selected >= startup_entry_count) {
+        return 0;
+    }
+    return &startup_entries[startup_list.selected];
+}
+
+static void toggle_selected_startup_entry(void)
+{
+    struct leonos_startup_entry *entry = selected_startup_entry();
+    if (!entry) {
+        set_status(T("No startup app selected", "未选择启动应用"));
+        return;
+    }
+    if (leonos_startup_set_enabled(startup_selected_uid, entry->id, !entry->enabled) < 0) {
+        set_status(T("Could not change startup app", "无法更改启动应用"));
+        return;
+    }
+    set_status(entry->enabled ? T("Startup app disabled", "启动应用已禁用")
+                              : T("Startup app enabled", "启动应用已启用"));
+    refresh_startup_entries();
+}
+
+static void remove_selected_startup_entry(void)
+{
+    struct leonos_startup_entry *entry = selected_startup_entry();
+    if (!entry) {
+        set_status(T("No startup app selected", "未选择启动应用"));
+        return;
+    }
+    if (!leonos_ui_show_confirm_dialog(T("Remove Startup App", "删除启动应用"),
+                                       T("Remove the selected startup app?", "删除选中的启动应用？"), 0)) {
+        return;
+    }
+    if (leonos_startup_remove(startup_selected_uid, entry->id) < 0) {
+        set_status(T("Could not remove startup app", "无法删除启动应用"));
+        return;
+    }
+    set_status(T("Startup app removed", "启动应用已删除"));
+    refresh_startup_entries();
 }
 
 static int selected_task_killable(void)
@@ -501,6 +643,99 @@ static void draw_performance(struct leonos_ui_surface *ui)
     draw_perf_text_line(ui, 24, y, value, value2);
 }
 
+static uint32_t startup_dropdown_rows(void)
+{
+    uint32_t available = view_h > 160 + TASKMGR_STATUS_H ?
+                             view_h - 160 - TASKMGR_STATUS_H : 1;
+    uint32_t rows = available / TASKMGR_STARTUP_USER_ROW_H;
+    if (rows == 0) {
+        rows = 1;
+    }
+    return rows > 12 ? 12 : rows;
+}
+
+static void startup_command_line(char *text, uint32_t cap,
+                                 const struct leonos_startup_command *command)
+{
+    uint32_t pos = 0;
+    text[0] = 0;
+    append_text(text, &pos, cap, command->path);
+    for (uint32_t i = 0; i < command->argc; ++i) {
+        append_text(text, &pos, cap, " ");
+        append_text(text, &pos, cap, command->args[i]);
+    }
+}
+
+static void draw_startup(struct leonos_ui_surface *ui)
+{
+    uint32_t list_w = view_w > 38 ? view_w - 38 : 320;
+    uint32_t list_h = view_h > 112 + TASKMGR_STATUS_H + 4 ?
+                          view_h - 112 - TASKMGR_STATUS_H - 4 : 80;
+    uint32_t scroll_h = list_h > 2 ? list_h - 2 : 24;
+    uint32_t rows = startup_entry_count > startup_list.visible_rows ?
+                        startup_list.visible_rows : startup_entry_count;
+    struct leonos_ui_list_column cols[] = {
+        {T("STATUS", "状态"), 88},
+        {T("COMMAND", "命令"), list_w > 88 ? list_w - 88 : 80},
+    };
+
+    startup_list.visible_rows = startup_visible_rows();
+    leonos_ui_listview_state_set_count(&startup_list, startup_entry_count);
+    leonos_ui_panel(ui, 8, 72, view_w > 16 ? view_w - 16 : view_w,
+                    view_h > 112 ? view_h - 108 : 96, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 24, 84, T("User", "用户"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 70, 78, 180, startup_selected_username(),
+                        startup_user_dropdown_open, 0);
+    leonos_ui_scroll_view_frame(ui, 8, 112, view_w - 16, list_h);
+    leonos_ui_listview_header(ui, 10, 114, list_w, cols, 2);
+    for (uint32_t row = 0; row < rows; ++row) {
+        uint32_t i = startup_list.scroll + row;
+        const char *cells[2];
+        char command[512];
+        if (i >= startup_entry_count) {
+            break;
+        }
+        cells[0] = startup_entries[i].enabled ? T("Enabled", "已启用") :
+                                                T("Disabled", "已禁用");
+        startup_command_line(command, sizeof(command), &startup_entries[i].command);
+        cells[1] = command;
+        leonos_ui_listview_row(ui, 10, 142 + row * 24, list_w, cols, cells, 2,
+                               startup_list.selected == (int32_t)i
+                                   ? LEONOS_UI_MENU_SELECTED : 0);
+    }
+    leonos_ui_vscrollbar(ui, view_w - 26, 114, 18, scroll_h,
+                         startup_list.scroll,
+                         startup_entry_count > startup_list.visible_rows
+                             ? startup_entry_count : startup_list.visible_rows,
+                         startup_list.visible_rows,
+                         startup_entry_count <= startup_list.visible_rows
+                             ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
+
+    if (startup_user_dropdown_open) {
+        uint32_t visible = startup_dropdown_rows();
+        uint32_t rows_to_draw = startup_user_count > startup_user_dropdown_scroll
+                                    ? startup_user_count - startup_user_dropdown_scroll : 0;
+        uint32_t height;
+        if (rows_to_draw > visible) {
+            rows_to_draw = visible;
+        }
+        height = rows_to_draw * TASKMGR_STARTUP_USER_ROW_H;
+        leonos_ui_menu(ui, 70, 102, 180, height);
+        for (uint32_t row = 0; row < rows_to_draw; ++row) {
+            uint32_t i = startup_user_dropdown_scroll + row;
+            leonos_ui_menu_item(ui, 72, 103 + row * TASKMGR_STARTUP_USER_ROW_H,
+                                156, startup_users[i].username,
+                                startup_users[i].uid == startup_selected_uid
+                                    ? LEONOS_UI_MENU_SELECTED : 0);
+        }
+        if (startup_user_count > visible) {
+            leonos_ui_vscrollbar(ui, 232, 102, 16, height,
+                                 startup_user_dropdown_scroll, startup_user_count,
+                                 visible, 0);
+        }
+    }
+}
+
 static void draw_taskmgr(struct leonos_ui_surface *ui)
 {
     char line[128];
@@ -523,7 +758,9 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
         {T("File", "文件"), TASKMGR_MENU_FILE, 64, 0},
         {T("Options", "选项"), TASKMGR_MENU_OPTIONS, 80, 0},
     };
-    struct leonos_ui_tab_item tabs[2];
+    struct leonos_ui_tab_item tabs[3];
+    uint32_t tab_w;
+    uint32_t action_x;
     taskmgr_tab_items(tabs);
     task_list.visible_rows = vis_rows;
     leonos_ui_listview_state_set_count(&task_list, task_count);
@@ -535,9 +772,25 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
     leonos_ui_toolbar(ui, 0, 28, view_w, 36);
     leonos_ui_toolbar_button(ui, 8, 34, 88, T("Refresh", "刷新"), 0);
     taskmgr_tabs.selected_id = active_tab;
-    leonos_ui_tab_control(ui, 104, 34, 214, tabs, 2, &taskmgr_tabs);
-    leonos_ui_toolbar_button(ui, 326, 34, 86, T("End Task", "结束任务"),
-                             selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
+    tab_w = toolbar_tab_width();
+    action_x = toolbar_action_x();
+    leonos_ui_tab_control(ui, 104, 34, tab_w, tabs, 3, &taskmgr_tabs);
+    if (active_tab == TASKMGR_TAB_PROCESSES && action_x + 86 <= view_w) {
+        leonos_ui_toolbar_button(ui, action_x, 34, 86, T("End Task", "结束任务"),
+                                 selected_task_killable() ? 0 : LEONOS_UI_BUTTON_DISABLED);
+    } else if (active_tab == TASKMGR_TAB_STARTUP) {
+        struct leonos_startup_entry *entry = selected_startup_entry();
+        if (action_x + 92 <= view_w) {
+            leonos_ui_toolbar_button(ui, action_x, 34, 92,
+                                     entry && entry->enabled ? T("Disable", "禁用") :
+                                                               T("Enable", "启用"),
+                                     entry ? 0 : LEONOS_UI_BUTTON_DISABLED);
+        }
+        if (action_x + 192 <= view_w) {
+            leonos_ui_toolbar_button(ui, action_x + 100, 34, 86, T("Remove", "删除"),
+                                     entry ? 0 : LEONOS_UI_BUTTON_DISABLED);
+        }
+    }
 
     if (active_tab == TASKMGR_TAB_PROCESSES) {
         line[0] = 0;
@@ -545,8 +798,9 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
         append_dec(line, &pos, sizeof(line), task_tick);
         append_text(line, &pos, sizeof(line), " tasks=");
         append_dec(line, &pos, sizeof(line), task_count);
-        if (view_w > 520) {
-            leonos_ui_text_clipped(ui, 426, 40, view_w - 434, line,
+        uint32_t tick_x = action_x + 86 <= view_w ? action_x + 94 : action_x;
+        if (tick_x + 64 < view_w) {
+            leonos_ui_text_clipped(ui, tick_x, 40, view_w - tick_x - 8, line,
                                    LEONOS_UI_BLACK, LEONOS_UI_GRAY);
         }
 
@@ -590,8 +844,10 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
                              task_list.scroll, task_count > vis_rows ? task_count : vis_rows,
                              vis_rows,
                              task_count <= vis_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
-    } else {
+    } else if (active_tab == TASKMGR_TAB_PERFORMANCE) {
         draw_performance(ui);
+    } else {
+        draw_startup(ui);
     }
     leonos_ui_statusbar(ui, view_h - TASKMGR_STATUS_H, TASKMGR_STATUS_H, status_text);
 
@@ -612,6 +868,7 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
         struct leonos_ui_context_menu_item items[] = {
             {T("Processes", "进程"), TASKMGR_ACTION_PROCESSES, 0},
             {T("Performance", "性能"), TASKMGR_ACTION_PERFORMANCE, 0},
+            {T("Startup Apps", "启动应用"), TASKMGR_ACTION_STARTUP, 0},
             {T("About", "关于"), TASKMGR_ACTION_ABOUT, 0},
         };
         struct leonos_ui_rect r;
@@ -619,10 +876,12 @@ static void draw_taskmgr(struct leonos_ui_surface *ui)
                                     sizeof(menu_items) / sizeof(menu_items[0]),
                                     TASKMGR_MENU_OPTIONS, &r);
         leonos_ui_menu_popup(ui, (uint32_t)r.x, TASKMGR_MENU_BAR_H, 178,
-                             items, sizeof(items) / sizeof(items[0]),
-                             active_tab == TASKMGR_TAB_PROCESSES
-                                 ? TASKMGR_ACTION_PROCESSES
-                                 : TASKMGR_ACTION_PERFORMANCE);
+                              items, sizeof(items) / sizeof(items[0]),
+                              active_tab == TASKMGR_TAB_PROCESSES
+                                  ? TASKMGR_ACTION_PROCESSES
+                                  : active_tab == TASKMGR_TAB_PERFORMANCE
+                                        ? TASKMGR_ACTION_PERFORMANCE
+                                        : TASKMGR_ACTION_STARTUP);
     }
     if (context_menu_active || context_menu_animating) {
         struct leonos_ui_context_menu_item items[TASKMGR_CONTEXT_MENU_COUNT];
@@ -691,6 +950,7 @@ static int handle_menu_click(int32_t x, int32_t y)
         struct leonos_ui_context_menu_item items[] = {
             {T("Processes", "进程"), TASKMGR_ACTION_PROCESSES, 0},
             {T("Performance", "性能"), TASKMGR_ACTION_PERFORMANCE, 0},
+            {T("Startup Apps", "启动应用"), TASKMGR_ACTION_STARTUP, 0},
             {T("About", "关于"), TASKMGR_ACTION_ABOUT, 0},
         };
         struct leonos_ui_rect r;
@@ -708,6 +968,10 @@ static int handle_menu_click(int32_t x, int32_t y)
                 refresh_all();
             } else if (action == TASKMGR_ACTION_PERFORMANCE) {
                 active_tab = TASKMGR_TAB_PERFORMANCE;
+                taskmgr_tabs.selected_id = active_tab;
+                refresh_all();
+            } else if (action == TASKMGR_ACTION_STARTUP) {
+                active_tab = TASKMGR_TAB_STARTUP;
                 taskmgr_tabs.selected_id = active_tab;
                 refresh_all();
             } else if (action == TASKMGR_ACTION_ABOUT) {
@@ -791,6 +1055,7 @@ int main(void)
 
     leonos_ui_bind(&ui, pixels, view_w, view_h, TASKMGR_MAX_W);
     leonos_ui_listview_state_init(&task_list, visible_rows(), 24);
+    leonos_ui_listview_state_init(&startup_list, startup_visible_rows(), 24);
     leonos_ui_tab_state_init(&taskmgr_tabs, TASKMGR_TAB_PROCESSES);
     task_list.focused = 1;
     for (;;) {
@@ -830,20 +1095,87 @@ int main(void)
                     continue;
                 }
                 {
-                    struct leonos_ui_tab_item tabs[2];
+                    struct leonos_ui_tab_item tabs[3];
+                    uint32_t tab_w = toolbar_tab_width();
                     taskmgr_tab_items(tabs);
                     if (leonos_ui_tab_control_handle_mouse(&taskmgr_tabs, event.x, event.y,
-                                                           104, 34, 214, tabs, 2)) {
+                                                           104, 34, tab_w, tabs, 3)) {
                         active_tab = (uint8_t)taskmgr_tabs.selected_id;
                         refresh_all();
                         present_taskmgr((uint32_t)window_id, &ui);
                         continue;
                     }
                 }
-                if (hit_rect_i(event.x, event.y, 326, 34, 86, LEONOS_UI_BUTTON_H)) {
+                uint32_t action_x = toolbar_action_x();
+                if (active_tab == TASKMGR_TAB_PROCESSES &&
+                    action_x + 86 <= view_w &&
+                    hit_rect_i(event.x, event.y, (int32_t)action_x, 34, 86, LEONOS_UI_BUTTON_H)) {
                     kill_selected_task();
                     present_taskmgr((uint32_t)window_id, &ui);
                     continue;
+                }
+                if (active_tab == TASKMGR_TAB_STARTUP) {
+                    uint32_t dropdown_rows = startup_dropdown_rows();
+                    uint32_t dropdown_h = dropdown_rows * TASKMGR_STARTUP_USER_ROW_H;
+                    if (startup_user_dropdown_open &&
+                        hit_rect_i(event.x, event.y, 70, 102, 160, (int32_t)dropdown_h)) {
+                        uint32_t row = ((uint32_t)event.y - 102U) / TASKMGR_STARTUP_USER_ROW_H;
+                        uint32_t index = startup_user_dropdown_scroll + row;
+                        if (index < startup_user_count) {
+                            startup_selected_uid = startup_users[index].uid;
+                            startup_user_dropdown_open = 0;
+                            startup_user_dropdown_scroll = 0;
+                            refresh_startup_entries();
+                        }
+                        present_taskmgr((uint32_t)window_id, &ui);
+                        continue;
+                    }
+                    if (startup_user_dropdown_open && startup_user_count > dropdown_rows &&
+                        hit_rect_i(event.x, event.y, 232, 102, 16, (int32_t)dropdown_h)) {
+                        leonos_ui_vscrollbar_handle_mouse(&startup_user_dropdown_scroll,
+                                                          startup_user_count, dropdown_rows,
+                                                          232, 102, 16, dropdown_h,
+                                                          event.x, event.y);
+                        present_taskmgr((uint32_t)window_id, &ui);
+                        continue;
+                    }
+                    if (hit_rect_i(event.x, event.y, 70, 78, 180, LEONOS_UI_BUTTON_H)) {
+                        startup_user_dropdown_open = startup_user_dropdown_open ? 0U : 1U;
+                        present_taskmgr((uint32_t)window_id, &ui);
+                        continue;
+                    }
+                    startup_user_dropdown_open = 0;
+                    if (action_x + 92 <= view_w &&
+                        hit_rect_i(event.x, event.y, (int32_t)action_x, 34, 92, LEONOS_UI_BUTTON_H)) {
+                        toggle_selected_startup_entry();
+                        present_taskmgr((uint32_t)window_id, &ui);
+                        continue;
+                    }
+                    if (action_x + 192 <= view_w &&
+                        hit_rect_i(event.x, event.y, (int32_t)action_x + 100, 34, 86,
+                                   LEONOS_UI_BUTTON_H)) {
+                        remove_selected_startup_entry();
+                        present_taskmgr((uint32_t)window_id, &ui);
+                        continue;
+                    }
+                    if (event.x >= (int32_t)(view_w - 26) && event.y >= 114 &&
+                        event.y < (int32_t)(view_h - TASKMGR_STATUS_H)) {
+                        leonos_ui_vscrollbar_handle_mouse(&startup_list.scroll,
+                                                          startup_entry_count > startup_visible_rows()
+                                                              ? startup_entry_count : startup_visible_rows(),
+                                                          startup_visible_rows(),
+                                                          view_w - 26, 114, 18,
+                                                          view_h > 112 + TASKMGR_STATUS_H + 6
+                                                              ? view_h - 112 - TASKMGR_STATUS_H - 6 : 24,
+                                                          event.x, event.y);
+                    } else {
+                        uint32_t activate = 0;
+                        leonos_ui_listview_state_handle_mouse(&startup_list, event.x, event.y,
+                                                              10, 142,
+                                                              view_w > 38 ? view_w - 38 : 320,
+                                                              &activate);
+                    }
+                    startup_list.focused = 1;
                 }
                 if (active_tab == TASKMGR_TAB_PROCESSES &&
                     event.x >= (int32_t)(view_w - 26) && event.y >= 74 &&
@@ -866,6 +1198,15 @@ int main(void)
                 if (active_tab == TASKMGR_TAB_PROCESSES &&
                     leonos_ui_listview_state_handle_wheel(&task_list, event.dy)) {
                     present_taskmgr((uint32_t)window_id, &ui);
+                } else if (active_tab == TASKMGR_TAB_STARTUP && startup_user_dropdown_open &&
+                           startup_user_count > startup_dropdown_rows()) {
+                    leonos_ui_vscrollbar_handle_wheel(&startup_user_dropdown_scroll,
+                                                       startup_user_count, startup_dropdown_rows(),
+                                                       event.dy);
+                    present_taskmgr((uint32_t)window_id, &ui);
+                } else if (active_tab == TASKMGR_TAB_STARTUP &&
+                           leonos_ui_listview_state_handle_wheel(&startup_list, event.dy)) {
+                    present_taskmgr((uint32_t)window_id, &ui);
                 }
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
@@ -877,8 +1218,16 @@ int main(void)
                     present_taskmgr((uint32_t)window_id, &ui);
                     continue;
                 }
+                if (active_tab == TASKMGR_TAB_STARTUP && event.keycode == LEONOS_KEY_DELETE) {
+                    remove_selected_startup_entry();
+                    present_taskmgr((uint32_t)window_id, &ui);
+                    continue;
+                }
                 if (active_tab == TASKMGR_TAB_PROCESSES &&
                     leonos_ui_listview_state_handle_key(&task_list, event.keycode, &activate)) {
+                    present_taskmgr((uint32_t)window_id, &ui);
+                } else if (active_tab == TASKMGR_TAB_STARTUP &&
+                           leonos_ui_listview_state_handle_key(&startup_list, event.keycode, &activate)) {
                     present_taskmgr((uint32_t)window_id, &ui);
                 }
             }
@@ -891,6 +1240,8 @@ int main(void)
                 }
                 task_list.visible_rows = visible_rows();
                 leonos_ui_listview_state_set_count(&task_list, task_count);
+                startup_list.visible_rows = startup_visible_rows();
+                leonos_ui_listview_state_set_count(&startup_list, startup_entry_count);
                 present_taskmgr((uint32_t)window_id, &ui);
             }
             event.window_id = (uint32_t)window_id;

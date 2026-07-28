@@ -40,7 +40,7 @@ PYTHON = sys.executable
 SYSTEM_APPS = [
     "init", "desktop", "oobe", "login", "serviced", "installer", "shell", "fileman",
     "taskmgr", "settings", "terminal", "run", "osver", "netctl", "servicemgr",
-    "diskmgr", "devmgr", "drvmgr",
+    "diskmgr", "devmgr", "drvmgr", "sysconfdialog",
 ]
 PROGRAM_APPS = [
     "hello", "uidemo", "cjktest", "notepad", "calc", "minesweeper", "memtest",

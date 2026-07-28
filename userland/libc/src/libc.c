@@ -710,7 +710,16 @@ int leonos_gui_create_app_window_ex(const char *title, const char *text,
         .text = text,
         .flags = flags,
     };
-    return ioctl(3, LEONOS_GUI_IOCTL_CREATE_WINDOW, &cmd);
+    int ret = ioctl(3, LEONOS_GUI_IOCTL_CREATE_WINDOW, &cmd);
+    if (ret > 0) {
+        struct leonos_appearance_state appearance;
+        if (ioctl(3, LEONOS_GUI_IOCTL_APPEARANCE_STATE, &appearance) > 0) {
+            (void)leonos_ui_theme_set_appearance(appearance.theme,
+                                                 appearance.metro_color_scheme,
+                                                 appearance.win95_color_scheme);
+        }
+    }
+    return ret;
 }
 
 int leonos_gui_destroy_app_window(uint32_t window_id)
@@ -763,7 +772,9 @@ int leonos_gui_poll_app_event(struct leonos_gui_app_event *event)
 {
     int ret = ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, event);
     if (ret > 0 && event && event->type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
-        (void)leonos_ui_theme_set((uint32_t)event->x);
+        (void)leonos_ui_theme_set_appearance((uint32_t)event->x,
+                                             (uint32_t)event->y,
+                                             (uint32_t)event->dx);
         event->type = LEONOS_GUI_APP_EVENT_RESIZE;
     }
     return ret;
@@ -785,7 +796,9 @@ int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeo
     if (ret > 0) {
         *event = wait.event;
         if (event->type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
-            (void)leonos_ui_theme_set((uint32_t)event->x);
+            (void)leonos_ui_theme_set_appearance((uint32_t)event->x,
+                                                 (uint32_t)event->y,
+                                                 (uint32_t)event->dx);
             event->type = LEONOS_GUI_APP_EVENT_RESIZE;
         }
     }
@@ -2224,6 +2237,72 @@ int leonos_auth_change_password(uint32_t uid, const char *old_password,
     libc_copy_fixed(password.old_password, sizeof(password.old_password), old_password);
     libc_copy_fixed(password.new_password, sizeof(password.new_password), new_password);
     return ioctl(3, LEONOS_AUTH_IOCTL_CHANGE_PASSWORD, &password);
+}
+
+int leonos_startup_request(const struct leonos_startup_command *command,
+                           uint32_t *out_request_id)
+{
+    struct leonos_startup_request request;
+    int ret;
+    if (!command) {
+        return -1;
+    }
+    request = (struct leonos_startup_request){0};
+    request.command = *command;
+    ret = ioctl(3, LEONOS_STARTUP_IOCTL_REQUEST, &request);
+    if (out_request_id) {
+        *out_request_id = request.request_id;
+    }
+    return ret;
+}
+
+int leonos_startup_request_status(uint32_t request_id, uint32_t *out_status)
+{
+    struct leonos_startup_request_status request = {request_id, 0};
+    int ret = ioctl(3, LEONOS_STARTUP_IOCTL_REQUEST_STATUS, &request);
+    if (out_status) {
+        *out_status = request.status;
+    }
+    return ret;
+}
+
+int leonos_startup_dialog_get(struct leonos_startup_dialog_request *request)
+{
+    return request ? ioctl(3, LEONOS_STARTUP_IOCTL_DIALOG_GET, request) : -1;
+}
+
+int leonos_startup_dialog_resolve(uint32_t request_id, uint32_t decision)
+{
+    struct leonos_startup_dialog_resolution resolution = {request_id, decision};
+    return ioctl(3, LEONOS_STARTUP_IOCTL_DIALOG_RESOLVE, &resolution);
+}
+
+int leonos_startup_list(uint32_t uid, struct leonos_startup_entry *entries,
+                        uint32_t capacity, uint32_t *out_count)
+{
+    struct leonos_startup_list list = {uid, capacity, 0, 0, entries};
+    int ret = ioctl(3, LEONOS_STARTUP_IOCTL_LIST, &list);
+    if (out_count) {
+        *out_count = list.count;
+    }
+    return ret;
+}
+
+int leonos_startup_set_enabled(uint32_t uid, uint32_t entry_id, uint32_t enabled)
+{
+    struct leonos_startup_update update = {uid, entry_id, enabled ? 1U : 0U, 0};
+    return ioctl(3, LEONOS_STARTUP_IOCTL_SET_ENABLED, &update);
+}
+
+int leonos_startup_remove(uint32_t uid, uint32_t entry_id)
+{
+    struct leonos_startup_update update = {uid, entry_id, 0, 0};
+    return ioctl(3, LEONOS_STARTUP_IOCTL_REMOVE, &update);
+}
+
+int leonos_startup_launch_current_user(void)
+{
+    return ioctl(3, LEONOS_STARTUP_IOCTL_LAUNCH_CURRENT, 0);
 }
 
 int leonos_system_info(struct leonos_system_info *info)

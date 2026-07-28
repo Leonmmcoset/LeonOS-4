@@ -81,27 +81,68 @@ void desktop_publish_display_state(void)
 
 void desktop_publish_appearance_state(void)
 {
-    struct leonos_appearance_state state = {.theme = leonos_ui_theme()};
+    struct leonos_appearance_state state;
+    state.theme = leonos_ui_theme();
+    state.metro_color_scheme = desktop_metro_color_scheme;
+    state.win95_color_scheme = desktop_win95_color_scheme;
+    state.wallpaper_mode = desktop_wallpaper_mode;
+    copy_text(state.wallpaper_path, sizeof(state.wallpaper_path),
+              desktop_wallpaper_path);
     (void)leonos_appearance_publish_state(&state);
 }
 
-void desktop_apply_theme(uint32_t theme)
+static void desktop_broadcast_appearance(void)
 {
-    if (leonos_ui_theme_set(theme) < 0) {
-        return;
-    }
-    (void)desktop_save_display_config();
-    desktop_publish_appearance_state();
     for (uint8_t slot = BUILTIN_WINDOWS; slot < MAX_WINDOWS; ++slot) {
         if (windows[slot].visible && windows[slot].window_id) {
             send_app_event_to_window(windows[slot].window_id,
                                      LEONOS_GUI_APP_EVENT_THEME_CHANGED,
-                                     (int32_t)theme, 0, 0, 0,
+                                     (int32_t)leonos_ui_theme(),
+                                     (int32_t)desktop_metro_color_scheme,
+                                     (int32_t)desktop_win95_color_scheme,
+                                     0,
                                      window_body_width(&windows[slot]),
                                      window_body_height(&windows[slot]),
                                      0, 0, 0);
         }
     }
+}
+
+void desktop_apply_theme(uint32_t theme)
+{
+    struct leonos_appearance_request request;
+    request.theme = theme;
+    request.metro_color_scheme = desktop_metro_color_scheme;
+    request.win95_color_scheme = desktop_win95_color_scheme;
+    request.wallpaper_mode = desktop_wallpaper_mode;
+    copy_text(request.wallpaper_path, sizeof(request.wallpaper_path),
+              desktop_wallpaper_path);
+    desktop_apply_appearance(&request);
+}
+
+void desktop_apply_appearance(const struct leonos_appearance_request *request)
+{
+    if (!request ||
+        request->theme > LEONOS_UI_THEME_METRO ||
+        request->metro_color_scheme >= LEONOS_UI_COLOR_SCHEME_COUNT ||
+        request->win95_color_scheme >= LEONOS_UI_COLOR_SCHEME_COUNT ||
+        request->wallpaper_mode >= LEONOS_WALLPAPER_MODE_COUNT) {
+        return;
+    }
+    if (leonos_ui_theme_set_appearance(request->theme,
+                                       request->metro_color_scheme,
+                                       request->win95_color_scheme) < 0) {
+        return;
+    }
+    desktop_metro_color_scheme = (uint8_t)request->metro_color_scheme;
+    desktop_win95_color_scheme = (uint8_t)request->win95_color_scheme;
+    desktop_wallpaper_mode = (uint8_t)request->wallpaper_mode;
+    copy_text(desktop_wallpaper_path, sizeof(desktop_wallpaper_path),
+              request->wallpaper_path);
+    (void)load_wallpaper_bmp();
+    (void)desktop_save_appearance_config();
+    desktop_publish_appearance_state();
+    desktop_broadcast_appearance();
     full_redraw_pending = 1;
 }
 
@@ -109,7 +150,7 @@ void desktop_handle_appearance_requests(void)
 {
     struct leonos_appearance_request request;
     while (leonos_appearance_poll_request(&request) > 0) {
-        desktop_apply_theme(request.theme);
+        desktop_apply_appearance(&request);
     }
 }
 
@@ -203,12 +244,262 @@ static int parse_display_config(const char *buf, uint8_t *mode, uint8_t *scale)
     return 0;
 }
 
+static int desktop_config_get_value(const char *buf, const char *key,
+                                    char *value, uint32_t value_len)
+{
+    uint32_t key_len = 0;
+    uint32_t pos = 0;
+    if (!buf || !key || !value || value_len == 0) {
+        return 0;
+    }
+    value[0] = 0;
+    while (key[key_len]) {
+        ++key_len;
+    }
+    while (buf[pos]) {
+        uint32_t start = pos;
+        uint32_t line_end;
+        while (buf[pos] && buf[pos] != '\n' && buf[pos] != '\r') {
+            ++pos;
+        }
+        line_end = pos;
+        while (buf[pos] == '\n' || buf[pos] == '\r') {
+            ++pos;
+        }
+        if (line_end > start + key_len && buf[start + key_len] == '=') {
+            uint32_t matched = 0;
+            uint32_t out = 0;
+            while (matched < key_len && buf[start + matched] == key[matched]) {
+                ++matched;
+            }
+            if (matched != key_len) {
+                continue;
+            }
+            start += key_len + 1u;
+            while (start < line_end && out + 1u < value_len) {
+                value[out++] = buf[start++];
+            }
+            value[out] = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static uint32_t desktop_color_scheme_from_name(const char *name, uint32_t fallback)
+{
+    if (text_eq(name, "blue")) {
+        return LEONOS_UI_COLOR_SCHEME_BLUE;
+    }
+    if (text_eq(name, "teal")) {
+        return LEONOS_UI_COLOR_SCHEME_TEAL;
+    }
+    if (text_eq(name, "green")) {
+        return LEONOS_UI_COLOR_SCHEME_GREEN;
+    }
+    if (text_eq(name, "purple")) {
+        return LEONOS_UI_COLOR_SCHEME_PURPLE;
+    }
+    if (text_eq(name, "red")) {
+        return LEONOS_UI_COLOR_SCHEME_RED;
+    }
+    if (text_eq(name, "graphite")) {
+        return LEONOS_UI_COLOR_SCHEME_GRAPHITE;
+    }
+    return fallback < LEONOS_UI_COLOR_SCHEME_COUNT
+               ? fallback
+               : LEONOS_UI_COLOR_SCHEME_BLUE;
+}
+
+static const char *desktop_color_scheme_name(uint32_t scheme)
+{
+    switch (scheme) {
+    case LEONOS_UI_COLOR_SCHEME_TEAL:
+        return "teal";
+    case LEONOS_UI_COLOR_SCHEME_GREEN:
+        return "green";
+    case LEONOS_UI_COLOR_SCHEME_PURPLE:
+        return "purple";
+    case LEONOS_UI_COLOR_SCHEME_RED:
+        return "red";
+    case LEONOS_UI_COLOR_SCHEME_GRAPHITE:
+        return "graphite";
+    default:
+        return "blue";
+    }
+}
+
+static uint32_t desktop_wallpaper_mode_from_name(const char *name, uint32_t fallback)
+{
+    if (text_eq(name, "fit")) {
+        return LEONOS_WALLPAPER_MODE_FIT;
+    }
+    if (text_eq(name, "center")) {
+        return LEONOS_WALLPAPER_MODE_CENTER;
+    }
+    if (text_eq(name, "tile")) {
+        return LEONOS_WALLPAPER_MODE_TILE;
+    }
+    if (text_eq(name, "stretch")) {
+        return LEONOS_WALLPAPER_MODE_STRETCH;
+    }
+    if (text_eq(name, "fill")) {
+        return LEONOS_WALLPAPER_MODE_FILL;
+    }
+    return fallback < LEONOS_WALLPAPER_MODE_COUNT
+               ? fallback
+               : LEONOS_WALLPAPER_MODE_FILL;
+}
+
+static const char *desktop_wallpaper_mode_name(uint32_t mode)
+{
+    switch (mode) {
+    case LEONOS_WALLPAPER_MODE_FIT:
+        return "fit";
+    case LEONOS_WALLPAPER_MODE_CENTER:
+        return "center";
+    case LEONOS_WALLPAPER_MODE_TILE:
+        return "tile";
+    case LEONOS_WALLPAPER_MODE_STRETCH:
+        return "stretch";
+    default:
+        return "fill";
+    }
+}
+
+static int desktop_appearance_config_path(char *path, uint32_t path_len)
+{
+    struct leonos_user_info user;
+    uint32_t pos = 0;
+    if (!path || path_len == 0) {
+        return 0;
+    }
+    path[0] = 0;
+    user = (struct leonos_user_info){0};
+    if (leonos_auth_current(&user) < 0 || !user.uid || !user.home[0]) {
+        return 0;
+    }
+    append_text(path, &pos, path_len, user.home);
+    append_char(path, &pos, path_len, '/');
+    append_text(path, &pos, path_len, APPEARANCE_CONFIG_NAME);
+    return path[0] != 0;
+}
+
+void desktop_load_appearance_config(void)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    char cfg[640];
+    char value[LEONOS_FS_PATH_LEN];
+    uint32_t theme;
+    uint32_t len = 0;
+    int fd;
+
+    leonos_ui_theme_load_system();
+    desktop_boot_theme_default = (uint8_t)leonos_ui_theme();
+    theme = desktop_boot_theme_default;
+    desktop_metro_color_scheme =
+        (uint8_t)leonos_ui_theme_color_scheme(LEONOS_UI_THEME_METRO);
+    desktop_win95_color_scheme =
+        (uint8_t)leonos_ui_theme_color_scheme(LEONOS_UI_THEME_WIN95);
+    desktop_wallpaper_mode = LEONOS_WALLPAPER_MODE_FILL;
+    copy_text(desktop_wallpaper_path, sizeof(desktop_wallpaper_path),
+              DESKTOP_DEFAULT_WALLPAPER_PATH);
+
+    if (desktop_appearance_config_path(path, sizeof(path))) {
+        fd = open(path, LEONOS_O_RDONLY, 0);
+        if (fd >= 0) {
+            while (len + 1u < sizeof(cfg)) {
+                long got = read(fd, cfg + len, sizeof(cfg) - len - 1u);
+                if (got <= 0) {
+                    break;
+                }
+                len += (uint32_t)got;
+            }
+            close(fd);
+            cfg[len] = 0;
+            if (desktop_config_get_value(cfg, "theme", value, sizeof(value))) {
+                theme = text_eq(value, "win95")
+                            ? LEONOS_UI_THEME_WIN95
+                            : LEONOS_UI_THEME_METRO;
+            }
+            if (desktop_config_get_value(cfg, "metro.color", value, sizeof(value))) {
+                desktop_metro_color_scheme =
+                    (uint8_t)desktop_color_scheme_from_name(value,
+                                                            desktop_metro_color_scheme);
+            }
+            if (desktop_config_get_value(cfg, "win95.color", value, sizeof(value))) {
+                desktop_win95_color_scheme =
+                    (uint8_t)desktop_color_scheme_from_name(value,
+                                                            desktop_win95_color_scheme);
+            }
+            if (desktop_config_get_value(cfg, "wallpaper.path", value, sizeof(value))) {
+                copy_text(desktop_wallpaper_path, sizeof(desktop_wallpaper_path), value);
+            }
+            if (desktop_config_get_value(cfg, "wallpaper.mode", value, sizeof(value))) {
+                desktop_wallpaper_mode =
+                    (uint8_t)desktop_wallpaper_mode_from_name(value,
+                                                              desktop_wallpaper_mode);
+            }
+        }
+    }
+    (void)leonos_ui_theme_set_appearance(theme,
+                                         desktop_metro_color_scheme,
+                                         desktop_win95_color_scheme);
+    (void)load_wallpaper_bmp();
+    desktop_publish_appearance_state();
+    desktop_broadcast_appearance();
+    full_redraw_pending = 1;
+}
+
+int desktop_save_appearance_config(void)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    char buf[640];
+    uint32_t pos = 0;
+    int fd;
+    long wrote;
+    if (!desktop_appearance_config_path(path, sizeof(path))) {
+        return -LEONOS_EPERM;
+    }
+    buf[0] = 0;
+    append_text(buf, &pos, sizeof(buf), "theme=");
+    append_text(buf, &pos, sizeof(buf),
+                leonos_ui_theme() == LEONOS_UI_THEME_WIN95 ? "win95" : "metro");
+    append_char(buf, &pos, sizeof(buf), '\n');
+    append_text(buf, &pos, sizeof(buf), "metro.color=");
+    append_text(buf, &pos, sizeof(buf),
+                desktop_color_scheme_name(desktop_metro_color_scheme));
+    append_char(buf, &pos, sizeof(buf), '\n');
+    append_text(buf, &pos, sizeof(buf), "win95.color=");
+    append_text(buf, &pos, sizeof(buf),
+                desktop_color_scheme_name(desktop_win95_color_scheme));
+    append_char(buf, &pos, sizeof(buf), '\n');
+    append_text(buf, &pos, sizeof(buf), "wallpaper.path=");
+    append_text(buf, &pos, sizeof(buf), desktop_wallpaper_path);
+    append_char(buf, &pos, sizeof(buf), '\n');
+    append_text(buf, &pos, sizeof(buf), "wallpaper.mode=");
+    append_text(buf, &pos, sizeof(buf),
+                desktop_wallpaper_mode_name(desktop_wallpaper_mode));
+    append_char(buf, &pos, sizeof(buf), '\n');
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    wrote = write(fd, buf, pos);
+    close(fd);
+    if (wrote < 0) {
+        return (int)wrote;
+    }
+    return wrote == (long)pos ? 0 : -5;
+}
+
 void desktop_load_display_config(void)
 {
     char buf[128];
     uint8_t mode = 0;
     uint8_t scale = 0;
     leonos_ui_theme_load_system();
+    desktop_boot_theme_default = (uint8_t)leonos_ui_theme();
     int fd = open(DISPLAY_CONFIG_PATH, 0, 0);
     if (fd >= 0) {
         long got = read(fd, buf, sizeof(buf) - 1);
@@ -242,7 +533,7 @@ int desktop_save_display_config(void)
     append_char(buf, &pos, sizeof(buf), '\n');
     append_text(buf, &pos, sizeof(buf), "theme=");
     append_text(buf, &pos, sizeof(buf),
-                leonos_ui_theme() == LEONOS_UI_THEME_WIN95 ? "win95" : "metro");
+                desktop_boot_theme_default == LEONOS_UI_THEME_WIN95 ? "win95" : "metro");
     append_char(buf, &pos, sizeof(buf), '\n');
     fd = open(DISPLAY_CONFIG_PATH,
               LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);

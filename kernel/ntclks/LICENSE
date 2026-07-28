@@ -1,0 +1,15 @@
+# ntclks License
+
+Copyright (C) 2026 LeonMMcoset
+
+The source code in this directory is licensed under the GNU General Public
+License version 3 only.
+
+SPDX-License-Identifier: GPL-3.0-only
+
+This directory-level license applies to `kernel/ntclks/` and its
+subdirectories. It does not change the license terms of files outside this
+directory unless those files explicitly say otherwise.
+
+When distributing this source code, include a copy of the GNU General Public
+License version 3 text together with this notice.

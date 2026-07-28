@@ -2,6 +2,7 @@
 #define NTCLKS_USERLAND_H
 
 #include <leonos/fs.h>
+#include <leonos/auth.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/trap.h>
 #include <ntclks/types.h>
@@ -16,7 +17,13 @@ int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id);
 int64_t userland_spawn_path_argv(const char *path,
                                  const char *const argv[],
                                  const char *const envp[],
-                                 uint32_t pty_id);
+                                  uint32_t pty_id);
+int64_t userland_spawn_path_argv_for_user(const char *path,
+                                          const char *const argv[],
+                                          const char *const envp[],
+                                          uint32_t parent_pid,
+                                          const struct leonos_user_info *user,
+                                          uint32_t session_id);
 void userland_yield_if_runnable(void);
 struct task *userland_schedule_from_frame(struct trap_frame *frame);
 int userland_list_dir(const char *path, struct leonos_dir_entry *entries,

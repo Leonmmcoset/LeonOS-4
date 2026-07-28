@@ -466,33 +466,32 @@ static void draw_servicemgr(struct leonos_ui_surface *ui)
         char pid_text[16];
         uint32_t pos = 0;
         uint32_t y = SERVICEMGR_ROW_Y + i * SERVICEMGR_ROW_H;
+        uint32_t row_selected = selected_row == (int32_t)i;
+        uint32_t row_bg = row_selected ? leonos_ui_color(LEONOS_UI_COLOR_SELECTION)
+                                       : LEONOS_UI_WHITE;
         uint32_t flags = (!can_manage || service_rows[i].locked)
                              ? LEONOS_UI_BUTTON_DISABLED
                              : 0;
         pid_text[0] = 0;
         append_u32(pid_text, &pos, sizeof(pid_text), service_rows[i].pid);
-        leonos_ui_panel(ui, 24, y, SERVICEMGR_W - 48U, 44U,
-                        selected_row == (int32_t)i ? 0x00e7f0ff : LEONOS_UI_WHITE);
+        leonos_ui_panel(ui, 24, y, SERVICEMGR_W - 48U, 44U, row_bg);
         leonos_ui_checkbox(ui, 36, y + 12U,
                            T(service_rows[i].name_en, service_rows[i].name_zh),
                            service_rows[i].enabled, flags);
         leonos_ui_text_clipped(ui, 156, y + 14U, 126,
                                T(service_rows[i].detail_en, service_rows[i].detail_zh),
-                               LEONOS_UI_DARK,
-                               selected_row == (int32_t)i ? 0x00e7f0ff : LEONOS_UI_WHITE);
+                               LEONOS_UI_DARK, row_bg);
         leonos_ui_text_clipped(ui, 300, y + 14U, 92,
                                localized_state(service_rows[i].state),
                                text_eq(service_rows[i].state, "failed")
                                    ? 0x00c00000
                                    : LEONOS_UI_BLACK,
-                               selected_row == (int32_t)i ? 0x00e7f0ff : LEONOS_UI_WHITE);
+                               row_bg);
         leonos_ui_text_clipped(ui, 408, y + 14U, 42, pid_text,
-                               LEONOS_UI_DARK,
-                               selected_row == (int32_t)i ? 0x00e7f0ff : LEONOS_UI_WHITE);
+                               LEONOS_UI_DARK, row_bg);
         leonos_ui_text_clipped(ui, 462, y + 14U, SERVICEMGR_W - 498U,
                                service_rows[i].state_detail,
-                               LEONOS_UI_BLACK,
-                               selected_row == (int32_t)i ? 0x00e7f0ff : LEONOS_UI_WHITE);
+                               LEONOS_UI_BLACK, row_bg);
     }
     leonos_ui_button(ui, 24, SERVICEMGR_H - 66U, 92U, LEONOS_UI_BUTTON_H,
                      T("Refresh", "刷新"), 0);

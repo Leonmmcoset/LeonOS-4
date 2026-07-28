@@ -16,7 +16,13 @@ static struct gui_ipc_display_request display_request;
 static uint8_t display_request_pending;
 static struct gui_ipc_display_state display_state;
 static uint8_t display_state_valid;
-static struct gui_ipc_appearance_state appearance_state = {.theme = 1u};
+static struct gui_ipc_appearance_state appearance_state = {
+    .theme = 1u,
+    .metro_color_scheme = 0u,
+    .win95_color_scheme = 0u,
+    .wallpaper_mode = GUI_IPC_WALLPAPER_MODE_FILL,
+    .wallpaper_path = "0:/system/resources/wallpaper-metro.bmp",
+};
 static struct gui_ipc_appearance_request appearance_request;
 static uint8_t appearance_request_pending;
 
@@ -351,10 +357,40 @@ int gui_ipc_appearance_state(struct gui_ipc_appearance_state *out)
     return 1;
 }
 
+static int gui_ipc_appearance_path_valid(const char *path)
+{
+    if (!path) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < LEONOS_FS_PATH_LEN; ++i) {
+        if (path[i] == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int gui_ipc_appearance_valid(uint32_t theme,
+                                    uint32_t metro_color_scheme,
+                                    uint32_t win95_color_scheme,
+                                    uint32_t wallpaper_mode,
+                                    const char *wallpaper_path)
+{
+    return theme <= 1u &&
+           metro_color_scheme < GUI_IPC_COLOR_SCHEME_COUNT &&
+           win95_color_scheme < GUI_IPC_COLOR_SCHEME_COUNT &&
+           wallpaper_mode < GUI_IPC_WALLPAPER_MODE_COUNT &&
+           gui_ipc_appearance_path_valid(wallpaper_path);
+}
+
 int gui_ipc_publish_appearance_state(uint32_t caller_pid,
                                      const struct gui_ipc_appearance_state *state)
 {
-    if (!caller_is_window_server(caller_pid) || !state || state->theme > 1u) {
+    if (!caller_is_window_server(caller_pid) || !state ||
+        !gui_ipc_appearance_valid(state->theme, state->metro_color_scheme,
+                                  state->win95_color_scheme,
+                                  state->wallpaper_mode,
+                                  state->wallpaper_path)) {
         return 0;
     }
     appearance_state = *state;
@@ -363,7 +399,11 @@ int gui_ipc_publish_appearance_state(uint32_t caller_pid,
 
 int gui_ipc_request_appearance(const struct gui_ipc_appearance_request *request)
 {
-    if (!request || request->theme > 1u) {
+    if (!request ||
+        !gui_ipc_appearance_valid(request->theme, request->metro_color_scheme,
+                                  request->win95_color_scheme,
+                                  request->wallpaper_mode,
+                                  request->wallpaper_path)) {
         return 0;
     }
     appearance_request = *request;

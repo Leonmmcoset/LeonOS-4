@@ -26,6 +26,7 @@
 #include <leonos/net.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
+#include <leonos/startup.h>
 #include <leonos/text.h>
 
 #define LEONOS_GUI_IOCTL_EVENT 0x4c455654ULL
@@ -68,8 +69,56 @@
 #define TASK_VMA_FLAG_LAZY    0x00000008u
 #define OOBE_DHCP_APP_PATH "0:/system/apps/oobe/oobe.elf"
 #define OOBE_DONE_MARKER_PATH "0:/system/state/oobe.done"
+#define SYSCONFDIALOG_APP_PATH "0:/system/apps/sysconfdialog/sysconfdialog.elf"
+#define STARTUP_DB_PATH "0:/system/state/startup.db"
+#define STARTUP_DENIAL_DB_PATH "0:/system/state/startup-denials.db"
+#define STARTUP_DB_MAGIC 0x53545031U
+#define STARTUP_DENIAL_DB_MAGIC 0x53544431U
+#define STARTUP_DB_ENTRY_MAX 64U
+#define STARTUP_DENIAL_MAX 64U
+#define STARTUP_REQUEST_MAX 16U
 
 static struct leonos_user_info auth_user_scratch[LEONOS_AUTH_MAX_USERS];
+
+struct startup_db {
+    uint32_t magic;
+    uint32_t count;
+    uint32_t next_id;
+    uint32_t reserved;
+    struct {
+        uint32_t uid;
+        struct leonos_startup_entry entry;
+    } entries[STARTUP_DB_ENTRY_MAX];
+};
+
+struct startup_denial_db {
+    uint32_t magic;
+    uint32_t count;
+    uint32_t reserved0;
+    uint32_t reserved1;
+    struct {
+        uint32_t uid;
+        char requester_path[LEONOS_FS_PATH_LEN];
+        struct leonos_startup_command command;
+    } entries[STARTUP_DENIAL_MAX];
+};
+
+struct startup_request_slot {
+    uint32_t used;
+    uint32_t id;
+    uint32_t status;
+    uint32_t requester_pid;
+    uint32_t dialog_pid;
+    uint32_t session_id;
+    struct leonos_user_info user;
+    char requester_path[LEONOS_FS_PATH_LEN];
+    struct leonos_startup_command command;
+};
+
+static struct startup_db startup_db_scratch;
+static struct startup_denial_db startup_denial_db_scratch;
+static struct startup_request_slot startup_requests[STARTUP_REQUEST_MAX];
+static uint32_t startup_next_request_id = 1;
 
 struct task_snapshot_user {
     uint32_t capacity;
@@ -886,6 +935,524 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
     return -LEONOS_ENOSYS;
 }
 
+static void startup_release_file(const void *data, size_t len)
+{
+    uint32_t pages = (uint32_t)((len + 4095U) / 4096U);
+    if (data && pages) {
+        mm_free_pages((uint64_t)(uintptr_t)data, pages);
+    }
+}
+
+static int startup_command_is_well_formed(const struct leonos_startup_command *command)
+{
+    if (!command || !command->path[0] || command->argc > LEONOS_STARTUP_MAX_ARGS ||
+        kernel_string_len_cap(command->path, sizeof(command->path)) >= sizeof(command->path)) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < command->argc; ++i) {
+        if (kernel_string_len_cap(command->args[i], sizeof(command->args[i])) >=
+            sizeof(command->args[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int startup_db_is_well_formed(const struct startup_db *db)
+{
+    if (!db || db->magic != STARTUP_DB_MAGIC || db->count > STARTUP_DB_ENTRY_MAX ||
+        !db->next_id) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < db->count; ++i) {
+        if (!db->entries[i].uid || !db->entries[i].entry.id ||
+            !startup_command_is_well_formed(&db->entries[i].entry.command)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int startup_denial_db_is_well_formed(const struct startup_denial_db *db)
+{
+    if (!db || db->magic != STARTUP_DENIAL_DB_MAGIC || db->count > STARTUP_DENIAL_MAX) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < db->count; ++i) {
+        if (!db->entries[i].uid ||
+            kernel_string_len_cap(db->entries[i].requester_path,
+                                  sizeof(db->entries[i].requester_path)) >=
+                sizeof(db->entries[i].requester_path) ||
+            !startup_command_is_well_formed(&db->entries[i].command)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void startup_db_load(void)
+{
+    const void *data = 0;
+    size_t len = 0;
+    startup_db_scratch = (struct startup_db){0};
+    startup_db_scratch.magic = STARTUP_DB_MAGIC;
+    startup_db_scratch.next_id = 1;
+    if (storage_read_file(STARTUP_DB_PATH, &data, &len) == 0 &&
+        data && len == sizeof(startup_db_scratch)) {
+        const struct startup_db *saved = (const struct startup_db *)data;
+        if (startup_db_is_well_formed(saved)) {
+            startup_db_scratch = *saved;
+        }
+    }
+    startup_release_file(data, len);
+}
+
+static int startup_db_save(void)
+{
+    (void)storage_mkdir("0:/system");
+    (void)storage_mkdir("0:/system/state");
+    return storage_write_file(STARTUP_DB_PATH, &startup_db_scratch,
+                              sizeof(startup_db_scratch));
+}
+
+static void startup_denial_db_load(void)
+{
+    const void *data = 0;
+    size_t len = 0;
+    startup_denial_db_scratch = (struct startup_denial_db){0};
+    startup_denial_db_scratch.magic = STARTUP_DENIAL_DB_MAGIC;
+    if (storage_read_file(STARTUP_DENIAL_DB_PATH, &data, &len) == 0 &&
+        data && len == sizeof(startup_denial_db_scratch)) {
+        const struct startup_denial_db *saved = (const struct startup_denial_db *)data;
+        if (startup_denial_db_is_well_formed(saved)) {
+            startup_denial_db_scratch = *saved;
+        }
+    }
+    startup_release_file(data, len);
+}
+
+static int startup_denial_db_save(void)
+{
+    (void)storage_mkdir("0:/system");
+    (void)storage_mkdir("0:/system/state");
+    return storage_write_file(STARTUP_DENIAL_DB_PATH, &startup_denial_db_scratch,
+                              sizeof(startup_denial_db_scratch));
+}
+
+static int startup_text_eq(const char *a, const char *b)
+{
+    uint32_t i = 0;
+    if (!a || !b) {
+        return 0;
+    }
+    while (a[i] && b[i] && a[i] == b[i]) {
+        ++i;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
+static int startup_command_equal(const struct leonos_startup_command *a,
+                                 const struct leonos_startup_command *b)
+{
+    if (!a || !b || a->argc != b->argc || !startup_text_eq(a->path, b->path)) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < a->argc; ++i) {
+        if (!startup_text_eq(a->args[i], b->args[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int startup_command_validate(struct leonos_startup_command *command,
+                                    const struct task *task)
+{
+    char resolved[LEONOS_FS_PATH_LEN];
+    struct leonos_stat st;
+    uint32_t exec_bytes;
+    if (!command || !task || !command->path[0] ||
+        command->argc > LEONOS_STARTUP_MAX_ARGS ||
+        kernel_string_len_cap(command->path, sizeof(command->path)) >= sizeof(command->path)) {
+        return -LEONOS_EINVAL;
+    }
+    for (uint32_t i = 0; i < command->argc; ++i) {
+        uint32_t arg_len = kernel_string_len_cap(command->args[i], sizeof(command->args[i]));
+        if (arg_len >= sizeof(command->args[i])) {
+            return -LEONOS_EINVAL;
+        }
+    }
+    if (storage_resolve_path(task->cwd, command->path, resolved, sizeof(resolved)) < 0 ||
+        storage_stat_path(resolved, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE) {
+        return -LEONOS_EINVAL;
+    }
+    if (authz_check_path(task, LEONOS_AUTHZ_EXEC, resolved, 0, 0) < 0) {
+        return -LEONOS_EACCES;
+    }
+    copy_text(command->path, sizeof(command->path), resolved);
+    exec_bytes = kernel_string_len_cap(command->path, sizeof(command->path)) + 1U;
+    for (uint32_t i = 0; i < command->argc; ++i) {
+        exec_bytes += kernel_string_len_cap(command->args[i], sizeof(command->args[i])) + 1U;
+    }
+    if (exec_bytes > SCHED_EXEC_DATA_MAX) {
+        return -LEONOS_EINVAL;
+    }
+    command->reserved = 0;
+    for (uint32_t i = command->argc; i < LEONOS_STARTUP_MAX_ARGS; ++i) {
+        command->args[i][0] = 0;
+    }
+    return 0;
+}
+
+static int startup_can_manage_uid(const struct task *task, uint32_t uid)
+{
+    return task && task->uid && uid &&
+           (task->role == LEONOS_AUTH_ROLE_ADMIN || task->uid == uid);
+}
+
+static int startup_db_find(uint32_t uid, const struct leonos_startup_command *command)
+{
+    for (uint32_t i = 0; i < startup_db_scratch.count; ++i) {
+        if (startup_db_scratch.entries[i].uid == uid &&
+            startup_command_equal(&startup_db_scratch.entries[i].entry.command, command)) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int startup_denial_find(uint32_t uid, const char *requester_path,
+                               const struct leonos_startup_command *command)
+{
+    for (uint32_t i = 0; i < startup_denial_db_scratch.count; ++i) {
+        if (startup_denial_db_scratch.entries[i].uid == uid &&
+            startup_text_eq(startup_denial_db_scratch.entries[i].requester_path, requester_path) &&
+            startup_command_equal(&startup_denial_db_scratch.entries[i].command, command)) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int startup_remember_denial(uint32_t uid, const char *requester_path,
+                                   const struct leonos_startup_command *command)
+{
+    if (startup_denial_find(uid, requester_path, command) >= 0 ||
+        startup_denial_db_scratch.count >= STARTUP_DENIAL_MAX) {
+        return -LEONOS_E2BIG;
+    }
+    uint32_t i = startup_denial_db_scratch.count++;
+    startup_denial_db_scratch.entries[i].uid = uid;
+    copy_text(startup_denial_db_scratch.entries[i].requester_path,
+              sizeof(startup_denial_db_scratch.entries[i].requester_path), requester_path);
+    startup_denial_db_scratch.entries[i].command = *command;
+    return startup_denial_db_save();
+}
+
+static struct startup_request_slot *startup_request_find(uint32_t id)
+{
+    for (uint32_t i = 0; i < STARTUP_REQUEST_MAX; ++i) {
+        if (startup_requests[i].used && startup_requests[i].id == id) {
+            return &startup_requests[i];
+        }
+    }
+    return 0;
+}
+
+static void startup_request_reconcile(struct startup_request_slot *slot)
+{
+    struct task *dialog;
+    if (!slot || slot->status != LEONOS_STARTUP_STATUS_PENDING) {
+        return;
+    }
+    dialog = sched_find(slot->dialog_pid);
+    if (!dialog || dialog->state == TASK_EXITED) {
+        slot->status = LEONOS_STARTUP_STATUS_DENIED;
+    }
+}
+
+static struct startup_request_slot *startup_request_alloc(void)
+{
+    for (uint32_t i = 0; i < STARTUP_REQUEST_MAX; ++i) {
+        struct task *requester;
+        startup_request_reconcile(&startup_requests[i]);
+        requester = startup_requests[i].used
+                        ? sched_find(startup_requests[i].requester_pid) : 0;
+        if (startup_requests[i].used && startup_requests[i].status != LEONOS_STARTUP_STATUS_PENDING &&
+            (!requester || requester->state == TASK_EXITED)) {
+            startup_requests[i].used = 0;
+        }
+        if (!startup_requests[i].used) {
+            startup_requests[i] = (struct startup_request_slot){0};
+            startup_requests[i].used = 1;
+            startup_requests[i].id = startup_next_request_id++;
+            if (!startup_next_request_id) {
+                startup_next_request_id = 1;
+            }
+            return &startup_requests[i];
+        }
+    }
+    return 0;
+}
+
+static int startup_add_entry(uint32_t uid, const struct leonos_startup_command *command)
+{
+    int existing;
+    uint32_t user_entry_count = 0;
+    startup_db_load();
+    existing = startup_db_find(uid, command);
+    if (existing >= 0) {
+        return 1;
+    }
+    for (uint32_t i = 0; i < startup_db_scratch.count; ++i) {
+        if (startup_db_scratch.entries[i].uid == uid) {
+            ++user_entry_count;
+        }
+    }
+    if (user_entry_count >= LEONOS_STARTUP_MAX_ENTRIES) {
+        return -LEONOS_E2BIG;
+    }
+    if (startup_db_scratch.count >= STARTUP_DB_ENTRY_MAX) {
+        return -LEONOS_E2BIG;
+    }
+    uint32_t i = startup_db_scratch.count++;
+    startup_db_scratch.entries[i].uid = uid;
+    startup_db_scratch.entries[i].entry.id = startup_db_scratch.next_id++;
+    if (!startup_db_scratch.next_id) {
+        startup_db_scratch.next_id = 1;
+    }
+    startup_db_scratch.entries[i].entry.enabled = 1;
+    startup_db_scratch.entries[i].entry.command = *command;
+    return startup_db_save();
+}
+
+static int startup_dialog_spawn(struct startup_request_slot *slot)
+{
+    const char *argv[] = {SYSCONFDIALOG_APP_PATH, 0};
+    int64_t pid;
+    if (!slot || !slot->user.uid || !slot->session_id) {
+        return -LEONOS_EINVAL;
+    }
+    pid = userland_spawn_path_argv_for_user(SYSCONFDIALOG_APP_PATH, argv, 0,
+                                            slot->requester_pid, &slot->user,
+                                            slot->session_id);
+    if (pid <= 0) {
+        slot->status = LEONOS_STARTUP_STATUS_FAILED;
+        return (int)pid;
+    }
+    slot->dialog_pid = (uint32_t)pid;
+    return 0;
+}
+
+static int startup_handle_ioctl(uint64_t request, uint64_t user_arg)
+{
+    struct task *task = sched_current_task();
+    if (request == LEONOS_STARTUP_IOCTL_REQUEST) {
+        struct leonos_startup_request input;
+        struct startup_request_slot *slot;
+        int ret;
+        if (!task || !task->uid || !task->session_id || !task->path[0] ||
+            !user_range_ok(user_arg, sizeof(input))) {
+            return -LEONOS_EACCES;
+        }
+        input = *(struct leonos_startup_request *)(uintptr_t)user_arg;
+        ret = startup_command_validate(&input.command, task);
+        if (ret < 0) {
+            return ret;
+        }
+        slot = startup_request_alloc();
+        if (!slot) {
+            return -LEONOS_E2BIG;
+        }
+        slot->requester_pid = task->pid;
+        slot->session_id = task->session_id;
+        auth_copy_current_user(&slot->user, task);
+        copy_text(slot->requester_path, sizeof(slot->requester_path), task->path);
+        slot->command = input.command;
+        startup_db_load();
+        if (startup_db_find(task->uid, &slot->command) >= 0) {
+            slot->status = LEONOS_STARTUP_STATUS_EXISTS;
+        } else {
+            startup_denial_db_load();
+            if (startup_denial_find(task->uid, slot->requester_path, &slot->command) >= 0) {
+                slot->status = LEONOS_STARTUP_STATUS_DENIED_REMEMBERED;
+            } else {
+                slot->status = LEONOS_STARTUP_STATUS_PENDING;
+                ret = startup_dialog_spawn(slot);
+                if (ret < 0) {
+                    input.request_id = slot->id;
+                    input.status = slot->status;
+                    *(struct leonos_startup_request *)(uintptr_t)user_arg = input;
+                    return ret;
+                }
+            }
+        }
+        input.request_id = slot->id;
+        input.status = slot->status;
+        *(struct leonos_startup_request *)(uintptr_t)user_arg = input;
+        return 0;
+    }
+    if (request == LEONOS_STARTUP_IOCTL_REQUEST_STATUS) {
+        struct leonos_startup_request_status status;
+        struct startup_request_slot *slot;
+        if (!task || !user_range_ok(user_arg, sizeof(status))) {
+            return -LEONOS_EFAULT;
+        }
+        status = *(struct leonos_startup_request_status *)(uintptr_t)user_arg;
+        slot = startup_request_find(status.request_id);
+        if (!slot || slot->requester_pid != task->pid) {
+            return -LEONOS_EACCES;
+        }
+        startup_request_reconcile(slot);
+        status.status = slot->status;
+        *(struct leonos_startup_request_status *)(uintptr_t)user_arg = status;
+        if (slot->status != LEONOS_STARTUP_STATUS_PENDING) {
+            slot->used = 0;
+        }
+        return 0;
+    }
+    if (request == LEONOS_STARTUP_IOCTL_DIALOG_GET) {
+        struct leonos_startup_dialog_request output;
+        struct startup_request_slot *slot = 0;
+        if (!task || !text_eq_cstr(task->path, SYSCONFDIALOG_APP_PATH) ||
+            !user_range_ok(user_arg, sizeof(output))) {
+            return -LEONOS_EACCES;
+        }
+        for (uint32_t i = 0; i < STARTUP_REQUEST_MAX; ++i) {
+            startup_request_reconcile(&startup_requests[i]);
+            if (startup_requests[i].used && startup_requests[i].dialog_pid == task->pid &&
+                startup_requests[i].status == LEONOS_STARTUP_STATUS_PENDING) {
+                slot = &startup_requests[i];
+                break;
+            }
+        }
+        if (!slot) {
+            return -LEONOS_EINVAL;
+        }
+        output = (struct leonos_startup_dialog_request){0};
+        output.request_id = slot->id;
+        output.uid = slot->user.uid;
+        copy_text(output.requester_path, sizeof(output.requester_path), slot->requester_path);
+        output.command = slot->command;
+        *(struct leonos_startup_dialog_request *)(uintptr_t)user_arg = output;
+        return 0;
+    }
+    if (request == LEONOS_STARTUP_IOCTL_DIALOG_RESOLVE) {
+        struct leonos_startup_dialog_resolution resolution;
+        struct startup_request_slot *slot;
+        int ret;
+        if (!task || !text_eq_cstr(task->path, SYSCONFDIALOG_APP_PATH) ||
+            !user_range_ok(user_arg, sizeof(resolution))) {
+            return -LEONOS_EACCES;
+        }
+        resolution = *(struct leonos_startup_dialog_resolution *)(uintptr_t)user_arg;
+        slot = startup_request_find(resolution.request_id);
+        if (!slot || slot->dialog_pid != task->pid ||
+            slot->status != LEONOS_STARTUP_STATUS_PENDING) {
+            return -LEONOS_EACCES;
+        }
+        if (resolution.decision == LEONOS_STARTUP_DECISION_ALLOW) {
+            ret = startup_add_entry(slot->user.uid, &slot->command);
+            slot->status = ret < 0 ? LEONOS_STARTUP_STATUS_FAILED :
+                           (ret > 0 ? LEONOS_STARTUP_STATUS_EXISTS :
+                                      LEONOS_STARTUP_STATUS_APPROVED);
+        } else if (resolution.decision == LEONOS_STARTUP_DECISION_DENY ||
+                   resolution.decision == LEONOS_STARTUP_DECISION_DENY_REMEMBERED) {
+            if (resolution.decision == LEONOS_STARTUP_DECISION_DENY_REMEMBERED) {
+                startup_denial_db_load();
+                ret = startup_remember_denial(slot->user.uid, slot->requester_path, &slot->command);
+                slot->status = ret < 0 ? LEONOS_STARTUP_STATUS_DENIED :
+                                       LEONOS_STARTUP_STATUS_DENIED_REMEMBERED;
+            } else {
+                slot->status = LEONOS_STARTUP_STATUS_DENIED;
+            }
+        } else {
+            return -LEONOS_EINVAL;
+        }
+        return 0;
+    }
+    if (request == LEONOS_STARTUP_IOCTL_LIST) {
+        struct leonos_startup_list list;
+        uint32_t out = 0;
+        if (!task || !user_range_ok(user_arg, sizeof(list))) {
+            return -LEONOS_EFAULT;
+        }
+        list = *(struct leonos_startup_list *)(uintptr_t)user_arg;
+        if (!startup_can_manage_uid(task, list.uid) || list.capacity > LEONOS_STARTUP_MAX_ENTRIES ||
+            (list.capacity && (!list.entries || !user_range_ok((uint64_t)(uintptr_t)list.entries,
+             (uint64_t)list.capacity * sizeof(struct leonos_startup_entry))))) {
+            return -LEONOS_EACCES;
+        }
+        startup_db_load();
+        for (uint32_t i = 0; i < startup_db_scratch.count; ++i) {
+            if (startup_db_scratch.entries[i].uid != list.uid) {
+                continue;
+            }
+            if (list.entries && out < list.capacity) {
+                list.entries[out] = startup_db_scratch.entries[i].entry;
+            }
+            ++out;
+        }
+        list.count = out;
+        *(struct leonos_startup_list *)(uintptr_t)user_arg = list;
+        return 0;
+    }
+    if (request == LEONOS_STARTUP_IOCTL_SET_ENABLED || request == LEONOS_STARTUP_IOCTL_REMOVE) {
+        struct leonos_startup_update update;
+        if (!task || !user_range_ok(user_arg, sizeof(update))) {
+            return -LEONOS_EFAULT;
+        }
+        update = *(struct leonos_startup_update *)(uintptr_t)user_arg;
+        if (!startup_can_manage_uid(task, update.uid)) {
+            return -LEONOS_EACCES;
+        }
+        startup_db_load();
+        for (uint32_t i = 0; i < startup_db_scratch.count; ++i) {
+            if (startup_db_scratch.entries[i].uid != update.uid ||
+                startup_db_scratch.entries[i].entry.id != update.entry_id) {
+                continue;
+            }
+            if (request == LEONOS_STARTUP_IOCTL_SET_ENABLED) {
+                startup_db_scratch.entries[i].entry.enabled = update.enabled ? 1U : 0U;
+            } else {
+                for (uint32_t j = i + 1; j < startup_db_scratch.count; ++j) {
+                    startup_db_scratch.entries[j - 1] = startup_db_scratch.entries[j];
+                }
+                --startup_db_scratch.count;
+            }
+            return startup_db_save();
+        }
+        return -LEONOS_EINVAL;
+    }
+    if (request == LEONOS_STARTUP_IOCTL_LAUNCH_CURRENT) {
+        const char *argv[LEONOS_STARTUP_MAX_ARGS + 2];
+        int launched = 0;
+        if (!task || !task->uid || !task->session_id ||
+            !(task->flags & TASK_FLAG_WINDOW_SERVER) ||
+            !text_eq_cstr(task->path, "0:/system/apps/desktop/desktop.elf")) {
+            return -LEONOS_EACCES;
+        }
+        startup_db_load();
+        for (uint32_t i = 0; i < startup_db_scratch.count; ++i) {
+            struct leonos_startup_entry *entry = &startup_db_scratch.entries[i].entry;
+            if (startup_db_scratch.entries[i].uid != task->uid || !entry->enabled ||
+                authz_check_path(task, LEONOS_AUTHZ_EXEC, entry->command.path, 0, 0) < 0) {
+                continue;
+            }
+            argv[0] = entry->command.path;
+            for (uint32_t j = 0; j < entry->command.argc; ++j) {
+                argv[j + 1] = entry->command.args[j];
+            }
+            argv[entry->command.argc + 1] = 0;
+            if (userland_spawn_path_argv(entry->command.path, argv, 0, 0) > 0) {
+                ++launched;
+            }
+        }
+        return launched;
+    }
+    return -LEONOS_ENOSYS;
+}
+
 static int copy_user_vector(uint64_t user_ptr, uint32_t max_count,
                             char *out_ptrs[], char *data,
                             uint32_t data_cap, uint32_t *out_count, uint32_t *data_len)
@@ -1522,6 +2089,18 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
          a1 == LEONOS_AUTH_IOCTL_UPDATE_USER ||
          a1 == LEONOS_AUTH_IOCTL_CHANGE_PASSWORD)) {
         return auth_handle_ioctl(a1, a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == LEONOS_STARTUP_IOCTL_REQUEST ||
+         a1 == LEONOS_STARTUP_IOCTL_REQUEST_STATUS ||
+         a1 == LEONOS_STARTUP_IOCTL_DIALOG_GET ||
+         a1 == LEONOS_STARTUP_IOCTL_DIALOG_RESOLVE ||
+         a1 == LEONOS_STARTUP_IOCTL_LIST ||
+         a1 == LEONOS_STARTUP_IOCTL_SET_ENABLED ||
+         a1 == LEONOS_STARTUP_IOCTL_REMOVE ||
+         a1 == LEONOS_STARTUP_IOCTL_LAUNCH_CURRENT)) {
+        return startup_handle_ioctl(a1, a2);
     }
 
     if (number == LINUX_SYS_IOCTL &&
@@ -2343,7 +2922,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_APPEARANCE_REQUEST) {
         struct task *task = sched_current_task();
-        if (!task || task->role != LEONOS_AUTH_ROLE_ADMIN) {
+        if (!task || !task->uid) {
             return -LEONOS_EPERM;
         }
         if (!user_range_ok(a2, sizeof(struct gui_ipc_appearance_request))) {

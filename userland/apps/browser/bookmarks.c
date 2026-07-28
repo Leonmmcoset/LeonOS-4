@@ -281,17 +281,20 @@ int browser_show_bookmark_manager(char *out_url, uint32_t out_cap)
         leonos_ui_text(&surface, 18, 18, T("Bookmarks", "书签"),
                        LEONOS_UI_BLACK, LEONOS_UI_GRAY);
         leonos_ui_panel(&surface, 16, LIST_Y, W - 32, LIST_ROWS * ROW_H,
-                        LEONOS_UI_WHITE);
+        LEONOS_UI_WHITE);
         for (uint32_t i = 0; i < browser_bookmark_count && i < LIST_ROWS; ++i) {
             uint32_t y = LIST_Y + i * ROW_H;
-            uint32_t bg = selected == (int32_t)i ? 0x00e7f0ffU : LEONOS_UI_WHITE;
+            uint32_t selected_row = selected == (int32_t)i;
+            uint32_t bg = selected_row ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE;
+            uint32_t fg = selected_row ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
+            uint32_t detail_fg = selected_row ? LEONOS_UI_WHITE : LEONOS_UI_DARK;
             leonos_ui_rect(&surface, 18, y + 1U, W - 36, ROW_H - 2U, bg);
             leonos_ui_text_clipped(&surface, 28, y + 7U, 180,
                                    browser_bookmarks[i].title,
-                                   LEONOS_UI_BLACK, bg);
+                                   fg, bg);
             leonos_ui_text_clipped(&surface, 216, y + 7U, W - 244,
                                    browser_bookmarks[i].url,
-                                   LEONOS_UI_DARK, bg);
+                                   detail_fg, bg);
         }
         if (!browser_bookmark_count) {
             leonos_ui_text(&surface, 28, LIST_Y + 10,

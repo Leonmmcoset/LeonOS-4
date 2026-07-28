@@ -14,10 +14,14 @@
 #define SETTINGS_DROPDOWN_ROW_H 28
 #define SETTINGS_MODE_COUNT 5
 #define SETTINGS_SCALE_COUNT 3
-#define SETTINGS_TAB_COUNT 5
+#define SETTINGS_TAB_COUNT 6
 #define SETTINGS_USER_ROWS 7
 #define SETTINGS_ASSOC_ROWS 6
 #define SETTINGS_SERVICE_ROWS 5
+#define SETTINGS_WALLPAPER_MAX_W 1280U
+#define SETTINGS_WALLPAPER_MAX_H 720U
+#define SETTINGS_WALLPAPER_BMP_MAX_BYTES (SETTINGS_WALLPAPER_MAX_W * SETTINGS_WALLPAPER_MAX_H * 4U + 128U)
+#define SETTINGS_DEFAULT_WALLPAPER_PATH "0:/system/resources/wallpaper-metro.bmp"
 #define SETTINGS_TAB_Y 14
 #define SETTINGS_BODY_Y 44
 #define SETTINGS_SERVICES_PATH "0:/system/config/services.cfg"
@@ -28,10 +32,11 @@
 
 enum {
     PAGE_DISPLAY = 0,
-    PAGE_USERS = 1,
-    PAGE_ASSOC = 2,
-    PAGE_SERVICES = 3,
-    PAGE_ACTIVATION = 4,
+    PAGE_PERSONALIZATION = 1,
+    PAGE_USERS = 2,
+    PAGE_ASSOC = 3,
+    PAGE_SERVICES = 4,
+    PAGE_ACTIVATION = 5,
 };
 
 enum {
@@ -40,6 +45,9 @@ enum {
     DROP_SCALE = 2,
     DROP_LANGUAGE = 3,
     DROP_THEME = 4,
+    DROP_METRO_COLOR = 5,
+    DROP_WIN95_COLOR = 6,
+    DROP_WALLPAPER_MODE = 7,
 };
 
 static uint32_t pixels[SETTINGS_W * SETTINGS_H];
@@ -176,6 +184,138 @@ static uint32_t text_len(const char *text)
         ++n;
     }
     return n;
+}
+
+static uint16_t settings_read_le16(const uint8_t *p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t settings_read_le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static int32_t settings_read_le32s(const uint8_t *p)
+{
+    return (int32_t)settings_read_le32(p);
+}
+
+static const char *theme_color_label(uint32_t scheme)
+{
+    switch (scheme) {
+    case LEONOS_UI_COLOR_SCHEME_TEAL:
+        return T("Teal", "青色");
+    case LEONOS_UI_COLOR_SCHEME_GREEN:
+        return T("Green", "绿色");
+    case LEONOS_UI_COLOR_SCHEME_PURPLE:
+        return T("Purple", "紫色");
+    case LEONOS_UI_COLOR_SCHEME_RED:
+        return T("Red", "红色");
+    case LEONOS_UI_COLOR_SCHEME_GRAPHITE:
+        return T("Graphite", "石墨色");
+    default:
+        return T("Blue", "蓝色");
+    }
+}
+
+static const char *wallpaper_mode_label(uint32_t mode)
+{
+    switch (mode) {
+    case LEONOS_WALLPAPER_MODE_FIT:
+        return T("Fit", "适应");
+    case LEONOS_WALLPAPER_MODE_CENTER:
+        return T("Center", "居中");
+    case LEONOS_WALLPAPER_MODE_TILE:
+        return T("Tile", "平铺");
+    case LEONOS_WALLPAPER_MODE_STRETCH:
+        return T("Stretch", "拉伸");
+    default:
+        return T("Fill", "填充");
+    }
+}
+
+static void fill_theme_color_items(struct leonos_ui_dropdown_item *items)
+{
+    if (!items) {
+        return;
+    }
+    for (uint32_t i = 0; i < LEONOS_UI_COLOR_SCHEME_COUNT; ++i) {
+        items[i].label = theme_color_label(i);
+        items[i].id = i;
+        items[i].flags = 0;
+    }
+}
+
+static void fill_wallpaper_mode_items(struct leonos_ui_dropdown_item *items)
+{
+    if (!items) {
+        return;
+    }
+    for (uint32_t i = 0; i < LEONOS_WALLPAPER_MODE_COUNT; ++i) {
+        items[i].label = wallpaper_mode_label(i);
+        items[i].id = i;
+        items[i].flags = 0;
+    }
+}
+
+static int validate_wallpaper_bmp(const char *path)
+{
+    uint8_t header[54];
+    struct leonos_stat st;
+    int fd;
+    long got;
+    uint32_t pixel_offset;
+    uint32_t dib_size;
+    int32_t width;
+    int32_t height_signed;
+    uint32_t height;
+    uint16_t planes;
+    uint16_t bpp;
+    uint32_t compression;
+    uint32_t row_stride;
+    if (!path || !path[0]) {
+        return 0;
+    }
+    if (stat(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
+        st.size < sizeof(header) || st.size > SETTINGS_WALLPAPER_BMP_MAX_BYTES) {
+        return 0;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    got = read(fd, header, sizeof(header));
+    close(fd);
+    if (got < (long)sizeof(header) || header[0] != 'B' || header[1] != 'M') {
+        return 0;
+    }
+    pixel_offset = settings_read_le32(header + 10);
+    dib_size = settings_read_le32(header + 14);
+    width = settings_read_le32s(header + 18);
+    height_signed = settings_read_le32s(header + 22);
+    planes = settings_read_le16(header + 26);
+    bpp = settings_read_le16(header + 28);
+    compression = settings_read_le32(header + 30);
+    if (dib_size < 40 || width <= 0 || height_signed == 0 ||
+        planes != 1 || (bpp != 24 && bpp != 32) || compression != 0) {
+        return 0;
+    }
+    height = height_signed < 0
+                 ? (uint32_t)(0u - (uint32_t)height_signed)
+                 : (uint32_t)height_signed;
+    if ((uint32_t)width > SETTINGS_WALLPAPER_MAX_W ||
+        height > SETTINGS_WALLPAPER_MAX_H) {
+        return 0;
+    }
+    row_stride = ((((uint32_t)width * bpp) + 31u) / 32u) * 4u;
+    if ((uint64_t)pixel_offset + (uint64_t)row_stride * height > st.size) {
+        return 0;
+    }
+    return 1;
 }
 
 static const char *role_label(uint32_t role)
@@ -453,6 +593,14 @@ static void refresh_appearance_state(void)
 {
     if (leonos_appearance_get_state(&appearance_state) <= 0) {
         appearance_state.theme = leonos_ui_theme();
+        appearance_state.metro_color_scheme =
+            leonos_ui_theme_color_scheme(LEONOS_UI_THEME_METRO);
+        appearance_state.win95_color_scheme =
+            leonos_ui_theme_color_scheme(LEONOS_UI_THEME_WIN95);
+        appearance_state.wallpaper_mode = LEONOS_WALLPAPER_MODE_FILL;
+        copy_text(appearance_state.wallpaper_path,
+                  sizeof(appearance_state.wallpaper_path),
+                  SETTINGS_DEFAULT_WALLPAPER_PATH);
     }
 }
 
@@ -480,6 +628,27 @@ static void request_display(uint32_t action, uint32_t mode, uint32_t scale)
     request.mode_index = mode;
     request.scale_index = scale;
     (void)leonos_display_request(&request);
+}
+
+static void request_appearance_change(const char *ok_text)
+{
+    struct leonos_appearance_request request;
+    request.theme = appearance_state.theme;
+    request.metro_color_scheme = appearance_state.metro_color_scheme;
+    request.win95_color_scheme = appearance_state.win95_color_scheme;
+    request.wallpaper_mode = appearance_state.wallpaper_mode;
+    copy_text(request.wallpaper_path, sizeof(request.wallpaper_path),
+              appearance_state.wallpaper_path);
+    if (leonos_appearance_request_theme(&request) > 0) {
+        (void)leonos_ui_theme_set_appearance(request.theme,
+                                             request.metro_color_scheme,
+                                             request.win95_color_scheme);
+        copy_text(status_text, sizeof(status_text),
+                  ok_text ? ok_text : T("Personalization updated", "个性化设置已更新"));
+    } else {
+        copy_text(status_text, sizeof(status_text),
+                  T("Could not apply personalization", "无法应用个性化设置"));
+    }
 }
 
 static const char *mode_label(void)
@@ -513,7 +682,6 @@ static void draw_display_page(struct leonos_ui_surface *ui)
     struct leonos_ui_dropdown_item mode_items[SETTINGS_MODE_COUNT];
     struct leonos_ui_dropdown_item scale_items[SETTINGS_SCALE_COUNT];
     struct leonos_ui_dropdown_item lang_items[2];
-    struct leonos_ui_dropdown_item theme_items[2];
     for (uint32_t i = 0; i < SETTINGS_MODE_COUNT; ++i) {
         mode_items[i].label = mode_labels[i];
         mode_items[i].id = i;
@@ -526,8 +694,6 @@ static void draw_display_page(struct leonos_ui_surface *ui)
     }
     lang_items[0] = (struct leonos_ui_dropdown_item){"English", LEONOS_LANG_EN, 0};
     lang_items[1] = (struct leonos_ui_dropdown_item){"中文", LEONOS_LANG_ZH, 0};
-    theme_items[0] = (struct leonos_ui_dropdown_item){"Metro", LEONOS_UI_THEME_METRO, 0};
-    theme_items[1] = (struct leonos_ui_dropdown_item){"Win95", LEONOS_UI_THEME_WIN95, 0};
 
     append_text(line, &pos, sizeof(line), T("Framebuffer ", "帧缓冲 "));
     append_dec(line, &pos, sizeof(line), display_state.fb_width);
@@ -549,13 +715,6 @@ static void draw_display_page(struct leonos_ui_surface *ui)
                      0);
     leonos_ui_text(ui, 44, 184, T("Language", "语言"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_combobox(ui, 160, 178, 190, language_label(), active_drop == DROP_LANGUAGE, 0);
-    leonos_ui_text(ui, 44, 224, T("System style", "系统样式"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_combobox(ui, 160, 218, 190, theme_label(), active_drop == DROP_THEME,
-                        current_user.role == LEONOS_AUTH_ROLE_ADMIN ? 0 : LEONOS_UI_BUTTON_DISABLED);
-    if (current_user.role != LEONOS_AUTH_ROLE_ADMIN) {
-        leonos_ui_text(ui, 360, 224, T("Administrator only", "仅管理员可更改"),
-                       LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    }
     if (display_state.pending_confirm) {
         uint32_t seconds = (display_state.confirm_remaining_ms + 999) / 1000;
         pos = 0;
@@ -578,9 +737,92 @@ static void draw_display_page(struct leonos_ui_surface *ui)
     } else if (active_drop == DROP_RESOLUTION) {
         leonos_ui_dropdown(ui, 160, 122, 190, mode_items, SETTINGS_MODE_COUNT,
                            display_state.mode_index, SETTINGS_DROPDOWN_ROW_H, 1000);
-    } else if (active_drop == DROP_THEME) {
-        leonos_ui_dropdown(ui, 160, 242, 190, theme_items, 2,
+    }
+}
+
+static void draw_personalization_page(struct leonos_ui_surface *ui)
+{
+    struct leonos_ui_dropdown_item theme_items[2];
+    struct leonos_ui_dropdown_item metro_items[LEONOS_UI_COLOR_SCHEME_COUNT];
+    struct leonos_ui_dropdown_item win95_items[LEONOS_UI_COLOR_SCHEME_COUNT];
+    struct leonos_ui_dropdown_item wallpaper_items[LEONOS_WALLPAPER_MODE_COUNT];
+    uint32_t disabled = current_user.uid ? 0 : LEONOS_UI_BUTTON_DISABLED;
+    theme_items[0] = (struct leonos_ui_dropdown_item){"Metro", LEONOS_UI_THEME_METRO, 0};
+    theme_items[1] = (struct leonos_ui_dropdown_item){"Win95", LEONOS_UI_THEME_WIN95, 0};
+    fill_theme_color_items(metro_items);
+    fill_theme_color_items(win95_items);
+    fill_wallpaper_mode_items(wallpaper_items);
+
+    leonos_ui_text(ui, 34, 64,
+                   T("Personalization is saved for the current user. Metro and Win95 keep separate colors.",
+                     "个性化设置按当前用户保存。Metro 和 Win95 保留各自独立的颜色。"),
+                   LEONOS_UI_DARK, LEONOS_UI_GRAY);
+
+    leonos_ui_text(ui, 44, 104, T("Theme style", "主题样式"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 160, 98, 190, theme_label(),
+                       active_drop == DROP_THEME, disabled);
+
+    leonos_ui_text(ui, 44, 144, T("Metro color", "Metro 颜色"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 160, 138, 190,
+                       theme_color_label(appearance_state.metro_color_scheme),
+                       active_drop == DROP_METRO_COLOR, disabled);
+    leonos_ui_rect(ui, 364, 141, 28, 18,
+                   leonos_ui_theme_scheme_accent(LEONOS_UI_THEME_METRO,
+                                                 appearance_state.metro_color_scheme));
+
+    leonos_ui_text(ui, 44, 184, T("Win95 color", "Win95 颜色"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 160, 178, 190,
+                       theme_color_label(appearance_state.win95_color_scheme),
+                       active_drop == DROP_WIN95_COLOR, disabled);
+    leonos_ui_rect(ui, 364, 181, 28, 18,
+                   leonos_ui_theme_scheme_accent(LEONOS_UI_THEME_WIN95,
+                                                 appearance_state.win95_color_scheme));
+
+    leonos_ui_text(ui, 44, 224, T("Wallpaper", "壁纸"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text_field(ui, 160, 218, 318, appearance_state.wallpaper_path,
+                         LEONOS_UI_EDIT_READONLY | disabled);
+    leonos_ui_button(ui, 486, 218, 82, LEONOS_UI_BUTTON_H,
+                     T("Browse", "浏览"), disabled);
+    leonos_ui_button(ui, 576, 218, 82, LEONOS_UI_BUTTON_H,
+                     T("Default", "默认"), disabled);
+
+    leonos_ui_text(ui, 44, 264, T("Display mode", "显示方式"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 160, 258, 190,
+                       wallpaper_mode_label(appearance_state.wallpaper_mode),
+                       active_drop == DROP_WALLPAPER_MODE, disabled);
+    leonos_ui_text(ui, 360, 264,
+                   T("BMP only, up to 1280 x 720.", "仅 BMP，最大 1280 x 720。"),
+                   LEONOS_UI_DARK, LEONOS_UI_WHITE);
+
+    if (!current_user.uid) {
+        leonos_ui_text(ui, 44, 318,
+                       T("Sign in to change personalization.", "登录后才能更改个性化设置。"),
+                       LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    }
+
+    if (active_drop == DROP_THEME) {
+        leonos_ui_dropdown(ui, 160, 122, 190, theme_items, 2,
                            appearance_state.theme, SETTINGS_DROPDOWN_ROW_H, 1000);
+    } else if (active_drop == DROP_METRO_COLOR) {
+        leonos_ui_dropdown(ui, 160, 162, 190, metro_items,
+                           LEONOS_UI_COLOR_SCHEME_COUNT,
+                           appearance_state.metro_color_scheme,
+                           SETTINGS_DROPDOWN_ROW_H, 1000);
+    } else if (active_drop == DROP_WIN95_COLOR) {
+        leonos_ui_dropdown(ui, 160, 202, 190, win95_items,
+                           LEONOS_UI_COLOR_SCHEME_COUNT,
+                           appearance_state.win95_color_scheme,
+                           SETTINGS_DROPDOWN_ROW_H, 1000);
+    } else if (active_drop == DROP_WALLPAPER_MODE) {
+        leonos_ui_dropdown(ui, 160, 282, 190, wallpaper_items,
+                           LEONOS_WALLPAPER_MODE_COUNT,
+                           appearance_state.wallpaper_mode,
+                           SETTINGS_DROPDOWN_ROW_H, 1000);
     }
 }
 
@@ -748,6 +990,7 @@ static void draw_settings(struct leonos_ui_surface *ui)
 {
     struct leonos_ui_tab_item tabs[] = {
         {T("Display", "显示"), PAGE_DISPLAY, 0},
+        {T("Personalize", "个性化"), PAGE_PERSONALIZATION, 0},
         {T("Users", "用户"), PAGE_USERS, 0},
         {T("File Types", "文件类型"), PAGE_ASSOC, 0},
         {T("Services", "服务"), PAGE_SERVICES, 0},
@@ -760,6 +1003,8 @@ static void draw_settings(struct leonos_ui_surface *ui)
     leonos_ui_tab_body(ui, 18, SETTINGS_BODY_Y, SETTINGS_W - 36, SETTINGS_H - 84);
     if (active_page == PAGE_DISPLAY) {
         draw_display_page(ui);
+    } else if (active_page == PAGE_PERSONALIZATION) {
+        draw_personalization_page(ui);
     } else if (active_page == PAGE_USERS) {
         draw_users_page(ui);
     } else if (active_page == PAGE_ASSOC) {
@@ -779,6 +1024,9 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
     struct leonos_ui_dropdown_item scale_items[SETTINGS_SCALE_COUNT];
     struct leonos_ui_dropdown_item lang_items[2];
     struct leonos_ui_dropdown_item theme_items[2];
+    struct leonos_ui_dropdown_item metro_items[LEONOS_UI_COLOR_SCHEME_COUNT];
+    struct leonos_ui_dropdown_item win95_items[LEONOS_UI_COLOR_SCHEME_COUNT];
+    struct leonos_ui_dropdown_item wallpaper_items[LEONOS_WALLPAPER_MODE_COUNT];
     for (uint32_t i = 0; i < SETTINGS_MODE_COUNT; ++i) {
         mode_items[i].label = mode_labels[i];
         mode_items[i].id = i;
@@ -793,6 +1041,9 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
     lang_items[1] = (struct leonos_ui_dropdown_item){"中文", LEONOS_LANG_ZH, 0};
     theme_items[0] = (struct leonos_ui_dropdown_item){"Metro", LEONOS_UI_THEME_METRO, 0};
     theme_items[1] = (struct leonos_ui_dropdown_item){"Win95", LEONOS_UI_THEME_WIN95, 0};
+    fill_theme_color_items(metro_items);
+    fill_theme_color_items(win95_items);
+    fill_wallpaper_mode_items(wallpaper_items);
     if (active_drop == DROP_RESOLUTION &&
         leonos_ui_dropdown_hit(x, y, 160, 122, 190, mode_items, SETTINGS_MODE_COUNT,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
@@ -826,19 +1077,46 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
         return 1;
     }
     if (active_drop == DROP_THEME &&
-        leonos_ui_dropdown_hit(x, y, 160, 242, 190, theme_items, 2,
+        leonos_ui_dropdown_hit(x, y, 160, 122, 190, theme_items, 2,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
         active_drop = DROP_NONE;
-        if (current_user.role == LEONOS_AUTH_ROLE_ADMIN &&
+        if (current_user.uid &&
             (id == LEONOS_UI_THEME_METRO || id == LEONOS_UI_THEME_WIN95)) {
-            struct leonos_appearance_request request = {.theme = id};
-            if (leonos_appearance_request_theme(&request) > 0) {
-                leonos_ui_theme_set(id);
-                appearance_state.theme = id;
-                copy_text(status_text, sizeof(status_text), T("System style changed", "系统样式已更改"));
-            } else {
-                copy_text(status_text, sizeof(status_text), T("Could not change system style", "无法更改系统样式"));
-            }
+            appearance_state.theme = id;
+            request_appearance_change(T("Theme style changed", "主题样式已更改"));
+        }
+        return 1;
+    }
+    if (active_drop == DROP_METRO_COLOR &&
+        leonos_ui_dropdown_hit(x, y, 160, 162, 190, metro_items,
+                               LEONOS_UI_COLOR_SCHEME_COUNT,
+                               SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
+        active_drop = DROP_NONE;
+        if (current_user.uid && id < LEONOS_UI_COLOR_SCHEME_COUNT) {
+            appearance_state.metro_color_scheme = id;
+            request_appearance_change(T("Metro color changed", "Metro 颜色已更改"));
+        }
+        return 1;
+    }
+    if (active_drop == DROP_WIN95_COLOR &&
+        leonos_ui_dropdown_hit(x, y, 160, 202, 190, win95_items,
+                               LEONOS_UI_COLOR_SCHEME_COUNT,
+                               SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
+        active_drop = DROP_NONE;
+        if (current_user.uid && id < LEONOS_UI_COLOR_SCHEME_COUNT) {
+            appearance_state.win95_color_scheme = id;
+            request_appearance_change(T("Win95 color changed", "Win95 颜色已更改"));
+        }
+        return 1;
+    }
+    if (active_drop == DROP_WALLPAPER_MODE &&
+        leonos_ui_dropdown_hit(x, y, 160, 282, 190, wallpaper_items,
+                               LEONOS_WALLPAPER_MODE_COUNT,
+                               SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
+        active_drop = DROP_NONE;
+        if (current_user.uid && id < LEONOS_WALLPAPER_MODE_COUNT) {
+            appearance_state.wallpaper_mode = id;
+            request_appearance_change(T("Wallpaper mode changed", "壁纸显示方式已更改"));
         }
         return 1;
     }
@@ -976,11 +1254,6 @@ static void handle_display_click(int32_t x, int32_t y)
         active_drop = DROP_LANGUAGE;
         return;
     }
-    if (current_user.role == LEONOS_AUTH_ROLE_ADMIN &&
-        hit_rect_i(x, y, 160, 218, 190, LEONOS_FONT_H + 8)) {
-        active_drop = DROP_THEME;
-        return;
-    }
     if (display_state.pending_confirm && hit_rect_i(x, y, 54, 306, 82, LEONOS_UI_BUTTON_H)) {
         request_display(LEONOS_DISPLAY_REQUEST_KEEP, display_state.mode_index, display_state.scale_index);
         copy_text(status_text, sizeof(status_text), T("Display settings saved", "显示设置已保存"));
@@ -989,6 +1262,70 @@ static void handle_display_click(int32_t x, int32_t y)
     if (display_state.pending_confirm && hit_rect_i(x, y, 146, 306, 82, LEONOS_UI_BUTTON_H)) {
         request_display(LEONOS_DISPLAY_REQUEST_REVERT, display_state.mode_index, display_state.scale_index);
         copy_text(status_text, sizeof(status_text), T("Display settings reverted", "显示设置已还原"));
+    }
+}
+
+static void choose_wallpaper_dialog(void)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    copy_text(path, sizeof(path),
+              appearance_state.wallpaper_path[0]
+                  ? appearance_state.wallpaper_path
+                  : SETTINGS_DEFAULT_WALLPAPER_PATH);
+    if (leonos_ui_show_open_dialog(T("Choose wallpaper", "选择壁纸"),
+                                   path, sizeof(path),
+                                   T("Bitmap (*.bmp)", "BMP 图片 (*.bmp)"),
+                                   ".bmp") <= 0) {
+        return;
+    }
+    if (!validate_wallpaper_bmp(path)) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Wallpaper BMP must be uncompressed 24/32-bit and no larger than 1280 x 720.",
+                    "壁纸 BMP 必须是未压缩 24/32 位，且不超过 1280 x 720。"));
+        return;
+    }
+    copy_text(appearance_state.wallpaper_path,
+              sizeof(appearance_state.wallpaper_path), path);
+    request_appearance_change(T("Wallpaper changed", "壁纸已更改"));
+}
+
+static void handle_personalization_click(int32_t x, int32_t y)
+{
+    if (active_drop && handle_open_dropdown_hit(x, y)) {
+        return;
+    }
+    active_drop = DROP_NONE;
+    if (!current_user.uid) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Sign in to change personalization.", "登录后才能更改个性化设置。"));
+        return;
+    }
+    if (hit_rect_i(x, y, 160, 98, 190, LEONOS_FONT_H + 8)) {
+        active_drop = DROP_THEME;
+        return;
+    }
+    if (hit_rect_i(x, y, 160, 138, 190, LEONOS_FONT_H + 8)) {
+        active_drop = DROP_METRO_COLOR;
+        return;
+    }
+    if (hit_rect_i(x, y, 160, 178, 190, LEONOS_FONT_H + 8)) {
+        active_drop = DROP_WIN95_COLOR;
+        return;
+    }
+    if (hit_rect_i(x, y, 486, 218, 82, LEONOS_UI_BUTTON_H)) {
+        choose_wallpaper_dialog();
+        return;
+    }
+    if (hit_rect_i(x, y, 576, 218, 82, LEONOS_UI_BUTTON_H)) {
+        copy_text(appearance_state.wallpaper_path,
+                  sizeof(appearance_state.wallpaper_path),
+                  SETTINGS_DEFAULT_WALLPAPER_PATH);
+        request_appearance_change(T("Default wallpaper restored", "已恢复默认壁纸"));
+        return;
+    }
+    if (hit_rect_i(x, y, 160, 258, 190, LEONOS_FONT_H + 8)) {
+        active_drop = DROP_WALLPAPER_MODE;
+        return;
     }
 }
 
@@ -1054,6 +1391,7 @@ static void handle_click(int32_t x, int32_t y)
 {
     struct leonos_ui_tab_item tabs[] = {
         {T("Display", "显示"), PAGE_DISPLAY, 0},
+        {T("Personalize", "个性化"), PAGE_PERSONALIZATION, 0},
         {T("Users", "用户"), PAGE_USERS, 0},
         {T("File Types", "文件类型"), PAGE_ASSOC, 0},
         {T("Services", "服务"), PAGE_SERVICES, 0},
@@ -1068,6 +1406,8 @@ static void handle_click(int32_t x, int32_t y)
     }
     if (active_page == PAGE_DISPLAY) {
         handle_display_click(x, y);
+    } else if (active_page == PAGE_PERSONALIZATION) {
+        handle_personalization_click(x, y);
     } else if (active_page == PAGE_USERS) {
         handle_users_click(x, y);
     } else if (active_page == PAGE_ASSOC) {
@@ -1108,8 +1448,10 @@ int main(void)
                 return 0;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
-                (void)leonos_ui_theme_set((uint32_t)event.x);
-                appearance_state.theme = (uint32_t)event.x;
+                (void)leonos_ui_theme_set_appearance((uint32_t)event.x,
+                                                     (uint32_t)event.y,
+                                                     (uint32_t)event.dx);
+                refresh_appearance_state();
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
                 continue;

@@ -599,14 +599,17 @@ int load_wallpaper_bmp(void)
     wallpaper_loaded = 0;
     wallpaper_width = 0;
     wallpaper_height = 0;
-    if (!load_bmp_argb(WALLPAPER_BMP_PATH, WALLPAPER_MAX_W, WALLPAPER_MAX_H,
+    if (!desktop_wallpaper_path[0]) {
+        return 0;
+    }
+    if (!load_bmp_argb(desktop_wallpaper_path, WALLPAPER_MAX_W, WALLPAPER_MAX_H,
                        WALLPAPER_BMP_MAX_BYTES, wallpaper_pixels, WALLPAPER_MAX_W,
                        &wallpaper_width, &wallpaper_height)) {
         return 0;
     }
     wallpaper_loaded = 1;
-    printf("[desktop.elf] loaded Metro wallpaper %s %dx%d\n",
-           WALLPAPER_BMP_PATH, (int)wallpaper_width, (int)wallpaper_height);
+    printf("[desktop.elf] loaded wallpaper %s %dx%d\n",
+           desktop_wallpaper_path, (int)wallpaper_width, (int)wallpaper_height);
     return 1;
 }
 

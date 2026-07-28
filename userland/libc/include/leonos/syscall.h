@@ -3,6 +3,7 @@
 
 #include <leonos/fs.h>
 #include <leonos/auth.h>
+#include <leonos/startup.h>
 #include <stddef.h>
 #include <stdint.h>
 

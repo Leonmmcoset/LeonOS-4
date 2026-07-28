@@ -456,8 +456,7 @@ static void desktop_draw_centered_label_line(const char *text, uint32_t x, uint3
         draw_x = x + inset;
         draw_w = w > inset ? w - inset : w;
     }
-    if (leonos_ui_theme() == LEONOS_UI_THEME_METRO && wallpaper_loaded &&
-        bg == LEONOS_UI_DESKTOP) {
+    if (wallpaper_loaded && bg == LEONOS_UI_DESKTOP) {
         text_draw_transparent_i((int)draw_x + 1, (int)y + 1, text ? text : "",
                                 0x00101d32u);
         text_draw_transparent_i((int)draw_x, (int)y, text ? text : "", fg);
@@ -475,9 +474,7 @@ static void desktop_draw_item_label(const char *text, uint32_t x, uint32_t y,
     uint32_t max_cells = leonos_ui_text_fit_chars(w);
     uint32_t fg = LEONOS_UI_WHITE;
     uint32_t bg = selected
-                      ? (leonos_ui_theme() == LEONOS_UI_THEME_METRO
-                             ? LEONOS_UI_ACTIVE_TITLE
-                             : 0x000060a8u)
+                      ? LEONOS_UI_ACTIVE_TITLE
                       : LEONOS_UI_DESKTOP;
     if (!max_cells) {
         max_cells = 1;
@@ -779,7 +776,8 @@ void draw_desktop_items(struct rect dirty)
         }
         if (selected) {
             rect_fill_i(r.x + 4, label_y - 2, r.w - 8,
-                        (int)(label_lines * LEONOS_FONT_H + 4), 0x000060a8);
+                        (int)(label_lines * LEONOS_FONT_H + 4),
+                        LEONOS_UI_ACTIVE_TITLE);
         }
         draw_app_icon_large(desktop_items[i].icon_path, icon_x, icon_y);
         desktop_draw_item_label(desktop_items[i].label,

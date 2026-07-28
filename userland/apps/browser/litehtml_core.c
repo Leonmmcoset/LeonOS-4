@@ -512,14 +512,16 @@ static void core_render_raw_codepoint(struct core_render_ctx *ctx,
     }
     line = &view->lines[count - 1U];
     core_apply_current_style(ctx, line);
-    if (line->cells + cells > core_current_cols(ctx, line) ||
+    if ((!ctx->table_depth &&
+         line->cells + cells > core_current_cols(ctx, line)) ||
         line->len + byte_len >= cap) {
         core_render_newline(ctx, 1);
         count = core_line_count(view);
         line = &view->lines[count - 1U];
         core_apply_current_style(ctx, line);
     }
-    if (line->cells + cells > core_current_cols(ctx, line) ||
+    if ((!ctx->table_depth &&
+         line->cells + cells > core_current_cols(ctx, line)) ||
         line->len + byte_len >= cap) {
         core_set_truncated(view);
         return;

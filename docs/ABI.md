@@ -64,19 +64,26 @@ and persistent `0:/system/config/drivers.conf` policy are documented in
 
 ## Appearance ABI
 
-The system UI theme is a global Desktop-owned appearance state. `Metro` is the
-default (`LEONOS_UI_THEME_METRO`); `LEONOS_UI_THEME_WIN95` restores the legacy
-Win95 palette and bevelled controls. The persistent key is `theme=metro` or
-`theme=win95` in `0:/system/config/display.conf`; a missing or invalid key selects Metro.
+The runtime UI appearance is a Desktop-owned state. `Metro` is the default
+(`LEONOS_UI_THEME_METRO`); `LEONOS_UI_THEME_WIN95` restores the legacy Win95
+palette and bevelled controls. The global `0:/system/config/display.conf`
+`theme=` key remains the boot/default style used before a user session is
+available, including early framebuffer output and bugcheck rendering.
 
-`struct leonos_appearance_state` is read through
-`LEONOS_GUI_IOCTL_APPEARANCE_STATE`. Only administrator tasks may submit
-`struct leonos_appearance_request` through
-`LEONOS_GUI_IOCTL_APPEARANCE_REQUEST`; the window server polls and publishes
-the state through the paired appearance ioctls, then sends
-`LEONOS_GUI_APP_EVENT_THEME_CHANGED` to active application windows. The UEFI
-loader passes the persisted value to the kernel so early framebuffer output and
-bugcheck rendering use the selected style before Desktop starts.
+Per-user personalization is saved separately in
+`0:/users/<name>/appearance.conf`. `struct leonos_appearance_state` and
+`struct leonos_appearance_request` carry the active theme, independent Metro
+and Win95 basic color scheme IDs, a wallpaper display mode, and a wallpaper BMP
+path. Wallpaper BMP decoding is bounded to 1280 x 720 and accepts
+uncompressed 24-bit or 32-bit BMP files.
+
+`LEONOS_GUI_IOCTL_APPEARANCE_STATE` reads the current Desktop-published state.
+Logged-in user tasks may submit `LEONOS_GUI_IOCTL_APPEARANCE_REQUEST`; the
+window server polls and publishes the updated state through the paired
+appearance ioctls, writes the current user's `appearance.conf`, reloads the
+wallpaper, then sends `LEONOS_GUI_APP_EVENT_THEME_CHANGED` to active
+application windows. The event carries the theme in `x`, the Metro color
+scheme in `y`, and the Win95 color scheme in `dx`.
 
 ## Authentication ABI
 

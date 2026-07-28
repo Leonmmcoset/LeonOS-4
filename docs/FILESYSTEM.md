@@ -36,6 +36,8 @@ Multi-user v1 uses these fixed paths:
 - `0:/system/state/license.dat`: local activation record with mode, email hash,
   machine ID, key hash, and local HMAC; plaintext keys are not stored.
 - `0:/system/state/oobe.done`: first-run completion marker.
+- `0:/system/state/startup.db`: kernel-managed per-user startup application records.
+- `0:/system/state/startup-denials.db`: kernel-managed remembered startup permission denials.
 - `0:/system/config/leonos.conf`: build and kernel configuration.
 - `0:/system/config/display.conf`: default Metro appearance and display policy.
 - `0:/system/config/drivers.conf`: loadable-driver policy; all drivers are enabled by default.
@@ -51,6 +53,8 @@ Multi-user v1 uses these fixed paths:
   administrator tools.
 - `0:/var/log/services.log`: service runtime log.
 - `0:/users/<name>`: user home directory.
+- `0:/users/<name>/appearance.conf`: per-user theme, independent Metro/Win95
+  color choices, wallpaper path, and wallpaper display mode.
 - `0:/users/<name>/desktop`
 - `0:/users/<name>/documents`
 - `0:/users/<name>/downloads`

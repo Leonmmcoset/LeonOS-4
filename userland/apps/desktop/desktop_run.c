@@ -73,6 +73,7 @@ void desktop_run(void)
     }
     printf("[desktop.elf] framebuffer %dx%d bpp=%d\n", fb.width, fb.height, fb.bpp);
     desktop_load_display_config();
+    desktop_load_appearance_config();
     (void)desktop_load_service_config();
     printf("[desktop.elf] display mode %s scale=%dx logical=%dx%d\n",
            desktop_display_modes[desktop_mode_index].label,

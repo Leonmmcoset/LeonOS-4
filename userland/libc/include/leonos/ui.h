@@ -6,6 +6,14 @@
 #define LEONOS_UI_THEME_WIN95 0u
 #define LEONOS_UI_THEME_METRO 1u
 
+#define LEONOS_UI_COLOR_SCHEME_BLUE 0u
+#define LEONOS_UI_COLOR_SCHEME_TEAL 1u
+#define LEONOS_UI_COLOR_SCHEME_GREEN 2u
+#define LEONOS_UI_COLOR_SCHEME_PURPLE 3u
+#define LEONOS_UI_COLOR_SCHEME_RED 4u
+#define LEONOS_UI_COLOR_SCHEME_GRAPHITE 5u
+#define LEONOS_UI_COLOR_SCHEME_COUNT 6u
+
 #define LEONOS_UI_COLOR_TEXT 0u
 #define LEONOS_UI_COLOR_CONTENT 1u
 #define LEONOS_UI_COLOR_SURFACE 2u
@@ -112,6 +120,13 @@ struct leonos_ui_text_area_state {
 
 uint32_t leonos_ui_theme(void);
 int leonos_ui_theme_set(uint32_t theme);
+uint32_t leonos_ui_theme_color_scheme(uint32_t theme);
+uint32_t leonos_ui_theme_active_color_scheme(void);
+uint32_t leonos_ui_theme_scheme_accent(uint32_t theme, uint32_t scheme);
+int leonos_ui_theme_set_color_scheme(uint32_t theme, uint32_t scheme);
+int leonos_ui_theme_set_appearance(uint32_t theme,
+                                   uint32_t metro_color_scheme,
+                                   uint32_t win95_color_scheme);
 void leonos_ui_theme_load_system(void);
 uint32_t leonos_ui_color(uint32_t role);
 

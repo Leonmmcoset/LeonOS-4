@@ -98,53 +98,154 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
     leonos_ui_rect(&ui, icon_x + 20, icon_y + 11, 4, 4, color);
 }
 
-static void draw_metro_wallpaper(struct rect dirty)
+static void wallpaper_draw_pixel(uint32_t x, uint32_t y,
+                                 uint32_t source_x, uint32_t source_y)
+{
+    if (source_x >= wallpaper_width) {
+        source_x = wallpaper_width - 1;
+    }
+    if (source_y >= wallpaper_height) {
+        source_y = wallpaper_height - 1;
+    }
+    put_pixel(x, y, wallpaper_pixels[source_y * WALLPAPER_MAX_W + source_x] & 0x00ffffffu);
+}
+
+static void draw_scaled_wallpaper_region(struct rect dirty,
+                                         uint32_t target_x, uint32_t target_y,
+                                         uint32_t target_w, uint32_t target_h)
+{
+    if (!target_w || !target_h) {
+        return;
+    }
+    for (int y = dirty.y; y < dirty.y + dirty.h; ++y) {
+        if ((uint32_t)y < target_y || (uint32_t)y >= target_y + target_h) {
+            continue;
+        }
+        uint32_t source_y = ((uint64_t)((uint32_t)y - target_y) * wallpaper_height) /
+                            target_h;
+        for (int x = dirty.x; x < dirty.x + dirty.w; ++x) {
+            if ((uint32_t)x < target_x || (uint32_t)x >= target_x + target_w) {
+                continue;
+            }
+            uint32_t source_x = ((uint64_t)((uint32_t)x - target_x) * wallpaper_width) /
+                                target_w;
+            wallpaper_draw_pixel((uint32_t)x, (uint32_t)y, source_x, source_y);
+        }
+    }
+}
+
+static void draw_wallpaper(struct rect dirty)
 {
     uint32_t desktop_width = fb_w();
     uint32_t desktop_height = fb_h();
-    uint32_t source_x_start = 0;
-    uint32_t source_y_start = 0;
-    uint32_t source_width;
-    uint32_t source_height;
     if (!wallpaper_loaded || !wallpaper_width || !wallpaper_height ||
         !desktop_width || !desktop_height) {
         return;
     }
-    source_width = wallpaper_width;
-    source_height = wallpaper_height;
-    if ((uint64_t)desktop_width * wallpaper_height >
-        (uint64_t)desktop_height * wallpaper_width) {
-        source_height = (uint32_t)((uint64_t)wallpaper_width * desktop_height /
-                                   desktop_width);
-        if (!source_height) {
-            source_height = 1;
+    if (desktop_wallpaper_mode == LEONOS_WALLPAPER_MODE_STRETCH) {
+        draw_scaled_wallpaper_region(dirty, 0, 0, desktop_width, desktop_height);
+        return;
+    }
+    if (desktop_wallpaper_mode == LEONOS_WALLPAPER_MODE_TILE) {
+        for (int y = dirty.y; y < dirty.y + dirty.h; ++y) {
+            uint32_t source_y = (uint32_t)y % wallpaper_height;
+            for (int x = dirty.x; x < dirty.x + dirty.w; ++x) {
+                wallpaper_draw_pixel((uint32_t)x, (uint32_t)y,
+                                     (uint32_t)x % wallpaper_width, source_y);
+            }
         }
-        source_y_start = (wallpaper_height - source_height) / 2U;
-    } else if ((uint64_t)desktop_width * wallpaper_height <
-               (uint64_t)desktop_height * wallpaper_width) {
-        source_width = (uint32_t)((uint64_t)wallpaper_height * desktop_width /
-                                  desktop_height);
-        if (!source_width) {
-            source_width = 1;
+        return;
+    }
+    if (desktop_wallpaper_mode == LEONOS_WALLPAPER_MODE_CENTER) {
+        uint32_t target_w = wallpaper_width < desktop_width ? wallpaper_width : desktop_width;
+        uint32_t target_h = wallpaper_height < desktop_height ? wallpaper_height : desktop_height;
+        uint32_t target_x = desktop_width > target_w ? (desktop_width - target_w) / 2U : 0;
+        uint32_t target_y = desktop_height > target_h ? (desktop_height - target_h) / 2U : 0;
+        rect_fill((uint32_t)dirty.x, (uint32_t)dirty.y,
+                  (uint32_t)dirty.w, (uint32_t)dirty.h, LEONOS_UI_DESKTOP);
+        for (int y = dirty.y; y < dirty.y + dirty.h; ++y) {
+            if ((uint32_t)y < target_y || (uint32_t)y >= target_y + target_h) {
+                continue;
+            }
+            uint32_t source_y = (uint32_t)y - target_y;
+            if (desktop_height < wallpaper_height) {
+                source_y += (wallpaper_height - desktop_height) / 2U;
+            }
+            for (int x = dirty.x; x < dirty.x + dirty.w; ++x) {
+                if ((uint32_t)x < target_x || (uint32_t)x >= target_x + target_w) {
+                    continue;
+                }
+                uint32_t source_x = (uint32_t)x - target_x;
+                if (desktop_width < wallpaper_width) {
+                    source_x += (wallpaper_width - desktop_width) / 2U;
+                }
+                wallpaper_draw_pixel((uint32_t)x, (uint32_t)y, source_x, source_y);
+            }
         }
-        source_x_start = (wallpaper_width - source_width) / 2U;
+        return;
+    }
+
+    if (desktop_wallpaper_mode == LEONOS_WALLPAPER_MODE_FIT) {
+        uint32_t target_w = desktop_width;
+        uint32_t target_h = (uint32_t)(((uint64_t)desktop_width * wallpaper_height) /
+                                      wallpaper_width);
+        if (!target_h) {
+            target_h = 1;
+        }
+        if (target_h > desktop_height) {
+            target_h = desktop_height;
+            target_w = (uint32_t)(((uint64_t)desktop_height * wallpaper_width) /
+                                  wallpaper_height);
+            if (!target_w) {
+                target_w = 1;
+            }
+        }
+        rect_fill((uint32_t)dirty.x, (uint32_t)dirty.y,
+                  (uint32_t)dirty.w, (uint32_t)dirty.h, LEONOS_UI_DESKTOP);
+        draw_scaled_wallpaper_region(dirty,
+                                     desktop_width > target_w ? (desktop_width - target_w) / 2U : 0,
+                                     desktop_height > target_h ? (desktop_height - target_h) / 2U : 0,
+                                     target_w, target_h);
+        return;
+    }
+
+    uint32_t target_h = (uint32_t)(((uint64_t)desktop_width * wallpaper_height) /
+                                  wallpaper_width);
+    uint32_t source_x_start = 0;
+    uint32_t source_y_start = 0;
+    uint32_t source_w = wallpaper_width;
+    uint32_t source_h = wallpaper_height;
+    if (!target_h) {
+        target_h = 1;
+    }
+    if (target_h < desktop_height) {
+        source_w = (uint32_t)(((uint64_t)wallpaper_height * desktop_width) /
+                              desktop_height);
+        if (!source_w) {
+            source_w = 1;
+        }
+        if (source_w < wallpaper_width) {
+            source_x_start = (wallpaper_width - source_w) / 2U;
+        }
+    } else if (target_h > desktop_height) {
+        source_h = (uint32_t)(((uint64_t)wallpaper_width * desktop_height) /
+                              desktop_width);
+        if (!source_h) {
+            source_h = 1;
+        }
+        if (source_h < wallpaper_height) {
+            source_y_start = (wallpaper_height - source_h) / 2U;
+        }
     }
     for (int y = dirty.y; y < dirty.y + dirty.h; ++y) {
         uint32_t source_y = source_y_start +
-                            (uint32_t)(((uint64_t)(uint32_t)y * source_height) /
+                            (uint32_t)(((uint64_t)(uint32_t)y * source_h) /
                                        desktop_height);
-        if (source_y >= wallpaper_height) {
-            source_y = wallpaper_height - 1;
-        }
         for (int x = dirty.x; x < dirty.x + dirty.w; ++x) {
             uint32_t source_x = source_x_start +
-                                (uint32_t)(((uint64_t)(uint32_t)x * source_width) /
+                                (uint32_t)(((uint64_t)(uint32_t)x * source_w) /
                                            desktop_width);
-            if (source_x >= wallpaper_width) {
-                source_x = wallpaper_width - 1;
-            }
-            put_pixel((uint32_t)x, (uint32_t)y,
-                      wallpaper_pixels[source_y * WALLPAPER_MAX_W + source_x] & 0x00ffffffu);
+            wallpaper_draw_pixel((uint32_t)x, (uint32_t)y, source_x, source_y);
         }
     }
 }
@@ -187,8 +288,8 @@ void redraw_region(struct rect dirty)
         return;
     }
 
-    if (leonos_ui_theme() == LEONOS_UI_THEME_METRO && wallpaper_loaded) {
-        draw_metro_wallpaper(dirty);
+    if (wallpaper_loaded) {
+        draw_wallpaper(dirty);
     } else {
         rect_fill((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h,
                   LEONOS_UI_DESKTOP);

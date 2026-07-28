@@ -545,6 +545,38 @@ int64_t userland_spawn_path_argv(const char *path,
     return pid;
 }
 
+int64_t userland_spawn_path_argv_for_user(const char *path,
+                                          const char *const argv[],
+                                          const char *const envp[],
+                                          uint32_t parent_pid,
+                                          const struct leonos_user_info *user,
+                                          uint32_t session_id)
+{
+    char task_name[SCHED_TASK_NAME_LEN];
+    struct exec_launch launch;
+    int64_t pid;
+    int ret;
+
+    if (!path || !path[0] || !user || !user->uid || !session_id) {
+        return -22;
+    }
+    task_name_from_path(path, task_name, sizeof(task_name));
+    if (!task_name[0]) {
+        return -22;
+    }
+    ret = build_exec_launch(&launch, path, argv, envp);
+    if (ret < 0) {
+        return ret;
+    }
+    pid = spawn_path_internal(path, task_name, &launch, parent_pid, 0, 0);
+    if (pid > 0) {
+        sched_set_task_identity((uint32_t)pid, user, session_id);
+        console_printf("[ntclks] spawn trusted path=%s pid=%u parent=%u user=%u\n",
+                       path, (unsigned)pid, parent_pid, user->uid);
+    }
+    return pid;
+}
+
 int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id)
 {
     return userland_spawn_path_argv(path, 0, 0, pty_id);

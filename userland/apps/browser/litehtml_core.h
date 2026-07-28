@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define BROWSER_COLOR_UNSET 0xffffffffu
+#define BROWSER_LINE_CHARS 512U
 
 enum browser_line_kind {
     BROWSER_LINE_NORMAL = 0,
@@ -32,13 +33,13 @@ enum browser_text_align {
 };
 
 struct browser_line {
-    char text[176];
-    uint8_t link[176];
-    uint8_t style[176];
-    uint32_t fg[176];
-    uint32_t bg[176];
-    uint8_t cell_width[176];
-    uint8_t cell_align[176];
+    char text[BROWSER_LINE_CHARS];
+    uint8_t link[BROWSER_LINE_CHARS];
+    uint8_t style[BROWSER_LINE_CHARS];
+    uint32_t fg[BROWSER_LINE_CHARS];
+    uint32_t bg[BROWSER_LINE_CHARS];
+    uint8_t cell_width[BROWSER_LINE_CHARS];
+    uint8_t cell_align[BROWSER_LINE_CHARS];
     uint32_t len;
     uint32_t cells;
     uint8_t kind;

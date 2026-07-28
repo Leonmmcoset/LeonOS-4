@@ -36,6 +36,15 @@
 #define GUI_IPC_DISPLAY_REQUEST_REVERT 3u
 #define GUI_IPC_DISPLAY_REQUEST_REFRESH 4u
 
+#define GUI_IPC_COLOR_SCHEME_COUNT 6u
+
+#define GUI_IPC_WALLPAPER_MODE_FILL 0u
+#define GUI_IPC_WALLPAPER_MODE_FIT 1u
+#define GUI_IPC_WALLPAPER_MODE_CENTER 2u
+#define GUI_IPC_WALLPAPER_MODE_TILE 3u
+#define GUI_IPC_WALLPAPER_MODE_STRETCH 4u
+#define GUI_IPC_WALLPAPER_MODE_COUNT 5u
+
 struct gui_ipc_window {
     uint32_t type;
     uint32_t pid;
@@ -83,10 +92,18 @@ struct gui_ipc_display_request {
 
 struct gui_ipc_appearance_state {
     uint32_t theme;
+    uint32_t metro_color_scheme;
+    uint32_t win95_color_scheme;
+    uint32_t wallpaper_mode;
+    char wallpaper_path[LEONOS_FS_PATH_LEN];
 };
 
 struct gui_ipc_appearance_request {
     uint32_t theme;
+    uint32_t metro_color_scheme;
+    uint32_t win95_color_scheme;
+    uint32_t wallpaper_mode;
+    char wallpaper_path[LEONOS_FS_PATH_LEN];
 };
 
 void gui_ipc_init(void);
