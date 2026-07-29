@@ -1,9 +1,12 @@
+#include <leonos/auth.h>
+#include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/startup.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <string.h>
 
 #define DIALOG_W 560U
 #define DIALOG_H 300U
@@ -84,7 +87,7 @@ static void draw_dialog(struct leonos_ui_surface *ui,
                      LEONOS_UI_BUTTON_H, T("Allow", "允许"), 0);
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
     struct leonos_startup_dialog_request request;
     struct leonos_gui_app_event event;
@@ -92,7 +95,8 @@ int main(void)
     uint8_t remember = 0;
     int window_id;
 
-    request = (struct leonos_startup_dialog_request){0};
+    (void)argc;
+    (void)argv;
     if (leonos_startup_dialog_get(&request) < 0) {
         return 1;
     }

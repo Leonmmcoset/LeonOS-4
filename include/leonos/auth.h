@@ -18,6 +18,7 @@
 #define LEONOS_AUTH_IOCTL_CURRENT 0x4c415543UL
 #define LEONOS_AUTH_IOCTL_LIST_USERS 0x4c41554cUL
 #define LEONOS_AUTH_IOCTL_LOGIN 0x4c415547UL
+#define LEONOS_AUTH_IOCTL_ELEVATE_ADMIN 0x4c415545UL
 #define LEONOS_AUTH_IOCTL_LOGOUT 0x4c41554fUL
 #define LEONOS_AUTH_IOCTL_CREATE_USER 0x4c415541UL
 #define LEONOS_AUTH_IOCTL_UPDATE_USER 0x4c415555UL
@@ -126,6 +127,8 @@ int leonos_auth_list_users(struct leonos_user_info *users, uint32_t capacity,
                            uint32_t include_disabled, uint32_t *out_count);
 int leonos_auth_login(const char *username, const char *password,
                       struct leonos_user_info *user);
+int leonos_auth_elevate_admin(const char *username, const char *password,
+                              struct leonos_user_info *user);
 int leonos_auth_logout(void);
 int leonos_auth_create_user(const char *username, const char *password,
                             uint32_t role, struct leonos_user_info *user);

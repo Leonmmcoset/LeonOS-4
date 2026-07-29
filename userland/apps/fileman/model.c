@@ -288,6 +288,15 @@ void build_context_menu_items(struct leonos_ui_context_menu_item *items,
         has_item ? 0 : LEONOS_UI_MENU_DISABLED};
     items[11] = (struct leonos_ui_context_menu_item){
         T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0};
+    items[12] = (struct leonos_ui_context_menu_item){"", 0, LEONOS_UI_MENU_SEPARATOR};
+    items[13] = (struct leonos_ui_context_menu_item){
+        has_file && ends_with(entries[file_list.selected].name, ".tar")
+            ? T("Extract tar", "解压tar")
+            : T("Compress to .tar", "压缩为tar"),
+        has_file && ends_with(entries[file_list.selected].name, ".tar")
+            ? FILEMAN_ACTION_EXTRACT_TAR
+            : FILEMAN_ACTION_COMPRESS_TAR,
+        has_item ? 0 : LEONOS_UI_MENU_DISABLED};
 }
 
 void build_file_menu_items(struct leonos_ui_context_menu_item *items, uint32_t count)

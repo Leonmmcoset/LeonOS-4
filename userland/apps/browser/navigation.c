@@ -4,6 +4,7 @@
 #define BROWSER_CSS_FETCH_MAX 2048U
 #define BROWSER_CSS_LINK_MAX 4U
 #define BROWSER_TAG_TEXT_MAX 512U
+#define BROWSER_HTTP_MAX_RETRIES 3U
 
 static char browser_http_headers[LEONOS_HTTP_HEADER_MAX + 1U];
 static char browser_css_headers[LEONOS_HTTP_HEADER_MAX + 1U];
@@ -454,12 +455,32 @@ static int browser_response_is_html(const struct leonos_http_response *response,
     return 1;
 }
 
+static int is_retriable_error(int ret, uint32_t net_status)
+{
+    if (ret < 0) {
+        return 1;
+    }
+    if (net_status == LEONOS_NET_STATUS_DNS_TIMEOUT ||
+        net_status == LEONOS_NET_STATUS_DNS_FAILED ||
+        net_status == LEONOS_NET_STATUS_DNS_NO_ANSWER ||
+        net_status == LEONOS_NET_STATUS_TCP_TIMEOUT ||
+        net_status == LEONOS_NET_STATUS_TCP_RESET ||
+        net_status == LEONOS_NET_STATUS_TCP_FAILED ||
+        net_status == LEONOS_NET_STATUS_SOCKET_LIMIT ||
+        net_status == LEONOS_NET_STATUS_TX_FAILED ||
+        net_status == LEONOS_NET_STATUS_TLS_FAILED) {
+        return 1;
+    }
+    return 0;
+}
+
 void load_http_form_post(const char *url, const char *body)
 {
     struct parsed_http_url parsed;
     struct leonos_http_response response;
     uint32_t pos = 0;
     uint32_t css_count = 0;
+    uint32_t retries = 0;
     int ret;
     char normalized[BROWSER_URL_CAP];
     char status[BROWSER_STATUS_CAP];
@@ -478,14 +499,27 @@ void load_http_form_post(const char *url, const char *body)
     leonos_ui_edit_state_sync(&address_edit);
     set_status(T("Submitting form...", "正在提交表单..."));
     present_browser();
-    page_source[0] = 0;
-    browser_http_headers[0] = 0;
-    source_truncated = 0;
-    ret = browser_http_post_with_cookies(normalized, body,
-                                         page_source, sizeof(page_source),
-                                         browser_http_headers,
-                                         sizeof(browser_http_headers),
-                                         &response);
+    for (;;) {
+        page_source[0] = 0;
+        browser_http_headers[0] = 0;
+        source_truncated = 0;
+        ret = browser_http_post_with_cookies(normalized, body,
+                                             page_source, sizeof(page_source),
+                                             browser_http_headers,
+                                             sizeof(browser_http_headers),
+                                             &response);
+        if (ret >= 0 && response.net_status == LEONOS_NET_STATUS_OK) {
+            break;
+        }
+        if (!is_retriable_error(ret, response.net_status)) {
+            break;
+        }
+        ++retries;
+        if (retries > BROWSER_HTTP_MAX_RETRIES) {
+            break;
+        }
+        set_status(T("Retrying form submission...", "正在重新提交表单..."));
+    }
     if (ret < 0) {
         format_ret_status(status, sizeof(status),
                           T("HTTP client failed", "HTTP 客户端失败"), ret);
@@ -548,6 +582,7 @@ void load_http_url(const char *url)
     struct leonos_http_response response;
     uint32_t pos = 0;
     uint32_t css_count = 0;
+    uint32_t retries = 0;
     int ret;
     char normalized[BROWSER_URL_CAP];
     char status[BROWSER_STATUS_CAP];
@@ -565,15 +600,28 @@ void load_http_url(const char *url)
     leonos_ui_edit_state_sync(&address_edit);
     set_status(T("Opening page...", "正在打开页面..."));
     present_browser();
-    page_source[0] = 0;
-    browser_http_headers[0] = 0;
-    source_truncated = 0;
-    ret = browser_http_get_with_cookies(normalized,
-                                        LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
-                                        page_source, sizeof(page_source),
-                                        browser_http_headers,
-                                        sizeof(browser_http_headers),
-                                        &response);
+    for (;;) {
+        page_source[0] = 0;
+        browser_http_headers[0] = 0;
+        source_truncated = 0;
+        ret = browser_http_get_with_cookies(normalized,
+                                            LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
+                                            page_source, sizeof(page_source),
+                                            browser_http_headers,
+                                            sizeof(browser_http_headers),
+                                            &response);
+        if (ret >= 0 && response.net_status == LEONOS_NET_STATUS_OK) {
+            break;
+        }
+        if (!is_retriable_error(ret, response.net_status)) {
+            break;
+        }
+        ++retries;
+        if (retries > BROWSER_HTTP_MAX_RETRIES) {
+            break;
+        }
+        set_status(T("Retrying...", "正在重试..."));
+    }
     if (ret < 0) {
         format_ret_status(status, sizeof(status),
                           T("HTTP client failed", "HTTP 客户端失败"), ret);

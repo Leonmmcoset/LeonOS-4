@@ -9,6 +9,7 @@
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
+#include <leonos/tar.h>
 #include <leonos/ui.h>
 
 #define FILEMAN_W 560
@@ -29,7 +30,7 @@
 #define FILEMAN_KEY_UP 72U
 #define FILEMAN_KEY_DOWN 80U
 #define FILEMAN_CONTEXT_MENU_W 206
-#define FILEMAN_CONTEXT_MENU_COUNT 12
+#define FILEMAN_CONTEXT_MENU_COUNT 14
 #define FILEMAN_FILE_MENU_COUNT 9
 #define FILEMAN_EDIT_MENU_COUNT 7
 #define FILEMAN_RECYCLE_MENU_COUNT 4
@@ -70,6 +71,9 @@ enum {
     FILEMAN_ACTION_DELETE_PERMANENT = 20,
     FILEMAN_ACTION_RESTORE = 21,
     FILEMAN_ACTION_EMPTY_RECYCLE = 22,
+    FILEMAN_ACTION_EXTRACT_TAR = 23,
+    FILEMAN_ACTION_COMPRESS_TAR = 24,
+    FILEMAN_ACTION_COMPRESS_SELECTED = 25,
 };
 
 struct fileman_layout {
@@ -184,6 +188,9 @@ void recycle_selected_entries(void);
 void restore_selected_entry(void);
 void empty_recycle_bin(void);
 void permanent_delete_selected_entries(void);
+void extract_tar_selected(void);
+void compress_selected_to_tar(void);
+void extract_tar_with_path(const char *tar_path);
 void fileman_present_progress(void);
 void execute_action(uint32_t action);
 int handle_menu_click(int32_t x, int32_t y);

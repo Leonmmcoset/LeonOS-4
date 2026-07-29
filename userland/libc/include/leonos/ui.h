@@ -64,6 +64,8 @@
 #define LEONOS_UI_TOAST_ERROR 3u
 #define LEONOS_UI_SPLIT_VERTICAL 1u
 #define LEONOS_UI_SPLIT_HORIZONTAL 0u
+#define LEONOS_UI_TREEVIEW_ITEM_DISABLED 0x01u
+#define LEONOS_UI_TREEVIEW_MAX_ITEMS 128u
 
 struct leonos_ui_surface {
     uint32_t *pixels;
@@ -137,6 +139,27 @@ struct leonos_ui_listview_state {
     uint32_t scroll;
     int32_t selected;
     uint8_t focused;
+};
+
+struct leonos_ui_treeview_item {
+    uint32_t id;
+    uint32_t parent_id;
+    const char *const *cells;
+    uint32_t flags;
+};
+
+struct leonos_ui_treeview_state {
+    uint32_t visible_rows;
+    uint32_t row_height;
+    uint32_t scroll;
+    uint32_t selected_id;
+    uint32_t visible_count;
+    uint32_t collapsed_count;
+    uint32_t visible_indices[LEONOS_UI_TREEVIEW_MAX_ITEMS];
+    uint32_t collapsed_ids[LEONOS_UI_TREEVIEW_MAX_ITEMS];
+    uint8_t visible_depths[LEONOS_UI_TREEVIEW_MAX_ITEMS];
+    uint8_t focused;
+    uint8_t has_selection;
 };
 
 struct leonos_ui_context_menu_item {
@@ -377,6 +400,29 @@ int leonos_ui_listview_state_handle_mouse(struct leonos_ui_listview_state *state
                                           uint32_t rows_y, uint32_t w,
                                           uint32_t *activated);
 int leonos_ui_listview_state_handle_wheel(struct leonos_ui_listview_state *state,
+                                          int32_t wheel_delta);
+void leonos_ui_treeview_state_init(struct leonos_ui_treeview_state *state,
+                                   uint32_t visible_rows, uint32_t row_height);
+void leonos_ui_treeview_state_set_viewport(struct leonos_ui_treeview_state *state,
+                                           uint32_t visible_rows);
+void leonos_ui_treeview_state_sync(struct leonos_ui_treeview_state *state,
+                                   const struct leonos_ui_treeview_item *items,
+                                   uint32_t count);
+void leonos_ui_treeview(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                        uint32_t w, const struct leonos_ui_list_column *cols,
+                        uint32_t col_count,
+                        const struct leonos_ui_treeview_item *items,
+                        uint32_t count, struct leonos_ui_treeview_state *state);
+int leonos_ui_treeview_state_handle_key(struct leonos_ui_treeview_state *state,
+                                        const struct leonos_ui_treeview_item *items,
+                                        uint32_t count, uint8_t keycode,
+                                        uint32_t *activated);
+int leonos_ui_treeview_state_handle_mouse(struct leonos_ui_treeview_state *state,
+                                          const struct leonos_ui_treeview_item *items,
+                                          uint32_t count, int32_t px, int32_t py,
+                                          uint32_t x, uint32_t rows_y, uint32_t w,
+                                          uint32_t *activated);
+int leonos_ui_treeview_state_handle_wheel(struct leonos_ui_treeview_state *state,
                                           int32_t wheel_delta);
 int leonos_ui_vscrollbar_handle_mouse(uint32_t *value, uint32_t max, uint32_t page,
                                       uint32_t x, uint32_t y, uint32_t w,

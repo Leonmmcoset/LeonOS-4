@@ -101,6 +101,7 @@ static void task_clear_identity(struct task *task)
     if (!task) {
         return;
     }
+    task->flags &= ~TASK_FLAG_ELEVATED_ADMIN;
     task->uid = 0;
     task->role = LEONOS_AUTH_ROLE_NONE;
     task->session_id = 0;
@@ -406,6 +407,7 @@ void sched_on_tick(void)
     current = sched_find(current_pid);
     if (current && current->state == TASK_RUNNING) {
         ++scheduler_busy_ticks;
+        ++current->cpu_ticks;
     } else {
         ++scheduler_idle_ticks;
     }
@@ -718,6 +720,8 @@ uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint6
         dst->uid = tasks[i].uid;
         dst->role = tasks[i].role;
         dst->session_id = tasks[i].session_id;
+        dst->memory_kib = address_space_user_memory_kib(&tasks[i].as);
+        dst->cpu_ticks = tasks[i].cpu_ticks;
         dst->wake_tick = tasks[i].wake_tick;
         dst->entry = tasks[i].entry;
         dst->cr3 = tasks[i].as.cr3;
@@ -734,6 +738,7 @@ void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
     if (!task) {
         return;
     }
+    task->flags &= ~TASK_FLAG_ELEVATED_ADMIN;
     if (!user || !user->uid) {
         task_clear_identity(task);
         task_copy_cwd(task, "0:/");

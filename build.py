@@ -40,12 +40,12 @@ PYTHON = sys.executable
 SYSTEM_APPS = [
     "init", "desktop", "oobe", "login", "serviced", "installer", "shell", "fileman",
     "taskmgr", "settings", "terminal", "run", "osver", "netctl", "servicemgr",
-    "diskmgr", "devmgr", "drvmgr", "sysconfdialog",
+    "diskmgr", "devmgr", "drvmgr", "sysconfdialog", "apiapp",
 ]
 PROGRAM_APPS = [
     "hello", "uidemo", "cjktest", "notepad", "calc", "minesweeper", "memtest",
     "bugtest", "ping", "httpget", "downloadmgr", "browser", "imageview", "wavplay",
-    "oshlp",
+    "oshlp", "helloworld",
 ]
 NORMAL_USER_APPS = [app for app in SYSTEM_APPS if app != "installer"] + PROGRAM_APPS
 INSTALLER_USER_APPS = ["desktop", "installer"]
@@ -608,6 +608,18 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         target = add_copy(graph, f"esp:icon:{app}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    helloworld_api = paths.out / "api/helloworld.api"
+    api_destination = paths.staging / "api/helloworld.api"
+    graph.add(Target(
+        name="esp:api:helloworld",
+        outputs=(helloworld_api,),
+        inputs=(app_elfs["helloworld"], ROOT / "tools/build_api.py"),
+        kind="generate",
+        command=(PYTHON, "tools/build_api.py", relative(app_elfs["helloworld"]), relative(helloworld_api)),
+    ))
+    target = add_copy(graph, "esp:api:helloworld-copy", helloworld_api, api_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(api_destination)
     config_destination = paths.staging / "system/config/leonos.conf"
     target = add_copy(graph, "esp:config", paths.kconfig, config_destination)
     esp_names.append(target.name)

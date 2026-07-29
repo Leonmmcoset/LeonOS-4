@@ -2147,6 +2147,15 @@ static void libc_copy_fixed(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
+static void libc_clear_secret(void *data, uint32_t len)
+{
+    volatile uint8_t *p = (volatile uint8_t *)data;
+    while (p && len) {
+        *p++ = 0;
+        --len;
+    }
+}
+
 int leonos_auth_status(struct leonos_auth_status *status)
 {
     if (!status) {
@@ -2193,6 +2202,22 @@ int leonos_auth_login(const char *username, const char *password,
     if (ret == 0 && user) {
         *user = login.user;
     }
+    libc_clear_secret(login.password, sizeof(login.password));
+    return ret;
+}
+
+int leonos_auth_elevate_admin(const char *username, const char *password,
+                              struct leonos_user_info *user)
+{
+    struct leonos_auth_login login;
+    login = (struct leonos_auth_login){0};
+    libc_copy_fixed(login.username, sizeof(login.username), username);
+    libc_copy_fixed(login.password, sizeof(login.password), password);
+    int ret = ioctl(3, LEONOS_AUTH_IOCTL_ELEVATE_ADMIN, &login);
+    if (ret == 0 && user) {
+        *user = login.user;
+    }
+    libc_clear_secret(login.password, sizeof(login.password));
     return ret;
 }
 
@@ -2213,6 +2238,7 @@ int leonos_auth_create_user(const char *username, const char *password,
     if (ret == 0 && user) {
         *user = create.user;
     }
+    libc_clear_secret(create.password, sizeof(create.password));
     return ret;
 }
 
@@ -2236,7 +2262,12 @@ int leonos_auth_change_password(uint32_t uid, const char *old_password,
     password.uid = uid;
     libc_copy_fixed(password.old_password, sizeof(password.old_password), old_password);
     libc_copy_fixed(password.new_password, sizeof(password.new_password), new_password);
-    return ioctl(3, LEONOS_AUTH_IOCTL_CHANGE_PASSWORD, &password);
+    {
+        int ret = ioctl(3, LEONOS_AUTH_IOCTL_CHANGE_PASSWORD, &password);
+        libc_clear_secret(password.old_password, sizeof(password.old_password));
+        libc_clear_secret(password.new_password, sizeof(password.new_password));
+        return ret;
+    }
 }
 
 int leonos_startup_request(const struct leonos_startup_command *command,

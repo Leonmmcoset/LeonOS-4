@@ -176,6 +176,7 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
         return false;
     }
     as->user_pt[table][slot] = phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER | flags;
+    ++as->user_page_count;
     x86_64_invlpg(page);
     return true;
 }
@@ -200,6 +201,9 @@ uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
         return 0;
     }
     as->user_pt[table][slot] = 0;
+    if (as->user_page_count) {
+        --as->user_page_count;
+    }
     x86_64_invlpg(page);
     return entry & ~0xfffULL;
 }
@@ -221,6 +225,14 @@ uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t v
     }
     uint64_t entry = as->user_pt[table][slot];
     return (entry & NTCLKS_PAGE_PRESENT) ? (entry & ~0xfffULL) : 0;
+}
+
+uint32_t address_space_user_memory_kib(const struct address_space *as)
+{
+    if (!as) {
+        return 0;
+    }
+    return as->user_page_count * 4U;
 }
 
 bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top)

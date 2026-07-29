@@ -52,6 +52,7 @@ static const struct builtin_assoc builtin_assocs[] = {
     {".cfg", "0:/programs/notepad/notepad.elf"},
     {".conf", "0:/programs/notepad/notepad.elf"},
     {".ini", "0:/programs/notepad/notepad.elf"},
+    {".api", "0:/system/apps/apiapp/apiapp.elf"},
     {".bmp", "0:/programs/imageview/imageview.elf"},
     {".dib", "0:/programs/imageview/imageview.elf"},
     {".wav", "0:/programs/wavplay/wavplay.elf"},

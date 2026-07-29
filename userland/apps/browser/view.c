@@ -81,6 +81,7 @@ void draw_line_run(uint32_t x, uint32_t y, const char *text,
 {
     char tmp[BROWSER_LINE_CHARS];
     uint32_t copy_len = len;
+    uint32_t clip_px;
     if (!cell_w) {
         cell_w = LEONOS_FONT_W;
     }
@@ -97,18 +98,26 @@ void draw_line_run(uint32_t x, uint32_t y, const char *text,
         tmp[i] = text[i];
     }
     tmp[copy_len] = 0;
+    clip_px = cell_count * cell_w;
+    {
+        uint32_t ttf_px = leonos_ui_text_width(tmp);
+        uint32_t scaled = (ttf_px * cell_w + LEONOS_FONT_W / 2U) / LEONOS_FONT_W;
+        if (scaled > clip_px) {
+            clip_px = scaled;
+        }
+    }
     if (code && copy_len) {
         if (bg == LEONOS_UI_WHITE) {
             bg = BROWSER_CODE_BG;
         }
         leonos_ui_rect(&ui, x > 1U ? x - 1U : x, y > 1U ? y - 1U : y,
-                       cell_count * cell_w + 2U, cell_h + 2U,
+                       clip_px + 2U, cell_h + 2U,
                        bg);
     }
-    leonos_ui_text_resized_clipped(&ui, x, y, cell_count * cell_w,
+    leonos_ui_text_resized_clipped(&ui, x, y, clip_px,
                                    tmp, fg, bg, cell_w, cell_h);
     if (bold) {
-        leonos_ui_text_resized_clipped(&ui, x + 1U, y, cell_count * cell_w,
+        leonos_ui_text_resized_clipped(&ui, x + 1U, y, clip_px,
                                        tmp, fg, bg, cell_w, cell_h);
     }
     if (italic) {
@@ -119,7 +128,7 @@ void draw_line_run(uint32_t x, uint32_t y, const char *text,
     }
     if (underline && copy_len) {
         leonos_ui_rect(&ui, x, y + cell_h - 1U,
-                       cell_count * cell_w, 1U, fg);
+                       clip_px, 1U, fg);
     }
 }
 

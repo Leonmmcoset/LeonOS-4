@@ -192,6 +192,8 @@ struct leonos_gui_wait_app_event {
     uint32_t timeout_ms;
 };
 
+#define LEONOS_TASK_SNAPSHOT_FLAG_ELEVATED_ADMIN 0x00000010U
+
 struct leonos_task_info {
     uint32_t pid;
     uint32_t parent_pid;
@@ -201,6 +203,8 @@ struct leonos_task_info {
     uint32_t uid;
     uint32_t role;
     uint32_t session_id;
+    uint32_t memory_kib;
+    uint64_t cpu_ticks;
     uint64_t wake_tick;
     uint64_t entry;
     uint64_t cr3;

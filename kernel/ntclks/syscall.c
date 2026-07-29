@@ -127,6 +127,8 @@ struct task_snapshot_user {
     struct task_snapshot_info *tasks;
 };
 
+static uint32_t task_effective_role(const struct task *task);
+
 static void device_copy_text(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -185,7 +187,7 @@ static int require_network_config_access(void)
     if (storage_installer_root_active()) {
         return 0;
     }
-    if (task && task->role == LEONOS_AUTH_ROLE_ADMIN) {
+    if (task_effective_role(task) == LEONOS_AUTH_ROLE_ADMIN) {
         return 0;
     }
     if (task && (task->flags & TASK_FLAG_SERVICE) &&
@@ -201,7 +203,21 @@ static int require_network_config_access(void)
 static int require_driver_management(void)
 {
     struct task *task = sched_current_task();
-    return task && task->role == LEONOS_AUTH_ROLE_ADMIN ? 0 : -LEONOS_EPERM;
+    return task_effective_role(task) == LEONOS_AUTH_ROLE_ADMIN
+               ? 0
+               : -LEONOS_EPERM;
+}
+
+static uint32_t task_effective_role(const struct task *task)
+{
+    if (!task) {
+        return LEONOS_AUTH_ROLE_NONE;
+    }
+    if (task->role == LEONOS_AUTH_ROLE_ADMIN ||
+        (task->flags & TASK_FLAG_ELEVATED_ADMIN)) {
+        return LEONOS_AUTH_ROLE_ADMIN;
+    }
+    return task->role;
 }
 
 static int require_background_service(void)
@@ -595,6 +611,15 @@ static uint32_t kernel_string_len_cap(const char *text, uint32_t cap)
     return len;
 }
 
+static void kernel_clear_secret(void *data, uint32_t len)
+{
+    volatile uint8_t *p = (volatile uint8_t *)data;
+    while (p && len) {
+        *p++ = 0;
+        --len;
+    }
+}
+
 static int auth_copy_current_user(struct leonos_user_info *user, const struct task *task)
 {
     if (!user) {
@@ -606,7 +631,7 @@ static int auth_copy_current_user(struct leonos_user_info *user, const struct ta
         return 0;
     }
     user->uid = task->uid;
-    user->role = task->role;
+    user->role = task_effective_role(task);
     copy_text(user->username, sizeof(user->username), task->username);
     copy_text(user->home, sizeof(user->home), task->home);
     return 0;
@@ -627,7 +652,7 @@ static int authz_check_path(const struct task *task, uint32_t op,
     req = (struct leonos_authz_request){0};
     if (task) {
         req.uid = task->uid;
-        req.role = task->role;
+        req.role = task_effective_role(task);
         req.session_id = task->session_id;
         if ((task->flags & TASK_FLAG_SERVICE) &&
             !(task->flags & TASK_FLAG_WINDOW_SERVER)) {
@@ -662,7 +687,7 @@ static void fs_acl_fill_actor(struct leonos_fs_acl_request *req,
     }
     if (task) {
         req->actor_uid = task->uid;
-        req->actor_role = task->role;
+        req->actor_role = task_effective_role(task);
         if ((task->flags & TASK_FLAG_SERVICE) &&
             !(task->flags & TASK_FLAG_WINDOW_SERVER)) {
             req->actor_flags |= LEONOS_AUTHZ_ACTOR_SERVICE;
@@ -726,7 +751,7 @@ static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
     if (request == LEONOS_FS_IOCTL_ACL_GET) {
         req.action = LEONOS_FS_ACL_ACTION_GET;
         ret = authz_check_path(task, LEONOS_AUTHZ_READ, req.path, 0, 0);
-        if (ret < 0 && (!task || task->role != LEONOS_AUTH_ROLE_ADMIN)) {
+        if (ret < 0 && task_effective_role(task) != LEONOS_AUTH_ROLE_ADMIN) {
             return ret;
         }
     } else if (request == LEONOS_FS_IOCTL_ACL_SET) {
@@ -846,7 +871,7 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
             return -LEONOS_EFAULT;
         }
         list.actor_uid = task ? task->uid : 0;
-        list.actor_role = task ? task->role : LEONOS_AUTH_ROLE_NONE;
+        list.actor_role = task_effective_role(task);
         list.users = users;
         ret = osmlayer_auth_op(LEONOS_AUTH_OP_LIST_USERS, &list);
         user_list->count = list.count;
@@ -868,13 +893,42 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
         login = *(struct leonos_auth_login *)(uintptr_t)user_arg;
         if (kernel_string_len_cap(login.username, sizeof(login.username)) >= sizeof(login.username) ||
             kernel_string_len_cap(login.password, sizeof(login.password)) >= sizeof(login.password)) {
+            kernel_clear_secret(login.password, sizeof(login.password));
             return -LEONOS_EFAULT;
         }
         ret = osmlayer_auth_op(LEONOS_AUTH_OP_LOGIN, &login);
+        kernel_clear_secret(login.password, sizeof(login.password));
         if (ret < 0) {
             return ret;
         }
         auth_apply_session_login(task, &login.user);
+        *(struct leonos_auth_login *)(uintptr_t)user_arg = login;
+        return 0;
+    }
+    if (request == LEONOS_AUTH_IOCTL_ELEVATE_ADMIN) {
+        struct leonos_auth_login login;
+        int ret;
+        if (!user_range_ok(user_arg, sizeof(login))) {
+            return -LEONOS_EFAULT;
+        }
+        if (!task || !task->uid || !task->session_id) {
+            return -LEONOS_EACCES;
+        }
+        login = *(struct leonos_auth_login *)(uintptr_t)user_arg;
+        if (kernel_string_len_cap(login.username, sizeof(login.username)) >= sizeof(login.username) ||
+            kernel_string_len_cap(login.password, sizeof(login.password)) >= sizeof(login.password)) {
+            kernel_clear_secret(login.password, sizeof(login.password));
+            return -LEONOS_EFAULT;
+        }
+        ret = osmlayer_auth_op(LEONOS_AUTH_OP_LOGIN, &login);
+        kernel_clear_secret(login.password, sizeof(login.password));
+        if (ret < 0) {
+            return ret;
+        }
+        if (login.user.role != LEONOS_AUTH_ROLE_ADMIN) {
+            return -LEONOS_EACCES;
+        }
+        task->flags |= TASK_FLAG_ELEVATED_ADMIN;
         *(struct leonos_auth_login *)(uintptr_t)user_arg = login;
         return 0;
     }
@@ -897,11 +951,13 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
         create = *(struct leonos_auth_create *)(uintptr_t)user_arg;
         if (kernel_string_len_cap(create.username, sizeof(create.username)) >= sizeof(create.username) ||
             kernel_string_len_cap(create.password, sizeof(create.password)) >= sizeof(create.password)) {
+            kernel_clear_secret(create.password, sizeof(create.password));
             return -LEONOS_EFAULT;
         }
         create.actor_uid = task ? task->uid : 0;
-        create.actor_role = task ? task->role : LEONOS_AUTH_ROLE_NONE;
+        create.actor_role = task_effective_role(task);
         ret = osmlayer_auth_op(LEONOS_AUTH_OP_CREATE_USER, &create);
+        kernel_clear_secret(create.password, sizeof(create.password));
         if (ret < 0) {
             return ret;
         }
@@ -915,7 +971,7 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
         }
         update = *(struct leonos_auth_update *)(uintptr_t)user_arg;
         update.actor_uid = task ? task->uid : 0;
-        update.actor_role = task ? task->role : LEONOS_AUTH_ROLE_NONE;
+        update.actor_role = task_effective_role(task);
         return osmlayer_auth_op(LEONOS_AUTH_OP_UPDATE_USER, &update);
     }
     if (request == LEONOS_AUTH_IOCTL_CHANGE_PASSWORD) {
@@ -926,11 +982,18 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
         password = *(struct leonos_auth_password *)(uintptr_t)user_arg;
         if (kernel_string_len_cap(password.old_password, sizeof(password.old_password)) >= sizeof(password.old_password) ||
             kernel_string_len_cap(password.new_password, sizeof(password.new_password)) >= sizeof(password.new_password)) {
+            kernel_clear_secret(password.old_password, sizeof(password.old_password));
+            kernel_clear_secret(password.new_password, sizeof(password.new_password));
             return -LEONOS_EFAULT;
         }
         password.actor_uid = task ? task->uid : 0;
-        password.actor_role = task ? task->role : LEONOS_AUTH_ROLE_NONE;
-        return osmlayer_auth_op(LEONOS_AUTH_OP_CHANGE_PASSWORD, &password);
+        password.actor_role = task_effective_role(task);
+        {
+            int ret = osmlayer_auth_op(LEONOS_AUTH_OP_CHANGE_PASSWORD, &password);
+            kernel_clear_secret(password.old_password, sizeof(password.old_password));
+            kernel_clear_secret(password.new_password, sizeof(password.new_password));
+            return ret;
+        }
     }
     return -LEONOS_ENOSYS;
 }
@@ -1107,7 +1170,8 @@ static int startup_command_validate(struct leonos_startup_command *command,
 static int startup_can_manage_uid(const struct task *task, uint32_t uid)
 {
     return task && task->uid && uid &&
-           (task->role == LEONOS_AUTH_ROLE_ADMIN || task->uid == uid);
+           (task_effective_role(task) == LEONOS_AUTH_ROLE_ADMIN ||
+            task->uid == uid);
 }
 
 static int startup_db_find(uint32_t uid, const struct leonos_startup_command *command)
@@ -2828,7 +2892,8 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         total = sched_snapshot(temp, SCHED_TASK_MAX, &tick);
         for (uint32_t i = 0; i < total && i < SCHED_TASK_MAX; ++i) {
-            if (viewer_task && viewer_task->role != LEONOS_AUTH_ROLE_ADMIN &&
+            if (viewer_task &&
+                task_effective_role(viewer_task) != LEONOS_AUTH_ROLE_ADMIN &&
                 (!viewer_task->uid || temp[i].uid != viewer_task->uid)) {
                 continue;
             }

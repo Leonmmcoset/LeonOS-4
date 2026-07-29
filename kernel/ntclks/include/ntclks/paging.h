@@ -21,6 +21,7 @@ struct address_space {
     uint64_t *pd[4];
     uint64_t *user_pt[NTCLKS_USER_PD_COUNT];
     uint64_t cr3;
+    uint32_t user_page_count;
 };
 
 void paging_init_user_identity(void);
@@ -33,6 +34,7 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
                                  uint64_t phys, uint64_t flags);
 uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr);
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr);
+uint32_t address_space_user_memory_kib(const struct address_space *as);
 bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top);
 
 #endif

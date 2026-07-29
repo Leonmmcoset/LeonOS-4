@@ -51,6 +51,7 @@ enum task_kind {
 #define TASK_FLAG_STARTED 0x00000002u
 #define TASK_FLAG_RESOURCES_RELEASED 0x00000004u
 #define TASK_FLAG_WINDOW_SERVER 0x00000008u
+#define TASK_FLAG_ELEVATED_ADMIN 0x00000010u
 
 struct task {
     uint32_t pid;
@@ -73,6 +74,7 @@ struct task {
     uint32_t uid;
     uint32_t role;
     uint32_t session_id;
+    uint64_t cpu_ticks;
     char username[LEONOS_AUTH_USERNAME_LEN];
     char home[LEONOS_AUTH_HOME_LEN];
     char cwd[LEONOS_FS_PATH_LEN];
@@ -96,6 +98,8 @@ struct task_snapshot_info {
     uint32_t uid;
     uint32_t role;
     uint32_t session_id;
+    uint32_t memory_kib;
+    uint64_t cpu_ticks;
     uint64_t wake_tick;
     uint64_t entry;
     uint64_t cr3;
