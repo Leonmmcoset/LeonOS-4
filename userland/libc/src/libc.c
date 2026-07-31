@@ -7,14 +7,34 @@
 #include <leonos/http.h>
 #include <leonos/i18n.h>
 #include <leonos/net.h>
+#include <leonos/mouse.h>
 #include <leonos/pty.h>
 #include <leonos/stdio.h>
 #include <leonos/system.h>
 #include <leonos/syscall.h>
+#include <leonos/gui.h>
 #include <leonos/text.h>
 #include <leonos/tls.h>
 #include <leonos/ui.h>
 #include <stdarg.h>
+#include <stdio.h>
+
+int errno;
+
+struct leonos_file {
+    int fd;
+    long position;
+    long length;
+    int eof;
+    int writable;
+};
+
+static struct leonos_file std_streams[3] = {
+    {.fd = 0}, {.fd = 1, .writable = 1}, {.fd = 2, .writable = 1},
+};
+FILE *stdin = &std_streams[0];
+FILE *stdout = &std_streams[1];
+FILE *stderr = &std_streams[2];
 
 #define HEAP_BLOCK_MAGIC 0x4c48454150424c4bULL
 #define MALLOC_ALIGN 16UL
@@ -101,6 +121,76 @@ int strcmp(const char *left, const char *right)
     return (unsigned char)*left - (unsigned char)*right;
 }
 
+int strcasecmp(const char *left, const char *right)
+{
+    while (*left && *right) {
+        char a = *left >= 'A' && *left <= 'Z' ? *left + 32 : *left;
+        char b = *right >= 'A' && *right <= 'Z' ? *right + 32 : *right;
+        if (a != b) {
+            return (unsigned char)a - (unsigned char)b;
+        }
+        ++left;
+        ++right;
+    }
+    return (unsigned char)*left - (unsigned char)*right;
+}
+
+int strncasecmp(const char *left, const char *right, size_t len)
+{
+    while (len && *left && *right) {
+        char a = *left >= 'A' && *left <= 'Z' ? *left + 32 : *left;
+        char b = *right >= 'A' && *right <= 'Z' ? *right + 32 : *right;
+        if (a != b) {
+            return (unsigned char)a - (unsigned char)b;
+        }
+        ++left;
+        ++right;
+        --len;
+    }
+    return len ? (unsigned char)*left - (unsigned char)*right : 0;
+}
+
+int abs(int value)
+{
+    return value < 0 ? -value : value;
+}
+
+int atoi(const char *text)
+{
+    int sign = 1;
+    int value = 0;
+    while (text && (*text == ' ' || *text == '\t')) {
+        ++text;
+    }
+    if (text && *text == '-') {
+        sign = -1;
+        ++text;
+    }
+    while (text && *text >= '0' && *text <= '9') {
+        value = value * 10 + (*text++ - '0');
+    }
+    return value * sign;
+}
+
+double atof(const char *text)
+{
+    (void)text;
+    return 0.0;
+}
+
+char *strdup(const char *text)
+{
+    size_t len = strlen(text) + 1;
+    char *copy = malloc(len);
+    return copy ? (char *)memcpy(copy, text, len) : 0;
+}
+
+char *getenv(const char *name)
+{
+    (void)name;
+    return 0;
+}
+
 int strncmp(const char *left, const char *right, size_t len)
 {
     while (len && *left && *left == *right) {
@@ -160,6 +250,19 @@ char *strstr(const char *text, const char *needle)
     return 0;
 }
 
+char *strrchr(const char *text, int value)
+{
+    const char *last = 0;
+    char target = (char)value;
+    while (text && *text) {
+        if (*text == target) {
+            last = text;
+        }
+        ++text;
+    }
+    return target == 0 ? (char *)text : (char *)last;
+}
+
 long read(int fd, void *buf, size_t len)
 {
     return syscall3(SYS_read, fd, (long)buf, (long)len);
@@ -206,6 +309,32 @@ char *getcwd(char *buf, size_t len)
 int ioctl(int fd, unsigned long request, void *arg)
 {
     return (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
+}
+
+int leonos_gui_set_mouse_visible(uint32_t window_id, uint32_t visible)
+{
+    unsigned long value = ((unsigned long)window_id << 32) | (visible ? 1UL : 0UL);
+    return ioctl(3, LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE, (void *)value);
+}
+
+int leonos_gui_mouse_visible(void)
+{
+    return ioctl(3, LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE, 0);
+}
+
+int leonos_mouse_hide(uint32_t window_id)
+{
+    return leonos_gui_set_mouse_visible(window_id, 0);
+}
+
+int leonos_mouse_show(uint32_t window_id)
+{
+    return leonos_gui_set_mouse_visible(window_id, 1);
+}
+
+int leonos_mouse_is_visible(void)
+{
+    return leonos_gui_mouse_visible();
 }
 
 int sched_yield(void)
@@ -566,50 +695,434 @@ static void print_num(char *buf, size_t *pos, unsigned long value, unsigned base
     }
 }
 
+static size_t format_text(char *buf, size_t cap, const char *fmt, va_list ap);
+
 int printf(const char *fmt, ...)
 {
-    char buf[512];
+    char buffer[1024];
+    va_list args;
+    size_t length;
+    va_start(args, fmt);
+    length = format_text(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    write(1, buffer, length);
+    return (int)length;
+}
+
+static size_t format_text(char *buf, size_t cap, const char *fmt, va_list ap)
+{
     size_t pos = 0;
-    va_list ap;
-    va_start(ap, fmt);
-    for (const char *p = fmt; *p && pos + 1 < sizeof(buf); ++p) {
+    for (const char *p = fmt; p && *p && pos + 1 < cap; ++p) {
         if (*p != '%') {
             buf[pos++] = *p;
             continue;
         }
         ++p;
+        int zero_pad = 0;
+        int width = 0;
+        int precision = -1;
+        if (*p == '0') {
+            zero_pad = 1;
+            ++p;
+        }
+        while (*p >= '0' && *p <= '9') {
+            width = width * 10 + (*p - '0');
+            ++p;
+        }
+        if (*p == '.') {
+            precision = 0;
+            ++p;
+            while (*p >= '0' && *p <= '9') {
+                precision = precision * 10 + (*p - '0');
+                ++p;
+            }
+        }
+        int long_value = 0;
+        if (*p == 'l') {
+            long_value = 1;
+            ++p;
+        }
         switch (*p) {
         case 's': {
-            const char *s = va_arg(ap, const char *);
-            while (s && *s && pos + 1 < sizeof(buf)) {
-                buf[pos++] = *s++;
+            const char *text = va_arg(ap, const char *);
+            while (text && *text && pos + 1 < cap) {
+                buf[pos++] = *text++;
             }
             break;
         }
-        case 'd': {
-            long v = va_arg(ap, int);
-            if (v < 0) {
+        case 'd':
+        case 'i': {
+            long value = long_value ? va_arg(ap, long) : (long)va_arg(ap, int);
+            size_t digits_start = pos;
+            if (value < 0 && pos + 1 < cap) {
                 buf[pos++] = '-';
-                v = -v;
+                digits_start = pos;
+                value = -value;
             }
-            print_num(buf, &pos, (unsigned long)v, 10);
+            print_num(buf, &pos, (unsigned long)value, 10);
+            while (zero_pad && width > (int)(pos - digits_start) && pos + 1 < cap) {
+                for (size_t i = pos; i > digits_start; --i) {
+                    buf[i] = buf[i - 1];
+                }
+                buf[digits_start] = '0';
+                ++pos;
+            }
+            while (precision > (int)(pos - digits_start) && pos + 1 < cap) {
+                for (size_t i = pos; i > digits_start; --i) {
+                    buf[i] = buf[i - 1];
+                }
+                buf[digits_start] = '0';
+                ++pos;
+            }
+            break;
+        }
+        case 'u': {
+            size_t start = pos;
+            print_num(buf, &pos, long_value ? (unsigned long)va_arg(ap, unsigned long)
+                                             : (unsigned long)va_arg(ap, unsigned int), 10);
+            while (zero_pad && width > (int)(pos - start) && pos + 1 < cap) {
+                for (size_t i = pos; i > start; --i) {
+                    buf[i] = buf[i - 1];
+                }
+                buf[start] = '0';
+                ++pos;
+            }
+            while (precision > (int)(pos - start) && pos + 1 < cap) {
+                for (size_t i = pos; i > start; --i) {
+                    buf[i] = buf[i - 1];
+                }
+                buf[start] = '0';
+                ++pos;
+            }
             break;
         }
         case 'x':
-            print_num(buf, &pos, va_arg(ap, unsigned int), 16);
+        case 'X': {
+            size_t start = pos;
+            print_num(buf, &pos, long_value ? (unsigned long)va_arg(ap, unsigned long)
+                                             : (unsigned long)va_arg(ap, unsigned int), 16);
+            while (zero_pad && width > (int)(pos - start) && pos + 1 < cap) {
+                for (size_t i = pos; i > start; --i) {
+                    buf[i] = buf[i - 1];
+                }
+                buf[start] = '0';
+                ++pos;
+            }
+            while (precision > (int)(pos - start) && pos + 1 < cap) {
+                for (size_t i = pos; i > start; --i) {
+                    buf[i] = buf[i - 1];
+                }
+                buf[start] = '0';
+                ++pos;
+            }
+            break;
+        }
+        case 'f': {
+            (void)va_arg(ap, double);
+            if (precision != 0 && pos + 1 < cap) {
+                buf[pos++] = '0';
+                buf[pos++] = '.';
+                if (pos + 1 < cap) {
+                    buf[pos++] = '0';
+                }
+            } else if (pos + 1 < cap) {
+                buf[pos++] = '0';
+            }
+            break;
+        }
+        case 'p':
+            if (pos + 2 < cap) {
+                buf[pos++] = '0';
+                buf[pos++] = 'x';
+            }
+            print_num(buf, &pos, (unsigned long)(uintptr_t)va_arg(ap, void *), 16);
+            break;
+        case 'c':
+            if (pos + 1 < cap) {
+                buf[pos++] = (char)va_arg(ap, int);
+            }
             break;
         case '%':
             buf[pos++] = '%';
             break;
         default:
-            buf[pos++] = '%';
-            buf[pos++] = *p;
+            if (pos + 2 < cap) {
+                buf[pos++] = '%';
+                buf[pos++] = *p;
+            }
             break;
         }
     }
-    va_end(ap);
-    write(1, buf, pos);
-    return (int)pos;
+    if (cap) {
+        buf[pos < cap ? pos : cap - 1] = 0;
+    }
+    return pos;
+}
+
+int vsnprintf(char *buffer, size_t capacity, const char *fmt, va_list args)
+{
+    va_list copy;
+    size_t length;
+    if (!buffer || capacity == 0) {
+        return 0;
+    }
+    va_copy(copy, args);
+    length = format_text(buffer, capacity, fmt, copy);
+    va_end(copy);
+    return (int)length;
+}
+
+int snprintf(char *buffer, size_t capacity, const char *fmt, ...)
+{
+    va_list args;
+    int result;
+    va_start(args, fmt);
+    result = vsnprintf(buffer, capacity, fmt, args);
+    va_end(args);
+    return result;
+}
+
+int vfprintf(FILE *stream, const char *fmt, va_list args)
+{
+    char buffer[1024];
+    va_list copy;
+    size_t len;
+    if (!stream) {
+        return -1;
+    }
+    va_copy(copy, args);
+    len = format_text(buffer, sizeof(buffer), fmt, copy);
+    va_end(copy);
+    return write(stream->fd, buffer, len) < 0 ? -1 : (int)len;
+}
+
+int fprintf(FILE *stream, const char *fmt, ...)
+{
+    va_list args;
+    int result;
+    va_start(args, fmt);
+    result = vfprintf(stream, fmt, args);
+    va_end(args);
+    return result;
+}
+
+int sscanf(const char *text, const char *format, ...)
+{
+    va_list args;
+    int converted = 0;
+    va_start(args, format);
+    while (text && format && *format) {
+        if (*format != '%') {
+            if (*format == ' ' || *format == '\t') {
+                while (*text == ' ' || *text == '\t') {
+                    ++text;
+                }
+            } else if (*text != *format) {
+                break;
+            } else {
+                ++text;
+            }
+            ++format;
+            continue;
+        }
+        ++format;
+        if (*format == 'd' || *format == 'i') {
+            int *out = va_arg(args, int *);
+            int sign = 1;
+            int value = 0;
+            while (*text == ' ' || *text == '\t') {
+                ++text;
+            }
+            if (*text == '-') {
+                sign = -1;
+                ++text;
+            }
+            while (*text >= '0' && *text <= '9') {
+                value = value * 10 + (*text++ - '0');
+            }
+            if (out) {
+                *out = value * sign;
+                ++converted;
+            }
+        } else if (*format == 'x' || *format == 'X') {
+            unsigned int *out = va_arg(args, unsigned int *);
+            unsigned int value = 0;
+            while (*text == ' ' || *text == '\t') {
+                ++text;
+            }
+            while ((*text >= '0' && *text <= '9') ||
+                   (*text >= 'a' && *text <= 'f') ||
+                   (*text >= 'A' && *text <= 'F')) {
+                unsigned int digit = *text >= '0' && *text <= '9'
+                                         ? (unsigned int)(*text - '0')
+                                         : (unsigned int)((*text | 32) - 'a' + 10);
+                value = value * 16U + digit;
+                ++text;
+            }
+            if (out) {
+                *out = value;
+                ++converted;
+            }
+        }
+        ++format;
+    }
+    va_end(args);
+    return converted;
+}
+
+int putchar(int ch)
+{
+    char value = (char)ch;
+    return write(1, &value, 1) == 1 ? ch : -1;
+}
+
+FILE *fopen(const char *path, const char *mode)
+{
+    struct leonos_file *file;
+    int flags = LEONOS_O_RDONLY;
+    if (!path || !mode) {
+        return 0;
+    }
+    if (mode[0] == 'w') {
+        flags = LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC;
+    } else if (mode[0] == 'a') {
+        flags = LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND;
+    } else if (mode[0] == 'r' && mode[1] == '+') {
+        flags = LEONOS_O_RDWR;
+    }
+    int fd = open(path, flags, 0);
+    if (fd < 0) {
+        errno = -fd;
+        return 0;
+    }
+    file = malloc(sizeof(*file));
+    if (!file) {
+        close(fd);
+        return 0;
+    }
+    struct leonos_stat info;
+    file->fd = fd;
+    file->position = 0;
+    file->length = stat(path, &info) == 0 ? (long)info.size : 0;
+    file->eof = 0;
+    file->writable = (flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY;
+    if (flags & LEONOS_O_APPEND) {
+        file->position = file->length;
+    }
+    return file;
+}
+
+size_t fread(void *buffer, size_t size, size_t count, FILE *stream)
+{
+    size_t bytes = size * count;
+    long got;
+    if (!stream || !buffer || !size) {
+        return 0;
+    }
+    got = read(stream->fd, buffer, bytes);
+    if (got < 0) {
+        return 0;
+    }
+    stream->position += got;
+    if ((size_t)got < bytes) {
+        stream->eof = 1;
+    }
+    return (size_t)got / size;
+}
+
+size_t fwrite(const void *buffer, size_t size, size_t count, FILE *stream)
+{
+    size_t bytes = size * count;
+    long wrote;
+    if (!stream || !buffer || !size || !stream->writable) {
+        return 0;
+    }
+    wrote = write(stream->fd, buffer, bytes);
+    if (wrote < 0) {
+        return 0;
+    }
+    stream->position += wrote;
+    return (size_t)wrote / size;
+}
+
+int fclose(FILE *stream)
+{
+    int result;
+    if (!stream || stream == stdin || stream == stdout || stream == stderr) {
+        return -1;
+    }
+    result = close(stream->fd);
+    free(stream);
+    return result;
+}
+
+int fseek(FILE *stream, long offset, int whence)
+{
+    long result;
+    if (!stream) {
+        return -1;
+    }
+    result = lseek(stream->fd, offset, whence);
+    if (result < 0) {
+        return -1;
+    }
+    stream->position = result;
+    stream->eof = 0;
+    return 0;
+}
+
+long ftell(FILE *stream)
+{
+    return stream ? stream->position : -1;
+}
+
+int feof(FILE *stream)
+{
+    return stream ? stream->eof : 1;
+}
+
+char *fgets(char *buffer, int size, FILE *stream)
+{
+    int pos = 0;
+    char ch;
+    if (!buffer || size <= 1 || !stream) {
+        return 0;
+    }
+    while (pos + 1 < size && fread(&ch, 1, 1, stream) == 1) {
+        buffer[pos++] = ch;
+        if (ch == '\n') {
+            break;
+        }
+    }
+    buffer[pos] = 0;
+    return pos ? buffer : 0;
+}
+
+int fflush(FILE *stream)
+{
+    (void)stream;
+    return 0;
+}
+
+int fileno(FILE *stream)
+{
+    return stream ? stream->fd : -1;
+}
+
+int remove(const char *path)
+{
+    return unlink(path);
+}
+
+int system(const char *command)
+{
+    (void)command;
+    return -1;
+}
+
+int isatty(int fd)
+{
+    return fd == 0 || fd == 1 || fd == 2;
 }
 
 int leonos_gui_connect(void)

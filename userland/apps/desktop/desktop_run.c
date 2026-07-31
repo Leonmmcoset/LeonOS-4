@@ -91,6 +91,7 @@ void desktop_run(void)
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
     unsigned long last_services_refresh = leonos_uptime_ms();
     unsigned idle_sleep_ms = 10;
+    int last_mouse_visible = 1;
     for (;;) {
         struct leonos_gui_window_msg window_msg;
         int did_work = 0;
@@ -148,6 +149,12 @@ void desktop_run(void)
             }
         }
         if (full_redraw_pending) {
+            redraw_all();
+            did_work = 1;
+        }
+        int mouse_visible = leonos_mouse_is_visible();
+        if (mouse_visible != last_mouse_visible) {
+            last_mouse_visible = mouse_visible;
             redraw_all();
             did_work = 1;
         }

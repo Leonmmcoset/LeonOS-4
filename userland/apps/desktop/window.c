@@ -456,12 +456,17 @@ static uint32_t desktop_map_legacy_ui_color(uint32_t color)
 
 static void desktop_map_app_surface(uint32_t width, uint32_t height)
 {
-    uint32_t limit = width * height;
-    if (limit > APP_CLIENT_MAX_W * APP_CLIENT_MAX_H) {
-        limit = APP_CLIENT_MAX_W * APP_CLIENT_MAX_H;
+    if (width > APP_CLIENT_MAX_W) {
+        width = APP_CLIENT_MAX_W;
     }
-    for (uint32_t index = 0; index < limit; ++index) {
-        app_client_scratch[index] = desktop_map_legacy_ui_color(app_client_scratch[index]);
+    if (height > APP_CLIENT_MAX_H) {
+        height = APP_CLIENT_MAX_H;
+    }
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            uint32_t index = y * APP_CLIENT_MAX_W + x;
+            app_client_scratch[index] = desktop_map_legacy_ui_color(app_client_scratch[index]);
+        }
     }
 }
 
@@ -494,6 +499,34 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
     desktop_map_app_surface(out_w, out_h);
     windows[id].client_width = out_w;
     windows[id].client_height = out_h;
+    if (window_is_fullscreen(&windows[id]) && out_w && out_h) {
+        uint32_t draw_w;
+        uint32_t draw_h;
+        int draw_x;
+        int draw_y;
+        if ((uint64_t)body_w * out_h > (uint64_t)body_h * out_w) {
+            draw_h = body_h;
+            draw_w = (uint32_t)((uint64_t)body_h * out_w / out_h);
+        } else {
+            draw_w = body_w;
+            draw_h = (uint32_t)((uint64_t)body_w * out_h / out_w);
+        }
+        if (!draw_w || !draw_h) {
+            return;
+        }
+        draw_x = body_x + ((int)body_w - (int)draw_w) / 2;
+        draw_y = body_y + ((int)body_h - (int)draw_h) / 2;
+        clip = rect_clip(rect_make(draw_x, draw_y, (int)draw_w, (int)draw_h));
+        for (int yy = 0; yy < clip.h; ++yy) {
+            uint32_t src_y = (uint32_t)((uint64_t)(clip.y - draw_y + yy) * out_h / draw_h);
+            for (int xx = 0; xx < clip.w; ++xx) {
+                uint32_t src_x = (uint32_t)((uint64_t)(clip.x - draw_x + xx) * out_w / draw_w);
+                put_pixel((uint32_t)(clip.x + xx), (uint32_t)(clip.y + yy),
+                          app_client_scratch[(uint64_t)src_y * APP_CLIENT_MAX_W + src_x]);
+            }
+        }
+        return;
+    }
     clip = rect_clip(rect_make(body_x, body_y, (int)out_w, (int)out_h));
     for (int yy = 0; yy < clip.h; ++yy) {
         uint32_t src_y = (uint32_t)(clip.y - body_y + yy);

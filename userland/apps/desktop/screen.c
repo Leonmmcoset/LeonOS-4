@@ -299,7 +299,7 @@ void redraw_region(struct rect dirty)
         if (rect_intersects(dirty, window_rect((uint8_t)active_window))) {
             draw_window((uint8_t)active_window);
         }
-        if (cursor_visible) {
+        if (cursor_visible && leonos_mouse_is_visible() > 0) {
             draw_cursor_shape(cursor_x, cursor_y);
         }
         return;
@@ -348,7 +348,7 @@ void redraw_region(struct rect dirty)
     draw_power_confirm();
     draw_desktop_shortcut_input();
     draw_desktop_message();
-    if (cursor_visible) {
+    if (cursor_visible && leonos_mouse_is_visible() > 0) {
         draw_cursor_shape(cursor_x, cursor_y);
     }
 }

@@ -14,6 +14,8 @@ struct mouse_state {
 void mouse_init(void);
 void mouse_poll(void);
 const struct mouse_state *mouse_get_state(void);
+void mouse_set_visible(bool visible);
+bool mouse_is_visible(void);
 uint32_t mouse_event_count(void);
 uint8_t mouse_last_status(void);
 uint8_t mouse_last_data(void);

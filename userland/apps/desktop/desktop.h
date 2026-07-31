@@ -7,6 +7,7 @@
 #include <leonos/i18n.h>
 #include <leonos/license.h>
 #include <leonos/launch.h>
+#include <leonos/mouse.h>
 #include <leonos/net.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>

@@ -87,6 +87,7 @@ struct driver_slot {
 static struct driver_slot driver_slots[LEONOS_DRIVER_MAX];
 static int32_t loading_slot = -1;
 static const struct leonos_driver_mouse_ops *mouse_ops;
+static bool mouse_visible = true;
 static const struct leonos_driver_serial_ops *serial_ops;
 static const struct leonos_driver_e1000_ops *e1000_ops;
 static const struct leonos_driver_audio_ops *audio_ops;
@@ -1001,6 +1002,16 @@ const struct mouse_state *mouse_get_state(void)
         };
     }
     return &mouse_cache;
+}
+
+void mouse_set_visible(bool visible)
+{
+    mouse_visible = visible;
+}
+
+bool mouse_is_visible(void)
+{
+    return mouse_visible;
 }
 
 uint32_t mouse_event_count(void)

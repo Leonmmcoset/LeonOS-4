@@ -1,0 +1,13 @@
+#ifndef LEONOS_FCNTL_H
+#define LEONOS_FCNTL_H
+
+#include <leonos/fs.h>
+
+#define O_RDONLY LEONOS_O_RDONLY
+#define O_WRONLY LEONOS_O_WRONLY
+#define O_RDWR LEONOS_O_RDWR
+#define O_CREAT LEONOS_O_CREAT
+#define O_TRUNC LEONOS_O_TRUNC
+#define O_APPEND LEONOS_O_APPEND
+
+#endif

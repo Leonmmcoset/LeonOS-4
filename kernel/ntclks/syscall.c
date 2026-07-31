@@ -2829,6 +2829,15 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return gui_ipc_destroy_window(sched_current_pid(), (uint32_t)a2) ? 1 : 0;
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE) {
+        if (a2 == 0) {
+            return gui_ipc_mouse_visible();
+        }
+        uint32_t window_id = (uint32_t)(a2 >> 32);
+        uint32_t visible = (uint32_t)a2;
+        return gui_ipc_set_mouse_visible(sched_current_pid(), window_id, visible) ? 1 : 0;
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_WINDOW_EVENT) {
         if (!user_range_ok(a2, sizeof(struct gui_ipc_app_event))) {
             return -LEONOS_EFAULT;

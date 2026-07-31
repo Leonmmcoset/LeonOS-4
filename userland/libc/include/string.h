@@ -14,5 +14,8 @@ char *strcpy(char *dst, const char *src);
 char *strncpy(char *dst, const char *src, size_t len);
 char *strchr(const char *text, int value);
 char *strstr(const char *text, const char *needle);
+char *strrchr(const char *text, int value);
+int strcasecmp(const char *left, const char *right);
+int strncasecmp(const char *left, const char *right, size_t len);
 
 #endif

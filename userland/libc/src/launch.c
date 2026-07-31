@@ -39,6 +39,8 @@ static const struct builtin_program builtin_programs[] = {
     {"imageview", "0:/programs/imageview/imageview.elf"},
     {"wavplay", "0:/programs/wavplay/wavplay.elf"},
     {"oshlp", "0:/programs/oshlp/oshlp.elf"},
+    {"doom", "0:/programs/doomlauncher/doomlauncher.elf"},
+    {"doomlauncher", "0:/programs/doomlauncher/doomlauncher.elf"},
     {"diskmgr", "0:/system/apps/diskmgr/diskmgr.elf"},
     {"devmgr", "0:/system/apps/devmgr/devmgr.elf"},
 };

@@ -12,6 +12,7 @@
 #define LEONOS_GUI_IOCTL_APPEARANCE_REQUEST 0x4c415052UL
 #define LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST 0x4c415050UL
 #define LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE 0x4c415042UL
+#define LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE 0x4c4d4f55UL
 
 #define GUI_IPC_WINDOW_MSG_CREATE 1u
 #define GUI_IPC_WINDOW_MSG_DIRTY 2u
@@ -123,6 +124,8 @@ int gui_ipc_fetch_window(uint32_t caller_pid, uint32_t window_id,
 int gui_ipc_push_event(uint32_t caller_pid, uint32_t window_id,
                        const struct gui_ipc_app_event *event);
 int gui_ipc_pop_event(uint32_t pid, uint32_t window_id, struct gui_ipc_app_event *out);
+int gui_ipc_set_mouse_visible(uint32_t pid, uint32_t window_id, uint32_t visible);
+int gui_ipc_mouse_visible(void);
 void gui_ipc_destroy_owner(uint32_t pid);
 int gui_ipc_display_state(struct gui_ipc_display_state *out);
 int gui_ipc_publish_display_state(uint32_t caller_pid,

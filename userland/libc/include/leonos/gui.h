@@ -34,6 +34,7 @@
 #define LEONOS_GUI_IOCTL_APPEARANCE_REQUEST 0x4c415052UL
 #define LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST 0x4c415050UL
 #define LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE 0x4c415042UL
+#define LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE 0x4c4d4f55UL
 
 #define LEONOS_DISPLAY_REQUEST_APPLY 1U
 #define LEONOS_DISPLAY_REQUEST_KEEP 2U
@@ -275,6 +276,8 @@ int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_
 int leonos_gui_poll_app_event(struct leonos_gui_app_event *event);
 int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeout_ms);
 int leonos_gui_send_app_event(const struct leonos_gui_app_event *event);
+int leonos_gui_set_mouse_visible(uint32_t window_id, uint32_t visible);
+int leonos_gui_mouse_visible(void);
 int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint64_t *tick);
 int leonos_task_kill(uint32_t pid);
 int leonos_display_get_state(struct leonos_display_state *state);

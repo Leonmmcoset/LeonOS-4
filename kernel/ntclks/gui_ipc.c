@@ -1,5 +1,6 @@
 #include <ntclks/gui_ipc.h>
 #include <ntclks/mm.h>
+#include <ntclks/mouse.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/sched.h>
 #include <ntclks/usercopy.h>
@@ -25,6 +26,7 @@ static struct gui_ipc_appearance_state appearance_state = {
 };
 static struct gui_ipc_appearance_request appearance_request;
 static uint8_t appearance_request_pending;
+static uint32_t mouse_hidden_window_id;
 
 struct gui_window_slot {
     uint8_t used;
@@ -419,6 +421,8 @@ int gui_ipc_pop_appearance_request(uint32_t caller_pid,
     }
     *out = appearance_request;
     appearance_request_pending = 0;
+    mouse_hidden_window_id = 0;
+    mouse_set_visible(true);
     return 1;
 }
 
@@ -518,6 +522,10 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
         return 0;
     }
     (void)push_message(GUI_IPC_WINDOW_MSG_CLOSE, slot);
+    if (mouse_hidden_window_id == window_id) {
+        mouse_hidden_window_id = 0;
+        mouse_set_visible(true);
+    }
     free_window_buffer(slot);
     slot->used = 0;
     slot->id = 0;
@@ -531,6 +539,28 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
     slot->text[0] = 0;
     slot->app_path[0] = 0;
     return 1;
+}
+
+int gui_ipc_set_mouse_visible(uint32_t pid, uint32_t window_id, uint32_t visible)
+{
+    struct gui_window_slot *slot = find_window(window_id);
+    if (!slot || slot->owner_pid != pid) {
+        return 0;
+    }
+    if (visible) {
+        if (mouse_hidden_window_id == window_id) {
+            mouse_hidden_window_id = 0;
+        }
+    } else {
+        mouse_hidden_window_id = window_id;
+    }
+    mouse_set_visible(mouse_hidden_window_id == 0);
+    return 1;
+}
+
+int gui_ipc_mouse_visible(void)
+{
+    return mouse_is_visible();
 }
 
 int gui_ipc_fetch_window(uint32_t caller_pid, uint32_t window_id,
@@ -600,6 +630,10 @@ void gui_ipc_destroy_owner(uint32_t pid)
             continue;
         }
         (void)push_message(GUI_IPC_WINDOW_MSG_CLOSE, slot);
+        if (mouse_hidden_window_id == slot->id) {
+            mouse_hidden_window_id = 0;
+            mouse_set_visible(true);
+        }
         free_window_buffer(slot);
         slot->used = 0;
         slot->id = 0;

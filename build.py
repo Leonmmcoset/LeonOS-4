@@ -45,7 +45,7 @@ SYSTEM_APPS = [
 PROGRAM_APPS = [
     "hello", "uidemo", "cjktest", "notepad", "calc", "minesweeper", "memtest",
     "bugtest", "ping", "httpget", "downloadmgr", "browser", "imageview", "wavplay",
-    "oshlp", "helloworld",
+    "oshlp", "helloworld", "doomlauncher", "doom",
 ]
 NORMAL_USER_APPS = [app for app in SYSTEM_APPS if app != "installer"] + PROGRAM_APPS
 INSTALLER_USER_APPS = ["desktop", "installer"]
@@ -69,6 +69,7 @@ SYSTEM_FILES = [
     ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
     ("system/resources/wallpaper-metro.bmp", "system/resources/wallpaper-metro.bmp"),
     ("system/certs/cacert.pem", "system/certs/cacert.pem"),
+    ("third_party/doomgeneric/FREEDOOM-COPYING.txt", "system/docs/FREEDOOM-COPYING.txt"),
 ]
 
 
@@ -138,6 +139,17 @@ def object_path(paths: BuildPaths, source: Path, prefix: str) -> Path:
 
 def user_app_sources(app: str) -> list[Path]:
     sources = collect(f"userland/apps/{app}/*.c", f"userland/apps/{app}/*.S")
+    if app == "doom":
+        sources.extend(
+            source for source in collect("third_party/doomgeneric/doomgeneric/*.c")
+            if source.name not in {
+                "doomgeneric_allegro.c", "doomgeneric_emscripten.c",
+                "doomgeneric_linuxvt.c", "doomgeneric_sdl.c", "doomgeneric_soso.c",
+                "doomgeneric_sosox.c", "doomgeneric_win.c", "doomgeneric_xlib.c",
+                "i_allegromusic.c", "i_allegrosound.c", "i_sdlsound.c",
+                "i_sdlmusic.c", "i_cdmus.c", "mus2mid.c",
+            }
+        )
     if app == "oobe":
         sources.extend(source for source in collect("userland/apps/browser/*.c") if source.name != "main.c")
     return sorted(set(sources))
@@ -372,6 +384,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
     cflags_user = cflags_user_base + ["-include", relative(autoconf)]
+    cflags_doom = cflags_user + ["-Ithird_party/doomgeneric/doomgeneric"]
     cflags_installer = cflags_user_base + ["-include", relative(installer_autoconf)]
     asflags_user = [
         cc, "-target", "x86_64-unknown-none", "-O2", "-ffreestanding", "-mno-red-zone",
@@ -501,7 +514,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         objects: list[Path] = []
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
-            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_user, (autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else (cflags_doom if app == "doom" else cflags_user), (autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland/{app}.elf"
         graph.add(Target(name=f"app:{app}", outputs=(output,), inputs=tuple([*objects, libc_a]), implicit_inputs=(ROOT / "userland/linker.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000", "-T", "userland/linker.ld", "-o", relative(output), *map(relative, objects), relative(libc_a))))
         app_elfs[app] = output
@@ -602,6 +615,12 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         target = add_copy(graph, f"esp:app:{app}", app_elfs[app], destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    doom_wad = ROOT / "third_party/doomgeneric/freedoom1.wad"
+    if doom_wad.exists():
+        doom_wad_destination = paths.staging / "programs/doom/freedoom1.wad"
+        target = add_copy(graph, "esp:doom:freedoom1-wad", doom_wad, doom_wad_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(doom_wad_destination)
     for app in NORMAL_USER_APPS:
         source = paths.out / f"generated/app-icons/{app}.bmp"
         destination = paths.staging / runtime_app_relative(app, "bmp")
