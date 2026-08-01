@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GRUB_MODULES = (
     "part_gpt fat iso9660 multiboot2 normal search search_fs_file configfile echo serial "
-    "terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm"
+    "terminal video video_bochs video_cirrus efi_gop efi_uga all_video font gfxterm"
 )
 
 
@@ -48,12 +48,14 @@ def stage_installer_tree(
     kernel: Path,
     middlelayer: Path,
     installer_root: Path,
+    grub_font: Path,
 ) -> None:
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
     copy_file(boot_efi, stage / "EFI/BOOT/BOOTX64.EFI")
     copy_file(ROOT / "boot/grub/installer.cfg", stage / "boot/grub/grub.cfg")
+    copy_file(grub_font, stage / "boot/grub/fonts/leonos-unicode.pf2")
     (stage / "boot/leonos-installer-iso.marker").write_text("LeonOS installer ISO volume\n", encoding="ascii")
     copy_file(loader, stage / "boot/loader.elf")
     copy_file(kernel, stage / "system/kernel.sys")
@@ -92,6 +94,7 @@ def main() -> int:
     parser.add_argument("--kernel", default="build/system/kernel.sys")
     parser.add_argument("--middlelayer", default="build/system/middlelayer.sys")
     parser.add_argument("--installer-root", default="build/install/root.fat")
+    parser.add_argument("--grub-font", default="build/generated/grub/leonos-unicode.pf2")
     parser.add_argument("--work-dir", default="build/install")
     parser.add_argument("--grub-efi-dir", default="/usr/lib/grub/x86_64-efi")
     args = parser.parse_args()
@@ -103,6 +106,7 @@ def main() -> int:
     kernel = ROOT / args.kernel
     middlelayer = ROOT / args.middlelayer
     installer_root = ROOT / args.installer_root
+    grub_font = ROOT / args.grub_font
     work_dir = ROOT / args.work_dir
     grub_efi_dir = Path(args.grub_efi_dir)
     if not grub_efi_dir.is_absolute():
@@ -114,7 +118,7 @@ def main() -> int:
 
     boot_efi = build_installer_boot_efi(work_dir / "installer-BOOTX64.EFI", grub_efi_dir)
     create_boot_image(boot_image, boot_efi, work_dir / "efi-boot")
-    stage_installer_tree(stage, boot_image, boot_efi, loader, kernel, middlelayer, installer_root)
+    stage_installer_tree(stage, boot_image, boot_efi, loader, kernel, middlelayer, installer_root, grub_font)
     run([
         "xorriso",
         "-as",

@@ -932,6 +932,25 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
         *(struct leonos_auth_login *)(uintptr_t)user_arg = login;
         return 0;
     }
+    if (request == LEONOS_AUTH_IOCTL_DELEGATE_ELEVATION) {
+        struct leonos_auth_delegate_elevation delegation;
+        struct task *child;
+        if (!user_range_ok(user_arg, sizeof(delegation))) {
+            return -LEONOS_EFAULT;
+        }
+        if (!task || task_effective_role(task) != LEONOS_AUTH_ROLE_ADMIN) {
+            return -LEONOS_EACCES;
+        }
+        delegation = *(struct leonos_auth_delegate_elevation *)(uintptr_t)user_arg;
+        child = sched_find(delegation.child_pid);
+        if (!child || child->kind != TASK_KIND_USER ||
+            child->state == TASK_EXITED || child->parent_pid != task->pid ||
+            child->uid != task->uid || child->session_id != task->session_id) {
+            return -LEONOS_EACCES;
+        }
+        child->flags |= TASK_FLAG_ELEVATED_ADMIN;
+        return 0;
+    }
     if (request == LEONOS_AUTH_IOCTL_LOGOUT) {
         uint32_t uid = task ? task->uid : 0;
         uint32_t session_id = task ? task->session_id : 0;
@@ -2145,10 +2164,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 {
     if (number == LINUX_SYS_IOCTL &&
         (a1 == LEONOS_AUTH_IOCTL_STATUS ||
-         a1 == LEONOS_AUTH_IOCTL_CURRENT ||
-         a1 == LEONOS_AUTH_IOCTL_LIST_USERS ||
-         a1 == LEONOS_AUTH_IOCTL_LOGIN ||
-         a1 == LEONOS_AUTH_IOCTL_LOGOUT ||
+          a1 == LEONOS_AUTH_IOCTL_CURRENT ||
+          a1 == LEONOS_AUTH_IOCTL_LIST_USERS ||
+          a1 == LEONOS_AUTH_IOCTL_LOGIN ||
+          a1 == LEONOS_AUTH_IOCTL_ELEVATE_ADMIN ||
+          a1 == LEONOS_AUTH_IOCTL_DELEGATE_ELEVATION ||
+          a1 == LEONOS_AUTH_IOCTL_LOGOUT ||
          a1 == LEONOS_AUTH_IOCTL_CREATE_USER ||
          a1 == LEONOS_AUTH_IOCTL_UPDATE_USER ||
          a1 == LEONOS_AUTH_IOCTL_CHANGE_PASSWORD)) {
@@ -3630,9 +3651,15 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
         {
             struct leonos_audio_state audio = {0};
+            const char *audio_name;
             uint32_t flags = 0;
             uint32_t pos = 0;
             driver_manager_audio_get_state(&audio);
+            audio_name = audio.vendor_id == 0x1274U && audio.device_id == 0x1371U
+                             ? "Ensoniq AudioPCI ES1371"
+                             : audio.vendor_id == 0x8086U && audio.device_id == 0x2415U
+                                   ? "Intel ICH AC'97"
+                                   : "Audio Device";
             if (audio.present) {
                 flags |= LEONOS_DEVICE_FLAG_PRESENT;
             }
@@ -3649,13 +3676,13 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                 device_append_text(detail, &pos, sizeof(detail), "-bit PCM");
             } else if (audio.present) {
                 device_append_text(detail, &pos, sizeof(detail),
-                                   "Intel ICH AC'97 detected but driver not active");
+                                   "Audio device detected but driver not active");
             } else {
                 device_append_text(detail, &pos, sizeof(detail),
-                                   "No Intel ICH AC'97 audio device detected");
+                                   "No supported audio device detected");
             }
             device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_AUDIO,
-                       flags, "Intel ICH AC'97", audio.active ? "Running" : "Unavailable",
+                       flags, audio_name, audio.active ? "Running" : "Unavailable",
                        detail, ((uint64_t)audio.vendor_id << 16) | audio.device_id,
                        ((uint64_t)audio.bus << 16) |
                            ((uint64_t)audio.slot << 8) | audio.function);

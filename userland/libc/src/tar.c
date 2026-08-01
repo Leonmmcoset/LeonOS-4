@@ -1,8 +1,12 @@
 #include <leonos/fs.h>
+#include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/tar.h>
 #include <stdint.h>
 #include <string.h>
+
+#define LEONOS_TAR_IO_BUFFER_SIZE (32U * 1024U)
+#define LEONOS_TAR_PROGRESS_INTERVAL (256U * 1024U)
 
 #define LEONOS_TAR_HEADER_NAME 0U
 #define LEONOS_TAR_HEADER_MODE 100U
@@ -593,6 +597,7 @@ int leonos_tar_extract_file(const char *tar_path, const char *stored_name,
     for (;;) {
         got = read(tar_fd, header, sizeof(header));
         if (got != (long)sizeof(header)) {
+            printf("[tar] header read failed got=%ld\n", got);
             close(tar_fd);
             return 0;
         }
@@ -601,6 +606,7 @@ int leonos_tar_extract_file(const char *tar_path, const char *stored_name,
             return 0;
         }
         if (!tar_header_parse(header, name, sizeof(name), &file_size, &typeflag)) {
+            printf("[tar] invalid header\n");
             close(tar_fd);
             return 0;
         }
@@ -649,7 +655,10 @@ int leonos_tar_extract_file(const char *tar_path, const char *stored_name,
     return ok;
 }
 
-int leonos_tar_extract_all(const char *tar_path, const char *dest_dir)
+int leonos_tar_extract_all_with_progress(const char *tar_path,
+                                         const char *dest_dir,
+                                         leonos_tar_progress_fn progress,
+                                         void *context)
 {
     int tar_fd;
     int dest_fd;
@@ -659,13 +668,17 @@ int leonos_tar_extract_all(const char *tar_path, const char *dest_dir)
     uint32_t remaining;
     uint32_t count = 0;
     int file_ok;
-    unsigned char buffer[LEONOS_TAR_BLOCK_SIZE];
+    unsigned char buffer[LEONOS_TAR_IO_BUFFER_SIZE];
     char dest_path[LEONOS_FS_PATH_LEN];
     uint32_t dest_dir_len;
     char name[LEONOS_FS_PATH_LEN];
     char typeflag;
     long got;
     long wrote;
+    struct leonos_stat archive_stat;
+    uint32_t total = 0;
+    uint32_t processed = 0;
+    uint32_t reported = 0;
     if (!tar_path || !tar_path[0] || !dest_dir || !dest_dir[0]) {
         return 0;
     }
@@ -677,6 +690,13 @@ int leonos_tar_extract_all(const char *tar_path, const char *dest_dir)
     if (tar_fd < 0) {
         return 0;
     }
+    if (fstat(tar_fd, &archive_stat) == 0 && archive_stat.size <= 0xffffffffULL) {
+        total = (uint32_t)archive_stat.size;
+    }
+    if (progress && progress(0, total, context) < 0) {
+        close(tar_fd);
+        return 0;
+    }
     for (;;) {
         got = read(tar_fd, header, sizeof(header));
         if (got != (long)sizeof(header)) {
@@ -684,7 +704,16 @@ int leonos_tar_extract_all(const char *tar_path, const char *dest_dir)
             return 0;
         }
         if (tar_header_is_zero(header)) {
+            processed += (uint32_t)got;
             break;
+        }
+        processed += (uint32_t)got;
+        if (progress && processed - reported >= LEONOS_TAR_PROGRESS_INTERVAL) {
+            reported = processed;
+            if (progress(processed, total, context) < 0) {
+                close(tar_fd);
+                return 0;
+            }
         }
         if (!tar_header_parse(header, name, sizeof(name), &file_size, &typeflag)) {
             close(tar_fd);
@@ -695,29 +724,38 @@ int leonos_tar_extract_all(const char *tar_path, const char *dest_dir)
             tar_strip_trailing_slashes(name);
             if (!tar_member_name_is_safe(name) || !tar_join_path(dest_path, sizeof(dest_path), dest_dir, name) ||
                 !tar_ensure_dir(dest_path)) {
+                printf("[tar] directory setup failed name=%s\n", name);
                 close(tar_fd);
                 return 0;
             }
             if (lseek(tar_fd, (long)padded_size, LEONOS_SEEK_CUR) < 0) {
+                printf("[tar] directory seek failed name=%s size=%u\n", name,
+                       padded_size);
                 close(tar_fd);
                 return 0;
             }
+            processed += padded_size;
             ++count;
             continue;
         }
         if (typeflag != LEONOS_TAR_TYPE_FILE) {
+            printf("[tar] unsupported type name=%s type=%u\n", name,
+                   (unsigned int)(unsigned char)typeflag);
             close(tar_fd);
             return 0;
         }
         if (!tar_member_name_is_safe(name) ||
             !tar_join_path(dest_path, sizeof(dest_path), dest_dir, name) ||
             !tar_ensure_parent_dir(dest_path)) {
+            printf("[tar] file path setup failed name=%s\n", name);
             close(tar_fd);
             return 0;
         }
+        printf("[tar] extracting name=%s size=%u\n", name, file_size);
         dest_fd = open(dest_path,
                        LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
         if (dest_fd < 0) {
+            printf("[tar] open failed name=%s ret=%d\n", name, dest_fd);
             close(tar_fd);
             return 0;
         }
@@ -728,31 +766,58 @@ int leonos_tar_extract_all(const char *tar_path, const char *dest_dir)
                                                          : sizeof(buffer);
             got = read(tar_fd, buffer, chunk);
             if (got <= 0) {
+                printf("[tar] data read failed name=%s ret=%ld remaining=%u\n",
+                       name, got, remaining);
                 file_ok = 0;
                 break;
             }
             wrote = write(dest_fd, buffer, (size_t)got);
             if (wrote != got) {
+                printf("[tar] write failed name=%s read=%ld wrote=%ld remaining=%u\n",
+                       name, got, wrote, remaining);
                 file_ok = 0;
                 break;
             }
             remaining -= (uint32_t)got;
+            processed += (uint32_t)got;
+            if (progress && processed - reported >= LEONOS_TAR_PROGRESS_INTERVAL) {
+                reported = processed;
+                if (progress(processed, total, context) < 0) {
+                    close(dest_fd);
+                    unlink(dest_path);
+                    close(tar_fd);
+                    return 0;
+                }
+            }
         }
         close(dest_fd);
         if (!file_ok || remaining != 0) {
+            printf("[tar] extract failed name=%s remaining=%u\n", name,
+                   remaining);
             unlink(dest_path);
             close(tar_fd);
             return 0;
         }
         if (padded_size > file_size &&
             lseek(tar_fd, (long)(padded_size - file_size), LEONOS_SEEK_CUR) < 0) {
+            printf("[tar] padding seek failed name=%s bytes=%u\n", name,
+                   padded_size - file_size);
             close(tar_fd);
             return 0;
         }
+        processed += padded_size - file_size;
         ++count;
     }
     close(tar_fd);
+    if (progress && progress(total ? total : processed, total, context) < 0) {
+        return 0;
+    }
     return count > 0 ? 1 : 0;
+}
+
+int leonos_tar_extract_all(const char *tar_path, const char *dest_dir)
+{
+    return leonos_tar_extract_all_with_progress(tar_path, dest_dir, 0, 0);
 }
 
 int leonos_tar_list(const char *tar_path, char *output, uint32_t capacity)

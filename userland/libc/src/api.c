@@ -399,14 +399,16 @@ cleanup:
     return ok;
 }
 
-static int api_extract_tar(const char *api_path, const char *dest_dir)
+static int api_extract_tar(const char *api_path, const char *dest_dir,
+                           leonos_api_progress_fn progress, void *context)
 {
     char manifest_path[LEONOS_API_PATH_MAX];
     int ok;
     if (!api_path || !dest_dir) {
         return 0;
     }
-    ok = leonos_tar_extract_all(api_path, dest_dir);
+    ok = leonos_tar_extract_all_with_progress(api_path, dest_dir, progress,
+                                              context);
     if (ok && api_join_path(manifest_path, sizeof(manifest_path), dest_dir,
                             API_INI_PATH)) {
         unlink(manifest_path);
@@ -435,11 +437,13 @@ int leonos_api_extract_files(const char *api_path, const char *dest_dir)
     if (!api_ensure_dir(install_root)) {
         return 0;
     }
-    return api_extract_tar(api_path, install_root);
+    return api_extract_tar(api_path, install_root, 0, 0);
 }
 
-int leonos_api_install(const char *api_path, const char *dest_dir,
-                       uint32_t create_shortcut)
+int leonos_api_install_with_progress(const char *api_path, const char *dest_dir,
+                                     uint32_t create_shortcut,
+                                     leonos_api_progress_fn progress,
+                                     void *context)
 {
     struct leonos_api_info info;
     struct leonos_user_info user;
@@ -464,7 +468,7 @@ int leonos_api_install(const char *api_path, const char *dest_dir,
     if (!api_ensure_dir(install_root)) {
         return 0;
     }
-    if (!api_extract_tar(api_path, install_root)) {
+    if (!api_extract_tar(api_path, install_root, progress, context)) {
         return 0;
     }
     if (!api_join_path(exe_path, sizeof(exe_path), install_root,
@@ -491,4 +495,11 @@ int leonos_api_install(const char *api_path, const char *dest_dir,
         }
     }
     return 1;
+}
+
+int leonos_api_install(const char *api_path, const char *dest_dir,
+                       uint32_t create_shortcut)
+{
+    return leonos_api_install_with_progress(api_path, dest_dir,
+                                            create_shortcut, 0, 0);
 }

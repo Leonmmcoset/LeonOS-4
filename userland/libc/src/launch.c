@@ -38,9 +38,10 @@ static const struct builtin_program builtin_programs[] = {
     {"browser", "0:/programs/browser/browser.elf"},
     {"imageview", "0:/programs/imageview/imageview.elf"},
     {"wavplay", "0:/programs/wavplay/wavplay.elf"},
+    {"mp3play", "0:/programs/mp3play/mp3play.elf"},
     {"oshlp", "0:/programs/oshlp/oshlp.elf"},
-    {"doom", "0:/programs/doomlauncher/doomlauncher.elf"},
-    {"doomlauncher", "0:/programs/doomlauncher/doomlauncher.elf"},
+    {"doom", "0:/programs/doom/doomlauncher.elf"},
+    {"doomlauncher", "0:/programs/doom/doomlauncher.elf"},
     {"diskmgr", "0:/system/apps/diskmgr/diskmgr.elf"},
     {"devmgr", "0:/system/apps/devmgr/devmgr.elf"},
 };
@@ -58,6 +59,7 @@ static const struct builtin_assoc builtin_assocs[] = {
     {".bmp", "0:/programs/imageview/imageview.elf"},
     {".dib", "0:/programs/imageview/imageview.elf"},
     {".wav", "0:/programs/wavplay/wavplay.elf"},
+    {".mp3", "0:/programs/mp3play/mp3play.elf"},
     {".hlp", "0:/programs/oshlp/oshlp.elf"},
 };
 
@@ -66,6 +68,7 @@ static const struct leonos_launch_assoc_app assoc_apps[] = {
     {"Notepad", "Open the file as text", "0:/programs/notepad/notepad.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
     {"Image Viewer", "Open BMP images", "0:/programs/imageview/imageview.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
     {"WAV Player", "Play PCM WAV audio", "0:/programs/wavplay/wavplay.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
+    {"MP3 Player", "Play MP3 audio", "0:/programs/mp3play/mp3play.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
     {"Help Viewer", "Open LeonOS help files", "0:/programs/oshlp/oshlp.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
     {"Terminal", "Run cat in a terminal window", "0:/system/apps/terminal/terminal.elf", LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT},
     {"Run", "Pass the path to the Run dialog", "0:/system/apps/run/run.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},

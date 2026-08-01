@@ -67,6 +67,7 @@ struct task {
     size_t image_len;
     struct address_space as;
     struct trap_frame frame;
+    uint8_t fpu_state[512] __attribute__((aligned(16)));
     enum task_state state;
     enum task_kind kind;
     uint32_t flags;

@@ -390,6 +390,8 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
     struct task *current = sched_current_task();
     if (current && current->kind == TASK_KIND_USER && frame) {
         current->frame = *frame;
+        /* The kernel is integer-only, so the incoming user FPU state is intact. */
+        arch_fpu_save(current->fpu_state);
         if (current->state == TASK_RUNNING) {
             current->state = TASK_READY;
         }
@@ -412,6 +414,7 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
     }
     sched_set_running(next->pid);
     userland_yield_if_runnable();
+    arch_fpu_restore(next->fpu_state);
     return next;
 }
 

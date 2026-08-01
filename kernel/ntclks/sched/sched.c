@@ -227,6 +227,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->frame.rflags = 0x202;
     task->frame.rsp = stack_top;
     task->frame.ss = NTCLKS_USER_DS;
+    arch_fpu_task_init(task->fpu_state);
     task->state = TASK_READY;
     task->kind = TASK_KIND_USER;
     task->flags = flags;

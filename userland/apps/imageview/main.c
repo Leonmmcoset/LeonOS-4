@@ -19,6 +19,14 @@
 #define IMAGEVIEW_DETAIL_H 22U
 #define IMAGEVIEW_MAX_PIXELS (1024U * 1024U)
 #define IMAGEVIEW_ROWS_MAX LEONOS_FS_MAX_ENTRIES
+#define IMAGEVIEW_OPEN_X 12U
+#define IMAGEVIEW_OPEN_W 56U
+#define IMAGEVIEW_PREVIOUS_X 76U
+#define IMAGEVIEW_NEXT_X 156U
+#define IMAGEVIEW_FIT_X 248U
+#define IMAGEVIEW_1X_X 312U
+#define IMAGEVIEW_2X_X 368U
+#define IMAGEVIEW_PATH_X 436U
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum zoom_mode {
@@ -36,7 +44,7 @@ static uint32_t view_h = IMAGEVIEW_H;
 static uint8_t zoom_mode = ZOOM_FIT;
 static char current_path[LEONOS_FS_PATH_LEN];
 static char current_dir[LEONOS_FS_PATH_LEN];
-static char status_text[160] = "Open a BMP file from File Manager.";
+static char status_text[160] = "Use Open to choose a BMP image.";
 static char detail_text[192] = "";
 static char sibling_names[IMAGEVIEW_ROWS_MAX][LEONOS_FS_NAME_LEN];
 static uint32_t sibling_count;
@@ -421,9 +429,9 @@ static void draw_scaled_image(struct leonos_ui_surface *ui)
     leonos_ui_inset(ui, x0, y0, w0, h0, LEONOS_UI_WHITE);
     if (!image_pixels || !image_w || !image_h) {
         leonos_ui_text_clipped(ui, x0 + 18U, y0 + 18U, w0 > 36U ? w0 - 36U : w0,
-                               T("Open a .bmp file from File Manager, Run, or command line.",
-                                 "请从文件资源管理器、运行或命令行打开 .bmp 文件。"),
-                               LEONOS_UI_DARK, LEONOS_UI_WHITE);
+                                T("Use Open, File Manager, Run, or the command line to open a .bmp file.",
+                                  "请使用打开、文件资源管理器、运行或命令行打开 .bmp 文件。"),
+                                LEONOS_UI_DARK, LEONOS_UI_WHITE);
         return;
     }
     if (zoom_mode == ZOOM_FIT) {
@@ -467,25 +475,30 @@ static void present(int window_id, struct leonos_ui_surface *ui)
     leonos_ui_bind(ui, pixels, view_w, view_h, IMAGEVIEW_MAX_W);
     leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_GRAY);
     leonos_ui_toolbar(ui, 0, IMAGEVIEW_TOOLBAR_Y, view_w, IMAGEVIEW_TOOLBAR_H);
-    leonos_ui_button(ui, 12, IMAGEVIEW_TOOLBAR_Y + 6U, 72,
+    leonos_ui_button(ui, IMAGEVIEW_OPEN_X, IMAGEVIEW_TOOLBAR_Y + 6U,
+                     IMAGEVIEW_OPEN_W,
+                     LEONOS_UI_BUTTON_H, T("Open", "打开"), 0);
+    leonos_ui_button(ui, IMAGEVIEW_PREVIOUS_X, IMAGEVIEW_TOOLBAR_Y + 6U, 72,
                      LEONOS_UI_BUTTON_H, T("Previous", "上一张"),
                      sibling_count > 1U ? 0 : LEONOS_UI_BUTTON_DISABLED);
-    leonos_ui_button(ui, 92, IMAGEVIEW_TOOLBAR_Y + 6U, 72,
+    leonos_ui_button(ui, IMAGEVIEW_NEXT_X, IMAGEVIEW_TOOLBAR_Y + 6U, 72,
                      LEONOS_UI_BUTTON_H, T("Next", "下一张"),
                      sibling_count > 1U ? 0 : LEONOS_UI_BUTTON_DISABLED);
-    leonos_ui_button(ui, 184, IMAGEVIEW_TOOLBAR_Y + 6U, 56,
+    leonos_ui_button(ui, IMAGEVIEW_FIT_X, IMAGEVIEW_TOOLBAR_Y + 6U, 56,
                      LEONOS_UI_BUTTON_H, "Fit",
                      zoom_mode == ZOOM_FIT ? LEONOS_UI_BUTTON_PRESSED : 0);
-    leonos_ui_button(ui, 248, IMAGEVIEW_TOOLBAR_Y + 6U, 48,
+    leonos_ui_button(ui, IMAGEVIEW_1X_X, IMAGEVIEW_TOOLBAR_Y + 6U, 48,
                      LEONOS_UI_BUTTON_H, "1x",
                      zoom_mode == ZOOM_1X ? LEONOS_UI_BUTTON_PRESSED : 0);
-    leonos_ui_button(ui, 304, IMAGEVIEW_TOOLBAR_Y + 6U, 48,
+    leonos_ui_button(ui, IMAGEVIEW_2X_X, IMAGEVIEW_TOOLBAR_Y + 6U, 48,
                      LEONOS_UI_BUTTON_H, "2x",
                      zoom_mode == ZOOM_2X ? LEONOS_UI_BUTTON_PRESSED : 0);
-    leonos_ui_text_clipped(ui, 372, IMAGEVIEW_TOOLBAR_Y + 12U,
-                           view_w > 392 ? view_w - 392 : 80,
-                           current_path[0] ? current_path : T("No file", "没有文件"),
-                           LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    if (view_w > IMAGEVIEW_PATH_X + 8U) {
+        leonos_ui_text_clipped(ui, IMAGEVIEW_PATH_X, IMAGEVIEW_TOOLBAR_Y + 12U,
+                               view_w - IMAGEVIEW_PATH_X - 8U,
+                               current_path[0] ? current_path : T("No file", "没有文件"),
+                               LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    }
     draw_scaled_image(ui);
     leonos_ui_text_clipped(ui, 14, detail_y(),
                            view_w > 28U ? view_w - 28U : view_w,
@@ -519,20 +532,39 @@ static void load_sibling_delta(int delta)
     (void)load_image_path(next_path);
 }
 
+static void open_image_via_dialog(void)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    path[0] = 0;
+    if (leonos_ui_show_open_dialog(T("Open image", "打开图片"), path, sizeof(path),
+                                   T("BMP images (*.bmp)", "BMP 图片 (*.bmp)"),
+                                   ".bmp") > 0 && path[0]) {
+        (void)load_image_path(path);
+    }
+}
+
 static void handle_click(int32_t x, int32_t y)
 {
     uint32_t button_y = IMAGEVIEW_TOOLBAR_Y + 6U;
-    if (hit_rect(x, y, 12, button_y, 72, LEONOS_UI_BUTTON_H)) {
+    if (hit_rect(x, y, IMAGEVIEW_OPEN_X, button_y, IMAGEVIEW_OPEN_W,
+                 LEONOS_UI_BUTTON_H)) {
+        open_image_via_dialog();
+    } else if (hit_rect(x, y, IMAGEVIEW_PREVIOUS_X, button_y, 72,
+                        LEONOS_UI_BUTTON_H)) {
         load_sibling_delta(-1);
-    } else if (hit_rect(x, y, 92, button_y, 72, LEONOS_UI_BUTTON_H)) {
+    } else if (hit_rect(x, y, IMAGEVIEW_NEXT_X, button_y, 72,
+                        LEONOS_UI_BUTTON_H)) {
         load_sibling_delta(1);
-    } else if (hit_rect(x, y, 184, button_y, 56, LEONOS_UI_BUTTON_H)) {
+    } else if (hit_rect(x, y, IMAGEVIEW_FIT_X, button_y, 56,
+                        LEONOS_UI_BUTTON_H)) {
         zoom_mode = ZOOM_FIT;
         rebuild_detail();
-    } else if (hit_rect(x, y, 248, button_y, 48, LEONOS_UI_BUTTON_H)) {
+    } else if (hit_rect(x, y, IMAGEVIEW_1X_X, button_y, 48,
+                        LEONOS_UI_BUTTON_H)) {
         zoom_mode = ZOOM_1X;
         rebuild_detail();
-    } else if (hit_rect(x, y, 304, button_y, 48, LEONOS_UI_BUTTON_H)) {
+    } else if (hit_rect(x, y, IMAGEVIEW_2X_X, button_y, 48,
+                        LEONOS_UI_BUTTON_H)) {
         zoom_mode = ZOOM_2X;
         rebuild_detail();
     }

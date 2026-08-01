@@ -4,9 +4,10 @@ import os
 import sys
 import struct
 import io
+import argparse
 
 BLOCK_SIZE = 512
-MAX_FILE_SIZE = 8 * 1024 * 1024
+MAX_FILE_SIZE = 32 * 1024 * 1024
 API_FORMAT = "leonos-api"
 API_FORMAT_VERSION = "1"
 
@@ -163,18 +164,68 @@ icon={icon_arcname}
 
     print(f"Created {output_path} ({os.path.getsize(output_abs)} bytes)")
 
-if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <helloworld.elf> <output.api>")
-        sys.exit(1)
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("legacy", nargs="*", help=argparse.SUPPRESS)
+    parser.add_argument("--name")
+    parser.add_argument("--version")
+    parser.add_argument("--main-exe")
+    parser.add_argument("--default-path")
+    parser.add_argument("--icon", default="")
+    parser.add_argument("--requires-admin", action="store_true")
+    parser.add_argument("--desktop-shortcut", action="store_true")
+    parser.add_argument("--file", dest="files", action="append", nargs=2,
+                        metavar=("LOCAL", "ARCHIVE"), default=[])
+    parser.add_argument("--output")
+    args = parser.parse_args()
+
+    if args.legacy:
+        if len(args.legacy) != 2 or any((args.name, args.version,
+                                         args.main_exe, args.default_path,
+                                         args.output, args.files)):
+            parser.error("use either the legacy ELF/output form or named options")
+        name = "Hello World"
+        version = "1.0.0"
+        main_exe = "files/helloworld.elf"
+        default_path = "0:/programs/helloworld"
+        files = [(args.legacy[0], main_exe)]
+        output = args.legacy[1]
+        requires_admin = True
+        desktop_shortcut = True
+        icon = ""
+    else:
+        required = {
+            "--name": args.name,
+            "--version": args.version,
+            "--main-exe": args.main_exe,
+            "--default-path": args.default_path,
+            "--output": args.output,
+        }
+        missing = [label for label, value in required.items() if not value]
+        if missing or not args.files:
+            parser.error("missing required options: " + ", ".join(missing or ["--file"]))
+        name = args.name
+        version = args.version
+        main_exe = args.main_exe
+        default_path = args.default_path
+        files = [(local, archive) for local, archive in args.files]
+        output = args.output
+        requires_admin = args.requires_admin
+        desktop_shortcut = args.desktop_shortcut
+        icon = args.icon
+
     build_api_file(
-        name='Hello World',
-        version='1.0.0',
-        main_exe_arcname='files/helloworld.elf',
-        default_path='0:/programs/helloworld',
-        requires_admin=True,
-        desktop_shortcut=True,
-        icon_arcname='',
-        files_list=[(sys.argv[1], 'files/helloworld.elf')],
-        output_path=sys.argv[2],
+        name=name,
+        version=version,
+        main_exe_arcname=main_exe,
+        default_path=default_path,
+        requires_admin=requires_admin,
+        desktop_shortcut=desktop_shortcut,
+        icon_arcname=icon,
+        files_list=files,
+        output_path=output,
     )
+
+
+if __name__ == '__main__':
+    main()

@@ -44,14 +44,16 @@ SYSTEM_APPS = [
 ]
 PROGRAM_APPS = [
     "hello", "uidemo", "cjktest", "notepad", "calc", "minesweeper", "memtest",
-    "bugtest", "ping", "httpget", "downloadmgr", "browser", "imageview", "wavplay",
-    "oshlp", "helloworld", "doomlauncher", "doom",
+    "bugtest", "ping", "httpget", "downloadmgr", "browser", "imageview", "wavplay", "mp3play",
+    "oshlp", "helloworld",
 ]
+PACKAGE_APPS = ["doomlauncher", "doom"]
 NORMAL_USER_APPS = [app for app in SYSTEM_APPS if app != "installer"] + PROGRAM_APPS
 INSTALLER_USER_APPS = ["desktop", "installer"]
 INSTALLER_POLICY_APPS = ["desktop", "oobe", "settings"]
 USER_APPS = NORMAL_USER_APPS + [app for app in INSTALLER_USER_APPS if app not in NORMAL_USER_APPS]
-DRIVER_MODULES = ["mouse", "serial", "e1000", "ac97"]
+BUILD_USER_APPS = USER_APPS + [app for app in PACKAGE_APPS if app not in USER_APPS]
+DRIVER_MODULES = ["mouse", "serial", "e1000", "ac97", "es1371"]
 BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "clean",
     "config-sync",
@@ -80,7 +82,7 @@ def runtime_app_relative(app: str, extension: str) -> Path:
 KCONFIG_DEFAULTS = {
     "CONFIG_VMDK_REQUIRE_LICENSE": "y",
     "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE": "y",
-    "CONFIG_IMAGE_SIZE_MIB": "96",
+    "CONFIG_IMAGE_SIZE_MIB": "192",
     "CONFIG_INSTALLER_ROOT_SIZE_MIB": "128",
     "CONFIG_QEMU_MEMORY_MB": "512",
     "CONFIG_QEMU_DISPLAY_WIDTH": "1920",
@@ -385,6 +387,10 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     ]
     cflags_user = cflags_user_base + ["-include", relative(autoconf)]
     cflags_doom = cflags_user + ["-Ithird_party/doomgeneric/doomgeneric"]
+    cflags_mp3play = [flag for flag in cflags_user if flag != "-mgeneral-regs-only"] + [
+        "-mno-avx", "-mno-avx2",
+        "-Ithird_party/minimp3",
+    ]
     cflags_installer = cflags_user_base + ["-include", relative(installer_autoconf)]
     asflags_user = [
         cc, "-target", "x86_64-unknown-none", "-O2", "-ffreestanding", "-mno-red-zone",
@@ -510,11 +516,12 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
 
     app_elfs: dict[str, Path] = {}
     user_targets: list[str] = ["archive:libc"]
-    for app in USER_APPS:
+    for app in BUILD_USER_APPS:
         objects: list[Path] = []
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
-            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else (cflags_doom if app == "doom" else cflags_user), (autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+            cflags_app = cflags_doom if app == "doom" else (cflags_mp3play if app == "mp3play" else cflags_user)
+            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, (autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland/{app}.elf"
         graph.add(Target(name=f"app:{app}", outputs=(output,), inputs=tuple([*objects, libc_a]), implicit_inputs=(ROOT / "userland/linker.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000", "-T", "userland/linker.ld", "-o", relative(output), *map(relative, objects), relative(libc_a))))
         app_elfs[app] = output
@@ -533,7 +540,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         installer_policy_elfs[app] = output
         user_targets.append(name)
 
-    app_icons = tuple(paths.out / f"generated/app-icons/{app}.bmp" for app in USER_APPS)
+    app_icons = tuple(paths.out / f"generated/app-icons/{app}.bmp" for app in BUILD_USER_APPS)
     ui_metro_font = paths.out / "generated/fonts/leonos-metro.ttf"
     ui_win95_font = paths.out / "generated/fonts/leonos-win95.ttf"
     browser_font = paths.out / "generated/fonts/times-new-roman.ttf"
@@ -549,18 +556,33 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
                      command=(PYTHON, "tools/prepare_browser_font.py", "--font",
                               relative(browser_font_source), "--out",
                               relative(browser_font))))
-    graph.add(Target(name="app-icons", outputs=app_icons, inputs=(ROOT / "tools/make_app_icons.py",), kind="generate", command=(PYTHON, "tools/make_app_icons.py", "--out-dir", relative(paths.out / "generated/app-icons"), "--apps", *USER_APPS)))
+    graph.add(Target(name="app-icons", outputs=app_icons, inputs=(ROOT / "tools/make_app_icons.py",), kind="generate", command=(PYTHON, "tools/make_app_icons.py", "--out-dir", relative(paths.out / "generated/app-icons"), "--apps", *BUILD_USER_APPS)))
     button_icons = tuple(paths.out / f"generated/window-buttons/{name}" for name in WINDOW_BUTTON_ICONS)
     graph.add(Target(name="window-button-icons", outputs=button_icons, inputs=(ROOT / "tools/make_window_button_icons.py",), kind="generate", command=(PYTHON, "tools/make_window_button_icons.py", "--out-dir", relative(paths.out / "generated/window-buttons"))))
     user_targets += ["app-icons", "window-button-icons", "ui-font", "browser-font"]
     graph.add(Target(name="userland", depends_on=tuple(user_targets), group=True, kind="aggregate"))
 
+    grub_font = paths.out / "generated/grub/leonos-unicode.pf2"
+    graph.add(Target(
+        name="grub-font",
+        outputs=(grub_font,),
+        inputs=(ROOT / "system/fonts/Deng.ttf",),
+        kind="generate",
+        command=(
+            "grub-mkfont", "-s", "16", "-n", "LeonOS Unicode",
+            "-o", relative(grub_font), "system/fonts/Deng.ttf",
+        ),
+    ))
     grub_efi = paths.staging / "EFI/BOOT/BOOTX64.EFI"
     # 如果是系统 GRUB 路径，使用绝对路径；否则使用相对路径
     grub_dir_arg = str(grub_efi_dir) if using_system_grub else relative(grub_efi_dir)
-    graph.add(Target(name="grub-efi", outputs=(grub_efi,), inputs=(ROOT / "boot/grub/embedded.cfg", grub_efi_dir / "modinfo.sh"), kind="generate", command=("grub-mkstandalone", "-d", grub_dir_arg, "-O", "x86_64-efi", "-o", relative(grub_efi), "--modules=part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video gfxterm", "boot/grub/grub.cfg=boot/grub/embedded.cfg")))
+    graph.add(Target(name="grub-efi", outputs=(grub_efi,), inputs=(ROOT / "boot/grub/embedded.cfg", grub_efi_dir / "modinfo.sh"), kind="generate", command=("grub-mkstandalone", "-d", grub_dir_arg, "-O", "x86_64-efi", "-o", relative(grub_efi), "--modules=part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video font gfxterm", "boot/grub/grub.cfg=boot/grub/embedded.cfg")))
     esp_names = ["grub-efi"]
     esp_outputs: list[Path] = [grub_efi]
+    grub_font_destination = paths.staging / "boot/grub/fonts/leonos-unicode.pf2"
+    target = add_copy(graph, "esp:grub-font", grub_font, grub_font_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(grub_font_destination)
     for source, destination_rel in [(ROOT / "boot/grub/grub.cfg", "boot/grub/grub.cfg"), (loader_elf, "boot/loader.elf"), (kernel_sys, "system/kernel.sys"), (middle_sys, "system/middlelayer.sys")]:
         destination = paths.staging / destination_rel
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
@@ -615,18 +637,16 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         target = add_copy(graph, f"esp:app:{app}", app_elfs[app], destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
-    doom_wad = ROOT / "third_party/doomgeneric/freedoom1.wad"
-    if doom_wad.exists():
-        doom_wad_destination = paths.staging / "programs/doom/freedoom1.wad"
-        target = add_copy(graph, "esp:doom:freedoom1-wad", doom_wad, doom_wad_destination)
-        esp_names.append(target.name)
-        esp_outputs.append(doom_wad_destination)
     for app in NORMAL_USER_APPS:
         source = paths.out / f"generated/app-icons/{app}.bmp"
         destination = paths.staging / runtime_app_relative(app, "bmp")
         target = add_copy(graph, f"esp:icon:{app}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    test_mp3 = paths.staging / "test/test.mp3"
+    target = add_copy(graph, "esp:test:test.mp3", ROOT / "test/test.mp3", test_mp3)
+    esp_names.append(target.name)
+    esp_outputs.append(test_mp3)
     helloworld_api = paths.out / "api/helloworld.api"
     api_destination = paths.staging / "api/helloworld.api"
     graph.add(Target(
@@ -639,6 +659,35 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     target = add_copy(graph, "esp:api:helloworld-copy", helloworld_api, api_destination)
     esp_names.append(target.name)
     esp_outputs.append(api_destination)
+    doom_wad = ROOT / "third_party/doomgeneric/freedoom1.wad"
+    doom_icon = paths.out / "generated/app-icons/doom.bmp"
+    doom_api = paths.out / "api/doom.api"
+    doom_api_destination = paths.staging / "api/doom.api"
+    graph.add(Target(
+        name="esp:api:doom",
+        outputs=(doom_api,),
+        inputs=(app_elfs["doomlauncher"], app_elfs["doom"], doom_wad,
+                doom_icon, ROOT / "tools/build_api.py"),
+        kind="generate",
+        command=(
+            PYTHON, "tools/build_api.py",
+            "--name", "DOOM",
+            "--version", "1.0.0-freedoom",
+            "--main-exe", "doomlauncher.elf",
+            "--default-path", "0:/programs/doom",
+            "--requires-admin",
+            "--desktop-shortcut",
+            "--icon", "doom.bmp",
+            "--file", relative(app_elfs["doomlauncher"]), "doomlauncher.elf",
+            "--file", relative(app_elfs["doom"]), "doom.elf",
+            "--file", relative(doom_wad), "freedoom1.wad",
+            "--file", relative(doom_icon), "doom.bmp",
+            "--output", relative(doom_api),
+        ),
+    ))
+    target = add_copy(graph, "esp:api:doom-copy", doom_api, doom_api_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(doom_api_destination)
     config_destination = paths.staging / "system/config/leonos.conf"
     target = add_copy(graph, "esp:config", paths.kconfig, config_destination)
     esp_names.append(target.name)
@@ -676,7 +725,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--userland-dir", relative(paths.out / "userland"), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--manifest", relative(manifest), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
     installer_iso = paths.images / "leonos4-installer.iso"
     installer_boot_image = paths.out / "install/installer-efiboot.img"
-    graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
+    graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_font, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
 
     graph.add(Target(name="all", depends_on=("config-sync", "build-info", "loader", "kernel", "drivers", "middlelayer", "userland", "esp"), group=True, kind="aggregate"))
     graph.add(Target(name="run", inputs=(vmdk,), depends_on=("image-vmdk",), kind="command", command=qemu_command(paths, values)))
@@ -764,7 +813,7 @@ def require_grub_efi_modules(paths: BuildPaths, task: str) -> None:
 def task_tools(task: str) -> tuple[str, ...]:
     compiler = ("clang", "ld.lld")
     userland = (*compiler, "llvm-ar")
-    esp = (*userland, "rustc", "grub-mkstandalone")
+    esp = (*userland, "rustc", "grub-mkfont", "grub-mkstandalone")
     vmdk = (*esp, "truncate", "sgdisk", "mkfs.fat", "mcopy", "dd", "qemu-img")
     iso = (*esp, "grub-mkrescue", "xorriso")
     if task in {"kernel", "loader", "drivers"}:

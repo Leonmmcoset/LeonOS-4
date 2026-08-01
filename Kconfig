@@ -13,7 +13,7 @@ config INSTALLER_INSTALLED_REQUIRE_LICENSE
 config IMAGE_SIZE_MIB
     int "Standalone VMDK image size in MiB"
     range 64 4096
-    default 96
+    default 192
 
 config INSTALLER_ROOT_SIZE_MIB
     int "Installer runtime root size in MiB"

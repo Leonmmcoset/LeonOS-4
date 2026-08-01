@@ -7,6 +7,7 @@
 #include <ntclks/net.h>
 #include <ntclks/pci.h>
 #include <ntclks/storage.h>
+#include <ntclks/time.h>
 
 #include "arch/x86_64/port.h"
 
@@ -656,6 +657,8 @@ static const struct leonos_driver_kernel_api driver_kernel_api = {
     .pci_read16 = pci_config_read16,
     .pci_write16 = pci_config_write16,
     .pci_read32 = pci_config_read32,
+    .ticks = time_ticks,
+    .sleep_ms = time_sleep_ms,
     .register_mouse = driver_register_mouse,
     .register_serial = driver_register_serial,
     .register_e1000 = driver_register_e1000,

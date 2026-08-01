@@ -2647,6 +2647,463 @@ int leonos_http_get(const char *url, uint32_t timeout_ms,
     return leonos_http_request(&request, response);
 }
 
+#define HTTP_DOWNLOAD_HEADER_MAX LEONOS_HTTP_HEADER_MAX
+#define HTTP_DOWNLOAD_READ_SIZE 4096U
+
+enum http_download_body_state {
+    HTTP_DOWNLOAD_BODY_IDENTITY,
+    HTTP_DOWNLOAD_BODY_CHUNK_SIZE,
+    HTTP_DOWNLOAD_BODY_CHUNK_DATA,
+    HTTP_DOWNLOAD_BODY_CHUNK_CRLF,
+};
+
+struct http_download_stream {
+    char headers[HTTP_DOWNLOAD_HEADER_MAX + 1U];
+    char location[LEONOS_HTTP_URL_LEN];
+    struct leonos_http_response *response;
+    leonos_http_download_progress_fn progress;
+    void *progress_context;
+    uint32_t headers_len;
+    uint32_t total;
+    uint32_t received;
+    uint32_t chunk_remaining;
+    uint8_t body_state;
+    uint8_t chunk_seen_hex;
+    uint8_t chunk_extension;
+    uint8_t chunk_crlf_seen;
+    uint8_t headers_ready;
+    uint8_t complete;
+    uint8_t redirect;
+    uint8_t failed;
+    uint8_t cancelled;
+    int fd;
+};
+
+static int http_download_report(struct http_download_stream *stream)
+{
+    if (!stream || !stream->progress) {
+        return 0;
+    }
+    if (stream->progress(stream->received, stream->total,
+                         stream->progress_context) < 0) {
+        stream->cancelled = 1;
+        return -1;
+    }
+    return 0;
+}
+
+static int http_download_write_all(struct http_download_stream *stream,
+                                   const char *data, uint32_t length)
+{
+    uint32_t written = 0;
+    if (!stream || !data) {
+        return -1;
+    }
+    if (stream->total && (length > stream->total ||
+                          stream->received > stream->total - length)) {
+        stream->failed = 1;
+        return -1;
+    }
+    while (written < length) {
+        long ret = write(stream->fd, data + written, length - written);
+        if (ret <= 0) {
+            stream->failed = 1;
+            return -1;
+        }
+        written += (uint32_t)ret;
+    }
+    stream->received += length;
+    if (http_download_report(stream) < 0) {
+        return -1;
+    }
+    if (stream->total && stream->received == stream->total) {
+        stream->complete = 1;
+        return -1;
+    }
+    return 0;
+}
+
+static int http_download_parse_headers(struct http_download_stream *stream)
+{
+    char transfer_encoding[48];
+    char content_length_text[32];
+    int valid_length = 0;
+    if (!stream || !stream->response) {
+        return -1;
+    }
+    stream->response->headers_len = stream->headers_len;
+    stream->response->http_status = http_parse_status_code(stream->headers,
+                                                            stream->headers_len);
+    if (!stream->response->http_status) {
+        stream->failed = 1;
+        return -1;
+    }
+    stream->response->net_status = LEONOS_NET_STATUS_OK;
+    http_header_value(stream->headers, stream->headers_len, "Content-Type",
+                      stream->response->content_type,
+                      sizeof(stream->response->content_type));
+    http_header_value(stream->headers, stream->headers_len, "Location",
+                      stream->location, sizeof(stream->location));
+    transfer_encoding[0] = 0;
+    http_header_value(stream->headers, stream->headers_len,
+                      "Transfer-Encoding", transfer_encoding,
+                      sizeof(transfer_encoding));
+    content_length_text[0] = 0;
+    if (http_header_value(stream->headers, stream->headers_len,
+                          "Content-Length", content_length_text,
+                          sizeof(content_length_text))) {
+        stream->response->content_length =
+            http_parse_decimal(content_length_text, &valid_length);
+        if (valid_length) {
+            stream->response->flags |= LEONOS_HTTP_FLAG_CONTENT_LENGTH;
+        }
+    }
+    if (http_contains_ignore_case(transfer_encoding, "chunked")) {
+        stream->response->flags |= LEONOS_HTTP_FLAG_CHUNKED;
+        stream->body_state = HTTP_DOWNLOAD_BODY_CHUNK_SIZE;
+    } else {
+        stream->body_state = HTTP_DOWNLOAD_BODY_IDENTITY;
+        stream->total = valid_length ? stream->response->content_length : 0;
+    }
+    stream->headers_ready = 1;
+    if (http_is_redirect(stream->response->http_status) && stream->location[0]) {
+        stream->redirect = 1;
+        return -1;
+    }
+    if (stream->response->http_status < 200U ||
+        stream->response->http_status >= 300U) {
+        stream->failed = 1;
+        return -1;
+    }
+    if (http_download_report(stream) < 0) {
+        return -1;
+    }
+    if (stream->total == 0 &&
+        (stream->response->flags & LEONOS_HTTP_FLAG_CONTENT_LENGTH)) {
+        stream->complete = 1;
+        return -1;
+    }
+    return 0;
+}
+
+static int http_download_consume_chunked(struct http_download_stream *stream,
+                                         const char *data, uint32_t length,
+                                         uint32_t *position)
+{
+    while (*position < length) {
+        char ch = data[*position];
+        if (stream->body_state == HTTP_DOWNLOAD_BODY_CHUNK_SIZE) {
+            ++(*position);
+            if (ch == '\r') {
+                continue;
+            }
+            if (ch == '\n') {
+                if (!stream->chunk_seen_hex) {
+                    stream->failed = 1;
+                    return -1;
+                }
+                if (stream->chunk_remaining == 0) {
+                    stream->complete = 1;
+                    return -1;
+                }
+                stream->body_state = HTTP_DOWNLOAD_BODY_CHUNK_DATA;
+                continue;
+            }
+            if (ch == ';') {
+                if (!stream->chunk_seen_hex) {
+                    stream->failed = 1;
+                    return -1;
+                }
+                stream->chunk_extension = 1;
+                continue;
+            }
+            if (!stream->chunk_extension && http_is_hex(ch)) {
+                uint32_t digit = http_hex_value(ch);
+                if (stream->chunk_remaining > (0xffffffffU - digit) / 16U) {
+                    stream->failed = 1;
+                    return -1;
+                }
+                stream->chunk_remaining = stream->chunk_remaining * 16U + digit;
+                stream->chunk_seen_hex = 1;
+                continue;
+            }
+            if (!stream->chunk_extension) {
+                stream->failed = 1;
+                return -1;
+            }
+            continue;
+        }
+        if (stream->body_state == HTTP_DOWNLOAD_BODY_CHUNK_DATA) {
+            uint32_t available = length - *position;
+            uint32_t take = available < stream->chunk_remaining
+                                ? available : stream->chunk_remaining;
+            if (http_download_write_all(stream, data + *position, take) < 0) {
+                return -1;
+            }
+            *position += take;
+            stream->chunk_remaining -= take;
+            if (stream->chunk_remaining == 0) {
+                stream->body_state = HTTP_DOWNLOAD_BODY_CHUNK_CRLF;
+                stream->chunk_crlf_seen = 0;
+            }
+            continue;
+        }
+        ++(*position);
+        if (ch == '\r' && !stream->chunk_crlf_seen) {
+            stream->chunk_crlf_seen = 1;
+            continue;
+        }
+        if (ch == '\n') {
+            stream->body_state = HTTP_DOWNLOAD_BODY_CHUNK_SIZE;
+            stream->chunk_remaining = 0;
+            stream->chunk_seen_hex = 0;
+            stream->chunk_extension = 0;
+            continue;
+        }
+        stream->failed = 1;
+        return -1;
+    }
+    return 0;
+}
+
+static int http_download_stream_data(const void *raw_data, uint32_t length,
+                                     void *context)
+{
+    struct http_download_stream *stream = (struct http_download_stream *)context;
+    const char *data = (const char *)raw_data;
+    uint32_t position = 0;
+    if (!stream) {
+        return -1;
+    }
+    if (length == 0) {
+        return http_download_report(stream);
+    }
+    while (position < length) {
+        if (!stream->headers_ready) {
+            uint32_t body_offset;
+            if (stream->headers_len >= HTTP_DOWNLOAD_HEADER_MAX) {
+                stream->failed = 1;
+                return -1;
+            }
+            stream->headers[stream->headers_len++] = data[position++];
+            stream->headers[stream->headers_len] = 0;
+            body_offset = http_find_body_offset(stream->headers,
+                                                stream->headers_len);
+            if (!body_offset) {
+                continue;
+            }
+            if (http_download_parse_headers(stream) < 0) {
+                return -1;
+            }
+            continue;
+        }
+        if (stream->body_state == HTTP_DOWNLOAD_BODY_IDENTITY) {
+            if (http_download_write_all(stream, data + position,
+                                        length - position) < 0) {
+                return -1;
+            }
+            position = length;
+        } else if (http_download_consume_chunked(stream, data, length,
+                                                  &position) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int http_download_fetch_once(const char *url_text,
+                                    uint32_t timeout_ms,
+                                    struct http_download_stream *stream)
+{
+    struct libc_http_url url;
+    struct leonos_net_socket_connect connection;
+    struct leonos_http_request request = {0};
+    char request_text[HTTP_REQUEST_MAX];
+    uint32_t request_len;
+    uint32_t net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+    int socket;
+    int ret = -1;
+    if (!url_text || !stream || !stream->response ||
+        !http_parse_url(url_text, &url)) {
+        return -1;
+    }
+    request.method = "GET";
+    request_len = http_build_request_text(request_text, sizeof(request_text),
+                                          &url, &request);
+    if (!request_len || http_download_report(stream) < 0) {
+        return -1;
+    }
+    socket = leonos_socket_tcp();
+    if (socket < 0) {
+        stream->response->net_status = LEONOS_NET_STATUS_SOCKET_LIMIT;
+        return -1;
+    }
+    ret = leonos_socket_connect(socket, url.host, url.port, timeout_ms,
+                                &connection);
+    if (ret < 0 || connection.status != LEONOS_NET_STATUS_OK) {
+        stream->response->net_status = ret < 0 ? LEONOS_NET_STATUS_TCP_FAILED
+                                                : connection.status;
+        leonos_socket_close(socket);
+        return -1;
+    }
+    if (url.secure) {
+        ret = leonos_tls_http_stream(socket, url.host, timeout_ms,
+                                     request_text, request_len, 0, 0,
+                                     http_download_stream_data, stream);
+    } else {
+        ret = (int)leonos_socket_send(socket, request_text, request_len,
+                                      timeout_ms, &net_status);
+        if (ret >= 0 && net_status == LEONOS_NET_STATUS_OK &&
+            (uint32_t)ret == request_len) {
+            char buffer[HTTP_DOWNLOAD_READ_SIZE];
+            unsigned long last_data = leonos_uptime_ms();
+            ret = 0;
+            for (;;) {
+                long got;
+                if (http_download_report(stream) < 0) {
+                    ret = -1;
+                    break;
+                }
+                got = leonos_socket_recv(socket, buffer, sizeof(buffer),
+                                         200U,
+                                         &net_status);
+                if (got == 0) {
+                    if (net_status == LEONOS_NET_STATUS_TCP_TIMEOUT) {
+                        if (leonos_uptime_ms() - last_data < timeout_ms) {
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                if (got < 0 || http_download_stream_data(buffer,
+                                                          (uint32_t)got,
+                                                          stream) < 0) {
+                    ret = -1;
+                    break;
+                }
+                last_data = leonos_uptime_ms();
+            }
+            if (net_status != LEONOS_NET_STATUS_OK &&
+                !stream->complete && !stream->redirect && !stream->failed &&
+                !stream->cancelled) {
+                ret = -1;
+            }
+        } else {
+            stream->response->net_status = net_status;
+            ret = -1;
+        }
+    }
+    leonos_socket_close(socket);
+    if (stream->redirect || stream->complete) {
+        return 0;
+    }
+    if (ret < 0 || stream->failed || stream->cancelled ||
+        !stream->headers_ready) {
+        if (stream->response->net_status == LEONOS_NET_STATUS_HTTP_FAILED) {
+            stream->response->net_status = url.secure
+                                               ? LEONOS_NET_STATUS_TLS_FAILED
+                                               : LEONOS_NET_STATUS_TCP_FAILED;
+        }
+        return -1;
+    }
+    if (stream->body_state == HTTP_DOWNLOAD_BODY_IDENTITY &&
+        (!stream->total || stream->received == stream->total)) {
+        stream->complete = 1;
+        return 0;
+    }
+    stream->response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+    return -1;
+}
+
+static int http_download_temp_path(const char *output_path, char *temp_path,
+                                   uint32_t capacity)
+{
+    uint32_t length;
+    if (!output_path || !output_path[0] || !temp_path || capacity == 0) {
+        return 0;
+    }
+    length = (uint32_t)strlen(output_path);
+    if (length + 6U >= capacity) {
+        return 0;
+    }
+    memcpy(temp_path, output_path, length);
+    memcpy(temp_path + length, ".part", 6U);
+    return 1;
+}
+
+int leonos_http_download(const char *url, const char *output_path,
+                         uint32_t timeout_ms,
+                         leonos_http_download_progress_fn progress,
+                         void *context,
+                         struct leonos_http_response *response)
+{
+    char current_url[LEONOS_HTTP_URL_LEN];
+    char next_url[LEONOS_HTTP_URL_LEN];
+    char temp_path[LEONOS_FS_PATH_LEN];
+    uint32_t redirects = 0;
+    if (!url || !output_path || !response ||
+        !http_download_temp_path(output_path, temp_path, sizeof(temp_path))) {
+        return -1;
+    }
+    *response = (struct leonos_http_response){0};
+    http_copy_text(current_url, sizeof(current_url), url);
+    for (;;) {
+        struct http_download_stream stream = {0};
+        stream.response = response;
+        stream.progress = progress;
+        stream.progress_context = context;
+        stream.fd = open(temp_path, LEONOS_O_WRONLY | LEONOS_O_CREAT |
+                         LEONOS_O_TRUNC, 0);
+        if (stream.fd < 0) {
+            response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+            return -1;
+        }
+        response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+        response->http_status = 0;
+        response->flags &= LEONOS_HTTP_FLAG_REDIRECTED;
+        response->body_len = 0;
+        response->headers_len = 0;
+        response->content_length = 0;
+        response->content_type[0] = 0;
+        (void)http_download_fetch_once(current_url,
+                                       timeout_ms ? timeout_ms
+                                                  : LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
+                                       &stream);
+        close(stream.fd);
+        http_copy_text(response->final_url, sizeof(response->final_url),
+                       current_url);
+        if (stream.redirect) {
+            unlink(temp_path);
+            if (redirects >= LEONOS_HTTP_DEFAULT_REDIRECTS ||
+                leonos_http_resolve_url(current_url, stream.location,
+                                        next_url, sizeof(next_url)) < 0) {
+                response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+                return -1;
+            }
+            http_copy_text(current_url, sizeof(current_url), next_url);
+            ++redirects;
+            response->redirect_count = redirects;
+            response->flags |= LEONOS_HTTP_FLAG_REDIRECTED;
+            continue;
+        }
+        if (!stream.complete || stream.failed || stream.cancelled ||
+            response->net_status != LEONOS_NET_STATUS_OK) {
+            unlink(temp_path);
+            return -1;
+        }
+        response->body_len = stream.received;
+        if (rename(temp_path, output_path) < 0) {
+            unlink(temp_path);
+            response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+            return -1;
+        }
+        if (http_download_report(&stream) < 0) {
+            return -1;
+        }
+        return 0;
+    }
+}
+
 static void libc_copy_fixed(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -2720,7 +3177,7 @@ int leonos_auth_login(const char *username, const char *password,
 }
 
 int leonos_auth_elevate_admin(const char *username, const char *password,
-                              struct leonos_user_info *user)
+                               struct leonos_user_info *user)
 {
     struct leonos_auth_login login;
     login = (struct leonos_auth_login){0};
@@ -2732,6 +3189,15 @@ int leonos_auth_elevate_admin(const char *username, const char *password,
     }
     libc_clear_secret(login.password, sizeof(login.password));
     return ret;
+}
+
+int leonos_auth_delegate_elevation(uint32_t child_pid)
+{
+    struct leonos_auth_delegate_elevation delegation = {
+        .child_pid = child_pid,
+        .reserved = 0,
+    };
+    return ioctl(3, LEONOS_AUTH_IOCTL_DELEGATE_ELEVATION, &delegation);
 }
 
 int leonos_auth_logout(void)

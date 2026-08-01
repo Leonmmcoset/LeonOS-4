@@ -1,4 +1,5 @@
 #include <leonos/fs.h>
+#include <leonos/gui.h>
 #include <leonos/net.h>
 #include <leonos/system.h>
 #include <leonos/syscall.h>
@@ -20,6 +21,8 @@
 struct leonos_tls_io {
     int socket;
     uint32_t timeout_ms;
+    leonos_tls_stream_callback activity;
+    void *activity_context;
 };
 
 static mbedtls_x509_crt leonos_tls_roots;
@@ -203,19 +206,39 @@ static int leonos_tls_send(void *context, const unsigned char *buffer,
 }
 
 static int leonos_tls_recv(void *context, unsigned char *buffer,
-                           size_t length)
+                            size_t length)
 {
     struct leonos_tls_io *io = (struct leonos_tls_io *)context;
     uint32_t status = LEONOS_NET_STATUS_TCP_FAILED;
-    long received = leonos_socket_recv(io->socket, buffer, (uint32_t)length,
-                                       io->timeout_ms, &status);
-    if (received == 0 && status == LEONOS_NET_STATUS_OK) {
-        return 0;
+    unsigned long started = leonos_uptime_ms();
+    for (;;) {
+        uint32_t wait_ms = io->timeout_ms;
+        long received;
+        if (io->activity) {
+            unsigned long elapsed = leonos_uptime_ms() - started;
+            if (elapsed >= io->timeout_ms ||
+                io->activity(0, 0, io->activity_context) < 0) {
+                return MBEDTLS_ERR_NET_RECV_FAILED;
+            }
+            wait_ms = io->timeout_ms - (uint32_t)elapsed;
+            if (wait_ms > 200U) {
+                wait_ms = 200U;
+            }
+        }
+        received = leonos_socket_recv(io->socket, buffer, (uint32_t)length,
+                                      wait_ms, &status);
+        if (received == 0 && status == LEONOS_NET_STATUS_TCP_TIMEOUT &&
+            io->activity) {
+            continue;
+        }
+        if (received == 0 && status == LEONOS_NET_STATUS_OK) {
+            return 0;
+        }
+        if (received < 0 || status != LEONOS_NET_STATUS_OK) {
+            return MBEDTLS_ERR_NET_RECV_FAILED;
+        }
+        return (int)received;
     }
-    if (received < 0 || status != LEONOS_NET_STATUS_OK) {
-        return MBEDTLS_ERR_NET_RECV_FAILED;
-    }
-    return (int)received;
 }
 
 static int leonos_tls_write_all(mbedtls_ssl_context *ssl,
@@ -260,6 +283,8 @@ int leonos_tls_http_exchange(int socket, const char *hostname,
     }
     io.socket = socket;
     io.timeout_ms = timeout_ms;
+    io.activity = 0;
+    io.activity_context = 0;
     mbedtls_ssl_init(&ssl);
     mbedtls_ssl_config_init(&config);
     mbedtls_ctr_drbg_init(&drbg);
@@ -307,6 +332,82 @@ int leonos_tls_http_exchange(int socket, const char *hostname,
     response[received] = 0;
     *response_len = received;
     ret = 0;
+
+cleanup:
+    mbedtls_ssl_close_notify(&ssl);
+    mbedtls_ssl_free(&ssl);
+    mbedtls_ssl_config_free(&config);
+    mbedtls_ctr_drbg_free(&drbg);
+    mbedtls_entropy_free(&entropy);
+    return ret;
+}
+
+int leonos_tls_http_stream(int socket, const char *hostname,
+                           uint32_t timeout_ms,
+                           const void *request_headers,
+                           uint32_t request_headers_len,
+                           const void *request_body,
+                           uint32_t request_body_len,
+                           leonos_tls_stream_callback callback,
+                           void *context)
+{
+    struct leonos_time_info time_info;
+    struct leonos_tls_io io;
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config config;
+    mbedtls_ctr_drbg_context drbg;
+    mbedtls_entropy_context entropy;
+    unsigned char buffer[4096];
+    int ret = -1;
+    if (!hostname || !hostname[0] || !request_headers || !request_headers_len ||
+        !callback || leonos_time_info(&time_info) < 0 || !time_info.valid ||
+        leonos_tls_load_roots() < 0) {
+        return -1;
+    }
+    io.socket = socket;
+    io.timeout_ms = timeout_ms;
+    io.activity = callback;
+    io.activity_context = context;
+    mbedtls_ssl_init(&ssl);
+    mbedtls_ssl_config_init(&config);
+    mbedtls_ctr_drbg_init(&drbg);
+    mbedtls_entropy_init(&entropy);
+    if (mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
+                              (const unsigned char *)"LeonOS TLS", 10) != 0 ||
+        mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_CLIENT,
+                                    MBEDTLS_SSL_TRANSPORT_STREAM,
+                                    MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
+        goto cleanup;
+    }
+    mbedtls_ssl_conf_min_version(&config, MBEDTLS_SSL_MAJOR_VERSION_3,
+                                 MBEDTLS_SSL_MINOR_VERSION_3);
+    mbedtls_ssl_conf_max_version(&config, MBEDTLS_SSL_MAJOR_VERSION_3,
+                                 MBEDTLS_SSL_MINOR_VERSION_3);
+    mbedtls_ssl_conf_authmode(&config, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_ca_chain(&config, &leonos_tls_roots, 0);
+    mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &drbg);
+    if (mbedtls_ssl_setup(&ssl, &config) != 0 ||
+        mbedtls_ssl_set_hostname(&ssl, hostname) != 0) {
+        goto cleanup;
+    }
+    mbedtls_ssl_set_bio(&ssl, &io, leonos_tls_send, leonos_tls_recv, 0);
+    if (mbedtls_ssl_handshake(&ssl) != 0 ||
+        mbedtls_ssl_get_verify_result(&ssl) != 0 ||
+        leonos_tls_write_all(&ssl, request_headers, request_headers_len) < 0 ||
+        (request_body_len &&
+         leonos_tls_write_all(&ssl, request_body, request_body_len) < 0)) {
+        goto cleanup;
+    }
+    for (;;) {
+        int got = mbedtls_ssl_read(&ssl, buffer, sizeof(buffer));
+        if (got == 0 || got == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+            ret = 0;
+            break;
+        }
+        if (got < 0 || callback(buffer, (uint32_t)got, context) < 0) {
+            break;
+        }
+    }
 
 cleanup:
     mbedtls_ssl_close_notify(&ssl);

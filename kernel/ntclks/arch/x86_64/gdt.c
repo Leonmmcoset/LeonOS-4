@@ -73,5 +73,6 @@ void arch_userland_init(void *kernel_stack_top)
     x86_64_load_segments();
     x86_64_ltr(0x28);
     paging_init_user_identity();
+    arch_fpu_init();
     (void)kernel_stack_top;
 }

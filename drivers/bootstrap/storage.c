@@ -49,7 +49,9 @@
 #define STORAGE_SCRATCH_SECTORS 8u
 #define STORAGE_FAT_CACHE_SECTORS 8u
 #define STORAGE_READAHEAD_SECTORS 64u
-#define FAT32_MAX_FILE_CLUSTERS 16384u
+/* 512-byte FAT32 clusters are used on the default ESP, so 32 MiB files need
+ * up to 65536 clusters. Keep this aligned with LEONOS_TAR_MAX_FILE_SIZE. */
+#define FAT32_MAX_FILE_CLUSTERS 65536u
 #define STORAGE_MAX_DRIVES 2u
 #define STORAGE_MAX_INSTALL_DISKS LEONOS_INSTALL_MAX_DISKS
 #define INSTALL_ESP_FIRST_LBA 2048ULL
@@ -2830,10 +2832,27 @@ int storage_write_node(const char *path, uint64_t offset,
                 return -5;
             }
         }
-        for (uint32_t i = 0; i < clusters_needed; ++i) {
-            uint32_t next = (i + 1u < clusters_needed) ? storage_old_chain[i + 1u] : FAT32_EOC;
-            if (fat32_write_fat_entry(storage_old_chain[i], next) < 0) {
+        if (offset == node.size && old_count && clusters_needed > old_count) {
+            if (fat32_write_fat_entry(storage_old_chain[old_count - 1u],
+                                      storage_old_chain[old_count]) < 0) {
                 return -5;
+            }
+            for (uint32_t i = old_count; i < clusters_needed; ++i) {
+                uint32_t next = i + 1u < clusters_needed
+                                    ? storage_old_chain[i + 1u]
+                                    : FAT32_EOC;
+                if (fat32_write_fat_entry(storage_old_chain[i], next) < 0) {
+                    return -5;
+                }
+            }
+        } else {
+            for (uint32_t i = 0; i < clusters_needed; ++i) {
+                uint32_t next = i + 1u < clusters_needed
+                                    ? storage_old_chain[i + 1u]
+                                    : FAT32_EOC;
+                if (fat32_write_fat_entry(storage_old_chain[i], next) < 0) {
+                    return -5;
+                }
             }
         }
 

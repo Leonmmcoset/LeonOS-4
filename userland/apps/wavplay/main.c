@@ -3,8 +3,8 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 
-#define WAVPLAY_BUFFER_BYTES LEONOS_AUDIO_MAX_WRITE
-#define WAVPLAY_TONE_FRAMES 4096U
+#define WAVPLAY_BUFFER_BYTES 4096U
+#define WAVPLAY_TONE_FRAMES 1024U
 
 static int16_t tone_samples[WAVPLAY_TONE_FRAMES * 2U];
 
@@ -198,10 +198,10 @@ static int play_test_melody(void)
         .flags = 0,
     };
     if (leonos_audio_configure(&format) < 0) {
-        puts("wavplay: AC97 audio device is unavailable");
+        puts("wavplay: PCM audio device is unavailable");
         return 1;
     }
-    puts("wavplay: playing AC97 test melody");
+    puts("wavplay: playing test melody");
     if (play_square_note(183U, 12000U) < 0 ||
         play_square_note(145U, 12000U) < 0 ||
         play_square_note(122U, 12000U) < 0 ||

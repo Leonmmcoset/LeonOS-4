@@ -2075,13 +2075,17 @@ static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
             osmlayer_append_text(detail, &pos, sizeof(detail), "-bit PCM");
         } else if (raw->flags & OSMLAYER_DEVICE_FLAG_PRESENT) {
             osmlayer_copy_text(detail, sizeof(detail),
-                               "Intel ICH AC'97 detected but driver not active");
+                                "Audio device detected but driver not active");
         } else {
             osmlayer_copy_text(detail, sizeof(detail),
-                               "No Intel ICH AC'97 audio device detected");
+                                "No supported audio device detected");
         }
         osmlayer_catalog_add(query, OSMLAYER_DEVICE_CLASS_AUDIO, raw->flags,
-                             "Intel ICH AC'97",
+                              raw->value0 == 0x12741371ULL
+                                  ? "Ensoniq AudioPCI ES1371"
+                                  : raw->value0 == 0x80862415ULL
+                                        ? "Intel ICH AC'97"
+                                        : "Audio Device",
                              osmlayer_active(raw->flags) ? "Running" : "Unavailable",
                              detail, raw->value0, raw->value1);
         break;

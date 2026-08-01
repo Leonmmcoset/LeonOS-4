@@ -17,6 +17,14 @@ verification for the shared HTTP client. The system image includes
 `0:/system/certs/cacert.pem`, the curl CA Extract from
 `https://curl.se/ca/cacert.pem`, to establish public Web PKI trust.
 
+## minimp3
+
+- Path: `third_party/minimp3/minimp3.h`
+- Upstream: `https://github.com/lieff/minimp3`
+- Pinned commit: `ea99364f61c14656440e8d77e9c233ccf3124633`
+- License: CC0-1.0; upstream declares the source public domain dedication and
+  warranty disclaimer in the vendored header.
+
 ## GNU GRUB
 
 - Delivered component: UEFI and Multiboot2 boot support in normal and installer

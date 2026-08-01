@@ -738,9 +738,10 @@ static int browser_should_download_http_url(const char *url)
            ends_with_ignore_case(url, ".jpg") ||
            ends_with_ignore_case(url, ".jpeg") ||
            ends_with_ignore_case(url, ".gif") ||
-           ends_with_ignore_case(url, ".zip") ||
-           ends_with_ignore_case(url, ".bin") ||
-           ends_with_ignore_case(url, ".elf") ||
+            ends_with_ignore_case(url, ".zip") ||
+            ends_with_ignore_case(url, ".bin") ||
+            ends_with_ignore_case(url, ".api") ||
+            ends_with_ignore_case(url, ".elf") ||
            ends_with_ignore_case(url, ".iso") ||
            ends_with_ignore_case(url, ".vmdk") ||
            ends_with_ignore_case(url, ".pdf") ||
@@ -764,6 +765,21 @@ void browser_start_download(const char *url)
     }
 }
 
+static void browser_start_api_install(const char *url)
+{
+    char target[LEONOS_HTTP_URL_LEN];
+    char *argv[3];
+    copy_text(target, sizeof(target), url);
+    argv[0] = "0:/system/apps/apiapp/apiapp.elf";
+    argv[1] = target;
+    argv[2] = 0;
+    if (leonos_launch_argv(argv) < 0) {
+        set_status(T("Could not start API Installer", "无法启动 API 安装程序"));
+    } else {
+        set_status(T("Application download started", "应用下载已开始"));
+    }
+}
+
 void navigate_to(const char *input, uint8_t add_to_history)
 {
     char url[BROWSER_URL_CAP];
@@ -773,7 +789,11 @@ void navigate_to(const char *input, uint8_t add_to_history)
     } else if (starts_with_ignore_case(url, "http://") ||
                starts_with_ignore_case(url, "https://")) {
         if (browser_should_download_http_url(url)) {
-            browser_start_download(url);
+            if (ends_with_ignore_case(url, ".api")) {
+                browser_start_api_install(url);
+            } else {
+                browser_start_download(url);
+            }
             return;
         } else {
             load_http_url(url);

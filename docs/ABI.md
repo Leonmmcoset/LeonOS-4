@@ -277,9 +277,10 @@ management are still out of scope for this ABI version.
 autoloaded audio driver modules. `LEONOS_IOCTL_AUDIO_CONFIGURE` selects the
 stream format, `LEONOS_IOCTL_AUDIO_WRITE` plays at most 64 KiB per call, and
 `LEONOS_IOCTL_AUDIO_GET_STATE` returns device and stream state. The initial
-`ac97.drv` target is QEMU's Intel ICH AC'97 controller and accepts only
-16-bit, stereo PCM at 8000–48000 Hz. `wavplay.elf` opens matching PCM WAV files
-and is the default `.wav` handler; without a path it plays a short test melody.
+`ac97.drv` supports QEMU's Intel ICH AC'97 controller, while `es1371.drv`
+supports VMware's Ensoniq AudioPCI ES1371 controller. Both accept 16-bit,
+stereo PCM at 8000–48000 Hz. `wavplay.elf` opens matching PCM WAV files and is
+the default `.wav` handler; without a path it plays a short test melody.
 
 ## Application Services
 
@@ -297,7 +298,7 @@ Current companion applications:
   the current user's `0:/users/<name>/downloads` directory.
 - `imageview.elf`: opens uncompressed 24/32-bit BMP files, supports Fit/1x/2x
   zoom, and can move to previous/next BMP siblings in the same directory.
-- `wavplay.elf`: plays 16-bit stereo PCM WAV files through the AC'97 audio
+- `wavplay.elf`: plays 16-bit stereo PCM WAV files through the active audio
   driver, or a built-in test melody when started without a file.
 - `oshlp.elf`: opens LeonOS `.hlp` help containers from `0:/docs` or any path
   passed by another app. The help viewer uses the current system language as its
