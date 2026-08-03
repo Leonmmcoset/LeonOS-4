@@ -43,6 +43,12 @@ def validate_install_path(path):
     if len(path.encode('utf-8')) >= 256:
         raise ValueError(f"install path is too long: {path}")
 
+def validate_input_method_id(value):
+    if not value or len(value.encode('utf-8')) >= 32:
+        raise ValueError("input method id is empty or too long")
+    if not all(ch.isascii() and (ch.isalnum() or ch in '_-') for ch in value):
+        raise ValueError("input method id must use ASCII letters, digits, _ or -")
+
 def octal_str(value, length):
     fmt = f"%0{length - 1}o"
     s = fmt % value
@@ -89,7 +95,10 @@ def pad_size(size):
 
 def build_api_file(name, version, main_exe_arcname, default_path,
                    requires_admin, desktop_shortcut, icon_arcname,
-                   files_list, output_path):
+                   files_list, output_path, input_method_id="",
+                   input_method_abbreviation="", input_method_startup="manual",
+                   input_method_settings="", input_method_settings_app="",
+                   launch_after_install=False):
     """files_list: list of (local_path, arcname) tuples"""
     validate_ini_value("name", name, 64)
     validate_ini_value("version", version, 16)
@@ -115,6 +124,24 @@ def build_api_file(name, version, main_exe_arcname, default_path,
         raise ValueError("main_exe must point to a packaged file")
     if icon_arcname and icon_arcname not in seen:
         raise ValueError("icon must point to a packaged file")
+    if input_method_id:
+        validate_input_method_id(input_method_id)
+        validate_ini_value("input method abbreviation", input_method_abbreviation, 8)
+        if input_method_startup not in ("manual", "login", "on-demand"):
+            raise ValueError("input method startup must be manual, login, or on-demand")
+        if input_method_settings:
+            validate_member_name(input_method_settings)
+            if input_method_settings not in seen:
+                raise ValueError("input method settings schema must be a packaged file")
+        if input_method_settings_app:
+            validate_member_name(input_method_settings_app)
+            if not input_method_settings_app.endswith('.elf'):
+                raise ValueError("input method settings app must be an .elf file")
+            if input_method_settings_app not in seen:
+                raise ValueError("input method settings app must be a packaged file")
+    elif (input_method_abbreviation or input_method_settings or input_method_settings_app or
+          launch_after_install):
+        raise ValueError("input method options require --input-method-id")
 
     ini_content = f"""[package]
 format={API_FORMAT}
@@ -128,6 +155,17 @@ default_path={default_path}
 requires_admin={1 if requires_admin else 0}
 desktop_shortcut={1 if desktop_shortcut else 0}
 icon={icon_arcname}
+"""
+    if input_method_id:
+        ini_content += f"""
+[input_method]
+type=input-method
+id={input_method_id}
+abbreviation={input_method_abbreviation}
+startup_mode={input_method_startup}
+launch_after_install={1 if launch_after_install else 0}
+settings_schema={input_method_settings}
+settings_app={input_method_settings_app}
 """
     ini_data = ini_content.encode('utf-8')
     output_abs = os.path.abspath(output_path)
@@ -174,6 +212,13 @@ def main():
     parser.add_argument("--icon", default="")
     parser.add_argument("--requires-admin", action="store_true")
     parser.add_argument("--desktop-shortcut", action="store_true")
+    parser.add_argument("--input-method-id", default="")
+    parser.add_argument("--input-method-abbreviation", default="")
+    parser.add_argument("--input-method-startup", default="manual",
+                        choices=("manual", "login", "on-demand"))
+    parser.add_argument("--input-method-settings", default="")
+    parser.add_argument("--input-method-settings-app", default="")
+    parser.add_argument("--launch-after-install", action="store_true")
     parser.add_argument("--file", dest="files", action="append", nargs=2,
                         metavar=("LOCAL", "ARCHIVE"), default=[])
     parser.add_argument("--output")
@@ -213,6 +258,20 @@ def main():
         requires_admin = args.requires_admin
         desktop_shortcut = args.desktop_shortcut
         icon = args.icon
+        input_method_id = args.input_method_id
+        input_method_abbreviation = args.input_method_abbreviation
+        input_method_startup = args.input_method_startup
+        input_method_settings = args.input_method_settings
+        input_method_settings_app = args.input_method_settings_app
+        launch_after_install = args.launch_after_install
+
+    if args.legacy:
+        input_method_id = ""
+        input_method_abbreviation = ""
+        input_method_startup = "manual"
+        input_method_settings = ""
+        input_method_settings_app = ""
+        launch_after_install = False
 
     build_api_file(
         name=name,
@@ -224,6 +283,12 @@ def main():
         icon_arcname=icon,
         files_list=files,
         output_path=output,
+        input_method_id=input_method_id,
+        input_method_abbreviation=input_method_abbreviation,
+        input_method_startup=input_method_startup,
+        input_method_settings=input_method_settings,
+        input_method_settings_app=input_method_settings_app,
+        launch_after_install=launch_after_install,
     )
 
 

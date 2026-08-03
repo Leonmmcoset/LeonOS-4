@@ -71,12 +71,20 @@ void rerender_page(void)
 void set_page_source(const char *title, const char *source,
                             uint8_t is_html, const char *status)
 {
+    char window_title[47];
+    uint32_t title_pos = 0;
     browser_form_clear_focus();
     copy_text(page_title, sizeof(page_title), title && title[0] ? title : T("Untitled", "无标题"));
     copy_text(page_source, sizeof(page_source), source ? source : "");
     page_is_html = is_html;
     source_truncated = 0;
     rerender_page();
+    if (!browser_embedded && window_id > 0) {
+        window_title[0] = 0;
+        append_text(window_title, &title_pos, sizeof(window_title), "LeonOS Browser - ");
+        append_text(window_title, &title_pos, sizeof(window_title), page_title);
+        (void)leonos_gui_set_window_title((uint32_t)window_id, window_title);
+    }
     set_status(status);
 }
 

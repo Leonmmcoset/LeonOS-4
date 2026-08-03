@@ -2,6 +2,7 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/inputm.h>
 #include <leonos/license.h>
 #include <leonos/net.h>
 #include <leonos/psf_font.h>
@@ -652,6 +653,18 @@ static void handle_key_up(uint8_t keycode)
     (void)leonos_ui_edit_state_handle_key(current_edit_state(), keycode, 0);
 }
 
+static void oobe_update_inputm_context(uint32_t window_id)
+{
+    struct leonos_inputm_context context = {
+        .window_id = window_id,
+        .flags = LEONOS_INPUTM_CONTEXT_FOCUSED,
+    };
+    if (current_page == OOBE_PAGE_ADMIN && active_admin_field == 1U) {
+        context.flags |= LEONOS_INPUTM_CONTEXT_SECURE;
+    }
+    (void)leonos_inputm_set_context(&context);
+}
+
 int main(void)
 {
     struct leonos_ui_surface ui;
@@ -691,6 +704,7 @@ int main(void)
         draw_oobe(&ui);
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                                   OOBE_MAX_W, pixels);
+        oobe_update_inputm_context((uint32_t)window_id);
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_wait_app_event(&event, 20U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {

@@ -32,6 +32,10 @@
 #define AHCI_CMDH_PRDTL 1u
 #define AHCI_MAX_SECTORS 64u
 #define STORAGE_WRITE_MAX_SECTORS 8u
+/* AHCI completion is polled synchronously. Keep enough headroom for a busy
+ * virtual disk: a too-short limit abandons a live command and turns the next
+ * application image read into a spurious -EIO. Filesystem syscalls already
+ * bound each transfer, which is the responsiveness control for this path. */
 #define AHCI_WAIT_SPINS 40000000u
 
 #define SECTOR_SIZE 512u
@@ -307,6 +311,34 @@ struct storage_sector_cache {
 static struct storage_sector_cache storage_fat_cache;
 static struct storage_sector_cache storage_read_cache;
 
+/* Keep the last file chain tail available for repeated append writes. The
+ * scheduler limits each syscall to a small payload, so without this hint a
+ * large file would be walked from its first cluster on every syscall. */
+struct storage_write_chain_cache {
+    struct storage_volume *volume;
+    uint32_t first_cluster;
+    uint32_t size;
+    uint32_t count;
+    uint32_t tail;
+    char path[LEONOS_FS_PATH_LEN];
+    uint8_t valid;
+};
+
+static struct storage_write_chain_cache storage_write_chain_cache;
+
+/* Directory reads are issued one entry at a time. Cache the current cluster
+ * and decoded entry ordinal so sequential readdir never restarts at root. */
+struct storage_dir_iter_cache {
+    struct storage_volume *volume;
+    uint32_t first_cluster;
+    uint32_t cluster;
+    uint32_t entry_offset;
+    uint64_t next_index;
+    uint8_t valid;
+};
+
+static struct storage_dir_iter_cache storage_dir_iter_cache;
+
 static int fat32_mount(void);
 
 struct fat32_dir_ref {
@@ -332,6 +364,15 @@ static void storage_cache_invalidate(void)
 {
     storage_fat_cache.valid = 0;
     storage_read_cache.valid = 0;
+    storage_dir_iter_cache.valid = 0;
+    storage_write_chain_cache.valid = 0;
+}
+
+static void storage_sector_cache_invalidate(void)
+{
+    storage_fat_cache.valid = 0;
+    storage_read_cache.valid = 0;
+    storage_dir_iter_cache.valid = 0;
 }
 
 static void storage_memcpy(void *dst, const void *src, size_t len)
@@ -811,7 +852,7 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
 static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void *buffer)
 {
     const uint8_t *src = (const uint8_t *)buffer;
-    storage_cache_invalidate();
+    storage_sector_cache_invalidate();
     if (g_storage.kind == STORAGE_VOLUME_RAM) {
         uint64_t offset = lba * SECTOR_SIZE;
         uint64_t bytes = (uint64_t)sector_count * SECTOR_SIZE;
@@ -1031,6 +1072,8 @@ static int fat32_write_fat_entry(uint32_t cluster, uint32_t value)
     uint32_t sector_offset = (cluster * 4u) / g_storage.bytes_per_sector;
     uint32_t offset = fat_offset_for_cluster(cluster);
     uint32_t masked = value & 0x0fffffffu;
+    uint64_t first_fat_lba = g_storage.esp_start_lba + g_storage.fat_start_sector +
+                             sector_offset;
     for (uint32_t fat = 0; fat < g_storage.fat_count; ++fat) {
         uint64_t lba = g_storage.esp_start_lba + g_storage.fat_start_sector +
                        (uint64_t)fat * g_storage.fat_sector_count + sector_offset;
@@ -1043,6 +1086,14 @@ static int fat32_write_fat_entry(uint32_t cluster, uint32_t value)
             return -5;
         }
     }
+    /* storage_write_sectors() invalidates the read cache. Re-seed the FAT
+     * cache with the just-written sector so freeing/appending a long chain
+     * does not issue a disk read for every adjacent FAT entry. */
+    storage_memcpy(storage_fat_cache_data, storage_scratch, SECTOR_SIZE);
+    storage_fat_cache.volume = g_active_volume;
+    storage_fat_cache.first_lba = first_fat_lba;
+    storage_fat_cache.sector_count = 1;
+    storage_fat_cache.valid = 1;
     return 0;
 }
 
@@ -1248,12 +1299,16 @@ static int fat32_collect_chain(uint32_t first_cluster, uint32_t chain[FAT32_MAX_
 static int fat32_free_chain(uint32_t first_cluster)
 {
     uint32_t cluster = first_cluster;
+    uint32_t count = 0;
     if (first_cluster >= 2 &&
         (g_storage.next_free_cluster < 2 || first_cluster < g_storage.next_free_cluster)) {
         g_storage.next_free_cluster = first_cluster;
     }
     while (cluster >= 2 && cluster < FAT32_EOC) {
         uint32_t next = 0;
+        if (count++ >= FAT32_MAX_FILE_CLUSTERS) {
+            return -28;
+        }
         if (fat32_read_fat_entry(cluster, &next) < 0) {
             return -5;
         }
@@ -2074,13 +2129,29 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
     uint64_t emitted = 0;
     uint16_t lfn_parts[20][13];
     uint32_t lfn_count = 0;
+    uint32_t first_offset = 0;
+    if (!entry || dir_cluster < 2) {
+        return -22;
+    }
+    if (storage_dir_iter_cache.valid &&
+        storage_dir_iter_cache.volume == g_active_volume &&
+        storage_dir_iter_cache.first_cluster == dir_cluster &&
+        storage_dir_iter_cache.next_index == index) {
+        cluster = storage_dir_iter_cache.cluster;
+        first_offset = storage_dir_iter_cache.entry_offset;
+        emitted = index;
+    } else {
+        storage_dir_iter_cache.valid = 0;
+    }
     for (;;) {
         if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
             return -5;
         }
-        for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
+        for (uint32_t off = first_offset; off < g_storage.cluster_bytes;
+             off += sizeof(struct fat32_dirent)) {
             struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
             if (de->name[0] == 0x00) {
+                storage_dir_iter_cache.valid = 0;
                 return -2;
             }
             if (de->name[0] == 0xe5) {
@@ -2147,6 +2218,23 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
             }
             entry->type = (de->attr & FAT32_ATTR_DIRECTORY) ? LEONOS_FS_TYPE_DIR : LEONOS_FS_TYPE_FILE;
             storage_copy_text(entry->name, sizeof(entry->name), name);
+            storage_dir_iter_cache.volume = g_active_volume;
+            storage_dir_iter_cache.first_cluster = dir_cluster;
+            storage_dir_iter_cache.cluster = cluster;
+            storage_dir_iter_cache.entry_offset = off + sizeof(struct fat32_dirent);
+            storage_dir_iter_cache.next_index = index + 1u;
+            if (storage_dir_iter_cache.entry_offset >= g_storage.cluster_bytes) {
+                uint32_t next = 0;
+                if (fat32_read_fat_entry(cluster, &next) < 0 || next >= FAT32_EOC) {
+                    storage_dir_iter_cache.valid = 0;
+                } else {
+                    storage_dir_iter_cache.cluster = next;
+                    storage_dir_iter_cache.entry_offset = 0;
+                    storage_dir_iter_cache.valid = 1;
+                }
+            } else {
+                storage_dir_iter_cache.valid = 1;
+            }
             return 0;
         }
         uint32_t next = 0;
@@ -2157,6 +2245,7 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
             return -2;
         }
         cluster = next;
+        first_offset = 0;
     }
 }
 
@@ -2634,13 +2723,19 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     while (done < len) {
         uint64_t cluster_file_offset = offset + done - cluster_off;
         uint64_t bytes_from_cluster = node->size - cluster_file_offset;
-        uint32_t max_clusters = (uint32_t)((bytes_from_cluster +
-                                             g_storage.cluster_bytes - 1u) /
-                                            g_storage.cluster_bytes);
+        /* Include the leading offset because cache fills are cluster-aligned. */
+        uint64_t bytes_requested = len - done + cluster_off;
+        uint32_t max_clusters;
         uint32_t cache_offset;
         uint32_t cache_clusters;
         uint32_t next;
         uint32_t take;
+        if (bytes_from_cluster > bytes_requested) {
+            bytes_from_cluster = bytes_requested;
+        }
+        max_clusters = (uint32_t)((bytes_from_cluster +
+                                   g_storage.cluster_bytes - 1u) /
+                                  g_storage.cluster_bytes);
         if (max_clusters > STORAGE_READAHEAD_SECTORS / g_storage.sectors_per_cluster) {
             max_clusters = STORAGE_READAHEAD_SECTORS / g_storage.sectors_per_cluster;
         }
@@ -2738,6 +2833,12 @@ int storage_read_file(const char *path, const void **out_data, size_t *out_len)
     if (node.type != LEONOS_FS_TYPE_FILE) {
         return -21;
     }
+    /* storage_read_node() and the page allocator use 32-bit lengths. Do not
+     * silently truncate a larger FAT32 file into a short executable/image. */
+    if (node.size > 0xffffffffULL ||
+        (node.size + 4095ULL) / 4096ULL > 0xffffffffULL) {
+        return -28;
+    }
     pages = (node.size + 4095u) / 4096u;
     phys = pages ? mm_alloc_pages((uint32_t)pages) : mm_alloc_page();
     if (!phys) {
@@ -2783,21 +2884,14 @@ int storage_write_node(const char *path, uint64_t offset,
     if (node.type != LEONOS_FS_TYPE_FILE) {
         return -21;
     }
+    if (node.size > 0xffffffffULL) {
+        return -28;
+    }
     end64 = offset + len;
     if (end64 > 0xffffffffu || end64 < offset) {
         return -28;
     }
     total_len = (uint32_t)end64;
-    if (offset == 0) {
-        ret = storage_write_file(path, buf, total_len);
-        if (ret < 0) {
-            return ret;
-        }
-        if (out_written) {
-            *out_written = len;
-        }
-        return 0;
-    }
     if (len == 0) {
         return 0;
     }
@@ -2813,12 +2907,31 @@ int storage_write_node(const char *path, uint64_t offset,
         if (clusters_needed > FAT32_MAX_FILE_CLUSTERS) {
             return -28;
         }
+        uint8_t cached_append =
+            offset == node.size && node.first_cluster >= 2 &&
+            storage_write_chain_cache.valid &&
+            storage_write_chain_cache.volume == g_active_volume &&
+            storage_write_chain_cache.first_cluster == node.first_cluster &&
+            storage_write_chain_cache.size == (uint32_t)node.size &&
+            storage_text_eq(storage_write_chain_cache.path, path) &&
+            storage_write_chain_cache.count > 0 &&
+            clusters_needed >= storage_write_chain_cache.count;
         if (node.first_cluster >= 2) {
-            ret = fat32_collect_chain(node.first_cluster, storage_old_chain, &old_count);
-            if (ret < 0) {
-                return ret;
+            if (cached_append) {
+                old_count = storage_write_chain_cache.count;
+                /* Only the last cluster is needed when the append stays
+                 * inside the existing chain; restore that cached tail. */
+                storage_old_chain[old_count - 1u] = storage_write_chain_cache.tail;
+            } else {
+                ret = fat32_collect_chain(node.first_cluster, storage_old_chain, &old_count);
+                if (ret < 0) {
+                    return ret;
+                }
             }
         }
+        /* Any later I/O failure can leave the chain partly changed. Rebuild
+         * the append hint only after the directory entry commits below. */
+        storage_write_chain_cache.valid = 0;
         for (uint32_t i = old_count; i < clusters_needed; ++i) {
             ret = fat32_find_free_cluster(&storage_old_chain[i]);
             if (ret < 0) {
@@ -2832,7 +2945,22 @@ int storage_write_node(const char *path, uint64_t offset,
                 return -5;
             }
         }
-        if (offset == node.size && old_count && clusters_needed > old_count) {
+        if (cached_append) {
+            if (clusters_needed > old_count) {
+                if (fat32_write_fat_entry(storage_old_chain[old_count - 1u],
+                                          storage_old_chain[old_count]) < 0) {
+                    return -5;
+                }
+                for (uint32_t i = old_count; i < clusters_needed; ++i) {
+                    uint32_t next = i + 1u < clusters_needed
+                                        ? storage_old_chain[i + 1u]
+                                        : FAT32_EOC;
+                    if (fat32_write_fat_entry(storage_old_chain[i], next) < 0) {
+                        return -5;
+                    }
+                }
+            }
+        } else if (offset == node.size && old_count && clusters_needed > old_count) {
             if (fat32_write_fat_entry(storage_old_chain[old_count - 1u],
                                       storage_old_chain[old_count]) < 0) {
                 return -5;
@@ -2879,7 +3007,8 @@ int storage_write_node(const char *path, uint64_t offset,
             remaining -= take;
         }
 
-        first_cluster = clusters_needed ? storage_old_chain[0] : 0;
+        first_cluster = clusters_needed ?
+            (cached_append ? node.first_cluster : storage_old_chain[0]) : 0;
         if (storage_parent_path(path, parent, sizeof(parent), name, sizeof(name)) < 0) {
             return -22;
         }
@@ -2900,9 +3029,23 @@ int storage_write_node(const char *path, uint64_t offset,
         if (out_written) {
             *out_written = len;
         }
+        storage_write_chain_cache.volume = g_active_volume;
+        storage_write_chain_cache.first_cluster = first_cluster;
+        storage_write_chain_cache.size = final_len;
+        storage_write_chain_cache.count = clusters_needed;
+        storage_write_chain_cache.tail = clusters_needed ?
+            storage_old_chain[clusters_needed - 1u] : 0;
+        storage_copy_text(storage_write_chain_cache.path,
+                          sizeof(storage_write_chain_cache.path), path);
+        storage_write_chain_cache.valid = 1;
         return 0;
     }
 
+    if (g_storage.cluster_bytes == 0 ||
+        (uint64_t)total_len > (uint64_t)FAT32_MAX_FILE_CLUSTERS *
+                              g_storage.cluster_bytes) {
+        return -28;
+    }
     pages = total_len ? (uint32_t)((total_len + 4095u) / 4096u) : 1u;
     phys = mm_alloc_pages(pages);
     if (!phys) {
@@ -2929,6 +3072,7 @@ int storage_write_node(const char *path, uint64_t offset,
     if (out_written) {
         *out_written = len;
     }
+    storage_write_chain_cache.valid = 0;
     return 0;
 }
 
@@ -2952,6 +3096,7 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
     if (!path || (!buf && len != 0)) {
         return -22;
     }
+    storage_write_chain_cache.valid = 0;
     if (!storage_ready()) {
         return -2;
     }
@@ -3043,7 +3188,10 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
         return ret;
     }
 
-    if (existing.first_cluster >= 2) {
+    /* Empty replacement only needs the chain head. Avoid collecting the
+     * entire old chain before immediately freeing it; on a large file that
+     * otherwise performs two full FAT walks during O_TRUNC. */
+    if (existing.first_cluster >= 2 && len != 0) {
         ret = fat32_collect_chain(existing.first_cluster, storage_old_chain, &old_count);
         if (ret < 0) {
             return ret;
@@ -3086,7 +3234,11 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
         }
     }
 
-    if (old_count > clusters_needed) {
+    if (len == 0 && existing.first_cluster >= 2) {
+        if (fat32_free_chain(existing.first_cluster) < 0) {
+            return -5;
+        }
+    } else if (old_count > clusters_needed) {
         if (fat32_free_chain(storage_old_chain[clusters_needed]) < 0) {
             return -5;
         }
@@ -3220,6 +3372,7 @@ int storage_unlink(const char *path)
     if (!storage_ready()) {
         return -2;
     }
+    storage_write_chain_cache.valid = 0;
     if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0 ||
         storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
         return -22;
@@ -3268,6 +3421,7 @@ int storage_rmdir(const char *path)
     if (!storage_ready()) {
         return -2;
     }
+    storage_write_chain_cache.valid = 0;
     if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0 ||
         storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
         return -22;

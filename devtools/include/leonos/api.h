@@ -2,6 +2,7 @@
 #define LEONOS_API_H
 
 #include <stdint.h>
+#include <leonos/inputm.h>
 
 #define LEONOS_API_PATH_MAX 256U
 #define LEONOS_API_NAME_LEN 64U
@@ -15,6 +16,13 @@ struct leonos_api_info {
     char icon[LEONOS_API_PATH_MAX];
     uint32_t requires_admin;
     uint32_t desktop_shortcut;
+    uint32_t input_method;
+    char input_method_id[LEONOS_INPUTM_ID_LEN];
+    char input_method_abbreviation[LEONOS_INPUTM_ABBREV_LEN];
+    uint32_t input_method_startup_mode;
+    uint32_t input_method_launch_after_install;
+    char input_method_settings[LEONOS_API_PATH_MAX];
+    char input_method_settings_app[LEONOS_API_PATH_MAX];
 };
 
 typedef int (*leonos_api_progress_fn)(uint32_t processed, uint32_t total,

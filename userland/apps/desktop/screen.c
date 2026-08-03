@@ -68,7 +68,7 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
         connected = 1;
         color = 0x0000a000u;
     }
-    x = fb_w() - tray_w;
+    x = fb_w() - (desktop_service_rtc_clock ? TASKBAR_CLOCK_W : 0U) - TASKBAR_NET_W;
     icon_x = x + 10;
     icon_y = tb_y + 11;
     leonos_ui_button(&ui, x + 4, tb_y + 5, TASKBAR_NET_W - 6,
@@ -96,6 +96,23 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
         leonos_ui_rect(&ui, icon_x + 11, icon_y + 2, 2, 8, color);
     }
     leonos_ui_rect(&ui, icon_x + 20, icon_y + 11, 4, 4, color);
+}
+
+static void draw_taskbar_inputm(uint32_t tb_y)
+{
+    const char *label = "EN";
+    uint32_t tray_w = desktop_tray_width();
+    uint32_t x = fb_w() > tray_w ? fb_w() - tray_w : 0;
+    for (uint32_t i = 0; i < desktop_inputm_entry_count; ++i) {
+        if (text_eq(desktop_inputm_entries[i].id, desktop_inputm_state.active_id) &&
+            desktop_inputm_entries[i].abbreviation[0]) {
+            label = desktop_inputm_entries[i].abbreviation;
+            break;
+        }
+    }
+    leonos_ui_button(&ui, x + 4U, tb_y + 5U, TASKBAR_INPUTM_W - 6U,
+                     LEONOS_UI_BUTTON_H, label,
+                     desktop_inputm_menu_open ? LEONOS_UI_BUTTON_PRESSED : 0);
 }
 
 static void wallpaper_draw_pixel(uint32_t x, uint32_t y,
@@ -250,6 +267,76 @@ static void draw_wallpaper(struct rect dirty)
     }
 }
 
+static void draw_custom_cursor(uint32_t x, uint32_t y)
+{
+    const uint32_t black = 0x00000000u;
+    const uint32_t white = 0x00ffffffu;
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_TEXT) {
+        for (uint32_t row = 0; row < FALLBACK_CURSOR_H; ++row) {
+            put_pixel(x + 7, y + row, black);
+        }
+        for (uint32_t col = 4; col < 11; ++col) {
+            put_pixel(x + col, y, black);
+            put_pixel(x + col, y + FALLBACK_CURSOR_H - 1, black);
+        }
+        return;
+    }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_CROSSHAIR) {
+        for (uint32_t i = 0; i < FALLBACK_CURSOR_H; ++i) {
+            put_pixel(x + 7, y + i, black);
+            put_pixel(x + i, y + 7, black);
+        }
+        put_pixel(x + 7, y + 7, white);
+        return;
+    }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_MOVE) {
+        for (uint32_t i = 3; i < 13; ++i) {
+            put_pixel(x + 7, y + i, black);
+            put_pixel(x + i, y + 7, black);
+        }
+        for (uint32_t i = 0; i < 4; ++i) {
+            put_pixel(x + 7 - i, y + 3 + i, black);
+            put_pixel(x + 7 + i, y + 3 + i, black);
+            put_pixel(x + 7 - i, y + 11 - i, black);
+            put_pixel(x + 7 + i, y + 11 - i, black);
+        }
+        return;
+    }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_WAIT) {
+        for (uint32_t row = 2; row < 14; ++row) {
+            for (uint32_t col = 2; col < 14; ++col) {
+                uint32_t dx = col > 7 ? col - 7 : 7 - col;
+                uint32_t dy = row > 7 ? row - 7 : 7 - row;
+                if ((dx == 5 && dy >= 2 && dy <= 4) ||
+                    (dy == 5 && dx >= 2 && dx <= 4) ||
+                    (dx == 4 && dy == 4)) {
+                    put_pixel(x + col, y + row, black);
+                }
+            }
+        }
+        put_pixel(x + 10, y + 3, white);
+        return;
+    }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_HAND) {
+        for (uint32_t row = 2; row < 11; ++row) {
+            put_pixel(x + 7, y + row, black);
+        }
+        for (uint32_t row = 4; row < 10; ++row) {
+            put_pixel(x + 9, y + row, black);
+        }
+        for (uint32_t row = 7; row < 11; ++row) {
+            put_pixel(x + 5, y + row, black);
+        }
+        for (uint32_t col = 5; col < 11; ++col) {
+            put_pixel(x + col, y + 11, black);
+            put_pixel(x + col, y + 13, black);
+        }
+        put_pixel(x + 4, y + 12, black);
+        put_pixel(x + 11, y + 12, black);
+        return;
+    }
+}
+
 void draw_cursor_shape(uint32_t x, uint32_t y)
 {
     if (x + cursor_width > fb_w()) {
@@ -257,6 +344,10 @@ void draw_cursor_shape(uint32_t x, uint32_t y)
     }
     if (y + cursor_height > fb_h()) {
         y = fb_h() > cursor_height ? fb_h() - cursor_height : 0;
+    }
+    if (desktop_cursor_style != LEONOS_GUI_CURSOR_ARROW) {
+        draw_custom_cursor(x, y);
+        return;
     }
     if (cursor_bitmap_loaded) {
         for (uint32_t row = 0; row < cursor_height; ++row) {
@@ -316,14 +407,16 @@ void redraw_region(struct rect dirty)
     draw_snap_preview();
 
     uint32_t tb_y = taskbar_y();
-    if ((uint32_t)(dirty.y + dirty.h) >= tb_y) {
+    if (desktop_taskbar_visible && (uint32_t)(dirty.y + dirty.h) >= tb_y) {
         leonos_ui_taskbar(&ui, tb_y, TASKBAR_H);
         leonos_ui_button(&ui, 6, tb_y + 5, 86, LEONOS_UI_BUTTON_H, leonos_i18n("Start", "开始"),
                          start_menu_open ? LEONOS_UI_BUTTON_PRESSED : 0);
         uint32_t x = 106;
         uint32_t button_w = taskbar_button_width(running_window_count());
         for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
-            if (windows[i].visible && button_w > 0) {
+            if (windows[i].visible &&
+                (windows[i].flags & LEONOS_GUI_WINDOW_HIDE_TASKBAR) == 0 &&
+                button_w > 0) {
                 draw_taskbar_button(i, x, tb_y + 5, button_w);
                 x += button_w;
             }
@@ -334,6 +427,7 @@ void redraw_region(struct rect dirty)
         if (desktop_service_rtc_clock) {
             draw_taskbar_clock(tb_y);
         }
+        draw_taskbar_inputm(tb_y);
     }
 
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
@@ -348,6 +442,7 @@ void redraw_region(struct rect dirty)
     draw_power_confirm();
     draw_desktop_shortcut_input();
     draw_desktop_message();
+    draw_inputm_overlay();
     if (cursor_visible && leonos_mouse_is_visible() > 0) {
         draw_cursor_shape(cursor_x, cursor_y);
     }

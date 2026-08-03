@@ -1,4 +1,5 @@
 #include <leonos/ui.h>
+#include <leonos/inputm.h>
 
 #include "ui_internal.h"
 
@@ -141,6 +142,15 @@ void leonos_ui_edit_state_draw(struct leonos_ui_surface *surface, uint32_t x,
         return;
     }
     leonos_ui_edit_state_sync(state);
+    if (state->focused && !state->readonly && !(flags & LEONOS_UI_EDIT_DISABLED)) {
+        uint32_t context_flags = LEONOS_INPUTM_CONTEXT_FOCUSED;
+        if (flags & LEONOS_UI_EDIT_SECURE) {
+            context_flags |= LEONOS_INPUTM_CONTEXT_SECURE;
+        }
+        (void)leonos_inputm_set_current_context(context_flags,
+                                                (int32_t)x, (int32_t)y,
+                                                w, h);
+    }
     if (state->focused) {
         draw_flags |= LEONOS_UI_EDIT_FOCUSED;
     }
@@ -208,6 +218,40 @@ static int edit_insert_char(struct leonos_ui_edit_state *state, char ch)
     return 1;
 }
 
+static int edit_insert_text(struct leonos_ui_edit_state *state, const char *text)
+{
+    uint32_t text_len = 0;
+    if (!state || !state->buffer || state->readonly || !text) {
+        return 0;
+    }
+    while (text[text_len]) {
+        ++text_len;
+    }
+    if (!text_len) {
+        return 0;
+    }
+    if (edit_has_selection(state)) {
+        uint32_t start;
+        uint32_t end;
+        edit_selection_range(state, &start, &end);
+        edit_delete_range(state, start, end);
+    }
+    if (state->length + text_len >= state->capacity) {
+        return 0;
+    }
+    for (uint32_t i = state->length + text_len + 1U;
+         i > state->cursor + text_len; --i) {
+        state->buffer[i - 1U] = state->buffer[i - text_len - 1U];
+    }
+    for (uint32_t i = 0; i < text_len; ++i) {
+        state->buffer[state->cursor + i] = text[i];
+    }
+    state->cursor += text_len;
+    state->length += text_len;
+    edit_clear_selection(state);
+    return 1;
+}
+
 int leonos_ui_edit_state_handle_key(struct leonos_ui_edit_state *state,
                                     uint8_t keycode, uint8_t pressed)
 {
@@ -223,6 +267,11 @@ int leonos_ui_edit_state_handle_key(struct leonos_ui_edit_state *state,
         return 0;
     }
     leonos_ui_edit_state_sync(state);
+    if (keycode == 0) {
+        char text[LEONOS_INPUTM_TEXT_LEN];
+        return leonos_inputm_take_text(text, sizeof(text)) ?
+                   edit_insert_text(state, text) : 0;
+    }
     switch (keycode) {
     case LEONOS_KEY_BACKSPACE:
         if (state->readonly) {
@@ -288,6 +337,7 @@ int leonos_ui_edit_state_handle_mouse(struct leonos_ui_edit_state *state,
         if (buttons & 1u) {
             state->focused = 0;
             state->selecting = 0;
+            (void)leonos_inputm_set_current_context(0, 0, 0, 0, 0);
             return 1;
         }
         return 0;
@@ -297,6 +347,10 @@ int leonos_ui_edit_state_handle_mouse(struct leonos_ui_edit_state *state,
         return 0;
     }
     state->focused = 1;
+    if (!state->readonly) {
+        (void)leonos_inputm_set_current_context(LEONOS_INPUTM_CONTEXT_FOCUSED,
+                                                (int32_t)x, (int32_t)y, w, h);
+    }
     idx = state->scroll;
     if (px > (int32_t)x + 4) {
         idx = ui_byte_offset_for_pixel(state->buffer, state->length, state->scroll,
@@ -620,6 +674,14 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
         return;
     }
     leonos_ui_text_area_state_sync(state, w);
+    if (state->focused && !state->readonly && !(flags & LEONOS_UI_EDIT_DISABLED)) {
+        uint32_t context_flags = LEONOS_INPUTM_CONTEXT_FOCUSED;
+        if (flags & LEONOS_UI_EDIT_SECURE) {
+            context_flags |= LEONOS_INPUTM_CONTEXT_SECURE;
+        }
+        (void)leonos_inputm_set_current_context(context_flags,
+                                                (int32_t)x, (int32_t)y, w, h);
+    }
     if (state->focused) {
         draw_flags |= LEONOS_UI_EDIT_FOCUSED;
     }
@@ -721,6 +783,42 @@ static int text_area_insert_char(struct leonos_ui_text_area_state *state, char c
     return 1;
 }
 
+static int text_area_insert_text(struct leonos_ui_text_area_state *state, const char *text)
+{
+    uint32_t text_len = 0;
+    if (!state || !state->buffer || state->readonly || !text) {
+        return 0;
+    }
+    while (text[text_len]) {
+        ++text_len;
+    }
+    if (!text_len) {
+        return 0;
+    }
+    if (text_area_has_selection(state)) {
+        uint32_t start;
+        uint32_t end;
+        text_area_selection_range(state, &start, &end);
+        if (!text_area_delete_range(state, start, end)) {
+            return 0;
+        }
+    }
+    if (state->length + text_len >= state->capacity) {
+        return 0;
+    }
+    for (uint32_t i = state->length + text_len + 1U;
+         i > state->cursor + text_len; --i) {
+        state->buffer[i - 1U] = state->buffer[i - text_len - 1U];
+    }
+    for (uint32_t i = 0; i < text_len; ++i) {
+        state->buffer[state->cursor + i] = text[i];
+    }
+    state->cursor += text_len;
+    state->length += text_len;
+    text_area_clear_selection(state);
+    return 1;
+}
+
 static int text_area_delete_char(struct leonos_ui_text_area_state *state, uint32_t index)
 {
     if (!state) {
@@ -751,6 +849,18 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         return 0;
     }
     leonos_ui_text_area_state_sync(state, w);
+    if (keycode == 0) {
+        char text[LEONOS_INPUTM_TEXT_LEN];
+        int changed = leonos_inputm_take_text(text, sizeof(text)) ?
+                          text_area_insert_text(state, text) : 0;
+        if (changed) {
+            text_area_cursor_line_col(state, w, state->cursor, &line, &col);
+            state->preferred_column = col;
+            leonos_ui_text_area_state_sync(state, w);
+            text_area_ensure_cursor_visible(state, w, h);
+        }
+        return changed;
+    }
     text_area_cursor_line_col(state, w, state->cursor, &line, &col);
     switch (keycode) {
     case LEONOS_KEY_BACKSPACE:
@@ -892,9 +1002,14 @@ int leonos_ui_text_area_state_handle_mouse(struct leonos_ui_text_area_state *sta
     }
     if (!leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)y, w, h)) {
         state->focused = 0;
+        (void)leonos_inputm_set_current_context(0, 0, 0, 0, 0);
         return 1;
     }
     state->focused = 1;
+    if (!state->readonly) {
+        (void)leonos_inputm_set_current_context(LEONOS_INPUTM_CONTEXT_FOCUSED,
+                                                (int32_t)x, (int32_t)y, w, h);
+    }
     line = state->scroll_line;
     if (py > (int32_t)y + 4) {
         line += ((uint32_t)py - y - 4) / LEONOS_FONT_H;

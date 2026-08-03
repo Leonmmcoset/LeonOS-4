@@ -3,6 +3,7 @@
 #include <ntclks/framebuffer.h>
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
+#include <ntclks/inputm.h>
 #include <ntclks/mm.h>
 #include <ntclks/mouse.h>
 #include <ntclks/net.h>
@@ -23,6 +24,7 @@
 #include <leonos/driver.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
+#include <leonos/inputm.h>
 #include <leonos/net.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
@@ -56,17 +58,13 @@
 #define LEONOS_TEXT_LAYOUT_MAX_BYTES 4096U
 #define LEONOS_TEXT_LAYOUT_MAX_GLYPHS 512U
 #define PAGE_SIZE 4096ULL
-#define LINUX_PROT_READ 0x1u
-#define LINUX_PROT_WRITE 0x2u
-#define LINUX_PROT_EXEC 0x4u
+#define LINUX_PROT_READ TASK_VMA_PROT_READ
+#define LINUX_PROT_WRITE TASK_VMA_PROT_WRITE
+#define LINUX_PROT_EXEC TASK_VMA_PROT_EXEC
 #define LINUX_MAP_PRIVATE 0x02u
 #define LINUX_MAP_FIXED 0x10u
 #define LINUX_MAP_ANONYMOUS 0x20u
 #define LINUX_MAP_SUPPORTED (LINUX_MAP_PRIVATE | LINUX_MAP_FIXED | LINUX_MAP_ANONYMOUS)
-#define TASK_VMA_FLAG_PRIVATE 0x00000001u
-#define TASK_VMA_FLAG_ANON    0x00000002u
-#define TASK_VMA_FLAG_FILE    0x00000004u
-#define TASK_VMA_FLAG_LAZY    0x00000008u
 #define OOBE_DHCP_APP_PATH "0:/system/apps/oobe/oobe.elf"
 #define OOBE_DONE_MARKER_PATH "0:/system/state/oobe.done"
 #define SYSCONFDIALOG_APP_PATH "0:/system/apps/sysconfdialog/sysconfdialog.elf"
@@ -415,6 +413,26 @@ struct gui_fetch_window_user {
 struct gui_wait_app_event_user {
     struct gui_ipc_app_event event;
     uint32_t timeout_ms;
+};
+
+struct gui_window_update_user {
+    uint32_t window_id;
+    uint32_t mask;
+    uint32_t flags;
+    const char *title;
+};
+
+struct gui_taskbar_request_user {
+    uint32_t window_id;
+    uint32_t visible;
+};
+
+struct gui_cursor_request_user {
+    uint32_t window_id;
+    int32_t x;
+    int32_t y;
+    uint32_t style;
+    uint32_t flags;
 };
 
 struct exec_params_kernel {
@@ -1718,7 +1736,8 @@ static int task_vma_file_attrs_match(const struct task_vma *vma,
     if (!vma || !(vma->flags & TASK_VMA_FLAG_FILE)) {
         return 1;
     }
-    return storage_nodes_equal(&vma->file_node, file_node);
+    return storage_nodes_equal(&vma->file_node, file_node) &&
+           file_node && vma->file_limit == file_node->size;
 }
 
 static void task_vma_clear(struct task_vma *vma)
@@ -1828,6 +1847,7 @@ static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t e
     slot->start = start;
     slot->end = end;
     slot->file_offset = file_offset;
+    slot->file_limit = file_node ? file_node->size : 0;
     if (file_node) {
         slot->file_node = *file_node;
     } else {
@@ -1929,8 +1949,8 @@ static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
     zero_phys_page(phys);
 
     uint64_t file_offset = vma->file_offset + (page - vma->start);
-    if (file_offset < vma->file_node.size) {
-        uint64_t available = vma->file_node.size - file_offset;
+    if (file_offset < vma->file_limit) {
+        uint64_t available = vma->file_limit - file_offset;
         uint32_t want = available < PAGE_SIZE ? (uint32_t)available : (uint32_t)PAGE_SIZE;
         uint32_t got = 0;
         int ret = storage_read_node(&vma->file_node, file_offset, (void *)(uintptr_t)phys, want, &got);
@@ -1953,9 +1973,6 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
     if (error & 0x9ULL) {
         return 0;
     }
-    if ((error & 0x2ULL) || (error & 0x10ULL)) {
-        return 0;
-    }
     struct task *task = sched_current_task();
     if (!task || task->kind != TASK_KIND_USER) {
         return 0;
@@ -1969,6 +1986,12 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
     }
     struct task_vma *vma = task_vma_containing(task, page, page + PAGE_SIZE);
     if (!vma || !(vma->flags & TASK_VMA_FLAG_LAZY) || !(vma->flags & TASK_VMA_FLAG_FILE)) {
+        return 0;
+    }
+    if ((error & 0x2ULL) && !(vma->prot & LINUX_PROT_WRITE)) {
+        return 0;
+    }
+    if ((error & 0x10ULL) && !(vma->prot & LINUX_PROT_EXEC)) {
         return 0;
     }
     return task_map_file_vma_page(task, vma, page) == 0;
@@ -2198,15 +2221,19 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_WRITE) {
         struct task *task = sched_current_task();
+        uint32_t request_len;
         if (!user_range_ok(a1, a2)) {
             return -LEONOS_EFAULT;
         }
+        request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
+                          ? LEONOS_FS_IO_SLICE_BYTES
+                          : (uint32_t)a2;
         if (task && task->pty_id && (a0 == 1 || a0 == 2)) {
-            return pty_write_output(task->pty_id, (const char *)(uintptr_t)a1, (uint32_t)a2);
+            return pty_write_output(task->pty_id, (const char *)(uintptr_t)a1, request_len);
         }
         if (a0 == 1 || a0 == 2) {
-            console_write_len((const char *)(uintptr_t)a1, (size_t)a2);
-            return (int64_t)a2;
+            console_write_len((const char *)(uintptr_t)a1, (size_t)request_len);
+            return (int64_t)request_len;
         }
         struct task_file *file = task_file_for_fd(task, (int)a0);
         uint32_t wrote = 0;
@@ -2231,11 +2258,17 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             file->offset = file->node.size;
         }
         ret = storage_write_node(file->path, file->offset,
-                                 (const void *)(uintptr_t)a1, (uint32_t)a2, &wrote);
+                                 (const void *)(uintptr_t)a1, request_len, &wrote);
         if (ret < 0) {
             return ret;
         }
         file->offset += wrote;
+        if (wrote && file->node.first_cluster < 2) {
+            struct storage_node updated;
+            if (storage_lookup_path(file->path, &updated) == 0) {
+                file->node = updated;
+            }
+        }
         file->node.size = file->offset > file->node.size ? file->offset : file->node.size;
         return (int64_t)wrote;
     }
@@ -2244,6 +2277,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         struct task *task = sched_current_task();
         struct task_file *file;
         uint32_t got = 0;
+        uint32_t request_len;
         if (!user_range_ok(a1, a2)) {
             return -LEONOS_EFAULT;
         }
@@ -2287,7 +2321,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (!file_can_read(file)) {
             return -LEONOS_EBADF;
         }
-        if (storage_read_node(&file->node, file->offset, (void *)(uintptr_t)a1, (uint32_t)a2, &got) < 0) {
+        request_len = a2 > LEONOS_FS_READ_SLICE_BYTES
+                          ? LEONOS_FS_READ_SLICE_BYTES
+                          : (uint32_t)a2;
+        if (storage_read_node(&file->node, file->offset, (void *)(uintptr_t)a1, request_len, &got) < 0) {
             return -LEONOS_EINVAL;
         }
         file->offset += got;
@@ -2663,6 +2700,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return pid;
     }
 
+    if (number == LINUX_SYS_IOCTL && inputm_handles_ioctl(a1)) {
+        return inputm_handle_ioctl(a1, a2);
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_EVENT) {
         struct input_event event;
         int ret = require_window_server();
@@ -2857,6 +2898,62 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         uint32_t window_id = (uint32_t)(a2 >> 32);
         uint32_t visible = (uint32_t)a2;
         return gui_ipc_set_mouse_visible(sched_current_pid(), window_id, visible) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_UPDATE_WINDOW) {
+        const struct gui_window_update_user *cmd;
+        if (!user_range_ok(a2, sizeof(struct gui_window_update_user))) {
+            return -LEONOS_EFAULT;
+        }
+        cmd = (const struct gui_window_update_user *)(uintptr_t)a2;
+        if (!cmd->window_id || !cmd->mask ||
+            (cmd->mask & ~GUI_IPC_WINDOW_UPDATE_ALL)) {
+            return -LEONOS_EINVAL;
+        }
+        if (cmd->mask & GUI_IPC_WINDOW_UPDATE_TITLE) {
+            size_t len;
+            if (!cmd->title ||
+                !user_range_ok((uint64_t)(uintptr_t)cmd->title, 1)) {
+                return -LEONOS_EFAULT;
+            }
+            len = user_strlen(cmd->title, GUI_IPC_WINDOW_TITLE_MAX - 1);
+            if (len == GUI_IPC_WINDOW_TITLE_MAX - 1 ||
+                !user_range_ok((uint64_t)(uintptr_t)cmd->title, len + 1)) {
+                return -LEONOS_EFAULT;
+            }
+        }
+        return gui_ipc_update_window(sched_current_pid(), cmd->window_id,
+                                     cmd->mask, cmd->flags, cmd->title) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_SET_TASKBAR_VISIBLE) {
+        const struct gui_taskbar_request_user *cmd;
+        if (!user_range_ok(a2, sizeof(struct gui_taskbar_request_user))) {
+            return -LEONOS_EFAULT;
+        }
+        cmd = (const struct gui_taskbar_request_user *)(uintptr_t)a2;
+        if (!cmd->window_id) {
+            return -LEONOS_EINVAL;
+        }
+        return gui_ipc_set_taskbar_visible(sched_current_pid(), cmd->window_id,
+                                           cmd->visible) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_CURSOR_REQUEST) {
+        const struct gui_cursor_request_user *cmd;
+        if (!user_range_ok(a2, sizeof(struct gui_cursor_request_user))) {
+            return -LEONOS_EFAULT;
+        }
+        cmd = (const struct gui_cursor_request_user *)(uintptr_t)a2;
+        if (!cmd->window_id || !cmd->flags ||
+            (cmd->flags & ~GUI_IPC_CURSOR_REQUEST_ALL) ||
+            ((cmd->flags & GUI_IPC_CURSOR_REQUEST_STYLE) &&
+             cmd->style >= GUI_IPC_CURSOR_STYLE_COUNT)) {
+            return -LEONOS_EINVAL;
+        }
+        return gui_ipc_request_cursor(sched_current_pid(), cmd->window_id,
+                                      cmd->x, cmd->y, cmd->style,
+                                      cmd->flags) ? 1 : 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_WINDOW_EVENT) {
@@ -3394,6 +3491,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_AUDIO_WRITE) {
         struct leonos_audio_write *request;
+        uint32_t request_len;
         long ret;
         if (!user_range_ok(a2, sizeof(struct leonos_audio_write))) {
             return -LEONOS_EFAULT;
@@ -3405,7 +3503,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                             request->length)))) {
             return -LEONOS_EFAULT;
         }
-        ret = driver_manager_audio_write(request->data, request->length,
+        request_len = request->length > LEONOS_AUDIO_IO_SLICE_BYTES
+                          ? LEONOS_AUDIO_IO_SLICE_BYTES
+                          : request->length;
+        ret = driver_manager_audio_write(request->data, request_len,
                                          &request->status);
         request->transferred = ret > 0 ? (uint32_t)ret : 0;
         return ret < 0 ? ret : 0;

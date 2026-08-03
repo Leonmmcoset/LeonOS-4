@@ -314,7 +314,12 @@ struct task *page_fault_dispatch(struct trap_frame *frame)
 {
     uint64_t cr2 = x86_64_read_cr2();
     if (frame && syscall_handle_user_page_fault(cr2, frame->error)) {
-        return NULL;
+        /*
+         * A lazy file-backed page may require a synchronous FAT read.  Switch
+         * away after each resolved fault so a newly-starting app cannot hold
+         * the desktop in a long run of consecutive page-ins.
+         */
+        return userland_schedule_from_frame(frame);
     }
     if (!frame) {
         bugcheck_exception(14, 0, 0, 0, 0, 0, 0, cr2);

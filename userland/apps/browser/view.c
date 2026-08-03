@@ -853,6 +853,90 @@ void draw_browser_menu(void)
     }
 }
 
+void draw_browser_devtools(void)
+{
+    char line[BROWSER_URL_CAP + BROWSER_TITLE_CAP + 64U];
+    uint32_t height = browser_devtools_height();
+    uint32_t y;
+    uint32_t width;
+    uint32_t source_bytes = 0;
+    uint32_t pos;
+    if (!height || browser_embedded) {
+        return;
+    }
+    y = view_h > height ? view_h - height : 0;
+    width = view_w > 12U ? view_w - 12U : view_w;
+    while (source_bytes < BROWSER_SOURCE_CAP && page_source[source_bytes]) {
+        ++source_bytes;
+    }
+    leonos_ui_inset(&ui, 6, y + 2U, width, height > 4U ? height - 4U : height,
+                    LEONOS_UI_WHITE);
+    leonos_ui_rect(&ui, 8, y + 4U, width > 4U ? width - 4U : width, 20U,
+                   LEONOS_UI_ACTIVE_TITLE);
+    leonos_ui_text_clipped(&ui, 16, y + 7U, width > 20U ? width - 20U : width,
+                           T("Developer Tools", "开发者工具"),
+                           LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), T("Location: ", "地址: "));
+    append_text(line, &pos, sizeof(line), current_location);
+    leonos_ui_text_clipped(&ui, 16, y + 29U, width > 20U ? width - 20U : width,
+                           line, BROWSER_TEXT_DARK, LEONOS_UI_WHITE);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), T("Document: ", "文档: "));
+    append_text(line, &pos, sizeof(line), page_title);
+    append_text(line, &pos, sizeof(line), page_is_html ? " [HTML, " : " [text, ");
+    append_u32(line, &pos, sizeof(line), source_bytes);
+    append_text(line, &pos, sizeof(line), " bytes]");
+    if (source_truncated) {
+        append_text(line, &pos, sizeof(line), T(" source limit reached", " 源码已截断"));
+    }
+    leonos_ui_text_clipped(&ui, 16, y + 46U, width > 20U ? width - 20U : width,
+                           line, BROWSER_TEXT_DARK, LEONOS_UI_WHITE);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), T("Viewport: ", "视口: "));
+    append_u32(line, &pos, sizeof(line), document_text_w());
+    append_text(line, &pos, sizeof(line), " x ");
+    append_u32(line, &pos, sizeof(line), document_view_h());
+    append_text(line, &pos, sizeof(line), T("; content: ", "; 内容: "));
+    append_u32(line, &pos, sizeof(line), document_content_w());
+    append_text(line, &pos, sizeof(line), " px");
+    leonos_ui_text_clipped(&ui, 16, y + 63U, width > 20U ? width - 20U : width,
+                           line, BROWSER_TEXT_DARK, LEONOS_UI_WHITE);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), T("Rendered: ", "渲染: "));
+    append_u32(line, &pos, sizeof(line), line_count);
+    append_text(line, &pos, sizeof(line), T(" lines, ", " 行, "));
+    append_u32(line, &pos, sizeof(line), link_count);
+    append_text(line, &pos, sizeof(line), T(" links, ", " 链接, "));
+    append_u32(line, &pos, sizeof(line), browser_form_count);
+    append_text(line, &pos, sizeof(line), T(" forms, ", " 表单, "));
+    append_u32(line, &pos, sizeof(line), browser_form_control_count);
+    append_text(line, &pos, sizeof(line), T(" controls", " 控件"));
+    leonos_ui_text_clipped(&ui, 16, y + 80U, width > 20U ? width - 20U : width,
+                           line, BROWSER_TEXT_DARK, LEONOS_UI_WHITE);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), T("Scroll: line ", "滚动: 行 "));
+    append_u32(line, &pos, sizeof(line), scroll_line);
+    append_text(line, &pos, sizeof(line), " / ");
+    append_u32(line, &pos, sizeof(line), line_count ? line_count - 1U : 0U);
+    append_text(line, &pos, sizeof(line), ", x=");
+    append_u32(line, &pos, sizeof(line), scroll_x);
+    append_text(line, &pos, sizeof(line), T("; status: ", "; 状态: "));
+    append_text(line, &pos, sizeof(line), status_text);
+    leonos_ui_text_clipped(&ui, 16, y + 97U, width > 20U ? width - 20U : width,
+                           line, BROWSER_TEXT_DARK, LEONOS_UI_WHITE);
+}
+
 void draw_browser(void)
 {
     uint32_t p_y = page_y();
@@ -933,6 +1017,7 @@ void draw_browser(void)
                              scroll_x, content_w, doc_w, 0);
     }
     draw_browser_menu();
+    draw_browser_devtools();
     leonos_ui_toast_draw(&ui, &browser_toast, leonos_uptime_ms());
 }
 

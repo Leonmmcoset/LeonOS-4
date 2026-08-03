@@ -77,6 +77,8 @@
 #define BROWSER_HOME_W 62U
 #define BROWSER_STOP_W 58U
 #define BROWSER_GO_W 54U
+#define BROWSER_DEVTOOLS_MIN_H 118U
+#define BROWSER_DEVTOOLS_MAX_H 142U
 #define BROWSER_FONT_PATH "0:/system/fonts/times-new-roman.ttf"
 #define BROWSER_FONT_FALLBACK_PATH "0:/system/fonts/simsun.ttc"
 #define BROWSER_LINK_BLUE 0x000000eeU
@@ -230,6 +232,7 @@ extern char browser_find_query[BROWSER_FIND_CAP];
 extern int32_t browser_find_row;
 extern uint32_t browser_find_start;
 extern uint32_t browser_find_len;
+extern uint8_t browser_devtools_open;
 
 void copy_text(char *dst, uint32_t cap, const char *src);
 char ascii_tolower(char ch);
@@ -247,6 +250,7 @@ void trim_copy(char *dst, uint32_t cap, const char *src);
 uint32_t page_y(void);
 uint32_t page_w(void);
 uint32_t page_h(void);
+uint32_t browser_devtools_height(void);
 uint32_t text_x(void);
 uint32_t text_y(void);
 uint32_t text_cols(void);
@@ -322,6 +326,7 @@ void draw_document_line_frame(const struct browser_line *line, int32_t x, uint32
 uint32_t line_align_shift_px(const struct browser_line *line, uint32_t doc_w);
 void draw_document_lines(void);
 void draw_browser_menu(void);
+void draw_browser_devtools(void);
 void draw_browser(void);
 void present_browser(void);
 void browser_embed_init(uint32_t width, uint32_t height, const char *initial_url);

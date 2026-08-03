@@ -72,7 +72,7 @@ static void module_console_notice(void)
 #define E1000_RX_COUNT 16u
 #define E1000_TX_COUNT 16u
 #define E1000_BUFFER_SIZE 2048u
-#define E1000_TX_WAIT_SPINS 1000000u
+#define E1000_TX_WAIT_SPINS 250000u
 
 struct e1000_rx_desc {
     uint64_t addr;

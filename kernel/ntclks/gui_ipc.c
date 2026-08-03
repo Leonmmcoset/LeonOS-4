@@ -27,6 +27,8 @@ static struct gui_ipc_appearance_state appearance_state = {
 static struct gui_ipc_appearance_request appearance_request;
 static uint8_t appearance_request_pending;
 static uint32_t mouse_hidden_window_id;
+static uint32_t taskbar_hidden_window_id;
+static uint32_t cursor_style_window_id;
 
 struct gui_window_slot {
     uint8_t used;
@@ -226,6 +228,7 @@ static void fill_message(struct gui_ipc_window *msg, uint32_t type,
     msg->width = slot->width;
     msg->height = slot->height;
     msg->flags = slot->flags;
+    msg->data = 0;
     copy_kernel_string(msg->title, sizeof(msg->title), slot->title);
     copy_kernel_string(msg->text, sizeof(msg->text), slot->text);
     copy_kernel_string(msg->app_path, sizeof(msg->app_path), slot->app_path);
@@ -269,6 +272,28 @@ static int push_message(uint32_t type, const struct gui_window_slot *slot)
     return 1;
 }
 
+static int push_control_message(uint32_t type, const struct gui_window_slot *slot,
+                                uint32_t width, uint32_t height,
+                                uint32_t flags, uint32_t data)
+{
+    uint32_t next = (head + 1) % GUI_IPC_QUEUE_CAP;
+    struct gui_ipc_window *msg;
+    if (!slot) {
+        return 0;
+    }
+    if (next == tail) {
+        tail = (tail + 1) % GUI_IPC_QUEUE_CAP;
+    }
+    msg = &queue[head];
+    fill_message(msg, type, slot);
+    msg->width = width;
+    msg->height = height;
+    msg->flags = flags;
+    msg->data = data;
+    head = next;
+    return 1;
+}
+
 static int push_system_window_message(uint32_t pid, uint32_t width, uint32_t height,
                                       const char *title, const char *text,
                                       const char *app_path, uint32_t flags)
@@ -288,6 +313,7 @@ static int push_system_window_message(uint32_t pid, uint32_t width, uint32_t hei
     msg->width = width;
     msg->height = height;
     msg->flags = flags;
+    msg->data = 0;
     copy_kernel_string(msg->title, sizeof(msg->title), title);
     copy_kernel_string(msg->text, sizeof(msg->text), text);
     copy_kernel_string(msg->app_path, sizeof(msg->app_path), app_path);
@@ -302,6 +328,9 @@ void gui_ipc_init(void)
     next_window_id = 1;
     display_request_pending = 0;
     display_state_valid = 0;
+    mouse_hidden_window_id = 0;
+    taskbar_hidden_window_id = 0;
+    cursor_style_window_id = 0;
     for (uint32_t i = 0; i < GUI_IPC_MAX_WINDOWS; ++i) {
         windows[i].used = 0;
         windows[i].buffer_phys = 0;
@@ -421,8 +450,6 @@ int gui_ipc_pop_appearance_request(uint32_t caller_pid,
     }
     *out = appearance_request;
     appearance_request_pending = 0;
-    mouse_hidden_window_id = 0;
-    mouse_set_visible(true);
     return 1;
 }
 
@@ -442,6 +469,10 @@ int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
     struct gui_window_slot *slot;
     uint32_t id;
     if (!pid || !width || !height) {
+        return 0;
+    }
+    if (flags & ~(GUI_IPC_WINDOW_NO_RESIZE | GUI_IPC_WINDOW_FULLSCREEN |
+                  GUI_IPC_WINDOW_BORDERLESS | GUI_IPC_WINDOW_HIDE_TASKBAR)) {
         return 0;
     }
     slot = alloc_window_slot();
@@ -521,6 +552,16 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
     if (!slot || slot->owner_pid != pid) {
         return 0;
     }
+    if (taskbar_hidden_window_id == window_id) {
+        taskbar_hidden_window_id = 0;
+        (void)push_control_message(GUI_IPC_WINDOW_MSG_TASKBAR, slot, 0, 0, 0, 1);
+    }
+    if (cursor_style_window_id == window_id) {
+        cursor_style_window_id = 0;
+        (void)push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot, 0, 0,
+                                   GUI_IPC_CURSOR_REQUEST_STYLE,
+                                   GUI_IPC_CURSOR_ARROW);
+    }
     (void)push_message(GUI_IPC_WINDOW_MSG_CLOSE, slot);
     if (mouse_hidden_window_id == window_id) {
         mouse_hidden_window_id = 0;
@@ -539,6 +580,74 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
     slot->text[0] = 0;
     slot->app_path[0] = 0;
     return 1;
+}
+
+int gui_ipc_update_window(uint32_t pid, uint32_t window_id, uint32_t mask,
+                          uint32_t flags, const char *title)
+{
+    struct gui_window_slot *slot = find_window(window_id);
+    if (!slot || slot->owner_pid != pid || !mask ||
+        (mask & ~GUI_IPC_WINDOW_UPDATE_ALL)) {
+        return 0;
+    }
+    if ((mask & GUI_IPC_WINDOW_UPDATE_TITLE) && !title) {
+        return 0;
+    }
+    if (mask & GUI_IPC_WINDOW_UPDATE_TITLE) {
+        copy_user_string(slot->title, sizeof(slot->title), title);
+    }
+    if (mask & GUI_IPC_WINDOW_UPDATE_BORDERLESS) {
+        if (flags & GUI_IPC_WINDOW_BORDERLESS) {
+            slot->flags |= GUI_IPC_WINDOW_BORDERLESS;
+        } else {
+            slot->flags &= ~GUI_IPC_WINDOW_BORDERLESS;
+        }
+    }
+    if (mask & GUI_IPC_WINDOW_UPDATE_TASKBAR) {
+        if (flags & GUI_IPC_WINDOW_HIDE_TASKBAR) {
+            slot->flags |= GUI_IPC_WINDOW_HIDE_TASKBAR;
+        } else {
+            slot->flags &= ~GUI_IPC_WINDOW_HIDE_TASKBAR;
+        }
+    }
+    return push_message(GUI_IPC_WINDOW_MSG_UPDATE, slot);
+}
+
+int gui_ipc_set_taskbar_visible(uint32_t pid, uint32_t window_id, uint32_t visible)
+{
+    struct gui_window_slot *slot = find_window(window_id);
+    if (!slot || slot->owner_pid != pid) {
+        return 0;
+    }
+    if (visible) {
+        if (taskbar_hidden_window_id && taskbar_hidden_window_id != window_id) {
+            return 0;
+        }
+        taskbar_hidden_window_id = 0;
+    } else {
+        if (taskbar_hidden_window_id && taskbar_hidden_window_id != window_id) {
+            return 0;
+        }
+        taskbar_hidden_window_id = window_id;
+    }
+    return push_control_message(GUI_IPC_WINDOW_MSG_TASKBAR, slot, 0, 0, 0,
+                                visible ? 1u : 0u);
+}
+
+int gui_ipc_request_cursor(uint32_t pid, uint32_t window_id, int32_t x, int32_t y,
+                           uint32_t style, uint32_t flags)
+{
+    struct gui_window_slot *slot = find_window(window_id);
+    if (!slot || slot->owner_pid != pid || !flags ||
+        (flags & ~GUI_IPC_CURSOR_REQUEST_ALL) ||
+        ((flags & GUI_IPC_CURSOR_REQUEST_STYLE) && style >= GUI_IPC_CURSOR_STYLE_COUNT)) {
+        return 0;
+    }
+    if (flags & GUI_IPC_CURSOR_REQUEST_STYLE) {
+        cursor_style_window_id = window_id;
+    }
+    return push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot,
+                                (uint32_t)x, (uint32_t)y, flags, style);
 }
 
 int gui_ipc_set_mouse_visible(uint32_t pid, uint32_t window_id, uint32_t visible)
@@ -628,6 +737,16 @@ void gui_ipc_destroy_owner(uint32_t pid)
         struct gui_window_slot *slot = &windows[i];
         if (!slot->used || slot->owner_pid != pid) {
             continue;
+        }
+        if (taskbar_hidden_window_id == slot->id) {
+            taskbar_hidden_window_id = 0;
+            (void)push_control_message(GUI_IPC_WINDOW_MSG_TASKBAR, slot, 0, 0, 0, 1);
+        }
+        if (cursor_style_window_id == slot->id) {
+            cursor_style_window_id = 0;
+            (void)push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot, 0, 0,
+                                       GUI_IPC_CURSOR_REQUEST_STYLE,
+                                       GUI_IPC_CURSOR_ARROW);
         }
         (void)push_message(GUI_IPC_WINDOW_MSG_CLOSE, slot);
         if (mouse_hidden_window_id == slot->id) {

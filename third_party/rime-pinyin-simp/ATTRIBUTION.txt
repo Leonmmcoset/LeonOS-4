@@ -1,0 +1,7 @@
+LeonOS 4 Chinese Input packages pinyin_simp.dict.yaml from:
+https://github.com/rime/rime-pinyin-simp
+
+Copyright and license terms for the dictionary are preserved in LICENSE.
+The upstream dictionary is used as a data source and is not modified by this
+attribution file. Manual updates intentionally follow the upstream default
+branch over HTTPS, as selected for this system.

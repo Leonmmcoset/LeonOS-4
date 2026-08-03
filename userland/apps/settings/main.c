@@ -2,9 +2,11 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/inputm.h>
 #include <leonos/launch.h>
 #include <leonos/license.h>
 #include <leonos/psf_font.h>
+#include <leonos/startup.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
@@ -14,7 +16,7 @@
 #define SETTINGS_DROPDOWN_ROW_H 28
 #define SETTINGS_MODE_COUNT 5
 #define SETTINGS_SCALE_COUNT 3
-#define SETTINGS_TAB_COUNT 6
+#define SETTINGS_TAB_COUNT 7
 #define SETTINGS_USER_ROWS 7
 #define SETTINGS_ASSOC_ROWS 6
 #define SETTINGS_SERVICE_ROWS 5
@@ -27,6 +29,11 @@
 #define SETTINGS_SERVICES_PATH "0:/system/config/services.cfg"
 #define SETTINGS_SERVICES_STATE_PATH "0:/var/run/services.state"
 #define SETTINGS_SERVICES_CONFIG_MAX 512U
+#define SETTINGS_INPUTM_CONFIG_MAX 2048U
+#define SETTINGS_INPUTM_ROWS (LEONOS_INPUTM_MAX_PROVIDERS + 1U)
+#define SETTINGS_INPUTM_OPTION_COUNT 4U
+#define SETTINGS_INPUTM_OPTION_KEY_LEN 64U
+#define SETTINGS_INPUTM_OPTION_LABEL_LEN 64U
 #define SETTINGS_KEY_ESCAPE 1U
 #define T(en, zh) leonos_i18n((en), (zh))
 
@@ -37,6 +44,7 @@ enum {
     PAGE_ASSOC = 3,
     PAGE_SERVICES = 4,
     PAGE_ACTIVATION = 5,
+    PAGE_INPUT_METHODS = 6,
 };
 
 enum {
@@ -48,6 +56,8 @@ enum {
     DROP_METRO_COLOR = 5,
     DROP_WIN95_COLOR = 6,
     DROP_WALLPAPER_MODE = 7,
+    DROP_INPUTM_HOTKEY = 8,
+    DROP_INPUTM_STARTUP = 9,
 };
 
 static uint32_t pixels[SETTINGS_W * SETTINGS_H];
@@ -63,6 +73,32 @@ static struct leonos_ui_tab_state settings_tabs;
 static char status_text[160] = "Ready";
 static char ntp_runtime_state[16] = "unknown";
 static char ntp_runtime_detail[96] = "runtime state unavailable";
+
+struct settings_inputm_entry {
+    char id[LEONOS_INPUTM_ID_LEN];
+    char path[LEONOS_FS_PATH_LEN];
+    char settings_path[LEONOS_FS_PATH_LEN];
+    char settings_app[LEONOS_FS_PATH_LEN];
+    uint32_t config_index;
+    uint32_t startup_mode;
+    uint32_t order;
+    uint8_t enabled;
+};
+
+struct settings_inputm_option {
+    char key[SETTINGS_INPUTM_OPTION_KEY_LEN];
+    char label[SETTINGS_INPUTM_OPTION_LABEL_LEN];
+    char label_zh[SETTINGS_INPUTM_OPTION_LABEL_LEN];
+    uint8_t value;
+};
+
+static struct settings_inputm_entry inputm_entries[SETTINGS_INPUTM_ROWS];
+static uint32_t inputm_entry_count;
+static uint32_t inputm_selected;
+static char inputm_default[LEONOS_INPUTM_ID_LEN] = "en";
+static char inputm_hotkey[16] = "win-space";
+static struct settings_inputm_option inputm_options[SETTINGS_INPUTM_OPTION_COUNT];
+static uint32_t inputm_option_count;
 
 struct assoc_row {
     const char *extension;
@@ -621,6 +657,396 @@ static void refresh_users(void)
     }
 }
 
+static int inputm_config_path(char *path, uint32_t capacity)
+{
+    uint32_t home_len;
+    const char *name = ".inputm.conf";
+    if (!path || !capacity || !current_user.uid || !current_user.home[0]) {
+        return 0;
+    }
+    home_len = text_len(current_user.home);
+    if (home_len + 1U + text_len(name) >= capacity) {
+        return 0;
+    }
+    copy_text(path, capacity, current_user.home);
+    path[home_len] = '/';
+    copy_text(path + home_len + 1U, capacity - home_len - 1U, name);
+    return 1;
+}
+
+static int inputm_config_get(const char *config, const char *key,
+                             char *value, uint32_t capacity)
+{
+    uint32_t key_len = text_len(key);
+    uint32_t pos = 0;
+    uint8_t found = 0;
+    if (!config || !key || !key_len || !value || !capacity) {
+        return 0;
+    }
+    value[0] = 0;
+    while (config[pos]) {
+        uint32_t start = pos;
+        uint32_t end;
+        uint32_t out = 0;
+        uint8_t match = 1;
+        while (config[pos] && config[pos] != '\n' && config[pos] != '\r') {
+            ++pos;
+        }
+        end = pos;
+        while (config[pos] == '\n' || config[pos] == '\r') {
+            ++pos;
+        }
+        if (end <= start + key_len || config[start + key_len] != '=') {
+            continue;
+        }
+        for (uint32_t i = 0; i < key_len; ++i) {
+            if (config[start + i] != key[i]) {
+                match = 0;
+                break;
+            }
+        }
+        if (!match) {
+            continue;
+        }
+        start += key_len + 1U;
+        while (start < end && out + 1U < capacity) {
+            value[out++] = config[start++];
+        }
+        value[out] = 0;
+        found = 1;
+    }
+    return found;
+}
+
+static uint32_t inputm_parse_u32(const char *text, uint32_t fallback)
+{
+    uint32_t value = 0;
+    uint32_t digits = 0;
+    while (text && *text >= '0' && *text <= '9') {
+        value = value * 10U + (uint32_t)(*text - '0');
+        ++digits;
+        ++text;
+    }
+    return digits ? value : fallback;
+}
+
+static void inputm_provider_key(char *key, uint32_t capacity, uint32_t index,
+                                const char *field)
+{
+    uint32_t pos = 0;
+    key[0] = 0;
+    append_text(key, &pos, capacity, "provider");
+    append_dec(key, &pos, capacity, index);
+    append_char(key, &pos, capacity, '_');
+    append_text(key, &pos, capacity, field);
+}
+
+static int inputm_append_config(const char *key, const char *value)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    char line[LEONOS_FS_PATH_LEN + 80U];
+    uint32_t pos = 0;
+    int fd;
+    long wrote;
+    if (!key || !value || !inputm_config_path(path, sizeof(path))) {
+        return 0;
+    }
+    line[0] = 0;
+    append_char(line, &pos, sizeof(line), '\n');
+    append_text(line, &pos, sizeof(line), key);
+    append_char(line, &pos, sizeof(line), '=');
+    append_text(line, &pos, sizeof(line), value);
+    append_char(line, &pos, sizeof(line), '\n');
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    wrote = write(fd, line, pos);
+    close(fd);
+    if (wrote == (long)pos) {
+        (void)leonos_inputm_notify_config(current_user.uid);
+        return 1;
+    }
+    return 0;
+}
+
+static int inputm_key_is_safe(const char *key)
+{
+    uint32_t i = 0;
+    if (!key || !key[0]) {
+        return 0;
+    }
+    while (key[i]) {
+        char ch = key[i++];
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+              (ch >= '0' && ch <= '9') || ch == '_' || ch == '-')) {
+            return 0;
+        }
+    }
+    return i < SETTINGS_INPUTM_OPTION_KEY_LEN;
+}
+
+static int inputm_schema_value(const char *line, uint32_t length,
+                               const char *field, char *out, uint32_t capacity)
+{
+    uint32_t field_len = text_len(field);
+    uint32_t pos = 0;
+    if (!line || !field || !out || capacity == 0 || length <= field_len ||
+        line[field_len] != '=') {
+        return 0;
+    }
+    for (uint32_t i = 0; i < field_len; ++i) {
+        if (line[i] != field[i]) {
+            return 0;
+        }
+    }
+    while (field_len + 1U + pos < length && pos + 1U < capacity) {
+        out[pos] = line[field_len + 1U + pos];
+        ++pos;
+    }
+    out[pos] = 0;
+    return 1;
+}
+
+static void inputm_add_schema_option(const char *config, const char *key,
+                                     const char *type, const char *default_value,
+                                     const char *label, const char *label_zh)
+{
+    struct settings_inputm_option *option;
+    char value[16];
+    if (inputm_option_count >= SETTINGS_INPUTM_OPTION_COUNT ||
+        !inputm_key_is_safe(key) || !text_eq(type, "bool")) {
+        return;
+    }
+    option = &inputm_options[inputm_option_count];
+    *option = (struct settings_inputm_option){0};
+    copy_text(option->key, sizeof(option->key), key);
+    copy_text(option->label, sizeof(option->label), label && label[0] ? label : key);
+    copy_text(option->label_zh, sizeof(option->label_zh), label_zh);
+    if (inputm_config_get(config, key, value, sizeof(value))) {
+        option->value = inputm_parse_u32(value, 0) ? 1 : 0;
+    } else {
+        option->value = inputm_parse_u32(default_value, 0) ? 1 : 0;
+    }
+    ++inputm_option_count;
+}
+
+static void inputm_load_extension_options(const char *config)
+{
+    struct settings_inputm_entry *entry;
+    char schema[SETTINGS_INPUTM_CONFIG_MAX];
+    char key[SETTINGS_INPUTM_OPTION_KEY_LEN] = {0};
+    char type[16] = {0};
+    char default_value[16] = {0};
+    char label[SETTINGS_INPUTM_OPTION_LABEL_LEN] = {0};
+    char label_zh[SETTINGS_INPUTM_OPTION_LABEL_LEN] = {0};
+    uint8_t in_setting = 0;
+    uint32_t pos = 0;
+    int fd;
+    long got;
+
+    inputm_option_count = 0;
+    entry = inputm_selected < inputm_entry_count ? &inputm_entries[inputm_selected] : 0;
+    if (!entry || !entry->settings_path[0]) {
+        return;
+    }
+    fd = open(entry->settings_path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return;
+    }
+    got = read(fd, schema, sizeof(schema) - 1U);
+    close(fd);
+    if (got <= 0) {
+        return;
+    }
+    schema[got] = 0;
+    while (schema[pos]) {
+        uint32_t start = pos;
+        uint32_t end;
+        while (schema[pos] && schema[pos] != '\n' && schema[pos] != '\r') {
+            ++pos;
+        }
+        end = pos;
+        while (schema[pos] == '\n' || schema[pos] == '\r') {
+            ++pos;
+        }
+        if (end - start == 9U &&
+            schema[start] == '[' && schema[start + 1U] == 's' &&
+            schema[start + 2U] == 'e' && schema[start + 3U] == 't' &&
+            schema[start + 4U] == 't' && schema[start + 5U] == 'i' &&
+            schema[start + 6U] == 'n' && schema[start + 7U] == 'g' &&
+            schema[start + 8U] == ']') {
+            if (in_setting) {
+                inputm_add_schema_option(config, key, type, default_value, label, label_zh);
+            }
+            key[0] = 0;
+            type[0] = 0;
+            default_value[0] = 0;
+            label[0] = 0;
+            label_zh[0] = 0;
+            in_setting = 1;
+            continue;
+        }
+        if (!in_setting) {
+            continue;
+        }
+        if (inputm_schema_value(schema + start, end - start, "key", key, sizeof(key)) ||
+            inputm_schema_value(schema + start, end - start, "type", type, sizeof(type)) ||
+            inputm_schema_value(schema + start, end - start, "default", default_value,
+                                sizeof(default_value)) ||
+            inputm_schema_value(schema + start, end - start, "label", label, sizeof(label))) {
+            continue;
+        }
+        (void)inputm_schema_value(schema + start, end - start, "label_zh", label_zh,
+                                  sizeof(label_zh));
+    }
+    if (in_setting) {
+        inputm_add_schema_option(config, key, type, default_value, label, label_zh);
+    }
+}
+
+static void inputm_sort_entries(void)
+{
+    for (uint32_t i = 1; i < inputm_entry_count; ++i) {
+        for (uint32_t j = i + 1U; j < inputm_entry_count; ++j) {
+            if (inputm_entries[j].order < inputm_entries[i].order) {
+                struct settings_inputm_entry temp = inputm_entries[i];
+                inputm_entries[i] = inputm_entries[j];
+                inputm_entries[j] = temp;
+            }
+        }
+    }
+}
+
+static void inputm_reload_extension_options(void)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    char config[SETTINGS_INPUTM_CONFIG_MAX];
+    int fd;
+    long got;
+    inputm_option_count = 0;
+    if (!inputm_config_path(path, sizeof(path))) {
+        return;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return;
+    }
+    got = read(fd, config, sizeof(config) - 1U);
+    close(fd);
+    if (got <= 0) {
+        return;
+    }
+    config[got] = 0;
+    inputm_load_extension_options(config);
+}
+
+static void inputm_load_settings(void)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    char config[SETTINGS_INPUTM_CONFIG_MAX];
+    char value[LEONOS_FS_PATH_LEN];
+    int fd;
+    long got;
+    uint32_t configured = 0;
+    inputm_entries[0] = (struct settings_inputm_entry){0};
+    copy_text(inputm_entries[0].id, sizeof(inputm_entries[0].id), "en");
+    inputm_entries[0].enabled = 1;
+    inputm_entries[0].startup_mode = LEONOS_INPUTM_START_MANUAL;
+    inputm_entry_count = 1;
+    inputm_selected = 0;
+    copy_text(inputm_default, sizeof(inputm_default), "en");
+    copy_text(inputm_hotkey, sizeof(inputm_hotkey), "win-space");
+    inputm_option_count = 0;
+    if (!inputm_config_path(path, sizeof(path))) {
+        return;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return;
+    }
+    got = read(fd, config, sizeof(config) - 1U);
+    close(fd);
+    if (got <= 0) {
+        return;
+    }
+    config[got] = 0;
+    if (inputm_config_get(config, "default", value, sizeof(value)) && value[0]) {
+        copy_text(inputm_default, sizeof(inputm_default), value);
+    }
+    if (inputm_config_get(config, "inputm_hotkey", value, sizeof(value)) && value[0]) {
+        copy_text(inputm_hotkey, sizeof(inputm_hotkey), value);
+    }
+    if (inputm_config_get(config, "provider_count", value, sizeof(value))) {
+        configured = inputm_parse_u32(value, 0);
+    }
+    if (configured > LEONOS_INPUTM_MAX_PROVIDERS) {
+        configured = LEONOS_INPUTM_MAX_PROVIDERS;
+    }
+    for (uint32_t i = 0; i < configured && inputm_entry_count < SETTINGS_INPUTM_ROWS; ++i) {
+        char key[48];
+        struct settings_inputm_entry *entry = &inputm_entries[inputm_entry_count];
+        inputm_provider_key(key, sizeof(key), i, "id");
+        if (!inputm_config_get(config, key, value, sizeof(value)) || !value[0] ||
+            text_eq(value, "en")) {
+            continue;
+        }
+        *entry = (struct settings_inputm_entry){0};
+        copy_text(entry->id, sizeof(entry->id), value);
+        entry->config_index = i;
+        entry->enabled = 1;
+        entry->startup_mode = LEONOS_INPUTM_START_ON_DEMAND;
+        entry->order = i + 1U;
+        inputm_provider_key(key, sizeof(key), i, "path");
+        if (inputm_config_get(config, key, value, sizeof(value))) {
+            copy_text(entry->path, sizeof(entry->path), value);
+        }
+        inputm_provider_key(key, sizeof(key), i, "settings");
+        if (inputm_config_get(config, key, value, sizeof(value))) {
+            copy_text(entry->settings_path, sizeof(entry->settings_path), value);
+        }
+        inputm_provider_key(key, sizeof(key), i, "settings_app");
+        if (inputm_config_get(config, key, value, sizeof(value))) {
+            copy_text(entry->settings_app, sizeof(entry->settings_app), value);
+        }
+        inputm_provider_key(key, sizeof(key), i, "enabled");
+        if (inputm_config_get(config, key, value, sizeof(value))) {
+            entry->enabled = inputm_parse_u32(value, 1) ? 1 : 0;
+        }
+        inputm_provider_key(key, sizeof(key), i, "startup");
+        if (inputm_config_get(config, key, value, sizeof(value))) {
+            uint32_t mode = inputm_parse_u32(value, LEONOS_INPUTM_START_ON_DEMAND);
+            entry->startup_mode = mode <= LEONOS_INPUTM_START_ON_DEMAND ? mode :
+                                  LEONOS_INPUTM_START_ON_DEMAND;
+        }
+        inputm_provider_key(key, sizeof(key), i, "order");
+        if (inputm_config_get(config, key, value, sizeof(value))) {
+            uint32_t order = inputm_parse_u32(value, i + 1U);
+            entry->order = order ? order : i + 1U;
+        }
+        ++inputm_entry_count;
+    }
+    inputm_sort_entries();
+    for (uint32_t i = 1; i < inputm_entry_count; ++i) {
+        if (text_eq(inputm_entries[i].id, inputm_default)) {
+            inputm_selected = i;
+            break;
+        }
+    }
+    inputm_load_extension_options(config);
+}
+
+static const char *inputm_startup_label(uint32_t mode)
+{
+    if (mode == LEONOS_INPUTM_START_LOGIN) {
+        return T("At sign-in", "登录时启动");
+    }
+    if (mode == LEONOS_INPUTM_START_ON_DEMAND) {
+        return T("On demand", "按需启动");
+    }
+    return T("Manual", "手动启动");
+}
+
 static void request_display(uint32_t action, uint32_t mode, uint32_t scale)
 {
     struct leonos_display_request request;
@@ -826,6 +1252,108 @@ static void draw_personalization_page(struct leonos_ui_surface *ui)
     }
 }
 
+static void draw_input_methods_page(struct leonos_ui_surface *ui)
+{
+    const struct leonos_ui_list_column cols[] = {
+        {T("Input method", "输入法"), 220},
+        {T("Enabled", "启用"), 90},
+        {T("Startup", "启动方式"), 150},
+    };
+    struct leonos_ui_dropdown_item startup_items[3] = {
+        {T("Manual", "手动"), LEONOS_INPUTM_START_MANUAL, 0},
+        {T("At sign-in", "登录时"), LEONOS_INPUTM_START_LOGIN, 0},
+        {T("On demand", "按需"), LEONOS_INPUTM_START_ON_DEMAND, 0},
+    };
+    struct leonos_ui_dropdown_item hotkey_items[2] = {
+        {"Win + Space", 0, 0},
+        {"Alt + Shift", 1, 0},
+    };
+    struct settings_inputm_entry *selected =
+        inputm_selected < inputm_entry_count ? &inputm_entries[inputm_selected] : 0;
+    leonos_ui_text(ui, 34, 64,
+                   T("Input methods and learning data are isolated for the current user.",
+                     "输入法和学习数据按当前用户隔离保存。"),
+                   LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_listview_header(ui, 34, 90, 460, cols, 3);
+    for (uint32_t i = 0; i < inputm_entry_count && i < 5U; ++i) {
+        const char *cells[3];
+        cells[0] = inputm_entries[i].id;
+        cells[1] = inputm_entries[i].enabled ? T("Yes", "是") : T("No", "否");
+        cells[2] = inputm_startup_label(inputm_entries[i].startup_mode);
+        leonos_ui_listview_row(ui, 34, 118 + i * 27U, 460, cols, cells, 3,
+                               i == inputm_selected ? LEONOS_UI_MENU_SELECTED : 0);
+    }
+    leonos_ui_button(ui, 510, 92, 156, LEONOS_UI_BUTTON_H,
+                     selected && selected->enabled ? T("Disable", "禁用") :
+                                                     T("Enable", "启用"),
+                     !selected || !current_user.uid || inputm_selected == 0 ?
+                         LEONOS_UI_BUTTON_DISABLED : 0);
+    leonos_ui_button(ui, 510, 126, 156, LEONOS_UI_BUTTON_H,
+                     T("Use as default", "设为默认"),
+                     !selected || !selected->enabled || !current_user.uid ?
+                         LEONOS_UI_BUTTON_DISABLED : 0);
+    leonos_ui_combobox(ui, 510, 160, 156,
+                        selected ? inputm_startup_label(selected->startup_mode) : "-",
+                        active_drop == DROP_INPUTM_STARTUP,
+                        !selected || !current_user.uid || inputm_selected == 0 ?
+                            LEONOS_UI_BUTTON_DISABLED : 0);
+    leonos_ui_button(ui, 510, 194, 74, LEONOS_UI_BUTTON_H,
+                     T("Move up", "上移"),
+                     !selected || !current_user.uid || inputm_selected <= 1U ?
+                         LEONOS_UI_BUTTON_DISABLED : 0);
+    leonos_ui_button(ui, 592, 194, 74, LEONOS_UI_BUTTON_H,
+                     T("Move down", "下移"),
+                     !selected || !current_user.uid || inputm_selected == 0 ||
+                         inputm_selected + 1U >= inputm_entry_count ?
+                         LEONOS_UI_BUTTON_DISABLED : 0);
+    leonos_ui_text(ui, 44, 266, T("Switch shortcut", "切换快捷键"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_combobox(ui, 170, 260, 180,
+                        text_eq(inputm_hotkey, "alt-shift") ? "Alt + Shift" : "Win + Space",
+                        active_drop == DROP_INPUTM_HOTKEY,
+                        current_user.uid ? 0 : LEONOS_UI_BUTTON_DISABLED);
+    leonos_ui_text(ui, 372, 266, T("Candidates", "候选框"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, 470, 266, T("System overlay", "系统覆盖层"),
+                   LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    if (inputm_option_count) {
+        for (uint32_t i = 0; i < inputm_option_count; ++i) {
+            char label[SETTINGS_INPUTM_OPTION_LABEL_LEN + 12U];
+            uint32_t pos = 0;
+            const char *base = T(inputm_options[i].label,
+                                 inputm_options[i].label_zh[0] ?
+                                     inputm_options[i].label_zh : inputm_options[i].label);
+            label[0] = 0;
+            append_text(label, &pos, sizeof(label), base);
+            append_text(label, &pos, sizeof(label), inputm_options[i].value ? ": On" : ": Off");
+            leonos_ui_button(ui, 44U + i * 150U, 304, 140, LEONOS_UI_BUTTON_H,
+                             label, current_user.uid ?
+                                        (inputm_options[i].value ? LEONOS_UI_BUTTON_PRESSED : 0) :
+                                        LEONOS_UI_BUTTON_DISABLED);
+        }
+    } else {
+        leonos_ui_text(ui, 44, 314, T("This input method has no configurable options.",
+                                      "此输入法没有可配置选项。"),
+                       LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    }
+    leonos_ui_button(ui, 510, 344, 156, LEONOS_UI_BUTTON_H,
+                     selected && selected->settings_app[0] ?
+                         T("Open provider settings", "打开输入法设置") :
+                         T("Update dictionary", "更新词库"),
+                     !selected ||
+                         (!(selected->settings_app[0]) &&
+                          (!text_eq(selected->id, "oschinpt") || !selected->path[0])) ?
+                         LEONOS_UI_BUTTON_DISABLED : 0);
+    if (active_drop == DROP_INPUTM_STARTUP && selected) {
+        leonos_ui_dropdown(ui, 510, 184, 156, startup_items, 3,
+                           selected->startup_mode, SETTINGS_DROPDOWN_ROW_H, 1000);
+    } else if (active_drop == DROP_INPUTM_HOTKEY) {
+        leonos_ui_dropdown(ui, 170, 284, 180, hotkey_items, 2,
+                           text_eq(inputm_hotkey, "alt-shift") ? 1U : 0U,
+                           SETTINGS_DROPDOWN_ROW_H, 1000);
+    }
+}
+
 static void draw_users_page(struct leonos_ui_surface *ui)
 {
     const struct leonos_ui_list_column cols[] = {
@@ -995,6 +1523,7 @@ static void draw_settings(struct leonos_ui_surface *ui)
         {T("File Types", "文件类型"), PAGE_ASSOC, 0},
         {T("Services", "服务"), PAGE_SERVICES, 0},
         {T("Activation", "激活"), PAGE_ACTIVATION, 0},
+        {T("Input", "输入法"), PAGE_INPUT_METHODS, 0},
     };
     leonos_ui_rect(ui, 0, 0, SETTINGS_W, SETTINGS_H, LEONOS_UI_GRAY);
     settings_tabs.selected_id = active_page;
@@ -1011,6 +1540,8 @@ static void draw_settings(struct leonos_ui_surface *ui)
         draw_assoc_page(ui);
     } else if (active_page == PAGE_SERVICES) {
         draw_services_page(ui);
+    } else if (active_page == PAGE_INPUT_METHODS) {
+        draw_input_methods_page(ui);
     } else {
         draw_activation_page(ui);
     }
@@ -1132,8 +1663,8 @@ static void create_user_dialog(uint32_t role)
                                     name, sizeof(name)) <= 0) {
         return;
     }
-    if (leonos_ui_show_input_dialog(T("Create user", "创建用户"), T("Password", "密码"),
-                                    pass, sizeof(pass)) <= 0) {
+    if (leonos_ui_show_password_dialog(T("Create user", "创建用户"), T("Password", "密码"),
+                                       pass, sizeof(pass)) <= 0) {
         return;
     }
     if (leonos_auth_create_user(name, pass, role, &user) == 0) {
@@ -1147,8 +1678,8 @@ static void create_user_dialog(uint32_t role)
 static void reset_password_dialog(uint32_t uid)
 {
     char pass[LEONOS_AUTH_PASSWORD_LEN] = "";
-    if (leonos_ui_show_input_dialog(T("Reset password", "重置密码"), T("New password", "新密码"),
-                                    pass, sizeof(pass)) <= 0) {
+    if (leonos_ui_show_password_dialog(T("Reset password", "重置密码"), T("New password", "新密码"),
+                                       pass, sizeof(pass)) <= 0) {
         return;
     }
     if (leonos_auth_change_password(uid, "", pass) == 0) {
@@ -1165,12 +1696,12 @@ static void change_my_password(void)
     if (!current_user.uid) {
         return;
     }
-    if (leonos_ui_show_input_dialog(T("Change password", "修改密码"), T("Old password", "旧密码"),
-                                    old_pass, sizeof(old_pass)) <= 0) {
+    if (leonos_ui_show_password_dialog(T("Change password", "修改密码"), T("Old password", "旧密码"),
+                                       old_pass, sizeof(old_pass)) <= 0) {
         return;
     }
-    if (leonos_ui_show_input_dialog(T("Change password", "修改密码"), T("New password", "新密码"),
-                                    new_pass, sizeof(new_pass)) <= 0) {
+    if (leonos_ui_show_password_dialog(T("Change password", "修改密码"), T("New password", "新密码"),
+                                       new_pass, sizeof(new_pass)) <= 0) {
         return;
     }
     if (leonos_auth_change_password(current_user.uid, old_pass, new_pass) == 0) {
@@ -1387,6 +1918,215 @@ static void handle_services_click(int32_t x, int32_t y)
     }
 }
 
+static void inputm_set_status(int ok, const char *success, const char *failure)
+{
+    copy_text(status_text, sizeof(status_text), ok ? success : failure);
+}
+
+static void inputm_request_login_start(const struct settings_inputm_entry *entry)
+{
+    struct leonos_startup_command command = {0};
+    uint32_t request_id = 0;
+    if (!entry || !entry->path[0] || text_len(entry->path) >= sizeof(command.path)) {
+        return;
+    }
+    copy_text(command.path, sizeof(command.path), entry->path);
+    if (leonos_startup_request(&command, &request_id) == 0) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Login startup approval requested", "已请求登录启动权限"));
+    }
+}
+
+static void handle_input_methods_click(int32_t x, int32_t y)
+{
+    struct settings_inputm_entry *entry =
+        inputm_selected < inputm_entry_count ? &inputm_entries[inputm_selected] : 0;
+    if (active_drop == DROP_INPUTM_STARTUP && entry) {
+        struct leonos_ui_dropdown_item items[3] = {
+            {T("Manual", "手动"), LEONOS_INPUTM_START_MANUAL, 0},
+            {T("At sign-in", "登录时"), LEONOS_INPUTM_START_LOGIN, 0},
+            {T("On demand", "按需"), LEONOS_INPUTM_START_ON_DEMAND, 0},
+        };
+        uint32_t id = 0;
+        if (leonos_ui_dropdown_hit(x, y, 510, 184, 156, items, 3,
+                                   SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
+            char key[48];
+            char value[4];
+            active_drop = DROP_NONE;
+            if (id <= LEONOS_INPUTM_START_ON_DEMAND) {
+                entry->startup_mode = id;
+                inputm_provider_key(key, sizeof(key), entry->config_index, "startup");
+                value[0] = (char)('0' + id);
+                value[1] = 0;
+                inputm_set_status(inputm_append_config(key, value),
+                                  T("Startup behavior saved", "启动方式已保存"),
+                                  T("Could not save input method", "无法保存输入法设置"));
+                if (id == LEONOS_INPUTM_START_LOGIN) {
+                    inputm_request_login_start(entry);
+                }
+            }
+            return;
+        }
+    }
+    if (active_drop == DROP_INPUTM_HOTKEY) {
+        struct leonos_ui_dropdown_item items[2] = {
+            {"Win + Space", 0, 0},
+            {"Alt + Shift", 1, 0},
+        };
+        uint32_t id = 0;
+        if (leonos_ui_dropdown_hit(x, y, 170, 284, 180, items, 2,
+                                   SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
+            active_drop = DROP_NONE;
+            copy_text(inputm_hotkey, sizeof(inputm_hotkey),
+                      id == 1U ? "alt-shift" : "win-space");
+            inputm_set_status(inputm_append_config("inputm_hotkey", inputm_hotkey),
+                              T("Input shortcut changed", "输入法快捷键已更改"),
+                              T("Could not save input method", "无法保存输入法设置"));
+            return;
+        }
+    }
+    active_drop = DROP_NONE;
+    if (!current_user.uid) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Sign in to change input methods", "登录后才能更改输入法"));
+        return;
+    }
+    if (y >= 118 && y < 118 + (int32_t)(inputm_entry_count * 27U) &&
+        x >= 34 && x < 494) {
+        inputm_selected = (uint32_t)(y - 118) / 27U;
+        inputm_reload_extension_options();
+        return;
+    }
+    entry = inputm_selected < inputm_entry_count ? &inputm_entries[inputm_selected] : 0;
+    if (!entry) {
+        return;
+    }
+    if (hit_rect_i(x, y, 510, 92, 156, LEONOS_UI_BUTTON_H) && inputm_selected != 0) {
+        char key[48];
+        entry->enabled = entry->enabled ? 0 : 1;
+        inputm_provider_key(key, sizeof(key), entry->config_index, "enabled");
+        inputm_set_status(inputm_append_config(key, entry->enabled ? "1" : "0"),
+                          entry->enabled ? T("Input method enabled", "输入法已启用") :
+                                           T("Input method disabled", "输入法已禁用"),
+                          T("Could not save input method", "无法保存输入法设置"));
+        if (!entry->enabled && text_eq(inputm_default, entry->id)) {
+            copy_text(inputm_default, sizeof(inputm_default), "en");
+            (void)inputm_append_config("default", "en");
+        }
+        if (!entry->enabled) {
+            (void)leonos_inputm_set_active(current_user.uid, "en");
+        }
+        return;
+    }
+    if (hit_rect_i(x, y, 510, 126, 156, LEONOS_UI_BUTTON_H) && entry->enabled) {
+        copy_text(inputm_default, sizeof(inputm_default), entry->id);
+        inputm_set_status(inputm_append_config("default", entry->id),
+                          T("Default input method saved", "默认输入法已保存"),
+                          T("Could not save input method", "无法保存输入法设置"));
+        return;
+    }
+    if (hit_rect_i(x, y, 510, 160, 156, LEONOS_UI_BUTTON_H) && inputm_selected != 0) {
+        active_drop = DROP_INPUTM_STARTUP;
+        return;
+    }
+    if (hit_rect_i(x, y, 510, 194, 74, LEONOS_UI_BUTTON_H) && inputm_selected > 1U) {
+        struct settings_inputm_entry *previous = &inputm_entries[inputm_selected - 1U];
+        char key[48];
+        char value[12];
+        uint32_t pos = 0;
+        uint32_t order = entry->order;
+        entry->order = previous->order;
+        previous->order = order;
+        inputm_provider_key(key, sizeof(key), entry->config_index, "order");
+        value[0] = 0;
+        append_dec(value, &pos, sizeof(value), entry->order);
+        if (!inputm_append_config(key, value)) {
+            copy_text(status_text, sizeof(status_text),
+                      T("Could not save input method order", "无法保存输入法顺序"));
+            return;
+        }
+        inputm_provider_key(key, sizeof(key), previous->config_index, "order");
+        pos = 0;
+        value[0] = 0;
+        append_dec(value, &pos, sizeof(value), previous->order);
+        if (!inputm_append_config(key, value)) {
+            copy_text(status_text, sizeof(status_text),
+                      T("Could not save input method order", "无法保存输入法顺序"));
+            return;
+        }
+        inputm_sort_entries();
+        --inputm_selected;
+        inputm_reload_extension_options();
+        copy_text(status_text, sizeof(status_text), T("Input method moved", "已调整输入法顺序"));
+        return;
+    }
+    if (hit_rect_i(x, y, 592, 194, 74, LEONOS_UI_BUTTON_H) && inputm_selected != 0 &&
+        inputm_selected + 1U < inputm_entry_count) {
+        struct settings_inputm_entry *next = &inputm_entries[inputm_selected + 1U];
+        char key[48];
+        char value[12];
+        uint32_t pos = 0;
+        uint32_t order = entry->order;
+        entry->order = next->order;
+        next->order = order;
+        inputm_provider_key(key, sizeof(key), entry->config_index, "order");
+        value[0] = 0;
+        append_dec(value, &pos, sizeof(value), entry->order);
+        if (!inputm_append_config(key, value)) {
+            copy_text(status_text, sizeof(status_text),
+                      T("Could not save input method order", "无法保存输入法顺序"));
+            return;
+        }
+        inputm_provider_key(key, sizeof(key), next->config_index, "order");
+        pos = 0;
+        value[0] = 0;
+        append_dec(value, &pos, sizeof(value), next->order);
+        if (!inputm_append_config(key, value)) {
+            copy_text(status_text, sizeof(status_text),
+                      T("Could not save input method order", "无法保存输入法顺序"));
+            return;
+        }
+        inputm_sort_entries();
+        ++inputm_selected;
+        inputm_reload_extension_options();
+        copy_text(status_text, sizeof(status_text), T("Input method moved", "已调整输入法顺序"));
+        return;
+    }
+    if (hit_rect_i(x, y, 170, 260, 180, LEONOS_UI_BUTTON_H)) {
+        active_drop = DROP_INPUTM_HOTKEY;
+        return;
+    }
+    for (uint32_t i = 0; i < inputm_option_count; ++i) {
+        if (hit_rect_i(x, y, 44 + (int32_t)i * 150, 304, 140, LEONOS_UI_BUTTON_H)) {
+            inputm_options[i].value = inputm_options[i].value ? 0 : 1;
+            inputm_set_status(inputm_append_config(inputm_options[i].key,
+                                                   inputm_options[i].value ? "1" : "0"),
+                              T("Input method setting changed", "输入法设置已更改"),
+                              T("Could not save input method", "无法保存输入法设置"));
+            return;
+        }
+    }
+    if (hit_rect_i(x, y, 510, 344, 156, LEONOS_UI_BUTTON_H) && entry->settings_app[0]) {
+        char *argv[2];
+        argv[0] = entry->settings_app;
+        argv[1] = 0;
+        inputm_set_status(execve(entry->settings_app, argv, 0) > 0,
+                          T("Provider settings started", "已启动输入法设置"),
+                          T("Could not start provider settings", "无法启动输入法设置"));
+        return;
+    }
+    if (hit_rect_i(x, y, 510, 344, 156, LEONOS_UI_BUTTON_H) &&
+        text_eq(entry->id, "oschinpt") && entry->path[0]) {
+        char *argv[3];
+        argv[0] = entry->path;
+        argv[1] = "--update";
+        argv[2] = 0;
+        inputm_set_status(execve(entry->path, argv, 0) > 0,
+                          T("Dictionary update started", "词库更新已开始"),
+                          T("Could not start dictionary update", "无法启动词库更新"));
+    }
+}
+
 static void handle_click(int32_t x, int32_t y)
 {
     struct leonos_ui_tab_item tabs[] = {
@@ -1396,6 +2136,7 @@ static void handle_click(int32_t x, int32_t y)
         {T("File Types", "文件类型"), PAGE_ASSOC, 0},
         {T("Services", "服务"), PAGE_SERVICES, 0},
         {T("Activation", "激活"), PAGE_ACTIVATION, 0},
+        {T("Input", "输入法"), PAGE_INPUT_METHODS, 0},
     };
     if (leonos_ui_tab_control_handle_mouse(&settings_tabs, x, y, 18,
                                            SETTINGS_TAB_Y, SETTINGS_W - 36,
@@ -1414,6 +2155,8 @@ static void handle_click(int32_t x, int32_t y)
         handle_assoc_click(x, y);
     } else if (active_page == PAGE_SERVICES) {
         handle_services_click(x, y);
+    } else if (active_page == PAGE_INPUT_METHODS) {
+        handle_input_methods_click(x, y);
     }
 }
 
@@ -1437,6 +2180,7 @@ int main(void)
     refresh_display_state();
     refresh_appearance_state();
     refresh_users();
+    inputm_load_settings();
     load_services_config();
     refresh_ntp_runtime_state();
     draw_settings(&ui);
@@ -1473,6 +2217,7 @@ int main(void)
                 refresh_display_state();
                 refresh_appearance_state();
                 refresh_users();
+                inputm_load_settings();
                 refresh_ntp_runtime_state();
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);

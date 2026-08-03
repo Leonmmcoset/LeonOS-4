@@ -184,7 +184,7 @@ void draw_window(uint8_t id)
         draw_window_animation_frame(w);
         return;
     }
-    if (window_is_fullscreen(w)) {
+    if (window_is_fullscreen(w) || window_is_borderless(w)) {
         rect_fill_i(w->x, w->y, (int)w->width, (int)w->height, w->body_color);
         if (w->window_id) {
             draw_app_surface_i(id, w->x, w->y, w->width, w->height);
@@ -288,7 +288,8 @@ draw_resize_grip:
 
 void draw_taskbar_button(uint8_t id, uint32_t x, uint32_t y, uint32_t w)
 {
-    if (!windows[id].visible) {
+    if (!windows[id].visible ||
+        (windows[id].flags & LEONOS_GUI_WINDOW_HIDE_TASKBAR) != 0) {
         return;
     }
     int active = active_window == id && !windows[id].minimized;

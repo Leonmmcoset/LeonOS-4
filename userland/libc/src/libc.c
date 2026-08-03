@@ -6,6 +6,7 @@
 #include <leonos/gui.h>
 #include <leonos/http.h>
 #include <leonos/i18n.h>
+#include <leonos/inputm.h>
 #include <leonos/net.h>
 #include <leonos/mouse.h>
 #include <leonos/pty.h>
@@ -265,12 +266,54 @@ char *strrchr(const char *text, int value)
 
 long read(int fd, void *buf, size_t len)
 {
-    return syscall3(SYS_read, fd, (long)buf, (long)len);
+    struct leonos_stat stat_info;
+    size_t done = 0;
+
+    /* The kernel already bounds each file read to this size.  Avoid an
+     * additional fstat/path lookup for the small reads used during startup. */
+    if (len <= LEONOS_FS_READ_SLICE_BYTES) {
+        return syscall3(SYS_read, fd, (long)buf, (long)len);
+    }
+    if (fstat(fd, &stat_info) < 0 || stat_info.type != LEONOS_FS_TYPE_FILE) {
+        return syscall3(SYS_read, fd, (long)buf, (long)len);
+    }
+    while (done < len) {
+        size_t chunk = len - done;
+        long ret;
+        if (chunk > LEONOS_FS_READ_SLICE_BYTES) {
+            chunk = LEONOS_FS_READ_SLICE_BYTES;
+        }
+        ret = syscall3(SYS_read, fd, (long)((uint8_t *)buf + done), (long)chunk);
+        if (ret <= 0) {
+            return done ? (long)done : ret;
+        }
+        done += (size_t)ret;
+        if ((size_t)ret < chunk) {
+            break;
+        }
+    }
+    return (long)done;
 }
 
 long write(int fd, const void *buf, size_t len)
 {
-    return syscall3(SYS_write, fd, (long)buf, (long)len);
+    size_t done = 0;
+    while (done < len) {
+        size_t chunk = len - done;
+        long ret;
+        if (chunk > LEONOS_FS_IO_SLICE_BYTES) {
+            chunk = LEONOS_FS_IO_SLICE_BYTES;
+        }
+        ret = syscall3(SYS_write, fd, (long)((const uint8_t *)buf + done), (long)chunk);
+        if (ret <= 0) {
+            return done ? (long)done : ret;
+        }
+        done += (size_t)ret;
+        if ((size_t)ret < chunk) {
+            break;
+        }
+    }
+    return (long)done;
 }
 
 int open(const char *path, int flags, int mode)
@@ -335,6 +378,30 @@ int leonos_mouse_show(uint32_t window_id)
 int leonos_mouse_is_visible(void)
 {
     return leonos_gui_mouse_visible();
+}
+
+int leonos_mouse_set_position(uint32_t window_id, int32_t x, int32_t y)
+{
+    struct leonos_gui_cursor_request request = {
+        .window_id = window_id,
+        .x = x,
+        .y = y,
+        .style = LEONOS_GUI_CURSOR_ARROW,
+        .flags = LEONOS_GUI_CURSOR_REQUEST_POSITION,
+    };
+    return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
+}
+
+int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
+{
+    struct leonos_gui_cursor_request request = {
+        .window_id = window_id,
+        .x = 0,
+        .y = 0,
+        .style = style,
+        .flags = LEONOS_GUI_CURSOR_REQUEST_STYLE,
+    };
+    return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
 }
 
 int sched_yield(void)
@@ -1226,6 +1293,7 @@ int leonos_gui_create_app_window_ex(const char *title, const char *text,
     int ret = ioctl(3, LEONOS_GUI_IOCTL_CREATE_WINDOW, &cmd);
     if (ret > 0) {
         struct leonos_appearance_state appearance;
+        leonos_inputm_note_gui_window((uint32_t)ret);
         if (ioctl(3, LEONOS_GUI_IOCTL_APPEARANCE_STATE, &appearance) > 0) {
             (void)leonos_ui_theme_set_appearance(appearance.theme,
                                                  appearance.metro_color_scheme,
@@ -1238,6 +1306,56 @@ int leonos_gui_create_app_window_ex(const char *title, const char *text,
 int leonos_gui_destroy_app_window(uint32_t window_id)
 {
     return ioctl(3, LEONOS_GUI_IOCTL_DESTROY_WINDOW, (void *)(unsigned long)window_id);
+}
+
+int leonos_gui_update_window(const struct leonos_gui_window_update *update)
+{
+    if (!update) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_GUI_IOCTL_UPDATE_WINDOW, (void *)update);
+}
+
+int leonos_gui_set_window_title(uint32_t window_id, const char *title)
+{
+    struct leonos_gui_window_update update = {
+        .window_id = window_id,
+        .mask = LEONOS_GUI_WINDOW_UPDATE_TITLE,
+        .flags = 0,
+        .title = title,
+    };
+    return leonos_gui_update_window(&update);
+}
+
+int leonos_gui_set_window_borderless(uint32_t window_id, uint32_t borderless)
+{
+    struct leonos_gui_window_update update = {
+        .window_id = window_id,
+        .mask = LEONOS_GUI_WINDOW_UPDATE_BORDERLESS,
+        .flags = borderless ? LEONOS_GUI_WINDOW_BORDERLESS : 0,
+        .title = 0,
+    };
+    return leonos_gui_update_window(&update);
+}
+
+int leonos_gui_set_window_taskbar_visible(uint32_t window_id, uint32_t visible)
+{
+    struct leonos_gui_window_update update = {
+        .window_id = window_id,
+        .mask = LEONOS_GUI_WINDOW_UPDATE_TASKBAR,
+        .flags = visible ? 0 : LEONOS_GUI_WINDOW_HIDE_TASKBAR,
+        .title = 0,
+    };
+    return leonos_gui_update_window(&update);
+}
+
+int leonos_gui_set_taskbar_visible(uint32_t window_id, uint32_t visible)
+{
+    struct leonos_gui_taskbar_request request = {
+        .window_id = window_id,
+        .visible = visible ? 1u : 0u,
+    };
+    return ioctl(3, LEONOS_GUI_IOCTL_SET_TASKBAR_VISIBLE, &request);
 }
 
 int leonos_gui_poll_window(struct leonos_gui_window_msg *message)
@@ -1281,14 +1399,53 @@ int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_
     return ret;
 }
 
+static int leonos_gui_inputm_commit_event(struct leonos_gui_app_event *event)
+{
+    uint32_t window_id;
+    if (!event || !event->window_id) {
+        return 0;
+    }
+    window_id = event->window_id;
+    if (leonos_inputm_poll_gui_commit(window_id) <= 0) {
+        return 0;
+    }
+    *event = (struct leonos_gui_app_event){0};
+    event->window_id = window_id;
+    event->type = LEONOS_GUI_APP_EVENT_KEY_DOWN;
+    event->pressed = 1;
+    if (leonos_inputm_take_key(&event->keycode, &event->pressed)) {
+        event->type = event->pressed ? LEONOS_GUI_APP_EVENT_KEY_DOWN :
+                                     LEONOS_GUI_APP_EVENT_KEY_UP;
+    }
+    return 1;
+}
+
+static void leonos_gui_observe_inputm_key(struct leonos_gui_app_event *event)
+{
+    if (!event || (event->type != LEONOS_GUI_APP_EVENT_KEY_DOWN &&
+                   event->type != LEONOS_GUI_APP_EVENT_KEY_UP)) {
+        return;
+    }
+    (void)leonos_inputm_observe_gui_key(event->window_id, &event->keycode,
+                                         event->pressed);
+}
+
 int leonos_gui_poll_app_event(struct leonos_gui_app_event *event)
 {
-    int ret = ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, event);
+    int ret;
+    if (leonos_gui_inputm_commit_event(event)) {
+        return 1;
+    }
+    ret = ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, event);
     if (ret > 0 && event && event->type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
         (void)leonos_ui_theme_set_appearance((uint32_t)event->x,
                                              (uint32_t)event->y,
                                              (uint32_t)event->dx);
         event->type = LEONOS_GUI_APP_EVENT_RESIZE;
+    }
+    if (ret > 0) {
+        leonos_inputm_note_gui_window(event->window_id);
+        leonos_gui_observe_inputm_key(event);
     }
     return ret;
 }
@@ -1300,9 +1457,15 @@ int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeo
     if (!event) {
         return -1;
     }
+    if (leonos_gui_inputm_commit_event(event)) {
+        return 1;
+    }
     wait.event = *event;
     wait.timeout_ms = timeout_ms;
     ret = ioctl(3, LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT, &wait);
+    if (ret == 0 && leonos_gui_inputm_commit_event(event)) {
+        return 1;
+    }
     if (ret == 0) {
         ret = ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, &wait.event);
     }
@@ -1314,6 +1477,8 @@ int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeo
                                                  (uint32_t)event->dx);
             event->type = LEONOS_GUI_APP_EVENT_RESIZE;
         }
+        leonos_inputm_note_gui_window(event->window_id);
+        leonos_gui_observe_inputm_key(event);
     }
     return ret;
 }
@@ -1410,17 +1575,45 @@ int leonos_appearance_publish_state(const struct leonos_appearance_state *state)
 int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
                     uint32_t capacity, uint32_t *out_count)
 {
-    struct leonos_dir_list query = {
-        .path = path,
-        .capacity = capacity,
-        .count = 0,
-        .entries = entries,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_LIST_DIR, &query);
+    uint32_t count = 0;
+    int fd;
     if (out_count) {
-        *out_count = query.count;
+        *out_count = 0;
     }
-    return ret;
+    if (!path || (capacity && !entries)) {
+        return -1;
+    }
+    if (capacity > LEONOS_FS_MAX_ENTRIES) {
+        capacity = LEONOS_FS_MAX_ENTRIES;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    while (count < capacity) {
+        /* Directory reads already return one fixed-size entry per syscall. */
+        long got = syscall3(SYS_read, fd, (long)&entries[count],
+                            sizeof(entries[count]));
+        if (got < 0) {
+            (void)close(fd);
+            return (int)got;
+        }
+        if (got == 0) {
+            break;
+        }
+        if (got != (long)sizeof(entries[count])) {
+            (void)close(fd);
+            return -1;
+        }
+        ++count;
+    }
+    if (close(fd) < 0) {
+        return -1;
+    }
+    if (out_count) {
+        *out_count = count;
+    }
+    return 0;
 }
 
 static int leonos_fs_acl_ioctl(unsigned long request, const char *path,
@@ -1588,21 +1781,47 @@ int leonos_audio_configure(const struct leonos_audio_format *format)
 long leonos_audio_write(const void *data, uint32_t length,
                         uint32_t *out_status)
 {
-    struct leonos_audio_write request = {
-        .data = data,
-        .length = length,
-        .transferred = 0,
-        .status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED,
-    };
-    int ret;
+    uint32_t done = 0;
+    uint32_t status = LEONOS_AUDIO_STATUS_OK;
     if (length && !data) {
         return -1;
     }
-    ret = ioctl(3, LEONOS_IOCTL_AUDIO_WRITE, &request);
-    if (out_status) {
-        *out_status = request.status;
+    while (done < length) {
+        uint32_t chunk = length - done;
+        struct leonos_audio_write request;
+        int ret;
+        if (chunk > LEONOS_AUDIO_IO_SLICE_BYTES) {
+            chunk = LEONOS_AUDIO_IO_SLICE_BYTES;
+        }
+        request = (struct leonos_audio_write){
+            .data = (const uint8_t *)data + done,
+            .length = chunk,
+            .transferred = 0,
+            .status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED,
+        };
+        ret = ioctl(3, LEONOS_IOCTL_AUDIO_WRITE, &request);
+        status = request.status;
+        if (ret < 0) {
+            if (out_status) {
+                *out_status = status;
+            }
+            return done ? (long)done : ret;
+        }
+        if (request.transferred == 0 || request.transferred > chunk) {
+            if (out_status) {
+                *out_status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
+            }
+            return done ? (long)done : -1;
+        }
+        done += request.transferred;
+        if (request.transferred < chunk) {
+            break;
+        }
     }
-    return ret < 0 ? ret : (long)request.transferred;
+    if (out_status) {
+        *out_status = status;
+    }
+    return (long)done;
 }
 
 int leonos_audio_get_state(struct leonos_audio_state *state)

@@ -4,6 +4,7 @@
 #include <leonos/fs.h>
 #include <leonos/ini.h>
 #include <leonos/launch.h>
+#include <leonos/startup.h>
 #include <leonos/syscall.h>
 #include <leonos/tar.h>
 #include <string.h>
@@ -291,6 +292,40 @@ static int api_bool_value(const char *key, uint32_t *out)
     return 0;
 }
 
+static int api_bool_value_in_section(const char *section, const char *key,
+                                     uint32_t *out)
+{
+    char val[8];
+    if (!section || !key || !out || !leonos_ini_get(section, key, val, sizeof(val))) {
+        return 0;
+    }
+    if (api_text_eq(val, "0")) {
+        *out = 0;
+        return 1;
+    }
+    if (api_text_eq(val, "1")) {
+        *out = 1;
+        return 1;
+    }
+    return 0;
+}
+
+static int api_input_method_id_is_safe(const char *id)
+{
+    uint32_t i = 0;
+    if (!id || !id[0]) {
+        return 0;
+    }
+    while (id[i]) {
+        char ch = id[i++];
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+              (ch >= '0' && ch <= '9') || ch == '_' || ch == '-')) {
+            return 0;
+        }
+    }
+    return i < LEONOS_INPUTM_ID_LEN;
+}
+
 static int api_validate_info(struct leonos_api_info *info)
 {
     if (!info || !info->name[0] || !info->version[0] ||
@@ -305,6 +340,17 @@ static int api_validate_info(struct leonos_api_info *info)
         return 0;
     }
     if (info->icon[0] && !api_relative_path_is_safe(info->icon)) {
+        return 0;
+    }
+    if (info->input_method &&
+        (!api_input_method_id_is_safe(info->input_method_id) ||
+         !info->input_method_abbreviation[0] ||
+         info->input_method_startup_mode > LEONOS_INPUTM_START_ON_DEMAND ||
+         (info->input_method_settings[0] &&
+          !api_relative_path_is_safe(info->input_method_settings)) ||
+         (info->input_method_settings_app[0] &&
+          (!api_relative_path_is_safe(info->input_method_settings_app) ||
+           !api_text_ends_with(info->input_method_settings_app, ".elf"))))) {
         return 0;
     }
     return 1;
@@ -340,6 +386,12 @@ int leonos_api_parse_info(const char *api_path, struct leonos_api_info *info)
     char main_exe_value[LEONOS_INI_VALUE_LEN];
     char default_path_value[LEONOS_INI_VALUE_LEN];
     char icon_value[LEONOS_INI_VALUE_LEN];
+    char input_type[32];
+    char input_id[LEONOS_INI_VALUE_LEN];
+    char input_abbreviation[LEONOS_INI_VALUE_LEN];
+    char input_startup[16];
+    char input_settings[LEONOS_INI_VALUE_LEN];
+    char input_settings_app[LEONOS_INI_VALUE_LEN];
     int ok = 0;
     if (!api_path || !info) {
         return 0;
@@ -385,6 +437,44 @@ int leonos_api_parse_info(const char *api_path, struct leonos_api_info *info)
         !api_copy_field(info->icon, sizeof(info->icon), icon_value)) {
         goto cleanup;
     }
+    input_type[0] = 0;
+    if (leonos_ini_get("input_method", "type", input_type, sizeof(input_type))) {
+        if (!api_text_eq(input_type, "input-method") ||
+            !leonos_ini_get("input_method", "id", input_id, sizeof(input_id)) ||
+            !leonos_ini_get("input_method", "abbreviation", input_abbreviation,
+                            sizeof(input_abbreviation)) ||
+            !leonos_ini_get("input_method", "startup_mode", input_startup,
+                            sizeof(input_startup)) ||
+            !api_bool_value_in_section("input_method", "launch_after_install",
+                                       &info->input_method_launch_after_install)) {
+            goto cleanup;
+        }
+        input_settings[0] = 0;
+        input_settings_app[0] = 0;
+        (void)leonos_ini_get("input_method", "settings_schema", input_settings,
+                             sizeof(input_settings));
+        (void)leonos_ini_get("input_method", "settings_app", input_settings_app,
+                             sizeof(input_settings_app));
+        info->input_method = 1;
+        if (api_text_eq(input_startup, "manual")) {
+            info->input_method_startup_mode = LEONOS_INPUTM_START_MANUAL;
+        } else if (api_text_eq(input_startup, "login")) {
+            info->input_method_startup_mode = LEONOS_INPUTM_START_LOGIN;
+        } else if (api_text_eq(input_startup, "on-demand")) {
+            info->input_method_startup_mode = LEONOS_INPUTM_START_ON_DEMAND;
+        } else {
+            goto cleanup;
+        }
+        if (!api_copy_field(info->input_method_id, sizeof(info->input_method_id), input_id) ||
+            !api_copy_field(info->input_method_abbreviation,
+                            sizeof(info->input_method_abbreviation), input_abbreviation) ||
+            !api_copy_field(info->input_method_settings,
+                            sizeof(info->input_method_settings), input_settings) ||
+            !api_copy_field(info->input_method_settings_app,
+                            sizeof(info->input_method_settings_app), input_settings_app)) {
+            goto cleanup;
+        }
+    }
     if (!api_validate_info(info)) {
         goto cleanup;
     }
@@ -397,6 +487,225 @@ cleanup:
         memset(info, 0, sizeof(*info));
     }
     return ok;
+}
+
+static uint32_t api_parse_u32(const char *text, uint32_t fallback)
+{
+    uint32_t value = 0;
+    uint32_t digits = 0;
+    while (text && *text >= '0' && *text <= '9') {
+        uint32_t digit = (uint32_t)(*text - '0');
+        if (value > (UINT32_MAX - digit) / 10U) {
+            return fallback;
+        }
+        value = value * 10U + digit;
+        ++text;
+        ++digits;
+    }
+    return digits ? value : fallback;
+}
+
+/* Return the last exact key assignment so append-only user config remains valid. */
+static int api_config_get(const char *config, const char *key,
+                          char *value, uint32_t capacity)
+{
+    uint32_t key_len = (uint32_t)strlen(key);
+    uint32_t pos = 0;
+    uint8_t found = 0;
+    if (!config || !key || !key_len || !value || capacity == 0) {
+        return 0;
+    }
+    value[0] = 0;
+    while (config[pos]) {
+        uint32_t start = pos;
+        uint32_t end;
+        uint32_t out = 0;
+        while (config[pos] && config[pos] != '\n' && config[pos] != '\r') {
+            ++pos;
+        }
+        end = pos;
+        while (config[pos] == '\n' || config[pos] == '\r') {
+            ++pos;
+        }
+        if (end <= start + key_len || config[start + key_len] != '=') {
+            continue;
+        }
+        for (uint32_t i = 0; i < key_len; ++i) {
+            if (config[start + i] != key[i]) {
+                goto next_line;
+            }
+        }
+        start += key_len + 1U;
+        while (start < end && out + 1U < capacity) {
+            value[out++] = config[start++];
+        }
+        value[out] = 0;
+        found = 1;
+next_line:
+        ;
+    }
+    return found;
+}
+
+static void api_inputm_provider_key(char *key, uint32_t capacity,
+                                    uint32_t index, const char *field)
+{
+    uint32_t pos = 0;
+    if (!key || capacity == 0) {
+        return;
+    }
+    key[0] = 0;
+    api_append_text(key, &pos, capacity, "provider");
+    api_append_uint(key, &pos, capacity, index);
+    api_append_char(key, &pos, capacity, '_');
+    api_append_text(key, &pos, capacity, field);
+}
+
+static int api_append_input_method_config(const struct leonos_api_info *info,
+                                          const char *exe_path)
+{
+    struct leonos_user_info user = {0};
+    char path[LEONOS_FS_PATH_LEN];
+    char config[2048];
+    char line[LEONOS_FS_PATH_LEN * 3U + 256U];
+    char value[LEONOS_FS_PATH_LEN];
+    char settings_path[LEONOS_FS_PATH_LEN];
+    char settings_app_path[LEONOS_FS_PATH_LEN];
+    char install_dir[LEONOS_FS_PATH_LEN];
+    uint32_t home_len;
+    uint32_t count = 0;
+    uint32_t index;
+    uint32_t pos = 0;
+    int fd;
+    long got;
+    if (!info || !info->input_method || !exe_path ||
+        leonos_auth_current(&user) != 0 || !user.uid || !user.home[0]) {
+        return 0;
+    }
+    home_len = (uint32_t)strlen(user.home);
+    if (home_len + 14U >= sizeof(path)) {
+        return 0;
+    }
+    memcpy(path, user.home, home_len);
+    memcpy(path + home_len, "/.inputm.conf", 14U);
+    config[0] = 0;
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd >= 0) {
+        got = read(fd, config, sizeof(config) - 1U);
+        close(fd);
+        if (got > 0) {
+            config[got] = 0;
+        } else {
+            config[0] = 0;
+        }
+    }
+    if (api_config_get(config, "provider_count", value, sizeof(value))) {
+        count = api_parse_u32(value, LEONOS_INPUTM_MAX_PROVIDERS);
+    }
+    line[0] = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        char key[48];
+        api_inputm_provider_key(key, sizeof(key), i, "id");
+        if (api_config_get(config, key, value, sizeof(value)) &&
+            api_text_eq(value, info->input_method_id)) {
+            index = i;
+            goto append_provider;
+        }
+    }
+    if (count >= LEONOS_INPUTM_MAX_PROVIDERS) {
+        return 0;
+    }
+    index = count;
+    api_append_text(line, &pos, sizeof(line), "\nprovider_count=");
+    api_append_uint(line, &pos, sizeof(line), count + 1U);
+
+append_provider:
+    api_append_text(line, &pos, sizeof(line), "\nprovider");
+    api_append_uint(line, &pos, sizeof(line), index);
+    api_append_text(line, &pos, sizeof(line), "_id=");
+    api_append_text(line, &pos, sizeof(line), info->input_method_id);
+    api_append_text(line, &pos, sizeof(line), "\nprovider");
+    api_append_uint(line, &pos, sizeof(line), index);
+    api_append_text(line, &pos, sizeof(line), "_path=");
+    api_append_text(line, &pos, sizeof(line), exe_path);
+    if (index == count) {
+        api_append_text(line, &pos, sizeof(line), "\nprovider");
+        api_append_uint(line, &pos, sizeof(line), index);
+        api_append_text(line, &pos, sizeof(line), "_enabled=1\nprovider");
+        api_append_uint(line, &pos, sizeof(line), index);
+        api_append_text(line, &pos, sizeof(line), "_startup=");
+        api_append_uint(line, &pos, sizeof(line), info->input_method_startup_mode);
+        api_append_text(line, &pos, sizeof(line), "\nprovider");
+        api_append_uint(line, &pos, sizeof(line), index);
+        api_append_text(line, &pos, sizeof(line), "_order=");
+        api_append_uint(line, &pos, sizeof(line), count + 1U);
+    }
+    if ((info->input_method_settings[0] || info->input_method_settings_app[0]) &&
+        !api_parent_path(exe_path, install_dir, sizeof(install_dir))) {
+        return 0;
+    }
+    if (info->input_method_settings[0] &&
+        !api_join_path(settings_path, sizeof(settings_path), install_dir,
+                       info->input_method_settings)) {
+        return 0;
+    }
+    if (info->input_method_settings_app[0] &&
+        !api_join_path(settings_app_path, sizeof(settings_app_path), install_dir,
+                       info->input_method_settings_app)) {
+        return 0;
+    }
+    if (info->input_method_settings[0]) {
+        api_append_text(line, &pos, sizeof(line), "\nprovider");
+        api_append_uint(line, &pos, sizeof(line), index);
+        api_append_text(line, &pos, sizeof(line), "_settings=");
+        api_append_text(line, &pos, sizeof(line), settings_path);
+    }
+    if (info->input_method_settings_app[0]) {
+        api_append_text(line, &pos, sizeof(line), "\nprovider");
+        api_append_uint(line, &pos, sizeof(line), index);
+        api_append_text(line, &pos, sizeof(line), "_settings_app=");
+        api_append_text(line, &pos, sizeof(line), settings_app_path);
+    }
+    api_append_char(line, &pos, sizeof(line), '\n');
+    if (pos == 0 || pos + 1U >= sizeof(line)) {
+        return 0;
+    }
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    got = write(fd, line, pos);
+    close(fd);
+    return got == (long)pos;
+}
+
+static int api_install_input_method(const struct leonos_api_info *info,
+                                    const char *exe_path)
+{
+    struct leonos_user_info user = {0};
+    char *argv[2];
+    if (!info || !info->input_method ||
+        !api_append_input_method_config(info, exe_path)) {
+        return 0;
+    }
+    if (leonos_auth_current(&user) == 0 && user.uid) {
+        (void)leonos_inputm_notify_config(user.uid);
+    }
+    if (info->input_method_startup_mode == LEONOS_INPUTM_START_LOGIN) {
+        struct leonos_startup_command command = {0};
+        uint32_t request_id;
+        if (strlen(exe_path) >= sizeof(command.path)) {
+            return 0;
+        }
+        memcpy(command.path, exe_path, strlen(exe_path) + 1U);
+        (void)leonos_startup_request(&command, &request_id);
+    }
+    if (!info->input_method_launch_after_install) {
+        return 1;
+    }
+    argv[0] = (char *)exe_path;
+    argv[1] = 0;
+    return execve(exe_path, argv, 0) > 0;
 }
 
 static int api_extract_tar(const char *api_path, const char *dest_dir,
@@ -475,6 +784,9 @@ int leonos_api_install_with_progress(const char *api_path, const char *dest_dir,
                        info.main_exe) ||
         stat(exe_path, &exe_stat) != 0 ||
         exe_stat.type != LEONOS_FS_TYPE_FILE) {
+        return 0;
+    }
+    if (info.input_method && !api_install_input_method(&info, exe_path)) {
         return 0;
     }
     if (create_shortcut && info.main_exe[0]) {

@@ -28,7 +28,8 @@
 
 #define AC97_BDL_COUNT 16U
 #define AC97_BUFFER_BYTES 4096U
-#define AC97_WAIT_SPINS 10000000U
+/* A failed codec must return promptly; the caller can retry playback. */
+#define AC97_WAIT_SPINS 1000000U
 
 struct ac97_buffer_desc {
     uint32_t address;

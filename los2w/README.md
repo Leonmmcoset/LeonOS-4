@@ -4,9 +4,15 @@
 Windows Python. It maps a selected Windows directory as the guest `0:/` drive
 and provides the current filesystem, GUI, network, and selected system ioctls.
 
+## Install
+
+```powershell
+py -m pip install los2w
+```
+
 ## Run
 
-Install dependencies:
+To run from a source checkout, install the development dependencies:
 
 ```powershell
 py -m pip install -r los2w\requirements.txt

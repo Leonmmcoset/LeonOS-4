@@ -843,6 +843,9 @@ void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name)
 
 uint32_t taskbar_y(void)
 {
+    if (!desktop_taskbar_visible) {
+        return fb_h();
+    }
     return fb_h() > TASKBAR_H ? fb_h() - TASKBAR_H : 0;
 }
 
@@ -850,7 +853,8 @@ uint32_t running_window_count(void)
 {
     uint32_t count = 0;
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
-        if (windows[i].visible) {
+        if (windows[i].visible &&
+            (windows[i].flags & LEONOS_GUI_WINDOW_HIDE_TASKBAR) == 0) {
             ++count;
         }
     }

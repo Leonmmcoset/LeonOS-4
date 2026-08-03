@@ -31,6 +31,11 @@
 #define KERNEL_PATH "0:/system/kernel.sys"
 #define MIDDLELAYER_PATH "0:/system/middlelayer.sys"
 #define READ_BUFFER_SIZE (1024u * 1024u)
+#define LOADER_LOG_MAX_COLUMNS 256u
+#define LOADER_LOG_MAX_ROWS 96u
+#define LOADER_UI_HEADER_HEIGHT 56u
+#define LOADER_UI_FOOTER_HEIGHT 32u
+#define LOADER_UI_PANEL_HEADER_HEIGHT 28u
 
 struct multiboot2_info {
     uint32_t total_size;
@@ -303,13 +308,26 @@ struct loader_framebuffer_console {
     uint32_t rows;
     uint32_t column;
     uint32_t row;
+    uint32_t log_x;
+    uint32_t log_y;
+    uint32_t panel_x;
+    uint32_t panel_y;
+    uint32_t panel_width;
+    uint32_t panel_height;
+    uint32_t footer_y;
     uint32_t background;
     uint32_t banner;
+    uint32_t panel;
+    uint32_t border;
     uint32_t text;
+    uint32_t muted_text;
+    uint32_t accent;
+    uint32_t line_count;
     uint8_t enabled;
 };
 
 static struct loader_framebuffer_console framebuffer_console;
+static char framebuffer_log_lines[LOADER_LOG_MAX_ROWS][LOADER_LOG_MAX_COLUMNS + 1u];
 
 struct loader_module {
     uint64_t start;
@@ -570,26 +588,113 @@ static void loader_framebuffer_text(uint32_t x, uint32_t y, const char *text,
                                     uint32_t foreground, uint32_t background)
 {
     uint32_t column = 0;
-    while (text && text[column] && x + (column + 1U) * LEONOS_FONT_W <= framebuffer_console.width) {
+    while (text && text[column] &&
+           x + (column + 1U) * LEONOS_FONT_W <= framebuffer_console.width) {
         loader_framebuffer_char(x + column * LEONOS_FONT_W, y, text[column],
                                 foreground, background);
         ++column;
     }
 }
 
-static void loader_framebuffer_clear_log(void)
+static void loader_framebuffer_redraw_log(void)
 {
-    uint32_t log_y = 48U;
     if (!framebuffer_console.enabled) {
         return;
     }
-    if (log_y < framebuffer_console.height) {
-        loader_framebuffer_fill(0, log_y, framebuffer_console.width,
-                                framebuffer_console.height - log_y,
-                                framebuffer_console.background);
+    loader_framebuffer_fill(framebuffer_console.log_x, framebuffer_console.log_y,
+                            framebuffer_console.columns * LEONOS_FONT_W,
+                            framebuffer_console.rows * LEONOS_FONT_H,
+                            framebuffer_console.panel);
+    for (uint32_t row = 0; row < framebuffer_console.line_count; ++row) {
+        loader_framebuffer_text(framebuffer_console.log_x,
+                                framebuffer_console.log_y + row * LEONOS_FONT_H,
+                                framebuffer_log_lines[row],
+                                framebuffer_console.text,
+                                framebuffer_console.panel);
     }
+}
+
+static void loader_framebuffer_clear_log(void)
+{
+    if (!framebuffer_console.enabled) {
+        return;
+    }
+    memset_local(framebuffer_log_lines, 0, sizeof(framebuffer_log_lines));
+    framebuffer_console.line_count = 1U;
     framebuffer_console.column = 0;
     framebuffer_console.row = 0;
+    loader_framebuffer_redraw_log();
+}
+
+static void loader_framebuffer_draw_chrome(void)
+{
+    uint32_t header_height = framebuffer_console.panel_y;
+    uint32_t live_output_x = framebuffer_console.panel_x + 12U;
+
+    if (framebuffer_console.panel_width >= 128U) {
+        live_output_x = framebuffer_console.panel_x + framebuffer_console.panel_width - 116U;
+    }
+
+    loader_framebuffer_fill(0, 0, framebuffer_console.width,
+                            framebuffer_console.height, framebuffer_console.background);
+    loader_framebuffer_fill(0, 0, framebuffer_console.width, header_height,
+                            framebuffer_console.banner);
+    loader_framebuffer_fill(framebuffer_console.panel_x, framebuffer_console.panel_y,
+                            framebuffer_console.panel_width,
+                            framebuffer_console.panel_height,
+                            framebuffer_console.panel);
+    loader_framebuffer_fill(framebuffer_console.panel_x,
+                            framebuffer_console.panel_y,
+                            framebuffer_console.panel_width, 1U,
+                            framebuffer_console.border);
+    loader_framebuffer_fill(framebuffer_console.panel_x,
+                            framebuffer_console.panel_y + framebuffer_console.panel_height - 1U,
+                            framebuffer_console.panel_width, 1U,
+                            framebuffer_console.border);
+    loader_framebuffer_fill(framebuffer_console.panel_x,
+                            framebuffer_console.panel_y, 1U,
+                            framebuffer_console.panel_height,
+                            framebuffer_console.border);
+    loader_framebuffer_fill(framebuffer_console.panel_x + framebuffer_console.panel_width - 1U,
+                            framebuffer_console.panel_y, 1U,
+                            framebuffer_console.panel_height,
+                            framebuffer_console.border);
+    loader_framebuffer_fill(framebuffer_console.panel_x + 1U,
+                            framebuffer_console.panel_y + 1U,
+                            framebuffer_console.panel_width - 2U,
+                            LOADER_UI_PANEL_HEADER_HEIGHT - 1U,
+                            framebuffer_console.banner);
+    loader_framebuffer_fill(framebuffer_console.panel_x + framebuffer_console.panel_width - 12U,
+                            framebuffer_console.panel_y + 10U, 4U, 4U,
+                            framebuffer_console.accent);
+    loader_framebuffer_fill(0, framebuffer_console.footer_y,
+                            framebuffer_console.width,
+                            framebuffer_console.height - framebuffer_console.footer_y,
+                            framebuffer_console.banner);
+
+    loader_framebuffer_text(24U, 10U, "LeonOS 4",
+                            framebuffer_console.text, framebuffer_console.banner);
+    loader_framebuffer_text(24U, 30U, "SYSTEM STARTUP",
+                            framebuffer_console.muted_text, framebuffer_console.banner);
+    loader_framebuffer_text(framebuffer_console.panel_x + 12U,
+                            framebuffer_console.panel_y + 7U,
+                            "BOOT LOG",
+                            framebuffer_console.text, framebuffer_console.banner);
+    if (framebuffer_console.panel_width >= 208U) {
+        loader_framebuffer_text(live_output_x,
+                                framebuffer_console.panel_y + 7U,
+                                "LIVE OUTPUT",
+                                framebuffer_console.muted_text, framebuffer_console.banner);
+    }
+    loader_framebuffer_text(24U, framebuffer_console.footer_y + 9U,
+                            "Initializing system components",
+                            framebuffer_console.muted_text, framebuffer_console.banner);
+    if (framebuffer_console.width >= 420U) {
+        loader_framebuffer_text(framebuffer_console.width - 154U,
+                                framebuffer_console.footer_y + 9U,
+                                "EFI / MULTIBOOT",
+                                framebuffer_console.muted_text, framebuffer_console.banner);
+    }
 }
 
 static void loader_framebuffer_reset(void)
@@ -597,12 +702,7 @@ static void loader_framebuffer_reset(void)
     if (!framebuffer_console.enabled) {
         return;
     }
-    loader_framebuffer_fill(0, 0, framebuffer_console.width,
-                            framebuffer_console.height, framebuffer_console.background);
-    loader_framebuffer_fill(0, 0, framebuffer_console.width, 36U,
-                            framebuffer_console.banner);
-    loader_framebuffer_text(20U, 10U, "LeonOS 4 Boot Loader",
-                            framebuffer_console.text, framebuffer_console.banner);
+    loader_framebuffer_draw_chrome();
     loader_framebuffer_clear_log();
 }
 
@@ -614,11 +714,19 @@ static void loader_framebuffer_set_theme(uint32_t theme)
     if (theme == 0U) {
         framebuffer_console.background = 0x00000000U;
         framebuffer_console.banner = 0x00808080U;
+        framebuffer_console.panel = 0x00000000U;
+        framebuffer_console.border = 0x00c0c0c0U;
         framebuffer_console.text = 0x0000ff00U;
+        framebuffer_console.muted_text = 0x00c0c0c0U;
+        framebuffer_console.accent = 0x00ffff00U;
     } else {
-        framebuffer_console.background = 0x000078d4U;
-        framebuffer_console.banner = 0x005aa7e8U;
+        framebuffer_console.background = 0x00131c2aU;
+        framebuffer_console.banner = 0x0022384dU;
+        framebuffer_console.panel = 0x001b2a3aU;
+        framebuffer_console.border = 0x003a6179U;
         framebuffer_console.text = 0x00ffffffU;
+        framebuffer_console.muted_text = 0x0091b8d0U;
+        framebuffer_console.accent = 0x005aa7e8U;
     }
     loader_framebuffer_reset();
 }
@@ -636,8 +744,37 @@ static void loader_framebuffer_init(void)
     framebuffer_console.width = handoff.framebuffer_width;
     framebuffer_console.height = handoff.framebuffer_height;
     framebuffer_console.pitch_pixels = handoff.framebuffer_pitch / 4U;
-    framebuffer_console.columns = (handoff.framebuffer_width - 40U) / LEONOS_FONT_W;
-    framebuffer_console.rows = (handoff.framebuffer_height - 56U) / LEONOS_FONT_H;
+    framebuffer_console.panel_x = framebuffer_console.width >= 320U ? 24U : 8U;
+    framebuffer_console.panel_y = framebuffer_console.height >= 160U
+                                      ? LOADER_UI_HEADER_HEIGHT + 18U
+                                      : LEONOS_FONT_H * 3U;
+    framebuffer_console.footer_y = framebuffer_console.height > LOADER_UI_FOOTER_HEIGHT + 8U
+                                       ? framebuffer_console.height - LOADER_UI_FOOTER_HEIGHT
+                                       : framebuffer_console.height;
+    framebuffer_console.panel_width = framebuffer_console.width > framebuffer_console.panel_x * 2U
+                                          ? framebuffer_console.width - framebuffer_console.panel_x * 2U
+                                          : 0U;
+    framebuffer_console.panel_height = framebuffer_console.footer_y > framebuffer_console.panel_y + 8U
+                                           ? framebuffer_console.footer_y - framebuffer_console.panel_y - 8U
+                                           : 0U;
+    if (framebuffer_console.panel_width >= 24U + LEONOS_FONT_W &&
+        framebuffer_console.panel_height >
+                                                     LOADER_UI_PANEL_HEADER_HEIGHT + LEONOS_FONT_H + 8U) {
+        uint32_t text_width = framebuffer_console.panel_width - 24U;
+        uint32_t text_height = framebuffer_console.panel_height -
+                               LOADER_UI_PANEL_HEADER_HEIGHT - 16U;
+        framebuffer_console.columns = text_width / LEONOS_FONT_W;
+        framebuffer_console.rows = text_height / LEONOS_FONT_H;
+        if (framebuffer_console.columns > LOADER_LOG_MAX_COLUMNS) {
+            framebuffer_console.columns = LOADER_LOG_MAX_COLUMNS;
+        }
+        if (framebuffer_console.rows > LOADER_LOG_MAX_ROWS) {
+            framebuffer_console.rows = LOADER_LOG_MAX_ROWS;
+        }
+        framebuffer_console.log_x = framebuffer_console.panel_x + 12U;
+        framebuffer_console.log_y = framebuffer_console.panel_y +
+                                    LOADER_UI_PANEL_HEADER_HEIGHT + 8U;
+    }
     framebuffer_console.enabled = framebuffer_console.columns && framebuffer_console.rows;
     loader_framebuffer_set_theme(handoff.ui_theme);
 }
@@ -645,10 +782,22 @@ static void loader_framebuffer_init(void)
 static void loader_framebuffer_newline(void)
 {
     framebuffer_console.column = 0;
-    ++framebuffer_console.row;
-    if (framebuffer_console.row >= framebuffer_console.rows) {
-        loader_framebuffer_clear_log();
+    if (framebuffer_console.line_count < framebuffer_console.rows) {
+        ++framebuffer_console.line_count;
+        ++framebuffer_console.row;
+        memset_local(framebuffer_log_lines[framebuffer_console.line_count - 1U],
+                     0, sizeof(framebuffer_log_lines[0]));
+        return;
     }
+    for (uint32_t line = 1U; line < framebuffer_console.rows; ++line) {
+        memcpy_local(framebuffer_log_lines[line - 1U],
+                     framebuffer_log_lines[line],
+                     sizeof(framebuffer_log_lines[0]));
+    }
+    memset_local(framebuffer_log_lines[framebuffer_console.rows - 1U],
+                 0, sizeof(framebuffer_log_lines[0]));
+    framebuffer_console.row = framebuffer_console.rows - 1U;
+    loader_framebuffer_redraw_log();
 }
 
 static void loader_framebuffer_putc(char ch)
@@ -674,10 +823,12 @@ static void loader_framebuffer_putc(char ch)
     if (framebuffer_console.column >= framebuffer_console.columns) {
         loader_framebuffer_newline();
     }
-    x = 20U + framebuffer_console.column * LEONOS_FONT_W;
-    y = 48U + framebuffer_console.row * LEONOS_FONT_H;
+    x = framebuffer_console.log_x + framebuffer_console.column * LEONOS_FONT_W;
+    y = framebuffer_console.log_y + framebuffer_console.row * LEONOS_FONT_H;
+    framebuffer_log_lines[framebuffer_console.row][framebuffer_console.column] = ch;
+    framebuffer_log_lines[framebuffer_console.row][framebuffer_console.column + 1U] = 0;
     loader_framebuffer_char(x, y, ch, framebuffer_console.text,
-                            framebuffer_console.background);
+                            framebuffer_console.panel);
     ++framebuffer_console.column;
 }
 
@@ -775,7 +926,12 @@ static void efi_console_write(const char *s)
 static void boot_write(const char *s)
 {
     serial_write(s);
-    efi_console_write(s);
+    /* EFI text output shares the top-left console area with the framebuffer.
+     * Once the graphical log is active, duplicating every line there would
+     * paint over the boot UI. */
+    if (!framebuffer_console.enabled) {
+        efi_console_write(s);
+    }
 }
 
 static void boot_write_sha256(const uint8_t digest[32])

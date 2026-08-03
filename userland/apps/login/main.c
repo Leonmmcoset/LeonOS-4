@@ -1,6 +1,7 @@
 #include <leonos/auth.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/inputm.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -169,6 +170,13 @@ int main(void)
     if (window_id <= 0) {
         printf("[login.elf] create window failed=%d\n", window_id);
         return 1;
+    }
+    {
+        struct leonos_inputm_context context = {
+            .window_id = (uint32_t)window_id,
+            .flags = LEONOS_INPUTM_CONTEXT_FOCUSED | LEONOS_INPUTM_CONTEXT_SECURE,
+        };
+        (void)leonos_inputm_set_context(&context);
     }
     for (;;) {
         leonos_ui_bind(&ui, pixels, surface_w, surface_h, LOGIN_MAX_W);

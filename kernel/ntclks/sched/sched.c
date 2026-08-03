@@ -1,5 +1,6 @@
 #include <ntclks/console.h>
 #include <ntclks/arch.h>
+#include <ntclks/inputm.h>
 #include <ntclks/paging.h>
 #include <ntclks/sched.h>
 
@@ -261,6 +262,16 @@ void sched_set_task_image(uint32_t pid, const void *image, size_t image_len)
     task->image_len = image_len;
 }
 
+void sched_set_task_image_node(uint32_t pid, const struct storage_node *node)
+{
+    struct task *task = sched_find(pid);
+    if (!task) {
+        return;
+    }
+    task->image_node = node ? *node : (struct storage_node){0};
+    task->flags |= TASK_FLAG_PENDING_LOAD;
+}
+
 void sched_set_task_path(uint32_t pid, const char *path)
 {
     task_copy_path(sched_find(pid), path);
@@ -381,6 +392,7 @@ void sched_exit(uint32_t pid, uint64_t code)
             break;
         }
     }
+    inputm_destroy_owner(pid);
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i].parent_pid == pid) {
             tasks[i].parent_pid = 0;
@@ -550,7 +562,8 @@ struct task *sched_select_next_user(void)
             if (pass == 0 && (tasks[i].flags & TASK_FLAG_SERVICE)) {
                 continue;
             }
-            if ((!tasks[i].entry && !(tasks[i].image && tasks[i].image_len)) ||
+            if ((!tasks[i].entry && !(tasks[i].image && tasks[i].image_len) &&
+                 !(tasks[i].flags & TASK_FLAG_PENDING_LOAD)) ||
                 !tasks[i].stack_top || !tasks[i].as.cr3) {
                 continue;
             }

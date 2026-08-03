@@ -45,9 +45,9 @@ SYSTEM_APPS = [
 PROGRAM_APPS = [
     "hello", "uidemo", "cjktest", "notepad", "calc", "minesweeper", "memtest",
     "bugtest", "ping", "httpget", "downloadmgr", "browser", "imageview", "wavplay", "mp3play",
-    "oshlp", "helloworld",
+    "oshlp", "helloworld", "guitest",
 ]
-PACKAGE_APPS = ["doomlauncher", "doom"]
+PACKAGE_APPS = ["doomlauncher", "doom", "oschinpt"]
 NORMAL_USER_APPS = [app for app in SYSTEM_APPS if app != "installer"] + PROGRAM_APPS
 INSTALLER_USER_APPS = ["desktop", "installer"]
 INSTALLER_POLICY_APPS = ["desktop", "oobe", "settings"]
@@ -688,6 +688,56 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     target = add_copy(graph, "esp:api:doom-copy", doom_api, doom_api_destination)
     esp_names.append(target.name)
     esp_outputs.append(doom_api_destination)
+    oschinpt_api = paths.out / "api/oschinpt.api"
+    oschinpt_api_destination = paths.staging / "tools/oschinpt.api"
+    oschinpt_dict = ROOT / "third_party/rime-pinyin-simp/pinyin_simp.dict.yaml"
+    oschinpt_index = paths.out / "api/pinyin_simp.idx"
+    oschinpt_license = ROOT / "third_party/rime-pinyin-simp/LICENSE"
+    oschinpt_attribution = ROOT / "third_party/rime-pinyin-simp/ATTRIBUTION.txt"
+    oschinpt_settings = ROOT / "userland/apps/oschinpt/settings.ini"
+    graph.add(Target(
+        name="esp:api:oschinpt-index",
+        outputs=(oschinpt_index,),
+        inputs=(oschinpt_dict, ROOT / "tools/make_oschinpt_index.py"),
+        kind="generate",
+        command=(
+            PYTHON, "tools/make_oschinpt_index.py",
+            "--input", relative(oschinpt_dict),
+            "--output", relative(oschinpt_index),
+        ),
+    ))
+    graph.add(Target(
+        name="esp:api:oschinpt",
+        outputs=(oschinpt_api,),
+        inputs=(app_elfs["oschinpt"], oschinpt_dict, oschinpt_index,
+                oschinpt_license, oschinpt_attribution, oschinpt_settings,
+                ROOT / "tools/build_api.py"),
+        kind="generate",
+        command=(
+            PYTHON, "tools/build_api.py",
+            "--name", "LeonOS 4 Chinese Input",
+            "--version", "1.0.0",
+            "--main-exe", "oschinpt.elf",
+            "--default-path", "0:/programs/oschinpt",
+            "--requires-admin",
+            "--input-method-id", "oschinpt",
+            "--input-method-abbreviation", "OSC",
+            "--input-method-startup", "login",
+            "--input-method-settings", "settings.ini",
+            "--launch-after-install",
+            "--file", relative(app_elfs["oschinpt"]), "oschinpt.elf",
+            "--file", relative(oschinpt_dict), "pinyin_simp.dict.yaml",
+            "--file", relative(oschinpt_index), "oscp.idx",
+            "--file", relative(oschinpt_license), "LICENSE",
+            "--file", relative(oschinpt_attribution), "ATTRIBUTION.txt",
+            "--file", relative(oschinpt_settings), "settings.ini",
+            "--output", relative(oschinpt_api),
+        ),
+    ))
+    target = add_copy(graph, "esp:api:oschinpt-copy", oschinpt_api,
+                      oschinpt_api_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(oschinpt_api_destination)
     config_destination = paths.staging / "system/config/leonos.conf"
     target = add_copy(graph, "esp:config", paths.kconfig, config_destination)
     esp_names.append(target.name)

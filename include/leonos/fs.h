@@ -58,6 +58,12 @@
 #define LEONOS_O_TRUNC 0x0200
 #define LEONOS_O_APPEND 0x0400
 
+/* Keep writes short enough for prompt scheduling. Reads match the FAT
+ * readahead window so large fonts and wallpapers do not devolve into 4 KiB
+ * syscall/storage cycles. */
+#define LEONOS_FS_IO_SLICE_BYTES 4096U
+#define LEONOS_FS_READ_SLICE_BYTES (64U * 512U)
+
 #define LEONOS_SEEK_SET 0
 #define LEONOS_SEEK_CUR 1
 #define LEONOS_SEEK_END 2

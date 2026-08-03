@@ -291,11 +291,29 @@ static bool userland_load_task_image(struct task *task)
     if (!task || (task->flags & TASK_FLAG_STARTED)) {
         return task != NULL;
     }
-    if (!task->image || !task->image_len) {
-        return false;
-    }
-    if (!elf64_load_address_space(&task->as, task->image, task->image_len, &loaded)) {
-        console_printf("[ntclks] failed to load %s into private address space\n", task->name);
+    if (task->flags & TASK_FLAG_PENDING_LOAD) {
+        if (task->image_node.type != LEONOS_FS_TYPE_FILE) {
+            int ret = storage_lookup_path(task->path, &task->image_node);
+            if (ret < 0 || task->image_node.type != LEONOS_FS_TYPE_FILE) {
+                console_printf("[ntclks] executable lookup failed path=%s ret=%d\n",
+                               task->path, ret < 0 ? ret : -21);
+                return false;
+            }
+        }
+        if (!elf64_map_task_image(task, &task->image_node, &loaded)) {
+            console_printf("[ntclks] failed to map executable %s\n", task->name);
+            return false;
+        }
+        task->flags &= ~TASK_FLAG_PENDING_LOAD;
+    } else if (task->image && task->image_len) {
+        if (!elf64_load_address_space(&task->as, task->image, task->image_len, &loaded)) {
+            console_printf("[ntclks] failed to load %s into private address space\n", task->name);
+            return false;
+        }
+        free_image_buffer(task->image, task->image_len);
+        task->image = NULL;
+        task->image_len = 0;
+    } else {
         return false;
     }
 
@@ -307,35 +325,28 @@ static bool userland_load_task_image(struct task *task)
     task->frame.ss = NTCLKS_USER_DS;
     if (prepare_user_exec_stack(task) < 0) {
         console_printf("[ntclks] failed to prepare argv/envp for %s\n", task->name);
-        free_image_buffer(task->image, task->image_len);
-        task->image = NULL;
-        task->image_len = 0;
         return false;
     }
-    free_image_buffer(task->image, task->image_len);
-    task->image = NULL;
-    task->image_len = 0;
     task->flags |= TASK_FLAG_STARTED;
 
-    console_printf("[ntclks] %s mapped private Ring-3 image entry=0x%llx cr3=0x%llx\n",
+    console_printf("[ntclks] %s prepared lazy Ring-3 image entry=0x%llx cr3=0x%llx\n",
                    task->name,
                    (unsigned long long)task->entry,
                    (unsigned long long)task->as.cr3);
     return true;
 }
 
-static int64_t spawn_loaded_image(const char *path, const char *task_name,
-                                  const void *image, size_t image_len,
-                                  const struct exec_launch *launch,
-                                  uint32_t parent, uint32_t flags, uint32_t pty_id)
+static int64_t spawn_pending_image(const char *path, const char *task_name,
+                                   const struct storage_node *node,
+                                   const struct exec_launch *launch,
+                                   uint32_t parent, uint32_t flags, uint32_t pty_id)
 {
     uint32_t pid = sched_create_user_task(task_name, 0, USER_STACK_TOP, parent, flags);
     if (!pid) {
-        free_image_buffer(image, image_len);
         return -12;
     }
-    sched_set_task_image(pid, image, image_len);
     sched_set_task_path(pid, path);
+    sched_set_task_image_node(pid, node);
     if (launch) {
         sched_set_task_exec_params(pid, launch->argc, (char *const *)launch->argv,
                                    launch->envc, (char *const *)launch->envp,
@@ -354,8 +365,7 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
                                    const struct exec_launch *launch,
                                    uint32_t parent, uint32_t flags, uint32_t pty_id)
 {
-    const void *image = NULL;
-    size_t image_len = 0;
+    struct storage_node node;
     int ret;
     if (path_is_system_desktop(path)) {
         flags |= TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER;
@@ -370,12 +380,16 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
         console_printf("[ntclks] refusing second service daemon path=%s\n", path);
         return -LEONOS_EEXIST;
     }
-    ret = storage_read_file(path, &image, &image_len);
-    if (ret < 0) {
-        console_printf("[ntclks] spawn read failed path=%s ret=%d\n", path, ret);
-        return ret;
+    if (flags & TASK_FLAG_SERVICE) {
+        ret = storage_lookup_path(path, &node);
+        if (ret < 0 || node.type != LEONOS_FS_TYPE_FILE) {
+            console_printf("[ntclks] spawn lookup failed path=%s ret=%d\n", path,
+                           ret < 0 ? ret : -21);
+            return ret < 0 ? ret : -21;
+        }
+        return spawn_pending_image(path, task_name, &node, launch, parent, flags, pty_id);
     }
-    return spawn_loaded_image(path, task_name, image, image_len, launch, parent, flags, pty_id);
+    return spawn_pending_image(path, task_name, NULL, launch, parent, flags, pty_id);
 }
 
 static void wait_for_runnable_task(void)

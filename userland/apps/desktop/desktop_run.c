@@ -50,8 +50,9 @@ void init_desktop(void)
     cursor_x = 320;
     cursor_y = 240;
     cursor_visible = 1;
+    desktop_cursor_style = LEONOS_GUI_CURSOR_ARROW;
+    desktop_taskbar_visible = 1;
     load_cursor_bmp();
-    load_wallpaper_bmp();
     desktop_items_clear();
     full_redraw_pending = 1;
     refresh_task_snapshot();
@@ -65,8 +66,9 @@ void desktop_run(void)
     int version = leonos_gui_connect();
     printf("[desktop.elf] GUI protocol version=%d\n", version);
     printf("[desktop.elf] pid=%d service=window-server\n", getpid());
-    if (leonos_fb_info(&fb) < 0) {
-        puts("[desktop.elf] framebuffer unavailable");
+    int framebuffer_result = leonos_fb_info(&fb);
+    if (framebuffer_result < 0) {
+        printf("[desktop.elf] framebuffer query failed ret=%d\n", framebuffer_result);
         for (;;) {
             sleep_ms(1000);
         }
@@ -83,6 +85,7 @@ void desktop_run(void)
     desktop_publish_appearance_state();
 
     init_desktop();
+    desktop_inputm_load_config();
     puts("[desktop.elf] Ring-3 desktop uses shadow framebuffer blit");
     desktop_service_daemon_update();
     maybe_launch_oobe();
@@ -90,6 +93,7 @@ void desktop_run(void)
     unsigned long last_log = 0;
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
     unsigned long last_services_refresh = leonos_uptime_ms();
+    unsigned long last_inputm_refresh = 0;
     unsigned idle_sleep_ms = 10;
     int last_mouse_visible = 1;
     for (;;) {
@@ -160,7 +164,7 @@ void desktop_run(void)
         }
 
         unsigned long now = leonos_uptime_ms();
-        if (now / 1000UL != last_clock_second) {
+        if (desktop_taskbar_visible && now / 1000UL != last_clock_second) {
             last_clock_second = now / 1000UL;
             repaint_and_flush(rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));
             did_work = 1;
@@ -169,8 +173,10 @@ void desktop_run(void)
             last_services_refresh = now;
             desktop_service_daemon_update();
             if (desktop_load_service_config()) {
-                repaint_and_flush(rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));
-                did_work = 1;
+                if (desktop_taskbar_visible) {
+                    repaint_and_flush(rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));
+                    did_work = 1;
+                }
             }
         }
         if (now - last_task_refresh >= 500) {
@@ -179,6 +185,10 @@ void desktop_run(void)
                 redraw_all();
                 did_work = 1;
             }
+        }
+        if (now - last_inputm_refresh >= 100UL) {
+            last_inputm_refresh = now;
+            desktop_inputm_refresh();
         }
         if (now - last_log >= 5000) {
             puts("[desktop.elf] window server alive");

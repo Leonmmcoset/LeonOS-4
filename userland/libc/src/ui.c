@@ -520,7 +520,8 @@ int leonos_ui_show_password_dialog(const char *title, const char *label,
         leonos_ui_rect(&surface, 0, 0, W, H, LEONOS_UI_GRAY);
         leonos_ui_text_clipped(&surface, 16, 20, W - 32, label ? label : "",
                                LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-        leonos_ui_edit_state_draw(&surface, 16, 46, W - 32, &shown, 0);
+        leonos_ui_edit_state_draw(&surface, 16, 46, W - 32, &shown,
+                                  LEONOS_UI_EDIT_SECURE);
         leonos_ui_button(&surface, W - 168, H - 38, 72, LEONOS_UI_BUTTON_H,
                          "OK", 0);
         leonos_ui_button(&surface, W - 88, H - 38, 72, LEONOS_UI_BUTTON_H,

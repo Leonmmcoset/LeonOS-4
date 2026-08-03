@@ -4,6 +4,8 @@
 #include <ntclks/types.h>
 
 struct address_space;
+struct storage_node;
+struct task;
 
 struct elf_image_info {
     bool valid;
@@ -17,5 +19,7 @@ struct elf_image_info {
 bool elf64_probe(const void *image, size_t len, struct elf_image_info *out);
 bool elf64_load_address_space(struct address_space *as, const void *image, size_t len,
                               struct elf_image_info *out);
+bool elf64_map_task_image(struct task *task, const struct storage_node *node,
+                          struct elf_image_info *out);
 
 #endif

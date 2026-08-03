@@ -35,6 +35,9 @@
 #define LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST 0x4c415050UL
 #define LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE 0x4c415042UL
 #define LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE 0x4c4d4f55UL
+#define LEONOS_GUI_IOCTL_UPDATE_WINDOW 0x4c475755UL
+#define LEONOS_GUI_IOCTL_SET_TASKBAR_VISIBLE 0x4c475442UL
+#define LEONOS_GUI_IOCTL_CURSOR_REQUEST 0x4c474352UL
 
 #define LEONOS_DISPLAY_REQUEST_APPLY 1U
 #define LEONOS_DISPLAY_REQUEST_KEEP 2U
@@ -62,6 +65,7 @@
 #define LEONOS_KEY_RIGHT_SHIFT 54U
 #define LEONOS_KEY_LEFT_ALT 56U
 #define LEONOS_KEY_SPACE 57U
+#define LEONOS_KEY_F12 88U
 #define LEONOS_KEY_LEFT_WIN 112U
 #define LEONOS_KEY_RIGHT_WIN 113U
 #define LEONOS_KEY_MENU 114U
@@ -82,6 +86,23 @@
 
 #define LEONOS_GUI_WINDOW_NO_RESIZE 0x00000001U
 #define LEONOS_GUI_WINDOW_FULLSCREEN 0x00000002U
+#define LEONOS_GUI_WINDOW_BORDERLESS 0x00000004U
+#define LEONOS_GUI_WINDOW_HIDE_TASKBAR 0x00000008U
+
+#define LEONOS_GUI_WINDOW_UPDATE_TITLE 0x00000001U
+#define LEONOS_GUI_WINDOW_UPDATE_BORDERLESS 0x00000002U
+#define LEONOS_GUI_WINDOW_UPDATE_TASKBAR 0x00000004U
+
+#define LEONOS_GUI_CURSOR_ARROW 0U
+#define LEONOS_GUI_CURSOR_HAND 1U
+#define LEONOS_GUI_CURSOR_TEXT 2U
+#define LEONOS_GUI_CURSOR_WAIT 3U
+#define LEONOS_GUI_CURSOR_CROSSHAIR 4U
+#define LEONOS_GUI_CURSOR_MOVE 5U
+#define LEONOS_GUI_CURSOR_STYLE_COUNT 6U
+
+#define LEONOS_GUI_CURSOR_REQUEST_POSITION 0x00000001U
+#define LEONOS_GUI_CURSOR_REQUEST_STYLE 0x00000002U
 
 struct leonos_gui_window {
     uint32_t id;
@@ -143,6 +164,26 @@ struct leonos_gui_create {
     uint32_t flags;
 };
 
+struct leonos_gui_window_update {
+    uint32_t window_id;
+    uint32_t mask;
+    uint32_t flags;
+    const char *title;
+};
+
+struct leonos_gui_taskbar_request {
+    uint32_t window_id;
+    uint32_t visible;
+};
+
+struct leonos_gui_cursor_request {
+    uint32_t window_id;
+    int32_t x;
+    int32_t y;
+    uint32_t style;
+    uint32_t flags;
+};
+
 struct leonos_gui_window_msg {
     uint32_t type;
     uint32_t pid;
@@ -150,6 +191,7 @@ struct leonos_gui_window_msg {
     uint32_t width;
     uint32_t height;
     uint32_t flags;
+    uint32_t data;
     char title[48];
     char text[1024];
     char app_path[LEONOS_FS_PATH_LEN];
@@ -267,6 +309,11 @@ int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint
 int leonos_gui_create_app_window(const char *title, const char *text, uint32_t width, uint32_t height);
 int leonos_gui_create_app_window_ex(const char *title, const char *text, uint32_t width, uint32_t height, uint32_t flags);
 int leonos_gui_destroy_app_window(uint32_t window_id);
+int leonos_gui_update_window(const struct leonos_gui_window_update *update);
+int leonos_gui_set_window_title(uint32_t window_id, const char *title);
+int leonos_gui_set_window_borderless(uint32_t window_id, uint32_t borderless);
+int leonos_gui_set_window_taskbar_visible(uint32_t window_id, uint32_t visible);
+int leonos_gui_set_taskbar_visible(uint32_t window_id, uint32_t visible);
 int leonos_gui_poll_window(struct leonos_gui_window_msg *message);
 int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t height,
                               uint32_t stride, const uint32_t *pixels);

@@ -1,0 +1,7 @@
+include pyproject.toml
+include los2w/LICENSE
+include los2w/README.md
+recursive-include los2w *.py
+exclude README.md
+global-exclude *.py[cod]
+prune los2w/__pycache__

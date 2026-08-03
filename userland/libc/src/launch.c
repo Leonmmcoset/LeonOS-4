@@ -894,6 +894,13 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         target_argv[i] = 0;
         return leonos_launch_argv_depth(target_argv, depth + 1);
     }
+    if (ends_with_ignore_case(path, ".elf")) {
+        int ret = execve(path, argv, 0);
+        if (ret == -LEONOS_EEXIST && is_system_desktop_path(path)) {
+            return LEONOS_LAUNCH_ERR_ALREADY_RUNNING;
+        }
+        return ret;
+    }
     if (stat(path, &st) < 0) {
         return LEONOS_LAUNCH_ERR_NOT_FOUND;
     }
@@ -903,13 +910,6 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         dir_argv[1] = path;
         dir_argv[2] = 0;
         return execve(dir_argv[0], dir_argv, 0);
-    }
-    if (ends_with_ignore_case(path, ".elf")) {
-        int ret = execve(path, argv, 0);
-        if (ret == -LEONOS_EEXIST && is_system_desktop_path(path)) {
-            return LEONOS_LAUNCH_ERR_ALREADY_RUNNING;
-        }
-        return ret;
     }
     default_program = leonos_launch_resolve_default_app_for_path(path);
     if (default_program) {

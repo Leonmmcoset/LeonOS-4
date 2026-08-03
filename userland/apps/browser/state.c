@@ -41,6 +41,23 @@ char browser_find_query[BROWSER_FIND_CAP];
 int32_t browser_find_row = -1;
 uint32_t browser_find_start;
 uint32_t browser_find_len;
+uint8_t browser_devtools_open;
+
+uint32_t browser_devtools_height(void)
+{
+    uint32_t height;
+    if (browser_embedded || !browser_devtools_open) {
+        return 0;
+    }
+    height = view_h / 3U;
+    if (height < BROWSER_DEVTOOLS_MIN_H) {
+        height = BROWSER_DEVTOOLS_MIN_H;
+    }
+    if (height > BROWSER_DEVTOOLS_MAX_H) {
+        height = BROWSER_DEVTOOLS_MAX_H;
+    }
+    return height;
+}
 
 uint32_t page_y(void)
 {
@@ -59,14 +76,17 @@ uint32_t page_h(void)
 {
     uint32_t y = page_y();
     uint32_t content_w;
-    if (view_h <= y + 4U) {
+    uint32_t devtools_h = browser_devtools_height();
+    uint32_t bottom_reserve = devtools_h ? devtools_h + 4U : 0U;
+    if (view_h <= y + bottom_reserve + 4U) {
         return BROWSER_LINE_H;
     }
     content_w = document_content_w();
-    if (content_w > document_text_w() && view_h > y + BROWSER_SCROLL_W + 8U) {
-        return view_h - y - BROWSER_SCROLL_W - 4U;
+    if (content_w > document_text_w() &&
+        view_h > y + bottom_reserve + BROWSER_SCROLL_W + 8U) {
+        return view_h - y - bottom_reserve - BROWSER_SCROLL_W - 4U;
     }
-    return view_h - y - 4U;
+    return view_h - y - bottom_reserve - 4U;
 }
 
 uint32_t text_x(void)

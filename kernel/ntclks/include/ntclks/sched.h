@@ -15,6 +15,15 @@
 #define SCHED_EXEC_DATA_MAX 512u
 #define SCHED_TASK_VMA_MAX 16u
 
+#define TASK_VMA_FLAG_PRIVATE 0x00000001u
+#define TASK_VMA_FLAG_ANON    0x00000002u
+#define TASK_VMA_FLAG_FILE    0x00000004u
+#define TASK_VMA_FLAG_LAZY    0x00000008u
+
+#define TASK_VMA_PROT_READ  0x1u
+#define TASK_VMA_PROT_WRITE 0x2u
+#define TASK_VMA_PROT_EXEC  0x4u
+
 struct task_vma {
     uint32_t used;
     uint32_t prot;
@@ -23,6 +32,7 @@ struct task_vma {
     uint64_t start;
     uint64_t end;
     uint64_t file_offset;
+    uint64_t file_limit;
     struct storage_node file_node;
 };
 
@@ -52,6 +62,7 @@ enum task_kind {
 #define TASK_FLAG_RESOURCES_RELEASED 0x00000004u
 #define TASK_FLAG_WINDOW_SERVER 0x00000008u
 #define TASK_FLAG_ELEVATED_ADMIN 0x00000010u
+#define TASK_FLAG_PENDING_LOAD 0x00000020u
 
 struct task {
     uint32_t pid;
@@ -65,6 +76,7 @@ struct task {
     uint64_t exit_code;
     const void *image;
     size_t image_len;
+    struct storage_node image_node;
     struct address_space as;
     struct trap_frame frame;
     uint8_t fpu_state[512] __attribute__((aligned(16)));
@@ -113,6 +125,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry);
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags);
 void sched_set_task_image(uint32_t pid, const void *image, size_t image_len);
+void sched_set_task_image_node(uint32_t pid, const struct storage_node *node);
 void sched_set_task_path(uint32_t pid, const char *path);
 void sched_set_task_exec_params(uint32_t pid,
                                 uint32_t argc, char *const argv[],

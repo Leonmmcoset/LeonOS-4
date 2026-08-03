@@ -1,6 +1,7 @@
 #include <ntclks/usercopy.h>
 #include <ntclks/paging.h>
 #include <ntclks/sched.h>
+#include <ntclks/syscall.h>
 
 #define PAGE_SIZE 4096ULL
 
@@ -29,6 +30,10 @@ bool user_range_ok(uint64_t ptr, uint64_t len)
         return true;
     }
     for (page = align_down_page(ptr); page < end; page += PAGE_SIZE) {
+        if (!address_space_user_page_phys(&task->as, page) &&
+            !syscall_handle_user_page_fault(page, 0)) {
+            return false;
+        }
         if (!address_space_user_page_phys(&task->as, page)) {
             return false;
         }

@@ -5,6 +5,7 @@
 #include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/i18n.h>
+#include <leonos/inputm.h>
 #include <leonos/license.h>
 #include <leonos/launch.h>
 #include <leonos/mouse.h>
@@ -24,7 +25,8 @@
 #define TASKBAR_H LEONOS_UI_TASKBAR_H
 #define TASKBAR_CLOCK_W 92
 #define TASKBAR_NET_W 34
-#define TASKBAR_TRAY_W (TASKBAR_CLOCK_W + TASKBAR_NET_W)
+#define TASKBAR_INPUTM_W 42
+#define TASKBAR_TRAY_W (TASKBAR_CLOCK_W + TASKBAR_NET_W + TASKBAR_INPUTM_W)
 #define TITLEBAR_H LEONOS_UI_TITLEBAR_H
 #define MIN_W 180
 #define MIN_H 96
@@ -107,6 +109,9 @@
 #define DESKTOP_MESSAGE_TEXT_LEN 160
 #define DESKTOP_SHORTCUT_INPUT_W 480
 #define DESKTOP_SHORTCUT_INPUT_H 170
+#define DESKTOP_INPUTM_CONFIG_NAME ".inputm.conf"
+#define DESKTOP_INPUTM_MENU_W 248U
+#define DESKTOP_INPUTM_MENU_ROW_H 25U
 
 #define DRAG_NONE 0
 #define DRAG_MOVE 1
@@ -221,6 +226,16 @@ struct desktop_item {
     char icon_path[LEONOS_FS_PATH_LEN];
 };
 
+struct desktop_inputm_entry {
+    char id[LEONOS_INPUTM_ID_LEN];
+    char path[LEONOS_FS_PATH_LEN];
+    char abbreviation[LEONOS_INPUTM_ABBREV_LEN];
+    uint32_t startup_mode;
+    uint32_t order;
+    uint8_t enabled;
+    uint8_t running;
+};
+
 extern struct leonos_fb_info fb;
 extern uint32_t desktop_scale;
 extern uint32_t desktop_logical_w;
@@ -298,6 +313,8 @@ extern uint32_t cursor_height;
 extern uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
 extern uint8_t cursor_visible;
 extern uint8_t cursor_bitmap_loaded;
+extern uint32_t desktop_cursor_style;
+extern uint8_t desktop_taskbar_visible;
 extern uint32_t wallpaper_pixels[WALLPAPER_MAX_W * WALLPAPER_MAX_H];
 extern uint32_t wallpaper_width;
 extern uint32_t wallpaper_height;
@@ -324,6 +341,11 @@ extern struct leonos_task_info task_infos[LEONOS_TASK_MAX];
 extern uint32_t task_info_count;
 extern uint64_t task_info_tick;
 extern unsigned long last_task_refresh;
+extern struct desktop_inputm_entry desktop_inputm_entries[LEONOS_INPUTM_MAX_PROVIDERS + 1U];
+extern uint32_t desktop_inputm_entry_count;
+extern struct leonos_inputm_state desktop_inputm_state;
+extern uint8_t desktop_inputm_menu_open;
+extern char desktop_inputm_status[96];
 extern struct leonos_ui_surface ui;
 extern uint32_t app_client_scratch[APP_CLIENT_MAX_W * APP_CLIENT_MAX_H];
 
@@ -410,6 +432,7 @@ int find_window_slot_by_window_id(uint32_t window_id);
 uint32_t window_body_width(const struct desktop_window *w);
 uint32_t window_body_height(const struct desktop_window *w);
 int window_is_fullscreen(const struct desktop_window *w);
+int window_is_borderless(const struct desktop_window *w);
 int active_window_is_fullscreen(void);
 int window_allows_resize(const struct desktop_window *w);
 int window_is_snap_candidate(const struct desktop_window *w);
@@ -520,6 +543,13 @@ int desktop_handle_power_confirm_click(uint32_t x, uint32_t y);
 void handle_start_click(uint32_t x, uint32_t y);
 int hit_start_menu_area(uint32_t x, uint32_t y);
 int handle_taskbar_click(uint32_t x, uint32_t y);
+void desktop_inputm_load_config(void);
+void desktop_inputm_refresh(void);
+void desktop_inputm_launch_login_providers(void);
+void desktop_inputm_cycle(void);
+int desktop_inputm_hotkey_is_alt_shift(void);
+int desktop_inputm_handle_click(uint32_t x, uint32_t y);
+void draw_inputm_overlay(void);
 void desktop_publish_display_state(void);
 void desktop_handle_display_requests(void);
 void desktop_publish_appearance_state(void);

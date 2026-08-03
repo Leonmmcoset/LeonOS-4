@@ -8,6 +8,8 @@
 #define LEONOS_IOCTL_AUDIO_GET_STATE 0x4c415553UL
 
 #define LEONOS_AUDIO_MAX_WRITE (64U * 1024U)
+/* Audio drivers poll hardware synchronously; keep each kernel call bounded. */
+#define LEONOS_AUDIO_IO_SLICE_BYTES 4096U
 
 #define LEONOS_AUDIO_STATUS_OK 0U
 #define LEONOS_AUDIO_STATUS_NO_DEVICE 1U

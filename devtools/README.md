@@ -10,6 +10,7 @@ ELF 应用程序。
 - `lib/libc.a`: 与本 SDK 头文件匹配的 freestanding 用户态 C 库。
 - `linker.ld`: LeonOS 4 用户态 ELF 的链接布局，入口为 `_start`。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
+- `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。
 - `Makefile`: 独立构建入口，不会引用 LeonOS 4 源码目录。
 
 ## 前置条件
@@ -77,6 +78,7 @@ make APP=examples/myapp APP_NAME=myapp
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/gui.h>
+#include <leonos/mouse.h>
 #include <leonos/ui.h>
 ```
 
@@ -85,9 +87,70 @@ make APP=examples/myapp APP_NAME=myapp
 窗口、事件与软件绘制接口。文件路径使用 LeonOS 驱动器格式，例如
 `0:/programs/myapp/data.txt`。
 
+### 窗口与鼠标控制
+
+`leonos/gui.h` 还提供窗口运行时控制接口：
+
+```c
+leonos_gui_set_window_title(window_id, "Download complete");
+leonos_gui_set_window_borderless(window_id, 1);
+leonos_gui_set_window_taskbar_visible(window_id, 0);
+leonos_gui_set_taskbar_visible(window_id, 0);
+```
+
+可在创建窗口时使用 `LEONOS_GUI_WINDOW_BORDERLESS` 或
+`LEONOS_GUI_WINDOW_HIDE_TASKBAR` 标志。前者移除窗口边框，后者仅隐藏该
+窗口在桌面底部任务栏中的按钮；`leonos_gui_set_taskbar_visible()` 则隐藏或
+显示整个桌面任务栏。
+
+`leonos/mouse.h` 提供鼠标可见性、位置与样式控制：
+
+```c
+leonos_mouse_set_position(window_id, 320, 240);
+leonos_mouse_set_style(window_id, LEONOS_GUI_CURSOR_HAND);
+```
+
+位置使用桌面的逻辑像素坐标。所有这类接口都只允许应用控制自己创建的
+`window_id`；窗口销毁后，任务栏和光标样式会自动恢复。
+
 程序必须是 freestanding：不要依赖宿主系统的动态链接器、POSIX 运行时或
 宿主系统的库。请只链接本 SDK 的 `lib/libc.a`，并保留 Makefile 的编译、
 链接参数与 `linker.ld`。
+
+### 输入法提供者
+
+`leonos/inputm.h` 提供异步输入法接口。提供者进程调用
+`leonos_inputm_register()` 注册后，循环调用 `leonos_inputm_provider_next()`
+获取由活动编辑控件提交的按键，并必须针对每个事件调用
+`leonos_inputm_provider_result()`。提交 UTF-8 文本使用
+`LEONOS_INPUTM_RESULT_COMMIT`，组词和候选使用
+`LEONOS_INPUTM_RESULT_COMPOSITION`，未处理的导航、删除和修饰键必须使用
+`LEONOS_INPUTM_RESULT_PASSTHROUGH`，以保留应用原有按键语义。
+
+标准 UI 编辑控件会自动声明焦点和候选位置。自绘控件应使用
+`leonos_inputm_set_context()` 声明 `LEONOS_INPUTM_CONTEXT_FOCUSED`；密码、
+凭据和其他安全字段必须额外声明 `LEONOS_INPUTM_CONTEXT_SECURE`，系统不会将
+此类字段的按键发送给第三方提供者。候选可由桌面主题控件绘制，提供者也可声明
+`LEONOS_INPUTM_RENDER_PIXELS` 后使用自己的像素窗口绘制。
+
+使用 `make APP=examples/inputm_provider APP_NAME=inputm_provider` 构建示例。
+
+输入法 API 包可以在 `[input_method]` 中提供 `settings_schema`。该文件由设置
+应用直接读取，连续的 `[setting]` 节定义一个当前用户配置项；目前支持安全的布尔
+项：
+
+```ini
+[setting]
+key=myime_prediction
+type=bool
+default=1
+label=Prediction
+label_zh=联想输入
+```
+
+设置会立即写入该用户的 `.inputm.conf` 并通知已运行的提供者。包还可声明一个
+可选的 `settings_app=provider-settings.elf`，由设置页启动提供者自己的设置程序；
+此程序和 schema 都必须作为 API 包成员安装。
 
 ## 兼容性
 

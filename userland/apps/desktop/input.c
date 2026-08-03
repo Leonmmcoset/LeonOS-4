@@ -31,10 +31,18 @@ int handle_global_key(uint8_t keycode, uint8_t pressed)
     char ch;
     if (keycode == LEONOS_KEY_LEFT_SHIFT) {
         desktop_left_shift_down = pressed;
+        if (pressed && is_alt_down() && desktop_inputm_hotkey_is_alt_shift()) {
+            desktop_inputm_cycle();
+            return 1;
+        }
         return 0;
     }
     if (keycode == LEONOS_KEY_RIGHT_SHIFT) {
         desktop_right_shift_down = pressed;
+        if (pressed && is_alt_down() && desktop_inputm_hotkey_is_alt_shift()) {
+            desktop_inputm_cycle();
+            return 1;
+        }
         return 0;
     }
     if (keycode == LEONOS_KEY_LEFT_ALT) {
@@ -78,6 +86,14 @@ int handle_global_key(uint8_t keycode, uint8_t pressed)
         if (!win_left_down && !win_right_down) {
             win_combo_used = 0;
             win_down_ms = 0;
+        }
+        return 1;
+    }
+    if (!desktop_inputm_hotkey_is_alt_shift() && is_win_down() &&
+        keycode == LEONOS_KEY_SPACE) {
+        win_combo_used = 1;
+        if (pressed) {
+            desktop_inputm_cycle();
         }
         return 1;
     }
@@ -209,6 +225,55 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
         }
         return;
     }
+    if (msg->type == 4) {
+        existing = find_window_slot_by_window_id(msg->window_id);
+        if (existing >= 0) {
+            struct desktop_window *w = &windows[existing];
+            uint32_t old_body_w = window_body_width(w);
+            uint32_t old_body_h = window_body_height(w);
+            copy_text(app_titles[existing], sizeof(app_titles[existing]),
+                      msg->title[0] ? msg->title : leonos_i18n("Application", "应用程序"));
+            w->title = app_titles[existing];
+            w->flags = msg->flags;
+            clamp_window(w);
+            if (old_body_w != window_body_width(w) || old_body_h != window_body_height(w)) {
+                send_app_event((uint8_t)existing, LEONOS_GUI_APP_EVENT_RESIZE,
+                               0, 0, 0, 0, 0, 0, 0);
+            }
+            full_redraw_pending = 1;
+        }
+        return;
+    }
+    if (msg->type == 5) {
+        uint8_t visible = msg->data ? 1 : 0;
+        if (desktop_taskbar_visible != visible) {
+            desktop_taskbar_visible = visible;
+            start_menu_set_open(0);
+            desktop_reflow_after_display_change();
+        }
+        return;
+    }
+    if (msg->type == 6) {
+        if (msg->flags & LEONOS_GUI_CURSOR_REQUEST_POSITION) {
+            int32_t requested_x = (int32_t)msg->width;
+            int32_t requested_y = (int32_t)msg->height;
+            cursor_x = requested_x < 0 ? 0 : (uint32_t)requested_x;
+            cursor_y = requested_y < 0 ? 0 : (uint32_t)requested_y;
+            if (cursor_x >= fb_w()) {
+                cursor_x = fb_w() ? fb_w() - 1 : 0;
+            }
+            if (cursor_y >= fb_h()) {
+                cursor_y = fb_h() ? fb_h() - 1 : 0;
+            }
+            cursor_visible = 1;
+        }
+        if ((msg->flags & LEONOS_GUI_CURSOR_REQUEST_STYLE) &&
+            msg->data < LEONOS_GUI_CURSOR_STYLE_COUNT) {
+            desktop_cursor_style = msg->data;
+        }
+        full_redraw_pending = 1;
+        return;
+    }
     if (msg->type != 1) {
         return;
     }
@@ -233,8 +298,13 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
     copy_text(app_texts[slot], sizeof(app_texts[slot]),
               msg->text[0] ? msg->text : leonos_i18n("Application window", "应用程序窗口"));
     uint32_t fullscreen = (msg->flags & LEONOS_GUI_WINDOW_FULLSCREEN) != 0;
-    uint32_t width = fullscreen ? fb_w() : msg->width + 16;
-    uint32_t height = fullscreen ? fb_h() : msg->height + TITLEBAR_H + 18;
+    uint32_t borderless = (msg->flags & LEONOS_GUI_WINDOW_BORDERLESS) != 0;
+    uint32_t width = fullscreen || borderless ? msg->width : msg->width + 16;
+    uint32_t height = fullscreen || borderless ? msg->height : msg->height + TITLEBAR_H + 18;
+    if (fullscreen) {
+        width = fb_w();
+        height = fb_h();
+    }
     if (!fullscreen && width < MIN_W) {
         width = MIN_W;
     }
@@ -443,6 +513,8 @@ void maybe_launch_login(void)
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
         desktop_load_appearance_config();
+        desktop_inputm_load_config();
+        desktop_inputm_launch_login_providers();
         (void)desktop_refresh_items();
         desktop_launch_startup_apps();
         full_redraw_pending = 1;
@@ -491,6 +563,8 @@ void login_lock_update(void)
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
         desktop_load_appearance_config();
+        desktop_inputm_load_config();
+        desktop_inputm_launch_login_providers();
         (void)desktop_refresh_items();
         desktop_launch_startup_apps();
         full_redraw_pending = 1;
@@ -563,6 +637,7 @@ void desktop_logout(void)
     printf("[desktop.elf] logout requested from Start menu\n");
     leonos_auth_logout();
     desktop_load_appearance_config();
+    desktop_inputm_load_config();
     desktop_items_clear();
     desktop_message_active = 0;
     desktop_shortcut_input_active = 0;
@@ -753,6 +828,9 @@ int hit_start_menu_area(uint32_t x, uint32_t y)
 int handle_taskbar_click(uint32_t x, uint32_t y)
 {
     uint32_t tb_y = taskbar_y();
+    if (!desktop_taskbar_visible) {
+        return 0;
+    }
     if (!hit_rect(x, y, 0, (int)tb_y, fb_w(), TASKBAR_H) && !hit_start_menu_area(x, y)) {
         return 0;
     }
@@ -763,7 +841,9 @@ int handle_taskbar_click(uint32_t x, uint32_t y)
     uint32_t bx = 106;
     uint32_t button_w = taskbar_button_width(running_window_count());
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
-        if (windows[i].visible && button_w > 0) {
+        if (windows[i].visible &&
+            (windows[i].flags & LEONOS_GUI_WINDOW_HIDE_TASKBAR) == 0 &&
+            button_w > 0) {
             uint32_t hit_w = button_w > 8 ? button_w - 8 : button_w;
             if (hit_rect(x, y, (int)bx, (int)tb_y + 5, hit_w, 24)) {
                 if (active_window == i && !windows[i].minimized) {
@@ -826,6 +906,15 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         } else {
             repaint_and_flush(rect_pad(dirty, 2));
         }
+        return;
+    }
+
+    if (new_left && desktop_inputm_handle_click(x, y)) {
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        redraw_all();
         return;
     }
 
@@ -1004,12 +1093,14 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                 window_client_origin(w, &origin_x, &origin_y);
                 int bx = w->x + (int)w->width - 64;
                 int by = w->y + 7;
-                if (!window_is_fullscreen(w) && hit_rect(x, y, bx, by, 18, 20)) {
+                if (!window_is_fullscreen(w) && !window_is_borderless(w) &&
+                    hit_rect(x, y, bx, by, 18, 20)) {
                     minimize_window((uint8_t)id);
-                } else if (!window_is_fullscreen(w) &&
+                } else if (!window_is_fullscreen(w) && !window_is_borderless(w) &&
                            hit_rect(x, y, bx + 20, by, 18, 20) && window_allows_resize(w)) {
                     toggle_maximize((uint8_t)id);
-                } else if (!window_is_fullscreen(w) && hit_rect(x, y, bx + 40, by, 18, 20)) {
+                } else if (!window_is_fullscreen(w) && !window_is_borderless(w) &&
+                           hit_rect(x, y, bx + 40, by, 18, 20)) {
                     request_close_window((uint8_t)id);
                 } else if (window_allows_resize(w) &&
                            hit_rect(x, y, w->x + (int)w->width - 18, w->y + (int)w->height - 18, 18, 18) &&
@@ -1020,7 +1111,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                     drag_origin_y = (int)y;
                     drag_origin_w = w->width;
                     drag_origin_h = w->height;
-                } else if (!window_is_fullscreen(w) &&
+                } else if (!window_is_fullscreen(w) && !window_is_borderless(w) &&
                            hit_rect(x, y, w->x + 4, w->y + 4,
                                     w->width > 8 ? w->width - 8 : 0, TITLEBAR_H)) {
                     unsigned long now = leonos_uptime_ms();

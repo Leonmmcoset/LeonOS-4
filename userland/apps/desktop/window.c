@@ -26,6 +26,27 @@ void clamp_window_size(struct desktop_window *w)
 
 void clamp_window_position_recoverable(struct desktop_window *w)
 {
+    if (window_is_borderless(w)) {
+        int max_x = (int)fb_w() - (int)w->width;
+        int max_y = (int)taskbar_y() - (int)w->height;
+        if (max_x < 0) {
+            max_x = 0;
+        }
+        if (max_y < 0) {
+            max_y = 0;
+        }
+        if (w->x < 0) {
+            w->x = 0;
+        } else if (w->x > max_x) {
+            w->x = max_x;
+        }
+        if (w->y < 0) {
+            w->y = 0;
+        } else if (w->y > max_y) {
+            w->y = max_y;
+        }
+        return;
+    }
     uint32_t visible_w = min_u32(w->width, WINDOW_RECOVERABLE_W);
     uint32_t visible_title_h = min_u32(TITLEBAR_H, WINDOW_RECOVERABLE_TITLEBAR_H);
     int min_x = -(int)w->width + (int)visible_w;
@@ -135,7 +156,7 @@ int find_window_slot_by_window_id(uint32_t window_id)
 
 uint32_t window_body_width(const struct desktop_window *w)
 {
-    if (window_is_fullscreen(w)) {
+    if (window_is_fullscreen(w) || window_is_borderless(w)) {
         return w->width;
     }
     return w && w->width > 16 ? w->width - 16 : 0;
@@ -143,7 +164,7 @@ uint32_t window_body_width(const struct desktop_window *w)
 
 uint32_t window_body_height(const struct desktop_window *w)
 {
-    if (window_is_fullscreen(w)) {
+    if (window_is_fullscreen(w) || window_is_borderless(w)) {
         return w->height;
     }
     return w && w->height > TITLEBAR_H + 18 ? w->height - TITLEBAR_H - 18 : 0;
@@ -152,6 +173,11 @@ uint32_t window_body_height(const struct desktop_window *w)
 int window_is_fullscreen(const struct desktop_window *w)
 {
     return w && (w->flags & LEONOS_GUI_WINDOW_FULLSCREEN) != 0;
+}
+
+int window_is_borderless(const struct desktop_window *w)
+{
+    return w && (w->flags & LEONOS_GUI_WINDOW_BORDERLESS) != 0;
 }
 
 int active_window_is_fullscreen(void)
@@ -163,13 +189,13 @@ int active_window_is_fullscreen(void)
 
 int window_allows_resize(const struct desktop_window *w)
 {
-    return w && !window_is_fullscreen(w) &&
+    return w && !window_is_fullscreen(w) && !window_is_borderless(w) &&
            (w->flags & LEONOS_GUI_WINDOW_NO_RESIZE) == 0;
 }
 
 void window_client_origin(const struct desktop_window *w, int *x, int *y)
 {
-    if (window_is_fullscreen(w)) {
+    if (window_is_fullscreen(w) || window_is_borderless(w)) {
         if (x) {
             *x = w ? w->x : 0;
         }
@@ -254,7 +280,8 @@ static struct rect window_taskbar_target_rect(uint8_t slot)
     uint32_t x = 106;
     if (button_w > 0) {
         for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
-            if (!windows[i].visible) {
+            if (!windows[i].visible ||
+                (windows[i].flags & LEONOS_GUI_WINDOW_HIDE_TASKBAR) != 0) {
                 continue;
             }
             if (i == slot) {
@@ -291,7 +318,8 @@ void begin_window_rect_animation(uint8_t slot, uint8_t anim,
 void begin_window_open_animation(uint8_t slot)
 {
     struct rect from;
-    if (slot >= MAX_WINDOWS || !windows[slot].visible || window_is_fullscreen(&windows[slot])) {
+    if (slot >= MAX_WINDOWS || !windows[slot].visible || window_is_fullscreen(&windows[slot]) ||
+        window_is_borderless(&windows[slot])) {
         return;
     }
     from = window_center_min_rect(&windows[slot]);
@@ -307,7 +335,7 @@ void begin_window_close_animation(uint8_t slot, uint8_t send_close_event)
     if (slot >= MAX_WINDOWS || !windows[slot].visible) {
         return;
     }
-    if (window_is_fullscreen(&windows[slot])) {
+    if (window_is_fullscreen(&windows[slot]) || window_is_borderless(&windows[slot])) {
         if (send_close_event && windows[slot].window_id) {
             send_app_event(slot, 1, 0, 0, 0, 0, 0, 0, 0);
         }

@@ -375,6 +375,12 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
 
 void handle_key(struct leonos_gui_app_event *event)
 {
+    if (!browser_embedded && event->pressed && event->keycode == LEONOS_KEY_F12) {
+        browser_devtools_open = browser_devtools_open ? 0 : 1;
+        clamp_scroll();
+        present_browser();
+        return;
+    }
     if (browser_form_handle_key(event)) {
         present_browser();
         return;
