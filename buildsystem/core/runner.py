@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
@@ -42,6 +43,12 @@ class CommandError(BuildFailure):
         self.command = tuple(command)
         self.returncode = returncode
         super().__init__(f"command failed with exit {returncode}: {' '.join(self.command)}")
+
+
+def exception_message(error: BaseException) -> str:
+    """Return a useful task failure message even for empty built-in exceptions."""
+    message = str(error)
+    return message if message else f"{type(error).__name__}: {error!r}"
 
 
 @dataclass(slots=True)
@@ -434,22 +441,26 @@ class BuildRunner:
             )
             return self.metrics
         except BaseException as exc:
+            message = exception_message(exc)
             self.metrics.errors += 1
             elapsed = time.monotonic() - started
             self.metrics.elapsed_seconds = round(elapsed, 3)
             self.store.flush_target_states()
-            self.logger.failed_task(command_name, exc)
+            self.logger.failed_task(command_name, BuildFailure(message))
+            if not str(exc):
+                for line in traceback.format_exception(exc):
+                    self.logger.emit(line.rstrip(), RED)
             self.store.update(
                 self.task_id,
                 status="failed",
                 finished_at=utc_now(),
                 elapsed_seconds=round(elapsed, 3),
-                error=str(exc),
+                error=message,
                 metrics=asdict(self.metrics),
             )
-            if isinstance(exc, BuildFailure):
+            if isinstance(exc, BuildFailure) and str(exc):
                 raise
-            raise BuildFailure(str(exc)) from exc
+            raise BuildFailure(message) from exc
         finally:
             self.close()
 
