@@ -16,3 +16,6 @@
 [submodule "third_party/pl_editor"]
 	path = third_party/pl_editor
 	url = https://github.com/plos-clan/pl_editor.git
+[submodule "third_party/tinycc"]
+	path = third_party/tinycc
+	url = https://github.com/TinyCC/tinycc.git
