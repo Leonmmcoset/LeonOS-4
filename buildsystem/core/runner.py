@@ -544,6 +544,8 @@ class BuildRunner:
                         dependencies[dependent].discard(name)
                         if not dependencies[dependent]:
                             ready.append(dependent)
+                if failed is not None:
+                    break
             if failed is not None:
                 raise failed
         if self.metrics.completed != len(closure):

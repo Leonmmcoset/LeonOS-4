@@ -572,8 +572,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     installer_libc_objects: list[Path] = []
     for source in sorted(libc_sources):
         is_asm = source.suffix == ".S"
-        libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, (autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
-        installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, (installer_autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+        libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, (autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+        installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, (installer_autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
     libc_a = paths.out / "userland/libc.a"
     installer_libc_a = paths.out / "userland-installer-policy/libc.a"
     graph.add(Target(name="archive:libc", outputs=(libc_a,), inputs=tuple(libc_objects), kind="link", command=(ar, "rcs", relative(libc_a), *map(relative, libc_objects))))
