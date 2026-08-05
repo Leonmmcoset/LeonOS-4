@@ -10,3 +10,6 @@
 [submodule "third_party/busybox"]
 	path = third_party/busybox
 	url = https://github.com/mirror/busybox.git
+[submodule "third_party/nano"]
+	path = third_party/nano
+	url = https://git.savannah.gnu.org/git/nano.git

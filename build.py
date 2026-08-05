@@ -50,7 +50,7 @@ SYSTEM_APPS = [
 PROGRAM_APPS = [
     "hello", "uidemo", "cjktest", "notepad", "calc", "minesweeper", "memtest",
     "bugtest", "ping", "httpget", "downloadmgr", "browser", "imageview", "wavplay", "mp3play",
-    "oshlp", "helloworld", "guitest",
+    "oshlp", "helloworld", "guitest", "nano",
 ]
 PACKAGE_APPS = ["doomlauncher", "doom", "oschinpt"]
 NORMAL_USER_APPS = [app for app in SYSTEM_APPS if app != "installer"] + PROGRAM_APPS
@@ -340,6 +340,11 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     busybox_source_stamp = paths.out / "busybox/source-revision.txt"
     busybox_elf = paths.out / "userland/busybox.elf"
     busybox_stamp = paths.out / "userland/busybox.stamp"
+    nano_source = ROOT / "third_party/nano"
+    nano_port = ROOT / "userland/nano"
+    nano_elf = paths.out / "userland/nano.elf"
+    nano_stamp = paths.out / "userland/nano.stamp"
+    nano_work_dir = paths.out / "nano-work"
     developer_sdk = ROOT / "LeonOS4-Developer-SDK.zip"
     grub_efi_dir = paths.deps / "grub-efi-amd64-bin/usr/lib/grub/x86_64-efi"
     system_grub_efi_dir = Path("/usr/lib/grub/x86_64-efi")
@@ -373,6 +378,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         raise GraphError("third_party/picolibc is missing; initialize the Picolibc source tree")
     if not (busybox_source / "Makefile").is_file():
         raise GraphError("third_party/busybox is missing; initialize the BusyBox source tree")
+    if not (nano_source / "src/nano.c").is_file():
+        raise GraphError("third_party/nano is missing; initialize the GNU nano source tree")
     picolibc_inputs = collect(
         "third_party/picolibc/**/*.c",
         "third_party/picolibc/**/*.h",
@@ -615,9 +622,33 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         ),
     ))
 
+    nano_inputs = collect(
+        "third_party/nano/src/**/*.c", "third_party/nano/src/**/*.h",
+        "third_party/nano/COPYING", "userland/nano/**/*.c", "userland/nano/**/*.h",
+        "tools/build_nano.py",
+    )
+    graph.add(Target(
+        name="nano",
+        outputs=(nano_elf, nano_stamp),
+        inputs=tuple([*nano_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
+        depends_on=("picolibc", "archive:libc"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_nano.py", "--source", "third_party/nano",
+            "--port", "userland/nano", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(nano_work_dir),
+            "--output", relative(nano_elf), "--stamp", relative(nano_stamp),
+        ),
+    ))
+
     app_elfs: dict[str, Path] = {}
-    user_targets: list[str] = ["picolibc", "archive:libc", "busybox"]
+    user_targets: list[str] = ["picolibc", "archive:libc", "busybox", "nano"]
     for app in BUILD_USER_APPS:
+        if app == "nano":
+            app_elfs[app] = nano_elf
+            continue
         objects: list[Path] = []
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
@@ -795,6 +826,11 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         target = add_copy(graph, f"esp:busybox:{source.name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    nano_license_destination = paths.staging / "programs/nano/COPYING"
+    target = add_copy(graph, "esp:nano:COPYING", ROOT / "third_party/nano/COPYING",
+                      nano_license_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(nano_license_destination)
     test_mp3 = paths.staging / "test/test.mp3"
     target = add_copy(graph, "esp:test:test.mp3", ROOT / "test/test.mp3", test_mp3)
     esp_names.append(target.name)

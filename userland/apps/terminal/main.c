@@ -20,7 +20,9 @@
 #define TERMINAL_BODY_H (TERMINAL_H - TERMINAL_HEADER_H - TERMINAL_STATUS_H - TERMINAL_MARGIN * 2U)
 #define TERMINAL_COLUMNS ((TERMINAL_BODY_W - 12U) / LEONOS_FONT_W)
 #define TERMINAL_CSI_PARAM_CAP 12U
-#define TERMINAL_OUTPUT_BUDGET 2048U
+/* Keep a complete typical curses redraw in one terminal frame.  Smaller
+ * batches make full-screen programs redraw and present the window repeatedly. */
+#define TERMINAL_OUTPUT_BUDGET 8192U
 #define TERMINAL_CELL_CONTINUATION 0xffffffffU
 #define T(en, zh) leonos_i18n((en), (zh))
 
@@ -862,7 +864,7 @@ static void terminal_draw(struct leonos_ui_surface *ui)
 
 static int terminal_pump_output(void)
 {
-    char buffer[256];
+    char buffer[1024];
     uint32_t consumed = 0;
     int changed = 0;
     int received;
@@ -891,6 +893,17 @@ static int terminal_pty_echo_enabled(void)
         return 1;
     }
     return (termios.c_lflag & ECHO) != 0;
+}
+
+static char terminal_pty_echo_character(char character)
+{
+    struct leonos_pty_termios termios;
+    if (character == '\r' &&
+        leonos_pty_get_termios(pty_id, &termios) == 0 &&
+        (termios.c_iflag & LEONOS_PTY_IFLAG_ICRNL)) {
+        return '\n';
+    }
+    return character;
 }
 
 static int terminal_write_input(const char *buffer, uint32_t length)
@@ -973,7 +986,9 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     } else if (keycode == LEONOS_KEY_PAGE_DOWN) {
         sequence[0] = '\033'; sequence[1] = '['; sequence[2] = '6'; sequence[3] = '~'; sequence_length = 4;
     } else if (keycode == LEONOS_KEY_ENTER) {
-        character = '\n';
+        /* A terminal Enter key emits CR.  Canonical PTYs translate it to LF
+         * for shell input, while raw-mode programs such as nano receive ^M. */
+        character = '\r';
     } else if (keycode == LEONOS_KEY_BACKSPACE) {
         character = '\b';
     } else if (keycode == LEONOS_KEY_TAB) {
@@ -1011,7 +1026,7 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     }
     local_echo = terminal_pty_echo_enabled();
     if (local_echo) {
-        terminal_put_char(character);
+        terminal_put_char(terminal_pty_echo_character(character));
     }
     return 1;
 }

@@ -77,7 +77,7 @@ int32_t pty_create(uint32_t owner_pid)
             sessions[i].input_tail = 0;
             sessions[i].output_head = 0;
             sessions[i].output_tail = 0;
-            sessions[i].termios.c_iflag = 0x0002U; /* ICRNL */
+            sessions[i].termios.c_iflag = LEONOS_PTY_IFLAG_ICRNL;
             sessions[i].termios.c_oflag = 0x0003U; /* OPOST|ONLCR */
             sessions[i].termios.c_cflag = 0x0228U; /* CLOCAL|CREAD|CS8 */
             sessions[i].termios.c_lflag = 0x0079U; /* ECHO|ECHONL|ICANON|IEXTEN|ISIG */
@@ -130,15 +130,24 @@ int64_t pty_read_output(uint32_t owner_pid, uint32_t pty_id, char *buffer, uint3
 int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer, uint32_t length)
 {
     struct pty_session *session = find_session(pty_id);
+    uint32_t written = 0;
     if (!session || session->owner_pid != owner_pid) {
         return -22;
     }
     if (!buffer || length == 0) {
         return 0;
     }
-    return (int64_t)ring_push(session->input, PTY_INPUT_CAP,
-                              &session->input_head, &session->input_tail,
-                              buffer, length);
+    for (uint32_t i = 0; i < length; ++i) {
+        char input = buffer[i];
+        if (input == '\r' &&
+            (session->termios.c_iflag & LEONOS_PTY_IFLAG_ICRNL)) {
+            input = '\n';
+        }
+        written += ring_push(session->input, PTY_INPUT_CAP,
+                             &session->input_head, &session->input_tail,
+                             &input, 1);
+    }
+    return (int64_t)written;
 }
 
 int64_t pty_read_input(uint32_t pty_id, char *buffer, uint32_t length)

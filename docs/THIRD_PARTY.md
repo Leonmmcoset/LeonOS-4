@@ -47,6 +47,22 @@ LeonOS builds a static, basic-applet BusyBox profile at
 `printf`. BusyBox ash is intentionally excluded until LeonOS has fork, pipe,
 file-descriptor duplication, process-group, and signal semantics.
 
+## GNU nano
+
+- Path: `third_party/nano`
+- Upstream: `https://git.savannah.gnu.org/git/nano.git`
+- Version: `9.2`
+- Pinned commit: `8e6360d1663998c62ddd0cf934923d1f18004e3e` (`v9.2`)
+- License: GPL-3.0-or-later; the complete upstream `COPYING` is staged at
+  `0:/programs/nano/COPYING` beside the executable.
+
+LeonOS builds Nano at `0:/programs/nano/nano.elf` with a narrow ANSI curses
+compatibility layer over the GUI terminal PTY. This initial port intentionally
+uses Nano's single-buffer tiny profile: the core editor path is present, while
+external spellers/formatters, rc files, syntax coloring, help pages, mouse
+input and multi-buffer support remain off. Interactive editing and persistence
+still require manual GUI-terminal validation on each supported VM platform.
+
 ## minimp3
 
 - Path: `third_party/minimp3/minimp3.h`

@@ -202,7 +202,9 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
 \t\t\tdebug_leave();
 \t\t\treturn rcode;
 \t\t}
-\t\tif (strchr(argv_expanded[0], '/'))
+\t\tif (strcmp(argv_expanded[0], "nano") == 0)
+\t\t\tspawn_path = xstrdup("0:/programs/nano/nano.elf");
+\t\telse if (strchr(argv_expanded[0], '/'))
 \t\t\tspawn_path = xstrdup(argv_expanded[0]);
 \t\telse
 \t\t\tspawn_path = find_in_path(argv_expanded[0]);

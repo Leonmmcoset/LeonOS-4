@@ -28,6 +28,7 @@ static const struct builtin_program builtin_programs[] = {
     {"terminal", "0:/system/apps/terminal/terminal.elf"},
     {"notepad", "0:/programs/notepad/notepad.elf"},
     {"calc", "0:/programs/calc/calc.elf"},
+    {"nano", "0:/programs/nano/nano.elf"},
     {"run", "0:/system/apps/run/run.elf"},
     {"osver", "0:/system/apps/osver/osver.elf"},
     {"memtest", "0:/programs/memtest/memtest.elf"},

@@ -21,6 +21,7 @@
 
 #define LEONOS_PTY_PATH_LEN 160U
 #define LEONOS_PTY_NCCS 11U
+#define LEONOS_PTY_IFLAG_ICRNL 0x0002U
 
 struct leonos_pty_io {
     uint32_t pty_id;
