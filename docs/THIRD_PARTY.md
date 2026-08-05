@@ -17,6 +17,21 @@ verification for the shared HTTP client. The system image includes
 `0:/system/certs/cacert.pem`, the curl CA Extract from
 `https://curl.se/ca/cacert.pem`, to establish public Web PKI trust.
 
+## Picolibc
+
+- Path: `third_party/picolibc`
+- Upstream: `https://github.com/picolibc/picolibc.git`
+- LeonOS fork: `https://github.com/Leonmmcoset/LeonOS-4-picolibc.git`
+- Version: `1.8.12`
+- Pinned commit: `2fca8654025d367b3da4699a82c347840123bcd2`
+- License: BSD; preserve the complete upstream attribution and license notices
+  in `third_party/picolibc/COPYING.picolibc`.
+
+LeonOS builds Picolibc as its x86_64 freestanding user-space ISO C library.
+The LeonOS syscall and GUI bindings remain in the separate `leonos.a` adapter
+archive. The generated Developer SDK packages both archives, Picolibc headers,
+and the upstream license notice.
+
 ## minimp3
 
 - Path: `third_party/minimp3/minimp3.h`
@@ -36,7 +51,7 @@ verification for the shared HTTP client. The system image includes
 
 - Path: `third_party/litehtml`
 - Upstream: `https://github.com/litehtml/litehtml.git`
-- Recorded commit: `932439c91afb04dbce30903673292e3bf2da01dc`
+- Recorded commit: `b9e89f0b9494ff9a5f008800af35503efabddf59`
 - License: New BSD License / BSD-3-Clause, see `third_party/litehtml/LICENSE`
 
 `browser.elf` does not yet link upstream litehtml directly because LeonOS

@@ -4,3 +4,6 @@
 [submodule "third_party/mbedtls"]
 	path = third_party/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "third_party/picolibc"]
+	path = third_party/picolibc
+	url = https://github.com/Leonmmcoset/LeonOS-4-picolibc.git
