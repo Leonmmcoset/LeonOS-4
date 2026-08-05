@@ -50,7 +50,7 @@ SYSTEM_APPS = [
 PROGRAM_APPS = [
     "hello", "uidemo", "cjktest", "notepad", "calc", "minesweeper", "memtest",
     "bugtest", "ping", "httpget", "downloadmgr", "browser", "imageview", "wavplay", "mp3play",
-    "oshlp", "helloworld", "guitest", "nano",
+    "oshlp", "helloworld", "guitest", "nano", "pleditor",
 ]
 PACKAGE_APPS = ["doomlauncher", "doom", "oschinpt"]
 NORMAL_USER_APPS = [app for app in SYSTEM_APPS if app != "installer"] + PROGRAM_APPS
@@ -345,6 +345,11 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     nano_elf = paths.out / "userland/nano.elf"
     nano_stamp = paths.out / "userland/nano.stamp"
     nano_work_dir = paths.out / "nano-work"
+    pleditor_source = ROOT / "third_party/pl_editor"
+    pleditor_port = ROOT / "userland/apps/pleditor"
+    pleditor_elf = paths.out / "userland/pleditor.elf"
+    pleditor_stamp = paths.out / "userland/pleditor.stamp"
+    pleditor_work_dir = paths.out / "pleditor-work"
     developer_sdk = ROOT / "LeonOS4-Developer-SDK.zip"
     grub_efi_dir = paths.deps / "grub-efi-amd64-bin/usr/lib/grub/x86_64-efi"
     system_grub_efi_dir = Path("/usr/lib/grub/x86_64-efi")
@@ -380,6 +385,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         raise GraphError("third_party/busybox is missing; initialize the BusyBox source tree")
     if not (nano_source / "src/nano.c").is_file():
         raise GraphError("third_party/nano is missing; initialize the GNU nano source tree")
+    if not (pleditor_source / "src/pleditor.c").is_file():
+        raise GraphError("third_party/pl_editor is missing; initialize the PL Editor source tree")
     picolibc_inputs = collect(
         "third_party/picolibc/**/*.c",
         "third_party/picolibc/**/*.h",
@@ -643,11 +650,36 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         ),
     ))
 
+    pleditor_inputs = collect(
+        "third_party/pl_editor/src/**/*.c", "third_party/pl_editor/src/**/*.h",
+        "third_party/pl_editor/LICENSE", "userland/apps/pleditor/**/*.c",
+        "userland/apps/pleditor/**/*.h", "tools/build_pleditor.py",
+    )
+    graph.add(Target(
+        name="app:pleditor",
+        outputs=(pleditor_elf, pleditor_stamp),
+        inputs=tuple([*pleditor_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
+        depends_on=("picolibc", "archive:libc"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_pleditor.py", "--source", "third_party/pl_editor",
+            "--port", "userland/apps/pleditor", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--generated-include", relative(paths.generated_include),
+            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(pleditor_work_dir),
+            "--output", relative(pleditor_elf), "--stamp", relative(pleditor_stamp),
+        ),
+    ))
+
     app_elfs: dict[str, Path] = {}
-    user_targets: list[str] = ["picolibc", "archive:libc", "busybox", "nano"]
+    user_targets: list[str] = ["picolibc", "archive:libc", "busybox", "nano", "app:pleditor"]
     for app in BUILD_USER_APPS:
         if app == "nano":
             app_elfs[app] = nano_elf
+            continue
+        if app == "pleditor":
+            app_elfs[app] = pleditor_elf
             continue
         objects: list[Path] = []
         for source in user_app_sources(app):
@@ -831,6 +863,11 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
                       nano_license_destination)
     esp_names.append(target.name)
     esp_outputs.append(nano_license_destination)
+    pleditor_license_destination = paths.staging / "programs/pleditor/LICENSE"
+    target = add_copy(graph, "esp:pleditor:LICENSE", ROOT / "third_party/pl_editor/LICENSE",
+                      pleditor_license_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(pleditor_license_destination)
     test_mp3 = paths.staging / "test/test.mp3"
     target = add_copy(graph, "esp:test:test.mp3", ROOT / "test/test.mp3", test_mp3)
     esp_names.append(target.name)
@@ -997,7 +1034,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     graph.add(Target(name="test-license-server", inputs=(ROOT / "tools/test_license_server.py", ROOT / "tools/license_server.py"), kind="command", command=(PYTHON, "tools/test_license_server.py")))
     graph.add(Target(name="test-los2w", inputs=tuple(collect("los2w/*.py")), kind="command", command=(PYTHON, "-c", "from los2w.selftest import run_self_tests; print('\\n'.join(run_self_tests()))")))
 
-    def qmp_test(context: ActionContext) -> None:
+    def qmp_test(context: ActionContext, editor: str = "nano") -> None:
         socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}.sock"
         socket.unlink(missing_ok=True)
         command = list(qemu_command(paths, values, debug=True))
@@ -1005,7 +1042,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         context.runner.logger.command(context.worker_id, command)
         process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         try:
-            context.run((PYTHON, "tools/qmp_terminal_smoke.py", str(socket)), announce=True)
+            context.run((PYTHON, "tools/qmp_terminal_smoke.py", "--editor", editor,
+                         str(socket)), announce=True)
             process.wait(timeout=15)
             if process.returncode not in (0, None):
                 raise BuildFailure(f"QEMU QMP test exited with {process.returncode}")
@@ -1018,7 +1056,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
                     process.kill()
             socket.unlink(missing_ok=True)
 
-    graph.add(Target(name="test-qmp-terminal", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v2"))
+    graph.add(Target(name="test-qmp-terminal", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v3"))
+    graph.add(Target(name="test-qmp-pleditor", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "pleditor"), action_key="qmp-pleditor-v1"))
     graph.add(Target(name="test-all", depends_on=("test-license-server", "test-los2w", "test-qmp-terminal"), group=True, kind="aggregate"))
     return graph
 
@@ -1074,7 +1113,7 @@ def task_tools(task: str) -> tuple[str, ...]:
         return (*vmdk, "grub-mkrescue", "xorriso", "qemu-system-x86_64")
     if task == "menuconfig":
         return ("kconfig-mconf",)
-    if task in {"test-qmp-terminal", "test-all"}:
+    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-all"}:
         return (*vmdk, "qemu-system-x86_64")
     return ()
 
@@ -1090,7 +1129,7 @@ def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
 
 
 def display_help() -> str:
-    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py run <task>\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py profile <task>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|qmp-terminal|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, run, run-debug, run-iso, menuconfig, clean\n"""
+    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py run <task>\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py profile <task>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|qmp-terminal|qmp-pleditor|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, run, run-debug, run-iso, menuconfig, clean\n"""
 
 
 def complete_simple(store: TaskStore, task_id: str, command: str, text: str, success: bool = True) -> None:
@@ -1345,7 +1384,7 @@ def parser() -> argparse.ArgumentParser:
     generate = commands.add_parser("gen")
     generate.add_argument("file")
     test = commands.add_parser("test")
-    test.add_argument("item", choices=("license-server", "los2w", "qmp-terminal", "all"))
+    test.add_argument("item", choices=("license-server", "los2w", "qmp-terminal", "qmp-pleditor", "all"))
     client = commands.add_parser("client")
     client.add_argument("args", nargs=argparse.REMAINDER)
     status = commands.add_parser("status")

@@ -63,6 +63,20 @@ external spellers/formatters, rc files, syntax coloring, help pages, mouse
 input and multi-buffer support remain off. Interactive editing and persistence
 still require manual GUI-terminal validation on each supported VM platform.
 
+## PL Editor
+
+- Path: `third_party/pl_editor`
+- Upstream: `https://github.com/plos-clan/pl_editor.git`
+- Pinned commit: `15435b8aab125537421d57c6220e3b8a0c827787`
+- License: MIT; the complete upstream `LICENSE` is staged at
+  `0:/programs/pleditor/LICENSE` beside the executable.
+
+LeonOS builds PL Editor at `0:/programs/pleditor/pleditor.elf`. Its upstream
+platform-independent editor core is kept as a submodule; the LeonOS platform
+adapter provides raw PTY input, ANSI terminal output, terminal sizing and
+file persistence. It is launched through Terminal and supports syntax
+highlighting, search, undo/redo and line numbers.
+
 ## minimp3
 
 - Path: `third_party/minimp3/minimp3.h`

@@ -31,11 +31,24 @@ def send_keys(sock: socket.socket, keys: tuple[str, ...], delay: float = 0.08) -
         hmp(sock, f"sendkey {key}", delay)
 
 
+def text_keys(text: str) -> tuple[str, ...]:
+    keys: list[str] = []
+    for character in text:
+        if character == " ":
+            keys.append("spc")
+        elif character == ".":
+            keys.append("dot")
+        else:
+            keys.append(character)
+    return tuple(keys)
+
+
 def main() -> int:
     arguments = sys.argv[1:]
     skip_oobe = False
     exit_only = False
     login_password: str | None = None
+    editor = "nano"
     if arguments and arguments[0] == "--skip-oobe":
         skip_oobe = True
         arguments = arguments[1:]
@@ -45,6 +58,11 @@ def main() -> int:
     if len(arguments) >= 2 and arguments[0] == "--login-password":
         login_password = arguments[1]
         arguments = arguments[2:]
+    if len(arguments) >= 2 and arguments[0] == "--editor":
+        editor = arguments[1]
+        arguments = arguments[2:]
+    if editor not in ("nano", "pleditor"):
+        return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
         return 2
     sock_path = arguments[0]
@@ -82,27 +100,33 @@ def main() -> int:
     # read loop before sending the editor command.
     time.sleep(10.0)
 
-    # Nano is launched by BusyBox as an external child through the PTY.  It
-    # must be able to write a file, restore the terminal, and return control
-    # to the resident shell.
-    send_keys(sock, ("n", "a", "n", "o", "spc", "n", "a", "n", "o", "t", "e", "s", "t", "dot", "t", "x", "t", "ret"))
-    # Nano is loaded lazily; wait until its first userspace scheduling turn
-    # before writing into its raw terminal mode.
+    # Both terminal editors are launched by BusyBox as external children
+    # through the PTY.  They must write a file, restore the terminal and hand
+    # control back to the resident shell.
+    filename = "nanotest.txt" if editor == "nano" else "pleditortest.txt"
+    send_keys(sock, text_keys(f"{editor} {filename}"))
+    # The editor is loaded lazily; wait until its first userspace scheduling
+    # turn before sending raw-mode input.
     time.sleep(5.0)
     if exit_only:
-        hmp(sock, "sendkey ctrl-x", 20.0)
+        hmp(sock, "sendkey ctrl-x" if editor == "nano" else "sendkey ctrl-q", 20.0)
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 
-    send_keys(sock, ("n", "a", "n", "o", "s", "m", "o", "k", "e"))
-    hmp(sock, "sendkey ctrl-o", 0.3)
-    hmp(sock, "sendkey ret", 2.0)
-    hmp(sock, "sendkey ctrl-x", 2.0)
+    if editor == "nano":
+        send_keys(sock, ("n", "a", "n", "o", "s", "m", "o", "k", "e"))
+        hmp(sock, "sendkey ctrl-o", 0.3)
+        hmp(sock, "sendkey ret", 2.0)
+        hmp(sock, "sendkey ctrl-x", 2.0)
+    else:
+        send_keys(sock, ("p", "l", "o", "s", "s", "m", "o", "k", "e"))
+        hmp(sock, "sendkey ctrl-s", 2.0)
+        hmp(sock, "sendkey ctrl-q", 2.0)
 
-    send_keys(sock, ("c", "a", "t", "spc", "n", "a", "n", "o", "t", "e", "s", "t", "dot", "t", "x", "t", "ret"))
+    send_keys(sock, text_keys(f"cat {filename}") + ("ret",))
 
     time.sleep(2.0)
-    hmp(sock, "screendump build/images/terminal-qmp-smoke.ppm", 0.4)
+    hmp(sock, f"screendump build/images/{editor}-qmp-smoke.ppm", 0.4)
     send(sock, {"execute": "quit"}, 0.2)
     return 0
 
