@@ -13,3 +13,6 @@
 [submodule "third_party/nano"]
 	path = third_party/nano
 	url = https://git.savannah.gnu.org/git/nano.git
+[submodule "third_party/pl_editor"]
+	path = third_party/pl_editor
+	url = https://github.com/plos-clan/pl_editor.git
