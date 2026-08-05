@@ -10,6 +10,7 @@
 #define SCHED_TASK_NAME_LEN 32u
 #define SCHED_TASK_MAX 64u
 #define SCHED_TASK_FILE_MAX 12u
+#define SCHED_TASK_PTY_FD_MAX 8u
 #define SCHED_EXEC_ARG_MAX 8u
 #define SCHED_EXEC_ENV_MAX 8u
 #define SCHED_EXEC_DATA_MAX 512u
@@ -43,6 +44,14 @@ struct task_file {
     uint64_t offset;
     uint64_t aux;
     char path[LEONOS_FS_PATH_LEN];
+};
+
+/* Aliases of the standard streams for a process attached to a PTY. */
+struct task_pty_fd {
+    uint32_t used;
+    int32_t fd;
+    uint32_t stream;
+    uint32_t flags;
 };
 
 enum task_state {
@@ -100,6 +109,7 @@ struct task {
     char exec_data[SCHED_EXEC_DATA_MAX];
     struct task_vma vmas[SCHED_TASK_VMA_MAX];
     struct task_file files[SCHED_TASK_FILE_MAX];
+    struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
 };
 
 struct task_snapshot_info {

@@ -1,6 +1,10 @@
-name: Build LeonOS Installer
+name: Build LeonOS 4
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       installer_root_size_mib:
@@ -27,22 +31,30 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: leonos4-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Install dependencies
         run: |
           sudo apt-get update
 
           sudo apt-get install -y \
+            build-essential \
             ninja-build \
+            meson \
             clang \
             llvm \
             lld \
@@ -52,28 +64,46 @@ jobs:
             xorriso \
             mtools \
             dosfstools \
-            ovmf \
-            qemu-system-x86 \
+            gdisk \
+            qemu-utils \
             python3 \
-            python3-pip \
             python3-pil \
             git \
             make \
-            curl
+            bison \
+            flex \
+            bc \
+            pkg-config
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable
+          rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add x86_64-unknown-none
 
       - name: Verify toolchain
         run: |
+          set -euo pipefail
+
           clang --version
           ld.lld --version
           llvm-ar --version
+          meson --version
+          grub-mkstandalone --version
+          grub-mkrescue --version
+          qemu-img --version
           rustc --version
           cargo --version
+
+      - name: Verify third-party sources
+        run: |
+          set -euo pipefail
+
+          test -f third_party/picolibc/meson.build
+          test -f third_party/busybox/Makefile
+          git -C third_party/picolibc rev-parse --verify HEAD
+          git -C third_party/busybox rev-parse --verify HEAD
+          git submodule status --recursive
 
       - name: Prepare build configuration
         env:
@@ -83,6 +113,11 @@ jobs:
           KCONFIG_LICENSE_DEBUG_LOG: ${{ inputs.license_debug_log }}
         run: |
           set -euo pipefail
+
+          : "${KCONFIG_INSTALLER_ROOT_SIZE_MIB:=128}"
+          : "${KCONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE:=true}"
+          : "${KCONFIG_LICENSE_SERVER_URL:=http://127.0.0.1:30301}"
+          : "${KCONFIG_LICENSE_DEBUG_LOG:=true}"
 
           config_path=buildsystem/config/leonos.conf
           mkdir -p "$(dirname "$config_path")"
@@ -124,15 +159,30 @@ jobs:
           set_config CONFIG_LICENSE_SERVER_URL "\"$KCONFIG_LICENSE_SERVER_URL\""
           set_bool CONFIG_LICENSE_DEBUG_LOG "$KCONFIG_LICENSE_DEBUG_LOG"
 
-      - name: Build installer
+      - name: Build LeonOS images
         run: |
+          set -euo pipefail
+
+          python3 ./build.py run image-vmdk
+          python3 ./build.py run image-iso
           python3 ./build.py run installer
 
-      - name: Upload installer artifacts
+      - name: Verify generated images
+        run: |
+          set -euo pipefail
+
+          test -s build/images/leonos4.vmdk
+          test -s build/images/leonos4.iso
+          test -s build/images/leonos4-installer.iso
+          qemu-img info build/images/leonos4.vmdk
+
+      - name: Upload LeonOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: LeonOS-Installer
+          name: LeonOS-4-${{ github.run_number }}
           path: |
+            build/images/leonos4.vmdk
+            build/images/leonos4.iso
             build/images/leonos4-installer.iso
             buildsystem/config/leonos.conf
           if-no-files-found: error

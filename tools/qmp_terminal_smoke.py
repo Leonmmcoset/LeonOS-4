@@ -51,10 +51,21 @@ def main() -> int:
     hmp(sock, "mouse_button 1", 0.1)
     hmp(sock, "mouse_button 0", 1.5)
 
+    # vi is a regular BusyBox applet and must run in a child. Returning with
+    # :q must leave the resident hush shell usable for the following command.
+    for key in ("v", "i", "ret"):
+        hmp(sock, f"sendkey {key}", 0.08)
+    time.sleep(1.0)
+    hmp(sock, "sendkey esc", 0.1)
+    hmp(sock, "sendkey shift:semicolon", 0.1)
+    hmp(sock, "sendkey q", 0.1)
+    hmp(sock, "sendkey ret", 1.0)
+
     for scancode in [0x23, 0x12, 0x26, 0x19, 0x1C]:
         hmp(sock, f"sendkey 0x{scancode:x}", 0.08)
 
     time.sleep(1.2)
+    hmp(sock, "screendump build/images/terminal-qmp-smoke.ppm", 0.4)
     send(sock, {"execute": "quit"}, 0.2)
     return 0
 

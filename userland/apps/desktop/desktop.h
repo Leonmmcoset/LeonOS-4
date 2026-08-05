@@ -65,6 +65,7 @@
 #define LOGIN_WINDOW_TEXT "Sign in"
 #define LOGIN_RESPAWN_MS 1000UL
 #define SERVICE_DAEMON_PATH "0:/system/apps/serviced/serviced.elf"
+#define NETWORK_CONTROLLER_APP_PATH "0:/system/apps/netctl/netctl.elf"
 #define SERVICE_DAEMON_RETRY_MS 2000UL
 #define DISPLAY_CONFIG_PATH "0:/system/config/display.conf"
 #define APPEARANCE_CONFIG_NAME "appearance.conf"

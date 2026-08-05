@@ -98,7 +98,7 @@ def build_api_file(name, version, main_exe_arcname, default_path,
                    files_list, output_path, input_method_id="",
                    input_method_abbreviation="", input_method_startup="manual",
                    input_method_settings="", input_method_settings_app="",
-                   launch_after_install=False):
+                   launch_after_install=False, virtual_terminal=False):
     """files_list: list of (local_path, arcname) tuples"""
     validate_ini_value("name", name, 64)
     validate_ini_value("version", version, 16)
@@ -124,6 +124,13 @@ def build_api_file(name, version, main_exe_arcname, default_path,
         raise ValueError("main_exe must point to a packaged file")
     if icon_arcname and icon_arcname not in seen:
         raise ValueError("icon must point to a packaged file")
+    terminal_manifest = ""
+    if virtual_terminal:
+        terminal_manifest = main_exe_arcname[:-4] + ".app.ini"
+        validate_member_name(terminal_manifest)
+        if terminal_manifest in seen:
+            raise ValueError("virtual terminal manifest conflicts with a packaged file")
+        seen.add(terminal_manifest)
     if input_method_id:
         validate_input_method_id(input_method_id)
         validate_ini_value("input method abbreviation", input_method_abbreviation, 8)
@@ -155,6 +162,7 @@ default_path={default_path}
 requires_admin={1 if requires_admin else 0}
 desktop_shortcut={1 if desktop_shortcut else 0}
 icon={icon_arcname}
+terminal={1 if virtual_terminal else 0}
 """
     if input_method_id:
         ini_content += f"""
@@ -182,6 +190,15 @@ settings_app={input_method_settings_app}
             pad = pad_size(len(ini_data)) - len(ini_data)
             if pad:
                 out.write(b'\0' * pad)
+
+            if terminal_manifest:
+                manifest_data = b"[app]\nterminal=1\n"
+                hdr = tar_header(terminal_manifest, len(manifest_data))
+                out.write(hdr)
+                out.write(manifest_data)
+                pad = pad_size(len(manifest_data)) - len(manifest_data)
+                if pad:
+                    out.write(b'\0' * pad)
 
             for local_path, arcname in sorted(files_list, key=lambda x: x[1]):
                 fsize = os.path.getsize(local_path)
@@ -219,6 +236,8 @@ def main():
     parser.add_argument("--input-method-settings", default="")
     parser.add_argument("--input-method-settings-app", default="")
     parser.add_argument("--launch-after-install", action="store_true")
+    parser.add_argument("--virtual-terminal", action="store_true",
+                        help="run the installed main executable through Terminal")
     parser.add_argument("--file", dest="files", action="append", nargs=2,
                         metavar=("LOCAL", "ARCHIVE"), default=[])
     parser.add_argument("--output")
@@ -227,7 +246,7 @@ def main():
     if args.legacy:
         if len(args.legacy) != 2 or any((args.name, args.version,
                                          args.main_exe, args.default_path,
-                                         args.output, args.files)):
+                                         args.output, args.files, args.virtual_terminal)):
             parser.error("use either the legacy ELF/output form or named options")
         name = "Hello World"
         version = "1.0.0"
@@ -264,6 +283,7 @@ def main():
         input_method_settings = args.input_method_settings
         input_method_settings_app = args.input_method_settings_app
         launch_after_install = args.launch_after_install
+        virtual_terminal = args.virtual_terminal
 
     if args.legacy:
         input_method_id = ""
@@ -272,6 +292,7 @@ def main():
         input_method_settings = ""
         input_method_settings_app = ""
         launch_after_install = False
+        virtual_terminal = False
 
     build_api_file(
         name=name,
@@ -289,6 +310,7 @@ def main():
         input_method_settings=input_method_settings,
         input_method_settings_app=input_method_settings_app,
         launch_after_install=launch_after_install,
+        virtual_terminal=virtual_terminal,
     )
 
 

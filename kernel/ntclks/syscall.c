@@ -515,6 +515,114 @@ static struct task_file *task_file_for_fd(struct task *task, int fd)
     return file->used ? file : NULL;
 }
 
+#define LEONOS_F_DUPFD 0
+#define LEONOS_F_GETFD 1
+#define LEONOS_F_SETFD 2
+#define LEONOS_F_GETFL 3
+#define LEONOS_F_SETFL 4
+#define LEONOS_F_DUPFD_CLOEXEC 14
+#define LEONOS_FD_CLOEXEC 1
+
+static struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
+{
+    if (!task || !task->pty_id || fd < 4) {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
+        struct task_pty_fd *entry = &task->pty_fds[i];
+        if (entry->used && entry->fd == fd) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static int task_pty_stream_for_fd(struct task *task, int fd)
+{
+    struct task_pty_fd *entry;
+    if (!task || !task->pty_id) {
+        return -1;
+    }
+    if (fd >= 0 && fd <= 2) {
+        return fd;
+    }
+    entry = task_pty_fd_for_fd(task, fd);
+    return entry ? (int)entry->stream : -1;
+}
+
+static int task_pty_fd_available(struct task *task, int fd)
+{
+    if (fd < 4 || task_file_for_fd(task, fd) || task_pty_fd_for_fd(task, fd)) {
+        return 0;
+    }
+    return 1;
+}
+
+static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
+                                 uint32_t flags)
+{
+    int stream = task_pty_stream_for_fd(task, old_fd);
+    int candidate;
+    if (stream < 0 || minimum_fd < 0) {
+        return -LEONOS_EBADF;
+    }
+    candidate = minimum_fd < 4 ? 4 : minimum_fd;
+    for (uint32_t attempts = 0; attempts < SCHED_TASK_PTY_FD_MAX + SCHED_TASK_FILE_MAX + 4u;
+         ++attempts, ++candidate) {
+        if (candidate < 0) {
+            return -LEONOS_EINVAL;
+        }
+        if (!task_pty_fd_available(task, candidate)) {
+            continue;
+        }
+        for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
+            struct task_pty_fd *entry = &task->pty_fds[i];
+            if (!entry->used) {
+                entry->used = 1;
+                entry->fd = candidate;
+                entry->stream = (uint32_t)stream;
+                entry->flags = flags;
+                return candidate;
+            }
+        }
+        return -LEONOS_EMFILE;
+    }
+    return -LEONOS_EMFILE;
+}
+
+static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
+{
+    int stream = task_pty_stream_for_fd(task, old_fd);
+    struct task_pty_fd *entry;
+    if (stream < 0 || new_fd < 0) {
+        return -LEONOS_EBADF;
+    }
+    if (old_fd == new_fd) {
+        return new_fd;
+    }
+    /* Rebinding stdin/stdout/stderr needs a complete descriptor table. */
+    if (new_fd < 4 || task_file_for_fd(task, new_fd)) {
+        return -LEONOS_ENOSYS;
+    }
+    entry = task_pty_fd_for_fd(task, new_fd);
+    if (!entry) {
+        for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
+            if (!task->pty_fds[i].used) {
+                entry = &task->pty_fds[i];
+                entry->used = 1;
+                entry->fd = new_fd;
+                break;
+            }
+        }
+    }
+    if (!entry) {
+        return -LEONOS_EMFILE;
+    }
+    entry->stream = (uint32_t)stream;
+    entry->flags = 0;
+    return new_fd;
+}
+
 static int alloc_task_fd(struct task *task, const struct storage_node *node, uint32_t flags, const char *path)
 {
     if (!task || !node) {
@@ -2166,7 +2274,6 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
     case LINUX_SYS_GETCWD:
     case LINUX_SYS_CHDIR:
     case LINUX_SYS_EXECVE:
-    case LINUX_SYS_WAIT4:
     case LINUX_SYS_EXIT:
     case LINUX_SYS_NANOSLEEP:
     case LINUX_SYS_IOCTL:
@@ -2222,13 +2329,15 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     if (number == LINUX_SYS_WRITE) {
         struct task *task = sched_current_task();
         uint32_t request_len;
+        int pty_stream;
         if (!user_range_ok(a1, a2)) {
             return -LEONOS_EFAULT;
         }
         request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
                           ? LEONOS_FS_IO_SLICE_BYTES
                           : (uint32_t)a2;
-        if (task && task->pty_id && (a0 == 1 || a0 == 2)) {
+        pty_stream = task_pty_stream_for_fd(task, (int)a0);
+        if (pty_stream == 1 || pty_stream == 2) {
             return pty_write_output(task->pty_id, (const char *)(uintptr_t)a1, request_len);
         }
         if (a0 == 1 || a0 == 2) {
@@ -2278,10 +2387,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         struct task_file *file;
         uint32_t got = 0;
         uint32_t request_len;
+        int pty_stream;
         if (!user_range_ok(a1, a2)) {
             return -LEONOS_EFAULT;
         }
-        if (task && task->pty_id && a0 == 0) {
+        pty_stream = task_pty_stream_for_fd(task, (int)a0);
+        if (pty_stream == 0) {
             return pty_read_input(task->pty_id, (char *)(uintptr_t)a1, (uint32_t)a2);
         }
         file = task_file_for_fd(task, (int)a0);
@@ -2436,12 +2547,87 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (a0 <= 3) {
             return 0;
         }
+        {
+            struct task_pty_fd *pty_fd = task_pty_fd_for_fd(task, (int)a0);
+            if (pty_fd) {
+                pty_fd->used = 0;
+                pty_fd->fd = 0;
+                pty_fd->stream = 0;
+                pty_fd->flags = 0;
+                return 0;
+            }
+        }
         struct task_file *file = task_file_for_fd(task, (int)a0);
         if (!file) {
             return -LEONOS_EBADF;
         }
         clear_task_file(file);
         return 0;
+    }
+
+    if (number == LINUX_SYS_FTRUNCATE) {
+        struct task *task = sched_current_task();
+        struct task_file *file;
+        int ret;
+        if ((int64_t)a1 < 0) {
+            return -LEONOS_EINVAL;
+        }
+        file = task_file_for_fd(task, (int)a0);
+        if (!file) {
+            return -LEONOS_EBADF;
+        }
+        if (file->node.type != LEONOS_FS_TYPE_FILE || !file_can_write(file) || !file->path[0]) {
+            return -LEONOS_EBADF;
+        }
+        ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, file->path, 0, 0);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_truncate_file(file->path, a1);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_lookup_path(file->path, &file->node);
+        if (ret < 0) {
+            return ret;
+        }
+        if (file->offset > file->node.size) {
+            file->offset = file->node.size;
+        }
+        return 0;
+    }
+
+    if (number == LINUX_SYS_DUP || number == LINUX_SYS_DUP2 || number == LINUX_SYS_FCNTL) {
+        struct task *task = sched_current_task();
+        if (number == LINUX_SYS_DUP) {
+            return task_pty_duplicate_fd(task, (int)a0, 0, 0);
+        }
+        if (number == LINUX_SYS_DUP2) {
+            return task_pty_dup2_fd(task, (int)a0, (int)a1);
+        }
+        if (a1 == LEONOS_F_DUPFD || a1 == LEONOS_F_DUPFD_CLOEXEC) {
+            return task_pty_duplicate_fd(task, (int)a0, (int)a2,
+                                         a1 == LEONOS_F_DUPFD_CLOEXEC ? LEONOS_FD_CLOEXEC : 0);
+        }
+        {
+            struct task_pty_fd *pty_fd = task_pty_fd_for_fd(task, (int)a0);
+            if (!pty_fd && task_pty_stream_for_fd(task, (int)a0) < 0) {
+                return -LEONOS_EBADF;
+            }
+            if (a1 == LEONOS_F_GETFD) {
+                return pty_fd ? (int64_t)pty_fd->flags : 0;
+            }
+            if (a1 == LEONOS_F_SETFD) {
+                if (pty_fd) {
+                    pty_fd->flags = (uint32_t)a2 & LEONOS_FD_CLOEXEC;
+                }
+                return 0;
+            }
+            if (a1 == LEONOS_F_GETFL || a1 == LEONOS_F_SETFL) {
+                return 0;
+            }
+        }
+        return -LEONOS_ENOSYS;
     }
 
     if (number == LINUX_SYS_STAT) {
@@ -2684,11 +2870,13 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_WAIT4) {
-        uint32_t wanted_pid = (uint32_t)a0;
+        int32_t requested_pid = (int32_t)a0;
+        uint32_t wanted_pid = requested_pid == -1 ? 0U : (uint32_t)requested_pid;
         uint64_t code = 0;
         int64_t pid = sched_wait_reap(sched_current_pid(), wanted_pid, &code);
         if (pid <= 0) {
-            return -LEONOS_ECHILD;
+            /* waitpid(..., WNOHANG) reports no state change, not ECHILD. */
+            return (a2 & 1U) != 0 ? 0 : -LEONOS_ECHILD;
         }
         if (a1) {
             if (!user_range_ok(a1, sizeof(int))) {
@@ -3817,6 +4005,91 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return task ? (int64_t)task->pty_id : 0;
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_INPUT_AVAILABLE) {
+        struct task *task = sched_current_task();
+        if (!task || !task->pty_id) {
+            return -LEONOS_EINVAL;
+        }
+        return (int64_t)pty_input_available(task->pty_id);
+    }
+
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == LEONOS_PTY_IOCTL_OWNER_GET_ATTR ||
+         a1 == LEONOS_PTY_IOCTL_OWNER_SET_ATTR)) {
+        struct leonos_pty_termios_io *io;
+        if (!user_range_ok(a2, sizeof(*io))) {
+            return -LEONOS_EFAULT;
+        }
+        io = (struct leonos_pty_termios_io *)(uintptr_t)a2;
+        if (!pty_is_owner(io->pty_id, sched_current_pid())) {
+            return -LEONOS_EINVAL;
+        }
+        if (a1 == LEONOS_PTY_IOCTL_OWNER_GET_ATTR) {
+            return pty_get_termios(io->pty_id, &io->termios);
+        }
+        return pty_set_termios(io->pty_id, &io->termios);
+    }
+
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == LEONOS_PTY_IOCTL_OWNER_GET_WINSIZE ||
+         a1 == LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE)) {
+        struct leonos_pty_winsize_io *io;
+        if (!user_range_ok(a2, sizeof(*io))) {
+            return -LEONOS_EFAULT;
+        }
+        io = (struct leonos_pty_winsize_io *)(uintptr_t)a2;
+        if (!pty_is_owner(io->pty_id, sched_current_pid())) {
+            return -LEONOS_EINVAL;
+        }
+        if (a1 == LEONOS_PTY_IOCTL_OWNER_GET_WINSIZE) {
+            return pty_get_winsize(io->pty_id, &io->winsize);
+        }
+        return pty_set_winsize(io->pty_id, &io->winsize);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_GET_ATTR) {
+        struct task *task = sched_current_task();
+        struct leonos_pty_termios *termios;
+        if (!task || !task->pty_id) {
+            return -LEONOS_EINVAL;
+        }
+        if (!user_range_ok(a2, sizeof(struct leonos_pty_termios))) {
+            return -LEONOS_EFAULT;
+        }
+        termios = (struct leonos_pty_termios *)(uintptr_t)a2;
+        return pty_get_termios(task->pty_id, termios);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_SET_ATTR) {
+        struct task *task = sched_current_task();
+        const struct leonos_pty_termios_request *request;
+        if (!task || !task->pty_id) {
+            return -LEONOS_EINVAL;
+        }
+        if (!user_range_ok(a2, sizeof(struct leonos_pty_termios_request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = (const struct leonos_pty_termios_request *)(uintptr_t)a2;
+        return pty_set_termios(task->pty_id, &request->termios);
+    }
+
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == LEONOS_PTY_IOCTL_GET_WINSIZE || a1 == LEONOS_PTY_IOCTL_SET_WINSIZE)) {
+        struct task *task = sched_current_task();
+        if (!task || !task->pty_id) {
+            return -LEONOS_EINVAL;
+        }
+        if (!user_range_ok(a2, sizeof(struct leonos_pty_winsize))) {
+            return -LEONOS_EFAULT;
+        }
+        if (a1 == LEONOS_PTY_IOCTL_GET_WINSIZE) {
+            return pty_get_winsize(task->pty_id,
+                                   (struct leonos_pty_winsize *)(uintptr_t)a2);
+        }
+        return pty_set_winsize(task->pty_id,
+                               (const struct leonos_pty_winsize *)(uintptr_t)a2);
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_READ_OUTPUT) {
         struct leonos_pty_io *io;
         if (!user_range_ok(a2, sizeof(struct leonos_pty_io))) {
@@ -3845,6 +4118,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_SPAWN) {
         const struct leonos_pty_spawn *spawn;
+        struct task *task = sched_current_task();
         struct exec_params_kernel params;
         char path[LEONOS_FS_PATH_LEN];
         size_t len;
@@ -3860,7 +4134,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             !user_range_ok((uint64_t)(uintptr_t)spawn->path, len + 1)) {
             return -LEONOS_EFAULT;
         }
-        if (!pty_is_owner(spawn->pty_id, sched_current_pid())) {
+        /* The terminal owns the PTY, while its shell and commands inherit it.
+         * Permit both the owner and an attached descendant to spawn, but do
+         * not accept arbitrary PTY ids from an unrelated process. */
+        if (!task || !pty_is_active(spawn->pty_id) ||
+            (!pty_is_owner(spawn->pty_id, sched_current_pid()) &&
+             task->pty_id != spawn->pty_id)) {
             return -LEONOS_EINVAL;
         }
         {

@@ -3,7 +3,32 @@
 
 ## 编译源代码
 > 本项目只能在 Linux 和 WSL 平台编译
+
+首次克隆必须递归获取第三方子模块：
+
+```bash
+git clone --recurse-submodules https://github.com/Leonmmcoset/LeonOS-4.git
+cd LeonOS-4
+```
+
+Ubuntu 或 WSL 需要安装完整构建依赖：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential ninja-build meson clang llvm lld \
+  grub-efi-amd64-bin grub-pc-bin grub-common xorriso \
+  mtools dosfstools gdisk qemu-utils python3 python3-pil \
+  git make bison flex bc pkg-config
+
+# Requires rustup; install it from https://rustup.rs when it is unavailable.
+rustup toolchain install stable --profile minimal
+rustup default stable
+rustup target add x86_64-unknown-none
+```
+
 编译命令：
+
 ```bash
 python3 build.py run image-vmdk
 ```

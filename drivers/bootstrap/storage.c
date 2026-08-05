@@ -3274,6 +3274,48 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
     return 0;
 }
 
+int storage_truncate_file(const char *path, uint64_t length)
+{
+    struct storage_node node;
+    uint64_t phys;
+    uint32_t pages;
+    uint32_t got = 0;
+    uint32_t target;
+    int ret;
+
+    if (!path || length > 0xffffffffULL) {
+        return -22;
+    }
+    ret = storage_lookup_path(path, &node);
+    if (ret < 0) {
+        return ret;
+    }
+    if (node.type != LEONOS_FS_TYPE_FILE) {
+        return -21;
+    }
+    target = (uint32_t)length;
+    if (target == node.size) {
+        return 0;
+    }
+    pages = target ? (target + 4095u) / 4096u : 1u;
+    phys = mm_alloc_pages(pages);
+    if (!phys) {
+        return -12;
+    }
+    storage_memzero((void *)(uintptr_t)phys, pages * 4096u);
+    if (node.size && target) {
+        uint32_t copy = node.size < target ? (uint32_t)node.size : target;
+        ret = storage_read_node(&node, 0, (void *)(uintptr_t)phys, copy, &got);
+        if (ret < 0 || got != copy) {
+            mm_free_pages(phys, pages);
+            return ret < 0 ? ret : -5;
+        }
+    }
+    ret = storage_write_file(path, (const void *)(uintptr_t)phys, target);
+    mm_free_pages(phys, pages);
+    return ret;
+}
+
 int storage_mkdir(const char *path)
 {
     char resolved[LEONOS_FS_PATH_LEN];

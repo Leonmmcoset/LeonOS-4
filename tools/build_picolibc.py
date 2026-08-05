@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Build Picolibc for LeonOS with the checked-in x86_64 cross file."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent.parent
+WINDOWS_MESON_DIR = ROOT / "buildsystem/deps/picolibc-meson"
+
+
+def run_meson(arguments: list[str]) -> None:
+    meson = shutil.which("meson")
+    if meson:
+        subprocess.run([meson, *arguments], check=True)
+        return
+    if WINDOWS_MESON_DIR.is_dir():
+        environment = os.environ.copy()
+        existing = environment.get("PYTHONPATH")
+        environment["PYTHONPATH"] = str(WINDOWS_MESON_DIR) + (
+            os.pathsep + existing if existing else ""
+        )
+        subprocess.run([sys.executable, "-m", "mesonbuild.mesonmain", *arguments],
+                       check=True, env=environment)
+        return
+    raise SystemExit(
+        "Meson is required for Picolibc. Install meson >= 0.61 or run "
+        "py -m pip install --target buildsystem/deps/picolibc-meson meson"
+    )
+
+
+def picolibc_revision(source: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout.strip()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--cross-file", type=Path, required=True)
+    parser.add_argument("--build-dir", type=Path, required=True)
+    parser.add_argument("--prefix", type=Path, required=True)
+    parser.add_argument("--archive", type=Path, required=True)
+    parser.add_argument("--stamp", type=Path, required=True)
+    args = parser.parse_args()
+
+    source = args.source.resolve()
+    cross_file = args.cross_file.resolve()
+    build_dir = args.build_dir.resolve()
+    prefix = args.prefix.resolve()
+    archive = args.archive.resolve()
+    stamp = args.stamp.resolve()
+    if not (source / "meson.build").is_file():
+        raise SystemExit(f"Picolibc source tree not found: {source}")
+    if not cross_file.is_file():
+        raise SystemExit(f"Picolibc cross file not found: {cross_file}")
+
+    options = [
+        "-Dmultilib=false",
+        "-Dtests=false",
+        "-Dsemihost=false",
+        "-Dos-fallback=false",
+        "-Dpicocrt=false",
+        "-Dpicocrt-lib=false",
+        "-Dthread-local-storage=false",
+        "-Dnewlib-global-errno=true",
+        "-Dsingle-thread=true",
+        "-Dposix-console=true",
+        "-Denable-malloc=true",
+        "-Dinternal-heap=0",
+        "-Dio-long-long=true",
+        "-Dformat-default=integer",
+        "-Dmb-capable=true",
+        "-Dstack-protector-guard=global",
+        "-Dspecsdir=none",
+    ]
+    config = {
+        "schema": 1,
+        "cross_file_sha256": hashlib.sha256(cross_file.read_bytes()).hexdigest(),
+        "options": options,
+    }
+    config_path = build_dir / ".leonos-picolibc-config.json"
+    previous = None
+    if config_path.is_file():
+        try:
+            previous = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = None
+
+    setup = ["setup"]
+    if (build_dir / "meson-private/coredata.dat").exists():
+        setup.append("--reconfigure" if previous == config else "--wipe")
+    setup += [
+        str(build_dir),
+        str(source),
+        "--cross-file", str(cross_file),
+        "--prefix", str(prefix),
+        *options,
+    ]
+    run_meson(setup)
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    run_meson(["compile", "-C", str(build_dir)])
+    run_meson(["install", "-C", str(build_dir)])
+
+    if not archive.is_file():
+        raise SystemExit(f"Picolibc install did not produce {archive}")
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(
+        json.dumps(
+            {
+                "picolibc_commit": picolibc_revision(source),
+                "archive": str(archive),
+                "cross_file": str(cross_file),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+if __name__ == "__main__":
+    main()

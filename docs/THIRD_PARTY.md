@@ -32,6 +32,21 @@ The LeonOS syscall and GUI bindings remain in the separate `leonos.a` adapter
 archive. The generated Developer SDK packages both archives, Picolibc headers,
 and the upstream license notice.
 
+## BusyBox
+
+- Path: `third_party/busybox`
+- Upstream: `https://github.com/mirror/busybox.git`
+- Version: `1.36.1`
+- Pinned commit: `1a64f6a20aaf6ea4dbba68bbfa8cc1ab7e5c57c4` (`1_36_1`)
+- License: GPL-2.0-only; the complete upstream `LICENSE` is staged at
+  `0:/programs/busybox/LICENSE` beside the executable.
+
+LeonOS builds a static, basic-applet BusyBox profile at
+`0:/programs/busybox/busybox.elf`. It includes file/text utilities such as
+`ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `mkdir`, `rmdir`, and
+`printf`. BusyBox ash is intentionally excluded until LeonOS has fork, pipe,
+file-descriptor duplication, process-group, and signal semantics.
+
 ## minimp3
 
 - Path: `third_party/minimp3/minimp3.h`

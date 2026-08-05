@@ -34,6 +34,7 @@ int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
                          struct leonos_dir_entry *entry);
 int storage_read_file(const char *path, const void **out_data, size_t *out_len);
 int storage_write_file(const char *path, const void *buf, uint32_t len);
+int storage_truncate_file(const char *path, uint64_t length);
 int storage_write_node(const char *path, uint64_t offset,
                        const void *buf, uint32_t len, uint32_t *out_written);
 int storage_list_dir(const char *path, struct leonos_dir_entry *entries,

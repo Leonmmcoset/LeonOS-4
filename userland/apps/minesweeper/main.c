@@ -8,6 +8,7 @@
 #define MS_COLS 9
 #define MS_ROWS 9
 #define MS_MINES 10
+#define MS_CELLS (MS_COLS * MS_ROWS)
 #define MS_TILE 28
 #define MS_GAP 2
 #define MS_BOARD_X 18
@@ -15,6 +16,10 @@
 #define MS_TOP_H 52
 #define MS_W (MS_BOARD_X * 2 + MS_COLS * MS_TILE)
 #define MS_H (MS_BOARD_Y + MS_ROWS * MS_TILE + 18)
+#define MS_SPRITE_SIZE 20
+#define MS_SPRITE_BMP_MAX_BYTES (MS_SPRITE_SIZE * MS_SPRITE_SIZE * 4U + 128U)
+#define MS_MINE_SPRITE_PATH "0:/system/resources/minesweeper-mine.bmp"
+#define MS_FLAG_SPRITE_PATH "0:/system/resources/minesweeper-flag.bmp"
 
 #define CELL_MINE 0x01u
 #define CELL_REVEALED 0x02u
@@ -30,6 +35,15 @@ static uint8_t won;
 static uint32_t revealed_count;
 static uint32_t flagged_count;
 static uint32_t rng_state;
+
+struct minesweeper_sprite {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pixels[MS_SPRITE_SIZE * MS_SPRITE_SIZE];
+};
+
+static struct minesweeper_sprite mine_sprite;
+static struct minesweeper_sprite flag_sprite;
 
 static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
 {
@@ -56,6 +70,99 @@ static uint32_t text_len(const char *text)
         ++n;
     }
     return n;
+}
+
+static uint16_t read_le16(const uint8_t *p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t read_le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static int32_t read_le32s(const uint8_t *p)
+{
+    return (int32_t)read_le32(p);
+}
+
+static int load_sprite_bmp(const char *path, struct minesweeper_sprite *sprite)
+{
+    uint8_t bmp[MS_SPRITE_BMP_MAX_BYTES];
+    struct leonos_stat st;
+    uint32_t len = 0;
+    uint32_t pixel_offset;
+    uint32_t row_stride;
+    uint32_t height;
+    int32_t width;
+    int32_t height_signed;
+    int top_down;
+    int fd;
+
+    if (!path || !sprite || stat(path, &st) < 0 ||
+        st.type != LEONOS_FS_TYPE_FILE || st.size < 54 ||
+        st.size > sizeof(bmp)) {
+        return 0;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    while (len < st.size) {
+        long got = read(fd, bmp + len, (uint32_t)st.size - len);
+        if (got <= 0) {
+            close(fd);
+            return 0;
+        }
+        len += (uint32_t)got;
+    }
+    close(fd);
+    if (bmp[0] != 'B' || bmp[1] != 'M' || read_le32(bmp + 14) < 40 ||
+        read_le16(bmp + 26) != 1 || read_le32(bmp + 30) != 0 ||
+        read_le16(bmp + 28) != 32) {
+        return 0;
+    }
+    pixel_offset = read_le32(bmp + 10);
+    width = read_le32s(bmp + 18);
+    height_signed = read_le32s(bmp + 22);
+    if (width <= 0 || height_signed == 0 || (uint32_t)width > MS_SPRITE_SIZE) {
+        return 0;
+    }
+    top_down = height_signed < 0;
+    height = top_down ? (uint32_t)(-height_signed) : (uint32_t)height_signed;
+    if (height > MS_SPRITE_SIZE || pixel_offset >= len) {
+        return 0;
+    }
+    row_stride = (uint32_t)width * 4U;
+    if (height > (len - pixel_offset) / row_stride) {
+        return 0;
+    }
+    for (uint32_t y = 0; y < MS_SPRITE_SIZE; ++y) {
+        for (uint32_t x = 0; x < MS_SPRITE_SIZE; ++x) {
+            sprite->pixels[y * MS_SPRITE_SIZE + x] = 0;
+        }
+    }
+    for (uint32_t y = 0; y < height; ++y) {
+        uint32_t src_y = top_down ? y : height - 1U - y;
+        const uint8_t *row = bmp + pixel_offset + src_y * row_stride;
+        for (uint32_t x = 0; x < (uint32_t)width; ++x) {
+            const uint8_t *pixel = row + x * 4U;
+            sprite->pixels[y * MS_SPRITE_SIZE + x] =
+                ((uint32_t)pixel[3] << 24) | ((uint32_t)pixel[2] << 16) |
+                ((uint32_t)pixel[1] << 8) | pixel[0];
+        }
+    }
+    sprite->width = (uint32_t)width;
+    sprite->height = height;
+    return 1;
+}
+
+static int load_game_assets(void)
+{
+    return load_sprite_bmp(MS_MINE_SPRITE_PATH, &mine_sprite) &&
+           load_sprite_bmp(MS_FLAG_SPRITE_PATH, &flag_sprite);
 }
 
 static uint32_t color_for_number(uint8_t n)
@@ -112,43 +219,59 @@ static int in_board(int x, int y)
     return x >= 0 && y >= 0 && x < MS_COLS && y < MS_ROWS;
 }
 
-static void calculate_adjacency(void)
+static void add_mine_adjacency(int mine_x, int mine_y)
 {
-    for (int y = 0; y < MS_ROWS; ++y) {
-        for (int x = 0; x < MS_COLS; ++x) {
-            uint8_t count = 0;
-            for (int dy = -1; dy <= 1; ++dy) {
-                for (int dx = -1; dx <= 1; ++dx) {
-                    if ((dx || dy) && in_board(x + dx, y + dy) &&
-                        (cells[y + dy][x + dx] & CELL_MINE)) {
-                        ++count;
-                    }
-                }
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            int x = mine_x + dx;
+            int y = mine_y + dy;
+            if ((dx || dy) && in_board(x, y)) {
+                ++adjacent[y][x];
             }
-            adjacent[y][x] = count;
         }
     }
 }
 
 static void place_mines(int safe_x, int safe_y)
 {
-    uint32_t placed = 0;
-    while (placed < MS_MINES) {
-        uint32_t index = rng_next() % (MS_COLS * MS_ROWS);
+    uint8_t candidates[MS_CELLS];
+    uint32_t candidate_count = 0;
+    for (int y = 0; y < MS_ROWS; ++y) {
+        for (int x = 0; x < MS_COLS; ++x) {
+            if (x != safe_x || y != safe_y) {
+                candidates[candidate_count++] = (uint8_t)(y * MS_COLS + x);
+            }
+        }
+    }
+    for (uint32_t placed = 0; placed < MS_MINES; ++placed) {
+        uint32_t selected = placed + rng_next() % (candidate_count - placed);
+        uint8_t index = candidates[selected];
         int x = (int)(index % MS_COLS);
         int y = (int)(index / MS_COLS);
-        if ((x == safe_x && y == safe_y) || (cells[y][x] & CELL_MINE)) {
-            continue;
-        }
+        candidates[selected] = candidates[placed];
+        candidates[placed] = index;
         cells[y][x] |= CELL_MINE;
-        ++placed;
+        add_mine_adjacency(x, y);
     }
-    calculate_adjacency();
     mines_placed = 1;
+}
+
+static void reveal_all_mines(void)
+{
+    for (uint32_t y = 0; y < MS_ROWS; ++y) {
+        for (uint32_t x = 0; x < MS_COLS; ++x) {
+            if (cells[y][x] & CELL_MINE) {
+                cells[y][x] |= CELL_REVEALED;
+            }
+        }
+    }
 }
 
 static void reveal_cell(int x, int y)
 {
+    uint8_t queue[MS_CELLS];
+    uint32_t head = 0;
+    uint32_t tail = 0;
     if (!in_board(x, y) ||
         (cells[y][x] & (CELL_REVEALED | CELL_FLAGGED)) ||
         game_over) {
@@ -159,20 +282,27 @@ static void reveal_cell(int x, int y)
     if (cells[y][x] & CELL_MINE) {
         game_over = 1;
         won = 0;
-        for (uint32_t yy = 0; yy < MS_ROWS; ++yy) {
-            for (uint32_t xx = 0; xx < MS_COLS; ++xx) {
-                if (cells[yy][xx] & CELL_MINE) {
-                    cells[yy][xx] |= CELL_REVEALED;
-                }
-            }
-        }
+        reveal_all_mines();
         return;
     }
-    if (adjacent[y][x] == 0) {
+    queue[tail++] = (uint8_t)(y * MS_COLS + x);
+    while (head < tail) {
+        uint8_t index = queue[head++];
+        int current_x = (int)(index % MS_COLS);
+        int current_y = (int)(index / MS_COLS);
+        if (adjacent[current_y][current_x] != 0) {
+            continue;
+        }
         for (int dy = -1; dy <= 1; ++dy) {
             for (int dx = -1; dx <= 1; ++dx) {
-                if (dx || dy) {
-                    reveal_cell(x + dx, y + dy);
+                int next_x = current_x + dx;
+                int next_y = current_y + dy;
+                if ((dx || dy) && in_board(next_x, next_y) &&
+                    !(cells[next_y][next_x] &
+                      (CELL_MINE | CELL_REVEALED | CELL_FLAGGED))) {
+                    cells[next_y][next_x] |= CELL_REVEALED;
+                    ++revealed_count;
+                    queue[tail++] = (uint8_t)(next_y * MS_COLS + next_x);
                 }
             }
         }
@@ -207,19 +337,18 @@ static void toggle_flag(int x, int y)
     }
 }
 
-static void draw_mine(struct leonos_ui_surface *ui, uint32_t x, uint32_t y)
+static void draw_sprite(struct leonos_ui_surface *ui,
+                        const struct minesweeper_sprite *sprite,
+                        uint32_t x, uint32_t y)
 {
-    leonos_ui_rect(ui, x + 11, y + 7, 6, 14, LEONOS_UI_BLACK);
-    leonos_ui_rect(ui, x + 7, y + 11, 14, 6, LEONOS_UI_BLACK);
-    leonos_ui_rect(ui, x + 9, y + 9, 10, 10, LEONOS_UI_BLACK);
-    leonos_ui_rect(ui, x + 12, y + 10, 3, 3, LEONOS_UI_WHITE);
-}
-
-static void draw_flag(struct leonos_ui_surface *ui, uint32_t x, uint32_t y)
-{
-    leonos_ui_rect(ui, x + 9, y + 7, 2, 16, LEONOS_UI_BLACK);
-    leonos_ui_rect(ui, x + 11, y + 8, 10, 7, 0x00c00000);
-    leonos_ui_rect(ui, x + 6, y + 22, 14, 2, LEONOS_UI_BLACK);
+    for (uint32_t yy = 0; yy < sprite->height; ++yy) {
+        for (uint32_t xx = 0; xx < sprite->width; ++xx) {
+            uint32_t argb = sprite->pixels[yy * MS_SPRITE_SIZE + xx];
+            if (argb >> 24) {
+                leonos_ui_pixel(ui, x + xx, y + yy, argb & 0x00ffffffu);
+            }
+        }
+    }
 }
 
 static void draw_tile(struct leonos_ui_surface *ui, uint32_t gx, uint32_t gy)
@@ -232,7 +361,8 @@ static void draw_tile(struct leonos_ui_surface *ui, uint32_t gx, uint32_t gy)
         uint32_t fill = (cell & CELL_MINE) ? 0x00e8b0b0 : 0x00d8d8d8;
         leonos_ui_inset(ui, x, y, inner, inner, fill);
         if (cell & CELL_MINE) {
-            draw_mine(ui, x, y);
+            draw_sprite(ui, &mine_sprite, x + (inner - mine_sprite.width) / 2U,
+                        y + (inner - mine_sprite.height) / 2U);
         } else if (adjacent[gy][gx]) {
             char text[2] = {(char)('0' + adjacent[gy][gx]), 0};
             draw_center_text(ui, x, y, inner, inner, text,
@@ -241,7 +371,8 @@ static void draw_tile(struct leonos_ui_surface *ui, uint32_t gx, uint32_t gy)
     } else {
         leonos_ui_bevel(ui, x, y, inner, inner, LEONOS_UI_GRAY, 0);
         if (cell & CELL_FLAGGED) {
-            draw_flag(ui, x, y);
+            draw_sprite(ui, &flag_sprite, x + (inner - flag_sprite.width) / 2U,
+                        y + (inner - flag_sprite.height) / 2U);
         }
     }
 }
@@ -303,6 +434,10 @@ int main(void)
     struct leonos_gui_app_event event;
     int window_id;
     puts("[minesweeper.elf] starting");
+    if (!load_game_assets()) {
+        puts("[minesweeper.elf] required BMP assets unavailable");
+        return 1;
+    }
     window_id = leonos_gui_create_app_window_ex(T("Minesweeper", "扫雷"), T("LeonOS Minesweeper", "LeonOS 扫雷"),
                                                 MS_W, MS_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {

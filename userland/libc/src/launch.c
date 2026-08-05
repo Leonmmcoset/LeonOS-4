@@ -1,4 +1,5 @@
 #include <leonos/fs.h>
+#include <leonos/ini.h>
 #include <leonos/launch.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -7,6 +8,7 @@
 #define LEONOS_ASSOC_CONFIG_MAX 1024U
 #define LEONOS_SHORTCUT_MAX_BYTES 384U
 #define LEONOS_SHORTCUT_MAX_DEPTH 8U
+#define LEONOS_TERMINAL_APP_PATH "0:/system/apps/terminal/terminal.elf"
 
 struct builtin_program {
     const char *name;
@@ -196,6 +198,58 @@ static void build_parent_path(char *dst, uint32_t capacity, const char *path)
     } else {
         copy_text(dst, capacity, "0:/");
     }
+}
+
+static int app_manifest_path(const char *program_path, char *manifest,
+                             uint32_t capacity)
+{
+    uint32_t length;
+    uint32_t pos;
+    if (!program_path || !manifest || capacity == 0 ||
+        !ends_with_ignore_case(program_path, ".elf")) {
+        return 0;
+    }
+    length = text_len(program_path);
+    if (length < 4U || length + 4U >= capacity) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < length - 4U; ++i) {
+        manifest[i] = program_path[i];
+    }
+    pos = length - 4U;
+    manifest[pos] = 0;
+    append_text(manifest, &pos, capacity, ".app.ini");
+    return 1;
+}
+
+static int app_requires_terminal(const char *program_path)
+{
+    char manifest[LEONOS_FS_PATH_LEN];
+    char value[8];
+    if (!app_manifest_path(program_path, manifest, sizeof(manifest)) ||
+        !leonos_ini_load_strict(manifest) ||
+        !leonos_ini_get("app", "terminal", value, sizeof(value))) {
+        return 0;
+    }
+    return text_eq(value, "1") || text_eq_ignore_case(value, "true") ||
+           text_eq_ignore_case(value, "yes");
+}
+
+static int launch_in_terminal(char *argv[])
+{
+    char *terminal_argv[LEONOS_LAUNCH_MAX_ARGS + 3U];
+    uint32_t argc = 0;
+    terminal_argv[0] = (char *)LEONOS_TERMINAL_APP_PATH;
+    terminal_argv[1] = "--run";
+    while (argv[argc]) {
+        if (argc >= LEONOS_LAUNCH_MAX_ARGS) {
+            return LEONOS_LAUNCH_ERR_TOO_MANY_ARGS;
+        }
+        terminal_argv[argc + 2U] = argv[argc];
+        ++argc;
+    }
+    terminal_argv[argc + 2U] = 0;
+    return execve(terminal_argv[0], terminal_argv, 0);
 }
 
 static void build_child_path(char *dst, uint32_t capacity,
@@ -798,7 +852,7 @@ int leonos_launch_file_with_app(const char *target_path, const char *program_pat
         argv[0] = (char *)resolved_program;
         argv[1] = (char *)target_path;
         argv[2] = 0;
-        return execve(resolved_program, argv, 0);
+        return leonos_launch_argv(argv);
     }
 }
 
@@ -895,6 +949,9 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         return leonos_launch_argv_depth(target_argv, depth + 1);
     }
     if (ends_with_ignore_case(path, ".elf")) {
+        if (app_requires_terminal(path)) {
+            return launch_in_terminal(argv);
+        }
         int ret = execve(path, argv, 0);
         if (ret == -LEONOS_EEXIST && is_system_desktop_path(path)) {
             return LEONOS_LAUNCH_ERR_ALREADY_RUNNING;

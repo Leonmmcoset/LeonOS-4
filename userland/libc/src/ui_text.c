@@ -1,5 +1,6 @@
 #include <leonos/syscall.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "ui_internal.h"
 
@@ -287,6 +288,8 @@ static int ui_ttf_load_font(struct ui_ttf_font *font, const char *path)
         return 0;
     }
     *font = ui_ttf;
+    printf("[ui] TTF loaded path=%s bytes=%u glyphs=%u\n",
+           path ? path : "", ui_ttf.len, ui_ttf.glyph_count);
     return 1;
 }
 
@@ -304,6 +307,7 @@ static void ui_ttf_load(void)
     if (!ui_ttf_load_font(&ui_ttf_primary, ui_ttf_primary_path()) &&
         (!ui_ttf_override_path[0] ||
          !ui_ttf_load_font(&ui_ttf_primary, ui_ttf_default_path()))) {
+        printf("[ui] TTF load failed path=%s\n", ui_ttf_primary_path());
         return;
     }
     if (ui_ttf_fallback_path[0]) {
@@ -1291,6 +1295,13 @@ void ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uin
 void ui_char(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, char character, uint32_t fg, uint32_t bg, int transparent)
 {
     ui_codepoint(surface, x, y, (uint8_t)character, 1, fg, bg, transparent);
+}
+
+void leonos_ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                         uint32_t codepoint, uint32_t cell_width,
+                         uint32_t fg, uint32_t bg)
+{
+    ui_codepoint(surface, x, y, codepoint, cell_width, fg, bg, 0);
 }
 
 static void ui_draw_layout_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w, const char *text, uint32_t fg, uint32_t bg, int transparent, int clipped)

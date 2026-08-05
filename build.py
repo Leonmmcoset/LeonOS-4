@@ -37,6 +37,11 @@ from buildsystem.core.state import utc_now
 ROOT = Path(__file__).resolve().parent
 PYTHON = sys.executable
 
+if os.name == "nt":
+    raise SystemExit(
+        "LeonOS 4 must be built from Linux or WSL; do not run build.py with Windows Python."
+    )
+
 SYSTEM_APPS = [
     "init", "desktop", "oobe", "login", "serviced", "installer", "shell", "fileman",
     "taskmgr", "settings", "terminal", "run", "osver", "netctl", "servicemgr",
@@ -66,6 +71,10 @@ WINDOW_BUTTON_ICONS = [
     "window-button-maximize.bmp",
     "window-button-restore.bmp",
     "window-button-close.bmp",
+]
+MINESWEEPER_ASSETS = [
+    "minesweeper-mine.bmp",
+    "minesweeper-flag.bmp",
 ]
 SYSTEM_FILES = [
     ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
@@ -318,6 +327,20 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     rustcfg = generated / "rustcfg.args"
     build_info = ROOT / "include/generated/build_info.h"
     loader_integrity = generated / "loader_integrity.h"
+    picolibc_source = ROOT / "third_party/picolibc"
+    picolibc_cross_file = ROOT / "userland/picolibc/leonos-x86_64.ini"
+    picolibc_build_dir = paths.out / "picolibc"
+    picolibc_prefix = picolibc_build_dir / "sysroot"
+    picolibc_archive = picolibc_prefix / "lib/libc.a"
+    picolibc_header_stamp = picolibc_prefix / "include/.leonos-picolibc.stamp"
+    busybox_source = ROOT / "third_party/busybox"
+    busybox_config = ROOT / "userland/busybox/leonos.config"
+    busybox_shim = ROOT / "userland/busybox/leonos_shim.c"
+    busybox_headers = collect("userland/busybox/include/**/*.h")
+    busybox_source_stamp = paths.out / "busybox/source-revision.txt"
+    busybox_elf = paths.out / "userland/busybox.elf"
+    busybox_stamp = paths.out / "userland/busybox.stamp"
+    developer_sdk = ROOT / "LeonOS4-Developer-SDK.zip"
     grub_efi_dir = paths.deps / "grub-efi-amd64-bin/usr/lib/grub/x86_64-efi"
     system_grub_efi_dir = Path("/usr/lib/grub/x86_64-efi")
     using_system_grub = False
@@ -343,6 +366,36 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
             action=sync_config,
             action_key="kconfig-sync-v2",
             always=True,
+        )
+    )
+
+    if not (picolibc_source / "meson.build").is_file():
+        raise GraphError("third_party/picolibc is missing; initialize the Picolibc source tree")
+    if not (busybox_source / "Makefile").is_file():
+        raise GraphError("third_party/busybox is missing; initialize the BusyBox source tree")
+    picolibc_inputs = collect(
+        "third_party/picolibc/**/*.c",
+        "third_party/picolibc/**/*.h",
+        "third_party/picolibc/**/*.S",
+        "third_party/picolibc/**/meson.build",
+        "third_party/picolibc/meson_options.txt",
+    )
+    graph.add(
+        Target(
+            name="picolibc",
+            outputs=(picolibc_archive, picolibc_header_stamp),
+            inputs=tuple([ROOT / "tools/build_picolibc.py", picolibc_cross_file,
+                          *picolibc_inputs]),
+            kind="compile",
+            command=(
+                PYTHON, "tools/build_picolibc.py",
+                "--source", "third_party/picolibc",
+                "--cross-file", "userland/picolibc/leonos-x86_64.ini",
+                "--build-dir", relative(picolibc_build_dir),
+                "--prefix", relative(picolibc_prefix),
+                "--archive", relative(picolibc_archive),
+                "--stamp", relative(picolibc_header_stamp),
+            ),
         )
     )
     graph.add(
@@ -381,7 +434,9 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     cflags_user_base = [
         cc, "-target", "x86_64-unknown-none", "-O2", "-std=c11", "-ffreestanding",
         "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
-        "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-Iuserland/libc/include",
+        "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-DLEONOS_USE_PICOLIBC",
+        "-D_POSIX_C_SOURCE=200809L",
+        f"-I{relative(picolibc_prefix / 'include')}", "-Iuserland/libc/include",
         "-Iinclude", f"-I{relative(paths.out / 'include')}", "-Ithird_party/mbedtls/include",
         '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
@@ -392,6 +447,16 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         "-Ithird_party/minimp3",
     ]
     cflags_installer = cflags_user_base + ["-include", relative(installer_autoconf)]
+    cflags_user_libc_base = [
+        cc, "-target", "x86_64-unknown-none", "-O2", "-std=c11", "-ffreestanding",
+        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
+        "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-DLEONOS_USE_PICOLIBC",
+        f"-I{relative(picolibc_prefix / 'include')}",
+        "-Iuserland/libc/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-Ithird_party/mbedtls/include", '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
+    ]
+    cflags_user_libc = cflags_user_libc_base + ["-include", relative(autoconf)]
+    cflags_installer_libc = cflags_user_libc_base + ["-include", relative(installer_autoconf)]
     asflags_user = [
         cc, "-target", "x86_64-unknown-none", "-O2", "-ffreestanding", "-mno-red-zone",
         "-mgeneral-regs-only", "-Iuserland/libc/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
@@ -507,23 +572,59 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     installer_libc_objects: list[Path] = []
     for source in sorted(libc_sources):
         is_asm = source.suffix == ".S"
-        libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user, (autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
-        installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer, (installer_autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+        libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, (autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+        installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, (installer_autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
     libc_a = paths.out / "userland/libc.a"
     installer_libc_a = paths.out / "userland-installer-policy/libc.a"
     graph.add(Target(name="archive:libc", outputs=(libc_a,), inputs=tuple(libc_objects), kind="link", command=(ar, "rcs", relative(libc_a), *map(relative, libc_objects))))
     graph.add(Target(name="archive:installer-libc", outputs=(installer_libc_a,), inputs=tuple(installer_libc_objects), kind="link", command=(ar, "rcs", relative(installer_libc_a), *map(relative, installer_libc_objects))))
 
+    def busybox_source_revision_action(context: ActionContext) -> None:
+        result = subprocess.run(
+            ("git", "-C", str(busybox_source), "rev-parse", "HEAD"),
+            check=True, text=True, capture_output=True,
+        )
+        ensure_parent(context, busybox_source_stamp, result.stdout.strip() + "\n")
+
+    graph.add(Target(
+        name="busybox-source-revision",
+        outputs=(busybox_source_stamp,),
+        inputs=(busybox_source / "Makefile", busybox_source / "Config.in"),
+        kind="generate",
+        action=busybox_source_revision_action,
+        action_key="busybox-source-revision-v1",
+        always=True,
+    ))
+    graph.add(Target(
+        name="busybox",
+        outputs=(busybox_elf, busybox_stamp),
+        inputs=tuple([
+            busybox_source_stamp, ROOT / "tools/build_busybox.py", busybox_config,
+            busybox_shim, *busybox_headers, ROOT / "userland/linker.ld", libc_a,
+            picolibc_archive,
+        ]),
+        depends_on=("busybox-source-revision", "picolibc", "archive:libc"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_busybox.py", "--source", "third_party/busybox",
+            "--config", "userland/busybox/leonos.config", "--picolibc-prefix",
+            relative(picolibc_prefix), "--leonos-libc-include", "userland/libc/include",
+            "--leonos-include", "include", "--linker-script", "userland/linker.ld",
+            "--leonos-lib", relative(libc_a), "--picolibc-lib", relative(picolibc_archive),
+            "--output", relative(busybox_elf), "--stamp", relative(busybox_stamp),
+        ),
+    ))
+
     app_elfs: dict[str, Path] = {}
-    user_targets: list[str] = ["archive:libc"]
+    user_targets: list[str] = ["picolibc", "archive:libc", "busybox"]
     for app in BUILD_USER_APPS:
         objects: list[Path] = []
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
             cflags_app = cflags_doom if app == "doom" else (cflags_mp3play if app == "mp3play" else cflags_user)
-            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, (autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, (autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland/{app}.elf"
-        graph.add(Target(name=f"app:{app}", outputs=(output,), inputs=tuple([*objects, libc_a]), implicit_inputs=(ROOT / "userland/linker.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000", "-T", "userland/linker.ld", "-o", relative(output), *map(relative, objects), relative(libc_a))))
+        graph.add(Target(name=f"app:{app}", outputs=(output,), inputs=tuple([*objects, libc_a, picolibc_archive]), implicit_inputs=(ROOT / "userland/linker.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000", "-T", "userland/linker.ld", "-o", relative(output), *map(relative, objects), "--start-group", relative(libc_a), relative(picolibc_archive), "--end-group")))
         app_elfs[app] = output
         user_targets.append(f"app:{app}")
 
@@ -533,14 +634,16 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         objects = []
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
-            objects.append(add_compile(graph, paths, f"compile:installer-app:{app}:{relative(source)}", source, f"user-installer-policy-{app}", asflags_user if is_asm else cflags_installer, (installer_autoconf,) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+            objects.append(add_compile(graph, paths, f"compile:installer-app:{app}:{relative(source)}", source, f"user-installer-policy-{app}", asflags_user if is_asm else cflags_installer, (installer_autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland-installer-policy/{app}.elf"
         name = f"installer-policy:{app}"
-        graph.add(Target(name=name, outputs=(output,), inputs=tuple([*objects, installer_libc_a]), implicit_inputs=(ROOT / "userland/linker.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000", "-T", "userland/linker.ld", "-o", relative(output), *map(relative, objects), relative(installer_libc_a))))
+        graph.add(Target(name=name, outputs=(output,), inputs=tuple([*objects, installer_libc_a, picolibc_archive]), implicit_inputs=(ROOT / "userland/linker.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000", "-T", "userland/linker.ld", "-o", relative(output), *map(relative, objects), "--start-group", relative(installer_libc_a), relative(picolibc_archive), "--end-group")))
         installer_policy_elfs[app] = output
         user_targets.append(name)
 
     app_icons = tuple(paths.out / f"generated/app-icons/{app}.bmp" for app in BUILD_USER_APPS)
+    minesweeper_assets = tuple(paths.out / f"generated/minesweeper-assets/{name}"
+                               for name in MINESWEEPER_ASSETS)
     ui_metro_font = paths.out / "generated/fonts/leonos-metro.ttf"
     ui_win95_font = paths.out / "generated/fonts/leonos-win95.ttf"
     browser_font = paths.out / "generated/fonts/times-new-roman.ttf"
@@ -557,10 +660,35 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
                               relative(browser_font_source), "--out",
                               relative(browser_font))))
     graph.add(Target(name="app-icons", outputs=app_icons, inputs=(ROOT / "tools/make_app_icons.py",), kind="generate", command=(PYTHON, "tools/make_app_icons.py", "--out-dir", relative(paths.out / "generated/app-icons"), "--apps", *BUILD_USER_APPS)))
+    graph.add(Target(name="minesweeper-assets", outputs=minesweeper_assets,
+                     inputs=(ROOT / "tools/make_minesweeper_assets.py",), kind="generate",
+                     command=(PYTHON, "tools/make_minesweeper_assets.py", "--out-dir",
+                              relative(paths.out / "generated/minesweeper-assets"))))
     button_icons = tuple(paths.out / f"generated/window-buttons/{name}" for name in WINDOW_BUTTON_ICONS)
     graph.add(Target(name="window-button-icons", outputs=button_icons, inputs=(ROOT / "tools/make_window_button_icons.py",), kind="generate", command=(PYTHON, "tools/make_window_button_icons.py", "--out-dir", relative(paths.out / "generated/window-buttons"))))
-    user_targets += ["app-icons", "window-button-icons", "ui-font", "browser-font"]
+    user_targets += ["app-icons", "window-button-icons", "minesweeper-assets", "ui-font", "browser-font"]
     graph.add(Target(name="userland", depends_on=tuple(user_targets), group=True, kind="aggregate"))
+
+    sdk_inputs = tuple([
+        ROOT / "tools/package_devtools.py", ROOT / "third_party/picolibc/COPYING.picolibc",
+        *collect("devtools/**/*"),
+    ])
+    graph.add(Target(
+        name="sdk",
+        outputs=(developer_sdk,),
+        inputs=sdk_inputs,
+        depends_on=("picolibc", "archive:libc"),
+        kind="generate",
+        command=(
+            PYTHON, "tools/package_devtools.py",
+            "--sdk-root", "devtools",
+            "--leonos-lib", relative(libc_a),
+            "--picolibc-lib", relative(picolibc_archive),
+            "--picolibc-include", relative(picolibc_prefix / "include"),
+            "--picolibc-source", "third_party/picolibc",
+            "--out", relative(developer_sdk),
+        ),
+    ))
 
     grub_font = paths.out / "generated/grub/leonos-unicode.pf2"
     graph.add(Target(
@@ -627,6 +755,11 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         target = add_copy(graph, f"esp:window-icon:{icon}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    for source, name in zip(minesweeper_assets, MINESWEEPER_ASSETS):
+        destination = paths.staging / "system/resources" / name
+        target = add_copy(graph, f"esp:minesweeper-asset:{name}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
     for driver, source in zip(DRIVER_MODULES, driver_outputs):
         destination = paths.staging / f"drivers/{driver}.drv"
         target = add_copy(graph, f"esp:driver:{driver}", source, destination)
@@ -641,6 +774,25 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         source = paths.out / f"generated/app-icons/{app}.bmp"
         destination = paths.staging / runtime_app_relative(app, "bmp")
         target = add_copy(graph, f"esp:icon:{app}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
+    for app in NORMAL_USER_APPS:
+        source = ROOT / "userland/apps" / app / f"{app}.app.ini"
+        if source.exists():
+            destination = paths.staging / runtime_app_relative(app, "app.ini")
+            target = add_copy(graph, f"esp:manifest:{app}", source, destination)
+            esp_names.append(target.name)
+            esp_outputs.append(destination)
+    busybox_destination = paths.staging / "programs/busybox/busybox.elf"
+    target = add_copy(graph, "esp:busybox", busybox_elf, busybox_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(busybox_destination)
+    for source in (
+        ROOT / "third_party/busybox/LICENSE",
+        ROOT / "userland/busybox/busybox.app.ini",
+    ):
+        destination = paths.staging / "programs/busybox" / source.name
+        target = add_copy(graph, f"esp:busybox:{source.name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
     test_mp3 = paths.staging / "test/test.mp3"
@@ -777,7 +929,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     installer_boot_image = paths.out / "install/installer-efiboot.img"
     graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_font, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
 
-    graph.add(Target(name="all", depends_on=("config-sync", "build-info", "loader", "kernel", "drivers", "middlelayer", "userland", "esp"), group=True, kind="aggregate"))
+    graph.add(Target(name="all", depends_on=("config-sync", "build-info", "loader", "kernel", "drivers", "middlelayer", "userland", "sdk", "esp"), group=True, kind="aggregate"))
     graph.add(Target(name="run", inputs=(vmdk,), depends_on=("image-vmdk",), kind="command", command=qemu_command(paths, values)))
     graph.add(Target(name="run-debug", inputs=(vmdk,), depends_on=("image-vmdk",), kind="command", command=qemu_command(paths, values, debug=True)))
     graph.add(Target(name="run-iso", inputs=(vmdk, iso), depends_on=("image-vmdk", "image-iso"), kind="command", command=qemu_command(paths, values, debug=True, iso=True)))
@@ -902,7 +1054,7 @@ def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
 
 
 def display_help() -> str:
-    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py run <task>\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py profile <task>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|qmp-terminal|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, esp, image-vmdk, image-iso, installer, run, run-debug, run-iso, menuconfig, clean\n"""
+    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py run <task>\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py profile <task>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|qmp-terminal|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, run, run-debug, run-iso, menuconfig, clean\n"""
 
 
 def complete_simple(store: TaskStore, task_id: str, command: str, text: str, success: bool = True) -> None:

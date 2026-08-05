@@ -70,6 +70,22 @@ make APP=examples/myapp APP_NAME=myapp
 
 可由桌面、文件管理器或 `execve()` 启动。
 
+### 虚拟终端应用
+
+不创建 GUI 窗口、而是需要标准输入输出渲染的应用，可在 ELF 同目录放置同名
+sidecar manifest。例如 `0:/programs/myapp/myapp.elf` 的标记文件是
+`0:/programs/myapp/myapp.app.ini`：
+
+```ini
+[app]
+terminal=1
+```
+
+通过桌面、文件管理器、运行框、快捷方式或 `leonos_launch_argv()` 启动时，系统会
+创建 Terminal 窗口并将该程序的标准输入、标准输出和标准错误绑定到同一个 PTY。
+直接调用 `execve()` 不会读取该标记。使用 `tools/build_api.py` 打包应用时，传入
+`--virtual-terminal` 会自动生成并安装这个 manifest。
+
 ## API 使用
 
 使用 SDK 携带的头文件，而不是宿主操作系统的 API：

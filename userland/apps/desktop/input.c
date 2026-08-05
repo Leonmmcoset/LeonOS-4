@@ -351,7 +351,11 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
 
 int spawn_program_path(const char *path)
 {
-    int pid = execve(path, 0, 0);
+    char *argv[2];
+    int pid;
+    argv[0] = (char *)path;
+    argv[1] = 0;
+    pid = leonos_launch_argv(argv);
     printf("[desktop.elf] spawn %s pid=%d\n", path, pid);
     return pid;
 }
@@ -837,6 +841,18 @@ int handle_taskbar_click(uint32_t x, uint32_t y)
     handle_start_click(x, y);
     if (hit_rect(x, y, 6, (int)tb_y + 5, 86, 24) || hit_start_menu_area(x, y)) {
         return 1;
+    }
+    if (desktop_service_network_icon &&
+        fb_w() >= desktop_tray_width() + 8U) {
+        uint32_t network_x = fb_w() -
+                              (desktop_service_rtc_clock ? TASKBAR_CLOCK_W : 0U) -
+                              TASKBAR_NET_W;
+        if (hit_rect(x, y, (int)network_x + 4, (int)tb_y + 5,
+                     TASKBAR_NET_W - 6, LEONOS_UI_BUTTON_H)) {
+            spawn_program_path(NETWORK_CONTROLLER_APP_PATH);
+            start_menu_set_open(0);
+            return 1;
+        }
     }
     uint32_t bx = 106;
     uint32_t button_w = taskbar_button_width(running_window_count());

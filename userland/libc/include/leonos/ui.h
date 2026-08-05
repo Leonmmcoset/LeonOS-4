@@ -270,6 +270,9 @@ int leonos_ui_keycode_to_char_shift(uint8_t keycode, uint8_t shifted, char *out)
 void leonos_ui_pixel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t color);
 void leonos_ui_rect(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     uint32_t w, uint32_t h, uint32_t color);
+void leonos_ui_codepoint(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
+                         uint32_t codepoint, uint32_t cell_width,
+                         uint32_t fg, uint32_t bg);
 void leonos_ui_text(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     const char *text, uint32_t fg, uint32_t bg);
 void leonos_ui_text_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,

@@ -990,7 +990,8 @@ uint32_t taskbar_button_width(uint32_t count)
 
 uint32_t desktop_tray_width(void)
 {
-    uint32_t w = 0;
+    /* The input method selector is always present, including the built-in EN provider. */
+    uint32_t w = TASKBAR_INPUTM_W;
     if (desktop_service_network_icon) {
         w += TASKBAR_NET_W;
     }

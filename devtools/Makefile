@@ -20,9 +20,12 @@ OBJECTS := $(patsubst $(APP)/%.c,$(BUILD_DIR)/%.o,$(filter %.c,$(SOURCES))) \
 
 CFLAGS := -O2 -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
           -mno-red-zone -mgeneral-regs-only -ffunction-sections -fdata-sections \
-          -Wall -Wextra -I"$(SDK_ROOT)/include"
+          -Wall -Wextra -DLEONOS_USE_PICOLIBC -D_POSIX_C_SOURCE=200809L \
+          -I"$(SDK_ROOT)/include"
 LDFLAGS := --gc-sections -z max-page-size=0x1000 \
            -T "$(SDK_ROOT)/linker.ld"
+LEONOS_LIB := "$(SDK_ROOT)/lib/leonos.a"
+PICOLIBC_LIB := "$(SDK_ROOT)/lib/libc.a"
 
 .PHONY: all clean
 
@@ -38,7 +41,7 @@ $(BUILD_DIR)/%.o: $(APP)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUTPUT): $(OBJECTS)
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) "$(SDK_ROOT)/lib/libc.a"
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) --start-group $(LEONOS_LIB) $(PICOLIBC_LIB) --end-group
 
 clean:
 	rm -rf $(BUILD_DIR)

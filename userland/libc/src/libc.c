@@ -17,9 +17,13 @@
 #include <leonos/text.h>
 #include <leonos/tls.h>
 #include <leonos/ui.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <sys/types.h>
+#include <termios.h>
 
+#ifndef LEONOS_USE_PICOLIBC
 int errno;
 
 struct leonos_file {
@@ -263,6 +267,7 @@ char *strrchr(const char *text, int value)
     }
     return target == 0 ? (char *)text : (char *)last;
 }
+#endif
 
 long read(int fd, void *buf, size_t len)
 {
@@ -331,7 +336,7 @@ long lseek(int fd, long offset, int whence)
     return syscall3(SYS_lseek, fd, offset, whence);
 }
 
-void exit(int code)
+void _exit(int code)
 {
     syscall1(SYS_exit, code);
     for (;;) {
@@ -468,6 +473,89 @@ void *mmap(void *addr, size_t len, int prot, int flags, int fd, long offset)
 int munmap(void *addr, size_t len)
 {
     return (int)syscall2(SYS_munmap, (long)addr, (long)len);
+}
+
+#define SBRK_PAGE_SIZE 4096U
+#define SBRK_MIN_RESERVE (64U * 1024U)
+
+static uint8_t *sbrk_break;
+static uint8_t *sbrk_mapped_end;
+
+static int sbrk_reserve(size_t minimum)
+{
+    size_t length = minimum < SBRK_MIN_RESERVE ? SBRK_MIN_RESERVE : minimum;
+    uint32_t flags = LEONOS_MAP_PRIVATE | LEONOS_MAP_ANONYMOUS;
+    void *base;
+
+    if (length > (size_t)-1 - (SBRK_PAGE_SIZE - 1U)) {
+        return 0;
+    }
+    length = (length + SBRK_PAGE_SIZE - 1U) & ~(size_t)(SBRK_PAGE_SIZE - 1U);
+    if (sbrk_mapped_end) {
+        flags |= LEONOS_MAP_FIXED;
+    }
+    base = mmap(sbrk_mapped_end, length, LEONOS_PROT_READ | LEONOS_PROT_WRITE,
+                flags, -1, 0);
+    if (base == LEONOS_MAP_FAILED ||
+        (sbrk_mapped_end && base != (void *)sbrk_mapped_end)) {
+        if (base != LEONOS_MAP_FAILED) {
+            (void)munmap(base, length);
+        }
+        return 0;
+    }
+    if ((uintptr_t)base > (uintptr_t)-1 - length) {
+        (void)munmap(base, length);
+        return 0;
+    }
+    if (!sbrk_break) {
+        sbrk_break = (uint8_t *)base;
+    }
+    sbrk_mapped_end = (uint8_t *)base + length;
+    return 1;
+}
+
+void *sbrk(ptrdiff_t increment)
+{
+    uint8_t *previous;
+    size_t amount;
+    uintptr_t target;
+
+    if (increment == 0) {
+        return sbrk_break;
+    }
+    if (increment < 0) {
+        amount = (size_t)(-(increment + 1)) + 1U;
+        if (!sbrk_break || amount > (size_t)(uintptr_t)sbrk_break) {
+            return (void *)-1;
+        }
+        previous = sbrk_break;
+        sbrk_break -= amount;
+        return previous;
+    }
+    amount = (size_t)increment;
+    if ((ptrdiff_t)amount != increment) {
+        return (void *)-1;
+    }
+    if (!sbrk_break && !sbrk_reserve(amount)) {
+        return (void *)-1;
+    }
+    previous = sbrk_break;
+    if ((uintptr_t)previous > (uintptr_t)-1 - amount) {
+        return (void *)-1;
+    }
+    target = (uintptr_t)previous + amount;
+    if (target > (uintptr_t)sbrk_mapped_end &&
+        !sbrk_reserve((size_t)(target - (uintptr_t)sbrk_mapped_end))) {
+        return (void *)-1;
+    }
+    sbrk_break = (uint8_t *)target;
+    return previous;
+}
+
+#ifndef LEONOS_USE_PICOLIBC
+void exit(int code)
+{
+    _exit(code);
 }
 
 static size_t malloc_align_up(size_t value)
@@ -1180,6 +1268,8 @@ int remove(const char *path)
 {
     return unlink(path);
 }
+
+#endif
 
 int system(const char *command)
 {
@@ -3706,4 +3796,167 @@ int leonos_pty_spawn_argv(const char *path, uint32_t pty_id,
 int leonos_pty_self(void)
 {
     return ioctl(3, LEONOS_PTY_IOCTL_SELF, 0);
+}
+
+int leonos_pty_input_available(void)
+{
+    return ioctl(3, LEONOS_PTY_IOCTL_INPUT_AVAILABLE, 0);
+}
+
+static int leonos_pty_error(int result);
+
+int leonos_pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios)
+{
+    struct leonos_pty_termios_io io;
+    int result;
+    if (!pty_id || !termios) {
+        errno = EINVAL;
+        return -1;
+    }
+    io.pty_id = pty_id;
+    io.action = 0;
+    result = ioctl(3, LEONOS_PTY_IOCTL_OWNER_GET_ATTR, &io);
+    if (result < 0) {
+        return leonos_pty_error(result);
+    }
+    *termios = io.termios;
+    return 0;
+}
+
+int leonos_pty_set_termios(uint32_t pty_id,
+                           const struct leonos_pty_termios *termios)
+{
+    struct leonos_pty_termios_io io;
+    if (!pty_id || !termios) {
+        errno = EINVAL;
+        return -1;
+    }
+    io.pty_id = pty_id;
+    io.action = 0;
+    io.termios = *termios;
+    return leonos_pty_error(ioctl(3, LEONOS_PTY_IOCTL_OWNER_SET_ATTR, &io));
+}
+
+int leonos_pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize)
+{
+    struct leonos_pty_winsize_io io;
+    int result;
+    if (!pty_id || !winsize) {
+        errno = EINVAL;
+        return -1;
+    }
+    io.pty_id = pty_id;
+    result = ioctl(3, LEONOS_PTY_IOCTL_OWNER_GET_WINSIZE, &io);
+    if (result < 0) {
+        return leonos_pty_error(result);
+    }
+    *winsize = io.winsize;
+    return 0;
+}
+
+int leonos_pty_set_winsize(uint32_t pty_id,
+                            const struct leonos_pty_winsize *winsize)
+{
+    struct leonos_pty_winsize_io io;
+    if (!pty_id || !winsize) {
+        errno = EINVAL;
+        return -1;
+    }
+    io.pty_id = pty_id;
+    io.winsize = *winsize;
+    return leonos_pty_error(ioctl(3, LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE, &io));
+}
+
+static int leonos_pty_error(int result)
+{
+    if (result < 0) {
+        errno = -result;
+        return -1;
+    }
+    return 0;
+}
+
+int tcgetattr(int fd, struct termios *termios)
+{
+    struct leonos_pty_termios native;
+    int result;
+    if (fd < 0 || fd > 2 || !termios) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = ioctl(fd, LEONOS_PTY_IOCTL_GET_ATTR, &native);
+    if (result < 0) {
+        return leonos_pty_error(result);
+    }
+    termios->c_iflag = native.c_iflag;
+    termios->c_oflag = native.c_oflag;
+    termios->c_cflag = native.c_cflag;
+    termios->c_lflag = native.c_lflag;
+    for (uint32_t index = 0; index < LEONOS_PTY_NCCS; ++index) {
+        termios->c_cc[index] = native.c_cc[index];
+    }
+    termios->c_ispeed = native.c_ispeed;
+    termios->c_ospeed = native.c_ospeed;
+    return 0;
+}
+
+int tcsetattr(int fd, int action, const struct termios *termios)
+{
+    struct leonos_pty_termios_request request;
+    int result;
+    if (fd < 0 || fd > 2 || !termios) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (action != TCSANOW && action != TCSADRAIN && action != TCSAFLUSH) {
+        errno = EINVAL;
+        return -1;
+    }
+    request.action = (uint32_t)action;
+    request.reserved = 0;
+    request.termios.c_iflag = termios->c_iflag;
+    request.termios.c_oflag = termios->c_oflag;
+    request.termios.c_cflag = termios->c_cflag;
+    request.termios.c_lflag = termios->c_lflag;
+    for (uint32_t index = 0; index < LEONOS_PTY_NCCS; ++index) {
+        request.termios.c_cc[index] = termios->c_cc[index];
+    }
+    request.termios.reserved = 0;
+    request.termios.c_ispeed = termios->c_ispeed;
+    request.termios.c_ospeed = termios->c_ospeed;
+    result = ioctl(fd, LEONOS_PTY_IOCTL_SET_ATTR, &request);
+    return leonos_pty_error(result);
+}
+
+int tcgetwinsize(int fd, struct winsize *winsize)
+{
+    int result;
+    if (fd < 0 || fd > 2 || !winsize) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = ioctl(fd, LEONOS_PTY_IOCTL_GET_WINSIZE, winsize);
+    return leonos_pty_error(result);
+}
+
+int tcsetwinsize(int fd, const struct winsize *winsize)
+{
+    int result;
+    if (fd < 0 || fd > 2 || !winsize) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = ioctl(fd, LEONOS_PTY_IOCTL_SET_WINSIZE, (void *)winsize);
+    return leonos_pty_error(result);
+}
+
+int ftruncate(int fd, off_t length)
+{
+    long result;
+    if (length < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = syscall2(77, fd, (long)length);
+    return leonos_pty_error((int)result);
 }
