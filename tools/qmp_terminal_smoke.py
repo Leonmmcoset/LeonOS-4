@@ -32,14 +32,17 @@ def send_keys(sock: socket.socket, keys: tuple[str, ...], delay: float = 0.08) -
 
 
 def text_keys(text: str) -> tuple[str, ...]:
+    special = {
+        " ": "spc",
+        ".": "dot",
+        "/": "slash",
+        "-": "minus",
+        "_": "shift-minus",
+        ":": "shift-semicolon",
+    }
     keys: list[str] = []
     for character in text:
-        if character == " ":
-            keys.append("spc")
-        elif character == ".":
-            keys.append("dot")
-        else:
-            keys.append(character)
+        keys.append(special.get(character, character))
     return tuple(keys)
 
 
@@ -47,6 +50,7 @@ def main() -> int:
     arguments = sys.argv[1:]
     skip_oobe = False
     exit_only = False
+    tcc_smoke = False
     login_password: str | None = None
     editor = "nano"
     if arguments and arguments[0] == "--skip-oobe":
@@ -54,6 +58,9 @@ def main() -> int:
         arguments = arguments[1:]
     if arguments and arguments[0] == "--exit-only":
         exit_only = True
+        arguments = arguments[1:]
+    if arguments and arguments[0] == "--tcc":
+        tcc_smoke = True
         arguments = arguments[1:]
     if len(arguments) >= 2 and arguments[0] == "--login-password":
         login_password = arguments[1]
@@ -99,6 +106,19 @@ def main() -> int:
     # Wait for Terminal to create its window and for BusyBox to enter the PTY
     # read loop before sending the editor command.
     time.sleep(10.0)
+
+    if tcc_smoke:
+        # Compile the image-staged example with the on-device compiler, then
+        # execute the resulting ELF through the resident BusyBox shell.
+        send_keys(sock, text_keys("cd 0:/programs/tcc") + ("ret",))
+        time.sleep(1.0)
+        send_keys(sock, text_keys("tcc examples/hello.c -o hello.elf") + ("ret",))
+        time.sleep(16.0)
+        send_keys(sock, text_keys("hello.elf") + ("ret",))
+        time.sleep(3.0)
+        hmp(sock, "screendump build/images/tcc-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
 
     # Both terminal editors are launched by BusyBox as external children
     # through the PTY.  They must write a file, restore the terminal and hand

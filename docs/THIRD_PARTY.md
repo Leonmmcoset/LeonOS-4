@@ -63,6 +63,22 @@ external spellers/formatters, rc files, syntax coloring, help pages, mouse
 input and multi-buffer support remain off. Interactive editing and persistence
 still require manual GUI-terminal validation on each supported VM platform.
 
+## TinyCC
+
+- Path: `third_party/tinycc`
+- Upstream: `https://repo.or.cz/tinycc.git`
+- Version: `0.9.28rc`
+- Pinned commit: `2be0218be4461f9e453cbdcb98f81f41a5ae8bed`
+- License: LGPL-2.1-or-later; the complete upstream `COPYING` is staged at
+  `0:/programs/tcc/COPYING` beside the executable and runtime files.
+
+LeonOS builds TinyCC as the static, on-device x86_64 C compiler at
+`0:/programs/tcc/tcc.elf`. It uses the installed Picolibc headers,
+`libleonos.a`, `libpicolibc.a`, LeonOS `crt0.o`, and TinyCC's `libtcc1.a` to
+produce normal static LeonOS ELF programs. Dynamic linking, shared libraries,
+PIE and in-memory `tcc -run` execution are deliberately unavailable until the
+runtime loader ABI exists.
+
 ## PL Editor
 
 - Path: `third_party/pl_editor`

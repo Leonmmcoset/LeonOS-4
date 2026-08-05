@@ -65,6 +65,10 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "menuconfig",
     "test-license-server",
     "test-los2w",
+    "test-qmp-terminal",
+    "test-qmp-pleditor",
+    "test-qmp-tcc",
+    "test-all",
 })
 WINDOW_BUTTON_ICONS = [
     "window-button-minimize.bmp",
@@ -345,6 +349,12 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     nano_elf = paths.out / "userland/nano.elf"
     nano_stamp = paths.out / "userland/nano.stamp"
     nano_work_dir = paths.out / "nano-work"
+    tcc_source = ROOT / "third_party/tinycc"
+    tcc_port = ROOT / "userland/tcc"
+    tcc_app_manifest = ROOT / "userland/apps/tcc/tcc.app.ini"
+    tcc_elf = paths.out / "userland/tcc.elf"
+    tcc_runtime_dir = paths.out / "tcc-runtime"
+    tcc_stamp = paths.out / "userland/tcc.stamp"
     pleditor_source = ROOT / "third_party/pl_editor"
     pleditor_port = ROOT / "userland/apps/pleditor"
     pleditor_elf = paths.out / "userland/pleditor.elf"
@@ -385,6 +395,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         raise GraphError("third_party/busybox is missing; initialize the BusyBox source tree")
     if not (nano_source / "src/nano.c").is_file():
         raise GraphError("third_party/nano is missing; initialize the GNU nano source tree")
+    if not (tcc_source / "tcc.c").is_file():
+        raise GraphError("third_party/tinycc is missing; initialize the TinyCC source tree")
     if not (pleditor_source / "src/pleditor.c").is_file():
         raise GraphError("third_party/pl_editor is missing; initialize the PL Editor source tree")
     picolibc_inputs = collect(
@@ -650,6 +662,29 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         ),
     ))
 
+    tcc_inputs = collect(
+        "third_party/tinycc/**/*.c", "third_party/tinycc/**/*.h",
+        "third_party/tinycc/**/*.S", "third_party/tinycc/**/*.def",
+        "third_party/tinycc/VERSION", "third_party/tinycc/COPYING",
+        "userland/tcc/**/*.c", "userland/tcc/**/*.h", "userland/tcc/**/*.md",
+        "tools/build_tcc.py",
+    )
+    graph.add(Target(
+        name="tcc",
+        outputs=(tcc_elf, tcc_stamp),
+        inputs=tuple([*tcc_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
+        depends_on=("picolibc", "archive:libc"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_tcc.py", "--source", "third_party/tinycc",
+            "--port", "userland/tcc", "--sdk-include", "devtools/include",
+            "--picolibc-prefix", relative(picolibc_prefix), "--leonos-lib", relative(libc_a),
+            "--picolibc-lib", relative(picolibc_archive), "--linker-script", "userland/linker.ld",
+            "--work-dir", relative(paths.out / "tcc-work"), "--runtime-dir", relative(tcc_runtime_dir),
+            "--output", relative(tcc_elf), "--stamp", relative(tcc_stamp),
+        ),
+    ))
+
     pleditor_inputs = collect(
         "third_party/pl_editor/src/**/*.c", "third_party/pl_editor/src/**/*.h",
         "third_party/pl_editor/LICENSE", "userland/apps/pleditor/**/*.c",
@@ -673,7 +708,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     ))
 
     app_elfs: dict[str, Path] = {}
-    user_targets: list[str] = ["picolibc", "archive:libc", "busybox", "nano", "app:pleditor"]
+    user_targets: list[str] = ["picolibc", "archive:libc", "busybox", "nano", "tcc", "app:pleditor"]
     for app in BUILD_USER_APPS:
         if app == "nano":
             app_elfs[app] = nano_elf
@@ -858,6 +893,28 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         target = add_copy(graph, f"esp:busybox:{source.name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    tcc_destination = paths.staging / "programs/tcc"
+
+    def sync_tcc_runtime(context: ActionContext) -> None:
+        if tcc_destination.exists():
+            shutil.rmtree(tcc_destination)
+        shutil.copytree(tcc_runtime_dir, tcc_destination)
+        shutil.copyfile(tcc_elf, tcc_destination / "tcc.elf")
+        shutil.copyfile(tcc_app_manifest, tcc_destination / "tcc.app.ini")
+
+    target = graph.add(Target(
+        name="esp:tcc",
+        outputs=(tcc_destination / "tcc.elf", tcc_destination / "lib/libtcc1.a",
+                 tcc_destination / "tcc.app.ini"),
+        inputs=(tcc_elf, tcc_stamp, tcc_app_manifest),
+        depends_on=("tcc",),
+        kind="generate",
+        action=sync_tcc_runtime,
+        action_key="sync-tcc-runtime-v1",
+    ))
+    esp_names.append(target.name)
+    esp_outputs.extend((tcc_destination / "tcc.elf", tcc_destination / "lib/libtcc1.a",
+                        tcc_destination / "tcc.app.ini"))
     nano_license_destination = paths.staging / "programs/nano/COPYING"
     target = add_copy(graph, "esp:nano:COPYING", ROOT / "third_party/nano/COPYING",
                       nano_license_destination)
@@ -1034,31 +1091,58 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     graph.add(Target(name="test-license-server", inputs=(ROOT / "tools/test_license_server.py", ROOT / "tools/license_server.py"), kind="command", command=(PYTHON, "tools/test_license_server.py")))
     graph.add(Target(name="test-los2w", inputs=tuple(collect("los2w/*.py")), kind="command", command=(PYTHON, "-c", "from los2w.selftest import run_self_tests; print('\\n'.join(run_self_tests()))")))
 
-    def qmp_test(context: ActionContext, editor: str = "nano") -> None:
+    def qmp_test(context: ActionContext, editor: str = "nano", tcc_smoke: bool = False) -> None:
         socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}.sock"
+        test_name = "tcc" if tcc_smoke else editor
+        serial_log = paths.out / f"qmp-{test_name}-serial.log"
         socket.unlink(missing_ok=True)
+        serial_log.parent.mkdir(parents=True, exist_ok=True)
         command = list(qemu_command(paths, values, debug=True))
         command += ["-qmp", f"unix:{socket},server=on,wait=off"]
         context.runner.logger.command(context.worker_id, command)
-        process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        try:
-            context.run((PYTHON, "tools/qmp_terminal_smoke.py", "--editor", editor,
-                         str(socket)), announce=True)
-            process.wait(timeout=15)
-            if process.returncode not in (0, None):
-                raise BuildFailure(f"QEMU QMP test exited with {process.returncode}")
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-            socket.unlink(missing_ok=True)
+        with serial_log.open("wb") as serial_output:
+            process = subprocess.Popen(command, cwd=ROOT, stdout=serial_output,
+                                       stderr=subprocess.STDOUT)
+            try:
+                smoke_command = [PYTHON, "tools/qmp_terminal_smoke.py"]
+                if tcc_smoke:
+                    smoke_command.append("--tcc")
+                else:
+                    smoke_command += ["--editor", editor]
+                smoke_command.append(str(socket))
+                context.run(tuple(smoke_command), announce=True)
+                process.wait(timeout=15)
+                if process.returncode not in (0, None):
+                    raise BuildFailure(f"QEMU QMP test exited with {process.returncode}")
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                socket.unlink(missing_ok=True)
+        serial_text = serial_log.read_text(encoding="utf-8", errors="replace")
+        if tcc_smoke:
+            expected_spawns = (
+                "spawn path=0:/programs/tcc/tcc.elf",
+                "spawn path=0:/programs/tcc/hello.elf",
+            )
+            expected_exits = ("name=tcc.elf", "name=hello.elf")
+        else:
+            expected_spawns = (f"spawn path=0:/programs/{editor}/{editor}.elf",)
+            expected_exits = (f"name={editor}.elf",)
+        for expected_spawn in expected_spawns:
+            if expected_spawn not in serial_text:
+                raise BuildFailure(f"QMP test did not start {test_name}: missing {expected_spawn}")
+        for expected_exit in expected_exits:
+            if expected_exit not in serial_text:
+                raise BuildFailure(f"QMP test did not observe {test_name} exit: missing {expected_exit}")
 
     graph.add(Target(name="test-qmp-terminal", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v3"))
     graph.add(Target(name="test-qmp-pleditor", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "pleditor"), action_key="qmp-pleditor-v1"))
-    graph.add(Target(name="test-all", depends_on=("test-license-server", "test-los2w", "test-qmp-terminal"), group=True, kind="aggregate"))
+    graph.add(Target(name="test-qmp-tcc", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, tcc_smoke=True), action_key="qmp-tcc-v1"))
+    graph.add(Target(name="test-all", depends_on=("test-license-server", "test-los2w", "test-qmp-terminal", "test-qmp-tcc"), group=True, kind="aggregate"))
     return graph
 
 
@@ -1113,7 +1197,7 @@ def task_tools(task: str) -> tuple[str, ...]:
         return (*vmdk, "grub-mkrescue", "xorriso", "qemu-system-x86_64")
     if task == "menuconfig":
         return ("kconfig-mconf",)
-    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-all"}:
+    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-all"}:
         return (*vmdk, "qemu-system-x86_64")
     return ()
 
@@ -1129,7 +1213,7 @@ def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
 
 
 def display_help() -> str:
-    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py run <task>\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py profile <task>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|qmp-terminal|qmp-pleditor|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, run, run-debug, run-iso, menuconfig, clean\n"""
+    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py run <task>\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py profile <task>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|qmp-terminal|qmp-pleditor|qmp-tcc|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, run, run-debug, run-iso, menuconfig, clean\n"""
 
 
 def complete_simple(store: TaskStore, task_id: str, command: str, text: str, success: bool = True) -> None:
@@ -1384,7 +1468,7 @@ def parser() -> argparse.ArgumentParser:
     generate = commands.add_parser("gen")
     generate.add_argument("file")
     test = commands.add_parser("test")
-    test.add_argument("item", choices=("license-server", "los2w", "qmp-terminal", "qmp-pleditor", "all"))
+    test.add_argument("item", choices=("license-server", "los2w", "qmp-terminal", "qmp-pleditor", "qmp-tcc", "all"))
     client = commands.add_parser("client")
     client.add_argument("args", nargs=argparse.REMAINDER)
     status = commands.add_parser("status")

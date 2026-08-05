@@ -12,6 +12,7 @@ ELF 应用程序。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
 - `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。
 - `Makefile`: 独立构建入口，不会引用 LeonOS 4 源码目录。
+- `README-tcc.md`: 镜像内置设备端 TinyCC 的静态编译工作流与限制。
 
 ## 前置条件
 

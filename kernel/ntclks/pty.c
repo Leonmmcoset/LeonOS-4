@@ -11,6 +11,9 @@ struct pty_session {
     uint8_t input[PTY_INPUT_CAP];
     uint32_t input_head;
     uint32_t input_tail;
+    /* ICANON input is kept separate until a line delimiter arrives. */
+    uint8_t canonical_input[PTY_INPUT_CAP];
+    uint32_t canonical_length;
     uint8_t output[PTY_OUTPUT_CAP];
     uint32_t output_head;
     uint32_t output_tail;
@@ -58,6 +61,24 @@ static uint32_t ring_pop(uint8_t *ring, uint32_t cap, uint32_t *head, uint32_t *
     return read;
 }
 
+static void pty_commit_canonical_input(struct pty_session *session)
+{
+    if (!session || !session->canonical_length) {
+        return;
+    }
+    (void)ring_push(session->input, PTY_INPUT_CAP,
+                    &session->input_head, &session->input_tail,
+                    (const char *)session->canonical_input,
+                    session->canonical_length);
+    session->canonical_length = 0;
+}
+
+static int pty_canonical_mode(const struct pty_session *session)
+{
+    return session &&
+           (session->termios.c_lflag & LEONOS_PTY_LFLAG_ICANON) != 0;
+}
+
 void pty_init(void)
 {
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
@@ -80,18 +101,22 @@ int32_t pty_create(uint32_t owner_pid)
             sessions[i].termios.c_iflag = LEONOS_PTY_IFLAG_ICRNL;
             sessions[i].termios.c_oflag = 0x0003U; /* OPOST|ONLCR */
             sessions[i].termios.c_cflag = 0x0228U; /* CLOCAL|CREAD|CS8 */
-            sessions[i].termios.c_lflag = 0x0079U; /* ECHO|ECHONL|ICANON|IEXTEN|ISIG */
-            sessions[i].termios.c_cc[0] = 4;       /* VEOF: Ctrl-D */
-            sessions[i].termios.c_cc[1] = 0;       /* VEOL */
-            sessions[i].termios.c_cc[2] = 127;     /* VERASE */
-            sessions[i].termios.c_cc[3] = 3;       /* VINTR */
-            sessions[i].termios.c_cc[4] = 21;      /* VKILL */
-            sessions[i].termios.c_cc[5] = 1;       /* VMIN */
-            sessions[i].termios.c_cc[6] = 28;      /* VQUIT */
-            sessions[i].termios.c_cc[7] = 17;      /* VSTART */
-            sessions[i].termios.c_cc[8] = 19;      /* VSTOP */
-            sessions[i].termios.c_cc[9] = 26;      /* VSUSP */
-            sessions[i].termios.c_cc[10] = 0;      /* VTIME */
+            sessions[i].termios.c_lflag = LEONOS_PTY_LFLAG_ECHO |
+                                          LEONOS_PTY_LFLAG_ECHONL |
+                                          LEONOS_PTY_LFLAG_ICANON |
+                                          LEONOS_PTY_LFLAG_IEXTEN |
+                                          LEONOS_PTY_LFLAG_ISIG;
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VEOF] = 4;     /* Ctrl-D */
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VEOL] = 0;
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VERASE] = 127; /* DEL */
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VINTR] = 3;    /* Ctrl-C */
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VKILL] = 21;   /* Ctrl-U */
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VMIN] = 1;
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VQUIT] = 28;
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VSTART] = 17;
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VSTOP] = 19;
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VSUSP] = 26;
+            sessions[i].termios.c_cc[LEONOS_PTY_CC_VTIME] = 0;
             sessions[i].termios.c_ispeed = 115200U;
             sessions[i].termios.c_ospeed = 115200U;
             sessions[i].winsize.ws_row = 24;
@@ -143,9 +168,33 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
             (session->termios.c_iflag & LEONOS_PTY_IFLAG_ICRNL)) {
             input = '\n';
         }
-        written += ring_push(session->input, PTY_INPUT_CAP,
-                             &session->input_head, &session->input_tail,
-                             &input, 1);
+        if (!pty_canonical_mode(session)) {
+            written += ring_push(session->input, PTY_INPUT_CAP,
+                                 &session->input_head, &session->input_tail,
+                                 &input, 1);
+            continue;
+        }
+
+        if (input == (char)session->termios.c_cc[LEONOS_PTY_CC_VERASE]) {
+            if (session->canonical_length) {
+                --session->canonical_length;
+            }
+        } else if (input == (char)session->termios.c_cc[LEONOS_PTY_CC_VKILL]) {
+            session->canonical_length = 0;
+        } else if (input == (char)session->termios.c_cc[LEONOS_PTY_CC_VEOF]) {
+            /* VEOF is a delimiter, not a byte delivered to the reader. */
+            pty_commit_canonical_input(session);
+        } else {
+            if (session->canonical_length + 1U < PTY_INPUT_CAP) {
+                session->canonical_input[session->canonical_length++] = (uint8_t)input;
+            }
+            if (input == '\n' ||
+                (session->termios.c_cc[LEONOS_PTY_CC_VEOL] != 0 &&
+                 input == (char)session->termios.c_cc[LEONOS_PTY_CC_VEOL])) {
+                pty_commit_canonical_input(session);
+            }
+        }
+        ++written;
     }
     return (int64_t)written;
 }
@@ -205,6 +254,12 @@ int pty_set_termios(uint32_t pty_id, const struct leonos_pty_termios *termios)
     struct pty_session *session = find_session(pty_id);
     if (!session || !termios) {
         return -22;
+    }
+    /* A program switching to raw mode must be able to read a line that was
+     * already typed in cooked mode instead of leaving it stranded forever. */
+    if (pty_canonical_mode(session) &&
+        (termios->c_lflag & LEONOS_PTY_LFLAG_ICANON) == 0) {
+        pty_commit_canonical_input(session);
     }
     session->termios = *termios;
     return 0;

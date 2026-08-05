@@ -90,6 +90,9 @@ static uint8_t utf8_bytes[4];
 static uint8_t utf8_length;
 static uint8_t utf8_expected;
 static uint8_t alternate_screen_active;
+/* The PTY host supplies canonical-mode echo, so keep enough state to erase
+ * only text entered after the current prompt rather than erasing the prompt. */
+static uint32_t local_echoed_input_count;
 
 static uint32_t terminal_visible_rows(void);
 static void terminal_flush_utf8(void);
@@ -285,6 +288,7 @@ static void terminal_clear(void)
     active_line = 0;
     cursor_column = 0;
     saved_cursor_valid = 0;
+    local_echoed_input_count = 0;
     for (row = 0; row < TERMINAL_HISTORY_ROWS; ++row) {
         terminal_reset_line(&history[row]);
     }
@@ -886,26 +890,6 @@ static int terminal_pump_output(void)
     return changed;
 }
 
-static int terminal_pty_echo_enabled(void)
-{
-    struct leonos_pty_termios termios;
-    if (leonos_pty_get_termios(pty_id, &termios) < 0) {
-        return 1;
-    }
-    return (termios.c_lflag & ECHO) != 0;
-}
-
-static char terminal_pty_echo_character(char character)
-{
-    struct leonos_pty_termios termios;
-    if (character == '\r' &&
-        leonos_pty_get_termios(pty_id, &termios) == 0 &&
-        (termios.c_iflag & LEONOS_PTY_IFLAG_ICRNL)) {
-        return '\n';
-    }
-    return character;
-}
-
 static int terminal_write_input(const char *buffer, uint32_t length)
 {
     return leonos_pty_write_input(pty_id, buffer, length) == (int)length;
@@ -946,6 +930,8 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     char character;
     char sequence[8];
     uint32_t sequence_length = 0;
+    struct leonos_pty_termios termios;
+    int have_termios;
     int local_echo;
     if (keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT) {
         *shift_down = pressed ? 1 : 0;
@@ -962,6 +948,7 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     if (!pressed) {
         return 0;
     }
+    have_termios = leonos_pty_get_termios(pty_id, &termios) == 0;
     if (keycode == LEONOS_KEY_ESCAPE) {
         sequence[0] = '\033';
         sequence_length = 1;
@@ -990,7 +977,11 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
          * for shell input, while raw-mode programs such as nano receive ^M. */
         character = '\r';
     } else if (keycode == LEONOS_KEY_BACKSPACE) {
-        character = '\b';
+        /* Send the configured erase byte.  The default is DEL (0x7f), which
+         * lets the PTY remove it in ICANON mode and is also understood by
+         * nano, BusyBox vi and other raw-mode editors. */
+        character = have_termios && termios.c_cc[LEONOS_PTY_CC_VERASE] ?
+                    (char)termios.c_cc[LEONOS_PTY_CC_VERASE] : '\177';
     } else if (keycode == LEONOS_KEY_TAB) {
         character = '\t';
     } else if (!leonos_ui_keycode_to_char_shift(keycode, *shift_down, &character)) {
@@ -1024,9 +1015,39 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     if (!terminal_write_input(&character, 1)) {
         return 0;
     }
-    local_echo = terminal_pty_echo_enabled();
+    local_echo = !have_termios ||
+                 (termios.c_lflag & LEONOS_PTY_LFLAG_ECHO) != 0;
     if (local_echo) {
-        terminal_put_char(terminal_pty_echo_character(character));
+        if (keycode == LEONOS_KEY_BACKSPACE) {
+            if (local_echoed_input_count) {
+                terminal_put_char('\b');
+                terminal_put_char(' ');
+                terminal_put_char('\b');
+                --local_echoed_input_count;
+            }
+        } else if (have_termios &&
+                   (termios.c_lflag & LEONOS_PTY_LFLAG_ICANON) != 0 &&
+                   character == (char)termios.c_cc[LEONOS_PTY_CC_VKILL]) {
+            while (local_echoed_input_count) {
+                terminal_put_char('\b');
+                terminal_put_char(' ');
+                terminal_put_char('\b');
+                --local_echoed_input_count;
+            }
+        } else if (!(have_termios &&
+                     (termios.c_lflag & LEONOS_PTY_LFLAG_ICANON) != 0 &&
+                     character == (char)termios.c_cc[LEONOS_PTY_CC_VEOF])) {
+            if (character == '\r' && have_termios &&
+                (termios.c_iflag & LEONOS_PTY_IFLAG_ICRNL)) {
+                terminal_put_char('\n');
+                local_echoed_input_count = 0;
+            } else {
+                terminal_put_char(character);
+                if ((uint8_t)character >= 32U || character == '\t') {
+                    ++local_echoed_input_count;
+                }
+            }
+        }
     }
     return 1;
 }
