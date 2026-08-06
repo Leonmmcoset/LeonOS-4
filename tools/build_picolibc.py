@@ -47,6 +47,22 @@ def picolibc_revision(source: Path) -> str:
     return result.stdout.strip()
 
 
+def reject_os_fallback_members(archive: Path) -> None:
+    """Ensure LeonOS never ships Picolibc's linker-script heap fallback."""
+    result = subprocess.run(
+        ["llvm-ar", "t", str(archive)], check=True, text=True, capture_output=True
+    )
+    fallback_members = [
+        member for member in result.stdout.splitlines()
+        if member.startswith("libos_fallback_")
+    ]
+    if fallback_members:
+        raise SystemExit(
+            "Picolibc os-fallback objects leaked into the LeonOS archive: "
+            + ", ".join(fallback_members)
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
@@ -72,7 +88,10 @@ def main() -> None:
         "-Dmultilib=false",
         "-Dtests=false",
         "-Dsemihost=false",
-        "-Dos-fallback=false",
+        # In Picolibc, true splits fallback syscalls into libos-fallback.a;
+        # false merges them into libc.a. Keep them separate so LeonOS's
+        # syscall implementations are always used by regular applications.
+        "-Dos-fallback=true",
         "-Dpicocrt=false",
         "-Dpicocrt-lib=false",
         "-Dthread-local-storage=false",
@@ -88,7 +107,9 @@ def main() -> None:
         "-Dspecsdir=none",
     ]
     config = {
-        "schema": 1,
+        # Schema 3 forces a clean Meson reconfiguration for old build trees
+        # that merged os-fallback/sbrk objects into libc.a.
+        "schema": 3,
         "cross_file_sha256": hashlib.sha256(cross_file.read_bytes()).hexdigest(),
         "options": options,
     }
@@ -117,6 +138,7 @@ def main() -> None:
 
     if not archive.is_file():
         raise SystemExit(f"Picolibc install did not produce {archive}")
+    reject_os_fallback_members(archive)
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(
         json.dumps(

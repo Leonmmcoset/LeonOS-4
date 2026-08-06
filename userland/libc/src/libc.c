@@ -273,11 +273,44 @@ long read(int fd, void *buf, size_t len)
 {
     struct leonos_stat stat_info;
     size_t done = 0;
+    int pty_id = 0;
+    int canonical_pty_stdin = 0;
+
+    /*
+     * PTY input is exposed by the kernel as an empty read until a complete
+     * canonical line is ready.  POSIX stdio interprets that empty read as
+     * EOF, which made programs using fgets() (Lua's REPL, in particular)
+     * print one prompt and return immediately to the shell.  Turn only the
+     * canonical stdin case into the expected blocking read at the userland
+     * boundary.  Raw-mode programs retain the non-blocking PTY behaviour
+     * needed by terminal editors and their poll loops.
+     */
+    if (fd == 0 && len != 0) {
+        struct termios termios;
+        pty_id = leonos_pty_self();
+        /*
+         * This process is the PTY child, not its terminal-owner process.
+         * Use the standard fd-oriented request here; the owner-only helper
+         * rejects child processes and would silently disable this wait loop.
+         */
+        if (pty_id > 0 && tcgetattr(fd, &termios) == 0 &&
+            (termios.c_lflag & LEONOS_PTY_LFLAG_ICANON) != 0) {
+            canonical_pty_stdin = 1;
+        }
+    }
 
     /* The kernel already bounds each file read to this size.  Avoid an
      * additional fstat/path lookup for the small reads used during startup. */
     if (len <= LEONOS_FS_READ_SLICE_BYTES) {
-        return syscall3(SYS_read, fd, (long)buf, (long)len);
+        long result;
+        do {
+            result = syscall3(SYS_read, fd, (long)buf, (long)len);
+            if (result != 0 || !canonical_pty_stdin) {
+                return result;
+            }
+            sleep_ms(4);
+        } while (leonos_pty_self() == pty_id);
+        return 0;
     }
     if (fstat(fd, &stat_info) < 0 || stat_info.type != LEONOS_FS_TYPE_FILE) {
         return syscall3(SYS_read, fd, (long)buf, (long)len);
@@ -341,6 +374,18 @@ void _exit(int code)
     syscall1(SYS_exit, code);
     for (;;) {
     }
+}
+
+int raise(int signal)
+{
+    /*
+     * LeonOS does not expose POSIX process-directed signals. Keep Picolibc's
+     * abort path well-defined: abort() will fall through to _Exit() after
+     * this reports the unsupported signal delivery attempt.
+     */
+    (void)signal;
+    errno = ENOSYS;
+    return -1;
 }
 
 int chdir(const char *path)

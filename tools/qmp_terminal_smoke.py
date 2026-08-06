@@ -97,15 +97,23 @@ def main() -> int:
         send_keys(sock, ("tab", "n", "a", "n", "o", "t", "e", "s", "t", "ret"))
         # The desktop relocks its input routing after the fullscreen OOBE
         # window is destroyed, so wait until the desktop owns keyboard focus.
-        time.sleep(6.0)
+        # OOBE exits before the desktop has necessarily removed its fullscreen
+        # window and restored Start-menu focus.  Wait for that focus handoff
+        # before opening Terminal; otherwise the search keystrokes can be
+        # delivered to the dying OOBE window on a cold QEMU boot.
+        time.sleep(12.0)
     elif login_password is not None:
         send_keys(sock, tuple(login_password) + ("ret",))
         time.sleep(2.0)
     hmp(sock, "sendkey meta_l", 0.5)
+    # Opening Start is asynchronous.  Give the menu time to claim keyboard
+    # focus before the search text starts arriving.
+    time.sleep(1.5)
     send_keys(sock, ("t", "e", "r", "m", "i", "n", "a", "l", "ret"))
     # Wait for Terminal to create its window and for BusyBox to enter the PTY
-    # read loop before sending the editor command.
-    time.sleep(10.0)
+    # read loop before sending the editor command.  A cold guest may still be
+    # loading the font and starting BusyBox after the window first appears.
+    time.sleep(18.0)
 
     if tcc_smoke:
         # Compile the image-staged example with the on-device compiler, then
@@ -113,8 +121,15 @@ def main() -> int:
         send_keys(sock, text_keys("cd 0:/programs/tcc") + ("ret",))
         time.sleep(1.0)
         send_keys(sock, text_keys("tcc examples/hello.c -o hello.elf") + ("ret",))
-        time.sleep(16.0)
-        send_keys(sock, text_keys("hello.elf") + ("ret",))
+        # The first full compile parses the staged Picolibc headers from the
+        # FAT image.  On a cold QEMU guest that can exceed the generic editor
+        # smoke-test delay, so do not inject the executable command while the
+        # compiler still owns the PTY.
+        time.sleep(60.0)
+        # Hush intentionally does not search the current directory unless it
+        # is in PATH.  Use the absolute output path so this verifies the ELF
+        # produced by TCC rather than depending on a shell PATH policy.
+        send_keys(sock, text_keys("0:/programs/tcc/hello.elf") + ("ret",))
         time.sleep(3.0)
         hmp(sock, "screendump build/images/tcc-qmp-smoke.ppm", 0.4)
         send(sock, {"execute": "quit"}, 0.2)

@@ -8,6 +8,8 @@ ELF 应用程序。
 
 - `include/`: LeonOS 4 用户态 C 标准库兼容头文件和公开系统 API。
 - `lib/libc.a`: 与本 SDK 头文件匹配的 freestanding 用户态 C 库。
+- `lib/libz.a` 与 `lib/libpng.a`: zlib 1.3.2 和 libpng 1.6.58 静态库；对应
+  的公开头文件与许可证也包含在 SDK 中。
 - `linker.ld`: LeonOS 4 用户态 ELF 的链接布局，入口为 `_start`。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
 - `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。
@@ -133,6 +135,27 @@ leonos_mouse_set_style(window_id, LEONOS_GUI_CURSOR_HAND);
 程序必须是 freestanding：不要依赖宿主系统的动态链接器、POSIX 运行时或
 宿主系统的库。请只链接本 SDK 的 `lib/libc.a`，并保留 Makefile 的编译、
 链接参数与 `linker.ld`。
+
+### PNG 图像
+
+SDK 带有上游的 `<zlib.h>`、`<png.h>` 和完整静态库。默认 Makefile 已把
+`libpng.a` 与 `libz.a` 放在链接组中，因此应用可以直接调用 libpng，或使用
+LeonOS 的受限文件解码接口：
+
+```c
+#include <leonos/png.h>
+
+uint32_t *pixels;
+uint32_t width;
+uint32_t height;
+if (leonos_png_decode_file("0:/programs/demo/image.png", &pixels, &width, &height) == 0) {
+    /* pixels are 0x00RRGGBB and alpha has been composited on white. */
+    leonos_png_free(pixels);
+}
+```
+
+`leonos_png_decode_file()` 最多接受 16 MiB 的文件和 1,024 x 1,024 像素，
+以避免应用因损坏图像耗尽内存。直接使用 libpng 时仍应自行设置合理的大小限制。
 
 ### 输入法提供者
 

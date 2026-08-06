@@ -208,6 +208,8 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
 \t\t\tspawn_path = xstrdup("0:/programs/pleditor/pleditor.elf");
 \t\telse if (strcmp(argv_expanded[0], "tcc") == 0)
 \t\t\tspawn_path = xstrdup("0:/programs/tcc/tcc.elf");
+\t\telse if (strcmp(argv_expanded[0], "lua") == 0)
+\t\t\tspawn_path = xstrdup("0:/programs/lua/lua.elf");
 \t\telse if (strchr(argv_expanded[0], '/'))
 \t\t\tspawn_path = xstrdup(argv_expanded[0]);
 \t\telse

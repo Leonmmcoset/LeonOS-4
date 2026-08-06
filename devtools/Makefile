@@ -26,6 +26,8 @@ LDFLAGS := --gc-sections -z max-page-size=0x1000 \
            -T "$(SDK_ROOT)/linker.ld"
 LEONOS_LIB := "$(SDK_ROOT)/lib/leonos.a"
 PICOLIBC_LIB := "$(SDK_ROOT)/lib/libc.a"
+ZLIB_LIB := "$(SDK_ROOT)/lib/libz.a"
+LIBPNG_LIB := "$(SDK_ROOT)/lib/libpng.a"
 
 .PHONY: all clean
 
@@ -41,7 +43,7 @@ $(BUILD_DIR)/%.o: $(APP)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUTPUT): $(OBJECTS)
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) --start-group $(LEONOS_LIB) $(PICOLIBC_LIB) --end-group
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) --start-group $(LEONOS_LIB) $(LIBPNG_LIB) $(ZLIB_LIB) $(PICOLIBC_LIB) --end-group
 
 clean:
 	rm -rf $(BUILD_DIR)

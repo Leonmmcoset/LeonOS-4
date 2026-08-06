@@ -57,14 +57,24 @@ def main() -> None:
     parser.add_argument("--picolibc-lib", type=Path, required=True)
     parser.add_argument("--picolibc-include", type=Path, required=True)
     parser.add_argument("--picolibc-source", type=Path, required=True)
+    parser.add_argument("--zlib-lib", type=Path, required=True)
+    parser.add_argument("--zlib-source", type=Path, required=True)
+    parser.add_argument("--libpng-lib", type=Path, required=True)
+    parser.add_argument("--libpng-source", type=Path, required=True)
+    parser.add_argument("--libpng-config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
     sdk_root = args.sdk_root.resolve()
     if not (sdk_root / "Makefile").is_file():
         raise SystemExit(f"SDK source tree not found: {sdk_root}")
+    zlib_headers = (args.zlib_source / "zlib.h", args.zlib_source / "zconf.h")
+    libpng_headers = (args.libpng_source / "png.h", args.libpng_source / "pngconf.h",
+                      args.libpng_config)
     for required in (args.leonos_lib, args.picolibc_lib, args.picolibc_include,
-                     args.picolibc_source / "COPYING.picolibc"):
+                     args.picolibc_source / "COPYING.picolibc", args.zlib_lib,
+                     args.zlib_source / "LICENSE", args.libpng_lib,
+                     args.libpng_source / "LICENSE", *zlib_headers, *libpng_headers):
         if not required.exists():
             raise SystemExit(f"required SDK input is missing: {required}")
 
@@ -96,12 +106,34 @@ def main() -> None:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.picolibc_include).as_posix()}", source)
             add_file(archive, f"{SDK_PREFIX}/lib/leonos.a", args.leonos_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libc.a", args.picolibc_lib)
+            add_file(archive, f"{SDK_PREFIX}/lib/libz.a", args.zlib_lib)
+            add_file(archive, f"{SDK_PREFIX}/lib/libpng.a", args.libpng_lib)
             add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/PICOLIBC-COPYING", args.picolibc_source / "COPYING.picolibc")
+            for source in zlib_headers:
+                add_file(archive, f"{SDK_PREFIX}/include/{source.name}", source)
+            for source in libpng_headers:
+                add_file(archive, f"{SDK_PREFIX}/include/{source.name}", source)
+            add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/ZLIB-LICENSE", args.zlib_source / "LICENSE")
+            add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBPNG-LICENSE", args.libpng_source / "LICENSE")
             add_text(
                 archive,
                 f"{SDK_PREFIX}/THIRD_PARTY/PICOLIBC-VERSION.txt",
                 f"Picolibc version: {version}\nPicolibc revision: {revision}\n"
                 "Upstream: https://github.com/picolibc/picolibc\n",
+            )
+            add_text(
+                archive,
+                f"{SDK_PREFIX}/THIRD_PARTY/ZLIB-VERSION.txt",
+                "zlib version: 1.3.2\n"
+                "Upstream: https://github.com/madler/zlib\n"
+                "License: zlib License\n",
+            )
+            add_text(
+                archive,
+                f"{SDK_PREFIX}/THIRD_PARTY/LIBPNG-VERSION.txt",
+                "libpng version: 1.6.58\n"
+                "Upstream: https://github.com/pnggroup/libpng\n"
+                "License: libpng License\n",
             )
         os.replace(temporary_path, output)
     finally:

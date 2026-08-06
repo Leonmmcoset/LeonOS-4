@@ -171,9 +171,10 @@ class ProgressRenderer:
 
 
 class TaskLogger:
-    def __init__(self, log_path: Path, metrics: BuildMetrics) -> None:
+    def __init__(self, log_path: Path, metrics: BuildMetrics, *, verbose: bool = False) -> None:
         self.log_path = log_path
         self.metrics = metrics
+        self.verbose = verbose
         self.progress = ProgressRenderer()
         self._lock = threading.Lock()
         self._entered: set[Path] = set()
@@ -191,6 +192,11 @@ class TaskLogger:
             self._handle.write(plain + "\n")
             self._handle.flush()
         self.progress.write_log(rendered)
+
+    def detail(self, text: str) -> None:
+        """Emit implementation detail only when the caller selected -v."""
+        if self.verbose:
+            self.emit(f"{styled(DIM, '[verbose]')} {text}", DIM)
 
     def start_task(self, name: str, depth: int) -> None:
         self.metrics.started_tasks += 1
@@ -249,13 +255,31 @@ class TaskLogger:
             f"{styled(YELLOW, root_relative(root, label))}",
         )
 
-    def command(self, worker: int, command: Iterable[str]) -> None:
+    def command(
+        self,
+        worker: int,
+        command: Iterable[str],
+        *,
+        cwd: Path | None = None,
+        environment: dict[str, str] | None = None,
+        root: Path | None = None,
+    ) -> None:
         quoted = " ".join(shell_quote(part) for part in command)
         self.metrics.ran_commands += 1
         self.emit(
             f"{styled(CYAN, f'<{worker}>')} {styled(WHITE, 'Running command:')} "
             f"{styled(DIM, f'\"{quoted}\"')}",
         )
+        if self.verbose:
+            command_cwd = cwd or root
+            if command_cwd is not None:
+                location = root_relative(root, command_cwd) if root is not None else str(command_cwd)
+                self.detail(f"<{worker}> command cwd: {location}")
+            if environment:
+                overrides = ", ".join(
+                    f"{name}={shell_quote(value)}" for name, value in sorted(environment.items())
+                )
+                self.detail(f"<{worker}> command environment overrides: {overrides}")
 
     def download(self, worker: int, url: str, destination: Path, root: Path) -> None:
         self.metrics.downloaded_files += 1
@@ -265,9 +289,12 @@ class TaskLogger:
             f"{styled(GREEN, root_relative(root, destination))}",
         )
 
-    def child_output(self, text: str) -> None:
+    def child_output(self, text: str, worker: int | None = None) -> None:
         if text:
-            self.emit(text, DIM)
+            if self.verbose and worker is not None:
+                self.emit(f"{styled(DIM, f'<{worker}> output |')} {text}", DIM)
+            else:
+                self.emit(text, DIM)
 
 
 def shell_quote(value: str) -> str:
@@ -360,9 +387,15 @@ class ActionContext:
         )
 
     def copy(self, source: Path, destination: Path) -> None:
-        self.runner.logger.generating(self.worker_id, self.target, self.root)
+        self.runner.logger.detail(
+            f"<{self.worker_id}> copy {root_relative(self.root, source)} -> "
+            f"{root_relative(self.root, destination)}"
+        )
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
+
+    def detail(self, text: str) -> None:
+        self.runner.logger.detail(f"<{self.worker_id}> {self.target.name}: {text}")
 
     def download(self, url: str, destination: Path) -> None:
         self.runner.download(url, destination, self.worker_id)
@@ -377,6 +410,7 @@ class BuildRunner:
         task_id: str,
         *,
         engine_inputs: Iterable[Path] = (),
+        verbose: bool = False,
     ) -> None:
         self.graph = graph
         self.paths = paths
@@ -384,7 +418,8 @@ class BuildRunner:
         self.task_id = task_id
         self.store = TaskStore(paths)
         self.metrics = BuildMetrics()
-        self.logger = TaskLogger(self.store.log_path(task_id), self.metrics)
+        self.verbose = verbose
+        self.logger = TaskLogger(self.store.log_path(task_id), self.metrics, verbose=verbose)
         self.engine_inputs = tuple(engine_inputs)
         self._processes = threading.BoundedSemaphore(max(1, settings.max_processes))
         self._slots: queue.Queue[int] = queue.Queue()
@@ -424,6 +459,17 @@ class BuildRunner:
             self.logger.progress.start()
             self.logger.progress.update(0, len(closure), 0)
             self.logger.start_run(command_name, self.task_id)
+            self.logger.detail(f"task id: {self.task_id}")
+            self.logger.detail(f"workspace root: {self.paths.root}")
+            self.logger.detail(
+                "scheduler settings: "
+                f"workers={self.settings.worker_threads}, processes={self.settings.max_processes}, "
+                f"download_retries={self.settings.download_retries}"
+            )
+            self.logger.detail(
+                f"resolved closure ({len(closure)} targets): "
+                + ", ".join(target.name for target in closure)
+            )
             self._announce_groups(roots)
             self._schedule(closure)
             elapsed = time.monotonic() - started
@@ -518,12 +564,14 @@ class BuildRunner:
                 dependents[dependency].add(name)
 
         ready = [name for name, required in dependencies.items() if not required]
+        self.logger.detail("scheduler initial ready targets: " + ", ".join(sorted(ready)))
         running: dict[Future[None], str] = {}
         failed: BaseException | None = None
         with ThreadPoolExecutor(max_workers=max(1, self.settings.worker_threads)) as pool:
             while ready or running:
                 while ready and failed is None:
                     name = ready.pop()
+                    self.logger.detail(f"scheduler dispatch: {name}")
                     future = pool.submit(self._execute, names[name])
                     running[future] = name
                 self.logger.progress.update(self.metrics.completed, self.metrics.total, len(running))
@@ -536,10 +584,12 @@ class BuildRunner:
                         future.result()
                     except BaseException as exc:
                         failed = exc
+                        self.logger.detail(f"scheduler failure from {name}: {exception_message(exc)}")
                         for pending in running:
                             pending.cancel()
                         break
                     self.metrics.completed += 1
+                    self.logger.detail(f"scheduler complete: {name}")
                     for dependent in dependents[name]:
                         dependencies[dependent].discard(name)
                         if not dependencies[dependent]:
@@ -563,13 +613,20 @@ class BuildRunner:
             )
         try:
             if target.group:
+                self.logger.detail(f"<{worker}> aggregate target {target.name} satisfied by dependencies")
                 return
-            if not self.rebuild_reasons(target):
+            reasons = self.rebuild_reasons(target)
+            self._log_target_metadata(worker, target)
+            if not reasons:
                 status = "skipped"
+                self.logger.detail(f"<{worker}> cache hit: {target.name}; no rebuild required")
                 with self._metrics_lock:
                     self.metrics.skipped_targets += 1
                 return
             status = "executed"
+            self.logger.detail(f"<{worker}> cache miss: {target.name}")
+            for reason in reasons:
+                self.logger.detail(f"<{worker}> rebuild reason: {reason}")
             self._announce_target(worker, target)
             context = ActionContext(self, target, worker)
             if target.command is not None:
@@ -577,8 +634,17 @@ class BuildRunner:
                     output.parent.mkdir(parents=True, exist_ok=True)
                 if target.depfile is not None:
                     target.depfile.parent.mkdir(parents=True, exist_ok=True)
-                self.run_process(target.command, worker, cwd=target.cwd, environment=target.environment, announce=False)
+                self.run_process(
+                    target.command,
+                    worker,
+                    cwd=target.cwd,
+                    environment=target.environment,
+                    announce=self.verbose,
+                )
             elif target.action is not None:
+                self.logger.detail(
+                    f"<{worker}> action dispatch: {target.action_key or target.action.__name__}"
+                )
                 target.action(context)
             else:
                 raise BuildFailure(f"target {target.name} has no action")
@@ -587,8 +653,12 @@ class BuildRunner:
                 raise BuildFailure(f"target {target.name} did not create {root_relative(self.paths.root, missing)}")
             self._refresh_mtimes((*target.outputs, target.depfile))
             self._write_target_state(target)
+            self.logger.detail(f"<{worker}> target outputs recorded: {target.name}")
             with self._metrics_lock:
                 self.metrics.executed_targets += 1
+        except BaseException as exc:
+            self.logger.detail(f"<{worker}> target failed: {target.name}: {exception_message(exc)}")
+            raise
         finally:
             elapsed = time.perf_counter() - started
             if not target.group:
@@ -614,10 +684,52 @@ class BuildRunner:
         elif target.kind == "download":
             return
         elif target.kind == "command":
-            if target.command is not None:
-                self.logger.command(worker, target.command)
+            if target.command is not None and not self.verbose:
+                self.logger.command(worker, target.command, cwd=target.cwd,
+                                    environment=target.environment, root=self.paths.root)
         else:
             self.logger.generating(worker, target, self.paths.root)
+
+    def _log_target_metadata(self, worker: int, target: Target) -> None:
+        if not self.verbose:
+            return
+        self.logger.detail(f"<{worker}> target: {target.name}")
+        self.logger.detail(f"<{worker}> kind: {target.kind}")
+        if target.source is not None:
+            self.logger.detail(
+                f"<{worker}> source: {root_relative(self.paths.root, target.source)}"
+            )
+        self.logger.detail(
+            f"<{worker}> outputs: "
+            + (", ".join(root_relative(self.paths.root, output) for output in target.outputs) or "(none)")
+        )
+        self.logger.detail(
+            f"<{worker}> inputs: "
+            + (", ".join(root_relative(self.paths.root, input_path) for input_path in target.inputs) or "(none)")
+        )
+        self.logger.detail(
+            f"<{worker}> implicit inputs: "
+            + (", ".join(root_relative(self.paths.root, input_path) for input_path in target.implicit_inputs) or "(none)")
+        )
+        self.logger.detail(
+            f"<{worker}> dependencies: "
+            + (", ".join(dependency.name for dependency in self.graph.dependencies(target)) or "(none)")
+        )
+        if target.depfile is not None:
+            self.logger.detail(
+                f"<{worker}> depfile: {root_relative(self.paths.root, target.depfile)}"
+            )
+        if target.cwd is not None:
+            self.logger.detail(f"<{worker}> target cwd: {root_relative(self.paths.root, target.cwd)}")
+        if target.environment:
+            overrides = ", ".join(
+                f"{name}={shell_quote(value)}" for name, value in sorted(target.environment.items())
+            )
+            self.logger.detail(f"<{worker}> target environment overrides: {overrides}")
+        if target.always:
+            self.logger.detail(f"<{worker}> target policy: always run")
+        if target.action_key:
+            self.logger.detail(f"<{worker}> action key: {target.action_key}")
 
     def _fingerprint(self, target: Target) -> str:
         payload = {
@@ -744,7 +856,7 @@ class BuildRunner:
         interactive: bool = False,
     ) -> None:
         if announce:
-            self.logger.command(worker, command)
+            self.logger.command(worker, command, cwd=cwd, environment=environment, root=self.paths.root)
         merged_environment = os.environ.copy()
         if environment:
             merged_environment.update(environment)
@@ -754,16 +866,20 @@ class BuildRunner:
             self.logger.progress.suspend()
             try:
                 with self._processes:
+                    self.logger.detail(f"<{worker}> acquired process slot (interactive)")
                     process = subprocess.Popen(
                         command,
                         cwd=str(cwd or self.paths.root),
                         env=merged_environment,
                     )
+                    self.logger.detail(f"<{worker}> process started: pid={process.pid}")
                     returncode = process.wait()
+                    self.logger.detail(f"<{worker}> process exited: pid={process.pid}, status={returncode}")
             finally:
                 self.logger.progress.resume()
         else:
             with self._processes:
+                self.logger.detail(f"<{worker}> acquired process slot")
                 process = subprocess.Popen(
                     command,
                     cwd=str(cwd or self.paths.root),
@@ -775,10 +891,12 @@ class BuildRunner:
                     errors="replace",
                     bufsize=1,
                 )
+                self.logger.detail(f"<{worker}> process started: pid={process.pid}")
                 assert process.stdout is not None
                 for line in process.stdout:
-                    self.logger.child_output(line.rstrip("\n"))
+                    self.logger.child_output(line.rstrip("\n"), worker)
                 returncode = process.wait()
+                self.logger.detail(f"<{worker}> process exited: pid={process.pid}, status={returncode}")
         if returncode != 0:
             raise CommandError(command, returncode)
 

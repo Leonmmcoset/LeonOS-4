@@ -744,16 +744,42 @@ static const char *ui_path_basename(const char *path)
 static int ui_path_extension_matches(const char *name, const char *filter_ext)
 {
     uint32_t name_len;
-    uint32_t ext_len;
+    const char *entry;
     if (!filter_ext || !filter_ext[0]) {
         return 1;
     }
     name_len = ui_strlen(name);
-    ext_len = ui_strlen(filter_ext);
-    if (ext_len > name_len) {
-        return 0;
+    entry = filter_ext;
+    while (*entry) {
+        const char *end = entry;
+        uint32_t ext_len;
+        while (*end && *end != ';') {
+            ++end;
+        }
+        ext_len = (uint32_t)(end - entry);
+        if (ext_len <= name_len && ext_len != 0) {
+            uint32_t i;
+            const char *suffix = name + name_len - ext_len;
+            for (i = 0; i < ext_len; ++i) {
+                char a = suffix[i];
+                char b = entry[i];
+                if (a >= 'A' && a <= 'Z') {
+                    a = (char)(a - 'A' + 'a');
+                }
+                if (b >= 'A' && b <= 'Z') {
+                    b = (char)(b - 'A' + 'a');
+                }
+                if (a != b) {
+                    break;
+                }
+            }
+            if (i == ext_len) {
+                return 1;
+            }
+        }
+        entry = *end ? end + 1 : end;
     }
-    return ui_text_eq_ignore_case(name + name_len - ext_len, filter_ext);
+    return 0;
 }
 
 static void ui_file_dialog_entry_text(struct ui_file_dialog_entry *entry)

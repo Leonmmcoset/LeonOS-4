@@ -32,6 +32,30 @@ The LeonOS syscall and GUI bindings remain in the separate `leonos.a` adapter
 archive. The generated Developer SDK packages both archives, Picolibc headers,
 and the upstream license notice.
 
+## zlib
+
+- Path: `third_party/zlib`
+- Upstream: `https://github.com/madler/zlib.git`
+- Version: `1.3.2`
+- Pinned commit: `da607da739fa6047df13e66a2af6b8bec7c2a498` (`v1.3.2`)
+- License: zlib License; preserve `third_party/zlib/LICENSE`.
+
+LeonOS builds zlib's freestanding in-memory compression/decompression core as
+`libz.a`.  Gzip file-stream helpers are intentionally excluded because LeonOS
+does not provide a hosted stdio file backend to the library.
+
+## libpng
+
+- Path: `third_party/libpng`
+- Upstream: `https://github.com/pnggroup/libpng.git`
+- Version: `1.6.58`
+- Pinned commit: `3061454d980de7d53608f594194cfac722721d2a` (`v1.6.58`)
+- License: libpng License; preserve `third_party/libpng/LICENSE`.
+
+LeonOS builds libpng as `libpng.a` against its bundled zlib.  The public SDK
+includes both upstream libraries and headers, while `leonos/png.h` provides a
+bounded PNG-to-LeonOS-pixel decoder for ordinary GUI applications.
+
 ## BusyBox
 
 - Path: `third_party/busybox`
@@ -74,10 +98,30 @@ still require manual GUI-terminal validation on each supported VM platform.
 
 LeonOS builds TinyCC as the static, on-device x86_64 C compiler at
 `0:/programs/tcc/tcc.elf`. It uses the installed Picolibc headers,
-`libleonos.a`, `libpicolibc.a`, LeonOS `crt0.o`, and TinyCC's `libtcc1.a` to
-produce normal static LeonOS ELF programs. Dynamic linking, shared libraries,
+`libleonos.a`, `libpicolibc.a`, LeonOS `crt0.o`, the target support archive
+`libleonos-tcc-rt.a`, and TinyCC's `libtcc1.a` to produce normal static LeonOS
+ELF programs. Picolibc headers are staged unchanged; LeonOS ABI predefines are
+owned by TinyCC's target definition layer. Dynamic linking, shared libraries,
 PIE and in-memory `tcc -run` execution are deliberately unavailable until the
-runtime loader ABI exists.
+runtime loader ABI exists. The target runtime currently reports `ENOSYS` for
+`times()` and `SIG_ERR` for `signal()` because those LeonOS ABIs do not yet
+exist.
+
+## Lua
+
+- Path: `third_party/lua`
+- Upstream: `https://github.com/lua/lua.git`
+- Version: `5.4.8`
+- Pinned commit: `6e22fedb74cf0c9b6656e9fce8b7331db847c605` (`v5.4.8`)
+- License: MIT; the LeonOS copy of the complete upstream license is staged at
+  `0:/programs/lua/LICENSE` beside the executable.
+
+LeonOS builds Lua as the static command-line interpreter at
+`0:/programs/lua/lua.elf`. It uses Lua's portable C89 configuration with
+Picolibc and the LeonOS adapter archive. Dynamic C modules and `package.loadlib`
+are intentionally unavailable until the system has a dynamic-loader ABI. Lua
+scripts can be loaded from the current directory or from
+`0:/programs/lua/lua/`.
 
 ## PL Editor
 

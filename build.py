@@ -116,6 +116,18 @@ MBEDTLS_SOURCES = [
     "ssl_cli.c", "ssl_msg.c", "ssl_tls.c", "x509.c", "x509_crt.c",
 ]
 
+ZLIB_SOURCES = [
+    "adler32.c", "compress.c", "crc32.c", "deflate.c", "infback.c",
+    "inffast.c", "inflate.c", "inftrees.c", "trees.c", "uncompr.c",
+    "zutil.c",
+]
+
+LIBPNG_SOURCES = [
+    "png.c", "pngerror.c", "pngget.c", "pngmem.c", "pngpread.c",
+    "pngread.c", "pngrio.c", "pngrtran.c", "pngrutil.c", "pngset.c",
+    "pngtrans.c", "pngwio.c", "pngwrite.c", "pngwtran.c", "pngwutil.c",
+]
+
 _COLLECT_CACHE: dict[tuple[str, ...], tuple[Path, ...]] = {}
 
 
@@ -214,8 +226,7 @@ def ensure_parent(context: ActionContext, output: Path, text: str) -> None:
 
 def copy_action(source: Path, destination: Path) -> Callable[[ActionContext], None]:
     def action(context: ActionContext) -> None:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, destination)
+        context.copy(source, destination)
 
     return action
 
@@ -337,6 +348,13 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     picolibc_prefix = picolibc_build_dir / "sysroot"
     picolibc_archive = picolibc_prefix / "lib/libc.a"
     picolibc_header_stamp = picolibc_prefix / "include/.leonos-picolibc.stamp"
+    zlib_source = ROOT / "third_party/zlib"
+    libpng_source = ROOT / "third_party/libpng"
+    libpng_config_source = libpng_source / "scripts/pnglibconf.h.prebuilt"
+    libpng_generated_dir = paths.out / "generated/libpng"
+    libpng_config = libpng_generated_dir / "pnglibconf.h"
+    zlib_archive = paths.out / "userland/libz.a"
+    libpng_archive = paths.out / "userland/libpng.a"
     busybox_source = ROOT / "third_party/busybox"
     busybox_config = ROOT / "userland/busybox/leonos.config"
     busybox_shim = ROOT / "userland/busybox/leonos_shim.c"
@@ -355,6 +373,12 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     tcc_elf = paths.out / "userland/tcc.elf"
     tcc_runtime_dir = paths.out / "tcc-runtime"
     tcc_stamp = paths.out / "userland/tcc.stamp"
+    lua_source = ROOT / "third_party/lua"
+    lua_port = ROOT / "userland/lua"
+    lua_app_manifest = ROOT / "userland/apps/lua/lua.app.ini"
+    lua_elf = paths.out / "userland/lua.elf"
+    lua_stamp = paths.out / "userland/lua.stamp"
+    lua_work_dir = paths.out / "lua-work"
     pleditor_source = ROOT / "third_party/pl_editor"
     pleditor_port = ROOT / "userland/apps/pleditor"
     pleditor_elf = paths.out / "userland/pleditor.elf"
@@ -388,6 +412,33 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
             always=True,
         )
     )
+    def generate_libpng_config(context: ActionContext) -> None:
+        config_text = libpng_config_source.read_text(encoding="utf-8")
+        marker = "/* end of options */"
+        if marker not in config_text:
+            raise GraphError("unsupported libpng revision: pnglibconf.h format changed")
+        # Normal LeonOS user processes deliberately avoid x87/SSE state.  Keep
+        # libpng's fixed-point path instead of introducing soft-float runtime
+        # helpers to every PNG consumer.
+        config_text = config_text.replace(
+            marker,
+            "#undef PNG_FLOATING_ARITHMETIC_SUPPORTED\n"
+            "#undef PNG_FLOATING_POINT_SUPPORTED\n"
+            "#undef PNG_READ_FLOAT_SUPPORTED\n"
+            "#undef PNG_INCH_CONVERSIONS_SUPPORTED\n"
+            + marker,
+            1,
+        )
+        ensure_parent(context, libpng_config, config_text)
+
+    graph.add(Target(
+        name="generate:libpng-config",
+        outputs=(libpng_config,),
+        inputs=(libpng_config_source,),
+        kind="generate",
+        action=generate_libpng_config,
+        action_key="generate-libpng-config-v3",
+    ))
 
     if not (picolibc_source / "meson.build").is_file():
         raise GraphError("third_party/picolibc is missing; initialize the Picolibc source tree")
@@ -397,8 +448,16 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         raise GraphError("third_party/nano is missing; initialize the GNU nano source tree")
     if not (tcc_source / "tcc.c").is_file():
         raise GraphError("third_party/tinycc is missing; initialize the TinyCC source tree")
+    if not (lua_source / "lua.c").is_file() or not (lua_source / "lua.h").is_file():
+        raise GraphError("third_party/lua is missing; initialize the Lua source tree")
+    if not (lua_port / "LICENSE").is_file() or not lua_app_manifest.is_file():
+        raise GraphError("the LeonOS Lua port metadata is missing")
     if not (pleditor_source / "src/pleditor.c").is_file():
         raise GraphError("third_party/pl_editor is missing; initialize the PL Editor source tree")
+    if not (zlib_source / "zlib.h").is_file():
+        raise GraphError("third_party/zlib is missing; initialize the zlib source tree")
+    if not (libpng_source / "png.h").is_file() or not libpng_config_source.is_file():
+        raise GraphError("third_party/libpng is missing; initialize the libpng source tree")
     picolibc_inputs = collect(
         "third_party/picolibc/**/*.c",
         "third_party/picolibc/**/*.h",
@@ -464,6 +523,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         "-D_POSIX_C_SOURCE=200809L",
         f"-I{relative(picolibc_prefix / 'include')}", "-Iuserland/libc/include",
         "-Iinclude", f"-I{relative(paths.out / 'include')}", "-Ithird_party/mbedtls/include",
+        "-Ithird_party/zlib", "-Ithird_party/libpng", f"-I{relative(libpng_generated_dir)}",
         '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
     cflags_user = cflags_user_base + ["-include", relative(autoconf)]
@@ -479,7 +539,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-DLEONOS_USE_PICOLIBC",
         f"-I{relative(picolibc_prefix / 'include')}",
         "-Iuserland/libc/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
-        "-Ithird_party/mbedtls/include", '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
+        "-Ithird_party/mbedtls/include", "-Ithird_party/zlib", "-Ithird_party/libpng",
+        f"-I{relative(libpng_generated_dir)}", '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
     cflags_user_libc = cflags_user_libc_base + ["-include", relative(autoconf)]
     cflags_installer_libc = cflags_user_libc_base + ["-include", relative(installer_autoconf)]
@@ -598,14 +659,35 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     installer_libc_objects: list[Path] = []
     for source in sorted(libc_sources):
         is_asm = source.suffix == ".S"
-        libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, (autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
-        installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, (installer_autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+        libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+        installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, (installer_autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (), kind="assemble" if is_asm else "compile"))
     libc_a = paths.out / "userland/libc.a"
     installer_libc_a = paths.out / "userland-installer-policy/libc.a"
     graph.add(Target(name="archive:libc", outputs=(libc_a,), inputs=tuple(libc_objects), kind="link", command=(ar, "rcs", relative(libc_a), *map(relative, libc_objects))))
     graph.add(Target(name="archive:installer-libc", outputs=(installer_libc_a,), inputs=tuple(installer_libc_objects), kind="link", command=(ar, "rcs", relative(installer_libc_a), *map(relative, installer_libc_objects))))
 
+    zlib_objects = [
+        add_compile(graph, paths, f"compile:zlib:{source}", zlib_source / source, "zlib",
+                    cflags_user_libc + ["-DZ_SOLO", "-include", "stddef.h"],
+                    (autoconf, picolibc_header_stamp))
+        for source in ZLIB_SOURCES
+    ]
+    graph.add(Target(name="archive:zlib", outputs=(zlib_archive,), inputs=tuple(zlib_objects),
+                     kind="link", command=(ar, "rcs", relative(zlib_archive),
+                                             *map(relative, zlib_objects))))
+    libpng_cflags = cflags_user_libc + ["-DLEONOS_LIBPNG_FIXED_POINT=3"]
+    libpng_objects = [
+        add_compile(graph, paths, f"compile:libpng:{source}", libpng_source / source, "libpng",
+                    libpng_cflags, (autoconf, picolibc_header_stamp, libpng_config))
+        for source in LIBPNG_SOURCES
+    ]
+    graph.add(Target(name="archive:libpng", outputs=(libpng_archive,),
+                     inputs=tuple([*libpng_objects, libpng_config]), kind="link",
+                     command=(ar, "rcs", relative(libpng_archive),
+                              *map(relative, libpng_objects))))
+
     def busybox_source_revision_action(context: ActionContext) -> None:
+        context.detail(f"reading source revision: git -C {relative(busybox_source)} rev-parse HEAD")
         result = subprocess.run(
             ("git", "-C", str(busybox_source), "rev-parse", "HEAD"),
             check=True, text=True, capture_output=True,
@@ -672,16 +754,42 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     graph.add(Target(
         name="tcc",
         outputs=(tcc_elf, tcc_stamp),
-        inputs=tuple([*tcc_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
-        depends_on=("picolibc", "archive:libc"),
+        inputs=tuple([*tcc_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive,
+                      zlib_archive, libpng_archive]),
+        depends_on=("picolibc", "archive:libc", "archive:zlib", "archive:libpng"),
         kind="compile",
         command=(
             PYTHON, "tools/build_tcc.py", "--source", "third_party/tinycc",
             "--port", "userland/tcc", "--sdk-include", "devtools/include",
             "--picolibc-prefix", relative(picolibc_prefix), "--leonos-lib", relative(libc_a),
             "--picolibc-lib", relative(picolibc_archive), "--linker-script", "userland/linker.ld",
+            "--zlib-lib", relative(zlib_archive), "--libpng-lib", relative(libpng_archive),
+            "--zlib-source", "third_party/zlib", "--libpng-source", "third_party/libpng",
+            "--libpng-config", relative(libpng_config),
             "--work-dir", relative(paths.out / "tcc-work"), "--runtime-dir", relative(tcc_runtime_dir),
             "--output", relative(tcc_elf), "--stamp", relative(tcc_stamp),
+        ),
+    ))
+
+    lua_inputs = collect(
+        "third_party/lua/*.c", "third_party/lua/*.h", "third_party/lua/README.md",
+        "userland/lua/**/*.c", "userland/lua/**/*.h", "userland/lua/**/*.md",
+        "userland/lua/LICENSE", "userland/apps/lua/lua.app.ini",
+        "tools/build_lua.py",
+    )
+    graph.add(Target(
+        name="lua",
+        outputs=(lua_elf, lua_stamp),
+        inputs=tuple([*lua_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
+        depends_on=("picolibc", "archive:libc"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_lua.py", "--source", "third_party/lua",
+            "--port", "userland/lua", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(lua_work_dir),
+            "--output", relative(lua_elf), "--stamp", relative(lua_stamp),
         ),
     ))
 
@@ -708,7 +816,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     ))
 
     app_elfs: dict[str, Path] = {}
-    user_targets: list[str] = ["picolibc", "archive:libc", "busybox", "nano", "tcc", "app:pleditor"]
+    user_targets: list[str] = ["picolibc", "archive:libc", "archive:zlib", "archive:libpng",
+                               "busybox", "nano", "tcc", "lua", "app:pleditor"]
     for app in BUILD_USER_APPS:
         if app == "nano":
             app_elfs[app] = nano_elf
@@ -720,9 +829,19 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
             cflags_app = cflags_doom if app == "doom" else (cflags_mp3play if app == "mp3play" else cflags_user)
-            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, (autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (), kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland/{app}.elf"
-        graph.add(Target(name=f"app:{app}", outputs=(output,), inputs=tuple([*objects, libc_a, picolibc_archive]), implicit_inputs=(ROOT / "userland/linker.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000", "-T", "userland/linker.ld", "-o", relative(output), *map(relative, objects), "--start-group", relative(libc_a), relative(picolibc_archive), "--end-group")))
+        app_archives = [libc_a]
+        if app == "notepad":
+            app_archives.extend((libpng_archive, zlib_archive))
+        app_archives.append(picolibc_archive)
+        graph.add(Target(name=f"app:{app}", outputs=(output,),
+                         inputs=tuple([*objects, *app_archives]),
+                         implicit_inputs=(ROOT / "userland/linker.ld",), kind="link",
+                         command=(ld, "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000",
+                                  "-T", "userland/linker.ld", "-o", relative(output),
+                                  *map(relative, objects), "--start-group",
+                                  *map(relative, app_archives), "--end-group")))
         app_elfs[app] = output
         user_targets.append(f"app:{app}")
 
@@ -769,13 +888,17 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
 
     sdk_inputs = tuple([
         ROOT / "tools/package_devtools.py", ROOT / "third_party/picolibc/COPYING.picolibc",
+        ROOT / "third_party/zlib/LICENSE", ROOT / "third_party/libpng/LICENSE", libpng_config,
+        # The packager copies these build outputs verbatim. Keep them as
+        # explicit inputs so a rebuilt runtime cannot leave a stale SDK ZIP.
+        libc_a, picolibc_archive, picolibc_header_stamp, zlib_archive, libpng_archive,
         *collect("devtools/**/*"),
     ])
     graph.add(Target(
         name="sdk",
         outputs=(developer_sdk,),
         inputs=sdk_inputs,
-        depends_on=("picolibc", "archive:libc"),
+        depends_on=("picolibc", "archive:libc", "archive:zlib", "archive:libpng"),
         kind="generate",
         command=(
             PYTHON, "tools/package_devtools.py",
@@ -784,6 +907,9 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
             "--picolibc-lib", relative(picolibc_archive),
             "--picolibc-include", relative(picolibc_prefix / "include"),
             "--picolibc-source", "third_party/picolibc",
+            "--zlib-lib", relative(zlib_archive), "--zlib-source", "third_party/zlib",
+            "--libpng-lib", relative(libpng_archive), "--libpng-source", "third_party/libpng",
+            "--libpng-config", relative(libpng_config),
             "--out", relative(developer_sdk),
         ),
     ))
@@ -831,15 +957,17 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
 
     def sync_ui_font(context: ActionContext) -> None:
         for legacy_dir in ("etc", "userland"):
+            context.detail(f"remove obsolete staging directory: {relative(paths.staging / legacy_dir)}")
             shutil.rmtree(paths.staging / legacy_dir, ignore_errors=True)
         for legacy_name in ("system.psf", "cjk16.lbf", "metro-latin.lbf", "leonos.lbf", "leonos-ui.ttf"):
+            context.detail(f"remove obsolete font: {relative(ui_metro_font_destination.parent / legacy_name)}")
             (ui_metro_font_destination.parent / legacy_name).unlink(missing_ok=True)
         ui_metro_font_destination.parent.mkdir(parents=True, exist_ok=True)
         (paths.staging / "system/state").mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(ui_metro_font, ui_metro_font_destination)
-        shutil.copyfile(ui_win95_font, ui_win95_font_destination)
-        shutil.copyfile(browser_font, browser_font_destination)
-        shutil.copyfile(browser_cjk_font_source, browser_cjk_font_destination)
+        context.copy(ui_metro_font, ui_metro_font_destination)
+        context.copy(ui_win95_font, ui_win95_font_destination)
+        context.copy(browser_font, browser_font_destination)
+        context.copy(browser_cjk_font_source, browser_cjk_font_destination)
 
     target = graph.add(Target(name="esp:system-font", outputs=(ui_metro_font_destination, ui_win95_font_destination,
                                                                  browser_font_destination, browser_cjk_font_destination),
@@ -897,14 +1025,19 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
 
     def sync_tcc_runtime(context: ActionContext) -> None:
         if tcc_destination.exists():
+            context.detail(f"replace staged TCC runtime: {relative(tcc_destination)}")
             shutil.rmtree(tcc_destination)
+        context.detail(
+            f"copy runtime tree: {relative(tcc_runtime_dir)} -> {relative(tcc_destination)}"
+        )
         shutil.copytree(tcc_runtime_dir, tcc_destination)
-        shutil.copyfile(tcc_elf, tcc_destination / "tcc.elf")
-        shutil.copyfile(tcc_app_manifest, tcc_destination / "tcc.app.ini")
+        context.copy(tcc_elf, tcc_destination / "tcc.elf")
+        context.copy(tcc_app_manifest, tcc_destination / "tcc.app.ini")
 
     target = graph.add(Target(
         name="esp:tcc",
         outputs=(tcc_destination / "tcc.elf", tcc_destination / "lib/libtcc1.a",
+                 tcc_destination / "lib/libleonos-tcc-rt.a",
                  tcc_destination / "tcc.app.ini"),
         inputs=(tcc_elf, tcc_stamp, tcc_app_manifest),
         depends_on=("tcc",),
@@ -914,7 +1047,14 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     ))
     esp_names.append(target.name)
     esp_outputs.extend((tcc_destination / "tcc.elf", tcc_destination / "lib/libtcc1.a",
+                        tcc_destination / "lib/libleonos-tcc-rt.a",
                         tcc_destination / "tcc.app.ini"))
+    lua_destination = paths.staging / "programs/lua"
+    for source in (lua_elf, lua_port / "LICENSE", lua_app_manifest):
+        destination = lua_destination / ("lua.elf" if source == lua_elf else source.name)
+        target = add_copy(graph, f"esp:lua:{destination.name}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
     nano_license_destination = paths.staging / "programs/nano/COPYING"
     target = add_copy(graph, "esp:nano:COPYING", ROOT / "third_party/nano/COPYING",
                       nano_license_destination)
@@ -1046,7 +1186,9 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
 
     def make_iso(context: ActionContext) -> None:
         if iso_stage.exists():
+            context.detail(f"replace ISO staging tree: {relative(iso_stage)}")
             shutil.rmtree(iso_stage)
+        context.detail(f"copy ESP staging tree: {relative(paths.staging)} -> {relative(iso_stage)}")
         shutil.copytree(paths.staging, iso_stage)
         context.run(("grub-mkrescue", "-o", relative(iso), relative(iso_stage)), announce=True)
 
@@ -1202,8 +1344,14 @@ def task_tools(task: str) -> tuple[str, ...]:
     return ()
 
 
-def create_runner(paths: BuildPaths, graph: BuildGraph, task_id: str) -> BuildRunner:
-    return BuildRunner(graph, paths, load_settings(paths), task_id)
+def create_runner(
+    paths: BuildPaths,
+    graph: BuildGraph,
+    task_id: str,
+    *,
+    verbose: bool = False,
+) -> BuildRunner:
+    return BuildRunner(graph, paths, load_settings(paths), task_id, verbose=verbose)
 
 
 def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
@@ -1213,7 +1361,7 @@ def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
 
 
 def display_help() -> str:
-    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py run <task>\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py profile <task>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|qmp-terminal|qmp-pleditor|qmp-tcc|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, run, run-debug, run-iso, menuconfig, clean\n"""
+    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py [-v|--verbose] run <task>\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py profile <task>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|qmp-terminal|qmp-pleditor|qmp-tcc|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nOptions:\n  -v, --verbose  Print target graph, cache decisions, commands, process diagnostics, and actions.\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, run, run-debug, run-iso, menuconfig, clean\n"""
 
 
 def complete_simple(store: TaskStore, task_id: str, command: str, text: str, success: bool = True) -> None:
@@ -1381,11 +1529,12 @@ def profile_target(
     graph_seconds: float,
     *,
     json_output: bool,
+    verbose: bool,
 ) -> dict[str, object]:
     require_linux()
     require_tools(task_tools(target.name))
     require_grub_efi_modules(paths, target.name)
-    runner = create_runner(paths, graph, task_id)
+    runner = create_runner(paths, graph, task_id, verbose=verbose)
     roots = build_roots(graph, target)
     if json_output:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -1397,11 +1546,19 @@ def profile_target(
     return report
 
 
-def run_foreground(paths: BuildPaths, graph: BuildGraph, task_id: str, target: Target, label: str) -> int:
+def run_foreground(
+    paths: BuildPaths,
+    graph: BuildGraph,
+    task_id: str,
+    target: Target,
+    label: str,
+    *,
+    verbose: bool,
+) -> int:
     require_linux()
     require_tools(task_tools(target.name))
     require_grub_efi_modules(paths, target.name)
-    runner = create_runner(paths, graph, task_id)
+    runner = create_runner(paths, graph, task_id, verbose=verbose)
     runner.run(build_roots(graph, target), label)
     return 0
 
@@ -1413,6 +1570,7 @@ def run_client(
     command: list[str],
     *,
     json_output: bool,
+    verbose: bool,
 ) -> int:
     if not command or command[0] not in {"run", "gen", "test", "profile"}:
         raise BuildFailure("client accepts run, gen, test, or profile followed by its arguments")
@@ -1420,9 +1578,12 @@ def run_client(
     log = store.log_path(task_id)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(f"Queued background task {task_id}: {' '.join(command)}\n")
+        detail = " (verbose)" if verbose else ""
+        handle.write(f"Queued background task {task_id}{detail}: {' '.join(command)}\n")
     with open(os.devnull, "w", encoding="utf-8") as sink:
         worker_command = [*command]
+        if verbose:
+            worker_command.append("--verbose")
         if json_output:
             worker_command.append("--json")
         subprocess.Popen(
@@ -1440,7 +1601,8 @@ def run_client(
             title="Background task",
         )
     else:
-        print(f"build: task \"{' '.join(command)}\" start. ID:{task_id}")
+        suffix = " (verbose)" if verbose else ""
+        print(f"build: task \"{' '.join(command)}\" start. ID:{task_id}{suffix}")
     return 0
 
 
@@ -1449,6 +1611,10 @@ def parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     argument_parser.add_argument("--task-id", help=argparse.SUPPRESS)
     argument_parser.add_argument("--json", dest="json_output", action="store_true", help="emit machine-readable JSON")
+    argument_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="show full build graph, cache, command, process, and action diagnostics",
+    )
     commands = argument_parser.add_subparsers(dest="command")
     commands.add_parser("help")
     run = commands.add_parser("run")
@@ -1481,9 +1647,12 @@ def parser() -> argparse.ArgumentParser:
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     values = list(argv if argv is not None else sys.argv[1:])
     json_output = "--json" in values
-    values = [value for value in values if value != "--json"]
+    verbose = any(value in {"-v", "--verbose"} for value in values)
+    values = [value for value in values if value not in {"--json", "-v", "--verbose"}]
     if json_output:
         values.insert(0, "--json")
+    if verbose:
+        values.insert(0, "--verbose")
     return parser().parse_args(values)
 
 
@@ -1507,7 +1676,14 @@ def main(argv: list[str] | None = None) -> int:
             complete_simple(store, task_id, "help", text)
             return 0
         if arguments.command == "client":
-            return run_client(paths, store, task_id, arguments.args, json_output=arguments.json_output)
+            return run_client(
+                paths,
+                store,
+                task_id,
+                arguments.args,
+                json_output=arguments.json_output,
+                verbose=arguments.verbose,
+            )
         if arguments.command == "cache":
             data = cache_report(paths, store) if arguments.action == "stats" else prune_cache(paths, store)
             text = emit_data(data, json_output=arguments.json_output, title=f"Cache {arguments.action}")
@@ -1534,12 +1710,33 @@ def main(argv: list[str] | None = None) -> int:
         graph = build_graph(paths)
         graph_seconds = time.perf_counter() - graph_started
         if arguments.command == "run":
-            return run_foreground(paths, graph, task_id, graph.resolve_target(arguments.task), f"run {arguments.task}")
+            return run_foreground(
+                paths,
+                graph,
+                task_id,
+                graph.resolve_target(arguments.task),
+                f"run {arguments.task}",
+                verbose=arguments.verbose,
+            )
         if arguments.command == "gen":
-            return run_foreground(paths, graph, task_id, graph.resolve_target(arguments.file), f"gen {arguments.file}")
+            return run_foreground(
+                paths,
+                graph,
+                task_id,
+                graph.resolve_target(arguments.file),
+                f"gen {arguments.file}",
+                verbose=arguments.verbose,
+            )
         if arguments.command == "test":
             target = graph.resolve_target(f"test-{arguments.item}")
-            return run_foreground(paths, graph, task_id, target, f"test {arguments.item}")
+            return run_foreground(
+                paths,
+                graph,
+                task_id,
+                target,
+                f"test {arguments.item}",
+                verbose=arguments.verbose,
+            )
         if arguments.command == "profile":
             target = graph.resolve_target(arguments.task)
             data = profile_target(
@@ -1550,6 +1747,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"profile {arguments.task}",
                 graph_seconds,
                 json_output=arguments.json_output,
+                verbose=arguments.verbose,
             )
             store.update(task_id, profile=data)
             emit_data(data, json_output=arguments.json_output, title="Build profile")
