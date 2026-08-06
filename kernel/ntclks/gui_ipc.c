@@ -8,6 +8,7 @@
 #define GUI_IPC_QUEUE_CAP 128
 #define GUI_IPC_MAX_WINDOWS 32
 #define GUI_IPC_WINDOW_EVENT_CAP 32
+#define GUI_IPC_PAGE_SIZE 4096ULL
 
 static struct gui_ipc_window queue[GUI_IPC_QUEUE_CAP];
 static uint32_t head;
@@ -178,6 +179,34 @@ static uint32_t *window_pixels(const struct gui_window_slot *slot)
     return slot && slot->buffer_phys ? (uint32_t *)(uintptr_t)slot->buffer_phys : NULL;
 }
 
+static int checked_mul_u64(uint64_t left, uint64_t right, uint64_t *out)
+{
+    if (!out || (left && right > UINT64_MAX / left)) {
+        return 0;
+    }
+    *out = left * right;
+    return 1;
+}
+
+int gui_ipc_validate_surface_geometry(uint32_t width, uint32_t height,
+                                      uint32_t stride, uint64_t *bytes)
+{
+    uint64_t pixels;
+    uint64_t total_bytes;
+    if (!width || !height || !stride || stride < width ||
+        width > GUI_IPC_MAX_WINDOW_WIDTH ||
+        height > GUI_IPC_MAX_WINDOW_HEIGHT ||
+        stride > GUI_IPC_MAX_WINDOW_STRIDE ||
+        !checked_mul_u64((uint64_t)stride, (uint64_t)height, &pixels) ||
+        !checked_mul_u64(pixels, sizeof(uint32_t), &total_bytes)) {
+        return 0;
+    }
+    if (bytes) {
+        *bytes = total_bytes;
+    }
+    return 1;
+}
+
 static int caller_is_window_server(uint32_t caller_pid)
 {
     struct task *task = sched_find(caller_pid);
@@ -190,7 +219,7 @@ static void free_window_buffer(struct gui_window_slot *slot)
         return;
     }
     for (uint32_t i = 0; i < slot->buffer_pages; ++i) {
-        mm_free_page(slot->buffer_phys + (uint64_t)i * 4096ULL);
+        mm_free_page(slot->buffer_phys + (uint64_t)i * GUI_IPC_PAGE_SIZE);
     }
     slot->buffer_phys = 0;
     slot->buffer_pages = 0;
@@ -199,13 +228,18 @@ static void free_window_buffer(struct gui_window_slot *slot)
 static int ensure_window_buffer(struct gui_window_slot *slot, uint32_t width, uint32_t height)
 {
     uint64_t bytes;
+    uint64_t pages64;
     uint32_t pages;
     uint64_t phys;
-    if (!slot || !width || !height) {
+    if (!slot || !gui_ipc_validate_surface_geometry(width, height, width, &bytes) ||
+        bytes > UINT64_MAX - (GUI_IPC_PAGE_SIZE - 1ULL)) {
         return 0;
     }
-    bytes = (uint64_t)width * height * sizeof(uint32_t);
-    pages = (uint32_t)((bytes + 4095ULL) / 4096ULL);
+    pages64 = (bytes + GUI_IPC_PAGE_SIZE - 1ULL) / GUI_IPC_PAGE_SIZE;
+    if (!pages64 || pages64 > UINT32_MAX) {
+        return 0;
+    }
+    pages = (uint32_t)pages64;
     if (pages <= slot->buffer_pages && slot->buffer_phys) {
         return 1;
     }
@@ -300,7 +334,7 @@ static int push_system_window_message(uint32_t pid, uint32_t width, uint32_t hei
 {
     uint32_t next = (head + 1) % GUI_IPC_QUEUE_CAP;
     struct gui_ipc_window *msg;
-    if (!pid || !width || !height) {
+    if (!pid || !gui_ipc_validate_surface_geometry(width, height, width, NULL)) {
         return 0;
     }
     if (next == tail) {
@@ -468,7 +502,7 @@ int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
 {
     struct gui_window_slot *slot;
     uint32_t id;
-    if (!pid || !width || !height) {
+    if (!pid || !gui_ipc_validate_surface_geometry(width, height, width, NULL)) {
         return 0;
     }
     if (flags & ~(GUI_IPC_WINDOW_NO_RESIZE | GUI_IPC_WINDOW_FULLSCREEN |
@@ -529,7 +563,8 @@ int gui_ipc_present_window(uint32_t pid, uint32_t window_id, uint32_t width, uin
 {
     struct gui_window_slot *slot = find_window(window_id);
     uint32_t *dst;
-    if (!slot || slot->owner_pid != pid || !pixels || !width || !height || stride < width) {
+    if (!slot || slot->owner_pid != pid || !pixels ||
+        !gui_ipc_validate_surface_geometry(width, height, stride, NULL)) {
         return 0;
     }
     if (!ensure_window_buffer(slot, width, height)) {
@@ -682,7 +717,8 @@ int gui_ipc_fetch_window(uint32_t caller_pid, uint32_t window_id,
     uint32_t copy_h;
     uint32_t *src;
     if (!caller_is_window_server(caller_pid) || !slot || !pixels || !slot->buffer_phys ||
-        !capacity_width || !capacity_height || stride < capacity_width) {
+        !gui_ipc_validate_surface_geometry(capacity_width, capacity_height, stride, NULL) ||
+        !gui_ipc_validate_surface_geometry(slot->width, slot->height, slot->width, NULL)) {
         return 0;
     }
     copy_w = min_u32(slot->width, capacity_width);

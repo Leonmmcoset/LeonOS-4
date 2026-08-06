@@ -102,19 +102,34 @@ def result_if(
 
 def check_gui_geometry(audit: SourceAudit) -> FindingResult:
     path = "kernel/ntclks/gui_ipc.c"
+    header = audit.read("kernel/ntclks/include/ntclks/gui_ipc.h")
+    source = audit.read(path)
+    create_ioctl = audit.ioctl_block("LEONOS_GUI_IOCTL_CREATE_WINDOW")
+    present_ioctl = audit.ioctl_block("LEONOS_GUI_IOCTL_PRESENT_WINDOW")
+    fetch_ioctl = audit.ioctl_block("LEONOS_GUI_IOCTL_FETCH_WINDOW")
     body = audit.function(path, "ensure_window_buffer")
     legacy_cast = (
         "uint32_t pages;" in body
         and "bytes = (uint64_t)width * height * sizeof(uint32_t);" in body
         and "pages = (uint32_t)((bytes + 4095ULL) / 4096ULL);" in body
     )
-    has_overflow_guard = "UINT32_MAX" in body or "SIZE_MAX" in body
+    has_overflow_guard = (
+        "GUI_IPC_MAX_WINDOW_WIDTH" in header
+        and "GUI_IPC_MAX_WINDOW_HEIGHT" in header
+        and "gui_ipc_validate_surface_geometry" in source
+        and "checked_mul_u64" in source
+        and "pages64 > UINT32_MAX" in body
+        and "bytes > UINT64_MAX -" in body
+        and "gui_ipc_validate_surface_geometry" in create_ioctl
+        and "gui_ipc_validate_surface_geometry" in present_ioctl
+        and "gui_ipc_validate_surface_geometry" in fetch_ioctl
+    )
     return result_if(
         "SEC-001",
         "GUI 几何参数整数回绕导致内核越界写",
-        legacy_cast and not has_overflow_guard,
-        audit.evidence(path, "pages = (uint32_t)((bytes + 4095ULL) / 4096ULL);"),
-        "在页数缩窄前限制 bytes，并拒绝页数为零或超过分配器上限的几何参数。",
+        legacy_cast or not has_overflow_guard,
+        audit.evidence(path, "gui_ipc_validate_surface_geometry"),
+        "限制窗口宽高/stride，并在页数缩窄前使用 checked 64 位乘法和上限检查。",
     )
 
 

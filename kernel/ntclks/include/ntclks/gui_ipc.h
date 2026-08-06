@@ -7,6 +7,10 @@
 #define GUI_IPC_WINDOW_TITLE_MAX 48u
 #define GUI_IPC_WINDOW_TEXT_MAX 1024u
 #define GUI_IPC_WINDOW_PATH_MAX LEONOS_FS_PATH_LEN
+/* GUI surfaces are backed by kernel pages and must stay within the native UI limits. */
+#define GUI_IPC_MAX_WINDOW_WIDTH 1920u
+#define GUI_IPC_MAX_WINDOW_HEIGHT 1080u
+#define GUI_IPC_MAX_WINDOW_STRIDE GUI_IPC_MAX_WINDOW_WIDTH
 
 #define LEONOS_GUI_IOCTL_APPEARANCE_STATE 0x4c415053UL
 #define LEONOS_GUI_IOCTL_APPEARANCE_REQUEST 0x4c415052UL
@@ -132,6 +136,8 @@ struct gui_ipc_appearance_request {
 };
 
 void gui_ipc_init(void);
+int gui_ipc_validate_surface_geometry(uint32_t width, uint32_t height,
+                                      uint32_t stride, uint64_t *bytes);
 int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
                               const char *title, const char *text, uint32_t flags);
 int gui_ipc_post_system_window(uint32_t pid, uint32_t width, uint32_t height,

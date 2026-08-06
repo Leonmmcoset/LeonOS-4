@@ -3003,6 +3003,9 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (!cmd->title || !cmd->text) {
             return -LEONOS_EFAULT;
         }
+        if (!gui_ipc_validate_surface_geometry(cmd->width, cmd->height, cmd->width, NULL)) {
+            return -LEONOS_EINVAL;
+        }
         if (user_strlen(cmd->title, GUI_IPC_WINDOW_TITLE_MAX - 1) == GUI_IPC_WINDOW_TITLE_MAX - 1 ||
             user_strlen(cmd->text, GUI_IPC_WINDOW_TEXT_MAX - 1) == GUI_IPC_WINDOW_TEXT_MAX - 1) {
             return -LEONOS_EFAULT;
@@ -3033,10 +3036,11 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         const struct gui_present_window_user *cmd = (const struct gui_present_window_user *)(uintptr_t)a2;
         uint64_t bytes;
-        if (!cmd->pixels || !cmd->width || !cmd->height || cmd->stride < cmd->width) {
+        if (!cmd->pixels ||
+            !gui_ipc_validate_surface_geometry(cmd->width, cmd->height,
+                                               cmd->stride, &bytes)) {
             return -LEONOS_EINVAL;
         }
-        bytes = (uint64_t)cmd->stride * cmd->height * sizeof(uint32_t);
         if (!user_range_ok((uint64_t)(uintptr_t)cmd->pixels, bytes)) {
             return -LEONOS_EFAULT;
         }
@@ -3050,6 +3054,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FETCH_WINDOW) {
         struct gui_fetch_window_user *cmd;
+        uint64_t bytes;
         int ret = require_window_server();
         if (ret < 0) {
             return ret;
@@ -3058,11 +3063,13 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         cmd = (struct gui_fetch_window_user *)(uintptr_t)a2;
-        if (!cmd->pixels || !cmd->capacity_width || !cmd->capacity_height || cmd->stride < cmd->capacity_width) {
+        if (!cmd->pixels ||
+            !gui_ipc_validate_surface_geometry(cmd->capacity_width,
+                                               cmd->capacity_height,
+                                               cmd->stride, &bytes)) {
             return -LEONOS_EINVAL;
         }
-        if (!user_range_ok((uint64_t)(uintptr_t)cmd->pixels,
-                           (uint64_t)cmd->stride * cmd->capacity_height * sizeof(uint32_t))) {
+        if (!user_range_ok((uint64_t)(uintptr_t)cmd->pixels, bytes)) {
             return -LEONOS_EFAULT;
         }
         return gui_ipc_fetch_window(sched_current_pid(),
