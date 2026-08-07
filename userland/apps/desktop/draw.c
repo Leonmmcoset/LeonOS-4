@@ -608,6 +608,7 @@ int load_wallpaper_bmp(void)
         return 0;
     }
     wallpaper_loaded = 1;
+    wallpaper_retry_ms = 0;
     printf("[desktop.elf] loaded wallpaper %s %dx%d\n",
            desktop_wallpaper_path, (int)wallpaper_width, (int)wallpaper_height);
     return 1;

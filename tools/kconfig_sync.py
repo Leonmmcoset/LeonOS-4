@@ -7,6 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 KNOWN_KEYS = {
+    "CONFIG_VMDK_DEFAULT_LANGUAGE_EN": "y",
+    "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH": "n",
     "CONFIG_VMDK_REQUIRE_LICENSE": "y",
     "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE": "y",
     "CONFIG_IMAGE_SIZE_MIB": "192",

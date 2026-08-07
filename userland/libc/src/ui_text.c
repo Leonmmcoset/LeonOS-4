@@ -18,6 +18,7 @@
 struct ui_ttf_font {
     uint8_t *data;
     uint32_t len;
+    uint32_t mapped_len;
     uint32_t face;
     uint32_t cmap;
     uint32_t cmap_len;
@@ -30,6 +31,7 @@ struct ui_ttf_font {
     uint16_t glyph_count;
     uint16_t hmetrics_count;
     uint8_t long_loca;
+    uint8_t mapped;
 };
 
 struct ui_ttf_point {
@@ -88,6 +90,7 @@ static uint8_t ui_ttf_row_coverage[UI_TTF_RASTER_WIDTH_MAX];
 static uint32_t ui_ttf_mask_clock;
 static uint8_t ui_ttf_checked;
 static uint8_t ui_ttf_metro;
+static unsigned long ui_ttf_next_retry_ms;
 static uint8_t ui_ttf_active_fallback;
 static char ui_ttf_override_path[UI_TTF_PATH_MAX];
 static char ui_ttf_fallback_path[UI_TTF_PATH_MAX];
@@ -155,7 +158,11 @@ static void ui_ttf_unload_font(struct ui_ttf_font *font)
     if (!font || !font->data) {
         return;
     }
-    free(font->data);
+    if (font->mapped) {
+        (void)munmap(font->data, font->mapped_len);
+    } else {
+        free(font->data);
+    }
     *font = (struct ui_ttf_font){0};
 }
 
@@ -167,6 +174,7 @@ static void ui_ttf_reset(void)
     ui_ttf_active_fallback = 0;
     ui_ttf_checked = 0;
     ui_ttf_metro = 0;
+    ui_ttf_next_retry_ms = 0;
     ui_ttf_mask_clock = 0;
     for (uint32_t index = 0; index < UI_TTF_MASK_CACHE_ENTRIES; ++index) {
         ui_ttf_mask_cache[index] = (struct ui_ttf_mask_cache_entry){0};
@@ -209,34 +217,42 @@ static int ui_ttf_read_file(struct ui_ttf_font *font, const char *path)
 {
     struct leonos_stat st;
     int fd;
-    uint32_t length = 0;
-    if (stat(path, &st) != 0 || st.type != LEONOS_FS_TYPE_FILE ||
-        st.size < 12 || st.size > UI_TTF_MAX) {
+    long mapped_raw;
+    if (!font || !path) {
+        printf("[ui] TTF invalid load request\n");
+        return 0;
+    }
+    if (stat(path, &st) != 0) {
+        printf("[ui] TTF stat failed path=%s\n", path);
+        return 0;
+    }
+    if (st.type != LEONOS_FS_TYPE_FILE || st.size < 12 || st.size > UI_TTF_MAX) {
+        printf("[ui] TTF invalid file path=%s type=%u size=%u\n",
+               path, st.type, (unsigned)st.size);
         return 0;
     }
     fd = open(path, LEONOS_O_RDONLY, 0);
     if (fd < 0) {
+        printf("[ui] TTF open failed path=%s ret=%d\n", path, fd);
         return 0;
     }
-    font->data = malloc((size_t)st.size);
-    if (!font->data) {
-        close(fd);
-        return 0;
-    }
-    while (length < st.size) {
-        long got = read(fd, font->data + length, (size_t)st.size - length);
-        if (got <= 0) {
-            break;
-        }
-        length += (uint32_t)got;
-    }
+    /* UI fonts are large (the bundled CJK font is roughly 16 MiB).  Copying
+     * every byte during the first paint turns startup into thousands of disk
+     * reads.  A read-only file mapping keeps the same parser API while the
+     * kernel supplies only the font pages actually used by UI text. */
+    mapped_raw = syscall6(SYS_mmap, 0, (long)st.size, LEONOS_PROT_READ,
+                          LEONOS_MAP_PRIVATE, fd, 0);
     close(fd);
-    font->len = length;
-    if (length == st.size) {
-        return 1;
+    if (mapped_raw < 0) {
+        printf("[ui] TTF mmap failed path=%s bytes=%u ret=%ld\n",
+               path, (unsigned)st.size, mapped_raw);
+        return 0;
     }
-    ui_ttf_unload_font(font);
-    return 0;
+    font->data = (uint8_t *)(uintptr_t)mapped_raw;
+    font->len = (uint32_t)st.size;
+    font->mapped_len = (uint32_t)st.size;
+    font->mapped = 1;
+    return 1;
 }
 
 static int ui_ttf_load_font(struct ui_ttf_font *font, const char *path)
@@ -296,7 +312,12 @@ static int ui_ttf_load_font(struct ui_ttf_font *font, const char *path)
 static void ui_ttf_load(void)
 {
     uint8_t metro = (uint8_t)ui_theme_is_metro();
-    if (ui_ttf_checked && ui_ttf_metro == metro) {
+    unsigned long now = leonos_uptime_ms();
+    if (ui_ttf_checked && ui_ttf_metro == metro && ui_ttf_primary.data) {
+        return;
+    }
+    if (ui_ttf_checked && ui_ttf_metro == metro &&
+        now < ui_ttf_next_retry_ms) {
         return;
     }
     ui_ttf_unload_font(&ui_ttf_primary);
@@ -304,6 +325,7 @@ static void ui_ttf_load(void)
     ui_ttf = (struct ui_ttf_font){0};
     ui_ttf_checked = 1;
     ui_ttf_metro = metro;
+    ui_ttf_next_retry_ms = now + 1000UL;
     if (!ui_ttf_load_font(&ui_ttf_primary, ui_ttf_primary_path()) &&
         (!ui_ttf_override_path[0] ||
          !ui_ttf_load_font(&ui_ttf_primary, ui_ttf_default_path()))) {
@@ -315,6 +337,7 @@ static void ui_ttf_load(void)
     }
     ui_ttf = ui_ttf_primary;
     ui_ttf_active_fallback = 0;
+    ui_ttf_next_retry_ms = 0;
 }
 
 static uint16_t ui_ttf_glyph_uncached(uint32_t codepoint)

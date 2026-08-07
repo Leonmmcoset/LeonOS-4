@@ -58,10 +58,12 @@
 #define LEONOS_O_TRUNC 0x0200
 #define LEONOS_O_APPEND 0x0400
 
-/* Keep writes short enough for prompt scheduling. Reads match the FAT
- * readahead window so large fonts and wallpapers do not devolve into 4 KiB
- * syscall/storage cycles. */
+/* Keep terminal and console writes short enough for prompt scheduling.
+ * Regular files use the same 32 KiB window as reads: archive extraction and
+ * compiler output must not turn every FAT cluster update into a new syscall.
+ * The kernel still limits stream output to LEONOS_FS_IO_SLICE_BYTES. */
 #define LEONOS_FS_IO_SLICE_BYTES 4096U
+#define LEONOS_FS_FILE_WRITE_SLICE_BYTES (64U * 512U)
 #define LEONOS_FS_READ_SLICE_BYTES (64U * 512U)
 
 #define LEONOS_SEEK_SET 0

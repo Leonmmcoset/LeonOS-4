@@ -242,10 +242,36 @@ static void format_process_cpu(char *buf, uint32_t cap, uint32_t percent)
 
 static void format_process_memory(char *buf, uint32_t cap, uint32_t kib)
 {
+    static const char *const units[] = {"B", "KB", "MB", "GB", "TB"};
+    uint64_t bytes = (uint64_t)kib * 1024ULL;
+    uint64_t unit_size = 1ULL;
+    uint64_t whole;
+    uint64_t fraction;
+    uint32_t unit = 0;
     uint32_t pos = 0;
+
+    while (unit + 1U < sizeof(units) / sizeof(units[0]) &&
+           bytes >= unit_size * 1024ULL) {
+        unit_size *= 1024ULL;
+        ++unit;
+    }
+    whole = bytes / unit_size;
+    /* Keep one useful decimal place for small non-integral values without
+     * making the process list jump in width on every refresh. */
+    fraction = ((bytes % unit_size) * 10ULL + unit_size / 2ULL) / unit_size;
+    if (fraction == 10ULL) {
+        ++whole;
+        fraction = 0;
+    }
+
     buf[0] = 0;
-    append_dec(buf, &pos, cap, kib);
-    append_text(buf, &pos, cap, " KiB");
+    append_dec(buf, &pos, cap, whole);
+    if (unit != 0 && whole < 10ULL && fraction != 0) {
+        append_char(buf, &pos, cap, '.');
+        append_dec(buf, &pos, cap, fraction);
+    }
+    append_char(buf, &pos, cap, ' ');
+    append_text(buf, &pos, cap, units[unit]);
 }
 
 static void rebuild_process_tree_items(void)

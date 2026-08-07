@@ -1427,8 +1427,12 @@ static int osmlayer_acl_path_has_permission(const char *path,
             osmlayer_append_char(current, &pos, sizeof(current), '/');
         }
         osmlayer_append_text(current, &pos, sizeof(current), parts[i]);
-        if (osmlayer_acl_get_explicit_or_default(current, accounts, count, &acl) < 0) {
-            return 0;
+        {
+            int acl_ret = osmlayer_acl_get_explicit_or_default(current, accounts,
+                                                               count, &acl);
+            if (acl_ret < 0) {
+                return acl_ret;
+            }
         }
         if (acl.flags & LEONOS_FS_ACL_FLAG_CORRUPT) {
             return req->role == LEONOS_AUTH_ROLE_ADMIN && needed == LEONOS_FS_PERM_MANAGE;
@@ -1446,8 +1450,14 @@ static int osmlayer_acl_path_has_permission(const char *path,
     }
     if (part_count == 0) {
         struct leonos_fs_acl acl;
-        if (osmlayer_acl_get_explicit_or_default("0:/", accounts, count, &acl) < 0 ||
-            (acl.flags & LEONOS_FS_ACL_FLAG_CORRUPT)) {
+        {
+            int acl_ret = osmlayer_acl_get_explicit_or_default("0:/", accounts,
+                                                               count, &acl);
+            if (acl_ret < 0) {
+                return acl_ret;
+            }
+        }
+        if (acl.flags & LEONOS_FS_ACL_FLAG_CORRUPT) {
             return req->role == LEONOS_AUTH_ROLE_ADMIN && needed == LEONOS_FS_PERM_MANAGE;
         }
         return (osmlayer_acl_actor_permissions(&acl, req->uid, req->role,
@@ -1461,6 +1471,7 @@ static int osmlayer_fsacl_authorize(struct leonos_authz_request *req)
     struct osmlayer_account *accounts = osmlayer_auth_accounts;
     uint32_t count = 0;
     uint32_t needed;
+    int accounts_ret;
     if (!req || !req->path[0]) {
         return 0;
     }
@@ -1468,13 +1479,25 @@ static int osmlayer_fsacl_authorize(struct leonos_authz_request *req)
         req->allowed = 0;
         return 0;
     }
-    if (osmlayer_accounts_load(accounts, &count) < 0) {
+    accounts_ret = osmlayer_accounts_load(accounts, &count);
+    if (accounts_ret < 0) {
         req->allowed = 0;
-        return 0;
+        /* Do not turn a transient storage read failure into EACCES. The
+         * kernel syscall restart path can retry EAGAIN, while a real I/O
+         * error must remain visible to the caller instead of looking like a
+         * permissions problem. */
+        return accounts_ret;
     }
     needed = osmlayer_authz_permission_bit(req->op);
-    req->allowed = osmlayer_acl_path_has_permission(req->path, accounts, count,
-                                                    req, needed) ? 1u : 0u;
+    {
+        int permission = osmlayer_acl_path_has_permission(req->path, accounts, count,
+                                                          req, needed);
+        if (permission < 0) {
+            req->allowed = 0;
+            return permission;
+        }
+        req->allowed = permission ? 1u : 0u;
+    }
     return 0;
 }
 

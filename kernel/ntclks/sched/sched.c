@@ -3,6 +3,7 @@
 #include <ntclks/inputm.h>
 #include <ntclks/paging.h>
 #include <ntclks/sched.h>
+#include <ntclks/storage.h>
 
 static struct task tasks[SCHED_TASK_MAX];
 static uint32_t task_count;
@@ -409,6 +410,7 @@ void sched_release_task_resources(struct task *task)
         (task->flags & TASK_FLAG_RESOURCES_RELEASED)) {
         return;
     }
+    storage_drain_task_io(task->pid);
     address_space_destroy(&task->as);
     task->flags |= TASK_FLAG_RESOURCES_RELEASED;
 }
@@ -553,22 +555,24 @@ struct task *sched_select_next_user(void)
         }
     }
 
-    for (uint32_t pass = 0; pass < 2; ++pass) {
-        for (uint32_t n = 1; n <= task_count; ++n) {
-            uint32_t i = (current_index + n) % task_count;
-            if (tasks[i].kind != TASK_KIND_USER || tasks[i].state != TASK_READY) {
-                continue;
-            }
-            if (pass == 0 && (tasks[i].flags & TASK_FLAG_SERVICE)) {
-                continue;
-            }
-            if ((!tasks[i].entry && !(tasks[i].image && tasks[i].image_len) &&
-                 !(tasks[i].flags & TASK_FLAG_PENDING_LOAD)) ||
-                !tasks[i].stack_top || !tasks[i].as.cr3) {
-                continue;
-            }
-            return &tasks[i];
+    /*
+     * Services (especially desktop.elf) must participate in the same
+     * round-robin queue as normal applications.  The old two-pass policy
+     * skipped every service while any ordinary process was READY; a compiler
+     * or shell that stayed runnable could therefore starve the window server
+     * indefinitely and make the whole desktop appear frozen.
+     */
+    for (uint32_t n = 1; n <= task_count; ++n) {
+        uint32_t i = (current_index + n) % task_count;
+        if (tasks[i].kind != TASK_KIND_USER || tasks[i].state != TASK_READY) {
+            continue;
         }
+        if ((!tasks[i].entry && !(tasks[i].image && tasks[i].image_len) &&
+             !(tasks[i].flags & TASK_FLAG_PENDING_LOAD)) ||
+            !tasks[i].stack_top || !tasks[i].as.cr3) {
+            continue;
+        }
+        return &tasks[i];
     }
     return NULL;
 }

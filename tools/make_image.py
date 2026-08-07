@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -34,12 +35,16 @@ def main() -> int:
     parser.add_argument("--out", default="build/images/leonos4.vmdk")
     parser.add_argument("--raw", default="build/images/leonos4.raw")
     parser.add_argument("--esp-tree", default="build/esp")
+    parser.add_argument("--default-language", choices=("en", "zh"), default="en",
+                        help="Language override written only to this VMDK image")
     parser.add_argument("--size-mib", type=int, default=96)
     args = parser.parse_args()
 
     raw = ROOT / args.raw
     out = ROOT / args.out
     esp_tree = ROOT / args.esp_tree
+    if not esp_tree.is_dir():
+        raise SystemExit(f"ESP staging tree does not exist: {esp_tree}")
     image_dir = out.parent
     image_dir.mkdir(parents=True, exist_ok=True)
     raw.parent.mkdir(parents=True, exist_ok=True)
@@ -68,10 +73,24 @@ def main() -> int:
         fat_img.unlink()
     esp_size = (end_sector - start_sector + 1) * 512
     run(["truncate", "-s", str(esp_size), str(fat_img)])
-    run(["mkfs.fat", "-F", "32", "-n", "LEONOS4", str(fat_img)])
+    # Keep this a standards-sized FAT32 while avoiding mkfs.fat's 512-byte
+    # default.  With the old layout one 4 KiB archive write allocated and
+    # updated eight FAT entries; large API payloads such as Doom's WAD could
+    # then exhaust the virtual AHCI write budget.
+    run(["mkfs.fat", "-F", "32", "-s", "4", "-n", "LEONOS4", str(fat_img)])
 
-    for item in sorted(esp_tree.iterdir()):
-        run(["mcopy", "-s", "-i", str(fat_img), str(item), "::/"])
+    # VMDK has a build-time language seed. Keep it in a private copy so the
+    # shared ESP staging tree remains unchanged; image-iso therefore retains
+    # the installer/default locale selected by its own flow.
+    with tempfile.TemporaryDirectory(prefix="leonos-vmdk-esp-") as temp_dir:
+        image_esp = Path(temp_dir) / "esp"
+        copy_tree(esp_tree, image_esp)
+        locale_path = image_esp / "system/config/locale.conf"
+        locale_path.parent.mkdir(parents=True, exist_ok=True)
+        locale_path.write_text(f"lang={args.default_language}\n", encoding="utf-8")
+        items = sorted(image_esp.iterdir())
+        for item in items:
+            run(["mcopy", "-s", "-i", str(fat_img), str(item), "::/"])
 
     run(["dd", f"if={fat_img}", f"of={raw}", "bs=512", f"seek={start_sector}", "conv=notrunc", "status=none"])
     run(["qemu-img", "convert", "-f", "raw", "-O", "vmdk", str(raw), str(out)])

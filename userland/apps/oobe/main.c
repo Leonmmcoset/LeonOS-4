@@ -506,6 +506,7 @@ static void renew_dhcp(void)
 static int create_admin(void)
 {
     struct leonos_user_info user;
+    int ret;
     if (!license_ready && !license_is_valid()) {
         current_page = OOBE_PAGE_LICENSE;
         copy_text(license_status_text, sizeof(license_status_text),
@@ -523,12 +524,27 @@ static int create_admin(void)
         copy_text(status_text, sizeof(status_text), T("Password required.", "请输入密码。"));
         return 0;
     }
-    if (leonos_auth_create_user(username, password, LEONOS_AUTH_ROLE_ADMIN, &user) < 0) {
-        copy_text(status_text, sizeof(status_text),
-                  T("Could not create administrator.", "无法创建管理员。"));
+    ret = leonos_auth_create_user(username, password, LEONOS_AUTH_ROLE_ADMIN, &user);
+    OOBE_LOG("[oobe.elf] create administrator username=%s password_len=%u ret=%d\n",
+             username, (unsigned)strlen(password), ret);
+    if (ret < 0) {
+        uint32_t pos = 0;
+        status_text[0] = 0;
+        append_text(status_text, &pos, sizeof(status_text),
+                    T("Could not create administrator (error ",
+                      "无法创建管理员（错误 "));
+        if (ret < 0) {
+            append_char(status_text, &pos, sizeof(status_text), '-');
+            append_u32(status_text, &pos, sizeof(status_text), (uint32_t)(-(ret + 1)) + 1U);
+        } else {
+            append_u32(status_text, &pos, sizeof(status_text), (uint32_t)ret);
+        }
+        append_text(status_text, &pos, sizeof(status_text), T(").", "）。"));
         return 0;
     }
-    if (leonos_auth_login(username, password, &user) < 0) {
+    ret = leonos_auth_login(username, password, &user);
+    OOBE_LOG("[oobe.elf] first administrator login username=%s ret=%d\n", username, ret);
+    if (ret < 0) {
         copy_text(status_text, sizeof(status_text),
                   T("Created account, but sign-in failed.", "账户已创建，但登录失败。"));
         return 0;

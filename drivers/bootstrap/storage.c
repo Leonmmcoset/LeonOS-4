@@ -3,7 +3,10 @@
 #include <ntclks/multiboot2.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/pci.h>
+#include <ntclks/sched.h>
 #include <ntclks/storage.h>
+#include <ntclks/syscall.h>
+#include <ntclks/time.h>
 
 #define ATA_CLASS_MASS_STORAGE 0x01u
 #define ATA_SUBCLASS_SATA 0x06u
@@ -37,6 +40,15 @@
  * application image read into a spurious -EIO. Filesystem syscalls already
  * bound each transfer, which is the responsiveness control for this path. */
 #define AHCI_WAIT_SPINS 40000000u
+/* Most virtual AHCI reads complete just after the command is submitted.  In
+ * asynchronous syscall context, poll briefly before yielding a whole PIT
+ * tick: this keeps application image and UI-resource loading fast without
+ * restoring the old unbounded Ring-0 busy wait on a slow disk. */
+#define AHCI_ASYNC_FAST_POLL_SPINS 8192u
+/* A pending asynchronous command may be polled by transparently resumed
+ * syscalls for at most five seconds. A failed virtual controller must not
+ * leave a task blocked forever. */
+#define AHCI_ASYNC_TIMEOUT_TICKS (5u * 100u)
 
 #define SECTOR_SIZE 512u
 #define GPT_ENTRY_COUNT 128u
@@ -52,12 +64,19 @@
 
 #define STORAGE_SCRATCH_SECTORS 8u
 #define STORAGE_FAT_CACHE_SECTORS 8u
-#define STORAGE_READAHEAD_SECTORS 64u
-/* 512-byte FAT32 clusters are used on the default ESP, so 32 MiB files need
- * up to 65536 clusters. Keep this aligned with LEONOS_TAR_MAX_FILE_SIZE. */
+/* Keep the FAT cache fill to a 4 KiB DMA transfer.  This is the proven
+ * compatibility limit for resource loads on the current virtual AHCI path;
+ * the short completion poll below removes the common full-tick delay without
+ * changing the transfer shape used by TTF and BMP loading. */
+#define STORAGE_READAHEAD_SECTORS 8u
+/* Keep the chain scratch space bounded even for legacy 512-byte-cluster
+ * FAT32 volumes. New VMDK images and installer-created volumes use larger
+ * clusters, but this remains the safe compatibility limit. */
 #define FAT32_MAX_FILE_CLUSTERS 65536u
 #define STORAGE_MAX_DRIVES 2u
 #define STORAGE_MAX_INSTALL_DISKS LEONOS_INSTALL_MAX_DISKS
+#define STORAGE_PATH_CACHE_ENTRIES 128u
+#define STORAGE_DIR_INDEX_ENTRIES 512u
 #define INSTALL_ESP_FIRST_LBA 2048ULL
 
 enum storage_volume_kind {
@@ -284,6 +303,16 @@ static struct storage_volume g_volumes[STORAGE_MAX_DRIVES];
 static struct storage_volume *g_active_volume = &g_volumes[0];
 #define g_storage (*g_active_volume)
 
+/*
+ * A filesystem syscall is allowed to park while it is only observing disk
+ * state.  Once it has begun a mutation, however, replaying the syscall after
+ * an asynchronous yield could allocate a second FAT chain or apply part of a
+ * directory update twice.  Keep that small critical tail synchronous; normal
+ * application loads, path walks and compiler header reads remain preemptible.
+ */
+static bool storage_io_async_context;
+static bool storage_io_write_started;
+
 static struct install_disk_state g_install_disks[STORAGE_MAX_INSTALL_DISKS];
 static uint32_t g_install_disk_count;
 static uint8_t g_devfs_enabled = 1;
@@ -298,8 +327,26 @@ static uint8_t storage_fat_cache_data[STORAGE_FAT_CACHE_SECTORS * SECTOR_SIZE]
     __attribute__((aligned(4096)));
 static uint8_t storage_read_cache_data[STORAGE_READAHEAD_SECTORS * SECTOR_SIZE]
     __attribute__((aligned(4096)));
+/* Directory lookups are much more frequent than file-data reads during a
+ * compiler build. Keep a separate cluster cache so opening the next header
+ * does not evict the directory that is being scanned from the data cache. */
+static uint8_t storage_dir_lookup_cache_data[64 * SECTOR_SIZE]
+    __attribute__((aligned(4096)));
 static uint32_t storage_old_chain[FAT32_MAX_FILE_CLUSTERS];
 static uint32_t storage_new_chain[FAT32_MAX_FILE_CLUSTERS];
+
+struct ahci_pending_command {
+    struct ahci_hba_port *port;
+    uint64_t lba;
+    uint32_t sector_count;
+    void *buffer;
+    uint64_t start_tick;
+    uint32_t owner_pid;
+    uint8_t write;
+    uint8_t active;
+};
+
+static struct ahci_pending_command ahci_pending_command;
 
 struct storage_sector_cache {
     struct storage_volume *volume;
@@ -308,8 +355,34 @@ struct storage_sector_cache {
     uint8_t valid;
 };
 
+struct storage_cluster_cache {
+    struct storage_volume *volume;
+    uint32_t cluster;
+    uint8_t valid;
+};
+
+struct storage_path_cache_entry {
+    struct storage_volume *volume;
+    struct storage_node node;
+    char path[LEONOS_FS_PATH_LEN];
+    uint8_t valid;
+};
+
+struct storage_dir_index_entry {
+    struct storage_volume *volume;
+    uint32_t directory_cluster;
+    struct storage_node node;
+    char name[LEONOS_FS_NAME_LEN];
+    uint8_t valid;
+};
+
 static struct storage_sector_cache storage_fat_cache;
 static struct storage_sector_cache storage_read_cache;
+static struct storage_cluster_cache storage_dir_lookup_cache;
+static struct storage_path_cache_entry storage_path_cache[STORAGE_PATH_CACHE_ENTRIES];
+static uint32_t storage_path_cache_next;
+static struct storage_dir_index_entry storage_dir_index[STORAGE_DIR_INDEX_ENTRIES];
+static uint32_t storage_dir_index_next;
 
 /* Keep the last file chain tail available for repeated append writes. The
  * scheduler limits each syscall to a small payload, so without this hint a
@@ -341,6 +414,24 @@ static struct storage_dir_iter_cache storage_dir_iter_cache;
 
 static int fat32_mount(void);
 
+void storage_set_io_async_context(bool enabled)
+{
+    storage_io_async_context = enabled;
+    storage_io_write_started = false;
+}
+
+static bool storage_async_can_yield(void)
+{
+    return storage_io_async_context && !storage_io_write_started;
+}
+
+static void storage_begin_mutation(void)
+{
+    if (storage_io_async_context) {
+        storage_io_write_started = true;
+    }
+}
+
 struct fat32_dir_ref {
     uint32_t entry_cluster;
     uint32_t entry_offset;
@@ -364,6 +455,15 @@ static void storage_cache_invalidate(void)
 {
     storage_fat_cache.valid = 0;
     storage_read_cache.valid = 0;
+    storage_dir_lookup_cache.valid = 0;
+    for (uint32_t i = 0; i < STORAGE_PATH_CACHE_ENTRIES; ++i) {
+        storage_path_cache[i].valid = 0;
+    }
+    storage_path_cache_next = 0;
+    for (uint32_t i = 0; i < STORAGE_DIR_INDEX_ENTRIES; ++i) {
+        storage_dir_index[i].valid = 0;
+    }
+    storage_dir_index_next = 0;
     storage_dir_iter_cache.valid = 0;
     storage_write_chain_cache.valid = 0;
 }
@@ -372,6 +472,15 @@ static void storage_sector_cache_invalidate(void)
 {
     storage_fat_cache.valid = 0;
     storage_read_cache.valid = 0;
+    storage_dir_lookup_cache.valid = 0;
+    for (uint32_t i = 0; i < STORAGE_PATH_CACHE_ENTRIES; ++i) {
+        storage_path_cache[i].valid = 0;
+    }
+    storage_path_cache_next = 0;
+    for (uint32_t i = 0; i < STORAGE_DIR_INDEX_ENTRIES; ++i) {
+        storage_dir_index[i].valid = 0;
+    }
+    storage_dir_index_next = 0;
     storage_dir_iter_cache.valid = 0;
 }
 
@@ -451,6 +560,76 @@ static int storage_text_eq_ci(const char *a, const char *b)
         ++b;
     }
     return *a == 0 && *b == 0;
+}
+
+static int storage_path_cache_lookup(const char *path, struct storage_node *out)
+{
+    if (!path || !path[0]) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < STORAGE_PATH_CACHE_ENTRIES; ++i) {
+        struct storage_path_cache_entry *entry = &storage_path_cache[i];
+        if (!entry->valid || entry->volume != g_active_volume ||
+            !storage_text_eq_ci(entry->path, path)) {
+            continue;
+        }
+        if (out) {
+            *out = entry->node;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static void storage_path_cache_store(const char *path, const struct storage_node *node)
+{
+    struct storage_path_cache_entry *entry;
+    if (!path || !path[0] || !node) {
+        return;
+    }
+    entry = &storage_path_cache[storage_path_cache_next % STORAGE_PATH_CACHE_ENTRIES];
+    storage_path_cache_next = (storage_path_cache_next + 1u) % STORAGE_PATH_CACHE_ENTRIES;
+    entry->volume = g_active_volume;
+    entry->node = *node;
+    storage_copy_text(entry->path, sizeof(entry->path), path);
+    entry->valid = 1;
+}
+
+static int storage_dir_index_lookup(uint32_t directory_cluster, const char *name,
+                                    struct storage_node *out)
+{
+    if (directory_cluster < 2 || !name || !name[0]) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < STORAGE_DIR_INDEX_ENTRIES; ++i) {
+        struct storage_dir_index_entry *entry = &storage_dir_index[i];
+        if (!entry->valid || entry->volume != g_active_volume ||
+            entry->directory_cluster != directory_cluster ||
+            !storage_text_eq_ci(entry->name, name)) {
+            continue;
+        }
+        if (out) {
+            *out = entry->node;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static void storage_dir_index_store(uint32_t directory_cluster, const char *name,
+                                    const struct storage_node *node)
+{
+    struct storage_dir_index_entry *entry;
+    if (directory_cluster < 2 || !name || !name[0] || !node) {
+        return;
+    }
+    entry = &storage_dir_index[storage_dir_index_next % STORAGE_DIR_INDEX_ENTRIES];
+    storage_dir_index_next = (storage_dir_index_next + 1u) % STORAGE_DIR_INDEX_ENTRIES;
+    entry->volume = g_active_volume;
+    entry->directory_cluster = directory_cluster;
+    entry->node = *node;
+    storage_copy_text(entry->name, sizeof(entry->name), name);
+    entry->valid = 1;
 }
 
 static uint64_t storage_rdtsc(void)
@@ -648,8 +827,34 @@ static void ahci_cpu_relax(void)
     __asm__ volatile("pause");
 }
 
+static int ahci_async_fast_poll_idle(struct ahci_hba_port *port)
+{
+    for (uint32_t i = 0; i < AHCI_ASYNC_FAST_POLL_SPINS; ++i) {
+        if ((port->tfd & (AHCI_PORT_TFD_BSY | AHCI_PORT_TFD_DRQ)) == 0) {
+            return 0;
+        }
+        ahci_cpu_relax();
+    }
+    return -LEONOS_EAGAIN;
+}
+
+static int ahci_async_fast_poll_command(struct ahci_hba_port *port)
+{
+    for (uint32_t i = 0; i < AHCI_ASYNC_FAST_POLL_SPINS; ++i) {
+        if ((port->ci & 1u) == 0) {
+            return 0;
+        }
+        ahci_cpu_relax();
+    }
+    return -LEONOS_EAGAIN;
+}
+
 static int ahci_wait_idle(struct ahci_hba_port *port)
 {
+    if (storage_async_can_yield() &&
+        (port->tfd & (AHCI_PORT_TFD_BSY | AHCI_PORT_TFD_DRQ)) != 0) {
+        return ahci_async_fast_poll_idle(port);
+    }
     for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
         if ((port->tfd & (AHCI_PORT_TFD_BSY | AHCI_PORT_TFD_DRQ)) == 0) {
             return 0;
@@ -661,6 +866,15 @@ static int ahci_wait_idle(struct ahci_hba_port *port)
 
 static int ahci_wait_cmd_slot(struct ahci_hba_port *port)
 {
+    if (storage_async_can_yield() && (port->ci | port->sact) != 0) {
+        for (uint32_t i = 0; i < AHCI_ASYNC_FAST_POLL_SPINS; ++i) {
+            if ((port->ci | port->sact) == 0) {
+                return 0;
+            }
+            ahci_cpu_relax();
+        }
+        return -LEONOS_EAGAIN;
+    }
     for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
         if ((port->ci | port->sact) == 0) {
             return 0;
@@ -668,6 +882,88 @@ static int ahci_wait_cmd_slot(struct ahci_hba_port *port)
         ahci_cpu_relax();
     }
     return -5;
+}
+
+static void ahci_pending_clear(void)
+{
+    storage_memzero(&ahci_pending_command, sizeof(ahci_pending_command));
+}
+
+static int ahci_pending_poll(void)
+{
+    struct ahci_hba_port *port = ahci_pending_command.port;
+    if (!ahci_pending_command.active || !port) {
+        return -22;
+    }
+    if ((port->ci & 1u) != 0) {
+        if (storage_async_can_yield()) {
+            int poll_ret = ahci_async_fast_poll_command(port);
+            if (poll_ret == 0) {
+                goto command_complete;
+            }
+            if (time_ticks() - ahci_pending_command.start_tick >=
+                AHCI_ASYNC_TIMEOUT_TICKS) {
+                port->ci &= ~1u;
+                ahci_pending_clear();
+                return -5;
+            }
+            return -LEONOS_EAGAIN;
+        }
+        for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
+            if ((port->ci & 1u) == 0) {
+                break;
+            }
+            ahci_cpu_relax();
+        }
+        if ((port->ci & 1u) != 0) {
+            ahci_pending_clear();
+            return -5;
+        }
+    }
+command_complete:
+    if (port->is & AHCI_PORT_IS_TFES) {
+        ahci_pending_clear();
+        return -5;
+    }
+    ahci_pending_clear();
+    return 0;
+}
+
+static int ahci_pending_matches(struct ahci_hba_port *port, uint64_t lba,
+                                uint32_t sector_count, const void *buffer,
+                                uint8_t write)
+{
+    return ahci_pending_command.active &&
+           ahci_pending_command.port == port &&
+           ahci_pending_command.lba == lba &&
+           ahci_pending_command.sector_count == sector_count &&
+           ahci_pending_command.buffer == buffer &&
+           ahci_pending_command.write == write;
+}
+
+void storage_drain_task_io(uint32_t pid)
+{
+    bool saved_async;
+    bool saved_write_started;
+    if (!pid || !ahci_pending_command.active ||
+        ahci_pending_command.owner_pid != pid) {
+        return;
+    }
+    /* The task's address space is about to be released.  Finish its DMA
+     * before pages can be reused by another process.  This runs only while
+     * reaping an exited owner, never on the normal application I/O path. */
+    saved_async = storage_io_async_context;
+    saved_write_started = storage_io_write_started;
+    storage_io_async_context = false;
+    storage_io_write_started = true;
+    (void)ahci_pending_poll();
+    storage_io_async_context = saved_async;
+    storage_io_write_started = saved_write_started;
+}
+
+static int storage_read_failure(int ret)
+{
+    return ret == -LEONOS_EAGAIN ? ret : -5;
 }
 
 static void ahci_stop_port(struct ahci_hba_port *port)
@@ -714,12 +1010,24 @@ static int ahci_read_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sect
     struct ahci_cmd_header *hdr;
     struct ahci_cmd_table *tbl;
     struct fis_reg_h2d *fis;
+    int pending_ret;
+    int pending_matches;
 
     if (!port || !buffer || sector_count == 0 || sector_count > AHCI_MAX_SECTORS) {
         return -22;
     }
+    if (ahci_pending_command.active) {
+        pending_matches = ahci_pending_matches(port, lba, sector_count, buffer, 0);
+        pending_ret = ahci_pending_poll();
+        if (pending_matches || pending_ret < 0) {
+            return pending_ret;
+        }
+        if (pending_ret != 0) {
+            return -5;
+        }
+    }
     if (ahci_wait_idle(port) < 0) {
-        return -5;
+        return storage_async_can_yield() ? -LEONOS_EAGAIN : -5;
     }
 
     port->is = 0xffffffffu;
@@ -750,20 +1058,18 @@ static int ahci_read_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sect
     fis->counth = (uint8_t)((sector_count >> 8) & 0xffu);
 
     if (ahci_wait_cmd_slot(port) < 0) {
-        return -5;
+        return storage_async_can_yield() ? -LEONOS_EAGAIN : -5;
     }
     port->ci = 1u;
-
-    for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
-        if ((port->ci & 1u) == 0) {
-            if (port->is & AHCI_PORT_IS_TFES) {
-                return -5;
-            }
-            return 0;
-        }
-        ahci_cpu_relax();
-    }
-    return -5;
+    ahci_pending_command.port = port;
+    ahci_pending_command.lba = lba;
+    ahci_pending_command.sector_count = sector_count;
+    ahci_pending_command.buffer = buffer;
+    ahci_pending_command.start_tick = time_ticks();
+    ahci_pending_command.owner_pid = sched_current_pid();
+    ahci_pending_command.write = 0;
+    ahci_pending_command.active = 1;
+    return ahci_pending_poll();
 }
 
 static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sector_count, const void *buffer)
@@ -771,12 +1077,24 @@ static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sec
     struct ahci_cmd_header *hdr;
     struct ahci_cmd_table *tbl;
     struct fis_reg_h2d *fis;
+    int pending_ret;
+    int pending_matches;
 
     if (!port || !buffer || sector_count == 0 || sector_count > AHCI_MAX_SECTORS) {
         return -22;
     }
+    if (ahci_pending_command.active) {
+        pending_matches = ahci_pending_matches(port, lba, sector_count, buffer, 1);
+        pending_ret = ahci_pending_poll();
+        if (pending_matches || pending_ret < 0) {
+            return pending_ret;
+        }
+        if (pending_ret != 0) {
+            return -5;
+        }
+    }
     if (ahci_wait_idle(port) < 0) {
-        return -5;
+        return storage_async_can_yield() ? -LEONOS_EAGAIN : -5;
     }
 
     port->is = 0xffffffffu;
@@ -807,20 +1125,18 @@ static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sec
     fis->counth = (uint8_t)((sector_count >> 8) & 0xffu);
 
     if (ahci_wait_cmd_slot(port) < 0) {
-        return -5;
+        return storage_async_can_yield() ? -LEONOS_EAGAIN : -5;
     }
     port->ci = 1u;
-
-    for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
-        if ((port->ci & 1u) == 0) {
-            if (port->is & AHCI_PORT_IS_TFES) {
-                return -5;
-            }
-            return 0;
-        }
-        ahci_cpu_relax();
-    }
-    return -5;
+    ahci_pending_command.port = port;
+    ahci_pending_command.lba = lba;
+    ahci_pending_command.sector_count = sector_count;
+    ahci_pending_command.buffer = (void *)buffer;
+    ahci_pending_command.start_tick = time_ticks();
+    ahci_pending_command.owner_pid = sched_current_pid();
+    ahci_pending_command.write = 1;
+    ahci_pending_command.active = 1;
+    return ahci_pending_poll();
 }
 
 static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffer)
@@ -852,6 +1168,9 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
 static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void *buffer)
 {
     const uint8_t *src = (const uint8_t *)buffer;
+    /* From this point the caller may have changed filesystem metadata.  Do
+     * not return EAGAIN and replay a partially completed mutation. */
+    storage_begin_mutation();
     storage_sector_cache_invalidate();
     if (g_storage.kind == STORAGE_VOLUME_RAM) {
         uint64_t offset = lba * SECTOR_SIZE;
@@ -978,8 +1297,9 @@ static int fat32_read_fat_entry(uint32_t cluster, uint32_t *out_next)
         cache_sectors = (uint32_t)min_u64(STORAGE_FAT_CACHE_SECTORS,
                                           fat_end - cache_start);
         storage_fat_cache.valid = 0;
-        if (storage_read_sectors(cache_start, cache_sectors, storage_fat_cache_data) < 0) {
-            return -5;
+        int ret = storage_read_sectors(cache_start, cache_sectors, storage_fat_cache_data);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         storage_fat_cache.volume = g_active_volume;
         storage_fat_cache.first_lba = cache_start;
@@ -1033,8 +1353,9 @@ static int storage_read_contiguous_clusters(uint32_t first_cluster,
         return -22;
     }
     for (;;) {
-        if (fat32_read_fat_entry(cluster, &next) < 0) {
-            return -5;
+        int ret = fat32_read_fat_entry(cluster, &next);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         if (count >= max_clusters || next >= FAT32_EOC || next != cluster + 1u) {
             *out_clusters = count;
@@ -1057,13 +1378,39 @@ static int storage_read_cache_fill(uint32_t first_cluster, uint32_t clusters)
     sectors = clusters * g_storage.sectors_per_cluster;
     lba = cluster_to_lba(first_cluster);
     storage_read_cache.valid = 0;
-    if (storage_read_sectors(lba, sectors, storage_read_cache_data) < 0) {
-        return -5;
+    int ret = storage_read_sectors(lba, sectors, storage_read_cache_data);
+    if (ret < 0) {
+        return storage_read_failure(ret);
     }
     storage_read_cache.volume = g_active_volume;
     storage_read_cache.first_lba = lba;
     storage_read_cache.sector_count = sectors;
     storage_read_cache.valid = 1;
+    return 0;
+}
+
+static int fat32_read_lookup_cluster(uint32_t cluster, void *buffer)
+{
+    if (cluster < 2 || !buffer || g_storage.cluster_bytes == 0 ||
+        g_storage.cluster_bytes > sizeof(storage_dir_lookup_cache_data)) {
+        return -22;
+    }
+    if (storage_dir_lookup_cache.valid &&
+        storage_dir_lookup_cache.volume == g_active_volume &&
+        storage_dir_lookup_cache.cluster == cluster) {
+        storage_memcpy(buffer, storage_dir_lookup_cache_data, g_storage.cluster_bytes);
+        return 0;
+    }
+    int ret = storage_read_sectors(cluster_to_lba(cluster), g_storage.sectors_per_cluster,
+                                   storage_dir_lookup_cache_data);
+    if (ret < 0) {
+        storage_dir_lookup_cache.valid = 0;
+        return storage_read_failure(ret);
+    }
+    storage_dir_lookup_cache.volume = g_active_volume;
+    storage_dir_lookup_cache.cluster = cluster;
+    storage_dir_lookup_cache.valid = 1;
+    storage_memcpy(buffer, storage_dir_lookup_cache_data, g_storage.cluster_bytes);
     return 0;
 }
 
@@ -1077,13 +1424,15 @@ static int fat32_write_fat_entry(uint32_t cluster, uint32_t value)
     for (uint32_t fat = 0; fat < g_storage.fat_count; ++fat) {
         uint64_t lba = g_storage.esp_start_lba + g_storage.fat_start_sector +
                        (uint64_t)fat * g_storage.fat_sector_count + sector_offset;
-        if (storage_read_sectors(lba, 1, storage_scratch) < 0) {
-            return -5;
+        int ret = storage_read_sectors(lba, 1, storage_scratch);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         *(uint32_t *)(void *)(storage_scratch + offset) =
             (*(uint32_t *)(void *)(storage_scratch + offset) & 0xf0000000u) | masked;
-        if (storage_write_sectors(lba, 1, storage_scratch) < 0) {
-            return -5;
+        ret = storage_write_sectors(lba, 1, storage_scratch);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
     }
     /* storage_write_sectors() invalidates the read cache. Re-seed the FAT
@@ -1254,8 +1603,9 @@ static int fat32_find_free_cluster(uint32_t *out_cluster)
         uint32_t end = pass == 0 ? max_cluster : (start > 2 ? start - 1u : 1u);
         for (uint32_t cluster = begin; cluster <= end; ++cluster) {
             uint32_t value = 0;
-            if (fat32_read_fat_entry(cluster, &value) < 0) {
-                return -5;
+            int ret = fat32_read_fat_entry(cluster, &value);
+            if (ret < 0) {
+                return storage_read_failure(ret);
             }
             if (value == 0) {
                 *out_cluster = cluster;
@@ -1284,8 +1634,9 @@ static int fat32_collect_chain(uint32_t first_cluster, uint32_t chain[FAT32_MAX_
             return -28;
         }
         chain[count++] = cluster;
-        if (fat32_read_fat_entry(cluster, &next) < 0) {
-            return -5;
+        int ret = fat32_read_fat_entry(cluster, &next);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         if (next >= FAT32_EOC) {
             break;
@@ -1309,11 +1660,13 @@ static int fat32_free_chain(uint32_t first_cluster)
         if (count++ >= FAT32_MAX_FILE_CLUSTERS) {
             return -28;
         }
-        if (fat32_read_fat_entry(cluster, &next) < 0) {
-            return -5;
+        int ret = fat32_read_fat_entry(cluster, &next);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
-        if (fat32_write_fat_entry(cluster, 0) < 0) {
-            return -5;
+        ret = fat32_write_fat_entry(cluster, 0);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         if (next >= FAT32_EOC) {
             break;
@@ -1509,8 +1862,9 @@ static int fat32_short_name_exists_in_dir(uint32_t dir_cluster, const uint8_t sh
 {
     uint32_t cluster = dir_cluster;
     for (;;) {
-        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
-            return -5;
+        int ret = fat32_read_cluster(cluster, storage_cluster_buf);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
             struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
@@ -1526,8 +1880,9 @@ static int fat32_short_name_exists_in_dir(uint32_t dir_cluster, const uint8_t sh
         }
         {
             uint32_t next = 0;
-            if (fat32_read_fat_entry(cluster, &next) < 0) {
-                return -5;
+            ret = fat32_read_fat_entry(cluster, &next);
+            if (ret < 0) {
+                return storage_read_failure(ret);
             }
             if (next >= FAT32_EOC) {
                 return 0;
@@ -1667,9 +2022,13 @@ static int fat32_find_in_dir(uint32_t dir_cluster, const char *name, struct stor
     uint32_t cluster = dir_cluster;
     uint16_t lfn_parts[20][13];
     uint32_t lfn_count = 0;
+    if (storage_dir_index_lookup(dir_cluster, name, out)) {
+        return 0;
+    }
     for (;;) {
-        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
-            return -5;
+        int ret = fat32_read_lookup_cluster(cluster, storage_cluster_buf);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
             struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
@@ -1700,9 +2059,17 @@ static int fat32_find_in_dir(uint32_t dir_cluster, const char *name, struct stor
                 continue;
             }
             int matched = 0;
+            struct storage_node candidate = {
+                .type = (de->attr & FAT32_ATTR_DIRECTORY) ? LEONOS_FS_TYPE_DIR : LEONOS_FS_TYPE_FILE,
+                .flags = 0,
+                .first_cluster = ((uint32_t)de->first_cluster_hi << 16) | de->first_cluster_lo,
+                .drive = g_storage.drive,
+                .size = de->size,
+            };
             if (lfn_count) {
                 char full[LEONOS_FS_NAME_LEN];
                 fat32_build_lfn_name(lfn_parts, lfn_count, full, sizeof(full));
+                storage_dir_index_store(dir_cluster, full, &candidate);
                 matched = storage_text_eq_ci(full, name) || fat32_name_match_short(de, name);
             } else {
                 matched = fat32_name_match_short(de, name);
@@ -1712,16 +2079,14 @@ static int fat32_find_in_dir(uint32_t dir_cluster, const char *name, struct stor
                 continue;
             }
             if (out) {
-                out->type = (de->attr & FAT32_ATTR_DIRECTORY) ? LEONOS_FS_TYPE_DIR : LEONOS_FS_TYPE_FILE;
-                out->size = de->size;
-                out->first_cluster = ((uint32_t)de->first_cluster_hi << 16) | de->first_cluster_lo;
-                out->flags = 0;
+                *out = candidate;
             }
             return 0;
         }
         uint32_t next = 0;
-        if (fat32_read_fat_entry(cluster, &next) < 0) {
-            return -5;
+        ret = fat32_read_fat_entry(cluster, &next);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         if (next >= FAT32_EOC) {
             return -2;
@@ -1736,8 +2101,9 @@ static int fat32_find_dirent_ref_in_dir(uint32_t dir_cluster, const char *name, 
     uint16_t lfn_parts[20][13];
     uint32_t lfn_count = 0;
     for (;;) {
-        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
-            return -5;
+        int ret = fat32_read_lookup_cluster(cluster, storage_cluster_buf);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
             struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
@@ -1792,8 +2158,9 @@ static int fat32_find_dirent_ref_in_dir(uint32_t dir_cluster, const char *name, 
         }
         {
             uint32_t next = 0;
-            if (fat32_read_fat_entry(cluster, &next) < 0) {
-                return -5;
+            ret = fat32_read_fat_entry(cluster, &next);
+            if (ret < 0) {
+                return storage_read_failure(ret);
             }
             if (next >= FAT32_EOC) {
                 return -2;
@@ -1805,15 +2172,18 @@ static int fat32_find_dirent_ref_in_dir(uint32_t dir_cluster, const char *name, 
 
 static int fat32_update_dirent(const struct fat32_dir_ref *ref)
 {
+    int ret;
     if (!ref || ref->entry_cluster < 2 || ref->entry_offset + sizeof(struct fat32_dirent) > g_storage.cluster_bytes) {
         return -22;
     }
-    if (fat32_read_cluster(ref->entry_cluster, storage_cluster_buf) < 0) {
-        return -5;
+    ret = fat32_read_cluster(ref->entry_cluster, storage_cluster_buf);
+    if (ret < 0) {
+        return storage_read_failure(ret);
     }
     *(struct fat32_dirent *)(void *)(storage_cluster_buf + ref->entry_offset) = ref->dirent;
-    if (fat32_write_cluster(ref->entry_cluster, storage_cluster_buf) < 0) {
-        return -5;
+    ret = fat32_write_cluster(ref->entry_cluster, storage_cluster_buf);
+    if (ret < 0) {
+        return storage_read_failure(ret);
     }
     return 0;
 }
@@ -1868,8 +2238,9 @@ static int fat32_find_free_dirent_span(uint32_t dir_cluster, uint32_t slots,
     for (;;) {
         uint32_t run = 0;
         uint32_t run_start = 0;
-        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
-            return -5;
+        int ret = fat32_read_cluster(cluster, storage_cluster_buf);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
             struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
@@ -1889,21 +2260,28 @@ static int fat32_find_free_dirent_span(uint32_t dir_cluster, uint32_t slots,
         }
         {
             uint32_t next = 0;
-            if (fat32_read_fat_entry(cluster, &next) < 0) {
-                return -5;
+            ret = fat32_read_fat_entry(cluster, &next);
+            if (ret < 0) {
+                return storage_read_failure(ret);
             }
             if (next >= FAT32_EOC) {
                 uint32_t new_cluster = 0;
-                if (fat32_find_free_cluster(&new_cluster) < 0) {
-                    return -28;
+                ret = fat32_find_free_cluster(&new_cluster);
+                if (ret < 0) {
+                    return storage_read_failure(ret);
                 }
-                if (fat32_write_fat_entry(cluster, new_cluster) < 0 ||
-                    fat32_write_fat_entry(new_cluster, FAT32_EOC) < 0) {
-                    return -5;
+                ret = fat32_write_fat_entry(cluster, new_cluster);
+                if (ret < 0) {
+                    return storage_read_failure(ret);
+                }
+                ret = fat32_write_fat_entry(new_cluster, FAT32_EOC);
+                if (ret < 0) {
+                    return storage_read_failure(ret);
                 }
                 storage_memzero(storage_cluster_buf, g_storage.cluster_bytes);
-                if (fat32_write_cluster(new_cluster, storage_cluster_buf) < 0) {
-                    return -5;
+                ret = fat32_write_cluster(new_cluster, storage_cluster_buf);
+                if (ret < 0) {
+                    return storage_read_failure(ret);
                 }
                 out->entry_cluster = new_cluster;
                 out->entry_offset = 0;
@@ -1949,8 +2327,9 @@ static int fat32_create_dirent(uint32_t parent_cluster, const char *name, uint8_
     dirent.first_cluster_lo = (uint16_t)(first_cluster & 0xffffu);
     dirent.size = size;
 
-    if (fat32_read_cluster(span.entry_cluster, storage_cluster_buf) < 0) {
-        return -5;
+    ret = fat32_read_cluster(span.entry_cluster, storage_cluster_buf);
+    if (ret < 0) {
+        return storage_read_failure(ret);
     }
     if (need_lfn) {
         uint16_t utf16_name[260];
@@ -1966,8 +2345,9 @@ static int fat32_create_dirent(uint32_t parent_cluster, const char *name, uint8_
     }
     *(struct fat32_dirent *)(void *)(storage_cluster_buf +
         span.entry_offset + lfn_count * sizeof(struct fat32_dirent)) = dirent;
-    if (fat32_write_cluster(span.entry_cluster, storage_cluster_buf) < 0) {
-        return -5;
+    ret = fat32_write_cluster(span.entry_cluster, storage_cluster_buf);
+    if (ret < 0) {
+        return storage_read_failure(ret);
     }
     return 0;
 }
@@ -1980,8 +2360,9 @@ static int fat32_delete_dirent(uint32_t dir_cluster, const char *name,
     uint32_t lfn_count = 0;
     uint32_t lfn_start = 0xffffffffu;
     for (;;) {
-        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
-            return -5;
+        int ret = fat32_read_cluster(cluster, storage_cluster_buf);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
             struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
@@ -2041,16 +2422,18 @@ static int fat32_delete_dirent(uint32_t dir_cluster, const char *name,
                         (struct fat32_dirent *)(void *)(storage_cluster_buf + clear);
                     clear_de->name[0] = 0xe5u;
                 }
-                if (fat32_write_cluster(cluster, storage_cluster_buf) < 0) {
-                    return -5;
+                ret = fat32_write_cluster(cluster, storage_cluster_buf);
+                if (ret < 0) {
+                    return storage_read_failure(ret);
                 }
                 return 0;
             }
         }
         {
             uint32_t next = 0;
-            if (fat32_read_fat_entry(cluster, &next) < 0) {
-                return -5;
+            ret = fat32_read_fat_entry(cluster, &next);
+            if (ret < 0) {
+                return storage_read_failure(ret);
             }
             if (next >= FAT32_EOC) {
                 return -2;
@@ -2090,8 +2473,9 @@ static int fat32_dir_is_empty(uint32_t dir_cluster)
 {
     uint32_t cluster = dir_cluster;
     for (;;) {
-        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
-            return -5;
+        int ret = fat32_read_cluster(cluster, storage_cluster_buf);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         for (uint32_t off = 0; off < g_storage.cluster_bytes; off += sizeof(struct fat32_dirent)) {
             struct fat32_dirent *de = (struct fat32_dirent *)(void *)(storage_cluster_buf + off);
@@ -2112,8 +2496,9 @@ static int fat32_dir_is_empty(uint32_t dir_cluster)
         }
         {
             uint32_t next = 0;
-            if (fat32_read_fat_entry(cluster, &next) < 0) {
-                return -5;
+            ret = fat32_read_fat_entry(cluster, &next);
+            if (ret < 0) {
+                return storage_read_failure(ret);
             }
             if (next >= FAT32_EOC) {
                 return 1;
@@ -2144,8 +2529,9 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
         storage_dir_iter_cache.valid = 0;
     }
     for (;;) {
-        if (fat32_read_cluster(cluster, storage_cluster_buf) < 0) {
-            return -5;
+        int ret = fat32_read_cluster(cluster, storage_cluster_buf);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         for (uint32_t off = first_offset; off < g_storage.cluster_bytes;
              off += sizeof(struct fat32_dirent)) {
@@ -2238,8 +2624,9 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
             return 0;
         }
         uint32_t next = 0;
-        if (fat32_read_fat_entry(cluster, &next) < 0) {
-            return -5;
+        ret = fat32_read_fat_entry(cluster, &next);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         if (next >= FAT32_EOC) {
             return -2;
@@ -2256,6 +2643,9 @@ void storage_init(void)
     g_install_disk_count = 0;
     g_devfs_enabled = 1;
     g_installer_root_active = 0;
+    storage_io_async_context = false;
+    storage_io_write_started = false;
+    ahci_pending_clear();
     g_active_volume = &g_volumes[0];
     storage_cache_invalidate();
 
@@ -2416,6 +2806,7 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
     storage_memzero(root, sizeof(*root));
     g_active_volume = root;
     g_installer_root_active = 0;
+    ahci_pending_clear();
     storage_cache_invalidate();
     if (!image || len < SECTOR_SIZE || (len % SECTOR_SIZE) != 0) {
         return -22;
@@ -2628,6 +3019,10 @@ int storage_lookup_path(const char *path, struct storage_node *out)
         return 0;
     }
 
+    if (storage_path_cache_lookup(resolved, out)) {
+        return 0;
+    }
+
     struct storage_node node = {
         .type = LEONOS_FS_TYPE_DIR,
         .flags = STORAGE_NODE_FLAG_ROOT,
@@ -2671,6 +3066,7 @@ int storage_lookup_path(const char *path, struct storage_node *out)
     if (out) {
         *out = node;
     }
+    storage_path_cache_store(resolved, &node);
     return 0;
 }
 
@@ -2709,9 +3105,10 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     uint32_t cluster_off = (uint32_t)(offset % g_storage.cluster_bytes);
     while (skip_clusters--) {
         uint32_t next = 0;
-        if (fat32_read_fat_entry(cluster, &next) < 0) {
+        ret = fat32_read_fat_entry(cluster, &next);
+        if (ret < 0) {
             storage_restore_volume(old_volume);
-            return -5;
+            return storage_read_failure(ret);
         }
         if (next >= FAT32_EOC) {
             storage_restore_volume(old_volume);
@@ -2743,16 +3140,22 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
             if (cache_clusters > max_clusters) {
                 cache_clusters = max_clusters;
             }
-            if (fat32_read_fat_entry(cluster + cache_clusters - 1u, &next) < 0) {
+            ret = fat32_read_fat_entry(cluster + cache_clusters - 1u, &next);
+            if (ret < 0) {
                 storage_restore_volume(old_volume);
-                return -5;
+                return storage_read_failure(ret);
             }
         } else {
-            if (storage_read_contiguous_clusters(cluster, max_clusters,
-                                                 &cache_clusters, &next) < 0 ||
-                storage_read_cache_fill(cluster, cache_clusters) < 0) {
+            ret = storage_read_contiguous_clusters(cluster, max_clusters,
+                                                   &cache_clusters, &next);
+            if (ret < 0) {
                 storage_restore_volume(old_volume);
-                return -5;
+                return storage_read_failure(ret);
+            }
+            ret = storage_read_cache_fill(cluster, cache_clusters);
+            if (ret < 0) {
+                storage_restore_volume(old_volume);
+                return storage_read_failure(ret);
             }
             cache_offset = 0;
         }
@@ -2940,10 +3343,6 @@ int storage_write_node(const char *path, uint64_t offset,
             if (fat32_write_fat_entry(storage_old_chain[i], FAT32_EOC) < 0) {
                 return -5;
             }
-            storage_memzero(storage_cluster_buf, g_storage.cluster_bytes);
-            if (fat32_write_cluster(storage_old_chain[i], storage_cluster_buf) < 0) {
-                return -5;
-            }
         }
         if (cached_append) {
             if (clusters_needed > old_count) {
@@ -2994,7 +3393,13 @@ int storage_write_node(const char *path, uint64_t offset,
                 return -5;
             }
             if (cluster_off != 0 || take != g_storage.cluster_bytes) {
-                if (fat32_read_cluster(storage_old_chain[cluster_index], storage_cluster_buf) < 0) {
+                if (cluster_index >= old_count) {
+                    /* Newly allocated clusters have no visible contents yet.
+                     * Zero only the bytes this partial write does not cover;
+                     * avoid an otherwise redundant full-cluster DMA write. */
+                    storage_memzero(storage_cluster_buf, g_storage.cluster_bytes);
+                } else if (fat32_read_cluster(storage_old_chain[cluster_index],
+                                               storage_cluster_buf) < 0) {
                     return -5;
                 }
             }
@@ -3666,6 +4071,9 @@ static int install_write_sectors(struct install_disk_state *disk, uint64_t lba,
     if (!disk || !disk->present || !disk->hba_port || !buffer) {
         return -22;
     }
+    /* Installer formatting is also a filesystem mutation: do not make its
+     * multi-sector GPT/FAT update replayable after an async yield. */
+    storage_begin_mutation();
     storage_cache_invalidate();
     while (sector_count) {
         uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);

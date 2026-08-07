@@ -2,6 +2,22 @@ menu "LeonOS 4"
 
 menu "Build"
 
+choice
+    prompt "Standalone VMDK default language"
+    default VMDK_DEFAULT_LANGUAGE_EN
+    help
+      Select the language preseeded in standalone VMDK images. This does not
+      change the ISO installer language or the language selected by the user
+      during installation.
+
+config VMDK_DEFAULT_LANGUAGE_EN
+    bool "English"
+
+config VMDK_DEFAULT_LANGUAGE_ZH
+    bool "Simplified Chinese"
+
+endchoice
+
 config VMDK_REQUIRE_LICENSE
     bool "Standalone VMDK requires license activation"
     default y

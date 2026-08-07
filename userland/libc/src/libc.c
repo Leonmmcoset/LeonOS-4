@@ -339,8 +339,8 @@ long write(int fd, const void *buf, size_t len)
     while (done < len) {
         size_t chunk = len - done;
         long ret;
-        if (chunk > LEONOS_FS_IO_SLICE_BYTES) {
-            chunk = LEONOS_FS_IO_SLICE_BYTES;
+        if (chunk > LEONOS_FS_FILE_WRITE_SLICE_BYTES) {
+            chunk = LEONOS_FS_FILE_WRITE_SLICE_BYTES;
         }
         ret = syscall3(SYS_write, fd, (long)((const uint8_t *)buf + done), (long)chunk);
         if (ret <= 0) {

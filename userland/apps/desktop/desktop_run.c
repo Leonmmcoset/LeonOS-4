@@ -164,6 +164,20 @@ void desktop_run(void)
         }
 
         unsigned long now = leonos_uptime_ms();
+        if (!wallpaper_loaded && now >= wallpaper_retry_ms) {
+            if (load_wallpaper_bmp()) {
+                full_redraw_pending = 1;
+            }
+            wallpaper_retry_ms = now + 1000UL;
+            did_work = 1;
+        }
+        if (!desktop_items_ready && now >= desktop_items_retry_ms) {
+            if (desktop_refresh_items() < 0) {
+                desktop_items_retry_ms = now + 1000UL;
+            }
+            full_redraw_pending = 1;
+            did_work = 1;
+        }
         if (desktop_taskbar_visible && now / 1000UL != last_clock_second) {
             last_clock_second = now / 1000UL;
             repaint_and_flush(rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));

@@ -1279,6 +1279,7 @@ static int startup_command_validate(struct leonos_startup_command *command,
     char resolved[LEONOS_FS_PATH_LEN];
     struct leonos_stat st;
     uint32_t exec_bytes;
+    int ret;
     if (!command || !task || !command->path[0] ||
         command->argc > LEONOS_STARTUP_MAX_ARGS ||
         kernel_string_len_cap(command->path, sizeof(command->path)) >= sizeof(command->path)) {
@@ -1290,12 +1291,20 @@ static int startup_command_validate(struct leonos_startup_command *command,
             return -LEONOS_EINVAL;
         }
     }
-    if (storage_resolve_path(task->cwd, command->path, resolved, sizeof(resolved)) < 0 ||
-        storage_stat_path(resolved, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE) {
+    ret = storage_resolve_path(task->cwd, command->path, resolved, sizeof(resolved));
+    if (ret < 0) {
         return -LEONOS_EINVAL;
     }
-    if (authz_check_path(task, LEONOS_AUTHZ_EXEC, resolved, 0, 0) < 0) {
-        return -LEONOS_EACCES;
+    ret = storage_stat_path(resolved, &st);
+    if (ret < 0) {
+        return ret == -2 ? -LEONOS_EINVAL : ret;
+    }
+    if (st.type != LEONOS_FS_TYPE_FILE) {
+        return -LEONOS_EINVAL;
+    }
+    ret = authz_check_path(task, LEONOS_AUTHZ_EXEC, resolved, 0, 0);
+    if (ret < 0) {
+        return ret;
     }
     copy_text(command->path, sizeof(command->path), resolved);
     exec_bytes = kernel_string_len_cap(command->path, sizeof(command->path)) + 1U;
@@ -2333,14 +2342,17 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (!user_range_ok(a1, a2)) {
             return -LEONOS_EFAULT;
         }
-        request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
-                          ? LEONOS_FS_IO_SLICE_BYTES
-                          : (uint32_t)a2;
         pty_stream = task_pty_stream_for_fd(task, (int)a0);
         if (pty_stream == 1 || pty_stream == 2) {
+            request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
+                              ? LEONOS_FS_IO_SLICE_BYTES
+                              : (uint32_t)a2;
             return pty_write_output(task->pty_id, (const char *)(uintptr_t)a1, request_len);
         }
         if (a0 == 1 || a0 == 2) {
+            request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
+                              ? LEONOS_FS_IO_SLICE_BYTES
+                              : (uint32_t)a2;
             console_write_len((const char *)(uintptr_t)a1, (size_t)request_len);
             return (int64_t)request_len;
         }
@@ -2359,6 +2371,9 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (file->node.type != LEONOS_FS_TYPE_FILE || !file->path[0]) {
             return -LEONOS_EBADF;
         }
+        request_len = a2 > LEONOS_FS_FILE_WRITE_SLICE_BYTES
+                          ? LEONOS_FS_FILE_WRITE_SLICE_BYTES
+                          : (uint32_t)a2;
         ret = authz_check_path(task, LEONOS_AUTHZ_WRITE, file->path, 0, 0);
         if (ret < 0) {
             return ret;
@@ -2435,8 +2450,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         request_len = a2 > LEONOS_FS_READ_SLICE_BYTES
                           ? LEONOS_FS_READ_SLICE_BYTES
                           : (uint32_t)a2;
-        if (storage_read_node(&file->node, file->offset, (void *)(uintptr_t)a1, request_len, &got) < 0) {
-            return -LEONOS_EINVAL;
+        {
+            int ret = storage_read_node(&file->node, file->offset,
+                                        (void *)(uintptr_t)a1, request_len, &got);
+            if (ret < 0) {
+                return storage_errno(ret);
+            }
         }
         file->offset += got;
         return (int64_t)got;
@@ -4190,14 +4209,30 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
 void syscall_dispatch_frame(struct trap_frame *frame)
 {
+    uint64_t number;
+    int64_t result;
     if (!frame) {
         return;
     }
-    frame->rax = (uint64_t)syscall_dispatch_regs(frame->rax,
-                                                 frame->rdi,
-                                                 frame->rsi,
-                                                 frame->rdx,
-                                                 frame->r10,
-                                                 frame->r8,
-                                                 frame->r9);
+    number = frame->rax;
+    storage_set_io_async_context(true);
+    result = syscall_dispatch_regs(number,
+                                   frame->rdi,
+                                   frame->rsi,
+                                   frame->rdx,
+                                   frame->r10,
+                                   frame->r8,
+                                   frame->r9);
+    storage_set_io_async_context(false);
+    if (result == -LEONOS_EAGAIN) {
+        /* int $0x80 has advanced RIP by two bytes.  Park this task for one
+         * timer tick and re-execute the exact same instruction when its AHCI
+         * DMA request can be polled again.  User programs keep normal
+         * blocking read/open/stat semantics and never observe EAGAIN. */
+        frame->rax = number;
+        frame->rip -= 2u;
+        sched_sleep_current_until(time_ticks() + 1u);
+        return;
+    }
+    frame->rax = (uint64_t)result;
 }

@@ -93,6 +93,8 @@ def runtime_app_relative(app: str, extension: str) -> Path:
     return Path(root) / app / f"{app}.{extension}"
 
 KCONFIG_DEFAULTS = {
+    "CONFIG_VMDK_DEFAULT_LANGUAGE_EN": "y",
+    "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH": "n",
     "CONFIG_VMDK_REQUIRE_LICENSE": "y",
     "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE": "y",
     "CONFIG_IMAGE_SIZE_MIB": "192",
@@ -1179,7 +1181,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     vmdk = paths.images / "leonos4.vmdk"
     raw = paths.images / "leonos4.raw"
     esp_fat = paths.images / "esp.fat"
-    graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat), inputs=tuple([*esp_outputs, ROOT / "tools/make_image.py"]), kind="generate", command=(PYTHON, "tools/make_image.py", "--out", relative(vmdk), "--raw", relative(raw), "--esp-tree", relative(paths.staging), "--size-mib", str(config_int(values, "CONFIG_IMAGE_SIZE_MIB")))))
+    vmdk_language = "zh" if config_bool(values, "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH") else "en"
+    graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat), inputs=tuple([*esp_outputs, paths.kconfig, ROOT / "tools/make_image.py"]), kind="generate", command=(PYTHON, "tools/make_image.py", "--out", relative(vmdk), "--raw", relative(raw), "--esp-tree", relative(paths.staging), "--default-language", vmdk_language, "--size-mib", str(config_int(values, "CONFIG_IMAGE_SIZE_MIB")))))
 
     iso = paths.images / "leonos4.iso"
     iso_stage = paths.out / "iso"

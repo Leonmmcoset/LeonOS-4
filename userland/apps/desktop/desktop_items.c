@@ -704,6 +704,7 @@ void desktop_items_clear(void)
 {
     desktop_item_count = 0;
     desktop_folder_path[0] = 0;
+    desktop_items_ready = 0;
     desktop_selected_item = -1;
     desktop_last_click_item = -1;
     desktop_last_click_ms = 0;
@@ -718,11 +719,16 @@ int desktop_refresh_items(void)
     struct leonos_dir_entry entry;
     int fd;
     int ret;
+    int auth_ret;
     uint32_t count = 0;
 
     desktop_items_clear();
     user = (struct leonos_user_info){0};
-    if (leonos_auth_current(&user) < 0 || !user.uid || !user.home[0]) {
+    auth_ret = leonos_auth_current(&user);
+    if (auth_ret < 0) {
+        return auth_ret;
+    }
+    if (!user.uid || !user.home[0]) {
         return -LEONOS_EACCES;
     }
     desktop_build_child_path(desktop_folder_path, sizeof(desktop_folder_path),
@@ -757,6 +763,8 @@ int desktop_refresh_items(void)
     }
     close(fd);
     desktop_item_count = count;
+    desktop_items_ready = 1;
+    desktop_items_retry_ms = 0;
     return 0;
 }
 

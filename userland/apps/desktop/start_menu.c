@@ -11,7 +11,7 @@ int start_menu_is_hidden_app(const char *name)
             text_eq(name, "shell.elf");
 }
 
-static void start_menu_add_package(const char *root, const char *package)
+static int start_menu_add_package(const char *root, const char *package)
 {
     char elf_name[LEONOS_FS_PATH_LEN];
     char path[LEONOS_FS_PATH_LEN];
@@ -19,7 +19,7 @@ static void start_menu_add_package(const char *root, const char *package)
     struct leonos_stat st;
     if (!root || !package || !package[0] ||
         start_menu_app_count >= START_MENU_MAX_APPS) {
-        return;
+        return 0;
     }
     copy_text(elf_name, sizeof(elf_name), package);
     pos = 0;
@@ -28,7 +28,7 @@ static void start_menu_add_package(const char *root, const char *package)
     }
     append_text(elf_name, &pos, sizeof(elf_name), ".elf");
     if (start_menu_is_hidden_app(elf_name)) {
-        return;
+        return 0;
     }
     copy_text(path, sizeof(path), root);
     pos = 0;
@@ -39,8 +39,14 @@ static void start_menu_add_package(const char *root, const char *package)
     append_text(path, &pos, sizeof(path), package);
     append_char(path, &pos, sizeof(path), '/');
     append_text(path, &pos, sizeof(path), elf_name);
-    if (stat(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE) {
-        return;
+    {
+        int ret = stat(path, &st);
+        if (ret < 0) {
+            return (ret == -LEONOS_EAGAIN || ret == -LEONOS_EIO) ? ret : 0;
+        }
+        if (st.type != LEONOS_FS_TYPE_FILE) {
+            return 0;
+        }
     }
     copy_app_label_from_elf(start_menu_app_labels[start_menu_app_count],
                             sizeof(start_menu_app_labels[start_menu_app_count]),
@@ -48,35 +54,55 @@ static void start_menu_add_package(const char *root, const char *package)
     copy_text(start_menu_app_paths[start_menu_app_count],
               sizeof(start_menu_app_paths[start_menu_app_count]), path);
     ++start_menu_app_count;
+    return 0;
 }
 
-static void start_menu_load_root(const char *root)
+static int start_menu_load_root(const char *root)
 {
     struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
     uint32_t count = 0;
-    if (leonos_list_dir(root, entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
-        return;
+    int ret = leonos_list_dir(root, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    if (ret < 0) {
+        return ret;
     }
     for (uint32_t i = 0; i < count && start_menu_app_count < START_MENU_MAX_APPS; ++i) {
         if (entries[i].type != LEONOS_FS_TYPE_DIR) {
             continue;
         }
-        start_menu_add_package(root, entries[i].name);
+        ret = start_menu_add_package(root, entries[i].name);
+        if (ret < 0) {
+            return ret;
+        }
     }
+    return 0;
 }
 
-void start_menu_load_apps(void)
+int start_menu_load_apps(void)
 {
+    int ret;
     start_menu_app_count = 0;
+    start_menu_apps_loaded = 0;
+    ret = start_menu_load_root("0:/system/apps");
+    if (ret < 0) {
+        start_menu_app_count = 0;
+        return ret;
+    }
+    ret = start_menu_load_root("0:/programs");
+    if (ret < 0) {
+        start_menu_app_count = 0;
+        return ret;
+    }
     start_menu_apps_loaded = 1;
-    start_menu_load_root("0:/system/apps");
-    start_menu_load_root("0:/programs");
+    return 0;
 }
 
 void start_menu_ensure_apps(void)
 {
-    if (!start_menu_apps_loaded) {
-        start_menu_load_apps();
+    unsigned long now = leonos_uptime_ms();
+    if (!start_menu_apps_loaded && now >= start_menu_apps_retry_ms) {
+        if (start_menu_load_apps() < 0) {
+            start_menu_apps_retry_ms = now + 1000UL;
+        }
     }
 }
 
@@ -195,7 +221,7 @@ void start_menu_load_docs(void)
     struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
     uint32_t count = 0;
     start_menu_doc_count = 0;
-    start_menu_docs_loaded = 1;
+    start_menu_docs_loaded = 0;
     if (leonos_list_dir("0:/docs", entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
         return;
     }
@@ -223,12 +249,17 @@ void start_menu_load_docs(void)
         }
         ++start_menu_doc_count;
     }
+    start_menu_docs_loaded = 1;
 }
 
 void start_menu_ensure_docs(void)
 {
-    if (!start_menu_docs_loaded) {
+    unsigned long now = leonos_uptime_ms();
+    if (!start_menu_docs_loaded && now >= start_menu_docs_retry_ms) {
         start_menu_load_docs();
+        if (!start_menu_docs_loaded) {
+            start_menu_docs_retry_ms = now + 1000UL;
+        }
     }
 }
 

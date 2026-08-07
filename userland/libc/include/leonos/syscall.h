@@ -44,6 +44,8 @@
 
 #define LEONOS_EPERM 1
 #define LEONOS_EACCES 13
+#define LEONOS_EIO 5
+#define LEONOS_EAGAIN 11
 #define LEONOS_EEXIST 17
 
 long syscall0(long n);
