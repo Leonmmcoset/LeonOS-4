@@ -1109,16 +1109,17 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                 window_client_origin(w, &origin_x, &origin_y);
                 int bx = w->x + (int)w->width - 64;
                 int by = w->y + 7;
+                int resizable = window_allows_resize(w);
                 if (!window_is_fullscreen(w) && !window_is_borderless(w) &&
-                    hit_rect(x, y, bx, by, 18, 20)) {
+                    hit_rect(x, y, resizable ? bx : bx + 20, by, 18, 20)) {
                     minimize_window((uint8_t)id);
                 } else if (!window_is_fullscreen(w) && !window_is_borderless(w) &&
-                           hit_rect(x, y, bx + 20, by, 18, 20) && window_allows_resize(w)) {
+                           hit_rect(x, y, bx + 20, by, 18, 20) && resizable) {
                     toggle_maximize((uint8_t)id);
                 } else if (!window_is_fullscreen(w) && !window_is_borderless(w) &&
                            hit_rect(x, y, bx + 40, by, 18, 20)) {
                     request_close_window((uint8_t)id);
-                } else if (window_allows_resize(w) &&
+                } else if (resizable &&
                            hit_rect(x, y, w->x + (int)w->width - 18, w->y + (int)w->height - 18, 18, 18) &&
                            !w->maximized) {
                     drag_window = id;
@@ -1131,7 +1132,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                            hit_rect(x, y, w->x + 4, w->y + 4,
                                     w->width > 8 ? w->width - 8 : 0, TITLEBAR_H)) {
                     unsigned long now = leonos_uptime_ms();
-                    if (window_allows_resize(w) &&
+                    if (resizable &&
                         last_title_click_valid &&
                         last_title_click_window == (uint8_t)id &&
                         now - last_title_click_ms <= TITLEBAR_DOUBLE_CLICK_MS) {

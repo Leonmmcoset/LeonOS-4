@@ -98,9 +98,11 @@ void leonos_ui_window_ex(struct leonos_ui_surface *surface, uint32_t x, uint32_t
 
     uint32_t bx = x + w - 64;
     uint32_t by = y + 6;
-    leonos_ui_window_button(surface, bx, by, '_', 0);
-    leonos_ui_window_button(surface, bx + 20, by, maximize_label,
-                            no_resize ? LEONOS_UI_BUTTON_DISABLED : 0);
+    uint32_t minimize_bx = no_resize ? bx + 20 : bx;
+    leonos_ui_window_button(surface, minimize_bx, by, '_', 0);
+    if (!no_resize) {
+        leonos_ui_window_button(surface, bx + 20, by, maximize_label, 0);
+    }
     leonos_ui_window_button(surface, bx + 40, by, 'X', 0);
 
     uint32_t body_x = x + 8;
@@ -112,8 +114,11 @@ void leonos_ui_window_ex(struct leonos_ui_surface *surface, uint32_t x, uint32_t
     if (parts) {
         parts->titlebar = (struct leonos_ui_rect){(int32_t)x + 4, (int32_t)y + 4, w > 8 ? w - 8 : 0, LEONOS_UI_TITLEBAR_H};
         parts->body = (struct leonos_ui_rect){(int32_t)body_x, (int32_t)body_y, body_w, body_h};
-        parts->minimize = (struct leonos_ui_rect){(int32_t)bx, (int32_t)by, LEONOS_UI_WINDOW_BUTTON_W, LEONOS_UI_WINDOW_BUTTON_H};
-        parts->maximize = (struct leonos_ui_rect){(int32_t)bx + 20, (int32_t)by, LEONOS_UI_WINDOW_BUTTON_W, LEONOS_UI_WINDOW_BUTTON_H};
+        parts->minimize = (struct leonos_ui_rect){(int32_t)minimize_bx, (int32_t)by, LEONOS_UI_WINDOW_BUTTON_W, LEONOS_UI_WINDOW_BUTTON_H};
+        parts->maximize = (struct leonos_ui_rect){0};
+        if (!no_resize) {
+            parts->maximize = (struct leonos_ui_rect){(int32_t)bx + 20, (int32_t)by, LEONOS_UI_WINDOW_BUTTON_W, LEONOS_UI_WINDOW_BUTTON_H};
+        }
         parts->close = (struct leonos_ui_rect){(int32_t)bx + 40, (int32_t)by, LEONOS_UI_WINDOW_BUTTON_W, LEONOS_UI_WINDOW_BUTTON_H};
     }
 }

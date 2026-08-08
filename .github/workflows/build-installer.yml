@@ -73,7 +73,12 @@ jobs:
             bison \
             flex \
             bc \
-            pkg-config
+            pkg-config \
+            autoconf \
+            automake \
+            libtool \
+            libtool-bin \
+            gawk
 
       - name: Install Rust
         run: |

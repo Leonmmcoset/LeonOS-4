@@ -62,6 +62,8 @@ int	W_GetNumForName (char* name);
 
 int	W_LumpLength (unsigned int lump);
 void    W_ReadLump (unsigned int lump, void *dest);
+void    W_ReadLumpFragment(unsigned int lump, unsigned int offset,
+                           void *dest, unsigned int length);
 
 void*	W_CacheLumpNum (int lump, int tag);
 void*	W_CacheLumpName (char* name, int tag);

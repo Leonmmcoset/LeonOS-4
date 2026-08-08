@@ -67,9 +67,11 @@ bounded PNG-to-LeonOS-pixel decoder for ordinary GUI applications.
 
 LeonOS builds a static, basic-applet BusyBox profile at
 `0:/programs/busybox/busybox.elf`. It includes file/text utilities such as
-`ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `mkdir`, `rmdir`, and
+`ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `mkdir`, `rmdir`, `cp`, `mv`,
+`rm`, `unlink`, `printenv`, `uname`, `sleep`, `true`, `false`, `vi`, and
 `printf`. BusyBox ash is intentionally excluded until LeonOS has fork, pipe,
-file-descriptor duplication, process-group, and signal semantics.
+file-descriptor duplication, process-group, and signal semantics; the current
+shell entry point is the no-fork Hush profile.
 
 ## GNU nano
 

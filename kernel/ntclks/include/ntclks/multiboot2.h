@@ -67,6 +67,12 @@ struct multiboot2_tag_framebuffer {
     uint16_t reserved;
 };
 
+#define MULTIBOOT2_FRAMEBUFFER_TYPE_INDEXED 0u
+#define MULTIBOOT2_FRAMEBUFFER_TYPE_RGB 1u
+#define MULTIBOOT2_FRAMEBUFFER_TYPE_EGA_TEXT 2u
+
+#define MULTIBOOT2_FRAMEBUFFER_RGB_INFO_SIZE 6u
+
 struct multiboot2_tag_efi_mmap {
     uint32_t type;
     uint32_t size;
@@ -100,6 +106,13 @@ struct boot_info {
     uint32_t framebuffer_height;
     uint32_t framebuffer_pitch;
     uint8_t framebuffer_bpp;
+    uint8_t framebuffer_type;
+    uint8_t framebuffer_red_field_position;
+    uint8_t framebuffer_red_mask_size;
+    uint8_t framebuffer_green_field_position;
+    uint8_t framebuffer_green_mask_size;
+    uint8_t framebuffer_blue_field_position;
+    uint8_t framebuffer_blue_mask_size;
     uint64_t memory_lower_kib;
     uint64_t memory_upper_kib;
     uint64_t mmap_addr;

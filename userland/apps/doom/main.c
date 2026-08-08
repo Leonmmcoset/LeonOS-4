@@ -217,7 +217,7 @@ int main(int argc, char **argv, char **envp)
     };
     (void)envp;
     if (argc <= 1 || !argv || !argv[0]) {
-        argc = 4;
+        argc = (int)(sizeof(default_argv) / sizeof(default_argv[0])) - 1;
         argv = default_argv;
     }
     doomgeneric_Create(argc, argv);

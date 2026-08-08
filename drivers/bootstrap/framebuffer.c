@@ -172,6 +172,178 @@ struct efi_graphics_output_protocol {
     struct efi_gop_mode *mode;
 };
 
+#define EFI_GOP_PIXEL_RED_GREEN_BLUE 0u
+#define EFI_GOP_PIXEL_BLUE_GREEN_RED 1u
+#define EFI_GOP_PIXEL_BIT_MASK 2u
+#define EFI_GOP_PIXEL_BLT_ONLY 3u
+
+static int framebuffer_color_format_valid(const struct framebuffer *target)
+{
+    if (!target || target->type != MULTIBOOT2_FRAMEBUFFER_TYPE_RGB ||
+        !target->red_mask_size || !target->green_mask_size ||
+        !target->blue_mask_size || target->red_mask_size > 32u ||
+        target->green_mask_size > 32u || target->blue_mask_size > 32u) {
+        return 0;
+    }
+    return target->red_field_position <= 32u - target->red_mask_size &&
+           target->green_field_position <= 32u - target->green_mask_size &&
+           target->blue_field_position <= 32u - target->blue_mask_size;
+}
+
+static uint64_t framebuffer_channel_max(uint8_t mask_size)
+{
+    return mask_size == 32u ? 0xffffffffULL : ((1ULL << mask_size) - 1ULL);
+}
+
+static uint32_t framebuffer_component_to_native(uint8_t component,
+                                                uint8_t field_position,
+                                                uint8_t mask_size)
+{
+    uint64_t max_value = framebuffer_channel_max(mask_size);
+    uint64_t scaled = ((uint64_t)component * max_value + 127ULL) / 255ULL;
+    return (uint32_t)(scaled << field_position);
+}
+
+static uint8_t framebuffer_component_from_native(uint32_t pixel,
+                                                 uint8_t field_position,
+                                                 uint8_t mask_size)
+{
+    uint64_t max_value = framebuffer_channel_max(mask_size);
+    uint64_t raw = ((uint64_t)pixel >> field_position) & max_value;
+    return (uint8_t)((raw * 255ULL + max_value / 2ULL) / max_value);
+}
+
+static uint32_t framebuffer_native_color(uint32_t color)
+{
+    uint8_t red_position = 16u;
+    uint8_t red_size = 8u;
+    uint8_t green_position = 8u;
+    uint8_t green_size = 8u;
+    uint8_t blue_position = 0u;
+    uint8_t blue_size = 8u;
+
+    if (framebuffer_color_format_valid(&fb)) {
+        red_position = fb.red_field_position;
+        red_size = fb.red_mask_size;
+        green_position = fb.green_field_position;
+        green_size = fb.green_mask_size;
+        blue_position = fb.blue_field_position;
+        blue_size = fb.blue_mask_size;
+    }
+
+    return framebuffer_component_to_native((uint8_t)(color >> 16),
+                                           red_position, red_size) |
+           framebuffer_component_to_native((uint8_t)(color >> 8),
+                                           green_position, green_size) |
+           framebuffer_component_to_native((uint8_t)color,
+                                           blue_position, blue_size);
+}
+
+static uint32_t framebuffer_logical_color(uint32_t pixel)
+{
+    uint8_t red_position = 16u;
+    uint8_t red_size = 8u;
+    uint8_t green_position = 8u;
+    uint8_t green_size = 8u;
+    uint8_t blue_position = 0u;
+    uint8_t blue_size = 8u;
+
+    if (framebuffer_color_format_valid(&fb)) {
+        red_position = fb.red_field_position;
+        red_size = fb.red_mask_size;
+        green_position = fb.green_field_position;
+        green_size = fb.green_mask_size;
+        blue_position = fb.blue_field_position;
+        blue_size = fb.blue_mask_size;
+    }
+
+    return ((uint32_t)framebuffer_component_from_native(pixel, red_position, red_size) << 16) |
+           ((uint32_t)framebuffer_component_from_native(pixel, green_position, green_size) << 8) |
+           (uint32_t)framebuffer_component_from_native(pixel, blue_position, blue_size);
+}
+
+static int framebuffer_gop_mask(uint32_t mask, uint8_t *position, uint8_t *size)
+{
+    uint8_t shift = 0;
+    uint8_t width = 0;
+
+    if (!mask || !position || !size) {
+        return 0;
+    }
+    while (!(mask & 1u)) {
+        mask >>= 1;
+        ++shift;
+    }
+    while (mask & 1u) {
+        mask >>= 1;
+        ++width;
+    }
+    if (mask != 0 || !width || shift > 32u - width) {
+        return 0;
+    }
+    *position = shift;
+    *size = width;
+    return 1;
+}
+
+static void framebuffer_set_default_format(void)
+{
+    fb.type = MULTIBOOT2_FRAMEBUFFER_TYPE_RGB;
+    fb.red_field_position = 16u;
+    fb.red_mask_size = 8u;
+    fb.green_field_position = 8u;
+    fb.green_mask_size = 8u;
+    fb.blue_field_position = 0u;
+    fb.blue_mask_size = 8u;
+}
+
+static uint8_t framebuffer_bytes_per_pixel(uint32_t pitch, uint32_t width,
+                                           uint8_t bpp)
+{
+    uint32_t expected = ((uint32_t)bpp + 7u) / 8u;
+
+    if (!width) {
+        return 0;
+    }
+    if ((expected == 3u || expected == 4u) &&
+        (uint64_t)width * expected <= pitch) {
+        return (uint8_t)expected;
+    }
+
+    /* Some QEMU VGA modes report 32bpp but expose a packed 24-bit scanline. */
+    if (pitch % width == 0u) {
+        uint32_t actual = pitch / width;
+        if (actual == 3u || actual == 4u) {
+            return (uint8_t)actual;
+        }
+    }
+    return 0;
+}
+
+static uint8_t *framebuffer_pixel_ptr(uint32_t x, uint32_t y)
+{
+    return (uint8_t *)fb.pixels + (uint64_t)y * fb.pitch +
+           (uint64_t)x * fb.bytes_per_pixel;
+}
+
+static void framebuffer_write_native(uint32_t x, uint32_t y, uint32_t color)
+{
+    uint8_t *pixel = framebuffer_pixel_ptr(x, y);
+    for (uint8_t byte = 0; byte < fb.bytes_per_pixel; ++byte) {
+        pixel[byte] = (uint8_t)(color >> (byte * 8u));
+    }
+}
+
+static uint32_t framebuffer_read_native(uint32_t x, uint32_t y)
+{
+    const uint8_t *pixel = framebuffer_pixel_ptr(x, y);
+    uint32_t color = 0;
+    for (uint8_t byte = 0; byte < fb.bytes_per_pixel; ++byte) {
+        color |= (uint32_t)pixel[byte] << (byte * 8u);
+    }
+    return color;
+}
+
 static int guid_equal(const struct efi_guid *a, const struct efi_guid *b)
 {
     if (a->data1 != b->data1 || a->data2 != b->data2 || a->data3 != b->data3) {
@@ -223,15 +395,50 @@ static void framebuffer_init_from_gop(uint64_t system_table_addr)
         if (!gop->mode || !gop->mode->info || gop->mode->framebuffer_base == 0) {
             continue;
         }
+        if (gop->mode->info->pixel_format == EFI_GOP_PIXEL_BLT_ONLY) {
+            continue;
+        }
         fb.pixels = (uint32_t *)(uintptr_t)gop->mode->framebuffer_base;
         fb.width = gop->mode->info->horizontal_resolution;
         fb.height = gop->mode->info->vertical_resolution;
         fb.pitch = gop->mode->info->pixels_per_scan_line * 4;
         fb.bpp = 32;
-        fb.available = true;
-        console_printf("[ntclks] GOP framebuffer base=%p size=%llu\n",
+        fb.bytes_per_pixel = 4u;
+        fb.type = MULTIBOOT2_FRAMEBUFFER_TYPE_RGB;
+        if (gop->mode->info->pixel_format == EFI_GOP_PIXEL_RED_GREEN_BLUE) {
+            fb.red_field_position = 0u;
+            fb.red_mask_size = 8u;
+            fb.green_field_position = 8u;
+            fb.green_mask_size = 8u;
+            fb.blue_field_position = 16u;
+            fb.blue_mask_size = 8u;
+        } else if (gop->mode->info->pixel_format == EFI_GOP_PIXEL_BLUE_GREEN_RED) {
+            fb.red_field_position = 16u;
+            fb.red_mask_size = 8u;
+            fb.green_field_position = 8u;
+            fb.green_mask_size = 8u;
+            fb.blue_field_position = 0u;
+            fb.blue_mask_size = 8u;
+        } else if (gop->mode->info->pixel_format == EFI_GOP_PIXEL_BIT_MASK &&
+                   framebuffer_gop_mask(gop->mode->info->pixel_information[0],
+                                        &fb.red_field_position, &fb.red_mask_size) &&
+                   framebuffer_gop_mask(gop->mode->info->pixel_information[1],
+                                        &fb.green_field_position, &fb.green_mask_size) &&
+                   framebuffer_gop_mask(gop->mode->info->pixel_information[2],
+                                        &fb.blue_field_position, &fb.blue_mask_size)) {
+            /* The masks above describe the native pixel layout directly. */
+        } else {
+            framebuffer_set_default_format();
+        }
+        fb.available = framebuffer_color_format_valid(&fb);
+        console_printf("[ntclks] GOP framebuffer base=%p size=%llu format=%u "
+                       "R=%u/%u G=%u/%u B=%u/%u\n",
                        (void *)(uintptr_t)gop->mode->framebuffer_base,
-                       (unsigned long long)gop->mode->framebuffer_size);
+                       (unsigned long long)gop->mode->framebuffer_size,
+                       gop->mode->info->pixel_format,
+                       fb.red_field_position, fb.red_mask_size,
+                       fb.green_field_position, fb.green_mask_size,
+                       fb.blue_field_position, fb.blue_mask_size);
         return;
     }
 
@@ -242,17 +449,38 @@ static void framebuffer_init_from_gop(uint64_t system_table_addr)
 
 void framebuffer_init(const struct boot_info *boot)
 {
+    int direct_color;
+
     fb.pixels = (uint32_t *)(uintptr_t)boot->framebuffer_addr;
     fb.width = boot->framebuffer_width;
     fb.height = boot->framebuffer_height;
     fb.pitch = boot->framebuffer_pitch;
     fb.bpp = boot->framebuffer_bpp;
-    fb.available = boot->framebuffer_addr != 0 && boot->framebuffer_bpp == 32;
+    fb.bytes_per_pixel = framebuffer_bytes_per_pixel(fb.pitch, fb.width, fb.bpp);
+    fb.type = boot->framebuffer_type;
+    fb.red_field_position = boot->framebuffer_red_field_position;
+    fb.red_mask_size = boot->framebuffer_red_mask_size;
+    fb.green_field_position = boot->framebuffer_green_field_position;
+    fb.green_mask_size = boot->framebuffer_green_mask_size;
+    fb.blue_field_position = boot->framebuffer_blue_field_position;
+    fb.blue_mask_size = boot->framebuffer_blue_mask_size;
+    direct_color = fb.type == MULTIBOOT2_FRAMEBUFFER_TYPE_RGB;
+    if (direct_color && !framebuffer_color_format_valid(&fb)) {
+        framebuffer_set_default_format();
+    }
+    fb.available = boot->framebuffer_addr != 0 &&
+                   (boot->framebuffer_bpp == 24u || boot->framebuffer_bpp == 32u) &&
+                   fb.bytes_per_pixel != 0u &&
+                   (direct_color || boot->framebuffer_type == 0u);
     framebuffer_init_from_gop(boot->efi_system_table);
 
     if (fb.available) {
-        console_printf("[ntclks] framebuffer %ux%u pitch=%u bpp=%u\n",
-                       fb.width, fb.height, fb.pitch, fb.bpp);
+        console_printf("[ntclks] framebuffer %ux%u pitch=%u bpp=%u bytespp=%u type=%u "
+                       "R=%u/%u G=%u/%u B=%u/%u\n",
+                       fb.width, fb.height, fb.pitch, fb.bpp, fb.bytes_per_pixel, fb.type,
+                       fb.red_field_position, fb.red_mask_size,
+                       fb.green_field_position, fb.green_mask_size,
+                       fb.blue_field_position, fb.blue_mask_size);
     } else {
         console_printf("[ntclks] framebuffer unavailable, VGA fallback active\n");
     }
@@ -265,19 +493,21 @@ const struct framebuffer *framebuffer_get(void)
 
 void framebuffer_clear(uint32_t color)
 {
+    uint32_t native_color;
     if (!fb.available) {
         return;
     }
+    native_color = framebuffer_native_color(color);
     for (uint32_t y = 0; y < fb.height; ++y) {
-        uint32_t *row = (uint32_t *)((uint8_t *)fb.pixels + (uint64_t)y * fb.pitch);
         for (uint32_t x = 0; x < fb.width; ++x) {
-            row[x] = color;
+            framebuffer_write_native(x, y, native_color);
         }
     }
 }
 
 void framebuffer_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color)
 {
+    uint32_t native_color;
     if (!fb.available || x >= fb.width || y >= fb.height) {
         return;
     }
@@ -287,10 +517,10 @@ void framebuffer_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t c
     if (y + h > fb.height) {
         h = fb.height - y;
     }
+    native_color = framebuffer_native_color(color);
     for (uint32_t yy = y; yy < y + h; ++yy) {
-        uint32_t *row = (uint32_t *)((uint8_t *)fb.pixels + (uint64_t)yy * fb.pitch);
         for (uint32_t xx = x; xx < x + w; ++xx) {
-            row[xx] = color;
+            framebuffer_write_native(xx, yy, native_color);
         }
     }
 }
@@ -307,10 +537,10 @@ void framebuffer_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t s
         h = fb.height - y;
     }
     for (uint32_t yy = 0; yy < h; ++yy) {
-        uint32_t *dst = (uint32_t *)((uint8_t *)fb.pixels + (uint64_t)(y + yy) * fb.pitch);
         const uint32_t *src = pixels + (uint64_t)yy * stride;
         for (uint32_t xx = 0; xx < w; ++xx) {
-            dst[x + xx] = src[xx];
+            framebuffer_write_native(x + xx, y + yy,
+                                     framebuffer_native_color(src[xx]));
         }
     }
 }
@@ -320,8 +550,7 @@ static uint32_t framebuffer_get_pixel(uint32_t x, uint32_t y)
     if (!fb.available || x >= fb.width || y >= fb.height) {
         return 0;
     }
-    uint32_t *row = (uint32_t *)((uint8_t *)fb.pixels + (uint64_t)y * fb.pitch);
-    return row[x];
+    return framebuffer_logical_color(framebuffer_read_native(x, y));
 }
 
 static void framebuffer_put_pixel(uint32_t x, uint32_t y, uint32_t color)
@@ -329,8 +558,7 @@ static void framebuffer_put_pixel(uint32_t x, uint32_t y, uint32_t color)
     if (!fb.available || x >= fb.width || y >= fb.height) {
         return;
     }
-    uint32_t *row = (uint32_t *)((uint8_t *)fb.pixels + (uint64_t)y * fb.pitch);
-    row[x] = color;
+    framebuffer_write_native(x, y, framebuffer_native_color(color));
 }
 
 uint32_t framebuffer_get_pixel_public(uint32_t x, uint32_t y)

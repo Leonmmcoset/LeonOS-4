@@ -55,8 +55,16 @@
 #include <CoreFoundation/CFUserNotification.h>
 #endif
 
+#if defined(LEONOS_DOOM)
+/* Freedoom's larger texture and sprite set exceeds Chocolate Doom's 6 MiB
+ * default. Prefer the larger zone when it fits, but retain the original
+ * 6 MiB floor so low-memory VMware configurations can still start the game. */
+#define DEFAULT_RAM 24 /* MiB */
+#define MIN_RAM      6 /* MiB */
+#else
 #define DEFAULT_RAM 6 /* MiB */
 #define MIN_RAM     6  /* MiB */
+#endif
 
 
 typedef struct atexit_listentry_s atexit_listentry_t;

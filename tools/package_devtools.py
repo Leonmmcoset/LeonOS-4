@@ -62,6 +62,9 @@ def main() -> None:
     parser.add_argument("--libpng-lib", type=Path, required=True)
     parser.add_argument("--libpng-source", type=Path, required=True)
     parser.add_argument("--libpng-config", type=Path, required=True)
+    parser.add_argument("--libmagic-lib", type=Path, required=True)
+    parser.add_argument("--libmagic-source", type=Path, required=True)
+    parser.add_argument("--libmagic-header", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
@@ -74,7 +77,9 @@ def main() -> None:
     for required in (args.leonos_lib, args.picolibc_lib, args.picolibc_include,
                      args.picolibc_source / "COPYING.picolibc", args.zlib_lib,
                      args.zlib_source / "LICENSE", args.libpng_lib,
-                     args.libpng_source / "LICENSE", *zlib_headers, *libpng_headers):
+                     args.libpng_source / "LICENSE", args.libmagic_lib,
+                     args.libmagic_source / "COPYING", args.libmagic_header,
+                     *zlib_headers, *libpng_headers):
         if not required.exists():
             raise SystemExit(f"required SDK input is missing: {required}")
 
@@ -108,13 +113,16 @@ def main() -> None:
             add_file(archive, f"{SDK_PREFIX}/lib/libc.a", args.picolibc_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libz.a", args.zlib_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libpng.a", args.libpng_lib)
+            add_file(archive, f"{SDK_PREFIX}/lib/libmagic.a", args.libmagic_lib)
             add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/PICOLIBC-COPYING", args.picolibc_source / "COPYING.picolibc")
             for source in zlib_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.name}", source)
             for source in libpng_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.name}", source)
+            add_file(archive, f"{SDK_PREFIX}/include/magic.h", args.libmagic_header)
             add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/ZLIB-LICENSE", args.zlib_source / "LICENSE")
             add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBPNG-LICENSE", args.libpng_source / "LICENSE")
+            add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBMAGIC-COPYING", args.libmagic_source / "COPYING")
             add_text(
                 archive,
                 f"{SDK_PREFIX}/THIRD_PARTY/PICOLIBC-VERSION.txt",
@@ -134,6 +142,13 @@ def main() -> None:
                 "libpng version: 1.6.58\n"
                 "Upstream: https://github.com/pnggroup/libpng\n"
                 "License: libpng License\n",
+            )
+            add_text(
+                archive,
+                f"{SDK_PREFIX}/THIRD_PARTY/LIBMAGIC-VERSION.txt",
+                "file/libmagic version: 5.48\n"
+                "Upstream: https://github.com/file/file\n"
+                "License: BSD-2-Clause\n",
             )
         os.replace(temporary_path, output)
     finally:

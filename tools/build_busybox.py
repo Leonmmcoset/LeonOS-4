@@ -25,6 +25,7 @@ WORK_PREFIX = "leonos4-busybox-"
 # profile instead of growing placeholder ABI declarations for unavailable APIs.
 MINIMAL_LIBBB_OBJECTS = (
     "appletlib.o",
+    "ask_confirmation.o",
     "auto_string.o",
     "bb_cat.o",
     "leonos_shim.o",
@@ -34,7 +35,9 @@ MINIMAL_LIBBB_OBJECTS = (
     "chomp.o",
     "compare_string_array.o",
     "concat_path_file.o",
+    "concat_subpath_file.o",
     "const_hack.o",
+    "copy_file.o",
     "copyfd.o",
     "default_error_retval.o",
     "common_bufsiz.o",
@@ -47,6 +50,7 @@ MINIMAL_LIBBB_OBJECTS = (
     "getopt32.o",
     "getopt_allopts.o",
     "human_readable.o",
+    "inode_hash.o",
     "iterate_on_dir.o",
     "last_char_is.o",
     "llist.o",
@@ -65,6 +69,7 @@ MINIMAL_LIBBB_OBJECTS = (
     "process_escape_sequence.o",
     "ptr_to_globals.o",
     "read.o",
+    "remove_file.o",
     "safe_write.o",
     "safe_strncpy.o",
     "single_argv.o",
@@ -210,6 +215,8 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
 \t\t\tspawn_path = xstrdup("0:/programs/tcc/tcc.elf");
 \t\telse if (strcmp(argv_expanded[0], "lua") == 0)
 \t\t\tspawn_path = xstrdup("0:/programs/lua/lua.elf");
+\t\telse if (strcmp(argv_expanded[0], "file") == 0)
+\t\t\tspawn_path = xstrdup("0:/programs/file/file.elf");
 \t\telse if (strchr(argv_expanded[0], '/'))
 \t\t\tspawn_path = xstrdup(argv_expanded[0]);
 \t\telse

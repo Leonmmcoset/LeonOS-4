@@ -18,6 +18,8 @@
 #define OSCHINPT_DICT_LINE_CAP 256U
 #define OSCHINPT_DICT_READ_CHUNK 1024U
 #define OSCHINPT_LOOKUP_CACHE_CAP 12U
+#define OSCHINPT_CANDIDATE_POOL_CAP 32U
+#define OSCHINPT_CANDIDATE_PAGE_SIZE LEONOS_INPUTM_MAX_CANDIDATES
 #define OSCHINPT_INDEX_CODE_LEN 8U
 #define OSCHINPT_INDEX_CAP 2048U
 #define OSCHINPT_INDEX_MAGIC "OSCI"
@@ -35,7 +37,7 @@ struct learned_phrase {
 
 struct lookup_cache_entry {
     char code[OSCHINPT_COMPOSITION_CAP];
-    char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN];
+    char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN];
     uint32_t count;
 };
 
@@ -104,6 +106,7 @@ static struct dictionary_index_entry dictionary_index[OSCHINPT_INDEX_CAP];
 static uint32_t dictionary_index_count;
 static uint8_t dictionary_index_loaded;
 static uint8_t dictionary_index_attempted;
+static uint32_t candidate_page;
 
 static uint32_t text_len(const char *text)
 {
@@ -295,10 +298,10 @@ static void save_learning(const char *code, const char *word)
     }
 }
 
-static void add_candidate(char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN],
-                          uint32_t *count, const char *word)
+static void add_candidate(char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN],
+                           uint32_t *count, const char *word)
 {
-    if (!count || !word || !word[0] || *count >= LEONOS_INPUTM_MAX_CANDIDATES) {
+    if (!count || !word || !word[0] || *count >= OSCHINPT_CANDIDATE_POOL_CAP) {
         return;
     }
     for (uint32_t i = 0; i < *count; ++i) {
@@ -311,7 +314,7 @@ static void add_candidate(char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_I
 }
 
 static void parse_dictionary_line(const char *line, uint32_t length, const char *code,
-                                  char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN],
+                                  char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN],
                                   uint32_t *count)
 {
     uint32_t word_end = 0;
@@ -653,7 +656,7 @@ static int dictionary_index_build(void)
 }
 
 static void dictionary_candidates(const char *code,
-                                  char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN],
+                                  char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN],
                                   uint32_t *count)
 {
     uint32_t index_pos = dictionary_index_find(code);
@@ -669,7 +672,7 @@ static void dictionary_candidates(const char *code,
     if (fd < 0) {
         return;
     }
-    while (index_pos < dictionary_index_count && *count < LEONOS_INPUTM_MAX_CANDIDATES &&
+    while (index_pos < dictionary_index_count && *count < OSCHINPT_CANDIDATE_POOL_CAP &&
            text_eq(dictionary_index[index_pos].code, code)) {
         struct dictionary_index_entry *entry = &dictionary_index[index_pos++];
         if (lseek(fd, (long)entry->start, LEONOS_SEEK_SET) < 0) {
@@ -677,7 +680,7 @@ static void dictionary_candidates(const char *code,
         }
         remaining = entry->end - entry->start;
         line_len = 0;
-        while (*count < LEONOS_INPUTM_MAX_CANDIDATES && remaining) {
+        while (*count < OSCHINPT_CANDIDATE_POOL_CAP && remaining) {
             uint32_t want = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
             long got = read(fd, buffer, want);
             if (got <= 0) {
@@ -702,7 +705,7 @@ static void dictionary_candidates(const char *code,
 }
 
 static int lookup_cache_get(const char *code,
-                            char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN],
+                            char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN],
                             uint32_t *out_count)
 {
     if (!code || !out_count) {
@@ -721,7 +724,7 @@ static int lookup_cache_get(const char *code,
 }
 
 static void lookup_cache_put(const char *code,
-                             char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN],
+                             char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN],
                              uint32_t count)
 {
     struct lookup_cache_entry *entry;
@@ -738,7 +741,7 @@ static void lookup_cache_put(const char *code,
 }
 
 static uint32_t lookup_candidates(const char *code,
-                                  char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN])
+                                  char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN])
 {
     uint32_t count = 0;
     if (lookup_cache_get(code, candidates, &count)) {
@@ -785,6 +788,8 @@ static int key_to_ascii(uint8_t keycode, char *out)
         return 1;
     }
     switch (keycode) {
+    case 12: *out = '-'; return 1;
+    case 13: *out = '='; return 1;
     case 39: *out = ';'; return 1;
     case 40: *out = '\''; return 1;
     case 51: *out = ','; return 1;
@@ -796,25 +801,39 @@ static int key_to_ascii(uint8_t keycode, char *out)
 
 static void respond(const struct leonos_inputm_key_event *event, uint32_t type,
                     const char *text,
-                    char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN],
+                    char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN],
                     uint32_t candidate_count)
 {
     struct leonos_inputm_result result = {0};
+    uint32_t first = 0;
+    uint32_t visible = 0;
     result.sequence = event->sequence;
     result.client_pid = event->client_pid;
     result.window_id = event->window_id;
     result.type = type;
     copy_text(result.text, sizeof(result.text), text);
-    result.candidate_count = candidate_count;
-    for (uint32_t i = 0; i < candidate_count; ++i) {
-        copy_text(result.candidates[i], sizeof(result.candidates[i]), candidates[i]);
+    if (candidate_count) {
+        uint32_t page_count = (candidate_count + OSCHINPT_CANDIDATE_PAGE_SIZE - 1U) /
+                              OSCHINPT_CANDIDATE_PAGE_SIZE;
+        if (candidate_page >= page_count) {
+            candidate_page = page_count - 1U;
+        }
+        first = candidate_page * OSCHINPT_CANDIDATE_PAGE_SIZE;
+        visible = candidate_count - first;
+        if (visible > LEONOS_INPUTM_MAX_CANDIDATES) {
+            visible = LEONOS_INPUTM_MAX_CANDIDATES;
+        }
+    }
+    result.candidate_count = visible;
+    for (uint32_t i = 0; i < visible; ++i) {
+        copy_text(result.candidates[i], sizeof(result.candidates[i]), candidates[first + i]);
     }
     (void)leonos_inputm_provider_result(&result);
 }
 
 static void respond_composition(const struct leonos_inputm_key_event *event)
 {
-    char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN] = {{0}};
+    char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN] = {{0}};
     uint32_t count = lookup_candidates(composition, candidates);
     respond(event, LEONOS_INPUTM_RESULT_COMPOSITION, composition, candidates, count);
 }
@@ -824,12 +843,13 @@ static void clear_composition(void)
     composition[0] = 0;
     composition_pid = 0;
     composition_window = 0;
+    candidate_page = 0;
 }
 
 static void commit_candidate(const struct leonos_inputm_key_event *event, uint32_t selected,
-                             const char *suffix)
+                              const char *suffix)
 {
-    char candidates[LEONOS_INPUTM_MAX_CANDIDATES][LEONOS_INPUTM_TEXT_LEN] = {{0}};
+    char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN] = {{0}};
     char text[LEONOS_INPUTM_TEXT_LEN];
     uint32_t count = lookup_candidates(composition, candidates);
     uint32_t pos = 0;
@@ -860,6 +880,35 @@ static const char *punctuation_for(char ch)
     case '/': return "、";
     default: return 0;
     }
+}
+
+static uint32_t candidate_page_first(void)
+{
+    return candidate_page * OSCHINPT_CANDIDATE_PAGE_SIZE;
+}
+
+static void change_candidate_page(const struct leonos_inputm_key_event *event, int direction)
+{
+    char candidates[OSCHINPT_CANDIDATE_POOL_CAP][LEONOS_INPUTM_TEXT_LEN] = {{0}};
+    uint32_t count = lookup_candidates(composition, candidates);
+    uint32_t page_count;
+
+    if (!count) {
+        candidate_page = 0;
+        respond(event, LEONOS_INPUTM_RESULT_COMPOSITION, composition, candidates, 0);
+        return;
+    }
+    page_count = (count + OSCHINPT_CANDIDATE_PAGE_SIZE - 1U) /
+                 OSCHINPT_CANDIDATE_PAGE_SIZE;
+    if (candidate_page >= page_count) {
+        candidate_page = page_count - 1U;
+    }
+    if (direction > 0 && candidate_page + 1U < page_count) {
+        ++candidate_page;
+    } else if (direction < 0 && candidate_page) {
+        --candidate_page;
+    }
+    respond(event, LEONOS_INPUTM_RESULT_COMPOSITION, composition, candidates, count);
 }
 
 static int update_dictionary(void)
@@ -899,6 +948,7 @@ static void handle_event(const struct leonos_inputm_key_event *event)
             composition[length + 1U] = 0;
             composition_pid = event->client_pid;
             composition_window = event->window_id;
+            candidate_page = 0;
         }
         respond_composition(event);
         return;
@@ -907,6 +957,7 @@ static void handle_event(const struct leonos_inputm_key_event *event)
         uint32_t length = text_len(composition);
         if (length) {
             composition[length - 1U] = 0;
+            candidate_page = 0;
             if (composition[0]) {
                 respond_composition(event);
             } else {
@@ -928,7 +979,7 @@ static void handle_event(const struct leonos_inputm_key_event *event)
     }
     if (event->keycode == LEONOS_KEY_SPACE) {
         if (composition[0]) {
-            commit_candidate(event, 0, 0);
+            commit_candidate(event, candidate_page_first(), 0);
         } else if (full_width) {
             respond(event, LEONOS_INPUTM_RESULT_COMMIT, "　", 0, 0);
         } else {
@@ -938,20 +989,29 @@ static void handle_event(const struct leonos_inputm_key_event *event)
     }
     if (event->keycode == LEONOS_KEY_ENTER) {
         if (composition[0]) {
-            commit_candidate(event, 0, 0);
+            commit_candidate(event, candidate_page_first(), 0);
         } else {
             respond(event, LEONOS_INPUTM_RESULT_PASSTHROUGH, "", 0, 0);
         }
         return;
     }
     if (event->keycode >= 2U && event->keycode <= 6U && composition[0]) {
-        commit_candidate(event, event->keycode - 2U, 0);
+        commit_candidate(event, candidate_page_first() + event->keycode - 2U, 0);
+        return;
+    }
+    if (composition[0] && event->keycode == 13U) {
+        /* The '=' key and its Shift-modified '+' variant share scan code 13. */
+        change_candidate_page(event, 1);
+        return;
+    }
+    if (composition[0] && event->keycode == 12U) {
+        change_candidate_page(event, -1);
         return;
     }
     if (key_to_ascii(event->keycode, &ch)) {
         punctuation = punctuation_for(ch);
         if (composition[0]) {
-            commit_candidate(event, 0, punctuation ? punctuation : "");
+            commit_candidate(event, candidate_page_first(), punctuation ? punctuation : "");
         } else if (punctuation) {
             respond(event, LEONOS_INPUTM_RESULT_COMMIT, punctuation, 0, 0);
         } else {

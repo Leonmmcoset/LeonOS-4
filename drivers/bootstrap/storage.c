@@ -49,6 +49,10 @@
  * syscalls for at most five seconds. A failed virtual controller must not
  * leave a task blocked forever. */
 #define AHCI_ASYNC_TIMEOUT_TICKS (5u * 100u)
+/* Retrying an individual sector command is safe: all callers resubmit the
+ * same LBA range with the same payload.  This contains short-lived virtual
+ * AHCI controller faults without replaying a higher-level FAT operation. */
+#define AHCI_IO_RETRY_COUNT 3u
 
 #define SECTOR_SIZE 512u
 #define GPT_ENTRY_COUNT 128u
@@ -86,39 +90,39 @@ enum storage_volume_kind {
 };
 
 struct __attribute__((packed)) ahci_hba_port {
-    uint32_t clb;
-    uint32_t clbu;
-    uint32_t fb;
-    uint32_t fbu;
-    uint32_t is;
-    uint32_t ie;
-    uint32_t cmd;
-    uint32_t reserved0;
-    uint32_t tfd;
-    uint32_t sig;
-    uint32_t ssts;
-    uint32_t sctl;
-    uint32_t serr;
-    uint32_t sact;
-    uint32_t ci;
-    uint32_t sntf;
-    uint32_t fbs;
-    uint32_t reserved1[11];
-    uint32_t vendor[4];
+    volatile uint32_t clb;
+    volatile uint32_t clbu;
+    volatile uint32_t fb;
+    volatile uint32_t fbu;
+    volatile uint32_t is;
+    volatile uint32_t ie;
+    volatile uint32_t cmd;
+    volatile uint32_t reserved0;
+    volatile uint32_t tfd;
+    volatile uint32_t sig;
+    volatile uint32_t ssts;
+    volatile uint32_t sctl;
+    volatile uint32_t serr;
+    volatile uint32_t sact;
+    volatile uint32_t ci;
+    volatile uint32_t sntf;
+    volatile uint32_t fbs;
+    volatile uint32_t reserved1[11];
+    volatile uint32_t vendor[4];
 };
 
 struct __attribute__((packed)) ahci_hba_mem {
-    uint32_t cap;
-    uint32_t ghc;
-    uint32_t is;
-    uint32_t pi;
-    uint32_t vs;
-    uint32_t ccc_ctl;
-    uint32_t ccc_pts;
-    uint32_t em_loc;
-    uint32_t em_ctl;
-    uint32_t cap2;
-    uint32_t bohc;
+    volatile uint32_t cap;
+    volatile uint32_t ghc;
+    volatile uint32_t is;
+    volatile uint32_t pi;
+    volatile uint32_t vs;
+    volatile uint32_t ccc_ctl;
+    volatile uint32_t ccc_pts;
+    volatile uint32_t em_loc;
+    volatile uint32_t em_ctl;
+    volatile uint32_t cap2;
+    volatile uint32_t bohc;
     uint8_t reserved[0xa0 - 0x2c];
     uint8_t vendor[0x100 - 0xa0];
     struct ahci_hba_port ports[32];
@@ -827,6 +831,14 @@ static void ahci_cpu_relax(void)
     __asm__ volatile("pause");
 }
 
+static void ahci_memory_barrier(void)
+{
+    /* The command list and table live in normal RAM while PxCI is MMIO.
+     * Keep descriptor stores on the visible side of command submission and
+     * do not consume DMA output before the controller has cleared PxCI. */
+    __asm__ volatile("mfence" ::: "memory");
+}
+
 static int ahci_async_fast_poll_idle(struct ahci_hba_port *port)
 {
     for (uint32_t i = 0; i < AHCI_ASYNC_FAST_POLL_SPINS; ++i) {
@@ -889,6 +901,25 @@ static void ahci_pending_clear(void)
     storage_memzero(&ahci_pending_command, sizeof(ahci_pending_command));
 }
 
+static void ahci_log_pending_failure(const char *reason,
+                                     struct ahci_hba_port *port)
+{
+    if (!port) {
+        return;
+    }
+    console_printf("[ntclks] ahci %s op=%s owner=%u lba=%llu sectors=%u "
+                   "ci=0x%x is=0x%x tfd=0x%x serr=0x%x\n",
+                   reason,
+                   ahci_pending_command.write ? "write" : "read",
+                   ahci_pending_command.owner_pid,
+                   (unsigned long long)ahci_pending_command.lba,
+                   ahci_pending_command.sector_count,
+                   port->ci,
+                   port->is,
+                   port->tfd,
+                   port->serr);
+}
+
 static int ahci_pending_poll(void)
 {
     struct ahci_hba_port *port = ahci_pending_command.port;
@@ -903,7 +934,10 @@ static int ahci_pending_poll(void)
             }
             if (time_ticks() - ahci_pending_command.start_tick >=
                 AHCI_ASYNC_TIMEOUT_TICKS) {
-                port->ci &= ~1u;
+                /* PxCI is cleared by the controller, not software.  Do not
+                 * overwrite it here: the retry path below will stop and
+                 * reinitialise the port before reusing command memory. */
+                ahci_log_pending_failure("timeout", port);
                 ahci_pending_clear();
                 return -5;
             }
@@ -916,15 +950,18 @@ static int ahci_pending_poll(void)
             ahci_cpu_relax();
         }
         if ((port->ci & 1u) != 0) {
+            ahci_log_pending_failure("wait timeout", port);
             ahci_pending_clear();
             return -5;
         }
     }
 command_complete:
     if (port->is & AHCI_PORT_IS_TFES) {
+        ahci_log_pending_failure("task-file error", port);
         ahci_pending_clear();
         return -5;
     }
+    ahci_memory_barrier();
     ahci_pending_clear();
     return 0;
 }
@@ -966,16 +1003,20 @@ static int storage_read_failure(int ret)
     return ret == -LEONOS_EAGAIN ? ret : -5;
 }
 
-static void ahci_stop_port(struct ahci_hba_port *port)
+static int ahci_stop_port(struct ahci_hba_port *port)
 {
+    if (!port) {
+        return -22;
+    }
     port->cmd &= ~AHCI_PORT_CMD_ST;
     port->cmd &= ~AHCI_PORT_CMD_FRE;
     for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
         if ((port->cmd & (AHCI_PORT_CMD_FR | AHCI_PORT_CMD_CR)) == 0) {
-            break;
+            return 0;
         }
         ahci_cpu_relax();
     }
+    return -5;
 }
 
 static void ahci_start_port(struct ahci_hba_port *port)
@@ -986,7 +1027,9 @@ static void ahci_start_port(struct ahci_hba_port *port)
 
 static int ahci_setup_port(struct ahci_hba_port *port)
 {
-    ahci_stop_port(port);
+    if (ahci_stop_port(port) < 0) {
+        return -5;
+    }
     storage_memzero(ahci_cmd_headers, sizeof(ahci_cmd_headers));
     storage_memzero(ahci_received_fis, sizeof(ahci_received_fis));
     storage_memzero(ahci_cmd_table_buf, sizeof(ahci_cmd_table_buf));
@@ -1001,7 +1044,26 @@ static int ahci_setup_port(struct ahci_hba_port *port)
     cmd->ctba = (uint32_t)(uintptr_t)ahci_cmd_table_buf;
     cmd->ctbau = 0;
 
+    port->is = 0xffffffffu;
+    port->serr = 0xffffffffu;
+    ahci_memory_barrier();
     ahci_start_port(port);
+    return 0;
+}
+
+static int ahci_recover_port(struct ahci_hba_port *port, uint32_t attempt)
+{
+    if (!port) {
+        return -22;
+    }
+    console_printf("[ntclks] ahci recovering port after I/O failure attempt=%u "
+                   "ci=0x%x is=0x%x tfd=0x%x serr=0x%x\n",
+                   attempt, port->ci, port->is, port->tfd, port->serr);
+    ahci_pending_clear();
+    if (ahci_setup_port(port) < 0) {
+        console_printf("[ntclks] ahci port recovery failed attempt=%u\n", attempt);
+        return -5;
+    }
     return 0;
 }
 
@@ -1060,6 +1122,7 @@ static int ahci_read_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sect
     if (ahci_wait_cmd_slot(port) < 0) {
         return storage_async_can_yield() ? -LEONOS_EAGAIN : -5;
     }
+    ahci_memory_barrier();
     port->ci = 1u;
     ahci_pending_command.port = port;
     ahci_pending_command.lba = lba;
@@ -1127,6 +1190,7 @@ static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sec
     if (ahci_wait_cmd_slot(port) < 0) {
         return storage_async_can_yield() ? -LEONOS_EAGAIN : -5;
     }
+    ahci_memory_barrier();
     port->ci = 1u;
     ahci_pending_command.port = port;
     ahci_pending_command.lba = lba;
@@ -1137,6 +1201,47 @@ static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sec
     ahci_pending_command.write = 1;
     ahci_pending_command.active = 1;
     return ahci_pending_poll();
+}
+
+static int ahci_read_lba_retry(struct ahci_hba_port *port, uint64_t lba,
+                               uint32_t sector_count, void *buffer)
+{
+    int ret = -5;
+    for (uint32_t attempt = 0; attempt < AHCI_IO_RETRY_COUNT; ++attempt) {
+        ret = ahci_read_lba(port, lba, sector_count, buffer);
+        if (ret >= 0 || ret == -LEONOS_EAGAIN) {
+            return ret;
+        }
+        if (ahci_recover_port(port, attempt + 1u) < 0) {
+            break;
+        }
+        if (attempt + 1u >= AHCI_IO_RETRY_COUNT) {
+            break;
+        }
+    }
+    return ret;
+}
+
+static int ahci_write_lba_retry(struct ahci_hba_port *port, uint64_t lba,
+                                uint32_t sector_count, const void *buffer)
+{
+    int ret = -5;
+    for (uint32_t attempt = 0; attempt < AHCI_IO_RETRY_COUNT; ++attempt) {
+        ret = ahci_write_lba(port, lba, sector_count, buffer);
+        if (ret >= 0 || ret == -LEONOS_EAGAIN) {
+            return ret;
+        }
+        /* Writes are retried at the same sector range with unchanged data.
+         * That is safe even when the controller completed a command just as
+         * the timeout/error status was observed. */
+        if (ahci_recover_port(port, attempt + 1u) < 0) {
+            break;
+        }
+        if (attempt + 1u >= AHCI_IO_RETRY_COUNT) {
+            break;
+        }
+    }
+    return ret;
 }
 
 static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffer)
@@ -1154,7 +1259,7 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
     }
     while (sector_count) {
         uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
-        int ret = ahci_read_lba(g_storage.hba_port, lba, chunk, dst);
+        int ret = ahci_read_lba_retry(g_storage.hba_port, lba, chunk, dst);
         if (ret < 0) {
             return ret;
         }
@@ -1184,7 +1289,7 @@ static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void
     }
     while (sector_count) {
         uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
-        int ret = ahci_write_lba(g_storage.hba_port, lba, chunk, src);
+        int ret = ahci_write_lba_retry(g_storage.hba_port, lba, chunk, src);
         if (ret < 0) {
             return ret;
         }
@@ -4077,7 +4182,7 @@ static int install_write_sectors(struct install_disk_state *disk, uint64_t lba,
     storage_cache_invalidate();
     while (sector_count) {
         uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
-        int ret = ahci_write_lba(disk->hba_port, lba, chunk, src);
+        int ret = ahci_write_lba_retry(disk->hba_port, lba, chunk, src);
         if (ret < 0) {
             return ret;
         }

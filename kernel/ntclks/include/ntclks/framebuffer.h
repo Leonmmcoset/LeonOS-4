@@ -10,6 +10,14 @@ struct framebuffer {
     uint32_t height;
     uint32_t pitch;
     uint8_t bpp;
+    uint8_t bytes_per_pixel;
+    uint8_t type;
+    uint8_t red_field_position;
+    uint8_t red_mask_size;
+    uint8_t green_field_position;
+    uint8_t green_mask_size;
+    uint8_t blue_field_position;
+    uint8_t blue_mask_size;
     bool available;
 };
 

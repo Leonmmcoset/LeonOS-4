@@ -4,7 +4,10 @@
 #include <ntclks/types.h>
 
 #define NTCLKS_USER_BASE 0x0000000000400000ULL
-#define NTCLKS_USER_TOP  0x0000000004000000ULL
+/* Keep the user interval below the kernel's identity-mapped 128 MiB image
+ * base. The extra range leaves room for large file mappings and application
+ * heaps without replacing the kernel mapping in a user CR3. */
+#define NTCLKS_USER_TOP  0x0000000007000000ULL
 #define NTCLKS_USER_MMAP_BASE 0x0000000002000000ULL
 #define NTCLKS_USER_STACK_PAGES 16u
 #define NTCLKS_USER_PD_BYTES 0x200000ULL
@@ -30,6 +33,8 @@ void paging_load_cr3(uint64_t cr3);
 
 bool address_space_create(struct address_space *as);
 void address_space_destroy(struct address_space *as);
+bool address_space_prepare_user_range(struct address_space *as, uint64_t start,
+                                      uint64_t end);
 bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
                                  uint64_t phys, uint64_t flags);
 uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr);

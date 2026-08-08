@@ -52,12 +52,15 @@ SHA-256 values and waits for a user decision:
 This check runs for both normal EFI filesystem loading and installer GRUB
 module loading.
 
-## Framebuffer boot log
+## GRUB framebuffer boot log
 
 After GRUB supplies the Multiboot2 framebuffer tag, the loader creates an
 on-screen boot log using the built-in 8x16 PSF font. All subsequent loader
 serial output is mirrored to this panel, including component discovery,
-integrity results, load failures, and the kernel handoff.
+integrity results, load failures, and the kernel handoff. The loader records
+the panel geometry and cursor in `struct leonos_boot_handoff`, so the kernel
+bootstrap console appends its startup log to the same GRUB framebuffer panel
+instead of opening a separate top-corner framebuffer console.
 
 The panel uses Metro blue by default and switches to the persisted Win95 or
 Metro theme after the loader reads `0:/system/config/display.conf`. It requires a 32-bit

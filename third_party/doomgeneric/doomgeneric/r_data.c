@@ -20,6 +20,7 @@
 #include <stdio.h>
 
 #include "deh_main.h"
+#include "doomgeneric.h"
 #include "i_swap.h"
 #include "i_system.h"
 #include "z_zone.h"
@@ -37,6 +38,44 @@
 
 
 #include "r_data.h"
+
+/* Loading Freedoom's renderer data requires hundreds of small WAD reads.
+ * LeonOS uses cooperative yielding while storage requests are in flight, so
+ * periodically hand control back to the desktop instead of making startup
+ * appear frozen on slower virtual disks. */
+static void R_StartupYield(void)
+{
+#if defined(LEONOS_DOOM)
+    DG_SleepMs(1);
+#endif
+}
+
+static void R_StartupProgress(uint32_t progress, const char *message)
+{
+#if defined(LEONOS_DOOM)
+    DG_StartupProgress(progress, message);
+#else
+    (void)progress;
+    (void)message;
+#endif
+}
+
+/* The standard WAD patch header has four 16-bit fields followed by one
+ * 32-bit column offset per pixel column.  Freedoom's patches are far smaller
+ * than this bound; accepting 4096 columns also covers high-resolution mods
+ * without allocating whole patch images during renderer startup. */
+#define R_PATCH_HEADER_BYTES 8U
+#define R_PATCH_HEADER_MAX_COLUMNS 4096U
+
+typedef struct
+{
+    short width;
+    short height;
+    short leftoffset;
+    short topoffset;
+} PACKEDATTR r_patch_header_t;
+
+static int r_patch_columnofs[R_PATCH_HEADER_MAX_COLUMNS];
 
 //
 // Graphics.
@@ -296,7 +335,8 @@ void R_GenerateLookup (int texnum)
     texture_t*		texture;
     byte*		patchcount;	// patchcount[texture->width]
     texpatch_t*		patch;	
-    patch_t*		realpatch;
+    r_patch_header_t patch_header;
+    int patch_width;
     int			x;
     int			x1;
     int			x2;
@@ -325,9 +365,25 @@ void R_GenerateLookup (int texnum)
 	 i<texture->patchcount;
 	 i++, patch++)
     {
-	realpatch = W_CacheLumpNum (patch->patch, PU_CACHE);
+	/* Only the patch width and column directory are needed to build the
+	 * lookup table.  Caching full patch pixels here causes the Freedoom WAD
+	 * to churn the entire zone before the first frame is drawn. */
+	W_ReadLumpFragment(patch->patch, 0, &patch_header,
+	                  R_PATCH_HEADER_BYTES);
+	patch_width = SHORT(patch_header.width);
+    if (patch_width <= 0 ||
+        patch_width > (int)R_PATCH_HEADER_MAX_COLUMNS ||
+	    W_LumpLength(patch->patch) <
+	        (int)(R_PATCH_HEADER_BYTES +
+	              (unsigned int)patch_width * sizeof(r_patch_columnofs[0])))
+	{
+	    I_Error("R_GenerateLookup: invalid patch header in lump %i",
+	            patch->patch);
+	}
+	W_ReadLumpFragment(patch->patch, R_PATCH_HEADER_BYTES, r_patch_columnofs,
+	                  (unsigned int)patch_width * sizeof(r_patch_columnofs[0]));
 	x1 = patch->originx;
-	x2 = x1 + SHORT(realpatch->width);
+	x2 = x1 + patch_width;
 	
 	if (x1 < 0)
 	    x = 0;
@@ -340,7 +396,7 @@ void R_GenerateLookup (int texnum)
 	{
 	    patchcount[x]++;
 	    collump[x] = patch->patch;
-	    colofs[x] = LONG(realpatch->columnofs[x-x1])+3;
+	    colofs[x] = LONG(r_patch_columnofs[x-x1])+3;
 	}
     }
 	
@@ -552,6 +608,8 @@ void R_InitTextures (void)
     {
 	if (!(i&63))
 	    printf (".");
+	if (i != 0 && !(i & 31))
+	    R_StartupYield();
 
 	if (i == numtextures1)
 	{
@@ -613,8 +671,13 @@ void R_InitTextures (void)
     
     // Precalculate whatever possible.	
 
+    R_StartupProgress(89, "Indexing texture data");
     for (i=0 ; i<numtextures ; i++)
+    {
 	R_GenerateLookup (i);
+	if (i != 0 && !(i & 7))
+	    R_StartupYield();
+    }
     
     // Create translation table for global animation.
     texturetranslation = Z_Malloc ((numtextures+1)*sizeof(*texturetranslation), PU_STATIC, 0);
@@ -669,6 +732,8 @@ void R_InitSpriteLumps (void)
     {
 	if (!(i&63))
 	    printf (".");
+	if (i != 0 && !(i & 15))
+	    R_StartupYield();
 
 	patch = W_CacheLumpNum (firstspritelump+i, PU_CACHE);
 	spritewidth[i] = SHORT(patch->width)<<FRACBITS;
@@ -702,12 +767,16 @@ void R_InitColormaps (void)
 //
 void R_InitData (void)
 {
+    R_StartupProgress(88, "Loading textures");
     R_InitTextures ();
     printf (".");
+    R_StartupProgress(90, "Loading flats");
     R_InitFlats ();
     printf (".");
+    R_StartupProgress(91, "Loading sprites");
     R_InitSpriteLumps ();
     printf (".");
+    R_StartupProgress(91, "Loading lighting");
     R_InitColormaps ();
 }
 
@@ -906,7 +975,4 @@ void R_PrecacheLevel (void)
 
     Z_Free(spritepresent);
 }
-
-
-
 

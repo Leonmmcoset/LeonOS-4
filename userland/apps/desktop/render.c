@@ -192,8 +192,9 @@ void draw_window(uint8_t id)
         return;
     }
 
+    int resizable = window_allows_resize(w);
     uint32_t window_flags = active_window == id ? LEONOS_UI_WINDOW_ACTIVE : 0;
-    if (!window_allows_resize(w)) {
+    if (!resizable) {
         window_flags |= LEONOS_UI_WINDOW_NO_RESIZE;
     }
     uint32_t title_color = (window_flags & LEONOS_UI_WINDOW_ACTIVE) ?
@@ -204,9 +205,10 @@ void draw_window(uint8_t id)
     text_draw_i(w->x + 28, w->y + 9, w->title, LEONOS_UI_WHITE, title_color);
     int bx_i = w->x + (int)w->width - 64;
     int by_i = w->y + 6;
-    window_button_i(bx_i, by_i, '_', 0);
-    window_button_i(bx_i + 20, by_i, w->maximized ? 'r' : 'M',
-                    window_allows_resize(w) ? 0 : LEONOS_UI_BUTTON_DISABLED);
+    window_button_i(resizable ? bx_i : bx_i + 20, by_i, '_', 0);
+    if (resizable) {
+        window_button_i(bx_i + 20, by_i, w->maximized ? 'r' : 'M', 0);
+    }
     window_button_i(bx_i + 40, by_i, 'X', 0);
 
     int body_x_i = w->x + 8;

@@ -7,6 +7,8 @@
 
 #define LEONOS_TAR_IO_BUFFER_SIZE (32U * 1024U)
 #define LEONOS_TAR_PROGRESS_INTERVAL (256U * 1024U)
+#define LEONOS_TAR_WRITE_RETRY_COUNT 8U
+#define LEONOS_TAR_WRITE_RETRY_DELAY_MS 5UL
 
 #define LEONOS_TAR_HEADER_NAME 0U
 #define LEONOS_TAR_HEADER_MODE 100U
@@ -340,13 +342,42 @@ static uint32_t tar_round_up(uint32_t size)
     return rem ? size + LEONOS_TAR_BLOCK_SIZE - rem : size;
 }
 
+static int tar_write_all(int fd, const void *data, uint32_t len)
+{
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint32_t written = 0;
+    uint32_t retries = 0;
+
+    if (!data && len != 0) {
+        return 0;
+    }
+    while (written < len) {
+        long result = write(fd, bytes + written, len - written);
+        if (result > 0) {
+            if ((uint64_t)result > (uint64_t)(len - written)) {
+                return 0;
+            }
+            written += (uint32_t)result;
+            retries = 0;
+            continue;
+        }
+        if ((result != -LEONOS_EIO && result != -LEONOS_EAGAIN) ||
+            retries >= LEONOS_TAR_WRITE_RETRY_COUNT) {
+            return 0;
+        }
+        ++retries;
+        /* File-write errors do not advance the task file offset.  Retry only
+         * the byte range that has not received a successful return value. */
+        sleep_ms(retries * LEONOS_TAR_WRITE_RETRY_DELAY_MS);
+    }
+    return 1;
+}
+
 int leonos_tar_finalize(int fd)
 {
     unsigned char zero[LEONOS_TAR_BLOCK_SIZE * 2U];
-    long wrote;
     memset(zero, 0, sizeof(zero));
-    wrote = write(fd, zero, sizeof(zero));
-    return wrote == (long)sizeof(zero) ? 1 : 0;
+    return tar_write_all(fd, zero, sizeof(zero));
 }
 
 static int tar_write_padding(int fd, uint32_t size)
@@ -358,8 +389,7 @@ static int tar_write_padding(int fd, uint32_t size)
         memset(zero, 0, sizeof(zero));
         while (pad > 0) {
             uint32_t chunk = pad < sizeof(zero) ? pad : sizeof(zero);
-            long wrote = write(fd, zero, chunk);
-            if (wrote != (long)chunk) {
+            if (!tar_write_all(fd, zero, chunk)) {
                 return 0;
             }
             pad -= chunk;
@@ -394,7 +424,6 @@ int leonos_tar_pack_file_append(int tar_fd, const char *file_path,
     uint32_t file_size;
     uint32_t remaining;
     long got;
-    long wrote;
     if (!file_path || !file_path[0] || !stored_name || !stored_name[0]) {
         return 0;
     }
@@ -431,8 +460,7 @@ int leonos_tar_pack_file_append(int tar_fd, const char *file_path,
     tar_uint_to_octal(tar_compute_checksum(raw),
                       ((struct tar_header *)raw)->checksum,
                       sizeof(((struct tar_header *)raw)->checksum));
-    wrote = write(tar_fd, raw, sizeof(raw));
-    if (wrote != (long)sizeof(raw)) {
+    if (!tar_write_all(tar_fd, raw, sizeof(raw))) {
         close(src_fd);
         return 0;
     }
@@ -443,8 +471,7 @@ int leonos_tar_pack_file_append(int tar_fd, const char *file_path,
         if (got <= 0) {
             break;
         }
-        wrote = write(tar_fd, buffer, (size_t)got);
-        if (wrote != got) {
+        if (!tar_write_all(tar_fd, buffer, (uint32_t)got)) {
             close(src_fd);
             return 0;
         }
@@ -580,7 +607,6 @@ int leonos_tar_extract_file(const char *tar_path, const char *stored_name,
     char name[LEONOS_FS_PATH_LEN];
     char typeflag;
     long got;
-    long wrote;
     int found = 0;
     int ok = 0;
     if (!tar_path || !tar_path[0] || !stored_name || !stored_name[0] ||
@@ -640,8 +666,7 @@ int leonos_tar_extract_file(const char *tar_path, const char *stored_name,
         if (got <= 0) {
             break;
         }
-        wrote = write(dest_fd, buffer, (size_t)got);
-        if (wrote != got) {
+        if (!tar_write_all(dest_fd, buffer, (uint32_t)got)) {
             break;
         }
         remaining -= (uint32_t)got;
@@ -674,7 +699,6 @@ int leonos_tar_extract_all_with_progress(const char *tar_path,
     char name[LEONOS_FS_PATH_LEN];
     char typeflag;
     long got;
-    long wrote;
     struct leonos_stat archive_stat;
     uint32_t total = 0;
     uint32_t processed = 0;
@@ -771,10 +795,9 @@ int leonos_tar_extract_all_with_progress(const char *tar_path,
                 file_ok = 0;
                 break;
             }
-            wrote = write(dest_fd, buffer, (size_t)got);
-            if (wrote != got) {
-                printf("[tar] write failed name=%s read=%ld wrote=%ld remaining=%u\n",
-                       name, got, wrote, remaining);
+            if (!tar_write_all(dest_fd, buffer, (uint32_t)got)) {
+                printf("[tar] write failed name=%s bytes=%ld after retries remaining=%u\n",
+                       name, got, remaining);
                 file_ok = 0;
                 break;
             }

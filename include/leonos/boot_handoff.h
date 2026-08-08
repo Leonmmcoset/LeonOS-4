@@ -5,7 +5,7 @@
 #include <leonos/auth.h>
 
 #define LEONOS_BOOT_HANDOFF_MAGIC 0x4c424f54u
-#define LEONOS_BOOT_HANDOFF_VERSION 2u
+#define LEONOS_BOOT_HANDOFF_VERSION 3u
 #define LEONOS_KERNEL_SERVICES_VERSION 2u
 #define LEONOS_MIDDLELAYER_API_VERSION 5u
 
@@ -51,6 +51,16 @@ struct leonos_boot_module_info {
     const char *path;
 };
 
+struct leonos_boot_log_state {
+    uint32_t log_x;
+    uint32_t log_y;
+    uint32_t columns;
+    uint32_t rows;
+    uint32_t column;
+    uint32_t row;
+    uint32_t line_count;
+};
+
 struct leonos_boot_handoff {
     uint32_t magic;
     uint32_t version;
@@ -64,7 +74,13 @@ struct leonos_boot_handoff {
     uint32_t framebuffer_height;
     uint32_t framebuffer_pitch;
     uint8_t framebuffer_bpp;
-    uint8_t reserved_fb[7];
+    uint8_t framebuffer_type;
+    uint8_t framebuffer_red_field_position;
+    uint8_t framebuffer_red_mask_size;
+    uint8_t framebuffer_green_field_position;
+    uint8_t framebuffer_green_mask_size;
+    uint8_t framebuffer_blue_field_position;
+    uint8_t framebuffer_blue_mask_size;
     uint64_t mmap_addr;
     uint32_t mmap_entry_size;
     uint32_t mmap_entry_count;
@@ -77,6 +93,7 @@ struct leonos_boot_handoff {
     struct leonos_boot_module_info kernel;
     struct leonos_boot_module_info middlelayer;
     uint64_t middlelayer_api;
+    struct leonos_boot_log_state boot_log;
 };
 
 struct leonos_kernel_services {

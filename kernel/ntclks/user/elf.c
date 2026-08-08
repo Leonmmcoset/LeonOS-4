@@ -335,6 +335,10 @@ bool elf64_map_task_image(struct task *task, const struct storage_node *node,
             out->valid = false;
             return false;
         }
+        if (!address_space_prepare_user_range(&task->as, start, end)) {
+            out->valid = false;
+            return false;
+        }
         vma = elf64_task_free_vma(task);
         if (!vma) {
             out->valid = false;

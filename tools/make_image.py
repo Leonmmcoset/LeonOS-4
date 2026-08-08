@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -14,20 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def run(cmd: list[str]) -> None:
     print("+", " ".join(cmd))
     subprocess.run(cmd, cwd=ROOT, check=True)
-
-
-def copy_tree(src: Path, dst: Path) -> None:
-    if dst.exists():
-        shutil.rmtree(dst)
-    dst.mkdir(parents=True)
-    for item in src.rglob("*"):
-        rel = item.relative_to(src)
-        target = dst / rel
-        if item.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, target)
 
 
 def main() -> int:
@@ -79,20 +64,23 @@ def main() -> int:
     # then exhaust the virtual AHCI write budget.
     run(["mkfs.fat", "-F", "32", "-s", "4", "-n", "LEONOS4", str(fat_img)])
 
-    # VMDK has a build-time language seed. Keep it in a private copy so the
-    # shared ESP staging tree remains unchanged; image-iso therefore retains
-    # the installer/default locale selected by its own flow.
+    # VMDK has a build-time language seed. Copy the staged files directly and
+    # then replace only locale.conf, so image-iso retains the shared staging
+    # tree without paying for a complete temporary ESP-tree copy on every run.
+    for item in sorted(esp_tree.iterdir()):
+        run(["mcopy", "-s", "-i", str(fat_img), str(item), "::/"])
     with tempfile.TemporaryDirectory(prefix="leonos-vmdk-esp-") as temp_dir:
-        image_esp = Path(temp_dir) / "esp"
-        copy_tree(esp_tree, image_esp)
-        locale_path = image_esp / "system/config/locale.conf"
-        locale_path.parent.mkdir(parents=True, exist_ok=True)
+        locale_path = Path(temp_dir) / "locale.conf"
         locale_path.write_text(f"lang={args.default_language}\n", encoding="utf-8")
-        items = sorted(image_esp.iterdir())
-        for item in items:
-            run(["mcopy", "-s", "-i", str(fat_img), str(item), "::/"])
+        run(["mcopy", "-o", "-i", str(fat_img), str(locale_path),
+             "::/system/config/locale.conf"])
 
-    run(["dd", f"if={fat_img}", f"of={raw}", "bs=512", f"seek={start_sector}", "conv=notrunc", "status=none"])
+    # `bs=512` issued roughly 380,000 writes for a 192 MiB image. This is
+    # especially slow on WSL's Windows-mounted worktree. Keep the byte offset
+    # exact but copy in large, sequential chunks.
+    run(["dd", f"if={fat_img}", f"of={raw}", "bs=4M",
+         f"seek={start_sector * 512}", "oflag=seek_bytes", "conv=notrunc",
+         "status=none"])
     run(["qemu-img", "convert", "-f", "raw", "-O", "vmdk", str(raw), str(out)])
     return 0
 

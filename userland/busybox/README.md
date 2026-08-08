@@ -12,8 +12,16 @@ The profile includes BusyBox `hush` behind the `sh` applet in standalone
 no-fork mode. It supports simple command lines, shell built-ins, and the
 bundled applets (`ls`, `pwd`, `cat`,
 `echo`, `clear`, `head`, `tail`, `wc`, `basename`, `dirname`, `printf`,
-`mkdir`, `rmdir`, `true`, and `false`). The GUI terminal launches this shell
-by default.
+`mkdir`, `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`,
+`true`, `false`, and `vi`). The GUI terminal launches this shell by default.
+
+`cp`, `mv`, and `rm` operate on regular files and directories through the
+LeonOS filesystem ABI. Symbolic links, ownership changes, and special device
+nodes remain unsupported by the filesystem and return an error.
+
+The `file` command is provided as an external program backed by upstream
+libmagic. Hush resolves it to `0:/programs/file/file.elf`; the matching
+compiled database is installed at `0:/system/share/misc/magic.mgc`.
 
 LeonOS does not yet provide POSIX `fork`/`vfork`, pipe, descriptor duplication,
 process groups, or signal semantics. Therefore pipelines, redirections,

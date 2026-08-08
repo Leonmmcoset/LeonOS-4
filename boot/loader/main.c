@@ -81,6 +81,9 @@ struct multiboot2_tag_framebuffer {
     uint16_t reserved;
 };
 
+#define MULTIBOOT2_FRAMEBUFFER_TYPE_RGB 1u
+#define MULTIBOOT2_FRAMEBUFFER_RGB_INFO_SIZE 6u
+
 struct multiboot2_tag_efi_mmap {
     uint32_t type;
     uint32_t size;
@@ -300,10 +303,11 @@ static struct efi_simple_text_output_protocol *text_out;
 static struct efi_simple_text_input_protocol *text_in;
 
 struct loader_framebuffer_console {
-    uint32_t *pixels;
+    uint8_t *pixels;
     uint32_t width;
     uint32_t height;
-    uint32_t pitch_pixels;
+    uint32_t pitch;
+    uint8_t bytes_per_pixel;
     uint32_t columns;
     uint32_t rows;
     uint32_t column;
@@ -543,9 +547,93 @@ static int bytes_eq(const uint8_t *a, const uint8_t *b, uint64_t len)
     return diff == 0;
 }
 
+static int loader_framebuffer_color_format_valid(void)
+{
+    if (handoff.framebuffer_type != MULTIBOOT2_FRAMEBUFFER_TYPE_RGB ||
+        !handoff.framebuffer_red_mask_size ||
+        !handoff.framebuffer_green_mask_size ||
+        !handoff.framebuffer_blue_mask_size ||
+        handoff.framebuffer_red_mask_size > 32u ||
+        handoff.framebuffer_green_mask_size > 32u ||
+        handoff.framebuffer_blue_mask_size > 32u) {
+        return 0;
+    }
+    return handoff.framebuffer_red_field_position <=
+               32u - handoff.framebuffer_red_mask_size &&
+           handoff.framebuffer_green_field_position <=
+               32u - handoff.framebuffer_green_mask_size &&
+           handoff.framebuffer_blue_field_position <=
+               32u - handoff.framebuffer_blue_mask_size;
+}
+
+static uint32_t loader_framebuffer_component_to_native(uint8_t component,
+                                                        uint8_t field_position,
+                                                        uint8_t mask_size)
+{
+    uint64_t max_value = mask_size == 32u ? 0xffffffffULL :
+                         ((1ULL << mask_size) - 1ULL);
+    uint64_t scaled = ((uint64_t)component * max_value + 127ULL) / 255ULL;
+    return (uint32_t)(scaled << field_position);
+}
+
+static uint32_t loader_framebuffer_native_color(uint32_t color)
+{
+    uint8_t red_position = 16u;
+    uint8_t red_size = 8u;
+    uint8_t green_position = 8u;
+    uint8_t green_size = 8u;
+    uint8_t blue_position = 0u;
+    uint8_t blue_size = 8u;
+
+    if (loader_framebuffer_color_format_valid()) {
+        red_position = handoff.framebuffer_red_field_position;
+        red_size = handoff.framebuffer_red_mask_size;
+        green_position = handoff.framebuffer_green_field_position;
+        green_size = handoff.framebuffer_green_mask_size;
+        blue_position = handoff.framebuffer_blue_field_position;
+        blue_size = handoff.framebuffer_blue_mask_size;
+    }
+
+    return loader_framebuffer_component_to_native((uint8_t)(color >> 16),
+                                                  red_position, red_size) |
+           loader_framebuffer_component_to_native((uint8_t)(color >> 8),
+                                                  green_position, green_size) |
+           loader_framebuffer_component_to_native((uint8_t)color,
+                                                  blue_position, blue_size);
+}
+
+static uint8_t loader_framebuffer_bytes_per_pixel(uint32_t pitch, uint32_t width,
+                                                   uint8_t bpp)
+{
+    uint32_t expected = ((uint32_t)bpp + 7u) / 8u;
+
+    if (!width) {
+        return 0;
+    }
+    if ((expected == 3u || expected == 4u) &&
+        (uint64_t)width * expected <= pitch) {
+        return (uint8_t)expected;
+    }
+    if (pitch % width == 0u) {
+        uint32_t actual = pitch / width;
+        if (actual == 3u || actual == 4u) {
+            return (uint8_t)actual;
+        }
+    }
+    return 0;
+}
+
+static void loader_framebuffer_write_native(uint8_t *pixel, uint32_t color)
+{
+    for (uint8_t byte = 0; byte < framebuffer_console.bytes_per_pixel; ++byte) {
+        pixel[byte] = (uint8_t)(color >> (byte * 8u));
+    }
+}
+
 static void loader_framebuffer_fill(uint32_t x, uint32_t y, uint32_t width,
                                     uint32_t height, uint32_t color)
 {
+    uint32_t native_color;
     if (!framebuffer_console.enabled || x >= framebuffer_console.width ||
         y >= framebuffer_console.height) {
         return;
@@ -556,11 +644,15 @@ static void loader_framebuffer_fill(uint32_t x, uint32_t y, uint32_t width,
     if (height > framebuffer_console.height - y) {
         height = framebuffer_console.height - y;
     }
+    native_color = loader_framebuffer_native_color(color);
     for (uint32_t row = 0; row < height; ++row) {
-        uint32_t *line = framebuffer_console.pixels +
-                         (uint64_t)(y + row) * framebuffer_console.pitch_pixels + x;
+        uint8_t *line = framebuffer_console.pixels +
+                        (uint64_t)(y + row) * framebuffer_console.pitch +
+                        (uint64_t)x * framebuffer_console.bytes_per_pixel;
         for (uint32_t column = 0; column < width; ++column) {
-            line[column] = color;
+            loader_framebuffer_write_native(line +
+                                                (uint64_t)column * framebuffer_console.bytes_per_pixel,
+                                            native_color);
         }
     }
 }
@@ -569,17 +661,24 @@ static void loader_framebuffer_char(uint32_t x, uint32_t y, char ch,
                                     uint32_t foreground, uint32_t background)
 {
     const uint8_t *glyph;
+    uint32_t native_foreground;
+    uint32_t native_background;
     if (!framebuffer_console.enabled || x + LEONOS_FONT_W > framebuffer_console.width ||
         y + LEONOS_FONT_H > framebuffer_console.height) {
         return;
     }
     glyph = leonos_psf_glyph(ch);
+    native_foreground = loader_framebuffer_native_color(foreground);
+    native_background = loader_framebuffer_native_color(background);
     for (uint32_t row = 0; row < LEONOS_FONT_H; ++row) {
-        uint32_t *line = framebuffer_console.pixels +
-                         (uint64_t)(y + row) * framebuffer_console.pitch_pixels + x;
+        uint8_t *line = framebuffer_console.pixels +
+                        (uint64_t)(y + row) * framebuffer_console.pitch +
+                        (uint64_t)x * framebuffer_console.bytes_per_pixel;
         for (uint32_t column = 0; column < LEONOS_FONT_W; ++column) {
-            line[column] = (glyph[row] & (uint8_t)(0x80u >> column))
-                               ? foreground : background;
+            loader_framebuffer_write_native(line +
+                                                (uint64_t)column * framebuffer_console.bytes_per_pixel,
+                                            (glyph[row] & (uint8_t)(0x80u >> column))
+                                                ? native_foreground : native_background);
         }
     }
 }
@@ -678,12 +777,12 @@ static void loader_framebuffer_draw_chrome(void)
                             framebuffer_console.muted_text, framebuffer_console.banner);
     loader_framebuffer_text(framebuffer_console.panel_x + 12U,
                             framebuffer_console.panel_y + 7U,
-                            "BOOT LOG",
+                            "GRUB FRAMEBUFFER",
                             framebuffer_console.text, framebuffer_console.banner);
-    if (framebuffer_console.panel_width >= 208U) {
+    if (framebuffer_console.panel_width >= 288U) {
         loader_framebuffer_text(live_output_x,
                                 framebuffer_console.panel_y + 7U,
-                                "LIVE OUTPUT",
+                                "BOOT LOG",
                                 framebuffer_console.muted_text, framebuffer_console.banner);
     }
     loader_framebuffer_text(24U, framebuffer_console.footer_y + 9U,
@@ -692,7 +791,7 @@ static void loader_framebuffer_draw_chrome(void)
     if (framebuffer_console.width >= 420U) {
         loader_framebuffer_text(framebuffer_console.width - 154U,
                                 framebuffer_console.footer_y + 9U,
-                                "EFI / MULTIBOOT",
+                                "GRUB / MULTIBOOT",
                                 framebuffer_console.muted_text, framebuffer_console.banner);
     }
 }
@@ -733,17 +832,26 @@ static void loader_framebuffer_set_theme(uint32_t theme)
 
 static void loader_framebuffer_init(void)
 {
+    uint8_t bytes_per_pixel;
+
     framebuffer_console = (struct loader_framebuffer_console){0};
-    if (!handoff.framebuffer_addr || handoff.framebuffer_bpp != 32U ||
+    bytes_per_pixel = loader_framebuffer_bytes_per_pixel(handoff.framebuffer_pitch,
+                                                         handoff.framebuffer_width,
+                                                         handoff.framebuffer_bpp);
+    if (!handoff.framebuffer_addr ||
+        (handoff.framebuffer_bpp != 24U && handoff.framebuffer_bpp != 32U) ||
+        !bytes_per_pixel ||
         handoff.framebuffer_width < LEONOS_FONT_W * 4U ||
         handoff.framebuffer_height < LEONOS_FONT_H * 4U ||
-        handoff.framebuffer_pitch < handoff.framebuffer_width * 4U) {
+        handoff.framebuffer_pitch <
+            (uint64_t)handoff.framebuffer_width * bytes_per_pixel) {
         return;
     }
-    framebuffer_console.pixels = (uint32_t *)(uintptr_t)handoff.framebuffer_addr;
+    framebuffer_console.pixels = (uint8_t *)(uintptr_t)handoff.framebuffer_addr;
     framebuffer_console.width = handoff.framebuffer_width;
     framebuffer_console.height = handoff.framebuffer_height;
-    framebuffer_console.pitch_pixels = handoff.framebuffer_pitch / 4U;
+    framebuffer_console.pitch = handoff.framebuffer_pitch;
+    framebuffer_console.bytes_per_pixel = bytes_per_pixel;
     framebuffer_console.panel_x = framebuffer_console.width >= 320U ? 24U : 8U;
     framebuffer_console.panel_y = framebuffer_console.height >= 160U
                                       ? LOADER_UI_HEADER_HEIGHT + 18U
@@ -777,6 +885,22 @@ static void loader_framebuffer_init(void)
     }
     framebuffer_console.enabled = framebuffer_console.columns && framebuffer_console.rows;
     loader_framebuffer_set_theme(handoff.ui_theme);
+}
+
+static void loader_framebuffer_save_state(void)
+{
+    if (!framebuffer_console.enabled) {
+        handoff.boot_log = (struct leonos_boot_log_state){0};
+        return;
+    }
+
+    handoff.boot_log.log_x = framebuffer_console.log_x;
+    handoff.boot_log.log_y = framebuffer_console.log_y;
+    handoff.boot_log.columns = framebuffer_console.columns;
+    handoff.boot_log.rows = framebuffer_console.rows;
+    handoff.boot_log.column = framebuffer_console.column;
+    handoff.boot_log.row = framebuffer_console.row;
+    handoff.boot_log.line_count = framebuffer_console.line_count;
 }
 
 static void loader_framebuffer_newline(void)
@@ -1352,6 +1476,17 @@ static void parse_multiboot2(uint32_t magic, uint32_t info_addr)
             handoff.framebuffer_height = fb->framebuffer_height;
             handoff.framebuffer_pitch = fb->framebuffer_pitch;
             handoff.framebuffer_bpp = fb->framebuffer_bpp;
+            handoff.framebuffer_type = fb->framebuffer_type;
+            if (fb->framebuffer_type == MULTIBOOT2_FRAMEBUFFER_TYPE_RGB &&
+                tag->size >= sizeof(*fb) + MULTIBOOT2_FRAMEBUFFER_RGB_INFO_SIZE) {
+                const uint8_t *rgb = (const uint8_t *)fb + sizeof(*fb);
+                handoff.framebuffer_red_field_position = rgb[0];
+                handoff.framebuffer_red_mask_size = rgb[1];
+                handoff.framebuffer_green_field_position = rgb[2];
+                handoff.framebuffer_green_mask_size = rgb[3];
+                handoff.framebuffer_blue_field_position = rgb[4];
+                handoff.framebuffer_blue_mask_size = rgb[5];
+            }
             break;
         }
         case MULTIBOOT2_TAG_TYPE_EFI64: {
@@ -1507,6 +1642,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_write("\n");
 
     serial_write("[loader] jumping to kernel\n");
+    loader_framebuffer_save_state();
     void (*entry)(const struct leonos_boot_handoff *) =
         (void (*)(const struct leonos_boot_handoff *))(uintptr_t)handoff.kernel.entry;
     entry(&handoff);

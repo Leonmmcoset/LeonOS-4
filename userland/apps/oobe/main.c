@@ -16,6 +16,7 @@
 #define OOBE_INITIAL_H 600
 #define OOBE_DONE_PATH "0:/system/state/oobe.done"
 #define OOBE_KEY_ESCAPE 1U
+#define OOBE_MARKER_RETRY_INTERVAL_MS 250UL
 #define T(en, zh) leonos_i18n((en), (zh))
 
 #if CONFIG_LICENSE_DEBUG_LOG
@@ -70,6 +71,9 @@ static uint8_t active_license_field;
 static uint8_t current_page = OOBE_PAGE_LICENSE;
 static uint8_t license_ready;
 static uint8_t show_renew_dhcp;
+static uint8_t completion_marker_pending;
+static uint32_t completion_marker_retry_count;
+static unsigned long completion_marker_next_retry_ms;
 static char status_text[160] = "Create the first administrator account";
 static char license_status_text[160] = "Activate LeonOS before creating the first administrator";
 
@@ -150,14 +154,63 @@ static void update_surface_size_from_framebuffer(void)
 static int write_completion_marker(void)
 {
     static const char done[] = "OOBE done\n";
-    int fd = open(OOBE_DONE_PATH, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    struct leonos_stat st;
+    int fd;
+    int close_ret;
     long wrote;
+
+    fd = open(OOBE_DONE_PATH, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
     if (fd < 0) {
         return fd;
     }
     wrote = write(fd, done, sizeof(done) - 1);
-    close(fd);
-    return wrote == (long)(sizeof(done) - 1) ? 0 : -1;
+    close_ret = close(fd);
+    if (wrote != (long)(sizeof(done) - 1)) {
+        return -1;
+    }
+    if (close_ret < 0) {
+        return close_ret;
+    }
+    st = (struct leonos_stat){0};
+    if (stat(OOBE_DONE_PATH, &st) < 0 ||
+        st.type != LEONOS_FS_TYPE_FILE ||
+        st.size != sizeof(done) - 1U) {
+        return -1;
+    }
+    return 0;
+}
+
+static void schedule_completion_marker_write(void)
+{
+    completion_marker_pending = 1;
+    completion_marker_next_retry_ms = leonos_uptime_ms() + OOBE_MARKER_RETRY_INTERVAL_MS;
+    copy_text(status_text, sizeof(status_text),
+              T("Setup complete. Finalizing...",
+                "设置已完成，正在收尾..."));
+}
+
+static int retry_completion_marker_if_due(void)
+{
+    unsigned long now;
+
+    if (!completion_marker_pending) {
+        return 0;
+    }
+    now = leonos_uptime_ms();
+    if (now < completion_marker_next_retry_ms) {
+        return 0;
+    }
+    if (write_completion_marker() == 0) {
+        completion_marker_pending = 0;
+        OOBE_LOG("[oobe.elf] completion marker write succeeded after %u failed attempts\n",
+                 (unsigned)completion_marker_retry_count);
+        return 1;
+    }
+    ++completion_marker_retry_count;
+    OOBE_LOG("[oobe.elf] completion marker write failed; retry=%u\n",
+             (unsigned)completion_marker_retry_count);
+    schedule_completion_marker_write();
+    return 0;
 }
 
 static int license_is_valid(void)
@@ -190,12 +243,10 @@ static int finish_if_complete(char *detail, uint32_t detail_cap)
     if (!both_setup_parts_complete()) {
         return 0;
     }
-    if (write_completion_marker() < 0) {
-        copy_text(detail, detail_cap, T("Setup complete, but marker write failed.",
-                                        "设置已完成，但完成标记写入失败。"));
-        return 0;
-    }
-    return 1;
+    schedule_completion_marker_write();
+    copy_text(detail, detail_cap, T("Setup complete. Finalizing...",
+                                    "设置已完成，正在收尾..."));
+    return 0;
 }
 
 static void password_mask(char *dst, uint32_t cap)
@@ -427,6 +478,10 @@ static int activate_online(void)
     if (finish_if_complete(license_status_text, sizeof(license_status_text))) {
         return 1;
     }
+    if (completion_marker_pending) {
+        current_page = OOBE_PAGE_ADMIN;
+        return 0;
+    }
     current_page = OOBE_PAGE_ADMIN;
     active_admin_field = 0;
     copy_text(status_text, sizeof(status_text),
@@ -447,6 +502,10 @@ static int activate_offline(void)
     show_renew_dhcp = 0;
     if (finish_if_complete(license_status_text, sizeof(license_status_text))) {
         return 1;
+    }
+    if (completion_marker_pending) {
+        current_page = OOBE_PAGE_ADMIN;
+        return 0;
     }
     current_page = OOBE_PAGE_ADMIN;
     active_admin_field = 0;
@@ -507,6 +566,9 @@ static int create_admin(void)
 {
     struct leonos_user_info user;
     int ret;
+    if (completion_marker_pending) {
+        return 0;
+    }
     if (!license_ready && !license_is_valid()) {
         current_page = OOBE_PAGE_LICENSE;
         copy_text(license_status_text, sizeof(license_status_text),
@@ -549,12 +611,8 @@ static int create_admin(void)
                   T("Created account, but sign-in failed.", "账户已创建，但登录失败。"));
         return 0;
     }
-    if (write_completion_marker() < 0) {
-        copy_text(status_text, sizeof(status_text),
-                  T("Created account, but setup marker failed.", "账户已创建，但完成标记写入失败。"));
-        return 0;
-    }
-    return 1;
+    schedule_completion_marker_write();
+    return 0;
 }
 
 static int handle_license_click(int32_t x, int32_t y)
@@ -697,8 +755,8 @@ int main(void)
                     "请创建第一个管理员。"));
     }
     if (license_ready && admin_exists()) {
-        (void)write_completion_marker();
-        return 0;
+        current_page = OOBE_PAGE_ADMIN;
+        schedule_completion_marker_write();
     }
     current_page = license_ready ? OOBE_PAGE_ADMIN : OOBE_PAGE_LICENSE;
     update_surface_size_from_framebuffer();
@@ -721,6 +779,9 @@ int main(void)
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                                   OOBE_MAX_W, pixels);
         oobe_update_inputm_context((uint32_t)window_id);
+        if (retry_completion_marker_if_due()) {
+            break;
+        }
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_wait_app_event(&event, 20U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {

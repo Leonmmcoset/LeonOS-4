@@ -145,15 +145,39 @@ static int leonos_posix_stat_call(int result, const struct leonos_stat_raw *raw,
     return leonos_posix_stat_fill(raw, st);
 }
 
+/* FAT32 exposes only a compact type/size record through the current ABI.
+ * BusyBox's copy and move applets still need stable, distinct identity fields
+ * to reject copying a file onto itself, so derive a deterministic inode from
+ * the user-visible path in the path-based stat adapter. */
+static ino_t leonos_path_inode(const char *path)
+{
+    const unsigned char *cursor = (const unsigned char *)path;
+    uint64_t hash = 1469598103934665603ULL;
+    while (cursor && *cursor) {
+        hash ^= *cursor++;
+        hash *= 1099511628211ULL;
+    }
+    hash ^= hash >> 32;
+    hash &= 0x7fffffffffffffffULL;
+    return (ino_t)(hash ? hash : 1ULL);
+}
+
 /* BusyBox is compiled with stat/fstat remapped to these POSIX ABI adapters. */
 int leonos_posix_stat(const char *path, struct stat *st)
 {
     struct leonos_stat_raw raw;
+    int result;
     if (!path || !st) {
         errno = EINVAL;
         return -1;
     }
-    return leonos_posix_stat_call(leonos_stat_raw_call(path, &raw), &raw, st);
+    result = leonos_stat_raw_call(path, &raw);
+    if (leonos_posix_stat_call(result, &raw, st) < 0) {
+        return -1;
+    }
+    st->st_dev = 1;
+    st->st_ino = leonos_path_inode(path);
+    return 0;
 }
 
 int leonos_posix_fstat(int fd, struct stat *st)
@@ -169,6 +193,53 @@ int leonos_posix_fstat(int fd, struct stat *st)
 int lstat(const char *path, struct stat *st)
 {
     return leonos_posix_stat(path, st);
+}
+
+int link(const char *old_path, const char *new_path)
+{
+    (void)old_path;
+    (void)new_path;
+    errno = ENOSYS;
+    return -1;
+}
+
+int symlink(const char *target, const char *link_path)
+{
+    (void)target;
+    (void)link_path;
+    errno = ENOSYS;
+    return -1;
+}
+
+int chown(const char *path, uid_t owner, gid_t group)
+{
+    (void)path;
+    (void)owner;
+    (void)group;
+    errno = ENOSYS;
+    return -1;
+}
+
+int lchown(const char *path, uid_t owner, gid_t group)
+{
+    return chown(path, owner, group);
+}
+
+int mknod(const char *path, mode_t mode, dev_t device)
+{
+    (void)path;
+    (void)mode;
+    (void)device;
+    errno = ENOSYS;
+    return -1;
+}
+
+int utimes(const char *path, const struct timeval times[2])
+{
+    (void)path;
+    (void)times;
+    errno = ENOSYS;
+    return -1;
 }
 
 int fcntl(int fd, int command, ...)

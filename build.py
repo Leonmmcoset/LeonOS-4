@@ -357,6 +357,14 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
     libpng_config = libpng_generated_dir / "pnglibconf.h"
     zlib_archive = paths.out / "userland/libz.a"
     libpng_archive = paths.out / "userland/libpng.a"
+    file_source = ROOT / "third_party/file"
+    file_port = ROOT / "userland/file"
+    file_elf = paths.out / "userland/file.elf"
+    libmagic_archive = paths.out / "userland/libmagic.a"
+    file_stamp = paths.out / "userland/file.stamp"
+    file_magic_header = paths.out / "generated/file/magic.h"
+    magic_database = paths.out / "userland/magic.mgc"
+    magic_database_stamp = paths.out / "userland/magic.stamp"
     busybox_source = ROOT / "third_party/busybox"
     busybox_config = ROOT / "userland/busybox/leonos.config"
     busybox_shim = ROOT / "userland/busybox/leonos_shim.c"
@@ -460,6 +468,10 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         raise GraphError("third_party/zlib is missing; initialize the zlib source tree")
     if not (libpng_source / "png.h").is_file() or not libpng_config_source.is_file():
         raise GraphError("third_party/libpng is missing; initialize the libpng source tree")
+    if not (file_source / "configure.ac").is_file() or not (file_source / "magic").is_dir():
+        raise GraphError("third_party/file is missing; initialize the libmagic source tree")
+    if not (file_port / "config.h").is_file() or not (file_port / "leonos_shim.c").is_file():
+        raise GraphError("the LeonOS file/libmagic port metadata is missing")
     picolibc_inputs = collect(
         "third_party/picolibc/**/*.c",
         "third_party/picolibc/**/*.h",
@@ -529,7 +541,7 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
     cflags_user = cflags_user_base + ["-include", relative(autoconf)]
-    cflags_doom = cflags_user + ["-Ithird_party/doomgeneric/doomgeneric"]
+    cflags_doom = cflags_user + ["-DLEONOS_DOOM", "-Ithird_party/doomgeneric/doomgeneric"]
     cflags_mp3play = [flag for flag in cflags_user if flag != "-mgeneral-regs-only"] + [
         "-mno-avx", "-mno-avx2",
         "-Ithird_party/minimp3",
@@ -688,6 +700,49 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
                      command=(ar, "rcs", relative(libpng_archive),
                               *map(relative, libpng_objects))))
 
+    file_magic_inputs = tuple([
+        ROOT / "tools/build_file_magic.py", file_source / "configure.ac",
+        file_source / "acinclude.m4", file_source / "Makefile.am",
+        file_source / "src/magic.h.in", *collect("third_party/file/m4/*.m4"),
+        *collect("third_party/file/src/*.c"), *collect("third_party/file/src/*.h"),
+        *collect("third_party/file/magic/**/*"),
+    ])
+    graph.add(Target(
+        name="file-magic",
+        outputs=(magic_database, magic_database_stamp),
+        inputs=file_magic_inputs,
+        kind="generate",
+        command=(
+            PYTHON, "tools/build_file_magic.py", "--source", "third_party/file",
+            "--output", relative(magic_database), "--stamp", relative(magic_database_stamp),
+        ),
+    ))
+
+    file_inputs = tuple([
+        ROOT / "tools/build_file.py", file_port / "config.h",
+        file_port / "leonos_shim.c", file_port / "README.md",
+        *collect("userland/file/include/**/*.h"),
+        *collect("third_party/file/src/*.c"), *collect("third_party/file/src/*.h"),
+        file_source / "COPYING",
+    ])
+    graph.add(Target(
+        name="file",
+        outputs=(file_elf, libmagic_archive, file_magic_header, file_stamp),
+        inputs=tuple([*file_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
+        depends_on=("picolibc", "archive:libc"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_file.py", "--source", "third_party/file",
+            "--port", "userland/file", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--generated-include", relative(paths.generated_include), "--linker-script",
+            "userland/linker.ld", "--leonos-lib", relative(libc_a), "--picolibc-lib",
+            relative(picolibc_archive), "--output", relative(file_elf), "--library",
+            relative(libmagic_archive), "--magic-header", relative(file_magic_header),
+            "--stamp", relative(file_stamp),
+        ),
+    ))
+
     def busybox_source_revision_action(context: ActionContext) -> None:
         context.detail(f"reading source revision: git -C {relative(busybox_source)} rev-parse HEAD")
         result = subprocess.run(
@@ -819,7 +874,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
 
     app_elfs: dict[str, Path] = {}
     user_targets: list[str] = ["picolibc", "archive:libc", "archive:zlib", "archive:libpng",
-                               "busybox", "nano", "tcc", "lua", "app:pleditor"]
+                               "file-magic", "file", "busybox", "nano", "tcc", "lua",
+                               "app:pleditor"]
     for app in BUILD_USER_APPS:
         if app == "nano":
             app_elfs[app] = nano_elf
@@ -890,17 +946,19 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
 
     sdk_inputs = tuple([
         ROOT / "tools/package_devtools.py", ROOT / "third_party/picolibc/COPYING.picolibc",
-        ROOT / "third_party/zlib/LICENSE", ROOT / "third_party/libpng/LICENSE", libpng_config,
+        ROOT / "third_party/zlib/LICENSE", ROOT / "third_party/libpng/LICENSE",
+        file_source / "COPYING", libpng_config,
         # The packager copies these build outputs verbatim. Keep them as
         # explicit inputs so a rebuilt runtime cannot leave a stale SDK ZIP.
         libc_a, picolibc_archive, picolibc_header_stamp, zlib_archive, libpng_archive,
+        libmagic_archive, file_magic_header,
         *collect("devtools/**/*"),
     ])
     graph.add(Target(
         name="sdk",
         outputs=(developer_sdk,),
         inputs=sdk_inputs,
-        depends_on=("picolibc", "archive:libc", "archive:zlib", "archive:libpng"),
+        depends_on=("picolibc", "archive:libc", "archive:zlib", "archive:libpng", "file"),
         kind="generate",
         command=(
             PYTHON, "tools/package_devtools.py",
@@ -912,6 +970,8 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
             "--zlib-lib", relative(zlib_archive), "--zlib-source", "third_party/zlib",
             "--libpng-lib", relative(libpng_archive), "--libpng-source", "third_party/libpng",
             "--libpng-config", relative(libpng_config),
+            "--libmagic-lib", relative(libmagic_archive), "--libmagic-source", "third_party/file",
+            "--libmagic-header", relative(file_magic_header),
             "--out", relative(developer_sdk),
         ),
     ))
@@ -1023,6 +1083,19 @@ def build_graph(paths: BuildPaths) -> BuildGraph:
         target = add_copy(graph, f"esp:busybox:{source.name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    file_destination = paths.staging / "programs/file/file.elf"
+    target = add_copy(graph, "esp:file", file_elf, file_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(file_destination)
+    file_license_destination = paths.staging / "programs/file/COPYING"
+    target = add_copy(graph, "esp:file:COPYING", file_source / "COPYING",
+                      file_license_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(file_license_destination)
+    magic_destination = paths.staging / "system/share/misc/magic.mgc"
+    target = add_copy(graph, "esp:file:magic.mgc", magic_database, magic_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(magic_destination)
     tcc_destination = paths.staging / "programs/tcc"
 
     def sync_tcc_runtime(context: ActionContext) -> None:
@@ -1318,10 +1391,14 @@ def require_grub_efi_modules(paths: BuildPaths, task: str) -> None:
 
 def task_tools(task: str) -> tuple[str, ...]:
     compiler = ("clang", "ld.lld")
-    userland = (*compiler, "llvm-ar")
+    host_userland = ("autoreconf", "autoconf", "automake", "libtoolize", "make",
+                     "gcc", "gawk")
+    userland = (*compiler, "llvm-ar", *host_userland)
     esp = (*userland, "rustc", "grub-mkfont", "grub-mkstandalone")
     vmdk = (*esp, "truncate", "sgdisk", "mkfs.fat", "mcopy", "dd", "qemu-img")
     iso = (*esp, "grub-mkrescue", "xorriso")
+    if task in {"file", "file-magic"}:
+        return userland
     if task in {"kernel", "loader", "drivers"}:
         return compiler
     if task == "middlelayer":

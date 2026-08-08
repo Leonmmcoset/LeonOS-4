@@ -2002,6 +2002,20 @@ static int task_user_pages_free(const struct task *task, uint64_t start, uint64_
     return 1;
 }
 
+static uint32_t task_vma_count(const struct task *task)
+{
+    uint32_t count = 0;
+    if (!task) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        if (task->vmas[i].used) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
 {
     uint64_t top = task_mmap_top(task);
@@ -2012,6 +2026,30 @@ static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
         if (task_user_pages_free(task, start, start + len)) {
             return start;
         }
+    }
+    return 0;
+}
+
+/* Picolibc grows its sbrk heap upward from the first anonymous mapping. Keep
+ * read-only file mappings at the opposite end of the mmap interval so a
+ * large font, dictionary, or other resource cannot occupy the heap's next
+ * contiguous extension. */
+static uint64_t task_find_file_mmap_region(struct task *task, uint64_t len)
+{
+    uint64_t top = task_mmap_top(task);
+    uint64_t start;
+    if (top <= NTCLKS_USER_MMAP_BASE || len > top - NTCLKS_USER_MMAP_BASE) {
+        return 0;
+    }
+    start = align_down_page(top - len);
+    for (;;) {
+        if (task_user_pages_free(task, start, start + len)) {
+            return start;
+        }
+        if (start < NTCLKS_USER_MMAP_BASE + PAGE_SIZE) {
+            break;
+        }
+        start -= PAGE_SIZE;
     }
     return 0;
 }
@@ -2043,6 +2081,17 @@ static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t 
     for (uint64_t page = start; page < end; page += PAGE_SIZE) {
         uint64_t phys = mm_alloc_page();
         if (!phys || !address_space_map_user_page(&task->as, page, phys, page_flags)) {
+            uint64_t mapped_kib = (page - start) / 1024ULL;
+            console_printf("[ntclks] anonymous mmap failed pid=%u range=0x%llx-0x%llx "
+                           "at=0x%llx mapped=%llu KiB free=%llu KiB vmas=%u cause=%s\n",
+                           task ? task->pid : 0,
+                           (unsigned long long)start,
+                           (unsigned long long)end,
+                           (unsigned long long)page,
+                           (unsigned long long)mapped_kib,
+                           (unsigned long long)mm_free_memory_kib(),
+                           task_vma_count(task),
+                           phys ? "page-table" : "physical-memory");
             if (phys) {
                 mm_free_page(phys);
             }
@@ -2175,8 +2224,15 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
         }
         start = addr;
     } else {
-        start = task_find_mmap_region(task, mapped_len);
+        start = anonymous ? task_find_mmap_region(task, mapped_len)
+                          : task_find_file_mmap_region(task, mapped_len);
         if (!start) {
+            console_printf("[ntclks] mmap virtual range unavailable pid=%u bytes=%llu "
+                           "top=0x%llx vmas=%u\n",
+                           task->pid,
+                           (unsigned long long)mapped_len,
+                           (unsigned long long)task_mmap_top(task),
+                           task_vma_count(task));
             return -LEONOS_ENOMEM;
         }
     }
@@ -2189,6 +2245,17 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     }
     if (!task_vma_can_record_mapping(task, start, end, prot, vma_flags,
                                      file ? &file->node : NULL, offset)) {
+        console_printf("[ntclks] mmap VMA slots exhausted pid=%u bytes=%llu vmas=%u\n",
+                       task->pid,
+                       (unsigned long long)mapped_len,
+                       task_vma_count(task));
+        return -LEONOS_ENOMEM;
+    }
+
+    /* File mappings are lazy: reserve the page-table range now so a first
+     * instruction/data fault can replace the inherited kernel huge-page
+     * identity mapping even when the CPU reports the fault as present. */
+    if (!anonymous && !address_space_prepare_user_range(&task->as, start, end)) {
         return -LEONOS_ENOMEM;
     }
 

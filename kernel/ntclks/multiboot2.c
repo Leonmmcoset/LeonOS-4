@@ -67,6 +67,17 @@ void multiboot2_parse(uint32_t magic, uintptr_t info_addr, struct boot_info *out
             out->framebuffer_height = fb->framebuffer_height;
             out->framebuffer_pitch = fb->framebuffer_pitch;
             out->framebuffer_bpp = fb->framebuffer_bpp;
+            out->framebuffer_type = fb->framebuffer_type;
+            if (fb->framebuffer_type == MULTIBOOT2_FRAMEBUFFER_TYPE_RGB &&
+                tag->size >= sizeof(*fb) + MULTIBOOT2_FRAMEBUFFER_RGB_INFO_SIZE) {
+                const uint8_t *rgb = (const uint8_t *)fb + sizeof(*fb);
+                out->framebuffer_red_field_position = rgb[0];
+                out->framebuffer_red_mask_size = rgb[1];
+                out->framebuffer_green_field_position = rgb[2];
+                out->framebuffer_green_mask_size = rgb[3];
+                out->framebuffer_blue_field_position = rgb[4];
+                out->framebuffer_blue_mask_size = rgb[5];
+            }
             break;
         }
         case MULTIBOOT2_TAG_TYPE_EFI64: {

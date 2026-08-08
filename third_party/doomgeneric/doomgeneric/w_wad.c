@@ -364,6 +364,40 @@ void W_ReadLump(unsigned int lump, void *dest)
     I_EndRead ();
 }
 
+//
+// W_ReadLumpFragment
+// Reads a bounded portion of a lump.  This is used by renderer setup to
+// inspect patch metadata without pulling each patch's complete pixel data
+// into the zone cache.
+//
+void W_ReadLumpFragment(unsigned int lump, unsigned int offset,
+                        void *dest, unsigned int length)
+{
+    int c;
+    lumpinfo_t *l;
+
+    if (lump >= numlumps)
+    {
+        I_Error("W_ReadLumpFragment: %i >= numlumps", lump);
+    }
+
+    l = lumpinfo + lump;
+    if (offset > (unsigned int)l->size ||
+        length > (unsigned int)l->size - offset)
+    {
+        I_Error("W_ReadLumpFragment: invalid range on lump %i", lump);
+    }
+
+    I_BeginRead();
+    c = W_Read(l->wad_file, (unsigned int)l->position + offset, dest, length);
+    if (c < (int)length)
+    {
+        I_Error("W_ReadLumpFragment: only read %i of %i on lump %i",
+                c, length, lump);
+    }
+    I_EndRead();
+}
+
 
 
 
@@ -609,4 +643,3 @@ void W_CheckCorrectIWAD(GameMission_t mission)
         }
     }
 }
-

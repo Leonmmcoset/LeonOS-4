@@ -18,6 +18,10 @@
 
 #include <stdio.h>
 
+#if defined(LEONOS_DOOM)
+#include "doomgeneric.h"
+#endif
+
 #include "m_misc.h"
 #include "w_file.h"
 #include "z_zone.h"
@@ -29,6 +33,22 @@ typedef struct
 } stdc_wad_file_t;
 
 extern wad_file_class_t stdc_wad_file;
+
+static void W_StdC_YieldAfterRead(void)
+{
+#if defined(LEONOS_DOOM)
+    static unsigned int read_count;
+
+    /* Renderer setup can issue thousands of short, non-sequential reads.
+     * Give the window server and storage worker a scheduling point after a
+     * small batch, rather than monopolising a core until all WAD lookups are
+     * complete. */
+    if (++read_count % 8U == 0U)
+    {
+        DG_SleepMs(1);
+    }
+#endif
+}
 
 static wad_file_t *W_StdC_OpenFile(char *path)
 {
@@ -81,6 +101,7 @@ size_t W_StdC_Read(wad_file_t *wad, unsigned int offset,
     // Read into the buffer.
 
     result = fread(buffer, 1, buffer_len, stdc_wad->fstream);
+    W_StdC_YieldAfterRead();
 
     return result;
 }
@@ -92,5 +113,4 @@ wad_file_class_t stdc_wad_file =
     W_StdC_CloseFile,
     W_StdC_Read,
 };
-
 

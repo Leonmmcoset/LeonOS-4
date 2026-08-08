@@ -109,20 +109,6 @@ bool address_space_create(struct address_space *as)
     }
     as->pdpt[USER_PDPT_INDEX] = low_pd_phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_USER;
 
-    for (uint32_t i = 0; i < NTCLKS_USER_PD_COUNT; ++i) {
-        uint64_t pt_phys = alloc_table();
-        if (!pt_phys) {
-            if (pt_phys) {
-                mm_free_page(pt_phys);
-            }
-            address_space_destroy(as);
-            return false;
-        }
-        as->user_pt[i] = (uint64_t *)(uintptr_t)pt_phys;
-        as->pd[LOW_PD_INDEX][NTCLKS_USER_PD_START + i] =
-            pt_phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_USER;
-    }
-
     return true;
 }
 
@@ -156,6 +142,39 @@ void address_space_destroy(struct address_space *as)
     }
 }
 
+bool address_space_prepare_user_range(struct address_space *as, uint64_t start,
+                                      uint64_t end)
+{
+    uint64_t first_page;
+    uint64_t last_page;
+    uint64_t first_table;
+    uint64_t last_table;
+
+    if (!as || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP) {
+        return false;
+    }
+    first_page = align_down(start, PAGE_SIZE);
+    last_page = align_down(end - 1ULL, PAGE_SIZE);
+    first_table = (first_page - NTCLKS_USER_BASE) / PAGE_SIZE / 512ULL;
+    last_table = (last_page - NTCLKS_USER_BASE) / PAGE_SIZE / 512ULL;
+    if (last_table >= NTCLKS_USER_PD_COUNT) {
+        return false;
+    }
+    for (uint64_t table = first_table; table <= last_table; ++table) {
+        if (!as->user_pt[table]) {
+            uint64_t pt_phys = alloc_table();
+            if (!pt_phys) {
+                return false;
+            }
+            as->user_pt[table] = (uint64_t *)(uintptr_t)pt_phys;
+            as->pd[LOW_PD_INDEX][NTCLKS_USER_PD_START + table] =
+                pt_phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_USER;
+            x86_64_invlpg(NTCLKS_USER_BASE + table * NTCLKS_USER_PD_BYTES);
+        }
+    }
+    return true;
+}
+
 bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
                                  uint64_t phys, uint64_t flags)
 {
@@ -169,7 +188,11 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
     uint64_t index = (page - NTCLKS_USER_BASE) / PAGE_SIZE;
     uint64_t table = index / 512;
     uint64_t slot = index % 512;
-    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) {
+    if (table >= NTCLKS_USER_PD_COUNT) {
+        return false;
+    }
+    if (!as->user_pt[table] &&
+        !address_space_prepare_user_range(as, page, page + PAGE_SIZE)) {
         return false;
     }
     if (as->user_pt[table][slot] & NTCLKS_PAGE_PRESENT) {

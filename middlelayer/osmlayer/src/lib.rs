@@ -67,6 +67,17 @@ pub struct LeonosBootModuleInfo {
 }
 
 #[repr(C)]
+pub struct LeonosBootLogState {
+    log_x: u32,
+    log_y: u32,
+    columns: u32,
+    rows: u32,
+    column: u32,
+    row: u32,
+    line_count: u32,
+}
+
+#[repr(C)]
 pub struct LeonosBootHandoff {
     magic: u32,
     version: u32,
@@ -93,6 +104,7 @@ pub struct LeonosBootHandoff {
     kernel: LeonosBootModuleInfo,
     middlelayer: LeonosBootModuleInfo,
     middlelayer_api: u64,
+    boot_log: LeonosBootLogState,
 }
 
 #[repr(C)]
