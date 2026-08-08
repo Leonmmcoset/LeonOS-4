@@ -107,8 +107,15 @@ def main() -> None:
     library_objects = [compile_source(patched_source / name, Path(name).stem)
                        for name in LIBMAGIC_SOURCES]
     library_objects.append(compile_source(port / "leonos_shim.c", "leonos_shim"))
-    args.library.resolve().parent.mkdir(parents=True, exist_ok=True)
-    run(["llvm-ar", "rcs", str(args.library.resolve()), *map(str, library_objects)])
+    library = args.library.resolve()
+    library.parent.mkdir(parents=True, exist_ok=True)
+    # llvm-ar replaces members named on the command line but retains every
+    # other old member.  Always recreate the archive so a locally built
+    # libmagic cannot retain sources from an earlier port revision and diverge
+    # from CI's clean archive.
+    if library.exists():
+        library.unlink()
+    run(["llvm-ar", "rcs", str(library), *map(str, library_objects)])
 
     app_objects = [
         compile_source(patched_source / "file.c", "file-main"),

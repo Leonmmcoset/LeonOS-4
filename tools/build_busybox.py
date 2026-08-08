@@ -51,6 +51,7 @@ MINIMAL_LIBBB_OBJECTS = (
     "getopt_allopts.o",
     "human_readable.o",
     "inode_hash.o",
+    "isqrt.o",
     "iterate_on_dir.o",
     "last_char_is.o",
     "llist.o",

@@ -11,9 +11,16 @@ terminal and prints the applet list. Invoke a specific applet with:
 The profile includes BusyBox `hush` behind the `sh` applet in standalone
 no-fork mode. It supports simple command lines, shell built-ins, and the
 bundled applets (`ls`, `pwd`, `cat`,
-`echo`, `clear`, `head`, `tail`, `wc`, `basename`, `dirname`, `printf`,
+`echo`, `clear`, `head`, `tail`, `wc`, `basename`, `dirname`, `printf`, `diff`,
+`less`,
 `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`,
 `true`, `false`, and `vi`). The GUI terminal launches this shell by default.
+
+`diff` produces unified file differences.  `less` provides keyboard-controlled
+pagination for text files; its input is capped at 8,192 lines to keep malformed
+or exceptionally large files from exhausting the current user-space budget.
+`ls` emits ANSI file-type colors by default when its output is a terminal; use
+`ls --color=never` when plain output is required.
 
 `cp`, `mv`, and `rm` operate on regular files and directories through the
 LeonOS filesystem ABI. Symbolic links, ownership changes, and special device

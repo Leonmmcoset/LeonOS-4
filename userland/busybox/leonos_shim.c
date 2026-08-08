@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -45,6 +46,51 @@ extern char **environ;
 #define LEONOS_SYS_DUP2 33
 #define LEONOS_SYS_FCNTL 72
 #define LEONOS_SPAWN_ARG_MAX 8U
+
+/*
+ * LeonOS terminals are inherited standard streams, not reopenable named tty
+ * nodes.  BusyBox less accepts this condition and safely falls back to its
+ * stdout descriptor for keyboard input.
+ */
+int ttyname_r(int fd, char *buffer, size_t length)
+{
+    (void)fd;
+    (void)buffer;
+    (void)length;
+    errno = ENOTTY;
+    return ENOTTY;
+}
+
+/*
+ * The kernel currently has no POSIX signal delivery.  less still registers
+ * fatal-signal cleanup handlers; retaining the registration call as a no-op
+ * is correct until those signals can actually reach Ring-3 processes.
+ */
+void bb_signals(int signals, void (*handler)(int))
+{
+    (void)signals;
+    (void)handler;
+}
+
+void kill_myself_with_sig(int signal_number)
+{
+    exit(128 + signal_number);
+}
+
+/* Picolibc time() needs gettimeofday(); LeonOS has a monotonic uptime clock. */
+int gettimeofday(struct timeval *value, void *timezone)
+{
+    unsigned long milliseconds;
+    (void)timezone;
+    if (!value) {
+        errno = EINVAL;
+        return -1;
+    }
+    milliseconds = leonos_uptime_ms();
+    value->tv_sec = (time_t)(milliseconds / 1000U);
+    value->tv_usec = (suseconds_t)((milliseconds % 1000U) * 1000U);
+    return 0;
+}
 
 static void leonos_zero(void *buffer, uint32_t length)
 {
