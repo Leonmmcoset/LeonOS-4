@@ -51,6 +51,7 @@ def main() -> int:
     skip_oobe = False
     exit_only = False
     tcc_smoke = False
+    desktop_app: str | None = None
     login_password: str | None = None
     editor = "nano"
     if arguments and arguments[0] == "--skip-oobe":
@@ -62,6 +63,9 @@ def main() -> int:
     if arguments and arguments[0] == "--tcc":
         tcc_smoke = True
         arguments = arguments[1:]
+    if len(arguments) >= 2 and arguments[0] == "--desktop-app":
+        desktop_app = arguments[1]
+        arguments = arguments[2:]
     if len(arguments) >= 2 and arguments[0] == "--login-password":
         login_password = arguments[1]
         arguments = arguments[2:]
@@ -69,6 +73,10 @@ def main() -> int:
         editor = arguments[1]
         arguments = arguments[2:]
     if editor not in ("nano", "pleditor"):
+        return 2
+    if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
+        return 2
+    if desktop_app is not None and (tcc_smoke or exit_only):
         return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
         return 2
@@ -109,6 +117,19 @@ def main() -> int:
     # Opening Start is asynchronous.  Give the menu time to claim keyboard
     # focus before the search text starts arriving.
     time.sleep(1.5)
+
+    if desktop_app is not None:
+        # GUI examples are normal desktop apps, so start them through the same
+        # Start-menu search route a user uses.  The screenshot is the runtime
+        # assertion: it catches failures after process spawn, window creation
+        # or the first framebuffer presentation.
+        send_keys(sock, text_keys(desktop_app) + ("ret",))
+        time.sleep(10.0)
+        hmp(sock, f"screendump build/images/{desktop_app}-qmp-smoke.ppm", 0.4)
+        hmp(sock, "sendkey alt-f4", 2.0)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
     send_keys(sock, ("t", "e", "r", "m", "i", "n", "a", "l", "ret"))
     # Wait for Terminal to create its window and for BusyBox to enter the PTY
     # read loop before sending the editor command.  A cold guest may still be

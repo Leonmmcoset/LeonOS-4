@@ -310,6 +310,8 @@ def main() -> None:
     parser.add_argument("--picolibc-lib", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
+    parser.add_argument("--compile-flag", action="append", default=[])
+    parser.add_argument("--linker-flag", action="append", default=[])
     args = parser.parse_args()
 
     if os.name == "nt":
@@ -370,7 +372,7 @@ def main() -> None:
 
     headers = clang_resource_headers()
     cflags = " ".join([
-        "-target", "x86_64-unknown-none", "-O2", "-std=gnu11", "-ffreestanding",
+        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
         "-D_POSIX_C_SOURCE=200809L",
         # LeonOS's native stat/fstat use a compact private structure. Keep
         # BusyBox on the Picolibc POSIX ABI through the port's adapter layer.
@@ -387,6 +389,7 @@ def main() -> None:
         "-target", "x86_64-unknown-none", "-nostdlib", "-fuse-ld=lld",
         "-Wl,-u,_start", "-Wl,--gc-sections", "-Wl,-T," + str(linker_script),
         "-L" + str(lib_dir),
+        *["-Wl," + flag for flag in args.linker_flag],
     ])
     run([
         "make", "-C", str(source_dir), f"O={output_dir}", "CC=clang", "ARCH=x86_64",

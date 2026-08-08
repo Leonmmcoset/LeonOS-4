@@ -164,6 +164,25 @@ jobs:
           set_config CONFIG_LICENSE_SERVER_URL "\"$KCONFIG_LICENSE_SERVER_URL\""
           set_bool CONFIG_LICENSE_DEBUG_LOG "$KCONFIG_LICENSE_DEBUG_LOG"
 
+      - name: Verify dynamic component configuration
+        run: |
+          set -euo pipefail
+
+          python3 tools/generate_component_kconfig.py \
+            --output build/generated/ci-Kconfig.components \
+            --json build/generated/ci-components.json
+          python3 tools/test_component_config.py
+          python3 build.py info release --profile default >/dev/null
+          python3 build.py info installer-root --profile default \
+            --set CONFIG_LEON_COMPONENT_APP_OOBE_BUILD=n >/dev/null
+          python3 build.py info app:stardusthello --profile default \
+            --set CONFIG_LEON_COMPONENT_LIB_STARDUSTUI_BUILD=n >/dev/null
+          if python3 build.py info userland --profile default \
+              --set CONFIG_NOT_A_REAL_OPTION=y; then
+            echo "unknown CONFIG override unexpectedly succeeded" >&2
+            exit 1
+          fi
+
       - name: Build LeonOS images
         run: |
           set -euo pipefail

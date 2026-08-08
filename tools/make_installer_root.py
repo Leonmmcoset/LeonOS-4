@@ -44,6 +44,7 @@ def main() -> int:
     parser.add_argument("--stage", default="build/install/root")
     parser.add_argument("--esp-tree", default="build/esp")
     parser.add_argument("--installed-policy-dir", default="build/userland-installer-policy")
+    parser.add_argument("--policy-apps", nargs="*", default=("desktop", "oobe", "settings"))
     parser.add_argument("--userland-dir", default="build/userland")
     parser.add_argument("--generated-icons-dir", default="build/generated/app-icons")
     parser.add_argument("--manifest", default="build/esp/system/osmlayer.manifest")
@@ -89,8 +90,10 @@ def main() -> int:
     copy_tree(esp_tree, stage / "install/esp")
     remove_file(stage / "install/esp/etc/license.conf")
     remove_file(stage / "install/esp/etc/install.id")
-    for name in ("desktop.elf", "oobe.elf", "settings.elf"):
-        app = name.removesuffix(".elf")
+    for app in args.policy_apps:
+        if app not in {"desktop", "oobe", "settings"}:
+            raise ValueError(f"unsupported installer policy app: {app}")
+        name = f"{app}.elf"
         copy_file(installed_policy_dir / name,
                   stage / "install/esp/system/apps" / app / name)
 

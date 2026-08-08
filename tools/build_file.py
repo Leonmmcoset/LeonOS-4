@@ -40,6 +40,8 @@ def main() -> None:
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--magic-header", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
+    parser.add_argument("--compile-flag", action="append", default=[])
+    parser.add_argument("--linker-flag", action="append", default=[])
     args = parser.parse_args()
 
     source = args.source.resolve()
@@ -82,7 +84,7 @@ def main() -> None:
         raise SystemExit(f"Clang x86_64 compiler runtime is missing: {compiler_runtime}")
 
     cflags = [
-        "-target", "x86_64-unknown-none", "-O2", "-std=gnu11", "-ffreestanding",
+        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
         "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone",
         "-ffunction-sections", "-fdata-sections",
         "-nostdinc", "-isystem", str(args.generated_include),
@@ -114,7 +116,7 @@ def main() -> None:
     ]
     args.output.resolve().parent.mkdir(parents=True, exist_ok=True)
     run([
-        "ld.lld", "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000",
+        "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, "-z", "max-page-size=0x1000",
         "-u", "_start", "-T", str(args.linker_script.resolve()),
         "-o", str(args.output.resolve()), *map(str, app_objects), "--start-group",
         str(args.library.resolve()), str(args.leonos_lib.resolve()),

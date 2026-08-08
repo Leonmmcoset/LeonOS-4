@@ -10,6 +10,8 @@ ELF 应用程序。
 - `lib/libc.a`: 与本 SDK 头文件匹配的 freestanding 用户态 C 库。
 - `lib/libz.a` 与 `lib/libpng.a`: zlib 1.3.2 和 libpng 1.6.58 静态库；对应
   的公开头文件与许可证也包含在 SDK 中。
+- `lib/libstardustui.a`: StardustUI 静态 GUI 库，含 LeonOS 像素窗口后端、
+  C++ 兼容头、上游公共头文件、许可证和最小示例。
 - `linker.ld`: LeonOS 4 用户态 ELF 的链接布局，入口为 `_start`。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
 - `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。
@@ -72,6 +74,33 @@ make APP=examples/myapp APP_NAME=myapp
 ```
 
 可由桌面、文件管理器或 `execve()` 启动。
+
+### StardustUI C++ 应用
+
+SDK 包含 StardustUI 的 LeonOS 后端，因此可以直接创建事件驱动的像素窗口。
+请使用 C++ 源文件，并在构建时启用库：
+
+```sh
+make APP=examples/stardusthello APP_NAME=stardusthello USE_STARDUSTUI=1
+```
+
+`Makefile` 会为 `.cpp`、`.cc` 和 `.cxx` 自动使用 `CXX`，并启用不依赖宿主
+C++ 运行时的 freestanding C++17 参数。应用可包含上游头文件，例如：
+
+```cpp
+#include <stardustui/includes/window.hpp>
+#include <stardustui/includes/components/button.hpp>
+```
+
+当前用户态 C 运行时调用未修饰的 `main` 符号，因此 C++ 程序入口须保留 C 链接：
+
+```cpp
+extern "C" int main(int argc, char **argv, char **envp);
+```
+
+主题名称会先查找当前用户目录，随后查找 `0:/etc/stardustui/theme`。镜像预装
+`md3-light`、`md3-dark`、`green_light` 和 `green_dark` 四个上游主题样例。
+LeonOS 使用现有 UI 字体渲染器；StardustUI 的字体路径配置不会替换系统字体。
 
 ### 虚拟终端应用
 

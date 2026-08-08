@@ -1,5 +1,71 @@
 #include "desktop.h"
 
+/* Generated per image. Unknown (for example, post-install) programs remain
+ * visible; only build-managed packages are listed here. */
+#define START_MENU_ENTRY_POLICY_PATH "0:/system/config/desktop-entries.conf"
+#define START_MENU_ENTRY_POLICY_BYTES 4096U
+#define START_MENU_ENTRY_POLICY_MAX 96U
+
+static char start_menu_disabled_packages[START_MENU_ENTRY_POLICY_MAX][LEONOS_FS_PATH_LEN];
+static uint32_t start_menu_disabled_package_count;
+
+static int start_menu_entry_policy_matches(const char *path)
+{
+    for (uint32_t index = 0; index < start_menu_disabled_package_count; ++index) {
+        if (text_eq(path, start_menu_disabled_packages[index])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void start_menu_load_entry_policy(void)
+{
+    char buffer[START_MENU_ENTRY_POLICY_BYTES + 1U];
+    int fd;
+    long got;
+    uint32_t offset = 0;
+
+    start_menu_disabled_package_count = 0;
+    fd = open(START_MENU_ENTRY_POLICY_PATH, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return;
+    }
+    got = read(fd, buffer, START_MENU_ENTRY_POLICY_BYTES);
+    close(fd);
+    if (got <= 0) {
+        return;
+    }
+    if ((uint32_t)got > START_MENU_ENTRY_POLICY_BYTES) {
+        got = START_MENU_ENTRY_POLICY_BYTES;
+    }
+    buffer[got] = 0;
+    while (offset < (uint32_t)got &&
+           start_menu_disabled_package_count < START_MENU_ENTRY_POLICY_MAX) {
+        uint32_t line_start = offset;
+        uint32_t out = 0;
+        while (offset < (uint32_t)got && buffer[offset] != '\n' && buffer[offset] != '\r') {
+            ++offset;
+        }
+        if (offset - line_start > 5U &&
+            buffer[line_start] == 'h' && buffer[line_start + 1U] == 'i' &&
+            buffer[line_start + 2U] == 'd' && buffer[line_start + 3U] == 'e' &&
+            buffer[line_start + 4U] == '=') {
+            uint32_t value = line_start + 5U;
+            while (value < offset && out + 1U < LEONOS_FS_PATH_LEN) {
+                start_menu_disabled_packages[start_menu_disabled_package_count][out++] = buffer[value++];
+            }
+            start_menu_disabled_packages[start_menu_disabled_package_count][out] = 0;
+            if (out) {
+                ++start_menu_disabled_package_count;
+            }
+        }
+        while (offset < (uint32_t)got && (buffer[offset] == '\n' || buffer[offset] == '\r')) {
+            ++offset;
+        }
+    }
+}
+
 int start_menu_is_hidden_app(const char *name)
 {
     return text_eq(name, "init.elf") ||
@@ -37,6 +103,9 @@ static int start_menu_add_package(const char *root, const char *package)
     }
     append_char(path, &pos, sizeof(path), '/');
     append_text(path, &pos, sizeof(path), package);
+    if (start_menu_entry_policy_matches(path)) {
+        return 0;
+    }
     append_char(path, &pos, sizeof(path), '/');
     append_text(path, &pos, sizeof(path), elf_name);
     {
@@ -82,6 +151,7 @@ int start_menu_load_apps(void)
     int ret;
     start_menu_app_count = 0;
     start_menu_apps_loaded = 0;
+    start_menu_load_entry_policy();
     ret = start_menu_load_root("0:/system/apps");
     if (ret < 0) {
         start_menu_app_count = 0;

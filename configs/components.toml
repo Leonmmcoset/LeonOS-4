@@ -1,0 +1,675 @@
+version = 1
+
+# The component manifest is the source for optional build, image and entry
+# switches. Core services remain explicit in Kconfig and cannot be disabled.
+
+[[components]]
+id = "init"
+symbol = "APP_INIT"
+label = "Userland init"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "desktop"
+symbol = "APP_DESKTOP"
+label = "Desktop window server"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "installer"
+symbol = "APP_INSTALLER"
+label = "Installer"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = false
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "oobe"
+symbol = "APP_OOBE"
+label = "First-run setup"
+category = "System applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "login"
+symbol = "APP_LOGIN"
+label = "Login"
+category = "System applications"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "serviced"
+symbol = "APP_SERVICED"
+label = "Service manager daemon"
+category = "System applications"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "shell"
+symbol = "APP_SHELL"
+label = "Shell"
+category = "System applications"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "fileman"
+symbol = "APP_FILEMAN"
+label = "File manager"
+category = "Desktop applications"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "taskmgr"
+symbol = "APP_TASKMGR"
+label = "Task manager"
+category = "Desktop applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "settings"
+symbol = "APP_SETTINGS"
+label = "Settings"
+category = "Desktop applications"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "terminal"
+symbol = "APP_TERMINAL"
+label = "Terminal"
+category = "Developer applications"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "run"
+symbol = "APP_RUN"
+label = "Run dialog"
+category = "Desktop applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "osver"
+symbol = "APP_OSVER"
+label = "System information"
+category = "Desktop applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "netctl"
+symbol = "APP_NETCTL"
+label = "Network controller"
+category = "Network and multimedia"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "servicemgr"
+symbol = "APP_SERVICEMGR"
+label = "Service control"
+category = "System applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "diskmgr"
+symbol = "APP_DISKMGR"
+label = "Disk manager"
+category = "System applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "devmgr"
+symbol = "APP_DEVMGR"
+label = "Device manager"
+category = "System applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "drvmgr"
+symbol = "APP_DRVMGR"
+label = "Driver manager"
+category = "System applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "sysconfdialog"
+symbol = "APP_SYSCONFDIALOG"
+label = "System configuration dialog"
+category = "System applications"
+kind = "system-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "apiapp"
+symbol = "APP_APIAPP"
+label = "API installer"
+category = "System applications"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "hello"
+symbol = "APP_HELLO"
+label = "Hello"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "uidemo"
+symbol = "APP_UIDEMO"
+label = "UI demo"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "cjktest"
+symbol = "APP_CJKTEST"
+label = "CJK test"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "notepad"
+symbol = "APP_NOTEPAD"
+label = "Notepad"
+category = "Desktop applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "calc"
+symbol = "APP_CALC"
+label = "Calculator"
+category = "Desktop applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "minesweeper"
+symbol = "APP_MINESWEEPER"
+label = "Minesweeper"
+category = "Games"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "memtest"
+symbol = "APP_MEMTEST"
+label = "Memory test"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "bugtest"
+symbol = "APP_BUGTEST"
+label = "Bug test"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "ping"
+symbol = "APP_PING"
+label = "Ping"
+category = "Network and multimedia"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "httpget"
+symbol = "APP_HTTPGET"
+label = "HTTP client"
+category = "Network and multimedia"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "downloadmgr"
+symbol = "APP_DOWNLOADMGR"
+label = "Download manager"
+category = "Network and multimedia"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "browser"
+symbol = "APP_BROWSER"
+label = "Browser"
+category = "Network and multimedia"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "imageview"
+symbol = "APP_IMAGEVIEW"
+label = "Image viewer"
+category = "Desktop applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "wavplay"
+symbol = "APP_WAVPLAY"
+label = "WAV player"
+category = "Network and multimedia"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "mp3play"
+symbol = "APP_MP3PLAY"
+label = "MP3 player"
+category = "Network and multimedia"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "oshlp"
+symbol = "APP_OSHLP"
+label = "Help viewer"
+category = "Desktop applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "helloworld"
+symbol = "APP_HELLOWORLD"
+label = "API hello world"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = true
+api_stage_path = "api/helloworld.api"
+
+[[components]]
+id = "guitest"
+symbol = "APP_GUITEST"
+label = "GUI test"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "nano"
+symbol = "APP_NANO"
+label = "nano editor"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "pleditor"
+symbol = "APP_PLEDITOR"
+label = "PL editor"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+
+[[components]]
+id = "stardusthello"
+symbol = "APP_STARDUSTHELLO"
+label = "StardustUI hello"
+category = "Third-party UI"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = true
+api = false
+depends = ["stardustui"]
+
+[[components]]
+id = "stardustlayout"
+symbol = "APP_STARDUSTLAYOUT"
+label = "StardustUI layout"
+category = "Third-party UI"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = true
+api = false
+depends = ["stardustui"]
+
+[[components]]
+id = "stardustshowcase"
+symbol = "APP_STARDUSTSHOWCASE"
+label = "StardustUI showcase"
+category = "Third-party UI"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = true
+api = false
+depends = ["stardustui"]
+
+[[components]]
+id = "doomlauncher"
+symbol = "APP_DOOMLAUNCHER"
+label = "DOOM launcher"
+category = "Games"
+kind = "package-app"
+default = true
+required = false
+stage = false
+entry = false
+sdk = false
+api = true
+depends = ["doom"]
+
+[[components]]
+id = "doom"
+symbol = "APP_DOOM"
+label = "DOOM"
+category = "Games"
+kind = "package-app"
+default = true
+required = false
+stage = false
+entry = false
+sdk = false
+api = true
+api_stage_path = "api/doom.api"
+api_requires = ["doomlauncher"]
+
+[[components]]
+id = "oschinpt"
+symbol = "APP_OSCHINPT"
+label = "LeonOS 4 Chinese Input"
+category = "Input methods"
+kind = "package-app"
+default = true
+required = false
+stage = false
+entry = false
+sdk = false
+api = true
+api_stage_path = "tools/oschinpt.api"
+
+[[components]]
+id = "busybox"
+symbol = "TOOL_BUSYBOX"
+label = "BusyBox"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "file"
+symbol = "TOOL_FILE"
+label = "file and libmagic"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = true
+api = false
+
+[[components]]
+id = "tcc"
+symbol = "TOOL_TCC"
+label = "Tiny C Compiler"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = true
+api = false
+
+[[components]]
+id = "lua"
+symbol = "TOOL_LUA"
+label = "Lua interpreter"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = true
+api = false
+
+[[components]]
+id = "stardustui"
+symbol = "LIB_STARDUSTUI"
+label = "StardustUI library"
+category = "Third-party UI"
+kind = "library"
+default = true
+required = false
+stage = false
+entry = false
+sdk = true
+api = false

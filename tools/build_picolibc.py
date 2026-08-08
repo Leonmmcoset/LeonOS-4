@@ -63,6 +63,31 @@ def reject_os_fallback_members(archive: Path) -> None:
         )
 
 
+def generated_cross_file(
+    source: Path, destination: Path, compile_flags: list[str], linker_flags: list[str]
+) -> Path:
+    """Create a build-owned cross file so presets never edit tracked input."""
+    text = source.read_text(encoding="utf-8")
+    c_args = ", ".join(repr(flag) for flag in (compile_flags or ["-O2"]))
+    c_link_args = ", ".join(
+        repr(flag if not flag.startswith("--") else f"-Wl,{flag}")
+        for flag in linker_flags
+    )
+    old_args = "c_args = ['-target', 'x86_64-unknown-none', '-O2', '-std=c11', '-ffreestanding', '-nostdlibinc', '-fno-stack-protector', '-fno-pic', '-fno-pie', '-mno-red-zone']"
+    new_args = "c_args = ['-target', 'x86_64-unknown-none', " + c_args + ", '-std=c11', '-ffreestanding', '-nostdlibinc', '-fno-stack-protector', '-fno-pic', '-fno-pie', '-mno-red-zone']"
+    if old_args not in text:
+        raise SystemExit("unsupported Picolibc cross-file c_args format")
+    text = text.replace(old_args, new_args, 1)
+    old_link_args = "c_link_args = ['-target', 'x86_64-unknown-none', '-nostdlib', '-fno-pic', '-fno-pie', '-mno-red-zone']"
+    new_link_args = "c_link_args = ['-target', 'x86_64-unknown-none', '-nostdlib', '-fno-pic', '-fno-pie', '-mno-red-zone'" + (", " + c_link_args if c_link_args else "") + "]"
+    if old_link_args not in text:
+        raise SystemExit("unsupported Picolibc cross-file c_link_args format")
+    text = text.replace(old_link_args, new_link_args, 1)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8", newline="\n")
+    return destination
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
@@ -71,6 +96,8 @@ def main() -> None:
     parser.add_argument("--prefix", type=Path, required=True)
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
+    parser.add_argument("--compile-flag", action="append", default=[])
+    parser.add_argument("--linker-flag", action="append", default=[])
     args = parser.parse_args()
 
     source = args.source.resolve()
@@ -84,6 +111,16 @@ def main() -> None:
     if not cross_file.is_file():
         raise SystemExit(f"Picolibc cross file not found: {cross_file}")
 
+    # Meson ``setup --wipe`` removes every file inside ``build_dir`` before
+    # it parses the cross file.  Keep this generated input beside the build
+    # directory so a reconfiguration cannot delete it between generation and
+    # Meson's argument parsing.
+    effective_cross_file = generated_cross_file(
+        cross_file,
+        build_dir.parent / f"{build_dir.name}.leonos-x86_64.generated.ini",
+        args.compile_flag,
+        args.linker_flag,
+    )
     options = [
         "-Dmultilib=false",
         "-Dtests=false",
@@ -109,8 +146,8 @@ def main() -> None:
     config = {
         # Schema 3 forces a clean Meson reconfiguration for old build trees
         # that merged os-fallback/sbrk objects into libc.a.
-        "schema": 3,
-        "cross_file_sha256": hashlib.sha256(cross_file.read_bytes()).hexdigest(),
+        "schema": 4,
+        "cross_file_sha256": hashlib.sha256(effective_cross_file.read_bytes()).hexdigest(),
         "options": options,
     }
     config_path = build_dir / ".leonos-picolibc-config.json"
@@ -127,7 +164,7 @@ def main() -> None:
     setup += [
         str(build_dir),
         str(source),
-        "--cross-file", str(cross_file),
+        "--cross-file", str(effective_cross_file),
         "--prefix", str(prefix),
         *options,
     ]
@@ -146,6 +183,7 @@ def main() -> None:
                 "picolibc_commit": picolibc_revision(source),
                 "archive": str(archive),
                 "cross_file": str(cross_file),
+                "effective_cross_file": str(effective_cross_file),
             },
             indent=2,
         )

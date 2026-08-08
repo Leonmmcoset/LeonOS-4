@@ -2,6 +2,8 @@ menu "LeonOS 4"
 
 menu "Build"
 
+source "Kconfig.components"
+
 choice
     prompt "Standalone VMDK default language"
     default VMDK_DEFAULT_LANGUAGE_EN
@@ -36,6 +38,99 @@ config INSTALLER_ROOT_SIZE_MIB
     range 32 4096
     default 128
 
+menu "Image defaults"
+
+choice
+    prompt "Standalone VMDK default theme"
+    default VMDK_DEFAULT_THEME_METRO
+
+config VMDK_DEFAULT_THEME_METRO
+    bool "Metro"
+
+config VMDK_DEFAULT_THEME_WIN95
+    bool "Win95"
+
+endchoice
+
+choice
+    prompt "Standalone VMDK wallpaper display mode"
+    default VMDK_WALLPAPER_FILL
+
+config VMDK_WALLPAPER_FILL
+    bool "Fill"
+
+config VMDK_WALLPAPER_STRETCH
+    bool "Stretch"
+
+config VMDK_WALLPAPER_CENTER
+    bool "Center"
+
+endchoice
+
+endmenu
+
+menu "Compiler and diagnostics"
+
+choice
+    prompt "Build preset"
+    default BUILD_PRESET_DEVELOP
+
+config BUILD_PRESET_DEBUG
+    bool "Debug"
+
+config BUILD_PRESET_DEVELOP
+    bool "Develop"
+
+config BUILD_PRESET_RELEASE
+    bool "Release"
+
+endchoice
+
+config BUILD_USE_ADVANCED_OVERRIDES
+    bool "Override build preset defaults"
+    default n
+    help
+      When disabled, Debug/Develop/Release owns optimization, symbols,
+      diagnostics, and stripping. Enable this only when those values should
+      be edited independently.
+
+config BUILD_OPTIMIZATION_LEVEL
+    int "C/C++ optimization level"
+    range 0 3
+    depends on BUILD_USE_ADVANCED_OVERRIDES
+    default 0 if BUILD_PRESET_DEBUG
+    default 2 if BUILD_PRESET_DEVELOP
+    default 3 if BUILD_PRESET_RELEASE
+
+config BUILD_DEBUG_SYMBOLS
+    bool "Emit debug symbols"
+    depends on BUILD_USE_ADVANCED_OVERRIDES
+    default y if BUILD_PRESET_DEBUG || BUILD_PRESET_DEVELOP
+    default n if BUILD_PRESET_RELEASE
+
+config BUILD_ENABLE_LTO
+    bool "Enable link-time optimization"
+    depends on BUILD_USE_ADVANCED_OVERRIDES
+    default n
+
+config BUILD_STRIP_BINARIES
+    bool "Strip user binaries"
+    depends on BUILD_USE_ADVANCED_OVERRIDES
+    default y if BUILD_PRESET_RELEASE
+    default n if BUILD_PRESET_DEBUG || BUILD_PRESET_DEVELOP
+
+config BUILD_DEVELOPER_DIAGNOSTICS
+    bool "Enable developer diagnostics"
+    depends on BUILD_USE_ADVANCED_OVERRIDES
+    default y if BUILD_PRESET_DEBUG
+    default n if BUILD_PRESET_DEVELOP || BUILD_PRESET_RELEASE
+
+config BUILD_VERBOSE_LOG
+    bool "Enable detailed build logs by default"
+    default n
+
+endmenu
+
 endmenu
 
 menu "QEMU Run"
@@ -68,6 +163,50 @@ config QEMU_NET_DEVICE
 config QEMU_OVMF_PATH
     string "QEMU OVMF firmware path"
     default "/usr/share/ovmf/OVMF.fd"
+
+endmenu
+
+menu "Validation"
+
+config TEST_LICENSE_SERVER
+    bool "Include license server checks in test-all"
+    default y
+
+config TEST_LOS2W
+    bool "Include los2w self-tests in test-all"
+    default y
+
+config TEST_QMP_TERMINAL
+    bool "Include terminal QMP smoke test in test-all"
+    default y
+
+config TEST_QMP_TCC
+    bool "Include TCC QMP smoke test in test-all"
+    default y
+
+config TEST_QMP_STARDUST
+    bool "Include StardustUI QMP smoke test in test-all"
+    default y
+
+config TEST_COMPONENT_CONFIG
+    bool "Include dynamic component configuration self-tests in test-all"
+    default y
+
+endmenu
+
+menu "SDK and release"
+
+config SDK_INCLUDE_COMPONENT_METADATA
+    bool "Include component manifest metadata in developer SDK"
+    default y
+
+config RELEASE_WRITE_CHECKSUMS
+    bool "Write SHA-256 checksums for release artifacts"
+    default y
+
+config RELEASE_INCLUDE_THIRD_PARTY_NOTICES
+    bool "Include third-party notices in release artifacts"
+    default y
 
 endmenu
 

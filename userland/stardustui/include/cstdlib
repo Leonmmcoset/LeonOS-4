@@ -1,0 +1,13 @@
+#pragma once
+
+#include <stdlib.h>
+
+namespace std {
+using ::size_t;
+using ::malloc;
+using ::calloc;
+using ::realloc;
+using ::free;
+using ::getenv;
+using ::exit;
+}

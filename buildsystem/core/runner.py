@@ -453,6 +453,9 @@ class BuildRunner:
             started_at=utc_now(),
             task=command_name,
             total_targets=len(closure),
+            completed_targets=0,
+            running_targets=[],
+            progress_percent=0,
         )
         started = time.monotonic()
         try:
@@ -574,6 +577,7 @@ class BuildRunner:
                     self.logger.detail(f"scheduler dispatch: {name}")
                     future = pool.submit(self._execute, names[name])
                     running[future] = name
+                self._publish_progress(tuple(running.values()))
                 self.logger.progress.update(self.metrics.completed, self.metrics.total, len(running))
                 if not running:
                     break
@@ -594,12 +598,26 @@ class BuildRunner:
                         dependencies[dependent].discard(name)
                         if not dependencies[dependent]:
                             ready.append(dependent)
+                    self._publish_progress(tuple(running.values()))
                 if failed is not None:
                     break
             if failed is not None:
                 raise failed
         if self.metrics.completed != len(closure):
             raise BuildFailure("build graph did not complete")
+
+    def _publish_progress(self, running_targets: tuple[str, ...]) -> None:
+        total = self.metrics.total
+        percent = 0 if total <= 0 else int(self.metrics.completed * 100 / total)
+        self.store.update(
+            self.task_id,
+            status="running",
+            completed_targets=self.metrics.completed,
+            total_targets=total,
+            running_targets=sorted(set(running_targets)),
+            progress_percent=min(100, max(0, percent)),
+            updated_at=utc_now(),
+        )
 
     def _execute(self, target: Target) -> None:
         worker = self._slots.get()

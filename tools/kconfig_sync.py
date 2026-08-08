@@ -1,32 +1,54 @@
 #!/usr/bin/env python3
+"""Synchronize Kconfig values, generated headers, and component selection."""
+
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-KNOWN_KEYS = {
-    "CONFIG_VMDK_DEFAULT_LANGUAGE_EN": "y",
-    "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH": "n",
-    "CONFIG_VMDK_REQUIRE_LICENSE": "y",
-    "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE": "y",
-    "CONFIG_IMAGE_SIZE_MIB": "192",
-    "CONFIG_INSTALLER_ROOT_SIZE_MIB": "128",
-    "CONFIG_QEMU_MEMORY_MB": "512",
-    "CONFIG_QEMU_DISPLAY_WIDTH": "1920",
-    "CONFIG_QEMU_DISPLAY_HEIGHT": "1080",
-    "CONFIG_QEMU_ENABLE_KVM": "y",
-    "CONFIG_QEMU_NET_DEVICE": '"e1000"',
-    "CONFIG_QEMU_OVMF_PATH": '"/usr/share/ovmf/OVMF.fd"',
-    "CONFIG_LICENSE_SERVER_URL": '"http://127.0.0.1:30301"',
-    "CONFIG_LICENSE_DEBUG_LOG": "y",
-}
+sys.path.insert(0, str(ROOT))
 
-STRING_KEYS = {
-    "CONFIG_LICENSE_SERVER_URL",
-    "CONFIG_QEMU_NET_DEVICE",
-    "CONFIG_QEMU_OVMF_PATH",
+from buildsystem.components import (
+    Component,
+    component_config_symbols,
+    component_defaults,
+    load_components,
+    resolve_components,
+    validate_component_targets,
+)
+
+
+BUILD_PRESET_CHOICES = (
+    "CONFIG_BUILD_PRESET_DEBUG",
+    "CONFIG_BUILD_PRESET_DEVELOP",
+    "CONFIG_BUILD_PRESET_RELEASE",
+)
+BUILD_PRESET_VALUES = {
+    "CONFIG_BUILD_PRESET_DEBUG": {
+        "CONFIG_BUILD_OPTIMIZATION_LEVEL": "0",
+        "CONFIG_BUILD_DEBUG_SYMBOLS": "y",
+        "CONFIG_BUILD_ENABLE_LTO": "n",
+        "CONFIG_BUILD_STRIP_BINARIES": "n",
+        "CONFIG_BUILD_DEVELOPER_DIAGNOSTICS": "y",
+    },
+    "CONFIG_BUILD_PRESET_DEVELOP": {
+        "CONFIG_BUILD_OPTIMIZATION_LEVEL": "2",
+        "CONFIG_BUILD_DEBUG_SYMBOLS": "y",
+        "CONFIG_BUILD_ENABLE_LTO": "n",
+        "CONFIG_BUILD_STRIP_BINARIES": "n",
+        "CONFIG_BUILD_DEVELOPER_DIAGNOSTICS": "n",
+    },
+    "CONFIG_BUILD_PRESET_RELEASE": {
+        "CONFIG_BUILD_OPTIMIZATION_LEVEL": "3",
+        "CONFIG_BUILD_DEBUG_SYMBOLS": "n",
+        "CONFIG_BUILD_ENABLE_LTO": "n",
+        "CONFIG_BUILD_STRIP_BINARIES": "y",
+        "CONFIG_BUILD_DEVELOPER_DIAGNOSTICS": "n",
+    },
 }
 
 
@@ -36,27 +58,30 @@ def parse_config(path: Path) -> dict[str, str]:
         return values
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
-        if not line or line.startswith("#"):
-            if line.startswith("# CONFIG_") and line.endswith(" is not set"):
-                key = line[2 : -len(" is not set")]
-                if key in KNOWN_KEYS:
-                    values[key] = "n"
+        if not line:
             continue
-        if "=" not in line:
+        if line.startswith("# CONFIG_") and line.endswith(" is not set"):
+            values[line[2 : -len(" is not set")]] = "n"
             continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if key in KNOWN_KEYS:
-            values[key] = value.strip()
+        if "=" in line and not line.startswith("#"):
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key.startswith("CONFIG_"):
+                values[key] = value.strip()
     return values
 
 
+def config_key_order(path: Path) -> list[str]:
+    values = parse_config(path)
+    return list(values)
+
+
 def bool_value(values: dict[str, str], key: str) -> bool:
-    return values.get(key, KNOWN_KEYS[key]) == "y"
+    return values.get(key) == "y"
 
 
-def string_value(values: dict[str, str], key: str) -> str:
-    value = values.get(key, KNOWN_KEYS[key]).strip()
+def string_value(value: str) -> str:
+    value = value.strip()
     if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
         value = value[1:-1]
     return value.replace('\\"', '"').replace("\\\\", "\\")
@@ -66,23 +91,31 @@ def c_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def normalize_values(values: dict[str, str]) -> dict[str, str]:
-    normalized = dict(KNOWN_KEYS)
-    for key, value in values.items():
-        if key in KNOWN_KEYS:
+def normalize_values(
+    defaults: dict[str, str],
+    configured: dict[str, str],
+    component_values: dict[str, str],
+) -> dict[str, str]:
+    normalized = {**defaults, **component_values}
+    for key, value in configured.items():
+        if key in normalized:
             normalized[key] = value
+    preset = next(
+        (key for key in BUILD_PRESET_CHOICES if normalized.get(key) == "y"),
+        "CONFIG_BUILD_PRESET_DEVELOP",
+    )
+    if normalized.get("CONFIG_BUILD_USE_ADVANCED_OVERRIDES") != "y":
+        normalized.update(BUILD_PRESET_VALUES[preset])
     return normalized
 
 
-def write_config(path: Path, values: dict[str, str]) -> None:
-    lines = []
-    for key in KNOWN_KEYS:
-        value = values[key]
-        if value == "n":
-            lines.append(f"# {key} is not set")
-        else:
-            lines.append(f"{key}={value}")
-    write_if_changed(path, "\n".join(lines) + "\n")
+def validate_configured_keys(
+    configured: dict[str, str], defaults: dict[str, str], components: tuple[Component, ...]
+) -> None:
+    known = set(defaults) | component_config_symbols(components)
+    unknown = sorted(key for key in configured if key not in known)
+    if unknown:
+        raise ValueError("unknown configuration symbol(s): " + ", ".join(unknown))
 
 
 def write_if_changed(path: Path, text: str) -> None:
@@ -92,75 +125,110 @@ def write_if_changed(path: Path, text: str) -> None:
             return
     except FileNotFoundError:
         pass
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def write_config(path: Path, values: dict[str, str], ordered_keys: list[str]) -> None:
+    keys = [key for key in ordered_keys if key in values]
+    keys.extend(sorted(key for key in values if key not in set(keys)))
+    lines = [
+        f"# {key} is not set" if values[key] == "n" else f"{key}={values[key]}"
+        for key in keys
+    ]
+    write_if_changed(path, "\n".join(lines) + "\n")
 
 
 def write_header(path: Path, guard: str, values: dict[str, str], require_key: str) -> None:
-    header_lines = [
+    lines = [
         "/* Generated by tools/kconfig_sync.py. */",
         f"#ifndef {guard}",
         f"#define {guard}",
         "",
     ]
-
     for key in sorted(values):
         value = values[key]
         if value == "y":
-            header_lines.append(f"#define {key} 1")
+            lines.append(f"#define {key} 1")
         elif value == "n":
             continue
-        elif key in STRING_KEYS:
-            header_lines.append(f"#define {key} {c_string(string_value(values, key))}")
+        elif value.startswith('"') and value.endswith('"'):
+            lines.append(f"#define {key} {c_string(string_value(value))}")
         else:
-            header_lines.append(f"#define {key} {value}")
-
-    header_lines.extend([
+            lines.append(f"#define {key} {value}")
+    lines.extend([
         "",
         f"#define LEONOS_LICENSE_REQUIRE {1 if bool_value(values, require_key) else 0}",
+        "",
+        "#endif",
+        "",
     ])
-    header_lines.extend(["", "#endif", ""])
-    write_if_changed(path, "\n".join(header_lines))
+    write_if_changed(path, "\n".join(lines))
 
 
-def write_outputs(values: dict[str, str], generated: Path) -> None:
+def write_outputs(
+    values: dict[str, str],
+    generated: Path,
+    selection_out: Path,
+    selection: dict[str, dict[str, object]],
+) -> None:
     generated.mkdir(parents=True, exist_ok=True)
-
-    header = generated / "autoconf.h"
-    installer_header = generated / "autoconf-installer.h"
-    rustcfg = generated / "rustcfg.args"
-
-    rust_lines: list[str] = []
-    for key in sorted(values):
-        if values[key] == "y":
-            rust_lines.append(f'--cfg={key.lower()}')
-
-    write_header(header, "LEONOS4_AUTOCONF_H", values, "CONFIG_VMDK_REQUIRE_LICENSE")
     write_header(
-        installer_header,
+        generated / "autoconf.h",
+        "LEONOS4_AUTOCONF_H",
+        values,
+        "CONFIG_VMDK_REQUIRE_LICENSE",
+    )
+    write_header(
+        generated / "autoconf-installer.h",
         "LEONOS4_AUTOCONF_INSTALLER_H",
         values,
         "CONFIG_INSTALLER_INSTALLED_REQUIRE_LICENSE",
     )
-    write_if_changed(rustcfg, "\n".join(rust_lines) + ("\n" if rust_lines else ""))
+    rust_lines = [
+        f"--cfg={key.lower()}" for key in sorted(values) if values[key] == "y"
+    ]
+    write_if_changed(
+        generated / "rustcfg.args",
+        "\n".join(rust_lines) + ("\n" if rust_lines else ""),
+    )
+    payload = {"version": 1, "components": selection}
+    write_if_changed(
+        selection_out,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Synchronize LeonOS 4 Kconfig outputs")
-    parser.add_argument("--config", default=".config")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", default="buildsystem/config/leonos.conf")
     parser.add_argument("--defaults", default="configs/default.conf")
-    parser.add_argument("--out-dir", default="include/generated")
+    parser.add_argument("--manifest", default="configs/components.toml")
+    parser.add_argument("--out-dir", default="build/include/generated")
+    parser.add_argument("--selection-out", default="build/generated/component-selection.json")
     args = parser.parse_args()
 
     config = ROOT / args.config
-    defaults = ROOT / args.defaults
-    generated = ROOT / args.out_dir
+    defaults_path = ROOT / args.defaults
+    components = load_components(ROOT / args.manifest)
+    validate_component_targets(components, ROOT)
+    defaults = parse_config(defaults_path)
+    configured = parse_config(config)
+    validate_configured_keys(configured, defaults, components)
+    values = normalize_values(defaults, configured, component_defaults(components))
+    selection = resolve_components(components, values)
+    for component in components:
+        resolved = selection[component.id]
+        values[component.build_symbol] = "y" if resolved["build"] else "n"
+        for suffix, field in (
+            ("IMAGE", "image"),
+            ("ENTRY", "entry"),
+            ("SDK", "sdk"),
+            ("API", "api"),
+        ):
+            values[component.option_symbol(suffix)] = "y" if resolved[field] else "n"
 
-    if not config.exists():
-        config.write_text(defaults.read_text(encoding="utf-8"), encoding="utf-8")
-
-    values = normalize_values(parse_config(config))
-    write_config(config, values)
-    write_outputs(values, generated)
+    write_config(config, values, config_key_order(defaults_path))
+    write_outputs(values, ROOT / args.out_dir, ROOT / args.selection_out, selection)
     return 0
 
 

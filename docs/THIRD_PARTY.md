@@ -32,6 +32,23 @@ The LeonOS syscall and GUI bindings remain in the separate `leonos.a` adapter
 archive. The generated Developer SDK packages both archives, Picolibc headers,
 and the upstream license notice.
 
+## StardustUI
+
+- Path: `third_party/stardustui`
+- Upstream: `https://github.com/xingji-studio/StardustUI.git`
+- Pinned commit: `67aae17214a0d27bb6a8b0caf10b7c1f98313086`
+- License: MIT; preserve `third_party/stardustui/LICENSE`. The generated SDK
+  includes the library's public headers, LeonOS C++ compatibility headers and
+  the full license text.
+
+LeonOS builds StardustUI as `libstardustui.a` over its existing pixel-buffer
+window ABI and UI text renderer. The image includes the upstream Hello World,
+layout and widget-showcase examples at `0:/programs/stardusthello/`,
+`0:/programs/stardustlayout/` and `0:/programs/stardustshowcase/`, plus the
+upstream Material 3 example themes in `0:/etc/stardustui/theme/`. StardustUI's
+socket API is linked but currently reports that networking is unavailable, so
+the network-dependent DuckChat example is intentionally not installed.
+
 ## zlib
 
 - Path: `third_party/zlib`

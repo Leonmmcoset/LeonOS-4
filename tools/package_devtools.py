@@ -14,6 +14,7 @@ from pathlib import Path
 
 SDK_PREFIX = "devtools"
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+COMPONENT_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 def version_and_revision(source: Path) -> tuple[str, str]:
@@ -50,6 +51,32 @@ def add_text(archive: zipfile.ZipFile, archive_name: str, value: str) -> None:
     archive.writestr(info, value.encode("utf-8"))
 
 
+def component_archive_name(component: str, destination: str, source_name: str = "") -> str:
+    if not COMPONENT_ID_RE.fullmatch(component):
+        raise SystemExit(f"invalid SDK component id: {component}")
+    path = Path(destination)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise SystemExit(f"invalid SDK component destination: {destination}")
+    return f"{SDK_PREFIX}/components/{component}/{path.as_posix()}" + (
+        f"/{source_name}" if source_name else ""
+    )
+
+
+def add_component_tree(
+    archive: zipfile.ZipFile, component: str, destination: str, source: Path
+) -> None:
+    if not source.is_dir():
+        raise SystemExit(f"SDK component tree is missing: {source}")
+    for item in sorted(source.rglob("*")):
+        if item.is_file():
+            add_file(
+                archive,
+                component_archive_name(component, destination,
+                                       item.relative_to(source).as_posix()),
+                item,
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sdk-root", type=Path, required=True)
@@ -62,9 +89,16 @@ def main() -> None:
     parser.add_argument("--libpng-lib", type=Path, required=True)
     parser.add_argument("--libpng-source", type=Path, required=True)
     parser.add_argument("--libpng-config", type=Path, required=True)
-    parser.add_argument("--libmagic-lib", type=Path, required=True)
-    parser.add_argument("--libmagic-source", type=Path, required=True)
-    parser.add_argument("--libmagic-header", type=Path, required=True)
+    parser.add_argument("--libmagic-lib", type=Path)
+    parser.add_argument("--libmagic-source", type=Path)
+    parser.add_argument("--libmagic-header", type=Path)
+    parser.add_argument("--stardustui-lib", type=Path)
+    parser.add_argument("--stardustui-source", type=Path)
+    parser.add_argument("--component-metadata", type=Path)
+    parser.add_argument("--component-file", nargs=3, action="append", default=[],
+                        metavar=("ID", "DESTINATION", "SOURCE"))
+    parser.add_argument("--component-tree", nargs=3, action="append", default=[],
+                        metavar=("ID", "DESTINATION", "SOURCE"))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
@@ -74,14 +108,57 @@ def main() -> None:
     zlib_headers = (args.zlib_source / "zlib.h", args.zlib_source / "zconf.h")
     libpng_headers = (args.libpng_source / "png.h", args.libpng_source / "pngconf.h",
                       args.libpng_config)
+    include_libmagic = any((
+        args.libmagic_lib is not None,
+        args.libmagic_source is not None,
+        args.libmagic_header is not None,
+    ))
+    if include_libmagic and not all((
+        args.libmagic_lib is not None,
+        args.libmagic_source is not None,
+        args.libmagic_header is not None,
+    )):
+        raise SystemExit("libmagic SDK inputs must be provided together")
     for required in (args.leonos_lib, args.picolibc_lib, args.picolibc_include,
                      args.picolibc_source / "COPYING.picolibc", args.zlib_lib,
                      args.zlib_source / "LICENSE", args.libpng_lib,
-                     args.libpng_source / "LICENSE", args.libmagic_lib,
-                     args.libmagic_source / "COPYING", args.libmagic_header,
+                     args.libpng_source / "LICENSE",
                      *zlib_headers, *libpng_headers):
         if not required.exists():
             raise SystemExit(f"required SDK input is missing: {required}")
+    if include_libmagic:
+        assert args.libmagic_lib is not None
+        assert args.libmagic_source is not None
+        assert args.libmagic_header is not None
+        for required in (
+            args.libmagic_lib, args.libmagic_source / "COPYING", args.libmagic_header,
+        ):
+            if not required.exists():
+                raise SystemExit(f"required libmagic SDK input is missing: {required}")
+    include_stardustui = args.stardustui_lib is not None or args.stardustui_source is not None
+    if include_stardustui:
+        if args.stardustui_lib is None or args.stardustui_source is None:
+            raise SystemExit("StardustUI SDK inputs must be provided together")
+        for required in (
+            args.stardustui_lib, args.stardustui_source / "LICENSE",
+            args.stardustui_source / "includes",
+            args.stardustui_source / "platforms/platform.hpp",
+            args.stardustui_source / "settings.hpp",
+        ):
+            if not required.exists():
+                raise SystemExit(f"required StardustUI SDK input is missing: {required}")
+    if args.component_metadata is not None and not args.component_metadata.exists():
+        raise SystemExit(f"component metadata is missing: {args.component_metadata}")
+    for component, destination, source in args.component_file:
+        source_path = Path(source)
+        if not source_path.is_file():
+            raise SystemExit(f"SDK component file is missing: {source_path}")
+        component_archive_name(component, destination)
+    for component, destination, source in args.component_tree:
+        source_path = Path(source)
+        if not source_path.is_dir():
+            raise SystemExit(f"SDK component tree is missing: {source_path}")
+        component_archive_name(component, destination)
 
     version, revision = version_and_revision(args.picolibc_source)
     picolibc_headers = [
@@ -113,16 +190,45 @@ def main() -> None:
             add_file(archive, f"{SDK_PREFIX}/lib/libc.a", args.picolibc_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libz.a", args.zlib_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libpng.a", args.libpng_lib)
-            add_file(archive, f"{SDK_PREFIX}/lib/libmagic.a", args.libmagic_lib)
+            if include_libmagic:
+                assert args.libmagic_lib is not None
+                add_file(archive, f"{SDK_PREFIX}/lib/libmagic.a", args.libmagic_lib)
+            if include_stardustui:
+                assert args.stardustui_lib is not None
+                assert args.stardustui_source is not None
+                add_file(archive, f"{SDK_PREFIX}/lib/libstardustui.a", args.stardustui_lib)
+                for source in sorted(args.stardustui_source.rglob("*.hpp")):
+                    relative_name = source.relative_to(args.stardustui_source).as_posix()
+                    if relative_name.startswith("includes/") or relative_name in {
+                        "platforms/platform.hpp", "settings.hpp"
+                    }:
+                        add_file(archive, f"{SDK_PREFIX}/include/stardustui/{relative_name}", source)
+                for source in sorted((Path("userland/stardustui/include")).glob("*")
+                                     if Path("userland/stardustui/include").is_dir() else []):
+                    if source.is_file():
+                        add_file(archive, f"{SDK_PREFIX}/include/stardustui/leonos/{source.name}", source)
             add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/PICOLIBC-COPYING", args.picolibc_source / "COPYING.picolibc")
             for source in zlib_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.name}", source)
             for source in libpng_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.name}", source)
-            add_file(archive, f"{SDK_PREFIX}/include/magic.h", args.libmagic_header)
             add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/ZLIB-LICENSE", args.zlib_source / "LICENSE")
             add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBPNG-LICENSE", args.libpng_source / "LICENSE")
-            add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBMAGIC-COPYING", args.libmagic_source / "COPYING")
+            if include_libmagic:
+                assert args.libmagic_header is not None
+                assert args.libmagic_source is not None
+                add_file(archive, f"{SDK_PREFIX}/include/magic.h", args.libmagic_header)
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBMAGIC-COPYING", args.libmagic_source / "COPYING")
+            if include_stardustui:
+                assert args.stardustui_source is not None
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/STARDUSTUI-LICENSE", args.stardustui_source / "LICENSE")
+            if args.component_metadata is not None:
+                add_file(archive, f"{SDK_PREFIX}/share/leonos/components.json", args.component_metadata)
+            for component, destination, source in args.component_file:
+                source_path = Path(source)
+                add_file(archive, component_archive_name(component, destination), source_path)
+            for component, destination, source in args.component_tree:
+                add_component_tree(archive, component, destination, Path(source))
             add_text(
                 archive,
                 f"{SDK_PREFIX}/THIRD_PARTY/PICOLIBC-VERSION.txt",
@@ -143,13 +249,22 @@ def main() -> None:
                 "Upstream: https://github.com/pnggroup/libpng\n"
                 "License: libpng License\n",
             )
-            add_text(
-                archive,
-                f"{SDK_PREFIX}/THIRD_PARTY/LIBMAGIC-VERSION.txt",
-                "file/libmagic version: 5.48\n"
-                "Upstream: https://github.com/file/file\n"
-                "License: BSD-2-Clause\n",
-            )
+            if include_libmagic:
+                add_text(
+                    archive,
+                    f"{SDK_PREFIX}/THIRD_PARTY/LIBMAGIC-VERSION.txt",
+                    "file/libmagic version: 5.48\n"
+                    "Upstream: https://github.com/file/file\n"
+                    "License: BSD-2-Clause\n",
+                )
+            if include_stardustui:
+                add_text(
+                    archive,
+                    f"{SDK_PREFIX}/THIRD_PARTY/STARDUSTUI-VERSION.txt",
+                    "StardustUI revision: 67aae17214a0d27bb6a8b0caf10b7c1f98313086\n"
+                    "Upstream: https://github.com/xingji-studio/StardustUI\n"
+                    "License: MIT\n",
+                )
         os.replace(temporary_path, output)
     finally:
         if temporary_path.exists():

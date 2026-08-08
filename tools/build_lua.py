@@ -80,6 +80,8 @@ def main() -> None:
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
+    parser.add_argument("--compile-flag", action="append", default=[])
+    parser.add_argument("--linker-flag", action="append", default=[])
     args = parser.parse_args()
 
     if os.name == "nt":
@@ -123,7 +125,7 @@ def main() -> None:
     # saves/restores each task's x87/SSE state with fxsave/fxrstor, so SSE is a
     # supported user-process ABI and is intentional for this target.
     common_flags = [
-        "-target", "x86_64-unknown-none", "-O2", "-std=c99", "-ffreestanding",
+        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=c99", "-ffreestanding",
         "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone",
         "-ffunction-sections", "-fdata-sections", "-Wall",
         "-Wextra", "-Wno-unused-parameter", "-DLUA_USE_C89",
@@ -148,7 +150,7 @@ def main() -> None:
 
     output.parent.mkdir(parents=True, exist_ok=True)
     run([
-        "ld.lld", "-nostdlib", "--gc-sections", "-z", "max-page-size=0x1000",
+        "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, "-z", "max-page-size=0x1000",
         "-T", str(linker_script), "-o", str(output), *map(str, objects),
         "--start-group", str(leonos_lib), str(picolibc_lib), str(compiler_runtime), "--end-group",
     ])
