@@ -73,6 +73,14 @@ void desktop_run(void)
             sleep_ms(1000);
         }
     }
+    if (leonos_fb_capabilities(&fb_caps) < 0) {
+        fb_caps.bytes_per_pixel = 4;
+        fb_caps.capabilities = 0;
+        fb_caps.max_width = fb.width;
+        fb_caps.max_height = fb.height;
+        fb_caps.max_bytes = fb.pitch * fb.height;
+        fb_caps.backend = LEONOS_FB_BACKEND_BOOT;
+    }
     printf("[desktop.elf] framebuffer %dx%d bpp=%d\n", fb.width, fb.height, fb.bpp);
     desktop_load_display_config();
     desktop_load_appearance_config();

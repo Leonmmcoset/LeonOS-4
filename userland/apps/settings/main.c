@@ -62,6 +62,7 @@ enum {
 
 static uint32_t pixels[SETTINGS_W * SETTINGS_H];
 static struct leonos_display_state display_state;
+static struct leonos_fb_capabilities framebuffer_caps;
 static struct leonos_appearance_state appearance_state;
 static struct leonos_user_info current_user;
 static struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
@@ -602,17 +603,41 @@ static void save_services_config(void)
 static int mode_supported(uint32_t mode, uint32_t scale_index)
 {
     uint32_t scale;
+    uint64_t physical_width;
+    uint64_t physical_height;
+    uint64_t required_bytes;
+    uint32_t max_width;
+    uint32_t max_height;
+    uint32_t max_bytes;
     if (mode >= SETTINGS_MODE_COUNT || scale_index >= SETTINGS_SCALE_COUNT) {
         return 0;
     }
     scale = scale_values[scale_index];
-    return mode_widths[mode] * scale <= display_state.fb_width &&
-           mode_heights[mode] * scale <= display_state.fb_height;
+    physical_width = (uint64_t)mode_widths[mode] * scale;
+    physical_height = (uint64_t)mode_heights[mode] * scale;
+    required_bytes = physical_width * physical_height * sizeof(uint32_t);
+    max_width = framebuffer_caps.max_width ? framebuffer_caps.max_width : display_state.fb_width;
+    max_height = framebuffer_caps.max_height ? framebuffer_caps.max_height : display_state.fb_height;
+    max_bytes = framebuffer_caps.max_bytes
+                    ? framebuffer_caps.max_bytes
+                    : display_state.fb_width * display_state.fb_height * sizeof(uint32_t);
+    return physical_width <= max_width && physical_height <= max_height &&
+           required_bytes <= max_bytes;
 }
 
 static void refresh_display_state(void)
 {
-    if (leonos_display_get_state(&display_state) <= 0) {
+    int state_available = leonos_display_get_state(&display_state) > 0;
+    if (leonos_fb_capabilities(&framebuffer_caps) < 0) {
+        framebuffer_caps.bytes_per_pixel = 4;
+        framebuffer_caps.capabilities = 0;
+        framebuffer_caps.max_width = state_available ? display_state.fb_width : 1920;
+        framebuffer_caps.max_height = state_available ? display_state.fb_height : 1080;
+        framebuffer_caps.max_bytes = framebuffer_caps.max_width * framebuffer_caps.max_height *
+                                    sizeof(uint32_t);
+        framebuffer_caps.backend = LEONOS_FB_BACKEND_BOOT;
+    }
+    if (!state_available) {
         display_state.fb_width = 1920;
         display_state.fb_height = 1080;
         display_state.logical_width = 1280;

@@ -98,6 +98,14 @@ x86_64_outl:
     out %eax, %dx
     ret
 
+.global x86_64_inw
+.type x86_64_inw, @function
+x86_64_inw:
+    mov %di, %dx
+    xor %eax, %eax
+    in %dx, %ax
+    ret
+
 .global x86_64_inl
 .type x86_64_inl, @function
 x86_64_inl:

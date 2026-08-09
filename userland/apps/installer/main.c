@@ -26,7 +26,12 @@
 #define POLICY_SCROLLBAR_W 18U
 #define POLICY_LINE_TEXT_MAX 256U
 #define POLICY_MAX_LINES 192U
-#define T(en, zh) leonos_i18n((en), (zh))
+#define INSTALLER_CJK_FALLBACK_FONT "0:/system/fonts/simsun.ttc"
+
+/* The installer must be able to change language before it has a writable
+ * target system.  Do not make rendering depend on persisting locale.conf on
+ * the installation medium. */
+#define T(en, zh) ((installer_lang == LEONOS_LANG_ZH && (zh)) ? (zh) : (en))
 
 enum installer_page {
     PAGE_LANGUAGE = 0,
@@ -2851,7 +2856,6 @@ static void handle_language_click(int32_t x, int32_t y)
         policy_accepted = 0;
         policy_scroll_y = 0;
         acknowledgements_scroll_y = 0;
-        (void)leonos_i18n_set_language(language);
         dirty = 1;
     }
 }
@@ -3124,6 +3128,10 @@ int main(void)
     leonos_ui_bind(&ui, pixels, surface_w, surface_h, INSTALLER_MAX_W);
     installer_lang = (uint8_t)leonos_i18n_language();
     installer_theme = (uint8_t)leonos_ui_theme();
+    /* Deng covers most CJK text, but use the staged SimSun collection for
+     * characters it does not contain.  Keeping it as a fallback preserves
+     * the selected Metro/Win95 primary-font rendering. */
+    (void)leonos_ui_set_font_fallback_path(INSTALLER_CJK_FALLBACK_FONT);
     leonos_ui_listview_state_init(&update_app_list, 1, UPDATE_APP_ROW_H);
     refresh_disks();
     page = PAGE_LANGUAGE;

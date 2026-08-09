@@ -1519,10 +1519,20 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     uint64_t len;
     const struct loader_module *kernel_module;
     const struct loader_module *middlelayer_module;
+    const struct loader_module *installer_root_module;
 
     serial_init();
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
+    installer_root_module = find_loader_module("leonos-installer-root");
+    if (installer_root_module && installer_root_module->end > installer_root_module->start) {
+        handoff.installer_root.start = installer_root_module->start;
+        handoff.installer_root.end = installer_root_module->end;
+        handoff.installer_root.path = "leonos-installer-root";
+        serial_write("[loader] installer root module bytes=");
+        serial_write_hex(installer_root_module->end - installer_root_module->start);
+        serial_write("\n");
+    }
     loader_framebuffer_init();
     efi_console_init();
     if (handoff.efi_system_table && efi_open_root(handoff.efi_system_table) == 0) {

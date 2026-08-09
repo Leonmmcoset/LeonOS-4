@@ -14,6 +14,8 @@
 #define LEONOS_GUI_IOCTL_FB_TEXT 0x4c464254UL
 #define LEONOS_GUI_IOCTL_FB_PIXEL 0x4c464250UL
 #define LEONOS_GUI_IOCTL_FB_BLIT 0x4c46424cUL
+#define LEONOS_GUI_IOCTL_FB_SET_MODE 0x4c46424dUL
+#define LEONOS_GUI_IOCTL_FB_CAPS 0x4c464243UL
 #define LEONOS_GUI_IOCTL_CREATE_WINDOW 0x4c475743UL
 #define LEONOS_GUI_IOCTL_POLL_WINDOW 0x4c475750UL
 #define LEONOS_GUI_IOCTL_TASKS 0x4c54534bUL
@@ -43,6 +45,11 @@
 #define LEONOS_DISPLAY_REQUEST_KEEP 2U
 #define LEONOS_DISPLAY_REQUEST_REVERT 3U
 #define LEONOS_DISPLAY_REQUEST_REFRESH 4U
+
+#define LEONOS_FB_CAP_MODE_SET 0x0001U
+#define LEONOS_FB_BACKEND_BOOT 0U
+#define LEONOS_FB_BACKEND_BOCHS_VBE 1U
+#define LEONOS_FB_BACKEND_VMWARE_SVGA 2U
 
 #define LEONOS_WALLPAPER_MODE_FILL 0U
 #define LEONOS_WALLPAPER_MODE_FIT 1U
@@ -129,6 +136,21 @@ struct leonos_fb_info {
     uint32_t height;
     uint32_t pitch;
     uint8_t bpp;
+};
+
+struct leonos_fb_capabilities {
+    uint8_t bytes_per_pixel;
+    uint8_t reserved;
+    uint16_t capabilities;
+    uint32_t max_width;
+    uint32_t max_height;
+    uint32_t max_bytes;
+    uint32_t backend;
+};
+
+struct leonos_fb_mode {
+    uint32_t width;
+    uint32_t height;
 };
 
 struct leonos_fb_rect {
@@ -301,6 +323,8 @@ int leonos_gui_create_window(const struct leonos_gui_window *window);
 int leonos_gui_next_event(struct leonos_input_event *event);
 unsigned long leonos_uptime_ms(void);
 int leonos_fb_info(struct leonos_fb_info *info);
+int leonos_fb_capabilities(struct leonos_fb_capabilities *caps);
+int leonos_fb_set_mode(uint32_t width, uint32_t height);
 int leonos_fb_fill(uint32_t color);
 int leonos_fb_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color);
 int leonos_fb_text(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg);

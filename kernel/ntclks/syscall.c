@@ -39,6 +39,8 @@
 #define LEONOS_GUI_IOCTL_FB_TEXT 0x4c464254ULL
 #define LEONOS_GUI_IOCTL_FB_PIXEL 0x4c464250ULL
 #define LEONOS_GUI_IOCTL_FB_BLIT 0x4c46424cULL
+#define LEONOS_GUI_IOCTL_FB_SET_MODE 0x4c46424dULL
+#define LEONOS_GUI_IOCTL_FB_CAPS 0x4c464243ULL
 #define LEONOS_GUI_IOCTL_CREATE_WINDOW 0x4c475743ULL
 #define LEONOS_GUI_IOCTL_POLL_WINDOW 0x4c475750ULL
 #define LEONOS_GUI_IOCTL_TASKS 0x4c54534bULL
@@ -3005,11 +3007,45 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         const struct framebuffer *fb = framebuffer_get();
         struct framebuffer_info *info = (struct framebuffer_info *)(uintptr_t)a2;
-        info->width = fb->width;
-        info->height = fb->height;
-        info->pitch = fb->pitch;
-        info->bpp = fb->bpp;
+        *info = (struct framebuffer_info){
+            .width = fb->width,
+            .height = fb->height,
+            .pitch = fb->pitch,
+            .bpp = fb->bpp,
+        };
         return fb->available ? 0 : -LEONOS_EINVAL;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FB_CAPS) {
+        if (!user_range_ok(a2, sizeof(struct framebuffer_capabilities))) {
+            return -LEONOS_EFAULT;
+        }
+        const struct framebuffer *fb = framebuffer_get();
+        struct framebuffer_capabilities *caps =
+            (struct framebuffer_capabilities *)(uintptr_t)a2;
+        *caps = (struct framebuffer_capabilities){
+            .bytes_per_pixel = fb->bytes_per_pixel,
+            .reserved = 0,
+            .capabilities = fb->capabilities,
+            .max_width = fb->max_width,
+            .max_height = fb->max_height,
+            .max_bytes = fb->max_bytes,
+            .backend = fb->backend,
+        };
+        return fb->available ? 0 : -LEONOS_EINVAL;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FB_SET_MODE) {
+        int ret = require_window_server();
+        if (ret < 0) {
+            return ret;
+        }
+        if (!user_range_ok(a2, sizeof(struct framebuffer_mode_cmd))) {
+            return -LEONOS_EFAULT;
+        }
+        const struct framebuffer_mode_cmd *cmd =
+            (const struct framebuffer_mode_cmd *)(uintptr_t)a2;
+        return framebuffer_set_mode(cmd->width, cmd->height) == 0 ? 0 : -LEONOS_EINVAL;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_FB_FILL) {
@@ -3018,6 +3054,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return ret;
         }
         framebuffer_clear((uint32_t)a2);
+        framebuffer_present();
         return 0;
     }
 
@@ -3031,6 +3068,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         const struct framebuffer_rect_cmd *cmd = (const struct framebuffer_rect_cmd *)(uintptr_t)a2;
         framebuffer_rect(cmd->x, cmd->y, cmd->width, cmd->height, cmd->color);
+        framebuffer_present_region(cmd->x, cmd->y, cmd->width, cmd->height);
         return 0;
     }
 
@@ -3048,6 +3086,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         framebuffer_text(cmd->x, cmd->y, cmd->text, cmd->fg, cmd->bg);
+        framebuffer_present();
         return 0;
     }
 
@@ -3078,6 +3117,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         framebuffer_blit(cmd->x, cmd->y, cmd->width, cmd->height, cmd->stride, cmd->pixels);
+        framebuffer_present_region(cmd->x, cmd->y, cmd->width, cmd->height);
         return 0;
     }
 
@@ -4290,6 +4330,9 @@ void syscall_dispatch_frame(struct trap_frame *frame)
                                    frame->r10,
                                    frame->r8,
                                    frame->r9);
+    if (result != -LEONOS_EAGAIN) {
+        storage_release_task_io(sched_current_pid());
+    }
     storage_set_io_async_context(false);
     if (result == -LEONOS_EAGAIN) {
         /* int $0x80 has advanced RIP by two bytes.  Park this task for one

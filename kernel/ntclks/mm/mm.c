@@ -229,6 +229,8 @@ static void seed_free_ranges_from_boot(const struct boot_info *boot)
 static void reserve_boot_ranges(const struct boot_info *boot,
                                 const struct leonos_boot_handoff *handoff)
 {
+    uint64_t boot_framebuffer_start = 0;
+    uint64_t boot_framebuffer_bytes = 0;
     reserve_range(0, PAGE_ALLOC_MIN, "lowmem");
     if (boot->mmap_addr && boot->mmap_entry_count) {
         reserve_bytes(boot->mmap_addr,
@@ -250,16 +252,24 @@ static void reserve_boot_ranges(const struct boot_info *boot,
         reserve_bytes(boot->rsdp_addr, 4096, "acpi-rsdp");
     }
     if (boot->framebuffer_addr && boot->framebuffer_pitch && boot->framebuffer_height) {
-        reserve_bytes(boot->framebuffer_addr,
-                      (uint64_t)boot->framebuffer_pitch * boot->framebuffer_height,
+        boot_framebuffer_start = boot->framebuffer_addr;
+        boot_framebuffer_bytes = (uint64_t)boot->framebuffer_pitch * boot->framebuffer_height;
+        reserve_bytes(boot_framebuffer_start, boot_framebuffer_bytes,
                       "framebuffer");
     }
     {
         const struct framebuffer *fb = framebuffer_get();
-        if (fb->available && fb->pixels && fb->pitch && fb->height) {
-            reserve_bytes((uint64_t)(uintptr_t)fb->pixels,
-                          (uint64_t)fb->pitch * fb->height,
-                          "gop-fb");
+        uint64_t reservation_start = fb->reservation_start;
+        uint64_t reservation_bytes = fb->reservation_bytes;
+        if (!reservation_start && fb->available && fb->pixels && fb->pitch && fb->height) {
+            reservation_start = (uint64_t)(uintptr_t)fb->pixels;
+            reservation_bytes = (uint64_t)fb->pitch * fb->height;
+        }
+        if (reservation_start && reservation_bytes &&
+            (reservation_start != boot_framebuffer_start ||
+             reservation_bytes != boot_framebuffer_bytes)) {
+            reserve_bytes(reservation_start, reservation_bytes,
+                          "framebuffer-vram");
         }
     }
     for (uint32_t i = 0; i < boot->module_count; ++i) {
@@ -272,6 +282,8 @@ static void reserve_boot_ranges(const struct boot_info *boot,
                       "loader-handoff");
         reserve_range(handoff->kernel.start, handoff->kernel.end, "kernel");
         reserve_range(handoff->middlelayer.start, handoff->middlelayer.end, "middlelayer");
+        reserve_range(handoff->installer_root.start, handoff->installer_root.end,
+                      "installer-root");
     }
 }
 

@@ -33,21 +33,48 @@ uint32_t desktop_scale_fit_for_mode(uint32_t width, uint32_t height)
 
 int desktop_display_mode_supported(uint8_t mode_index, uint8_t scale_index)
 {
+    uint64_t physical_width;
+    uint64_t physical_height;
+    uint64_t required_bytes;
+    uint32_t max_width;
+    uint32_t max_height;
+    uint32_t max_bytes;
     if (mode_index >= DESKTOP_MODE_COUNT || scale_index >= DESKTOP_SCALE_COUNT) {
         return 0;
     }
     uint32_t scale = desktop_scale_options[scale_index];
     uint32_t width = desktop_display_modes[mode_index].width;
     uint32_t height = desktop_display_modes[mode_index].height;
+    physical_width = (uint64_t)width * scale;
+    physical_height = (uint64_t)height * scale;
+    required_bytes = physical_width * physical_height * sizeof(uint32_t);
+    max_width = fb_caps.max_width ? fb_caps.max_width : fb.width;
+    max_height = fb_caps.max_height ? fb_caps.max_height : fb.height;
+    max_bytes = fb_caps.max_bytes ? fb_caps.max_bytes : fb.pitch * fb.height;
     return width > 0 && height > 0 &&
            width <= MAX_FB_W && height <= MAX_FB_H &&
-           width * scale <= fb.width && height * scale <= fb.height;
+           physical_width <= max_width && physical_height <= max_height &&
+           required_bytes <= max_bytes;
 }
 
-void desktop_apply_display_settings(uint8_t mode_index, uint8_t scale_index)
+int desktop_apply_display_settings(uint8_t mode_index, uint8_t scale_index)
 {
+    uint32_t physical_width;
+    uint32_t physical_height;
     if (!desktop_display_mode_supported(mode_index, scale_index)) {
-        return;
+        return 0;
+    }
+    physical_width = desktop_display_modes[mode_index].width *
+                     desktop_scale_options[scale_index];
+    physical_height = desktop_display_modes[mode_index].height *
+                      desktop_scale_options[scale_index];
+    if ((fb_caps.capabilities & LEONOS_FB_CAP_MODE_SET) &&
+        (fb.width != physical_width || fb.height != physical_height)) {
+        if (leonos_fb_set_mode(physical_width, physical_height) < 0 ||
+            leonos_fb_info(&fb) < 0 || leonos_fb_capabilities(&fb_caps) < 0) {
+            puts("[desktop.elf] framebuffer mode change failed");
+            return 0;
+        }
     }
     desktop_mode_index = mode_index;
     desktop_scale_index = scale_index;
@@ -59,6 +86,7 @@ void desktop_apply_display_settings(uint8_t mode_index, uint8_t scale_index)
         desktop_reflow_after_display_change();
     }
     desktop_publish_display_state();
+    return 1;
 }
 
 void desktop_publish_display_state(void)
@@ -177,8 +205,9 @@ static void desktop_choose_default_display(void)
     desktop_mode_index = 0;
     desktop_scale_index = 0;
     if (desktop_display_mode_supported(desktop_mode_index, desktop_scale_index)) {
-        desktop_apply_display_settings(desktop_mode_index, desktop_scale_index);
-        return;
+        if (desktop_apply_display_settings(desktop_mode_index, desktop_scale_index)) {
+            return;
+        }
     }
     for (uint8_t i = 0; i < DESKTOP_MODE_COUNT; ++i) {
         uint32_t fit = desktop_scale_fit_for_mode(desktop_display_modes[i].width,
@@ -186,12 +215,13 @@ static void desktop_choose_default_display(void)
         for (uint8_t s = 0; s < DESKTOP_SCALE_COUNT; ++s) {
             if (desktop_scale_options[s] == fit &&
                 desktop_display_mode_supported(i, s)) {
-                desktop_apply_display_settings(i, s);
-                return;
+                if (desktop_apply_display_settings(i, s)) {
+                    return;
+                }
             }
         }
     }
-    desktop_apply_display_settings(DESKTOP_MODE_COUNT - 1, 0);
+    (void)desktop_apply_display_settings(DESKTOP_MODE_COUNT - 1, 0);
 }
 
 static int parse_display_config(const char *buf, uint8_t *mode, uint8_t *scale)
@@ -506,8 +536,8 @@ void desktop_load_display_config(void)
         close(fd);
         if (got > 0) {
             buf[got < (long)sizeof(buf) ? got : (long)sizeof(buf) - 1] = 0;
-            if (parse_display_config(buf, &mode, &scale)) {
-                desktop_apply_display_settings(mode, scale);
+            if (parse_display_config(buf, &mode, &scale) &&
+                desktop_apply_display_settings(mode, scale)) {
                 return;
             }
         }
@@ -557,7 +587,9 @@ void desktop_apply_display_settings_pending(uint8_t mode_index, uint8_t scale_in
         desktop_previous_mode_index = desktop_mode_index;
         desktop_previous_scale_index = desktop_scale_index;
     }
-    desktop_apply_display_settings(mode_index, scale_index);
+    if (!desktop_apply_display_settings(mode_index, scale_index)) {
+        return;
+    }
     desktop_pending_confirm = 1;
     desktop_confirm_deadline_ms = leonos_uptime_ms() + DISPLAY_CONFIRM_MS;
     full_redraw_pending = 1;
@@ -582,7 +614,7 @@ void desktop_revert_display_settings(void)
         return;
     }
     desktop_pending_confirm = 0;
-    desktop_apply_display_settings(desktop_previous_mode_index, desktop_previous_scale_index);
+    (void)desktop_apply_display_settings(desktop_previous_mode_index, desktop_previous_scale_index);
     full_redraw_pending = 1;
     desktop_publish_display_state();
 }

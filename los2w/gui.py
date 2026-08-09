@@ -212,7 +212,9 @@ class GUIManager:
         self.frames: dict[int, tuple[int, int, int, bytes]] = {}
         self.events: deque[structs.GuiAppEvent] = deque(maxlen=32)
         self.input_events: deque[bytes] = deque(maxlen=64)
-        self.framebuffer = bytearray(1024 * 768 * 4)
+        self.fb_width = 1024
+        self.fb_height = 768
+        self.framebuffer = bytearray(self.fb_width * self.fb_height * 4)
         self.next_window_id = 1
         self.start_time = time.monotonic()
         self.present_count = 0
@@ -243,6 +245,15 @@ class GUIManager:
     def configure_appearance(self, ui_theme: str, allow_theme_changes: bool) -> None:
         self.appearance_theme = self._appearance_theme_value(ui_theme)
         self.allow_theme_changes = allow_theme_changes
+
+    def _resize_framebuffer(self, width: int, height: int) -> None:
+        self.fb_width = width
+        self.fb_height = height
+        self.framebuffer = bytearray(width * height * 4)
+        window = self.windows.get(0)
+        if window is not None:
+            window.resize(width, height)
+            window.setPixmap(QPixmap())
 
     def _set_appearance_theme(self, theme: int, *, notify: bool) -> int:
         if theme not in (C.UI_THEME_WIN95, C.UI_THEME_METRO):
@@ -325,7 +336,21 @@ class GUIManager:
         if request == C.GUI_IOCTL_UPTIME_MS:
             return int((time.monotonic() - self.start_time) * 1000)
         if request == C.GUI_IOCTL_FB_INFO:
-            memory.write(arg, struct.pack("<IIIb3x", 1024, 768, 1024, 32))
+            memory.write(arg, struct.pack("<IIIb3x", self.fb_width, self.fb_height,
+                                          self.fb_width * 4, 32))
+            return 0
+        if request == C.GUI_IOCTL_FB_CAPS:
+            memory.write(arg, struct.pack("<BBHIIII", 4, 0, 0x0001,
+                                          4096, 4096, 64 * 1024 * 1024, 0))
+            return 0
+        if request == C.GUI_IOCTL_FB_SET_MODE:
+            try:
+                width, height = struct.unpack("<II", memory.read(arg, 8))
+            except Exception:
+                return neg(EINVAL)
+            if not width or not height or width > 4096 or height > 4096 or width * height * 4 > 64 * 1024 * 1024:
+                return neg(EINVAL)
+            self._resize_framebuffer(width, height)
             return 0
         if request == C.GUI_IOCTL_FB_BLIT:
             return self._framebuffer_blit(memory, arg)
@@ -356,7 +381,9 @@ class GUIManager:
             memory.write_u32(arg + 4, 0)
             return 0
         if request == C.GUI_IOCTL_DISPLAY_STATE:
-            memory.write(arg, struct.pack("<IIIIIIIII", 1024, 768, 1024, 768, 1, 0, 0, 0, 0))
+            memory.write(arg, struct.pack("<IIIIIIIII", self.fb_width, self.fb_height,
+                                          self.fb_width, self.fb_height,
+                                          1, 0, 0, 0, 0))
             return 0
         if request == C.GUI_IOCTL_PUBLISH_DISPLAY_STATE:
             return 1
@@ -395,20 +422,20 @@ class GUIManager:
             )
         except Exception:
             return neg(EINVAL)
-        if not width or not height or stride < width or x >= 1024 or y >= 768:
+        if not width or not height or stride < width or x >= self.fb_width or y >= self.fb_height:
             return neg(EINVAL)
-        copy_width = min(width, 1024 - x)
-        copy_height = min(height, 768 - y)
+        copy_width = min(width, self.fb_width - x)
+        copy_height = min(height, self.fb_height - y)
         try:
             for row in range(copy_height):
                 source = memory.read(pixels_ptr + row * stride * 4, copy_width * 4)
-                offset = ((y + row) * 1024 + x) * 4
+                offset = ((y + row) * self.fb_width + x) * 4
                 self.framebuffer[offset : offset + copy_width * 4] = source
         except Exception:
             return neg(EINVAL)
         window = self.windows.get(0)
         if window is None:
-            window = GuestWindow(self, 0, "LeonOS Desktop", 1024, 768)
+            window = GuestWindow(self, 0, "LeonOS Desktop", self.fb_width, self.fb_height)
             self.windows[0] = window
             window.show()
             window.raise_()
@@ -417,9 +444,10 @@ class GUIManager:
             window._suppress_initial_events = False
         frame_data = bytearray(self.framebuffer)
         frame_data[3::4] = b"\xff" * (len(frame_data) // 4)
-        image = QImage(frame_data, 1024, 768, 1024 * 4, QImage.Format.Format_RGB32).copy()
+        image = QImage(frame_data, self.fb_width, self.fb_height,
+                       self.fb_width * 4, QImage.Format.Format_RGB32).copy()
         window.setPixmap(QPixmap.fromImage(image))
-        self.frames[0] = (1024, 768, 1024, bytes(frame_data))
+        self.frames[0] = (self.fb_width, self.fb_height, self.fb_width, bytes(frame_data))
         self.present_count += 1
         if self._present_callback:
             self._present_callback()

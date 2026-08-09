@@ -238,6 +238,7 @@ struct desktop_inputm_entry {
 };
 
 extern struct leonos_fb_info fb;
+extern struct leonos_fb_capabilities fb_caps;
 extern uint32_t desktop_scale;
 extern uint32_t desktop_logical_w;
 extern uint32_t desktop_logical_h;
@@ -366,7 +367,7 @@ uint32_t fb_h(void);
 uint32_t desktop_scale_for_framebuffer(uint32_t width, uint32_t height);
 uint32_t desktop_scale_fit_for_mode(uint32_t width, uint32_t height);
 int desktop_display_mode_supported(uint8_t mode_index, uint8_t scale_index);
-void desktop_apply_display_settings(uint8_t mode_index, uint8_t scale_index);
+int desktop_apply_display_settings(uint8_t mode_index, uint8_t scale_index);
 void desktop_apply_display_settings_pending(uint8_t mode_index, uint8_t scale_index);
 void desktop_confirm_display_settings(void);
 void desktop_revert_display_settings(void);

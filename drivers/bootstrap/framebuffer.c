@@ -2,8 +2,87 @@
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/gui_ipc.h>
+#include <ntclks/pci.h>
+#include <ntclks/port.h>
 
 static struct framebuffer fb;
+static void framebuffer_set_default_format(void);
+static int framebuffer_range_valid(uint64_t start, uint64_t bytes);
+
+#define FRAMEBUFFER_MODE_MAX_WIDTH 4096u
+#define FRAMEBUFFER_MODE_MAX_HEIGHT 4096u
+#define FRAMEBUFFER_MAX_VRAM_BYTES (512u * 1024u * 1024u)
+#define FRAMEBUFFER_PHYS_LIMIT 0x100000000ULL
+
+#define VBE_DISPI_IOPORT_INDEX 0x01ceu
+#define VBE_DISPI_IOPORT_DATA 0x01cfu
+#define VBE_DISPI_INDEX_ID 0u
+#define VBE_DISPI_INDEX_XRES 1u
+#define VBE_DISPI_INDEX_YRES 2u
+#define VBE_DISPI_INDEX_BPP 3u
+#define VBE_DISPI_INDEX_ENABLE 4u
+#define VBE_DISPI_INDEX_VIRT_WIDTH 6u
+#define VBE_DISPI_INDEX_VIDEO_MEMORY_64K 10u
+#define VBE_DISPI_ID0 0xb0c0u
+#define VBE_DISPI_ID5 0xb0c5u
+#define VBE_DISPI_ENABLED 0x01u
+#define VBE_DISPI_LFB_ENABLED 0x40u
+
+#define VMWARE_VENDOR_ID 0x15adu
+#define VMWARE_SVGA_DEVICE_ID 0x0405u
+#define VMWARE_PCI_COMMAND_IO 0x0001u
+#define VMWARE_PCI_COMMAND_MEMORY 0x0002u
+#define VMWARE_SVGA_ID_2 0x90000002u
+#define VMWARE_SVGA_REG_ID 0u
+#define VMWARE_SVGA_REG_ENABLE 1u
+#define VMWARE_SVGA_REG_WIDTH 2u
+#define VMWARE_SVGA_REG_HEIGHT 3u
+#define VMWARE_SVGA_REG_MAX_WIDTH 4u
+#define VMWARE_SVGA_REG_MAX_HEIGHT 5u
+#define VMWARE_SVGA_REG_DEPTH 6u
+#define VMWARE_SVGA_REG_BITS_PER_PIXEL 7u
+#define VMWARE_SVGA_REG_PSEUDOCOLOR 8u
+#define VMWARE_SVGA_REG_BYTES_PER_LINE 12u
+#define VMWARE_SVGA_REG_FB_START 13u
+#define VMWARE_SVGA_REG_FB_OFFSET 14u
+#define VMWARE_SVGA_REG_FB_MAX_SIZE 15u
+#define VMWARE_SVGA_REG_FB_SIZE 16u
+#define VMWARE_SVGA_REG_MEM_START 18u
+#define VMWARE_SVGA_REG_MEM_SIZE 19u
+#define VMWARE_SVGA_REG_CONFIG_DONE 20u
+#define VMWARE_SVGA_REG_SYNC 21u
+#define VMWARE_SVGA_REG_BUSY 22u
+#define VMWARE_SVGA_SYNC_POLL_LIMIT 100000u
+
+#define VMWARE_SVGA_FIFO_MIN 0u
+#define VMWARE_SVGA_FIFO_MAX 1u
+#define VMWARE_SVGA_FIFO_NEXT_CMD 2u
+#define VMWARE_SVGA_FIFO_STOP 3u
+#define VMWARE_SVGA_FIFO_MIN_BYTES (4u * sizeof(uint32_t))
+#define VMWARE_SVGA_CMD_UPDATE 1u
+#define VMWARE_SVGA_UPDATE_WORDS 5u
+
+struct vmware_svga_state {
+    uint16_t io_port;
+    uint32_t max_width;
+    uint32_t max_height;
+    volatile uint32_t *fifo;
+    uint32_t fifo_min;
+    uint32_t fifo_max;
+    bool present;
+    bool fifo_present;
+    bool fifo_full_logged;
+    bool sync_timeout_logged;
+};
+
+struct bochs_vbe_state {
+    uint32_t lfb_start;
+    uint32_t vram_bytes;
+    bool present;
+};
+
+static struct vmware_svga_state vmware_svga;
+static struct bochs_vbe_state bochs_vbe;
 
 #define CURSOR_W 16
 #define CURSOR_H 16
@@ -320,6 +399,393 @@ static uint8_t framebuffer_bytes_per_pixel(uint32_t pitch, uint32_t width,
     return 0;
 }
 
+static int framebuffer_range_valid(uint64_t start, uint64_t bytes)
+{
+    return start != 0 && bytes != 0 && start < FRAMEBUFFER_PHYS_LIMIT &&
+           bytes <= FRAMEBUFFER_PHYS_LIMIT - start;
+}
+
+static uint64_t framebuffer_current_bytes(void)
+{
+    return (uint64_t)fb.pitch * fb.height;
+}
+
+static void framebuffer_set_boot_limits(void)
+{
+    uint64_t bytes = framebuffer_current_bytes();
+
+    fb.max_width = fb.width;
+    fb.max_height = fb.height;
+    fb.max_bytes = bytes <= UINT32_MAX ? (uint32_t)bytes : 0;
+    fb.backend = FRAMEBUFFER_BACKEND_BOOT;
+    fb.capabilities = 0;
+    fb.reservation_start = (uint64_t)(uintptr_t)fb.pixels;
+    fb.reservation_bytes = fb.max_bytes;
+}
+
+static uint16_t vbe_read(uint16_t index)
+{
+    x86_64_outw(index, VBE_DISPI_IOPORT_INDEX);
+    return x86_64_inw(VBE_DISPI_IOPORT_DATA);
+}
+
+static void vbe_write(uint16_t index, uint16_t value)
+{
+    x86_64_outw(index, VBE_DISPI_IOPORT_INDEX);
+    x86_64_outw(value, VBE_DISPI_IOPORT_DATA);
+}
+
+static uint32_t vmware_svga_read(uint32_t reg)
+{
+    x86_64_outl(reg, vmware_svga.io_port);
+    return x86_64_inl((uint16_t)(vmware_svga.io_port + 1u));
+}
+
+static void vmware_svga_write(uint32_t reg, uint32_t value)
+{
+    x86_64_outl(reg, vmware_svga.io_port);
+    x86_64_outl(value, (uint16_t)(vmware_svga.io_port + 1u));
+}
+
+static void vmware_svga_memory_fence(void)
+{
+    __asm__ volatile("mfence" ::: "memory");
+}
+
+static void framebuffer_vmware_fifo_init(void)
+{
+    uint32_t mem_start = vmware_svga_read(VMWARE_SVGA_REG_MEM_START);
+    uint32_t mem_size = vmware_svga_read(VMWARE_SVGA_REG_MEM_SIZE);
+
+    vmware_svga.fifo = 0;
+    vmware_svga.fifo_present = false;
+    if (mem_size < VMWARE_SVGA_FIFO_MIN_BYTES +
+                       VMWARE_SVGA_UPDATE_WORDS * sizeof(uint32_t) ||
+        mem_size > FRAMEBUFFER_MAX_VRAM_BYTES ||
+        !framebuffer_range_valid(mem_start, mem_size)) {
+        return;
+    }
+
+    vmware_svga.fifo = (volatile uint32_t *)(uintptr_t)mem_start;
+    vmware_svga.fifo_min = VMWARE_SVGA_FIFO_MIN_BYTES;
+    vmware_svga.fifo_max = mem_size;
+    vmware_svga.fifo[VMWARE_SVGA_FIFO_MIN] = vmware_svga.fifo_min;
+    vmware_svga.fifo[VMWARE_SVGA_FIFO_MAX] = vmware_svga.fifo_max;
+    vmware_svga.fifo[VMWARE_SVGA_FIFO_NEXT_CMD] = vmware_svga.fifo_min;
+    vmware_svga.fifo[VMWARE_SVGA_FIFO_STOP] = vmware_svga.fifo_min;
+    vmware_svga_memory_fence();
+    vmware_svga.fifo_present = true;
+}
+
+static int framebuffer_vmware_fifo_update(uint32_t x, uint32_t y,
+                                          uint32_t width, uint32_t height)
+{
+    uint32_t next;
+    uint32_t stop;
+    uint32_t bytes = VMWARE_SVGA_UPDATE_WORDS * sizeof(uint32_t);
+    uint32_t index;
+
+    if (!vmware_svga.fifo_present || !vmware_svga.fifo || !width || !height) {
+        return 0;
+    }
+    next = vmware_svga.fifo[VMWARE_SVGA_FIFO_NEXT_CMD];
+    stop = vmware_svga.fifo[VMWARE_SVGA_FIFO_STOP];
+    if (next < vmware_svga.fifo_min || next >= vmware_svga.fifo_max ||
+        stop < vmware_svga.fifo_min || stop >= vmware_svga.fifo_max) {
+        vmware_svga.fifo_present = false;
+        return 0;
+    }
+    if (next + bytes >= vmware_svga.fifo_max) {
+        if (vmware_svga.fifo_min + bytes >= stop) {
+            goto full;
+        }
+        next = vmware_svga.fifo_min;
+    } else if (next < stop && next + bytes >= stop) {
+        goto full;
+    }
+
+    index = next / sizeof(uint32_t);
+    vmware_svga.fifo[index] = VMWARE_SVGA_CMD_UPDATE;
+    vmware_svga.fifo[index + 1u] = x;
+    vmware_svga.fifo[index + 2u] = y;
+    vmware_svga.fifo[index + 3u] = width;
+    vmware_svga.fifo[index + 4u] = height;
+    vmware_svga_memory_fence();
+    vmware_svga.fifo[VMWARE_SVGA_FIFO_NEXT_CMD] = next + bytes;
+    vmware_svga_memory_fence();
+    return 1;
+
+full:
+    if (!vmware_svga.fifo_full_logged) {
+        console_printf("[ntclks] VMware SVGA FIFO full; update will retry on next frame\n");
+        vmware_svga.fifo_full_logged = true;
+    }
+    return 0;
+}
+
+static void framebuffer_vmware_sync(void)
+{
+    if (!vmware_svga.present) {
+        return;
+    }
+    vmware_svga_write(VMWARE_SVGA_REG_SYNC, 1u);
+    for (uint32_t spins = 0; spins < VMWARE_SVGA_SYNC_POLL_LIMIT; ++spins) {
+        if (vmware_svga_read(VMWARE_SVGA_REG_BUSY) == 0u) {
+            return;
+        }
+    }
+    if (!vmware_svga.sync_timeout_logged) {
+        console_printf("[ntclks] VMware SVGA sync timed out; continuing asynchronously\n");
+        vmware_svga.sync_timeout_logged = true;
+    }
+}
+
+static int framebuffer_vmware_probe(void)
+{
+    struct pci_device device;
+    uint32_t bar;
+    uint32_t id;
+    uint32_t fb_start;
+    uint32_t fb_offset;
+    uint32_t fb_max_size;
+    uint32_t fb_size;
+    uint64_t usable_bytes;
+    uint32_t io_base;
+
+    if (!fb.available || pci_find_device(VMWARE_VENDOR_ID, VMWARE_SVGA_DEVICE_ID,
+                                         &device) < 0) {
+        return 0;
+    }
+    bar = pci_config_read32(device.bus, device.slot, device.function, 0x10);
+    io_base = bar & 0xfffcu;
+    if ((bar & 1u) == 0 || io_base == 0 || io_base > 0xfffeu) {
+        return 0;
+    }
+    vmware_svga.io_port = (uint16_t)io_base;
+    pci_config_write16(device.bus, device.slot, device.function, 0x04,
+                       (uint16_t)(pci_config_read16(device.bus, device.slot,
+                                                     device.function, 0x04) |
+                                  VMWARE_PCI_COMMAND_IO |
+                                  VMWARE_PCI_COMMAND_MEMORY));
+    vmware_svga_write(VMWARE_SVGA_REG_ID, VMWARE_SVGA_ID_2);
+    id = vmware_svga_read(VMWARE_SVGA_REG_ID);
+    if (id < VMWARE_SVGA_ID_2) {
+        return 0;
+    }
+
+    fb_start = vmware_svga_read(VMWARE_SVGA_REG_FB_START);
+    fb_offset = vmware_svga_read(VMWARE_SVGA_REG_FB_OFFSET);
+    fb_max_size = vmware_svga_read(VMWARE_SVGA_REG_FB_MAX_SIZE);
+    fb_size = vmware_svga_read(VMWARE_SVGA_REG_FB_SIZE);
+    if (!fb_max_size || fb_max_size > FRAMEBUFFER_MAX_VRAM_BYTES ||
+        fb_offset >= fb_max_size ||
+        !framebuffer_range_valid(fb_start, fb_max_size)) {
+        return 0;
+    }
+    /* FB_SIZE describes the current scan-out surface.  It grows and shrinks
+     * with the mode, whereas FB_MAX_SIZE is the SVGA II VRAM capacity. */
+    usable_bytes = (uint64_t)fb_max_size - fb_offset;
+    if (usable_bytes < framebuffer_current_bytes()) {
+        console_printf("[ntclks] VMware SVGA framebuffer too small fb=%p offset=%u "
+                       "size=%u max=%u current=%u\n",
+                       (void *)(uintptr_t)fb_start, fb_offset, fb_size, fb_max_size,
+                       (uint32_t)framebuffer_current_bytes());
+        return 0;
+    }
+
+    vmware_svga.max_width = vmware_svga_read(VMWARE_SVGA_REG_MAX_WIDTH);
+    vmware_svga.max_height = vmware_svga_read(VMWARE_SVGA_REG_MAX_HEIGHT);
+    if (!vmware_svga.max_width || !vmware_svga.max_height) {
+        return 0;
+    }
+    if (vmware_svga.max_width > FRAMEBUFFER_MODE_MAX_WIDTH) {
+        vmware_svga.max_width = FRAMEBUFFER_MODE_MAX_WIDTH;
+    }
+    if (vmware_svga.max_height > FRAMEBUFFER_MODE_MAX_HEIGHT) {
+        vmware_svga.max_height = FRAMEBUFFER_MODE_MAX_HEIGHT;
+    }
+    vmware_svga.present = true;
+    framebuffer_vmware_fifo_init();
+
+    fb.max_width = vmware_svga.max_width;
+    fb.max_height = vmware_svga.max_height;
+    fb.max_bytes = (uint32_t)usable_bytes;
+    fb.backend = FRAMEBUFFER_BACKEND_VMWARE_SVGA;
+    fb.capabilities = FRAMEBUFFER_CAP_MODE_SET;
+    fb.reservation_start = fb_start;
+    fb.reservation_bytes = fb_max_size;
+    console_printf("[ntclks] VMware SVGA detected io=0x%x fb=%p offset=%u size=%u "
+                   "max=%u limits=%ux%u fifo=%p\n",
+                   vmware_svga.io_port, (void *)(uintptr_t)fb_start, fb_offset,
+                   fb_size, fb_max_size, vmware_svga.max_width,
+                   vmware_svga.max_height, (void *)vmware_svga.fifo);
+    return 1;
+}
+
+static int framebuffer_vbe_probe(void)
+{
+    struct pci_device device;
+    uint32_t vbe_id;
+    uint32_t vram_64k;
+    uint64_t vram_bytes;
+    uint32_t bar;
+    uint32_t lfb_start;
+
+    if (!fb.available) {
+        return 0;
+    }
+    vbe_id = vbe_read(VBE_DISPI_INDEX_ID);
+    if (vbe_id < VBE_DISPI_ID0 || vbe_id > VBE_DISPI_ID5) {
+        return 0;
+    }
+    vram_64k = vbe_read(VBE_DISPI_INDEX_VIDEO_MEMORY_64K);
+    vram_bytes = (uint64_t)vram_64k * 65536u;
+    if (!vram_bytes || vram_bytes > FRAMEBUFFER_MAX_VRAM_BYTES ||
+        vram_bytes < framebuffer_current_bytes()) {
+        return 0;
+    }
+
+    /* The VBE registers select the LFB in the VGA PCI BAR, not the GOP
+     * framebuffer reported at boot.  Keep that address authoritative for
+     * every mode change; continuing to draw through a stale GOP address
+     * leaves QEMU scanning a black VBE surface. */
+    if (pci_find_device(0x1234u, 0x1111u, &device) < 0) {
+        return 0;
+    }
+    bar = pci_config_read32(device.bus, device.slot, device.function, 0x10);
+    lfb_start = bar & 0xfffffff0u;
+    if ((bar & 1u) != 0 ||
+        !framebuffer_range_valid((uint64_t)lfb_start, vram_bytes)) {
+        return 0;
+    }
+
+    bochs_vbe.lfb_start = lfb_start;
+    bochs_vbe.vram_bytes = (uint32_t)vram_bytes;
+    bochs_vbe.present = true;
+    fb.max_width = FRAMEBUFFER_MODE_MAX_WIDTH;
+    fb.max_height = FRAMEBUFFER_MODE_MAX_HEIGHT;
+    fb.max_bytes = (uint32_t)vram_bytes;
+    fb.backend = FRAMEBUFFER_BACKEND_BOCHS_VBE;
+    fb.capabilities = FRAMEBUFFER_CAP_MODE_SET;
+    fb.reservation_start = lfb_start;
+    fb.reservation_bytes = (uint32_t)vram_bytes;
+    return 1;
+}
+
+static int framebuffer_vbe_set_mode(uint32_t width, uint32_t height)
+{
+    uint32_t actual_width;
+    uint32_t actual_height;
+    uint32_t virtual_width;
+    uint64_t pitch;
+
+    if (!bochs_vbe.present ||
+        !framebuffer_range_valid(bochs_vbe.lfb_start, bochs_vbe.vram_bytes)) {
+        return 0;
+    }
+
+    vbe_write(VBE_DISPI_INDEX_ENABLE, 0);
+    vbe_write(VBE_DISPI_INDEX_XRES, (uint16_t)width);
+    vbe_write(VBE_DISPI_INDEX_YRES, (uint16_t)height);
+    vbe_write(VBE_DISPI_INDEX_BPP, 32u);
+    vbe_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
+
+    actual_width = vbe_read(VBE_DISPI_INDEX_XRES);
+    actual_height = vbe_read(VBE_DISPI_INDEX_YRES);
+    virtual_width = vbe_read(VBE_DISPI_INDEX_VIRT_WIDTH);
+    pitch = (uint64_t)virtual_width * 4u;
+    if (actual_width != width || actual_height != height ||
+        virtual_width < width || pitch > UINT32_MAX ||
+        pitch * height > fb.max_bytes) {
+        return 0;
+    }
+    fb.pixels = (uint32_t *)(uintptr_t)bochs_vbe.lfb_start;
+    fb.width = width;
+    fb.height = height;
+    fb.pitch = (uint32_t)pitch;
+    fb.bpp = 32u;
+    fb.bytes_per_pixel = 4u;
+    fb.reservation_start = bochs_vbe.lfb_start;
+    fb.reservation_bytes = bochs_vbe.vram_bytes;
+    framebuffer_set_default_format();
+    fb.available = true;
+    return 1;
+}
+
+static int framebuffer_vmware_set_mode(uint32_t width, uint32_t height)
+{
+    uint32_t actual_width;
+    uint32_t actual_height;
+    uint32_t depth;
+    uint32_t bpp;
+    uint32_t pseudocolor;
+    uint32_t pitch;
+    uint32_t fb_start;
+    uint32_t fb_offset;
+    uint32_t fb_max_size;
+    uint32_t fb_size;
+    uint64_t usable_bytes;
+
+    if (!vmware_svga.present) {
+        return 0;
+    }
+    vmware_svga_write(VMWARE_SVGA_REG_ENABLE, 0u);
+    vmware_svga_write(VMWARE_SVGA_REG_WIDTH, width);
+    vmware_svga_write(VMWARE_SVGA_REG_HEIGHT, height);
+    vmware_svga_write(VMWARE_SVGA_REG_DEPTH, 24u);
+    vmware_svga_write(VMWARE_SVGA_REG_BITS_PER_PIXEL, 32u);
+    vmware_svga_write(VMWARE_SVGA_REG_PSEUDOCOLOR, 0u);
+    vmware_svga_write(VMWARE_SVGA_REG_ENABLE, 1u);
+    vmware_svga_write(VMWARE_SVGA_REG_CONFIG_DONE, 1u);
+
+    actual_width = vmware_svga_read(VMWARE_SVGA_REG_WIDTH);
+    actual_height = vmware_svga_read(VMWARE_SVGA_REG_HEIGHT);
+    depth = vmware_svga_read(VMWARE_SVGA_REG_DEPTH);
+    bpp = vmware_svga_read(VMWARE_SVGA_REG_BITS_PER_PIXEL);
+    pseudocolor = vmware_svga_read(VMWARE_SVGA_REG_PSEUDOCOLOR);
+    pitch = vmware_svga_read(VMWARE_SVGA_REG_BYTES_PER_LINE);
+    fb_start = vmware_svga_read(VMWARE_SVGA_REG_FB_START);
+    fb_offset = vmware_svga_read(VMWARE_SVGA_REG_FB_OFFSET);
+    fb_max_size = vmware_svga_read(VMWARE_SVGA_REG_FB_MAX_SIZE);
+    fb_size = vmware_svga_read(VMWARE_SVGA_REG_FB_SIZE);
+    if (actual_width != width || actual_height != height || depth != 24u ||
+        bpp != 32u || pseudocolor != 0u ||
+        !fb_max_size || fb_max_size > FRAMEBUFFER_MAX_VRAM_BYTES ||
+        fb_offset >= fb_max_size || pitch < width * 4u ||
+        !framebuffer_range_valid(fb_start, fb_max_size)) {
+        console_printf("[ntclks] VMware SVGA rejected mode req=%ux%u got=%ux%u "
+                       "depth=%u bpp=%u pseudo=%u pitch=%u fb=%p offset=%u size=%u max=%u\n",
+                       width, height, actual_width, actual_height, depth, bpp,
+                       pseudocolor, pitch, (void *)(uintptr_t)fb_start, fb_offset,
+                       fb_size, fb_max_size);
+        return 0;
+    }
+    usable_bytes = (uint64_t)fb_max_size - fb_offset;
+    if ((uint64_t)pitch * height > usable_bytes) {
+        return 0;
+    }
+    fb.pixels = (uint32_t *)(uintptr_t)((uint64_t)fb_start + fb_offset);
+    fb.width = width;
+    fb.height = height;
+    fb.pitch = pitch;
+    fb.bpp = 32u;
+    fb.bytes_per_pixel = 4u;
+    fb.max_width = vmware_svga.max_width;
+    fb.max_height = vmware_svga.max_height;
+    fb.max_bytes = (uint32_t)usable_bytes;
+    fb.reservation_start = fb_start;
+    fb.reservation_bytes = fb_max_size;
+    framebuffer_set_default_format();
+    fb.available = true;
+    console_printf("[ntclks] VMware SVGA mode=%ux%u depth=%u bpp=%u pseudo=%u "
+                   "pitch=%u fb=%p offset=%u size=%u max=%u\n",
+                   fb.width, fb.height, depth, bpp, pseudocolor,
+                   fb.pitch, (void *)(uintptr_t)fb_start, fb_offset, fb_size,
+                   fb_max_size);
+    framebuffer_vmware_sync();
+    return 1;
+}
+
 static uint8_t *framebuffer_pixel_ptr(uint32_t x, uint32_t y)
 {
     return (uint8_t *)fb.pixels + (uint64_t)y * fb.pitch +
@@ -473,6 +939,10 @@ void framebuffer_init(const struct boot_info *boot)
                    fb.bytes_per_pixel != 0u &&
                    (direct_color || boot->framebuffer_type == 0u);
     framebuffer_init_from_gop(boot->efi_system_table);
+    framebuffer_set_boot_limits();
+    if (!framebuffer_vmware_probe()) {
+        (void)framebuffer_vbe_probe();
+    }
 
     if (fb.available) {
         console_printf("[ntclks] framebuffer %ux%u pitch=%u bpp=%u bytespp=%u type=%u "
@@ -481,6 +951,11 @@ void framebuffer_init(const struct boot_info *boot)
                        fb.red_field_position, fb.red_mask_size,
                        fb.green_field_position, fb.green_mask_size,
                        fb.blue_field_position, fb.blue_mask_size);
+        if (fb.capabilities & FRAMEBUFFER_CAP_MODE_SET) {
+            console_printf("[ntclks] dynamic framebuffer backend=%u max=%ux%u vram=%u KiB\n",
+                           fb.backend, fb.max_width, fb.max_height,
+                           fb.max_bytes / 1024u);
+        }
     } else {
         console_printf("[ntclks] framebuffer unavailable, VGA fallback active\n");
     }
@@ -489,6 +964,47 @@ void framebuffer_init(const struct boot_info *boot)
 const struct framebuffer *framebuffer_get(void)
 {
     return &fb;
+}
+
+int framebuffer_set_mode(uint32_t width, uint32_t height)
+{
+    struct framebuffer previous;
+    uint64_t required_bytes;
+    int changed;
+
+    if (!fb.available || !(fb.capabilities & FRAMEBUFFER_CAP_MODE_SET) ||
+        width == 0 || height == 0 || width > fb.max_width || height > fb.max_height) {
+        return -1;
+    }
+    required_bytes = (uint64_t)width * height * 4u;
+    if (required_bytes > fb.max_bytes) {
+        return -1;
+    }
+    if (fb.width == width && fb.height == height && fb.bpp == 32u) {
+        return 0;
+    }
+
+    previous = fb;
+    if (fb.backend == FRAMEBUFFER_BACKEND_VMWARE_SVGA) {
+        changed = framebuffer_vmware_set_mode(width, height);
+    } else if (fb.backend == FRAMEBUFFER_BACKEND_BOCHS_VBE) {
+        changed = framebuffer_vbe_set_mode(width, height);
+    } else {
+        return -1;
+    }
+    if (changed) {
+        console_printf("[ntclks] framebuffer mode changed backend=%u %ux%u pitch=%u\n",
+                       fb.backend, fb.width, fb.height, fb.pitch);
+        return 0;
+    }
+
+    if (previous.backend == FRAMEBUFFER_BACKEND_VMWARE_SVGA) {
+        (void)framebuffer_vmware_set_mode(previous.width, previous.height);
+    } else if (previous.backend == FRAMEBUFFER_BACKEND_BOCHS_VBE) {
+        (void)framebuffer_vbe_set_mode(previous.width, previous.height);
+    }
+    fb = previous;
+    return -1;
 }
 
 void framebuffer_clear(uint32_t color)
@@ -580,6 +1096,27 @@ static void framebuffer_char(uint32_t x, uint32_t y, char ch, uint32_t fg, uint3
             framebuffer_rect(x + col, y + row, 1, 1, color);
         }
     }
+}
+
+void framebuffer_present_region(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+{
+    if (fb.backend != FRAMEBUFFER_BACKEND_VMWARE_SVGA || !fb.available ||
+        x >= fb.width || y >= fb.height) {
+        return;
+    }
+    if (width > fb.width - x) {
+        width = fb.width - x;
+    }
+    if (height > fb.height - y) {
+        height = fb.height - y;
+    }
+    (void)framebuffer_vmware_fifo_update(x, y, width, height);
+    framebuffer_vmware_sync();
+}
+
+void framebuffer_present(void)
+{
+    framebuffer_present_region(0, 0, fb.width, fb.height);
 }
 
 static void framebuffer_char_transparent(uint32_t x, uint32_t y, char ch, uint32_t fg)

@@ -1,6 +1,7 @@
 #include "desktop.h"
 
 struct leonos_fb_info fb;
+struct leonos_fb_capabilities fb_caps;
 uint32_t desktop_scale = 1;
 uint32_t desktop_logical_w = MAX_FB_W;
 uint32_t desktop_logical_h = MAX_FB_H;

@@ -35,6 +35,11 @@ leonos_gui_present_window(window, width, height, width, pixels);
 低级 `leonos_fb_*` 接口适合诊断或全屏服务程序。普通应用应使用窗口提交，
 不要假设物理 framebuffer 永远可用。
 
+`leonos_fb_set_mode(width, height)` 仅供 Desktop 窗口服务器使用。调用前先查询
+`leonos_fb_capabilities()`：只有 `capabilities & LEONOS_FB_CAP_MODE_SET` 非零时才可请求
+模式切换；请求尺寸同时不能超过 `max_width`、`max_height`，且 32 位像素缓冲不得
+超过 `max_bytes`。当前内核为 QEMU 标准 VGA/Bochs VBE 和 VMware SVGA II 提供该能力。
+
 ## 事件循环
 
 ```c

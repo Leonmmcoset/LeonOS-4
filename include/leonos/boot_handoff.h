@@ -5,7 +5,7 @@
 #include <leonos/auth.h>
 
 #define LEONOS_BOOT_HANDOFF_MAGIC 0x4c424f54u
-#define LEONOS_BOOT_HANDOFF_VERSION 3u
+#define LEONOS_BOOT_HANDOFF_VERSION 4u
 #define LEONOS_KERNEL_SERVICES_VERSION 2u
 #define LEONOS_MIDDLELAYER_API_VERSION 5u
 
@@ -92,6 +92,11 @@ struct leonos_boot_handoff {
     struct leonos_boot_module_info loader;
     struct leonos_boot_module_info kernel;
     struct leonos_boot_module_info middlelayer;
+    /* The installer root is a raw Multiboot module, not an ELF image.  Keep
+     * its range in the loader handoff so the kernel does not have to trust
+     * module tags that may be overwritten while the second-stage images are
+     * loaded. */
+    struct leonos_boot_module_info installer_root;
     uint64_t middlelayer_api;
     struct leonos_boot_log_state boot_log;
 };

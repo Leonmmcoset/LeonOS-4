@@ -130,6 +130,45 @@ static int cmdline_has(const struct boot_info *boot, const char *needle)
     return 0;
 }
 
+static int boot_text_eq(const char *a, const char *b)
+{
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b && *a == *b) {
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+
+static void boot_import_handoff_modules(struct boot_info *boot,
+                                        const struct leonos_boot_handoff *handoff)
+{
+    if (!boot || !handoff || handoff->magic != LEONOS_BOOT_HANDOFF_MAGIC ||
+        handoff->installer_root.end <= handoff->installer_root.start) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < boot->module_count && i < 16; ++i) {
+        if (boot_text_eq(boot->modules[i].name, "leonos-installer-root")) {
+            boot->modules[i].start = handoff->installer_root.start;
+            boot->modules[i].end = handoff->installer_root.end;
+            return;
+        }
+    }
+
+    if (boot->module_count < 16) {
+        struct boot_module *module = &boot->modules[boot->module_count++];
+        module->start = handoff->installer_root.start;
+        module->end = handoff->installer_root.end;
+        module->name = handoff->installer_root.path;
+        console_printf("[ntclks] imported installer root module start=%p bytes=%llu\n",
+                       (void *)(uintptr_t)module->start,
+                       (unsigned long long)(module->end - module->start));
+    }
+}
+
 static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                          const struct leonos_boot_handoff *handoff)
 {
@@ -150,6 +189,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
+    boot_import_handoff_modules(&boot, handoff);
     platform_identity_init(&boot);
 
     arch_init();
@@ -179,6 +219,10 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
         int policy_ret = osmlayer_bridge_mount_policy(&boot, &mount_policy);
         if (policy_ret == 0) {
             storage_apply_mount_policy(&mount_policy);
+            if (cmdline_has(&boot, "mode=installer") && !storage_ready()) {
+                console_printf("[ntclks] installer mount policy did not produce a ready root, retrying handoff module\n");
+                storage_init_installer_root(&boot);
+            }
         } else if (cmdline_has(&boot, "mode=installer")) {
             console_printf("[ntclks] middlelayer mount policy unavailable ret=%d, using installer fallback\n",
                            policy_ret);

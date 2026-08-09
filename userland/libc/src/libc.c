@@ -1362,6 +1362,20 @@ int leonos_fb_info(struct leonos_fb_info *info)
     return ioctl(3, LEONOS_GUI_IOCTL_FB_INFO, info);
 }
 
+int leonos_fb_capabilities(struct leonos_fb_capabilities *caps)
+{
+    return ioctl(3, LEONOS_GUI_IOCTL_FB_CAPS, caps);
+}
+
+int leonos_fb_set_mode(uint32_t width, uint32_t height)
+{
+    struct leonos_fb_mode mode = {
+        .width = width,
+        .height = height,
+    };
+    return ioctl(3, LEONOS_GUI_IOCTL_FB_SET_MODE, &mode);
+}
+
 int leonos_fb_fill(uint32_t color)
 {
     return ioctl(3, LEONOS_GUI_IOCTL_FB_FILL, (void *)(long)color);

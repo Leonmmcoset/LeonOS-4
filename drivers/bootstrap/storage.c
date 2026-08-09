@@ -316,6 +316,10 @@ static struct storage_volume *g_active_volume = &g_volumes[0];
  */
 static bool storage_io_async_context;
 static bool storage_io_write_started;
+/* The AHCI command table, DMA staging areas and FAT32 caches are shared
+ * globally.  A syscall that yielded for disk completion therefore owns the
+ * storage state until its instruction is retried and completes. */
+static uint32_t storage_task_io_owner;
 
 static struct install_disk_state g_install_disks[STORAGE_MAX_INSTALL_DISKS];
 static uint32_t g_install_disk_count;
@@ -422,6 +426,31 @@ void storage_set_io_async_context(bool enabled)
 {
     storage_io_async_context = enabled;
     storage_io_write_started = false;
+}
+
+static int storage_acquire_task_io(void)
+{
+    uint32_t pid;
+
+    if (!storage_io_async_context) {
+        return 0;
+    }
+    pid = sched_current_pid();
+    if (!pid) {
+        return 0;
+    }
+    if (storage_task_io_owner == 0 || storage_task_io_owner == pid) {
+        storage_task_io_owner = pid;
+        return 0;
+    }
+    return -LEONOS_EAGAIN;
+}
+
+void storage_release_task_io(uint32_t pid)
+{
+    if (pid && storage_task_io_owner == pid) {
+        storage_task_io_owner = 0;
+    }
 }
 
 static bool storage_async_can_yield(void)
@@ -741,6 +770,10 @@ static int storage_drive_id_from_path(const char *path)
 
 static int storage_select_drive(uint32_t drive)
 {
+    int ret = storage_acquire_task_io();
+    if (ret < 0) {
+        return ret;
+    }
     if (drive >= STORAGE_MAX_DRIVES || !g_volumes[drive].ready) {
         return -2;
     }
@@ -751,6 +784,10 @@ static int storage_select_drive(uint32_t drive)
 static int storage_select_node_drive(const struct storage_node *node,
                                      struct storage_volume **old_volume)
 {
+    int ret = storage_acquire_task_io();
+    if (ret < 0) {
+        return ret;
+    }
     if (!node || node->drive >= STORAGE_MAX_DRIVES ||
         !g_volumes[node->drive].ready) {
         return -2;
@@ -982,8 +1019,12 @@ void storage_drain_task_io(uint32_t pid)
 {
     bool saved_async;
     bool saved_write_started;
-    if (!pid || !ahci_pending_command.active ||
+    if (!pid) {
+        return;
+    }
+    if (!ahci_pending_command.active ||
         ahci_pending_command.owner_pid != pid) {
+        storage_release_task_io(pid);
         return;
     }
     /* The task's address space is about to be released.  Finish its DMA
@@ -996,6 +1037,7 @@ void storage_drain_task_io(uint32_t pid)
     (void)ahci_pending_poll();
     storage_io_async_context = saved_async;
     storage_io_write_started = saved_write_started;
+    storage_release_task_io(pid);
 }
 
 static int storage_read_failure(int ret)
@@ -1297,8 +1339,9 @@ static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void
 static int gpt_find_esp(void)
 {
     struct gpt_header *hdr = (struct gpt_header *)(void *)storage_scratch;
-    if (storage_read_sectors(1, 1, storage_scratch) < 0) {
-        return -5;
+    int ret = storage_read_sectors(1, 1, storage_scratch);
+    if (ret < 0) {
+        return storage_read_failure(ret);
     }
     if (hdr->signature != 0x5452415020494645ULL) {
         return -2;
@@ -1315,7 +1358,7 @@ static int gpt_find_esp(void)
         return -12;
     }
     uint8_t *table = (uint8_t *)(uintptr_t)phys;
-    int ret = storage_read_sectors(hdr->partition_entries_lba, total_sectors, table);
+    ret = storage_read_sectors(hdr->partition_entries_lba, total_sectors, table);
     if (ret < 0) {
         mm_free_pages(phys, (total_sectors + 7u) / 8u);
         return ret;
@@ -1346,8 +1389,9 @@ static int fat32_mount(void)
     struct fat32_bpb *bpb = (struct fat32_bpb *)(void *)storage_scratch;
     uint32_t total_sectors;
     uint32_t data_sectors;
-    if (storage_read_sectors(g_storage.esp_start_lba, 1, storage_scratch) < 0) {
-        return -5;
+    int ret = storage_read_sectors(g_storage.esp_start_lba, 1, storage_scratch);
+    if (ret < 0) {
+        return storage_read_failure(ret);
     }
     if (bpb->bytes_per_sector != SECTOR_SIZE || bpb->sectors_per_cluster == 0 ||
         bpb->fat_count == 0 || bpb->fat_size32 == 0 || bpb->root_cluster < 2) {
@@ -1520,6 +1564,10 @@ static int fat32_write_fat_entry(uint32_t cluster, uint32_t value)
     uint32_t masked = value & 0x0fffffffu;
     uint64_t first_fat_lba = g_storage.esp_start_lba + g_storage.fat_start_sector +
                              sector_offset;
+    /* The sector read below supplies data for a persistent FAT update. Once
+     * this point is reached the operation must finish synchronously: replaying
+     * a partially updated FAT chain after EAGAIN is not safe. */
+    storage_begin_mutation();
     for (uint32_t fat = 0; fat < g_storage.fat_count; ++fat) {
         uint64_t lba = g_storage.esp_start_lba + g_storage.fat_start_sector +
                        (uint64_t)fat * g_storage.fat_sector_count + sector_offset;
@@ -1574,11 +1622,13 @@ static int fat32_write_cluster(uint32_t cluster, const void *buffer)
 static int storage_install_identify(struct install_disk_state *disk, uint64_t *out_sectors)
 {
     uint16_t *id = (uint16_t *)storage_scratch;
+    int ret;
     if (!disk || !disk->hba_port || !out_sectors) {
         return -22;
     }
-    if (ahci_wait_idle(disk->hba_port) < 0) {
-        return -5;
+    ret = ahci_wait_idle(disk->hba_port);
+    if (ret < 0) {
+        return storage_read_failure(ret);
     }
     disk->hba_port->is = 0xffffffffu;
     storage_memzero(ahci_cmd_headers, sizeof(ahci_cmd_headers));
@@ -1599,8 +1649,9 @@ static int storage_install_identify(struct install_disk_state *disk, uint64_t *o
         fis->command = ATA_CMD_IDENTIFY_DEVICE;
         fis->device = 0;
         fis->countl = 1;
-        if (ahci_wait_cmd_slot(disk->hba_port) < 0) {
-            return -5;
+        ret = ahci_wait_cmd_slot(disk->hba_port);
+        if (ret < 0) {
+            return storage_read_failure(ret);
         }
         disk->hba_port->ci = 1u;
         for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
@@ -2900,6 +2951,8 @@ void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
 int storage_mount_ramdisk_root(const void *image, uint64_t len)
 {
     struct storage_volume *root = &g_volumes[0];
+    uint64_t copy_phys;
+    uint32_t copy_pages;
     storage_memzero(root, sizeof(*root));
     g_active_volume = root;
     g_installer_root_active = 0;
@@ -2908,21 +2961,34 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
     if (!image || len < SECTOR_SIZE || (len % SECTOR_SIZE) != 0) {
         return -22;
     }
+    /* GRUB owns Multiboot module storage.  Keep an allocator-owned snapshot
+     * for the Installer filesystem: later image mapping must not depend on
+     * that bootloader backing staying untouched. */
+    if ((len + 4095ULL) / 4096ULL > 0xffffffffULL) {
+        return -22;
+    }
+    copy_pages = (uint32_t)((len + 4095ULL) / 4096ULL);
+    copy_phys = mm_alloc_pages(copy_pages);
+    if (!copy_phys) {
+        return -12;
+    }
+    storage_memcpy((void *)(uintptr_t)copy_phys, image, (size_t)len);
     root->drive = 0;
     root->kind = STORAGE_VOLUME_RAM;
-    /* Multiboot modules are reserved by mm_init; use the ISO payload in place. */
-    root->ram_base = (uint8_t *)image;
+    root->ram_base = (uint8_t *)(uintptr_t)copy_phys;
     root->ram_bytes = len;
     root->esp_start_lba = 0;
     root->esp_sector_count = len / SECTOR_SIZE;
     if (fat32_mount() < 0) {
         storage_memzero(root, sizeof(*root));
+        mm_free_pages(copy_phys, copy_pages);
         return -2;
     }
     root->ready = true;
     g_installer_root_active = 1;
-    console_printf("[ntclks] storage installer root ready ramdisk=%p bytes=%llu fat32_root=%u\n",
+    console_printf("[ntclks] storage installer root ready ramdisk=%p copy=%p bytes=%llu fat32_root=%u\n",
                    image,
+                   (void *)(uintptr_t)copy_phys,
                    (unsigned long long)len,
                    root->root_cluster);
     return 0;
@@ -3064,6 +3130,7 @@ int storage_lookup_path(const char *path, struct storage_node *out)
 {
     char resolved[LEONOS_FS_PATH_LEN];
     int drive;
+    int ret;
     if (!storage_ready()) {
         return -2;
     }
@@ -3074,8 +3141,9 @@ int storage_lookup_path(const char *path, struct storage_node *out)
     if (drive < 0) {
         return -22;
     }
-    if (storage_select_drive((uint32_t)drive) < 0) {
-        return -2;
+    ret = storage_select_drive((uint32_t)drive);
+    if (ret < 0) {
+        return ret;
     }
     if (storage_text_eq_ci(resolved, "0:/")) {
         if (out) {
@@ -3388,6 +3456,9 @@ int storage_write_node(const char *path, uint64_t offset,
     if (len == 0) {
         return 0;
     }
+    /* The remaining path modifies file data and its directory entry. Keep
+     * pre-read/modify/write sequences in one non-replayable transaction. */
+    storage_begin_mutation();
     if (offset <= node.size) {
         char parent[LEONOS_FS_PATH_LEN];
         char name[LEONOS_FS_NAME_LEN];
@@ -3655,8 +3726,9 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
         if (existing.type != LEONOS_FS_TYPE_FILE) {
             return -21;
         }
-        if (fat32_find_dirent_ref_in_dir(parent_node.first_cluster, name, &ref) < 0) {
-            return -5;
+        ret = fat32_find_dirent_ref_in_dir(parent_node.first_cluster, name, &ref);
+        if (ret < 0) {
+            return ret;
         }
     } else if (ret == -2) {
         uint32_t lfn_count = need_lfn ? fat32_lfn_entry_count(name) : 0;
@@ -3692,6 +3764,11 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
             return ret;
         }
     }
+
+    /* All discovery above is replayable. The work below changes FAT chains,
+     * file clusters or directory entries, so its supporting reads must not
+     * return EAGAIN and be misreported to user space as EIO. */
+    storage_begin_mutation();
 
     if (len) {
         clusters_needed = (len + g_storage.cluster_bytes - 1u) / g_storage.cluster_bytes;
@@ -3855,6 +3932,7 @@ int storage_mkdir(const char *path)
     if (ret < 0) {
         return ret;
     }
+    storage_begin_mutation();
     if (fat32_write_fat_entry(cluster, FAT32_EOC) < 0) {
         return -5;
     }
@@ -3928,6 +4006,7 @@ int storage_unlink(const char *path)
     if (node.type == LEONOS_FS_TYPE_DIR) {
         return -21;
     }
+    storage_begin_mutation();
     ret = fat32_delete_dirent(parent_node.first_cluster, name, &deleted);
     if (ret < 0) {
         return ret;
@@ -3988,6 +4067,7 @@ int storage_rmdir(const char *path)
     if (!empty) {
         return -39;
     }
+    storage_begin_mutation();
     ret = fat32_delete_acl_metadata_file(node.first_cluster);
     if (ret < 0) {
         return ret;
@@ -4060,6 +4140,7 @@ int storage_rename(const char *old_path, const char *new_path)
         return ret;
     }
     first_cluster = node.first_cluster;
+    storage_begin_mutation();
     ret = fat32_create_dirent(parent_node.first_cluster, new_name,
                               node.type == LEONOS_FS_TYPE_DIR ? FAT32_ATTR_DIRECTORY : FAT32_ATTR_ARCHIVE,
                               first_cluster, node.type == LEONOS_FS_TYPE_FILE ? (uint32_t)node.size : 0);
@@ -4408,6 +4489,10 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
 int storage_install_list_disks(struct leonos_install_disk *disks,
                                uint32_t capacity, uint32_t *out_count)
 {
+    int ret = storage_acquire_task_io();
+    if (ret < 0) {
+        return ret;
+    }
     if (!out_count) {
         return -22;
     }
@@ -4448,6 +4533,10 @@ int storage_install_format_esp(uint32_t disk_id)
     uint64_t esp_lba = 0;
     uint64_t esp_sectors = 0;
     int ret;
+    ret = storage_acquire_task_io();
+    if (ret < 0) {
+        return ret;
+    }
     if (disk_id >= g_install_disk_count || !g_install_disks[disk_id].present) {
         return -2;
     }
@@ -4481,6 +4570,10 @@ int storage_install_format_esp(uint32_t disk_id)
 
 int storage_install_mount_target(uint32_t disk_id)
 {
+    int ownership_ret = storage_acquire_task_io();
+    if (ownership_ret < 0) {
+        return ownership_ret;
+    }
     if (disk_id >= g_install_disk_count || !g_install_disks[disk_id].present) {
         return -2;
     }

@@ -22,6 +22,7 @@ struct boot_info;
 
 void storage_init(void);
 void storage_set_io_async_context(bool enabled);
+void storage_release_task_io(uint32_t pid);
 void storage_drain_task_io(uint32_t pid);
 void storage_init_installer_root(const struct boot_info *boot);
 void storage_apply_mount_policy(const struct leonos_mount_policy *policy);
