@@ -15,6 +15,7 @@ ELF 应用程序。
 - `linker.ld`: LeonOS 4 用户态 ELF 的链接布局，入口为 `_start`。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
 - `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。
+- `docs/`: 按主题拆分的系统调用、GUI/UI、InputM、公共库、构建和打包文档。
 - `Makefile`: 独立构建入口，不会引用 LeonOS 4 源码目录。
 - `README-tcc.md`: 镜像内置设备端 TinyCC 的静态编译工作流与限制。
 
@@ -119,6 +120,9 @@ terminal=1
 `--virtual-terminal` 会自动生成并安装这个 manifest。
 
 ## API 使用
+
+完整 API 参考请从 [`docs/README.md`](docs/README.md) 开始。它包含 syscall ABI、
+窗口事件、UI 控件、输入法、公共库、虚拟终端和 `.api` 包的独立说明。
 
 使用 SDK 携带的头文件，而不是宿主操作系统的 API：
 

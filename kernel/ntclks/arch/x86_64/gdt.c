@@ -1,5 +1,6 @@
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
+#include <ntclks/framebuffer.h>
 
 struct __attribute__((packed)) gdt_ptr {
     uint16_t limit;
@@ -20,6 +21,8 @@ struct __attribute__((packed)) tss64 {
 
 static uint64_t gdt[7];
 static struct tss64 tss;
+
+#define IDENTITY_MAP_LIMIT (1ULL << 32)
 
 extern void x86_64_lgdt(const struct gdt_ptr *ptr);
 extern void x86_64_load_segments(void);
@@ -52,9 +55,25 @@ static void set_tss_descriptor(uint32_t index, uint64_t base, uint32_t limit)
     gdt[index + 1] = high;
 }
 
+static int framebuffer_survives_identity_map(void)
+{
+    const struct framebuffer *fb = framebuffer_get();
+    uint64_t start;
+    uint64_t bytes;
+
+    if (!fb || !fb->available || !fb->pixels || !fb->pitch || !fb->height) {
+        return 0;
+    }
+    start = (uint64_t)(uintptr_t)fb->pixels;
+    bytes = (uint64_t)fb->pitch * fb->height;
+    return start < IDENTITY_MAP_LIMIT && bytes <= IDENTITY_MAP_LIMIT - start;
+}
+
 void arch_userland_init(void *kernel_stack_top)
 {
-    console_disable_framebuffer();
+    if (!framebuffer_survives_identity_map()) {
+        console_disable_framebuffer();
+    }
     tss.rsp0 = (uint64_t)(uintptr_t)kernel_stack_top;
     tss.io_map_base = sizeof(tss);
 

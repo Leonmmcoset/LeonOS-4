@@ -1273,20 +1273,14 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
 static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void *buffer)
 {
     const uint8_t *src = (const uint8_t *)buffer;
+    /* The installer payload is a reserved Multiboot module and must stay immutable. */
+    if (g_storage.kind == STORAGE_VOLUME_RAM) {
+        return -30;
+    }
     /* From this point the caller may have changed filesystem metadata.  Do
      * not return EAGAIN and replay a partially completed mutation. */
     storage_begin_mutation();
     storage_sector_cache_invalidate();
-    if (g_storage.kind == STORAGE_VOLUME_RAM) {
-        uint64_t offset = lba * SECTOR_SIZE;
-        uint64_t bytes = (uint64_t)sector_count * SECTOR_SIZE;
-        if (!buffer || !g_storage.ram_base || offset + bytes < offset ||
-            offset + bytes > g_storage.ram_bytes) {
-            return -22;
-        }
-        storage_memcpy(g_storage.ram_base + offset, buffer, (size_t)bytes);
-        return 0;
-    }
     while (sector_count) {
         uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
         int ret = ahci_write_lba_retry(g_storage.hba_port, lba, chunk, src);
@@ -2906,8 +2900,6 @@ void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
 int storage_mount_ramdisk_root(const void *image, uint64_t len)
 {
     struct storage_volume *root = &g_volumes[0];
-    uint64_t copy_phys;
-    uint32_t copy_pages;
     storage_memzero(root, sizeof(*root));
     g_active_volume = root;
     g_installer_root_active = 0;
@@ -2916,28 +2908,21 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
     if (!image || len < SECTOR_SIZE || (len % SECTOR_SIZE) != 0) {
         return -22;
     }
-    copy_pages = (uint32_t)((len + 4095ULL) / 4096ULL);
-    copy_phys = mm_alloc_pages(copy_pages);
-    if (!copy_phys) {
-        return -12;
-    }
-    storage_memcpy((void *)(uintptr_t)copy_phys, image, (size_t)len);
     root->drive = 0;
     root->kind = STORAGE_VOLUME_RAM;
-    root->ram_base = (uint8_t *)(uintptr_t)copy_phys;
+    /* Multiboot modules are reserved by mm_init; use the ISO payload in place. */
+    root->ram_base = (uint8_t *)image;
     root->ram_bytes = len;
     root->esp_start_lba = 0;
     root->esp_sector_count = len / SECTOR_SIZE;
     if (fat32_mount() < 0) {
         storage_memzero(root, sizeof(*root));
-        mm_free_pages(copy_phys, copy_pages);
         return -2;
     }
     root->ready = true;
     g_installer_root_active = 1;
-    console_printf("[ntclks] storage installer root ready ramdisk=%p copy=%p bytes=%llu fat32_root=%u\n",
+    console_printf("[ntclks] storage installer root ready ramdisk=%p bytes=%llu fat32_root=%u\n",
                    image,
-                   (void *)(uintptr_t)copy_phys,
                    (unsigned long long)len,
                    root->root_cluster);
     return 0;

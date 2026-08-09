@@ -66,7 +66,8 @@ static struct leonos_ui_edit_state online_email_edit;
 static struct leonos_ui_edit_state online_key_edit;
 static struct leonos_ui_edit_state offline_email_edit;
 static struct leonos_ui_edit_state offline_key_edit;
-static uint8_t active_admin_field;
+/* Start administrator setup with the password field selected. */
+static uint8_t active_admin_field = 1;
 static uint8_t active_license_field;
 static uint8_t current_page = OOBE_PAGE_LICENSE;
 static uint8_t license_ready;
@@ -480,10 +481,11 @@ static int activate_online(void)
     }
     if (completion_marker_pending) {
         current_page = OOBE_PAGE_ADMIN;
+        active_admin_field = 1;
         return 0;
     }
     current_page = OOBE_PAGE_ADMIN;
-    active_admin_field = 0;
+    active_admin_field = 1;
     copy_text(status_text, sizeof(status_text),
               T("License activated. Create the first administrator.",
                 "许可证已激活。请创建第一个管理员。"));
@@ -505,10 +507,11 @@ static int activate_offline(void)
     }
     if (completion_marker_pending) {
         current_page = OOBE_PAGE_ADMIN;
+        active_admin_field = 1;
         return 0;
     }
     current_page = OOBE_PAGE_ADMIN;
-    active_admin_field = 0;
+    active_admin_field = 1;
     copy_text(status_text, sizeof(status_text),
               T("License activated. Create the first administrator.",
                 "许可证已激活。请创建第一个管理员。"));
@@ -520,6 +523,9 @@ static void close_license_browser(void)
     browser_embed_clear_exit();
     license_ready = (uint8_t)license_is_valid();
     current_page = license_ready ? OOBE_PAGE_ADMIN : OOBE_PAGE_LICENSE;
+    if (current_page == OOBE_PAGE_ADMIN) {
+        active_admin_field = 1;
+    }
 }
 
 static void open_license_browser(void)
@@ -756,9 +762,13 @@ int main(void)
     }
     if (license_ready && admin_exists()) {
         current_page = OOBE_PAGE_ADMIN;
+        active_admin_field = 1;
         schedule_completion_marker_write();
     }
     current_page = license_ready ? OOBE_PAGE_ADMIN : OOBE_PAGE_LICENSE;
+    if (current_page == OOBE_PAGE_ADMIN) {
+        active_admin_field = 1;
+    }
     update_surface_size_from_framebuffer();
     leonos_ui_edit_state_init(&username_edit, username, sizeof(username));
     leonos_ui_edit_state_init(&password_edit, password, sizeof(password));

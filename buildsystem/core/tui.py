@@ -134,6 +134,7 @@ class BuildTui:
         self.viewer_lines: list[str] = []
         self.output_lines: deque[str] = deque(maxlen=MAX_LOG_LINES)
         self.output_title = ""
+        self.output_follow = False
         self.job: CommandJob | None = None
         self.status_message = "Ready"
         self.observed_task_id: str | None = None
@@ -440,10 +441,11 @@ class BuildTui:
             title = self.output_title
             if self.job is not None:
                 title += "  [running]"
+            title += "  [following]" if self.output_follow else "  [scroll paused]"
             progress = self._progress_summary()
             if progress:
                 title += f"  |  {progress}"
-            self._draw_text_view(rows, cols, title, list(self.output_lines))
+            self._draw_text_view(rows, cols, title, list(self.output_lines), follow=self.output_follow)
         elif self.view == "monitor":
             self._draw_monitor(rows, cols)
         elif self.view == "tasks":
@@ -485,6 +487,9 @@ class BuildTui:
             text = "Up/Down select  Enter choose  q cancel"
         elif self.view == "monitor":
             text = "Up/Down scroll log  PageUp/PageDown jump  g/G top/end  q dashboard"
+        elif self.view == "output":
+            state = "pause follow" if self.output_follow else "resume follow"
+            text = f"Up/Down scroll  PageUp/PageDown jump  g/G top/end  f {state}  q back"
         else:
             text = "Up/Down scroll  PageUp/PageDown jump  q back"
         self._add(rows - 1, 1, text, curses.A_REVERSE, cols - 2)
@@ -682,11 +687,19 @@ class BuildTui:
         self._target_detail_cache[cache_key] = lines
         return lines
 
-    def _draw_text_view(self, rows: int, cols: int, title: str, lines: list[str]) -> None:
+    def _draw_text_view(
+        self,
+        rows: int,
+        cols: int,
+        title: str,
+        lines: list[str],
+        *,
+        follow: bool = False,
+    ) -> None:
         self._add(2, 1, title, curses.A_BOLD | self._color(1), cols - 2)
         visible = max(1, rows - 5)
         max_offset = max(0, len(lines) - visible)
-        self.text_scroll = min(self.text_scroll, max_offset)
+        self.text_scroll = max_offset if follow else min(self.text_scroll, max_offset)
         for index, line in enumerate(lines[self.text_scroll : self.text_scroll + visible]):
             self._add(3 + index, 1, line, 0, cols - 2)
         footer = f"{self.text_scroll + 1}-{min(len(lines), self.text_scroll + visible)} / {len(lines)}"
@@ -852,24 +865,40 @@ class BuildTui:
         lines = self.viewer_lines if self.view == "viewer" else list(self.output_lines)
         rows, _ = self._size()
         visible = max(1, rows - 5)
+        max_offset = max(0, len(lines) - visible)
         if key in (ord("q"), 27):
             if self.job is not None:
                 self.status_message = "A command is still running; wait for it or press Ctrl-C first"
                 return
             self.view = self.previous_view
             self.text_scroll = 0
+        elif self.view == "output" and key == ord("f"):
+            self.output_follow = not self.output_follow
+            if self.output_follow:
+                self.text_scroll = max_offset
         elif key in (curses.KEY_UP, ord("k")):
             self.text_scroll = max(0, self.text_scroll - 1)
+            self._update_output_follow(max_offset)
         elif key in (curses.KEY_DOWN, ord("j")):
-            self.text_scroll = min(max(0, len(lines) - visible), self.text_scroll + 1)
+            self.text_scroll = min(max_offset, self.text_scroll + 1)
+            self._update_output_follow(max_offset)
         elif key == curses.KEY_PPAGE:
             self.text_scroll = max(0, self.text_scroll - visible)
+            self._update_output_follow(max_offset)
         elif key == curses.KEY_NPAGE:
-            self.text_scroll = min(max(0, len(lines) - visible), self.text_scroll + visible)
-        elif key == ord("G"):
-            self.text_scroll = max(0, len(lines) - visible)
-        elif key == ord("g"):
+            self.text_scroll = min(max_offset, self.text_scroll + visible)
+            self._update_output_follow(max_offset)
+        elif key in (ord("G"), curses.KEY_END):
+            self.text_scroll = max_offset
+            if self.view == "output":
+                self.output_follow = True
+        elif key in (ord("g"), curses.KEY_HOME):
             self.text_scroll = 0
+            self._update_output_follow(max_offset)
+
+    def _update_output_follow(self, max_offset: int) -> None:
+        if self.view == "output":
+            self.output_follow = self.text_scroll >= max_offset
 
     def _handle_monitor_key(self, key: int) -> None:
         rows, _ = self._size()
@@ -1055,6 +1084,7 @@ class BuildTui:
         self.output_lines.clear()
         self.output_lines.append("$ " + " ".join(shlex.quote(part) for part in command))
         self.output_title = title
+        self.output_follow = True
         self.text_scroll = 0
         try:
             self.job = CommandJob(command, args, self.paths.root)

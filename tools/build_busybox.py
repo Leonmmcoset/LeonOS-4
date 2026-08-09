@@ -251,6 +251,87 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def patch_less_for_leonos(source: Path) -> None:
+    """Keep the pager's file stream separate from the terminal PTY."""
+    path = source / "miscutils/less.c"
+    text = path.read_text(encoding="utf-8")
+    globals_before = "\tint kbd_fd;  /* fd to get input from */\n"
+    globals_after = (
+        globals_before
+        + "\tint input_fd; /* fd supplying the displayed file */\n"
+    )
+    if globals_after in text:
+        return
+    macro_before = "#define kbd_fd              (G.kbd_fd            )\n"
+    macro_after = (
+        macro_before
+        + "#define input_fd            (G.input_fd          )\n"
+    )
+    open_before = """\tif (filename) {
+\t\txmove_fd(xopen(filename, O_RDONLY), STDIN_FILENO);
+#if ENABLE_FEATURE_LESS_FLAGS
+\t\tnum_lines = REOPEN_AND_COUNT;
+#endif
+\t} else {
+\t\t/* \"less\" with no arguments in argv[] */
+\t\t/* For status line only */
+\t\tfilename = xstrdup(bb_msg_standard_input);
+#if ENABLE_FEATURE_LESS_FLAGS
+\t\tnum_lines = REOPEN_STDIN;
+#endif
+\t}
+"""
+    open_after = """\tif (filename) {
+\t\t/* Keep fd 0 attached to the PTY so keyboard input still works. */
+\t\tif (input_fd != STDIN_FILENO)
+\t\t\tclose(input_fd);
+\t\tinput_fd = xopen(filename, O_RDONLY);
+#if ENABLE_FEATURE_LESS_FLAGS
+\t\tnum_lines = REOPEN_AND_COUNT;
+#endif
+\t} else {
+\t\t/* \"less\" with no arguments in argv[] */
+\t\t/* For status line only */
+\t\tfilename = xstrdup(bb_msg_standard_input);
+\t\tinput_fd = STDIN_FILENO;
+#if ENABLE_FEATURE_LESS_FLAGS
+\t\tnum_lines = REOPEN_STDIN;
+#endif
+\t}
+"""
+    required = (
+        globals_before, macro_before, open_before,
+        "int flags = ndelay_on(0);",
+        "safe_read(STDIN_FILENO, readbuf, COMMON_BUFSIZE)",
+        "fcntl(0, F_SETFL, flags)",
+        "pfd[0].fd = STDIN_FILENO;",
+    )
+    if any(marker not in text for marker in required):
+        raise SystemExit("unsupported BusyBox less source revision: LeonOS patch did not apply")
+    text = text.replace(globals_before, globals_after, 1)
+    text = text.replace(macro_before, macro_after, 1)
+    text = text.replace(open_before, open_after, 1)
+    text = text.replace("int flags = ndelay_on(0);", "int flags = ndelay_on(input_fd);", 1)
+    text = text.replace("safe_read(STDIN_FILENO, readbuf, COMMON_BUFSIZE)",
+                        "safe_read(input_fd, readbuf, COMMON_BUFSIZE)", 1)
+    text = text.replace("fcntl(0, F_SETFL, flags)", "fcntl(input_fd, F_SETFL, flags)", 1)
+    text = text.replace("pfd[0].fd = STDIN_FILENO;", "pfd[0].fd = input_fd;", 1)
+    path.write_text(text, encoding="utf-8")
+
+
+def patch_ls_colors_for_leonos(source: Path) -> None:
+    """Use the classic green directory colour in the LeonOS terminal."""
+    path = source / "coreutils/ls.c"
+    text = path.read_text(encoding="utf-8")
+    colors_before = r'"\037\043\043\045\042\045\043\043\000\045\044\045\043\045\045\040"'
+    colors_after = r'"\037\043\043\045\040\045\043\043\000\045\044\045\043\045\045\040"'
+    if colors_after in text:
+        return
+    if colors_before not in text:
+        raise SystemExit("unsupported BusyBox ls source revision: LeonOS color patch did not apply")
+    path.write_text(text.replace(colors_before, colors_after, 1), encoding="utf-8")
+
+
 def read_fragment(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -331,6 +412,8 @@ def main() -> None:
     source_dir = cached_source(source, source_cache_key(revision))
     trim_libbb(source_dir)
     enable_leonos_spawn_fallback(source_dir)
+    patch_less_for_leonos(source_dir)
+    patch_ls_colors_for_leonos(source_dir)
     work_root = source_dir.parent
     output_dir = work_root / "output"
     sdk_dir = work_root / "sdk"
