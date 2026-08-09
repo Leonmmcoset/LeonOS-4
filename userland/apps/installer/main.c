@@ -26,7 +26,7 @@
 #define POLICY_SCROLLBAR_W 18U
 #define POLICY_LINE_TEXT_MAX 256U
 #define POLICY_MAX_LINES 192U
-#define INSTALLER_CJK_FALLBACK_FONT "0:/system/fonts/simsun.ttc"
+#define INSTALLER_CJK_FONT "0:/system/fonts/simsun.ttc"
 
 /* The installer must be able to change language before it has a writable
  * target system.  Do not make rendering depend on persisting locale.conf on
@@ -204,6 +204,7 @@ static const char acknowledgements_en[] =
     "- zlib 1.3.2, the bundled compression library - zlib License\n"
     "- libpng 1.6.58, the bundled PNG decoder library - libpng License\n"
     "- BusyBox 1.36.1 - GPL-2.0-only\n"
+    "- ChenPi11/cmd - GPL-3.0-or-later\n"
     "- GNU nano 9.2 - GPL-3.0-or-later\n"
     "- TinyCC 0.9.28rc - LGPL-2.1-or-later\n"
     "- Lua 5.4.8 - MIT\n"
@@ -242,6 +243,7 @@ static const char acknowledgements_zh[] =
     "- zlib 1.3.2（内置压缩库）- zlib License\n"
     "- libpng 1.6.58（内置 PNG 解码库）- libpng License\n"
     "- BusyBox 1.36.1 - GPL-2.0-only\n"
+    "- ChenPi11/cmd - GPL-3.0-or-later\n"
     "- GNU nano 9.2 - GPL-3.0-or-later\n"
     "- TinyCC 0.9.28rc - LGPL-2.1-or-later\n"
     "- Lua 5.4.8 - MIT\n"
@@ -370,26 +372,29 @@ static int append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t value)
     return append_u64(buf, pos, cap, mag);
 }
 
-static uint32_t policy_utf8_char(const char *text, uint32_t pos, uint32_t *out_cells)
+static uint32_t policy_utf8_char(const char *text, uint32_t pos, uint32_t len,
+                                 uint32_t *out_cells)
 {
-    uint8_t first = (uint8_t)text[pos];
+    uint8_t first;
     uint32_t bytes = 1;
     if (out_cells) {
         *out_cells = 1;
     }
-    if (!first) {
+    if (!text || pos >= len || !text[pos]) {
         return 0;
     }
-    if ((first & 0xe0u) == 0xc0u && (text[pos + 1U] & 0xc0u) == 0x80u) {
+    first = (uint8_t)text[pos];
+    if (first >= 0xc2u && first < 0xe0u && pos + 1U < len &&
+        (((uint8_t)text[pos + 1U] & 0xc0u) == 0x80u)) {
         bytes = 2;
-    } else if ((first & 0xf0u) == 0xe0u &&
-               (text[pos + 1U] & 0xc0u) == 0x80u &&
-               (text[pos + 2U] & 0xc0u) == 0x80u) {
+    } else if (first >= 0xe0u && first < 0xf0u && pos + 2U < len &&
+               (((uint8_t)text[pos + 1U] & 0xc0u) == 0x80u) &&
+               (((uint8_t)text[pos + 2U] & 0xc0u) == 0x80u)) {
         bytes = 3;
-    } else if ((first & 0xf8u) == 0xf0u &&
-               (text[pos + 1U] & 0xc0u) == 0x80u &&
-               (text[pos + 2U] & 0xc0u) == 0x80u &&
-               (text[pos + 3U] & 0xc0u) == 0x80u) {
+    } else if (first >= 0xf0u && first < 0xf5u && pos + 3U < len &&
+               (((uint8_t)text[pos + 1U] & 0xc0u) == 0x80u) &&
+               (((uint8_t)text[pos + 2U] & 0xc0u) == 0x80u) &&
+               (((uint8_t)text[pos + 3U] & 0xc0u) == 0x80u)) {
         bytes = 4;
     }
     if (out_cells && bytes >= 3U) {
@@ -402,9 +407,10 @@ static uint32_t policy_text_cells(const char *text)
 {
     uint32_t pos = 0;
     uint32_t cells = 0;
-    while (text && text[pos]) {
+    uint32_t len = text_len(text);
+    while (pos < len) {
         uint32_t char_cells = 1;
-        uint32_t bytes = policy_utf8_char(text, pos, &char_cells);
+        uint32_t bytes = policy_utf8_char(text, pos, len, &char_cells);
         if (!bytes) {
             break;
         }
@@ -414,21 +420,46 @@ static uint32_t policy_text_cells(const char *text)
     return cells;
 }
 
+static uint32_t policy_utf8_prefix_len(const char *text, uint32_t len,
+                                       uint32_t capacity)
+{
+    uint32_t pos = 0;
+    while (pos < len && pos < capacity) {
+        uint32_t bytes = policy_utf8_char(text, pos, len, 0);
+        if (!bytes || bytes > capacity - pos) {
+            break;
+        }
+        pos += bytes;
+    }
+    return pos;
+}
+
 static void policy_clean_inline(char *dst, uint32_t cap, const char *src)
 {
     uint32_t out = 0;
+    uint32_t pos = 0;
+    uint32_t len = text_len(src);
     if (!dst || cap == 0) {
         return;
     }
     dst[0] = 0;
-    for (uint32_t i = 0; src && src[i]; ++i) {
-        if (src[i] == '*' || src[i] == '_' || src[i] == '`') {
+    while (pos < len) {
+        uint32_t bytes = policy_utf8_char(src, pos, len, 0);
+        if (!bytes) {
+            break;
+        }
+        if (bytes == 1U && (src[pos] == '*' || src[pos] == '_' || src[pos] == '`')) {
+            ++pos;
             continue;
         }
-        if (out + 1U < cap) {
-            dst[out++] = src[i];
-            dst[out] = 0;
+        if (out + bytes >= cap) {
+            break;
         }
+        for (uint32_t i = 0; i < bytes; ++i) {
+            dst[out++] = src[pos + i];
+        }
+        dst[out] = 0;
+        pos += bytes;
     }
 }
 
@@ -467,14 +498,15 @@ static void policy_emit_wrapped(uint8_t kind, const char *prefix,
     uint32_t max_cells = leonos_ui_text_fit_chars(width);
     uint32_t prefix_cells = policy_text_cells(prefix);
     uint32_t cells = prefix_cells;
+    uint32_t source_len = text_len(text);
     if (max_cells < 16U) {
         max_cells = 16U;
     }
     line[0] = 0;
     (void)append_text(line, &out, sizeof(line), prefix);
-    while (text && text[pos]) {
+    while (pos < source_len) {
         uint32_t char_cells = 1;
-        uint32_t bytes = policy_utf8_char(text, pos, &char_cells);
+        uint32_t bytes = policy_utf8_char(text, pos, source_len, &char_cells);
         if (!bytes) {
             break;
         }
@@ -485,9 +517,10 @@ static void policy_emit_wrapped(uint8_t kind, const char *prefix,
         if (text[pos] != ' ' && text[pos] != '\t') {
             uint32_t word_pos = pos;
             uint32_t word_cells = 0;
-            while (text[word_pos] && text[word_pos] != ' ' && text[word_pos] != '\t') {
+            while (word_pos < source_len && text[word_pos] != ' ' && text[word_pos] != '\t') {
                 uint32_t next_cells = 1;
-                uint32_t next_bytes = policy_utf8_char(text, word_pos, &next_cells);
+                uint32_t next_bytes = policy_utf8_char(text, word_pos, source_len,
+                                                       &next_cells);
                 if (!next_bytes) {
                     break;
                 }
@@ -541,7 +574,7 @@ static void markdown_reflow(const char *source, uint32_t width)
     policy_line_count = 0;
     while (source[pos] && policy_line_count < POLICY_MAX_LINES) {
         char raw[512];
-        char clean[POLICY_LINE_TEXT_MAX];
+        char clean[sizeof(raw)];
         uint32_t line_start = pos;
         uint32_t line_end;
         uint32_t raw_len;
@@ -554,9 +587,8 @@ static void markdown_reflow(const char *source, uint32_t width)
             ++pos;
         }
         raw_len = line_end - line_start;
-        if (raw_len >= sizeof(raw)) {
-            raw_len = sizeof(raw) - 1U;
-        }
+        raw_len = policy_utf8_prefix_len(source + line_start, raw_len,
+                                         sizeof(raw) - 1U);
         for (uint32_t i = 0; i < raw_len; ++i) {
             raw[i] = source[line_start + i];
         }
@@ -2842,6 +2874,21 @@ static void handle_mode_click(int32_t x, int32_t y)
     }
 }
 
+static void installer_apply_language_font(void)
+{
+    /* The installer is its own process and has a tighter memory budget than
+     * the installed desktop.  Loading Deng plus SimSun as a fallback maps two
+     * large CJK font files and makes the fallback path unreliable during the
+     * first language switch.  Chinese Setup text uses SimSun as its primary
+     * face; English continues to use the theme's normal primary font. */
+    (void)leonos_ui_set_font_fallback_path(0);
+    if (installer_lang == LEONOS_LANG_ZH) {
+        (void)leonos_ui_set_font_path(INSTALLER_CJK_FONT);
+    } else {
+        (void)leonos_ui_set_font_path(0);
+    }
+}
+
 static void handle_language_click(int32_t x, int32_t y)
 {
     struct installer_layout l = get_layout();
@@ -2853,6 +2900,7 @@ static void handle_language_click(int32_t x, int32_t y)
     }
     if (language != installer_lang) {
         installer_lang = language;
+        installer_apply_language_font();
         policy_accepted = 0;
         policy_scroll_y = 0;
         acknowledgements_scroll_y = 0;
@@ -3128,10 +3176,7 @@ int main(void)
     leonos_ui_bind(&ui, pixels, surface_w, surface_h, INSTALLER_MAX_W);
     installer_lang = (uint8_t)leonos_i18n_language();
     installer_theme = (uint8_t)leonos_ui_theme();
-    /* Deng covers most CJK text, but use the staged SimSun collection for
-     * characters it does not contain.  Keeping it as a fallback preserves
-     * the selected Metro/Win95 primary-font rendering. */
-    (void)leonos_ui_set_font_fallback_path(INSTALLER_CJK_FALLBACK_FONT);
+    installer_apply_language_font();
     leonos_ui_listview_state_init(&update_app_list, 1, UPDATE_APP_ROW_H);
     refresh_disks();
     page = PAGE_LANGUAGE;
