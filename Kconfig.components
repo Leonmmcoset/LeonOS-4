@@ -392,6 +392,26 @@ config LEON_COMPONENT_TOOL_LUA_SDK
     default y
     depends on LEON_COMPONENT_TOOL_LUA_BUILD
 
+config LEON_COMPONENT_TOOL_CMD_BUILD
+    bool "Build ChenPi11 cmd shell"
+    default y
+    select LEON_COMPONENT_TOOL_BUSYBOX_BUILD
+
+config LEON_COMPONENT_TOOL_CMD_IMAGE
+    bool "Include ChenPi11 cmd shell in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_CMD_BUILD
+
+config LEON_COMPONENT_TOOL_CMD_ENTRY
+    bool "Generate a desktop entry for ChenPi11 cmd shell"
+    default n
+    depends on LEON_COMPONENT_TOOL_CMD_BUILD
+
+config LEON_COMPONENT_TOOL_CMD_SDK
+    bool "Include ChenPi11 cmd shell in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_CMD_BUILD
+
 endmenu
 
 menu "Games"

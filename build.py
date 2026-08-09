@@ -536,6 +536,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     lua_elf = paths.out / "userland/lua.elf"
     lua_stamp = paths.out / "userland/lua.stamp"
     lua_work_dir = paths.out / "lua-work"
+    cmd_source = ROOT / "third_party/cmd"
+    cmd_port = ROOT / "userland/cmd"
+    cmd_elf = paths.out / "userland/cmd.elf"
+    cmd_stamp = paths.out / "userland/cmd.stamp"
+    cmd_work_dir = paths.out / "cmd-work"
     pleditor_source = ROOT / "third_party/pl_editor"
     pleditor_port = ROOT / "userland/apps/pleditor"
     pleditor_elf = paths.out / "userland/pleditor.elf"
@@ -618,6 +623,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/tinycc is missing; initialize the TinyCC source tree")
     if not (lua_source / "lua.c").is_file() or not (lua_source / "lua.h").is_file():
         raise GraphError("third_party/lua is missing; initialize the Lua source tree")
+    if not (cmd_source / "cmain.c").is_file() or not (cmd_source / "LICENSE").is_file():
+        raise GraphError("third_party/cmd is missing; initialize the ChenPi11/cmd source tree")
     if not (lua_port / "LICENSE").is_file() or not lua_app_manifest.is_file():
         raise GraphError("the LeonOS Lua port metadata is missing")
     if not (pleditor_source / "src/pleditor.c").is_file():
@@ -1073,6 +1080,29 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ),
     ))
 
+    cmd_inputs = collect(
+        "third_party/cmd/*.c", "third_party/cmd/*.h", "third_party/cmd/LICENSE",
+        "userland/cmd/**/*.c", "userland/cmd/**/*.h", "userland/cmd/**/*.md",
+        "tools/build_cmd.py",
+    )
+    graph.add(Target(
+        name="cmd",
+        outputs=(cmd_elf, cmd_stamp),
+        inputs=tuple([*cmd_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
+        depends_on=("picolibc", "archive:libc"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_cmd.py", "--source", "third_party/cmd",
+            "--port", "userland/cmd", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(cmd_work_dir),
+            "--output", relative(cmd_elf), "--stamp", relative(cmd_stamp),
+            *compile_option_args,
+            *linker_option_args,
+        ),
+    ))
+
     pleditor_inputs = collect(
         "third_party/pl_editor/src/**/*.c", "third_party/pl_editor/src/**/*.h",
         "third_party/pl_editor/LICENSE", "userland/apps/pleditor/**/*.c",
@@ -1194,6 +1224,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         user_targets.append("tcc")
     if component_enabled("lua"):
         user_targets.append("lua")
+    if component_enabled("cmd"):
+        user_targets.append("cmd")
     if component_enabled("pleditor"):
         user_targets.append("app:pleditor")
     if component_enabled("stardustui"):
@@ -1590,6 +1622,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         for source in (lua_elf, lua_port / "LICENSE", lua_app_manifest):
             destination = lua_destination / ("lua.elf" if source == lua_elf else source.name)
             target = add_copy(graph, f"esp:lua:{destination.name}", source, destination)
+            esp_names.append(target.name)
+            esp_outputs.append(destination)
+    if component_enabled("cmd", "image"):
+        cmd_destination = paths.staging / "programs/cmd"
+        for source in (cmd_elf, cmd_source / "LICENSE", cmd_port / "README.md"):
+            destination = cmd_destination / ("cmd.elf" if source == cmd_elf else source.name)
+            target = add_copy(graph, f"esp:cmd:{destination.name}", source, destination)
             esp_names.append(target.name)
             esp_outputs.append(destination)
     if component_enabled("nano", "image"):

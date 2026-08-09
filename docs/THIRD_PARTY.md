@@ -156,6 +156,22 @@ adapter provides raw PTY input, ANSI terminal output, terminal sizing and
 file persistence. It is launched through Terminal and supports syntax
 highlighting, search, undo/redo and line numbers.
 
+## ChenPi11 cmd
+
+- Path: `third_party/cmd`
+- Upstream: `https://github.com/ChenPi11/cmd`
+- Pinned commit: `e1b2fc3388013cb3ddf68bcc96fa8a799d346418`
+- License: GPL-3.0-only; the complete upstream `LICENSE` is staged at
+  `0:/programs/cmd/LICENSE` beside the executable.
+
+LeonOS builds the interpreter at `0:/programs/cmd/cmd.elf`. From the BusyBox
+Hush prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
+built-ins, batch files, variables and redirection, and executes enabled
+BusyBox applets or supported LeonOS terminal programs through the PTY
+spawn/wait ABI. Pipes and the background process forms of `START` remain
+unavailable because LeonOS does not yet provide fork or pipe semantics; they
+fail explicitly instead of entering a partial POSIX fallback.
+
 ## minimp3
 
 - Path: `third_party/minimp3/minimp3.h`

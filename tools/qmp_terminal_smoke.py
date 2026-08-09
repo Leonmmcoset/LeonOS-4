@@ -99,10 +99,10 @@ def main() -> int:
     time.sleep(30.0)
 
     if not skip_oobe:
-        # A freshly generated image opens OOBE.  The default username is admin;
-        # create the first account before starting the terminal via the Start-menu
-        # keyboard search, so this test has no persisted-image prerequisite.
-        send_keys(sock, ("tab", "n", "a", "n", "o", "t", "e", "s", "t", "ret"))
+        # A freshly generated image opens OOBE.  The default username is admin
+        # and the password field owns focus, so create the first account before
+        # starting Terminal through the Start-menu keyboard search.
+        send_keys(sock, ("n", "a", "n", "o", "t", "e", "s", "t", "ret"))
         # The desktop relocks its input routing after the fullscreen OOBE
         # window is destroyed, so wait until the desktop owns keyboard focus.
         # OOBE exits before the desktop has necessarily removed its fullscreen
