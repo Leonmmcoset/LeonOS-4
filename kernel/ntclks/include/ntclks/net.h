@@ -10,6 +10,7 @@ struct task;
 void net_init(void);
 int net_is_ready(void);
 int net_get_config(struct leonos_net_config *config);
+int net_set_dns_policy(struct leonos_net_dns_policy *request);
 int net_dhcp_renew(struct leonos_net_dhcp *request);
 int net_ping(struct leonos_net_ping *request);
 int net_dns_resolve(struct leonos_net_dns *request);

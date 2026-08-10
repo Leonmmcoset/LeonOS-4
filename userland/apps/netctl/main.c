@@ -1,3 +1,4 @@
+#include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/net.h>
@@ -7,24 +8,33 @@
 #include <leonos/ui.h>
 
 #define NETCTL_W 720
-#define NETCTL_H 500
+#define NETCTL_H 584
 #define DOMAIN_LEN LEONOS_NET_HOSTNAME_LEN
+#define DNS_INPUT_LEN 16U
+#define NETCTL_NETWORK_CONFIG_PATH "0:/system/config/network.conf"
+#define NETCTL_NETWORK_CONFIG_TEMP_PATH "0:/system/config/network.conf.tmp"
+#define NETCTL_NETWORK_CONFIG_BACKUP_PATH "0:/system/config/network.conf.bak"
+#define NETCTL_SAVE_RETRIES 3U
 #define CONN_VISIBLE_ROWS 4U
 #define CONN_ROW_H (LEONOS_FONT_H + 4U)
 #define CONN_X 34U
-#define CONN_Y 330U
+#define CONN_Y 398U
 #define CONN_W (NETCTL_W - 68U)
 #define CONN_ROWS_Y (CONN_Y + LEONOS_FONT_H + 8U)
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[NETCTL_W * NETCTL_H];
 static struct leonos_net_config config;
+static uint32_t dns_mode = LEONOS_NET_DNS_MODE_CLOUDFLARE;
+static uint32_t dns_custom_ip;
 static struct leonos_net_connection_info connections[LEONOS_NET_SOCKET_MAX];
 static uint32_t connection_count;
 static char domain_input[DOMAIN_LEN] = "example.com";
+static char dns_input[DNS_INPUT_LEN] = "1.1.1.1";
 static char status_text[128] = "Ready";
 static char dns_text[192] = "Enter a host name and resolve an A record.";
 static struct leonos_ui_edit_state domain_edit;
+static struct leonos_ui_edit_state dns_edit;
 static struct leonos_ui_listview_state connections_view;
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
@@ -106,6 +116,60 @@ static void format_ipv4(char *dst, uint32_t cap, uint32_t ip)
     append_u32(dst, &pos, cap, (ip >> 8) & 0xffu);
     append_char(dst, &pos, cap, '.');
     append_u32(dst, &pos, cap, ip & 0xffu);
+}
+
+static int parse_ipv4(const char *text, uint32_t *out_ip)
+{
+    uint32_t ip = 0;
+    uint32_t pos = 0;
+    if (!text || !out_ip) {
+        return 0;
+    }
+    for (uint32_t octet = 0; octet < 4U; ++octet) {
+        uint32_t value = 0;
+        uint32_t digits = 0;
+        while (text[pos] >= '0' && text[pos] <= '9') {
+            value = value * 10U + (uint32_t)(text[pos] - '0');
+            if (value > 255U || ++digits > 3U) {
+                return 0;
+            }
+            ++pos;
+        }
+        if (!digits) {
+            return 0;
+        }
+        ip = (ip << 8) | value;
+        if (octet != 3U) {
+            if (text[pos++] != '.') {
+                return 0;
+            }
+        }
+    }
+    if (text[pos] || ip == 0 || ip == 0xffffffffU) {
+        return 0;
+    }
+    *out_ip = ip;
+    return 1;
+}
+
+static const char *dns_mode_name(uint32_t mode)
+{
+    switch (mode) {
+    case LEONOS_NET_DNS_MODE_DHCP:
+        return T("DHCP DNS", "DHCP DNS");
+    case LEONOS_NET_DNS_MODE_CUSTOM:
+        return T("Custom DNS", "自定义 DNS");
+    default:
+        return T("Cloudflare DNS", "Cloudflare DNS");
+    }
+}
+
+static void load_dns_input(uint32_t ip)
+{
+    if (!ip) {
+        ip = LEONOS_NET_CLOUDFLARE_DNS_IP;
+    }
+    format_ipv4(dns_input, sizeof(dns_input), ip);
 }
 
 static void format_endpoint(char *dst, uint32_t cap, uint32_t ip, uint32_t port)
@@ -222,12 +286,32 @@ static void set_status_ret(const char *prefix, int ret)
 
 static void refresh_connections(void);
 
+static int refresh_dns_policy(void)
+{
+    struct leonos_net_dns_policy policy;
+    int ret = leonos_net_get_dns_policy(&policy);
+    if (ret < 0) {
+        set_status_ret(T("DNS policy query failed", "读取 DNS 策略失败"), ret);
+        return ret;
+    }
+    if (policy.status != LEONOS_NET_STATUS_OK) {
+        copy_text(status_text, sizeof(status_text), status_name(policy.status));
+        return -1;
+    }
+    dns_mode = policy.mode;
+    dns_custom_ip = policy.custom_dns_ip;
+    return 0;
+}
+
 static void refresh_config(void)
 {
     int ret = leonos_net_config(&config);
     if (ret < 0) {
         config = (struct leonos_net_config){0};
         set_status_ret(T("Config query failed", "读取配置失败"), ret);
+        return;
+    }
+    if (refresh_dns_policy() < 0) {
         return;
     }
     copy_text(status_text, sizeof(status_text), T("Network configuration refreshed", "网络配置已刷新"));
@@ -255,8 +339,145 @@ static void renew_dhcp(void)
         return;
     }
     config = dhcp.config;
+    if (refresh_dns_policy() < 0) {
+        return;
+    }
     refresh_connections();
     copy_text(status_text, sizeof(status_text), status_name(dhcp.status));
+}
+
+static int path_exists(const char *path)
+{
+    int fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    close(fd);
+    return 1;
+}
+
+static int save_dns_policy(uint32_t mode, uint32_t custom_dns_ip)
+{
+    char config_text[96];
+    const char *mode_text;
+    uint32_t pos = 0;
+    int fd;
+    long wrote;
+    if (mode == LEONOS_NET_DNS_MODE_DHCP) {
+        mode_text = "dhcp";
+    } else if (mode == LEONOS_NET_DNS_MODE_CUSTOM) {
+        mode_text = "custom";
+    } else {
+        mode_text = "cloudflare";
+    }
+    append_text(config_text, &pos, sizeof(config_text), "dns_mode=");
+    append_text(config_text, &pos, sizeof(config_text), mode_text);
+    append_char(config_text, &pos, sizeof(config_text), '\n');
+    if (mode == LEONOS_NET_DNS_MODE_CUSTOM) {
+        char ip[DNS_INPUT_LEN];
+        format_ipv4(ip, sizeof(ip), custom_dns_ip);
+        append_text(config_text, &pos, sizeof(config_text), "dns_custom=");
+        append_text(config_text, &pos, sizeof(config_text), ip);
+        append_char(config_text, &pos, sizeof(config_text), '\n');
+    }
+    for (uint32_t attempt = 0; attempt < NETCTL_SAVE_RETRIES; ++attempt) {
+        unlink(NETCTL_NETWORK_CONFIG_TEMP_PATH);
+        if (!path_exists(NETCTL_NETWORK_CONFIG_PATH) &&
+            path_exists(NETCTL_NETWORK_CONFIG_BACKUP_PATH) &&
+            rename(NETCTL_NETWORK_CONFIG_BACKUP_PATH,
+                   NETCTL_NETWORK_CONFIG_PATH) < 0) {
+            return -1;
+        }
+        if (path_exists(NETCTL_NETWORK_CONFIG_PATH)) {
+            unlink(NETCTL_NETWORK_CONFIG_BACKUP_PATH);
+        }
+        fd = open(NETCTL_NETWORK_CONFIG_TEMP_PATH,
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+        if (fd >= 0) {
+            wrote = write(fd, config_text, pos);
+            if (close(fd) == 0 && wrote == (long)pos) {
+                if (!path_exists(NETCTL_NETWORK_CONFIG_PATH)) {
+                    if (rename(NETCTL_NETWORK_CONFIG_TEMP_PATH,
+                               NETCTL_NETWORK_CONFIG_PATH) == 0) {
+                        return 0;
+                    }
+                } else if (rename(NETCTL_NETWORK_CONFIG_PATH,
+                                  NETCTL_NETWORK_CONFIG_BACKUP_PATH) == 0) {
+                    if (rename(NETCTL_NETWORK_CONFIG_TEMP_PATH,
+                               NETCTL_NETWORK_CONFIG_PATH) == 0) {
+                        unlink(NETCTL_NETWORK_CONFIG_BACKUP_PATH);
+                        return 0;
+                    }
+                    if (rename(NETCTL_NETWORK_CONFIG_BACKUP_PATH,
+                               NETCTL_NETWORK_CONFIG_PATH) < 0) {
+                        return -1;
+                    }
+                }
+            }
+        }
+        unlink(NETCTL_NETWORK_CONFIG_TEMP_PATH);
+        sleep_ms(20);
+    }
+    return -1;
+}
+
+static void apply_dns_policy(uint32_t mode)
+{
+    struct leonos_net_dns_policy policy;
+    struct leonos_net_dns_policy previous;
+    uint32_t custom_dns_ip = 0;
+    int ret;
+    if (mode == LEONOS_NET_DNS_MODE_CUSTOM &&
+        !parse_ipv4(dns_input, &custom_dns_ip)) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Enter a valid custom IPv4 DNS address.",
+                    "请输入有效的自定义 IPv4 DNS 地址。"));
+        return;
+    }
+    if (leonos_net_get_dns_policy(&previous) < 0 ||
+        previous.status != LEONOS_NET_STATUS_OK) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Unable to read the current DNS policy.",
+                    "无法读取当前 DNS 策略。"));
+        return;
+    }
+    ret = leonos_net_set_dns_policy(mode, custom_dns_ip, &policy);
+    if (ret < 0) {
+        set_status_ret(T("DNS policy change failed", "DNS 策略更改失败"), ret);
+        return;
+    }
+    if (policy.status != LEONOS_NET_STATUS_OK) {
+        copy_text(status_text, sizeof(status_text), status_name(policy.status));
+        return;
+    }
+    config = policy.config;
+    dns_mode = policy.mode;
+    dns_custom_ip = policy.custom_dns_ip;
+    refresh_connections();
+    if (save_dns_policy(mode, custom_dns_ip) < 0) {
+        struct leonos_net_dns_policy restored;
+        int restore_ret = leonos_net_set_dns_policy(previous.mode,
+                                                     previous.custom_dns_ip,
+                                                     &restored);
+        if (restore_ret == 0 && restored.status == LEONOS_NET_STATUS_OK) {
+            config = restored.config;
+            dns_mode = restored.mode;
+            dns_custom_ip = restored.custom_dns_ip;
+            copy_text(status_text, sizeof(status_text),
+                      T("DNS save failed; previous policy restored.",
+                        "DNS 保存失败；已恢复之前的策略。"));
+        } else {
+            copy_text(status_text, sizeof(status_text),
+                      T("DNS save failed; runtime policy may differ.",
+                        "DNS 保存失败；运行时策略可能已变化。"));
+        }
+        return;
+    }
+    load_dns_input(mode == LEONOS_NET_DNS_MODE_CUSTOM
+                       ? custom_dns_ip
+                       : LEONOS_NET_CLOUDFLARE_DNS_IP);
+    copy_text(status_text, sizeof(status_text),
+              T("DNS policy applied and saved", "DNS 策略已应用并保存"));
 }
 
 static void resolve_domain(void)
@@ -312,6 +533,7 @@ static void draw_netctl(struct leonos_ui_surface *ui)
     char gateway[32];
     char dns[32];
     char lease[48];
+    const char *dns_mode_text;
     uint32_t pos = 0;
 
     format_mac(mac, sizeof(mac), config.mac);
@@ -319,6 +541,7 @@ static void draw_netctl(struct leonos_ui_surface *ui)
     format_ipv4(mask, sizeof(mask), config.subnet_mask);
     format_ipv4(gateway, sizeof(gateway), config.gateway_ip);
     format_ipv4(dns, sizeof(dns), config.dns_ip);
+    dns_mode_text = dns_mode_name(dns_mode);
     lease[0] = 0;
     append_u32(lease, &pos, sizeof(lease), config.lease_seconds);
     append_text(lease, &pos, sizeof(lease), "s");
@@ -341,16 +564,30 @@ static void draw_netctl(struct leonos_ui_surface *ui)
     draw_row(ui, 170, T("Gateway:", "网关:"), gateway);
     draw_row(ui, 194, T("DNS:", "DNS:"), dns);
     draw_row(ui, 218, T("Lease:", "租约:"), lease);
+    draw_row(ui, 242, T("DNS mode:", "DNS 模式:"), dns_mode_text);
 
-    leonos_ui_button(ui, 24, 250, 88, LEONOS_UI_BUTTON_H, T("Refresh", "刷新"), 0);
-    leonos_ui_button(ui, 124, 250, 118, LEONOS_UI_BUTTON_H, T("Renew DHCP", "更新 DHCP"), 0);
-    leonos_ui_text(ui, 274, 254, T("Host:", "域名:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
-    leonos_ui_edit_state_draw(ui, 318, 250, 220, &domain_edit, 0);
-    leonos_ui_button(ui, 552, 250, 86, LEONOS_UI_BUTTON_H, T("Resolve", "解析"), 0);
-    leonos_ui_text_clipped(ui, 24, 286, NETCTL_W - 48, dns_text,
+    leonos_ui_button(ui, 24, 270, 110, LEONOS_UI_BUTTON_H,
+                     T("Cloudflare", "Cloudflare"),
+                     dns_mode == LEONOS_NET_DNS_MODE_CLOUDFLARE
+                         ? LEONOS_UI_BUTTON_PRESSED : 0);
+    leonos_ui_button(ui, 144, 270, 96, LEONOS_UI_BUTTON_H, T("DHCP", "DHCP"),
+                     dns_mode == LEONOS_NET_DNS_MODE_DHCP
+                         ? LEONOS_UI_BUTTON_PRESSED : 0);
+    leonos_ui_button(ui, 250, 270, 92, LEONOS_UI_BUTTON_H, T("Custom", "自定义"),
+                     dns_mode == LEONOS_NET_DNS_MODE_CUSTOM
+                         ? LEONOS_UI_BUTTON_PRESSED : 0);
+    leonos_ui_edit_state_draw(ui, 352, 270, 154, &dns_edit, 0);
+    leonos_ui_button(ui, 516, 270, 104, LEONOS_UI_BUTTON_H, T("Apply", "应用"), 0);
+
+    leonos_ui_button(ui, 24, 312, 88, LEONOS_UI_BUTTON_H, T("Refresh", "刷新"), 0);
+    leonos_ui_button(ui, 124, 312, 118, LEONOS_UI_BUTTON_H, T("Renew DHCP", "更新 DHCP"), 0);
+    leonos_ui_text(ui, 254, 316, T("Host:", "域名:"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_edit_state_draw(ui, 298, 312, 220, &domain_edit, 0);
+    leonos_ui_button(ui, 532, 312, 86, LEONOS_UI_BUTTON_H, T("Resolve", "解析"), 0);
+    leonos_ui_text_clipped(ui, 24, 348, NETCTL_W - 48, dns_text,
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
 
-    leonos_ui_groupbox(ui, 24, 308, NETCTL_W - 48, 132,
+    leonos_ui_groupbox(ui, 24, 376, NETCTL_W - 48, 154,
                        T("TCP Connections", "TCP 连接"));
     leonos_ui_listview_header(ui, CONN_X, CONN_Y, CONN_W,
                               conn_cols, 6);
@@ -431,9 +668,14 @@ int main(void)
     }
     leonos_ui_bind(&ui, pixels, NETCTL_W, NETCTL_H, NETCTL_W);
     leonos_ui_edit_state_init(&domain_edit, domain_input, sizeof(domain_input));
+    leonos_ui_edit_state_init(&dns_edit, dns_input, sizeof(dns_input));
     leonos_ui_listview_state_init(&connections_view, CONN_VISIBLE_ROWS, CONN_ROW_H);
     domain_edit.focused = 0;
+    dns_edit.focused = 0;
     refresh_config();
+    load_dns_input(dns_mode == LEONOS_NET_DNS_MODE_CUSTOM
+                       ? dns_custom_ip
+                       : LEONOS_NET_CLOUDFLARE_DNS_IP);
     draw_netctl(&ui);
     leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
 
@@ -444,8 +686,10 @@ int main(void)
                 return 0;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
-                if (leonos_ui_edit_state_handle_mouse(&domain_edit, event.x, event.y,
-                                                      318, 250, 220, event.buttons)) {
+                if (leonos_ui_edit_state_handle_mouse(&dns_edit, event.x, event.y,
+                                                      352, 270, 154, event.buttons) ||
+                    leonos_ui_edit_state_handle_mouse(&domain_edit, event.x, event.y,
+                                                      298, 312, 220, event.buttons)) {
                     draw_netctl(&ui);
                     leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
                 }
@@ -457,11 +701,20 @@ int main(void)
                     leonos_gui_present_window((uint32_t)window_id, NETCTL_W, NETCTL_H, NETCTL_W, pixels);
                 }
                 if (event.buttons & 1u) {
-                    if (hit_rect(event.x, event.y, 24, 250, 88, LEONOS_UI_BUTTON_H)) {
+                    if (hit_rect(event.x, event.y, 24, 270, 110, LEONOS_UI_BUTTON_H)) {
+                        apply_dns_policy(LEONOS_NET_DNS_MODE_CLOUDFLARE);
+                    } else if (hit_rect(event.x, event.y, 144, 270, 96, LEONOS_UI_BUTTON_H)) {
+                        apply_dns_policy(LEONOS_NET_DNS_MODE_DHCP);
+                    } else if (hit_rect(event.x, event.y, 250, 270, 92, LEONOS_UI_BUTTON_H)) {
+                        dns_edit.focused = 1;
+                        domain_edit.focused = 0;
+                    } else if (hit_rect(event.x, event.y, 516, 270, 104, LEONOS_UI_BUTTON_H)) {
+                        apply_dns_policy(LEONOS_NET_DNS_MODE_CUSTOM);
+                    } else if (hit_rect(event.x, event.y, 24, 312, 88, LEONOS_UI_BUTTON_H)) {
                         refresh_config();
-                    } else if (hit_rect(event.x, event.y, 124, 250, 118, LEONOS_UI_BUTTON_H)) {
+                    } else if (hit_rect(event.x, event.y, 124, 312, 118, LEONOS_UI_BUTTON_H)) {
                         renew_dhcp();
-                    } else if (hit_rect(event.x, event.y, 552, 250, 86, LEONOS_UI_BUTTON_H)) {
+                    } else if (hit_rect(event.x, event.y, 532, 312, 86, LEONOS_UI_BUTTON_H)) {
                         resolve_domain();
                     }
                     draw_netctl(&ui);
@@ -482,8 +735,13 @@ int main(void)
                     return 0;
                 }
                 if (event.pressed && event.keycode == LEONOS_KEY_ENTER) {
-                    resolve_domain();
-                } else if (!leonos_ui_edit_state_handle_key(&domain_edit, event.keycode, event.pressed)) {
+                    if (dns_edit.focused) {
+                        apply_dns_policy(LEONOS_NET_DNS_MODE_CUSTOM);
+                    } else {
+                        resolve_domain();
+                    }
+                } else if (!leonos_ui_edit_state_handle_key(&dns_edit, event.keycode, event.pressed) &&
+                           !leonos_ui_edit_state_handle_key(&domain_edit, event.keycode, event.pressed)) {
                     continue;
                 }
                 draw_netctl(&ui);

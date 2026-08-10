@@ -1989,6 +1989,38 @@ int leonos_net_config(struct leonos_net_config *config)
     return ioctl(3, LEONOS_IOCTL_NET_CONFIG, config);
 }
 
+int leonos_net_get_dns_policy(struct leonos_net_dns_policy *result)
+{
+    struct leonos_net_dns_policy query = {
+        .mode = LEONOS_NET_DNS_MODE_QUERY,
+        .status = LEONOS_NET_STATUS_BAD_ARGUMENT,
+    };
+    int ret;
+    if (!result) {
+        return -1;
+    }
+    ret = ioctl(3, LEONOS_IOCTL_NET_DNS_POLICY, &query);
+    *result = query;
+    return ret;
+}
+
+int leonos_net_set_dns_policy(uint32_t mode, uint32_t custom_dns_ip,
+                              struct leonos_net_dns_policy *result)
+{
+    struct leonos_net_dns_policy query = {
+        .mode = mode,
+        .custom_dns_ip = custom_dns_ip,
+        .status = LEONOS_NET_STATUS_BAD_ARGUMENT,
+    };
+    int ret;
+    if (!result) {
+        return -1;
+    }
+    ret = ioctl(3, LEONOS_IOCTL_NET_DNS_POLICY, &query);
+    *result = query;
+    return ret;
+}
+
 int leonos_net_dhcp_renew(uint32_t timeout_ms, struct leonos_net_dhcp *result)
 {
     struct leonos_net_dhcp query = {
@@ -2786,31 +2818,41 @@ static int http_fetch_once(const char *url_text,
     }
     if (!http_starts_with_ignore_case(url_text, "http://") &&
         !http_starts_with_ignore_case(url_text, "https://")) {
+        printf("[http] request rejected unsupported scheme\n");
         response->net_status = LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED;
         return 0;
     }
     if (!http_parse_url(url_text, &url)) {
+        printf("[http] request rejected invalid url\n");
         response->net_status = LEONOS_NET_STATUS_BAD_ARGUMENT;
         return 0;
     }
+    printf("[http] request host=%s port=%u secure=%u timeout=%u\n", url.host,
+           url.port, url.secure, timeout_ms);
     request_len = http_build_request_text(request_text, sizeof(request_text),
                                           &url, request);
     if (!request_len) {
+        printf("[http] request build failed host=%s\n", url.host);
         response->net_status = LEONOS_NET_STATUS_BAD_ARGUMENT;
         return 0;
     }
     socket = leonos_socket_tcp();
     if (socket < 0) {
+        printf("[http] socket open failed host=%s\n", url.host);
         response->net_status = LEONOS_NET_STATUS_SOCKET_LIMIT;
         return 0;
     }
     ret = leonos_socket_connect(socket, url.host, url.port, timeout_ms, &conn);
     if (ret < 0 || conn.status != LEONOS_NET_STATUS_OK) {
+        printf("[http] connect failed host=%s ret=%d status=%u\n", url.host,
+               ret, conn.status);
         leonos_socket_close(socket);
         response->net_status = ret < 0 ? LEONOS_NET_STATUS_TCP_FAILED
                                        : conn.status;
         return 0;
     }
+    printf("[http] connected host=%s socket=%d remote_ip=%u\n", url.host,
+           socket, conn.remote_ip);
     if (url.secure) {
         if (leonos_tls_http_exchange(socket, url.host, timeout_ms,
                                      request_text, request_len,
@@ -2819,10 +2861,15 @@ static int http_fetch_once(const char *url_text,
                                      request->response_body,
                                      request->response_body_capacity,
                                      &raw_len) < 0) {
+            printf("[http] TLS exchange failed host=%s raw=%u\n", url.host,
+                   raw_len);
             leonos_socket_close(socket);
             response->net_status = LEONOS_NET_STATUS_TLS_FAILED;
             return 0;
         }
+        net_status = LEONOS_NET_STATUS_OK;
+        printf("[http] TLS exchange complete host=%s raw=%u\n", url.host,
+               raw_len);
     } else {
         ret = (int)leonos_socket_send(socket, request_text, request_len,
                                       timeout_ms, &net_status);
@@ -2850,6 +2897,8 @@ static int http_fetch_once(const char *url_text,
                                           raw_len ? 1200U : timeout_ms,
                                           &net_status);
             if (got < 0) {
+                printf("[http] response read failed host=%s ret=%ld status=%u raw=%u\n",
+                       url.host, got, net_status, raw_len);
                 leonos_socket_close(socket);
                 response->net_status = LEONOS_NET_STATUS_TCP_FAILED;
                 return 0;
@@ -2871,10 +2920,14 @@ static int http_fetch_once(const char *url_text,
         response->flags |= LEONOS_HTTP_FLAG_TRUNCATED;
     }
     if (net_status != LEONOS_NET_STATUS_OK) {
+        printf("[http] response transport failed host=%s status=%u raw=%u\n",
+               url.host, net_status, raw_len);
         return 0;
     }
     body_offset = http_find_body_offset(request->response_body, raw_len);
     if (!body_offset) {
+        printf("[http] response missing header terminator host=%s raw=%u\n",
+               url.host, raw_len);
         response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
         return 0;
     }
@@ -2882,6 +2935,8 @@ static int http_fetch_once(const char *url_text,
     response->http_status = http_parse_status_code(request->response_body,
                                                    header_len);
     if (!response->http_status) {
+        printf("[http] response status parse failed host=%s headers=%u raw=%u\n",
+               url.host, header_len, raw_len);
         response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
         return 0;
     }
@@ -2925,6 +2980,10 @@ static int http_fetch_once(const char *url_text,
                                            response->content_length,
                                            &response->flags);
     }
+    printf("[http] response host=%s status=%u headers=%u raw=%u body=%u length=%u flags=0x%x type=%s\n",
+           url.host, response->http_status, response->headers_len, raw_len,
+           response->body_len, response->content_length, response->flags,
+           response->content_type[0] ? response->content_type : "(none)");
     return 0;
 }
 
@@ -2971,11 +3030,16 @@ int leonos_http_request(const struct leonos_http_request *request,
                         location, sizeof(location));
         http_copy_text(response->final_url, sizeof(response->final_url),
                        current_url);
+        printf("[http] request result url=%s status=%u net=%u body=%u redirects=%u flags=0x%x\n",
+               current_url, response->http_status, response->net_status,
+               response->body_len, response->redirect_count, response->flags);
         if (response->net_status != LEONOS_NET_STATUS_OK ||
             !http_is_redirect(response->http_status) ||
             !location[0]) {
             return 0;
         }
+        printf("[http] redirect from=%s to=(location present) status=%u\n",
+               current_url, response->http_status);
         if (max_redirects == 0) {
             return 0;
         }

@@ -14,6 +14,7 @@
 #define LEONOS_IOCTL_NET_SOCKET_RECV 0x4c4e5352UL
 #define LEONOS_IOCTL_NET_SOCKET_CLOSE 0x4c4e5358UL
 #define LEONOS_IOCTL_NET_CONNECTIONS 0x4c4e434eUL
+#define LEONOS_IOCTL_NET_DNS_POLICY 0x4c4e4450UL
 
 #define LEONOS_NET_STATUS_OK 0U
 #define LEONOS_NET_STATUS_NO_DEVICE 1U
@@ -43,7 +44,13 @@
 #define LEONOS_NET_DEFAULT_LOCAL_IP 0x0a00020fU
 #define LEONOS_NET_DEFAULT_GATEWAY_IP 0x0a000202U
 #define LEONOS_NET_DEFAULT_SUBNET_MASK 0xffffff00U
-#define LEONOS_NET_DEFAULT_DNS_IP 0x0a000203U
+#define LEONOS_NET_CLOUDFLARE_DNS_IP 0x01010101U
+#define LEONOS_NET_DEFAULT_DNS_IP LEONOS_NET_CLOUDFLARE_DNS_IP
+
+#define LEONOS_NET_DNS_MODE_CLOUDFLARE 0U
+#define LEONOS_NET_DNS_MODE_DHCP 1U
+#define LEONOS_NET_DNS_MODE_CUSTOM 2U
+#define LEONOS_NET_DNS_MODE_QUERY 0xffffffffU
 
 #define LEONOS_NET_CONFIG_SOURCE_NONE 0U
 #define LEONOS_NET_CONFIG_SOURCE_STATIC 1U
@@ -84,6 +91,14 @@ struct leonos_net_config {
 struct leonos_net_dhcp {
     uint32_t timeout_ms;
     uint32_t status;
+    struct leonos_net_config config;
+};
+
+struct leonos_net_dns_policy {
+    uint32_t mode;
+    uint32_t custom_dns_ip;
+    uint32_t status;
+    uint32_t reserved;
     struct leonos_net_config config;
 };
 
@@ -173,6 +188,9 @@ struct leonos_net_connection_list {
 };
 
 int leonos_net_config(struct leonos_net_config *config);
+int leonos_net_get_dns_policy(struct leonos_net_dns_policy *result);
+int leonos_net_set_dns_policy(uint32_t mode, uint32_t custom_dns_ip,
+                              struct leonos_net_dns_policy *result);
 int leonos_net_dhcp_renew(uint32_t timeout_ms, struct leonos_net_dhcp *result);
 int leonos_net_ping(uint32_t target_ip, uint32_t timeout_ms,
                     struct leonos_net_ping *result);

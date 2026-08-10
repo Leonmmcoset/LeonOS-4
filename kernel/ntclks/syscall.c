@@ -3670,6 +3670,21 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return net_get_config((struct leonos_net_config *)(uintptr_t)a2);
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_DNS_POLICY) {
+        struct leonos_net_dns_policy *request;
+        if (!user_range_ok(a2, sizeof(struct leonos_net_dns_policy))) {
+            return -LEONOS_EFAULT;
+        }
+        request = (struct leonos_net_dns_policy *)(uintptr_t)a2;
+        if (request->mode != LEONOS_NET_DNS_MODE_QUERY) {
+            int ret = require_network_config_access();
+            if (ret < 0) {
+                return ret;
+            }
+        }
+        return net_set_dns_policy(request);
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_NET_DHCP) {
         int ret = require_network_config_access();
         if (ret < 0) {

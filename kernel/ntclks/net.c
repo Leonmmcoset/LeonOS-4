@@ -53,6 +53,9 @@
 #define NET_SOCKET_DEFAULT_TIMEOUT_MS 5000u
 #define NET_SERVICES_CONFIG_PATH "0:/system/config/services.cfg"
 #define NET_SERVICES_CONFIG_MAX 512u
+#define NET_NETWORK_CONFIG_PATH "0:/system/config/network.conf"
+#define NET_NETWORK_CONFIG_BACKUP_PATH "0:/system/config/network.conf.bak"
+#define NET_NETWORK_CONFIG_MAX 256u
 #define NET_NTP_UNIX_EPOCH_OFFSET 2208988800ULL
 
 struct net_arp_wait {
@@ -137,6 +140,9 @@ static const uint8_t net_broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 static uint32_t net_sequence = 1;
 static uint16_t net_ipv4_id = 1;
 static struct leonos_net_config net_config;
+static uint32_t net_dns_mode = LEONOS_NET_DNS_MODE_CLOUDFLARE;
+static uint32_t net_dns_custom_ip;
+static uint32_t net_dhcp_dns_ip;
 static struct net_arp_cache_entry net_arp_cache[NET_ARP_CACHE_SIZE];
 static uint32_t net_arp_cache_next;
 static struct net_socket net_sockets[LEONOS_NET_SOCKET_MAX];
@@ -150,7 +156,7 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
 
 static void net_cpu_relax(void)
 {
-    __asm__ volatile("pause");
+    __asm__ volatile("sti; hlt; cli");
 }
 
 static void net_memcpy(void *dst, const void *src, uint32_t len)
@@ -219,6 +225,131 @@ static int net_service_line_value(const char *line, uint32_t len,
              line[key_len + 1u] == 'y' ||
              line[key_len + 1u] == 'Y';
     return 1;
+}
+
+static int net_line_value(const char *line, uint32_t len, const char *key,
+                          const char **out_value, uint32_t *out_len)
+{
+    uint32_t key_len = net_strlen(key, NET_NETWORK_CONFIG_MAX);
+    if (!line || !key || !out_value || !out_len || !key_len || len <= key_len ||
+        line[key_len] != '=' || !net_text_eq_len(line, key, key_len)) {
+        return 0;
+    }
+    *out_value = line + key_len + 1u;
+    *out_len = len - key_len - 1u;
+    return 1;
+}
+
+static int net_value_eq(const char *value, uint32_t len, const char *expected)
+{
+    uint32_t index = 0;
+    while (expected && expected[index]) {
+        if (index >= len || value[index] != expected[index]) {
+            return 0;
+        }
+        ++index;
+    }
+    return index == len;
+}
+
+static int net_parse_ipv4(const char *text, uint32_t len, uint32_t *out_ip)
+{
+    uint32_t ip = 0;
+    uint32_t pos = 0;
+    for (uint32_t octet = 0; octet < 4u; ++octet) {
+        uint32_t value = 0;
+        uint32_t digits = 0;
+        while (pos < len && text[pos] >= '0' && text[pos] <= '9') {
+            value = value * 10u + (uint32_t)(text[pos] - '0');
+            if (value > 255u || ++digits > 3u) {
+                return 0;
+            }
+            ++pos;
+        }
+        if (!digits) {
+            return 0;
+        }
+        ip = (ip << 8) | value;
+        if (octet != 3u) {
+            if (pos >= len || text[pos++] != '.') {
+                return 0;
+            }
+        }
+    }
+    if (pos != len || ip == 0 || ip == 0xffffffffu) {
+        return 0;
+    }
+    *out_ip = ip;
+    return 1;
+}
+
+static int net_load_dns_policy_file(const char *path)
+{
+    struct storage_node node;
+    char cfg[NET_NETWORK_CONFIG_MAX];
+    uint32_t got = 0;
+    uint32_t pos = 0;
+
+    if (!path || !storage_ready() ||
+        storage_lookup_path(path, &node) < 0 ||
+        node.type != LEONOS_FS_TYPE_FILE) {
+        return -1;
+    }
+    if (storage_read_node(&node, 0, cfg, sizeof(cfg) - 1u, &got) < 0) {
+        return -1;
+    }
+    cfg[got] = 0;
+    while (pos < got) {
+        const char *value;
+        uint32_t value_len;
+        uint32_t start = pos;
+        uint32_t line_len;
+        while (pos < got && cfg[pos] != '\n' && cfg[pos] != '\r') {
+            ++pos;
+        }
+        line_len = pos - start;
+        while (pos < got && (cfg[pos] == '\n' || cfg[pos] == '\r')) {
+            ++pos;
+        }
+        if (net_line_value(cfg + start, line_len, "dns_mode", &value, &value_len)) {
+            if (net_value_eq(value, value_len, "dhcp")) {
+                net_dns_mode = LEONOS_NET_DNS_MODE_DHCP;
+            } else if (net_value_eq(value, value_len, "custom")) {
+                net_dns_mode = LEONOS_NET_DNS_MODE_CUSTOM;
+            } else if (net_value_eq(value, value_len, "cloudflare")) {
+                net_dns_mode = LEONOS_NET_DNS_MODE_CLOUDFLARE;
+            }
+        } else if (net_line_value(cfg + start, line_len, "dns_custom", &value, &value_len)) {
+            uint32_t parsed_ip;
+            if (net_parse_ipv4(value, value_len, &parsed_ip)) {
+                net_dns_custom_ip = parsed_ip;
+            }
+        }
+    }
+    return 0;
+}
+
+static void net_load_dns_policy(void)
+{
+    net_dns_mode = LEONOS_NET_DNS_MODE_CLOUDFLARE;
+    net_dns_custom_ip = 0;
+    if (net_load_dns_policy_file(NET_NETWORK_CONFIG_PATH) < 0) {
+        (void)net_load_dns_policy_file(NET_NETWORK_CONFIG_BACKUP_PATH);
+    }
+    if (net_dns_mode == LEONOS_NET_DNS_MODE_CUSTOM && !net_dns_custom_ip) {
+        net_dns_mode = LEONOS_NET_DNS_MODE_CLOUDFLARE;
+    }
+}
+
+static uint32_t net_effective_dns_ip(uint32_t dhcp_dns_ip)
+{
+    if (net_dns_mode == LEONOS_NET_DNS_MODE_CUSTOM && net_dns_custom_ip) {
+        return net_dns_custom_ip;
+    }
+    if (net_dns_mode == LEONOS_NET_DNS_MODE_DHCP && dhcp_dns_ip) {
+        return dhcp_dns_ip;
+    }
+    return LEONOS_NET_CLOUDFLARE_DNS_IP;
 }
 
 static uint8_t net_service_enabled(const char *key, uint8_t default_value)
@@ -452,7 +583,7 @@ static void net_set_static_fallback(void)
         .local_ip = LEONOS_NET_DEFAULT_LOCAL_IP,
         .subnet_mask = LEONOS_NET_DEFAULT_SUBNET_MASK,
         .gateway_ip = LEONOS_NET_DEFAULT_GATEWAY_IP,
-        .dns_ip = LEONOS_NET_DEFAULT_DNS_IP,
+        .dns_ip = net_effective_dns_ip(0),
         .dhcp_server_ip = 0,
         .lease_seconds = 0,
     };
@@ -465,7 +596,8 @@ static void net_apply_dhcp_offer(const struct net_dhcp_offer *offer)
     net_config.local_ip = offer->yiaddr;
     net_config.subnet_mask = offer->subnet_mask ? offer->subnet_mask : LEONOS_NET_DEFAULT_SUBNET_MASK;
     net_config.gateway_ip = offer->router_ip ? offer->router_ip : LEONOS_NET_DEFAULT_GATEWAY_IP;
-    net_config.dns_ip = offer->dns_ip ? offer->dns_ip : LEONOS_NET_DEFAULT_DNS_IP;
+    net_dhcp_dns_ip = offer->dns_ip;
+    net_config.dns_ip = net_effective_dns_ip(net_dhcp_dns_ip);
     net_config.dhcp_server_ip = offer->server_ip;
     net_config.lease_seconds = offer->lease_seconds;
     net_config.source = LEONOS_NET_CONFIG_SOURCE_DHCP;
@@ -612,7 +744,7 @@ static int net_send_tcp_to_mac(const uint8_t *dst_mac, uint32_t src_ip,
     net_put_u32(tcp + 8, ack);
     tcp[12] = (uint8_t)((tcp_header_len / 4u) << 4);
     tcp[13] = flags;
-    net_put_u16(tcp + 14, 4096);
+    net_put_u16(tcp + 14, NET_SOCKET_RX_CAP);
     net_put_u16(tcp + 16, 0);
     net_put_u16(tcp + 18, 0);
     if (flags & TCP_FLAG_SYN) {
@@ -1012,6 +1144,11 @@ static void net_socket_mark_closed(struct net_socket *socket, uint32_t status)
     net_socket_touch(socket);
 }
 
+static int net_socket_trace_tls(const struct net_socket *socket)
+{
+    return socket && socket->remote_port == 443u;
+}
+
 static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
                                   uint16_t dst_port, uint32_t seq,
                                   uint32_t ack, uint8_t flags,
@@ -1021,6 +1158,11 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
     struct net_socket *socket = net_socket_match(src_ip, src_port, dst_port);
     if (!socket) {
         return;
+    }
+    if (net_socket_trace_tls(socket)) {
+        console_printf("[net] tls rx socket=%d state=%u flags=0x%x seq=%u ack=%u payload=%u expected=%u\\n",
+                       socket->handle, socket->state, flags, seq, ack,
+                       payload_len, socket->remote_seq);
     }
     if (flags & TCP_FLAG_ACK) {
         if (!socket->acked_seq ||
@@ -1040,6 +1182,11 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
             socket->state = LEONOS_NET_TCP_ESTABLISHED;
             socket->status = LEONOS_NET_STATUS_OK;
             net_socket_touch(socket);
+            if (net_socket_trace_tls(socket)) {
+                console_printf("[net] tls connected socket=%d local=%u remote=%u\\n",
+                               socket->handle, socket->local_port,
+                               socket->remote_port);
+            }
             (void)net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
                                       socket->remote_ip, socket->local_port,
                                       socket->remote_port, socket->local_seq,
@@ -1069,6 +1216,14 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
             socket->status = overflow ? LEONOS_NET_STATUS_HTTP_TOO_LARGE
                                       : LEONOS_NET_STATUS_OK;
             net_socket_touch(socket);
+            if (net_socket_trace_tls(socket)) {
+                console_printf("[net] tls rx accepted socket=%d bytes=%u queued=%u next=%u overflow=%u\\n",
+                               socket->handle, copy_len, socket->rx_len,
+                               socket->remote_seq, overflow);
+            }
+        } else if (net_socket_trace_tls(socket)) {
+            console_printf("[net] tls rx ignored socket=%d seq=%u expected=%u bytes=%u\\n",
+                           socket->handle, seq, socket->remote_seq, payload_len);
         }
         (void)net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
                                   socket->remote_ip, socket->local_port,
@@ -1335,6 +1490,7 @@ static void net_log_config(const char *prefix)
 void net_init(void)
 {
     uint32_t status = LEONOS_NET_STATUS_DHCP_FAILED;
+    net_load_dns_policy();
     e1000_init();
     net_set_static_fallback();
     if (!e1000_is_ready()) {
@@ -1372,6 +1528,43 @@ int net_get_config(struct leonos_net_config *config)
     }
     net_update_config_flags();
     *config = net_config;
+    return 0;
+}
+
+int net_set_dns_policy(struct leonos_net_dns_policy *request)
+{
+    uint32_t mode;
+    uint32_t custom_dns_ip;
+    if (!request) {
+        return -1;
+    }
+    mode = request->mode;
+    custom_dns_ip = request->custom_dns_ip;
+    request->status = LEONOS_NET_STATUS_BAD_ARGUMENT;
+    net_update_config_flags();
+    if (mode == LEONOS_NET_DNS_MODE_QUERY) {
+        request->mode = net_dns_mode;
+        request->custom_dns_ip = net_dns_custom_ip;
+        request->status = LEONOS_NET_STATUS_OK;
+        request->config = net_config;
+        return 0;
+    }
+    request->config = net_config;
+    if (mode > LEONOS_NET_DNS_MODE_CUSTOM ||
+        (mode == LEONOS_NET_DNS_MODE_CUSTOM &&
+         (custom_dns_ip == 0 || custom_dns_ip == 0xffffffffu))) {
+        return 0;
+    }
+    net_dns_mode = mode;
+    net_dns_custom_ip = mode == LEONOS_NET_DNS_MODE_CUSTOM
+                            ? custom_dns_ip
+                            : 0;
+    net_config.dns_ip = net_effective_dns_ip(net_dhcp_dns_ip);
+    net_update_config_flags();
+    request->mode = net_dns_mode;
+    request->custom_dns_ip = net_dns_custom_ip;
+    request->status = LEONOS_NET_STATUS_OK;
+    request->config = net_config;
     return 0;
 }
 
@@ -2122,6 +2315,11 @@ int net_socket_send(struct leonos_net_socket_io *request, uint32_t owner_pid)
             chunk = NET_TCP_MSS;
         }
         target_seq = seq + chunk;
+        if (net_socket_trace_tls(socket)) {
+            console_printf("[net] tls tx socket=%d seq=%u ack=%u bytes=%u target=%u\\n",
+                           socket->handle, seq, socket->remote_seq, chunk,
+                           target_seq);
+        }
         if (net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
                                 socket->remote_ip, socket->local_port,
                                 socket->remote_port, seq,
@@ -2165,6 +2363,11 @@ int net_socket_send(struct leonos_net_socket_io *request, uint32_t owner_pid)
         }
         if (!net_tcp_seq_after_or_equal(socket->acked_seq, target_seq)) {
             request->status = LEONOS_NET_STATUS_TCP_TIMEOUT;
+            if (net_socket_trace_tls(socket)) {
+                console_printf("[net] tls tx timeout socket=%d target=%u acked=%u state=%u\\n",
+                               socket->handle, target_seq, socket->acked_seq,
+                               socket->state);
+            }
             return 0;
         }
     }
@@ -2220,6 +2423,10 @@ int net_socket_recv(struct leonos_net_socket_io *request, uint32_t owner_pid)
                 socket->rx[i - copy_len] = socket->rx[i];
             }
             socket->rx_len -= copy_len;
+            (void)net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
+                                      socket->remote_ip, socket->local_port,
+                                      socket->remote_port, socket->local_seq,
+                                      socket->remote_seq, TCP_FLAG_ACK, 0, 0);
         }
         request->transferred = copy_len;
         request->status = LEONOS_NET_STATUS_OK;
@@ -2234,6 +2441,11 @@ int net_socket_recv(struct leonos_net_socket_io *request, uint32_t owner_pid)
         return 0;
     }
     request->status = LEONOS_NET_STATUS_TCP_TIMEOUT;
+    if (net_socket_trace_tls(socket)) {
+        console_printf("[net] tls rx timeout socket=%d state=%u expected=%u queued=%u fin=%u\\n",
+                       socket->handle, socket->state, socket->remote_seq,
+                       socket->rx_len, socket->fin_received);
+    }
     return 0;
 }
 

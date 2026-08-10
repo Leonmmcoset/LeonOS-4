@@ -36,7 +36,7 @@ static struct service_entry services[SERVICE_COUNT] = {
     {"dhcp", 1, 0, 1, "starting", "waiting for network state", 0},
     {"network_icon", 1, 0, 1, "running", "desktop taskbar switch enabled", 0},
     {"rtc_clock", 1, 0, 1, "running", "desktop taskbar switch enabled", 0},
-    {"ntp_sync", 0, 0, 0, "stopped", "disabled by policy", 0},
+    {"ntp_sync", 1, 0, 1, "starting", "waiting for clock sync", 0},
 };
 
 static unsigned long last_dhcp_attempt_ms;
