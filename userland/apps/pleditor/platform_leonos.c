@@ -7,11 +7,13 @@
 #include <unistd.h>
 
 #include <leonos/syscall.h>
+#include <leonos/text.h>
 
 #include "../../../third_party/pl_editor/src/platform.h"
 
 static struct termios saved_termios;
 static int terminal_active;
+static uint32_t file_encoding = LEONOS_TEXT_ENCODING_UTF8;
 
 static int read_byte(unsigned char *value, unsigned long timeout_ms)
 {
@@ -147,6 +149,12 @@ bool pleditor_platform_read_file(const char *filename, char **buffer, size_t *le
     FILE *file;
     long size;
     size_t read_length;
+    char *raw_buffer;
+    uint32_t decoded_length;
+    uint32_t replacements;
+    uint32_t detected_encoding;
+    int result;
+    int close_result;
     if (!filename || !buffer || !length || !(file = fopen(filename, "rb"))) {
         return false;
     }
@@ -155,19 +163,35 @@ bool pleditor_platform_read_file(const char *filename, char **buffer, size_t *le
         fclose(file);
         return false;
     }
-    *buffer = malloc((size_t)size + 1U);
-    if (!*buffer) {
+    if ((uint64_t)size > ((uint64_t)UINT32_MAX - 1U) / 3U ||
+        !(raw_buffer = malloc((size_t)size + 1U))) {
         fclose(file);
         return false;
     }
-    read_length = fread(*buffer, 1, (size_t)size, file);
-    if (read_length != (size_t)size || fclose(file) != 0) {
+    read_length = fread(raw_buffer, 1, (size_t)size, file);
+    close_result = fclose(file);
+    if (read_length != (size_t)size || close_result != 0) {
+        free(raw_buffer);
+        return false;
+    }
+    if (leonos_text_detect_encoding(raw_buffer, (uint32_t)read_length,
+                                    &detected_encoding) < 0 ||
+        !(*buffer = malloc(read_length * 3U + 1U))) {
+        free(raw_buffer);
+        return false;
+    }
+    result = leonos_text_decode(raw_buffer, (uint32_t)read_length, detected_encoding,
+                                *buffer, (uint32_t)(read_length * 3U),
+                                &decoded_length, &replacements);
+    free(raw_buffer);
+    if (result < 0) {
         free(*buffer);
         *buffer = 0;
         return false;
     }
-    (*buffer)[read_length] = '\0';
-    *length = read_length;
+    (*buffer)[decoded_length] = '\0';
+    *length = decoded_length;
+    file_encoding = detected_encoding;
     return true;
 }
 
@@ -175,9 +199,32 @@ bool pleditor_platform_write_file(const char *filename, const char *buffer, size
 {
     FILE *file;
     size_t written;
-    if (!filename || (!buffer && length) || !(file = fopen(filename, "wb"))) {
+    char *encoded;
+    uint32_t encoded_length;
+    uint32_t replacements;
+    int result;
+    int close_result;
+    if (!filename || (!buffer && length)) {
         return false;
     }
-    written = fwrite(buffer, 1, length, file);
-    return written == length && fclose(file) == 0;
+    if ((uint64_t)length > ((uint64_t)UINT32_MAX - 4U) / 2U ||
+        !(encoded = malloc(length * 2U + 4U))) {
+        return false;
+    }
+    result = leonos_text_encode(buffer, (uint32_t)length, file_encoding, encoded,
+                                (uint32_t)(length * 2U + 4U),
+                                &encoded_length, &replacements);
+    if (result < 0 || replacements) {
+        free(encoded);
+        return false;
+    }
+    file = fopen(filename, "wb");
+    if (!file) {
+        free(encoded);
+        return false;
+    }
+    written = fwrite(encoded, 1, encoded_length, file);
+    free(encoded);
+    close_result = fclose(file);
+    return written == encoded_length && close_result == 0;
 }

@@ -11,6 +11,7 @@
 #include <ntclks/net.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/platform.h>
+#include <ntclks/power.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
@@ -189,6 +190,11 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
+    if (!boot.rsdp_addr && handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC) {
+        boot.rsdp_addr = handoff->rsdp_addr;
+    }
+    /* Parse ACPI before the physical allocator can reclaim ACPI memory. */
+    power_init(&boot);
     boot_import_handoff_modules(&boot, handoff);
     platform_identity_init(&boot);
 

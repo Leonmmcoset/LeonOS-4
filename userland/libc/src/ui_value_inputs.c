@@ -1,6 +1,84 @@
 #include <leonos/gui.h>
 #include <leonos/ui.h>
 
+struct value_popup_cache {
+    uint32_t valid;
+    uint32_t kind;
+    uint32_t requested_x;
+    uint32_t requested_y;
+    uint32_t requested_w;
+    uint32_t w;
+    uint32_t h;
+    int32_t x;
+    int32_t y;
+};
+
+static struct value_popup_cache value_popup;
+
+static void value_popup_place(const struct leonos_ui_surface *surface,
+                              uint32_t kind, uint32_t requested_x,
+                              uint32_t requested_y, uint32_t w, uint32_t h,
+                              int32_t *out_x, int32_t *out_y)
+{
+    int32_t x = (int32_t)requested_x;
+    int32_t y = (int32_t)requested_y;
+    if (surface) {
+        if (w > surface->width) {
+            x = 0;
+        } else if ((uint32_t)x + w > surface->width) {
+            x = (int32_t)(surface->width - w);
+        }
+        if (h > surface->height) {
+            y = 0;
+        } else if ((uint32_t)y + h > surface->height) {
+            if (y >= (int32_t)h + 2) {
+                y -= (int32_t)h + 2;
+            } else {
+                y = (int32_t)(surface->height - h);
+            }
+        }
+    }
+    value_popup.valid = 1;
+    value_popup.kind = kind;
+    value_popup.requested_x = requested_x;
+    value_popup.requested_y = requested_y;
+    value_popup.requested_w = w;
+    value_popup.w = w;
+    value_popup.h = h;
+    value_popup.x = x;
+    value_popup.y = y;
+    if (out_x) {
+        *out_x = x;
+    }
+    if (out_y) {
+        *out_y = y;
+    }
+}
+
+static void value_popup_resolve(uint32_t kind, uint32_t requested_x,
+                                uint32_t requested_y, uint32_t w, uint32_t h,
+                                int32_t *out_x, int32_t *out_y)
+{
+    int32_t x = (int32_t)requested_x;
+    int32_t y = (int32_t)requested_y;
+    if (value_popup.valid && value_popup.kind == kind &&
+        value_popup.requested_x == requested_x &&
+        value_popup.requested_y == requested_y &&
+        value_popup.requested_w == w) {
+        x = value_popup.x;
+        y = value_popup.y;
+    } else if (requested_y >= h + 2) {
+        /* Fallback for callers that draw through a separate surface pass. */
+        y = (int32_t)requested_y - (int32_t)h - 2;
+    }
+    if (out_x) {
+        *out_x = x;
+    }
+    if (out_y) {
+        *out_y = y;
+    }
+}
+
 static uint8_t color_channel(uint32_t color, uint8_t channel)
 {
     return (uint8_t)(color >> ((2U - (channel % 3U)) * 8U));
@@ -40,7 +118,8 @@ void leonos_ui_color_input(struct leonos_ui_surface *surface, uint32_t x, uint32
                            uint32_t flags)
 {
     char value[8];
-    uint32_t popup_y;
+    int32_t popup_x;
+    int32_t popup_y;
     uint32_t popup_w = w < 214 ? 214 : w;
     uint32_t channel_w = (popup_w - 16) / 3;
     static const char names[] = "RGB";
@@ -58,19 +137,21 @@ void leonos_ui_color_input(struct leonos_ui_surface *surface, uint32_t x, uint32
     if (!state->open || (flags & LEONOS_UI_INPUT_DISABLED)) {
         return;
     }
-    popup_y = y + LEONOS_UI_BUTTON_H + 2;
-    leonos_ui_bevel(surface, x, popup_y, popup_w, 82, LEONOS_UI_GRAY, 0);
+    value_popup_place(surface, 1, x, y + LEONOS_UI_BUTTON_H + 2,
+                      popup_w, 82, &popup_x, &popup_y);
+    leonos_ui_bevel(surface, (uint32_t)popup_x, (uint32_t)popup_y,
+                    popup_w, 82, LEONOS_UI_GRAY, 0);
     for (uint32_t channel = 0; channel < 3; ++channel) {
-        uint32_t channel_x = x + 6 + channel * channel_w;
+        uint32_t channel_x = (uint32_t)popup_x + 6 + channel * channel_w;
         int32_t channel_value = color_channel(state->color, (uint8_t)channel);
         char label[3] = {names[channel], ':', 0};
         uint32_t preview = channel == 0 ? ((uint32_t)channel_value << 16)
                          : channel == 1 ? ((uint32_t)channel_value << 8)
                                         : (uint32_t)channel_value;
-        leonos_ui_text_transparent(surface, channel_x, popup_y + 8, label, LEONOS_UI_BLACK);
-        leonos_ui_rect(surface, channel_x, popup_y + 26,
+        leonos_ui_text_transparent(surface, channel_x, (uint32_t)popup_y + 8, label, LEONOS_UI_BLACK);
+        leonos_ui_rect(surface, channel_x, (uint32_t)popup_y + 26,
                        channel_w > 8 ? channel_w - 8 : channel_w, 12, preview);
-        leonos_ui_stepper(surface, channel_x, popup_y + 46,
+        leonos_ui_stepper(surface, channel_x, (uint32_t)popup_y + 46,
                           channel_w > 8 ? channel_w - 8 : channel_w,
                           LEONOS_UI_BUTTON_H, channel_value, 0, 255,
                           state->channel == channel ? LEONOS_UI_BUTTON_ACTIVE : 0);
@@ -82,7 +163,8 @@ int leonos_ui_color_input_handle_mouse(struct leonos_ui_color_input_state *state
                                        uint32_t x, uint32_t y, uint32_t w,
                                        uint32_t flags)
 {
-    uint32_t popup_y;
+    int32_t popup_x;
+    int32_t popup_y;
     uint32_t popup_w;
     uint32_t channel_w;
     if (!state || (flags & LEONOS_UI_INPUT_DISABLED)) {
@@ -97,14 +179,15 @@ int leonos_ui_color_input_handle_mouse(struct leonos_ui_color_input_state *state
     if (!state->open) {
         return 0;
     }
-    popup_y = y + LEONOS_UI_BUTTON_H + 2;
     popup_w = w < 214 ? 214 : w;
+    value_popup_resolve(1, x, y + LEONOS_UI_BUTTON_H + 2,
+                        popup_w, 82, &popup_x, &popup_y);
     channel_w = (popup_w - 16) / 3;
     for (uint32_t channel = 0; channel < 3; ++channel) {
-        uint32_t channel_x = x + 6 + channel * channel_w;
+        uint32_t channel_x = (uint32_t)popup_x + 6 + channel * channel_w;
         int32_t value = color_channel(state->color, (uint8_t)channel);
         if (leonos_ui_stepper_handle_mouse(&value, 0, 255, 1, channel_x,
-                                           popup_y + 46,
+                                           (uint32_t)popup_y + 46,
                                            channel_w > 8 ? channel_w - 8 : channel_w,
                                            LEONOS_UI_BUTTON_H, px, py)) {
             color_set_channel(state, (uint8_t)channel, (uint8_t)value);
@@ -112,7 +195,7 @@ int leonos_ui_color_input_handle_mouse(struct leonos_ui_color_input_state *state
             return 1;
         }
     }
-    if (!leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)popup_y,
+    if (!leonos_ui_hit((uint32_t)px, (uint32_t)py, popup_x, popup_y,
                        popup_w, 82)) {
         state->open = 0;
         return 1;
@@ -237,7 +320,8 @@ void leonos_ui_date_input(struct leonos_ui_surface *surface, uint32_t x, uint32_
 {
     char value[11];
     char day_text[3];
-    uint32_t popup_y;
+    int32_t popup_x;
+    int32_t popup_y;
     uint32_t popup_w = w < 224 ? 224 : w;
     uint32_t cell_w = (popup_w - 12) / 7;
     uint8_t first;
@@ -256,21 +340,26 @@ void leonos_ui_date_input(struct leonos_ui_surface *surface, uint32_t x, uint32_
     if (!state->open || (flags & LEONOS_UI_INPUT_DISABLED)) {
         return;
     }
-    popup_y = y + LEONOS_UI_BUTTON_H + 2;
-    leonos_ui_bevel(surface, x, popup_y, popup_w, 174, LEONOS_UI_GRAY, 0);
-    leonos_ui_button(surface, x + 6, popup_y + 4, 22, 20, "<", 0);
-    leonos_ui_button(surface, x + popup_w - 28, popup_y + 4, 22, 20, ">", 0);
-    leonos_ui_text_transparent(surface, x + 42, popup_y + 6, value, LEONOS_UI_BLACK);
+    value_popup_place(surface, 2, x, y + LEONOS_UI_BUTTON_H + 2,
+                      popup_w, 174, &popup_x, &popup_y);
+    leonos_ui_bevel(surface, (uint32_t)popup_x, (uint32_t)popup_y,
+                    popup_w, 174, LEONOS_UI_GRAY, 0);
+    leonos_ui_button(surface, (uint32_t)popup_x + 6, (uint32_t)popup_y + 4, 22, 20, "<", 0);
+    leonos_ui_button(surface, (uint32_t)popup_x + popup_w - 28,
+                     (uint32_t)popup_y + 4, 22, 20, ">", 0);
+    leonos_ui_text_transparent(surface, (uint32_t)popup_x + 42,
+                               (uint32_t)popup_y + 6, value, LEONOS_UI_BLACK);
     for (uint32_t column = 0; column < 7; ++column) {
-        leonos_ui_text_transparent(surface, x + 8 + column * cell_w, popup_y + 32,
+        leonos_ui_text_transparent(surface, (uint32_t)popup_x + 8 + column * cell_w,
+                                   (uint32_t)popup_y + 32,
                                    weekdays[column], LEONOS_UI_DARK);
     }
     first = date_weekday(state->year, state->month, 1);
     days = date_days_in_month(state->year, state->month);
     for (uint8_t day = 1; day <= days; ++day) {
         uint32_t index = first + day - 1U;
-        uint32_t cell_x = x + 6 + (index % 7U) * cell_w;
-        uint32_t cell_y = popup_y + 50 + (index / 7U) * 20U;
+        uint32_t cell_x = (uint32_t)popup_x + 6 + (index % 7U) * cell_w;
+        uint32_t cell_y = (uint32_t)popup_y + 50 + (index / 7U) * 20U;
         uint32_t selected = day == state->day;
         day_text[0] = (char)('0' + day / 10U);
         day_text[1] = (char)('0' + day % 10U);
@@ -289,7 +378,8 @@ int leonos_ui_date_input_handle_mouse(struct leonos_ui_date_input_state *state,
                                       uint32_t x, uint32_t y, uint32_t w,
                                       uint32_t flags)
 {
-    uint32_t popup_y;
+    int32_t popup_x;
+    int32_t popup_y;
     uint32_t popup_w;
     uint32_t cell_w;
     uint8_t first;
@@ -305,23 +395,29 @@ int leonos_ui_date_input_handle_mouse(struct leonos_ui_date_input_state *state,
     if (!state->open) {
         return 0;
     }
-    popup_y = y + LEONOS_UI_BUTTON_H + 2;
     popup_w = w < 224 ? 224 : w;
-    if ((uint32_t)py >= popup_y + 4 && (uint32_t)py < popup_y + 24) {
-        if ((uint32_t)px >= x + 6 && (uint32_t)px < x + 28) {
+    value_popup_resolve(2, x, y + LEONOS_UI_BUTTON_H + 2,
+                        popup_w, 174, &popup_x, &popup_y);
+    if ((uint32_t)py >= (uint32_t)popup_y + 4 &&
+        (uint32_t)py < (uint32_t)popup_y + 24) {
+        if ((uint32_t)px >= (uint32_t)popup_x + 6 &&
+            (uint32_t)px < (uint32_t)popup_x + 28) {
             date_change_month(state, -1);
             return 1;
         }
-        if ((uint32_t)px >= x + popup_w - 28 && (uint32_t)px < x + popup_w - 6) {
+        if ((uint32_t)px >= (uint32_t)popup_x + popup_w - 28 &&
+            (uint32_t)px < (uint32_t)popup_x + popup_w - 6) {
             date_change_month(state, 1);
             return 1;
         }
     }
     cell_w = (popup_w - 12) / 7;
-    if ((uint32_t)px >= x + 6 && (uint32_t)px < x + popup_w - 6 &&
-        (uint32_t)py >= popup_y + 50 && (uint32_t)py < popup_y + 170) {
-        uint32_t column = ((uint32_t)px - x - 6) / cell_w;
-        uint32_t row = ((uint32_t)py - popup_y - 50) / 20U;
+    if ((uint32_t)px >= (uint32_t)popup_x + 6 &&
+        (uint32_t)px < (uint32_t)popup_x + popup_w - 6 &&
+        (uint32_t)py >= (uint32_t)popup_y + 50 &&
+        (uint32_t)py < (uint32_t)popup_y + 170) {
+        uint32_t column = ((uint32_t)px - (uint32_t)popup_x - 6) / cell_w;
+        uint32_t row = ((uint32_t)py - (uint32_t)popup_y - 50) / 20U;
         uint32_t cell = row * 7U + column;
         first = date_weekday(state->year, state->month, 1);
         if (cell >= first && cell < first + date_days_in_month(state->year, state->month)) {
@@ -332,7 +428,7 @@ int leonos_ui_date_input_handle_mouse(struct leonos_ui_date_input_state *state,
         }
         return 1;
     }
-    if (!leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)popup_y,
+    if (!leonos_ui_hit((uint32_t)px, (uint32_t)py, popup_x, popup_y,
                        popup_w, 174)) {
         state->open = 0;
         return 1;

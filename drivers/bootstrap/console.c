@@ -4,11 +4,8 @@
 #include <ntclks/framebuffer.h>
 
 #define CONSOLE_LOG_CAP 8192
-#define CONSOLE_MAX_COLS 256u
-#define CONSOLE_MAX_ROWS 96u
-#define CONSOLE_UI_HEADER_HEIGHT 56u
-#define CONSOLE_UI_FOOTER_HEIGHT 32u
-#define CONSOLE_UI_PANEL_HEADER_HEIGHT 28u
+#define CONSOLE_MAX_COLS 512u
+#define CONSOLE_MAX_ROWS 192u
 
 static char log_buffer[CONSOLE_LOG_CAP];
 static size_t log_len;
@@ -22,39 +19,14 @@ static uint32_t fb_col;
 static uint32_t fb_row;
 static uint32_t console_ui_theme = 1u;
 
-static uint32_t console_background(void)
-{
-    return console_ui_theme == 0u ? 0x00000000u : 0x00131c2au;
-}
-
-static uint32_t console_banner(void)
-{
-    return console_ui_theme == 0u ? 0x00808080u : 0x0022384du;
-}
-
 static uint32_t console_panel(void)
 {
     return console_ui_theme == 0u ? 0x00000000u : 0x001b2a3au;
 }
 
-static uint32_t console_border(void)
-{
-    return console_ui_theme == 0u ? 0x00c0c0c0u : 0x003a6179u;
-}
-
 static uint32_t console_fg(void)
 {
     return console_ui_theme == 0u ? 0x0000ff00u : 0x00ffffffu;
-}
-
-static uint32_t console_muted_fg(void)
-{
-    return console_ui_theme == 0u ? 0x00c0c0c0u : 0x0091b8d0u;
-}
-
-static uint32_t console_accent(void)
-{
-    return console_ui_theme == 0u ? 0x00ffff00u : 0x005aa7e8u;
 }
 
 static void log_store(char ch)
@@ -190,82 +162,16 @@ static bool fb_console_use_handoff_state(const struct leonos_boot_log_state *boo
     return true;
 }
 
-static void fb_console_draw_boot_log_chrome(void)
+static void fb_console_initialize_fullscreen(void)
 {
     const struct framebuffer *fb = framebuffer_get();
     if (!fb->available) {
         return;
     }
-
-    uint32_t panel_x = fb->width >= 320u ? 24u : 8u;
-    uint32_t panel_y = fb->height >= 160u ? CONSOLE_UI_HEADER_HEIGHT + 18u
-                                          : LEONOS_FONT_H * 3u;
-    uint32_t footer_y = fb->height > CONSOLE_UI_FOOTER_HEIGHT + 8u
-                            ? fb->height - CONSOLE_UI_FOOTER_HEIGHT
-                            : fb->height;
-    uint32_t panel_width = fb->width > panel_x * 2u ? fb->width - panel_x * 2u : 0u;
-    uint32_t panel_height = footer_y > panel_y + 8u ? footer_y - panel_y - 8u : 0u;
-    uint32_t live_output_x = panel_x + 12u;
-    if (panel_width < 24u + LEONOS_FONT_W ||
-        panel_height <= CONSOLE_UI_PANEL_HEADER_HEIGHT + LEONOS_FONT_H + 8u) {
-        fb_x = 0;
-        fb_y = 0;
-        fb_cols = fb->width / LEONOS_FONT_W;
-        fb_rows = fb->height / LEONOS_FONT_H;
-        if (fb_cols > CONSOLE_MAX_COLS) {
-            fb_cols = CONSOLE_MAX_COLS;
-        }
-        if (fb_rows > CONSOLE_MAX_ROWS) {
-            fb_rows = CONSOLE_MAX_ROWS;
-        }
-        fb_col = 0;
-        fb_row = 0;
-        fb_console_clear_log();
-        return;
-    }
-    if (panel_width >= 128u) {
-        live_output_x = panel_x + panel_width - 116u;
-    }
-
-    framebuffer_rect(0, 0, fb->width, fb->height, console_background());
-    framebuffer_rect(0, 0, fb->width, panel_y, console_banner());
-    framebuffer_rect(panel_x, panel_y, panel_width, panel_height, console_panel());
-    framebuffer_rect(panel_x, panel_y, panel_width, 1u, console_border());
-    framebuffer_rect(panel_x, panel_y + panel_height - 1u, panel_width, 1u,
-                     console_border());
-    framebuffer_rect(panel_x, panel_y, 1u, panel_height, console_border());
-    framebuffer_rect(panel_x + panel_width - 1u, panel_y, 1u, panel_height,
-                     console_border());
-    framebuffer_rect(panel_x + 1u, panel_y + 1u, panel_width - 2u,
-                     CONSOLE_UI_PANEL_HEADER_HEIGHT - 1u, console_banner());
-    framebuffer_rect(panel_x + panel_width - 12u, panel_y + 10u, 4u, 4u,
-                     console_accent());
-    framebuffer_rect(0, footer_y, fb->width, fb->height - footer_y, console_banner());
-
-    framebuffer_text(24u, 10u, "LeonOS 4", console_fg(), console_banner());
-    framebuffer_text(24u, 30u, "SYSTEM STARTUP", console_muted_fg(), console_banner());
-    framebuffer_text(panel_x + 12u, panel_y + 7u, "GRUB FRAMEBUFFER",
-                     console_fg(), console_banner());
-    if (panel_width >= 288u) {
-        framebuffer_text(live_output_x, panel_y + 7u, "BOOT LOG",
-                         console_muted_fg(), console_banner());
-    }
-    framebuffer_text(24u, footer_y + 9u, "Initializing system components",
-                     console_muted_fg(), console_banner());
-    if (fb->width >= 420u) {
-        framebuffer_text(fb->width - 154u, footer_y + 9u, "GRUB / MULTIBOOT",
-                         console_muted_fg(), console_banner());
-    }
-
-    fb_x = panel_x + 12u;
-    fb_y = panel_y + CONSOLE_UI_PANEL_HEADER_HEIGHT + 8u;
-    fb_cols = panel_width >= 24u + LEONOS_FONT_W
-                  ? (panel_width - 24u) / LEONOS_FONT_W
-                  : 0u;
-    fb_rows = panel_height > CONSOLE_UI_PANEL_HEADER_HEIGHT + LEONOS_FONT_H + 8u
-                  ? (panel_height - CONSOLE_UI_PANEL_HEADER_HEIGHT - 16u) /
-                        LEONOS_FONT_H
-                  : 0u;
+    fb_x = 0;
+    fb_y = 0;
+    fb_cols = fb->width / LEONOS_FONT_W;
+    fb_rows = fb->height / LEONOS_FONT_H;
     if (fb_cols > CONSOLE_MAX_COLS) {
         fb_cols = CONSOLE_MAX_COLS;
     }
@@ -274,6 +180,7 @@ static void fb_console_draw_boot_log_chrome(void)
     }
     fb_col = 0;
     fb_row = 0;
+    framebuffer_rect(0, 0, fb->width, fb->height, console_panel());
 }
 
 static void print_unsigned(uint64_t value, unsigned base, bool upper)
@@ -416,7 +323,7 @@ void console_enable_framebuffer(const struct leonos_boot_log_state *boot_log)
     }
     fb_console_enabled = true;
     if (!fb_console_use_handoff_state(boot_log)) {
-        fb_console_draw_boot_log_chrome();
+        fb_console_initialize_fullscreen();
         fb_console_clear_log();
     }
     for (size_t i = 0; i < log_len; ++i) {

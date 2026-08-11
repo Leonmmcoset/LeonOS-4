@@ -67,6 +67,9 @@
 #define LEONOS_UI_SPLIT_HORIZONTAL 0u
 #define LEONOS_UI_TREEVIEW_ITEM_DISABLED 0x01u
 #define LEONOS_UI_TREEVIEW_MAX_ITEMS 128u
+#define LEONOS_UI_FILE_DIALOG_INPUT_CHECKBOX 1u
+#define LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN 2u
+#define LEONOS_UI_FILE_DIALOG_MAX_INPUTS 4u
 
 struct leonos_ui_surface {
     uint32_t *pixels;
@@ -180,6 +183,21 @@ struct leonos_ui_dropdown_item {
     const char *label;
     uint32_t id;
     uint32_t flags;
+};
+
+struct leonos_ui_file_dialog_input {
+    uint32_t type;
+    uint32_t id;
+    const char *label;
+    uint32_t flags;
+    uint32_t *value;
+    const struct leonos_ui_dropdown_item *items;
+    uint32_t item_count;
+};
+
+struct leonos_ui_file_dialog_options {
+    const struct leonos_ui_file_dialog_input *inputs;
+    uint32_t input_count;
 };
 
 struct leonos_ui_tab_item {
@@ -457,11 +475,21 @@ int leonos_ui_show_password_dialog(const char *title, const char *label,
                                    char *value, uint32_t capacity);
 int leonos_ui_show_open_dialog(const char *title, char *path, uint32_t capacity,
                                const char *filter_label, const char *filter_ext);
+int leonos_ui_show_open_dialog_with_options(const char *title, char *path,
+                                            uint32_t capacity,
+                                            const char *filter_label,
+                                            const char *filter_ext,
+                                            const struct leonos_ui_file_dialog_options *options);
 int leonos_ui_show_open_with_dialog(const char *title, const char *path,
                                     char *program_path, uint32_t capacity,
                                     uint32_t *remember, uint32_t flags);
 int leonos_ui_show_save_dialog_ex(const char *title, char *value, uint32_t capacity,
                                   const char *filter_label, const char *filter_ext);
+int leonos_ui_show_save_dialog_with_options(const char *title, char *value,
+                                            uint32_t capacity,
+                                            const char *filter_label,
+                                            const char *filter_ext,
+                                            const struct leonos_ui_file_dialog_options *options);
 int leonos_ui_show_save_dialog(const char *title, char *value, uint32_t capacity);
 void leonos_ui_combobox(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, const char *text, uint32_t open, uint32_t flags);

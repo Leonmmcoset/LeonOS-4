@@ -491,6 +491,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     rustcfg = generated / "rustcfg.args"
     build_info = ROOT / "include/generated/build_info.h"
     loader_integrity = generated / "loader_integrity.h"
+    gbk_table_header = generated / "leonos_gbk_table.h"
     picolibc_source = ROOT / "third_party/picolibc"
     picolibc_cross_file = ROOT / "userland/picolibc/leonos-x86_64.ini"
     picolibc_build_dir = paths.out / "picolibc"
@@ -887,14 +888,30 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         driver_groups.append(name)
     graph.add(Target(name="drivers", depends_on=tuple(driver_groups), group=True, kind="aggregate"))
 
+    graph.add(Target(
+        name="gbk-table",
+        outputs=(gbk_table_header,),
+        inputs=(ROOT / "tools/generate_gbk_table.py",
+                ROOT / "third_party/litehtml/src/encodings.cpp"),
+        kind="generate",
+        command=(PYTHON, "tools/generate_gbk_table.py", "--source",
+                 "third_party/litehtml/src/encodings.cpp", "--output",
+                 relative(gbk_table_header)),
+    ))
+
     libc_sources = collect("userland/libc/src/*.c", "userland/libc/src/*.S")
     libc_sources += [ROOT / "third_party/mbedtls/library" / source for source in MBEDTLS_SOURCES]
     libc_objects: list[Path] = []
     installer_libc_objects: list[Path] = []
     for source in sorted(libc_sources):
         is_asm = source.suffix == ".S"
-        libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (), kind="assemble" if is_asm else "compile"))
-        installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, (installer_autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+        implicit = (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else ()
+        installer_implicit = (installer_autoconf, picolibc_header_stamp, libpng_config) if not is_asm else ()
+        if source == ROOT / "userland/libc/src/text_encoding.c":
+            implicit += (gbk_table_header,)
+            installer_implicit += (gbk_table_header,)
+        libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, implicit, kind="assemble" if is_asm else "compile"))
+        installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, installer_implicit, kind="assemble" if is_asm else "compile"))
     libc_a = paths.out / "userland/libc.a"
     installer_libc_a = paths.out / "userland-installer-policy/libc.a"
     graph.add(Target(name="archive:libc", outputs=(libc_a,), inputs=tuple(libc_objects), kind="link", command=(ar, "rcs", relative(libc_a), *map(relative, libc_objects))))

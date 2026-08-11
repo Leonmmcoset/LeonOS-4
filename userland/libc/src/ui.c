@@ -587,9 +587,15 @@ struct ui_file_dialog_entry {
     char display[LEONOS_FS_NAME_LEN + 4];
 };
 
+struct ui_file_dialog_filter {
+    struct leonos_ui_dropdown_item item;
+    const char *extension;
+};
+
 enum {
     UI_FILE_DIALOG_W = 520,
     UI_FILE_DIALOG_H = 404,
+    UI_FILE_DIALOG_MAX_H = UI_FILE_DIALOG_H + LEONOS_UI_FILE_DIALOG_MAX_INPUTS * 28,
     UI_FILE_DIALOG_MAX_ENTRIES = 64,
     UI_FILE_DIALOG_MARGIN = 16,
     UI_FILE_DIALOG_NAV_BUTTON_X = UI_FILE_DIALOG_W - 78,
@@ -620,6 +626,107 @@ enum {
     UI_FILE_DIALOG_BUTTON_W = 78,
     UI_FILE_DIALOG_BUTTON_Y = UI_FILE_DIALOG_H - 38
 };
+
+static uint32_t ui_file_dialog_height(uint32_t input_count)
+{
+    if (input_count > LEONOS_UI_FILE_DIALOG_MAX_INPUTS) {
+        input_count = LEONOS_UI_FILE_DIALOG_MAX_INPUTS;
+    }
+    return UI_FILE_DIALOG_H + input_count * 28;
+}
+
+static uint32_t ui_file_dialog_status_y(uint32_t input_count)
+{
+    return UI_FILE_DIALOG_STATUS_Y + input_count * 28;
+}
+
+static int ui_file_dialog_options_valid(const struct leonos_ui_file_dialog_options *options)
+{
+    if (!options) {
+        return 0;
+    }
+    if (options->input_count > LEONOS_UI_FILE_DIALOG_MAX_INPUTS ||
+        (options->input_count && !options->inputs)) {
+        return -1;
+    }
+    for (uint32_t index = 0; index < options->input_count; ++index) {
+        const struct leonos_ui_file_dialog_input *input = &options->inputs[index];
+        if (!input->value ||
+            (input->type != LEONOS_UI_FILE_DIALOG_INPUT_CHECKBOX &&
+             input->type != LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN)) {
+            return -1;
+        }
+        if (input->type == LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN &&
+            (!input->items || input->item_count == 0)) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static uint32_t ui_file_dialog_input_initial(
+    const struct leonos_ui_file_dialog_input *input)
+{
+    if (!input || !input->value) {
+        return 0;
+    }
+    if (input->type == LEONOS_UI_FILE_DIALOG_INPUT_CHECKBOX) {
+        return *input->value ? 1U : 0U;
+    }
+    for (uint32_t index = 0; index < input->item_count; ++index) {
+        if (input->items[index].id == *input->value &&
+            !(input->items[index].flags & (LEONOS_UI_MENU_DISABLED |
+                                            LEONOS_UI_MENU_SEPARATOR))) {
+            return *input->value;
+        }
+    }
+    for (uint32_t index = 0; index < input->item_count; ++index) {
+        if (!(input->items[index].flags & (LEONOS_UI_MENU_DISABLED |
+                                            LEONOS_UI_MENU_SEPARATOR))) {
+            return input->items[index].id;
+        }
+    }
+    return 0;
+}
+
+static int ui_file_dialog_input_disabled(
+    const struct leonos_ui_file_dialog_input *input)
+{
+    return input && (input->flags & (LEONOS_UI_INPUT_DISABLED |
+                                     LEONOS_UI_BUTTON_DISABLED |
+                                     LEONOS_UI_EDIT_DISABLED));
+}
+
+static uint32_t ui_file_dialog_build_filters(
+    struct ui_file_dialog_filter filters[2], const char *filter_label,
+    const char *filter_ext)
+{
+    uint32_t count = 0;
+    if (filter_ext && filter_ext[0]) {
+        filters[count].item.label = filter_label && filter_label[0]
+                                        ? filter_label : filter_ext;
+        filters[count].item.id = 1;
+        filters[count].item.flags = 0;
+        filters[count].extension = filter_ext;
+        ++count;
+    }
+    filters[count].item.label = UI_T("All files (*.*)", "所有文件 (*.*)");
+    filters[count].item.id = 2;
+    filters[count].item.flags = 0;
+    filters[count].extension = 0;
+    return count + 1;
+}
+
+static const struct ui_file_dialog_filter *ui_file_dialog_find_filter(
+    const struct ui_file_dialog_filter *filters, uint32_t count, uint32_t id)
+{
+    for (uint32_t index = 0; filters && index < count; ++index) {
+        if (filters[index].item.id == id) {
+            return &filters[index];
+        }
+    }
+    return count ? &filters[count - 1] : 0;
+}
 
 static void ui_copy_text(char *dst, uint32_t capacity, const char *src)
 {
@@ -886,7 +993,8 @@ static int ui_file_dialog_activate(const char *title, int save_mode,
     int ret;
     if (!save_mode) {
         if (list_state->selected < 0 || (uint32_t)list_state->selected >= *entry_count) {
-            ui_file_dialog_status(status, status_cap, "Select a file in ", dir_path);
+            ui_file_dialog_status(status, status_cap,
+                                  UI_T("Select a file in ", "请在以下位置选择文件："), dir_path);
             return 0;
         }
         if (entries[list_state->selected].dir_entry.type == LEONOS_FS_TYPE_DIR) {
@@ -897,29 +1005,35 @@ static int ui_file_dialog_activate(const char *title, int save_mode,
             ret = ui_file_dialog_load_entries(dir_path, entries, entry_cap,
                                               entry_count, filter_ext);
             if (ret < 0) {
-                ui_file_dialog_status(status, status_cap, "Open dir failed ", dir_path);
+                ui_file_dialog_status(status, status_cap,
+                                      UI_T("Open dir failed ", "打开目录失败："), dir_path);
                 return 0;
             }
             leonos_ui_listview_state_set_count(list_state, *entry_count);
             list_state->selected = *entry_count ? 0 : -1;
             list_state->scroll = 0;
-            ui_file_dialog_status(status, status_cap, "Opened ", dir_path);
+            ui_file_dialog_status(status, status_cap,
+                                  UI_T("Opened ", "已打开："), dir_path);
             return 0;
         }
         ui_build_child_path(full_path, sizeof(full_path), dir_path, filename);
         if (stat(full_path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE) {
-            ui_file_dialog_status(status, status_cap, "File not found ", full_path);
+            ui_file_dialog_status(status, status_cap,
+                                  UI_T("File not found ", "找不到文件："), full_path);
             return 0;
         }
         ui_copy_text(filename, file_cap, full_path);
         return 1;
     }
     if (!filename[0]) {
-        ui_file_dialog_status(status, status_cap, "Enter a file name in ", dir_path);
+        ui_file_dialog_status(status, status_cap,
+                              UI_T("Enter a file name in ", "请在以下位置输入文件名："), dir_path);
         return 0;
     }
     if (!ui_path_extension_matches(filename, filter_ext)) {
-        ui_file_dialog_status(status, status_cap, "File type must match ", filter_ext ? filter_ext : "");
+        ui_file_dialog_status(status, status_cap,
+                              UI_T("File type must match ", "文件类型必须匹配："),
+                              filter_ext ? filter_ext : "");
         return 0;
     }
     if (filename[0] == '0' && filename[1] == ':' && filename[2] == '/') {
@@ -928,10 +1042,12 @@ static int ui_file_dialog_activate(const char *title, int save_mode,
         ui_build_child_path(full_path, sizeof(full_path), dir_path, filename);
     }
     if (stat(full_path, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
-        if (!leonos_ui_show_confirm_dialog(title ? title : "Save As",
-                                           "This file already exists. Replace it?",
+        if (!leonos_ui_show_confirm_dialog(title ? title : UI_T("Save As", "另存为"),
+                                           UI_T("This file already exists. Replace it?",
+                                                "文件已存在。是否替换？"),
                                            0)) {
-            ui_file_dialog_status(status, status_cap, "Overwrite canceled for ", full_path);
+            ui_file_dialog_status(status, status_cap,
+                                  UI_T("Overwrite canceled for ", "已取消覆盖："), full_path);
             return 0;
         }
     }
@@ -939,22 +1055,63 @@ static int ui_file_dialog_activate(const char *title, int save_mode,
     return 1;
 }
 
+static uint32_t ui_file_dialog_input_y(uint32_t index)
+{
+    return UI_FILE_DIALOG_STATUS_Y + index * 28;
+}
+
+static const char *ui_file_dialog_input_label(
+    const struct leonos_ui_file_dialog_input *input, uint32_t value)
+{
+    if (!input || input->type != LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN) {
+        return "";
+    }
+    for (uint32_t index = 0; index < input->item_count; ++index) {
+        if (input->items[index].id == value) {
+            return input->items[index].label ? input->items[index].label : "";
+        }
+    }
+    return "";
+}
+
 static void ui_file_dialog_draw(struct leonos_ui_surface *surface,
-                                const char *title, int save_mode,
-                                const char *dir_path,
-                                const char *filter_label,
+                                uint32_t dialog_h, const char *title,
+                                int save_mode, const char *dir_path,
+                                const struct ui_file_dialog_filter *filters,
+                                uint32_t filter_count,
+                                uint32_t selected_filter_id,
+                                uint32_t filter_dropdown_open,
                                 const char *status,
                                 struct ui_file_dialog_entry *entries,
                                 uint32_t entry_count,
                                 struct leonos_ui_listview_state *list_state,
-                                struct leonos_ui_edit_state *name_edit)
+                                struct leonos_ui_edit_state *name_edit,
+                                const struct leonos_ui_file_dialog_options *options,
+                                const uint32_t *input_values,
+                                uint32_t input_dropdown_open)
 {
+    uint32_t input_count = options ? options->input_count : 0;
+    struct leonos_ui_dropdown_item filter_items[2];
+    const char *look_in_label = UI_T("Look in:", "查找范围：");
+    uint32_t path_edit_x = UI_FILE_DIALOG_MARGIN + leonos_ui_text_width(look_in_label) + 8U;
+    uint32_t path_edit_w = UI_FILE_DIALOG_NAV_BUTTON_X > path_edit_x + 8U
+                               ? UI_FILE_DIALOG_NAV_BUTTON_X - path_edit_x - 8U
+                               : 0;
+    uint32_t status_y = ui_file_dialog_status_y(input_count);
+    uint32_t button_y = dialog_h - 38;
+    const struct ui_file_dialog_filter *selected_filter =
+        ui_file_dialog_find_filter(filters, filter_count, selected_filter_id);
+    for (uint32_t index = 0; index < filter_count && index < 2; ++index) {
+        filter_items[index] = filters[index].item;
+    }
     (void)title;
-    leonos_ui_rect(surface, 0, 0, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H, LEONOS_UI_GRAY);
-    leonos_ui_text(surface, 16, 18, "Look in:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, 72, 14, UI_FILE_DIALOG_W - 88, dir_path, ui_strlen(dir_path),
+    leonos_ui_rect(surface, 0, 0, UI_FILE_DIALOG_W, dialog_h, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, UI_FILE_DIALOG_MARGIN, 18, look_in_label,
+                   LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_edit(surface, path_edit_x, 14, path_edit_w, dir_path, ui_strlen(dir_path),
                    0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_text(surface, 16, 44, "Files:", LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text(surface, 16, 44, UI_T("Files:", "文件："),
+                   LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_scroll_view_frame(surface, UI_FILE_DIALOG_LIST_X, UI_FILE_DIALOG_LIST_Y,
                                 UI_FILE_DIALOG_LIST_FRAME_W, UI_FILE_DIALOG_LIST_H);
     for (uint32_t row = 0; row < list_state->visible_rows; ++row) {
@@ -974,51 +1131,112 @@ static void ui_file_dialog_draw(struct leonos_ui_surface *surface,
                          list_state->visible_rows,
                          entry_count <= list_state->visible_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
     leonos_ui_button(surface, UI_FILE_DIALOG_NAV_BUTTON_X, UI_FILE_DIALOG_UP_Y,
-                     UI_FILE_DIALOG_NAV_BUTTON_W, LEONOS_UI_BUTTON_H, "Up", 0);
+                     UI_FILE_DIALOG_NAV_BUTTON_W, LEONOS_UI_BUTTON_H,
+                     UI_T("Up", "上一级"), 0);
     leonos_ui_button(surface, UI_FILE_DIALOG_NAV_BUTTON_X, UI_FILE_DIALOG_ROOT_Y,
-                     UI_FILE_DIALOG_NAV_BUTTON_W, LEONOS_UI_BUTTON_H, "Root", 0);
+                     UI_FILE_DIALOG_NAV_BUTTON_W, LEONOS_UI_BUTTON_H,
+                     UI_T("Root", "根目录"), 0);
     leonos_ui_text(surface, 16, UI_FILE_DIALOG_NAME_LABEL_Y,
-                   save_mode ? "File name:" : "Selection:",
+                   save_mode ? UI_T("File name:", "文件名：")
+                             : UI_T("Selection:", "选择："),
                    LEONOS_UI_BLACK, LEONOS_UI_GRAY);
     leonos_ui_edit_state_draw(surface, UI_FILE_DIALOG_NAME_EDIT_X,
                               UI_FILE_DIALOG_NAME_EDIT_Y,
                               UI_FILE_DIALOG_NAME_EDIT_W, name_edit, 0);
-    leonos_ui_text(surface, 16, UI_FILE_DIALOG_TYPE_LABEL_Y, "Files of type:",
+    leonos_ui_text(surface, 16, UI_FILE_DIALOG_TYPE_LABEL_Y,
+                   UI_T("Files of type:", "文件类型："),
                    LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_edit(surface, UI_FILE_DIALOG_TYPE_EDIT_X, UI_FILE_DIALOG_TYPE_EDIT_Y,
-                   UI_FILE_DIALOG_TYPE_EDIT_W,
-                   filter_label ? filter_label : "All files",
-                   ui_strlen(filter_label ? filter_label : "All files"),
-                   0, LEONOS_UI_EDIT_READONLY);
-    leonos_ui_statusbar(surface, UI_FILE_DIALOG_STATUS_Y, UI_FILE_DIALOG_STATUS_H, status);
-    leonos_ui_button(surface, UI_FILE_DIALOG_W - 180, UI_FILE_DIALOG_BUTTON_Y,
+    leonos_ui_combobox(surface, UI_FILE_DIALOG_TYPE_EDIT_X, UI_FILE_DIALOG_TYPE_EDIT_Y,
+                       UI_FILE_DIALOG_TYPE_EDIT_W,
+                       selected_filter ? selected_filter->item.label : "",
+                       filter_dropdown_open, 0);
+    for (uint32_t index = 0; index < input_count; ++index) {
+        const struct leonos_ui_file_dialog_input *input = &options->inputs[index];
+        uint32_t input_y = ui_file_dialog_input_y(index);
+        uint32_t input_flags = input->flags & (LEONOS_UI_BUTTON_DISABLED |
+                                                LEONOS_UI_EDIT_DISABLED);
+        if (input->flags & LEONOS_UI_INPUT_DISABLED) {
+            input_flags |= LEONOS_UI_BUTTON_DISABLED | LEONOS_UI_EDIT_DISABLED;
+        }
+        if (input->type == LEONOS_UI_FILE_DIALOG_INPUT_CHECKBOX) {
+            leonos_ui_checkbox(surface, 16, input_y + 4, input->label,
+                               input_values[index] != 0, input_flags);
+        } else {
+            leonos_ui_text(surface, 16, input_y + 4, input->label,
+                           LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+            leonos_ui_combobox(surface, UI_FILE_DIALOG_TYPE_EDIT_X, input_y,
+                               UI_FILE_DIALOG_TYPE_EDIT_W,
+                               ui_file_dialog_input_label(input, input_values[index]),
+                               input_dropdown_open == index + 1U, input_flags);
+        }
+    }
+    leonos_ui_statusbar(surface, status_y, UI_FILE_DIALOG_STATUS_H, status);
+    leonos_ui_button(surface, UI_FILE_DIALOG_W - 180, button_y,
                      UI_FILE_DIALOG_BUTTON_W, LEONOS_UI_BUTTON_H,
-                     save_mode ? "Save" : "Open", 0);
-    leonos_ui_button(surface, UI_FILE_DIALOG_W - 94, UI_FILE_DIALOG_BUTTON_Y,
-                     UI_FILE_DIALOG_BUTTON_W, LEONOS_UI_BUTTON_H, "Cancel", 0);
+                     save_mode ? UI_T("Save", "保存") : UI_T("Open", "打开"), 0);
+    leonos_ui_button(surface, UI_FILE_DIALOG_W - 94, button_y,
+                     UI_FILE_DIALOG_BUTTON_W, LEONOS_UI_BUTTON_H,
+                     UI_T("Cancel", "取消"), 0);
+    if (filter_dropdown_open) {
+        leonos_ui_dropdown(surface, UI_FILE_DIALOG_TYPE_EDIT_X,
+                           UI_FILE_DIALOG_TYPE_EDIT_Y + LEONOS_UI_BUTTON_H,
+                           UI_FILE_DIALOG_TYPE_EDIT_W, filter_items,
+                           filter_count, selected_filter_id,
+                           LEONOS_FONT_H + 8, 1000);
+    }
+    for (uint32_t index = 0; index < input_count; ++index) {
+        const struct leonos_ui_file_dialog_input *input = &options->inputs[index];
+        if (input->type == LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN &&
+            input_dropdown_open == index + 1U) {
+            leonos_ui_dropdown(surface, UI_FILE_DIALOG_TYPE_EDIT_X,
+                               ui_file_dialog_input_y(index) + LEONOS_UI_BUTTON_H,
+                               UI_FILE_DIALOG_TYPE_EDIT_W, input->items,
+                               input->item_count, input_values[index],
+                               LEONOS_FONT_H + 8, 1000);
+        }
+    }
 }
 
 static int ui_show_file_dialog_common(const char *title, int save_mode,
                                       char *path, uint32_t capacity,
                                       const char *filter_label,
-                                      const char *filter_ext)
+                                      const char *filter_ext,
+                                      const struct leonos_ui_file_dialog_options *options)
 {
-    static uint32_t pixels[UI_FILE_DIALOG_W * UI_FILE_DIALOG_H];
+    static uint32_t pixels[UI_FILE_DIALOG_W * UI_FILE_DIALOG_MAX_H];
     struct leonos_ui_surface surface;
     struct leonos_gui_app_event event;
     struct ui_file_dialog_entry entries[UI_FILE_DIALOG_MAX_ENTRIES];
+    struct ui_file_dialog_filter filters[2];
     struct leonos_ui_listview_state list_state;
     struct leonos_ui_edit_state name_edit;
     char original[LEONOS_FS_PATH_LEN];
     char dir_path[LEONOS_FS_PATH_LEN];
     char file_name[LEONOS_FS_PATH_LEN];
     char status[128];
+    uint32_t input_values[LEONOS_UI_FILE_DIALOG_MAX_INPUTS] = {0};
+    uint32_t filter_count;
+    uint32_t selected_filter_id;
+    uint32_t filter_dropdown_open = 0;
+    uint32_t input_dropdown_open = 0;
+    uint32_t focused_input = 0;
+    uint32_t input_count = options ? options->input_count : 0;
+    uint32_t dialog_h;
+    const char *active_filter_ext;
     uint32_t entry_count = 0;
     int result = 0;
     int window_id;
     int load_ret;
-    if (!path || capacity == 0) {
+    if (!path || capacity == 0 || ui_file_dialog_options_valid(options) < 0) {
         return -1;
+    }
+    dialog_h = ui_file_dialog_height(input_count);
+    filter_count = ui_file_dialog_build_filters(filters, filter_label, filter_ext);
+    selected_filter_id = filter_ext && filter_ext[0] ? 1U : 2U;
+    active_filter_ext = ui_file_dialog_find_filter(filters, filter_count,
+                                                   selected_filter_id)->extension;
+    for (uint32_t index = 0; index < input_count; ++index) {
+        input_values[index] = ui_file_dialog_input_initial(&options->inputs[index]);
     }
     ui_copy_text(original, sizeof(original), path);
     if (path[0] == '0' && path[1] == ':' && path[2] == '/') {
@@ -1028,13 +1246,16 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
         ui_copy_text(dir_path, sizeof(dir_path), "0:/");
         ui_copy_text(file_name, sizeof(file_name), path);
     }
-    window_id = leonos_gui_create_app_window_ex(title ? title : (save_mode ? "Save As" : "Open"),
-                                                dir_path, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H,
+    window_id = leonos_gui_create_app_window_ex(
+                                                title ? title : (save_mode
+                                                                    ? UI_T("Save As", "另存为")
+                                                                    : UI_T("Open", "打开")),
+                                                dir_path, UI_FILE_DIALOG_W, dialog_h,
                                                 LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
         return window_id;
     }
-    leonos_ui_bind(&surface, pixels, UI_FILE_DIALOG_W, UI_FILE_DIALOG_H,
+    leonos_ui_bind(&surface, pixels, UI_FILE_DIALOG_W, dialog_h,
                    UI_FILE_DIALOG_W);
     leonos_ui_listview_state_init(&list_state, UI_FILE_DIALOG_LIST_ROWS,
                                   UI_FILE_DIALOG_ROW_H);
@@ -1043,11 +1264,13 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
     name_edit.focused = save_mode ? 1 : 0;
     ui_file_dialog_sync_name_edit(&name_edit);
     load_ret = ui_file_dialog_load_entries(dir_path, entries, UI_FILE_DIALOG_MAX_ENTRIES,
-                                           &entry_count, filter_ext);
+                                           &entry_count, active_filter_ext);
     if (load_ret < 0) {
-        ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
+        ui_file_dialog_status(status, sizeof(status),
+                              UI_T("Open dir failed ", "打开目录失败："), dir_path);
     } else {
-        ui_file_dialog_status(status, sizeof(status), "Ready in ", dir_path);
+        ui_file_dialog_status(status, sizeof(status),
+                              UI_T("Ready in ", "准备就绪："), dir_path);
     }
     leonos_ui_listview_state_set_count(&list_state, entry_count);
     list_state.selected = entry_count ? 0 : -1;
@@ -1057,10 +1280,13 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
         ui_file_dialog_sync_name_edit(&name_edit);
     }
     for (;;) {
-        ui_file_dialog_draw(&surface, title, save_mode, dir_path, filter_label, status,
-                            entries, entry_count, &list_state, &name_edit);
+        ui_file_dialog_draw(&surface, dialog_h, title, save_mode, dir_path,
+                            filters, filter_count, selected_filter_id,
+                            filter_dropdown_open, status, entries, entry_count,
+                            &list_state, &name_edit, options, input_values,
+                            input_dropdown_open);
         leonos_gui_present_window((uint32_t)window_id, UI_FILE_DIALOG_W,
-                                  UI_FILE_DIALOG_H, UI_FILE_DIALOG_W, pixels);
+                                  dialog_h, UI_FILE_DIALOG_W, pixels);
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
@@ -1068,20 +1294,56 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
                 uint32_t activated = 0;
-                if (event.pressed && event.keycode == 1) {
+                if (event.pressed && event.keycode == LEONOS_KEY_ESCAPE) {
+                    if (filter_dropdown_open || input_dropdown_open) {
+                        filter_dropdown_open = 0;
+                        input_dropdown_open = 0;
+                        continue;
+                    }
                     break;
                 }
                 if (event.pressed && event.keycode == LEONOS_KEY_TAB) {
-                    name_edit.focused = name_edit.focused ? 0 : 1;
-                    list_state.focused = name_edit.focused ? 0 : 1;
+                    if (filter_dropdown_open || input_dropdown_open) {
+                        filter_dropdown_open = 0;
+                        input_dropdown_open = 0;
+                        continue;
+                    }
+                    if (input_count) {
+                        uint32_t next = focused_input;
+                        do {
+                            next = (next + 1U) % (input_count + 2U);
+                        } while (next > 0 && next <= input_count &&
+                                 ui_file_dialog_input_disabled(&options->inputs[next - 1U]));
+                        focused_input = next;
+                        name_edit.focused = focused_input == 0;
+                        list_state.focused = focused_input == input_count + 1U;
+                    } else {
+                        name_edit.focused = name_edit.focused ? 0 : 1;
+                        list_state.focused = name_edit.focused ? 0 : 1;
+                    }
                     continue;
                 }
                 if (event.pressed && event.keycode == LEONOS_KEY_ENTER) {
+                    if (filter_dropdown_open || input_dropdown_open) {
+                        filter_dropdown_open = 0;
+                        input_dropdown_open = 0;
+                        continue;
+                    }
+                    if (focused_input > 0 && focused_input <= input_count &&
+                        options->inputs[focused_input - 1U].type ==
+                            LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN &&
+                        !ui_file_dialog_input_disabled(&options->inputs[focused_input - 1U])) {
+                        input_dropdown_open = focused_input;
+                        continue;
+                    }
                     if (ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
                                                 file_name, sizeof(file_name), entries,
                                                 UI_FILE_DIALOG_MAX_ENTRIES,
-                                                &entry_count, &list_state, filter_ext,
+                                                &entry_count, &list_state, active_filter_ext,
                                                 status, sizeof(status))) {
+                        for (uint32_t index = 0; index < input_count; ++index) {
+                            *options->inputs[index].value = input_values[index];
+                        }
                         ui_copy_text(path, capacity, file_name);
                         result = 1;
                         break;
@@ -1090,9 +1352,47 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                     leonos_ui_listview_state_set_count(&list_state, entry_count);
                     continue;
                 }
+                if (event.pressed && focused_input > 0 && focused_input <= input_count) {
+                    const struct leonos_ui_file_dialog_input *input =
+                        &options->inputs[focused_input - 1U];
+                    if (!ui_file_dialog_input_disabled(input)) {
+                        if (input->type == LEONOS_UI_FILE_DIALOG_INPUT_CHECKBOX &&
+                            event.keycode == LEONOS_KEY_SPACE) {
+                            input_values[focused_input - 1U] =
+                                input_values[focused_input - 1U] ? 0 : 1;
+                        } else if (input->type == LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN &&
+                                   (event.keycode == LEONOS_KEY_UP ||
+                                    event.keycode == LEONOS_KEY_DOWN)) {
+                            uint32_t current = input_values[focused_input - 1U];
+                            uint32_t selected = 0;
+                            for (uint32_t item_index = 0; item_index < input->item_count;
+                                 ++item_index) {
+                                if (input->items[item_index].id == current) {
+                                    selected = item_index;
+                                    break;
+                                }
+                            }
+                            for (uint32_t step = 0; step < input->item_count; ++step) {
+                                if (event.keycode == LEONOS_KEY_UP) {
+                                    selected = selected ? selected - 1U : input->item_count - 1U;
+                                } else {
+                                    selected = (selected + 1U) % input->item_count;
+                                }
+                                if (!(input->items[selected].flags &
+                                      (LEONOS_UI_MENU_DISABLED | LEONOS_UI_MENU_SEPARATOR))) {
+                                    input_values[focused_input - 1U] = input->items[selected].id;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if (name_edit.focused) {
                     leonos_ui_edit_state_handle_key(&name_edit, event.keycode, event.pressed);
-                } else if (leonos_ui_listview_state_handle_key(&list_state, event.keycode, &activated)) {
+                } else if (list_state.focused &&
+                           leonos_ui_listview_state_handle_key(&list_state, event.keycode,
+                                                               &activated)) {
                     if (list_state.selected >= 0 && (uint32_t)list_state.selected < entry_count) {
                         ui_file_dialog_select_entry(dir_path, &entries[list_state.selected],
                                                     file_name, sizeof(file_name));
@@ -1102,8 +1402,11 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                         ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
                                                 file_name, sizeof(file_name), entries,
                                                 UI_FILE_DIALOG_MAX_ENTRIES,
-                                                &entry_count, &list_state, filter_ext,
+                                                &entry_count, &list_state, active_filter_ext,
                                                 status, sizeof(status))) {
+                        for (uint32_t index = 0; index < input_count; ++index) {
+                            *options->inputs[index].value = input_values[index];
+                        }
                         ui_copy_text(path, capacity, file_name);
                         result = 1;
                         break;
@@ -1115,15 +1418,125 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
                 uint32_t activated = 0;
+                uint32_t button_y = dialog_h - 38;
+                uint32_t filter_id = 0;
+
+                if (filter_dropdown_open) {
+                    struct leonos_ui_dropdown_item filter_items[2];
+                    for (uint32_t index = 0; index < filter_count; ++index) {
+                        filter_items[index] = filters[index].item;
+                    }
+                    if (leonos_ui_dropdown_hit(event.x, event.y,
+                                               UI_FILE_DIALOG_TYPE_EDIT_X,
+                                               UI_FILE_DIALOG_TYPE_EDIT_Y + LEONOS_UI_BUTTON_H,
+                                               UI_FILE_DIALOG_TYPE_EDIT_W, filter_items,
+                                               filter_count, LEONOS_FONT_H + 8, 1000,
+                                               &filter_id)) {
+                        filter_dropdown_open = 0;
+                        if (filter_id) {
+                            const struct ui_file_dialog_filter *filter =
+                                ui_file_dialog_find_filter(filters, filter_count, filter_id);
+                            selected_filter_id = filter_id;
+                            active_filter_ext = filter ? filter->extension : 0;
+                            load_ret = ui_file_dialog_load_entries(dir_path, entries,
+                                                                   UI_FILE_DIALOG_MAX_ENTRIES,
+                                                                   &entry_count,
+                                                                   active_filter_ext);
+                            if (load_ret < 0) {
+                                ui_file_dialog_status(status, sizeof(status),
+                                                       UI_T("Open dir failed ", "打开目录失败："),
+                                                       dir_path);
+                            } else {
+                                ui_file_dialog_status(status, sizeof(status),
+                                                       UI_T("Opened ", "已打开："), dir_path);
+                            }
+                            leonos_ui_listview_state_set_count(&list_state, entry_count);
+                            list_state.selected = entry_count ? 0 : -1;
+                            list_state.scroll = 0;
+                            if (!save_mode && list_state.selected >= 0) {
+                                ui_file_dialog_select_entry(dir_path,
+                                                            &entries[list_state.selected],
+                                                            file_name, sizeof(file_name));
+                            } else {
+                                ui_copy_text(file_name, sizeof(file_name), "");
+                            }
+                            ui_file_dialog_sync_name_edit(&name_edit);
+                        }
+                        continue;
+                    }
+                    filter_dropdown_open = 0;
+                    continue;
+                }
+                if (input_dropdown_open) {
+                    uint32_t index = input_dropdown_open - 1U;
+                    uint32_t input_id = 0;
+                    const struct leonos_ui_file_dialog_input *input =
+                        index < input_count ? &options->inputs[index] : 0;
+                    if (input && input->type == LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN &&
+                        leonos_ui_dropdown_hit(event.x, event.y,
+                                               UI_FILE_DIALOG_TYPE_EDIT_X,
+                                               ui_file_dialog_input_y(index) + LEONOS_UI_BUTTON_H,
+                                               UI_FILE_DIALOG_TYPE_EDIT_W, input->items,
+                                               input->item_count, LEONOS_FONT_H + 8, 1000,
+                                               &input_id)) {
+                        if (input_id) {
+                            input_values[index] = input_id;
+                        }
+                        input_dropdown_open = 0;
+                        continue;
+                    }
+                    input_dropdown_open = 0;
+                    continue;
+                }
+                if (leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                  UI_FILE_DIALOG_TYPE_EDIT_X,
+                                  UI_FILE_DIALOG_TYPE_EDIT_Y,
+                                  UI_FILE_DIALOG_TYPE_EDIT_W,
+                                  LEONOS_FONT_H + 8)) {
+                    filter_dropdown_open = 1;
+                    focused_input = 0;
+                    name_edit.focused = 0;
+                    list_state.focused = 0;
+                    continue;
+                }
+                for (uint32_t index = 0; index < input_count; ++index) {
+                    const struct leonos_ui_file_dialog_input *input = &options->inputs[index];
+                    uint32_t input_y = ui_file_dialog_input_y(index);
+                    if (ui_file_dialog_input_disabled(input)) {
+                        continue;
+                    }
+                    if (input->type == LEONOS_UI_FILE_DIALOG_INPUT_CHECKBOX &&
+                        leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y, 16, input_y + 4,
+                                      UI_FILE_DIALOG_W - 32, LEONOS_FONT_H + 8)) {
+                        input_values[index] = input_values[index] ? 0 : 1;
+                        focused_input = index + 1U;
+                        name_edit.focused = 0;
+                        list_state.focused = 0;
+                        continue;
+                    }
+                    if (input->type == LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN &&
+                        leonos_ui_hit((uint32_t)event.x, (uint32_t)event.y,
+                                      UI_FILE_DIALOG_TYPE_EDIT_X, input_y,
+                                      UI_FILE_DIALOG_TYPE_EDIT_W, LEONOS_FONT_H + 8)) {
+                        input_dropdown_open = index + 1U;
+                        focused_input = index + 1U;
+                        name_edit.focused = 0;
+                        list_state.focused = 0;
+                        continue;
+                    }
+                }
                 if (event.x >= (int32_t)(UI_FILE_DIALOG_W - 180) &&
                     event.x < (int32_t)(UI_FILE_DIALOG_W - 102) &&
-                    event.y >= (int32_t)UI_FILE_DIALOG_BUTTON_Y &&
-                    event.y < (int32_t)(UI_FILE_DIALOG_BUTTON_Y + LEONOS_UI_BUTTON_H)) {
+                    event.y >= (int32_t)button_y &&
+                    event.y < (int32_t)(button_y + LEONOS_UI_BUTTON_H)) {
                     if (ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
                                                 file_name, sizeof(file_name), entries,
                                                 UI_FILE_DIALOG_MAX_ENTRIES,
-                                                &entry_count, &list_state, filter_ext,
+                                                &entry_count, &list_state, active_filter_ext,
                                                 status, sizeof(status))) {
+                        for (uint32_t index = 0; index < input_count; ++index) {
+                            *options->inputs[index].value = input_values[index];
+                        }
                         ui_copy_text(path, capacity, file_name);
                         result = 1;
                         break;
@@ -1134,8 +1547,8 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                 }
                 if (event.x >= (int32_t)(UI_FILE_DIALOG_W - 94) &&
                     event.x < (int32_t)(UI_FILE_DIALOG_W - 16) &&
-                    event.y >= (int32_t)UI_FILE_DIALOG_BUTTON_Y &&
-                    event.y < (int32_t)(UI_FILE_DIALOG_BUTTON_Y + LEONOS_UI_BUTTON_H)) {
+                    event.y >= (int32_t)button_y &&
+                    event.y < (int32_t)(button_y + LEONOS_UI_BUTTON_H)) {
                     break;
                 }
                 if (event.x >= (int32_t)UI_FILE_DIALOG_NAV_BUTTON_X &&
@@ -1147,11 +1560,13 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                     ui_file_dialog_sync_name_edit(&name_edit);
                     load_ret = ui_file_dialog_load_entries(dir_path, entries,
                                                            UI_FILE_DIALOG_MAX_ENTRIES,
-                                                           &entry_count, filter_ext);
+                                                           &entry_count, active_filter_ext);
                     if (load_ret < 0) {
-                        ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
+                        ui_file_dialog_status(status, sizeof(status),
+                                               UI_T("Open dir failed ", "打开目录失败："), dir_path);
                     } else {
-                        ui_file_dialog_status(status, sizeof(status), "Opened ", dir_path);
+                        ui_file_dialog_status(status, sizeof(status),
+                                               UI_T("Opened ", "已打开："), dir_path);
                     }
                     leonos_ui_listview_state_set_count(&list_state, entry_count);
                     list_state.selected = entry_count ? 0 : -1;
@@ -1167,11 +1582,13 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                     ui_file_dialog_sync_name_edit(&name_edit);
                     load_ret = ui_file_dialog_load_entries(dir_path, entries,
                                                            UI_FILE_DIALOG_MAX_ENTRIES,
-                                                           &entry_count, filter_ext);
+                                                           &entry_count, active_filter_ext);
                     if (load_ret < 0) {
-                        ui_file_dialog_status(status, sizeof(status), "Open dir failed ", dir_path);
+                        ui_file_dialog_status(status, sizeof(status),
+                                               UI_T("Open dir failed ", "打开目录失败："), dir_path);
                     } else {
-                        ui_file_dialog_status(status, sizeof(status), "Opened ", dir_path);
+                        ui_file_dialog_status(status, sizeof(status),
+                                               UI_T("Opened ", "已打开："), dir_path);
                     }
                     leonos_ui_listview_state_set_count(&list_state, entry_count);
                     list_state.selected = entry_count ? 0 : -1;
@@ -1190,6 +1607,7 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                                                       event.buttons)) {
                     name_edit.focused = 1;
                     list_state.focused = 0;
+                    focused_input = 0;
                     continue;
                 }
                 if (event.x >= (int32_t)UI_FILE_DIALOG_SCROLL_X &&
@@ -1213,6 +1631,7 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                                                           &activated)) {
                     name_edit.focused = 0;
                     list_state.focused = 1;
+                    focused_input = input_count + 1U;
                     if (list_state.selected >= 0 && (uint32_t)list_state.selected < entry_count) {
                         ui_file_dialog_select_entry(dir_path, &entries[list_state.selected],
                                                     file_name, sizeof(file_name));
@@ -1222,8 +1641,11 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                         ui_file_dialog_activate(title, save_mode, dir_path, sizeof(dir_path),
                                                 file_name, sizeof(file_name), entries,
                                                 UI_FILE_DIALOG_MAX_ENTRIES,
-                                                &entry_count, &list_state, filter_ext,
+                                                &entry_count, &list_state, active_filter_ext,
                                                 status, sizeof(status))) {
+                        for (uint32_t index = 0; index < input_count; ++index) {
+                            *options->inputs[index].value = input_values[index];
+                        }
                         ui_copy_text(path, capacity, file_name);
                         result = 1;
                         break;
@@ -1263,8 +1685,18 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
 int leonos_ui_show_open_dialog(const char *title, char *path, uint32_t capacity,
                                const char *filter_label, const char *filter_ext)
 {
-    return ui_show_file_dialog_common(title ? title : "Open", 0,
-                                      path, capacity, filter_label, filter_ext);
+    return leonos_ui_show_open_dialog_with_options(title, path, capacity,
+                                                   filter_label, filter_ext, 0);
+}
+
+int leonos_ui_show_open_dialog_with_options(
+    const char *title, char *path, uint32_t capacity,
+    const char *filter_label, const char *filter_ext,
+    const struct leonos_ui_file_dialog_options *options)
+{
+    return ui_show_file_dialog_common(title ? title : UI_T("Open", "打开"), 0,
+                                      path, capacity, filter_label, filter_ext,
+                                      options);
 }
 
 enum {
@@ -1603,16 +2035,26 @@ int leonos_ui_show_open_with_dialog(const char *title, const char *path,
 int leonos_ui_show_save_dialog_ex(const char *title, char *value, uint32_t capacity,
                                   const char *filter_label, const char *filter_ext)
 {
-    return ui_show_file_dialog_common(title ? title : "Save As", 1,
-                                      value, capacity, filter_label, filter_ext);
+    return leonos_ui_show_save_dialog_with_options(title, value, capacity,
+                                                   filter_label, filter_ext, 0);
+}
+
+int leonos_ui_show_save_dialog_with_options(
+    const char *title, char *value, uint32_t capacity,
+    const char *filter_label, const char *filter_ext,
+    const struct leonos_ui_file_dialog_options *options)
+{
+    return ui_show_file_dialog_common(title ? title : UI_T("Save As", "另存为"), 1,
+                                      value, capacity, filter_label, filter_ext,
+                                      options);
 }
 
 int leonos_ui_show_save_dialog(const char *title, char *value, uint32_t capacity)
 {
-    return leonos_ui_show_save_dialog_ex(title ? title : "Save As",
+    return leonos_ui_show_save_dialog_ex(title ? title : UI_T("Save As", "另存为"),
                                          value,
                                          capacity,
-                                         "All files (*.*)",
+                                         UI_T("All files (*.*)", "所有文件 (*.*)"),
                                          0);
 }
 
@@ -1623,6 +2065,73 @@ void leonos_ui_combobox(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
     leonos_ui_edit(surface, x, y, w, text, ui_strlen(text), 0,
                    (flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_EDIT_DISABLED : 0);
     leonos_ui_button(surface, x + w - h, y, h, h, open ? "^" : "v", flags & LEONOS_UI_EDIT_DISABLED ? LEONOS_UI_BUTTON_DISABLED : 0);
+}
+
+/* Popup placement is remembered between the draw and input passes.  Most
+ * applications render once and then dispatch the event against that frame;
+ * keeping the adjusted rectangle here lets the legacy hit-test API follow a
+ * popup that had to move above or to the left of its control. */
+struct ui_popup_cache {
+    uint32_t valid;
+    int32_t requested_x;
+    int32_t requested_y;
+    uint32_t w;
+    uint32_t h;
+    uint32_t count;
+    uint32_t row_h;
+    uint32_t progress;
+    int32_t x;
+    int32_t y;
+};
+
+static struct ui_popup_cache ui_dropdown_cache;
+static struct ui_popup_cache ui_menu_cache;
+
+static void ui_popup_place(const struct leonos_ui_surface *surface,
+                           int32_t requested_x, int32_t requested_y,
+                           uint32_t w, uint32_t h, int32_t *out_x,
+                           int32_t *out_y)
+{
+    int32_t x = requested_x;
+    int32_t y = requested_y;
+    if (surface) {
+        if (w > surface->width) {
+            x = 0;
+        } else if (x < 0) {
+            x = 0;
+        } else if ((uint32_t)x + w > surface->width) {
+            x = (int32_t)(surface->width - w);
+        }
+        if (h > surface->height) {
+            y = 0;
+        } else if (y < 0) {
+            y = 0;
+        } else if ((uint32_t)y + h > surface->height) {
+            /* Leave a small gap when there is room to open above the anchor. */
+            if (y >= (int32_t)h + 2) {
+                y -= (int32_t)h + 2;
+            } else {
+                y = (int32_t)(surface->height - h);
+            }
+        }
+    }
+    if (out_x) {
+        *out_x = x;
+    }
+    if (out_y) {
+        *out_y = y;
+    }
+}
+
+static int ui_popup_cache_matches(const struct ui_popup_cache *cache,
+                                  int32_t x, int32_t y, uint32_t w,
+                                  uint32_t count, uint32_t row_h,
+                                  uint32_t progress)
+{
+    (void)progress;
+    return cache && cache->valid && cache->requested_x == x &&
+           cache->requested_y == y && cache->w == w && cache->count == count &&
+           cache->row_h == row_h;
 }
 
 uint32_t leonos_ui_dropdown_height(uint32_t count, uint32_t row_h,
@@ -1650,43 +2159,62 @@ void leonos_ui_dropdown(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
                         uint32_t progress)
 {
     uint32_t visible_h = leonos_ui_dropdown_height(count, row_h, progress);
+    int32_t popup_x;
+    int32_t popup_y;
     if (row_h < LEONOS_FONT_H + 8) {
         row_h = LEONOS_FONT_H + 8;
     }
     if (!visible_h || !w) {
+        ui_dropdown_cache.valid = 0;
         return;
     }
-    leonos_ui_bevel(surface, x, y, w, visible_h, LEONOS_UI_WHITE, 0);
+    ui_popup_place(surface, (int32_t)x, (int32_t)y, w, visible_h,
+                   &popup_x, &popup_y);
+    if (surface && visible_h > surface->height) {
+        visible_h = surface->height;
+    }
+    ui_dropdown_cache.valid = 1;
+    ui_dropdown_cache.requested_x = (int32_t)x;
+    ui_dropdown_cache.requested_y = (int32_t)y;
+    ui_dropdown_cache.w = w;
+    ui_dropdown_cache.h = visible_h;
+    ui_dropdown_cache.count = count;
+    ui_dropdown_cache.row_h = row_h;
+    ui_dropdown_cache.progress = progress;
+    ui_dropdown_cache.x = popup_x;
+    ui_dropdown_cache.y = popup_y;
+    leonos_ui_bevel(surface, (uint32_t)popup_x, (uint32_t)popup_y, w, visible_h,
+                    LEONOS_UI_WHITE, 0);
     if (visible_h <= 8) {
         return;
     }
     for (uint32_t i = 0; i < count; ++i) {
-        uint32_t row_y = y + 4 + i * row_h;
+        uint32_t row_y = (uint32_t)popup_y + 4 + i * row_h;
         uint32_t flags = items ? items[i].flags : LEONOS_UI_MENU_DISABLED;
         const char *label = items ? items[i].label : "";
         uint32_t row_bottom = row_y + row_h;
-        if (row_y >= y + visible_h - 3) {
+        if (row_y >= (uint32_t)popup_y + visible_h - 3) {
             break;
         }
-        if (row_bottom > y + visible_h - 3) {
+        if (row_bottom > (uint32_t)popup_y + visible_h - 3) {
             continue;
         }
         if (flags & LEONOS_UI_MENU_SEPARATOR) {
-            leonos_ui_rect(surface, x + 4, row_y + row_h / 2,
+            leonos_ui_rect(surface, (uint32_t)popup_x + 4, row_y + row_h / 2,
                            w > 8 ? w - 8 : w, 1, LEONOS_UI_DARK);
-            leonos_ui_rect(surface, x + 4, row_y + row_h / 2 + 1,
+            leonos_ui_rect(surface, (uint32_t)popup_x + 4, row_y + row_h / 2 + 1,
                            w > 8 ? w - 8 : w, 1, LEONOS_UI_WHITE);
             continue;
         }
         if (items && items[i].id == selected_id && !(flags & LEONOS_UI_MENU_DISABLED)) {
-            leonos_ui_rect(surface, x + 3, row_y, w > 6 ? w - 6 : w,
+            leonos_ui_rect(surface, (uint32_t)popup_x + 3, row_y, w > 6 ? w - 6 : w,
                            row_h, LEONOS_UI_ACTIVE_TITLE);
-            leonos_ui_text_transparent_clipped(surface, x + 8, row_y + 4,
+            leonos_ui_text_transparent_clipped(surface, (uint32_t)popup_x + 8, row_y + 4,
                                                w > 16 ? w - 16 : w,
                                                label ? label : "",
                                                LEONOS_UI_WHITE);
         } else {
-            leonos_ui_text_transparent_clipped(surface, x + 8, row_y + 4,
+            leonos_ui_text_transparent_clipped(surface, (uint32_t)popup_x + 8, row_y + 4,
                                                w > 16 ? w - 16 : w,
                                                label ? label : "",
                                                (flags & LEONOS_UI_MENU_DISABLED)
@@ -1702,6 +2230,8 @@ int leonos_ui_dropdown_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
                            uint32_t *out_id)
 {
     uint32_t visible_h = leonos_ui_dropdown_height(count, row_h, progress);
+    int32_t popup_x = (int32_t)x;
+    int32_t popup_y = (int32_t)y;
     uint32_t index;
     if (out_id) {
         *out_id = 0;
@@ -1709,13 +2239,22 @@ int leonos_ui_dropdown_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
     if (row_h < LEONOS_FONT_H + 8) {
         row_h = LEONOS_FONT_H + 8;
     }
+    if (ui_popup_cache_matches(&ui_dropdown_cache, (int32_t)x, (int32_t)y,
+                               w, count, row_h, progress)) {
+        popup_x = ui_dropdown_cache.x;
+        popup_y = ui_dropdown_cache.y;
+        w = ui_dropdown_cache.w;
+        visible_h = ui_dropdown_cache.h;
+    } else if (visible_h && py < (int32_t)y && y >= visible_h + 2) {
+        popup_y = (int32_t)y - (int32_t)visible_h - 2;
+    }
     if (!visible_h ||
-        !leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)y,
+        !leonos_ui_hit((uint32_t)px, (uint32_t)py, popup_x, popup_y,
                        w, visible_h) ||
-        py < (int32_t)y + 4) {
+        py < popup_y + 4) {
         return 0;
     }
-    index = ((uint32_t)py - y - 4) / row_h;
+    index = ((uint32_t)(py - popup_y) - 4) / row_h;
     if (!items || index >= count ||
         (items[index].flags & (LEONOS_UI_MENU_SEPARATOR | LEONOS_UI_MENU_DISABLED))) {
         return 1;
@@ -1918,14 +2457,27 @@ void leonos_ui_menu_popup(struct leonos_ui_surface *surface, uint32_t x, uint32_
 {
     uint32_t row_h = ui_menu_row_h();
     uint32_t h = leonos_ui_menu_popup_height(count);
-    leonos_ui_menu(surface, x, y, w, h);
+    int32_t popup_x;
+    int32_t popup_y;
+    ui_popup_place(surface, (int32_t)x, (int32_t)y, w, h, &popup_x, &popup_y);
+    ui_menu_cache.valid = 1;
+    ui_menu_cache.requested_x = (int32_t)x;
+    ui_menu_cache.requested_y = (int32_t)y;
+    ui_menu_cache.w = w;
+    ui_menu_cache.h = h;
+    ui_menu_cache.count = count;
+    ui_menu_cache.row_h = row_h;
+    ui_menu_cache.progress = 0;
+    ui_menu_cache.x = popup_x;
+    ui_menu_cache.y = popup_y;
+    leonos_ui_menu(surface, (uint32_t)popup_x, (uint32_t)popup_y, w, h);
     for (uint32_t i = 0; i < count; ++i) {
-        uint32_t row_y = y + 4 + i * row_h;
+        uint32_t row_y = (uint32_t)popup_y + 4 + i * row_h;
         uint32_t flags = items ? items[i].flags : LEONOS_UI_MENU_DISABLED;
         if (items && items[i].id == selected_id && !(flags & LEONOS_UI_MENU_DISABLED)) {
             flags |= LEONOS_UI_MENU_SELECTED;
         }
-        leonos_ui_menu_item(surface, x + 34, row_y, w > 42 ? w - 42 : w,
+        leonos_ui_menu_item(surface, (uint32_t)popup_x + 34, row_y, w > 42 ? w - 42 : w,
                             items ? items[i].label : "", flags);
     }
 }
@@ -1936,18 +2488,27 @@ int leonos_ui_menu_popup_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
 {
     uint32_t row_h = ui_menu_row_h();
     uint32_t h = leonos_ui_menu_popup_height(count);
+    int32_t popup_x = (int32_t)x;
+    int32_t popup_y = (int32_t)y;
     uint32_t index;
     if (out_id) {
         *out_id = 0;
     }
+    if (ui_popup_cache_matches(&ui_menu_cache, (int32_t)x, (int32_t)y,
+                               w, count, row_h, 0)) {
+        popup_x = ui_menu_cache.x;
+        popup_y = ui_menu_cache.y;
+        w = ui_menu_cache.w;
+        h = ui_menu_cache.h;
+    }
     if (px < 0 || py < 0 ||
-        !leonos_ui_hit((uint32_t)px, (uint32_t)py, (int32_t)x, (int32_t)y, w, h)) {
+        !leonos_ui_hit((uint32_t)px, (uint32_t)py, popup_x, popup_y, w, h)) {
         return 0;
     }
-    if ((uint32_t)py < y + 4) {
+    if (py < popup_y + 4) {
         return 1;
     }
-    index = ((uint32_t)py - y - 4) / row_h;
+    index = ((uint32_t)(py - popup_y) - 4) / row_h;
     if (!items || index >= count ||
         (items[index].flags & (LEONOS_UI_MENU_SEPARATOR | LEONOS_UI_MENU_DISABLED))) {
         return 1;

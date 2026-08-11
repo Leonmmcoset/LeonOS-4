@@ -5,6 +5,7 @@
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
+#include <leonos/text.h>
 #include <leonos/ui.h>
 
 #define NOTEPAD_W 720
@@ -14,22 +15,16 @@
 #define NOTEPAD_MAX_W 1264
 #define NOTEPAD_MAX_H 746
 #define NOTEPAD_TEXT_CAP 32768
+#define NOTEPAD_ENCODED_CAP (NOTEPAD_TEXT_CAP * 2 + 4)
 #define STATUS_CAP 128
 #define PATH_CAP LEONOS_FS_PATH_LEN
-#define HEADER_X 10
-#define HEADER_Y 30
-#define PATH_Y 48
 #define VIEW_X 10
-#define VIEW_Y 62
 #define STATUS_H 28
 #define MENU_BAR_H 28
+#define VIEW_Y (MENU_BAR_H + 10)
 #define MENU_ITEM_H (LEONOS_FONT_H + 8)
 #define UNTITLED_NAME "Untitled"
-#define NOTEPAD_OPEN_X 8
-#define NOTEPAD_OPEN_W 96
-#define NOTEPAD_SAVE_X 110
-#define NOTEPAD_SAVE_W 64
-#define NOTEPAD_PATH_X 184
+#define NOTEPAD_WINDOW_TITLE_CAP 48
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum {
@@ -49,10 +44,13 @@ static char file_path[PATH_CAP] = UNTITLED_NAME;
 static char status_text[STATUS_CAP];
 static char text_data[NOTEPAD_TEXT_CAP];
 static char loaded_text[NOTEPAD_TEXT_CAP];
+static char encoded_text[NOTEPAD_ENCODED_CAP];
 static uint8_t truncated;
 static uint8_t menu_open;
 static uint8_t document_dirty;
 static uint8_t document_kind;
+static uint32_t document_encoding = LEONOS_TEXT_ENCODING_UTF8;
+static uint32_t decode_replacements;
 static uint32_t saved_hash;
 static uint32_t *png_pixels;
 static uint32_t png_width;
@@ -62,6 +60,25 @@ static uint32_t view_w = NOTEPAD_W;
 static uint32_t view_h = NOTEPAD_H;
 
 static int confirm_dirty_action(const char *message);
+
+static const char *encoding_name(uint32_t encoding)
+{
+    switch (encoding) {
+    case LEONOS_TEXT_ENCODING_UTF8_BOM:
+        return "UTF-8 BOM";
+    case LEONOS_TEXT_ENCODING_UTF16LE:
+        return "UTF-16 LE";
+    case LEONOS_TEXT_ENCODING_UTF16BE:
+        return "UTF-16 BE";
+    case LEONOS_TEXT_ENCODING_GBK:
+        return "GBK";
+    case LEONOS_TEXT_ENCODING_GB2312:
+        return "GB2312";
+    case LEONOS_TEXT_ENCODING_UTF8:
+    default:
+        return "UTF-8";
+    }
+}
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -166,6 +183,20 @@ static int is_untitled_path(const char *path)
     return !path || !path[0] || text_equals(path, UNTITLED_NAME);
 }
 
+static const char *path_basename(const char *path)
+{
+    const char *base = path;
+    if (is_untitled_path(path)) {
+        return T("Untitled", "未命名");
+    }
+    for (uint32_t index = 0; path && path[index]; ++index) {
+        if (path[index] == '/') {
+            base = path + index + 1U;
+        }
+    }
+    return base && base[0] ? base : T("Untitled", "未命名");
+}
+
 static int hit_rect_i(int32_t x, int32_t y, int32_t rx, int32_t ry, int32_t rw, int32_t rh)
 {
     return x >= rx && y >= ry && x < rx + rw && y < ry + rh;
@@ -222,11 +253,16 @@ static void rebuild_status(void)
     append_u32(status_text, &pos, sizeof(status_text), document.line_count);
     append_text(status_text, &pos, sizeof(status_text), T("  Bytes ", "  字节 "));
     append_u32(status_text, &pos, sizeof(status_text), document.length);
+    append_text(status_text, &pos, sizeof(status_text), T("  Encoding ", "  编码 "));
+    append_text(status_text, &pos, sizeof(status_text), encoding_name(document_encoding));
     if (document_dirty) {
         append_text(status_text, &pos, sizeof(status_text), T("  Modified", "  已修改"));
     }
     if (truncated) {
         append_text(status_text, &pos, sizeof(status_text), T("  Truncated", "  已截断"));
+    }
+    if (decode_replacements) {
+        append_text(status_text, &pos, sizeof(status_text), T("  Invalid bytes replaced", "  无效字节已替换"));
     }
     if (document.length == 0) {
         append_text(status_text, &pos, sizeof(status_text), T("  Empty", "  空文件"));
@@ -301,6 +337,8 @@ static void begin_new_document(void)
     document.focused = 1;
     copy_text(file_path, sizeof(file_path), UNTITLED_NAME);
     clear_document_contents();
+    document_encoding = LEONOS_TEXT_ENCODING_UTF8;
+    decode_replacements = 0;
     mark_document_clean();
 }
 
@@ -309,7 +347,11 @@ static int load_document(const char *path)
     struct leonos_stat st;
     int fd;
     int ret;
+    int decode_ret;
     uint32_t loaded_length = 0;
+    uint32_t decoded_length = 0;
+    uint32_t detected_encoding = LEONOS_TEXT_ENCODING_UTF8;
+    uint32_t replacements = 0;
     uint8_t loaded_truncated = 0;
     if (!path || !path[0]) {
         begin_new_document();
@@ -360,20 +402,31 @@ static int load_document(const char *path)
     document.readonly = 0;
     document.focused = 1;
     clear_document_contents();
-    for (uint32_t i = 0; i < loaded_length; ++i) {
-        text_data[i] = loaded_text[i];
+    if (leonos_text_detect_encoding(loaded_text, loaded_length, &detected_encoding) < 0) {
+        copy_text(status_text, sizeof(status_text), T("Unsupported text encoding", "不支持的文本编码"));
+        return -1;
     }
-    text_data[loaded_length] = 0;
-    document.length = loaded_length;
-    truncated = loaded_truncated;
+    decode_ret = leonos_text_decode(loaded_text, loaded_length, detected_encoding,
+                                    text_data, sizeof(text_data) - 1U,
+                                    &decoded_length, &replacements);
+    if (decode_ret < 0 && decode_ret != LEONOS_TEXT_ENCODING_NO_SPACE) {
+        copy_text(status_text, sizeof(status_text), T("Could not decode text file", "无法解码文本文件"));
+        return decode_ret;
+    }
+    text_data[decoded_length] = 0;
+    document.length = decoded_length;
+    document_encoding = detected_encoding;
+    decode_replacements = replacements;
+    truncated = loaded_truncated || decode_ret == LEONOS_TEXT_ENCODING_NO_SPACE;
     copy_text(file_path, sizeof(file_path), path);
     document.cursor = 0;
     document.scroll_line = 0;
     leonos_ui_text_area_state_sync(&document, text_view_w());
     clamp_scroll();
     mark_document_clean();
-    printf("[notepad.elf] open path=%s bytes=%d lines=%d truncated=%d\n",
-           file_path, (int)document.length, (int)document.line_count, (int)truncated);
+    printf("[notepad.elf] open path=%s bytes=%d encoding=%s lines=%d truncated=%d\n",
+           file_path, (int)document.length, encoding_name(document_encoding),
+           (int)document.line_count, (int)truncated);
     return 0;
 }
 
@@ -404,10 +457,13 @@ static int load_png_document(const char *path)
     return 0;
 }
 
-static int save_document_to_path(const char *path)
+static int save_document_to_path(const char *path, uint32_t encoding)
 {
     int fd;
+    int encode_ret;
     uint32_t flags;
+    uint32_t encoded_length = 0;
+    uint32_t replacements = 0;
     long wrote;
     if (!path || !path[0]) {
         return 0;
@@ -417,24 +473,35 @@ static int save_document_to_path(const char *path)
                   T("PNG preview cannot be saved as text", "PNG 预览不能保存为文本"));
         return 0;
     }
-    flags = LEONOS_O_WRONLY | LEONOS_O_CREAT;
-    if (!document.length) {
-        flags |= LEONOS_O_TRUNC;
+    encode_ret = leonos_text_encode(text_data, document.length, encoding,
+                                    encoded_text, sizeof(encoded_text),
+                                    &encoded_length, &replacements);
+    if (encode_ret < 0) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Text is too large for selected encoding", "文本过大，无法使用所选编码保存"));
+        return 0;
     }
+    if (replacements && !leonos_ui_show_confirm_dialog(
+            T("Notepad", "记事本"),
+            T("Some characters are not available in this encoding. Save them as '?'?",
+              "所选编码无法表示部分字符。将其保存为 '?' 吗？"), 0)) {
+        return 0;
+    }
+    flags = LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC;
     fd = open(path, flags, 0);
     if (fd < 0) {
         set_error_status(T("save open failed ", "保存打开失败 "), fd);
         return 0;
     }
     wrote = 0;
-    if (document.length) {
-        wrote = write(fd, text_data, document.length);
+    if (encoded_length) {
+        wrote = write(fd, encoded_text, encoded_length);
         if (wrote < 0) {
             close(fd);
             set_error_status(T("save write failed ", "保存写入失败 "), (int)wrote);
             return 0;
         }
-        if ((uint32_t)wrote != document.length) {
+        if ((uint32_t)wrote != encoded_length) {
             close(fd);
             copy_text(status_text, sizeof(status_text), T("save write incomplete", "保存写入不完整"));
             return 0;
@@ -442,14 +509,40 @@ static int save_document_to_path(const char *path)
     }
     close(fd);
     copy_text(file_path, sizeof(file_path), path);
+    document_encoding = encoding;
+    decode_replacements = 0;
     mark_document_clean();
-    printf("[notepad.elf] saved path=%s bytes=%d\n", file_path, (int)document.length);
+    printf("[notepad.elf] saved path=%s bytes=%d encoding=%s\n", file_path,
+           (int)encoded_length, encoding_name(document_encoding));
     return 1;
 }
 
 static int save_document_as(void)
 {
     char path[PATH_CAP];
+    uint32_t encoding = document_encoding;
+    static const struct leonos_ui_dropdown_item encoding_items[] = {
+        {"UTF-8", LEONOS_TEXT_ENCODING_UTF8, 0},
+        {"UTF-8 with BOM", LEONOS_TEXT_ENCODING_UTF8_BOM, 0},
+        {"UTF-16 LE", LEONOS_TEXT_ENCODING_UTF16LE, 0},
+        {"UTF-16 BE", LEONOS_TEXT_ENCODING_UTF16BE, 0},
+        {"GBK", LEONOS_TEXT_ENCODING_GBK, 0},
+        {"GB2312", LEONOS_TEXT_ENCODING_GB2312, 0},
+    };
+    const struct leonos_ui_file_dialog_input inputs[] = {
+        {
+            .type = LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN,
+            .id = 1,
+            .label = T("Encoding", "编码"),
+            .value = &encoding,
+            .items = encoding_items,
+            .item_count = sizeof(encoding_items) / sizeof(encoding_items[0]),
+        },
+    };
+    const struct leonos_ui_file_dialog_options options = {
+        .inputs = inputs,
+        .input_count = sizeof(inputs) / sizeof(inputs[0]),
+    };
     if (document_kind == NOTEPAD_DOCUMENT_PNG) {
         copy_text(status_text, sizeof(status_text),
                   T("PNG preview cannot be saved as text", "PNG 预览不能保存为文本"));
@@ -460,15 +553,15 @@ static int save_document_as(void)
     } else {
         copy_text(path, sizeof(path), file_path);
     }
-    if (leonos_ui_show_save_dialog_ex(T("Save As", "另存为"), path, sizeof(path),
-                                      T("Text files (*.txt)", "文本文件 (*.txt)"),
-                                      ".txt") <= 0) {
+    if (leonos_ui_show_save_dialog_with_options(
+            T("Save As", "另存为"), path, sizeof(path),
+            T("Text files (*.txt)", "文本文件 (*.txt)"), ".txt", &options) <= 0) {
         return 0;
     }
     if (!path[0]) {
         return 0;
     }
-    return save_document_to_path(path);
+    return save_document_to_path(path, encoding);
 }
 
 static int open_document_via_dialog(void)
@@ -499,7 +592,7 @@ static int save_document(void)
     if (is_untitled_path(file_path)) {
         return save_document_as();
     }
-    return save_document_to_path(file_path);
+    return save_document_to_path(file_path, document_encoding);
 }
 
 static int confirm_dirty_action(const char *message)
@@ -562,29 +655,12 @@ static void draw_notepad(struct leonos_ui_surface *ui)
     uint32_t edit_w = text_view_w();
     uint32_t edit_h = text_view_h();
     uint32_t scroll_x = scrollbar_x();
-    char path_label[PATH_CAP + 4];
-    uint32_t path_pos = 0;
     leonos_ui_text_area_state_sync(&document, edit_w);
-    path_label[0] = 0;
-    append_text(path_label, &path_pos, sizeof(path_label), file_path);
-    if (document_dirty) {
-        append_text(path_label, &path_pos, sizeof(path_label), " *");
-    }
     leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_WHITE);
     leonos_ui_menubar(ui, 0, 0, view_w);
     leonos_ui_menubar_item(ui, 8, 0, 54, T("File", "文件"), menu_open == NOTEPAD_MENU_FILE);
     leonos_ui_menubar_item(ui, 64, 0, 54, T("Edit", "编辑"), menu_open == NOTEPAD_MENU_EDIT);
     leonos_ui_menubar_item(ui, 120, 0, 54, T("View", "查看"), menu_open == NOTEPAD_MENU_VIEW);
-    leonos_ui_toolbar(ui, 0, 28, view_w, 26);
-    leonos_ui_toolbar_button(ui, NOTEPAD_OPEN_X, 30, NOTEPAD_OPEN_W,
-                             T("Choose file", "选择文件"), 0);
-    leonos_ui_toolbar_button(ui, NOTEPAD_SAVE_X, 30, NOTEPAD_SAVE_W, T("Save", "保存"),
-                             document_kind == NOTEPAD_DOCUMENT_PNG
-                                 ? LEONOS_UI_TOOLBAR_BUTTON_DISABLED
-                                 : (document_dirty ? LEONOS_UI_TOOLBAR_BUTTON_ACTIVE : 0));
-    leonos_ui_text_clipped(ui, NOTEPAD_PATH_X, 36,
-                            view_w > NOTEPAD_PATH_X + 10U ? view_w - NOTEPAD_PATH_X - 10U : 80,
-                            path_label, LEONOS_UI_DARK, LEONOS_UI_GRAY);
     if (document_kind == NOTEPAD_DOCUMENT_PNG) {
         draw_png_preview(ui, VIEW_X, VIEW_Y, edit_w + 18U, edit_h);
     } else {
@@ -615,26 +691,18 @@ static void draw_notepad(struct leonos_ui_surface *ui)
 
 static void present_notepad(uint32_t window_id, struct leonos_ui_surface *ui)
 {
+    char title[NOTEPAD_WINDOW_TITLE_CAP];
+    uint32_t title_pos = 0;
+    title[0] = 0;
+    append_text(title, &title_pos, sizeof(title), T("Notepad - ", "记事本 - "));
+    append_text(title, &title_pos, sizeof(title), path_basename(file_path));
+    if (document_dirty) {
+        append_text(title, &title_pos, sizeof(title), " *");
+    }
+    (void)leonos_gui_set_window_title(window_id, title);
     leonos_ui_bind(ui, pixels, view_w, view_h, NOTEPAD_MAX_W);
     draw_notepad(ui);
     leonos_gui_present_window(window_id, view_w, view_h, NOTEPAD_MAX_W, pixels);
-}
-
-static int handle_toolbar_click(int32_t x, int32_t y)
-{
-    if (hit_rect_i(x, y, NOTEPAD_SAVE_X, 30, NOTEPAD_SAVE_W,
-                   (int32_t)LEONOS_UI_BUTTON_H)) {
-        menu_open = NOTEPAD_MENU_NONE;
-        save_document();
-        return 1;
-    }
-    if (hit_rect_i(x, y, NOTEPAD_OPEN_X, 30, NOTEPAD_OPEN_W,
-                   (int32_t)LEONOS_UI_BUTTON_H)) {
-        menu_open = NOTEPAD_MENU_NONE;
-        open_document_via_dialog();
-        return 1;
-    }
-    return 0;
 }
 
 static int handle_menu_click(int32_t x, int32_t y)
@@ -654,10 +722,6 @@ static int handle_menu_click(int32_t x, int32_t y)
         }
         menu_open = NOTEPAD_MENU_NONE;
         return 1;
-    }
-    if (hit_rect_i(x, y, NOTEPAD_SAVE_X, 30, NOTEPAD_SAVE_W,
-                   (int32_t)LEONOS_UI_BUTTON_H)) {
-        return handle_toolbar_click(x, y);
     }
     if (menu_open == NOTEPAD_MENU_FILE) {
         if (hit_rect_i(x, y, 42, (int32_t)MENU_BAR_H + 8, 116, (int32_t)MENU_ITEM_H)) {
@@ -775,10 +839,6 @@ int main(int argc, char **argv, char **envp)
                         continue;
                     }
                     menu_open = NOTEPAD_MENU_NONE;
-                    if (handle_toolbar_click(event.x, event.y)) {
-                        present_notepad((uint32_t)window_id, &ui);
-                        continue;
-                    }
                     if (document_kind == NOTEPAD_DOCUMENT_PNG) {
                         continue;
                     }

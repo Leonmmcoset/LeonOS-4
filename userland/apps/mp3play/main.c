@@ -1,11 +1,14 @@
 #include <leonos/audio.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
+#include <leonos/i18n.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
 #include <string.h>
+
+#define T(en, zh) leonos_i18n((en), (zh))
 
 #define MINIMP3_NO_SIMD
 #define MINIMP3_IMPLEMENTATION
@@ -321,8 +324,9 @@ static int player_open_dialog(struct mp3_player *player)
     char path[LEONOS_FS_PATH_LEN];
     player_stop(player, "Playback stopped");
     path[0] = 0;
-    if (leonos_ui_show_open_dialog("Open MP3", path, sizeof(path),
-                                   "MP3 audio (*.mp3)", ".mp3") <= 0 || !path[0]) {
+    if (leonos_ui_show_open_dialog(T("Open MP3", "打开 MP3"), path, sizeof(path),
+                                   T("MP3 audio (*.mp3)", "MP3 音频 (*.mp3)"),
+                                   ".mp3") <= 0 || !path[0]) {
         if (!player->path[0]) {
             copy_text(player->status, sizeof(player->status), "Select an MP3 file to begin");
         }

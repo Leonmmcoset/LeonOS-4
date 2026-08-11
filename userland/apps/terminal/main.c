@@ -10,20 +10,20 @@
 
 #define TERMINAL_W 760U
 #define TERMINAL_H 480U
+#define TERMINAL_MAX_SESSIONS 8U
 #define TERMINAL_HISTORY_ROWS 160U
-#define TERMINAL_MARGIN 14U
-#define TERMINAL_HEADER_H 32U
-#define TERMINAL_STATUS_H 24U
-#define TERMINAL_BODY_X (TERMINAL_MARGIN + 6U)
-#define TERMINAL_BODY_Y (TERMINAL_HEADER_H + TERMINAL_MARGIN)
-#define TERMINAL_BODY_W (TERMINAL_W - TERMINAL_MARGIN * 2U)
-#define TERMINAL_BODY_H (TERMINAL_H - TERMINAL_HEADER_H - TERMINAL_STATUS_H - TERMINAL_MARGIN * 2U)
-#define TERMINAL_COLUMNS ((TERMINAL_BODY_W - 12U) / LEONOS_FONT_W)
+#define TERMINAL_TAB_ADD_W 28U
+#define TERMINAL_BODY_X 0U
+#define TERMINAL_BODY_Y (LEONOS_FONT_H + 10U)
+#define TERMINAL_BODY_W TERMINAL_W
+#define TERMINAL_BODY_H (TERMINAL_H - TERMINAL_BODY_Y)
+#define TERMINAL_COLUMNS (TERMINAL_BODY_W / LEONOS_FONT_W)
 #define TERMINAL_CSI_PARAM_CAP 12U
 /* Keep a complete typical curses redraw in one terminal frame.  Smaller
  * batches make full-screen programs redraw and present the window repeatedly. */
 #define TERMINAL_OUTPUT_BUDGET 8192U
 #define TERMINAL_CELL_CONTINUATION 0xffffffffU
+#define TERMINAL_KEY_T 20U
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum terminal_escape_state {
@@ -44,59 +44,100 @@ struct terminal_line {
 
 struct terminal_screen_snapshot {
     struct terminal_line lines[TERMINAL_HISTORY_ROWS];
+    uint32_t snapshot_history_first;
+    uint32_t snapshot_history_count;
+    uint32_t snapshot_active_line;
+    uint32_t snapshot_cursor_column;
+    uint32_t snapshot_saved_line;
+    uint32_t snapshot_saved_column;
+    uint32_t snapshot_text_foreground;
+    uint32_t snapshot_text_background;
+    int8_t snapshot_foreground_index;
+    int8_t snapshot_background_index;
+    uint8_t snapshot_text_bright;
+    uint8_t snapshot_text_dim;
+    uint8_t snapshot_text_inverse;
+    uint8_t snapshot_background_bright;
+    uint8_t snapshot_cursor_visible;
+    uint8_t snapshot_saved_cursor_valid;
+};
+
+static uint32_t pixels[TERMINAL_W * TERMINAL_H];
+
+struct terminal_session {
+    struct terminal_line history[TERMINAL_HISTORY_ROWS];
+    struct terminal_screen_snapshot normal_screen;
     uint32_t history_first;
     uint32_t history_count;
     uint32_t active_line;
     uint32_t cursor_column;
     uint32_t saved_line;
     uint32_t saved_column;
+    uint32_t pty_id;
     uint32_t text_foreground;
     uint32_t text_background;
     int8_t foreground_index;
     int8_t background_index;
+    uint8_t used;
     uint8_t text_bright;
     uint8_t text_dim;
     uint8_t text_inverse;
     uint8_t background_bright;
     uint8_t cursor_visible;
     uint8_t saved_cursor_valid;
+    enum terminal_escape_state escape_state;
+    uint16_t csi_params[TERMINAL_CSI_PARAM_CAP];
+    uint8_t csi_param_count;
+    uint8_t csi_private;
+    uint8_t utf8_bytes[4];
+    uint8_t utf8_length;
+    uint8_t utf8_expected;
+    uint8_t alternate_screen_active;
+    /* The PTY host supplies canonical-mode echo, so keep enough state to
+     * erase only text entered after the current prompt, not the prompt. */
+    uint32_t local_echoed_input_count;
 };
 
-static uint32_t pixels[TERMINAL_W * TERMINAL_H];
-static struct terminal_line history[TERMINAL_HISTORY_ROWS];
-static struct terminal_screen_snapshot normal_screen;
-static uint32_t history_first;
-static uint32_t history_count;
-static uint32_t active_line;
-static uint32_t cursor_column;
-static uint32_t saved_line;
-static uint32_t saved_column;
-static uint32_t pty_id;
-static uint32_t text_foreground = 0x00d7e3f4U;
-static uint32_t text_background = 0x000b1019U;
-static int8_t foreground_index = -1;
-static int8_t background_index = -1;
-static uint8_t text_bright;
-static uint8_t text_dim;
-static uint8_t text_inverse;
-static uint8_t background_bright;
-static uint8_t cursor_visible = 1;
-static uint8_t saved_cursor_valid;
-static enum terminal_escape_state escape_state;
-static uint16_t csi_params[TERMINAL_CSI_PARAM_CAP];
-static uint8_t csi_param_count;
-static uint8_t csi_private;
-static uint8_t utf8_bytes[4];
-static uint8_t utf8_length;
-static uint8_t utf8_expected;
-static uint8_t alternate_screen_active;
-/* The PTY host supplies canonical-mode echo, so keep enough state to erase
- * only text entered after the current prompt rather than erasing the prompt. */
-static uint32_t local_echoed_input_count;
+static struct terminal_session sessions[TERMINAL_MAX_SESSIONS];
+static struct terminal_session *active_session;
+static struct leonos_ui_tab_state tabs_state;
+static const char *const terminal_tab_labels[TERMINAL_MAX_SESSIONS] = {
+    "1", "2", "3", "4", "5", "6", "7", "8",
+};
+
+#define history (active_session->history)
+#define normal_screen (active_session->normal_screen)
+#define history_first (active_session->history_first)
+#define history_count (active_session->history_count)
+#define active_line (active_session->active_line)
+#define cursor_column (active_session->cursor_column)
+#define saved_line (active_session->saved_line)
+#define saved_column (active_session->saved_column)
+#define pty_id (active_session->pty_id)
+#define text_foreground (active_session->text_foreground)
+#define text_background (active_session->text_background)
+#define foreground_index (active_session->foreground_index)
+#define background_index (active_session->background_index)
+#define text_bright (active_session->text_bright)
+#define text_dim (active_session->text_dim)
+#define text_inverse (active_session->text_inverse)
+#define background_bright (active_session->background_bright)
+#define cursor_visible (active_session->cursor_visible)
+#define saved_cursor_valid (active_session->saved_cursor_valid)
+#define escape_state (active_session->escape_state)
+#define csi_params (active_session->csi_params)
+#define csi_param_count (active_session->csi_param_count)
+#define csi_private (active_session->csi_private)
+#define utf8_bytes (active_session->utf8_bytes)
+#define utf8_length (active_session->utf8_length)
+#define utf8_expected (active_session->utf8_expected)
+#define alternate_screen_active (active_session->alternate_screen_active)
+#define local_echoed_input_count (active_session->local_echoed_input_count)
 
 static uint32_t terminal_visible_rows(void);
 static void terminal_flush_utf8(void);
 static int terminal_write_input(const char *buffer, uint32_t length);
+static uint32_t terminal_tab_items(struct leonos_ui_tab_item *items);
 
 static const uint32_t ansi_normal[8] = {
     0x00708090U, 0x00d06060U, 0x006fc77aU, 0x00d5b85aU,
@@ -169,22 +210,22 @@ static void terminal_save_normal_screen(void)
     for (row = 0; row < TERMINAL_HISTORY_ROWS; ++row) {
         normal_screen.lines[row] = history[row];
     }
-    normal_screen.history_first = history_first;
-    normal_screen.history_count = history_count;
-    normal_screen.active_line = active_line;
-    normal_screen.cursor_column = cursor_column;
-    normal_screen.saved_line = saved_line;
-    normal_screen.saved_column = saved_column;
-    normal_screen.text_foreground = text_foreground;
-    normal_screen.text_background = text_background;
-    normal_screen.foreground_index = foreground_index;
-    normal_screen.background_index = background_index;
-    normal_screen.text_bright = text_bright;
-    normal_screen.text_dim = text_dim;
-    normal_screen.text_inverse = text_inverse;
-    normal_screen.background_bright = background_bright;
-    normal_screen.cursor_visible = cursor_visible;
-    normal_screen.saved_cursor_valid = saved_cursor_valid;
+    normal_screen.snapshot_history_first = history_first;
+    normal_screen.snapshot_history_count = history_count;
+    normal_screen.snapshot_active_line = active_line;
+    normal_screen.snapshot_cursor_column = cursor_column;
+    normal_screen.snapshot_saved_line = saved_line;
+    normal_screen.snapshot_saved_column = saved_column;
+    normal_screen.snapshot_text_foreground = text_foreground;
+    normal_screen.snapshot_text_background = text_background;
+    normal_screen.snapshot_foreground_index = foreground_index;
+    normal_screen.snapshot_background_index = background_index;
+    normal_screen.snapshot_text_bright = text_bright;
+    normal_screen.snapshot_text_dim = text_dim;
+    normal_screen.snapshot_text_inverse = text_inverse;
+    normal_screen.snapshot_background_bright = background_bright;
+    normal_screen.snapshot_cursor_visible = cursor_visible;
+    normal_screen.snapshot_saved_cursor_valid = saved_cursor_valid;
 }
 
 static void terminal_restore_normal_screen(void)
@@ -193,22 +234,22 @@ static void terminal_restore_normal_screen(void)
     for (row = 0; row < TERMINAL_HISTORY_ROWS; ++row) {
         history[row] = normal_screen.lines[row];
     }
-    history_first = normal_screen.history_first;
-    history_count = normal_screen.history_count;
-    active_line = normal_screen.active_line;
-    cursor_column = normal_screen.cursor_column;
-    saved_line = normal_screen.saved_line;
-    saved_column = normal_screen.saved_column;
-    text_foreground = normal_screen.text_foreground;
-    text_background = normal_screen.text_background;
-    foreground_index = normal_screen.foreground_index;
-    background_index = normal_screen.background_index;
-    text_bright = normal_screen.text_bright;
-    text_dim = normal_screen.text_dim;
-    text_inverse = normal_screen.text_inverse;
-    background_bright = normal_screen.background_bright;
-    cursor_visible = normal_screen.cursor_visible;
-    saved_cursor_valid = normal_screen.saved_cursor_valid;
+    history_first = normal_screen.snapshot_history_first;
+    history_count = normal_screen.snapshot_history_count;
+    active_line = normal_screen.snapshot_active_line;
+    cursor_column = normal_screen.snapshot_cursor_column;
+    saved_line = normal_screen.snapshot_saved_line;
+    saved_column = normal_screen.snapshot_saved_column;
+    text_foreground = normal_screen.snapshot_text_foreground;
+    text_background = normal_screen.snapshot_text_background;
+    foreground_index = normal_screen.snapshot_foreground_index;
+    background_index = normal_screen.snapshot_background_index;
+    text_bright = normal_screen.snapshot_text_bright;
+    text_dim = normal_screen.snapshot_text_dim;
+    text_inverse = normal_screen.snapshot_text_inverse;
+    background_bright = normal_screen.snapshot_background_bright;
+    cursor_visible = normal_screen.snapshot_cursor_visible;
+    saved_cursor_valid = normal_screen.snapshot_saved_cursor_valid;
 }
 
 static void terminal_blank_cell(struct terminal_cell *cell)
@@ -832,21 +873,24 @@ static void terminal_draw_line(struct leonos_ui_surface *ui, uint32_t y,
 
 static void terminal_draw(struct leonos_ui_surface *ui)
 {
+    struct leonos_ui_tab_item tab_items[TERMINAL_MAX_SESSIONS];
+    uint32_t tab_count;
     uint32_t rows = terminal_visible_rows();
     uint32_t first_visible = history_count > rows ? history_count - rows : 0;
     uint32_t active_visible = terminal_logical_active();
     uint32_t row;
-    leonos_ui_rect(ui, 0, 0, TERMINAL_W, TERMINAL_H, 0x00101822U);
-    leonos_ui_rect(ui, 0, 0, TERMINAL_W, TERMINAL_HEADER_H, 0x001b2b45U);
-    leonos_ui_text(ui, TERMINAL_MARGIN, 8, T("LeonOS Terminal", "LeonOS 终端"),
-                   LEONOS_UI_WHITE, 0x001b2b45U);
-    leonos_ui_text_transparent_clipped(ui, TERMINAL_W - 236, 8, 220,
-                                       T("PTY command session", "PTY 命令会话"), 0x00a6bddbU);
-    leonos_ui_inset(ui, TERMINAL_MARGIN, TERMINAL_BODY_Y, TERMINAL_BODY_W,
-                    TERMINAL_BODY_H, 0x000b1019U);
+
+    tab_count = terminal_tab_items(tab_items);
+
+    leonos_ui_rect(ui, 0, 0, TERMINAL_W, TERMINAL_H, 0x000b1019U);
+    leonos_ui_tab_control(ui, 0, 0, TERMINAL_W - TERMINAL_TAB_ADD_W,
+                          tab_items, tab_count, &tabs_state);
+    leonos_ui_button(ui, TERMINAL_W - TERMINAL_TAB_ADD_W, 0,
+                     TERMINAL_TAB_ADD_W, leonos_ui_tab_height(), "+",
+                     tab_count < TERMINAL_MAX_SESSIONS ? 0 : LEONOS_UI_BUTTON_DISABLED);
     for (row = 0; row < rows && first_visible + row < history_count; ++row) {
         uint32_t line_index = (history_first + first_visible + row) % TERMINAL_HISTORY_ROWS;
-        terminal_draw_line(ui, TERMINAL_BODY_Y + 4U + row * LEONOS_FONT_H,
+        terminal_draw_line(ui, TERMINAL_BODY_Y + row * LEONOS_FONT_H,
                            &history[line_index]);
     }
     if (cursor_visible && active_visible >= first_visible &&
@@ -854,16 +898,11 @@ static void terminal_draw(struct leonos_ui_surface *ui)
         (leonos_uptime_ms() / 450UL) % 2UL == 0UL) {
         uint32_t cursor_x = TERMINAL_BODY_X +
                             (cursor_column < TERMINAL_COLUMNS ? cursor_column : TERMINAL_COLUMNS - 1U) * LEONOS_FONT_W;
-        uint32_t cursor_y = TERMINAL_BODY_Y + 4U +
+        uint32_t cursor_y = TERMINAL_BODY_Y +
                             (active_visible - first_visible) * LEONOS_FONT_H;
         leonos_ui_rect(ui, cursor_x, cursor_y + LEONOS_FONT_H - 2U,
                        LEONOS_FONT_W, 2, terminal_style_foreground());
     }
-    leonos_ui_rect(ui, 0, TERMINAL_H - TERMINAL_STATUS_H, TERMINAL_W,
-                   TERMINAL_STATUS_H, 0x001b2b45U);
-    leonos_ui_text(ui, TERMINAL_MARGIN, TERMINAL_H - TERMINAL_STATUS_H + 4,
-                   T("Ctrl+U clears the current command", "Ctrl+U 清除当前命令"),
-                   0x00a6bddbU, 0x001b2b45U);
 }
 
 static int terminal_pump_output(void)
@@ -888,6 +927,24 @@ static int terminal_pump_output(void)
         }
     } while (received > 0 && consumed < TERMINAL_OUTPUT_BUDGET);
     return changed;
+}
+
+static int terminal_pump_all_output(void)
+{
+    struct terminal_session *selected = active_session;
+    int selected_changed = 0;
+
+    for (uint32_t index = 0; index < TERMINAL_MAX_SESSIONS; ++index) {
+        if (!sessions[index].used) {
+            continue;
+        }
+        active_session = &sessions[index];
+        if (terminal_pump_output() && active_session == selected) {
+            selected_changed = 1;
+        }
+    }
+    active_session = selected;
+    return selected_changed;
 }
 
 static int terminal_write_input(const char *buffer, uint32_t length)
@@ -1052,58 +1109,172 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     return 1;
 }
 
+static uint32_t terminal_tab_items(struct leonos_ui_tab_item *items)
+{
+    uint32_t count = 0;
+
+    for (uint32_t index = 0; index < TERMINAL_MAX_SESSIONS; ++index) {
+        if (!sessions[index].used) {
+            continue;
+        }
+        if (items) {
+            items[count].label = terminal_tab_labels[index];
+            items[count].id = index + 1U;
+            items[count].flags = 0;
+        }
+        ++count;
+    }
+    return count;
+}
+
+static int terminal_select_tab(uint32_t id)
+{
+    struct terminal_session *session;
+
+    if (id == 0 || id > TERMINAL_MAX_SESSIONS) {
+        return 0;
+    }
+    session = &sessions[id - 1U];
+    if (!session->used) {
+        return 0;
+    }
+    active_session = session;
+    tabs_state.selected_id = id;
+    tabs_state.hovered_id = id;
+    return 1;
+}
+
+static int terminal_select_adjacent_tab(int direction)
+{
+    int index;
+
+    if (terminal_tab_items(0) < 2U || !active_session) {
+        return 0;
+    }
+    index = (int)(active_session - sessions);
+    for (uint32_t step = 1; step <= TERMINAL_MAX_SESSIONS; ++step) {
+        index += direction;
+        if (index < 0) {
+            index = TERMINAL_MAX_SESSIONS - 1;
+        } else if (index >= (int)TERMINAL_MAX_SESSIONS) {
+            index = 0;
+        }
+        if (sessions[index].used) {
+            return terminal_select_tab((uint32_t)index + 1U);
+        }
+    }
+    return 0;
+}
+
+static struct terminal_session *terminal_open_session(const char *path,
+                                                       char *const command_argv[])
+{
+    struct terminal_session *session = 0;
+    struct leonos_pty_winsize winsize;
+    int new_pty;
+    int shell_result;
+
+    if (!path || !path[0]) {
+        return 0;
+    }
+    for (uint32_t index = 0; index < TERMINAL_MAX_SESSIONS; ++index) {
+        if (!sessions[index].used) {
+            session = &sessions[index];
+            break;
+        }
+    }
+    if (!session) {
+        return 0;
+    }
+
+    new_pty = leonos_pty_create();
+    if (new_pty <= 0) {
+        return 0;
+    }
+    *session = (struct terminal_session){0};
+    session->used = 1;
+    active_session = session;
+    pty_id = (uint32_t)new_pty;
+    cursor_visible = 1;
+    terminal_reset_style();
+    terminal_clear();
+    winsize.ws_row = (uint16_t)terminal_visible_rows();
+    winsize.ws_col = (uint16_t)TERMINAL_COLUMNS;
+    (void)leonos_pty_set_winsize(pty_id, &winsize);
+    shell_result = leonos_pty_spawn_argv(path, pty_id, command_argv, 0);
+    if (shell_result < 0) {
+        terminal_put_text("! shell start failed");
+    }
+    (void)terminal_select_tab((uint32_t)(session - sessions) + 1U);
+    return session;
+}
+
+static int terminal_handle_mouse(int32_t x, int32_t y, uint8_t buttons,
+                                 const char *path, char *const command_argv[])
+{
+    struct leonos_ui_tab_item tab_items[TERMINAL_MAX_SESSIONS];
+    uint32_t tab_count;
+
+    if ((buttons & 1U) == 0) {
+        return 0;
+    }
+    tab_count = terminal_tab_items(tab_items);
+    if (leonos_ui_tab_control_handle_mouse(&tabs_state, x, y, 0, 0,
+                                           TERMINAL_W - TERMINAL_TAB_ADD_W,
+                                           tab_items, tab_count)) {
+        return terminal_select_tab(tabs_state.selected_id);
+    }
+    if (x >= (int32_t)(TERMINAL_W - TERMINAL_TAB_ADD_W) &&
+        x < (int32_t)TERMINAL_W && y >= 0 &&
+        y < (int32_t)leonos_ui_tab_height()) {
+        return terminal_open_session(path, command_argv) != 0;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv, char **envp)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     char *shell_argv[4];
+    char *const *command_argv;
+    const char *command_path;
     uint8_t shift_down = 0;
     uint8_t ctrl_down = 0;
     uint8_t alt_down = 0;
     uint8_t cursor_phase = 2;
     int window_id;
-    int shell_result;
+
     (void)envp;
-    pty_id = (uint32_t)leonos_pty_create();
-    if ((int)pty_id <= 0) {
-        printf("terminal: PTY creation failed (%d)\n", (int)pty_id);
-        return 1;
-    }
-    {
-        struct leonos_pty_winsize winsize = {
-            .ws_row = (uint16_t)terminal_visible_rows(),
-            .ws_col = (uint16_t)TERMINAL_COLUMNS,
-        };
-        (void)leonos_pty_set_winsize(pty_id, &winsize);
-    }
-    window_id = leonos_gui_create_app_window_ex(T("Terminal", "终端"),
-                                                T("PTY command terminal", "PTY 命令终端"),
-                                                TERMINAL_W, TERMINAL_H,
-                                                LEONOS_GUI_WINDOW_NO_RESIZE);
-    if (window_id <= 0) {
-        printf("terminal: window creation failed (%d)\n", window_id);
-        return 1;
-    }
     if (argc > 2 && terminal_arg_eq(argv[1], "--run") && argv[2] && argv[2][0]) {
-        shell_result = leonos_pty_spawn_argv(argv[2], pty_id, &argv[2], 0);
+        command_path = argv[2];
+        command_argv = &argv[2];
     } else {
         shell_argv[0] = "0:/programs/busybox/busybox.elf";
         shell_argv[1] = "sh";
         shell_argv[2] = 0;
         shell_argv[3] = 0;
-        shell_result = leonos_pty_spawn_argv(shell_argv[0], pty_id, shell_argv, 0);
+        command_path = shell_argv[0];
+        command_argv = shell_argv;
+    }
+    window_id = leonos_gui_create_app_window_ex(T("Terminal", "终端"),
+                                                "", TERMINAL_W, TERMINAL_H,
+                                                LEONOS_GUI_WINDOW_NO_RESIZE);
+    if (window_id <= 0) {
+        printf("terminal: window creation failed (%d)\n", window_id);
+        return 1;
     }
     leonos_ui_bind(&ui, pixels, TERMINAL_W, TERMINAL_H, TERMINAL_W);
-    terminal_reset_style();
-    terminal_clear();
-    if (shell_result < 0) {
-        terminal_put_text("! shell start failed");
+    leonos_ui_tab_state_init(&tabs_state, 0);
+    if (!terminal_open_session(command_path, command_argv)) {
+        printf("terminal: PTY creation failed\n");
+        return 1;
     }
     terminal_draw(&ui);
     leonos_gui_present_window((uint32_t)window_id, TERMINAL_W, TERMINAL_H,
                               TERMINAL_W, pixels);
     for (;;) {
-        int redraw = terminal_pump_output();
+        int redraw = terminal_pump_all_output();
         uint8_t next_cursor_phase = (uint8_t)((leonos_uptime_ms() / 450UL) % 2UL);
         if (next_cursor_phase != cursor_phase) {
             cursor_phase = next_cursor_phase;
@@ -1115,11 +1286,20 @@ int main(int argc, char **argv, char **envp)
                 return 0;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
-                redraw |= terminal_send_key(event.keycode, 1, &shift_down,
-                                            &ctrl_down, &alt_down);
+                if (ctrl_down && shift_down && event.keycode == TERMINAL_KEY_T) {
+                    redraw |= terminal_open_session(command_path, command_argv) != 0;
+                } else if (ctrl_down && event.keycode == LEONOS_KEY_TAB) {
+                    redraw |= terminal_select_adjacent_tab(shift_down ? -1 : 1);
+                } else {
+                    redraw |= terminal_send_key(event.keycode, 1, &shift_down,
+                                                &ctrl_down, &alt_down);
+                }
             } else if (event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
                 (void)terminal_send_key(event.keycode, 0, &shift_down,
                                         &ctrl_down, &alt_down);
+            } else if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
+                redraw |= terminal_handle_mouse(event.x, event.y, event.buttons,
+                                                command_path, command_argv);
             } else if (event.type == LEONOS_GUI_APP_EVENT_THEME_CHANGED ||
                        event.type == LEONOS_GUI_APP_EVENT_FOCUS) {
                 redraw = 1;

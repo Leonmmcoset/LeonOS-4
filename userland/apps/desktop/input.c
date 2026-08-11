@@ -399,22 +399,21 @@ void maybe_launch_oobe(void)
 
 int oobe_done_marker_exists(void)
 {
-    struct leonos_stat st;
     struct leonos_auth_status status;
     struct leonos_license_info license;
     status = (struct leonos_auth_status){0};
     if (leonos_auth_status(&status) < 0 || !status.has_admin) {
         return 0;
     }
-    if (!leonos_license_required()) {
-        return stat(OOBE_DONE_PATH, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE;
+    if (leonos_license_required()) {
+        license = (struct leonos_license_info){0};
+        if (leonos_license_status(&license) < 0 ||
+            license.status != LEONOS_LICENSE_STATUS_OK) {
+            return 0;
+        }
     }
-    license = (struct leonos_license_info){0};
-    if (leonos_license_status(&license) < 0 ||
-        license.status != LEONOS_LICENSE_STATUS_OK) {
-        return 0;
-    }
-    return stat(OOBE_DONE_PATH, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE;
+    /* The marker is a recoverable cache; account and license state are authoritative. */
+    return 1;
 }
 
 int window_is_oobe(const struct desktop_window *w)
