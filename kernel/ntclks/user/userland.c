@@ -235,10 +235,15 @@ static int prepare_user_exec_stack(struct task *task)
     uint64_t strings_base;
     uint64_t argv_bytes;
     uint64_t envp_bytes;
+    uint64_t launch_base = 0;
     if (!task) {
         return -22;
     }
     sp = task->stack_top;
+    if (task->dynamic_launch.abi_major) {
+        sp = (sp - sizeof(task->dynamic_launch)) & ~(EXEC_STACK_ALIGN - 1ULL);
+        launch_base = sp;
+    }
     strings_base = (sp - task->exec_data_len) & ~(EXEC_STACK_ALIGN - 1ULL);
     argv_bytes = (uint64_t)(task->exec_argc + 1) * sizeof(uint64_t);
     argv_base = (strings_base - argv_bytes) & ~(EXEC_STACK_ALIGN - 1ULL);
@@ -277,10 +282,21 @@ static int prepare_user_exec_stack(struct task *task)
         return -12;
     }
 
+    if (launch_base) {
+        for (uint32_t i = 0; i < sizeof(task->dynamic_launch); ++i) {
+            uint8_t *dst = (uint8_t *)user_ptr_for_phys(&task->as, launch_base + i);
+            if (!dst) {
+                return -12;
+            }
+            *dst = ((const uint8_t *)&task->dynamic_launch)[i];
+        }
+    }
+
     task->frame.rsp = envp_base;
     task->frame.rdi = task->exec_argc;
     task->frame.rsi = argv_base;
     task->frame.rdx = envp_base;
+    task->frame.r8 = launch_base;
     return 0;
 }
 
@@ -317,8 +333,8 @@ static bool userland_load_task_image(struct task *task)
         return false;
     }
 
-    task->entry = loaded.entry;
-    task->frame.rip = loaded.entry;
+    task->entry = loaded.dynamic ? loaded.interpreter_entry : loaded.entry;
+    task->frame.rip = task->entry;
     task->frame.rsp = task->stack_top;
     task->frame.rflags = 0x202;
     task->frame.cs = NTCLKS_USER_CS;

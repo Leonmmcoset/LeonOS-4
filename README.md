@@ -70,14 +70,28 @@ python3 build.py status <九位任务ID>
 
 系统默认使用蓝色、直角、平面化的 Metro 样式。管理员可在“设置 → 显示”中切换为完整保留的 Win95 样式；选择会立即应用到 Desktop 和已打开程序，并保存到 `0:/system/config/display.conf` 供下次启动的登录、OOBE、安装器与内核早期画面使用。
 
-## 代码根目录结构
-- `arch`：占位用的
-- `boot`：Grub 配置文件和 loader 的源代码
-- `configs`：配置文件
-- `docs`：文档
-- `include`：一些公共的 C 语言 头文件
-- `kernel`：ntclks 源代码
-- `middlelayer`：osmlayer 源代码
-- `system`：一些资源文件
-- `tools`：用于源代码生成/编译和配置文件加载等等的工具
-- `userland`：用户态程序源代码
+## 代码与目录结构
+
+根目录中的主要源码、构建输入和工具按职责组织如下：
+
+- `arch/`：各架构相关说明和预留代码（当前主要支持 x86_64）。
+- `boot/`：GRUB 配置、启动汇编和早期 loader 源代码。
+- `build.py`：唯一受支持的构建入口。
+- `buildsystem/`：构建图、缓存、依赖、任务状态、日志和本机设置实现。
+- `configs/`：组件清单、默认配置和可提交的构建 profile。
+- `devtools/`：面向应用开发的 SDK 头文件、库、链接脚本、示例和文档。
+- `docs/`：架构、ABI、构建、文件系统、安全和工具文档。
+- `drivers/`：可加载的 Ring-0 驱动及其构建输入。
+- `include/`：内核、中间层和用户态共用的公共 C 头文件；生成头文件位于 `include/generated/`。
+- `kernel/ntclks/`：LeonOS 内核，包括调度、内存、ELF、系统调用、GUI IPC、网络和存储桥接。
+- `los2w/`：宿主机上的 LeonOS/Windows 兼容工具和模拟器代码。
+- `middlelayer/osmlayer/`：Rust + C 中间层，负责 VFS、账户与 ACL、Unicode、设备和挂载策略。
+- `system/`：镜像中 staging 的系统配置、字体、证书、壁纸、图标和其他资源。
+- `test/`：测试输入和测试资源。
+- `third_party/`：通过 Git submodule 引入的上游或分叉项目源码，具体归属见 `.gitmodules`。
+- `tools/`：构建辅助、资源生成、组件同步、镜像/安装器打包、验证和代码统计工具（包括 `count_code.py`）。
+- `userland/`：用户态运行库、窗口/UI 支持、BusyBox、TCC、Lua、Nano、Fastfetch 及桌面应用源码。
+
+`Kconfig` 和 `Kconfig.components` 定义配置菜单；后者由工具根据组件清单生成，
+不应手工维护。`build/`、`dist/`、`buildsystem/logs/`、`buildsystem/tmp/` 等目录
+由构建或发布流程生成，不是手写源码的权威来源。

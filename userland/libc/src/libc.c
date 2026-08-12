@@ -376,6 +376,11 @@ void _exit(int code)
     }
 }
 
+int mprotect(void *addr, size_t len, int prot)
+{
+    return (int)syscall3(SYS_mprotect, (long)addr, (long)len, prot);
+}
+
 int raise(int signal)
 {
     /*

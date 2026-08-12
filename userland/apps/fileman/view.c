@@ -35,8 +35,10 @@ void draw_fileman(struct leonos_ui_surface *ui)
     leonos_ui_toolbar_button(ui, 8, TOOLBAR_Y, 54, T("Up", "上级"), 0);
     leonos_ui_toolbar_button(ui, 72, TOOLBAR_Y, 60, T("Open", "打开"), 0);
     leonos_ui_toolbar_button(ui, 142, TOOLBAR_Y, 76, T("Refresh", "刷新"), 0);
-    leonos_ui_edit(ui, 230, TOOLBAR_Y, view_w > 238 ? view_w - 238 : 120,
-                   current_path, text_len(current_path), 0, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_edit_state_draw(ui, 230, TOOLBAR_Y,
+                              view_w > 238 ? view_w - 238 :
+                              (view_w > 230 ? view_w - 230 : 1),
+                              &address_edit, 0);
 
     if (tree_first > (tree_count > tree_rows ? tree_count - tree_rows : 0)) {
         tree_first = tree_count > tree_rows ? tree_count - tree_rows : 0;

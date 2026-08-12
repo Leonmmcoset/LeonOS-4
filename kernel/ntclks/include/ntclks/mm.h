@@ -12,5 +12,6 @@ uint64_t mm_alloc_page(void);
 uint64_t mm_alloc_pages(uint32_t page_count);
 void mm_free_page(uint64_t phys);
 void mm_free_pages(uint64_t phys, uint32_t page_count);
+void mm_retain_page(uint64_t phys);
 
 #endif

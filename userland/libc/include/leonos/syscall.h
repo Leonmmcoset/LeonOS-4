@@ -15,6 +15,7 @@
 #define SYS_fstat 5
 #define SYS_lseek 8
 #define SYS_mmap 9
+#define SYS_mprotect 10
 #define SYS_munmap 11
 #define SYS_ioctl 16
 #define SYS_sched_yield 24
@@ -76,6 +77,7 @@ int rmdir(const char *path);
 int rename(const char *old_path, const char *new_path);
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
 int munmap(void *addr, size_t len);
+int mprotect(void *addr, size_t len, int prot);
 void *malloc(size_t size);
 void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);

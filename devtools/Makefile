@@ -26,19 +26,28 @@ OBJECTS := $(patsubst $(APP)/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES)) \
            $(patsubst $(APP)/%.cxx,$(BUILD_DIR)/%.o,$(filter %.cxx,$(CXX_SOURCES))) \
            $(patsubst $(APP)/%.S,$(BUILD_DIR)/%.o,$(ASM_SOURCES))
 
-CFLAGS := -O2 -std=c11 -ffreestanding -fno-stack-protector -fno-pic -fno-pie \
+CFLAGS := -O2 -std=c11 -ffreestanding -fno-stack-protector -fPIC -fPIE \
           -mno-red-zone -mgeneral-regs-only -ffunction-sections -fdata-sections \
           -Wall -Wextra -DLEONOS_USE_PICOLIBC -D_POSIX_C_SOURCE=200809L \
           -I"$(SDK_ROOT)/include"
 CXXFLAGS := -O2 -std=c++17 -ffreestanding -fno-exceptions -fno-rtti \
             -fno-use-cxa-atexit -fno-threadsafe-statics -fno-stack-protector \
-            -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only \
+            -fPIC -fPIE -mno-red-zone -mgeneral-regs-only \
             -ffunction-sections -fdata-sections -Wall -Wextra \
             -DLEONOS_USE_PICOLIBC -D_POSIX_C_SOURCE=200809L -nostdinc++ \
             -I"$(SDK_ROOT)/include/stardustui/leonos" \
             -I"$(SDK_ROOT)/include/stardustui" -I"$(SDK_ROOT)/include"
-LDFLAGS := --gc-sections -z max-page-size=0x1000 \
-           -T "$(SDK_ROOT)/linker.ld"
+STATIC ?= 0
+ifeq ($(STATIC),1)
+LDFLAGS := --gc-sections -z max-page-size=0x1000 -T "$(SDK_ROOT)/linker.ld"
+CRT :=
+RUNTIME_LIBS := $(LEONOS_LIB) $(LIBPNG_LIB) $(ZLIB_LIB) $(PICOLIBC_LIB)
+else
+LDFLAGS := -pie --hash-style=sysv --dynamic-linker 0:/system/lib/ld-leonos.elf \
+           -z relro -z now -z max-page-size=0x1000 -T "$(SDK_ROOT)/dynamic-app.ld"
+CRT := "$(SDK_ROOT)/lib/crt0-dynamic.o" "$(SDK_ROOT)/lib/leonos-abi-note.o"
+RUNTIME_LIBS := "$(SDK_ROOT)/lib/libleonos.so.1"
+endif
 LEONOS_LIB := "$(SDK_ROOT)/lib/leonos.a"
 PICOLIBC_LIB := "$(SDK_ROOT)/lib/libc.a"
 ZLIB_LIB := "$(SDK_ROOT)/lib/libz.a"
@@ -75,7 +84,7 @@ $(BUILD_DIR)/%.o: $(APP)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUTPUT): $(OBJECTS)
-	$(LD) $(LDFLAGS) -o $@ $(OBJECTS) --start-group $(APP_LIBS) $(LEONOS_LIB) $(LIBPNG_LIB) $(ZLIB_LIB) $(PICOLIBC_LIB) --end-group
+	$(LD) $(LDFLAGS) -o $@ $(CRT) $(OBJECTS) --start-group $(APP_LIBS) $(RUNTIME_LIBS) --end-group
 
 clean:
 	rm -rf $(BUILD_DIR)

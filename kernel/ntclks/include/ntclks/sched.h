@@ -6,6 +6,7 @@
 #include <ntclks/trap.h>
 #include <ntclks/types.h>
 #include <leonos/auth.h>
+#include <leonos/elf_abi.h>
 
 #define SCHED_TASK_NAME_LEN 32u
 #define SCHED_TASK_MAX 64u
@@ -14,12 +15,14 @@
 #define SCHED_EXEC_ARG_MAX 8u
 #define SCHED_EXEC_ENV_MAX 8u
 #define SCHED_EXEC_DATA_MAX 512u
-#define SCHED_TASK_VMA_MAX 32u
+#define SCHED_TASK_VMA_MAX 128u
 
 #define TASK_VMA_FLAG_PRIVATE 0x00000001u
 #define TASK_VMA_FLAG_ANON    0x00000002u
 #define TASK_VMA_FLAG_FILE    0x00000004u
 #define TASK_VMA_FLAG_LAZY    0x00000008u
+#define TASK_VMA_FLAG_SHARED_FILE 0x00000010u
+#define TASK_VMA_FLAG_DYNAMIC_LOAD 0x00000020u
 
 #define TASK_VMA_PROT_READ  0x1u
 #define TASK_VMA_PROT_WRITE 0x2u
@@ -28,6 +31,7 @@
 struct task_vma {
     uint32_t used;
     uint32_t prot;
+    uint32_t max_prot;
     uint32_t flags;
     uint32_t reserved;
     uint64_t start;
@@ -107,6 +111,7 @@ struct task {
     char *exec_argv[SCHED_EXEC_ARG_MAX + 1];
     char *exec_envp[SCHED_EXEC_ENV_MAX + 1];
     char exec_data[SCHED_EXEC_DATA_MAX];
+    struct leonos_dynamic_launch dynamic_launch;
     struct task_vma vmas[SCHED_TASK_VMA_MAX];
     struct task_file files[SCHED_TASK_FILE_MAX];
     struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];

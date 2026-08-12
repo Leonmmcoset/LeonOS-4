@@ -22,6 +22,8 @@ uint32_t view_h = FILEMAN_H;
 uint64_t selected_mask;
 uint32_t fileman_window_id;
 struct leonos_ui_surface fileman_ui;
+char address_input[LEONOS_FS_PATH_LEN];
+struct leonos_ui_edit_state address_edit;
 uint8_t fileman_operation_active;
 uint32_t fileman_operation_percent;
 char fileman_operation_text[160];

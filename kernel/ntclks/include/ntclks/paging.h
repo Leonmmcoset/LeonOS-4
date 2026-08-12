@@ -17,6 +17,8 @@
 #define NTCLKS_PAGE_PRESENT 0x001ULL
 #define NTCLKS_PAGE_WRITABLE 0x002ULL
 #define NTCLKS_PAGE_USER 0x004ULL
+#define NTCLKS_PAGE_NOEXEC (1ULL << 63)
+#define NTCLKS_PHYS_ADDR_MASK 0x000ffffffffff000ULL
 
 struct address_space {
     uint64_t *pml4;
@@ -37,6 +39,8 @@ bool address_space_prepare_user_range(struct address_space *as, uint64_t start,
                                       uint64_t end);
 bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
                                  uint64_t phys, uint64_t flags);
+bool address_space_protect_user_page(struct address_space *as, uint64_t vaddr,
+                                     uint64_t flags);
 uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr);
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr);
 uint32_t address_space_user_memory_kib(const struct address_space *as);

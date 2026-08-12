@@ -11,6 +11,7 @@ static uint64_t total_kib;
 #define FALLBACK_MEMORY_KIB (512ULL * 1024ULL)
 #define MM_MAX_FREE_RANGES 64u
 #define MM_MAX_RESERVED_RANGES 32u
+#define MM_PAGE_COUNT (PAGE_ALLOC_LIMIT / PAGE_SIZE)
 
 struct phys_range {
     uint64_t start;
@@ -22,6 +23,14 @@ static struct phys_range free_ranges[MM_MAX_FREE_RANGES];
 static uint32_t free_range_count;
 static struct phys_range reserved_ranges[MM_MAX_RESERVED_RANGES];
 static uint32_t reserved_range_count;
+/* The allocator is limited to the first 4 GiB, so a compact per-page count
+ * costs 2 MiB and lets file-backed code pages be shared safely. */
+static uint16_t page_refs[MM_PAGE_COUNT];
+
+static uint32_t page_index(uint64_t phys)
+{
+    return (uint32_t)(phys / PAGE_SIZE);
+}
 
 static int efi_memory_usable(uint32_t type)
 {
@@ -313,6 +322,9 @@ void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *han
     total_kib = boot->memory_lower_kib + boot->memory_upper_kib;
     free_range_count = 0;
     reserved_range_count = 0;
+    for (uint32_t i = 0; i < MM_PAGE_COUNT; ++i) {
+        page_refs[i] = 0;
+    }
     seed_free_ranges_from_boot(boot);
     reserve_boot_ranges(boot, handoff);
     coalesce_free_ranges();
@@ -357,6 +369,9 @@ uint64_t mm_alloc_pages(uint32_t page_count)
             remove_free_range(i);
         }
         zero_pages(phys, page_count);
+        for (uint32_t page = 0; page < page_count; ++page) {
+            page_refs[page_index(phys + (uint64_t)page * PAGE_SIZE)] = 1;
+        }
         return phys;
     }
     return 0;
@@ -373,16 +388,43 @@ void mm_free_pages(uint64_t phys, uint32_t page_count)
         return;
     }
     uint64_t end = phys + (uint64_t)page_count * PAGE_SIZE;
-    if (end <= phys || end > PAGE_ALLOC_LIMIT ||
-        overlaps_reserved(phys, end) ||
-        free_range_count >= MM_MAX_FREE_RANGES) {
+    if (end <= phys || end > PAGE_ALLOC_LIMIT || overlaps_reserved(phys, end)) {
         return;
     }
-    free_ranges[free_range_count++] = (struct phys_range){phys, end, "free"};
-    coalesce_free_ranges();
+    for (uint32_t page = 0; page < page_count; ++page) {
+        uint64_t current = phys + (uint64_t)page * PAGE_SIZE;
+        uint16_t *refs = &page_refs[page_index(current)];
+        if (!*refs) {
+            continue;
+        }
+        --*refs;
+        if (*refs) {
+            continue;
+        }
+        if (free_range_count >= MM_MAX_FREE_RANGES) {
+            /* This should be impossible after normal coalescing.  Keep the
+             * page reserved rather than corrupting the free-range table. */
+            *refs = 1;
+            continue;
+        }
+        free_ranges[free_range_count++] =
+            (struct phys_range){current, current + PAGE_SIZE, "free"};
+        coalesce_free_ranges();
+    }
 }
 
 void mm_free_page(uint64_t phys)
 {
     mm_free_pages(phys, 1);
+}
+
+void mm_retain_page(uint64_t phys)
+{
+    if (!phys || (phys & (PAGE_SIZE - 1)) || phys >= PAGE_ALLOC_LIMIT) {
+        return;
+    }
+    uint16_t *refs = &page_refs[page_index(phys)];
+    if (*refs && *refs != UINT16_MAX) {
+        ++*refs;
+    }
 }

@@ -1961,6 +1961,7 @@ static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t e
     }
     slot->used = 1;
     slot->prot = (uint32_t)prot;
+    slot->max_prot = (uint32_t)prot;
     slot->flags = flags;
     slot->reserved = 0;
     slot->start = start;
@@ -2080,6 +2081,10 @@ static void zero_phys_page(uint64_t phys)
 static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t end,
                                     uint64_t page_flags)
 {
+    /* Anonymous mappings have no executable provenance.  An application that
+     * needs JIT code must explicitly map RX after producing it; W+X is never
+     * accepted by the syscall. */
+    page_flags |= NTCLKS_PAGE_NOEXEC;
     for (uint64_t page = start; page < end; page += PAGE_SIZE) {
         uint64_t phys = mm_alloc_page();
         if (!phys || !address_space_map_user_page(&task->as, page, phys, page_flags)) {
@@ -2129,6 +2134,9 @@ static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
     }
 
     uint64_t page_flags = (vma->prot & LINUX_PROT_WRITE) ? NTCLKS_PAGE_WRITABLE : 0;
+    if (!(vma->prot & LINUX_PROT_EXEC)) {
+        page_flags |= NTCLKS_PAGE_NOEXEC;
+    }
     if (!address_space_map_user_page(&task->as, page, phys, page_flags)) {
         mm_free_page(phys);
         return -LEONOS_ENOMEM;
@@ -2188,6 +2196,10 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
         (prot & (LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) == 0) {
         return -LEONOS_EINVAL;
     }
+    if ((prot & (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ==
+        (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) {
+        return -LEONOS_EACCES;
+    }
     if ((flags & ~((uint64_t)LINUX_MAP_SUPPORTED)) != 0 || (flags & LINUX_MAP_PRIVATE) == 0) {
         return -LEONOS_EINVAL;
     }
@@ -2205,8 +2217,8 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
         if (offset > UINT64_MAX - mapped_len) {
             return -LEONOS_EINVAL;
         }
-        if (prot != LINUX_PROT_READ) {
-            return -LEONOS_ENOSYS;
+        if (!(prot & LINUX_PROT_READ)) {
+            return -LEONOS_EINVAL;
         }
         if (fd > INT32_MAX) {
             return -LEONOS_EBADF;
@@ -2264,6 +2276,9 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     if (prot & LINUX_PROT_WRITE) {
         page_flags |= NTCLKS_PAGE_WRITABLE;
     }
+    if (!(prot & LINUX_PROT_EXEC)) {
+        page_flags |= NTCLKS_PAGE_NOEXEC;
+    }
     if (anonymous) {
         ret = task_map_anonymous_pages(task, start, end, page_flags);
     } else {
@@ -2281,13 +2296,106 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     return (int64_t)start;
 }
 
+static int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
+{
+    struct task *task = sched_current_task();
+    uint64_t mapped_len;
+    uint64_t end;
+    struct task_vma *vma;
+    struct task_vma original;
+    struct task_vma *left = NULL;
+    struct task_vma *right = NULL;
+    uint64_t page_flags = 0;
+    if (!task || task->kind != TASK_KIND_USER || (addr & (PAGE_SIZE - 1ULL)) ||
+        align_user_len(len, &mapped_len) < 0 || mapped_len > NTCLKS_USER_TOP - addr ||
+        (prot & ~(uint64_t)(LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ||
+        !prot || (prot & (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ==
+                     (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) {
+        return -LEONOS_EINVAL;
+    }
+    end = addr + mapped_len;
+    vma = task_vma_containing(task, addr, end);
+    if (!vma || (prot & ~vma->max_prot)) {
+        return -LEONOS_EACCES;
+    }
+    original = *vma;
+    if (addr > original.start) {
+        left = task_vma_free_slot(task);
+        if (!left) {
+            return -LEONOS_ENOMEM;
+        }
+        /* Reserve this slot while looking for the optional suffix. */
+        left->used = 0xffffffffu;
+    }
+    if (end < original.end) {
+        right = task_vma_free_slot(task);
+        if (!right) {
+            if (left) {
+                task_vma_clear(left);
+            }
+            return -LEONOS_ENOMEM;
+        }
+        right->used = 0xffffffffu;
+    }
+    if (left) {
+        task_vma_clear(left);
+    }
+    if (right) {
+        task_vma_clear(right);
+    }
+    if (prot & LINUX_PROT_WRITE) {
+        page_flags |= NTCLKS_PAGE_WRITABLE;
+    }
+    if (!(prot & LINUX_PROT_EXEC)) {
+        page_flags |= NTCLKS_PAGE_NOEXEC;
+    }
+    for (uint64_t page = addr; page < end; page += PAGE_SIZE) {
+        if (address_space_user_page_phys(&task->as, page) &&
+            !address_space_protect_user_page(&task->as, page, page_flags)) {
+            return -LEONOS_EACCES;
+        }
+    }
+    /* A partial protection change needs independent VMA metadata.  In
+     * particular, PT_GNU_RELRO protects only the GOT page while BSS in the
+     * same original load segment must remain writable and lazily mappable. */
+    if (addr > original.start) {
+        left = task_vma_free_slot(task);
+        if (!left) {
+            return -LEONOS_ENOMEM;
+        }
+        *left = original;
+        left->end = addr;
+    }
+    if (end < original.end) {
+        right = task_vma_free_slot(task);
+        if (!right) {
+            return -LEONOS_ENOMEM;
+        }
+        *right = original;
+        right->start = end;
+        if (right->flags & TASK_VMA_FLAG_FILE) {
+            right->file_offset += end - original.start;
+        }
+    }
+    *vma = original;
+    vma->start = addr;
+    vma->end = end;
+    if (vma->flags & TASK_VMA_FLAG_FILE) {
+        vma->file_offset += addr - original.start;
+    }
+    vma->prot = (uint32_t)prot;
+    return 0;
+}
+
 static int64_t sys_munmap(uint64_t addr, uint64_t len)
 {
     struct task *task = sched_current_task();
-    struct task_vma *vma;
     uint64_t mapped_len;
     uint64_t start = addr;
     uint64_t end;
+    uint64_t cursor;
+    uint32_t split_count = 0;
+    uint32_t free_slots = 0;
 
     if (!task || task->kind != TASK_KIND_USER || (start & (PAGE_SIZE - 1ULL)) != 0 ||
         start < NTCLKS_USER_BASE || start >= NTCLKS_USER_TOP) {
@@ -2297,35 +2405,63 @@ static int64_t sys_munmap(uint64_t addr, uint64_t len)
         return -LEONOS_EINVAL;
     }
     end = start + mapped_len;
-    vma = task_vma_containing(task, start, end);
-    if (!vma) {
-        return -LEONOS_EINVAL;
+    /* Validate that the requested span is fully covered before changing any
+     * pages.  Dynamic libraries commonly have a RELRO VMA between two parts
+     * of the same PT_LOAD, so a valid unmap can legitimately cross VMAs. */
+    cursor = start;
+    while (cursor < end) {
+        struct task_vma *vma = task_vma_containing(task, cursor, cursor + 1);
+        uint64_t part_end;
+        if (!vma) {
+            return -LEONOS_EINVAL;
+        }
+        part_end = vma->end < end ? vma->end : end;
+        if (cursor > vma->start && part_end < vma->end) {
+            ++split_count;
+        }
+        cursor = part_end;
     }
-    if (start > vma->start && end < vma->end && !task_vma_free_slot(task)) {
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        if (!task->vmas[i].used) {
+            ++free_slots;
+        }
+    }
+    if (split_count > free_slots) {
         return -LEONOS_ENOMEM;
     }
-
-    uint64_t old_start = vma->start;
-    uint64_t old_end = vma->end;
     task_unmap_pages(task, start, end);
-    if (start == vma->start && end == old_end) {
-        task_vma_clear(vma);
-    } else if (start == vma->start) {
-        vma->start = end;
-        if (vma->flags & TASK_VMA_FLAG_FILE) {
-            vma->file_offset += end - old_start;
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        struct task_vma *vma = &task->vmas[i];
+        struct task_vma original;
+        uint64_t remove_start;
+        uint64_t remove_end;
+        if (!vma->used || vma->end <= start || vma->start >= end) {
+            continue;
         }
-    } else if (end == old_end) {
-        vma->end = start;
-    } else {
-        struct task_vma *right = task_vma_free_slot(task);
-        *right = *vma;
-        right->start = end;
-        right->end = old_end;
-        if (right->flags & TASK_VMA_FLAG_FILE) {
-            right->file_offset += end - old_start;
+        original = *vma;
+        remove_start = original.start > start ? original.start : start;
+        remove_end = original.end < end ? original.end : end;
+        if (remove_start == original.start && remove_end == original.end) {
+            task_vma_clear(vma);
+        } else if (remove_start == original.start) {
+            vma->start = remove_end;
+            if (vma->flags & TASK_VMA_FLAG_FILE) {
+                vma->file_offset += remove_end - original.start;
+            }
+        } else if (remove_end == original.end) {
+            vma->end = remove_start;
+        } else {
+            struct task_vma *right = task_vma_free_slot(task);
+            if (!right) {
+                return -LEONOS_ENOMEM;
+            }
+            *right = original;
+            right->start = remove_end;
+            if (right->flags & TASK_VMA_FLAG_FILE) {
+                right->file_offset += remove_end - original.start;
+            }
+            vma->end = remove_start;
         }
-        vma->end = start;
     }
     return 0;
 }
@@ -2362,6 +2498,8 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
                         frame->args[3], frame->args[4], frame->args[5]);
     case LINUX_SYS_MUNMAP:
         return sys_munmap(frame->args[0], frame->args[1]);
+    case LINUX_SYS_MPROTECT:
+        return sys_mprotect(frame->args[0], frame->args[1], frame->args[2]);
     default:
         return -LEONOS_ENOSYS;
     }
@@ -2956,6 +3094,9 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_MUNMAP) {
         return sys_munmap(a0, a1);
+    }
+    if (number == LINUX_SYS_MPROTECT) {
+        return sys_mprotect(a0, a1, a2);
     }
 
     if (number == LINUX_SYS_WAIT4) {

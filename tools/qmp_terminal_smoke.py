@@ -56,6 +56,7 @@ def main() -> int:
     editor = "nano"
     fastfetch_smoke = False
     iso9660_smoke = False
+    dynlinkerror_smoke = False
     if arguments and arguments[0] == "--skip-oobe":
         skip_oobe = True
         arguments = arguments[1:]
@@ -71,6 +72,9 @@ def main() -> int:
     if arguments and arguments[0] == "--iso9660":
         iso9660_smoke = True
         arguments = arguments[1:]
+    if arguments and arguments[0] == "--dynlinkerror":
+        dynlinkerror_smoke = True
+        arguments = arguments[1:]
     if len(arguments) >= 2 and arguments[0] == "--desktop-app":
         desktop_app = arguments[1]
         arguments = arguments[2:]
@@ -84,7 +88,8 @@ def main() -> int:
         return 2
     if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
         return 2
-    if desktop_app is not None and (tcc_smoke or fastfetch_smoke or iso9660_smoke or exit_only):
+    if desktop_app is not None and (tcc_smoke or fastfetch_smoke or iso9660_smoke or
+                                    dynlinkerror_smoke or exit_only):
         return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
         return 2
@@ -196,6 +201,18 @@ def main() -> int:
             send_keys(sock, text_keys(command) + ("ret",))
             time.sleep(2.0)
         hmp(sock, "screendump build/images/iso9660-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
+    if dynlinkerror_smoke:
+        # Terminal and desktop have the runtime resident already.  Deleting
+        # the on-disk runtime must therefore leave the desktop available to
+        # display the statically linked recovery window for the next launch.
+        send_keys(sock, text_keys("rm 0:/system/lib/libleonos.so.1") + ("ret",))
+        time.sleep(2.0)
+        send_keys(sock, text_keys("nano") + ("ret",))
+        time.sleep(5.0)
+        hmp(sock, "screendump build/images/dynlinkerror-qmp-smoke.ppm", 0.4)
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 

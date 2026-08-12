@@ -46,6 +46,7 @@ def main() -> int:
     parser.add_argument("--installed-policy-dir", default="build/userland-installer-policy")
     parser.add_argument("--policy-apps", nargs="*", default=("desktop", "oobe", "settings"))
     parser.add_argument("--userland-dir", default="build/userland")
+    parser.add_argument("--policy-runtime", default="build/userland-installer-policy/libleonos.so.1")
     parser.add_argument("--generated-icons-dir", default="build/generated/app-icons")
     parser.add_argument("--manifest", default="build/esp/system/osmlayer.manifest")
     parser.add_argument("--size-mib", type=int, default=64)
@@ -58,12 +59,14 @@ def main() -> int:
     userland_dir = ROOT / args.userland_dir
     generated_icons_dir = ROOT / args.generated_icons_dir
     manifest = ROOT / args.manifest
+    policy_runtime = ROOT / args.policy_runtime
 
     if not esp_tree.exists():
         raise FileNotFoundError(f"missing normal ESP payload: {esp_tree}")
     if not installed_policy_dir.exists():
         raise FileNotFoundError(f"missing installed policy directory: {installed_policy_dir}")
-    if not userland_dir.exists() or not generated_icons_dir.exists() or not manifest.exists():
+    if (not userland_dir.exists() or not generated_icons_dir.exists() or not manifest.exists() or
+            not policy_runtime.is_file()):
         raise FileNotFoundError("missing installer build inputs")
 
     if stage.exists():
@@ -75,6 +78,8 @@ def main() -> int:
 
     copy_file(userland_dir / "desktop.elf", stage / "system/apps/desktop/desktop.elf")
     copy_file(userland_dir / "installer.elf", stage / "system/apps/installer/installer.elf")
+    copy_file(esp_tree / "system/apps/dynlinkerror/dynlinkerror.elf",
+              stage / "system/apps/dynlinkerror/dynlinkerror.elf")
     copy_file(generated_icons_dir / "desktop.bmp", stage / "system/apps/desktop/desktop.bmp")
     copy_file(generated_icons_dir / "installer.bmp", stage / "system/apps/installer/installer.bmp")
     copy_tree(esp_tree / "system/config", stage / "system/config")
@@ -87,7 +92,10 @@ def main() -> int:
     copy_tree(esp_tree / "system/certs", stage / "system/certs")
     copy_tree(esp_tree / "system/resources", stage / "system/resources")
     copy_tree(esp_tree / "drivers", stage / "drivers")
+    copy_file(esp_tree / "system/lib/ld-leonos.elf", stage / "system/lib/ld-leonos.elf")
+    copy_file(policy_runtime, stage / "system/lib/libleonos.so.1")
     copy_tree(esp_tree, stage / "install/esp")
+    copy_file(policy_runtime, stage / "install/esp/system/lib/libleonos.so.1")
     remove_file(stage / "install/esp/etc/license.conf")
     remove_file(stage / "install/esp/etc/install.id")
     for app in args.policy_apps:

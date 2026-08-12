@@ -1004,6 +1004,16 @@ static int tree_node_index_for_id(uint32_t id)
     return -1;
 }
 
+static int tree_node_index_for_path(const char *path)
+{
+    for (uint32_t i = 0; i < fileman_tree_node_count; ++i) {
+        if (fileman_tree_nodes[i].used && text_eq(fileman_tree_nodes[i].path, path)) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
 static int tree_dir_has_children(const char *path)
 {
     struct leonos_dir_entry entry;
@@ -1127,6 +1137,140 @@ static void tree_load_children(uint32_t node_index)
     }
 }
 
+static int tree_ensure_path(const char *path)
+{
+    char partial[LEONOS_FS_PATH_LEN];
+    uint32_t pos;
+    int index;
+    if (!path || path[0] < '0' || path[0] > '9' || path[1] != ':' || path[2] != '/') {
+        return -1;
+    }
+    partial[0] = path[0];
+    partial[1] = ':';
+    partial[2] = '/';
+    partial[3] = 0;
+    index = tree_node_index_for_path(partial);
+    if (index < 0) {
+        return -1;
+    }
+    pos = 3;
+    while (path[pos]) {
+        uint32_t end = pos;
+        uint32_t partial_len;
+        while (path[end] && path[end] != '/') {
+            ++end;
+        }
+        partial_len = text_len(partial);
+        if (!is_root_path(partial)) {
+            append_char(partial, &partial_len, sizeof(partial), '/');
+        }
+        while (pos < end) {
+            append_char(partial, &partial_len, sizeof(partial), path[pos++]);
+        }
+        tree_load_children((uint32_t)index);
+        index = tree_node_index_for_path(partial);
+        if (index < 0) {
+            return -1;
+        }
+        pos = path[end] == '/' ? end + 1 : end;
+    }
+    return index;
+}
+
+static void tree_expand_path(const char *path)
+{
+    int index;
+    tree_init_if_needed();
+    index = tree_ensure_path(path);
+    while (index >= 0) {
+        struct fileman_tree_node *node = &fileman_tree_nodes[index];
+        if (node->has_children) {
+            tree_load_children((uint32_t)index);
+            if (node->has_children) {
+                node->expanded = 1;
+            }
+        }
+        index = node->parent_id ? tree_node_index_for_id(node->parent_id) : -1;
+    }
+}
+
+static void tree_collapse_path(const char *path)
+{
+    int index;
+    tree_init_if_needed();
+    index = tree_ensure_path(path);
+    if (index >= 0) {
+        fileman_tree_nodes[index].expanded = 0;
+    }
+}
+
+static void tree_scroll_to_path(const char *path)
+{
+    struct leonos_ui_tree_item items[FILEMAN_TREE_MAX_NODES];
+    struct fileman_layout layout;
+    uint32_t count;
+    uint32_t visible_rows;
+    if (!path) {
+        return;
+    }
+    count = build_tree_items(items, sizeof(items) / sizeof(items[0]));
+    layout = current_layout();
+    visible_rows = fileman_tree_visible_rows(&layout);
+    for (uint32_t i = 0; i < count; ++i) {
+        const char *item_path = tree_path_for_id(items[i].id);
+        if (!text_eq(path, item_path)) {
+            continue;
+        }
+        if (i < fileman_tree_scroll) {
+            fileman_tree_scroll = i;
+        } else if (i >= fileman_tree_scroll + visible_rows) {
+            fileman_tree_scroll = i - visible_rows + 1;
+        }
+        return;
+    }
+}
+
+static int tree_path_is_direct_child(const char *parent, const char *child)
+{
+    uint32_t parent_len;
+    uint32_t child_pos;
+    if (!parent || !child || !parent[0] || !child[0] || text_eq(parent, child)) {
+        return 0;
+    }
+    parent_len = text_len(parent);
+    for (uint32_t i = 0; i < parent_len; ++i) {
+        if (parent[i] != child[i]) {
+            return 0;
+        }
+    }
+    child_pos = parent_len;
+    if (!is_root_path(parent)) {
+        if (child[child_pos++] != '/') {
+            return 0;
+        }
+    }
+    if (!child[child_pos]) {
+        return 0;
+    }
+    while (child[child_pos]) {
+        if (child[child_pos++] == '/') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void fileman_tree_sync_navigation(const char *old_path, const char *new_path)
+{
+    if (tree_path_is_direct_child(old_path, new_path)) {
+        tree_expand_path(new_path);
+        tree_scroll_to_path(new_path);
+    } else if (tree_path_is_direct_child(new_path, old_path)) {
+        tree_collapse_path(old_path);
+        tree_scroll_to_path(new_path);
+    }
+}
+
 static void tree_append_visible(struct leonos_ui_tree_item *items, uint32_t cap,
                                 uint32_t *count, uint32_t node_index,
                                 uint32_t depth)
@@ -1217,10 +1361,27 @@ int navigate_to_path(const char *path)
     ret = chdir(target);
     if (ret < 0) {
         copy_text(current_path, sizeof(current_path), old_path);
+        address_edit_sync_path();
         set_status_error("Open dir failed ", ret);
         return ret;
     }
     copy_text(current_path, sizeof(current_path), target);
     getcwd(current_path, sizeof(current_path));
-    return reload_dir();
+    ret = reload_dir();
+    if (ret == 0) {
+        fileman_tree_sync_navigation(old_path, current_path);
+    }
+    address_edit_sync_path();
+    return ret;
+}
+
+void address_edit_sync_path(void)
+{
+    if (!address_edit.buffer) {
+        return;
+    }
+    copy_text(address_input, sizeof(address_input), current_path);
+    leonos_ui_edit_state_sync(&address_edit);
+    address_edit.focused = 0;
+    address_edit.selecting = 0;
 }

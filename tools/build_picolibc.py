@@ -63,6 +63,21 @@ def reject_os_fallback_members(archive: Path) -> None:
         )
 
 
+def remove_unsupported_tls_member(archive: Path) -> None:
+    """Keep the archive consistent with LeonOS's TLS-disabled ABI.
+
+    Picolibc's x86 machine source list includes ``tls.c.o`` even when its
+    thread-local-storage option is disabled.  Leaving that member available
+    would advertise an ABI that the LeonOS dynamic loader deliberately
+    rejects, and it references the linker-provided TLS layout symbols.
+    """
+    members = subprocess.run(
+        ["llvm-ar", "t", str(archive)], check=True, text=True, capture_output=True
+    ).stdout.splitlines()
+    if "tls.c.o" in members:
+        subprocess.run(["llvm-ar", "d", str(archive), "tls.c.o"], check=True)
+
+
 def generated_cross_file(
     source: Path, destination: Path, compile_flags: list[str], linker_flags: list[str]
 ) -> Path:
@@ -74,12 +89,14 @@ def generated_cross_file(
         for flag in linker_flags
     )
     old_args = "c_args = ['-target', 'x86_64-unknown-none', '-O2', '-std=c11', '-ffreestanding', '-nostdlibinc', '-fno-stack-protector', '-fno-pic', '-fno-pie', '-mno-red-zone']"
-    new_args = "c_args = ['-target', 'x86_64-unknown-none', " + c_args + ", '-std=c11', '-ffreestanding', '-nostdlibinc', '-fno-stack-protector', '-fno-pic', '-fno-pie', '-mno-red-zone']"
+    pic = "'-fPIC', '-fPIE'" if "-fPIC" in compile_flags else "'-fno-pic', '-fno-pie'"
+    new_args = "c_args = ['-target', 'x86_64-unknown-none', " + c_args + ", '-std=c11', '-ffreestanding', '-nostdlibinc', '-fno-stack-protector', " + pic + ", '-mno-red-zone']"
     if old_args not in text:
         raise SystemExit("unsupported Picolibc cross-file c_args format")
     text = text.replace(old_args, new_args, 1)
     old_link_args = "c_link_args = ['-target', 'x86_64-unknown-none', '-nostdlib', '-fno-pic', '-fno-pie', '-mno-red-zone']"
-    new_link_args = "c_link_args = ['-target', 'x86_64-unknown-none', '-nostdlib', '-fno-pic', '-fno-pie', '-mno-red-zone'" + (", " + c_link_args if c_link_args else "") + "]"
+    link_pic = "'-fPIC', '-fPIE'" if "-fPIC" in compile_flags else "'-fno-pic', '-fno-pie'"
+    new_link_args = "c_link_args = ['-target', 'x86_64-unknown-none', '-nostdlib', " + link_pic + ", '-mno-red-zone'" + (", " + c_link_args if c_link_args else "") + "]"
     if old_link_args not in text:
         raise SystemExit("unsupported Picolibc cross-file c_link_args format")
     text = text.replace(old_link_args, new_link_args, 1)
@@ -122,6 +139,7 @@ def main() -> None:
         args.linker_flag,
     )
     options = [
+        "-Db_staticpic=true" if "-fPIC" in args.compile_flag else "-Db_staticpic=false",
         "-Dmultilib=false",
         "-Dtests=false",
         "-Dsemihost=false",
@@ -144,9 +162,9 @@ def main() -> None:
         "-Dspecsdir=none",
     ]
     config = {
-        # Schema 3 forces a clean Meson reconfiguration for old build trees
+        # Schema 6 forces a clean Meson reconfiguration for old build trees
         # that merged os-fallback/sbrk objects into libc.a.
-        "schema": 4,
+        "schema": 6,
         "cross_file_sha256": hashlib.sha256(effective_cross_file.read_bytes()).hexdigest(),
         "options": options,
     }
@@ -176,6 +194,7 @@ def main() -> None:
     if not archive.is_file():
         raise SystemExit(f"Picolibc install did not produce {archive}")
     reject_os_fallback_members(archive)
+    remove_unsupported_tls_member(archive)
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(
         json.dumps(

@@ -170,6 +170,8 @@ void handle_right_click(int32_t x, int32_t y)
 void handle_click(int32_t x, int32_t y)
 {
     struct fileman_layout l = current_layout();
+    uint32_t address_w = view_w > 238 ? view_w - 238 :
+                         (view_w > 230 ? view_w - 230 : 1);
     if (handle_context_menu_click(x, y)) {
         return;
     }
@@ -179,6 +181,16 @@ void handle_click(int32_t x, int32_t y)
     }
     menu_open = FILEMAN_MENU_NONE;
     context_menu_set_active(0);
+    if (hit_rect_i(x, y, 230, TOOLBAR_Y, (int32_t)address_w,
+                   (int32_t)(LEONOS_FONT_H + 8))) {
+        (void)leonos_ui_edit_state_handle_mouse(&address_edit, x, y,
+                                                230, TOOLBAR_Y, address_w,
+                                                1U);
+        return;
+    }
+    if (address_edit.focused) {
+        address_edit_sync_path();
+    }
     if (x >= 8 && x < 62 && y >= TOOLBAR_Y && y < TOOLBAR_Y + (int32_t)LEONOS_UI_BUTTON_H) {
         navigate_up();
         return;
@@ -274,9 +286,27 @@ void handle_click(int32_t x, int32_t y)
     }
 }
 
-void handle_key(uint8_t keycode)
+void handle_key(uint8_t keycode, uint8_t pressed)
 {
     uint32_t activate = 0;
+    if (address_edit.focused) {
+        if (pressed && keycode == FILEMAN_KEY_ESCAPE) {
+            address_edit.focused = 0;
+            address_edit_sync_path();
+            return;
+        }
+        if (pressed && keycode == LEONOS_KEY_ENTER) {
+            char path[LEONOS_FS_PATH_LEN];
+            copy_text(path, sizeof(path), address_input);
+            (void)navigate_to_path(path);
+            return;
+        }
+        (void)leonos_ui_edit_state_handle_key(&address_edit, keycode, pressed);
+        return;
+    }
+    if (!pressed) {
+        return;
+    }
     if (leonos_ui_listview_state_handle_key(&file_list, keycode, &activate)) {
         if (activate) {
             open_selected_entry();

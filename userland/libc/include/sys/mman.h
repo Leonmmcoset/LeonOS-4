@@ -13,4 +13,6 @@
 #define MAP_ANON LEONOS_MAP_ANONYMOUS
 #define MAP_FAILED LEONOS_MAP_FAILED
 
+int mprotect(void *addr, size_t len, int prot);
+
 #endif

@@ -81,6 +81,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sdk-root", type=Path, required=True)
     parser.add_argument("--leonos-lib", type=Path, required=True)
+    parser.add_argument("--runtime-so", type=Path, required=True)
+    parser.add_argument("--runtime-loader", type=Path, required=True)
+    parser.add_argument("--dynamic-crt", type=Path, required=True)
+    parser.add_argument("--abi-note", type=Path, required=True)
     parser.add_argument("--picolibc-lib", type=Path, required=True)
     parser.add_argument("--picolibc-include", type=Path, required=True)
     parser.add_argument("--picolibc-source", type=Path, required=True)
@@ -119,7 +123,9 @@ def main() -> None:
         args.libmagic_header is not None,
     )):
         raise SystemExit("libmagic SDK inputs must be provided together")
-    for required in (args.leonos_lib, args.picolibc_lib, args.picolibc_include,
+    for required in (args.leonos_lib, args.runtime_so, args.runtime_loader,
+                     args.dynamic_crt, args.abi_note,
+                     args.picolibc_lib, args.picolibc_include,
                      args.picolibc_source / "COPYING.picolibc", args.zlib_lib,
                      args.zlib_source / "LICENSE", args.libpng_lib,
                      args.libpng_source / "LICENSE",
@@ -187,6 +193,14 @@ def main() -> None:
             for source in picolibc_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.picolibc_include).as_posix()}", source)
             add_file(archive, f"{SDK_PREFIX}/lib/leonos.a", args.leonos_lib)
+            add_file(archive, f"{SDK_PREFIX}/lib/libleonos.so.1", args.runtime_so)
+            add_file(archive, f"{SDK_PREFIX}/lib/ld-leonos.elf", args.runtime_loader)
+            add_file(archive, f"{SDK_PREFIX}/lib/crt0-dynamic.o", args.dynamic_crt)
+            add_file(archive, f"{SDK_PREFIX}/lib/leonos-abi-note.o", args.abi_note)
+            for name in ("dynamic-app.ld", "interpreter.ld"):
+                source = sdk_root.parent / "userland" / name
+                if source.is_file():
+                    add_file(archive, f"{SDK_PREFIX}/{name}", source)
             add_file(archive, f"{SDK_PREFIX}/lib/libc.a", args.picolibc_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libz.a", args.zlib_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libpng.a", args.libpng_lib)

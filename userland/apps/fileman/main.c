@@ -26,6 +26,8 @@ int main(int argc, char **argv, char **envp)
     } else if (home_path[0]) {
         copy_text(current_path, sizeof(current_path), home_path);
     }
+    copy_text(address_input, sizeof(address_input), current_path);
+    leonos_ui_edit_state_init(&address_edit, address_input, sizeof(address_input));
     if (navigate_to_path(current_path) < 0 && !text_eq(current_path, "0:/")) {
         navigate_to_path("0:/");
     }
@@ -47,8 +49,9 @@ int main(int argc, char **argv, char **envp)
                 file_list.focused = 1;
                 present_fileman(fileman_window_id, &fileman_ui);
             }
-            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
-                handle_key(event.keycode);
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN ||
+                event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                handle_key(event.keycode, event.pressed);
                 present_fileman(fileman_window_id, &fileman_ui);
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {

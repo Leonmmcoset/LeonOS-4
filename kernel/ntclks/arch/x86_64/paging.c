@@ -6,6 +6,8 @@
 #define PAGE_SIZE_FLAG 0x080ULL
 #define USER_PDPT_INDEX 0
 #define LOW_PD_INDEX 0
+#define X86_EFER_MSR 0xc0000080u
+#define X86_EFER_NXE (1ULL << 11)
 
 static uint64_t kernel_pml4[512] __attribute__((aligned(4096)));
 static uint64_t kernel_pdpt[512] __attribute__((aligned(4096)));
@@ -13,6 +15,36 @@ static uint64_t kernel_pd[4][512] __attribute__((aligned(4096)));
 
 extern void x86_64_load_cr3(uint64_t cr3);
 extern void x86_64_invlpg(uint64_t addr);
+
+static bool nx_enabled;
+
+static void paging_enable_nx(void)
+{
+    uint32_t max_extended = 0;
+    uint32_t regs[4];
+    __asm__ volatile("cpuid"
+                     : "=a"(regs[0]), "=b"(regs[1]), "=c"(regs[2]), "=d"(regs[3])
+                     : "a"(0x80000000u), "c"(0));
+    max_extended = regs[0];
+    if (max_extended < 0x80000001u) {
+        return;
+    }
+    __asm__ volatile("cpuid"
+                     : "=a"(regs[0]), "=b"(regs[1]), "=c"(regs[2]), "=d"(regs[3])
+                     : "a"(0x80000001u), "c"(0));
+    if (!(regs[3] & (1u << 20))) {
+        return;
+    }
+    uint32_t lo;
+    uint32_t hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(X86_EFER_MSR));
+    uint64_t efer = ((uint64_t)hi << 32) | lo;
+    efer |= X86_EFER_NXE;
+    lo = (uint32_t)efer;
+    hi = (uint32_t)(efer >> 32);
+    __asm__ volatile("wrmsr" : : "c"(X86_EFER_MSR), "a"(lo), "d"(hi));
+    nx_enabled = true;
+}
 
 static uint64_t align_down(uint64_t value, uint64_t align)
 {
@@ -34,6 +66,7 @@ static uint64_t kernel_page_flags_for(uint64_t addr)
 
 void paging_init_user_identity(void)
 {
+    paging_enable_nx();
     zero_table(kernel_pml4);
     zero_table(kernel_pdpt);
 
@@ -122,7 +155,7 @@ void address_space_destroy(struct address_space *as)
             for (uint32_t i = 0; i < 512; ++i) {
                 uint64_t entry = as->user_pt[table][i];
                 if (entry & NTCLKS_PAGE_PRESENT) {
-                    mm_free_page(entry & ~0xfffULL);
+                    mm_free_page(entry & NTCLKS_PHYS_ADDR_MASK);
                 }
             }
             mm_free_page((uint64_t)(uintptr_t)as->user_pt[table]);
@@ -198,8 +231,47 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
     if (as->user_pt[table][slot] & NTCLKS_PAGE_PRESENT) {
         return false;
     }
+    if ((flags & NTCLKS_PAGE_WRITABLE) && !(flags & NTCLKS_PAGE_NOEXEC)) {
+        return false;
+    }
+    if (!nx_enabled) {
+        /* Executable user mappings are unsafe without NX because the kernel
+         * cannot enforce W^X.  Refuse the process rather than weaken it. */
+        return false;
+    }
     as->user_pt[table][slot] = phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER | flags;
     ++as->user_page_count;
+    x86_64_invlpg(page);
+    return true;
+}
+
+bool address_space_protect_user_page(struct address_space *as, uint64_t vaddr,
+                                     uint64_t flags)
+{
+    uint64_t page;
+    uint64_t index;
+    uint64_t table;
+    uint64_t slot;
+    uint64_t entry;
+    if (!as || ((flags & NTCLKS_PAGE_WRITABLE) && !(flags & NTCLKS_PAGE_NOEXEC))) {
+        return false;
+    }
+    page = align_down(vaddr, PAGE_SIZE);
+    if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
+        return false;
+    }
+    index = (page - NTCLKS_USER_BASE) / PAGE_SIZE;
+    table = index / 512;
+    slot = index % 512;
+    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) {
+        return false;
+    }
+    entry = as->user_pt[table][slot];
+    if (!(entry & NTCLKS_PAGE_PRESENT)) {
+        return false;
+    }
+    as->user_pt[table][slot] = (entry & ~0xfffULL & ~NTCLKS_PAGE_NOEXEC) |
+                                NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER | flags;
     x86_64_invlpg(page);
     return true;
 }
@@ -228,7 +300,7 @@ uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
         --as->user_page_count;
     }
     x86_64_invlpg(page);
-    return entry & ~0xfffULL;
+    return entry & NTCLKS_PHYS_ADDR_MASK;
 }
 
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr)
@@ -247,7 +319,7 @@ uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t v
         return 0;
     }
     uint64_t entry = as->user_pt[table][slot];
-    return (entry & NTCLKS_PAGE_PRESENT) ? (entry & ~0xfffULL) : 0;
+    return (entry & NTCLKS_PAGE_PRESENT) ? (entry & NTCLKS_PHYS_ADDR_MASK) : 0;
 }
 
 uint32_t address_space_user_memory_kib(const struct address_space *as)
@@ -264,7 +336,7 @@ bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top)
     for (uint32_t i = 0; i < NTCLKS_USER_STACK_PAGES; ++i) {
         uint64_t phys = mm_alloc_page();
         if (!phys || !address_space_map_user_page(as, first + (uint64_t)i * PAGE_SIZE,
-                                                  phys, NTCLKS_PAGE_WRITABLE)) {
+                                                  phys, NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC)) {
             if (phys) {
                 mm_free_page(phys);
             }
