@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #define LEONOS_PTY_IOCTL_CREATE 0x4c505443UL
+#define LEONOS_PTY_IOCTL_DESTROY 0x4c505444UL
 #define LEONOS_PTY_IOCTL_READ_OUTPUT 0x4c505452UL
 #define LEONOS_PTY_IOCTL_WRITE_INPUT 0x4c505457UL
 #define LEONOS_PTY_IOCTL_SPAWN 0x4c505453UL
@@ -93,6 +94,7 @@ struct leonos_pty_winsize_io {
 };
 
 int leonos_pty_create(void);
+int leonos_pty_destroy(uint32_t pty_id);
 int leonos_pty_read_output(uint32_t pty_id, char *buffer, uint32_t length);
 int leonos_pty_write_input(uint32_t pty_id, const char *buffer, uint32_t length);
 int leonos_pty_spawn(const char *path, uint32_t pty_id);

@@ -7,7 +7,7 @@
 #define OSMLAYER_VFS_OP_RESOLVE_PATH 1u
 #define OSMLAYER_FS_NAME_LEN 128u
 #define OSMLAYER_FS_PATH_LEN 256u
-#define OSMLAYER_MAX_DRIVES 2u
+#define OSMLAYER_MAX_DRIVES 10u
 
 #define OSMLAYER_DEVICE_MAX 24u
 #define OSMLAYER_DEVICE_NAME_LEN 32u
@@ -1167,6 +1167,14 @@ static void osmlayer_acl_default_for_path(const char *path,
     acl->version = LEONOS_FS_ACL_VERSION;
     acl->owner_uid = owner;
     acl->flags = LEONOS_FS_ACL_FLAG_SYNTHETIC;
+    /* Removable volumes such as ISO 9660 discs have no LeonOS ACL sidecar.
+     * They are inherently read-only, so expose their contents to every user
+     * while keeping all write/delete/manage operations unavailable. */
+    if (osmlayer_abs_drive_path(path) && path[0] != '0') {
+        osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_EVERYONE, 0,
+                             LEONOS_FS_PERM_READ | LEONOS_FS_PERM_EXEC);
+        return;
+    }
     osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_SYSTEM, 0, LEONOS_FS_PERM_FULL);
     osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_ADMINISTRATORS, 0, LEONOS_FS_PERM_FULL);
     if (owner != 0) {
@@ -1477,6 +1485,12 @@ static int osmlayer_fsacl_authorize(struct leonos_authz_request *req)
     }
     if (osmlayer_path_is_accounts_db(req->path) || osmlayer_path_is_acl_file(req->path)) {
         req->allowed = 0;
+        return 0;
+    }
+    if (osmlayer_abs_drive_path(req->path) && req->path[0] != '0') {
+        /* Secondary mounted volumes are currently removable/read-only media. */
+        req->allowed = req->op == LEONOS_AUTHZ_READ ||
+                       req->op == LEONOS_AUTHZ_EXEC;
         return 0;
     }
     accounts_ret = osmlayer_accounts_load(accounts, &count);

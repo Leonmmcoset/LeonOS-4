@@ -2492,7 +2492,8 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (file->node.type == LEONOS_FS_TYPE_DIR) {
             struct leonos_dir_entry entry;
             int step = storage_readdir_node(&file->node, &file->offset, &entry);
-            if (step == 0 && (file->node.flags & STORAGE_NODE_FLAG_ROOT) && file->aux == 0) {
+            if (step == 0 && file->node.drive == 0 &&
+                (file->node.flags & STORAGE_NODE_FLAG_ROOT) && file->aux == 0) {
                 entry.type = LEONOS_FS_TYPE_DIR;
                 copy_text(entry.name, sizeof(entry.name), "dev");
                 file->aux = 1;
@@ -4146,6 +4147,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_CREATE) {
         return pty_create(sched_current_pid());
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_DESTROY) {
+        return pty_destroy(sched_current_pid(), (uint32_t)a2);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_SELF) {

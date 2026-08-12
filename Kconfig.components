@@ -297,6 +297,25 @@ config LEON_COMPONENT_APP_NANO_SDK
     default n
     depends on LEON_COMPONENT_APP_NANO_BUILD
 
+config LEON_COMPONENT_APP_FASTFETCH_BUILD
+    bool "Build fastfetch system summary"
+    default y
+
+config LEON_COMPONENT_APP_FASTFETCH_IMAGE
+    bool "Include fastfetch system summary in system images"
+    default y
+    depends on LEON_COMPONENT_APP_FASTFETCH_BUILD
+
+config LEON_COMPONENT_APP_FASTFETCH_ENTRY
+    bool "Generate a desktop entry for fastfetch system summary"
+    default n
+    depends on LEON_COMPONENT_APP_FASTFETCH_BUILD
+
+config LEON_COMPONENT_APP_FASTFETCH_SDK
+    bool "Include fastfetch system summary in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_FASTFETCH_BUILD
+
 config LEON_COMPONENT_APP_PLEDITOR_BUILD
     bool "Build PL editor"
     default y

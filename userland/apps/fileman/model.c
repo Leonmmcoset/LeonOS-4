@@ -2,7 +2,8 @@
 
 int is_root_path(const char *path)
 {
-    return text_eq(path, "0:/");
+    return path && path[0] >= '0' && path[0] <= '9' &&
+           path[1] == ':' && path[2] == '/' && path[3] == 0;
 }
 
 int selected_entry_valid(void)
@@ -193,7 +194,7 @@ void build_path_join(char *dst, uint32_t dst_len, const char *parent, const char
     uint32_t pos = 0;
     dst[0] = 0;
     append_text(dst, &pos, dst_len, parent);
-    if (!text_eq(parent, "0:/")) {
+    if (!is_root_path(parent)) {
         append_char(dst, &pos, dst_len, '/');
     }
     append_text(dst, &pos, dst_len, name);
@@ -987,41 +988,220 @@ int reload_dir(void)
     return 0;
 }
 
+static int tree_compare_nodes(const struct fileman_tree_node *left,
+                              const struct fileman_tree_node *right)
+{
+    return compare_entry_names(left->label, right->label);
+}
+
+static int tree_node_index_for_id(uint32_t id)
+{
+    for (uint32_t i = 0; i < fileman_tree_node_count; ++i) {
+        if (fileman_tree_nodes[i].used && fileman_tree_nodes[i].id == id) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int tree_dir_has_children(const char *path)
+{
+    struct leonos_dir_entry entry;
+    int fd;
+    int ret;
+    if (!path) {
+        return 0;
+    }
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    for (;;) {
+        ret = leonos_readdir(fd, &entry);
+        if (ret <= 0) {
+            break;
+        }
+        if (entry.type == LEONOS_FS_TYPE_DIR) {
+            close(fd);
+            return 1;
+        }
+    }
+    close(fd);
+    return 0;
+}
+
+static void tree_add_node(const char *path, const char *label, uint32_t id,
+                          uint32_t parent_id)
+{
+    struct fileman_tree_node *node;
+    if (fileman_tree_node_count >= FILEMAN_TREE_MAX_NODES) {
+        return;
+    }
+    node = &fileman_tree_nodes[fileman_tree_node_count++];
+    node->used = 1;
+    node->id = id;
+    node->parent_id = parent_id;
+    copy_text(node->path, sizeof(node->path), path);
+    copy_text(node->label, sizeof(node->label), label);
+    node->has_children = tree_dir_has_children(path) ? 1 : 0;
+}
+
+void fileman_tree_reset(void)
+{
+    char path[4];
+    struct leonos_stat st;
+    for (uint32_t i = 0; i < FILEMAN_TREE_MAX_NODES; ++i) {
+        fileman_tree_nodes[i] = (struct fileman_tree_node){0};
+    }
+    fileman_tree_node_count = 0;
+    fileman_tree_next_id = 11;
+    fileman_tree_scroll = 0;
+    tree_add_node("0:/", "0:/", 1, 0);
+    for (uint32_t drive = 1; drive < 10; ++drive) {
+        path[0] = (char)('0' + drive);
+        path[1] = ':';
+        path[2] = '/';
+        path[3] = 0;
+        if (stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR) {
+            tree_add_node(path, path, drive + 1, 0);
+        }
+    }
+}
+
+static void tree_init_if_needed(void)
+{
+    if (fileman_tree_node_count == 0) {
+        fileman_tree_reset();
+    }
+}
+
+static void tree_load_children(uint32_t node_index)
+{
+    struct fileman_tree_node *node;
+    struct leonos_dir_entry entry;
+    uint32_t first_child;
+    uint32_t added;
+    int fd;
+    int ret;
+    if (node_index >= fileman_tree_node_count) {
+        return;
+    }
+    node = &fileman_tree_nodes[node_index];
+    if (!node->used || node->loaded) {
+        return;
+    }
+    node->loaded = 1;
+    first_child = fileman_tree_node_count;
+    fd = open(node->path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        node->has_children = 0;
+        return;
+    }
+    while (fileman_tree_node_count < FILEMAN_TREE_MAX_NODES) {
+        char child_path[LEONOS_FS_PATH_LEN];
+        ret = leonos_readdir(fd, &entry);
+        if (ret <= 0) {
+            break;
+        }
+        if (entry.type != LEONOS_FS_TYPE_DIR) {
+            continue;
+        }
+        build_path_join(child_path, sizeof(child_path), node->path, entry.name);
+        tree_add_node(child_path, entry.name, fileman_tree_next_id++, node->id);
+    }
+    close(fd);
+    added = fileman_tree_node_count - first_child;
+    if (added == 0) {
+        node->has_children = 0;
+        return;
+    }
+    for (uint32_t i = first_child + 1; i < fileman_tree_node_count; ++i) {
+        struct fileman_tree_node child = fileman_tree_nodes[i];
+        uint32_t slot = i;
+        while (slot > first_child &&
+               tree_compare_nodes(&child, &fileman_tree_nodes[slot - 1]) < 0) {
+            fileman_tree_nodes[slot] = fileman_tree_nodes[slot - 1];
+            --slot;
+        }
+        fileman_tree_nodes[slot] = child;
+    }
+}
+
+static void tree_append_visible(struct leonos_ui_tree_item *items, uint32_t cap,
+                                uint32_t *count, uint32_t node_index,
+                                uint32_t depth)
+{
+    struct fileman_tree_node *node;
+    if (!items || !count || node_index >= fileman_tree_node_count || *count >= cap) {
+        return;
+    }
+    node = &fileman_tree_nodes[node_index];
+    if (!node->used) {
+        return;
+    }
+    items[(*count)++] = (struct leonos_ui_tree_item){
+        node->label, node->id, depth,
+        node->has_children ? (node->expanded ? LEONOS_UI_TREE_EXPANDED : 0)
+                           : LEONOS_UI_TREE_LEAF};
+    if (!node->expanded) {
+        return;
+    }
+    for (uint32_t i = 0; i < fileman_tree_node_count && *count < cap; ++i) {
+        if (fileman_tree_nodes[i].used && fileman_tree_nodes[i].parent_id == node->id) {
+            tree_append_visible(items, cap, count, i, depth + 1);
+        }
+    }
+}
+
 uint32_t build_tree_items(struct leonos_ui_tree_item *items, uint32_t cap)
 {
     uint32_t count = 0;
-    if (!items || cap < 5) {
+    tree_init_if_needed();
+    if (!items || cap == 0) {
         return 0;
     }
-    items[count++] = (struct leonos_ui_tree_item){"0:/", 1, 0, LEONOS_UI_TREE_EXPANDED};
-    if (home_path[0] && count < cap) {
-        items[count++] = (struct leonos_ui_tree_item){T("Home", "主页"), 2, 1, LEONOS_UI_TREE_LEAF};
+    for (uint32_t i = 0; i < fileman_tree_node_count && count < cap; ++i) {
+        if (fileman_tree_nodes[i].used && fileman_tree_nodes[i].parent_id == 0) {
+            tree_append_visible(items, cap, &count, i, 0);
+        }
     }
-    items[count++] = (struct leonos_ui_tree_item){"system", 3, 1, LEONOS_UI_TREE_LEAF};
-    items[count++] = (struct leonos_ui_tree_item){"fonts", 4, 2, LEONOS_UI_TREE_LEAF};
-    items[count++] = (struct leonos_ui_tree_item){"resources", 5, 2, LEONOS_UI_TREE_LEAF};
-    items[count++] = (struct leonos_ui_tree_item){"programs", 6, 1, LEONOS_UI_TREE_LEAF};
     return count;
 }
 
 const char *tree_path_for_id(uint32_t id)
 {
-    switch (id) {
-    case 1:
-        return "0:/";
-    case 2:
-        return home_path[0] ? home_path : 0;
-    case 3:
-        return "0:/system";
-    case 4:
-        return "0:/system/fonts";
-    case 5:
-        return "0:/system/resources";
-    case 6:
-        return "0:/programs";
-    default:
+    int index;
+    tree_init_if_needed();
+    index = tree_node_index_for_id(id);
+    return index >= 0 ? fileman_tree_nodes[index].path : 0;
+}
+
+int fileman_tree_toggle(uint32_t id)
+{
+    int index;
+    tree_init_if_needed();
+    index = tree_node_index_for_id(id);
+    if (index < 0 || !fileman_tree_nodes[index].has_children) {
         return 0;
     }
+    if (!fileman_tree_nodes[index].expanded) {
+        tree_load_children((uint32_t)index);
+        if (!fileman_tree_nodes[index].has_children) {
+            return 0;
+        }
+    }
+    fileman_tree_nodes[index].expanded = fileman_tree_nodes[index].expanded ? 0 : 1;
+    return 1;
+}
+
+uint32_t fileman_tree_visible_rows(const struct fileman_layout *layout)
+{
+    uint32_t height;
+    if (!layout || layout->tree_h <= 8) {
+        return 1;
+    }
+    height = layout->tree_h - 8;
+    return height / TREE_ROW_H ? height / TREE_ROW_H : 1;
 }
 
 int navigate_to_path(const char *path)

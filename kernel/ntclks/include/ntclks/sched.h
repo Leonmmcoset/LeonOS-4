@@ -165,6 +165,8 @@ void sched_sleep_current_until(uint64_t wake_tick);
 void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick);
 void sched_wake_window_event(uint32_t pid, uint32_t window_id);
 int sched_kill_user_task(uint32_t pid, uint64_t code);
+int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
+                                  uint64_t code);
 int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                      uint32_t keep_pid, uint64_t code);
 int64_t sched_wait_reap(uint32_t waiter_pid, uint32_t wanted_pid, uint64_t *exit_code);

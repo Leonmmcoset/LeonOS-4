@@ -54,6 +54,8 @@ def main() -> int:
     desktop_app: str | None = None
     login_password: str | None = None
     editor = "nano"
+    fastfetch_smoke = False
+    iso9660_smoke = False
     if arguments and arguments[0] == "--skip-oobe":
         skip_oobe = True
         arguments = arguments[1:]
@@ -62,6 +64,12 @@ def main() -> int:
         arguments = arguments[1:]
     if arguments and arguments[0] == "--tcc":
         tcc_smoke = True
+        arguments = arguments[1:]
+    if arguments and arguments[0] == "--fastfetch":
+        fastfetch_smoke = True
+        arguments = arguments[1:]
+    if arguments and arguments[0] == "--iso9660":
+        iso9660_smoke = True
         arguments = arguments[1:]
     if len(arguments) >= 2 and arguments[0] == "--desktop-app":
         desktop_app = arguments[1]
@@ -76,7 +84,7 @@ def main() -> int:
         return 2
     if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
         return 2
-    if desktop_app is not None and (tcc_smoke or exit_only):
+    if desktop_app is not None and (tcc_smoke or fastfetch_smoke or iso9660_smoke or exit_only):
         return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
         return 2
@@ -136,6 +144,13 @@ def main() -> int:
     # loading the font and starting BusyBox after the window first appears.
     time.sleep(18.0)
 
+    # Exercise terminal tab lifecycle: create a second PTY, close it, and
+    # create it again so a closed tab cannot exhaust the kernel PTY pool.
+    hmp(sock, "sendkey ctrl-shift-t", 1.0)
+    hmp(sock, "sendkey ctrl-shift-w", 1.0)
+    hmp(sock, "sendkey ctrl-shift-t", 1.0)
+    time.sleep(2.0)
+
     if tcc_smoke:
         # Compile the image-staged example with the on-device compiler, then
         # execute the resulting ELF through the resident BusyBox shell.
@@ -153,6 +168,34 @@ def main() -> int:
         send_keys(sock, text_keys("0:/programs/tcc/hello.elf") + ("ret",))
         time.sleep(3.0)
         hmp(sock, "screendump build/images/tcc-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
+    if fastfetch_smoke:
+        # Exercise the port's default summary, text-only mode, built-in ASCII
+        # logo lookup, layout settings and restricted structure dispatcher.
+        commands = (
+            "fastfetch",
+            "fastfetch --pipe",
+            "fastfetch --logo arch --logo-padding-right 2",
+            "fastfetch --logo windows --logo-position top --structure OS:DateTime:Version",
+            "fastfetch --structure Title:Break:Version --structure-disabled Break",
+        )
+        for command in commands:
+            send_keys(sock, text_keys(command) + ("ret",))
+            time.sleep(2.0)
+        hmp(sock, "screendump build/images/fastfetch-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
+    if iso9660_smoke:
+        # A data-only ISO attached as AHCI ATAPI must be mounted as 1:/.
+        # Run each command separately so a failed cd remains visible in the
+        # captured terminal instead of being hidden by shell command chaining.
+        for command in ("cd 1:/", "pwd", "ls", "cat readme.txt"):
+            send_keys(sock, text_keys(command) + ("ret",))
+            time.sleep(2.0)
+        hmp(sock, "screendump build/images/iso9660-qmp-smoke.ppm", 0.4)
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 

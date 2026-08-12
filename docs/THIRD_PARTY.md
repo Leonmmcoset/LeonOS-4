@@ -145,16 +145,18 @@ scripts can be loaded from the current directory or from
 ## PL Editor
 
 - Path: `third_party/pl_editor`
-- Upstream: `https://github.com/plos-clan/pl_editor.git`
-- Pinned commit: `15435b8aab125537421d57c6220e3b8a0c827787`
+- Upstream modified fork: `https://github.com/Leonmmcoset/pl_editor.git`
+- Pinned commit: `22fae7a1bc2362486d8bf845f0daf6ec7060a3a1`
 - License: MIT; the complete upstream `LICENSE` is staged at
   `0:/programs/pleditor/LICENSE` beside the executable.
 
 LeonOS builds PL Editor at `0:/programs/pleditor/pleditor.elf`. Its upstream
 platform-independent editor core is kept as a submodule; the LeonOS platform
 adapter provides raw PTY input, ANSI terminal output, terminal sizing and
-file persistence. It is launched through Terminal and supports syntax
-highlighting, search, undo/redo and line numbers.
+multi-encoding file persistence. It is launched through Terminal and supports
+syntax highlighting, search, undo/redo, line numbers, automatic bracket
+completion, CRLF preservation, wrapped welcome messages and the fork's
+extended syntax set.
 
 ## ChenPi11 cmd
 
@@ -171,6 +173,26 @@ BusyBox applets or supported LeonOS terminal programs through the PTY
 spawn/wait ABI. Pipes and the background process forms of `START` remain
 unavailable because LeonOS does not yet provide fork or pipe semantics; they
 fail explicitly instead of entering a partial POSIX fallback.
+
+## Fastfetch
+
+- Path: `third_party/fastfetch`
+- Upstream: `https://github.com/fastfetch-cli/fastfetch.git`
+- Version: `2.67.0`
+- Pinned commit: `56da8f811068289f6352db8881418aa6e0f994e8` (`2.67.0`)
+- License: MIT; the complete upstream `LICENSE` is staged at
+  `0:/programs/fastfetch/LICENSE` beside the executable.
+
+LeonOS builds upstream Fastfetch at `0:/programs/fastfetch/fastfetch.elf`.
+The unmodified upstream core supplies string, format, printing, ASCII-logo
+data, size, duration, percentage, display-option and module implementations.
+The separate `userland/fastfetch` adapter obtains Title, OS, Kernel, Uptime,
+Processes and Memory data from the LeonOS public ABI instead of Linux `/proc`
+and `/sys`. The port also includes the upstream DateTime, Break, Colors and
+Version modules, all 527 upstream built-in ASCII logos, logo/display options,
+and restricted `--structure` selection for the modules available on LeonOS.
+JSON/config files, file or image logos, dynamic refresh, dynamic libraries and
+modules requiring a host POSIX or Linux interface remain disabled.
 
 ## minimp3
 

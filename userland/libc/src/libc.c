@@ -3879,6 +3879,11 @@ int leonos_pty_create(void)
     return ioctl(3, LEONOS_PTY_IOCTL_CREATE, 0);
 }
 
+int leonos_pty_destroy(uint32_t pty_id)
+{
+    return ioctl(3, LEONOS_PTY_IOCTL_DESTROY, (void *)(uintptr_t)pty_id);
+}
+
 int leonos_pty_read_output(uint32_t pty_id, char *buffer, uint32_t length)
 {
     struct leonos_pty_io io = {

@@ -4,8 +4,8 @@
 
 All driver source code lives in the repository-root `drivers/` directory.
 
-- `drivers/bootstrap`: console, framebuffer, VGA, EFI filesystem, and storage
-  implementations that are linked into `kernel.sys`.
+- `drivers/bootstrap`: console, framebuffer, VGA, EFI filesystem, storage, and
+  USB UHCI/HID implementations that are linked into `kernel.sys`.
 - `drivers/mouse`, `drivers/serial`, and `drivers/e1000`: loadable driver
   implementations built as `mouse.drv`, `serial.drv`, and `e1000.drv`.
 
@@ -33,6 +33,17 @@ failed module is retried once, then recorded as failed while boot continues.
 `0:/system/config/drivers.conf` is optional. It uses UTF-8 text with a `version=1` line
 and one `disabled=<file>.drv` line per module excluded from automatic startup.
 Absent entries are enabled by default.
+
+## USB HID
+
+The bootstrap USB layer scans PCI UHCI (USB 1.1) controllers during kernel
+startup. It resets each root port, enumerates standard HID boot-protocol
+interfaces, and polls interrupt endpoints for keyboards and mice. A single
+level of USB hub is also configured so multiple devices can share a root port.
+Keyboard usages are translated to the existing set-1 keycodes, while mouse
+reports are published to the existing relative pointer event queue. EHCI,
+xHCI, USB storage, generic (non-boot) HID report parsing, and runtime hot-plug
+are not implemented yet.
 
 ## Management and Trust Boundary
 

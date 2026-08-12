@@ -25,6 +25,10 @@ struct leonos_ui_surface fileman_ui;
 uint8_t fileman_operation_active;
 uint32_t fileman_operation_percent;
 char fileman_operation_text[160];
+struct fileman_tree_node fileman_tree_nodes[FILEMAN_TREE_MAX_NODES];
+uint32_t fileman_tree_node_count;
+uint32_t fileman_tree_next_id;
+uint32_t fileman_tree_scroll;
 
 struct fileman_layout current_layout(void)
 {

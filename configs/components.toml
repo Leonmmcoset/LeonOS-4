@@ -512,6 +512,19 @@ sdk = false
 api = false
 
 [[components]]
+id = "fastfetch"
+symbol = "APP_FASTFETCH"
+label = "fastfetch system summary"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "pleditor"
 symbol = "APP_PLEDITOR"
 label = "PL editor"

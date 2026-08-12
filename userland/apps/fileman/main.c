@@ -20,6 +20,7 @@ int main(int argc, char **argv, char **envp)
     leonos_ui_listview_state_init(&file_list, current_layout().visible_rows, ROW_H);
     file_list.focused = 1;
     refresh_home_path();
+    fileman_tree_reset();
     if (argc > 1 && argv && argv[1] && argv[1][0]) {
         copy_text(current_path, sizeof(current_path), argv[1]);
     } else if (home_path[0]) {

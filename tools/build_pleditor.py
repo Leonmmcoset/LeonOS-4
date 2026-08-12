@@ -44,22 +44,26 @@ def patch_renderer(source: Path) -> None:
     include_before = "#include <stdlib.h>\n"
     include_after = "#include <stdlib.h>\n#include <stdint.h>\n"
     allocation_before = """    /* Buffer to build screen update in (large enough for entire screen) */
-    char *buffer = malloc(state->screen_rows * state->screen_cols * 5);
+    size_t buffer_size = (size_t)(state->screen_rows + 2) *
+        ((size_t)state->screen_cols * 16 + 32) + 256;
+    char *buffer = malloc(buffer_size);
+    if (!buffer) return;
     int len = 0;
 """
     allocation_after = """    /*
-     * Highlighting can change colour before every displayed byte.  Reserve a
-     * conservative per-row upper bound for ANSI SGR sequences, line numbers
-     * and clear-to-EOL commands before doing any screen write.
+     * A highlighted byte can add an ANSI SGR sequence.  Validate the
+     * screen-derived allocation before calculating its conservative size.
      */
     size_t rows = (size_t)state->screen_rows;
     size_t cols = (size_t)state->screen_cols;
     size_t bytes_per_row;
     size_t buffer_capacity;
-    if (rows == 0 || cols == 0 || cols > (SIZE_MAX - 256U) / 8U) {
+    if (state->screen_rows < 0 || state->screen_cols < 0 ||
+        rows > SIZE_MAX - 2U || cols > (SIZE_MAX - 32U) / 16U) {
         return;
     }
-    bytes_per_row = cols * 8U + 256U;
+    bytes_per_row = cols * 16U + 32U;
+    rows += 2U;
     if (rows > (SIZE_MAX - 256U) / bytes_per_row) {
         return;
     }
@@ -167,7 +171,7 @@ def main() -> None:
         json.dumps(
             {
                 "pleditor_commit": source_revision(source),
-                "renderer_patch": "bounded-ansi-screen-buffer-v1",
+                "renderer_patch": "bounded-ansi-screen-buffer-v2",
                 "port_sha256": hashlib.sha256((port / "platform_leonos.c").read_bytes()).hexdigest(),
             },
             indent=2,

@@ -3,10 +3,12 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include <termios.h>
 #include <unistd.h>
 
 #include <leonos/syscall.h>
+#include <leonos/system.h>
 #include <leonos/text.h>
 
 #include "../../../third_party/pl_editor/src/platform.h"
@@ -32,6 +34,22 @@ static int read_byte(unsigned char *value, unsigned long timeout_ms)
         (void)sleep_ms(1);
         ++waited;
     }
+}
+
+/* Picolibc's time() is used to seed the editor's session welcome message. */
+int gettimeofday(struct timeval *value, void *timezone)
+{
+    struct leonos_time_info time_info;
+    uint64_t milliseconds;
+    (void)timezone;
+    if (!value || leonos_time_info(&time_info) < 0) {
+        return -1;
+    }
+    milliseconds = time_info.valid ? time_info.unix_seconds * 1000U :
+                                     time_info.uptime_ms;
+    value->tv_sec = (time_t)(milliseconds / 1000U);
+    value->tv_usec = (suseconds_t)((milliseconds % 1000U) * 1000U);
+    return 0;
 }
 
 static void write_all(const char *text, size_t length)
@@ -227,4 +245,10 @@ bool pleditor_platform_write_file(const char *filename, const char *buffer, size
     free(encoded);
     close_result = fclose(file);
     return written == encoded_length && close_result == 0;
+}
+
+bool pleditor_platform_path_exists(const char *filename)
+{
+    struct leonos_stat status;
+    return filename && stat(filename, &status) == 0;
 }

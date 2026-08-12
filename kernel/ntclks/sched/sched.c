@@ -645,6 +645,31 @@ int sched_kill_user_task(uint32_t pid, uint64_t code)
     return 0;
 }
 
+int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
+                                  uint64_t code)
+{
+    int killed = 0;
+    if (!pty_id) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = &tasks[i];
+        if (task->pid == 0 || task->pid == keep_pid ||
+            task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
+            (task->flags & TASK_FLAG_SERVICE) || task->pty_id != pty_id) {
+            continue;
+        }
+        sched_exit(task->pid, code);
+        task->pty_id = 0;
+        for (uint32_t fd = 0; fd < SCHED_TASK_PTY_FD_MAX; ++fd) {
+            task->pty_fds[fd] = (struct task_pty_fd){0};
+        }
+        sched_release_task_resources(task);
+        ++killed;
+    }
+    return killed;
+}
+
 int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                      uint32_t keep_pid, uint64_t code)
 {

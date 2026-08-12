@@ -54,6 +54,7 @@
 #define LEONOS_UI_EDIT_SECURE 0x08u
 #define LEONOS_UI_SCROLLBAR_DISABLED 0x01u
 #define LEONOS_UI_TAB_DISABLED 0x01u
+#define LEONOS_UI_TAB_CLOSABLE 0x02u
 #define LEONOS_UI_INPUT_DISABLED 0x01u
 #define LEONOS_UI_TOOLBAR_BUTTON_ACTIVE LEONOS_UI_BUTTON_ACTIVE
 #define LEONOS_UI_TOOLBAR_BUTTON_PRESSED LEONOS_UI_BUTTON_PRESSED
@@ -517,6 +518,11 @@ int leonos_ui_tab_control_handle_mouse(struct leonos_ui_tab_state *state,
                                        uint32_t x, uint32_t y, uint32_t w,
                                        const struct leonos_ui_tab_item *items,
                                        uint32_t count);
+int leonos_ui_tab_control_handle_mouse_ex(struct leonos_ui_tab_state *state,
+                                           int32_t px, int32_t py,
+                                           uint32_t x, uint32_t y, uint32_t w,
+                                           const struct leonos_ui_tab_item *items,
+                                           uint32_t count, uint32_t *closed_id);
 int leonos_ui_tab_control_handle_key(struct leonos_ui_tab_state *state,
                                      uint8_t keycode,
                                      const struct leonos_ui_tab_item *items,

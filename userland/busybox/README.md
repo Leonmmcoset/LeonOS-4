@@ -29,6 +29,7 @@ nodes remain unsupported by the filesystem and return an error.
 The `file` command is provided as an external program backed by upstream
 libmagic. Hush resolves it to `0:/programs/file/file.elf`; the matching
 compiled database is installed at `0:/system/share/misc/magic.mgc`.
+`fastfetch` is likewise resolved to `0:/programs/fastfetch/fastfetch.elf`.
 
 LeonOS does not yet provide POSIX `fork`/`vfork`, pipe, descriptor duplication,
 process groups, or signal semantics. Therefore pipelines, redirections,

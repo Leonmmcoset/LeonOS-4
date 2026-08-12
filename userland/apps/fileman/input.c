@@ -56,7 +56,7 @@ int handle_menu_click(int32_t x, int32_t y)
             } else if (action == FILEMAN_ACTION_ROOT) {
                 navigate_root();
             } else if (action == FILEMAN_ACTION_ABOUT) {
-                leonos_ui_show_message_box(T("File Manager", "文件资源管理器"), T("Browse FAT32 files and launch apps.", "浏览 FAT32 文件并启动应用。"), "OK");
+                leonos_ui_show_message_box(T("File Manager", "文件资源管理器"), T("Browse files and launch apps.", "浏览文件并启动应用。"), "OK");
             }
             return 1;
         }
@@ -193,14 +193,39 @@ void handle_click(int32_t x, int32_t y)
     }
     if (l.tree_w && hit_rect_i(x, y, (int32_t)l.tree_x, (int32_t)l.tree_y,
                                (int32_t)l.tree_w, (int32_t)l.tree_h)) {
-        struct leonos_ui_tree_item tree_items[6];
+        struct leonos_ui_tree_item tree_items[FILEMAN_TREE_MAX_NODES];
         uint32_t tree_count = build_tree_items(tree_items, sizeof(tree_items) / sizeof(tree_items[0]));
+        uint32_t tree_rows = fileman_tree_visible_rows(&l);
+        uint32_t tree_first = fileman_tree_scroll;
+        uint32_t tree_visible;
         uint32_t id = 0;
-        if (leonos_ui_tree_hit(x, y, l.tree_x + 2, l.tree_y + 4, l.tree_w - 4,
-                               tree_items, tree_count,
+        if (tree_first > (tree_count > tree_rows ? tree_count - tree_rows : 0)) {
+            tree_first = tree_count > tree_rows ? tree_count - tree_rows : 0;
+            fileman_tree_scroll = tree_first;
+        }
+        if (x >= (int32_t)(l.tree_x + l.tree_w - 20)) {
+            leonos_ui_vscrollbar_handle_mouse(&fileman_tree_scroll,
+                                              tree_count > tree_rows ? tree_count : tree_rows,
+                                              tree_rows, l.tree_x + l.tree_w - 20,
+                                              l.tree_y + 2, 18,
+                                              l.tree_h > 4 ? l.tree_h - 4 : 1, x, y);
+            return;
+        }
+        tree_visible = tree_count > tree_first ? tree_count - tree_first : 0;
+        if (tree_visible > tree_rows) {
+            tree_visible = tree_rows;
+        }
+        if (leonos_ui_tree_hit(x, y, l.tree_x + 2, l.tree_y + 4,
+                               l.tree_w > 22 ? l.tree_w - 22 : 1,
+                               tree_items + tree_first, tree_visible,
                                TREE_ROW_H, &id)) {
             const char *path = tree_path_for_id(id);
-            if (path) {
+            uint32_t index = ((uint32_t)y - (l.tree_y + 4)) / TREE_ROW_H;
+            uint32_t indent = index < tree_visible ? tree_items[tree_first + index].depth * 14U : 0;
+            uint32_t glyph_x = l.tree_x + 6U + indent;
+            if (index < tree_visible && x >= (int32_t)glyph_x && x < (int32_t)(glyph_x + 12U)) {
+                (void)fileman_tree_toggle(id);
+            } else if (path) {
                 navigate_to_path(path);
             }
         }
@@ -264,6 +289,14 @@ void handle_key(uint8_t keycode)
 int handle_wheel(int32_t x, int32_t y, int32_t wheel)
 {
     struct fileman_layout l = current_layout();
+    if (l.tree_w && hit_rect_i(x, y, (int32_t)l.tree_x, (int32_t)l.tree_y,
+                               (int32_t)l.tree_w, (int32_t)l.tree_h)) {
+        struct leonos_ui_tree_item tree_items[FILEMAN_TREE_MAX_NODES];
+        uint32_t tree_count = build_tree_items(tree_items, sizeof(tree_items) / sizeof(tree_items[0]));
+        return leonos_ui_vscrollbar_handle_wheel(&fileman_tree_scroll,
+                                                 tree_count,
+                                                 fileman_tree_visible_rows(&l), wheel);
+    }
     if (hit_rect_i(x, y, (int32_t)l.list_x, (int32_t)l.list_y,
                    (int32_t)(l.list_w + 24), (int32_t)l.list_h)) {
         return leonos_ui_listview_state_handle_wheel(&file_list, wheel);

@@ -6,6 +6,7 @@
 
 void pty_init(void);
 int32_t pty_create(uint32_t owner_pid);
+int pty_destroy(uint32_t owner_pid, uint32_t pty_id);
 int pty_is_owner(uint32_t pty_id, uint32_t owner_pid);
 int pty_is_active(uint32_t pty_id);
 int64_t pty_read_output(uint32_t owner_pid, uint32_t pty_id, char *buffer, uint32_t length);

@@ -13,8 +13,11 @@ void draw_fileman(struct leonos_ui_surface *ui)
         {T("Type", "类型"), 58},
         {T("Name", "名称"), l.list_w > 58 ? l.list_w - 58 : 120},
     };
-    struct leonos_ui_tree_item tree_items[6];
+    struct leonos_ui_tree_item tree_items[FILEMAN_TREE_MAX_NODES];
     uint32_t tree_count = build_tree_items(tree_items, sizeof(tree_items) / sizeof(tree_items[0]));
+    uint32_t tree_rows = fileman_tree_visible_rows(&l);
+    uint32_t tree_first = fileman_tree_scroll;
+    uint32_t tree_visible;
     for (uint32_t i = 0; i < tree_count; ++i) {
         const char *path = tree_path_for_id(tree_items[i].id);
         if (text_eq(current_path, path)) {
@@ -35,10 +38,25 @@ void draw_fileman(struct leonos_ui_surface *ui)
     leonos_ui_edit(ui, 230, TOOLBAR_Y, view_w > 238 ? view_w - 238 : 120,
                    current_path, text_len(current_path), 0, LEONOS_UI_EDIT_READONLY);
 
+    if (tree_first > (tree_count > tree_rows ? tree_count - tree_rows : 0)) {
+        tree_first = tree_count > tree_rows ? tree_count - tree_rows : 0;
+        fileman_tree_scroll = tree_first;
+    }
+    tree_visible = tree_count > tree_first ? tree_count - tree_first : 0;
+    if (tree_visible > tree_rows) {
+        tree_visible = tree_rows;
+    }
+
     if (l.tree_w) {
         leonos_ui_scroll_view_frame(ui, l.tree_x, l.tree_y, l.tree_w, l.tree_h);
-        leonos_ui_tree(ui, l.tree_x + 2, l.tree_y + 4, l.tree_w - 4, tree_items,
-                       tree_count, TREE_ROW_H);
+        leonos_ui_tree(ui, l.tree_x + 2, l.tree_y + 4, l.tree_w > 22 ? l.tree_w - 22 : 1,
+                       tree_items + tree_first, tree_visible, TREE_ROW_H);
+        leonos_ui_vscrollbar(ui, l.tree_x + l.tree_w - 20, l.tree_y + 2, 18,
+                             l.tree_h > 4 ? l.tree_h - 4 : 1,
+                             fileman_tree_scroll,
+                             tree_count > tree_rows ? tree_count : tree_rows,
+                             tree_rows,
+                             tree_count <= tree_rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
         leonos_ui_splitter(ui, l.tree_x + l.tree_w, l.tree_y,
                            l.list_x > l.tree_x + l.tree_w ? l.list_x - l.tree_x - l.tree_w : 8,
                            l.tree_h, LEONOS_UI_SPLIT_VERTICAL);

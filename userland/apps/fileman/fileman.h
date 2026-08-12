@@ -24,6 +24,7 @@
 #define STATUS_H 28
 #define TREE_W 132
 #define TREE_ROW_H 24
+#define FILEMAN_TREE_MAX_NODES 128
 #define MENU_BAR_H 28
 #define MENU_ITEM_H (LEONOS_FONT_H + 8)
 #define FILEMAN_KEY_ESCAPE 1U
@@ -100,6 +101,17 @@ struct folder_size_info {
     uint8_t partial;
 };
 
+struct fileman_tree_node {
+    char path[LEONOS_FS_PATH_LEN];
+    char label[LEONOS_FS_NAME_LEN];
+    uint32_t id;
+    uint32_t parent_id;
+    uint8_t used;
+    uint8_t expanded;
+    uint8_t loaded;
+    uint8_t has_children;
+};
+
 extern uint32_t pixels[FILEMAN_MAX_W * FILEMAN_MAX_H];
 extern uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
 extern struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
@@ -125,6 +137,10 @@ extern struct leonos_ui_surface fileman_ui;
 extern uint8_t fileman_operation_active;
 extern uint32_t fileman_operation_percent;
 extern char fileman_operation_text[160];
+extern struct fileman_tree_node fileman_tree_nodes[FILEMAN_TREE_MAX_NODES];
+extern uint32_t fileman_tree_node_count;
+extern uint32_t fileman_tree_next_id;
+extern uint32_t fileman_tree_scroll;
 
 struct fileman_layout current_layout(void);
 void copy_text(char *dst, uint32_t dst_len, const char *src);
@@ -172,6 +188,9 @@ void show_default_program_for_selected(void);
 int reload_dir(void);
 uint32_t build_tree_items(struct leonos_ui_tree_item *items, uint32_t cap);
 const char *tree_path_for_id(uint32_t id);
+int fileman_tree_toggle(uint32_t id);
+void fileman_tree_reset(void);
+uint32_t fileman_tree_visible_rows(const struct fileman_layout *layout);
 int navigate_to_path(const char *path);
 void draw_fileman(struct leonos_ui_surface *ui);
 void open_selected_entry(void);

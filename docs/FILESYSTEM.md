@@ -4,10 +4,19 @@ LeonOS 4 uses numbered drives and slash-separated paths:
 
 - `0:/`
 - `1:/`
+- `2:/` through `9:/` when additional media is present
 
 Normal boots mount `0:/` from the GPT ESP FAT32 partition on the AHCI boot
 disk. Installer boots mount `0:/` from the `leonos-installer-root` FAT32
 ramdisk; the target ESP can be mounted as an optional target drive.
+
+During normal boot the bootstrap storage driver scans every present AHCI port.
+ATAPI optical drives with a valid ISO 9660 primary volume descriptor are
+mounted read-only in scan order, starting at `1:`. Additional optical media
+receive the next free digit drive. The file manager lists each detected optical
+drive, and the middlelayer grants ordinary users read/execute access to these
+removable volumes. Writes, directory creation, deletion, rename, and ACL
+changes return a read-only filesystem error.
 
 Path normalization is currently provided by the middlelayer VFS service
 (`LEONOS_VFS_OP_RESOLVE_PATH`) with a kernel fallback resolver. FAT32 parsing,
@@ -22,6 +31,9 @@ Mount policy comes from middlelayer:
 - Installer root: FAT32 ramdisk.
 - Device tree: `0:/dev`.
 - Optional target ESP during installation.
+
+Optical ISO 9660 mounts are discovered by the kernel's AHCI bootstrap scan and
+are not part of the static middlelayer mount-policy entries.
 
 The current devfs surface is deliberately small:
 
@@ -101,16 +113,17 @@ left-side tree in `oshlp.elf`. The desktop Start menu scans only top-level
 
 ## Supported operations
 
-Current FAT32 and syscall support includes:
+Current FAT32 and ISO 9660 syscall support includes:
 
 - Directory listing and directory file descriptors.
-- File reads and writes.
-- Create and overwrite through `open` flags.
-- `stat`, `fstat`, and `lseek`.
-- `mkdir`.
-- `unlink`.
-- `rmdir`.
-- `rename`.
+- File reads; FAT32 also supports writes.
+- Create and overwrite through `open` flags on FAT32.
+- `stat`, `fstat`, and `lseek` on both filesystem types.
+- `mkdir`, `unlink`, `rmdir`, and `rename` on FAT32.
+
+ISO 9660 names are matched case-insensitively and the common `;1` version
+suffix is hidden from callers. Rock Ridge/Joliet extensions, multi-extent files,
+and media insertion/removal notifications are not currently implemented.
 
 ## Permission Model
 

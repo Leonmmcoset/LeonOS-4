@@ -17,6 +17,7 @@
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
+#include <ntclks/usb.h>
 #include <ntclks/userland.h>
 #include <ntclks/version.h>
 
@@ -242,6 +243,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     }
     driver_manager_init();
     driver_manager_autoload();
+    usb_init();
     net_init();
     osmlayer_bridge_selftest();
     userland_init(&boot);

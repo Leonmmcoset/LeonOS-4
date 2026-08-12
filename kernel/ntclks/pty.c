@@ -1,4 +1,5 @@
 #include <ntclks/pty.h>
+#include <ntclks/sched.h>
 
 #define PTY_MAX 8u
 #define PTY_INPUT_CAP 1024u
@@ -125,6 +126,19 @@ int32_t pty_create(uint32_t owner_pid)
         }
     }
     return -12;
+}
+
+int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || session->owner_pid != owner_pid) {
+        return -22;
+    }
+    (void)sched_kill_user_tasks_for_pty(pty_id, owner_pid, 137);
+    for (uint32_t j = 0; j < sizeof(*session); ++j) {
+        ((uint8_t *)session)[j] = 0;
+    }
+    return 0;
 }
 
 int pty_is_owner(uint32_t pty_id, uint32_t owner_pid)

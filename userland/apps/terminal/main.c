@@ -24,6 +24,7 @@
 #define TERMINAL_OUTPUT_BUDGET 8192U
 #define TERMINAL_CELL_CONTINUATION 0xffffffffU
 #define TERMINAL_KEY_T 20U
+#define TERMINAL_KEY_W 17U
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum terminal_escape_state {
@@ -113,7 +114,7 @@ static const char *const terminal_tab_labels[TERMINAL_MAX_SESSIONS] = {
 #define cursor_column (active_session->cursor_column)
 #define saved_line (active_session->saved_line)
 #define saved_column (active_session->saved_column)
-#define pty_id (active_session->pty_id)
+#define active_pty_id (active_session->pty_id)
 #define text_foreground (active_session->text_foreground)
 #define text_background (active_session->text_background)
 #define foreground_index (active_session->foreground_index)
@@ -138,6 +139,7 @@ static uint32_t terminal_visible_rows(void);
 static void terminal_flush_utf8(void);
 static int terminal_write_input(const char *buffer, uint32_t length);
 static uint32_t terminal_tab_items(struct leonos_ui_tab_item *items);
+static int terminal_close_session(uint32_t id);
 
 static const uint32_t ansi_normal[8] = {
     0x00708090U, 0x00d06060U, 0x006fc77aU, 0x00d5b85aU,
@@ -717,7 +719,7 @@ static void terminal_finish_csi(char final)
         length = snprintf(response, sizeof(response), "\033[%u;%uR", row,
                           cursor_column + 1U);
         if (length > 0) {
-            (void)leonos_pty_write_input(pty_id, response, (uint32_t)length);
+            (void)leonos_pty_write_input(active_pty_id, response, (uint32_t)length);
         }
     } else if (final == 's') {
         terminal_save_cursor();
@@ -883,6 +885,7 @@ static void terminal_draw(struct leonos_ui_surface *ui)
     tab_count = terminal_tab_items(tab_items);
 
     leonos_ui_rect(ui, 0, 0, TERMINAL_W, TERMINAL_H, 0x000b1019U);
+    leonos_ui_rect(ui, 0, 0, TERMINAL_W, leonos_ui_tab_height(), LEONOS_UI_GRAY);
     leonos_ui_tab_control(ui, 0, 0, TERMINAL_W - TERMINAL_TAB_ADD_W,
                           tab_items, tab_count, &tabs_state);
     leonos_ui_button(ui, TERMINAL_W - TERMINAL_TAB_ADD_W, 0,
@@ -916,7 +919,7 @@ static int terminal_pump_output(void)
         if (request > sizeof(buffer)) {
             request = sizeof(buffer);
         }
-        received = leonos_pty_read_output(pty_id, buffer, request);
+        received = leonos_pty_read_output(active_pty_id, buffer, request);
         if (received > 0) {
             int index;
             for (index = 0; index < received; ++index) {
@@ -949,7 +952,7 @@ static int terminal_pump_all_output(void)
 
 static int terminal_write_input(const char *buffer, uint32_t length)
 {
-    return leonos_pty_write_input(pty_id, buffer, length) == (int)length;
+    return leonos_pty_write_input(active_pty_id, buffer, length) == (int)length;
 }
 
 static int terminal_control_character(char character, uint8_t ctrl, char *out)
@@ -1005,7 +1008,7 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     if (!pressed) {
         return 0;
     }
-    have_termios = leonos_pty_get_termios(pty_id, &termios) == 0;
+    have_termios = leonos_pty_get_termios(active_pty_id, &termios) == 0;
     if (keycode == LEONOS_KEY_ESCAPE) {
         sequence[0] = '\033';
         sequence_length = 1;
@@ -1120,7 +1123,7 @@ static uint32_t terminal_tab_items(struct leonos_ui_tab_item *items)
         if (items) {
             items[count].label = terminal_tab_labels[index];
             items[count].id = index + 1U;
-            items[count].flags = 0;
+            items[count].flags = LEONOS_UI_TAB_CLOSABLE;
         }
         ++count;
     }
@@ -1166,6 +1169,49 @@ static int terminal_select_adjacent_tab(int direction)
     return 0;
 }
 
+static int terminal_close_session(uint32_t id)
+{
+    struct terminal_session *session;
+    int index;
+    if (id == 0 || id > TERMINAL_MAX_SESSIONS || !sessions[id - 1U].used) {
+        return 0;
+    }
+    session = &sessions[id - 1U];
+    if (leonos_pty_destroy(session->pty_id) < 0) {
+        return 0;
+    }
+    index = (int)(session - sessions);
+    session->used = 0;
+    if (terminal_tab_items(0) == 0U) {
+        active_session = 0;
+        return -1;
+    }
+    if (active_session == session) {
+        for (uint32_t step = 1; step <= TERMINAL_MAX_SESSIONS; ++step) {
+            int candidate = index + (int)step;
+            if (candidate >= (int)TERMINAL_MAX_SESSIONS) {
+                candidate %= (int)TERMINAL_MAX_SESSIONS;
+            }
+            if (sessions[candidate].used) {
+                (void)terminal_select_tab((uint32_t)candidate + 1U);
+                break;
+            }
+        }
+    }
+    return 1;
+}
+
+static void terminal_close_all_sessions(void)
+{
+    for (uint32_t index = 0; index < TERMINAL_MAX_SESSIONS; ++index) {
+        if (sessions[index].used) {
+            (void)leonos_pty_destroy(sessions[index].pty_id);
+            sessions[index].used = 0;
+        }
+    }
+    active_session = 0;
+}
+
 static struct terminal_session *terminal_open_session(const char *path,
                                                        char *const command_argv[])
 {
@@ -1194,14 +1240,14 @@ static struct terminal_session *terminal_open_session(const char *path,
     *session = (struct terminal_session){0};
     session->used = 1;
     active_session = session;
-    pty_id = (uint32_t)new_pty;
+    active_pty_id = (uint32_t)new_pty;
     cursor_visible = 1;
     terminal_reset_style();
     terminal_clear();
     winsize.ws_row = (uint16_t)terminal_visible_rows();
     winsize.ws_col = (uint16_t)TERMINAL_COLUMNS;
-    (void)leonos_pty_set_winsize(pty_id, &winsize);
-    shell_result = leonos_pty_spawn_argv(path, pty_id, command_argv, 0);
+    (void)leonos_pty_set_winsize(active_pty_id, &winsize);
+    shell_result = leonos_pty_spawn_argv(path, active_pty_id, command_argv, 0);
     if (shell_result < 0) {
         terminal_put_text("! shell start failed");
     }
@@ -1214,14 +1260,18 @@ static int terminal_handle_mouse(int32_t x, int32_t y, uint8_t buttons,
 {
     struct leonos_ui_tab_item tab_items[TERMINAL_MAX_SESSIONS];
     uint32_t tab_count;
+    uint32_t closed_id = 0;
 
     if ((buttons & 1U) == 0) {
         return 0;
     }
     tab_count = terminal_tab_items(tab_items);
-    if (leonos_ui_tab_control_handle_mouse(&tabs_state, x, y, 0, 0,
-                                           TERMINAL_W - TERMINAL_TAB_ADD_W,
-                                           tab_items, tab_count)) {
+    if (leonos_ui_tab_control_handle_mouse_ex(&tabs_state, x, y, 0, 0,
+                                              TERMINAL_W - TERMINAL_TAB_ADD_W,
+                                              tab_items, tab_count, &closed_id)) {
+        if (closed_id) {
+            return terminal_close_session(closed_id);
+        }
         return terminal_select_tab(tabs_state.selected_id);
     }
     if (x >= (int32_t)(TERMINAL_W - TERMINAL_TAB_ADD_W) &&
@@ -1283,11 +1333,18 @@ int main(int argc, char **argv, char **envp)
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_wait_app_event(&event, 40U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
+                terminal_close_all_sessions();
                 return 0;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
                 if (ctrl_down && shift_down && event.keycode == TERMINAL_KEY_T) {
                     redraw |= terminal_open_session(command_path, command_argv) != 0;
+                } else if (ctrl_down && shift_down && event.keycode == TERMINAL_KEY_W) {
+                    int close_result = terminal_close_session(tabs_state.selected_id);
+                    if (close_result < 0) {
+                        return 0;
+                    }
+                    redraw |= close_result;
                 } else if (ctrl_down && event.keycode == LEONOS_KEY_TAB) {
                     redraw |= terminal_select_adjacent_tab(shift_down ? -1 : 1);
                 } else {
@@ -1298,8 +1355,12 @@ int main(int argc, char **argv, char **envp)
                 (void)terminal_send_key(event.keycode, 0, &shift_down,
                                         &ctrl_down, &alt_down);
             } else if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
-                redraw |= terminal_handle_mouse(event.x, event.y, event.buttons,
-                                                command_path, command_argv);
+                int mouse_result = terminal_handle_mouse(event.x, event.y, event.buttons,
+                                                         command_path, command_argv);
+                if (mouse_result < 0) {
+                    return 0;
+                }
+                redraw |= mouse_result;
             } else if (event.type == LEONOS_GUI_APP_EVENT_THEME_CHANGED ||
                        event.type == LEONOS_GUI_APP_EVENT_FOCUS) {
                 redraw = 1;

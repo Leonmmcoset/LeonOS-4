@@ -2,6 +2,7 @@
 #include <ntclks/console.h>
 #include <ntclks/sched.h>
 #include <ntclks/time.h>
+#include <ntclks/usb.h>
 
 #include "arch/x86_64/port.h"
 
@@ -200,6 +201,7 @@ void time_on_tick(void)
             ++wall_unix_seconds;
         }
     }
+    usb_poll();
     sched_on_tick();
 }
 

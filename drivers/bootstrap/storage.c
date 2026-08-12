@@ -21,16 +21,20 @@
 #define AHCI_PORT_TFD_DRQ 0x08u
 #define AHCI_PORT_IS_TFES 0x40000000u
 #define AHCI_PORT_SIG_ATA 0x00000101u
+#define AHCI_PORT_SIG_ATAPI 0xeb140101u
 #define AHCI_PORT_DET_PRESENT 0x3u
 #define AHCI_PORT_IPM_ACTIVE 0x1u
 
 #define ATA_CMD_READ_DMA_EXT 0x25u
 #define ATA_CMD_WRITE_DMA_EXT 0x35u
+#define ATA_CMD_PACKET 0xa0u
 #define ATA_CMD_IDENTIFY_DEVICE 0xECu
 #define ATA_DEV_BUSY 0x80u
 #define ATA_DEV_DRQ 0x08u
 
 #define FIS_TYPE_REG_H2D 0x27u
+
+#define SCSI_CMD_READ10 0x28u
 
 #define AHCI_CMDH_PRDTL 1u
 #define AHCI_MAX_SECTORS 64u
@@ -77,7 +81,9 @@
  * FAT32 volumes. New VMDK images and installer-created volumes use larger
  * clusters, but this remains the safe compatibility limit. */
 #define FAT32_MAX_FILE_CLUSTERS 65536u
-#define STORAGE_MAX_DRIVES 2u
+#define ISO9660_BLOCK_SIZE 2048u
+#define ISO9660_PVD_LBA 16u
+#define STORAGE_MAX_DRIVES 10u
 #define STORAGE_MAX_INSTALL_DISKS LEONOS_INSTALL_MAX_DISKS
 #define STORAGE_PATH_CACHE_ENTRIES 128u
 #define STORAGE_DIR_INDEX_ENTRIES 512u
@@ -87,6 +93,12 @@ enum storage_volume_kind {
     STORAGE_VOLUME_NONE = 0,
     STORAGE_VOLUME_AHCI = 1,
     STORAGE_VOLUME_RAM = 2,
+};
+
+enum storage_filesystem_kind {
+    STORAGE_FILESYSTEM_NONE = 0,
+    STORAGE_FILESYSTEM_FAT32 = 1,
+    STORAGE_FILESYSTEM_ISO9660 = 2,
 };
 
 struct __attribute__((packed)) ahci_hba_port {
@@ -264,6 +276,7 @@ struct storage_volume {
     bool ready;
     uint8_t drive;
     uint8_t kind;
+    uint8_t filesystem;
     uint8_t bus;
     uint8_t slot;
     uint8_t function;
@@ -284,6 +297,10 @@ struct storage_volume {
     uint32_t total_sectors;
     uint32_t data_cluster_count;
     uint32_t root_cluster;
+    uint32_t iso_block_size;
+    uint32_t iso_root_extent;
+    uint32_t iso_root_size;
+    uint64_t iso_sector_count;
     uint32_t next_free_cluster;
     uint8_t gpt_disk_guid[16];
     uint8_t esp_unique_guid[16];
@@ -1177,6 +1194,99 @@ static int ahci_read_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sect
     return ahci_pending_poll();
 }
 
+static int ahci_read_atapi_blocks(struct ahci_hba_port *port, uint64_t lba,
+                                  uint32_t block_count, void *buffer)
+{
+    struct ahci_cmd_header *hdr;
+    struct ahci_cmd_table *tbl;
+    struct fis_reg_h2d *fis;
+    uint8_t *packet;
+    int pending_ret;
+    int pending_matches;
+
+    if (!port || !buffer || block_count == 0 || block_count > 32u) {
+        return -22;
+    }
+    if (ahci_pending_command.active) {
+        pending_matches = ahci_pending_matches(port, lba, block_count, buffer, 0);
+        pending_ret = ahci_pending_poll();
+        if (pending_matches || pending_ret < 0) {
+            return pending_ret;
+        }
+        if (pending_ret != 0) {
+            return -5;
+        }
+    }
+    if (ahci_wait_idle(port) < 0) {
+        return storage_async_can_yield() ? -LEONOS_EAGAIN : -5;
+    }
+
+    port->is = 0xffffffffu;
+    hdr = &ahci_cmd_headers[0];
+    /* ATAPI PACKET has a five-dword command FIS and transfers data to RAM. */
+    /* CFL=5 and ATAPI command. READ(10) transfers from the device, so W is clear. */
+    hdr->flags = (uint16_t)((5u & 0x1fu) | (1u << 5));
+    hdr->prdtl = 1;
+    hdr->prdbc = 0;
+
+    tbl = (struct ahci_cmd_table *)(void *)ahci_cmd_table_buf;
+    storage_memzero(tbl, sizeof(ahci_cmd_table_buf));
+    tbl->prdt[0].dba = (uint32_t)(uintptr_t)buffer;
+    tbl->prdt[0].dbau = 0;
+    tbl->prdt[0].dbc = (block_count * ISO9660_BLOCK_SIZE) - 1u;
+
+    fis = (struct fis_reg_h2d *)(void *)tbl->cfis;
+    storage_memzero(fis, sizeof(*fis));
+    fis->fis_type = FIS_TYPE_REG_H2D;
+    fis->c = 1;
+    fis->command = ATA_CMD_PACKET;
+    /* Set the ATAPI DMA feature bit. */
+    fis->featurel = 1u;
+
+    packet = tbl->acmd;
+    packet[0] = SCSI_CMD_READ10;
+    packet[2] = (uint8_t)((lba >> 24) & 0xffu);
+    packet[3] = (uint8_t)((lba >> 16) & 0xffu);
+    packet[4] = (uint8_t)((lba >> 8) & 0xffu);
+    packet[5] = (uint8_t)(lba & 0xffu);
+    packet[7] = (uint8_t)((block_count >> 8) & 0xffu);
+    packet[8] = (uint8_t)(block_count & 0xffu);
+
+    if (ahci_wait_cmd_slot(port) < 0) {
+        return storage_async_can_yield() ? -LEONOS_EAGAIN : -5;
+    }
+    ahci_memory_barrier();
+    port->ci = 1u;
+    ahci_pending_command.port = port;
+    ahci_pending_command.lba = lba;
+    ahci_pending_command.sector_count = block_count;
+    ahci_pending_command.buffer = buffer;
+    ahci_pending_command.start_tick = time_ticks();
+    ahci_pending_command.owner_pid = sched_current_pid();
+    ahci_pending_command.write = 0;
+    ahci_pending_command.active = 1;
+    return ahci_pending_poll();
+}
+
+static int ahci_read_atapi_blocks_retry(struct ahci_hba_port *port, uint64_t lba,
+                                        uint32_t block_count, void *buffer)
+{
+    int ret = -5;
+    for (uint32_t attempt = 0; attempt < AHCI_IO_RETRY_COUNT; ++attempt) {
+        ret = ahci_read_atapi_blocks(port, lba, block_count, buffer);
+        if (ret >= 0 || ret == -LEONOS_EAGAIN) {
+            return ret;
+        }
+        if (ahci_recover_port(port, attempt + 1u) < 0) {
+            break;
+        }
+        if (attempt + 1u >= AHCI_IO_RETRY_COUNT) {
+            break;
+        }
+    }
+    return ret;
+}
+
 static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sector_count, const void *buffer)
 {
     struct ahci_cmd_header *hdr;
@@ -1312,6 +1422,32 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
     return 0;
 }
 
+static int storage_read_iso_blocks(uint64_t lba, uint32_t block_count, void *buffer)
+{
+    uint8_t *dst = (uint8_t *)buffer;
+    if (!buffer || block_count == 0 || g_storage.filesystem != STORAGE_FILESYSTEM_ISO9660) {
+        return -22;
+    }
+    /* The PVD is read before the volume size is known. Once mounted, keep
+     * malformed directory records from issuing reads past the medium. */
+    if (g_storage.iso_sector_count != 0 &&
+        (lba >= g_storage.iso_sector_count ||
+         (uint64_t)block_count > g_storage.iso_sector_count - lba)) {
+        return -5;
+    }
+    while (block_count) {
+        uint32_t chunk = min_u32(block_count, 32u);
+        int ret = ahci_read_atapi_blocks_retry(g_storage.hba_port, lba, chunk, dst);
+        if (ret < 0) {
+            return ret;
+        }
+        lba += chunk;
+        block_count -= chunk;
+        dst += chunk * ISO9660_BLOCK_SIZE;
+    }
+    return 0;
+}
+
 static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void *buffer)
 {
     const uint8_t *src = (const uint8_t *)buffer;
@@ -1381,6 +1517,217 @@ static int gpt_find_esp(void)
         }
     }
     mm_free_pages(phys, (total_sectors + 7u) / 8u);
+    return -2;
+}
+
+static uint32_t iso_u32_le(const uint8_t *p)
+{
+    return (uint32_t)p[0] |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static uint32_t iso_u32_be(const uint8_t *p)
+{
+    return ((uint32_t)p[0] << 24) |
+           ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) |
+           (uint32_t)p[3];
+}
+
+static int iso9660_mount(void)
+{
+    const uint8_t *pvd = storage_scratch;
+    const uint8_t *root;
+    uint32_t block_size;
+    uint32_t sector_count;
+    uint32_t root_extent;
+    uint32_t root_size;
+    int ret;
+
+    g_storage.filesystem = STORAGE_FILESYSTEM_ISO9660;
+    ret = storage_read_iso_blocks(ISO9660_PVD_LBA, 1, storage_scratch);
+    if (ret < 0) {
+        return storage_read_failure(ret);
+    }
+    if (pvd[0] != 1 || pvd[1] != 'C' || pvd[2] != 'D' ||
+        pvd[3] != '0' || pvd[4] != '0' || pvd[5] != '1') {
+        return -2;
+    }
+    block_size = (uint32_t)pvd[128] | ((uint32_t)pvd[129] << 8);
+    if (block_size != ISO9660_BLOCK_SIZE) {
+        return -2;
+    }
+    sector_count = iso_u32_le(pvd + 80);
+    if (!sector_count) {
+        sector_count = iso_u32_be(pvd + 84);
+    }
+    root = pvd + 156;
+    if (root[0] < 34 || root[1] != 0) {
+        return -2;
+    }
+    root_extent = iso_u32_le(root + 2);
+    root_size = iso_u32_le(root + 10);
+    if (!root_extent || !root_size || root[32] == 0 ||
+        root_extent >= sector_count ||
+        (uint64_t)root_size > (uint64_t)(sector_count - root_extent) * ISO9660_BLOCK_SIZE) {
+        return -2;
+    }
+    g_storage.bytes_per_sector = ISO9660_BLOCK_SIZE;
+    g_storage.iso_block_size = ISO9660_BLOCK_SIZE;
+    g_storage.iso_sector_count = sector_count;
+    g_storage.iso_root_extent = root_extent;
+    g_storage.iso_root_size = root_size;
+    g_storage.filesystem = STORAGE_FILESYSTEM_ISO9660;
+    return 0;
+}
+
+static uint32_t iso_visible_name_length(const uint8_t *name, uint32_t length)
+{
+    uint32_t visible = length;
+    if (!name) {
+        return 0;
+    }
+    for (uint32_t i = 0; i + 1u < visible; ++i) {
+        if (name[i] == ';') {
+            visible = i;
+            break;
+        }
+    }
+    while (visible && name[visible - 1u] == '.') {
+        --visible;
+    }
+    return visible;
+}
+
+static int iso_name_match(const uint8_t *record_name, uint32_t record_length,
+                          const char *name)
+{
+    uint32_t record_visible;
+    uint32_t input_length;
+    uint32_t input_visible;
+    if (!record_name || !name || !name[0]) {
+        return 0;
+    }
+    input_length = (uint32_t)storage_strlen(name);
+    input_visible = iso_visible_name_length((const uint8_t *)name, input_length);
+    record_visible = iso_visible_name_length(record_name, record_length);
+    if (!record_visible || record_visible != input_visible) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < record_visible; ++i) {
+        char left = (char)record_name[i];
+        char right = name[i];
+        if (left >= 'A' && left <= 'Z') {
+            left = (char)(left - 'A' + 'a');
+        }
+        if (right >= 'A' && right <= 'Z') {
+            right = (char)(right - 'A' + 'a');
+        }
+        if (left != right) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void iso_copy_name(char *dst, uint32_t cap, const uint8_t *record_name,
+                          uint32_t record_length)
+{
+    uint32_t length = iso_visible_name_length(record_name, record_length);
+    uint32_t out = 0;
+    if (!dst || cap == 0) {
+        return;
+    }
+    while (out < length && out + 1u < cap) {
+        char ch = (char)record_name[out];
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = (char)(ch - 'A' + 'a');
+        }
+        dst[out++] = ch;
+    }
+    dst[out] = 0;
+}
+
+static int iso9660_find_in_dir(uint32_t extent, uint32_t size, const char *name,
+                               struct storage_node *out)
+{
+    uint32_t offset = 0;
+    if (!extent || !size || !name || !name[0]) {
+        return -2;
+    }
+    while (offset < size) {
+        uint32_t block = offset / ISO9660_BLOCK_SIZE;
+        uint32_t block_limit = min_u32(ISO9660_BLOCK_SIZE, size - block * ISO9660_BLOCK_SIZE);
+        int ret = storage_read_iso_blocks((uint64_t)extent + block, 1, storage_scratch);
+        if (ret < 0) {
+            return storage_read_failure(ret);
+        }
+        for (uint32_t pos = 0; pos < block_limit;) {
+            const uint8_t *record = storage_scratch + pos;
+            uint32_t length = record[0];
+            if (!length) {
+                break;
+            }
+            if (length < 34u || pos + length > ISO9660_BLOCK_SIZE ||
+                record[32] == 0 || 33u + record[32] > length) {
+                return -5;
+            }
+            if (record[32] > 1u && iso_name_match(record + 33, record[32], name)) {
+                if (out) {
+                    out->type = (record[25] & 0x02u) ? LEONOS_FS_TYPE_DIR : LEONOS_FS_TYPE_FILE;
+                    out->flags = 0;
+                    out->first_cluster = iso_u32_le(record + 2);
+                    out->drive = g_storage.drive;
+                    out->size = iso_u32_le(record + 10);
+                }
+                return 0;
+            }
+            pos += length;
+        }
+        offset = (block + 1u) * ISO9660_BLOCK_SIZE;
+    }
+    return -2;
+}
+
+static int iso9660_iter_dir_entry(uint32_t extent, uint32_t size, uint64_t index,
+                                  struct leonos_dir_entry *entry)
+{
+    uint32_t offset = 0;
+    uint64_t ordinal = 0;
+    if (!extent || !size || !entry) {
+        return -2;
+    }
+    while (offset < size) {
+        uint32_t block = offset / ISO9660_BLOCK_SIZE;
+        uint32_t block_limit = min_u32(ISO9660_BLOCK_SIZE, size - block * ISO9660_BLOCK_SIZE);
+        int ret = storage_read_iso_blocks((uint64_t)extent + block, 1, storage_scratch);
+        if (ret < 0) {
+            return storage_read_failure(ret);
+        }
+        for (uint32_t pos = 0; pos < block_limit;) {
+            const uint8_t *record = storage_scratch + pos;
+            uint32_t length = record[0];
+            if (!length) {
+                break;
+            }
+            if (length < 34u || pos + length > ISO9660_BLOCK_SIZE ||
+                record[32] == 0 || 33u + record[32] > length) {
+                return -5;
+            }
+            if (record[32] > 1u) {
+                if (ordinal == index) {
+                    entry->type = (record[25] & 0x02u) ? LEONOS_FS_TYPE_DIR : LEONOS_FS_TYPE_FILE;
+                    iso_copy_name(entry->name, sizeof(entry->name), record + 33, record[32]);
+                    return 0;
+                }
+                ++ordinal;
+            }
+            pos += length;
+        }
+        offset = (block + 1u) * ISO9660_BLOCK_SIZE;
+    }
     return -2;
 }
 
@@ -2788,6 +3135,9 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
 
 void storage_init(void)
 {
+    uint32_t optical_drive = 1u;
+    uint8_t root_ready = 0;
+
     storage_memzero(g_volumes, sizeof(g_volumes));
     storage_memzero(g_install_disks, sizeof(g_install_disks));
     g_install_disk_count = 0;
@@ -2823,51 +3173,95 @@ void storage_init(void)
                 if (!abar_phys) {
                     continue;
                 }
-                g_storage.bus = (uint8_t)bus;
-                g_storage.slot = slot;
-                g_storage.function = func;
-                g_storage.abar = (struct ahci_hba_mem *)(uintptr_t)abar_phys;
-                g_storage.abar->ghc |= AHCI_GHC_AE;
+                struct ahci_hba_mem *abar = (struct ahci_hba_mem *)(uintptr_t)abar_phys;
+                abar->ghc |= AHCI_GHC_AE;
                 for (uint8_t port = 0; port < 32; ++port) {
-                    if ((g_storage.abar->pi & (1u << port)) == 0) {
+                    if ((abar->pi & (1u << port)) == 0) {
                         continue;
                     }
-                    struct ahci_hba_port *p = &g_storage.abar->ports[port];
+                    struct ahci_hba_port *p = &abar->ports[port];
                     uint32_t det = p->ssts & 0x0fu;
                     uint32_t ipm = (p->ssts >> 8) & 0x0fu;
                     if (det != AHCI_PORT_DET_PRESENT || ipm != AHCI_PORT_IPM_ACTIVE ||
-                        p->sig != AHCI_PORT_SIG_ATA) {
+                        (p->sig != AHCI_PORT_SIG_ATA && p->sig != AHCI_PORT_SIG_ATAPI)) {
                         continue;
                     }
-                    uint32_t disk_id = g_install_disk_count;
-                    if (disk_id < STORAGE_MAX_INSTALL_DISKS) {
-                        g_install_disks[disk_id].present = true;
-                        g_install_disks[disk_id].bus = (uint8_t)bus;
-                        g_install_disks[disk_id].slot = slot;
-                        g_install_disks[disk_id].function = func;
-                        g_install_disks[disk_id].port = port;
-                        g_install_disks[disk_id].abar = g_storage.abar;
-                        g_install_disks[disk_id].hba_port = p;
-                        g_install_disks[disk_id].sector_count = 0;
-                        ++g_install_disk_count;
+                    if (ahci_setup_port(p) < 0) {
+                        continue;
                     }
+
+                    if (p->sig == AHCI_PORT_SIG_ATAPI) {
+                        struct storage_volume *optical;
+                        if (optical_drive >= STORAGE_MAX_DRIVES) {
+                            continue;
+                        }
+                        optical = &g_volumes[optical_drive];
+                        storage_memzero(optical, sizeof(*optical));
+                        optical->drive = (uint8_t)optical_drive;
+                        optical->kind = STORAGE_VOLUME_AHCI;
+                        optical->bus = (uint8_t)bus;
+                        optical->slot = slot;
+                        optical->function = func;
+                        optical->port = port;
+                        optical->abar = abar;
+                        optical->hba_port = p;
+                        g_active_volume = optical;
+                        {
+                            int mount_ret = iso9660_mount();
+                            if (mount_ret < 0) {
+                                console_printf("[ntclks] storage failed to mount iso9660 drive=%u ahci=%u:%u.%u port=%u error=%d\\n",
+                                               optical_drive, bus, slot, func, port, mount_ret);
+                                storage_memzero(optical, sizeof(*optical));
+                                continue;
+                            }
+                        }
+                        optical->ready = true;
+                        console_printf("[ntclks] storage auto-mounted iso9660 drive=%u ahci=%u:%u.%u port=%u blocks=%llu\n",
+                                       optical_drive,
+                                       bus, slot, func, port,
+                                       (unsigned long long)optical->iso_sector_count);
+                        ++optical_drive;
+                        continue;
+                    }
+
+                    {
+                        uint32_t disk_id = g_install_disk_count;
+                        if (disk_id < STORAGE_MAX_INSTALL_DISKS) {
+                            g_install_disks[disk_id].present = true;
+                            g_install_disks[disk_id].bus = (uint8_t)bus;
+                            g_install_disks[disk_id].slot = slot;
+                            g_install_disks[disk_id].function = func;
+                            g_install_disks[disk_id].port = port;
+                            g_install_disks[disk_id].abar = abar;
+                            g_install_disks[disk_id].hba_port = p;
+                            g_install_disks[disk_id].sector_count = 0;
+                            ++g_install_disk_count;
+                        }
+                    }
+                    if (root_ready) {
+                        continue;
+                    }
+                    g_active_volume = &g_volumes[0];
+                    g_storage.bus = (uint8_t)bus;
+                    g_storage.slot = slot;
+                    g_storage.function = func;
+                    g_storage.abar = abar;
                     g_storage.hba_port = p;
                     g_storage.port = port;
                     g_storage.kind = STORAGE_VOLUME_AHCI;
                     g_storage.drive = 0;
-                    if (ahci_setup_port(p) < 0) {
+                    if (gpt_find_esp() < 0 || fat32_mount() < 0) {
+                        storage_memzero(&g_volumes[0], sizeof(g_volumes[0]));
+                        g_active_volume = &g_volumes[0];
                         continue;
                     }
-                    if (gpt_find_esp() < 0) {
-                        continue;
-                    }
-                    if (fat32_mount() < 0) {
-                        continue;
-                    }
-                    if (disk_id < STORAGE_MAX_INSTALL_DISKS) {
-                        g_install_disks[disk_id].boot_root = 1;
-                    }
+                    g_storage.filesystem = STORAGE_FILESYSTEM_FAT32;
                     g_storage.ready = true;
+                    root_ready = 1;
+                    if (g_install_disk_count != 0 &&
+                        g_install_disks[g_install_disk_count - 1u].present) {
+                        g_install_disks[g_install_disk_count - 1u].boot_root = 1;
+                    }
                     console_printf("[ntclks] storage ready ahci=%u:%u.%u port=%u esp_lba=%llu fat32_root=%u\n",
                                    g_storage.bus,
                                    g_storage.slot,
@@ -2875,12 +3269,14 @@ void storage_init(void)
                                    g_storage.port,
                                    (unsigned long long)g_storage.esp_start_lba,
                                    g_storage.root_cluster);
-                    return;
                 }
             }
         }
     }
-    console_printf("[ntclks] storage init failed: no AHCI FAT32 ESP found\n");
+    g_active_volume = &g_volumes[0];
+    if (!root_ready) {
+        console_printf("[ntclks] storage init failed: no AHCI FAT32 ESP found\n");
+    }
 }
 
 void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
@@ -2975,6 +3371,7 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
     storage_memcpy((void *)(uintptr_t)copy_phys, image, (size_t)len);
     root->drive = 0;
     root->kind = STORAGE_VOLUME_RAM;
+    root->filesystem = STORAGE_FILESYSTEM_FAT32;
     root->ram_base = (uint8_t *)(uintptr_t)copy_phys;
     root->ram_bytes = len;
     root->esp_start_lba = 0;
@@ -3027,6 +3424,7 @@ bool storage_installer_root_active(void)
 int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t cap)
 {
     char parts[16][LEONOS_FS_NAME_LEN];
+    char default_cwd[4];
     uint32_t part_count = 0;
     char drive = '0';
     uint8_t use_cwd = 1;
@@ -3057,7 +3455,11 @@ int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t
             cwd[1] == ':' && cwd[2] == '/') {
             drive = cwd[0];
         }
-        cwd = drive == '1' ? "1:/" : "0:/";
+        default_cwd[0] = drive;
+        default_cwd[1] = ':';
+        default_cwd[2] = '/';
+        default_cwd[3] = 0;
+        cwd = default_cwd;
         use_cwd = 0;
     } else if (!cwd || cwd[0] < '0' || cwd[0] >= (char)('0' + STORAGE_MAX_DRIVES) ||
                cwd[1] != ':' || cwd[2] != '/') {
@@ -3145,13 +3547,17 @@ int storage_lookup_path(const char *path, struct storage_node *out)
     if (ret < 0) {
         return ret;
     }
-    if (storage_text_eq_ci(resolved, "0:/")) {
+    if (resolved[0] >= '0' && resolved[0] <= '9' &&
+        resolved[1] == ':' && resolved[2] == '/' && resolved[3] == 0) {
         if (out) {
             out->type = LEONOS_FS_TYPE_DIR;
             out->flags = STORAGE_NODE_FLAG_ROOT;
-            out->first_cluster = g_storage.root_cluster;
+            out->first_cluster = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
+                                     ? g_storage.iso_root_extent
+                                     : g_storage.root_cluster;
             out->drive = (uint32_t)drive;
-            out->size = 0;
+            out->size = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
+                            ? g_storage.iso_root_size : 0;
             out->drive = (uint32_t)drive;
         }
         return 0;
@@ -3184,9 +3590,11 @@ int storage_lookup_path(const char *path, struct storage_node *out)
     struct storage_node node = {
         .type = LEONOS_FS_TYPE_DIR,
         .flags = STORAGE_NODE_FLAG_ROOT,
-        .first_cluster = g_storage.root_cluster,
+        .first_cluster = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
+                             ? g_storage.iso_root_extent : g_storage.root_cluster,
         .drive = (uint32_t)drive,
-        .size = 0,
+        .size = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
+                    ? g_storage.iso_root_size : 0,
     };
     const char *p = resolved + 3;
     char name[LEONOS_FS_NAME_LEN];
@@ -3199,7 +3607,10 @@ int storage_lookup_path(const char *path, struct storage_node *out)
                 if (node.type != LEONOS_FS_TYPE_DIR || node.flags == STORAGE_NODE_FLAG_DEV_DIR) {
                     return -20;
                 }
-                int ret = fat32_find_in_dir(node.first_cluster, name, &node);
+                int ret = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
+                              ? iso9660_find_in_dir(node.first_cluster, (uint32_t)node.size,
+                                                    name, &node)
+                              : fat32_find_in_dir(node.first_cluster, name, &node);
                 if (ret < 0) {
                     return ret;
                 }
@@ -3256,6 +3667,29 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     }
     if (len > node->size - offset) {
         len = (uint32_t)(node->size - offset);
+    }
+
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660) {
+        uint64_t absolute = (uint64_t)node->first_cluster * ISO9660_BLOCK_SIZE + offset;
+        uint32_t done = 0;
+        while (done < len) {
+            uint64_t block = absolute / ISO9660_BLOCK_SIZE;
+            uint32_t block_offset = (uint32_t)(absolute % ISO9660_BLOCK_SIZE);
+            uint32_t take = min_u32(ISO9660_BLOCK_SIZE - block_offset, len - done);
+            ret = storage_read_iso_blocks(block, 1, storage_scratch);
+            if (ret < 0) {
+                storage_restore_volume(old_volume);
+                return storage_read_failure(ret);
+            }
+            storage_memcpy(dst + done, storage_scratch + block_offset, take);
+            absolute += take;
+            done += take;
+        }
+        if (out_read) {
+            *out_read = done;
+        }
+        storage_restore_volume(old_volume);
+        return 0;
     }
 
     uint32_t cluster = node->first_cluster;
@@ -3364,6 +3798,19 @@ int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
     if (ret < 0) {
         return ret;
     }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660) {
+        ret = iso9660_iter_dir_entry(node->first_cluster, (uint32_t)node->size,
+                                     *cursor, entry);
+        storage_restore_volume(old_volume);
+        if (ret == 0) {
+            ++(*cursor);
+            return 1;
+        }
+        if (ret == -2) {
+            return 0;
+        }
+        return ret;
+    }
     ret = fat32_iter_dir_entry(node->first_cluster, *cursor, entry);
     storage_restore_volume(old_volume);
     if (ret == 0) {
@@ -3444,6 +3891,9 @@ int storage_write_node(const char *path, uint64_t offset,
     }
     if (node.type != LEONOS_FS_TYPE_FILE) {
         return -21;
+    }
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
+        return -30;
     }
     if (node.size > 0xffffffffULL) {
         return -28;
@@ -3679,6 +4129,9 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
     if (parent_node.type != LEONOS_FS_TYPE_DIR) {
         return -20;
     }
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
+        return -30;
+    }
     if (parent_node.flags & STORAGE_NODE_FLAG_DEV_DIR) {
         return -21;
     }
@@ -3865,6 +4318,9 @@ int storage_truncate_file(const char *path, uint64_t length)
     if (node.type != LEONOS_FS_TYPE_FILE) {
         return -21;
     }
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
+        return -30;
+    }
     target = (uint32_t)length;
     if (target == node.size) {
         return 0;
@@ -3913,6 +4369,9 @@ int storage_mkdir(const char *path)
     }
     if (parent_node.type != LEONOS_FS_TYPE_DIR) {
         return -20;
+    }
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
+        return -30;
     }
     if (parent_node.flags & STORAGE_NODE_FLAG_DEV_DIR) {
         return -21;
@@ -4003,6 +4462,9 @@ int storage_unlink(const char *path)
     if (ret < 0) {
         return ret;
     }
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
+        return -30;
+    }
     if (node.type == LEONOS_FS_TYPE_DIR) {
         return -21;
     }
@@ -4056,6 +4518,9 @@ int storage_rmdir(const char *path)
     ret = storage_lookup_path(resolved, &node);
     if (ret < 0) {
         return ret;
+    }
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
+        return -30;
     }
     if (node.type != LEONOS_FS_TYPE_DIR || (node.flags & STORAGE_NODE_FLAG_DEV_DIR)) {
         return -20;
@@ -4127,6 +4592,9 @@ int storage_rename(const char *old_path, const char *new_path)
     }
     if (parent_node.type != LEONOS_FS_TYPE_DIR || (parent_node.flags & STORAGE_NODE_FLAG_DEV_DIR)) {
         return -20;
+    }
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
+        return -30;
     }
     ret = storage_lookup_path(old_resolved, &node);
     if (ret < 0) {
