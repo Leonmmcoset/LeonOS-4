@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel networking interface: declares sockets and packet services.
+ * Defines the internal contract between network drivers and syscalls.
+ */
 #ifndef NTCLKS_NET_H
 #define NTCLKS_NET_H
 

@@ -1,3 +1,7 @@
+/*
+ * LeonOS platform support: handles firmware-provided platform information.
+ * Converts EFI tables and platform services into kernel boot abstractions.
+ */
 #include <ntclks/console.h>
 #include <ntclks/platform.h>
 

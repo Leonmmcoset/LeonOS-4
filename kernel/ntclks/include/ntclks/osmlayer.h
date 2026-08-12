@@ -1,3 +1,7 @@
+/*
+ * LeonOS osmlayer interface: declares the kernel-to-middle-layer ABI.
+ * Defines VFS, identity, device, mount, and policy requests and responses.
+ */
 #ifndef NTCLKS_OSMLAYER_H
 #define NTCLKS_OSMLAYER_H
 

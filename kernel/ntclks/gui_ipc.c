@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel GUI IPC: implements the window-server communication path.
+ * Manages application windows, shared buffers, focus, and input event delivery.
+ */
 #include <ntclks/gui_ipc.h>
 #include <ntclks/mm.h>
 #include <ntclks/mouse.h>

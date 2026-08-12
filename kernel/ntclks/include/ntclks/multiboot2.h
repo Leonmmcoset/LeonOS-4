@@ -1,3 +1,7 @@
+/*
+ * LeonOS Multiboot2 interface: defines bootloader information structures.
+ * Provides typed access to memory maps, modules, framebuffer, and tags.
+ */
 #ifndef NTCLKS_MULTIBOOT2_H
 #define NTCLKS_MULTIBOOT2_H
 

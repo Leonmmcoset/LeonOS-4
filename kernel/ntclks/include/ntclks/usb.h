@@ -1,3 +1,7 @@
+/*
+ * LeonOS USB bootstrap interface: declares HID keyboard and mouse support.
+ * Provides initialization and polling hooks for early USB input handling.
+ */
 #ifndef NTCLKS_USB_H
 #define NTCLKS_USB_H
 

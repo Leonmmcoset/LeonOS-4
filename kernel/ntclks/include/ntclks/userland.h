@@ -1,3 +1,7 @@
+/*
+ * LeonOS userland interface: declares process-image and userspace services.
+ * Coordinates executable loading, launch arguments, and user task startup.
+ */
 #ifndef NTCLKS_USERLAND_H
 #define NTCLKS_USERLAND_H
 

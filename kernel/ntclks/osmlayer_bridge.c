@@ -1,3 +1,7 @@
+/*
+ * LeonOS osmlayer bridge: connects kernel services to the Rust middle layer.
+ * Marshals VFS, account, device, mount, and policy operations across the ABI.
+ */
 #include <ntclks/console.h>
 #include <ntclks/mm.h>
 #include <ntclks/osmlayer.h>

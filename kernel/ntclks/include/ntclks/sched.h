@@ -1,3 +1,7 @@
+/*
+ * LeonOS scheduler interface: defines task, VMA, file, and session state.
+ * Declares task lifecycle, scheduling, waiting, and process-inspection APIs.
+ */
 #ifndef NTCLKS_SCHED_H
 #define NTCLKS_SCHED_H
 

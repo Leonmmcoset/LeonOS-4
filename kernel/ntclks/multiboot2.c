@@ -1,3 +1,7 @@
+/*
+ * LeonOS Multiboot2 support: decodes bootloader information structures.
+ * Extracts memory maps, framebuffer data, modules, and command-line metadata.
+ */
 #include <ntclks/console.h>
 #include <ntclks/multiboot2.h>
 

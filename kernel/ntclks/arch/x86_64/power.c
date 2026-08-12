@@ -1,3 +1,7 @@
+/*
+ * LeonOS x86_64 power control: implements firmware and virtual-machine power.
+ * Provides shutdown, reboot, and platform-specific fallback mechanisms.
+ */
 #include <ntclks/console.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/power.h>

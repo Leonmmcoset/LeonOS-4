@@ -1,3 +1,7 @@
+/*
+ * LeonOS GUI IPC interface: defines kernel/window-server message structures.
+ * Exposes window lifecycle, buffers, focus, input, and application events.
+ */
 #ifndef NTCLKS_GUI_IPC_H
 #define NTCLKS_GUI_IPC_H
 

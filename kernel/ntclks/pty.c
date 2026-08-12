@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel pseudo-terminals: implements terminal input and output queues.
+ * Connects shells and terminal applications to their controlling sessions.
+ */
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
 

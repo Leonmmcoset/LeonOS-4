@@ -1,3 +1,7 @@
+/*
+ * LeonOS x86_64 GDT setup: defines kernel and user segment descriptors.
+ * Loads the descriptor table required for protected-mode execution.
+ */
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>

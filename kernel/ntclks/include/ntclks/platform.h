@@ -1,3 +1,7 @@
+/*
+ * LeonOS platform interface: declares firmware and machine identification.
+ * Provides platform setup and system-information hooks to kernel services.
+ */
 #ifndef NTCLKS_PLATFORM_H
 #define NTCLKS_PLATFORM_H
 

@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel driver manager: owns built-in and loadable driver lifecycle.
+ * Provides registration, probing, initialization, and device event dispatch.
+ */
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/e1000.h>

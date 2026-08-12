@@ -1,3 +1,7 @@
+/*
+ * LeonOS user-copy implementation: performs checked Ring-3 buffer access.
+ * Validates pointers and transfers strings or bytes without kernel overreach.
+ */
 #include <ntclks/usercopy.h>
 #include <ntclks/paging.h>
 #include <ntclks/sched.h>

@@ -1,3 +1,7 @@
+/*
+ * LeonOS framebuffer interface: declares early and kernel display services.
+ * Handles framebuffer discovery, pixel output, fonts, and console rendering.
+ */
 #ifndef NTCLKS_FRAMEBUFFER_H
 #define NTCLKS_FRAMEBUFFER_H
 

@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel lifecycle interface: declares top-level kernel initialization.
+ * Defines the entry point used after architecture and boot setup complete.
+ */
 #ifndef NTCLKS_KERNEL_H
 #define NTCLKS_KERNEL_H
 

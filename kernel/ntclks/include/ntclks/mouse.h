@@ -1,3 +1,7 @@
+/*
+ * LeonOS mouse interface: declares mouse-device state and event helpers.
+ * Provides normalized pointer movement, buttons, and wheel data.
+ */
 #ifndef NTCLKS_MOUSE_H
 #define NTCLKS_MOUSE_H
 

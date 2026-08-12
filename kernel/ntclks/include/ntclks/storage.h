@@ -1,3 +1,7 @@
+/*
+ * LeonOS storage interface: declares filesystem and storage-node operations.
+ * Provides path lookup, directory access, file reads, and mount abstractions.
+ */
 #ifndef NTCLKS_STORAGE_H
 #define NTCLKS_STORAGE_H
 

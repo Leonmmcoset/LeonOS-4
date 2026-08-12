@@ -1,3 +1,7 @@
+/*
+ * LeonOS ELF loader: validates and maps static and dynamic x86_64 images.
+ * Enforces ABI, W^X, PT_INTERP, segment-layout, and ASLR startup rules.
+ */
 #include <leonos/elf_abi.h>
 #include <ntclks/console.h>
 #include <ntclks/elf.h>

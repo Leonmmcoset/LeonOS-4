@@ -1,3 +1,6 @@
+// LeonOS osmlayer POSIX bridge: translates selected POSIX requests to VFS.
+// Implements file, directory, mount, and metadata operations for userland.
+
 use crate::fat32;
 use crate::gui;
 use crate::vfs;

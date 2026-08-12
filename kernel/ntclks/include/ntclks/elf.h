@@ -1,3 +1,7 @@
+/*
+ * LeonOS ELF loader interface: declares executable image validation/loading.
+ * Describes legacy static images and dynamic PIE startup metadata.
+ */
 #ifndef NTCLKS_ELF_H
 #define NTCLKS_ELF_H
 

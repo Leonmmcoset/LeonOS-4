@@ -1,3 +1,7 @@
+/*
+ * LeonOS EFI filesystem interface: declares firmware filesystem helpers.
+ * Supports reading boot files and metadata from EFI-backed storage.
+ */
 #ifndef NTCLKS_EFI_FS_H
 #define NTCLKS_EFI_FS_H
 

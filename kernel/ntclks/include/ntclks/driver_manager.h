@@ -1,3 +1,7 @@
+/*
+ * LeonOS driver-manager interface: declares driver registration and dispatch.
+ * Defines the kernel-facing contract for device discovery and lifecycle.
+ */
 #ifndef NTCLKS_DRIVER_MANAGER_H
 #define NTCLKS_DRIVER_MANAGER_H
 

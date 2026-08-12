@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel bootstrap: coordinates early platform initialization.
+ * Starts memory, interrupts, drivers, storage, middle layer, and scheduling.
+ */
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>

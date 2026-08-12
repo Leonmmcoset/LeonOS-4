@@ -1,3 +1,7 @@
+/*
+ * LeonOS x86_64 architecture support: initializes processor control state.
+ * Provides CPU feature setup and the transition into user execution.
+ */
 #include <ntclks/console.h>
 #include <ntclks/types.h>
 

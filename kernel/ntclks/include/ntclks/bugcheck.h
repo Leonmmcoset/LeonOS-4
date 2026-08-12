@@ -1,3 +1,7 @@
+/*
+ * LeonOS bugcheck interface: declares fatal kernel diagnostic entry points.
+ * Supplies panic, trap, and crash-reporting APIs for unrecoverable faults.
+ */
 #ifndef NTCLKS_BUGCHECK_H
 #define NTCLKS_BUGCHECK_H
 

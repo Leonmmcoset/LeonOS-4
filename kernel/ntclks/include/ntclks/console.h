@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel console interface: declares early and diagnostic output.
+ * Provides formatted console logging used before and during userland startup.
+ */
 #ifndef NTCLKS_CONSOLE_H
 #define NTCLKS_CONSOLE_H
 

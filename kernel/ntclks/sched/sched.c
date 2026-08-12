@@ -1,3 +1,7 @@
+/*
+ * LeonOS scheduler implementation: manages kernel and Ring-3 task state.
+ * Selects runnable tasks, handles waits/exits, and switches address spaces.
+ */
 #include <ntclks/console.h>
 #include <ntclks/arch.h>
 #include <ntclks/inputm.h>

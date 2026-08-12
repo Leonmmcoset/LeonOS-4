@@ -1,3 +1,7 @@
+/*
+ * LeonOS architecture interface: declares CPU and user-mode transitions.
+ * Provides the architecture-neutral hooks used by scheduler and kernel code.
+ */
 #ifndef NTCLKS_ARCH_H
 #define NTCLKS_ARCH_H
 

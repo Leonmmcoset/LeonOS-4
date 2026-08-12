@@ -1,3 +1,7 @@
+/*
+ * LeonOS power interface: declares shutdown and reboot operations.
+ * Allows platform code and system calls to request controlled power changes.
+ */
 #ifndef NTCLKS_POWER_H
 #define NTCLKS_POWER_H
 

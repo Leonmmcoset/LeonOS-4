@@ -1,3 +1,7 @@
+/*
+ * LeonOS x86_64 interrupt handling: configures the IDT and trap dispatch.
+ * Handles faults, system calls, hardware IRQs, and user page faults.
+ */
 #include <ntclks/bugcheck.h>
 #include <ntclks/arch.h>
 #include <ntclks/console.h>

@@ -1,3 +1,6 @@
+// LeonOS osmlayer crate root: assembles the no_std middle-layer modules.
+// Exposes the C ABI entry points and coordinates VFS, policy, IPC, and devices.
+
 #![no_std]
 #![allow(dead_code)]
 

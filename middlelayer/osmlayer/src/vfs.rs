@@ -1,3 +1,6 @@
+// LeonOS osmlayer VFS: defines mount, path, and filesystem dispatch logic.
+// Applies mount policy and routes filesystem operations to storage backends.
+
 use crate::BootInfo;
 use core::ffi::c_char;
 

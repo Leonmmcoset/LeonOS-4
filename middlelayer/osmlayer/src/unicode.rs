@@ -1,3 +1,6 @@
+// LeonOS osmlayer Unicode service: converts and normalizes text encodings.
+// Provides UTF-8/UTF-16 handling and character classification for the VFS.
+
 use core::slice;
 
 const OP_LAYOUT_UTF8: u32 = 1;

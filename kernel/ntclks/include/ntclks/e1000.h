@@ -1,3 +1,7 @@
+/*
+ * LeonOS e1000 driver interface: declares Intel e1000 network operations.
+ * Connects the PCI-backed NIC driver to the kernel networking layer.
+ */
 #ifndef NTCLKS_E1000_H
 #define NTCLKS_E1000_H
 

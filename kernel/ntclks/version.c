@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel version module: exposes build and release metadata.
+ * Publishes the system information consumed by diagnostics and userland.
+ */
 #include <ntclks/version.h>
 
 #include <generated/build_info.h>

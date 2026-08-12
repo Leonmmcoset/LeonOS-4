@@ -1,3 +1,7 @@
+/*
+ * LeonOS input-manager interface: declares event routing and device handling.
+ * Connects raw keyboard and pointer input to sessions and GUI clients.
+ */
 #ifndef NTCLKS_INPUTM_H
 #define NTCLKS_INPUTM_H
 

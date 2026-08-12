@@ -1,3 +1,7 @@
+/*
+ * LeonOS x86_64 paging: builds kernel and per-process address spaces.
+ * Maps user pages, enforces NX/W^X permissions, and handles page protection.
+ */
 #include <ntclks/mm.h>
 #include <ntclks/paging.h>
 

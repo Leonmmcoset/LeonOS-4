@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel bugcheck implementation: renders fatal diagnostics.
+ * Captures task, trap, memory, and display state before halting safely.
+ */
 #include <ntclks/bugcheck.h>
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>

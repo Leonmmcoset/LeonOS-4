@@ -1,3 +1,7 @@
+/*
+ * LeonOS input queue interface: declares normalized input event operations.
+ * Used by interrupt handlers, drivers, and the input manager.
+ */
 #ifndef NTCLKS_INPUT_H
 #define NTCLKS_INPUT_H
 

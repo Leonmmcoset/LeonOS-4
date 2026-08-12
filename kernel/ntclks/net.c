@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel networking: provides the network and socket service layer.
+ * Handles interfaces, packet transport, TCP state, and user-facing requests.
+ */
 #include <ntclks/console.h>
 #include <ntclks/e1000.h>
 #include <ntclks/net.h>

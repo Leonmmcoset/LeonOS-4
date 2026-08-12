@@ -1,3 +1,7 @@
+/*
+ * LeonOS freestanding string primitives: implements basic memory operations.
+ * Supplies memset, memcpy, memmove, and related routines to kernel code.
+ */
 #include <ntclks/types.h>
 
 void *memset(void *dst, int value, size_t len)

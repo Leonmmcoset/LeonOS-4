@@ -1,3 +1,7 @@
+/*
+ * LeonOS paging interface: defines address-space and user-page operations.
+ * Exposes page mapping, protection, unmapping, and memory-layout constants.
+ */
 #ifndef NTCLKS_PAGING_H
 #define NTCLKS_PAGING_H
 

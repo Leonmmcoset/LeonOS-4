@@ -1,3 +1,7 @@
+/*
+ * LeonOS x86_64 IRQ handling: services hardware interrupt requests.
+ * Routes timer, input, storage, and device interrupts to kernel subsystems.
+ */
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/input.h>

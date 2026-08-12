@@ -1,3 +1,6 @@
+// LeonOS osmlayer FAT32 support: stores mounted-volume metadata and state.
+// Supplies filesystem-specific data used by the VFS mount layer.
+
 pub struct Fat32Volume {
     pub drive: u32,
     pub bytes_per_sector: u16,

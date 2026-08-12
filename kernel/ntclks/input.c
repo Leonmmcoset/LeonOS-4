@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel input queue: stores normalized keyboard and pointer events.
+ * Exposes bounded producer/consumer operations to interrupt and user paths.
+ */
 #include <ntclks/input.h>
 
 #define INPUT_QUEUE_CAP 512

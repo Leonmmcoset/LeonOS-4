@@ -1,3 +1,6 @@
+// LeonOS osmlayer GUI ABI: defines window and event request structures.
+// Marshals GUI operations across the kernel IPC boundary.
+
 use crate::ipc;
 
 #[repr(C)]

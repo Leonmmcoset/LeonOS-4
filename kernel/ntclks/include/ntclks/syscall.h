@@ -1,3 +1,7 @@
+/*
+ * LeonOS syscall interface: declares syscall dispatch and user ABI helpers.
+ * Defines syscall frames, numbers, and kernel entry points for Ring 3.
+ */
 #ifndef NTCLKS_SYSCALL_H
 #define NTCLKS_SYSCALL_H
 

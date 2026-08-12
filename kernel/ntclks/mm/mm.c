@@ -1,3 +1,7 @@
+/*
+ * LeonOS physical memory manager: tracks usable and reserved page ranges.
+ * Allocates, frees, zeroes, and reference-counts physical memory pages.
+ */
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/mm.h>

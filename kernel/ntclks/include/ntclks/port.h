@@ -1,3 +1,7 @@
+/*
+ * LeonOS port interface: declares low-level platform I/O abstractions.
+ * Keeps architecture-specific port access behind a stable kernel header.
+ */
 #ifndef NTCLKS_PORT_H
 #define NTCLKS_PORT_H
 

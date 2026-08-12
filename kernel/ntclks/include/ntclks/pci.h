@@ -1,3 +1,7 @@
+/*
+ * LeonOS PCI interface: declares architecture-neutral PCI configuration APIs.
+ * Used by device discovery and PCI-backed kernel drivers.
+ */
 #ifndef NTCLKS_PCI_H
 #define NTCLKS_PCI_H
 

@@ -1,3 +1,7 @@
+/*
+ * LeonOS userland launcher: prepares process images, stacks, and arguments.
+ * Creates user tasks, maps executables, and enters the Ring-3 scheduler path.
+ */
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
 #include <ntclks/elf.h>

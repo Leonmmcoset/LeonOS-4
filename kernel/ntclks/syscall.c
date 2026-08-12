@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel system calls: validates and dispatches the user ABI.
+ * Implements process, file, memory, IPC, GUI, device, and timing operations.
+ */
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>

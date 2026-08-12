@@ -1,3 +1,7 @@
+/*
+ * LeonOS physical-memory interface: declares page allocation and reclamation.
+ * Provides memory statistics and reference management for kernel mappings.
+ */
 #ifndef NTCLKS_MM_H
 #define NTCLKS_MM_H
 

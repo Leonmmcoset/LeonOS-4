@@ -1,3 +1,7 @@
+/*
+ * LeonOS user-copy interface: declares checked Ring-3 memory access helpers.
+ * Safely transfers buffers and strings between user and kernel address spaces.
+ */
 #ifndef NTCLKS_USERCOPY_H
 #define NTCLKS_USERCOPY_H
 

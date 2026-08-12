@@ -1,3 +1,6 @@
+// LeonOS osmlayer IPC model: defines endpoints and message-routing records.
+// Supports communication between the middle layer, kernel, and user services.
+
 #[derive(Clone, Copy)]
 pub struct Endpoint {
     pub pid: u32,

@@ -1,3 +1,7 @@
+/*
+ * LeonOS osmlayer runtime: provides the C ABI and syscall bridge for Rust.
+ * Implements storage, identity, IPC, device, and policy callbacks.
+ */
 #include <stddef.h>
 #include <stdint.h>
 #include <leonos/auth.h>

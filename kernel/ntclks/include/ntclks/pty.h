@@ -1,3 +1,7 @@
+/*
+ * LeonOS pseudo-terminal interface: declares PTY allocation and I/O helpers.
+ * Connects terminal processes, shells, and the kernel's event streams.
+ */
 #ifndef NTCLKS_PTY_H
 #define NTCLKS_PTY_H
 

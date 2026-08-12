@@ -1,3 +1,7 @@
+/*
+ * LeonOS time interface: declares kernel tick and clock services.
+ * Provides monotonic time and timer coordination for scheduling and devices.
+ */
 #ifndef NTCLKS_TIME_H
 #define NTCLKS_TIME_H
 

@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel input manager: translates device input into session events.
+ * Routes keyboard, mouse, and text-input activity to the active user task.
+ */
 #include <ntclks/inputm.h>
 #include <ntclks/sched.h>
 #include <ntclks/syscall.h>
