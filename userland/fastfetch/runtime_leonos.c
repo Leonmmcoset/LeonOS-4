@@ -163,6 +163,11 @@ void ffLeonOSPrintStatic(const char* key, const char* value)
     putchar('\n');
 }
 
+void ffLeonOSPrintCPU(void)
+{
+    ffLeonOSPrintStatic("CPU", ffLeonOSCPUName());
+}
+
 int clock_gettime([[maybe_unused]] clockid_t clock_id, struct timespec* time)
 {
     struct leonos_time_info info = {0};

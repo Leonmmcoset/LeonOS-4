@@ -23,7 +23,7 @@
     ffInit##name##Options(&options)
 
 static const char default_structure[] =
-    "Title:Separator:OS:Kernel:Uptime:Processes:Memory:Shell:Terminal:Colors";
+    "Title:Separator:OS:Kernel:CPU:Uptime:Processes:Memory:Shell:Terminal:Colors";
 
 static void print_help(void)
 {
@@ -51,14 +51,14 @@ static void print_help(void)
     puts("      --list-modules                List modules available on LeonOS");
     puts("");
     puts("Available modules: Title, Separator, OS, Kernel, Uptime, Processes,");
-    puts("Memory, DateTime, Break, Shell, Terminal, Colors, Version.");
+    puts("Memory, CPU, DateTime, Break, Shell, Terminal, Colors, Version.");
     puts("Only upstream ASCII logos are available; files, images, JSON/config,");
     puts("dynamic output, and modules requiring Linux host interfaces are disabled.");
 }
 
 static void print_modules(void)
 {
-    puts("Title\nSeparator\nOS\nKernel\nUptime\nProcesses\nMemory\nDateTime\nBreak\nShell\nTerminal\nColors\nVersion");
+    puts("Title\nSeparator\nOS\nKernel\nCPU\nUptime\nProcesses\nMemory\nDateTime\nBreak\nShell\nTerminal\nColors\nVersion");
 }
 
 static bool equals_ign_case_n(const char* value, size_t length, const char* expected)
@@ -182,6 +182,8 @@ static void print_module(const char* name, size_t length)
         MODULE_OPTION(OS); ffPrintOS(&options);
     } else if (equals_ign_case_n(name, length, "Kernel")) {
         MODULE_OPTION(Kernel); ffPrintKernel(&options);
+    } else if (equals_ign_case_n(name, length, "CPU")) {
+        ffLeonOSPrintCPU();
     } else if (equals_ign_case_n(name, length, "Uptime")) {
         MODULE_OPTION(Uptime); ffPrintUptime(&options);
     } else if (equals_ign_case_n(name, length, "Processes")) {

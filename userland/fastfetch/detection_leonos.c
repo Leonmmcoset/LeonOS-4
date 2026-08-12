@@ -5,6 +5,51 @@
 
 #include <leonos/system.h>
 
+#include <stdint.h>
+#include <string.h>
+
+static char leonos_cpu_name[49];
+
+static void leonos_cpuid(uint32_t leaf, uint32_t subleaf,
+                         uint32_t *eax, uint32_t *ebx,
+                         uint32_t *ecx, uint32_t *edx)
+{
+    uint32_t a = leaf, b, c = subleaf, d;
+    __asm__ volatile("cpuid"
+                     : "+a"(a), "=b"(b), "+c"(c), "=d"(d));
+    if (eax) *eax = a;
+    if (ebx) *ebx = b;
+    if (ecx) *ecx = c;
+    if (edx) *edx = d;
+}
+
+const char* ffLeonOSCPUName(void)
+{
+    uint32_t max_leaf = 0;
+    uint32_t eax, ebx, ecx, edx;
+    memset(leonos_cpu_name, 0, sizeof(leonos_cpu_name));
+    leonos_cpuid(0x80000000U, 0, &max_leaf, 0, 0, 0);
+    if (max_leaf >= 0x80000004U) {
+        uint32_t *words = (uint32_t *)(void *)leonos_cpu_name;
+        leonos_cpuid(0x80000002U, 0, &eax, &ebx, &ecx, &edx);
+        words[0] = eax; words[1] = ebx; words[2] = ecx; words[3] = edx;
+        leonos_cpuid(0x80000003U, 0, &eax, &ebx, &ecx, &edx);
+        words[4] = eax; words[5] = ebx; words[6] = ecx; words[7] = edx;
+        leonos_cpuid(0x80000004U, 0, &eax, &ebx, &ecx, &edx);
+        words[8] = eax; words[9] = ebx; words[10] = ecx; words[11] = edx;
+        leonos_cpu_name[48] = '\0';
+        size_t end = strlen(leonos_cpu_name);
+        while (end > 0 && (leonos_cpu_name[end - 1] == ' ' ||
+                           leonos_cpu_name[end - 1] == '\t')) {
+            leonos_cpu_name[--end] = '\0';
+        }
+    }
+    if (!leonos_cpu_name[0]) {
+        strcpy(leonos_cpu_name, "x86_64 processor");
+    }
+    return leonos_cpu_name;
+}
+
 static FFOSResult os_result;
 static bool os_initialized;
 

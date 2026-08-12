@@ -9,7 +9,7 @@ duration, percentage, display-option, ASCII-logo data, and module sources. The
 small adapter in this directory supplies platform and detection interfaces from
 the LeonOS public ABI rather than attempting to read Linux `/proc` or `/sys`.
 
-Supported information modules are Title, Separator, OS, Kernel, Uptime,
+Supported information modules are Title, Separator, OS, Kernel, CPU, Uptime,
 Processes, Memory, DateTime, Break, Colors and Version. `Shell` and `Terminal`
 are LeonOS-specific static rows. The default concise summary uses the standard
 system rows and Colors; DateTime, Break and Version remain opt-in through
@@ -22,6 +22,9 @@ the usual logo colors, dimensions, padding and left/top/right positioning. The
 default remains the LeonOS logo. The upstream display options that affect the
 available modules are supported, including `--pipe`, `--color*`, `--separator`,
 `--key-*`, `--size-*`, `--duration-*`, `--percent-*`, and `--bar-*`.
+
+The CPU row reads the x86 CPUID brand string exposed by the processor (with a
+generic `x86_64 processor` fallback when the brand leaves are unavailable).
 
 Configuration files, JSON output, image/file/command logos, dynamic refresh,
 dynamic libraries, and modules requiring host POSIX or Linux interfaces remain
