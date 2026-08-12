@@ -15,7 +15,7 @@
 	url = https://git.savannah.gnu.org/git/nano.git
 [submodule "third_party/pl_editor"]
 	path = third_party/pl_editor
-	url = https://github.com/plos-clan/pl_editor.git
+	url = https://github.com/Leonmmcoset/pl_editor.git
 [submodule "third_party/tinycc"]
 	path = third_party/tinycc
 	url = https://github.com/TinyCC/tinycc.git
@@ -37,3 +37,6 @@
 [submodule "third_party/cmd"]
 	path = third_party/cmd
 	url = https://github.com/ChenPi11/cmd.git
+[submodule "third_party/fastfetch"]
+	path = third_party/fastfetch
+	url = https://github.com/fastfetch-cli/fastfetch.git
