@@ -22,6 +22,9 @@ extern void x86_64_invlpg(uint64_t addr);
 
 static bool nx_enabled;
 
+/**
+ * @brief Coordinates the paging enable nx operation.
+ */
 static void paging_enable_nx(void)
 {
     uint32_t max_extended = 0;
@@ -50,11 +53,21 @@ static void paging_enable_nx(void)
     nx_enabled = true;
 }
 
+/**
+ * @brief Coordinates the align down operation.
+ * @param value Input or output value used by this operation.
+ * @param align Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_down(uint64_t value, uint64_t align)
 {
     return value & ~(align - 1);
 }
 
+/**
+ * @brief Coordinates the zero table operation.
+ * @param table Input or output value used by this operation.
+ */
 static void zero_table(uint64_t *table)
 {
     for (uint32_t i = 0; i < 512; ++i) {
@@ -62,12 +75,20 @@ static void zero_table(uint64_t *table)
     }
 }
 
+/**
+ * @brief Coordinates the kernel page flags for operation.
+ * @param addr Address used by this operation; its address-space interpretation follows the API.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t kernel_page_flags_for(uint64_t addr)
 {
     (void)addr;
     return NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE | PAGE_SIZE_FLAG;
 }
 
+/**
+ * @brief Coordinates the paging init user identity operation.
+ */
 void paging_init_user_identity(void)
 {
     paging_enable_nx();
@@ -90,21 +111,38 @@ void paging_init_user_identity(void)
     x86_64_load_cr3((uint64_t)(uintptr_t)kernel_pml4);
 }
 
+/**
+ * @brief Coordinates the paging kernel cr3 operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t paging_kernel_cr3(void)
 {
     return (uint64_t)(uintptr_t)kernel_pml4;
 }
 
+/**
+ * @brief Coordinates the paging load cr3 operation.
+ * @param cr3 Input or output value used by this operation.
+ */
 void paging_load_cr3(uint64_t cr3)
 {
     x86_64_load_cr3(cr3 ? cr3 : paging_kernel_cr3());
 }
 
+/**
+ * @brief Allocates table.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t alloc_table(void)
 {
     return mm_alloc_page();
 }
 
+/**
+ * @brief Coordinates the address space create operation.
+ * @param as Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool address_space_create(struct address_space *as)
 {
     if (!as) {
@@ -149,6 +187,10 @@ bool address_space_create(struct address_space *as)
     return true;
 }
 
+/**
+ * @brief Coordinates the address space destroy operation.
+ * @param as Input or output value used by this operation.
+ */
 void address_space_destroy(struct address_space *as)
 {
     if (!as) {
@@ -179,6 +221,13 @@ void address_space_destroy(struct address_space *as)
     }
 }
 
+/**
+ * @brief Coordinates the address space prepare user range operation.
+ * @param as Input or output value used by this operation.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool address_space_prepare_user_range(struct address_space *as, uint64_t start,
                                       uint64_t end)
 {
@@ -212,6 +261,14 @@ bool address_space_prepare_user_range(struct address_space *as, uint64_t start,
     return true;
 }
 
+/**
+ * @brief Coordinates the address space map user page operation.
+ * @param as Input or output value used by this operation.
+ * @param vaddr Address used by this operation; its address-space interpretation follows the API.
+ * @param phys Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
                                  uint64_t phys, uint64_t flags)
 {
@@ -249,6 +306,13 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
     return true;
 }
 
+/**
+ * @brief Coordinates the address space protect user page operation.
+ * @param as Input or output value used by this operation.
+ * @param vaddr Address used by this operation; its address-space interpretation follows the API.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool address_space_protect_user_page(struct address_space *as, uint64_t vaddr,
                                      uint64_t flags)
 {
@@ -280,6 +344,12 @@ bool address_space_protect_user_page(struct address_space *as, uint64_t vaddr,
     return true;
 }
 
+/**
+ * @brief Coordinates the address space unmap user page operation.
+ * @param as Input or output value used by this operation.
+ * @param vaddr Address used by this operation; its address-space interpretation follows the API.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
 {
     if (!as) {
@@ -307,6 +377,12 @@ uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
     return entry & NTCLKS_PHYS_ADDR_MASK;
 }
 
+/**
+ * @brief Coordinates the address space user page phys operation.
+ * @param as Input or output value used by this operation.
+ * @param vaddr Address used by this operation; its address-space interpretation follows the API.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr)
 {
     if (!as) {
@@ -326,6 +402,11 @@ uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t v
     return (entry & NTCLKS_PAGE_PRESENT) ? (entry & NTCLKS_PHYS_ADDR_MASK) : 0;
 }
 
+/**
+ * @brief Coordinates the address space user memory kib operation.
+ * @param as Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint32_t address_space_user_memory_kib(const struct address_space *as)
 {
     if (!as) {
@@ -334,6 +415,12 @@ uint32_t address_space_user_memory_kib(const struct address_space *as)
     return as->user_page_count * 4U;
 }
 
+/**
+ * @brief Coordinates the address space map user stack operation.
+ * @param as Input or output value used by this operation.
+ * @param stack_top Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top)
 {
     uint64_t first = stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE;

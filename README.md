@@ -95,3 +95,30 @@ python3 build.py status <九位任务ID>
 `Kconfig` 和 `Kconfig.components` 定义配置菜单；后者由工具根据组件清单生成，
 不应手工维护。`build/`、`dist/`、`buildsystem/logs/`、`buildsystem/tmp/` 等目录
 由构建或发布流程生成，不是手写源码的权威来源。
+
+## 代码注释规范
+
+内核 `kernel/ntclks/` 与中间层 `middlelayer/osmlayer/` 的每个函数定义和公共函数
+声明都必须使用 Doxygen 风格注释。C、C++、汇编预处理源和 Rust 均采用以下块注释形式，
+以便 Doxygen 和 Rust 文档工具都可读取：
+
+```c
+/**
+ * @brief 简要说明函数负责的行为、边界和可观察效果。
+ * @param request 输入请求；说明所有权、可空性和缓冲区容量（如适用）。
+ * @param out_result 输出结构；调用方提供有效可写空间。
+ * @return 0 表示成功，负 errno 表示失败。
+ */
+int subsystem_handle(const struct request *request, struct result *out_result);
+```
+
+- `@brief` 必须描述职责，不能只把函数名改写为一句话。涉及权限、用户指针、硬件、
+  锁、引用计数、映射或中断上下文时，简要说明关键前置条件或副作用。
+- 每个参数使用 `@param`。明确输入/输出、可空性、所有权转移、字节长度与数组容量；
+  无参数函数不写空的 `@param`。
+- 非 `void` 函数使用 `@return`，说明成功结果及错误值/特殊值。不会返回的函数标明
+  不返回的原因；异步接口还应说明完成或回调语义。
+- 注释紧贴其声明或定义。静态私有函数至少在定义处有注释；公共函数在头文件声明处
+  和实现处保持一致，不要让两处描述相互矛盾。
+- 结构、宏、全局状态与复杂算法仍应保留必要的独立注释；函数 Doxygen 注释不能替代
+  ABI、并发、内存安全和错误处理说明。

@@ -19,6 +19,10 @@ static const struct leonos_system_info system_info = {
     .copyright_year = LEONOS_COPYRIGHT_YEAR,
 };
 
+/**
+ * @brief Coordinates the ntclks system info operation.
+ * @return Result, status, or value defined by this API.
+ */
 const struct leonos_system_info *ntclks_system_info(void)
 {
     return &system_info;

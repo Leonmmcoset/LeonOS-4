@@ -15,11 +15,15 @@ SYS_STAT = 4
 SYS_FSTAT = 5
 SYS_LSEEK = 8
 SYS_MMAP = 9
+SYS_MPROTECT = 10
 SYS_MUNMAP = 11
 SYS_IOCTL = 16
 SYS_SCHED_YIELD = 24
 SYS_NANOSLEEP = 35
 SYS_GETPID = 39
+SYS_DUP = 32
+SYS_DUP2 = 33
+SYS_FCNTL = 72
 SYS_EXECVE = 59
 SYS_EXIT = 60
 SYS_WAIT4 = 61
@@ -29,6 +33,7 @@ SYS_RENAME = 82
 SYS_MKDIR = 83
 SYS_RMDIR = 84
 SYS_UNLINK = 87
+SYS_FTRUNCATE = 77
 
 SYSCALL_NAMES = {
     SYS_READ: "read",
@@ -39,11 +44,16 @@ SYSCALL_NAMES = {
     SYS_FSTAT: "fstat",
     SYS_LSEEK: "lseek",
     SYS_MMAP: "mmap",
+    SYS_MPROTECT: "mprotect",
     SYS_MUNMAP: "munmap",
     SYS_IOCTL: "ioctl",
     SYS_SCHED_YIELD: "sched_yield",
     SYS_NANOSLEEP: "nanosleep",
     SYS_GETPID: "getpid",
+    SYS_DUP: "dup",
+    SYS_DUP2: "dup2",
+    SYS_FCNTL: "fcntl",
+    SYS_FTRUNCATE: "ftruncate",
     SYS_EXECVE: "execve",
     SYS_EXIT: "exit",
     SYS_WAIT4: "wait4",
@@ -176,6 +186,9 @@ NET_IOCTL_SOCKET_SEND = 0x4C4E5353
 NET_IOCTL_SOCKET_RECV = 0x4C4E5352
 NET_IOCTL_SOCKET_CLOSE = 0x4C4E5358
 NET_IOCTL_CONNECTIONS = 0x4C4E434E
+
+# Input method manager ABI (shared with include/leonos/inputm.h).
+INPUTM_IOCTL_POLL_RESULT = 0x4C494D50
 
 NET_STATUS_OK = 0
 NET_STATUS_NO_DEVICE = 1

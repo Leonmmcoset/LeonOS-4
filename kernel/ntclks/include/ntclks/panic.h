@@ -7,6 +7,10 @@
 
 #include <ntclks/bugcheck.h>
 
+/**
+ * @brief Coordinates the panic operation.
+ * @param message Input or output value used by this operation.
+ */
 __attribute__((noreturn)) void panic(const char *message);
 
 #endif

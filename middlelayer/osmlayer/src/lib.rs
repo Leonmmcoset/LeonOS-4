@@ -189,6 +189,12 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
+/**
+ * @brief Coordinates the osmlayer module init operation.
+ * @param services Input or output value used by this operation.
+ * @param _handoff Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 pub extern "C" fn osmlayer_module_init(
     services: *const LeonosKernelServices,
     _handoff: *const LeonosBootHandoff,
@@ -202,6 +208,11 @@ pub extern "C" fn osmlayer_module_init(
 }
 
 #[unsafe(no_mangle)]
+/**
+ * @brief Coordinates the osmlayer rust init operation.
+ * @param boot Boot information supplied by the loader.
+ * @return Result, status, or value defined by this API.
+ */
 pub extern "C" fn osmlayer_rust_init(boot: *const BootInfo) -> OsmlayerBootSummary {
     let boot = unsafe { boot.as_ref() };
     let module_count = boot.map(|b| b.module_count).unwrap_or(0);
@@ -238,6 +249,12 @@ pub extern "C" fn osmlayer_rust_init(boot: *const BootInfo) -> OsmlayerBootSumma
 }
 
 #[unsafe(no_mangle)]
+/**
+ * @brief Coordinates the osmlayer rust mount policy operation.
+ * @param boot Boot information supplied by the loader.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 pub extern "C" fn osmlayer_rust_mount_policy(
     boot: *const BootInfo,
     out: *mut vfs::LeonosMountPolicy,
@@ -252,6 +269,11 @@ pub extern "C" fn osmlayer_rust_mount_policy(
 }
 
 #[unsafe(no_mangle)]
+/**
+ * @brief Coordinates the osmlayer rust syscall operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @return Result, status, or value defined by this API.
+ */
 pub extern "C" fn osmlayer_rust_syscall(frame: *const SyscallFrame) -> i64 {
     let Some(frame) = (unsafe { frame.as_ref() }) else {
         return -EINVAL;
@@ -260,11 +282,21 @@ pub extern "C" fn osmlayer_rust_syscall(frame: *const SyscallFrame) -> i64 {
 }
 
 #[unsafe(no_mangle)]
+/**
+ * @brief Coordinates the osmlayer rust unicode op operation.
+ * @param op Input or output value used by this operation.
+ * @param arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 pub extern "C" fn osmlayer_rust_unicode_op(op: u32, arg: *mut core::ffi::c_void) -> i32 {
     unicode::dispatch(op, arg)
 }
 
 #[unsafe(no_mangle)]
+/**
+ * @brief Coordinates the osmlayer rust selftest operation.
+ * @return Result, status, or value defined by this API.
+ */
 pub extern "C" fn osmlayer_rust_selftest() -> u32 {
     let mut passed = 0;
     if vfs::resolve_drive_path("0:/system/apps/desktop/desktop.elf").is_some() {
@@ -286,6 +318,11 @@ pub extern "C" fn osmlayer_rust_selftest() -> u32 {
 }
 
 #[panic_handler]
+/**
+ * @brief Coordinates the panic operation.
+ * @param _info Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 fn panic(_info: &PanicInfo<'_>) -> ! {
     loop {
         core::hint::spin_loop();

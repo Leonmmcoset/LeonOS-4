@@ -15,6 +15,7 @@ def _emulator_data(emulator) -> dict[str, Any]:
     snapshot = getattr(dispatcher, "compatibility_snapshot", lambda: {})()
     registers = getattr(emulator, "register_snapshot", lambda: {})()
     loaded = getattr(emulator, "loaded", None)
+    processes = getattr(getattr(emulator, "process_manager", None), "processes", {})
     return {
         "elf": str(getattr(emulator, "elf_path", "")),
         "root": str(getattr(emulator, "root_dir", "")),
@@ -24,6 +25,14 @@ def _emulator_data(emulator) -> dict[str, Any]:
         "fault": getattr(emulator, "fault_message", None),
         "registers": registers,
         "compatibility": snapshot,
+        "pid": getattr(emulator, "pid", None),
+        "ppid": getattr(emulator, "ppid", None),
+        "processes": {
+            str(pid): {"elf": str(getattr(proc, "elf_path", "")),
+                       "ppid": getattr(proc, "ppid", None),
+                       "exit_code": getattr(proc, "exit_code", None)}
+            for pid, proc in processes.items()
+        },
     }
 
 

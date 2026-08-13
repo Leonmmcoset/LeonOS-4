@@ -24,11 +24,18 @@
 static uint8_t key_states[128];
 static uint8_t e0_prefix;
 
+/**
+ * @brief Coordinates the io wait operation.
+ */
 static void io_wait(void)
 {
     x86_64_outb(0, 0x80);
 }
 
+/**
+ * @brief Coordinates the pic send eoi operation.
+ * @param irq Input or output value used by this operation.
+ */
 static void pic_send_eoi(uint8_t irq)
 {
     if (irq >= 8) {
@@ -37,6 +44,9 @@ static void pic_send_eoi(uint8_t irq)
     x86_64_outb(PIC_EOI, PIC1_COMMAND);
 }
 
+/**
+ * @brief Coordinates the pic remap operation.
+ */
 static void pic_remap(void)
 {
     x86_64_outb(0xff, PIC1_DATA);
@@ -68,6 +78,9 @@ static void pic_remap(void)
     pic_send_eoi(0);
 }
 
+/**
+ * @brief Coordinates the pit init 100hz operation.
+ */
 static void pit_init_100hz(void)
 {
     uint16_t divisor = (uint16_t)(1193182 / NTCLKS_TICK_HZ);
@@ -76,6 +89,9 @@ static void pit_init_100hz(void)
     x86_64_outb((uint8_t)(divisor >> 8), PIT_CHANNEL0);
 }
 
+/**
+ * @brief Coordinates the irq init operation.
+ */
 void irq_init(void)
 {
     __asm__ volatile("cli");
@@ -84,6 +100,11 @@ void irq_init(void)
     console_printf("[ntclks] PIC remapped, PIT=%uHz, IRQ0/1/12 enabled\n", (unsigned)NTCLKS_TICK_HZ);
 }
 
+/**
+ * @brief Coordinates the irq dispatch operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @return Result, status, or value defined by this API.
+ */
 struct task *irq_dispatch(struct trap_frame *frame)
 {
     uint64_t vector = frame ? frame->vector : 0;

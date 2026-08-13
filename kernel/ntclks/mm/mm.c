@@ -31,26 +31,52 @@ static uint32_t reserved_range_count;
  * costs 2 MiB and lets file-backed code pages be shared safely. */
 static uint16_t page_refs[MM_PAGE_COUNT];
 
+/**
+ * @brief Coordinates the page index operation.
+ * @param phys Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t page_index(uint64_t phys)
 {
     return (uint32_t)(phys / PAGE_SIZE);
 }
 
+/**
+ * @brief Coordinates the efi memory usable operation.
+ * @param type Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int efi_memory_usable(uint32_t type)
 {
     return type == 1 || type == 2 || type == 3 || type == 4 || type == 7;
 }
 
+/**
+ * @brief Coordinates the align down operation.
+ * @param value Input or output value used by this operation.
+ * @param align Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_down(uint64_t value, uint64_t align)
 {
     return value & ~(align - 1);
 }
 
+/**
+ * @brief Coordinates the align up operation.
+ * @param value Input or output value used by this operation.
+ * @param align Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_up(uint64_t value, uint64_t align)
 {
     return (value + align - 1) & ~(align - 1);
 }
 
+/**
+ * @brief Coordinates the zero page operation.
+ * @param phys Input or output value used by this operation.
+ */
 static void zero_page(uint64_t phys)
 {
     uint8_t *p = (uint8_t *)(uintptr_t)phys;
@@ -59,6 +85,11 @@ static void zero_page(uint64_t phys)
     }
 }
 
+/**
+ * @brief Coordinates the zero pages operation.
+ * @param phys Input or output value used by this operation.
+ * @param page_count Length, size, or element count associated with the operation.
+ */
 static void zero_pages(uint64_t phys, uint32_t page_count)
 {
     for (uint32_t i = 0; i < page_count; ++i) {
@@ -66,6 +97,11 @@ static void zero_pages(uint64_t phys, uint32_t page_count)
     }
 }
 
+/**
+ * @brief Coordinates the add free range operation.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ */
 static void add_free_range(uint64_t start, uint64_t end)
 {
     if (end > PAGE_ALLOC_LIMIT) {
@@ -82,6 +118,12 @@ static void add_free_range(uint64_t start, uint64_t end)
     free_ranges[free_range_count++] = (struct phys_range){start, end, "free"};
 }
 
+/**
+ * @brief Coordinates the add reserved range operation.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param name Input or output value used by this operation.
+ */
 static void add_reserved_range(uint64_t start, uint64_t end, const char *name)
 {
     start = align_down(start, PAGE_SIZE);
@@ -92,6 +134,10 @@ static void add_reserved_range(uint64_t start, uint64_t end, const char *name)
     reserved_ranges[reserved_range_count++] = (struct phys_range){start, end, name};
 }
 
+/**
+ * @brief Coordinates the remove free range operation.
+ * @param index Input or output value used by this operation.
+ */
 static void remove_free_range(uint32_t index)
 {
     if (index >= free_range_count) {
@@ -103,6 +149,9 @@ static void remove_free_range(uint32_t index)
     --free_range_count;
 }
 
+/**
+ * @brief Coordinates the sort free ranges operation.
+ */
 static void sort_free_ranges(void)
 {
     for (uint32_t i = 0; i < free_range_count; ++i) {
@@ -116,6 +165,9 @@ static void sort_free_ranges(void)
     }
 }
 
+/**
+ * @brief Coordinates the coalesce free ranges operation.
+ */
 static void coalesce_free_ranges(void)
 {
     sort_free_ranges();
@@ -131,6 +183,11 @@ static void coalesce_free_ranges(void)
     }
 }
 
+/**
+ * @brief Coordinates the reserve from free operation.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ */
 static void reserve_from_free(uint64_t start, uint64_t end)
 {
     start = align_down(start, PAGE_SIZE);
@@ -168,12 +225,24 @@ static void reserve_from_free(uint64_t start, uint64_t end)
     }
 }
 
+/**
+ * @brief Coordinates the reserve range operation.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param name Input or output value used by this operation.
+ */
 static void reserve_range(uint64_t start, uint64_t end, const char *name)
 {
     add_reserved_range(start, end, name);
     reserve_from_free(start, end);
 }
 
+/**
+ * @brief Coordinates the overlaps reserved operation.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int overlaps_reserved(uint64_t start, uint64_t end)
 {
     for (uint32_t i = 0; i < reserved_range_count; ++i) {
@@ -184,6 +253,12 @@ static int overlaps_reserved(uint64_t start, uint64_t end)
     return 0;
 }
 
+/**
+ * @brief Coordinates the reserve bytes operation.
+ * @param start Input or output value used by this operation.
+ * @param bytes Input or output value used by this operation.
+ * @param name Input or output value used by this operation.
+ */
 static void reserve_bytes(uint64_t start, uint64_t bytes, const char *name)
 {
     if (!start || !bytes || start + bytes < start) {
@@ -192,6 +267,9 @@ static void reserve_bytes(uint64_t start, uint64_t bytes, const char *name)
     reserve_range(start, start + bytes, name);
 }
 
+/**
+ * @brief Coordinates the add fallback free range operation.
+ */
 static void add_fallback_free_range(void)
 {
     uint64_t end = (total_kib ? total_kib : FALLBACK_MEMORY_KIB) * 1024ULL;
@@ -204,6 +282,10 @@ static void add_fallback_free_range(void)
     add_free_range(FALLBACK_ALLOC_START, end);
 }
 
+/**
+ * @brief Coordinates the seed free ranges from boot operation.
+ * @param boot Boot information supplied by the loader.
+ */
 static void seed_free_ranges_from_boot(const struct boot_info *boot)
 {
     if (boot->mmap_addr && boot->mmap_entry_count) {
@@ -239,6 +321,11 @@ static void seed_free_ranges_from_boot(const struct boot_info *boot)
     add_fallback_free_range();
 }
 
+/**
+ * @brief Coordinates the reserve boot ranges operation.
+ * @param boot Boot information supplied by the loader.
+ * @param handoff Input or output value used by this operation.
+ */
 static void reserve_boot_ranges(const struct boot_info *boot,
                                 const struct leonos_boot_handoff *handoff)
 {
@@ -300,6 +387,9 @@ static void reserve_boot_ranges(const struct boot_info *boot,
     }
 }
 
+/**
+ * @brief Coordinates the print memory map operation.
+ */
 static void print_memory_map(void)
 {
     console_printf("[ntclks] physical memory free ranges=%u reserved=%u\n",
@@ -321,6 +411,11 @@ static void print_memory_map(void)
     }
 }
 
+/**
+ * @brief Coordinates the mm init operation.
+ * @param boot Boot information supplied by the loader.
+ * @param handoff Input or output value used by this operation.
+ */
 void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *handoff)
 {
     total_kib = boot->memory_lower_kib + boot->memory_upper_kib;
@@ -340,11 +435,19 @@ void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *han
     print_memory_map();
 }
 
+/**
+ * @brief Coordinates the mm total memory kib operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t mm_total_memory_kib(void)
 {
     return total_kib;
 }
 
+/**
+ * @brief Coordinates the mm free memory kib operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t mm_free_memory_kib(void)
 {
     uint64_t free_kib = 0;
@@ -356,6 +459,11 @@ uint64_t mm_free_memory_kib(void)
     return free_kib;
 }
 
+/**
+ * @brief Coordinates the mm alloc pages operation.
+ * @param page_count Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t mm_alloc_pages(uint32_t page_count)
 {
     if (!page_count) {
@@ -381,11 +489,20 @@ uint64_t mm_alloc_pages(uint32_t page_count)
     return 0;
 }
 
+/**
+ * @brief Coordinates the mm alloc page operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t mm_alloc_page(void)
 {
     return mm_alloc_pages(1);
 }
 
+/**
+ * @brief Coordinates the mm free pages operation.
+ * @param phys Input or output value used by this operation.
+ * @param page_count Length, size, or element count associated with the operation.
+ */
 void mm_free_pages(uint64_t phys, uint32_t page_count)
 {
     if (!phys || !page_count || (phys & (PAGE_SIZE - 1))) {
@@ -417,11 +534,19 @@ void mm_free_pages(uint64_t phys, uint32_t page_count)
     }
 }
 
+/**
+ * @brief Coordinates the mm free page operation.
+ * @param phys Input or output value used by this operation.
+ */
 void mm_free_page(uint64_t phys)
 {
     mm_free_pages(phys, 1);
 }
 
+/**
+ * @brief Coordinates the mm retain page operation.
+ * @param phys Input or output value used by this operation.
+ */
 void mm_retain_page(uint64_t phys)
 {
     if (!phys || (phys & (PAGE_SIZE - 1)) || phys >= PAGE_ALLOC_LIMIT) {

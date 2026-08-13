@@ -8,6 +8,9 @@
 
 #include "port.h"
 
+/**
+ * @brief Coordinates the io delay operation.
+ */
 static void io_delay(void)
 {
     for (volatile uint32_t i = 0; i < 100000; ++i) {
@@ -52,6 +55,12 @@ struct acpi_power_state {
 
 static struct acpi_power_state acpi_power;
 
+/**
+ * @brief Coordinates the acpi read32 operation.
+ * @param base Input or output value used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t acpi_read32(const uint8_t *base, uint32_t offset)
 {
     uint32_t value = 0;
@@ -64,6 +73,12 @@ static uint32_t acpi_read32(const uint8_t *base, uint32_t offset)
     return value;
 }
 
+/**
+ * @brief Coordinates the acpi read64 operation.
+ * @param base Input or output value used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t acpi_read64(const uint8_t *base, uint32_t offset)
 {
     uint64_t value = 0;
@@ -76,6 +91,12 @@ static uint64_t acpi_read64(const uint8_t *base, uint32_t offset)
     return value;
 }
 
+/**
+ * @brief Coordinates the acpi guid equal operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int acpi_guid_equal(const uint8_t *a, const uint8_t *b)
 {
     if (!a || !b) {
@@ -89,6 +110,13 @@ static int acpi_guid_equal(const uint8_t *a, const uint8_t *b)
     return 1;
 }
 
+/**
+ * @brief Coordinates the acpi bytes equal operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @param length Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int acpi_bytes_equal(const char *a, const char *b, uint32_t length)
 {
     if (!a || !b) {
@@ -102,6 +130,12 @@ static int acpi_bytes_equal(const char *a, const char *b, uint32_t length)
     return 1;
 }
 
+/**
+ * @brief Coordinates the acpi checksum valid operation.
+ * @param table Input or output value used by this operation.
+ * @param length Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int acpi_checksum_valid(const uint8_t *table, uint32_t length)
 {
     uint8_t checksum = 0;
@@ -114,6 +148,11 @@ static int acpi_checksum_valid(const uint8_t *table, uint32_t length)
     return checksum == 0;
 }
 
+/**
+ * @brief Coordinates the acpi rsdp valid operation.
+ * @param rsdp Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int acpi_rsdp_valid(const struct acpi_rsdp *rsdp)
 {
     uint8_t checksum = 0;
@@ -134,6 +173,12 @@ static int acpi_rsdp_valid(const struct acpi_rsdp *rsdp)
     return 1;
 }
 
+/**
+ * @brief Coordinates the acpi scan rsdp range operation.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static const struct acpi_rsdp *acpi_scan_rsdp_range(uint32_t start,
                                                      uint32_t end)
 {
@@ -149,6 +194,10 @@ static const struct acpi_rsdp *acpi_scan_rsdp_range(uint32_t start,
     return 0;
 }
 
+/**
+ * @brief Coordinates the acpi scan rsdp operation.
+ * @return Result, status, or value defined by this API.
+ */
 static const struct acpi_rsdp *acpi_scan_rsdp(void)
 {
     const struct acpi_rsdp *rsdp;
@@ -167,6 +216,11 @@ static const struct acpi_rsdp *acpi_scan_rsdp(void)
     return acpi_scan_rsdp_range(0xe0000U, 0x100000U);
 }
 
+/**
+ * @brief Coordinates the acpi rsdp from efi operation.
+ * @param system_table Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static const struct acpi_rsdp *acpi_rsdp_from_efi(uint64_t system_table)
 {
     static const uint8_t acpi_guids[][16] = {
@@ -206,6 +260,12 @@ static const struct acpi_rsdp *acpi_rsdp_from_efi(uint64_t system_table)
     return 0;
 }
 
+/**
+ * @brief Coordinates the acpi find table operation.
+ * @param rsdp Input or output value used by this operation.
+ * @param signature Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static const struct acpi_sdt_header *acpi_find_table(const struct acpi_rsdp *rsdp,
                                                       const char signature[4])
 {
@@ -243,6 +303,12 @@ static const struct acpi_sdt_header *acpi_find_table(const struct acpi_rsdp *rsd
         entry_count = (root_length - sizeof(struct acpi_sdt_header)) / entry_size;
         for (uint32_t i = 0; i < entry_count; ++i) {
             uint64_t address = entry_size == 8
+                                   /**
+ * @brief Coordinates the acpi read32 operation.
+ * @param root Input or output value used by this operation.
+ * @param U Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
                                    ? acpi_read64(root, sizeof(struct acpi_sdt_header) + i * 8U)
                                    : acpi_read32(root, sizeof(struct acpi_sdt_header) + i * 4U);
             const struct acpi_sdt_header *table;
@@ -260,6 +326,13 @@ static const struct acpi_sdt_header *acpi_find_table(const struct acpi_rsdp *rsd
     return 0;
 }
 
+/**
+ * @brief Coordinates the acpi pkg length operation.
+ * @param aml Input or output value used by this operation.
+ * @param length Length, size, or element count associated with the operation.
+ * @param consumed Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t acpi_pkg_length(const uint8_t *aml, uint32_t length,
                                 uint32_t *consumed)
 {
@@ -284,6 +357,14 @@ static uint32_t acpi_pkg_length(const uint8_t *aml, uint32_t length,
     return value;
 }
 
+/**
+ * @brief Coordinates the acpi aml integer operation.
+ * @param aml Input or output value used by this operation.
+ * @param length Length, size, or element count associated with the operation.
+ * @param consumed Input or output value used by this operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int acpi_aml_integer(const uint8_t *aml, uint32_t length,
                             uint32_t *consumed, uint16_t *value)
 {
@@ -327,6 +408,13 @@ static int acpi_aml_integer(const uint8_t *aml, uint32_t length,
     }
 }
 
+/**
+ * @brief Coordinates the acpi find sleep types operation.
+ * @param dsdt Input or output value used by this operation.
+ * @param sleep_type_a Input or output value used by this operation.
+ * @param sleep_type_b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int acpi_find_sleep_types(const struct acpi_sdt_header *dsdt,
                                  uint16_t *sleep_type_a, uint16_t *sleep_type_b)
 {
@@ -394,6 +482,12 @@ static int acpi_find_sleep_types(const struct acpi_sdt_header *dsdt,
     return 0;
 }
 
+/**
+ * @brief Coordinates the acpi gas io port operation.
+ * @param fadt Input or output value used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint16_t acpi_gas_io_port(const uint8_t *fadt, uint32_t offset)
 {
     uint64_t address;
@@ -408,6 +502,10 @@ static uint16_t acpi_gas_io_port(const uint8_t *fadt, uint32_t offset)
     return address <= 0xffffU ? (uint16_t)address : 0;
 }
 
+/**
+ * @brief Coordinates the power init operation.
+ * @param boot Boot information supplied by the loader.
+ */
 void power_init(const struct boot_info *boot)
 {
     const struct acpi_rsdp *rsdp = 0;
@@ -488,6 +586,10 @@ void power_init(const struct boot_info *boot)
                    acpi_power.pm1a_control, acpi_power.pm1b_control);
 }
 
+/**
+ * @brief Coordinates the acpi enable power management operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int acpi_enable_power_management(void)
 {
     if (!acpi_power.available) {
@@ -507,6 +609,9 @@ static int acpi_enable_power_management(void)
     return (x86_64_inw(acpi_power.pm1a_control) & 1U) != 0;
 }
 
+/**
+ * @brief Coordinates the power reboot operation.
+ */
 void power_reboot(void)
 {
     console_printf("[ntclks] reboot requested\n");
@@ -518,6 +623,9 @@ void power_reboot(void)
     }
 }
 
+/**
+ * @brief Coordinates the power shutdown operation.
+ */
 void power_shutdown(void)
 {
     console_printf("[ntclks] shutdown requested\n");

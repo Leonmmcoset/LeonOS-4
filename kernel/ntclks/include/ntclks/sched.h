@@ -139,26 +139,109 @@ struct task_snapshot_info {
     char username[LEONOS_AUTH_USERNAME_LEN];
 };
 
+/**
+ * @brief Coordinates the sched init operation.
+ */
 void sched_init(void);
+/**
+ * @brief Coordinates the sched create kernel task operation.
+ * @param name Input or output value used by this operation.
+ * @param entry Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint32_t sched_create_kernel_task(const char *name, uint64_t entry);
+/**
+ * @brief Coordinates the sched create user task operation.
+ * @param name Input or output value used by this operation.
+ * @param entry Input or output value used by this operation.
+ * @param stack_top Input or output value used by this operation.
+ * @param parent_pid Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags);
+/**
+ * @brief Coordinates the sched set task image operation.
+ * @param pid Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param image_len Length, size, or element count associated with the operation.
+ */
 void sched_set_task_image(uint32_t pid, const void *image, size_t image_len);
+/**
+ * @brief Coordinates the sched set task image node operation.
+ * @param pid Input or output value used by this operation.
+ * @param node Input or output value used by this operation.
+ */
 void sched_set_task_image_node(uint32_t pid, const struct storage_node *node);
+/**
+ * @brief Coordinates the sched set task path operation.
+ * @param pid Input or output value used by this operation.
+ * @param path LeonOS path consumed by this operation.
+ */
 void sched_set_task_path(uint32_t pid, const char *path);
+/**
+ * @brief Coordinates the sched set task exec params operation.
+ * @param pid Input or output value used by this operation.
+ * @param argc Input or output value used by this operation.
+ * @param argv Input or output value used by this operation.
+ * @param envc Input or output value used by this operation.
+ * @param envp Input or output value used by this operation.
+ * @param data Input or output value used by this operation.
+ * @param data_len Length, size, or element count associated with the operation.
+ */
 void sched_set_task_exec_params(uint32_t pid,
                                 uint32_t argc, char *const argv[],
                                 uint32_t envc, char *const envp[],
                                 const char *data, uint32_t data_len);
+/**
+ * @brief Coordinates the sched create idle task operation.
+ */
 void sched_create_idle_task(void);
+/**
+ * @brief Coordinates the sched set running operation.
+ * @param pid Input or output value used by this operation.
+ */
 void sched_set_running(uint32_t pid);
+/**
+ * @brief Coordinates the sched exit operation.
+ * @param pid Input or output value used by this operation.
+ * @param code Input or output value used by this operation.
+ */
 void sched_exit(uint32_t pid, uint64_t code);
+/**
+ * @brief Coordinates the sched release task resources operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 void sched_release_task_resources(struct task *task);
+/**
+ * @brief Coordinates the sched on tick operation.
+ */
 void sched_on_tick(void);
+/**
+ * @brief Coordinates the sched tick count operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t sched_tick_count(void);
+/**
+ * @brief Coordinates the sched cpu ticks operation.
+ * @param busy_ticks Input or output value used by this operation.
+ * @param idle_ticks Input or output value used by this operation.
+ */
 void sched_cpu_ticks(uint64_t *busy_ticks, uint64_t *idle_ticks);
+/**
+ * @brief Coordinates the sched task counts operation.
+ * @param task_count Length, size, or element count associated with the operation.
+ * @param running_tasks Input or output value used by this operation.
+ * @param ready_tasks Input or output value used by this operation.
+ * @param sleeping_tasks Input or output value used by this operation.
+ */
 void sched_task_counts(uint32_t *task_count, uint32_t *running_tasks,
                        uint32_t *ready_tasks, uint32_t *sleeping_tasks);
+/**
+ * @brief Coordinates the sched current pid operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint32_t sched_current_pid(void);
 struct task *sched_current_task(void);
 struct task *sched_find(uint32_t pid);
@@ -168,24 +251,105 @@ struct task *sched_find_by_path_basename(const char *basename);
 struct task *sched_find_window_server(void);
 struct task *sched_select_next_user(void);
 struct trap_frame *sched_task_frame(struct task *task);
+/**
+ * @brief Coordinates the sched task cr3 operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t sched_task_cr3(struct task *task);
+/**
+ * @brief Coordinates the sched mark ready operation.
+ * @param pid Input or output value used by this operation.
+ */
 void sched_mark_ready(uint32_t pid);
+/**
+ * @brief Coordinates the sched sleep current until operation.
+ * @param wake_tick Input or output value used by this operation.
+ */
 void sched_sleep_current_until(uint64_t wake_tick);
+/**
+ * @brief Coordinates the sched wait current for window event operation.
+ * @param window_id Input or output value used by this operation.
+ * @param wake_tick Input or output value used by this operation.
+ */
 void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick);
+/**
+ * @brief Coordinates the sched wake window event operation.
+ * @param pid Input or output value used by this operation.
+ * @param window_id Input or output value used by this operation.
+ */
 void sched_wake_window_event(uint32_t pid, uint32_t window_id);
+/**
+ * @brief Coordinates the sched kill user task operation.
+ * @param pid Input or output value used by this operation.
+ * @param code Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int sched_kill_user_task(uint32_t pid, uint64_t code);
+/**
+ * @brief Coordinates the sched kill user tasks for pty operation.
+ * @param pty_id Input or output value used by this operation.
+ * @param keep_pid Input or output value used by this operation.
+ * @param code Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
                                   uint64_t code);
+/**
+ * @brief Coordinates the sched kill user tasks for logout operation.
+ * @param uid Input or output value used by this operation.
+ * @param session_id Input or output value used by this operation.
+ * @param keep_pid Input or output value used by this operation.
+ * @param code Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                      uint32_t keep_pid, uint64_t code);
+/**
+ * @brief Coordinates the sched wait reap operation.
+ * @param waiter_pid Input or output value used by this operation.
+ * @param wanted_pid Input or output value used by this operation.
+ * @param exit_code Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t sched_wait_reap(uint32_t waiter_pid, uint32_t wanted_pid, uint64_t *exit_code);
+/**
+ * @brief Coordinates the sched snapshot operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @param capacity Capacity, in elements or bytes, of the related output buffer.
+ * @param tick Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint64_t *tick);
+/**
+ * @brief Coordinates the sched set task identity operation.
+ * @param pid Input or output value used by this operation.
+ * @param user Input or output value used by this operation.
+ * @param session_id Input or output value used by this operation.
+ */
 void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
                              uint32_t session_id);
+/**
+ * @brief Coordinates the sched set session identity operation.
+ * @param parent_pid Input or output value used by this operation.
+ * @param user Input or output value used by this operation.
+ * @param session_id Input or output value used by this operation.
+ */
 void sched_set_session_identity(uint32_t parent_pid, const struct leonos_user_info *user,
                                 uint32_t session_id);
+/**
+ * @brief Coordinates the sched clear session identity operation.
+ * @param session_id Input or output value used by this operation.
+ */
 void sched_clear_session_identity(uint32_t session_id);
+/**
+ * @brief Coordinates the sched next session id operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint32_t sched_next_session_id(void);
+/**
+ * @brief Coordinates the sched dump operation.
+ */
 void sched_dump(void);
 
 #endif

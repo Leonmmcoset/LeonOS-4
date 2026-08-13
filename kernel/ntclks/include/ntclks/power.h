@@ -7,6 +7,10 @@
 
 struct boot_info;
 
+/**
+ * @brief Coordinates the power init operation.
+ * @param boot Boot information supplied by the loader.
+ */
 void power_init(const struct boot_info *boot);
 void power_reboot(void) __attribute__((noreturn));
 void power_shutdown(void) __attribute__((noreturn));

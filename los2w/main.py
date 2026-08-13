@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .config import ConfigStore, HostConfig
 from .diagnostics import default_report_path, write_report
-from .emulator import LeonOSEmulator
+from .emulator import LeonOSEmulator, ProcessManager
 from .errors import GuestFault
 from .i18n import t
 from .logging import LogBuffer
@@ -21,6 +21,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--elf", help="LeonOS ELF application to run")
     parser.add_argument("--root", help="Host directory mapped as LeonOS 0:/")
     parser.add_argument("--arg", action="append", default=[], help="Guest argv item after argv[0]")
+    parser.add_argument("--program", action="append", default=[],
+                        help="Additional guest ELF to run concurrently (repeatable)")
     parser.add_argument("--smoke", action="store_true", help="Stop successfully after the first presented frame")
     parser.add_argument("--self-test", action="store_true", help="Run los2w self-tests")
     parser.add_argument("--lang", choices=("en", "zh"), help="los2w UI and virtual guest locale")
@@ -336,11 +338,27 @@ def run_elf_cli(args: argparse.Namespace) -> int:
     logger = LogBuffer(lambda line: print(line, flush=True))
     gui = GUIManager(logger=logger, ui_theme=cfg.ui_theme,
                      allow_theme_changes=cfg.guest_admin)
-    emu = LeonOSEmulator(args.elf, args.root, args.arg, config=cfg, gui=gui, logger=logger)
+    manager = ProcessManager(root_dir=args.root, config=cfg, gui=gui, logger=logger)
+    emu = manager.spawn(args.elf, args.arg)
+    for program in args.program:
+        manager.spawn(program, [], ppid=emu.pid)
     code = None
     fault: Exception | None = None
     try:
-        code = emu.run(max_seconds=5.0 if args.smoke else None, smoke=args.smoke)
+        if args.program:
+            deadline = time.monotonic() + (5.0 if args.smoke else 365 * 24 * 3600)
+            while manager.processes and time.monotonic() < deadline:
+                manager.run_step()
+                # Keep exited children until their parent calls wait4; a
+                # parent must be able to observe and reap the exit status.
+                if all(proc.exit_code is not None or proc.stop_requested
+                       for proc in manager.processes.values()):
+                    break
+                if args.smoke and gui.present_count > 0:
+                    break
+            code = emu.exit_code
+        else:
+            code = emu.run(max_seconds=5.0 if args.smoke else None, smoke=args.smoke)
     except Exception as exc:
         fault = exc
         logger.write(f"[los2w] failed: {exc}")

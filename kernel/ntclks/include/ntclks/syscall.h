@@ -61,10 +61,32 @@ struct syscall_frame {
     uint64_t args[6];
 };
 
+/**
+ * @brief Coordinates the syscall init operation.
+ */
 void syscall_init(void);
+/**
+ * @brief Coordinates the syscall dispatch operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t syscall_dispatch(const struct syscall_frame *frame);
+/**
+ * @brief Coordinates the syscall dispatch frame operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ */
 void syscall_dispatch_frame(struct trap_frame *frame);
+/**
+ * @brief Coordinates the syscall handle user page fault operation.
+ * @param fault_addr Address used by this operation; its address-space interpretation follows the API.
+ * @param error Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error);
+/**
+ * @brief Coordinates the syscall release task files operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 void syscall_release_task_files(struct task *task);
 
 #endif

@@ -50,6 +50,12 @@ static struct inputm_result_slot results[INPUTM_RESULT_CAP];
 static struct inputm_context_slot contexts[INPUTM_CONTEXT_CAP];
 static struct inputm_user_slot users[INPUTM_UID_CAP];
 
+/**
+ * @brief Coordinates the inputm copy text operation.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ */
 static void inputm_copy_text(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -63,6 +69,12 @@ static void inputm_copy_text(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Coordinates the inputm text valid operation.
+ * @param text Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @return Result, status, or value defined by this API.
+ */
 static int inputm_text_valid(const char *text, uint32_t cap)
 {
     uint32_t i = 0;
@@ -79,6 +91,12 @@ static int inputm_text_valid(const char *text, uint32_t cap)
     return i < cap;
 }
 
+/**
+ * @brief Coordinates the inputm text equal operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int inputm_text_equal(const char *a, const char *b)
 {
     uint32_t i = 0;
@@ -91,6 +109,13 @@ static int inputm_text_equal(const char *a, const char *b)
     return a[i] == 0 && b[i] == 0;
 }
 
+/**
+ * @brief Coordinates the inputm utf8 valid operation.
+ * @param text Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param require_text Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int inputm_utf8_valid(const char *text, uint32_t cap, uint8_t require_text)
 {
     uint32_t i = 0;
@@ -142,12 +167,23 @@ static int inputm_utf8_valid(const char *text, uint32_t cap, uint8_t require_tex
     return i < cap;
 }
 
+/**
+ * @brief Coordinates the inputm task alive operation.
+ * @param pid Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int inputm_task_alive(uint32_t pid)
 {
     struct task *task = sched_find(pid);
     return task && task->state != TASK_EXITED;
 }
 
+/**
+ * @brief Coordinates the inputm find user operation.
+ * @param uid Input or output value used by this operation.
+ * @param create Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct inputm_user_slot *inputm_find_user(uint32_t uid, uint8_t create)
 {
     struct inputm_user_slot *free_slot = 0;
@@ -174,6 +210,11 @@ static struct inputm_user_slot *inputm_find_user(uint32_t uid, uint8_t create)
     return free_slot;
 }
 
+/**
+ * @brief Coordinates the inputm find provider operation.
+ * @param pid Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct inputm_provider_slot *inputm_find_provider(uint32_t pid)
 {
     for (uint32_t i = 0; i < LEONOS_INPUTM_MAX_PROVIDERS; ++i) {
@@ -184,6 +225,12 @@ static struct inputm_provider_slot *inputm_find_provider(uint32_t pid)
     return 0;
 }
 
+/**
+ * @brief Coordinates the inputm find provider for user operation.
+ * @param uid Input or output value used by this operation.
+ * @param id Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct inputm_provider_slot *inputm_find_provider_for_user(uint32_t uid, const char *id)
 {
     for (uint32_t i = 0; i < LEONOS_INPUTM_MAX_PROVIDERS; ++i) {
@@ -196,6 +243,12 @@ static struct inputm_provider_slot *inputm_find_provider_for_user(uint32_t uid, 
     return 0;
 }
 
+/**
+ * @brief Coordinates the inputm find issued event operation.
+ * @param provider Input or output value used by this operation.
+ * @param result Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int inputm_find_issued_event(const struct inputm_provider_slot *provider,
                                     const struct leonos_inputm_result *result)
 {
@@ -213,6 +266,13 @@ static int inputm_find_issued_event(const struct inputm_provider_slot *provider,
     return -1;
 }
 
+/**
+ * @brief Coordinates the inputm find context operation.
+ * @param pid Input or output value used by this operation.
+ * @param window_id Input or output value used by this operation.
+ * @param create Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct inputm_context_slot *inputm_find_context(uint32_t pid, uint32_t window_id,
                                                         uint8_t create)
 {
@@ -236,6 +296,11 @@ static struct inputm_context_slot *inputm_find_context(uint32_t pid, uint32_t wi
     return free_slot;
 }
 
+/**
+ * @brief Coordinates the inputm queue event operation.
+ * @param provider Input or output value used by this operation.
+ * @param event Input or output value used by this operation.
+ */
 static void inputm_queue_event(struct inputm_provider_slot *provider,
                                const struct leonos_inputm_key_event *event)
 {
@@ -251,6 +316,12 @@ static void inputm_queue_event(struct inputm_provider_slot *provider,
     provider->event_head = next;
 }
 
+/**
+ * @brief Coordinates the inputm queue result operation.
+ * @param pid Input or output value used by this operation.
+ * @param result Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int inputm_queue_result(uint32_t pid, const struct leonos_inputm_result *result)
 {
     for (uint32_t i = 0; i < INPUTM_RESULT_CAP; ++i) {
@@ -264,6 +335,11 @@ static int inputm_queue_result(uint32_t pid, const struct leonos_inputm_result *
     return 0;
 }
 
+/**
+ * @brief Coordinates the inputm handles ioctl operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int inputm_handles_ioctl(uint64_t request)
 {
     switch (request) {
@@ -284,6 +360,12 @@ int inputm_handles_ioctl(uint64_t request)
     }
 }
 
+/**
+ * @brief Coordinates the inputm handle ioctl operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @param user_arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t inputm_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
     struct task *task = sched_current_task();
@@ -613,6 +695,10 @@ int64_t inputm_handle_ioctl(uint64_t request, uint64_t user_arg)
     return -LEONOS_EINVAL;
 }
 
+/**
+ * @brief Coordinates the inputm destroy owner operation.
+ * @param pid Input or output value used by this operation.
+ */
 void inputm_destroy_owner(uint32_t pid)
 {
     for (uint32_t i = 0; i < LEONOS_INPUTM_MAX_PROVIDERS; ++i) {

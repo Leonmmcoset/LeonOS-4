@@ -29,6 +29,12 @@
 
 static uint8_t kernel_ring0_stack[65536] __attribute__((aligned(16)));
 
+/**
+ * @brief Coordinates the status u32 operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param value Input or output value used by this operation.
+ */
 static void status_u32(char *buf, uint32_t *pos, uint32_t value)
 {
     char tmp[10];
@@ -46,6 +52,12 @@ static void status_u32(char *buf, uint32_t *pos, uint32_t value)
     }
 }
 
+/**
+ * @brief Coordinates the status hex8 operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param value Input or output value used by this operation.
+ */
 static void status_hex8(char *buf, uint32_t *pos, uint8_t value)
 {
     const char *digits = "0123456789abcdef";
@@ -53,6 +65,9 @@ static void status_hex8(char *buf, uint32_t *pos, uint8_t value)
     buf[(*pos)++] = digits[value & 0xf];
 }
 
+/**
+ * @brief Coordinates the mouse status line operation.
+ */
 static void mouse_status_line(void)
 {
     const struct mouse_state *m = mouse_get_state();
@@ -110,6 +125,9 @@ static void mouse_status_line(void)
     }
 }
 
+/**
+ * @brief Coordinates the kernel idle loop operation.
+ */
 void kernel_idle_loop(void)
 {
     for (;;) {
@@ -117,6 +135,12 @@ void kernel_idle_loop(void)
     }
 }
 
+/**
+ * @brief Coordinates the cmdline has operation.
+ * @param boot Boot information supplied by the loader.
+ * @param needle Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int cmdline_has(const struct boot_info *boot, const char *needle)
 {
     if (!boot || !boot->cmdline || !needle) {
@@ -136,6 +160,12 @@ static int cmdline_has(const struct boot_info *boot, const char *needle)
     return 0;
 }
 
+/**
+ * @brief Coordinates the boot text eq operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int boot_text_eq(const char *a, const char *b)
 {
     if (!a || !b) {
@@ -148,6 +178,11 @@ static int boot_text_eq(const char *a, const char *b)
     return *a == 0 && *b == 0;
 }
 
+/**
+ * @brief Coordinates the boot import handoff modules operation.
+ * @param boot Boot information supplied by the loader.
+ * @param handoff Input or output value used by this operation.
+ */
 static void boot_import_handoff_modules(struct boot_info *boot,
                                         const struct leonos_boot_handoff *handoff)
 {
@@ -175,6 +210,12 @@ static void boot_import_handoff_modules(struct boot_info *boot,
     }
 }
 
+/**
+ * @brief Coordinates the kernel start operation.
+ * @param magic Input or output value used by this operation.
+ * @param multiboot_info Input or output value used by this operation.
+ * @param handoff Input or output value used by this operation.
+ */
 static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                          const struct leonos_boot_handoff *handoff)
 {
@@ -264,6 +305,10 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     kernel_idle_loop();
 }
 
+/**
+ * @brief Coordinates the kernel entry operation.
+ * @param handoff Input or output value used by this operation.
+ */
 void kernel_entry(const struct leonos_boot_handoff *handoff)
 {
     if (!handoff || handoff->magic != LEONOS_BOOT_HANDOFF_MAGIC) {
@@ -272,6 +317,11 @@ void kernel_entry(const struct leonos_boot_handoff *handoff)
     kernel_start(handoff->multiboot_magic, (uint32_t)handoff->multiboot_info, handoff);
 }
 
+/**
+ * @brief Coordinates the kernel main operation.
+ * @param magic Input or output value used by this operation.
+ * @param multiboot_info Input or output value used by this operation.
+ */
 void kernel_main(uint32_t magic, uint32_t multiboot_info)
 {
     kernel_start(magic, multiboot_info, 0);

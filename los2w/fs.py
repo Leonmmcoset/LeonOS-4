@@ -243,6 +243,56 @@ class GuestFS:
                 return neg(EINVAL)
         return 0
 
+    def dup(self, fd: int) -> int:
+        value = self.fds.get(fd)
+        if value is None:
+            return neg(EBADF)
+        if hasattr(value, "seek") and hasattr(value, "tell"):
+            try:
+                clone = value
+                if hasattr(value, "fileno"):
+                    clone = os.fdopen(os.dup(value.fileno()), value.mode)
+                    clone.seek(value.tell())
+                return self._alloc_fd(clone)
+            except (OSError, AttributeError):
+                pass
+        return self._alloc_fd(value)
+
+    def dup2(self, old_fd: int, new_fd: int) -> int:
+        if old_fd not in self.fds or new_fd < 0:
+            return neg(EBADF)
+        if old_fd == new_fd:
+            return new_fd
+        if new_fd in self.fds and new_fd > 3:
+            self.close(new_fd)
+        self.fds[new_fd] = self.fds[old_fd]
+        self.next_fd = max(self.next_fd, new_fd + 1)
+        return new_fd
+
+    def fcntl(self, fd: int, command: int, arg: int = 0) -> int:
+        if fd not in self.fds:
+            return neg(EBADF)
+        # F_DUPFD/F_DUPFD_CLOEXEC: close-on-exec is not observable in los2w.
+        if command in (0, 14):
+            result = self.dup(fd)
+            if result >= 0 and arg > result:
+                self.fds[arg] = self.fds.pop(result)
+                result = arg
+            return result
+        if command in (1, 2, 3, 4):
+            return 0
+        return neg(EINVAL)
+
+    def ftruncate(self, fd: int, length: int) -> int:
+        value = self.fds.get(fd)
+        if value is None or isinstance(value, (DirectoryFD, VirtualFD)) or length < 0:
+            return neg(EBADF if value is None else EINVAL)
+        try:
+            value.truncate(length)
+            return 0
+        except OSError:
+            return neg(EINVAL)
+
     def lseek(self, fd: int, offset: int, whence: int) -> int:
         value = self.fds.get(fd)
         if value is None or isinstance(value, DirectoryFD):

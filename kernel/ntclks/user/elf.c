@@ -66,11 +66,21 @@ static uint8_t elf_header_scratch[ELF_HEADER_READ_BYTES];
 static uint64_t aslr_counter;
 static bool weak_entropy_reported;
 
+/**
+ * @brief Coordinates the align down operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_down(uint64_t value)
 {
     return value & ~(PAGE_SIZE - 1ULL);
 }
 
+/**
+ * @brief Coordinates the align up operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_up(uint64_t value)
 {
     if (value > UINT64_MAX - (PAGE_SIZE - 1ULL)) {
@@ -79,6 +89,11 @@ static uint64_t align_up(uint64_t value)
     return (value + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
 }
 
+/**
+ * @brief Coordinates the align4 up operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align4_up(uint64_t value)
 {
     if (value > UINT64_MAX - 3ULL) {
@@ -87,6 +102,11 @@ static uint64_t align4_up(uint64_t value)
     return (value + 3ULL) & ~3ULL;
 }
 
+/**
+ * @brief Coordinates the elf64 random u64 operation.
+ * @param strong Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t elf64_random_u64(bool *strong)
 {
     uint32_t eax;
@@ -119,6 +139,10 @@ static uint64_t elf64_random_u64(bool *strong)
     return result;
 }
 
+/**
+ * @brief Coordinates the elf64 fill random operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ */
 static void elf64_fill_random(uint8_t out[16])
 {
     bool strong = false;
@@ -134,6 +158,12 @@ static void elf64_fill_random(uint8_t out[16])
     }
 }
 
+/**
+ * @brief Coordinates the elf64 program headers fit operation.
+ * @param eh Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_program_headers_fit(const struct elf64_ehdr *eh, size_t len)
 {
     if (!eh || eh->e_phentsize != sizeof(struct elf64_phdr) || eh->e_phoff > len) {
@@ -142,6 +172,13 @@ static bool elf64_program_headers_fit(const struct elf64_ehdr *eh, size_t len)
     return eh->e_phnum <= (len - eh->e_phoff) / eh->e_phentsize;
 }
 
+/**
+ * @brief Coordinates the elf64 phdr at operation.
+ * @param eh Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param index Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static const struct elf64_phdr *elf64_phdr_at(const struct elf64_ehdr *eh,
                                                const void *image, uint16_t index)
 {
@@ -149,6 +186,14 @@ static const struct elf64_phdr *elf64_phdr_at(const struct elf64_ehdr *eh,
                                        (uint64_t)index * eh->e_phentsize);
 }
 
+/**
+ * @brief Coordinates the elf64 note abi operation.
+ * @param eh Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param out_major Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_note_abi(const struct elf64_ehdr *eh, const void *image, size_t len,
                            uint32_t *out_major)
 {
@@ -194,6 +239,14 @@ static bool elf64_note_abi(const struct elf64_ehdr *eh, const void *image, size_
     return false;
 }
 
+/**
+ * @brief Coordinates the elf64 interp operation.
+ * @param eh Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_interp(const struct elf64_ehdr *eh, const void *image, size_t len,
                          char out[64])
 {
@@ -218,6 +271,15 @@ static bool elf64_interp(const struct elf64_ehdr *eh, const void *image, size_t 
     return false;
 }
 
+/**
+ * @brief Coordinates the elf64 validate dynamic header operation.
+ * @param eh Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param is_interpreter Input or output value used by this operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const void *image,
                                           size_t len, bool is_interpreter,
                                           struct elf_image_info *out)
@@ -317,11 +379,25 @@ static bool elf64_probe_image(const void *image, size_t header_len, uint64_t fil
     return true;
 }
 
+/**
+ * @brief Coordinates the elf64 probe operation.
+ * @param image Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool elf64_probe(const void *image, size_t len, struct elf_image_info *out)
 {
     return elf64_probe_image(image, len, len, false, out);
 }
 
+/**
+ * @brief Coordinates the elf64 segment valid operation.
+ * @param ph Input or output value used by this operation.
+ * @param file_len Length, size, or element count associated with the operation.
+ * @param bias Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_segment_valid(const struct elf64_phdr *ph, uint64_t file_len,
                                 uint64_t bias)
 {
@@ -335,6 +411,14 @@ static bool elf64_segment_valid(const struct elf64_phdr *ph, uint64_t file_len,
     return start >= NTCLKS_USER_BASE && ph->p_memsz <= NTCLKS_USER_TOP - start;
 }
 
+/**
+ * @brief Coordinates the ensure segment pages operation.
+ * @param as Input or output value used by this operation.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool ensure_segment_pages(struct address_space *as, uint64_t start,
                                  uint64_t end, uint64_t flags)
 {
@@ -354,6 +438,14 @@ static bool ensure_segment_pages(struct address_space *as, uint64_t start,
     return true;
 }
 
+/**
+ * @brief Copies to address space.
+ * @param as Input or output value used by this operation.
+ * @param vaddr Address used by this operation; its address-space interpretation follows the API.
+ * @param src Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool copy_to_address_space(struct address_space *as, uint64_t vaddr,
                                   const uint8_t *src, uint64_t len)
 {
@@ -376,6 +468,14 @@ static bool copy_to_address_space(struct address_space *as, uint64_t vaddr,
     return true;
 }
 
+/**
+ * @brief Coordinates the elf64 load address space operation.
+ * @param as Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool elf64_load_address_space(struct address_space *as, const void *image, size_t len,
                               struct elf_image_info *out)
 {
@@ -407,6 +507,13 @@ bool elf64_load_address_space(struct address_space *as, const void *image, size_
     return true;
 }
 
+/**
+ * @brief Coordinates the elf64 read headers operation.
+ * @param node Input or output value used by this operation.
+ * @param out_image Caller-provided storage that receives output from this operation.
+ * @param out_len Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_read_headers(const struct storage_node *node, const void **out_image,
                                size_t *out_len)
 {
@@ -441,6 +548,13 @@ static bool elf64_read_headers(const struct storage_node *node, const void **out
     return true;
 }
 
+/**
+ * @brief Coordinates the elf64 task range available operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_task_range_available(const struct task *task, uint64_t start, uint64_t end)
 {
     uint64_t stack_low;
@@ -461,6 +575,11 @@ static bool elf64_task_range_available(const struct task *task, uint64_t start, 
     return true;
 }
 
+/**
+ * @brief Coordinates the elf64 task free vma operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *elf64_task_free_vma(struct task *task)
 {
     for (uint32_t i = 0; task && i < SCHED_TASK_VMA_MAX; ++i) {
@@ -471,6 +590,15 @@ static struct task_vma *elf64_task_free_vma(struct task *task)
     return NULL;
 }
 
+/**
+ * @brief Coordinates the elf64 segments nonoverlapping operation.
+ * @param eh Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param file_len Length, size, or element count associated with the operation.
+ * @param bias Input or output value used by this operation.
+ * @param strict_page_layout Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_segments_nonoverlapping(const struct elf64_ehdr *eh, const void *image,
                                           uint64_t file_len, uint64_t bias,
                                           bool strict_page_layout)
@@ -539,6 +667,12 @@ static struct task_vma *elf64_legacy_shared_page_vma(struct task *task,
     return NULL;
 }
 
+/**
+ * @brief Coordinates the elf64 choose bias operation.
+ * @param info Input or output value used by this operation.
+ * @param interpreter Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t elf64_choose_bias(const struct elf_image_info *info, bool interpreter)
 {
     uint64_t min = interpreter ? ELF_DYN_INTERP_MIN : ELF_DYN_MAIN_MIN;
@@ -557,6 +691,16 @@ static uint64_t elf64_choose_bias(const struct elf_image_info *info, bool interp
     return base - align_down(info->low_vaddr);
 }
 
+/**
+ * @brief Coordinates the elf64 map one operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param node Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param info Input or output value used by this operation.
+ * @param bias Input or output value used by this operation.
+ * @param image_name Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static bool elf64_map_one(struct task *task, const struct storage_node *node,
                           const void *image, const struct elf_image_info *info,
                           uint64_t bias, const char *image_name)
@@ -677,6 +821,13 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
     return true;
 }
 
+/**
+ * @brief Coordinates the elf64 map task image operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param node Input or output value used by this operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool elf64_map_task_image(struct task *task, const struct storage_node *node,
                           struct elf_image_info *out)
 {

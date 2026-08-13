@@ -33,6 +33,14 @@ extern void x86_64_load_segments(void);
 extern void x86_64_ltr(uint16_t selector);
 void paging_init_user_identity(void);
 
+/**
+ * @brief Coordinates the descriptor operation.
+ * @param base Input or output value used by this operation.
+ * @param limit Input or output value used by this operation.
+ * @param access Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t descriptor(uint32_t base, uint32_t limit, uint8_t access, uint8_t flags)
 {
     uint64_t desc = 0;
@@ -45,6 +53,12 @@ static uint64_t descriptor(uint32_t base, uint32_t limit, uint8_t access, uint8_
     return desc;
 }
 
+/**
+ * @brief Updates tss descriptor.
+ * @param index Input or output value used by this operation.
+ * @param base Input or output value used by this operation.
+ * @param limit Input or output value used by this operation.
+ */
 static void set_tss_descriptor(uint32_t index, uint64_t base, uint32_t limit)
 {
     uint64_t low = 0;
@@ -59,6 +73,10 @@ static void set_tss_descriptor(uint32_t index, uint64_t base, uint32_t limit)
     gdt[index + 1] = high;
 }
 
+/**
+ * @brief Coordinates the framebuffer survives identity map operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int framebuffer_survives_identity_map(void)
 {
     const struct framebuffer *fb = framebuffer_get();
@@ -73,6 +91,10 @@ static int framebuffer_survives_identity_map(void)
     return start < IDENTITY_MAP_LIMIT && bytes <= IDENTITY_MAP_LIMIT - start;
 }
 
+/**
+ * @brief Coordinates the arch userland init operation.
+ * @param kernel_stack_top Input or output value used by this operation.
+ */
 void arch_userland_init(void *kernel_stack_top)
 {
     if (!framebuffer_survives_identity_map()) {

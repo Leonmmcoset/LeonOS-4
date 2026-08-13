@@ -9,6 +9,14 @@
 #define PCI_CONFIG_ADDR 0xcf8u
 #define PCI_CONFIG_DATA 0xcfcu
 
+/**
+ * @brief Coordinates the pci make addr operation.
+ * @param bus Input or output value used by this operation.
+ * @param slot Input or output value used by this operation.
+ * @param function Input or output value used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t pci_make_addr(uint8_t bus, uint8_t slot, uint8_t function,
                               uint8_t offset)
 {
@@ -19,6 +27,14 @@ static uint32_t pci_make_addr(uint8_t bus, uint8_t slot, uint8_t function,
            ((uint32_t)offset & 0xfcu);
 }
 
+/**
+ * @brief Coordinates the pci config read32 operation.
+ * @param bus Input or output value used by this operation.
+ * @param slot Input or output value used by this operation.
+ * @param function Input or output value used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t function,
                            uint8_t offset)
 {
@@ -26,6 +42,14 @@ uint32_t pci_config_read32(uint8_t bus, uint8_t slot, uint8_t function,
     return x86_64_inl(PCI_CONFIG_DATA);
 }
 
+/**
+ * @brief Coordinates the pci config write32 operation.
+ * @param bus Input or output value used by this operation.
+ * @param slot Input or output value used by this operation.
+ * @param function Input or output value used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @param value Input or output value used by this operation.
+ */
 void pci_config_write32(uint8_t bus, uint8_t slot, uint8_t function,
                         uint8_t offset, uint32_t value)
 {
@@ -33,6 +57,14 @@ void pci_config_write32(uint8_t bus, uint8_t slot, uint8_t function,
     x86_64_outl(value, PCI_CONFIG_DATA);
 }
 
+/**
+ * @brief Coordinates the pci config read16 operation.
+ * @param bus Input or output value used by this operation.
+ * @param slot Input or output value used by this operation.
+ * @param function Input or output value used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint16_t pci_config_read16(uint8_t bus, uint8_t slot, uint8_t function,
                            uint8_t offset)
 {
@@ -40,6 +72,14 @@ uint16_t pci_config_read16(uint8_t bus, uint8_t slot, uint8_t function,
     return (uint16_t)(value >> ((offset & 2u) * 8u));
 }
 
+/**
+ * @brief Coordinates the pci config write16 operation.
+ * @param bus Input or output value used by this operation.
+ * @param slot Input or output value used by this operation.
+ * @param function Input or output value used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @param value Input or output value used by this operation.
+ */
 void pci_config_write16(uint8_t bus, uint8_t slot, uint8_t function,
                         uint8_t offset, uint16_t value)
 {
@@ -51,6 +91,14 @@ void pci_config_write16(uint8_t bus, uint8_t slot, uint8_t function,
     pci_config_write32(bus, slot, function, aligned, current);
 }
 
+/**
+ * @brief Coordinates the pci read device operation.
+ * @param bus Input or output value used by this operation.
+ * @param slot Input or output value used by this operation.
+ * @param function Input or output value used by this operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int pci_read_device(uint8_t bus, uint8_t slot, uint8_t function,
                     struct pci_device *out)
 {
@@ -77,6 +125,13 @@ int pci_read_device(uint8_t bus, uint8_t slot, uint8_t function,
     return 0;
 }
 
+/**
+ * @brief Coordinates the pci find device operation.
+ * @param vendor_id Input or output value used by this operation.
+ * @param device_id Input or output value used by this operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int pci_find_device(uint16_t vendor_id, uint16_t device_id,
                     struct pci_device *out)
 {

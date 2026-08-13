@@ -79,6 +79,12 @@ struct __attribute__((packed)) smbios_header {
 
 static struct leonos_machine_identity platform_identity;
 
+/**
+ * @brief Coordinates the guid equal operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int guid_equal(const struct efi_guid *a, const struct efi_guid *b)
 {
     if (!a || !b) {
@@ -95,6 +101,13 @@ static int guid_equal(const struct efi_guid *a, const struct efi_guid *b)
     return 1;
 }
 
+/**
+ * @brief Coordinates the bytes eq operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int bytes_eq(const char *a, const char *b, uint32_t len)
 {
     for (uint32_t i = 0; i < len; ++i) {
@@ -105,6 +118,12 @@ static int bytes_eq(const char *a, const char *b, uint32_t len)
     return 1;
 }
 
+/**
+ * @brief Copies text.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ */
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -118,6 +137,12 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Copies efi text.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ */
 static void copy_efi_text(char *dst, uint32_t cap, const uint16_t *src)
 {
     uint32_t i = 0;
@@ -132,6 +157,11 @@ static void copy_efi_text(char *dst, uint32_t cap, const uint16_t *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Coordinates the uuid valid operation.
+ * @param uuid Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int uuid_valid(const uint8_t uuid[16])
 {
     uint8_t or_all = 0;
@@ -143,6 +173,13 @@ static int uuid_valid(const uint8_t uuid[16])
     return or_all != 0 && and_all != 0xffU;
 }
 
+/**
+ * @brief Appends hex2.
+ * @param dst Input or output value used by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void append_hex2(char *dst, uint32_t *pos, uint32_t cap, uint8_t value)
 {
     static const char hex[] = "0123456789abcdef";
@@ -154,6 +191,12 @@ static void append_hex2(char *dst, uint32_t *pos, uint32_t cap, uint8_t value)
     dst[*pos] = 0;
 }
 
+/**
+ * @brief Coordinates the format uuid raw operation.
+ * @param uuid Input or output value used by this operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ */
 static void format_uuid_raw(const uint8_t uuid[16], char *out, uint32_t cap)
 {
     static const uint8_t order[16] = {
@@ -176,6 +219,12 @@ static void format_uuid_raw(const uint8_t uuid[16], char *out, uint32_t cap)
     }
 }
 
+/**
+ * @brief Coordinates the checksum8 operation.
+ * @param data Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint8_t checksum8(const void *data, uint32_t len)
 {
     const uint8_t *bytes = (const uint8_t *)data;
@@ -186,6 +235,12 @@ static uint8_t checksum8(const void *data, uint32_t len)
     return sum;
 }
 
+/**
+ * @brief Coordinates the smbios next operation.
+ * @param ptr Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static const uint8_t *smbios_next(const uint8_t *ptr, const uint8_t *end)
 {
     const struct smbios_header *hdr = (const struct smbios_header *)ptr;
@@ -204,6 +259,12 @@ static const uint8_t *smbios_next(const uint8_t *ptr, const uint8_t *end)
     return end;
 }
 
+/**
+ * @brief Parses smbios table.
+ * @param table_addr Address used by this operation; its address-space interpretation follows the API.
+ * @param table_len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int parse_smbios_table(uint64_t table_addr, uint32_t table_len)
 {
     const uint8_t *table = (const uint8_t *)(uintptr_t)table_addr;
@@ -236,6 +297,11 @@ static int parse_smbios_table(uint64_t table_addr, uint32_t table_len)
     return -1;
 }
 
+/**
+ * @brief Parses smbios3.
+ * @param entry Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int parse_smbios3(const void *entry)
 {
     const struct smbios3_entry *smbios = (const struct smbios3_entry *)entry;
@@ -247,6 +313,11 @@ static int parse_smbios3(const void *entry)
     return parse_smbios_table(smbios->table_address, smbios->table_max_size);
 }
 
+/**
+ * @brief Parses smbios2.
+ * @param entry Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int parse_smbios2(const void *entry)
 {
     const struct smbios2_entry *smbios = (const struct smbios2_entry *)entry;
@@ -259,6 +330,10 @@ static int parse_smbios2(const void *entry)
     return parse_smbios_table(smbios->table_address, smbios->table_length);
 }
 
+/**
+ * @brief Coordinates the platform identity init operation.
+ * @param boot Boot information supplied by the loader.
+ */
 void platform_identity_init(const struct boot_info *boot)
 {
     static const struct efi_guid smbios3_guid = {
@@ -307,6 +382,10 @@ void platform_identity_init(const struct boot_info *boot)
     console_printf("[ntclks] platform identity unavailable: no SMBIOS UUID\n");
 }
 
+/**
+ * @brief Coordinates the platform machine identity operation.
+ * @param identity Input or output value used by this operation.
+ */
 void platform_machine_identity(struct leonos_machine_identity *identity)
 {
     if (!identity) {

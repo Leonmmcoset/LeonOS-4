@@ -69,6 +69,12 @@ extern void irq12_stub(void);
 extern void irq32_stub(void);
 extern uint64_t x86_64_read_cr2(void);
 
+/**
+ * @brief Coordinates the idt set operation.
+ * @param vector Input or output value used by this operation.
+ * @param handler Input or output value used by this operation.
+ * @param dpl Input or output value used by this operation.
+ */
 static void idt_set(uint8_t vector, void *handler, uint8_t dpl)
 {
     uint64_t addr = (uint64_t)(uintptr_t)handler;
@@ -81,6 +87,9 @@ static void idt_set(uint8_t vector, void *handler, uint8_t dpl)
     idt[vector].zero = 0;
 }
 
+/**
+ * @brief Coordinates the idt init operation.
+ */
 void idt_init(void)
 {
     idt_set(0, isr0_stub, 0);
@@ -129,6 +138,16 @@ void idt_init(void)
     x86_64_lidt(&ptr);
 }
 
+/**
+ * @brief Coordinates the exception dispatch operation.
+ * @param vector Input or output value used by this operation.
+ * @param error Input or output value used by this operation.
+ * @param rip Input or output value used by this operation.
+ * @param cs Input or output value used by this operation.
+ * @param rflags Input or output value used by this operation.
+ * @param rsp Input or output value used by this operation.
+ * @param ss Input or output value used by this operation.
+ */
 void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t cs,
                         uint64_t rflags, uint64_t rsp, uint64_t ss)
 {
@@ -157,6 +176,13 @@ void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t 
     bugcheck_exception(vector, error, rip, cs, rflags, rsp, ss, cr2);
 }
 
+/**
+ * @brief Coordinates the pf append char operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param ch Input or output value used by this operation.
+ */
 static void pf_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
     if (!buf || !pos || cap == 0 || *pos + 1 >= cap) {
@@ -167,6 +193,13 @@ static void pf_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
     buf[*pos] = 0;
 }
 
+/**
+ * @brief Coordinates the pf append text operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param text Input or output value used by this operation.
+ */
 static void pf_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
     if (!text) {
@@ -177,6 +210,13 @@ static void pf_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *t
     }
 }
 
+/**
+ * @brief Coordinates the pf append u64 dec operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void pf_append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
     char tmp[21];
@@ -194,6 +234,13 @@ static void pf_append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
     }
 }
 
+/**
+ * @brief Coordinates the pf append u64 hex operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void pf_append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
     static const char hex[] = "0123456789abcdef";
@@ -208,6 +255,14 @@ static void pf_append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
     }
 }
 
+/**
+ * @brief Coordinates the format user page fault report operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @param cr2 Input or output value used by this operation.
+ */
 static void format_user_page_fault_report(char *buf, uint32_t cap,
                                           const struct task *task,
                                           const struct trap_frame *frame,
@@ -280,6 +335,12 @@ static void format_user_page_fault_report(char *buf, uint32_t cap,
     pf_append_u64_dec(buf, &pos, cap, time_ticks());
 }
 
+/**
+ * @brief Coordinates the abort user page fault task operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @param cr2 Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_t cr2)
 {
     struct task *task = sched_current_task();
@@ -314,6 +375,11 @@ static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_
     return userland_schedule_from_frame(NULL);
 }
 
+/**
+ * @brief Coordinates the page fault dispatch operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @return Result, status, or value defined by this API.
+ */
 struct task *page_fault_dispatch(struct trap_frame *frame)
 {
     uint64_t cr2 = x86_64_read_cr2();
@@ -345,6 +411,11 @@ struct task *page_fault_dispatch(struct trap_frame *frame)
     bugcheck_trap("Unhandled Page Fault", frame, cr2);
 }
 
+/**
+ * @brief Coordinates the int80 dispatch operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @return Result, status, or value defined by this API.
+ */
 struct task *int80_dispatch(struct trap_frame *frame)
 {
     syscall_dispatch_frame(frame);

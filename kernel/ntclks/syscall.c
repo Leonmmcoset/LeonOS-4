@@ -131,8 +131,19 @@ struct task_snapshot_user {
     struct task_snapshot_info *tasks;
 };
 
+/**
+ * @brief Coordinates the task effective role operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t task_effective_role(const struct task *task);
 
+/**
+ * @brief Coordinates the device copy text operation.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ */
 static void device_copy_text(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -146,6 +157,13 @@ static void device_copy_text(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Coordinates the device append char operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param ch Input or output value used by this operation.
+ */
 static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
     if (buf && pos && *pos + 1 < cap) {
@@ -154,6 +172,12 @@ static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
     }
 }
 
+/**
+ * @brief Coordinates the text eq cstr operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int text_eq_cstr(const char *a, const char *b)
 {
     uint32_t i = 0;
@@ -166,6 +190,11 @@ static int text_eq_cstr(const char *a, const char *b)
     return a[i] == 0 && b[i] == 0;
 }
 
+/**
+ * @brief Coordinates the oobe dhcp renew allowed operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int oobe_dhcp_renew_allowed(const struct task *task)
 {
     struct storage_node node;
@@ -176,6 +205,10 @@ static int oobe_dhcp_renew_allowed(const struct task *task)
     return storage_lookup_path(OOBE_DONE_MARKER_PATH, &node) < 0;
 }
 
+/**
+ * @brief Validates permission for window server.
+ * @return Result, status, or value defined by this API.
+ */
 static int require_window_server(void)
 {
     struct task *task = sched_current_task();
@@ -185,6 +218,10 @@ static int require_window_server(void)
     return 0;
 }
 
+/**
+ * @brief Validates permission for network config access.
+ * @return Result, status, or value defined by this API.
+ */
 static int require_network_config_access(void)
 {
     struct task *task = sched_current_task();
@@ -204,6 +241,10 @@ static int require_network_config_access(void)
     return -LEONOS_EPERM;
 }
 
+/**
+ * @brief Validates permission for driver management.
+ * @return Result, status, or value defined by this API.
+ */
 static int require_driver_management(void)
 {
     struct task *task = sched_current_task();
@@ -212,6 +253,11 @@ static int require_driver_management(void)
                : -LEONOS_EPERM;
 }
 
+/**
+ * @brief Coordinates the task effective role operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t task_effective_role(const struct task *task)
 {
     if (!task) {
@@ -224,6 +270,10 @@ static uint32_t task_effective_role(const struct task *task)
     return task->role;
 }
 
+/**
+ * @brief Validates permission for background service.
+ * @return Result, status, or value defined by this API.
+ */
 static int require_background_service(void)
 {
     struct task *task = sched_current_task();
@@ -234,6 +284,13 @@ static int require_background_service(void)
     return 0;
 }
 
+/**
+ * @brief Coordinates the device append text operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param text Input or output value used by this operation.
+ */
 static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
     while (text && *text) {
@@ -241,6 +298,13 @@ static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const cha
     }
 }
 
+/**
+ * @brief Coordinates the device append u64 operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void device_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
     char tmp[24];
@@ -258,6 +322,13 @@ static void device_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
     }
 }
 
+/**
+ * @brief Coordinates the device append i32 operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void device_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t value)
 {
     if (value < 0) {
@@ -267,6 +338,13 @@ static void device_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t va
     device_append_u64(buf, pos, cap, (uint32_t)value);
 }
 
+/**
+ * @brief Coordinates the device append ipv4 operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param ip Input or output value used by this operation.
+ */
 static void device_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t ip)
 {
     device_append_u64(buf, pos, cap, (ip >> 24) & 0xffu);
@@ -278,6 +356,19 @@ static void device_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t 
     device_append_u64(buf, pos, cap, ip & 0xffu);
 }
 
+/**
+ * @brief Coordinates the device add operation.
+ * @param devices Input or output value used by this operation.
+ * @param capacity Capacity, in elements or bytes, of the related output buffer.
+ * @param count Length, size, or element count associated with the operation.
+ * @param device_class Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param name Input or output value used by this operation.
+ * @param status Input or output value used by this operation.
+ * @param detail Input or output value used by this operation.
+ * @param value0 Input or output value used by this operation.
+ * @param value1 Input or output value used by this operation.
+ */
 static void device_add(struct leonos_device_info *devices, uint32_t capacity,
                        uint32_t *count, uint32_t device_class, uint32_t flags,
                        const char *name, const char *status, const char *detail,
@@ -303,6 +394,17 @@ static void device_add(struct leonos_device_info *devices, uint32_t capacity,
     device_copy_text(devices[index].detail, sizeof(devices[index].detail), detail);
 }
 
+/**
+ * @brief Coordinates the raw device add operation.
+ * @param raw Input or output value used by this operation.
+ * @param count Length, size, or element count associated with the operation.
+ * @param kind Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param aux0 Input or output value used by this operation.
+ * @param aux1 Input or output value used by this operation.
+ * @param value0 Input or output value used by this operation.
+ * @param value1 Input or output value used by this operation.
+ */
 static void raw_device_add(struct leonos_raw_device_info *raw, uint32_t *count,
                            uint32_t kind, uint32_t flags, uint32_t aux0, uint32_t aux1,
                            uint64_t value0, uint64_t value1)
@@ -322,6 +424,12 @@ static void raw_device_add(struct leonos_raw_device_info *raw, uint32_t *count,
     };
 }
 
+/**
+ * @brief Coordinates the device format fb operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param fb Input or output value used by this operation.
+ */
 static void device_format_fb(char *buf, uint32_t cap, const struct framebuffer *fb)
 {
     uint32_t pos = 0;
@@ -339,6 +447,12 @@ static void device_format_fb(char *buf, uint32_t cap, const struct framebuffer *
     device_append_u64(buf, &pos, cap, fb->pitch);
 }
 
+/**
+ * @brief Coordinates the device format mouse operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param mouse Input or output value used by this operation.
+ */
 static void device_format_mouse(char *buf, uint32_t cap, const struct mouse_state *mouse)
 {
     uint32_t pos = 0;
@@ -356,6 +470,12 @@ static void device_format_mouse(char *buf, uint32_t cap, const struct mouse_stat
     device_append_u64(buf, &pos, cap, mouse->buttons);
 }
 
+/**
+ * @brief Coordinates the device format disk operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param disk Input or output value used by this operation.
+ */
 static void device_format_disk(char *buf, uint32_t cap, const struct leonos_install_disk *disk)
 {
     uint32_t pos = 0;
@@ -369,6 +489,12 @@ static void device_format_disk(char *buf, uint32_t cap, const struct leonos_inst
     device_append_u64(buf, &pos, cap, disk ? disk->sector_size : 0);
 }
 
+/**
+ * @brief Coordinates the device format time operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param time Input or output value used by this operation.
+ */
 static void device_format_time(char *buf, uint32_t cap, const struct leonos_time_info *time)
 {
     uint32_t pos = 0;
@@ -450,6 +576,10 @@ struct exec_params_kernel {
     uint32_t data_len;
 };
 
+/**
+ * @brief Coordinates the normalize dir path operation.
+ * @param path LeonOS path consumed by this operation.
+ */
 static void normalize_dir_path(char *path)
 {
     size_t len = 0;
@@ -464,6 +594,12 @@ static void normalize_dir_path(char *path)
     }
 }
 
+/**
+ * @brief Copies text.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ */
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -477,6 +613,10 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Coordinates the clear task file operation.
+ * @param file Input or output value used by this operation.
+ */
 static void clear_task_file(struct task_file *file)
 {
     if (!file) {
@@ -494,6 +634,10 @@ static void clear_task_file(struct task_file *file)
     file->path[0] = 0;
 }
 
+/**
+ * @brief Coordinates the clear task files operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 static void clear_task_files(struct task *task)
 {
     if (!task) {
@@ -504,6 +648,10 @@ static void clear_task_files(struct task *task)
     }
 }
 
+/**
+ * @brief Coordinates the syscall release task files operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 void syscall_release_task_files(struct task *task)
 {
     if (task) {
@@ -512,6 +660,12 @@ void syscall_release_task_files(struct task *task)
     clear_task_files(task);
 }
 
+/**
+ * @brief Coordinates the task file for fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param fd Open file descriptor used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_file *task_file_for_fd(struct task *task, int fd)
 {
     if (!task || fd < 4 || fd >= 4 + (int)SCHED_TASK_FILE_MAX) {
@@ -529,6 +683,12 @@ static struct task_file *task_file_for_fd(struct task *task, int fd)
 #define LEONOS_F_DUPFD_CLOEXEC 14
 #define LEONOS_FD_CLOEXEC 1
 
+/**
+ * @brief Coordinates the task pty fd for fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param fd Open file descriptor used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
 {
     if (!task || !task->pty_id || fd < 4) {
@@ -543,6 +703,12 @@ static struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task pty stream for fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param fd Open file descriptor used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_pty_stream_for_fd(struct task *task, int fd)
 {
     struct task_pty_fd *entry;
@@ -556,6 +722,12 @@ static int task_pty_stream_for_fd(struct task *task, int fd)
     return entry ? (int)entry->stream : -1;
 }
 
+/**
+ * @brief Coordinates the task pty fd available operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param fd Open file descriptor used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_pty_fd_available(struct task *task, int fd)
 {
     if (fd < 4 || task_file_for_fd(task, fd) || task_pty_fd_for_fd(task, fd)) {
@@ -564,6 +736,14 @@ static int task_pty_fd_available(struct task *task, int fd)
     return 1;
 }
 
+/**
+ * @brief Coordinates the task pty duplicate fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param old_fd Input or output value used by this operation.
+ * @param minimum_fd Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
                                  uint32_t flags)
 {
@@ -596,6 +776,13 @@ static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
     return -LEONOS_EMFILE;
 }
 
+/**
+ * @brief Coordinates the task pty dup2 fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param old_fd Input or output value used by this operation.
+ * @param new_fd Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
 {
     int stream = task_pty_stream_for_fd(task, old_fd);
@@ -629,6 +816,14 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
     return new_fd;
 }
 
+/**
+ * @brief Allocates task fd.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param node Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param path LeonOS path consumed by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int alloc_task_fd(struct task *task, const struct storage_node *node, uint32_t flags, const char *path)
 {
     if (!task || !node) {
@@ -649,18 +844,35 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node, uin
     return -LEONOS_EMFILE;
 }
 
+/**
+ * @brief Coordinates the file can read operation.
+ * @param file Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int file_can_read(const struct task_file *file)
 {
     uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
     return acc == LEONOS_O_RDONLY || acc == LEONOS_O_RDWR;
 }
 
+/**
+ * @brief Coordinates the file can write operation.
+ * @param file Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int file_can_write(const struct task_file *file)
 {
     uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
     return acc == LEONOS_O_WRONLY || acc == LEONOS_O_RDWR;
 }
 
+/**
+ * @brief Copies user path.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param user_ptr Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int copy_user_path(char *dst, uint32_t cap, uint64_t user_ptr)
 {
     size_t len;
@@ -677,6 +889,14 @@ static int copy_user_path(char *dst, uint32_t cap, uint64_t user_ptr)
     return 0;
 }
 
+/**
+ * @brief Coordinates the resolve user path operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param user_ptr Input or output value used by this operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @return Result, status, or value defined by this API.
+ */
 static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, uint32_t cap)
 {
     char raw[LEONOS_FS_PATH_LEN];
@@ -692,6 +912,11 @@ static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, ui
     return 0;
 }
 
+/**
+ * @brief Coordinates the storage errno operation.
+ * @param ret Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int storage_errno(int ret)
 {
     if (ret == -2) {
@@ -712,6 +937,14 @@ static int storage_errno(int ret)
     return ret;
 }
 
+/**
+ * @brief Copies user string fixed.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param user_ptr Input or output value used by this operation.
+ * @param out_len Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr, uint32_t *out_len)
 {
     size_t len;
@@ -734,6 +967,12 @@ static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr, ui
     return 0;
 }
 
+/**
+ * @brief Coordinates the kernel string len cap operation.
+ * @param text Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t kernel_string_len_cap(const char *text, uint32_t cap)
 {
     uint32_t len = 0;
@@ -743,6 +982,11 @@ static uint32_t kernel_string_len_cap(const char *text, uint32_t cap)
     return len;
 }
 
+/**
+ * @brief Coordinates the kernel clear secret operation.
+ * @param data Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ */
 static void kernel_clear_secret(void *data, uint32_t len)
 {
     volatile uint8_t *p = (volatile uint8_t *)data;
@@ -752,6 +996,12 @@ static void kernel_clear_secret(void *data, uint32_t len)
     }
 }
 
+/**
+ * @brief Coordinates the auth copy current user operation.
+ * @param user Input or output value used by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int auth_copy_current_user(struct leonos_user_info *user, const struct task *task)
 {
     if (!user) {
@@ -769,6 +1019,15 @@ static int auth_copy_current_user(struct leonos_user_info *user, const struct ta
     return 0;
 }
 
+/**
+ * @brief Coordinates the authz check path operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param op Input or output value used by this operation.
+ * @param path LeonOS path consumed by this operation.
+ * @param target_uid Input or output value used by this operation.
+ * @param target_role Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int authz_check_path(const struct task *task, uint32_t op,
                             const char *path, uint32_t target_uid,
                             uint32_t target_role)
@@ -806,11 +1065,21 @@ static int authz_check_path(const struct task *task, uint32_t op,
     return req.allowed ? 0 : -LEONOS_EACCES;
 }
 
+/**
+ * @brief Coordinates the authz check install operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int authz_check_install(const struct task *task)
 {
     return authz_check_path(task, LEONOS_AUTHZ_INSTALL, 0, 0, 0);
 }
 
+/**
+ * @brief Coordinates the fs acl fill actor operation.
+ * @param req Input or output value used by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 static void fs_acl_fill_actor(struct leonos_fs_acl_request *req,
                               const struct task *task)
 {
@@ -831,6 +1100,11 @@ static void fs_acl_fill_actor(struct leonos_fs_acl_request *req,
     }
 }
 
+/**
+ * @brief Coordinates the fs acl dispatch operation.
+ * @param req Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int fs_acl_dispatch(struct leonos_fs_acl_request *req)
 {
     if (!req) {
@@ -839,6 +1113,13 @@ static int fs_acl_dispatch(struct leonos_fs_acl_request *req)
     return osmlayer_auth_op(LEONOS_AUTH_OP_FSPERM, req);
 }
 
+/**
+ * @brief Coordinates the fs acl notify operation.
+ * @param action Input or output value used by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param path LeonOS path consumed by this operation.
+ * @param path2 LeonOS path consumed by this operation.
+ */
 static void fs_acl_notify(uint32_t action, const struct task *task,
                           const char *path, const char *path2)
 {
@@ -853,9 +1134,20 @@ static void fs_acl_notify(uint32_t action, const struct task *task,
         copy_text(req.path2, sizeof(req.path2), path2);
     }
     fs_acl_fill_actor(&req, task);
+    /**
+ * @brief Coordinates the fs acl dispatch operation.
+ * @param req Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
     (void)fs_acl_dispatch(&req);
 }
 
+/**
+ * @brief Coordinates the fs acl handle ioctl operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @param user_arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
     struct task *task = sched_current_task();
@@ -912,6 +1204,11 @@ static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
     return 0;
 }
 
+/**
+ * @brief Coordinates the auth apply session login operation.
+ * @param caller Input or output value used by this operation.
+ * @param user Input or output value used by this operation.
+ */
 static void auth_apply_session_login(struct task *caller,
                                      const struct leonos_user_info *user)
 {
@@ -926,6 +1223,10 @@ static void auth_apply_session_login(struct task *caller,
     sched_set_task_identity(caller->pid, user, session_id);
 }
 
+/**
+ * @brief Coordinates the auth cleanup logged out task operation.
+ * @param pid Input or output value used by this operation.
+ */
 static void auth_cleanup_logged_out_task(uint32_t pid)
 {
     net_close_owner_sockets(pid);
@@ -933,6 +1234,12 @@ static void auth_cleanup_logged_out_task(uint32_t pid)
     pty_process_exit(pid);
 }
 
+/**
+ * @brief Coordinates the auth kill session tasks for logout operation.
+ * @param uid Input or output value used by this operation.
+ * @param session_id Input or output value used by this operation.
+ * @param keep_pid Input or output value used by this operation.
+ */
 static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                                uint32_t keep_pid)
 {
@@ -957,6 +1264,12 @@ static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id
     }
 }
 
+/**
+ * @brief Coordinates the auth handle ioctl operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @param user_arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
     struct task *task = sched_current_task();
@@ -1149,6 +1462,11 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
     return -LEONOS_ENOSYS;
 }
 
+/**
+ * @brief Coordinates the startup release file operation.
+ * @param data Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ */
 static void startup_release_file(const void *data, size_t len)
 {
     uint32_t pages = (uint32_t)((len + 4095U) / 4096U);
@@ -1157,6 +1475,11 @@ static void startup_release_file(const void *data, size_t len)
     }
 }
 
+/**
+ * @brief Coordinates the startup command is well formed operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_command_is_well_formed(const struct leonos_startup_command *command)
 {
     if (!command || !command->path[0] || command->argc > LEONOS_STARTUP_MAX_ARGS ||
@@ -1172,6 +1495,11 @@ static int startup_command_is_well_formed(const struct leonos_startup_command *c
     return 1;
 }
 
+/**
+ * @brief Coordinates the startup db is well formed operation.
+ * @param db Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_db_is_well_formed(const struct startup_db *db)
 {
     if (!db || db->magic != STARTUP_DB_MAGIC || db->count > STARTUP_DB_ENTRY_MAX ||
@@ -1187,6 +1515,11 @@ static int startup_db_is_well_formed(const struct startup_db *db)
     return 1;
 }
 
+/**
+ * @brief Coordinates the startup denial db is well formed operation.
+ * @param db Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_denial_db_is_well_formed(const struct startup_denial_db *db)
 {
     if (!db || db->magic != STARTUP_DENIAL_DB_MAGIC || db->count > STARTUP_DENIAL_MAX) {
@@ -1204,6 +1537,9 @@ static int startup_denial_db_is_well_formed(const struct startup_denial_db *db)
     return 1;
 }
 
+/**
+ * @brief Coordinates the startup db load operation.
+ */
 static void startup_db_load(void)
 {
     const void *data = 0;
@@ -1221,6 +1557,10 @@ static void startup_db_load(void)
     startup_release_file(data, len);
 }
 
+/**
+ * @brief Coordinates the startup db save operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_db_save(void)
 {
     (void)storage_mkdir("0:/system");
@@ -1229,6 +1569,9 @@ static int startup_db_save(void)
                               sizeof(startup_db_scratch));
 }
 
+/**
+ * @brief Coordinates the startup denial db load operation.
+ */
 static void startup_denial_db_load(void)
 {
     const void *data = 0;
@@ -1245,6 +1588,10 @@ static void startup_denial_db_load(void)
     startup_release_file(data, len);
 }
 
+/**
+ * @brief Coordinates the startup denial db save operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_denial_db_save(void)
 {
     (void)storage_mkdir("0:/system");
@@ -1253,6 +1600,12 @@ static int startup_denial_db_save(void)
                               sizeof(startup_denial_db_scratch));
 }
 
+/**
+ * @brief Coordinates the startup text eq operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_text_eq(const char *a, const char *b)
 {
     uint32_t i = 0;
@@ -1265,6 +1618,12 @@ static int startup_text_eq(const char *a, const char *b)
     return a[i] == 0 && b[i] == 0;
 }
 
+/**
+ * @brief Coordinates the startup command equal operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_command_equal(const struct leonos_startup_command *a,
                                  const struct leonos_startup_command *b)
 {
@@ -1279,6 +1638,12 @@ static int startup_command_equal(const struct leonos_startup_command *a,
     return 1;
 }
 
+/**
+ * @brief Coordinates the startup command validate operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_command_validate(struct leonos_startup_command *command,
                                     const struct task *task)
 {
@@ -1327,6 +1692,12 @@ static int startup_command_validate(struct leonos_startup_command *command,
     return 0;
 }
 
+/**
+ * @brief Coordinates the startup can manage uid operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param uid Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_can_manage_uid(const struct task *task, uint32_t uid)
 {
     return task && task->uid && uid &&
@@ -1334,6 +1705,12 @@ static int startup_can_manage_uid(const struct task *task, uint32_t uid)
             task->uid == uid);
 }
 
+/**
+ * @brief Coordinates the startup db find operation.
+ * @param uid Input or output value used by this operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_db_find(uint32_t uid, const struct leonos_startup_command *command)
 {
     for (uint32_t i = 0; i < startup_db_scratch.count; ++i) {
@@ -1345,6 +1722,13 @@ static int startup_db_find(uint32_t uid, const struct leonos_startup_command *co
     return -1;
 }
 
+/**
+ * @brief Coordinates the startup denial find operation.
+ * @param uid Input or output value used by this operation.
+ * @param requester_path LeonOS path consumed by this operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_denial_find(uint32_t uid, const char *requester_path,
                                const struct leonos_startup_command *command)
 {
@@ -1358,6 +1742,13 @@ static int startup_denial_find(uint32_t uid, const char *requester_path,
     return -1;
 }
 
+/**
+ * @brief Coordinates the startup remember denial operation.
+ * @param uid Input or output value used by this operation.
+ * @param requester_path LeonOS path consumed by this operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_remember_denial(uint32_t uid, const char *requester_path,
                                    const struct leonos_startup_command *command)
 {
@@ -1373,6 +1764,11 @@ static int startup_remember_denial(uint32_t uid, const char *requester_path,
     return startup_denial_db_save();
 }
 
+/**
+ * @brief Coordinates the startup request find operation.
+ * @param id Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct startup_request_slot *startup_request_find(uint32_t id)
 {
     for (uint32_t i = 0; i < STARTUP_REQUEST_MAX; ++i) {
@@ -1383,6 +1779,10 @@ static struct startup_request_slot *startup_request_find(uint32_t id)
     return 0;
 }
 
+/**
+ * @brief Coordinates the startup request reconcile operation.
+ * @param slot Input or output value used by this operation.
+ */
 static void startup_request_reconcile(struct startup_request_slot *slot)
 {
     struct task *dialog;
@@ -1395,6 +1795,10 @@ static void startup_request_reconcile(struct startup_request_slot *slot)
     }
 }
 
+/**
+ * @brief Coordinates the startup request alloc operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct startup_request_slot *startup_request_alloc(void)
 {
     for (uint32_t i = 0; i < STARTUP_REQUEST_MAX; ++i) {
@@ -1419,6 +1823,12 @@ static struct startup_request_slot *startup_request_alloc(void)
     return 0;
 }
 
+/**
+ * @brief Coordinates the startup add entry operation.
+ * @param uid Input or output value used by this operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_add_entry(uint32_t uid, const struct leonos_startup_command *command)
 {
     int existing;
@@ -1450,6 +1860,11 @@ static int startup_add_entry(uint32_t uid, const struct leonos_startup_command *
     return startup_db_save();
 }
 
+/**
+ * @brief Coordinates the startup dialog spawn operation.
+ * @param slot Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_dialog_spawn(struct startup_request_slot *slot)
 {
     const char *argv[] = {SYSCONFDIALOG_APP_PATH, 0};
@@ -1468,6 +1883,12 @@ static int startup_dialog_spawn(struct startup_request_slot *slot)
     return 0;
 }
 
+/**
+ * @brief Coordinates the startup handle ioctl operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @param user_arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
     struct task *task = sched_current_task();
@@ -1677,6 +2098,17 @@ static int startup_handle_ioctl(uint64_t request, uint64_t user_arg)
     return -LEONOS_ENOSYS;
 }
 
+/**
+ * @brief Copies user vector.
+ * @param user_ptr Input or output value used by this operation.
+ * @param max_count Length, size, or element count associated with the operation.
+ * @param out_ptrs Caller-provided storage that receives output from this operation.
+ * @param data Input or output value used by this operation.
+ * @param data_cap Capacity, in elements or bytes, of the related output buffer.
+ * @param out_count Caller-provided storage that receives output from this operation.
+ * @param data_len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int copy_user_vector(uint64_t user_ptr, uint32_t max_count,
                             char *out_ptrs[], char *data,
                             uint32_t data_cap, uint32_t *out_count, uint32_t *data_len)
@@ -1717,6 +2149,17 @@ static int copy_user_vector(uint64_t user_ptr, uint32_t max_count,
     return 0;
 }
 
+/**
+ * @brief Copies exec params from user.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param path_ptr LeonOS path consumed by this operation.
+ * @param argv_ptr Input or output value used by this operation.
+ * @param envp_ptr Input or output value used by this operation.
+ * @param path_out LeonOS path consumed by this operation.
+ * @param path_cap Capacity, in elements or bytes, of the related output buffer.
+ * @param params Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int copy_exec_params_from_user(struct task *task, uint64_t path_ptr, uint64_t argv_ptr, uint64_t envp_ptr,
                                       char *path_out, uint32_t path_cap, struct exec_params_kernel *params)
 {
@@ -1772,6 +2215,13 @@ static int copy_exec_params_from_user(struct task *task, uint64_t path_ptr, uint
     return 0;
 }
 
+/**
+ * @brief Coordinates the stat for fd operation.
+ * @param fd Open file descriptor used by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param st Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
 {
     if (!st) {
@@ -1793,16 +2243,32 @@ static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
     return 0;
 }
 
+/**
+ * @brief Coordinates the align up page operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_up_page(uint64_t value)
 {
     return (value + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
 }
 
+/**
+ * @brief Coordinates the align down page operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_down_page(uint64_t value)
 {
     return value & ~(PAGE_SIZE - 1ULL);
 }
 
+/**
+ * @brief Coordinates the align user len operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int align_user_len(uint64_t len, uint64_t *out)
 {
     if (!len || len > NTCLKS_USER_TOP - NTCLKS_USER_BASE) {
@@ -1815,6 +2281,11 @@ static int align_user_len(uint64_t len, uint64_t *out)
     return *out ? 0 : -LEONOS_EINVAL;
 }
 
+/**
+ * @brief Coordinates the task mmap top operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t task_mmap_top(const struct task *task)
 {
     uint64_t stack_top = (task && task->stack_top) ? task->stack_top : NTCLKS_USER_TOP - PAGE_SIZE;
@@ -1825,6 +2296,11 @@ static uint64_t task_mmap_top(const struct task *task)
     return stack_low;
 }
 
+/**
+ * @brief Coordinates the task vma free slot operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *task_vma_free_slot(struct task *task)
 {
     if (!task) {
@@ -1838,11 +2314,24 @@ static struct task_vma *task_vma_free_slot(struct task *task)
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task vma attrs match operation.
+ * @param vma Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_attrs_match(const struct task_vma *vma, uint64_t prot, uint32_t flags)
 {
     return vma && vma->used && vma->prot == (uint32_t)prot && vma->flags == flags;
 }
 
+/**
+ * @brief Coordinates the storage nodes equal operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int storage_nodes_equal(const struct storage_node *a, const struct storage_node *b)
 {
     return a && b &&
@@ -1853,6 +2342,12 @@ static int storage_nodes_equal(const struct storage_node *a, const struct storag
            a->size == b->size;
 }
 
+/**
+ * @brief Coordinates the task vma file attrs match operation.
+ * @param vma Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_file_attrs_match(const struct task_vma *vma,
                                      const struct storage_node *file_node)
 {
@@ -1863,6 +2358,10 @@ static int task_vma_file_attrs_match(const struct task_vma *vma,
            file_node && vma->file_limit == file_node->size;
 }
 
+/**
+ * @brief Coordinates the task vma clear operation.
+ * @param vma Input or output value used by this operation.
+ */
 static void task_vma_clear(struct task_vma *vma)
 {
     if (vma) {
@@ -1870,6 +2369,13 @@ static void task_vma_clear(struct task_vma *vma)
     }
 }
 
+/**
+ * @brief Coordinates the task vma containing operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *task_vma_containing(struct task *task, uint64_t start, uint64_t end)
 {
     if (!task) {
@@ -1883,6 +2389,16 @@ static struct task_vma *task_vma_containing(struct task *task, uint64_t start, u
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task vma left adjacent operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @param file_offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start,
                                                 uint64_t prot, uint32_t flags,
                                                 const struct storage_node *file_node,
@@ -1904,6 +2420,17 @@ static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task vma right adjacent operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param end Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @param file_offset Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
                                                  uint64_t prot, uint32_t flags,
                                                  const struct storage_node *file_node,
@@ -1926,6 +2453,17 @@ static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task vma can record mapping operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @param file_offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_can_record_mapping(struct task *task, uint64_t start, uint64_t end,
                                        uint64_t prot, uint32_t flags,
                                        const struct storage_node *file_node,
@@ -1937,6 +2475,17 @@ static int task_vma_can_record_mapping(struct task *task, uint64_t start, uint64
            task_vma_free_slot(task);
 }
 
+/**
+ * @brief Coordinates the task vma record mapping operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @param file_offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t end,
                                    uint64_t prot, uint32_t flags,
                                    const struct storage_node *file_node,
@@ -1980,6 +2529,13 @@ static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t e
     return 0;
 }
 
+/**
+ * @brief Coordinates the task vma overlaps operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t end)
 {
     if (!task) {
@@ -1993,6 +2549,13 @@ static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t e
     return 0;
 }
 
+/**
+ * @brief Coordinates the task user pages free operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_user_pages_free(const struct task *task, uint64_t start, uint64_t end)
 {
     if (!task || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP) {
@@ -2009,6 +2572,11 @@ static int task_user_pages_free(const struct task *task, uint64_t start, uint64_
     return 1;
 }
 
+/**
+ * @brief Coordinates the task vma count operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t task_vma_count(const struct task *task)
 {
     uint32_t count = 0;
@@ -2023,6 +2591,12 @@ static uint32_t task_vma_count(const struct task *task)
     return count;
 }
 
+/**
+ * @brief Coordinates the task find mmap region operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
 {
     uint64_t top = task_mmap_top(task);
@@ -2061,6 +2635,12 @@ static uint64_t task_find_file_mmap_region(struct task *task, uint64_t len)
     return 0;
 }
 
+/**
+ * @brief Coordinates the task unmap pages operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ */
 static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
 {
     if (!task) {
@@ -2074,6 +2654,10 @@ static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
     }
 }
 
+/**
+ * @brief Coordinates the zero phys page operation.
+ * @param phys Input or output value used by this operation.
+ */
 static void zero_phys_page(uint64_t phys)
 {
     uint8_t *ptr = (uint8_t *)(uintptr_t)phys;
@@ -2082,6 +2666,14 @@ static void zero_phys_page(uint64_t phys)
     }
 }
 
+/**
+ * @brief Coordinates the task map anonymous pages operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param page_flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t end,
                                     uint64_t page_flags)
 {
@@ -2113,6 +2705,13 @@ static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t 
     return 0;
 }
 
+/**
+ * @brief Coordinates the task map file vma page operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param vma Input or output value used by this operation.
+ * @param page Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
                                   uint64_t page)
 {
@@ -2148,6 +2747,12 @@ static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
     return 0;
 }
 
+/**
+ * @brief Coordinates the syscall handle user page fault operation.
+ * @param fault_addr Address used by this operation; its address-space interpretation follows the API.
+ * @param error Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
 {
     if (error & 0x9ULL) {
@@ -2177,6 +2782,16 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
     return task_map_file_vma_page(task, vma, page) == 0;
 }
 
+/**
+ * @brief Handles the mmap.
+ * @param addr Address used by this operation; its address-space interpretation follows the API.
+ * @param len Length, size, or element count associated with the operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param fd Open file descriptor used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
                         uint64_t flags, uint64_t fd, uint64_t offset)
 {
@@ -2300,6 +2915,13 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     return (int64_t)start;
 }
 
+/**
+ * @brief Handles the mprotect.
+ * @param addr Address used by this operation; its address-space interpretation follows the API.
+ * @param len Length, size, or element count associated with the operation.
+ * @param prot Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
 {
     struct task *task = sched_current_task();
@@ -2391,6 +3013,12 @@ static int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
     return 0;
 }
 
+/**
+ * @brief Handles the munmap.
+ * @param addr Address used by this operation; its address-space interpretation follows the API.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t sys_munmap(uint64_t addr, uint64_t len)
 {
     struct task *task = sched_current_task();
@@ -2470,11 +3098,19 @@ static int64_t sys_munmap(uint64_t addr, uint64_t len)
     return 0;
 }
 
+/**
+ * @brief Coordinates the syscall init operation.
+ */
 void syscall_init(void)
 {
     console_printf("[ntclks] Linux x86_64 syscall ABI registered\n");
 }
 
+/**
+ * @brief Coordinates the syscall dispatch operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t syscall_dispatch(const struct syscall_frame *frame)
 {
     if (!frame) {
@@ -2509,6 +3145,17 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
     }
 }
 
+/**
+ * @brief Coordinates the syscall dispatch regs operation.
+ * @param number Input or output value used by this operation.
+ * @param a0 Input or output value used by this operation.
+ * @param a1 Input or output value used by this operation.
+ * @param a2 Input or output value used by this operation.
+ * @param a3 Input or output value used by this operation.
+ * @param a4 Input or output value used by this operation.
+ * @param a5 Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, uint64_t a2,
                                      uint64_t a3, uint64_t a4, uint64_t a5)
 {
@@ -4479,6 +5126,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     return syscall_dispatch(&frame);
 }
 
+/**
+ * @brief Coordinates the syscall dispatch frame operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ */
 void syscall_dispatch_frame(struct trap_frame *frame)
 {
     uint64_t number;

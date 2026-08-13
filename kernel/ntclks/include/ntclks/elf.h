@@ -26,9 +26,31 @@ struct elf_image_info {
     char interp[64];
 };
 
+/**
+ * @brief Coordinates the elf64 probe operation.
+ * @param image Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool elf64_probe(const void *image, size_t len, struct elf_image_info *out);
+/**
+ * @brief Coordinates the elf64 load address space operation.
+ * @param as Input or output value used by this operation.
+ * @param image Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool elf64_load_address_space(struct address_space *as, const void *image, size_t len,
                               struct elf_image_info *out);
+/**
+ * @brief Coordinates the elf64 map task image operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param node Input or output value used by this operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool elf64_map_task_image(struct task *task, const struct storage_node *node,
                           struct elf_image_info *out);
 

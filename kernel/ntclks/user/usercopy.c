@@ -9,11 +9,22 @@
 
 #define PAGE_SIZE 4096ULL
 
+/**
+ * @brief Coordinates the align down page operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_down_page(uint64_t value)
 {
     return value & ~(PAGE_SIZE - 1ULL);
 }
 
+/**
+ * @brief Coordinates the user range ok operation.
+ * @param ptr Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 bool user_range_ok(uint64_t ptr, uint64_t len)
 {
     struct task *task;
@@ -45,6 +56,12 @@ bool user_range_ok(uint64_t ptr, uint64_t len)
     return true;
 }
 
+/**
+ * @brief Coordinates the user strlen operation.
+ * @param s Input or output value used by this operation.
+ * @param max Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 size_t user_strlen(const char *s, size_t max)
 {
     size_t n = 0;

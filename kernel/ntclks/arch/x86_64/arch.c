@@ -14,6 +14,11 @@
 
 static uint8_t initial_fpu_state[512] __attribute__((aligned(16)));
 
+/**
+ * @brief Copies fpu state.
+ * @param dst Input or output value used by this operation.
+ * @param src Input or output value used by this operation.
+ */
 static void copy_fpu_state(void *dst, const void *src)
 {
     uint8_t *out = (uint8_t *)dst;
@@ -23,11 +28,17 @@ static void copy_fpu_state(void *dst, const void *src)
     }
 }
 
+/**
+ * @brief Coordinates the arch init operation.
+ */
 void arch_init(void)
 {
     console_printf("[ntclks] arch/x86_64 initialized\n");
 }
 
+/**
+ * @brief Coordinates the arch fpu init operation.
+ */
 void arch_fpu_init(void)
 {
     uint64_t cr0;
@@ -48,16 +59,28 @@ void arch_fpu_init(void)
     console_printf("[ntclks] x87/SSE task state enabled\n");
 }
 
+/**
+ * @brief Coordinates the arch fpu task init operation.
+ * @param state Input or output value used by this operation.
+ */
 void arch_fpu_task_init(void *state)
 {
     copy_fpu_state(state, initial_fpu_state);
 }
 
+/**
+ * @brief Coordinates the arch fpu save operation.
+ * @param state Input or output value used by this operation.
+ */
 void arch_fpu_save(void *state)
 {
     __asm__ volatile("fxsave64 (%0)" : : "r"(state) : "memory");
 }
 
+/**
+ * @brief Coordinates the arch fpu restore operation.
+ * @param state Input or output value used by this operation.
+ */
 void arch_fpu_restore(const void *state)
 {
     __asm__ volatile("fxrstor64 (%0)" : : "r"(state) : "memory");

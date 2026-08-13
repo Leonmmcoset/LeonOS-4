@@ -12,6 +12,12 @@
 
 #include "../arch/x86_64/port.h"
 
+/**
+ * @brief Coordinates the bugcheck color operation.
+ * @param win95 Input or output value used by this operation.
+ * @param metro Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t bugcheck_color(uint32_t win95, uint32_t metro)
 {
     return gui_ipc_appearance_theme() == 0u ? win95 : metro;
@@ -40,6 +46,12 @@ struct bugcheck_info {
     const char *task_name;
 };
 
+/**
+ * @brief Copies text.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ */
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -53,6 +65,13 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Appends char.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param ch Input or output value used by this operation.
+ */
 static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
     if (!buf || !pos || *pos + 1 >= cap) {
@@ -63,6 +82,13 @@ static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
     buf[*pos] = 0;
 }
 
+/**
+ * @brief Appends text.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param text Input or output value used by this operation.
+ */
 static void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
     while (text && *text) {
@@ -70,6 +96,13 @@ static void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text
     }
 }
 
+/**
+ * @brief Appends u64 dec.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
     char tmp[24];
@@ -87,6 +120,13 @@ static void append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t valu
     }
 }
 
+/**
+ * @brief Appends u64 hex.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
     const char *digits = "0123456789ABCDEF";
@@ -96,6 +136,11 @@ static void append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t valu
     }
 }
 
+/**
+ * @brief Coordinates the exception name operation.
+ * @param vector Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static const char *exception_name(uint64_t vector)
 {
     switch (vector) {
@@ -126,11 +171,23 @@ static const char *exception_name(uint64_t vector)
     }
 }
 
+/**
+ * @brief Coordinates the fault mode operation.
+ * @param info Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static const char *fault_mode(const struct bugcheck_info *info)
 {
     return info && (info->cs & 3u) == 3u ? "user" : "kernel";
 }
 
+/**
+ * @brief Appends page fault flags.
+ * @param line Input or output value used by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param error Input or output value used by this operation.
+ */
 static void append_page_fault_flags(char *line, uint32_t *pos, uint32_t cap,
                                     uint64_t error)
 {
@@ -146,6 +203,10 @@ static void append_page_fault_flags(char *line, uint32_t *pos, uint32_t cap,
     append_char(line, pos, cap, (error & 16u) ? '1' : '0');
 }
 
+/**
+ * @brief Coordinates the collect bugcheck info operation.
+ * @param info Input or output value used by this operation.
+ */
 static void collect_bugcheck_info(struct bugcheck_info *info)
 {
     struct task *task;
@@ -159,6 +220,10 @@ static void collect_bugcheck_info(struct bugcheck_info *info)
     info->task_name = (task && task->name) ? task->name : "(none)";
 }
 
+/**
+ * @brief Coordinates the draw bugcheck vga operation.
+ * @param info Input or output value used by this operation.
+ */
 static void draw_bugcheck_vga(const struct bugcheck_info *info)
 {
     char line[96];
@@ -218,6 +283,10 @@ static void draw_bugcheck_vga(const struct bugcheck_info *info)
     }
 }
 
+/**
+ * @brief Coordinates the draw bugcheck fb operation.
+ * @param info Input or output value used by this operation.
+ */
 static void draw_bugcheck_fb(const struct bugcheck_info *info)
 {
     const struct framebuffer *fb = framebuffer_get();
@@ -322,6 +391,9 @@ static void draw_bugcheck_fb(const struct bugcheck_info *info)
                      BUGCHECK_SUB, BUGCHECK_PANEL);
 }
 
+/**
+ * @brief Coordinates the bugcheck halt forever operation.
+ */
 static __attribute__((noreturn)) void bugcheck_halt_forever(void)
 {
     console_disable_framebuffer();
@@ -330,6 +402,10 @@ static __attribute__((noreturn)) void bugcheck_halt_forever(void)
     }
 }
 
+/**
+ * @brief Coordinates the bugcheck commit operation.
+ * @param info Input or output value used by this operation.
+ */
 static __attribute__((noreturn)) void bugcheck_commit(struct bugcheck_info *info)
 {
     if (!info) {
@@ -374,6 +450,10 @@ static __attribute__((noreturn)) void bugcheck_commit(struct bugcheck_info *info
     bugcheck_halt_forever();
 }
 
+/**
+ * @brief Coordinates the bugcheck panic operation.
+ * @param message Input or output value used by this operation.
+ */
 __attribute__((noreturn)) void bugcheck_panic(const char *message)
 {
     struct bugcheck_info info = {
@@ -391,6 +471,17 @@ __attribute__((noreturn)) void bugcheck_panic(const char *message)
     bugcheck_commit(&info);
 }
 
+/**
+ * @brief Coordinates the bugcheck exception operation.
+ * @param vector Input or output value used by this operation.
+ * @param error Input or output value used by this operation.
+ * @param rip Input or output value used by this operation.
+ * @param cs Input or output value used by this operation.
+ * @param rflags Input or output value used by this operation.
+ * @param rsp Input or output value used by this operation.
+ * @param ss Input or output value used by this operation.
+ * @param cr2 Input or output value used by this operation.
+ */
 __attribute__((noreturn)) void bugcheck_exception(uint64_t vector, uint64_t error,
                                                   uint64_t rip, uint64_t cs,
                                                   uint64_t rflags, uint64_t rsp,
@@ -411,6 +502,12 @@ __attribute__((noreturn)) void bugcheck_exception(uint64_t vector, uint64_t erro
     bugcheck_commit(&info);
 }
 
+/**
+ * @brief Coordinates the bugcheck trap operation.
+ * @param reason Input or output value used by this operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @param cr2 Input or output value used by this operation.
+ */
 __attribute__((noreturn)) void bugcheck_trap(const char *reason, const struct trap_frame *frame,
                                              uint64_t cr2)
 {

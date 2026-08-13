@@ -25,9 +25,16 @@ const SYS_CHDIR: u64 = 80;
 
 const ENOSYS: i64 = 38;
 const EBADF: i64 = 9;
-
+/**
+ * @brief Initializes linux abi.
+ */
 pub fn init_linux_abi() {}
-
+/**
+ * @brief Dispatches the subsystem.
+ * @param number Input or output value used by this operation.
+ * @param args Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 pub fn dispatch(number: u64, args: &[u64; 6]) -> i64 {
     match number {
         SYS_WRITE => write(args[0], args[1], args[2]),
@@ -49,7 +56,13 @@ pub fn dispatch(number: u64, args: &[u64; 6]) -> i64 {
         _ => -ENOSYS,
     }
 }
-
+/**
+ * @brief Writes the subsystem.
+ * @param fd Open file descriptor used by this operation.
+ * @param _buf Buffer consumed or filled by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 fn write(fd: u64, _buf: u64, len: u64) -> i64 {
     match fd {
         1 | 2 => len as i64,
@@ -59,7 +72,13 @@ fn write(fd: u64, _buf: u64, len: u64) -> i64 {
         }
     }
 }
-
+/**
+ * @brief Coordinates the ioctl operation.
+ * @param _fd Input or output value used by this operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @param _arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 fn ioctl(_fd: u64, request: u64, _arg: u64) -> i64 {
     match request {
         0x4c_47_55_49 => gui::client_api_version() as i64,

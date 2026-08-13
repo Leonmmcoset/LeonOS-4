@@ -28,11 +28,19 @@ static uint64_t wall_unix_seconds;
 static uint64_t wall_subticks;
 static uint8_t wall_clock_valid;
 
+/**
+ * @brief Coordinates the cmos wait operation.
+ */
 static void cmos_wait(void)
 {
     x86_64_outb(0, 0x80);
 }
 
+/**
+ * @brief Coordinates the cmos read operation.
+ * @param reg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint8_t cmos_read(uint8_t reg)
 {
     x86_64_outb((uint8_t)(CMOS_NMI_DISABLE | reg), CMOS_ADDRESS);
@@ -40,21 +48,41 @@ static uint8_t cmos_read(uint8_t reg)
     return x86_64_inb(CMOS_DATA);
 }
 
+/**
+ * @brief Coordinates the rtc update in progress operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int rtc_update_in_progress(void)
 {
     return (cmos_read(CMOS_STATUS_A) & 0x80u) != 0;
 }
 
+/**
+ * @brief Coordinates the bcd to binary operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t bcd_to_binary(uint8_t value)
 {
     return (uint32_t)((value & 0x0fu) + ((value >> 4) * 10u));
 }
 
+/**
+ * @brief Reports whether leap year.
+ * @param year Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int is_leap_year(uint32_t year)
 {
     return (year % 4u == 0 && year % 100u != 0) || (year % 400u == 0);
 }
 
+/**
+ * @brief Coordinates the days in month operation.
+ * @param year Input or output value used by this operation.
+ * @param month Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t days_in_month(uint32_t year, uint32_t month)
 {
     static const uint8_t days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -67,6 +95,16 @@ static uint32_t days_in_month(uint32_t year, uint32_t month)
     return days[month - 1];
 }
 
+/**
+ * @brief Coordinates the rtc datetime valid operation.
+ * @param year Input or output value used by this operation.
+ * @param month Input or output value used by this operation.
+ * @param day Input or output value used by this operation.
+ * @param hour Input or output value used by this operation.
+ * @param minute Input or output value used by this operation.
+ * @param second Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int rtc_datetime_valid(uint32_t year, uint32_t month, uint32_t day,
                               uint32_t hour, uint32_t minute, uint32_t second)
 {
@@ -76,6 +114,16 @@ static int rtc_datetime_valid(uint32_t year, uint32_t month, uint32_t day,
            hour < 24 && minute < 60 && second < 60;
 }
 
+/**
+ * @brief Coordinates the datetime to unix operation.
+ * @param year Input or output value used by this operation.
+ * @param month Input or output value used by this operation.
+ * @param day Input or output value used by this operation.
+ * @param hour Input or output value used by this operation.
+ * @param minute Input or output value used by this operation.
+ * @param second Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t datetime_to_unix(uint32_t year, uint32_t month, uint32_t day,
                                  uint32_t hour, uint32_t minute, uint32_t second)
 {
@@ -91,6 +139,11 @@ static uint64_t datetime_to_unix(uint32_t year, uint32_t month, uint32_t day,
            (uint64_t)minute * 60ULL + second;
 }
 
+/**
+ * @brief Coordinates the unix to datetime operation.
+ * @param unix_seconds Input or output value used by this operation.
+ * @param info Input or output value used by this operation.
+ */
 static void unix_to_datetime(uint64_t unix_seconds, struct leonos_time_info *info)
 {
     uint64_t days = unix_seconds / 86400ULL;
@@ -122,6 +175,11 @@ static void unix_to_datetime(uint64_t unix_seconds, struct leonos_time_info *inf
     info->second = rem % 60u;
 }
 
+/**
+ * @brief Coordinates the rtc read unix seconds operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int rtc_read_unix_seconds(uint64_t *out)
 {
     uint8_t second;
@@ -177,6 +235,9 @@ static int rtc_read_unix_seconds(uint64_t *out)
     return 0;
 }
 
+/**
+ * @brief Coordinates the time init operation.
+ */
 void time_init(void)
 {
     ticks = 0;
@@ -195,6 +256,9 @@ void time_init(void)
     }
 }
 
+/**
+ * @brief Coordinates the time on tick operation.
+ */
 void time_on_tick(void)
 {
     ++ticks;
@@ -209,16 +273,29 @@ void time_on_tick(void)
     sched_on_tick();
 }
 
+/**
+ * @brief Coordinates the time ticks operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t time_ticks(void)
 {
     return ticks;
 }
 
+/**
+ * @brief Coordinates the time uptime ms operation.
+ * @return Result, status, or value defined by this API.
+ */
 uint64_t time_uptime_ms(void)
 {
     return (ticks * 1000ULL) / NTCLKS_TICK_HZ;
 }
 
+/**
+ * @brief Coordinates the time wall clock operation.
+ * @param info Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int time_wall_clock(struct leonos_time_info *info)
 {
     if (!info || !wall_clock_valid) {
@@ -232,6 +309,11 @@ int time_wall_clock(struct leonos_time_info *info)
     return 0;
 }
 
+/**
+ * @brief Coordinates the time set wall clock operation.
+ * @param unix_seconds Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int time_set_wall_clock(uint64_t unix_seconds)
 {
     struct leonos_time_info info;
@@ -252,6 +334,10 @@ int time_set_wall_clock(uint64_t unix_seconds)
     return 0;
 }
 
+/**
+ * @brief Coordinates the time sleep ms operation.
+ * @param ms Input or output value used by this operation.
+ */
 void time_sleep_ms(uint64_t ms)
 {
     uint64_t delta = (ms * NTCLKS_TICK_HZ + 999ULL) / 1000ULL;

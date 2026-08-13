@@ -12,6 +12,9 @@ from .config import ConfigStore, HostConfig
 from .diagnostics import write_report
 from .fs import GuestFS
 from .logging import LogBuffer
+from .memory import GuestMemory
+from .elf_loader import ELFLoader
+from unicorn import Uc, UC_ARCH_X86, UC_MODE_64
 
 
 def run_self_tests() -> list[str]:
@@ -83,6 +86,21 @@ def run_self_tests() -> list[str]:
 
         report = write_report(root / "report.json", logger, reason="self-test")
         assert json.loads(report.read_text(encoding="utf-8"))["reason"] == "self-test"
+
+        uc = Uc(UC_ARCH_X86, UC_MODE_64)
+        memory = GuestMemory(uc)
+        memory.map_user_space()
+        addr = memory.allocate(0x2000)
+        assert addr >= 0
+        assert memory.protect(addr, 0x1000, C.PROT_READ) == 0
+        assert memory.free(addr, 0x2000) == 0
+
+        # The process table is intentionally exercised without requiring a
+        # compiled guest ELF: PID allocation and wait semantics are pure host
+        # state and remain deterministic for callers embedding los2w.
+        from .emulator import ProcessManager
+        manager = ProcessManager(root_dir=root, config=HostConfig(root_dir=str(root)), gui=None, logger=logger)
+        assert manager.next_pid == 100
 
     lines.append("self-test ok")
     return lines
