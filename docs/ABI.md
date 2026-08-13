@@ -9,6 +9,18 @@
 
 Unimplemented syscalls return `-ENOSYS`.
 
+## Dynamic Library ABI
+
+Dynamic PIE executables use `0:/system/lib/ld-leonos.elf` and must contain one
+`DT_NEEDED=libleonos.so.1` entry. They may additionally require ABI-v1 shared
+libraries. The loader resolves an unqualified library name from the requesting
+module directory and then `0:/system/lib`, validates each LeonOS ABI note, and
+loads recursive dependencies before relocating the main executable.
+
+The system libraries currently include `libleonos.so.1`, `libmagic.so.1`, and
+`liblua.so.5`. Static `ET_EXEC` binaries remain supported for recovery tools
+and SDK builds made with `STATIC=1`.
+
 ## Syscall subset
 
 LeonOS keeps Linux-compatible syscall numbers for the current user ABI:

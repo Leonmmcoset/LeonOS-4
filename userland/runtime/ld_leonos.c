@@ -1131,6 +1131,8 @@ static int run_initializers(struct loader_module *module, int include_preinit)
     return 0;
 }
 
+static int module_release(struct loader_module *module);
+
 static void run_finalizers(struct loader_module *module)
 {
     uint64_t entries = module_dynamic_entries(module);
@@ -1157,6 +1159,12 @@ void exit(int code)
         process_finalizers_ran = 1;
         if (modules[0].used) {
             run_finalizers(&modules[0]);
+            /* Startup dependencies are held by the permanent main module,
+             * so process exit is their final release point.  This executes
+             * their fini arrays in reverse DT_NEEDED order before `_exit`. */
+            for (uint32_t i = modules[0].dep_count; i; --i) {
+                (void)module_release(modules[0].deps[i - 1]);
+            }
         }
         __libc_fini_array();
     }
@@ -1168,8 +1176,6 @@ void leonos_dynamic_exit(int code)
 {
     exit(code);
 }
-
-static int module_release(struct loader_module *module);
 
 static int module_add_dependency(struct loader_module *module, struct loader_module *dependency)
 {
@@ -1328,23 +1334,34 @@ static int initialize_startup_modules(struct leonos_dynamic_launch *launch,
     return 0;
 }
 
-static int main_needs_runtime(const struct loader_module *main_module)
+static int main_load_dependencies(struct loader_module *main_module)
 {
     uint64_t entries = module_dynamic_entries(main_module);
-    uint32_t count = 0;
+    uint32_t runtime_count = 0;
     for (uint64_t i = 0; i < entries && main_module->dynamic[i].tag != DT_NULL; ++i) {
+        struct loader_module *dependency;
         const char *needed;
         if (main_module->dynamic[i].tag != DT_NEEDED) {
             continue;
         }
         needed = module_string(main_module, main_module->dynamic[i].value);
-        if (!needed || !text_equal(needed, LEONOS_ELF_RUNTIME_SONAME)) {
-            set_error("unsupported initial runtime dependency");
+        if (!needed) {
+            set_error("invalid initial runtime dependency");
             return -1;
         }
-        ++count;
+        if (text_equal(needed, LEONOS_ELF_RUNTIME_SONAME)) {
+            ++runtime_count;
+            continue;
+        }
+        /* The initial executable may link system or application-private ABI-v1
+         * libraries.  `load_module_name` enforces the fixed requester/system
+         * search order, validates their notes and recursively loads DT_NEEDED. */
+        if (load_module_name(needed, main_module, RTLD_GLOBAL, &dependency) < 0 ||
+            module_add_dependency(main_module, dependency) < 0) {
+            return -1;
+        }
     }
-    if (count != 1) {
+    if (runtime_count != 1) {
         set_error("dynamic application must depend on libleonos.so.1");
         return -1;
     }
@@ -1364,9 +1381,19 @@ int leonos_runtime_start(int argc, char **argv, char **envp,
     }
     main_module = &modules[0];
     runtime_module = &modules[1];
-    if (main_needs_runtime(main_module) < 0 || relocate_module(main_module) < 0 || apply_relro(main_module) < 0 ||
-        apply_relro(runtime_module) < 0 || run_initializers(runtime_module, 0) < 0 ||
-        run_initializers(main_module, 1) < 0) {
+    /* The bootstrap interpreter has already relocated libleonos. Initialize
+     * it before loading the executable's optional libraries, so constructors
+     * in liblua/libmagic (or a future ABI-v1 library) see an initialized C
+     * runtime. `main_load_dependencies` recursively relocates and initializes
+     * each dependency before the executable itself is relocated. */
+    if (apply_relro(runtime_module) < 0 || run_initializers(runtime_module, 0) < 0 ||
+        main_load_dependencies(main_module) < 0 || relocate_module(main_module) < 0 ||
+        apply_relro(main_module) < 0 || run_initializers(main_module, 1) < 0) {
+        /* A dependency can be absent after the base runtime has already
+         * transferred control here. Replace the failed program with the
+         * statically linked recovery dialog when there is a concrete missing
+         * path; it remains usable even if a system library was deleted. */
+        report_missing_shared_object(launch->main_path);
         return 127;
     }
     return ((int (*)(int, char **, char **))(uintptr_t)launch->main_entry)(argc, argv, envp);

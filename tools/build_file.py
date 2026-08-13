@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the upstream file(1)/libmagic sources for LeonOS."""
+"""Build the upstream file(1) and ABI-v1 libmagic shared library for LeonOS."""
 
 from __future__ import annotations
 
@@ -36,8 +36,13 @@ def main() -> None:
     parser.add_argument("--linker-script", type=Path, required=True)
     parser.add_argument("--leonos-lib", type=Path, required=True)
     parser.add_argument("--picolibc-lib", type=Path, required=True)
+    parser.add_argument("--dynamic-linker-script", type=Path, required=True)
+    parser.add_argument("--runtime-so", type=Path, required=True)
+    parser.add_argument("--dynamic-crt", type=Path, required=True)
+    parser.add_argument("--abi-note", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--library", type=Path, required=True)
+    parser.add_argument("--static-library", type=Path, required=True)
     parser.add_argument("--magic-header", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
     parser.add_argument("--compile-flag", action="append", default=[])
@@ -79,13 +84,9 @@ def main() -> None:
         ["clang", "-print-resource-dir"], check=True,
         capture_output=True, text=True,
     ).stdout.strip()
-    compiler_runtime = Path(resource_dir) / "lib/linux/libclang_rt.builtins-x86_64.a"
-    if not compiler_runtime.is_file():
-        raise SystemExit(f"Clang x86_64 compiler runtime is missing: {compiler_runtime}")
-
     cflags = [
         "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone",
+        "-fno-stack-protector", "-fPIC", "-mno-red-zone",
         "-ffunction-sections", "-fdata-sections",
         "-nostdinc", "-isystem", str(args.generated_include),
         "-isystem", str(Path(resource_dir) / "include"),
@@ -107,15 +108,24 @@ def main() -> None:
     library_objects = [compile_source(patched_source / name, Path(name).stem)
                        for name in LIBMAGIC_SOURCES]
     library_objects.append(compile_source(port / "leonos_shim.c", "leonos_shim"))
-    library = args.library.resolve()
-    library.parent.mkdir(parents=True, exist_ok=True)
+    static_library = args.static_library.resolve()
+    static_library.parent.mkdir(parents=True, exist_ok=True)
     # llvm-ar replaces members named on the command line but retains every
     # other old member.  Always recreate the archive so a locally built
     # libmagic cannot retain sources from an earlier port revision and diverge
     # from CI's clean archive.
-    if library.exists():
-        library.unlink()
-    run(["llvm-ar", "rcs", str(library), *map(str, library_objects)])
+    if static_library.exists():
+        static_library.unlink()
+    run(["llvm-ar", "rcs", str(static_library), *map(str, library_objects)])
+
+    library = args.library.resolve()
+    library.parent.mkdir(parents=True, exist_ok=True)
+    run([
+        "ld.lld", "-shared", "-Bsymbolic", "--hash-style=sysv", "-soname", "libmagic.so.1",
+        "-z", "max-page-size=0x1000", "-T", str(args.dynamic_linker_script.resolve()),
+        "-o", str(library), *map(str, library_objects), str(args.abi_note.resolve()),
+        str(args.runtime_so.resolve()),
+    ])
 
     app_objects = [
         compile_source(patched_source / "file.c", "file-main"),
@@ -123,11 +133,13 @@ def main() -> None:
     ]
     args.output.resolve().parent.mkdir(parents=True, exist_ok=True)
     run([
-        "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, "-z", "max-page-size=0x1000",
-        "-u", "_start", "-T", str(args.linker_script.resolve()),
-        "-o", str(args.output.resolve()), *map(str, app_objects), "--start-group",
-        str(args.library.resolve()), str(args.leonos_lib.resolve()),
-        str(args.picolibc_lib.resolve()), str(compiler_runtime), "--end-group",
+        "ld.lld", "-nostdlib", "--gc-sections", "-pie", "--hash-style=sysv",
+        "--dynamic-linker", "0:/system/lib/ld-leonos.elf", "-z", "relro", "-z", "now",
+        "-z", "max-page-size=0x1000", *args.linker_flag,
+        "-T", str(args.dynamic_linker_script.resolve()),
+        "-o", str(args.output.resolve()), str(args.dynamic_crt.resolve()),
+        str(args.abi_note.resolve()), *map(str, app_objects), str(args.runtime_so.resolve()),
+        str(args.library.resolve()),
     ])
     args.stamp.resolve().parent.mkdir(parents=True, exist_ok=True)
     args.stamp.resolve().write_text("libmagic 5.48\n", encoding="ascii")

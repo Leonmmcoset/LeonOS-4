@@ -522,6 +522,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     picolibc_archive = picolibc_prefix / "lib/libc.a"
     runtime_so = paths.out / "system/lib/libleonos.so.1"
     runtime_loader = paths.out / "system/lib/ld-leonos.elf"
+    libmagic_so = paths.out / "system/lib/libmagic.so.1"
+    liblua_so = paths.out / "system/lib/liblua.so.5"
     dynlinkerror_elf = paths.out / "userland/dynlinkerror.elf"
     installer_runtime_so = paths.out / "userland-installer-policy/libleonos.so.1"
     picolibc_header_stamp = picolibc_prefix / "include/.leonos-picolibc.stamp"
@@ -567,6 +569,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     lua_port = ROOT / "userland/lua"
     lua_app_manifest = ROOT / "userland/apps/lua/lua.app.ini"
     lua_elf = paths.out / "userland/lua.elf"
+    liblua_archive = paths.out / "userland/liblua.a"
     lua_stamp = paths.out / "userland/lua.stamp"
     lua_work_dir = paths.out / "lua-work"
     cmd_source = ROOT / "third_party/cmd"
@@ -1131,18 +1134,22 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ])
     graph.add(Target(
         name="file",
-        outputs=(file_elf, libmagic_archive, file_magic_header, file_stamp),
-        inputs=tuple([*file_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
-        depends_on=("picolibc", "archive:libc"),
+        outputs=(file_elf, libmagic_so, libmagic_archive, file_magic_header, file_stamp),
+        inputs=tuple([*file_inputs, ROOT / "userland/dynamic-app.ld", runtime_so,
+                      dynamic_crt_obj, dynamic_note_obj, picolibc_archive]),
+        depends_on=("picolibc", "runtime", "runtime-loader"),
         kind="compile",
         command=(
             PYTHON, "tools/build_file.py", "--source", "third_party/file",
             "--port", "userland/file", "--picolibc-prefix", relative(picolibc_prefix),
             "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
             "--generated-include", relative(paths.generated_include), "--linker-script",
-            "userland/linker.ld", "--leonos-lib", relative(libc_a), "--picolibc-lib",
-            relative(picolibc_archive), "--output", relative(file_elf), "--library",
-            relative(libmagic_archive), "--magic-header", relative(file_magic_header),
+            "userland/linker.ld", "--dynamic-linker-script", "userland/dynamic-app.ld",
+            "--leonos-lib", relative(libc_a), "--runtime-so", relative(runtime_so),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
+            "--picolibc-lib", relative(picolibc_archive), "--output", relative(file_elf),
+            "--library", relative(libmagic_so), "--static-library", relative(libmagic_archive),
+            "--magic-header", relative(file_magic_header),
             "--stamp", relative(file_stamp),
             *compile_option_args,
             *linker_option_args,
@@ -1278,17 +1285,21 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     )
     graph.add(Target(
         name="lua",
-        outputs=(lua_elf, lua_stamp),
-        inputs=tuple([*lua_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
-        depends_on=("picolibc", "archive:libc"),
+        outputs=(lua_elf, liblua_so, liblua_archive, lua_stamp),
+        inputs=tuple([*lua_inputs, ROOT / "userland/dynamic-app.ld", runtime_so,
+                      dynamic_crt_obj, dynamic_note_obj, picolibc_archive]),
+        depends_on=("picolibc", "runtime", "runtime-loader"),
         kind="compile",
         command=(
             PYTHON, "tools/build_lua.py", "--source", "third_party/lua",
             "--port", "userland/lua", "--picolibc-prefix", relative(picolibc_prefix),
             "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
-            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--linker-script", "userland/linker.ld", "--dynamic-linker-script", "userland/dynamic-app.ld",
+            "--leonos-lib", relative(libc_a), "--runtime-so", relative(runtime_so),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
             "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(lua_work_dir),
-            "--output", relative(lua_elf), "--stamp", relative(lua_stamp),
+            "--output", relative(lua_elf), "--library", relative(liblua_so),
+            "--static-library", relative(liblua_archive), "--stamp", relative(lua_stamp),
             *compile_option_args,
             *linker_option_args,
         ),
@@ -1561,10 +1572,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "--libpng-config", relative(libpng_config),
     ]
     if component_enabled("file", "sdk"):
-        sdk_inputs_list.extend((file_source / "COPYING", libmagic_archive, file_magic_header))
+        sdk_inputs_list.extend((file_source / "COPYING", libmagic_so, libmagic_archive, file_magic_header))
         sdk_depends.append("file")
         sdk_command.extend((
-            "--libmagic-lib", relative(libmagic_archive),
+            "--libmagic-lib", relative(libmagic_archive), "--libmagic-so", relative(libmagic_so),
             "--libmagic-source", "third_party/file",
             "--libmagic-header", relative(file_magic_header),
         ))
@@ -1592,12 +1603,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ))
     if component_enabled("lua", "sdk"):
         sdk_inputs_list.extend((
-            lua_elf, lua_stamp, *collect("third_party/lua/*"),
+            lua_elf, liblua_so, liblua_archive, lua_stamp, *collect("third_party/lua/*"),
             *collect("userland/lua/**/*"), lua_app_manifest,
         ))
         sdk_depends.append("lua")
         sdk_command.extend((
             "--component-file", "lua", "bin/lua.elf", relative(lua_elf),
+            "--liblua-lib", relative(liblua_archive), "--liblua-so", relative(liblua_so),
+            "--liblua-source", "third_party/lua",
             "--component-tree", "lua", "upstream", "third_party/lua",
             "--component-tree", "lua", "port", "userland/lua",
             "--component-file", "lua", "lua.app.ini", "userland/apps/lua/lua.app.ini",
@@ -1656,6 +1669,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             if not selected and target_dir.exists():
                 context.detail(f"remove disabled component staging: {relative(target_dir)}")
                 shutil.rmtree(target_dir)
+        for component, library_name in (("file", "libmagic.so.1"), ("lua", "liblua.so.5")):
+            library = paths.staging / "system/lib" / library_name
+            if not component_enabled(component, "image") and library.exists():
+                context.detail(f"remove disabled shared library staging: {relative(library)}")
+                library.unlink()
         for app in staged_user_apps:
             if component_enabled(app, "entry"):
                 continue
@@ -1713,6 +1731,16 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                                     (runtime_so, "system/lib/libleonos.so.1")):
         destination = paths.staging / destination_rel
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
+    for component, source, filename in (
+        ("file", libmagic_so, "libmagic.so.1"),
+        ("lua", liblua_so, "liblua.so.5"),
+    ):
+        if not component_enabled(component, "image"):
+            continue
+        destination = paths.staging / "system/lib" / filename
+        target = add_copy(graph, f"esp:system/lib/{filename}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
     dynlinkerror_destination = paths.staging / "system/apps/dynlinkerror/dynlinkerror.elf"

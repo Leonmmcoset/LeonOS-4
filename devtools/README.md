@@ -12,6 +12,10 @@ ELF 应用程序。
   的公开头文件与许可证也包含在 SDK 中。
 - `lib/libstardustui.a`: StardustUI 静态 GUI 库，含 LeonOS 像素窗口后端、
   C++ 兼容头、上游公共头文件、许可证和最小示例。
+- `lib/libmagic.so.1` 与 `lib/libmagic.a`: file 5.48 的动态和静态文件类型
+  识别库，公共头文件为 `include/magic.h`。
+- `lib/liblua.so.5` 与 `lib/liblua.a`: Lua 5.4.8 的动态和静态 C API，公共
+  头文件为 `include/lua5.4/`。
 - `linker.ld`: LeonOS 4 用户态 ELF 的链接布局，入口为 `_start`。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
 - `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。
@@ -60,8 +64,9 @@ make clean
 ## 创建应用
 
 1. 复制 `examples/helloworld` 为你的应用目录，例如 `examples/myapp`。
-2. 修改其中的 `main.c`。程序入口是普通的 `int main(void)`；SDK 的
-   `libc.a` 会提供 `_start`、系统调用封装和常用 C 库函数。
+2. 修改其中的 `main.c`。程序入口是普通的 `int main(void)`；默认动态运行时
+   的 `libleonos.so.1` 会提供系统调用封装和常用 C 库函数。需要完整静态程序
+   时使用 `STATIC=1`。
 3. 构建：
 
 ```sh
@@ -166,8 +171,9 @@ leonos_mouse_set_style(window_id, LEONOS_GUI_CURSOR_HAND);
 `window_id`；窗口销毁后，任务栏和光标样式会自动恢复。
 
 程序必须是 freestanding：不要依赖宿主系统的动态链接器、POSIX 运行时或
-宿主系统的库。请只链接本 SDK 的 `lib/libc.a`，并保留 Makefile 的编译、
-链接参数与 `linker.ld`。
+宿主系统的库。默认构建使用 LeonOS 的 `0:/system/lib/ld-leonos.elf` 和
+`libleonos.so.1`；请保留 Makefile 的编译和链接参数。`STATIC=1` 才会改用
+SDK 中的静态归档与 `linker.ld`。
 
 ### PNG 图像
 

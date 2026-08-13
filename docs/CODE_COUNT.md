@@ -1,9 +1,9 @@
 # Code Statistics
 
 `tools/count_code.py` builds a filtered list of project files and passes it to
-`cloc`. It reports file, blank-line, comment-line, and code-line totals for
-each project part and for the complete project. The default configuration is
-`tools/codecount.json`.
+the selected counter. `cloc` is the default and preserves the historical
+report format. `scc` adds complexity, COCOMO, and LOCOMO estimates. The default
+configuration is `tools/codecount.json`.
 
 Run it from the repository root:
 
@@ -13,6 +13,9 @@ python3 tools/count_code.py --languages
 python3 tools/count_code.py --format json --output build/code-count.json
 python3 tools/count_code.py --jobs 8
 python3 tools/count_code.py --no-progress --format json
+python3 tools/count_code.py --engine scc
+python3 tools/count_code.py --engine scc --cocomo-project-type semi-detached \
+  --avg-wage 75000 --overhead 2.4 --eaf 1.0 --locomo-preset local
 python3 tools/count_code.py --history --history-chart build/code-growth.svg
 python3 tools/count_code.py --history --format json --output build/code-history.json
 ```
@@ -46,7 +49,7 @@ python3 tools/count_code.py --exclude-dir test --group-depth 2
 
 By default, the tool starts up to four worker threads. The report always keeps
 top-level parts such as `userland` and `third_party` separate. Large parts are
-internally split into bounded cloc batches, so a large dependency tree or the
+internally split into bounded batches, so a large dependency tree or the
 userland sources do not monopolize one worker. Use `--shard-threshold` and
 `--shard-size` to tune this behavior. Results are merged back into the same
 part before the final report. Use `--jobs 1` to force a single worker, or
@@ -57,7 +60,16 @@ suppress it.
 Use `--no-config` to ignore the repository configuration, or
 `--no-default-excludes` when a complete diagnostic scan of generated files is
 needed. `cloc` must be installed and available in `PATH`; use `--cloc` to
-select a specific executable.
+select a specific executable. For `scc`, install the upstream tool and use
+`--engine scc` or `--scc PATH`. `scc` receives the same explicit filtered file
+list and ignores repository-local ignore files, so `codecount.json` remains the
+single source of truth for exclusions.
+
+The `scc` COCOMO values use Basic COCOMO coefficients. `--avg-wage` is an
+annual wage, `--overhead` is the non-salary multiplier, and `--eaf` is the
+effort adjustment factor. LOCOMO is a rough LLM code-regeneration estimate;
+its `large`, `medium`, `small`, and `local` presets describe only pricing and
+output throughput, not a promise about any specific model.
 
 Git history growth is available with `--history`. It performs one
 `git log --numstat` scan, so it is substantially faster than checking out every

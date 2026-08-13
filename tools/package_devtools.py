@@ -94,8 +94,12 @@ def main() -> None:
     parser.add_argument("--libpng-source", type=Path, required=True)
     parser.add_argument("--libpng-config", type=Path, required=True)
     parser.add_argument("--libmagic-lib", type=Path)
+    parser.add_argument("--libmagic-so", type=Path)
     parser.add_argument("--libmagic-source", type=Path)
     parser.add_argument("--libmagic-header", type=Path)
+    parser.add_argument("--liblua-lib", type=Path)
+    parser.add_argument("--liblua-so", type=Path)
+    parser.add_argument("--liblua-source", type=Path)
     parser.add_argument("--stardustui-lib", type=Path)
     parser.add_argument("--stardustui-source", type=Path)
     parser.add_argument("--component-metadata", type=Path)
@@ -114,11 +118,13 @@ def main() -> None:
                       args.libpng_config)
     include_libmagic = any((
         args.libmagic_lib is not None,
+        args.libmagic_so is not None,
         args.libmagic_source is not None,
         args.libmagic_header is not None,
     ))
     if include_libmagic and not all((
         args.libmagic_lib is not None,
+        args.libmagic_so is not None,
         args.libmagic_source is not None,
         args.libmagic_header is not None,
     )):
@@ -137,10 +143,25 @@ def main() -> None:
         assert args.libmagic_source is not None
         assert args.libmagic_header is not None
         for required in (
-            args.libmagic_lib, args.libmagic_source / "COPYING", args.libmagic_header,
+            args.libmagic_lib, args.libmagic_so, args.libmagic_source / "COPYING", args.libmagic_header,
         ):
             if not required.exists():
                 raise SystemExit(f"required libmagic SDK input is missing: {required}")
+    include_lua = any((args.liblua_lib is not None, args.liblua_so is not None,
+                       args.liblua_source is not None))
+    if include_lua and not all((args.liblua_lib is not None, args.liblua_so is not None,
+                                args.liblua_source is not None)):
+        raise SystemExit("liblua SDK inputs must be provided together")
+    if include_lua:
+        assert args.liblua_lib is not None
+        assert args.liblua_so is not None
+        assert args.liblua_source is not None
+        for required in (
+            args.liblua_lib, args.liblua_so, args.liblua_source / "README.md",
+            *(args.liblua_source / name for name in ("lua.h", "lauxlib.h", "lualib.h", "luaconf.h")),
+        ):
+            if not required.exists():
+                raise SystemExit(f"required liblua SDK input is missing: {required}")
     include_stardustui = args.stardustui_lib is not None or args.stardustui_source is not None
     if include_stardustui:
         if args.stardustui_lib is None or args.stardustui_source is None:
@@ -206,7 +227,17 @@ def main() -> None:
             add_file(archive, f"{SDK_PREFIX}/lib/libpng.a", args.libpng_lib)
             if include_libmagic:
                 assert args.libmagic_lib is not None
+                assert args.libmagic_so is not None
                 add_file(archive, f"{SDK_PREFIX}/lib/libmagic.a", args.libmagic_lib)
+                add_file(archive, f"{SDK_PREFIX}/lib/libmagic.so.1", args.libmagic_so)
+            if include_lua:
+                assert args.liblua_lib is not None
+                assert args.liblua_so is not None
+                assert args.liblua_source is not None
+                add_file(archive, f"{SDK_PREFIX}/lib/liblua.a", args.liblua_lib)
+                add_file(archive, f"{SDK_PREFIX}/lib/liblua.so.5", args.liblua_so)
+                for name in ("lua.h", "lauxlib.h", "lualib.h", "luaconf.h"):
+                    add_file(archive, f"{SDK_PREFIX}/include/lua5.4/{name}", args.liblua_source / name)
             if include_stardustui:
                 assert args.stardustui_lib is not None
                 assert args.stardustui_source is not None
@@ -233,6 +264,9 @@ def main() -> None:
                 assert args.libmagic_source is not None
                 add_file(archive, f"{SDK_PREFIX}/include/magic.h", args.libmagic_header)
                 add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBMAGIC-COPYING", args.libmagic_source / "COPYING")
+            if include_lua:
+                assert args.liblua_source is not None
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LUA-LICENSE", args.liblua_source / "README.md")
             if include_stardustui:
                 assert args.stardustui_source is not None
                 add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/STARDUSTUI-LICENSE", args.stardustui_source / "LICENSE")
@@ -270,6 +304,14 @@ def main() -> None:
                     "file/libmagic version: 5.48\n"
                     "Upstream: https://github.com/file/file\n"
                     "License: BSD-2-Clause\n",
+                )
+            if include_lua:
+                add_text(
+                    archive,
+                    f"{SDK_PREFIX}/THIRD_PARTY/LUA-VERSION.txt",
+                    "Lua version: 5.4.8\n"
+                    "Upstream: https://www.lua.org/\n"
+                    "License: MIT\n",
                 )
             if include_stardustui:
                 add_text(

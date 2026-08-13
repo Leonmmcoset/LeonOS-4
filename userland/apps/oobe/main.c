@@ -16,6 +16,8 @@
 #define OOBE_INITIAL_H 600
 #define OOBE_DONE_PATH "0:/system/state/oobe.done"
 #define OOBE_KEY_ESCAPE 1U
+#define OOBE_ACCOUNT_READY_RETRIES 50U
+#define OOBE_ACCOUNT_READY_RETRY_MS 20U
 #define T(en, zh) leonos_i18n((en), (zh))
 
 #if CONFIG_LICENSE_DEBUG_LOG
@@ -195,6 +197,34 @@ static int admin_exists(void)
     struct leonos_auth_status status;
     status = (struct leonos_auth_status){0};
     return leonos_auth_status(&status) == 0 && status.has_admin;
+}
+
+/* The account database is persisted through the storage service.  On an AHCI
+ * cold boot, its write completion can become visible to a follow-up auth
+ * request a tick later.  Do not turn that short handoff into a second OOBE. */
+static int wait_for_created_admin(void)
+{
+    for (uint32_t attempt = 0; attempt < OOBE_ACCOUNT_READY_RETRIES; ++attempt) {
+        if (admin_exists()) {
+            return 1;
+        }
+        sleep_ms(OOBE_ACCOUNT_READY_RETRY_MS);
+    }
+    return 0;
+}
+
+static int login_created_admin(const char *account_name, const char *account_password,
+                               struct leonos_user_info *user)
+{
+    int ret = -1;
+    for (uint32_t attempt = 0; attempt < OOBE_ACCOUNT_READY_RETRIES; ++attempt) {
+        ret = leonos_auth_login(account_name, account_password, user);
+        if (ret == 0) {
+            return 0;
+        }
+        sleep_ms(OOBE_ACCOUNT_READY_RETRY_MS);
+    }
+    return ret;
 }
 
 static int both_setup_parts_complete(void)
@@ -561,7 +591,13 @@ static int create_admin(void)
         append_text(status_text, &pos, sizeof(status_text), T(").", "）。"));
         return 0;
     }
-    ret = leonos_auth_login(username, password, &user);
+    if (!wait_for_created_admin()) {
+        copy_text(status_text, sizeof(status_text),
+                  T("Account was created, but is not ready yet. Try again.",
+                    "账户已创建，但尚未就绪。请重试。"));
+        return 0;
+    }
+    ret = login_created_admin(username, password, &user);
     OOBE_LOG("[oobe.elf] first administrator login username=%s ret=%d\n", username, ret);
     if (ret < 0) {
         copy_text(status_text, sizeof(status_text),

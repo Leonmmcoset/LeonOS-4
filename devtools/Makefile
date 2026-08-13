@@ -53,12 +53,34 @@ PICOLIBC_LIB := "$(SDK_ROOT)/lib/libc.a"
 ZLIB_LIB := "$(SDK_ROOT)/lib/libz.a"
 LIBPNG_LIB := "$(SDK_ROOT)/lib/libpng.a"
 STARDUSTUI_LIB := "$(SDK_ROOT)/lib/libstardustui.a"
+LIBMAGIC_LIB := "$(SDK_ROOT)/lib/libmagic.a"
+LIBMAGIC_SO := "$(SDK_ROOT)/lib/libmagic.so.1"
+LUA_LIB := "$(SDK_ROOT)/lib/liblua.a"
+LUA_SO := "$(SDK_ROOT)/lib/liblua.so.5"
 USE_STARDUSTUI ?= 0
+USE_LIBMAGIC ?= 0
+USE_LUA ?= 0
 
 ifeq ($(USE_STARDUSTUI),1)
 APP_LIBS := $(STARDUSTUI_LIB)
 else
 APP_LIBS :=
+endif
+
+ifeq ($(USE_LIBMAGIC),1)
+ifeq ($(STATIC),1)
+APP_LIBS += $(LIBMAGIC_LIB)
+else
+APP_LIBS += $(LIBMAGIC_SO)
+endif
+endif
+
+ifeq ($(USE_LUA),1)
+ifeq ($(STATIC),1)
+APP_LIBS += $(LUA_LIB)
+else
+APP_LIBS += $(LUA_SO)
+endif
 endif
 
 .PHONY: all clean

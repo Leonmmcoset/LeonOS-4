@@ -15,6 +15,11 @@ _start:
     mov %rdi, %r12
     mov %rsi, %r13
     mov %rdx, %r14
+    /* The runtime loader may tail-transfer here after finishing relocation.
+     * Unlike a normal call, that transfer does not push a return address, so
+     * normalize the caller boundary before invoking compiled application code.
+     * System V AMD64 requires main to enter with rsp % 16 == 8. */
+    and $-16, %rsp
     /* `environ` lives in libleonos.  Access it through the PIE GOT so the
      * executable never emits the unsupported R_X86_64_COPY relocation. */
     mov environ@GOTPCREL(%rip), %rax

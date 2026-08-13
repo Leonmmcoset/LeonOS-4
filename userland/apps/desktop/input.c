@@ -444,6 +444,15 @@ void oobe_lock_update(void)
     if (!oobe_lock_active) {
         return;
     }
+    /* Successful OOBE sign-in assigns the desktop task a session before its
+     * window teardown is observed.  That in-memory identity is authoritative
+     * and avoids re-opening OOBE while the account database write is settling. */
+    if (desktop_session_logged_in()) {
+        oobe_lock_active = 0;
+        full_redraw_pending = 1;
+        maybe_launch_login();
+        return;
+    }
     if (oobe_done_marker_exists()) {
         oobe_lock_active = 0;
         full_redraw_pending = 1;
@@ -462,9 +471,11 @@ void oobe_lock_update(void)
 
 void oobe_lock_on_window_removed(uint8_t slot)
 {
-    (void)slot;
-    if (oobe_lock_active) {
-        oobe_last_spawn_ms = 0;
+    if (oobe_lock_active && slot < MAX_WINDOWS && window_is_oobe(&windows[slot])) {
+        /* Let the OOBE completion writes become observable before considering
+         * a replacement.  The previous zero timestamp caused an immediate
+         * respawn on some cold-storage timings. */
+        oobe_last_spawn_ms = leonos_uptime_ms();
     }
 }
 
@@ -510,9 +521,6 @@ int desktop_session_logged_in(void)
 void maybe_launch_login(void)
 {
     struct leonos_auth_status status;
-    if (!oobe_done_marker_exists()) {
-        return;
-    }
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
         desktop_load_appearance_config();
@@ -521,6 +529,9 @@ void maybe_launch_login(void)
         (void)desktop_refresh_items();
         desktop_launch_startup_apps();
         full_redraw_pending = 1;
+        return;
+    }
+    if (!oobe_done_marker_exists()) {
         return;
     }
     status = (struct leonos_auth_status){0};

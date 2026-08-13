@@ -135,11 +135,10 @@ exist.
 - License: MIT; the LeonOS copy of the complete upstream license is staged at
   `0:/programs/lua/LICENSE` beside the executable.
 
-LeonOS builds Lua as the static command-line interpreter at
-`0:/programs/lua/lua.elf`. It uses Lua's portable C89 configuration with
-Picolibc and the LeonOS adapter archive. Dynamic C modules and `package.loadlib`
-are intentionally unavailable until the system has a dynamic-loader ABI. Lua
-scripts can be loaded from the current directory or from
+LeonOS builds Lua as the command-line interpreter at `0:/programs/lua/lua.elf`
+and provides its ABI-v1 C API in `0:/system/lib/liblua.so.5`. It uses Lua's
+portable C89 configuration with the LeonOS runtime. Dynamic C modules and
+`package.loadlib` remain unavailable. Lua scripts can be loaded from the current directory or from
 `0:/programs/lua/lua/`.
 
 ## PL Editor

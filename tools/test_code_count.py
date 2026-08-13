@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,17 @@ def main() -> int:
         assert "third_party/cmd" not in configured["parts"]
         assert "third_party" in configured["parts"]
         assert configured["parts"]["third_party"]["files"] == 1
+
+        if shutil.which("scc"):
+            scc_summary = run(str(root), "--engine", "scc", "--config", str(config_path),
+                              "--jobs", "1", "--cocomo-project-type", "embedded",
+                              "--locomo-preset", "local")
+            assert scc_summary["engine"] == "scc"
+            assert scc_summary["total"]["files"] == 2
+            assert scc_summary["total"]["complexity"] >= 0
+            assert scc_summary["metrics"]["cocomo"]["project_type"] == "embedded"
+            assert scc_summary["metrics"]["locomo"]["preset"] == "local"
+            assert scc_summary["metrics"]["locomo"]["estimated_cost"] == 0
 
         history_root = root / "history"
         history_root.mkdir()

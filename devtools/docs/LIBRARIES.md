@@ -1,7 +1,8 @@
 # 公共库参考
 
-所有下列接口都通过 `lib/leonos.a`（或 SDK 中对应的静态库）提供。头文件是
-唯一稳定入口；未列出的内部符号不属于应用 ABI。
+LeonOS ABI v1 的基础运行库是 `lib/libleonos.so.1`。SDK 默认构建动态 PIE；
+`STATIC=1` 时使用 `lib/leonos.a` 和下列静态归档。头文件是唯一稳定入口；未列出的
+内部符号不属于应用 ABI。
 
 ## 文件、配置和文本
 
@@ -49,11 +50,27 @@
 虚拟终端标记和输入法元数据。安装路径必须由系统安装器选择，应用不要把包内容
 直接解包到 `0:/tools` 以冒充已安装程序。
 
-## 第三方静态库
+## 第三方库
 
 - `lib/libc.a`：Picolibc 运行时，和 SDK 头文件、链接脚本成套使用。
 - `lib/libz.a`、`lib/libpng.a`：压缩和 PNG；应用仍需设置输入大小上限。
 - `lib/libstardustui.a`：启用 `USE_STARDUSTUI=1` 时链接，且只能使用 SDK
   中随附的上游公共头文件。
+- `lib/libmagic.so.1` 与 `lib/libmagic.a`：file 5.48 的文件类型识别库；公共头
+  文件为 `include/magic.h`，运行时数据库为 `0:/system/share/misc/magic.mgc`。
+- `lib/liblua.so.5` 与 `lib/liblua.a`：Lua 5.4.8 C API；公共头文件为
+  `include/lua5.4/`。动态 C 模块加载仍未开放。
 
-这些库都是静态链接，不提供运行时动态装载或宿主机 ABI 兼容层。
+`libmagic.so.1` 和 `liblua.so.5` 与 `libleonos.so.1` 都要求 LeonOS ABI v1，
+运行时从 `0:/system/lib` 解析。它们不提供宿主机 ABI 兼容层。
+
+在 SDK 默认动态构建中，使用 `USE_LIBMAGIC=1` 或 `USE_LUA=1` 会自动写入
+相应 `DT_NEEDED` 项。例如：
+
+```sh
+make APP=examples/typecheck APP_NAME=typecheck USE_LIBMAGIC=1
+make APP=examples/lua_embed APP_NAME=lua_embed USE_LUA=1
+```
+
+与基础运行库相同，这两个共享库由目标 LeonOS 系统提供；不要把宿主机的 `.so`
+放进应用目录。`STATIC=1` 时相同开关改用 `.a` 归档。

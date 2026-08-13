@@ -50,6 +50,9 @@ _start:
 6:
     mov %r8, %rcx
     /* argc, argv and envp retain the normal LeonOS launch registers. */
+    /* The kernel normally supplies an aligned initial stack.  Keep the
+     * interpreter's first C call ABI-correct even if the launch layout grows. */
+    and $-16, %rsp
     call ld_leonos_start
     mov %eax, %edi
     mov $60, %eax
