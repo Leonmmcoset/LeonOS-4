@@ -20,3 +20,38 @@ when changing the kernel, loader, middlelayer, installer, or user ABI.
   staged path toward a full litehtml port.
 - [Third-Party Code](THIRD_PARTY.md): submodule paths, upstream licenses, and
   integration status for bundled external code.
+
+## Tools
+
+`tools/analyze_boot_log.py` parses loader, kernel, middlelayer, ELF, dynamic
+linker, CPU exception, storage, and ACPI messages. It accepts a file or
+standard input and preserves one-based evidence line numbers:
+
+```sh
+python tools/analyze_boot_log.py boot.log
+python tools/analyze_boot_log.py boot.log --json tools/dist/boot-report.json
+cat boot.log | python tools/analyze_boot_log.py - --strict
+python tools/analyze_boot_log.py --self-test
+```
+
+`--strict` returns a non-zero status when an error or fatal finding is present,
+which makes the analyzer suitable for CI/QEMU smoke-test wrappers.
+
+`tools/check_licenses.py` checks initialized submodules, staged image and
+installer payloads, SDK directories or ZIP archives, and the installer
+acknowledgements policy.  It uses an explicit license manifest so disabled
+components are not reported as missing:
+
+```sh
+python tools/check_licenses.py
+python tools/check_licenses.py --strict
+python tools/check_licenses.py --sdk LeonOS4-Developer-SDK.zip \
+  --json tools/dist/license-report.json
+python tools/check_licenses.py --self-test
+```
+
+Raw FAT/VMDK/ISO files are reported as skipped; pass the mounted or staged
+directory (or a ZIP) to verify their contents.  The default excluded-credit
+policy rejects `llama2.c`, `TinyLlama`, and `karpathy` in the installer's
+acknowledgements page.  Add project-specific forbidden names with repeated
+`--excluded-credit` options.

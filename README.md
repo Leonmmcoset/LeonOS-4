@@ -89,7 +89,7 @@ python3 build.py status <九位任务ID>
 - `system/`：镜像中 staging 的系统配置、字体、证书、壁纸、图标和其他资源。
 - `test/`：测试输入和测试资源。
 - `third_party/`：通过 Git submodule 引入的上游或分叉项目源码，具体归属见 `.gitmodules`。
-- `tools/`：构建辅助、资源生成、组件同步、镜像/安装器打包、验证和代码统计工具（包括 `count_code.py`）。
+- `tools/`：构建辅助、资源生成、组件同步、镜像/安装器打包、验证、Doxygen 文档、启动日志分析、许可证归属检查和代码统计工具（包括 `count_code.py`、`analyze_boot_log.py` 与 `check_licenses.py`）。
 - `userland/`：用户态运行库、窗口/UI 支持、BusyBox、TCC、Lua、Nano、Fastfetch 及桌面应用源码。
 
 `Kconfig` 和 `Kconfig.components` 定义配置菜单；后者由工具根据组件清单生成，
