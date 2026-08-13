@@ -78,6 +78,7 @@ int rename(const char *old_path, const char *new_path);
 void *mmap(void *addr, size_t len, int prot, int flags, int fd, long offset);
 int munmap(void *addr, size_t len);
 int mprotect(void *addr, size_t len, int prot);
+int ftruncate(int fd, long length);
 void *malloc(size_t size);
 void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);

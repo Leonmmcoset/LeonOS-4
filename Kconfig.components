@@ -865,3 +865,26 @@ config LEON_COMPONENT_LIB_STARDUSTUI_SDK
     depends on LEON_COMPONENT_LIB_STARDUSTUI_BUILD
 
 endmenu
+
+menu "Third-party libraries"
+
+config LEON_COMPONENT_LIB_SQLITE_BUILD
+    bool "Build SQLite database library"
+    default y
+
+config LEON_COMPONENT_LIB_SQLITE_IMAGE
+    bool "Include SQLite database library in system images"
+    default y
+    depends on LEON_COMPONENT_LIB_SQLITE_BUILD
+
+config LEON_COMPONENT_LIB_SQLITE_ENTRY
+    bool "Generate a desktop entry for SQLite database library"
+    default n
+    depends on LEON_COMPONENT_LIB_SQLITE_BUILD
+
+config LEON_COMPONENT_LIB_SQLITE_SDK
+    bool "Include SQLite database library in the developer SDK"
+    default y
+    depends on LEON_COMPONENT_LIB_SQLITE_BUILD
+
+endmenu

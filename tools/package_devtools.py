@@ -100,6 +100,11 @@ def main() -> None:
     parser.add_argument("--liblua-lib", type=Path)
     parser.add_argument("--liblua-so", type=Path)
     parser.add_argument("--liblua-source", type=Path)
+    parser.add_argument("--sqlite-lib", type=Path)
+    parser.add_argument("--sqlite-so", type=Path)
+    parser.add_argument("--sqlite-source", type=Path)
+    parser.add_argument("--sqlite-header", type=Path)
+    parser.add_argument("--sqlite-stamp", type=Path)
     parser.add_argument("--stardustui-lib", type=Path)
     parser.add_argument("--stardustui-source", type=Path)
     parser.add_argument("--component-metadata", type=Path)
@@ -163,6 +168,21 @@ def main() -> None:
             if not required.exists():
                 raise SystemExit(f"required liblua SDK input is missing: {required}")
     include_stardustui = args.stardustui_lib is not None or args.stardustui_source is not None
+    include_sqlite = any((args.sqlite_lib is not None, args.sqlite_so is not None,
+                          args.sqlite_source is not None, args.sqlite_header is not None,
+                          args.sqlite_stamp is not None))
+    if include_sqlite and not all((args.sqlite_lib is not None, args.sqlite_so is not None,
+                                   args.sqlite_source is not None, args.sqlite_header is not None,
+                                   args.sqlite_stamp is not None)):
+        raise SystemExit("SQLite SDK inputs must be provided together")
+    if include_sqlite:
+        assert args.sqlite_lib is not None and args.sqlite_so is not None
+        assert args.sqlite_source is not None and args.sqlite_header is not None
+        assert args.sqlite_stamp is not None
+        for required in (args.sqlite_lib, args.sqlite_so, args.sqlite_source / "LICENSE.md",
+                         args.sqlite_header, args.sqlite_stamp):
+            if not required.exists():
+                raise SystemExit(f"required SQLite SDK input is missing: {required}")
     if include_stardustui:
         if args.stardustui_lib is None or args.stardustui_source is None:
             raise SystemExit("StardustUI SDK inputs must be provided together")
@@ -238,6 +258,15 @@ def main() -> None:
                 add_file(archive, f"{SDK_PREFIX}/lib/liblua.so.5", args.liblua_so)
                 for name in ("lua.h", "lauxlib.h", "lualib.h", "luaconf.h"):
                     add_file(archive, f"{SDK_PREFIX}/include/lua5.4/{name}", args.liblua_source / name)
+            if include_sqlite:
+                assert args.sqlite_lib is not None and args.sqlite_so is not None
+                assert args.sqlite_source is not None and args.sqlite_header is not None
+                assert args.sqlite_stamp is not None
+                add_file(archive, f"{SDK_PREFIX}/lib/sqlite.a", args.sqlite_lib)
+                add_file(archive, f"{SDK_PREFIX}/lib/sqlite.so.3", args.sqlite_so)
+                add_file(archive, f"{SDK_PREFIX}/include/sqlite3.h", args.sqlite_header)
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/SQLITE-LICENSE", args.sqlite_source / "LICENSE.md")
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/SQLITE-VERSION.txt", args.sqlite_stamp)
             if include_stardustui:
                 assert args.stardustui_lib is not None
                 assert args.stardustui_source is not None

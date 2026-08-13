@@ -57,9 +57,12 @@ LIBMAGIC_LIB := "$(SDK_ROOT)/lib/libmagic.a"
 LIBMAGIC_SO := "$(SDK_ROOT)/lib/libmagic.so.1"
 LUA_LIB := "$(SDK_ROOT)/lib/liblua.a"
 LUA_SO := "$(SDK_ROOT)/lib/liblua.so.5"
+SQLITE_LIB := "$(SDK_ROOT)/lib/sqlite.a"
+SQLITE_SO := "$(SDK_ROOT)/lib/sqlite.so.3"
 USE_STARDUSTUI ?= 0
 USE_LIBMAGIC ?= 0
 USE_LUA ?= 0
+USE_SQLITE ?= 0
 
 ifeq ($(USE_STARDUSTUI),1)
 APP_LIBS := $(STARDUSTUI_LIB)
@@ -80,6 +83,14 @@ ifeq ($(STATIC),1)
 APP_LIBS += $(LUA_LIB)
 else
 APP_LIBS += $(LUA_SO)
+endif
+
+ifeq ($(USE_SQLITE),1)
+ifeq ($(STATIC),1)
+APP_LIBS += $(SQLITE_LIB)
+else
+APP_LIBS += $(SQLITE_SO)
+endif
 endif
 endif
 

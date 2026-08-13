@@ -73,6 +73,19 @@ LeonOS builds libpng as `libpng.a` against its bundled zlib.  The public SDK
 includes both upstream libraries and headers, while `leonos/png.h` provides a
 bounded PNG-to-LeonOS-pixel decoder for ordinary GUI applications.
 
+## SQLite
+
+- Path: `third_party/sqlite`
+- Upstream: `https://github.com/sqlite/sqlite.git`
+- Version: 3.46.1; pinned commit:
+  `f3d536d37825302e31ed0eddd811c689f38f85a3`
+- License: SQLite public domain dedication and blessing; preserve
+  `third_party/sqlite/LICENSE.md`.
+
+LeonOS installs the ABI-v1 shared library as `0:/system/lib/sqlite.so.3` and
+packages `sqlite3.h` in the SDK. The port uses a LeonOS VFS and currently
+disables WAL, loadable extensions, and cross-process file locking.
+
 ## BusyBox
 
 - Path: `third_party/busybox`

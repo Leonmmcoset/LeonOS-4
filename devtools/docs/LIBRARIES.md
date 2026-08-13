@@ -60,6 +60,8 @@ LeonOS ABI v1 的基础运行库是 `lib/libleonos.so.1`。SDK 默认构建动�
   文件为 `include/magic.h`，运行时数据库为 `0:/system/share/misc/magic.mgc`。
 - `lib/liblua.so.5` 与 `lib/liblua.a`：Lua 5.4.8 C API；公共头文件为
   `include/lua5.4/`。动态 C 模块加载仍未开放。
+- `lib/sqlite.so.3` 与 `lib/sqlite.a`：SQLite 3.46.1 C API；公共头文件为
+  `include/sqlite3.h`。LeonOS 使用自定义 VFS，当前关闭 WAL、扩展加载和跨进程锁。
 
 `libmagic.so.1` 和 `liblua.so.5` 与 `libleonos.so.1` 都要求 LeonOS ABI v1，
 运行时从 `0:/system/lib` 解析。它们不提供宿主机 ABI 兼容层。
@@ -70,7 +72,8 @@ LeonOS ABI v1 的基础运行库是 `lib/libleonos.so.1`。SDK 默认构建动�
 ```sh
 make APP=examples/typecheck APP_NAME=typecheck USE_LIBMAGIC=1
 make APP=examples/lua_embed APP_NAME=lua_embed USE_LUA=1
+make APP=examples/sqlite_demo APP_NAME=sqlite_demo USE_SQLITE=1
 ```
 
-与基础运行库相同，这两个共享库由目标 LeonOS 系统提供；不要把宿主机的 `.so`
+与基础运行库相同，这些共享库由目标 LeonOS 系统提供；不要把宿主机的 `.so`
 放进应用目录。`STATIC=1` 时相同开关改用 `.a` 归档。

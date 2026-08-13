@@ -40,3 +40,6 @@
 [submodule "third_party/fastfetch"]
 	path = third_party/fastfetch
 	url = https://github.com/fastfetch-cli/fastfetch.git
+[submodule "third_party/sqlite"]
+	path = third_party/sqlite
+	url = https://github.com/sqlite/sqlite.git

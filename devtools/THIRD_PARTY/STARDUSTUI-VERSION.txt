@@ -1,0 +1,3 @@
+StardustUI revision: 67aae17214a0d27bb6a8b0caf10b7c1f98313086
+Upstream: https://github.com/xingji-studio/StardustUI
+License: MIT

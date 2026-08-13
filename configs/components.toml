@@ -700,3 +700,16 @@ stage = false
 entry = false
 sdk = true
 api = false
+
+[[components]]
+id = "sqlite"
+symbol = "LIB_SQLITE"
+label = "SQLite database library"
+category = "Third-party libraries"
+kind = "library"
+default = true
+required = false
+stage = true
+entry = false
+sdk = true
+api = false

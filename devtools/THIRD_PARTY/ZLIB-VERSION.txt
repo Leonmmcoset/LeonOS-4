@@ -1,0 +1,3 @@
+zlib version: 1.3.2
+Upstream: https://github.com/madler/zlib
+License: zlib License

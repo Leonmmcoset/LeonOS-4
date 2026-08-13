@@ -1,0 +1,3 @@
+file/libmagic version: 5.48
+Upstream: https://github.com/file/file
+License: BSD-2-Clause

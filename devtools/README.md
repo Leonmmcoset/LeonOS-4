@@ -16,6 +16,8 @@ ELF 应用程序。
   识别库，公共头文件为 `include/magic.h`。
 - `lib/liblua.so.5` 与 `lib/liblua.a`: Lua 5.4.8 的动态和静态 C API，公共
   头文件为 `include/lua5.4/`。
+- `lib/sqlite.so.3` 与 `lib/sqlite.a`: SQLite 3.46.1 的动态和静态 C API，
+  公共头文件为 `include/sqlite3.h`。
 - `linker.ld`: LeonOS 4 用户态 ELF 的链接布局，入口为 `_start`。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
 - `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。

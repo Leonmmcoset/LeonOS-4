@@ -1,0 +1,225 @@
+/*
+Copyright (c) 1982, 1986, 1993
+The Regents of the University of California.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+3. Neither the name of the University nor the names of its contributors
+may be used to endorse or promote products derived from this software
+without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+ */
+/* ANSI C namespace clean utility typedefs */
+
+/* This file defines various typedefs needed by the system calls that support
+   the C library.  Basically, they're just the POSIX versions with a '__'
+   prepended.  Targets shall use <machine/_types.h> to define their own
+   internal types if desired.
+
+   There are three define patterns used for type definitions.  Lets assume
+   xyz_t is a user type.
+
+   The internal type definition uses __machine_xyz_t_defined.  It is defined by
+   <machine/_types.h> to disable a default definition in <sys/_types.h>. It
+   must not be used in other files.
+
+   User type definitions are guarded by _XYZ_T_DEFINED in each header defining
+   xyz_t.
+*/
+
+#ifndef _SYS__TYPES_H
+#define _SYS__TYPES_H
+
+#define __need_size_t
+#define __need_wint_t
+#include <stddef.h>
+
+#include <machine/_types.h>
+
+/* The Arm Compiler doesn't define wint_t as part of stddef.h so
+ * define it here.
+ */
+#if defined(__ARMCC_VERSION) && (__ARMCC_VERSION >= 6100100)
+typedef __WINT_TYPE__ wint_t;
+#endif
+
+#ifndef __machine_blkcnt_t_defined
+typedef __int64_t __blkcnt_t;
+#endif
+
+#ifndef __machine_blksize_t_defined
+typedef __int32_t __blksize_t;
+#endif
+
+#ifndef __machine_fsblkcnt_t_defined
+typedef __uint64_t __fsblkcnt_t;
+#endif
+
+#ifndef __machine_fsfilcnt_t_defined
+typedef __uint64_t __fsfilcnt_t;
+#endif
+
+#ifndef __machine_off_t_defined
+typedef __int64_t __off_t;
+#endif
+
+#ifndef __machine_pid_t_defined
+/* Return value from fork(2), which gcc "knows" is int */
+typedef int __pid_t;
+#endif
+
+#ifndef __machine_dev_t_defined
+typedef __uint64_t __dev_t;
+#endif
+
+#ifndef __machine_uid_t_defined
+typedef __uint32_t __uid_t;
+#endif
+
+#ifndef __machine_gid_t_defined
+typedef __uint32_t __gid_t;
+#endif
+
+#ifndef __machine_id_t_defined
+typedef __uint32_t __id_t;
+#endif
+
+#ifndef __machine_ino_t_defined
+typedef __uint64_t __ino_t;
+#endif
+
+#ifndef __machine_mode_t_defined
+typedef __uint32_t __mode_t;
+#endif
+
+#ifndef __machine_key_t_defined
+typedef __int32_t __key_t;
+#endif
+
+#ifndef __machine_fpos_t_defined
+typedef __off_t __fpos_t;
+#endif
+
+#ifndef __machine_rlim_t_defined
+typedef __uint64_t __rlim_t;
+#endif
+
+/* Defined by GCC provided <stddef.h> */
+#undef __size_t
+
+#ifndef __machine_size_t_defined
+#ifdef __SIZE_TYPE__
+typedef __SIZE_TYPE__ __size_t;
+#else
+#if defined(__INT_MAX__) && __INT_MAX__ == 2147483647
+typedef unsigned int __size_t;
+#else
+typedef unsigned long __size_t;
+#endif
+#endif
+#endif
+
+#ifndef __machine_ssize_t_defined
+#ifdef __SIZE_TYPE__
+/* If __SIZE_TYPE__ is defined (gcc) we define ssize_t based on size_t.
+   We simply change "unsigned" to "signed" for this single definition
+   to make sure ssize_t and size_t only differ by their signedness. */
+#define unsigned signed
+typedef __SIZE_TYPE__ __ssize_t;
+#undef unsigned
+#define __SSIZE_MAX__ ((__ssize_t)(__SIZE_MAX__ >> 1))
+#else
+#if defined(__INT_MAX__) && __INT_MAX__ == 2147483647
+typedef int __ssize_t;
+#define __SSIZE_MAX__ __INT_MAX__
+#else
+typedef long __ssize_t;
+#define __SSIZE_MAX__ __LONG_MAX__
+#endif
+#endif
+#endif
+
+#ifndef __machine_mbstate_t_defined
+/* Conversion state information.  */
+typedef struct {
+    int __count;
+    union {
+        wint_t        __wch;
+        unsigned char __wchb[4];
+        __uint32_t    __ucs;
+        __uint16_t    __ucs2;
+    } __value; /* Value so far.  */
+} __mbstate_t;
+#endif
+
+#ifndef __machine_iconv_t_defined
+/* Iconv descriptor type */
+struct __iconv_t;
+typedef struct __iconv_t *_iconv_t;
+#endif
+
+#ifndef __machine_clock_t_defined
+typedef __uint64_t __clock_t;
+#endif
+
+#ifndef __machine_time_t_defined
+typedef __int64_t __time_t;
+#endif
+
+#ifndef __machine_clockid_t_defined
+typedef unsigned long __clockid_t;
+#endif
+
+#ifndef __machine_timer_t_defined
+typedef unsigned long __timer_t;
+#endif
+
+#ifndef __machine_sa_family_t_defined
+typedef __uint8_t __sa_family_t;
+#endif
+
+#ifndef __machine_socklen_t_defined
+typedef __uint32_t __socklen_t;
+#endif
+
+typedef __int32_t  __nl_item;
+typedef __uint64_t __nlink_t;
+typedef __int32_t  __suseconds_t; /* microseconds (signed) */
+typedef __uint32_t __useconds_t;  /* microseconds (unsigned) */
+
+#ifdef __STDC_WANT_LIB_EXT1__
+#if (__STDC_WANT_LIB_EXT1__ != 0) && (__STDC_WANT_LIB_EXT1__ != 1)
+#error Please define __STDC_WANT_LIB_EXT__ as 0 or 1
+#endif
+
+#if __STDC_WANT_LIB_EXT1__ == 1
+#ifndef __STDC_LIB_EXT1__
+#define __STDC_LIB_EXT1__ 1
+#endif
+#endif
+#endif
+
+typedef __size_t   __rsize_t;
+typedef int        __errno_t;
+typedef __uint16_t __wctype_t;
+
+#define __NAME_MAX 255
+
+#endif /* _SYS__TYPES_H */

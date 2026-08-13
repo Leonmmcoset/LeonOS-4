@@ -524,6 +524,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     runtime_loader = paths.out / "system/lib/ld-leonos.elf"
     libmagic_so = paths.out / "system/lib/libmagic.so.1"
     liblua_so = paths.out / "system/lib/liblua.so.5"
+    sqlite_source = ROOT / "third_party/sqlite"
+    sqlite_port = ROOT / "userland/sqlite"
+    sqlite_so = paths.out / "system/lib/sqlite.so.3"
+    sqlite_archive = paths.out / "userland/sqlite.a"
+    sqlite_header = paths.out / "generated/sqlite/sqlite3.h"
+    sqlite_stamp = paths.out / "userland/sqlite.stamp"
+    sqlite_work_dir = paths.out / "sqlite-work"
     dynlinkerror_elf = paths.out / "userland/dynlinkerror.elf"
     installer_runtime_so = paths.out / "userland-installer-policy/libleonos.so.1"
     picolibc_header_stamp = picolibc_prefix / "include/.leonos-picolibc.stamp"
@@ -676,6 +683,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/file is missing; initialize the libmagic source tree")
     if not (file_port / "config.h").is_file() or not (file_port / "leonos_shim.c").is_file():
         raise GraphError("the LeonOS file/libmagic port metadata is missing")
+    if not (sqlite_source / "main.mk").is_file() or not (sqlite_source / "Makefile.linux-gcc").is_file():
+        raise GraphError("third_party/sqlite is missing; initialize the SQLite source tree")
+    if not (sqlite_port / "leonos_sqlite_vfs.c").is_file():
+        raise GraphError("the LeonOS SQLite VFS port metadata is missing")
     optimization_level = config_int(values, "CONFIG_BUILD_OPTIMIZATION_LEVEL", 2)
     optimization_flag = f"-O{max(0, min(3, optimization_level))}"
     build_compile_flags: list[str] = [optimization_flag]
@@ -1156,6 +1167,30 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ),
     ))
 
+    sqlite_inputs = tuple([
+        ROOT / "tools/build_sqlite.py", sqlite_source / "VERSION", sqlite_source / "main.mk",
+        sqlite_source / "Makefile.linux-gcc", sqlite_source / "tool/mksqlite3c.tcl",
+        sqlite_port / "leonos_sqlite_vfs.c", sqlite_port / "README.md",
+        ROOT / "userland/dynamic-app.ld", runtime_so, dynamic_crt_obj, dynamic_note_obj,
+    ])
+    graph.add(Target(
+        name="sqlite",
+        outputs=(sqlite_so, sqlite_archive, sqlite_header, sqlite_stamp),
+        inputs=sqlite_inputs,
+        depends_on=("picolibc", "runtime", "runtime-loader"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_sqlite.py", "--source", "third_party/sqlite",
+            "--port", "userland/sqlite", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--dynamic-linker-script", "userland/dynamic-app.ld", "--runtime-so", relative(runtime_so),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
+            "--library", relative(sqlite_so), "--static-library", relative(sqlite_archive),
+            "--header", relative(sqlite_header), "--work-dir", relative(sqlite_work_dir),
+            "--stamp", relative(sqlite_stamp), *compile_option_args, *linker_option_args,
+        ),
+    ))
+
     def busybox_source_revision_action(context: ActionContext) -> None:
         context.detail(f"reading source revision: git -C {relative(busybox_source)} rev-parse HEAD")
         result = subprocess.run(
@@ -1443,6 +1478,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                                "runtime", "runtime-loader", "dynlinkerror"]
     if component_enabled("file"):
         user_targets.extend(("file-magic", "file"))
+    if component_enabled("sqlite"):
+        user_targets.append("sqlite")
     if component_enabled("busybox"):
         user_targets.append("busybox")
     if component_enabled("nano"):
@@ -1579,6 +1616,15 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             "--libmagic-source", "third_party/file",
             "--libmagic-header", relative(file_magic_header),
         ))
+    if component_enabled("sqlite", "sdk"):
+        sdk_inputs_list.extend((sqlite_source / "LICENSE.md", sqlite_so, sqlite_archive,
+                                sqlite_header, sqlite_stamp, sqlite_port / "README.md"))
+        sdk_depends.append("sqlite")
+        sdk_command.extend((
+            "--sqlite-lib", relative(sqlite_archive), "--sqlite-so", relative(sqlite_so),
+            "--sqlite-source", "third_party/sqlite", "--sqlite-header", relative(sqlite_header),
+            "--sqlite-stamp", relative(sqlite_stamp),
+        ))
     if component_enabled("stardustui", "sdk"):
         sdk_inputs_list.extend((
             ROOT / "third_party/stardustui/LICENSE", stardustui_archive,
@@ -1669,7 +1715,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             if not selected and target_dir.exists():
                 context.detail(f"remove disabled component staging: {relative(target_dir)}")
                 shutil.rmtree(target_dir)
-        for component, library_name in (("file", "libmagic.so.1"), ("lua", "liblua.so.5")):
+        for component, library_name in (("file", "libmagic.so.1"), ("lua", "liblua.so.5"),
+                                        ("sqlite", "sqlite.so.3")):
             library = paths.staging / "system/lib" / library_name
             if not component_enabled(component, "image") and library.exists():
                 context.detail(f"remove disabled shared library staging: {relative(library)}")
@@ -1736,6 +1783,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     for component, source, filename in (
         ("file", libmagic_so, "libmagic.so.1"),
         ("lua", liblua_so, "liblua.so.5"),
+        ("sqlite", sqlite_so, "sqlite.so.3"),
     ):
         if not component_enabled(component, "image"):
             continue
@@ -2299,7 +2347,7 @@ def task_tools(task: str) -> tuple[str, ...]:
     esp = (*userland, "rustc", "grub-mkfont", "grub-mkstandalone")
     vmdk = (*esp, "truncate", "sgdisk", "mkfs.fat", "mcopy", "dd", "qemu-img")
     iso = (*esp, "grub-mkrescue", "xorriso")
-    if task in {"file", "file-magic"}:
+    if task in {"file", "file-magic", "sqlite"}:
         return userland
     if task in {"kernel", "loader", "drivers"}:
         return compiler
