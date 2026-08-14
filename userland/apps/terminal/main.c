@@ -8,16 +8,17 @@
 #include <stdio.h>
 #include <termios.h>
 
-#define TERMINAL_W 760U
-#define TERMINAL_H 480U
+#define TERMINAL_DEFAULT_W 760U
+#define TERMINAL_DEFAULT_H 480U
+#define TERMINAL_MIN_W 160U
+#define TERMINAL_MIN_H 96U
+#define TERMINAL_MAX_W 1920U
+#define TERMINAL_MAX_H 1080U
 #define TERMINAL_MAX_SESSIONS 8U
 #define TERMINAL_HISTORY_ROWS 160U
 #define TERMINAL_TAB_ADD_W 28U
 #define TERMINAL_BODY_X 0U
-#define TERMINAL_BODY_Y (LEONOS_FONT_H + 10U)
-#define TERMINAL_BODY_W TERMINAL_W
-#define TERMINAL_BODY_H (TERMINAL_H - TERMINAL_BODY_Y)
-#define TERMINAL_COLUMNS (TERMINAL_BODY_W / LEONOS_FONT_W)
+#define TERMINAL_MAX_COLUMNS (TERMINAL_MAX_W / LEONOS_FONT_W)
 #define TERMINAL_CSI_PARAM_CAP 12U
 /* Keep a complete typical curses redraw in one terminal frame.  Smaller
  * batches make full-screen programs redraw and present the window repeatedly. */
@@ -40,7 +41,7 @@ struct terminal_cell {
 };
 
 struct terminal_line {
-    struct terminal_cell cells[TERMINAL_COLUMNS];
+    struct terminal_cell cells[TERMINAL_MAX_COLUMNS];
 };
 
 struct terminal_screen_snapshot {
@@ -63,7 +64,7 @@ struct terminal_screen_snapshot {
     uint8_t snapshot_saved_cursor_valid;
 };
 
-static uint32_t pixels[TERMINAL_W * TERMINAL_H];
+static uint32_t pixels[TERMINAL_MAX_W * TERMINAL_MAX_H];
 
 struct terminal_session {
     struct terminal_line history[TERMINAL_HISTORY_ROWS];
@@ -102,6 +103,8 @@ struct terminal_session {
 static struct terminal_session sessions[TERMINAL_MAX_SESSIONS];
 static struct terminal_session *active_session;
 static struct leonos_ui_tab_state tabs_state;
+static uint32_t terminal_view_width = TERMINAL_DEFAULT_W;
+static uint32_t terminal_view_height = TERMINAL_DEFAULT_H;
 static const char *const terminal_tab_labels[TERMINAL_MAX_SESSIONS] = {
     "1", "2", "3", "4", "5", "6", "7", "8",
 };
@@ -136,6 +139,7 @@ static const char *const terminal_tab_labels[TERMINAL_MAX_SESSIONS] = {
 #define local_echoed_input_count (active_session->local_echoed_input_count)
 
 static uint32_t terminal_visible_rows(void);
+static uint32_t terminal_columns(void);
 static void terminal_flush_utf8(void);
 static int terminal_write_input(const char *buffer, uint32_t length);
 static uint32_t terminal_tab_items(struct leonos_ui_tab_item *items);
@@ -264,9 +268,119 @@ static void terminal_blank_cell(struct terminal_cell *cell)
 static void terminal_reset_line(struct terminal_line *line)
 {
     uint32_t column;
-    for (column = 0; column < TERMINAL_COLUMNS; ++column) {
+    for (column = 0; column < TERMINAL_MAX_COLUMNS; ++column) {
         terminal_blank_cell(&line->cells[column]);
     }
+}
+
+static uint32_t terminal_columns(void)
+{
+    uint32_t columns = terminal_view_width / LEONOS_FONT_W;
+    if (columns == 0) {
+        return 1;
+    }
+    return columns > TERMINAL_MAX_COLUMNS ? TERMINAL_MAX_COLUMNS : columns;
+}
+
+static uint32_t terminal_visible_rows(void)
+{
+    uint32_t body_y = leonos_ui_tab_height();
+    uint32_t rows;
+    if (terminal_view_height <= body_y) {
+        return 1;
+    }
+    rows = (terminal_view_height - body_y) / LEONOS_FONT_H;
+    return rows ? rows : 1;
+}
+
+static void terminal_normalize_line_width(struct terminal_line *line,
+                                          uint32_t columns)
+{
+    uint32_t column;
+    if (!line || columns == 0 || columns > TERMINAL_MAX_COLUMNS) {
+        return;
+    }
+
+    /* Do not leave half of a double-width glyph at the new right edge. */
+    if (columns < TERMINAL_MAX_COLUMNS &&
+        line->cells[columns].codepoint == TERMINAL_CELL_CONTINUATION) {
+        terminal_blank_cell(&line->cells[columns - 1U]);
+    }
+    for (column = columns; column < TERMINAL_MAX_COLUMNS; ++column) {
+        terminal_blank_cell(&line->cells[column]);
+    }
+}
+
+static void terminal_resize_active_session_grid(void)
+{
+    uint32_t row;
+    uint32_t columns = terminal_columns();
+
+    if (!active_session || !active_session->used) {
+        return;
+    }
+    for (row = 0; row < TERMINAL_HISTORY_ROWS; ++row) {
+        terminal_normalize_line_width(&history[row], columns);
+    }
+    if (alternate_screen_active) {
+        for (row = 0; row < TERMINAL_HISTORY_ROWS; ++row) {
+            terminal_normalize_line_width(&normal_screen.lines[row], columns);
+        }
+        if (normal_screen.snapshot_cursor_column > columns) {
+            normal_screen.snapshot_cursor_column = columns;
+        }
+        if (normal_screen.snapshot_saved_column > columns) {
+            normal_screen.snapshot_saved_column = columns;
+        }
+    }
+    if (cursor_column > columns) {
+        cursor_column = columns;
+    }
+    if (saved_column > columns) {
+        saved_column = columns;
+    }
+}
+
+static void terminal_sync_session_winsize(const struct terminal_session *session)
+{
+    struct leonos_pty_winsize winsize;
+    if (!session || !session->used || !session->pty_id) {
+        return;
+    }
+    winsize.ws_row = (uint16_t)terminal_visible_rows();
+    winsize.ws_col = (uint16_t)terminal_columns();
+    (void)leonos_pty_set_winsize(session->pty_id, &winsize);
+}
+
+static int terminal_resize_view(uint32_t width, uint32_t height)
+{
+    struct terminal_session *selected = active_session;
+    uint32_t previous_width = terminal_view_width;
+    uint32_t previous_height = terminal_view_height;
+
+    if (width < TERMINAL_MIN_W) {
+        width = TERMINAL_MIN_W;
+    } else if (width > TERMINAL_MAX_W) {
+        width = TERMINAL_MAX_W;
+    }
+    if (height < TERMINAL_MIN_H) {
+        height = TERMINAL_MIN_H;
+    } else if (height > TERMINAL_MAX_H) {
+        height = TERMINAL_MAX_H;
+    }
+    terminal_view_width = width;
+    terminal_view_height = height;
+
+    for (uint32_t index = 0; index < TERMINAL_MAX_SESSIONS; ++index) {
+        if (!sessions[index].used) {
+            continue;
+        }
+        active_session = &sessions[index];
+        terminal_resize_active_session_grid();
+        terminal_sync_session_winsize(active_session);
+    }
+    active_session = selected;
+    return previous_width != width || previous_height != height;
 }
 
 static uint32_t terminal_logical_active(void)
@@ -376,13 +490,13 @@ static uint32_t terminal_codepoint_width(uint32_t codepoint)
 
 static void terminal_prepare_cell(struct terminal_line *line, uint32_t column)
 {
-    if (column >= TERMINAL_COLUMNS) {
+    if (column >= terminal_columns()) {
         return;
     }
     if (line->cells[column].codepoint == TERMINAL_CELL_CONTINUATION && column > 0) {
         terminal_blank_cell(&line->cells[column - 1U]);
     }
-    if (column + 1U < TERMINAL_COLUMNS &&
+    if (column + 1U < terminal_columns() &&
         line->cells[column + 1U].codepoint == TERMINAL_CELL_CONTINUATION) {
         terminal_blank_cell(&line->cells[column + 1U]);
     }
@@ -394,11 +508,12 @@ static void terminal_put_codepoint(uint32_t codepoint)
     struct terminal_line *line;
     uint32_t width = terminal_codepoint_width(codepoint);
     uint32_t column;
-    if (width > TERMINAL_COLUMNS) {
+    if (width > terminal_columns()) {
         codepoint = '?';
         width = 1;
     }
-    if (cursor_column >= TERMINAL_COLUMNS || cursor_column + width > TERMINAL_COLUMNS) {
+    if (cursor_column >= terminal_columns() ||
+        cursor_column + width > terminal_columns()) {
         terminal_newline();
     }
     line = terminal_current_line();
@@ -495,7 +610,7 @@ static void terminal_move_down(uint32_t amount)
 
 static void terminal_move_home(uint32_t row, uint32_t column)
 {
-    uint32_t visible_rows = TERMINAL_BODY_H / LEONOS_FONT_H;
+    uint32_t visible_rows = terminal_visible_rows();
     uint32_t first_visible = history_count > visible_rows ? history_count - visible_rows : 0;
     uint32_t target;
     if (row == 0) {
@@ -513,8 +628,8 @@ static void terminal_move_home(uint32_t row, uint32_t column)
     }
     terminal_select_logical(target);
     cursor_column = column - 1U;
-    if (cursor_column >= TERMINAL_COLUMNS) {
-        cursor_column = TERMINAL_COLUMNS - 1U;
+    if (cursor_column >= terminal_columns()) {
+        cursor_column = terminal_columns() - 1U;
     }
 }
 
@@ -522,15 +637,15 @@ static void terminal_erase_line(uint32_t mode)
 {
     struct terminal_line *line = terminal_current_line();
     uint32_t first = 0;
-    uint32_t last = TERMINAL_COLUMNS;
+    uint32_t last = terminal_columns();
     uint32_t column;
     if (mode == 0) {
         first = cursor_column;
     } else if (mode == 1) {
-        last = cursor_column < TERMINAL_COLUMNS ? cursor_column + 1U : TERMINAL_COLUMNS;
+        last = cursor_column < terminal_columns() ? cursor_column + 1U : terminal_columns();
     }
-    if (first > TERMINAL_COLUMNS) {
-        first = TERMINAL_COLUMNS;
+    if (first > terminal_columns()) {
+        first = terminal_columns();
     }
     for (column = first; column < last; ++column) {
         terminal_blank_cell(&line->cells[column]);
@@ -574,7 +689,8 @@ static void terminal_restore_cursor(void)
     for (row = 0; row < history_count; ++row) {
         if ((history_first + row) % TERMINAL_HISTORY_ROWS == saved_line) {
             active_line = saved_line;
-            cursor_column = saved_column < TERMINAL_COLUMNS ? saved_column : TERMINAL_COLUMNS;
+            cursor_column = saved_column < terminal_columns() ?
+                            saved_column : terminal_columns();
             return;
         }
     }
@@ -650,8 +766,8 @@ static void terminal_finish_csi(char final)
         terminal_move_down(amount);
     } else if (final == 'C') {
         cursor_column += amount;
-        if (cursor_column > TERMINAL_COLUMNS) {
-            cursor_column = TERMINAL_COLUMNS;
+        if (cursor_column > terminal_columns()) {
+            cursor_column = terminal_columns();
         }
     } else if (final == 'D') {
         cursor_column = cursor_column > amount ? cursor_column - amount : 0;
@@ -663,13 +779,13 @@ static void terminal_finish_csi(char final)
         cursor_column = 0;
     } else if (final == 'a') {
         cursor_column += amount;
-        if (cursor_column > TERMINAL_COLUMNS) {
-            cursor_column = TERMINAL_COLUMNS;
+        if (cursor_column > terminal_columns()) {
+            cursor_column = terminal_columns();
         }
     } else if (final == 'G') {
         cursor_column = amount - 1U;
-        if (cursor_column >= TERMINAL_COLUMNS) {
-            cursor_column = TERMINAL_COLUMNS - 1U;
+        if (cursor_column >= terminal_columns()) {
+            cursor_column = terminal_columns() - 1U;
         }
     } else if (final == 'H' || final == 'f') {
         terminal_move_home(terminal_csi_param(0, 1), terminal_csi_param(1, 1));
@@ -679,10 +795,10 @@ static void terminal_finish_csi(char final)
         terminal_erase_line(csi_params[0]);
     } else if (final == '@') {
         line = terminal_current_line();
-        if (amount > TERMINAL_COLUMNS - cursor_column) {
-            amount = (uint16_t)(TERMINAL_COLUMNS - cursor_column);
+        if (amount > terminal_columns() - cursor_column) {
+            amount = (uint16_t)(terminal_columns() - cursor_column);
         }
-        for (column = TERMINAL_COLUMNS; column-- > cursor_column + amount;) {
+        for (column = terminal_columns(); column-- > cursor_column + amount;) {
             line->cells[column] = line->cells[column - amount];
         }
         for (column = cursor_column; column < cursor_column + amount; ++column) {
@@ -690,19 +806,19 @@ static void terminal_finish_csi(char final)
         }
     } else if (final == 'P') {
         line = terminal_current_line();
-        if (amount > TERMINAL_COLUMNS - cursor_column) {
-            amount = (uint16_t)(TERMINAL_COLUMNS - cursor_column);
+        if (amount > terminal_columns() - cursor_column) {
+            amount = (uint16_t)(terminal_columns() - cursor_column);
         }
-        for (column = cursor_column; column + amount < TERMINAL_COLUMNS; ++column) {
+        for (column = cursor_column; column + amount < terminal_columns(); ++column) {
             line->cells[column] = line->cells[column + amount];
         }
-        for (; column < TERMINAL_COLUMNS; ++column) {
+        for (; column < terminal_columns(); ++column) {
             terminal_blank_cell(&line->cells[column]);
         }
     } else if (final == 'X') {
         line = terminal_current_line();
-        if (amount > TERMINAL_COLUMNS - cursor_column) {
-            amount = (uint16_t)(TERMINAL_COLUMNS - cursor_column);
+        if (amount > terminal_columns() - cursor_column) {
+            amount = (uint16_t)(terminal_columns() - cursor_column);
         }
         for (column = cursor_column; column < cursor_column + amount; ++column) {
             terminal_blank_cell(&line->cells[column]);
@@ -817,11 +933,6 @@ static void terminal_put_text(const char *text)
     }
 }
 
-static uint32_t terminal_visible_rows(void)
-{
-    return TERMINAL_BODY_H / LEONOS_FONT_H;
-}
-
 static void terminal_draw_monospace_glyph(struct leonos_ui_surface *ui,
                                           uint32_t x, uint32_t y,
                                           uint32_t codepoint, uint32_t width,
@@ -853,14 +964,14 @@ static void terminal_draw_line(struct leonos_ui_surface *ui, uint32_t y,
                                const struct terminal_line *line)
 {
     uint32_t column;
-    for (column = 0; column < TERMINAL_COLUMNS; ++column) {
+    for (column = 0; column < terminal_columns(); ++column) {
         const struct terminal_cell *cell = &line->cells[column];
         uint32_t width = 1;
         uint32_t x = TERMINAL_BODY_X + column * LEONOS_FONT_W;
         if (cell->codepoint == TERMINAL_CELL_CONTINUATION) {
             continue;
         }
-        if (column + 1U < TERMINAL_COLUMNS &&
+        if (column + 1U < terminal_columns() &&
             line->cells[column + 1U].codepoint == TERMINAL_CELL_CONTINUATION) {
             width = 2;
         }
@@ -884,24 +995,25 @@ static void terminal_draw(struct leonos_ui_surface *ui)
 
     tab_count = terminal_tab_items(tab_items);
 
-    leonos_ui_rect(ui, 0, 0, TERMINAL_W, TERMINAL_H, 0x000b1019U);
-    leonos_ui_rect(ui, 0, 0, TERMINAL_W, leonos_ui_tab_height(), LEONOS_UI_GRAY);
-    leonos_ui_tab_control(ui, 0, 0, TERMINAL_W - TERMINAL_TAB_ADD_W,
+    leonos_ui_rect(ui, 0, 0, terminal_view_width, terminal_view_height, 0x000b1019U);
+    leonos_ui_rect(ui, 0, 0, terminal_view_width, leonos_ui_tab_height(), LEONOS_UI_GRAY);
+    leonos_ui_tab_control(ui, 0, 0, terminal_view_width - TERMINAL_TAB_ADD_W,
                           tab_items, tab_count, &tabs_state);
-    leonos_ui_button(ui, TERMINAL_W - TERMINAL_TAB_ADD_W, 0,
+    leonos_ui_button(ui, terminal_view_width - TERMINAL_TAB_ADD_W, 0,
                      TERMINAL_TAB_ADD_W, leonos_ui_tab_height(), "+",
                      tab_count < TERMINAL_MAX_SESSIONS ? 0 : LEONOS_UI_BUTTON_DISABLED);
     for (row = 0; row < rows && first_visible + row < history_count; ++row) {
         uint32_t line_index = (history_first + first_visible + row) % TERMINAL_HISTORY_ROWS;
-        terminal_draw_line(ui, TERMINAL_BODY_Y + row * LEONOS_FONT_H,
+        terminal_draw_line(ui, leonos_ui_tab_height() + row * LEONOS_FONT_H,
                            &history[line_index]);
     }
     if (cursor_visible && active_visible >= first_visible &&
         active_visible < first_visible + rows &&
         (leonos_uptime_ms() / 450UL) % 2UL == 0UL) {
         uint32_t cursor_x = TERMINAL_BODY_X +
-                            (cursor_column < TERMINAL_COLUMNS ? cursor_column : TERMINAL_COLUMNS - 1U) * LEONOS_FONT_W;
-        uint32_t cursor_y = TERMINAL_BODY_Y +
+                            (cursor_column < terminal_columns() ?
+                             cursor_column : terminal_columns() - 1U) * LEONOS_FONT_W;
+        uint32_t cursor_y = leonos_ui_tab_height() +
                             (active_visible - first_visible) * LEONOS_FONT_H;
         leonos_ui_rect(ui, cursor_x, cursor_y + LEONOS_FONT_H - 2U,
                        LEONOS_FONT_W, 2, terminal_style_foreground());
@@ -1216,7 +1328,6 @@ static struct terminal_session *terminal_open_session(const char *path,
                                                        char *const command_argv[])
 {
     struct terminal_session *session = 0;
-    struct leonos_pty_winsize winsize;
     int new_pty;
     int shell_result;
 
@@ -1244,9 +1355,7 @@ static struct terminal_session *terminal_open_session(const char *path,
     cursor_visible = 1;
     terminal_reset_style();
     terminal_clear();
-    winsize.ws_row = (uint16_t)terminal_visible_rows();
-    winsize.ws_col = (uint16_t)TERMINAL_COLUMNS;
-    (void)leonos_pty_set_winsize(active_pty_id, &winsize);
+    terminal_sync_session_winsize(session);
     shell_result = leonos_pty_spawn_argv(path, active_pty_id, command_argv, 0);
     if (shell_result < 0) {
         terminal_put_text("! shell start failed");
@@ -1267,15 +1376,15 @@ static int terminal_handle_mouse(int32_t x, int32_t y, uint8_t buttons,
     }
     tab_count = terminal_tab_items(tab_items);
     if (leonos_ui_tab_control_handle_mouse_ex(&tabs_state, x, y, 0, 0,
-                                              TERMINAL_W - TERMINAL_TAB_ADD_W,
+                                              terminal_view_width - TERMINAL_TAB_ADD_W,
                                               tab_items, tab_count, &closed_id)) {
         if (closed_id) {
             return terminal_close_session(closed_id);
         }
         return terminal_select_tab(tabs_state.selected_id);
     }
-    if (x >= (int32_t)(TERMINAL_W - TERMINAL_TAB_ADD_W) &&
-        x < (int32_t)TERMINAL_W && y >= 0 &&
+    if (x >= (int32_t)(terminal_view_width - TERMINAL_TAB_ADD_W) &&
+        x < (int32_t)terminal_view_width && y >= 0 &&
         y < (int32_t)leonos_ui_tab_height()) {
         return terminal_open_session(path, command_argv) != 0;
     }
@@ -1308,21 +1417,22 @@ int main(int argc, char **argv, char **envp)
         command_argv = shell_argv;
     }
     window_id = leonos_gui_create_app_window_ex(T("Terminal", "终端"),
-                                                "", TERMINAL_W, TERMINAL_H,
-                                                LEONOS_GUI_WINDOW_NO_RESIZE);
+                                                "", TERMINAL_DEFAULT_W,
+                                                TERMINAL_DEFAULT_H, 0);
     if (window_id <= 0) {
         printf("terminal: window creation failed (%d)\n", window_id);
         return 1;
     }
-    leonos_ui_bind(&ui, pixels, TERMINAL_W, TERMINAL_H, TERMINAL_W);
+    leonos_ui_bind(&ui, pixels, terminal_view_width, terminal_view_height,
+                   TERMINAL_MAX_W);
     leonos_ui_tab_state_init(&tabs_state, 0);
     if (!terminal_open_session(command_path, command_argv)) {
         printf("terminal: PTY creation failed\n");
         return 1;
     }
     terminal_draw(&ui);
-    leonos_gui_present_window((uint32_t)window_id, TERMINAL_W, TERMINAL_H,
-                              TERMINAL_W, pixels);
+    leonos_gui_present_window((uint32_t)window_id, terminal_view_width,
+                              terminal_view_height, TERMINAL_MAX_W, pixels);
     for (;;) {
         int redraw = terminal_pump_all_output();
         uint8_t next_cursor_phase = (uint8_t)((leonos_uptime_ms() / 450UL) % 2UL);
@@ -1361,15 +1471,25 @@ int main(int argc, char **argv, char **envp)
                     return 0;
                 }
                 redraw |= mouse_result;
+            } else if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
+                /* Theme changes are translated to RESIZE by libc but carry
+                 * no geometry. Preserve the current PTY size in that case. */
+                if (event.width && event.height) {
+                    redraw |= terminal_resize_view(event.width, event.height);
+                } else {
+                    redraw = 1;
+                }
             } else if (event.type == LEONOS_GUI_APP_EVENT_THEME_CHANGED ||
                        event.type == LEONOS_GUI_APP_EVENT_FOCUS) {
                 redraw = 1;
             }
         }
         if (redraw) {
+            leonos_ui_bind(&ui, pixels, terminal_view_width, terminal_view_height,
+                           TERMINAL_MAX_W);
             terminal_draw(&ui);
-            leonos_gui_present_window((uint32_t)window_id, TERMINAL_W, TERMINAL_H,
-                                      TERMINAL_W, pixels);
+            leonos_gui_present_window((uint32_t)window_id, terminal_view_width,
+                                      terminal_view_height, TERMINAL_MAX_W, pixels);
         }
     }
 }

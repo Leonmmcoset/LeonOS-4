@@ -46,7 +46,10 @@ def text_keys(text: str) -> tuple[str, ...]:
     }
     keys: list[str] = []
     for character in text:
-        keys.append(special.get(character, character))
+        if "A" <= character <= "Z":
+            keys.append(f"shift-{character.lower()}")
+        else:
+            keys.append(special.get(character, character))
     return tuple(keys)
 
 
@@ -59,6 +62,7 @@ def main() -> int:
     login_password: str | None = None
     editor = "nano"
     fastfetch_smoke = False
+    fastfetch_single = False
     iso9660_smoke = False
     dynlinkerror_smoke = False
     cmd_pipeline_smoke = False
@@ -73,6 +77,9 @@ def main() -> int:
         arguments = arguments[1:]
     if arguments and arguments[0] == "--fastfetch":
         fastfetch_smoke = True
+        arguments = arguments[1:]
+    if arguments and arguments[0] == "--fastfetch-single":
+        fastfetch_single = True
         arguments = arguments[1:]
     if arguments and arguments[0] == "--iso9660":
         iso9660_smoke = True
@@ -96,7 +103,7 @@ def main() -> int:
         return 2
     if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
         return 2
-    if desktop_app is not None and (tcc_smoke or fastfetch_smoke or iso9660_smoke or
+    if desktop_app is not None and (tcc_smoke or fastfetch_smoke or fastfetch_single or iso9660_smoke or
                                     dynlinkerror_smoke or cmd_pipeline_smoke or exit_only):
         return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
@@ -154,6 +161,13 @@ def main() -> int:
     # read loop before sending the editor command.  A cold guest may still be
     # loading the font and starting BusyBox after the window first appears.
     time.sleep(18.0)
+
+    if fastfetch_single:
+        send_keys(sock, text_keys("fastfetch") + ("ret",))
+        time.sleep(3.0)
+        hmp(sock, "screendump build/images/fastfetch-single-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
 
     # Exercise terminal tab lifecycle: create a second PTY, close it, and
     # create it again so a closed tab cannot exhaust the kernel PTY pool.
