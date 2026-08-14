@@ -3,6 +3,7 @@
  * Starts memory, interrupts, drivers, storage, middle layer, and scheduling.
  */
 #include <ntclks/arch.h>
+#include <ntclks/boot_splash.h>
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>
@@ -10,7 +11,6 @@
 #include <ntclks/input.h>
 #include <ntclks/kernel.h>
 #include <ntclks/mm.h>
-#include <ntclks/mouse.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/net.h>
 #include <ntclks/osmlayer.h>
@@ -28,102 +28,6 @@
 #include "arch/x86_64/idt.h"
 
 static uint8_t kernel_ring0_stack[65536] __attribute__((aligned(16)));
-
-/**
- * @brief Coordinates the status u32 operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- */
-static void status_u32(char *buf, uint32_t *pos, uint32_t value)
-{
-    char tmp[10];
-    uint32_t n = 0;
-    if (value == 0) {
-        buf[(*pos)++] = '0';
-        return;
-    }
-    while (value && n < sizeof(tmp)) {
-        tmp[n++] = (char)('0' + value % 10);
-        value /= 10;
-    }
-    while (n) {
-        buf[(*pos)++] = tmp[--n];
-    }
-}
-
-/**
- * @brief Coordinates the status hex8 operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- */
-static void status_hex8(char *buf, uint32_t *pos, uint8_t value)
-{
-    const char *digits = "0123456789abcdef";
-    buf[(*pos)++] = digits[(value >> 4) & 0xf];
-    buf[(*pos)++] = digits[value & 0xf];
-}
-
-/**
- * @brief Coordinates the mouse status line operation.
- */
-static void mouse_status_line(void)
-{
-    const struct mouse_state *m = mouse_get_state();
-    char line[80];
-    uint32_t pos = 0;
-    const char *prefix = "Mouse x=";
-    for (uint32_t i = 0; prefix[i]; ++i) {
-        line[pos++] = prefix[i];
-    }
-    status_u32(line, &pos, (uint32_t)m->x);
-    line[pos++] = ' ';
-    line[pos++] = 'y';
-    line[pos++] = '=';
-    status_u32(line, &pos, (uint32_t)m->y);
-    line[pos++] = ' ';
-    line[pos++] = 'b';
-    line[pos++] = '=';
-    status_u32(line, &pos, m->buttons);
-    line[pos++] = ' ';
-    line[pos++] = 'e';
-    line[pos++] = '=';
-    status_u32(line, &pos, mouse_event_count());
-    line[pos++] = ' ';
-    line[pos++] = 'p';
-    line[pos++] = '=';
-    line[pos++] = m->present ? '1' : '0';
-    line[pos++] = ' ';
-    line[pos++] = 'm';
-    line[pos++] = '=';
-    line[pos++] = m->absolute ? 'a' : 'r';
-    line[pos++] = ' ';
-    line[pos++] = 's';
-    line[pos++] = '=';
-    status_hex8(line, &pos, mouse_last_status());
-    line[pos++] = ' ';
-    line[pos++] = 'd';
-    line[pos++] = '=';
-    status_hex8(line, &pos, mouse_last_data());
-    line[pos++] = ' ';
-    line[pos++] = 'a';
-    line[pos++] = '=';
-    status_hex8(line, &pos, mouse_last_ack());
-    while (pos < 79) {
-        line[pos++] = ' ';
-    }
-    line[pos] = 0;
-
-    const struct framebuffer *fb = framebuffer_get();
-    if (fb->available) {
-        uint32_t y = fb->height > 18 ? fb->height - 18 : 0;
-        framebuffer_rect(0, y, 640, 10, 0x00c0c0c0);
-        framebuffer_text(4, y + 1, line, 0x00000000, 0x00c0c0c0);
-    } else {
-        vga_write_at(0, 24, line);
-    }
-}
 
 /**
  * @brief Coordinates the kernel idle loop operation.
@@ -219,6 +123,8 @@ static void boot_import_handoff_modules(struct boot_info *boot,
 static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                          const struct leonos_boot_handoff *handoff)
 {
+    bool boot_log_screen;
+
     __asm__ volatile("cli");
     console_init();
     const struct leonos_system_info *system = ntclks_system_info();
@@ -236,6 +142,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
+    boot_log_screen = cmdline_has(&boot, "bootlog=1");
     if (!boot.rsdp_addr && handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC) {
         boot.rsdp_addr = handoff->rsdp_addr;
     }
@@ -246,7 +153,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     arch_init();
     framebuffer_init(&boot);
+    boot_splash_init(!boot_log_screen);
     mm_init(&boot, handoff);
+    boot_splash_update(84u);
     time_init();
     input_init();
     pty_init();
@@ -255,9 +164,11 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                                ? handoff->ui_theme
                                : 1u);
     console_set_ui_theme(gui_ipc_appearance_theme());
-    console_enable_framebuffer(handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC
-                                   ? &handoff->boot_log
-                                   : 0);
+    if (boot_log_screen) {
+        console_enable_framebuffer(handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC
+                                       ? &handoff->boot_log
+                                       : 0);
+    }
     console_enable_vga_fallback();
     sched_init();
     sched_create_idle_task();
@@ -265,7 +176,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     arch_userland_init(kernel_ring0_stack + sizeof(kernel_ring0_stack));
     idt_init();
     irq_init();
+    boot_splash_update(90u);
     osmlayer_bridge_init(&boot, handoff);
+    boot_splash_update(93u);
     {
         struct leonos_mount_policy mount_policy;
         int policy_ret = osmlayer_bridge_mount_policy(&boot, &mount_policy);
@@ -286,20 +199,23 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
             storage_init();
         }
     }
+    boot_splash_update(96u);
     driver_manager_init();
     driver_manager_autoload();
     usb_init();
     net_init();
+    boot_splash_update(98u);
     osmlayer_bridge_selftest();
     userland_init(&boot);
     sched_dump();
     console_printf("[ntclks] boot complete: version=%s root=0:/ fs=FAT32 desktop=desktop.elf\n",
                    system->kernel_version);
-    console_disable_framebuffer();
-    framebuffer_clear(gui_ipc_appearance_theme() == 0u ? 0x00008080u : 0x000078d4u);
-    framebuffer_text(24, 24, "LeonOS 4 starting Ring-3 desktop.elf...", 0x00ffffffu,
-                     gui_ipc_appearance_theme() == 0u ? 0x00008080u : 0x000078d4u);
-    mouse_status_line();
+    boot_splash_update(100u);
+    if (boot_log_screen) {
+        /* Keep the original log console visible until the Ring-3 desktop
+         * replaces it.  The graphical path retains the completed splash. */
+        console_printf("[ntclks] starting Ring-3 desktop.elf\n");
+    }
 
     userland_enter_first();
     kernel_idle_loop();

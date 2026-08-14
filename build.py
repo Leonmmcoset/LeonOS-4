@@ -858,12 +858,26 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "-z", "relro", "-z", "now", "-z", "max-page-size=0x1000",
     ]
 
+    boot_logo = paths.out / "include/generated/boot_logo.h"
+    graph.add(
+        Target(
+            name="boot-logo",
+            outputs=(boot_logo,),
+            inputs=(ROOT / "logo.png", ROOT / "tools/generate_boot_logo.py"),
+            kind="generate",
+            command=(PYTHON, "tools/generate_boot_logo.py", "--input", "logo.png",
+                     "--out", relative(boot_logo)),
+        )
+    )
+
     loader_sources = collect("boot/loader/**/*.c", "boot/loader/**/*.S")
     kernel_sources = collect("kernel/ntclks/**/*.c", "kernel/ntclks/**/*.S", "drivers/bootstrap/**/*.c", "drivers/bootstrap/**/*.S")
     rust_sources = collect("middlelayer/osmlayer/src/**/*.rs")
     kernel_objects: list[Path] = []
     for source in kernel_sources:
         implicit: list[Path] = [autoconf]
+        if source == ROOT / "drivers/bootstrap/boot_splash.c":
+            implicit.append(boot_logo)
         if source == ROOT / "kernel/ntclks/version.c":
             implicit += [build_info] + [candidate for candidate in kernel_sources + rust_sources if candidate != source]
         flags = asflags_kernel if source.suffix == ".S" else cflags_kernel + (["-include", relative(autoconf)] if source.suffix == ".c" else [])
@@ -951,7 +965,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     loader_objects: list[Path] = []
     for source in loader_sources:
         flags = asflags_loader if source.suffix == ".S" else cflags_loader
-        loader_objects.append(add_compile(graph, paths, f"compile:loader:{relative(source)}", source, "loader", flags, (loader_integrity,), kind="assemble" if source.suffix == ".S" else "compile"))
+        implicit = (loader_integrity, boot_logo) if source == ROOT / "boot/loader/main.c" else (loader_integrity,)
+        loader_objects.append(add_compile(graph, paths, f"compile:loader:{relative(source)}", source, "loader", flags, implicit, kind="assemble" if source.suffix == ".S" else "compile"))
     loader_elf = paths.out / "boot/loader.elf"
     graph.add(
         Target(
