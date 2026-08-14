@@ -42,6 +42,9 @@ void leonos_launch_default_shortcut_name(const char *target_path, char *buffer,
 int leonos_launch_create_shortcut(const char *shortcut_path, const char *target_path);
 int leonos_launch_create_shortcut_in_dir(const char *dir_path, const char *target_path,
                                          char *out_path, uint32_t out_capacity);
+/* Starts an executable in a child process. execve() replaces the current
+ * process image, so graphical launchers must use this helper. */
+int leonos_spawn_argv(const char *path, char *const argv[]);
 int leonos_launch_argv(char *argv[]);
 int leonos_launch_command_line(char *line, char *argv[], uint32_t max_args);
 const char *leonos_launch_error_text(int code);

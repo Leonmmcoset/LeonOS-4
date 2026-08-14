@@ -13,6 +13,7 @@
 #include <sys/time.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#include <string.h>
 #include <unistd.h>
 
 #define LEONOS_FS_TYPE_FILE 1U
@@ -47,6 +48,12 @@ extern char **environ;
 #define LEONOS_SYS_FCNTL 72
 #define LEONOS_SPAWN_ARG_MAX 8U
 
+int leonos_spawn_wait_argv_with_fds(const char *path, char *const argv[],
+                                    int stdin_fd, int stdout_fd, int stderr_fd);
+int leonos_spawn_busybox_applet_wait_with_fds(const char *path, char *const applet_argv[],
+                                              int stdin_fd, int stdout_fd, int stderr_fd);
+static const char *leonos_command_path(const char *name);
+
 /*
  * LeonOS terminals are inherited standard streams, not reopenable named tty
  * nodes.  BusyBox less accepts this condition and safely falls back to its
@@ -61,11 +68,8 @@ int ttyname_r(int fd, char *buffer, size_t length)
     return ENOTTY;
 }
 
-/*
- * The kernel currently has no POSIX signal delivery.  less still registers
- * fatal-signal cleanup handlers; retaining the registration call as a no-op
- * is correct until those signals can actually reach Ring-3 processes.
- */
+/* Signal handlers remain a compatibility stub; kill() termination is provided
+ * by the kernel syscall ABI below. */
 void bb_signals(int signals, void (*handler)(int))
 {
     (void)signals;
@@ -77,19 +81,16 @@ void kill_myself_with_sig(int signal_number)
     exit(128 + signal_number);
 }
 
-/* Picolibc time() needs gettimeofday(); LeonOS has a monotonic uptime clock. */
-int gettimeofday(struct timeval *value, void *timezone)
+int sigprocmask_allsigs(int how)
 {
-    unsigned long milliseconds;
-    (void)timezone;
-    if (!value) {
-        errno = EINVAL;
-        return -1;
-    }
-    milliseconds = leonos_uptime_ms();
-    value->tv_sec = (time_t)(milliseconds / 1000U);
-    value->tv_usec = (suseconds_t)((milliseconds % 1000U) * 1000U);
-    return 0;
+    sigset_t signals;
+    sigfillset(&signals);
+    return sigprocmask(how, &signals, NULL);
+}
+
+int sigprocmask2(int how, sigset_t *signals)
+{
+    return sigprocmask(how, signals, signals);
 }
 
 static void leonos_zero(void *buffer, uint32_t length)
@@ -307,21 +308,6 @@ int fcntl(int fd, int command, ...)
     return (int)result;
 }
 
-int dup2(int old_fd, int new_fd)
-{
-    long result = syscall2(LEONOS_SYS_DUP2, old_fd, new_fd);
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
-    return (int)result;
-}
-
-uid_t getuid(void)
-{
-    return 0;
-}
-
 uid_t geteuid(void)
 {
     return 0;
@@ -337,25 +323,9 @@ gid_t getegid(void)
     return 0;
 }
 
-pid_t getppid(void)
-{
-    return 0;
-}
-
-pid_t fork(void)
-{
-    errno = ENOSYS;
-    return -1;
-}
-
-pid_t vfork(void)
-{
-    errno = ENOSYS;
-    return -1;
-}
-
 /* Execute one command through the kernel's spawn ABI and wait for it. */
-int leonos_spawn_wait_argv(const char *path, char *const argv[])
+int leonos_spawn_wait_argv_with_fds(const char *path, char *const argv[],
+                                    int stdin_fd, int stdout_fd, int stderr_fd)
 {
     int pty_id = leonos_pty_self();
     int pid;
@@ -365,8 +335,8 @@ int leonos_spawn_wait_argv(const char *path, char *const argv[])
         errno = EINVAL;
         return 127;
     }
-    pid = leonos_pty_spawn_argv(path, pty_id > 0 ? (uint32_t)pty_id : 0U,
-                                argv, environ);
+    pid = leonos_pty_spawn_argv_with_fds(path, pty_id > 0 ? (uint32_t)pty_id : 0U,
+                                         argv, environ, stdin_fd, stdout_fd, stderr_fd);
     if (pid < 0) {
         errno = -pid;
         return 127;
@@ -376,7 +346,7 @@ int leonos_spawn_wait_argv(const char *path, char *const argv[])
         if (waited == pid) {
             return (status >> 8) & 0xff;
         }
-        if (waited == -ECHILD) {
+        if (waited == -EAGAIN) {
             sleep_ms(1);
             continue;
         }
@@ -385,8 +355,19 @@ int leonos_spawn_wait_argv(const char *path, char *const argv[])
     }
 }
 
+int leonos_spawn_wait_argv(const char *path, char *const argv[])
+{
+    return leonos_spawn_wait_argv_with_fds(path, argv, -1, -1, -1);
+}
+
 /* Use BusyBox's documented "busybox <applet>" process form. */
 int leonos_spawn_busybox_applet_wait(const char *path, char *const applet_argv[])
+{
+    return leonos_spawn_busybox_applet_wait_with_fds(path, applet_argv, -1, -1, -1);
+}
+
+int leonos_spawn_busybox_applet_wait_with_fds(const char *path, char *const applet_argv[],
+                                              int stdin_fd, int stdout_fd, int stderr_fd)
 {
     char *exec_argv[LEONOS_SPAWN_ARG_MAX + 1];
     uint32_t count = 0;
@@ -395,7 +376,9 @@ int leonos_spawn_busybox_applet_wait(const char *path, char *const applet_argv[]
         errno = EINVAL;
         return 127;
     }
-    exec_argv[count++] = (char *)path;
+    /* The executable is named busybox.elf on FAT32, but BusyBox switches to
+     * multi-call mode only when argv[0] is the literal "busybox". */
+    exec_argv[count++] = "busybox";
     while (applet_argv[count - 1U]) {
         if (count >= LEONOS_SPAWN_ARG_MAX) {
             errno = E2BIG;
@@ -405,42 +388,107 @@ int leonos_spawn_busybox_applet_wait(const char *path, char *const applet_argv[]
         ++count;
     }
     exec_argv[count] = 0;
-    return leonos_spawn_wait_argv(path, exec_argv);
+    return leonos_spawn_wait_argv_with_fds(path, exec_argv, stdin_fd, stdout_fd, stderr_fd);
 }
 
-int pipe(int filedes[2])
+static const char *leonos_command_path(const char *name)
 {
-    (void)filedes;
-    errno = ENOSYS;
-    return -1;
+    if (!name || !name[0]) return 0;
+    if (strchr(name, '/') || strchr(name, ':')) return name;
+    if (strcmp(name, "nano") == 0) return "0:/programs/nano/nano.elf";
+    if (strcmp(name, "pleditor") == 0) return "0:/programs/pleditor/pleditor.elf";
+    if (strcmp(name, "tcc") == 0) return "0:/programs/tcc/tcc.elf";
+    if (strcmp(name, "lua") == 0) return "0:/programs/lua/lua.elf";
+    if (strcmp(name, "file") == 0) return "0:/programs/file/file.elf";
+    if (strcmp(name, "fastfetch") == 0) return "0:/programs/fastfetch/fastfetch.elf";
+    if (strcmp(name, "cmd") == 0) return "0:/programs/cmd/cmd.elf";
+    return 0;
 }
 
-pid_t waitpid(pid_t pid, int *status, int options)
+int execvp(const char *file, char *const argv[])
 {
-    int result;
+    const char *path = leonos_command_path(file);
+    if (path) {
+        return execve(path, argv, environ);
+    }
+
+    /* Hush invokes execvp for a normal BusyBox applet as well as for an
+     * external program.  There are no applet symlinks or /proc/self/exe in
+     * the FAT32 image, so express the former using BusyBox's documented
+     * process form instead of trying to exec a bare applet name. */
+    if (!argv || !argv[0]) {
+        errno = EINVAL;
+        return -1;
+    }
+    {
+        char *exec_argv[LEONOS_SPAWN_ARG_MAX + 1];
+        uint32_t count = 0;
+        exec_argv[count++] = "busybox";
+        while (argv[count - 1U]) {
+            if (count >= LEONOS_SPAWN_ARG_MAX) {
+                errno = E2BIG;
+                return -1;
+            }
+            exec_argv[count] = argv[count - 1U];
+            ++count;
+        }
+        exec_argv[count] = 0;
+        return execve("0:/programs/busybox/busybox.elf", exec_argv, environ);
+    }
+}
+
+static int leonos_spawn_command_async(char *const argv[], int stdin_fd, int stdout_fd,
+                                      int stderr_fd)
+{
+    char *exec_argv[LEONOS_SPAWN_ARG_MAX + 1];
+    const char *path;
+    uint32_t count = 0;
+    if (!argv || !argv[0]) return -EINVAL;
+    path = leonos_command_path(argv[0]);
+    if (!path) {
+        path = "0:/programs/busybox/busybox.elf";
+        exec_argv[count++] = "busybox";
+        for (uint32_t i = 0; argv[i] && count < LEONOS_SPAWN_ARG_MAX; ++i)
+            exec_argv[count++] = argv[i];
+        if (argv[count - 1U] && count >= LEONOS_SPAWN_ARG_MAX) return -E2BIG;
+    } else {
+        for (uint32_t i = 0; argv[i] && count < LEONOS_SPAWN_ARG_MAX; ++i)
+            exec_argv[count++] = argv[i];
+        if (argv[count - 1U] && count >= LEONOS_SPAWN_ARG_MAX) return -E2BIG;
+    }
+    exec_argv[count] = 0;
+    return leonos_pty_spawn_argv_with_fds(path, (uint32_t)(leonos_pty_self() > 0 ? leonos_pty_self() : 0),
+                                          exec_argv, environ, stdin_fd, stdout_fd, stderr_fd);
+}
+
+int leonos_spawn_pipeline_wait(char *const left[], char *const right[])
+{
+    int fds[2];
+    int left_pid, right_pid;
+    int left_status = 0, right_status = 0;
+    if (!left || !right || pipe(fds) < 0) return 127;
+    left_pid = leonos_spawn_command_async(left, 0, fds[1], 2);
+    right_pid = left_pid >= 0 ? leonos_spawn_command_async(right, fds[0], 1, 2) : -1;
+    close(fds[0]);
+    close(fds[1]);
+    if (left_pid < 0 || right_pid < 0) {
+        if (left_pid >= 0) kill(left_pid, SIGTERM);
+        if (right_pid >= 0) kill(right_pid, SIGTERM);
+        return 127;
+    }
     for (;;) {
-        result = wait4(pid, status, options, 0);
-        if (result >= 0 || (options & 1)) {
-            return (pid_t)result;
-        }
-        if (result != -ECHILD) {
-            errno = -result;
-            return -1;
-        }
+        int waited = wait4(left_pid, &left_status, 0, 0);
+        if (waited == left_pid) break;
+        if (waited != -EAGAIN) return 127;
         sleep_ms(1);
     }
-}
-
-int sigaction(int signal_number, const struct sigaction *action,
-              struct sigaction *previous)
-{
-    (void)signal_number;
-    (void)action;
-    if (previous) {
-        leonos_zero(previous, sizeof(*previous));
-        previous->sa_handler = SIG_DFL;
+    for (;;) {
+        int waited = wait4(right_pid, &right_status, 0, 0);
+        if (waited == right_pid) break;
+        if (waited != -EAGAIN) return 127;
+        sleep_ms(1);
     }
-    return 0;
+    return (right_status >> 8) & 0xff;
 }
 
 int access(const char *path, int mode)
@@ -475,12 +523,6 @@ unsigned long long monotonic_ms(void)
 unsigned bb_clk_tck(void)
 {
     return 1000U;
-}
-
-const char *get_signame(int signal_number)
-{
-    (void)signal_number;
-    return "signal";
 }
 
 int poll(struct pollfd *fds, nfds_t count, int timeout_ms)
@@ -529,18 +571,6 @@ mode_t umask(mode_t mode)
 {
     (void)mode;
     return 0;
-}
-
-int nanosleep(const struct timespec *request, struct timespec *remaining)
-{
-    unsigned long milliseconds;
-    (void)remaining;
-    if (!request) {
-        return -1;
-    }
-    milliseconds = (unsigned long)request->tv_sec * 1000UL +
-                  (unsigned long)request->tv_nsec / 1000000UL;
-    return sleep_ms(milliseconds);
 }
 
 int uname(struct utsname *name)

@@ -99,9 +99,11 @@ LeonOS builds a static, basic-applet BusyBox profile at
 `0:/programs/busybox/busybox.elf`. It includes file/text utilities such as
 `ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `diff`, `less`, `mkdir`,
 `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`, `true`,
-`false`, `vi`, and `printf`. BusyBox ash is intentionally excluded until LeonOS has fork, pipe,
-file-descriptor duplication, process-group, and signal semantics; the current
-shell entry point is the no-fork Hush profile.
+`false`, `vi`, and `printf`. The `sh` entry point is BusyBox Hush built for
+LeonOS's MMU path. It uses the kernel COW `fork`/`execve` ABI, inherited file
+descriptors, process groups and PTY foreground groups for pipelines,
+redirection, background jobs, and `jobs`/`fg`/`bg`. BusyBox ash remains
+disabled because the image profile selects Hush as its shell implementation.
 
 ## GNU nano
 
@@ -182,9 +184,11 @@ LeonOS builds the interpreter at `0:/programs/cmd/cmd.elf`. From the BusyBox
 Hush prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
 built-ins, batch files, variables and redirection, and executes enabled
 BusyBox applets or supported LeonOS terminal programs through the PTY
-spawn/wait ABI. Pipes and the background process forms of `START` remain
-unavailable because LeonOS does not yet provide fork or pipe semantics; they
-fail explicitly instead of entering a partial POSIX fallback.
+spawn/wait ABI. External command pipelines and background jobs use the
+controlled spawn and anonymous-pipe ABI; `cmd` supports `command &`, external
+pipelines ending in `&`, plus `jobs`, `fg`, and `bg`. BusyBox Hush is the
+interactive POSIX-style shell and uses the native COW `fork`/`execve` path for
+full pipeline, redirection, process-group, and terminal job-control semantics.
 
 ## Fastfetch
 

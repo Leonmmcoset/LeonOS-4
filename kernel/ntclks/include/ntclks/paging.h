@@ -21,6 +21,10 @@
 #define NTCLKS_PAGE_PRESENT 0x001ULL
 #define NTCLKS_PAGE_WRITABLE 0x002ULL
 #define NTCLKS_PAGE_USER 0x004ULL
+/* x86_64 makes bits 9-11 of a present PTE available to software.  A COW
+ * mapping is deliberately read-only; the page-fault handler copies it before
+ * restoring write permission for the faulting address space. */
+#define NTCLKS_PAGE_COW 0x200ULL
 #define NTCLKS_PAGE_NOEXEC (1ULL << 63)
 #define NTCLKS_PHYS_ADDR_MASK 0x000ffffffffff000ULL
 
@@ -54,6 +58,13 @@ void paging_load_cr3(uint64_t cr3);
  * @return Result, status, or value defined by this API.
  */
 bool address_space_create(struct address_space *as);
+/**
+ * @brief Clones a user address space using copy-on-write mappings.
+ * @param source Existing user address space; writable pages become read-only COW mappings.
+ * @param destination Zeroed output address space that receives independent page tables.
+ * @return True on success; false after rolling back every destination mapping on failure.
+ */
+bool address_space_clone_cow(struct address_space *source, struct address_space *destination);
 /**
  * @brief Coordinates the address space destroy operation.
  * @param as Input or output value used by this operation.
@@ -114,5 +125,12 @@ uint32_t address_space_user_memory_kib(const struct address_space *as);
  * @return Result, status, or value defined by this API.
  */
 bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top);
+/**
+ * @brief Resolves a write protection fault on a copy-on-write user page.
+ * @param as Faulting process address space.
+ * @param vaddr User virtual address that raised the write fault.
+ * @return True when the page was made private and writable, otherwise false.
+ */
+bool address_space_handle_cow_fault(struct address_space *as, uint64_t vaddr);
 
 #endif

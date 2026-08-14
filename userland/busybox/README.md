@@ -8,11 +8,11 @@ terminal and prints the applet list. Invoke a specific applet with:
 0:/programs/busybox/busybox.elf ls 0:/
 ```
 
-The profile includes BusyBox `hush` behind the `sh` applet in standalone
-no-fork mode. It supports simple command lines, shell built-ins, and the
-bundled applets (`ls`, `pwd`, `cat`,
+The profile includes BusyBox `hush` behind the `sh` applet with native
+`fork`/`exec`, pipelines, redirections, background jobs, and `jobs`/`fg`/`bg`.
+It supports simple command lines, shell built-ins, and the bundled applets (`ls`, `pwd`, `cat`,
 `echo`, `clear`, `head`, `tail`, `wc`, `basename`, `dirname`, `printf`, `diff`,
-`less`,
+`less`, `ps`, and `kill`,
 `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`,
 `true`, `false`, and `vi`). The GUI terminal launches this shell by default.
 
@@ -31,11 +31,12 @@ libmagic. Hush resolves it to `0:/programs/file/file.elf`; the matching
 compiled database is installed at `0:/system/share/misc/magic.mgc`.
 `fastfetch` is likewise resolved to `0:/programs/fastfetch/fastfetch.elf`.
 
-LeonOS does not yet provide POSIX `fork`/`vfork`, pipe, descriptor duplication,
-process groups, or signal semantics. Therefore pipelines, redirections,
-background jobs, command substitution, and arbitrary external ELF programs
-are not supported by this BusyBox profile. They must not be advertised as
-working shell functionality until those kernel interfaces are implemented.
+The kernel provides process inspection through the task snapshot ABI,
+same-user signal termination, COW `fork`, `execve`, process groups, foreground
+PTY groups, and nice-style priorities. `kill` and graphical task tools use
+those interfaces. Hush uses normal pipelines and redirections (`<`, `>`, `>>`,
+`2>`), and handles `Ctrl+C`/`Ctrl+Z` through the PTY foreground group. Custom
+POSIX signal handlers and shared file offsets after `fork` are not yet exposed.
 
 BusyBox is GPL-2.0-only; `LICENSE` and upstream version information are staged
 beside the executable in the image.

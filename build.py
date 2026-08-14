@@ -95,6 +95,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-qmp-tcc",
     "test-qmp-fastfetch",
     "test-qmp-dynlinkerror",
+    "test-qmp-cmd",
     "test-qmp-stardust",
     "test-component-config",
     "test-all",
@@ -491,6 +492,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     rustc = os.environ.get("RUSTC", "rustc")
     ar = os.environ.get("AR", "llvm-ar")
     ld = os.environ.get("LD", "ld.lld")
+    objcopy = os.environ.get("OBJCOPY", "llvm-objcopy")
     compiler_rt = subprocess.run(
         (cc, "-target", "x86_64-unknown-none", "-rtlib=compiler-rt",
          "--print-libgcc-file-name"),
@@ -867,18 +869,40 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         flags = asflags_kernel if source.suffix == ".S" else cflags_kernel + (["-include", relative(autoconf)] if source.suffix == ".c" else [])
         kernel_objects.append(add_compile(graph, paths, f"compile:kernel:{relative(source)}", source, "kernel", flags, implicit, kind="assemble" if source.suffix == ".S" else "compile"))
 
+    kernel_unstripped = paths.out / "system/kernel.unstripped"
+    kernel_debug = paths.out / "system/kernel.debug"
     kernel_sys = paths.out / "system/kernel.sys"
+    graph.add(
+        Target(
+            name="kernel-link",
+            outputs=(kernel_unstripped,),
+            inputs=tuple(kernel_objects),
+            implicit_inputs=(ROOT / "kernel/ntclks/arch/x86_64/linker.ld",),
+            kind="link",
+            command=(ld, "-nostdlib", "-z", "max-page-size=0x1000", "-T", "kernel/ntclks/arch/x86_64/linker.ld", "-o", relative(kernel_unstripped), *map(relative, kernel_objects)),
+        )
+    )
+    graph.add(
+        Target(
+            name="kernel-debug",
+            outputs=(kernel_debug,),
+            inputs=(kernel_unstripped,),
+            depends_on=("kernel-link",),
+            kind="generate",
+            command=(objcopy, "--only-keep-debug", relative(kernel_unstripped), relative(kernel_debug)),
+        )
+    )
     graph.add(
         Target(
             name="kernel-image",
             outputs=(kernel_sys,),
-            inputs=tuple(kernel_objects),
-            implicit_inputs=(ROOT / "kernel/ntclks/arch/x86_64/linker.ld",),
-            kind="link",
-            command=(ld, "-nostdlib", "-z", "max-page-size=0x1000", "-T", "kernel/ntclks/arch/x86_64/linker.ld", "-o", relative(kernel_sys), *map(relative, kernel_objects)),
+            inputs=(kernel_unstripped,),
+            depends_on=("kernel-link",),
+            kind="generate",
+            command=(objcopy, "--strip-debug", relative(kernel_unstripped), relative(kernel_sys)),
         )
     )
-    graph.add(Target(name="kernel", depends_on=("kernel-image",), group=True, kind="aggregate"))
+    graph.add(Target(name="kernel", depends_on=("kernel-image", "kernel-debug"), group=True, kind="aggregate"))
 
     rust_obj = paths.objects / "middlelayer/osmlayer.o"
     middle_runtime = ROOT / "middlelayer/osmlayer/runtime.c"
@@ -1414,7 +1438,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     cxxflags_stardustui = [
         cxx, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c++17", "-ffreestanding",
         "-fno-exceptions", "-fno-rtti", "-fno-use-cxa-atexit", "-fno-threadsafe-statics",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
+        "-fno-stack-protector", "-fPIC", "-mno-red-zone", "-mgeneral-regs-only",
         "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-Wno-unused-parameter",
         "-DLEONOS_USE_PICOLIBC", "-DSTARDUSTUI_LINUX", "-D_POSIX_C_SOURCE=200809L",
         "-nostdinc++", f"-I{relative(picolibc_prefix / 'include')}",
@@ -2223,11 +2247,17 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     def qmp_test(context: ActionContext, editor: str = "nano", tcc_smoke: bool = False,
                  fastfetch_smoke: bool = False,
                  dynlinkerror_smoke: bool = False,
+                 cmd_pipeline_smoke: bool = False,
                  desktop_app: str | None = None) -> None:
+        if cmd_pipeline_smoke and not component_enabled("cmd", "image"):
+            raise BuildFailure(
+                "QMP cmd pipeline test requires CONFIG_LEON_COMPONENT_TOOL_CMD_IMAGE=y"
+            )
         socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}.sock"
         test_name = desktop_app if desktop_app else ("dynlinkerror" if dynlinkerror_smoke else
+                                                     ("cmd" if cmd_pipeline_smoke else
                                                      ("fastfetch" if fastfetch_smoke else
-                                                      ("tcc" if tcc_smoke else editor)))
+                                                      ("tcc" if tcc_smoke else editor))))
         serial_log = paths.out / f"qmp-{test_name}-serial.log"
         socket.unlink(missing_ok=True)
         serial_log.parent.mkdir(parents=True, exist_ok=True)
@@ -2245,6 +2275,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                     smoke_command.append("--fastfetch")
                 elif dynlinkerror_smoke:
                     smoke_command.append("--dynlinkerror")
+                elif cmd_pipeline_smoke:
+                    smoke_command.append("--cmd-pipeline")
                 elif desktop_app:
                     smoke_command += ["--desktop-app", desktop_app]
                 else:
@@ -2263,6 +2295,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                         process.kill()
                 socket.unlink(missing_ok=True)
         serial_text = serial_log.read_text(encoding="utf-8", errors="replace")
+        # Once the graphical desktop owns the console, the framebuffer remains
+        # the most reliable user-visible assertion. Keep serial checks as well
+        # when a specific process launch is expected.
+        if cmd_pipeline_smoke:
+            screenshot = paths.images / "cmd-pipeline-qmp-smoke.ppm"
+            if not screenshot.is_file() or screenshot.stat().st_size == 0:
+                raise BuildFailure("QMP cmd pipeline test did not produce a terminal screenshot")
         if desktop_app:
             expected_spawns = (f"spawn path=0:/programs/{desktop_app}/{desktop_app}.elf",)
             expected_exits = (f"name={desktop_app}.elf",)
@@ -2281,21 +2320,59 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "spawn path=0:/system/apps/dynlinkerror/dynlinkerror.elf",
             )
             expected_exits = ("name=nano.elf",)
+        elif cmd_pipeline_smoke:
+            expected_spawns = (
+                "spawn path=0:/programs/cmd/cmd.elf",
+                "spawn path=0:/programs/busybox/busybox.elf",
+            )
+            expected_exits = ("name=busybox.elf",)
         else:
             expected_spawns = (f"spawn path=0:/programs/{editor}/{editor}.elf",)
             expected_exits = (f"name={editor}.elf",)
         for expected_spawn in expected_spawns:
-            if expected_spawn not in serial_text:
+            # Desktop launchers still use the kernel's controlled spawn API,
+            # while Hush now performs a real COW fork followed by execve.
+            # Accept either diagnostic form, but always require the exact
+            # executable path so a different child cannot satisfy the check.
+            executable_path = expected_spawn.removeprefix("spawn path=")
+            fork_exec_seen = "exec pid=" in serial_text and f"path={executable_path}" in serial_text
+            if expected_spawn not in serial_text and not fork_exec_seen:
                 raise BuildFailure(f"QMP test did not start {test_name}: missing {expected_spawn}")
         for expected_exit in expected_exits:
             if expected_exit not in serial_text:
                 raise BuildFailure(f"QMP test did not observe {test_name} exit: missing {expected_exit}")
-
+        if cmd_pipeline_smoke:
+            cmd_pids = re.findall(
+                r"\[ntclks\] exec pid=(\d+) path=0:/programs/cmd/cmd\.elf",
+                serial_text,
+            )
+            if not cmd_pids:
+                raise BuildFailure("QMP cmd pipeline test did not identify the cmd process")
+            cmd_pid = cmd_pids[-1]
+            stage_pids = re.findall(
+                rf"\[ntclks\] spawn path=0:/programs/busybox/busybox\.elf pid=(\d+) "
+                rf"parent={re.escape(cmd_pid)} fds=",
+                serial_text,
+            )
+            if len(stage_pids) < 2:
+                raise BuildFailure(
+                    "QMP cmd pipeline test did not start both BusyBox pipeline stages"
+                )
+            missing_stage_exits = [
+                pid for pid in stage_pids
+                if f"scheduler task exited pid={pid} name=busybox.elf code=0" not in serial_text
+            ]
+            if missing_stage_exits:
+                raise BuildFailure(
+                    "QMP cmd pipeline test did not observe successful exit for BusyBox stage(s): "
+                    + ", ".join(missing_stage_exits)
+                )
     graph.add(Target(name="test-qmp-terminal", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v3"))
     graph.add(Target(name="test-qmp-pleditor", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "pleditor"), action_key="qmp-pleditor-v1"))
     graph.add(Target(name="test-qmp-tcc", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, tcc_smoke=True), action_key="qmp-tcc-v1"))
     graph.add(Target(name="test-qmp-fastfetch", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, fastfetch_smoke=True), action_key="qmp-fastfetch-v1"))
     graph.add(Target(name="test-qmp-dynlinkerror", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, dynlinkerror_smoke=True), action_key="qmp-dynlinkerror-v1"))
+    graph.add(Target(name="test-qmp-cmd", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, cmd_pipeline_smoke=True), action_key="qmp-cmd-v2"))
     graph.add(Target(name="test-qmp-stardust", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="stardusthello"), action_key="qmp-stardust-v1"))
     selected_tests: list[str] = []
     if config_bool(values, "CONFIG_TEST_LICENSE_SERVER"):
@@ -2306,6 +2383,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         selected_tests.append("test-qmp-terminal")
     if config_bool(values, "CONFIG_TEST_QMP_TCC") and component_enabled("tcc", "image"):
         selected_tests.append("test-qmp-tcc")
+    if component_enabled("cmd", "image"):
+        selected_tests.append("test-qmp-cmd")
     if config_bool(values, "CONFIG_TEST_QMP_STARDUST") and component_enabled("stardusthello", "image"):
         selected_tests.append("test-qmp-stardust")
     if config_bool(values, "CONFIG_TEST_COMPONENT_CONFIG"):
@@ -2374,7 +2453,7 @@ def task_tools(task: str) -> tuple[str, ...]:
     if task == "menuconfig":
         return ("kconfig-mconf",)
     if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-fastfetch",
-                "test-qmp-dynlinkerror", "test-qmp-stardust", "test-all"}:
+                "test-qmp-dynlinkerror", "test-qmp-cmd", "test-qmp-stardust", "test-all"}:
         return (*vmdk, "qemu-system-x86_64")
     return ()
 
@@ -2396,7 +2475,7 @@ def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
 
 
 def display_help() -> str:
-    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py tui\n  build.py [-v|--verbose] run <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py profile <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py config <list|save|load|reset|import|export> [name] [path]\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-dynlinkerror|qmp-stardust|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nOptions:\n  -v, --verbose  Print target graph, cache decisions, commands, process diagnostics, and actions.\n  --profile       Build from configs/profiles/<name>.conf without modifying the active config.\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, release, run, run-debug, run-iso, menuconfig, clean\n"""
+    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py tui\n  build.py [-v|--verbose] run <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py profile <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py config <list|save|load|reset|import|export> [name] [path]\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-dynlinkerror|qmp-cmd|qmp-stardust|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nOptions:\n  -v, --verbose  Print target graph, cache decisions, commands, process diagnostics, and actions.\n  --profile       Build from configs/profiles/<name>.conf without modifying the active config.\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, release, run, run-debug, run-iso, menuconfig, clean\n"""
 
 
 PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -2840,7 +2919,7 @@ def parser() -> argparse.ArgumentParser:
     test = commands.add_parser("test")
     test.add_argument("item", choices=("license-server", "los2w", "component-config",
                                        "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch",
-                                       "qmp-dynlinkerror", "qmp-stardust", "all"))
+                                       "qmp-dynlinkerror", "qmp-cmd", "qmp-stardust", "all"))
     add_config_options(test)
     config = commands.add_parser("config")
     config.add_argument("action", choices=("list", "save", "load", "reset", "import", "export"))

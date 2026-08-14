@@ -36,8 +36,9 @@ LeonOS ABI v1 的基础运行库是 `lib/libleonos.so.1`。SDK 默认构建动�
   和 [UI.md](UI.md)。
 - `leonos/pty.h`：创建 PTY、读输出、写输入、启动子进程、读写 termios 和窗口
   大小。终端程序应处理短读短写，并在退出前关闭 PTY。
-- `leonos/launch.h`：命令行拆分、文件关联、快捷方式和统一启动；返回值可用
-  `leonos_launch_error_text()` 转换为用户可读文本。
+- `leonos/launch.h`：命令行拆分、文件关联、快捷方式和统一启动；
+  `leonos_spawn_argv()` 启动子进程，`leonos_launch_argv()` 额外处理 Terminal 与
+  文件关联，返回值可用 `leonos_launch_error_text()` 转换为用户可读文本。
 - `leonos/startup.h`：按当前 UID 申请、查询、批准/拒绝和管理登录自启动项。
 - `leonos/system.h`：系统版本、性能计数、时间、NTP 同步、机器身份以及重启/关机。
 

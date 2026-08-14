@@ -25,6 +25,20 @@ void userland_enter_first(void) __attribute__((noreturn));
  */
 void userland_process_exit(uint64_t code);
 /**
+ * @brief Replaces the current process image while preserving its PID and process attributes.
+ * @param path Resolved executable path.
+ * @param argc Number of kernel-copied argv entries.
+ * @param argv Kernel-owned argv pointers into data.
+ * @param envc Number of kernel-copied envp entries.
+ * @param envp Kernel-owned envp pointers into data.
+ * @param data Packed NUL-terminated argument and environment strings.
+ * @param data_len Number of valid data bytes.
+ * @return Zero on success, or a negative errno-style failure with the old image intact.
+ */
+int userland_exec_current_path(const char *path, uint32_t argc, char *const argv[],
+                               uint32_t envc, char *const envp[],
+                               const char *data, uint32_t data_len);
+/**
  * @brief Coordinates the userland spawn path operation.
  * @param path LeonOS path consumed by this operation.
  * @return Result, status, or value defined by this API.
@@ -49,6 +63,23 @@ int64_t userland_spawn_path_argv(const char *path,
                                  const char *const argv[],
                                  const char *const envp[],
                                   uint32_t pty_id);
+/**
+ * @brief Spawns a user process with caller-selected standard descriptors.
+ * @param path NUL-terminated executable path in LeonOS drive syntax.
+ * @param argv Optional NUL-terminated argument vector copied to the child.
+ * @param envp Optional NUL-terminated environment vector copied to the child.
+ * @param pty_id Active PTY inherited by the child.
+ * @param stdin_fd Descriptor assigned to child standard input.
+ * @param stdout_fd Descriptor assigned to child standard output.
+ * @param stderr_fd Descriptor assigned to child standard error.
+ * @return Positive child PID on success or a negative errno value on failure.
+ */
+int64_t userland_spawn_path_argv_with_fds(const char *path,
+                                          const char *const argv[],
+                                          const char *const envp[],
+                                          uint32_t pty_id,
+                                          int stdin_fd, int stdout_fd,
+                                          int stderr_fd);
 /**
  * @brief Coordinates the userland spawn path argv for user operation.
  * @param path LeonOS path consumed by this operation.

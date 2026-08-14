@@ -270,6 +270,8 @@ struct leonos_task_info {
     uint32_t session_id;
     uint32_t memory_kib;
     uint64_t cpu_ticks;
+    int32_t priority;
+    uint32_t pending_signals;
     uint64_t wake_tick;
     uint64_t entry;
     uint64_t cr3;

@@ -17,6 +17,9 @@
 #define LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE 0x4c505450UL
 #define LEONOS_PTY_IOCTL_GET_WINSIZE 0x5401UL
 #define LEONOS_PTY_IOCTL_SET_WINSIZE 0x5402UL
+/* Linux-compatible process-group TTY requests used by Picolibc. */
+#define LEONOS_PTY_IOCTL_GET_PGRP 0x540fUL
+#define LEONOS_PTY_IOCTL_SET_PGRP 0x5410UL
 
 #define LEONOS_PTY_PATH_LEN 160U
 #define LEONOS_PTY_NCCS 11U
@@ -33,6 +36,9 @@ struct leonos_pty_spawn {
     const char *path;
     char *const *argv;
     char *const *envp;
+    int32_t stdin_fd;
+    int32_t stdout_fd;
+    int32_t stderr_fd;
 };
 
 struct leonos_pty_termios {
@@ -74,6 +80,9 @@ int leonos_pty_write_input(uint32_t pty_id, const char *buffer, uint32_t length)
 int leonos_pty_spawn(const char *path, uint32_t pty_id);
 int leonos_pty_spawn_argv(const char *path, uint32_t pty_id,
                           char *const argv[], char *const envp[]);
+int leonos_pty_spawn_argv_with_fds(const char *path, uint32_t pty_id,
+                                   char *const argv[], char *const envp[],
+                                   int stdin_fd, int stdout_fd, int stderr_fd);
 int leonos_pty_self(void);
 int leonos_pty_input_available(void);
 int leonos_pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios);

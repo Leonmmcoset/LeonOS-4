@@ -45,7 +45,9 @@ The kernel-side numbers and errno constants are in:
 | 24 | `sched_yield` | `sched_yield` | Yields the current task if another task can run. |
 | 35 | `nanosleep` | `sleep_ms` | libc passes milliseconds; kernel also accepts a Linux-like timespec pointer. |
 | 39 | `getpid` | `getpid` | Returns the current scheduler PID. |
-| 59 | `execve` | `execve` | Spawns an ELF user program and returns the child PID. |
+| 57 | `fork` | `fork` | Creates a copy-on-write child; the child receives zero. |
+| 58 | `vfork` | `vfork` | Currently has the same copy-on-write behavior as `fork`. |
+| 59 | `execve` | `execve` | Replaces the current process image with an ELF program. |
 | 60 | `exit` | `exit` | Releases process-owned files, windows, PTYs, and exits with a code. |
 | 61 | `wait4` | `wait4` | Waits for a child and writes a Linux-style shifted status. |
 | 79 | `getcwd` | `getcwd` | Copies the task current directory. |
@@ -131,9 +133,12 @@ large page-aligned free blocks with `munmap`.
 
 ## Process and Scheduler Calls
 
-`execve(path, argv, envp)` validates and copies the user argument vectors,
-spawns the requested ELF, and returns the child PID rather than replacing the
-current process image.
+`fork()` creates a copy-on-write child with inherited file descriptors. The
+parent receives the child PID and the child receives zero. `execve(path, argv,
+envp)` validates and copies the user argument vectors, then replaces the
+current process image while preserving its PID, working directory, identity,
+PTY and descriptors not marked `FD_CLOEXEC`. Use `fork()` followed by
+`execve()` to start a child; GUI applications can use `leonos_spawn_argv()`.
 
 `wait4(pid, status, options, rusage)` waits for a child process. `options` and
 `rusage` are accepted for ABI shape but are not a full Linux wait
@@ -320,11 +325,13 @@ remain available to any logged-in user.
 
 ## Current Limitations
 
-- There is no `fork`, `clone`, `pipe`, `poll`, or signal ABI.
+- `fork`, `vfork`, `pipe`, process groups and default signal actions are
+  available; user-installed signal handlers and `clone` are not yet supported.
 - Networking has TCP client sockets and a TLS 1.2 HTTPS client path, but no TCP
   listener/server mode, UDP socket API, or full retransmission/window-management
   surface yet.
-- `execve` spawns a child process instead of replacing the caller.
+- `execve` replaces the caller; use `fork` followed by `execve` to launch a
+  child process.
 - File-backed `mmap` is private and read-only.
 - Open permissions are ACL checks, not a full Unix permission model.
 - FAT32 does not store standard owner/mode metadata; LeonOS stores ACL metadata

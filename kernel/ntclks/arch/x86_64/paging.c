@@ -23,6 +23,20 @@ extern void x86_64_invlpg(uint64_t addr);
 static bool nx_enabled;
 
 /**
+ * @brief Copies one physical page without relying on the user virtual mapping.
+ * @param destination Allocated physical destination page.
+ * @param source Existing physical source page.
+ */
+static void copy_page(uint64_t destination, uint64_t source)
+{
+    uint8_t *dst = (uint8_t *)(uintptr_t)destination;
+    const uint8_t *src = (const uint8_t *)(uintptr_t)source;
+    for (uint32_t i = 0; i < PAGE_SIZE; ++i) {
+        dst[i] = src[i];
+    }
+}
+
+/**
  * @brief Coordinates the paging enable nx operation.
  */
 static void paging_enable_nx(void)
@@ -188,6 +202,54 @@ bool address_space_create(struct address_space *as)
 }
 
 /**
+ * @brief Clones populated user mappings and turns private writable pages into COW pages.
+ * @param source Parent address space whose writable mappings are write-protected in place.
+ * @param destination Empty output address space with independently allocated page tables.
+ * @return True if all mappings were cloned; false after releasing the partial destination.
+ */
+bool address_space_clone_cow(struct address_space *source, struct address_space *destination)
+{
+    if (!source || !destination || !source->pml4 || !source->pdpt) {
+        return false;
+    }
+    if (!address_space_create(destination)) {
+        return false;
+    }
+    for (uint32_t table = 0; table < NTCLKS_USER_PD_COUNT; ++table) {
+        uint64_t base = NTCLKS_USER_BASE + (uint64_t)table * NTCLKS_USER_PD_BYTES;
+        if (!source->user_pt[table]) {
+            continue;
+        }
+        for (uint32_t slot = 0; slot < 512; ++slot) {
+            uint64_t entry = source->user_pt[table][slot];
+            uint64_t flags;
+            uint64_t phys;
+            uint64_t page;
+            if (!(entry & NTCLKS_PAGE_PRESENT)) {
+                continue;
+            }
+            phys = entry & NTCLKS_PHYS_ADDR_MASK;
+            flags = entry & (NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC | NTCLKS_PAGE_COW);
+            page = base + (uint64_t)slot * PAGE_SIZE;
+            if ((entry & NTCLKS_PAGE_WRITABLE) || (entry & NTCLKS_PAGE_COW)) {
+                flags &= ~NTCLKS_PAGE_WRITABLE;
+                flags |= NTCLKS_PAGE_COW;
+                source->user_pt[table][slot] = phys | NTCLKS_PAGE_PRESENT |
+                                               NTCLKS_PAGE_USER | flags;
+                x86_64_invlpg(page);
+            }
+            mm_retain_page(phys);
+            if (!address_space_map_user_page(destination, page, phys, flags)) {
+                mm_free_page(phys);
+                address_space_destroy(destination);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
  * @brief Coordinates the address space destroy operation.
  * @param as Input or output value used by this operation.
  */
@@ -338,7 +400,7 @@ bool address_space_protect_user_page(struct address_space *as, uint64_t vaddr,
     if (!(entry & NTCLKS_PAGE_PRESENT)) {
         return false;
     }
-    as->user_pt[table][slot] = (entry & ~0xfffULL & ~NTCLKS_PAGE_NOEXEC) |
+    as->user_pt[table][slot] = (entry & NTCLKS_PHYS_ADDR_MASK) |
                                 NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER | flags;
     x86_64_invlpg(page);
     return true;
@@ -434,5 +496,50 @@ bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top)
             return false;
         }
     }
+    return true;
+}
+
+/**
+ * @brief Resolves a write fault by copying a shared COW page into the faulting address space.
+ * @param as Address space that owns the faulting mapping.
+ * @param vaddr User address within the affected page.
+ * @return True when the page is now writable and private to this address space.
+ */
+bool address_space_handle_cow_fault(struct address_space *as, uint64_t vaddr)
+{
+    uint64_t page;
+    uint64_t index;
+    uint64_t table;
+    uint64_t slot;
+    uint64_t entry;
+    uint64_t old_phys;
+    uint64_t new_phys;
+    if (!as) {
+        return false;
+    }
+    page = align_down(vaddr, PAGE_SIZE);
+    if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
+        return false;
+    }
+    index = (page - NTCLKS_USER_BASE) / PAGE_SIZE;
+    table = index / 512;
+    slot = index % 512;
+    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) {
+        return false;
+    }
+    entry = as->user_pt[table][slot];
+    if (!(entry & NTCLKS_PAGE_PRESENT) || !(entry & NTCLKS_PAGE_COW)) {
+        return false;
+    }
+    old_phys = entry & NTCLKS_PHYS_ADDR_MASK;
+    new_phys = mm_alloc_page();
+    if (!new_phys) {
+        return false;
+    }
+    copy_page(new_phys, old_phys);
+    as->user_pt[table][slot] = new_phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER |
+                               NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC;
+    x86_64_invlpg(page);
+    mm_free_page(old_phys);
     return true;
 }

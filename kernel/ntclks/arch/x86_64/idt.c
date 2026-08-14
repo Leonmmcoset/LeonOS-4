@@ -384,6 +384,13 @@ struct task *page_fault_dispatch(struct trap_frame *frame)
 {
     uint64_t cr2 = x86_64_read_cr2();
     if (frame && syscall_handle_user_page_fault(cr2, frame->error)) {
+        /* Kernel helpers may write a current user's COW buffer while serving
+         * a syscall.  Its page is now private, so resume the interrupted
+         * kernel instruction instead of trying to iret through a kernel-mode
+         * trap frame. */
+        if ((frame->cs & 3ULL) != 3ULL) {
+            return NULL;
+        }
         /*
          * A lazy file-backed page may require a synchronous FAT read.  Switch
          * away after each resolved fault so a newly-starting app cannot hold

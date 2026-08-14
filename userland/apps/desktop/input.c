@@ -367,7 +367,7 @@ int spawn_help_path(const char *path)
     argv[0] = "0:/programs/oshlp/oshlp.elf";
     argv[1] = (char *)path;
     argv[2] = 0;
-    pid = execve(argv[0], argv, 0);
+    pid = leonos_spawn_argv(argv[0], argv);
     printf("[desktop.elf] spawn help %s pid=%d\n", path ? path : "", pid);
     return pid;
 }

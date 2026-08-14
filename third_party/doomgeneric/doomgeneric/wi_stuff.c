@@ -408,6 +408,7 @@ void WI_slamBackground(void)
 //  because of timing issues in netgames.
 boolean WI_Responder(event_t* ev)
 {
+    (void)ev;
     return false;
 }
 

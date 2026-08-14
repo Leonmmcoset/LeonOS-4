@@ -16,6 +16,7 @@
 #define SCHED_TASK_MAX 64u
 #define SCHED_TASK_FILE_MAX 12u
 #define SCHED_TASK_PTY_FD_MAX 8u
+#define SCHED_TASK_STDIO_MAX 3u
 #define SCHED_EXEC_ARG_MAX 8u
 #define SCHED_EXEC_ENV_MAX 8u
 #define SCHED_EXEC_DATA_MAX 512u
@@ -48,11 +49,15 @@ struct task_vma {
 struct task_file {
     uint32_t used;
     uint32_t flags;
+    uint32_t fd_flags;
     struct storage_node node;
     uint64_t offset;
     uint64_t aux;
     char path[LEONOS_FS_PATH_LEN];
 };
+
+#define TASK_FILE_FLAG_PIPE       0x80000000u
+#define TASK_FILE_FLAG_PIPE_WRITE 0x40000000u
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {
@@ -67,6 +72,9 @@ enum task_state {
     TASK_RUNNING = 1,
     TASK_BLOCKED = 2,
     TASK_EXITED = 3,
+    /* A SIGSTOPped task keeps its address space and descriptors but is not
+     * eligible for scheduling until SIGCONT makes it ready again. */
+    TASK_STOPPED = 4,
 };
 
 enum task_kind {
@@ -80,10 +88,20 @@ enum task_kind {
 #define TASK_FLAG_WINDOW_SERVER 0x00000008u
 #define TASK_FLAG_ELEVATED_ADMIN 0x00000010u
 #define TASK_FLAG_PENDING_LOAD 0x00000020u
+/* Real fork children remain zombies until their parent calls waitpid. */
+#define TASK_FLAG_WAITABLE_CHILD 0x00000040u
+
+/* A stopped or continued child retains its task slot until its parent has
+ * observed the state transition through waitpid. */
+#define TASK_CHILD_EVENT_NONE      0x00000000u
+#define TASK_CHILD_EVENT_STOPPED   0x00000001u
+#define TASK_CHILD_EVENT_CONTINUED 0x00000002u
 
 struct task {
     uint32_t pid;
     uint32_t parent_pid;
+    uint32_t process_group;
+    uint32_t process_session;
     char name_storage[SCHED_TASK_NAME_LEN];
     const char *name;
     uint64_t entry;
@@ -105,6 +123,13 @@ struct task {
     uint32_t role;
     uint32_t session_id;
     uint64_t cpu_ticks;
+    int32_t priority;
+    uint32_t pending_signals;
+    uint32_t child_event;
+    uint32_t stop_signal;
+    uint32_t exit_signal;
+    uint64_t rlimit_nofile;
+    uint64_t rlimit_as;
     char username[LEONOS_AUTH_USERNAME_LEN];
     char home[LEONOS_AUTH_HOME_LEN];
     char cwd[LEONOS_FS_PATH_LEN];
@@ -118,6 +143,7 @@ struct task {
     struct leonos_dynamic_launch dynamic_launch;
     struct task_vma vmas[SCHED_TASK_VMA_MAX];
     struct task_file files[SCHED_TASK_FILE_MAX];
+    struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
     struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
 };
 
@@ -132,6 +158,8 @@ struct task_snapshot_info {
     uint32_t session_id;
     uint32_t memory_kib;
     uint64_t cpu_ticks;
+    int32_t priority;
+    uint32_t pending_signals;
     uint64_t wake_tick;
     uint64_t entry;
     uint64_t cr3;
@@ -161,6 +189,12 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry);
  */
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags);
+/**
+ * @brief Duplicates the current user task using copy-on-write user mappings.
+ * @param parent_frame Saved fork syscall frame; the child receives a copy with rax set to zero.
+ * @return Positive child PID to the parent or a negative errno-style failure.
+ */
+int64_t sched_fork_current(const struct trap_frame *parent_frame);
 /**
  * @brief Coordinates the sched set task image operation.
  * @param pid Input or output value used by this operation.
@@ -287,6 +321,64 @@ void sched_wake_window_event(uint32_t pid, uint32_t window_id);
  */
 int sched_kill_user_task(uint32_t pid, uint64_t code);
 /**
+ * @brief Sends a supported signal to a user task.
+ * @param pid Target process identifier.
+ * @param signal_number POSIX signal number.
+ * @return Zero on success or a negative scheduler error.
+ */
+int sched_signal_user_task(uint32_t pid, int signal_number);
+/**
+ * @brief Sends a signal to all eligible user tasks in a process group.
+ * @param sender_pid Process that requested the signal.
+ * @param process_group Target process group identifier.
+ * @param signal_number POSIX signal number.
+ * @return Number of signalled tasks, or a negative scheduler error.
+ */
+int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
+                               int signal_number);
+/**
+ * @brief Updates the process group of the caller or one of its direct children.
+ * @param caller_pid Process issuing setpgid.
+ * @param pid Target process, or zero for the caller.
+ * @param process_group Target group, or zero to create a group led by the target.
+ * @return Zero on success or a negative errno-style failure.
+ */
+int sched_set_process_group(uint32_t caller_pid, uint32_t pid,
+                            uint32_t process_group);
+/**
+ * @brief Returns the process group for a task.
+ * @param pid Target process, or zero for the current process.
+ * @return Positive process-group identifier or a negative scheduler error.
+ */
+int64_t sched_get_process_group(uint32_t pid);
+/**
+ * @brief Creates a new POSIX-style session for the calling process.
+ * @param pid Calling process identifier.
+ * @return New session identifier or a negative scheduler error.
+ */
+int64_t sched_create_process_session(uint32_t pid);
+/**
+ * @brief Checks whether a process group has a task attached to a PTY.
+ * @param process_group Process group identifier.
+ * @param pty_id PTY identifier.
+ * @return Non-zero when an attached group member exists.
+ */
+int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id);
+/**
+ * @brief Returns the POSIX process session containing a task.
+ * @param pid Task process identifier.
+ * @return Positive session identifier or a negative scheduler error.
+ */
+int64_t sched_get_process_session(uint32_t pid);
+/**
+ * @brief Reads or updates a task's nice-style priority.
+ * @param pid Target process identifier.
+ * @param priority New priority when set is non-zero.
+ * @param set Non-zero to update, zero to read.
+ * @return Priority on read/update or a negative error.
+ */
+int sched_task_priority(uint32_t pid, int priority, int set);
+/**
  * @brief Coordinates the sched kill user tasks for pty operation.
  * @param pty_id Input or output value used by this operation.
  * @param keep_pid Input or output value used by this operation.
@@ -312,7 +404,8 @@ int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
  * @param exit_code Input or output value used by this operation.
  * @return Result, status, or value defined by this API.
  */
-int64_t sched_wait_reap(uint32_t waiter_pid, uint32_t wanted_pid, uint64_t *exit_code);
+int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
+                        uint32_t options, int *status);
 /**
  * @brief Coordinates the sched snapshot operation.
  * @param out Caller-provided storage that receives output from this operation.

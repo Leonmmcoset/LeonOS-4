@@ -19,10 +19,8 @@ WORK_PREFIX = "leonos4-busybox-"
 
 
 # BusyBox's upstream libbb/Kbuild.src compiles a broad support library even
-# when allnoconfig selects only a few applets.  LeonOS deliberately does not
-# expose Linux sockets, ptys, process groups, or fork semantics to this port;
-# limit the copied source tree to the helpers used by the small file/text
-# profile instead of growing placeholder ABI declarations for unavailable APIs.
+# when allnoconfig selects only a few applets. Keep the source-copy profile
+# small; the LeonOS shim supplies the limited signal-mask helpers Hush needs.
 MINIMAL_LIBBB_OBJECTS = (
     "appletlib.o",
     "ask_confirmation.o",
@@ -89,6 +87,11 @@ MINIMAL_LIBBB_OBJECTS = (
     "read_key.o",
     "safe_poll.o",
     "read_printf.o",
+    # kill.c uses the shared process scanner for killall-compatible paths;
+    # the LeonOS profile only enables kill, but the object still supplies the
+    # common scanner symbols referenced by the applet.
+    "procps.o",
+    "u_signal_names.o",
 )
 
 def run(command: list[str], *, cwd: Path | None = None) -> None:
@@ -178,6 +181,83 @@ def trim_libbb(source: Path) -> None:
         path.write_text(text, encoding="utf-8")
 
 
+def patch_optional_config_macros(source: Path) -> None:
+    """Keep disabled dependent Kconfig symbols usable in C expressions.
+
+    BusyBox normally emits ENABLE_* for every symbol.  Its Kconfig model
+    suppresses FEATURE_PS_ADDITIONAL_COLUMNS when DESKTOP is disabled, while
+    libbb.h still uses the symbol in an enum expression.  The LeonOS profile
+    intentionally has no DESKTOP ps features, so provide the canonical zero
+    fallback in the temporary source tree.
+    """
+    path = source / "include/libbb.h"
+    text = path.read_text(encoding="utf-8")
+    marker = "#include \"platform.h\"\n"
+    fallback = (
+        marker
+        + "\n#ifndef ENABLE_FEATURE_PS_ADDITIONAL_COLUMNS\n"
+          "#define ENABLE_FEATURE_PS_ADDITIONAL_COLUMNS 0\n"
+          "#endif\n"
+    )
+    if "#define ENABLE_FEATURE_PS_ADDITIONAL_COLUMNS 0" not in text:
+        if marker not in text:
+            raise SystemExit("unable to add BusyBox ps config fallback")
+        text = text.replace(marker, fallback, 1)
+        path.write_text(text, encoding="utf-8")
+
+
+def patch_ps_for_leonos(source: Path) -> None:
+    """Replace Linux /proc parsing while retaining BusyBox build metadata."""
+    path = source / "procps/ps.c"
+    path.write_text(r'''/* LeonOS ps port: task snapshots replace Linux /proc parsing. */
+//config:config PS
+//config:	bool "ps"
+//config:	default y
+//config:config FEATURE_PS_ADDITIONAL_COLUMNS
+//config:	bool "Enable -o rgroup, -o ruser, -o nice specifiers"
+//config:	default n
+//config:	depends on PS && DESKTOP
+//applet:IF_PS(APPLET_NOEXEC(ps, ps, BB_DIR_BIN, BB_SUID_DROP, ps))
+//kbuild:lib-$(CONFIG_PS) += ps.o
+
+//usage:#define ps_trivial_usage
+//usage:       ""
+//usage:#define ps_full_usage "\\n\\n"
+//usage:       "Show list of processes\\n"
+//usage:#define ps_example_usage
+
+#include "libbb.h"
+#pragma push_macro("stat")
+#pragma push_macro("fstat")
+#undef stat
+#undef fstat
+#include <leonos/gui.h>
+#pragma pop_macro("fstat")
+#pragma pop_macro("stat")
+
+int ps_main(int argc UNUSED_PARAM, char **argv UNUSED_PARAM)
+{
+    struct leonos_task_info tasks[LEONOS_TASK_MAX];
+    uint64_t tick = 0;
+    int count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &tick);
+    (void)tick;
+    if (count < 0) {
+        bb_error_msg("unable to read task snapshot");
+        return EXIT_FAILURE;
+    }
+    puts("PID PPID PRI STATE NAME");
+    for (int i = 0; i < count; ++i) {
+        const char *state = tasks[i].state == 1 ? "RUN" :
+                            tasks[i].state == 2 ? "SLEEP" :
+                            tasks[i].state == 3 ? "EXIT" : "READY";
+        printf("%u %u %d %s %s\n", tasks[i].pid, tasks[i].parent_pid,
+               tasks[i].priority, state, tasks[i].name);
+    }
+    return EXIT_SUCCESS;
+}
+''', encoding="utf-8")
+
+
 def enable_leonos_spawn_fallback(source: Path) -> None:
     path = source / "shell/hush.c"
     text = path.read_text(encoding="utf-8")
@@ -186,7 +266,10 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
         include_marker
         + "\n#include <leonos/pty.h>\n"
           "extern int leonos_spawn_wait_argv(const char *path, char *const argv[]);\n"
-          "extern int leonos_spawn_busybox_applet_wait(const char *path, char *const argv[]);"
+          "extern int leonos_spawn_wait_argv_with_fds(const char *path, char *const argv[], int stdin_fd, int stdout_fd, int stderr_fd);\n"
+          "extern int leonos_spawn_busybox_applet_wait(const char *path, char *const argv[]);\n"
+          "extern int leonos_spawn_busybox_applet_wait_with_fds(const char *path, char *const argv[], int stdin_fd, int stdout_fd, int stderr_fd);\n"
+          "extern int leonos_spawn_pipeline_wait(char *const left[], char *const right[]);"
     )
     if "leonos_spawn_wait_argv" not in text:
         if include_marker not in text:
@@ -200,10 +283,17 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
 \t/* LeonOS has no fork/exec replacement ABI; spawn one simple command. */
 \tif (pi->num_cmds == 1 && pi->followup == PIPE_SEQ && argv_expanded && argv_expanded[0]) {
 \t\tchar *spawn_path = NULL;
+\t\tstruct squirrel *spawn_squirrel = NULL;
 \t\tint applet_no = strchr(argv_expanded[0], '/') ? -1 : find_applet_by_name(argv_expanded[0]);
 \t\t/* The image has one BusyBox executable, not per-applet links. */
 \t\tif (applet_no >= 0) {
-\t\t\trcode = leonos_spawn_busybox_applet_wait("0:/programs/busybox/busybox.elf", argv_expanded);
+\t\t\tif (setup_redirects(command, &spawn_squirrel) != 0) {
+\t\t\t\tfree(argv_expanded);
+\t\t\t\tdebug_leave();
+\t\t\t\treturn 1;
+\t\t\t}
+\t\t\trcode = leonos_spawn_busybox_applet_wait_with_fds("0:/programs/busybox/busybox.elf", argv_expanded, 0, 1, 2);
+\t\t\trestore_redirects(spawn_squirrel);
 \t\t\tfree(argv_expanded);
 \t\t\tdebug_leave();
 \t\t\treturn rcode;
@@ -232,7 +322,14 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
 \t\t\tdebug_leave();
 \t\t\treturn 127;
 \t\t}
-\t\trcode = leonos_spawn_wait_argv(spawn_path, argv_expanded);
+\t\tif (setup_redirects(command, &spawn_squirrel) != 0) {
+\t\t\tfree(spawn_path);
+\t\t\tfree(argv_expanded);
+\t\t\tdebug_leave();
+\t\t\treturn 1;
+\t\t}
+\t\trcode = leonos_spawn_wait_argv_with_fds(spawn_path, argv_expanded, 0, 1, 2);
+\t\trestore_redirects(spawn_squirrel);
 \t\tfree(spawn_path);
 \t\tfree(argv_expanded);
 \t\tdebug_leave();
@@ -244,6 +341,28 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
         if text.count(marker) != 1:
             raise SystemExit("unexpected hush must_fork marker count")
         text = text.replace(marker, replacement, 1)
+    pipeline_marker = " must_fork:\n"
+    pipeline_code = """ must_fork:
+#if ENABLE_FEATURE_SH_NOFORK
+	/* LeonOS supports a bounded two-command pipeline through native spawn. */
+	if (pi->num_cmds == 2 && pi->followup != PIPE_BG &&
+		!pi->cmds[0].redirects && !pi->cmds[1].redirects &&
+		pi->cmds[0].argv && pi->cmds[1].argv) {
+		char **left_argv = expand_strvec_to_strvec(pi->cmds[0].argv);
+		char **right_argv = expand_strvec_to_strvec(pi->cmds[1].argv);
+		int pipeline_rcode = leonos_spawn_pipeline_wait(left_argv, right_argv);
+		free(left_argv);
+		free(right_argv);
+		debug_leave();
+		return pipeline_rcode;
+	}
+#endif
+
+"""
+    if "bounded two-command pipeline" not in text:
+        if text.count(pipeline_marker) != 1:
+            raise SystemExit("unexpected hush pipeline marker count")
+        text = text.replace(pipeline_marker, pipeline_code, 1)
 
     old_error = 'bb_simple_perror_msg(BB_MMU ? "vfork"+1 : "vfork");'
     if old_error in text:
@@ -415,6 +534,8 @@ def main() -> None:
     revision = source_revision(source)
     source_dir = cached_source(source, source_cache_key(revision))
     trim_libbb(source_dir)
+    patch_optional_config_macros(source_dir)
+    patch_ps_for_leonos(source_dir)
     enable_leonos_spawn_fallback(source_dir)
     patch_less_for_leonos(source_dir)
     patch_ls_colors_for_leonos(source_dir)

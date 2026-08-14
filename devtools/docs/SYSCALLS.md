@@ -23,6 +23,7 @@ LeonOS 4 x86_64 用户态通过 `int $0x80` 进入内核。SDK 中的
 | `write` | 1 | `write` |
 | `open` | 2 | `open` |
 | `close` | 3 | `close` |
+| `pipe` | 22 | `pipe` (anonymous 4 KiB pipe, returns read/write fds) |
 | `stat` | 4 | `stat` |
 | `fstat` | 5 | `fstat` |
 | `lseek` | 8 | `lseek` |
@@ -32,9 +33,22 @@ LeonOS 4 x86_64 用户态通过 `int $0x80` 进入内核。SDK 中的
 | `sched_yield` | 24 | `sched_yield` |
 | `nanosleep` | 35 | `sleep_ms` |
 | `getpid` | 39 | `getpid` |
+| `fork` | 57 | `fork` |
+| `vfork` | 58 | `vfork` (currently COW `fork` equivalent) |
 | `execve` | 59 | `execve` |
 | `exit` | 60 | `exit`、`_exit` |
 | `wait4` | 61 | `wait4` |
+| `kill` | 62 | `kill`（有限信号终止语义） |
+| `getppid` | 110 | `getppid` |
+| `setpgid` | 109 | `setpgid` |
+| `getpgrp` | 111 | `getpgrp` |
+| `setsid` | 112 | `setsid` |
+| `getpgid` | 121 | `getpgid` |
+| `nice` | 34 | `nice` |
+| `getpriority` | 140 | `getpriority` |
+| `setpriority` | 141 | `setpriority` |
+| `getrlimit` | 97 | `getrlimit` (`RLIMIT_NOFILE`/`RLIMIT_AS`) |
+| `setrlimit` | 160 | `setrlimit` (`RLIMIT_NOFILE`/`RLIMIT_AS`) |
 | `getcwd` | 79 | `getcwd` |
 | `chdir` | 80 | `chdir` |
 | `rename` | 82 | `rename` |
@@ -56,10 +70,22 @@ EOF 或返回负值。目录通过 `leonos_list_dir()` 或 `leonos_readdir()` �
 
 ## 进程语义
 
-LeonOS 当前的 `execve()` 是由父进程请求创建子任务并返回结果，不是传统
-POSIX 的“替换当前映像”。需要等待子任务时使用 `wait4()`；终止当前任务使用
-`exit()`。当前没有可移植的 `fork`、`clone`、管道、完整 `poll` 或 POSIX 信号
-接口，程序应使用 `leonos_pty_*`、GUI 事件和明确的子进程协议。
+`fork()` 创建当前任务的写时复制地址空间副本，父进程获得子 PID，子进程返回
+零；`vfork()` 暂时采用相同语义。`execve()` 替换当前进程映像且保留 PID、工作目录、
+身份、PTY 和未标记 `FD_CLOEXEC` 的描述符。需要等待子任务时使用 `wait4()` 或
+`waitpid()`；终止当前任务使用 `exit()`。`waitpid()` 支持 `WNOHANG`、`WUNTRACED`
+和 `WCONTINUED`，并接受 PID、零（调用方进程组）或负进程组选择器。
+
+`kill()` 支持同 UID 或管理员发送信号，正 PID 指向单个进程，零指向调用方进程组，
+负 PID 指向指定进程组。`SIGHUP`、`SIGINT`、`SIGQUIT`、`SIGKILL`、`SIGTERM` 会终止
+目标任务；`SIGSTOP`/`SIGTSTP` 停止任务，`SIGCONT` 恢复它。`setpgid()`、`getpgrp()`、
+`getpgid()` 和 `setsid()` 提供作业控制基础；PTY 的 `TIOCGPGRP`/`TIOCSPGRP` 设置前台
+组，`Ctrl+C` 与 `Ctrl+Z` 分别向该组投递 `SIGINT` 和 `SIGTSTP`。用户态自定义信号
+处理器和信号掩码仍是兼容性 stub。
+
+`pipe()` 创建容量为 4 KiB 的匿名管道，`dup2()` 可把管道或普通文件绑定到标准流。
+管道在无数据时返回 `EAGAIN`，写端没有读者时返回 `EPIPE`；libc 会短暂让出 CPU
+后重试。Hush 已支持普通流水线、重定向、后台任务与 `jobs`/`fg`/`bg`。
 
 ## 内存映射
 

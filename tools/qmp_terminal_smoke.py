@@ -39,6 +39,10 @@ def text_keys(text: str) -> tuple[str, ...]:
         "-": "minus",
         "_": "shift-minus",
         ":": "shift-semicolon",
+        # QEMU's HMP key name for the pipe key is the shifted backslash key.
+        # `bar` is accepted by some builds but does not inject a character on
+        # the guest keyboard layout used by LeonOS.
+        "|": "shift-backslash",
     }
     keys: list[str] = []
     for character in text:
@@ -57,6 +61,7 @@ def main() -> int:
     fastfetch_smoke = False
     iso9660_smoke = False
     dynlinkerror_smoke = False
+    cmd_pipeline_smoke = False
     if arguments and arguments[0] == "--skip-oobe":
         skip_oobe = True
         arguments = arguments[1:]
@@ -75,6 +80,9 @@ def main() -> int:
     if arguments and arguments[0] == "--dynlinkerror":
         dynlinkerror_smoke = True
         arguments = arguments[1:]
+    if arguments and arguments[0] == "--cmd-pipeline":
+        cmd_pipeline_smoke = True
+        arguments = arguments[1:]
     if len(arguments) >= 2 and arguments[0] == "--desktop-app":
         desktop_app = arguments[1]
         arguments = arguments[2:]
@@ -89,7 +97,7 @@ def main() -> int:
     if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
         return 2
     if desktop_app is not None and (tcc_smoke or fastfetch_smoke or iso9660_smoke or
-                                    dynlinkerror_smoke or exit_only):
+                                    dynlinkerror_smoke or cmd_pipeline_smoke or exit_only):
         return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
         return 2
@@ -113,16 +121,14 @@ def main() -> int:
 
     if not skip_oobe:
         # A freshly generated image opens OOBE.  The default username is admin
-        # and the password field owns focus, so create the first account before
-        # starting Terminal through the Start-menu keyboard search.
+        # and the password field owns focus, so create the first account.
         send_keys(sock, ("n", "a", "n", "o", "t", "e", "s", "t", "ret"))
-        # The desktop relocks its input routing after the fullscreen OOBE
-        # window is destroyed, so wait until the desktop owns keyboard focus.
-        # OOBE exits before the desktop has necessarily removed its fullscreen
-        # window and restored Start-menu focus.  Wait for that focus handoff
-        # before opening Terminal; otherwise the search keystrokes can be
-        # delivered to the dying OOBE window on a cold QEMU boot.
-        time.sleep(12.0)
+        # First-run OOBE now completes by returning to the normal Sign in
+        # screen.  Its selected account is admin and the password field owns
+        # focus, so authenticate before the Start-menu input is sent.
+        time.sleep(8.0)
+        send_keys(sock, ("n", "a", "n", "o", "t", "e", "s", "t", "ret"))
+        time.sleep(5.0)
     elif login_password is not None:
         send_keys(sock, tuple(login_password) + ("ret",))
         time.sleep(2.0)
@@ -155,6 +161,13 @@ def main() -> int:
     hmp(sock, "sendkey ctrl-shift-w", 1.0)
     hmp(sock, "sendkey ctrl-shift-t", 1.0)
     time.sleep(2.0)
+
+    # Exercise the MMU Hush path before launching the editor: both pipeline
+    # stages must be real fork/exec children, and the background job must be
+    # visible to jobs and collectable by wait.
+    for command in ("printf hello | wc -c", "sleep 2 &", "jobs", "wait"):
+        send_keys(sock, text_keys(command) + ("ret",))
+        time.sleep(2.0)
 
     if tcc_smoke:
         # Compile the image-staged example with the on-device compiler, then
@@ -213,6 +226,20 @@ def main() -> int:
         send_keys(sock, text_keys("nano") + ("ret",))
         time.sleep(5.0)
         hmp(sock, "screendump build/images/dynlinkerror-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
+    if cmd_pipeline_smoke:
+        # cmd executes each external pipeline stage through controlled spawn.
+        # printf and wc are BusyBox applets, so both stages also validate the
+        # BusyBox argv transformation used by cmd's external-command resolver.
+        send_keys(sock, text_keys("cmd") + ("ret",))
+        time.sleep(2.0)
+        send_keys(sock, text_keys("printf hello | wc -c") + ("ret",))
+        # Both pipeline stages cold-start BusyBox from the FAT image.  Allow
+        # their lazy page-ins and the final EOF-driven wc flush to complete.
+        time.sleep(30.0)
+        hmp(sock, "screendump build/images/cmd-pipeline-qmp-smoke.ppm", 0.4)
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 

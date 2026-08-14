@@ -5,6 +5,7 @@
 #include <leonos/gui.h>
 #include <leonos/http.h>
 #include <leonos/i18n.h>
+#include <leonos/launch.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
@@ -543,7 +544,7 @@ static int install_api_with_progress(int window_id, const char *api_path,
     argv[4] = create_shortcut ? "1" : "0";
     argv[5] = state.status_path;
     argv[6] = 0;
-    state.worker_pid = execve(APIAPP_PATH, argv, 0);
+    state.worker_pid = leonos_spawn_argv(APIAPP_PATH, argv);
     if (state.worker_pid < 0) {
         install_log_result("failed to spawn install worker: ", state.worker_pid);
         return 0;
@@ -646,7 +647,7 @@ static int download_api(const char *url, char *api_path, uint32_t capacity)
     argv[3] = state.output_path;
     argv[4] = state.status_path;
     argv[5] = 0;
-    state.worker_pid = execve(APIAPP_PATH, argv, 0);
+    state.worker_pid = leonos_spawn_argv(APIAPP_PATH, argv);
     if (state.worker_pid < 0) {
         copy_text(state.status, sizeof(state.status),
                   T("Could not start download", "无法启动下载"));

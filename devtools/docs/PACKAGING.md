@@ -24,8 +24,8 @@ terminal=1
 ```
 
 `terminal=0` 或缺少 manifest 表示普通 GUI/后台程序。该标记只由桌面、文件管理器、
-运行框、快捷方式和 `leonos_launch_argv()` 读取；底层 `execve()` 不会替换父进程，
-也不会自动创建 Terminal。构建 API 包时可使用 `tools/build_api.py --virtual-terminal`
+运行框、快捷方式和 `leonos_launch_argv()` 读取；底层 `execve()` 会替换当前进程，
+但不会自动创建 Terminal。构建 API 包时可使用 `tools/build_api.py --virtual-terminal`
 自动加入 manifest。
 
 ## `.api` 包结构

@@ -129,6 +129,20 @@ static void copy_text(char *dst, uint32_t dst_len, const char *src)
 }
 
 /**
+ * @brief Clears the virtual-memory-area metadata belonging to an old process image.
+ * @param task Task whose replacement address space has no mappings represented by its VMA table.
+ */
+static void clear_task_vmas(struct task *task)
+{
+    if (!task) {
+        return;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        task->vmas[i] = (struct task_vma){0};
+    }
+}
+
+/**
  * @brief Coordinates the task name from path operation.
  * @param path LeonOS path consumed by this operation.
  * @param dst Input or output value used by this operation.
@@ -469,7 +483,8 @@ static bool userland_load_task_image(struct task *task)
 static int64_t spawn_pending_image(const char *path, const char *task_name,
                                    const struct storage_node *node,
                                    const struct exec_launch *launch,
-                                   uint32_t parent, uint32_t flags, uint32_t pty_id)
+                                   uint32_t parent, uint32_t flags, uint32_t pty_id,
+                                   int stdin_fd, int stdout_fd, int stderr_fd)
 {
     uint32_t pid = sched_create_user_task(task_name, 0, USER_STACK_TOP, parent, flags);
     if (!pid) {
@@ -488,6 +503,15 @@ static int64_t spawn_pending_image(const char *path, const char *task_name,
             task->pty_id = pty_id;
         }
     }
+    if (stdin_fd >= 0 || stdout_fd >= 0 || stderr_fd >= 0) {
+        struct task *child = sched_find(pid);
+        struct task *parent_task = sched_find(parent);
+        if (!child || syscall_inherit_task_fds(parent_task, child,
+                                               stdin_fd, stdout_fd, stderr_fd) < 0) {
+            sched_exit(pid, 127);
+            return -9;
+        }
+    }
     return pid;
 }
 
@@ -503,7 +527,8 @@ static int64_t spawn_pending_image(const char *path, const char *task_name,
  */
 static int64_t spawn_path_internal(const char *path, const char *task_name,
                                    const struct exec_launch *launch,
-                                   uint32_t parent, uint32_t flags, uint32_t pty_id)
+                                   uint32_t parent, uint32_t flags, uint32_t pty_id,
+                                   int stdin_fd, int stdout_fd, int stderr_fd)
 {
     struct storage_node node;
     int ret;
@@ -527,9 +552,11 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
                            ret < 0 ? ret : -21);
             return ret < 0 ? ret : -21;
         }
-        return spawn_pending_image(path, task_name, &node, launch, parent, flags, pty_id);
+        return spawn_pending_image(path, task_name, &node, launch, parent, flags, pty_id,
+                                   stdin_fd, stdout_fd, stderr_fd);
     }
-    return spawn_pending_image(path, task_name, NULL, launch, parent, flags, pty_id);
+    return spawn_pending_image(path, task_name, NULL, launch, parent, flags, pty_id,
+                               stdin_fd, stdout_fd, stderr_fd);
 }
 
 /**
@@ -639,7 +666,7 @@ void userland_init(const struct boot_info *boot)
 
     if (boot && name_contains(boot->cmdline, "mode=installer")) {
         pid = spawn_path_internal("0:/system/apps/desktop/desktop.elf", "desktop.elf window server",
-                                  0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0);
+                                  0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
             kernel_idle_loop();
@@ -649,7 +676,7 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
-    pid = spawn_path_internal("0:/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0);
+    pid = spawn_path_internal("0:/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load init.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
@@ -657,7 +684,7 @@ void userland_init(const struct boot_info *boot)
     init_pid = (uint32_t)pid;
 
     pid = spawn_path_internal("0:/system/apps/desktop/desktop.elf", "desktop.elf window server",
-                              0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0);
+                              0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load desktop.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
@@ -692,6 +719,76 @@ void userland_process_exit(uint64_t code)
 }
 
 /**
+ * @brief Replaces the calling task's user address space with a pending executable image.
+ * @param path Canonical executable path already authorized by the syscall layer.
+ * @param argc Number of entries in argv.
+ * @param argv Kernel-owned argv pointers into data.
+ * @param envc Number of entries in envp.
+ * @param envp Kernel-owned envp pointers into data.
+ * @param data Packed argument/environment storage copied from user memory.
+ * @param data_len Number of valid data bytes.
+ * @return Zero after committing the new image, or a negative errno-style value with no change.
+ */
+int userland_exec_current_path(const char *path, uint32_t argc, char *const argv[],
+                               uint32_t envc, char *const envp[],
+                               const char *data, uint32_t data_len)
+{
+    struct task *task = sched_current_task();
+    struct storage_node node;
+    struct address_space replacement = {0};
+    struct address_space old_as;
+    char task_name[SCHED_TASK_NAME_LEN];
+    uint32_t preserved_flags;
+    int ret;
+    if (!task || task->kind != TASK_KIND_USER || !path || !path[0]) {
+        return -22;
+    }
+    ret = storage_lookup_path(path, &node);
+    if (ret < 0 || node.type != LEONOS_FS_TYPE_FILE) {
+        return ret < 0 ? ret : -2;
+    }
+    task_name_from_path(path, task_name, sizeof(task_name));
+    if (!task_name[0] || !address_space_create(&replacement) ||
+        !address_space_map_user_stack(&replacement, USER_STACK_TOP)) {
+        address_space_destroy(&replacement);
+        return -12;
+    }
+
+    /* No operation after this point can fail.  Keep all old process identity,
+     * cwd, PTY association, limits, process parentage and waitability intact. */
+    old_as = task->as;
+    task->as = replacement;
+    task->entry = 0;
+    task->stack_top = USER_STACK_TOP;
+    task->image = NULL;
+    task->image_len = 0;
+    task->image_node = node;
+    /* A fork child inherits its parent's VMA records.  Its replacement page
+     * tables are blank, so retaining those records would make the ELF mapper
+     * reject valid PIE ranges as overlaps with the discarded image. */
+    clear_task_vmas(task);
+    task->frame = (struct trap_frame){0};
+    task->frame.cs = NTCLKS_USER_CS;
+    task->frame.ss = NTCLKS_USER_DS;
+    task->frame.rflags = 0x202;
+    task->frame.rsp = USER_STACK_TOP;
+    task->dynamic_launch = (struct leonos_dynamic_launch){0};
+    preserved_flags = task->flags & (TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER |
+                                     TASK_FLAG_ELEVATED_ADMIN | TASK_FLAG_WAITABLE_CHILD);
+    task->flags = preserved_flags | TASK_FLAG_PENDING_LOAD;
+    copy_text(task->name_storage, sizeof(task->name_storage), task_name);
+    task->name = task->name_storage;
+    copy_text(task->path, sizeof(task->path), path);
+    sched_set_task_exec_params(task->pid, argc, argv, envc, envp, data, data_len);
+    syscall_close_cloexec_files(task);
+    address_space_destroy(&old_as);
+    arch_fpu_task_init(task->fpu_state);
+    console_printf("[ntclks] exec pid=%u path=%s pending cr3=0x%llx\n",
+                   task->pid, path, (unsigned long long)task->as.cr3);
+    return 0;
+}
+
+/**
  * @brief Coordinates the userland spawn path argv operation.
  * @param path LeonOS path consumed by this operation.
  * @param argv Input or output value used by this operation.
@@ -723,12 +820,48 @@ int64_t userland_spawn_path_argv(const char *path,
         return ret;
     }
 
-    pid = spawn_path_internal(path, task_name, &launch, parent, 0, pty_id);
+    pid = spawn_path_internal(path, task_name, &launch, parent, 0, pty_id, -1, -1, -1);
     if (pid > 0) {
         console_printf("[ntclks] spawn path=%s pid=%u parent=%u\n",
                        path,
                        (unsigned)pid,
                        parent);
+    }
+    return pid;
+}
+
+/**
+ * @brief Spawns a user executable with explicitly inherited standard streams.
+ * @param path NUL-terminated executable path in LeonOS drive syntax.
+ * @param argv Optional NUL-terminated argument vector copied into the child.
+ * @param envp Optional NUL-terminated environment vector copied into the child.
+ * @param pty_id Active PTY inherited by the child; it must belong to the caller.
+ * @param stdin_fd Caller file descriptor used as the child's standard input.
+ * @param stdout_fd Caller file descriptor used as the child's standard output.
+ * @param stderr_fd Caller file descriptor used as the child's standard error.
+ * @return Positive child PID on success, or a negative errno value on failure.
+ */
+int64_t userland_spawn_path_argv_with_fds(const char *path,
+                                          const char *const argv[],
+                                          const char *const envp[],
+                                          uint32_t pty_id,
+                                          int stdin_fd, int stdout_fd,
+                                          int stderr_fd)
+{
+    char task_name[SCHED_TASK_NAME_LEN];
+    struct exec_launch launch;
+    uint32_t parent = sched_current_pid();
+    int64_t pid;
+    int ret;
+    if (!path || !path[0]) return -22;
+    task_name_from_path(path, task_name, sizeof(task_name));
+    ret = build_exec_launch(&launch, path, argv, envp);
+    if (ret < 0) return ret;
+    pid = spawn_path_internal(path, task_name, &launch, parent, 0, pty_id,
+                              stdin_fd, stdout_fd, stderr_fd);
+    if (pid > 0) {
+        console_printf("[ntclks] spawn path=%s pid=%u parent=%u fds=%d,%d,%d\n",
+                       path, (unsigned)pid, parent, stdin_fd, stdout_fd, stderr_fd);
     }
     return pid;
 }
@@ -766,7 +899,7 @@ int64_t userland_spawn_path_argv_for_user(const char *path,
     if (ret < 0) {
         return ret;
     }
-    pid = spawn_path_internal(path, task_name, &launch, parent_pid, 0, 0);
+    pid = spawn_path_internal(path, task_name, &launch, parent_pid, 0, 0, -1, -1, -1);
     if (pid > 0) {
         sched_set_task_identity((uint32_t)pid, user, session_id);
         console_printf("[ntclks] spawn trusted path=%s pid=%u parent=%u user=%u\n",

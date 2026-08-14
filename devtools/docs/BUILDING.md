@@ -94,4 +94,5 @@ terminal=1
 - 长文件复制请分块读写并在循环中处理短读/短写，避免阻塞窗口事件循环。
 - GUI 应用应在事件等待期间让出 CPU；需要定时刷新时使用
   `leonos_gui_wait_app_event()` 和有限超时。
-- `fork`、`clone`、完整 POSIX 信号和动态链接器不属于当前 SDK ABI。
+- `fork`、`vfork`、`execve`、匿名管道、进程组和有限的默认信号动作属于当前 SDK
+  ABI；`clone`、用户安装的信号处理器和动态 TLS 仍不受支持。

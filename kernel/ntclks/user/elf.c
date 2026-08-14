@@ -560,15 +560,24 @@ static bool elf64_task_range_available(const struct task *task, uint64_t start, 
     uint64_t stack_low;
     if (!task || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP ||
         task->stack_top < (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE) {
+        console_printf("[ntclks] ELF range invalid start=0x%llx end=0x%llx stack=0x%llx\n",
+                       (unsigned long long)start, (unsigned long long)end,
+                       task ? (unsigned long long)task->stack_top : 0ULL);
         return false;
     }
     stack_low = task->stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE;
     if (end > stack_low) {
+        console_printf("[ntclks] ELF range overlaps stack start=0x%llx end=0x%llx stack=0x%llx\n",
+                       (unsigned long long)start, (unsigned long long)end,
+                       (unsigned long long)stack_low);
         return false;
     }
     for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
         const struct task_vma *vma = &task->vmas[i];
         if (vma->used && start < vma->end && end > vma->start) {
+            console_printf("[ntclks] ELF range overlaps VMA=%u range=0x%llx-0x%llx existing=0x%llx-0x%llx\n",
+                           i, (unsigned long long)start, (unsigned long long)end,
+                           (unsigned long long)vma->start, (unsigned long long)vma->end);
             return false;
         }
     }

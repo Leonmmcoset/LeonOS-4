@@ -13,6 +13,8 @@ struct pty_session {
     uint8_t used;
     uint8_t reserved[3];
     uint32_t owner_pid;
+    uint32_t process_session;
+    uint32_t foreground_pgid;
     uint8_t input[PTY_INPUT_CAP];
     uint32_t input_head;
     uint32_t input_tail;
@@ -151,6 +153,11 @@ int32_t pty_create(uint32_t owner_pid)
         if (!sessions[i].used) {
             sessions[i].used = 1;
             sessions[i].owner_pid = owner_pid;
+            {
+                struct task *owner = sched_find(owner_pid);
+                sessions[i].process_session = owner ? owner->process_session : 0;
+                sessions[i].foreground_pgid = owner ? owner->process_group : 0;
+            }
             sessions[i].input_head = 0;
             sessions[i].input_tail = 0;
             sessions[i].output_head = 0;
@@ -270,6 +277,36 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
         if (input == '\r' &&
             (session->termios.c_iflag & LEONOS_PTY_IFLAG_ICRNL)) {
             input = '\n';
+        }
+        if ((session->termios.c_lflag & LEONOS_PTY_LFLAG_ISIG) != 0 &&
+            input == (char)session->termios.c_cc[LEONOS_PTY_CC_VINTR]) {
+            session->canonical_length = 0;
+            if (session->foreground_pgid) {
+                (void)sched_signal_process_group(session->owner_pid,
+                                                 session->foreground_pgid, 2);
+            }
+            ++written;
+            continue;
+        }
+        if ((session->termios.c_lflag & LEONOS_PTY_LFLAG_ISIG) != 0 &&
+            input == (char)session->termios.c_cc[LEONOS_PTY_CC_VSUSP]) {
+            session->canonical_length = 0;
+            if (session->foreground_pgid) {
+                (void)sched_signal_process_group(session->owner_pid,
+                                                 session->foreground_pgid, 18);
+            }
+            ++written;
+            continue;
+        }
+        if ((session->termios.c_lflag & LEONOS_PTY_LFLAG_ISIG) != 0 &&
+            input == (char)session->termios.c_cc[LEONOS_PTY_CC_VQUIT]) {
+            session->canonical_length = 0;
+            if (session->foreground_pgid) {
+                (void)sched_signal_process_group(session->owner_pid,
+                                                 session->foreground_pgid, 3);
+            }
+            ++written;
+            continue;
         }
         if (!pty_canonical_mode(session)) {
             written += ring_push(session->input, PTY_INPUT_CAP,
@@ -431,6 +468,43 @@ int pty_set_winsize(uint32_t pty_id, const struct leonos_pty_winsize *winsize)
         return -22;
     }
     session->winsize = *winsize;
+    return 0;
+}
+
+/**
+ * @brief Gets the process group currently receiving terminal-generated signals.
+ * @param pty_id PTY identifier.
+ * @param process_group Destination for the foreground process-group identifier.
+ * @return Zero on success or a negative errno-style failure.
+ */
+int pty_get_foreground_pgid(uint32_t pty_id, uint32_t *process_group)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || !process_group) {
+        return -22;
+    }
+    *process_group = session->foreground_pgid;
+    return 0;
+}
+
+/**
+ * @brief Changes the group that owns foreground terminal input.
+ * @param pty_id PTY identifier.
+ * @param caller_pid Attached process requesting the change.
+ * @param process_group New foreground process-group identifier.
+ * @return Zero on success or a negative errno-style failure.
+ */
+int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
+                            uint32_t process_group)
+{
+    struct pty_session *session = find_session(pty_id);
+    struct task *caller = sched_find(caller_pid);
+    if (!session || !caller || !process_group || caller->pty_id != pty_id ||
+        caller->process_session != session->process_session ||
+        !sched_process_group_has_pty(process_group, pty_id)) {
+        return -22;
+    }
+    session->foreground_pgid = process_group;
     return 0;
 }
 

@@ -3,6 +3,8 @@
 #include <leonos/launch.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
+#include <errno.h>
+#include <unistd.h>
 
 #define LEONOS_ASSOC_CONFIG_PATH "0:/system/config/fileassoc.cfg"
 #define LEONOS_ASSOC_CONFIG_MAX 1024U
@@ -251,7 +253,28 @@ static int launch_in_terminal(char *argv[])
         ++argc;
     }
     terminal_argv[argc + 2U] = 0;
-    return execve(terminal_argv[0], terminal_argv, 0);
+    return leonos_spawn_argv(terminal_argv[0], terminal_argv);
+}
+
+int leonos_spawn_argv(const char *path, char *const argv[])
+{
+    pid_t pid;
+    int result;
+
+    if (!path || !path[0] || !argv || !argv[0]) {
+        return LEONOS_LAUNCH_ERR_EMPTY;
+    }
+    pid = fork();
+    if (pid < 0) {
+        return errno ? -errno : -LEONOS_EAGAIN;
+    }
+    if (pid != 0) {
+        return (int)pid;
+    }
+
+    result = execve(path, argv, 0);
+    (void)result;
+    _exit(127);
 }
 
 static void build_child_path(char *dst, uint32_t capacity,
@@ -847,7 +870,7 @@ int leonos_launch_file_with_app(const char *target_path, const char *program_pat
         argv[1] = cwd;
         argv[2] = command;
         argv[3] = 0;
-        return execve(resolved_program, argv, 0);
+        return leonos_spawn_argv(resolved_program, argv);
     }
     {
         char *argv[3];
@@ -954,7 +977,7 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         if (app_requires_terminal(path)) {
             return launch_in_terminal(argv);
         }
-        int ret = execve(path, argv, 0);
+        int ret = leonos_spawn_argv(path, argv);
         if (ret == -LEONOS_EEXIST && is_system_desktop_path(path)) {
             return LEONOS_LAUNCH_ERR_ALREADY_RUNNING;
         }
@@ -968,7 +991,7 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         dir_argv[0] = "0:/system/apps/fileman/fileman.elf";
         dir_argv[1] = path;
         dir_argv[2] = 0;
-        return execve(dir_argv[0], dir_argv, 0);
+        return leonos_spawn_argv(dir_argv[0], dir_argv);
     }
     default_program = leonos_launch_resolve_default_app_for_path(path);
     if (default_program) {

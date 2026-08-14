@@ -705,7 +705,7 @@ static int api_install_input_method(const struct leonos_api_info *info,
     }
     argv[0] = (char *)exe_path;
     argv[1] = 0;
-    return execve(exe_path, argv, 0) > 0;
+    return leonos_spawn_argv(exe_path, argv) > 0;
 }
 
 static int api_extract_tar(const char *api_path, const char *dest_dir,

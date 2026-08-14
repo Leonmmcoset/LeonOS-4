@@ -66,6 +66,32 @@ def source_revision(source: Path) -> str:
     return result.stdout.strip()
 
 
+def replace_directory(staging_dir: Path, target_dir: Path) -> None:
+    """Install a generated directory even when the tree is on Windows drvfs.
+
+    Directory rename is normally atomic, but drvfs can reject it with
+    ``PermissionError`` after a subprocess has recently touched one of the
+    generated files.  The fallback keeps the build output deterministic while
+    avoiding a spurious TinyCC failure.
+    """
+    if target_dir.exists():
+        try:
+            shutil.rmtree(target_dir)
+        except PermissionError:
+            for child in target_dir.rglob("*"):
+                try:
+                    child.chmod(0o666 if child.is_file() else 0o777)
+                except OSError:
+                    pass
+            shutil.rmtree(target_dir)
+    try:
+        staging_dir.rename(target_dir)
+        return
+    except PermissionError:
+        shutil.copytree(staging_dir, target_dir, dirs_exist_ok=True)
+        shutil.rmtree(staging_dir)
+
+
 def replace_once(path: Path, before: str, after: str, description: str) -> None:
     text = path.read_text(encoding="utf-8")
     if text.count(before) != 1:
@@ -392,9 +418,7 @@ def main() -> None:
     shutil.copyfile(port / "README.md", staging_dir / "README-LEONOS.md")
     shutil.copytree(port / "examples", staging_dir / "examples")
 
-    if runtime_dir.exists():
-        shutil.rmtree(runtime_dir)
-    staging_dir.rename(runtime_dir)
+    replace_directory(staging_dir, runtime_dir)
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(
         json.dumps(

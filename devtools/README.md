@@ -81,7 +81,8 @@ make APP=examples/myapp APP_NAME=myapp
 0:/programs/myapp/myapp.elf
 ```
 
-可由桌面、文件管理器或 `execve()` 启动。
+可由桌面、文件管理器或 `leonos_launch_argv()` 启动；需要 POSIX 启动语义时使用
+`fork()` 后由子进程调用 `execve()`。
 
 ### StardustUI C++ 应用
 

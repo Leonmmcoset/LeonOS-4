@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <sys/types.h>
+#include <sys/resource.h>
 #include <termios.h>
 
 #ifndef LEONOS_USE_PICOLIBC
@@ -305,6 +306,10 @@ long read(int fd, void *buf, size_t len)
         long result;
         do {
             result = syscall3(SYS_read, fd, (long)buf, (long)len);
+            if (result == -LEONOS_EAGAIN) {
+                sleep_ms(1);
+                continue;
+            }
             if (result != 0 || !canonical_pty_stdin) {
                 return result;
             }
@@ -322,6 +327,10 @@ long read(int fd, void *buf, size_t len)
             chunk = LEONOS_FS_READ_SLICE_BYTES;
         }
         ret = syscall3(SYS_read, fd, (long)((uint8_t *)buf + done), (long)chunk);
+        if (ret == -LEONOS_EAGAIN) {
+            sleep_ms(1);
+            continue;
+        }
         if (ret <= 0) {
             return done ? (long)done : ret;
         }
@@ -343,6 +352,10 @@ long write(int fd, const void *buf, size_t len)
             chunk = LEONOS_FS_FILE_WRITE_SLICE_BYTES;
         }
         ret = syscall3(SYS_write, fd, (long)((const uint8_t *)buf + done), (long)chunk);
+        if (ret == -LEONOS_EAGAIN) {
+            sleep_ms(1);
+            continue;
+        }
         if (ret <= 0) {
             return done ? (long)done : ret;
         }
@@ -362,6 +375,31 @@ int open(const char *path, int flags, int mode)
 int close(int fd)
 {
     return (int)syscall1(SYS_close, fd);
+}
+
+int dup(int fd)
+{
+    long result = syscall1(SYS_dup, fd);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return (int)result;
+}
+
+int pipe(int filedes[2])
+{
+    long result;
+    if (!filedes) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = syscall1(SYS_pipe, (long)filedes);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
 }
 
 long lseek(int fd, long offset, int whence)
@@ -474,6 +512,41 @@ int getpid(void)
     return (int)syscall0(SYS_getpid);
 }
 
+int getppid(void)
+{
+    return (int)syscall0(SYS_getppid);
+}
+
+int kill(int pid, int signal_number)
+{
+    return (int)syscall2(SYS_kill, pid, signal_number);
+}
+
+int nice(int increment)
+{
+    return (int)syscall1(SYS_nice, increment);
+}
+
+int getpriority(int which, id_t who)
+{
+    return (int)syscall2(SYS_getpriority, which, who);
+}
+
+int setpriority(int which, id_t who, int priority)
+{
+    return (int)syscall3(SYS_setpriority, which, who, priority);
+}
+
+int getrlimit(int resource, struct rlimit *limit)
+{
+    return (int)syscall2(SYS_getrlimit, resource, (long)limit);
+}
+
+int setrlimit(int resource, const struct rlimit *limit)
+{
+    return (int)syscall2(SYS_setrlimit, resource, (long)limit);
+}
+
 int stat(const char *path, struct leonos_stat *st)
 {
     return (int)syscall2(SYS_stat, (long)path, (long)st);
@@ -491,7 +564,12 @@ int wait4(int pid, int *status, int options, void *rusage)
 
 int execve(const char *path, char *const argv[], char *const envp[])
 {
-    return (int)syscall3(SYS_execve, (long)path, (long)argv, (long)envp);
+    long result = syscall3(SYS_execve, (long)path, (long)argv, (long)envp);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return (int)result;
 }
 
 int mkdir(const char *path, int mode)
@@ -3917,11 +3995,21 @@ int leonos_pty_spawn(const char *path, uint32_t pty_id)
 int leonos_pty_spawn_argv(const char *path, uint32_t pty_id,
                           char *const argv[], char *const envp[])
 {
+    return leonos_pty_spawn_argv_with_fds(path, pty_id, argv, envp, -1, -1, -1);
+}
+
+int leonos_pty_spawn_argv_with_fds(const char *path, uint32_t pty_id,
+                                   char *const argv[], char *const envp[],
+                                   int stdin_fd, int stdout_fd, int stderr_fd)
+{
     struct leonos_pty_spawn spawn = {
         .pty_id = pty_id,
         .path = path,
         .argv = argv,
         .envp = envp,
+        .stdin_fd = stdin_fd,
+        .stdout_fd = stdout_fd,
+        .stderr_fd = stderr_fd,
     };
     return ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
 }

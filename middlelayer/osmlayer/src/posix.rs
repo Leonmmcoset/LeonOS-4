@@ -20,6 +20,11 @@ const SYS_GETPID: u64 = 39;
 const SYS_EXECVE: u64 = 59;
 const SYS_EXIT: u64 = 60;
 const SYS_WAIT4: u64 = 61;
+const SYS_KILL: u64 = 62;
+const SYS_NICE: u64 = 34;
+const SYS_GETPPID: u64 = 110;
+const SYS_GETPRIORITY: u64 = 140;
+const SYS_SETPRIORITY: u64 = 141;
 const SYS_GETCWD: u64 = 79;
 const SYS_CHDIR: u64 = 80;
 
@@ -46,6 +51,8 @@ pub fn dispatch(number: u64, args: &[u64; 6]) -> i64 {
         SYS_GETCWD => args[0] as i64,
         SYS_CHDIR => 0,
         SYS_GETPID => 0,
+        SYS_GETPPID => 0,
+        SYS_KILL | SYS_NICE | SYS_GETPRIORITY | SYS_SETPRIORITY => 0,
         SYS_EXECVE => 0,
         SYS_WAIT4 => 0,
         SYS_EXIT => 0,

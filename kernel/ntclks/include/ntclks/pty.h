@@ -107,6 +107,22 @@ int pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize);
  */
 int pty_set_winsize(uint32_t pty_id, const struct leonos_pty_winsize *winsize);
 /**
+ * @brief Reads the foreground process group of a pseudo-terminal.
+ * @param pty_id PTY identifier.
+ * @param process_group Destination for the foreground process-group identifier.
+ * @return Zero on success or a negative errno-style failure.
+ */
+int pty_get_foreground_pgid(uint32_t pty_id, uint32_t *process_group);
+/**
+ * @brief Changes the foreground process group of a pseudo-terminal.
+ * @param pty_id PTY identifier.
+ * @param caller_pid Attached process requesting the change.
+ * @param process_group New foreground process-group identifier.
+ * @return Zero on success or a negative errno-style failure.
+ */
+int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
+                            uint32_t process_group);
+/**
  * @brief Coordinates the pty process exit operation.
  * @param pid Input or output value used by this operation.
  */

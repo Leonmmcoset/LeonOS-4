@@ -130,13 +130,6 @@ int dup2(int old_fd, int new_fd)
     return -1;
 }
 
-int pipe(int fds[2])
-{
-    (void)fds;
-    errno = ENOSYS;
-    return -1;
-}
-
 int access(const char *path, int mode)
 {
     struct stat st;
