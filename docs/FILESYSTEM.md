@@ -1,173 +1,146 @@
-# Filesystem
+# Filesystems
 
-LeonOS 4 uses numbered drives and slash-separated paths:
+LeonOS 4 uses a multi-filesystem storage layer. The normal installed system is
+not a FAT32 root filesystem: it has a small FAT32 EFI System Partition (ESP)
+and a separate writable ext2 root partition.
 
-- `0:/`
-- `1:/`
-- `2:/` through `9:/` when additional media is present
+## Installed Disk Layout
 
-Normal boots mount `0:/` from the GPT ESP FAT32 partition on the AHCI boot
-disk. Installer boots mount `0:/` from the `leonos-installer-root` FAT32
-ramdisk; the target ESP can be mounted as an optional target drive.
+| GPT partition | Type | Contents | Mounted drive |
+| --- | --- | --- | --- |
+| 1 | EFI System Partition / FAT32 | `EFI/`, `boot/`, `system/kernel.sys`, `system/middlelayer.sys` | `2:/` while Installer is running; boot-only in a normal session |
+| 2 | Linux filesystem data / ext2 | normal system files: `system/`, `programs/`, `drivers/`, `docs/`, `users/`, `var/`, `tmp/` | `0:/` in a normal session, `1:/` while Installer is running |
 
-During normal boot the bootstrap storage driver scans every present AHCI port.
-ATAPI optical drives with a valid ISO 9660 primary volume descriptor are
-mounted read-only in scan order, starting at `1:`. Additional optical media
-receive the next free digit drive. The file manager lists each detected optical
-drive, and the middlelayer grants ordinary users read/execute access to these
-removable volumes. Writes, directory creation, deletion, rename, and ACL
-changes return a read-only filesystem error.
+UEFI GRUB and the early loader read partition 1. Once the kernel is running,
+the storage layer selects partition 2 as `0:/`. A legacy one-partition FAT32
+LeonOS disk remains readable and writable as `0:/`; it is a compatibility
+fallback, not the layout produced by current image or installer builds.
 
-Path normalization is currently provided by the middlelayer VFS service
-(`LEONOS_VFS_OP_RESOLVE_PATH`) with a kernel fallback resolver. FAT32 parsing,
-block I/O, directory mutation, and user pointer validation remain in the
-kernel.
+The installer itself keeps using a FAT32 ramdisk root because it must start
+before any target disk is trusted. Its payload is deliberately split:
 
-## Mounts
+- `0:/install/root` is copied to the ext2 target root `1:/`.
+- `0:/install/esp` is copied to the FAT32 target ESP `2:/`.
 
-Mount policy comes from middlelayer:
+Fresh installation creates both GPT partitions. Update requires both a valid
+ext2 root and ESP; old FAT32-only installations should use a fresh install.
 
-- Normal root: FAT32 boot ESP.
-- Installer root: FAT32 ramdisk.
-- Device tree: `0:/dev`.
-- Optional target ESP during installation.
+## Supported Formats
 
-Optical ISO 9660 mounts are discovered by the kernel's AHCI bootstrap scan and
-are not part of the static middlelayer mount-policy entries.
+### ext2
 
-The current devfs surface is deliberately small:
+The kernel implements the classic, unjournaled ext2 subset used by generated
+images and installer-created targets:
 
-- `0:/dev`
-- `0:/dev/fb0`
+- 1 KiB, 2 KiB, and 4 KiB blocks; generated LeonOS images use 4 KiB.
+- 128-byte-or-larger classic inodes.
+- Direct, singly indirect, and doubly indirect file blocks.
+- File read/write/truncate, directory enumeration, create, `mkdir`, `unlink`,
+  `rmdir`, and same-filesystem `rename`.
+- Standard Linux filesystem-data GPT type GUID.
 
-## Users and Local Data
+It intentionally rejects extents, journals, metadata checksums, 64-bit block
+numbers, encryption, and unsupported incompatible feature bits. Build images
+with `mke2fs -t ext2`; `tools/make_image.py` disables unsupported modern
+extensions explicitly.
 
-Multi-user v1 uses these fixed paths:
+### FAT32
 
-- `0:/system/state/accounts.db`: middlelayer-owned account database.
-- `0:/system/state/license.dat`: local activation record with mode, email hash,
-  machine ID, key hash, and local HMAC; plaintext keys are not stored.
-- `0:/system/state/oobe.done`: first-run completion marker.
-- `0:/system/state/startup.db`: kernel-managed per-user startup application records.
-- `0:/system/state/startup-denials.db`: kernel-managed remembered startup permission denials.
-- `0:/system/config/leonos.conf`: build and kernel configuration.
-- `0:/system/config/display.conf`: default Metro appearance and display policy.
-- `0:/system/config/drivers.conf`: loadable-driver policy; all drivers are enabled by default.
-- `0:/system/config/fileassoc.cfg`: user-defined launcher file-association overrides.
-- `0:/system/config/locale.conf`: default UI language.
-- `0:/system/config/services.cfg`: default startup and service policy.
-- `0:/drivers`: unsigned Ring 0 `.drv` modules loaded after root mount.
-- `0:/docs`: bundled and third-party `.hlp` help containers shown by the
-  desktop Documents menu and opened by `oshlp.elf`.
-- `0:/var/run/services.state`: service runtime state written by
-  `serviced.elf`.
-- `0:/var/run/services.cmd`: one-shot service control command file written by
-  administrator tools.
-- `0:/var/log/services.log`: service runtime log.
-- `0:/users/<name>`: user home directory.
-- `0:/users/<name>/appearance.conf`: per-user theme, independent Metro/Win95
-  color choices, wallpaper path, and wallpaper display mode.
-- `0:/users/<name>/desktop`
-- `0:/users/<name>/documents`
-- `0:/users/<name>/downloads`
-- `0:/tmp`: shared temporary write area.
+FAT32 remains supported for the ESP, installer ramdisk, legacy installed
+images, removable media, and compatibility data volumes. Long file names,
+directory traversal, reads, writes, creation, deletion, and renaming remain
+available. FAT32 remains the only filesystem the UEFI/GRUB boot path relies
+on.
 
-The installed image does not pre-create `accounts.db` or `license.dat`. On
-first boot, OOBE requires license activation first when the build's
-`LEONOS_LICENSE_REQUIRE` policy is enabled. Online activation posts email, key,
-and the machine ID to the license server compiled into the license binaries
-through `CONFIG_LICENSE_SERVER_URL`. The machine ID comes from stable platform
-identity: SMBIOS System UUID first, then boot GPT disk and ESP partition GUIDs
-when SMBIOS UUID is unavailable. Network adapter MAC addresses are not part of
-the license machine ID, so adding or removing an e1000 adapter does not change
-activation state. Offline activation validates a
-50-character key against the local RTC date and only checks the offline key's
-validity window at activation time. After the license is valid, or after the
-source/build configuration compiles a no-license policy into the binaries, OOBE
-creates the first administrator, creates the home layout, writes
-`0:/system/state/oobe.done`, and enters the administrator desktop. Later boots enter
-`login.elf`. If `oobe.done` exists but desktop cannot find an enabled
-administrator, or cannot find a valid license when the compiled policy requires
-one, desktop launches OOBE again.
+### ISO 9660
 
-New account creation seeds the user's desktop with `File Manager.lnk`,
-`Task Manager.lnk`, `Settings.lnk`, and `Browser.lnk`, pointing to
-`0:/system/apps/fileman/fileman.elf`, `0:/system/apps/taskmgr/taskmgr.elf`,
-`0:/system/apps/settings/settings.elf`, and `0:/programs/browser/browser.elf`.
+Optical media is discovered through AHCI ATAPI and automatically assigned the
+next free numeric drive. ISO 9660 volumes are read-only. This is independent
+of whether the boot/root disk uses ext2 or FAT32.
 
-`downloadmgr.elf` saves successful downloads to `0:/users/<name>/downloads`
-when a user session is active, and falls back to `0:/tmp` when no home directory
-is available.
+## Runtime Data Mounts
 
-## Help Documents
+Disk Manager can mount a supported, unprotected FAT32 or ext2 GPT data
+partition for the current boot. The kernel assigns the first free numeric
+drive (`1:/` through `9:/`), skipping mounted optical media and the installer's
+temporary target drives. The assigned drive is shown in the partition status
+and appears in File Manager's sidebar without restarting File Manager.
 
-LeonOS help files use the `.hlp` extension and are plain-text containers with
-file metadata plus one or more Markdown document pages. The default system help
-file is `0:/docs/leonos.hlp`; `oshlp.elf <file.hlp> [doc.id]` opens a file and
-optionally jumps directly to one page.
+Runtime data mounts are deliberately non-persistent in this first version:
+they are removed on reboot and no automatic mounting policy is stored on disk.
+Mounting the same partition again is idempotent and returns its existing drive.
+Only the FAT32 and classic ext2 subsets documented above are accepted; an
+unknown or unsupported on-disk filesystem is rejected rather than mounted
+according to its GPT type alone.
 
-Each document page can provide `title.en`, `title.zh`, `path.en`, `path.zh`,
-`author`, and `version` metadata. `path.*` uses `/` separators to build the
-left-side tree in `oshlp.elf`. The desktop Start menu scans only top-level
-`0:/docs/*.hlp` files and displays the file-level title when it can be read.
+The installer reserves `1:/` for the target root and `2:/` for its ESP while a
+target is mounted. Formatting or mounting an installer target is rejected with
+busy if those drives contain an optical, data, or other runtime volume; this
+prevents an installer operation from silently replacing a live drive mapping.
 
-## Supported operations
+Unmounting is administrator-gated. The kernel refuses it while any live task
+has that drive as its working directory, owns an open file on it, is executing
+an image from it, or retains a file-backed mapping from it. Format and delete
+are likewise refused while the partition is mounted. This avoids stale file
+nodes and mappings after a volume is removed.
 
-Current FAT32 and ISO 9660 syscall support includes:
+## Disk Manager Partitions
 
-- Directory listing and directory file descriptors.
-- File reads; FAT32 also supports writes.
-- Create and overwrite through `open` flags on FAT32.
-- `stat`, `fstat`, and `lseek` on both filesystem types.
-- `mkdir`, `unlink`, `rmdir`, and `rename` on FAT32.
+Disk Manager presents the GPT entries of every detected AHCI disk, including
+their name, LBA range, filesystem probe, capacity, GPT role, protection state,
+and assigned drive when mounted. It can create a 1 MiB-aligned FAT32 or ext2
+data partition in free space, format an existing data partition as either
+filesystem, delete an existing data partition's GPT entry, and mount or
+unmount a supported data partition. New partition creation includes formatting
+as part of the operation.
 
-ISO 9660 names are matched case-insensitively and the common `;1` version
-suffix is hidden from callers. Rock Ridge/Joliet extensions, multi-extent files,
-and media insertion/removal notifications are not currently implemented.
+Formatting reuses the installer-grade FAT32 and ext2 formatters but applies
+only to the selected partition extent. FAT32 data partitions use the Microsoft
+Basic Data GPT type; ext2 data partitions use the Linux filesystem type.
+Deleting a partition removes its GPT metadata only, so it is not a secure-wipe
+operation.
 
-## Permission Model
+Disk Manager never allows partition changes or runtime mounts against the
+current boot disk or a target disk currently mounted by the installer. This
+restriction is enforced by the kernel, not merely disabled buttons. The
+initial partition-management ABI supports the common 128-entry, 128-byte GPT
+table format generated by LeonOS and rejects a malformed, overlapping,
+out-of-range, or CRC-invalid table before making a modification.
 
-LeonOS v1 stores Windows-style ACL metadata beside FAT32 directory entries.
-Each directory may contain a hidden/system `LEONACL.SYS` file. The kernel hides
-that file from normal directory enumeration and denies direct user-task access;
-middlelayer reads and writes it through trusted kernel file services.
+## VFS and Paths
 
-`LEONACL.SYS` is a LeonOS TLV binary file:
+LeonOS paths use numeric drive syntax, for example
+`0:/system/apps/desktop/desktop.elf`. The middlelayer resolves `.` and `..`
+and the storage layer selects a drive before dispatching the operation to its
+filesystem implementation. Filesystem names are case-insensitive at the
+LeonOS path layer for compatibility with historical FAT32 behavior; avoid
+creating names that differ only by case on ext2.
 
-- Header: `LACL` magic, version `1`, record count, checksum.
-- Record TLV: directory-entry name, owner uid, flags, and up to
-  `LEONOS_FS_ACL_MAX_ACE` ACEs.
-- ACE principals: Owner, System, Administrators, Users, Everyone.
-- ACE permissions: Read/List, Write/Create, Execute/Traverse, Delete, and
-  Manage Permissions.
+The device directory is synthesized at `0:/dev`. `LEONACL.SYS` is internal
+ACL sidecar metadata: it remains readable by the authorization service but is
+hidden from normal FAT32 and ext2 directory enumeration.
 
-ACL rows only grant allowed permissions; an unchecked permission bit means no
-grant. Explicit parent ACL records dynamically affect children; synthetic
-built-in defaults are used for missing metadata but are not written until an
-object is changed. A child may add explicit ACL entries but v1 does not
-implement a "disable inherited permissions" switch.
+## API Behavior
 
-Default policy:
+Current file syscalls support all writable ext2 and FAT32 roots:
 
-- `0:/boot`, `0:/docs`, `0:/system`, and `0:/programs`: System and
-  Administrators get full control; Users get read/execute.
-- `0:/users/<name>` and descendants: Owner, System, and Administrators get full
-  control by default. Other normal users are not granted access.
-- `0:/tmp`: Users, System, and Administrators get read/write/execute/delete.
-- `0:/system/state/accounts.db` and `LEONACL.SYS` are denied to user tasks; supported
-  access goes through auth and ACL APIs. License OOBE writes
-  `0:/system/state/license.dat` before normal user login exists.
-- Installer RAM-root boots bypass normal policy so installation/update code can
-  copy the ESP payload to target drive paths such as `1:/`.
+- File reads and short, bounded writes.
+- Create and overwrite through `open` flags.
+- `mkdir`, `unlink`, `rmdir`, and `rename` within one mounted filesystem.
+- Directory listing, `stat`, seek, and ACL service integration.
 
-If an ACL file is missing, middlelayer synthesizes the default ACL. If an ACL
-file is corrupt, normal users are denied and administrators can repair it from
-File Manager properties.
+Cross-drive rename is rejected. ISO 9660 returns a read-only error for all
+mutation operations. ext2 allocation updates its inode/block bitmaps and free
+counts; FAT32 retains its cluster-chain allocator and LFN handling.
 
-## Current limits
+## Safety and Recovery
 
-- No journaling or crash recovery.
-- FAT32 long-file-name behavior is still conservative.
-- Devfs only exposes the framebuffer node today.
-- ACL metadata is LeonOS-specific and is not compatible with external FAT32
-  permission tools.
+ext2 has no journal, so sudden loss of power during metadata updates can still
+require offline repair. The installer writes a complete target layout before
+copying payload files and treats a failed copy as an installation failure. The
+normal image generator and installer formatter reserve distinct boot and root
+partitions so a large runtime file cannot consume ESP space.
+
+Use `tools/analyze_boot_log.py` when boot diagnostics show a root mount failure.
+The log identifies whether ext2 was selected or the legacy FAT32 fallback was
+used.

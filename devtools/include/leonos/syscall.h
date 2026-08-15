@@ -55,6 +55,7 @@
 
 #define LEONOS_EPERM 1
 #define LEONOS_EACCES 13
+#define LEONOS_EBUSY 16
 #define LEONOS_EEXIST 17
 #define LEONOS_EPIPE 32
 

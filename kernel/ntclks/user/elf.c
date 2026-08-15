@@ -322,7 +322,7 @@ static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const voi
 }
 
 /* header_len is the amount available in image. file_len is the full backing
- * file size, which is larger when the kernel lazily maps an ELF from FAT32. */
+ * file size, which is larger when the kernel lazily maps an ELF from storage. */
 static bool elf64_probe_image(const void *image, size_t header_len, uint64_t file_len,
                               bool is_interpreter, struct elf_image_info *out)
 {

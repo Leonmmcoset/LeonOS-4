@@ -38,6 +38,13 @@ def version_and_revision(source: Path) -> tuple[str, str]:
 
 
 def add_file(archive: zipfile.ZipFile, archive_name: str, source: Path) -> None:
+    written_names = getattr(archive, "_leonos_written_names", None)
+    if written_names is None:
+        written_names = set()
+        setattr(archive, "_leonos_written_names", written_names)
+    if archive_name in written_names:
+        raise SystemExit(f"duplicate SDK archive member: {archive_name}")
+    written_names.add(archive_name)
     info = zipfile.ZipInfo(archive_name, ZIP_TIMESTAMP)
     info.compress_type = zipfile.ZIP_DEFLATED
     info.external_attr = 0o100644 << 16
@@ -45,6 +52,13 @@ def add_file(archive: zipfile.ZipFile, archive_name: str, source: Path) -> None:
 
 
 def add_text(archive: zipfile.ZipFile, archive_name: str, value: str) -> None:
+    written_names = getattr(archive, "_leonos_written_names", None)
+    if written_names is None:
+        written_names = set()
+        setattr(archive, "_leonos_written_names", written_names)
+    if archive_name in written_names:
+        raise SystemExit(f"duplicate SDK archive member: {archive_name}")
+    written_names.add(archive_name)
     info = zipfile.ZipInfo(archive_name, ZIP_TIMESTAMP)
     info.compress_type = zipfile.ZIP_DEFLATED
     info.external_attr = 0o100644 << 16
@@ -225,9 +239,29 @@ def main() -> None:
         with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED,
                              compresslevel=9) as archive:
             for source in sorted(sdk_root.rglob("*")):
-                if not source.is_file() or "lib" in source.relative_to(sdk_root).parts:
+                if not source.is_file():
                     continue
                 relative_name = source.relative_to(sdk_root).as_posix()
+                relative_parts = source.relative_to(sdk_root).parts
+                # Libraries, selected component payloads, third-party notices,
+                # and generated SDK metadata are added below from their
+                # authoritative source.  Keeping this broad SDK-tree copy out
+                # of those destinations prevents stale inputs and duplicate
+                # ZIP members when a component is rebuilt.
+                if (
+                    "lib" in relative_parts
+                    or relative_parts[0] in {"components", "THIRD_PARTY"}
+                    or relative_name in {"dynamic-app.ld", "interpreter.ld", "share/leonos/components.json"}
+                    or relative_name in {
+                        "include/lua5.4/lua.h", "include/lua5.4/lauxlib.h",
+                        "include/lua5.4/lualib.h", "include/lua5.4/luaconf.h",
+                        "include/sqlite3.h", "include/magic.h", "include/zlib.h",
+                        "include/zconf.h", "include/png.h", "include/pngconf.h",
+                        "include/pnglibconf.h",
+                    }
+                    or relative_name.startswith("include/stardustui/")
+                ):
+                    continue
                 if relative_name.removeprefix("include/") in picolibc_names:
                     continue
                 add_file(archive, f"{SDK_PREFIX}/{relative_name}", source)

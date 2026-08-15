@@ -208,8 +208,8 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     osmlayer_bridge_selftest();
     userland_init(&boot);
     sched_dump();
-    console_printf("[ntclks] boot complete: version=%s root=0:/ fs=FAT32 desktop=desktop.elf\n",
-                   system->kernel_version);
+    console_printf("[ntclks] boot complete: version=%s root=0:/ fs=%s desktop=desktop.elf\n",
+                   system->kernel_version, storage_root_filesystem_name());
     boot_splash_update(100u);
     if (boot_log_screen) {
         /* Keep the original log console visible until the Ring-3 desktop

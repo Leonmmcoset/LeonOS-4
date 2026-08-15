@@ -93,7 +93,7 @@ static int leonos_sync(sqlite3_file *file, int flags)
 {
     (void)file;
     (void)flags;
-    /* FAT32 commits metadata as part of the write syscall. */
+    /* LeonOS filesystem writes commit metadata as part of the write syscall. */
     return SQLITE_OK;
 }
 

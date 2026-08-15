@@ -641,5 +641,5 @@ void osmlayer_bridge_selftest(void)
         return;
     }
     uint32_t passed = middlelayer_selftest();
-    console_printf("[osmlayer] selftest passed=%u/5 (vfs fat32 ipc gui device)\n", passed);
+    console_printf("[osmlayer] selftest passed=%u/5 (vfs storage ipc gui device)\n", passed);
 }

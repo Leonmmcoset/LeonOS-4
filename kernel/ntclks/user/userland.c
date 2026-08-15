@@ -660,7 +660,7 @@ void userland_init(const struct boot_info *boot)
     }
 
     if (!storage_ready()) {
-        console_printf("[ntclks] no block-backed FAT32 filesystem available for userland\n");
+        console_printf("[ntclks] no block-backed root filesystem available for userland\n");
         kernel_idle_loop();
     }
 

@@ -157,6 +157,47 @@ Administrators, Users, and Everyone. Supported permission bits are Read/List,
 Write/Create, Execute/Traverse, Delete, and Manage Permissions. ACL rows only
 grant allowed permissions; an unchecked permission bit means no grant.
 
+## Disk Management ABI
+
+`include/leonos/fs.h` also defines the GPT disk-management ABI used by
+`diskmgr.elf`. A caller first uses `leonos_install_list_disks`, then requests
+the selected disk's entries with `leonos_disk_list_partitions`. Each
+`struct leonos_disk_partition` carries its zero-based GPT entry index, LBA
+range, decoded filesystem, GPT type GUID, display name, protection flags, and
+the assigned numeric drive when `LEONOS_DISK_PARTITION_FLAG_MOUNTED` is set.
+Unmounted entries report `LEONOS_DISK_DRIVE_NONE`.
+
+The associated ioctls are:
+
+- `LEONOS_DISK_IOCTL_LIST_PARTITIONS`
+- `LEONOS_DISK_IOCTL_FORMAT_PARTITION`
+- `LEONOS_DISK_IOCTL_DELETE_PARTITION`
+- `LEONOS_DISK_IOCTL_CREATE_PARTITION`
+- `LEONOS_DISK_IOCTL_MOUNT_PARTITION`
+- `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`
+
+`FORMAT_PARTITION` accepts FAT32 and ext2 through
+`struct leonos_disk_partition_format`. `CREATE_PARTITION` allocates a
+1 MiB-aligned range with the requested size in MiB and formats it immediately;
+FAT32 uses the GPT Microsoft Basic Data type and ext2 uses the Linux filesystem
+type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
+claim to securely erase the old data area.
+
+`MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount` whose
+`drive` input is `LEONOS_DISK_DRIVE_NONE`; it returns the first free runtime
+drive. The mount is not persistent across reboot. `UNMOUNT_PARTITION` takes a
+`struct leonos_disk_partition_unmount` and returns busy when a live task still
+uses the drive through a CWD, descriptor, image, or file mapping.
+
+Listing is available to disk-management clients, while create, format, delete,
+mount, and unmount are checked through the administrator install authorization
+path in the kernel. The running boot disk and an installer target that is
+currently mounted are exported as protected and their partitions are rejected
+by the kernel even if a client constructs an ioctl request directly. The
+initial ABI accepts the standard 128-entry, 128-byte GPT table emitted by
+LeonOS; malformed, out of range, overlapping, or CRC-invalid tables are never
+mutated.
+
 ## Middlelayer ABI v5
 
 The loader starts `kernel.sys` and `middlelayer.sys`. The middlelayer module
@@ -183,7 +224,7 @@ The kernel service table passed to middlelayer is intentionally small:
 - `mkdir`
 
 Kernel code owns hardware probing, interrupts, page tables, physical memory,
-scheduling, user pointer validation, storage block I/O, and FAT32 mutation.
+scheduling, user pointer validation, storage block I/O, and FAT32/ext2 mutation.
 Middlelayer owns higher-level policy or semantic services that can run on top
 of those kernel facts.
 

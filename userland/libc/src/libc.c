@@ -1940,12 +1940,86 @@ int leonos_install_list_disks(struct leonos_install_disk *disks,
 
 int leonos_install_format_esp(uint32_t disk_id)
 {
-    return ioctl(3, LEONOS_INSTALL_IOCTL_FORMAT_ESP, (void *)(uintptr_t)disk_id);
+    return leonos_install_format_target(disk_id);
+}
+
+int leonos_install_format_target(uint32_t disk_id)
+{
+    return ioctl(3, LEONOS_INSTALL_IOCTL_FORMAT_TARGET, (void *)(uintptr_t)disk_id);
 }
 
 int leonos_install_mount_target(uint32_t disk_id)
 {
     return ioctl(3, LEONOS_INSTALL_IOCTL_MOUNT_TARGET, (void *)(uintptr_t)disk_id);
+}
+
+int leonos_disk_list_partitions(uint32_t disk_id,
+                                struct leonos_disk_partition *partitions,
+                                uint32_t capacity, uint32_t *out_count)
+{
+    struct leonos_disk_partition_list query = {
+        .disk_id = disk_id,
+        .capacity = capacity,
+        .count = 0,
+        .reserved = 0,
+        .partitions = partitions,
+    };
+    int ret = ioctl(3, LEONOS_DISK_IOCTL_LIST_PARTITIONS, &query);
+    if (out_count) {
+        *out_count = query.count;
+    }
+    return ret;
+}
+
+int leonos_disk_format_partition(const struct leonos_disk_partition_format *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_DISK_IOCTL_FORMAT_PARTITION, (void *)request);
+}
+
+int leonos_disk_delete_partition(const struct leonos_disk_partition_delete *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_DISK_IOCTL_DELETE_PARTITION, (void *)request);
+}
+
+int leonos_disk_create_partition(const struct leonos_disk_partition_create *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_DISK_IOCTL_CREATE_PARTITION, (void *)request);
+}
+
+int leonos_disk_mount_partition(uint32_t disk_id, uint32_t partition_index,
+                                uint32_t *out_drive)
+{
+    struct leonos_disk_partition_mount request = {
+        .disk_id = disk_id,
+        .partition_index = partition_index,
+        .drive = LEONOS_DISK_DRIVE_NONE,
+        .reserved = 0,
+    };
+    int ret = ioctl(3, LEONOS_DISK_IOCTL_MOUNT_PARTITION, &request);
+    if (ret == 0 && out_drive) {
+        *out_drive = request.drive;
+    }
+    return ret;
+}
+
+int leonos_disk_unmount_partition(uint32_t disk_id, uint32_t partition_index)
+{
+    struct leonos_disk_partition_unmount request = {
+        .disk_id = disk_id,
+        .partition_index = partition_index,
+        .reserved0 = 0,
+        .reserved1 = 0,
+    };
+    return ioctl(3, LEONOS_DISK_IOCTL_UNMOUNT_PARTITION, &request);
 }
 
 int leonos_device_list(struct leonos_device_info *devices,

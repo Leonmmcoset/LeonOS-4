@@ -38,6 +38,22 @@ def remove_file(path: Path) -> None:
         path.unlink()
 
 
+def stage_installed_payloads(esp_tree: Path, destination: Path) -> None:
+    """Split normal staging into ext2 root and the minimal FAT32 boot payload."""
+    root = destination / "install/root"
+    esp = destination / "install/esp"
+    copy_tree(esp_tree, root)
+    shutil.rmtree(root / "EFI", ignore_errors=True)
+    shutil.rmtree(root / "boot", ignore_errors=True)
+    remove_file(root / "system/kernel.sys")
+    remove_file(root / "system/middlelayer.sys")
+
+    copy_file(esp_tree / "EFI/BOOT/BOOTX64.EFI", esp / "EFI/BOOT/BOOTX64.EFI")
+    copy_tree(esp_tree / "boot", esp / "boot")
+    copy_file(esp_tree / "system/kernel.sys", esp / "system/kernel.sys")
+    copy_file(esp_tree / "system/middlelayer.sys", esp / "system/middlelayer.sys")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create LeonOS installer runtime FAT root")
     parser.add_argument("--out", default="build/install/root.fat")
@@ -48,7 +64,9 @@ def main() -> int:
     parser.add_argument("--userland-dir", default="build/userland")
     parser.add_argument("--policy-runtime", default="build/userland-installer-policy/libleonos.so.1")
     parser.add_argument("--generated-icons-dir", default="build/generated/app-icons")
-    parser.add_argument("--manifest", default="build/esp/system/osmlayer.manifest")
+    # Accepted only so a build.py process started before the payload split can
+    # finish. New build graphs no longer pass this option.
+    parser.add_argument("--manifest", help=argparse.SUPPRESS)
     parser.add_argument("--size-mib", type=int, default=64)
     args = parser.parse_args()
 
@@ -58,14 +76,13 @@ def main() -> int:
     installed_policy_dir = ROOT / args.installed_policy_dir
     userland_dir = ROOT / args.userland_dir
     generated_icons_dir = ROOT / args.generated_icons_dir
-    manifest = ROOT / args.manifest
     policy_runtime = ROOT / args.policy_runtime
 
     if not esp_tree.exists():
         raise FileNotFoundError(f"missing normal ESP payload: {esp_tree}")
     if not installed_policy_dir.exists():
         raise FileNotFoundError(f"missing installed policy directory: {installed_policy_dir}")
-    if (not userland_dir.exists() or not generated_icons_dir.exists() or not manifest.exists() or
+    if (not userland_dir.exists() or not generated_icons_dir.exists() or
             not policy_runtime.is_file()):
         raise FileNotFoundError("missing installer build inputs")
 
@@ -84,7 +101,12 @@ def main() -> int:
     copy_file(generated_icons_dir / "installer.bmp", stage / "system/apps/installer/installer.bmp")
     copy_tree(esp_tree / "system/config", stage / "system/config")
     (stage / "system/state").mkdir(parents=True, exist_ok=True)
-    copy_file(manifest, stage / "system/osmlayer.manifest")
+    # The installer itself runs from this FAT32 ramdisk. The staged installed
+    # root below retains the normal ext2 manifest copied from esp_tree.
+    (stage / "system/osmlayer.manifest").write_text(
+        "name=osmlayer\nabi=1\nroot=0:/\nfs=fat32\ngui=desktop.elf\n",
+        encoding="ascii",
+    )
     copy_file(esp_tree / "system/fonts/leonos-metro.ttf", stage / "system/fonts/leonos-metro.ttf")
     copy_file(esp_tree / "system/fonts/leonos-win95.ttf", stage / "system/fonts/leonos-win95.ttf")
     copy_file(esp_tree / "system/fonts/times-new-roman.ttf", stage / "system/fonts/times-new-roman.ttf")
@@ -94,16 +116,16 @@ def main() -> int:
     copy_tree(esp_tree / "drivers", stage / "drivers")
     copy_file(esp_tree / "system/lib/ld-leonos.elf", stage / "system/lib/ld-leonos.elf")
     copy_file(policy_runtime, stage / "system/lib/libleonos.so.1")
-    copy_tree(esp_tree, stage / "install/esp")
-    copy_file(policy_runtime, stage / "install/esp/system/lib/libleonos.so.1")
-    remove_file(stage / "install/esp/etc/license.conf")
-    remove_file(stage / "install/esp/etc/install.id")
+    stage_installed_payloads(esp_tree, stage)
+    copy_file(policy_runtime, stage / "install/root/system/lib/libleonos.so.1")
+    remove_file(stage / "install/root/etc/license.conf")
+    remove_file(stage / "install/root/etc/install.id")
     for app in args.policy_apps:
         if app not in {"desktop", "oobe", "settings"}:
             raise ValueError(f"unsupported installer policy app: {app}")
         name = f"{app}.elf"
         copy_file(installed_policy_dir / name,
-                  stage / "install/esp/system/apps" / app / name)
+                  stage / "install/root/system/apps" / app / name)
 
     payload_bytes = sum(item.stat().st_size for item in stage.rglob("*") if item.is_file())
     required_mib = (payload_bytes + (1024 * 1024 - 1)) // (1024 * 1024)

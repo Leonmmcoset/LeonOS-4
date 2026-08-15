@@ -1,41 +1,44 @@
-// LeonOS osmlayer FAT32 support: stores mounted-volume metadata and state.
-// Supplies filesystem-specific data used by the VFS mount layer.
+// LeonOS osmlayer storage-volume state shared by VFS-facing services.
+// Records generic mounted-volume properties without assuming a FAT32 root.
 
-pub struct Fat32Volume {
+pub struct StorageVolume {
     pub drive: u32,
     pub bytes_per_sector: u16,
     pub writable: bool,
 }
 
-static mut ROOT: Fat32Volume = Fat32Volume {
+static mut ROOT: StorageVolume = StorageVolume {
     drive: 0,
     bytes_per_sector: 512,
     writable: true,
 };
+
 /**
- * @brief Initializes root partition.
+ * @brief Initializes the runtime root volume state.
  */
 pub fn init_root_partition() {
     unsafe {
-        ROOT = Fat32Volume {
+        ROOT = StorageVolume {
             drive: 0,
             bytes_per_sector: 512,
             writable: true,
         };
     }
 }
+
 /**
- * @brief Reports whether the subsystem supports basic write.
- * @return Result, status, or value defined by this API.
+ * @brief Reports whether the mounted root accepts basic writes.
+ * @return True when the current root volume is writable through the storage ABI.
  */
 pub fn supports_basic_write() -> bool {
     unsafe { ROOT.writable && ROOT.bytes_per_sector == 512 }
 }
+
 /**
- * @brief Appends log.
+ * @brief Appends a log record through the storage abstraction.
  * @param _path LeonOS path consumed by this operation.
- * @param bytes Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @param bytes Input bytes to append.
+ * @return Number of bytes accepted, or an errno value.
  */
 pub fn append_log(_path: &str, bytes: &[u8]) -> Result<usize, i32> {
     if supports_basic_write() {

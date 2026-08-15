@@ -23,8 +23,8 @@
 
 ## 2. 项目定位与运行时架构
 
-LeonOS 4 是面向 x86_64、UEFI 启动的操作系统项目。正常系统使用 FAT32
-根文件系统，应用运行在 Ring 3，内核和可加载驱动运行在 Ring 0。主要启动
+LeonOS 4 是面向 x86_64、UEFI 启动的操作系统项目。正常系统使用 FAT32 ESP
+和 ext2 根文件系统，应用运行在 Ring 3，内核和可加载驱动运行在 Ring 0。主要启动
 与服务链如下：
 
 ```text
@@ -38,9 +38,9 @@ UEFI/GRUB
 ```
 
 安装器 ISO 是另一条启动路径：顶层 ISO 只包含启动所需的 loader、内核、
-中间层和 installer root；真正安装到磁盘的常规 ESP 内容作为
-`0:/install/esp` 载荷保存在 installer root 中。不要把“安装器运行时镜像
-内容”和“安装后系统内容”混为一谈。
+中间层和 installer root；真正安装到磁盘的系统分为 `0:/install/esp`（FAT32
+启动载荷）和 `0:/install/root`（ext2 运行时根载荷）。不要把“安装器运行时
+镜像内容”和“安装后系统内容”混为一谈。
 
 ### 根目录职责
 
@@ -154,7 +154,7 @@ UI 修改必须横向检查，而不是只改一个应用。典型关联范围�
 
 ### 存储与响应性
 
-- 任何 FAT32 写入、API 解包、词库下载、游戏资源安装或大文件复制必须正确
+- 任何文件系统写入、API 解包、词库下载、游戏资源安装或大文件复制必须正确
   处理短读、短写、临时失败、重试边界、最终错误和资源关闭。`ret == 0` 不等同
   于完整写入成功；以实际传输字节数判断。
 - 不能在 Desktop、窗口绘制、输入事件或持锁的热路径中执行长时间同步磁盘
@@ -263,12 +263,12 @@ python3 build.py run image-vmdk --set CONFIG_KEY=VALUE
 
 ### 产物与 staging
 
-- 常规 ESP staging tree 是 `build/esp/`；VMDK 位于
+- 常规系统 staging tree 是 `build/esp/`；镜像工具从它派生 FAT32 ESP 与 ext2 根，VMDK 位于
   `build/images/leonos4.vmdk`，普通 ISO 位于 `build/images/leonos4.iso`，
   Installer ISO 位于 `build/images/leonos4-installer.iso`。
-- 安装器 root 是 `build/install/root.fat`，常规 ESP 的安装载荷被复制到
-  `0:/install/esp`。改变程序是否进入镜像时必须验证常规 VMDK、installer root
-  与安装后 payload 的对应行为。
+- 安装器 root 是 `build/install/root.fat`；其 `0:/install/esp` 会复制到安装目标
+  的 FAT32 `2:/`，`0:/install/root` 会复制到 ext2 `1:/`。改变程序是否进入镜像时
+  必须验证常规 VMDK、installer root 与安装后两组 payload 的对应行为。
 - 每次 OS 构建、生成或 profile 任务都可能更新构建号和
   `include/generated/build_info.h`。不要把这种自动改动误认为用户业务逻辑；
   若只为验证而触发递增，恢复时只能回退自己这次产生的元数据差异，绝不能覆盖

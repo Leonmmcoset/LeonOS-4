@@ -1316,7 +1316,7 @@ static void draw_window(uint8_t id)
     } else if (id == 1) {
         framebuffer_text(body_x + 16, body_y + 18, "0:/", black, w->body_color);
         framebuffer_text(body_x + 16, body_y + 42, "boot  system  userland", black, w->body_color);
-        framebuffer_text(body_x + 16, body_y + 66, "FAT32 root drive view", black, w->body_color);
+        framebuffer_text(body_x + 16, body_y + 66, "System root drive view", black, w->body_color);
     } else {
         framebuffer_text(body_x + 16, body_y + 18, "Settings", black, w->body_color);
         framebuffer_text(body_x + 16, body_y + 42, "Win98 style controls", black, w->body_color);

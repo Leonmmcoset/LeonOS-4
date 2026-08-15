@@ -138,6 +138,7 @@ static void task_pipe_release(struct task_file *file)
 #define STARTUP_REQUEST_MAX 16U
 
 static struct leonos_user_info auth_user_scratch[LEONOS_AUTH_MAX_USERS];
+static struct leonos_disk_partition disk_partition_scratch[LEONOS_DISK_MAX_PARTITIONS];
 
 struct startup_db {
     uint32_t magic;
@@ -4903,12 +4904,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return 0;
     }
 
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_FORMAT_ESP) {
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_FORMAT_TARGET) {
         int ret = authz_check_install(sched_current_task());
         if (ret < 0) {
             return ret;
         }
-        return storage_install_format_esp((uint32_t)a2);
+        return storage_install_format_target((uint32_t)a2);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_MOUNT_TARGET) {
@@ -4917,6 +4918,143 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return ret;
         }
         return storage_install_mount_target((uint32_t)a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_LIST_PARTITIONS) {
+        struct leonos_disk_partition_list *query;
+        struct leonos_disk_partition_list request;
+        uint32_t count = 0;
+        uint32_t copy_count;
+        int ret;
+        if (!user_range_ok(a2, sizeof(struct leonos_disk_partition_list))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_disk_partition_list *)(uintptr_t)a2;
+        request = *query;
+        if (request.reserved != 0 || request.capacity > LEONOS_DISK_MAX_PARTITIONS) {
+            return -LEONOS_EINVAL;
+        }
+        if (request.capacity && (!request.partitions ||
+            !user_range_ok((uint64_t)(uintptr_t)request.partitions,
+                           (uint64_t)request.capacity * sizeof(struct leonos_disk_partition)))) {
+            return -LEONOS_EFAULT;
+        }
+        ret = storage_disk_list_partitions(request.disk_id, disk_partition_scratch,
+                                           LEONOS_DISK_MAX_PARTITIONS, &count);
+        if (ret < 0) {
+            return ret;
+        }
+        query->count = count;
+        copy_count = count < request.capacity ? count : request.capacity;
+        for (uint32_t i = 0; i < copy_count; ++i) {
+            request.partitions[i] = disk_partition_scratch[i];
+        }
+        return 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_FORMAT_PARTITION) {
+        struct leonos_disk_partition_format request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_format *)(uintptr_t)a2;
+        if (request.reserved != 0 ||
+            (request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
+             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2)) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        return storage_disk_format_partition(&request);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_DELETE_PARTITION) {
+        struct leonos_disk_partition_delete request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_delete *)(uintptr_t)a2;
+        if (request.reserved0 != 0 || request.reserved1 != 0) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        return storage_disk_delete_partition(&request);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_CREATE_PARTITION) {
+        struct leonos_disk_partition_create request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_create *)(uintptr_t)a2;
+        request.name[LEONOS_DISK_PARTITION_NAME_LEN - 1u] = 0;
+        if (request.reserved != 0 || request.size_mib == 0 ||
+            (request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
+             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2)) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        return storage_disk_create_partition(&request);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_MOUNT_PARTITION) {
+        struct leonos_disk_partition_mount *query;
+        struct leonos_disk_partition_mount request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_disk_partition_mount *)(uintptr_t)a2;
+        request = *query;
+        if (request.reserved != 0 || request.drive != LEONOS_DISK_DRIVE_NONE) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_disk_mount_partition(&request);
+        if (ret == 0) {
+            query->drive = request.drive;
+        }
+        return ret;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_UNMOUNT_PARTITION) {
+        struct leonos_disk_partition_unmount request;
+        uint32_t drive;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_unmount *)(uintptr_t)a2;
+        if (request.reserved0 != 0 || request.reserved1 != 0) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_disk_partition_mounted_drive(request.disk_id, request.partition_index,
+                                                   &drive);
+        if (ret < 0) {
+            return ret;
+        }
+        if (sched_drive_in_use(drive)) {
+            return -LEONOS_EBUSY;
+        }
+        return storage_disk_unmount_partition(&request);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_LIST_DIR) {

@@ -192,7 +192,7 @@ static int leonos_posix_stat_call(int result, const struct leonos_stat_raw *raw,
     return leonos_posix_stat_fill(raw, st);
 }
 
-/* FAT32 exposes only a compact type/size record through the current ABI.
+/* The current filesystem ABI exposes only a compact type/size record.
  * BusyBox's copy and move applets still need stable, distinct identity fields
  * to reject copying a file onto itself, so derive a deterministic inode from
  * the user-visible path in the path-based stat adapter. */
@@ -376,7 +376,7 @@ int leonos_spawn_busybox_applet_wait_with_fds(const char *path, char *const appl
         errno = EINVAL;
         return 127;
     }
-    /* The executable is named busybox.elf on FAT32, but BusyBox switches to
+    /* The executable is named busybox.elf in the LeonOS runtime, but BusyBox switches to
      * multi-call mode only when argv[0] is the literal "busybox". */
     exec_argv[count++] = "busybox";
     while (applet_argv[count - 1U]) {
@@ -414,7 +414,7 @@ int execvp(const char *file, char *const argv[])
 
     /* Hush invokes execvp for a normal BusyBox applet as well as for an
      * external program.  There are no applet symlinks or /proc/self/exe in
-     * the FAT32 image, so express the former using BusyBox's documented
+     * the system image, so express the former using BusyBox's documented
      * process form instead of trying to exec a bare applet name. */
     if (!argv || !argv[0]) {
         errno = EINVAL;

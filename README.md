@@ -18,7 +18,7 @@ sudo apt-get update
 sudo apt-get install -y \
   build-essential ninja-build meson clang llvm lld \
   grub-efi-amd64-bin grub-pc-bin grub-common xorriso \
-  mtools dosfstools gdisk qemu-utils python3 python3-pil \
+  mtools dosfstools e2fsprogs gdisk qemu-utils python3 python3-pil \
   git make bison flex bc pkg-config
 
 # Requires rustup; install it from https://rustup.rs when it is unavailable.
@@ -37,6 +37,11 @@ python3 build.py run image-vmdk
 python3 build.py run run
 ```
 来通过 QEMU + KVM 运行操作系统。
+
+常规 VMDK 使用 GPT 双分区：FAT32 ESP 存放 UEFI/GRUB、loader、kernel 和
+middlelayer，ext2 分区作为运行时 `0:/` 根目录。FAT32 仍用于 ESP、安装器
+ramdisk、旧镜像兼容和可移动介质；构建 ext2 镜像需要 `e2fsprogs` 提供的
+`mke2fs`。
 
 `build.py` 是唯一受支持的构建入口，不再兼容 Ninja。常用命令包括：
 

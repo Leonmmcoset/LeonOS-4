@@ -21,6 +21,7 @@ struct storage_node {
 #define STORAGE_NODE_FLAG_ROOT    0x00000001u
 #define STORAGE_NODE_FLAG_DEV_DIR 0x00000002u
 #define STORAGE_NODE_FLAG_DEV_FB0 0x00000004u
+#define STORAGE_NODE_FLAG_EXT2    0x00000008u
 
 struct boot_info;
 
@@ -58,6 +59,11 @@ void storage_apply_mount_policy(const struct leonos_mount_policy *policy);
  * @return Result, status, or value defined by this API.
  */
 bool storage_ready(void);
+/**
+ * @brief Returns the mounted filesystem type for the runtime root volume.
+ * @return Stable lowercase filesystem name, or "none" before a root mounts.
+ */
+const char *storage_root_filesystem_name(void);
 /**
  * @brief Coordinates the storage installer root active operation.
  * @return Result, status, or value defined by this API.
@@ -198,11 +204,67 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
  */
 int storage_install_format_esp(uint32_t disk_id);
 /**
+ * @brief Formats an installer target as a GPT disk with FAT32 ESP and ext2 root.
+ * @param disk_id Installer-selected AHCI disk identifier.
+ * @return Zero on success or a negative errno-style storage error.
+ */
+int storage_install_format_target(uint32_t disk_id);
+/**
  * @brief Coordinates the storage install mount target operation.
  * @param disk_id Input or output value used by this operation.
  * @return Result, status, or value defined by this API.
  */
 int storage_install_mount_target(uint32_t disk_id);
+/**
+ * @brief Lists GPT partitions on an AHCI disk exposed to disk management.
+ * @param disk_id Detected AHCI disk identifier.
+ * @param partitions Caller buffer receiving partition metadata.
+ * @param capacity Number of partition records available in @p partitions.
+ * @param out_count Receives the complete number of usable GPT entries.
+ * @return Zero on success or a negative errno-style storage error.
+ */
+int storage_disk_list_partitions(uint32_t disk_id,
+                                 struct leonos_disk_partition *partitions,
+                                 uint32_t capacity, uint32_t *out_count);
+/**
+ * @brief Formats an unprotected GPT partition as FAT32 or ext2.
+ * @param request Partition selector and requested filesystem.
+ * @return Zero on success or a negative errno-style storage error.
+ */
+int storage_disk_format_partition(const struct leonos_disk_partition_format *request);
+/**
+ * @brief Removes one unprotected GPT partition entry without wiping its data area.
+ * @param request Partition selector.
+ * @return Zero on success or a negative errno-style storage error.
+ */
+int storage_disk_delete_partition(const struct leonos_disk_partition_delete *request);
+/**
+ * @brief Creates and formats one GPT data partition in an unallocated disk range.
+ * @param request Disk, filesystem, size, and display-name request.
+ * @return Zero on success or a negative errno-style storage error.
+ */
+int storage_disk_create_partition(const struct leonos_disk_partition_create *request);
+/**
+ * @brief Mounts one FAT32 or ext2 data partition on the next free numeric drive.
+ * @param request Disk and GPT-entry selector; receives the selected drive.
+ * @return Zero on success or a negative errno-style storage error.
+ */
+int storage_disk_mount_partition(struct leonos_disk_partition_mount *request);
+/**
+ * @brief Returns the assigned drive for a runtime data-partition mount.
+ * @param disk_id AHCI disk identifier.
+ * @param partition_index Zero-based GPT entry index.
+ * @param out_drive Receives the mounted numeric drive.
+ * @return Zero when mounted, or a negative errno-style storage error.
+ */
+int storage_disk_partition_mounted_drive(uint32_t disk_id, uint32_t partition_index,
+                                         uint32_t *out_drive);
+/**
+ * @brief Tears down one runtime data-partition mount after the kernel checks usage.
+ * @param request Disk and GPT-entry selector.
+ * @return Zero on success or a negative errno-style storage error.
+ */
+int storage_disk_unmount_partition(const struct leonos_disk_partition_unmount *request);
 /**
  * @brief Coordinates the storage boot identity operation.
  * @param identity Input or output value used by this operation.

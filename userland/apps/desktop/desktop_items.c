@@ -750,6 +750,12 @@ int desktop_refresh_items(void)
         if (ret == 0) {
             break;
         }
+        /* Desktop follows the usual dotfile convention: keep private files
+         * and directories addressable through File Manager, but never turn
+         * them (including ext2's . and .. entries) into desktop icons. */
+        if (entry.name[0] == '.') {
+            continue;
+        }
         desktop_items[count].entry = entry;
         desktop_copy_item_label(desktop_items[count].label,
                                 sizeof(desktop_items[count].label), &entry);

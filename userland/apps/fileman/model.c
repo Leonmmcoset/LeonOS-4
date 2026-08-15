@@ -1078,6 +1078,31 @@ void fileman_tree_reset(void)
     }
 }
 
+/** Refreshes only the drive roots when another application mounts or unmounts media. */
+static void fileman_tree_refresh_drives(void)
+{
+    struct leonos_stat st;
+    if (fileman_tree_node_count == 0) {
+        return;
+    }
+    for (uint32_t drive = 0; drive < 10u; ++drive) {
+        char path[4] = {(char)('0' + drive), ':', '/', 0};
+        uint8_t present = stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
+        uint8_t listed = 0;
+        for (uint32_t i = 0; i < fileman_tree_node_count; ++i) {
+            const struct fileman_tree_node *node = &fileman_tree_nodes[i];
+            if (node->used && node->parent_id == 0 && text_eq(node->path, path)) {
+                listed = 1;
+                break;
+            }
+        }
+        if (present != listed) {
+            fileman_tree_reset();
+            return;
+        }
+    }
+}
+
 static void tree_init_if_needed(void)
 {
     if (fileman_tree_node_count == 0) {
@@ -1301,6 +1326,7 @@ uint32_t build_tree_items(struct leonos_ui_tree_item *items, uint32_t cap)
 {
     uint32_t count = 0;
     tree_init_if_needed();
+    fileman_tree_refresh_drives();
     if (!items || cap == 0) {
         return 0;
     }

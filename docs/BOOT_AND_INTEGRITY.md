@@ -10,11 +10,15 @@ LeonOS 4 boots through GRUB and the custom loader:
 4. The kernel receives a `struct leonos_boot_handoff`, including middlelayer
    module information and the middlelayer API pointer.
 
-Normal disk images load components from the ESP tree:
+During early boot, normal disk images load components from the FAT32 ESP:
 
 - `0:/boot/loader.elf`
 - `0:/system/kernel.sys`
 - `0:/system/middlelayer.sys`
+
+After the kernel starts, its storage layer mounts the separate ext2 partition
+as the normal `0:/` runtime root. The ESP stays separate so a full root cannot
+consume UEFI boot space.
 
 Installer ISOs pass kernel, middlelayer, and installer root as GRUB modules:
 
@@ -69,12 +73,13 @@ output is unavailable.
 
 ## Installer compatibility
 
-The installer payload is built from the same matched runtime ESP tree:
+The installer payload is built from the same matched runtime staging tree:
 
 - `build/esp` contains the loader, kernel, middlelayer, resources, config, and
   userland applications for the installed system.
-- `tools/make_installer_root.py` copies `build/esp` into
-  `install/esp` inside `build/install/root.fat`.
+- `tools/make_installer_root.py` splits `build/esp` into `install/esp` (the
+  FAT32 ESP boot subset) and `install/root` (the ext2 runtime root) inside
+  `build/install/root.fat`.
 - `tools/make_installer_iso.py` stages top-level installer copies of
   `boot/loader.elf`, `system/kernel.sys`, `system/middlelayer.sys`, and
   `install/root.fat`.

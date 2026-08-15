@@ -81,7 +81,7 @@ DIRECT_RULES = (
         r"^\[loader\].*(?:kernel\.sys load failed|middlelayer\.sys load failed|module load failed|no readable EFI FAT volume|unable to open EFI filesystem)",
         "引导加载器无法读取核心启动组件",
         "loader 无法从 EFI 文件系统或 GRUB 模块获得 kernel.sys 或 middlelayer.sys。",
-        "检查镜像中的 boot/、system/kernel.sys、system/middlelayer.sys，以及 EFI/FAT32 挂载状态。",
+        "检查 ESP 中的 boot/、system/kernel.sys、system/middlelayer.sys，以及 ext2 根分区和 EFI/FAT32 挂载状态。",
         "boot/loader/main.c:1114",
     ),
     Rule(
@@ -94,10 +94,10 @@ DIRECT_RULES = (
     ),
     Rule(
         "STORAGE-ROOT", "错误", "存储",
-        r"^\[ntclks\] no block-backed FAT32 filesystem available for userland$",
-        "用户态没有可用的 FAT32 根文件系统",
-        "内核无法找到可供用户态加载的块设备 FAT32 文件系统。",
-        "检查磁盘控制器、ESP/FAT32 镜像格式、挂载策略和虚拟机磁盘连接。",
+        r"^\[ntclks\] no block-backed root filesystem available for userland$",
+        "用户态没有可用的根文件系统",
+        "内核无法找到可供用户态加载的块设备根文件系统。",
+        "检查磁盘控制器、ext2 根分区、ESP/FAT32 启动分区、挂载策略和虚拟机磁盘连接。",
         "kernel/ntclks/user/userland.c:636",
     ),
     Rule(
@@ -387,7 +387,7 @@ def _print_text(analysis: LogAnalysis) -> None:
 
 def _self_test() -> int:
     """Exercise correlations for the ELF and CPU-fault failures seen in practice."""
-    sample = """[ntclks] boot complete: version=4.4.0 root=0:/ fs=FAT32 desktop=desktop.elf
+    sample = """[ntclks] boot complete: version=4.4.0 root=0:/ fs=ext2 desktop=desktop.elf
 [ntclks] ELF main header validation failed
 [ntclks] failed to map executable init.elf
 [ntclks] scheduler task exited pid=1 name=init.elf code=127

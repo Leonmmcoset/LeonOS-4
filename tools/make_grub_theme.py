@@ -139,7 +139,7 @@ def write_tga(path: Path, width: int = 1024, height: int = 768) -> None:
     c.text(box_x + 48, box_y + 32, "Select an operating system to start:", WHITE, BLUE, 2)
     c.text(box_x + 48, box_y + 272, "ENTER=Boot   E=Edit   C=Command Line", GRAY, BLUE, 2)
 
-    c.text(160, 600, "LeonOS 4 uses GRUB Multiboot2, UEFI, FAT32 ESP, SATA VMDK.", WHITE, BLUE, 2)
+    c.text(160, 600, "LeonOS 4 uses GRUB Multiboot2, UEFI, FAT32 ESP and ext2 root.", WHITE, BLUE, 2)
     c.text(160, 628, "Default entry starts ntclks kernel and desktop.elf window server.", WHITE, BLUE, 2)
     c.text(160, 684, "Copyright (c) LeonOS Project", GRAY, BLUE, 2)
 

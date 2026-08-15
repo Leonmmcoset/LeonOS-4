@@ -4,7 +4,7 @@
 #![no_std]
 #![allow(dead_code)]
 
-mod fat32;
+mod storage;
 mod device;
 mod gui;
 mod ipc;
@@ -231,7 +231,7 @@ pub extern "C" fn osmlayer_rust_init(boot: *const BootInfo) -> OsmlayerBootSumma
         };
     }
 
-    fat32::init_root_partition();
+    storage::init_root_partition();
     ipc::init_registry();
     gui::init_protocol();
     posix::init_linux_abi();
@@ -302,7 +302,7 @@ pub extern "C" fn osmlayer_rust_selftest() -> u32 {
     if vfs::resolve_drive_path("0:/system/apps/desktop/desktop.elf").is_some() {
         passed += 1;
     }
-    if fat32::supports_basic_write() {
+    if storage::supports_basic_write() {
         passed += 1;
     }
     if ipc::register_window_server(1).is_ok() {

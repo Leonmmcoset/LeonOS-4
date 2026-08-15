@@ -217,7 +217,7 @@ def check_submodules(root: Path) -> list[Finding]:
 
 def image_base(source: Path) -> Path:
     if source.is_dir():
-        for relative in ("install/esp", "root/install/esp"):
+        for relative in ("install/root", "root/install/root", "install/esp", "root/install/esp"):
             if (source / relative).is_dir():
                 return source / relative
     return source

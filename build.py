@@ -1810,7 +1810,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         esp_names.append(target.name)
         esp_outputs.append(destination)
     manifest = paths.staging / "system/osmlayer.manifest"
-    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=1\nroot=0:/\nfs=fat32\ngui=desktop.elf\n"), action_key="manifest-v1"))
+    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=1\nroot=0:/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v2"))
     esp_names.append("esp:manifest")
     esp_outputs.append(manifest)
     for source, destination_rel in ((runtime_loader, "system/lib/ld-leonos.elf"),
@@ -2126,12 +2126,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     vmdk = paths.images / "leonos4.vmdk"
     raw = paths.images / "leonos4.raw"
     esp_fat = paths.images / "esp.fat"
+    root_ext2 = paths.images / "root.ext2"
     vmdk_language = "zh" if config_bool(values, "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH") else "en"
-    graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat),
+    graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat, root_ext2),
                      inputs=tuple([*esp_outputs, config_path, ROOT / "tools/make_image.py"]),
                      depends_on=("esp",), kind="generate", command=(PYTHON, "tools/make_image.py", "--out",
                      relative(vmdk), "--raw", relative(raw), "--esp-tree",
-                     relative(paths.staging), "--default-language", vmdk_language,
+                     relative(paths.staging), "--esp-image", relative(esp_fat),
+                     "--root-image", relative(root_ext2), "--default-language", vmdk_language,
                      "--size-mib", str(config_int(values, "CONFIG_IMAGE_SIZE_MIB")))))
 
     iso = paths.images / "leonos4.iso"
@@ -2149,7 +2151,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     installer_root = paths.out / "install/root.fat"
     installer_stage = paths.out / "install/root"
-    graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], installer_runtime_so, *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), depends_on=("esp", "installer-runtime"), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--policy-runtime", relative(installer_runtime_so), "--policy-apps", *installer_policy_apps, "--userland-dir", relative(paths.out / "userland"), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--manifest", relative(manifest), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
+    graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], installer_runtime_so, *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), depends_on=("esp", "installer-runtime"), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--policy-runtime", relative(installer_runtime_so), "--policy-apps", *installer_policy_apps, "--userland-dir", relative(paths.out / "userland"), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
     installer_iso = paths.images / "leonos4-installer.iso"
     installer_boot_image = paths.out / "install/installer-efiboot.img"
     graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_font, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
@@ -2268,16 +2270,19 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             raise BuildFailure(
                 "QMP cmd pipeline test requires CONFIG_LEON_COMPONENT_TOOL_CMD_IMAGE=y"
             )
-        socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}.sock"
         test_name = desktop_app if desktop_app else ("dynlinkerror" if dynlinkerror_smoke else
                                                      ("cmd" if cmd_pipeline_smoke else
                                                      ("fastfetch" if fastfetch_smoke else
                                                       ("tcc" if tcc_smoke else editor))))
+        # Keep the control endpoint and writes isolated from the produced VMDK.
+        # The test name also makes per-test serial logs and QMP diagnostics
+        # unambiguous when individual tests are started independently.
+        socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}-{test_name}.sock"
         serial_log = paths.out / f"qmp-{test_name}-serial.log"
         socket.unlink(missing_ok=True)
         serial_log.parent.mkdir(parents=True, exist_ok=True)
         command = list(qemu_command(paths, values, debug=True))
-        command += ["-qmp", f"unix:{socket},server=on,wait=off"]
+        command += ["-snapshot", "-qmp", f"unix:{socket},server=on,wait=off"]
         context.runner.logger.command(context.worker_id, command)
         with serial_log.open("wb") as serial_output:
             process = subprocess.Popen(command, cwd=ROOT, stdout=serial_output,
@@ -2389,19 +2394,38 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-qmp-dynlinkerror", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, dynlinkerror_smoke=True), action_key="qmp-dynlinkerror-v1"))
     graph.add(Target(name="test-qmp-cmd", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, cmd_pipeline_smoke=True), action_key="qmp-cmd-v2"))
     graph.add(Target(name="test-qmp-stardust", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="stardusthello"), action_key="qmp-stardust-v1"))
+    qmp_suite_specs: list[dict[str, object]] = []
+    if config_bool(values, "CONFIG_TEST_QMP_TERMINAL"):
+        qmp_suite_specs.append({})
+    if config_bool(values, "CONFIG_TEST_QMP_TCC") and component_enabled("tcc", "image"):
+        qmp_suite_specs.append({"tcc_smoke": True})
+    if component_enabled("cmd", "image"):
+        qmp_suite_specs.append({"cmd_pipeline_smoke": True})
+    if config_bool(values, "CONFIG_TEST_QMP_STARDUST") and component_enabled("stardusthello", "image"):
+        qmp_suite_specs.append({"desktop_app": "stardusthello"})
+
+    def qmp_test_suite(context: ActionContext) -> None:
+        # A full TinyCC run exceeds a minute on a cold guest.  Running QMP
+        # guests serially keeps timing deterministic and avoids CPU contention
+        # that can make shell input arrive while the compiler owns the PTY.
+        for spec in qmp_suite_specs:
+            qmp_test(context, **spec)
+
+    graph.add(Target(
+        name="test-qmp-suite",
+        inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"),
+        depends_on=("image-vmdk",),
+        kind="command",
+        action=qmp_test_suite,
+        action_key="qmp-suite-v1",
+    ))
     selected_tests: list[str] = []
     if config_bool(values, "CONFIG_TEST_LICENSE_SERVER"):
         selected_tests.append("test-license-server")
     if config_bool(values, "CONFIG_TEST_LOS2W"):
         selected_tests.append("test-los2w")
-    if config_bool(values, "CONFIG_TEST_QMP_TERMINAL"):
-        selected_tests.append("test-qmp-terminal")
-    if config_bool(values, "CONFIG_TEST_QMP_TCC") and component_enabled("tcc", "image"):
-        selected_tests.append("test-qmp-tcc")
-    if component_enabled("cmd", "image"):
-        selected_tests.append("test-qmp-cmd")
-    if config_bool(values, "CONFIG_TEST_QMP_STARDUST") and component_enabled("stardusthello", "image"):
-        selected_tests.append("test-qmp-stardust")
+    if qmp_suite_specs:
+        selected_tests.append("test-qmp-suite")
     if config_bool(values, "CONFIG_TEST_COMPONENT_CONFIG"):
         selected_tests.append("test-component-config")
     graph.add(Target(name="test-all", depends_on=tuple(selected_tests), group=True, kind="aggregate"))
@@ -2439,7 +2463,7 @@ def task_tools(task: str) -> tuple[str, ...]:
                      "gcc", "gawk")
     userland = (*compiler, "llvm-ar", *host_userland)
     esp = (*userland, "rustc", "grub-mkfont", "grub-mkstandalone")
-    vmdk = (*esp, "truncate", "sgdisk", "mkfs.fat", "mcopy", "dd", "qemu-img")
+    vmdk = (*esp, "truncate", "sgdisk", "mkfs.fat", "mcopy", "mke2fs", "dd", "qemu-img")
     iso = (*esp, "grub-mkrescue", "xorriso")
     if task in {"file", "file-magic", "sqlite"}:
         return userland

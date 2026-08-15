@@ -241,7 +241,7 @@ void draw_window(uint8_t id)
     } else if (id == 1) {
         text_draw(body_x + 16, body_y + 18, "0:/", 0x00000000, w->body_color);
         text_draw(body_x + 16, body_y + 42, leonos_i18n("boot  system  programs", "boot  system  programs"), 0x00000000, w->body_color);
-        text_draw(body_x + 16, body_y + 66, leonos_i18n("FAT32 root drive view", "FAT32 根驱动器视图"), 0x00000000, w->body_color);
+        text_draw(body_x + 16, body_y + 66, leonos_i18n("System root drive view", "系统根驱动器视图"), 0x00000000, w->body_color);
     } else if (id == 3) {
         char line[112];
         uint32_t pos = 0;

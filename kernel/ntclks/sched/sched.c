@@ -791,6 +791,59 @@ struct task *sched_find_window_server(void)
 }
 
 /**
+ * @brief Tests whether a canonical LeonOS path starts on a selected drive.
+ * @param path Canonical or candidate LeonOS path.
+ * @param drive Numeric drive identifier to test.
+ * @return True when @p path selects @p drive.
+ */
+static bool sched_path_uses_drive(const char *path, uint32_t drive)
+{
+    return path && drive < 10u && path[0] == (char)('0' + drive) &&
+           path[1] == ':' && path[2] == '/';
+}
+
+/**
+ * @brief Determines whether a live task still refers to a numeric drive.
+ * @param drive Numeric LeonOS drive identifier.
+ * @return True when a CWD, open file, image, or file mapping uses the drive.
+ */
+bool sched_drive_in_use(uint32_t drive)
+{
+    if (drive == 0 || drive >= 10u) {
+        return drive == 0;
+    }
+    for (uint32_t i = 0; i < task_count; ++i) {
+        const struct task *task = &tasks[i];
+        if (!task->pid || task->state == TASK_EXITED) {
+            continue;
+        }
+        if (sched_path_uses_drive(task->cwd, drive) ||
+            sched_path_uses_drive(task->path, drive) ||
+            task->image_node.drive == drive) {
+            return true;
+        }
+        for (uint32_t fd = 0; fd < SCHED_TASK_FILE_MAX; ++fd) {
+            if (task->files[fd].used && task->files[fd].node.drive == drive) {
+                return true;
+            }
+        }
+        for (uint32_t fd = 0; fd < SCHED_TASK_STDIO_MAX; ++fd) {
+            if (task->stdio_files[fd].used && task->stdio_files[fd].node.drive == drive) {
+                return true;
+            }
+        }
+        for (uint32_t vma = 0; vma < SCHED_TASK_VMA_MAX; ++vma) {
+            if (task->vmas[vma].used &&
+                (task->vmas[vma].flags & TASK_VMA_FLAG_FILE) &&
+                task->vmas[vma].file_node.drive == drive) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
  * @brief Coordinates the sched current task operation.
  * @return Result, status, or value defined by this API.
  */

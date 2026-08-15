@@ -43,8 +43,10 @@ Common build outputs:
 - `build/images/leonos4.iso`
 - `build/images/leonos4-installer.iso`
 - `build/install/root.fat`
+- `build/images/esp.fat`
+- `build/images/root.ext2`
 
-The runtime ESP staging tree is:
+The common system staging tree is:
 
 - `build/esp`
 
@@ -56,15 +58,19 @@ the account database is intentionally not staged.
 
 ## Installer packaging
 
-The installer has two related payloads:
+The installer has two related payload groups:
 
 - Top-level ISO boot payload: loader, kernel, middlelayer, and installer root.
-- Installed-system payload: a copy of `build/esp` stored under `install/esp`
-  inside `build/install/root.fat`.
+- Installed-system ext2 root payload: a copy of `build/esp` without `EFI/`,
+  `boot/`, `system/kernel.sys`, or `system/middlelayer.sys`, stored under
+  `install/root` inside `build/install/root.fat`.
+- Installed-system FAT32 ESP payload: the UEFI/GRUB and early loader files
+  stored under `install/esp` inside `build/install/root.fat`.
 
 `tools/make_installer_root.py` creates `build/install/root.fat`, copies the
-normal ESP tree into the installer runtime at `0:/install/esp`, removes stale
-license override files from that payload if they exist, and overlays
+normal staging tree into `0:/install/root` and its boot subset into
+`0:/install/esp`, removes stale license override files from the root payload,
+and overlays
 policy-sensitive binaries built with `autoconf-installer.h`.
 
 `tools/make_installer_iso.py` creates `build/images/leonos4-installer.iso` and
@@ -79,8 +85,8 @@ This keeps installer boot and installed-system boot on the same matched
 component set.
 
 The installer runtime itself only needs `desktop.elf` and `installer.elf` under
-`0:/system/apps`. The installed-system payload under `0:/install/esp/system/apps`
-and `0:/install/esp/programs` contains the normal app set, including `login.elf`
+`0:/system/apps`. The installed-system root payload under `0:/install/root/system/apps`
+and `0:/install/root/programs` contains the normal app set, including `login.elf`
 and `oobe.elf`, so a fresh
 install boots into license OOBE and then first-administrator creation instead
 of requiring pre-created accounts.
@@ -92,8 +98,9 @@ the license server. To build an image without license validation, change the
 corresponding source macro through Kconfig and regenerate/rebuild so the
 generated binaries contain `LEONOS_LICENSE_REQUIRE 0`.
 
-Installer update mode refreshes `boot`, immutable `system` files, `EFI`, selected
-changed or missing `programs` packages, and bundled docs from `0:/install/esp/docs`.
+Installer update mode refreshes FAT32 ESP boot files from `0:/install/esp`, ext2
+system files from `0:/install/root`, selected changed or missing `programs`
+packages, and bundled docs from `0:/install/root/docs`.
 Docs are merged: matching bundled `.hlp` files are overwritten, but extra
 third-party help files already present on the target `1:/docs` are kept.
 Update mode does not replace `1:/system/config` or `1:/system/state`, so local machine state such as

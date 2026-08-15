@@ -15,6 +15,8 @@ pub const MOUNT_KIND_FAT32_BOOT: u32 = 1;
 pub const MOUNT_KIND_FAT32_RAMDISK: u32 = 2;
 pub const MOUNT_KIND_DEVFS: u32 = 3;
 pub const MOUNT_KIND_TARGET_ESP: u32 = 4;
+pub const MOUNT_KIND_EXT2_BOOT: u32 = 5;
+pub const MOUNT_KIND_TARGET_ROOT: u32 = 6;
 
 pub const MOUNT_FLAG_READONLY: u32 = 0x0000_0001;
 pub const MOUNT_FLAG_RUNTIME_ROOT: u32 = 0x0000_0002;
@@ -126,18 +128,26 @@ pub fn init_root(boot: Option<&BootInfo>) {
 
         let mut target = LeonosMountEntry::empty();
         target.drive = 1;
-        target.kind = MOUNT_KIND_TARGET_ESP;
+        target.kind = MOUNT_KIND_TARGET_ROOT;
         target.flags = MOUNT_FLAG_OPTIONAL;
         copy_bytes(&mut target.path, b"1:/");
-        copy_bytes(&mut target.source, b"installer-target-esp");
+        copy_bytes(&mut target.source, b"installer-target-root");
         add_entry(&mut policy, target);
+
+        let mut target_esp = LeonosMountEntry::empty();
+        target_esp.drive = 2;
+        target_esp.kind = MOUNT_KIND_TARGET_ESP;
+        target_esp.flags = MOUNT_FLAG_OPTIONAL;
+        copy_bytes(&mut target_esp.path, b"2:/");
+        copy_bytes(&mut target_esp.source, b"installer-target-esp");
+        add_entry(&mut policy, target_esp);
     } else {
         let mut root = LeonosMountEntry::empty();
         root.drive = 0;
-        root.kind = MOUNT_KIND_FAT32_BOOT;
+        root.kind = MOUNT_KIND_EXT2_BOOT;
         root.flags = MOUNT_FLAG_RUNTIME_ROOT;
         copy_bytes(&mut root.path, b"0:/");
-        copy_bytes(&mut root.source, b"ahci-esp:auto");
+        copy_bytes(&mut root.source, b"ahci-ext2:auto");
         add_entry(&mut policy, root);
 
         let mut devfs = LeonosMountEntry::empty();
