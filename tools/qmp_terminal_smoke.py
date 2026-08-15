@@ -267,9 +267,9 @@ def main() -> int:
         return 0
 
     if cmd_pipeline_smoke:
-        # cmd executes each external pipeline stage through controlled spawn.
-        # printf and wc are BusyBox applets, so both stages also validate the
-        # BusyBox argv transformation used by cmd's external-command resolver.
+        # cmd executes every pipeline stage through the common COW
+        # fork/exec path. printf and wc are BusyBox applets, so both stages
+        # also validate the argv transformation used by cmd's resolver.
         send_keys(sock, text_keys("cmd") + ("ret",))
         time.sleep(2.0)
         send_keys(sock, text_keys("printf hello | wc -c") + ("ret",))

@@ -7,6 +7,16 @@ ELF 应用程序。
 ## 内容
 
 - `include/`: LeonOS 4 用户态 C 标准库兼容头文件和公开系统 API。
+- `include/curses.h` 与 `include/ncurses.h`: 由 `libleonos.so.1` 提供的共享
+  ANSI curses 子集，普通终端程序可直接使用，不需要复制 Nano 或 `sl` 的
+  curses 兼容层。
+- `include/leonos/posix.h`: 共享文件状态适配器。目录遍历、`fcntl` 与
+  `access` 则直接使用 SDK 内 Picolibc 提供的标准 POSIX 头文件，运行库已
+  包含实现。
+- `fork`、`execve`、`waitpid`、管道、描述符复制、进程组、前台终端组、
+  `kill`、优先级和资源限制同样由 `libleonos.so.1` 统一实现；直接包含
+  Picolibc 的标准 `<unistd.h>`、`<sys/wait.h>`、`<fcntl.h>`、`<signal.h>`
+  和 `<sys/resource.h>`。自定义 signal handler 尚未支持。
 - `lib/libc.a`: 与本 SDK 头文件匹配的 freestanding 用户态 C 库。
 - `lib/libz.a` 与 `lib/libpng.a`: zlib 1.3.2 和 libpng 1.6.58 静态库；对应
   的公开头文件与许可证也包含在 SDK 中。

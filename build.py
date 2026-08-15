@@ -675,7 +675,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("the LeonOS Fastfetch port metadata is missing")
     if not (sl_source / "sl.c").is_file() or not (sl_source / "sl.h").is_file() or not (sl_source / "LICENSE").is_file():
         raise GraphError("third_party/sl is missing; initialize the sl source tree")
-    if not (sl_port / "leonos_curses.c").is_file() or not (sl_port / "leonos_signal.c").is_file() or not (sl_port / "include/curses.h").is_file():
+    if not (ROOT / "userland/libc/include/curses.h").is_file():
         raise GraphError("the LeonOS sl port metadata is missing")
     if not (tcc_source / "tcc.c").is_file():
         raise GraphError("third_party/tinycc is missing; initialize the TinyCC source tree")
@@ -1661,6 +1661,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     sdk_inputs_list: list[Path] = [
         ROOT / "tools/package_devtools.py", ROOT / "third_party/picolibc/COPYING.picolibc",
         ROOT / "third_party/zlib/LICENSE", ROOT / "third_party/libpng/LICENSE",
+        ROOT / "userland/libc/include/curses.h", ROOT / "userland/libc/include/ncurses.h",
+        ROOT / "userland/libc/include/leonos/posix.h",
         libpng_config,
         # The packager copies these build outputs verbatim. Keep them as
         # explicit inputs so a rebuilt runtime cannot leave a stale SDK ZIP.
@@ -1680,6 +1682,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "--picolibc-lib", relative(picolibc_archive),
         "--picolibc-include", relative(picolibc_prefix / "include"),
         "--picolibc-source", "third_party/picolibc",
+        "--leonos-libc-include", "userland/libc/include",
         "--zlib-lib", relative(zlib_archive), "--zlib-source", "third_party/zlib",
         "--libpng-lib", relative(libpng_archive), "--libpng-source", "third_party/libpng",
         "--libpng-config", relative(libpng_config),
@@ -2401,7 +2404,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             expected_spawns = (f"spawn path=0:/programs/{editor}/{editor}.elf",)
             expected_exits = (f"name={editor}.elf",)
         for expected_spawn in expected_spawns:
-            # Desktop launchers still use the kernel's controlled spawn API,
+            # Desktop launchers still use the kernel's direct launcher API,
             # while Hush now performs a real COW fork followed by execve.
             # Accept either diagnostic form, but always require the exact
             # executable path so a different child cannot satisfy the check.
@@ -2420,11 +2423,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             if not cmd_pids:
                 raise BuildFailure("QMP cmd pipeline test did not identify the cmd process")
             cmd_pid = cmd_pids[-1]
-            stage_pids = re.findall(
-                rf"\[ntclks\] spawn path=0:/programs/busybox/busybox\.elf pid=(\d+) "
-                rf"parent={re.escape(cmd_pid)} fds=",
+            forked_children = re.findall(
+                rf"\[ntclks\] fork parent={re.escape(cmd_pid)} child=(\d+) ",
                 serial_text,
             )
+            stage_pids = [
+                pid for pid in forked_children
+                if f"[ntclks] exec pid={pid} path=0:/programs/busybox/busybox.elf" in serial_text
+            ]
             if len(stage_pids) < 2:
                 raise BuildFailure(
                     "QMP cmd pipeline test did not start both BusyBox pipeline stages"
@@ -2444,7 +2450,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-qmp-fastfetch", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, fastfetch_smoke=True), action_key="qmp-fastfetch-v1"))
     graph.add(Target(name="test-qmp-sl", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, sl_smoke=True), action_key="qmp-sl-v1"))
     graph.add(Target(name="test-qmp-dynlinkerror", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, dynlinkerror_smoke=True), action_key="qmp-dynlinkerror-v1"))
-    graph.add(Target(name="test-qmp-cmd", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, cmd_pipeline_smoke=True), action_key="qmp-cmd-v2"))
+    graph.add(Target(name="test-qmp-cmd", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, cmd_pipeline_smoke=True), action_key="qmp-cmd-v3"))
     graph.add(Target(name="test-qmp-stardust", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="stardusthello"), action_key="qmp-stardust-v1"))
     qmp_suite_specs: list[dict[str, object]] = []
     if config_bool(values, "CONFIG_TEST_QMP_TERMINAL"):

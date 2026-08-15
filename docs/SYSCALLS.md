@@ -342,6 +342,24 @@ remain available to any logged-in user.
   surface yet.
 - `execve` replaces the caller; use `fork` followed by `execve` to launch a
   child process.
+- `libleonos.so.1` owns the common process, descriptor, pipe, process-group,
+  PTY foreground-group, priority, resource-limit, and wait wrappers. Their
+  standard declarations come from the SDK's Picolibc headers. `waitpid` with
+  `WNOHANG` returns `0` when no child state is available; blocking waits yield
+  across the kernel's temporary `EAGAIN` response. `vfork` currently has the
+  same COW semantics as `fork`.
+- `nice` and `getpriority` return standard priorities in the `-20..19` range.
+  Raw syscall users receive `priority + 20` and must subtract 20 after checking
+  for a negative errno; the shared runtime performs that decoding.
+- Terminal Ctrl+C/Ctrl+Z actions are delivered to the foreground process group,
+  but `signal`, `sigaction`, `sigprocmask`, and user-installed signal handlers
+  are not available yet (`signal()` returns `SIG_ERR` with `ENOSYS`).
+- The shared runtime contains the common ANSI curses subset used by Nano and
+  `sl`; applications should include the SDK's `<curses.h>` or `<ncurses.h>`
+  instead of carrying a private terminal shim.
+- `libleonos.so.1` also supplies the common POSIX adapters for file status,
+  directory iteration and `fcntl`; third-party ports should use the SDK's
+  normal Picolibc headers rather than copying those wrappers into each port.
 - File-backed `mmap` is private and read-only.
 - Open permissions are ACL checks, not a full Unix permission model.
 - FAT32 and the supported ext2 subset do not expose LeonOS ACLs as native

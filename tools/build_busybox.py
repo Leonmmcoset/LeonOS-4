@@ -260,124 +260,6 @@ int ps_main(int argc UNUSED_PARAM, char **argv UNUSED_PARAM)
 ''', encoding="utf-8")
 
 
-def enable_leonos_spawn_fallback(source: Path) -> None:
-    path = source / "shell/hush.c"
-    text = path.read_text(encoding="utf-8")
-    include_marker = '#include "shell_common.h"'
-    include_addition = (
-        include_marker
-        + "\n#include <leonos/pty.h>\n"
-          "extern int leonos_spawn_wait_argv(const char *path, char *const argv[]);\n"
-          "extern int leonos_spawn_wait_argv_with_fds(const char *path, char *const argv[], int stdin_fd, int stdout_fd, int stderr_fd);\n"
-          "extern int leonos_spawn_busybox_applet_wait(const char *path, char *const argv[]);\n"
-          "extern int leonos_spawn_busybox_applet_wait_with_fds(const char *path, char *const argv[], int stdin_fd, int stdout_fd, int stderr_fd);\n"
-          "extern int leonos_spawn_pipeline_wait(char *const left[], char *const right[]);"
-    )
-    if "leonos_spawn_wait_argv" not in text:
-        if include_marker not in text:
-            raise SystemExit("unable to add LeonOS spawn declaration to hush")
-        text = text.replace(include_marker, include_addition, 1)
-
-    marker = " must_fork:\n"
-    if "LeonOS has no fork/exec replacement ABI" not in text:
-        replacement = """ must_fork:
-#if ENABLE_FEATURE_SH_NOFORK
-\t/* LeonOS has no fork/exec replacement ABI; spawn one simple command. */
-\tif (pi->num_cmds == 1 && pi->followup == PIPE_SEQ && argv_expanded && argv_expanded[0]) {
-\t\tchar *spawn_path = NULL;
-\t\tstruct squirrel *spawn_squirrel = NULL;
-\t\tint applet_no = strchr(argv_expanded[0], '/') ? -1 : find_applet_by_name(argv_expanded[0]);
-\t\t/* The image has one BusyBox executable, not per-applet links. */
-\t\tif (applet_no >= 0) {
-\t\t\tif (setup_redirects(command, &spawn_squirrel) != 0) {
-\t\t\t\tfree(argv_expanded);
-\t\t\t\tdebug_leave();
-\t\t\t\treturn 1;
-\t\t\t}
-\t\t\trcode = leonos_spawn_busybox_applet_wait_with_fds("0:/programs/busybox/busybox.elf", argv_expanded, 0, 1, 2);
-\t\t\trestore_redirects(spawn_squirrel);
-\t\t\tfree(argv_expanded);
-\t\t\tdebug_leave();
-\t\t\treturn rcode;
-\t\t}
-\t\tif (strcmp(argv_expanded[0], "nano") == 0)
-\t\t\tspawn_path = xstrdup("0:/programs/nano/nano.elf");
-\t\telse if (strcmp(argv_expanded[0], "pleditor") == 0)
-\t\t\tspawn_path = xstrdup("0:/programs/pleditor/pleditor.elf");
-\t\telse if (strcmp(argv_expanded[0], "tcc") == 0)
-\t\t\tspawn_path = xstrdup("0:/programs/tcc/tcc.elf");
-\t\telse if (strcmp(argv_expanded[0], "lua") == 0)
-\t\t\tspawn_path = xstrdup("0:/programs/lua/lua.elf");
-\t\telse if (strcmp(argv_expanded[0], "file") == 0)
-\t\t\tspawn_path = xstrdup("0:/programs/file/file.elf");
-\t\telse if (strcmp(argv_expanded[0], "fastfetch") == 0)
-\t\t\tspawn_path = xstrdup("0:/programs/fastfetch/fastfetch.elf");
-\t\telse if (strcmp(argv_expanded[0], "sl") == 0)
-\t\t\tspawn_path = xstrdup("0:/programs/sl/sl.elf");
-\t\telse if (strcmp(argv_expanded[0], "cmd") == 0)
-\t\t\tspawn_path = xstrdup("0:/programs/cmd/cmd.elf");
-\t\telse if (strchr(argv_expanded[0], '/'))
-\t\t\tspawn_path = xstrdup(argv_expanded[0]);
-\t\telse
-\t\t\tspawn_path = find_in_path(argv_expanded[0]);
-\t\tif (!spawn_path) {
-\t\t\tbb_error_msg("%s: not found", argv_expanded[0]);
-\t\t\tfree(argv_expanded);
-\t\t\tdebug_leave();
-\t\t\treturn 127;
-\t\t}
-\t\tif (setup_redirects(command, &spawn_squirrel) != 0) {
-\t\t\tfree(spawn_path);
-\t\t\tfree(argv_expanded);
-\t\t\tdebug_leave();
-\t\t\treturn 1;
-\t\t}
-\t\trcode = leonos_spawn_wait_argv_with_fds(spawn_path, argv_expanded, 0, 1, 2);
-\t\trestore_redirects(spawn_squirrel);
-\t\tfree(spawn_path);
-\t\tfree(argv_expanded);
-\t\tdebug_leave();
-\t\treturn rcode;
-\t}
-#endif
-
-"""
-        if text.count(marker) != 1:
-            raise SystemExit("unexpected hush must_fork marker count")
-        text = text.replace(marker, replacement, 1)
-    pipeline_marker = " must_fork:\n"
-    pipeline_code = """ must_fork:
-#if ENABLE_FEATURE_SH_NOFORK
-	/* LeonOS supports a bounded two-command pipeline through native spawn. */
-	if (pi->num_cmds == 2 && pi->followup != PIPE_BG &&
-		!pi->cmds[0].redirects && !pi->cmds[1].redirects &&
-		pi->cmds[0].argv && pi->cmds[1].argv) {
-		char **left_argv = expand_strvec_to_strvec(pi->cmds[0].argv);
-		char **right_argv = expand_strvec_to_strvec(pi->cmds[1].argv);
-		int pipeline_rcode = leonos_spawn_pipeline_wait(left_argv, right_argv);
-		free(left_argv);
-		free(right_argv);
-		debug_leave();
-		return pipeline_rcode;
-	}
-#endif
-
-"""
-    if "bounded two-command pipeline" not in text:
-        if text.count(pipeline_marker) != 1:
-            raise SystemExit("unexpected hush pipeline marker count")
-        text = text.replace(pipeline_marker, pipeline_code, 1)
-
-    old_error = 'bb_simple_perror_msg(BB_MMU ? "vfork"+1 : "vfork");'
-    if old_error in text:
-        text = text.replace(
-            old_error,
-            'bb_error_msg("process spawning is unavailable for pipelines or background commands");',
-            1,
-        )
-    path.write_text(text, encoding="utf-8")
-
-
 def patch_less_for_leonos(source: Path) -> None:
     """Keep the pager's file stream separate from the terminal PTY."""
     path = source / "miscutils/less.c"
@@ -540,7 +422,6 @@ def main() -> None:
     trim_libbb(source_dir)
     patch_optional_config_macros(source_dir)
     patch_ps_for_leonos(source_dir)
-    enable_leonos_spawn_fallback(source_dir)
     patch_less_for_leonos(source_dir)
     patch_ls_colors_for_leonos(source_dir)
     work_root = source_dir.parent

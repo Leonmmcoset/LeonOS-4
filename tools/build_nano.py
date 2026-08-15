@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a static GNU nano with LeonOS's ANSI curses compatibility layer."""
+"""Build GNU nano against the shared LeonOS ANSI curses runtime."""
 
 from __future__ import annotations
 
@@ -81,10 +81,11 @@ def main() -> None:
     output = args.output.resolve()
     stamp = args.stamp.resolve()
     required = (
-        source / "src/nano.c", source / "COPYING", port / "leonos_curses.c",
-        port / "leonos_port.c", port / "include/config.h", port / "include/ncurses.h",
+        source / "src/nano.c", source / "COPYING", port / "leonos_port.c",
+        port / "include/config.h",
         port / "include/revision.h", picolibc_prefix / "include", leonos_libc_include,
-        leonos_include, linker_script, leonos_lib, picolibc_lib,
+        leonos_libc_include / "ncurses.h", leonos_include, linker_script,
+        leonos_lib, picolibc_lib,
     )
     for path in required:
         if not path.exists():
@@ -120,7 +121,7 @@ def main() -> None:
         object_file = object_dir / (name.removesuffix(".c") + ".o")
         compile_source("clang", nano_flags, source_file, object_file)
         objects.append(object_file)
-    for name in ("leonos_curses.c", "leonos_port.c"):
+    for name in ("leonos_port.c",):
         source_file = port / name
         object_file = object_dir / (name.removesuffix(".c") + ".o")
         compile_source("clang", port_flags, source_file, object_file)
@@ -143,9 +144,9 @@ def main() -> None:
                 "nano_commit": source_revision(source),
                 "nano_version": "9.2",
                 "port_sha256": hashlib.sha256(
-                    (port / "leonos_curses.c").read_bytes()
-                    + (port / "leonos_port.c").read_bytes()
+                    (port / "leonos_port.c").read_bytes()
                     + (port / "include/config.h").read_bytes()
+                    + (leonos_libc_include / "ncurses.h").read_bytes()
                 ).hexdigest(),
             },
             indent=2,

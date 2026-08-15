@@ -29,12 +29,13 @@ OBJECTS := $(patsubst $(APP)/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES)) \
 CFLAGS := -O2 -std=c11 -ffreestanding -fno-stack-protector -fPIC -fPIE \
           -mno-red-zone -mgeneral-regs-only -ffunction-sections -fdata-sections \
           -Wall -Wextra -DLEONOS_USE_PICOLIBC -D_POSIX_C_SOURCE=200809L \
+          -D_DEFAULT_SOURCE \
           -I"$(SDK_ROOT)/include"
 CXXFLAGS := -O2 -std=c++17 -ffreestanding -fno-exceptions -fno-rtti \
             -fno-use-cxa-atexit -fno-threadsafe-statics -fno-stack-protector \
             -fPIC -fPIE -mno-red-zone -mgeneral-regs-only \
             -ffunction-sections -fdata-sections -Wall -Wextra \
-            -DLEONOS_USE_PICOLIBC -D_POSIX_C_SOURCE=200809L -nostdinc++ \
+            -DLEONOS_USE_PICOLIBC -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -nostdinc++ \
             -I"$(SDK_ROOT)/include/stardustui/leonos" \
             -I"$(SDK_ROOT)/include/stardustui" -I"$(SDK_ROOT)/include"
 STATIC ?= 0

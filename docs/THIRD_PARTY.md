@@ -183,12 +183,14 @@ extended syntax set.
 LeonOS builds the interpreter at `0:/programs/cmd/cmd.elf`. From the BusyBox
 Hush prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
 built-ins, batch files, variables and redirection, and executes enabled
-BusyBox applets or supported LeonOS terminal programs through the PTY
-spawn/wait ABI. External command pipelines and background jobs use the
-controlled spawn and anonymous-pipe ABI; `cmd` supports `command &`, external
-pipelines ending in `&`, plus `jobs`, `fg`, and `bg`. BusyBox Hush is the
-interactive POSIX-style shell and uses the native COW `fork`/`execve` path for
-full pipeline, redirection, process-group, and terminal job-control semantics.
+BusyBox applets or supported LeonOS terminal programs through the shared COW
+`fork`/`execve`/`waitpid` path. Foreground pipelines use inherited anonymous
+pipes and support per-stage redirection. `cmd` also supports `command &`,
+external pipelines ending in `&`, plus `jobs`, `fg`, and `bg`; those background
+jobs remain limited to external commands without per-stage redirection. BusyBox
+Hush is the interactive POSIX-style shell and uses the same native COW process
+path for full pipeline, redirection, process-group, and terminal job-control
+semantics.
 
 ## Fastfetch
 

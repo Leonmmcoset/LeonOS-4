@@ -1,4 +1,4 @@
-/* Minimal ANSI curses surface required by the LeonOS GNU nano port. */
+/* Shared ANSI curses subset for LeonOS terminal applications. */
 #include <ncurses.h>
 
 #include <stdint.h>
@@ -24,6 +24,8 @@ WINDOW *stdscr;
 int LINES = 24;
 int COLS = 80;
 static int curses_active;
+static struct termios saved_termios;
+static int have_saved_termios;
 static int pending_input = ERR;
 #define LEONOS_CURSES_OUTPUT_CAP 4096U
 static char output_buffer[LEONOS_CURSES_OUTPUT_CAP];
@@ -111,6 +113,9 @@ static void refresh_size(void)
 
 WINDOW *initscr(void)
 {
+    if (!curses_active) {
+        have_saved_termios = tcgetattr(STDIN_FILENO, &saved_termios) == 0;
+    }
     refresh_size();
     if (!stdscr) {
         stdscr = newwin(LINES, COLS, 0, 0);
@@ -131,6 +136,9 @@ int endwin(void)
     if (curses_active) {
         emit_text("\033[0m\033[?25h\033[?1049l");
         flush_output();
+        if (have_saved_termios) {
+            (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved_termios);
+        }
         curses_active = 0;
     }
     return OK;
@@ -237,6 +245,13 @@ int nonl(void)
 int typeahead(int fd)
 {
     (void)fd;
+    return OK;
+}
+
+int leaveok(WINDOW *window, int enabled)
+{
+    (void)window;
+    (void)enabled;
     return OK;
 }
 
@@ -502,4 +517,26 @@ char *tgetstr(const char *name, char **area)
     (void)name;
     (void)area;
     return 0;
+}
+
+int mvaddch(int y, int x, chtype character)
+{
+    return mvwaddch(stdscr, y, x, character);
+}
+
+int refresh(void)
+{
+    return wrefresh(stdscr);
+}
+
+int getch(void)
+{
+    return wgetch(stdscr);
+}
+
+int mvcur(int old_y, int old_x, int new_y, int new_x)
+{
+    (void)old_y;
+    (void)old_x;
+    return wmove(stdscr, new_y, new_x);
 }

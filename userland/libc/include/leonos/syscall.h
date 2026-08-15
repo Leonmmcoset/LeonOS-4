@@ -71,7 +71,7 @@ long syscall2(long n, long a0, long a1);
 long syscall3(long n, long a0, long a1, long a2);
 long syscall6(long n, long a0, long a1, long a2, long a3, long a4, long a5);
 
-int open(const char *path, int flags, int mode);
+int open(const char *path, int flags, ...);
 long read(int fd, void *buf, size_t len);
 long write(int fd, const void *buf, size_t len);
 int close(int fd);

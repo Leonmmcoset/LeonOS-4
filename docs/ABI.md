@@ -33,9 +33,47 @@ LeonOS keeps Linux-compatible syscall numbers for the current user ABI:
 - Memory: `mmap`, `munmap`
 - Device and system extensions: `ioctl`
 
-The libc wrappers live in `userland/libc/include/leonos/syscall.h` and
-`userland/libc/src/libc.c`. `mmap` supports anonymous private mappings and
-private file mappings; `munmap` supports whole or partial unmapping.
+The libc wrappers live in `userland/libc/include/leonos/syscall.h`,
+`userland/libc/src/libc.c`, and the POSIX-facing files beside it. `mmap`
+supports anonymous private mappings and private file mappings; `munmap`
+supports whole or partial unmapping.
+
+## Shared POSIX porting surface
+
+`libleonos.so.1` contains the shared ANSI curses subset in
+`userland/libc/src/ansi_curses.c`. Applications include either `<curses.h>` or
+`<ncurses.h>` from the SDK and link only the normal runtime; Nano and `sl` use
+the same implementation. It provides windows, cursor movement, buffered ANSI
+output, terminal-size refresh, raw/noecho mode, and the key/input functions
+used by those ports. It is a small LeonOS terminal API, not a promise of
+binary compatibility with host ncurses.
+
+The runtime also exports `usleep()`. The SDK Makefile enables
+`_DEFAULT_SOURCE`, so Picolibc exposes its standard declaration without an
+application-local `unistd.h` shim. Signal-handler installation remains
+unsupported until the kernel signal ABI is complete.
+
+`userland/libc/src/posix_process.c` is the single POSIX process and descriptor
+adapter used by both dynamic applications and static ports. It implements
+`fork`, `vfork`, `execve`, `wait4`, `waitpid`, `pipe`, `dup`, `dup2`, `fcntl`,
+process IDs/groups, foreground PTY groups, `kill`, nice priorities, and resource
+limits. The wrappers convert raw negative errno values to `-1` with `errno`.
+`waitpid(..., WNOHANG)` returns `0` if the child has no state change; blocking
+waits yield while the scheduler reports its temporary `EAGAIN`. `vfork` is
+intentionally COW-fork equivalent until LeonOS has a parent-suspending vfork
+ABI. `nice()` and `getpriority()` return the normal `-20..19` priority range.
+
+The kernel applies default terminal signal actions to the foreground process
+group. `signal`, `sigaction`, `sigprocmask`, and `raise` currently report
+`ENOSYS` (`signal` returns `SIG_ERR`), while `sigsuspend` yields and returns
+`EINTR`; applications must not rely on custom user-space signal handlers yet.
+
+The runtime also owns the common POSIX file-port adapters: `stat`, `fstat`,
+and `lstat` are available as the explicit `leonos_posix_*` adapters in
+`<leonos/posix.h>`; `access`, `fcntl`, `opendir`, `readdir`, `closedir`,
+`dirfd`, and `rewinddir` are supplied through Picolibc's normal POSIX headers.
+Directory entries expose LeonOS's file, directory, and device kinds.  They do
+not yet provide filesystem-native inode or ownership metadata.
 
 See [Syscalls](SYSCALLS.md) for the detailed syscall table, ioctl groups, and
 current limitations.

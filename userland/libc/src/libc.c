@@ -367,8 +367,15 @@ long write(int fd, const void *buf, size_t len)
     return (long)done;
 }
 
-int open(const char *path, int flags, int mode)
+int open(const char *path, int flags, ...)
 {
+    va_list args;
+    int mode = 0;
+    if (flags & LEONOS_O_CREAT) {
+        va_start(args, flags);
+        mode = va_arg(args, int);
+        va_end(args);
+    }
     return (int)syscall3(SYS_open, (long)path, flags, mode);
 }
 
@@ -377,58 +384,14 @@ int close(int fd)
     return (int)syscall1(SYS_close, fd);
 }
 
-int dup(int fd)
-{
-    long result = syscall1(SYS_dup, fd);
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
-    return (int)result;
-}
-
-int pipe(int filedes[2])
-{
-    long result;
-    if (!filedes) {
-        errno = EINVAL;
-        return -1;
-    }
-    result = syscall1(SYS_pipe, (long)filedes);
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
-    return 0;
-}
-
 long lseek(int fd, long offset, int whence)
 {
     return syscall3(SYS_lseek, fd, offset, whence);
 }
 
-void _exit(int code)
-{
-    syscall1(SYS_exit, code);
-    for (;;) {
-    }
-}
-
 int mprotect(void *addr, size_t len, int prot)
 {
     return (int)syscall3(SYS_mprotect, (long)addr, (long)len, prot);
-}
-
-int raise(int signal)
-{
-    /*
-     * LeonOS does not expose POSIX process-directed signals. Keep Picolibc's
-     * abort path well-defined: abort() will fall through to _Exit() after
-     * this reports the unsupported signal delivery attempt.
-     */
-    (void)signal;
-    errno = ENOSYS;
-    return -1;
 }
 
 int chdir(const char *path)
@@ -497,54 +460,9 @@ int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
     return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
 }
 
-int sched_yield(void)
-{
-    return (int)syscall0(SYS_sched_yield);
-}
-
 int sleep_ms(unsigned long ms)
 {
     return (int)syscall2(SYS_nanosleep, (long)ms, 0);
-}
-
-int getpid(void)
-{
-    return (int)syscall0(SYS_getpid);
-}
-
-int getppid(void)
-{
-    return (int)syscall0(SYS_getppid);
-}
-
-int kill(int pid, int signal_number)
-{
-    return (int)syscall2(SYS_kill, pid, signal_number);
-}
-
-int nice(int increment)
-{
-    return (int)syscall1(SYS_nice, increment);
-}
-
-int getpriority(int which, id_t who)
-{
-    return (int)syscall2(SYS_getpriority, which, who);
-}
-
-int setpriority(int which, id_t who, int priority)
-{
-    return (int)syscall3(SYS_setpriority, which, who, priority);
-}
-
-int getrlimit(int resource, struct rlimit *limit)
-{
-    return (int)syscall2(SYS_getrlimit, resource, (long)limit);
-}
-
-int setrlimit(int resource, const struct rlimit *limit)
-{
-    return (int)syscall2(SYS_setrlimit, resource, (long)limit);
 }
 
 int stat(const char *path, struct leonos_stat *st)
@@ -555,21 +473,6 @@ int stat(const char *path, struct leonos_stat *st)
 int fstat(int fd, struct leonos_stat *st)
 {
     return (int)syscall2(SYS_fstat, fd, (long)st);
-}
-
-int wait4(int pid, int *status, int options, void *rusage)
-{
-    return (int)syscall6(SYS_wait4, pid, (long)status, options, (long)rusage, 0, 0);
-}
-
-int execve(const char *path, char *const argv[], char *const envp[])
-{
-    long result = syscall3(SYS_execve, (long)path, (long)argv, (long)envp);
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
-    return (int)result;
 }
 
 int mkdir(const char *path, int mode)

@@ -2,6 +2,7 @@
 #define LEONOS_FILE_UNISTD_H
 
 #include <sys/types.h>
+#include <leonos/posix.h>
 
 #ifndef STDIN_FILENO
 #define STDIN_FILENO 0
@@ -31,8 +32,4 @@ int dup2(int old_fd, int new_fd);
 int pipe(int fds[2]);
 ssize_t pread(int fd, void *buffer, size_t length, off_t offset);
 ssize_t readlink(const char *path, char *buffer, size_t capacity);
-struct stat;
-int leonos_posix_stat(const char *path, struct stat *st);
-int leonos_posix_fstat(int fd, struct stat *st);
-
 #endif

@@ -82,9 +82,9 @@ def prepare_source(source: Path, work_source: Path) -> None:
     text = text.replace(old_read, "            result = libcmd_readline(\"\", line, sizeof(line));\n", 1)
     cinterp.write_text(text.replace("        free(prompt);\n\n", "", 1), encoding="utf-8")
 
-    # The upstream job-control implementation assumes fork, process groups,
-    # and SIGCHLD.  LeonOS tracks controlled-spawn jobs in cparser instead.
-    # Publish the small asynchronous pipeline API used by that adapter.
+    # The upstream parser now uses LeonOS's normal COW fork/pipe/dup2/waitpid
+    # flow.  Publish one small asynchronous pipeline helper for the LeonOS
+    # cmd-specific background-job adapter below.
     glibcmd = work_source / "glibcmd.h"
     text = glibcmd.read_text(encoding="utf-8")
     pipeline_marker = """int libcmd_exec_pipeline(char *const *const *cmds,
@@ -96,8 +96,8 @@ def prepare_source(source: Path, work_source: Path) -> None:
                          libcmd_exit_info_t *exit_info);
 """
     pipeline_addition = pipeline_marker + """
-/* Starts an external pipeline without waiting. pids receives one child PID
- * per stage and the return value is the number of started stages. */
+/* Starts an external pipeline through fork/exec without waiting. pids receives
+ * one child PID per stage and the return value is the number of started stages. */
 int libcmd_exec_pipeline_async(char *const *const *cmds,
                                const char *const *paths,
                                int n,
@@ -107,8 +107,16 @@ int libcmd_exec_pipeline_async(char *const *const *cmds,
                                int pids[],
                                int pids_capacity);
 
-/* Returns non-zero when the controlled-spawn child is SIGSTOPped. */
-int libcmd_job_is_stopped(int pid);
+/* Starts an external shell job without creating the detached session used by
+ * cmd.exe START. The child becomes the leader of its process group. */
+int libcmd_exec_job_async(const char *path,
+                          char *const argv[],
+                          char *const envp[],
+                          int stdin_fd,
+                          int stdout_fd,
+                          int stderr_fd,
+                          int nice_level);
+
 """
     if "libcmd_exec_pipeline_async" not in text:
         if pipeline_marker not in text:
@@ -117,50 +125,6 @@ int libcmd_job_is_stopped(int pid);
 
     cparser = work_source / "cparser.c"
     text = cparser.read_text(encoding="utf-8")
-    start = text.find("    case NODE_PIPE: {")
-    end = text.find("\n    case NODE_AND:", start)
-    if start < 0 or end < 0:
-        raise SystemExit("unsupported cmd source revision: pipeline executor changed")
-    replacement = """    case NODE_PIPE: {
-        /* LeonOS runs external pipeline stages concurrently through the
-         * controlled spawn ABI. Builtins and stage redirections remain
-         * unsupported here because they require fork-like shell state. */
-        cmd_node_t *stages[64];
-        char *const *argvs[64];
-        const char *paths[64];
-        /* 64 x CMD_MAX_PATH is about 256 KiB.  Keep it out of cmd's
-         * bounded user stack; only one command interpreter thread executes
-         * this dispatcher at a time. */
-        static char resolved[64][CMD_MAX_PATH];
-        libcmd_exit_info_t pipeline_status;
-        int n = collect_pipe_stages(node, stages, 64);
-        int i;
-        if (n <= 0) {
-            ret = 1;
-            break;
-        }
-        for (i = 0; i < n; ++i) {
-            if (stages[i]->type != NODE_SIMPLE || stages[i]->argc == 0 ||
-                stages[i]->redirs || cmd_find_builtin(stages[i]->argv[0]) ||
-                libcmd_find_exec(stages[i]->argv[0], libcmd_getenv("PATH"),
-                                 resolved[i], sizeof(resolved[i])) < 0) {
-                fputs("cmd: pipelines require external commands without redirection\\n", stderr);
-                ret = 1;
-                break;
-            }
-            argvs[i] = stages[i]->argv;
-            paths[i] = resolved[i];
-        }
-        if (i == n && libcmd_exec_pipeline(argvs, paths, n,
-                                           libcmd_get_environ(), stdin_fd,
-                                           stdout_fd, &pipeline_status) == 0)
-            ret = pipeline_status.exit_code;
-        else if (i == n)
-            ret = 1;
-        break;
-    }
-"""
-    text = text[:start] + replacement + text[end:]
     simple_marker = "    cparser.write_text(text, encoding=\"utf-8\")\n"
     if simple_marker in text:
         raise SystemExit("unsupported cmd source revision: duplicate job patch marker")
@@ -187,11 +151,14 @@ int libcmd_job_is_stopped(int pid);
                         stdin_fd, stdout_fd, stderr_fd);
 }
 """
-    job_decls = """\n/* LeonOS controlled-spawn job adapter. */
+    job_decls = """\n/* LeonOS background-job adapter backed by COW fork/waitpid. */
 extern int leonos_cmd_builtin(int argc, char **argv, int *handled);
 extern int leonos_cmd_register_job(const int pids[], int count, int last_pid,
                                    const char *text);
 extern void leonos_cmd_job_append_word(char *out, size_t cap, const char *word);
+extern int leonos_cmd_set_process_group(int pid, int process_group);
+extern int leonos_cmd_foreground_enter(int fd, int process_group, int *saved_group);
+extern void leonos_cmd_foreground_leave(int fd, int saved_group);
 \n"""
     declarations = """static int exec_simple(cmd_context_t *ctx, cmd_node_t *node,
                        int stdin_fd, int stdout_fd, int stderr_fd);
@@ -205,6 +172,53 @@ static int exec_node_fds(cmd_context_t *ctx, cmd_node_t *node,
         raise SystemExit("unsupported cmd source revision: job executor insertion changed")
     text = text.replace(declarations, declarations_after + job_decls, 1)
     text = text.replace(simple_before, simple_after, 1)
+    pipeline_locals = """        int prev_read = stdin_fd;
+        int pids[64];
+        int i;
+"""
+    pipeline_locals_replacement = """        int prev_read = stdin_fd;
+        int pids[64];
+        int process_group = 0;
+        int saved_group = 0;
+        int i;
+"""
+    pipeline_parent = """            /* Parent */
+            pids[i] = (int)pid;
+            if (prev_read >= 0 && prev_read != stdin_fd)
+"""
+    pipeline_parent_replacement = """            /* Parent */
+            pids[i] = (int)pid;
+            if (process_group == 0)
+                process_group = (int)pid;
+            (void)leonos_cmd_set_process_group((int)pid, process_group);
+            if (prev_read >= 0 && prev_read != stdin_fd)
+"""
+    pipeline_wait = """        /* Wait for all children; the exit code is the last stage's */
+        ret = 0;
+        for (i = 0; i < n; i++) {
+            libcmd_exit_info_t ei;
+            if (libcmd_wait_pid(pids[i], &ei) == 0 && i == n - 1)
+                ret = ei.exit_code;
+        }
+        break;
+"""
+    pipeline_wait_replacement = """        /* Wait for all children; the exit code is the last stage's */
+        ret = 0;
+        (void)leonos_cmd_foreground_enter(stdin_fd, process_group, &saved_group);
+        for (i = 0; i < n; i++) {
+            libcmd_exit_info_t ei;
+            if (libcmd_wait_pid(pids[i], &ei) == 0 && i == n - 1)
+                ret = ei.exit_code;
+        }
+        leonos_cmd_foreground_leave(stdin_fd, saved_group);
+        break;
+"""
+    if (pipeline_locals not in text or pipeline_parent not in text or
+            pipeline_wait not in text):
+        raise SystemExit("unsupported cmd source revision: pipeline job-control insertion changed")
+    text = text.replace(pipeline_locals, pipeline_locals_replacement, 1)
+    text = text.replace(pipeline_parent, pipeline_parent_replacement, 1)
+    text = text.replace(pipeline_wait, pipeline_wait_replacement, 1)
     seq_before = """    case NODE_SEQ:
         exec_node_fds(ctx, node->left, stdin_fd, stdout_fd, stderr_fd);
         ret = exec_node_fds(ctx, node->right, stdin_fd, stdout_fd, stderr_fd);
@@ -236,8 +250,8 @@ static int exec_node_fds(cmd_context_t *ctx, cmd_node_t *node,
             fputs(\"cmd: background jobs require an external command without redirection\\n\", stderr);
             return 1;
         }
-        pids[0] = libcmd_exec_async(resolved[0], node->argv, libcmd_get_environ(),
-                                    stdin_fd, stdout_fd, stderr_fd, 0);
+        pids[0] = libcmd_exec_job_async(resolved[0], node->argv, libcmd_get_environ(),
+                                        stdin_fd, stdout_fd, stderr_fd, 0);
         if (pids[0] < 0) {
             fputs(\"cmd: unable to start background command\\n\", stderr);
             return 1;
@@ -496,7 +510,7 @@ def main() -> None:
     stamp.write_text(json.dumps({
         "cmd_commit": source_revision(source),
         "upstream": "https://github.com/ChenPi11/cmd",
-        "port": "canonical-pty-input, controlled spawn/wait, multi-stage external pipelines",
+        "port": "canonical-pty-input, COW fork/exec/wait, multi-stage pipelines",
         "port_sha256": hashlib.sha256((port / "leonos_cmd_shim.c").read_bytes()).hexdigest(),
     }, indent=2) + "\n", encoding="utf-8")
 

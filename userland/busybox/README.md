@@ -43,6 +43,11 @@ PTY groups, and nice-style priorities. `kill` and graphical task tools use
 those interfaces. Hush uses normal pipelines and redirections (`<`, `>`, `>>`,
 `2>`), and handles `Ctrl+C`/`Ctrl+Z` through the PTY foreground group. Custom
 POSIX signal handlers and shared file offsets after `fork` are not yet exposed.
+Hush does not use the legacy PTY-launch adapter: its commands use the upstream
+MMU `fork`/`pipe`/`dup2`/`execvp`/`waitpid` flow. The remaining
+BusyBox adapter only maps bare applet names to the single
+`0:/programs/busybox/busybox.elf` executable and maps bundled external tools
+to their installed paths.
 
 BusyBox is GPL-2.0-only; `LICENSE` and upstream version information are staged
 beside the executable in the image.

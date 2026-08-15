@@ -1,8 +1,13 @@
-#ifndef LEONOS_NANO_NCURSES_H
-#define LEONOS_NANO_NCURSES_H
+#ifndef LEONOS_NCURSES_H
+#define LEONOS_NCURSES_H
 
 #include <stdarg.h>
 
+/*
+ * LeonOS exposes the small ANSI curses surface implemented by libleonos.
+ * This is intentionally source-compatible with the subset used by Nano and
+ * other terminal applications; it is not an ABI-compatible ncurses clone.
+ */
 typedef unsigned long chtype;
 typedef struct leonos_curses_window WINDOW;
 
@@ -96,6 +101,7 @@ int halfdelay(int tenths);
 int napms(int milliseconds);
 int nonl(void);
 int typeahead(int fd);
+int leaveok(WINDOW *window, int enabled);
 int curs_set(int visibility);
 int beep(void);
 int start_color(void);
@@ -122,5 +128,19 @@ int wscrl(WINDOW *window, int lines);
 int wgetch(WINDOW *window);
 int ungetch(int input);
 int key_defined(const char *definition);
+char *tgetstr(const char *name, char **area);
+
+/* Basic single-window helpers used by small curses ports such as sl. */
+int mvaddch(int y, int x, chtype character);
+int refresh(void);
+int getch(void);
+int mvcur(int old_y, int old_x, int new_y, int new_x);
+
+#define move(y, x) wmove(stdscr, (y), (x))
+#define addch(character) waddch(stdscr, (character))
+#define addnstr(text, length) waddnstr(stdscr, (text), (length))
+#define addstr(text) waddstr(stdscr, (text))
+#define mvaddnstr(y, x, text, length) mvwaddnstr(stdscr, (y), (x), (text), (length))
+#define mvaddstr(y, x, text) mvwaddstr(stdscr, (y), (x), (text))
 
 #endif

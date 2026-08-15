@@ -31,6 +31,7 @@ int feof(FILE *stream);
 char *fgets(char *buffer, int size, FILE *stream);
 int fflush(FILE *stream);
 int putchar(int ch);
+int fputc(int ch, FILE *stream);
 int remove(const char *path);
 int sscanf(const char *text, const char *format, ...);
 int fileno(FILE *stream);

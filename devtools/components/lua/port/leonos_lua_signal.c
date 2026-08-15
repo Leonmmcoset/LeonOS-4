@@ -1,22 +1,10 @@
 /*
- * LeonOS has no POSIX signal-delivery or process-accounting ABI. Lua only
- * installs SIGINT handlers around a protected evaluation and only needs a
- * wall-clock timestamp plus elapsed time for its standard OS library. Keep
- * those narrow adapters here rather than linking Picolibc's generic OS
- * fallback library.
+ * Lua's standard time helpers backed by the shared LeonOS system-time ABI.
  */
 
-#include <signal.h>
 #include <time.h>
 
 #include <leonos/system.h>
-
-_sig_func_ptr signal(int signum, _sig_func_ptr handler)
-{
-    (void)signum;
-    (void)handler;
-    return SIG_DFL;
-}
 
 time_t time(time_t *seconds)
 {

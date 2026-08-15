@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the upstream sl animation with LeonOS's ANSI terminal adapter."""
+"""Build the upstream sl animation against the shared ANSI runtime."""
 
 from __future__ import annotations
 
@@ -76,8 +76,7 @@ def main() -> None:
     stamp = args.stamp.resolve()
     required = (
         source / "sl.c", source / "sl.h", source / "LICENSE",
-        port / "leonos_curses.c", port / "leonos_signal.c", port / "include/curses.h",
-        port / "include/unistd.h",
+        leonos_libc_include / "curses.h",
         picolibc_prefix / "include", leonos_libc_include, leonos_include,
         linker_script, leonos_lib, picolibc_lib, args.dynamic_crt, args.abi_note,
     )
@@ -100,17 +99,13 @@ def main() -> None:
         "-std=gnu11", "-ffreestanding", "-fno-stack-protector", "-fPIC", "-fPIE",
         "-mno-red-zone", "-mgeneral-regs-only", "-ffunction-sections", "-fdata-sections",
         "-Wall", "-Wextra", "-Wno-unused-parameter", "-D_POSIX_C_SOURCE=200809L",
-        "-DLEONOS_USE_PICOLIBC", "-nostdinc", "-isystem", str(headers),
-        "-I" + str(port / "include"), "-I" + str(picolibc_prefix / "include"),
+        "-DLEONOS_USE_PICOLIBC", "-D_DEFAULT_SOURCE", "-nostdinc", "-isystem", str(headers),
+        "-I" + str(picolibc_prefix / "include"),
         "-I" + str(leonos_libc_include), "-I" + str(leonos_include),
-        "-I" + str(source), "-I" + str(port),
+        "-I" + str(source),
     ]
     objects: list[Path] = []
-    for name, path in (
-        ("sl", source / "sl.c"),
-        ("leonos_curses", port / "leonos_curses.c"),
-        ("leonos_signal", port / "leonos_signal.c"),
-    ):
+    for name, path in (("sl", source / "sl.c"),):
         object_file = object_dir / f"{name}.o"
         compile_source(flags, path, object_file)
         objects.append(object_file)
@@ -131,9 +126,7 @@ def main() -> None:
         json.dumps({
             "sl_commit": revision,
             "port_sha256": hashlib.sha256(
-                b"".join((port / name).read_bytes()
-                         for name in ("leonos_curses.c", "leonos_signal.c", "include/curses.h",
-                                      "include/unistd.h"))
+                (leonos_libc_include / "curses.h").read_bytes()
             ).hexdigest(),
         }, indent=2) + "\n", encoding="utf-8"
     )

@@ -91,9 +91,14 @@ def main() -> None:
         "-nostdinc", "-isystem", str(args.generated_include),
         "-isystem", str(Path(resource_dir) / "include"),
         "-isystem", str(args.picolibc_prefix / "include"),
-        "-I", str(port / "include"), "-I", str(args.leonos_include),
+        "-I", str(port / "include"),
+        "-I", str(args.leonos_include),
         "-I", str(include_dir),
         "-I", str(patched_source),
+        # Prefer Picolibc's full POSIX headers for upstream libmagic.  The
+        # LeonOS headers remain available for our additive compatibility API
+        # without shadowing standard headers such as <stdlib.h>.
+        "-idirafter", str(args.leonos_libc_include),
         "-DHAVE_CONFIG_H", "-Dstat(...)=leonos_posix_stat(__VA_ARGS__)",
         "-Dfstat(...)=leonos_posix_fstat(__VA_ARGS__)",
         "-DLEONOS_FILE_PATHSEP_SEMICOLON",

@@ -34,9 +34,10 @@ Picolibc private headers during the build.
 - Dynamic libraries, PIE and shared-library output.
 - `tcc -run` / in-memory JIT execution.
 - Host/Linux headers and libraries.
-- `times()` and `signal()` in generated programs; LeonOS does not yet expose
-  process CPU-time or POSIX signal ABIs, so these target-runtime stubs return
-  `ENOSYS`/`SIG_ERR`.
+- `times()` in generated programs; LeonOS does not yet expose process CPU-time
+  accounting, so the target-runtime stub returns `ENOSYS`. `signal()` is
+  supplied by `libleonos`, but user-installed handlers remain unsupported and
+  return `SIG_ERR` with `errno = ENOSYS`.
 
 Paths accepted by the compiler use LeonOS drive syntax, such as
 `0:/programs/demo/main.c`.  For multiple `C_INCLUDE_PATH`, `CPATH` or

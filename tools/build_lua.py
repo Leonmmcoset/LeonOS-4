@@ -103,7 +103,7 @@ def main() -> None:
     stamp = args.stamp.resolve()
     required = (
         source / "lua.c", source / "lua.h", source / "luaconf.h", source / "lualib.h",
-        port / "LICENSE", port / "leonos_lua_signal.c", picolibc_prefix / "include", leonos_libc_include,
+        port / "LICENSE", port / "leonos_lua_time.c", picolibc_prefix / "include", leonos_libc_include,
         leonos_include, linker_script, leonos_lib, picolibc_lib,
         dynamic_linker_script, runtime_so, dynamic_crt, abi_note,
     )
@@ -147,9 +147,9 @@ def main() -> None:
         object_file = object_dir / (name.removesuffix(".c") + ".o")
         compile_source(common_flags, source_file, object_file)
         library_objects.append(object_file)
-    signal_object = object_dir / "leonos_lua_signal.o"
-    compile_source(common_flags, port / "leonos_lua_signal.c", signal_object)
-    library_objects.append(signal_object)
+    time_object = object_dir / "leonos_lua_time.o"
+    compile_source(common_flags, port / "leonos_lua_time.c", time_object)
+    library_objects.append(time_object)
 
     library.parent.mkdir(parents=True, exist_ok=True)
     run([

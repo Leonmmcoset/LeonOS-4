@@ -3527,9 +3527,16 @@ static int64_t syscall_process_control(uint64_t number, uint64_t a0,
         struct task *task = sched_current_task();
         int current = task ? task->priority : 0;
         int next = current + (int)a0;
+        int priority;
         if (next < -20) next = -20;
         if (next > 19) next = 19;
-        return sched_task_priority(sched_current_pid(), next, 1);
+        priority = sched_task_priority(sched_current_pid(), next, 1);
+        if (priority < -20 || priority > 19) {
+            return -LEONOS_EINVAL;
+        }
+        /* A raw syscall cannot return a negative successful value. Encode
+         * POSIX's -20..19 priority range as Linux does for getpriority. */
+        return priority + 20;
     }
     if (number == LINUX_SYS_GETPRIORITY || number == LINUX_SYS_SETPRIORITY) {
         struct task *current = sched_current_task();
@@ -3544,7 +3551,19 @@ static int64_t syscall_process_control(uint64_t number, uint64_t a0,
                          target != current->pid && current->uid != 0)) {
             return -LEONOS_EPERM;
         }
-        return sched_task_priority(target, (int)a2, number == LINUX_SYS_SETPRIORITY);
+        {
+            int priority = sched_task_priority(target, (int)a2,
+                                                number == LINUX_SYS_SETPRIORITY);
+            if (priority < -20 || priority > 19) {
+                return -LEONOS_ENOENT;
+            }
+            if (number == LINUX_SYS_SETPRIORITY) {
+                return 0;
+            }
+            /* Preserve the negative-errno syscall convention for callers
+             * while exposing the POSIX priority through libc. */
+            return priority + 20;
+        }
     }
     if (number == LINUX_SYS_GETRLIMIT || number == LINUX_SYS_SETRLIMIT) {
         struct task *task = sched_current_task();

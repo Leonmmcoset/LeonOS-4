@@ -102,6 +102,7 @@ def main() -> None:
     parser.add_argument("--picolibc-lib", type=Path, required=True)
     parser.add_argument("--picolibc-include", type=Path, required=True)
     parser.add_argument("--picolibc-source", type=Path, required=True)
+    parser.add_argument("--leonos-libc-include", type=Path)
     parser.add_argument("--zlib-lib", type=Path, required=True)
     parser.add_argument("--zlib-source", type=Path, required=True)
     parser.add_argument("--libpng-lib", type=Path, required=True)
@@ -226,6 +227,15 @@ def main() -> None:
         source for source in sorted(args.picolibc_include.rglob("*"))
         if source.is_file() and source.name != ".leonos-picolibc.stamp"
     ]
+    shared_posix_headers = ()
+    if args.leonos_libc_include is not None:
+        shared_posix_headers = tuple(
+            args.leonos_libc_include / name
+            for name in (Path("curses.h"), Path("ncurses.h"), Path("leonos/posix.h"))
+        )
+        for required in shared_posix_headers:
+            if not required.is_file():
+                raise SystemExit(f"required shared POSIX header is missing: {required}")
     picolibc_names = {
         source.relative_to(args.picolibc_include).as_posix()
         for source in picolibc_headers
@@ -267,6 +277,8 @@ def main() -> None:
                 add_file(archive, f"{SDK_PREFIX}/{relative_name}", source)
             for source in picolibc_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.picolibc_include).as_posix()}", source)
+            for source in shared_posix_headers:
+                add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.leonos_libc_include).as_posix()}", source)
             add_file(archive, f"{SDK_PREFIX}/lib/leonos.a", args.leonos_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libleonos.so.1", args.runtime_so)
             add_file(archive, f"{SDK_PREFIX}/lib/ld-leonos.elf", args.runtime_loader)
