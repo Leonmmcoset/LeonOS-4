@@ -63,6 +63,7 @@ def main() -> int:
     editor = "nano"
     fastfetch_smoke = False
     fastfetch_single = False
+    sl_smoke = False
     start_menu_smoke = False
     iso9660_smoke = False
     dynlinkerror_smoke = False
@@ -81,6 +82,9 @@ def main() -> int:
         arguments = arguments[1:]
     if arguments and arguments[0] == "--fastfetch-single":
         fastfetch_single = True
+        arguments = arguments[1:]
+    if arguments and arguments[0] == "--sl":
+        sl_smoke = True
         arguments = arguments[1:]
     if arguments and arguments[0] == "--start-menu":
         start_menu_smoke = True
@@ -107,7 +111,7 @@ def main() -> int:
         return 2
     if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
         return 2
-    if desktop_app is not None and (tcc_smoke or fastfetch_smoke or fastfetch_single or start_menu_smoke or iso9660_smoke or
+    if desktop_app is not None and (tcc_smoke or fastfetch_smoke or fastfetch_single or sl_smoke or start_menu_smoke or iso9660_smoke or
                                     dynlinkerror_smoke or cmd_pipeline_smoke or exit_only):
         return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
@@ -175,6 +179,16 @@ def main() -> int:
         send_keys(sock, text_keys("fastfetch") + ("ret",))
         time.sleep(3.0)
         hmp(sock, "screendump build/images/fastfetch-single-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
+    if sl_smoke:
+        send_keys(sock, text_keys("sl -l") + ("ret",))
+        # The locomotive remains visible during its run. Capture an active
+        # frame, then wait for the upstream animation to leave the screen.
+        time.sleep(2.0)
+        hmp(sock, "screendump build/images/sl-qmp-smoke.ppm", 0.4)
+        time.sleep(14.0)
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 

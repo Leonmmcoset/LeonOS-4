@@ -210,6 +210,18 @@ and restricted `--structure` selection for the modules available on LeonOS.
 JSON/config files, file or image logos, dynamic refresh, dynamic libraries and
 modules requiring a host POSIX or Linux interface remain disabled.
 
+## sl
+
+- Path: `third_party/sl`
+- Upstream: `https://github.com/mtoyoda/sl.git`
+- Pinned commit: `923e7d7ebc5c1f009755bdeb789ac25658ccce03`
+- License: permissive upstream license; the complete upstream `LICENSE` is
+  staged at `0:/programs/sl/LICENSE` beside the executable.
+
+LeonOS builds the Steam Locomotive joke command at
+`0:/programs/sl/sl.elf`. The upstream animation is kept intact and its curses
+calls are implemented by the ANSI adapter in `userland/sl`.
+
 ## minimp3
 
 - Path: `third_party/minimp3/minimp3.h`

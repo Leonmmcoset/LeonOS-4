@@ -94,6 +94,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-qmp-pleditor",
     "test-qmp-tcc",
     "test-qmp-fastfetch",
+    "test-qmp-sl",
     "test-qmp-dynlinkerror",
     "test-qmp-cmd",
     "test-qmp-stardust",
@@ -568,6 +569,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     fastfetch_elf = paths.out / "userland/fastfetch.elf"
     fastfetch_stamp = paths.out / "userland/fastfetch.stamp"
     fastfetch_work_dir = paths.out / "fastfetch-work"
+    sl_source = ROOT / "third_party/sl"
+    sl_port = ROOT / "userland/sl"
+    sl_elf = paths.out / "userland/sl.elf"
+    sl_stamp = paths.out / "userland/sl.stamp"
+    sl_work_dir = paths.out / "sl-work"
     tcc_source = ROOT / "third_party/tinycc"
     tcc_port = ROOT / "userland/tcc"
     tcc_app_manifest = ROOT / "userland/apps/tcc/tcc.app.ini"
@@ -667,6 +673,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/fastfetch is missing; initialize the Fastfetch source tree")
     if not (fastfetch_port / "main.c").is_file() or not (fastfetch_port / "include/fastfetch_config.h").is_file():
         raise GraphError("the LeonOS Fastfetch port metadata is missing")
+    if not (sl_source / "sl.c").is_file() or not (sl_source / "sl.h").is_file() or not (sl_source / "LICENSE").is_file():
+        raise GraphError("third_party/sl is missing; initialize the sl source tree")
+    if not (sl_port / "leonos_curses.c").is_file() or not (sl_port / "leonos_signal.c").is_file() or not (sl_port / "include/curses.h").is_file():
+        raise GraphError("the LeonOS sl port metadata is missing")
     if not (tcc_source / "tcc.c").is_file():
         raise GraphError("third_party/tinycc is missing; initialize the TinyCC source tree")
     if not (lua_source / "lua.c").is_file() or not (lua_source / "lua.h").is_file():
@@ -1322,6 +1332,31 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ),
     ))
 
+    sl_inputs = collect(
+        "third_party/sl/sl.c", "third_party/sl/sl.h", "third_party/sl/LICENSE",
+        "userland/sl/**/*.c", "userland/sl/**/*.h", "userland/sl/**/*.md",
+        "tools/build_sl.py",
+    )
+    graph.add(Target(
+        name="sl",
+        outputs=(sl_elf, sl_stamp),
+        inputs=tuple([*sl_inputs, ROOT / "userland/dynamic-app.ld", runtime_so,
+                      dynamic_crt_obj, dynamic_note_obj]),
+        depends_on=("runtime", "runtime-loader"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_sl.py", "--source", "third_party/sl", "--port", "userland/sl",
+            "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--linker-script", "userland/dynamic-app.ld", "--leonos-lib", relative(runtime_so),
+            "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(sl_work_dir),
+            "--output", relative(sl_elf), "--stamp", relative(sl_stamp),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
+            *compile_option_args,
+            *linker_option_args,
+        ),
+    ))
+
     tcc_inputs = collect(
         "third_party/tinycc/**/*.c", "third_party/tinycc/**/*.h",
         "third_party/tinycc/**/*.S", "third_party/tinycc/**/*.def",
@@ -1525,6 +1560,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         user_targets.append("nano")
     if component_enabled("fastfetch"):
         user_targets.append("fastfetch")
+    if component_enabled("sl"):
+        user_targets.append("sl")
     if component_enabled("tcc"):
         user_targets.append("tcc")
     if component_enabled("lua"):
@@ -1991,6 +2028,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                           fastfetch_license_destination)
         esp_names.append(target.name)
         esp_outputs.append(fastfetch_license_destination)
+    if component_enabled("sl", "image"):
+        sl_destination = paths.staging / "programs/sl"
+        for source in (sl_elf, sl_source / "LICENSE", sl_port / "README.md"):
+            destination = sl_destination / ("sl.elf" if source == sl_elf else source.name)
+            target = add_copy(graph, f"esp:sl:{destination.name}", source, destination)
+            esp_names.append(target.name)
+            esp_outputs.append(destination)
     if component_enabled("pleditor", "image"):
         pleditor_license_destination = paths.staging / "programs/pleditor/LICENSE"
         target = add_copy(graph, "esp:pleditor:LICENSE", ROOT / "third_party/pl_editor/LICENSE",
@@ -2263,6 +2307,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     def qmp_test(context: ActionContext, editor: str = "nano", tcc_smoke: bool = False,
                  fastfetch_smoke: bool = False,
+                 sl_smoke: bool = False,
                  dynlinkerror_smoke: bool = False,
                  cmd_pipeline_smoke: bool = False,
                  desktop_app: str | None = None) -> None:
@@ -2272,8 +2317,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             )
         test_name = desktop_app if desktop_app else ("dynlinkerror" if dynlinkerror_smoke else
                                                      ("cmd" if cmd_pipeline_smoke else
+                                                     ("sl" if sl_smoke else
                                                      ("fastfetch" if fastfetch_smoke else
-                                                      ("tcc" if tcc_smoke else editor))))
+                                                      ("tcc" if tcc_smoke else editor)))))
         # Keep the control endpoint and writes isolated from the produced VMDK.
         # The test name also makes per-test serial logs and QMP diagnostics
         # unambiguous when individual tests are started independently.
@@ -2293,6 +2339,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                     smoke_command.append("--tcc")
                 elif fastfetch_smoke:
                     smoke_command.append("--fastfetch")
+                elif sl_smoke:
+                    smoke_command.append("--sl")
                 elif dynlinkerror_smoke:
                     smoke_command.append("--dynlinkerror")
                 elif cmd_pipeline_smoke:
@@ -2334,6 +2382,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         elif fastfetch_smoke:
             expected_spawns = ("spawn path=0:/programs/fastfetch/fastfetch.elf",)
             expected_exits = ("name=fastfetch.elf",)
+        elif sl_smoke:
+            expected_spawns = ("spawn path=0:/programs/sl/sl.elf",)
+            expected_exits = ("name=sl.elf",)
         elif dynlinkerror_smoke:
             expected_spawns = (
                 "spawn path=0:/programs/nano/nano.elf",
@@ -2391,6 +2442,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-qmp-pleditor", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "pleditor"), action_key="qmp-pleditor-v1"))
     graph.add(Target(name="test-qmp-tcc", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, tcc_smoke=True), action_key="qmp-tcc-v1"))
     graph.add(Target(name="test-qmp-fastfetch", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, fastfetch_smoke=True), action_key="qmp-fastfetch-v1"))
+    graph.add(Target(name="test-qmp-sl", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, sl_smoke=True), action_key="qmp-sl-v1"))
     graph.add(Target(name="test-qmp-dynlinkerror", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, dynlinkerror_smoke=True), action_key="qmp-dynlinkerror-v1"))
     graph.add(Target(name="test-qmp-cmd", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, cmd_pipeline_smoke=True), action_key="qmp-cmd-v2"))
     graph.add(Target(name="test-qmp-stardust", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="stardusthello"), action_key="qmp-stardust-v1"))
@@ -2491,7 +2543,7 @@ def task_tools(task: str) -> tuple[str, ...]:
         return (*vmdk, "grub-mkrescue", "xorriso", "qemu-system-x86_64")
     if task == "menuconfig":
         return ("kconfig-mconf",)
-    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-fastfetch",
+    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-fastfetch", "test-qmp-sl",
                 "test-qmp-dynlinkerror", "test-qmp-cmd", "test-qmp-stardust", "test-all"}:
         return (*vmdk, "qemu-system-x86_64")
     return ()
@@ -2957,7 +3009,7 @@ def parser() -> argparse.ArgumentParser:
     add_config_options(generate)
     test = commands.add_parser("test")
     test.add_argument("item", choices=("license-server", "los2w", "component-config",
-                                       "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch",
+                                       "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl",
                                        "qmp-dynlinkerror", "qmp-cmd", "qmp-stardust", "all"))
     add_config_options(test)
     config = commands.add_parser("config")

@@ -43,6 +43,7 @@ SUBMODULE_LICENSES: dict[str, tuple[str, ...]] = {
     "stardustui": ("LICENSE",),
     "cmd": ("LICENSE", "COPYING"),
     "fastfetch": ("LICENSE",),
+    "sl": ("LICENSE",),
     "sqlite": ("LICENSE.md", "LICENSE", "COPYING"),
 }
 
@@ -55,6 +56,7 @@ IMAGE_LICENSES: dict[str, tuple[str, ...]] = {
     "cmd": ("LICENSE",),
     "nano": ("COPYING",),
     "fastfetch": ("LICENSE",),
+    "sl": ("LICENSE",),
     "pleditor": ("LICENSE",),
     "tcc": ("COPYING",),
 }

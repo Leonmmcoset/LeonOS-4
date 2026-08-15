@@ -401,6 +401,7 @@ static const char *leonos_command_path(const char *name)
     if (strcmp(name, "lua") == 0) return "0:/programs/lua/lua.elf";
     if (strcmp(name, "file") == 0) return "0:/programs/file/file.elf";
     if (strcmp(name, "fastfetch") == 0) return "0:/programs/fastfetch/fastfetch.elf";
+    if (strcmp(name, "sl") == 0) return "0:/programs/sl/sl.elf";
     if (strcmp(name, "cmd") == 0) return "0:/programs/cmd/cmd.elf";
     return 0;
 }

@@ -35,6 +35,7 @@ The `file` command is provided as an external program backed by upstream
 libmagic. Hush resolves it to `0:/programs/file/file.elf`; the matching
 compiled database is installed at `0:/system/share/misc/magic.mgc`.
 `fastfetch` is likewise resolved to `0:/programs/fastfetch/fastfetch.elf`.
+The `sl` terminal joke is resolved to `0:/programs/sl/sl.elf`.
 
 The kernel provides process inspection through the task snapshot ABI,
 same-user signal termination, COW `fork`, `execve`, process groups, foreground

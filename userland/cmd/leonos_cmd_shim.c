@@ -360,6 +360,7 @@ static const struct program_path programs[] = {
     {"cmd", "0:/programs/cmd/cmd.elf"},
     {"file", "0:/programs/file/file.elf"},
     {"fastfetch", "0:/programs/fastfetch/fastfetch.elf"},
+    {"sl", "0:/programs/sl/sl.elf"},
     {"lua", "0:/programs/lua/lua.elf"},
     {"nano", "0:/programs/nano/nano.elf"},
     {"pleditor", "0:/programs/pleditor/pleditor.elf"},

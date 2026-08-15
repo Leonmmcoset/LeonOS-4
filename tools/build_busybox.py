@@ -312,6 +312,8 @@ def enable_leonos_spawn_fallback(source: Path) -> None:
 \t\t\tspawn_path = xstrdup("0:/programs/file/file.elf");
 \t\telse if (strcmp(argv_expanded[0], "fastfetch") == 0)
 \t\t\tspawn_path = xstrdup("0:/programs/fastfetch/fastfetch.elf");
+\t\telse if (strcmp(argv_expanded[0], "sl") == 0)
+\t\t\tspawn_path = xstrdup("0:/programs/sl/sl.elf");
 \t\telse if (strcmp(argv_expanded[0], "cmd") == 0)
 \t\t\tspawn_path = xstrdup("0:/programs/cmd/cmd.elf");
 \t\telse if (strchr(argv_expanded[0], '/'))

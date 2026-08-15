@@ -525,6 +525,19 @@ sdk = false
 api = false
 
 [[components]]
+id = "sl"
+symbol = "TOOL_SL"
+label = "sl Steam Locomotive"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "pleditor"
 symbol = "APP_PLEDITOR"
 label = "PL editor"
