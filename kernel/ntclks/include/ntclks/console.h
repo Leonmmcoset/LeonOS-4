@@ -14,6 +14,11 @@ struct leonos_boot_log_state;
  */
 void console_init(void);
 /**
+ * @brief Sets the loader-provided uptime origin for boot log timestamps.
+ * @param uptime_us Elapsed boot time in microseconds at kernel entry.
+ */
+void console_set_boot_uptime_us(uint64_t uptime_us);
+/**
  * @brief Coordinates the console putc operation.
  * @param ch Input or output value used by this operation.
  */

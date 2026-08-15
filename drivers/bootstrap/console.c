@@ -2,6 +2,7 @@
 #include <leonos/psf_font.h>
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
+#include <ntclks/time.h>
 
 #define CONSOLE_LOG_CAP 8192
 #define CONSOLE_MAX_COLS 512u
@@ -18,6 +19,8 @@ static uint32_t fb_rows;
 static uint32_t fb_col;
 static uint32_t fb_row;
 static uint32_t console_ui_theme = 1u;
+static bool console_line_start = true;
+static uint64_t console_boot_uptime_us;
 
 static uint32_t console_panel(void)
 {
@@ -183,14 +186,26 @@ static void fb_console_initialize_fullscreen(void)
     framebuffer_rect(0, 0, fb->width, fb->height, console_panel());
 }
 
-static void print_unsigned(uint64_t value, unsigned base, bool upper)
+static void console_emit_raw(char ch)
+{
+    char s[2] = {ch, 0};
+    log_store(ch);
+    serial_write(s);
+    if (vga_console_enabled) {
+        vga_putc(ch);
+    }
+    fb_console_putc(ch);
+    console_line_start = ch == '\n';
+}
+
+static void print_unsigned_raw(uint64_t value, unsigned base, bool upper)
 {
     char buf[32];
     const char *digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
     size_t i = 0;
 
     if (value == 0) {
-        console_putc('0');
+        console_emit_raw('0');
         return;
     }
 
@@ -199,13 +214,46 @@ static void print_unsigned(uint64_t value, unsigned base, bool upper)
         value /= base;
     }
     while (i) {
-        console_putc(buf[--i]);
+        console_emit_raw(buf[--i]);
     }
+}
+
+static void console_emit_timestamp(void)
+{
+    uint64_t uptime_us = console_boot_uptime_us + time_uptime_ms() * 1000ULL;
+    uint64_t seconds = uptime_us / 1000000ULL;
+    uint64_t micros = uptime_us % 1000000ULL;
+    uint64_t divisor = 1ULL;
+    uint32_t digits = 1U;
+
+    while (seconds >= divisor * 10ULL && digits < 20U) {
+        divisor *= 10ULL;
+        ++digits;
+    }
+    console_emit_raw('[');
+    for (uint32_t i = digits; i < 5U; ++i) {
+        console_emit_raw(' ');
+    }
+    print_unsigned_raw(seconds, 10, false);
+    console_emit_raw('.');
+    console_emit_raw((char)('0' + (micros / 100000ULL) % 10ULL));
+    console_emit_raw((char)('0' + (micros / 10000ULL) % 10ULL));
+    console_emit_raw((char)('0' + (micros / 1000ULL) % 10ULL));
+    console_emit_raw((char)('0' + (micros / 100ULL) % 10ULL));
+    console_emit_raw((char)('0' + (micros / 10ULL) % 10ULL));
+    console_emit_raw((char)('0' + micros % 10ULL));
+    console_emit_raw(']');
+    console_emit_raw(' ');
 }
 
 void console_init(void)
 {
     serial_init();
+}
+
+void console_set_boot_uptime_us(uint64_t uptime_us)
+{
+    console_boot_uptime_us = uptime_us;
 }
 
 void console_set_ui_theme(uint32_t theme)
@@ -215,13 +263,10 @@ void console_set_ui_theme(uint32_t theme)
 
 void console_putc(char ch)
 {
-    char s[2] = {ch, 0};
-    log_store(ch);
-    serial_write(s);
-    if (vga_console_enabled) {
-        vga_putc(ch);
+    if (console_line_start) {
+        console_emit_timestamp();
     }
-    fb_console_putc(ch);
+    console_emit_raw(ch);
 }
 
 void console_write(const char *s)
@@ -241,6 +286,10 @@ void console_write_len(const char *s, size_t len)
 void console_printf(const char *fmt, ...)
 {
     va_list ap;
+
+    if (fmt && fmt[0] && console_line_start) {
+        console_emit_timestamp();
+    }
     va_start(ap, fmt);
 
     for (const char *p = fmt; *p; ++p) {
@@ -279,14 +328,14 @@ void console_printf(const char *fmt, ...)
                 console_putc('-');
                 v = -v;
             }
-            print_unsigned((uint64_t)v, 10, false);
+            print_unsigned_raw((uint64_t)v, 10, false);
             break;
         }
         case 'u': {
             uint64_t v = long_long_flag ? va_arg(ap, unsigned long long)
                          : long_flag  ? va_arg(ap, unsigned long)
                                       : va_arg(ap, unsigned int);
-            print_unsigned(v, 10, false);
+            print_unsigned_raw(v, 10, false);
             break;
         }
         case 'x':
@@ -294,13 +343,13 @@ void console_printf(const char *fmt, ...)
             uint64_t v = long_long_flag ? va_arg(ap, unsigned long long)
                          : long_flag  ? va_arg(ap, unsigned long)
                                       : va_arg(ap, unsigned int);
-            print_unsigned(v, 16, *p == 'X');
+            print_unsigned_raw(v, 16, *p == 'X');
             break;
         }
         case 'p': {
             uintptr_t v = (uintptr_t)va_arg(ap, void *);
             console_write("0x");
-            print_unsigned(v, 16, false);
+            print_unsigned_raw(v, 16, false);
             break;
         }
         case '%':

@@ -127,6 +127,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     __asm__ volatile("cli");
     console_init();
+    console_set_boot_uptime_us(handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC
+                                   ? handoff->boot_uptime_us
+                                   : 0ULL);
     const struct leonos_system_info *system = ntclks_system_info();
     console_printf("LeonOS 4 %s %s booting\n",
                    system->kernel_name,

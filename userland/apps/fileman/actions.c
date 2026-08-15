@@ -290,6 +290,9 @@ void execute_action(uint32_t action)
     case FILEMAN_ACTION_REFRESH:
         reload_dir();
         break;
+    case FILEMAN_ACTION_SETTINGS:
+        fileman_open_settings();
+        break;
     default:
         break;
     }

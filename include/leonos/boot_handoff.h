@@ -101,6 +101,7 @@ struct leonos_boot_handoff {
     struct leonos_boot_module_info installer_root;
     uint64_t middlelayer_api;
     struct leonos_boot_log_state boot_log;
+    uint64_t boot_uptime_us;
 };
 
 struct leonos_kernel_services {

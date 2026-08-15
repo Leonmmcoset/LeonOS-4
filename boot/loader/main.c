@@ -299,6 +299,10 @@ void loader_main(uint32_t magic, uint32_t multiboot_info);
 static uint8_t read_buffer[READ_BUFFER_SIZE] __attribute__((aligned(4096)));
 static struct leonos_boot_handoff handoff;
 static struct efi_boot_services *boot_services;
+static uint8_t loader_log_line_start = 1u;
+static uint64_t loader_tsc_start;
+static uint64_t loader_tsc_hz;
+static uint8_t loader_tsc_ready;
 static struct efi_file_protocol *root_dir;
 static struct efi_simple_text_output_protocol *text_out;
 static struct efi_simple_text_input_protocol *text_in;
@@ -924,12 +928,113 @@ static void loader_framebuffer_putc(char ch)
     ++framebuffer_console.column;
 }
 
-static void serial_putc(char ch)
+static uint64_t loader_rdtsc(void)
+{
+    uint32_t low;
+    uint32_t high;
+    __asm__ volatile("rdtsc" : "=a"(low), "=d"(high));
+    return ((uint64_t)high << 32) | low;
+}
+
+static void loader_clock_calibrate(void)
+{
+    uint64_t sample_start;
+    uint64_t sample_end;
+    struct efi_system_table *st;
+
+    if (!loader_tsc_start) {
+        loader_tsc_start = loader_rdtsc();
+    }
+    if (!boot_services) {
+        if (!handoff.efi_system_table) {
+            return;
+        }
+        st = (struct efi_system_table *)(uintptr_t)handoff.efi_system_table;
+        boot_services = st->boot_services;
+    }
+    if (!boot_services || !boot_services->stall) {
+        return;
+    }
+    sample_start = loader_rdtsc();
+    if (boot_services->stall(100000ULL) != EFI_SUCCESS) {
+        return;
+    }
+    sample_end = loader_rdtsc();
+    if (sample_end <= sample_start) {
+        return;
+    }
+    loader_tsc_hz = (sample_end - sample_start) * 10ULL;
+    loader_tsc_ready = loader_tsc_hz != 0;
+}
+
+static uint64_t loader_uptime_us(void)
+{
+    uint64_t now;
+    uint64_t elapsed;
+
+    if (!loader_tsc_ready || !loader_tsc_start) {
+        return 0;
+    }
+    now = loader_rdtsc();
+    if (now <= loader_tsc_start) {
+        return 0;
+    }
+    elapsed = now - loader_tsc_start;
+    return (elapsed * 1000000ULL) / loader_tsc_hz;
+}
+
+static void serial_putc_raw(char ch)
 {
     loader_outb((uint8_t)ch, 0x3f8);
     if (loader_boot_log_screen) {
         loader_framebuffer_putc(ch);
     }
+}
+
+static void loader_emit_timestamp(void)
+{
+    uint64_t uptime_us = loader_uptime_us();
+    uint64_t seconds = uptime_us / 1000000ULL;
+    uint64_t micros = uptime_us % 1000000ULL;
+    uint64_t divisor = 1ULL;
+    uint32_t digits = 1U;
+
+    while (seconds >= divisor * 10ULL && digits < 20U) {
+        divisor *= 10ULL;
+        ++digits;
+    }
+    serial_putc_raw('[');
+    for (uint32_t i = digits; i < 5U; ++i) {
+        serial_putc_raw(' ');
+    }
+    if (seconds == 0) {
+        serial_putc_raw('0');
+    } else {
+        char digits_buf[20];
+        uint32_t count = 0;
+        while (seconds && count < sizeof(digits_buf)) {
+            digits_buf[count++] = (char)('0' + seconds % 10ULL);
+            seconds /= 10ULL;
+        }
+        while (count) {
+            serial_putc_raw(digits_buf[--count]);
+        }
+    }
+    serial_putc_raw('.');
+    for (uint64_t divisor_us = 100000ULL; divisor_us; divisor_us /= 10ULL) {
+        serial_putc_raw((char)('0' + (micros / divisor_us) % 10ULL));
+    }
+    serial_putc_raw(']');
+    serial_putc_raw(' ');
+}
+
+static void serial_putc(char ch)
+{
+    if (loader_log_line_start) {
+        loader_emit_timestamp();
+    }
+    serial_putc_raw(ch);
+    loader_log_line_start = ch == '\n';
 }
 
 static void serial_write(const char *s)
@@ -1528,6 +1633,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     const struct loader_module *middlelayer_module;
     const struct loader_module *installer_root_module;
 
+    loader_tsc_start = loader_rdtsc();
     serial_init();
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
@@ -1543,6 +1649,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     }
     loader_framebuffer_init();
     efi_console_init();
+    loader_clock_calibrate();
     if (handoff.efi_system_table && efi_open_root(handoff.efi_system_table) == 0) {
         loader_load_ui_theme();
         loader_framebuffer_set_theme(handoff.ui_theme);
@@ -1668,6 +1775,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
 
     serial_write("[loader] jumping to kernel\n");
     loader_framebuffer_draw_boot_splash(80u);
+    handoff.boot_uptime_us = loader_uptime_us();
     loader_framebuffer_save_state();
     void (*entry)(const struct leonos_boot_handoff *) =
         (void (*)(const struct leonos_boot_handoff *))(uintptr_t)handoff.kernel.entry;

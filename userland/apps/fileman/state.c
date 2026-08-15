@@ -31,6 +31,9 @@ struct fileman_tree_node fileman_tree_nodes[FILEMAN_TREE_MAX_NODES];
 uint32_t fileman_tree_node_count;
 uint32_t fileman_tree_next_id;
 uint32_t fileman_tree_scroll;
+uint8_t fileman_show_hidden;
+uint8_t fileman_settings_open;
+uint8_t fileman_settings_show_hidden;
 
 struct fileman_layout current_layout(void)
 {

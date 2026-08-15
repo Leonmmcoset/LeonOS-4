@@ -41,13 +41,14 @@ int handle_menu_click(int32_t x, int32_t y)
         struct leonos_ui_context_menu_item items[] = {
             {T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0},
             {T("Root", "根目录"), FILEMAN_ACTION_ROOT, 0},
+            {T("Settings...", "设置..."), FILEMAN_ACTION_SETTINGS, 0},
             {T("About", "关于"), FILEMAN_ACTION_ABOUT, 0},
         };
         struct leonos_ui_rect r;
         leonos_ui_menubar_item_rect(0, 0, menu_items,
                                     sizeof(menu_items) / sizeof(menu_items[0]),
                                     FILEMAN_MENU_VIEW, &r);
-        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, MENU_BAR_H, 154,
+        if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, MENU_BAR_H, 170,
                                      items, sizeof(items) / sizeof(items[0]),
                                      &action)) {
             menu_open = FILEMAN_MENU_NONE;
@@ -55,6 +56,8 @@ int handle_menu_click(int32_t x, int32_t y)
                 reload_dir();
             } else if (action == FILEMAN_ACTION_ROOT) {
                 navigate_root();
+            } else if (action == FILEMAN_ACTION_SETTINGS) {
+                fileman_open_settings();
             } else if (action == FILEMAN_ACTION_ABOUT) {
                 leonos_ui_show_message_box(T("File Manager", "文件资源管理器"), T("Browse files and launch apps.", "浏览文件并启动应用。"), "OK");
             }
@@ -172,6 +175,10 @@ void handle_click(int32_t x, int32_t y)
     struct fileman_layout l = current_layout();
     uint32_t address_w = view_w > 238 ? view_w - 238 :
                          (view_w > 230 ? view_w - 230 : 1);
+    if (fileman_settings_open) {
+        (void)fileman_handle_settings_click(x, y);
+        return;
+    }
     if (handle_context_menu_click(x, y)) {
         return;
     }
@@ -289,6 +296,12 @@ void handle_click(int32_t x, int32_t y)
 void handle_key(uint8_t keycode, uint8_t pressed)
 {
     uint32_t activate = 0;
+    if (fileman_settings_open) {
+        if (pressed) {
+            (void)fileman_handle_settings_key(keycode);
+        }
+        return;
+    }
     if (address_edit.focused) {
         if (pressed && keycode == FILEMAN_KEY_ESCAPE) {
             address_edit.focused = 0;
