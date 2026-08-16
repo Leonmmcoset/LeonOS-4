@@ -222,17 +222,39 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
         "        tcc_add_library(s1, \"c\");\n",
         "#if defined LEONOS_TCC_TARGET\n"
         "        /*\n"
-        "         * This is the LeonOS static target link specification. The second\n"
-        "         * Picolibc scan resolves adapter objects selected from libleonos.\n"
+        "         * This is the LeonOS static target link specification. Archives\n"
+        "         * are rescanned as a group because the LeonOS adapter, Picolibc,\n"
+        "         * mbedTLS, and target runtime have recursive references. TinyCC\n"
+        "         * resolves an archive only when tcc_add_library() is called, so\n"
+        "         * one pass is not sufficient for all cross-archive dependencies.\n"
         "         */\n"
+        "        tcc_add_support(s1, \"libleonos-tcc-rt.a\");\n"
         "        tcc_add_library(s1, \"picolibc\");\n"
         "        tcc_add_library(s1, \"leonos\");\n"
         "        tcc_add_library(s1, \"picolibc\");\n"
-        "        tcc_add_support(s1, \"libleonos-tcc-rt.a\");\n"
+        "        tcc_add_library(s1, \"leonos\");\n"
+        "        tcc_add_library(s1, \"picolibc\");\n"
+        "        tcc_add_library(s1, \"leonos\");\n"
         "#else\n"
         "        tcc_add_library(s1, \"c\");\n"
         "#endif\n",
         "LeonOS static target link specification",
+    )
+
+    replace_once(
+        source / "x86_64-link.c",
+        "ST_FUNC int gotplt_entry_type (int reloc_type)\n"
+        "{\n"
+        "    switch (reloc_type) {\n"
+        "        case R_X86_64_GLOB_DAT:\n",
+        "ST_FUNC int gotplt_entry_type (int reloc_type)\n"
+        "{\n"
+        "    switch (reloc_type) {\n"
+        "        /* TLS relaxation leaves a consumed relocation marker. */\n"
+        "        case R_X86_64_NONE:\n"
+        "            return NO_GOTPLT_ENTRY;\n"
+        "        case R_X86_64_GLOB_DAT:\n",
+        "accept consumed x86_64 NONE relocations in GOT pass",
     )
 
     replace_once(

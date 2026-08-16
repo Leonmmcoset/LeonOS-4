@@ -1,7 +1,7 @@
 # ChenPi11/cmd on LeonOS
 
 LeonOS builds the upstream `cmd` interpreter as `0:/programs/cmd/cmd.elf`.
-BusyBox Hush starts it with the `cmd` command.
+BusyBox Ash starts it with the `cmd` command.
 
 The port retains the interpreter, built-in commands, batch files, variables,
 redirection and the LeonOS terminal's canonical input mode. External commands

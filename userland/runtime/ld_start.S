@@ -5,6 +5,10 @@
 .extern _DYNAMIC
 _start:
     xor %rbp, %rbp
+    /* The loader's self-relocation loop uses rdx as scratch, but the kernel
+     * passes the initial environment vector in rdx. Preserve it until the
+     * C loader receives the established argc/argv/envp launch ABI. */
+    mov %rdx, %r14
     /* ld-leonos is itself a PIE.  Its dynamic section is deliberately small
      * and self-contained, so apply RELATIVE relocations before C touches the
      * GOT or writable global data.  The kernel supplies this image's load
@@ -49,6 +53,7 @@ _start:
     jmp 5b
 6:
     mov %r8, %rcx
+    mov %r14, %rdx
     /* argc, argv and envp retain the normal LeonOS launch registers. */
     /* The kernel normally supplies an aligned initial stack.  Keep the
      * interpreter's first C call ABI-correct even if the launch layout grows. */

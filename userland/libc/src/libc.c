@@ -20,9 +20,19 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/resource.h>
 #include <termios.h>
+
+/* TinyCC's static archive scan can leave Picolibc's environ member out when
+ * the generated program only needs the CRT startup object. Keep a real
+ * address available for the startup assignment; Picolibc's strong definition
+ * still wins when its full environment implementation is pulled in. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+#endif
+char **environ;
 
 #ifndef LEONOS_USE_PICOLIBC
 int errno;
@@ -401,8 +411,38 @@ int chdir(const char *path)
 
 char *getcwd(char *buf, size_t len)
 {
-    long ret = syscall2(SYS_getcwd, (long)buf, (long)len);
-    return ret < 0 ? (char *)0 : (char *)ret;
+    int allocated = 0;
+    long ret;
+
+    /* BusyBox Ash and other portable user programs use the widely supported
+     * getcwd(NULL, 0) allocation extension. LeonOS paths have a fixed ABI
+     * maximum, so allocate a buffer large enough for every canonical path. */
+    if (!buf) {
+        if (len != 0) {
+            errno = EINVAL;
+            return 0;
+        }
+        len = LEONOS_FS_PATH_LEN;
+        buf = malloc(len);
+        if (!buf) {
+            errno = ENOMEM;
+            return 0;
+        }
+        allocated = 1;
+    } else if (len == 0) {
+        errno = EINVAL;
+        return 0;
+    }
+
+    ret = syscall2(SYS_getcwd, (long)buf, (long)len);
+    if (ret < 0) {
+        errno = (int)-ret;
+        if (allocated) {
+            free(buf);
+        }
+        return 0;
+    }
+    return (char *)ret;
 }
 
 int ioctl(int fd, unsigned long request, void *arg)

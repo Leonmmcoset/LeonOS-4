@@ -85,7 +85,7 @@ EOF 或返回负值。目录通过 `leonos_list_dir()` 或 `leonos_readdir()` �
 
 `pipe()` 创建容量为 4 KiB 的匿名管道，`dup2()` 可把管道或普通文件绑定到标准流。
 管道在无数据时返回 `EAGAIN`，写端没有读者时返回 `EPIPE`；libc 会短暂让出 CPU
-后重试。Hush 已支持普通流水线、重定向、后台任务与 `jobs`/`fg`/`bg`。
+后重试。Ash 已支持普通流水线、重定向、后台任务与 `jobs`/`fg`/`bg`。
 
 ## 内存映射
 

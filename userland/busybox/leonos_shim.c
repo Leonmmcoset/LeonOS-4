@@ -18,7 +18,21 @@ extern int sleep_ms(unsigned long milliseconds);
 extern unsigned long leonos_uptime_ms(void);
 extern char **environ;
 
-static const char *leonos_command_path(const char *name);
+/* Ash and libbb/lineedit share this latch when an input wait is interrupted.
+ * The rest of BusyBox's signals.c is intentionally replaced by the LeonOS
+ * signal shim below, so keep this small state definition here as well. */
+signed char bb_got_signal;
+
+void record_signo(int signal_number)
+{
+    bb_got_signal = (signed char)signal_number;
+}
+
+/* POSIX requires environ to remain a valid, NULL-terminated vector.  Ash
+ * calls clearenv() while preparing noexec applets, so never leave it NULL. */
+static char *leonos_empty_environment[] = { 0 };
+
+const char *leonos_shell_command_path(const char *name);
 
 /*
  * LeonOS terminals are inherited standard streams, not reopenable named tty
@@ -40,6 +54,11 @@ void bb_signals(int signals, void (*handler)(int))
 {
     (void)signals;
     (void)handler;
+}
+
+int sigaction_set(int signal_number, const struct sigaction *action)
+{
+    return sigaction(signal_number, action, NULL);
 }
 
 void kill_myself_with_sig(int signal_number)
@@ -130,7 +149,18 @@ gid_t getegid(void)
     return 0;
 }
 
-static const char *leonos_command_path(const char *name)
+int getgroups(int count, gid_t groups[])
+{
+    (void)groups;
+    if (count < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    /* LeonOS currently has no supplementary-group database. */
+    return 0;
+}
+
+const char *leonos_shell_command_path(const char *name)
 {
     if (!name || !name[0]) return 0;
     if (strchr(name, '/') || strchr(name, ':')) return name;
@@ -183,15 +213,14 @@ static int leonos_exec_busybox_applet(char *const argv[])
 
 int execvp(const char *file, char *const argv[])
 {
-    const char *path = leonos_command_path(file);
+    const char *path = leonos_shell_command_path(file);
     if (path) {
         return execve(path, argv, environ);
     }
 
-    /* Hush invokes execvp for a normal BusyBox applet as well as for an
-     * external program.  There are no applet symlinks or /proc/self/exe in
-     * the system image, so express the former using BusyBox's documented
-     * process form instead of trying to exec a bare applet name. */
+    /* Other BusyBox callers may use execvp directly. Ash uses its dedicated
+     * image resolver patch, while this fallback still expresses a bare
+     * applet through BusyBox's documented process form. */
     if (!argv || !argv[0]) {
         errno = EINVAL;
         return -1;
@@ -219,6 +248,11 @@ void globfree(glob_t *matches)
 unsigned long long monotonic_ms(void)
 {
     return (unsigned long long)leonos_uptime_ms();
+}
+
+unsigned long long monotonic_us(void)
+{
+    return (unsigned long long)leonos_uptime_ms() * 1000ULL;
 }
 
 unsigned bb_clk_tck(void)
@@ -305,6 +339,10 @@ int uname(struct utsname *name)
 
 int clearenv(void)
 {
-    environ = 0;
+    if (environ) {
+        environ[0] = 0;
+    } else {
+        environ = leonos_empty_environment;
+    }
     return 0;
 }

@@ -16,5 +16,5 @@ sl -c       Draw the C51 locomotive
 ```
 
 The command is installed as `0:/programs/sl/sl.elf` and is available from both
-BusyBox Hush and the `cmd` shell. The upstream copyright and license are kept
+BusyBox Ash and the `cmd` shell. The upstream copyright and license are kept
 in the adjacent `LICENSE` file.

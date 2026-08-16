@@ -537,6 +537,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     dynlinkerror_elf = paths.out / "userland/dynlinkerror.elf"
     installer_runtime_so = paths.out / "userland-installer-policy/libleonos.so.1"
     picolibc_header_stamp = picolibc_prefix / "include/.leonos-picolibc.stamp"
+    picolibc_static_header_stamp = picolibc_static_prefix / "include/.leonos-picolibc.stamp"
     zlib_source = ROOT / "third_party/zlib"
     libpng_source = ROOT / "third_party/libpng"
     libpng_config_source = libpng_source / "scripts/pnglibconf.h.prebuilt"
@@ -744,7 +745,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(
         Target(
             name="picolibc-static",
-            outputs=(picolibc_static_archive,),
+            # Static libc objects include this generated sysroot.  Declare the
+            # stamp as an output as well as the archive so the scheduler can
+            # order those compiles after Meson has finished installing every
+            # header; otherwise they can race the install on a clean build.
+            outputs=(picolibc_static_archive, picolibc_static_header_stamp),
             inputs=tuple([ROOT / "tools/build_picolibc.py", picolibc_cross_file, *picolibc_inputs]),
             kind="compile",
             command=(PYTHON, "tools/build_picolibc.py", "--source", "third_party/picolibc",
@@ -854,7 +859,17 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "-Ithird_party/mbedtls/include", "-Ithird_party/zlib", "-Ithird_party/libpng",
         f"-I{relative(libpng_generated_dir)}", '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
+    # TCC's target linker consumes a static, non-PIC SDK.  The normal libc
+    # objects are PIC inputs for the shared runtime and contain GOT relaxation
+    # relocations that TinyCC intentionally does not accept in static links.
+    cflags_user_libc_static_base = [
+        "-fno-pic" if flag == "-fPIC" else
+        f"-I{relative(picolibc_static_prefix / 'include')}" if flag == f"-I{relative(picolibc_prefix / 'include')}" else
+        flag
+        for flag in cflags_user_libc_base
+    ]
     cflags_user_libc = cflags_user_libc_base + ["-include", relative(autoconf)]
+    cflags_user_libc_static = cflags_user_libc_static_base + ["-include", relative(autoconf)]
     cflags_installer_libc = cflags_user_libc_base + ["-include", relative(installer_autoconf)]
     asflags_user = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-ffreestanding", "-mno-red-zone",
@@ -1029,19 +1044,25 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     libc_sources = collect("userland/libc/src/*.c", "userland/libc/src/*.S")
     libc_sources += [ROOT / "third_party/mbedtls/library" / source for source in MBEDTLS_SOURCES]
     libc_objects: list[Path] = []
+    static_libc_objects: list[Path] = []
     installer_libc_objects: list[Path] = []
     for source in sorted(libc_sources):
         is_asm = source.suffix == ".S"
         implicit = (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else ()
+        static_implicit = (autoconf, picolibc_static_header_stamp, libpng_config) if not is_asm else ()
         installer_implicit = (installer_autoconf, picolibc_header_stamp, libpng_config) if not is_asm else ()
         if source == ROOT / "userland/libc/src/text_encoding.c":
             implicit += (gbk_table_header,)
+            static_implicit += (gbk_table_header,)
             installer_implicit += (gbk_table_header,)
         libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, implicit, kind="assemble" if is_asm else "compile"))
+        static_libc_objects.append(add_compile(graph, paths, f"compile:static-libc:{relative(source)}", source, "userlib-static", asflags_user if is_asm else cflags_user_libc_static, static_implicit, kind="assemble" if is_asm else "compile"))
         installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, installer_implicit, kind="assemble" if is_asm else "compile"))
     libc_a = paths.out / "userland/libc.a"
+    static_libc_a = paths.out / "userland/libc-static.a"
     installer_libc_a = paths.out / "userland-installer-policy/libc.a"
     graph.add(Target(name="archive:libc", outputs=(libc_a,), inputs=tuple(libc_objects), kind="link", command=(ar, "rcs", relative(libc_a), *map(relative, libc_objects))))
+    graph.add(Target(name="archive:libc-static", outputs=(static_libc_a,), inputs=tuple(static_libc_objects), depends_on=("picolibc-static",), kind="link", command=(ar, "rcs", relative(static_libc_a), *map(relative, static_libc_objects))))
     graph.add(Target(name="archive:installer-libc", outputs=(installer_libc_a,), inputs=tuple(installer_libc_objects), kind="link", command=(ar, "rcs", relative(installer_libc_a), *map(relative, installer_libc_objects))))
 
     runtime_sources = [source for source in sorted(libc_sources)
@@ -1367,15 +1388,15 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(
         name="tcc",
         outputs=(tcc_elf, tcc_stamp),
-        inputs=tuple([*tcc_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive,
+        inputs=tuple([*tcc_inputs, ROOT / "userland/linker.ld", static_libc_a, picolibc_static_archive,
                       zlib_archive, libpng_archive]),
-        depends_on=("picolibc", "archive:libc", "archive:zlib", "archive:libpng"),
+        depends_on=("picolibc-static", "archive:libc-static", "archive:zlib", "archive:libpng"),
         kind="compile",
         command=(
             PYTHON, "tools/build_tcc.py", "--source", "third_party/tinycc",
             "--port", "userland/tcc", "--sdk-include", "devtools/include",
-            "--picolibc-prefix", relative(picolibc_prefix), "--leonos-lib", relative(libc_a),
-            "--picolibc-lib", relative(picolibc_archive), "--linker-script", "userland/linker.ld",
+            "--picolibc-prefix", relative(picolibc_static_prefix), "--leonos-lib", relative(static_libc_a),
+            "--picolibc-lib", relative(picolibc_static_archive), "--linker-script", "userland/linker.ld",
             "--zlib-lib", relative(zlib_archive), "--libpng-lib", relative(libpng_archive),
             "--zlib-source", "third_party/zlib", "--libpng-source", "third_party/libpng",
             "--libpng-config", relative(libpng_config),
@@ -2379,7 +2400,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         elif tcc_smoke:
             expected_spawns = (
                 "spawn path=0:/programs/tcc/tcc.elf",
-                "spawn path=0:/programs/tcc/hello.elf",
+                "spawn path=0:/users/admin/hello.elf",
             )
             expected_exits = ("name=tcc.elf", "name=hello.elf")
         elif fastfetch_smoke:
@@ -2400,12 +2421,15 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "spawn path=0:/programs/busybox/busybox.elf",
             )
             expected_exits = ("name=busybox.elf",)
+        elif editor == "vi":
+            expected_spawns = ("spawn path=0:/programs/busybox/busybox.elf",)
+            expected_exits = ("name=busybox.elf",)
         else:
             expected_spawns = (f"spawn path=0:/programs/{editor}/{editor}.elf",)
             expected_exits = (f"name={editor}.elf",)
         for expected_spawn in expected_spawns:
             # Desktop launchers still use the kernel's direct launcher API,
-            # while Hush now performs a real COW fork followed by execve.
+            # while Ash now performs a real COW fork followed by execve.
             # Accept either diagnostic form, but always require the exact
             # executable path so a different child cannot satisfy the check.
             executable_path = expected_spawn.removeprefix("spawn path=")
@@ -2446,6 +2470,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 )
     graph.add(Target(name="test-qmp-terminal", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v3"))
     graph.add(Target(name="test-qmp-pleditor", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "pleditor"), action_key="qmp-pleditor-v1"))
+    graph.add(Target(name="test-qmp-vi", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "vi"), action_key="qmp-vi-v1"))
     graph.add(Target(name="test-qmp-tcc", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, tcc_smoke=True), action_key="qmp-tcc-v1"))
     graph.add(Target(name="test-qmp-fastfetch", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, fastfetch_smoke=True), action_key="qmp-fastfetch-v1"))
     graph.add(Target(name="test-qmp-sl", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, sl_smoke=True), action_key="qmp-sl-v1"))
@@ -2521,7 +2546,7 @@ def task_tools(task: str) -> tuple[str, ...]:
                      "gcc", "gawk")
     userland = (*compiler, "llvm-ar", *host_userland)
     esp = (*userland, "rustc", "grub-mkfont", "grub-mkstandalone")
-    vmdk = (*esp, "truncate", "sgdisk", "mkfs.fat", "mcopy", "mke2fs", "dd", "qemu-img")
+    vmdk = (*esp, "truncate", "mkfs.fat", "mcopy", "mke2fs", "dd", "qemu-img")
     iso = (*esp, "grub-mkrescue", "xorriso")
     if task in {"file", "file-magic", "sqlite"}:
         return userland

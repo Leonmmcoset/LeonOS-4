@@ -1187,6 +1187,11 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     if (!terminal_write_input(&character, 1)) {
         return 0;
     }
+    /* Tab completion and raw-mode programs decide their own cursor movement.
+     * Do not fake a four-column local echo; render only what the PTY produces. */
+    if (keycode == LEONOS_KEY_TAB) {
+        return 1;
+    }
     local_echo = !have_termios ||
                  (termios.c_lflag & LEONOS_PTY_LFLAG_ECHO) != 0;
     if (local_echo) {
@@ -1325,7 +1330,8 @@ static void terminal_close_all_sessions(void)
 }
 
 static struct terminal_session *terminal_open_session(const char *path,
-                                                       char *const command_argv[])
+                                                      char *const command_argv[],
+                                                      char *const command_envp[])
 {
     struct terminal_session *session = 0;
     int new_pty;
@@ -1356,7 +1362,8 @@ static struct terminal_session *terminal_open_session(const char *path,
     terminal_reset_style();
     terminal_clear();
     terminal_sync_session_winsize(session);
-    shell_result = leonos_pty_spawn_argv(path, active_pty_id, command_argv, 0);
+    shell_result = leonos_pty_spawn_argv(path, active_pty_id, command_argv,
+                                         command_envp);
     if (shell_result < 0) {
         terminal_put_text("! shell start failed");
     }
@@ -1365,7 +1372,8 @@ static struct terminal_session *terminal_open_session(const char *path,
 }
 
 static int terminal_handle_mouse(int32_t x, int32_t y, uint8_t buttons,
-                                 const char *path, char *const command_argv[])
+                                 const char *path, char *const command_argv[],
+                                 char *const command_envp[])
 {
     struct leonos_ui_tab_item tab_items[TERMINAL_MAX_SESSIONS];
     uint32_t tab_count;
@@ -1386,7 +1394,7 @@ static int terminal_handle_mouse(int32_t x, int32_t y, uint8_t buttons,
     if (x >= (int32_t)(terminal_view_width - TERMINAL_TAB_ADD_W) &&
         x < (int32_t)terminal_view_width && y >= 0 &&
         y < (int32_t)leonos_ui_tab_height()) {
-        return terminal_open_session(path, command_argv) != 0;
+        return terminal_open_session(path, command_argv, command_envp) != 0;
     }
     return 0;
 }
@@ -1396,7 +1404,11 @@ int main(int argc, char **argv, char **envp)
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     char *shell_argv[4];
+    char shell_prompt[] = "PS1=\\w \\$ ";
+    char shell_term[] = "TERM=xterm";
+    char *shell_envp[] = { shell_prompt, shell_term, 0 };
     char *const *command_argv;
+    char *const *command_envp;
     const char *command_path;
     uint8_t shift_down = 0;
     uint8_t ctrl_down = 0;
@@ -1408,6 +1420,7 @@ int main(int argc, char **argv, char **envp)
     if (argc > 2 && terminal_arg_eq(argv[1], "--run") && argv[2] && argv[2][0]) {
         command_path = argv[2];
         command_argv = &argv[2];
+        command_envp = 0;
     } else {
         shell_argv[0] = "0:/programs/busybox/busybox.elf";
         shell_argv[1] = "sh";
@@ -1415,6 +1428,7 @@ int main(int argc, char **argv, char **envp)
         shell_argv[3] = 0;
         command_path = shell_argv[0];
         command_argv = shell_argv;
+        command_envp = shell_envp;
     }
     window_id = leonos_gui_create_app_window_ex(T("Terminal", "终端"),
                                                 "", TERMINAL_DEFAULT_W,
@@ -1426,7 +1440,7 @@ int main(int argc, char **argv, char **envp)
     leonos_ui_bind(&ui, pixels, terminal_view_width, terminal_view_height,
                    TERMINAL_MAX_W);
     leonos_ui_tab_state_init(&tabs_state, 0);
-    if (!terminal_open_session(command_path, command_argv)) {
+    if (!terminal_open_session(command_path, command_argv, command_envp)) {
         printf("terminal: PTY creation failed\n");
         return 1;
     }
@@ -1448,7 +1462,8 @@ int main(int argc, char **argv, char **envp)
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
                 if (ctrl_down && shift_down && event.keycode == TERMINAL_KEY_T) {
-                    redraw |= terminal_open_session(command_path, command_argv) != 0;
+                    redraw |= terminal_open_session(command_path, command_argv,
+                                                    command_envp) != 0;
                 } else if (ctrl_down && shift_down && event.keycode == TERMINAL_KEY_W) {
                     int close_result = terminal_close_session(tabs_state.selected_id);
                     if (close_result < 0) {
@@ -1465,8 +1480,9 @@ int main(int argc, char **argv, char **envp)
                 (void)terminal_send_key(event.keycode, 0, &shift_down,
                                         &ctrl_down, &alt_down);
             } else if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
-                int mouse_result = terminal_handle_mouse(event.x, event.y, event.buttons,
-                                                         command_path, command_argv);
+            int mouse_result = terminal_handle_mouse(event.x, event.y, event.buttons,
+                                                      command_path, command_argv,
+                                                      command_envp);
                 if (mouse_result < 0) {
                     return 0;
                 }
