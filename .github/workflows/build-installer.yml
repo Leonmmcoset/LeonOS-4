@@ -10,7 +10,7 @@ on:
       installer_root_size_mib:
         description: Installer runtime root size in MiB (32-4096)
         required: false
-        default: "128"
+        default: "400"
         type: string
       installed_system_requires_license:
         description: Require activation after the installer deploys the system
