@@ -156,7 +156,10 @@ def main() -> None:
         "-Denable-malloc=true",
         "-Dinternal-heap=0",
         "-Dio-long-long=true",
-        "-Dformat-default=integer",
+        # Fastfetch and other POSIX ports use ordinary %f through the public
+        # printf/vsnprintf ABI. Picolibc still emits all variants, so selecting
+        # the double-aware default does not require an upstream source change.
+        "-Dformat-default=double",
         "-Dmb-capable=true",
         "-Dstack-protector-guard=global",
         "-Dspecsdir=none",

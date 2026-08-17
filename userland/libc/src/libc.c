@@ -2870,6 +2870,37 @@ static uint32_t http_copy_body(char *buffer, uint32_t body_offset,
     return copy_len;
 }
 
+static int http_extra_header_present(const char *headers, const char *name)
+{
+    uint32_t name_len;
+    uint32_t i = 0;
+    if (!headers || !name || !name[0]) {
+        return 0;
+    }
+    name_len = (uint32_t)strlen(name);
+    while (headers[i]) {
+        uint32_t line_start = i;
+        uint32_t line_end;
+        uint32_t colon;
+        while (headers[i] && headers[i] != '\r' && headers[i] != '\n') {
+            ++i;
+        }
+        line_end = i;
+        colon = line_start;
+        while (colon < line_end && headers[colon] != ':') {
+            ++colon;
+        }
+        if (colon < line_end && colon - line_start == name_len &&
+            http_text_eq_ignore_case_n(headers + line_start, name, name_len)) {
+            return 1;
+        }
+        while (headers[i] == '\r' || headers[i] == '\n') {
+            ++i;
+        }
+    }
+    return 0;
+}
+
 static uint32_t http_build_request_text(char *dst, uint32_t cap,
                                         const struct libc_http_url *url,
                                         const struct leonos_http_request *request)
@@ -2891,9 +2922,19 @@ static uint32_t http_build_request_text(char *dst, uint32_t cap,
         http_append_char(dst, &pos, cap, ':');
         http_append_u32(dst, &pos, cap, url->port);
     }
-    http_append_text(dst, &pos, cap,
-                     "\r\nUser-Agent: LeonOS/4\r\nAccept: */*\r\n"
-                     "Accept-Encoding: identity\r\nConnection: close\r\n");
+    http_append_text(dst, &pos, cap, "\r\n");
+    if (!http_extra_header_present(request->extra_headers, "User-Agent")) {
+        http_append_text(dst, &pos, cap, "User-Agent: LeonOS/4\r\n");
+    }
+    if (!http_extra_header_present(request->extra_headers, "Accept")) {
+        http_append_text(dst, &pos, cap, "Accept: */*\r\n");
+    }
+    if (!http_extra_header_present(request->extra_headers, "Accept-Encoding")) {
+        http_append_text(dst, &pos, cap, "Accept-Encoding: identity\r\n");
+    }
+    if (!http_extra_header_present(request->extra_headers, "Connection")) {
+        http_append_text(dst, &pos, cap, "Connection: close\r\n");
+    }
     if (request->request_body && request->request_body_len) {
         http_append_text(dst, &pos, cap, "Content-Length: ");
         http_append_u32(dst, &pos, cap, request->request_body_len);

@@ -81,6 +81,13 @@
 #define BROWSER_DEVTOOLS_MAX_H 142U
 #define BROWSER_FONT_PATH "0:/system/fonts/times-new-roman.ttf"
 #define BROWSER_FONT_FALLBACK_PATH "0:/system/fonts/simsun.ttc"
+#define BROWSER_USER_AGENT                                                   \
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "        \
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+#define BROWSER_ACCEPT_HEADER                                                \
+    "text/html,application/xhtml+xml,application/xml;q=0.9,"               \
+    "image/webp,image/apng,*/*;q=0.8"
+#define BROWSER_ACCEPT_LANGUAGE "zh-CN,zh;q=0.9,en;q=0.8"
 #define BROWSER_LINK_BLUE 0x000000eeU
 #define BROWSER_TEXT_DARK 0x00202020U
 #define BROWSER_IE_NAVY 0x00000080U

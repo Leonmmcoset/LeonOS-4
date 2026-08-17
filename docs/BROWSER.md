@@ -20,6 +20,8 @@ Current features:
 - `http://` and `https://` navigation through the libc HTTP client on top of
   TCP sockets. HTTPS uses TLS 1.2 with certificate, hostname, and system-clock
   validation.
+- Chrome-compatible desktop `User-Agent`, `Accept`, and language headers for
+  sites that reject unknown clients.
 - Local `.html` and `.htm` file loading.
 - Download-link handoff: links ending in common binary/media/archive suffixes
   launch `downloadmgr.elf`, which saves the response to the current user's
