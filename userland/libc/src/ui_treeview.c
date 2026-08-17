@@ -139,6 +139,24 @@ static void treeview_append_visible(struct leonos_ui_treeview_state *state,
     }
 }
 
+/* Keep the fallback walk from reintroducing descendants skipped by collapse. */
+static int treeview_has_collapsed_ancestor(const struct leonos_ui_treeview_state *state,
+                                           const struct leonos_ui_treeview_item *items,
+                                           uint32_t count, uint32_t index)
+{
+    for (uint32_t steps = 0; steps < count; ++steps) {
+        int parent = treeview_parent_index(items, count, index);
+        if (parent < 0) {
+            return 0;
+        }
+        if (treeview_is_collapsed(state, items[parent].id)) {
+            return 1;
+        }
+        index = (uint32_t)parent;
+    }
+    return 0;
+}
+
 static int treeview_selected_row(const struct leonos_ui_treeview_state *state,
                                  const struct leonos_ui_treeview_item *items)
 {
@@ -240,7 +258,10 @@ void leonos_ui_treeview_state_sync(struct leonos_ui_treeview_state *state,
         }
     }
     for (uint32_t i = 0; i < count; ++i) {
-        treeview_append_visible(state, items, count, i, 0, visited);
+        if (!visited[i] &&
+            !treeview_has_collapsed_ancestor(state, items, count, i)) {
+            treeview_append_visible(state, items, count, i, 0, visited);
+        }
     }
     treeview_clamp(state, items);
 }

@@ -14,7 +14,6 @@ _start:
     /* The kernel and ld-leonos preserve the established LeonOS launch ABI. */
     mov %rdi, %r12
     mov %rsi, %r13
-    mov %rdx, %r14
     /* The runtime loader may tail-transfer here after finishing relocation.
      * Unlike a normal call, that transfer does not push a return address, so
      * normalize the caller boundary before invoking compiled application code.
@@ -22,6 +21,11 @@ _start:
     and $-16, %rsp
     /* `environ` lives in libleonos.  Access it through the PIE GOT so the
      * executable never emits the unsupported R_X86_64_COPY relocation. */
+    test %rdx, %rdx
+    jne 1f
+    lea leonos_empty_environment(%rip), %rdx
+1:
+    mov %rdx, %r14
     mov environ@GOTPCREL(%rip), %rax
     mov %rdx, (%rax)
     /* ld-leonos has already run the main object's preinit/init arrays after
@@ -34,3 +38,8 @@ _start:
     call main
     mov %eax, %edi
     call leonos_dynamic_exit
+
+.section .bss, "aw", @nobits
+.p2align 3
+leonos_empty_environment:
+    .quad 0

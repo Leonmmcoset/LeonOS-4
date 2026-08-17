@@ -20,7 +20,7 @@ WORK_PREFIX = "leonos4-busybox-"
 
 # BusyBox's upstream libbb/Kbuild.src compiles a broad support library even
 # when allnoconfig selects only a few applets. Keep the source-copy profile
-# small; the LeonOS shim supplies the limited signal-mask helpers Hush needs.
+# small; the LeonOS shim supplies the limited signal-mask helpers Ash needs.
 MINIMAL_LIBBB_OBJECTS = (
     "appletlib.o",
     "ask_confirmation.o",
@@ -87,12 +87,21 @@ MINIMAL_LIBBB_OBJECTS = (
     "wfopen_input.o",
     "wfopen.o",
     "read_key.o",
+    # Ash command-line editing and tab completion are enabled in the LeonOS
+    # profile; keep the object in the deliberately small libbb source set.
+    "lineedit.o",
+    "lineedit_ptr_hack.o",
+    # Fancy prompt expansion uses BusyBox's time formatter and hostname
+    # helper; these are normally pulled in by the complete libbb archive.
+    "safe_gethostname.o",
+    "time.o",
     "safe_poll.o",
     "read_printf.o",
     # kill.c uses the shared process scanner for killall-compatible paths;
     # the LeonOS profile only enables kill, but the object still supplies the
     # common scanner symbols referenced by the applet.
     "procps.o",
+    "bb_getgroups.o",
     "u_signal_names.o",
 )
 
@@ -138,7 +147,11 @@ def source_cache_key(revision: str) -> str:
     digest.update(revision.encode("ascii"))
     # The source copy is modified by this script and the LeonOS adapter, so
     # an upstream revision alone cannot identify a reusable copy.
-    for path in (Path(__file__), ROOT / "userland/busybox/leonos_shim.c"):
+    for path in (
+        Path(__file__),
+        ROOT / "userland/busybox/leonos_shim.c",
+        ROOT / "userland/busybox/leonos.config",
+    ):
         digest.update(path.read_bytes())
     return digest.hexdigest()
 
@@ -171,6 +184,7 @@ def write_minimal_libbb_kbuild(kbuild: Path, generated: bool) -> None:
 
 def trim_libbb(source: Path) -> None:
     shutil.copyfile(ROOT / "userland/busybox/leonos_shim.c", source / "libbb/leonos_shim.c")
+    patch_time_for_leonos(source)
     write_minimal_libbb_kbuild(source / "libbb/Kbuild.src", False)
     allowed = {Path(name).stem for name in MINIMAL_LIBBB_OBJECTS}
     for path in (source / "libbb").rglob("*.c"):
@@ -341,6 +355,75 @@ def patch_ls_colors_for_leonos(source: Path) -> None:
     path.write_text(text.replace(colors_before, colors_after, 1), encoding="utf-8")
 
 
+def patch_time_for_leonos(source: Path) -> None:
+    """Keep monotonic helpers in the LeonOS shim as the single definition."""
+    path = source / "libbb/time.c"
+    text = path.read_text(encoding="utf-8")
+    start_marker = "#if ENABLE_MONOTONIC_SYSCALL\n"
+    end_marker = "\n#endif"
+    if "/* LeonOS supplies monotonic_* through leonos_shim.c. */" in text:
+        return
+    start = text.find(start_marker)
+    if start < 0:
+        raise SystemExit("unsupported BusyBox time source revision: monotonic marker missing")
+    end = text.rfind(end_marker)
+    if end < 0:
+        raise SystemExit("unsupported BusyBox time source revision: monotonic footer missing")
+    replacement = "/* LeonOS supplies monotonic_* through leonos_shim.c. */\n"
+    text = text[:start] + replacement + text[end + len("\n#endif\n"):]
+    path.write_text(text, encoding="utf-8")
+
+
+def patch_ash_for_leonos(source: Path) -> None:
+    """Resolve LeonOS image applications before Ash searches Linux paths."""
+    path = source / "shell/ash.c"
+    text = path.read_text(encoding="utf-8")
+    declaration = (
+        "/* LeonOS has no Unix-style applet links or program directories. */\n"
+        "extern const char *leonos_shell_command_path(const char *name);\n\n"
+    )
+    declaration_marker = "/* ============ Hashing commands */\n"
+    command_lookup = """#endif
+
+	if (leonos_shell_command_path(name) != NULL) {
+		/* The image resolver will execute the matching .elf in shellexec(). */
+		entry->cmdtype = CMDNORMAL;
+		entry->u.index = -1;
+		return;
+	}
+
+	/* We have to search path. */
+"""
+    command_lookup_marker = """#endif
+
+	/* We have to search path. */
+"""
+    exec_lookup = """\tenvp = listvars(VEXPORT, VUNSET, /*strlist:*/ NULL, /*end:*/ NULL);
+	if (strchr(prog, '/') == NULL) {
+		const char *leonos_path = leonos_shell_command_path(prog);
+		if (leonos_path != NULL)
+			tryexec(IF_FEATURE_SH_STANDALONE(-1,) leonos_path, argv, envp);
+	}
+	if (strchr(prog, '/') != NULL
+"""
+    exec_lookup_marker = """\tenvp = listvars(VEXPORT, VUNSET, /*strlist:*/ NULL, /*end:*/ NULL);
+	if (strchr(prog, '/') != NULL
+"""
+    if declaration not in text:
+        if declaration_marker not in text:
+            raise SystemExit("unsupported BusyBox ash source revision: declaration marker missing")
+        text = text.replace(declaration_marker, declaration + declaration_marker, 1)
+    if command_lookup not in text:
+        if command_lookup_marker not in text:
+            raise SystemExit("unsupported BusyBox ash source revision: command lookup marker missing")
+        text = text.replace(command_lookup_marker, command_lookup, 1)
+    if exec_lookup not in text:
+        if exec_lookup_marker not in text:
+            raise SystemExit("unsupported BusyBox ash source revision: exec lookup marker missing")
+        text = text.replace(exec_lookup_marker, exec_lookup, 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def read_fragment(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -424,6 +507,7 @@ def main() -> None:
     patch_ps_for_leonos(source_dir)
     patch_less_for_leonos(source_dir)
     patch_ls_colors_for_leonos(source_dir)
+    patch_ash_for_leonos(source_dir)
     work_root = source_dir.parent
     output_dir = work_root / "output"
     sdk_dir = work_root / "sdk"

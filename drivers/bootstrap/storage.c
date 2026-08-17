@@ -3478,7 +3478,12 @@ void storage_init(void)
                      * and an ext2 data partition for the normal writable root.
                      * Keep the legacy ESP-only FAT32 image path for upgrades and
                      * removable-media compatibility. */
-                    if (!g_storage.ext2_start_lba || ext2_mount() < 0) {
+                    int ext2_ret = g_storage.ext2_start_lba ? ext2_mount() : -2;
+                    if (ext2_ret < 0) {
+                        console_printf("[ntclks] ext2 root mount unavailable lba=%llu sectors=%llu error=%d; falling back to FAT32 ESP\n",
+                                       (unsigned long long)g_storage.ext2_start_lba,
+                                       (unsigned long long)g_storage.ext2_sector_count,
+                                       ext2_ret);
                         if (fat32_mount() < 0) {
                             storage_memzero(&g_volumes[0], sizeof(g_volumes[0]));
                             g_active_volume = &g_volumes[0];
@@ -3907,13 +3912,17 @@ int storage_lookup_path(const char *path, struct storage_node *out)
     return 0;
 }
 
-int storage_read_node(const struct storage_node *node, uint64_t offset,
-                      void *buf, uint32_t len, uint32_t *out_read)
+int storage_read_node_cursor(const struct storage_node *node, uint64_t offset,
+                             void *buf, uint32_t len, uint32_t *out_read,
+                             struct storage_read_cursor *cursor)
 {
     uint8_t *dst = (uint8_t *)buf;
     uint32_t done = 0;
     struct storage_volume *old_volume = 0;
     int ret;
+    if (cursor && (!cursor->valid || cursor->offset != offset || cursor->cluster < 2u)) {
+        cursor->valid = 0;
+    }
     if (out_read) {
         *out_read = 0;
     }
@@ -3927,6 +3936,9 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
         return -21;
     }
     if (offset >= node->size || len == 0) {
+        if (cursor) {
+            cursor->valid = 0;
+        }
         return 0;
     }
     ret = storage_select_node_drive(node, &old_volume);
@@ -3938,6 +3950,9 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     }
 
     if (g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660) {
+        if (cursor) {
+            cursor->valid = 0;
+        }
         uint64_t absolute = (uint64_t)node->first_cluster * ISO9660_BLOCK_SIZE + offset;
         uint32_t done = 0;
         while (done < len) {
@@ -3961,6 +3976,9 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     }
 
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
+        if (cursor) {
+            cursor->valid = 0;
+        }
         ret = ext2_read_node(node, offset, buf, len, out_read);
         storage_restore_volume(old_volume);
         return ret;
@@ -3969,18 +3987,22 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     uint32_t cluster = node->first_cluster;
     uint64_t skip_clusters = offset / g_storage.cluster_bytes;
     uint32_t cluster_off = (uint32_t)(offset % g_storage.cluster_bytes);
-    while (skip_clusters--) {
-        uint32_t next = 0;
-        ret = fat32_read_fat_entry(cluster, &next);
-        if (ret < 0) {
-            storage_restore_volume(old_volume);
-            return storage_read_failure(ret);
+    if (cursor && cursor->valid) {
+        cluster = cursor->cluster;
+    } else {
+        while (skip_clusters--) {
+            uint32_t next = 0;
+            ret = fat32_read_fat_entry(cluster, &next);
+            if (ret < 0) {
+                storage_restore_volume(old_volume);
+                return storage_read_failure(ret);
+            }
+            if (next >= FAT32_EOC || next < 2u) {
+                storage_restore_volume(old_volume);
+                return -5;
+            }
+            cluster = next;
         }
-        if (next >= FAT32_EOC) {
-            storage_restore_volume(old_volume);
-            return -5;
-        }
-        cluster = next;
     }
 
     while (done < len) {
@@ -4033,10 +4055,45 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
                        take);
         done += take;
         if (done >= len) {
+            if (cursor && offset + done < node->size) {
+                uint32_t consumed = cluster_off + take;
+                uint32_t advanced = consumed / g_storage.cluster_bytes;
+                uint32_t next_cluster = cluster + advanced;
+                if ((consumed % g_storage.cluster_bytes) == 0u &&
+                    advanced >= cache_clusters) {
+                    next_cluster = next;
+                }
+                if (next_cluster < 2u || next_cluster >= FAT32_EOC) {
+                    cursor->valid = 0;
+                    storage_restore_volume(old_volume);
+                    return -5;
+                }
+                cursor->offset = offset + done;
+                cursor->cluster = next_cluster;
+                cursor->valid = 1;
+            } else if (cursor) {
+                cursor->valid = 0;
+            }
             break;
         }
         if (next >= FAT32_EOC) {
-            break;
+            if (cursor) {
+                cursor->valid = 0;
+            }
+            storage_restore_volume(old_volume);
+            return -5;
+        }
+        if (next < 2u) {
+            if (cursor) {
+                cursor->valid = 0;
+            }
+            storage_restore_volume(old_volume);
+            return -5;
+        }
+        if (cursor) {
+            cursor->offset = offset + done;
+            cursor->cluster = next;
+            cursor->valid = 1;
         }
         cluster = next;
         cluster_off = 0;
@@ -4046,6 +4103,12 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     }
     storage_restore_volume(old_volume);
     return 0;
+}
+
+int storage_read_node(const struct storage_node *node, uint64_t offset,
+                      void *buf, uint32_t len, uint32_t *out_read)
+{
+    return storage_read_node_cursor(node, offset, buf, len, out_read, NULL);
 }
 
 int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,

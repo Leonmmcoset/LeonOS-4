@@ -99,11 +99,11 @@ LeonOS builds a static, basic-applet BusyBox profile at
 `0:/programs/busybox/busybox.elf`. It includes file/text utilities such as
 `ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `diff`, `less`, `mkdir`,
 `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`, `true`,
-`false`, `vi`, and `printf`. The `sh` entry point is BusyBox Hush built for
+`false`, `vi`, and `printf`. The `sh` entry point is BusyBox Ash built for
 LeonOS's MMU path. It uses the kernel COW `fork`/`execve` ABI, inherited file
 descriptors, process groups and PTY foreground groups for pipelines,
-redirection, background jobs, and `jobs`/`fg`/`bg`. BusyBox ash remains
-disabled because the image profile selects Hush as its shell implementation.
+redirection, background jobs, and `jobs`/`fg`/`bg`. The image profile selects
+Ash as its shell implementation.
 
 ## GNU nano
 
@@ -120,6 +120,19 @@ uses Nano's single-buffer tiny profile: the core editor path is present, while
 external spellers/formatters, rc files, syntax coloring, help pages, mouse
 input and multi-buffer support remain off. Interactive editing and persistence
 still require manual GUI-terminal validation on each supported VM platform.
+
+## GNU less
+
+- Path: `third_party/less`
+- Upstream: `https://github.com/gwsw/less.git`
+- Pinned commit: `b8bbf4297169e20d35e1cc3e015180e8a011bcf2`
+- License: GNU GPL-3.0-or-later or the upstream Less License; preserve both
+  `third_party/less/COPYING` and `third_party/less/LICENSE`.
+
+LeonOS installs the upstream pager at `0:/programs/less/less.elf`. It uses the
+shared PTY, polling and POSIX regular-expression runtime through a small ANSI
+termcap adapter. Shell escapes, external editor commands, tags, user key files,
+logfile output and shell pipes are disabled for the system build.
 
 ## TinyCC
 
@@ -181,14 +194,14 @@ extended syntax set.
   `0:/programs/cmd/LICENSE` beside the executable.
 
 LeonOS builds the interpreter at `0:/programs/cmd/cmd.elf`. From the BusyBox
-Hush prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
+Ash prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
 built-ins, batch files, variables and redirection, and executes enabled
 BusyBox applets or supported LeonOS terminal programs through the shared COW
 `fork`/`execve`/`waitpid` path. Foreground pipelines use inherited anonymous
 pipes and support per-stage redirection. `cmd` also supports `command &`,
 external pipelines ending in `&`, plus `jobs`, `fg`, and `bg`; those background
 jobs remain limited to external commands without per-stage redirection. BusyBox
-Hush is the interactive POSIX-style shell and uses the same native COW process
+Ash is the interactive POSIX-style shell and uses the same native COW process
 path for full pipeline, redirection, process-group, and terminal job-control
 semantics.
 

@@ -727,6 +727,10 @@ static void browser_http_prepare_headers(const char *url,
     char cookie_header[BROWSER_COOKIE_HEADER_CAP];
     uint32_t pos = 0;
     out[0] = 0;
+    append_text(out, &pos, cap, "User-Agent: " BROWSER_USER_AGENT "\r\n");
+    append_text(out, &pos, cap, "Accept: " BROWSER_ACCEPT_HEADER "\r\n");
+    append_text(out, &pos, cap, "Accept-Language: " BROWSER_ACCEPT_LANGUAGE "\r\n");
+    append_text(out, &pos, cap, "Upgrade-Insecure-Requests: 1\r\n");
     if (extra_headers && extra_headers[0]) {
         append_text(out, &pos, cap, extra_headers);
         if (pos < 2U || out[pos - 1U] != '\n') {
@@ -752,7 +756,7 @@ static int browser_http_request_with_cookies(
     char current_url[BROWSER_URL_CAP];
     char next_url[BROWSER_URL_CAP];
     char location[BROWSER_URL_CAP];
-    char merged_headers[1024];
+    char merged_headers[LEONOS_HTTP_HEADER_MAX];
     const char *active_method = method && method[0] ? method : "GET";
     const char *active_extra = extra_headers;
     const char *active_body = body;

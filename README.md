@@ -57,6 +57,9 @@ python3 build.py why kernel --json
 python3 build.py test all
 python3 build.py client run image-vmdk
 python3 build.py -v run image-vmdk
+python3 build.py --theme=linux run image-vmdk
+python3 build.py run image-vmdk --theme=meson
+python3 build.py --theme=cargo run image-vmdk
 python3 build.py status <九位任务ID>
 ```
 
@@ -67,6 +70,10 @@ python3 build.py status <九位任务ID>
 `-v` 或 `--verbose` 同样可置于命令前后；它会展开构建图、缓存命中/失效原因、
 每个目标的输入输出、实际命令、工作目录、显式环境覆盖、子进程输出和 action 处理细节。
 后台任务使用 `python3 build.py client -v run image-vmdk`，详细内容会写入该任务的日志。
+构建日志默认使用 LeonOS 原有主题；也可用 `--theme=linux`、`--theme=meson` 或
+`--theme=cargo` 切换为 Linux Kbuild、Meson/Ninja 或 Cargo 风格。主题会传递给后台
+`client` worker，日志文件始终保存为不含 ANSI 控制序列的纯文本。
+非默认主题不会追加 LeonOS 自定义的 `Result:` 汇总块，以保持对应上游工具的原生收尾格式。
 
 版本元数据头文件保留在`include/generated/build_info.h`，`python3 build.py run clean`
 不会删除它。每次 OS 构建、生成或 profile 任务都会递增构建号；清理、配置和纯主机测试不递增。

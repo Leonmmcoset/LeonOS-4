@@ -53,6 +53,7 @@ struct task_file {
     struct storage_node node;
     uint64_t offset;
     uint64_t aux;
+    struct storage_read_cursor read_cursor;
     char path[LEONOS_FS_PATH_LEN];
 };
 

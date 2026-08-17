@@ -10,7 +10,7 @@ on:
       installer_root_size_mib:
         description: Installer runtime root size in MiB (32-4096)
         required: false
-        default: "128"
+        default: "400"
         type: string
       installed_system_requires_license:
         description: Require activation after the installer deploys the system
@@ -27,6 +27,13 @@ on:
         required: false
         default: true
         type: boolean
+      # ---------- 新增输入 ----------
+      upload_artifacts:
+        description: Upload build artifacts (VMDK, ISO, etc.)
+        required: false
+        default: true
+        type: boolean
+      # -----------------------------
 
 permissions:
   contents: read
@@ -200,7 +207,43 @@ jobs:
           test -s build/images/leonos4-installer.iso
           qemu-img info build/images/leonos4.vmdk
 
+      # ---------- 新增：生成构建摘要 Markdown ----------
+      - name: Generate build summary
+        run: |
+          cat > build-summary.md <<EOF
+          # LeonOS 4 Build Summary
+
+          **Run ID:** ${{ github.run_id }}
+          **Run Number:** ${{ github.run_number }}
+          **Commit:** ${{ github.sha }}
+          **Ref:** ${{ github.ref }}
+          **Triggered by:** ${{ github.actor }}
+          **Build Date:** $(date -u)
+
+          ## Input Parameters
+          - installer_root_size_mib: ${{ inputs.installer_root_size_mib }}
+          - installed_system_requires_license: ${{ inputs.installed_system_requires_license }}
+          - license_server_url: ${{ inputs.license_server_url }}
+          - license_debug_log: ${{ inputs.license_debug_log }}
+          - upload_artifacts: ${{ inputs.upload_artifacts }}
+
+          ## Generated Artifacts
+          - leonos4.vmdk
+          - leonos4.iso
+          - leonos4-installer.iso
+          - leonos.conf
+          - build-summary.md (this file)
+
+          ## Retention Policy
+          Artifacts will be automatically deleted after 3 days.
+          EOF
+
+          # 同时写入 GitHub Step Summary，便于在 Actions 页面查看
+          cat build-summary.md >> $GITHUB_STEP_SUMMARY
+
+      # ---------- 修改：条件上传 + 设置保留天数 ----------
       - name: Upload LeonOS artifacts
+        if: inputs.upload_artifacts == 'true'   # 仅当用户允许上传时才执行
         uses: actions/upload-artifact@v4
         with:
           name: LeonOS-4-${{ github.run_number }}
@@ -209,5 +252,7 @@ jobs:
             build/images/leonos4.iso
             build/images/leonos4-installer.iso
             buildsystem/config/leonos.conf
+            build-summary.md                       # 包含摘要文档
           if-no-files-found: error
           compression-level: 0
+          retention-days: 3                        # 3天后自动删除
