@@ -1,9 +1,12 @@
 /* LeonOS compatibility layer for the ChenPi11/cmd POSIX implementation. */
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
 #include "glibcmd.h"
 
-#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <leonos/posix.h>
 #include <leonos/pty.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -12,173 +15,80 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define LEONOS_FS_TYPE_FILE 1U
-#define LEONOS_FS_TYPE_DIR 2U
-#define LEONOS_FS_TYPE_DEVICE 3U
-#define LEONOS_SYS_DUP 32
-#define LEONOS_SYS_DUP2 33
-#define LEONOS_SYS_FCNTL 72
-#define LEONOS_SPAWN_ARG_MAX 8U
+#define LEONOS_CMD_JOB_MAX 16U
+#define LEONOS_CMD_JOB_PROCESS_MAX 64U
+#define LEONOS_CMD_JOB_TEXT_MAX 160U
+#define LEONOS_CMD_TASK_MAX 64U
+#define LEONOS_CMD_TASK_NAME_LEN 32U
 
-struct leonos_stat_raw {
-    uint32_t type;
-    uint32_t reserved;
-    uint64_t size;
+/* Keep this local mirror of the task-snapshot wire layout so this POSIX
+ * adapter does not include leonos/gui.h, which intentionally exposes the
+ * native filesystem stat ABI rather than Picolibc's POSIX stat ABI. */
+struct leonos_cmd_task_info {
+    uint32_t pid;
+    uint32_t parent_pid;
+    uint32_t state;
+    uint32_t kind;
+    uint32_t flags;
+    uint32_t uid;
+    uint32_t role;
+    uint32_t session_id;
+    uint32_t memory_kib;
+    uint64_t cpu_ticks;
+    int32_t priority;
+    uint32_t pending_signals;
+    uint64_t wake_tick;
+    uint64_t entry;
+    uint64_t cr3;
+    char name[LEONOS_CMD_TASK_NAME_LEN];
+    char username[32];
 };
 
-struct leonos_dir_entry_raw {
-    uint32_t type;
-    char name[128];
+enum leonos_cmd_job_state {
+    LEONOS_CMD_JOB_RUNNING = 1,
+    LEONOS_CMD_JOB_STOPPED = 2,
+    LEONOS_CMD_JOB_DONE = 3,
 };
 
-extern int leonos_stat_raw_call(const char *path, struct leonos_stat_raw *st)
-    __asm__("stat");
-extern int leonos_fstat_raw_call(int fd, struct leonos_stat_raw *st)
-    __asm__("fstat");
-extern int leonos_readdir(int fd, struct leonos_dir_entry_raw *entry);
-extern int wait4(int pid, int *status, int options, void *rusage);
-extern int sleep_ms(unsigned long milliseconds);
+struct leonos_cmd_job {
+    int used;
+    int id;
+    int state;
+    int process_count;
+    int remaining;
+    int last_pid;
+    int process_group;
+    int exit_code;
+    int pids[LEONOS_CMD_JOB_PROCESS_MAX];
+    char text[LEONOS_CMD_JOB_TEXT_MAX];
+};
+
+static struct leonos_cmd_job leonos_cmd_jobs[LEONOS_CMD_JOB_MAX];
+static int leonos_cmd_next_job_id = 1;
+
+extern int leonos_task_snapshot(struct leonos_cmd_task_info *tasks,
+                                uint32_t capacity, uint64_t *tick);
 extern unsigned long leonos_uptime_ms(void);
-extern long syscall1(long number, long first);
-extern long syscall2(long number, long first, long second);
-extern long syscall3(long number, long first, long second, long third);
 extern char **environ;
 
-static int set_errno_from_status(int status)
+static void fill_exit_info(int status, libcmd_exit_info_t *exit_info)
 {
-    if (status < 0) {
-        errno = -status;
-        return -1;
+    if (!exit_info) {
+        return;
     }
-    return status;
-}
-
-static int fill_stat(const struct leonos_stat_raw *raw, struct stat *st)
-{
-    if (!raw || !st) {
-        errno = EINVAL;
-        return -1;
+    exit_info->exited = WIFEXITED(status);
+    exit_info->exit_code = exit_info->exited ? WEXITSTATUS(status) : 0;
+    exit_info->signaled = WIFSIGNALED(status);
+    exit_info->signal = exit_info->signaled ? WTERMSIG(status) : 0;
+    if (exit_info->signaled) {
+        exit_info->exit_code = 128 + exit_info->signal;
     }
-    memset(st, 0, sizeof(*st));
-    st->st_mode = raw->type == LEONOS_FS_TYPE_DIR ? (S_IFDIR | 0755) :
-                  raw->type == LEONOS_FS_TYPE_DEVICE ? (S_IFCHR | 0660) :
-                  (S_IFREG | 0755);
-    st->st_size = (off_t)raw->size;
-    st->st_nlink = 1;
-    st->st_blksize = 512;
-    st->st_blocks = (blkcnt_t)((raw->size + 511U) / 512U);
-    return 0;
-}
-
-int leonos_posix_stat(const char *path, struct stat *st)
-{
-    struct leonos_stat_raw raw;
-    int result;
-    if (!path || !st) {
-        errno = EINVAL;
-        return -1;
-    }
-    result = leonos_stat_raw_call(path, &raw);
-    if (set_errno_from_status(result) < 0)
-        return -1;
-    return fill_stat(&raw, st);
-}
-
-int leonos_posix_fstat(int fd, struct stat *st)
-{
-    struct leonos_stat_raw raw;
-    int result;
-    if (!st) {
-        errno = EINVAL;
-        return -1;
-    }
-    result = leonos_fstat_raw_call(fd, &raw);
-    if (set_errno_from_status(result) < 0)
-        return -1;
-    return fill_stat(&raw, st);
-}
-
-int leonos_posix_lstat(const char *path, struct stat *st)
-{
-    return leonos_posix_stat(path, st);
-}
-
-DIR *opendir(const char *path)
-{
-    DIR *directory;
-    int fd;
-    if (!path) {
-        errno = EINVAL;
-        return NULL;
-    }
-    fd = open(path, O_RDONLY, 0);
-    if (fd < 0) {
-        errno = -fd;
-        return NULL;
-    }
-    directory = (DIR *)calloc(1, sizeof(*directory));
-    if (!directory) {
-        close(fd);
-        errno = ENOMEM;
-        return NULL;
-    }
-    directory->fd = fd;
-    return directory;
-}
-
-struct dirent *readdir(DIR *directory)
-{
-    struct leonos_dir_entry_raw entry;
-    int result;
-    size_t index;
-    if (!directory) {
-        errno = EINVAL;
-        return NULL;
-    }
-    result = leonos_readdir(directory->fd, &entry);
-    if (result <= 0)
-        return NULL;
-    memset(&directory->dirent, 0, sizeof(directory->dirent));
-    directory->dirent.d_type = entry.type == LEONOS_FS_TYPE_DIR ? DT_DIR :
-                                entry.type == LEONOS_FS_TYPE_DEVICE ? DT_CHR : DT_REG;
-    for (index = 0; index + 1 < sizeof(directory->dirent.d_name) && entry.name[index]; ++index)
-        directory->dirent.d_name[index] = entry.name[index];
-    return &directory->dirent;
-}
-
-int closedir(DIR *directory)
-{
-    int result;
-    if (!directory) {
-        errno = EINVAL;
-        return -1;
-    }
-    result = close(directory->fd);
-    free(directory);
-    return set_errno_from_status(result);
-}
-
-int lstat(const char *path, struct stat *st)
-{
-    return leonos_posix_stat(path, st);
-}
-
-int access(const char *path, int mode)
-{
-    struct leonos_stat_raw raw;
-    int result;
-    (void)mode;
-    if (!path || !path[0]) {
-        errno = EINVAL;
-        return -1;
-    }
-    result = leonos_stat_raw_call(path, &raw);
-    return set_errno_from_status(result) < 0 ? -1 : 0;
 }
 
 int chmod(const char *path, mode_t mode)
@@ -231,105 +141,6 @@ int fstatvfs(int fd, struct statvfs *st)
 {
     (void)fd;
     return statvfs(NULL, st);
-}
-
-int fcntl(int fd, int command, ...)
-{
-    va_list args;
-    long argument = 0;
-    long result;
-    va_start(args, command);
-    if (command == F_DUPFD || command == F_DUPFD_CLOEXEC ||
-        command == F_SETFD || command == F_SETFL)
-        argument = va_arg(args, int);
-    va_end(args);
-    result = syscall3(LEONOS_SYS_FCNTL, fd, command, argument);
-    return set_errno_from_status((int)result);
-}
-
-int dup(int fd)
-{
-    return set_errno_from_status((int)syscall1(LEONOS_SYS_DUP, fd));
-}
-
-int dup2(int old_fd, int new_fd)
-{
-    return set_errno_from_status((int)syscall2(LEONOS_SYS_DUP2, old_fd, new_fd));
-}
-
-int pipe(int filedes[2])
-{
-    (void)filedes;
-    errno = ENOSYS;
-    return -1;
-}
-
-pid_t fork(void)
-{
-    errno = ENOSYS;
-    return -1;
-}
-
-pid_t vfork(void)
-{
-    errno = ENOSYS;
-    return -1;
-}
-
-pid_t waitpid(pid_t pid, int *status, int options)
-{
-    int result;
-    for (;;) {
-        result = wait4((int)pid, status, options, NULL);
-        if (result >= 0 || (options & 1))
-            return (pid_t)result;
-        if (result != -ECHILD) {
-            errno = -result;
-            return -1;
-        }
-        sleep_ms(1);
-    }
-}
-
-int sigaction(int signal_number, const struct sigaction *action,
-              struct sigaction *previous)
-{
-    (void)signal_number;
-    (void)action;
-    if (previous) {
-        memset(previous, 0, sizeof(*previous));
-        previous->sa_handler = SIG_DFL;
-    }
-    return 0;
-}
-
-int sigprocmask(int how, const sigset_t *set, sigset_t *old_set)
-{
-    (void)how;
-    (void)set;
-    if (old_set)
-        memset(old_set, 0, sizeof(*old_set));
-    return 0;
-}
-
-int gettimeofday(struct timeval *value, void *timezone)
-{
-    unsigned long milliseconds;
-    (void)timezone;
-    if (!value) {
-        errno = EINVAL;
-        return -1;
-    }
-    milliseconds = leonos_uptime_ms();
-    value->tv_sec = (time_t)(milliseconds / 1000U);
-    value->tv_usec = (suseconds_t)((milliseconds % 1000U) * 1000U);
-    return 0;
-}
-
-int nice(int increment)
-{
-    (void)increment;
-    return 0;
 }
 
 int stime(const time_t *time_value)
@@ -395,7 +206,7 @@ static int copy_exec_path(char *out, size_t out_size, const char *path)
 
 static const char *const busybox_applets[] = {
     "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo",
-    "false", "head", "less", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
+    "false", "grep", "head", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
     "rm", "rmdir", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc", NULL,
 };
 
@@ -408,12 +219,145 @@ static const struct program_path programs[] = {
     {"cmd", "0:/programs/cmd/cmd.elf"},
     {"file", "0:/programs/file/file.elf"},
     {"fastfetch", "0:/programs/fastfetch/fastfetch.elf"},
+    {"less", "0:/programs/less/less.elf"},
+    {"sl", "0:/programs/sl/sl.elf"},
     {"lua", "0:/programs/lua/lua.elf"},
     {"nano", "0:/programs/nano/nano.elf"},
     {"pleditor", "0:/programs/pleditor/pleditor.elf"},
     {"tcc", "0:/programs/tcc/tcc.elf"},
     {NULL, NULL},
 };
+
+static int job_name_equal(const char *left, const char *right)
+{
+    return left && right && command_name_equal(left, right);
+}
+
+static int job_id_from_arg(const char *text)
+{
+    int id = 0;
+    if (!text) return -1;
+    if (*text == '%') ++text;
+    if (!*text) return -1;
+    while (*text) {
+        if (*text < '0' || *text > '9') return -1;
+        id = id * 10 + (*text - '0');
+        ++text;
+    }
+    return id > 0 ? id : -1;
+}
+
+static int task_is_stopped(int pid)
+{
+    struct leonos_cmd_task_info tasks[LEONOS_CMD_TASK_MAX];
+    uint64_t tick = 0;
+    int count = leonos_task_snapshot(tasks, LEONOS_CMD_TASK_MAX, &tick);
+    int i;
+    (void)tick;
+    if (count < 0) return 0;
+    for (i = 0; i < count; ++i) {
+        if ((int)tasks[i].pid == pid)
+            return tasks[i].state == 4;
+    }
+    return 0;
+}
+
+int libcmd_job_is_stopped(int pid)
+{
+    return task_is_stopped(pid);
+}
+
+static struct leonos_cmd_job *job_by_id(int id)
+{
+    int i;
+    for (i = 0; i < (int)LEONOS_CMD_JOB_MAX; ++i) {
+        if (leonos_cmd_jobs[i].used && leonos_cmd_jobs[i].id == id)
+            return &leonos_cmd_jobs[i];
+    }
+    return NULL;
+}
+
+static struct leonos_cmd_job *job_last(void)
+{
+    struct leonos_cmd_job *best = NULL;
+    int i;
+    for (i = 0; i < (int)LEONOS_CMD_JOB_MAX; ++i) {
+        struct leonos_cmd_job *job = &leonos_cmd_jobs[i];
+        if (job->used && (!best || job->id > best->id)) best = job;
+    }
+    return best;
+}
+
+static void job_refresh(struct leonos_cmd_job *job)
+{
+    int i;
+    int stopped = 0;
+    if (!job || !job->used || job->state == LEONOS_CMD_JOB_DONE) return;
+    for (i = 0; i < job->process_count; ++i) {
+        int status = 0;
+        int waited;
+        if (job->pids[i] <= 0) continue;
+        waited = waitpid(job->pids[i], &status, WNOHANG);
+        if (waited == job->pids[i]) {
+            if (job->pids[i] == job->last_pid) {
+                libcmd_exit_info_t exit_info;
+                fill_exit_info(status, &exit_info);
+                job->exit_code = exit_info.exit_code;
+            }
+            job->pids[i] = 0;
+            if (job->remaining > 0) --job->remaining;
+        } else if (waited == 0 && task_is_stopped(job->pids[i])) {
+            ++stopped;
+        } else if (waited < 0 && errno == ECHILD) {
+            job->pids[i] = 0;
+            if (job->remaining > 0) --job->remaining;
+        }
+    }
+    if (job->remaining == 0) job->state = LEONOS_CMD_JOB_DONE;
+    else job->state = stopped == job->remaining ? LEONOS_CMD_JOB_STOPPED : LEONOS_CMD_JOB_RUNNING;
+}
+
+static const char *job_state_text(int state)
+{
+    if (state == LEONOS_CMD_JOB_STOPPED) return "Stopped";
+    if (state == LEONOS_CMD_JOB_DONE) return "Done";
+    return "Running";
+}
+
+static struct leonos_cmd_job *job_add(const int pids[], int count, int last_pid,
+                                      const char *text)
+{
+    struct leonos_cmd_job *job = NULL;
+    int i;
+    if (!pids || count <= 0 || count > (int)LEONOS_CMD_JOB_PROCESS_MAX) return NULL;
+    for (i = 0; i < (int)LEONOS_CMD_JOB_MAX; ++i) {
+        if (!leonos_cmd_jobs[i].used || leonos_cmd_jobs[i].state == LEONOS_CMD_JOB_DONE) {
+            job = &leonos_cmd_jobs[i];
+            break;
+        }
+    }
+    if (!job) return NULL;
+    memset(job, 0, sizeof(*job));
+    job->used = 1;
+    job->id = leonos_cmd_next_job_id++;
+    job->state = LEONOS_CMD_JOB_RUNNING;
+    job->process_count = count;
+    job->remaining = count;
+    job->last_pid = last_pid;
+    job->process_group = pids[0];
+    for (i = 0; i < count; ++i) job->pids[i] = pids[i];
+    if (text) strncpy(job->text, text, sizeof(job->text) - 1);
+    return job;
+}
+
+static void job_append_word(char *out, size_t cap, const char *word)
+{
+    size_t pos = strlen(out);
+    size_t i = 0;
+    if (pos && pos + 1 < cap) out[pos++] = ' ';
+    while (word && word[i] && pos + 1 < cap) out[pos++] = word[i++];
+    out[pos] = '\0';
+}
 
 int libcmd_find_exec(const char *name, const char *path_env, char *out, size_t out_size)
 {
@@ -440,102 +384,191 @@ int libcmd_find_exec(const char *name, const char *path_env, char *out, size_t o
     return -1;
 }
 
-static int spawn_argv(const char *path, char *const argv[], int wait,
-                      libcmd_exit_info_t *exit_info)
+static void child_setup_fds(int stdin_fd, int stdout_fd, int stderr_fd)
 {
-    int pid;
-    int status = 0;
-    int waited;
-    size_t count = 0;
-    int pty_id;
+    if (stdin_fd >= 0 && stdin_fd != STDIN_FILENO) {
+        (void)dup2(stdin_fd, STDIN_FILENO);
+        (void)close(stdin_fd);
+    }
+    if (stdout_fd >= 0 && stdout_fd != STDOUT_FILENO) {
+        (void)dup2(stdout_fd, STDOUT_FILENO);
+        (void)close(stdout_fd);
+    }
+    if (stderr_fd >= 0 && stderr_fd != STDERR_FILENO) {
+        (void)dup2(stderr_fd, STDERR_FILENO);
+        (void)close(stderr_fd);
+    }
+}
+
+static int child_exec_path(const char *path, char *const argv[], char *const envp[])
+{
+    int busybox_dispatch;
 
     if (!path || !path[0] || !argv || !argv[0]) {
         errno = EINVAL;
         return -1;
     }
-    while (argv[count]) {
-        if (++count > LEONOS_SPAWN_ARG_MAX) {
+    busybox_dispatch = strcmp(path, "0:/programs/busybox/busybox.elf") == 0;
+
+    if (!busybox_dispatch) {
+        return execve(path, argv, envp ? envp : environ);
+    }
+
+    /* FAT32 cannot represent BusyBox applet symlinks.  Keep the executable
+     * path separate from argv[0] and construct BusyBox's documented
+     * "busybox <applet> ..." form without imposing an arbitrary argv cap. */
+    {
+        size_t argc = 0;
+        size_t index;
+        char **exec_argv;
+        int result;
+        int saved_errno;
+
+        while (argv[argc]) {
+            ++argc;
+        }
+        if (argc > (((size_t)-1) / sizeof(*exec_argv)) - 2U) {
             errno = E2BIG;
             return -1;
         }
-    }
-    pty_id = leonos_pty_self();
-    pid = leonos_pty_spawn_argv(path, pty_id > 0 ? (uint32_t)pty_id : 0U, argv, environ);
-    if (pid < 0) {
-        errno = -pid;
-        return -1;
-    }
-    if (!wait)
-        return pid;
-    for (;;) {
-        waited = wait4(pid, &status, 0, NULL);
-        if (waited == pid)
-            break;
-        if (waited != -ECHILD) {
-            errno = waited < 0 ? -waited : ECHILD;
+        exec_argv = malloc((argc + 2U) * sizeof(*exec_argv));
+        if (!exec_argv) {
+            errno = ENOMEM;
             return -1;
         }
-        sleep_ms(1);
+        exec_argv[0] = "busybox";
+        for (index = 0; index < argc; ++index) {
+            exec_argv[index + 1U] = argv[index];
+        }
+        exec_argv[argc + 1U] = NULL;
+        result = execve(path, exec_argv, envp ? envp : environ);
+        saved_errno = errno;
+        free(exec_argv);
+        errno = saved_errno;
+        return result;
     }
-    if (exit_info) {
-        exit_info->exited = 1;
-        exit_info->exit_code = (status >> 8) & 0xff;
-        exit_info->signaled = 0;
-        exit_info->signal = 0;
+}
+
+/* Foreground commands are placed in their own process group before the shell
+ * transfers the PTY.  A non-terminal stdin is valid for batch execution. */
+int leonos_cmd_set_process_group(int pid, int process_group)
+{
+    if (pid <= 0 || process_group <= 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    return setpgid((pid_t)pid, (pid_t)process_group);
+}
+
+int leonos_cmd_foreground_enter(int fd, int process_group, int *saved_group)
+{
+    int previous;
+
+    if (saved_group) {
+        *saved_group = 0;
+    }
+    if (fd < 0 || process_group <= 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    previous = (int)tcgetpgrp(fd);
+    if (previous < 0) {
+        return 0;
+    }
+    if (tcsetpgrp(fd, (pid_t)process_group) < 0) {
+        return -1;
+    }
+    if (saved_group) {
+        *saved_group = previous;
     }
     return 0;
+}
+
+void leonos_cmd_foreground_leave(int fd, int saved_group)
+{
+    if (fd >= 0 && saved_group > 0) {
+        (void)tcsetpgrp(fd, (pid_t)saved_group);
+    }
 }
 
 int libcmd_exec_sync(const char *path, char *const argv[], char *const envp[],
                      int stdin_fd, int stdout_fd, int stderr_fd, int nice_level,
                      libcmd_exit_info_t *exit_info)
 {
-    (void)envp;
-    (void)stdin_fd;
-    (void)stdout_fd;
-    (void)stderr_fd;
-    (void)nice_level;
-    return spawn_argv(path, argv, 1, exit_info);
+    pid_t pid = fork();
+    int status;
+    int saved_group = 0;
+
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        (void)libcmd_set_process_priority(nice_level);
+        child_setup_fds(stdin_fd, stdout_fd, stderr_fd);
+        (void)child_exec_path(path, argv, envp);
+        _exit(127);
+    }
+    (void)leonos_cmd_set_process_group((int)pid, (int)pid);
+    (void)leonos_cmd_foreground_enter(stdin_fd, (int)pid, &saved_group);
+    if (waitpid(pid, &status, 0) < 0) {
+        leonos_cmd_foreground_leave(stdin_fd, saved_group);
+        return -1;
+    }
+    leonos_cmd_foreground_leave(stdin_fd, saved_group);
+    fill_exit_info(status, exit_info);
+    return 0;
 }
 
 int libcmd_exec_async(const char *path, char *const argv[], char *const envp[],
                       int stdin_fd, int stdout_fd, int stderr_fd, int nice_level)
 {
-    (void)envp;
-    (void)stdin_fd;
-    (void)stdout_fd;
-    (void)stderr_fd;
-    (void)nice_level;
-    return spawn_argv(path, argv, 0, NULL);
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        (void)setsid();
+        (void)libcmd_set_process_priority(nice_level);
+        child_setup_fds(stdin_fd, stdout_fd, stderr_fd);
+        (void)child_exec_path(path, argv, envp);
+        _exit(127);
+    }
+    return (int)pid;
+}
+
+/* cmd.exe START needs a detached session; shell background jobs do not. */
+int libcmd_exec_job_async(const char *path, char *const argv[], char *const envp[],
+                          int stdin_fd, int stdout_fd, int stderr_fd, int nice_level)
+{
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        (void)libcmd_set_process_priority(nice_level);
+        child_setup_fds(stdin_fd, stdout_fd, stderr_fd);
+        (void)child_exec_path(path, argv, envp);
+        _exit(127);
+    }
+    (void)leonos_cmd_set_process_group((int)pid, (int)pid);
+    return (int)pid;
 }
 
 int libcmd_wait_pid(int pid, libcmd_exit_info_t *exit_info)
 {
     int status = 0;
-    int waited;
-    for (;;) {
-        waited = wait4(pid, &status, 0, NULL);
-        if (waited == pid)
-            break;
-        if (waited != -ECHILD) {
-            errno = waited < 0 ? -waited : ECHILD;
-            return -1;
-        }
-        sleep_ms(1);
+    if (waitpid((pid_t)pid, &status, 0) < 0) {
+        return -1;
     }
-    if (exit_info) {
-        exit_info->exited = 1;
-        exit_info->exit_code = (status >> 8) & 0xff;
-        exit_info->signaled = 0;
-        exit_info->signal = 0;
-    }
+    fill_exit_info(status, exit_info);
     return 0;
 }
 
 int libcmd_fork(void)
 {
-    errno = ENOSYS;
-    return -1;
+    return (int)fork();
 }
 
 void libcmd_exit(int status)
@@ -547,15 +580,210 @@ int libcmd_exec_pipeline(char *const *const *cmds, const char *const *paths, int
                          char *const envp[], int stdin_fd, int stdout_fd,
                          libcmd_exit_info_t *exit_info)
 {
-    (void)cmds;
-    (void)paths;
-    (void)n;
-    (void)envp;
-    (void)stdin_fd;
-    (void)stdout_fd;
-    (void)exit_info;
-    errno = ENOSYS;
+    int pids[64];
+    int prev_read = -1;
+    int prev_owned = 0;
+    int process_group = 0;
+    int saved_group = 0;
+    int i;
+    if (!cmds || !paths || n <= 0 || n > 64) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (i = 0; i < n; ++i) {
+        int fds[2] = {-1, -1};
+        int child_stdin;
+        int child_stdout;
+        int pid;
+        if (!cmds[i] || !cmds[i][0] || !paths[i] || !paths[i][0]) {
+            errno = EINVAL;
+            goto fail;
+        }
+        if (i + 1 < n && pipe(fds) < 0)
+            goto fail;
+        child_stdin = i == 0 ? (stdin_fd >= 0 ? stdin_fd : 0) : prev_read;
+        child_stdout = i + 1 < n ? fds[1] : (stdout_fd >= 0 ? stdout_fd : 1);
+        pid = fork();
+        if (pid < 0) {
+            if (fds[0] >= 0) close(fds[0]);
+            if (fds[1] >= 0) close(fds[1]);
+            goto fail;
+        }
+        if (pid == 0) {
+            if (fds[0] >= 0) close(fds[0]);
+            child_setup_fds(child_stdin, child_stdout, STDERR_FILENO);
+            (void)child_exec_path(paths[i], (char *const *)cmds[i], envp);
+            _exit(127);
+        }
+        pids[i] = pid;
+        if (!process_group) {
+            process_group = pid;
+        }
+        (void)leonos_cmd_set_process_group(pid, process_group);
+        if (prev_owned) close(prev_read);
+        if (fds[1] >= 0) close(fds[1]);
+        prev_read = fds[0];
+        prev_owned = fds[0] >= 0;
+    }
+    if (prev_owned) close(prev_read);
+    (void)leonos_cmd_foreground_enter(stdin_fd, process_group, &saved_group);
+    for (i = 0; i < n; ++i) {
+        libcmd_exit_info_t current;
+        if (libcmd_wait_pid(pids[i], &current) < 0) {
+            leonos_cmd_foreground_leave(stdin_fd, saved_group);
+            return -1;
+        }
+        if (i == n - 1 && exit_info)
+            *exit_info = current;
+    }
+    leonos_cmd_foreground_leave(stdin_fd, saved_group);
+    return 0;
+
+fail:
+    if (prev_owned) close(prev_read);
+    while (i-- > 0) {
+        (void)kill(pids[i], SIGTERM);
+        (void)libcmd_wait_pid(pids[i], NULL);
+    }
     return -1;
+}
+
+int libcmd_exec_pipeline_async(char *const *const *cmds, const char *const *paths, int n,
+                               char *const envp[], int stdin_fd, int stdout_fd,
+                               int pids[], int pids_capacity)
+{
+    int prev_read = -1;
+    int prev_owned = 0;
+    int process_group = 0;
+    int i;
+    if (!cmds || !paths || !pids || n <= 0 || n > pids_capacity || n > 64) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (i = 0; i < n; ++i) {
+        int fds[2] = {-1, -1};
+        int child_stdin;
+        int child_stdout;
+        int pid;
+        if (!cmds[i] || !cmds[i][0] || !paths[i] || !paths[i][0]) {
+            errno = EINVAL;
+            goto fail;
+        }
+        if (i + 1 < n && pipe(fds) < 0) goto fail;
+        child_stdin = i == 0 ? (stdin_fd >= 0 ? stdin_fd : 0) : prev_read;
+        child_stdout = i + 1 < n ? fds[1] : (stdout_fd >= 0 ? stdout_fd : 1);
+        pid = fork();
+        if (pid < 0) {
+            if (fds[0] >= 0) close(fds[0]);
+            if (fds[1] >= 0) close(fds[1]);
+            goto fail;
+        }
+        if (pid == 0) {
+            if (fds[0] >= 0) close(fds[0]);
+            child_setup_fds(child_stdin, child_stdout, STDERR_FILENO);
+            (void)child_exec_path(paths[i], (char *const *)cmds[i], envp);
+            _exit(127);
+        }
+        pids[i] = pid;
+        if (!process_group) {
+            process_group = pid;
+        }
+        (void)leonos_cmd_set_process_group(pid, process_group);
+        if (prev_owned) close(prev_read);
+        if (fds[1] >= 0) close(fds[1]);
+        prev_read = fds[0];
+        prev_owned = fds[0] >= 0;
+    }
+    if (prev_owned) close(prev_read);
+    return n;
+
+fail:
+    if (prev_owned) close(prev_read);
+    while (i-- > 0) (void)kill(pids[i], SIGTERM);
+    return -1;
+}
+
+int leonos_cmd_builtin(int argc, char **argv, int *handled)
+{
+    struct leonos_cmd_job *job;
+    int id;
+    int i;
+    if (handled) *handled = 0;
+    if (argc <= 0 || !argv || !argv[0]) return 0;
+    if (job_name_equal(argv[0], "jobs")) {
+        if (handled) *handled = 1;
+        for (i = 0; i < (int)LEONOS_CMD_JOB_MAX; ++i) {
+            job = &leonos_cmd_jobs[i];
+            if (!job->used) continue;
+            job_refresh(job);
+            if (job->state == LEONOS_CMD_JOB_DONE)
+                printf("[%d] %s %s (exit %d)\n", job->id, job_state_text(job->state),
+                       job->text, job->exit_code);
+            else
+                printf("[%d] %s %s\n", job->id, job_state_text(job->state), job->text);
+        }
+        return 0;
+    }
+    if (!job_name_equal(argv[0], "fg") && !job_name_equal(argv[0], "bg")) return 0;
+    if (handled) *handled = 1;
+    if (argc > 2) {
+        fputs("cmd: fg/bg accepts at most one job id\n", stderr);
+        return 1;
+    }
+    id = argc == 2 ? job_id_from_arg(argv[1]) : -1;
+    job = id > 0 ? job_by_id(id) : job_last();
+    if (!job) {
+        fputs("cmd: no such job\n", stderr);
+        return 1;
+    }
+    job_refresh(job);
+    if (job->state == LEONOS_CMD_JOB_DONE) {
+        fprintf(stderr, "cmd: job [%d] already completed (exit %d)\n", job->id, job->exit_code);
+        return job->exit_code;
+    }
+    if (job->process_group > 0) {
+        (void)kill(-job->process_group, SIGCONT);
+    }
+    job->state = LEONOS_CMD_JOB_RUNNING;
+    if (job_name_equal(argv[0], "bg")) {
+        printf("[%d] %s\n", job->id, job->text);
+        return 0;
+    }
+    {
+        int saved_group = 0;
+        (void)leonos_cmd_foreground_enter(STDIN_FILENO, job->process_group,
+                                          &saved_group);
+        for (i = 0; i < job->process_count; ++i) {
+            libcmd_exit_info_t exit_info;
+            if (job->pids[i] <= 0) continue;
+            if (libcmd_wait_pid(job->pids[i], &exit_info) < 0) {
+                leonos_cmd_foreground_leave(STDIN_FILENO, saved_group);
+                return 1;
+            }
+            if (job->pids[i] == job->last_pid) job->exit_code = exit_info.exit_code;
+            job->pids[i] = 0;
+            if (job->remaining > 0) --job->remaining;
+        }
+        leonos_cmd_foreground_leave(STDIN_FILENO, saved_group);
+    }
+    job->state = LEONOS_CMD_JOB_DONE;
+    return job->exit_code;
+}
+
+int leonos_cmd_register_job(const int pids[], int count, int last_pid, const char *text)
+{
+    struct leonos_cmd_job *job = job_add(pids, count, last_pid, text);
+    if (!job) {
+        errno = EAGAIN;
+        return -1;
+    }
+    printf("[%d] %d\n", job->id, last_pid);
+    return 0;
+}
+
+void leonos_cmd_job_append_word(char *out, size_t cap, const char *word)
+{
+    job_append_word(out, cap, word);
 }
 
 FILE *libcmd_popen(const char *cmd, const char *mode)
@@ -721,8 +949,10 @@ int libcmd_set_system_time(time_t value)
 
 int libcmd_set_process_priority(int nice_level)
 {
-    (void)nice_level;
-    return 0;
+    if (nice_level == 0) {
+        return 0;
+    }
+    return setpriority(PRIO_PROCESS, 0, nice_level);
 }
 
 FILE *libcmd_open_memstream(char **ptr, size_t *size)

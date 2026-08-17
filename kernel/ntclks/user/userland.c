@@ -1,3 +1,7 @@
+/*
+ * LeonOS userland launcher: prepares process images, stacks, and arguments.
+ * Creates user tasks, maps executables, and enters the Ring-3 scheduler path.
+ */
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
 #include <ntclks/elf.h>
@@ -29,6 +33,12 @@ static bool autospawn_terminal;
 static bool autospawn_memtest;
 static bool autospawn_installer;
 
+/**
+ * @brief Coordinates the name contains operation.
+ * @param name Input or output value used by this operation.
+ * @param needle Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int name_contains(const char *name, const char *needle)
 {
     if (!name || !needle) {
@@ -48,6 +58,12 @@ static int name_contains(const char *name, const char *needle)
     return 0;
 }
 
+/**
+ * @brief Coordinates the path eq operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int path_eq(const char *a, const char *b)
 {
     if (!a || !b) {
@@ -60,6 +76,11 @@ static int path_eq(const char *a, const char *b)
     return *a == 0 && *b == 0;
 }
 
+/**
+ * @brief Coordinates the ascii tolower operation.
+ * @param ch Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static char ascii_tolower(char ch)
 {
     if (ch >= 'A' && ch <= 'Z') {
@@ -68,6 +89,12 @@ static char ascii_tolower(char ch)
     return ch;
 }
 
+/**
+ * @brief Coordinates the path eq ignore case operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int path_eq_ignore_case(const char *a, const char *b)
 {
     if (!a || !b) {
@@ -80,6 +107,12 @@ static int path_eq_ignore_case(const char *a, const char *b)
     return *a == 0 && *b == 0;
 }
 
+/**
+ * @brief Copies text.
+ * @param dst Input or output value used by this operation.
+ * @param dst_len Length, size, or element count associated with the operation.
+ * @param src Input or output value used by this operation.
+ */
 static void copy_text(char *dst, uint32_t dst_len, const char *src)
 {
     uint32_t i = 0;
@@ -95,6 +128,26 @@ static void copy_text(char *dst, uint32_t dst_len, const char *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Clears the virtual-memory-area metadata belonging to an old process image.
+ * @param task Task whose replacement address space has no mappings represented by its VMA table.
+ */
+static void clear_task_vmas(struct task *task)
+{
+    if (!task) {
+        return;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        task->vmas[i] = (struct task_vma){0};
+    }
+}
+
+/**
+ * @brief Coordinates the task name from path operation.
+ * @param path LeonOS path consumed by this operation.
+ * @param dst Input or output value used by this operation.
+ * @param dst_len Length, size, or element count associated with the operation.
+ */
 static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
 {
     const char *name = path;
@@ -110,16 +163,34 @@ static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
     copy_text(dst, dst_len, name);
 }
 
+/**
+ * @brief Coordinates the path is system desktop operation.
+ * @param path LeonOS path consumed by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int path_is_system_desktop(const char *path)
 {
     return path_eq_ignore_case(path, "0:/system/apps/desktop/desktop.elf");
 }
 
+/**
+ * @brief Coordinates the path is system service daemon operation.
+ * @param path LeonOS path consumed by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int path_is_system_service_daemon(const char *path)
 {
     return path_eq_ignore_case(path, "0:/system/apps/serviced/serviced.elf");
 }
 
+/**
+ * @brief Coordinates the dir add operation.
+ * @param entries Input or output value used by this operation.
+ * @param capacity Capacity, in elements or bytes, of the related output buffer.
+ * @param count Length, size, or element count associated with the operation.
+ * @param type Input or output value used by this operation.
+ * @param name Input or output value used by this operation.
+ */
 static void dir_add(struct leonos_dir_entry *entries, uint32_t capacity, uint32_t *count,
                     uint32_t type, const char *name)
 {
@@ -130,6 +201,11 @@ static void dir_add(struct leonos_dir_entry *entries, uint32_t capacity, uint32_
     ++(*count);
 }
 
+/**
+ * @brief Releases image buffer.
+ * @param image Input or output value used by this operation.
+ * @param image_len Length, size, or element count associated with the operation.
+ */
 static void free_image_buffer(const void *image, size_t image_len)
 {
     uint32_t pages;
@@ -140,6 +216,16 @@ static void free_image_buffer(const void *image, size_t image_len)
     mm_free_pages((uint64_t)(uintptr_t)image, pages);
 }
 
+/**
+ * @brief Copies exec vector.
+ * @param dst Input or output value used by this operation.
+ * @param dst_cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ * @param data Input or output value used by this operation.
+ * @param data_cap Capacity, in elements or bytes, of the related output buffer.
+ * @param data_len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t copy_exec_vector(char *dst[], uint32_t dst_cap,
                                  const char *const src[], char *data,
                                  uint32_t data_cap, uint32_t *data_len)
@@ -172,6 +258,14 @@ static uint32_t copy_exec_vector(char *dst[], uint32_t dst_cap,
     return count;
 }
 
+/**
+ * @brief Coordinates the build exec launch operation.
+ * @param launch Input or output value used by this operation.
+ * @param path LeonOS path consumed by this operation.
+ * @param argv Input or output value used by this operation.
+ * @param envp Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int build_exec_launch(struct exec_launch *launch, const char *path,
                              const char *const argv[], const char *const envp[])
 {
@@ -206,6 +300,12 @@ static int build_exec_launch(struct exec_launch *launch, const char *path,
     return 0;
 }
 
+/**
+ * @brief Coordinates the user ptr for phys operation.
+ * @param as Input or output value used by this operation.
+ * @param vaddr Address used by this operation; its address-space interpretation follows the API.
+ * @return Result, status, or value defined by this API.
+ */
 static void *user_ptr_for_phys(const struct address_space *as, uint64_t vaddr)
 {
     uint64_t phys = address_space_user_page_phys(as, vaddr);
@@ -215,6 +315,13 @@ static void *user_ptr_for_phys(const struct address_space *as, uint64_t vaddr)
     return (void *)(uintptr_t)(phys + (vaddr & 0xfffULL));
 }
 
+/**
+ * @brief Writes user u64.
+ * @param as Input or output value used by this operation.
+ * @param vaddr Address used by this operation; its address-space interpretation follows the API.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int write_user_u64(const struct address_space *as, uint64_t vaddr, uint64_t value)
 {
     for (uint32_t i = 0; i < sizeof(value); ++i) {
@@ -227,6 +334,11 @@ static int write_user_u64(const struct address_space *as, uint64_t vaddr, uint64
     return 0;
 }
 
+/**
+ * @brief Coordinates the prepare user exec stack operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int prepare_user_exec_stack(struct task *task)
 {
     uint64_t sp;
@@ -235,10 +347,15 @@ static int prepare_user_exec_stack(struct task *task)
     uint64_t strings_base;
     uint64_t argv_bytes;
     uint64_t envp_bytes;
+    uint64_t launch_base = 0;
     if (!task) {
         return -22;
     }
     sp = task->stack_top;
+    if (task->dynamic_launch.abi_major) {
+        sp = (sp - sizeof(task->dynamic_launch)) & ~(EXEC_STACK_ALIGN - 1ULL);
+        launch_base = sp;
+    }
     strings_base = (sp - task->exec_data_len) & ~(EXEC_STACK_ALIGN - 1ULL);
     argv_bytes = (uint64_t)(task->exec_argc + 1) * sizeof(uint64_t);
     argv_base = (strings_base - argv_bytes) & ~(EXEC_STACK_ALIGN - 1ULL);
@@ -277,13 +394,29 @@ static int prepare_user_exec_stack(struct task *task)
         return -12;
     }
 
+    if (launch_base) {
+        for (uint32_t i = 0; i < sizeof(task->dynamic_launch); ++i) {
+            uint8_t *dst = (uint8_t *)user_ptr_for_phys(&task->as, launch_base + i);
+            if (!dst) {
+                return -12;
+            }
+            *dst = ((const uint8_t *)&task->dynamic_launch)[i];
+        }
+    }
+
     task->frame.rsp = envp_base;
     task->frame.rdi = task->exec_argc;
     task->frame.rsi = argv_base;
     task->frame.rdx = envp_base;
+    task->frame.r8 = launch_base;
     return 0;
 }
 
+/**
+ * @brief Coordinates the userland load task image operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static bool userland_load_task_image(struct task *task)
 {
     struct elf_image_info loaded;
@@ -317,8 +450,8 @@ static bool userland_load_task_image(struct task *task)
         return false;
     }
 
-    task->entry = loaded.entry;
-    task->frame.rip = loaded.entry;
+    task->entry = loaded.dynamic ? loaded.interpreter_entry : loaded.entry;
+    task->frame.rip = task->entry;
     task->frame.rsp = task->stack_top;
     task->frame.rflags = 0x202;
     task->frame.cs = NTCLKS_USER_CS;
@@ -336,10 +469,22 @@ static bool userland_load_task_image(struct task *task)
     return true;
 }
 
+/**
+ * @brief Starts pending image.
+ * @param path LeonOS path consumed by this operation.
+ * @param task_name Input or output value used by this operation.
+ * @param node Input or output value used by this operation.
+ * @param launch Input or output value used by this operation.
+ * @param parent Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param pty_id Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t spawn_pending_image(const char *path, const char *task_name,
                                    const struct storage_node *node,
                                    const struct exec_launch *launch,
-                                   uint32_t parent, uint32_t flags, uint32_t pty_id)
+                                   uint32_t parent, uint32_t flags, uint32_t pty_id,
+                                   int stdin_fd, int stdout_fd, int stderr_fd)
 {
     uint32_t pid = sched_create_user_task(task_name, 0, USER_STACK_TOP, parent, flags);
     if (!pid) {
@@ -358,12 +503,32 @@ static int64_t spawn_pending_image(const char *path, const char *task_name,
             task->pty_id = pty_id;
         }
     }
+    if (stdin_fd >= 0 || stdout_fd >= 0 || stderr_fd >= 0) {
+        struct task *child = sched_find(pid);
+        struct task *parent_task = sched_find(parent);
+        if (!child || syscall_inherit_task_fds(parent_task, child,
+                                               stdin_fd, stdout_fd, stderr_fd) < 0) {
+            sched_exit(pid, 127);
+            return -9;
+        }
+    }
     return pid;
 }
 
+/**
+ * @brief Starts path internal.
+ * @param path LeonOS path consumed by this operation.
+ * @param task_name Input or output value used by this operation.
+ * @param launch Input or output value used by this operation.
+ * @param parent Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param pty_id Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t spawn_path_internal(const char *path, const char *task_name,
                                    const struct exec_launch *launch,
-                                   uint32_t parent, uint32_t flags, uint32_t pty_id)
+                                   uint32_t parent, uint32_t flags, uint32_t pty_id,
+                                   int stdin_fd, int stdout_fd, int stderr_fd)
 {
     struct storage_node node;
     int ret;
@@ -387,11 +552,16 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
                            ret < 0 ? ret : -21);
             return ret < 0 ? ret : -21;
         }
-        return spawn_pending_image(path, task_name, &node, launch, parent, flags, pty_id);
+        return spawn_pending_image(path, task_name, &node, launch, parent, flags, pty_id,
+                                   stdin_fd, stdout_fd, stderr_fd);
     }
-    return spawn_pending_image(path, task_name, NULL, launch, parent, flags, pty_id);
+    return spawn_pending_image(path, task_name, NULL, launch, parent, flags, pty_id,
+                               stdin_fd, stdout_fd, stderr_fd);
 }
 
+/**
+ * @brief Waits for for runnable task.
+ */
 static void wait_for_runnable_task(void)
 {
     while (!sched_select_next_user()) {
@@ -399,6 +569,11 @@ static void wait_for_runnable_task(void)
     }
 }
 
+/**
+ * @brief Coordinates the userland schedule from frame operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @return Result, status, or value defined by this API.
+ */
 struct task *userland_schedule_from_frame(struct trap_frame *frame)
 {
     struct task *current = sched_current_task();
@@ -434,6 +609,10 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
 
 static void userland_enter_task(struct task *task) __attribute__((noreturn));
 
+/**
+ * @brief Coordinates the userland enter task operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 static void userland_enter_task(struct task *task)
 {
     if (!task) {
@@ -449,6 +628,10 @@ static void userland_enter_task(struct task *task)
     arch_enter_user_frame(&task->frame, task->as.cr3);
 }
 
+/**
+ * @brief Coordinates the userland init operation.
+ * @param boot Boot information supplied by the loader.
+ */
 void userland_init(const struct boot_info *boot)
 {
     int64_t pid;
@@ -477,13 +660,13 @@ void userland_init(const struct boot_info *boot)
     }
 
     if (!storage_ready()) {
-        console_printf("[ntclks] no block-backed FAT32 filesystem available for userland\n");
+        console_printf("[ntclks] no block-backed root filesystem available for userland\n");
         kernel_idle_loop();
     }
 
     if (boot && name_contains(boot->cmdline, "mode=installer")) {
         pid = spawn_path_internal("0:/system/apps/desktop/desktop.elf", "desktop.elf window server",
-                                  0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0);
+                                  0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
             kernel_idle_loop();
@@ -493,7 +676,7 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
-    pid = spawn_path_internal("0:/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0);
+    pid = spawn_path_internal("0:/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load init.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
@@ -501,7 +684,7 @@ void userland_init(const struct boot_info *boot)
     init_pid = (uint32_t)pid;
 
     pid = spawn_path_internal("0:/system/apps/desktop/desktop.elf", "desktop.elf window server",
-                              0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0);
+                              0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load desktop.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
@@ -510,6 +693,9 @@ void userland_init(const struct boot_info *boot)
     console_printf("[ntclks] desktop.elf window server selected for Ring-3 GUI\n");
 }
 
+/**
+ * @brief Coordinates the userland enter first operation.
+ */
 void userland_enter_first(void)
 {
     if (!init_pid && !desktop_pid) {
@@ -519,6 +705,10 @@ void userland_enter_first(void)
     userland_enter_task(userland_schedule_from_frame(NULL));
 }
 
+/**
+ * @brief Coordinates the userland process exit operation.
+ * @param code Input or output value used by this operation.
+ */
 void userland_process_exit(uint64_t code)
 {
     uint32_t pid = sched_current_pid();
@@ -528,6 +718,84 @@ void userland_process_exit(uint64_t code)
     sched_exit(pid, code);
 }
 
+/**
+ * @brief Replaces the calling task's user address space with a pending executable image.
+ * @param path Canonical executable path already authorized by the syscall layer.
+ * @param argc Number of entries in argv.
+ * @param argv Kernel-owned argv pointers into data.
+ * @param envc Number of entries in envp.
+ * @param envp Kernel-owned envp pointers into data.
+ * @param data Packed argument/environment storage copied from user memory.
+ * @param data_len Number of valid data bytes.
+ * @return Zero after committing the new image, or a negative errno-style value with no change.
+ */
+int userland_exec_current_path(const char *path, uint32_t argc, char *const argv[],
+                               uint32_t envc, char *const envp[],
+                               const char *data, uint32_t data_len)
+{
+    struct task *task = sched_current_task();
+    struct storage_node node;
+    struct address_space replacement = {0};
+    struct address_space old_as;
+    char task_name[SCHED_TASK_NAME_LEN];
+    uint32_t preserved_flags;
+    int ret;
+    if (!task || task->kind != TASK_KIND_USER || !path || !path[0]) {
+        return -22;
+    }
+    ret = storage_lookup_path(path, &node);
+    if (ret < 0 || node.type != LEONOS_FS_TYPE_FILE) {
+        return ret < 0 ? ret : -2;
+    }
+    task_name_from_path(path, task_name, sizeof(task_name));
+    if (!task_name[0] || !address_space_create(&replacement) ||
+        !address_space_map_user_stack(&replacement, USER_STACK_TOP)) {
+        address_space_destroy(&replacement);
+        return -12;
+    }
+
+    /* No operation after this point can fail.  Keep all old process identity,
+     * cwd, PTY association, limits, process parentage and waitability intact. */
+    old_as = task->as;
+    task->as = replacement;
+    task->entry = 0;
+    task->stack_top = USER_STACK_TOP;
+    task->image = NULL;
+    task->image_len = 0;
+    task->image_node = node;
+    /* A fork child inherits its parent's VMA records.  Its replacement page
+     * tables are blank, so retaining those records would make the ELF mapper
+     * reject valid PIE ranges as overlaps with the discarded image. */
+    clear_task_vmas(task);
+    task->frame = (struct trap_frame){0};
+    task->frame.cs = NTCLKS_USER_CS;
+    task->frame.ss = NTCLKS_USER_DS;
+    task->frame.rflags = 0x202;
+    task->frame.rsp = USER_STACK_TOP;
+    task->dynamic_launch = (struct leonos_dynamic_launch){0};
+    preserved_flags = task->flags & (TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER |
+                                     TASK_FLAG_ELEVATED_ADMIN | TASK_FLAG_WAITABLE_CHILD);
+    task->flags = preserved_flags | TASK_FLAG_PENDING_LOAD;
+    copy_text(task->name_storage, sizeof(task->name_storage), task_name);
+    task->name = task->name_storage;
+    copy_text(task->path, sizeof(task->path), path);
+    sched_set_task_exec_params(task->pid, argc, argv, envc, envp, data, data_len);
+    syscall_close_cloexec_files(task);
+    address_space_destroy(&old_as);
+    arch_fpu_task_init(task->fpu_state);
+    console_printf("[ntclks] exec pid=%u path=%s pending cr3=0x%llx\n",
+                   task->pid, path, (unsigned long long)task->as.cr3);
+    return 0;
+}
+
+/**
+ * @brief Coordinates the userland spawn path argv operation.
+ * @param path LeonOS path consumed by this operation.
+ * @param argv Input or output value used by this operation.
+ * @param envp Input or output value used by this operation.
+ * @param pty_id Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t userland_spawn_path_argv(const char *path,
                                  const char *const argv[],
                                  const char *const envp[],
@@ -552,7 +820,7 @@ int64_t userland_spawn_path_argv(const char *path,
         return ret;
     }
 
-    pid = spawn_path_internal(path, task_name, &launch, parent, 0, pty_id);
+    pid = spawn_path_internal(path, task_name, &launch, parent, 0, pty_id, -1, -1, -1);
     if (pid > 0) {
         console_printf("[ntclks] spawn path=%s pid=%u parent=%u\n",
                        path,
@@ -562,6 +830,52 @@ int64_t userland_spawn_path_argv(const char *path,
     return pid;
 }
 
+/**
+ * @brief Spawns a user executable with explicitly inherited standard streams.
+ * @param path NUL-terminated executable path in LeonOS drive syntax.
+ * @param argv Optional NUL-terminated argument vector copied into the child.
+ * @param envp Optional NUL-terminated environment vector copied into the child.
+ * @param pty_id Active PTY inherited by the child; it must belong to the caller.
+ * @param stdin_fd Caller file descriptor used as the child's standard input.
+ * @param stdout_fd Caller file descriptor used as the child's standard output.
+ * @param stderr_fd Caller file descriptor used as the child's standard error.
+ * @return Positive child PID on success, or a negative errno value on failure.
+ */
+int64_t userland_spawn_path_argv_with_fds(const char *path,
+                                          const char *const argv[],
+                                          const char *const envp[],
+                                          uint32_t pty_id,
+                                          int stdin_fd, int stdout_fd,
+                                          int stderr_fd)
+{
+    char task_name[SCHED_TASK_NAME_LEN];
+    struct exec_launch launch;
+    uint32_t parent = sched_current_pid();
+    int64_t pid;
+    int ret;
+    if (!path || !path[0]) return -22;
+    task_name_from_path(path, task_name, sizeof(task_name));
+    ret = build_exec_launch(&launch, path, argv, envp);
+    if (ret < 0) return ret;
+    pid = spawn_path_internal(path, task_name, &launch, parent, 0, pty_id,
+                              stdin_fd, stdout_fd, stderr_fd);
+    if (pid > 0) {
+        console_printf("[ntclks] spawn path=%s pid=%u parent=%u fds=%d,%d,%d\n",
+                       path, (unsigned)pid, parent, stdin_fd, stdout_fd, stderr_fd);
+    }
+    return pid;
+}
+
+/**
+ * @brief Coordinates the userland spawn path argv for user operation.
+ * @param path LeonOS path consumed by this operation.
+ * @param argv Input or output value used by this operation.
+ * @param envp Input or output value used by this operation.
+ * @param parent_pid Input or output value used by this operation.
+ * @param user Input or output value used by this operation.
+ * @param session_id Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t userland_spawn_path_argv_for_user(const char *path,
                                           const char *const argv[],
                                           const char *const envp[],
@@ -585,7 +899,7 @@ int64_t userland_spawn_path_argv_for_user(const char *path,
     if (ret < 0) {
         return ret;
     }
-    pid = spawn_path_internal(path, task_name, &launch, parent_pid, 0, 0);
+    pid = spawn_path_internal(path, task_name, &launch, parent_pid, 0, 0, -1, -1, -1);
     if (pid > 0) {
         sched_set_task_identity((uint32_t)pid, user, session_id);
         console_printf("[ntclks] spawn trusted path=%s pid=%u parent=%u user=%u\n",
@@ -594,16 +908,30 @@ int64_t userland_spawn_path_argv_for_user(const char *path,
     return pid;
 }
 
+/**
+ * @brief Coordinates the userland spawn path with pty operation.
+ * @param path LeonOS path consumed by this operation.
+ * @param pty_id Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id)
 {
     return userland_spawn_path_argv(path, 0, 0, pty_id);
 }
 
+/**
+ * @brief Coordinates the userland spawn path operation.
+ * @param path LeonOS path consumed by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t userland_spawn_path(const char *path)
 {
     return userland_spawn_path_with_pty(path, 0);
 }
 
+/**
+ * @brief Coordinates the userland yield if runnable operation.
+ */
 void userland_yield_if_runnable(void)
 {
     if (autospawn_hello && sched_current_pid() == desktop_pid) {
@@ -633,6 +961,14 @@ void userland_yield_if_runnable(void)
     }
 }
 
+/**
+ * @brief Coordinates the userland list dir operation.
+ * @param path LeonOS path consumed by this operation.
+ * @param entries Input or output value used by this operation.
+ * @param capacity Capacity, in elements or bytes, of the related output buffer.
+ * @param out_count Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
                       uint32_t capacity, uint32_t *out_count)
 {

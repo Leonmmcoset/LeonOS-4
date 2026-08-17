@@ -51,8 +51,7 @@ void navigate_up(void)
         return;
     }
     build_parent_path(path, sizeof(path));
-    copy_text(current_path, sizeof(current_path), path);
-    navigate_to_path(current_path);
+    navigate_to_path(path);
 }
 
 void navigate_root(void)
@@ -290,6 +289,9 @@ void execute_action(uint32_t action)
         break;
     case FILEMAN_ACTION_REFRESH:
         reload_dir();
+        break;
+    case FILEMAN_ACTION_SETTINGS:
+        fileman_open_settings();
         break;
     default:
         break;

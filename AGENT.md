@@ -23,8 +23,8 @@
 
 ## 2. 项目定位与运行时架构
 
-LeonOS 4 是面向 x86_64、UEFI 启动的操作系统项目。正常系统使用 FAT32
-根文件系统，应用运行在 Ring 3，内核和可加载驱动运行在 Ring 0。主要启动
+LeonOS 4 是面向 x86_64、UEFI 启动的操作系统项目。正常系统使用 FAT32 ESP
+和 ext2 根文件系统，应用运行在 Ring 3，内核和可加载驱动运行在 Ring 0。主要启动
 与服务链如下：
 
 ```text
@@ -38,9 +38,9 @@ UEFI/GRUB
 ```
 
 安装器 ISO 是另一条启动路径：顶层 ISO 只包含启动所需的 loader、内核、
-中间层和 installer root；真正安装到磁盘的常规 ESP 内容作为
-`0:/install/esp` 载荷保存在 installer root 中。不要把“安装器运行时镜像
-内容”和“安装后系统内容”混为一谈。
+中间层和 installer root；真正安装到磁盘的系统分为 `0:/install/esp`（FAT32
+启动载荷）和 `0:/install/root`（ext2 运行时根载荷）。不要把“安装器运行时
+镜像内容”和“安装后系统内容”混为一谈。
 
 ### 根目录职责
 
@@ -154,7 +154,7 @@ UI 修改必须横向检查，而不是只改一个应用。典型关联范围�
 
 ### 存储与响应性
 
-- 任何 FAT32 写入、API 解包、词库下载、游戏资源安装或大文件复制必须正确
+- 任何文件系统写入、API 解包、词库下载、游戏资源安装或大文件复制必须正确
   处理短读、短写、临时失败、重试边界、最终错误和资源关闭。`ret == 0` 不等同
   于完整写入成功；以实际传输字节数判断。
 - 不能在 Desktop、窗口绘制、输入事件或持锁的热路径中执行长时间同步磁盘
@@ -263,12 +263,12 @@ python3 build.py run image-vmdk --set CONFIG_KEY=VALUE
 
 ### 产物与 staging
 
-- 常规 ESP staging tree 是 `build/esp/`；VMDK 位于
+- 常规系统 staging tree 是 `build/esp/`；镜像工具从它派生 FAT32 ESP 与 ext2 根，VMDK 位于
   `build/images/leonos4.vmdk`，普通 ISO 位于 `build/images/leonos4.iso`，
   Installer ISO 位于 `build/images/leonos4-installer.iso`。
-- 安装器 root 是 `build/install/root.fat`，常规 ESP 的安装载荷被复制到
-  `0:/install/esp`。改变程序是否进入镜像时必须验证常规 VMDK、installer root
-  与安装后 payload 的对应行为。
+- 安装器 root 是 `build/install/root.fat`；其 `0:/install/esp` 会复制到安装目标
+  的 FAT32 `2:/`，`0:/install/root` 会复制到 ext2 `1:/`。改变程序是否进入镜像时
+  必须验证常规 VMDK、installer root 与安装后两组 payload 的对应行为。
 - 每次 OS 构建、生成或 profile 任务都可能更新构建号和
   `include/generated/build_info.h`。不要把这种自动改动误认为用户业务逻辑；
   若只为验证而触发递增，恢复时只能回退自己这次产生的元数据差异，绝不能覆盖
@@ -303,7 +303,33 @@ python3 build.py run image-vmdk --set CONFIG_KEY=VALUE
 - 新增安全审计报告时，使用简体中文，归档为 `docs/security/YYYY-MM-DD.md`，
   明确静态覆盖范围和未做的 PoC/QEMU 验证，不能虚构修复版本或利用结论。
 
-## 8. 文档、日志和交付质量
+## 8. 代码注释规范
+
+`kernel/ntclks/` 与 `middlelayer/osmlayer/` 中的每个函数定义和公共函数声明必须紧贴
+Doxygen 风格块注释。C、汇编预处理源和 Rust 统一使用 `/** ... */`，格式如下：
+
+```c
+/**
+ * @brief 说明函数实际负责的行为、边界与副作用。
+ * @param request 输入；说明可空性、所有权、长度或容量。
+ * @param out_result 输出；调用方提供的可写存储。
+ * @return 成功值和所有重要错误/特殊返回值。
+ */
+int subsystem_handle(const struct request *request, struct result *out_result);
+```
+
+- `@brief` 必须表达职责，不能只重复函数名。涉及用户指针、权限、锁、中断上下文、
+  内存映射、引用计数或硬件 I/O 时，要记录适用的关键前置条件或副作用。
+- 每个参数都用 `@param` 说明输入/输出方向、可空性、所有权与字节长度/数组容量；
+  无参数函数不写占位 `@param`。不返回的函数应说明不返回的原因。
+- 每个非 `void` 函数都用 `@return` 描述成功结果、负 errno 或其他特殊值。异步函数还要
+  说明完成、回调或状态变化的时机。
+- 静态私有函数至少在定义处注释；公共函数的头文件声明和实现都必须有一致描述。函数
+  注释不替代结构、宏、ABI、状态机或复杂算法所需的独立说明。
+- 修改已有函数签名、返回约定、所有权、锁定规则或副作用时，必须同步修改其 Doxygen
+  注释；新函数不带合格注释不得合入。
+
+## 9. 文档、日志和交付质量
 
 - 新功能、公开 API、构建开关、镜像布局或第三方移植发生变化时，更新相关
   `docs/`、`devtools/docs/`、SDK 说明、示例和归属/许可证文本。文档只能描述
@@ -317,7 +343,7 @@ python3 build.py run image-vmdk --set CONFIG_KEY=VALUE
 - 当用户问“为什么”或要求诊断时，先给源码和日志证据，再给结论；除非用户
   同时要求修复，否则不要擅自修改。
 
-## 9. Git、CI 与发布
+## 10. Git、CI 与发布
 
 - 提交前检查 `git status --short`、`git diff --check`，并只 stage 本任务的文件。
   没有用户明确要求时，不要自行创建分支、提交、push 或创建 PR。
@@ -329,7 +355,7 @@ python3 build.py run image-vmdk --set CONFIG_KEY=VALUE
 - 发布任务应同时考虑 VMDK、普通 ISO、Installer ISO、SDK、API 包、校验和与
   第三方归属文件；任何一项是否包含某个组件由当前 profile 与组件清单决定。
 
-## 10. 常用排查顺序
+## 11. 常用排查顺序
 
 1. `git status --short`，查看是否有用户进行中的工作。
 2. `git diff -- <相关路径>`，确定当前改动与请求关系。

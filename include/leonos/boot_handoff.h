@@ -19,6 +19,8 @@
 #define LEONOS_MOUNT_KIND_FAT32_RAMDISK 2u
 #define LEONOS_MOUNT_KIND_DEVFS 3u
 #define LEONOS_MOUNT_KIND_TARGET_ESP 4u
+#define LEONOS_MOUNT_KIND_EXT2_BOOT 5u
+#define LEONOS_MOUNT_KIND_TARGET_ROOT 6u
 
 #define LEONOS_MOUNT_FLAG_READONLY 0x00000001u
 #define LEONOS_MOUNT_FLAG_RUNTIME_ROOT 0x00000002u
@@ -99,6 +101,7 @@ struct leonos_boot_handoff {
     struct leonos_boot_module_info installer_root;
     uint64_t middlelayer_api;
     struct leonos_boot_log_state boot_log;
+    uint64_t boot_uptime_us;
 };
 
 struct leonos_kernel_services {

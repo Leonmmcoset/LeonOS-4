@@ -367,7 +367,7 @@ int spawn_help_path(const char *path)
     argv[0] = "0:/programs/oshlp/oshlp.elf";
     argv[1] = (char *)path;
     argv[2] = 0;
-    pid = execve(argv[0], argv, 0);
+    pid = leonos_spawn_argv(argv[0], argv);
     printf("[desktop.elf] spawn help %s pid=%d\n", path ? path : "", pid);
     return pid;
 }
@@ -444,6 +444,15 @@ void oobe_lock_update(void)
     if (!oobe_lock_active) {
         return;
     }
+    /* Successful OOBE sign-in assigns the desktop task a session before its
+     * window teardown is observed.  That in-memory identity is authoritative
+     * and avoids re-opening OOBE while the account database write is settling. */
+    if (desktop_session_logged_in()) {
+        oobe_lock_active = 0;
+        full_redraw_pending = 1;
+        maybe_launch_login();
+        return;
+    }
     if (oobe_done_marker_exists()) {
         oobe_lock_active = 0;
         full_redraw_pending = 1;
@@ -462,9 +471,11 @@ void oobe_lock_update(void)
 
 void oobe_lock_on_window_removed(uint8_t slot)
 {
-    (void)slot;
-    if (oobe_lock_active) {
-        oobe_last_spawn_ms = 0;
+    if (oobe_lock_active && slot < MAX_WINDOWS && window_is_oobe(&windows[slot])) {
+        /* Let the OOBE completion writes become observable before considering
+         * a replacement.  The previous zero timestamp caused an immediate
+         * respawn on some cold-storage timings. */
+        oobe_last_spawn_ms = leonos_uptime_ms();
     }
 }
 
@@ -510,9 +521,6 @@ int desktop_session_logged_in(void)
 void maybe_launch_login(void)
 {
     struct leonos_auth_status status;
-    if (!oobe_done_marker_exists()) {
-        return;
-    }
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
         desktop_load_appearance_config();
@@ -521,6 +529,9 @@ void maybe_launch_login(void)
         (void)desktop_refresh_items();
         desktop_launch_startup_apps();
         full_redraw_pending = 1;
+        return;
+    }
+    if (!oobe_done_marker_exists()) {
         return;
     }
     status = (struct leonos_auth_status){0};
@@ -714,118 +725,12 @@ void handle_start_click(uint32_t x, uint32_t y)
     if (!start_menu_open && !start_menu_animating) {
         return;
     }
-    struct start_menu_item items[START_MENU_MAX_ITEMS];
-    uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
-    struct start_menu_layout layout = start_menu_layout_for_count(count);
-    struct start_programs_layout programs = start_programs_layout_for_menu(layout);
-    struct start_programs_layout docs = start_docs_layout_for_menu(layout);
-    if (start_menu_programs_open &&
-        hit_rect(x, y, (int)programs.x, (int)programs.y, programs.w, programs.h)) {
-        uint32_t filtered_count = start_menu_filtered_app_count();
-        if (filtered_count && x >= programs.x + 34 &&
-            y >= programs.y + 8 + START_MENU_SEARCH_H) {
-            uint32_t rel_x = x - programs.x - 34;
-            uint32_t rel_y = y - programs.y - 8 - START_MENU_SEARCH_H;
-            uint32_t col = rel_x / START_PROGRAMS_W;
-            uint32_t row = rel_y / START_MENU_ITEM_H;
-            uint32_t filtered_index = start_menu_programs_scroll + col * programs.rows + row;
-            uint32_t app_index = start_menu_filtered_app_index(filtered_index);
-            if (col < programs.cols && row < programs.rows &&
-                filtered_index < filtered_count && app_index < start_menu_app_count) {
-                spawn_program_path(start_menu_app_paths[app_index]);
-                start_menu_set_open(0);
-            }
-        }
-        return;
-    }
-    if (start_menu_docs_open &&
-        hit_rect(x, y, (int)docs.x, (int)docs.y, docs.w, docs.h)) {
-        if (start_menu_doc_count && x >= docs.x + 34) {
-            uint32_t rel_x = x - docs.x - 34;
-            uint32_t rel_y = y > docs.y + 8 ? y - docs.y - 8 : 0;
-            uint32_t col = rel_x / START_DOCS_W;
-            uint32_t row = rel_y / START_MENU_ITEM_H;
-            uint32_t index = start_menu_docs_scroll + col * docs.rows + row;
-            if (col < docs.cols && row < docs.rows && index < start_menu_doc_count) {
-                spawn_help_path(start_menu_doc_paths[index]);
-                start_menu_set_open(0);
-            }
-        }
-        return;
-    }
-    if (!hit_rect(x, y, (int)layout.x, (int)layout.y, layout.w, layout.visible_h)) {
-        start_menu_set_open(0);
-        return;
-    }
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t item_y_full = 8 + i * START_MENU_ITEM_H;
-        if (item_y_full + START_MENU_ITEM_H <= layout.visible_start) {
-            continue;
-        }
-        int item_y = (int)layout.y + (int)item_y_full - (int)layout.visible_start;
-        if (item_y < (int)layout.y + 4 ||
-            item_y + START_MENU_ITEM_H > (int)layout.y + (int)layout.visible_h ||
-            !hit_rect(x, y, (int)layout.x + 34, item_y, layout.w - 52, START_MENU_ITEM_H)) {
-            continue;
-        }
-        if (items[i].type == START_ACTION_RESTORE) {
-            restore_window(items[i].window_id);
-        } else if (items[i].type == START_ACTION_SPAWN ||
-                   items[i].type == START_ACTION_SPAWN_ONCE) {
-            spawn_program_path(items[i].path);
-        } else if (items[i].type == START_ACTION_PROGRAMS) {
-            start_menu_programs_open = start_menu_programs_open ? 0 : 1;
-            if (start_menu_programs_open) {
-                start_menu_docs_open = 0;
-            }
-            start_menu_programs_scroll = 0;
-            full_redraw_pending = 1;
-            return;
-        } else if (items[i].type == START_ACTION_DOCUMENTS) {
-            start_menu_docs_open = start_menu_docs_open ? 0 : 1;
-            if (start_menu_docs_open) {
-                start_menu_programs_open = 0;
-            }
-            start_menu_docs_scroll = 0;
-            full_redraw_pending = 1;
-            return;
-        } else if (items[i].type == START_ACTION_REBOOT) {
-            desktop_request_power_confirm(POWER_CONFIRM_REBOOT);
-            return;
-        } else if (items[i].type == START_ACTION_SHUTDOWN) {
-            desktop_request_power_confirm(POWER_CONFIRM_SHUTDOWN);
-            return;
-        } else if (items[i].type == START_ACTION_LOGOUT) {
-            desktop_logout();
-            return;
-        }
-        break;
-    }
-    start_menu_set_open(0);
+    start_menu_handle_click(x, y);
 }
 
 int hit_start_menu_area(uint32_t x, uint32_t y)
 {
-    if (!start_menu_open && !start_menu_animating) {
-        return 0;
-    }
-    struct start_menu_item items[START_MENU_MAX_ITEMS];
-    uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
-    struct start_menu_layout layout = start_menu_layout_for_count(count);
-    if (hit_rect(x, y, (int)layout.x, (int)layout.y, layout.w, layout.visible_h)) {
-        return 1;
-    }
-    if (start_menu_programs_open) {
-        struct start_programs_layout programs = start_programs_layout_for_menu(layout);
-        if (hit_rect(x, y, (int)programs.x, (int)programs.y, programs.w, programs.h)) {
-            return 1;
-        }
-    }
-    if (start_menu_docs_open) {
-        struct start_programs_layout docs = start_docs_layout_for_menu(layout);
-        return hit_rect(x, y, (int)docs.x, (int)docs.y, docs.w, docs.h);
-    }
-    return 0;
+    return start_menu_hit_test(x, y);
 }
 
 int handle_taskbar_click(uint32_t x, uint32_t y)
@@ -1208,58 +1113,9 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
         (login_lock_active && handle_login_lock_mouse_wheel(x, y, wheel, buttons))) {
         return;
     }
-    if (start_menu_open && start_menu_programs_open && wheel != 0) {
-        struct start_menu_item items[START_MENU_MAX_ITEMS];
-        uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
-        struct start_menu_layout menu = start_menu_layout_for_count(count);
-        struct start_programs_layout programs = start_programs_layout_for_menu(menu);
-        uint32_t filtered_count = start_menu_filtered_app_count();
-        if (hit_rect(x, y, (int)programs.x, (int)programs.y, programs.w, programs.h) &&
-            filtered_count > programs.visible_count) {
-            uint32_t steps = wheel < 0 ? (uint32_t)(-wheel) : (uint32_t)wheel;
-            uint32_t max_scroll = filtered_count - programs.visible_count;
-            if (steps == 0) {
-                steps = 1;
-            }
-            if (wheel > 0) {
-                start_menu_programs_scroll = start_menu_programs_scroll > steps
-                                                 ? start_menu_programs_scroll - steps
-                                                 : 0;
-            } else {
-                start_menu_programs_scroll = start_menu_programs_scroll + steps < max_scroll
-                                                 ? start_menu_programs_scroll + steps
-                                                 : max_scroll;
-            }
-            full_redraw_pending = 1;
-            redraw_all();
-            return;
-        }
-    }
-    if (start_menu_open && start_menu_docs_open && wheel != 0) {
-        struct start_menu_item items[START_MENU_MAX_ITEMS];
-        uint32_t count = build_start_menu_items(items, START_MENU_MAX_ITEMS);
-        struct start_menu_layout menu = start_menu_layout_for_count(count);
-        struct start_programs_layout docs = start_docs_layout_for_menu(menu);
-        if (hit_rect(x, y, (int)docs.x, (int)docs.y, docs.w, docs.h) &&
-            start_menu_doc_count > docs.visible_count) {
-            uint32_t steps = wheel < 0 ? (uint32_t)(-wheel) : (uint32_t)wheel;
-            uint32_t max_scroll = start_menu_doc_count - docs.visible_count;
-            if (steps == 0) {
-                steps = 1;
-            }
-            if (wheel > 0) {
-                start_menu_docs_scroll = start_menu_docs_scroll > steps
-                                             ? start_menu_docs_scroll - steps
-                                             : 0;
-            } else {
-                start_menu_docs_scroll = start_menu_docs_scroll + steps < max_scroll
-                                             ? start_menu_docs_scroll + steps
-                                             : max_scroll;
-            }
-            full_redraw_pending = 1;
-            redraw_all();
-            return;
-        }
+    if (start_menu_handle_wheel(x, y, wheel)) {
+        redraw_all();
+        return;
     }
     int hover_id = hit_window(x, y);
     if (hover_id >= BUILTIN_WINDOWS && hover_id < MAX_WINDOWS && windows[hover_id].window_id) {

@@ -1,0 +1,10 @@
+{
+  "sqlite_version": "3.46.1",
+  "sqlite_commit": "f3d536d37825302e31ed0eddd811c689f38f85a3",
+  "vfs": "leonos",
+  "features": [
+    "SQLITE_THREADSAFE=0",
+    "SQLITE_OMIT_WAL",
+    "SQLITE_OMIT_LOAD_EXTENSION"
+  ]
+}

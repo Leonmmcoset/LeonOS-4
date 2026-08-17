@@ -9,6 +9,18 @@
 
 Unimplemented syscalls return `-ENOSYS`.
 
+## Dynamic Library ABI
+
+Dynamic PIE executables use `0:/system/lib/ld-leonos.elf` and must contain one
+`DT_NEEDED=libleonos.so.1` entry. They may additionally require ABI-v1 shared
+libraries. The loader resolves an unqualified library name from the requesting
+module directory and then `0:/system/lib`, validates each LeonOS ABI note, and
+loads recursive dependencies before relocating the main executable.
+
+The system libraries currently include `libleonos.so.1`, `libmagic.so.1`, and
+`liblua.so.5`. Static `ET_EXEC` binaries remain supported for recovery tools
+and SDK builds made with `STATIC=1`.
+
 ## Syscall subset
 
 LeonOS keeps Linux-compatible syscall numbers for the current user ABI:
@@ -21,9 +33,47 @@ LeonOS keeps Linux-compatible syscall numbers for the current user ABI:
 - Memory: `mmap`, `munmap`
 - Device and system extensions: `ioctl`
 
-The libc wrappers live in `userland/libc/include/leonos/syscall.h` and
-`userland/libc/src/libc.c`. `mmap` supports anonymous private mappings and
-private file mappings; `munmap` supports whole or partial unmapping.
+The libc wrappers live in `userland/libc/include/leonos/syscall.h`,
+`userland/libc/src/libc.c`, and the POSIX-facing files beside it. `mmap`
+supports anonymous private mappings and private file mappings; `munmap`
+supports whole or partial unmapping.
+
+## Shared POSIX porting surface
+
+`libleonos.so.1` contains the shared ANSI curses subset in
+`userland/libc/src/ansi_curses.c`. Applications include either `<curses.h>` or
+`<ncurses.h>` from the SDK and link only the normal runtime; Nano and `sl` use
+the same implementation. It provides windows, cursor movement, buffered ANSI
+output, terminal-size refresh, raw/noecho mode, and the key/input functions
+used by those ports. It is a small LeonOS terminal API, not a promise of
+binary compatibility with host ncurses.
+
+The runtime also exports `usleep()`. The SDK Makefile enables
+`_DEFAULT_SOURCE`, so Picolibc exposes its standard declaration without an
+application-local `unistd.h` shim. Signal-handler installation remains
+unsupported until the kernel signal ABI is complete.
+
+`userland/libc/src/posix_process.c` is the single POSIX process and descriptor
+adapter used by both dynamic applications and static ports. It implements
+`fork`, `vfork`, `execve`, `wait4`, `waitpid`, `pipe`, `dup`, `dup2`, `fcntl`,
+process IDs/groups, foreground PTY groups, `kill`, nice priorities, and resource
+limits. The wrappers convert raw negative errno values to `-1` with `errno`.
+`waitpid(..., WNOHANG)` returns `0` if the child has no state change; blocking
+waits yield while the scheduler reports its temporary `EAGAIN`. `vfork` is
+intentionally COW-fork equivalent until LeonOS has a parent-suspending vfork
+ABI. `nice()` and `getpriority()` return the normal `-20..19` priority range.
+
+The kernel applies default terminal signal actions to the foreground process
+group. `signal`, `sigaction`, `sigprocmask`, and `raise` currently report
+`ENOSYS` (`signal` returns `SIG_ERR`), while `sigsuspend` yields and returns
+`EINTR`; applications must not rely on custom user-space signal handlers yet.
+
+The runtime also owns the common POSIX file-port adapters: `stat`, `fstat`,
+and `lstat` are available as the explicit `leonos_posix_*` adapters in
+`<leonos/posix.h>`; `access`, `fcntl`, `opendir`, `readdir`, `closedir`,
+`dirfd`, and `rewinddir` are supplied through Picolibc's normal POSIX headers.
+Directory entries expose LeonOS's file, directory, and device kinds.  They do
+not yet provide filesystem-native inode or ownership metadata.
 
 See [Syscalls](SYSCALLS.md) for the detailed syscall table, ioctl groups, and
 current limitations.
@@ -145,6 +195,47 @@ Administrators, Users, and Everyone. Supported permission bits are Read/List,
 Write/Create, Execute/Traverse, Delete, and Manage Permissions. ACL rows only
 grant allowed permissions; an unchecked permission bit means no grant.
 
+## Disk Management ABI
+
+`include/leonos/fs.h` also defines the GPT disk-management ABI used by
+`diskmgr.elf`. A caller first uses `leonos_install_list_disks`, then requests
+the selected disk's entries with `leonos_disk_list_partitions`. Each
+`struct leonos_disk_partition` carries its zero-based GPT entry index, LBA
+range, decoded filesystem, GPT type GUID, display name, protection flags, and
+the assigned numeric drive when `LEONOS_DISK_PARTITION_FLAG_MOUNTED` is set.
+Unmounted entries report `LEONOS_DISK_DRIVE_NONE`.
+
+The associated ioctls are:
+
+- `LEONOS_DISK_IOCTL_LIST_PARTITIONS`
+- `LEONOS_DISK_IOCTL_FORMAT_PARTITION`
+- `LEONOS_DISK_IOCTL_DELETE_PARTITION`
+- `LEONOS_DISK_IOCTL_CREATE_PARTITION`
+- `LEONOS_DISK_IOCTL_MOUNT_PARTITION`
+- `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`
+
+`FORMAT_PARTITION` accepts FAT32 and ext2 through
+`struct leonos_disk_partition_format`. `CREATE_PARTITION` allocates a
+1 MiB-aligned range with the requested size in MiB and formats it immediately;
+FAT32 uses the GPT Microsoft Basic Data type and ext2 uses the Linux filesystem
+type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
+claim to securely erase the old data area.
+
+`MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount` whose
+`drive` input is `LEONOS_DISK_DRIVE_NONE`; it returns the first free runtime
+drive. The mount is not persistent across reboot. `UNMOUNT_PARTITION` takes a
+`struct leonos_disk_partition_unmount` and returns busy when a live task still
+uses the drive through a CWD, descriptor, image, or file mapping.
+
+Listing is available to disk-management clients, while create, format, delete,
+mount, and unmount are checked through the administrator install authorization
+path in the kernel. The running boot disk and an installer target that is
+currently mounted are exported as protected and their partitions are rejected
+by the kernel even if a client constructs an ioctl request directly. The
+initial ABI accepts the standard 128-entry, 128-byte GPT table emitted by
+LeonOS; malformed, out of range, overlapping, or CRC-invalid tables are never
+mutated.
+
 ## Middlelayer ABI v5
 
 The loader starts `kernel.sys` and `middlelayer.sys`. The middlelayer module
@@ -171,7 +262,7 @@ The kernel service table passed to middlelayer is intentionally small:
 - `mkdir`
 
 Kernel code owns hardware probing, interrupts, page tables, physical memory,
-scheduling, user pointer validation, storage block I/O, and FAT32 mutation.
+scheduling, user pointer validation, storage block I/O, and FAT32/ext2 mutation.
 Middlelayer owns higher-level policy or semantic services that can run on top
 of those kernel facts.
 

@@ -95,6 +95,9 @@ def main() -> None:
     parser.add_argument("--linker-script", type=Path, required=True)
     parser.add_argument("--leonos-lib", type=Path, required=True)
     parser.add_argument("--picolibc-lib", type=Path, required=True)
+    parser.add_argument("--dynamic-crt", type=Path)
+    parser.add_argument("--abi-note", type=Path)
+    parser.add_argument("--dynamic", action="store_true")
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
@@ -141,7 +144,7 @@ def main() -> None:
     headers = clang_resource_headers()
     flags = [
         "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=c11", "-ffreestanding",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone",
+        "-fno-stack-protector", "-fPIC", "-fPIE", "-mno-red-zone",
         "-mgeneral-regs-only", "-ffunction-sections", "-fdata-sections", "-Wall",
         "-Wextra", "-DLEONOS_USE_PICOLIBC", "-D_POSIX_C_SOURCE=200809L",
         "-include", str(generated_include / "autoconf.h"), "-nostdinc", "-isystem",
@@ -161,11 +164,15 @@ def main() -> None:
     objects.append(port_object)
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, "-z", "max-page-size=0x1000",
-        "-T", str(linker_script), "-o", str(output), *map(str, objects),
-        "--start-group", str(leonos_lib), str(picolibc_lib), "--end-group",
-    ])
+    if args.dynamic and (not args.dynamic_crt or not args.abi_note):
+        raise SystemExit("dynamic PL Editor requires --dynamic-crt and --abi-note")
+    dynamic = ["-pie", "--hash-style=sysv", "--dynamic-linker", "0:/system/lib/ld-leonos.elf",
+               "-z", "relro", "-z", "now"] if args.dynamic else []
+    startup = [str(args.dynamic_crt), str(args.abi_note)] if args.dynamic else []
+    libraries = [str(leonos_lib)] if args.dynamic else [str(leonos_lib), str(picolibc_lib)]
+    run(["ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, *dynamic,
+         "-z", "max-page-size=0x1000", "-T", str(linker_script), "-o", str(output),
+         *startup, *map(str, objects), "--start-group", *libraries, "--end-group"])
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(
         json.dumps(

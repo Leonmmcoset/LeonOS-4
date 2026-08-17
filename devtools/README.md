@@ -7,11 +7,27 @@ ELF 应用程序。
 ## 内容
 
 - `include/`: LeonOS 4 用户态 C 标准库兼容头文件和公开系统 API。
+- `include/curses.h` 与 `include/ncurses.h`: 由 `libleonos.so.1` 提供的共享
+  ANSI curses 子集，普通终端程序可直接使用，不需要复制 Nano 或 `sl` 的
+  curses 兼容层。
+- `include/leonos/posix.h`: 共享文件状态适配器。目录遍历、`fcntl` 与
+  `access` 则直接使用 SDK 内 Picolibc 提供的标准 POSIX 头文件，运行库已
+  包含实现。
+- `fork`、`execve`、`waitpid`、管道、描述符复制、进程组、前台终端组、
+  `kill`、优先级和资源限制同样由 `libleonos.so.1` 统一实现；直接包含
+  Picolibc 的标准 `<unistd.h>`、`<sys/wait.h>`、`<fcntl.h>`、`<signal.h>`
+  和 `<sys/resource.h>`。自定义 signal handler 尚未支持。
 - `lib/libc.a`: 与本 SDK 头文件匹配的 freestanding 用户态 C 库。
 - `lib/libz.a` 与 `lib/libpng.a`: zlib 1.3.2 和 libpng 1.6.58 静态库；对应
   的公开头文件与许可证也包含在 SDK 中。
 - `lib/libstardustui.a`: StardustUI 静态 GUI 库，含 LeonOS 像素窗口后端、
   C++ 兼容头、上游公共头文件、许可证和最小示例。
+- `lib/libmagic.so.1` 与 `lib/libmagic.a`: file 5.48 的动态和静态文件类型
+  识别库，公共头文件为 `include/magic.h`。
+- `lib/liblua.so.5` 与 `lib/liblua.a`: Lua 5.4.8 的动态和静态 C API，公共
+  头文件为 `include/lua5.4/`。
+- `lib/sqlite.so.3` 与 `lib/sqlite.a`: SQLite 3.46.1 的动态和静态 C API，
+  公共头文件为 `include/sqlite3.h`。
 - `linker.ld`: LeonOS 4 用户态 ELF 的链接布局，入口为 `_start`。
 - `examples/helloworld/`: 最小可构建的 HelloWorld 应用。
 - `examples/inputm_provider/`: 注册 InputM 提供者并提交/透传键盘事件的示例。
@@ -60,8 +76,9 @@ make clean
 ## 创建应用
 
 1. 复制 `examples/helloworld` 为你的应用目录，例如 `examples/myapp`。
-2. 修改其中的 `main.c`。程序入口是普通的 `int main(void)`；SDK 的
-   `libc.a` 会提供 `_start`、系统调用封装和常用 C 库函数。
+2. 修改其中的 `main.c`。程序入口是普通的 `int main(void)`；默认动态运行时
+   的 `libleonos.so.1` 会提供系统调用封装和常用 C 库函数。需要完整静态程序
+   时使用 `STATIC=1`。
 3. 构建：
 
 ```sh
@@ -74,7 +91,8 @@ make APP=examples/myapp APP_NAME=myapp
 0:/programs/myapp/myapp.elf
 ```
 
-可由桌面、文件管理器或 `execve()` 启动。
+可由桌面、文件管理器或 `leonos_launch_argv()` 启动；需要 POSIX 启动语义时使用
+`fork()` 后由子进程调用 `execve()`。
 
 ### StardustUI C++ 应用
 
@@ -166,8 +184,9 @@ leonos_mouse_set_style(window_id, LEONOS_GUI_CURSOR_HAND);
 `window_id`；窗口销毁后，任务栏和光标样式会自动恢复。
 
 程序必须是 freestanding：不要依赖宿主系统的动态链接器、POSIX 运行时或
-宿主系统的库。请只链接本 SDK 的 `lib/libc.a`，并保留 Makefile 的编译、
-链接参数与 `linker.ld`。
+宿主系统的库。默认构建使用 LeonOS 的 `0:/system/lib/ld-leonos.elf` 和
+`libleonos.so.1`；请保留 Makefile 的编译和链接参数。`STATIC=1` 才会改用
+SDK 中的静态归档与 `linker.ld`。
 
 ### PNG 图像
 

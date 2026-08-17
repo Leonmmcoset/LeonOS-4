@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "los2w"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run LeonOS 4 x86_64 ELF applications on Windows Python."
 readme = { file = "los2w/README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"

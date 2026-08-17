@@ -73,6 +73,19 @@ LeonOS builds libpng as `libpng.a` against its bundled zlib.  The public SDK
 includes both upstream libraries and headers, while `leonos/png.h` provides a
 bounded PNG-to-LeonOS-pixel decoder for ordinary GUI applications.
 
+## SQLite
+
+- Path: `third_party/sqlite`
+- Upstream: `https://github.com/sqlite/sqlite.git`
+- Version: 3.46.1; pinned commit:
+  `f3d536d37825302e31ed0eddd811c689f38f85a3`
+- License: SQLite public domain dedication and blessing; preserve
+  `third_party/sqlite/LICENSE.md`.
+
+LeonOS installs the ABI-v1 shared library as `0:/system/lib/sqlite.so.3` and
+packages `sqlite3.h` in the SDK. The port uses a LeonOS VFS and currently
+disables WAL, loadable extensions, and cross-process file locking.
+
 ## BusyBox
 
 - Path: `third_party/busybox`
@@ -86,9 +99,11 @@ LeonOS builds a static, basic-applet BusyBox profile at
 `0:/programs/busybox/busybox.elf`. It includes file/text utilities such as
 `ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `diff`, `less`, `mkdir`,
 `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`, `true`,
-`false`, `vi`, and `printf`. BusyBox ash is intentionally excluded until LeonOS has fork, pipe,
-file-descriptor duplication, process-group, and signal semantics; the current
-shell entry point is the no-fork Hush profile.
+`false`, `vi`, and `printf`. The `sh` entry point is BusyBox Ash built for
+LeonOS's MMU path. It uses the kernel COW `fork`/`execve` ABI, inherited file
+descriptors, process groups and PTY foreground groups for pipelines,
+redirection, background jobs, and `jobs`/`fg`/`bg`. The image profile selects
+Ash as its shell implementation.
 
 ## GNU nano
 
@@ -105,6 +120,19 @@ uses Nano's single-buffer tiny profile: the core editor path is present, while
 external spellers/formatters, rc files, syntax coloring, help pages, mouse
 input and multi-buffer support remain off. Interactive editing and persistence
 still require manual GUI-terminal validation on each supported VM platform.
+
+## GNU less
+
+- Path: `third_party/less`
+- Upstream: `https://github.com/gwsw/less.git`
+- Pinned commit: `b8bbf4297169e20d35e1cc3e015180e8a011bcf2`
+- License: GNU GPL-3.0-or-later or the upstream Less License; preserve both
+  `third_party/less/COPYING` and `third_party/less/LICENSE`.
+
+LeonOS installs the upstream pager at `0:/programs/less/less.elf`. It uses the
+shared PTY, polling and POSIX regular-expression runtime through a small ANSI
+termcap adapter. Shell escapes, external editor commands, tags, user key files,
+logfile output and shell pipes are disabled for the system build.
 
 ## TinyCC
 
@@ -135,11 +163,10 @@ exist.
 - License: MIT; the LeonOS copy of the complete upstream license is staged at
   `0:/programs/lua/LICENSE` beside the executable.
 
-LeonOS builds Lua as the static command-line interpreter at
-`0:/programs/lua/lua.elf`. It uses Lua's portable C89 configuration with
-Picolibc and the LeonOS adapter archive. Dynamic C modules and `package.loadlib`
-are intentionally unavailable until the system has a dynamic-loader ABI. Lua
-scripts can be loaded from the current directory or from
+LeonOS builds Lua as the command-line interpreter at `0:/programs/lua/lua.elf`
+and provides its ABI-v1 C API in `0:/system/lib/liblua.so.5`. It uses Lua's
+portable C89 configuration with the LeonOS runtime. Dynamic C modules and
+`package.loadlib` remain unavailable. Lua scripts can be loaded from the current directory or from
 `0:/programs/lua/lua/`.
 
 ## PL Editor
@@ -167,12 +194,16 @@ extended syntax set.
   `0:/programs/cmd/LICENSE` beside the executable.
 
 LeonOS builds the interpreter at `0:/programs/cmd/cmd.elf`. From the BusyBox
-Hush prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
+Ash prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
 built-ins, batch files, variables and redirection, and executes enabled
-BusyBox applets or supported LeonOS terminal programs through the PTY
-spawn/wait ABI. Pipes and the background process forms of `START` remain
-unavailable because LeonOS does not yet provide fork or pipe semantics; they
-fail explicitly instead of entering a partial POSIX fallback.
+BusyBox applets or supported LeonOS terminal programs through the shared COW
+`fork`/`execve`/`waitpid` path. Foreground pipelines use inherited anonymous
+pipes and support per-stage redirection. `cmd` also supports `command &`,
+external pipelines ending in `&`, plus `jobs`, `fg`, and `bg`; those background
+jobs remain limited to external commands without per-stage redirection. BusyBox
+Ash is the interactive POSIX-style shell and uses the same native COW process
+path for full pipeline, redirection, process-group, and terminal job-control
+semantics.
 
 ## Fastfetch
 
@@ -193,6 +224,18 @@ Version modules, all 527 upstream built-in ASCII logos, logo/display options,
 and restricted `--structure` selection for the modules available on LeonOS.
 JSON/config files, file or image logos, dynamic refresh, dynamic libraries and
 modules requiring a host POSIX or Linux interface remain disabled.
+
+## sl
+
+- Path: `third_party/sl`
+- Upstream: `https://github.com/mtoyoda/sl.git`
+- Pinned commit: `923e7d7ebc5c1f009755bdeb789ac25658ccce03`
+- License: permissive upstream license; the complete upstream `LICENSE` is
+  staged at `0:/programs/sl/LICENSE` beside the executable.
+
+LeonOS builds the Steam Locomotive joke command at
+`0:/programs/sl/sl.elf`. The upstream animation is kept intact and its curses
+calls are implemented by the ANSI adapter in `userland/sl`.
 
 ## minimp3
 

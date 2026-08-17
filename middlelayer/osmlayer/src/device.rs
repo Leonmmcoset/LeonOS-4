@@ -1,3 +1,6 @@
+// LeonOS osmlayer device model: defines raw device records shared with C.
+// Provides typed device discovery and metadata used by mount and VFS policy.
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LeonosRawDeviceInfo {
@@ -32,7 +35,10 @@ pub struct LeonosDeviceCatalogQuery {
     count: u32,
     reserved: u32,
 }
-
+/**
+ * @brief Coordinates the catalog selftest operation.
+ * @return Result, status, or value defined by this API.
+ */
 pub fn catalog_selftest() -> bool {
     true
 }

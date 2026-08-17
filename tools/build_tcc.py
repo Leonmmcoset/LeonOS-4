@@ -66,6 +66,32 @@ def source_revision(source: Path) -> str:
     return result.stdout.strip()
 
 
+def replace_directory(staging_dir: Path, target_dir: Path) -> None:
+    """Install a generated directory even when the tree is on Windows drvfs.
+
+    Directory rename is normally atomic, but drvfs can reject it with
+    ``PermissionError`` after a subprocess has recently touched one of the
+    generated files.  The fallback keeps the build output deterministic while
+    avoiding a spurious TinyCC failure.
+    """
+    if target_dir.exists():
+        try:
+            shutil.rmtree(target_dir)
+        except PermissionError:
+            for child in target_dir.rglob("*"):
+                try:
+                    child.chmod(0o666 if child.is_file() else 0o777)
+                except OSError:
+                    pass
+            shutil.rmtree(target_dir)
+    try:
+        staging_dir.rename(target_dir)
+        return
+    except PermissionError:
+        shutil.copytree(staging_dir, target_dir, dirs_exist_ok=True)
+        shutil.rmtree(staging_dir)
+
+
 def replace_once(path: Path, before: str, after: str, description: str) -> None:
     text = path.read_text(encoding="utf-8")
     if text.count(before) != 1:
@@ -196,17 +222,39 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
         "        tcc_add_library(s1, \"c\");\n",
         "#if defined LEONOS_TCC_TARGET\n"
         "        /*\n"
-        "         * This is the LeonOS static target link specification. The second\n"
-        "         * Picolibc scan resolves adapter objects selected from libleonos.\n"
+        "         * This is the LeonOS static target link specification. Archives\n"
+        "         * are rescanned as a group because the LeonOS adapter, Picolibc,\n"
+        "         * mbedTLS, and target runtime have recursive references. TinyCC\n"
+        "         * resolves an archive only when tcc_add_library() is called, so\n"
+        "         * one pass is not sufficient for all cross-archive dependencies.\n"
         "         */\n"
+        "        tcc_add_support(s1, \"libleonos-tcc-rt.a\");\n"
         "        tcc_add_library(s1, \"picolibc\");\n"
         "        tcc_add_library(s1, \"leonos\");\n"
         "        tcc_add_library(s1, \"picolibc\");\n"
-        "        tcc_add_support(s1, \"libleonos-tcc-rt.a\");\n"
+        "        tcc_add_library(s1, \"leonos\");\n"
+        "        tcc_add_library(s1, \"picolibc\");\n"
+        "        tcc_add_library(s1, \"leonos\");\n"
         "#else\n"
         "        tcc_add_library(s1, \"c\");\n"
         "#endif\n",
         "LeonOS static target link specification",
+    )
+
+    replace_once(
+        source / "x86_64-link.c",
+        "ST_FUNC int gotplt_entry_type (int reloc_type)\n"
+        "{\n"
+        "    switch (reloc_type) {\n"
+        "        case R_X86_64_GLOB_DAT:\n",
+        "ST_FUNC int gotplt_entry_type (int reloc_type)\n"
+        "{\n"
+        "    switch (reloc_type) {\n"
+        "        /* TLS relaxation leaves a consumed relocation marker. */\n"
+        "        case R_X86_64_NONE:\n"
+        "            return NO_GOTPLT_ENTRY;\n"
+        "        case R_X86_64_GLOB_DAT:\n",
+        "accept consumed x86_64 NONE relocations in GOT pass",
     )
 
     replace_once(
@@ -392,9 +440,7 @@ def main() -> None:
     shutil.copyfile(port / "README.md", staging_dir / "README-LEONOS.md")
     shutil.copytree(port / "examples", staging_dir / "examples")
 
-    if runtime_dir.exists():
-        shutil.rmtree(runtime_dir)
-    staging_dir.rename(runtime_dir)
+    replace_directory(staging_dir, runtime_dir)
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(
         json.dumps(

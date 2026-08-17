@@ -1,0 +1,10 @@
+.section .note.leonos,"a",@note
+.balign 4
+.long 7
+.long 8
+.long 0x4c4f5341
+.asciz "LeonOS"
+.balign 4
+.long 1
+.long 0
+.balign 4

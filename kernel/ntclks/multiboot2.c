@@ -1,11 +1,26 @@
+/*
+ * LeonOS Multiboot2 support: decodes bootloader information structures.
+ * Extracts memory maps, framebuffer data, modules, and command-line metadata.
+ */
 #include <ntclks/console.h>
 #include <ntclks/multiboot2.h>
 
+/**
+ * @brief Coordinates the align8 operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uintptr_t align8(uintptr_t value)
 {
     return (value + 7u) & ~((uintptr_t)7u);
 }
 
+/**
+ * @brief Coordinates the multiboot2 parse operation.
+ * @param magic Input or output value used by this operation.
+ * @param info_addr Address used by this operation; its address-space interpretation follows the API.
+ * @param out Caller-provided storage that receives output from this operation.
+ */
 void multiboot2_parse(uint32_t magic, uintptr_t info_addr, struct boot_info *out)
 {
     for (size_t i = 0; i < sizeof(*out); ++i) {

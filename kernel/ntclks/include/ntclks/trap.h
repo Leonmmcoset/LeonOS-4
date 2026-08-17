@@ -1,3 +1,7 @@
+/*
+ * LeonOS trap-frame interface: defines saved CPU register state.
+ * Shared by interrupt entry assembly, fault handlers, and syscall dispatch.
+ */
 #ifndef NTCLKS_TRAP_H
 #define NTCLKS_TRAP_H
 

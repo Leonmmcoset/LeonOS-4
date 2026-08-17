@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a static GNU nano with LeonOS's ANSI curses compatibility layer."""
+"""Build GNU nano against the shared LeonOS ANSI curses runtime."""
 
 from __future__ import annotations
 
@@ -56,6 +56,9 @@ def main() -> None:
     parser.add_argument("--linker-script", type=Path, required=True)
     parser.add_argument("--leonos-lib", type=Path, required=True)
     parser.add_argument("--picolibc-lib", type=Path, required=True)
+    parser.add_argument("--dynamic-crt", type=Path)
+    parser.add_argument("--abi-note", type=Path)
+    parser.add_argument("--dynamic", action="store_true")
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
@@ -78,10 +81,11 @@ def main() -> None:
     output = args.output.resolve()
     stamp = args.stamp.resolve()
     required = (
-        source / "src/nano.c", source / "COPYING", port / "leonos_curses.c",
-        port / "leonos_port.c", port / "include/config.h", port / "include/ncurses.h",
+        source / "src/nano.c", source / "COPYING", port / "leonos_port.c",
+        port / "include/config.h",
         port / "include/revision.h", picolibc_prefix / "include", leonos_libc_include,
-        leonos_include, linker_script, leonos_lib, picolibc_lib,
+        leonos_libc_include / "ncurses.h", leonos_include, linker_script,
+        leonos_lib, picolibc_lib,
     )
     for path in required:
         if not path.exists():
@@ -97,7 +101,7 @@ def main() -> None:
     headers = clang_resource_headers()
     common_flags = [
         "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone",
+        "-fno-stack-protector", "-fPIC", "-fPIE", "-mno-red-zone",
         "-mgeneral-regs-only", "-ffunction-sections", "-fdata-sections", "-Wall",
         "-Wextra", "-Wno-unused-parameter", "-D_POSIX_C_SOURCE=200809L",
         "-D_DEFAULT_SOURCE", "-DHAVE_CONFIG_H", "-DLEONOS_USE_PICOLIBC",
@@ -117,18 +121,22 @@ def main() -> None:
         object_file = object_dir / (name.removesuffix(".c") + ".o")
         compile_source("clang", nano_flags, source_file, object_file)
         objects.append(object_file)
-    for name in ("leonos_curses.c", "leonos_port.c"):
+    for name in ("leonos_port.c",):
         source_file = port / name
         object_file = object_dir / (name.removesuffix(".c") + ".o")
         compile_source("clang", port_flags, source_file, object_file)
         objects.append(object_file)
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, "-z", "max-page-size=0x1000",
-        "-T", str(linker_script), "-o", str(output), *map(str, objects),
-        "--start-group", str(leonos_lib), str(picolibc_lib), "--end-group",
-    ])
+    if args.dynamic and (not args.dynamic_crt or not args.abi_note):
+        raise SystemExit("dynamic Nano requires --dynamic-crt and --abi-note")
+    dynamic = ["-pie", "--hash-style=sysv", "--dynamic-linker", "0:/system/lib/ld-leonos.elf",
+               "-z", "relro", "-z", "now"] if args.dynamic else []
+    startup = [str(args.dynamic_crt), str(args.abi_note)] if args.dynamic else []
+    libraries = [str(leonos_lib)] if args.dynamic else [str(leonos_lib), str(picolibc_lib)]
+    run(["ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, *dynamic,
+         "-z", "max-page-size=0x1000", "-T", str(linker_script), "-o", str(output),
+         *startup, *map(str, objects), "--start-group", *libraries, "--end-group"])
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(
         json.dumps(
@@ -136,9 +144,9 @@ def main() -> None:
                 "nano_commit": source_revision(source),
                 "nano_version": "9.2",
                 "port_sha256": hashlib.sha256(
-                    (port / "leonos_curses.c").read_bytes()
-                    + (port / "leonos_port.c").read_bytes()
+                    (port / "leonos_port.c").read_bytes()
                     + (port / "include/config.h").read_bytes()
+                    + (leonos_libc_include / "ncurses.h").read_bytes()
                 ).hexdigest(),
             },
             indent=2,

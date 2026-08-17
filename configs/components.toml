@@ -525,6 +525,32 @@ sdk = false
 api = false
 
 [[components]]
+id = "less"
+symbol = "TOOL_LESS"
+label = "GNU less pager"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "sl"
+symbol = "TOOL_SL"
+label = "sl Steam Locomotive"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "pleditor"
 symbol = "APP_PLEDITOR"
 label = "PL editor"
@@ -697,6 +723,19 @@ kind = "library"
 default = true
 required = false
 stage = false
+entry = false
+sdk = true
+api = false
+
+[[components]]
+id = "sqlite"
+symbol = "LIB_SQLITE"
+label = "SQLite database library"
+category = "Third-party libraries"
+kind = "library"
+default = true
+required = false
+stage = true
 entry = false
 sdk = true
 api = false

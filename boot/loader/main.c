@@ -1,6 +1,7 @@
 #include <leonos/boot_handoff.h>
 #include <leonos/psf_font.h>
 #include <generated/loader_integrity.h>
+#include <generated/boot_logo.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -33,6 +34,9 @@
 #define READ_BUFFER_SIZE (1024u * 1024u)
 #define LOADER_LOG_MAX_COLUMNS 512u
 #define LOADER_LOG_MAX_ROWS 192u
+#define LOADER_SPLASH_BACKGROUND 0x00ffffffu
+#define LOADER_SPLASH_TRACK 0x00e6f2fbu
+#define LOADER_SPLASH_PROGRESS 0x000078d4u
 
 struct multiboot2_info {
     uint32_t total_size;
@@ -295,6 +299,10 @@ void loader_main(uint32_t magic, uint32_t multiboot_info);
 static uint8_t read_buffer[READ_BUFFER_SIZE] __attribute__((aligned(4096)));
 static struct leonos_boot_handoff handoff;
 static struct efi_boot_services *boot_services;
+static uint8_t loader_log_line_start = 1u;
+static uint64_t loader_tsc_start;
+static uint64_t loader_tsc_hz;
+static uint8_t loader_tsc_ready;
 static struct efi_file_protocol *root_dir;
 static struct efi_simple_text_output_protocol *text_out;
 static struct efi_simple_text_input_protocol *text_in;
@@ -319,6 +327,7 @@ struct loader_framebuffer_console {
 
 static struct loader_framebuffer_console framebuffer_console;
 static char framebuffer_log_lines[LOADER_LOG_MAX_ROWS][LOADER_LOG_MAX_COLUMNS + 1u];
+static uint8_t loader_boot_log_screen;
 
 struct loader_module {
     uint64_t start;
@@ -644,6 +653,78 @@ static void loader_framebuffer_fill(uint32_t x, uint32_t y, uint32_t width,
     }
 }
 
+static uint32_t loader_framebuffer_splash_bar_height(void)
+{
+    uint32_t height;
+
+    if (!framebuffer_console.height) {
+        return 0;
+    }
+    height = framebuffer_console.height / 90u;
+    if (height < 4u) {
+        height = 4u;
+    }
+    if (height > 10u) {
+        height = 10u;
+    }
+    return height > framebuffer_console.height ? framebuffer_console.height : height;
+}
+
+static void loader_framebuffer_draw_boot_splash(uint32_t percent)
+{
+    uint32_t bar_height;
+    uint32_t available_height;
+    uint32_t logo_x;
+    uint32_t logo_y;
+    uint32_t draw_width;
+    uint32_t draw_height;
+    uint32_t progress_width;
+
+    if (loader_boot_log_screen || !framebuffer_console.enabled) {
+        return;
+    }
+    if (percent > 100u) {
+        percent = 100u;
+    }
+
+    bar_height = loader_framebuffer_splash_bar_height();
+    available_height = framebuffer_console.height - bar_height;
+    logo_x = framebuffer_console.width > LEONOS_BOOT_LOGO_WIDTH
+                 ? (framebuffer_console.width - LEONOS_BOOT_LOGO_WIDTH) / 2u
+                 : 0u;
+    logo_y = available_height > LEONOS_BOOT_LOGO_HEIGHT
+                 ? (available_height - LEONOS_BOOT_LOGO_HEIGHT) / 2u
+                 : 0u;
+    draw_width = LEONOS_BOOT_LOGO_WIDTH;
+    draw_height = LEONOS_BOOT_LOGO_HEIGHT;
+    if (draw_width > framebuffer_console.width - logo_x) {
+        draw_width = framebuffer_console.width - logo_x;
+    }
+    if (draw_height > available_height - logo_y) {
+        draw_height = available_height - logo_y;
+    }
+
+    loader_framebuffer_fill(0, 0, framebuffer_console.width,
+                            framebuffer_console.height, LOADER_SPLASH_BACKGROUND);
+    for (uint32_t row = 0; row < draw_height; ++row) {
+        uint8_t *line = framebuffer_console.pixels +
+                        (uint64_t)(logo_y + row) * framebuffer_console.pitch +
+                        (uint64_t)logo_x * framebuffer_console.bytes_per_pixel;
+        const uint32_t *pixels = leonos_boot_logo_pixels +
+                                 (uint64_t)row * LEONOS_BOOT_LOGO_WIDTH;
+        for (uint32_t column = 0; column < draw_width; ++column) {
+            loader_framebuffer_write_native(
+                line + (uint64_t)column * framebuffer_console.bytes_per_pixel,
+                loader_framebuffer_native_color(pixels[column]));
+        }
+    }
+    loader_framebuffer_fill(0, framebuffer_console.height - bar_height,
+                            framebuffer_console.width, bar_height, LOADER_SPLASH_TRACK);
+    progress_width = (uint32_t)(((uint64_t)framebuffer_console.width * percent) / 100u);
+    loader_framebuffer_fill(0, framebuffer_console.height - bar_height,
+                            progress_width, bar_height, LOADER_SPLASH_PROGRESS);
+}
+
 static void loader_framebuffer_char(uint32_t x, uint32_t y, char ch,
                                     uint32_t foreground, uint32_t background)
 {
@@ -720,7 +801,7 @@ static void loader_framebuffer_reset(void)
 
 static void loader_framebuffer_set_theme(uint32_t theme)
 {
-    if (!framebuffer_console.enabled) {
+    if (!framebuffer_console.enabled || !loader_boot_log_screen) {
         return;
     }
     if (theme == 0U) {
@@ -731,6 +812,15 @@ static void loader_framebuffer_set_theme(uint32_t theme)
         framebuffer_console.text = 0x00ffffffU;
     }
     loader_framebuffer_reset();
+}
+
+static void loader_framebuffer_switch_to_log(void)
+{
+    if (loader_boot_log_screen) {
+        return;
+    }
+    loader_boot_log_screen = 1u;
+    loader_framebuffer_set_theme(handoff.ui_theme);
 }
 
 static void loader_framebuffer_init(void)
@@ -771,7 +861,7 @@ static void loader_framebuffer_init(void)
 
 static void loader_framebuffer_save_state(void)
 {
-    if (!framebuffer_console.enabled) {
+    if (!loader_boot_log_screen || !framebuffer_console.enabled) {
         handoff.boot_log = (struct leonos_boot_log_state){0};
         return;
     }
@@ -838,10 +928,113 @@ static void loader_framebuffer_putc(char ch)
     ++framebuffer_console.column;
 }
 
-static void serial_putc(char ch)
+static uint64_t loader_rdtsc(void)
+{
+    uint32_t low;
+    uint32_t high;
+    __asm__ volatile("rdtsc" : "=a"(low), "=d"(high));
+    return ((uint64_t)high << 32) | low;
+}
+
+static void loader_clock_calibrate(void)
+{
+    uint64_t sample_start;
+    uint64_t sample_end;
+    struct efi_system_table *st;
+
+    if (!loader_tsc_start) {
+        loader_tsc_start = loader_rdtsc();
+    }
+    if (!boot_services) {
+        if (!handoff.efi_system_table) {
+            return;
+        }
+        st = (struct efi_system_table *)(uintptr_t)handoff.efi_system_table;
+        boot_services = st->boot_services;
+    }
+    if (!boot_services || !boot_services->stall) {
+        return;
+    }
+    sample_start = loader_rdtsc();
+    if (boot_services->stall(100000ULL) != EFI_SUCCESS) {
+        return;
+    }
+    sample_end = loader_rdtsc();
+    if (sample_end <= sample_start) {
+        return;
+    }
+    loader_tsc_hz = (sample_end - sample_start) * 10ULL;
+    loader_tsc_ready = loader_tsc_hz != 0;
+}
+
+static uint64_t loader_uptime_us(void)
+{
+    uint64_t now;
+    uint64_t elapsed;
+
+    if (!loader_tsc_ready || !loader_tsc_start) {
+        return 0;
+    }
+    now = loader_rdtsc();
+    if (now <= loader_tsc_start) {
+        return 0;
+    }
+    elapsed = now - loader_tsc_start;
+    return (elapsed * 1000000ULL) / loader_tsc_hz;
+}
+
+static void serial_putc_raw(char ch)
 {
     loader_outb((uint8_t)ch, 0x3f8);
-    loader_framebuffer_putc(ch);
+    if (loader_boot_log_screen) {
+        loader_framebuffer_putc(ch);
+    }
+}
+
+static void loader_emit_timestamp(void)
+{
+    uint64_t uptime_us = loader_uptime_us();
+    uint64_t seconds = uptime_us / 1000000ULL;
+    uint64_t micros = uptime_us % 1000000ULL;
+    uint64_t divisor = 1ULL;
+    uint32_t digits = 1U;
+
+    while (seconds >= divisor * 10ULL && digits < 20U) {
+        divisor *= 10ULL;
+        ++digits;
+    }
+    serial_putc_raw('[');
+    for (uint32_t i = digits; i < 5U; ++i) {
+        serial_putc_raw(' ');
+    }
+    if (seconds == 0) {
+        serial_putc_raw('0');
+    } else {
+        char digits_buf[20];
+        uint32_t count = 0;
+        while (seconds && count < sizeof(digits_buf)) {
+            digits_buf[count++] = (char)('0' + seconds % 10ULL);
+            seconds /= 10ULL;
+        }
+        while (count) {
+            serial_putc_raw(digits_buf[--count]);
+        }
+    }
+    serial_putc_raw('.');
+    for (uint64_t divisor_us = 100000ULL; divisor_us; divisor_us /= 10ULL) {
+        serial_putc_raw((char)('0' + (micros / divisor_us) % 10ULL));
+    }
+    serial_putc_raw(']');
+    serial_putc_raw(' ');
+}
+
+static void serial_putc(char ch)
+{
+    if (loader_log_line_start) {
+        loader_emit_timestamp();
+    }
+    serial_putc_raw(ch);
+    loader_log_line_start = ch == '\n';
 }
 
 static void serial_write(const char *s)
@@ -1025,6 +1218,7 @@ static int verify_image_integrity(const char *label, const void *image,
         return 0;
     }
 
+    loader_framebuffer_switch_to_log();
     boot_write("\n[loader] WARNING: boot component hash mismatch: ");
     boot_write(label);
     boot_write("\n[loader] Expected SHA256: ");
@@ -1050,6 +1244,42 @@ static int text_eq(const char *a, const char *b)
         ++b;
     }
     return *a == 0 && *b == 0;
+}
+
+static int loader_cmdline_has(const char *needle)
+{
+    const char *cursor = handoff.cmdline;
+    size_t needle_len = 0;
+
+    if (!cursor || !needle || !*needle) {
+        return 0;
+    }
+    while (needle[needle_len]) {
+        ++needle_len;
+    }
+    while (*cursor) {
+        const char *token;
+        size_t index = 0;
+
+        while (*cursor == ' ' || *cursor == '\t') {
+            ++cursor;
+        }
+        token = cursor;
+        while (token[index] && token[index] != ' ' && token[index] != '\t') {
+            ++index;
+        }
+        if (index == needle_len) {
+            size_t match = 0;
+            while (match < needle_len && token[match] == needle[match]) {
+                ++match;
+            }
+            if (match == needle_len) {
+                return 1;
+            }
+        }
+        cursor = token + index;
+    }
+    return 0;
 }
 
 static const struct loader_module *find_loader_module(const char *name)
@@ -1403,9 +1633,11 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     const struct loader_module *middlelayer_module;
     const struct loader_module *installer_root_module;
 
+    loader_tsc_start = loader_rdtsc();
     serial_init();
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
+    loader_boot_log_screen = loader_cmdline_has("bootlog=1");
     installer_root_module = find_loader_module("leonos-installer-root");
     if (installer_root_module && installer_root_module->end > installer_root_module->start) {
         handoff.installer_root.start = installer_root_module->start;
@@ -1417,11 +1649,17 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     }
     loader_framebuffer_init();
     efi_console_init();
+    loader_clock_calibrate();
     if (handoff.efi_system_table && efi_open_root(handoff.efi_system_table) == 0) {
         loader_load_ui_theme();
         loader_framebuffer_set_theme(handoff.ui_theme);
     }
-    boot_write("[loader] framebuffer boot log active\n");
+    if (loader_boot_log_screen) {
+        boot_write("[loader] framebuffer boot log active\n");
+    } else {
+        loader_framebuffer_draw_boot_splash(12u);
+        serial_write("[loader] graphical boot splash active\n");
+    }
 
     kernel_module = find_loader_module("leonos-kernel");
     if (kernel_module) {
@@ -1477,6 +1715,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_write("-");
     serial_write_hex(handoff.kernel.end);
     serial_write("\n");
+    loader_framebuffer_draw_boot_splash(50u);
 
     middlelayer_module = find_loader_module("leonos-middlelayer");
     if (middlelayer_module) {
@@ -1532,8 +1771,11 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_write("-");
     serial_write_hex(handoff.middlelayer.end);
     serial_write("\n");
+    loader_framebuffer_draw_boot_splash(78u);
 
     serial_write("[loader] jumping to kernel\n");
+    loader_framebuffer_draw_boot_splash(80u);
+    handoff.boot_uptime_us = loader_uptime_us();
     loader_framebuffer_save_state();
     void (*entry)(const struct leonos_boot_handoff *) =
         (void (*)(const struct leonos_boot_handoff *))(uintptr_t)handoff.kernel.entry;

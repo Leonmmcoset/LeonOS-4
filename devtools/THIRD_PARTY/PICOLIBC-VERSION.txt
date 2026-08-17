@@ -1,0 +1,3 @@
+Picolibc version: 1.8.12
+Picolibc revision: 2fca8654025d367b3da4699a82c347840123bcd2
+Upstream: https://github.com/picolibc/picolibc

@@ -316,6 +316,44 @@ config LEON_COMPONENT_APP_FASTFETCH_SDK
     default n
     depends on LEON_COMPONENT_APP_FASTFETCH_BUILD
 
+config LEON_COMPONENT_TOOL_LESS_BUILD
+    bool "Build GNU less pager"
+    default y
+
+config LEON_COMPONENT_TOOL_LESS_IMAGE
+    bool "Include GNU less pager in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_LESS_BUILD
+
+config LEON_COMPONENT_TOOL_LESS_ENTRY
+    bool "Generate a desktop entry for GNU less pager"
+    default n
+    depends on LEON_COMPONENT_TOOL_LESS_BUILD
+
+config LEON_COMPONENT_TOOL_LESS_SDK
+    bool "Include GNU less pager in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_LESS_BUILD
+
+config LEON_COMPONENT_TOOL_SL_BUILD
+    bool "Build sl Steam Locomotive"
+    default y
+
+config LEON_COMPONENT_TOOL_SL_IMAGE
+    bool "Include sl Steam Locomotive in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_SL_BUILD
+
+config LEON_COMPONENT_TOOL_SL_ENTRY
+    bool "Generate a desktop entry for sl Steam Locomotive"
+    default n
+    depends on LEON_COMPONENT_TOOL_SL_BUILD
+
+config LEON_COMPONENT_TOOL_SL_SDK
+    bool "Include sl Steam Locomotive in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_SL_BUILD
+
 config LEON_COMPONENT_APP_PLEDITOR_BUILD
     bool "Build PL editor"
     default y
@@ -863,5 +901,28 @@ config LEON_COMPONENT_LIB_STARDUSTUI_SDK
     bool "Include StardustUI library in the developer SDK"
     default y
     depends on LEON_COMPONENT_LIB_STARDUSTUI_BUILD
+
+endmenu
+
+menu "Third-party libraries"
+
+config LEON_COMPONENT_LIB_SQLITE_BUILD
+    bool "Build SQLite database library"
+    default y
+
+config LEON_COMPONENT_LIB_SQLITE_IMAGE
+    bool "Include SQLite database library in system images"
+    default y
+    depends on LEON_COMPONENT_LIB_SQLITE_BUILD
+
+config LEON_COMPONENT_LIB_SQLITE_ENTRY
+    bool "Generate a desktop entry for SQLite database library"
+    default n
+    depends on LEON_COMPONENT_LIB_SQLITE_BUILD
+
+config LEON_COMPONENT_LIB_SQLITE_SDK
+    bool "Include SQLite database library in the developer SDK"
+    default y
+    depends on LEON_COMPONENT_LIB_SQLITE_BUILD
 
 endmenu

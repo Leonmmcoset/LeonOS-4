@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel system calls: validates and dispatches the user ABI.
+ * Implements process, file, memory, IPC, GUI, device, and timing operations.
+ */
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>
@@ -17,6 +21,61 @@
 #include <ntclks/time.h>
 #include <ntclks/usercopy.h>
 #include <ntclks/userland.h>
+
+/* A 64-stage shell pipeline owns 63 pipes simultaneously.  Keep an extra
+ * ring sentinel byte so the advertised 4096-byte capacity is usable. */
+#define TASK_PIPE_MAX 64u
+#define TASK_PIPE_CAP 4096u
+#define TASK_PIPE_RING_CAP (TASK_PIPE_CAP + 1u)
+
+struct task_pipe {
+    uint8_t used;
+    uint8_t reserved[3];
+    uint32_t readers;
+    uint32_t writers;
+    uint32_t head;
+    uint32_t tail;
+    uint8_t data[TASK_PIPE_RING_CAP];
+};
+
+static struct task_pipe task_pipes[TASK_PIPE_MAX];
+
+static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
+                                     uint64_t a2, uint64_t a3, uint64_t a4,
+                                     uint64_t a5);
+
+static struct task_file *task_file_for_fd(struct task *task, int fd);
+
+static struct task_pipe *task_pipe_for_file(const struct task_file *file)
+{
+    if (!file || !(file->flags & TASK_FILE_FLAG_PIPE) || file->aux >= TASK_PIPE_MAX ||
+        !task_pipes[file->aux].used) {
+        return NULL;
+    }
+    return &task_pipes[file->aux];
+}
+
+static void task_pipe_retain(struct task_file *file)
+{
+    struct task_pipe *pipe = task_pipe_for_file(file);
+    if (!pipe) return;
+    if (file->flags & TASK_FILE_FLAG_PIPE_WRITE) ++pipe->writers;
+    else ++pipe->readers;
+}
+
+static void task_pipe_release(struct task_file *file)
+{
+    struct task_pipe *pipe = task_pipe_for_file(file);
+    if (!pipe) return;
+    if (file->flags & TASK_FILE_FLAG_PIPE_WRITE) {
+        if (pipe->writers) --pipe->writers;
+    } else if (pipe->readers) {
+        --pipe->readers;
+    }
+    if (!pipe->readers && !pipe->writers) {
+        *pipe = (struct task_pipe){0};
+    }
+}
 #include <ntclks/version.h>
 
 #include <leonos/device.h>
@@ -32,6 +91,7 @@
 #include <leonos/text.h>
 
 #define LEONOS_GUI_IOCTL_EVENT 0x4c455654ULL
+#define LEONOS_GUI_IOCTL_VERSION 0x4c475549ULL
 #define LEONOS_GUI_IOCTL_UPTIME_MS 0x4c555054ULL
 #define LEONOS_GUI_IOCTL_FB_INFO 0x4c464249ULL
 #define LEONOS_GUI_IOCTL_FB_FILL 0x4c464246ULL
@@ -79,6 +139,7 @@
 #define STARTUP_REQUEST_MAX 16U
 
 static struct leonos_user_info auth_user_scratch[LEONOS_AUTH_MAX_USERS];
+static struct leonos_disk_partition disk_partition_scratch[LEONOS_DISK_MAX_PARTITIONS];
 
 struct startup_db {
     uint32_t magic;
@@ -127,8 +188,19 @@ struct task_snapshot_user {
     struct task_snapshot_info *tasks;
 };
 
+/**
+ * @brief Coordinates the task effective role operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t task_effective_role(const struct task *task);
 
+/**
+ * @brief Coordinates the device copy text operation.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ */
 static void device_copy_text(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -142,6 +214,13 @@ static void device_copy_text(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Coordinates the device append char operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param ch Input or output value used by this operation.
+ */
 static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
     if (buf && pos && *pos + 1 < cap) {
@@ -150,6 +229,12 @@ static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
     }
 }
 
+/**
+ * @brief Coordinates the text eq cstr operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int text_eq_cstr(const char *a, const char *b)
 {
     uint32_t i = 0;
@@ -162,6 +247,11 @@ static int text_eq_cstr(const char *a, const char *b)
     return a[i] == 0 && b[i] == 0;
 }
 
+/**
+ * @brief Coordinates the oobe dhcp renew allowed operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int oobe_dhcp_renew_allowed(const struct task *task)
 {
     struct storage_node node;
@@ -172,6 +262,10 @@ static int oobe_dhcp_renew_allowed(const struct task *task)
     return storage_lookup_path(OOBE_DONE_MARKER_PATH, &node) < 0;
 }
 
+/**
+ * @brief Validates permission for window server.
+ * @return Result, status, or value defined by this API.
+ */
 static int require_window_server(void)
 {
     struct task *task = sched_current_task();
@@ -181,6 +275,10 @@ static int require_window_server(void)
     return 0;
 }
 
+/**
+ * @brief Validates permission for network config access.
+ * @return Result, status, or value defined by this API.
+ */
 static int require_network_config_access(void)
 {
     struct task *task = sched_current_task();
@@ -200,6 +298,10 @@ static int require_network_config_access(void)
     return -LEONOS_EPERM;
 }
 
+/**
+ * @brief Validates permission for driver management.
+ * @return Result, status, or value defined by this API.
+ */
 static int require_driver_management(void)
 {
     struct task *task = sched_current_task();
@@ -208,6 +310,11 @@ static int require_driver_management(void)
                : -LEONOS_EPERM;
 }
 
+/**
+ * @brief Coordinates the task effective role operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t task_effective_role(const struct task *task)
 {
     if (!task) {
@@ -220,6 +327,10 @@ static uint32_t task_effective_role(const struct task *task)
     return task->role;
 }
 
+/**
+ * @brief Validates permission for background service.
+ * @return Result, status, or value defined by this API.
+ */
 static int require_background_service(void)
 {
     struct task *task = sched_current_task();
@@ -230,6 +341,13 @@ static int require_background_service(void)
     return 0;
 }
 
+/**
+ * @brief Coordinates the device append text operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param text Input or output value used by this operation.
+ */
 static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
     while (text && *text) {
@@ -237,6 +355,13 @@ static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const cha
     }
 }
 
+/**
+ * @brief Coordinates the device append u64 operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void device_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
     char tmp[24];
@@ -254,6 +379,13 @@ static void device_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
     }
 }
 
+/**
+ * @brief Coordinates the device append i32 operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param value Input or output value used by this operation.
+ */
 static void device_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t value)
 {
     if (value < 0) {
@@ -263,6 +395,13 @@ static void device_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t va
     device_append_u64(buf, pos, cap, (uint32_t)value);
 }
 
+/**
+ * @brief Coordinates the device append ipv4 operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param pos Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param ip Input or output value used by this operation.
+ */
 static void device_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t ip)
 {
     device_append_u64(buf, pos, cap, (ip >> 24) & 0xffu);
@@ -274,6 +413,19 @@ static void device_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t 
     device_append_u64(buf, pos, cap, ip & 0xffu);
 }
 
+/**
+ * @brief Coordinates the device add operation.
+ * @param devices Input or output value used by this operation.
+ * @param capacity Capacity, in elements or bytes, of the related output buffer.
+ * @param count Length, size, or element count associated with the operation.
+ * @param device_class Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param name Input or output value used by this operation.
+ * @param status Input or output value used by this operation.
+ * @param detail Input or output value used by this operation.
+ * @param value0 Input or output value used by this operation.
+ * @param value1 Input or output value used by this operation.
+ */
 static void device_add(struct leonos_device_info *devices, uint32_t capacity,
                        uint32_t *count, uint32_t device_class, uint32_t flags,
                        const char *name, const char *status, const char *detail,
@@ -299,6 +451,17 @@ static void device_add(struct leonos_device_info *devices, uint32_t capacity,
     device_copy_text(devices[index].detail, sizeof(devices[index].detail), detail);
 }
 
+/**
+ * @brief Coordinates the raw device add operation.
+ * @param raw Input or output value used by this operation.
+ * @param count Length, size, or element count associated with the operation.
+ * @param kind Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param aux0 Input or output value used by this operation.
+ * @param aux1 Input or output value used by this operation.
+ * @param value0 Input or output value used by this operation.
+ * @param value1 Input or output value used by this operation.
+ */
 static void raw_device_add(struct leonos_raw_device_info *raw, uint32_t *count,
                            uint32_t kind, uint32_t flags, uint32_t aux0, uint32_t aux1,
                            uint64_t value0, uint64_t value1)
@@ -318,6 +481,12 @@ static void raw_device_add(struct leonos_raw_device_info *raw, uint32_t *count,
     };
 }
 
+/**
+ * @brief Coordinates the device format fb operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param fb Input or output value used by this operation.
+ */
 static void device_format_fb(char *buf, uint32_t cap, const struct framebuffer *fb)
 {
     uint32_t pos = 0;
@@ -335,6 +504,12 @@ static void device_format_fb(char *buf, uint32_t cap, const struct framebuffer *
     device_append_u64(buf, &pos, cap, fb->pitch);
 }
 
+/**
+ * @brief Coordinates the device format mouse operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param mouse Input or output value used by this operation.
+ */
 static void device_format_mouse(char *buf, uint32_t cap, const struct mouse_state *mouse)
 {
     uint32_t pos = 0;
@@ -352,6 +527,12 @@ static void device_format_mouse(char *buf, uint32_t cap, const struct mouse_stat
     device_append_u64(buf, &pos, cap, mouse->buttons);
 }
 
+/**
+ * @brief Coordinates the device format disk operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param disk Input or output value used by this operation.
+ */
 static void device_format_disk(char *buf, uint32_t cap, const struct leonos_install_disk *disk)
 {
     uint32_t pos = 0;
@@ -365,6 +546,12 @@ static void device_format_disk(char *buf, uint32_t cap, const struct leonos_inst
     device_append_u64(buf, &pos, cap, disk ? disk->sector_size : 0);
 }
 
+/**
+ * @brief Coordinates the device format time operation.
+ * @param buf Buffer consumed or filled by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param time Input or output value used by this operation.
+ */
 static void device_format_time(char *buf, uint32_t cap, const struct leonos_time_info *time)
 {
     uint32_t pos = 0;
@@ -446,6 +633,10 @@ struct exec_params_kernel {
     uint32_t data_len;
 };
 
+/**
+ * @brief Coordinates the normalize dir path operation.
+ * @param path LeonOS path consumed by this operation.
+ */
 static void normalize_dir_path(char *path)
 {
     size_t len = 0;
@@ -460,6 +651,12 @@ static void normalize_dir_path(char *path)
     }
 }
 
+/**
+ * @brief Copies text.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param src Input or output value used by this operation.
+ */
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
     uint32_t i = 0;
@@ -473,11 +670,19 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
+/**
+ * @brief Coordinates the clear task file operation.
+ * @param file Input or output value used by this operation.
+ */
 static void clear_task_file(struct task_file *file)
 {
-    if (!file) {
+    /* Descriptor cleanup can be reached both from the immediate exit path
+     * and from later zombie reaping.  A released pipe end must only decrement
+     * its shared reference count once. */
+    if (!file || !file->used) {
         return;
     }
+    task_pipe_release(file);
     file->used = 0;
     file->node.type = 0;
     file->node.flags = 0;
@@ -486,10 +691,16 @@ static void clear_task_file(struct task_file *file)
     file->node.size = 0;
     file->offset = 0;
     file->aux = 0;
+    file->read_cursor = (struct storage_read_cursor){0};
     file->flags = 0;
+    file->fd_flags = 0;
     file->path[0] = 0;
 }
 
+/**
+ * @brief Coordinates the clear task files operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 static void clear_task_files(struct task *task)
 {
     if (!task) {
@@ -498,8 +709,15 @@ static void clear_task_files(struct task *task)
     for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
         clear_task_file(&task->files[i]);
     }
+    for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
+        clear_task_file(&task->stdio_files[i]);
+    }
 }
 
+/**
+ * @brief Coordinates the syscall release task files operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 void syscall_release_task_files(struct task *task)
 {
     if (task) {
@@ -508,11 +726,72 @@ void syscall_release_task_files(struct task *task)
     clear_task_files(task);
 }
 
+/**
+ * @brief Retains pipe endpoint references after fork copies descriptor entries by value.
+ * @param parent Source process, required to prevent accidental use on detached task records.
+ * @param child Fork child whose copied pipe endpoints require new references.
+ * @return Zero on success or a negative errno-style result for invalid arguments.
+ */
+int syscall_clone_task_files(const struct task *parent, struct task *child)
+{
+    if (!parent || !child || child->parent_pid != parent->pid) {
+        return -LEONOS_EINVAL;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
+        if (child->files[i].used) {
+            task_pipe_retain(&child->files[i]);
+        }
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
+        if (child->stdio_files[i].used) {
+            task_pipe_retain(&child->stdio_files[i]);
+        }
+    }
+    return 0;
+}
+
+/**
+ * @brief Closes file and explicit PTY aliases marked FD_CLOEXEC for execve.
+ * @param task Process whose existing descriptor table survives the image replacement.
+ */
+void syscall_close_cloexec_files(struct task *task)
+{
+    if (!task) {
+        return;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
+        if (task->files[i].used && (task->files[i].fd_flags & 1u)) {
+            clear_task_file(&task->files[i]);
+        }
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
+        if (task->stdio_files[i].used && (task->stdio_files[i].fd_flags & 1u)) {
+            clear_task_file(&task->stdio_files[i]);
+        }
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
+        if (task->pty_fds[i].used && (task->pty_fds[i].flags & 1u)) {
+            task->pty_fds[i] = (struct task_pty_fd){0};
+        }
+    }
+}
+
+/**
+ * @brief Coordinates the task file for fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param fd Open file descriptor used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_file *task_file_for_fd(struct task *task, int fd)
 {
-    if (!task || fd < 4 || fd >= 4 + (int)SCHED_TASK_FILE_MAX) {
+    if (!task || fd < 0) {
         return NULL;
     }
+    if (fd < 3) {
+        return task->stdio_files[fd].used ? &task->stdio_files[fd] : NULL;
+    }
+    if (fd == 3) return NULL;
+    if (fd >= 4 + (int)SCHED_TASK_FILE_MAX) return NULL;
     struct task_file *file = &task->files[fd - 4];
     return file->used ? file : NULL;
 }
@@ -525,6 +804,12 @@ static struct task_file *task_file_for_fd(struct task *task, int fd)
 #define LEONOS_F_DUPFD_CLOEXEC 14
 #define LEONOS_FD_CLOEXEC 1
 
+/**
+ * @brief Coordinates the task pty fd for fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param fd Open file descriptor used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
 {
     if (!task || !task->pty_id || fd < 4) {
@@ -539,10 +824,20 @@ static struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task pty stream for fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param fd Open file descriptor used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_pty_stream_for_fd(struct task *task, int fd)
 {
     struct task_pty_fd *entry;
     if (!task || !task->pty_id) {
+        return -1;
+    }
+    /* A redirected stdio descriptor shadows the implicit PTY stream. */
+    if (task_file_for_fd(task, fd)) {
         return -1;
     }
     if (fd >= 0 && fd <= 2) {
@@ -552,6 +847,12 @@ static int task_pty_stream_for_fd(struct task *task, int fd)
     return entry ? (int)entry->stream : -1;
 }
 
+/**
+ * @brief Coordinates the task pty fd available operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param fd Open file descriptor used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_pty_fd_available(struct task *task, int fd)
 {
     if (fd < 4 || task_file_for_fd(task, fd) || task_pty_fd_for_fd(task, fd)) {
@@ -560,6 +861,41 @@ static int task_pty_fd_available(struct task *task, int fd)
     return 1;
 }
 
+/* RLIMIT_NOFILE applies to descriptors allocated in addition to the three
+ * implicit PTY standard streams.  Files and explicit PTY aliases share the
+ * same process limit even though they use separate backing tables. */
+static uint32_t task_allocated_fd_count(const struct task *task)
+{
+    uint32_t count = 0;
+    if (!task) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
+        if (task->files[i].used) {
+            ++count;
+        }
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
+        if (task->pty_fds[i].used) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static int task_can_allocate_fd(const struct task *task)
+{
+    return task && task_allocated_fd_count(task) < task->rlimit_nofile;
+}
+
+/**
+ * @brief Coordinates the task pty duplicate fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param old_fd Input or output value used by this operation.
+ * @param minimum_fd Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
                                  uint32_t flags)
 {
@@ -567,6 +903,9 @@ static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
     int candidate;
     if (stream < 0 || minimum_fd < 0) {
         return -LEONOS_EBADF;
+    }
+    if (!task_can_allocate_fd(task)) {
+        return -LEONOS_EMFILE;
     }
     candidate = minimum_fd < 4 ? 4 : minimum_fd;
     for (uint32_t attempts = 0; attempts < SCHED_TASK_PTY_FD_MAX + SCHED_TASK_FILE_MAX + 4u;
@@ -592,6 +931,13 @@ static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
     return -LEONOS_EMFILE;
 }
 
+/**
+ * @brief Coordinates the task pty dup2 fd operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param old_fd Input or output value used by this operation.
+ * @param new_fd Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
 {
     int stream = task_pty_stream_for_fd(task, old_fd);
@@ -602,12 +948,26 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
     if (old_fd == new_fd) {
         return new_fd;
     }
-    /* Rebinding stdin/stdout/stderr needs a complete descriptor table. */
-    if (new_fd < 4 || task_file_for_fd(task, new_fd)) {
-        return -LEONOS_ENOSYS;
+    /* Restore an implicit PTY stream after a temporary redirection. */
+    if (new_fd < 3) {
+        struct task_file *stdio = &task->stdio_files[new_fd];
+        if (stdio->used) {
+            clear_task_file(stdio);
+        }
+        return new_fd;
+    }
+    if (new_fd == 3) {
+        return -LEONOS_EBADF;
+    }
+    /* dup2() replaces an existing descriptor regardless of its backing kind. */
+    if (task_file_for_fd(task, new_fd)) {
+        clear_task_file(task_file_for_fd(task, new_fd));
     }
     entry = task_pty_fd_for_fd(task, new_fd);
     if (!entry) {
+        if (!task_can_allocate_fd(task)) {
+            return -LEONOS_EMFILE;
+        }
         for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
             if (!task->pty_fds[i].used) {
                 entry = &task->pty_fds[i];
@@ -625,13 +985,28 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
     return new_fd;
 }
 
+/**
+ * @brief Allocates task fd.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param node Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param path LeonOS path consumed by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int alloc_task_fd(struct task *task, const struct storage_node *node, uint32_t flags, const char *path)
 {
     if (!task || !node) {
         return -LEONOS_EINVAL;
     }
+    if (!task_can_allocate_fd(task)) {
+        return -LEONOS_EMFILE;
+    }
     for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
+        int fd = (int)i + 4;
         if (task->files[i].used) {
+            continue;
+        }
+        if (task_pty_fd_for_fd(task, fd)) {
             continue;
         }
         task->files[i].used = 1;
@@ -639,24 +1014,182 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node, uin
         task->files[i].offset = 0;
         task->files[i].aux = 0;
         task->files[i].flags = flags;
+        task->files[i].fd_flags = 0;
         copy_text(task->files[i].path, sizeof(task->files[i].path), path);
-        return (int)i + 4;
+        return fd;
     }
     return -LEONOS_EMFILE;
 }
 
+static int alloc_task_pipe_fd(struct task *task, uint32_t pipe_index, int write_end)
+{
+    struct task_file *file;
+    int fd;
+    if (!task || pipe_index >= TASK_PIPE_MAX || !task_pipes[pipe_index].used) {
+        return -LEONOS_EINVAL;
+    }
+    if (!task_can_allocate_fd(task)) {
+        return -LEONOS_EMFILE;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
+        fd = (int)i + 4;
+        if (task->files[i].used || task_pty_fd_for_fd(task, fd)) continue;
+        file = &task->files[i];
+        file->used = 1;
+        file->flags = TASK_FILE_FLAG_PIPE | (write_end ? TASK_FILE_FLAG_PIPE_WRITE : 0) |
+                      (write_end ? LEONOS_O_WRONLY : LEONOS_O_RDONLY);
+        file->fd_flags = 0;
+        file->aux = pipe_index;
+        file->path[0] = 0;
+        task_pipe_retain(file);
+        return fd;
+    }
+    return -LEONOS_EMFILE;
+}
+
+static int task_pipe_read(struct task_file *file, void *buffer, uint32_t length)
+{
+    struct task_pipe *pipe = task_pipe_for_file(file);
+    uint32_t count = 0;
+    if (!pipe || (file->flags & TASK_FILE_FLAG_PIPE_WRITE)) return -LEONOS_EBADF;
+    if (length == 0) return 0;
+    while (pipe->tail != pipe->head && count < length) {
+        ((uint8_t *)buffer)[count++] = pipe->data[pipe->tail];
+        pipe->tail = (pipe->tail + 1U) % TASK_PIPE_RING_CAP;
+    }
+    return count ? (int)count : (pipe->writers ? -LEONOS_EAGAIN : 0);
+}
+
+static int task_pipe_write(struct task_file *file, const void *buffer, uint32_t length)
+{
+    struct task_pipe *pipe = task_pipe_for_file(file);
+    uint32_t count = 0;
+    if (!pipe || !(file->flags & TASK_FILE_FLAG_PIPE_WRITE)) return -LEONOS_EBADF;
+    if (length == 0) return 0;
+    if (!pipe->readers) return -LEONOS_EPIPE;
+    while (count < length) {
+        uint32_t next = (pipe->head + 1U) % TASK_PIPE_RING_CAP;
+        if (next == pipe->tail) {
+            return count ? (int)count : -LEONOS_EAGAIN;
+        }
+        pipe->data[pipe->head] = ((const uint8_t *)buffer)[count++];
+        pipe->head = next;
+    }
+    return (int)count;
+}
+
+static int task_dup2_fd(struct task *task, int old_fd, int new_fd)
+{
+    struct task_file *old_file = task_file_for_fd(task, old_fd);
+    struct task_file *new_file;
+    struct task_pty_fd *replaced_pty = NULL;
+    if (!task || old_fd < 0 || new_fd < 0 || !old_file) return -LEONOS_EBADF;
+    if (old_fd == new_fd) return new_fd;
+    if (new_fd < 3) {
+        new_file = &task->stdio_files[new_fd];
+    } else if (new_fd >= 4 && new_fd < 4 + (int)SCHED_TASK_FILE_MAX) {
+        new_file = &task->files[new_fd - 4];
+    } else {
+        return -LEONOS_EBADF;
+    }
+    if (new_fd >= 4) {
+        replaced_pty = task_pty_fd_for_fd(task, new_fd);
+    }
+    if (!new_file->used && !replaced_pty && new_fd >= 4 && !task_can_allocate_fd(task)) {
+        return -LEONOS_EMFILE;
+    }
+    if (new_file->used) clear_task_file(new_file);
+    if (replaced_pty) {
+        *replaced_pty = (struct task_pty_fd){0};
+    }
+    *new_file = *old_file;
+    new_file->used = 1;
+    new_file->fd_flags = 0;
+    task_pipe_retain(new_file);
+    return new_fd;
+}
+
+static int task_duplicate_file_fd(struct task *task, int old_fd, int minimum_fd,
+                                  uint32_t fd_flags)
+{
+    struct task_file *source = task_file_for_fd(task, old_fd);
+    int fd;
+    if (!source || minimum_fd < 0) {
+        return -LEONOS_EBADF;
+    }
+    if (!task_can_allocate_fd(task)) {
+        return -LEONOS_EMFILE;
+    }
+    if (minimum_fd < 4) {
+        minimum_fd = 4;
+    }
+    for (fd = minimum_fd; fd < 4 + (int)SCHED_TASK_FILE_MAX; ++fd) {
+        struct task_file *target;
+        if (task_file_for_fd(task, fd) || task_pty_fd_for_fd(task, fd)) {
+            continue;
+        }
+        target = &task->files[fd - 4];
+        *target = *source;
+        target->used = 1;
+        target->fd_flags = fd_flags;
+        task_pipe_retain(target);
+        return fd;
+    }
+    return -LEONOS_EMFILE;
+}
+
+int syscall_inherit_task_fds(struct task *parent, struct task *child,
+                             int stdin_fd, int stdout_fd, int stderr_fd)
+{
+    const int requested[3] = {stdin_fd, stdout_fd, stderr_fd};
+    if (!child) return -LEONOS_EINVAL;
+    for (int i = 0; i < 3; ++i) {
+        struct task_file *source;
+        struct task_file *target = &child->stdio_files[i];
+        if (requested[i] < 0) continue;
+        source = task_file_for_fd(parent, requested[i]);
+        /* No explicit file means the child's PTY supplies this stream. */
+        if (!source && requested[i] >= 0 && requested[i] <= 2) continue;
+        if (!source) {
+            return -LEONOS_EBADF;
+        }
+        if (target->used) clear_task_file(target);
+        *target = *source;
+        target->used = 1;
+        task_pipe_retain(target);
+    }
+    return 0;
+}
+
+/**
+ * @brief Coordinates the file can read operation.
+ * @param file Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int file_can_read(const struct task_file *file)
 {
     uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
     return acc == LEONOS_O_RDONLY || acc == LEONOS_O_RDWR;
 }
 
+/**
+ * @brief Coordinates the file can write operation.
+ * @param file Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int file_can_write(const struct task_file *file)
 {
     uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
     return acc == LEONOS_O_WRONLY || acc == LEONOS_O_RDWR;
 }
 
+/**
+ * @brief Copies user path.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param user_ptr Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int copy_user_path(char *dst, uint32_t cap, uint64_t user_ptr)
 {
     size_t len;
@@ -673,6 +1206,14 @@ static int copy_user_path(char *dst, uint32_t cap, uint64_t user_ptr)
     return 0;
 }
 
+/**
+ * @brief Coordinates the resolve user path operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param user_ptr Input or output value used by this operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @return Result, status, or value defined by this API.
+ */
 static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, uint32_t cap)
 {
     char raw[LEONOS_FS_PATH_LEN];
@@ -688,6 +1229,11 @@ static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, ui
     return 0;
 }
 
+/**
+ * @brief Coordinates the storage errno operation.
+ * @param ret Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int storage_errno(int ret)
 {
     if (ret == -2) {
@@ -708,6 +1254,14 @@ static int storage_errno(int ret)
     return ret;
 }
 
+/**
+ * @brief Copies user string fixed.
+ * @param dst Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @param user_ptr Input or output value used by this operation.
+ * @param out_len Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr, uint32_t *out_len)
 {
     size_t len;
@@ -730,6 +1284,12 @@ static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr, ui
     return 0;
 }
 
+/**
+ * @brief Coordinates the kernel string len cap operation.
+ * @param text Input or output value used by this operation.
+ * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t kernel_string_len_cap(const char *text, uint32_t cap)
 {
     uint32_t len = 0;
@@ -739,6 +1299,11 @@ static uint32_t kernel_string_len_cap(const char *text, uint32_t cap)
     return len;
 }
 
+/**
+ * @brief Coordinates the kernel clear secret operation.
+ * @param data Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ */
 static void kernel_clear_secret(void *data, uint32_t len)
 {
     volatile uint8_t *p = (volatile uint8_t *)data;
@@ -748,6 +1313,12 @@ static void kernel_clear_secret(void *data, uint32_t len)
     }
 }
 
+/**
+ * @brief Coordinates the auth copy current user operation.
+ * @param user Input or output value used by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int auth_copy_current_user(struct leonos_user_info *user, const struct task *task)
 {
     if (!user) {
@@ -765,6 +1336,15 @@ static int auth_copy_current_user(struct leonos_user_info *user, const struct ta
     return 0;
 }
 
+/**
+ * @brief Coordinates the authz check path operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param op Input or output value used by this operation.
+ * @param path LeonOS path consumed by this operation.
+ * @param target_uid Input or output value used by this operation.
+ * @param target_role Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int authz_check_path(const struct task *task, uint32_t op,
                             const char *path, uint32_t target_uid,
                             uint32_t target_role)
@@ -802,11 +1382,21 @@ static int authz_check_path(const struct task *task, uint32_t op,
     return req.allowed ? 0 : -LEONOS_EACCES;
 }
 
+/**
+ * @brief Coordinates the authz check install operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int authz_check_install(const struct task *task)
 {
     return authz_check_path(task, LEONOS_AUTHZ_INSTALL, 0, 0, 0);
 }
 
+/**
+ * @brief Coordinates the fs acl fill actor operation.
+ * @param req Input or output value used by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ */
 static void fs_acl_fill_actor(struct leonos_fs_acl_request *req,
                               const struct task *task)
 {
@@ -827,6 +1417,11 @@ static void fs_acl_fill_actor(struct leonos_fs_acl_request *req,
     }
 }
 
+/**
+ * @brief Coordinates the fs acl dispatch operation.
+ * @param req Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int fs_acl_dispatch(struct leonos_fs_acl_request *req)
 {
     if (!req) {
@@ -835,6 +1430,13 @@ static int fs_acl_dispatch(struct leonos_fs_acl_request *req)
     return osmlayer_auth_op(LEONOS_AUTH_OP_FSPERM, req);
 }
 
+/**
+ * @brief Coordinates the fs acl notify operation.
+ * @param action Input or output value used by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param path LeonOS path consumed by this operation.
+ * @param path2 LeonOS path consumed by this operation.
+ */
 static void fs_acl_notify(uint32_t action, const struct task *task,
                           const char *path, const char *path2)
 {
@@ -849,9 +1451,20 @@ static void fs_acl_notify(uint32_t action, const struct task *task,
         copy_text(req.path2, sizeof(req.path2), path2);
     }
     fs_acl_fill_actor(&req, task);
+    /**
+ * @brief Coordinates the fs acl dispatch operation.
+ * @param req Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
     (void)fs_acl_dispatch(&req);
 }
 
+/**
+ * @brief Coordinates the fs acl handle ioctl operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @param user_arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
     struct task *task = sched_current_task();
@@ -908,6 +1521,11 @@ static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
     return 0;
 }
 
+/**
+ * @brief Coordinates the auth apply session login operation.
+ * @param caller Input or output value used by this operation.
+ * @param user Input or output value used by this operation.
+ */
 static void auth_apply_session_login(struct task *caller,
                                      const struct leonos_user_info *user)
 {
@@ -922,6 +1540,10 @@ static void auth_apply_session_login(struct task *caller,
     sched_set_task_identity(caller->pid, user, session_id);
 }
 
+/**
+ * @brief Coordinates the auth cleanup logged out task operation.
+ * @param pid Input or output value used by this operation.
+ */
 static void auth_cleanup_logged_out_task(uint32_t pid)
 {
     net_close_owner_sockets(pid);
@@ -929,6 +1551,12 @@ static void auth_cleanup_logged_out_task(uint32_t pid)
     pty_process_exit(pid);
 }
 
+/**
+ * @brief Coordinates the auth kill session tasks for logout operation.
+ * @param uid Input or output value used by this operation.
+ * @param session_id Input or output value used by this operation.
+ * @param keep_pid Input or output value used by this operation.
+ */
 static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                                uint32_t keep_pid)
 {
@@ -953,6 +1581,12 @@ static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id
     }
 }
 
+/**
+ * @brief Coordinates the auth handle ioctl operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @param user_arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
     struct task *task = sched_current_task();
@@ -1145,6 +1779,11 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
     return -LEONOS_ENOSYS;
 }
 
+/**
+ * @brief Coordinates the startup release file operation.
+ * @param data Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ */
 static void startup_release_file(const void *data, size_t len)
 {
     uint32_t pages = (uint32_t)((len + 4095U) / 4096U);
@@ -1153,6 +1792,11 @@ static void startup_release_file(const void *data, size_t len)
     }
 }
 
+/**
+ * @brief Coordinates the startup command is well formed operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_command_is_well_formed(const struct leonos_startup_command *command)
 {
     if (!command || !command->path[0] || command->argc > LEONOS_STARTUP_MAX_ARGS ||
@@ -1168,6 +1812,11 @@ static int startup_command_is_well_formed(const struct leonos_startup_command *c
     return 1;
 }
 
+/**
+ * @brief Coordinates the startup db is well formed operation.
+ * @param db Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_db_is_well_formed(const struct startup_db *db)
 {
     if (!db || db->magic != STARTUP_DB_MAGIC || db->count > STARTUP_DB_ENTRY_MAX ||
@@ -1183,6 +1832,11 @@ static int startup_db_is_well_formed(const struct startup_db *db)
     return 1;
 }
 
+/**
+ * @brief Coordinates the startup denial db is well formed operation.
+ * @param db Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_denial_db_is_well_formed(const struct startup_denial_db *db)
 {
     if (!db || db->magic != STARTUP_DENIAL_DB_MAGIC || db->count > STARTUP_DENIAL_MAX) {
@@ -1200,6 +1854,9 @@ static int startup_denial_db_is_well_formed(const struct startup_denial_db *db)
     return 1;
 }
 
+/**
+ * @brief Coordinates the startup db load operation.
+ */
 static void startup_db_load(void)
 {
     const void *data = 0;
@@ -1217,6 +1874,10 @@ static void startup_db_load(void)
     startup_release_file(data, len);
 }
 
+/**
+ * @brief Coordinates the startup db save operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_db_save(void)
 {
     (void)storage_mkdir("0:/system");
@@ -1225,6 +1886,9 @@ static int startup_db_save(void)
                               sizeof(startup_db_scratch));
 }
 
+/**
+ * @brief Coordinates the startup denial db load operation.
+ */
 static void startup_denial_db_load(void)
 {
     const void *data = 0;
@@ -1241,6 +1905,10 @@ static void startup_denial_db_load(void)
     startup_release_file(data, len);
 }
 
+/**
+ * @brief Coordinates the startup denial db save operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_denial_db_save(void)
 {
     (void)storage_mkdir("0:/system");
@@ -1249,6 +1917,12 @@ static int startup_denial_db_save(void)
                               sizeof(startup_denial_db_scratch));
 }
 
+/**
+ * @brief Coordinates the startup text eq operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_text_eq(const char *a, const char *b)
 {
     uint32_t i = 0;
@@ -1261,6 +1935,12 @@ static int startup_text_eq(const char *a, const char *b)
     return a[i] == 0 && b[i] == 0;
 }
 
+/**
+ * @brief Coordinates the startup command equal operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_command_equal(const struct leonos_startup_command *a,
                                  const struct leonos_startup_command *b)
 {
@@ -1275,6 +1955,12 @@ static int startup_command_equal(const struct leonos_startup_command *a,
     return 1;
 }
 
+/**
+ * @brief Coordinates the startup command validate operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_command_validate(struct leonos_startup_command *command,
                                     const struct task *task)
 {
@@ -1323,6 +2009,12 @@ static int startup_command_validate(struct leonos_startup_command *command,
     return 0;
 }
 
+/**
+ * @brief Coordinates the startup can manage uid operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param uid Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_can_manage_uid(const struct task *task, uint32_t uid)
 {
     return task && task->uid && uid &&
@@ -1330,6 +2022,12 @@ static int startup_can_manage_uid(const struct task *task, uint32_t uid)
             task->uid == uid);
 }
 
+/**
+ * @brief Coordinates the startup db find operation.
+ * @param uid Input or output value used by this operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_db_find(uint32_t uid, const struct leonos_startup_command *command)
 {
     for (uint32_t i = 0; i < startup_db_scratch.count; ++i) {
@@ -1341,6 +2039,13 @@ static int startup_db_find(uint32_t uid, const struct leonos_startup_command *co
     return -1;
 }
 
+/**
+ * @brief Coordinates the startup denial find operation.
+ * @param uid Input or output value used by this operation.
+ * @param requester_path LeonOS path consumed by this operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_denial_find(uint32_t uid, const char *requester_path,
                                const struct leonos_startup_command *command)
 {
@@ -1354,6 +2059,13 @@ static int startup_denial_find(uint32_t uid, const char *requester_path,
     return -1;
 }
 
+/**
+ * @brief Coordinates the startup remember denial operation.
+ * @param uid Input or output value used by this operation.
+ * @param requester_path LeonOS path consumed by this operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_remember_denial(uint32_t uid, const char *requester_path,
                                    const struct leonos_startup_command *command)
 {
@@ -1369,6 +2081,11 @@ static int startup_remember_denial(uint32_t uid, const char *requester_path,
     return startup_denial_db_save();
 }
 
+/**
+ * @brief Coordinates the startup request find operation.
+ * @param id Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct startup_request_slot *startup_request_find(uint32_t id)
 {
     for (uint32_t i = 0; i < STARTUP_REQUEST_MAX; ++i) {
@@ -1379,6 +2096,10 @@ static struct startup_request_slot *startup_request_find(uint32_t id)
     return 0;
 }
 
+/**
+ * @brief Coordinates the startup request reconcile operation.
+ * @param slot Input or output value used by this operation.
+ */
 static void startup_request_reconcile(struct startup_request_slot *slot)
 {
     struct task *dialog;
@@ -1391,6 +2112,10 @@ static void startup_request_reconcile(struct startup_request_slot *slot)
     }
 }
 
+/**
+ * @brief Coordinates the startup request alloc operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct startup_request_slot *startup_request_alloc(void)
 {
     for (uint32_t i = 0; i < STARTUP_REQUEST_MAX; ++i) {
@@ -1415,6 +2140,12 @@ static struct startup_request_slot *startup_request_alloc(void)
     return 0;
 }
 
+/**
+ * @brief Coordinates the startup add entry operation.
+ * @param uid Input or output value used by this operation.
+ * @param command Request structure consumed and, where defined, updated by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_add_entry(uint32_t uid, const struct leonos_startup_command *command)
 {
     int existing;
@@ -1446,6 +2177,11 @@ static int startup_add_entry(uint32_t uid, const struct leonos_startup_command *
     return startup_db_save();
 }
 
+/**
+ * @brief Coordinates the startup dialog spawn operation.
+ * @param slot Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_dialog_spawn(struct startup_request_slot *slot)
 {
     const char *argv[] = {SYSCONFDIALOG_APP_PATH, 0};
@@ -1464,6 +2200,12 @@ static int startup_dialog_spawn(struct startup_request_slot *slot)
     return 0;
 }
 
+/**
+ * @brief Coordinates the startup handle ioctl operation.
+ * @param request Request structure consumed and, where defined, updated by this operation.
+ * @param user_arg Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int startup_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
     struct task *task = sched_current_task();
@@ -1673,6 +2415,17 @@ static int startup_handle_ioctl(uint64_t request, uint64_t user_arg)
     return -LEONOS_ENOSYS;
 }
 
+/**
+ * @brief Copies user vector.
+ * @param user_ptr Input or output value used by this operation.
+ * @param max_count Length, size, or element count associated with the operation.
+ * @param out_ptrs Caller-provided storage that receives output from this operation.
+ * @param data Input or output value used by this operation.
+ * @param data_cap Capacity, in elements or bytes, of the related output buffer.
+ * @param out_count Caller-provided storage that receives output from this operation.
+ * @param data_len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int copy_user_vector(uint64_t user_ptr, uint32_t max_count,
                             char *out_ptrs[], char *data,
                             uint32_t data_cap, uint32_t *out_count, uint32_t *data_len)
@@ -1713,6 +2466,17 @@ static int copy_user_vector(uint64_t user_ptr, uint32_t max_count,
     return 0;
 }
 
+/**
+ * @brief Copies exec params from user.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param path_ptr LeonOS path consumed by this operation.
+ * @param argv_ptr Input or output value used by this operation.
+ * @param envp_ptr Input or output value used by this operation.
+ * @param path_out LeonOS path consumed by this operation.
+ * @param path_cap Capacity, in elements or bytes, of the related output buffer.
+ * @param params Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int copy_exec_params_from_user(struct task *task, uint64_t path_ptr, uint64_t argv_ptr, uint64_t envp_ptr,
                                       char *path_out, uint32_t path_cap, struct exec_params_kernel *params)
 {
@@ -1768,10 +2532,26 @@ static int copy_exec_params_from_user(struct task *task, uint64_t path_ptr, uint
     return 0;
 }
 
+/**
+ * @brief Coordinates the stat for fd operation.
+ * @param fd Open file descriptor used by this operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param st Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
 {
+    struct task_file *file;
     if (!st) {
         return -LEONOS_EFAULT;
+    }
+    file = task_file_for_fd(task, fd);
+    if (file) {
+        st->type = (file->flags & TASK_FILE_FLAG_PIPE) ? LEONOS_FS_TYPE_DEVICE
+                                                         : file->node.type;
+        st->reserved = 0;
+        st->size = file->node.size;
+        return 0;
     }
     if (fd >= 0 && fd <= 3) {
         st->type = LEONOS_FS_TYPE_DEVICE;
@@ -1779,26 +2559,35 @@ static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
         st->size = 0;
         return 0;
     }
-    struct task_file *file = task_file_for_fd(task, fd);
-    if (!file) {
-        return -LEONOS_EBADF;
-    }
-    st->type = file->node.type;
-    st->reserved = 0;
-    st->size = file->node.size;
-    return 0;
+    return -LEONOS_EBADF;
 }
 
+/**
+ * @brief Coordinates the align up page operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_up_page(uint64_t value)
 {
     return (value + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
 }
 
+/**
+ * @brief Coordinates the align down page operation.
+ * @param value Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t align_down_page(uint64_t value)
 {
     return value & ~(PAGE_SIZE - 1ULL);
 }
 
+/**
+ * @brief Coordinates the align user len operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @param out Caller-provided storage that receives output from this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int align_user_len(uint64_t len, uint64_t *out)
 {
     if (!len || len > NTCLKS_USER_TOP - NTCLKS_USER_BASE) {
@@ -1811,6 +2600,11 @@ static int align_user_len(uint64_t len, uint64_t *out)
     return *out ? 0 : -LEONOS_EINVAL;
 }
 
+/**
+ * @brief Coordinates the task mmap top operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t task_mmap_top(const struct task *task)
 {
     uint64_t stack_top = (task && task->stack_top) ? task->stack_top : NTCLKS_USER_TOP - PAGE_SIZE;
@@ -1821,6 +2615,11 @@ static uint64_t task_mmap_top(const struct task *task)
     return stack_low;
 }
 
+/**
+ * @brief Coordinates the task vma free slot operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *task_vma_free_slot(struct task *task)
 {
     if (!task) {
@@ -1834,11 +2633,24 @@ static struct task_vma *task_vma_free_slot(struct task *task)
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task vma attrs match operation.
+ * @param vma Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_attrs_match(const struct task_vma *vma, uint64_t prot, uint32_t flags)
 {
     return vma && vma->used && vma->prot == (uint32_t)prot && vma->flags == flags;
 }
 
+/**
+ * @brief Coordinates the storage nodes equal operation.
+ * @param a Input or output value used by this operation.
+ * @param b Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int storage_nodes_equal(const struct storage_node *a, const struct storage_node *b)
 {
     return a && b &&
@@ -1849,6 +2661,12 @@ static int storage_nodes_equal(const struct storage_node *a, const struct storag
            a->size == b->size;
 }
 
+/**
+ * @brief Coordinates the task vma file attrs match operation.
+ * @param vma Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_file_attrs_match(const struct task_vma *vma,
                                      const struct storage_node *file_node)
 {
@@ -1859,6 +2677,10 @@ static int task_vma_file_attrs_match(const struct task_vma *vma,
            file_node && vma->file_limit == file_node->size;
 }
 
+/**
+ * @brief Coordinates the task vma clear operation.
+ * @param vma Input or output value used by this operation.
+ */
 static void task_vma_clear(struct task_vma *vma)
 {
     if (vma) {
@@ -1866,6 +2688,13 @@ static void task_vma_clear(struct task_vma *vma)
     }
 }
 
+/**
+ * @brief Coordinates the task vma containing operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *task_vma_containing(struct task *task, uint64_t start, uint64_t end)
 {
     if (!task) {
@@ -1879,6 +2708,16 @@ static struct task_vma *task_vma_containing(struct task *task, uint64_t start, u
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task vma left adjacent operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @param file_offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start,
                                                 uint64_t prot, uint32_t flags,
                                                 const struct storage_node *file_node,
@@ -1900,6 +2739,17 @@ static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task vma right adjacent operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param end Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @param file_offset Input or output value used by this operation.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
                                                  uint64_t prot, uint32_t flags,
                                                  const struct storage_node *file_node,
@@ -1922,6 +2772,17 @@ static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
     return NULL;
 }
 
+/**
+ * @brief Coordinates the task vma can record mapping operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @param file_offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_can_record_mapping(struct task *task, uint64_t start, uint64_t end,
                                        uint64_t prot, uint32_t flags,
                                        const struct storage_node *file_node,
@@ -1933,6 +2794,17 @@ static int task_vma_can_record_mapping(struct task *task, uint64_t start, uint64
            task_vma_free_slot(task);
 }
 
+/**
+ * @brief Coordinates the task vma record mapping operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param file_node Input or output value used by this operation.
+ * @param file_offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t end,
                                    uint64_t prot, uint32_t flags,
                                    const struct storage_node *file_node,
@@ -1961,6 +2833,7 @@ static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t e
     }
     slot->used = 1;
     slot->prot = (uint32_t)prot;
+    slot->max_prot = (uint32_t)prot;
     slot->flags = flags;
     slot->reserved = 0;
     slot->start = start;
@@ -1975,6 +2848,13 @@ static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t e
     return 0;
 }
 
+/**
+ * @brief Coordinates the task vma overlaps operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t end)
 {
     if (!task) {
@@ -1988,6 +2868,13 @@ static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t e
     return 0;
 }
 
+/**
+ * @brief Coordinates the task user pages free operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_user_pages_free(const struct task *task, uint64_t start, uint64_t end)
 {
     if (!task || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP) {
@@ -2004,6 +2891,11 @@ static int task_user_pages_free(const struct task *task, uint64_t start, uint64_
     return 1;
 }
 
+/**
+ * @brief Coordinates the task vma count operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @return Result, status, or value defined by this API.
+ */
 static uint32_t task_vma_count(const struct task *task)
 {
     uint32_t count = 0;
@@ -2018,6 +2910,31 @@ static uint32_t task_vma_count(const struct task *task)
     return count;
 }
 
+static uint64_t task_vma_total_bytes(const struct task *task)
+{
+    uint64_t total = 0;
+    if (!task) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        const struct task_vma *vma = &task->vmas[i];
+        if (!vma->used || vma->end < vma->start) {
+            continue;
+        }
+        if (UINT64_MAX - total < vma->end - vma->start) {
+            return UINT64_MAX;
+        }
+        total += vma->end - vma->start;
+    }
+    return total;
+}
+
+/**
+ * @brief Coordinates the task find mmap region operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
 {
     uint64_t top = task_mmap_top(task);
@@ -2056,6 +2973,12 @@ static uint64_t task_find_file_mmap_region(struct task *task, uint64_t len)
     return 0;
 }
 
+/**
+ * @brief Coordinates the task unmap pages operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ */
 static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
 {
     if (!task) {
@@ -2069,6 +2992,10 @@ static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
     }
 }
 
+/**
+ * @brief Coordinates the zero phys page operation.
+ * @param phys Input or output value used by this operation.
+ */
 static void zero_phys_page(uint64_t phys)
 {
     uint8_t *ptr = (uint8_t *)(uintptr_t)phys;
@@ -2077,9 +3004,21 @@ static void zero_phys_page(uint64_t phys)
     }
 }
 
+/**
+ * @brief Coordinates the task map anonymous pages operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param start Input or output value used by this operation.
+ * @param end Input or output value used by this operation.
+ * @param page_flags Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t end,
                                     uint64_t page_flags)
 {
+    /* Anonymous mappings have no executable provenance.  An application that
+     * needs JIT code must explicitly map RX after producing it; W+X is never
+     * accepted by the syscall. */
+    page_flags |= NTCLKS_PAGE_NOEXEC;
     for (uint64_t page = start; page < end; page += PAGE_SIZE) {
         uint64_t phys = mm_alloc_page();
         if (!phys || !address_space_map_user_page(&task->as, page, phys, page_flags)) {
@@ -2104,6 +3043,13 @@ static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t 
     return 0;
 }
 
+/**
+ * @brief Coordinates the task map file vma page operation.
+ * @param task Task whose state or authority is inspected or updated.
+ * @param vma Input or output value used by this operation.
+ * @param page Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
                                   uint64_t page)
 {
@@ -2129,6 +3075,9 @@ static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
     }
 
     uint64_t page_flags = (vma->prot & LINUX_PROT_WRITE) ? NTCLKS_PAGE_WRITABLE : 0;
+    if (!(vma->prot & LINUX_PROT_EXEC)) {
+        page_flags |= NTCLKS_PAGE_NOEXEC;
+    }
     if (!address_space_map_user_page(&task->as, page, phys, page_flags)) {
         mm_free_page(phys);
         return -LEONOS_ENOMEM;
@@ -2136,17 +3085,30 @@ static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
     return 0;
 }
 
+/**
+ * @brief Coordinates the syscall handle user page fault operation.
+ * @param fault_addr Address used by this operation; its address-space interpretation follows the API.
+ * @param error Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
 {
-    if (error & 0x9ULL) {
-        return 0;
-    }
     struct task *task = sched_current_task();
     if (!task || task->kind != TASK_KIND_USER) {
         return 0;
     }
     uint64_t page = align_down_page(fault_addr);
     if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
+        return 0;
+    }
+    /* A write through either Ring-3 code or a kernel syscall helper can touch
+     * the calling process's present, read-only COW PTE.  Resolve only that
+     * precise protection fault; reserved-bit and instruction-fetch faults
+     * remain fatal and ordinary kernel faults never reach this path. */
+    if ((error & 0x3ULL) == 0x3ULL && !(error & 0x18ULL)) {
+        return address_space_handle_cow_fault(&task->as, page);
+    }
+    if (error & 0x9ULL) {
         return 0;
     }
     if (address_space_user_page_phys(&task->as, page)) {
@@ -2165,6 +3127,16 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
     return task_map_file_vma_page(task, vma, page) == 0;
 }
 
+/**
+ * @brief Handles the mmap.
+ * @param addr Address used by this operation; its address-space interpretation follows the API.
+ * @param len Length, size, or element count associated with the operation.
+ * @param prot Input or output value used by this operation.
+ * @param flags Input or output value used by this operation.
+ * @param fd Open file descriptor used by this operation.
+ * @param offset Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
                         uint64_t flags, uint64_t fd, uint64_t offset)
 {
@@ -2184,9 +3156,19 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     if (align_user_len(len, &mapped_len) < 0) {
         return -LEONOS_EINVAL;
     }
+    if (task->rlimit_as) {
+        uint64_t used = task_vma_total_bytes(task);
+        if (used > task->rlimit_as || mapped_len > task->rlimit_as - used) {
+            return -LEONOS_ENOMEM;
+        }
+    }
     if ((prot & ~(uint64_t)(LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) != 0 ||
         (prot & (LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) == 0) {
         return -LEONOS_EINVAL;
+    }
+    if ((prot & (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ==
+        (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) {
+        return -LEONOS_EACCES;
     }
     if ((flags & ~((uint64_t)LINUX_MAP_SUPPORTED)) != 0 || (flags & LINUX_MAP_PRIVATE) == 0) {
         return -LEONOS_EINVAL;
@@ -2205,8 +3187,8 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
         if (offset > UINT64_MAX - mapped_len) {
             return -LEONOS_EINVAL;
         }
-        if (prot != LINUX_PROT_READ) {
-            return -LEONOS_ENOSYS;
+        if (!(prot & LINUX_PROT_READ)) {
+            return -LEONOS_EINVAL;
         }
         if (fd > INT32_MAX) {
             return -LEONOS_EBADF;
@@ -2264,6 +3246,9 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     if (prot & LINUX_PROT_WRITE) {
         page_flags |= NTCLKS_PAGE_WRITABLE;
     }
+    if (!(prot & LINUX_PROT_EXEC)) {
+        page_flags |= NTCLKS_PAGE_NOEXEC;
+    }
     if (anonymous) {
         ret = task_map_anonymous_pages(task, start, end, page_flags);
     } else {
@@ -2281,13 +3266,119 @@ static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     return (int64_t)start;
 }
 
+/**
+ * @brief Handles the mprotect.
+ * @param addr Address used by this operation; its address-space interpretation follows the API.
+ * @param len Length, size, or element count associated with the operation.
+ * @param prot Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
+static int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
+{
+    struct task *task = sched_current_task();
+    uint64_t mapped_len;
+    uint64_t end;
+    struct task_vma *vma;
+    struct task_vma original;
+    struct task_vma *left = NULL;
+    struct task_vma *right = NULL;
+    uint64_t page_flags = 0;
+    if (!task || task->kind != TASK_KIND_USER || (addr & (PAGE_SIZE - 1ULL)) ||
+        align_user_len(len, &mapped_len) < 0 || mapped_len > NTCLKS_USER_TOP - addr ||
+        (prot & ~(uint64_t)(LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ||
+        !prot || (prot & (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ==
+                     (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) {
+        return -LEONOS_EINVAL;
+    }
+    end = addr + mapped_len;
+    vma = task_vma_containing(task, addr, end);
+    if (!vma || (prot & ~vma->max_prot)) {
+        return -LEONOS_EACCES;
+    }
+    original = *vma;
+    if (addr > original.start) {
+        left = task_vma_free_slot(task);
+        if (!left) {
+            return -LEONOS_ENOMEM;
+        }
+        /* Reserve this slot while looking for the optional suffix. */
+        left->used = 0xffffffffu;
+    }
+    if (end < original.end) {
+        right = task_vma_free_slot(task);
+        if (!right) {
+            if (left) {
+                task_vma_clear(left);
+            }
+            return -LEONOS_ENOMEM;
+        }
+        right->used = 0xffffffffu;
+    }
+    if (left) {
+        task_vma_clear(left);
+    }
+    if (right) {
+        task_vma_clear(right);
+    }
+    if (prot & LINUX_PROT_WRITE) {
+        page_flags |= NTCLKS_PAGE_WRITABLE;
+    }
+    if (!(prot & LINUX_PROT_EXEC)) {
+        page_flags |= NTCLKS_PAGE_NOEXEC;
+    }
+    for (uint64_t page = addr; page < end; page += PAGE_SIZE) {
+        if (address_space_user_page_phys(&task->as, page) &&
+            !address_space_protect_user_page(&task->as, page, page_flags)) {
+            return -LEONOS_EACCES;
+        }
+    }
+    /* A partial protection change needs independent VMA metadata.  In
+     * particular, PT_GNU_RELRO protects only the GOT page while BSS in the
+     * same original load segment must remain writable and lazily mappable. */
+    if (addr > original.start) {
+        left = task_vma_free_slot(task);
+        if (!left) {
+            return -LEONOS_ENOMEM;
+        }
+        *left = original;
+        left->end = addr;
+    }
+    if (end < original.end) {
+        right = task_vma_free_slot(task);
+        if (!right) {
+            return -LEONOS_ENOMEM;
+        }
+        *right = original;
+        right->start = end;
+        if (right->flags & TASK_VMA_FLAG_FILE) {
+            right->file_offset += end - original.start;
+        }
+    }
+    *vma = original;
+    vma->start = addr;
+    vma->end = end;
+    if (vma->flags & TASK_VMA_FLAG_FILE) {
+        vma->file_offset += addr - original.start;
+    }
+    vma->prot = (uint32_t)prot;
+    return 0;
+}
+
+/**
+ * @brief Handles the munmap.
+ * @param addr Address used by this operation; its address-space interpretation follows the API.
+ * @param len Length, size, or element count associated with the operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t sys_munmap(uint64_t addr, uint64_t len)
 {
     struct task *task = sched_current_task();
-    struct task_vma *vma;
     uint64_t mapped_len;
     uint64_t start = addr;
     uint64_t end;
+    uint64_t cursor;
+    uint32_t split_count = 0;
+    uint32_t free_slots = 0;
 
     if (!task || task->kind != TASK_KIND_USER || (start & (PAGE_SIZE - 1ULL)) != 0 ||
         start < NTCLKS_USER_BASE || start >= NTCLKS_USER_TOP) {
@@ -2297,44 +3388,217 @@ static int64_t sys_munmap(uint64_t addr, uint64_t len)
         return -LEONOS_EINVAL;
     }
     end = start + mapped_len;
-    vma = task_vma_containing(task, start, end);
-    if (!vma) {
-        return -LEONOS_EINVAL;
+    /* Validate that the requested span is fully covered before changing any
+     * pages.  Dynamic libraries commonly have a RELRO VMA between two parts
+     * of the same PT_LOAD, so a valid unmap can legitimately cross VMAs. */
+    cursor = start;
+    while (cursor < end) {
+        struct task_vma *vma = task_vma_containing(task, cursor, cursor + 1);
+        uint64_t part_end;
+        if (!vma) {
+            return -LEONOS_EINVAL;
+        }
+        part_end = vma->end < end ? vma->end : end;
+        if (cursor > vma->start && part_end < vma->end) {
+            ++split_count;
+        }
+        cursor = part_end;
     }
-    if (start > vma->start && end < vma->end && !task_vma_free_slot(task)) {
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        if (!task->vmas[i].used) {
+            ++free_slots;
+        }
+    }
+    if (split_count > free_slots) {
         return -LEONOS_ENOMEM;
     }
-
-    uint64_t old_start = vma->start;
-    uint64_t old_end = vma->end;
     task_unmap_pages(task, start, end);
-    if (start == vma->start && end == old_end) {
-        task_vma_clear(vma);
-    } else if (start == vma->start) {
-        vma->start = end;
-        if (vma->flags & TASK_VMA_FLAG_FILE) {
-            vma->file_offset += end - old_start;
+    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
+        struct task_vma *vma = &task->vmas[i];
+        struct task_vma original;
+        uint64_t remove_start;
+        uint64_t remove_end;
+        if (!vma->used || vma->end <= start || vma->start >= end) {
+            continue;
         }
-    } else if (end == old_end) {
-        vma->end = start;
-    } else {
-        struct task_vma *right = task_vma_free_slot(task);
-        *right = *vma;
-        right->start = end;
-        right->end = old_end;
-        if (right->flags & TASK_VMA_FLAG_FILE) {
-            right->file_offset += end - old_start;
+        original = *vma;
+        remove_start = original.start > start ? original.start : start;
+        remove_end = original.end < end ? original.end : end;
+        if (remove_start == original.start && remove_end == original.end) {
+            task_vma_clear(vma);
+        } else if (remove_start == original.start) {
+            vma->start = remove_end;
+            if (vma->flags & TASK_VMA_FLAG_FILE) {
+                vma->file_offset += remove_end - original.start;
+            }
+        } else if (remove_end == original.end) {
+            vma->end = remove_start;
+        } else {
+            struct task_vma *right = task_vma_free_slot(task);
+            if (!right) {
+                return -LEONOS_ENOMEM;
+            }
+            *right = original;
+            right->start = remove_end;
+            if (right->flags & TASK_VMA_FLAG_FILE) {
+                right->file_offset += remove_end - original.start;
+            }
+            vma->end = remove_start;
         }
-        vma->end = start;
     }
     return 0;
 }
 
+/**
+ * @brief Coordinates the syscall init operation.
+ */
 void syscall_init(void)
 {
     console_printf("[ntclks] Linux x86_64 syscall ABI registered\n");
 }
 
+/**
+ * @brief Handles process identity, signal, and nice-style priority syscalls.
+ * @param number Linux syscall number.
+ * @param a0 First syscall argument.
+ * @param a1 Second syscall argument.
+ * @param a2 Third syscall argument.
+ * @param a3 Fourth syscall argument.
+ * @return Syscall result or negative errno.
+ */
+static int64_t syscall_process_control(uint64_t number, uint64_t a0,
+                                       uint64_t a1, uint64_t a2, uint64_t a3)
+{
+    if (number == LINUX_SYS_GETPID) {
+        return (int64_t)sched_current_pid();
+    }
+    if (number == LINUX_SYS_GETPPID) {
+        struct task *task = sched_current_task();
+        return task ? (int64_t)task->parent_pid : 0;
+    }
+    if (number == LINUX_SYS_GETPGRP) {
+        return sched_get_process_group(0);
+    }
+    if (number == LINUX_SYS_GETPGID) {
+        struct task *current = sched_current_task();
+        struct task *target = sched_find((uint32_t)a0);
+        if (a0 == 0) {
+            return sched_get_process_group(0);
+        }
+        if (!current || !target ||
+            (current->uid != 0 && current->uid != target->uid)) {
+            return -LEONOS_EPERM;
+        }
+        return sched_get_process_group((uint32_t)a0);
+    }
+    if (number == LINUX_SYS_SETPGID) {
+        int result = sched_set_process_group(sched_current_pid(), (uint32_t)a0,
+                                             (uint32_t)a1);
+        return result == 0 ? 0 : (result == -2 ? -LEONOS_ENOENT : -LEONOS_EPERM);
+    }
+    if (number == LINUX_SYS_SETSID) {
+        int64_t result = sched_create_process_session(sched_current_pid());
+        return result > 0 ? result : -LEONOS_EPERM;
+    }
+    if (number == LINUX_SYS_KILL) {
+        int signal_number = (int)a1;
+        struct task *current = sched_current_task();
+        int32_t requested_pid = (int32_t)a0;
+        struct task *target;
+        if (!current || requested_pid == -1) {
+            return -LEONOS_EINVAL;
+        }
+        if (requested_pid <= 0) {
+            uint32_t process_group = requested_pid == 0
+                                         ? current->process_group
+                                         : (uint32_t)(-(int64_t)requested_pid);
+            int result = sched_signal_process_group(current->pid, process_group,
+                                                    signal_number);
+            return result >= 0 ? 0 : -LEONOS_EPERM;
+        }
+        target = sched_find((uint32_t)requested_pid);
+        if (!current || !target ||
+            ((uint32_t)requested_pid != current->pid && current->uid != 0 &&
+             current->uid != target->uid)) {
+            return -LEONOS_EPERM;
+        }
+        return sched_signal_user_task((uint32_t)requested_pid, signal_number) == 0
+                   ? 0 : -LEONOS_EINVAL;
+    }
+    if (number == LINUX_SYS_NICE) {
+        struct task *task = sched_current_task();
+        int current = task ? task->priority : 0;
+        int next = current + (int)a0;
+        int priority;
+        if (next < -20) next = -20;
+        if (next > 19) next = 19;
+        priority = sched_task_priority(sched_current_pid(), next, 1);
+        if (priority < -20 || priority > 19) {
+            return -LEONOS_EINVAL;
+        }
+        /* A raw syscall cannot return a negative successful value. Encode
+         * POSIX's -20..19 priority range as Linux does for getpriority. */
+        return priority + 20;
+    }
+    if (number == LINUX_SYS_GETPRIORITY || number == LINUX_SYS_SETPRIORITY) {
+        struct task *current = sched_current_task();
+        uint32_t target = (uint32_t)a1;
+        if (a0 != 0) {
+            return -LEONOS_EINVAL;
+        }
+        if (target == 0 && current) {
+            target = current->pid;
+        }
+        if (!current || (number == LINUX_SYS_SETPRIORITY &&
+                         target != current->pid && current->uid != 0)) {
+            return -LEONOS_EPERM;
+        }
+        {
+            int priority = sched_task_priority(target, (int)a2,
+                                                number == LINUX_SYS_SETPRIORITY);
+            if (priority < -20 || priority > 19) {
+                return -LEONOS_ENOENT;
+            }
+            if (number == LINUX_SYS_SETPRIORITY) {
+                return 0;
+            }
+            /* Preserve the negative-errno syscall convention for callers
+             * while exposing the POSIX priority through libc. */
+            return priority + 20;
+        }
+    }
+    if (number == LINUX_SYS_GETRLIMIT || number == LINUX_SYS_SETRLIMIT) {
+        struct task *task = sched_current_task();
+        uint64_t *limit = (uint64_t *)(uintptr_t)a1;
+        uint64_t current_limit;
+        uint64_t maximum_limit;
+        if (!task || !limit || !user_range_ok(a1, 16)) return -LEONOS_EFAULT;
+        if (a0 == 5) {
+            current_limit = task->rlimit_nofile;
+            maximum_limit = SCHED_TASK_FILE_MAX;
+        } else if (a0 == 6) {
+            maximum_limit = NTCLKS_USER_TOP - NTCLKS_USER_BASE;
+            current_limit = task->rlimit_as ? task->rlimit_as : maximum_limit;
+        } else return -LEONOS_ENOSYS;
+        if (number == LINUX_SYS_GETRLIMIT) {
+            limit[0] = current_limit;
+            limit[1] = maximum_limit;
+            return 0;
+        }
+        if (limit[0] > maximum_limit || limit[1] > maximum_limit ||
+            limit[0] > limit[1]) return -LEONOS_EPERM;
+        if (a0 == 5) task->rlimit_nofile = limit[0];
+        else task->rlimit_as = limit[0] == maximum_limit ? 0 : limit[0];
+        return 0;
+    }
+    return -LEONOS_ENOSYS;
+}
+
+/**
+ * @brief Coordinates the syscall dispatch operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @return Result, status, or value defined by this API.
+ */
 int64_t syscall_dispatch(const struct syscall_frame *frame)
 {
     if (!frame) {
@@ -2342,31 +3606,74 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
     }
 
     switch (frame->number) {
-    case LINUX_SYS_WRITE:
     case LINUX_SYS_READ:
+    case LINUX_SYS_WRITE:
     case LINUX_SYS_OPEN:
     case LINUX_SYS_CLOSE:
     case LINUX_SYS_STAT:
     case LINUX_SYS_FSTAT:
     case LINUX_SYS_LSEEK:
-    case LINUX_SYS_GETCWD:
-    case LINUX_SYS_CHDIR:
+    case LINUX_SYS_FTRUNCATE:
+    case LINUX_SYS_IOCTL:
+    case LINUX_SYS_SCHED_YIELD:
+    case LINUX_SYS_NANOSLEEP:
     case LINUX_SYS_EXECVE:
     case LINUX_SYS_EXIT:
-    case LINUX_SYS_NANOSLEEP:
-    case LINUX_SYS_IOCTL:
+    case LINUX_SYS_WAIT4:
+    case LINUX_SYS_GETCWD:
+    case LINUX_SYS_CHDIR:
+    case LINUX_SYS_RENAME:
+    case LINUX_SYS_MKDIR:
+    case LINUX_SYS_RMDIR:
+    case LINUX_SYS_UNLINK:
+    case LINUX_SYS_PIPE:
+    case LINUX_SYS_DUP:
+    case LINUX_SYS_DUP2:
+    case LINUX_SYS_FORK:
+    case LINUX_SYS_VFORK:
+    case LINUX_SYS_FCNTL:
+        return syscall_dispatch_regs(frame->number, frame->args[0], frame->args[1],
+                                     frame->args[2], frame->args[3], frame->args[4],
+                                     frame->args[5]);
     case LINUX_SYS_GETPID:
-        return osmlayer_bridge_syscall(frame);
+    case LINUX_SYS_GETPPID:
+    case LINUX_SYS_SETPGID:
+    case LINUX_SYS_GETPGRP:
+    case LINUX_SYS_SETSID:
+    case LINUX_SYS_GETPGID:
+    case LINUX_SYS_KILL:
+    case LINUX_SYS_NICE:
+    case LINUX_SYS_GETPRIORITY:
+    case LINUX_SYS_SETPRIORITY:
+        return syscall_process_control(frame->number, frame->args[0], frame->args[1],
+                                       frame->args[2], frame->args[3]);
+    case LINUX_SYS_GETRLIMIT:
+    case LINUX_SYS_SETRLIMIT:
+        return syscall_process_control(frame->number, frame->args[0], frame->args[1],
+                                       frame->args[2], frame->args[3]);
     case LINUX_SYS_MMAP:
         return sys_mmap(frame->args[0], frame->args[1], frame->args[2],
                         frame->args[3], frame->args[4], frame->args[5]);
     case LINUX_SYS_MUNMAP:
         return sys_munmap(frame->args[0], frame->args[1]);
+    case LINUX_SYS_MPROTECT:
+        return sys_mprotect(frame->args[0], frame->args[1], frame->args[2]);
     default:
         return -LEONOS_ENOSYS;
     }
 }
 
+/**
+ * @brief Coordinates the syscall dispatch regs operation.
+ * @param number Input or output value used by this operation.
+ * @param a0 Input or output value used by this operation.
+ * @param a1 Input or output value used by this operation.
+ * @param a2 Input or output value used by this operation.
+ * @param a3 Input or output value used by this operation.
+ * @param a4 Input or output value used by this operation.
+ * @param a5 Input or output value used by this operation.
+ * @return Result, status, or value defined by this API.
+ */
 static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, uint64_t a2,
                                      uint64_t a3, uint64_t a4, uint64_t a5)
 {
@@ -2411,6 +3718,13 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (!user_range_ok(a1, a2)) {
             return -LEONOS_EFAULT;
         }
+        {
+            struct task_file *pipe_file = task_file_for_fd(task, (int)a0);
+            if (pipe_file && (pipe_file->flags & TASK_FILE_FLAG_PIPE)) {
+                uint32_t request = a2 > TASK_PIPE_CAP ? TASK_PIPE_CAP : (uint32_t)a2;
+                return task_pipe_write(pipe_file, (const void *)(uintptr_t)a1, request);
+            }
+        }
         pty_stream = task_pty_stream_for_fd(task, (int)a0);
         if (pty_stream == 1 || pty_stream == 2) {
             request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
@@ -2418,7 +3732,11 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                               : (uint32_t)a2;
             return pty_write_output(task->pty_id, (const char *)(uintptr_t)a1, request_len);
         }
-        if (a0 == 1 || a0 == 2) {
+        /* A redirected stdio descriptor must be handled by the regular file
+         * path below.  Only an unbound implicit PTY stream falls back to the
+         * kernel console; otherwise a pipe on fd 1/2 would be silently
+         * bypassed and its consumer would receive EOF/zero bytes. */
+        if ((a0 == 1 || a0 == 2) && !task_file_for_fd(task, (int)a0)) {
             request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
                               ? LEONOS_FS_IO_SLICE_BYTES
                               : (uint32_t)a2;
@@ -2450,6 +3768,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (file->flags & LEONOS_O_APPEND) {
             file->offset = file->node.size;
         }
+        file->read_cursor.valid = 0;
         ret = storage_write_node(file->path, file->offset,
                                  (const void *)(uintptr_t)a1, request_len, &wrote);
         if (ret < 0) {
@@ -2474,6 +3793,13 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         int pty_stream;
         if (!user_range_ok(a1, a2)) {
             return -LEONOS_EFAULT;
+        }
+        {
+            struct task_file *pipe_file = task_file_for_fd(task, (int)a0);
+            if (pipe_file && (pipe_file->flags & TASK_FILE_FLAG_PIPE)) {
+                uint32_t request = a2 > TASK_PIPE_CAP ? TASK_PIPE_CAP : (uint32_t)a2;
+                return task_pipe_read(pipe_file, (void *)(uintptr_t)a1, request);
+            }
         }
         pty_stream = task_pty_stream_for_fd(task, (int)a0);
         if (pty_stream == 0) {
@@ -2521,8 +3847,9 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                           ? LEONOS_FS_READ_SLICE_BYTES
                           : (uint32_t)a2;
         {
-            int ret = storage_read_node(&file->node, file->offset,
-                                        (void *)(uintptr_t)a1, request_len, &got);
+            int ret = storage_read_node_cursor(&file->node, file->offset,
+                                               (void *)(uintptr_t)a1, request_len, &got,
+                                               &file->read_cursor);
             if (ret < 0) {
                 return storage_errno(ret);
             }
@@ -2553,20 +3880,14 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
-        int64_t pid = userland_spawn_path_argv(path,
-                                               (const char *const *)params.argv,
-                                               (const char *const *)params.envp,
-                                               0);
-        if (pid == -2) {
-            return -LEONOS_ENOENT;
-        }
-        if (pid == -12) {
-            return -LEONOS_ENOMEM;
-        }
-        if (pid == -7) {
-            return -LEONOS_E2BIG;
-        }
-        return pid;
+        return userland_exec_current_path(path, params.argc, params.argv,
+                                          params.envc, params.envp,
+                                          params.data, params.data_len);
+    }
+
+    if (number == LINUX_SYS_FORK || number == LINUX_SYS_VFORK) {
+        struct task *task = sched_current_task();
+        return sched_fork_current(task ? &task->frame : NULL);
     }
 
     if (number == LINUX_SYS_OPEN) {
@@ -2631,27 +3952,49 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return fd;
     }
 
+    if (number == LINUX_SYS_PIPE) {
+        struct task *task = sched_current_task();
+        int read_fd, write_fd;
+        uint32_t pipe_index;
+        if (!task || !user_range_ok(a0, sizeof(int) * 2U)) return -LEONOS_EFAULT;
+        for (pipe_index = 0; pipe_index < TASK_PIPE_MAX; ++pipe_index) {
+            if (!task_pipes[pipe_index].used) break;
+        }
+        if (pipe_index == TASK_PIPE_MAX) return -LEONOS_EMFILE;
+        task_pipes[pipe_index] = (struct task_pipe){.used = 1, .readers = 0, .writers = 0};
+        read_fd = alloc_task_pipe_fd(task, pipe_index, 0);
+        write_fd = alloc_task_pipe_fd(task, pipe_index, 1);
+        if (read_fd < 0 || write_fd < 0) {
+            if (read_fd >= 0) clear_task_file(task_file_for_fd(task, read_fd));
+            if (write_fd >= 0) clear_task_file(task_file_for_fd(task, write_fd));
+            task_pipes[pipe_index] = (struct task_pipe){0};
+            return -LEONOS_EMFILE;
+        }
+        ((int *)(uintptr_t)a0)[0] = read_fd;
+        ((int *)(uintptr_t)a0)[1] = write_fd;
+        return 0;
+    }
+
     if (number == LINUX_SYS_CLOSE) {
         struct task *task = sched_current_task();
         if (a0 <= 3) {
+            struct task_file *stdio_file = task_file_for_fd(task, (int)a0);
+            if (stdio_file) clear_task_file(stdio_file);
+            return 0;
+        }
+        struct task_file *file = task_file_for_fd(task, (int)a0);
+        if (file) {
+            clear_task_file(file);
             return 0;
         }
         {
             struct task_pty_fd *pty_fd = task_pty_fd_for_fd(task, (int)a0);
             if (pty_fd) {
-                pty_fd->used = 0;
-                pty_fd->fd = 0;
-                pty_fd->stream = 0;
-                pty_fd->flags = 0;
+                *pty_fd = (struct task_pty_fd){0};
                 return 0;
             }
         }
-        struct task_file *file = task_file_for_fd(task, (int)a0);
-        if (!file) {
-            return -LEONOS_EBADF;
-        }
-        clear_task_file(file);
-        return 0;
+        return -LEONOS_EBADF;
     }
 
     if (number == LINUX_SYS_FTRUNCATE) {
@@ -2676,6 +4019,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
+        file->read_cursor.valid = 0;
         ret = storage_lookup_path(file->path, &file->node);
         if (ret < 0) {
             return ret;
@@ -2689,25 +4033,41 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     if (number == LINUX_SYS_DUP || number == LINUX_SYS_DUP2 || number == LINUX_SYS_FCNTL) {
         struct task *task = sched_current_task();
         if (number == LINUX_SYS_DUP) {
+            struct task_file *source = task_file_for_fd(task, (int)a0);
+            if (source) {
+                return task_duplicate_file_fd(task, (int)a0, 4, 0);
+            }
             return task_pty_duplicate_fd(task, (int)a0, 0, 0);
         }
         if (number == LINUX_SYS_DUP2) {
+            if (task_file_for_fd(task, (int)a0)) {
+                return task_dup2_fd(task, (int)a0, (int)a1);
+            }
             return task_pty_dup2_fd(task, (int)a0, (int)a1);
         }
         if (a1 == LEONOS_F_DUPFD || a1 == LEONOS_F_DUPFD_CLOEXEC) {
+            if (task_file_for_fd(task, (int)a0)) {
+                return task_duplicate_file_fd(task, (int)a0, (int)a2,
+                                              a1 == LEONOS_F_DUPFD_CLOEXEC ?
+                                                  LEONOS_FD_CLOEXEC : 0);
+            }
             return task_pty_duplicate_fd(task, (int)a0, (int)a2,
                                          a1 == LEONOS_F_DUPFD_CLOEXEC ? LEONOS_FD_CLOEXEC : 0);
         }
         {
+            struct task_file *file_fd = task_file_for_fd(task, (int)a0);
             struct task_pty_fd *pty_fd = task_pty_fd_for_fd(task, (int)a0);
-            if (!pty_fd && task_pty_stream_for_fd(task, (int)a0) < 0) {
+            if (!file_fd && !pty_fd && task_pty_stream_for_fd(task, (int)a0) < 0) {
                 return -LEONOS_EBADF;
             }
             if (a1 == LEONOS_F_GETFD) {
-                return pty_fd ? (int64_t)pty_fd->flags : 0;
+                return file_fd ? (int64_t)file_fd->fd_flags :
+                       (pty_fd ? (int64_t)pty_fd->flags : 0);
             }
             if (a1 == LEONOS_F_SETFD) {
-                if (pty_fd) {
+                if (file_fd) {
+                    file_fd->fd_flags = (uint32_t)a2 & LEONOS_FD_CLOEXEC;
+                } else if (pty_fd) {
                     pty_fd->flags = (uint32_t)a2 & LEONOS_FD_CLOEXEC;
                 }
                 return 0;
@@ -2797,6 +4157,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return (int64_t)(file->offset * sizeof(struct leonos_dir_entry));
         }
         file->offset = (uint64_t)(base + offset);
+        file->read_cursor.valid = 0;
         return (int64_t)file->offset;
     }
 
@@ -2926,8 +4287,15 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return 0;
     }
 
-    if (number == LINUX_SYS_GETPID) {
-        return (int64_t)sched_current_pid();
+    if (number == LINUX_SYS_GETPID || number == LINUX_SYS_GETPPID ||
+        number == LINUX_SYS_SETPGID || number == LINUX_SYS_GETPGRP ||
+        number == LINUX_SYS_SETSID || number == LINUX_SYS_GETPGID ||
+        number == LINUX_SYS_KILL || number == LINUX_SYS_NICE ||
+        number == LINUX_SYS_GETPRIORITY || number == LINUX_SYS_SETPRIORITY) {
+        return syscall_process_control(number, a0, a1, a2, a3);
+    }
+    if (number == LINUX_SYS_GETRLIMIT || number == LINUX_SYS_SETRLIMIT) {
+        return syscall_process_control(number, a0, a1, a2, a3);
     }
 
     if (number == LINUX_SYS_SCHED_YIELD) {
@@ -2957,28 +4325,37 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     if (number == LINUX_SYS_MUNMAP) {
         return sys_munmap(a0, a1);
     }
+    if (number == LINUX_SYS_MPROTECT) {
+        return sys_mprotect(a0, a1, a2);
+    }
 
     if (number == LINUX_SYS_WAIT4) {
         int32_t requested_pid = (int32_t)a0;
-        uint32_t wanted_pid = requested_pid == -1 ? 0U : (uint32_t)requested_pid;
-        uint64_t code = 0;
-        int64_t pid = sched_wait_reap(sched_current_pid(), wanted_pid, &code);
+        int status = 0;
+        int64_t pid;
+        if (a1 && !user_range_ok(a1, sizeof(int))) {
+            return -LEONOS_EFAULT;
+        }
+        pid = sched_wait_reap(sched_current_pid(), requested_pid, (uint32_t)a2,
+                              a1 ? &status : NULL);
+        if (pid == -LEONOS_EAGAIN) {
+            return (a2 & 1U) != 0 ? 0 : -LEONOS_EAGAIN;
+        }
         if (pid <= 0) {
-            /* waitpid(..., WNOHANG) reports no state change, not ECHILD. */
-            return (a2 & 1U) != 0 ? 0 : -LEONOS_ECHILD;
+            return -LEONOS_ECHILD;
         }
         if (a1) {
-            if (!user_range_ok(a1, sizeof(int))) {
-                return -LEONOS_EFAULT;
-            }
-            int *status = (int *)(uintptr_t)a1;
-            *status = (int)((code & 0xff) << 8);
+            *(int *)(uintptr_t)a1 = status;
         }
         return pid;
     }
 
     if (number == LINUX_SYS_IOCTL && inputm_handles_ioctl(a1)) {
         return inputm_handle_ioctl(a1, a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_VERSION) {
+        return 1;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_EVENT) {
@@ -3556,12 +4933,12 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return 0;
     }
 
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_FORMAT_ESP) {
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_FORMAT_TARGET) {
         int ret = authz_check_install(sched_current_task());
         if (ret < 0) {
             return ret;
         }
-        return storage_install_format_esp((uint32_t)a2);
+        return storage_install_format_target((uint32_t)a2);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_MOUNT_TARGET) {
@@ -3570,6 +4947,143 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return ret;
         }
         return storage_install_mount_target((uint32_t)a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_LIST_PARTITIONS) {
+        struct leonos_disk_partition_list *query;
+        struct leonos_disk_partition_list request;
+        uint32_t count = 0;
+        uint32_t copy_count;
+        int ret;
+        if (!user_range_ok(a2, sizeof(struct leonos_disk_partition_list))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_disk_partition_list *)(uintptr_t)a2;
+        request = *query;
+        if (request.reserved != 0 || request.capacity > LEONOS_DISK_MAX_PARTITIONS) {
+            return -LEONOS_EINVAL;
+        }
+        if (request.capacity && (!request.partitions ||
+            !user_range_ok((uint64_t)(uintptr_t)request.partitions,
+                           (uint64_t)request.capacity * sizeof(struct leonos_disk_partition)))) {
+            return -LEONOS_EFAULT;
+        }
+        ret = storage_disk_list_partitions(request.disk_id, disk_partition_scratch,
+                                           LEONOS_DISK_MAX_PARTITIONS, &count);
+        if (ret < 0) {
+            return ret;
+        }
+        query->count = count;
+        copy_count = count < request.capacity ? count : request.capacity;
+        for (uint32_t i = 0; i < copy_count; ++i) {
+            request.partitions[i] = disk_partition_scratch[i];
+        }
+        return 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_FORMAT_PARTITION) {
+        struct leonos_disk_partition_format request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_format *)(uintptr_t)a2;
+        if (request.reserved != 0 ||
+            (request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
+             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2)) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        return storage_disk_format_partition(&request);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_DELETE_PARTITION) {
+        struct leonos_disk_partition_delete request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_delete *)(uintptr_t)a2;
+        if (request.reserved0 != 0 || request.reserved1 != 0) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        return storage_disk_delete_partition(&request);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_CREATE_PARTITION) {
+        struct leonos_disk_partition_create request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_create *)(uintptr_t)a2;
+        request.name[LEONOS_DISK_PARTITION_NAME_LEN - 1u] = 0;
+        if (request.reserved != 0 || request.size_mib == 0 ||
+            (request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
+             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2)) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        return storage_disk_create_partition(&request);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_MOUNT_PARTITION) {
+        struct leonos_disk_partition_mount *query;
+        struct leonos_disk_partition_mount request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        query = (struct leonos_disk_partition_mount *)(uintptr_t)a2;
+        request = *query;
+        if (request.reserved != 0 || request.drive != LEONOS_DISK_DRIVE_NONE) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_disk_mount_partition(&request);
+        if (ret == 0) {
+            query->drive = request.drive;
+        }
+        return ret;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_UNMOUNT_PARTITION) {
+        struct leonos_disk_partition_unmount request;
+        uint32_t drive;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_unmount *)(uintptr_t)a2;
+        if (request.reserved0 != 0 || request.reserved1 != 0) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_disk_partition_mounted_drive(request.disk_id, request.partition_index,
+                                                   &drive);
+        if (ret < 0) {
+            return ret;
+        }
+        if (sched_drive_in_use(drive)) {
+            return -LEONOS_EBUSY;
+        }
+        return storage_disk_unmount_partition(&request);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_LIST_DIR) {
@@ -4167,6 +5681,33 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL &&
+        (a1 == LEONOS_PTY_IOCTL_GET_PGRP || a1 == LEONOS_PTY_IOCTL_SET_PGRP)) {
+        struct task *task = sched_current_task();
+        int *process_group;
+        if (!task || task_pty_stream_for_fd(task, (int)a0) < 0) {
+            return -LEONOS_ENOTTY;
+        }
+        if (!user_range_ok(a2, sizeof(*process_group))) {
+            return -LEONOS_EFAULT;
+        }
+        process_group = (int *)(uintptr_t)a2;
+        if (a1 == LEONOS_PTY_IOCTL_GET_PGRP) {
+            uint32_t value = 0;
+            int result = pty_get_foreground_pgid(task->pty_id, &value);
+            if (result < 0) {
+                return result;
+            }
+            *process_group = (int)value;
+            return 0;
+        }
+        if (*process_group <= 0) {
+            return -LEONOS_EINVAL;
+        }
+        return pty_set_foreground_pgid(task->pty_id, task->pid,
+                                       (uint32_t)*process_group);
+    }
+
+    if (number == LINUX_SYS_IOCTL &&
         (a1 == LEONOS_PTY_IOCTL_OWNER_GET_ATTR ||
          a1 == LEONOS_PTY_IOCTL_OWNER_SET_ATTR)) {
         struct leonos_pty_termios_io *io;
@@ -4203,8 +5744,8 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_GET_ATTR) {
         struct task *task = sched_current_task();
         struct leonos_pty_termios *termios;
-        if (!task || !task->pty_id) {
-            return -LEONOS_EINVAL;
+        if (!task || task_pty_stream_for_fd(task, (int)a0) < 0) {
+            return -LEONOS_ENOTTY;
         }
         if (!user_range_ok(a2, sizeof(struct leonos_pty_termios))) {
             return -LEONOS_EFAULT;
@@ -4216,8 +5757,8 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_SET_ATTR) {
         struct task *task = sched_current_task();
         const struct leonos_pty_termios_request *request;
-        if (!task || !task->pty_id) {
-            return -LEONOS_EINVAL;
+        if (!task || task_pty_stream_for_fd(task, (int)a0) < 0) {
+            return -LEONOS_ENOTTY;
         }
         if (!user_range_ok(a2, sizeof(struct leonos_pty_termios_request))) {
             return -LEONOS_EFAULT;
@@ -4229,8 +5770,8 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     if (number == LINUX_SYS_IOCTL &&
         (a1 == LEONOS_PTY_IOCTL_GET_WINSIZE || a1 == LEONOS_PTY_IOCTL_SET_WINSIZE)) {
         struct task *task = sched_current_task();
-        if (!task || !task->pty_id) {
-            return -LEONOS_EINVAL;
+        if (!task || task_pty_stream_for_fd(task, (int)a0) < 0) {
+            return -LEONOS_ENOTTY;
         }
         if (!user_range_ok(a2, sizeof(struct leonos_pty_winsize))) {
             return -LEONOS_EFAULT;
@@ -4311,10 +5852,18 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                 return ret;
             }
         }
-        int64_t pid = userland_spawn_path_argv(path,
-                                               (const char *const *)params.argv,
-                                               (const char *const *)params.envp,
-                                               spawn->pty_id);
+        int64_t pid = (spawn->stdin_fd >= 0 || spawn->stdout_fd >= 0 || spawn->stderr_fd >= 0)
+                          ? userland_spawn_path_argv_with_fds(path,
+                                                               (const char *const *)params.argv,
+                                                               (const char *const *)params.envp,
+                                                               spawn->pty_id,
+                                                               spawn->stdin_fd,
+                                                               spawn->stdout_fd,
+                                                               spawn->stderr_fd)
+                          : userland_spawn_path_argv(path,
+                                                     (const char *const *)params.argv,
+                                                     (const char *const *)params.envp,
+                                                     spawn->pty_id);
         if (pid == -2) {
             return -LEONOS_ENOENT;
         }
@@ -4327,13 +5876,13 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return pid;
     }
 
-    struct syscall_frame frame = {
-        .number = number,
-        .args = {a0, a1, a2, a3, a4, a5},
-    };
-    return syscall_dispatch(&frame);
+    return -LEONOS_ENOSYS;
 }
 
+/**
+ * @brief Coordinates the syscall dispatch frame operation.
+ * @param frame Trap or syscall frame supplied by the architecture layer.
+ */
 void syscall_dispatch_frame(struct trap_frame *frame)
 {
     uint64_t number;
@@ -4343,13 +5892,19 @@ void syscall_dispatch_frame(struct trap_frame *frame)
     }
     number = frame->rax;
     storage_set_io_async_context(true);
-    result = syscall_dispatch_regs(number,
-                                   frame->rdi,
-                                   frame->rsi,
-                                   frame->rdx,
-                                   frame->r10,
-                                   frame->r8,
-                                   frame->r9);
+    if (number == LINUX_SYS_FORK || number == LINUX_SYS_VFORK) {
+        /* vfork intentionally uses fork semantics for now: sharing the
+         * address space would let the child corrupt its suspended parent. */
+        result = sched_fork_current(frame);
+    } else {
+        result = syscall_dispatch_regs(number,
+                                       frame->rdi,
+                                       frame->rsi,
+                                       frame->rdx,
+                                       frame->r10,
+                                       frame->r8,
+                                       frame->r9);
+    }
     if (result != -LEONOS_EAGAIN) {
         storage_release_task_io(sched_current_pid());
     }

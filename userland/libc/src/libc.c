@@ -20,8 +20,20 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
+#include <sys/resource.h>
 #include <termios.h>
+
+/* TinyCC's static archive scan can leave Picolibc's environ member out when
+ * the generated program only needs the CRT startup object. Keep a real
+ * address available for the startup assignment; Picolibc's strong definition
+ * still wins when its full environment implementation is pulled in. */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak))
+#endif
+char **environ;
 
 #ifndef LEONOS_USE_PICOLIBC
 int errno;
@@ -274,28 +286,21 @@ long read(int fd, void *buf, size_t len)
     struct leonos_stat stat_info;
     size_t done = 0;
     int pty_id = 0;
-    int canonical_pty_stdin = 0;
+    int pty_input = 0;
 
-    /*
-     * PTY input is exposed by the kernel as an empty read until a complete
-     * canonical line is ready.  POSIX stdio interprets that empty read as
-     * EOF, which made programs using fgets() (Lua's REPL, in particular)
-     * print one prompt and return immediately to the shell.  Turn only the
-     * canonical stdin case into the expected blocking read at the userland
-     * boundary.  Raw-mode programs retain the non-blocking PTY behaviour
-     * needed by terminal editors and their poll loops.
-     */
-    if (fd == 0 && len != 0) {
+    /* The kernel reports an empty PTY queue as a zero-length read.  That is
+     * not EOF for a terminal: wait for input so both canonical and raw-mode
+     * POSIX programs see the expected blocking read semantics. */
+    if (len != 0) {
         struct termios termios;
         pty_id = leonos_pty_self();
         /*
          * This process is the PTY child, not its terminal-owner process.
          * Use the standard fd-oriented request here; the owner-only helper
          * rejects child processes and would silently disable this wait loop.
-         */
-        if (pty_id > 0 && tcgetattr(fd, &termios) == 0 &&
-            (termios.c_lflag & LEONOS_PTY_LFLAG_ICANON) != 0) {
-            canonical_pty_stdin = 1;
+        */
+        if (pty_id > 0 && tcgetattr(fd, &termios) == 0) {
+            pty_input = 1;
         }
     }
 
@@ -305,7 +310,11 @@ long read(int fd, void *buf, size_t len)
         long result;
         do {
             result = syscall3(SYS_read, fd, (long)buf, (long)len);
-            if (result != 0 || !canonical_pty_stdin) {
+            if (result == -LEONOS_EAGAIN) {
+                sleep_ms(1);
+                continue;
+            }
+            if (result != 0 || !pty_input) {
                 return result;
             }
             sleep_ms(4);
@@ -313,7 +322,16 @@ long read(int fd, void *buf, size_t len)
         return 0;
     }
     if (fstat(fd, &stat_info) < 0 || stat_info.type != LEONOS_FS_TYPE_FILE) {
-        return syscall3(SYS_read, fd, (long)buf, (long)len);
+        /* Pipes, terminals, and device-like descriptors do not expose a
+         * regular-file size. Keep the direct path, but preserve the same
+         * transparent EAGAIN retry guarantee as regular files. */
+        for (;;) {
+            long result = syscall3(SYS_read, fd, (long)buf, (long)len);
+            if (result != -LEONOS_EAGAIN) {
+                return result;
+            }
+            sleep_ms(1);
+        }
     }
     while (done < len) {
         size_t chunk = len - done;
@@ -322,6 +340,10 @@ long read(int fd, void *buf, size_t len)
             chunk = LEONOS_FS_READ_SLICE_BYTES;
         }
         ret = syscall3(SYS_read, fd, (long)((uint8_t *)buf + done), (long)chunk);
+        if (ret == -LEONOS_EAGAIN) {
+            sleep_ms(1);
+            continue;
+        }
         if (ret <= 0) {
             return done ? (long)done : ret;
         }
@@ -343,6 +365,10 @@ long write(int fd, const void *buf, size_t len)
             chunk = LEONOS_FS_FILE_WRITE_SLICE_BYTES;
         }
         ret = syscall3(SYS_write, fd, (long)((const uint8_t *)buf + done), (long)chunk);
+        if (ret == -LEONOS_EAGAIN) {
+            sleep_ms(1);
+            continue;
+        }
         if (ret <= 0) {
             return done ? (long)done : ret;
         }
@@ -354,8 +380,27 @@ long write(int fd, const void *buf, size_t len)
     return (long)done;
 }
 
-int open(const char *path, int flags, int mode)
+int open(const char *path, int flags, ...)
 {
+    va_list args;
+    int mode = 0;
+
+    /*
+     * LeonOS exposes a process' controlling PTY as the implicit standard
+     * descriptors instead of materialising a /dev/tty filesystem node.
+     * POSIX terminal programs (including less) use the conventional device
+     * path to obtain a raw keyboard descriptor, so map read-only opens to a
+     * duplicate of stdin before falling through to the filesystem syscall.
+     */
+    if (path && strcmp(path, "/dev/tty") == 0 &&
+        (flags & LEONOS_O_ACCMODE) == LEONOS_O_RDONLY) {
+        return dup(0);
+    }
+    if (flags & LEONOS_O_CREAT) {
+        va_start(args, flags);
+        mode = va_arg(args, int);
+        va_end(args);
+    }
     return (int)syscall3(SYS_open, (long)path, flags, mode);
 }
 
@@ -369,23 +414,9 @@ long lseek(int fd, long offset, int whence)
     return syscall3(SYS_lseek, fd, offset, whence);
 }
 
-void _exit(int code)
+int mprotect(void *addr, size_t len, int prot)
 {
-    syscall1(SYS_exit, code);
-    for (;;) {
-    }
-}
-
-int raise(int signal)
-{
-    /*
-     * LeonOS does not expose POSIX process-directed signals. Keep Picolibc's
-     * abort path well-defined: abort() will fall through to _Exit() after
-     * this reports the unsupported signal delivery attempt.
-     */
-    (void)signal;
-    errno = ENOSYS;
-    return -1;
+    return (int)syscall3(SYS_mprotect, (long)addr, (long)len, prot);
 }
 
 int chdir(const char *path)
@@ -395,8 +426,38 @@ int chdir(const char *path)
 
 char *getcwd(char *buf, size_t len)
 {
-    long ret = syscall2(SYS_getcwd, (long)buf, (long)len);
-    return ret < 0 ? (char *)0 : (char *)ret;
+    int allocated = 0;
+    long ret;
+
+    /* BusyBox Ash and other portable user programs use the widely supported
+     * getcwd(NULL, 0) allocation extension. LeonOS paths have a fixed ABI
+     * maximum, so allocate a buffer large enough for every canonical path. */
+    if (!buf) {
+        if (len != 0) {
+            errno = EINVAL;
+            return 0;
+        }
+        len = LEONOS_FS_PATH_LEN;
+        buf = malloc(len);
+        if (!buf) {
+            errno = ENOMEM;
+            return 0;
+        }
+        allocated = 1;
+    } else if (len == 0) {
+        errno = EINVAL;
+        return 0;
+    }
+
+    ret = syscall2(SYS_getcwd, (long)buf, (long)len);
+    if (ret < 0) {
+        errno = (int)-ret;
+        if (allocated) {
+            free(buf);
+        }
+        return 0;
+    }
+    return (char *)ret;
 }
 
 int ioctl(int fd, unsigned long request, void *arg)
@@ -454,19 +515,9 @@ int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
     return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
 }
 
-int sched_yield(void)
-{
-    return (int)syscall0(SYS_sched_yield);
-}
-
 int sleep_ms(unsigned long ms)
 {
     return (int)syscall2(SYS_nanosleep, (long)ms, 0);
-}
-
-int getpid(void)
-{
-    return (int)syscall0(SYS_getpid);
 }
 
 int stat(const char *path, struct leonos_stat *st)
@@ -477,16 +528,6 @@ int stat(const char *path, struct leonos_stat *st)
 int fstat(int fd, struct leonos_stat *st)
 {
     return (int)syscall2(SYS_fstat, fd, (long)st);
-}
-
-int wait4(int pid, int *status, int options, void *rusage)
-{
-    return (int)syscall6(SYS_wait4, pid, (long)status, options, (long)rusage, 0, 0);
-}
-
-int execve(const char *path, char *const argv[], char *const envp[])
-{
-    return (int)syscall3(SYS_execve, (long)path, (long)argv, (long)envp);
 }
 
 int mkdir(const char *path, int mode)
@@ -1324,7 +1365,8 @@ int system(const char *command)
 
 int isatty(int fd)
 {
-    return fd == 0 || fd == 1 || fd == 2;
+    struct termios termios;
+    return tcgetattr(fd, &termios) == 0;
 }
 
 int leonos_gui_connect(void)
@@ -1857,12 +1899,86 @@ int leonos_install_list_disks(struct leonos_install_disk *disks,
 
 int leonos_install_format_esp(uint32_t disk_id)
 {
-    return ioctl(3, LEONOS_INSTALL_IOCTL_FORMAT_ESP, (void *)(uintptr_t)disk_id);
+    return leonos_install_format_target(disk_id);
+}
+
+int leonos_install_format_target(uint32_t disk_id)
+{
+    return ioctl(3, LEONOS_INSTALL_IOCTL_FORMAT_TARGET, (void *)(uintptr_t)disk_id);
 }
 
 int leonos_install_mount_target(uint32_t disk_id)
 {
     return ioctl(3, LEONOS_INSTALL_IOCTL_MOUNT_TARGET, (void *)(uintptr_t)disk_id);
+}
+
+int leonos_disk_list_partitions(uint32_t disk_id,
+                                struct leonos_disk_partition *partitions,
+                                uint32_t capacity, uint32_t *out_count)
+{
+    struct leonos_disk_partition_list query = {
+        .disk_id = disk_id,
+        .capacity = capacity,
+        .count = 0,
+        .reserved = 0,
+        .partitions = partitions,
+    };
+    int ret = ioctl(3, LEONOS_DISK_IOCTL_LIST_PARTITIONS, &query);
+    if (out_count) {
+        *out_count = query.count;
+    }
+    return ret;
+}
+
+int leonos_disk_format_partition(const struct leonos_disk_partition_format *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_DISK_IOCTL_FORMAT_PARTITION, (void *)request);
+}
+
+int leonos_disk_delete_partition(const struct leonos_disk_partition_delete *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_DISK_IOCTL_DELETE_PARTITION, (void *)request);
+}
+
+int leonos_disk_create_partition(const struct leonos_disk_partition_create *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_DISK_IOCTL_CREATE_PARTITION, (void *)request);
+}
+
+int leonos_disk_mount_partition(uint32_t disk_id, uint32_t partition_index,
+                                uint32_t *out_drive)
+{
+    struct leonos_disk_partition_mount request = {
+        .disk_id = disk_id,
+        .partition_index = partition_index,
+        .drive = LEONOS_DISK_DRIVE_NONE,
+        .reserved = 0,
+    };
+    int ret = ioctl(3, LEONOS_DISK_IOCTL_MOUNT_PARTITION, &request);
+    if (ret == 0 && out_drive) {
+        *out_drive = request.drive;
+    }
+    return ret;
+}
+
+int leonos_disk_unmount_partition(uint32_t disk_id, uint32_t partition_index)
+{
+    struct leonos_disk_partition_unmount request = {
+        .disk_id = disk_id,
+        .partition_index = partition_index,
+        .reserved0 = 0,
+        .reserved1 = 0,
+    };
+    return ioctl(3, LEONOS_DISK_IOCTL_UNMOUNT_PARTITION, &request);
 }
 
 int leonos_device_list(struct leonos_device_info *devices,
@@ -2754,6 +2870,37 @@ static uint32_t http_copy_body(char *buffer, uint32_t body_offset,
     return copy_len;
 }
 
+static int http_extra_header_present(const char *headers, const char *name)
+{
+    uint32_t name_len;
+    uint32_t i = 0;
+    if (!headers || !name || !name[0]) {
+        return 0;
+    }
+    name_len = (uint32_t)strlen(name);
+    while (headers[i]) {
+        uint32_t line_start = i;
+        uint32_t line_end;
+        uint32_t colon;
+        while (headers[i] && headers[i] != '\r' && headers[i] != '\n') {
+            ++i;
+        }
+        line_end = i;
+        colon = line_start;
+        while (colon < line_end && headers[colon] != ':') {
+            ++colon;
+        }
+        if (colon < line_end && colon - line_start == name_len &&
+            http_text_eq_ignore_case_n(headers + line_start, name, name_len)) {
+            return 1;
+        }
+        while (headers[i] == '\r' || headers[i] == '\n') {
+            ++i;
+        }
+    }
+    return 0;
+}
+
 static uint32_t http_build_request_text(char *dst, uint32_t cap,
                                         const struct libc_http_url *url,
                                         const struct leonos_http_request *request)
@@ -2775,9 +2922,19 @@ static uint32_t http_build_request_text(char *dst, uint32_t cap,
         http_append_char(dst, &pos, cap, ':');
         http_append_u32(dst, &pos, cap, url->port);
     }
-    http_append_text(dst, &pos, cap,
-                     "\r\nUser-Agent: LeonOS/4\r\nAccept: */*\r\n"
-                     "Accept-Encoding: identity\r\nConnection: close\r\n");
+    http_append_text(dst, &pos, cap, "\r\n");
+    if (!http_extra_header_present(request->extra_headers, "User-Agent")) {
+        http_append_text(dst, &pos, cap, "User-Agent: LeonOS/4\r\n");
+    }
+    if (!http_extra_header_present(request->extra_headers, "Accept")) {
+        http_append_text(dst, &pos, cap, "Accept: */*\r\n");
+    }
+    if (!http_extra_header_present(request->extra_headers, "Accept-Encoding")) {
+        http_append_text(dst, &pos, cap, "Accept-Encoding: identity\r\n");
+    }
+    if (!http_extra_header_present(request->extra_headers, "Connection")) {
+        http_append_text(dst, &pos, cap, "Connection: close\r\n");
+    }
     if (request->request_body && request->request_body_len) {
         http_append_text(dst, &pos, cap, "Content-Length: ");
         http_append_u32(dst, &pos, cap, request->request_body_len);
@@ -3912,11 +4069,21 @@ int leonos_pty_spawn(const char *path, uint32_t pty_id)
 int leonos_pty_spawn_argv(const char *path, uint32_t pty_id,
                           char *const argv[], char *const envp[])
 {
+    return leonos_pty_spawn_argv_with_fds(path, pty_id, argv, envp, -1, -1, -1);
+}
+
+int leonos_pty_spawn_argv_with_fds(const char *path, uint32_t pty_id,
+                                   char *const argv[], char *const envp[],
+                                   int stdin_fd, int stdout_fd, int stderr_fd)
+{
     struct leonos_pty_spawn spawn = {
         .pty_id = pty_id,
         .path = path,
         .argv = argv,
         .envp = envp,
+        .stdin_fd = stdin_fd,
+        .stdout_fd = stdout_fd,
+        .stderr_fd = stderr_fd,
     };
     return ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
 }
@@ -4008,7 +4175,7 @@ int tcgetattr(int fd, struct termios *termios)
 {
     struct leonos_pty_termios native;
     int result;
-    if (fd < 0 || fd > 2 || !termios) {
+    if (fd < 0 || !termios) {
         errno = EINVAL;
         return -1;
     }
@@ -4032,7 +4199,7 @@ int tcsetattr(int fd, int action, const struct termios *termios)
 {
     struct leonos_pty_termios_request request;
     int result;
-    if (fd < 0 || fd > 2 || !termios) {
+    if (fd < 0 || !termios) {
         errno = EINVAL;
         return -1;
     }
@@ -4059,7 +4226,7 @@ int tcsetattr(int fd, int action, const struct termios *termios)
 int tcgetwinsize(int fd, struct winsize *winsize)
 {
     int result;
-    if (fd < 0 || fd > 2 || !winsize) {
+    if (fd < 0 || !winsize) {
         errno = EINVAL;
         return -1;
     }
@@ -4070,7 +4237,7 @@ int tcgetwinsize(int fd, struct winsize *winsize)
 int tcsetwinsize(int fd, const struct winsize *winsize)
 {
     int result;
-    if (fd < 0 || fd > 2 || !winsize) {
+    if (fd < 0 || !winsize) {
         errno = EINVAL;
         return -1;
     }

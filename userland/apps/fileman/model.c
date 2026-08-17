@@ -72,6 +72,184 @@ int fileman_is_recycle_dir(void)
     return text_eq(current_path, recycle);
 }
 
+int fileman_entry_is_hidden(const struct leonos_dir_entry *entry)
+{
+    return entry && entry->name[0] == '.';
+}
+
+static void fileman_settings_path(char *path, uint32_t capacity)
+{
+    struct leonos_user_info user;
+    if (!path || capacity == 0) {
+        return;
+    }
+    path[0] = 0;
+    if (leonos_auth_current(&user) == 0 && user.uid && user.home[0]) {
+        build_path_join(path, capacity, user.home, ".fileman.conf");
+        return;
+    }
+    (void)mkdir("0:/var", 0);
+    build_path_join(path, capacity, "0:/var", ".fileman.conf");
+}
+
+static uint8_t fileman_settings_show_hidden_value(const char *config)
+{
+    static const char key[] = "show_hidden=";
+    uint32_t pos = 0;
+    while (config && config[pos]) {
+        uint32_t start = pos;
+        uint32_t key_pos = 0;
+        while (config[pos] && config[pos] != '\n' && config[pos] != '\r') {
+            ++pos;
+        }
+        while (key[key_pos] && start + key_pos < pos &&
+               config[start + key_pos] == key[key_pos]) {
+            ++key_pos;
+        }
+        if (!key[key_pos] && start + key_pos < pos) {
+            char value = config[start + key_pos];
+            return value == '1' || value == 'y' || value == 'Y' ||
+                   value == 't' || value == 'T';
+        }
+        while (config[pos] == '\n' || config[pos] == '\r') {
+            ++pos;
+        }
+    }
+    return 0;
+}
+
+void fileman_settings_load(void)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    char config[128];
+    uint32_t length = 0;
+    int fd;
+    fileman_show_hidden = 0;
+    fileman_settings_path(path, sizeof(path));
+    fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return;
+    }
+    while (length + 1u < sizeof(config)) {
+        long got = read(fd, config + length, sizeof(config) - length - 1u);
+        if (got <= 0) {
+            break;
+        }
+        length += (uint32_t)got;
+    }
+    close(fd);
+    config[length] = 0;
+    fileman_show_hidden = fileman_settings_show_hidden_value(config);
+}
+
+static int fileman_settings_save(uint8_t show_hidden)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    static const char enabled[] = "version=1\nshow_hidden=1\n";
+    static const char disabled[] = "version=1\nshow_hidden=0\n";
+    const char *config = show_hidden ? enabled : disabled;
+    uint32_t length = text_len(config);
+    int fd;
+    fileman_settings_path(path, sizeof(path));
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    if (write(fd, config, length) != (long)length) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+void fileman_open_settings(void)
+{
+    fileman_settings_show_hidden = fileman_show_hidden;
+    fileman_settings_open = 1;
+    menu_open = FILEMAN_MENU_NONE;
+    context_menu_set_active(0);
+}
+
+void fileman_cancel_settings(void)
+{
+    fileman_settings_open = 0;
+}
+
+void fileman_apply_settings(void)
+{
+    int ret = fileman_settings_save(fileman_settings_show_hidden);
+    if (ret < 0) {
+        set_status_error(T("Could not save file manager settings ",
+                           "无法保存文件资源管理器设置 "), ret);
+        return;
+    }
+    fileman_show_hidden = fileman_settings_show_hidden;
+    fileman_settings_open = 0;
+    fileman_tree_reset();
+    (void)reload_dir();
+    set_status(T("File Manager settings saved", "文件资源管理器设置已保存"));
+}
+
+void fileman_settings_dialog_rect(struct leonos_ui_rect *out)
+{
+    uint32_t width = view_w > 16u ? view_w - 16u : view_w;
+    uint32_t height = view_h > 16u ? view_h - 16u : view_h;
+    if (!out) {
+        return;
+    }
+    if (width > FILEMAN_SETTINGS_DIALOG_W) {
+        width = FILEMAN_SETTINGS_DIALOG_W;
+    }
+    if (height > FILEMAN_SETTINGS_DIALOG_H) {
+        height = FILEMAN_SETTINGS_DIALOG_H;
+    }
+    out->w = width;
+    out->h = height;
+    out->x = (int32_t)(view_w > width ? (view_w - width) / 2u : 0u);
+    out->y = (int32_t)(view_h > height ? (view_h - height) / 2u : 0u);
+}
+
+int fileman_handle_settings_click(int32_t x, int32_t y)
+{
+    struct leonos_ui_rect rect;
+    uint32_t button_y;
+    if (!fileman_settings_open) {
+        return 0;
+    }
+    fileman_settings_dialog_rect(&rect);
+    button_y = (uint32_t)rect.y + rect.h - 34u;
+    if (hit_rect_i(x, y, rect.x + 18, rect.y + 52,
+                   (int32_t)(rect.w > 36u ? rect.w - 36u : rect.w), 30)) {
+        fileman_settings_show_hidden = fileman_settings_show_hidden ? 0 : 1;
+        return 1;
+    }
+    if (hit_rect_i(x, y, rect.x + (int32_t)rect.w - 168, (int32_t)button_y,
+                   72, LEONOS_UI_BUTTON_H)) {
+        fileman_apply_settings();
+        return 1;
+    }
+    if (hit_rect_i(x, y, rect.x + (int32_t)rect.w - 88, (int32_t)button_y,
+                   72, LEONOS_UI_BUTTON_H)) {
+        fileman_cancel_settings();
+        return 1;
+    }
+    return 1;
+}
+
+int fileman_handle_settings_key(uint8_t keycode)
+{
+    if (!fileman_settings_open) {
+        return 0;
+    }
+    if (keycode == FILEMAN_KEY_ESCAPE) {
+        fileman_cancel_settings();
+    } else if (keycode == LEONOS_KEY_ENTER) {
+        fileman_apply_settings();
+    }
+    return 1;
+}
+
 int list_index_at(int32_t x, int32_t y)
 {
     struct fileman_layout l = current_layout();
@@ -963,6 +1141,9 @@ int reload_dir(void)
         if (fileman_is_recycle_dir() && text_eq(entry.name, ".leon-recycle-map")) {
             continue;
         }
+        if (!fileman_show_hidden && fileman_entry_is_hidden(&entry)) {
+            continue;
+        }
         entries[count] = entry;
         ++count;
     }
@@ -1004,6 +1185,16 @@ static int tree_node_index_for_id(uint32_t id)
     return -1;
 }
 
+static int tree_node_index_for_path(const char *path)
+{
+    for (uint32_t i = 0; i < fileman_tree_node_count; ++i) {
+        if (fileman_tree_nodes[i].used && text_eq(fileman_tree_nodes[i].path, path)) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
 static int tree_dir_has_children(const char *path)
 {
     struct leonos_dir_entry entry;
@@ -1021,7 +1212,8 @@ static int tree_dir_has_children(const char *path)
         if (ret <= 0) {
             break;
         }
-        if (entry.type == LEONOS_FS_TYPE_DIR) {
+        if (entry.type == LEONOS_FS_TYPE_DIR &&
+            (fileman_show_hidden || !fileman_entry_is_hidden(&entry))) {
             close(fd);
             return 1;
         }
@@ -1068,6 +1260,31 @@ void fileman_tree_reset(void)
     }
 }
 
+/** Refreshes only the drive roots when another application mounts or unmounts media. */
+static void fileman_tree_refresh_drives(void)
+{
+    struct leonos_stat st;
+    if (fileman_tree_node_count == 0) {
+        return;
+    }
+    for (uint32_t drive = 0; drive < 10u; ++drive) {
+        char path[4] = {(char)('0' + drive), ':', '/', 0};
+        uint8_t present = stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
+        uint8_t listed = 0;
+        for (uint32_t i = 0; i < fileman_tree_node_count; ++i) {
+            const struct fileman_tree_node *node = &fileman_tree_nodes[i];
+            if (node->used && node->parent_id == 0 && text_eq(node->path, path)) {
+                listed = 1;
+                break;
+            }
+        }
+        if (present != listed) {
+            fileman_tree_reset();
+            return;
+        }
+    }
+}
+
 static void tree_init_if_needed(void)
 {
     if (fileman_tree_node_count == 0) {
@@ -1106,6 +1323,9 @@ static void tree_load_children(uint32_t node_index)
         if (entry.type != LEONOS_FS_TYPE_DIR) {
             continue;
         }
+        if (!fileman_show_hidden && fileman_entry_is_hidden(&entry)) {
+            continue;
+        }
         build_path_join(child_path, sizeof(child_path), node->path, entry.name);
         tree_add_node(child_path, entry.name, fileman_tree_next_id++, node->id);
     }
@@ -1124,6 +1344,140 @@ static void tree_load_children(uint32_t node_index)
             --slot;
         }
         fileman_tree_nodes[slot] = child;
+    }
+}
+
+static int tree_ensure_path(const char *path)
+{
+    char partial[LEONOS_FS_PATH_LEN];
+    uint32_t pos;
+    int index;
+    if (!path || path[0] < '0' || path[0] > '9' || path[1] != ':' || path[2] != '/') {
+        return -1;
+    }
+    partial[0] = path[0];
+    partial[1] = ':';
+    partial[2] = '/';
+    partial[3] = 0;
+    index = tree_node_index_for_path(partial);
+    if (index < 0) {
+        return -1;
+    }
+    pos = 3;
+    while (path[pos]) {
+        uint32_t end = pos;
+        uint32_t partial_len;
+        while (path[end] && path[end] != '/') {
+            ++end;
+        }
+        partial_len = text_len(partial);
+        if (!is_root_path(partial)) {
+            append_char(partial, &partial_len, sizeof(partial), '/');
+        }
+        while (pos < end) {
+            append_char(partial, &partial_len, sizeof(partial), path[pos++]);
+        }
+        tree_load_children((uint32_t)index);
+        index = tree_node_index_for_path(partial);
+        if (index < 0) {
+            return -1;
+        }
+        pos = path[end] == '/' ? end + 1 : end;
+    }
+    return index;
+}
+
+static void tree_expand_path(const char *path)
+{
+    int index;
+    tree_init_if_needed();
+    index = tree_ensure_path(path);
+    while (index >= 0) {
+        struct fileman_tree_node *node = &fileman_tree_nodes[index];
+        if (node->has_children) {
+            tree_load_children((uint32_t)index);
+            if (node->has_children) {
+                node->expanded = 1;
+            }
+        }
+        index = node->parent_id ? tree_node_index_for_id(node->parent_id) : -1;
+    }
+}
+
+static void tree_collapse_path(const char *path)
+{
+    int index;
+    tree_init_if_needed();
+    index = tree_ensure_path(path);
+    if (index >= 0) {
+        fileman_tree_nodes[index].expanded = 0;
+    }
+}
+
+static void tree_scroll_to_path(const char *path)
+{
+    struct leonos_ui_tree_item items[FILEMAN_TREE_MAX_NODES];
+    struct fileman_layout layout;
+    uint32_t count;
+    uint32_t visible_rows;
+    if (!path) {
+        return;
+    }
+    count = build_tree_items(items, sizeof(items) / sizeof(items[0]));
+    layout = current_layout();
+    visible_rows = fileman_tree_visible_rows(&layout);
+    for (uint32_t i = 0; i < count; ++i) {
+        const char *item_path = tree_path_for_id(items[i].id);
+        if (!text_eq(path, item_path)) {
+            continue;
+        }
+        if (i < fileman_tree_scroll) {
+            fileman_tree_scroll = i;
+        } else if (i >= fileman_tree_scroll + visible_rows) {
+            fileman_tree_scroll = i - visible_rows + 1;
+        }
+        return;
+    }
+}
+
+static int tree_path_is_direct_child(const char *parent, const char *child)
+{
+    uint32_t parent_len;
+    uint32_t child_pos;
+    if (!parent || !child || !parent[0] || !child[0] || text_eq(parent, child)) {
+        return 0;
+    }
+    parent_len = text_len(parent);
+    for (uint32_t i = 0; i < parent_len; ++i) {
+        if (parent[i] != child[i]) {
+            return 0;
+        }
+    }
+    child_pos = parent_len;
+    if (!is_root_path(parent)) {
+        if (child[child_pos++] != '/') {
+            return 0;
+        }
+    }
+    if (!child[child_pos]) {
+        return 0;
+    }
+    while (child[child_pos]) {
+        if (child[child_pos++] == '/') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void fileman_tree_sync_navigation(const char *old_path, const char *new_path)
+{
+    if (tree_path_is_direct_child(old_path, new_path)) {
+        tree_expand_path(new_path);
+        tree_scroll_to_path(new_path);
+    } else if (tree_path_is_direct_child(new_path, old_path)) {
+        tree_collapse_path(old_path);
+        tree_scroll_to_path(new_path);
     }
 }
 
@@ -1157,6 +1511,7 @@ uint32_t build_tree_items(struct leonos_ui_tree_item *items, uint32_t cap)
 {
     uint32_t count = 0;
     tree_init_if_needed();
+    fileman_tree_refresh_drives();
     if (!items || cap == 0) {
         return 0;
     }
@@ -1217,10 +1572,27 @@ int navigate_to_path(const char *path)
     ret = chdir(target);
     if (ret < 0) {
         copy_text(current_path, sizeof(current_path), old_path);
+        address_edit_sync_path();
         set_status_error("Open dir failed ", ret);
         return ret;
     }
     copy_text(current_path, sizeof(current_path), target);
     getcwd(current_path, sizeof(current_path));
-    return reload_dir();
+    ret = reload_dir();
+    if (ret == 0) {
+        fileman_tree_sync_navigation(old_path, current_path);
+    }
+    address_edit_sync_path();
+    return ret;
+}
+
+void address_edit_sync_path(void)
+{
+    if (!address_edit.buffer) {
+        return;
+    }
+    copy_text(address_input, sizeof(address_input), current_path);
+    leonos_ui_edit_state_sync(&address_edit);
+    address_edit.focused = 0;
+    address_edit.selecting = 0;
 }

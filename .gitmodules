@@ -28,6 +28,9 @@
 [submodule "third_party/lua"]
 	path = third_party/lua
 	url = https://github.com/lua/lua.git
+[submodule "devtools/components/lua/upstream"]
+    path = devtools/components/lua/upstream
+    url = https://github.com/lua/lua.git
 [submodule "third_party/file"]
 	path = third_party/file
 	url = https://github.com/file/file.git
@@ -40,3 +43,12 @@
 [submodule "third_party/fastfetch"]
 	path = third_party/fastfetch
 	url = https://github.com/fastfetch-cli/fastfetch.git
+[submodule "third_party/sqlite"]
+	path = third_party/sqlite
+	url = https://github.com/sqlite/sqlite.git
+[submodule "third_party/sl"]
+	path = third_party/sl
+	url = https://github.com/mtoyoda/sl.git
+[submodule "third_party/less"]
+	path = third_party/less
+	url = https://github.com/gwsw/less.git

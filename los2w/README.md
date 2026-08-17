@@ -1,8 +1,12 @@
 # los2w
 
-`los2w` runs current static LeonOS 4 x86_64 ELF applications directly on
-Windows Python. It maps a selected Windows directory as the guest `0:/` drive
-and provides the current filesystem, GUI, network, and selected system ioctls.
+`los2w` runs LeonOS 4 x86_64 ELF applications directly on Windows Python. It
+supports legacy `ET_EXEC` images and the LeonOS ABI-v1 dynamic `ET_DYN` format,
+including `0:/system/lib/ld-leonos.elf` and `libleonos.so.1`. A process table
+provides independent Unicorn address spaces, PID/PPID tracking, round-robin
+execution, guest `execve`, and `wait4` child reaping. The mapped Windows
+directory is exposed as guest `0:/` and shared GUI, network, and logging state
+is available to all guest processes.
 
 ## Install
 
@@ -29,6 +33,18 @@ Run a smoke test:
 ```powershell
 py -m los2w --elf build\userland\oshlp.elf --root build\esp --arg 0:/docs/leonos.hlp --smoke
 ```
+
+Run multiple programs concurrently by repeating `--program`:
+
+```powershell
+py -m los2w --elf build\userland\terminal.elf --root build\esp `
+  --program build\userland\fastfetch.elf
+```
+
+`mmap`, `munmap`, `mprotect`, descriptor duplication, `fcntl`, `ftruncate`,
+`execve`, `wait4`, and the current LeonOS filesystem syscall numbers are
+emulated. This is a LeonOS compatibility runner, not a Linux ABI emulator;
+unsupported syscalls are reported in the diagnostic compatibility snapshot.
 
 The GUI records the ten most recent ELF and root-directory choices in its host
 configuration. Use **App UI style** to start the selected application with the

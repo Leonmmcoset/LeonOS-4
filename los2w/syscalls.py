@@ -24,7 +24,8 @@ def s64(value: int) -> int:
 
 
 class SyscallDispatcher:
-    def __init__(self, *, memory, fs, gui, net, logger, config):
+    def __init__(self, *, memory, fs, gui, net, logger, config, pid=100,
+                 execve_callback=None, wait_callback=None):
         self.memory = memory
         self.fs = fs
         self.gui = gui
@@ -32,7 +33,9 @@ class SyscallDispatcher:
         self.logger = logger
         self.config = config
         self.exit_code: int | None = None
-        self.pid = 100
+        self.pid = pid
+        self.execve_callback = execve_callback
+        self.wait_callback = wait_callback
         self.syscall_counts: Counter[str] = Counter()
         self.ioctl_counts: Counter[str] = Counter()
         self.unsupported_syscalls: set[str] = set()
@@ -72,8 +75,18 @@ class SyscallDispatcher:
                 return self.fs.lseek(int(args[0]), s64(args[1]), int(args[2]))
             if number == C.SYS_MMAP:
                 return self._mmap(*args)
+            if number == C.SYS_MPROTECT:
+                return self.memory.protect(args[0], args[1], args[2])
             if number == C.SYS_MUNMAP:
                 return self.memory.free(args[0], args[1])
+            if number == C.SYS_DUP:
+                return self.fs.dup(int(args[0]))
+            if number == C.SYS_DUP2:
+                return self.fs.dup2(int(args[0]), int(args[1]))
+            if number == C.SYS_FCNTL:
+                return self.fs.fcntl(int(args[0]), int(args[1]), int(args[2]))
+            if number == C.SYS_FTRUNCATE:
+                return self.fs.ftruncate(int(args[0]), s64(args[1]))
             if number == C.SYS_IOCTL:
                 return self._ioctl(args[0], args[1], args[2])
             if number == C.SYS_SCHED_YIELD:
@@ -89,14 +102,20 @@ class SyscallDispatcher:
                 return self.pid
             if number == C.SYS_EXECVE:
                 path = self.memory.read_cstr(args[0], C.FS_PATH_LEN)
-                raise UnsupportedABI(f"multi-process execve is not implemented in v1: {path}")
+                argv = self._read_vector(args[1])
+                envp = self._read_vector(args[2])
+                if self.execve_callback is None:
+                    return neg(ENOSYS)
+                return int(self.execve_callback(path, argv, envp, uc) or 0)
             if number == C.SYS_EXIT:
                 self.exit_code = int(args[0])
                 if uc:
                     uc.emu_stop()
                 return 0
             if number == C.SYS_WAIT4:
-                return neg(ECHILD)
+                if self.wait_callback is None:
+                    return neg(ECHILD)
+                return int(self.wait_callback(int(args[0]), args[1], int(args[2]), args[3]))
             if number == C.SYS_GETCWD:
                 return self._getcwd(args[0], args[1])
             if number == C.SYS_CHDIR:
@@ -127,6 +146,17 @@ class SyscallDispatcher:
             self.memory.write(buf, result)
         return len(result)
 
+    def _read_vector(self, ptr: int) -> list[str]:
+        if not ptr:
+            return []
+        values: list[str] = []
+        for idx in range(256):
+            item = self.memory.read_u64(ptr + idx * 8)
+            if not item:
+                break
+            values.append(self.memory.read_cstr(item, C.FS_PATH_LEN))
+        return values
+
     def _write(self, fd: int, buf: int, count: int) -> int:
         data = self.memory.read(buf, int(count))
         return self.fs.write(int(fd), data)
@@ -155,6 +185,7 @@ class SyscallDispatcher:
         if result < 0:
             return neg(ENOMEM)
         self.memory.write(result, b"\0" * self.memory.align_up(length))
+        self.memory.protect(result, length, int(prot) & (C.PROT_READ | C.PROT_WRITE | C.PROT_EXEC))
         if not (flags & C.MAP_ANONYMOUS) and s64(fd) >= 0:
             old = self.fs.lseek(int(fd), s64(offset), C.SEEK_SET)
             if old >= 0:
@@ -177,6 +208,11 @@ class SyscallDispatcher:
             return self._list_dir(arg)
         if request == C.TEXT_IOCTL_LAYOUT_UTF8:
             return self._text_layout_utf8(arg)
+        if request == getattr(C, "INPUTM_IOCTL_POLL_RESULT", -1):
+            # los2w has no separate input-method provider process.  Return an
+            # empty result structure so libc clients can safely poll.
+            self.memory.write(arg, b"\0" * 684)
+            return 0
         result = self.gui.ioctl(self.memory, int(request), int(arg))
         if result is not None:
             return result

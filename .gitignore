@@ -12,4 +12,5 @@ __pycache__/
 *.tmp
 .kagent
 dist/
+tools/dist/
 LeonOS4-Developer-SDK.zip

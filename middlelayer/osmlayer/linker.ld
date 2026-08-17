@@ -1,3 +1,7 @@
+/*
+ * LeonOS osmlayer linker script: fixes the load address and image sections.
+ * Produces the relocatable middle-layer module consumed by the kernel.
+ */
 ENTRY(osmlayer_module_init)
 
 SECTIONS

@@ -1,3 +1,7 @@
+/*
+ * LeonOS x86_64 kernel linker script: fixes the kernel image layout.
+ * Places boot, text, read-only data, writable data, and relocation sections.
+ */
 ENTRY(kernel_entry)
 
 SECTIONS

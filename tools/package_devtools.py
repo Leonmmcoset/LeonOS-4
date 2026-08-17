@@ -38,6 +38,13 @@ def version_and_revision(source: Path) -> tuple[str, str]:
 
 
 def add_file(archive: zipfile.ZipFile, archive_name: str, source: Path) -> None:
+    written_names = getattr(archive, "_leonos_written_names", None)
+    if written_names is None:
+        written_names = set()
+        setattr(archive, "_leonos_written_names", written_names)
+    if archive_name in written_names:
+        raise SystemExit(f"duplicate SDK archive member: {archive_name}")
+    written_names.add(archive_name)
     info = zipfile.ZipInfo(archive_name, ZIP_TIMESTAMP)
     info.compress_type = zipfile.ZIP_DEFLATED
     info.external_attr = 0o100644 << 16
@@ -45,6 +52,13 @@ def add_file(archive: zipfile.ZipFile, archive_name: str, source: Path) -> None:
 
 
 def add_text(archive: zipfile.ZipFile, archive_name: str, value: str) -> None:
+    written_names = getattr(archive, "_leonos_written_names", None)
+    if written_names is None:
+        written_names = set()
+        setattr(archive, "_leonos_written_names", written_names)
+    if archive_name in written_names:
+        raise SystemExit(f"duplicate SDK archive member: {archive_name}")
+    written_names.add(archive_name)
     info = zipfile.ZipInfo(archive_name, ZIP_TIMESTAMP)
     info.compress_type = zipfile.ZIP_DEFLATED
     info.external_attr = 0o100644 << 16
@@ -81,17 +95,31 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sdk-root", type=Path, required=True)
     parser.add_argument("--leonos-lib", type=Path, required=True)
+    parser.add_argument("--runtime-so", type=Path, required=True)
+    parser.add_argument("--runtime-loader", type=Path, required=True)
+    parser.add_argument("--dynamic-crt", type=Path, required=True)
+    parser.add_argument("--abi-note", type=Path, required=True)
     parser.add_argument("--picolibc-lib", type=Path, required=True)
     parser.add_argument("--picolibc-include", type=Path, required=True)
     parser.add_argument("--picolibc-source", type=Path, required=True)
+    parser.add_argument("--leonos-libc-include", type=Path)
     parser.add_argument("--zlib-lib", type=Path, required=True)
     parser.add_argument("--zlib-source", type=Path, required=True)
     parser.add_argument("--libpng-lib", type=Path, required=True)
     parser.add_argument("--libpng-source", type=Path, required=True)
     parser.add_argument("--libpng-config", type=Path, required=True)
     parser.add_argument("--libmagic-lib", type=Path)
+    parser.add_argument("--libmagic-so", type=Path)
     parser.add_argument("--libmagic-source", type=Path)
     parser.add_argument("--libmagic-header", type=Path)
+    parser.add_argument("--liblua-lib", type=Path)
+    parser.add_argument("--liblua-so", type=Path)
+    parser.add_argument("--liblua-source", type=Path)
+    parser.add_argument("--sqlite-lib", type=Path)
+    parser.add_argument("--sqlite-so", type=Path)
+    parser.add_argument("--sqlite-source", type=Path)
+    parser.add_argument("--sqlite-header", type=Path)
+    parser.add_argument("--sqlite-stamp", type=Path)
     parser.add_argument("--stardustui-lib", type=Path)
     parser.add_argument("--stardustui-source", type=Path)
     parser.add_argument("--component-metadata", type=Path)
@@ -110,16 +138,20 @@ def main() -> None:
                       args.libpng_config)
     include_libmagic = any((
         args.libmagic_lib is not None,
+        args.libmagic_so is not None,
         args.libmagic_source is not None,
         args.libmagic_header is not None,
     ))
     if include_libmagic and not all((
         args.libmagic_lib is not None,
+        args.libmagic_so is not None,
         args.libmagic_source is not None,
         args.libmagic_header is not None,
     )):
         raise SystemExit("libmagic SDK inputs must be provided together")
-    for required in (args.leonos_lib, args.picolibc_lib, args.picolibc_include,
+    for required in (args.leonos_lib, args.runtime_so, args.runtime_loader,
+                     args.dynamic_crt, args.abi_note,
+                     args.picolibc_lib, args.picolibc_include,
                      args.picolibc_source / "COPYING.picolibc", args.zlib_lib,
                      args.zlib_source / "LICENSE", args.libpng_lib,
                      args.libpng_source / "LICENSE",
@@ -131,11 +163,41 @@ def main() -> None:
         assert args.libmagic_source is not None
         assert args.libmagic_header is not None
         for required in (
-            args.libmagic_lib, args.libmagic_source / "COPYING", args.libmagic_header,
+            args.libmagic_lib, args.libmagic_so, args.libmagic_source / "COPYING", args.libmagic_header,
         ):
             if not required.exists():
                 raise SystemExit(f"required libmagic SDK input is missing: {required}")
+    include_lua = any((args.liblua_lib is not None, args.liblua_so is not None,
+                       args.liblua_source is not None))
+    if include_lua and not all((args.liblua_lib is not None, args.liblua_so is not None,
+                                args.liblua_source is not None)):
+        raise SystemExit("liblua SDK inputs must be provided together")
+    if include_lua:
+        assert args.liblua_lib is not None
+        assert args.liblua_so is not None
+        assert args.liblua_source is not None
+        for required in (
+            args.liblua_lib, args.liblua_so, args.liblua_source / "README.md",
+            *(args.liblua_source / name for name in ("lua.h", "lauxlib.h", "lualib.h", "luaconf.h")),
+        ):
+            if not required.exists():
+                raise SystemExit(f"required liblua SDK input is missing: {required}")
     include_stardustui = args.stardustui_lib is not None or args.stardustui_source is not None
+    include_sqlite = any((args.sqlite_lib is not None, args.sqlite_so is not None,
+                          args.sqlite_source is not None, args.sqlite_header is not None,
+                          args.sqlite_stamp is not None))
+    if include_sqlite and not all((args.sqlite_lib is not None, args.sqlite_so is not None,
+                                   args.sqlite_source is not None, args.sqlite_header is not None,
+                                   args.sqlite_stamp is not None)):
+        raise SystemExit("SQLite SDK inputs must be provided together")
+    if include_sqlite:
+        assert args.sqlite_lib is not None and args.sqlite_so is not None
+        assert args.sqlite_source is not None and args.sqlite_header is not None
+        assert args.sqlite_stamp is not None
+        for required in (args.sqlite_lib, args.sqlite_so, args.sqlite_source / "LICENSE.md",
+                         args.sqlite_header, args.sqlite_stamp):
+            if not required.exists():
+                raise SystemExit(f"required SQLite SDK input is missing: {required}")
     if include_stardustui:
         if args.stardustui_lib is None or args.stardustui_source is None:
             raise SystemExit("StardustUI SDK inputs must be provided together")
@@ -165,6 +227,15 @@ def main() -> None:
         source for source in sorted(args.picolibc_include.rglob("*"))
         if source.is_file() and source.name != ".leonos-picolibc.stamp"
     ]
+    shared_posix_headers = ()
+    if args.leonos_libc_include is not None:
+        shared_posix_headers = tuple(
+            args.leonos_libc_include / name
+            for name in (Path("curses.h"), Path("ncurses.h"), Path("leonos/posix.h"))
+        )
+        for required in shared_posix_headers:
+            if not required.is_file():
+                raise SystemExit(f"required shared POSIX header is missing: {required}")
     picolibc_names = {
         source.relative_to(args.picolibc_include).as_posix()
         for source in picolibc_headers
@@ -178,21 +249,70 @@ def main() -> None:
         with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED,
                              compresslevel=9) as archive:
             for source in sorted(sdk_root.rglob("*")):
-                if not source.is_file() or "lib" in source.relative_to(sdk_root).parts:
+                if not source.is_file():
                     continue
                 relative_name = source.relative_to(sdk_root).as_posix()
+                relative_parts = source.relative_to(sdk_root).parts
+                # Libraries, selected component payloads, third-party notices,
+                # and generated SDK metadata are added below from their
+                # authoritative source.  Keeping this broad SDK-tree copy out
+                # of those destinations prevents stale inputs and duplicate
+                # ZIP members when a component is rebuilt.
+                if (
+                    "lib" in relative_parts
+                    or relative_parts[0] in {"components", "THIRD_PARTY"}
+                    or relative_name in {"dynamic-app.ld", "interpreter.ld", "share/leonos/components.json"}
+                    or relative_name in {
+                        "include/lua5.4/lua.h", "include/lua5.4/lauxlib.h",
+                        "include/lua5.4/lualib.h", "include/lua5.4/luaconf.h",
+                        "include/sqlite3.h", "include/magic.h", "include/zlib.h",
+                        "include/zconf.h", "include/png.h", "include/pngconf.h",
+                        "include/pnglibconf.h",
+                    }
+                    or relative_name.startswith("include/stardustui/")
+                ):
+                    continue
                 if relative_name.removeprefix("include/") in picolibc_names:
                     continue
                 add_file(archive, f"{SDK_PREFIX}/{relative_name}", source)
             for source in picolibc_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.picolibc_include).as_posix()}", source)
+            for source in shared_posix_headers:
+                add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.leonos_libc_include).as_posix()}", source)
             add_file(archive, f"{SDK_PREFIX}/lib/leonos.a", args.leonos_lib)
+            add_file(archive, f"{SDK_PREFIX}/lib/libleonos.so.1", args.runtime_so)
+            add_file(archive, f"{SDK_PREFIX}/lib/ld-leonos.elf", args.runtime_loader)
+            add_file(archive, f"{SDK_PREFIX}/lib/crt0-dynamic.o", args.dynamic_crt)
+            add_file(archive, f"{SDK_PREFIX}/lib/leonos-abi-note.o", args.abi_note)
+            for name in ("dynamic-app.ld", "interpreter.ld"):
+                source = sdk_root.parent / "userland" / name
+                if source.is_file():
+                    add_file(archive, f"{SDK_PREFIX}/{name}", source)
             add_file(archive, f"{SDK_PREFIX}/lib/libc.a", args.picolibc_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libz.a", args.zlib_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libpng.a", args.libpng_lib)
             if include_libmagic:
                 assert args.libmagic_lib is not None
+                assert args.libmagic_so is not None
                 add_file(archive, f"{SDK_PREFIX}/lib/libmagic.a", args.libmagic_lib)
+                add_file(archive, f"{SDK_PREFIX}/lib/libmagic.so.1", args.libmagic_so)
+            if include_lua:
+                assert args.liblua_lib is not None
+                assert args.liblua_so is not None
+                assert args.liblua_source is not None
+                add_file(archive, f"{SDK_PREFIX}/lib/liblua.a", args.liblua_lib)
+                add_file(archive, f"{SDK_PREFIX}/lib/liblua.so.5", args.liblua_so)
+                for name in ("lua.h", "lauxlib.h", "lualib.h", "luaconf.h"):
+                    add_file(archive, f"{SDK_PREFIX}/include/lua5.4/{name}", args.liblua_source / name)
+            if include_sqlite:
+                assert args.sqlite_lib is not None and args.sqlite_so is not None
+                assert args.sqlite_source is not None and args.sqlite_header is not None
+                assert args.sqlite_stamp is not None
+                add_file(archive, f"{SDK_PREFIX}/lib/sqlite.a", args.sqlite_lib)
+                add_file(archive, f"{SDK_PREFIX}/lib/sqlite.so.3", args.sqlite_so)
+                add_file(archive, f"{SDK_PREFIX}/include/sqlite3.h", args.sqlite_header)
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/SQLITE-LICENSE", args.sqlite_source / "LICENSE.md")
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/SQLITE-VERSION.txt", args.sqlite_stamp)
             if include_stardustui:
                 assert args.stardustui_lib is not None
                 assert args.stardustui_source is not None
@@ -219,6 +339,9 @@ def main() -> None:
                 assert args.libmagic_source is not None
                 add_file(archive, f"{SDK_PREFIX}/include/magic.h", args.libmagic_header)
                 add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBMAGIC-COPYING", args.libmagic_source / "COPYING")
+            if include_lua:
+                assert args.liblua_source is not None
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LUA-LICENSE", args.liblua_source / "README.md")
             if include_stardustui:
                 assert args.stardustui_source is not None
                 add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/STARDUSTUI-LICENSE", args.stardustui_source / "LICENSE")
@@ -256,6 +379,14 @@ def main() -> None:
                     "file/libmagic version: 5.48\n"
                     "Upstream: https://github.com/file/file\n"
                     "License: BSD-2-Clause\n",
+                )
+            if include_lua:
+                add_text(
+                    archive,
+                    f"{SDK_PREFIX}/THIRD_PARTY/LUA-VERSION.txt",
+                    "Lua version: 5.4.8\n"
+                    "Upstream: https://www.lua.org/\n"
+                    "License: MIT\n",
                 )
             if include_stardustui:
                 add_text(

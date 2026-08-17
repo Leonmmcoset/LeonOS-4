@@ -16,11 +16,21 @@ typedef struct FFLeonOSLogoLine {
 } FFLeonOSLogoLine;
 
 static const char* const leonos_logo =
-    "      .--------.\n"
-    "     /  LeonOS  \\\n"
-    "    /------------\\\n"
-    "    |     4      |\n"
-    "    '------------'";
+    "     $2:-------:.$1\n"
+    "     $2:-----------.$1\n"
+    "     $2--------------.$1     .\n"
+    "    $2.---------------.$1  .::::\n"
+    "   $2.-----.:------$1:::..:::::::.\n"
+    "  $2:-----: -$1:::...::::::::::::::\n"
+    " $2:-----:$1 ...:::::::::::::::::::.\n"
+    "$2:-----.$1 .:::::::::::...:::::::::\n"
+    "$2----- $1 .::::........::::::::::::\n"
+    "$2---- $1 .:::  ..::::::::::::::::::\n"
+    "$2:--:$1  ::. .::::::::::::::::::::\n"
+    " $2---$1  :. .::::::::::::::::::::.\n"
+    "  $2:-.$1 .  ::::::::::::::::::::\n"
+    "    $2:.$1   ::::::::::::::::::\n"
+    "         $1..::::::::::::.";
 
 static void clear_logo_cache(void)
 {
@@ -74,7 +84,12 @@ static void apply_leonos_colors(void)
         ffStrbufAppendS(&instance.config.display.colorKeys, FF_COLOR_FG_CYAN);
     }
     if (instance.config.logo.colors[0].length == 0) {
-        ffStrbufAppendS(&instance.config.logo.colors[0], FF_COLOR_FG_CYAN);
+        ffStrbufAppendS(&instance.config.logo.colors[0],
+                        instance.config.display.brightColor ? "22;34" : FF_COLOR_FG_BLUE);
+    }
+    if (instance.config.logo.colors[1].length == 0) {
+        ffStrbufAppendS(&instance.config.logo.colors[1],
+                        instance.config.display.brightColor ? "1;34" : FF_COLOR_FG_BLUE);
     }
 }
 
@@ -256,7 +271,9 @@ void ffLogoPrintLine(void)
 {
     FFLogoLineCacheState* cache = &instance.state.logoLineCache;
     if (cache->nextLine < cache->lines.length) {
-        FFLeonOSLogoLine* line = FF_LIST_GET(FFLeonOSLogoLine, cache->lines, cache->nextLine++);
+        FFLeonOSLogoLine* line = FF_LIST_GET(FFLeonOSLogoLine, cache->lines,
+                                             cache->nextLine);
+        ++cache->nextLine;
         if (instance.config.logo.position == FF_LOGO_POSITION_RIGHT) {
             printf("\033[9999999C\033[%uD", cache->rightOffset);
             ffStrbufWriteTo(&line->chars, stdout);
@@ -283,7 +300,9 @@ void ffLogoPrintRemaining(void)
     if (cache->lines.length > 0 &&
         (instance.config.logo.position == FF_LOGO_POSITION_LEFT || instance.config.logo.position == FF_LOGO_POSITION_RIGHT)) {
         while (cache->nextLine < cache->lines.length) {
-            FFLeonOSLogoLine* line = FF_LIST_GET(FFLeonOSLogoLine, cache->lines, cache->nextLine++);
+            FFLeonOSLogoLine* line = FF_LIST_GET(FFLeonOSLogoLine, cache->lines,
+                                                 cache->nextLine);
+            ++cache->nextLine;
             if (instance.config.logo.position == FF_LOGO_POSITION_RIGHT) {
                 printf("\033[9999999C\033[%uD", cache->rightOffset);
             }

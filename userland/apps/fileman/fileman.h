@@ -39,6 +39,8 @@
 #define FILEMAN_DETAILS_H 360
 #define FILEMAN_FOLDER_SIZE_MAX_DEPTH 16
 #define FILEMAN_FOLDER_SIZE_MAX_ITEMS 2048
+#define FILEMAN_SETTINGS_DIALOG_W 340
+#define FILEMAN_SETTINGS_DIALOG_H 166
 #define T(en, zh) leonos_i18n((en), (zh))
 
 enum {
@@ -75,6 +77,7 @@ enum {
     FILEMAN_ACTION_EXTRACT_TAR = 23,
     FILEMAN_ACTION_COMPRESS_TAR = 24,
     FILEMAN_ACTION_COMPRESS_SELECTED = 25,
+    FILEMAN_ACTION_SETTINGS = 26,
 };
 
 struct fileman_layout {
@@ -134,6 +137,8 @@ extern uint32_t view_h;
 extern uint64_t selected_mask;
 extern uint32_t fileman_window_id;
 extern struct leonos_ui_surface fileman_ui;
+extern char address_input[LEONOS_FS_PATH_LEN];
+extern struct leonos_ui_edit_state address_edit;
 extern uint8_t fileman_operation_active;
 extern uint32_t fileman_operation_percent;
 extern char fileman_operation_text[160];
@@ -141,6 +146,9 @@ extern struct fileman_tree_node fileman_tree_nodes[FILEMAN_TREE_MAX_NODES];
 extern uint32_t fileman_tree_node_count;
 extern uint32_t fileman_tree_next_id;
 extern uint32_t fileman_tree_scroll;
+extern uint8_t fileman_show_hidden;
+extern uint8_t fileman_settings_open;
+extern uint8_t fileman_settings_show_hidden;
 
 struct fileman_layout current_layout(void);
 void copy_text(char *dst, uint32_t dst_len, const char *src);
@@ -162,6 +170,7 @@ void fileman_toggle_selected(void);
 void fileman_select_all(void);
 void fileman_clear_selection(void);
 int fileman_is_recycle_dir(void);
+int fileman_entry_is_hidden(const struct leonos_dir_entry *entry);
 int list_index_at(int32_t x, int32_t y);
 void format_size_text(char *buf, uint32_t cap, uint64_t bytes);
 void set_status(const char *text);
@@ -186,13 +195,22 @@ void show_open_with_for_path(const char *path, uint8_t set_default_only);
 void show_open_with_selected(void);
 void show_default_program_for_selected(void);
 int reload_dir(void);
+void fileman_settings_load(void);
+void fileman_open_settings(void);
+void fileman_cancel_settings(void);
+void fileman_apply_settings(void);
+void fileman_settings_dialog_rect(struct leonos_ui_rect *out);
+int fileman_handle_settings_click(int32_t x, int32_t y);
+int fileman_handle_settings_key(uint8_t keycode);
 uint32_t build_tree_items(struct leonos_ui_tree_item *items, uint32_t cap);
 const char *tree_path_for_id(uint32_t id);
 int fileman_tree_toggle(uint32_t id);
 void fileman_tree_reset(void);
 uint32_t fileman_tree_visible_rows(const struct fileman_layout *layout);
 int navigate_to_path(const char *path);
+void address_edit_sync_path(void);
 void draw_fileman(struct leonos_ui_surface *ui);
+void draw_fileman_settings_dialog(struct leonos_ui_surface *ui);
 void open_selected_entry(void);
 void navigate_up(void);
 void navigate_root(void);
@@ -217,7 +235,7 @@ int handle_context_menu_click(int32_t x, int32_t y);
 void show_context_menu_at(int32_t x, int32_t y, int32_t target);
 void handle_right_click(int32_t x, int32_t y);
 void handle_click(int32_t x, int32_t y);
-void handle_key(uint8_t keycode);
+void handle_key(uint8_t keycode, uint8_t pressed);
 int handle_wheel(int32_t x, int32_t y, int32_t wheel);
 void present_fileman(uint32_t window_id, struct leonos_ui_surface *ui);
 

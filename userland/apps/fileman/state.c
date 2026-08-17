@@ -22,6 +22,8 @@ uint32_t view_h = FILEMAN_H;
 uint64_t selected_mask;
 uint32_t fileman_window_id;
 struct leonos_ui_surface fileman_ui;
+char address_input[LEONOS_FS_PATH_LEN];
+struct leonos_ui_edit_state address_edit;
 uint8_t fileman_operation_active;
 uint32_t fileman_operation_percent;
 char fileman_operation_text[160];
@@ -29,6 +31,9 @@ struct fileman_tree_node fileman_tree_nodes[FILEMAN_TREE_MAX_NODES];
 uint32_t fileman_tree_node_count;
 uint32_t fileman_tree_next_id;
 uint32_t fileman_tree_scroll;
+uint8_t fileman_show_hidden;
+uint8_t fileman_settings_open;
+uint8_t fileman_settings_show_hidden;
 
 struct fileman_layout current_layout(void)
 {

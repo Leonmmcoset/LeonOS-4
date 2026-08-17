@@ -94,6 +94,10 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-qmp-pleditor",
     "test-qmp-tcc",
     "test-qmp-fastfetch",
+    "test-qmp-sl",
+    "test-qmp-less",
+    "test-qmp-dynlinkerror",
+    "test-qmp-cmd",
     "test-qmp-stardust",
     "test-component-config",
     "test-all",
@@ -418,8 +422,12 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
     height = config_int(values, "CONFIG_QEMU_DISPLAY_HEIGHT")
     command = ["qemu-system-x86_64"]
     if config_bool(values, "CONFIG_QEMU_ENABLE_KVM"):
-        command.append("-enable-kvm")
-    command += ["-cpu", "host", "-machine", "q35", "-m", f"{memory}M"]
+        command += ["-enable-kvm", "-cpu", "host"]
+    else:
+        # QEMU's host CPU model is valid only with KVM/HVF.  TCG uses max so
+        # the smoke tests remain runnable on hosts without hardware access.
+        command += ["-cpu", "max"]
+    command += ["-machine", "q35", "-m", f"{memory}M"]
     ovmf = config_string(values, "CONFIG_QEMU_OVMF_PATH")
     if ovmf:
         command += ["-bios", ovmf]
@@ -486,6 +494,21 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     rustc = os.environ.get("RUSTC", "rustc")
     ar = os.environ.get("AR", "llvm-ar")
     ld = os.environ.get("LD", "ld.lld")
+    objcopy = os.environ.get("OBJCOPY", "llvm-objcopy")
+    compiler_rt = subprocess.run(
+        (cc, "-target", "x86_64-unknown-none", "-rtlib=compiler-rt",
+         "--print-libgcc-file-name"),
+        check=False, text=True, capture_output=True,
+    )
+    compiler_rt_archive = Path(compiler_rt.stdout.strip())
+    # Debian/Ubuntu package compiler-rt under ``lib/linux`` while Clang's
+    # generic target query returns the adjacent cross-target location.
+    if not compiler_rt_archive.is_file():
+        linux_candidate = compiler_rt_archive.parent / "linux" / compiler_rt_archive.name
+        if linux_candidate.is_file():
+            compiler_rt_archive = linux_candidate
+    if compiler_rt.returncode or not compiler_rt_archive.is_file():
+        raise GraphError("Clang compiler-rt builtins archive is required for the dynamic runtime")
     generated = paths.generated_include
     autoconf = generated / "autoconf.h"
     installer_autoconf = generated / "autoconf-installer.h"
@@ -495,10 +518,27 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     gbk_table_header = generated / "leonos_gbk_table.h"
     picolibc_source = ROOT / "third_party/picolibc"
     picolibc_cross_file = ROOT / "userland/picolibc/leonos-x86_64.ini"
+    picolibc_static_build_dir = paths.out / "picolibc-static"
+    picolibc_static_prefix = picolibc_static_build_dir / "sysroot"
+    picolibc_static_archive = picolibc_static_prefix / "lib/libc.a"
     picolibc_build_dir = paths.out / "picolibc"
     picolibc_prefix = picolibc_build_dir / "sysroot"
     picolibc_archive = picolibc_prefix / "lib/libc.a"
+    runtime_so = paths.out / "system/lib/libleonos.so.1"
+    runtime_loader = paths.out / "system/lib/ld-leonos.elf"
+    libmagic_so = paths.out / "system/lib/libmagic.so.1"
+    liblua_so = paths.out / "system/lib/liblua.so.5"
+    sqlite_source = ROOT / "third_party/sqlite"
+    sqlite_port = ROOT / "userland/sqlite"
+    sqlite_so = paths.out / "system/lib/sqlite.so.3"
+    sqlite_archive = paths.out / "userland/sqlite.a"
+    sqlite_header = paths.out / "generated/sqlite/sqlite3.h"
+    sqlite_stamp = paths.out / "userland/sqlite.stamp"
+    sqlite_work_dir = paths.out / "sqlite-work"
+    dynlinkerror_elf = paths.out / "userland/dynlinkerror.elf"
+    installer_runtime_so = paths.out / "userland-installer-policy/libleonos.so.1"
     picolibc_header_stamp = picolibc_prefix / "include/.leonos-picolibc.stamp"
+    picolibc_static_header_stamp = picolibc_static_prefix / "include/.leonos-picolibc.stamp"
     zlib_source = ROOT / "third_party/zlib"
     libpng_source = ROOT / "third_party/libpng"
     libpng_config_source = libpng_source / "scripts/pnglibconf.h.prebuilt"
@@ -531,6 +571,16 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     fastfetch_elf = paths.out / "userland/fastfetch.elf"
     fastfetch_stamp = paths.out / "userland/fastfetch.stamp"
     fastfetch_work_dir = paths.out / "fastfetch-work"
+    sl_source = ROOT / "third_party/sl"
+    sl_port = ROOT / "userland/sl"
+    sl_elf = paths.out / "userland/sl.elf"
+    sl_stamp = paths.out / "userland/sl.stamp"
+    sl_work_dir = paths.out / "sl-work"
+    less_source = ROOT / "third_party/less"
+    less_port = ROOT / "userland/less"
+    less_elf = paths.out / "userland/less.elf"
+    less_stamp = paths.out / "userland/less.stamp"
+    less_work_dir = paths.out / "less-work"
     tcc_source = ROOT / "third_party/tinycc"
     tcc_port = ROOT / "userland/tcc"
     tcc_app_manifest = ROOT / "userland/apps/tcc/tcc.app.ini"
@@ -541,6 +591,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     lua_port = ROOT / "userland/lua"
     lua_app_manifest = ROOT / "userland/apps/lua/lua.app.ini"
     lua_elf = paths.out / "userland/lua.elf"
+    liblua_archive = paths.out / "userland/liblua.a"
     lua_stamp = paths.out / "userland/lua.stamp"
     lua_work_dir = paths.out / "lua-work"
     cmd_source = ROOT / "third_party/cmd"
@@ -619,7 +670,6 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         action=generate_libpng_config,
         action_key="generate-libpng-config-v3",
     ))
-
     if not (picolibc_source / "meson.build").is_file():
         raise GraphError("third_party/picolibc is missing; initialize the Picolibc source tree")
     if not (busybox_source / "Makefile").is_file():
@@ -630,6 +680,17 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/fastfetch is missing; initialize the Fastfetch source tree")
     if not (fastfetch_port / "main.c").is_file() or not (fastfetch_port / "include/fastfetch_config.h").is_file():
         raise GraphError("the LeonOS Fastfetch port metadata is missing")
+    if not (sl_source / "sl.c").is_file() or not (sl_source / "sl.h").is_file() or not (sl_source / "LICENSE").is_file():
+        raise GraphError("third_party/sl is missing; initialize the sl source tree")
+    if not (ROOT / "userland/libc/include/curses.h").is_file():
+        raise GraphError("the LeonOS sl port metadata is missing")
+    if (not (less_source / "main.c").is_file() or
+            not (less_source / "COPYING").is_file() or
+            not (less_source / "LICENSE").is_file()):
+        raise GraphError("third_party/less is missing; initialize the GNU less source tree")
+    if (not (less_port / "leonos_termcap.c").is_file() or
+            not (less_port / "include/defines.h").is_file()):
+        raise GraphError("the LeonOS less port metadata is missing")
     if not (tcc_source / "tcc.c").is_file():
         raise GraphError("third_party/tinycc is missing; initialize the TinyCC source tree")
     if not (lua_source / "lua.c").is_file() or not (lua_source / "lua.h").is_file():
@@ -648,6 +709,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/file is missing; initialize the libmagic source tree")
     if not (file_port / "config.h").is_file() or not (file_port / "leonos_shim.c").is_file():
         raise GraphError("the LeonOS file/libmagic port metadata is missing")
+    if not (sqlite_source / "main.mk").is_file() or not (sqlite_source / "Makefile.linux-gcc").is_file():
+        raise GraphError("third_party/sqlite is missing; initialize the SQLite source tree")
+    if not (sqlite_port / "leonos_sqlite_vfs.c").is_file():
+        raise GraphError("the LeonOS SQLite VFS port metadata is missing")
     optimization_level = config_int(values, "CONFIG_BUILD_OPTIMIZATION_LEVEL", 2)
     optimization_flag = f"-O{max(0, min(3, optimization_level))}"
     build_compile_flags: list[str] = [optimization_flag]
@@ -685,8 +750,28 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "--archive", relative(picolibc_archive),
                 "--stamp", relative(picolibc_header_stamp),
                 *compile_option_args,
+                "--compile-flag=-fPIC",
                 *linker_option_args,
             ),
+        )
+    )
+    graph.add(
+        Target(
+            name="picolibc-static",
+            # Static libc objects include this generated sysroot.  Declare the
+            # stamp as an output as well as the archive so the scheduler can
+            # order those compiles after Meson has finished installing every
+            # header; otherwise they can race the install on a clean build.
+            outputs=(picolibc_static_archive, picolibc_static_header_stamp),
+            inputs=tuple([ROOT / "tools/build_picolibc.py", picolibc_cross_file, *picolibc_inputs]),
+            kind="compile",
+            command=(PYTHON, "tools/build_picolibc.py", "--source", "third_party/picolibc",
+                     "--cross-file", "userland/picolibc/leonos-x86_64.ini",
+                     "--build-dir", relative(picolibc_static_build_dir),
+                     "--prefix", relative(picolibc_static_prefix),
+                     "--archive", relative(picolibc_static_archive),
+                     "--stamp", relative(picolibc_static_prefix / "include/.leonos-picolibc.stamp"),
+                     *compile_option_args, *linker_option_args),
         )
     )
     graph.add(
@@ -763,7 +848,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ]
     cflags_user_base = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c11", "-ffreestanding",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
+        "-fno-stack-protector", "-fPIC", "-fPIE", "-mno-red-zone", "-mgeneral-regs-only",
         "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-DLEONOS_USE_PICOLIBC",
         "-D_POSIX_C_SOURCE=200809L",
         f"-I{relative(picolibc_prefix / 'include')}", "-Iuserland/libc/include",
@@ -780,19 +865,48 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     cflags_installer = cflags_user_base + ["-include", relative(installer_autoconf)]
     cflags_user_libc_base = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c11", "-ffreestanding",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
+        "-fno-stack-protector", "-fPIC", "-mno-red-zone", "-mgeneral-regs-only",
         "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-DLEONOS_USE_PICOLIBC",
         f"-I{relative(picolibc_prefix / 'include')}",
         "-Iuserland/libc/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
         "-Ithird_party/mbedtls/include", "-Ithird_party/zlib", "-Ithird_party/libpng",
         f"-I{relative(libpng_generated_dir)}", '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
+    # TCC's target linker consumes a static, non-PIC SDK.  The normal libc
+    # objects are PIC inputs for the shared runtime and contain GOT relaxation
+    # relocations that TinyCC intentionally does not accept in static links.
+    cflags_user_libc_static_base = [
+        "-fno-pic" if flag == "-fPIC" else
+        f"-I{relative(picolibc_static_prefix / 'include')}" if flag == f"-I{relative(picolibc_prefix / 'include')}" else
+        flag
+        for flag in cflags_user_libc_base
+    ]
     cflags_user_libc = cflags_user_libc_base + ["-include", relative(autoconf)]
+    cflags_user_libc_static = cflags_user_libc_static_base + ["-include", relative(autoconf)]
     cflags_installer_libc = cflags_user_libc_base + ["-include", relative(installer_autoconf)]
     asflags_user = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-ffreestanding", "-mno-red-zone",
         "-mgeneral-regs-only", "-Iuserland/libc/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
     ]
+    cflags_runtime = [flag for flag in cflags_user_libc if flag not in {"-include", relative(autoconf)}]
+    cflags_runtime += ["-include", relative(autoconf), "-fPIC"]
+    asflags_runtime = [*asflags_user, "-fPIC"]
+    dynamic_link_flags = [
+        "-pie", "--hash-style=sysv", "--dynamic-linker", "0:/system/lib/ld-leonos.elf",
+        "-z", "relro", "-z", "now", "-z", "max-page-size=0x1000",
+    ]
+
+    boot_logo = paths.out / "include/generated/boot_logo.h"
+    graph.add(
+        Target(
+            name="boot-logo",
+            outputs=(boot_logo,),
+            inputs=(ROOT / "logo.png", ROOT / "tools/generate_boot_logo.py"),
+            kind="generate",
+            command=(PYTHON, "tools/generate_boot_logo.py", "--input", "logo.png",
+                     "--out", relative(boot_logo)),
+        )
+    )
 
     loader_sources = collect("boot/loader/**/*.c", "boot/loader/**/*.S")
     kernel_sources = collect("kernel/ntclks/**/*.c", "kernel/ntclks/**/*.S", "drivers/bootstrap/**/*.c", "drivers/bootstrap/**/*.S")
@@ -800,23 +914,47 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     kernel_objects: list[Path] = []
     for source in kernel_sources:
         implicit: list[Path] = [autoconf]
+        if source == ROOT / "drivers/bootstrap/boot_splash.c":
+            implicit.append(boot_logo)
         if source == ROOT / "kernel/ntclks/version.c":
             implicit += [build_info] + [candidate for candidate in kernel_sources + rust_sources if candidate != source]
         flags = asflags_kernel if source.suffix == ".S" else cflags_kernel + (["-include", relative(autoconf)] if source.suffix == ".c" else [])
         kernel_objects.append(add_compile(graph, paths, f"compile:kernel:{relative(source)}", source, "kernel", flags, implicit, kind="assemble" if source.suffix == ".S" else "compile"))
 
+    kernel_unstripped = paths.out / "system/kernel.unstripped"
+    kernel_debug = paths.out / "system/kernel.debug"
     kernel_sys = paths.out / "system/kernel.sys"
+    graph.add(
+        Target(
+            name="kernel-link",
+            outputs=(kernel_unstripped,),
+            inputs=tuple(kernel_objects),
+            implicit_inputs=(ROOT / "kernel/ntclks/arch/x86_64/linker.ld",),
+            kind="link",
+            command=(ld, "-nostdlib", "-z", "max-page-size=0x1000", "-T", "kernel/ntclks/arch/x86_64/linker.ld", "-o", relative(kernel_unstripped), *map(relative, kernel_objects)),
+        )
+    )
+    graph.add(
+        Target(
+            name="kernel-debug",
+            outputs=(kernel_debug,),
+            inputs=(kernel_unstripped,),
+            depends_on=("kernel-link",),
+            kind="generate",
+            command=(objcopy, "--only-keep-debug", relative(kernel_unstripped), relative(kernel_debug)),
+        )
+    )
     graph.add(
         Target(
             name="kernel-image",
             outputs=(kernel_sys,),
-            inputs=tuple(kernel_objects),
-            implicit_inputs=(ROOT / "kernel/ntclks/arch/x86_64/linker.ld",),
-            kind="link",
-            command=(ld, "-nostdlib", "-z", "max-page-size=0x1000", "-T", "kernel/ntclks/arch/x86_64/linker.ld", "-o", relative(kernel_sys), *map(relative, kernel_objects)),
+            inputs=(kernel_unstripped,),
+            depends_on=("kernel-link",),
+            kind="generate",
+            command=(objcopy, "--strip-debug", relative(kernel_unstripped), relative(kernel_sys)),
         )
     )
-    graph.add(Target(name="kernel", depends_on=("kernel-image",), group=True, kind="aggregate"))
+    graph.add(Target(name="kernel", depends_on=("kernel-image", "kernel-debug"), group=True, kind="aggregate"))
 
     rust_obj = paths.objects / "middlelayer/osmlayer.o"
     middle_runtime = ROOT / "middlelayer/osmlayer/runtime.c"
@@ -865,7 +1003,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     loader_objects: list[Path] = []
     for source in loader_sources:
         flags = asflags_loader if source.suffix == ".S" else cflags_loader
-        loader_objects.append(add_compile(graph, paths, f"compile:loader:{relative(source)}", source, "loader", flags, (loader_integrity,), kind="assemble" if source.suffix == ".S" else "compile"))
+        implicit = (loader_integrity, boot_logo) if source == ROOT / "boot/loader/main.c" else (loader_integrity,)
+        loader_objects.append(add_compile(graph, paths, f"compile:loader:{relative(source)}", source, "loader", flags, implicit, kind="assemble" if source.suffix == ".S" else "compile"))
     loader_elf = paths.out / "boot/loader.elf"
     graph.add(
         Target(
@@ -908,24 +1047,139 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                  "third_party/litehtml/src/encodings.cpp", "--output",
                  relative(gbk_table_header)),
     ))
+    dynamic_crt_obj = add_compile(
+        graph, paths, "compile:runtime:crt0-dynamic", ROOT / "userland/runtime/crt0_dynamic.S",
+        "runtime-crt", asflags_runtime, (), kind="assemble")
+    dynamic_note_obj = add_compile(
+        graph, paths, "compile:runtime:abi-note", ROOT / "userland/runtime/abi_note.S",
+        "runtime-crt", asflags_runtime, (), kind="assemble")
 
     libc_sources = collect("userland/libc/src/*.c", "userland/libc/src/*.S")
     libc_sources += [ROOT / "third_party/mbedtls/library" / source for source in MBEDTLS_SOURCES]
     libc_objects: list[Path] = []
+    static_libc_objects: list[Path] = []
     installer_libc_objects: list[Path] = []
     for source in sorted(libc_sources):
         is_asm = source.suffix == ".S"
         implicit = (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else ()
+        static_implicit = (autoconf, picolibc_static_header_stamp, libpng_config) if not is_asm else ()
         installer_implicit = (installer_autoconf, picolibc_header_stamp, libpng_config) if not is_asm else ()
         if source == ROOT / "userland/libc/src/text_encoding.c":
             implicit += (gbk_table_header,)
+            static_implicit += (gbk_table_header,)
             installer_implicit += (gbk_table_header,)
         libc_objects.append(add_compile(graph, paths, f"compile:libc:{relative(source)}", source, "userlib", asflags_user if is_asm else cflags_user_libc, implicit, kind="assemble" if is_asm else "compile"))
+        static_libc_objects.append(add_compile(graph, paths, f"compile:static-libc:{relative(source)}", source, "userlib-static", asflags_user if is_asm else cflags_user_libc_static, static_implicit, kind="assemble" if is_asm else "compile"))
         installer_libc_objects.append(add_compile(graph, paths, f"compile:installer-libc:{relative(source)}", source, "userlib-installer-policy", asflags_user if is_asm else cflags_installer_libc, installer_implicit, kind="assemble" if is_asm else "compile"))
     libc_a = paths.out / "userland/libc.a"
+    static_libc_a = paths.out / "userland/libc-static.a"
     installer_libc_a = paths.out / "userland-installer-policy/libc.a"
     graph.add(Target(name="archive:libc", outputs=(libc_a,), inputs=tuple(libc_objects), kind="link", command=(ar, "rcs", relative(libc_a), *map(relative, libc_objects))))
+    graph.add(Target(name="archive:libc-static", outputs=(static_libc_a,), inputs=tuple(static_libc_objects), depends_on=("picolibc-static",), kind="link", command=(ar, "rcs", relative(static_libc_a), *map(relative, static_libc_objects))))
     graph.add(Target(name="archive:installer-libc", outputs=(installer_libc_a,), inputs=tuple(installer_libc_objects), kind="link", command=(ar, "rcs", relative(installer_libc_a), *map(relative, installer_libc_objects))))
+
+    runtime_sources = [source for source in sorted(libc_sources)
+                       if source.name != "crt0.S"] + [ROOT / "userland/runtime/ld_leonos.c",
+                                                       ROOT / "userland/runtime/abi_note.S"]
+    runtime_objects: list[Path] = []
+    for source in runtime_sources:
+        is_asm = source.suffix == ".S"
+        runtime_objects.append(add_compile(
+            graph, paths, f"compile:runtime:{relative(source)}", source, "runtime",
+            asflags_runtime if is_asm else cflags_runtime,
+            (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (),
+            kind="assemble" if is_asm else "compile"))
+    graph.add(Target(
+        name="runtime",
+        outputs=(runtime_so,),
+        inputs=tuple([*runtime_objects, picolibc_archive, zlib_archive, libpng_archive,
+                      compiler_rt_archive,
+                      ROOT / "userland/dynamic-linker.ld"]),
+        depends_on=("picolibc", "archive:zlib", "archive:libpng"),
+        kind="link",
+        command=(ld, "-shared", "-Bsymbolic", "--allow-multiple-definition", "--hash-style=sysv", "-soname", "libleonos.so.1",
+                 "-z", "max-page-size=0x1000", "-T", "userland/dynamic-linker.ld",
+                 "-o", relative(runtime_so), *map(relative, runtime_objects),
+                 # These are referenced by the dynamic CRT, not by the runtime
+                 # objects themselves.  Keep their Picolibc archive members in
+                 # the shared ABI so every dynamic executable starts uniformly.
+                 "-u", "environ", "-u", "__libc_init_array", "-u", "exit",
+                 # ABI v1 promises the public Picolibc, zlib and libpng
+                 # surfaces.  Archive extraction based only on runtime-local
+                 # references would silently drop valid application symbols.
+                 "--whole-archive", relative(picolibc_archive), relative(zlib_archive),
+                 relative(libpng_archive), "--no-whole-archive", relative(compiler_rt_archive)),
+    ))
+    installer_runtime_sources = [source for source in sorted(libc_sources)
+                                 if source.name != "crt0.S"] + [ROOT / "userland/runtime/ld_leonos.c",
+                                                                 ROOT / "userland/runtime/abi_note.S"]
+    installer_runtime_objects: list[Path] = []
+    for source in installer_runtime_sources:
+        is_asm = source.suffix == ".S"
+        installer_runtime_objects.append(add_compile(
+            graph, paths, f"compile:installer-runtime:{relative(source)}", source, "installer-runtime",
+            asflags_runtime if is_asm else cflags_installer_libc + ["-fPIC"],
+            (installer_autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (),
+            kind="assemble" if is_asm else "compile"))
+    graph.add(Target(
+        name="installer-runtime",
+        outputs=(installer_runtime_so,),
+        inputs=tuple([*installer_runtime_objects, picolibc_archive, zlib_archive, libpng_archive,
+                      compiler_rt_archive,
+                      ROOT / "userland/dynamic-linker.ld"]),
+        depends_on=("picolibc", "archive:zlib", "archive:libpng"),
+        kind="link",
+        command=(ld, "-shared", "-Bsymbolic", "--allow-multiple-definition", "--hash-style=sysv", "-soname", "libleonos.so.1",
+                 "-z", "max-page-size=0x1000", "-T", "userland/dynamic-linker.ld",
+                 "-o", relative(installer_runtime_so), *map(relative, installer_runtime_objects),
+                 "-u", "environ", "-u", "__libc_init_array", "-u", "exit",
+                 "--whole-archive", relative(picolibc_archive), relative(zlib_archive),
+                 relative(libpng_archive), "--no-whole-archive", relative(compiler_rt_archive)),
+    ))
+    loader_sources = [ROOT / "userland/runtime/ld_start.S", ROOT / "userland/runtime/ld_leonos.c",
+                      ROOT / "userland/runtime/abi_note.S"]
+    loader_objects = [add_compile(
+        graph, paths, f"compile:ld-leonos:{relative(source)}", source, "ld-leonos",
+        asflags_runtime if source.suffix == ".S" else cflags_runtime,
+        (autoconf, picolibc_header_stamp) if source.suffix != ".S" else (),
+        kind="assemble" if source.suffix == ".S" else "compile") for source in loader_sources]
+    graph.add(Target(
+        name="runtime-loader",
+        outputs=(runtime_loader,),
+        inputs=tuple([*loader_objects, libc_a, picolibc_archive,
+                      ROOT / "userland/interpreter.ld"]),
+        depends_on=("archive:libc", "picolibc"),
+        kind="link",
+        command=(ld, "-pie", "-nostdlib", "--gc-sections", "-Bsymbolic", "--hash-style=sysv",
+                 "-u", "stdin", "-u", "stdout", "-u", "stderr",
+                 "-z", "max-page-size=0x1000",
+                 "-T", "userland/interpreter.ld", "-o", relative(runtime_loader),
+                 *map(relative, loader_objects), "--start-group", relative(libc_a),
+                 relative(picolibc_archive), "--end-group"),
+    ))
+
+    # This recovery window must remain usable when libleonos.so.1 is missing.
+    # Keep it as a conventional ET_EXEC image with no PT_INTERP or DT_NEEDED.
+    cflags_dynlinkerror = [flag for flag in cflags_user if flag not in {"-fPIC", "-fPIE"}]
+    cflags_dynlinkerror.extend(("-fno-pic", "-fno-pie"))
+    dynlinkerror_source = ROOT / "userland/apps/dynlinkerror/main.c"
+    dynlinkerror_object = add_compile(
+        graph, paths, "compile:dynlinkerror", dynlinkerror_source, "user-dynlinkerror",
+        cflags_dynlinkerror, (autoconf, picolibc_header_stamp),
+    )
+    graph.add(Target(
+        name="dynlinkerror",
+        outputs=(dynlinkerror_elf,),
+        inputs=(dynlinkerror_object, libc_a, picolibc_archive,
+                compiler_rt_archive, ROOT / "userland/linker.ld"),
+        depends_on=("archive:libc", "picolibc"),
+        kind="link",
+        command=(ld, "-nostdlib", "--gc-sections", *build_link_flags,
+                 "-z", "max-page-size=0x1000", "-T", "userland/linker.ld",
+                 "-o", relative(dynlinkerror_elf), relative(dynlinkerror_object),
+                 "--start-group", relative(libc_a), relative(picolibc_archive),
+                 relative(compiler_rt_archive), "--end-group"),
+    ))
 
     zlib_objects = [
         add_compile(graph, paths, f"compile:zlib:{source}", zlib_source / source, "zlib",
@@ -974,21 +1228,49 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ])
     graph.add(Target(
         name="file",
-        outputs=(file_elf, libmagic_archive, file_magic_header, file_stamp),
-        inputs=tuple([*file_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
-        depends_on=("picolibc", "archive:libc"),
+        outputs=(file_elf, libmagic_so, libmagic_archive, file_magic_header, file_stamp),
+        inputs=tuple([*file_inputs, ROOT / "userland/dynamic-app.ld", runtime_so,
+                      dynamic_crt_obj, dynamic_note_obj, picolibc_archive]),
+        depends_on=("picolibc", "runtime", "runtime-loader"),
         kind="compile",
         command=(
             PYTHON, "tools/build_file.py", "--source", "third_party/file",
             "--port", "userland/file", "--picolibc-prefix", relative(picolibc_prefix),
             "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
             "--generated-include", relative(paths.generated_include), "--linker-script",
-            "userland/linker.ld", "--leonos-lib", relative(libc_a), "--picolibc-lib",
-            relative(picolibc_archive), "--output", relative(file_elf), "--library",
-            relative(libmagic_archive), "--magic-header", relative(file_magic_header),
+            "userland/linker.ld", "--dynamic-linker-script", "userland/dynamic-app.ld",
+            "--leonos-lib", relative(libc_a), "--runtime-so", relative(runtime_so),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
+            "--picolibc-lib", relative(picolibc_archive), "--output", relative(file_elf),
+            "--library", relative(libmagic_so), "--static-library", relative(libmagic_archive),
+            "--magic-header", relative(file_magic_header),
             "--stamp", relative(file_stamp),
             *compile_option_args,
             *linker_option_args,
+        ),
+    ))
+
+    sqlite_inputs = tuple([
+        ROOT / "tools/build_sqlite.py", sqlite_source / "VERSION", sqlite_source / "main.mk",
+        sqlite_source / "Makefile.linux-gcc", sqlite_source / "tool/mksqlite3c.tcl",
+        sqlite_port / "leonos_sqlite_vfs.c", sqlite_port / "README.md",
+        ROOT / "userland/dynamic-app.ld", runtime_so, dynamic_crt_obj, dynamic_note_obj,
+    ])
+    graph.add(Target(
+        name="sqlite",
+        outputs=(sqlite_so, sqlite_archive, sqlite_header, sqlite_stamp),
+        inputs=sqlite_inputs,
+        depends_on=("picolibc", "runtime", "runtime-loader"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_sqlite.py", "--source", "third_party/sqlite",
+            "--port", "userland/sqlite", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--dynamic-linker-script", "userland/dynamic-app.ld", "--runtime-so", relative(runtime_so),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
+            "--library", relative(sqlite_so), "--static-library", relative(sqlite_archive),
+            "--header", relative(sqlite_header), "--work-dir", relative(sqlite_work_dir),
+            "--stamp", relative(sqlite_stamp), *compile_option_args, *linker_option_args,
         ),
     ))
 
@@ -1039,16 +1321,17 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(
         name="nano",
         outputs=(nano_elf, nano_stamp),
-        inputs=tuple([*nano_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
-        depends_on=("picolibc", "archive:libc"),
+        inputs=tuple([*nano_inputs, ROOT / "userland/dynamic-app.ld", runtime_so, dynamic_crt_obj, dynamic_note_obj]),
+        depends_on=("runtime", "runtime-loader"),
         kind="compile",
         command=(
             PYTHON, "tools/build_nano.py", "--source", "third_party/nano",
             "--port", "userland/nano", "--picolibc-prefix", relative(picolibc_prefix),
             "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
-            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--linker-script", "userland/dynamic-app.ld", "--leonos-lib", relative(runtime_so),
             "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(nano_work_dir),
             "--output", relative(nano_elf), "--stamp", relative(nano_stamp),
+            "--dynamic", "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
             *compile_option_args,
             *linker_option_args,
         ),
@@ -1067,18 +1350,69 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(
         name="fastfetch",
         outputs=(fastfetch_elf, fastfetch_stamp),
-        inputs=tuple([*fastfetch_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
-        depends_on=("picolibc", "archive:libc"),
+        inputs=tuple([*fastfetch_inputs, ROOT / "userland/dynamic-app.ld", runtime_so, dynamic_crt_obj, dynamic_note_obj]),
+        depends_on=("runtime", "runtime-loader"),
         kind="compile",
         command=(
             PYTHON, "tools/build_fastfetch.py", "--source", "third_party/fastfetch",
             "--port", "userland/fastfetch", "--picolibc-prefix", relative(picolibc_prefix),
             "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
-            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--linker-script", "userland/dynamic-app.ld", "--leonos-lib", relative(runtime_so),
             "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(fastfetch_work_dir),
             "--output", relative(fastfetch_elf), "--stamp", relative(fastfetch_stamp),
+            "--dynamic", "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
             *compile_option_args,
             *linker_option_args,
+        ),
+    ))
+
+    sl_inputs = collect(
+        "third_party/sl/sl.c", "third_party/sl/sl.h", "third_party/sl/LICENSE",
+        "userland/sl/**/*.c", "userland/sl/**/*.h", "userland/sl/**/*.md",
+        "tools/build_sl.py",
+    )
+    graph.add(Target(
+        name="sl",
+        outputs=(sl_elf, sl_stamp),
+        inputs=tuple([*sl_inputs, ROOT / "userland/dynamic-app.ld", runtime_so,
+                      dynamic_crt_obj, dynamic_note_obj]),
+        depends_on=("runtime", "runtime-loader"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_sl.py", "--source", "third_party/sl", "--port", "userland/sl",
+            "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--linker-script", "userland/dynamic-app.ld", "--leonos-lib", relative(runtime_so),
+            "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(sl_work_dir),
+            "--output", relative(sl_elf), "--stamp", relative(sl_stamp),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
+            *compile_option_args,
+            *linker_option_args,
+        ),
+    ))
+
+    less_inputs = collect(
+        "third_party/less/*.c", "third_party/less/*.h", "third_party/less/*.uni",
+        "third_party/less/less.hlp", "third_party/less/lessmsg", "third_party/less/lessmsg_int",
+        "third_party/less/mkhelp.py", "third_party/less/COPYING", "third_party/less/LICENSE",
+        "userland/less/**/*.c", "userland/less/**/*.h", "userland/less/**/*.md",
+        "tools/build_less.py",
+    )
+    graph.add(Target(
+        name="less",
+        outputs=(less_elf, less_stamp),
+        inputs=tuple([*less_inputs, ROOT / "userland/dynamic-app.ld", runtime_so,
+                      dynamic_crt_obj, dynamic_note_obj]),
+        depends_on=("runtime", "runtime-loader"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_less.py", "--source", "third_party/less",
+            "--port", "userland/less", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--linker-script", "userland/dynamic-app.ld", "--leonos-lib", relative(runtime_so),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
+            "--work-dir", relative(less_work_dir), "--output", relative(less_elf),
+            "--stamp", relative(less_stamp), *compile_option_args, *linker_option_args,
         ),
     ))
 
@@ -1092,15 +1426,15 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(
         name="tcc",
         outputs=(tcc_elf, tcc_stamp),
-        inputs=tuple([*tcc_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive,
+        inputs=tuple([*tcc_inputs, ROOT / "userland/linker.ld", static_libc_a, picolibc_static_archive,
                       zlib_archive, libpng_archive]),
-        depends_on=("picolibc", "archive:libc", "archive:zlib", "archive:libpng"),
+        depends_on=("picolibc-static", "archive:libc-static", "archive:zlib", "archive:libpng"),
         kind="compile",
         command=(
             PYTHON, "tools/build_tcc.py", "--source", "third_party/tinycc",
             "--port", "userland/tcc", "--sdk-include", "devtools/include",
-            "--picolibc-prefix", relative(picolibc_prefix), "--leonos-lib", relative(libc_a),
-            "--picolibc-lib", relative(picolibc_archive), "--linker-script", "userland/linker.ld",
+            "--picolibc-prefix", relative(picolibc_static_prefix), "--leonos-lib", relative(static_libc_a),
+            "--picolibc-lib", relative(picolibc_static_archive), "--linker-script", "userland/linker.ld",
             "--zlib-lib", relative(zlib_archive), "--libpng-lib", relative(libpng_archive),
             "--zlib-source", "third_party/zlib", "--libpng-source", "third_party/libpng",
             "--libpng-config", relative(libpng_config),
@@ -1119,17 +1453,21 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     )
     graph.add(Target(
         name="lua",
-        outputs=(lua_elf, lua_stamp),
-        inputs=tuple([*lua_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
-        depends_on=("picolibc", "archive:libc"),
+        outputs=(lua_elf, liblua_so, liblua_archive, lua_stamp),
+        inputs=tuple([*lua_inputs, ROOT / "userland/dynamic-app.ld", runtime_so,
+                      dynamic_crt_obj, dynamic_note_obj, picolibc_archive]),
+        depends_on=("picolibc", "runtime", "runtime-loader"),
         kind="compile",
         command=(
             PYTHON, "tools/build_lua.py", "--source", "third_party/lua",
             "--port", "userland/lua", "--picolibc-prefix", relative(picolibc_prefix),
             "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
-            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--linker-script", "userland/linker.ld", "--dynamic-linker-script", "userland/dynamic-app.ld",
+            "--leonos-lib", relative(libc_a), "--runtime-so", relative(runtime_so),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
             "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(lua_work_dir),
-            "--output", relative(lua_elf), "--stamp", relative(lua_stamp),
+            "--output", relative(lua_elf), "--library", relative(liblua_so),
+            "--static-library", relative(liblua_archive), "--stamp", relative(lua_stamp),
             *compile_option_args,
             *linker_option_args,
         ),
@@ -1166,17 +1504,18 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(
         name="app:pleditor",
         outputs=(pleditor_elf, pleditor_stamp),
-        inputs=tuple([*pleditor_inputs, ROOT / "userland/linker.ld", libc_a, picolibc_archive]),
-        depends_on=("picolibc", "archive:libc"),
+        inputs=tuple([*pleditor_inputs, ROOT / "userland/dynamic-app.ld", runtime_so, dynamic_crt_obj, dynamic_note_obj]),
+        depends_on=("runtime", "runtime-loader"),
         kind="compile",
         command=(
             PYTHON, "tools/build_pleditor.py", "--source", "third_party/pl_editor",
             "--port", "userland/apps/pleditor", "--picolibc-prefix", relative(picolibc_prefix),
             "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
             "--generated-include", relative(paths.generated_include),
-            "--linker-script", "userland/linker.ld", "--leonos-lib", relative(libc_a),
+            "--linker-script", "userland/dynamic-app.ld", "--leonos-lib", relative(runtime_so),
             "--picolibc-lib", relative(picolibc_archive), "--work-dir", relative(pleditor_work_dir),
             "--output", relative(pleditor_elf), "--stamp", relative(pleditor_stamp),
+            "--dynamic", "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
             *compile_option_args,
             *linker_option_args,
         ),
@@ -1208,7 +1547,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     cxxflags_stardustui = [
         cxx, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c++17", "-ffreestanding",
         "-fno-exceptions", "-fno-rtti", "-fno-use-cxa-atexit", "-fno-threadsafe-statics",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
+        "-fno-stack-protector", "-fPIC", "-mno-red-zone", "-mgeneral-regs-only",
         "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-Wno-unused-parameter",
         "-DLEONOS_USE_PICOLIBC", "-DSTARDUSTUI_LINUX", "-D_POSIX_C_SOURCE=200809L",
         "-nostdinc++", f"-I{relative(picolibc_prefix / 'include')}",
@@ -1255,28 +1594,35 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         graph.add(Target(
             name=f"app:{app}",
             outputs=(output,),
-            inputs=tuple([obj, wrapper_obj, *example_inputs]),
-            depends_on=(compile_name, wrapper_compile_name, "archive:stardustui", "picolibc", "archive:libc"),
-            implicit_inputs=(ROOT / "userland/linker.ld",),
+        inputs=tuple([obj, wrapper_obj, *example_inputs, runtime_so, dynamic_crt_obj, dynamic_note_obj,
+                      ROOT / "userland/dynamic-app.ld"]),
+            depends_on=(compile_name, wrapper_compile_name, "archive:stardustui", "runtime", "runtime-loader"),
+            implicit_inputs=(ROOT / "userland/dynamic-app.ld",),
             kind="link",
-            command=(ld, "-nostdlib", "--gc-sections", *build_link_flags,
-                     "-z", "max-page-size=0x1000",
-                     "-T", "userland/linker.ld", "-o", relative(output), relative(wrapper_obj), relative(obj),
-                     "--start-group", relative(stardustui_archive), relative(libc_a),
-                     relative(picolibc_archive), "--end-group"),
+            command=(ld, "-nostdlib", "--gc-sections", *build_link_flags, *dynamic_link_flags,
+                     "-T", "userland/dynamic-app.ld", "-o", relative(output),
+                     relative(dynamic_crt_obj), relative(dynamic_note_obj), relative(wrapper_obj), relative(obj),
+                     "--start-group", relative(stardustui_archive), relative(runtime_so), "--end-group"),
         ))
         stardustui_elfs[app] = output
 
     app_elfs: dict[str, Path] = {}
-    user_targets: list[str] = ["picolibc", "archive:libc", "archive:zlib", "archive:libpng"]
+    user_targets: list[str] = ["picolibc", "archive:libc", "archive:zlib", "archive:libpng",
+                               "runtime", "runtime-loader", "dynlinkerror"]
     if component_enabled("file"):
         user_targets.extend(("file-magic", "file"))
+    if component_enabled("sqlite"):
+        user_targets.append("sqlite")
     if component_enabled("busybox"):
         user_targets.append("busybox")
     if component_enabled("nano"):
         user_targets.append("nano")
     if component_enabled("fastfetch"):
         user_targets.append("fastfetch")
+    if component_enabled("sl"):
+        user_targets.append("sl")
+    if component_enabled("less"):
+        user_targets.append("less")
     if component_enabled("tcc"):
         user_targets.append("tcc")
     if component_enabled("lua"):
@@ -1309,18 +1655,15 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             cflags_app = cflags_doom if app == "doom" else (cflags_mp3play if app == "mp3play" else cflags_user)
             objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (), kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland/{app}.elf"
-        app_archives = [libc_a]
-        if app == "notepad":
-            app_archives.extend((libpng_archive, zlib_archive))
-        app_archives.append(picolibc_archive)
+        app_archives = [runtime_so]
         graph.add(Target(name=f"app:{app}", outputs=(output,),
-                         inputs=tuple([*objects, *app_archives]),
-                         implicit_inputs=(ROOT / "userland/linker.ld",), kind="link",
-                         command=(ld, "-nostdlib", "--gc-sections", *build_link_flags,
-                                  "-z", "max-page-size=0x1000",
-                                  "-T", "userland/linker.ld", "-o", relative(output),
-                                  *map(relative, objects), "--start-group",
-                                  *map(relative, app_archives), "--end-group")))
+                         inputs=tuple([*objects, *app_archives, dynamic_crt_obj, dynamic_note_obj,
+                                       ROOT / "userland/dynamic-app.ld"]),
+                         implicit_inputs=(ROOT / "userland/dynamic-app.ld",), kind="link",
+                         command=(ld, "-nostdlib", "--gc-sections", *build_link_flags, *dynamic_link_flags,
+                                  "-T", "userland/dynamic-app.ld", "-o", relative(output),
+                                  relative(dynamic_crt_obj), relative(dynamic_note_obj),
+                                  *map(relative, objects), relative(runtime_so))))
         app_elfs[app] = output
         user_targets.append(f"app:{app}")
 
@@ -1333,7 +1676,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             objects.append(add_compile(graph, paths, f"compile:installer-app:{app}:{relative(source)}", source, f"user-installer-policy-{app}", asflags_user if is_asm else cflags_installer, (installer_autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland-installer-policy/{app}.elf"
         name = f"installer-policy:{app}"
-        graph.add(Target(name=name, outputs=(output,), inputs=tuple([*objects, installer_libc_a, picolibc_archive]), implicit_inputs=(ROOT / "userland/linker.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", *build_link_flags, "-z", "max-page-size=0x1000", "-T", "userland/linker.ld", "-o", relative(output), *map(relative, objects), "--start-group", relative(installer_libc_a), relative(picolibc_archive), "--end-group")))
+        graph.add(Target(name=name, outputs=(output,), inputs=tuple([*objects, installer_runtime_so, dynamic_crt_obj, dynamic_note_obj]), implicit_inputs=(ROOT / "userland/dynamic-app.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", *build_link_flags, *dynamic_link_flags, "-T", "userland/dynamic-app.ld", "-o", relative(output), relative(dynamic_crt_obj), relative(dynamic_note_obj), *map(relative, objects), relative(installer_runtime_so))))
         installer_policy_elfs[app] = output
         user_targets.append(name)
 
@@ -1379,31 +1722,48 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     sdk_inputs_list: list[Path] = [
         ROOT / "tools/package_devtools.py", ROOT / "third_party/picolibc/COPYING.picolibc",
         ROOT / "third_party/zlib/LICENSE", ROOT / "third_party/libpng/LICENSE",
+        ROOT / "userland/libc/include/curses.h", ROOT / "userland/libc/include/ncurses.h",
+        ROOT / "userland/libc/include/leonos/posix.h",
         libpng_config,
         # The packager copies these build outputs verbatim. Keep them as
         # explicit inputs so a rebuilt runtime cannot leave a stale SDK ZIP.
-        libc_a, picolibc_archive, picolibc_header_stamp, zlib_archive, libpng_archive,
-        *collect("devtools/**/*"),
+        libc_a, runtime_so, runtime_loader, picolibc_archive, picolibc_header_stamp, zlib_archive, libpng_archive,
+        dynamic_crt_obj, dynamic_note_obj, ROOT / "userland/dynamic-app.ld",
+        ROOT / "userland/interpreter.ld", *collect("devtools/**/*"),
     ]
     sdk_depends = ["picolibc", "archive:libc", "archive:zlib", "archive:libpng"]
     sdk_command: list[str] = [
         PYTHON, "tools/package_devtools.py",
         "--sdk-root", "devtools",
         "--leonos-lib", relative(libc_a),
+        "--runtime-so", relative(runtime_so),
+        "--runtime-loader", relative(runtime_loader),
+        "--dynamic-crt", relative(dynamic_crt_obj),
+        "--abi-note", relative(dynamic_note_obj),
         "--picolibc-lib", relative(picolibc_archive),
         "--picolibc-include", relative(picolibc_prefix / "include"),
         "--picolibc-source", "third_party/picolibc",
+        "--leonos-libc-include", "userland/libc/include",
         "--zlib-lib", relative(zlib_archive), "--zlib-source", "third_party/zlib",
         "--libpng-lib", relative(libpng_archive), "--libpng-source", "third_party/libpng",
         "--libpng-config", relative(libpng_config),
     ]
     if component_enabled("file", "sdk"):
-        sdk_inputs_list.extend((file_source / "COPYING", libmagic_archive, file_magic_header))
+        sdk_inputs_list.extend((file_source / "COPYING", libmagic_so, libmagic_archive, file_magic_header))
         sdk_depends.append("file")
         sdk_command.extend((
-            "--libmagic-lib", relative(libmagic_archive),
+            "--libmagic-lib", relative(libmagic_archive), "--libmagic-so", relative(libmagic_so),
             "--libmagic-source", "third_party/file",
             "--libmagic-header", relative(file_magic_header),
+        ))
+    if component_enabled("sqlite", "sdk"):
+        sdk_inputs_list.extend((sqlite_source / "LICENSE.md", sqlite_so, sqlite_archive,
+                                sqlite_header, sqlite_stamp, sqlite_port / "README.md"))
+        sdk_depends.append("sqlite")
+        sdk_command.extend((
+            "--sqlite-lib", relative(sqlite_archive), "--sqlite-so", relative(sqlite_so),
+            "--sqlite-source", "third_party/sqlite", "--sqlite-header", relative(sqlite_header),
+            "--sqlite-stamp", relative(sqlite_stamp),
         ))
     if component_enabled("stardustui", "sdk"):
         sdk_inputs_list.extend((
@@ -1429,12 +1789,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ))
     if component_enabled("lua", "sdk"):
         sdk_inputs_list.extend((
-            lua_elf, lua_stamp, *collect("third_party/lua/*"),
+            lua_elf, liblua_so, liblua_archive, lua_stamp, *collect("third_party/lua/*"),
             *collect("userland/lua/**/*"), lua_app_manifest,
         ))
         sdk_depends.append("lua")
         sdk_command.extend((
             "--component-file", "lua", "bin/lua.elf", relative(lua_elf),
+            "--liblua-lib", relative(liblua_archive), "--liblua-so", relative(liblua_so),
+            "--liblua-source", "third_party/lua",
             "--component-tree", "lua", "upstream", "third_party/lua",
             "--component-tree", "lua", "port", "userland/lua",
             "--component-file", "lua", "lua.app.ini", "userland/apps/lua/lua.app.ini",
@@ -1493,6 +1855,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             if not selected and target_dir.exists():
                 context.detail(f"remove disabled component staging: {relative(target_dir)}")
                 shutil.rmtree(target_dir)
+        for component, library_name in (("file", "libmagic.so.1"), ("lua", "liblua.so.5"),
+                                        ("sqlite", "sqlite.so.3")):
+            library = paths.staging / "system/lib" / library_name
+            if not component_enabled(component, "image") and library.exists():
+                context.detail(f"remove disabled shared library staging: {relative(library)}")
+                library.unlink()
         for app in staged_user_apps:
             if component_enabled(app, "entry"):
                 continue
@@ -1543,9 +1911,30 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         esp_names.append(target.name)
         esp_outputs.append(destination)
     manifest = paths.staging / "system/osmlayer.manifest"
-    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=1\nroot=0:/\nfs=fat32\ngui=desktop.elf\n"), action_key="manifest-v1"))
+    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=1\nroot=0:/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v2"))
     esp_names.append("esp:manifest")
     esp_outputs.append(manifest)
+    for source, destination_rel in ((runtime_loader, "system/lib/ld-leonos.elf"),
+                                    (runtime_so, "system/lib/libleonos.so.1")):
+        destination = paths.staging / destination_rel
+        target = add_copy(graph, f"esp:{destination_rel}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
+    for component, source, filename in (
+        ("file", libmagic_so, "libmagic.so.1"),
+        ("lua", liblua_so, "liblua.so.5"),
+        ("sqlite", sqlite_so, "sqlite.so.3"),
+    ):
+        if not component_enabled(component, "image"):
+            continue
+        destination = paths.staging / "system/lib" / filename
+        target = add_copy(graph, f"esp:system/lib/{filename}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
+    dynlinkerror_destination = paths.staging / "system/apps/dynlinkerror/dynlinkerror.elf"
+    target = add_copy(graph, "esp:dynlinkerror", dynlinkerror_elf, dynlinkerror_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(dynlinkerror_destination)
     for source_rel, destination_rel in SYSTEM_FILES:
         source = ROOT / source_rel
         destination = paths.staging / destination_rel
@@ -1703,6 +2092,20 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                           fastfetch_license_destination)
         esp_names.append(target.name)
         esp_outputs.append(fastfetch_license_destination)
+    if component_enabled("sl", "image"):
+        sl_destination = paths.staging / "programs/sl"
+        for source in (sl_elf, sl_source / "LICENSE", sl_port / "README.md"):
+            destination = sl_destination / ("sl.elf" if source == sl_elf else source.name)
+            target = add_copy(graph, f"esp:sl:{destination.name}", source, destination)
+            esp_names.append(target.name)
+            esp_outputs.append(destination)
+    if component_enabled("less", "image"):
+        less_destination = paths.staging / "programs/less"
+        for source in (less_elf, less_source / "COPYING", less_source / "LICENSE", less_port / "README.md"):
+            destination = less_destination / ("less.elf" if source == less_elf else source.name)
+            target = add_copy(graph, f"esp:less:{destination.name}", source, destination)
+            esp_names.append(target.name)
+            esp_outputs.append(destination)
     if component_enabled("pleditor", "image"):
         pleditor_license_destination = paths.staging / "programs/pleditor/LICENSE"
         target = add_copy(graph, "esp:pleditor:LICENSE", ROOT / "third_party/pl_editor/LICENSE",
@@ -1838,12 +2241,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     vmdk = paths.images / "leonos4.vmdk"
     raw = paths.images / "leonos4.raw"
     esp_fat = paths.images / "esp.fat"
+    root_ext2 = paths.images / "root.ext2"
     vmdk_language = "zh" if config_bool(values, "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH") else "en"
-    graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat),
+    graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat, root_ext2),
                      inputs=tuple([*esp_outputs, config_path, ROOT / "tools/make_image.py"]),
                      depends_on=("esp",), kind="generate", command=(PYTHON, "tools/make_image.py", "--out",
                      relative(vmdk), "--raw", relative(raw), "--esp-tree",
-                     relative(paths.staging), "--default-language", vmdk_language,
+                     relative(paths.staging), "--esp-image", relative(esp_fat),
+                     "--root-image", relative(root_ext2), "--default-language", vmdk_language,
                      "--size-mib", str(config_int(values, "CONFIG_IMAGE_SIZE_MIB")))))
 
     iso = paths.images / "leonos4.iso"
@@ -1861,7 +2266,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     installer_root = paths.out / "install/root.fat"
     installer_stage = paths.out / "install/root"
-    graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), depends_on=("esp",), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--policy-apps", *installer_policy_apps, "--userland-dir", relative(paths.out / "userland"), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--manifest", relative(manifest), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
+    graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], installer_runtime_so, *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), depends_on=("esp", "installer-runtime"), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--policy-runtime", relative(installer_runtime_so), "--policy-apps", *installer_policy_apps, "--userland-dir", relative(paths.out / "userland"), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
     installer_iso = paths.images / "leonos4-installer.iso"
     installer_boot_image = paths.out / "install/installer-efiboot.img"
     graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_font, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
@@ -1973,14 +2378,32 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     def qmp_test(context: ActionContext, editor: str = "nano", tcc_smoke: bool = False,
                  fastfetch_smoke: bool = False,
+                 sl_smoke: bool = False,
+                 less_smoke: bool = False,
+                 dynlinkerror_smoke: bool = False,
+                 cmd_pipeline_smoke: bool = False,
                  desktop_app: str | None = None) -> None:
-        socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}.sock"
-        test_name = desktop_app if desktop_app else ("fastfetch" if fastfetch_smoke else ("tcc" if tcc_smoke else editor))
+        if cmd_pipeline_smoke and not component_enabled("cmd", "image"):
+            raise BuildFailure(
+                "QMP cmd pipeline test requires CONFIG_LEON_COMPONENT_TOOL_CMD_IMAGE=y"
+            )
+        test_name = desktop_app if desktop_app else (
+            "dynlinkerror" if dynlinkerror_smoke else
+            "cmd" if cmd_pipeline_smoke else
+            "less" if less_smoke else
+            "sl" if sl_smoke else
+            "fastfetch" if fastfetch_smoke else
+            "tcc" if tcc_smoke else editor
+        )
+        # Keep the control endpoint and writes isolated from the produced VMDK.
+        # The test name also makes per-test serial logs and QMP diagnostics
+        # unambiguous when individual tests are started independently.
+        socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}-{test_name}.sock"
         serial_log = paths.out / f"qmp-{test_name}-serial.log"
         socket.unlink(missing_ok=True)
         serial_log.parent.mkdir(parents=True, exist_ok=True)
         command = list(qemu_command(paths, values, debug=True))
-        command += ["-qmp", f"unix:{socket},server=on,wait=off"]
+        command += ["-snapshot", "-qmp", f"unix:{socket},server=on,wait=off"]
         context.runner.logger.command(context.worker_id, command)
         with serial_log.open("wb") as serial_output:
             process = subprocess.Popen(command, cwd=ROOT, stdout=serial_output,
@@ -1991,10 +2414,20 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                     smoke_command.append("--tcc")
                 elif fastfetch_smoke:
                     smoke_command.append("--fastfetch")
+                elif sl_smoke:
+                    smoke_command.append("--sl")
+                elif less_smoke:
+                    smoke_command.append("--less")
+                elif dynlinkerror_smoke:
+                    smoke_command.append("--dynlinkerror")
+                elif cmd_pipeline_smoke:
+                    smoke_command.append("--cmd-pipeline")
                 elif desktop_app:
                     smoke_command += ["--desktop-app", desktop_app]
                 else:
                     smoke_command += ["--editor", editor]
+                if less_smoke:
+                    smoke_command += ["--serial-log", str(serial_log)]
                 smoke_command.append(str(socket))
                 context.run(tuple(smoke_command), announce=True)
                 process.wait(timeout=15)
@@ -2009,44 +2442,135 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                         process.kill()
                 socket.unlink(missing_ok=True)
         serial_text = serial_log.read_text(encoding="utf-8", errors="replace")
+        # Once the graphical desktop owns the console, the framebuffer remains
+        # the most reliable user-visible assertion. Keep serial checks as well
+        # when a specific process launch is expected.
+        if cmd_pipeline_smoke or less_smoke:
+            screenshot_name = "less-qmp-smoke.ppm" if less_smoke else "cmd-pipeline-qmp-smoke.ppm"
+            screenshot = paths.images / screenshot_name
+            if not screenshot.is_file() or screenshot.stat().st_size == 0:
+                raise BuildFailure(f"QMP {test_name} test did not produce a terminal screenshot")
         if desktop_app:
             expected_spawns = (f"spawn path=0:/programs/{desktop_app}/{desktop_app}.elf",)
             expected_exits = (f"name={desktop_app}.elf",)
         elif tcc_smoke:
             expected_spawns = (
                 "spawn path=0:/programs/tcc/tcc.elf",
-                "spawn path=0:/programs/tcc/hello.elf",
+                "spawn path=0:/programs/tcc/examples/a.out",
             )
-            expected_exits = ("name=tcc.elf", "name=hello.elf")
+            expected_exits = ("name=tcc.elf", "name=a.out")
         elif fastfetch_smoke:
             expected_spawns = ("spawn path=0:/programs/fastfetch/fastfetch.elf",)
             expected_exits = ("name=fastfetch.elf",)
+        elif sl_smoke:
+            expected_spawns = ("spawn path=0:/programs/sl/sl.elf",)
+            expected_exits = ("name=sl.elf",)
+        elif less_smoke:
+            expected_spawns = ("spawn path=0:/programs/less/less.elf",)
+            expected_exits = ("name=less.elf",)
+        elif dynlinkerror_smoke:
+            expected_spawns = (
+                "spawn path=0:/programs/nano/nano.elf",
+                "spawn path=0:/system/apps/dynlinkerror/dynlinkerror.elf",
+            )
+            expected_exits = ("name=nano.elf",)
+        elif cmd_pipeline_smoke:
+            expected_spawns = (
+                "spawn path=0:/programs/cmd/cmd.elf",
+                "spawn path=0:/programs/busybox/busybox.elf",
+            )
+            expected_exits = ("name=busybox.elf",)
+        elif editor == "vi":
+            expected_spawns = ("spawn path=0:/programs/busybox/busybox.elf",)
+            expected_exits = ("name=busybox.elf",)
         else:
             expected_spawns = (f"spawn path=0:/programs/{editor}/{editor}.elf",)
             expected_exits = (f"name={editor}.elf",)
         for expected_spawn in expected_spawns:
-            if expected_spawn not in serial_text:
+            # Desktop launchers still use the kernel's direct launcher API,
+            # while Ash now performs a real COW fork followed by execve.
+            # Accept either diagnostic form, but always require the exact
+            # executable path so a different child cannot satisfy the check.
+            executable_path = expected_spawn.removeprefix("spawn path=")
+            fork_exec_seen = "exec pid=" in serial_text and f"path={executable_path}" in serial_text
+            if expected_spawn not in serial_text and not fork_exec_seen:
                 raise BuildFailure(f"QMP test did not start {test_name}: missing {expected_spawn}")
         for expected_exit in expected_exits:
             if expected_exit not in serial_text:
                 raise BuildFailure(f"QMP test did not observe {test_name} exit: missing {expected_exit}")
-
+        if cmd_pipeline_smoke:
+            cmd_pids = re.findall(
+                r"\[ntclks\] exec pid=(\d+) path=0:/programs/cmd/cmd\.elf",
+                serial_text,
+            )
+            if not cmd_pids:
+                raise BuildFailure("QMP cmd pipeline test did not identify the cmd process")
+            cmd_pid = cmd_pids[-1]
+            forked_children = re.findall(
+                rf"\[ntclks\] fork parent={re.escape(cmd_pid)} child=(\d+) ",
+                serial_text,
+            )
+            stage_pids = [
+                pid for pid in forked_children
+                if f"[ntclks] exec pid={pid} path=0:/programs/busybox/busybox.elf" in serial_text
+            ]
+            if len(stage_pids) < 2:
+                raise BuildFailure(
+                    "QMP cmd pipeline test did not start both BusyBox pipeline stages"
+                )
+            missing_stage_exits = [
+                pid for pid in stage_pids
+                if f"scheduler task exited pid={pid} name=busybox.elf code=0" not in serial_text
+            ]
+            if missing_stage_exits:
+                raise BuildFailure(
+                    "QMP cmd pipeline test did not observe successful exit for BusyBox stage(s): "
+                    + ", ".join(missing_stage_exits)
+                )
     graph.add(Target(name="test-qmp-terminal", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v3"))
     graph.add(Target(name="test-qmp-pleditor", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "pleditor"), action_key="qmp-pleditor-v1"))
+    graph.add(Target(name="test-qmp-vi", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "vi"), action_key="qmp-vi-v1"))
     graph.add(Target(name="test-qmp-tcc", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, tcc_smoke=True), action_key="qmp-tcc-v1"))
     graph.add(Target(name="test-qmp-fastfetch", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, fastfetch_smoke=True), action_key="qmp-fastfetch-v1"))
+    graph.add(Target(name="test-qmp-sl", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, sl_smoke=True), action_key="qmp-sl-v1"))
+    graph.add(Target(name="test-qmp-less", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, less_smoke=True), action_key="qmp-less-v1"))
+    graph.add(Target(name="test-qmp-dynlinkerror", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, dynlinkerror_smoke=True), action_key="qmp-dynlinkerror-v1"))
+    graph.add(Target(name="test-qmp-cmd", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, cmd_pipeline_smoke=True), action_key="qmp-cmd-v3"))
     graph.add(Target(name="test-qmp-stardust", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="stardusthello"), action_key="qmp-stardust-v1"))
+    qmp_suite_specs: list[dict[str, object]] = []
+    if config_bool(values, "CONFIG_TEST_QMP_TERMINAL"):
+        qmp_suite_specs.append({})
+    if config_bool(values, "CONFIG_TEST_QMP_TCC") and component_enabled("tcc", "image"):
+        qmp_suite_specs.append({"tcc_smoke": True})
+    if component_enabled("cmd", "image"):
+        qmp_suite_specs.append({"cmd_pipeline_smoke": True})
+    if component_enabled("less", "image"):
+        qmp_suite_specs.append({"less_smoke": True})
+    if config_bool(values, "CONFIG_TEST_QMP_STARDUST") and component_enabled("stardusthello", "image"):
+        qmp_suite_specs.append({"desktop_app": "stardusthello"})
+
+    def qmp_test_suite(context: ActionContext) -> None:
+        # A full TinyCC run exceeds a minute on a cold guest.  Running QMP
+        # guests serially keeps timing deterministic and avoids CPU contention
+        # that can make shell input arrive while the compiler owns the PTY.
+        for spec in qmp_suite_specs:
+            qmp_test(context, **spec)
+
+    graph.add(Target(
+        name="test-qmp-suite",
+        inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"),
+        depends_on=("image-vmdk",),
+        kind="command",
+        action=qmp_test_suite,
+        action_key="qmp-suite-v1",
+    ))
     selected_tests: list[str] = []
     if config_bool(values, "CONFIG_TEST_LICENSE_SERVER"):
         selected_tests.append("test-license-server")
     if config_bool(values, "CONFIG_TEST_LOS2W"):
         selected_tests.append("test-los2w")
-    if config_bool(values, "CONFIG_TEST_QMP_TERMINAL"):
-        selected_tests.append("test-qmp-terminal")
-    if config_bool(values, "CONFIG_TEST_QMP_TCC") and component_enabled("tcc", "image"):
-        selected_tests.append("test-qmp-tcc")
-    if config_bool(values, "CONFIG_TEST_QMP_STARDUST") and component_enabled("stardusthello", "image"):
-        selected_tests.append("test-qmp-stardust")
+    if qmp_suite_specs:
+        selected_tests.append("test-qmp-suite")
     if config_bool(values, "CONFIG_TEST_COMPONENT_CONFIG"):
         selected_tests.append("test-component-config")
     graph.add(Target(name="test-all", depends_on=tuple(selected_tests), group=True, kind="aggregate"))
@@ -2084,9 +2608,9 @@ def task_tools(task: str) -> tuple[str, ...]:
                      "gcc", "gawk")
     userland = (*compiler, "llvm-ar", *host_userland)
     esp = (*userland, "rustc", "grub-mkfont", "grub-mkstandalone")
-    vmdk = (*esp, "truncate", "sgdisk", "mkfs.fat", "mcopy", "dd", "qemu-img")
+    vmdk = (*esp, "truncate", "mkfs.fat", "mcopy", "mke2fs", "dd", "qemu-img")
     iso = (*esp, "grub-mkrescue", "xorriso")
-    if task in {"file", "file-magic"}:
+    if task in {"file", "file-magic", "sqlite"}:
         return userland
     if task in {"kernel", "loader", "drivers"}:
         return compiler
@@ -2112,7 +2636,8 @@ def task_tools(task: str) -> tuple[str, ...]:
         return (*vmdk, "grub-mkrescue", "xorriso", "qemu-system-x86_64")
     if task == "menuconfig":
         return ("kconfig-mconf",)
-    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-stardust", "test-all"}:
+    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-fastfetch", "test-qmp-sl", "test-qmp-less",
+                "test-qmp-dynlinkerror", "test-qmp-cmd", "test-qmp-stardust", "test-all"}:
         return (*vmdk, "qemu-system-x86_64")
     return ()
 
@@ -2123,8 +2648,9 @@ def create_runner(
     task_id: str,
     *,
     verbose: bool = False,
+    theme: str = "default",
 ) -> BuildRunner:
-    return BuildRunner(graph, paths, load_settings(paths), task_id, verbose=verbose)
+    return BuildRunner(graph, paths, load_settings(paths), task_id, verbose=verbose, theme=theme)
 
 
 def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
@@ -2134,7 +2660,7 @@ def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
 
 
 def display_help() -> str:
-    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py tui\n  build.py [-v|--verbose] run <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py profile <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py config <list|save|load|reset|import|export> [name] [path]\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-stardust|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nOptions:\n  -v, --verbose  Print target graph, cache decisions, commands, process diagnostics, and actions.\n  --profile       Build from configs/profiles/<name>.conf without modifying the active config.\n  --set           Apply a non-persistent CONFIG_KEY=VALUE override.\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, release, run, run-debug, run-iso, menuconfig, clean\n"""
+    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py tui\n  build.py [-v|--verbose] run <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py profile <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py config <list|save|load|reset|import|export> [name] [path]\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nOptions:\n  -v, --verbose  Print target graph, cache decisions, commands, process diagnostics, and actions.\n  --profile       Build from configs/profiles/<name>.conf without modifying the active config.\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, release, run, run-debug, run-iso, menuconfig, clean\n"""
 
 
 PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -2454,11 +2980,12 @@ def profile_target(
     *,
     json_output: bool,
     verbose: bool,
+    theme: str = "default",
 ) -> dict[str, object]:
     require_linux()
     require_tools(task_tools(target.name))
     require_grub_efi_modules(paths, target.name)
-    runner = create_runner(paths, graph, task_id, verbose=verbose)
+    runner = create_runner(paths, graph, task_id, verbose=verbose, theme=theme)
     roots = build_roots(graph, target)
     if json_output:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -2478,11 +3005,12 @@ def run_foreground(
     label: str,
     *,
     verbose: bool,
+    theme: str = "default",
 ) -> int:
     require_linux()
     require_tools(task_tools(target.name))
     require_grub_efi_modules(paths, target.name)
-    runner = create_runner(paths, graph, task_id, verbose=verbose)
+    runner = create_runner(paths, graph, task_id, verbose=verbose, theme=theme)
     runner.run(build_roots(graph, target), label)
     return 0
 
@@ -2495,6 +3023,7 @@ def run_client(
     *,
     json_output: bool,
     verbose: bool,
+    theme: str = "default",
 ) -> int:
     if not command or command[0] not in {"run", "gen", "test", "profile"}:
         raise BuildFailure("client accepts run, gen, test, or profile followed by its arguments")
@@ -2502,7 +3031,12 @@ def run_client(
     log = store.log_path(task_id)
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("w", encoding="utf-8", newline="\n") as handle:
-        detail = " (verbose)" if verbose else ""
+        details: list[str] = []
+        if verbose:
+            details.append("verbose")
+        if theme != "default":
+            details.append(f"theme={theme}")
+        detail = f" ({', '.join(details)})" if details else ""
         handle.write(f"Queued background task {task_id}{detail}: {' '.join(command)}\n")
     with open(os.devnull, "w", encoding="utf-8") as sink:
         worker_command = [*command]
@@ -2510,6 +3044,8 @@ def run_client(
             worker_command.append("--verbose")
         if json_output:
             worker_command.append("--json")
+        if theme != "default":
+            worker_command.append(f"--theme={theme}")
         subprocess.Popen(
             [PYTHON, "build.py", "--worker", "--task-id", task_id, *worker_command],
             cwd=ROOT,
@@ -2525,7 +3061,12 @@ def run_client(
             title="Background task",
         )
     else:
-        suffix = " (verbose)" if verbose else ""
+        details: list[str] = []
+        if verbose:
+            details.append("verbose")
+        if theme != "default":
+            details.append(f"theme={theme}")
+        suffix = f" ({', '.join(details)})" if details else ""
         print(f"build: task \"{' '.join(command)}\" start. ID:{task_id}{suffix}")
     return 0
 
@@ -2538,6 +3079,10 @@ def parser() -> argparse.ArgumentParser:
     argument_parser.add_argument(
         "-v", "--verbose", action="store_true",
         help="show full build graph, cache, command, process, and action diagnostics",
+    )
+    argument_parser.add_argument(
+        "--theme", choices=("default", "linux", "meson", "cargo"), default="default",
+        help="render build logs using the selected build-system style",
     )
     commands = argument_parser.add_subparsers(dest="command")
 
@@ -2577,8 +3122,8 @@ def parser() -> argparse.ArgumentParser:
     add_config_options(generate)
     test = commands.add_parser("test")
     test.add_argument("item", choices=("license-server", "los2w", "component-config",
-                                       "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch",
-                                       "qmp-stardust", "all"))
+                                       "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl", "qmp-less",
+                                       "qmp-dynlinkerror", "qmp-cmd", "qmp-stardust", "all"))
     add_config_options(test)
     config = commands.add_parser("config")
     config.add_argument("action", choices=("list", "save", "load", "reset", "import", "export"))
@@ -2597,11 +3142,29 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     values = list(argv if argv is not None else sys.argv[1:])
     json_output = "--json" in values
     verbose = any(value in {"-v", "--verbose"} for value in values)
-    values = [value for value in values if value not in {"--json", "-v", "--verbose"}]
+    theme = "default"
+    filtered: list[str] = []
+    index = 0
+    while index < len(values):
+        value = values[index]
+        if value.startswith("--theme="):
+            theme = value.split("=", 1)[1]
+        elif value == "--theme":
+            if index + 1 < len(values):
+                theme = values[index + 1]
+                index += 1
+            else:
+                filtered.append(value)
+        elif value not in {"--json", "-v", "--verbose"}:
+            filtered.append(value)
+        index += 1
+    values = filtered
     if json_output:
         values.insert(0, "--json")
     if verbose:
         values.insert(0, "--verbose")
+    if theme != "default":
+        values.insert(0, f"--theme={theme}")
     return parser().parse_args(values)
 
 
@@ -2632,6 +3195,7 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.args,
                 json_output=arguments.json_output,
                 verbose=arguments.verbose,
+                theme=arguments.theme,
             )
         if arguments.command == "cache":
             data = cache_report(paths, store) if arguments.action == "stats" else prune_cache(paths, store)
@@ -2690,6 +3254,7 @@ def main(argv: list[str] | None = None) -> int:
                 graph.resolve_target(arguments.task),
                 f"run {arguments.task}",
                 verbose=effective_verbose,
+                theme=arguments.theme,
             )
         if arguments.command == "gen":
             return run_foreground(
@@ -2699,6 +3264,7 @@ def main(argv: list[str] | None = None) -> int:
                 graph.resolve_target(arguments.file),
                 f"gen {arguments.file}",
                 verbose=effective_verbose,
+                theme=arguments.theme,
             )
         if arguments.command == "test":
             target = graph.resolve_target(f"test-{arguments.item}")
@@ -2709,6 +3275,7 @@ def main(argv: list[str] | None = None) -> int:
                 target,
                 f"test {arguments.item}",
                 verbose=effective_verbose,
+                theme=arguments.theme,
             )
         if arguments.command == "profile":
             target = graph.resolve_target(arguments.task)
@@ -2721,6 +3288,7 @@ def main(argv: list[str] | None = None) -> int:
                 graph_seconds,
                 json_output=arguments.json_output,
                 verbose=effective_verbose,
+                theme=arguments.theme,
             )
             store.update(task_id, profile=data)
             emit_data(data, json_output=arguments.json_output, title="Build profile")
@@ -2754,7 +3322,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         raise BuildFailure(f"unsupported command: {arguments.command}")
     except (BuildFailure, GraphError, FileNotFoundError, ValueError) as exc:
-        message = f"build: {exc}"
+        message = f"{'' if arguments.theme != 'default' else 'build: '}{exc}"
         print(f"{RED}{message}{RESET}", file=sys.stderr)
         try:
             record = store.read(task_id)

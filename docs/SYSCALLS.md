@@ -45,15 +45,17 @@ The kernel-side numbers and errno constants are in:
 | 24 | `sched_yield` | `sched_yield` | Yields the current task if another task can run. |
 | 35 | `nanosleep` | `sleep_ms` | libc passes milliseconds; kernel also accepts a Linux-like timespec pointer. |
 | 39 | `getpid` | `getpid` | Returns the current scheduler PID. |
-| 59 | `execve` | `execve` | Spawns an ELF user program and returns the child PID. |
+| 57 | `fork` | `fork` | Creates a copy-on-write child; the child receives zero. |
+| 58 | `vfork` | `vfork` | Currently has the same copy-on-write behavior as `fork`. |
+| 59 | `execve` | `execve` | Replaces the current process image with an ELF program. |
 | 60 | `exit` | `exit` | Releases process-owned files, windows, PTYs, and exits with a code. |
 | 61 | `wait4` | `wait4` | Waits for a child and writes a Linux-style shifted status. |
 | 79 | `getcwd` | `getcwd` | Copies the task current directory. |
 | 80 | `chdir` | `chdir` | Changes the task current directory after path lookup. |
-| 82 | `rename` | `rename` | Renames FAT32 files or directories. |
-| 83 | `mkdir` | `mkdir` | Creates a FAT32 directory. |
-| 84 | `rmdir` | `rmdir` | Removes an empty FAT32 directory. |
-| 87 | `unlink` | `unlink` | Removes a FAT32 file. |
+| 82 | `rename` | `rename` | Renames FAT32 or ext2 files/directories within one filesystem. |
+| 83 | `mkdir` | `mkdir` | Creates a FAT32 or ext2 directory. |
+| 84 | `rmdir` | `rmdir` | Removes an empty FAT32 or ext2 directory. |
+| 87 | `unlink` | `unlink` | Removes a FAT32 or ext2 file. |
 
 ## File and Directory Calls
 
@@ -131,9 +133,12 @@ large page-aligned free blocks with `munmap`.
 
 ## Process and Scheduler Calls
 
-`execve(path, argv, envp)` validates and copies the user argument vectors,
-spawns the requested ELF, and returns the child PID rather than replacing the
-current process image.
+`fork()` creates a copy-on-write child with inherited file descriptors. The
+parent receives the child PID and the child receives zero. `execve(path, argv,
+envp)` validates and copies the user argument vectors, then replaces the
+current process image while preserving its PID, working directory, identity,
+PTY and descriptors not marked `FD_CLOEXEC`. Use `fork()` followed by
+`execve()` to start a child; GUI applications can use `leonos_spawn_argv()`.
 
 `wait4(pid, status, options, rusage)` waits for a child process. `options` and
 `rusage` are accepted for ABI shape but are not a full Linux wait
@@ -196,8 +201,18 @@ Important requests include:
 - `LEONOS_IOCTL_NET_SOCKET_OPEN`, `LEONOS_IOCTL_NET_SOCKET_CONNECT`,
   `LEONOS_IOCTL_NET_SOCKET_SEND`, `LEONOS_IOCTL_NET_SOCKET_RECV`,
   `LEONOS_IOCTL_NET_SOCKET_CLOSE`, `LEONOS_IOCTL_NET_CONNECTIONS`
-- `LEONOS_INSTALL_IOCTL_LIST_DISKS`, `LEONOS_INSTALL_IOCTL_FORMAT_ESP`,
+- `LEONOS_INSTALL_IOCTL_LIST_DISKS`, `LEONOS_INSTALL_IOCTL_FORMAT_TARGET`
+  (with `LEONOS_INSTALL_IOCTL_FORMAT_ESP` retained as an ABI alias),
   `LEONOS_INSTALL_IOCTL_MOUNT_TARGET`
+- `LEONOS_DISK_IOCTL_LIST_PARTITIONS`, `LEONOS_DISK_IOCTL_FORMAT_PARTITION`,
+  `LEONOS_DISK_IOCTL_DELETE_PARTITION`, `LEONOS_DISK_IOCTL_CREATE_PARTITION`,
+  `LEONOS_DISK_IOCTL_MOUNT_PARTITION`,
+  `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`. These use the fixed-size records in
+  `leonos/fs.h`; listing reads a GPT table, while create/format/delete/mount/
+  unmount require administrator install authorization and reject current boot
+  or mounted installer-target disks. A data mount returns the first free
+  numeric drive; unmount is rejected with busy while a live process holds a
+  CWD, descriptor, executable image, or file mapping on the target drive.
 - `LEONOS_TEXT_IOCTL_LAYOUT_UTF8`
 - `LEONOS_PTY_IOCTL_CREATE`, `LEONOS_PTY_IOCTL_SELF`,
   `LEONOS_PTY_IOCTL_READ_OUTPUT`, `LEONOS_PTY_IOCTL_WRITE_INPUT`,
@@ -302,8 +317,8 @@ task and inherited by child applications. Logout clears the session identity and
 kills ordinary user tasks in the session, then desktop returns to `login.elf`.
 
 The kernel asks middlelayer policy before file, task-kill, user-management, and
-installer-storage operations. File authorization now uses the FAT32-side
-`LEONACL.SYS` ACL model. The mapping is:
+installer-storage operations. File authorization uses the `LEONACL.SYS` ACL
+sidecar model on FAT32 and ext2 roots. The mapping is:
 
 - `stat`, directory reads, and file reads: Read/List.
 - `open` create/truncate, `write`, and `mkdir`: Write/Create.
@@ -320,15 +335,35 @@ remain available to any logged-in user.
 
 ## Current Limitations
 
-- There is no `fork`, `clone`, `pipe`, `poll`, or signal ABI.
+- `fork`, `vfork`, `pipe`, process groups and default signal actions are
+  available; user-installed signal handlers and `clone` are not yet supported.
 - Networking has TCP client sockets and a TLS 1.2 HTTPS client path, but no TCP
   listener/server mode, UDP socket API, or full retransmission/window-management
   surface yet.
-- `execve` spawns a child process instead of replacing the caller.
+- `execve` replaces the caller; use `fork` followed by `execve` to launch a
+  child process.
+- `libleonos.so.1` owns the common process, descriptor, pipe, process-group,
+  PTY foreground-group, priority, resource-limit, and wait wrappers. Their
+  standard declarations come from the SDK's Picolibc headers. `waitpid` with
+  `WNOHANG` returns `0` when no child state is available; blocking waits yield
+  across the kernel's temporary `EAGAIN` response. `vfork` currently has the
+  same COW semantics as `fork`.
+- `nice` and `getpriority` return standard priorities in the `-20..19` range.
+  Raw syscall users receive `priority + 20` and must subtract 20 after checking
+  for a negative errno; the shared runtime performs that decoding.
+- Terminal Ctrl+C/Ctrl+Z actions are delivered to the foreground process group,
+  but `signal`, `sigaction`, `sigprocmask`, and user-installed signal handlers
+  are not available yet (`signal()` returns `SIG_ERR` with `ENOSYS`).
+- The shared runtime contains the common ANSI curses subset used by Nano and
+  `sl`; applications should include the SDK's `<curses.h>` or `<ncurses.h>`
+  instead of carrying a private terminal shim.
+- `libleonos.so.1` also supplies the common POSIX adapters for file status,
+  directory iteration and `fcntl`; third-party ports should use the SDK's
+  normal Picolibc headers rather than copying those wrappers into each port.
 - File-backed `mmap` is private and read-only.
 - Open permissions are ACL checks, not a full Unix permission model.
-- FAT32 does not store standard owner/mode metadata; LeonOS stores ACL metadata
-  in hidden `LEONACL.SYS` sidecar files and enforces it at syscall/ioctl
-  boundaries.
+- FAT32 and the supported ext2 subset do not expose LeonOS ACLs as native
+  ownership/mode metadata; LeonOS stores ACL metadata in hidden `LEONACL.SYS`
+  sidecar files and enforces it at syscall/ioctl boundaries.
 - `ioctl` is intentionally broad and should be split into dedicated syscalls or
   narrower devices as the ABI stabilizes.

@@ -1,51 +1,38 @@
 /* POSIX-shaped file helpers backed by the LeonOS userland ABI. */
-#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
 #include <leonos/pty.h>
 #include <poll.h>
 #include <signal.h>
-#include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#include <string.h>
 #include <unistd.h>
 
-#define LEONOS_FS_TYPE_FILE 1U
-#define LEONOS_FS_TYPE_DIR 2U
-#define LEONOS_FS_TYPE_DEVICE 3U
-#define LEONOS_DIR_NAME_LEN 128U
-
-struct leonos_stat_raw {
-    uint32_t type;
-    uint32_t reserved;
-    uint64_t size;
-};
-
-struct leonos_dir_entry_raw {
-    uint32_t type;
-    char name[LEONOS_DIR_NAME_LEN];
-};
-
-extern int leonos_stat_raw_call(const char *path, struct leonos_stat_raw *st)
-    __asm__("stat");
-extern int leonos_fstat_raw_call(int fd, struct leonos_stat_raw *st)
-    __asm__("fstat");
-extern int leonos_readdir(int fd, struct leonos_dir_entry_raw *entry);
 extern int sleep_ms(unsigned long milliseconds);
 extern unsigned long leonos_uptime_ms(void);
-extern int wait4(int pid, int *status, int options, void *rusage);
-extern long syscall2(long number, long first, long second);
-extern long syscall3(long number, long first, long second, long third);
 extern char **environ;
 
-#define LEONOS_SYS_DUP2 33
-#define LEONOS_SYS_FCNTL 72
-#define LEONOS_SPAWN_ARG_MAX 8U
+/* Ash and libbb/lineedit share this latch when an input wait is interrupted.
+ * The rest of BusyBox's signals.c is intentionally replaced by the LeonOS
+ * signal shim below, so keep this small state definition here as well. */
+signed char bb_got_signal;
+
+void record_signo(int signal_number)
+{
+    bb_got_signal = (signed char)signal_number;
+}
+
+/* POSIX requires environ to remain a valid, NULL-terminated vector.  Ash
+ * calls clearenv() while preparing noexec applets, so never leave it NULL. */
+static char *leonos_empty_environment[] = { 0 };
+
+const char *leonos_shell_command_path(const char *name);
 
 /*
  * LeonOS terminals are inherited standard streams, not reopenable named tty
@@ -61,15 +48,17 @@ int ttyname_r(int fd, char *buffer, size_t length)
     return ENOTTY;
 }
 
-/*
- * The kernel currently has no POSIX signal delivery.  less still registers
- * fatal-signal cleanup handlers; retaining the registration call as a no-op
- * is correct until those signals can actually reach Ring-3 processes.
- */
+/* Signal handlers remain a compatibility stub; kill() termination is provided
+ * by the kernel syscall ABI below. */
 void bb_signals(int signals, void (*handler)(int))
 {
     (void)signals;
     (void)handler;
+}
+
+int sigaction_set(int signal_number, const struct sigaction *action)
+{
+    return sigaction(signal_number, action, NULL);
 }
 
 void kill_myself_with_sig(int signal_number)
@@ -77,19 +66,16 @@ void kill_myself_with_sig(int signal_number)
     exit(128 + signal_number);
 }
 
-/* Picolibc time() needs gettimeofday(); LeonOS has a monotonic uptime clock. */
-int gettimeofday(struct timeval *value, void *timezone)
+int sigprocmask_allsigs(int how)
 {
-    unsigned long milliseconds;
-    (void)timezone;
-    if (!value) {
-        errno = EINVAL;
-        return -1;
-    }
-    milliseconds = leonos_uptime_ms();
-    value->tv_sec = (time_t)(milliseconds / 1000U);
-    value->tv_usec = (suseconds_t)((milliseconds % 1000U) * 1000U);
-    return 0;
+    sigset_t signals;
+    sigfillset(&signals);
+    return sigprocmask(how, &signals, NULL);
+}
+
+int sigprocmask2(int how, sigset_t *signals)
+{
+    return sigprocmask(how, signals, signals);
 }
 
 static void leonos_zero(void *buffer, uint32_t length)
@@ -99,146 +85,6 @@ static void leonos_zero(void *buffer, uint32_t length)
     for (index = 0; index < length; ++index) {
         bytes[index] = 0;
     }
-}
-
-static unsigned char leonos_dirent_type(uint32_t type)
-{
-    if (type == LEONOS_FS_TYPE_DIR) {
-        return DT_DIR;
-    }
-    if (type == LEONOS_FS_TYPE_DEVICE) {
-        return DT_CHR;
-    }
-    return DT_REG;
-}
-
-DIR *opendir(const char *path)
-{
-    DIR *directory;
-    int fd;
-    if (!path) {
-        return 0;
-    }
-    fd = open(path, O_RDONLY, 0);
-    if (fd < 0) {
-        return 0;
-    }
-    directory = (DIR *)malloc(sizeof(*directory));
-    if (!directory) {
-        close(fd);
-        return 0;
-    }
-    leonos_zero(directory, sizeof(*directory));
-    directory->fd = fd;
-    return directory;
-}
-
-struct dirent *readdir(DIR *directory)
-{
-    struct leonos_dir_entry_raw entry;
-    uint32_t index;
-    int result;
-    if (!directory) {
-        return 0;
-    }
-    result = leonos_readdir(directory->fd, &entry);
-    if (result <= 0) {
-        return 0;
-    }
-    leonos_zero(&directory->dirent, sizeof(directory->dirent));
-    directory->dirent.d_type = leonos_dirent_type(entry.type);
-    for (index = 0; index + 1U < sizeof(directory->dirent.d_name) && entry.name[index]; ++index) {
-        directory->dirent.d_name[index] = entry.name[index];
-    }
-    return &directory->dirent;
-}
-
-int closedir(DIR *directory)
-{
-    int result;
-    if (!directory) {
-        return -1;
-    }
-    result = close(directory->fd);
-    free(directory);
-    return result;
-}
-
-static int leonos_posix_stat_fill(const struct leonos_stat_raw *raw, struct stat *st)
-{
-    if (!raw || !st) {
-        errno = EINVAL;
-        return -1;
-    }
-    leonos_zero(st, sizeof(*st));
-    st->st_mode = raw->type == LEONOS_FS_TYPE_DIR ? (S_IFDIR | 0755) :
-                  raw->type == LEONOS_FS_TYPE_DEVICE ? (S_IFCHR | 0660) :
-                  (S_IFREG | 0644);
-    st->st_size = (off_t)raw->size;
-    st->st_nlink = 1;
-    st->st_blksize = 512;
-    st->st_blocks = (blkcnt_t)((raw->size + 511U) / 512U);
-    return 0;
-}
-
-static int leonos_posix_stat_call(int result, const struct leonos_stat_raw *raw,
-                                  struct stat *st)
-{
-    if (result < 0) {
-        errno = -result;
-        return -1;
-    }
-    return leonos_posix_stat_fill(raw, st);
-}
-
-/* FAT32 exposes only a compact type/size record through the current ABI.
- * BusyBox's copy and move applets still need stable, distinct identity fields
- * to reject copying a file onto itself, so derive a deterministic inode from
- * the user-visible path in the path-based stat adapter. */
-static ino_t leonos_path_inode(const char *path)
-{
-    const unsigned char *cursor = (const unsigned char *)path;
-    uint64_t hash = 1469598103934665603ULL;
-    while (cursor && *cursor) {
-        hash ^= *cursor++;
-        hash *= 1099511628211ULL;
-    }
-    hash ^= hash >> 32;
-    hash &= 0x7fffffffffffffffULL;
-    return (ino_t)(hash ? hash : 1ULL);
-}
-
-/* BusyBox is compiled with stat/fstat remapped to these POSIX ABI adapters. */
-int leonos_posix_stat(const char *path, struct stat *st)
-{
-    struct leonos_stat_raw raw;
-    int result;
-    if (!path || !st) {
-        errno = EINVAL;
-        return -1;
-    }
-    result = leonos_stat_raw_call(path, &raw);
-    if (leonos_posix_stat_call(result, &raw, st) < 0) {
-        return -1;
-    }
-    st->st_dev = 1;
-    st->st_ino = leonos_path_inode(path);
-    return 0;
-}
-
-int leonos_posix_fstat(int fd, struct stat *st)
-{
-    struct leonos_stat_raw raw;
-    if (!st) {
-        errno = EINVAL;
-        return -1;
-    }
-    return leonos_posix_stat_call(leonos_fstat_raw_call(fd, &raw), &raw, st);
-}
-
-int lstat(const char *path, struct stat *st)
-{
-    return leonos_posix_stat(path, st);
 }
 
 int link(const char *old_path, const char *new_path)
@@ -288,40 +134,6 @@ int utimes(const char *path, const struct timeval times[2])
     return -1;
 }
 
-int fcntl(int fd, int command, ...)
-{
-    va_list args;
-    long argument = 0;
-    long result;
-    va_start(args, command);
-    if (command == F_DUPFD || command == F_DUPFD_CLOEXEC ||
-        command == F_SETFD || command == F_SETFL) {
-        argument = va_arg(args, int);
-    }
-    va_end(args);
-    result = syscall3(LEONOS_SYS_FCNTL, fd, command, argument);
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
-    return (int)result;
-}
-
-int dup2(int old_fd, int new_fd)
-{
-    long result = syscall2(LEONOS_SYS_DUP2, old_fd, new_fd);
-    if (result < 0) {
-        errno = (int)-result;
-        return -1;
-    }
-    return (int)result;
-}
-
-uid_t getuid(void)
-{
-    return 0;
-}
-
 uid_t geteuid(void)
 {
     return 0;
@@ -337,117 +149,84 @@ gid_t getegid(void)
     return 0;
 }
 
-pid_t getppid(void)
+int getgroups(int count, gid_t groups[])
 {
+    (void)groups;
+    if (count < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    /* LeonOS currently has no supplementary-group database. */
     return 0;
 }
 
-pid_t fork(void)
+const char *leonos_shell_command_path(const char *name)
 {
-    errno = ENOSYS;
-    return -1;
+    if (!name || !name[0]) return 0;
+    if (strchr(name, '/') || strchr(name, ':')) return name;
+    if (strcmp(name, "nano") == 0) return "0:/programs/nano/nano.elf";
+    if (strcmp(name, "pleditor") == 0) return "0:/programs/pleditor/pleditor.elf";
+    if (strcmp(name, "tcc") == 0) return "0:/programs/tcc/tcc.elf";
+    if (strcmp(name, "lua") == 0) return "0:/programs/lua/lua.elf";
+    if (strcmp(name, "file") == 0) return "0:/programs/file/file.elf";
+    if (strcmp(name, "fastfetch") == 0) return "0:/programs/fastfetch/fastfetch.elf";
+    if (strcmp(name, "less") == 0) return "0:/programs/less/less.elf";
+    if (strcmp(name, "sl") == 0) return "0:/programs/sl/sl.elf";
+    if (strcmp(name, "cmd") == 0) return "0:/programs/cmd/cmd.elf";
+    return 0;
 }
 
-pid_t vfork(void)
+static int leonos_exec_busybox_applet(char *const argv[])
 {
-    errno = ENOSYS;
-    return -1;
-}
-
-/* Execute one command through the kernel's spawn ABI and wait for it. */
-int leonos_spawn_wait_argv(const char *path, char *const argv[])
-{
-    int pty_id = leonos_pty_self();
-    int pid;
-    int status = 0;
-    int waited;
-    if (!path || !path[0] || !argv) {
-        errno = EINVAL;
-        return 127;
-    }
-    pid = leonos_pty_spawn_argv(path, pty_id > 0 ? (uint32_t)pty_id : 0U,
-                                argv, environ);
-    if (pid < 0) {
-        errno = -pid;
-        return 127;
-    }
-    for (;;) {
-        waited = wait4(pid, &status, 0, 0);
-        if (waited == pid) {
-            return (status >> 8) & 0xff;
-        }
-        if (waited == -ECHILD) {
-            sleep_ms(1);
-            continue;
-        }
-        errno = waited < 0 ? -waited : ECHILD;
-        return 127;
-    }
-}
-
-/* Use BusyBox's documented "busybox <applet>" process form. */
-int leonos_spawn_busybox_applet_wait(const char *path, char *const applet_argv[])
-{
-    char *exec_argv[LEONOS_SPAWN_ARG_MAX + 1];
-    uint32_t count = 0;
-
-    if (!path || !path[0] || !applet_argv || !applet_argv[0]) {
-        errno = EINVAL;
-        return 127;
-    }
-    exec_argv[count++] = (char *)path;
-    while (applet_argv[count - 1U]) {
-        if (count >= LEONOS_SPAWN_ARG_MAX) {
-            errno = E2BIG;
-            return 127;
-        }
-        exec_argv[count] = applet_argv[count - 1U];
-        ++count;
-    }
-    exec_argv[count] = 0;
-    return leonos_spawn_wait_argv(path, exec_argv);
-}
-
-int pipe(int filedes[2])
-{
-    (void)filedes;
-    errno = ENOSYS;
-    return -1;
-}
-
-pid_t waitpid(pid_t pid, int *status, int options)
-{
+    size_t argc = 0;
+    size_t index;
+    char **exec_argv;
     int result;
-    for (;;) {
-        result = wait4(pid, status, options, 0);
-        if (result >= 0 || (options & 1)) {
-            return (pid_t)result;
-        }
-        if (result != -ECHILD) {
-            errno = -result;
-            return -1;
-        }
-        sleep_ms(1);
+    int saved_errno;
+
+    if (!argv || !argv[0]) {
+        errno = EINVAL;
+        return -1;
     }
+    while (argv[argc]) {
+        ++argc;
+    }
+    if (argc > (((size_t)-1) / sizeof(*exec_argv)) - 2U) {
+        errno = E2BIG;
+        return -1;
+    }
+    exec_argv = malloc((argc + 2U) * sizeof(*exec_argv));
+    if (!exec_argv) {
+        errno = ENOMEM;
+        return -1;
+    }
+    exec_argv[0] = "busybox";
+    for (index = 0; index < argc; ++index) {
+        exec_argv[index + 1U] = argv[index];
+    }
+    exec_argv[argc + 1U] = 0;
+    result = execve("0:/programs/busybox/busybox.elf", exec_argv, environ);
+    saved_errno = errno;
+    free(exec_argv);
+    errno = saved_errno;
+    return result;
 }
 
-int sigaction(int signal_number, const struct sigaction *action,
-              struct sigaction *previous)
+int execvp(const char *file, char *const argv[])
 {
-    (void)signal_number;
-    (void)action;
-    if (previous) {
-        leonos_zero(previous, sizeof(*previous));
-        previous->sa_handler = SIG_DFL;
+    const char *path = leonos_shell_command_path(file);
+    if (path) {
+        return execve(path, argv, environ);
     }
-    return 0;
-}
 
-int access(const char *path, int mode)
-{
-    struct leonos_stat_raw raw;
-    (void)mode;
-    return path && leonos_stat_raw_call(path, &raw) >= 0 ? 0 : -1;
+    /* Other BusyBox callers may use execvp directly. Ash uses its dedicated
+     * image resolver patch, while this fallback still expresses a bare
+     * applet through BusyBox's documented process form. */
+    if (!argv || !argv[0]) {
+        errno = EINVAL;
+        return -1;
+    }
+    return leonos_exec_busybox_applet(argv);
 }
 
 int glob(const char *pattern, int flags,
@@ -472,42 +251,14 @@ unsigned long long monotonic_ms(void)
     return (unsigned long long)leonos_uptime_ms();
 }
 
+unsigned long long monotonic_us(void)
+{
+    return (unsigned long long)leonos_uptime_ms() * 1000ULL;
+}
+
 unsigned bb_clk_tck(void)
 {
     return 1000U;
-}
-
-const char *get_signame(int signal_number)
-{
-    (void)signal_number;
-    return "signal";
-}
-
-int poll(struct pollfd *fds, nfds_t count, int timeout_ms)
-{
-    nfds_t index;
-    unsigned long started = leonos_uptime_ms();
-    for (;;) {
-        int ready = 0;
-        int stdin_available = leonos_pty_input_available();
-        for (index = 0; index < count; ++index) {
-            fds[index].revents = 0;
-            if (fds[index].fd < 0 || !(fds[index].events & POLLIN)) {
-                continue;
-            }
-            if (fds[index].fd != STDIN_FILENO || stdin_available != 0) {
-                fds[index].revents = POLLIN;
-                ++ready;
-            }
-        }
-        if (ready || timeout_ms == 0) {
-            return ready;
-        }
-        if (timeout_ms > 0 && leonos_uptime_ms() - started >= (unsigned long)timeout_ms) {
-            return 0;
-        }
-        sleep_ms(4);
-    }
 }
 
 ssize_t readlink(const char *path, char *buffer, size_t length)
@@ -529,18 +280,6 @@ mode_t umask(mode_t mode)
 {
     (void)mode;
     return 0;
-}
-
-int nanosleep(const struct timespec *request, struct timespec *remaining)
-{
-    unsigned long milliseconds;
-    (void)remaining;
-    if (!request) {
-        return -1;
-    }
-    milliseconds = (unsigned long)request->tv_sec * 1000UL +
-                  (unsigned long)request->tv_nsec / 1000000UL;
-    return sleep_ms(milliseconds);
 }
 
 int uname(struct utsname *name)
@@ -574,6 +313,10 @@ int uname(struct utsname *name)
 
 int clearenv(void)
 {
-    environ = 0;
+    if (environ) {
+        environ[0] = 0;
+    } else {
+        environ = leonos_empty_environment;
+    }
     return 0;
 }

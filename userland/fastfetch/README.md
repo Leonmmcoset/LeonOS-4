@@ -19,7 +19,8 @@ system rows and Colors; DateTime, Break and Version remain opt-in through
 All 527 upstream built-in ASCII logos are included. `--logo <name>` (`-l`),
 `--logo small`, `--logo none`, `--list-logos`, and `--print-logos` work with
 the usual logo colors, dimensions, padding and left/top/right positioning. The
-default remains the LeonOS logo. The upstream display options that affect the
+default is the two-tone blue LeonOS leaf mark, rendered with ANSI-colored ASCII
+characters; it has no bitmap or image-protocol dependency. The upstream display options that affect the
 available modules are supported, including `--pipe`, `--color*`, `--separator`,
 `--key-*`, `--size-*`, `--duration-*`, `--percent-*`, and `--bar-*`.
 

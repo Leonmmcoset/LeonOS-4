@@ -159,7 +159,7 @@ static void launch_doom(void)
         }
     }
     argv[argc] = 0;
-    pid = execve(DOOM_PATH, argv, 0);
+    pid = leonos_spawn_argv(DOOM_PATH, argv);
     if (pid < 0) {
         set_status_code(T("Launch failed: ", "启动失败: "), pid);
         return;

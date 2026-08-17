@@ -15,6 +15,7 @@ class GuestMemory:
         self.uc = uc
         self.alloc_next = C.USER_MMAP_BASE
         self.allocations: dict[int, int] = {}
+        self.protections: dict[int, int] = {}
 
     def map_user_space(self) -> None:
         self.uc.mem_map(C.USER_BASE, C.USER_TOP - C.USER_BASE)
@@ -83,18 +84,61 @@ class GuestMemory:
             start = self.align_down(fixed)
             if not self.range_ok(start, size):
                 return neg(12)
+            end = start + size
+            for old, old_size in self.allocations.items():
+                if start < old + old_size and old < end:
+                    return neg(12)
             self.allocations[start] = size
+            self.protections[start] = 0x7
             return start
         start = self.align_up(self.alloc_next)
         if start < C.USER_MMAP_BASE:
             start = C.USER_MMAP_BASE
-        if start + size >= C.USER_STACK_TOP - C.USER_STACK_PAGES * C.PAGE_SIZE:
+        limit = C.USER_STACK_TOP - C.USER_STACK_PAGES * C.PAGE_SIZE
+        while True:
+            conflict = next((old + old_size for old, old_size in self.allocations.items()
+                             if start < old + old_size and old < start + size), None)
+            if conflict is None:
+                break
+            start = self.align_up(conflict)
+        if start + size >= limit:
             return neg(12)
         self.alloc_next = start + size
         self.allocations[start] = size
+        self.protections[start] = 0x7
         return start
 
     def free(self, addr: int, size: int) -> int:
-        if addr in self.allocations:
-            del self.allocations[addr]
+        start = self.align_down(addr)
+        if start in self.allocations:
+            del self.allocations[start]
+            self.protections.pop(start, None)
         return 0
+
+    def protect(self, addr: int, size: int, prot: int) -> int:
+        """Update Unicorn page permissions for a mapped user range."""
+        start = self.align_down(addr)
+        length = self.align_up(size + (addr - start))
+        if size <= 0 or not self.range_ok(start, length):
+            return neg(22)
+        # Unicorn uses the same R/W/X bit layout as the LeonOS ABI.
+        try:
+            self.uc.mem_protect(start, length, prot & 0x7)
+        except Exception:
+            return neg(14)
+        self.protections[start] = prot & 0x7
+        return 0
+
+    def reserve(self, addr: int, size: int, prot: int = 0x7) -> int:
+        start = self.align_down(addr)
+        end = start + self.align_up(size)
+        for old, old_size in self.allocations.items():
+            if old <= start and end <= old + old_size:
+                self.protections[old] = prot & 0x7
+                return old
+        result = self.allocate(size, fixed=addr)
+        if result < 0:
+            return result
+        self.protections[result] = prot & 0x7
+        self.alloc_next = max(self.alloc_next, result + self.align_up(size))
+        return result

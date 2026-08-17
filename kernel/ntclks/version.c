@@ -1,3 +1,7 @@
+/*
+ * LeonOS kernel version module: exposes build and release metadata.
+ * Publishes the system information consumed by diagnostics and userland.
+ */
 #include <ntclks/version.h>
 
 #include <generated/build_info.h>
@@ -15,6 +19,10 @@ static const struct leonos_system_info system_info = {
     .copyright_year = LEONOS_COPYRIGHT_YEAR,
 };
 
+/**
+ * @brief Coordinates the ntclks system info operation.
+ * @return Result, status, or value defined by this API.
+ */
 const struct leonos_system_info *ntclks_system_info(void)
 {
     return &system_info;

@@ -2135,7 +2135,7 @@ static void handle_input_methods_click(int32_t x, int32_t y)
         char *argv[2];
         argv[0] = entry->settings_app;
         argv[1] = 0;
-        inputm_set_status(execve(entry->settings_app, argv, 0) > 0,
+        inputm_set_status(leonos_spawn_argv(entry->settings_app, argv) > 0,
                           T("Provider settings started", "已启动输入法设置"),
                           T("Could not start provider settings", "无法启动输入法设置"));
         return;
@@ -2146,7 +2146,7 @@ static void handle_input_methods_click(int32_t x, int32_t y)
         argv[0] = entry->path;
         argv[1] = "--update";
         argv[2] = 0;
-        inputm_set_status(execve(entry->path, argv, 0) > 0,
+        inputm_set_status(leonos_spawn_argv(entry->path, argv) > 0,
                           T("Dictionary update started", "词库更新已开始"),
                           T("Could not start dictionary update", "无法启动词库更新"));
     }

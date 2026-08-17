@@ -35,8 +35,10 @@ void draw_fileman(struct leonos_ui_surface *ui)
     leonos_ui_toolbar_button(ui, 8, TOOLBAR_Y, 54, T("Up", "上级"), 0);
     leonos_ui_toolbar_button(ui, 72, TOOLBAR_Y, 60, T("Open", "打开"), 0);
     leonos_ui_toolbar_button(ui, 142, TOOLBAR_Y, 76, T("Refresh", "刷新"), 0);
-    leonos_ui_edit(ui, 230, TOOLBAR_Y, view_w > 238 ? view_w - 238 : 120,
-                   current_path, text_len(current_path), 0, LEONOS_UI_EDIT_READONLY);
+    leonos_ui_edit_state_draw(ui, 230, TOOLBAR_Y,
+                              view_w > 238 ? view_w - 238 :
+                              (view_w > 230 ? view_w - 230 : 1),
+                              &address_edit, 0);
 
     if (tree_first > (tree_count > tree_rows ? tree_count - tree_rows : 0)) {
         tree_first = tree_count > tree_rows ? tree_count - tree_rows : 0;
@@ -107,13 +109,14 @@ void draw_fileman(struct leonos_ui_surface *ui)
         struct leonos_ui_context_menu_item items[] = {
             {T("Refresh", "刷新"), FILEMAN_ACTION_REFRESH, 0},
             {T("Root", "根目录"), FILEMAN_ACTION_ROOT, 0},
+            {T("Settings...", "设置..."), FILEMAN_ACTION_SETTINGS, 0},
             {T("About", "关于"), FILEMAN_ACTION_ABOUT, 0},
         };
         struct leonos_ui_rect r;
         leonos_ui_menubar_item_rect(0, 0, menu_items,
                                     sizeof(menu_items) / sizeof(menu_items[0]),
                                     FILEMAN_MENU_VIEW, &r);
-        leonos_ui_menu_popup(ui, (uint32_t)r.x, MENU_BAR_H, 154,
+        leonos_ui_menu_popup(ui, (uint32_t)r.x, MENU_BAR_H, 170,
                              items, sizeof(items) / sizeof(items[0]), 0);
     } else if (menu_open == FILEMAN_MENU_EDIT) {
         struct leonos_ui_context_menu_item items[FILEMAN_EDIT_MENU_COUNT];
@@ -149,6 +152,41 @@ void draw_fileman(struct leonos_ui_surface *ui)
         leonos_ui_context_menu_animated(ui, context_menu_x, context_menu_y, FILEMAN_CONTEXT_MENU_W,
                                         items, FILEMAN_CONTEXT_MENU_COUNT, progress);
     }
+    if (fileman_settings_open) {
+        draw_fileman_settings_dialog(ui);
+    }
+}
+
+void draw_fileman_settings_dialog(struct leonos_ui_surface *ui)
+{
+    struct leonos_ui_rect rect;
+    uint32_t button_y;
+    if (!ui || !fileman_settings_open) {
+        return;
+    }
+    fileman_settings_dialog_rect(&rect);
+    button_y = (uint32_t)rect.y + rect.h - 34u;
+    leonos_ui_dialog(ui, (uint32_t)rect.x, (uint32_t)rect.y, rect.w, rect.h,
+                     T("File Manager Settings", "文件资源管理器设置"));
+    leonos_ui_text_clipped(ui, (uint32_t)rect.x + 18u, (uint32_t)rect.y + 36u,
+                           rect.w > 36u ? rect.w - 36u : rect.w,
+                           T("Display", "显示"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_checkbox(ui, (uint32_t)rect.x + 18u, (uint32_t)rect.y + 56u, "",
+                       fileman_settings_show_hidden, 0);
+    leonos_ui_text_clipped(ui, (uint32_t)rect.x + 40u, (uint32_t)rect.y + 58u,
+                           rect.w > 58u ? rect.w - 58u : rect.w,
+                           T("Show files and folders starting with a dot",
+                             "显示名称以点开头的文件和文件夹"),
+                           LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    leonos_ui_text_clipped(ui, (uint32_t)rect.x + 18u, (uint32_t)rect.y + 90u,
+                           rect.w > 36u ? rect.w - 36u : rect.w,
+                           T("This preference is saved for the current user.",
+                             "此设置会为当前用户保存。"),
+                           LEONOS_UI_DARK, LEONOS_UI_GRAY);
+    leonos_ui_button(ui, (uint32_t)rect.x + rect.w - 168u, button_y,
+                     72, LEONOS_UI_BUTTON_H, T("Save", "保存"), 0);
+    leonos_ui_button(ui, (uint32_t)rect.x + rect.w - 88u, button_y,
+                     72, LEONOS_UI_BUTTON_H, T("Cancel", "取消"), 0);
 }
 
 

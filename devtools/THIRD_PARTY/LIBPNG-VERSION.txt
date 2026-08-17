@@ -1,0 +1,3 @@
+libpng version: 1.6.58
+Upstream: https://github.com/pnggroup/libpng
+License: libpng License

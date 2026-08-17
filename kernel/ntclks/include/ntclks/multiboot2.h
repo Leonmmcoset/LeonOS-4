@@ -1,3 +1,7 @@
+/*
+ * LeonOS Multiboot2 interface: defines bootloader information structures.
+ * Provides typed access to memory maps, modules, framebuffer, and tags.
+ */
 #ifndef NTCLKS_MULTIBOOT2_H
 #define NTCLKS_MULTIBOOT2_H
 
@@ -127,6 +131,12 @@ struct boot_info {
     uint32_t module_count;
 };
 
+/**
+ * @brief Coordinates the multiboot2 parse operation.
+ * @param magic Input or output value used by this operation.
+ * @param info_addr Address used by this operation; its address-space interpretation follows the API.
+ * @param out Caller-provided storage that receives output from this operation.
+ */
 void multiboot2_parse(uint32_t magic, uintptr_t info_addr, struct boot_info *out);
 
 #endif

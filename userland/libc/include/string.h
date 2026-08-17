@@ -7,6 +7,7 @@ void *memcpy(void *dst, const void *src, size_t len);
 void *memmove(void *dst, const void *src, size_t len);
 void *memset(void *dst, int value, size_t len);
 int memcmp(const void *left, const void *right, size_t len);
+void *memchr(const void *text, int value, size_t len);
 size_t strlen(const char *text);
 int strcmp(const char *left, const char *right);
 int strncmp(const char *left, const char *right, size_t len);
@@ -15,6 +16,7 @@ char *strncpy(char *dst, const char *src, size_t len);
 char *strchr(const char *text, int value);
 char *strstr(const char *text, const char *needle);
 char *strrchr(const char *text, int value);
+size_t strcspn(const char *text, const char *reject);
 int strcasecmp(const char *left, const char *right);
 int strncasecmp(const char *left, const char *right, size_t len);
 

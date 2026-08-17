@@ -1,0 +1,6 @@
+{
+  "picolibc_commit": "2fca8654025d367b3da4699a82c347840123bcd2",
+  "archive": "/mnt/d/Projects/C/LeonOS 4/build/picolibc/sysroot/lib/libc.a",
+  "cross_file": "/mnt/d/Projects/C/LeonOS 4/userland/picolibc/leonos-x86_64.ini",
+  "effective_cross_file": "/mnt/d/Projects/C/LeonOS 4/build/picolibc.leonos-x86_64.generated.ini"
+}
