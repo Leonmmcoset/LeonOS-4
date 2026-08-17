@@ -46,3 +46,6 @@
 [submodule "third_party/sl"]
 	path = third_party/sl
 	url = https://github.com/mtoyoda/sl.git
+[submodule "third_party/less"]
+	path = third_party/less
+	url = https://github.com/gwsw/less.git
