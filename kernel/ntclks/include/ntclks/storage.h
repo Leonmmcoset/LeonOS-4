@@ -18,6 +18,19 @@ struct storage_node {
     uint64_t size;
 };
 
+/**
+ * @brief Maintains the next FAT32 cluster for one sequential file reader.
+ *
+ * The cursor is deliberately owned by the open file descriptor.  It is not
+ * part of a storage node because several descriptors may read the same node
+ * at different offsets.
+ */
+struct storage_read_cursor {
+    uint64_t offset;
+    uint32_t cluster;
+    uint32_t valid;
+};
+
 #define STORAGE_NODE_FLAG_ROOT    0x00000001u
 #define STORAGE_NODE_FLAG_DEV_DIR 0x00000002u
 #define STORAGE_NODE_FLAG_DEV_FB0 0x00000004u
@@ -103,6 +116,19 @@ int storage_lookup_path(const char *path, struct storage_node *out);
  */
 int storage_read_node(const struct storage_node *node, uint64_t offset,
                       void *buf, uint32_t len, uint32_t *out_read);
+/**
+ * @brief Reads a file range while reusing a cursor for sequential FAT32 I/O.
+ * @param node File node to read.
+ * @param offset Byte offset at which to begin the read.
+ * @param buf Destination buffer.
+ * @param len Maximum number of bytes to read.
+ * @param out_read Receives the number of bytes copied.
+ * @param cursor Optional descriptor-owned sequential-read cursor.
+ * @return Zero on success or a negative storage error.
+ */
+int storage_read_node_cursor(const struct storage_node *node, uint64_t offset,
+                             void *buf, uint32_t len, uint32_t *out_read,
+                             struct storage_read_cursor *cursor);
 /**
  * @brief Coordinates the storage readdir node operation.
  * @param node Input or output value used by this operation.

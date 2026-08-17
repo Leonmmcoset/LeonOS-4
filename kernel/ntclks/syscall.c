@@ -91,6 +91,7 @@ static void task_pipe_release(struct task_file *file)
 #include <leonos/text.h>
 
 #define LEONOS_GUI_IOCTL_EVENT 0x4c455654ULL
+#define LEONOS_GUI_IOCTL_VERSION 0x4c475549ULL
 #define LEONOS_GUI_IOCTL_UPTIME_MS 0x4c555054ULL
 #define LEONOS_GUI_IOCTL_FB_INFO 0x4c464249ULL
 #define LEONOS_GUI_IOCTL_FB_FILL 0x4c464246ULL
@@ -690,6 +691,7 @@ static void clear_task_file(struct task_file *file)
     file->node.size = 0;
     file->offset = 0;
     file->aux = 0;
+    file->read_cursor = (struct storage_read_cursor){0};
     file->flags = 0;
     file->fd_flags = 0;
     file->path[0] = 0;
@@ -3766,6 +3768,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (file->flags & LEONOS_O_APPEND) {
             file->offset = file->node.size;
         }
+        file->read_cursor.valid = 0;
         ret = storage_write_node(file->path, file->offset,
                                  (const void *)(uintptr_t)a1, request_len, &wrote);
         if (ret < 0) {
@@ -3844,8 +3847,9 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
                           ? LEONOS_FS_READ_SLICE_BYTES
                           : (uint32_t)a2;
         {
-            int ret = storage_read_node(&file->node, file->offset,
-                                        (void *)(uintptr_t)a1, request_len, &got);
+            int ret = storage_read_node_cursor(&file->node, file->offset,
+                                               (void *)(uintptr_t)a1, request_len, &got,
+                                               &file->read_cursor);
             if (ret < 0) {
                 return storage_errno(ret);
             }
@@ -4015,6 +4019,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
+        file->read_cursor.valid = 0;
         ret = storage_lookup_path(file->path, &file->node);
         if (ret < 0) {
             return ret;
@@ -4152,6 +4157,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
             return (int64_t)(file->offset * sizeof(struct leonos_dir_entry));
         }
         file->offset = (uint64_t)(base + offset);
+        file->read_cursor.valid = 0;
         return (int64_t)file->offset;
     }
 
@@ -4346,6 +4352,10 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && inputm_handles_ioctl(a1)) {
         return inputm_handle_ioctl(a1, a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_VERSION) {
+        return 1;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_EVENT) {

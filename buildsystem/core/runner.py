@@ -28,6 +28,11 @@ YELLOW = "\x1b[93m"
 RED = "\x1b[91m"
 DIM = "\x1b[2m"
 WHITE = "\x1b[97m"
+BOLD = "\x1b[1m"
+CARGO_GREEN = "\x1b[32m"
+CARGO_RED = "\x1b[31m"
+
+LOG_THEMES = ("default", "linux", "meson", "cargo")
 
 
 def styled(color: str, text: str) -> str:
@@ -97,8 +102,8 @@ class BuildMetrics:
 class ProgressRenderer:
     """Render one safe progress line after the latest interactive log entry."""
 
-    def __init__(self) -> None:
-        self.enabled = sys.stdout.isatty()
+    def __init__(self, *, enabled: bool = True) -> None:
+        self.enabled = enabled and sys.stdout.isatty()
         self._lock = threading.Lock()
         self._active = False
         self._progress_line: str | None = None
@@ -171,13 +176,25 @@ class ProgressRenderer:
 
 
 class TaskLogger:
-    def __init__(self, log_path: Path, metrics: BuildMetrics, *, verbose: bool = False) -> None:
+    def __init__(
+        self,
+        log_path: Path,
+        metrics: BuildMetrics,
+        *,
+        verbose: bool = False,
+        theme: str = "default",
+        root: Path | None = None,
+    ) -> None:
         self.log_path = log_path
         self.metrics = metrics
         self.verbose = verbose
-        self.progress = ProgressRenderer()
+        self.theme = theme if theme in LOG_THEMES else "default"
+        self.root = root
+        self.progress = ProgressRenderer(enabled=self.theme == "default")
         self._lock = threading.Lock()
         self._entered: set[Path] = set()
+        self._theme_index = 0
+        self._theme_total = 0
         self._handle = log_path.open("w", encoding="utf-8", newline="\n")
 
     def close(self) -> None:
@@ -198,8 +215,26 @@ class TaskLogger:
         if self.verbose:
             self.emit(f"{styled(DIM, '[verbose]')} {text}", DIM)
 
+    def set_total(self, total: int) -> None:
+        self._theme_total = max(0, total)
+
+    def _next_theme_index(self) -> int:
+        with self._lock:
+            self._theme_index += 1
+            return self._theme_index
+
+    def _cargo_status(self, status: str, message: str, color: str = CARGO_GREEN) -> str:
+        """Format Cargo's right-aligned status column and color its status word."""
+        padding = max(0, 12 - len(status))
+        # Keep padding outside the ANSI sequence so visible columns remain
+        # stable in terminals that measure escape sequences themselves.
+        colored_status = f"{' ' * padding}{styled(color, status)}"
+        return f"{colored_status} {message}"
+
     def start_task(self, name: str, depth: int) -> None:
         self.metrics.started_tasks += 1
+        if self.theme != "default":
+            return
         self.emit(
             f"{styled(CYAN, '-- Start building task')} {styled(WHITE, name)} "
             f"{styled(CYAN, '--')} {styled(DIM, f'({depth})')}",
@@ -207,18 +242,56 @@ class TaskLogger:
 
     def start_run(self, name: str, task_id: str) -> None:
         self.metrics.started_tasks += 1
+        if self.theme == "linux":
+            directory = self.root.as_posix() if self.root is not None else "."
+            self.emit(f"make: Entering directory '{directory}'", WHITE)
+            return
+        if self.theme == "meson":
+            directory = self.root.as_posix() if self.root is not None else "."
+            self.emit(f"ninja: Entering directory `{directory}`", WHITE)
+            return
+        if self.theme == "cargo":
+            return
         self.emit(
             f"{styled(CYAN, '-- Start building task')} {styled(WHITE, name)} "
             f"{styled(CYAN, '--')} {styled(DIM, f'({task_id})')}",
         )
 
     def done_task(self, name: str, elapsed: float) -> None:
+        if self.theme == "linux":
+            directory = self.root.as_posix() if self.root is not None else "."
+            self.emit(f"make: Leaving directory '{directory}'", WHITE)
+            return
+        if self.theme == "meson":
+            if self.metrics.executed_targets == 0:
+                self.emit("ninja: no work to do.", WHITE)
+            return
+        if self.theme == "cargo":
+            self.emit(
+                self._cargo_status(
+                    "Finished",
+                    f"`dev` profile [unoptimized + debuginfo] target(s) in {elapsed:.2f}s",
+                ),
+            )
+            return
         self.emit(
             f"{styled(GREEN, 'DONE TASK')} {styled(WHITE, name)} "
             f"{styled(DIM, 'IN')} {styled(GREEN, f'{elapsed:.1f}s.')}",
         )
 
     def failed_task(self, name: str, error: BaseException) -> None:
+        if self.theme == "linux":
+            self.emit(f"make: *** [{name}] Error 1", RED)
+            return
+        if self.theme == "meson":
+            self.emit("ninja: build stopped: subcommand failed.", RED)
+            return
+        if self.theme == "cargo":
+            self.emit(
+                f"{styled(BOLD + CARGO_RED, 'error:')} could not compile `{name}`: {error}",
+                RED,
+            )
+            return
         self.emit(
             f"{styled(RED, 'FAILED TASK')} {styled(WHITE, name)}: {styled(RED, str(error))}",
         )
@@ -232,6 +305,8 @@ class TaskLogger:
             return
         self._entered.add(path)
         self.metrics.entered_folders += 1
+        if self.theme != "default":
+            return
         self.emit(
             f"{styled(ORANGE, '-- Enter folder')} "
             f"{styled(WHITE, relative.as_posix() or '.')} {styled(ORANGE, '--')}",
@@ -240,6 +315,32 @@ class TaskLogger:
     def building(self, worker: int, target: Target, root: Path) -> None:
         label = target.source or (target.outputs[0] if target.outputs else root)
         self.enter_folder(label.parent, root)
+        if self.theme == "linux":
+            command = {
+                "assemble": "AS",
+                "link": "LD",
+            }.get(target.kind, "CC")
+            self.metrics.built_files += max(1, len(target.outputs))
+            self.emit(f"  {command:<7} {root_relative(root, label)}", WHITE)
+            return
+        if self.theme == "meson":
+            index = self._next_theme_index()
+            self.metrics.built_files += max(1, len(target.outputs))
+            output = target.outputs[0] if target.outputs else label
+            language = "C" if label.suffix.lower() in {".c", ".h"} else "C++" if label.suffix.lower() in {".cc", ".cpp", ".cxx"} else ""
+            prefix = f"Compiling {language} object" if language else "Compiling"
+            self.emit(f"[{index}/{self._theme_total}] {prefix} {root_relative(root, output)}", WHITE)
+            return
+        if self.theme == "cargo":
+            self.metrics.built_files += max(1, len(target.outputs))
+            package = target.name.rsplit(":", 1)[-1]
+            self.emit(
+                self._cargo_status(
+                    "Compiling",
+                    f"{package} ({root_relative(root, label.parent)})",
+                )
+            )
+            return
         self.metrics.built_files += max(1, len(target.outputs))
         self.emit(
             f"{styled(CYAN, f'<{worker}>')} {styled(WHITE, 'Building')} "
@@ -249,6 +350,19 @@ class TaskLogger:
     def generating(self, worker: int, target: Target, root: Path) -> None:
         label = target.outputs[0] if target.outputs else Path(target.name)
         self.enter_folder(label.parent, root)
+        if self.theme == "linux":
+            self.metrics.generated_files += max(1, len(target.outputs))
+            self.emit(f"  GEN     {root_relative(root, label)}", WHITE)
+            return
+        if self.theme == "meson":
+            index = self._next_theme_index()
+            self.metrics.generated_files += max(1, len(target.outputs))
+            self.emit(f"[{index}/{self._theme_total}] Generating {root_relative(root, label)}", WHITE)
+            return
+        if self.theme == "cargo":
+            self.metrics.generated_files += max(1, len(target.outputs))
+            self.emit(self._cargo_status("Generating", root_relative(root, label)))
+            return
         self.metrics.generated_files += max(1, len(target.outputs))
         self.emit(
             f"{styled(CYAN, f'<{worker}>')} {styled(WHITE, 'Generating')} "
@@ -266,6 +380,16 @@ class TaskLogger:
     ) -> None:
         quoted = " ".join(shell_quote(part) for part in command)
         self.metrics.ran_commands += 1
+        if self.theme == "linux":
+            self.emit(f"  RUN     {quoted}", WHITE)
+            return
+        if self.theme == "meson":
+            index = self._next_theme_index()
+            self.emit(f"[{index}/{self._theme_total}] Running external command {quoted}", WHITE)
+            return
+        if self.theme == "cargo":
+            self.emit(self._cargo_status("Running", f"`{quoted}`"))
+            return
         self.emit(
             f"{styled(CYAN, f'<{worker}>')} {styled(WHITE, 'Running command:')} "
             f"{styled(DIM, f'\"{quoted}\"')}",
@@ -283,6 +407,16 @@ class TaskLogger:
 
     def download(self, worker: int, url: str, destination: Path, root: Path) -> None:
         self.metrics.downloaded_files += 1
+        if self.theme == "linux":
+            self.emit(f"  DOWNLOAD {url} -> {root_relative(root, destination)}", WHITE)
+            return
+        if self.theme == "meson":
+            index = self._next_theme_index()
+            self.emit(f"[{index}/{self._theme_total}] Downloading {url} to {root_relative(root, destination)}", WHITE)
+            return
+        if self.theme == "cargo":
+            self.emit(self._cargo_status("Downloading", url))
+            return
         self.emit(
             f"{styled(CYAN, f'<{worker}>')} {styled(WHITE, 'Online downloading')} "
             f"{styled(CYAN, url)} {styled(WHITE, 'to')} "
@@ -411,6 +545,7 @@ class BuildRunner:
         *,
         engine_inputs: Iterable[Path] = (),
         verbose: bool = False,
+        theme: str = "default",
     ) -> None:
         self.graph = graph
         self.paths = paths
@@ -419,7 +554,14 @@ class BuildRunner:
         self.store = TaskStore(paths)
         self.metrics = BuildMetrics()
         self.verbose = verbose
-        self.logger = TaskLogger(self.store.log_path(task_id), self.metrics, verbose=verbose)
+        self.theme = theme if theme in LOG_THEMES else "default"
+        self.logger = TaskLogger(
+            self.store.log_path(task_id),
+            self.metrics,
+            verbose=verbose,
+            theme=self.theme,
+            root=paths.root,
+        )
         self.engine_inputs = tuple(engine_inputs)
         self._processes = threading.BoundedSemaphore(max(1, settings.max_processes))
         self._slots: queue.Queue[int] = queue.Queue()
@@ -445,6 +587,10 @@ class BuildRunner:
         roots = tuple(roots)
         closure = self.graph.closure(roots)
         self.metrics.total = len(closure)
+        # Meson's progress denominator counts runnable Ninja edges, not
+        # aggregate graph groups. The scheduler's persisted total remains the
+        # full closure for backward-compatible task status reporting.
+        self.logger.set_total(sum(1 for target in closure if not target.group))
         self.paths.ensure()
         self.store.target_states()
         self.store.update(
@@ -479,8 +625,9 @@ class BuildRunner:
             self.metrics.elapsed_seconds = round(elapsed, 3)
             self.store.flush_target_states()
             self.logger.done_task(command_name, elapsed)
-            for line in self.metrics.summary():
-                self.logger.emit(line, GREEN if line == "Result:" else WHITE)
+            if self.theme == "default":
+                for line in self.metrics.summary():
+                    self.logger.emit(line, GREEN if line == "Result:" else WHITE)
             self.store.update(
                 self.task_id,
                 status="done",

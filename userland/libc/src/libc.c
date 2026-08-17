@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/resource.h>
 #include <termios.h>
@@ -285,28 +286,21 @@ long read(int fd, void *buf, size_t len)
     struct leonos_stat stat_info;
     size_t done = 0;
     int pty_id = 0;
-    int canonical_pty_stdin = 0;
+    int pty_input = 0;
 
-    /*
-     * PTY input is exposed by the kernel as an empty read until a complete
-     * canonical line is ready.  POSIX stdio interprets that empty read as
-     * EOF, which made programs using fgets() (Lua's REPL, in particular)
-     * print one prompt and return immediately to the shell.  Turn only the
-     * canonical stdin case into the expected blocking read at the userland
-     * boundary.  Raw-mode programs retain the non-blocking PTY behaviour
-     * needed by terminal editors and their poll loops.
-     */
-    if (fd == 0 && len != 0) {
+    /* The kernel reports an empty PTY queue as a zero-length read.  That is
+     * not EOF for a terminal: wait for input so both canonical and raw-mode
+     * POSIX programs see the expected blocking read semantics. */
+    if (len != 0) {
         struct termios termios;
         pty_id = leonos_pty_self();
         /*
          * This process is the PTY child, not its terminal-owner process.
          * Use the standard fd-oriented request here; the owner-only helper
          * rejects child processes and would silently disable this wait loop.
-         */
-        if (pty_id > 0 && tcgetattr(fd, &termios) == 0 &&
-            (termios.c_lflag & LEONOS_PTY_LFLAG_ICANON) != 0) {
-            canonical_pty_stdin = 1;
+        */
+        if (pty_id > 0 && tcgetattr(fd, &termios) == 0) {
+            pty_input = 1;
         }
     }
 
@@ -320,7 +314,7 @@ long read(int fd, void *buf, size_t len)
                 sleep_ms(1);
                 continue;
             }
-            if (result != 0 || !canonical_pty_stdin) {
+            if (result != 0 || !pty_input) {
                 return result;
             }
             sleep_ms(4);
@@ -328,7 +322,16 @@ long read(int fd, void *buf, size_t len)
         return 0;
     }
     if (fstat(fd, &stat_info) < 0 || stat_info.type != LEONOS_FS_TYPE_FILE) {
-        return syscall3(SYS_read, fd, (long)buf, (long)len);
+        /* Pipes, terminals, and device-like descriptors do not expose a
+         * regular-file size. Keep the direct path, but preserve the same
+         * transparent EAGAIN retry guarantee as regular files. */
+        for (;;) {
+            long result = syscall3(SYS_read, fd, (long)buf, (long)len);
+            if (result != -LEONOS_EAGAIN) {
+                return result;
+            }
+            sleep_ms(1);
+        }
     }
     while (done < len) {
         size_t chunk = len - done;
@@ -381,6 +384,18 @@ int open(const char *path, int flags, ...)
 {
     va_list args;
     int mode = 0;
+
+    /*
+     * LeonOS exposes a process' controlling PTY as the implicit standard
+     * descriptors instead of materialising a /dev/tty filesystem node.
+     * POSIX terminal programs (including less) use the conventional device
+     * path to obtain a raw keyboard descriptor, so map read-only opens to a
+     * duplicate of stdin before falling through to the filesystem syscall.
+     */
+    if (path && strcmp(path, "/dev/tty") == 0 &&
+        (flags & LEONOS_O_ACCMODE) == LEONOS_O_RDONLY) {
+        return dup(0);
+    }
     if (flags & LEONOS_O_CREAT) {
         va_start(args, flags);
         mode = va_arg(args, int);
@@ -1350,7 +1365,8 @@ int system(const char *command)
 
 int isatty(int fd)
 {
-    return fd == 0 || fd == 1 || fd == 2;
+    struct termios termios;
+    return tcgetattr(fd, &termios) == 0;
 }
 
 int leonos_gui_connect(void)
@@ -4118,7 +4134,7 @@ int tcgetattr(int fd, struct termios *termios)
 {
     struct leonos_pty_termios native;
     int result;
-    if (fd < 0 || fd > 2 || !termios) {
+    if (fd < 0 || !termios) {
         errno = EINVAL;
         return -1;
     }
@@ -4142,7 +4158,7 @@ int tcsetattr(int fd, int action, const struct termios *termios)
 {
     struct leonos_pty_termios_request request;
     int result;
-    if (fd < 0 || fd > 2 || !termios) {
+    if (fd < 0 || !termios) {
         errno = EINVAL;
         return -1;
     }
@@ -4169,7 +4185,7 @@ int tcsetattr(int fd, int action, const struct termios *termios)
 int tcgetwinsize(int fd, struct winsize *winsize)
 {
     int result;
-    if (fd < 0 || fd > 2 || !winsize) {
+    if (fd < 0 || !winsize) {
         errno = EINVAL;
         return -1;
     }
@@ -4180,7 +4196,7 @@ int tcgetwinsize(int fd, struct winsize *winsize)
 int tcsetwinsize(int fd, const struct winsize *winsize)
 {
     int result;
-    if (fd < 0 || fd > 2 || !winsize) {
+    if (fd < 0 || !winsize) {
         errno = EINVAL;
         return -1;
     }

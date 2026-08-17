@@ -121,6 +121,19 @@ external spellers/formatters, rc files, syntax coloring, help pages, mouse
 input and multi-buffer support remain off. Interactive editing and persistence
 still require manual GUI-terminal validation on each supported VM platform.
 
+## GNU less
+
+- Path: `third_party/less`
+- Upstream: `https://github.com/gwsw/less.git`
+- Pinned commit: `b8bbf4297169e20d35e1cc3e015180e8a011bcf2`
+- License: GNU GPL-3.0-or-later or the upstream Less License; preserve both
+  `third_party/less/COPYING` and `third_party/less/LICENSE`.
+
+LeonOS installs the upstream pager at `0:/programs/less/less.elf`. It uses the
+shared PTY, polling and POSIX regular-expression runtime through a small ANSI
+termcap adapter. Shell escapes, external editor commands, tags, user key files,
+logfile output and shell pipes are disabled for the system build.
+
 ## TinyCC
 
 - Path: `third_party/tinycc`

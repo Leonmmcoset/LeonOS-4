@@ -10,6 +10,7 @@
 #include <leonos/pty.h>
 #include <leonos/system.h>
 #include <leonos/syscall.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -117,4 +118,40 @@ int usleep(useconds_t microseconds)
         return -1;
     }
     return 0;
+}
+
+int poll(struct pollfd *fds, nfds_t count, int timeout_ms)
+{
+    unsigned long started = leonos_uptime_ms();
+    if (!fds && count != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (;;) {
+        nfds_t index;
+        int ready = 0;
+        int input_ready = leonos_pty_input_available() > 0;
+        for (index = 0; index < count; ++index) {
+            fds[index].revents = 0;
+            if (fds[index].fd < 0) {
+                continue;
+            }
+            if (fds[index].events & (POLLIN | POLLPRI)) {
+                /* Files are immediately readable; PTY input is not. */
+                if (fds[index].fd >= 3 || input_ready) {
+                    fds[index].revents |= POLLIN;
+                }
+            }
+            if (fds[index].revents) {
+                ++ready;
+            }
+        }
+        if (ready || timeout_ms == 0) {
+            return ready;
+        }
+        if (timeout_ms > 0 && leonos_uptime_ms() - started >= (unsigned long)timeout_ms) {
+            return 0;
+        }
+        (void)sleep_ms(4);
+    }
 }

@@ -16,6 +16,47 @@ static void ext2_set_inode_size(struct ext2_inode *inode, uint64_t size)
     inode->size_high = (uint32_t)(size >> 32);
 }
 
+/* A virtual AHCI device can reject a multi-sector DMA command while accepting
+ * the same sectors as individual commands. Keep the recovery bounded and
+ * rate-limit diagnostics so a damaged volume does not flood the boot log. */
+static uint32_t ext2_read_recovery_logs;
+
+/** @brief Reads sectors as a block, then retries one sector at a time. */
+static int ext2_read_sectors_resilient(uint64_t lba, uint32_t sectors,
+                                       void *buffer)
+{
+    uint8_t *dst = (uint8_t *)buffer;
+    int ret = storage_read_sectors(lba, sectors, buffer);
+    if (ret >= 0 || ret == -LEONOS_EAGAIN) {
+        return ret;
+    }
+    if (ext2_read_recovery_logs < 8u) {
+        console_printf("[ntclks] ext2 bulk read failed lba=%llu sectors=%u ret=%d; "
+                       "retrying sectors\n", (unsigned long long)lba, sectors, ret);
+        ++ext2_read_recovery_logs;
+    }
+    for (uint32_t i = 0; i < sectors; ++i) {
+        ret = storage_read_sectors(lba + i, 1u, dst + i * SECTOR_SIZE);
+        if (ret < 0) {
+            if (ret == -LEONOS_EAGAIN) {
+                return ret;
+            }
+            if (ext2_read_recovery_logs < 8u) {
+                console_printf("[ntclks] ext2 sector read failed lba=%llu ret=%d\n",
+                               (unsigned long long)(lba + i), ret);
+                ++ext2_read_recovery_logs;
+            }
+            return ret;
+        }
+    }
+    if (ext2_read_recovery_logs < 8u) {
+        console_printf("[ntclks] ext2 sector fallback recovered lba=%llu sectors=%u\n",
+                       (unsigned long long)lba, sectors);
+        ++ext2_read_recovery_logs;
+    }
+    return 0;
+}
+
 /**
  * @brief Reads one ext2 filesystem block through the shared read-ahead cache.
  * @param block Physical ext2 block number on the active volume.
@@ -52,7 +93,7 @@ static int ext2_read_block(uint32_t block, void *buffer)
     cache_sectors = remaining_sectors > STORAGE_READAHEAD_SECTORS
         ? STORAGE_READAHEAD_SECTORS : (uint32_t)remaining_sectors;
     storage_read_cache.valid = 0;
-    ret = storage_read_sectors(lba, cache_sectors, storage_read_cache_data);
+    ret = ext2_read_sectors_resilient(lba, cache_sectors, storage_read_cache_data);
     if (ret < 0) {
         return ret;
     }
@@ -231,8 +272,12 @@ static int ext2_find_in_dir(uint32_t directory_ino, const char *name,
         uint32_t block_limit;
         ret = ext2_get_block(&directory, file_block, 0, &physical);
         if (ret < 0) return ret;
-        if (!physical || ext2_read_block(physical, storage_cluster_buf) < 0) {
+        if (!physical) {
             return -5;
+        }
+        ret = ext2_read_block(physical, storage_cluster_buf);
+        if (ret < 0) {
+            return ret;
         }
         pos = offset % block_size;
         block_limit = min_u32(block_size, (uint32_t)(size - offset + pos));
@@ -321,7 +366,13 @@ static int ext2_read_node(const struct storage_node *node, uint64_t offset,
     if (out_read) *out_read = 0;
     if (!node || !buffer || node->type != LEONOS_FS_TYPE_FILE) return -22;
     ret = ext2_read_inode(node->first_cluster, &inode);
-    if (ret < 0) return ret;
+    if (ret < 0) {
+        if (ret != -LEONOS_EAGAIN) {
+            console_printf("[ntclks] ext2 inode read failed inode=%u offset=%llu ret=%d\n",
+                           node->first_cluster, (unsigned long long)offset, ret);
+        }
+        return ret;
+    }
     if (offset >= ext2_inode_size(&inode)) return 0;
     if (len > ext2_inode_size(&inode) - offset) len = (uint32_t)(ext2_inode_size(&inode) - offset);
     while (done < len) {
@@ -330,10 +381,24 @@ static int ext2_read_node(const struct storage_node *node, uint64_t offset,
         uint32_t block = 0;
         uint32_t take = min_u32(g_storage.ext2_block_size - block_offset, len - done);
         ret = ext2_get_block(&inode, logical, 0, &block);
-        if (ret < 0) return ret;
+        if (ret < 0) {
+            if (ret != -LEONOS_EAGAIN) {
+                console_printf("[ntclks] ext2 block map failed inode=%u offset=%llu "
+                               "logical=%u ret=%d\n", node->first_cluster,
+                               (unsigned long long)(offset + done), logical, ret);
+            }
+            return ret;
+        }
         if (block) {
             ret = ext2_read_block(block, storage_cluster_buf);
-            if (ret < 0) return ret;
+            if (ret < 0) {
+                if (ret != -LEONOS_EAGAIN) {
+                    console_printf("[ntclks] ext2 data read failed inode=%u offset=%llu "
+                                   "logical=%u block=%u ret=%d\n", node->first_cluster,
+                                   (unsigned long long)(offset + done), logical, block, ret);
+                }
+                return ret;
+            }
             storage_memcpy(dst + done, storage_cluster_buf + block_offset, take);
         } else {
             storage_memzero(dst + done, take);
@@ -520,7 +585,9 @@ static int ext2_iter_dir_entry(uint32_t directory_ino, uint64_t wanted,
         uint32_t block = 0;
         uint32_t pos;
         ret = ext2_get_block(&directory, logical, 0, &block);
-        if (ret < 0 || !block || ext2_read_block(block, storage_cluster_buf) < 0) return -5;
+        if (ret < 0 || !block) return ret < 0 ? ret : -5;
+        ret = ext2_read_block(block, storage_cluster_buf);
+        if (ret < 0) return ret;
         for (pos = 0; pos + 8u <= g_storage.ext2_block_size;) {
             struct ext2_dirent *entry = (struct ext2_dirent *)(void *)(storage_cluster_buf + pos);
             if (entry->rec_len < 8u || (entry->rec_len & 3u) || pos + entry->rec_len > g_storage.ext2_block_size ||

@@ -170,6 +170,7 @@ const char *leonos_shell_command_path(const char *name)
     if (strcmp(name, "lua") == 0) return "0:/programs/lua/lua.elf";
     if (strcmp(name, "file") == 0) return "0:/programs/file/file.elf";
     if (strcmp(name, "fastfetch") == 0) return "0:/programs/fastfetch/fastfetch.elf";
+    if (strcmp(name, "less") == 0) return "0:/programs/less/less.elf";
     if (strcmp(name, "sl") == 0) return "0:/programs/sl/sl.elf";
     if (strcmp(name, "cmd") == 0) return "0:/programs/cmd/cmd.elf";
     return 0;
@@ -258,33 +259,6 @@ unsigned long long monotonic_us(void)
 unsigned bb_clk_tck(void)
 {
     return 1000U;
-}
-
-int poll(struct pollfd *fds, nfds_t count, int timeout_ms)
-{
-    nfds_t index;
-    unsigned long started = leonos_uptime_ms();
-    for (;;) {
-        int ready = 0;
-        int stdin_available = leonos_pty_input_available();
-        for (index = 0; index < count; ++index) {
-            fds[index].revents = 0;
-            if (fds[index].fd < 0 || !(fds[index].events & POLLIN)) {
-                continue;
-            }
-            if (fds[index].fd != STDIN_FILENO || stdin_available != 0) {
-                fds[index].revents = POLLIN;
-                ++ready;
-            }
-        }
-        if (ready || timeout_ms == 0) {
-            return ready;
-        }
-        if (timeout_ms > 0 && leonos_uptime_ms() - started >= (unsigned long)timeout_ms) {
-            return 0;
-        }
-        sleep_ms(4);
-    }
 }
 
 ssize_t readlink(const char *path, char *buffer, size_t length)

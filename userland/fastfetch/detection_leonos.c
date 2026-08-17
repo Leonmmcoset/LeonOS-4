@@ -116,9 +116,9 @@ const char* ffDetectMemory(FFMemoryResult* result)
     if (!result || leonos_perf_info(&perf) < 0) {
         return "LeonOS performance information is unavailable";
     }
-    result->bytesTotal = perf.total_memory_kib * 1024U;
+    result->bytesTotal = (uint64_t)perf.total_memory_kib * 1024ULL;
     result->bytesUsed = perf.total_memory_kib > perf.free_memory_kib
-        ? (perf.total_memory_kib - perf.free_memory_kib) * 1024U
+        ? (uint64_t)(perf.total_memory_kib - perf.free_memory_kib) * 1024ULL
         : 0;
     return nullptr;
 }

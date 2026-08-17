@@ -316,6 +316,25 @@ config LEON_COMPONENT_APP_FASTFETCH_SDK
     default n
     depends on LEON_COMPONENT_APP_FASTFETCH_BUILD
 
+config LEON_COMPONENT_TOOL_LESS_BUILD
+    bool "Build GNU less pager"
+    default y
+
+config LEON_COMPONENT_TOOL_LESS_IMAGE
+    bool "Include GNU less pager in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_LESS_BUILD
+
+config LEON_COMPONENT_TOOL_LESS_ENTRY
+    bool "Generate a desktop entry for GNU less pager"
+    default n
+    depends on LEON_COMPONENT_TOOL_LESS_BUILD
+
+config LEON_COMPONENT_TOOL_LESS_SDK
+    bool "Include GNU less pager in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_LESS_BUILD
+
 config LEON_COMPONENT_TOOL_SL_BUILD
     bool "Build sl Steam Locomotive"
     default y
