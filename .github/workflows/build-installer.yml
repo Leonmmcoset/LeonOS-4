@@ -31,7 +31,7 @@ on:
       upload_artifacts:
         description: Upload build artifacts (VMDK, ISO, etc.)
         required: false
-        default: true
+        default: false
         type: boolean
       # -----------------------------
 
