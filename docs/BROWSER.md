@@ -73,6 +73,13 @@ shims in `userland/apps/browser/cxx_compat.c`. The shims intentionally provide
 only the no-thread/no-exception hooks needed by the freestanding build; they do
 not provide Linux binary compatibility.
 
+The four source-level freestanding adjustments needed by this profile are
+stored in `userland/litehtml/patches/leonos-freestanding.patch`. The build runs
+`tools/prepare_litehtml.py` to copy the recorded upstream commit into
+`build/litehtml-src` and applies that patch there before compiling. Therefore
+`third_party/litehtml` remains a clean, unmodified upstream submodule; deleting
+the generated build tree is safe and it will be recreated on the next build.
+
 ## Remaining Browser Work
 
 1. Add JavaScript support only after a sandbox and resource policy are

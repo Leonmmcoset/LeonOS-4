@@ -1,0 +1,183 @@
+diff --git a/src/encodings.cpp b/src/encodings.cpp
+index 49eda270..adba3dae 100644
+--- a/src/encodings.cpp
++++ b/src/encodings.cpp
+@@ -7879,6 +7879,15 @@ namespace litehtml
+         return index >= 1024;
+     }
+ 
++    /* LeonOS builds LiteHTML without C++ exception/unwind support.  The
++     * prescan parser normally uses a local exception only to abandon a
++     * bounded scan; the no-exception build takes the XML fallback directly. */
++#ifdef LEONOS_LITEHTML_NO_EXCEPTIONS
++    encoding prescan_a_byte_stream_to_determine_its_encoding(const std::string&)
++    {
++        return encoding::null;
++    }
++#else
+     struct abort_prescan_exception : public std::exception
+     {
+         const char* what() const noexcept override
+@@ -8146,6 +8155,7 @@ namespace litehtml
+         increment(index, str);
+         goto loop;
+     }
++#endif
+ 
+     // https://html.spec.whatwg.org/multipage/parsing.html#concept-get-xml-encoding-when-sniffing
+     encoding get_xml_encoding(const std::string& str)
+@@ -8246,6 +8256,9 @@ namespace litehtml
+     // https://html.spec.whatwg.org/multipage/parsing.html#prescan-a-byte-stream-to-determine-its-encoding
+     encoding prescan_for_encoding(const std::string& str)
+     {
++#ifdef LEONOS_LITEHTML_NO_EXCEPTIONS
++        return get_xml_encoding(str);
++#else
+         try
+         {
+             return prescan_a_byte_stream_to_determine_its_encoding(str);
+@@ -8254,6 +8267,7 @@ namespace litehtml
+         {
+             return get_xml_encoding(str);
+         }
++#endif
+     }
+ 
+     // https://html.spec.whatwg.org/multipage/parsing.html#encoding-sniffing-algorithm
+diff --git a/src/html_tag.cpp b/src/html_tag.cpp
+index 843f41d5..4b0875b8 100644
+--- a/src/html_tag.cpp
++++ b/src/html_tag.cpp
+@@ -344,7 +344,9 @@ namespace litehtml
+             result = value.get<css_token_vector>();
+             return true;
+         }
+-        if(auto _parent = dynamic_cast<html_tag*>(parent().get()))
++        /* All document parents created by LiteHTML are html_tag instances;
++         * avoid pulling RTTI into the freestanding LeonOS image. */
++        if(auto _parent = static_cast<html_tag*>(parent().get()))
+         {
+             return _parent->get_custom_property(name, result);
+         }
+diff --git a/src/render_item.cpp b/src/render_item.cpp
+index 4f4976d5..74989ff3 100644
+--- a/src/render_item.cpp
++++ b/src/render_item.cpp
+@@ -1358,7 +1358,11 @@ void litehtml::render_item::get_rendering_boxes(const std::function<void(const p
+ 
+ void litehtml::render_item::dump(litehtml::dumper& cout)
+ {
++#ifdef LEONOS_LITEHTML_NO_RTTI
++    cout.begin_node(src_el()->dump_get_name() + "{render_item}");
++#else
+     cout.begin_node(src_el()->dump_get_name() + "{" + std::string(typeid(*this).name()) + "}");
++#endif
+ 
+     auto attrs = src_el()->dump_get_attrs();
+     if(!attrs.empty())
+diff --git a/src/url.cpp b/src/url.cpp
+index 16d0fbd9..4413106e 100644
+--- a/src/url.cpp
++++ b/src/url.cpp
+@@ -29,11 +29,9 @@
+ 
+ #include "url.h"
+ 
+-#include <sstream>
+ #include <algorithm>
+ #include "codepoint.h"
+ #include "url_path.h"
+-#include <iomanip>
+ 
+ namespace litehtml
+ {
+@@ -110,48 +108,51 @@ namespace litehtml
+         query_(query),
+         fragment_(fragment)
+     {
+-        std::stringstream tss;
+-
+         if(!scheme_.empty())
+         {
+-            tss << scheme_ << ":";
++            str_ += scheme_;
++            str_ += ":";
+         }
+         if(!authority_.empty())
+         {
+-            tss << "//" << authority_;
++            str_ += "//";
++            str_ += authority_;
+         }
+         if(!path_.empty())
+         {
+-            tss << path_;
++            str_ += path_;
+         }
+         if(!query_.empty())
+         {
+-            tss << "?" << query_;
++            str_ += "?";
++            str_ += query_;
+         }
+         if(!fragment_.empty())
+         {
+-            tss << "#" << fragment_;
++            str_ += "#";
++            str_ += fragment_;
+         }
+-        str_ = tss.str();
+     }
+ 
+     std::string url::encode(const std::string& str)
+     {
+-        std::ostringstream encoded;
+-        encoded << std::hex << std::uppercase;
++        static const char hex[] = "0123456789ABCDEF";
++        std::string encoded;
+ 
+         for(unsigned char c : str)
+         {
+             if(isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+             {
+-                encoded << c;
++                encoded += static_cast<char>(c);
+             } else
+             {
+-                encoded << '%' << std::setw(2) << static_cast<int>(c);
++                encoded += '%';
++                encoded += hex[(c >> 4) & 0x0f];
++                encoded += hex[c & 0x0f];
+             }
+         }
+ 
+-        return encoded.str();
++        return encoded;
+     }
+ 
+     std::string url::decode(const std::string& str)
+@@ -169,9 +170,21 @@ namespace litehtml
+                     break;
+                 }
+ 
+-                // Decode the percent-encoded character
+-                char hex[3]  = {str[i + 1], str[i + 2], '\0'};
+-                c            = static_cast<char>(std::strtol(hex, nullptr, 16));
++                auto hex_value = [](char digit) -> int {
++                    if(digit >= '0' && digit <= '9') return digit - '0';
++                    if(digit >= 'a' && digit <= 'f') return digit - 'a' + 10;
++                    if(digit >= 'A' && digit <= 'F') return digit - 'A' + 10;
++                    return -1;
++                };
++                int high = hex_value(str[i + 1]);
++                int low = hex_value(str[i + 2]);
++                if(high < 0 || low < 0)
++                {
++                    decoded += c;
++                    i++;
++                    continue;
++                }
++                c = static_cast<char>((high << 4) | low);
+                 i           += 2; // Skip the next two characters
+             } else if(c == '+')
+             {

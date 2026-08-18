@@ -567,6 +567,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     sqlite_work_dir = paths.out / "sqlite-work"
     litehtml_archive = paths.out / "userland/liblitehtml.a"
     gumbo_archive = paths.out / "userland/libgumbo.a"
+    litehtml_source = ROOT / "third_party/litehtml"
+    litehtml_overlay = paths.out / "litehtml-src"
+    litehtml_overlay_stamp = paths.out / "litehtml-src.stamp"
+    litehtml_compat_patch = ROOT / "userland/litehtml/patches/leonos-freestanding.patch"
     dynlinkerror_elf = paths.out / "userland/dynlinkerror.elf"
     installer_runtime_so = paths.out / "userland-installer-policy/libleonos.so.1"
     picolibc_header_stamp = picolibc_prefix / "include/.leonos-picolibc.stamp"
@@ -741,6 +745,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/file is missing; initialize the libmagic source tree")
     if not (file_port / "config.h").is_file() or not (file_port / "leonos_shim.c").is_file():
         raise GraphError("the LeonOS file/libmagic port metadata is missing")
+    if not (litehtml_source / "include/litehtml.h").is_file() or not litehtml_compat_patch.is_file():
+        raise GraphError("third_party/litehtml or its LeonOS compatibility patch is missing")
     if not (sqlite_source / "main.mk").is_file() or not (sqlite_source / "Makefile.linux-gcc").is_file():
         raise GraphError("third_party/sqlite is missing; initialize the SQLite source tree")
     if not (sqlite_port / "leonos_sqlite_vfs.c").is_file():
@@ -1576,7 +1582,38 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     # LiteHTML is built from the upstream renderer and its bundled Gumbo parser.
     # Keep the renderer in archives so only the browser and the OOBE browser
-    # embed pay for the C++ implementation.
+    # embed pay for the C++ implementation.  LeonOS-specific freestanding
+    # changes are applied to a generated build overlay; the Git submodule is
+    # never modified by the build.
+    litehtml_tree_inputs = tuple([
+        *collect("third_party/litehtml/include/**/*.h"),
+        *collect("third_party/litehtml/src/**/*.h"),
+        *collect("third_party/litehtml/src/**/*.c"),
+        *collect("third_party/litehtml/src/**/*.cpp"),
+        ROOT / "third_party/litehtml/LICENSE",
+        ROOT / "tools/prepare_litehtml.py",
+        litehtml_compat_patch,
+    ])
+    litehtml_overlay_files = tuple(
+        litehtml_overlay / source.relative_to(litehtml_source)
+        for source in sorted({
+            source for source in litehtml_tree_inputs
+            if source.is_relative_to(litehtml_source)
+        })
+    )
+    graph.add(Target(
+        name="prepare-litehtml",
+        outputs=(litehtml_overlay_stamp, *litehtml_overlay_files),
+        inputs=litehtml_tree_inputs,
+        kind="generate",
+        command=(
+            PYTHON, "tools/prepare_litehtml.py",
+            "--source", "third_party/litehtml",
+            "--output", relative(litehtml_overlay),
+            "--patch", relative(litehtml_compat_patch),
+            "--stamp", relative(litehtml_overlay_stamp),
+        ),
+    ))
     litehtml_headers = tuple([
         *collect("third_party/litehtml/include/**/*.h"),
         *collect("third_party/litehtml/src/**/*.h"),
@@ -1600,11 +1637,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         kind="link",
         command=(ar, "rcs", relative(gumbo_archive), *map(relative, gumbo_objects)),
     ))
-    litehtml_sources = collect("third_party/litehtml/src/*.cpp")
+    litehtml_sources = [
+        litehtml_overlay / source.relative_to(litehtml_source)
+        for source in collect("third_party/litehtml/src/*.cpp")
+    ]
     litehtml_objects = [
         add_compile(graph, paths, f"compile:litehtml:{relative(source)}", source,
                     "litehtml", cxxflags_litehtml,
-                    (autoconf, *litehtml_headers))
+                    (autoconf, *litehtml_headers, litehtml_overlay_stamp))
         for source in litehtml_sources
     ]
     graph.add(Target(
