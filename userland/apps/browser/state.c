@@ -1,6 +1,10 @@
 #include "browser.h"
 
-uint32_t pixels[BROWSER_MAX_W * BROWSER_MAX_H];
+#include <stdlib.h>
+
+uint32_t *pixels;
+uint32_t pixel_stride;
+static uint32_t pixel_height;
 struct leonos_ui_surface ui;
 int window_id;
 uint32_t view_w = BROWSER_INITIAL_W;
@@ -13,27 +17,16 @@ char current_location[BROWSER_URL_CAP] = "about:leonos";
 char page_source[BROWSER_SOURCE_CAP];
 uint8_t page_is_html;
 uint8_t source_truncated;
-struct browser_line lines[BROWSER_MAX_LINES];
-uint32_t line_count = 1;
-uint32_t scroll_line;
+uint32_t browser_scroll_y;
 uint32_t scroll_x;
-struct browser_link links[BROWSER_MAX_LINKS];
-uint32_t link_count;
-struct browser_form browser_forms[BROWSER_MAX_FORMS];
 uint32_t browser_form_count;
-struct browser_form_control browser_form_controls[BROWSER_MAX_FORM_CONTROLS];
 uint32_t browser_form_control_count;
-struct browser_form_option browser_form_options[BROWSER_MAX_FORM_OPTIONS];
-uint32_t browser_form_option_count;
 char history[BROWSER_HISTORY_MAX][BROWSER_URL_CAP];
 uint32_t history_count;
 int32_t history_index = -1;
 uint8_t menu_open;
 uint8_t browser_should_exit;
 uint8_t browser_embedded;
-uint8_t browser_form_focus_active;
-uint32_t browser_form_focus_control;
-struct leonos_ui_edit_state browser_form_edit_state;
 struct leonos_ui_toast_state browser_toast;
 struct browser_bookmark browser_bookmarks[BROWSER_MAX_BOOKMARKS];
 uint32_t browser_bookmark_count;
@@ -42,6 +35,46 @@ int32_t browser_find_row = -1;
 uint32_t browser_find_start;
 uint32_t browser_find_len;
 uint8_t browser_devtools_open;
+struct browser_litehtml_document *browser_document;
+uint32_t browser_document_width;
+uint32_t browser_document_height;
+uint8_t browser_pending_form;
+char browser_pending_form_url[BROWSER_URL_CAP];
+char browser_pending_form_method[12];
+char browser_pending_form_body[BROWSER_FORM_BODY_CAP];
+
+int browser_resize_surface(uint32_t width, uint32_t height)
+{
+    uint64_t count;
+    uint32_t *new_pixels;
+    if (!width || !height || width > BROWSER_MAX_W || height > BROWSER_MAX_H) {
+        return -1;
+    }
+    if (pixels && pixel_stride == width && pixel_height == height) {
+        return 0;
+    }
+    count = (uint64_t)width * height;
+    if (count > (uint64_t)SIZE_MAX / sizeof(*new_pixels)) {
+        return -1;
+    }
+    new_pixels = (uint32_t *)malloc((size_t)count * sizeof(*new_pixels));
+    if (!new_pixels) {
+        return -1;
+    }
+    free(pixels);
+    pixels = new_pixels;
+    pixel_stride = width;
+    pixel_height = height;
+    return 0;
+}
+
+void browser_release_surface(void)
+{
+    free(pixels);
+    pixels = 0;
+    pixel_stride = 0;
+    pixel_height = 0;
+}
 
 uint32_t browser_devtools_height(void)
 {
@@ -79,7 +112,7 @@ uint32_t page_h(void)
     uint32_t devtools_h = browser_devtools_height();
     uint32_t bottom_reserve = devtools_h ? devtools_h + 4U : 0U;
     if (view_h <= y + bottom_reserve + 4U) {
-        return BROWSER_LINE_H;
+        return LEONOS_FONT_H + 2U;
     }
     content_w = document_content_w();
     if (content_w > document_text_w() &&
@@ -99,58 +132,32 @@ uint32_t text_y(void)
     return page_y() + 8U;
 }
 
-uint32_t text_cols(void)
-{
-    uint32_t w = page_w();
-    uint32_t cols;
-    if (w <= BROWSER_SCROLL_W + 24U) {
-        return 16U;
-    }
-    cols = (w - BROWSER_SCROLL_W - 24U) / LEONOS_FONT_W;
-    if (cols < 16U) {
-        cols = 16U;
-    }
-    if (cols >= BROWSER_LINE_CHARS) {
-        cols = BROWSER_LINE_CHARS - 1U;
-    }
-    return cols;
-}
-
-uint32_t visible_rows(void)
-{
-    uint32_t h = page_h();
-    uint32_t used = 0;
-    uint32_t rows = 0;
-    if (h <= 16U) {
-        return 1U;
-    }
-    h -= 16U;
-    for (uint32_t i = scroll_line; i < line_count; ++i) {
-        uint32_t line_h = browser_line_render_height(&lines[i]);
-        if (rows && used + line_h > h) {
-            break;
-        }
-        used += line_h;
-        ++rows;
-        if (used >= h) {
-            break;
-        }
-    }
-    return rows ? rows : 1U;
-}
-
 void clamp_scroll(void)
 {
-    uint32_t rows = visible_rows();
+    uint32_t viewport = document_view_h();
+    uint32_t content_h = document_content_h();
     uint32_t content_w = document_content_w();
-    if (line_count <= rows) {
-        scroll_line = 0;
-    } else if (scroll_line + rows > line_count) {
-        scroll_line = line_count - rows;
+    uint32_t max_y = content_h > viewport ? content_h - viewport : 0U;
+    if (browser_scroll_y > max_y) {
+        browser_scroll_y = max_y;
     }
     if (scroll_x + document_text_w() > content_w) {
         scroll_x = content_w > document_text_w() ? content_w - document_text_w() : 0;
     }
+}
+
+void browser_scroll_wheel(int32_t delta)
+{
+    int64_t next;
+    if (!browser_document || delta == 0) {
+        return;
+    }
+    next = (int64_t)browser_scroll_y + (int64_t)delta * 48;
+    if (next < 0) {
+        next = 0;
+    }
+    browser_scroll_y = (uint32_t)next;
+    clamp_scroll();
 }
 
 void set_status(const char *text)

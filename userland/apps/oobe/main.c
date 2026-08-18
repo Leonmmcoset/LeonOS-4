@@ -10,8 +10,10 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
-#define OOBE_MAX_W 1920
-#define OOBE_MAX_H 1080
+#include <stdlib.h>
+
+#define OOBE_MAX_W LEONOS_GUI_MAX_WINDOW_WIDTH
+#define OOBE_MAX_H LEONOS_GUI_MAX_WINDOW_HEIGHT
 #define OOBE_INITIAL_W 800
 #define OOBE_INITIAL_H 600
 #define OOBE_DONE_PATH "0:/system/state/oobe.done"
@@ -52,7 +54,8 @@ enum license_field {
     LICENSE_FIELD_COUNT = 4,
 };
 
-static uint32_t pixels[OOBE_MAX_W * OOBE_MAX_H];
+static uint32_t *pixels;
+static uint32_t pixel_stride;
 static uint32_t surface_w = OOBE_INITIAL_W;
 static uint32_t surface_h = OOBE_INITIAL_H;
 static char username[LEONOS_AUTH_USERNAME_LEN] = "admin";
@@ -128,8 +131,10 @@ static void append_u32(char *dst, uint32_t *pos, uint32_t cap, uint32_t value)
     }
 }
 
-static void update_surface_size(uint32_t width, uint32_t height)
+static int update_surface_size(uint32_t width, uint32_t height)
 {
+    uint64_t pixel_count;
+    uint32_t *new_pixels;
     uint32_t scale = 1;
     while ((width / scale) > OOBE_MAX_W || (height / scale) > OOBE_MAX_H) {
         ++scale;
@@ -138,16 +143,34 @@ static void update_surface_size(uint32_t width, uint32_t height)
         width /= scale;
         height /= scale;
     }
-    surface_w = width ? width : OOBE_INITIAL_W;
-    surface_h = height ? height : OOBE_INITIAL_H;
+    width = width ? width : OOBE_INITIAL_W;
+    height = height ? height : OOBE_INITIAL_H;
+    if (pixels && surface_w == width && surface_h == height) {
+        return 0;
+    }
+    pixel_count = (uint64_t)width * height;
+    if (pixel_count > (uint64_t)SIZE_MAX / sizeof(*new_pixels)) {
+        return -1;
+    }
+    new_pixels = (uint32_t *)malloc((size_t)pixel_count * sizeof(*new_pixels));
+    if (!new_pixels) {
+        return -1;
+    }
+    free(pixels);
+    pixels = new_pixels;
+    pixel_stride = width;
+    surface_w = width;
+    surface_h = height;
+    return 0;
 }
 
-static void update_surface_size_from_framebuffer(void)
+static int update_surface_size_from_framebuffer(void)
 {
     struct leonos_fb_info fb;
     if (leonos_fb_info(&fb) >= 0) {
-        update_surface_size(fb.width, fb.height);
+        return update_surface_size(fb.width, fb.height);
     }
+    return update_surface_size(OOBE_INITIAL_W, OOBE_INITIAL_H);
 }
 
 static int write_completion_marker(void)
@@ -757,7 +780,10 @@ int main(void)
     if (current_page == OOBE_PAGE_ADMIN) {
         active_admin_field = 1;
     }
-    update_surface_size_from_framebuffer();
+    if (update_surface_size_from_framebuffer() < 0) {
+        OOBE_LOG_LINE("[oobe.elf] render surface allocation failed");
+        return 1;
+    }
     leonos_ui_edit_state_init(&username_edit, username, sizeof(username));
     leonos_ui_edit_state_init(&password_edit, password, sizeof(password));
     leonos_ui_edit_state_init(&online_email_edit, online_email, sizeof(online_email));
@@ -772,15 +798,18 @@ int main(void)
         return 1;
     }
     for (;;) {
-        leonos_ui_bind(&ui, pixels, surface_w, surface_h, OOBE_MAX_W);
+        leonos_ui_bind(&ui, pixels, surface_w, surface_h, pixel_stride);
         draw_oobe(&ui);
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
-                                  OOBE_MAX_W, pixels);
+                                  pixel_stride, pixels);
         oobe_update_inputm_context((uint32_t)window_id);
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_wait_app_event(&event, 20U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
-                update_surface_size(event.width, event.height);
+                if (update_surface_size(event.width, event.height) < 0) {
+                    OOBE_LOG_LINE("[oobe.elf] render surface resize failed");
+                    continue;
+                }
                 if (current_page == OOBE_PAGE_LICENSE_BROWSER) {
                     browser_embed_resize(surface_w, surface_h);
                 }
@@ -839,5 +868,6 @@ int main(void)
         }
     }
     leonos_gui_destroy_app_window((uint32_t)window_id);
+    free(pixels);
     return 0;
 }

@@ -282,6 +282,7 @@ void leonos_ui_bind(struct leonos_ui_surface *surface, uint32_t *pixels,
 int leonos_ui_set_font_path(const char *path);
 int leonos_ui_set_font_fallback_path(const char *path);
 uint32_t leonos_ui_text_width(const char *text);
+uint32_t leonos_ui_text_scaled_width(const char *text, uint32_t font_height);
 uint32_t leonos_ui_text_fit_chars(uint32_t pixel_width);
 int leonos_ui_hit(uint32_t px, uint32_t py, int32_t x, int32_t y, uint32_t w, uint32_t h);
 int leonos_ui_keycode_to_char(uint8_t keycode, char *out);
@@ -300,6 +301,15 @@ void leonos_ui_text_resized_clipped(struct leonos_ui_surface *surface,
                                     uint32_t x, uint32_t y, uint32_t w,
                                     const char *text, uint32_t fg, uint32_t bg,
                                     uint32_t cell_w, uint32_t cell_h);
+void leonos_ui_text_resized_transparent_clipped(
+    struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w,
+    const char *text, uint32_t fg, uint32_t cell_w, uint32_t cell_h);
+void leonos_ui_text_scaled_transparent_clipped(
+    struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w,
+    const char *text, uint32_t fg, uint32_t font_height);
+void leonos_ui_text_scaled_transparent_clipped_at(
+    struct leonos_ui_surface *surface, int32_t x, int32_t y, uint32_t w,
+    const char *text, uint32_t fg, uint32_t font_height);
 void leonos_ui_text_transparent(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                                 const char *text, uint32_t fg);
 void leonos_ui_text_transparent_clipped(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,

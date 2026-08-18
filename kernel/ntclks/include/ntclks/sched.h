@@ -109,6 +109,8 @@ struct task {
     uint64_t stack_top;
     uint64_t wake_tick;
     uint32_t wait_window_id;
+    /* Non-zero while the task is blocked waiting for input on this PTY. */
+    uint32_t wait_pty_id;
     uint64_t exit_code;
     const void *image;
     size_t image_len;
@@ -320,6 +322,29 @@ void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick)
  * @param window_id Input or output value used by this operation.
  */
 void sched_wake_window_event(uint32_t pid, uint32_t window_id);
+/**
+ * @brief Wakes a task blocked on an interruptible I/O wait.
+ * @param pid Task to wake.
+ *
+ * Unlike sched_mark_ready(), this only changes TASK_BLOCKED tasks, so an
+ * asynchronous producer cannot disturb a task that is already running.
+ */
+void sched_wake_task(uint32_t pid);
+/**
+ * @brief Wakes blocked tasks belonging to a process group.
+ * @param process_group Process group to wake.
+ */
+void sched_wake_process_group(uint32_t process_group);
+/**
+ * @brief Blocks the current task until input is available on a PTY.
+ * @param pty_id PTY whose input queue should wake the task.
+ */
+void sched_wait_current_for_pty_input(uint32_t pty_id);
+/**
+ * @brief Wakes tasks waiting for input on a PTY.
+ * @param pty_id PTY whose input queue should be made ready.
+ */
+void sched_wake_pty_input(uint32_t pty_id);
 /**
  * @brief Coordinates the sched kill user task operation.
  * @param pid Input or output value used by this operation.

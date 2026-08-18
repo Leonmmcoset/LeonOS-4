@@ -10,6 +10,7 @@
 #define LEONOS_PTY_IOCTL_SPAWN 0x4c505453UL
 #define LEONOS_PTY_IOCTL_SELF 0x4c505449UL
 #define LEONOS_PTY_IOCTL_INPUT_AVAILABLE 0x4c505441UL
+#define LEONOS_PTY_IOCTL_WAIT_INPUT 0x4c505446UL
 #define LEONOS_PTY_IOCTL_GET_ATTR 0x4c505447UL
 #define LEONOS_PTY_IOCTL_SET_ATTR 0x4c505454UL
 #define LEONOS_PTY_IOCTL_OWNER_GET_ATTR 0x4c50544dUL
@@ -111,6 +112,7 @@ int leonos_pty_spawn_argv_with_fds(const char *path, uint32_t pty_id,
                                    int stdin_fd, int stdout_fd, int stderr_fd);
 int leonos_pty_self(void);
 int leonos_pty_input_available(void);
+int leonos_pty_wait_input(void);
 int leonos_pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios);
 int leonos_pty_set_termios(uint32_t pty_id,
                            const struct leonos_pty_termios *termios);

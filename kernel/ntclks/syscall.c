@@ -5680,6 +5680,18 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
         return (int64_t)pty_input_available(task->pty_id);
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_PTY_IOCTL_WAIT_INPUT) {
+        struct task *task = sched_current_task();
+        if (!task || !task->pty_id) {
+            return -LEONOS_EINVAL;
+        }
+        if (pty_input_available(task->pty_id)) {
+            return 1;
+        }
+        sched_wait_current_for_pty_input(task->pty_id);
+        return 0;
+    }
+
     if (number == LINUX_SYS_IOCTL &&
         (a1 == LEONOS_PTY_IOCTL_GET_PGRP || a1 == LEONOS_PTY_IOCTL_SET_PGRP)) {
         struct task *task = sched_current_task();

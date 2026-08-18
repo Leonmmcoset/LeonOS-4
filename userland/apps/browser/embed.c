@@ -7,6 +7,10 @@ static uint32_t browser_embed_min_u32(uint32_t a, uint32_t b)
 
 static void browser_embed_reset(void)
 {
+    if (browser_document) {
+        browser_litehtml_destroy(browser_document);
+        browser_document = 0;
+    }
     address_input[0] = 0;
     status_text[0] = 0;
     page_title[0] = 0;
@@ -14,34 +18,20 @@ static void browser_embed_reset(void)
     page_source[0] = 0;
     page_is_html = 0;
     source_truncated = 0;
-    line_count = 1;
-    scroll_line = 0;
+    browser_scroll_y = 0;
     scroll_x = 0;
-    link_count = 0;
     browser_form_count = 0;
     browser_form_control_count = 0;
-    browser_form_option_count = 0;
+    browser_pending_form = 0;
+    browser_pending_form_url[0] = 0;
+    browser_pending_form_method[0] = 0;
+    browser_pending_form_body[0] = 0;
     history_count = 0;
     history_index = -1;
     menu_open = BROWSER_MENU_NONE;
     browser_should_exit = 0;
     browser_form_clear_focus();
     browser_toast = (struct leonos_ui_toast_state){0};
-    for (uint32_t i = 0; i < BROWSER_MAX_LINES; ++i) {
-        lines[i] = (struct browser_line){0};
-    }
-    for (uint32_t i = 0; i < BROWSER_MAX_LINKS; ++i) {
-        links[i] = (struct browser_link){0};
-    }
-    for (uint32_t i = 0; i < BROWSER_MAX_FORMS; ++i) {
-        browser_forms[i] = (struct browser_form){0};
-    }
-    for (uint32_t i = 0; i < BROWSER_MAX_FORM_CONTROLS; ++i) {
-        browser_form_controls[i] = (struct browser_form_control){0};
-    }
-    for (uint32_t i = 0; i < BROWSER_MAX_FORM_OPTIONS; ++i) {
-        browser_form_options[i] = (struct browser_form_option){0};
-    }
     for (uint32_t i = 0; i < BROWSER_HISTORY_MAX; ++i) {
         history[i][0] = 0;
     }
@@ -76,9 +66,10 @@ void browser_embed_init(uint32_t width, uint32_t height, const char *initial_url
                                    BROWSER_MAX_H);
     leonos_ui_set_font_path(BROWSER_FONT_PATH);
     leonos_ui_set_font_fallback_path(BROWSER_FONT_FALLBACK_PATH);
-    leonos_ui_bind(&ui, pixels, init_w, init_h, BROWSER_MAX_W);
     view_w = init_w;
     view_h = init_h;
+    /* The embedded browser draws into the host application's surface. */
+    ui = (struct leonos_ui_surface){0};
     browser_embed_reset();
     browser_bookmarks_load();
     copy_text(address_input, sizeof(address_input), initial_url ? initial_url : "");
@@ -109,11 +100,16 @@ void browser_embed_handle_mouse_button(struct leonos_gui_app_event *event)
 
 void browser_embed_handle_mouse_wheel(struct leonos_gui_app_event *event)
 {
-    if (leonos_ui_vscrollbar_handle_wheel(&scroll_line,
-                                          line_count ? line_count : 1U,
-                                          visible_rows(), event->dy)) {
+    uint32_t before = browser_scroll_y;
+    browser_scroll_wheel(-event->dy);
+    if (browser_scroll_y != before) {
         present_browser();
     }
+}
+
+void browser_embed_handle_mouse_move(struct leonos_gui_app_event *event)
+{
+    handle_mouse_move(event);
 }
 
 void browser_embed_handle_key(struct leonos_gui_app_event *event)

@@ -66,11 +66,14 @@ void fill_surface(uint32_t color)
 
 bool resize_surface(uint32_t width, uint32_t height)
 {
-    if (width == 0 || height == 0 || width > 4096 || height > 4096) {
+    if (width == 0 || height == 0 ||
+        width > LEONOS_GUI_MAX_WINDOW_WIDTH ||
+        height > LEONOS_GUI_MAX_WINDOW_HEIGHT) {
         return false;
     }
     const uint64_t count = static_cast<uint64_t>(width) * height;
-    if (count > 16ULL * 1024ULL * 1024ULL) {
+    if (count > static_cast<uint64_t>(LEONOS_GUI_MAX_WINDOW_WIDTH) *
+                    LEONOS_GUI_MAX_WINDOW_HEIGHT) {
         return false;
     }
     uint32_t *pixels = static_cast<uint32_t *>(realloc(g_surface.pixels, static_cast<size_t>(count * sizeof(uint32_t))));

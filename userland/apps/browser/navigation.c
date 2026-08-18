@@ -1,59 +1,253 @@
 #include "browser.h"
 
-#define BROWSER_EXTERNAL_CSS_MAX 3072U
-#define BROWSER_CSS_FETCH_MAX 2048U
-#define BROWSER_CSS_LINK_MAX 4U
-#define BROWSER_TAG_TEXT_MAX 512U
+#include <leonos/png.h>
+#include <leonos/text.h>
+#include <stdlib.h>
+
 #define BROWSER_HTTP_MAX_RETRIES 3U
 
 static char browser_http_headers[LEONOS_HTTP_HEADER_MAX + 1U];
-static char browser_css_headers[LEONOS_HTTP_HEADER_MAX + 1U];
-static char browser_css_body[BROWSER_CSS_FETCH_MAX + 1U];
-static char browser_external_css[BROWSER_EXTERNAL_CSS_MAX + 1U];
 static char browser_combined_source[BROWSER_SOURCE_CAP];
+
+static int browser_url_has_query(const char *url)
+{
+    while (url && *url) {
+        if (*url == '?') {
+            return 1;
+        }
+        ++url;
+    }
+    return 0;
+}
+
+static void browser_decode_page_source(uint32_t length)
+{
+    uint32_t encoding = LEONOS_TEXT_ENCODING_UTF8;
+    uint32_t decoded_len = 0;
+    uint32_t replacements = 0;
+    char *raw;
+    int ret;
+    if (length >= BROWSER_SOURCE_CAP) {
+        length = BROWSER_SOURCE_CAP - 1U;
+        source_truncated = 1;
+    }
+    page_source[length] = 0;
+    if (length == 0 || leonos_text_detect_encoding(page_source, length,
+                                                   &encoding) < 0) {
+        return;
+    }
+    /* The decoder permits no overlapping input/output.  Keep the raw body
+     * temporarily so GBK and UTF-16 can expand into UTF-8 safely. */
+    raw = (char *)malloc((size_t)length + 1U);
+    if (!raw) {
+        return;
+    }
+    memcpy(raw, page_source, length);
+    raw[length] = 0;
+    ret = leonos_text_decode(raw, length, encoding, page_source,
+                             BROWSER_SOURCE_CAP, &decoded_len, &replacements);
+    free(raw);
+    if (ret < 0 && ret != LEONOS_TEXT_ENCODING_NO_SPACE) {
+        return;
+    }
+    if (ret == LEONOS_TEXT_ENCODING_NO_SPACE ||
+        decoded_len + 1U >= BROWSER_SOURCE_CAP) {
+        source_truncated = 1;
+        decoded_len = BROWSER_SOURCE_CAP - 1U;
+    }
+    page_source[decoded_len] = 0;
+    (void)replacements;
+}
+
+int browser_litehtml_fetch_resource(void *opaque, const char *url,
+                                    uint8_t **data, uint32_t *size,
+                                    char *content_type,
+                                    uint32_t content_type_cap)
+{
+    struct leonos_http_response response;
+    char *headers;
+    uint32_t capacity = LEONOS_PNG_MAX_FILE_BYTES;
+    int ret;
+    (void)opaque;
+    if (!url || !data || !size ||
+        (!starts_with_ignore_case(url, "http://") &&
+         !starts_with_ignore_case(url, "https://"))) {
+        return -1;
+    }
+    *data = 0;
+    *size = 0;
+    if (content_type && content_type_cap) {
+        content_type[0] = 0;
+    }
+    *data = (uint8_t *)malloc((size_t)capacity + 1U);
+    headers = (char *)malloc(LEONOS_HTTP_HEADER_MAX + 1U);
+    if (!*data || !headers) {
+        free(*data);
+        free(headers);
+        *data = 0;
+        return -1;
+    }
+    ret = browser_http_get_with_cookies(url, LEONOS_HTTP_DEFAULT_TIMEOUT_MS,
+                                        (char *)*data, capacity + 1U,
+                                        headers, LEONOS_HTTP_HEADER_MAX + 1U,
+                                        &response);
+    free(headers);
+    if (ret < 0 || response.net_status != LEONOS_NET_STATUS_OK ||
+        response.http_status < 200U || response.http_status >= 300U ||
+        response.body_len == 0 || response.body_len > capacity) {
+        free(*data);
+        *data = 0;
+        return -1;
+    }
+    if (content_type && content_type_cap) {
+        copy_text(content_type, content_type_cap, response.content_type);
+    }
+    *size = response.body_len;
+    return 0;
+}
+
+static void browser_litehtml_link(void *opaque, const char *url)
+{
+    (void)opaque;
+    if (url && url[0]) {
+        navigate_to(url, 1);
+    }
+}
+
+static void browser_litehtml_title(void *opaque, const char *title)
+{
+    (void)opaque;
+    if (title && title[0]) {
+        copy_text(page_title, sizeof(page_title), title);
+    }
+}
+
+static void browser_litehtml_submit(void *opaque, const char *action,
+                                    const char *method, const char *body)
+{
+    char resolved[BROWSER_URL_CAP];
+    const char *target = action && action[0] ? action : current_location;
+    (void)opaque;
+    if (action && action[0] &&
+        leonos_http_resolve_url(current_location, target, resolved,
+                                sizeof(resolved)) == 0) {
+        target = resolved;
+    }
+    copy_text(browser_pending_form_url, sizeof(browser_pending_form_url), target);
+    copy_text(browser_pending_form_method, sizeof(browser_pending_form_method),
+              method && method[0] ? method : "get");
+    copy_text(browser_pending_form_body, sizeof(browser_pending_form_body),
+              body ? body : "");
+    browser_pending_form = 1;
+}
+
+void browser_process_pending_form(void)
+{
+    char url[BROWSER_URL_CAP];
+    char method[12];
+    char body[BROWSER_FORM_BODY_CAP];
+    uint32_t pos;
+    if (!browser_pending_form) {
+        return;
+    }
+    copy_text(url, sizeof(url), browser_pending_form_url);
+    copy_text(method, sizeof(method), browser_pending_form_method);
+    copy_text(body, sizeof(body), browser_pending_form_body);
+    browser_pending_form = 0;
+    browser_pending_form_url[0] = 0;
+    browser_pending_form_method[0] = 0;
+    browser_pending_form_body[0] = 0;
+    if (text_eq_ignore_case(method, "post")) {
+        load_http_form_post(url, body);
+        return;
+    }
+    if (body[0]) {
+        pos = (uint32_t)strlen(url);
+        append_char(url, &pos, sizeof(url),
+                    browser_url_has_query(url) ? '&' : '?');
+        append_text(url, &pos, sizeof(url), body);
+    }
+    navigate_to(url, 1);
+}
+
+static void browser_escape_pre(const char *source)
+{
+    uint32_t pos = 0;
+    browser_combined_source[0] = 0;
+    append_text(browser_combined_source, &pos, sizeof(browser_combined_source),
+                "<pre style=\"white-space: pre-wrap; word-wrap: break-word\">\n");
+    while (source && *source) {
+        const char *replacement = 0;
+        if (*source == '&') {
+            replacement = "&amp;";
+        } else if (*source == '<') {
+            replacement = "&lt;";
+        } else if (*source == '>') {
+            replacement = "&gt;";
+        }
+        if (replacement) {
+            append_text(browser_combined_source, &pos,
+                        sizeof(browser_combined_source), replacement);
+        } else {
+            append_char(browser_combined_source, &pos,
+                        sizeof(browser_combined_source), *source);
+        }
+        ++source;
+    }
+    append_text(browser_combined_source, &pos, sizeof(browser_combined_source),
+                "\n</pre>");
+}
 
 void render_html_source(const char *source, const char *base_url)
 {
-    const char *inline_source;
-    struct litehtml_core_view view = {
-        .lines = lines,
-        .max_lines = BROWSER_MAX_LINES,
-        .line_chars = BROWSER_LINE_CHARS,
-        .links = links,
-        .max_links = BROWSER_MAX_LINKS,
-        .line_count = &line_count,
-        .link_count = &link_count,
-        .scroll_line = &scroll_line,
-        .page_title = page_title,
-        .page_title_cap = sizeof(page_title),
-        .source_truncated = &source_truncated,
-        .cols = text_cols(),
-    };
-    inline_source = browser_forms_render_inline_source(source, base_url);
+    uint32_t width = document_text_w();
+    if (width < 1U) {
+        width = 1U;
+    }
+    if (browser_document) {
+        browser_litehtml_destroy(browser_document);
+        browser_document = 0;
+    }
+    browser_form_count = 0;
+    browser_form_control_count = 0;
     scroll_x = 0;
-    litehtml_core_render_html(&view, inline_source, base_url);
-    browser_form_rebind_focus();
+    browser_document = browser_litehtml_create(source ? source : "",
+                                               base_url ? base_url : "",
+                                               browser_litehtml_link,
+                                               browser_litehtml_title,
+                                               browser_litehtml_submit,
+                                               browser_litehtml_fetch_resource,
+                                               0, width, document_view_h());
+    browser_document_width = width;
+    browser_document_height = browser_document
+                                  ? browser_litehtml_content_height(browser_document)
+                                  : 0U;
+    browser_form_count = browser_litehtml_form_count(browser_document);
+    browser_form_control_count =
+        browser_litehtml_form_control_count(browser_document);
+    browser_form_clear_focus();
     clamp_scroll();
 }
 
 void render_plain_source(const char *source)
 {
-    struct litehtml_core_view view = {
-        .lines = lines,
-        .max_lines = BROWSER_MAX_LINES,
-        .line_chars = BROWSER_LINE_CHARS,
-        .links = links,
-        .max_links = BROWSER_MAX_LINKS,
-        .line_count = &line_count,
-        .link_count = &link_count,
-        .scroll_line = &scroll_line,
-        .page_title = page_title,
-        .page_title_cap = sizeof(page_title),
-        .source_truncated = &source_truncated,
-        .cols = text_cols(),
-    };
+    browser_escape_pre(source ? source : "");
+    if (browser_document) {
+        browser_litehtml_destroy(browser_document);
+        browser_document = 0;
+    }
     scroll_x = 0;
-    litehtml_core_render_plain(&view, source);
+    browser_document = browser_litehtml_create(browser_combined_source,
+                                               current_location,
+                                               browser_litehtml_link,
+                                               browser_litehtml_title,
+                                               browser_litehtml_submit,
+                                               browser_litehtml_fetch_resource,
+                                               0, document_text_w(), document_view_h());
+    browser_document_width = document_text_w();
+    browser_document_height = browser_document
+                                  ? browser_litehtml_content_height(browser_document)
+                                  : 0U;
     clamp_scroll();
 }
 
@@ -62,7 +256,6 @@ void rerender_page(void)
     if (page_is_html) {
         render_html_source(page_source, current_location);
     } else {
-        browser_forms_clear();
         browser_form_clear_focus();
         render_plain_source(page_source);
     }
@@ -74,6 +267,10 @@ void set_page_source(const char *title, const char *source,
     char window_title[47];
     uint32_t title_pos = 0;
     browser_form_clear_focus();
+    /* A new document, including history navigation, starts at its origin.
+     * Retaining the previous offset can make a shorter page look blank. */
+    browser_scroll_y = 0;
+    scroll_x = 0;
     copy_text(page_title, sizeof(page_title), title && title[0] ? title : T("Untitled", "无标题"));
     copy_text(page_source, sizeof(page_source), source ? source : "");
     page_is_html = is_html;
@@ -91,7 +288,7 @@ void set_page_source(const char *title, const char *source,
 void render_message_page(const char *title, const char *message,
                                 const char *detail)
 {
-    char text[BROWSER_SOURCE_CAP];
+    static char text[BROWSER_SOURCE_CAP];
     uint32_t pos = 0;
     text[0] = 0;
     append_text(text, &pos, sizeof(text), title);
@@ -187,22 +384,6 @@ void load_about(void)
     set_page_source("LeonOS Browser", about_html, 1, T("Ready", "就绪"));
 }
 
-static void browser_copy_bytes(char *dst, uint32_t cap,
-                               const char *src, uint32_t len)
-{
-    uint32_t n = len;
-    if (!dst || cap == 0) {
-        return;
-    }
-    if (n + 1U > cap) {
-        n = cap - 1U;
-    }
-    for (uint32_t i = 0; i < n; ++i) {
-        dst[i] = src ? src[i] : 0;
-    }
-    dst[n] = 0;
-}
-
 static int browser_contains_ignore_case(const char *text, const char *needle)
 {
     uint32_t text_len;
@@ -226,219 +407,6 @@ static int browser_contains_ignore_case(const char *text, const char *needle)
         }
     }
     return 0;
-}
-
-static int browser_attr_name_eq(const char *text, uint32_t len,
-                                const char *name)
-{
-    uint32_t name_len = (uint32_t)strlen(name);
-    if (len != name_len) {
-        return 0;
-    }
-    for (uint32_t i = 0; i < len; ++i) {
-        if (ascii_tolower(text[i]) != ascii_tolower(name[i])) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int browser_extract_attr(const char *tag, const char *name,
-                                char *out, uint32_t cap)
-{
-    uint32_t i = 0;
-    if (out && cap) {
-        out[0] = 0;
-    }
-    if (!tag || !name || !out || cap == 0) {
-        return 0;
-    }
-    while (tag[i]) {
-        uint32_t name_start;
-        uint32_t name_end;
-        uint32_t value_start;
-        uint32_t value_end;
-        char quote = 0;
-        while (tag[i] && (is_space_char(tag[i]) || tag[i] == '<' ||
-                          tag[i] == '/' || tag[i] == '>')) {
-            ++i;
-        }
-        name_start = i;
-        while (tag[i] && !is_space_char(tag[i]) && tag[i] != '=' &&
-               tag[i] != '/' && tag[i] != '>') {
-            ++i;
-        }
-        name_end = i;
-        while (tag[i] && is_space_char(tag[i])) {
-            ++i;
-        }
-        if (tag[i] != '=') {
-            continue;
-        }
-        ++i;
-        while (tag[i] && is_space_char(tag[i])) {
-            ++i;
-        }
-        if (tag[i] == '"' || tag[i] == '\'') {
-            quote = tag[i++];
-        }
-        value_start = i;
-        if (quote) {
-            while (tag[i] && tag[i] != quote) {
-                ++i;
-            }
-        } else {
-            while (tag[i] && !is_space_char(tag[i]) && tag[i] != '>') {
-                ++i;
-            }
-        }
-        value_end = i;
-        if (quote && tag[i] == quote) {
-            ++i;
-        }
-        if (browser_attr_name_eq(tag + name_start, name_end - name_start,
-                                 name)) {
-            browser_copy_bytes(out, cap, tag + value_start,
-                               value_end - value_start);
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int browser_tag_name_at(const char *source, const char *name)
-{
-    uint32_t i = 0;
-    uint32_t name_len = (uint32_t)strlen(name);
-    if (!source || source[0] != '<') {
-        return 0;
-    }
-    i = 1;
-    while (source[i] && is_space_char(source[i])) {
-        ++i;
-    }
-    if (source[i] == '/') {
-        return 0;
-    }
-    for (uint32_t n = 0; n < name_len; ++n) {
-        if (ascii_tolower(source[i + n]) != ascii_tolower(name[n])) {
-            return 0;
-        }
-    }
-    i += name_len;
-    return source[i] == 0 || source[i] == '>' || source[i] == '/' ||
-           is_space_char(source[i]);
-}
-
-static uint32_t browser_copy_tag_at(const char *source, char *tag,
-                                    uint32_t tag_cap)
-{
-    uint32_t i = 0;
-    if (!source || !tag || tag_cap == 0) {
-        return 0;
-    }
-    while (source[i] && source[i] != '>' && i + 1U < tag_cap) {
-        tag[i] = source[i];
-        ++i;
-    }
-    if (source[i] == '>' && i + 1U < tag_cap) {
-        tag[i++] = '>';
-    }
-    tag[i] = 0;
-    return i;
-}
-
-static uint32_t browser_fetch_external_css(const char *base_url)
-{
-    char tag[BROWSER_TAG_TEXT_MAX];
-    char rel[80];
-    char href[BROWSER_URL_CAP];
-    char resolved[BROWSER_URL_CAP];
-    uint32_t css_pos = 0;
-    uint32_t scan = 0;
-    uint32_t count = 0;
-    browser_external_css[0] = 0;
-    while (page_source[scan] && count < BROWSER_CSS_LINK_MAX) {
-        uint32_t tag_len;
-        struct leonos_http_response css_response;
-        if (page_source[scan] != '<' ||
-            !browser_tag_name_at(page_source + scan, "link")) {
-            ++scan;
-            continue;
-        }
-        tag_len = browser_copy_tag_at(page_source + scan, tag, sizeof(tag));
-        if (!tag_len) {
-            ++scan;
-            continue;
-        }
-        scan += tag_len;
-        rel[0] = 0;
-        href[0] = 0;
-        if (!browser_extract_attr(tag, "rel", rel, sizeof(rel)) ||
-            !browser_contains_ignore_case(rel, "stylesheet") ||
-            !browser_extract_attr(tag, "href", href, sizeof(href))) {
-            continue;
-        }
-        if (leonos_http_resolve_url(base_url, href, resolved,
-                                    sizeof(resolved)) < 0 ||
-            (!starts_with_ignore_case(resolved, "http://") &&
-             !starts_with_ignore_case(resolved, "https://"))) {
-            continue;
-        }
-        browser_css_body[0] = 0;
-        browser_css_headers[0] = 0;
-        if (browser_http_get_with_cookies(resolved, 5000,
-                                          browser_css_body,
-                                          sizeof(browser_css_body),
-                                          browser_css_headers,
-                                          sizeof(browser_css_headers),
-                                          &css_response) < 0 ||
-            css_response.net_status != LEONOS_NET_STATUS_OK ||
-            css_response.http_status < 200U ||
-            css_response.http_status >= 400U) {
-            continue;
-        }
-        for (uint32_t i = 0; i < css_response.body_len; ++i) {
-            if (!browser_css_body[i]) {
-                browser_css_body[i] = ' ';
-            }
-        }
-        if (css_response.flags & LEONOS_HTTP_FLAG_TRUNCATED) {
-            source_truncated = 1;
-        }
-        append_text(browser_external_css, &css_pos,
-                    sizeof(browser_external_css), browser_css_body);
-        append_text(browser_external_css, &css_pos,
-                    sizeof(browser_external_css), "\n");
-        ++count;
-    }
-    return count;
-}
-
-static uint32_t browser_inject_external_css(const char *base_url)
-{
-    uint32_t css_count = browser_fetch_external_css(base_url);
-    uint32_t pos = 0;
-    uint32_t wrapper_len;
-    if (!css_count || !browser_external_css[0]) {
-        return 0;
-    }
-    browser_combined_source[0] = 0;
-    append_text(browser_combined_source, &pos,
-                sizeof(browser_combined_source), "<style>\n");
-    append_text(browser_combined_source, &pos,
-                sizeof(browser_combined_source), browser_external_css);
-    append_text(browser_combined_source, &pos,
-                sizeof(browser_combined_source), "</style>\n");
-    wrapper_len = pos;
-    append_text(browser_combined_source, &pos,
-                sizeof(browser_combined_source), page_source);
-    if (wrapper_len + (uint32_t)strlen(page_source) + 1U >
-        sizeof(browser_combined_source)) {
-        source_truncated = 1;
-    }
-    copy_text(page_source, sizeof(page_source), browser_combined_source);
-    return css_count;
 }
 
 static int browser_response_is_html(const struct leonos_http_response *response,
@@ -487,7 +455,6 @@ void load_http_form_post(const char *url, const char *body)
     struct parsed_http_url parsed;
     struct leonos_http_response response;
     uint32_t pos = 0;
-    uint32_t css_count = 0;
     uint32_t retries = 0;
     int ret;
     char normalized[BROWSER_URL_CAP];
@@ -540,11 +507,7 @@ void load_http_form_post(const char *url, const char *body)
         copy_text(address_input, sizeof(address_input), current_location);
         leonos_ui_edit_state_sync(&address_edit);
     }
-    for (uint32_t i = 0; i < response.body_len; ++i) {
-        if (!page_source[i]) {
-            page_source[i] = ' ';
-        }
-    }
+    browser_decode_page_source(response.body_len);
     if (response.flags & LEONOS_HTTP_FLAG_TRUNCATED) {
         source_truncated = 1;
     }
@@ -568,13 +531,6 @@ void load_http_form_post(const char *url, const char *body)
         return;
     }
     page_is_html = (uint8_t)browser_response_is_html(&response, current_location);
-    if (page_is_html) {
-        css_count = browser_inject_external_css(current_location);
-        if (css_count) {
-            append_text(status, &pos, sizeof(status), "  css ");
-            append_u32(status, &pos, sizeof(status), css_count);
-        }
-    }
     if (parse_http_url(current_location, &parsed)) {
         copy_text(page_title, sizeof(page_title), parsed.host);
     } else {
@@ -589,7 +545,6 @@ void load_http_url(const char *url)
     struct parsed_http_url parsed;
     struct leonos_http_response response;
     uint32_t pos = 0;
-    uint32_t css_count = 0;
     uint32_t retries = 0;
     int ret;
     char normalized[BROWSER_URL_CAP];
@@ -643,11 +598,7 @@ void load_http_url(const char *url)
         copy_text(address_input, sizeof(address_input), current_location);
         leonos_ui_edit_state_sync(&address_edit);
     }
-    for (uint32_t i = 0; i < response.body_len; ++i) {
-        if (!page_source[i]) {
-            page_source[i] = ' ';
-        }
-    }
+    browser_decode_page_source(response.body_len);
     if (response.flags & LEONOS_HTTP_FLAG_TRUNCATED) {
         source_truncated = 1;
     }
@@ -675,13 +626,6 @@ void load_http_url(const char *url)
     }
     page_is_html = (uint8_t)browser_response_is_html(&response,
                                                      current_location);
-    if (page_is_html) {
-        css_count = browser_inject_external_css(current_location);
-        if (css_count) {
-            append_text(status, &pos, sizeof(status), "  css ");
-            append_u32(status, &pos, sizeof(status), css_count);
-        }
-    }
     if (parse_http_url(current_location, &parsed)) {
         copy_text(page_title, sizeof(page_title), parsed.host);
     } else {
@@ -725,6 +669,7 @@ void load_local_file(const char *path)
     }
     close(fd);
     page_source[len] = 0;
+    browser_decode_page_source(len);
     copy_text(current_location, sizeof(current_location), path);
     copy_text(address_input, sizeof(address_input), path);
     leonos_ui_edit_state_sync(&address_edit);

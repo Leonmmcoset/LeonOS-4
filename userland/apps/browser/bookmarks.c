@@ -395,22 +395,18 @@ int browser_show_bookmark_manager(char *out_url, uint32_t out_cap)
     return result;
 }
 
-static int find_char_eq(char a, char b)
-{
-    return ascii_tolower(a) == ascii_tolower(b);
-}
-
-static int find_in_line(const struct browser_line *line, uint32_t start,
-                        uint32_t *out_offset)
+static int find_in_source(uint32_t start, uint32_t *out_offset)
 {
     uint32_t needle_len = (uint32_t)strlen(browser_find_query);
-    if (!line || !needle_len || line->len < needle_len) {
+    uint32_t source_len = (uint32_t)strlen(page_source);
+    if (!needle_len || start >= source_len || source_len < needle_len) {
         return 0;
     }
-    for (uint32_t pos = start; pos + needle_len <= line->len; ++pos) {
+    for (uint32_t pos = start; pos + needle_len <= source_len; ++pos) {
         uint32_t i = 0;
-        while (i < needle_len && find_char_eq(line->text[pos + i],
-                                               browser_find_query[i])) {
+        while (i < needle_len &&
+               ascii_tolower(page_source[pos + i]) ==
+                   ascii_tolower(browser_find_query[i])) {
             ++i;
         }
         if (i == needle_len) {
@@ -425,24 +421,21 @@ void browser_find_next(void)
 {
     uint32_t offset;
     uint32_t needle_len = (uint32_t)strlen(browser_find_query);
-    if (!needle_len || !line_count) {
+    uint32_t source_len = (uint32_t)strlen(page_source);
+    if (!needle_len || !source_len) {
         return;
     }
-    for (uint32_t pass = 0; pass < line_count; ++pass) {
-        uint32_t row = browser_find_row >= 0
-                           ? ((uint32_t)browser_find_row + pass) % line_count
-                           : pass;
-        uint32_t start = pass == 0 && browser_find_row >= 0
-                             ? browser_find_start + 1U : 0;
-        if (find_in_line(&lines[row], start, &offset)) {
-            browser_find_row = (int32_t)row;
+    if (browser_find_start >= source_len) {
+        browser_find_start = 0;
+    }
+    if (find_in_source(browser_find_start +
+                       (browser_find_len ? browser_find_len : 0U), &offset) ||
+        find_in_source(0, &offset)) {
+            browser_find_row = -1;
             browser_find_start = offset;
             browser_find_len = needle_len;
-            scroll_line = row;
-            clamp_scroll();
             set_status(T("Text found", "已找到文本"));
             return;
-        }
     }
     browser_find_row = -1;
     browser_find_start = 0;
@@ -464,11 +457,4 @@ void browser_find_prompt(void)
     browser_find_start = 0;
     browser_find_len = 0;
     browser_find_next();
-}
-
-int browser_find_match_boundary(uint32_t row, uint32_t offset)
-{
-    return browser_find_row == (int32_t)row && browser_find_len &&
-           offset >= browser_find_start &&
-           offset < browser_find_start + browser_find_len;
 }

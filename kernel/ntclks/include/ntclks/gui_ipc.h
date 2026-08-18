@@ -11,9 +11,11 @@
 #define GUI_IPC_WINDOW_TITLE_MAX 48u
 #define GUI_IPC_WINDOW_TEXT_MAX 1024u
 #define GUI_IPC_WINDOW_PATH_MAX LEONOS_FS_PATH_LEN
-/* GUI surfaces are backed by kernel pages and must stay within the native UI limits. */
-#define GUI_IPC_MAX_WINDOW_WIDTH 1920u
-#define GUI_IPC_MAX_WINDOW_HEIGHT 1080u
+/* Allow the driver's wider DCI-4K mode.  Keeping the IPC limit at the old
+ * 3840x2160 value made a resize silently stop delivering larger client
+ * surfaces even when the display backend supported 4096x2160. */
+#define GUI_IPC_MAX_WINDOW_WIDTH 4096u
+#define GUI_IPC_MAX_WINDOW_HEIGHT 2160u
 #define GUI_IPC_MAX_WINDOW_STRIDE GUI_IPC_MAX_WINDOW_WIDTH
 
 #define LEONOS_GUI_IOCTL_APPEARANCE_STATE 0x4c415053UL

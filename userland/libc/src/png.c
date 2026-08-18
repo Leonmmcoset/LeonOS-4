@@ -51,30 +51,26 @@ static int png_read_file(const char *path, uint8_t **out_data, uint32_t *out_siz
     return 0;
 }
 
-int leonos_png_decode_file(const char *path, uint32_t **out_pixels,
-                           uint32_t *out_width, uint32_t *out_height)
+int leonos_png_decode_memory(const void *data, uint32_t file_size,
+                             uint32_t **out_pixels, uint32_t *out_width,
+                             uint32_t *out_height)
 {
     png_image image;
-    uint8_t *file_data = 0;
     uint8_t *rgba = 0;
     uint32_t *pixels = 0;
-    uint32_t file_size = 0;
     uint64_t pixel_count;
     int result = -1;
 
-    if (!out_pixels || !out_width || !out_height) {
+    if (!data || file_size == 0 || file_size > LEONOS_PNG_MAX_FILE_BYTES ||
+        !out_pixels || !out_width || !out_height) {
         return -1;
     }
     *out_pixels = 0;
     *out_width = 0;
     *out_height = 0;
-    if (png_read_file(path, &file_data, &file_size) < 0) {
-        return -1;
-    }
-
     memset(&image, 0, sizeof(image));
     image.version = PNG_IMAGE_VERSION;
-    if (!png_image_begin_read_from_memory(&image, file_data, file_size) ||
+    if (!png_image_begin_read_from_memory(&image, data, file_size) ||
         image.width == 0 || image.height == 0) {
         goto cleanup;
     }
@@ -104,9 +100,23 @@ int leonos_png_decode_file(const char *path, uint32_t **out_pixels,
 
 cleanup:
     png_image_free(&image);
-    free(file_data);
     free(rgba);
     free(pixels);
+    return result;
+}
+
+int leonos_png_decode_file(const char *path, uint32_t **out_pixels,
+                           uint32_t *out_width, uint32_t *out_height)
+{
+    uint8_t *file_data = 0;
+    uint32_t file_size = 0;
+    int result;
+    if (png_read_file(path, &file_data, &file_size) < 0) {
+        return -1;
+    }
+    result = leonos_png_decode_memory(file_data, file_size, out_pixels,
+                                      out_width, out_height);
+    free(file_data);
     return result;
 }
 

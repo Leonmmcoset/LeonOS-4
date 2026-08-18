@@ -259,11 +259,11 @@ calls are implemented by the ANSI adapter in `userland/sl`.
 - Recorded commit: `b9e89f0b9494ff9a5f008800af35503efabddf59`
 - License: New BSD License / BSD-3-Clause, see `third_party/litehtml/LICENSE`
 
-`browser.elf` does not yet link upstream litehtml directly because LeonOS
-userland is still freestanding C without a C++ runtime or STL. The browser now
-uses `userland/apps/browser/litehtml_core.c` as the staged C document layout
-core. That keeps the browser shell, network loading, history, and GUI wiring
-ready for a later full litehtml container.
+`browser.elf` and the OOBE browser link the upstream C++ renderer and its Gumbo
+parser. `userland/apps/browser/browser_litehtml.cpp` supplies the LeonOS
+`document_container`; `userland/apps/browser/cxx_compat.c` supplies the
+single-thread, exceptions-disabled compatibility hooks required by the
+freestanding libc++ build. No legacy C HTML renderer remains in the browser.
 
 ## Gumbo HTML Parser
 
@@ -271,8 +271,8 @@ ready for a later full litehtml container.
 - Upstream: `https://github.com/google/gumbo-parser`
 - License: Apache License 2.0, see `third_party/litehtml/src/gumbo/LICENSE`.
 
-Gumbo source is present through the litehtml submodule. It is not built or
-executed by the current LeonOS browser path.
+Gumbo is compiled into `build/userland/libgumbo.a` and consumed by the upstream
+LiteHTML parser in browser and OOBE images.
 
 ## Noto Sans Mono
 

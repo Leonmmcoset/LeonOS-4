@@ -12,11 +12,13 @@
 #define TERMINAL_DEFAULT_H 480U
 #define TERMINAL_MIN_W 160U
 #define TERMINAL_MIN_H 96U
-#define TERMINAL_MAX_W 1920U
-#define TERMINAL_MAX_H 1080U
+#define TERMINAL_MAX_W LEONOS_GUI_MAX_WINDOW_WIDTH
+#define TERMINAL_MAX_H LEONOS_GUI_MAX_WINDOW_HEIGHT
 #define TERMINAL_MAX_SESSIONS 8U
 #define TERMINAL_HISTORY_ROWS 160U
 #define TERMINAL_TAB_ADD_W 28U
+#define TERMINAL_EVENT_WAIT_MS 1U
+#define TERMINAL_BACKGROUND_POLL_MS 25U
 #define TERMINAL_BODY_X 0U
 #define TERMINAL_MAX_COLUMNS (TERMINAL_MAX_W / LEONOS_FONT_W)
 #define TERMINAL_CSI_PARAM_CAP 12U
@@ -95,8 +97,9 @@ struct terminal_session {
     uint8_t utf8_length;
     uint8_t utf8_expected;
     uint8_t alternate_screen_active;
-    /* The PTY host supplies canonical-mode echo, so keep enough state to
-     * erase only text entered after the current prompt, not the prompt. */
+    /* The PTY owns canonical-mode input editing, while this client renders
+     * local echo.  Keep enough state to erase only text entered after the
+     * current prompt, not the prompt itself. */
     uint32_t local_echoed_input_count;
 };
 
@@ -1048,15 +1051,32 @@ static int terminal_pump_all_output(void)
 {
     struct terminal_session *selected = active_session;
     int selected_changed = 0;
+    static unsigned long last_background_poll_ms;
 
+    if (!selected || !selected->used) {
+        return 0;
+    }
+
+    /* Drain the visible tab first.  Background tabs still get serviced below,
+     * but their output must not add a full session-array scan before the user
+     * sees an echo or prompt update in the active terminal. */
+    active_session = selected;
+    selected_changed = terminal_pump_output();
+    /* The foreground PTY is drained on every turn.  Background tabs retain
+     * their output in the kernel ring, so a short periodic poll avoids up to
+     * seven empty syscalls on every GUI idle turn without delaying visible
+     * input or output. */
+    if (leonos_uptime_ms() - last_background_poll_ms <
+        TERMINAL_BACKGROUND_POLL_MS) {
+        return selected_changed;
+    }
+    last_background_poll_ms = leonos_uptime_ms();
     for (uint32_t index = 0; index < TERMINAL_MAX_SESSIONS; ++index) {
-        if (!sessions[index].used) {
+        if (!sessions[index].used || &sessions[index] == selected) {
             continue;
         }
         active_session = &sessions[index];
-        if (terminal_pump_output() && active_session == selected) {
-            selected_changed = 1;
-        }
+        (void)terminal_pump_output();
     }
     active_session = selected;
     return selected_changed;
@@ -1455,7 +1475,7 @@ int main(int argc, char **argv, char **envp)
             redraw = 1;
         }
         event.window_id = (uint32_t)window_id;
-        if (leonos_gui_wait_app_event(&event, 40U) > 0) {
+        if (leonos_gui_wait_app_event(&event, TERMINAL_EVENT_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 terminal_close_all_sessions();
                 return 0;
@@ -1498,6 +1518,13 @@ int main(int argc, char **argv, char **envp)
             } else if (event.type == LEONOS_GUI_APP_EVENT_THEME_CHANGED ||
                        event.type == LEONOS_GUI_APP_EVENT_FOCUS) {
                 redraw = 1;
+            }
+            /* A key can wake a shell which writes the PTY before the next
+             * outer loop iteration.  Consume that output in the same event
+             * turn so echo and command responses are presented together. */
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN ||
+                event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                redraw |= terminal_pump_all_output();
             }
         }
         if (redraw) {

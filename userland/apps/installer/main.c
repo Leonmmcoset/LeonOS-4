@@ -7,8 +7,8 @@
 #include <leonos/ui.h>
 #include <stdlib.h>
 
-#define INSTALLER_MAX_W 1920
-#define INSTALLER_MAX_H 1080
+#define INSTALLER_MAX_W LEONOS_GUI_MAX_WINDOW_WIDTH
+#define INSTALLER_MAX_H LEONOS_GUI_MAX_WINDOW_HEIGHT
 #define INSTALLER_INITIAL_W 1280
 #define INSTALLER_INITIAL_H 720
 #define SIDEBAR_W 220
@@ -232,11 +232,11 @@ static const char acknowledgements_en[] =
     "- Microsoft fonts used by the distribution - subject to the applicable Microsoft license terms\n"
     "- NASA Image and Video Library, PIA18033 - used in accordance with NASA Media Usage Guidelines\n"
     "\n"
-    "## Recorded Browser Source Dependencies\n"
+    "## Browser Rendering Sources\n"
     "- litehtml - BSD-3-Clause\n"
     "- Gumbo HTML Parser - Apache License 2.0\n"
     "\n"
-    "These browser sources are retained for future compatibility work and are not linked into the current browser runtime.\n"
+    "These sources provide the browser and OOBE LiteHTML parser, layout, and painting runtime.\n"
     "Complete license texts and attribution notices are preserved with the corresponding source, SDK, and/or installed program package.\n"
     "\n";
 
@@ -275,11 +275,11 @@ static const char acknowledgements_zh[] =
     "- 发行版使用的 Microsoft 字体 - 受相应 Microsoft 许可条款约束\n"
     "- NASA Image and Video Library，PIA18033 - 遵循 NASA 媒体使用指南\n"
     "\n"
-    "## 已记录的浏览器源码依赖\n"
+    "## 浏览器渲染源码\n"
     "- litehtml - BSD-3-Clause\n"
     "- Gumbo HTML Parser - Apache License 2.0\n"
     "\n"
-    "这些浏览器源码为后续兼容性工作保留，当前浏览器运行时尚未链接它们。\n"
+    "这些源码为浏览器和 OOBE 提供 LiteHTML 的解析、布局和绘制运行时。\n"
     "完整许可证文本与归属声明保留在相应源代码、开发套件和/或已安装程序包中。\n"
     "\n";
 

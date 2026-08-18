@@ -81,7 +81,15 @@ int desktop_apply_display_settings(uint8_t mode_index, uint8_t scale_index)
     desktop_scale = desktop_scale_options[scale_index];
     desktop_logical_w = desktop_display_modes[mode_index].width;
     desktop_logical_h = desktop_display_modes[mode_index].height;
-    leonos_ui_bind(&ui, screen, desktop_logical_w, desktop_logical_h, MAX_FB_W);
+    /* The shadow surface is sized in logical pixels.  Recreate it after a
+     * mode change before rebinding the UI; otherwise drawing continues to use
+     * the old stride and either overruns the buffer or leaves stale rows. */
+    if (desktop_resize_surfaces(desktop_logical_w, desktop_logical_h) < 0) {
+        puts("[desktop.elf] desktop surface resize failed");
+        return 0;
+    }
+    leonos_ui_bind(&ui, screen, desktop_logical_w, desktop_logical_h,
+                   desktop_surface_stride);
     if (windows[0].visible || windows[1].visible || windows[2].visible || windows[3].visible) {
         desktop_reflow_after_display_change();
     }

@@ -11,8 +11,21 @@
 #define X86_CR0_NE (1ULL << 5)
 #define X86_CR4_OSFXSR (1ULL << 9)
 #define X86_CR4_OSXMMEXCPT (1ULL << 10)
+#define X86_MSR_FS_BASE 0xc0000100u
 
 static uint8_t initial_fpu_state[512] __attribute__((aligned(16)));
+
+/**
+ * @brief Writes an x86 model-specific register.
+ * @param msr Model-specific register number.
+ * @param value Value to write.
+ */
+static void x86_64_write_msr(uint32_t msr, uint64_t value)
+{
+    uint32_t low = (uint32_t)value;
+    uint32_t high = (uint32_t)(value >> 32);
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
+}
 
 /**
  * @brief Copies fpu state.
@@ -84,4 +97,9 @@ void arch_fpu_save(void *state)
 void arch_fpu_restore(const void *state)
 {
     __asm__ volatile("fxrstor64 (%0)" : : "r"(state) : "memory");
+}
+
+void arch_set_user_fs_base(uint64_t base)
+{
+    x86_64_write_msr(X86_MSR_FS_BASE, base);
 }

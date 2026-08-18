@@ -1,5 +1,113 @@
 #include "desktop.h"
 
+#include <stdlib.h>
+
+static int desktop_allocate_client_surface(uint32_t width, uint32_t height)
+{
+    uint64_t pixels;
+    uint32_t *buffer;
+    if (!width || !height || width > APP_CLIENT_MAX_W ||
+        height > APP_CLIENT_MAX_H) {
+        return -1;
+    }
+    pixels = (uint64_t)width * height;
+    if (pixels > (uint64_t)SIZE_MAX / sizeof(*buffer)) {
+        return -1;
+    }
+    buffer = (uint32_t *)malloc((size_t)pixels * sizeof(*buffer));
+    if (!buffer) {
+        return -1;
+    }
+    free(app_client_scratch);
+    app_client_scratch = buffer;
+    desktop_client_stride = width;
+    desktop_client_height = height;
+    return 0;
+}
+
+int desktop_ensure_client_surface(uint32_t width, uint32_t height)
+{
+    uint32_t target_width = desktop_client_stride;
+    uint32_t target_height = desktop_client_height;
+    if (width > APP_CLIENT_MAX_W) width = APP_CLIENT_MAX_W;
+    if (height > APP_CLIENT_MAX_H) height = APP_CLIENT_MAX_H;
+    if (!width || !height) {
+        return -1;
+    }
+    if (target_width < width) target_width = width;
+    if (target_height < height) target_height = height;
+    if (target_width == desktop_client_stride &&
+        target_height == desktop_client_height && app_client_scratch) {
+        return 0;
+    }
+    return desktop_allocate_client_surface(target_width, target_height);
+}
+
+int desktop_resize_surfaces(uint32_t width, uint32_t height)
+{
+    uint64_t pixels;
+    uint32_t *new_screen;
+    uint32_t client_width;
+    uint32_t client_height;
+    if (!width || !height || width > MAX_FB_W || height > MAX_FB_H) {
+        return -1;
+    }
+    pixels = (uint64_t)width * height;
+    if (pixels > (uint64_t)SIZE_MAX / sizeof(*new_screen)) {
+        return -1;
+    }
+    new_screen = (uint32_t *)calloc((size_t)pixels, sizeof(*new_screen));
+    if (!new_screen) {
+        return -1;
+    }
+    client_width = width < 1024U ? width : 1024U;
+    client_height = height < 768U ? height : 768U;
+    if (desktop_ensure_client_surface(client_width, client_height) < 0) {
+        free(new_screen);
+        return -1;
+    }
+    free(screen);
+    screen = new_screen;
+    desktop_surface_stride = width;
+    return 0;
+}
+
+/*
+ * A full-resolution shadow framebuffer is intentionally kept separate from
+ * the device framebuffer so the desktop can redraw and then submit dirty
+ * regions.  On small VMware guests the device framebuffer can consume most
+ * of the available physical pages, making the additional 1920x1080 shadow
+ * surface fail even though the mode itself is valid.  Keep the physical mode
+ * and render a smaller logical desktop with nearest-neighbour scaling in that
+ * case.  This is also useful for old machines with a deliberately small RAM
+ * allocation.
+ */
+static int desktop_try_scaled_surfaces(void)
+{
+    static const uint32_t fallback_scales[] = {2U, 3U};
+    const uint32_t fallback_count =
+        (uint32_t)(sizeof(fallback_scales) / sizeof(fallback_scales[0]));
+    for (uint32_t i = 0; i < fallback_count; ++i) {
+        uint32_t scale = fallback_scales[i];
+        uint32_t logical_width = (fb.width + scale - 1U) / scale;
+        uint32_t logical_height = (fb.height + scale - 1U) / scale;
+        if (logical_width > MAX_FB_W || logical_height > MAX_FB_H ||
+            desktop_resize_surfaces(logical_width, logical_height) < 0) {
+            continue;
+        }
+        desktop_scale = scale;
+        desktop_scale_index = scale - 1U < DESKTOP_SCALE_COUNT
+                                  ? (uint8_t)(scale - 1U)
+                                  : (uint8_t)(DESKTOP_SCALE_COUNT - 1U);
+        desktop_logical_w = logical_width;
+        desktop_logical_h = logical_height;
+        printf("[desktop.elf] using %ux%u logical surface scale=%ux\n",
+               logical_width, logical_height, scale);
+        return 0;
+    }
+    return -1;
+}
+
 void init_desktop(void)
 {
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
@@ -88,7 +196,18 @@ void desktop_run(void)
     printf("[desktop.elf] display mode %s scale=%dx logical=%dx%d\n",
            desktop_display_modes[desktop_mode_index].label,
            (int)desktop_scale, fb_w(), fb_h());
-    leonos_ui_bind(&ui, screen, fb_w(), fb_h(), MAX_FB_W);
+    if (desktop_resize_surfaces(fb_w(), fb_h()) < 0) {
+        uint64_t required_bytes = (uint64_t)fb_w() * fb_h() * sizeof(uint32_t);
+        printf("[desktop.elf] desktop surface allocation failed %ux%u bytes=%llu; trying scaled mode\n",
+               fb_w(), fb_h(), (unsigned long long)required_bytes);
+        if (desktop_try_scaled_surfaces() < 0) {
+            puts("[desktop.elf] scaled desktop surface allocation failed");
+            for (;;) {
+                sleep_ms(1000);
+            }
+        }
+    }
+    leonos_ui_bind(&ui, screen, fb_w(), fb_h(), desktop_surface_stride);
     desktop_publish_display_state();
     desktop_publish_appearance_state();
 
@@ -102,7 +221,7 @@ void desktop_run(void)
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
     unsigned long last_services_refresh = leonos_uptime_ms();
     unsigned long last_inputm_refresh = 0;
-    unsigned idle_sleep_ms = 10;
+    unsigned idle_sleep_ms = 1;
     int last_mouse_visible = 1;
     for (;;) {
         struct leonos_gui_window_msg window_msg;
@@ -157,7 +276,6 @@ void desktop_run(void)
                                    event.pressed ? 7u : 8u,
                                    0, 0, 0, 0, 0, event.keycode, event.pressed);
                 }
-                printf("[desktop.elf] key scancode=%x pressed=%d\n", event.keycode, event.pressed);
             }
         }
         if (full_redraw_pending) {
@@ -218,12 +336,12 @@ void desktop_run(void)
         }
         desktop_update_display_confirmation();
         if (did_work) {
-            idle_sleep_ms = 10;
+            idle_sleep_ms = 1;
             continue;
         }
         sleep_ms(idle_sleep_ms);
-        if (idle_sleep_ms < 50) {
-            idle_sleep_ms += 10;
+        if (idle_sleep_ms < 4) {
+            ++idle_sleep_ms;
         }
     }
 }

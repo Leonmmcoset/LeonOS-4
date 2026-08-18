@@ -103,9 +103,9 @@
 #define LEONOS_GUI_APP_EVENT_THEME_CHANGED 10U
 #define LEONOS_GUI_IDLE_WAIT_MS 100U
 
-/* Keep resizable application surfaces aligned with the window-server limit. */
-#define LEONOS_GUI_MAX_WINDOW_WIDTH 1920U
-#define LEONOS_GUI_MAX_WINDOW_HEIGHT 1080U
+/* Keep resizable application surfaces aligned with the kernel/driver limit. */
+#define LEONOS_GUI_MAX_WINDOW_WIDTH 4096U
+#define LEONOS_GUI_MAX_WINDOW_HEIGHT 2160U
 
 #define LEONOS_GUI_WINDOW_NO_RESIZE 0x00000001U
 #define LEONOS_GUI_WINDOW_FULLSCREEN 0x00000002U

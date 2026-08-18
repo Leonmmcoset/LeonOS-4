@@ -14,7 +14,7 @@
 #define SETTINGS_W 720
 #define SETTINGS_H 470
 #define SETTINGS_DROPDOWN_ROW_H 28
-#define SETTINGS_MODE_COUNT 5
+#define SETTINGS_MODE_COUNT 7
 #define SETTINGS_SCALE_COUNT 3
 #define SETTINGS_TAB_COUNT 7
 #define SETTINGS_USER_ROWS 7
@@ -123,10 +123,12 @@ static const char *mode_labels[SETTINGS_MODE_COUNT] = {
     "1280 x 800",
     "1280 x 720",
     "1024 x 768",
+    "3840 x 2160",
+    "4096 x 2160",
 };
 
-static const uint32_t mode_widths[SETTINGS_MODE_COUNT] = {1920, 1600, 1280, 1280, 1024};
-static const uint32_t mode_heights[SETTINGS_MODE_COUNT] = {1080, 900, 800, 720, 768};
+static const uint32_t mode_widths[SETTINGS_MODE_COUNT] = {1920, 1600, 1280, 1280, 1024, 3840, 4096};
+static const uint32_t mode_heights[SETTINGS_MODE_COUNT] = {1080, 900, 800, 720, 768, 2160, 2160};
 static const uint32_t scale_values[SETTINGS_SCALE_COUNT] = {1, 2, 3};
 static const char *scale_labels[SETTINGS_SCALE_COUNT] = {"1x", "2x", "3x"};
 static const struct assoc_row assoc_rows[SETTINGS_ASSOC_ROWS] = {
@@ -631,15 +633,17 @@ static void refresh_display_state(void)
     if (leonos_fb_capabilities(&framebuffer_caps) < 0) {
         framebuffer_caps.bytes_per_pixel = 4;
         framebuffer_caps.capabilities = 0;
-        framebuffer_caps.max_width = state_available ? display_state.fb_width : 1920;
-        framebuffer_caps.max_height = state_available ? display_state.fb_height : 1080;
+        framebuffer_caps.max_width = state_available ? display_state.fb_width
+                                                      : LEONOS_GUI_MAX_WINDOW_WIDTH;
+        framebuffer_caps.max_height = state_available ? display_state.fb_height
+                                                       : LEONOS_GUI_MAX_WINDOW_HEIGHT;
         framebuffer_caps.max_bytes = framebuffer_caps.max_width * framebuffer_caps.max_height *
                                     sizeof(uint32_t);
         framebuffer_caps.backend = LEONOS_FB_BACKEND_BOOT;
     }
     if (!state_available) {
-        display_state.fb_width = 1920;
-        display_state.fb_height = 1080;
+        display_state.fb_width = LEONOS_GUI_MAX_WINDOW_WIDTH;
+        display_state.fb_height = LEONOS_GUI_MAX_WINDOW_HEIGHT;
         display_state.logical_width = 1280;
         display_state.logical_height = 800;
         display_state.scale = 1;

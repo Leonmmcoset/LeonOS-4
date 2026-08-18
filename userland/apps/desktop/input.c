@@ -942,9 +942,15 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         window_client_origin(hover, &origin_x, &origin_y);
         int client_x = (int)x - origin_x;
         int client_y = (int)y - origin_y;
+        int client_dx;
+        int client_dy;
+        window_map_input(hover, client_x, client_y,
+                         (int32_t)x - (int32_t)cursor_x,
+                         (int32_t)y - (int32_t)cursor_y,
+                         &client_x, &client_y, &client_dx, &client_dy);
         if (client_x >= 0 && client_y >= 0) {
             send_app_event((uint8_t)hover_id, 5, client_x, client_y,
-                           (int32_t)x - (int32_t)cursor_x, (int32_t)y - (int32_t)cursor_y,
+                           client_dx, client_dy,
                            buttons, 0, left ? 1 : 0);
             if (buttons != previous_buttons) {
                 send_app_event((uint8_t)hover_id, 6, client_x, client_y,
@@ -1059,6 +1065,11 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
                 } else if (w->window_id) {
                     int client_x = (int)x - origin_x;
                     int client_y = (int)y - origin_y;
+                    int client_dx;
+                    int client_dy;
+                    window_map_input(w, client_x, client_y, 0, 0,
+                                     &client_x, &client_y,
+                                     &client_dx, &client_dy);
                     if (client_x >= 0 && client_y >= 0) {
                         send_app_event((uint8_t)id, 6, client_x, client_y, 0, 0, buttons, 0, left ? 1 : 0);
                     }
@@ -1125,6 +1136,10 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
         window_client_origin(hover, &origin_x, &origin_y);
         int client_x = (int)x - origin_x;
         int client_y = (int)y - origin_y;
+        int client_dx;
+        int client_dy;
+        window_map_input(hover, client_x, client_y, 0, 0,
+                         &client_x, &client_y, &client_dx, &client_dy);
         if (client_x >= 0 && client_y >= 0) {
             send_app_event((uint8_t)hover_id, LEONOS_GUI_APP_EVENT_MOUSE_WHEEL,
                            client_x, client_y, 0, wheel, buttons, 0, 0);

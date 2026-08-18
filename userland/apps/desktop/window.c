@@ -8,8 +8,11 @@ void clamp_window_size(struct desktop_window *w)
     if (w->height < MIN_H) {
         w->height = MIN_H;
     }
-    uint32_t max_w = fb_w() ? fb_w() * 2 : MAX_FB_W;
-    uint32_t max_h = taskbar_y() ? taskbar_y() * 2 : fb_h() * 2;
+    /* A client surface must cover the whole logical window.  Allowing a
+     * window to grow beyond the work area used to leave its content capped
+     * at the old surface limit, so resizing appeared to stop working. */
+    uint32_t max_w = fb_w() ? fb_w() : MAX_FB_W;
+    uint32_t max_h = taskbar_y() ? taskbar_y() : fb_h();
     if (max_w < MIN_W) {
         max_w = MIN_W;
     }
@@ -170,6 +173,39 @@ uint32_t window_body_height(const struct desktop_window *w)
     return w && w->height > TITLEBAR_H + 18 ? w->height - TITLEBAR_H - 18 : 0;
 }
 
+void window_map_input(const struct desktop_window *w, int32_t body_x,
+                      int32_t body_y, int32_t body_dx, int32_t body_dy,
+                      int32_t *client_x, int32_t *client_y,
+                      int32_t *client_dx, int32_t *client_dy)
+{
+    uint32_t body_w;
+    uint32_t body_h;
+    uint32_t client_w;
+    uint32_t client_h;
+    if (!client_x || !client_y || !client_dx || !client_dy) {
+        return;
+    }
+    *client_x = body_x;
+    *client_y = body_y;
+    *client_dx = body_dx;
+    *client_dy = body_dy;
+    if (!w || window_is_fullscreen(w)) {
+        return;
+    }
+    body_w = window_body_width(w);
+    body_h = window_body_height(w);
+    client_w = w->client_width;
+    client_h = w->client_height;
+    if (!body_w || !body_h || !client_w || !client_h ||
+        (body_w == client_w && body_h == client_h)) {
+        return;
+    }
+    *client_x = (int32_t)((int64_t)body_x * client_w / body_w);
+    *client_y = (int32_t)((int64_t)body_y * client_h / body_h);
+    *client_dx = (int32_t)((int64_t)body_dx * client_w / body_w);
+    *client_dy = (int32_t)((int64_t)body_dy * client_h / body_h);
+}
+
 int window_is_fullscreen(const struct desktop_window *w)
 {
     return w && (w->flags & LEONOS_GUI_WINDOW_FULLSCREEN) != 0;
@@ -247,6 +283,8 @@ void remove_window_slot(uint8_t slot)
     windows[slot].window_id = 0;
     windows[slot].client_width = 0;
     windows[slot].client_height = 0;
+    windows[slot].resize_event_width = 0;
+    windows[slot].resize_event_height = 0;
     windows[slot].flags = 0;
     windows[slot].icon_path[0] = 0;
     windows[slot].anim = WINDOW_ANIM_NONE;
@@ -427,6 +465,14 @@ void send_app_event(uint8_t slot, uint32_t type, int32_t x, int32_t y,
     }
     client_w = window_body_width(&windows[slot]);
     client_h = window_body_height(&windows[slot]);
+    if (type == LEONOS_GUI_APP_EVENT_RESIZE) {
+        if (windows[slot].resize_event_width == client_w &&
+            windows[slot].resize_event_height == client_h) {
+            return;
+        }
+        windows[slot].resize_event_width = client_w;
+        windows[slot].resize_event_height = client_h;
+    }
     send_app_event_to_window(windows[slot].window_id, type, x, y, dx, dy,
                              client_w, client_h, buttons, keycode, pressed);
 }
@@ -451,7 +497,11 @@ void fetch_window_surface(uint8_t slot)
     if (cap_w == 0 || cap_h == 0) {
         return;
     }
-    if (leonos_gui_fetch_window(windows[slot].window_id, cap_w, cap_h, APP_CLIENT_MAX_W,
+    if (desktop_ensure_client_surface(cap_w, cap_h) < 0) {
+        return;
+    }
+    if (leonos_gui_fetch_window(windows[slot].window_id, cap_w, cap_h,
+                                desktop_client_stride,
                                 app_client_scratch, &out_w, &out_h) > 0) {
         windows[slot].client_width = out_w;
         windows[slot].client_height = out_h;
@@ -484,15 +534,11 @@ static uint32_t desktop_map_legacy_ui_color(uint32_t color)
 
 static void desktop_map_app_surface(uint32_t width, uint32_t height)
 {
-    if (width > APP_CLIENT_MAX_W) {
-        width = APP_CLIENT_MAX_W;
-    }
-    if (height > APP_CLIENT_MAX_H) {
-        height = APP_CLIENT_MAX_H;
-    }
+    if (width > desktop_client_stride) width = desktop_client_stride;
+    if (height > desktop_client_height) height = desktop_client_height;
     for (uint32_t y = 0; y < height; ++y) {
         for (uint32_t x = 0; x < width; ++x) {
-            uint32_t index = y * APP_CLIENT_MAX_W + x;
+            uint32_t index = y * desktop_client_stride + x;
             app_client_scratch[index] = desktop_map_legacy_ui_color(app_client_scratch[index]);
         }
     }
@@ -502,22 +548,32 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
                                uint32_t body_w, uint32_t body_h)
 {
     struct rect clip;
+    uint32_t fetch_w;
+    uint32_t fetch_h;
     uint32_t out_w = 0;
     uint32_t out_h = 0;
     if (!windows[id].window_id) {
         return;
     }
-    if (body_w > APP_CLIENT_MAX_W) {
-        body_w = APP_CLIENT_MAX_W;
-    }
-    if (body_h > APP_CLIENT_MAX_H) {
-        body_h = APP_CLIENT_MAX_H;
-    }
     if (body_w == 0 || body_h == 0) {
         return;
     }
-    if (leonos_gui_fetch_window(windows[id].window_id, body_w, body_h,
-                                APP_CLIENT_MAX_W,
+    /* The window can be larger than the largest client surface that can be
+     * copied into the desktop scratch buffer.  Keep the complete target
+     * rectangle here and only cap the fetch capacity; the result is scaled
+     * below to cover the whole current client area.  The old code overwrote
+     * body_w/body_h with the cap, leaving an unpainted/stale strip once a
+     * window crossed the fixed surface limit. */
+    fetch_w = body_w > APP_CLIENT_MAX_W ? APP_CLIENT_MAX_W : body_w;
+    fetch_h = body_h > APP_CLIENT_MAX_H ? APP_CLIENT_MAX_H : body_h;
+    if (desktop_ensure_client_surface(fetch_w, fetch_h) < 0) {
+        text_draw_i(body_x + 16, body_y + 18,
+                    windows[id].app_text ? windows[id].app_text : leonos_i18n("Application window", "应用程序窗口"),
+                    LEONOS_UI_BLACK, windows[id].body_color);
+        return;
+    }
+    if (leonos_gui_fetch_window(windows[id].window_id, fetch_w, fetch_h,
+                                desktop_client_stride,
                                 app_client_scratch, &out_w, &out_h) <= 0) {
         text_draw_i(body_x + 16, body_y + 18,
                     windows[id].app_text ? windows[id].app_text : leonos_i18n("Application window", "应用程序窗口"),
@@ -525,6 +581,9 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
         return;
     }
     desktop_map_app_surface(out_w, out_h);
+    if (!out_w || !out_h) {
+        return;
+    }
     windows[id].client_width = out_w;
     windows[id].client_height = out_h;
     if (window_is_fullscreen(&windows[id]) && out_w && out_h) {
@@ -550,7 +609,32 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
             for (int xx = 0; xx < clip.w; ++xx) {
                 uint32_t src_x = (uint32_t)((uint64_t)(clip.x - draw_x + xx) * out_w / draw_w);
                 put_pixel((uint32_t)(clip.x + xx), (uint32_t)(clip.y + yy),
-                          app_client_scratch[(uint64_t)src_y * APP_CLIENT_MAX_W + src_x]);
+                          app_client_scratch[(uint64_t)src_y * desktop_client_stride + src_x]);
+            }
+        }
+        return;
+    }
+    /* Applications are expected to redraw at the dimensions supplied by a
+     * resize event. During a resize, however, a client can still have its
+     * previous surface in the server. Scale that surface to the current
+     * body until the client catches up so the window never leaves a stale
+     * blank region. */
+    if (out_w != body_w || out_h != body_h) {
+        clip = rect_clip(rect_make(body_x, body_y, (int)body_w, (int)body_h));
+        for (int yy = 0; yy < clip.h; ++yy) {
+            uint32_t dst_y = (uint32_t)(clip.y - body_y + yy);
+            uint32_t src_y = (uint32_t)((uint64_t)dst_y * out_h / body_h);
+            if (src_y >= out_h) {
+                src_y = out_h - 1U;
+            }
+            for (int xx = 0; xx < clip.w; ++xx) {
+                uint32_t dst_x = (uint32_t)(clip.x - body_x + xx);
+                uint32_t src_x = (uint32_t)((uint64_t)dst_x * out_w / body_w);
+                if (src_x >= out_w) {
+                    src_x = out_w - 1U;
+                }
+                put_pixel((uint32_t)(clip.x + xx), (uint32_t)(clip.y + yy),
+                          app_client_scratch[(uint64_t)src_y * desktop_client_stride + src_x]);
             }
         }
         return;
@@ -561,7 +645,7 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
         for (int xx = 0; xx < clip.w; ++xx) {
             uint32_t src_x = (uint32_t)(clip.x - body_x + xx);
             put_pixel((uint32_t)(clip.x + xx), (uint32_t)(clip.y + yy),
-                      app_client_scratch[(uint64_t)src_y * APP_CLIENT_MAX_W + src_x]);
+                      app_client_scratch[(uint64_t)src_y * desktop_client_stride + src_x]);
         }
     }
 }

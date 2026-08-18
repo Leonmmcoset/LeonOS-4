@@ -15,6 +15,9 @@
  */
 int leonos_png_decode_file(const char *path, uint32_t **out_pixels,
                            uint32_t *out_width, uint32_t *out_height);
+int leonos_png_decode_memory(const void *data, uint32_t size,
+                             uint32_t **out_pixels, uint32_t *out_width,
+                             uint32_t *out_height);
 void leonos_png_free(uint32_t *pixels);
 
 #endif

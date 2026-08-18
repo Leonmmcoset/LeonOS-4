@@ -483,8 +483,8 @@ void flush_region(struct rect dirty)
         return;
     }
     if (desktop_scale <= 1) {
-        const uint32_t *src = screen + (uint64_t)dirty.y * MAX_FB_W + dirty.x;
-        leonos_fb_blit((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h, MAX_FB_W, src);
+        const uint32_t *src = screen + (uint64_t)dirty.y * desktop_surface_stride + dirty.x;
+        leonos_fb_blit((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h, desktop_surface_stride, src);
         return;
     }
     uint32_t scale = desktop_scale;
@@ -508,7 +508,7 @@ void flush_region(struct rect dirty)
                 logical_w = 1;
             }
             for (uint32_t y = 0; y < logical_h; ++y) {
-                const uint32_t *src = screen + (uint64_t)(dirty.y + (int)chunk_y + (int)y) * MAX_FB_W + dirty.x + (int)chunk_x;
+                const uint32_t *src = screen + (uint64_t)(dirty.y + (int)chunk_y + (int)y) * desktop_surface_stride + dirty.x + (int)chunk_x;
                 for (uint32_t sy = 0; sy < scale; ++sy) {
                     uint32_t *dst = scaled + (uint64_t)(y * scale + sy) * max_out_w;
                     for (uint32_t x = 0; x < logical_w; ++x) {

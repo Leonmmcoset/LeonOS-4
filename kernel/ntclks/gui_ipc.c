@@ -1047,8 +1047,30 @@ int gui_ipc_push_event(uint32_t caller_pid, uint32_t window_id,
 {
     struct gui_window_slot *slot = find_window(window_id);
     uint32_t next;
+    uint32_t index;
     if (!caller_is_window_server(caller_pid) || !slot || !event) {
         return 0;
+    }
+
+    /* A resize drag can generate more events than a large application can
+     * render.  Keep every pending resize at the newest geometry so the queue
+     * cannot make the client replay obsolete layouts after the drag ends. */
+    if (event->type == GUI_IPC_APP_EVENT_RESIZE) {
+        index = slot->event_tail;
+        while (index != slot->event_head) {
+            if (slot->events[index].type == GUI_IPC_APP_EVENT_RESIZE) {
+                slot->events[index] = *event;
+            }
+            index = (index + 1U) % GUI_IPC_WINDOW_EVENT_CAP;
+        }
+        index = slot->event_tail;
+        while (index != slot->event_head) {
+            if (slot->events[index].type == GUI_IPC_APP_EVENT_RESIZE) {
+                sched_wake_window_event(slot->owner_pid, window_id);
+                return 1;
+            }
+            index = (index + 1U) % GUI_IPC_WINDOW_EVENT_CAP;
+        }
     }
     next = (slot->event_head + 1) % GUI_IPC_WINDOW_EVENT_CAP;
     if (next == slot->event_tail) {

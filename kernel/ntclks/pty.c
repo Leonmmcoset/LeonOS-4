@@ -336,6 +336,12 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
         }
         ++written;
     }
+    /* Wake only readers that explicitly blocked on this PTY.  Do not wake the
+     * whole foreground process group: that could interrupt an unrelated
+     * nanosleep in a foreground program. */
+    if (session->input_head != session->input_tail) {
+        sched_wake_pty_input(pty_id);
+    }
     return (int64_t)written;
 }
 
@@ -387,15 +393,23 @@ uint32_t pty_input_available(uint32_t pty_id)
 int64_t pty_write_output(uint32_t pty_id, const char *buffer, uint32_t length)
 {
     struct pty_session *session = find_session(pty_id);
+    uint32_t written;
     if (!session) {
         return -5;
     }
     if (!buffer || length == 0) {
         return 0;
     }
-    return (int64_t)ring_push(session->output, PTY_OUTPUT_CAP,
-                              &session->output_head, &session->output_tail,
-                              buffer, length);
+    written = ring_push(session->output, PTY_OUTPUT_CAP,
+                        &session->output_head, &session->output_tail,
+                        buffer, length);
+    /* The terminal normally sleeps in WAIT_WINDOW_EVENT.  PTY output is an
+     * independent producer, so wake its owner immediately instead of making
+     * the UI wait for the polling timeout to expire. */
+    if (written && session->owner_pid) {
+        sched_wake_task(session->owner_pid);
+    }
+    return (int64_t)written;
 }
 
 /**

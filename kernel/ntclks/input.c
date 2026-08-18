@@ -3,6 +3,7 @@
  * Exposes bounded producer/consumer operations to interrupt and user paths.
  */
 #include <ntclks/input.h>
+#include <ntclks/sched.h>
 
 #define INPUT_QUEUE_CAP 512
 
@@ -25,6 +26,7 @@ void input_init(void)
  */
 static void push_event(const struct input_event *event)
 {
+    struct task *window_server;
     if (event && event->type == INPUT_EVENT_MOUSE && head != tail) {
         uint32_t prev = (head + INPUT_QUEUE_CAP - 1) % INPUT_QUEUE_CAP;
         if (queue[prev].type == INPUT_EVENT_MOUSE && queue[prev].buttons == event->buttons) {
@@ -32,6 +34,10 @@ static void push_event(const struct input_event *event)
             queue[prev].y = event->y;
             queue[prev].dx += event->dx;
             queue[prev].dy += event->dy;
+            window_server = sched_find_window_server();
+            if (window_server) {
+                sched_wake_task(window_server->pid);
+            }
             return;
         }
     }
@@ -41,6 +47,13 @@ static void push_event(const struct input_event *event)
     }
     queue[head] = *event;
     head = next;
+    /* Input is consumed by the Ring-3 window server.  Waking it here keeps
+     * keyboard and pointer delivery event-driven instead of waiting for its
+     * idle poll timeout to expire. */
+    window_server = sched_find_window_server();
+    if (window_server) {
+        sched_wake_task(window_server->pid);
+    }
 }
 
 /**

@@ -244,6 +244,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task->rlimit_nofile = SCHED_TASK_FILE_MAX;
     task->rlimit_as = 0;
     task->wait_window_id = 0;
+    task->wait_pty_id = 0;
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
@@ -294,6 +295,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->rlimit_nofile = SCHED_TASK_FILE_MAX;
     task->rlimit_as = 0;
     task->wait_window_id = 0;
+    task->wait_pty_id = 0;
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
@@ -375,6 +377,7 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     child->state = TASK_READY;
     child->wake_tick = 0;
     child->wait_window_id = 0;
+    child->wait_pty_id = 0;
     child->exit_code = 0;
     child->cpu_ticks = 0;
     child->pending_signals = 0;
@@ -533,6 +536,7 @@ void sched_create_idle_task(void)
     task->stack_top = 0;
     task->wake_tick = 0;
     task->wait_window_id = 0;
+    task->wait_pty_id = 0;
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
@@ -637,6 +641,7 @@ void sched_on_tick(void)
             tasks[i].wake_tick <= scheduler_ticks) {
             tasks[i].wake_tick = 0;
             tasks[i].wait_window_id = 0;
+            tasks[i].wait_pty_id = 0;
             tasks[i].state = TASK_READY;
         }
     }
@@ -923,6 +928,7 @@ void sched_mark_ready(uint32_t pid)
     }
     task->wake_tick = 0;
     task->wait_window_id = 0;
+    task->wait_pty_id = 0;
     task->state = TASK_READY;
 }
 
@@ -937,6 +943,7 @@ void sched_sleep_current_until(uint64_t wake_tick)
         return;
     }
     task->wait_window_id = 0;
+    task->wait_pty_id = 0;
     task->wake_tick = wake_tick;
     task->state = TASK_BLOCKED;
 }
@@ -953,6 +960,7 @@ void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick)
         return;
     }
     task->wait_window_id = window_id;
+    task->wait_pty_id = 0;
     task->wake_tick = wake_tick;
     task->state = TASK_BLOCKED;
 }
@@ -970,7 +978,84 @@ void sched_wake_window_event(uint32_t pid, uint32_t window_id)
     }
     task->wake_tick = 0;
     task->wait_window_id = 0;
+    task->wait_pty_id = 0;
     task->state = TASK_READY;
+}
+
+/**
+ * @brief Wakes a task blocked while waiting for asynchronous I/O.
+ * @param pid Task to wake.
+ */
+void sched_wake_task(uint32_t pid)
+{
+    struct task *task = sched_find(pid);
+    if (!task || task->state != TASK_BLOCKED) {
+        return;
+    }
+    task->wake_tick = 0;
+    task->wait_window_id = 0;
+    task->wait_pty_id = 0;
+    task->state = TASK_READY;
+}
+
+/**
+ * @brief Wakes blocked tasks belonging to a process group.
+ * @param process_group Process group to wake.
+ */
+void sched_wake_process_group(uint32_t process_group)
+{
+    if (!process_group) {
+        return;
+    }
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = &tasks[i];
+        if (task->pid == 0 || task->kind != TASK_KIND_USER ||
+            task->state != TASK_BLOCKED ||
+            task->process_group != process_group) {
+            continue;
+        }
+        task->wake_tick = 0;
+        task->wait_window_id = 0;
+        task->wait_pty_id = 0;
+        task->state = TASK_READY;
+    }
+}
+
+/**
+ * @brief Blocks the current task on a PTY input wait.
+ * @param pty_id PTY whose input queue should wake the task.
+ */
+void sched_wait_current_for_pty_input(uint32_t pty_id)
+{
+    struct task *task = sched_current_task();
+    if (!task || task->pid == 0 || task->state == TASK_EXITED || !pty_id) {
+        return;
+    }
+    task->wait_window_id = 0;
+    task->wake_tick = 0;
+    task->wait_pty_id = pty_id;
+    task->state = TASK_BLOCKED;
+}
+
+/**
+ * @brief Wakes tasks blocked for input on a PTY.
+ * @param pty_id PTY whose input queue became readable.
+ */
+void sched_wake_pty_input(uint32_t pty_id)
+{
+    if (!pty_id) {
+        return;
+    }
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = &tasks[i];
+        if (task->pid == 0 || task->kind != TASK_KIND_USER ||
+            task->state != TASK_BLOCKED || task->wait_pty_id != pty_id) {
+            continue;
+        }
+        task->wait_pty_id = 0;
+        task->wake_tick = 0;
+        task->state = TASK_READY;
+    }
 }
 
 /**
@@ -1013,6 +1098,7 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
     if (signal_number == 17 || signal_number == 18) { /* SIGSTOP or SIGTSTP */
         task->wake_tick = 0;
         task->wait_window_id = 0;
+        task->wait_pty_id = 0;
         task->state = TASK_STOPPED;
         task->stop_signal = (uint32_t)signal_number;
         task->child_event = TASK_CHILD_EVENT_STOPPED;
@@ -1023,6 +1109,7 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
         if (task->state == TASK_STOPPED) {
             task->wake_tick = 0;
             task->wait_window_id = 0;
+            task->wait_pty_id = 0;
             task->state = TASK_READY;
             task->stop_signal = 0;
             task->child_event = TASK_CHILD_EVENT_CONTINUED;

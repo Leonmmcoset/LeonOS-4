@@ -42,6 +42,11 @@ void arch_fpu_save(void *state);
  */
 void arch_fpu_restore(const void *state);
 /**
+ * @brief Sets the user-mode FS base used by compiler runtime TLS accesses.
+ * @param base User virtual address that remains mapped for the task.
+ */
+void arch_set_user_fs_base(uint64_t base);
+/**
  * @brief Coordinates the irq init operation.
  */
 void irq_init(void);

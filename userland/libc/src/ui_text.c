@@ -1369,6 +1369,127 @@ void leonos_ui_text_resized_clipped(struct leonos_ui_surface *surface, uint32_t 
     }
 }
 
+void leonos_ui_text_resized_transparent_clipped(struct leonos_ui_surface *surface,
+                                                uint32_t x, uint32_t y,
+                                                uint32_t w, const char *text,
+                                                uint32_t fg, uint32_t cell_w,
+                                                uint32_t cell_h)
+{
+    struct leonos_text_layout layout;
+    struct leonos_text_glyph glyphs[UI_LAYOUT_GLYPH_MAX];
+    uint32_t draw_x = x;
+    if (!cell_w) cell_w = LEONOS_FONT_W;
+    if (!cell_h) cell_h = LEONOS_FONT_H;
+    ui_layout_utf8(text ? text : "", 0, glyphs, UI_LAYOUT_GLYPH_MAX, &layout);
+    for (uint32_t i = 0; i < layout.count && i < UI_LAYOUT_GLYPH_MAX; ++i) {
+        uint32_t glyph_w = (glyphs[i].pixel_width * cell_w + LEONOS_FONT_W / 2U) /
+                           LEONOS_FONT_W;
+        if (draw_x + glyph_w > x + w) break;
+        if (glyphs[i].codepoint != '\t') {
+            ui_ttf_draw(surface, draw_x, y, glyph_w, cell_h,
+                        glyphs[i].codepoint, fg, 0, 1);
+        }
+        draw_x += glyph_w;
+    }
+}
+
+static uint32_t ui_scaled_text_glyph_width(uint32_t base_width,
+                                           uint32_t font_height)
+{
+    uint64_t scaled;
+    if (!font_height) {
+        font_height = LEONOS_FONT_H;
+    }
+    scaled = ((uint64_t)base_width * font_height + LEONOS_FONT_H / 2U) /
+             LEONOS_FONT_H;
+    if (scaled > UINT32_MAX) {
+        return UINT32_MAX;
+    }
+    return (uint32_t)scaled;
+}
+
+uint32_t leonos_ui_text_scaled_width(const char *text, uint32_t font_height)
+{
+    uint32_t length = ui_strlen(text);
+    uint32_t offset = 0;
+    uint64_t total = 0;
+    while (offset < length) {
+        uint32_t byte_len = 1;
+        uint32_t codepoint = ui_decode_utf8(text, length, offset, &byte_len);
+        uint32_t glyph_width = ui_scaled_text_glyph_width(
+            ui_codepoint_pixel_width(codepoint), font_height);
+        if (UINT32_MAX - total < glyph_width) {
+            return UINT32_MAX;
+        }
+        total += glyph_width;
+        offset += byte_len;
+    }
+    return (uint32_t)total;
+}
+
+void leonos_ui_text_scaled_transparent_clipped(
+    struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w,
+    const char *text, uint32_t fg, uint32_t font_height)
+{
+    uint32_t length = ui_strlen(text);
+    uint32_t offset = 0;
+    uint32_t draw_x = x;
+    if (!font_height) {
+        font_height = LEONOS_FONT_H;
+    }
+    while (offset < length) {
+        uint32_t byte_len = 1;
+        uint32_t codepoint = ui_decode_utf8(text, length, offset, &byte_len);
+        uint32_t glyph_width = ui_scaled_text_glyph_width(
+            ui_codepoint_pixel_width(codepoint), font_height);
+        if (glyph_width > w || draw_x < x || draw_x - x > w - glyph_width) {
+            break;
+        }
+        if (codepoint != '\t') {
+            ui_ttf_draw(surface, draw_x, y, glyph_width, font_height,
+                        codepoint, fg, 0, 1);
+        }
+        draw_x += glyph_width;
+        offset += byte_len;
+    }
+}
+
+void leonos_ui_text_scaled_transparent_clipped_at(
+    struct leonos_ui_surface *surface, int32_t x, int32_t y, uint32_t w,
+    const char *text, uint32_t fg, uint32_t font_height)
+{
+    uint32_t length = ui_strlen(text);
+    uint32_t offset = 0;
+    int64_t draw_x = x;
+    int64_t right = (int64_t)x + w;
+    if (!font_height) {
+        font_height = LEONOS_FONT_H;
+    }
+    if (!surface || !surface->pixels || !w) {
+        return;
+    }
+    while (offset < length) {
+        uint32_t byte_len = 1;
+        uint32_t codepoint = ui_decode_utf8(text, length, offset, &byte_len);
+        uint32_t glyph_width = ui_scaled_text_glyph_width(
+            ui_codepoint_pixel_width(codepoint), font_height);
+        int64_t glyph_right = draw_x + glyph_width;
+        if (draw_x >= right || glyph_right > right) {
+            break;
+        }
+        if (glyph_right > 0 && draw_x < (int64_t)surface->width &&
+            (int64_t)y + font_height > 0 && y < (int32_t)surface->height &&
+            codepoint != '\t') {
+            uint32_t draw_y = y < 0 ? 0U : (uint32_t)y;
+            uint32_t draw_at = draw_x < 0 ? 0U : (uint32_t)draw_x;
+            ui_ttf_draw(surface, draw_at, draw_y, glyph_width, font_height,
+                        codepoint, fg, 0, 1);
+        }
+        draw_x = glyph_right;
+        offset += byte_len;
+    }
+}
+
 void leonos_ui_text_transparent(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, const char *text, uint32_t fg)
 {
     ui_draw_layout_text(surface, x, y, 0, text, fg, 0, 1, 0);

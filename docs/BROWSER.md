@@ -1,9 +1,8 @@
 # Browser and litehtml Porting Notes
 
 LeonOS now ships `browser.elf`, a classic IE-style browser shell. Upstream
-litehtml is present as a Git submodule under `third_party/litehtml`; the browser
-currently links a freestanding C `litehtml_core` adapter while the full C++
-litehtml runtime prerequisites are still being built.
+litehtml is present as a Git submodule under `third_party/litehtml` and is the
+browser's document parser, layout engine, and renderer.
 
 ## Current Browser
 
@@ -26,33 +25,30 @@ Current features:
 - Download-link handoff: links ending in common binary/media/archive suffixes
   launch `downloadmgr.elf`, which saves the response to the current user's
   `Downloads` directory.
-- A `userland/apps/browser/litehtml_core.c` document layout layer for headings,
-  paragraphs and block sections, lists, blockquotes, table rows/cells, breaks,
-  horizontal rules, image placeholders with alt text, entities, links, per-cell
-  table alignment, and basic inline styles (`strong`/`b`, `em`/`i`, `code`).
-- A small CSS v1 parser for `<style>` blocks, inline `style=""`, and up to four
-  HTTP or HTTPS `<link rel="stylesheet">` stylesheets per page. It covers simple
-  tag/class/id selectors plus `color`, `background-color`, `font-weight`,
-  `font-style`, `text-decoration`, `text-align`, left indent properties, and
-  basic borders.
+- Upstream litehtml layout and painting, backed by a LeonOS
+  `document_container` in `userland/apps/browser/browser_litehtml.cpp`.
+- Basic font metrics, text drawing, colors, borders, gradients, overflow
+  clipping, CSS background repetition, local CSS imports, and local/remote PNG
+  image loading through the LeonOS
+  UI/libc APIs.
+- HTTP/HTTPS stylesheet and PNG image resources are fetched through the
+  existing cookie-aware browser HTTP client and resolved relative to the
+  document URL.
 - HTTP toast reporting, response content-type handling, bounded redirects,
   chunked transfer decoding, final URL reporting, and truncation indicators.
+- HTML, CSS, and local text sources are normalized through the shared text
+  decoder, including UTF-8, UTF-16, GBK, and GB2312 input.
 - Link hit testing, relative URL resolution, Back, Forward, Refresh, Home, and
   mouse-wheel scrolling.
-- Inline form support: `form`, text/email/search/url/tel/number/password/hidden
-  inputs, checkbox/radio controls, single-choice `select`/`option`, one-line
-  `textarea`, placeholder text, submit/reset inputs and buttons,
-  disabled/read-only states, GET and POST, and
-  `application/x-www-form-urlencoded` bodies. Select controls cycle through
-  options when clicked.
 - Resize-aware reflow.
 
 Current limits:
 
 - No JavaScript.
-- No inline image loading. Image links can be downloaded and opened with
-  `imageview.elf` when saved as BMP.
-- No full CSS cascade, box model, floats, flex/grid, or media queries.
+- Form controls are native LiteHTML element adapters: text/password fields,
+  textarea, checkbox/radio, keyboard Tab/Enter/Space navigation, select
+  cycling, reset, and GET/POST submission are supported. JavaScript-driven
+  form behavior is not available.
 - HTTP uses `HTTP/1.1` over TCP sockets with `Connection: close`; HTTPS uses a
   TLS 1.2 client profile backed by Mbed TLS and the bundled CA roots. Cookies,
   cache, compression, and true streaming downloads are not implemented yet.
@@ -68,33 +64,20 @@ Upstream litehtml is checked out as:
 
 - submodule path: `third_party/litehtml`
 - upstream URL: `https://github.com/litehtml/litehtml.git`
-- current recorded commit: `932439c91afb04dbce30903673292e3bf2da01dc`
+- current recorded commit: `b9e89f0b9494ff9a5f008800af35503efabddf59`
 
-The current upstream tree is C++ and depends heavily on STL types and library
-facilities such as strings, vectors, maps, smart pointers, variants, algorithms,
-and bundled Gumbo parser support. LeonOS userland is still freestanding C with a
-small libc and no C++ runtime or STL build path.
+The upstream tree is built into `build/userland/liblitehtml.a` and its bundled
+Gumbo parser into `build/userland/libgumbo.a`. Browser and OOBE link both
+archives with the host libc++ headers and LeonOS single-thread C++ compatibility
+shims in `userland/apps/browser/cxx_compat.c`. The shims intentionally provide
+only the no-thread/no-exception hooks needed by the freestanding build; they do
+not provide Linux binary compatibility.
 
-Because of that, the browser app currently owns a small C core with a deliberately
-narrow surface. The replacement point is the document layout layer: URL loading,
-navigation history, window chrome, status reporting, and launch integration
-should remain useful when the full C++ litehtml container becomes available.
+## Remaining Browser Work
 
-## Next Porting Steps
-
-To integrate real litehtml, do these in order:
-
-1. Add a userland C++ build mode in `tools/gen_ninja.py`.
-2. Provide a minimal C++ runtime surface for constructors, destructors,
-   allocation, exceptions-disabled builds, and required ABI helpers.
-3. Port or provide an STL subset/libc++ profile that satisfies litehtml.
-4. Build Gumbo and upstream litehtml as userland libraries from
-   `third_party/litehtml`.
-5. Replace `litehtml_core.c` with a LeonOS litehtml container that maps text measurement, drawing,
-   colors, clipping, mouse hit testing, and file/network resource fetches to
-   the existing GUI and network APIs.
-6. Keep the browser shell, navigation, address bar, history, and app-launch
-   integration stable while swapping the document engine.
+1. Add JavaScript support only after a sandbox and resource policy are
+   available.
+2. Expand CSS/media coverage and add a bounded resource cache.
 
 ## User Integration
 

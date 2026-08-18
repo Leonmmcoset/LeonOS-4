@@ -116,8 +116,11 @@ struct leonos_inputm_state desktop_inputm_state;
 uint8_t desktop_inputm_menu_open;
 char desktop_inputm_status[96];
 struct leonos_ui_surface ui;
-uint32_t app_client_scratch[APP_CLIENT_MAX_W * APP_CLIENT_MAX_H];
-uint32_t screen[MAX_FB_W * MAX_FB_H];
+uint32_t *app_client_scratch;
+uint32_t desktop_client_stride;
+uint32_t desktop_client_height;
+uint32_t desktop_surface_stride;
+uint32_t *screen;
 
 const char cursor_art[FALLBACK_CURSOR_H][FALLBACK_CURSOR_W + 1] = {
     "X...............",
@@ -144,6 +147,8 @@ const struct desktop_display_mode desktop_display_modes[DESKTOP_MODE_COUNT] = {
     {1280, 800, "1280 x 800"},
     {1280, 720, "1280 x 720"},
     {1024, 768, "1024 x 768"},
+    {3840, 2160, "3840 x 2160"},
+    {4096, 2160, "4096 x 2160"},
 };
 
 const uint32_t desktop_scale_options[DESKTOP_SCALE_COUNT] = {1, 2, 3};

@@ -1,73 +1,5 @@
 #include "browser.h"
 
-int activate_link_at(int32_t mx, int32_t my)
-{
-    uint32_t row;
-    uint32_t col;
-    uint32_t byte_index;
-    uint32_t doc_y;
-    uint32_t hit_x;
-    uint32_t y_cursor = 0;
-    uint32_t align_shift_px;
-    uint32_t content_x;
-    uint32_t cell_w;
-    uint8_t link;
-    struct browser_line *line;
-    if (!hit_rect_i(mx, my, text_x(), text_y(),
-                    document_text_w(),
-                    page_h() > 16U ? page_h() - 16U : page_h())) {
-        return 0;
-    }
-    doc_y = (uint32_t)my - text_y();
-    row = scroll_line;
-    while (row < line_count) {
-        uint32_t line_h = browser_line_render_height(&lines[row]);
-        if (doc_y < y_cursor + line_h) {
-            break;
-        }
-        y_cursor += line_h;
-        ++row;
-    }
-    if (row >= line_count) {
-        return 0;
-    }
-    line = &lines[row];
-    hit_x = (uint32_t)mx + scroll_x;
-    cell_w = browser_line_cell_w(line->kind);
-    if (!cell_w) {
-        cell_w = LEONOS_FONT_W;
-    }
-    content_x = text_x() + (uint32_t)line->indent * LEONOS_FONT_W;
-    align_shift_px = line_align_shift_px(line, document_text_w());
-    if (hit_x < content_x + align_shift_px) {
-        return 0;
-    }
-    col = (hit_x - content_x - align_shift_px) / cell_w;
-    if (line->kind == BROWSER_LINE_IMAGE) {
-        uint32_t image_cols = 20U / LEONOS_FONT_W;
-        if (col < image_cols) {
-            return 0;
-        }
-        col -= image_cols;
-    }
-    if (col >= line->cells) {
-        return 0;
-    }
-    byte_index = browser_line_byte_at_cell(line, col);
-    if (byte_index >= line->len) {
-        return 0;
-    }
-    link = line->link[byte_index];
-    if (!link || (uint32_t)(link - 1U) >= link_count) {
-        return 0;
-    }
-    if (browser_form_handle_click(links[link - 1U].href, mx, my)) {
-        return 1;
-    }
-    navigate_to(links[link - 1U].href, 1);
-    return 1;
-}
-
 int handle_toolbar_click(int32_t x, int32_t y)
 {
     if (browser_embedded) {
@@ -141,7 +73,7 @@ void select_address_text(void)
     set_status(T("Address selected", "已选中地址"));
 }
 
-int handle_menu_click(int32_t x, int32_t y)
+int handle_menu_click(int32_t x, int32_t y, uint8_t pressed)
 {
     if (browser_embedded) {
         return 0;
@@ -159,6 +91,9 @@ int handle_menu_click(int32_t x, int32_t y)
                               sizeof(top_items) / sizeof(top_items[0]),
                               &id)) {
         if (id) {
+            if (!pressed) {
+                return 1;
+            }
             menu_open = menu_open == id ? BROWSER_MENU_NONE : (uint8_t)id;
             address_edit.focused = 0;
             return 1;
@@ -179,6 +114,9 @@ int handle_menu_click(int32_t x, int32_t y)
         if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, BROWSER_MENU_H,
                                      188U, items,
                                      sizeof(items) / sizeof(items[0]), &id)) {
+            if (pressed) {
+                return 1;
+            }
             menu_open = BROWSER_MENU_NONE;
             if (id == BROWSER_CMD_HOME) {
                 navigate_to("about:leonos", 1);
@@ -207,6 +145,9 @@ int handle_menu_click(int32_t x, int32_t y)
         if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, BROWSER_MENU_H,
                                      192U, items,
                                      sizeof(items) / sizeof(items[0]), &id)) {
+            if (pressed) {
+                return 1;
+            }
             menu_open = BROWSER_MENU_NONE;
             if (id == BROWSER_CMD_SELECT_ADDRESS) {
                 select_address_text();
@@ -237,15 +178,17 @@ int handle_menu_click(int32_t x, int32_t y)
         if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, BROWSER_MENU_H,
                                      166U, items,
                                      sizeof(items) / sizeof(items[0]), &id)) {
+            if (pressed) {
+                return 1;
+            }
             menu_open = BROWSER_MENU_NONE;
             if (id == BROWSER_CMD_REFRESH) {
                 navigate_to(current_location, 0);
             } else if (id == BROWSER_CMD_TOP) {
-                scroll_line = 0;
+                browser_scroll_y = 0;
                 set_status(T("Top of page", "页面顶部"));
             } else if (id == BROWSER_CMD_BOTTOM) {
-                uint32_t rows = visible_rows();
-                scroll_line = line_count > rows ? line_count - rows : 0;
+                browser_scroll_y = document_scroll_extent();
                 set_status(T("Bottom of page", "页面底部"));
             }
             return 1;
@@ -265,6 +208,9 @@ int handle_menu_click(int32_t x, int32_t y)
         if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, BROWSER_MENU_H,
                                      204U, items,
                                      count, &id)) {
+            if (pressed) {
+                return 1;
+            }
             menu_open = BROWSER_MENU_NONE;
             if (browser_bookmarks_handle_command(id, url, sizeof(url)) &&
                 url[0]) {
@@ -285,6 +231,9 @@ int handle_menu_click(int32_t x, int32_t y)
         if (leonos_ui_menu_popup_hit(x, y, (uint32_t)r.x, BROWSER_MENU_H,
                                      176U, items,
                                      sizeof(items) / sizeof(items[0]), &id)) {
+            if (pressed) {
+                return 1;
+            }
             menu_open = BROWSER_MENU_NONE;
             if (id == BROWSER_CMD_ABOUT) {
                 leonos_ui_show_message_box(T("LeonOS Browser", "LeonOS 浏览器"),
@@ -311,10 +260,11 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
     if (event->pressed) {
         buttons |= 1U;
     }
-    if (!(buttons & 1U)) {
+    if (!(buttons & 1U) && !(browser_document && !event->pressed)) {
         return;
     }
-    if (!browser_embedded && handle_menu_click(event->x, event->y)) {
+    if (!browser_embedded && handle_menu_click(event->x, event->y,
+                                               event->pressed)) {
         browser_form_clear_focus();
         present_browser();
         return;
@@ -342,13 +292,12 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
     menu_open = BROWSER_MENU_NONE;
     if (hit_rect_i(event->x, event->y, vscroll_x, p_y + 2U,
                    BROWSER_SCROLL_W, p_h > 4U ? p_h - 4U : p_h)) {
-        if (leonos_ui_vscrollbar_handle_mouse(&scroll_line,
-                                              line_count ? line_count : 1U,
-                                              visible_rows(),
-                                              vscroll_x, p_y + 2U,
-                                              BROWSER_SCROLL_W,
-                                              p_h > 4U ? p_h - 4U : p_h,
-                                              event->x, event->y)) {
+        int changed = leonos_ui_vscrollbar_handle_mouse(
+            &browser_scroll_y, document_content_h(), document_view_h(),
+            vscroll_x, p_y + 2U, BROWSER_SCROLL_W,
+            p_h > 4U ? p_h - 4U : p_h, event->x, event->y);
+        if (changed) {
+            clamp_scroll();
             present_browser();
         }
         return;
@@ -367,8 +316,32 @@ void handle_mouse_button(struct leonos_gui_app_event *event)
         }
         return;
     }
-    if (!activate_link_at(event->x, event->y)) {
-        browser_form_clear_focus();
+    {
+        int32_t doc_x = event->x - (int32_t)text_x() + (int32_t)scroll_x;
+        int32_t doc_y = event->y - (int32_t)text_y() + (int32_t)browser_scroll_y;
+        int handled = event->pressed
+                          ? browser_litehtml_lbutton_down(browser_document, doc_x, doc_y)
+                          : browser_litehtml_lbutton_up(browser_document, doc_x, doc_y);
+        if (!handled) {
+            browser_form_clear_focus();
+        }
+    }
+    browser_process_pending_form();
+    present_browser();
+}
+
+void handle_mouse_move(struct leonos_gui_app_event *event)
+{
+    if (!event || !browser_document) {
+        return;
+    }
+    if (hit_rect_i(event->x, event->y, text_x(), text_y(),
+                   document_text_w(), document_view_h())) {
+        int32_t doc_x = event->x - (int32_t)text_x() + (int32_t)scroll_x;
+        int32_t doc_y = event->y - (int32_t)text_y() + (int32_t)browser_scroll_y;
+        (void)browser_litehtml_mouse_move(browser_document, doc_x, doc_y);
+    } else {
+        (void)browser_litehtml_mouse_leave(browser_document);
     }
     present_browser();
 }
@@ -382,6 +355,7 @@ void handle_key(struct leonos_gui_app_event *event)
         return;
     }
     if (browser_form_handle_key(event)) {
+        browser_process_pending_form();
         present_browser();
         return;
     }
@@ -407,12 +381,10 @@ void handle_key(struct leonos_gui_app_event *event)
         return;
     }
     if (event->keycode == 73U) {
-        uint32_t rows = visible_rows();
-        scroll_line = scroll_line > rows ? scroll_line - rows : 0;
+        browser_scroll_wheel(-1);
         present_browser();
     } else if (event->keycode == 81U) {
-        scroll_line += visible_rows();
-        clamp_scroll();
+        browser_scroll_wheel(1);
         present_browser();
     }
 }

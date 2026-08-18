@@ -62,9 +62,14 @@ int starts_with_ignore_case(const char *text, const char *prefix)
 
 int ends_with_ignore_case(const char *text, const char *suffix)
 {
-    uint32_t text_len = (uint32_t)strlen(text);
-    uint32_t suffix_len = (uint32_t)strlen(suffix);
-    if (!text || !suffix || suffix_len > text_len) {
+    uint32_t text_len;
+    uint32_t suffix_len;
+    if (!text || !suffix) {
+        return 0;
+    }
+    text_len = (uint32_t)strlen(text);
+    suffix_len = (uint32_t)strlen(suffix);
+    if (suffix_len > text_len) {
         return 0;
     }
     return text_eq_ignore_case(text + text_len - suffix_len, suffix);
@@ -287,6 +292,16 @@ void normalize_location(const char *input, char *out, uint32_t cap)
     if (!tmp[0]) {
         copy_text(out, cap, "about:leonos");
         return;
+    }
+    if (tmp[0] == '/' &&
+        (starts_with_ignore_case(current_location, "http://") ||
+         starts_with_ignore_case(current_location, "https://"))) {
+        char resolved[BROWSER_URL_CAP];
+        if (leonos_http_resolve_url(current_location, tmp, resolved,
+                                    sizeof(resolved)) == 0) {
+            copy_text(out, cap, resolved);
+            return;
+        }
     }
     if (starts_with_ignore_case(tmp, "http://") ||
         starts_with_ignore_case(tmp, "https://") ||

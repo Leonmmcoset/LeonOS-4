@@ -7,8 +7,10 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
-#define LOGIN_MAX_W 1920
-#define LOGIN_MAX_H 1080
+#include <stdlib.h>
+
+#define LOGIN_MAX_W LEONOS_GUI_MAX_WINDOW_WIDTH
+#define LOGIN_MAX_H LEONOS_GUI_MAX_WINDOW_HEIGHT
 #define LOGIN_INITIAL_W 800
 #define LOGIN_INITIAL_H 600
 #define LOGIN_WINDOW_TITLE "LeonOS Login"
@@ -21,7 +23,8 @@
 #define LOGIN_VISIBLE_USERS 5U
 #define T(en, zh) leonos_i18n((en), (zh))
 
-static uint32_t pixels[LOGIN_MAX_W * LOGIN_MAX_H];
+static uint32_t *pixels;
+static uint32_t pixel_stride;
 static uint32_t surface_w = LOGIN_INITIAL_W;
 static uint32_t surface_h = LOGIN_INITIAL_H;
 static struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
@@ -50,8 +53,10 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
     dst[i] = 0;
 }
 
-static void update_surface_size(uint32_t width, uint32_t height)
+static int update_surface_size(uint32_t width, uint32_t height)
 {
+    uint64_t pixel_count;
+    uint32_t *new_pixels;
     uint32_t scale = 1;
     while ((width / scale) > LOGIN_MAX_W || (height / scale) > LOGIN_MAX_H) {
         ++scale;
@@ -60,16 +65,34 @@ static void update_surface_size(uint32_t width, uint32_t height)
         width /= scale;
         height /= scale;
     }
-    surface_w = width ? width : LOGIN_INITIAL_W;
-    surface_h = height ? height : LOGIN_INITIAL_H;
+    width = width ? width : LOGIN_INITIAL_W;
+    height = height ? height : LOGIN_INITIAL_H;
+    if (pixels && surface_w == width && surface_h == height) {
+        return 0;
+    }
+    pixel_count = (uint64_t)width * height;
+    if (pixel_count > (uint64_t)SIZE_MAX / sizeof(*new_pixels)) {
+        return -1;
+    }
+    new_pixels = (uint32_t *)malloc((size_t)pixel_count * sizeof(*new_pixels));
+    if (!new_pixels) {
+        return -1;
+    }
+    free(pixels);
+    pixels = new_pixels;
+    pixel_stride = width;
+    surface_w = width;
+    surface_h = height;
+    return 0;
 }
 
-static void update_surface_size_from_framebuffer(void)
+static int update_surface_size_from_framebuffer(void)
 {
     struct leonos_fb_info fb;
     if (leonos_fb_info(&fb) >= 0) {
-        update_surface_size(fb.width, fb.height);
+        return update_surface_size(fb.width, fb.height);
     }
+    return update_surface_size(LOGIN_INITIAL_W, LOGIN_INITIAL_H);
 }
 
 static void refresh_users(void)
@@ -161,7 +184,10 @@ int main(void)
     struct leonos_gui_app_event event;
     int window_id;
     puts("[login.elf] starting login UI");
-    update_surface_size_from_framebuffer();
+    if (update_surface_size_from_framebuffer() < 0) {
+        puts("[login.elf] render surface allocation failed");
+        return 1;
+    }
     refresh_users();
     leonos_ui_edit_state_init(&password_edit, password, sizeof(password));
     window_id = leonos_gui_create_app_window_ex(LOGIN_WINDOW_TITLE, LOGIN_WINDOW_TEXT,
@@ -179,14 +205,16 @@ int main(void)
         (void)leonos_inputm_set_context(&context);
     }
     for (;;) {
-        leonos_ui_bind(&ui, pixels, surface_w, surface_h, LOGIN_MAX_W);
+        leonos_ui_bind(&ui, pixels, surface_w, surface_h, pixel_stride);
         draw_login(&ui);
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
-                                  LOGIN_MAX_W, pixels);
+                                  pixel_stride, pixels);
         event.window_id = (uint32_t)window_id;
         if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
-                update_surface_size(event.width, event.height);
+                if (update_surface_size(event.width, event.height) < 0) {
+                    puts("[login.elf] render surface resize failed");
+                }
                 continue;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event.pressed) {
@@ -236,5 +264,6 @@ int main(void)
         }
     }
     leonos_gui_destroy_app_window((uint32_t)window_id);
+    free(pixels);
     return 0;
 }

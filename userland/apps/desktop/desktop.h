@@ -18,9 +18,9 @@
 
 #define MAX_WINDOWS 32
 #define BUILTIN_WINDOWS 4
-#define MAX_FB_W 1920
-#define MAX_FB_H 1080
-#define DESKTOP_MODE_COUNT 5
+#define MAX_FB_W LEONOS_GUI_MAX_WINDOW_WIDTH
+#define MAX_FB_H LEONOS_GUI_MAX_WINDOW_HEIGHT
+#define DESKTOP_MODE_COUNT 7
 #define DESKTOP_SCALE_COUNT 3
 #define TASKBAR_H LEONOS_UI_TASKBAR_H
 #define TASKBAR_CLOCK_W 92
@@ -88,8 +88,8 @@
 #define START_MENU_VIEW_POWER 3U
 #define START_MENU_VIEW_SEARCH 4U
 #define APP_WINDOW_SLOTS (MAX_WINDOWS - BUILTIN_WINDOWS)
-#define APP_CLIENT_MAX_W 1920
-#define APP_CLIENT_MAX_H 1080
+#define APP_CLIENT_MAX_W LEONOS_GUI_MAX_WINDOW_WIDTH
+#define APP_CLIENT_MAX_H LEONOS_GUI_MAX_WINDOW_HEIGHT
 #define DESKTOP_APP_TEXT_LEN 1024
 #define SNAP_MARGIN 24
 #define ALT_TAB_MAX_WINDOWS MAX_WINDOWS
@@ -152,6 +152,8 @@ struct desktop_window {
     uint32_t window_id;
     uint32_t client_width;
     uint32_t client_height;
+    uint32_t resize_event_width;
+    uint32_t resize_event_height;
     uint32_t flags;
     uint8_t close_requested;
     uint8_t visible;
@@ -317,9 +319,15 @@ extern struct leonos_inputm_state desktop_inputm_state;
 extern uint8_t desktop_inputm_menu_open;
 extern char desktop_inputm_status[96];
 extern struct leonos_ui_surface ui;
-extern uint32_t app_client_scratch[APP_CLIENT_MAX_W * APP_CLIENT_MAX_H];
+/* These 4K-capable surfaces live on the process heap.  Keeping them in .bss
+ * makes the desktop PIE span tens of MiB and prevents the ELF loader from
+ * finding an ASLR layout. */
+extern uint32_t *app_client_scratch;
+extern uint32_t desktop_client_stride;
+extern uint32_t desktop_client_height;
+extern uint32_t desktop_surface_stride;
 
-extern uint32_t screen[MAX_FB_W * MAX_FB_H];
+extern uint32_t *screen;
 
 extern const char cursor_art[FALLBACK_CURSOR_H][FALLBACK_CURSOR_W + 1];
 extern const struct desktop_display_mode desktop_display_modes[DESKTOP_MODE_COUNT];
@@ -336,6 +344,8 @@ void desktop_confirm_display_settings(void);
 void desktop_revert_display_settings(void);
 void desktop_update_display_confirmation(void);
 void desktop_load_display_config(void);
+int desktop_resize_surfaces(uint32_t width, uint32_t height);
+int desktop_ensure_client_surface(uint32_t width, uint32_t height);
 int desktop_save_display_config(void);
 void desktop_load_appearance_config(void);
 int desktop_save_appearance_config(void);
@@ -401,6 +411,10 @@ void bring_to_front(uint8_t id);
 int find_window_slot_by_window_id(uint32_t window_id);
 uint32_t window_body_width(const struct desktop_window *w);
 uint32_t window_body_height(const struct desktop_window *w);
+void window_map_input(const struct desktop_window *w, int32_t body_x,
+                      int32_t body_y, int32_t body_dx, int32_t body_dy,
+                      int32_t *client_x, int32_t *client_y,
+                      int32_t *client_dx, int32_t *client_dy);
 int window_is_fullscreen(const struct desktop_window *w);
 int window_is_borderless(const struct desktop_window *w);
 int active_window_is_fullscreen(void);

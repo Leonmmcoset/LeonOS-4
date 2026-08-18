@@ -310,14 +310,18 @@ long read(int fd, void *buf, size_t len)
         long result;
         do {
             result = syscall3(SYS_read, fd, (long)buf, (long)len);
-            if (result == -LEONOS_EAGAIN) {
-                sleep_ms(1);
-                continue;
-            }
-            if (result != 0 || !pty_input) {
+            /* A PTY can report either an empty canonical queue (zero) or
+             * EAGAIN while its input producer is between queue updates.  In
+             * both cases use the precise kernel wait instead of turning the
+             * terminal into a millisecond polling loop. */
+            if (result > 0 ||
+                (result < 0 && result != -LEONOS_EAGAIN) ||
+                (!pty_input && result != -LEONOS_EAGAIN)) {
                 return result;
             }
-            sleep_ms(4);
+            if (!pty_input || leonos_pty_wait_input() < 0) {
+                sleep_ms(1);
+            }
         } while (leonos_pty_self() == pty_id);
         return 0;
     }
@@ -4096,6 +4100,11 @@ int leonos_pty_self(void)
 int leonos_pty_input_available(void)
 {
     return ioctl(3, LEONOS_PTY_IOCTL_INPUT_AVAILABLE, 0);
+}
+
+int leonos_pty_wait_input(void)
+{
+    return ioctl(3, LEONOS_PTY_IOCTL_WAIT_INPUT, 0);
 }
 
 static int leonos_pty_error(int result);

@@ -262,7 +262,8 @@ def object_path(paths: BuildPaths, source: Path, prefix: str) -> Path:
 
 
 def user_app_sources(app: str) -> list[Path]:
-    sources = collect(f"userland/apps/{app}/*.c", f"userland/apps/{app}/*.S")
+    sources = collect(f"userland/apps/{app}/*.c", f"userland/apps/{app}/*.S",
+                      f"userland/apps/{app}/*.cpp")
     if app == "doom":
         sources.extend(
             source for source in collect("third_party/doomgeneric/doomgeneric/*.c")
@@ -275,7 +276,9 @@ def user_app_sources(app: str) -> list[Path]:
             }
         )
     if app == "oobe":
-        sources.extend(source for source in collect("userland/apps/browser/*.c") if source.name != "main.c")
+        sources.extend(source for source in collect("userland/apps/browser/*.c",
+                                                    "userland/apps/browser/*.cpp")
+                       if source.name != "main.c")
     return sorted(set(sources))
 
 
@@ -509,6 +512,33 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             compiler_rt_archive = linux_candidate
     if compiler_rt.returncode or not compiler_rt_archive.is_file():
         raise GraphError("Clang compiler-rt builtins archive is required for the dynamic runtime")
+    cxx_std_include = next(
+        (candidate for candidate in (
+            Path("/usr/lib/llvm-18/include/c++/v1"),
+            Path("/usr/lib/llvm-17/include/c++/v1"),
+            Path("/usr/lib/llvm-16/include/c++/v1"),
+            Path("/usr/include/c++/v1"),
+        ) if candidate.is_dir()),
+        None,
+    )
+    if cxx_std_include is None:
+        raise GraphError("a libc++ header tree is required to build LiteHTML")
+    cxx_runtime_archive = next(
+        (candidate for candidate in (
+            Path("/usr/lib/llvm-18/lib/libc++.a"),
+            Path("/usr/lib/llvm-17/lib/libc++.a"),
+        ) if candidate.is_file()),
+        None,
+    )
+    cxx_abi_archive = next(
+        (candidate for candidate in (
+            Path("/usr/lib/llvm-18/lib/libc++abi.a"),
+            Path("/usr/lib/llvm-17/lib/libc++abi.a"),
+        ) if candidate.is_file()),
+        None,
+    )
+    if cxx_runtime_archive is None or cxx_abi_archive is None:
+        raise GraphError("static libc++ and libc++abi archives are required to build LiteHTML")
     generated = paths.generated_include
     autoconf = generated / "autoconf.h"
     installer_autoconf = generated / "autoconf-installer.h"
@@ -535,6 +565,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     sqlite_header = paths.out / "generated/sqlite/sqlite3.h"
     sqlite_stamp = paths.out / "userland/sqlite.stamp"
     sqlite_work_dir = paths.out / "sqlite-work"
+    litehtml_archive = paths.out / "userland/liblitehtml.a"
+    gumbo_archive = paths.out / "userland/libgumbo.a"
     dynlinkerror_elf = paths.out / "userland/dynlinkerror.elf"
     installer_runtime_so = paths.out / "userland-installer-policy/libleonos.so.1"
     picolibc_header_stamp = picolibc_prefix / "include/.leonos-picolibc.stamp"
@@ -857,6 +889,27 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
     cflags_user = cflags_user_base + ["-include", relative(autoconf)]
+    cxxflags_litehtml_base = [
+        cxx, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c++17",
+        "-ffreestanding", "-fno-exceptions", "-fno-rtti", "-fno-use-cxa-atexit",
+        "-fno-threadsafe-statics", "-fno-stack-protector", "-fPIC", "-mno-red-zone",
+        "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra",
+        "-Wno-unused-parameter", "-Wno-c++11-narrowing", "-nostdinc++",
+        "-I", str(cxx_std_include), f"-I{relative(picolibc_prefix / 'include')}",
+        "-Iuserland/libc/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-Ithird_party/litehtml/include", "-Ithird_party/litehtml/include/litehtml",
+        "-Ithird_party/litehtml/src", "-Ithird_party/litehtml/src/gumbo/include",
+        "-Ithird_party/litehtml/src/gumbo/include/gumbo", "-Iuserland/litehtml/include",
+        "-Ithird_party/mbedtls/include", "-Ithird_party/zlib", "-Ithird_party/libpng",
+        f"-I{relative(libpng_generated_dir)}", '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
+        "-include", "userland/litehtml/include/leonos_litehtml_compat.h",
+        "-include", relative(autoconf),
+    ]
+    cxxflags_litehtml = cxxflags_litehtml_base
+    cxxflags_litehtml_installer = [
+        relative_flag if relative_flag != relative(autoconf) else relative(installer_autoconf)
+        for relative_flag in cxxflags_litehtml_base
+    ]
     cflags_doom = cflags_user + ["-DLEONOS_DOOM", "-Ithird_party/doomgeneric/doomgeneric"]
     cflags_mp3play = [flag for flag in cflags_user if flag != "-mgeneral-regs-only"] + [
         "-mno-avx", "-mno-avx2",
@@ -1521,6 +1574,48 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ),
     ))
 
+    # LiteHTML is built from the upstream renderer and its bundled Gumbo parser.
+    # Keep the renderer in archives so only the browser and the OOBE browser
+    # embed pay for the C++ implementation.
+    litehtml_headers = tuple([
+        *collect("third_party/litehtml/include/**/*.h"),
+        *collect("third_party/litehtml/src/**/*.h"),
+        ROOT / "userland/litehtml/include/leonos_litehtml_compat.h",
+    ])
+    gumbo_sources = collect("third_party/litehtml/src/gumbo/*.c")
+    gumbo_headers = tuple(collect("third_party/litehtml/src/gumbo/**/*.h"))
+    gumbo_objects = [
+        add_compile(graph, paths, f"compile:gumbo:{relative(source)}", source,
+                    "gumbo", cflags_user_libc + [
+                        "-Ithird_party/litehtml/src/gumbo/include",
+                        "-Ithird_party/litehtml/src/gumbo/include/gumbo",
+                    ], (autoconf, *gumbo_headers))
+        for source in gumbo_sources
+    ]
+    graph.add(Target(
+        name="archive:gumbo-litehtml",
+        outputs=(gumbo_archive,),
+        inputs=tuple([*gumbo_objects, *gumbo_headers]),
+        depends_on=("picolibc",),
+        kind="link",
+        command=(ar, "rcs", relative(gumbo_archive), *map(relative, gumbo_objects)),
+    ))
+    litehtml_sources = collect("third_party/litehtml/src/*.cpp")
+    litehtml_objects = [
+        add_compile(graph, paths, f"compile:litehtml:{relative(source)}", source,
+                    "litehtml", cxxflags_litehtml,
+                    (autoconf, *litehtml_headers))
+        for source in litehtml_sources
+    ]
+    graph.add(Target(
+        name="archive:litehtml",
+        outputs=(litehtml_archive,),
+        inputs=tuple([*litehtml_objects, *litehtml_headers]),
+        depends_on=("picolibc", "archive:gumbo-litehtml"),
+        kind="link",
+        command=(ar, "rcs", relative(litehtml_archive), *map(relative, litehtml_objects)),
+    ))
+
     # StardustUI is a freestanding C++ library.  Keep its component and theme
     # implementation in one archive and use the upstream examples as the
     # first LeonOS applications.  The LeonOS platform adapter deliberately
@@ -1652,18 +1747,34 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         objects: list[Path] = []
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
+            is_cpp = source.suffix == ".cpp"
             cflags_app = cflags_doom if app == "doom" else (cflags_mp3play if app == "mp3play" else cflags_user)
-            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+            source_flags = (asflags_user if is_asm else
+                            (cxxflags_litehtml if is_cpp else cflags_app))
+            objects.append(add_compile(
+                graph, paths, f"compile:app:{app}:{relative(source)}", source,
+                f"user-{app}", source_flags,
+                (autoconf, picolibc_header_stamp, libpng_config)
+                if not is_asm else (),
+                kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland/{app}.elf"
         app_archives = [runtime_so]
+        app_dependencies = ["runtime", "runtime-loader"]
+        if app in {"browser", "oobe"}:
+            app_archives.extend((litehtml_archive, gumbo_archive,
+                                 cxx_runtime_archive, cxx_abi_archive))
+            app_dependencies.extend(("archive:litehtml", "archive:gumbo-litehtml"))
         graph.add(Target(name=f"app:{app}", outputs=(output,),
                          inputs=tuple([*objects, *app_archives, dynamic_crt_obj, dynamic_note_obj,
                                        ROOT / "userland/dynamic-app.ld"]),
+                         depends_on=tuple(app_dependencies),
                          implicit_inputs=(ROOT / "userland/dynamic-app.ld",), kind="link",
                          command=(ld, "-nostdlib", "--gc-sections", *build_link_flags, *dynamic_link_flags,
                                   "-T", "userland/dynamic-app.ld", "-o", relative(output),
                                   relative(dynamic_crt_obj), relative(dynamic_note_obj),
-                                  *map(relative, objects), relative(runtime_so))))
+                                  *map(relative, objects),
+                                  "--no-dependent-libraries",
+                                  "--start-group", *map(relative, app_archives), "--end-group")))
         app_elfs[app] = output
         user_targets.append(f"app:{app}")
 
@@ -1673,10 +1784,36 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         objects = []
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
-            objects.append(add_compile(graph, paths, f"compile:installer-app:{app}:{relative(source)}", source, f"user-installer-policy-{app}", asflags_user if is_asm else cflags_installer, (installer_autoconf, picolibc_header_stamp) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+            is_cpp = source.suffix == ".cpp"
+            source_flags = (asflags_user if is_asm else
+                            (cxxflags_litehtml_installer if is_cpp else cflags_installer))
+            objects.append(add_compile(
+                graph, paths, f"compile:installer-app:{app}:{relative(source)}", source,
+                f"user-installer-policy-{app}", source_flags,
+                (installer_autoconf, picolibc_header_stamp)
+                if not is_asm else (),
+                kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland-installer-policy/{app}.elf"
         name = f"installer-policy:{app}"
-        graph.add(Target(name=name, outputs=(output,), inputs=tuple([*objects, installer_runtime_so, dynamic_crt_obj, dynamic_note_obj]), implicit_inputs=(ROOT / "userland/dynamic-app.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", *build_link_flags, *dynamic_link_flags, "-T", "userland/dynamic-app.ld", "-o", relative(output), relative(dynamic_crt_obj), relative(dynamic_note_obj), *map(relative, objects), relative(installer_runtime_so))))
+        installer_archives = [installer_runtime_so]
+        installer_dependencies = ["installer-runtime", "runtime-loader"]
+        if app == "oobe":
+            installer_archives.extend((litehtml_archive, gumbo_archive,
+                                       cxx_runtime_archive, cxx_abi_archive))
+            installer_dependencies.extend(("archive:litehtml", "archive:gumbo-litehtml"))
+        graph.add(Target(
+            name=name, outputs=(output,),
+            inputs=tuple([*objects, *installer_archives, dynamic_crt_obj,
+                          dynamic_note_obj]),
+            depends_on=tuple(installer_dependencies),
+            implicit_inputs=(ROOT / "userland/dynamic-app.ld",), kind="link",
+            command=(ld, "-nostdlib", "--gc-sections", *build_link_flags,
+                     *dynamic_link_flags, "-T", "userland/dynamic-app.ld", "-o",
+                     relative(output), relative(dynamic_crt_obj),
+                     relative(dynamic_note_obj), *map(relative, objects),
+                     "--no-dependent-libraries",
+                     "--start-group", *map(relative, installer_archives),
+                     "--end-group")))
         installer_policy_elfs[app] = output
         user_targets.append(name)
 

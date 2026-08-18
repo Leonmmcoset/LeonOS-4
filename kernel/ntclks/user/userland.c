@@ -604,6 +604,12 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
     sched_set_running(next->pid);
     userland_yield_if_runnable();
     arch_fpu_restore(next->fpu_state);
+    /* The distribution libc++ archive uses the conventional FS:0x28 stack
+     * guard.  Keep FS based at a mapped page in each task's user stack; the
+     * kernel currently has no general TLS ABI, but this preserves the
+     * compiler-runtime contract without exposing a kernel address. */
+    arch_set_user_fs_base(next->stack_top -
+                          (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL);
     return next;
 }
 
@@ -625,6 +631,8 @@ static void userland_enter_task(struct task *task)
                    (unsigned long long)task->frame.rip,
                    (unsigned long long)task->frame.rsp,
                    (unsigned long long)task->as.cr3);
+    arch_set_user_fs_base(task->stack_top -
+                          (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL);
     arch_enter_user_frame(&task->frame, task->as.cr3);
 }
 

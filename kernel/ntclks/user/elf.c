@@ -23,10 +23,15 @@
 #define PF_W 2
 #define PAGE_SIZE 4096ULL
 #define ELF_HEADER_READ_BYTES 4096U
-#define ELF_DYN_MAIN_MIN 0x01000000ULL
-#define ELF_DYN_MAIN_MAX 0x03800000ULL
-#define ELF_DYN_INTERP_MIN 0x03800000ULL
-#define ELF_DYN_INTERP_MAX 0x05000000ULL
+/* Keep a large, disjoint window for PIE applications.  Terminal and other
+ * GUI applications may legitimately carry tens of MiB of private BSS for
+ * surfaces and tab state; the old 40 MiB window rejected those images before
+ * any segment was mapped.  The interpreter remains in its own window, while
+ * the address range above it is left available for libleonos and dlopen(). */
+#define ELF_DYN_MAIN_MIN 0x00800000ULL
+#define ELF_DYN_MAIN_MAX 0x06000000ULL
+#define ELF_DYN_INTERP_MIN 0x06000000ULL
+#define ELF_DYN_INTERP_MAX 0x06800000ULL
 
 struct elf64_ehdr {
     unsigned char e_ident[EI_NIDENT];
