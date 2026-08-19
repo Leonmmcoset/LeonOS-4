@@ -431,7 +431,7 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
     ovmf = config_string(values, "CONFIG_QEMU_OVMF_PATH")
     if ovmf:
         command += ["-bios", ovmf]
-    command += ["-serial", "stdio", "-display", "none" if debug or iso else os.environ.get("LEONOS_QEMU_DISPLAY", "sdl")]
+    command += ["-serial", "stdio"]
     command += ["-device", f"VGA,xres={width},yres={height}"]
     if debug or iso:
         command += ["-no-reboot", "-no-shutdown"]

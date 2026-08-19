@@ -32,6 +32,7 @@
 #define KERNEL_PATH "0:/system/kernel.sys"
 #define MIDDLELAYER_PATH "0:/system/middlelayer.sys"
 #define READ_BUFFER_SIZE (1024u * 1024u)
+#define EFI_MEMORY_MAP_BYTES (256u * 1024u)
 #define LOADER_LOG_MAX_COLUMNS 512u
 #define LOADER_LOG_MAX_ROWS 192u
 #define LOADER_SPLASH_BACKGROUND 0x00ffffffu
@@ -123,12 +124,28 @@ typedef efi_status_t (__attribute__((ms_abi)) *efi_locate_handle_buffer_fn)(
     efi_handle_t **buffer);
 typedef efi_status_t (__attribute__((ms_abi)) *efi_stall_fn)(
     uint64_t microseconds);
+typedef efi_status_t (__attribute__((ms_abi)) *efi_get_memory_map_fn)(
+    uint64_t *memory_map_size,
+    void *memory_map,
+    uint64_t *map_key,
+    uint64_t *descriptor_size,
+    uint32_t *descriptor_version);
 
 struct efi_boot_services {
     struct efi_table_header hdr;
     efi_status_t (*raise_tpl)(uint64_t tpl);
     void (*restore_tpl)(uint64_t tpl);
-    char _pad1[88];
+    void *allocate_pages;
+    void *free_pages;
+    efi_get_memory_map_fn get_memory_map;
+    void *allocate_pool;
+    void *free_pool;
+    void *create_event;
+    void *set_timer;
+    void *wait_for_event;
+    void *signal_event;
+    void *close_event;
+    void *check_event;
     efi_status_t (*install_protocol_interface)(void);
     efi_status_t (*reinstall_protocol_interface)(void);
     efi_status_t (*uninstall_protocol_interface)(void);
@@ -297,6 +314,9 @@ extern uint8_t __loader_end[];
 void loader_main(uint32_t magic, uint32_t multiboot_info);
 
 static uint8_t read_buffer[READ_BUFFER_SIZE] __attribute__((aligned(4096)));
+/* Captured after all EFI file reads.  The buffer lives inside the loader
+ * image, which the kernel reserves before reclaiming usable pages. */
+static uint8_t efi_memory_map[EFI_MEMORY_MAP_BYTES] __attribute__((aligned(4096)));
 static struct leonos_boot_handoff handoff;
 static struct efi_boot_services *boot_services;
 static uint8_t loader_log_line_start = 1u;
@@ -1453,6 +1473,47 @@ static int efi_read_file(const char *path, void *buffer, uint64_t cap, uint64_t 
     return 0;
 }
 
+static int efi_capture_memory_map(void)
+{
+    uint64_t map_size = EFI_MEMORY_MAP_BYTES;
+    uint64_t map_key = 0;
+    uint64_t descriptor_size = 0;
+    uint32_t descriptor_version = 0;
+    efi_status_t status;
+
+    if (!boot_services || !boot_services->get_memory_map) {
+        serial_write("[loader] EFI GetMemoryMap unavailable\n");
+        return -1;
+    }
+    status = boot_services->get_memory_map(&map_size, efi_memory_map,
+                                           &map_key, &descriptor_size,
+                                           &descriptor_version);
+    if (status != EFI_SUCCESS || !descriptor_size ||
+        map_size > EFI_MEMORY_MAP_BYTES ||
+        (map_size % descriptor_size) != 0) {
+        serial_write("[loader] EFI GetMemoryMap failed status=");
+        serial_write_hex(status);
+        serial_write(" bytes=");
+        serial_write_hex(map_size);
+        serial_write(" descriptor=");
+        serial_write_hex(descriptor_size);
+        serial_write("\n");
+        return -1;
+    }
+
+    handoff.efi_mmap_addr = (uint64_t)(uintptr_t)efi_memory_map;
+    handoff.efi_mmap_entry_size = (uint32_t)descriptor_size;
+    handoff.efi_mmap_entry_count = (uint32_t)(map_size / descriptor_size);
+    serial_write("[loader] EFI memory map captured entries=");
+    serial_write_hex(handoff.efi_mmap_entry_count);
+    serial_write(" descriptor=");
+    serial_write_hex(descriptor_size);
+    serial_write(" version=");
+    serial_write_hex(descriptor_version);
+    serial_write("\n");
+    return 0;
+}
+
 static void loader_load_ui_theme(void)
 {
     char config[160];
@@ -1772,6 +1833,10 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_write_hex(handoff.middlelayer.end);
     serial_write("\n");
     loader_framebuffer_draw_boot_splash(78u);
+
+    if (!handoff.mmap_entry_count && !handoff.efi_mmap_entry_count) {
+        (void)efi_capture_memory_map();
+    }
 
     serial_write("[loader] jumping to kernel\n");
     loader_framebuffer_draw_boot_splash(80u);

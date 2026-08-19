@@ -150,6 +150,19 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
+    /* UEFI GRUB keeps boot services active for the second-stage loader and
+     * may therefore omit Multiboot2 memory-map tags.  The loader captures a
+     * stable EFI map after loading all images; use it before the allocator
+     * falls back to the legacy 512 MiB estimate. */
+    if (!boot.mmap_entry_count && !boot.efi_mmap_entry_count &&
+        handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC &&
+        handoff->efi_mmap_addr && handoff->efi_mmap_entry_count) {
+        boot.efi_mmap_addr = handoff->efi_mmap_addr;
+        boot.efi_mmap_entry_size = handoff->efi_mmap_entry_size;
+        boot.efi_mmap_entry_count = handoff->efi_mmap_entry_count;
+        console_printf("[ntclks] using loader-captured EFI memory map entries=%u descriptor=%u\n",
+                       boot.efi_mmap_entry_count, boot.efi_mmap_entry_size);
+    }
     boot_log_screen = cmdline_has(&boot, "bootlog=1");
     if (!boot.rsdp_addr && handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC) {
         boot.rsdp_addr = handoff->rsdp_addr;

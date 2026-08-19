@@ -5,16 +5,17 @@
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/mm.h>
+#include <ntclks/paging.h>
 
 static uint64_t total_kib;
 
 #define PAGE_SIZE 4096ULL
-#define PAGE_ALLOC_MIN 0x00100000ULL
+#define PAGE_ALLOC_MIN NTCLKS_USER_TOP
 #define PAGE_ALLOC_LIMIT 0x100000000ULL
 #define FALLBACK_ALLOC_START 0x0a000000ULL
 #define FALLBACK_MEMORY_KIB (512ULL * 1024ULL)
-#define MM_MAX_FREE_RANGES 64u
-#define MM_MAX_RESERVED_RANGES 32u
+#define MM_MAX_FREE_RANGES 256u
+#define MM_MAX_RESERVED_RANGES 64u
 #define MM_PAGE_COUNT (PAGE_ALLOC_LIMIT / PAGE_SIZE)
 
 struct phys_range {
@@ -109,6 +110,9 @@ static void add_free_range(uint64_t start, uint64_t end)
     }
     start = align_up(start, PAGE_SIZE);
     end = align_down(end, PAGE_SIZE);
+    /* User address spaces replace the identity mapping above their lower
+     * boundary.  Physical pages below that boundary cannot safely be touched
+     * while a user CR3 is active, so keep allocator pages outside the alias. */
     if (start < PAGE_ALLOC_MIN) {
         start = PAGE_ALLOC_MIN;
     }
