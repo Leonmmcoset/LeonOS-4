@@ -128,13 +128,10 @@ def psf_ascii_glyphs(path: Path) -> dict[int, bytes]:
 def pixel_glyph(bitmap: bytes, ascender: int, descender: int, advance: int) -> bytes:
     contours: list[list[tuple[int, int]]] = []
     line_height = ascender - descender
-    bold_bitmap = bytearray(16)
+    # Keep the source PSF shape unchanged. Expanding every pixel to the
+    # right and below made the Win95 ASCII face visibly bolder than the
+    # original bitmap and changed narrow punctuation into blobs.
     for row, bits in enumerate(bitmap):
-        expanded = bits | (bits >> 1)
-        bold_bitmap[row] |= expanded
-        if row + 1 < len(bold_bitmap):
-            bold_bitmap[row + 1] |= expanded
-    for row, bits in enumerate(bold_bitmap):
         for column in range(8):
             if not bits & (0x80 >> column):
                 continue

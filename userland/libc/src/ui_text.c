@@ -1,6 +1,7 @@
 #include <leonos/syscall.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "ui_internal.h"
 
@@ -32,6 +33,7 @@ struct ui_ttf_font {
     uint16_t hmetrics_count;
     uint8_t long_loca;
     uint8_t mapped;
+    uint8_t pixel_ascii;
 };
 
 struct ui_ttf_point {
@@ -304,6 +306,7 @@ static int ui_ttf_load_font(struct ui_ttf_font *font, const char *path)
         return 0;
     }
     *font = ui_ttf;
+    font->pixel_ascii = path && strcmp(path, UI_TTF_WIN95_PATH) == 0;
     printf("[ui] TTF loaded path=%s bytes=%u glyphs=%u\n",
            path ? path : "", ui_ttf.len, ui_ttf.glyph_count);
     return 1;
@@ -940,9 +943,8 @@ static uint32_t ui_ttf_intersections_at(const struct ui_ttf_edge *edge_data,
 
 static void ui_ttf_accumulate_row(uint8_t *coverage, uint32_t width, uint32_t edges,
                                   uint32_t origin_x, uint32_t origin_y, uint32_t row,
-                                  int metro, const struct ui_ttf_edge *edge_data)
+                                  uint32_t samples, const struct ui_ttf_edge *edge_data)
 {
-    uint32_t samples = metro ? 2U : 1U;
     for (uint32_t sy = 0; sy < samples; ++sy) {
         int32_t offset = samples == 1U ? 32768 : (sy ? 49152 : 16384);
         uint32_t intersections = ui_ttf_intersections_at(
@@ -966,12 +968,21 @@ static void ui_ttf_accumulate_row(uint8_t *coverage, uint32_t width, uint32_t ed
     }
 }
 
-static void ui_ttf_mask_row_to_alpha(uint8_t *coverage, uint32_t width, int metro)
+static uint8_t ui_ttf_coverage_alpha(uint8_t coverage, uint32_t samples)
+{
+    uint32_t sample_total;
+    if (samples <= 1U) {
+        return coverage ? 255U : 0U;
+    }
+    sample_total = samples * samples;
+    return (uint8_t)((coverage * 255U + sample_total / 2U) / sample_total);
+}
+
+static void ui_ttf_mask_row_to_alpha(uint8_t *coverage, uint32_t width,
+                                     uint32_t samples)
 {
     for (uint32_t col = 0; col < width; ++col) {
-        coverage[col] = metro
-                            ? (uint8_t)((coverage[col] * 255U + 2U) / 4U)
-                            : (coverage[col] ? 255U : 0U);
+        coverage[col] = ui_ttf_coverage_alpha(coverage[col], samples);
     }
 }
 
@@ -985,25 +996,40 @@ static int ui_ttf_build_codepoint_edges(uint32_t codepoint, uint32_t h,
     return glyph && ui_ttf_build_edges(glyph, h, x, y, edges);
 }
 
+/* Win95 keeps only the generated PSF ASCII face pixel-crisp. Other outline
+ * glyphs, including CJK and an application's font override, need
+ * supersampling: a single sample can land between thin strokes and erase
+ * those strokes completely. */
+static uint32_t ui_ttf_sample_count(uint32_t codepoint)
+{
+    if (ui_theme_is_metro() || !ui_ttf.pixel_ascii ||
+        codepoint < 0x20U || codepoint > 0x7eU) {
+        return 2U;
+    }
+    return 1U;
+}
+
 static int ui_ttf_render_mask(uint8_t *mask, uint32_t w, uint32_t h,
                               uint32_t codepoint)
 {
     uint16_t glyph = ui_ttf_glyph(codepoint);
     uint32_t edges;
+    uint32_t samples;
     if (!glyph) {
         glyph = ui_ttf_glyph('?');
     }
     if (!glyph || !ui_ttf_build_edges(glyph, h, 0, 0, &edges)) {
         return 0;
     }
+    samples = ui_ttf_sample_count(codepoint);
     for (uint32_t row = 0; row < h; ++row) {
         uint8_t *coverage = mask + row * w;
         for (uint32_t col = 0; col < w; ++col) {
             coverage[col] = 0;
         }
-        ui_ttf_accumulate_row(coverage, w, edges, 0, 0, row,
-                              ui_theme_is_metro(), ui_ttf_edges);
-        ui_ttf_mask_row_to_alpha(coverage, w, ui_theme_is_metro());
+        ui_ttf_accumulate_row(coverage, w, edges, 0, 0, row, samples,
+                              ui_ttf_edges);
+        ui_ttf_mask_row_to_alpha(coverage, w, samples);
     }
     return 1;
 }
@@ -1068,7 +1094,8 @@ static void ui_ttf_blit_mask(struct leonos_ui_surface *surface, uint32_t x, uint
 
 static void ui_ttf_raster_surface(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                                   uint32_t w, uint32_t h, uint32_t edges,
-                                  uint32_t fg, uint32_t bg, int transparent)
+                                  uint32_t samples, uint32_t fg, uint32_t bg,
+                                  int transparent)
 {
     uint8_t *coverage = ui_ttf_row_coverage;
     int dynamic_coverage = 0;
@@ -1086,12 +1113,10 @@ static void ui_ttf_raster_surface(struct leonos_ui_surface *surface, uint32_t x,
         for (uint32_t col = 0; col < w; ++col) {
             coverage[col] = 0;
         }
-        ui_ttf_accumulate_row(coverage, w, edges, x, y, row, ui_theme_is_metro(),
+        ui_ttf_accumulate_row(coverage, w, edges, x, y, row, samples,
                               ui_ttf_edges);
         for (uint32_t col = 0; col < w; ++col) {
-            uint8_t alpha = ui_theme_is_metro()
-                                ? (uint8_t)((coverage[col] * 255U + 2U) / 4U)
-                                : (coverage[col] ? 255U : 0U);
+            uint8_t alpha = ui_ttf_coverage_alpha(coverage[col], samples);
             if (alpha) {
                 uint32_t base = transparent ? ui_surface_color(surface, x + col, y + row) : bg;
                 leonos_ui_pixel(surface, x + col, y + row, ui_blend_color(base, fg, alpha));
@@ -1112,7 +1137,8 @@ static void ui_ttf_draw_direct(struct leonos_ui_surface *surface, uint32_t x, ui
         ui_tofu(surface, x, y, w, h, fg, bg, transparent);
         return;
     }
-    ui_ttf_raster_surface(surface, x, y, w, h, edges, fg, bg, transparent);
+    ui_ttf_raster_surface(surface, x, y, w, h, edges,
+                          ui_ttf_sample_count(codepoint), fg, bg, transparent);
 }
 
 static void ui_ttf_draw(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
