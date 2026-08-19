@@ -5304,6 +5304,49 @@ static void install_ext2_set_bit(uint8_t *bitmap, uint32_t bit)
 }
 
 /**
+ * @brief Builds one classic ext2 block-group descriptor.
+ * @param descriptor Writable descriptor receiving the group's metadata locations.
+ * @param group Zero-based block-group index.
+ * @param group_blocks Blocks available in the group.
+ * @param descriptor_blocks Number of 4 KiB blocks occupied by the descriptor table.
+ * @param inode_table_blocks Number of blocks occupied by one inode table.
+ * @return Zero when the group has enough space for its metadata, otherwise -ENOSPC.
+ */
+static int install_ext2_make_group_desc(struct ext2_group_desc *descriptor,
+                                        uint32_t group, uint32_t group_blocks,
+                                        uint32_t descriptor_blocks,
+                                        uint32_t inode_table_blocks)
+{
+    uint32_t group_start;
+    uint32_t metadata_blocks;
+    uint32_t allocated_blocks;
+    uint32_t allocated_inodes;
+
+    if (!descriptor || descriptor_blocks == 0u) {
+        return -22;
+    }
+    group_start = group * INSTALL_EXT2_BLOCKS_PER_GROUP;
+    /* Every group stores a superblock plus a complete backup descriptor table,
+     * then its block bitmap, inode bitmap, and inode table. */
+    metadata_blocks = 3u + descriptor_blocks + inode_table_blocks;
+    allocated_blocks = metadata_blocks + (group == 0u ? 1u : 0u);
+    allocated_inodes = group == 0u ? 10u : 0u;
+    if (group_blocks <= allocated_blocks) {
+        return -28;
+    }
+
+    storage_memzero(descriptor, sizeof(*descriptor));
+    descriptor->block_bitmap = group_start + 1u + descriptor_blocks;
+    descriptor->inode_bitmap = descriptor->block_bitmap + 1u;
+    descriptor->inode_table = descriptor->inode_bitmap + 1u;
+    descriptor->free_blocks_count = (uint16_t)(group_blocks - allocated_blocks);
+    descriptor->free_inodes_count =
+        (uint16_t)(INSTALL_EXT2_INODES_PER_GROUP - allocated_inodes);
+    descriptor->used_dirs_count = group == 0u ? 1u : 0u;
+    return 0;
+}
+
+/**
  * @brief Creates a writable classic ext2 filesystem for the installed root.
  * @param disk AHCI disk containing the target partition.
  * @param start_lba First sector of the ext2 partition.
@@ -5315,38 +5358,35 @@ static int install_format_ext2(struct install_disk_state *disk, uint64_t start_l
 {
     uint32_t blocks;
     uint32_t group_count;
+    uint32_t descriptors_per_block;
+    uint32_t descriptor_blocks;
     uint32_t inode_table_blocks;
     uint32_t inodes_count;
     uint32_t free_blocks = 0;
     uint32_t free_inodes = 0;
-    struct ext2_group_desc *descriptors = (struct ext2_group_desc *)(void *)storage_cluster_buf;
     struct ext2_superblock super;
     int ret;
     if (!disk || sector_count < 262144ULL || sector_count / 8u > 0xffffffffULL) return -28;
     blocks = (uint32_t)(sector_count / 8u);
     group_count = (blocks + INSTALL_EXT2_BLOCKS_PER_GROUP - 1u) /
                   INSTALL_EXT2_BLOCKS_PER_GROUP;
+    descriptors_per_block = INSTALL_EXT2_BLOCK_SIZE / sizeof(struct ext2_group_desc);
+    descriptor_blocks = (group_count + descriptors_per_block - 1u) / descriptors_per_block;
     inode_table_blocks = (INSTALL_EXT2_INODES_PER_GROUP * 128u) / INSTALL_EXT2_BLOCK_SIZE;
     inodes_count = group_count * INSTALL_EXT2_INODES_PER_GROUP;
-    if (!group_count || group_count > INSTALL_EXT2_BLOCK_SIZE / sizeof(*descriptors) ||
-        blocks < inode_table_blocks + 262u) return -28;
+    if (!group_count || !descriptor_blocks ||
+        blocks < (uint64_t)inode_table_blocks + descriptor_blocks + 4u) return -28;
 
-    storage_memzero(descriptors, INSTALL_EXT2_BLOCK_SIZE);
     storage_memzero(&super, sizeof(super));
     for (uint32_t group = 0; group < group_count; ++group) {
         uint32_t group_start = group * INSTALL_EXT2_BLOCKS_PER_GROUP;
         uint32_t group_blocks = min_u32(INSTALL_EXT2_BLOCKS_PER_GROUP, blocks - group_start);
-        uint32_t reserved_blocks = 4u + inode_table_blocks + (group == 0 ? 1u : 0u);
-        struct ext2_group_desc *descriptor = &descriptors[group];
-        if (group_blocks <= reserved_blocks) return -28;
-        descriptor->block_bitmap = group_start + 2u;
-        descriptor->inode_bitmap = group_start + 3u;
-        descriptor->inode_table = group_start + 4u;
-        descriptor->free_blocks_count = (uint16_t)(group_blocks - reserved_blocks);
-        descriptor->free_inodes_count = (uint16_t)(INSTALL_EXT2_INODES_PER_GROUP - (group == 0 ? 10u : 0u));
-        descriptor->used_dirs_count = group == 0 ? 1u : 0u;
-        free_blocks += descriptor->free_blocks_count;
-        free_inodes += descriptor->free_inodes_count;
+        struct ext2_group_desc descriptor;
+        ret = install_ext2_make_group_desc(&descriptor, group, group_blocks,
+                                           descriptor_blocks, inode_table_blocks);
+        if (ret < 0) return ret;
+        free_blocks += descriptor.free_blocks_count;
+        free_inodes += descriptor.free_inodes_count;
     }
 
     super.inodes_count = inodes_count;
@@ -5368,9 +5408,10 @@ static int install_format_ext2(struct install_disk_state *disk, uint64_t start_l
     super.feature_incompat = EXT2_FEATURE_INCOMPAT_FILETYPE;
     storage_memcpy(super.volume_name, "LEONOS4-ROOT", 11u);
 
-    /* A non-sparse classic layout keeps a backup superblock and descriptor
-     * table at the beginning of every group, which makes offline e2fsck and
-     * recovery tooling understand the installer-created filesystem. */
+    /* A non-sparse classic layout keeps a backup superblock and a complete
+     * descriptor table at the beginning of every group. Generate one table
+     * block at a time: large filesystems need more than the single 4 KiB
+     * descriptor block used by the original formatter. */
     for (uint32_t group = 0; group < group_count; ++group) {
         uint32_t group_start = group * INSTALL_EXT2_BLOCKS_PER_GROUP;
         storage_memzero(storage_scratch, INSTALL_EXT2_BLOCK_SIZE);
@@ -5381,24 +5422,50 @@ static int install_format_ext2(struct install_disk_state *disk, uint64_t start_l
         }
         ret = install_write_ext2_block(disk, start_lba, group_start, storage_scratch);
         if (ret < 0) return ret;
-        ret = install_write_ext2_block(disk, start_lba, group_start + 1u, descriptors);
-        if (ret < 0) return ret;
+        for (uint32_t table_block = 0; table_block < descriptor_blocks; ++table_block) {
+            struct ext2_group_desc *descriptors =
+                (struct ext2_group_desc *)(void *)storage_scratch;
+            uint32_t first_descriptor = table_block * descriptors_per_block;
+            storage_memzero(storage_scratch, INSTALL_EXT2_BLOCK_SIZE);
+            for (uint32_t slot = 0; slot < descriptors_per_block; ++slot) {
+                uint32_t descriptor_group = first_descriptor + slot;
+                uint32_t descriptor_start;
+                uint32_t descriptor_group_blocks;
+                if (descriptor_group >= group_count) {
+                    break;
+                }
+                descriptor_start = descriptor_group * INSTALL_EXT2_BLOCKS_PER_GROUP;
+                descriptor_group_blocks = min_u32(INSTALL_EXT2_BLOCKS_PER_GROUP,
+                                                   blocks - descriptor_start);
+                ret = install_ext2_make_group_desc(&descriptors[slot], descriptor_group,
+                                                   descriptor_group_blocks,
+                                                   descriptor_blocks, inode_table_blocks);
+                if (ret < 0) return ret;
+            }
+            ret = install_write_ext2_block(disk, start_lba,
+                                           group_start + 1u + table_block, storage_scratch);
+            if (ret < 0) return ret;
+        }
     }
 
     for (uint32_t group = 0; group < group_count; ++group) {
         uint32_t group_start = group * INSTALL_EXT2_BLOCKS_PER_GROUP;
         uint32_t group_blocks = min_u32(INSTALL_EXT2_BLOCKS_PER_GROUP,
                                         blocks - group_start);
-        uint32_t reserved_blocks = 4u + inode_table_blocks + (group == 0 ? 1u : 0u);
+        uint32_t metadata_blocks = 3u + descriptor_blocks + inode_table_blocks;
+        uint32_t allocated_blocks = metadata_blocks + (group == 0u ? 1u : 0u);
+        uint32_t block_bitmap = group_start + 1u + descriptor_blocks;
+        uint32_t inode_bitmap = block_bitmap + 1u;
+        uint32_t inode_table = inode_bitmap + 1u;
         storage_memzero(storage_scratch, INSTALL_EXT2_BLOCK_SIZE);
-        for (uint32_t bit = 0; bit < reserved_blocks; ++bit) install_ext2_set_bit(storage_scratch, bit);
+        for (uint32_t bit = 0; bit < allocated_blocks; ++bit) install_ext2_set_bit(storage_scratch, bit);
         /* e2fsck requires unavailable tail bits in the final block group to
          * be allocated.  They are outside the free-block counters. */
         for (uint32_t bit = group_blocks;
              bit < INSTALL_EXT2_BLOCK_SIZE * 8u; ++bit) {
             install_ext2_set_bit(storage_scratch, bit);
         }
-        ret = install_write_ext2_block(disk, start_lba, group_start + 2u, storage_scratch);
+        ret = install_write_ext2_block(disk, start_lba, block_bitmap, storage_scratch);
         if (ret < 0) return ret;
         storage_memzero(storage_scratch, INSTALL_EXT2_BLOCK_SIZE);
         if (group == 0) {
@@ -5410,11 +5477,11 @@ static int install_format_ext2(struct install_disk_state *disk, uint64_t start_l
              bit < INSTALL_EXT2_BLOCK_SIZE * 8u; ++bit) {
             install_ext2_set_bit(storage_scratch, bit);
         }
-        ret = install_write_ext2_block(disk, start_lba, group_start + 3u, storage_scratch);
+        ret = install_write_ext2_block(disk, start_lba, inode_bitmap, storage_scratch);
         if (ret < 0) return ret;
         storage_memzero(storage_scratch, INSTALL_EXT2_BLOCK_SIZE);
         for (uint32_t table = 0; table < inode_table_blocks; ++table) {
-            ret = install_write_ext2_block(disk, start_lba, group_start + 4u + table, storage_scratch);
+            ret = install_write_ext2_block(disk, start_lba, inode_table + table, storage_scratch);
             if (ret < 0) return ret;
         }
     }
@@ -5422,14 +5489,14 @@ static int install_format_ext2(struct install_disk_state *disk, uint64_t start_l
     storage_memzero(storage_scratch, INSTALL_EXT2_BLOCK_SIZE);
     {
         struct ext2_inode *root = (struct ext2_inode *)(void *)(storage_scratch + 128u);
-        uint32_t root_block = 4u + inode_table_blocks;
+        uint32_t root_block = 3u + descriptor_blocks + inode_table_blocks;
         root->mode = EXT2_S_IFDIR | 0755u;
         root->size_lo = INSTALL_EXT2_BLOCK_SIZE;
         root->links_count = 2u;
         root->blocks_512 = 8u;
         root->block[0] = root_block;
     }
-    ret = install_write_ext2_block(disk, start_lba, 4u, storage_scratch);
+    ret = install_write_ext2_block(disk, start_lba, 3u + descriptor_blocks, storage_scratch);
     if (ret < 0) return ret;
     storage_memzero(storage_scratch, INSTALL_EXT2_BLOCK_SIZE);
     {
@@ -5447,7 +5514,9 @@ static int install_format_ext2(struct install_disk_state *disk, uint64_t start_l
         dotdot->name[0] = '.';
         dotdot->name[1] = '.';
     }
-    return install_write_ext2_block(disk, start_lba, 4u + inode_table_blocks, storage_scratch);
+    return install_write_ext2_block(disk, start_lba,
+                                    3u + descriptor_blocks + inode_table_blocks,
+                                    storage_scratch);
 }
 
 static void install_utf16_name(uint16_t dst[36], const char *name)
