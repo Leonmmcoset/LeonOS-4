@@ -3,6 +3,7 @@
  * Maps user pages, enforces NX/W^X permissions, and handles page protection.
  */
 #include <ntclks/mm.h>
+#include <ntclks/page_cache.h>
 #include <ntclks/paging.h>
 
 #define PAGE_SIZE 4096ULL
@@ -239,7 +240,11 @@ bool address_space_clone_cow(struct address_space *source, struct address_space 
                 x86_64_invlpg(page);
             }
             mm_retain_page(phys);
+            page_cache_retain(phys);
             if (!address_space_map_user_page(destination, page, phys, flags)) {
+                if (page_cache_owns(phys)) {
+                    page_cache_release(phys);
+                }
                 mm_free_page(phys);
                 address_space_destroy(destination);
                 return false;
@@ -263,7 +268,11 @@ void address_space_destroy(struct address_space *as)
             for (uint32_t i = 0; i < 512; ++i) {
                 uint64_t entry = as->user_pt[table][i];
                 if (entry & NTCLKS_PAGE_PRESENT) {
-                    mm_free_page(entry & NTCLKS_PHYS_ADDR_MASK);
+                    if (page_cache_owns(entry & NTCLKS_PHYS_ADDR_MASK)) {
+                        page_cache_release(entry & NTCLKS_PHYS_ADDR_MASK);
+                    } else {
+                        mm_free_page(entry & NTCLKS_PHYS_ADDR_MASK);
+                    }
                 }
             }
             mm_free_page((uint64_t)(uintptr_t)as->user_pt[table]);

@@ -101,6 +101,7 @@ uint8_t full_redraw_pending;
 uint8_t power_confirm_action;
 uint8_t oobe_lock_active;
 unsigned long oobe_last_spawn_ms;
+uint32_t oobe_spawn_pid;
 uint8_t login_lock_active;
 unsigned long login_last_spawn_ms;
 uint8_t desktop_startup_launched;

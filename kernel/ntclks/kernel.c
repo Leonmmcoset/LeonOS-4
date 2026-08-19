@@ -3,6 +3,7 @@
  * Starts memory, interrupts, drivers, storage, middle layer, and scheduling.
  */
 #include <ntclks/arch.h>
+#include <ntclks/apic.h>
 #include <ntclks/boot_splash.h>
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
@@ -11,13 +12,17 @@
 #include <ntclks/input.h>
 #include <ntclks/kernel.h>
 #include <ntclks/mm.h>
+#include <ntclks/heap.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/net.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/platform.h>
 #include <ntclks/power.h>
 #include <ntclks/pty.h>
+#include <ntclks/page_cache.h>
+#include <ntclks/object.h>
 #include <ntclks/sched.h>
+#include <ntclks/smp.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
@@ -155,9 +160,15 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     platform_identity_init(&boot);
 
     arch_init();
+    apic_init();
+    ioapic_init();
+    smp_init();
     framebuffer_init(&boot);
     boot_splash_init(!boot_log_screen);
     mm_init(&boot, handoff);
+    kernel_heap_init();
+    page_cache_init();
+    kernel_objects_init();
     boot_splash_update(84u);
     time_init();
     input_init();

@@ -83,6 +83,11 @@ struct syscall_frame {
  */
 void syscall_init(void);
 /**
+ * @brief Dispatches process identity, groups, signals, priority, and limits.
+ */
+int64_t syscall_process_control(uint64_t number, uint64_t a0, uint64_t a1,
+                                uint64_t a2, uint64_t a3);
+/**
  * @brief Coordinates the syscall dispatch operation.
  * @param frame Trap or syscall frame supplied by the architecture layer.
  * @return Result, status, or value defined by this API.
@@ -100,6 +105,10 @@ void syscall_dispatch_frame(struct trap_frame *frame);
  * @return Result, status, or value defined by this API.
  */
 int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error);
+int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
+                        uint64_t flags, uint64_t fd, uint64_t offset);
+int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot);
+int64_t syscall_mm_munmap(uint64_t addr, uint64_t len);
 /**
  * @brief Coordinates the syscall release task files operation.
  * @param task Task whose state or authority is inspected or updated.

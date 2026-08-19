@@ -98,7 +98,9 @@ enum task_kind {
 #define TASK_CHILD_EVENT_STOPPED   0x00000001u
 #define TASK_CHILD_EVENT_CONTINUED 0x00000002u
 
-struct task {
+/* The task object is split into ownership domains. Anonymous compatibility
+ * views preserve task->field while code migrates to named substructures. */
+struct task_process_state {
     uint32_t pid;
     uint32_t parent_pid;
     uint32_t process_group;
@@ -108,32 +110,53 @@ struct task {
     uint64_t entry;
     uint64_t stack_top;
     uint64_t wake_tick;
-    uint32_t wait_window_id;
     uint64_t exit_code;
-    const void *image;
-    size_t image_len;
-    struct storage_node image_node;
-    struct address_space as;
-    struct trap_frame frame;
-    uint8_t fpu_state[512] __attribute__((aligned(16)));
     enum task_state state;
     enum task_kind kind;
     uint32_t flags;
-    uint32_t pty_id;
-    uint32_t uid;
-    uint32_t role;
-    uint32_t session_id;
     uint64_t cpu_ticks;
     int32_t priority;
+};
+
+struct task_address_space_state {
+    struct address_space as;
+    struct task_vma vmas[SCHED_TASK_VMA_MAX];
+};
+
+struct task_fd_table_state {
+    struct task_file files[SCHED_TASK_FILE_MAX];
+    struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
+};
+
+struct task_signal_state {
     uint32_t pending_signals;
     uint32_t child_event;
     uint32_t stop_signal;
     uint32_t exit_signal;
+};
+
+struct task_credentials_state {
+    uint32_t uid;
+    uint32_t role;
+    uint32_t session_id;
     uint64_t rlimit_nofile;
     uint64_t rlimit_as;
     char username[LEONOS_AUTH_USERNAME_LEN];
     char home[LEONOS_AUTH_HOME_LEN];
     char cwd[LEONOS_FS_PATH_LEN];
+};
+
+struct task_terminal_state {
+    uint32_t wait_window_id;
+    uint32_t pty_id;
+    uint32_t wait_pty_id;
+    struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
+};
+
+struct task_loader_state {
+    const void *image;
+    size_t image_len;
+    struct storage_node image_node;
     char path[LEONOS_FS_PATH_LEN];
     uint32_t exec_argc;
     uint32_t exec_envc;
@@ -142,10 +165,92 @@ struct task {
     char *exec_envp[SCHED_EXEC_ENV_MAX + 1];
     char exec_data[SCHED_EXEC_DATA_MAX];
     struct leonos_dynamic_launch dynamic_launch;
-    struct task_vma vmas[SCHED_TASK_VMA_MAX];
-    struct task_file files[SCHED_TASK_FILE_MAX];
-    struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
-    struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
+};
+
+struct task {
+    union {
+        struct task_process_state process;
+        struct {
+            uint32_t pid;
+            uint32_t parent_pid;
+            uint32_t process_group;
+            uint32_t process_session;
+            char name_storage[SCHED_TASK_NAME_LEN];
+            const char *name;
+            uint64_t entry;
+            uint64_t stack_top;
+            uint64_t wake_tick;
+            uint64_t exit_code;
+            enum task_state state;
+            enum task_kind kind;
+            uint32_t flags;
+            uint64_t cpu_ticks;
+            int32_t priority;
+        };
+    };
+    union {
+        struct task_address_space_state address_space;
+        struct {
+            struct address_space as;
+            struct task_vma vmas[SCHED_TASK_VMA_MAX];
+        };
+    };
+    union {
+        struct task_fd_table_state fd_table;
+        struct {
+            struct task_file files[SCHED_TASK_FILE_MAX];
+            struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
+        };
+    };
+    union {
+        struct task_signal_state signal_state;
+        struct {
+            uint32_t pending_signals;
+            uint32_t child_event;
+            uint32_t stop_signal;
+            uint32_t exit_signal;
+        };
+    };
+    union {
+        struct task_credentials_state credentials;
+        struct {
+            uint32_t uid;
+            uint32_t role;
+            uint32_t session_id;
+            uint64_t rlimit_nofile;
+            uint64_t rlimit_as;
+            char username[LEONOS_AUTH_USERNAME_LEN];
+            char home[LEONOS_AUTH_HOME_LEN];
+            char cwd[LEONOS_FS_PATH_LEN];
+        };
+    };
+    union {
+        struct task_terminal_state terminal_state;
+        struct {
+            uint32_t wait_window_id;
+            uint32_t pty_id;
+            uint32_t wait_pty_id;
+            struct task_pty_fd pty_fds[SCHED_TASK_PTY_FD_MAX];
+        };
+    };
+    union {
+        struct task_loader_state loader_state;
+        struct {
+            const void *image;
+            size_t image_len;
+            struct storage_node image_node;
+            char path[LEONOS_FS_PATH_LEN];
+            uint32_t exec_argc;
+            uint32_t exec_envc;
+            uint32_t exec_data_len;
+            char *exec_argv[SCHED_EXEC_ARG_MAX + 1];
+            char *exec_envp[SCHED_EXEC_ENV_MAX + 1];
+            char exec_data[SCHED_EXEC_DATA_MAX];
+            struct leonos_dynamic_launch dynamic_launch;
+        };
+    };
+    struct trap_frame frame;
+    uint8_t fpu_state[512] __attribute__((aligned(16)));
 };
 
 struct task_snapshot_info {

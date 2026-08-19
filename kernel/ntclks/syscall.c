@@ -18,64 +18,15 @@
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
+#include <ntclks/syscall_internal.h>
 #include <ntclks/time.h>
 #include <ntclks/usercopy.h>
 #include <ntclks/userland.h>
-
-/* A 64-stage shell pipeline owns 63 pipes simultaneously.  Keep an extra
- * ring sentinel byte so the advertised 4096-byte capacity is usable. */
-#define TASK_PIPE_MAX 64u
-#define TASK_PIPE_CAP 4096u
-#define TASK_PIPE_RING_CAP (TASK_PIPE_CAP + 1u)
-
-struct task_pipe {
-    uint8_t used;
-    uint8_t reserved[3];
-    uint32_t readers;
-    uint32_t writers;
-    uint32_t head;
-    uint32_t tail;
-    uint8_t data[TASK_PIPE_RING_CAP];
-};
-
-static struct task_pipe task_pipes[TASK_PIPE_MAX];
 
 static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
                                      uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5);
 
-static struct task_file *task_file_for_fd(struct task *task, int fd);
-
-static struct task_pipe *task_pipe_for_file(const struct task_file *file)
-{
-    if (!file || !(file->flags & TASK_FILE_FLAG_PIPE) || file->aux >= TASK_PIPE_MAX ||
-        !task_pipes[file->aux].used) {
-        return NULL;
-    }
-    return &task_pipes[file->aux];
-}
-
-static void task_pipe_retain(struct task_file *file)
-{
-    struct task_pipe *pipe = task_pipe_for_file(file);
-    if (!pipe) return;
-    if (file->flags & TASK_FILE_FLAG_PIPE_WRITE) ++pipe->writers;
-    else ++pipe->readers;
-}
-
-static void task_pipe_release(struct task_file *file)
-{
-    struct task_pipe *pipe = task_pipe_for_file(file);
-    if (!pipe) return;
-    if (file->flags & TASK_FILE_FLAG_PIPE_WRITE) {
-        if (pipe->writers) --pipe->writers;
-    } else if (pipe->readers) {
-        --pipe->readers;
-    }
-    if (!pipe->readers && !pipe->writers) {
-        *pipe = (struct task_pipe){0};
-    }
-}
 #include <ntclks/version.h>
 
 #include <leonos/device.h>
@@ -674,7 +625,7 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
  * @brief Coordinates the clear task file operation.
  * @param file Input or output value used by this operation.
  */
-static void clear_task_file(struct task_file *file)
+void clear_task_file(struct task_file *file)
 {
     /* Descriptor cleanup can be reached both from the immediate exit path
      * and from later zombie reaping.  A released pipe end must only decrement
@@ -782,7 +733,7 @@ void syscall_close_cloexec_files(struct task *task)
  * @param fd Open file descriptor used by this operation.
  * @return Result, status, or value defined by this API.
  */
-static struct task_file *task_file_for_fd(struct task *task, int fd)
+struct task_file *task_file_for_fd(struct task *task, int fd)
 {
     if (!task || fd < 0) {
         return NULL;
@@ -810,7 +761,7 @@ static struct task_file *task_file_for_fd(struct task *task, int fd)
  * @param fd Open file descriptor used by this operation.
  * @return Result, status, or value defined by this API.
  */
-static struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
+struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
 {
     if (!task || !task->pty_id || fd < 4) {
         return NULL;
@@ -883,7 +834,7 @@ static uint32_t task_allocated_fd_count(const struct task *task)
     return count;
 }
 
-static int task_can_allocate_fd(const struct task *task)
+int task_can_allocate_fd(const struct task *task)
 {
     return task && task_allocated_fd_count(task) < task->rlimit_nofile;
 }
@@ -1021,62 +972,6 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node, uin
     return -LEONOS_EMFILE;
 }
 
-static int alloc_task_pipe_fd(struct task *task, uint32_t pipe_index, int write_end)
-{
-    struct task_file *file;
-    int fd;
-    if (!task || pipe_index >= TASK_PIPE_MAX || !task_pipes[pipe_index].used) {
-        return -LEONOS_EINVAL;
-    }
-    if (!task_can_allocate_fd(task)) {
-        return -LEONOS_EMFILE;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
-        fd = (int)i + 4;
-        if (task->files[i].used || task_pty_fd_for_fd(task, fd)) continue;
-        file = &task->files[i];
-        file->used = 1;
-        file->flags = TASK_FILE_FLAG_PIPE | (write_end ? TASK_FILE_FLAG_PIPE_WRITE : 0) |
-                      (write_end ? LEONOS_O_WRONLY : LEONOS_O_RDONLY);
-        file->fd_flags = 0;
-        file->aux = pipe_index;
-        file->path[0] = 0;
-        task_pipe_retain(file);
-        return fd;
-    }
-    return -LEONOS_EMFILE;
-}
-
-static int task_pipe_read(struct task_file *file, void *buffer, uint32_t length)
-{
-    struct task_pipe *pipe = task_pipe_for_file(file);
-    uint32_t count = 0;
-    if (!pipe || (file->flags & TASK_FILE_FLAG_PIPE_WRITE)) return -LEONOS_EBADF;
-    if (length == 0) return 0;
-    while (pipe->tail != pipe->head && count < length) {
-        ((uint8_t *)buffer)[count++] = pipe->data[pipe->tail];
-        pipe->tail = (pipe->tail + 1U) % TASK_PIPE_RING_CAP;
-    }
-    return count ? (int)count : (pipe->writers ? -LEONOS_EAGAIN : 0);
-}
-
-static int task_pipe_write(struct task_file *file, const void *buffer, uint32_t length)
-{
-    struct task_pipe *pipe = task_pipe_for_file(file);
-    uint32_t count = 0;
-    if (!pipe || !(file->flags & TASK_FILE_FLAG_PIPE_WRITE)) return -LEONOS_EBADF;
-    if (length == 0) return 0;
-    if (!pipe->readers) return -LEONOS_EPIPE;
-    while (count < length) {
-        uint32_t next = (pipe->head + 1U) % TASK_PIPE_RING_CAP;
-        if (next == pipe->tail) {
-            return count ? (int)count : -LEONOS_EAGAIN;
-        }
-        pipe->data[pipe->head] = ((const uint8_t *)buffer)[count++];
-        pipe->head = next;
-    }
-    return (int)count;
-}
 
 static int task_dup2_fd(struct task *task, int old_fd, int new_fd)
 {
@@ -1166,7 +1061,7 @@ int syscall_inherit_task_fds(struct task *parent, struct task *child,
  * @param file Input or output value used by this operation.
  * @return Result, status, or value defined by this API.
  */
-static int file_can_read(const struct task_file *file)
+int file_can_read(const struct task_file *file)
 {
     uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
     return acc == LEONOS_O_RDONLY || acc == LEONOS_O_RDWR;
@@ -1177,7 +1072,7 @@ static int file_can_read(const struct task_file *file)
  * @param file Input or output value used by this operation.
  * @return Result, status, or value defined by this API.
  */
-static int file_can_write(const struct task_file *file)
+int file_can_write(const struct task_file *file)
 {
     uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
     return acc == LEONOS_O_WRONLY || acc == LEONOS_O_RDWR;
@@ -1234,7 +1129,7 @@ static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, ui
  * @param ret Input or output value used by this operation.
  * @return Result, status, or value defined by this API.
  */
-static int storage_errno(int ret)
+int storage_errno(int ret)
 {
     if (ret == -2) {
         return -LEONOS_ENOENT;
@@ -2562,896 +2457,6 @@ static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
     return -LEONOS_EBADF;
 }
 
-/**
- * @brief Coordinates the align up page operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static uint64_t align_up_page(uint64_t value)
-{
-    return (value + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
-}
-
-/**
- * @brief Coordinates the align down page operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static uint64_t align_down_page(uint64_t value)
-{
-    return value & ~(PAGE_SIZE - 1ULL);
-}
-
-/**
- * @brief Coordinates the align user len operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
- */
-static int align_user_len(uint64_t len, uint64_t *out)
-{
-    if (!len || len > NTCLKS_USER_TOP - NTCLKS_USER_BASE) {
-        return -LEONOS_EINVAL;
-    }
-    if (len > UINT64_MAX - (PAGE_SIZE - 1ULL)) {
-        return -LEONOS_EINVAL;
-    }
-    *out = align_up_page(len);
-    return *out ? 0 : -LEONOS_EINVAL;
-}
-
-/**
- * @brief Coordinates the task mmap top operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
- */
-static uint64_t task_mmap_top(const struct task *task)
-{
-    uint64_t stack_top = (task && task->stack_top) ? task->stack_top : NTCLKS_USER_TOP - PAGE_SIZE;
-    uint64_t stack_low = stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE;
-    if (stack_low > NTCLKS_USER_BASE + PAGE_SIZE) {
-        return stack_low - PAGE_SIZE;
-    }
-    return stack_low;
-}
-
-/**
- * @brief Coordinates the task vma free slot operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
- */
-static struct task_vma *task_vma_free_slot(struct task *task)
-{
-    if (!task) {
-        return NULL;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (!task->vmas[i].used) {
-            return &task->vmas[i];
-        }
-    }
-    return NULL;
-}
-
-/**
- * @brief Coordinates the task vma attrs match operation.
- * @param vma Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int task_vma_attrs_match(const struct task_vma *vma, uint64_t prot, uint32_t flags)
-{
-    return vma && vma->used && vma->prot == (uint32_t)prot && vma->flags == flags;
-}
-
-/**
- * @brief Coordinates the storage nodes equal operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int storage_nodes_equal(const struct storage_node *a, const struct storage_node *b)
-{
-    return a && b &&
-           a->type == b->type &&
-           a->flags == b->flags &&
-           a->first_cluster == b->first_cluster &&
-           a->drive == b->drive &&
-           a->size == b->size;
-}
-
-/**
- * @brief Coordinates the task vma file attrs match operation.
- * @param vma Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int task_vma_file_attrs_match(const struct task_vma *vma,
-                                     const struct storage_node *file_node)
-{
-    if (!vma || !(vma->flags & TASK_VMA_FLAG_FILE)) {
-        return 1;
-    }
-    return storage_nodes_equal(&vma->file_node, file_node) &&
-           file_node && vma->file_limit == file_node->size;
-}
-
-/**
- * @brief Coordinates the task vma clear operation.
- * @param vma Input or output value used by this operation.
- */
-static void task_vma_clear(struct task_vma *vma)
-{
-    if (vma) {
-        *vma = (struct task_vma){0};
-    }
-}
-
-/**
- * @brief Coordinates the task vma containing operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static struct task_vma *task_vma_containing(struct task *task, uint64_t start, uint64_t end)
-{
-    if (!task) {
-        return NULL;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (task->vmas[i].used && start >= task->vmas[i].start && end <= task->vmas[i].end) {
-            return &task->vmas[i];
-        }
-    }
-    return NULL;
-}
-
-/**
- * @brief Coordinates the task vma left adjacent operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @param file_offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start,
-                                                uint64_t prot, uint32_t flags,
-                                                const struct storage_node *file_node,
-                                                uint64_t file_offset)
-{
-    if (!task) {
-        return NULL;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        struct task_vma *vma = &task->vmas[i];
-        if (task_vma_attrs_match(&task->vmas[i], prot, flags) &&
-            vma->end == start &&
-            task_vma_file_attrs_match(vma, file_node) &&
-            (!(flags & TASK_VMA_FLAG_FILE) ||
-             vma->file_offset + (vma->end - vma->start) == file_offset)) {
-            return vma;
-        }
-    }
-    return NULL;
-}
-
-/**
- * @brief Coordinates the task vma right adjacent operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param end Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @param file_offset Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
- */
-static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
-                                                 uint64_t prot, uint32_t flags,
-                                                 const struct storage_node *file_node,
-                                                 uint64_t file_offset,
-                                                 uint64_t len)
-{
-    if (!task) {
-        return NULL;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        struct task_vma *vma = &task->vmas[i];
-        if (task_vma_attrs_match(&task->vmas[i], prot, flags) &&
-            vma->start == end &&
-            task_vma_file_attrs_match(vma, file_node) &&
-            (!(flags & TASK_VMA_FLAG_FILE) ||
-             file_offset + len == vma->file_offset)) {
-            return vma;
-        }
-    }
-    return NULL;
-}
-
-/**
- * @brief Coordinates the task vma can record mapping operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @param file_offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int task_vma_can_record_mapping(struct task *task, uint64_t start, uint64_t end,
-                                       uint64_t prot, uint32_t flags,
-                                       const struct storage_node *file_node,
-                                       uint64_t file_offset)
-{
-    uint64_t len = end - start;
-    return task_vma_left_adjacent(task, start, prot, flags, file_node, file_offset) ||
-           task_vma_right_adjacent(task, end, prot, flags, file_node, file_offset, len) ||
-           task_vma_free_slot(task);
-}
-
-/**
- * @brief Coordinates the task vma record mapping operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @param file_offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t end,
-                                   uint64_t prot, uint32_t flags,
-                                   const struct storage_node *file_node,
-                                   uint64_t file_offset)
-{
-    uint64_t len = end - start;
-    struct task_vma *left = task_vma_left_adjacent(task, start, prot, flags, file_node, file_offset);
-    struct task_vma *right = task_vma_right_adjacent(task, end, prot, flags, file_node, file_offset, len);
-    if (left && right && left != right) {
-        left->end = right->end;
-        task_vma_clear(right);
-        return 0;
-    }
-    if (left) {
-        left->end = end;
-        return 0;
-    }
-    if (right) {
-        right->start = start;
-        return 0;
-    }
-
-    struct task_vma *slot = task_vma_free_slot(task);
-    if (!slot) {
-        return -LEONOS_ENOMEM;
-    }
-    slot->used = 1;
-    slot->prot = (uint32_t)prot;
-    slot->max_prot = (uint32_t)prot;
-    slot->flags = flags;
-    slot->reserved = 0;
-    slot->start = start;
-    slot->end = end;
-    slot->file_offset = file_offset;
-    slot->file_limit = file_node ? file_node->size : 0;
-    if (file_node) {
-        slot->file_node = *file_node;
-    } else {
-        slot->file_node = (struct storage_node){0};
-    }
-    return 0;
-}
-
-/**
- * @brief Coordinates the task vma overlaps operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t end)
-{
-    if (!task) {
-        return 1;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (task->vmas[i].used && start < task->vmas[i].end && end > task->vmas[i].start) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-/**
- * @brief Coordinates the task user pages free operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int task_user_pages_free(const struct task *task, uint64_t start, uint64_t end)
-{
-    if (!task || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP) {
-        return 0;
-    }
-    if (task_vma_overlaps(task, start, end)) {
-        return 0;
-    }
-    for (uint64_t page = start; page < end; page += PAGE_SIZE) {
-        if (address_space_user_page_phys(&task->as, page)) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-/**
- * @brief Coordinates the task vma count operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
- */
-static uint32_t task_vma_count(const struct task *task)
-{
-    uint32_t count = 0;
-    if (!task) {
-        return 0;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (task->vmas[i].used) {
-            ++count;
-        }
-    }
-    return count;
-}
-
-static uint64_t task_vma_total_bytes(const struct task *task)
-{
-    uint64_t total = 0;
-    if (!task) {
-        return 0;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        const struct task_vma *vma = &task->vmas[i];
-        if (!vma->used || vma->end < vma->start) {
-            continue;
-        }
-        if (UINT64_MAX - total < vma->end - vma->start) {
-            return UINT64_MAX;
-        }
-        total += vma->end - vma->start;
-    }
-    return total;
-}
-
-/**
- * @brief Coordinates the task find mmap region operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
- */
-static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
-{
-    uint64_t top = task_mmap_top(task);
-    if (top <= NTCLKS_USER_MMAP_BASE || len > top - NTCLKS_USER_MMAP_BASE) {
-        return 0;
-    }
-    for (uint64_t start = NTCLKS_USER_MMAP_BASE; start + len <= top; start += PAGE_SIZE) {
-        if (task_user_pages_free(task, start, start + len)) {
-            return start;
-        }
-    }
-    return 0;
-}
-
-/* Picolibc grows its sbrk heap upward from the first anonymous mapping. Keep
- * read-only file mappings at the opposite end of the mmap interval so a
- * large font, dictionary, or other resource cannot occupy the heap's next
- * contiguous extension. */
-static uint64_t task_find_file_mmap_region(struct task *task, uint64_t len)
-{
-    uint64_t top = task_mmap_top(task);
-    uint64_t start;
-    if (top <= NTCLKS_USER_MMAP_BASE || len > top - NTCLKS_USER_MMAP_BASE) {
-        return 0;
-    }
-    start = align_down_page(top - len);
-    for (;;) {
-        if (task_user_pages_free(task, start, start + len)) {
-            return start;
-        }
-        if (start < NTCLKS_USER_MMAP_BASE + PAGE_SIZE) {
-            break;
-        }
-        start -= PAGE_SIZE;
-    }
-    return 0;
-}
-
-/**
- * @brief Coordinates the task unmap pages operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- */
-static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
-{
-    if (!task) {
-        return;
-    }
-    for (uint64_t page = start; page < end; page += PAGE_SIZE) {
-        uint64_t phys = address_space_unmap_user_page(&task->as, page);
-        if (phys) {
-            mm_free_page(phys);
-        }
-    }
-}
-
-/**
- * @brief Coordinates the zero phys page operation.
- * @param phys Input or output value used by this operation.
- */
-static void zero_phys_page(uint64_t phys)
-{
-    uint8_t *ptr = (uint8_t *)(uintptr_t)phys;
-    for (uint64_t i = 0; i < PAGE_SIZE; ++i) {
-        ptr[i] = 0;
-    }
-}
-
-/**
- * @brief Coordinates the task map anonymous pages operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param page_flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t end,
-                                    uint64_t page_flags)
-{
-    /* Anonymous mappings have no executable provenance.  An application that
-     * needs JIT code must explicitly map RX after producing it; W+X is never
-     * accepted by the syscall. */
-    page_flags |= NTCLKS_PAGE_NOEXEC;
-    for (uint64_t page = start; page < end; page += PAGE_SIZE) {
-        uint64_t phys = mm_alloc_page();
-        if (!phys || !address_space_map_user_page(&task->as, page, phys, page_flags)) {
-            uint64_t mapped_kib = (page - start) / 1024ULL;
-            console_printf("[ntclks] anonymous mmap failed pid=%u range=0x%llx-0x%llx "
-                           "at=0x%llx mapped=%llu KiB free=%llu KiB vmas=%u cause=%s\n",
-                           task ? task->pid : 0,
-                           (unsigned long long)start,
-                           (unsigned long long)end,
-                           (unsigned long long)page,
-                           (unsigned long long)mapped_kib,
-                           (unsigned long long)mm_free_memory_kib(),
-                           task_vma_count(task),
-                           phys ? "page-table" : "physical-memory");
-            if (phys) {
-                mm_free_page(phys);
-            }
-            task_unmap_pages(task, start, page);
-            return -LEONOS_ENOMEM;
-        }
-    }
-    return 0;
-}
-
-/**
- * @brief Coordinates the task map file vma page operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param vma Input or output value used by this operation.
- * @param page Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
-                                  uint64_t page)
-{
-    if (!task || !vma || !(vma->flags & TASK_VMA_FLAG_FILE)) {
-        return -LEONOS_EINVAL;
-    }
-    uint64_t phys = mm_alloc_page();
-    if (!phys) {
-        return -LEONOS_ENOMEM;
-    }
-    zero_phys_page(phys);
-
-    uint64_t file_offset = vma->file_offset + (page - vma->start);
-    if (file_offset < vma->file_limit) {
-        uint64_t available = vma->file_limit - file_offset;
-        uint32_t want = available < PAGE_SIZE ? (uint32_t)available : (uint32_t)PAGE_SIZE;
-        uint32_t got = 0;
-        int ret = storage_read_node(&vma->file_node, file_offset, (void *)(uintptr_t)phys, want, &got);
-        if (ret < 0 || got != want) {
-            mm_free_page(phys);
-            return ret < 0 ? storage_errno(ret) : -LEONOS_EINVAL;
-        }
-    }
-
-    uint64_t page_flags = (vma->prot & LINUX_PROT_WRITE) ? NTCLKS_PAGE_WRITABLE : 0;
-    if (!(vma->prot & LINUX_PROT_EXEC)) {
-        page_flags |= NTCLKS_PAGE_NOEXEC;
-    }
-    if (!address_space_map_user_page(&task->as, page, phys, page_flags)) {
-        mm_free_page(phys);
-        return -LEONOS_ENOMEM;
-    }
-    return 0;
-}
-
-/**
- * @brief Coordinates the syscall handle user page fault operation.
- * @param fault_addr Address used by this operation; its address-space interpretation follows the API.
- * @param error Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
-{
-    struct task *task = sched_current_task();
-    if (!task || task->kind != TASK_KIND_USER) {
-        return 0;
-    }
-    uint64_t page = align_down_page(fault_addr);
-    if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
-        return 0;
-    }
-    /* A write through either Ring-3 code or a kernel syscall helper can touch
-     * the calling process's present, read-only COW PTE.  Resolve only that
-     * precise protection fault; reserved-bit and instruction-fetch faults
-     * remain fatal and ordinary kernel faults never reach this path. */
-    if ((error & 0x3ULL) == 0x3ULL && !(error & 0x18ULL)) {
-        return address_space_handle_cow_fault(&task->as, page);
-    }
-    if (error & 0x9ULL) {
-        return 0;
-    }
-    if (address_space_user_page_phys(&task->as, page)) {
-        return 0;
-    }
-    struct task_vma *vma = task_vma_containing(task, page, page + PAGE_SIZE);
-    if (!vma || !(vma->flags & TASK_VMA_FLAG_LAZY) || !(vma->flags & TASK_VMA_FLAG_FILE)) {
-        return 0;
-    }
-    if ((error & 0x2ULL) && !(vma->prot & LINUX_PROT_WRITE)) {
-        return 0;
-    }
-    if ((error & 0x10ULL) && !(vma->prot & LINUX_PROT_EXEC)) {
-        return 0;
-    }
-    return task_map_file_vma_page(task, vma, page) == 0;
-}
-
-/**
- * @brief Handles the mmap.
- * @param addr Address used by this operation; its address-space interpretation follows the API.
- * @param len Length, size, or element count associated with the operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param fd Open file descriptor used by this operation.
- * @param offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot,
-                        uint64_t flags, uint64_t fd, uint64_t offset)
-{
-    struct task *task = sched_current_task();
-    struct task_file *file = NULL;
-    uint64_t mapped_len;
-    uint64_t start;
-    uint64_t end;
-    uint64_t page_flags = 0;
-    uint32_t vma_flags = TASK_VMA_FLAG_PRIVATE;
-    int anonymous;
-    int ret;
-
-    if (!task || task->kind != TASK_KIND_USER) {
-        return -LEONOS_EINVAL;
-    }
-    if (align_user_len(len, &mapped_len) < 0) {
-        return -LEONOS_EINVAL;
-    }
-    if (task->rlimit_as) {
-        uint64_t used = task_vma_total_bytes(task);
-        if (used > task->rlimit_as || mapped_len > task->rlimit_as - used) {
-            return -LEONOS_ENOMEM;
-        }
-    }
-    if ((prot & ~(uint64_t)(LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) != 0 ||
-        (prot & (LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) == 0) {
-        return -LEONOS_EINVAL;
-    }
-    if ((prot & (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ==
-        (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) {
-        return -LEONOS_EACCES;
-    }
-    if ((flags & ~((uint64_t)LINUX_MAP_SUPPORTED)) != 0 || (flags & LINUX_MAP_PRIVATE) == 0) {
-        return -LEONOS_EINVAL;
-    }
-    anonymous = (flags & LINUX_MAP_ANONYMOUS) != 0;
-    vma_flags |= anonymous ? TASK_VMA_FLAG_ANON :
-        (TASK_VMA_FLAG_FILE | TASK_VMA_FLAG_LAZY);
-    if (anonymous) {
-        if (fd != UINT64_MAX || offset != 0) {
-            return -LEONOS_EINVAL;
-        }
-    } else {
-        if (offset & (PAGE_SIZE - 1ULL)) {
-            return -LEONOS_EINVAL;
-        }
-        if (offset > UINT64_MAX - mapped_len) {
-            return -LEONOS_EINVAL;
-        }
-        if (!(prot & LINUX_PROT_READ)) {
-            return -LEONOS_EINVAL;
-        }
-        if (fd > INT32_MAX) {
-            return -LEONOS_EBADF;
-        }
-        file = task_file_for_fd(task, (int)fd);
-        if (!file || !file_can_read(file)) {
-            return -LEONOS_EBADF;
-        }
-        if (file->node.type != LEONOS_FS_TYPE_FILE) {
-            return -LEONOS_EINVAL;
-        }
-    }
-
-    if (flags & LINUX_MAP_FIXED) {
-        if ((addr & (PAGE_SIZE - 1ULL)) != 0) {
-            return -LEONOS_EINVAL;
-        }
-        start = addr;
-    } else {
-        start = anonymous ? task_find_mmap_region(task, mapped_len)
-                          : task_find_file_mmap_region(task, mapped_len);
-        if (!start) {
-            console_printf("[ntclks] mmap virtual range unavailable pid=%u bytes=%llu "
-                           "top=0x%llx vmas=%u\n",
-                           task->pid,
-                           (unsigned long long)mapped_len,
-                           (unsigned long long)task_mmap_top(task),
-                           task_vma_count(task));
-            return -LEONOS_ENOMEM;
-        }
-    }
-    if (start < NTCLKS_USER_BASE || start >= NTCLKS_USER_TOP || mapped_len > NTCLKS_USER_TOP - start) {
-        return -LEONOS_EINVAL;
-    }
-    end = start + mapped_len;
-    if (end > task_mmap_top(task) || !task_user_pages_free(task, start, end)) {
-        return (flags & LINUX_MAP_FIXED) ? -LEONOS_EINVAL : -LEONOS_ENOMEM;
-    }
-    if (!task_vma_can_record_mapping(task, start, end, prot, vma_flags,
-                                     file ? &file->node : NULL, offset)) {
-        console_printf("[ntclks] mmap VMA slots exhausted pid=%u bytes=%llu vmas=%u\n",
-                       task->pid,
-                       (unsigned long long)mapped_len,
-                       task_vma_count(task));
-        return -LEONOS_ENOMEM;
-    }
-
-    /* File mappings are lazy: reserve the page-table range now so a first
-     * instruction/data fault can replace the inherited kernel huge-page
-     * identity mapping even when the CPU reports the fault as present. */
-    if (!anonymous && !address_space_prepare_user_range(&task->as, start, end)) {
-        return -LEONOS_ENOMEM;
-    }
-
-    if (prot & LINUX_PROT_WRITE) {
-        page_flags |= NTCLKS_PAGE_WRITABLE;
-    }
-    if (!(prot & LINUX_PROT_EXEC)) {
-        page_flags |= NTCLKS_PAGE_NOEXEC;
-    }
-    if (anonymous) {
-        ret = task_map_anonymous_pages(task, start, end, page_flags);
-    } else {
-        ret = 0;
-    }
-    if (ret < 0) {
-        return ret;
-    }
-
-    if (task_vma_record_mapping(task, start, end, prot, vma_flags,
-                                file ? &file->node : NULL, offset) < 0) {
-        task_unmap_pages(task, start, end);
-        return -LEONOS_ENOMEM;
-    }
-    return (int64_t)start;
-}
-
-/**
- * @brief Handles the mprotect.
- * @param addr Address used by this operation; its address-space interpretation follows the API.
- * @param len Length, size, or element count associated with the operation.
- * @param prot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-static int64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
-{
-    struct task *task = sched_current_task();
-    uint64_t mapped_len;
-    uint64_t end;
-    struct task_vma *vma;
-    struct task_vma original;
-    struct task_vma *left = NULL;
-    struct task_vma *right = NULL;
-    uint64_t page_flags = 0;
-    if (!task || task->kind != TASK_KIND_USER || (addr & (PAGE_SIZE - 1ULL)) ||
-        align_user_len(len, &mapped_len) < 0 || mapped_len > NTCLKS_USER_TOP - addr ||
-        (prot & ~(uint64_t)(LINUX_PROT_READ | LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ||
-        !prot || (prot & (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) ==
-                     (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) {
-        return -LEONOS_EINVAL;
-    }
-    end = addr + mapped_len;
-    vma = task_vma_containing(task, addr, end);
-    if (!vma || (prot & ~vma->max_prot)) {
-        return -LEONOS_EACCES;
-    }
-    original = *vma;
-    if (addr > original.start) {
-        left = task_vma_free_slot(task);
-        if (!left) {
-            return -LEONOS_ENOMEM;
-        }
-        /* Reserve this slot while looking for the optional suffix. */
-        left->used = 0xffffffffu;
-    }
-    if (end < original.end) {
-        right = task_vma_free_slot(task);
-        if (!right) {
-            if (left) {
-                task_vma_clear(left);
-            }
-            return -LEONOS_ENOMEM;
-        }
-        right->used = 0xffffffffu;
-    }
-    if (left) {
-        task_vma_clear(left);
-    }
-    if (right) {
-        task_vma_clear(right);
-    }
-    if (prot & LINUX_PROT_WRITE) {
-        page_flags |= NTCLKS_PAGE_WRITABLE;
-    }
-    if (!(prot & LINUX_PROT_EXEC)) {
-        page_flags |= NTCLKS_PAGE_NOEXEC;
-    }
-    for (uint64_t page = addr; page < end; page += PAGE_SIZE) {
-        if (address_space_user_page_phys(&task->as, page) &&
-            !address_space_protect_user_page(&task->as, page, page_flags)) {
-            return -LEONOS_EACCES;
-        }
-    }
-    /* A partial protection change needs independent VMA metadata.  In
-     * particular, PT_GNU_RELRO protects only the GOT page while BSS in the
-     * same original load segment must remain writable and lazily mappable. */
-    if (addr > original.start) {
-        left = task_vma_free_slot(task);
-        if (!left) {
-            return -LEONOS_ENOMEM;
-        }
-        *left = original;
-        left->end = addr;
-    }
-    if (end < original.end) {
-        right = task_vma_free_slot(task);
-        if (!right) {
-            return -LEONOS_ENOMEM;
-        }
-        *right = original;
-        right->start = end;
-        if (right->flags & TASK_VMA_FLAG_FILE) {
-            right->file_offset += end - original.start;
-        }
-    }
-    *vma = original;
-    vma->start = addr;
-    vma->end = end;
-    if (vma->flags & TASK_VMA_FLAG_FILE) {
-        vma->file_offset += addr - original.start;
-    }
-    vma->prot = (uint32_t)prot;
-    return 0;
-}
-
-/**
- * @brief Handles the munmap.
- * @param addr Address used by this operation; its address-space interpretation follows the API.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
- */
-static int64_t sys_munmap(uint64_t addr, uint64_t len)
-{
-    struct task *task = sched_current_task();
-    uint64_t mapped_len;
-    uint64_t start = addr;
-    uint64_t end;
-    uint64_t cursor;
-    uint32_t split_count = 0;
-    uint32_t free_slots = 0;
-
-    if (!task || task->kind != TASK_KIND_USER || (start & (PAGE_SIZE - 1ULL)) != 0 ||
-        start < NTCLKS_USER_BASE || start >= NTCLKS_USER_TOP) {
-        return -LEONOS_EINVAL;
-    }
-    if (align_user_len(len, &mapped_len) < 0 || mapped_len > NTCLKS_USER_TOP - start) {
-        return -LEONOS_EINVAL;
-    }
-    end = start + mapped_len;
-    /* Validate that the requested span is fully covered before changing any
-     * pages.  Dynamic libraries commonly have a RELRO VMA between two parts
-     * of the same PT_LOAD, so a valid unmap can legitimately cross VMAs. */
-    cursor = start;
-    while (cursor < end) {
-        struct task_vma *vma = task_vma_containing(task, cursor, cursor + 1);
-        uint64_t part_end;
-        if (!vma) {
-            return -LEONOS_EINVAL;
-        }
-        part_end = vma->end < end ? vma->end : end;
-        if (cursor > vma->start && part_end < vma->end) {
-            ++split_count;
-        }
-        cursor = part_end;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (!task->vmas[i].used) {
-            ++free_slots;
-        }
-    }
-    if (split_count > free_slots) {
-        return -LEONOS_ENOMEM;
-    }
-    task_unmap_pages(task, start, end);
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        struct task_vma *vma = &task->vmas[i];
-        struct task_vma original;
-        uint64_t remove_start;
-        uint64_t remove_end;
-        if (!vma->used || vma->end <= start || vma->start >= end) {
-            continue;
-        }
-        original = *vma;
-        remove_start = original.start > start ? original.start : start;
-        remove_end = original.end < end ? original.end : end;
-        if (remove_start == original.start && remove_end == original.end) {
-            task_vma_clear(vma);
-        } else if (remove_start == original.start) {
-            vma->start = remove_end;
-            if (vma->flags & TASK_VMA_FLAG_FILE) {
-                vma->file_offset += remove_end - original.start;
-            }
-        } else if (remove_end == original.end) {
-            vma->end = remove_start;
-        } else {
-            struct task_vma *right = task_vma_free_slot(task);
-            if (!right) {
-                return -LEONOS_ENOMEM;
-            }
-            *right = original;
-            right->start = remove_end;
-            if (right->flags & TASK_VMA_FLAG_FILE) {
-                right->file_offset += remove_end - original.start;
-            }
-            vma->end = remove_start;
-        }
-    }
-    return 0;
-}
-
-/**
- * @brief Coordinates the syscall init operation.
- */
 void syscall_init(void)
 {
     console_printf("[ntclks] Linux x86_64 syscall ABI registered\n");
@@ -3466,134 +2471,6 @@ void syscall_init(void)
  * @param a3 Fourth syscall argument.
  * @return Syscall result or negative errno.
  */
-static int64_t syscall_process_control(uint64_t number, uint64_t a0,
-                                       uint64_t a1, uint64_t a2, uint64_t a3)
-{
-    if (number == LINUX_SYS_GETPID) {
-        return (int64_t)sched_current_pid();
-    }
-    if (number == LINUX_SYS_GETPPID) {
-        struct task *task = sched_current_task();
-        return task ? (int64_t)task->parent_pid : 0;
-    }
-    if (number == LINUX_SYS_GETPGRP) {
-        return sched_get_process_group(0);
-    }
-    if (number == LINUX_SYS_GETPGID) {
-        struct task *current = sched_current_task();
-        struct task *target = sched_find((uint32_t)a0);
-        if (a0 == 0) {
-            return sched_get_process_group(0);
-        }
-        if (!current || !target ||
-            (current->uid != 0 && current->uid != target->uid)) {
-            return -LEONOS_EPERM;
-        }
-        return sched_get_process_group((uint32_t)a0);
-    }
-    if (number == LINUX_SYS_SETPGID) {
-        int result = sched_set_process_group(sched_current_pid(), (uint32_t)a0,
-                                             (uint32_t)a1);
-        return result == 0 ? 0 : (result == -2 ? -LEONOS_ENOENT : -LEONOS_EPERM);
-    }
-    if (number == LINUX_SYS_SETSID) {
-        int64_t result = sched_create_process_session(sched_current_pid());
-        return result > 0 ? result : -LEONOS_EPERM;
-    }
-    if (number == LINUX_SYS_KILL) {
-        int signal_number = (int)a1;
-        struct task *current = sched_current_task();
-        int32_t requested_pid = (int32_t)a0;
-        struct task *target;
-        if (!current || requested_pid == -1) {
-            return -LEONOS_EINVAL;
-        }
-        if (requested_pid <= 0) {
-            uint32_t process_group = requested_pid == 0
-                                         ? current->process_group
-                                         : (uint32_t)(-(int64_t)requested_pid);
-            int result = sched_signal_process_group(current->pid, process_group,
-                                                    signal_number);
-            return result >= 0 ? 0 : -LEONOS_EPERM;
-        }
-        target = sched_find((uint32_t)requested_pid);
-        if (!current || !target ||
-            ((uint32_t)requested_pid != current->pid && current->uid != 0 &&
-             current->uid != target->uid)) {
-            return -LEONOS_EPERM;
-        }
-        return sched_signal_user_task((uint32_t)requested_pid, signal_number) == 0
-                   ? 0 : -LEONOS_EINVAL;
-    }
-    if (number == LINUX_SYS_NICE) {
-        struct task *task = sched_current_task();
-        int current = task ? task->priority : 0;
-        int next = current + (int)a0;
-        int priority;
-        if (next < -20) next = -20;
-        if (next > 19) next = 19;
-        priority = sched_task_priority(sched_current_pid(), next, 1);
-        if (priority < -20 || priority > 19) {
-            return -LEONOS_EINVAL;
-        }
-        /* A raw syscall cannot return a negative successful value. Encode
-         * POSIX's -20..19 priority range as Linux does for getpriority. */
-        return priority + 20;
-    }
-    if (number == LINUX_SYS_GETPRIORITY || number == LINUX_SYS_SETPRIORITY) {
-        struct task *current = sched_current_task();
-        uint32_t target = (uint32_t)a1;
-        if (a0 != 0) {
-            return -LEONOS_EINVAL;
-        }
-        if (target == 0 && current) {
-            target = current->pid;
-        }
-        if (!current || (number == LINUX_SYS_SETPRIORITY &&
-                         target != current->pid && current->uid != 0)) {
-            return -LEONOS_EPERM;
-        }
-        {
-            int priority = sched_task_priority(target, (int)a2,
-                                                number == LINUX_SYS_SETPRIORITY);
-            if (priority < -20 || priority > 19) {
-                return -LEONOS_ENOENT;
-            }
-            if (number == LINUX_SYS_SETPRIORITY) {
-                return 0;
-            }
-            /* Preserve the negative-errno syscall convention for callers
-             * while exposing the POSIX priority through libc. */
-            return priority + 20;
-        }
-    }
-    if (number == LINUX_SYS_GETRLIMIT || number == LINUX_SYS_SETRLIMIT) {
-        struct task *task = sched_current_task();
-        uint64_t *limit = (uint64_t *)(uintptr_t)a1;
-        uint64_t current_limit;
-        uint64_t maximum_limit;
-        if (!task || !limit || !user_range_ok(a1, 16)) return -LEONOS_EFAULT;
-        if (a0 == 5) {
-            current_limit = task->rlimit_nofile;
-            maximum_limit = SCHED_TASK_FILE_MAX;
-        } else if (a0 == 6) {
-            maximum_limit = NTCLKS_USER_TOP - NTCLKS_USER_BASE;
-            current_limit = task->rlimit_as ? task->rlimit_as : maximum_limit;
-        } else return -LEONOS_ENOSYS;
-        if (number == LINUX_SYS_GETRLIMIT) {
-            limit[0] = current_limit;
-            limit[1] = maximum_limit;
-            return 0;
-        }
-        if (limit[0] > maximum_limit || limit[1] > maximum_limit ||
-            limit[0] > limit[1]) return -LEONOS_EPERM;
-        if (a0 == 5) task->rlimit_nofile = limit[0];
-        else task->rlimit_as = limit[0] == maximum_limit ? 0 : limit[0];
-        return 0;
-    }
-    return -LEONOS_ENOSYS;
-}
-
 /**
  * @brief Coordinates the syscall dispatch operation.
  * @param frame Trap or syscall frame supplied by the architecture layer.
@@ -3652,12 +2529,12 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
         return syscall_process_control(frame->number, frame->args[0], frame->args[1],
                                        frame->args[2], frame->args[3]);
     case LINUX_SYS_MMAP:
-        return sys_mmap(frame->args[0], frame->args[1], frame->args[2],
+        return syscall_mm_mmap(frame->args[0], frame->args[1], frame->args[2],
                         frame->args[3], frame->args[4], frame->args[5]);
     case LINUX_SYS_MUNMAP:
-        return sys_munmap(frame->args[0], frame->args[1]);
+        return syscall_mm_munmap(frame->args[0], frame->args[1]);
     case LINUX_SYS_MPROTECT:
-        return sys_mprotect(frame->args[0], frame->args[1], frame->args[2]);
+        return syscall_mm_mprotect(frame->args[0], frame->args[1], frame->args[2]);
     default:
         return -LEONOS_ENOSYS;
     }
@@ -3674,7 +2551,7 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
  * @param a5 Input or output value used by this operation.
  * @return Result, status, or value defined by this API.
  */
-static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, uint64_t a2,
+int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, uint64_t a2,
                                      uint64_t a3, uint64_t a4, uint64_t a5)
 {
     if (number == LINUX_SYS_IOCTL &&
@@ -3953,26 +2830,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_PIPE) {
-        struct task *task = sched_current_task();
-        int read_fd, write_fd;
-        uint32_t pipe_index;
-        if (!task || !user_range_ok(a0, sizeof(int) * 2U)) return -LEONOS_EFAULT;
-        for (pipe_index = 0; pipe_index < TASK_PIPE_MAX; ++pipe_index) {
-            if (!task_pipes[pipe_index].used) break;
-        }
-        if (pipe_index == TASK_PIPE_MAX) return -LEONOS_EMFILE;
-        task_pipes[pipe_index] = (struct task_pipe){.used = 1, .readers = 0, .writers = 0};
-        read_fd = alloc_task_pipe_fd(task, pipe_index, 0);
-        write_fd = alloc_task_pipe_fd(task, pipe_index, 1);
-        if (read_fd < 0 || write_fd < 0) {
-            if (read_fd >= 0) clear_task_file(task_file_for_fd(task, read_fd));
-            if (write_fd >= 0) clear_task_file(task_file_for_fd(task, write_fd));
-            task_pipes[pipe_index] = (struct task_pipe){0};
-            return -LEONOS_EMFILE;
-        }
-        ((int *)(uintptr_t)a0)[0] = read_fd;
-        ((int *)(uintptr_t)a0)[1] = write_fd;
-        return 0;
+        return syscall_ipc_pipe(a0);
     }
 
     if (number == LINUX_SYS_CLOSE) {
@@ -4319,14 +3177,14 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_MMAP) {
-        return sys_mmap(a0, a1, a2, a3, a4, a5);
+        return syscall_mm_mmap(a0, a1, a2, a3, a4, a5);
     }
 
     if (number == LINUX_SYS_MUNMAP) {
-        return sys_munmap(a0, a1);
+        return syscall_mm_munmap(a0, a1);
     }
     if (number == LINUX_SYS_MPROTECT) {
-        return sys_mprotect(a0, a1, a2);
+        return syscall_mm_mprotect(a0, a1, a2);
     }
 
     if (number == LINUX_SYS_WAIT4) {
@@ -5883,6 +4741,28 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1, 
  * @brief Coordinates the syscall dispatch frame operation.
  * @param frame Trap or syscall frame supplied by the architecture layer.
  */
+static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
+                                     uint64_t a2, uint64_t a3, uint64_t a4,
+                                     uint64_t a5)
+{
+    if (syscall_fs_owns(number)) {
+        return syscall_fs_dispatch(number, a0, a1, a2, a3, a4, a5);
+    }
+    if (syscall_ipc_owns(number)) {
+        return syscall_ipc_dispatch(number, a0, a1, a2, a3, a4, a5);
+    }
+    if (syscall_security_owns(number, a1)) {
+        return syscall_security_dispatch(number, a0, a1, a2, a3, a4, a5);
+    }
+    if (syscall_gui_owns(number, a1)) {
+        return syscall_gui_dispatch(number, a0, a1, a2, a3, a4, a5);
+    }
+    if (syscall_device_owns(number, a1)) {
+        return syscall_device_dispatch(number, a0, a1, a2, a3, a4, a5);
+    }
+    return syscall_dispatch_regs_legacy(number, a0, a1, a2, a3, a4, a5);
+}
+
 void syscall_dispatch_frame(struct trap_frame *frame)
 {
     uint64_t number;

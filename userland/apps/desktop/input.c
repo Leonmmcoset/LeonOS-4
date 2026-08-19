@@ -394,7 +394,31 @@ void maybe_launch_oobe(void)
              : "[desktop.elf] administrator account missing; launching oobe.elf");
     oobe_lock_active = 1;
     oobe_last_spawn_ms = leonos_uptime_ms();
-    spawn_program_path(OOBE_APP_PATH);
+    {
+        int pid = spawn_program_path(OOBE_APP_PATH);
+        oobe_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
+    }
+}
+
+static int oobe_process_alive(void)
+{
+    struct leonos_task_info tasks[LEONOS_TASK_MAX];
+    uint64_t tick;
+    int count;
+    if (!oobe_spawn_pid) {
+        return 0;
+    }
+    count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &tick);
+    if (count < 0) {
+        return 1;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (tasks[i].pid == oobe_spawn_pid && tasks[i].state != 3) {
+            return 1;
+        }
+    }
+    oobe_spawn_pid = 0;
+    return 0;
 }
 
 int oobe_done_marker_exists(void)
@@ -462,10 +486,16 @@ void oobe_lock_update(void)
     if (oobe_window_slot() >= 0) {
         return;
     }
+    if (oobe_process_alive()) {
+        return;
+    }
     now = leonos_uptime_ms();
     if (now - oobe_last_spawn_ms >= OOBE_RESPAWN_MS) {
         oobe_last_spawn_ms = now;
-        spawn_program_path(OOBE_APP_PATH);
+        {
+            int pid = spawn_program_path(OOBE_APP_PATH);
+            oobe_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
+        }
     }
 }
 

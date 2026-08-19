@@ -370,7 +370,10 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     child->as = empty_as;
     child->image = NULL;
     child->image_len = 0;
-    child->flags &= ~(TASK_FLAG_RESOURCES_RELEASED | TASK_FLAG_PENDING_LOAD);
+    /* Service and window-server authority belongs to the launched image, not
+     * to an arbitrary child created by that process. */
+    child->flags &= ~(TASK_FLAG_RESOURCES_RELEASED | TASK_FLAG_PENDING_LOAD |
+                      TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER);
     child->flags |= TASK_FLAG_WAITABLE_CHILD | TASK_FLAG_STARTED;
     child->state = TASK_READY;
     child->wake_tick = 0;

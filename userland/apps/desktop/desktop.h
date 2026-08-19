@@ -302,6 +302,7 @@ extern uint8_t full_redraw_pending;
 extern uint8_t power_confirm_action;
 extern uint8_t oobe_lock_active;
 extern unsigned long oobe_last_spawn_ms;
+extern uint32_t oobe_spawn_pid;
 extern uint8_t login_lock_active;
 extern unsigned long login_last_spawn_ms;
 extern uint8_t desktop_startup_launched;

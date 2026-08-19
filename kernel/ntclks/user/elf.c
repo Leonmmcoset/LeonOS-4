@@ -800,29 +800,27 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
             legacy_vma->prot |= prot;
             legacy_vma->max_prot |= prot;
             legacy_vma->flags = TASK_VMA_FLAG_FILE | TASK_VMA_FLAG_LAZY |
-                                ((legacy_vma->prot & TASK_VMA_PROT_WRITE) ?
-                                 TASK_VMA_FLAG_PRIVATE : TASK_VMA_FLAG_SHARED_FILE);
+                                TASK_VMA_FLAG_PRIVATE;
             if (end > legacy_vma->end) {
                 legacy_vma->end = end;
             }
             if (ph->p_offset + ph->p_filesz > legacy_vma->file_limit) {
                 legacy_vma->file_limit = ph->p_offset + ph->p_filesz;
-                legacy_vma->file_node.size = legacy_vma->file_limit;
             }
             continue;
         }
         segment_node = *node;
-        segment_node.size = ph->p_offset + ph->p_filesz;
         *vma = (struct task_vma){
             .used = 1,
             .prot = prot,
             .max_prot = prot,
-            .flags = TASK_VMA_FLAG_FILE | TASK_VMA_FLAG_LAZY |
-                     ((ph->p_flags & PF_W) ? TASK_VMA_FLAG_PRIVATE : TASK_VMA_FLAG_SHARED_FILE),
+            /* Keep ELF pages private until page-cache mapping ownership is
+             * fully accounted for across fork/COW and teardown. */
+            .flags = TASK_VMA_FLAG_FILE | TASK_VMA_FLAG_LAZY | TASK_VMA_FLAG_PRIVATE,
             .start = start,
             .end = end,
             .file_offset = file_offset,
-            .file_limit = segment_node.size,
+            .file_limit = ph->p_offset + ph->p_filesz,
             .file_node = segment_node,
         };
     }
