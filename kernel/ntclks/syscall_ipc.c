@@ -6,11 +6,12 @@
 #include <ntclks/sched.h>
 #include <ntclks/usercopy.h>
 #include <ntclks/object.h>
+#include <ntclks/heap.h>
 #include <leonos/fs.h>
 
 /* A 64-stage shell pipeline owns 63 pipes simultaneously.  Keep an extra
  * ring sentinel byte so the advertised 4096-byte capacity is usable. */
-#define TASK_PIPE_MAX 64u
+#define TASK_PIPE_MAX 256u
 #define TASK_PIPE_CAP 4096u
 #define TASK_PIPE_RING_CAP (TASK_PIPE_CAP + 1u)
 
@@ -24,7 +25,7 @@ struct task_pipe {
     uint8_t data[TASK_PIPE_RING_CAP];
 };
 
-static struct task_pipe task_pipes[TASK_PIPE_MAX];
+static struct task_pipe *task_pipes[TASK_PIPE_MAX];
 
 static struct task_pipe *task_pipe_for_file(const struct task_file *file)
 {
@@ -56,7 +57,13 @@ void task_pipe_release(struct task_file *file)
         void *removed = NULL;
         kernel_object_remove(kernel_objects(), file->aux, KERNEL_OBJECT_PIPE, &removed);
         if (removed) {
-            *(struct task_pipe *)removed = (struct task_pipe){0};
+            for (uint32_t i = 0; i < TASK_PIPE_MAX; ++i) {
+                if (task_pipes[i] == (struct task_pipe *)removed) {
+                    task_pipes[i] = NULL;
+                    break;
+                }
+            }
+            kernel_free(removed);
         }
     }
 }
@@ -72,10 +79,10 @@ static int alloc_task_pipe_fd(struct task *task, uint32_t pipe_handle, int write
     if (!task_can_allocate_fd(task)) {
         return -LEONOS_EMFILE;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
+    for (uint32_t i = 0; i < sched_task_file_capacity(task); ++i) {
         fd = (int)i + 4;
-        if (task->files[i].used || task_pty_fd_for_fd(task, fd)) continue;
-        file = &task->files[i];
+        file = sched_task_file_at(task, i);
+        if (!file || file->used || task_pty_fd_for_fd(task, fd)) continue;
         file->used = 1;
         file->flags = TASK_FILE_FLAG_PIPE | (write_end ? TASK_FILE_FLAG_PIPE_WRITE : 0) |
                       (write_end ? LEONOS_O_WRONLY : LEONOS_O_RDONLY);
@@ -84,6 +91,21 @@ static int alloc_task_pipe_fd(struct task *task, uint32_t pipe_handle, int write
         file->path[0] = 0;
         task_pipe_retain(file);
         return fd;
+    }
+    {
+        uint32_t i = sched_task_file_capacity(task);
+        fd = (int)i + 4;
+        file = sched_task_file_at(task, i);
+        if (file && !task_pty_fd_for_fd(task, fd)) {
+            file->used = 1;
+            file->flags = TASK_FILE_FLAG_PIPE | (write_end ? TASK_FILE_FLAG_PIPE_WRITE : 0) |
+                          (write_end ? LEONOS_O_WRONLY : LEONOS_O_RDONLY);
+            file->fd_flags = 0;
+            file->aux = pipe_handle;
+            file->path[0] = 0;
+            task_pipe_retain(file);
+            return fd;
+        }
     }
     return -LEONOS_EMFILE;
 }
@@ -129,18 +151,23 @@ int syscall_ipc_pipe(uint64_t user_ptr)
         return -LEONOS_EFAULT;
     }
     for (pipe_index = 0; pipe_index < TASK_PIPE_MAX; ++pipe_index) {
-        if (!task_pipes[pipe_index].used) {
+        if (!task_pipes[pipe_index]) {
             break;
         }
     }
     if (pipe_index == TASK_PIPE_MAX) {
         return -LEONOS_EMFILE;
     }
-    task_pipes[pipe_index] = (struct task_pipe){.used = 1};
-    pipe_handle = kernel_object_insert(kernel_objects(), &task_pipes[pipe_index],
+    task_pipes[pipe_index] = (struct task_pipe *)kernel_malloc(sizeof(struct task_pipe));
+    if (!task_pipes[pipe_index]) {
+        return -LEONOS_ENOMEM;
+    }
+    *task_pipes[pipe_index] = (struct task_pipe){.used = 1};
+    pipe_handle = kernel_object_insert(kernel_objects(), task_pipes[pipe_index],
                                        KERNEL_OBJECT_PIPE);
     if (!pipe_handle) {
-        task_pipes[pipe_index] = (struct task_pipe){0};
+        kernel_free(task_pipes[pipe_index]);
+        task_pipes[pipe_index] = NULL;
         return -LEONOS_EMFILE;
     }
     read_fd = alloc_task_pipe_fd(task, pipe_handle, 0);
@@ -153,7 +180,8 @@ int syscall_ipc_pipe(uint64_t user_ptr)
             clear_task_file(task_file_for_fd(task, write_fd));
         }
         kernel_object_remove(kernel_objects(), pipe_handle, KERNEL_OBJECT_PIPE, NULL);
-        task_pipes[pipe_index] = (struct task_pipe){0};
+        kernel_free(task_pipes[pipe_index]);
+        task_pipes[pipe_index] = NULL;
         return -LEONOS_EMFILE;
     }
     ((int *)(uintptr_t)user_ptr)[0] = read_fd;

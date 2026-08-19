@@ -6,7 +6,7 @@
 #include <ntclks/mm.h>
 #include <ntclks/page_cache.h>
 
-#define PAGE_CACHE_MAX 128u
+#define PAGE_CACHE_MAX 4096u
 #define PAGE_CACHE_PAGE_SIZE 4096ULL
 
 struct page_cache_entry {

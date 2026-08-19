@@ -11,7 +11,7 @@ static uint64_t total_kib;
 
 #define PAGE_SIZE 4096ULL
 #define PAGE_ALLOC_MIN NTCLKS_USER_TOP
-#define PAGE_ALLOC_LIMIT 0x100000000ULL
+#define PAGE_ALLOC_LIMIT 0x400000000ULL
 #define FALLBACK_ALLOC_START 0x0a000000ULL
 #define FALLBACK_MEMORY_KIB (512ULL * 1024ULL)
 #define MM_MAX_FREE_RANGES 256u
@@ -28,8 +28,9 @@ static struct phys_range free_ranges[MM_MAX_FREE_RANGES];
 static uint32_t free_range_count;
 static struct phys_range reserved_ranges[MM_MAX_RESERVED_RANGES];
 static uint32_t reserved_range_count;
-/* The allocator is limited to the first 4 GiB, so a compact per-page count
- * costs 2 MiB and lets file-backed code pages be shared safely. */
+/* The allocator tracks the first 16 GiB.  A compact 16-bit count uses 8 MiB
+ * and is large enough for the supported physical address range while still
+ * allowing COW and shared file pages to use the same ownership accounting. */
 static uint16_t page_refs[MM_PAGE_COUNT];
 
 /**
@@ -299,7 +300,6 @@ static void seed_free_ranges_from_boot(const struct boot_info *boot)
             const struct multiboot2_mmap_entry *entry =
                 (const struct multiboot2_mmap_entry *)(cursor + (uint64_t)i * boot->mmap_entry_size);
             if (entry->type == 1) {
-                total_kib += entry->len / 1024;
                 add_free_range(entry->addr, entry->addr + entry->len);
             }
         }
@@ -313,16 +313,23 @@ static void seed_free_ranges_from_boot(const struct boot_info *boot)
                 (const struct efi_memory_descriptor *)(cursor + (uint64_t)i * boot->efi_mmap_entry_size);
             uint64_t len = entry->number_of_pages * PAGE_SIZE;
             if (efi_memory_usable(entry->type)) {
-                total_kib += len / 1024;
                 add_free_range(entry->physical_start, entry->physical_start + len);
             }
         }
         return;
     }
-    if (!total_kib) {
-        total_kib = FALLBACK_MEMORY_KIB;
-    }
+    total_kib = 0;
     add_fallback_free_range();
+}
+
+static void recompute_total_allocatable_kib(void)
+{
+    total_kib = 0;
+    for (uint32_t i = 0; i < free_range_count; ++i) {
+        if (free_ranges[i].end > free_ranges[i].start) {
+            total_kib += (free_ranges[i].end - free_ranges[i].start) / 1024ULL;
+        }
+    }
 }
 
 /**
@@ -422,7 +429,7 @@ static void print_memory_map(void)
  */
 void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *handoff)
 {
-    total_kib = boot->memory_lower_kib + boot->memory_upper_kib;
+    total_kib = 0;
     free_range_count = 0;
     reserved_range_count = 0;
     for (uint32_t i = 0; i < MM_PAGE_COUNT; ++i) {
@@ -431,6 +438,10 @@ void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *han
     seed_free_ranges_from_boot(boot);
     reserve_boot_ranges(boot, handoff);
     coalesce_free_ranges();
+    /* Report the same range the allocator can actually serve.  Previously
+     * this value came from the legacy lower/upper fields and could include
+     * low reserved memory or addresses above the allocator limit. */
+    recompute_total_allocatable_kib();
 
     console_printf("[ntclks] mm initialized usable=%llu KiB mmap_entries=%u efi_mmap_entries=%u\n",
                    (unsigned long long)total_kib,

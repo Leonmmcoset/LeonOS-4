@@ -9,17 +9,19 @@
 #include <ntclks/storage.h>
 #include <ntclks/trap.h>
 #include <ntclks/types.h>
+#include <ntclks/heap.h>
 #include <leonos/auth.h>
 #include <leonos/elf_abi.h>
 
 #define SCHED_TASK_NAME_LEN 32u
 #define SCHED_TASK_MAX 64u
-#define SCHED_TASK_FILE_MAX 12u
+#define SCHED_TASK_FILE_MAX 64u
+#define SCHED_TASK_FILE_LIMIT 1024u
 #define SCHED_TASK_PTY_FD_MAX 8u
 #define SCHED_TASK_STDIO_MAX 3u
-#define SCHED_EXEC_ARG_MAX 8u
-#define SCHED_EXEC_ENV_MAX 8u
-#define SCHED_EXEC_DATA_MAX 512u
+#define SCHED_EXEC_ARG_MAX 64u
+#define SCHED_EXEC_ENV_MAX 64u
+#define SCHED_EXEC_DATA_MAX 8192u
 #define SCHED_TASK_VMA_MAX 128u
 
 #define TASK_VMA_FLAG_PRIVATE 0x00000001u
@@ -109,6 +111,7 @@ struct task_process_state {
     const char *name;
     uint64_t entry;
     uint64_t stack_top;
+    uint64_t stack_low;
     uint64_t wake_tick;
     uint64_t exit_code;
     enum task_state state;
@@ -121,11 +124,17 @@ struct task_process_state {
 struct task_address_space_state {
     struct address_space as;
     struct task_vma vmas[SCHED_TASK_VMA_MAX];
+    struct task_vma *vma_extra;
+    uint32_t vma_extra_count;
+    uint32_t vma_extra_capacity;
 };
 
 struct task_fd_table_state {
     struct task_file files[SCHED_TASK_FILE_MAX];
     struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
+    struct task_file *file_extra;
+    uint32_t file_extra_count;
+    uint32_t file_extra_capacity;
 };
 
 struct task_signal_state {
@@ -179,6 +188,7 @@ struct task {
             const char *name;
             uint64_t entry;
             uint64_t stack_top;
+            uint64_t stack_low;
             uint64_t wake_tick;
             uint64_t exit_code;
             enum task_state state;
@@ -193,6 +203,9 @@ struct task {
         struct {
             struct address_space as;
             struct task_vma vmas[SCHED_TASK_VMA_MAX];
+            struct task_vma *vma_extra;
+            uint32_t vma_extra_count;
+            uint32_t vma_extra_capacity;
         };
     };
     union {
@@ -200,6 +213,9 @@ struct task {
         struct {
             struct task_file files[SCHED_TASK_FILE_MAX];
             struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
+            struct task_file *file_extra;
+            uint32_t file_extra_count;
+            uint32_t file_extra_capacity;
         };
     };
     union {
@@ -334,6 +350,12 @@ void sched_set_task_exec_params(uint32_t pid,
                                 uint32_t argc, char *const argv[],
                                 uint32_t envc, char *const envp[],
                                 const char *data, uint32_t data_len);
+struct task_vma *sched_task_vma_at(struct task *task, uint32_t index);
+uint32_t sched_task_vma_capacity(const struct task *task);
+void sched_task_vma_release(struct task *task);
+struct task_file *sched_task_file_at(struct task *task, uint32_t index);
+uint32_t sched_task_file_capacity(const struct task *task);
+void sched_task_file_release(struct task *task);
 /**
  * @brief Coordinates the sched create idle task operation.
  */

@@ -66,7 +66,7 @@ static int align_user_len(uint64_t len, uint64_t *out)
 static uint64_t task_mmap_top(const struct task *task)
 {
     uint64_t stack_top = (task && task->stack_top) ? task->stack_top : NTCLKS_USER_TOP - PAGE_SIZE;
-    uint64_t stack_low = stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE;
+    uint64_t stack_low = stack_top - (uint64_t)NTCLKS_USER_STACK_MAX_PAGES * PAGE_SIZE;
     if (stack_low > NTCLKS_USER_BASE + PAGE_SIZE) {
         return stack_low - PAGE_SIZE;
     }
@@ -83,12 +83,13 @@ static struct task_vma *task_vma_free_slot(struct task *task)
     if (!task) {
         return NULL;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (!task->vmas[i].used) {
-            return &task->vmas[i];
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        struct task_vma *vma = sched_task_vma_at(task, i);
+        if (vma && !vma->used) {
+            return vma;
         }
     }
-    return NULL;
+    return sched_task_vma_at(task, sched_task_vma_capacity(task));
 }
 
 /**
@@ -158,9 +159,10 @@ static struct task_vma *task_vma_containing(struct task *task, uint64_t start, u
     if (!task) {
         return NULL;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (task->vmas[i].used && start >= task->vmas[i].start && end <= task->vmas[i].end) {
-            return &task->vmas[i];
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        struct task_vma *vma = sched_task_vma_at(task, i);
+        if (vma && vma->used && start >= vma->start && end <= vma->end) {
+            return vma;
         }
     }
     return NULL;
@@ -184,9 +186,10 @@ static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start
     if (!task) {
         return NULL;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        struct task_vma *vma = &task->vmas[i];
-        if (task_vma_attrs_match(&task->vmas[i], prot, flags) &&
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        struct task_vma *vma = sched_task_vma_at(task, i);
+        if (!vma) continue;
+        if (task_vma_attrs_match(vma, prot, flags) &&
             vma->end == start &&
             task_vma_file_attrs_match(vma, file_node) &&
             (!(flags & TASK_VMA_FLAG_FILE) ||
@@ -217,9 +220,10 @@ static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
     if (!task) {
         return NULL;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        struct task_vma *vma = &task->vmas[i];
-        if (task_vma_attrs_match(&task->vmas[i], prot, flags) &&
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        struct task_vma *vma = sched_task_vma_at(task, i);
+        if (!vma) continue;
+        if (task_vma_attrs_match(vma, prot, flags) &&
             vma->start == end &&
             task_vma_file_attrs_match(vma, file_node) &&
             (!(flags & TASK_VMA_FLAG_FILE) ||
@@ -318,8 +322,9 @@ static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t e
     if (!task) {
         return 1;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (task->vmas[i].used && start < task->vmas[i].end && end > task->vmas[i].start) {
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        const struct task_vma *vma = sched_task_vma_at((struct task *)task, i);
+        if (vma && vma->used && start < vma->end && end > vma->start) {
             return 1;
         }
     }
@@ -336,6 +341,9 @@ static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t e
 static int task_user_pages_free(const struct task *task, uint64_t start, uint64_t end)
 {
     if (!task || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP) {
+        return 0;
+    }
+    if (start < NTCLKS_KERNEL_HOLE_END && end > NTCLKS_KERNEL_HOLE_START) {
         return 0;
     }
     if (task_vma_overlaps(task, start, end)) {
@@ -360,8 +368,9 @@ static uint32_t task_vma_count(const struct task *task)
     if (!task) {
         return 0;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (task->vmas[i].used) {
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        const struct task_vma *vma = sched_task_vma_at((struct task *)task, i);
+        if (vma && vma->used) {
             ++count;
         }
     }
@@ -374,8 +383,9 @@ static uint64_t task_vma_total_bytes(const struct task *task)
     if (!task) {
         return 0;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        const struct task_vma *vma = &task->vmas[i];
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        const struct task_vma *vma = sched_task_vma_at((struct task *)task, i);
+        if (!vma) continue;
         if (!vma->used || vma->end < vma->start) {
             continue;
         }
@@ -630,6 +640,22 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
         return 0;
     }
     if (address_space_user_page_phys(&task->as, page)) {
+        return 0;
+    }
+
+    /* Grow the anonymous user stack on demand.  The initial image maps a
+     * small working set; accesses below it consume pages down to the fixed
+     * maximum and leave one unmapped guard page below the stack. */
+    if (!(error & 0x1ULL) && (error & 0x4ULL) && task->stack_top &&
+        task->stack_low && page < task->stack_low &&
+        page >= task->stack_top - (uint64_t)NTCLKS_USER_STACK_MAX_PAGES * PAGE_SIZE &&
+        page >= NTCLKS_USER_BASE + PAGE_SIZE) {
+        uint64_t guard = task->stack_top -
+                         (uint64_t)NTCLKS_USER_STACK_MAX_PAGES * PAGE_SIZE - PAGE_SIZE;
+        if (page > guard && address_space_map_user_stack_page(&task->as, page)) {
+            task->stack_low = page;
+            return 1;
+        }
         return 0;
     }
     struct task_vma *vma = task_vma_containing(task, page, page + PAGE_SIZE);
@@ -941,8 +967,9 @@ int64_t syscall_mm_munmap(uint64_t addr, uint64_t len)
         }
         cursor = part_end;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (!task->vmas[i].used) {
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        struct task_vma *vma = sched_task_vma_at(task, i);
+        if (vma && !vma->used) {
             ++free_slots;
         }
     }
@@ -950,8 +977,9 @@ int64_t syscall_mm_munmap(uint64_t addr, uint64_t len)
         return -LEONOS_ENOMEM;
     }
     task_unmap_pages(task, start, end);
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        struct task_vma *vma = &task->vmas[i];
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        struct task_vma *vma = sched_task_vma_at(task, i);
+        if (!vma) continue;
         struct task_vma original;
         uint64_t remove_start;
         uint64_t remove_end;

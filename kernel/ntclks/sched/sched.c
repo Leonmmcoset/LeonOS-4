@@ -9,6 +9,7 @@
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
+#include <ntclks/heap.h>
 
 static struct task tasks[SCHED_TASK_MAX];
 static uint32_t task_count;
@@ -18,6 +19,118 @@ static uint32_t next_session_id = 1;
 static uint64_t scheduler_ticks;
 static uint64_t scheduler_busy_ticks;
 static uint64_t scheduler_idle_ticks;
+
+struct task_vma *sched_task_vma_at(struct task *task, uint32_t index)
+{
+    if (!task) {
+        return NULL;
+    }
+    if (index < SCHED_TASK_VMA_MAX) {
+        return &task->vmas[index];
+    }
+    index -= SCHED_TASK_VMA_MAX;
+    if (index >= task->vma_extra_count) {
+        uint32_t wanted = index + 1u;
+        uint32_t capacity = task->vma_extra_capacity ? task->vma_extra_capacity : 16u;
+        struct task_vma *replacement;
+        while (capacity < wanted) {
+            if (capacity > UINT32_MAX / 2u) {
+                return NULL;
+            }
+            capacity *= 2u;
+        }
+        replacement = (struct task_vma *)kernel_malloc(
+            (size_t)capacity * sizeof(*replacement));
+        if (!replacement) {
+            return NULL;
+        }
+        for (uint32_t i = 0; i < capacity; ++i) {
+            replacement[i] = (struct task_vma){0};
+        }
+        for (uint32_t i = 0; i < task->vma_extra_count; ++i) {
+            replacement[i] = task->vma_extra[i];
+        }
+        if (task->vma_extra) {
+            kernel_free(task->vma_extra);
+        }
+        task->vma_extra = replacement;
+        task->vma_extra_capacity = capacity;
+        task->vma_extra_count = wanted;
+    }
+    return &task->vma_extra[index];
+}
+
+uint32_t sched_task_vma_capacity(const struct task *task)
+{
+    return task ? SCHED_TASK_VMA_MAX + task->vma_extra_count : 0;
+}
+
+void sched_task_vma_release(struct task *task)
+{
+    if (!task || !task->vma_extra) {
+        return;
+    }
+    kernel_free(task->vma_extra);
+    task->vma_extra = NULL;
+    task->vma_extra_count = 0;
+    task->vma_extra_capacity = 0;
+}
+
+struct task_file *sched_task_file_at(struct task *task, uint32_t index)
+{
+    if (!task) {
+        return NULL;
+    }
+    if (index < SCHED_TASK_FILE_MAX) {
+        return &task->files[index];
+    }
+    index -= SCHED_TASK_FILE_MAX;
+    if (index >= task->file_extra_count) {
+        uint32_t wanted = index + 1u;
+        uint32_t capacity = task->file_extra_capacity ? task->file_extra_capacity : 16u;
+        struct task_file *replacement;
+        while (capacity < wanted) {
+            if (capacity > UINT32_MAX / 2u) {
+                return NULL;
+            }
+            capacity *= 2u;
+        }
+        replacement = (struct task_file *)kernel_malloc(
+            (size_t)capacity * sizeof(*replacement));
+        if (!replacement) {
+            return NULL;
+        }
+        for (uint32_t i = 0; i < capacity; ++i) {
+            replacement[i] = (struct task_file){0};
+        }
+        for (uint32_t i = 0; i < task->file_extra_count; ++i) {
+            replacement[i] = task->file_extra[i];
+        }
+        if (task->file_extra) {
+            kernel_free(task->file_extra);
+        }
+        task->file_extra = replacement;
+        task->file_extra_capacity = capacity;
+        task->file_extra_count = wanted;
+    }
+    return &task->file_extra[index];
+}
+
+uint32_t sched_task_file_capacity(const struct task *task)
+{
+    return task ? SCHED_TASK_FILE_MAX + task->file_extra_count : 0;
+}
+
+void sched_task_file_release(struct task *task)
+{
+    if (!task || !task->file_extra) {
+        return;
+    }
+    kernel_free(task->file_extra);
+    task->file_extra = NULL;
+    task->file_extra_count = 0;
+    task->file_extra_capacity = 0;
+}
 
 /**
  * @brief Coordinates the str eq operation.
@@ -238,10 +351,11 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task_copy_name(task, name);
     task->entry = entry;
     task->stack_top = 0;
+    task->stack_low = 0;
     task->wake_tick = 0;
     task->priority = 0;
     task->pending_signals = 0;
-    task->rlimit_nofile = SCHED_TASK_FILE_MAX;
+    task->rlimit_nofile = SCHED_TASK_FILE_LIMIT;
     task->rlimit_as = 0;
     task->wait_window_id = 0;
     task->exit_code = 0;
@@ -288,10 +402,12 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task_copy_name(task, name);
     task->entry = entry;
     task->stack_top = stack_top;
+    task->stack_low = stack_top >= (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL ?
+                      stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL : 0;
     task->wake_tick = 0;
     task->priority = 0;
     task->pending_signals = 0;
-    task->rlimit_nofile = SCHED_TASK_FILE_MAX;
+    task->rlimit_nofile = SCHED_TASK_FILE_LIMIT;
     task->rlimit_as = 0;
     task->wait_window_id = 0;
     task->exit_code = 0;
@@ -390,8 +506,43 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
         child->flags = TASK_FLAG_RESOURCES_RELEASED;
         return -12;
     }
+    child->vma_extra = NULL;
+    child->vma_extra_count = 0;
+    child->vma_extra_capacity = 0;
+    if (parent->vma_extra_count) {
+        for (uint32_t i = 0; i < parent->vma_extra_count; ++i) {
+            struct task_vma *dst = sched_task_vma_at(child, SCHED_TASK_VMA_MAX + i);
+            if (!dst) {
+                address_space_destroy(&child->as);
+                sched_task_vma_release(child);
+                task_zero(child);
+                child->state = TASK_EXITED;
+                child->flags = TASK_FLAG_RESOURCES_RELEASED;
+                return -12;
+            }
+            *dst = parent->vma_extra[i];
+        }
+    }
+    child->file_extra = NULL;
+    child->file_extra_count = 0;
+    child->file_extra_capacity = 0;
+    for (uint32_t i = 0; i < parent->file_extra_count; ++i) {
+        struct task_file *dst = sched_task_file_at(child, SCHED_TASK_FILE_MAX + i);
+        if (!dst) {
+            address_space_destroy(&child->as);
+            sched_task_vma_release(child);
+            sched_task_file_release(child);
+            task_zero(child);
+            child->state = TASK_EXITED;
+            child->flags = TASK_FLAG_RESOURCES_RELEASED;
+            return -12;
+        }
+        *dst = parent->file_extra[i];
+    }
     if (syscall_clone_task_files(parent, child) < 0) {
         address_space_destroy(&child->as);
+        sched_task_vma_release(child);
+        sched_task_file_release(child);
         task_zero(child);
         child->state = TASK_EXITED;
         child->flags = TASK_FLAG_RESOURCES_RELEASED;
@@ -534,6 +685,7 @@ void sched_create_idle_task(void)
     task_copy_name(task, "idle");
     task->entry = 0;
     task->stack_top = 0;
+    task->stack_low = 0;
     task->wake_tick = 0;
     task->wait_window_id = 0;
     task->exit_code = 0;
@@ -618,6 +770,7 @@ void sched_release_task_resources(struct task *task)
     storage_drain_task_io(task->pid);
     syscall_release_task_files(task);
     address_space_destroy(&task->as);
+    sched_task_vma_release(task);
     task->flags |= TASK_FLAG_RESOURCES_RELEASED;
 }
 
@@ -825,8 +978,9 @@ bool sched_drive_in_use(uint32_t drive)
             task->image_node.drive == drive) {
             return true;
         }
-        for (uint32_t fd = 0; fd < SCHED_TASK_FILE_MAX; ++fd) {
-            if (task->files[fd].used && task->files[fd].node.drive == drive) {
+        for (uint32_t fd = 0; fd < sched_task_file_capacity(task); ++fd) {
+            const struct task_file *file = sched_task_file_at((struct task *)task, fd);
+            if (file && file->used && file->node.drive == drive) {
                 return true;
             }
         }

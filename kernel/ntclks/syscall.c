@@ -657,8 +657,9 @@ static void clear_task_files(struct task *task)
     if (!task) {
         return;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
-        clear_task_file(&task->files[i]);
+    for (uint32_t i = 0; i < sched_task_file_capacity(task); ++i) {
+        struct task_file *file = sched_task_file_at(task, i);
+        if (file) clear_task_file(file);
     }
     for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
         clear_task_file(&task->stdio_files[i]);
@@ -675,6 +676,7 @@ void syscall_release_task_files(struct task *task)
         net_close_owner_sockets(task->pid);
     }
     clear_task_files(task);
+    sched_task_file_release(task);
 }
 
 /**
@@ -688,9 +690,10 @@ int syscall_clone_task_files(const struct task *parent, struct task *child)
     if (!parent || !child || child->parent_pid != parent->pid) {
         return -LEONOS_EINVAL;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
-        if (child->files[i].used) {
-            task_pipe_retain(&child->files[i]);
+    for (uint32_t i = 0; i < sched_task_file_capacity(child); ++i) {
+        struct task_file *file = sched_task_file_at(child, i);
+        if (file && file->used) {
+            task_pipe_retain(file);
         }
     }
     for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
@@ -710,9 +713,10 @@ void syscall_close_cloexec_files(struct task *task)
     if (!task) {
         return;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
-        if (task->files[i].used && (task->files[i].fd_flags & 1u)) {
-            clear_task_file(&task->files[i]);
+    for (uint32_t i = 0; i < sched_task_file_capacity(task); ++i) {
+        struct task_file *file = sched_task_file_at(task, i);
+        if (file && file->used && (file->fd_flags & 1u)) {
+            clear_task_file(file);
         }
     }
     for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
@@ -742,8 +746,9 @@ struct task_file *task_file_for_fd(struct task *task, int fd)
         return task->stdio_files[fd].used ? &task->stdio_files[fd] : NULL;
     }
     if (fd == 3) return NULL;
-    if (fd >= 4 + (int)SCHED_TASK_FILE_MAX) return NULL;
-    struct task_file *file = &task->files[fd - 4];
+    if (fd >= 4 + (int)sched_task_file_capacity(task)) return NULL;
+    struct task_file *file = sched_task_file_at(task, (uint32_t)(fd - 4));
+    if (!file) return NULL;
     return file->used ? file : NULL;
 }
 
@@ -821,8 +826,9 @@ static uint32_t task_allocated_fd_count(const struct task *task)
     if (!task) {
         return 0;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
-        if (task->files[i].used) {
+    for (uint32_t i = 0; i < sched_task_file_capacity(task); ++i) {
+        const struct task_file *file = sched_task_file_at((struct task *)task, i);
+        if (file && file->used) {
             ++count;
         }
     }
@@ -952,22 +958,38 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node, uin
     if (!task_can_allocate_fd(task)) {
         return -LEONOS_EMFILE;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_FILE_MAX; ++i) {
+    for (uint32_t i = 0; i < sched_task_file_capacity(task); ++i) {
         int fd = (int)i + 4;
-        if (task->files[i].used) {
+        struct task_file *file = sched_task_file_at(task, i);
+        if (!file || file->used) {
             continue;
         }
         if (task_pty_fd_for_fd(task, fd)) {
             continue;
         }
-        task->files[i].used = 1;
-        task->files[i].node = *node;
-        task->files[i].offset = 0;
-        task->files[i].aux = 0;
-        task->files[i].flags = flags;
-        task->files[i].fd_flags = 0;
-        copy_text(task->files[i].path, sizeof(task->files[i].path), path);
+        file->used = 1;
+        file->node = *node;
+        file->offset = 0;
+        file->aux = 0;
+        file->flags = flags;
+        file->fd_flags = 0;
+        copy_text(file->path, sizeof(file->path), path);
         return fd;
+    }
+    {
+        uint32_t i = sched_task_file_capacity(task);
+        struct task_file *file = sched_task_file_at(task, i);
+        int fd = (int)i + 4;
+        if (file && !task_pty_fd_for_fd(task, fd)) {
+            file->used = 1;
+            file->node = *node;
+            file->offset = 0;
+            file->aux = 0;
+            file->flags = flags;
+            file->fd_flags = 0;
+            copy_text(file->path, sizeof(file->path), path);
+            return fd;
+        }
     }
     return -LEONOS_EMFILE;
 }
@@ -982,8 +1004,9 @@ static int task_dup2_fd(struct task *task, int old_fd, int new_fd)
     if (old_fd == new_fd) return new_fd;
     if (new_fd < 3) {
         new_file = &task->stdio_files[new_fd];
-    } else if (new_fd >= 4 && new_fd < 4 + (int)SCHED_TASK_FILE_MAX) {
-        new_file = &task->files[new_fd - 4];
+    } else if (new_fd >= 4 && new_fd < 4 + (int)sched_task_file_capacity(task)) {
+        new_file = sched_task_file_at(task, (uint32_t)(new_fd - 4));
+        if (!new_file) return -LEONOS_EMFILE;
     } else {
         return -LEONOS_EBADF;
     }
@@ -1018,12 +1041,13 @@ static int task_duplicate_file_fd(struct task *task, int old_fd, int minimum_fd,
     if (minimum_fd < 4) {
         minimum_fd = 4;
     }
-    for (fd = minimum_fd; fd < 4 + (int)SCHED_TASK_FILE_MAX; ++fd) {
+    for (fd = minimum_fd; fd < 4 + (int)sched_task_file_capacity(task); ++fd) {
         struct task_file *target;
         if (task_file_for_fd(task, fd) || task_pty_fd_for_fd(task, fd)) {
             continue;
         }
-        target = &task->files[fd - 4];
+        target = sched_task_file_at(task, (uint32_t)(fd - 4));
+        if (!target) continue;
         *target = *source;
         target->used = 1;
         target->fd_flags = fd_flags;

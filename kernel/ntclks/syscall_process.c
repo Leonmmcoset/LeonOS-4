@@ -116,7 +116,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         if (!task || !limit || !user_range_ok(a1, 16)) return -LEONOS_EFAULT;
         if (a0 == 5) {
             current_limit = task->rlimit_nofile;
-            maximum_limit = SCHED_TASK_FILE_MAX;
+            maximum_limit = SCHED_TASK_FILE_LIMIT;
         } else if (a0 == 6) {
             maximum_limit = NTCLKS_USER_TOP - NTCLKS_USER_BASE;
             current_limit = task->rlimit_as ? task->rlimit_as : maximum_limit;

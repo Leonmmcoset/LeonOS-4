@@ -140,6 +140,7 @@ static void clear_task_vmas(struct task *task)
     for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
         task->vmas[i] = (struct task_vma){0};
     }
+    sched_task_vma_release(task);
 }
 
 /**
@@ -760,6 +761,7 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     task->as = replacement;
     task->entry = 0;
     task->stack_top = USER_STACK_TOP;
+    task->stack_low = USER_STACK_TOP - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL;
     task->image = NULL;
     task->image_len = 0;
     task->image_node = node;
