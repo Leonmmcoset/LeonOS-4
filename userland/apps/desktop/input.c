@@ -376,6 +376,12 @@ void maybe_launch_oobe(void)
 {
     struct leonos_stat st;
     struct leonos_auth_status auth_status;
+    /* The desktop may reach this helper through both the startup path and the
+     * login fallback path.  Once the OOBE lock owns startup, only its update
+     * routine may decide whether another instance is needed. */
+    if (oobe_lock_active) {
+        return;
+    }
     if (stat("0:/system/apps/installer/installer.elf", &st) == 0 &&
         st.type == LEONOS_FS_TYPE_FILE &&
         stat(OOBE_APP_PATH, &st) < 0) {
@@ -404,6 +410,7 @@ static int oobe_process_alive(void)
 {
     struct leonos_task_info tasks[LEONOS_TASK_MAX];
     uint64_t tick;
+    unsigned long now;
     int count;
     if (!oobe_spawn_pid) {
         return 0;
@@ -416,6 +423,13 @@ static int oobe_process_alive(void)
         if (tasks[i].pid == oobe_spawn_pid && tasks[i].state != 3) {
             return 1;
         }
+    }
+    /* fork/exec publication is asynchronous.  A missing task in the first
+     * snapshot is therefore still a live spawn reservation, not proof that
+     * the process exited. */
+    now = leonos_uptime_ms();
+    if (now - oobe_last_spawn_ms < OOBE_STARTUP_GRACE_MS) {
+        return 1;
     }
     oobe_spawn_pid = 0;
     return 0;

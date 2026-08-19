@@ -421,7 +421,34 @@ int mprotect(void *addr, size_t len, int prot)
 
 int chdir(const char *path)
 {
-    return (int)syscall1(SYS_chdir, (long)path);
+    char absolute_path[LEONOS_FS_PATH_LEN];
+    const char *target = path;
+    long result;
+
+    /* POSIX applications use / as the root while LeonOS paths carry an
+     * explicit drive.  Keep both spellings valid, especially for Ash's
+     * updatepwd() output and programs ported from Unix. */
+    if (path && path[0] == '/') {
+        uint32_t i = 0;
+        absolute_path[0] = '0';
+        absolute_path[1] = ':';
+        while (path[i] && i + 3U < sizeof(absolute_path)) {
+            absolute_path[i + 2U] = path[i];
+            ++i;
+        }
+        if (path[i]) {
+            errno = EINVAL;
+            return -1;
+        }
+        absolute_path[i + 2U] = 0;
+        target = absolute_path;
+    }
+    result = syscall1(SYS_chdir, (long)target);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
 }
 
 char *getcwd(char *buf, size_t len)
@@ -986,6 +1013,19 @@ static size_t format_text(char *buf, size_t cap, const char *fmt, va_list ap)
         switch (*p) {
         case 's': {
             const char *text = va_arg(ap, const char *);
+            while (text && *text && pos + 1 < cap) {
+                buf[pos++] = *text++;
+            }
+            break;
+        }
+        case 'm': {
+            /* GNU/POSIX shells use %m to format the current errno without
+             * consuming an argument.  Keep it available to BusyBox and
+             * other portable applications using the shared formatter. */
+            const char *text = strerror(errno);
+            if (!text) {
+                text = "Unknown error";
+            }
             while (text && *text && pos + 1 < cap) {
                 buf[pos++] = *text++;
             }

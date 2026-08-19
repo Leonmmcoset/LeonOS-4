@@ -2974,16 +2974,16 @@ static void handle_mode_click(int32_t x, int32_t y)
 
 static void installer_apply_language_font(void)
 {
-    /* The installer is its own process and has a tighter memory budget than
-     * the installed desktop.  Loading Deng plus SimSun as a fallback maps two
-     * large CJK font files and makes the fallback path unreliable during the
-     * first language switch.  Chinese Setup text uses SimSun as its primary
-     * face; English continues to use the theme's normal primary font. */
-    (void)leonos_ui_set_font_fallback_path(0);
     if (installer_lang == LEONOS_LANG_ZH) {
+        /* SimSun supplies the CJK glyphs used throughout the Chinese UI. */
+        (void)leonos_ui_set_font_fallback_path(0);
         (void)leonos_ui_set_font_path(INSTALLER_CJK_FONT);
     } else {
-        (void)leonos_ui_set_font_path(0);
+        /* The language page contains the native-language "中文" selector.
+         * Use the complete face here so it renders deterministically before
+         * any fallback glyph cache has been warmed. */
+        (void)leonos_ui_set_font_fallback_path(0);
+        (void)leonos_ui_set_font_path(INSTALLER_CJK_FONT);
     }
 }
 

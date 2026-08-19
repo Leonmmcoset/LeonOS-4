@@ -14,6 +14,7 @@
 #include <leonos/elf_abi.h>
 
 #define SCHED_TASK_NAME_LEN 32u
+/* Initial task-table capacity; the scheduler grows beyond this value. */
 #define SCHED_TASK_MAX 64u
 #define SCHED_TASK_FILE_MAX 64u
 #define SCHED_TASK_FILE_LIMIT 1024u

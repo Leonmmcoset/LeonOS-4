@@ -5,6 +5,7 @@
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>
+#include <ntclks/heap.h>
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
 #include <ntclks/inputm.h>
@@ -1479,13 +1480,22 @@ static void auth_cleanup_logged_out_task(uint32_t pid)
 static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                                uint32_t keep_pid)
 {
-    struct task_snapshot_info tasks[SCHED_TASK_MAX];
+    struct task_snapshot_info *tasks;
     uint64_t tick;
     uint32_t count;
     if (!uid || !session_id) {
         return;
     }
-    count = sched_snapshot(tasks, SCHED_TASK_MAX, &tick);
+    count = sched_snapshot(NULL, 0, &tick);
+    if (!count || count > UINT32_MAX / sizeof(*tasks)) {
+        return;
+    }
+    tasks = (struct task_snapshot_info *)kernel_malloc(
+        (size_t)count * sizeof(*tasks));
+    if (!tasks) {
+        return;
+    }
+    count = sched_snapshot(tasks, count, &tick);
     for (uint32_t i = 0; i < count; ++i) {
         const struct task_snapshot_info *task = &tasks[i];
         if (task->pid == 0 || task->pid == keep_pid ||
@@ -1498,6 +1508,7 @@ static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id
             auth_cleanup_logged_out_task(task->pid);
         }
     }
+    kernel_free(tasks);
 }
 
 /**
@@ -3583,7 +3594,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_TASKS) {
         struct task *viewer_task = sched_current_task();
-        struct task_snapshot_info temp[SCHED_TASK_MAX];
+        struct task_snapshot_info *temp;
         uint64_t tick = 0;
         uint32_t total;
         uint32_t visible = 0;
@@ -3591,15 +3602,26 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         struct task_snapshot_user *snap = (struct task_snapshot_user *)(uintptr_t)a2;
-        if (snap->capacity > SCHED_TASK_MAX) {
-            snap->capacity = SCHED_TASK_MAX;
+        if (snap->capacity > UINT32_MAX / sizeof(struct task_snapshot_info)) {
+            return -LEONOS_EINVAL;
         }
         if (snap->capacity && !user_range_ok((uint64_t)(uintptr_t)snap->tasks,
                                              (uint64_t)snap->capacity * sizeof(struct task_snapshot_info))) {
             return -LEONOS_EFAULT;
         }
-        total = sched_snapshot(temp, SCHED_TASK_MAX, &tick);
-        for (uint32_t i = 0; i < total && i < SCHED_TASK_MAX; ++i) {
+        total = sched_snapshot(NULL, 0, &tick);
+        if (!total || total > UINT32_MAX / sizeof(*temp)) {
+            snap->tick = tick;
+            snap->count = 0;
+            return 0;
+        }
+        temp = (struct task_snapshot_info *)kernel_malloc(
+            (size_t)total * sizeof(*temp));
+        if (!temp) {
+            return -LEONOS_ENOMEM;
+        }
+        total = sched_snapshot(temp, total, &tick);
+        for (uint32_t i = 0; i < total; ++i) {
             if (viewer_task &&
                 task_effective_role(viewer_task) != LEONOS_AUTH_ROLE_ADMIN &&
                 (!viewer_task->uid || temp[i].uid != viewer_task->uid)) {
@@ -3612,6 +3634,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         snap->tick = tick;
         snap->count = visible;
+        kernel_free(temp);
         return (int64_t)snap->count;
     }
 

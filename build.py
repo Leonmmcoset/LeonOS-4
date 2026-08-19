@@ -113,6 +113,7 @@ MINESWEEPER_ASSETS = [
     "minesweeper-flag.bmp",
 ]
 SYSTEM_FILES = [
+    ("logo.png", "system/resources/logo.png"),
     ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
     ("system/resources/wallpaper-metro.bmp", "system/resources/wallpaper-metro.bmp"),
     ("system/certs/cacert.pem", "system/certs/cacert.pem"),

@@ -184,6 +184,7 @@ def write_minimal_libbb_kbuild(kbuild: Path, generated: bool) -> None:
 
 def trim_libbb(source: Path) -> None:
     shutil.copyfile(ROOT / "userland/busybox/leonos_shim.c", source / "libbb/leonos_shim.c")
+    patch_percentm_for_leonos(source)
     patch_time_for_leonos(source)
     write_minimal_libbb_kbuild(source / "libbb/Kbuild.src", False)
     allowed = {Path(name).stem for name in MINIMAL_LIBBB_OBJECTS}
@@ -220,6 +221,20 @@ def patch_optional_config_macros(source: Path) -> None:
             raise SystemExit("unable to add BusyBox ps config fallback")
         text = text.replace(marker, fallback, 1)
         path.write_text(text, encoding="utf-8")
+
+
+def patch_percentm_for_leonos(source: Path) -> None:
+    """Use strerror(errno) because LeonOS printf does not promise %m."""
+    path = source / "include/platform.h"
+    text = path.read_text(encoding="utf-8")
+    marker = "#define HAVE_PRINTF_PERCENTM 1\n"
+    comment = "/* LeonOS uses the portable %s + strerror(errno) form. */"
+    if comment in text:
+        return
+    if marker not in text:
+        raise SystemExit("unsupported BusyBox platform header: printf %m marker missing")
+    replacement = marker + comment + "\n#undef HAVE_PRINTF_PERCENTM\n"
+    path.write_text(text.replace(marker, replacement, 1), encoding="utf-8")
 
 
 def patch_ps_for_leonos(source: Path) -> None:
@@ -413,6 +428,33 @@ def patch_ash_for_leonos(source: Path) -> None:
         if declaration_marker not in text:
             raise SystemExit("unsupported BusyBox ash source revision: declaration marker missing")
         text = text.replace(declaration_marker, declaration + declaration_marker, 1)
+
+    drive_path_helper = """static int leonos_shell_drive_path(const char *path)
+{
+\treturn path && path[0] >= '0' && path[0] <= '9' &&
+\t       path[1] == ':' && path[2] == '/';
+}
+
+"""
+    drive_path_declaration = "static int leonos_shell_drive_path(const char *path);\n"
+    if drive_path_declaration not in text:
+        text = drive_path_declaration + text
+    if drive_path_helper not in text:
+        if declaration_marker not in text:
+            raise SystemExit("unsupported BusyBox ash source revision: drive path marker missing")
+        text = text.replace(declaration_marker, drive_path_helper + declaration_marker, 1)
+
+    docd_marker = """\tINT_OFF;
+\tif (!(flags & CD_PHYSICAL)) {
+\t\tdir = updatepwd(dest);"""
+    docd_replacement = """\tINT_OFF;
+\tif (!(flags & CD_PHYSICAL) && !leonos_shell_drive_path(dest)) {
+\t\tdir = updatepwd(dest);"""
+    if docd_marker in text:
+        text = text.replace(docd_marker, docd_replacement, 1)
+    elif docd_replacement not in text:
+        raise SystemExit("unsupported BusyBox ash source revision: cd path marker missing")
+
     if command_lookup not in text:
         if command_lookup_marker not in text:
             raise SystemExit("unsupported BusyBox ash source revision: command lookup marker missing")
