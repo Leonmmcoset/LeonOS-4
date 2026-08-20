@@ -104,6 +104,7 @@ unsigned long oobe_last_spawn_ms;
 uint32_t oobe_spawn_pid;
 uint8_t login_lock_active;
 unsigned long login_last_spawn_ms;
+uint32_t login_spawn_pid;
 uint8_t desktop_startup_launched;
 char app_titles[MAX_WINDOWS][48];
 char app_texts[MAX_WINDOWS][DESKTOP_APP_TEXT_LEN];

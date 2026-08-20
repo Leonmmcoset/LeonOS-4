@@ -12,6 +12,7 @@
         "Kconfig*": "makefile"
     },
     "conventionalCommits.scopes": [
-        "installer"
+        "installer",
+        "user"
     ]
 }
