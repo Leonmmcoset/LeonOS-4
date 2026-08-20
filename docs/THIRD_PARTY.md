@@ -3,6 +3,34 @@
 LeonOS keeps third-party source code in `third_party/` and records Git-backed
 dependencies as submodules.
 
+## Git Submodule Inventory
+
+The following inventory covers every Git submodule declared by the root
+`.gitmodules` file, plus the nested submodule declared by StardustUI. The
+commits are the revisions recorded by the LeonOS checkout.
+
+| Path | Upstream | Pinned commit |
+| --- | --- | --- |
+| `devtools/components/lua/upstream` | `https://github.com/lua/lua.git` | `6e22fedb74cf0c9b6656e9fce8b7331db847c605` |
+| `third_party/busybox` | `https://github.com/mirror/busybox.git` | `1a64f6a20aaf6ea4dbba68bbfa8cc1ab7e5c57c4` |
+| `third_party/cmd` | `https://github.com/ChenPi11/cmd.git` | `2290c38bc9da54db53aa56161a7204a27b388e21` |
+| `third_party/fastfetch` | `https://github.com/fastfetch-cli/fastfetch.git` | `56da8f811068289f6352db8881418aa6e0f994e8` |
+| `third_party/file` | `https://github.com/file/file.git` | `711ccc264519cdc5073ccb26651c0a9bafc3b47a` |
+| `third_party/less` | `https://github.com/gwsw/less.git` | `b8bbf4297169e20d35e1cc3e015180e8a011bcf2` |
+| `third_party/libpng` | `https://github.com/pnggroup/libpng.git` | `3061454d980de7d53608f594194cfac722721d2a` |
+| `third_party/litehtml` | `https://github.com/litehtml/litehtml.git` | `b9e89f0b9494ff9a5f008800af35503efabddf59` |
+| `third_party/lua` | `https://github.com/lua/lua.git` | `6e22fedb74cf0c9b6656e9fce8b7331db847c605` |
+| `third_party/mbedtls` | `https://github.com/Mbed-TLS/mbedtls.git` | `5a764e5555c64337ed17444410269ff21cb617b1` |
+| `third_party/nano` | `https://git.savannah.gnu.org/git/nano.git` | `8e6360d1663998c62ddd0cf934923d1f18004e3e` |
+| `third_party/picolibc` | `https://github.com/Leonmmcoset/LeonOS-4-picolibc.git` | `2fca8654025d367b3da4699a82c347840123bcd2` |
+| `third_party/pl_editor` | `https://github.com/Leonmmcoset/pl_editor.git` | `22fae7a1bc2362486d8bf845f0daf6ec7060a3a1` |
+| `third_party/sl` | `https://github.com/mtoyoda/sl.git` | `923e7d7ebc5c1f009755bdeb789ac25658ccce03` |
+| `third_party/sqlite` | `https://github.com/sqlite/sqlite.git` | `f3d536d37825302e31ed0eddd811c689f38f85a3` |
+| `third_party/stardustui` | `https://github.com/xingji-studio/StardustUI.git` | `67aae17214a0d27bb6a8b0caf10b7c1f98313086` |
+| `third_party/stardustui/third_party/ab_glyph_rasterizer/upstream` | `https://github.com/alexheretic/ab-glyph.git` | `791b15214d376dec06ae1c886da4c5f92f31e2e0` |
+| `third_party/tinycc` | `https://github.com/TinyCC/tinycc.git` | `2ba12e83b3599ca8f5d50c179fe5138fe956f0c9` |
+| `third_party/zlib` | `https://github.com/madler/zlib.git` | `da607da739fa6047df13e66a2af6b8bec7c2a498` |
+
 ## Mbed TLS
 
 - Path: `third_party/mbedtls`
@@ -48,6 +76,14 @@ layout and widget-showcase examples at `0:/programs/stardusthello/`,
 upstream Material 3 example themes in `0:/etc/stardustui/theme/`. StardustUI's
 socket API is linked but currently reports that networking is unavailable, so
 the network-dependent DuckChat example is intentionally not installed.
+
+StardustUI also records one nested dependency:
+
+- Path: `third_party/stardustui/third_party/ab_glyph_rasterizer/upstream`
+- Upstream: `https://github.com/alexheretic/ab-glyph.git`
+- Pinned commit: `791b15214d376dec06ae1c886da4c5f92f31e2e0`
+- Crate: `ab_glyph_rasterizer` 0.1.10
+- License: Apache-2.0; preserve the upstream license and attribution files.
 
 ## zlib
 
@@ -137,9 +173,9 @@ logfile output and shell pipes are disabled for the system build.
 ## TinyCC
 
 - Path: `third_party/tinycc`
-- Upstream: `https://repo.or.cz/tinycc.git`
+- Upstream: `https://github.com/TinyCC/tinycc.git`
 - Version: `0.9.28rc`
-- Pinned commit: `2be0218be4461f9e453cbdcb98f81f41a5ae8bed`
+- Pinned commit: `2ba12e83b3599ca8f5d50c179fe5138fe956f0c9` (`release_0_9_27-1440-g2ba12e83`)
 - License: LGPL-2.1-or-later; the complete upstream `COPYING` is staged at
   `0:/programs/tcc/COPYING` beside the executable and runtime files.
 
@@ -169,6 +205,19 @@ portable C89 configuration with the LeonOS runtime. Dynamic C modules and
 `package.loadlib` remain unavailable. Lua scripts can be loaded from the current directory or from
 `0:/programs/lua/lua/`.
 
+## Lua Development Source
+
+- Path: `devtools/components/lua/upstream`
+- Upstream: `https://github.com/lua/lua.git`
+- Pinned commit: `6e22fedb74cf0c9b6656e9fce8b7331db847c605` (`v5.4.8`)
+- License: MIT; preserve the upstream `COPYRIGHT` and license notices when
+  redistributing this development checkout.
+
+This separate checkout is used by the Lua development tooling and is not the
+runtime submodule built into the system image. It is pinned independently in
+the root `.gitmodules` file, even though it currently tracks the same Lua
+release as `third_party/lua`.
+
 ## PL Editor
 
 - Path: `third_party/pl_editor`
@@ -189,7 +238,8 @@ extended syntax set.
 
 - Path: `third_party/cmd`
 - Upstream: `https://github.com/ChenPi11/cmd`
-- Pinned commit: `e1b2fc3388013cb3ddf68bcc96fa8a799d346418`
+- Version: `0.1.0`
+- Pinned commit: `2290c38bc9da54db53aa56161a7204a27b388e21`
 - License: GPL-3.0-only; the complete upstream `LICENSE` is staged at
   `0:/programs/cmd/LICENSE` beside the executable.
 
@@ -204,6 +254,19 @@ jobs remain limited to external commands without per-stage redirection. BusyBox
 Ash is the interactive POSIX-style shell and uses the same native COW process
 path for full pipeline, redirection, process-group, and terminal job-control
 semantics.
+
+## file / libmagic
+
+- Path: `third_party/file`
+- Upstream: `https://github.com/file/file.git`
+- Version: `5.48`
+- Pinned commit: `711ccc264519cdc5073ccb26651c0a9bafc3b47a` (`FILE5_48-17-g711ccc26`)
+- License: BSD-2-Clause-style upstream license; preserve `third_party/file/COPYING`.
+
+LeonOS builds the upstream `file` command at `0:/programs/file/file.elf` and
+the ABI-v1 `libmagic.so.1` at `0:/system/lib/libmagic.so.1`. The compiled magic
+database is installed at `0:/system/share/misc/magic.mgc`; the port keeps the
+upstream recognizers while adapting file access to the LeonOS/Picolibc ABI.
 
 ## Fastfetch
 
