@@ -82,13 +82,18 @@ def add_component_tree(
     if not source.is_dir():
         raise SystemExit(f"SDK component tree is missing: {source}")
     for item in sorted(source.rglob("*")):
-        if item.is_file():
-            add_file(
-                archive,
-                component_archive_name(component, destination,
-                                       item.relative_to(source).as_posix()),
-                item,
-            )
+        if not item.is_file():
+            continue
+        relative = item.relative_to(source)
+        # Component sources can be checked-out repositories.  Their VCS
+        # metadata is neither part of the SDK nor useful to SDK consumers.
+        if ".git" in relative.parts:
+            continue
+        add_file(
+            archive,
+            component_archive_name(component, destination, relative.as_posix()),
+            item,
+        )
 
 
 def main() -> None:
@@ -268,6 +273,8 @@ def main() -> None:
                         "include/sqlite3.h", "include/magic.h", "include/zlib.h",
                         "include/zconf.h", "include/png.h", "include/pngconf.h",
                         "include/pnglibconf.h",
+                        "include/curses.h", "include/ncurses.h",
+                        "include/leonos/posix.h",
                     }
                     or relative_name.startswith("include/stardustui/")
                 ):

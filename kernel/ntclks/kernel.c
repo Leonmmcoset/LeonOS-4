@@ -3,21 +3,27 @@
  * Starts memory, interrupts, drivers, storage, middle layer, and scheduling.
  */
 #include <ntclks/arch.h>
+#include <ntclks/apic.h>
 #include <ntclks/boot_splash.h>
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
+#include <ntclks/kernel_debug.h>
 #include <ntclks/kernel.h>
 #include <ntclks/mm.h>
+#include <ntclks/heap.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/net.h>
 #include <ntclks/osmlayer.h>
 #include <ntclks/platform.h>
 #include <ntclks/power.h>
 #include <ntclks/pty.h>
+#include <ntclks/page_cache.h>
+#include <ntclks/object.h>
 #include <ntclks/sched.h>
+#include <ntclks/smp.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
@@ -145,6 +151,19 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
+    /* UEFI GRUB keeps boot services active for the second-stage loader and
+     * may therefore omit Multiboot2 memory-map tags.  The loader captures a
+     * stable EFI map after loading all images; use it before the allocator
+     * falls back to the legacy 512 MiB estimate. */
+    if (!boot.mmap_entry_count && !boot.efi_mmap_entry_count &&
+        handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC &&
+        handoff->efi_mmap_addr && handoff->efi_mmap_entry_count) {
+        boot.efi_mmap_addr = handoff->efi_mmap_addr;
+        boot.efi_mmap_entry_size = handoff->efi_mmap_entry_size;
+        boot.efi_mmap_entry_count = handoff->efi_mmap_entry_count;
+        console_printf("[ntclks] using loader-captured EFI memory map entries=%u descriptor=%u\n",
+                       boot.efi_mmap_entry_count, boot.efi_mmap_entry_size);
+    }
     boot_log_screen = cmdline_has(&boot, "bootlog=1");
     if (!boot.rsdp_addr && handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC) {
         boot.rsdp_addr = handoff->rsdp_addr;
@@ -155,9 +174,15 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     platform_identity_init(&boot);
 
     arch_init();
+    apic_init();
+    ioapic_init();
+    smp_init();
     framebuffer_init(&boot);
     boot_splash_init(!boot_log_screen);
     mm_init(&boot, handoff);
+    kernel_heap_init();
+    page_cache_init();
+    kernel_objects_init();
     boot_splash_update(84u);
     time_init();
     input_init();
@@ -209,6 +234,11 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     net_init();
     boot_splash_update(98u);
     osmlayer_bridge_selftest();
+    if (kernel_debug_boot_requested(handoff)) {
+        console_printf("[ntclks] entering kernel debug tool before userland\n");
+        (void)kernel_debug_run_module();
+        console_printf("[ntclks] kernel debug tool finished; continuing normal startup\n");
+    }
     userland_init(&boot);
     sched_dump();
     console_printf("[ntclks] boot complete: version=%s root=0:/ fs=%s desktop=desktop.elf\n",

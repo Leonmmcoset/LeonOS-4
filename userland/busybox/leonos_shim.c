@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <glob.h>
 #include <leonos/pty.h>
+#include <leonos/system.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -284,30 +285,34 @@ mode_t umask(mode_t mode)
 
 int uname(struct utsname *name)
 {
-    static const char system_name[] = "LeonOS";
-    static const char node_name[] = "leonos";
-    static const char release_name[] = "4";
-    static const char version_name[] = "LeonOS 4 userland";
-    static const char machine_name[] = "x86_64";
+    struct leonos_system_info system_info;
+    struct leonos_machine_identity identity = {0};
+    char node_name[_UTSNAME_LENGTH];
+    uint32_t node_pos = 0;
     if (!name) {
         return -1;
     }
     leonos_zero(name, sizeof(*name));
-    for (uint32_t index = 0; index + 1U < sizeof(name->sysname) && system_name[index]; ++index) {
-        name->sysname[index] = system_name[index];
+    if (leonos_system_info(&system_info) < 0) return -1;
+    (void)leonos_machine_identity(&identity);
+    strncpy(name->sysname, system_info.kernel_name, sizeof(name->sysname) - 1U);
+    strncpy(name->release, system_info.kernel_version, sizeof(name->release) - 1U);
+    strncpy(name->version, system_info.build_time, sizeof(name->version) - 1U);
+    strncpy(name->machine, system_info.architecture,
+            sizeof(name->machine) - 1U);
+    strncpy(node_name, "leonos", sizeof(node_name) - 1U);
+    node_pos = (uint32_t)strlen(node_name);
+    if (identity.platform_uuid[0]) {
+        if (node_pos + 1U < sizeof(node_name)) node_name[node_pos++] = '-';
+        for (uint32_t index = 0; identity.platform_uuid[index] &&
+             node_pos + 1U < sizeof(node_name); ++index) {
+            char ch = identity.platform_uuid[index];
+            if (ch == '-') continue;
+            node_name[node_pos++] = ch;
+        }
     }
-    for (uint32_t index = 0; index + 1U < sizeof(name->nodename) && node_name[index]; ++index) {
-        name->nodename[index] = node_name[index];
-    }
-    for (uint32_t index = 0; index + 1U < sizeof(name->release) && release_name[index]; ++index) {
-        name->release[index] = release_name[index];
-    }
-    for (uint32_t index = 0; index + 1U < sizeof(name->version) && version_name[index]; ++index) {
-        name->version[index] = version_name[index];
-    }
-    for (uint32_t index = 0; index + 1U < sizeof(name->machine) && machine_name[index]; ++index) {
-        name->machine[index] = machine_name[index];
-    }
+    node_name[node_pos] = 0;
+    strncpy(name->nodename, node_name, sizeof(name->nodename) - 1U);
     return 0;
 }
 

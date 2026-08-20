@@ -1,3 +1,18 @@
 {
-    "cmake.ignoreCMakeListsMissing": true
+    "cmake.ignoreCMakeListsMissing": true,
+    "leonos.wslProjectRoot": "/mnt/d/Projects/C/LeonOS 4",
+    "leonos.wslOvmfPath": "/usr/share/ovmf/OVMF.fd",
+    "leonos.buildTheme": "linux",
+    "C_Cpp.default.cStandard": "c11",
+    "C_Cpp.default.cppStandard": "c++17",
+    "C_Cpp.default.intelliSenseMode": "linux-clang-x64",
+    "files.associations": {
+        "*.inc": "c",
+        "*.S": "asm",
+        "Kconfig*": "makefile"
+    },
+    "conventionalCommits.scopes": [
+        "installer",
+        "user"
+    ]
 }

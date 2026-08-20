@@ -100,7 +100,19 @@ generated binaries contain `LEONOS_LICENSE_REQUIRE 0`.
 
 Installer update mode refreshes FAT32 ESP boot files from `0:/install/esp`, ext2
 system files from `0:/install/root`, selected changed or missing `programs`
-packages, and bundled docs from `0:/install/root/docs`.
+packages, and bundled docs from `0:/install/root/docs`. The core update replaces
+`1:/system/lib` as a unit, including `ld-leonos.elf`, `libleonos.so.1`, and
+versioned component libraries such as `libmagic.so.1`, `liblua.so.5`, and
+`sqlite.so.3`. It also copies `1:/system/kerneldebug.sys` from the payload.
+This keeps the dynamic loader, shared runtime, applications, and the built-in
+kernel debugging module on one release version. Missing runtime directories or
+the debug module on an older target are created during the update; the
+installer payload itself must contain all of these files or the update is
+rejected as incomplete.
+Selected program packages are compared recursively and only shipped files that
+are missing or changed are copied. This includes package metadata, licenses,
+icons, headers, examples, and private runtime data; files added locally to an
+installed package are left untouched.
 Docs are merged: matching bundled `.hlp` files are overwritten, but extra
 third-party help files already present on the target `1:/docs` are kept.
 Update mode does not replace `1:/system/config` or `1:/system/state`, so local machine state such as

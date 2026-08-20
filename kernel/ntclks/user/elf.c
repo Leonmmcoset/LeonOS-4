@@ -24,9 +24,9 @@
 #define PAGE_SIZE 4096ULL
 #define ELF_HEADER_READ_BYTES 4096U
 #define ELF_DYN_MAIN_MIN 0x01000000ULL
-#define ELF_DYN_MAIN_MAX 0x03800000ULL
-#define ELF_DYN_INTERP_MIN 0x03800000ULL
-#define ELF_DYN_INTERP_MAX 0x05000000ULL
+#define ELF_DYN_MAIN_MAX 0x04000000ULL
+#define ELF_DYN_INTERP_MIN 0x04000000ULL
+#define ELF_DYN_INTERP_MAX 0x06000000ULL
 
 struct elf64_ehdr {
     unsigned char e_ident[EI_NIDENT];
@@ -565,16 +565,16 @@ static bool elf64_task_range_available(const struct task *task, uint64_t start, 
                        task ? (unsigned long long)task->stack_top : 0ULL);
         return false;
     }
-    stack_low = task->stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE;
+    stack_low = task->stack_top - (uint64_t)NTCLKS_USER_STACK_MAX_PAGES * PAGE_SIZE;
     if (end > stack_low) {
         console_printf("[ntclks] ELF range overlaps stack start=0x%llx end=0x%llx stack=0x%llx\n",
                        (unsigned long long)start, (unsigned long long)end,
                        (unsigned long long)stack_low);
         return false;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        const struct task_vma *vma = &task->vmas[i];
-        if (vma->used && start < vma->end && end > vma->start) {
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        const struct task_vma *vma = sched_task_vma_at((struct task *)task, i);
+        if (vma && vma->used && start < vma->end && end > vma->start) {
             console_printf("[ntclks] ELF range overlaps VMA=%u range=0x%llx-0x%llx existing=0x%llx-0x%llx\n",
                            i, (unsigned long long)start, (unsigned long long)end,
                            (unsigned long long)vma->start, (unsigned long long)vma->end);
@@ -591,12 +591,13 @@ static bool elf64_task_range_available(const struct task *task, uint64_t start, 
  */
 static struct task_vma *elf64_task_free_vma(struct task *task)
 {
-    for (uint32_t i = 0; task && i < SCHED_TASK_VMA_MAX; ++i) {
-        if (!task->vmas[i].used) {
-            return &task->vmas[i];
+    for (uint32_t i = 0; task && i < sched_task_vma_capacity(task); ++i) {
+        struct task_vma *vma = sched_task_vma_at(task, i);
+        if (vma && !vma->used) {
+            return vma;
         }
     }
-    return NULL;
+    return task ? sched_task_vma_at(task, sched_task_vma_capacity(task)) : NULL;
 }
 
 /**
@@ -658,8 +659,9 @@ static struct task_vma *elf64_legacy_shared_page_vma(struct task *task,
                                                       uint64_t start, uint64_t end,
                                                       uint64_t file_offset)
 {
-    for (uint32_t i = 0; task && i < SCHED_TASK_VMA_MAX; ++i) {
-        struct task_vma *vma = &task->vmas[i];
+    for (uint32_t i = 0; task && i < sched_task_vma_capacity(task); ++i) {
+        struct task_vma *vma = sched_task_vma_at(task, i);
+        if (!vma) continue;
         uint64_t expected_offset;
         if (!vma->used || end <= vma->start || start >= vma->end) {
             continue;
@@ -722,8 +724,9 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
                        image_name, (unsigned long long)bias);
         return false;
     }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        if (!task->vmas[i].used) {
+    for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
+        const struct task_vma *vma = sched_task_vma_at(task, i);
+        if (vma && !vma->used) {
             ++free_vmas;
         }
     }
@@ -800,29 +803,30 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
             legacy_vma->prot |= prot;
             legacy_vma->max_prot |= prot;
             legacy_vma->flags = TASK_VMA_FLAG_FILE | TASK_VMA_FLAG_LAZY |
-                                ((legacy_vma->prot & TASK_VMA_PROT_WRITE) ?
-                                 TASK_VMA_FLAG_PRIVATE : TASK_VMA_FLAG_SHARED_FILE);
+                                TASK_VMA_FLAG_PRIVATE;
             if (end > legacy_vma->end) {
                 legacy_vma->end = end;
             }
             if (ph->p_offset + ph->p_filesz > legacy_vma->file_limit) {
                 legacy_vma->file_limit = ph->p_offset + ph->p_filesz;
-                legacy_vma->file_node.size = legacy_vma->file_limit;
             }
             continue;
         }
         segment_node = *node;
-        segment_node.size = ph->p_offset + ph->p_filesz;
         *vma = (struct task_vma){
             .used = 1,
             .prot = prot,
             .max_prot = prot,
+            /* Read-only ELF pages are immutable and can be backed directly
+             * by the system page cache.  Writable segments remain private so
+             * fork/COW preserves process isolation. */
             .flags = TASK_VMA_FLAG_FILE | TASK_VMA_FLAG_LAZY |
-                     ((ph->p_flags & PF_W) ? TASK_VMA_FLAG_PRIVATE : TASK_VMA_FLAG_SHARED_FILE),
+                     ((ph->p_flags & PF_W) ? TASK_VMA_FLAG_PRIVATE :
+                      TASK_VMA_FLAG_SHARED_FILE),
             .start = start,
             .end = end,
             .file_offset = file_offset,
-            .file_limit = segment_node.size,
+            .file_limit = ph->p_offset + ph->p_filesz,
             .file_node = segment_node,
         };
     }

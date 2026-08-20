@@ -2129,6 +2129,31 @@ static int osmlayer_write_desktop_shortcut(const char *home,
 }
 
 /**
+ * @brief Reads the system language used for newly-created user resources.
+ * @return Non-zero when the system locale is Chinese; English is the fallback.
+ */
+static int osmlayer_system_language_is_chinese(void)
+{
+    char locale[64];
+    uint32_t length = 0;
+    int ret = osmlayer_service_read_file("0:/system/config/locale.conf",
+                                         locale, sizeof(locale) - 1u, &length);
+    if (ret < 0 || length == 0) {
+        return 0;
+    }
+    locale[length < sizeof(locale) ? length : sizeof(locale) - 1u] = 0;
+    for (uint32_t i = 0; i + 6u < length; ++i) {
+        if ((locale[i] == 'l' || locale[i] == 'L') &&
+            locale[i + 1] == 'a' && locale[i + 2] == 'n' &&
+            locale[i + 3] == 'g' && locale[i + 4] == '=' &&
+            locale[i + 5] == 'z' && locale[i + 6] == 'h') {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/**
  * @brief Coordinates the osmlayer seed desktop shortcuts operation.
  * @param username Input or output value used by this operation.
  * @return Result, status, or value defined by this API.
@@ -2136,21 +2161,25 @@ static int osmlayer_write_desktop_shortcut(const char *home,
 static int osmlayer_seed_desktop_shortcuts(const char *username)
 {
     char home[LEONOS_AUTH_HOME_LEN];
+    int chinese = osmlayer_system_language_is_chinese();
     static const struct {
-        const char *name;
+        const char *name_en;
+        const char *name_zh;
         const char *target;
     } shortcuts[] = {
-        {"File Manager.lnk", "0:/system/apps/fileman/fileman.elf"},
-        {"Task Manager.lnk", "0:/system/apps/taskmgr/taskmgr.elf"},
-        {"Settings.lnk", "0:/system/apps/settings/settings.elf"},
-        {"Browser.lnk", "0:/programs/browser/browser.elf"},
+        {"File Manager.lnk", "文件管理器.lnk", "0:/system/apps/fileman/fileman.elf"},
+        {"Task Manager.lnk", "任务管理器.lnk", "0:/system/apps/taskmgr/taskmgr.elf"},
+        {"Settings.lnk", "设置.lnk", "0:/system/apps/settings/settings.elf"},
+        {"Browser.lnk", "浏览器.lnk", "0:/programs/browser/browser.elf"},
     };
     if (!osmlayer_username_valid(username)) {
         return -22;
     }
     osmlayer_home_for_user(home, sizeof(home), username);
     for (uint32_t i = 0; i < sizeof(shortcuts) / sizeof(shortcuts[0]); ++i) {
-        int ret = osmlayer_write_desktop_shortcut(home, shortcuts[i].name,
+        int ret = osmlayer_write_desktop_shortcut(home,
+                                                  chinese ? shortcuts[i].name_zh
+                                                          : shortcuts[i].name_en,
                                                   shortcuts[i].target);
         if (ret < 0) {
             return ret;

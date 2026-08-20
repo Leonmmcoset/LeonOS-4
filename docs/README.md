@@ -10,6 +10,8 @@ when changing the kernel, loader, middlelayer, installer, or user ABI.
   bundled `.hlp` help documents, and current limits.
 - [Drivers](DRIVERS.md): bootstrap drivers, loadable `.drv` modules, ABI, and
   management policy.
+- [Kernel Debug](KERNEL_DEBUG.md): five-click activation, one-shot boot state,
+  `kerneldebug.sys`, and the ostui diagnostic interface.
 - [Boot and Integrity](BOOT_AND_INTEGRITY.md): loader boot flow, SHA-256
   component checks, installer compatibility, and trust boundary.
 - [Middlelayer](MIDDLELAYER.md): current middlelayer services, ABI files, and

@@ -56,6 +56,7 @@ def stage_installer_tree(
     copy_file(boot_efi, stage / "EFI/BOOT/BOOTX64.EFI")
     copy_file(ROOT / "boot/grub/installer.cfg", stage / "boot/grub/grub.cfg")
     copy_file(grub_font, stage / "boot/grub/fonts/leonos-unicode.pf2")
+    copy_file(ROOT / "boot/grub/theme/theme.txt", stage / "boot/grub/theme/theme.txt")
     (stage / "boot/leonos-installer-iso.marker").write_text("LeonOS installer ISO volume\n", encoding="ascii")
     copy_file(loader, stage / "boot/loader.elf")
     copy_file(kernel, stage / "system/kernel.sys")

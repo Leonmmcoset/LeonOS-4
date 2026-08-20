@@ -113,6 +113,7 @@ MINESWEEPER_ASSETS = [
     "minesweeper-flag.bmp",
 ]
 SYSTEM_FILES = [
+    ("logo.png", "system/resources/logo.png"),
     ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
     ("system/resources/wallpaper-metro.bmp", "system/resources/wallpaper-metro.bmp"),
     ("system/certs/cacert.pem", "system/certs/cacert.pem"),
@@ -431,7 +432,7 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
     ovmf = config_string(values, "CONFIG_QEMU_OVMF_PATH")
     if ovmf:
         command += ["-bios", ovmf]
-    command += ["-serial", "stdio", "-display", "none" if debug or iso else os.environ.get("LEONOS_QEMU_DISPLAY", "sdl")]
+    command += ["-serial", "stdio"]
     command += ["-device", f"VGA,xres={width},yres={height}"]
     if debug or iso:
         command += ["-no-reboot", "-no-shutdown"]
@@ -909,7 +910,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     )
 
     loader_sources = collect("boot/loader/**/*.c", "boot/loader/**/*.S")
-    kernel_sources = collect("kernel/ntclks/**/*.c", "kernel/ntclks/**/*.S", "drivers/bootstrap/**/*.c", "drivers/bootstrap/**/*.S")
+    kernel_sources = collect("kernel/ntclks/**/*.c", "kernel/ntclks/**/*.S", "kernel/ostui/**/*.c", "drivers/bootstrap/**/*.c", "drivers/bootstrap/**/*.S")
     rust_sources = collect("middlelayer/osmlayer/src/**/*.rs")
     kernel_objects: list[Path] = []
     for source in kernel_sources:
@@ -955,6 +956,24 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         )
     )
     graph.add(Target(name="kernel", depends_on=("kernel-image", "kernel-debug"), group=True, kind="aggregate"))
+
+    kerneldebug_source = ROOT / "kernel/kerneldebug/kerneldebug.c"
+    kerneldebug_sys = paths.out / "system/kerneldebug.sys"
+    kerneldebug_obj = add_compile(
+        graph, paths, "compile:kerneldebug:module", kerneldebug_source,
+        "kerneldebug", cflags_kernel + ["-fno-pic", "-fno-pie"], (autoconf,))
+    graph.add(Target(
+        name="kerneldebug-module",
+        outputs=(kerneldebug_sys,),
+        inputs=(kerneldebug_obj,),
+        depends_on=("compile:kerneldebug:module",),
+        kind="generate",
+        command=(objcopy, "--remove-section", ".llvm_addrsig", "--remove-section", ".comment",
+                 "--remove-section", ".note.GNU-stack", "--rename-section",
+                 ".note.leonos.kerneldebug=.note.leonos.kerneldebug,alloc,load,readonly,data,contents",
+                 relative(kerneldebug_obj), relative(kerneldebug_sys)),
+        action_key="kerneldebug-module-v2",
+    ))
 
     rust_obj = paths.objects / "middlelayer/osmlayer.o"
     middle_runtime = ROOT / "middlelayer/osmlayer/runtime.c"
@@ -1825,15 +1844,23 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         command=tuple(sdk_command),
     ))
 
+    grub_bdf = paths.out / "generated/grub/leonos-pixel.bdf"
+    graph.add(Target(
+        name="grub-bdf",
+        outputs=(grub_bdf,),
+        inputs=(ROOT / "tools/make_grub_font.py", ROOT / "system/fonts/system.psf"),
+        kind="generate",
+        command=(PYTHON, "tools/make_grub_font.py", "--out", relative(grub_bdf)),
+    ))
     grub_font = paths.out / "generated/grub/leonos-unicode.pf2"
     graph.add(Target(
         name="grub-font",
         outputs=(grub_font,),
-        inputs=(ROOT / "system/fonts/Deng.ttf",),
+        inputs=(grub_bdf,),
+        depends_on=("grub-bdf",),
         kind="generate",
         command=(
-            "grub-mkfont", "-s", "16", "-n", "LeonOS Unicode",
-            "-o", relative(grub_font), "system/fonts/Deng.ttf",
+            "grub-mkfont", "-n", "LeonOS Pixel", "-o", relative(grub_font), relative(grub_bdf),
         ),
     ))
     grub_efi = paths.staging / "EFI/BOOT/BOOTX64.EFI"
@@ -1905,11 +1932,21 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     target = add_copy(graph, "esp:grub-font", grub_font, grub_font_destination)
     esp_names.append(target.name)
     esp_outputs.append(grub_font_destination)
+    grub_theme = ROOT / "boot/grub/theme/theme.txt"
+    grub_theme_destination = paths.staging / "boot/grub/theme/theme.txt"
+    target = add_copy(graph, "esp:grub-theme", grub_theme, grub_theme_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(grub_theme_destination)
     for source, destination_rel in [(ROOT / "boot/grub/grub.cfg", "boot/grub/grub.cfg"), (loader_elf, "boot/loader.elf"), (kernel_sys, "system/kernel.sys"), (middle_sys, "system/middlelayer.sys")]:
         destination = paths.staging / destination_rel
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    kerneldebug_destination = paths.staging / "system/kerneldebug.sys"
+    target = add_copy(graph, "esp:system/kerneldebug.sys", kerneldebug_sys, kerneldebug_destination)
+    esp_names.append(target.name)
+    esp_names.append("kerneldebug-module")
+    esp_outputs.append(kerneldebug_destination)
     manifest = paths.staging / "system/osmlayer.manifest"
     graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=1\nroot=0:/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v2"))
     esp_names.append("esp:manifest")
@@ -2269,9 +2306,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], installer_runtime_so, *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), depends_on=("esp", "installer-runtime"), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--policy-runtime", relative(installer_runtime_so), "--policy-apps", *installer_policy_apps, "--userland-dir", relative(paths.out / "userland"), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
     installer_iso = paths.images / "leonos4-installer.iso"
     installer_boot_image = paths.out / "install/installer-efiboot.img"
-    graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_font, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
+    graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_font, grub_theme, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
 
-    graph.add(Target(name="all", depends_on=("config-sync", "build-info", "loader", "kernel", "drivers", "middlelayer", "userland", "sdk", "esp"), group=True, kind="aggregate"))
+    graph.add(Target(name="all", depends_on=("config-sync", "build-info", "loader", "kernel", "kerneldebug-module", "drivers", "middlelayer", "userland", "sdk", "esp"), group=True, kind="aggregate"))
     graph.add(Target(name="run", inputs=(vmdk,), depends_on=("image-vmdk",), kind="command", command=qemu_command(paths, values)))
     graph.add(Target(name="run-debug", inputs=(vmdk,), depends_on=("image-vmdk",), kind="command", command=qemu_command(paths, values, debug=True)))
     graph.add(Target(name="run-iso", inputs=(vmdk, iso), depends_on=("image-vmdk", "image-iso"), kind="command", command=qemu_command(paths, values, debug=True, iso=True)))

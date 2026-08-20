@@ -112,6 +112,27 @@ root filesystem is mounted. The complete binary format, restricted kernel API,
 and persistent `0:/system/config/drivers.conf` policy are documented in
 [Drivers](DRIVERS.md).
 
+## Kernel Debug Module ABI
+
+`0:/system/kerneldebug.sys` is a built-in-only x86_64 little-endian `ET_REL`
+module. It must contain a `.note.leonos.kerneldebug` ELF note owned by
+`LEONKDBG`, type `0x4c4b4447`, ABI `1`, and the fixed entry-name hash. The
+loader accepts only PIC-free kernel sections and the `NONE`, `64`, `32`,
+`32S`, `PC32`, and `PLT32` relocations; dynamic segments, TLS, IFUNC,
+undefined symbols, W+X sections, and unknown sections are rejected.
+
+The module receives the fixed `leonos_kernel_debug_api` table declared in
+`kernel/ntclks/include/ntclks/kernel_debug.h`. It provides ostui output/input,
+TSC timing, controlled syscall/ioctl benchmark callbacks, and explicit
+continue, reboot, and shutdown operations. A valid module owns the diagnostic
+session; the kernel's minimal menu is only a recovery path for a missing or
+rejected module.
+
+The one-shot marker is `2:/system/state/kerneldebug.next`. The loader consumes
+and deletes it before validating its contents, preventing repeated entry after
+an interrupted or malformed debug boot. The persistent activation flag is
+`0:/system/state/kerneldebug.enabled`.
+
 ## Appearance ABI
 
 The runtime UI appearance is a Desktop-owned state. `Metro` is the default
@@ -126,6 +147,12 @@ Per-user personalization is saved separately in
 and Win95 basic color scheme IDs, a wallpaper display mode, and a wallpaper BMP
 path. Wallpaper BMP decoding is bounded to 1280 x 720 and accepts
 uncompressed 24-bit or 32-bit BMP files.
+
+The independent color scheme IDs are `Blue`, `Teal`, `Green`, `Purple`,
+`Red`, `Graphite`, and `Kawaii Pink`. The `Kawaii Pink` scheme is available
+for both Metro and Win95; each theme keeps its own palette and persisted
+`metro.color` / `win95.color` value. Its configuration value remains `pink`
+for compatibility.
 
 `LEONOS_GUI_IOCTL_APPEARANCE_STATE` reads the current Desktop-published state.
 Logged-in user tasks may submit `LEONOS_GUI_IOCTL_APPEARANCE_REQUEST`; the

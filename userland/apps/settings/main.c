@@ -254,6 +254,8 @@ static const char *theme_color_label(uint32_t scheme)
         return T("Red", "红色");
     case LEONOS_UI_COLOR_SCHEME_GRAPHITE:
         return T("Graphite", "石墨色");
+    case LEONOS_UI_COLOR_SCHEME_PINK:
+        return T("Kawaii Pink", "卡哇伊粉");
     default:
         return T("Blue", "蓝色");
     }

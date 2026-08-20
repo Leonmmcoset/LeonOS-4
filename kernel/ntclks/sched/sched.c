@@ -9,15 +9,131 @@
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
+#include <ntclks/heap.h>
 
-static struct task tasks[SCHED_TASK_MAX];
+/* The table grows by moving only pointers; task objects keep stable addresses
+ * because wait queues and interrupt paths may retain struct task pointers. */
+static struct task **tasks;
 static uint32_t task_count;
+static uint32_t task_capacity;
 static uint32_t next_pid = 1;
 static uint32_t current_pid;
 static uint32_t next_session_id = 1;
 static uint64_t scheduler_ticks;
 static uint64_t scheduler_busy_ticks;
 static uint64_t scheduler_idle_ticks;
+
+struct task_vma *sched_task_vma_at(struct task *task, uint32_t index)
+{
+    if (!task) {
+        return NULL;
+    }
+    if (index < SCHED_TASK_VMA_MAX) {
+        return &task->vmas[index];
+    }
+    index -= SCHED_TASK_VMA_MAX;
+    if (index >= task->vma_extra_count) {
+        uint32_t wanted = index + 1u;
+        uint32_t capacity = task->vma_extra_capacity ? task->vma_extra_capacity : 16u;
+        struct task_vma *replacement;
+        while (capacity < wanted) {
+            if (capacity > UINT32_MAX / 2u) {
+                return NULL;
+            }
+            capacity *= 2u;
+        }
+        replacement = (struct task_vma *)kernel_malloc(
+            (size_t)capacity * sizeof(*replacement));
+        if (!replacement) {
+            return NULL;
+        }
+        for (uint32_t i = 0; i < capacity; ++i) {
+            replacement[i] = (struct task_vma){0};
+        }
+        for (uint32_t i = 0; i < task->vma_extra_count; ++i) {
+            replacement[i] = task->vma_extra[i];
+        }
+        if (task->vma_extra) {
+            kernel_free(task->vma_extra);
+        }
+        task->vma_extra = replacement;
+        task->vma_extra_capacity = capacity;
+        task->vma_extra_count = wanted;
+    }
+    return &task->vma_extra[index];
+}
+
+uint32_t sched_task_vma_capacity(const struct task *task)
+{
+    return task ? SCHED_TASK_VMA_MAX + task->vma_extra_count : 0;
+}
+
+void sched_task_vma_release(struct task *task)
+{
+    if (!task || !task->vma_extra) {
+        return;
+    }
+    kernel_free(task->vma_extra);
+    task->vma_extra = NULL;
+    task->vma_extra_count = 0;
+    task->vma_extra_capacity = 0;
+}
+
+struct task_file *sched_task_file_at(struct task *task, uint32_t index)
+{
+    if (!task) {
+        return NULL;
+    }
+    if (index < SCHED_TASK_FILE_MAX) {
+        return &task->files[index];
+    }
+    index -= SCHED_TASK_FILE_MAX;
+    if (index >= task->file_extra_count) {
+        uint32_t wanted = index + 1u;
+        uint32_t capacity = task->file_extra_capacity ? task->file_extra_capacity : 16u;
+        struct task_file *replacement;
+        while (capacity < wanted) {
+            if (capacity > UINT32_MAX / 2u) {
+                return NULL;
+            }
+            capacity *= 2u;
+        }
+        replacement = (struct task_file *)kernel_malloc(
+            (size_t)capacity * sizeof(*replacement));
+        if (!replacement) {
+            return NULL;
+        }
+        for (uint32_t i = 0; i < capacity; ++i) {
+            replacement[i] = (struct task_file){0};
+        }
+        for (uint32_t i = 0; i < task->file_extra_count; ++i) {
+            replacement[i] = task->file_extra[i];
+        }
+        if (task->file_extra) {
+            kernel_free(task->file_extra);
+        }
+        task->file_extra = replacement;
+        task->file_extra_capacity = capacity;
+        task->file_extra_count = wanted;
+    }
+    return &task->file_extra[index];
+}
+
+uint32_t sched_task_file_capacity(const struct task *task)
+{
+    return task ? SCHED_TASK_FILE_MAX + task->file_extra_count : 0;
+}
+
+void sched_task_file_release(struct task *task)
+{
+    if (!task || !task->file_extra) {
+        return;
+    }
+    kernel_free(task->file_extra);
+    task->file_extra = NULL;
+    task->file_extra_count = 0;
+    task->file_extra_capacity = 0;
+}
 
 /**
  * @brief Coordinates the str eq operation.
@@ -174,7 +290,9 @@ static void task_copy_identity_from_parent(struct task *task, const struct task 
  */
 void sched_init(void)
 {
+    tasks = NULL;
     task_count = 0;
+    task_capacity = 0;
     next_pid = 1;
     current_pid = 0;
     next_session_id = 1;
@@ -199,23 +317,72 @@ static void task_zero(struct task *task)
 }
 
 /**
+ * @brief Allocates a PID that is not currently present in the task table.
+ * @return A non-zero PID, or zero when the identifier space is exhausted.
+ */
+static uint32_t task_allocate_pid(void)
+{
+    for (uint64_t attempt = 0; attempt < UINT32_MAX; ++attempt) {
+        uint32_t candidate = next_pid++;
+        uint32_t used = 0;
+        if (candidate == 0) {
+            continue;
+        }
+        for (uint32_t i = 0; i < task_count; ++i) {
+            if (tasks[i] && tasks[i]->pid == candidate) {
+                used = 1;
+                break;
+            }
+        }
+        if (!used) {
+            return candidate;
+        }
+    }
+    return 0;
+}
+
+/**
  * @brief Allocates task slot.
  * @return Result, status, or value defined by this API.
  */
 static struct task *alloc_task_slot(void)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].state == TASK_EXITED &&
-            (!(tasks[i].flags & TASK_FLAG_WAITABLE_CHILD) || tasks[i].parent_pid == 0)) {
-            sched_release_task_resources(&tasks[i]);
-            task_zero(&tasks[i]);
-            return &tasks[i];
+        if (tasks[i] && tasks[i]->state == TASK_EXITED &&
+            (!(tasks[i]->flags & TASK_FLAG_WAITABLE_CHILD) || tasks[i]->parent_pid == 0)) {
+            sched_release_task_resources(tasks[i]);
+            task_zero(tasks[i]);
+            return tasks[i];
         }
     }
-    if (task_count >= SCHED_TASK_MAX) {
+
+    if (task_count == task_capacity) {
+        uint32_t new_capacity = task_capacity ? task_capacity * 2u : SCHED_TASK_MAX;
+        struct task **replacement;
+        if (new_capacity < task_capacity || new_capacity > UINT32_MAX / sizeof(*tasks)) {
+            return NULL;
+        }
+        replacement = (struct task **)kernel_malloc(
+            (size_t)new_capacity * sizeof(*replacement));
+        if (!replacement) {
+            return NULL;
+        }
+        for (uint32_t i = 0; i < new_capacity; ++i) {
+            replacement[i] = i < task_count ? tasks[i] : NULL;
+        }
+        if (tasks) {
+            kernel_free(tasks);
+        }
+        tasks = replacement;
+        task_capacity = new_capacity;
+    }
+
+    tasks[task_count] = (struct task *)kernel_malloc(sizeof(struct task));
+    if (!tasks[task_count]) {
         return NULL;
     }
-    return &tasks[task_count++];
+    task_zero(tasks[task_count]);
+    return tasks[task_count++];
 }
 
 /**
@@ -227,21 +394,29 @@ static struct task *alloc_task_slot(void)
 uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
 {
     struct task *task = alloc_task_slot();
+    uint32_t pid;
     if (!task) {
         return 0;
     }
+    pid = task_allocate_pid();
+    if (!pid) {
+        task_zero(task);
+        task->state = TASK_EXITED;
+        return 0;
+    }
     task_zero(task);
-    task->pid = next_pid++;
+    task->pid = pid;
     task->parent_pid = 0;
     task->process_group = 0;
     task->process_session = 0;
     task_copy_name(task, name);
     task->entry = entry;
     task->stack_top = 0;
+    task->stack_low = 0;
     task->wake_tick = 0;
     task->priority = 0;
     task->pending_signals = 0;
-    task->rlimit_nofile = SCHED_TASK_FILE_MAX;
+    task->rlimit_nofile = SCHED_TASK_FILE_LIMIT;
     task->rlimit_as = 0;
     task->wait_window_id = 0;
     task->exit_code = 0;
@@ -277,21 +452,30 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
                                 uint32_t parent_pid, uint32_t flags)
 {
     struct task *task = alloc_task_slot();
+    uint32_t pid;
     if (!task) {
         return 0;
     }
+    pid = task_allocate_pid();
+    if (!pid) {
+        task_zero(task);
+        task->state = TASK_EXITED;
+        return 0;
+    }
     task_zero(task);
-    task->pid = next_pid++;
+    task->pid = pid;
     task->parent_pid = parent_pid;
     task->process_group = task->pid;
     task->process_session = task->pid;
     task_copy_name(task, name);
     task->entry = entry;
     task->stack_top = stack_top;
+    task->stack_low = stack_top >= (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL ?
+                      stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL : 0;
     task->wake_tick = 0;
     task->priority = 0;
     task->pending_signals = 0;
-    task->rlimit_nofile = SCHED_TASK_FILE_MAX;
+    task->rlimit_nofile = SCHED_TASK_FILE_LIMIT;
     task->rlimit_as = 0;
     task->wait_window_id = 0;
     task->exit_code = 0;
@@ -362,15 +546,23 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     if (!child) {
         return -12;
     }
+    child_pid = task_allocate_pid();
+    if (!child_pid) {
+        task_zero(child);
+        child->state = TASK_EXITED;
+        return -12;
+    }
     task_zero(child);
     *child = *parent;
-    child->pid = next_pid++;
-    child_pid = child->pid;
+    child->pid = child_pid;
     child->parent_pid = parent->pid;
     child->as = empty_as;
     child->image = NULL;
     child->image_len = 0;
-    child->flags &= ~(TASK_FLAG_RESOURCES_RELEASED | TASK_FLAG_PENDING_LOAD);
+    /* Service and window-server authority belongs to the launched image, not
+     * to an arbitrary child created by that process. */
+    child->flags &= ~(TASK_FLAG_RESOURCES_RELEASED | TASK_FLAG_PENDING_LOAD |
+                      TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER);
     child->flags |= TASK_FLAG_WAITABLE_CHILD | TASK_FLAG_STARTED;
     child->state = TASK_READY;
     child->wake_tick = 0;
@@ -387,8 +579,43 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
         child->flags = TASK_FLAG_RESOURCES_RELEASED;
         return -12;
     }
+    child->vma_extra = NULL;
+    child->vma_extra_count = 0;
+    child->vma_extra_capacity = 0;
+    if (parent->vma_extra_count) {
+        for (uint32_t i = 0; i < parent->vma_extra_count; ++i) {
+            struct task_vma *dst = sched_task_vma_at(child, SCHED_TASK_VMA_MAX + i);
+            if (!dst) {
+                address_space_destroy(&child->as);
+                sched_task_vma_release(child);
+                task_zero(child);
+                child->state = TASK_EXITED;
+                child->flags = TASK_FLAG_RESOURCES_RELEASED;
+                return -12;
+            }
+            *dst = parent->vma_extra[i];
+        }
+    }
+    child->file_extra = NULL;
+    child->file_extra_count = 0;
+    child->file_extra_capacity = 0;
+    for (uint32_t i = 0; i < parent->file_extra_count; ++i) {
+        struct task_file *dst = sched_task_file_at(child, SCHED_TASK_FILE_MAX + i);
+        if (!dst) {
+            address_space_destroy(&child->as);
+            sched_task_vma_release(child);
+            sched_task_file_release(child);
+            task_zero(child);
+            child->state = TASK_EXITED;
+            child->flags = TASK_FLAG_RESOURCES_RELEASED;
+            return -12;
+        }
+        *dst = parent->file_extra[i];
+    }
     if (syscall_clone_task_files(parent, child) < 0) {
         address_space_destroy(&child->as);
+        sched_task_vma_release(child);
+        sched_task_file_release(child);
         task_zero(child);
         child->state = TASK_EXITED;
         child->flags = TASK_FLAG_RESOURCES_RELEASED;
@@ -531,6 +758,7 @@ void sched_create_idle_task(void)
     task_copy_name(task, "idle");
     task->entry = 0;
     task->stack_top = 0;
+    task->stack_low = 0;
     task->wake_tick = 0;
     task->wait_window_id = 0;
     task->exit_code = 0;
@@ -558,10 +786,10 @@ void sched_set_running(uint32_t pid)
 {
     current_pid = pid;
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].pid == pid) {
-            tasks[i].state = TASK_RUNNING;
-        } else if (tasks[i].state == TASK_RUNNING) {
-            tasks[i].state = TASK_READY;
+        if (tasks[i]->pid == pid) {
+            tasks[i]->state = TASK_RUNNING;
+        } else if (tasks[i]->state == TASK_RUNNING) {
+            tasks[i]->state = TASK_READY;
         }
     }
 }
@@ -574,27 +802,27 @@ void sched_set_running(uint32_t pid)
 void sched_exit(uint32_t pid, uint64_t code)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].pid == pid) {
+        if (tasks[i]->pid == pid) {
             /* Exit paths such as SIGKILL and a failed lazy image load bypass
              * the normal SYS_exit handler.  Close their descriptors here so
              * pipe readers receive EOF once the final writer is gone. */
-            syscall_release_task_files(&tasks[i]);
-            tasks[i].state = TASK_EXITED;
-            tasks[i].exit_code = code;
-            tasks[i].child_event = TASK_CHILD_EVENT_NONE;
-            tasks[i].stop_signal = 0;
+            syscall_release_task_files(tasks[i]);
+            tasks[i]->state = TASK_EXITED;
+            tasks[i]->exit_code = code;
+            tasks[i]->child_event = TASK_CHILD_EVENT_NONE;
+            tasks[i]->stop_signal = 0;
             console_printf("[ntclks] scheduler task exited pid=%u name=%s code=%llu\n",
                            pid,
-                           tasks[i].name,
+                           tasks[i]->name,
                            (unsigned long long)code);
             break;
         }
     }
     inputm_destroy_owner(pid);
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].parent_pid == pid) {
-            tasks[i].parent_pid = 0;
-            tasks[i].flags &= ~TASK_FLAG_WAITABLE_CHILD;
+        if (tasks[i]->parent_pid == pid) {
+            tasks[i]->parent_pid = 0;
+            tasks[i]->flags &= ~TASK_FLAG_WAITABLE_CHILD;
         }
     }
     if (current_pid == pid) {
@@ -615,6 +843,8 @@ void sched_release_task_resources(struct task *task)
     storage_drain_task_io(task->pid);
     syscall_release_task_files(task);
     address_space_destroy(&task->as);
+    sched_task_vma_release(task);
+    sched_task_file_release(task);
     task->flags |= TASK_FLAG_RESOURCES_RELEASED;
 }
 
@@ -633,11 +863,11 @@ void sched_on_tick(void)
         ++scheduler_idle_ticks;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].state == TASK_BLOCKED && tasks[i].wake_tick &&
-            tasks[i].wake_tick <= scheduler_ticks) {
-            tasks[i].wake_tick = 0;
-            tasks[i].wait_window_id = 0;
-            tasks[i].state = TASK_READY;
+        if (tasks[i]->state == TASK_BLOCKED && tasks[i]->wake_tick &&
+            tasks[i]->wake_tick <= scheduler_ticks) {
+            tasks[i]->wake_tick = 0;
+            tasks[i]->wait_window_id = 0;
+            tasks[i]->state = TASK_READY;
         }
     }
 }
@@ -649,6 +879,14 @@ void sched_on_tick(void)
 uint64_t sched_tick_count(void)
 {
     return scheduler_ticks;
+}
+
+void sched_yield_current(void)
+{
+    /* The kernel debugger runs before the first user task exists.  A real
+     * context switch is therefore neither useful nor safe here; the timer
+     * interrupt remains the scheduling boundary for the normal system. */
+    __asm__ volatile("pause");
 }
 
 /**
@@ -680,11 +918,11 @@ void sched_task_counts(uint32_t *out_task_count, uint32_t *running_tasks,
     uint32_t ready = 0;
     uint32_t sleeping = 0;
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].state == TASK_RUNNING) {
+        if (tasks[i]->state == TASK_RUNNING) {
             ++running;
-        } else if (tasks[i].state == TASK_READY) {
+        } else if (tasks[i]->state == TASK_READY) {
             ++ready;
-        } else if (tasks[i].state == TASK_BLOCKED) {
+        } else if (tasks[i]->state == TASK_BLOCKED) {
             ++sleeping;
         }
     }
@@ -719,8 +957,8 @@ uint32_t sched_current_pid(void)
 struct task *sched_find(uint32_t pid)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].pid == pid) {
-            return &tasks[i];
+        if (tasks[i]->pid == pid) {
+            return tasks[i];
         }
     }
     return NULL;
@@ -734,8 +972,8 @@ struct task *sched_find(uint32_t pid)
 struct task *sched_find_by_name(const char *name)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (str_eq(tasks[i].name, name)) {
-            return &tasks[i];
+        if (str_eq(tasks[i]->name, name)) {
+            return tasks[i];
         }
     }
     return NULL;
@@ -749,9 +987,9 @@ struct task *sched_find_by_name(const char *name)
 struct task *sched_find_by_path(const char *path)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].pid && tasks[i].kind == TASK_KIND_USER &&
-            tasks[i].state != TASK_EXITED && str_eq(tasks[i].path, path)) {
-            return &tasks[i];
+        if (tasks[i]->pid && tasks[i]->kind == TASK_KIND_USER &&
+            tasks[i]->state != TASK_EXITED && str_eq(tasks[i]->path, path)) {
+            return tasks[i];
         }
     }
     return NULL;
@@ -765,10 +1003,10 @@ struct task *sched_find_by_path(const char *path)
 struct task *sched_find_by_path_basename(const char *basename)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].pid && tasks[i].kind == TASK_KIND_USER &&
-            tasks[i].state != TASK_EXITED &&
-            str_eq(task_path_basename(tasks[i].path), basename)) {
-            return &tasks[i];
+        if (tasks[i]->pid && tasks[i]->kind == TASK_KIND_USER &&
+            tasks[i]->state != TASK_EXITED &&
+            str_eq(task_path_basename(tasks[i]->path), basename)) {
+            return tasks[i];
         }
     }
     return NULL;
@@ -781,10 +1019,10 @@ struct task *sched_find_by_path_basename(const char *basename)
 struct task *sched_find_window_server(void)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].pid && tasks[i].kind == TASK_KIND_USER &&
-            tasks[i].state != TASK_EXITED &&
-            (tasks[i].flags & TASK_FLAG_WINDOW_SERVER)) {
-            return &tasks[i];
+        if (tasks[i]->pid && tasks[i]->kind == TASK_KIND_USER &&
+            tasks[i]->state != TASK_EXITED &&
+            (tasks[i]->flags & TASK_FLAG_WINDOW_SERVER)) {
+            return tasks[i];
         }
     }
     return NULL;
@@ -813,7 +1051,7 @@ bool sched_drive_in_use(uint32_t drive)
         return drive == 0;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        const struct task *task = &tasks[i];
+        const struct task *task = tasks[i];
         if (!task->pid || task->state == TASK_EXITED) {
             continue;
         }
@@ -822,8 +1060,9 @@ bool sched_drive_in_use(uint32_t drive)
             task->image_node.drive == drive) {
             return true;
         }
-        for (uint32_t fd = 0; fd < SCHED_TASK_FILE_MAX; ++fd) {
-            if (task->files[fd].used && task->files[fd].node.drive == drive) {
+        for (uint32_t fd = 0; fd < sched_task_file_capacity(task); ++fd) {
+            const struct task_file *file = sched_task_file_at((struct task *)task, fd);
+            if (file && file->used && file->node.drive == drive) {
                 return true;
             }
         }
@@ -861,7 +1100,7 @@ struct task *sched_select_next_user(void)
     uint32_t current_index = 0;
     struct task *best = NULL;
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].pid == current_pid) {
+        if (tasks[i]->pid == current_pid) {
             current_index = i;
             break;
         }
@@ -876,16 +1115,16 @@ struct task *sched_select_next_user(void)
      */
     for (uint32_t n = 1; n <= task_count; ++n) {
         uint32_t i = (current_index + n) % task_count;
-        if (tasks[i].kind != TASK_KIND_USER || tasks[i].state != TASK_READY) {
+        if (tasks[i]->kind != TASK_KIND_USER || tasks[i]->state != TASK_READY) {
             continue;
         }
-        if ((!tasks[i].entry && !(tasks[i].image && tasks[i].image_len) &&
-             !(tasks[i].flags & TASK_FLAG_PENDING_LOAD)) ||
-            !tasks[i].stack_top || !tasks[i].as.cr3) {
+        if ((!tasks[i]->entry && !(tasks[i]->image && tasks[i]->image_len) &&
+             !(tasks[i]->flags & TASK_FLAG_PENDING_LOAD)) ||
+            !tasks[i]->stack_top || !tasks[i]->as.cr3) {
             continue;
         }
-        if (!best || tasks[i].priority < best->priority) {
-            best = &tasks[i];
+        if (!best || tasks[i]->priority < best->priority) {
+            best = tasks[i];
         }
     }
     return best;
@@ -1053,7 +1292,7 @@ int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
         return -1;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        struct task *task = &tasks[i];
+        struct task *task = tasks[i];
         if (task->pid == 0 || task->kind != TASK_KIND_USER ||
             task->state == TASK_EXITED || task->process_group != process_group) {
             continue;
@@ -1063,7 +1302,7 @@ int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
         }
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        struct task *task = &tasks[i];
+        struct task *task = tasks[i];
         if (task->pid == 0 || task->kind != TASK_KIND_USER ||
             task->state == TASK_EXITED || task->process_group != process_group) {
             continue;
@@ -1112,7 +1351,7 @@ int sched_set_process_group(uint32_t caller_pid, uint32_t pid,
     }
     if (process_group != pid) {
         for (uint32_t i = 0; i < task_count; ++i) {
-            const struct task *member = &tasks[i];
+            const struct task *member = tasks[i];
             if (member->pid != 0 && member->kind == TASK_KIND_USER &&
                 member->state != TASK_EXITED &&
                 member->process_group == process_group &&
@@ -1163,7 +1402,7 @@ int64_t sched_create_process_session(uint32_t pid)
         return -1;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        const struct task *member = &tasks[i];
+        const struct task *member = tasks[i];
         if (member != task && member->pid != 0 && member->state != TASK_EXITED &&
             member->process_group == pid) {
             return -1;
@@ -1186,7 +1425,7 @@ int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id)
         return 0;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        const struct task *task = &tasks[i];
+        const struct task *task = tasks[i];
         if (task->pid != 0 && task->kind == TASK_KIND_USER &&
             task->state != TASK_EXITED && task->process_group == process_group &&
             task->pty_id == pty_id) {
@@ -1248,7 +1487,7 @@ int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
         return 0;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        struct task *task = &tasks[i];
+        struct task *task = tasks[i];
         if (task->pid == 0 || task->pid == keep_pid ||
             task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
             (task->flags & TASK_FLAG_SERVICE) || task->pty_id != pty_id) {
@@ -1281,7 +1520,7 @@ int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
         return 0;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        struct task *task = &tasks[i];
+        struct task *task = tasks[i];
         if (task->pid == 0 || task->pid == keep_pid ||
             task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
             task->uid != uid || task->session_id != session_id ||
@@ -1317,7 +1556,7 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
         wanted_group = waiter->process_group;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        struct task *task = &tasks[i];
+        struct task *task = tasks[i];
         if (task->pid == 0 || task->kind != TASK_KIND_USER) {
             continue;
         }
@@ -1414,23 +1653,23 @@ uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint6
     uint32_t n = task_count < capacity ? task_count : capacity;
     for (uint32_t i = 0; i < n; ++i) {
         struct task_snapshot_info *dst = &out[i];
-        dst->pid = tasks[i].pid;
-        dst->parent_pid = tasks[i].parent_pid;
-        dst->state = (uint32_t)tasks[i].state;
-        dst->kind = (uint32_t)tasks[i].kind;
-        dst->flags = tasks[i].flags;
-        dst->uid = tasks[i].uid;
-        dst->role = tasks[i].role;
-        dst->session_id = tasks[i].session_id;
-        dst->memory_kib = address_space_user_memory_kib(&tasks[i].as);
-        dst->cpu_ticks = tasks[i].cpu_ticks;
-        dst->priority = tasks[i].priority;
-        dst->pending_signals = tasks[i].pending_signals;
-        dst->wake_tick = tasks[i].wake_tick;
-        dst->entry = tasks[i].entry;
-        dst->cr3 = tasks[i].as.cr3;
-        snapshot_name(dst->name, sizeof(dst->name), tasks[i].name);
-        snapshot_name(dst->username, sizeof(dst->username), tasks[i].username);
+        dst->pid = tasks[i]->pid;
+        dst->parent_pid = tasks[i]->parent_pid;
+        dst->state = (uint32_t)tasks[i]->state;
+        dst->kind = (uint32_t)tasks[i]->kind;
+        dst->flags = tasks[i]->flags;
+        dst->uid = tasks[i]->uid;
+        dst->role = tasks[i]->role;
+        dst->session_id = tasks[i]->session_id;
+        dst->memory_kib = address_space_user_memory_kib(&tasks[i]->as);
+        dst->cpu_ticks = tasks[i]->cpu_ticks;
+        dst->priority = tasks[i]->priority;
+        dst->pending_signals = tasks[i]->pending_signals;
+        dst->wake_tick = tasks[i]->wake_tick;
+        dst->entry = tasks[i]->entry;
+        dst->cr3 = tasks[i]->as.cr3;
+        snapshot_name(dst->name, sizeof(dst->name), tasks[i]->name);
+        snapshot_name(dst->username, sizeof(dst->username), tasks[i]->username);
     }
     return n;
 }
@@ -1474,7 +1713,7 @@ void sched_set_session_identity(uint32_t parent_pid, const struct leonos_user_in
                                 uint32_t session_id)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
-        struct task *task = &tasks[i];
+        struct task *task = tasks[i];
         if (((task->flags & TASK_FLAG_SERVICE) == 0 ||
              (task->flags & TASK_FLAG_WINDOW_SERVER)) &&
             (task->pid == parent_pid || task->parent_pid == parent_pid)) {
@@ -1493,11 +1732,11 @@ void sched_clear_session_identity(uint32_t session_id)
         return;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i].session_id == session_id &&
-            ((tasks[i].flags & TASK_FLAG_SERVICE) == 0 ||
-             (tasks[i].flags & TASK_FLAG_WINDOW_SERVER))) {
-            task_clear_identity(&tasks[i]);
-            task_copy_cwd(&tasks[i], "0:/");
+        if (tasks[i]->session_id == session_id &&
+            ((tasks[i]->flags & TASK_FLAG_SERVICE) == 0 ||
+             (tasks[i]->flags & TASK_FLAG_WINDOW_SERVER))) {
+            task_clear_identity(tasks[i]);
+            task_copy_cwd(tasks[i], "0:/");
         }
     }
 }
@@ -1522,13 +1761,13 @@ void sched_dump(void)
     for (uint32_t i = 0; i < task_count; ++i) {
         console_printf("[ntclks] task[%u] pid=%u ppid=%u uid=%u role=%u name=%s state=%u kind=%u flags=0x%x\n",
                        i,
-                       tasks[i].pid,
-                       tasks[i].parent_pid,
-                       tasks[i].uid,
-                       tasks[i].role,
-                       tasks[i].name,
-                       tasks[i].state,
-                       tasks[i].kind,
-                       tasks[i].flags);
+                       tasks[i]->pid,
+                       tasks[i]->parent_pid,
+                       tasks[i]->uid,
+                       tasks[i]->role,
+                       tasks[i]->name,
+                       tasks[i]->state,
+                       tasks[i]->kind,
+                       tasks[i]->flags);
     }
 }

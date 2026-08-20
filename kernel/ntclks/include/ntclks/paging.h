@@ -8,12 +8,21 @@
 #include <ntclks/types.h>
 
 #define NTCLKS_USER_BASE 0x0000000000400000ULL
-/* Keep the user interval below the kernel's identity-mapped 128 MiB image
- * base. The extra range leaves room for large file mappings and application
- * heaps without replacing the kernel mapping in a user CR3. */
-#define NTCLKS_USER_TOP  0x0000000007000000ULL
-#define NTCLKS_USER_MMAP_BASE 0x0000000002000000ULL
+/* Keep the user interval below the kernel's low identity-map boundary.  The
+ * previous 108 MiB window made large applications and mmap users collide;
+ * 256 MiB leaves separate heap, mmap, file-map, and stack regions while still
+ * allowing the 512 MiB legacy VM configuration to boot. */
+#define NTCLKS_USER_TOP  0x0000000010000000ULL
+#define NTCLKS_USER_MMAP_BASE 0x0000000008000000ULL
+#define NTCLKS_USER_HEAP_BASE 0x0000000001000000ULL
+#define NTCLKS_USER_HEAP_LIMIT NTCLKS_USER_MMAP_BASE
 #define NTCLKS_USER_STACK_PAGES 16u
+#define NTCLKS_USER_STACK_MAX_PAGES 2048u
+/* The current loader places the kernel and middlelayer at 128 MiB.  Keep a
+ * supervisor-only hole in every user CR3 so creating user page tables never
+ * replaces those identity-mapped kernel PDEs. */
+#define NTCLKS_KERNEL_HOLE_START 0x0000000008000000ULL
+#define NTCLKS_KERNEL_HOLE_END   0x000000000c000000ULL
 #define NTCLKS_USER_PD_BYTES 0x200000ULL
 #define NTCLKS_USER_PD_START (NTCLKS_USER_BASE / NTCLKS_USER_PD_BYTES)
 #define NTCLKS_USER_PD_COUNT ((NTCLKS_USER_TOP - NTCLKS_USER_BASE) / NTCLKS_USER_PD_BYTES)
@@ -125,6 +134,7 @@ uint32_t address_space_user_memory_kib(const struct address_space *as);
  * @return Result, status, or value defined by this API.
  */
 bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top);
+bool address_space_map_user_stack_page(struct address_space *as, uint64_t page);
 /**
  * @brief Resolves a write protection fault on a copy-on-write user page.
  * @param as Faulting process address space.

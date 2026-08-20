@@ -3,6 +3,7 @@
  * Maps user pages, enforces NX/W^X permissions, and handles page protection.
  */
 #include <ntclks/mm.h>
+#include <ntclks/page_cache.h>
 #include <ntclks/paging.h>
 
 #define PAGE_SIZE 4096ULL
@@ -10,12 +11,13 @@
 #define PAGE_SIZE_FLAG 0x080ULL
 #define USER_PDPT_INDEX 0
 #define LOW_PD_INDEX 0
+#define KERNEL_PD_COUNT 16u /* 16 GiB identity map using 2 MiB leaves. */
 #define X86_EFER_MSR 0xc0000080u
 #define X86_EFER_NXE (1ULL << 11)
 
 static uint64_t kernel_pml4[512] __attribute__((aligned(4096)));
 static uint64_t kernel_pdpt[512] __attribute__((aligned(4096)));
-static uint64_t kernel_pd[4][512] __attribute__((aligned(4096)));
+static uint64_t kernel_pd[KERNEL_PD_COUNT][512] __attribute__((aligned(4096)));
 
 extern void x86_64_load_cr3(uint64_t cr3);
 extern void x86_64_invlpg(uint64_t addr);
@@ -109,7 +111,7 @@ void paging_init_user_identity(void)
     zero_table(kernel_pml4);
     zero_table(kernel_pdpt);
 
-    for (uint64_t table = 0; table < 4; ++table) {
+    for (uint64_t table = 0; table < KERNEL_PD_COUNT; ++table) {
         for (uint64_t i = 0; i < 512; ++i) {
             uint64_t addr = (table << 30) + i * PAGE_SIZE_2M;
             uint64_t flags = kernel_page_flags_for(addr);
@@ -118,7 +120,7 @@ void paging_init_user_identity(void)
     }
 
     kernel_pml4[0] = (uint64_t)(uintptr_t)kernel_pdpt | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE;
-    for (uint64_t i = 0; i < 4; ++i) {
+    for (uint64_t i = 0; i < KERNEL_PD_COUNT; ++i) {
         kernel_pdpt[i] = (uint64_t)(uintptr_t)kernel_pd[i] | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE;
     }
 
@@ -225,6 +227,7 @@ bool address_space_clone_cow(struct address_space *source, struct address_space 
             uint64_t flags;
             uint64_t phys;
             uint64_t page;
+            int cached;
             if (!(entry & NTCLKS_PAGE_PRESENT)) {
                 continue;
             }
@@ -238,8 +241,14 @@ bool address_space_clone_cow(struct address_space *source, struct address_space 
                                                NTCLKS_PAGE_USER | flags;
                 x86_64_invlpg(page);
             }
-            mm_retain_page(phys);
+            cached = page_cache_retain(phys) == 0;
+            if (!cached) {
+                mm_retain_page(phys);
+            }
             if (!address_space_map_user_page(destination, page, phys, flags)) {
+                if (cached) {
+                    page_cache_release(phys);
+                }
                 mm_free_page(phys);
                 address_space_destroy(destination);
                 return false;
@@ -263,7 +272,11 @@ void address_space_destroy(struct address_space *as)
             for (uint32_t i = 0; i < 512; ++i) {
                 uint64_t entry = as->user_pt[table][i];
                 if (entry & NTCLKS_PAGE_PRESENT) {
-                    mm_free_page(entry & NTCLKS_PHYS_ADDR_MASK);
+                    if (page_cache_owns(entry & NTCLKS_PHYS_ADDR_MASK)) {
+                        page_cache_release(entry & NTCLKS_PHYS_ADDR_MASK);
+                    } else {
+                        mm_free_page(entry & NTCLKS_PHYS_ADDR_MASK);
+                    }
                 }
             }
             mm_free_page((uint64_t)(uintptr_t)as->user_pt[table]);
@@ -298,7 +311,8 @@ bool address_space_prepare_user_range(struct address_space *as, uint64_t start,
     uint64_t first_table;
     uint64_t last_table;
 
-    if (!as || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP) {
+    if (!as || start < NTCLKS_USER_BASE || start >= end || end > NTCLKS_USER_TOP ||
+        (start < NTCLKS_KERNEL_HOLE_END && end > NTCLKS_KERNEL_HOLE_START)) {
         return false;
     }
     first_page = align_down(start, PAGE_SIZE);
@@ -338,7 +352,8 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
         return false;
     }
     uint64_t page = align_down(vaddr, PAGE_SIZE);
-    if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
+    if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP ||
+        (page >= NTCLKS_KERNEL_HOLE_START && page < NTCLKS_KERNEL_HOLE_END)) {
         return false;
     }
     uint64_t index = (page - NTCLKS_USER_BASE) / PAGE_SIZE;
@@ -485,6 +500,10 @@ uint32_t address_space_user_memory_kib(const struct address_space *as)
  */
 bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top)
 {
+    if (!as || stack_top <= (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE ||
+        stack_top > NTCLKS_USER_TOP) {
+        return false;
+    }
     uint64_t first = stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * PAGE_SIZE;
     for (uint32_t i = 0; i < NTCLKS_USER_STACK_PAGES; ++i) {
         uint64_t phys = mm_alloc_page();
@@ -495,6 +514,28 @@ bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top)
             }
             return false;
         }
+    }
+    return true;
+}
+
+bool address_space_map_user_stack_page(struct address_space *as, uint64_t page)
+{
+    uint64_t phys;
+    if (!as || (page & (PAGE_SIZE - 1ULL)) || page < NTCLKS_USER_BASE ||
+        page >= NTCLKS_USER_TOP) {
+        return false;
+    }
+    if (address_space_user_page_phys(as, page)) {
+        return true;
+    }
+    phys = mm_alloc_page();
+    if (!phys) {
+        return false;
+    }
+    if (!address_space_map_user_page(as, page, phys,
+                                     NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC)) {
+        mm_free_page(phys);
+        return false;
     }
     return true;
 }

@@ -1,0 +1,89 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "LeonOS: Debug kernel (Windows + WSL)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${config:leonos.wslProjectRoot}/build/system/kernel.unstripped",
+            "cwd": "${config:leonos.wslProjectRoot}",
+            "MIMode": "gdb",
+            "miDebuggerServerAddress": "127.0.0.1:1234",
+            "pipeTransport": {
+                "pipeProgram": "wsl.exe",
+                "pipeArgs": [
+                    "-e"
+                ],
+                "debuggerPath": "/usr/bin/gdb",
+                "pipeCwd": "${workspaceFolder}",
+                "quoteArgs": true
+            },
+            "sourceFileMap": {
+                "/mnt/d/Projects/C/LeonOS 4": "${workspaceFolder}"
+            },
+            "targetArchitecture": "x86_64",
+            "stopAtEntry": false,
+            "preLaunchTask": "LeonOS: Start QEMU for GDB",
+            "postDebugTask": "LeonOS: Stop QEMU for GDB",
+            "setupCommands": [
+                {
+                    "description": "Disable GDB pagination",
+                    "text": "set pagination off",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Allow pending breakpoints",
+                    "text": "set breakpoint pending on",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Show the next instruction",
+                    "text": "set disassemble-next-line on",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "LeonOS: Debug UEFI loader (Windows + WSL)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${config:leonos.wslProjectRoot}/build/boot/loader.elf",
+            "cwd": "${config:leonos.wslProjectRoot}",
+            "MIMode": "gdb",
+            "miDebuggerServerAddress": "127.0.0.1:1234",
+            "pipeTransport": {
+                "pipeProgram": "wsl.exe",
+                "pipeArgs": [
+                    "-e"
+                ],
+                "debuggerPath": "/usr/bin/gdb",
+                "pipeCwd": "${workspaceFolder}",
+                "quoteArgs": true
+            },
+            "sourceFileMap": {
+                "/mnt/d/Projects/C/LeonOS 4": "${workspaceFolder}"
+            },
+            "targetArchitecture": "x86_64",
+            "stopAtEntry": false,
+            "preLaunchTask": "LeonOS: Start QEMU for GDB",
+            "postDebugTask": "LeonOS: Stop QEMU for GDB",
+            "setupCommands": [
+                {
+                    "description": "Disable GDB pagination",
+                    "text": "set pagination off",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Allow pending breakpoints",
+                    "text": "set breakpoint pending on",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Show the next instruction",
+                    "text": "set disassemble-next-line on",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}

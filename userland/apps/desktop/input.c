@@ -376,6 +376,12 @@ void maybe_launch_oobe(void)
 {
     struct leonos_stat st;
     struct leonos_auth_status auth_status;
+    /* The desktop may reach this helper through both the startup path and the
+     * login fallback path.  Once the OOBE lock owns startup, only its update
+     * routine may decide whether another instance is needed. */
+    if (oobe_lock_active) {
+        return;
+    }
     if (stat("0:/system/apps/installer/installer.elf", &st) == 0 &&
         st.type == LEONOS_FS_TYPE_FILE &&
         stat(OOBE_APP_PATH, &st) < 0) {
@@ -394,7 +400,39 @@ void maybe_launch_oobe(void)
              : "[desktop.elf] administrator account missing; launching oobe.elf");
     oobe_lock_active = 1;
     oobe_last_spawn_ms = leonos_uptime_ms();
-    spawn_program_path(OOBE_APP_PATH);
+    {
+        int pid = spawn_program_path(OOBE_APP_PATH);
+        oobe_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
+    }
+}
+
+static int oobe_process_alive(void)
+{
+    struct leonos_task_info tasks[LEONOS_TASK_MAX];
+    uint64_t tick;
+    unsigned long now;
+    int count;
+    if (!oobe_spawn_pid) {
+        return 0;
+    }
+    count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &tick);
+    if (count < 0) {
+        return 1;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (tasks[i].pid == oobe_spawn_pid && tasks[i].state != 3) {
+            return 1;
+        }
+    }
+    /* fork/exec publication is asynchronous.  A missing task in the first
+     * snapshot is therefore still a live spawn reservation, not proof that
+     * the process exited. */
+    now = leonos_uptime_ms();
+    if (now - oobe_last_spawn_ms < OOBE_STARTUP_GRACE_MS) {
+        return 1;
+    }
+    oobe_spawn_pid = 0;
+    return 0;
 }
 
 int oobe_done_marker_exists(void)
@@ -462,10 +500,16 @@ void oobe_lock_update(void)
     if (oobe_window_slot() >= 0) {
         return;
     }
+    if (oobe_process_alive()) {
+        return;
+    }
     now = leonos_uptime_ms();
     if (now - oobe_last_spawn_ms >= OOBE_RESPAWN_MS) {
         oobe_last_spawn_ms = now;
-        spawn_program_path(OOBE_APP_PATH);
+        {
+            int pid = spawn_program_path(OOBE_APP_PATH);
+            oobe_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
+        }
     }
 }
 
@@ -518,11 +562,40 @@ int desktop_session_logged_in(void)
     return leonos_auth_current(&user) == 0 && user.uid != 0;
 }
 
+static int login_process_alive(void)
+{
+    struct leonos_task_info tasks[LEONOS_TASK_MAX];
+    uint64_t tick;
+    unsigned long now;
+    int count;
+    if (!login_spawn_pid) {
+        return 0;
+    }
+    count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &tick);
+    if (count < 0) {
+        return 1;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (tasks[i].pid == login_spawn_pid && tasks[i].state != 3) {
+            return 1;
+        }
+    }
+    /* The child can run before it is published in a task snapshot.  Do not
+     * interpret that short handoff as a failed login launch. */
+    now = leonos_uptime_ms();
+    if (now - login_last_spawn_ms < LOGIN_STARTUP_GRACE_MS) {
+        return 1;
+    }
+    login_spawn_pid = 0;
+    return 0;
+}
+
 void maybe_launch_login(void)
 {
     struct leonos_auth_status status;
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
+        login_spawn_pid = 0;
         desktop_load_appearance_config();
         desktop_inputm_load_config();
         desktop_inputm_launch_login_providers();
@@ -540,9 +613,13 @@ void maybe_launch_login(void)
         return;
     }
     login_lock_active = 1;
-    if (login_window_slot() < 0) {
-        login_last_spawn_ms = leonos_uptime_ms();
-        spawn_program_path(LOGIN_APP_PATH);
+    if (login_window_slot() >= 0 || login_process_alive()) {
+        return;
+    }
+    login_last_spawn_ms = leonos_uptime_ms();
+    {
+        int pid = spawn_program_path(LOGIN_APP_PATH);
+        login_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
     }
 }
 
@@ -576,6 +653,7 @@ void login_lock_update(void)
     }
     if (desktop_session_logged_in()) {
         login_lock_active = 0;
+        login_spawn_pid = 0;
         desktop_load_appearance_config();
         desktop_inputm_load_config();
         desktop_inputm_launch_login_providers();
@@ -587,18 +665,23 @@ void login_lock_update(void)
     if (login_window_slot() >= 0) {
         return;
     }
+    if (login_process_alive()) {
+        return;
+    }
     now = leonos_uptime_ms();
     if (now - login_last_spawn_ms >= LOGIN_RESPAWN_MS) {
         login_last_spawn_ms = now;
-        spawn_program_path(LOGIN_APP_PATH);
+        {
+            int pid = spawn_program_path(LOGIN_APP_PATH);
+            login_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
+        }
     }
 }
 
 void login_lock_on_window_removed(uint8_t slot)
 {
-    (void)slot;
-    if (login_lock_active) {
-        login_last_spawn_ms = 0;
+    if (login_lock_active && slot < MAX_WINDOWS && window_is_login(&windows[slot])) {
+        login_last_spawn_ms = leonos_uptime_ms();
     }
 }
 
@@ -658,6 +741,7 @@ void desktop_logout(void)
     desktop_shortcut_target[0] = 0;
     login_lock_active = 1;
     login_last_spawn_ms = 0;
+    login_spawn_pid = 0;
     desktop_startup_launched = 0;
     start_menu_set_open(0);
     maybe_launch_login();

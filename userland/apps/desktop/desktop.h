@@ -60,10 +60,16 @@
 #define OOBE_WINDOW_TITLE "LeonOS Setup"
 #define OOBE_WINDOW_TEXT "First-run setup"
 #define OOBE_RESPAWN_MS 1000UL
+/* A freshly spawned task can take several scheduler ticks before it appears
+ * in the task snapshot.  Keep the spawn reservation during that handoff. */
+#define OOBE_STARTUP_GRACE_MS 5000UL
 #define LOGIN_APP_PATH "0:/system/apps/login/login.elf"
 #define LOGIN_WINDOW_TITLE "LeonOS Login"
 #define LOGIN_WINDOW_TEXT "Sign in"
 #define LOGIN_RESPAWN_MS 1000UL
+/* Login window registration is asynchronous too.  Keep its launch reservation
+ * until the task becomes visible to the desktop or has had time to start. */
+#define LOGIN_STARTUP_GRACE_MS 5000UL
 #define SERVICE_DAEMON_PATH "0:/system/apps/serviced/serviced.elf"
 #define NETWORK_CONTROLLER_APP_PATH "0:/system/apps/netctl/netctl.elf"
 #define SERVICE_DAEMON_RETRY_MS 2000UL
@@ -302,8 +308,10 @@ extern uint8_t full_redraw_pending;
 extern uint8_t power_confirm_action;
 extern uint8_t oobe_lock_active;
 extern unsigned long oobe_last_spawn_ms;
+extern uint32_t oobe_spawn_pid;
 extern uint8_t login_lock_active;
 extern unsigned long login_last_spawn_ms;
+extern uint32_t login_spawn_pid;
 extern uint8_t desktop_startup_launched;
 extern char app_titles[MAX_WINDOWS][48];
 extern char app_texts[MAX_WINDOWS][DESKTOP_APP_TEXT_LEN];

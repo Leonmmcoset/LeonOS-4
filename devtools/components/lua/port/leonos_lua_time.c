@@ -1,6 +1,4 @@
-/*
- * Lua's standard time helpers backed by the shared LeonOS system-time ABI.
- */
+/* Lua's standard time helpers backed by the shared LeonOS system-time ABI. */
 
 #include <time.h>
 

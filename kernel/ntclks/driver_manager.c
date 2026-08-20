@@ -15,6 +15,36 @@
 
 #include "arch/x86_64/port.h"
 
+#define EARLY_SERIAL_COM1 0x3f8u
+#define EARLY_SERIAL_LSR  (EARLY_SERIAL_COM1 + 5u)
+
+/* Kernel diagnostics must be available before serial.drv is loaded.  Keep a
+ * tiny COM1 backend here; the loadable driver later replaces it through
+ * register_serial(), without changing the public console API. */
+static int early_serial_ready;
+
+static void early_serial_putc(char ch)
+{
+    uint32_t attempts = 100000u;
+    if (!early_serial_ready) {
+        return;
+    }
+    while (!(x86_64_inb((uint16_t)EARLY_SERIAL_LSR) & 0x20u) && attempts--) {
+        __asm__ volatile("pause");
+    }
+    x86_64_outb((uint8_t)ch, (uint16_t)EARLY_SERIAL_COM1);
+}
+
+static void early_serial_write(const char *text)
+{
+    while (text && *text) {
+        if (*text == '\n') {
+            early_serial_putc('\r');
+        }
+        early_serial_putc(*text++);
+    }
+}
+
 #define DRIVER_DIRECTORY "0:/drivers"
 #define DRIVER_CONFIG_PATH "0:/system/config/drivers.conf"
 #define DRIVER_CONFIG_CAP 1024U
@@ -1400,6 +1430,14 @@ void driver_manager_mouse_poll(void)
  */
 void serial_init(void)
 {
+    x86_64_outb(0x00u, (uint16_t)(EARLY_SERIAL_COM1 + 1u));
+    x86_64_outb(0x80u, (uint16_t)(EARLY_SERIAL_COM1 + 3u));
+    x86_64_outb(0x03u, (uint16_t)(EARLY_SERIAL_COM1 + 0u));
+    x86_64_outb(0x00u, (uint16_t)(EARLY_SERIAL_COM1 + 1u));
+    x86_64_outb(0x03u, (uint16_t)(EARLY_SERIAL_COM1 + 3u));
+    x86_64_outb(0xc7u, (uint16_t)(EARLY_SERIAL_COM1 + 2u));
+    x86_64_outb(0x0bu, (uint16_t)(EARLY_SERIAL_COM1 + 4u));
+    early_serial_ready = 1;
 }
 
 /**
@@ -1419,7 +1457,9 @@ void serial_write(const char *text)
 {
     if (serial_ops && serial_ops->write) {
         serial_ops->write(text);
+        return;
     }
+    early_serial_write(text);
 }
 
 /**

@@ -421,7 +421,34 @@ int mprotect(void *addr, size_t len, int prot)
 
 int chdir(const char *path)
 {
-    return (int)syscall1(SYS_chdir, (long)path);
+    char absolute_path[LEONOS_FS_PATH_LEN];
+    const char *target = path;
+    long result;
+
+    /* POSIX applications use / as the root while LeonOS paths carry an
+     * explicit drive.  Keep both spellings valid, especially for Ash's
+     * updatepwd() output and programs ported from Unix. */
+    if (path && path[0] == '/') {
+        uint32_t i = 0;
+        absolute_path[0] = '0';
+        absolute_path[1] = ':';
+        while (path[i] && i + 3U < sizeof(absolute_path)) {
+            absolute_path[i + 2U] = path[i];
+            ++i;
+        }
+        if (path[i]) {
+            errno = EINVAL;
+            return -1;
+        }
+        absolute_path[i + 2U] = 0;
+        target = absolute_path;
+    }
+    result = syscall1(SYS_chdir, (long)target);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
 }
 
 char *getcwd(char *buf, size_t len)
@@ -986,6 +1013,19 @@ static size_t format_text(char *buf, size_t cap, const char *fmt, va_list ap)
         switch (*p) {
         case 's': {
             const char *text = va_arg(ap, const char *);
+            while (text && *text && pos + 1 < cap) {
+                buf[pos++] = *text++;
+            }
+            break;
+        }
+        case 'm': {
+            /* GNU/POSIX shells use %m to format the current errno without
+             * consuming an argument.  Keep it available to BusyBox and
+             * other portable applications using the shared formatter. */
+            const char *text = strerror(errno);
+            if (!text) {
+                text = "Unknown error";
+            }
             while (text && *text && pos + 1 < cap) {
                 buf[pos++] = *text++;
             }
@@ -3954,6 +3994,47 @@ int leonos_system_reboot(void)
 int leonos_system_shutdown(void)
 {
     return ioctl(3, LEONOS_GUI_IOCTL_SHUTDOWN, 0);
+}
+
+int leonos_kernel_debug_get_state(uint32_t *flags)
+{
+    struct leonos_kernel_debug_control control = {
+        .version = LEONOS_KERNEL_DEBUG_VERSION,
+        .command = LEONOS_KERNEL_DEBUG_CONTROL_GET_STATE,
+    };
+    int ret;
+    if (!flags) return -1;
+    ret = ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+    if (ret == 0) *flags = control.result_flags;
+    return ret;
+}
+
+int leonos_kernel_debug_set_enabled(int enabled)
+{
+    struct leonos_kernel_debug_control control = {
+        .version = LEONOS_KERNEL_DEBUG_VERSION,
+        .command = LEONOS_KERNEL_DEBUG_CONTROL_SET_ENABLED,
+        .flags = enabled ? LEONOS_KERNEL_DEBUG_STATE_ENABLED : 0U,
+    };
+    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+}
+
+int leonos_kernel_debug_arm_next_boot(void)
+{
+    struct leonos_kernel_debug_control control = {
+        .version = LEONOS_KERNEL_DEBUG_VERSION,
+        .command = LEONOS_KERNEL_DEBUG_CONTROL_ARM_NEXT_BOOT,
+    };
+    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+}
+
+int leonos_kernel_debug_clear(void)
+{
+    struct leonos_kernel_debug_control control = {
+        .version = LEONOS_KERNEL_DEBUG_VERSION,
+        .command = LEONOS_KERNEL_DEBUG_CONTROL_CLEAR,
+    };
+    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
 }
 
 int leonos_readdir(int fd, struct leonos_dir_entry *entry)

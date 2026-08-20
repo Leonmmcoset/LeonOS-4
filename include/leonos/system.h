@@ -2,6 +2,7 @@
 #define LEONOS_SYSTEM_H
 
 #include <leonos/net.h>
+#include <leonos/kernel_debug.h>
 #include <stdint.h>
 
 #define LEONOS_IOCTL_SYSTEM_INFO 0x4c535953UL
@@ -14,6 +15,7 @@
 #define LEONOS_SYSTEM_VERSION_LEN 32U
 #define LEONOS_SYSTEM_TIME_LEN 32U
 #define LEONOS_SYSTEM_COPYRIGHT_LEN 96U
+#define LEONOS_SYSTEM_ARCH_LEN 16U
 #define LEONOS_MACHINE_IDENTITY_VERSION 1U
 #define LEONOS_MACHINE_IDENTITY_SOURCE_LEN 32U
 #define LEONOS_MACHINE_IDENTITY_UUID_LEN 37U
@@ -34,6 +36,7 @@ struct leonos_system_info {
     uint32_t version_patch;
     uint32_t build_number;
     uint32_t copyright_year;
+    char architecture[LEONOS_SYSTEM_ARCH_LEN];
 };
 
 struct leonos_perf_info {

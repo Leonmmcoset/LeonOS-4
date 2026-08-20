@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <leonos/posix.h>
 #include <leonos/pty.h>
+#include <leonos/system.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -152,21 +153,39 @@ int stime(const time_t *time_value)
 
 int uname(struct utsname *name)
 {
-    static const char system_name[] = "LeonOS";
-    static const char node_name[] = "leonos";
-    static const char release_name[] = "4";
-    static const char version_name[] = "LeonOS 4 userland";
-    static const char machine_name[] = "x86_64";
+    struct leonos_system_info system_info;
+    struct leonos_machine_identity identity;
+    char node_name[_UTSNAME_LENGTH];
+    uint32_t node_pos;
     if (!name) {
         errno = EINVAL;
         return -1;
     }
     memset(name, 0, sizeof(*name));
-    strncpy(name->sysname, system_name, sizeof(name->sysname) - 1);
-    strncpy(name->nodename, node_name, sizeof(name->nodename) - 1);
-    strncpy(name->release, release_name, sizeof(name->release) - 1);
-    strncpy(name->version, version_name, sizeof(name->version) - 1);
-    strncpy(name->machine, machine_name, sizeof(name->machine) - 1);
+    if (leonos_system_info(&system_info) < 0) {
+        errno = EIO;
+        return -1;
+    }
+    memset(&identity, 0, sizeof(identity));
+    leonos_machine_identity(&identity);
+    strncpy(name->sysname, system_info.kernel_name, sizeof(name->sysname) - 1U);
+    strncpy(name->release, system_info.kernel_version, sizeof(name->release) - 1U);
+    strncpy(name->version, system_info.build_time, sizeof(name->version) - 1U);
+    strncpy(name->machine, system_info.architecture,
+            sizeof(name->machine) - 1U);
+    strncpy(node_name, "leonos", sizeof(node_name) - 1U);
+    node_pos = (uint32_t)strlen(node_name);
+    if (identity.platform_uuid[0] && node_pos + 1U < sizeof(node_name)) {
+        node_name[node_pos++] = '-';
+    }
+    for (uint32_t index = 0; identity.platform_uuid[index] &&
+         node_pos + 1U < sizeof(node_name); ++index) {
+        char ch = identity.platform_uuid[index];
+        if (ch == '-') continue;
+        node_name[node_pos++] = ch;
+    }
+    node_name[node_pos] = 0;
+    strncpy(name->nodename, node_name, sizeof(name->nodename) - 1U);
     return 0;
 }
 

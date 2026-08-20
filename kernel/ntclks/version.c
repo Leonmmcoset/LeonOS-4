@@ -6,6 +6,14 @@
 
 #include <generated/build_info.h>
 
+#if defined(__x86_64__)
+#define NTCLKS_ARCHITECTURE "x86_64"
+#elif defined(__aarch64__)
+#define NTCLKS_ARCHITECTURE "aarch64"
+#else
+#define NTCLKS_ARCHITECTURE "unknown"
+#endif
+
 static const struct leonos_system_info system_info = {
     .kernel_name = LEONOS_KERNEL_NAME,
     .kernel_version = LEONOS_KERNEL_VERSION,
@@ -17,6 +25,7 @@ static const struct leonos_system_info system_info = {
     .version_patch = LEONOS_KERNEL_VERSION_PATCH,
     .build_number = LEONOS_BUILD_NUMBER,
     .copyright_year = LEONOS_COPYRIGHT_YEAR,
+    .architecture = NTCLKS_ARCHITECTURE,
 };
 
 /**

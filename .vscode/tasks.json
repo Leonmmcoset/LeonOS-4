@@ -1,0 +1,195 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "LeonOS: Build image (VMDK)",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "python3 build.py run image-vmdk --theme ${config:leonos.buildTheme}"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            }
+        },
+        {
+            "label": "LeonOS: Build all",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "python3 build.py run all --theme ${config:leonos.buildTheme}"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            }
+        },
+        {
+            "label": "LeonOS: Build kernel",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "python3 build.py run kernel --theme ${config:leonos.buildTheme}"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            }
+        },
+        {
+            "label": "LeonOS: Build installer",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "python3 build.py run installer --theme ${config:leonos.buildTheme}"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            }
+        },
+        {
+            "label": "LeonOS: Run QEMU",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "python3 build.py run run --theme ${config:leonos.buildTheme}"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true
+            }
+        },
+        {
+            "label": "LeonOS: Start QEMU for GDB",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "ovmf='${config:leonos.wslOvmfPath}'; test -r \"$ovmf\" || { echo \"OVMF not found: $ovmf\"; exit 1; }; rm -f build/qemu-vscode.pid build/qemu-vscode-serial.log; echo 'LeonOS QEMU GDB starting'; qemu-system-x86_64 -cpu max -machine q35 -m 512M -bios \"$ovmf\" -serial file:build/qemu-vscode-serial.log -device VGA,xres=1920,yres=1080 -netdev user,id=net0 -device e1000,netdev=net0 -audiodev driver=none,id=snd0 -device AC97,audiodev=snd0 -gdb tcp::1234 -S -no-reboot -no-shutdown -pidfile build/qemu-vscode.pid -drive file=build/images/leonos4.vmdk,if=none,id=sata0 -device ich9-ahci,id=ahci -device ide-hd,drive=sata0,bus=ahci.0; code=$?; rm -f build/qemu-vscode.pid; exit $code"
+            ],
+            "dependsOn": "LeonOS: Build image (VMDK)",
+            "dependsOrder": "sequence",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "leonos-qemu",
+                "pattern": {
+                    "regexp": "^$"
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^LeonOS QEMU GDB starting$",
+                    "endsPattern": "^LeonOS QEMU GDB starting$"
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": false,
+                "showReuseMessage": false,
+                "clear": true
+            }
+        },
+        {
+            "label": "LeonOS: Stop QEMU for GDB",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "if test -s build/qemu-vscode.pid; then pid=$(cat build/qemu-vscode.pid); kill -TERM \"$pid\" 2>/dev/null || true; fi; rm -f build/qemu-vscode.pid"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "never",
+                "panel": "dedicated",
+                "showReuseMessage": false
+            }
+        },
+        {
+            "label": "LeonOS: Test terminal (QMP)",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "python3 build.py test qmp-terminal"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            }
+        },
+        {
+            "label": "LeonOS: Clean build outputs",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "python3 build.py run clean --theme ${config:leonos.buildTheme}"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": false
+            }
+        }
+    ]
+}

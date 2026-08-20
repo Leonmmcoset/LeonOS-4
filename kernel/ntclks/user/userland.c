@@ -140,6 +140,7 @@ static void clear_task_vmas(struct task *task)
     for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
         task->vmas[i] = (struct task_vma){0};
     }
+    sched_task_vma_release(task);
 }
 
 /**
@@ -760,6 +761,7 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     task->as = replacement;
     task->entry = 0;
     task->stack_top = USER_STACK_TOP;
+    task->stack_low = USER_STACK_TOP - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL;
     task->image = NULL;
     task->image_len = 0;
     task->image_node = node;
@@ -773,8 +775,12 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     task->frame.rflags = 0x202;
     task->frame.rsp = USER_STACK_TOP;
     task->dynamic_launch = (struct leonos_dynamic_launch){0};
-    preserved_flags = task->flags & (TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER |
-                                     TASK_FLAG_ELEVATED_ADMIN | TASK_FLAG_WAITABLE_CHILD);
+    /* exec replaces the image and its authority.  A child of the desktop is
+     * never allowed to retain window-server/service privileges across exec. */
+    preserved_flags = task->flags & (TASK_FLAG_ELEVATED_ADMIN | TASK_FLAG_WAITABLE_CHILD);
+    if (path_is_system_service_daemon(path)) {
+        preserved_flags |= TASK_FLAG_SERVICE;
+    }
     task->flags = preserved_flags | TASK_FLAG_PENDING_LOAD;
     copy_text(task->name_storage, sizeof(task->name_storage), task_name);
     task->name = task->name_storage;

@@ -336,6 +336,9 @@ static uint32_t desktop_color_scheme_from_name(const char *name, uint32_t fallba
     if (text_eq(name, "graphite")) {
         return LEONOS_UI_COLOR_SCHEME_GRAPHITE;
     }
+    if (text_eq(name, "pink")) {
+        return LEONOS_UI_COLOR_SCHEME_PINK;
+    }
     return fallback < LEONOS_UI_COLOR_SCHEME_COUNT
                ? fallback
                : LEONOS_UI_COLOR_SCHEME_BLUE;
@@ -354,6 +357,8 @@ static const char *desktop_color_scheme_name(uint32_t scheme)
         return "red";
     case LEONOS_UI_COLOR_SCHEME_GRAPHITE:
         return "graphite";
+    case LEONOS_UI_COLOR_SCHEME_PINK:
+        return "pink";
     default:
         return "blue";
     }
