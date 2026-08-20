@@ -1,5 +1,5 @@
 # LeonOS 4
-此代码库是 **LeonOS 4** 项目的源代码仓库，此仓库的保密规定位于[LICENSE](LICENSE)。
+此代码库是 **LeonOS 4** 项目的源代码仓库，此仓库的开源协议位于[LICENSE](LICENSE)。
 
 ## 编译源代码
 > 本项目只能在 Linux 和 WSL 平台编译
@@ -134,3 +134,6 @@ int subsystem_handle(const struct request *request, struct result *out_result);
   和实现处保持一致，不要让两处描述相互矛盾。
 - 结构、宏、全局状态与复杂算法仍应保留必要的独立注释；函数 Doxygen 注释不能替代
   ABI、并发、内存安全和错误处理说明。
+
+## 作者注
+源代码里还包含神秘的许可证服务端和客户端完整代码，但是这个项目是 Apache 2.0 开源协议且我也打算放弃许可证机制所以就作为纪念保留吧。
