@@ -318,6 +318,19 @@
       "sdk": false,
       "symbol": "APP_INSTALLER"
     },
+    "less": {
+      "api": false,
+      "api_requires": [],
+      "build": true,
+      "depends": [],
+      "entry": false,
+      "id": "less",
+      "image": true,
+      "kind": "tool",
+      "required": false,
+      "sdk": false,
+      "symbol": "TOOL_LESS"
+    },
     "login": {
       "api": false,
       "api_requires": [],
@@ -564,6 +577,19 @@
       "required": true,
       "sdk": false,
       "symbol": "APP_SHELL"
+    },
+    "sl": {
+      "api": false,
+      "api_requires": [],
+      "build": true,
+      "depends": [],
+      "entry": false,
+      "id": "sl",
+      "image": true,
+      "kind": "tool",
+      "required": false,
+      "sdk": false,
+      "symbol": "TOOL_SL"
     },
     "sqlite": {
       "api": false,

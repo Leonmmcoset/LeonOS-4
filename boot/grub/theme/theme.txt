@@ -1,0 +1,322 @@
+title-text: ""
+title-font: "LeonOS Pixel Regular 16"
+title-color: "#ffffff"
+desktop-color: "#080b10"
+terminal-font: "LeonOS Pixel Regular 16"
+terminal-left: "7%"
+terminal-top: "72%"
+terminal-width: "86%"
+terminal-height: "16%"
+terminal-border: "0"
+
++ label {
+  left = 64
+  top = 64
+  width = 360
+  height = 28
+  text = "LeonOS 4"
+  font = "LeonOS Pixel Regular 16"
+  color = "#ffffff"
+}
+
++ label {
+  left = 64
+  top = 100
+  width = 360
+  height = 20
+  text = "A simple operating system"
+  font = "LeonOS Pixel Regular 16"
+  color = "#8fa3b8"
+}
+
++ label {
+  left = 64
+  top = 160
+  width = 160
+  height = 18
+  text = "     :-------:."
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
+
++ label {
+  left = 64
+  top = 178
+  width = 192
+  height = 18
+  text = "     :-----------."
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
+
++ label {
+  left = 64
+  top = 196
+  width = 168
+  height = 18
+  text = "     --------------."
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 224
+  top = 196
+  width = 64
+  height = 18
+  text = "     ."
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 214
+  width = 176
+  height = 18
+  text = "    .---------------."
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 232
+  top = 214
+  width = 72
+  height = 18
+  text = "  .::::"
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 232
+  width = 136
+  height = 18
+  text = "   .-----.:------"
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 200
+  top = 232
+  width = 112
+  height = 18
+  text = ":::..:::::::."
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 250
+  width = 88
+  height = 18
+  text = "  :-----: -"
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 152
+  top = 250
+  width = 168
+  height = 18
+  text = ":::...::::::::::::::"
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 268
+  width = 64
+  height = 18
+  text = " :-----:"
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 128
+  top = 268
+  width = 200
+  height = 18
+  text = " ...:::::::::::::::::::."
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 286
+  width = 56
+  height = 18
+  text = ":-----."
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 120
+  top = 286
+  width = 208
+  height = 18
+  text = " .:::::::::::...:::::::::"
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 304
+  width = 48
+  height = 18
+  text = "----- "
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 112
+  top = 304
+  width = 216
+  height = 18
+  text = " .::::........::::::::::::"
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 322
+  width = 40
+  height = 18
+  text = "---- "
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 104
+  top = 322
+  width = 224
+  height = 18
+  text = " .:::  ..::::::::::::::::::"
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 340
+  width = 32
+  height = 18
+  text = ":--:"
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 96
+  top = 340
+  width = 224
+  height = 18
+  text = "  ::. .::::::::::::::::::::"
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 358
+  width = 32
+  height = 18
+  text = " ---"
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 96
+  top = 358
+  width = 224
+  height = 18
+  text = "  :. .::::::::::::::::::::."
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 376
+  width = 40
+  height = 18
+  text = "  :-."
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 104
+  top = 376
+  width = 192
+  height = 18
+  text = " .  ::::::::::::::::::::"
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 64
+  top = 394
+  width = 48
+  height = 18
+  text = "    :."
+  font = "LeonOS Pixel Regular 16"
+  color = "#005A9E"
+}
++ label {
+  left = 112
+  top = 394
+  width = 176
+  height = 18
+  text = "   ::::::::::::::::::"
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 136
+  top = 412
+  width = 128
+  height = 18
+  text = "..::::::::::::."
+  font = "LeonOS Pixel Regular 16"
+  color = "#0078D4"
+}
+
++ label {
+  left = 52%
+  top = 30%
+  width = 40%
+  height = 20
+  text = "Select an operating system to start"
+  font = "LeonOS Pixel Regular 16"
+  color = "#8fa3b8"
+}
+
++ boot_menu {
+  left = 52%
+  top = 36%
+  width = 40%
+  height = 190
+  item_font = "LeonOS Pixel Regular 16"
+  item_color = "#8fa3b8"
+  selected_item_color = "#ffffff"
+  item_height = 32
+  item_padding = 4
+  item_spacing = 4
+  selected_item_pixmap_style = "none"
+}
+
++ label {
+  left = 64
+  top = 88%
+  width = 86%
+  height = 20
+  text = "[UP] [DOWN] select    [ENTER] boot    [E] edit"
+  font = "LeonOS Pixel Regular 16"
+  color = "#708090"
+}

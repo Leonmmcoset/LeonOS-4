@@ -106,6 +106,8 @@ struct installer_policy_view {
 
 struct update_app_entry {
     char name[LEONOS_FS_NAME_LEN];
+    char src_package[LEONOS_FS_PATH_LEN];
+    char dst_package[LEONOS_FS_PATH_LEN];
     char src_elf[LEONOS_FS_PATH_LEN];
     char dst_elf[LEONOS_FS_PATH_LEN];
     char src_icon[LEONOS_FS_PATH_LEN];
@@ -114,6 +116,7 @@ struct update_app_entry {
     uint8_t missing;
     uint8_t elf_diff;
     uint8_t icon_diff;
+    uint8_t package_diff;
 };
 
 static uint32_t pixels[INSTALLER_MAX_W * INSTALLER_MAX_H];
@@ -1269,6 +1272,8 @@ static void format_update_reason(char *buf, uint32_t cap,
         append_text(buf, &pos, cap, T("program differs", "程序不同"));
     } else if (entry->icon_diff) {
         append_text(buf, &pos, cap, T("icon differs", "图标不同"));
+    } else if (entry->package_diff) {
+        append_text(buf, &pos, cap, T("package files differ", "程序包文件不同"));
     } else {
         append_text(buf, &pos, cap, T("will be replaced", "将被替换"));
     }
@@ -1298,8 +1303,8 @@ static void draw_update_apps_page(struct leonos_ui_surface *ui)
                T("Changed or missing programs are selected; changed drivers are refreshed automatically.",
                  "变化或缺失的程序默认勾选；变化的驱动程序会自动刷新。"));
     leonos_ui_text_clipped(ui, l.content_x, l.content_y + 72, l.content_w,
-                           T("boot, system, EFI, docs, and drivers will be refreshed. Extra target programs and drivers are kept.",
-                             "boot、system、EFI、内置文档和驱动程序会刷新；目标中多出的程序和驱动会保留。"),
+                           T("boot, system/lib, kerneldebug, EFI, docs, and drivers will be refreshed. Extra target programs and drivers are kept.",
+                             "boot、system/lib、kerneldebug、EFI、内置文档和驱动程序会刷新；目标中多出的程序和驱动会保留。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_list_header(ui, l.content_x, header_y, list_w,
                           T("Programs to replace", "要替换的程序"));
@@ -1345,7 +1350,7 @@ static void draw_confirm_page(struct leonos_ui_surface *ui)
     draw_title(ui,
                install_mode == INSTALL_MODE_UPDATE ? T("Confirm Update", "确认更新")
                                                    : T("Confirm Installation", "确认安装"),
-               install_mode == INSTALL_MODE_UPDATE ? T("System folders will be replaced.", "系统文件夹将被替换。")
+               install_mode == INSTALL_MODE_UPDATE ? T("System folders and runtime files will be replaced.", "系统文件夹和运行时文件将被替换。")
                                                    : T("This operation is destructive.", "此操作会清空目标硬盘。"));
     if (selected_disk >= 0 && (uint32_t)selected_disk < disk_count) {
         format_disk_line(line, sizeof(line), &disks[selected_disk]);
@@ -1356,8 +1361,8 @@ static void draw_confirm_page(struct leonos_ui_surface *ui)
     }
     leonos_ui_text_clipped(ui, l.content_x, l.content_y + 130, l.content_w,
                            install_mode == INSTALL_MODE_UPDATE
-                       ? T("The FAT32 boot partition, ext2 system files, and bundled docs will be refreshed. Selected program packages will be refreshed.",
-                                   "FAT32 启动分区、ext2 系统文件和内置文档会刷新；已选程序包会刷新。")
+                       ? T("The FAT32 boot partition, ext2 system files, dynamic runtime libraries, kernel debugger, and bundled docs will be refreshed. Selected program packages will be refreshed.",
+                                   "FAT32 启动分区、ext2 系统文件、动态运行库、内核调试模块和内置文档会刷新；已选程序包会刷新。")
                                : T("The selected disk will be erased and formatted with a FAT32 ESP and ext2 system root.",
                                    "所选硬盘会被清空并格式化为 FAT32 ESP 和 ext2 系统根分区。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
@@ -2023,6 +2028,62 @@ out:
     return ret;
 }
 
+/* Return whether any source file differs from the corresponding target file.
+ * Extra files already present on the target are intentionally ignored: update
+ * mode is additive for user data and only refreshes files shipped by LeonOS. */
+static int package_has_changes(const char *src, const char *dst)
+{
+    struct leonos_dir_entry *entries = alloc_dir_entries();
+    uint32_t count = 0;
+    int ret;
+    if (!entries) {
+        return -12;
+    }
+    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    if (ret < 0) {
+        goto out;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        char src_child[LEONOS_FS_PATH_LEN];
+        char dst_child[LEONOS_FS_PATH_LEN];
+        if (name_is_dot(entries[i].name)) {
+            continue;
+        }
+        if (path_join(src_child, sizeof(src_child), src, entries[i].name) < 0 ||
+            path_join(dst_child, sizeof(dst_child), dst, entries[i].name) < 0) {
+            ret = -1;
+            goto out;
+        }
+        if (entries[i].type == LEONOS_FS_TYPE_DIR) {
+            struct leonos_stat dst_stat;
+            ret = stat(dst_child, &dst_stat);
+            if (ret < 0 || dst_stat.type != LEONOS_FS_TYPE_DIR) {
+                ret = 1;
+                goto out;
+            }
+            ret = package_has_changes(src_child, dst_child);
+            if (ret != 0) {
+                goto out;
+            }
+        } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
+            uint8_t missing;
+            uint8_t different;
+            ret = files_equal(src_child, dst_child, &missing, &different);
+            if (ret < 0) {
+                goto out;
+            }
+            if (missing || different) {
+                ret = 1;
+                goto out;
+            }
+        }
+    }
+    ret = 0;
+out:
+    free(entries);
+    return ret;
+}
+
 static int count_changed_files_recursive(const char *src, const char *dst)
 {
     struct leonos_dir_entry *entries = alloc_dir_entries();
@@ -2099,10 +2160,32 @@ static int copy_changed_dir_recursive(const char *src, const char *dst,
             goto out;
         }
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
+            struct leonos_stat dst_st;
+            int dst_ret = stat(dst_child, &dst_st);
+            if (dst_ret == 0 && dst_st.type != LEONOS_FS_TYPE_DIR) {
+                ret = remove_path_recursive(dst_child);
+                if (ret < 0) {
+                    goto out;
+                }
+            } else if (dst_ret < 0 && dst_ret != -2) {
+                ret = dst_ret;
+                goto out;
+            }
             ret = copy_changed_dir_recursive(src_child, dst_child, window_id, ui);
         } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
             uint8_t missing;
             uint8_t different;
+            struct leonos_stat dst_st;
+            int dst_ret = stat(dst_child, &dst_st);
+            if (dst_ret == 0 && dst_st.type != LEONOS_FS_TYPE_FILE) {
+                ret = remove_path_recursive(dst_child);
+                if (ret < 0) {
+                    goto out;
+                }
+            } else if (dst_ret < 0 && dst_ret != -2) {
+                ret = dst_ret;
+                goto out;
+            }
             ret = files_equal(src_child, dst_child, &missing, &different);
             if (ret >= 0 && (missing || different)) {
                 ret = copy_file_path(src_child, dst_child, window_id, ui);
@@ -2140,9 +2223,11 @@ static int replace_system_payload(int window_id, struct leonos_ui_surface *ui)
         "system/apps",
         "system/certs",
         "system/fonts",
+        "system/lib",
         "system/resources",
     };
     static const char *const root_files[] = {
+        "system/kerneldebug.sys",
         "system/osmlayer.manifest",
     };
     static const char *const esp_files[] = {
@@ -2254,16 +2339,30 @@ static int check_update_payload_required(void)
         "0:/install/root/drivers",
         "0:/install/root/system/apps",
         "0:/install/root/system/config",
+        "0:/install/root/system/lib",
         "0:/install/root/programs",
         "0:/install/esp/boot",
         "0:/install/esp/system",
         "0:/install/esp/EFI",
+    };
+    static const char *const required_files[] = {
+        "0:/install/root/system/kerneldebug.sys",
+        "0:/install/root/system/lib/ld-leonos.elf",
+        "0:/install/root/system/lib/libleonos.so.1",
     };
     for (uint32_t i = 0; i < sizeof(required_dirs) / sizeof(required_dirs[0]); ++i) {
         int ret = path_has_type(required_dirs[i], LEONOS_FS_TYPE_DIR);
         if (ret < 0) {
             set_status(T("Installation media is incomplete", "安装介质不完整"),
                        required_dirs[i]);
+            return ret;
+        }
+    }
+    for (uint32_t i = 0; i < sizeof(required_files) / sizeof(required_files[0]); ++i) {
+        int ret = path_has_type(required_files[i], LEONOS_FS_TYPE_FILE);
+        if (ret < 0) {
+            set_status(T("Installation media is incomplete", "安装介质不完整"),
+                       required_files[i]);
             return ret;
         }
     }
@@ -2322,6 +2421,7 @@ static int scan_update_apps(void)
         uint8_t elf_diff = 1;
         uint8_t icon_missing = 0;
         uint8_t icon_diff = 0;
+        uint8_t package_diff = 0;
         if (entries[i].type != LEONOS_FS_TYPE_DIR) {
             continue;
         }
@@ -2358,12 +2458,28 @@ static int scan_update_apps(void)
             dst_icon[0] = 0;
         }
         if (missing || elf_diff || icon_diff) {
+            package_diff = 1;
+        } else {
+            ret = package_has_changes(src_package, dst_package);
+            if (ret < 0) {
+                return ret;
+            }
+            package_diff = ret ? 1 : 0;
+        }
+        if (missing || elf_diff || icon_diff || package_diff) {
             ret = add_update_app_entry(entries[i].name, src_elf, dst_elf,
                                        src_icon, dst_icon, missing,
                                        elf_diff, icon_diff);
             if (ret < 0) {
                 return ret;
             }
+            copy_text(update_apps[update_app_count - 1].src_package,
+                      sizeof(update_apps[update_app_count - 1].src_package),
+                      src_package);
+            copy_text(update_apps[update_app_count - 1].dst_package,
+                      sizeof(update_apps[update_app_count - 1].dst_package),
+                      dst_package);
+            update_apps[update_app_count - 1].package_diff = package_diff;
         }
     }
     leonos_ui_listview_state_set_count(&update_app_list, update_app_count);
@@ -2391,15 +2507,10 @@ static int count_selected_update_work(void)
         if (!update_apps[i].selected) {
             continue;
         }
-        ret = add_file_copy_work(update_apps[i].src_elf);
+        ret = count_changed_files_recursive(update_apps[i].src_package,
+                                            update_apps[i].dst_package);
         if (ret < 0) {
             return ret;
-        }
-        if (update_apps[i].src_icon[0] && source_file_exists(update_apps[i].src_icon)) {
-            ret = add_file_copy_work(update_apps[i].src_icon);
-            if (ret < 0) {
-                return ret;
-            }
         }
     }
     return 0;
@@ -2420,23 +2531,29 @@ static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui
         if (path_join(package_dir, sizeof(package_dir), "1:/programs", update_apps[i].name) < 0) {
             return -1;
         }
-        ret = mkdir(package_dir, 0);
-        if (ret < 0 && ret != -17) {
-            return ret;
-        }
-        ret = copy_file_path(update_apps[i].src_elf, update_apps[i].dst_elf,
-                             window_id, ui);
-        if (ret < 0) {
-            return ret;
-        }
-        ++copy_done;
-        if (update_apps[i].src_icon[0] && source_file_exists(update_apps[i].src_icon)) {
-            ret = copy_file_path(update_apps[i].src_icon, update_apps[i].dst_icon,
-                                 window_id, ui);
-            if (ret < 0) {
+        {
+            struct leonos_stat package_stat;
+            ret = stat(package_dir, &package_stat);
+            if (ret == 0) {
+                if (package_stat.type != LEONOS_FS_TYPE_DIR) {
+                    ret = remove_path_recursive(package_dir);
+                    if (ret < 0) {
+                        return ret;
+                    }
+                }
+            } else if (ret != -2) {
                 return ret;
             }
-            ++copy_done;
+            ret = mkdir(package_dir, 0);
+            if (ret < 0 && ret != -17) {
+                return ret;
+            }
+        }
+        ret = copy_changed_dir_recursive(update_apps[i].src_package,
+                                         update_apps[i].dst_package,
+                                         window_id, ui);
+        if (ret < 0) {
+            return ret;
         }
     }
     return 0;
@@ -2691,9 +2808,11 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
         "system/apps",
         "system/certs",
         "system/fonts",
+        "system/lib",
         "system/resources",
     };
     static const char *const root_system_files[] = {
+        "system/kerneldebug.sys",
         "system/osmlayer.manifest",
     };
     static const char *const boot_system_files[] = {

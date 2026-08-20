@@ -10,5 +10,8 @@
         "*.inc": "c",
         "*.S": "asm",
         "Kconfig*": "makefile"
-    }
+    },
+    "conventionalCommits.scopes": [
+        "installer"
+    ]
 }

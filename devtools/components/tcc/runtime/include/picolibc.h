@@ -60,7 +60,7 @@
 #define __IO_C99_FORMATS
 
 /* The default printf and scanf variants */
-#define __IO_DEFAULT 'i'
+#define __IO_DEFAULT 'd'
 
 #define __IO_FLOAT_EXACT
 
