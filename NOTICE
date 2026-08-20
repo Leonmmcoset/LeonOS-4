@@ -1,0 +1,87 @@
+LeonOS 4 NOTICE
+===============
+
+This NOTICE file records attribution and license information for the LeonOS 4
+distribution. It is not a license and does not change the license of any
+component. LeonOS-owned source is governed by the root LICENSE file. Each
+third-party component remains governed by its own license.
+
+Complete license texts are kept with the corresponding source, submodule,
+generated SDK, or installed program package. The paths below refer to the
+repository unless an installed path is explicitly shown.
+
+LeonOS-owned code
+-----------------
+
+Copyright and licensing terms for code written for LeonOS 4 are specified by
+the root LICENSE file. Third-party source must not be relicensed under that
+file merely because it is distributed in the same repository or image.
+
+Runtime, libraries, and applications
+------------------------------------
+
+* GNU GRUB 2: GPL-3.0-or-later. See the GRUB source and boot artifacts.
+* Mbed TLS 2.28.8: Apache-2.0 OR GPL-2.0-or-later. See
+  third_party/mbedtls/LICENSE.
+* Picolibc 1.8.12 and the LeonOS port: BSD-family terms. See
+  third_party/picolibc/COPYING.picolibc.
+* zlib 1.3.2: zlib License. See third_party/zlib/LICENSE.
+  Copyright (C) 1995-2026 Jean-loup Gailly and Mark Adler.
+* libpng 1.6.58: libpng License. See third_party/libpng/LICENSE.
+* SQLite 3.46.1: public-domain dedication and blessing. See
+  third_party/sqlite/LICENSE.md.
+* BusyBox 1.36.1: GPL-2.0-only. See third_party/busybox/LICENSE.
+* GNU nano 9.2: GPL-3.0-or-later. See third_party/nano/COPYING.
+* GNU less: GNU GPL-3.0-or-later and/or the upstream Less License. See
+  third_party/less/COPYING and third_party/less/LICENSE.
+* ChenPi11/cmd: GPL-3.0-only. See third_party/cmd/LICENSE.
+* TinyCC: LGPL-2.1-or-later. See third_party/tinycc/COPYING.
+* Lua 5.4.8: MIT. See userland/lua/LICENSE and the Lua upstream checkout.
+* Fastfetch 2.67.0: MIT. See third_party/fastfetch/LICENSE.
+* file/libmagic: BSD-2-Clause-style terms. See third_party/file/COPYING.
+* StardustUI: MIT. See third_party/stardustui/LICENSE.
+* PL Editor (LeonOS fork): MIT. See third_party/pl_editor/LICENSE.
+* sl: permissive upstream license. See third_party/sl/LICENSE.
+* litehtml: BSD-3-Clause. See third_party/litehtml/LICENSE.
+* Gumbo HTML Parser: Apache-2.0. See third_party/litehtml/src/gumbo/LICENSE.
+* ab_glyph_rasterizer 0.1.10: Apache-2.0. See the nested StardustUI
+  dependency at third_party/stardustui/third_party/ab_glyph_rasterizer/upstream.
+* minimp3: CC0-1.0/public-domain dedication. See
+  third_party/minimp3/minimp3.h.
+* DoomGeneric: GPL-2.0-only. See third_party/doomgeneric/LICENSE.
+
+Data, dictionaries, and visual resources
+-----------------------------------------
+
+* Freedoom IWAD: BSD-3-Clause. See
+  third_party/doomgeneric/FREEDOOM-COPYING.txt and the installed
+  system/docs/FREEDOOM-COPYING.txt.
+* rime-pinyin-simp dictionary: Apache-2.0. See
+  third_party/rime-pinyin-simp/LICENSE and ATTRIBUTION.txt.
+* Noto Sans Mono: SIL Open Font License 1.1. Used to generate
+  system/fonts/metro-latin.lbf.
+* Droid Sans Fallback: Apache-2.0. Used by the CJK font generation chain.
+* Noto Sans CJK: SIL Open Font License 1.1. Used by the CJK font generation
+  chain and system/fonts/cjk16.lbf.
+* Microsoft font files in system/fonts (Deng.ttf, times.ttf, and simsun.ttc)
+  are subject to the applicable Microsoft license terms. They are not covered
+  by the LeonOS root license; verify redistribution rights before publishing
+  an image containing them.
+* Metro desktop wallpaper: NASA Image and Video Library asset PIA18033.
+  Source and credit are recorded in
+  system/resources/wallpaper-metro.source.txt. Use is subject to NASA media
+  usage guidance and applicable trademark restrictions.
+* Mozilla CA root certificates distributed as the curl CA Extract:
+  system/certs/cacert.pem. The file contains Mozilla certificate data and its
+  source, conversion, date, and checksum comments. See
+  https://curl.se/ca/caextract.html and the links recorded in that file.
+
+Distribution requirements
+-------------------------
+
+When distributing binaries or an ISO containing copyleft components, provide
+the corresponding source and build/porting changes required by that component's
+license. Preserve copyright notices, license texts, disclaimers, and required
+attribution in the source tree and in the installed image. Do not describe the
+entire distribution as Apache-2.0 unless the statement is explicitly limited
+to LeonOS-owned code and all third-party terms remain visible.
