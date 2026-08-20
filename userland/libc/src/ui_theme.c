@@ -24,6 +24,8 @@ static const struct ui_theme_palette metro_palettes[LEONOS_UI_COLOR_SCHEME_COUNT
     {0x006b3fa0u, 0x00756d82u, 0x00503380u, 0x00d2c8dfu, 0x00eee7f8u},
     {0x00b03030u, 0x00806d6du, 0x00802020u, 0x00dfc8c8u, 0x00f8e4e4u},
     {0x00505050u, 0x00707070u, 0x003a3a3au, 0x00c8c8c8u, 0x00e6e6e6u},
+    /* Kawaii pink: bubblegum title, soft candy desktop, gentle selection. */
+    {0x00ff6faeu, 0x00c98da9u, 0x00f7b6d2u, 0x00ffd7e7u, 0x00ffeaf3u},
 };
 
 static const struct ui_theme_palette win95_palettes[LEONOS_UI_COLOR_SCHEME_COUNT] = {
@@ -33,6 +35,8 @@ static const struct ui_theme_palette win95_palettes[LEONOS_UI_COLOR_SCHEME_COUNT
     {0x00800080u, 0x00808080u, 0x00602060u, 0x00000000u, 0x00efd8efu},
     {0x00800000u, 0x00808080u, 0x00602020u, 0x00000000u, 0x00efd8d8u},
     {0x00404040u, 0x00808080u, 0x00606060u, 0x00000000u, 0x00d8d8d8u},
+    /* Kawaii pink with a Win95-compatible darker title and pastel desktop. */
+    {0x00c85a91u, 0x00a77b91u, 0x00e9a4c5u, 0x00000000u, 0x00ffe0eeu},
 };
 
 static int ui_config_key_value_eq(const char *text, uint32_t len,
@@ -80,7 +84,7 @@ static uint32_t ui_color_scheme_from_config(const char *text, uint32_t len,
                                             const char *key, uint32_t fallback)
 {
     static const char *names[LEONOS_UI_COLOR_SCHEME_COUNT] = {
-        "blue", "teal", "green", "purple", "red", "graphite",
+        "blue", "teal", "green", "purple", "red", "graphite", "pink",
     };
     for (uint32_t i = 0; i < LEONOS_UI_COLOR_SCHEME_COUNT; ++i) {
         if (ui_config_key_value_eq(text, len, key, names[i])) {

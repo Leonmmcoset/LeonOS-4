@@ -19,6 +19,73 @@ static char status_text[96];
 static uint32_t *logo_pixels;
 static uint32_t logo_width;
 static uint32_t logo_height;
+static uint32_t logo_clicks;
+static unsigned long logo_click_window_ms;
+
+static void copy_text(char *dst, uint32_t cap, const char *src);
+
+static int osver_logo_rect(uint32_t *left, uint32_t *top,
+                           uint32_t *width, uint32_t *height)
+{
+    const uint32_t box_x = 16U + 35U;
+    const uint32_t box_y = 88U + 58U;
+    const uint32_t box_size = OSVER_LOGO_BOX - 16U;
+    uint32_t draw_w;
+    uint32_t draw_h;
+    if (!logo_pixels || !logo_width || !logo_height) return 0;
+    draw_w = box_size;
+    draw_h = (uint32_t)(((uint64_t)box_size * logo_height) / logo_width);
+    if (draw_h > box_size) {
+        draw_h = box_size;
+        draw_w = (uint32_t)(((uint64_t)box_size * logo_width) / logo_height);
+    }
+    if (!draw_w || !draw_h) return 0;
+    if (left) *left = box_x + (box_size - draw_w) / 2U;
+    if (top) *top = box_y + (box_size - draw_h) / 2U;
+    if (width) *width = draw_w;
+    if (height) *height = draw_h;
+    return 1;
+}
+
+static void osver_kernel_debug_click(uint32_t x, uint32_t y)
+{
+    uint32_t left;
+    uint32_t top;
+    uint32_t width;
+    uint32_t height;
+    const uint32_t now = (uint32_t)leonos_uptime_ms();
+    uint32_t flags = 0;
+    if (!osver_logo_rect(&left, &top, &width, &height) ||
+        x < left || y < top || x >= left + width || y >= top + height) {
+        logo_clicks = 0;
+        logo_click_window_ms = now;
+        return;
+    }
+    if (logo_clicks == 0U || now - logo_click_window_ms > 2000U) {
+        logo_clicks = 0U;
+        logo_click_window_ms = now;
+    }
+    ++logo_clicks;
+    if (logo_clicks < 5U) return;
+    logo_clicks = 0U;
+    if (leonos_kernel_debug_get_state(&flags) < 0 ||
+        (flags & LEONOS_KERNEL_DEBUG_STATE_ENABLED) == 0U) {
+        if (leonos_kernel_debug_set_enabled(1) == 0) {
+            copy_text(status_text, sizeof(status_text),
+                      T("Kernel debug mode enabled", "内核调试模式已启用"));
+            (void)leonos_ui_show_message_box(
+                T("Kernel debug mode", "内核调试模式"),
+                T("Kernel debug mode enabled. Use Start > Power to reboot into it.",
+                  "内核调试模式已启用。请从开始菜单的电源页面重启进入。"),
+                T("OK", "确定"));
+        } else {
+            (void)leonos_ui_show_message_box(
+                T("Kernel debug mode", "内核调试模式"),
+                T("Could not persist kernel debug mode.", "无法保存内核调试模式状态。"),
+                T("OK", "确定"));
+        }
+    }
+}
 
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -172,6 +239,14 @@ int main(void)
     if (!status_text[0]) {
         copy_text(status_text, sizeof(status_text), T("System version information", "系统版本信息"));
     }
+    {
+        uint32_t debug_flags = 0;
+        if (leonos_kernel_debug_get_state(&debug_flags) == 0 &&
+            (debug_flags & LEONOS_KERNEL_DEBUG_STATE_ENABLED) != 0U) {
+            copy_text(status_text, sizeof(status_text),
+                      T("Kernel debug mode enabled", "内核调试模式已启用"));
+        }
+    }
     window_id = leonos_gui_create_app_window_ex(T("About LeonOS", "关于 LeonOS"), T("System version", "系统版本"),
                                                 OSVER_W, OSVER_H, LEONOS_GUI_WINDOW_NO_RESIZE);
     if (window_id <= 0) {
@@ -193,6 +268,9 @@ int main(void)
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event.pressed && event.keycode == 1) {
                 leonos_png_free(logo_pixels);
                 return 0;
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1U)) {
+                osver_kernel_debug_click((uint32_t)event.x, (uint32_t)event.y);
             }
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE ||
                 event.type == LEONOS_GUI_APP_EVENT_FOCUS) {

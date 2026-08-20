@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "name": "LeonOS (WSL)",
+            "compilerPath": "/usr/bin/clang",
+            "intelliSenseMode": "linux-clang-x64",
+            "cStandard": "c11",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/kernel/ntclks/include",
+                "${workspaceFolder}/userland/libc/include",
+                "${workspaceFolder}/build/include/generated",
+                "${workspaceFolder}/build/picolibc/sysroot/include"
+            ],
+            "defines": [
+                "LEONOS_USE_PICOLIBC"
+            ],
+            "browse": {
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}

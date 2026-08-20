@@ -10,6 +10,7 @@
 #include <ntclks/framebuffer.h>
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
+#include <ntclks/kernel_debug.h>
 #include <ntclks/kernel.h>
 #include <ntclks/mm.h>
 #include <ntclks/heap.h>
@@ -233,6 +234,11 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     net_init();
     boot_splash_update(98u);
     osmlayer_bridge_selftest();
+    if (kernel_debug_boot_requested(handoff)) {
+        console_printf("[ntclks] entering kernel debug tool before userland\n");
+        (void)kernel_debug_run_module();
+        console_printf("[ntclks] kernel debug tool finished; continuing normal startup\n");
+    }
     userland_init(&boot);
     sched_dump();
     console_printf("[ntclks] boot complete: version=%s root=0:/ fs=%s desktop=desktop.elf\n",

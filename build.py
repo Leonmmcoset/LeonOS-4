@@ -910,7 +910,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     )
 
     loader_sources = collect("boot/loader/**/*.c", "boot/loader/**/*.S")
-    kernel_sources = collect("kernel/ntclks/**/*.c", "kernel/ntclks/**/*.S", "drivers/bootstrap/**/*.c", "drivers/bootstrap/**/*.S")
+    kernel_sources = collect("kernel/ntclks/**/*.c", "kernel/ntclks/**/*.S", "kernel/ostui/**/*.c", "drivers/bootstrap/**/*.c", "drivers/bootstrap/**/*.S")
     rust_sources = collect("middlelayer/osmlayer/src/**/*.rs")
     kernel_objects: list[Path] = []
     for source in kernel_sources:
@@ -956,6 +956,24 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         )
     )
     graph.add(Target(name="kernel", depends_on=("kernel-image", "kernel-debug"), group=True, kind="aggregate"))
+
+    kerneldebug_source = ROOT / "kernel/kerneldebug/kerneldebug.c"
+    kerneldebug_sys = paths.out / "system/kerneldebug.sys"
+    kerneldebug_obj = add_compile(
+        graph, paths, "compile:kerneldebug:module", kerneldebug_source,
+        "kerneldebug", cflags_kernel + ["-fno-pic", "-fno-pie"], (autoconf,))
+    graph.add(Target(
+        name="kerneldebug-module",
+        outputs=(kerneldebug_sys,),
+        inputs=(kerneldebug_obj,),
+        depends_on=("compile:kerneldebug:module",),
+        kind="generate",
+        command=(objcopy, "--remove-section", ".llvm_addrsig", "--remove-section", ".comment",
+                 "--remove-section", ".note.GNU-stack", "--rename-section",
+                 ".note.leonos.kerneldebug=.note.leonos.kerneldebug,alloc,load,readonly,data,contents",
+                 relative(kerneldebug_obj), relative(kerneldebug_sys)),
+        action_key="kerneldebug-module-v2",
+    ))
 
     rust_obj = paths.objects / "middlelayer/osmlayer.o"
     middle_runtime = ROOT / "middlelayer/osmlayer/runtime.c"
@@ -1911,6 +1929,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    kerneldebug_destination = paths.staging / "system/kerneldebug.sys"
+    target = add_copy(graph, "esp:system/kerneldebug.sys", kerneldebug_sys, kerneldebug_destination)
+    esp_names.append(target.name)
+    esp_names.append("kerneldebug-module")
+    esp_outputs.append(kerneldebug_destination)
     manifest = paths.staging / "system/osmlayer.manifest"
     graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=1\nroot=0:/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v2"))
     esp_names.append("esp:manifest")
@@ -2272,7 +2295,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     installer_boot_image = paths.out / "install/installer-efiboot.img"
     graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_font, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))
 
-    graph.add(Target(name="all", depends_on=("config-sync", "build-info", "loader", "kernel", "drivers", "middlelayer", "userland", "sdk", "esp"), group=True, kind="aggregate"))
+    graph.add(Target(name="all", depends_on=("config-sync", "build-info", "loader", "kernel", "kerneldebug-module", "drivers", "middlelayer", "userland", "sdk", "esp"), group=True, kind="aggregate"))
     graph.add(Target(name="run", inputs=(vmdk,), depends_on=("image-vmdk",), kind="command", command=qemu_command(paths, values)))
     graph.add(Target(name="run-debug", inputs=(vmdk,), depends_on=("image-vmdk",), kind="command", command=qemu_command(paths, values, debug=True)))
     graph.add(Target(name="run-iso", inputs=(vmdk, iso), depends_on=("image-vmdk", "image-iso"), kind="command", command=qemu_command(paths, values, debug=True, iso=True)))

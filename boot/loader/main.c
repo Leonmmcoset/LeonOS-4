@@ -20,6 +20,8 @@
 
 #define EFI_BY_PROTOCOL 2ULL
 #define EFI_FILE_MODE_READ 0x0000000000000001ULL
+#define EFI_FILE_MODE_WRITE 0x0000000000000002ULL
+#define EFI_FILE_MODE_CREATE 0x8000000000000000ULL
 #define EFI_SUCCESS 0ULL
 #define EFI_BUFFER_TOO_SMALL 0x8000000000000005ULL
 #define EFI_NOT_READY 0x8000000000000006ULL
@@ -200,6 +202,8 @@ typedef efi_status_t (__attribute__((ms_abi)) *efi_file_open_fn)(
     uint64_t attributes);
 typedef efi_status_t (__attribute__((ms_abi)) *efi_file_close_fn)(
     struct efi_file_protocol *self);
+typedef efi_status_t (__attribute__((ms_abi)) *efi_file_delete_fn)(
+    struct efi_file_protocol *self);
 typedef efi_status_t (__attribute__((ms_abi)) *efi_file_read_fn)(
     struct efi_file_protocol *self,
     uint64_t *buffer_size,
@@ -209,6 +213,12 @@ typedef efi_status_t (__attribute__((ms_abi)) *efi_file_get_info_fn)(
     struct efi_guid *information_type,
     uint64_t *buffer_size,
     void *buffer);
+typedef efi_status_t (__attribute__((ms_abi)) *efi_file_write_fn)(
+    struct efi_file_protocol *self,
+    uint64_t *buffer_size,
+    const void *buffer);
+typedef efi_status_t (__attribute__((ms_abi)) *efi_file_flush_fn)(
+    struct efi_file_protocol *self);
 typedef efi_status_t (__attribute__((ms_abi)) *efi_text_output_string_fn)(
     void *self,
     uint16_t *string);
@@ -225,14 +235,14 @@ struct efi_file_protocol {
     uint64_t revision;
     efi_file_open_fn open;
     efi_file_close_fn close;
-    void *delete_file;
+    efi_file_delete_fn delete_file;
     efi_file_read_fn read;
-    void *write;
+    efi_file_write_fn write;
     void *get_position;
     void *set_position;
     efi_file_get_info_fn get_info;
     void *set_info;
-    void *flush;
+    efi_file_flush_fn flush;
     void *open_ex;
     void *read_ex;
     void *write_ex;
@@ -1318,7 +1328,7 @@ static int build_efi_path(const char *path, uint16_t *out, uint32_t cap)
     if (!path || !out || cap < 2) {
         return -1;
     }
-    if (path[0] == '0' && path[1] == ':' && path[2] == '/') {
+    if (path[0] >= '0' && path[0] <= '9' && path[1] == ':' && path[2] == '/') {
         path += 3;
     }
     out[pos++] = '\\';
@@ -1471,6 +1481,66 @@ static int efi_read_file(const char *path, void *buffer, uint64_t cap, uint64_t 
     serial_write_hex(read_size);
     serial_write("\n");
     return 0;
+}
+
+static int efi_delete_file(const char *path)
+{
+    uint16_t efi_path[256];
+    struct efi_file_protocol *file = 0;
+    efi_status_t status;
+    if (!root_dir || !root_dir->open || build_efi_path(path, efi_path, 256) < 0) return -1;
+    status = root_dir->open(root_dir, &file, efi_path,
+                            EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (status != EFI_SUCCESS || !file || !file->delete_file) {
+        if (file && file->close) file->close(file);
+        return -1;
+    }
+    status = file->delete_file(file);
+    return status == EFI_SUCCESS ? 0 : -1;
+}
+
+/* Kept in the loader protocol layer for recovery tools that need to repair a
+ * one-shot control file.  Normal debug-mode arming uses the kernel storage
+ * path, so this helper is deliberately not part of the boot decision. */
+static int __attribute__((unused)) efi_write_file(const char *path, const void *buffer, uint64_t length)
+{
+    uint16_t efi_path[256];
+    struct efi_file_protocol *file = 0;
+    efi_status_t status;
+    uint64_t written;
+    if (!root_dir || !root_dir->open || !buffer || build_efi_path(path, efi_path, 256) < 0) return -1;
+    status = root_dir->open(root_dir, &file, efi_path,
+                            EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0);
+    if (status != EFI_SUCCESS || !file || !file->write) {
+        if (file && file->close) file->close(file);
+        return -1;
+    }
+    written = length;
+    status = file->write(file, &written, buffer);
+    if (status == EFI_SUCCESS && file->flush) status = file->flush(file);
+    if (file->close) file->close(file);
+    return status == EFI_SUCCESS && written == length ? 0 : -1;
+}
+
+static int loader_consume_kernel_debug_marker(void)
+{
+    static const char marker[] = "LEONOS-KDBG-1\n";
+    char value[sizeof(marker) + 8U];
+    uint64_t len = 0;
+    if (efi_read_file("2:/system/state/kerneldebug.next", value, sizeof(value) - 1U, &len) < 0) {
+        return 0;
+    }
+    if (efi_delete_file("2:/system/state/kerneldebug.next") < 0) {
+        serial_write("[loader] kernel debug marker could not be consumed\n");
+        return 0;
+    }
+    if (len != sizeof(marker) - 1U) return 0;
+    for (uint32_t i = 0; i + 1U < sizeof(marker); ++i) {
+        if (value[i] != marker[i]) return 0;
+    }
+    handoff.kernel_debug_mode = 1U;
+    serial_write("[loader] kernel debug one-shot marker consumed\n");
+    return 1;
 }
 
 static int efi_capture_memory_map(void)
@@ -1712,6 +1782,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     efi_console_init();
     loader_clock_calibrate();
     if (handoff.efi_system_table && efi_open_root(handoff.efi_system_table) == 0) {
+        (void)loader_consume_kernel_debug_marker();
         loader_load_ui_theme();
         loader_framebuffer_set_theme(handoff.ui_theme);
     }

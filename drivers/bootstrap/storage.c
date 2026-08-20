@@ -445,6 +445,7 @@ struct install_disk_state {
 static struct storage_volume g_volumes[STORAGE_MAX_DRIVES];
 static struct storage_volume *g_active_volume = &g_volumes[0];
 #define g_storage (*g_active_volume)
+static struct storage_volume *storage_control_old_volume;
 
 /*
  * A filesystem syscall is allowed to park while it is only observing disk
@@ -4862,6 +4863,88 @@ int storage_unlink(const char *path)
         }
     }
     return 0;
+}
+
+/* The normal runtime root is ext2, while its boot ESP is intentionally not
+ * exposed as a permanent drive.  Kernel-debug uses one tiny ESP marker that
+ * must be visible to the UEFI loader on the next restart.  Mount the boot
+ * disk's existing ESP only around that operation and release the temporary
+ * drive immediately afterwards. */
+static int storage_mount_boot_esp_for_control(uint8_t *temporary)
+{
+    struct storage_volume *root = &g_volumes[0];
+    struct storage_volume *esp = &g_volumes[2];
+    int ret;
+
+    if (!temporary || !root->ready || root->kind != STORAGE_VOLUME_AHCI ||
+        !root->esp_start_lba || !root->esp_sector_count) {
+        return -2;
+    }
+    *temporary = 0;
+    storage_control_old_volume = g_active_volume;
+    if (esp->ready) {
+        if (esp->filesystem != STORAGE_FILESYSTEM_FAT32) return -30;
+        g_active_volume = esp;
+        *temporary = 2;
+        return 0;
+    }
+
+    storage_cache_invalidate();
+    storage_memzero(esp, sizeof(*esp));
+    *esp = *root;
+    esp->drive = 2;
+    esp->ready = false;
+    esp->filesystem = STORAGE_FILESYSTEM_NONE;
+    esp->data_partition_mount = 0;
+    g_active_volume = esp;
+    ret = fat32_mount();
+    if (ret == 0) {
+        esp->ready = true;
+        *temporary = 1;
+    } else {
+        storage_memzero(esp, sizeof(*esp));
+    }
+    storage_cache_invalidate();
+    return ret;
+}
+
+static void storage_release_boot_esp_control(uint8_t temporary)
+{
+    if (!temporary) {
+        return;
+    }
+    storage_cache_invalidate();
+    if (temporary == 1) {
+        storage_memzero(&g_volumes[2], sizeof(g_volumes[2]));
+    }
+    g_active_volume = storage_control_old_volume ? storage_control_old_volume : &g_volumes[0];
+    storage_control_old_volume = NULL;
+}
+
+int storage_write_boot_esp_file(const char *path, const void *buf, uint32_t len)
+{
+    uint8_t temporary = 0;
+    int ret = storage_mount_boot_esp_for_control(&temporary);
+    if (ret < 0) {
+        return ret;
+    }
+    (void)storage_mkdir("2:/system");
+    (void)storage_mkdir("2:/system/state");
+    ret = storage_write_file(path, buf, len);
+    storage_release_boot_esp_control(temporary);
+    return ret;
+}
+
+int storage_unlink_boot_esp_file(const char *path)
+{
+    uint8_t temporary = 0;
+    int ret = storage_mount_boot_esp_for_control(&temporary);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = storage_unlink(path);
+    storage_release_boot_esp_control(temporary);
+    return ret == -2 ? 0 : ret;
 }
 
 int storage_rmdir(const char *path)

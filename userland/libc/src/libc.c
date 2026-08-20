@@ -3996,6 +3996,47 @@ int leonos_system_shutdown(void)
     return ioctl(3, LEONOS_GUI_IOCTL_SHUTDOWN, 0);
 }
 
+int leonos_kernel_debug_get_state(uint32_t *flags)
+{
+    struct leonos_kernel_debug_control control = {
+        .version = LEONOS_KERNEL_DEBUG_VERSION,
+        .command = LEONOS_KERNEL_DEBUG_CONTROL_GET_STATE,
+    };
+    int ret;
+    if (!flags) return -1;
+    ret = ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+    if (ret == 0) *flags = control.result_flags;
+    return ret;
+}
+
+int leonos_kernel_debug_set_enabled(int enabled)
+{
+    struct leonos_kernel_debug_control control = {
+        .version = LEONOS_KERNEL_DEBUG_VERSION,
+        .command = LEONOS_KERNEL_DEBUG_CONTROL_SET_ENABLED,
+        .flags = enabled ? LEONOS_KERNEL_DEBUG_STATE_ENABLED : 0U,
+    };
+    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+}
+
+int leonos_kernel_debug_arm_next_boot(void)
+{
+    struct leonos_kernel_debug_control control = {
+        .version = LEONOS_KERNEL_DEBUG_VERSION,
+        .command = LEONOS_KERNEL_DEBUG_CONTROL_ARM_NEXT_BOOT,
+    };
+    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+}
+
+int leonos_kernel_debug_clear(void)
+{
+    struct leonos_kernel_debug_control control = {
+        .version = LEONOS_KERNEL_DEBUG_VERSION,
+        .command = LEONOS_KERNEL_DEBUG_CONTROL_CLEAR,
+    };
+    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+}
+
 int leonos_readdir(int fd, struct leonos_dir_entry *entry)
 {
     long got;

@@ -386,6 +386,7 @@ void sched_on_tick(void);
  * @return Result, status, or value defined by this API.
  */
 uint64_t sched_tick_count(void);
+void sched_yield_current(void);
 /**
  * @brief Coordinates the sched cpu ticks operation.
  * @param busy_ticks Input or output value used by this operation.

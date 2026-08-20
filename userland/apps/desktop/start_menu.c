@@ -55,6 +55,12 @@ struct start_menu_result {
 
 static char start_menu_disabled_packages[START_MENU_ENTRY_POLICY_MAX][LEONOS_FS_PATH_LEN];
 static uint32_t start_menu_disabled_package_count;
+static int start_menu_kernel_debug_enabled(void)
+{
+    uint32_t flags = 0;
+    return leonos_kernel_debug_get_state(&flags) == 0 &&
+           (flags & LEONOS_KERNEL_DEBUG_STATE_ENABLED) != 0U;
+}
 
 static int start_menu_entry_policy_matches(const char *path)
 {
@@ -893,6 +899,11 @@ static void start_menu_draw_power(const struct start_panel_layout *panel,
     leonos_ui_button(&ui, x, y, width, START_MENU_ITEM_H,
                      leonos_i18n("Restart", "重启"), 0);
     y += START_MENU_ITEM_H + START_PANEL_GAP;
+    if (start_menu_kernel_debug_enabled()) {
+        leonos_ui_button(&ui, x, y, width, START_MENU_ITEM_H,
+                         leonos_i18n("Restart into kernel debugger", "重启并进入内核调试工具"), 0);
+        y += START_MENU_ITEM_H + START_PANEL_GAP;
+    }
     leonos_ui_button(&ui, x, y, width, START_MENU_ITEM_H,
                      leonos_i18n("Shut down", "关机"), 0);
     y += START_MENU_ITEM_H + START_PANEL_GAP;
@@ -1155,6 +1166,20 @@ static void start_menu_handle_power_click(uint32_t x, uint32_t y,
     uint32_t first_y = content->body_y + START_LIST_TITLE_H;
     if (!hit_rect(x, y, (int)left, (int)first_y, width, START_MENU_ITEM_H)) {
         first_y += START_MENU_ITEM_H + START_PANEL_GAP;
+        if (start_menu_kernel_debug_enabled()) {
+            if (hit_rect(x, y, (int)left, (int)first_y, width, START_MENU_ITEM_H)) {
+                start_menu_set_open(0);
+                if (leonos_kernel_debug_arm_next_boot() == 0) {
+                    leonos_system_reboot();
+                } else {
+                    desktop_show_message(leonos_i18n("Kernel debugger", "内核调试工具"),
+                                         leonos_i18n("Could not arm the next debug boot.",
+                                                     "无法设置下一次调试启动。"));
+                }
+                return;
+            }
+            first_y += START_MENU_ITEM_H + START_PANEL_GAP;
+        }
         if (hit_rect(x, y, (int)left, (int)first_y, width, START_MENU_ITEM_H)) {
             start_menu_set_open(0);
             desktop_request_power_confirm(POWER_CONFIRM_SHUTDOWN);

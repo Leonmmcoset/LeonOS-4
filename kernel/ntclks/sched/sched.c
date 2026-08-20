@@ -881,6 +881,14 @@ uint64_t sched_tick_count(void)
     return scheduler_ticks;
 }
 
+void sched_yield_current(void)
+{
+    /* The kernel debugger runs before the first user task exists.  A real
+     * context switch is therefore neither useful nor safe here; the timer
+     * interrupt remains the scheduling boundary for the normal system. */
+    __asm__ volatile("pause");
+}
+
 /**
  * @brief Coordinates the sched cpu ticks operation.
  * @param busy_ticks Input or output value used by this operation.

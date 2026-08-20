@@ -23,6 +23,7 @@
 #include <ntclks/time.h>
 #include <ntclks/usercopy.h>
 #include <ntclks/userland.h>
+#include <ntclks/kernel_debug.h>
 
 static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
                                      uint64_t a2, uint64_t a3, uint64_t a4,
@@ -3245,6 +3246,13 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_IOCTL && inputm_handles_ioctl(a1)) {
         return inputm_handle_ioctl(a1, a2);
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_KERNEL_DEBUG_IOCTL_CONTROL) {
+        if (!user_range_ok(a2, sizeof(struct leonos_kernel_debug_control))) {
+            return -LEONOS_EFAULT;
+        }
+        return kernel_debug_control((struct leonos_kernel_debug_control *)(uintptr_t)a2);
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_VERSION) {

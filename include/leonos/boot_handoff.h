@@ -5,7 +5,7 @@
 #include <leonos/auth.h>
 
 #define LEONOS_BOOT_HANDOFF_MAGIC 0x4c424f54u
-#define LEONOS_BOOT_HANDOFF_VERSION 4u
+#define LEONOS_BOOT_HANDOFF_VERSION 5u
 #define LEONOS_KERNEL_SERVICES_VERSION 2u
 #define LEONOS_MIDDLELAYER_API_VERSION 5u
 
@@ -102,6 +102,9 @@ struct leonos_boot_handoff {
     uint64_t middlelayer_api;
     struct leonos_boot_log_state boot_log;
     uint64_t boot_uptime_us;
+    /* Set only after the loader consumes a valid one-shot ESP marker. */
+    uint32_t kernel_debug_mode;
+    uint32_t kernel_debug_reserved;
 };
 
 struct leonos_kernel_services {

@@ -202,6 +202,14 @@ int storage_mkdir(const char *path);
  */
 int storage_unlink(const char *path);
 /**
+ * Writes a small control file to the ESP belonging to the current boot disk.
+ * The ESP is mounted only for the duration of the operation when it is not
+ * otherwise exposed as a user-visible drive.
+ */
+int storage_write_boot_esp_file(const char *path, const void *buf, uint32_t len);
+/** Removes a control file from the current boot disk ESP. */
+int storage_unlink_boot_esp_file(const char *path);
+/**
  * @brief Coordinates the storage rmdir operation.
  * @param path LeonOS path consumed by this operation.
  * @return Result, status, or value defined by this API.
