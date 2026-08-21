@@ -779,29 +779,9 @@ static int ui_text_eq(const char *a, const char *b)
     return *a == 0 && *b == 0;
 }
 
-static char ui_ascii_lower(char ch)
-{
-    if (ch >= 'A' && ch <= 'Z') {
-        return (char)(ch - 'A' + 'a');
-    }
-    return ch;
-}
-
-static int ui_text_eq_ignore_case(const char *a, const char *b)
-{
-    if (!a || !b) {
-        return 0;
-    }
-    while (*a && *b && ui_ascii_lower(*a) == ui_ascii_lower(*b)) {
-        ++a;
-        ++b;
-    }
-    return *a == 0 && *b == 0;
-}
-
 static int ui_path_is_root(const char *path)
 {
-    return ui_text_eq(path, "0:/");
+    return ui_text_eq(path, "/");
 }
 
 static void ui_build_parent_path(char *dst, uint32_t capacity, const char *path)
@@ -812,13 +792,13 @@ static void ui_build_parent_path(char *dst, uint32_t capacity, const char *path)
         return;
     }
     len = ui_strlen(dst);
-    while (len > 3 && dst[len - 1] != '/') {
+    while (len > 1 && dst[len - 1] != '/') {
         dst[--len] = 0;
     }
-    if (len > 3) {
+    if (len > 1) {
         dst[len - 1] = 0;
     } else {
-        ui_copy_text(dst, capacity, "0:/");
+        ui_copy_text(dst, capacity, "/");
     }
 }
 
@@ -1036,7 +1016,7 @@ static int ui_file_dialog_activate(const char *title, int save_mode,
                               filter_ext ? filter_ext : "");
         return 0;
     }
-    if (filename[0] == '0' && filename[1] == ':' && filename[2] == '/') {
+    if (filename[0] == '/') {
         ui_copy_text(full_path, sizeof(full_path), filename);
     } else {
         ui_build_child_path(full_path, sizeof(full_path), dir_path, filename);
@@ -1239,11 +1219,11 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
         input_values[index] = ui_file_dialog_input_initial(&options->inputs[index]);
     }
     ui_copy_text(original, sizeof(original), path);
-    if (path[0] == '0' && path[1] == ':' && path[2] == '/') {
+    if (path[0] == '/') {
         ui_build_parent_path(dir_path, sizeof(dir_path), path);
         ui_copy_text(file_name, sizeof(file_name), ui_path_basename(path));
     } else {
-        ui_copy_text(dir_path, sizeof(dir_path), "0:/");
+        ui_copy_text(dir_path, sizeof(dir_path), "/");
         ui_copy_text(file_name, sizeof(file_name), path);
     }
     window_id = leonos_gui_create_app_window_ex(
@@ -1577,7 +1557,7 @@ static int ui_show_file_dialog_common(const char *title, int save_mode,
                     event.x < (int32_t)(UI_FILE_DIALOG_NAV_BUTTON_X + UI_FILE_DIALOG_NAV_BUTTON_W) &&
                     event.y >= (int32_t)UI_FILE_DIALOG_ROOT_Y &&
                     event.y < (int32_t)(UI_FILE_DIALOG_ROOT_Y + LEONOS_UI_BUTTON_H)) {
-                    ui_copy_text(dir_path, sizeof(dir_path), "0:/");
+                    ui_copy_text(dir_path, sizeof(dir_path), "/");
                     ui_copy_text(file_name, sizeof(file_name), "");
                     ui_file_dialog_sync_name_edit(&name_edit);
                     load_ret = ui_file_dialog_load_entries(dir_path, entries,

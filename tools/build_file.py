@@ -52,11 +52,10 @@ def main() -> None:
     source = args.source.resolve()
     port = args.port.resolve()
     work = Path(tempfile.mkdtemp(prefix="leonos-file-build-"))
-    # libmagic uses PATHSEP to split its database search path.  LeonOS paths
-    # contain a drive separator (``0:/``), so the upstream POSIX ':' value
-    # would incorrectly turn the default database into ``0.mgc`` and
-    # ``/system/share/...``.  Patch only this throw-away build copy; keep the
-    # vendored source unchanged.
+    # libmagic uses PATHSEP to split its database search path. LeonOS keeps a
+    # semicolon separator so its Unix paths remain compatible with the target
+    # runtime. Patch only this throw-away build copy; keep the vendored source
+    # unchanged.
     patched_source = work / "src"
     shutil.copytree(source / "src", patched_source)
     file_header = patched_source / "file.h"
@@ -102,7 +101,7 @@ def main() -> None:
         "-DHAVE_CONFIG_H", "-Dstat(...)=leonos_posix_stat(__VA_ARGS__)",
         "-Dfstat(...)=leonos_posix_fstat(__VA_ARGS__)",
         "-DLEONOS_FILE_PATHSEP_SEMICOLON",
-        "-DMAGIC=\"0:/system/share/misc/magic.mgc\"",
+        "-DMAGIC=\"/system/share/misc/magic.mgc\"",
     ]
 
     def compile_source(path: Path, name: str) -> Path:
@@ -139,7 +138,7 @@ def main() -> None:
     args.output.resolve().parent.mkdir(parents=True, exist_ok=True)
     run([
         "ld.lld", "-nostdlib", "--gc-sections", "-pie", "--hash-style=sysv",
-        "--dynamic-linker", "0:/system/lib/ld-leonos.elf", "-z", "relro", "-z", "now",
+        "--dynamic-linker", "/system/lib/ld-leonos.elf", "-z", "relro", "-z", "now",
         "-z", "max-page-size=0x1000", *args.linker_flag,
         "-T", str(args.dynamic_linker_script.resolve()),
         "-o", str(args.output.resolve()), str(args.dynamic_crt.resolve()),

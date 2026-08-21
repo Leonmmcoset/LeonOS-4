@@ -56,7 +56,7 @@ void navigate_up(void)
 
 void navigate_root(void)
 {
-    navigate_to_path("0:/");
+    navigate_to_path("/");
 }
 
 void create_new_folder(void)

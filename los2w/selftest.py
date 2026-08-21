@@ -28,37 +28,42 @@ def run_self_tests() -> list[str]:
         (root / "docs" / "a.txt").write_text("hello", encoding="utf-8")
         fs = GuestFS(root, language="zh", ui_theme="metro", logger=logger)
 
-        assert fs.guest_abs("docs/a.txt") == "0:/docs/a.txt"
-        assert fs.guest_abs("0:/docs/../system/config") == "0:/system/config"
+        assert fs.guest_abs("docs/a.txt") == "/docs/a.txt"
+        assert fs.guest_abs("/docs/../system/config") == "/system/config"
         try:
-            fs.host_path("1:/bad")
-            raise AssertionError("drive 1: unexpectedly accepted")
+            fs.host_path("1" + ":/bad")
+            raise AssertionError("non-Unix path unexpectedly accepted")
+        except ValueError:
+            pass
+        try:
+            fs.host_path("/docs\\a.txt")
+            raise AssertionError("backslash path unexpectedly accepted")
         except ValueError:
             pass
 
-        fd = fs.open("0:/docs/a.txt", C.O_RDONLY, 0)
+        fd = fs.open("/docs/a.txt", C.O_RDONLY, 0)
         assert fd >= 4
         assert fs.read(fd, 5) == b"hello"
         assert fs.close(fd) == 0
 
-        fd = fs.open("0:/system/config/locale.conf", C.O_RDONLY, 0)
+        fd = fs.open("/system/config/locale.conf", C.O_RDONLY, 0)
         assert fd >= 4
         assert fs.read(fd, 32) == b"lang=zh\n"
         assert fs.close(fd) == 0
 
-        fd = fs.open("0:/system/config/display.conf", C.O_RDONLY, 0)
+        fd = fs.open("/system/config/display.conf", C.O_RDONLY, 0)
         assert fd >= 4
         assert fs.read(fd, 64) == b"width=1024\ntheme=metro\n"
         assert fs.close(fd) == 0
         assert (root / "system" / "config" / "display.conf").read_text(encoding="utf-8") == "width=1024\ntheme=win95\n"
 
         fs.set_ui_theme("win95")
-        fd = fs.open("0:/system/config/display.conf", C.O_RDONLY, 0)
+        fd = fs.open("/system/config/display.conf", C.O_RDONLY, 0)
         assert fd >= 4
         assert fs.read(fd, 64) == b"width=1024\ntheme=win95\n"
         assert fs.close(fd) == 0
 
-        entries = fs.list_dir("0:/docs")
+        entries = fs.list_dir("/docs")
         assert not isinstance(entries, int)
         assert entries == [(C.FS_TYPE_FILE, "a.txt")]
 

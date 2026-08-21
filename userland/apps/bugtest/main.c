@@ -134,7 +134,7 @@ static int safe_open_bad_path(void)
 
 static int safe_stat_bad_out(void)
 {
-    return nonfatal_result(stat("0:/system/config/leonos.conf", (struct leonos_stat *)0x200000ULL));
+    return nonfatal_result(stat("/system/config/leonos.conf", (struct leonos_stat *)0x200000ULL));
 }
 
 static int safe_getcwd_bad_out(void)
@@ -145,7 +145,7 @@ static int safe_getcwd_bad_out(void)
 static int safe_list_dir_bad_entries(void)
 {
     struct leonos_dir_list query = {
-        .path = "0:/programs",
+        .path = "/programs",
         .capacity = 4,
         .count = 0,
         .entries = (struct leonos_dir_entry *)0x200000ULL,

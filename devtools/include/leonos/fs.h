@@ -66,6 +66,14 @@
 #define LEONOS_O_TRUNC 0x0200
 #define LEONOS_O_APPEND 0x0400
 
+/* Keep terminal and console writes short enough for prompt scheduling.
+ * Regular files use the same 32 KiB window as reads: archive extraction and
+ * compiler output must not turn every FAT cluster update into a new syscall.
+ * The kernel still limits stream output to LEONOS_FS_IO_SLICE_BYTES. */
+#define LEONOS_FS_IO_SLICE_BYTES 4096U
+#define LEONOS_FS_FILE_WRITE_SLICE_BYTES (64U * 512U)
+#define LEONOS_FS_READ_SLICE_BYTES (64U * 512U)
+
 #define LEONOS_SEEK_SET 0
 #define LEONOS_SEEK_CUR 1
 #define LEONOS_SEEK_END 2
@@ -136,8 +144,6 @@ struct leonos_fs_acl_request {
 #define LEONOS_DISK_PARTITION_FLAG_PROTECTED 0x00000008U
 #define LEONOS_DISK_PARTITION_FLAG_MOUNTED 0x00000010U
 
-#define LEONOS_DISK_DRIVE_NONE 0xffffffffU
-
 struct leonos_install_disk {
     uint32_t id;
     uint32_t port;
@@ -159,8 +165,7 @@ struct leonos_disk_partition {
     uint32_t index;
     uint32_t filesystem;
     uint32_t flags;
-    uint32_t drive;
-    uint32_t reserved;
+    char mount_path[LEONOS_FS_PATH_LEN];
     uint64_t first_lba;
     uint64_t sector_count;
     uint8_t type_guid[16];
@@ -205,8 +210,7 @@ struct leonos_disk_partition_create {
 struct leonos_disk_partition_mount {
     uint32_t disk_id;
     uint32_t partition_index;
-    uint32_t drive;
-    uint32_t reserved;
+    char mount_path[LEONOS_FS_PATH_LEN];
 };
 
 /** Selects one runtime-mounted data partition for safe unmount. */
@@ -234,10 +238,10 @@ int leonos_disk_format_partition(const struct leonos_disk_partition_format *requ
 int leonos_disk_delete_partition(const struct leonos_disk_partition_delete *request);
 /** Creates and formats a new GPT data partition in free disk space. */
 int leonos_disk_create_partition(const struct leonos_disk_partition_create *request);
-/** Mounts a FAT32 or ext2 data partition and returns its assigned numeric drive. */
+/** Mounts a FAT32 or ext2 data partition and returns its absolute mount path. */
 int leonos_disk_mount_partition(uint32_t disk_id, uint32_t partition_index,
-                                uint32_t *out_drive);
-/** Unmounts a data partition when no live task is using its drive. */
+                                char *mount_path, uint32_t mount_path_capacity);
+/** Unmounts a data partition when no live task is using its mount. */
 int leonos_disk_unmount_partition(uint32_t disk_id, uint32_t partition_index);
 int stat(const char *path, struct leonos_stat *st);
 int fstat(int fd, struct leonos_stat *st);

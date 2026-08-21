@@ -23,11 +23,11 @@
 #define SETTINGS_WALLPAPER_MAX_W 1280U
 #define SETTINGS_WALLPAPER_MAX_H 720U
 #define SETTINGS_WALLPAPER_BMP_MAX_BYTES (SETTINGS_WALLPAPER_MAX_W * SETTINGS_WALLPAPER_MAX_H * 4U + 128U)
-#define SETTINGS_DEFAULT_WALLPAPER_PATH "0:/system/resources/wallpaper-metro.bmp"
+#define SETTINGS_DEFAULT_WALLPAPER_PATH "/system/resources/wallpaper-metro.bmp"
 #define SETTINGS_TAB_Y 14
 #define SETTINGS_BODY_Y 44
-#define SETTINGS_SERVICES_PATH "0:/system/config/services.cfg"
-#define SETTINGS_SERVICES_STATE_PATH "0:/var/run/services.state"
+#define SETTINGS_SERVICES_PATH "/system/config/services.cfg"
+#define SETTINGS_SERVICES_STATE_PATH "/var/run/services.state"
 #define SETTINGS_SERVICES_CONFIG_MAX 512U
 #define SETTINGS_INPUTM_CONFIG_MAX 2048U
 #define SETTINGS_INPUTM_ROWS (LEONOS_INPUTM_MAX_PROVIDERS + 1U)
@@ -364,22 +364,22 @@ static const char *role_label(uint32_t role)
 
 static const char *program_label(const char *program)
 {
-    if (text_eq(program, "0:/programs/browser/browser.elf")) {
+    if (text_eq(program, "/programs/browser/browser.elf")) {
         return T("Browser", "浏览器");
     }
-    if (text_eq(program, "0:/programs/notepad/notepad.elf")) {
+    if (text_eq(program, "/programs/notepad/notepad.elf")) {
         return T("Notepad", "记事本");
     }
-    if (text_eq(program, "0:/programs/imageview/imageview.elf")) {
+    if (text_eq(program, "/programs/imageview/imageview.elf")) {
         return T("Image Viewer", "图片查看器");
     }
-    if (text_eq(program, "0:/programs/oshlp/oshlp.elf")) {
+    if (text_eq(program, "/programs/oshlp/oshlp.elf")) {
         return T("Help Viewer", "帮助查看器");
     }
-    if (text_eq(program, "0:/system/apps/terminal/terminal.elf")) {
+    if (text_eq(program, "/system/apps/terminal/terminal.elf")) {
         return T("Terminal", "终端");
     }
-    if (text_eq(program, "0:/system/apps/run/run.elf")) {
+    if (text_eq(program, "/system/apps/run/run.elf")) {
         return T("Run", "运行");
     }
     return program && program[0] ? program : T("None", "无");
@@ -433,7 +433,7 @@ static void fake_path_for_extension(char *dst, uint32_t cap, const char *ext)
 {
     uint32_t pos = 0;
     dst[0] = 0;
-    append_text(dst, &pos, cap, "0:/sample");
+    append_text(dst, &pos, cap, "/sample");
     append_text(dst, &pos, cap, ext);
 }
 
@@ -1452,16 +1452,16 @@ static void draw_assoc_page(struct leonos_ui_surface *ui)
         leonos_ui_listview_row(ui, 34, y, 412, cols, cells, 3, 0);
         leonos_ui_button(ui, 450, y + 2, 64, LEONOS_UI_BUTTON_H,
                          T("Browser", "浏览器"),
-                         text_eq(program, "0:/programs/browser/browser.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+                         text_eq(program, "/programs/browser/browser.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
         leonos_ui_button(ui, 520, y + 2, 70, LEONOS_UI_BUTTON_H,
                          T("Notepad", "记事本"),
-                         text_eq(program, "0:/programs/notepad/notepad.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+                         text_eq(program, "/programs/notepad/notepad.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
         leonos_ui_button(ui, 596, y + 2, 58, LEONOS_UI_BUTTON_H,
                          T("Image", "图片"),
-                         text_eq(program, "0:/programs/imageview/imageview.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+                         text_eq(program, "/programs/imageview/imageview.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
         leonos_ui_button(ui, 660, y + 2, 50, LEONOS_UI_BUTTON_H,
                          T("Help", "帮助"),
-                         text_eq(program, "0:/programs/oshlp/oshlp.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+                         text_eq(program, "/programs/oshlp/oshlp.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
     }
 }
 
@@ -1538,7 +1538,7 @@ static void draw_activation_page(struct leonos_ui_surface *ui)
     draw_field(ui, 202, T("Machine ID", "机器码"), info.install_id);
     draw_field(ui, 234, T("Email hash", "邮箱哈希"), info.email_hash);
     draw_field(ui, 266, T("Detail", "详情"), info.detail);
-    draw_field(ui, 298, T("License file", "许可证文件"), "0:/system/state/license.dat");
+    draw_field(ui, 298, T("License file", "许可证文件"), "/system/state/license.dat");
 }
 
 static void draw_settings(struct leonos_ui_surface *ui)
@@ -1909,19 +1909,19 @@ static void handle_assoc_click(int32_t x, int32_t y)
     for (uint32_t i = 0; i < SETTINGS_ASSOC_ROWS; ++i) {
         int32_t row_y = 124 + (int32_t)i * 40;
         if (hit_rect_i(x, y, 450, row_y + 2, 64, LEONOS_UI_BUTTON_H)) {
-            set_assoc_for_row(i, "0:/programs/browser/browser.elf");
+            set_assoc_for_row(i, "/programs/browser/browser.elf");
             return;
         }
         if (hit_rect_i(x, y, 520, row_y + 2, 70, LEONOS_UI_BUTTON_H)) {
-            set_assoc_for_row(i, "0:/programs/notepad/notepad.elf");
+            set_assoc_for_row(i, "/programs/notepad/notepad.elf");
             return;
         }
         if (hit_rect_i(x, y, 596, row_y + 2, 58, LEONOS_UI_BUTTON_H)) {
-            set_assoc_for_row(i, "0:/programs/imageview/imageview.elf");
+            set_assoc_for_row(i, "/programs/imageview/imageview.elf");
             return;
         }
         if (hit_rect_i(x, y, 660, row_y + 2, 50, LEONOS_UI_BUTTON_H)) {
-            set_assoc_for_row(i, "0:/programs/oshlp/oshlp.elf");
+            set_assoc_for_row(i, "/programs/oshlp/oshlp.elf");
             return;
         }
     }

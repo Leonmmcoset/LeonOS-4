@@ -233,9 +233,9 @@ static uint32_t core_hex_value(char ch)
     return 0;
 }
 
-static int core_is_drive_path(const char *text)
+static int core_is_local_path(const char *text)
 {
-    return text && text[0] && text[1] == ':' && text[2] == '/';
+    return text && text[0] == '/';
 }
 
 static void core_copy_text(char *dst, uint32_t cap, const char *src)
@@ -1454,7 +1454,7 @@ static void core_resolve_href(const char *base, const char *href,
         core_starts_with_ignore_case(href, "https://") ||
         core_starts_with_ignore_case(href, "about:") ||
         core_starts_with_ignore_case(href, "form:") ||
-        core_is_drive_path(href)) {
+        core_is_local_path(href)) {
         core_copy_text(out, cap, href);
         return;
     }
@@ -1481,7 +1481,7 @@ static void core_resolve_href(const char *base, const char *href,
         core_append_text(out, &pos, cap, href);
         return;
     }
-    if (core_is_drive_path(base)) {
+    if (core_is_local_path(base)) {
         core_parent_url_dir(base, dir, sizeof(dir));
         out[0] = 0;
         core_append_text(out, &pos, cap, dir);

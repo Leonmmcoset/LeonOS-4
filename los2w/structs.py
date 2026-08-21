@@ -165,7 +165,7 @@ class DirList:
         return struct.pack(self.FORMAT, self.path_ptr, self.capacity, self.count, self.entries_ptr)
 
 
-def pack_user(uid: int = 1, role: int = C.AUTH_ROLE_ADMIN, username: str = "los2w", home: str = "0:/users/los2w") -> bytes:
+def pack_user(uid: int = 1, role: int = C.AUTH_ROLE_ADMIN, username: str = "los2w", home: str = "/users/los2w") -> bytes:
     return (
         struct.pack("<IIII", uid, role, 0, 0)
         + zbytes(username, 32)

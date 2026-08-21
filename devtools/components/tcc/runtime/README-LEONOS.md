@@ -7,19 +7,19 @@
 ```text
 tcc -c hello.c -o hello.o
 tcc hello.c -o hello.elf
-0:/path/to/hello.elf
+/path/to/hello.elf
 ```
 
 The installed `examples/hello.c` provides a small end-to-end check:
 
 ```text
-cd 0:/programs/tcc
+cd /programs/tcc
 tcc examples/hello.c -o hello.elf
-0:/programs/tcc/hello.elf
+/programs/tcc/hello.elf
 ```
 
 It automatically uses the headers and static runtime in
-`0:/programs/tcc/`.  Generated executables use LeonOS's existing `_start`,
+`/programs/tcc/`.  Generated executables use LeonOS's existing `_start`,
 `libleonos.a`, the unmodified Picolibc headers/library, and the separate
 LeonOS target runtime archive `libleonos-tcc-rt.a` plus TinyCC's compiler
 runtime `libtcc1.a`.
@@ -39,7 +39,7 @@ Picolibc private headers during the build.
   supplied by `libleonos`, but user-installed handlers remain unsupported and
   return `SIG_ERR` with `errno = ENOSYS`.
 
-Paths accepted by the compiler use LeonOS drive syntax, such as
-`0:/programs/demo/main.c`.  For multiple `C_INCLUDE_PATH`, `CPATH` or
-`LIBRARY_PATH` entries, use a semicolon (`;`), because `:` is part of the
-drive prefix.
+Paths accepted by the compiler use Unix syntax, such as
+`/programs/demo/main.c`. For multiple `C_INCLUDE_PATH`, `CPATH` or
+`LIBRARY_PATH` entries, use a semicolon (`;`); `:` is rejected in LeonOS
+paths.

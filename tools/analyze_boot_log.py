@@ -120,7 +120,7 @@ DIRECT_RULES = (
         "ELF-INTERPRETER", "错误", "动态链接",
         r"^\[ntclks\] ELF interpreter lookup failed path=",
         "动态 ELF 缺少解释器",
-        "动态应用需要的 0:/system/lib/ld-leonos.elf 无法从系统镜像读取。",
+        "动态应用需要的 /system/lib/ld-leonos.elf 无法从系统镜像读取。",
         "确认系统镜像包含 system/lib/ld-leonos.elf，并检查该文件的读取权限与完整性。",
         "kernel/ntclks/user/elf.c:892",
     ),
@@ -145,7 +145,7 @@ DIRECT_RULES = (
         r"^\[dynlinkerror\.elf\] unable to start .*: missing ",
         "动态链接库缺失",
         "静态链接的恢复程序已确认应用缺少必需共享库。",
-        "从匹配系统镜像恢复该 .so 文件到 0:/system/lib，或重新打包应用私有库。",
+        "从匹配系统镜像恢复该 .so 文件到 /system/lib，或重新打包应用私有库。",
         "userland/apps/dynlinkerror/main.c:52",
     ),
     Rule(
@@ -153,7 +153,7 @@ DIRECT_RULES = (
         r"(?:shared object not found|shared object cannot be opened|unresolved dynamic symbol|dynamic application must depend on libleonos\.so\.1)",
         "动态运行时无法解析应用依赖",
         "动态加载器拒绝或无法装载依赖库，或者无法解析应用所需符号。",
-        "检查 DT_NEEDED、库名、0:/system/lib 内容、ABI note 和导出符号；使用 ELF/动态链接检查器确认依赖树。",
+        "检查 DT_NEEDED、库名、/system/lib 内容、ABI note 和导出符号；使用 ELF/动态链接检查器确认依赖树。",
         "userland/runtime/ld_leonos.c:692",
     ),
     Rule(
@@ -387,7 +387,7 @@ def _print_text(analysis: LogAnalysis) -> None:
 
 def _self_test() -> int:
     """Exercise correlations for the ELF and CPU-fault failures seen in practice."""
-    sample = """[ntclks] boot complete: version=4.4.0 root=0:/ fs=ext2 desktop=desktop.elf
+    sample = """[ntclks] boot complete: version=4.4.0 root=/ fs=ext2 desktop=desktop.elf
 [ntclks] ELF main header validation failed
 [ntclks] failed to map executable init.elf
 [ntclks] scheduler task exited pid=1 name=init.elf code=127

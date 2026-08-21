@@ -54,10 +54,10 @@ static void parent_path_of(char *dst, uint32_t cap, const char *path)
     uint32_t len;
     copy_text(dst, cap, path);
     len = text_len(dst);
-    while (len > 3U && dst[len - 1U] != '/') {
+    while (len > 1U && dst[len - 1U] != '/') {
         dst[--len] = 0;
     }
-    if (len > 3U) {
+    if (len > 1U) {
         dst[len - 1U] = 0;
     }
 }

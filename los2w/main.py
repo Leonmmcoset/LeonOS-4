@@ -19,7 +19,7 @@ from .selftest import run_self_tests
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run LeonOS 4 ELF applications on Windows Python.")
     parser.add_argument("--elf", help="LeonOS ELF application to run")
-    parser.add_argument("--root", help="Host directory mapped as LeonOS 0:/")
+    parser.add_argument("--root", help="Host directory mapped as LeonOS /")
     parser.add_argument("--arg", action="append", default=[], help="Guest argv item after argv[0]")
     parser.add_argument("--program", action="append", default=[],
                         help="Additional guest ELF to run concurrently (repeatable)")

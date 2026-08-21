@@ -5,13 +5,13 @@
 #include <leonos/auth.h>
 
 #define LEONOS_BOOT_HANDOFF_MAGIC 0x4c424f54u
-#define LEONOS_BOOT_HANDOFF_VERSION 4u
+#define LEONOS_BOOT_HANDOFF_VERSION 6u
 #define LEONOS_KERNEL_SERVICES_VERSION 2u
-#define LEONOS_MIDDLELAYER_API_VERSION 5u
+#define LEONOS_MIDDLELAYER_API_VERSION 6u
 
-#define LEONOS_MOUNT_POLICY_VERSION 1u
+#define LEONOS_MOUNT_POLICY_VERSION 2u
 #define LEONOS_MOUNT_MAX_ENTRIES 8u
-#define LEONOS_MOUNT_PATH_LEN 16u
+#define LEONOS_MOUNT_PATH_LEN 64u
 #define LEONOS_MOUNT_SOURCE_LEN 64u
 
 #define LEONOS_MOUNT_KIND_NONE 0u
@@ -94,9 +94,17 @@ struct leonos_boot_handoff {
     struct leonos_boot_module_info loader;
     struct leonos_boot_module_info kernel;
     struct leonos_boot_module_info middlelayer;
+    /* The installer root is a raw Multiboot module, not an ELF image.  Keep
+     * its range in the loader handoff so the kernel does not have to trust
+     * module tags that may be overwritten while the second-stage images are
+     * loaded. */
     struct leonos_boot_module_info installer_root;
     uint64_t middlelayer_api;
     struct leonos_boot_log_state boot_log;
+    uint64_t boot_uptime_us;
+    /* Set only after the loader consumes a valid one-shot ESP marker. */
+    uint32_t kernel_debug_mode;
+    uint32_t kernel_debug_reserved;
 };
 
 struct leonos_kernel_services {
@@ -111,7 +119,6 @@ struct leonos_kernel_services {
 };
 
 struct leonos_mount_entry {
-    uint32_t drive;
     uint32_t kind;
     uint32_t flags;
     uint32_t reserved;
@@ -124,8 +131,8 @@ struct leonos_mount_entry {
 struct leonos_mount_policy {
     uint32_t version;
     uint32_t count;
-    uint32_t root_drive;
     uint32_t flags;
+    uint32_t reserved;
     struct leonos_mount_entry entries[LEONOS_MOUNT_MAX_ENTRIES];
 };
 
@@ -134,7 +141,6 @@ struct leonos_vfs_resolve_path {
     const char *input;
     char *out;
     uint32_t capacity;
-    uint32_t drive;
     uint32_t node_kind;
     uint32_t flags;
     uint32_t reserved;

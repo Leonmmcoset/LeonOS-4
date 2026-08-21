@@ -5,13 +5,13 @@
 #include <leonos/auth.h>
 
 #define LEONOS_BOOT_HANDOFF_MAGIC 0x4c424f54u
-#define LEONOS_BOOT_HANDOFF_VERSION 5u
+#define LEONOS_BOOT_HANDOFF_VERSION 6u
 #define LEONOS_KERNEL_SERVICES_VERSION 2u
-#define LEONOS_MIDDLELAYER_API_VERSION 5u
+#define LEONOS_MIDDLELAYER_API_VERSION 6u
 
-#define LEONOS_MOUNT_POLICY_VERSION 1u
+#define LEONOS_MOUNT_POLICY_VERSION 2u
 #define LEONOS_MOUNT_MAX_ENTRIES 8u
-#define LEONOS_MOUNT_PATH_LEN 16u
+#define LEONOS_MOUNT_PATH_LEN 64u
 #define LEONOS_MOUNT_SOURCE_LEN 64u
 
 #define LEONOS_MOUNT_KIND_NONE 0u
@@ -119,7 +119,6 @@ struct leonos_kernel_services {
 };
 
 struct leonos_mount_entry {
-    uint32_t drive;
     uint32_t kind;
     uint32_t flags;
     uint32_t reserved;
@@ -132,8 +131,8 @@ struct leonos_mount_entry {
 struct leonos_mount_policy {
     uint32_t version;
     uint32_t count;
-    uint32_t root_drive;
     uint32_t flags;
+    uint32_t reserved;
     struct leonos_mount_entry entries[LEONOS_MOUNT_MAX_ENTRIES];
 };
 
@@ -142,7 +141,6 @@ struct leonos_vfs_resolve_path {
     const char *input;
     char *out;
     uint32_t capacity;
-    uint32_t drive;
     uint32_t node_kind;
     uint32_t flags;
     uint32_t reserved;

@@ -27,8 +27,8 @@
 #include <ntclks/time.h>
 #include <ntclks/gui_ipc.h>
 
-#define KERNEL_DEBUG_ENABLED_PATH "0:/system/state/kerneldebug.enabled"
-#define KERNEL_DEBUG_MODULE_PATH "0:/system/kerneldebug.sys"
+#define KERNEL_DEBUG_ENABLED_PATH "/system/state/kerneldebug.enabled"
+#define KERNEL_DEBUG_MODULE_PATH "/system/kerneldebug.sys"
 #define KERNEL_DEBUG_MARKER "LEONOS-KDBG-1\n"
 #define KERNEL_DEBUG_BENCH_ITERATIONS 1000U
 #define KERNEL_DEBUG_GUI_IOCTL_VERSION 0x4c475549ULL
@@ -501,8 +501,8 @@ int kernel_debug_control(struct leonos_kernel_debug_control *control)
     case LEONOS_KERNEL_DEBUG_CONTROL_GET_STATE:
         return 0;
     case LEONOS_KERNEL_DEBUG_CONTROL_SET_ENABLED:
-        (void)storage_mkdir("0:/system");
-        (void)storage_mkdir("0:/system/state");
+        (void)storage_mkdir("/system");
+        (void)storage_mkdir("/system/state");
         if (control->flags & LEONOS_KERNEL_DEBUG_STATE_ENABLED) {
             ret = storage_write_file(KERNEL_DEBUG_ENABLED_PATH, "1\n", 2U);
         } else {
@@ -512,7 +512,7 @@ int kernel_debug_control(struct leonos_kernel_debug_control *control)
         break;
     case LEONOS_KERNEL_DEBUG_CONTROL_ARM_NEXT_BOOT:
         if (!enabled) return -1;
-        ret = storage_write_boot_esp_file("2:/system/state/kerneldebug.next",
+        ret = storage_write_boot_esp_file("/boot/system/state/kerneldebug.next",
                                           KERNEL_DEBUG_MARKER,
                                           (uint32_t)(sizeof(KERNEL_DEBUG_MARKER) - 1U));
         break;
@@ -520,7 +520,7 @@ int kernel_debug_control(struct leonos_kernel_debug_control *control)
         ret = storage_unlink(KERNEL_DEBUG_ENABLED_PATH);
         if (ret == -2) ret = 0;
         if (ret == 0) {
-            int marker_ret = storage_unlink_boot_esp_file("2:/system/state/kerneldebug.next");
+            int marker_ret = storage_unlink_boot_esp_file("/boot/system/state/kerneldebug.next");
             if (marker_ret < 0 && marker_ret != -2) ret = marker_ret;
         }
         break;
@@ -545,7 +545,7 @@ int kernel_debug_clear_state(void)
 bool kernel_debug_boot_requested(const struct leonos_boot_handoff *handoff)
 {
     return handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC &&
-           handoff->version >= LEONOS_BOOT_HANDOFF_VERSION &&
+           handoff->version == LEONOS_BOOT_HANDOFF_VERSION &&
            handoff->kernel_debug_mode != 0U && debug_file_exists(KERNEL_DEBUG_ENABLED_PATH);
 }
 

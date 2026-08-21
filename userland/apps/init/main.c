@@ -13,13 +13,13 @@ int main(void)
     long got;
     puts("[init.elf] LeonOS 4 userland init started");
     printf("[init.elf] pid=%d\n", getpid());
-    ret = chdir("0:/");
+    ret = chdir("/");
     printf("[init.elf] chdir root => %d\n", ret);
     printf("[init.elf] getcwd => %x\n", (unsigned int)(uintptr_t)getcwd(cwd, sizeof(cwd)));
     printf("[init.elf] cwd=%s\n", cwd);
-    ret = stat("0:/system/config/leonos.conf", &st);
+    ret = stat("/system/config/leonos.conf", &st);
     printf("[init.elf] stat leonos.conf => %d type=%d size=%d\n", ret, (int)st.type, (int)st.size);
-    ret = chdir("0:/system/config");
+    ret = chdir("/system/config");
     printf("[init.elf] chdir system config => %d\n", ret);
     printf("[init.elf] getcwd after chdir => %x\n", (unsigned int)(uintptr_t)getcwd(cwd, sizeof(cwd)));
     printf("[init.elf] cwd after chdir=%s\n", cwd);
@@ -44,7 +44,7 @@ int main(void)
         }
         close(fd);
     }
-    chdir("0:/");
+    chdir("/");
     puts("[init.elf] launching desktop.elf as window server");
     int status = 0;
     int reaped = wait4(2, &status, 0, 0);

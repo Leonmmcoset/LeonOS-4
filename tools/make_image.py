@@ -139,7 +139,8 @@ def write_gpt(image: Path, partitions: list[tuple[uuid.UUID, int, int, str]]) ->
 def make_boot_tree(staging: Path, destination: Path) -> None:
     """Stage only files GRUB and the LeonOS loader must read before ext2 mounts."""
     copy_file(staging / "EFI/BOOT/BOOTX64.EFI", destination / "EFI/BOOT/BOOTX64.EFI")
-    shutil.copytree(staging / "boot", destination / "boot", dirs_exist_ok=True)
+    copy_file(staging / "loader.elf", destination / "loader.elf")
+    shutil.copytree(staging / "grub", destination / "grub", dirs_exist_ok=True)
     copy_file(staging / "system/kernel.sys", destination / "system/kernel.sys")
     copy_file(staging / "system/middlelayer.sys", destination / "system/middlelayer.sys")
 
@@ -148,9 +149,10 @@ def make_root_tree(staging: Path, destination: Path, language: str) -> None:
     """Stage the normal writable root without duplicating ESP-only boot files."""
     shutil.copytree(staging, destination, dirs_exist_ok=True)
     shutil.rmtree(destination / "EFI", ignore_errors=True)
-    shutil.rmtree(destination / "boot", ignore_errors=True)
-    for name in ("kernel.sys", "middlelayer.sys"):
+    shutil.rmtree(destination / "grub", ignore_errors=True)
+    for name in ("loader.elf", "kernel.sys", "middlelayer.sys"):
         (destination / "system" / name).unlink(missing_ok=True)
+    (destination / "loader.elf").unlink(missing_ok=True)
     locale = destination / "system/config/locale.conf"
     locale.parent.mkdir(parents=True, exist_ok=True)
     locale.write_text(f"lang={language}\n", encoding="utf-8")

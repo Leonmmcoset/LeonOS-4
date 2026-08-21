@@ -74,7 +74,7 @@ static const char *const data_rows[][4] = {
     {"calc.elf", "Program", "Idle", "Keyboard input and buttons"},
     {"osver.elf", "Program", "Idle", "System version dialog"},
 };
-static char sample_path[96] = "0:/programs/notepad/notepad.elf";
+static char sample_path[96] = "/programs/notepad/notepad.elf";
 static char sample_text[160] = "Line one\n你好，LeonOS 4。中文显示测试。\nLine three";
 static char demo_status[96] = "Click inside the top tabs to switch pages";
 static struct leonos_ui_edit_state sample_edit;
@@ -125,8 +125,8 @@ static void copy_text(char *dst, uint32_t capacity, const char *src)
 
 static void run_unicode_file_test(void)
 {
-    const char *dir = "0:/测试目录";
-    const char *path = "0:/测试目录/你好.txt";
+    const char *dir = "/测试目录";
+    const char *path = "/测试目录/你好.txt";
     const char *content = "你好，LeonOS 4。中文显示测试。\n";
     struct leonos_stat st;
     struct leonos_dir_entry entry;
@@ -330,7 +330,7 @@ static void draw_advanced_page(struct leonos_ui_surface *ui)
     uint32_t eased = leonos_ui_anim_ease_out(progress);
     uint32_t width = leonos_ui_anim_lerp(48, 172, eased);
     struct leonos_ui_tree_item tree_items[] = {
-        {"0:/", 10, 0, LEONOS_UI_TREE_EXPANDED},
+        {"/", 10, 0, LEONOS_UI_TREE_EXPANDED},
         {"system", 11, 1, LEONOS_UI_TREE_EXPANDED},
         {"fonts", 12, 2, LEONOS_UI_TREE_LEAF},
         {"resources", 13, 2, LEONOS_UI_TREE_LEAF},
@@ -555,7 +555,7 @@ static int handle_menu_click(int32_t x, int32_t y, uint32_t *page)
 static int handle_advanced_mouse(int32_t x, int32_t y, uint32_t buttons)
 {
     struct leonos_ui_tree_item tree_items[] = {
-        {"0:/", 10, 0, LEONOS_UI_TREE_EXPANDED},
+        {"/", 10, 0, LEONOS_UI_TREE_EXPANDED},
         {"system", 11, 1, LEONOS_UI_TREE_EXPANDED},
         {"fonts", 12, 2, LEONOS_UI_TREE_LEAF},
         {"resources", 13, 2, LEONOS_UI_TREE_LEAF},

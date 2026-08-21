@@ -150,7 +150,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     run([
         "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag,
-        "-pie", "--hash-style=sysv", "--dynamic-linker", "0:/system/lib/ld-leonos.elf",
+        "-pie", "--hash-style=sysv", "--dynamic-linker", "/system/lib/ld-leonos.elf",
         "-z", "relro", "-z", "now", "-z", "max-page-size=0x1000",
         "-T", str(args.linker_script.resolve()), "-o", str(output),
         str(args.dynamic_crt.resolve()), str(args.abi_note.resolve()),

@@ -15,8 +15,8 @@
 #define PACKAGE_VERSION "9.2"
 #define PACKAGE_STRING "GNU nano 9.2"
 #define VERSION "9.2"
-#define LOCALEDIR "0:/system/locale"
-#define SYSCONFDIR "0:/system/config"
+#define LOCALEDIR "/system/locale"
+#define SYSCONFDIR "/system/config"
 
 #define HAVE_LIMITS_H 1
 #define HAVE_NCURSES_H 1

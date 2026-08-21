@@ -18,7 +18,7 @@ char *realpath(const char *path, char *resolved)
     if (!path || !path[0] || access(path, 0) < 0) {
         return 0;
     }
-    if (path[1] == ':') {
+    if (path[0] == '/') {
         path_len = strlen(path);
         if (!result) {
             result = (char *)malloc(path_len + 1U);

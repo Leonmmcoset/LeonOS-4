@@ -27,11 +27,11 @@ class VirtualFD:
 
 
 class GuestFS:
-    DISPLAY_CONFIG_PATH = "0:/system/config/display.conf"
+    DISPLAY_CONFIG_PATH = "/system/config/display.conf"
 
     def __init__(self, root: str | Path, *, language: str = "en", ui_theme: str = "metro", logger=None):
         self.root = Path(root).resolve()
-        self.cwd = "0:/"
+        self.cwd = "/"
         self.language = language
         self.ui_theme = "win95" if ui_theme == "win95" else "metro"
         self._display_config = self._load_display_config()
@@ -94,22 +94,16 @@ class GuestFS:
         return self._alloc_fd(VirtualFD(data, writable, self.DISPLAY_CONFIG_PATH))
 
     def guest_abs(self, path: str) -> str:
-        path = (path or "").replace("\\", "/")
+        path = path or ""
+        if ":" in path or "\\" in path:
+            raise ValueError("non-Unix path prefixes are not supported")
         if path.startswith("/"):
-            path = "0:" + path
-        if len(path) >= 3 and path[1] == ":" and path[2] == "/":
-            drive = path[:2]
-            rest = path[3:]
-        elif len(path) == 2 and path[1] == ":":
-            drive = path
-            rest = ""
+            rest = path[1:]
         else:
             base = self.cwd
             if not base.endswith("/"):
                 base += "/"
             return self.guest_abs(base + path)
-        if drive != "0:":
-            raise ValueError("only drive 0: is supported")
         parts: list[str] = []
         for part in rest.split("/"):
             if not part or part == ".":
@@ -119,11 +113,11 @@ class GuestFS:
                     parts.pop()
                 continue
             parts.append(part)
-        return "0:/" + "/".join(parts)
+        return "/" + "/".join(parts)
 
     def host_path(self, guest_path: str) -> Path:
         guest = self.guest_abs(guest_path)
-        rel = guest[3:]
+        rel = guest[1:]
         host = (self.root / Path(*[p for p in rel.split("/") if p])).resolve()
         try:
             host.relative_to(self.root)
@@ -145,7 +139,7 @@ class GuestFS:
             return neg(EACCES)
         if self._is_display_config(guest):
             return self._open_virtual_display_config(flags)
-        if guest.lower() == "0:/system/config/locale.conf" and not host.exists():
+        if guest.lower() == "/system/config/locale.conf" and not host.exists():
             text = "lang=zh\n" if self.language == "zh" else "lang=en\n"
             return self._alloc_fd(VirtualFD(io.BytesIO(text.encode("ascii")), False))
         write_mode = flags & C.O_ACCMODE
@@ -314,7 +308,7 @@ class GuestFS:
             return neg(EACCES)
         if self._is_display_config(guest):
             return (C.FS_TYPE_FILE, len(self._display_config))
-        if guest.lower() == "0:/system/config/locale.conf" and not host.exists():
+        if guest.lower() == "/system/config/locale.conf" and not host.exists():
             return (C.FS_TYPE_FILE, len("lang=zh\n" if self.language == "zh" else "lang=en\n"))
         try:
             st = host.stat()
@@ -338,7 +332,7 @@ class GuestFS:
                 (C.FS_TYPE_DIR if child.is_dir() else C.FS_TYPE_FILE, child.name)
                 for child in sorted(host.iterdir(), key=lambda p: p.name.lower())
             ]
-            if self.guest_abs(path).lower() == "0:/system/config" and not any(name.lower() == "display.conf" for _, name in entries):
+            if self.guest_abs(path).lower() == "/system/config" and not any(name.lower() == "display.conf" for _, name in entries):
                 entries.append((C.FS_TYPE_FILE, "display.conf"))
             return entries
         except OSError:

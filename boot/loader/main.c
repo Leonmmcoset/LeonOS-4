@@ -31,8 +31,8 @@
 #define EM_X86_64 62
 #define PT_LOAD 1
 
-#define KERNEL_PATH "0:/system/kernel.sys"
-#define MIDDLELAYER_PATH "0:/system/middlelayer.sys"
+#define KERNEL_PATH "/system/kernel.sys"
+#define MIDDLELAYER_PATH "/system/middlelayer.sys"
 #define READ_BUFFER_SIZE (1024u * 1024u)
 #define EFI_MEMORY_MAP_BYTES (256u * 1024u)
 #define LOADER_LOG_MAX_COLUMNS 512u
@@ -1328,10 +1328,11 @@ static int build_efi_path(const char *path, uint16_t *out, uint32_t cap)
     if (!path || !out || cap < 2) {
         return -1;
     }
-    if (path[0] >= '0' && path[0] <= '9' && path[1] == ':' && path[2] == '/') {
-        path += 3;
+    if (path[0] != '/') {
+        return -1;
     }
     out[pos++] = '\\';
+    ++path;
     while (*path) {
         if (pos + 1 >= cap) {
             return -1;
@@ -1527,10 +1528,10 @@ static int loader_consume_kernel_debug_marker(void)
     static const char marker[] = "LEONOS-KDBG-1\n";
     char value[sizeof(marker) + 8U];
     uint64_t len = 0;
-    if (efi_read_file("2:/system/state/kerneldebug.next", value, sizeof(value) - 1U, &len) < 0) {
+    if (efi_read_file("/system/state/kerneldebug.next", value, sizeof(value) - 1U, &len) < 0) {
         return 0;
     }
-    if (efi_delete_file("2:/system/state/kerneldebug.next") < 0) {
+    if (efi_delete_file("/system/state/kerneldebug.next") < 0) {
         serial_write("[loader] kernel debug marker could not be consumed\n");
         return 0;
     }
@@ -1590,7 +1591,7 @@ static void loader_load_ui_theme(void)
     uint64_t len = 0;
     static const char win95[] = "theme=win95";
     handoff.ui_theme = 1u;
-    if (efi_read_file("\\etc\\display.conf", config, sizeof(config), &len) < 0) {
+    if (efi_read_file("/system/config/display.conf", config, sizeof(config), &len) < 0) {
         return;
     }
     for (uint64_t index = 0; index + sizeof(win95) - 1u <= len; ++index) {
@@ -1670,7 +1671,7 @@ static void parse_multiboot2(uint32_t magic, uint32_t info_addr)
     handoff.loader.start = (uint64_t)(uintptr_t)__loader_start;
     handoff.loader.end = (uint64_t)(uintptr_t)__loader_end;
     handoff.loader.entry = (uint64_t)(uintptr_t)loader_main;
-    handoff.loader.path = "0:/boot/loader.elf";
+    handoff.loader.path = "/boot/loader.elf";
     handoff.ui_theme = 1u;
     if (magic != MULTIBOOT2_BOOTLOADER_MAGIC || !info_addr) {
         serial_write("[loader] invalid Multiboot2 handoff\n");
@@ -1839,7 +1840,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
             __asm__ volatile("hlt");
         }
     }
-    handoff.kernel.path = KERNEL_PATH;
+    handoff.kernel.path = "/boot/system/kernel.sys";
     serial_write("[loader] kernel loaded entry=");
     serial_write_hex(handoff.kernel.entry);
     serial_write(" range=");
@@ -1895,7 +1896,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
             __asm__ volatile("hlt");
         }
     }
-    handoff.middlelayer.path = MIDDLELAYER_PATH;
+    handoff.middlelayer.path = "/boot/system/middlelayer.sys";
     serial_write("[loader] middlelayer loaded entry=");
     serial_write_hex(handoff.middlelayer.entry);
     serial_write(" range=");

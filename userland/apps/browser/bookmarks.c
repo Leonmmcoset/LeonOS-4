@@ -27,8 +27,8 @@ static void bookmark_store_location(char *dst, uint32_t cap)
                              BROWSER_BOOKMARK_STORE_DIR);
         (void)mkdir(dir, 0);
     } else {
-        (void)mkdir("0:/var", 0);
-        bookmark_append_path(dir, sizeof(dir), "0:/var",
+        (void)mkdir("/var", 0);
+        bookmark_append_path(dir, sizeof(dir), "/var",
                              BROWSER_BOOKMARK_STORE_DIR);
         (void)mkdir(dir, 0);
     }

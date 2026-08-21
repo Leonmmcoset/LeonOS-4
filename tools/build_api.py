@@ -33,9 +33,9 @@ def validate_member_name(name):
         raise ValueError(f"archive member name is too long: {name}")
 
 def validate_install_path(path):
-    if not path.startswith('0:/programs/'):
-        raise ValueError(f"default_path must be under 0:/programs/: {path}")
-    parts = path[3:].split('/')
+    if not path.startswith('/programs/'):
+        raise ValueError(f"default_path must be under /programs/: {path}")
+    parts = path[1:].split('/')
     if any(part in ('', '.', '..') for part in parts):
         raise ValueError(f"unsafe install path: {path}")
     if '\\' in path or ':' in path[2:] or any(ord(ch) < 0x20 for ch in path):
@@ -251,7 +251,7 @@ def main():
         name = "Hello World"
         version = "1.0.0"
         main_exe = "files/helloworld.elf"
-        default_path = "0:/programs/helloworld"
+        default_path = "/programs/helloworld"
         files = [(args.legacy[0], main_exe)]
         output = args.legacy[1]
         requires_admin = True

@@ -210,7 +210,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     if args.dynamic and (not args.dynamic_crt or not args.abi_note):
         raise SystemExit("dynamic Fastfetch requires --dynamic-crt and --abi-note")
-    dynamic = ["-pie", "--hash-style=sysv", "--dynamic-linker", "0:/system/lib/ld-leonos.elf",
+    dynamic = ["-pie", "--hash-style=sysv", "--dynamic-linker", "/system/lib/ld-leonos.elf",
                "-z", "relro", "-z", "now"] if args.dynamic else []
     startup = [str(args.dynamic_crt), str(args.abi_note)] if args.dynamic else []
     libraries = [str(leonos_lib)] if args.dynamic else [str(leonos_lib), str(picolibc_lib), str(compiler_runtime)]

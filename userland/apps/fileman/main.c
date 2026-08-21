@@ -29,8 +29,8 @@ int main(int argc, char **argv, char **envp)
     }
     copy_text(address_input, sizeof(address_input), current_path);
     leonos_ui_edit_state_init(&address_edit, address_input, sizeof(address_input));
-    if (navigate_to_path(current_path) < 0 && !text_eq(current_path, "0:/")) {
-        navigate_to_path("0:/");
+    if (navigate_to_path(current_path) < 0 && !text_eq(current_path, "/")) {
+        navigate_to_path("/");
     }
     present_fileman(fileman_window_id, &fileman_ui);
 

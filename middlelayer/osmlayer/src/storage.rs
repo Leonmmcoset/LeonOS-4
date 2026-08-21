@@ -2,13 +2,13 @@
 // Records generic mounted-volume properties without assuming a FAT32 root.
 
 pub struct StorageVolume {
-    pub drive: u32,
+    pub volume_id: u32,
     pub bytes_per_sector: u16,
     pub writable: bool,
 }
 
 static mut ROOT: StorageVolume = StorageVolume {
-    drive: 0,
+    volume_id: 0,
     bytes_per_sector: 512,
     writable: true,
 };
@@ -19,7 +19,7 @@ static mut ROOT: StorageVolume = StorageVolume {
 pub fn init_root_partition() {
     unsafe {
         ROOT = StorageVolume {
-            drive: 0,
+            volume_id: 0,
             bytes_per_sector: 512,
             writable: true,
         };

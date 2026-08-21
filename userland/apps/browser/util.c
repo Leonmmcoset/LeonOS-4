@@ -274,9 +274,9 @@ void build_http_url(char *dst, uint32_t cap, const char *host,
     append_text(dst, &pos, cap, path && path[0] ? path : "/");
 }
 
-int is_drive_path(const char *text)
+int is_local_path(const char *text)
 {
-    return text && text[0] && text[1] == ':' && text[2] == '/';
+    return text && text[0] == '/';
 }
 
 void normalize_location(const char *input, char *out, uint32_t cap)
@@ -291,7 +291,7 @@ void normalize_location(const char *input, char *out, uint32_t cap)
     if (starts_with_ignore_case(tmp, "http://") ||
         starts_with_ignore_case(tmp, "https://") ||
         starts_with_ignore_case(tmp, "about:") ||
-        is_drive_path(tmp)) {
+        is_local_path(tmp)) {
         copy_text(out, cap, tmp);
         return;
     }

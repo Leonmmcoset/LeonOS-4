@@ -39,7 +39,7 @@ python3 build.py run run
 来通过 QEMU + KVM 运行操作系统。
 
 常规 VMDK 使用 GPT 双分区：FAT32 ESP 存放 UEFI/GRUB、loader、kernel 和
-middlelayer，ext2 分区作为运行时 `0:/` 根目录。FAT32 仍用于 ESP、安装器
+middlelayer，ext2 分区作为运行时 `/` 根目录。FAT32 仍用于 ESP、安装器
 ramdisk、旧镜像兼容和可移动介质；构建 ext2 镜像需要 `e2fsprogs` 提供的
 `mke2fs`。
 
@@ -80,7 +80,7 @@ python3 build.py status <九位任务ID>
 
 ## 界面样式
 
-系统默认使用蓝色、直角、平面化的 Metro 样式。管理员可在“设置 → 显示”中切换为完整保留的 Win95 样式；选择会立即应用到 Desktop 和已打开程序，并保存到 `0:/system/config/display.conf` 供下次启动的登录、OOBE、安装器与内核早期画面使用。
+系统默认使用蓝色、直角、平面化的 Metro 样式。管理员可在“设置 → 显示”中切换为完整保留的 Win95 样式；选择会立即应用到 Desktop 和已打开程序，并保存到 `/system/config/display.conf` 供下次启动的登录、OOBE、安装器与内核早期画面使用。
 
 ## 代码与目录结构
 
@@ -136,4 +136,5 @@ int subsystem_handle(const struct request *request, struct result *out_result);
   ABI、并发、内存安全和错误处理说明。
 
 ## 作者注
+
 源代码里还包含神秘的许可证服务端和客户端完整代码，但是这个项目是 Apache 2.0 开源协议且我也打算放弃许可证机制所以就作为纪念保留吧。

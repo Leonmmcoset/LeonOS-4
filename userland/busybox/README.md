@@ -1,11 +1,11 @@
 # LeonOS BusyBox profile
 
-The image builds BusyBox 1.36.1 as `0:/programs/busybox/busybox.elf` with a
+The image builds BusyBox 1.36.1 as `/programs/busybox/busybox.elf` with a
 small, static collection of file and text applets. Double-clicking it opens a
 terminal and prints the applet list. Invoke a specific applet with:
 
 ```text
-0:/programs/busybox/busybox.elf ls 0:/
+/programs/busybox/busybox.elf ls /
 ```
 
 The profile includes BusyBox `ash` behind the `sh` applet with native
@@ -42,10 +42,10 @@ LeonOS filesystem ABI. Symbolic links, ownership changes, and special device
 nodes remain unsupported by the filesystem and return an error.
 
 The `file` command is provided as an external program backed by upstream
-libmagic. Ash resolves it to `0:/programs/file/file.elf`; the matching
-compiled database is installed at `0:/system/share/misc/magic.mgc`.
-`fastfetch` is likewise resolved to `0:/programs/fastfetch/fastfetch.elf`.
-The `sl` terminal joke is resolved to `0:/programs/sl/sl.elf`.
+libmagic. Ash resolves it to `/programs/file/file.elf`; the matching
+compiled database is installed at `/system/share/misc/magic.mgc`.
+`fastfetch` is likewise resolved to `/programs/fastfetch/fastfetch.elf`.
+The `sl` terminal joke is resolved to `/programs/sl/sl.elf`.
 
 The kernel provides process inspection through the task snapshot ABI,
 same-user signal termination, COW `fork`, `execve`, process groups, foreground
@@ -56,7 +56,7 @@ POSIX signal handlers and shared file offsets after `fork` are not yet exposed.
 Ash does not use the legacy PTY-launch adapter: its commands use the upstream
 MMU `fork`/`pipe`/`dup2`/`execvp`/`waitpid` flow. The remaining
 BusyBox adapter only maps bare applet names to the single
-`0:/programs/busybox/busybox.elf` executable and maps bundled external tools
+`/programs/busybox/busybox.elf` executable and maps bundled external tools
 to their installed paths.
 
 BusyBox is GPL-2.0-only; `LICENSE` and upstream version information are staged

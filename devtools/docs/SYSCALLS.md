@@ -58,7 +58,7 @@ LeonOS 4 x86_64 用户态通过 `int $0x80` 进入内核。SDK 中的
 
 ## 文件与路径
 
-路径使用 LeonOS 驱动器格式，例如 `0:/users/admin/file.txt`。文件打开标志
+路径使用 Unix 风格根目录，例如 `/users/admin/file.txt`。文件打开标志
 和偏移常量来自 `<leonos/fs.h>` / `<fcntl.h>`：`O_RDONLY`、`O_WRONLY`、
 `O_RDWR`、`O_CREAT`、`O_TRUNC`、`O_APPEND` 以及 `SEEK_SET/CUR/END`。
 `stat.type` 使用 `LEONOS_FS_TYPE_FILE`、`LEONOS_FS_TYPE_DIR` 或

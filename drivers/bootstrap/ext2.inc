@@ -232,7 +232,7 @@ static void ext2_fill_node(uint32_t ino, const struct ext2_inode *inode,
     out->type = ext2_node_type(inode);
     out->flags = STORAGE_NODE_FLAG_EXT2 | (ino == EXT2_ROOT_INO ? STORAGE_NODE_FLAG_ROOT : 0u);
     out->first_cluster = ino;
-    out->drive = g_storage.drive;
+    out->volume_id = g_storage.volume_id;
     out->size = ext2_inode_size(inode);
 }
 
@@ -318,7 +318,7 @@ static int ext2_find_in_dir(uint32_t directory_ino, const char *name,
     return -2;
 }
 
-/** @brief Resolves a normalized LeonOS drive path through ext2 directories. */
+/** @brief Resolves a normalized filesystem-local path through ext2 directories. */
 static int ext2_lookup_path(const char *path, struct storage_node *out)
 {
     struct storage_node node;
@@ -327,11 +327,11 @@ static int ext2_lookup_path(const char *path, struct storage_node *out)
     uint32_t length = 0;
     struct ext2_inode root;
     int ret;
-    if (!path || path[1] != ':' || path[2] != '/') return -22;
+    if (!path || path[0] != '/') return -22;
     ret = ext2_read_inode(EXT2_ROOT_INO, &root);
     if (ret < 0) return ret;
     ext2_fill_node(EXT2_ROOT_INO, &root, &node);
-    cursor = path + 3;
+    cursor = path + 1;
     while (*cursor) {
         if (*cursor == '/') {
             if (length) {
@@ -1053,7 +1053,7 @@ static int ext2_release_trailing_blocks(struct ext2_inode *inode, uint32_t keep_
 
 /**
  * @brief Replaces or creates a regular ext2 file at a normalized path.
- * @param path Absolute LeonOS path on the currently active ext2 drive.
+ * @param path Absolute LeonOS path on the currently active ext2 volume.
  * @param buffer File data, or null only for a zero-length file.
  * @param len File byte length.
  * @return Zero on success, or a negative errno-style status.
@@ -1355,7 +1355,7 @@ static int ext2_rmdir(const char *path)
 /**
  * @brief Renames an ext2 path within the currently active filesystem.
  * @param old_path Existing absolute LeonOS path.
- * @param new_path Unused absolute LeonOS path in the same drive.
+ * @param new_path Unused absolute LeonOS path in the same volume.
  * @return Zero on success, -EEXIST for an occupied destination, or a negative error.
  */
 static int ext2_rename(const char *old_path, const char *new_path)

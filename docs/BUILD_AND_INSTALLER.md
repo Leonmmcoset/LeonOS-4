@@ -33,7 +33,7 @@ userland binaries. The default is `http://127.0.0.1:30301`.
 `LEONOS_LICENSE_REQUIRE` policy, writes `autoconf-installer.h` with the
 installer-installed-system policy, and writes `CONFIG_LICENSE_SERVER_URL` into
 both headers. License binaries read that compiled macro directly; there is no
-runtime `0:/system/config/license.conf` server override.
+runtime `/system/config/license.conf` server override.
 
 ## Main outputs
 
@@ -68,8 +68,8 @@ The installer has two related payload groups:
   stored under `install/esp` inside `build/install/root.fat`.
 
 `tools/make_installer_root.py` creates `build/install/root.fat`, copies the
-normal staging tree into `0:/install/root` and its boot subset into
-`0:/install/esp`, removes stale license override files from the root payload,
+normal staging tree into `/install/root` and its boot subset into
+`/install/esp`, removes stale license override files from the root payload,
 and overlays
 policy-sensitive binaries built with `autoconf-installer.h`.
 
@@ -85,8 +85,8 @@ This keeps installer boot and installed-system boot on the same matched
 component set.
 
 The installer runtime itself only needs `desktop.elf` and `installer.elf` under
-`0:/system/apps`. The installed-system root payload under `0:/install/root/system/apps`
-and `0:/install/root/programs` contains the normal app set, including `login.elf`
+`/system/apps`. The installed-system root payload under `/install/root/system/apps`
+and `/install/root/programs` contains the normal app set, including `login.elf`
 and `oobe.elf`, so a fresh
 install boots into license OOBE and then first-administrator creation instead
 of requiring pre-created accounts.
@@ -98,12 +98,12 @@ the license server. To build an image without license validation, change the
 corresponding source macro through Kconfig and regenerate/rebuild so the
 generated binaries contain `LEONOS_LICENSE_REQUIRE 0`.
 
-Installer update mode refreshes FAT32 ESP boot files from `0:/install/esp`, ext2
-system files from `0:/install/root`, selected changed or missing `programs`
-packages, and bundled docs from `0:/install/root/docs`. The core update replaces
-`1:/system/lib` as a unit, including `ld-leonos.elf`, `libleonos.so.1`, and
+Installer update mode refreshes FAT32 ESP boot files from `/install/esp`, ext2
+system files from `/install/root`, selected changed or missing `programs`
+packages, and bundled docs from `/install/root/docs`. The core update replaces
+`/target/system/lib` as a unit, including `ld-leonos.elf`, `libleonos.so.1`, and
 versioned component libraries such as `libmagic.so.1`, `liblua.so.5`, and
-`sqlite.so.3`. It also copies `1:/system/kerneldebug.sys` from the payload.
+`sqlite.so.3`. It also copies `/target/system/kerneldebug.sys` from the payload.
 This keeps the dynamic loader, shared runtime, applications, and the built-in
 kernel debugging module on one release version. Missing runtime directories or
 the debug module on an older target are created during the update; the
@@ -114,11 +114,11 @@ are missing or changed are copied. This includes package metadata, licenses,
 icons, headers, examples, and private runtime data; files added locally to an
 installed package are left untouched.
 Docs are merged: matching bundled `.hlp` files are overwritten, but extra
-third-party help files already present on the target `1:/docs` are kept.
-Update mode does not replace `1:/system/config` or `1:/system/state`, so local machine state such as
+third-party help files already present on the target `/target/docs` are kept.
+Update mode does not replace `/target/system/config` or `/target/system/state`, so local machine state such as
 `license.dat`, `accounts.db`, and `oobe.done` is preserved across an
 installer-driven update. The machine ID is derived from detected machine
-identity at runtime instead of being stored in `0:/system/config/install.id`. The stable
+identity at runtime instead of being stored in `/system/config/install.id`. The stable
 identity source is SMBIOS System UUID when firmware provides it, otherwise the
 boot GPT disk and ESP partition GUIDs. A fresh install formats and copies the
 staged `system/config` tree and creates `system/state` instead, so it starts the license OOBE flow again.

@@ -120,8 +120,8 @@ static void cookie_build_store_path(char *dst, uint32_t cap)
                            BROWSER_COOKIE_STORE_DIR);
         (void)mkdir(dir, 0);
     } else {
-        (void)mkdir("0:/var", 0);
-        cookie_append_path(dir, sizeof(dir), "0:/var",
+        (void)mkdir("/var", 0);
+        cookie_append_path(dir, sizeof(dir), "/var",
                            BROWSER_COOKIE_STORE_DIR);
         (void)mkdir(dir, 0);
     }

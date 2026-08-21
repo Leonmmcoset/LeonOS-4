@@ -49,7 +49,7 @@ LeonOS ABI v1 的基础运行库是 `lib/libleonos.so.1`。SDK 默认构建动�
 
 `leonos/api.h` 解析和安装 `.api` tar 包，支持进度回调、管理员要求、桌面入口、
 虚拟终端标记和输入法元数据。安装路径必须由系统安装器选择，应用不要把包内容
-直接解包到 `0:/tools` 以冒充已安装程序。
+直接解包到 `/tools` 以冒充已安装程序。
 
 ## 第三方库
 
@@ -58,14 +58,14 @@ LeonOS ABI v1 的基础运行库是 `lib/libleonos.so.1`。SDK 默认构建动�
 - `lib/libstardustui.a`：启用 `USE_STARDUSTUI=1` 时链接，且只能使用 SDK
   中随附的上游公共头文件。
 - `lib/libmagic.so.1` 与 `lib/libmagic.a`：file 5.48 的文件类型识别库；公共头
-  文件为 `include/magic.h`，运行时数据库为 `0:/system/share/misc/magic.mgc`。
+  文件为 `include/magic.h`，运行时数据库为 `/system/share/misc/magic.mgc`。
 - `lib/liblua.so.5` 与 `lib/liblua.a`：Lua 5.4.8 C API；公共头文件为
   `include/lua5.4/`。动态 C 模块加载仍未开放。
 - `lib/sqlite.so.3` 与 `lib/sqlite.a`：SQLite 3.46.1 C API；公共头文件为
   `include/sqlite3.h`。LeonOS 使用自定义 VFS，当前关闭 WAL、扩展加载和跨进程锁。
 
 `libmagic.so.1` 和 `liblua.so.5` 与 `libleonos.so.1` 都要求 LeonOS ABI v1，
-运行时从 `0:/system/lib` 解析。它们不提供宿主机 ABI 兼容层。
+运行时从 `/system/lib` 解析。它们不提供宿主机 ABI 兼容层。
 
 在 SDK 默认动态构建中，使用 `USE_LIBMAGIC=1` 或 `USE_LUA=1` 会自动写入
 相应 `DT_NEEDED` 项。例如：

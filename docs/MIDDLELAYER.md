@@ -16,7 +16,7 @@ Middlelayer currently owns:
 - ACL policy through hidden `LEONACL.SYS` metadata files on FAT32 and ext2, including
   default ACL synthesis, corrupt-ACL handling, and owner/role checks.
 - Service-runtime authorization for protected service tasks writing
-  `0:/var` state/log files and `0:/system/config/services.cfg`.
+  `/var` state/log files and `/system/config/services.cfg`.
 - Boot-time self-test coverage for multi-filesystem mount policy, IPC, GUI, VFS, and
   device catalog services.
 
@@ -68,7 +68,7 @@ helpers.
 
 ## Account and Policy Service
 
-Middlelayer owns `0:/system/state/accounts.db`. The v1 serialized line format is:
+Middlelayer owns `/system/state/accounts.db`. The v1 serialized line format is:
 
 ```text
 uid|role|flags|username|salt_hex|hash_hex
@@ -80,7 +80,7 @@ The database is accessed through trusted kernel services:
 - `write_file`
 - `mkdir`
 
-User tasks cannot open `0:/system/state/accounts.db` directly. Auth operations go through
+User tasks cannot open `/system/state/accounts.db` directly. Auth operations go through
 `auth_op`, and the kernel passes bounded structs after validating user pointers.
 
 ## Filesystem ACL Service
@@ -98,20 +98,20 @@ The ACL service supports:
   file operations.
 
 When metadata is missing, middlelayer synthesizes defaults for system trees
-including `0:/docs`, user homes, and `0:/tmp`. When metadata is corrupt,
+including `/docs`, user homes, and `/tmp`. When metadata is corrupt,
 ordinary access is denied and administrators can repair the object from File
 Manager.
 
 Middlelayer also creates and repairs:
 
-- `0:/users`
-- `0:/users/<name>`
-- `0:/users/<name>/desktop`
-- `0:/users/<name>/documents`
-- `0:/users/<name>/downloads`
-- `0:/tmp`
+- `/users`
+- `/users/<name>`
+- `/users/<name>/desktop`
+- `/users/<name>/documents`
+- `/users/<name>/downloads`
+- `/tmp`
 
-On new account creation, middlelayer also seeds `0:/users/<name>/desktop`
+On new account creation, middlelayer also seeds `/users/<name>/desktop`
 with launcher shortcuts for File Manager, Task Manager, Settings, and Browser.
 
 First account creation is only allowed when no enabled administrator exists,
@@ -123,14 +123,14 @@ administrator and refuses to remove the last enabled administrator.
 Protected system services are marked by the kernel with
 `LEONOS_AUTHZ_ACTOR_SERVICE` during authorization checks. Middlelayer uses that
 flag to allow `serviced.elf` to create and update
-`0:/var/run/services.state`, `0:/var/run/services.cmd`,
-`0:/var/log/services.log`, and `0:/system/config/services.cfg` without making those
-writes available to ordinary unauthenticated tasks. `0:/var` remains readable
+`/var/run/services.state`, `/var/run/services.cmd`,
+`/var/log/services.log`, and `/system/config/services.cfg` without making those
+writes available to ordinary unauthenticated tasks. `/var` remains readable
 so user tools can show runtime service state.
 
-## ABI v5 callbacks
+## ABI v6 callbacks
 
-`LEONOS_MIDDLELAYER_API_VERSION` is currently `5`. The required callback table
+`LEONOS_MIDDLELAYER_API_VERSION` is currently `6`. The required callback table
 fields are:
 
 - `init`
@@ -143,4 +143,4 @@ fields are:
 - `auth_op`
 
 The kernel bridge rejects a middlelayer module that does not provide the full
-v5 table.
+v6 table.

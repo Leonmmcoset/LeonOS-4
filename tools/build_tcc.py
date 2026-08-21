@@ -111,7 +111,7 @@ def write_config(path: Path) -> None:
         "/* LeonOS runs a single compiler invocation per process. */\n"
         "#define CONFIG_TCC_SEMLOCK 0\n"
         "#define CONFIG_TCC_PREDEFS 0\n"
-        "#define CONFIG_TCCDIR \"0:/programs/tcc\"\n"
+        "#define CONFIG_TCCDIR \"/programs/tcc\"\n"
         "#define CONFIG_TCC_SWITCHES \"-static\"\n"
         "#define CONFIG_TCC_SYSINCLUDEPATHS \"{B}/include\"\n"
         "#define CONFIG_TCC_LIBPATHS \"{B}/lib\"\n"
@@ -146,12 +146,10 @@ def patch_tinycc(source: Path, port: Path) -> None:
         "# define PATHCMP strcmp\n"
         "# define PATHSEP \":\"\n",
         "# define IS_DIRSEP(c) (c == '/')\n"
-        "/* LeonOS drive paths (for example 0:/programs) are absolute. */\n"
-        "# define IS_ABSPATH(p) (IS_DIRSEP(p[0]) || \\\n"
-        "                         (p[0] && p[1] == ':' && IS_DIRSEP(p[2])))\n"
+        "/* LeonOS uses Unix-style absolute paths, for example /programs. */\n"
+        "# define IS_ABSPATH(p) IS_DIRSEP(p[0])\n"
         "# define PATHCMP strcmp\n"
-        "/* ':' is part of every LeonOS absolute path. */\n"
-        "# define PATHSEP \";\"\n",
+        "# define PATHSEP \":\"\n",
         "LeonOS path syntax",
     )
     replace_once(

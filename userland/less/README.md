@@ -2,7 +2,7 @@
 
 LeonOS builds upstream `gwsw/less` at commit
 `b8bbf4297169e20d35e1cc3e015180e8a011bcf2`. The executable is installed as
-`0:/programs/less/less.elf` and the Ash/cmd command resolvers prefer it over
+`/programs/less/less.elf` and the Ash/cmd command resolvers prefer it over
 BusyBox's bounded fallback applet.
 
 The port uses the shared LeonOS PTY, `poll()` and POSIX regular-expression

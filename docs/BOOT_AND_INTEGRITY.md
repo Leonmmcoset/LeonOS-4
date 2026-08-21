@@ -12,12 +12,12 @@ LeonOS 4 boots through GRUB and the custom loader:
 
 During early boot, normal disk images load components from the FAT32 ESP:
 
-- `0:/boot/loader.elf`
-- `0:/system/kernel.sys`
-- `0:/system/middlelayer.sys`
+- `/boot/loader.elf`
+- `/system/kernel.sys`
+- `/system/middlelayer.sys`
 
 After the kernel starts, its storage layer mounts the separate ext2 partition
-as the normal `0:/` runtime root. The ESP stays separate so a full root cannot
+as the normal `/` runtime root. The ESP stays separate so a full root cannot
 consume UEFI boot space.
 
 Installer ISOs pass kernel, middlelayer, and installer root as GRUB modules:
@@ -67,7 +67,7 @@ bootstrap console appends its startup log to the same GRUB framebuffer panel
 instead of opening a separate top-corner framebuffer console.
 
 The panel uses Metro blue by default and switches to the persisted Win95 or
-Metro theme after the loader reads `0:/system/config/display.conf`. It requires a 32-bit
+Metro theme after the loader reads `/system/config/display.conf`. It requires a 32-bit
 linear framebuffer; serial logging remains available when GOP/framebuffer
 output is unavailable.
 

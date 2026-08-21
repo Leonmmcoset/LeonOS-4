@@ -13,8 +13,8 @@ void ffPlatformInitImpl(FFPlatform* platform)
 
     platform->pid = 0;
     platform->uid = 0;
-    ffStrbufSetS(&platform->cwd, "0:/");
-    ffStrbufSetS(&platform->cacheDir, "0:/system/cache/");
+    ffStrbufSetS(&platform->cwd, "/");
+    ffStrbufSetS(&platform->cacheDir, "/system/cache/");
     ffStrbufSetS(&platform->userShell, "LeonOS shell");
     ffStrbufSetS(&platform->hostName, "leonos");
     if (leonos_machine_identity(&identity) == 0 && identity.platform_uuid[0]) {
@@ -37,7 +37,7 @@ void ffPlatformInitImpl(FFPlatform* platform)
     } else {
         ffStrbufSetS(&platform->userName, "user");
         ffStrbufSetS(&platform->fullUserName, "user");
-        ffStrbufSetS(&platform->homeDir, "0:/users/");
+        ffStrbufSetS(&platform->homeDir, "/users/");
     }
     ffStrbufEnsureEndsWithC(&platform->homeDir, '/');
 

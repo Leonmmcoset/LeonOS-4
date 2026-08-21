@@ -44,12 +44,14 @@ def stage_installed_payloads(esp_tree: Path, destination: Path) -> None:
     esp = destination / "install/esp"
     copy_tree(esp_tree, root)
     shutil.rmtree(root / "EFI", ignore_errors=True)
-    shutil.rmtree(root / "boot", ignore_errors=True)
+    shutil.rmtree(root / "grub", ignore_errors=True)
+    remove_file(root / "loader.elf")
     remove_file(root / "system/kernel.sys")
     remove_file(root / "system/middlelayer.sys")
 
     copy_file(esp_tree / "EFI/BOOT/BOOTX64.EFI", esp / "EFI/BOOT/BOOTX64.EFI")
-    copy_tree(esp_tree / "boot", esp / "boot")
+    copy_tree(esp_tree / "grub", esp / "grub")
+    copy_file(esp_tree / "loader.elf", esp / "loader.elf")
     copy_file(esp_tree / "system/kernel.sys", esp / "system/kernel.sys")
     copy_file(esp_tree / "system/middlelayer.sys", esp / "system/middlelayer.sys")
 
@@ -104,7 +106,7 @@ def main() -> int:
     # The installer itself runs from this FAT32 ramdisk. The staged installed
     # root below retains the normal ext2 manifest copied from esp_tree.
     (stage / "system/osmlayer.manifest").write_text(
-        "name=osmlayer\nabi=1\nroot=0:/\nfs=fat32\ngui=desktop.elf\n",
+        "name=osmlayer\nabi=2\nroot=/\nfs=fat32\ngui=desktop.elf\n",
         encoding="ascii",
     )
     copy_file(esp_tree / "system/fonts/leonos-metro.ttf", stage / "system/fonts/leonos-metro.ttf")

@@ -134,7 +134,7 @@ class ELFLoader:
         loaded, elf = self._load_file(main_path)
         if loaded.elf_type != ET_DYN or not loaded.interp_path:
             return loaded
-        if loaded.interp_path != "0:/system/lib/ld-leonos.elf":
+        if loaded.interp_path != "/system/lib/ld-leonos.elf":
             raise GuestFault(f"unsupported ELF interpreter: {loaded.interp_path}")
         interp_path = self._guest_to_host(loaded.interp_path)
         interp, _ = self._load_file(interp_path, interpreter=True)
@@ -155,22 +155,19 @@ class ELFLoader:
         return loaded
 
     def _guest_path(self, path: Path) -> str:
-        # Callers normally pass a path below the selected guest root.  Keep
-        # Windows drive prefixes out of argv/startup records when a relative
-        # path is supplied, while retaining a useful normalized fallback.
+        # Callers normally pass a path below the selected guest root. Keep a
+        # normalized Unix path in argv/startup records for relative inputs.
         try:
             path = path.resolve().relative_to(self.root_dir) if self.root_dir else path
         except ValueError:
             pass
         text = path.as_posix().replace("\\", "/")
-        if ":/" in text:
-            text = text.split(":/", 1)[1]
-        return "0:/" + text.lstrip("/")
+        return "/" + text.lstrip("/")
 
     def _guest_to_host(self, path: str) -> Path:
-        if self.root_dir is None or not path.startswith("0:/"):
+        if self.root_dir is None or not path.startswith("/"):
             raise GuestFault("dynamic interpreter path requires a guest root")
-        target = (self.root_dir / Path(*path[3:].split("/"))).resolve()
+        target = (self.root_dir / Path(*path[1:].split("/"))).resolve()
         try:
             target.relative_to(self.root_dir)
         except ValueError as exc:

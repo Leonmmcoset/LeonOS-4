@@ -13,8 +13,8 @@
 #define FASTFETCH_PROJECT_DESCRIPTION "Fast neofetch-like system information tool"
 #define FASTFETCH_PROJECT_LICENSE "MIT license"
 
-#define FASTFETCH_TARGET_DIR_ROOT "0:/"
-#define FASTFETCH_TARGET_DIR_USR "0:/"
-#define FASTFETCH_TARGET_DIR_HOME "0:/users"
-#define FASTFETCH_TARGET_DIR_ETC "0:/system/config"
-#define FASTFETCH_TARGET_DIR_INSTALL_SYSCONF "0:/system/config"
+#define FASTFETCH_TARGET_DIR_ROOT "/"
+#define FASTFETCH_TARGET_DIR_USR "/"
+#define FASTFETCH_TARGET_DIR_HOME "/users"
+#define FASTFETCH_TARGET_DIR_ETC "/system/config"
+#define FASTFETCH_TARGET_DIR_INSTALL_SYSCONF "/system/config"

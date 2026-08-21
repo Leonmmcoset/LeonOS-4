@@ -2,7 +2,7 @@
 
 /* Generated per image. Unknown (for example, post-install) programs remain
  * visible; only build-managed packages are listed here. */
-#define START_MENU_ENTRY_POLICY_PATH "0:/system/config/desktop-entries.conf"
+#define START_MENU_ENTRY_POLICY_PATH "/system/config/desktop-entries.conf"
 #define START_MENU_ENTRY_POLICY_BYTES 4096U
 #define START_MENU_ENTRY_POLICY_MAX 96U
 
@@ -15,7 +15,7 @@
 #define START_SHORTCUT_H 42U
 #define START_SHORTCUT_GAP 4U
 #define START_LIST_TITLE_H 18U
-#define START_DOC_ICON_PATH "0:/programs/oshlp/oshlp.bmp"
+#define START_DOC_ICON_PATH "/programs/oshlp/oshlp.bmp"
 
 struct start_panel_layout {
     uint32_t x;
@@ -266,12 +266,12 @@ int start_menu_load_apps(void)
     start_menu_app_count = 0;
     start_menu_apps_loaded = 0;
     start_menu_load_entry_policy();
-    ret = start_menu_load_root("0:/system/apps");
+    ret = start_menu_load_root("/system/apps");
     if (ret < 0) {
         start_menu_app_count = 0;
         return ret;
     }
-    ret = start_menu_load_root("0:/programs");
+    ret = start_menu_load_root("/programs");
     if (ret < 0) {
         start_menu_app_count = 0;
         return ret;
@@ -408,7 +408,7 @@ void start_menu_load_docs(void)
     uint32_t count = 0;
     start_menu_doc_count = 0;
     start_menu_docs_loaded = 0;
-    if (leonos_list_dir("0:/docs", entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
+    if (leonos_list_dir("/docs", entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
         return;
     }
     for (uint32_t i = 0; i < count && start_menu_doc_count < START_MENU_MAX_DOCS; ++i) {
@@ -417,7 +417,7 @@ void start_menu_load_docs(void)
             continue;
         }
         copy_text(start_menu_doc_paths[start_menu_doc_count],
-                  sizeof(start_menu_doc_paths[start_menu_doc_count]), "0:/docs/");
+                  sizeof(start_menu_doc_paths[start_menu_doc_count]), "/docs/");
         while (start_menu_doc_paths[start_menu_doc_count][pos]) {
             ++pos;
         }
@@ -692,11 +692,11 @@ static const char *start_menu_shortcut_label(uint32_t index)
 static const char *start_menu_shortcut_path(uint32_t index)
 {
     static const char *const paths[] = {
-        "0:/system/apps/fileman/fileman.elf",
-        "0:/system/apps/terminal/terminal.elf",
-        "0:/system/apps/settings/settings.elf",
-        "0:/system/apps/run/run.elf",
-        "0:/system/apps/taskmgr/taskmgr.elf",
+        "/system/apps/fileman/fileman.elf",
+        "/system/apps/terminal/terminal.elf",
+        "/system/apps/settings/settings.elf",
+        "/system/apps/run/run.elf",
+        "/system/apps/taskmgr/taskmgr.elf",
     };
     return index < sizeof(paths) / sizeof(paths[0]) ? paths[index] : 0;
 }

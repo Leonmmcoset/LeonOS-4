@@ -11,7 +11,6 @@
 #define OSMLAYER_VFS_OP_RESOLVE_PATH 1u
 #define OSMLAYER_FS_NAME_LEN 128u
 #define OSMLAYER_FS_PATH_LEN 256u
-#define OSMLAYER_MAX_DRIVES 10u
 
 #define OSMLAYER_DEVICE_MAX 24u
 #define OSMLAYER_DEVICE_NAME_LEN 32u
@@ -47,7 +46,6 @@ struct osmlayer_vfs_resolve_path {
     const char *input;
     char *out;
     uint32_t capacity;
-    uint32_t drive;
     uint32_t node_kind;
     uint32_t flags;
     uint32_t reserved;
@@ -93,7 +91,7 @@ struct osmlayer_account {
     uint8_t hash[32];
 };
 
-#define OSMLAYER_ACCOUNTS_PATH "0:/system/state/accounts.db"
+#define OSMLAYER_ACCOUNTS_PATH "/system/state/accounts.db"
 #define OSMLAYER_ACCOUNT_DB_MAX 8192u
 
 static const struct leonos_kernel_services *osmlayer_services;
@@ -386,14 +384,22 @@ static void osmlayer_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_
 }
 
 /**
- * @brief Coordinates the osmlayer abs drive path operation.
+ * @brief Tests a canonical Unix absolute path.
  * @param path LeonOS path consumed by this operation.
  * @return Result, status, or value defined by this API.
  */
-static int osmlayer_abs_drive_path(const char *path)
+static int osmlayer_abs_path(const char *path)
 {
-    return path && path[0] >= '0' && path[0] < (char)('0' + OSMLAYER_MAX_DRIVES) &&
-           path[1] == ':' && path[2] == '/';
+    uint32_t i = 0;
+    if (!path || path[0] != '/') {
+        return 0;
+    }
+    while (path[i]) {
+        if (path[i++] == ':') {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 /**
@@ -450,41 +456,35 @@ static int osmlayer_resolve_path(struct osmlayer_vfs_resolve_path *query)
 {
     char parts[16][OSMLAYER_FS_NAME_LEN];
     uint32_t part_count = 0;
-    char drive = '0';
-    int use_cwd = 1;
-    const char *input_part;
+    const char *sources[2];
+    uint32_t source_count;
     uint32_t out_pos = 0;
 
-    if (!query || !query->input || !query->out || query->capacity < 4) {
+    if (!query || !query->input || !query->out || query->capacity < 2) {
         return -22;
     }
-    if (osmlayer_abs_drive_path(query->input)) {
-        drive = query->input[0];
-        use_cwd = 0;
-        input_part = query->input + 3;
-    } else if (query->input[0] == '/') {
-        if (osmlayer_abs_drive_path(query->cwd)) {
-            drive = query->cwd[0];
+    for (uint32_t i = 0; query->input[i]; ++i) {
+        if (query->input[i] == ':') {
+            return -22;
         }
-        use_cwd = 0;
-        input_part = query->input + 1;
+    }
+    if (query->input[0] == '/') {
+        sources[0] = query->input + 1;
+        source_count = 1;
     } else {
-        if (osmlayer_abs_drive_path(query->cwd)) {
-            drive = query->cwd[0];
-        } else {
-            query->cwd = "0:/";
+        if (!osmlayer_abs_path(query->cwd)) {
+            query->cwd = "/";
         }
-        input_part = query->input;
+        sources[0] = query->cwd + 1;
+        sources[1] = query->input;
+        source_count = 2;
     }
-    if (use_cwd && osmlayer_push_path_parts(parts, &part_count, query->cwd + 3) < 0) {
-        return -22;
-    }
-    if (osmlayer_push_path_parts(parts, &part_count, input_part) < 0) {
-        return -22;
+    for (uint32_t i = 0; i < source_count; ++i) {
+        if (osmlayer_push_path_parts(parts, &part_count, sources[i]) < 0) {
+            return -22;
+        }
     }
 
-    query->out[out_pos++] = drive;
-    query->out[out_pos++] = ':';
     query->out[out_pos++] = '/';
     query->out[out_pos] = 0;
     for (uint32_t i = 0; i < part_count; ++i) {
@@ -492,7 +492,7 @@ static int osmlayer_resolve_path(struct osmlayer_vfs_resolve_path *query)
         if (out_pos + len + 1 >= query->capacity) {
             return -22;
         }
-        if (out_pos > 3) {
+        if (out_pos > 1) {
             query->out[out_pos++] = '/';
         }
         for (uint32_t j = 0; parts[i][j]; ++j) {
@@ -500,12 +500,10 @@ static int osmlayer_resolve_path(struct osmlayer_vfs_resolve_path *query)
         }
         query->out[out_pos] = 0;
     }
-    query->drive = (uint32_t)(drive - '0');
-    query->node_kind = osmlayer_text_eq(query->out, "0:/dev") ? 1u :
-                       (query->out[0] == '0' && query->out[1] == ':' &&
-                        query->out[2] == '/' && query->out[3] == 'd' &&
-                        query->out[4] == 'e' && query->out[5] == 'v' &&
-                        query->out[6] == '/') ? 3u : 2u;
+    query->node_kind = osmlayer_text_eq(query->out, "/dev") ? 1u :
+                       (query->out[0] == '/' && query->out[1] == 'd' &&
+                        query->out[2] == 'e' && query->out[3] == 'v' &&
+                        query->out[4] == '/') ? 3u : 2u;
     return 0;
 }
 
@@ -748,7 +746,7 @@ static void osmlayer_home_for_user(char *home, uint32_t cap, const char *usernam
         return;
     }
     home[0] = 0;
-    osmlayer_append_text(home, &pos, cap, "0:/users/");
+    osmlayer_append_text(home, &pos, cap, "/users/");
     osmlayer_append_text(home, &pos, cap, username);
 }
 
@@ -1266,23 +1264,23 @@ static int osmlayer_path_parent_name(const char *path, char *parent,
     uint32_t len = osmlayer_strlen(path);
     uint32_t slash = 0;
     uint32_t pos = 0;
-    if (!path || !osmlayer_abs_drive_path(path) || !parent || !name ||
-        parent_cap < 4 || name_cap == 0) {
+    if (!path || !osmlayer_abs_path(path) || !parent || !name ||
+        parent_cap < 2 || name_cap == 0) {
         return -22;
     }
-    if (len == 3 && path[2] == '/') {
-        osmlayer_copy_text(parent, parent_cap, "0:/");
+    if (len == 1) {
+        osmlayer_copy_text(parent, parent_cap, "/");
         osmlayer_copy_text(name, name_cap, ".");
         return 0;
     }
-    for (uint32_t i = 3; path[i]; ++i) {
+    for (uint32_t i = 1; path[i]; ++i) {
         if (path[i] == '/') {
             slash = i;
         }
     }
     if (slash == 0) {
-        osmlayer_copy_text(parent, parent_cap, "0:/");
-        slash = 2;
+        osmlayer_copy_text(parent, parent_cap, "/");
+        slash = 0;
     } else {
         if (slash + 1u > parent_cap) {
             return -22;
@@ -1315,8 +1313,8 @@ static void osmlayer_acl_file_path(const char *dir, char *out, uint32_t cap)
         return;
     }
     out[0] = 0;
-    osmlayer_append_text(out, &pos, cap, dir && dir[0] ? dir : "0:/");
-    if (!osmlayer_text_eq(out, "0:/")) {
+    osmlayer_append_text(out, &pos, cap, dir && dir[0] ? dir : "/");
+    if (!osmlayer_text_eq(out, "/")) {
         osmlayer_append_char(out, &pos, cap, '/');
     }
     osmlayer_append_text(out, &pos, cap, OSMLAYER_ACL_FILE_NAME);
@@ -1525,14 +1523,14 @@ static uint32_t osmlayer_owner_for_path(const char *path,
  */
 static int osmlayer_path_is_system_tree(const char *path)
 {
-    return osmlayer_text_eq(path, "0:/") ||
-           osmlayer_text_eq(path, "0:/boot") || osmlayer_path_under(path, "0:/boot") ||
-           osmlayer_text_eq(path, "0:/docs") || osmlayer_path_under(path, "0:/docs") ||
-           osmlayer_text_eq(path, "0:/system") || osmlayer_path_under(path, "0:/system") ||
-           osmlayer_text_eq(path, "0:/programs") || osmlayer_path_under(path, "0:/programs") ||
-           osmlayer_text_eq(path, "0:/users") ||
-           osmlayer_text_eq(path, "0:/var") || osmlayer_path_under(path, "0:/var") ||
-           osmlayer_text_eq(path, "0:/dev") || osmlayer_path_under(path, "0:/dev");
+    return osmlayer_text_eq(path, "/") ||
+           osmlayer_text_eq(path, "/boot") || osmlayer_path_under(path, "/boot") ||
+           osmlayer_text_eq(path, "/docs") || osmlayer_path_under(path, "/docs") ||
+           osmlayer_text_eq(path, "/system") || osmlayer_path_under(path, "/system") ||
+           osmlayer_text_eq(path, "/programs") || osmlayer_path_under(path, "/programs") ||
+           osmlayer_text_eq(path, "/users") ||
+           osmlayer_text_eq(path, "/var") || osmlayer_path_under(path, "/var") ||
+           osmlayer_text_eq(path, "/dev") || osmlayer_path_under(path, "/dev");
 }
 
 /**
@@ -1552,27 +1550,19 @@ static void osmlayer_acl_default_for_path(const char *path,
     acl->version = LEONOS_FS_ACL_VERSION;
     acl->owner_uid = owner;
     acl->flags = LEONOS_FS_ACL_FLAG_SYNTHETIC;
-    /* Removable volumes such as ISO 9660 discs have no LeonOS ACL sidecar.
-     * They are inherently read-only, so expose their contents to every user
-     * while keeping all write/delete/manage operations unavailable. */
-    if (osmlayer_abs_drive_path(path) && path[0] != '0') {
-        osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_EVERYONE, 0,
-                             LEONOS_FS_PERM_READ | LEONOS_FS_PERM_EXEC);
-        return;
-    }
     osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_SYSTEM, 0, LEONOS_FS_PERM_FULL);
     osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_ADMINISTRATORS, 0, LEONOS_FS_PERM_FULL);
     if (owner != 0) {
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_OWNER, 0, LEONOS_FS_PERM_FULL);
         return;
     }
-    if (osmlayer_text_eq(path, "0:/tmp") || osmlayer_path_under(path, "0:/tmp")) {
+    if (osmlayer_text_eq(path, "/tmp") || osmlayer_path_under(path, "/tmp")) {
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0, LEONOS_FS_PERM_FULL);
         return;
     }
-    if (osmlayer_text_eq(path, "0:/system/config/display.conf") ||
-        osmlayer_text_eq(path, "0:/system/config/locale.conf") ||
-        osmlayer_text_eq(path, "0:/system/state/oobe.done")) {
+    if (osmlayer_text_eq(path, "/system/config/display.conf") ||
+        osmlayer_text_eq(path, "/system/config/locale.conf") ||
+        osmlayer_text_eq(path, "/system/state/oobe.done")) {
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0,
                              LEONOS_FS_PERM_READ | LEONOS_FS_PERM_WRITE);
         return;
@@ -1869,18 +1859,18 @@ static int osmlayer_acl_path_has_permission(const char *path,
     char parts[16][OSMLAYER_FS_NAME_LEN];
     char current[LEONOS_FS_PATH_LEN];
     uint32_t part_count = 0;
-    uint32_t pos = 3;
+    uint32_t pos = 1;
     uint32_t inherited_allow = 0;
     if (!path || !req || !needed) {
         return 0;
     }
-    if (osmlayer_push_path_parts(parts, &part_count, path + 3) < 0) {
+    if (osmlayer_push_path_parts(parts, &part_count, path + 1) < 0) {
         return 0;
     }
-    osmlayer_copy_text(current, sizeof(current), "0:/");
+    osmlayer_copy_text(current, sizeof(current), "/");
     for (uint32_t i = 0; i < part_count; ++i) {
         struct leonos_fs_acl acl;
-        if (pos > 3) {
+        if (pos > 1) {
             osmlayer_append_char(current, &pos, sizeof(current), '/');
         }
         osmlayer_append_text(current, &pos, sizeof(current), parts[i]);
@@ -1908,7 +1898,7 @@ static int osmlayer_acl_path_has_permission(const char *path,
     if (part_count == 0) {
         struct leonos_fs_acl acl;
         {
-            int acl_ret = osmlayer_acl_get_explicit_or_default("0:/", accounts,
+            int acl_ret = osmlayer_acl_get_explicit_or_default("/", accounts,
                                                                count, &acl);
             if (acl_ret < 0) {
                 return acl_ret;
@@ -1939,12 +1929,6 @@ static int osmlayer_fsacl_authorize(struct leonos_authz_request *req)
     }
     if (osmlayer_path_is_accounts_db(req->path) || osmlayer_path_is_acl_file(req->path)) {
         req->allowed = 0;
-        return 0;
-    }
-    if (osmlayer_abs_drive_path(req->path) && req->path[0] != '0') {
-        /* Secondary mounted volumes are currently removable/read-only media. */
-        req->allowed = req->op == LEONOS_AUTHZ_READ ||
-                       req->op == LEONOS_AUTHZ_EXEC;
         return 0;
     }
     accounts_ret = osmlayer_accounts_load(accounts, &count);
@@ -2072,12 +2056,12 @@ static int osmlayer_ensure_user_dirs(const char *username)
  * @brief Coordinates the osmlayer service mkdir operation.
  * @return Result, status, or value defined by this API.
  */
-    (void)osmlayer_service_mkdir("0:/users");
+    (void)osmlayer_service_mkdir("/users");
     /**
  * @brief Coordinates the osmlayer service mkdir operation.
  * @return Result, status, or value defined by this API.
  */
-    (void)osmlayer_service_mkdir("0:/tmp");
+    (void)osmlayer_service_mkdir("/tmp");
     osmlayer_home_for_user(home, sizeof(home), username);
     ret = osmlayer_service_mkdir(home);
     if (ret < 0) {
@@ -2136,7 +2120,7 @@ static int osmlayer_system_language_is_chinese(void)
 {
     char locale[64];
     uint32_t length = 0;
-    int ret = osmlayer_service_read_file("0:/system/config/locale.conf",
+    int ret = osmlayer_service_read_file("/system/config/locale.conf",
                                          locale, sizeof(locale) - 1u, &length);
     if (ret < 0 || length == 0) {
         return 0;
@@ -2167,10 +2151,10 @@ static int osmlayer_seed_desktop_shortcuts(const char *username)
         const char *name_zh;
         const char *target;
     } shortcuts[] = {
-        {"File Manager.lnk", "文件管理器.lnk", "0:/system/apps/fileman/fileman.elf"},
-        {"Task Manager.lnk", "任务管理器.lnk", "0:/system/apps/taskmgr/taskmgr.elf"},
-        {"Settings.lnk", "设置.lnk", "0:/system/apps/settings/settings.elf"},
-        {"Browser.lnk", "浏览器.lnk", "0:/programs/browser/browser.elf"},
+        {"File Manager.lnk", "文件管理器.lnk", "/system/apps/fileman/fileman.elf"},
+        {"Task Manager.lnk", "任务管理器.lnk", "/system/apps/taskmgr/taskmgr.elf"},
+        {"Settings.lnk", "设置.lnk", "/system/apps/settings/settings.elf"},
+        {"Browser.lnk", "浏览器.lnk", "/programs/browser/browser.elf"},
     };
     if (!osmlayer_username_valid(username)) {
         return -22;
@@ -2205,17 +2189,17 @@ static int osmlayer_auth_status(struct leonos_auth_status *status)
  * @brief Coordinates the osmlayer service mkdir operation.
  * @return Result, status, or value defined by this API.
  */
-    (void)osmlayer_service_mkdir("0:/system/state");
+    (void)osmlayer_service_mkdir("/system/state");
     /**
  * @brief Coordinates the osmlayer service mkdir operation.
  * @return Result, status, or value defined by this API.
  */
-    (void)osmlayer_service_mkdir("0:/users");
+    (void)osmlayer_service_mkdir("/users");
     /**
  * @brief Coordinates the osmlayer service mkdir operation.
  * @return Result, status, or value defined by this API.
  */
-    (void)osmlayer_service_mkdir("0:/tmp");
+    (void)osmlayer_service_mkdir("/tmp");
     if (status) {
         status->user_count = count;
         status->has_admin = osmlayer_account_enabled_admin_count(accounts, count) > 0 ? 1u : 0u;
@@ -2756,17 +2740,16 @@ int osmlayer_c_services_selftest(void)
 {
     char path[OSMLAYER_FS_PATH_LEN];
     struct osmlayer_vfs_resolve_path vfs = {
-        .cwd = "0:/system/config",
+        .cwd = "/system/config",
         .input = "../apps/desktop/desktop.elf",
         .out = path,
         .capacity = sizeof(path),
-        .drive = 0,
         .node_kind = 0,
         .flags = 0,
         .reserved = 0,
     };
     if (osmlayer_resolve_path(&vfs) < 0 ||
-        !osmlayer_text_eq(path, "0:/system/apps/desktop/desktop.elf")) {
+        !osmlayer_text_eq(path, "/system/apps/desktop/desktop.elf")) {
         return 0;
     }
 

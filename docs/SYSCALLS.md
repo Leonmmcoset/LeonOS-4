@@ -34,7 +34,7 @@ The kernel-side numbers and errno constants are in:
 | ---: | --- | --- | --- |
 | 0 | `read` | `read` | Reads files, directories, stdin PTY input, and directory entries. |
 | 1 | `write` | `write` | Writes files, stdout/stderr console output, and PTY output. |
-| 2 | `open` | `open` | Opens files, directories, and `0:/dev/fb0`; supports LeonOS open flags. |
+| 2 | `open` | `open` | Opens files, directories, and `/dev/fb0`; supports LeonOS open flags. |
 | 3 | `close` | `close` | Closes task file descriptors above the stdio/device range. |
 | 4 | `stat` | `stat` | Stats a path into `struct leonos_stat`. |
 | 5 | `fstat` | `fstat` | Stats an open file descriptor. |
@@ -59,9 +59,10 @@ The kernel-side numbers and errno constants are in:
 
 ## File and Directory Calls
 
-Paths use LeonOS numbered-drive syntax such as `0:/system/apps/desktop/desktop.elf`.
-Relative paths are resolved against the task current directory through the
-middlelayer VFS resolver when available, with a kernel fallback.
+Paths use Unix syntax such as `/system/apps/desktop/desktop.elf`. Relative
+paths are resolved against the task current directory through the middlelayer
+VFS resolver when available, with a kernel fallback. Inputs containing `:`
+are rejected.
 
 Open flags are defined in `include/leonos/fs.h`:
 
@@ -210,9 +211,9 @@ Important requests include:
   `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`. These use the fixed-size records in
   `leonos/fs.h`; listing reads a GPT table, while create/format/delete/mount/
   unmount require administrator install authorization and reject current boot
-  or mounted installer-target disks. A data mount returns the first free
-  numeric drive; unmount is rejected with busy while a live process holds a
-  CWD, descriptor, executable image, or file mapping on the target drive.
+  or mounted installer-target disks. A data mount returns a stable
+  `/mnt/disk<N>p<M>` path; unmount is rejected with busy while a live process
+  holds a CWD, descriptor, executable image, or file mapping on that volume.
 - `LEONOS_TEXT_IOCTL_LAYOUT_UTF8`
 - `LEONOS_PTY_IOCTL_CREATE`, `LEONOS_PTY_IOCTL_SELF`,
   `LEONOS_PTY_IOCTL_READ_OUTPUT`, `LEONOS_PTY_IOCTL_WRITE_INPUT`,
@@ -246,7 +247,7 @@ ICMP Echo, a small DHCP client, UDP transmit/receive for DHCP/DNS, DNS A record
 lookups, a small ARP cache, active-open TCP client sockets, and a compatibility
 `HTTP/1.0` GET helper over TCP. Boot starts with the QEMU user-network fallback so
 early networking is usable, then automatically tries DHCP three times unless
-`0:/system/config/services.cfg` contains `dhcp=0`. If DHCP succeeds, the active config
+`/system/config/services.cfg` contains `dhcp=0`. If DHCP succeeds, the active config
 switches to the lease; if it fails or is disabled, the fallback remains active:
 
 - guest IPv4: `10.0.2.15/24`
@@ -258,7 +259,7 @@ running to manually renew or recover a lease when the caller is an
 administrator. Non-admin users may read network status and use DNS/HTTP/socket
 APIs, but DHCP renew changes the global IPv4 configuration and returns
 `EPERM` unless the caller is an administrator or trusted service task. The only
-pre-login exception is `0:/system/apps/oobe/oobe.elf` while `0:/system/state/oobe.done` is
+pre-login exception is `/system/apps/oobe/oobe.elf` while `/system/state/oobe.done` is
 absent, so the license screen can expose a narrow `Renew DHCP` recovery button.
 `netctl.elf` also queries `leonos_net_connections` and displays TCP client
 sockets in `SYN_SENT`, `ESTABLISHED`, `TIME_WAIT`, or `CLOSED`. Administrators
@@ -267,9 +268,9 @@ connections owned by their uid.
 
 `serviced.elf` now runs as a protected service task started by the desktop. It
 uses the same `leonos_net_config` and `leonos_net_dhcp_renew` wrappers to keep
-retrying DHCP in the background when `0:/system/config/services.cfg` has `dhcp=1` and the
+retrying DHCP in the background when `/system/config/services.cfg` has `dhcp=1` and the
 kernel is still using the static fallback. It publishes status to
-`0:/var/run/services.state` for `servicemgr.elf`.
+`/var/run/services.state` for `servicemgr.elf`.
 
 `leonos_socket_tcp` returns an integer socket handle owned by the current task.
 `leonos_socket_connect` accepts a host name or IPv4 literal, resolves DNS A
@@ -327,8 +328,8 @@ sidecar model on FAT32 and ext2 roots. The mapping is:
 - ACL set operations: Manage Permissions.
 
 Normal users can access their own home through Owner permissions and shared
-temporary files through the `0:/tmp` default ACL. Bundled help files under
-`0:/docs` are treated as a system tree: normal users receive read/execute access
+temporary files through the `/tmp` default ACL. Bundled help files under
+`/docs` are treated as a system tree: normal users receive read/execute access
 by default, while administrators retain full control. Administrators can manage
 users and can take ownership or repair corrupt ACL metadata. Shutdown and reboot
 remain available to any logged-in user.

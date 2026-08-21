@@ -2,7 +2,7 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
-#define UI_THEME_CONFIG_PATH "0:/system/config/display.conf"
+#define UI_THEME_CONFIG_PATH "/system/config/display.conf"
 
 static uint32_t ui_current_theme = LEONOS_UI_THEME_METRO;
 static uint32_t ui_metro_color_scheme = LEONOS_UI_COLOR_SCHEME_BLUE;

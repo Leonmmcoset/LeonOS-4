@@ -386,7 +386,8 @@ static void reserve_boot_ranges(const struct boot_info *boot,
     for (uint32_t i = 0; i < boot->module_count; ++i) {
         reserve_range(boot->modules[i].start, boot->modules[i].end, "module");
     }
-    if (handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC) {
+    if (handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC &&
+        handoff->version == LEONOS_BOOT_HANDOFF_VERSION) {
         reserve_range(handoff->loader.start, handoff->loader.end, "loader");
         reserve_range((uint64_t)(uintptr_t)handoff,
                       (uint64_t)(uintptr_t)handoff + sizeof(*handoff),

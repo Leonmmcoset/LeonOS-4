@@ -80,11 +80,11 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
 #define LINUX_MAP_FIXED 0x10u
 #define LINUX_MAP_ANONYMOUS 0x20u
 #define LINUX_MAP_SUPPORTED (LINUX_MAP_PRIVATE | LINUX_MAP_FIXED | LINUX_MAP_ANONYMOUS)
-#define OOBE_DHCP_APP_PATH "0:/system/apps/oobe/oobe.elf"
-#define OOBE_DONE_MARKER_PATH "0:/system/state/oobe.done"
-#define SYSCONFDIALOG_APP_PATH "0:/system/apps/sysconfdialog/sysconfdialog.elf"
-#define STARTUP_DB_PATH "0:/system/state/startup.db"
-#define STARTUP_DENIAL_DB_PATH "0:/system/state/startup-denials.db"
+#define OOBE_DHCP_APP_PATH "/system/apps/oobe/oobe.elf"
+#define OOBE_DONE_MARKER_PATH "/system/state/oobe.done"
+#define SYSCONFDIALOG_APP_PATH "/system/apps/sysconfdialog/sysconfdialog.elf"
+#define STARTUP_DB_PATH "/system/state/startup.db"
+#define STARTUP_DENIAL_DB_PATH "/system/state/startup-denials.db"
 #define STARTUP_DB_MAGIC 0x53545031U
 #define STARTUP_DENIAL_DB_MAGIC 0x53544431U
 #define STARTUP_DB_ENTRY_MAX 64U
@@ -640,7 +640,7 @@ void clear_task_file(struct task_file *file)
     file->node.type = 0;
     file->node.flags = 0;
     file->node.first_cluster = 0;
-    file->node.drive = 0;
+    file->node.volume_id = 0;
     file->node.size = 0;
     file->offset = 0;
     file->aux = 0;
@@ -1142,7 +1142,7 @@ static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, ui
     if (ret < 0) {
         return ret;
     }
-    ret = storage_resolve_path(task ? task->cwd : "0:/", raw, out, cap);
+    ret = storage_resolve_path(task ? task->cwd : "/", raw, out, cap);
     if (ret < 0) {
         return -LEONOS_EINVAL;
     }
@@ -1398,7 +1398,7 @@ static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
     if (kernel_string_len_cap(req.path, sizeof(req.path)) >= sizeof(req.path)) {
         return -LEONOS_EFAULT;
     }
-    if (storage_resolve_path(task ? task->cwd : "0:/", req.path,
+    if (storage_resolve_path(task ? task->cwd : "/", req.path,
                              req.path, sizeof(req.path)) < 0) {
         return -LEONOS_EINVAL;
     }
@@ -1811,8 +1811,8 @@ static void startup_db_load(void)
  */
 static int startup_db_save(void)
 {
-    (void)storage_mkdir("0:/system");
-    (void)storage_mkdir("0:/system/state");
+    (void)storage_mkdir("/system");
+    (void)storage_mkdir("/system/state");
     return storage_write_file(STARTUP_DB_PATH, &startup_db_scratch,
                               sizeof(startup_db_scratch));
 }
@@ -1842,8 +1842,8 @@ static void startup_denial_db_load(void)
  */
 static int startup_denial_db_save(void)
 {
-    (void)storage_mkdir("0:/system");
-    (void)storage_mkdir("0:/system/state");
+    (void)storage_mkdir("/system");
+    (void)storage_mkdir("/system/state");
     return storage_write_file(STARTUP_DENIAL_DB_PATH, &startup_denial_db_scratch,
                               sizeof(startup_denial_db_scratch));
 }
@@ -2322,7 +2322,7 @@ static int startup_handle_ioctl(uint64_t request, uint64_t user_arg)
         int launched = 0;
         if (!task || !task->uid || !task->session_id ||
             !(task->flags & TASK_FLAG_WINDOW_SERVER) ||
-            !text_eq_cstr(task->path, "0:/system/apps/desktop/desktop.elf")) {
+            !text_eq_cstr(task->path, "/system/apps/desktop/desktop.elf")) {
             return -LEONOS_EACCES;
         }
         startup_db_load();
@@ -2731,7 +2731,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         if (file->node.type == LEONOS_FS_TYPE_DIR) {
             struct leonos_dir_entry entry;
             int step = storage_readdir_node(&file->node, &file->offset, &entry);
-            if (step == 0 && file->node.drive == 0 &&
+            if (step == 0 && file->node.volume_id == 0 &&
                 (file->node.flags & STORAGE_NODE_FLAG_ROOT) && file->aux == 0) {
                 entry.type = LEONOS_FS_TYPE_DIR;
                 copy_text(entry.name, sizeof(entry.name), "dev");
@@ -3057,7 +3057,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_GETCWD) {
         struct task *task = sched_current_task();
-        const char *cwd = (task && task->cwd[0]) ? task->cwd : "0:/";
+        const char *cwd = (task && task->cwd[0]) ? task->cwd : "/";
         size_t len = 0;
         while (cwd[len]) {
             ++len;
@@ -3959,7 +3959,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         query = (struct leonos_disk_partition_mount *)(uintptr_t)a2;
         request = *query;
-        if (request.reserved != 0 || request.drive != LEONOS_DISK_DRIVE_NONE) {
+        if (request.mount_path[0] != 0) {
             return -LEONOS_EINVAL;
         }
         ret = authz_check_install(sched_current_task());
@@ -3968,14 +3968,14 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         ret = storage_disk_mount_partition(&request);
         if (ret == 0) {
-            query->drive = request.drive;
+            *query = request;
         }
         return ret;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_UNMOUNT_PARTITION) {
         struct leonos_disk_partition_unmount request;
-        uint32_t drive;
+        uint32_t volume_id;
         int ret;
         if (!user_range_ok(a2, sizeof(request))) {
             return -LEONOS_EFAULT;
@@ -3988,12 +3988,12 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         if (ret < 0) {
             return ret;
         }
-        ret = storage_disk_partition_mounted_drive(request.disk_id, request.partition_index,
-                                                   &drive);
+        ret = storage_disk_partition_volume_id(request.disk_id, request.partition_index,
+                                               &volume_id);
         if (ret < 0) {
             return ret;
         }
-        if (sched_drive_in_use(drive)) {
+        if (sched_volume_in_use(volume_id)) {
             return -LEONOS_EBUSY;
         }
         return storage_disk_unmount_partition(&request);
@@ -4018,7 +4018,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         for (size_t i = 0; i <= len; ++i) {
             path[i] = query->path[i];
         }
-        if (storage_resolve_path(sched_current_task() ? sched_current_task()->cwd : "0:/",
+        if (storage_resolve_path(sched_current_task() ? sched_current_task()->cwd : "/",
                                  path, path, sizeof(path)) < 0) {
             return -LEONOS_EINVAL;
         }

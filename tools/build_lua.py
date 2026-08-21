@@ -132,7 +132,7 @@ def main() -> None:
         "-fno-stack-protector", "-fPIC", "-mno-red-zone",
         "-ffunction-sections", "-fdata-sections", "-Wall",
         "-Wextra", "-Wno-unused-parameter", "-DLUA_USE_C89",
-        '-DLUA_PATH_DEFAULT="0:/programs/lua/lua/?.lua;0:/programs/lua/lua/?/init.lua;./?.lua;./?/init.lua"',
+        '-DLUA_PATH_DEFAULT="/programs/lua/lua/?.lua;/programs/lua/lua/?/init.lua;./?.lua;./?/init.lua"',
         '-DLUA_CPATH_DEFAULT=""',
         "-nostdinc", "-isystem", str(headers),
         "-I" + str(picolibc_prefix / "include"),
@@ -172,7 +172,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     run([
         "ld.lld", "-nostdlib", "--gc-sections", "-pie", "--hash-style=sysv",
-        "--dynamic-linker", "0:/system/lib/ld-leonos.elf", "-z", "relro", "-z", "now",
+        "--dynamic-linker", "/system/lib/ld-leonos.elf", "-z", "relro", "-z", "now",
         "-z", "max-page-size=0x1000", *args.linker_flag, "-T", str(dynamic_linker_script),
         "-o", str(output), str(dynamic_crt), str(abi_note), *map(str, objects),
         str(runtime_so), str(library),

@@ -5,13 +5,13 @@
 建议每个程序使用独立目录：
 
 ```text
-0:/programs/myapp/myapp.elf
-0:/programs/myapp/myapp.app.ini
-0:/programs/myapp/icon.bmp        (可选)
+/programs/myapp/myapp.elf
+/programs/myapp/myapp.app.ini
+/programs/myapp/icon.bmp        (可选)
 ```
 
 桌面入口和文件关联由系统启动服务管理。应用自身不应写入其他用户的主目录，
-也不要依赖当前工作目录；启动时使用绝对的 `0:/...` 路径或先检查 `getcwd()`。
+也不要依赖当前工作目录；启动时使用绝对的 `/...` 路径或先检查 `getcwd()`。
 
 ## 虚拟终端 manifest
 
@@ -41,7 +41,7 @@ version=1
 name=Example
 version=1.0.0
 main_exe=example.elf
-default_path=0:/programs/example
+default_path=/programs/example
 requires_admin=0
 desktop_shortcut=1
 icon=example.bmp
@@ -49,8 +49,8 @@ terminal=0
 ```
 
 `main_exe`、`icon` 和输入法设置文件必须是包成员，路径不能为绝对路径，不能含
-`..`。安装器会把程序放到共享程序目录（通常是 `0:/programs/<name>`），而不是
-把 `0:/tools/<package>.api` 当成运行目录。`requires_admin=1` 或受保护目标路径
+`..`。安装器会把程序放到共享程序目录（通常是 `/programs/<name>`），而不是
+把 `/tools/<package>.api` 当成运行目录。`requires_admin=1` 或受保护目标路径
 会触发管理员授权。
 
 ## 输入法包扩展

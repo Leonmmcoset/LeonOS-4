@@ -421,29 +421,7 @@ int mprotect(void *addr, size_t len, int prot)
 
 int chdir(const char *path)
 {
-    char absolute_path[LEONOS_FS_PATH_LEN];
-    const char *target = path;
-    long result;
-
-    /* POSIX applications use / as the root while LeonOS paths carry an
-     * explicit drive.  Keep both spellings valid, especially for Ash's
-     * updatepwd() output and programs ported from Unix. */
-    if (path && path[0] == '/') {
-        uint32_t i = 0;
-        absolute_path[0] = '0';
-        absolute_path[1] = ':';
-        while (path[i] && i + 3U < sizeof(absolute_path)) {
-            absolute_path[i + 2U] = path[i];
-            ++i;
-        }
-        if (path[i]) {
-            errno = EINVAL;
-            return -1;
-        }
-        absolute_path[i + 2U] = 0;
-        target = absolute_path;
-    }
-    result = syscall1(SYS_chdir, (long)target);
+    long result = syscall1(SYS_chdir, (long)path);
     if (result < 0) {
         errno = (int)-result;
         return -1;
@@ -1411,7 +1389,7 @@ int isatty(int fd)
 
 int leonos_gui_connect(void)
 {
-    int fb = open("0:/dev/fb0", 0, 0);
+    int fb = open("/dev/fb0", 0, 0);
     if (fb < 0) {
         return fb;
     }
@@ -1995,17 +1973,24 @@ int leonos_disk_create_partition(const struct leonos_disk_partition_create *requ
 }
 
 int leonos_disk_mount_partition(uint32_t disk_id, uint32_t partition_index,
-                                uint32_t *out_drive)
+                                char *mount_path, uint32_t mount_path_capacity)
 {
     struct leonos_disk_partition_mount request = {
         .disk_id = disk_id,
         .partition_index = partition_index,
-        .drive = LEONOS_DISK_DRIVE_NONE,
-        .reserved = 0,
     };
+    if (!mount_path || mount_path_capacity == 0) {
+        return -1;
+    }
+    request.mount_path[0] = 0;
     int ret = ioctl(3, LEONOS_DISK_IOCTL_MOUNT_PARTITION, &request);
-    if (ret == 0 && out_drive) {
-        *out_drive = request.drive;
+    if (ret == 0) {
+        size_t i = 0;
+        while (i + 1 < mount_path_capacity && request.mount_path[i]) {
+            mount_path[i] = request.mount_path[i];
+            ++i;
+        }
+        mount_path[i] = 0;
     }
     return ret;
 }

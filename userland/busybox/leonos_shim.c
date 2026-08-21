@@ -165,15 +165,15 @@ const char *leonos_shell_command_path(const char *name)
 {
     if (!name || !name[0]) return 0;
     if (strchr(name, '/') || strchr(name, ':')) return name;
-    if (strcmp(name, "nano") == 0) return "0:/programs/nano/nano.elf";
-    if (strcmp(name, "pleditor") == 0) return "0:/programs/pleditor/pleditor.elf";
-    if (strcmp(name, "tcc") == 0) return "0:/programs/tcc/tcc.elf";
-    if (strcmp(name, "lua") == 0) return "0:/programs/lua/lua.elf";
-    if (strcmp(name, "file") == 0) return "0:/programs/file/file.elf";
-    if (strcmp(name, "fastfetch") == 0) return "0:/programs/fastfetch/fastfetch.elf";
-    if (strcmp(name, "less") == 0) return "0:/programs/less/less.elf";
-    if (strcmp(name, "sl") == 0) return "0:/programs/sl/sl.elf";
-    if (strcmp(name, "cmd") == 0) return "0:/programs/cmd/cmd.elf";
+    if (strcmp(name, "nano") == 0) return "/programs/nano/nano.elf";
+    if (strcmp(name, "pleditor") == 0) return "/programs/pleditor/pleditor.elf";
+    if (strcmp(name, "tcc") == 0) return "/programs/tcc/tcc.elf";
+    if (strcmp(name, "lua") == 0) return "/programs/lua/lua.elf";
+    if (strcmp(name, "file") == 0) return "/programs/file/file.elf";
+    if (strcmp(name, "fastfetch") == 0) return "/programs/fastfetch/fastfetch.elf";
+    if (strcmp(name, "less") == 0) return "/programs/less/less.elf";
+    if (strcmp(name, "sl") == 0) return "/programs/sl/sl.elf";
+    if (strcmp(name, "cmd") == 0) return "/programs/cmd/cmd.elf";
     return 0;
 }
 
@@ -206,7 +206,7 @@ static int leonos_exec_busybox_applet(char *const argv[])
         exec_argv[index + 1U] = argv[index];
     }
     exec_argv[argc + 1U] = 0;
-    result = execve("0:/programs/busybox/busybox.elf", exec_argv, environ);
+    result = execve("/programs/busybox/busybox.elf", exec_argv, environ);
     saved_errno = errno;
     free(exec_argv);
     errno = saved_errno;

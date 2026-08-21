@@ -667,7 +667,7 @@ static struct task_vma *elf64_legacy_shared_page_vma(struct task *task,
             continue;
         }
         if (!(vma->flags & TASK_VMA_FLAG_FILE) || start < vma->start ||
-            vma->file_node.type != node->type || vma->file_node.drive != node->drive ||
+            vma->file_node.type != node->type || vma->file_node.volume_id != node->volume_id ||
             vma->file_node.first_cluster != node->first_cluster ||
             start - vma->start > UINT64_MAX - vma->file_offset) {
             return NULL;

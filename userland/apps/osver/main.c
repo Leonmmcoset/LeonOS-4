@@ -9,7 +9,7 @@
 
 #define OSVER_W 720
 #define OSVER_H 460
-#define OSVER_LOGO_PATH "0:/system/resources/logo.png"
+#define OSVER_LOGO_PATH "/system/resources/logo.png"
 #define OSVER_LOGO_BOX 196U
 #define T(en, zh) leonos_i18n((en), (zh))
 

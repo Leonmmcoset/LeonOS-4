@@ -25,7 +25,7 @@ static uint32_t cache_hits;
 static int node_equal(const struct storage_node *a, const struct storage_node *b)
 {
     return a && b && a->type == b->type && a->flags == b->flags &&
-           a->first_cluster == b->first_cluster && a->drive == b->drive &&
+           a->first_cluster == b->first_cluster && a->volume_id == b->volume_id &&
            a->size == b->size;
 }
 

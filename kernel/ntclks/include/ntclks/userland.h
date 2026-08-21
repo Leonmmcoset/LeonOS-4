@@ -65,7 +65,7 @@ int64_t userland_spawn_path_argv(const char *path,
                                   uint32_t pty_id);
 /**
  * @brief Spawns a user process with caller-selected standard descriptors.
- * @param path NUL-terminated executable path in LeonOS drive syntax.
+ * @param path NUL-terminated executable path in LeonOS Unix syntax.
  * @param argv Optional NUL-terminated argument vector copied to the child.
  * @param envp Optional NUL-terminated environment vector copied to the child.
  * @param pty_id Active PTY inherited by the child.

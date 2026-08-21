@@ -112,7 +112,7 @@ def main() -> None:
 
     output.parent.mkdir(parents=True, exist_ok=True)
     dynamic = [
-        "-pie", "--hash-style=sysv", "--dynamic-linker", "0:/system/lib/ld-leonos.elf",
+        "-pie", "--hash-style=sysv", "--dynamic-linker", "/system/lib/ld-leonos.elf",
         "-z", "relro", "-z", "now",
     ]
     run([

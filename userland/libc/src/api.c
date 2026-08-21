@@ -9,14 +9,14 @@
 #include <leonos/tar.h>
 #include <string.h>
 
-#define API_TEMP_PREFIX "0:/tmp/api_install_"
+#define API_TEMP_PREFIX "/tmp/api_install_"
 #define API_INI_PATH "install.ini"
 #define API_PACKAGE_FORMAT "leonos-api"
 #define API_PACKAGE_VERSION "1"
-#define API_PROGRAM_DIR "0:/programs"
-#define API_PROGRAM_ROOT "0:/programs/"
-#define API_SYSTEM_DIR "0:/system"
-#define API_SYSTEM_ROOT "0:/system/"
+#define API_PROGRAM_DIR "/programs"
+#define API_PROGRAM_ROOT "/programs/"
+#define API_SYSTEM_DIR "/system"
+#define API_SYSTEM_ROOT "/system/"
 
 static uint32_t api_temp_sequence;
 
@@ -107,7 +107,7 @@ static int api_copy_trim_path(char *dst, uint32_t capacity, const char *src)
         return 0;
     }
     memcpy(dst, src, len + 1U);
-    while (len > 3U && dst[len - 1U] == '/') {
+    while (len > 1U && dst[len - 1U] == '/') {
         dst[--len] = 0;
     }
     return dst[0] ? 1 : 0;
@@ -154,8 +154,7 @@ static int api_join_path(char *out, uint32_t capacity, const char *base,
 
 static int api_is_root_path(const char *path)
 {
-    return path && path[0] >= '0' && path[0] <= '9' &&
-           path[1] == ':' && path[2] == '/' && path[3] == 0;
+    return path && path[0] == '/' && path[1] == 0;
 }
 
 static int api_parent_path(const char *path, char *parent, uint32_t capacity)
@@ -250,9 +249,8 @@ static int api_component_path_is_safe(const char *path, uint32_t start)
 
 static int api_path_is_clean_absolute(const char *path)
 {
-    return path && path[0] >= '0' && path[0] <= '9' &&
-           path[1] == ':' && path[2] == '/' &&
-           api_component_path_is_safe(path, 3U);
+    return path && path[0] == '/' &&
+           api_component_path_is_safe(path, 1U);
 }
 
 static int api_relative_path_is_safe(const char *path)

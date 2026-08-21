@@ -8,9 +8,9 @@
 #define LEONOS_ELF_ABI_MAJOR 1u
 #define LEONOS_ELF_ABI_MINOR 0u
 
-#define LEONOS_ELF_INTERP_PATH "0:/system/lib/ld-leonos.elf"
+#define LEONOS_ELF_INTERP_PATH "/system/lib/ld-leonos.elf"
 #define LEONOS_ELF_RUNTIME_SONAME "libleonos.so.1"
-#define LEONOS_ELF_RUNTIME_PATH "0:/system/lib/libleonos.so.1"
+#define LEONOS_ELF_RUNTIME_PATH "/system/lib/libleonos.so.1"
 
 struct leonos_elf_abi_note {
     unsigned int major;
