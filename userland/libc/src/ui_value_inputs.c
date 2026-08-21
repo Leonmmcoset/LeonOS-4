@@ -126,6 +126,12 @@ void leonos_ui_color_input(struct leonos_ui_surface *surface, uint32_t x, uint32
     if (!state || w < 36) {
         return;
     }
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            LEONOS_UI_BUTTON_H,
+                            (flags & LEONOS_UI_INPUT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_INPUT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     color_format(value, state->color);
     leonos_ui_bevel(surface, x, y, w, LEONOS_UI_BUTTON_H, LEONOS_UI_WHITE,
                     state->focused ? LEONOS_UI_BUTTON_PRESSED : 0);
@@ -330,6 +336,12 @@ void leonos_ui_date_input(struct leonos_ui_surface *surface, uint32_t x, uint32_
     if (!state || w < 48) {
         return;
     }
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            LEONOS_UI_BUTTON_H,
+                            (flags & LEONOS_UI_INPUT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_INPUT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     date_format(value, state);
     leonos_ui_bevel(surface, x, y, w, LEONOS_UI_BUTTON_H, LEONOS_UI_WHITE,
                     state->focused ? LEONOS_UI_BUTTON_PRESSED : 0);

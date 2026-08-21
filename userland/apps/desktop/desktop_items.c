@@ -1,7 +1,5 @@
 #include "desktop.h"
 
-#define DESKTOP_MESSAGE_W 380
-#define DESKTOP_MESSAGE_H 150
 #define DESKTOP_ITEM_LABEL_LINES 2
 #define DESKTOP_SHORTCUT_MAX_BYTES 384U
 

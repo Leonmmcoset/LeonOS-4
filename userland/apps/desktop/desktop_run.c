@@ -51,6 +51,7 @@ void init_desktop(void)
     cursor_y = 240;
     cursor_visible = 1;
     desktop_cursor_style = LEONOS_GUI_CURSOR_ARROW;
+    desktop_cursor_auto = 1;
     desktop_taskbar_visible = 1;
     load_cursor_bmp();
     desktop_items_clear();
@@ -158,6 +159,14 @@ void desktop_run(void)
                                    0, 0, 0, 0, 0, event.keycode, event.pressed);
                 }
                 printf("[desktop.elf] key scancode=%x pressed=%d\n", event.keycode, event.pressed);
+            }
+        }
+        if (desktop_cursor_auto) {
+            uint32_t next_cursor_style = desktop_cursor_style_for_pointer(cursor_x, cursor_y);
+            if (next_cursor_style != desktop_cursor_style) {
+                desktop_cursor_style = next_cursor_style;
+                full_redraw_pending = 1;
+                did_work = 1;
             }
         }
         if (full_redraw_pending) {

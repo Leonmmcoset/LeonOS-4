@@ -8,6 +8,11 @@ void leonos_ui_edit(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     uint32_t flags)
 {
     uint32_t h = LEONOS_FONT_H + 8;
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_TEXT,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     uint32_t bg = (flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_LIGHT : LEONOS_UI_WHITE;
     uint32_t fg = (flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
     const char *visible = text ? text : "";
@@ -375,6 +380,11 @@ void leonos_ui_text_area(struct leonos_ui_surface *surface, uint32_t x, uint32_t
                          uint32_t w, uint32_t h, const char *text, uint32_t cursor,
                          uint32_t scroll_line, uint32_t flags)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_TEXT,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     uint32_t rows = h > 8 ? (h - 8) / LEONOS_FONT_H : 0;
     uint32_t text_width = text_area_text_width(w);
     uint32_t current = 0;

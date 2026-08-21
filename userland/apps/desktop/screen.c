@@ -335,29 +335,113 @@ static void draw_custom_cursor(uint32_t x, uint32_t y)
         put_pixel(x + 11, y + 12, black);
         return;
     }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_NO) {
+        for (uint32_t i = 2; i < 14; ++i) {
+            put_pixel(x + i, y + i, black);
+            put_pixel(x + i, y + 15U - i, black);
+            if (i > 2 && i < 13) {
+                put_pixel(x + i - 1U, y + i, white);
+                put_pixel(x + i - 1U, y + 15U - i, white);
+            }
+        }
+        return;
+    }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_HELP) {
+        for (uint32_t i = 3; i < 13; ++i) {
+            put_pixel(x + i, y + 2, black);
+            put_pixel(x + i, y + 13, black);
+        }
+        for (uint32_t i = 2; i < 14; ++i) {
+            put_pixel(x + 2, y + i, black);
+            put_pixel(x + 13, y + i, black);
+        }
+        put_pixel(x + 7, y + 5, black);
+        put_pixel(x + 8, y + 5, black);
+        put_pixel(x + 7, y + 6, black);
+        put_pixel(x + 7, y + 8, black);
+        put_pixel(x + 7, y + 10, black);
+        return;
+    }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_PROGRESS ||
+        desktop_cursor_style == LEONOS_GUI_CURSOR_APP_STARTING) {
+        for (uint32_t i = 2; i < 14; ++i) {
+            put_pixel(x + 7, y + i, black);
+            put_pixel(x + i, y + 7, black);
+        }
+        put_pixel(x + 7, y + 2, white);
+        put_pixel(x + 12, y + 7, white);
+        return;
+    }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_NS ||
+        desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_WE ||
+        desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_NWSE ||
+        desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_NESW) {
+        for (uint32_t i = 3; i < 13; ++i) {
+            if (desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_NS) {
+                put_pixel(x + 7, y + i, black);
+            } else if (desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_WE) {
+                put_pixel(x + i, y + 7, black);
+            } else if (desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_NWSE) {
+                put_pixel(x + i, y + i, black);
+            } else {
+                put_pixel(x + i, y + 15U - i, black);
+            }
+        }
+        if (desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_NS) {
+            for (uint32_t i = 3; i < 7; ++i) {
+                put_pixel(x + 7U - i + 3U, y + i, black);
+                put_pixel(x + 7U + i - 3U, y + i, black);
+                put_pixel(x + 7U - i + 3U, y + 15U - i, black);
+                put_pixel(x + 7U + i - 3U, y + 15U - i, black);
+            }
+        } else if (desktop_cursor_style == LEONOS_GUI_CURSOR_SIZE_WE) {
+            for (uint32_t i = 3; i < 7; ++i) {
+                put_pixel(x + i, y + 7U - i + 3U, black);
+                put_pixel(x + i, y + 7U + i - 3U, black);
+                put_pixel(x + 15U - i, y + 7U - i + 3U, black);
+                put_pixel(x + 15U - i, y + 7U + i - 3U, black);
+            }
+        }
+        return;
+    }
+    if (desktop_cursor_style == LEONOS_GUI_CURSOR_UP) {
+        for (uint32_t i = 3; i < 14; ++i) {
+            put_pixel(x + 7, y + i, black);
+        }
+        for (uint32_t i = 3; i < 12; ++i) {
+            put_pixel(x + i, y + 5, black);
+        }
+        return;
+    }
 }
 
 void draw_cursor_shape(uint32_t x, uint32_t y)
 {
-    if (x + cursor_width > fb_w()) {
-        x = fb_w() > cursor_width ? fb_w() - cursor_width : 0;
-    }
-    if (y + cursor_height > fb_h()) {
-        y = fb_h() > cursor_height ? fb_h() - cursor_height : 0;
-    }
-    if (desktop_cursor_style != LEONOS_GUI_CURSOR_ARROW) {
-        draw_custom_cursor(x, y);
-        return;
-    }
+    uint32_t style = desktop_cursor_style < CURSOR_STYLE_COUNT
+                         ? desktop_cursor_style : LEONOS_GUI_CURSOR_ARROW;
+    int draw_x = (int)x - cursor_hotspot_x[style];
+    int draw_y = (int)y - cursor_hotspot_y[style];
     if (cursor_bitmap_loaded) {
-        for (uint32_t row = 0; row < cursor_height; ++row) {
-            for (uint32_t col = 0; col < cursor_width; ++col) {
-                uint32_t px = cursor_pixels[row * CURSOR_MAX_W + col];
-                if ((px >> 24) != 0) {
-                    put_pixel(x + col, y + row, px & 0x00ffffffu);
+        uint32_t tile_y = style * CURSOR_TILE_H;
+        for (uint32_t row = 0; row < CURSOR_TILE_H; ++row) {
+            for (uint32_t col = 0; col < CURSOR_TILE_W; ++col) {
+                uint32_t px = cursor_pixels[(tile_y + row) * CURSOR_MAX_W + col];
+                if ((px >> 24) != 0 && draw_x + (int)col >= 0 &&
+                    draw_y + (int)row >= 0 &&
+                    draw_x + (int)col < (int)fb_w() &&
+                    draw_y + (int)row < (int)fb_h()) {
+                    put_pixel((uint32_t)(draw_x + (int)col),
+                              (uint32_t)(draw_y + (int)row), px & 0x00ffffffu);
                 }
             }
         }
+        return;
+    }
+    if (style != LEONOS_GUI_CURSOR_ARROW) {
+        x = x > FALLBACK_CURSOR_W ? x - FALLBACK_CURSOR_W : 0;
+        y = y > FALLBACK_CURSOR_H ? y - FALLBACK_CURSOR_H : 0;
+        desktop_cursor_style = style;
+        draw_custom_cursor(x, y);
         return;
     }
     for (uint32_t row = 0; row < FALLBACK_CURSOR_H; ++row) {

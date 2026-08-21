@@ -26,6 +26,8 @@ void leonos_ui_listview_row(struct leonos_ui_surface *surface, uint32_t x, uint3
                             uint32_t w, const struct leonos_ui_list_column *cols,
                             const char *const cells[], uint32_t count, uint32_t flags)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, LEONOS_FONT_H + 8,
+                            LEONOS_GUI_CURSOR_HAND, 0);
     uint32_t selected = flags & LEONOS_UI_MENU_SELECTED;
     uint32_t bg = selected ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE;
     uint32_t fg = selected ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;

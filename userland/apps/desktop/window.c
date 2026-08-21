@@ -259,6 +259,9 @@ void remove_window_slot(uint8_t slot)
     windows[slot].anim_to_y = 0;
     windows[slot].anim_to_w = 0;
     windows[slot].anim_to_h = 0;
+    for (uint32_t i = 0; i < DESKTOP_CURSOR_REGION_CAP; ++i) {
+        windows[slot].cursor_regions[i].used = 0;
+    }
     app_titles[slot][0] = 0;
     app_texts[slot][0] = 0;
     full_redraw_pending = 1;

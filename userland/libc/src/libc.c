@@ -520,6 +520,52 @@ int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
     return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
 }
 
+int leonos_mouse_set_auto(uint32_t window_id)
+{
+    struct leonos_gui_cursor_request request = {
+        .window_id = window_id,
+        .x = 0,
+        .y = 0,
+        .style = LEONOS_GUI_CURSOR_ARROW,
+        .flags = LEONOS_GUI_CURSOR_REQUEST_AUTO,
+    };
+    return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
+}
+
+int leonos_mouse_get_state(struct leonos_mouse_state *state)
+{
+    return state ? ioctl(3, LEONOS_GUI_IOCTL_MOUSE_STATE, state) : -1;
+}
+
+int leonos_mouse_get_position(int32_t *x, int32_t *y)
+{
+    struct leonos_mouse_state state;
+    int ret;
+    if (!x || !y) {
+        return -1;
+    }
+    ret = leonos_mouse_get_state(&state);
+    if (ret > 0) {
+        *x = state.x;
+        *y = state.y;
+    }
+    return ret;
+}
+
+int leonos_mouse_set_region(const struct leonos_gui_cursor_region_request *region)
+{
+    return region ? ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REGION, (void *)region) : -1;
+}
+
+int leonos_mouse_clear_regions(uint32_t window_id)
+{
+    struct leonos_gui_cursor_region_request region = {
+        .window_id = window_id,
+        .operation = LEONOS_GUI_CURSOR_REGION_CLEAR,
+    };
+    return window_id ? leonos_mouse_set_region(&region) : -1;
+}
+
 int sleep_ms(unsigned long ms)
 {
     return (int)syscall2(SYS_nanosleep, (long)ms, 0);

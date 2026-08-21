@@ -13,6 +13,7 @@
 #define GUI_IPC_MAX_WINDOWS 32
 #define GUI_IPC_WINDOW_EVENT_CAP 32
 #define GUI_IPC_PAGE_SIZE 4096ULL
+#define GUI_IPC_CURSOR_REGION_CAP 32u
 
 static struct gui_ipc_window queue[GUI_IPC_QUEUE_CAP];
 static uint32_t head;
@@ -50,6 +51,16 @@ struct gui_window_slot {
     char title[GUI_IPC_WINDOW_TITLE_MAX];
     char text[GUI_IPC_WINDOW_TEXT_MAX];
     char app_path[GUI_IPC_WINDOW_PATH_MAX];
+    struct {
+        uint8_t used;
+        uint32_t id;
+        int32_t x;
+        int32_t y;
+        uint32_t width;
+        uint32_t height;
+        uint32_t style;
+        uint32_t flags;
+    } cursor_regions[GUI_IPC_CURSOR_REGION_CAP];
 };
 
 static struct gui_window_slot windows[GUI_IPC_MAX_WINDOWS];
@@ -198,6 +209,9 @@ static struct gui_window_slot *alloc_window_slot(void)
     for (uint32_t i = 0; i < GUI_IPC_MAX_WINDOWS; ++i) {
         if (!windows[i].used) {
             windows[i].used = 1;
+            for (uint32_t j = 0; j < GUI_IPC_CURSOR_REGION_CAP; ++j) {
+                windows[i].cursor_regions[j].used = 0;
+            }
             return &windows[i];
         }
     }
@@ -346,6 +360,12 @@ static void fill_message(struct gui_ipc_window *msg, uint32_t type,
     msg->height = slot->height;
     msg->flags = slot->flags;
     msg->data = 0;
+    msg->cursor_x = 0;
+    msg->cursor_y = 0;
+    msg->cursor_region_id = 0;
+    msg->cursor_style = GUI_IPC_CURSOR_ARROW;
+    msg->cursor_flags = 0;
+    msg->cursor_operation = 0;
     copy_kernel_string(msg->title, sizeof(msg->title), slot->title);
     copy_kernel_string(msg->text, sizeof(msg->text), slot->text);
     copy_kernel_string(msg->app_path, sizeof(msg->app_path), slot->app_path);
@@ -429,6 +449,35 @@ static int push_control_message(uint32_t type, const struct gui_window_slot *slo
     msg->height = height;
     msg->flags = flags;
     msg->data = data;
+    head = next;
+    return 1;
+}
+
+static int push_cursor_region_message(const struct gui_window_slot *slot,
+                                      uint32_t region_id, int32_t x, int32_t y,
+                                      uint32_t width, uint32_t height,
+                                      uint32_t style, uint32_t flags,
+                                      uint32_t operation)
+{
+    uint32_t next;
+    struct gui_ipc_window *msg;
+    if (!slot) {
+        return 0;
+    }
+    next = (head + 1) % GUI_IPC_QUEUE_CAP;
+    if (next == tail) {
+        tail = (tail + 1) % GUI_IPC_QUEUE_CAP;
+    }
+    msg = &queue[head];
+    fill_message(msg, GUI_IPC_WINDOW_MSG_CURSOR_REGION, slot);
+    msg->cursor_region_id = region_id;
+    msg->cursor_x = x;
+    msg->cursor_y = y;
+    msg->width = width;
+    msg->height = height;
+    msg->cursor_style = style;
+    msg->cursor_flags = flags;
+    msg->cursor_operation = operation;
     head = next;
     return 1;
 }
@@ -836,7 +885,7 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
  * @return Result, status, or value defined by this API.
  */
         (void)push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot, 0, 0,
-                                   GUI_IPC_CURSOR_REQUEST_STYLE,
+                                   GUI_IPC_CURSOR_REQUEST_STYLE | GUI_IPC_CURSOR_REQUEST_AUTO,
                                    GUI_IPC_CURSOR_ARROW);
     }
     /**
@@ -952,11 +1001,64 @@ int gui_ipc_request_cursor(uint32_t pid, uint32_t window_id, int32_t x, int32_t 
         ((flags & GUI_IPC_CURSOR_REQUEST_STYLE) && style >= GUI_IPC_CURSOR_STYLE_COUNT)) {
         return 0;
     }
-    if (flags & GUI_IPC_CURSOR_REQUEST_STYLE) {
+    if (flags & GUI_IPC_CURSOR_REQUEST_AUTO) {
+        cursor_style_window_id = 0;
+    } else if (flags & GUI_IPC_CURSOR_REQUEST_STYLE) {
         cursor_style_window_id = window_id;
     }
     return push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot,
                                 (uint32_t)x, (uint32_t)y, flags, style);
+}
+
+int gui_ipc_request_cursor_region(uint32_t pid, uint32_t window_id,
+                                  uint32_t region_id, int32_t x, int32_t y,
+                                  uint32_t width, uint32_t height,
+                                  uint32_t style, uint32_t flags,
+                                  uint32_t operation)
+{
+    struct gui_window_slot *slot = find_window(window_id);
+    uint32_t free_index = GUI_IPC_CURSOR_REGION_CAP;
+    if (!slot || slot->owner_pid != pid ||
+        operation < GUI_IPC_CURSOR_REGION_SET ||
+        operation > GUI_IPC_CURSOR_REGION_CLEAR ||
+        (flags & ~GUI_IPC_CURSOR_REGION_DISABLED) ||
+        (operation != GUI_IPC_CURSOR_REGION_CLEAR && !region_id) ||
+        (operation == GUI_IPC_CURSOR_REGION_SET &&
+         (!width || !height || style >= GUI_IPC_CURSOR_STYLE_COUNT))) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < GUI_IPC_CURSOR_REGION_CAP; ++i) {
+        if (slot->cursor_regions[i].used && slot->cursor_regions[i].id == region_id) {
+            free_index = i;
+            break;
+        }
+        if (!slot->cursor_regions[i].used && free_index == GUI_IPC_CURSOR_REGION_CAP) {
+            free_index = i;
+        }
+    }
+    if (operation == GUI_IPC_CURSOR_REGION_SET) {
+        if (free_index == GUI_IPC_CURSOR_REGION_CAP) {
+            return 0;
+        }
+        slot->cursor_regions[free_index].used = 1;
+        slot->cursor_regions[free_index].id = region_id;
+        slot->cursor_regions[free_index].x = x;
+        slot->cursor_regions[free_index].y = y;
+        slot->cursor_regions[free_index].width = width;
+        slot->cursor_regions[free_index].height = height;
+        slot->cursor_regions[free_index].style = style;
+        slot->cursor_regions[free_index].flags = flags;
+    } else if (operation == GUI_IPC_CURSOR_REGION_REMOVE) {
+        if (free_index < GUI_IPC_CURSOR_REGION_CAP) {
+            slot->cursor_regions[free_index].used = 0;
+        }
+    } else {
+        for (uint32_t i = 0; i < GUI_IPC_CURSOR_REGION_CAP; ++i) {
+            slot->cursor_regions[i].used = 0;
+        }
+    }
+    return push_cursor_region_message(slot, region_id, x, y, width, height,
+                                      style, flags, operation);
 }
 
 /**
@@ -990,6 +1092,25 @@ int gui_ipc_set_mouse_visible(uint32_t pid, uint32_t window_id, uint32_t visible
 int gui_ipc_mouse_visible(void)
 {
     return mouse_is_visible();
+}
+
+int gui_ipc_mouse_state(struct gui_ipc_mouse_state *out)
+{
+    const struct mouse_state *state;
+    if (!out) {
+        return 0;
+    }
+    state = mouse_get_state();
+    if (!state) {
+        return 0;
+    }
+    out->x = state->x;
+    out->y = state->y;
+    out->buttons = state->buttons;
+    out->visible = mouse_is_visible() ? 1u : 0u;
+    out->present = state->present ? 1u : 0u;
+    out->absolute = state->absolute ? 1u : 0u;
+    return 1;
 }
 
 /**
@@ -1110,7 +1231,7 @@ void gui_ipc_destroy_owner(uint32_t pid)
  * @return Result, status, or value defined by this API.
  */
             (void)push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot, 0, 0,
-                                       GUI_IPC_CURSOR_REQUEST_STYLE,
+                                       GUI_IPC_CURSOR_REQUEST_STYLE | GUI_IPC_CURSOR_REQUEST_AUTO,
                                        GUI_IPC_CURSOR_ARROW);
         }
         /**

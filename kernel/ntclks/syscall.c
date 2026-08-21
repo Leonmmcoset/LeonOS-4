@@ -577,6 +577,18 @@ struct gui_cursor_request_user {
     uint32_t flags;
 };
 
+struct gui_cursor_region_request_user {
+    uint32_t window_id;
+    uint32_t region_id;
+    int32_t x;
+    int32_t y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t style;
+    uint32_t flags;
+    uint32_t operation;
+};
+
 struct exec_params_kernel {
     uint32_t argc;
     uint32_t envc;
@@ -3500,6 +3512,18 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return gui_ipc_set_mouse_visible(sched_current_pid(), window_id, visible) ? 1 : 0;
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_MOUSE_STATE) {
+        struct gui_ipc_mouse_state state;
+        if (!user_range_ok(a2, sizeof(state))) {
+            return -LEONOS_EFAULT;
+        }
+        if (!gui_ipc_mouse_state(&state)) {
+            return -LEONOS_EIO;
+        }
+        *(struct gui_ipc_mouse_state *)(uintptr_t)a2 = state;
+        return 1;
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_UPDATE_WINDOW) {
         const struct gui_window_update_user *cmd;
         if (!user_range_ok(a2, sizeof(struct gui_window_update_user))) {
@@ -3554,6 +3578,27 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return gui_ipc_request_cursor(sched_current_pid(), cmd->window_id,
                                       cmd->x, cmd->y, cmd->style,
                                       cmd->flags) ? 1 : 0;
+    }
+
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_CURSOR_REGION) {
+        const struct gui_cursor_region_request_user *cmd;
+        if (!user_range_ok(a2, sizeof(*cmd))) {
+            return -LEONOS_EFAULT;
+        }
+        cmd = (const struct gui_cursor_region_request_user *)(uintptr_t)a2;
+        if (!cmd->window_id || cmd->operation < GUI_IPC_CURSOR_REGION_SET ||
+            cmd->operation > GUI_IPC_CURSOR_REGION_CLEAR ||
+            (cmd->flags & ~GUI_IPC_CURSOR_REGION_DISABLED) ||
+            (cmd->operation != GUI_IPC_CURSOR_REGION_CLEAR && !cmd->region_id) ||
+            (cmd->operation == GUI_IPC_CURSOR_REGION_SET &&
+             (!cmd->width || !cmd->height ||
+              cmd->style >= GUI_IPC_CURSOR_STYLE_COUNT))) {
+            return -LEONOS_EINVAL;
+        }
+        return gui_ipc_request_cursor_region(
+            sched_current_pid(), cmd->window_id, cmd->region_id,
+            cmd->x, cmd->y, cmd->width, cmd->height, cmd->style,
+            cmd->flags, cmd->operation) ? 1 : 0;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_WINDOW_EVENT) {

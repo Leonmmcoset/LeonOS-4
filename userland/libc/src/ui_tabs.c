@@ -45,6 +45,8 @@ void leonos_ui_tab_control(struct leonos_ui_surface *surface, uint32_t x, uint32
                            uint32_t w, const struct leonos_ui_tab_item *items,
                            uint32_t count, const struct leonos_ui_tab_state *state)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            leonos_ui_tab_height(), LEONOS_GUI_CURSOR_HAND, 0);
     uint32_t cursor = x;
     uint32_t right = x + w;
     uint32_t selected = state ? state->selected_id : 0;

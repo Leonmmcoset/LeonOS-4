@@ -2138,6 +2138,8 @@ void leonos_ui_dropdown(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
                         uint32_t count, uint32_t selected_id, uint32_t row_h,
                         uint32_t progress)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            LEONOS_UI_BUTTON_H, LEONOS_GUI_CURSOR_HAND, 0);
     uint32_t visible_h = leonos_ui_dropdown_height(count, row_h, progress);
     int32_t popup_x;
     int32_t popup_y;
@@ -2248,6 +2250,11 @@ int leonos_ui_dropdown_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
 void leonos_ui_radio(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      const char *label, int checked, uint32_t flags)
 {
+    uint32_t disabled = flags & LEONOS_UI_BUTTON_DISABLED;
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y,
+                            22 + leonos_ui_text_width(label), 18,
+                            disabled ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            disabled ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     uint32_t fg = (flags & LEONOS_UI_BUTTON_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
     leonos_ui_rect(surface, x + 3, y + 2, 8, 1, fg);
     leonos_ui_rect(surface, x + 2, y + 3, 10, 1, fg);
@@ -2296,6 +2303,8 @@ void leonos_ui_toolbar_button(struct leonos_ui_surface *surface, uint32_t x, uin
 void leonos_ui_splitter(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, uint32_t h, uint32_t vertical)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            LEONOS_GUI_CURSOR_MOVE, 0);
     leonos_ui_rect(surface, x, y, w, h, LEONOS_UI_GRAY);
     if (vertical) {
         leonos_ui_rect(surface, x, y, 1, h, LEONOS_UI_DARK);
@@ -2316,6 +2325,8 @@ void leonos_ui_menubar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y
 void leonos_ui_menubar_item(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                             uint32_t w, const char *label, uint32_t active)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            LEONOS_FONT_H + 8, LEONOS_GUI_CURSOR_HAND, 0);
     if (active) {
         leonos_ui_bevel(surface, x, y + 2, w, LEONOS_FONT_H + 4, LEONOS_UI_LIGHT, LEONOS_UI_BUTTON_PRESSED);
     }
@@ -2662,6 +2673,11 @@ void leonos_ui_slider(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                       uint32_t w, uint32_t h, uint32_t value, uint32_t max,
                       uint32_t flags)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_BUTTON_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_BUTTON_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     uint32_t track_y;
     uint32_t thumb_w = 10;
     uint32_t usable;

@@ -24,6 +24,8 @@
 #define LEONOS_GUI_IOCTL_UPDATE_WINDOW 0x4c475755UL
 #define LEONOS_GUI_IOCTL_SET_TASKBAR_VISIBLE 0x4c475442UL
 #define LEONOS_GUI_IOCTL_CURSOR_REQUEST 0x4c474352UL
+#define LEONOS_GUI_IOCTL_MOUSE_STATE 0x4c4d5354UL
+#define LEONOS_GUI_IOCTL_CURSOR_REGION 0x4c474347UL
 
 #define GUI_IPC_WINDOW_MSG_CREATE 1u
 #define GUI_IPC_WINDOW_MSG_DIRTY 2u
@@ -31,6 +33,7 @@
 #define GUI_IPC_WINDOW_MSG_UPDATE 4u
 #define GUI_IPC_WINDOW_MSG_TASKBAR 5u
 #define GUI_IPC_WINDOW_MSG_CURSOR 6u
+#define GUI_IPC_WINDOW_MSG_CURSOR_REGION 7u
 
 #define GUI_IPC_WINDOW_NO_RESIZE 0x00000001u
 #define GUI_IPC_WINDOW_FULLSCREEN 0x00000002u
@@ -46,11 +49,18 @@
                                    GUI_IPC_WINDOW_UPDATE_TASKBAR)
 
 #define GUI_IPC_CURSOR_ARROW 0u
-#define GUI_IPC_CURSOR_STYLE_COUNT 6u
+#define GUI_IPC_CURSOR_STYLE_COUNT 15u
 #define GUI_IPC_CURSOR_REQUEST_POSITION 0x00000001u
 #define GUI_IPC_CURSOR_REQUEST_STYLE 0x00000002u
+#define GUI_IPC_CURSOR_REQUEST_AUTO 0x00000004u
 #define GUI_IPC_CURSOR_REQUEST_ALL (GUI_IPC_CURSOR_REQUEST_POSITION | \
-                                    GUI_IPC_CURSOR_REQUEST_STYLE)
+                                    GUI_IPC_CURSOR_REQUEST_STYLE | \
+                                    GUI_IPC_CURSOR_REQUEST_AUTO)
+#define GUI_IPC_CURSOR_REGION_SET 1u
+#define GUI_IPC_CURSOR_REGION_REMOVE 2u
+#define GUI_IPC_CURSOR_REGION_CLEAR 3u
+#define GUI_IPC_CURSOR_REGION_DISABLED 0x00000001u
+
 
 #define GUI_IPC_APP_EVENT_CLOSE 1u
 #define GUI_IPC_APP_EVENT_FOCUS 2u
@@ -88,6 +98,12 @@ struct gui_ipc_window {
     char title[GUI_IPC_WINDOW_TITLE_MAX];
     char text[GUI_IPC_WINDOW_TEXT_MAX];
     char app_path[GUI_IPC_WINDOW_PATH_MAX];
+    int32_t cursor_x;
+    int32_t cursor_y;
+    uint32_t cursor_region_id;
+    uint32_t cursor_style;
+    uint32_t cursor_flags;
+    uint32_t cursor_operation;
 };
 
 struct gui_ipc_app_event {
@@ -137,6 +153,15 @@ struct gui_ipc_appearance_request {
     uint32_t win95_color_scheme;
     uint32_t wallpaper_mode;
     char wallpaper_path[LEONOS_FS_PATH_LEN];
+};
+
+struct gui_ipc_mouse_state {
+    int32_t x;
+    int32_t y;
+    uint8_t buttons;
+    uint8_t visible;
+    uint8_t present;
+    uint8_t absolute;
 };
 
 /**
@@ -236,6 +261,12 @@ int gui_ipc_set_taskbar_visible(uint32_t pid, uint32_t window_id, uint32_t visib
  */
 int gui_ipc_request_cursor(uint32_t pid, uint32_t window_id, int32_t x, int32_t y,
                            uint32_t style, uint32_t flags);
+int gui_ipc_request_cursor_region(uint32_t pid, uint32_t window_id,
+                                  uint32_t region_id, int32_t x, int32_t y,
+                                  uint32_t width, uint32_t height,
+                                  uint32_t style, uint32_t flags,
+                                  uint32_t operation);
+int gui_ipc_mouse_state(struct gui_ipc_mouse_state *out);
 /**
  * @brief Coordinates the gui ipc fetch window operation.
  * @param caller_pid Input or output value used by this operation.

@@ -267,11 +267,57 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
             }
             cursor_visible = 1;
         }
-        if ((msg->flags & LEONOS_GUI_CURSOR_REQUEST_STYLE) &&
-            msg->data < LEONOS_GUI_CURSOR_STYLE_COUNT) {
+        if (msg->flags & LEONOS_GUI_CURSOR_REQUEST_AUTO) {
+            desktop_cursor_auto = 1;
+            desktop_cursor_style = LEONOS_GUI_CURSOR_ARROW;
+        } else if ((msg->flags & LEONOS_GUI_CURSOR_REQUEST_STYLE) &&
+                   msg->data < LEONOS_GUI_CURSOR_STYLE_COUNT) {
+            desktop_cursor_auto = 0;
             desktop_cursor_style = msg->data;
         }
         full_redraw_pending = 1;
+        return;
+    }
+    if (msg->type == LEONOS_GUI_WINDOW_MSG_CURSOR_REGION) {
+        existing = find_window_slot_by_window_id(msg->window_id);
+        if (existing >= 0 &&
+            msg->cursor_operation >= LEONOS_GUI_CURSOR_REGION_SET &&
+            msg->cursor_operation <= LEONOS_GUI_CURSOR_REGION_CLEAR) {
+            struct desktop_window *w = &windows[existing];
+            uint32_t index = DESKTOP_CURSOR_REGION_CAP;
+            for (uint32_t i = 0; i < DESKTOP_CURSOR_REGION_CAP; ++i) {
+                if (w->cursor_regions[i].used &&
+                    w->cursor_regions[i].id == msg->cursor_region_id) {
+                    index = i;
+                    break;
+                }
+                if (!w->cursor_regions[i].used && index == DESKTOP_CURSOR_REGION_CAP) {
+                    index = i;
+                }
+            }
+            if (msg->cursor_operation == LEONOS_GUI_CURSOR_REGION_CLEAR) {
+                for (uint32_t i = 0; i < DESKTOP_CURSOR_REGION_CAP; ++i) {
+                    w->cursor_regions[i].used = 0;
+                }
+            } else if (index < DESKTOP_CURSOR_REGION_CAP) {
+                if (msg->cursor_operation == LEONOS_GUI_CURSOR_REGION_REMOVE) {
+                    w->cursor_regions[index].used = 0;
+                } else {
+                    w->cursor_regions[index].used = 1;
+                    w->cursor_regions[index].id = msg->cursor_region_id;
+                    w->cursor_regions[index].x = msg->cursor_x;
+                    w->cursor_regions[index].y = msg->cursor_y;
+                    w->cursor_regions[index].width = msg->width;
+                    w->cursor_regions[index].height = msg->height;
+                    w->cursor_regions[index].style = msg->cursor_style;
+                    w->cursor_regions[index].flags = msg->cursor_flags;
+                }
+            }
+            if (desktop_cursor_auto) {
+                desktop_cursor_style = desktop_cursor_style_for_pointer(cursor_x, cursor_y);
+            }
+            full_redraw_pending = 1;
+        }
         return;
     }
     if (msg->type != 1) {
@@ -878,6 +924,138 @@ void update_snap_preview(uint32_t x, uint32_t y)
     }
 }
 
+uint32_t desktop_cursor_style_for_pointer(uint32_t x, uint32_t y)
+{
+    int id;
+    struct desktop_window *w;
+    int bx;
+    int by;
+    int resize_edge_x;
+    int resize_edge_y;
+
+    if (!desktop_cursor_auto) {
+        return desktop_cursor_style;
+    }
+    if (drag_window >= 0) {
+        if (drag_mode == DRAG_MOVE) {
+            return LEONOS_GUI_CURSOR_MOVE;
+        }
+        if (drag_mode == DRAG_RESIZE) {
+            w = &windows[drag_window];
+            resize_edge_x = (int)x >= w->x + (int)w->width - 20;
+            resize_edge_y = (int)y >= w->y + (int)w->height - 20;
+            if (resize_edge_x && resize_edge_y) {
+                return LEONOS_GUI_CURSOR_SIZE_NWSE;
+            }
+            return resize_edge_x ? LEONOS_GUI_CURSOR_SIZE_WE : LEONOS_GUI_CURSOR_SIZE_NS;
+        }
+    }
+    if (power_confirm_action) {
+        enum { dialog_w = 360, dialog_h = 150 };
+        uint32_t dialog_x = fb_w() > dialog_w ? (fb_w() - dialog_w) / 2 : 0;
+        uint32_t dialog_y = fb_h() > dialog_h ? (fb_h() - dialog_h) / 2 : 0;
+        if (hit_rect(x, y, (int)dialog_x + dialog_w - 168,
+                     (int)dialog_y + dialog_h - 38, 72, LEONOS_UI_BUTTON_H) ||
+            hit_rect(x, y, (int)dialog_x + dialog_w - 88,
+                     (int)dialog_y + dialog_h - 38, 72, LEONOS_UI_BUTTON_H)) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+        return LEONOS_GUI_CURSOR_NO;
+    }
+    if (desktop_message_active) {
+        enum { dialog_w = DESKTOP_MESSAGE_W, dialog_h = DESKTOP_MESSAGE_H };
+        uint32_t dialog_x = fb_w() > dialog_w ? (fb_w() - dialog_w) / 2 : 0;
+        uint32_t dialog_y = fb_h() > dialog_h ? (fb_h() - dialog_h) / 2 : 0;
+        return hit_rect(x, y, (int)dialog_x + dialog_w / 2 - 36,
+                        (int)dialog_y + dialog_h - 38,
+                        72, LEONOS_UI_BUTTON_H)
+                   ? LEONOS_GUI_CURSOR_HAND
+                   : LEONOS_GUI_CURSOR_NO;
+    }
+    if (desktop_shortcut_input_active) {
+        uint32_t dialog_x = fb_w() > DESKTOP_SHORTCUT_INPUT_W
+                                ? (fb_w() - DESKTOP_SHORTCUT_INPUT_W) / 2
+                                : 0;
+        uint32_t dialog_y = fb_h() > DESKTOP_SHORTCUT_INPUT_H
+                                ? (fb_h() - DESKTOP_SHORTCUT_INPUT_H) / 2
+                                : 0;
+        uint32_t input_w = DESKTOP_SHORTCUT_INPUT_W > 40
+                               ? DESKTOP_SHORTCUT_INPUT_W - 40
+                               : DESKTOP_SHORTCUT_INPUT_W;
+        if (hit_rect(x, y, (int)dialog_x + 20, (int)dialog_y + 72,
+                     input_w, 24)) {
+            return LEONOS_GUI_CURSOR_TEXT;
+        }
+        if (hit_rect(x, y, (int)dialog_x + DESKTOP_SHORTCUT_INPUT_W - 168,
+                     (int)dialog_y + DESKTOP_SHORTCUT_INPUT_H - 38,
+                     72, LEONOS_UI_BUTTON_H) ||
+            hit_rect(x, y, (int)dialog_x + DESKTOP_SHORTCUT_INPUT_W - 88,
+                     (int)dialog_y + DESKTOP_SHORTCUT_INPUT_H - 38,
+                     72, LEONOS_UI_BUTTON_H)) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+        return LEONOS_GUI_CURSOR_NO;
+    }
+    if (start_menu_open || start_menu_animating) {
+        return start_menu_hit_test(x, y) ? LEONOS_GUI_CURSOR_HAND : LEONOS_GUI_CURSOR_NO;
+    }
+    if (desktop_context_menu_active || desktop_context_menu_animating) {
+        return hit_rect(x, y, (int)desktop_context_menu_x,
+                        (int)desktop_context_menu_y, DESKTOP_CONTEXT_MENU_W,
+                        leonos_ui_context_menu_height(DESKTOP_CONTEXT_MENU_COUNT))
+                   ? LEONOS_GUI_CURSOR_HAND
+                   : LEONOS_GUI_CURSOR_NO;
+    }
+    if (desktop_taskbar_visible && y >= taskbar_y()) {
+        return LEONOS_GUI_CURSOR_HAND;
+    }
+    id = hit_window(x, y);
+    if (id < BUILTIN_WINDOWS || id >= MAX_WINDOWS) {
+        return LEONOS_GUI_CURSOR_ARROW;
+    }
+    w = &windows[id];
+    if (!window_is_fullscreen(w) && !window_is_borderless(w)) {
+        bx = w->x + (int)w->width - 64;
+        by = w->y + 7;
+        if (hit_rect(x, y, bx, by, 60, 20)) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+        if (window_allows_resize(w) &&
+            hit_rect(x, y, w->x + (int)w->width - 20, w->y + (int)w->height - 20, 20, 20)) {
+            return LEONOS_GUI_CURSOR_SIZE_NWSE;
+        }
+        if (hit_rect(x, y, w->x + 4, w->y + 4,
+                     w->width > 8 ? w->width - 8 : 0, TITLEBAR_H)) {
+            return LEONOS_GUI_CURSOR_MOVE;
+        }
+    }
+    {
+        int origin_x;
+        int origin_y;
+        int client_x;
+        int client_y;
+        window_client_origin(w, &origin_x, &origin_y);
+        client_x = (int)x - origin_x;
+        client_y = (int)y - origin_y;
+        if (client_x < 0 || client_y < 0) {
+            return LEONOS_GUI_CURSOR_ARROW;
+        }
+        for (uint32_t i = 0; i < DESKTOP_CURSOR_REGION_CAP; ++i) {
+            struct desktop_cursor_region *region = &w->cursor_regions[i];
+            if (region->used && hit_rect((uint32_t)client_x, (uint32_t)client_y,
+                                         region->x, region->y,
+                                         region->width, region->height)) {
+                if (region->flags & LEONOS_GUI_CURSOR_REGION_DISABLED) {
+                    return LEONOS_GUI_CURSOR_NO;
+                }
+                return region->style < LEONOS_GUI_CURSOR_STYLE_COUNT
+                           ? region->style : LEONOS_GUI_CURSOR_ARROW;
+            }
+        }
+    }
+    return LEONOS_GUI_CURSOR_ARROW;
+}
+
 void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
 {
     if (x >= fb_w()) {
@@ -885,6 +1063,10 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
     }
     if (y >= fb_h()) {
         y = fb_h() ? fb_h() - 1 : 0;
+    }
+
+    if (desktop_cursor_auto) {
+        desktop_cursor_style = desktop_cursor_style_for_pointer(x, y);
     }
 
     uint8_t left = buttons & 1;

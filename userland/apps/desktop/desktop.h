@@ -32,10 +32,14 @@
 #define MIN_H 96
 #define FALLBACK_CURSOR_W 16
 #define FALLBACK_CURSOR_H 16
-#define CURSOR_MAX_W 64
-#define CURSOR_MAX_H 64
+#define CURSOR_TILE_W 32
+#define CURSOR_TILE_H 32
+#define CURSOR_STYLE_COUNT LEONOS_GUI_CURSOR_STYLE_COUNT
+#define CURSOR_MAX_W CURSOR_TILE_W
+#define CURSOR_MAX_H (CURSOR_TILE_H * CURSOR_STYLE_COUNT)
 #define CURSOR_BMP_MAX_BYTES (CURSOR_MAX_W * CURSOR_MAX_H * 4 + 128)
 #define CURSOR_BMP_PATH "/system/resources/mouse.bmp"
+#define DESKTOP_CURSOR_REGION_CAP 32
 #define WALLPAPER_MAX_W 1280
 #define WALLPAPER_MAX_H 720
 #define WALLPAPER_BMP_MAX_BYTES (WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4 + 128)
@@ -116,6 +120,8 @@
 #define DESKTOP_CONTEXT_ACTION_CREATE_SHORTCUT 3
 #define DESKTOP_MESSAGE_TITLE_LEN 48
 #define DESKTOP_MESSAGE_TEXT_LEN 160
+#define DESKTOP_MESSAGE_W 380
+#define DESKTOP_MESSAGE_H 150
 #define DESKTOP_SHORTCUT_INPUT_W 480
 #define DESKTOP_SHORTCUT_INPUT_H 170
 #define DESKTOP_INPUTM_CONFIG_NAME ".inputm.conf"
@@ -175,6 +181,16 @@ struct desktop_window {
     int anim_to_y;
     uint32_t anim_to_w;
     uint32_t anim_to_h;
+    struct desktop_cursor_region {
+        uint8_t used;
+        uint32_t id;
+        int32_t x;
+        int32_t y;
+        uint32_t width;
+        uint32_t height;
+        uint32_t style;
+        uint32_t flags;
+    } cursor_regions[DESKTOP_CURSOR_REGION_CAP];
 };
 
 struct rect {
@@ -286,9 +302,12 @@ extern uint32_t cursor_y;
 extern uint32_t cursor_width;
 extern uint32_t cursor_height;
 extern uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
+extern uint8_t cursor_hotspot_x[CURSOR_STYLE_COUNT];
+extern uint8_t cursor_hotspot_y[CURSOR_STYLE_COUNT];
 extern uint8_t cursor_visible;
 extern uint8_t cursor_bitmap_loaded;
 extern uint32_t desktop_cursor_style;
+extern uint8_t desktop_cursor_auto;
 extern uint8_t desktop_taskbar_visible;
 extern uint32_t wallpaper_pixels[WALLPAPER_MAX_W * WALLPAPER_MAX_H];
 extern uint32_t wallpaper_width;
@@ -475,6 +494,7 @@ int desktop_handle_background_click(uint32_t x, uint32_t y);
 int desktop_handle_background_right_click(uint32_t x, uint32_t y);
 void draw_power_confirm(void);
 void draw_cursor_shape(uint32_t x, uint32_t y);
+uint32_t desktop_cursor_style_for_pointer(uint32_t x, uint32_t y);
 void redraw_region(struct rect dirty);
 void flush_region(struct rect dirty);
 void repaint_and_flush(struct rect dirty);
