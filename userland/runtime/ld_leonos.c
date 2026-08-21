@@ -77,7 +77,7 @@
 #define LOADER_MAX_DEPS 16u
 #define LOADER_PATH_MAX 260u
 #define LOADER_PATH_WORK_MAX 520u
-#define LEONOS_DYNLINK_ERROR_APP_PATH "0:/system/apps/dynlinkerror/dynlinkerror.elf"
+#define LEONOS_DYNLINK_ERROR_APP_PATH "/system/apps/dynlinkerror/dynlinkerror.elf"
 
 enum loader_module_state {
     LOADER_MODULE_EMPTY = 0,
@@ -815,13 +815,23 @@ static int normalize_path(char out[LOADER_PATH_MAX], const char *base_path, cons
     if (!out || !name || !name[0]) {
         return -1;
     }
-    absolute = name[0] && name[1] == ':' && name[2] == '/';
+    for (uint32_t i = 0; name[i]; ++i) {
+        if (name[i] == ':' || name[i] == '\\') {
+            return -1;
+        }
+    }
+    absolute = name[0] == '/';
     if (absolute) {
         text_copy(work, sizeof(work), name);
     } else {
         uint32_t slash = 0;
-        if (!base_path || !(base_path[0] && base_path[1] == ':' && base_path[2] == '/')) {
+        if (!base_path || base_path[0] != '/') {
             return -1;
+        }
+        for (uint32_t i = 0; base_path[i]; ++i) {
+            if (base_path[i] == ':' || base_path[i] == '\\') {
+                return -1;
+            }
         }
         while (base_path[work_len] && work_len + 1 < sizeof(work)) {
             work[work_len] = base_path[work_len];
@@ -839,13 +849,11 @@ static int normalize_path(char out[LOADER_PATH_MAX], const char *base_path, cons
         }
         work[work_len] = 0;
     }
-    if (!(work[0] && work[1] == ':' && work[2] == '/')) {
+    if (work[0] != '/') {
         return -1;
     }
-    out[write++] = work[0];
-    out[write++] = ':';
     out[write++] = '/';
-    read = 3;
+    read = 1;
     while (work[read]) {
         uint32_t start;
         uint32_t length;
@@ -874,7 +882,7 @@ static int normalize_path(char out[LOADER_PATH_MAX], const char *base_path, cons
             return -1;
         }
         marks[mark_count++] = write;
-        if (write > 3) {
+        if (write > 1) {
             out[write++] = '/';
         }
         for (uint32_t i = 0; i < length; ++i) {

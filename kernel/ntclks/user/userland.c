@@ -171,7 +171,7 @@ static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
  */
 static int path_is_system_desktop(const char *path)
 {
-    return path_eq_ignore_case(path, "0:/system/apps/desktop/desktop.elf");
+    return path_eq_ignore_case(path, "/system/apps/desktop/desktop.elf");
 }
 
 /**
@@ -181,7 +181,7 @@ static int path_is_system_desktop(const char *path)
  */
 static int path_is_system_service_daemon(const char *path)
 {
-    return path_eq_ignore_case(path, "0:/system/apps/serviced/serviced.elf");
+    return path_eq_ignore_case(path, "/system/apps/serviced/serviced.elf");
 }
 
 /**
@@ -666,7 +666,7 @@ void userland_init(const struct boot_info *boot)
     }
 
     if (boot && name_contains(boot->cmdline, "mode=installer")) {
-        pid = spawn_path_internal("0:/system/apps/desktop/desktop.elf", "desktop.elf window server",
+        pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
                                   0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
@@ -677,14 +677,14 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
-    pid = spawn_path_internal("0:/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0, -1, -1, -1);
+    pid = spawn_path_internal("/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load init.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
     }
     init_pid = (uint32_t)pid;
 
-    pid = spawn_path_internal("0:/system/apps/desktop/desktop.elf", "desktop.elf window server",
+    pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
                               0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load desktop.elf ret=%lld\n", (long long)pid);
@@ -838,7 +838,7 @@ int64_t userland_spawn_path_argv(const char *path,
 
 /**
  * @brief Spawns a user executable with explicitly inherited standard streams.
- * @param path NUL-terminated executable path in LeonOS drive syntax.
+ * @param path NUL-terminated executable path in LeonOS Unix syntax.
  * @param argv Optional NUL-terminated argument vector copied into the child.
  * @param envp Optional NUL-terminated environment vector copied into the child.
  * @param pty_id Active PTY inherited by the child; it must belong to the caller.
@@ -942,27 +942,27 @@ void userland_yield_if_runnable(void)
 {
     if (autospawn_hello && sched_current_pid() == desktop_pid) {
         autospawn_hello = false;
-        int64_t pid = userland_spawn_path("0:/programs/hello/hello.elf");
+        int64_t pid = userland_spawn_path("/programs/hello/hello.elf");
         console_printf("[ntclks] debug autospawn hello pid=%lld\n", (long long)pid);
     }
     if (autospawn_uidemo && sched_current_pid() == desktop_pid) {
         autospawn_uidemo = false;
-        int64_t pid = userland_spawn_path("0:/programs/uidemo/uidemo.elf");
+        int64_t pid = userland_spawn_path("/programs/uidemo/uidemo.elf");
         console_printf("[ntclks] debug autospawn uidemo pid=%lld\n", (long long)pid);
     }
     if (autospawn_terminal && sched_current_pid() == desktop_pid) {
         autospawn_terminal = false;
-        int64_t pid = userland_spawn_path("0:/system/apps/terminal/terminal.elf");
+        int64_t pid = userland_spawn_path("/system/apps/terminal/terminal.elf");
         console_printf("[ntclks] debug autospawn terminal pid=%lld\n", (long long)pid);
     }
     if (autospawn_memtest && sched_current_pid() == desktop_pid) {
         autospawn_memtest = false;
-        int64_t pid = userland_spawn_path("0:/programs/memtest/memtest.elf");
+        int64_t pid = userland_spawn_path("/programs/memtest/memtest.elf");
         console_printf("[ntclks] debug autospawn memtest pid=%lld\n", (long long)pid);
     }
     if (autospawn_installer && sched_current_pid() == desktop_pid) {
         autospawn_installer = false;
-        int64_t pid = userland_spawn_path("0:/system/apps/installer/installer.elf");
+        int64_t pid = userland_spawn_path("/system/apps/installer/installer.elf");
         console_printf("[ntclks] installer autospawn pid=%lld\n", (long long)pid);
     }
 }
@@ -988,7 +988,7 @@ int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
         capacity = LEONOS_FS_MAX_ENTRIES;
     }
 
-    if (path_eq(path, "0:/dev")) {
+    if (path_eq(path, "/dev")) {
         dir_add(entries, capacity, &count, LEONOS_FS_TYPE_DEVICE, "fb0");
         *out_count = count;
         return (int)count;

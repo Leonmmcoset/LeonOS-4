@@ -183,7 +183,7 @@ static int tar_member_name_is_safe(const char *name)
 
 static int tar_is_root_path(const char *path)
 {
-    return path && path[0] == '0' && path[1] == ':' && path[2] == '/' && path[3] == 0;
+    return path && path[0] == '/' && path[1] == 0;
 }
 
 static int tar_parent_path(const char *path, char *parent, uint32_t capacity)

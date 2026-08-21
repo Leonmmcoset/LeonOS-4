@@ -6,7 +6,7 @@
 
 /*
  * TCC uses realpath() only to compare #pragma-once include files.  LeonOS
- * paths have one canonical drive-root form already; returning a separately
+ * paths have one canonical root-directory form already; returning a separately
  * allocated copy preserves the POSIX ownership contract without depending on
  * Picolibc's host-filesystem implementation.
  */

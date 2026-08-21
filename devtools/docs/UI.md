@@ -59,7 +59,7 @@ uint32_t accent = leonos_ui_color(LEONOS_UI_COLOR_ACCENT);
 ## 文件和常用对话框
 
 ```c
-char path[256] = "0:/users/admin";
+char path[256] = "/users/admin";
 if (leonos_ui_show_open_dialog("Open", path, sizeof(path),
                                "Text files", ".txt") == 0) {
     /* path 已由对话框填充。 */

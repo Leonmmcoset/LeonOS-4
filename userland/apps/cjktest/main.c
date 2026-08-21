@@ -14,7 +14,7 @@ static char text_buffer[512] =
     "你好，LeonOS 4。\n"
     "中文标点：，。！？；：《》【】（）\n"
     "宽度测试：ASCII=1 cell，中文=2 cells。\n"
-    "文件名测试会创建 0:/测试目录/你好.txt\n";
+    "文件名测试会创建 /测试目录/你好.txt\n";
 static struct leonos_ui_text_area_state text_state;
 
 static void append_char(char *dst, uint32_t *pos, uint32_t cap, char ch)
@@ -60,8 +60,8 @@ static void append_int(char *dst, uint32_t *pos, uint32_t cap, int value)
 
 static void run_file_test(void)
 {
-    const char *dir = "0:/测试目录";
-    const char *path = "0:/测试目录/你好.txt";
+    const char *dir = "/测试目录";
+    const char *path = "/测试目录/你好.txt";
     const char *content = "你好，LeonOS 4。中文文件名和 UTF-8 内容测试。\n";
     struct leonos_stat st;
     struct leonos_dir_entry entry;

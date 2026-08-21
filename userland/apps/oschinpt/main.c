@@ -8,8 +8,8 @@
 #include <string.h>
 
 #define OSCHINPT_ID "oschinpt"
-#define OSCHINPT_DICT_PATH "0:/programs/oschinpt/pinyin_simp.dict.yaml"
-#define OSCHINPT_DICT_INDEX_PATH "0:/programs/oschinpt/oscp.idx"
+#define OSCHINPT_DICT_PATH "/programs/oschinpt/pinyin_simp.dict.yaml"
+#define OSCHINPT_DICT_INDEX_PATH "/programs/oschinpt/oscp.idx"
 #define OSCHINPT_DICT_URL "https://raw.githubusercontent.com/rime/rime-pinyin-simp/master/pinyin_simp.dict.yaml"
 #define OSCHINPT_CONFIG_NAME ".inputm.conf"
 #define OSCHINPT_LEARN_NAME ".oschinpt.learn"

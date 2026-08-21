@@ -1422,7 +1422,7 @@ int main(int argc, char **argv, char **envp)
         command_argv = &argv[2];
         command_envp = 0;
     } else {
-        shell_argv[0] = "0:/programs/busybox/busybox.elf";
+        shell_argv[0] = "/programs/busybox/busybox.elf";
         shell_argv[1] = "sh";
         shell_argv[2] = 0;
         shell_argv[3] = 0;

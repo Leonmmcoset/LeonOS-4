@@ -5,10 +5,10 @@
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 
-#define SERVICE_CONFIG_PATH "0:/system/config/services.cfg"
-#define SERVICE_STATE_PATH "0:/var/run/services.state"
-#define SERVICE_COMMAND_PATH "0:/var/run/services.cmd"
-#define SERVICE_LOG_PATH "0:/var/log/services.log"
+#define SERVICE_CONFIG_PATH "/system/config/services.cfg"
+#define SERVICE_STATE_PATH "/var/run/services.state"
+#define SERVICE_COMMAND_PATH "/var/run/services.cmd"
+#define SERVICE_LOG_PATH "/var/log/services.log"
 #define SERVICE_CONFIG_MAX 512U
 #define SERVICE_COMMAND_MAX 512U
 #define SERVICE_STATE_MAX 1024U
@@ -519,9 +519,9 @@ static void write_state(void)
 
 static void ensure_runtime_dirs(void)
 {
-    (void)mkdir("0:/var", 0);
-    (void)mkdir("0:/var/run", 0);
-    (void)mkdir("0:/var/log", 0);
+    (void)mkdir("/var", 0);
+    (void)mkdir("/var/run", 0);
+    (void)mkdir("/var/log", 0);
 }
 
 int main(void)

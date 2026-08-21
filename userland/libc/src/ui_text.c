@@ -5,8 +5,8 @@
 
 #include "ui_internal.h"
 
-#define UI_TTF_METRO_PATH "0:/system/fonts/leonos-metro.ttf"
-#define UI_TTF_WIN95_PATH "0:/system/fonts/leonos-win95.ttf"
+#define UI_TTF_METRO_PATH "/system/fonts/leonos-metro.ttf"
+#define UI_TTF_WIN95_PATH "/system/fonts/leonos-win95.ttf"
 #define UI_TTF_PATH_MAX 128U
 #define UI_TTF_MAX (20U * 1024U * 1024U)
 #define UI_TTF_POINTS_MAX 2048U

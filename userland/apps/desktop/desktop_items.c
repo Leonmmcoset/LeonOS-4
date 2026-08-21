@@ -116,7 +116,7 @@ static uint32_t desktop_label_cell_width(uint32_t cp)
 
 static int desktop_path_is_root(const char *path)
 {
-    return text_eq(path, "0:/");
+    return text_eq(path, "/");
 }
 
 static void desktop_build_child_path(char *dst, uint32_t cap,
@@ -293,7 +293,7 @@ static void desktop_icon_path_for_target(const char *path, char *dst, uint32_t d
         return;
     }
     if (stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR) {
-        desktop_icon_path_for_app("0:/system/apps/fileman/fileman.elf", dst, dst_len);
+        desktop_icon_path_for_app("/system/apps/fileman/fileman.elf", dst, dst_len);
         return;
     }
     app_path = leonos_launch_resolve_default_app_for_path(path);

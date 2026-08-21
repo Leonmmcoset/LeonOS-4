@@ -208,7 +208,7 @@ def main() -> int:
         return 0
 
     if less_smoke:
-        send_keys(sock, text_keys("less 0:/programs/tcc/examples/hello.c") + ("ret",))
+        send_keys(sock, text_keys("less /programs/tcc/examples/hello.c") + ("ret",))
         # The pager must still own the PTY before the quit key is sent. A
         # successful launch renders the first page and waits for input.
         time.sleep(1.0)
@@ -253,8 +253,8 @@ def main() -> int:
         # execute the resulting ELF through the resident BusyBox shell. Use
         # an absolute source path so this test exercises TCC rather than
         # depending on a previous shell cwd change.
-        output_path = "0:/programs/tcc/examples/a.out"
-        send_keys(sock, text_keys(f"tcc 0:/programs/tcc/examples/hello.c -o {output_path}") + ("ret",))
+        output_path = "/programs/tcc/examples/a.out"
+        send_keys(sock, text_keys(f"tcc /programs/tcc/examples/hello.c -o {output_path}") + ("ret",))
         # The first full compile parses the staged Picolibc headers from the
         # image filesystem. On a cold QEMU guest that can exceed the generic editor
         # smoke-test delay, so do not inject the executable command while the
@@ -287,10 +287,10 @@ def main() -> int:
         return 0
 
     if iso9660_smoke:
-        # A data-only ISO attached as AHCI ATAPI must be mounted as 1:/.
+        # A data-only ISO attached as AHCI ATAPI must be mounted as /media/cdrom0.
         # Run each command separately so a failed cd remains visible in the
         # captured terminal instead of being hidden by shell command chaining.
-        for command in ("cd 1:/", "pwd", "ls", "cat readme.txt"):
+        for command in ("cd /media/cdrom0", "pwd", "ls", "cat readme.txt"):
             send_keys(sock, text_keys(command) + ("ret",))
             time.sleep(2.0)
         hmp(sock, "screendump build/images/iso9660-qmp-smoke.ppm", 0.4)
@@ -301,7 +301,7 @@ def main() -> int:
         # Terminal and desktop have the runtime resident already.  Deleting
         # the on-disk runtime must therefore leave the desktop available to
         # display the statically linked recovery window for the next launch.
-        send_keys(sock, text_keys("rm 0:/system/lib/libleonos.so.1") + ("ret",))
+        send_keys(sock, text_keys("rm /system/lib/libleonos.so.1") + ("ret",))
         time.sleep(2.0)
         send_keys(sock, text_keys("nano") + ("ret",))
         time.sleep(5.0)

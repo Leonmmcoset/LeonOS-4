@@ -44,7 +44,7 @@ LDFLAGS := --gc-sections -z max-page-size=0x1000 -T "$(SDK_ROOT)/linker.ld"
 CRT :=
 RUNTIME_LIBS := $(LEONOS_LIB) $(LIBPNG_LIB) $(ZLIB_LIB) $(PICOLIBC_LIB)
 else
-LDFLAGS := -pie --hash-style=sysv --dynamic-linker 0:/system/lib/ld-leonos.elf \
+LDFLAGS := -pie --hash-style=sysv --dynamic-linker /system/lib/ld-leonos.elf \
            -z relro -z now -z max-page-size=0x1000 -T "$(SDK_ROOT)/dynamic-app.ld"
 CRT := "$(SDK_ROOT)/lib/crt0-dynamic.o" "$(SDK_ROOT)/lib/leonos-abi-note.o"
 RUNTIME_LIBS := "$(SDK_ROOT)/lib/libleonos.so.1"

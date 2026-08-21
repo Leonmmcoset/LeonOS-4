@@ -193,7 +193,8 @@ static const char *filesystem_label(uint32_t filesystem)
     return T("Unknown", "未知");
 }
 
-static void format_partition_flags(char *buf, uint32_t cap, uint32_t flags, uint32_t drive)
+static void format_partition_flags(char *buf, uint32_t cap, uint32_t flags,
+                                   const char *mount_path)
 {
     uint32_t pos = 0;
     if (cap) {
@@ -213,10 +214,7 @@ static void format_partition_flags(char *buf, uint32_t cap, uint32_t flags, uint
     if (flags & LEONOS_DISK_PARTITION_FLAG_MOUNTED) {
         append_separator(buf, &pos, cap);
         append_text(buf, &pos, cap, T("Mounted ", "已挂载 "));
-        if (drive < 10u) {
-            append_char(buf, &pos, cap, (char)('0' + drive));
-            append_text(buf, &pos, cap, ":/");
-        }
+        append_text(buf, &pos, cap, mount_path);
     }
     if (flags & LEONOS_DISK_PARTITION_FLAG_PROTECTED) {
         append_separator(buf, &pos, cap);
@@ -384,7 +382,7 @@ static void refresh_partitions(void)
         format_size(part_size_text[i], sizeof(part_size_text[i]), partitions[i].sector_count * 512ULL);
         format_partition_range(part_range_text[i], sizeof(part_range_text[i]), &partitions[i]);
         format_partition_flags(part_flags_text[i], sizeof(part_flags_text[i]),
-                               partitions[i].flags, partitions[i].drive);
+                               partitions[i].flags, partitions[i].mount_path);
     }
     update_layout();
     if (partition_count) {
@@ -590,7 +588,7 @@ static void mount_selected_partition(void)
 {
     int disk_index = selected_disk_index();
     int part_index = selected_partition_index();
-    uint32_t drive = LEONOS_DISK_DRIVE_NONE;
+    char mount_path[LEONOS_FS_PATH_LEN];
     int ret;
     uint32_t pos = 0;
     if (disk_index < 0 || part_index < 0 || !selected_partition_mountable()) {
@@ -604,7 +602,8 @@ static void mount_selected_partition(void)
                   T("Administrator approval is required", "需要管理员授权"));
         return;
     }
-    ret = leonos_disk_mount_partition(disks[disk_index].id, partitions[part_index].index, &drive);
+    ret = leonos_disk_mount_partition(disks[disk_index].id, partitions[part_index].index,
+                                      mount_path, sizeof(mount_path));
     if (ret < 0) {
         set_ret_status(T("Partition mount failed", "分区挂载失败"), ret);
         return;
@@ -612,10 +611,7 @@ static void mount_selected_partition(void)
     refresh_disks();
     status_text[0] = 0;
     append_text(status_text, &pos, sizeof(status_text), T("Mounted as ", "已挂载为 "));
-    if (drive < 10u) {
-        append_char(status_text, &pos, sizeof(status_text), (char)('0' + drive));
-        append_text(status_text, &pos, sizeof(status_text), ":/");
-    }
+    append_text(status_text, &pos, sizeof(status_text), mount_path);
 }
 
 static void unmount_selected_partition(void)
@@ -637,8 +633,8 @@ static void unmount_selected_partition(void)
     if (ret < 0) {
         if (ret == -LEONOS_EBUSY) {
             copy_text(status_text, sizeof(status_text),
-                      T("Unmount blocked: close files and leave this drive first",
-                        "卸载被阻止：请先关闭文件并离开该盘符"));
+                      T("Unmount blocked: close files and leave the mount first",
+                        "卸载被阻止：请先关闭文件并离开该挂载点"));
         } else {
             set_ret_status(T("Partition unmount failed", "分区卸载失败"), ret);
         }
@@ -822,12 +818,12 @@ static void draw_diskmgr(struct leonos_ui_surface *ui)
         leonos_ui_groupbox(ui, 16, y, view_w > 32u ? view_w - 32u : 1u, action_panel_height(),
                            T("Partition safety", "分区安全"));
         leonos_ui_text_clipped(ui, 30, y + 22, view_w > 60u ? view_w - 60u : 1u,
-                               T("Mount FAT32 or ext2 data partitions to a free numeric drive.",
-                                 "可将 FAT32 或 ext2 数据分区挂载到空闲数字盘符。"),
+                               T("Mount FAT32 or ext2 data partitions at stable /mnt paths.",
+                                 "可将 FAT32 或 ext2 数据分区挂载到稳定的 /mnt 路径。"),
                                LEONOS_UI_BLACK, LEONOS_UI_WHITE);
         leonos_ui_text_clipped(ui, 30, y + 46, view_w > 60u ? view_w - 60u : 1u,
-                               T("Unmount requires administrator approval and no task may use the drive.",
-                                 "卸载需要管理员授权，且不能有进程正在使用该盘符。"),
+                               T("Unmount requires administrator approval and no task may use the mount.",
+                                 "卸载需要管理员授权，且不能有进程正在使用该挂载点。"),
                                LEONOS_UI_DARK, LEONOS_UI_WHITE);
     }
     leonos_ui_statusbar(ui, view_h - DISKMGR_STATUS_H, DISKMGR_STATUS_H, status_text);

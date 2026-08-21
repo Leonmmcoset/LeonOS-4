@@ -186,7 +186,7 @@ static void task_copy_cwd(struct task *task, const char *cwd)
         return;
     }
     if (!cwd || !cwd[0]) {
-        cwd = "0:/";
+        cwd = "/";
     }
     while (i + 1 < sizeof(task->cwd) && cwd[i]) {
         task->cwd[i] = cwd[i];
@@ -433,7 +433,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task->flags = 0;
     task->pty_id = 0;
     task_clear_identity(task);
-    task_copy_cwd(task, "0:/");
+    task_copy_cwd(task, "/");
     console_printf("[ntclks] task pid=%u name=%s entry=0x%llx\n",
                    task->pid, task->name, (unsigned long long)task->entry);
     return task->pid;
@@ -503,7 +503,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->kind = TASK_KIND_USER;
     task->flags = flags;
     task_clear_identity(task);
-    task_copy_cwd(task, "0:/");
+    task_copy_cwd(task, "/");
     if (parent_pid &&
         (!(flags & TASK_FLAG_SERVICE) || (flags & TASK_FLAG_WINDOW_SERVER))) {
         struct task *parent = sched_find(parent_pid);
@@ -775,7 +775,7 @@ void sched_create_idle_task(void)
     task->flags = 0;
     task->pty_id = 0;
     task_clear_identity(task);
-    task_copy_cwd(task, "0:/");
+    task_copy_cwd(task, "/");
 }
 
 /**
@@ -1029,52 +1029,45 @@ struct task *sched_find_window_server(void)
 }
 
 /**
- * @brief Tests whether a canonical LeonOS path starts on a selected drive.
- * @param path Canonical or candidate LeonOS path.
- * @param drive Numeric drive identifier to test.
- * @return True when @p path selects @p drive.
+ * @brief Tests whether a canonical LeonOS path resolves to a mounted volume.
  */
-static bool sched_path_uses_drive(const char *path, uint32_t drive)
+static bool sched_path_uses_volume(const char *path, uint32_t volume_id)
 {
-    return path && drive < 10u && path[0] == (char)('0' + drive) &&
-           path[1] == ':' && path[2] == '/';
+    uint32_t path_volume_id;
+    return path && storage_path_volume_id(path, &path_volume_id) == 0 &&
+           path_volume_id == volume_id;
 }
 
 /**
- * @brief Determines whether a live task still refers to a numeric drive.
- * @param drive Numeric LeonOS drive identifier.
- * @return True when a CWD, open file, image, or file mapping uses the drive.
+ * @brief Determines whether a live task still refers to one mounted volume.
  */
-bool sched_drive_in_use(uint32_t drive)
+bool sched_volume_in_use(uint32_t volume_id)
 {
-    if (drive == 0 || drive >= 10u) {
-        return drive == 0;
-    }
     for (uint32_t i = 0; i < task_count; ++i) {
         const struct task *task = tasks[i];
         if (!task->pid || task->state == TASK_EXITED) {
             continue;
         }
-        if (sched_path_uses_drive(task->cwd, drive) ||
-            sched_path_uses_drive(task->path, drive) ||
-            task->image_node.drive == drive) {
+        if (sched_path_uses_volume(task->cwd, volume_id) ||
+            sched_path_uses_volume(task->path, volume_id) ||
+            task->image_node.volume_id == volume_id) {
             return true;
         }
         for (uint32_t fd = 0; fd < sched_task_file_capacity(task); ++fd) {
             const struct task_file *file = sched_task_file_at((struct task *)task, fd);
-            if (file && file->used && file->node.drive == drive) {
+            if (file && file->used && file->node.volume_id == volume_id) {
                 return true;
             }
         }
         for (uint32_t fd = 0; fd < SCHED_TASK_STDIO_MAX; ++fd) {
-            if (task->stdio_files[fd].used && task->stdio_files[fd].node.drive == drive) {
+            if (task->stdio_files[fd].used && task->stdio_files[fd].node.volume_id == volume_id) {
                 return true;
             }
         }
         for (uint32_t vma = 0; vma < SCHED_TASK_VMA_MAX; ++vma) {
             if (task->vmas[vma].used &&
                 (task->vmas[vma].flags & TASK_VMA_FLAG_FILE) &&
-                task->vmas[vma].file_node.drive == drive) {
+                task->vmas[vma].file_node.volume_id == volume_id) {
                 return true;
             }
         }
@@ -1585,7 +1578,7 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
             task->image_len = 0;
             task->pty_id = 0;
             task_clear_identity(task);
-            task_copy_cwd(task, "0:/");
+            task_copy_cwd(task, "/");
             for (size_t j = 0; j < SCHED_TASK_FILE_MAX; ++j) {
                 task->files[j].used = 0;
                 task->files[j].offset = 0;
@@ -1690,7 +1683,7 @@ void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
     task->flags &= ~TASK_FLAG_ELEVATED_ADMIN;
     if (!user || !user->uid) {
         task_clear_identity(task);
-        task_copy_cwd(task, "0:/");
+        task_copy_cwd(task, "/");
         return;
     }
     task->uid = user->uid;
@@ -1736,7 +1729,7 @@ void sched_clear_session_identity(uint32_t session_id)
             ((tasks[i]->flags & TASK_FLAG_SERVICE) == 0 ||
              (tasks[i]->flags & TASK_FLAG_WINDOW_SERVER))) {
             task_clear_identity(tasks[i]);
-            task_copy_cwd(tasks[i], "0:/");
+            task_copy_cwd(tasks[i], "/");
         }
     }
 }

@@ -16,7 +16,7 @@
 
 #include <string.h>
 
-#define LEONOS_TLS_CA_BUNDLE "0:/system/certs/cacert.pem"
+#define LEONOS_TLS_CA_BUNDLE "/system/certs/cacert.pem"
 #define LEONOS_TLS_CA_BUNDLE_MAX (512U * 1024U)
 
 struct leonos_tls_io {

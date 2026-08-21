@@ -21,13 +21,13 @@ void init_desktop(void)
                                          .restore_x = 90, .restore_y = 118,
                                          .restore_width = 620, .restore_height = 300,
                                          .title = leonos_i18n("Task Manager", "任务管理器"), .body_color = LEONOS_UI_WHITE};
-    desktop_icon_path_for_app("0:/system/apps/desktop/desktop.elf", windows[0].icon_path,
+    desktop_icon_path_for_app("/system/apps/desktop/desktop.elf", windows[0].icon_path,
                               sizeof(windows[0].icon_path));
-    desktop_icon_path_for_app("0:/system/apps/fileman/fileman.elf", windows[1].icon_path,
+    desktop_icon_path_for_app("/system/apps/fileman/fileman.elf", windows[1].icon_path,
                               sizeof(windows[1].icon_path));
-    desktop_icon_path_for_app("0:/system/apps/settings/settings.elf", windows[2].icon_path,
+    desktop_icon_path_for_app("/system/apps/settings/settings.elf", windows[2].icon_path,
                               sizeof(windows[2].icon_path));
-    desktop_icon_path_for_app("0:/system/apps/taskmgr/taskmgr.elf", windows[3].icon_path,
+    desktop_icon_path_for_app("/system/apps/taskmgr/taskmgr.elf", windows[3].icon_path,
                               sizeof(windows[3].icon_path));
     z_order[0] = 4;
     z_order[1] = 5;

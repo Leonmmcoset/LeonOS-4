@@ -429,26 +429,25 @@ def patch_ash_for_leonos(source: Path) -> None:
             raise SystemExit("unsupported BusyBox ash source revision: declaration marker missing")
         text = text.replace(declaration_marker, declaration + declaration_marker, 1)
 
-    drive_path_helper = """static int leonos_shell_drive_path(const char *path)
+    absolute_path_helper = """static int leonos_shell_absolute_path(const char *path)
 {
-\treturn path && path[0] >= '0' && path[0] <= '9' &&
-\t       path[1] == ':' && path[2] == '/';
+	return path && path[0] == '/';
 }
 
 """
-    drive_path_declaration = "static int leonos_shell_drive_path(const char *path);\n"
-    if drive_path_declaration not in text:
-        text = drive_path_declaration + text
-    if drive_path_helper not in text:
+    absolute_path_declaration = "static int leonos_shell_absolute_path(const char *path);\n"
+    if absolute_path_declaration not in text:
+        text = absolute_path_declaration + text
+    if absolute_path_helper not in text:
         if declaration_marker not in text:
-            raise SystemExit("unsupported BusyBox ash source revision: drive path marker missing")
-        text = text.replace(declaration_marker, drive_path_helper + declaration_marker, 1)
+            raise SystemExit("unsupported BusyBox ash source revision: absolute path marker missing")
+        text = text.replace(declaration_marker, absolute_path_helper + declaration_marker, 1)
 
     docd_marker = """\tINT_OFF;
 \tif (!(flags & CD_PHYSICAL)) {
 \t\tdir = updatepwd(dest);"""
     docd_replacement = """\tINT_OFF;
-\tif (!(flags & CD_PHYSICAL) && !leonos_shell_drive_path(dest)) {
+\tif (!(flags & CD_PHYSICAL) && !leonos_shell_absolute_path(dest)) {
 \t\tdir = updatepwd(dest);"""
     if docd_marker in text:
         text = text.replace(docd_marker, docd_replacement, 1)

@@ -209,12 +209,12 @@ static int build_efi_path(const char *path, uint16_t *out, uint32_t cap)
     if (!path || !out || cap < 2) {
         return -22;
     }
-    if (path[0] != '0' || path[1] != ':' || path[2] != '/') {
+    if (path[0] != '/') {
         return -22;
     }
 
     out[pos++] = '\\';
-    for (const char *p = path + 3; *p; ++p) {
+    for (const char *p = path + 1; *p; ++p) {
         if (pos + 1 >= cap) {
             return -22;
         }
@@ -243,7 +243,7 @@ static int open_path(const char *path, struct efi_file_protocol **out_file)
     if (!ready || !root_dir || !root_dir->open || !out_file) {
         return -2;
     }
-    if (path[0] == '0' && path[1] == ':' && path[2] == '/' && path[3] == 0) {
+    if (path[0] == '/' && path[1] == 0) {
         *out_file = root_dir;
         return 0;
     }

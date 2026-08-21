@@ -42,7 +42,7 @@ commits are the revisions recorded by the LeonOS checkout.
 
 LeonOS builds a TLS 1.2 client profile with certificate and hostname
 verification for the shared HTTP client. The system image includes
-`0:/system/certs/cacert.pem`, the curl CA Extract from
+`/system/certs/cacert.pem`, the curl CA Extract from
 `https://curl.se/ca/cacert.pem`, to establish public Web PKI trust.
 
 ## Picolibc
@@ -71,9 +71,9 @@ and the upstream license notice.
 
 LeonOS builds StardustUI as `libstardustui.a` over its existing pixel-buffer
 window ABI and UI text renderer. The image includes the upstream Hello World,
-layout and widget-showcase examples at `0:/programs/stardusthello/`,
-`0:/programs/stardustlayout/` and `0:/programs/stardustshowcase/`, plus the
-upstream Material 3 example themes in `0:/etc/stardustui/theme/`. StardustUI's
+layout and widget-showcase examples at `/programs/stardusthello/`,
+`/programs/stardustlayout/` and `/programs/stardustshowcase/`, plus the
+upstream Material 3 example themes in `/etc/stardustui/theme/`. StardustUI's
 socket API is linked but currently reports that networking is unavailable, so
 the network-dependent DuckChat example is intentionally not installed.
 
@@ -118,7 +118,7 @@ bounded PNG-to-LeonOS-pixel decoder for ordinary GUI applications.
 - License: SQLite public domain dedication and blessing; preserve
   `third_party/sqlite/LICENSE.md`.
 
-LeonOS installs the ABI-v1 shared library as `0:/system/lib/sqlite.so.3` and
+LeonOS installs the ABI-v1 shared library as `/system/lib/sqlite.so.3` and
 packages `sqlite3.h` in the SDK. The port uses a LeonOS VFS and currently
 disables WAL, loadable extensions, and cross-process file locking.
 
@@ -129,10 +129,10 @@ disables WAL, loadable extensions, and cross-process file locking.
 - Version: `1.36.1`
 - Pinned commit: `1a64f6a20aaf6ea4dbba68bbfa8cc1ab7e5c57c4` (`1_36_1`)
 - License: GPL-2.0-only; the complete upstream `LICENSE` is staged at
-  `0:/programs/busybox/LICENSE` beside the executable.
+  `/programs/busybox/LICENSE` beside the executable.
 
 LeonOS builds a static, basic-applet BusyBox profile at
-`0:/programs/busybox/busybox.elf`. It includes file/text utilities such as
+`/programs/busybox/busybox.elf`. It includes file/text utilities such as
 `ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `diff`, `less`, `mkdir`,
 `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`, `true`,
 `false`, `vi`, and `printf`. The `sh` entry point is BusyBox Ash built for
@@ -148,9 +148,9 @@ Ash as its shell implementation.
 - Version: `9.2`
 - Pinned commit: `8e6360d1663998c62ddd0cf934923d1f18004e3e` (`v9.2`)
 - License: GPL-3.0-or-later; the complete upstream `COPYING` is staged at
-  `0:/programs/nano/COPYING` beside the executable.
+  `/programs/nano/COPYING` beside the executable.
 
-LeonOS builds Nano at `0:/programs/nano/nano.elf` with a narrow ANSI curses
+LeonOS builds Nano at `/programs/nano/nano.elf` with a narrow ANSI curses
 compatibility layer over the GUI terminal PTY. This initial port intentionally
 uses Nano's single-buffer tiny profile: the core editor path is present, while
 external spellers/formatters, rc files, syntax coloring, help pages, mouse
@@ -165,7 +165,7 @@ still require manual GUI-terminal validation on each supported VM platform.
 - License: GNU GPL-3.0-or-later or the upstream Less License; preserve both
   `third_party/less/COPYING` and `third_party/less/LICENSE`.
 
-LeonOS installs the upstream pager at `0:/programs/less/less.elf`. It uses the
+LeonOS installs the upstream pager at `/programs/less/less.elf`. It uses the
 shared PTY, polling and POSIX regular-expression runtime through a small ANSI
 termcap adapter. Shell escapes, external editor commands, tags, user key files,
 logfile output and shell pipes are disabled for the system build.
@@ -177,10 +177,10 @@ logfile output and shell pipes are disabled for the system build.
 - Version: `0.9.28rc`
 - Pinned commit: `2ba12e83b3599ca8f5d50c179fe5138fe956f0c9` (`release_0_9_27-1440-g2ba12e83`)
 - License: LGPL-2.1-or-later; the complete upstream `COPYING` is staged at
-  `0:/programs/tcc/COPYING` beside the executable and runtime files.
+  `/programs/tcc/COPYING` beside the executable and runtime files.
 
 LeonOS builds TinyCC as the static, on-device x86_64 C compiler at
-`0:/programs/tcc/tcc.elf`. It uses the installed Picolibc headers,
+`/programs/tcc/tcc.elf`. It uses the installed Picolibc headers,
 `libleonos.a`, `libpicolibc.a`, LeonOS `crt0.o`, the target support archive
 `libleonos-tcc-rt.a`, and TinyCC's `libtcc1.a` to produce normal static LeonOS
 ELF programs. Picolibc headers are staged unchanged; LeonOS ABI predefines are
@@ -197,13 +197,13 @@ exist.
 - Version: `5.4.8`
 - Pinned commit: `6e22fedb74cf0c9b6656e9fce8b7331db847c605` (`v5.4.8`)
 - License: MIT; the LeonOS copy of the complete upstream license is staged at
-  `0:/programs/lua/LICENSE` beside the executable.
+  `/programs/lua/LICENSE` beside the executable.
 
-LeonOS builds Lua as the command-line interpreter at `0:/programs/lua/lua.elf`
-and provides its ABI-v1 C API in `0:/system/lib/liblua.so.5`. It uses Lua's
+LeonOS builds Lua as the command-line interpreter at `/programs/lua/lua.elf`
+and provides its ABI-v1 C API in `/system/lib/liblua.so.5`. It uses Lua's
 portable C89 configuration with the LeonOS runtime. Dynamic C modules and
 `package.loadlib` remain unavailable. Lua scripts can be loaded from the current directory or from
-`0:/programs/lua/lua/`.
+`/programs/lua/lua/`.
 
 ## Lua Development Source
 
@@ -224,9 +224,9 @@ release as `third_party/lua`.
 - Upstream modified fork: `https://github.com/Leonmmcoset/pl_editor.git`
 - Pinned commit: `22fae7a1bc2362486d8bf845f0daf6ec7060a3a1`
 - License: MIT; the complete upstream `LICENSE` is staged at
-  `0:/programs/pleditor/LICENSE` beside the executable.
+  `/programs/pleditor/LICENSE` beside the executable.
 
-LeonOS builds PL Editor at `0:/programs/pleditor/pleditor.elf`. Its upstream
+LeonOS builds PL Editor at `/programs/pleditor/pleditor.elf`. Its upstream
 platform-independent editor core is kept as a submodule; the LeonOS platform
 adapter provides raw PTY input, ANSI terminal output, terminal sizing and
 multi-encoding file persistence. It is launched through Terminal and supports
@@ -241,9 +241,9 @@ extended syntax set.
 - Version: `0.1.0`
 - Pinned commit: `2290c38bc9da54db53aa56161a7204a27b388e21`
 - License: GPL-3.0-only; the complete upstream `LICENSE` is staged at
-  `0:/programs/cmd/LICENSE` beside the executable.
+  `/programs/cmd/LICENSE` beside the executable.
 
-LeonOS builds the interpreter at `0:/programs/cmd/cmd.elf`. From the BusyBox
+LeonOS builds the interpreter at `/programs/cmd/cmd.elf`. From the BusyBox
 Ash prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
 built-ins, batch files, variables and redirection, and executes enabled
 BusyBox applets or supported LeonOS terminal programs through the shared COW
@@ -263,9 +263,9 @@ semantics.
 - Pinned commit: `711ccc264519cdc5073ccb26651c0a9bafc3b47a` (`FILE5_48-17-g711ccc26`)
 - License: BSD-2-Clause-style upstream license; preserve `third_party/file/COPYING`.
 
-LeonOS builds the upstream `file` command at `0:/programs/file/file.elf` and
-the ABI-v1 `libmagic.so.1` at `0:/system/lib/libmagic.so.1`. The compiled magic
-database is installed at `0:/system/share/misc/magic.mgc`; the port keeps the
+LeonOS builds the upstream `file` command at `/programs/file/file.elf` and
+the ABI-v1 `libmagic.so.1` at `/system/lib/libmagic.so.1`. The compiled magic
+database is installed at `/system/share/misc/magic.mgc`; the port keeps the
 upstream recognizers while adapting file access to the LeonOS/Picolibc ABI.
 
 ## Fastfetch
@@ -275,9 +275,9 @@ upstream recognizers while adapting file access to the LeonOS/Picolibc ABI.
 - Version: `2.67.0`
 - Pinned commit: `56da8f811068289f6352db8881418aa6e0f994e8` (`2.67.0`)
 - License: MIT; the complete upstream `LICENSE` is staged at
-  `0:/programs/fastfetch/LICENSE` beside the executable.
+  `/programs/fastfetch/LICENSE` beside the executable.
 
-LeonOS builds upstream Fastfetch at `0:/programs/fastfetch/fastfetch.elf`.
+LeonOS builds upstream Fastfetch at `/programs/fastfetch/fastfetch.elf`.
 The unmodified upstream core supplies string, format, printing, ASCII-logo
 data, size, duration, percentage, display-option and module implementations.
 The separate `userland/fastfetch` adapter obtains Title, OS, Kernel, Uptime,
@@ -294,10 +294,10 @@ modules requiring a host POSIX or Linux interface remain disabled.
 - Upstream: `https://github.com/mtoyoda/sl.git`
 - Pinned commit: `923e7d7ebc5c1f009755bdeb789ac25658ccce03`
 - License: permissive upstream license; the complete upstream `LICENSE` is
-  staged at `0:/programs/sl/LICENSE` beside the executable.
+  staged at `/programs/sl/LICENSE` beside the executable.
 
 LeonOS builds the Steam Locomotive joke command at
-`0:/programs/sl/sl.elf`. The upstream animation is kept intact and its curses
+`/programs/sl/sl.elf`. The upstream animation is kept intact and its curses
 calls are implemented by the ANSI adapter in `userland/sl`.
 
 ## minimp3

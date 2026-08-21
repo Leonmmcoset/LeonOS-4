@@ -18,8 +18,8 @@
 #define MS_H (MS_BOARD_Y + MS_ROWS * MS_TILE + 18)
 #define MS_SPRITE_SIZE 20
 #define MS_SPRITE_BMP_MAX_BYTES (MS_SPRITE_SIZE * MS_SPRITE_SIZE * 4U + 128U)
-#define MS_MINE_SPRITE_PATH "0:/system/resources/minesweeper-mine.bmp"
-#define MS_FLAG_SPRITE_PATH "0:/system/resources/minesweeper-flag.bmp"
+#define MS_MINE_SPRITE_PATH "/system/resources/minesweeper-mine.bmp"
+#define MS_FLAG_SPRITE_PATH "/system/resources/minesweeper-flag.bmp"
 
 #define CELL_MINE 0x01u
 #define CELL_REVEALED 0x02u

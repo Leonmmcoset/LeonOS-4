@@ -204,7 +204,7 @@ static int command_name_equal(const char *left, const char *right)
 
 static int command_has_path(const char *name)
 {
-    return strchr(name, '/') != NULL || strchr(name, '\\') != NULL;
+    return strchr(name, '/') != NULL;
 }
 
 static int copy_exec_path(char *out, size_t out_size, const char *path)
@@ -235,15 +235,15 @@ struct program_path {
 };
 
 static const struct program_path programs[] = {
-    {"cmd", "0:/programs/cmd/cmd.elf"},
-    {"file", "0:/programs/file/file.elf"},
-    {"fastfetch", "0:/programs/fastfetch/fastfetch.elf"},
-    {"less", "0:/programs/less/less.elf"},
-    {"sl", "0:/programs/sl/sl.elf"},
-    {"lua", "0:/programs/lua/lua.elf"},
-    {"nano", "0:/programs/nano/nano.elf"},
-    {"pleditor", "0:/programs/pleditor/pleditor.elf"},
-    {"tcc", "0:/programs/tcc/tcc.elf"},
+    {"cmd", "/programs/cmd/cmd.elf"},
+    {"file", "/programs/file/file.elf"},
+    {"fastfetch", "/programs/fastfetch/fastfetch.elf"},
+    {"less", "/programs/less/less.elf"},
+    {"sl", "/programs/sl/sl.elf"},
+    {"lua", "/programs/lua/lua.elf"},
+    {"nano", "/programs/nano/nano.elf"},
+    {"pleditor", "/programs/pleditor/pleditor.elf"},
+    {"tcc", "/programs/tcc/tcc.elf"},
     {NULL, NULL},
 };
 
@@ -394,7 +394,7 @@ int libcmd_find_exec(const char *name, const char *path_env, char *out, size_t o
     }
     for (index = 0; busybox_applets[index]; ++index) {
         if (command_name_equal(name, busybox_applets[index]))
-            return copy_exec_path(out, out_size, "0:/programs/busybox/busybox.elf");
+            return copy_exec_path(out, out_size, "/programs/busybox/busybox.elf");
     }
     for (index = 0; programs[index].name; ++index) {
         if (command_name_equal(name, programs[index].name))
@@ -427,7 +427,7 @@ static int child_exec_path(const char *path, char *const argv[], char *const env
         errno = EINVAL;
         return -1;
     }
-    busybox_dispatch = strcmp(path, "0:/programs/busybox/busybox.elf") == 0;
+    busybox_dispatch = strcmp(path, "/programs/busybox/busybox.elf") == 0;
 
     if (!busybox_dispatch) {
         return execve(path, argv, envp ? envp : environ);
@@ -866,19 +866,12 @@ char *libcmd_readline(const char *prompt, char *buf, size_t size)
 
 int libcmd_path_is_abs(const char *path)
 {
-    return path && (path[0] == '/' ||
-                    (((path[0] >= 'A' && path[0] <= 'Z') ||
-                      (path[0] >= 'a' && path[0] <= 'z')) &&
-                     path[1] == ':' && path[2] == '/'));
+    return path && path[0] == '/';
 }
 
 void libcmd_path_norm_sep(char *path)
 {
-    while (path && *path) {
-        if (*path == '\\')
-            *path = '/';
-        ++path;
-    }
+    (void)path;
 }
 
 int libcmd_path_join(const char *base, const char *rel, char *buf, size_t size)
@@ -907,8 +900,6 @@ int libcmd_path_dirname(const char *path, char *buf, size_t size)
     last = strrchr(path, '/');
     if (!last)
         return copy_exec_path(buf, size, ".");
-    if (last == path + 2 && path[1] == ':')
-        return copy_exec_path(buf, size, "0:/");
     if (last == path)
         return copy_exec_path(buf, size, "/");
     length = (size_t)(last - path);

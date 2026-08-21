@@ -21,9 +21,9 @@
 #define DOWNLOAD_UPDATE_MS 100U
 #define INSTALL_UPDATE_BYTES (64U * 1024U)
 #define INSTALL_UPDATE_MS 100U
-#define API_INSTALL_LOG_PATH "0:/var/log/apiapp-install.log"
+#define API_INSTALL_LOG_PATH "/var/log/apiapp-install.log"
 #define TASK_STATE_EXITED 3U
-#define APIAPP_PATH "0:/system/apps/apiapp/apiapp.elf"
+#define APIAPP_PATH "/system/apps/apiapp/apiapp.elf"
 
 static uint32_t wizard_pixels[WIZARD_W * WIZARD_H];
 
@@ -113,7 +113,7 @@ static void download_path_for_user(char *dst, uint32_t capacity)
         append_text(dst, &pos, capacity, "/downloads");
         return;
     }
-    copy_text(dst, capacity, "0:/tmp");
+    copy_text(dst, capacity, "/tmp");
 }
 
 static void build_download_path(char *dst, uint32_t capacity)
@@ -131,9 +131,9 @@ static void build_download_path(char *dst, uint32_t capacity)
 static void build_download_status_path(char *dst, uint32_t capacity)
 {
     uint32_t pos = 0;
-    (void)mkdir("0:/tmp", 0);
+    (void)mkdir("/tmp", 0);
     dst[0] = 0;
-    append_text(dst, &pos, capacity, "0:/tmp/api_download_");
+    append_text(dst, &pos, capacity, "/tmp/api_download_");
     append_u32(dst, &pos, capacity, (uint32_t)getpid());
     append_text(dst, &pos, capacity, ".status");
 }
@@ -141,9 +141,9 @@ static void build_download_status_path(char *dst, uint32_t capacity)
 static void build_install_status_path(char *dst, uint32_t capacity)
 {
     uint32_t pos = 0;
-    (void)mkdir("0:/tmp", 0);
+    (void)mkdir("/tmp", 0);
     dst[0] = 0;
-    append_text(dst, &pos, capacity, "0:/tmp/api_install_");
+    append_text(dst, &pos, capacity, "/tmp/api_install_");
     append_u32(dst, &pos, capacity, (uint32_t)getpid());
     append_text(dst, &pos, capacity, ".status");
 }
@@ -157,8 +157,8 @@ static void install_log(const char *message)
         return;
     }
     printf("[apiapp] %s\n", message);
-    (void)mkdir("0:/var", 0);
-    (void)mkdir("0:/var/log", 0);
+    (void)mkdir("/var", 0);
+    (void)mkdir("/var/log", 0);
     fd = open(API_INSTALL_LOG_PATH,
               LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
     if (fd < 0) {

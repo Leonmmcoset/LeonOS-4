@@ -28,9 +28,9 @@
 #define GNU_OPTIONS 1
 #define ONLY_RETURN 0
 #define LESSKEYFILE ".less"
-#define LESSKEYFILE_SYS "0:/system/config/lesskey"
+#define LESSKEYFILE_SYS "/system/config/lesskey"
 #define DEF_LESSKEYINFILE ".lesskey"
-#define LESSKEYINFILE_SYS "0:/system/config/lesskey"
+#define LESSKEYINFILE_SYS "/system/config/lesskey"
 #define LESSHISTFILE ".lesshst"
 
 #define DEF_METACHARS "; *?\t\n'\"()<>|&"

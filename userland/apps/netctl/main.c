@@ -11,9 +11,9 @@
 #define NETCTL_H 584
 #define DOMAIN_LEN LEONOS_NET_HOSTNAME_LEN
 #define DNS_INPUT_LEN 16U
-#define NETCTL_NETWORK_CONFIG_PATH "0:/system/config/network.conf"
-#define NETCTL_NETWORK_CONFIG_TEMP_PATH "0:/system/config/network.conf.tmp"
-#define NETCTL_NETWORK_CONFIG_BACKUP_PATH "0:/system/config/network.conf.bak"
+#define NETCTL_NETWORK_CONFIG_PATH "/system/config/network.conf"
+#define NETCTL_NETWORK_CONFIG_TEMP_PATH "/system/config/network.conf.tmp"
+#define NETCTL_NETWORK_CONFIG_BACKUP_PATH "/system/config/network.conf.bak"
 #define NETCTL_SAVE_RETRIES 3U
 #define CONN_VISIBLE_ROWS 4U
 #define CONN_ROW_H (LEONOS_FONT_H + 4U)

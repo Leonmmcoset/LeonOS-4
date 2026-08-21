@@ -65,14 +65,14 @@ extern "C" int main(int argc, char **argv, char **envp);
 ```
 
 StardustUI 的 LeonOS 后端仍然通过 `leonos_gui_*` 窗口提交像素；主题文件可
-放在当前用户目录，系统回退路径是 `0:/etc/stardustui/theme`。
+放在当前用户目录，系统回退路径是 `/etc/stardustui/theme`。
 
 ## 构建后的安装
 
 普通 GUI 应用应安装到共享程序目录，例如：
 
 ```text
-0:/programs/myapp/myapp.elf
+/programs/myapp/myapp.elf
 ```
 
 需要标准输入输出的程序应同时安装同名 sidecar：

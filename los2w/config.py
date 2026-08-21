@@ -37,7 +37,7 @@ class HostConfig:
     language: str = "en"
     ui_theme: str = "metro"
     guest_username: str = "los2w"
-    guest_home: str = "0:/users/los2w"
+    guest_home: str = "/users/los2w"
     guest_admin: bool = True
     recent_elfs: list[str] | None = None
     recent_roots: list[str] | None = None

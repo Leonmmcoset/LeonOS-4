@@ -2,15 +2,15 @@
 
 LeonOS 4 includes an optional Ring-0 diagnostic mode. Open **About LeonOS**
 (`osver`) and click the Logo five times within two seconds. The enabled state
-is stored at `0:/system/state/kerneldebug.enabled`.
+is stored at `/system/state/kerneldebug.enabled`.
 
 When enabled, the Start menu exposes **Restart into kernel debugger**. That
 action writes a one-shot marker to the boot ESP at
-`2:/system/state/kerneldebug.next`. The loader consumes and deletes the marker
+`/boot/system/state/kerneldebug.next`. The loader consumes and deletes the marker
 before entering the kernel, so an interrupted debug session cannot create a
 permanent boot loop.
 
-The kernel then validates `0:/system/kerneldebug.sys` as an x86_64 `ET_REL`
+The kernel then validates `/system/kerneldebug.sys` as an x86_64 `ET_REL`
 module and enters its `ostui` diagnostic interface before starting Ring-3
 userland. The module must contain the `LEONKDBG` ELF note (ABI 1 and the fixed
 entry-name hash), have no dynamic segment or TLS, and use only the supported

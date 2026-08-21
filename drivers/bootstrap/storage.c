@@ -96,7 +96,11 @@
 #define EXT2_FT_UNKNOWN 0u
 #define EXT2_FT_REG_FILE 1u
 #define EXT2_FT_DIR 2u
-#define STORAGE_MAX_DRIVES 10u
+#define STORAGE_MAX_VOLUMES 10u
+#define STORAGE_VOLUME_ROOT 0u
+#define STORAGE_VOLUME_TARGET_ROOT 1u
+#define STORAGE_VOLUME_BOOT 2u
+#define STORAGE_VOLUME_DYNAMIC_FIRST 3u
 #define STORAGE_MAX_INSTALL_DISKS LEONOS_INSTALL_MAX_DISKS
 #define STORAGE_PATH_CACHE_ENTRIES 128u
 #define STORAGE_DIR_INDEX_ENTRIES 512u
@@ -380,7 +384,7 @@ static const uint8_t basic_data_guid[16] = {
 
 struct storage_volume {
     bool ready;
-    uint8_t drive;
+    uint8_t volume_id;
     uint8_t kind;
     uint8_t filesystem;
     uint8_t bus;
@@ -427,6 +431,7 @@ struct storage_volume {
     uint32_t source_disk_id;
     uint32_t source_partition_index;
     uint8_t data_partition_mount;
+    char mount_path[LEONOS_FS_PATH_LEN];
 };
 
 struct install_disk_state {
@@ -442,10 +447,9 @@ struct install_disk_state {
     uint64_t sector_count;
 };
 
-static struct storage_volume g_volumes[STORAGE_MAX_DRIVES];
+static struct storage_volume g_volumes[STORAGE_MAX_VOLUMES];
 static struct storage_volume *g_active_volume = &g_volumes[0];
 #define g_storage (*g_active_volume)
-static struct storage_volume *storage_control_old_volume;
 
 /*
  * A filesystem syscall is allowed to park while it is only observing disk
@@ -906,43 +910,34 @@ static uint64_t min_u64(uint64_t a, uint64_t b)
     return a < b ? a : b;
 }
 
-static int storage_drive_id_from_path(const char *path)
-{
-    if (path && path[0] >= '0' && path[0] < (char)('0' + STORAGE_MAX_DRIVES) &&
-        path[1] == ':' && path[2] == '/') {
-        return path[0] - '0';
-    }
-    return -1;
-}
-
-static int storage_select_drive(uint32_t drive)
+static int storage_select_volume(uint32_t volume_id)
 {
     int ret = storage_acquire_task_io();
     if (ret < 0) {
         return ret;
     }
-    if (drive >= STORAGE_MAX_DRIVES || !g_volumes[drive].ready) {
+    if (volume_id >= STORAGE_MAX_VOLUMES || !g_volumes[volume_id].ready) {
         return -2;
     }
-    g_active_volume = &g_volumes[drive];
+    g_active_volume = &g_volumes[volume_id];
     return 0;
 }
 
-static int storage_select_node_drive(const struct storage_node *node,
-                                     struct storage_volume **old_volume)
+static int storage_select_node_volume(const struct storage_node *node,
+                                      struct storage_volume **old_volume)
 {
     int ret = storage_acquire_task_io();
     if (ret < 0) {
         return ret;
     }
-    if (!node || node->drive >= STORAGE_MAX_DRIVES ||
-        !g_volumes[node->drive].ready) {
+    if (!node || node->volume_id >= STORAGE_MAX_VOLUMES ||
+        !g_volumes[node->volume_id].ready) {
         return -2;
     }
     if (old_volume) {
         *old_volume = g_active_volume;
     }
-    g_active_volume = &g_volumes[node->drive];
+    g_active_volume = &g_volumes[node->volume_id];
     return 0;
 }
 
@@ -953,15 +948,107 @@ static void storage_restore_volume(struct storage_volume *old_volume)
     }
 }
 
+static bool storage_mount_path_matches(const char *path, const char *mount_path)
+{
+    uint32_t length;
+    if (!path || !mount_path || mount_path[0] != '/') {
+        return false;
+    }
+    if (mount_path[1] == 0) {
+        return path[0] == '/';
+    }
+    length = storage_strlen(mount_path);
+    return storage_memcmp(path, mount_path, length) == 0 &&
+           (path[length] == 0 || path[length] == '/');
+}
+
+/* Routes a canonical global path to the mounted backend with the longest
+ * matching mount point.  Backends only receive paths rooted at their own
+ * filesystem, never a user-visible mount prefix. */
+static int storage_route_path(const char *path, struct storage_volume **out_volume,
+                              char *backend_path, uint32_t backend_capacity)
+{
+    struct storage_volume *best = NULL;
+    uint32_t best_length = 0;
+    uint32_t path_length;
+    uint32_t local_start;
+    uint32_t out_pos = 0;
+    if (!path || path[0] != '/' || !out_volume || !backend_path || backend_capacity < 2) {
+        return -22;
+    }
+    path_length = storage_strlen(path);
+    for (uint32_t i = 0; i < STORAGE_MAX_VOLUMES; ++i) {
+        struct storage_volume *volume = &g_volumes[i];
+        uint32_t length;
+        if (!volume->ready || volume->mount_path[0] != '/' ||
+            !storage_mount_path_matches(path, volume->mount_path)) {
+            continue;
+        }
+        length = storage_strlen(volume->mount_path);
+        if (!best || length > best_length) {
+            best = volume;
+            best_length = length;
+        }
+    }
+    if (!best) {
+        return -2;
+    }
+    local_start = best_length == 1 ? 1 : best_length;
+    backend_path[out_pos++] = '/';
+    if (path[local_start] == '/') {
+        ++local_start;
+    }
+    while (local_start < path_length) {
+        if (out_pos + 1 >= backend_capacity) {
+            return -22;
+        }
+        backend_path[out_pos++] = path[local_start++];
+    }
+    backend_path[out_pos] = 0;
+    *out_volume = best;
+    return 0;
+}
+
+static int storage_backend_path(const char *path, char *backend_path, uint32_t backend_capacity)
+{
+    struct storage_volume *volume;
+    int ret = storage_route_path(path, &volume, backend_path, backend_capacity);
+    if (ret < 0) {
+        return ret;
+    }
+    return storage_select_volume(volume->volume_id);
+}
+
+int storage_path_volume_id(const char *path, uint32_t *out_volume_id)
+{
+    char resolved[LEONOS_FS_PATH_LEN];
+    char backend_path[LEONOS_FS_PATH_LEN];
+    struct storage_volume *volume;
+    if (!out_volume_id || storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0) {
+        return -22;
+    }
+    if (g_devfs_enabled &&
+        (storage_text_eq_ci(resolved, "/dev") ||
+         (storage_memcmp(resolved, "/dev/", 5u) == 0))) {
+        *out_volume_id = STORAGE_VOLUME_ROOT;
+        return 0;
+    }
+    if (storage_route_path(resolved, &volume, backend_path, sizeof(backend_path)) < 0) {
+        return -2;
+    }
+    *out_volume_id = volume->volume_id;
+    return 0;
+}
+
 static int storage_parent_path(const char *path, char *parent, uint32_t parent_cap,
                                char *name, uint32_t name_cap)
 {
     char resolved[LEONOS_FS_PATH_LEN];
     uint32_t slash = 0;
-    if (!path || !parent || !name || parent_cap < 4 || name_cap == 0) {
+    if (!path || !parent || !name || parent_cap < 2 || name_cap == 0) {
         return -22;
     }
-    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0) {
+    if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0) {
         return -22;
     }
     for (uint32_t i = 0; resolved[i]; ++i) {
@@ -969,17 +1056,15 @@ static int storage_parent_path(const char *path, char *parent, uint32_t parent_c
             slash = i;
         }
     }
-    if (slash < 2 || resolved[slash + 1] == 0) {
+    if (resolved[slash + 1] == 0) {
         return -22;
     }
-    if (slash == 2) {
-        if (parent_cap < 4) {
+    if (slash == 0) {
+        if (parent_cap < 2) {
             return -22;
         }
-        parent[0] = resolved[0];
-        parent[1] = ':';
-        parent[2] = '/';
-        parent[3] = 0;
+        parent[0] = '/';
+        parent[1] = 0;
     } else {
         if (slash + 1 > parent_cap) {
             return -22;
@@ -1814,7 +1899,7 @@ static int iso9660_find_in_dir(uint32_t extent, uint32_t size, const char *name,
                     out->type = (record[25] & 0x02u) ? LEONOS_FS_TYPE_DIR : LEONOS_FS_TYPE_FILE;
                     out->flags = 0;
                     out->first_cluster = iso_u32_le(record + 2);
-                    out->drive = g_storage.drive;
+                    out->volume_id = g_storage.volume_id;
                     out->size = iso_u32_le(record + 10);
                 }
                 return 0;
@@ -1927,7 +2012,7 @@ static int fat32_mount(void)
         }
     }
     /* Installer targets clone the ext2 root volume before mounting its ESP as
-     * drive 2.  Always set the filesystem kind here so later path lookups do
+     * the target ESP. Always set the filesystem kind here so later path lookups do
      * not accidentally dispatch FAT32 paths through the ext2 backend. */
     g_storage.filesystem = STORAGE_FILESYSTEM_FAT32;
     return 0;
@@ -2774,7 +2859,7 @@ static int fat32_find_in_dir(uint32_t dir_cluster, const char *name, struct stor
                 .type = (de->attr & FAT32_ATTR_DIRECTORY) ? LEONOS_FS_TYPE_DIR : LEONOS_FS_TYPE_FILE,
                 .flags = 0,
                 .first_cluster = ((uint32_t)de->first_cluster_hi << 16) | de->first_cluster_lo,
-                .drive = g_storage.drive,
+                .volume_id = g_storage.volume_id,
                 .size = de->size,
             };
             if (lfn_count) {
@@ -3353,9 +3438,80 @@ static int fat32_iter_dir_entry(uint32_t dir_cluster, uint64_t index, struct leo
 
 #include "ext2.inc"
 
+static int storage_path_append_u32(char *path, uint32_t capacity, uint32_t *position,
+                                   uint32_t value)
+{
+    char digits[10];
+    uint32_t count = 0;
+    if (!path || !position || *position >= capacity) {
+        return -22;
+    }
+    do {
+        digits[count++] = (char)('0' + value % 10u);
+        value /= 10u;
+    } while (value && count < sizeof(digits));
+    while (count) {
+        if (*position + 1 >= capacity) {
+            return -22;
+        }
+        path[(*position)++] = digits[--count];
+    }
+    path[*position] = 0;
+    return 0;
+}
+
+static int storage_set_data_mount_path(struct storage_volume *volume, uint32_t disk_id,
+                                       uint32_t partition_index)
+{
+    uint32_t position;
+    if (!volume) {
+        return -22;
+    }
+    storage_copy_text(volume->mount_path, sizeof(volume->mount_path), "/mnt/disk");
+    position = storage_strlen(volume->mount_path);
+    if (storage_path_append_u32(volume->mount_path, sizeof(volume->mount_path), &position,
+                                disk_id) < 0 ||
+        position + 2 >= sizeof(volume->mount_path)) {
+        return -22;
+    }
+    volume->mount_path[position++] = 'p';
+    volume->mount_path[position] = 0;
+    return storage_path_append_u32(volume->mount_path, sizeof(volume->mount_path), &position,
+                                   partition_index + 1u);
+}
+
+static int storage_mount_runtime_boot(void)
+{
+    struct storage_volume *root = &g_volumes[STORAGE_VOLUME_ROOT];
+    struct storage_volume *boot = &g_volumes[STORAGE_VOLUME_BOOT];
+    struct storage_volume *old = g_active_volume;
+    int ret;
+    if (!root->ready || root->kind != STORAGE_VOLUME_AHCI || root->esp_sector_count == 0) {
+        return -2;
+    }
+    storage_memzero(boot, sizeof(*boot));
+    *boot = *root;
+    boot->volume_id = STORAGE_VOLUME_BOOT;
+    boot->ready = false;
+    boot->filesystem = STORAGE_FILESYSTEM_NONE;
+    boot->data_partition_mount = 0;
+    storage_copy_text(boot->mount_path, sizeof(boot->mount_path), "/boot");
+    g_active_volume = boot;
+    ret = fat32_mount();
+    if (ret == 0) {
+        boot->ready = true;
+    } else {
+        storage_memzero(boot, sizeof(*boot));
+    }
+    g_active_volume = old;
+    storage_cache_invalidate();
+    return ret;
+}
+
 void storage_init(void)
 {
-    uint32_t optical_drive = 1u;
+    uint32_t optical_slot = STORAGE_VOLUME_DYNAMIC_FIRST;
+    uint32_t optical_index = 0;
     uint8_t root_ready = 0;
 
     storage_memzero(g_volumes, sizeof(g_volumes));
@@ -3412,12 +3568,12 @@ void storage_init(void)
 
                     if (p->sig == AHCI_PORT_SIG_ATAPI) {
                         struct storage_volume *optical;
-                        if (optical_drive >= STORAGE_MAX_DRIVES) {
+                        if (optical_slot >= STORAGE_MAX_VOLUMES) {
                             continue;
                         }
-                        optical = &g_volumes[optical_drive];
+                        optical = &g_volumes[optical_slot];
                         storage_memzero(optical, sizeof(*optical));
-                        optical->drive = (uint8_t)optical_drive;
+                        optical->volume_id = (uint8_t)optical_slot;
                         optical->kind = STORAGE_VOLUME_AHCI;
                         optical->bus = (uint8_t)bus;
                         optical->slot = slot;
@@ -3429,18 +3585,30 @@ void storage_init(void)
                         {
                             int mount_ret = iso9660_mount();
                             if (mount_ret < 0) {
-                                console_printf("[ntclks] storage failed to mount iso9660 drive=%u ahci=%u:%u.%u port=%u error=%d\\n",
-                                               optical_drive, bus, slot, func, port, mount_ret);
+                                console_printf("[ntclks] storage failed to mount iso9660 cdrom=%u ahci=%u:%u.%u port=%u error=%d\\n",
+                                               optical_index, bus, slot, func, port, mount_ret);
+                                storage_memzero(optical, sizeof(*optical));
+                                continue;
+                            }
+                        }
+                        storage_copy_text(optical->mount_path, sizeof(optical->mount_path),
+                                          "/media/cdrom");
+                        {
+                            uint32_t position = storage_strlen(optical->mount_path);
+                            if (storage_path_append_u32(optical->mount_path,
+                                                        sizeof(optical->mount_path), &position,
+                                                        optical_index) < 0) {
                                 storage_memzero(optical, sizeof(*optical));
                                 continue;
                             }
                         }
                         optical->ready = true;
-                        console_printf("[ntclks] storage auto-mounted iso9660 drive=%u ahci=%u:%u.%u port=%u blocks=%llu\n",
-                                       optical_drive,
+                        console_printf("[ntclks] storage auto-mounted iso9660 path=%s ahci=%u:%u.%u port=%u blocks=%llu\n",
+                                       optical->mount_path,
                                        bus, slot, func, port,
                                        (unsigned long long)optical->iso_sector_count);
-                        ++optical_drive;
+                        ++optical_slot;
+                        ++optical_index;
                         continue;
                     }
 
@@ -3469,7 +3637,8 @@ void storage_init(void)
                     g_storage.hba_port = p;
                     g_storage.port = port;
                     g_storage.kind = STORAGE_VOLUME_AHCI;
-                    g_storage.drive = 0;
+                    g_storage.volume_id = STORAGE_VOLUME_ROOT;
+                    storage_copy_text(g_storage.mount_path, sizeof(g_storage.mount_path), "/");
                     if (gpt_find_esp() < 0) {
                         storage_memzero(&g_volumes[0], sizeof(g_volumes[0]));
                         g_active_volume = &g_volumes[0];
@@ -3495,6 +3664,9 @@ void storage_init(void)
                                        (unsigned long long)g_storage.esp_start_lba);
                     }
                     g_storage.ready = true;
+                    if (storage_mount_runtime_boot() < 0) {
+                        console_printf("[ntclks] storage boot ESP mount unavailable\n");
+                    }
                     root_ready = 1;
                     if (g_install_disk_count != 0 &&
                         g_install_disks[g_install_disk_count - 1u].present) {
@@ -3527,9 +3699,8 @@ void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
         return;
     }
 
-    console_printf("[ntclks] storage applying middlelayer mount policy entries=%u root=%u:/\n",
-                   policy->count,
-                   policy->root_drive);
+    console_printf("[ntclks] storage applying middlelayer mount policy entries=%u root=/\n",
+                   policy->count);
 
     storage_init();
     g_devfs_enabled = 0;
@@ -3552,7 +3723,7 @@ void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
                            entry->flags);
             break;
         case LEONOS_MOUNT_KIND_FAT32_RAMDISK:
-            if (entry->drive != 0 || !entry->module_start || !entry->module_len) {
+            if (!storage_text_eq(entry->path, "/") || !entry->module_start || !entry->module_len) {
                 root_ramdisk_status = -2;
             } else {
                 root_ramdisk_status =
@@ -3566,10 +3737,16 @@ void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
             if (root_ramdisk_status < 0) {
                 storage_memzero(g_volumes, sizeof(g_volumes));
                 g_active_volume = &g_volumes[0];
+            } else {
+                /* Installer mode owns / and later reuses the boot slot for
+                 * the selected target ESP at /target/boot. */
+                storage_memzero(&g_volumes[STORAGE_VOLUME_BOOT],
+                                sizeof(g_volumes[STORAGE_VOLUME_BOOT]));
+                g_active_volume = &g_volumes[STORAGE_VOLUME_ROOT];
             }
             break;
         case LEONOS_MOUNT_KIND_DEVFS:
-            if (entry->drive == 0) {
+            if (storage_text_eq(entry->path, "/dev")) {
                 g_devfs_enabled = 1;
             }
             console_printf("[ntclks] mount policy %s kind=devfs enabled=%u\n",
@@ -3617,13 +3794,14 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
         return -12;
     }
     storage_memcpy((void *)(uintptr_t)copy_phys, image, (size_t)len);
-    root->drive = 0;
+    root->volume_id = 0;
     root->kind = STORAGE_VOLUME_RAM;
     root->filesystem = STORAGE_FILESYSTEM_FAT32;
     root->ram_base = (uint8_t *)(uintptr_t)copy_phys;
     root->ram_bytes = len;
     root->esp_start_lba = 0;
     root->esp_sector_count = len / SECTOR_SIZE;
+    storage_copy_text(root->mount_path, sizeof(root->mount_path), "/");
     if (fat32_mount() < 0) {
         storage_memzero(root, sizeof(*root));
         mm_free_pages(copy_phys, copy_pages);
@@ -3665,7 +3843,7 @@ bool storage_ready(void)
 }
 
 /**
- * @brief Reports the filesystem implementation backing drive 0 at runtime.
+ * @brief Reports the filesystem implementation backing the runtime root at runtime.
  * @return A static lowercase name suitable for boot diagnostics.
  */
 const char *storage_root_filesystem_name(void)
@@ -3690,56 +3868,34 @@ bool storage_installer_root_active(void)
 int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t cap)
 {
     char parts[16][LEONOS_FS_NAME_LEN];
-    char default_cwd[4];
     uint32_t part_count = 0;
-    char drive = '0';
-    uint8_t use_cwd = 1;
-    struct leonos_vfs_resolve_path query;
-    if (!input || !out || cap < 4) {
+    const char *sources[2];
+    uint32_t source_count;
+    if (!input || !out || cap < 2) {
         return -22;
     }
-    query = (struct leonos_vfs_resolve_path){
-        .cwd = cwd,
-        .input = input,
-        .out = out,
-        .capacity = cap,
-        .drive = 0,
-        .node_kind = LEONOS_VFS_NODE_UNKNOWN,
-        .flags = 0,
-        .reserved = 0,
-    };
-    if (osmlayer_vfs_resolve_path(&query) == 0) {
-        return 0;
-    }
-    if (input[0] >= '0' && input[0] < (char)('0' + STORAGE_MAX_DRIVES) &&
-        input[1] == ':' && input[2] == '/') {
-        drive = input[0];
-        cwd = input;
-        use_cwd = 0;
-    } else if (input[0] == '/') {
-        if (cwd && cwd[0] >= '0' && cwd[0] < (char)('0' + STORAGE_MAX_DRIVES) &&
-            cwd[1] == ':' && cwd[2] == '/') {
-            drive = cwd[0];
+    for (uint32_t i = 0; input[i]; ++i) {
+        if (input[i] == ':' || input[i] == '\\') {
+            return -22;
         }
-        default_cwd[0] = drive;
-        default_cwd[1] = ':';
-        default_cwd[2] = '/';
-        default_cwd[3] = 0;
-        cwd = default_cwd;
-        use_cwd = 0;
-    } else if (!cwd || cwd[0] < '0' || cwd[0] >= (char)('0' + STORAGE_MAX_DRIVES) ||
-               cwd[1] != ':' || cwd[2] != '/') {
-        cwd = "0:/";
-    } else {
-        drive = cwd[0];
     }
-
-    const char *sources[2] = {
-        use_cwd ? cwd + 3 : "",
-        (input[0] >= '0' && input[0] < (char)('0' + STORAGE_MAX_DRIVES) &&
-         input[1] == ':' && input[2] == '/') ? input + 3 : (input[0] == '/' ? input + 1 : input)
-    };
-    for (uint32_t src_i = 0; src_i < 2; ++src_i) {
+    if (input[0] == '/') {
+        sources[0] = input + 1;
+        source_count = 1;
+    } else {
+        if (!cwd || cwd[0] != '/') {
+            cwd = "/";
+        }
+        for (uint32_t i = 0; cwd[i]; ++i) {
+            if (cwd[i] == ':' || cwd[i] == '\\') {
+                return -22;
+            }
+        }
+        sources[0] = cwd + 1;
+        sources[1] = input;
+        source_count = 2;
+    }
+    for (uint32_t src_i = 0; src_i < source_count; ++src_i) {
         const char *p = sources[src_i];
         char token[LEONOS_FS_NAME_LEN];
         uint32_t pos = 0;
@@ -3775,15 +3931,13 @@ int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t
     }
 
     uint32_t out_pos = 0;
-    out[out_pos++] = drive;
-    out[out_pos++] = ':';
     out[out_pos++] = '/';
     out[out_pos] = 0;
     for (uint32_t i = 0; i < part_count; ++i) {
         if (out_pos + storage_strlen(parts[i]) + 1 >= cap) {
             return -22;
         }
-        if (out_pos > 3) {
+        if (out_pos > 1) {
             out[out_pos++] = '/';
         }
         for (uint32_t j = 0; parts[i][j]; ++j) {
@@ -3797,58 +3951,43 @@ int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t
 int storage_lookup_path(const char *path, struct storage_node *out)
 {
     char resolved[LEONOS_FS_PATH_LEN];
-    int drive;
+    char backend_path[LEONOS_FS_PATH_LEN];
+    struct storage_volume *volume;
     int ret;
     if (!storage_ready()) {
         return -2;
     }
-    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0) {
+    if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0) {
         return -22;
     }
-    drive = storage_drive_id_from_path(resolved);
-    if (drive < 0) {
-        return -22;
-    }
-    ret = storage_select_drive((uint32_t)drive);
-    if (ret < 0) {
-        return ret;
-    }
-    if (resolved[0] >= '0' && resolved[0] <= '9' &&
-        resolved[1] == ':' && resolved[2] == '/' && resolved[3] == 0) {
-        if (out) {
-            out->type = LEONOS_FS_TYPE_DIR;
-            out->flags = STORAGE_NODE_FLAG_ROOT |
-                         (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2 ? STORAGE_NODE_FLAG_EXT2 : 0u);
-            out->first_cluster = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
-                                     ? g_storage.iso_root_extent
-                                     : (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2
-                                            ? EXT2_ROOT_INO : g_storage.root_cluster);
-            out->drive = (uint32_t)drive;
-            out->size = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
-                            ? g_storage.iso_root_size : 0;
-            out->drive = (uint32_t)drive;
-        }
-        return 0;
-    }
-    if (g_devfs_enabled && storage_text_eq_ci(resolved, "0:/dev")) {
+    if (g_devfs_enabled && storage_text_eq_ci(resolved, "/dev")) {
         if (out) {
             out->type = LEONOS_FS_TYPE_DIR;
             out->flags = STORAGE_NODE_FLAG_DEV_DIR;
             out->first_cluster = 0;
-            out->drive = (uint32_t)drive;
+            out->volume_id = STORAGE_VOLUME_ROOT;
             out->size = 0;
         }
         return 0;
     }
-    if (g_devfs_enabled && storage_text_eq_ci(resolved, "0:/dev/fb0")) {
+    if (g_devfs_enabled && storage_text_eq_ci(resolved, "/dev/fb0")) {
         if (out) {
             out->type = LEONOS_FS_TYPE_DEVICE;
             out->flags = STORAGE_NODE_FLAG_DEV_FB0;
             out->first_cluster = 0;
-            out->drive = (uint32_t)drive;
+            out->volume_id = STORAGE_VOLUME_ROOT;
             out->size = 0;
         }
         return 0;
+    }
+
+    ret = storage_route_path(resolved, &volume, backend_path, sizeof(backend_path));
+    if (ret < 0) {
+        return ret;
+    }
+    ret = storage_select_volume(volume->volume_id);
+    if (ret < 0) {
+        return ret;
     }
 
     if (storage_path_cache_lookup(resolved, out)) {
@@ -3856,7 +3995,7 @@ int storage_lookup_path(const char *path, struct storage_node *out)
     }
 
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
-        ret = ext2_lookup_path(resolved, out);
+        ret = ext2_lookup_path(backend_path, out);
         if (ret == 0 && out) storage_path_cache_store(resolved, out);
         return ret;
     }
@@ -3866,11 +4005,11 @@ int storage_lookup_path(const char *path, struct storage_node *out)
         .flags = STORAGE_NODE_FLAG_ROOT,
         .first_cluster = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
                              ? g_storage.iso_root_extent : g_storage.root_cluster,
-        .drive = (uint32_t)drive,
+        .volume_id = g_storage.volume_id,
         .size = g_storage.filesystem == STORAGE_FILESYSTEM_ISO9660
                     ? g_storage.iso_root_size : 0,
     };
-    const char *p = resolved + 3;
+    const char *p = backend_path + 1;
     char name[LEONOS_FS_NAME_LEN];
     uint32_t pos = 0;
     while (1) {
@@ -3942,7 +4081,7 @@ int storage_read_node_cursor(const struct storage_node *node, uint64_t offset,
         }
         return 0;
     }
-    ret = storage_select_node_drive(node, &old_volume);
+    ret = storage_select_node_volume(node, &old_volume);
     if (ret < 0) {
         return ret;
     }
@@ -4132,7 +4271,7 @@ int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
         }
         return 0;
     }
-    ret = storage_select_node_drive(node, &old_volume);
+    ret = storage_select_node_volume(node, &old_volume);
     if (ret < 0) {
         return ret;
     }
@@ -4213,6 +4352,8 @@ int storage_write_node(const char *path, uint64_t offset,
                        const void *buf, uint32_t len, uint32_t *out_written)
 {
     struct storage_node node;
+    char resolved[LEONOS_FS_PATH_LEN];
+    char backend_path[LEONOS_FS_PATH_LEN];
     uint64_t end64;
     uint32_t total_len;
     uint32_t final_len;
@@ -4240,8 +4381,12 @@ int storage_write_node(const char *path, uint64_t offset,
         return -21;
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
+        if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0 ||
+            storage_backend_path(resolved, backend_path, sizeof(backend_path)) < 0) {
+            return -22;
+        }
         storage_begin_mutation();
-        return ext2_write_node(path, offset, buf, len, out_written);
+        return ext2_write_node(backend_path, offset, buf, len, out_written);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -4449,6 +4594,7 @@ int storage_write_node(const char *path, uint64_t offset,
 int storage_write_file(const char *path, const void *buf, uint32_t len)
 {
     char resolved[LEONOS_FS_PATH_LEN];
+    char backend_path[LEONOS_FS_PATH_LEN];
     char parent[LEONOS_FS_PATH_LEN];
     char name[LEONOS_FS_NAME_LEN];
     struct storage_node parent_node;
@@ -4470,7 +4616,7 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
     if (!storage_ready()) {
         return -2;
     }
-    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0) {
+    if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0) {
         return -22;
     }
     if (storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
@@ -4484,8 +4630,11 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
         return -20;
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
+        if (storage_backend_path(resolved, backend_path, sizeof(backend_path)) < 0) {
+            return -22;
+        }
         storage_begin_mutation();
-        return ext2_write_file(resolved, buf, len);
+        return ext2_write_file(backend_path, buf, len);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -4663,6 +4812,8 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
 int storage_truncate_file(const char *path, uint64_t length)
 {
     struct storage_node node;
+    char resolved[LEONOS_FS_PATH_LEN];
+    char backend_path[LEONOS_FS_PATH_LEN];
     uint64_t phys;
     uint32_t pages;
     uint32_t got = 0;
@@ -4680,8 +4831,12 @@ int storage_truncate_file(const char *path, uint64_t length)
         return -21;
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
+        if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0 ||
+            storage_backend_path(resolved, backend_path, sizeof(backend_path)) < 0) {
+            return -22;
+        }
         storage_begin_mutation();
-        return ext2_truncate_file(path, length);
+        return ext2_truncate_file(backend_path, length);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -4712,6 +4867,7 @@ int storage_truncate_file(const char *path, uint64_t length)
 int storage_mkdir(const char *path)
 {
     char resolved[LEONOS_FS_PATH_LEN];
+    char backend_path[LEONOS_FS_PATH_LEN];
     char parent[LEONOS_FS_PATH_LEN];
     char name[LEONOS_FS_NAME_LEN];
     struct storage_node parent_node;
@@ -4724,7 +4880,7 @@ int storage_mkdir(const char *path)
     if (!storage_ready()) {
         return -2;
     }
-    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0 ||
+    if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0 ||
         storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
         return -22;
     }
@@ -4736,8 +4892,11 @@ int storage_mkdir(const char *path)
         return -20;
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
+        if (storage_backend_path(resolved, backend_path, sizeof(backend_path)) < 0) {
+            return -22;
+        }
         storage_begin_mutation();
-        return ext2_mkdir(resolved);
+        return ext2_mkdir(backend_path);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -4810,6 +4969,7 @@ int storage_mkdir(const char *path)
 int storage_unlink(const char *path)
 {
     char resolved[LEONOS_FS_PATH_LEN];
+    char backend_path[LEONOS_FS_PATH_LEN];
     char parent[LEONOS_FS_PATH_LEN];
     char name[LEONOS_FS_NAME_LEN];
     struct storage_node parent_node;
@@ -4824,7 +4984,7 @@ int storage_unlink(const char *path)
         return -2;
     }
     storage_write_chain_cache.valid = 0;
-    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0 ||
+    if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0 ||
         storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
         return -22;
     }
@@ -4841,8 +5001,11 @@ int storage_unlink(const char *path)
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
         if (node.type == LEONOS_FS_TYPE_DIR) return -21;
+        if (storage_backend_path(resolved, backend_path, sizeof(backend_path)) < 0) {
+            return -22;
+        }
         storage_begin_mutation();
-        return ext2_unlink(resolved);
+        return ext2_unlink(backend_path);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -4865,91 +5028,30 @@ int storage_unlink(const char *path)
     return 0;
 }
 
-/* The normal runtime root is ext2, while its boot ESP is intentionally not
- * exposed as a permanent drive.  Kernel-debug uses one tiny ESP marker that
- * must be visible to the UEFI loader on the next restart.  Mount the boot
- * disk's existing ESP only around that operation and release the temporary
- * drive immediately afterwards. */
-static int storage_mount_boot_esp_for_control(uint8_t *temporary)
-{
-    struct storage_volume *root = &g_volumes[0];
-    struct storage_volume *esp = &g_volumes[2];
-    int ret;
-
-    if (!temporary || !root->ready || root->kind != STORAGE_VOLUME_AHCI ||
-        !root->esp_start_lba || !root->esp_sector_count) {
-        return -2;
-    }
-    *temporary = 0;
-    storage_control_old_volume = g_active_volume;
-    if (esp->ready) {
-        if (esp->filesystem != STORAGE_FILESYSTEM_FAT32) return -30;
-        g_active_volume = esp;
-        *temporary = 2;
-        return 0;
-    }
-
-    storage_cache_invalidate();
-    storage_memzero(esp, sizeof(*esp));
-    *esp = *root;
-    esp->drive = 2;
-    esp->ready = false;
-    esp->filesystem = STORAGE_FILESYSTEM_NONE;
-    esp->data_partition_mount = 0;
-    g_active_volume = esp;
-    ret = fat32_mount();
-    if (ret == 0) {
-        esp->ready = true;
-        *temporary = 1;
-    } else {
-        storage_memzero(esp, sizeof(*esp));
-    }
-    storage_cache_invalidate();
-    return ret;
-}
-
-static void storage_release_boot_esp_control(uint8_t temporary)
-{
-    if (!temporary) {
-        return;
-    }
-    storage_cache_invalidate();
-    if (temporary == 1) {
-        storage_memzero(&g_volumes[2], sizeof(g_volumes[2]));
-    }
-    g_active_volume = storage_control_old_volume ? storage_control_old_volume : &g_volumes[0];
-    storage_control_old_volume = NULL;
-}
-
 int storage_write_boot_esp_file(const char *path, const void *buf, uint32_t len)
 {
-    uint8_t temporary = 0;
-    int ret = storage_mount_boot_esp_for_control(&temporary);
-    if (ret < 0) {
-        return ret;
+    if (!path || !storage_mount_path_matches(path, "/boot")) {
+        return -22;
     }
-    (void)storage_mkdir("2:/system");
-    (void)storage_mkdir("2:/system/state");
-    ret = storage_write_file(path, buf, len);
-    storage_release_boot_esp_control(temporary);
-    return ret;
+    (void)storage_mkdir("/boot/system");
+    (void)storage_mkdir("/boot/system/state");
+    return storage_write_file(path, buf, len);
 }
 
 int storage_unlink_boot_esp_file(const char *path)
 {
-    uint8_t temporary = 0;
-    int ret = storage_mount_boot_esp_for_control(&temporary);
-    if (ret < 0) {
-        return ret;
+    int ret;
+    if (!path || !storage_mount_path_matches(path, "/boot")) {
+        return -22;
     }
     ret = storage_unlink(path);
-    storage_release_boot_esp_control(temporary);
     return ret == -2 ? 0 : ret;
 }
 
 int storage_rmdir(const char *path)
 {
     char resolved[LEONOS_FS_PATH_LEN];
+    char backend_path[LEONOS_FS_PATH_LEN];
     char parent[LEONOS_FS_PATH_LEN];
     char name[LEONOS_FS_NAME_LEN];
     struct storage_node parent_node;
@@ -4964,12 +5066,12 @@ int storage_rmdir(const char *path)
         return -2;
     }
     storage_write_chain_cache.valid = 0;
-    if (storage_resolve_path("0:/", path, resolved, sizeof(resolved)) < 0 ||
+    if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0 ||
         storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
         return -22;
     }
-    if (storage_text_eq_ci(resolved, "0:/") ||
-        (g_devfs_enabled && storage_text_eq_ci(resolved, "0:/dev"))) {
+    if (storage_text_eq_ci(resolved, "/") ||
+        (g_devfs_enabled && storage_text_eq_ci(resolved, "/dev"))) {
         return -22;
     }
     ret = storage_lookup_path(parent, &parent_node);
@@ -4985,8 +5087,11 @@ int storage_rmdir(const char *path)
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
         if (node.type != LEONOS_FS_TYPE_DIR) return -20;
+        if (storage_backend_path(resolved, backend_path, sizeof(backend_path)) < 0) {
+            return -22;
+        }
         storage_begin_mutation();
-        return ext2_rmdir(resolved);
+        return ext2_rmdir(backend_path);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -5023,6 +5128,8 @@ int storage_rename(const char *old_path, const char *new_path)
 {
     char old_resolved[LEONOS_FS_PATH_LEN];
     char new_resolved[LEONOS_FS_PATH_LEN];
+    char old_backend_path[LEONOS_FS_PATH_LEN];
+    char new_backend_path[LEONOS_FS_PATH_LEN];
     char old_parent[LEONOS_FS_PATH_LEN];
     char new_parent[LEONOS_FS_PATH_LEN];
     char old_name[LEONOS_FS_NAME_LEN];
@@ -5039,8 +5146,8 @@ int storage_rename(const char *old_path, const char *new_path)
     if (!storage_ready()) {
         return -2;
     }
-    if (storage_resolve_path("0:/", old_path, old_resolved, sizeof(old_resolved)) < 0 ||
-        storage_resolve_path("0:/", new_path, new_resolved, sizeof(new_resolved)) < 0 ||
+    if (storage_resolve_path("/", old_path, old_resolved, sizeof(old_resolved)) < 0 ||
+        storage_resolve_path("/", new_path, new_resolved, sizeof(new_resolved)) < 0 ||
         storage_parent_path(old_resolved, old_parent, sizeof(old_parent), old_name, sizeof(old_name)) < 0 ||
         storage_parent_path(new_resolved, new_parent, sizeof(new_parent), new_name, sizeof(new_name)) < 0) {
         return -22;
@@ -5063,9 +5170,17 @@ int storage_rename(const char *old_path, const char *new_path)
         return -20;
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
-        if (old_resolved[0] != new_resolved[0]) return -18;
+        struct storage_volume *old_volume;
+        struct storage_volume *new_volume;
+        if (storage_route_path(old_resolved, &old_volume, old_backend_path,
+                               sizeof(old_backend_path)) < 0 ||
+            storage_route_path(new_resolved, &new_volume, new_backend_path,
+                               sizeof(new_backend_path)) < 0 ||
+            old_volume->volume_id != new_volume->volume_id) {
+            return -18;
+        }
         storage_begin_mutation();
-        return ext2_rename(old_resolved, new_resolved);
+        return ext2_rename(old_backend_path, new_backend_path);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -5128,7 +5243,7 @@ int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
         }
         ++count;
     }
-    if (g_devfs_enabled && node.drive == 0 &&
+    if (g_devfs_enabled && node.volume_id == 0 &&
         (node.flags & STORAGE_NODE_FLAG_ROOT) && count < capacity) {
         if (entries) {
             entries[count].type = LEONOS_FS_TYPE_DIR;
@@ -6051,7 +6166,6 @@ static void disk_partition_export(uint32_t disk_id, const struct install_disk_st
         return;
     }
     storage_memzero(out, sizeof(*out));
-    out->drive = LEONOS_DISK_DRIVE_NONE;
     out->disk_id = disk_id;
     out->index = entry_index;
     out->sector_count = entry->last_lba - entry->first_lba + 1u;
@@ -6069,10 +6183,9 @@ static void disk_partition_export(uint32_t disk_id, const struct install_disk_st
         out->flags |= LEONOS_DISK_PARTITION_FLAG_TARGET_MOUNTED |
                       LEONOS_DISK_PARTITION_FLAG_PROTECTED;
     }
-    if (storage_disk_partition_mounted_drive(disk_id, entry_index, &out->drive) == 0) {
+    if (storage_disk_partition_mount_path(disk_id, entry_index, out->mount_path,
+                                          sizeof(out->mount_path)) == 0) {
         out->flags |= LEONOS_DISK_PARTITION_FLAG_MOUNTED;
-    } else {
-        out->drive = LEONOS_DISK_DRIVE_NONE;
     }
     out->filesystem = disk_partition_filesystem((struct install_disk_state *)disk, entry);
 }
@@ -6093,12 +6206,13 @@ static int disk_partition_mutable(const struct install_disk_state *disk)
 /**
  * @brief Checks whether a runtime data mount belongs to an AHCI disk.
  * @param disk_id AHCI disk identifier to test.
- * @return Nonzero when one of the numeric data drives references @p disk_id.
+ * @return Nonzero when a dynamic data mount references @p disk_id.
  */
 static int storage_disk_has_data_mount(uint32_t disk_id)
 {
-    for (uint32_t drive = 1; drive < STORAGE_MAX_DRIVES; ++drive) {
-        const struct storage_volume *volume = &g_volumes[drive];
+    for (uint32_t volume_id = STORAGE_VOLUME_DYNAMIC_FIRST;
+         volume_id < STORAGE_MAX_VOLUMES; ++volume_id) {
+        const struct storage_volume *volume = &g_volumes[volume_id];
         if (volume->ready && volume->data_partition_mount &&
             volume->source_disk_id == disk_id) {
             return 1;
@@ -6108,13 +6222,14 @@ static int storage_disk_has_data_mount(uint32_t disk_id)
 }
 
 /**
- * @brief Checks whether installer-reserved drives are occupied by another volume.
- * @return Nonzero when drive 1 or drive 2 cannot be reused by the installer.
+ * @brief Checks whether installer-reserved mount slots are occupied.
+ * @return Nonzero when /target or /target/boot cannot be reused by the installer.
  */
-static int storage_installer_drives_busy(void)
+static int storage_installer_mounts_busy(void)
 {
-    for (uint32_t drive = 1; drive <= 2u; ++drive) {
-        const struct storage_volume *volume = &g_volumes[drive];
+    for (uint32_t volume_id = STORAGE_VOLUME_TARGET_ROOT;
+         volume_id <= STORAGE_VOLUME_BOOT; ++volume_id) {
+        const struct storage_volume *volume = &g_volumes[volume_id];
         if (volume->ready) {
             return 1;
         }
@@ -6312,7 +6427,7 @@ int storage_disk_format_partition(const struct leonos_disk_partition_format *req
     struct gpt_entry entry;
     struct gpt_entry *entries;
     uint64_t sector_count;
-    uint32_t mounted_drive;
+    uint32_t mounted_volume;
     int ret = storage_acquire_task_io();
     if (ret < 0) {
         return ret;
@@ -6336,8 +6451,8 @@ int storage_disk_format_partition(const struct leonos_disk_partition_format *req
     if (!disk_gpt_entry_used(&entries[request->partition_index])) {
         return -2;
     }
-    if (storage_disk_partition_mounted_drive(request->disk_id, request->partition_index,
-                                             &mounted_drive) == 0) {
+    if (storage_disk_partition_volume_id(request->disk_id, request->partition_index,
+                                         &mounted_volume) == 0) {
         return -LEONOS_EBUSY;
     }
     entry = entries[request->partition_index];
@@ -6369,7 +6484,7 @@ int storage_disk_delete_partition(const struct leonos_disk_partition_delete *req
     struct disk_gpt_table table;
     struct gpt_entry *entries;
     uint64_t sector_count;
-    uint32_t mounted_drive;
+    uint32_t mounted_volume;
     int ret = storage_acquire_task_io();
     if (ret < 0) {
         return ret;
@@ -6393,8 +6508,8 @@ int storage_disk_delete_partition(const struct leonos_disk_partition_delete *req
     if (!disk_gpt_entry_used(&entries[request->partition_index])) {
         return -2;
     }
-    if (storage_disk_partition_mounted_drive(request->disk_id, request->partition_index,
-                                             &mounted_drive) == 0) {
+    if (storage_disk_partition_volume_id(request->disk_id, request->partition_index,
+                                         &mounted_volume) == 0) {
         return -LEONOS_EBUSY;
     }
     storage_memzero(&entries[request->partition_index], sizeof(entries[request->partition_index]));
@@ -6465,50 +6580,52 @@ int storage_disk_create_partition(const struct leonos_disk_partition_create *req
     return disk_format_entry(disk, &entries[free_index], request->filesystem);
 }
 
-/**
- * @brief Returns the drive owning one runtime data-partition mount.
- * @param disk_id AHCI disk identifier.
- * @param partition_index Zero-based GPT entry index.
- * @param out_drive Receives the mounted numeric drive.
- * @return Zero if mounted, or a negative errno-style storage error.
- */
-int storage_disk_partition_mounted_drive(uint32_t disk_id, uint32_t partition_index,
-                                         uint32_t *out_drive)
+int storage_disk_partition_volume_id(uint32_t disk_id, uint32_t partition_index,
+                                     uint32_t *out_volume_id)
 {
-    if (!out_drive || partition_index >= LEONOS_DISK_MAX_PARTITIONS) {
+    if (!out_volume_id || partition_index >= LEONOS_DISK_MAX_PARTITIONS) {
         return -22;
     }
-    for (uint32_t drive = 1; drive < STORAGE_MAX_DRIVES; ++drive) {
-        const struct storage_volume *volume = &g_volumes[drive];
+    for (uint32_t volume_id = STORAGE_VOLUME_DYNAMIC_FIRST;
+         volume_id < STORAGE_MAX_VOLUMES; ++volume_id) {
+        const struct storage_volume *volume = &g_volumes[volume_id];
         if (volume->ready && volume->data_partition_mount &&
             volume->source_disk_id == disk_id &&
             volume->source_partition_index == partition_index) {
-            *out_drive = drive;
+            *out_volume_id = volume_id;
             return 0;
         }
     }
     return -2;
 }
 
-/**
- * @brief Finds the first non-root numeric drive not occupied by another volume.
- * @return A usable drive number, or LEONOS_DISK_DRIVE_NONE when all are occupied.
- */
-static uint32_t storage_next_data_mount_drive(void)
+int storage_disk_partition_mount_path(uint32_t disk_id, uint32_t partition_index,
+                                      char *out_path, uint32_t capacity)
 {
-    for (uint32_t drive = 1; drive < STORAGE_MAX_DRIVES; ++drive) {
-        if (!g_volumes[drive].ready) {
-            return drive;
-        }
+    uint32_t volume_id;
+    if (!out_path || capacity == 0) {
+        return -22;
     }
-    return LEONOS_DISK_DRIVE_NONE;
+    if (storage_disk_partition_volume_id(disk_id, partition_index, &volume_id) < 0) {
+        out_path[0] = 0;
+        return -2;
+    }
+    storage_copy_text(out_path, capacity, g_volumes[volume_id].mount_path);
+    return 0;
 }
 
-/**
- * @brief Mounts one supported data partition on the first free numeric drive.
- * @param request Disk and GPT-entry selector; receives the selected drive.
- * @return Zero on success or a negative errno-style storage error.
- */
+static uint32_t storage_next_data_mount_volume(void)
+{
+    for (uint32_t volume_id = STORAGE_VOLUME_DYNAMIC_FIRST;
+         volume_id < STORAGE_MAX_VOLUMES; ++volume_id) {
+        if (!g_volumes[volume_id].ready) {
+            return volume_id;
+        }
+    }
+    return STORAGE_MAX_VOLUMES;
+}
+
+/** Mounts one supported data partition at its deterministic Unix path. */
 int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
 {
     struct install_disk_state *disk;
@@ -6518,10 +6635,10 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     struct storage_volume *old_volume;
     uint64_t sector_count;
     uint32_t filesystem;
-    uint32_t drive;
+    uint32_t volume_id;
     int ret;
 
-    if (!request || request->reserved != 0 || request->drive != LEONOS_DISK_DRIVE_NONE) {
+    if (!request || request->mount_path[0] != 0) {
         return -22;
     }
     ret = storage_acquire_task_io();
@@ -6547,24 +6664,25 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
         }
         entry = entries[request->partition_index];
     }
-    if (storage_disk_partition_mounted_drive(request->disk_id, request->partition_index,
-                                             &request->drive) == 0) {
+    if (storage_disk_partition_mount_path(request->disk_id, request->partition_index,
+                                          request->mount_path,
+                                          sizeof(request->mount_path)) == 0) {
         return 0;
     }
     filesystem = disk_partition_filesystem(disk, &entry);
     if (!disk_filesystem_format_supported(filesystem)) {
         return -95;
     }
-    drive = storage_next_data_mount_drive();
-    if (drive == LEONOS_DISK_DRIVE_NONE) {
+    volume_id = storage_next_data_mount_volume();
+    if (volume_id == STORAGE_MAX_VOLUMES) {
         return -28;
     }
 
-    volume = &g_volumes[drive];
+    volume = &g_volumes[volume_id];
     old_volume = g_active_volume;
     storage_cache_invalidate();
     storage_memzero(volume, sizeof(*volume));
-    volume->drive = (uint8_t)drive;
+    volume->volume_id = (uint8_t)volume_id;
     volume->kind = STORAGE_VOLUME_AHCI;
     volume->bus = disk->bus;
     volume->slot = disk->slot;
@@ -6574,6 +6692,10 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     volume->hba_port = disk->hba_port;
     volume->source_disk_id = request->disk_id;
     volume->source_partition_index = request->partition_index;
+    if (storage_set_data_mount_path(volume, request->disk_id, request->partition_index) < 0) {
+        storage_memzero(volume, sizeof(*volume));
+        return -22;
+    }
     if (filesystem == LEONOS_DISK_FILESYSTEM_FAT32) {
         volume->esp_start_lba = entry.first_lba;
         volume->esp_sector_count = entry.last_lba - entry.first_lba + 1u;
@@ -6593,9 +6715,9 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     if (ret == 0) {
         volume->data_partition_mount = 1;
         volume->ready = true;
-        request->drive = drive;
-        console_printf("[ntclks] storage mounted data partition disk=%u entry=%u drive=%u fs=%s\\n",
-                       request->disk_id, request->partition_index, drive,
+        storage_copy_text(request->mount_path, sizeof(request->mount_path), volume->mount_path);
+        console_printf("[ntclks] storage mounted data partition disk=%u entry=%u path=%s fs=%s\\n",
+                       request->disk_id, request->partition_index, volume->mount_path,
                        filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ? "fat32" : "ext2");
     } else {
         storage_memzero(volume, sizeof(*volume));
@@ -6612,7 +6734,7 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
  */
 int storage_disk_unmount_partition(const struct leonos_disk_partition_unmount *request)
 {
-    uint32_t drive;
+    uint32_t volume_id;
     int ret;
     if (!request || request->reserved0 != 0 || request->reserved1 != 0) {
         return -22;
@@ -6621,20 +6743,22 @@ int storage_disk_unmount_partition(const struct leonos_disk_partition_unmount *r
     if (ret < 0) {
         return ret;
     }
-    ret = storage_disk_partition_mounted_drive(request->disk_id, request->partition_index, &drive);
+    ret = storage_disk_partition_volume_id(request->disk_id, request->partition_index,
+                                           &volume_id);
     if (ret < 0) {
         return ret;
     }
-    if (drive == 0 || drive >= STORAGE_MAX_DRIVES || !g_volumes[drive].data_partition_mount) {
+    if (volume_id < STORAGE_VOLUME_DYNAMIC_FIRST || volume_id >= STORAGE_MAX_VOLUMES ||
+        !g_volumes[volume_id].data_partition_mount) {
         return -2;
     }
-    if (g_active_volume == &g_volumes[drive]) {
+    if (g_active_volume == &g_volumes[volume_id]) {
         g_active_volume = &g_volumes[0];
     }
-    storage_memzero(&g_volumes[drive], sizeof(g_volumes[drive]));
+    storage_memzero(&g_volumes[volume_id], sizeof(g_volumes[volume_id]));
     storage_cache_invalidate();
-    console_printf("[ntclks] storage unmounted data partition disk=%u entry=%u drive=%u\\n",
-                   request->disk_id, request->partition_index, drive);
+    console_printf("[ntclks] storage unmounted data partition disk=%u entry=%u\\n",
+                   request->disk_id, request->partition_index);
     return 0;
 }
 
@@ -6696,7 +6820,7 @@ int storage_install_format_target(uint32_t disk_id)
     }
     struct install_disk_state *disk = &g_install_disks[disk_id];
     if (disk->target_mounted || storage_disk_has_data_mount(disk_id) ||
-        storage_installer_drives_busy()) {
+        storage_installer_mounts_busy()) {
         return -LEONOS_EBUSY;
     }
     if (ahci_setup_port(disk->hba_port) < 0) {
@@ -6724,10 +6848,12 @@ int storage_install_format_target(uint32_t disk_id)
         return ret;
     }
     disk->target_mounted = 0;
-    storage_memzero(&g_volumes[1], sizeof(g_volumes[1]));
-    storage_memzero(&g_volumes[2], sizeof(g_volumes[2]));
-    if (g_active_volume == &g_volumes[1] || g_active_volume == &g_volumes[2]) {
-        g_active_volume = &g_volumes[0];
+    storage_memzero(&g_volumes[STORAGE_VOLUME_TARGET_ROOT],
+                    sizeof(g_volumes[STORAGE_VOLUME_TARGET_ROOT]));
+    storage_memzero(&g_volumes[STORAGE_VOLUME_BOOT], sizeof(g_volumes[STORAGE_VOLUME_BOOT]));
+    if (g_active_volume == &g_volumes[STORAGE_VOLUME_TARGET_ROOT] ||
+        g_active_volume == &g_volumes[STORAGE_VOLUME_BOOT]) {
+        g_active_volume = &g_volumes[STORAGE_VOLUME_ROOT];
     }
     return 0;
 }
@@ -6755,15 +6881,15 @@ int storage_install_mount_target(uint32_t disk_id)
     if (disk->target_mounted) {
         return 0;
     }
-    if (storage_disk_has_data_mount(disk_id) || storage_installer_drives_busy()) {
+    if (storage_disk_has_data_mount(disk_id) || storage_installer_mounts_busy()) {
         return -LEONOS_EBUSY;
     }
-    struct storage_volume *target = &g_volumes[1];
-    struct storage_volume *esp = &g_volumes[2];
+    struct storage_volume *target = &g_volumes[STORAGE_VOLUME_TARGET_ROOT];
+    struct storage_volume *esp = &g_volumes[STORAGE_VOLUME_BOOT];
     struct storage_volume *old = g_active_volume;
     storage_cache_invalidate();
     storage_memzero(target, sizeof(*target));
-    target->drive = 1;
+    target->volume_id = STORAGE_VOLUME_TARGET_ROOT;
     target->kind = STORAGE_VOLUME_AHCI;
     target->bus = disk->bus;
     target->slot = disk->slot;
@@ -6771,6 +6897,7 @@ int storage_install_mount_target(uint32_t disk_id)
     target->port = disk->port;
     target->abar = disk->abar;
     target->hba_port = disk->hba_port;
+    storage_copy_text(target->mount_path, sizeof(target->mount_path), "/target");
     if (ahci_setup_port(disk->hba_port) < 0) {
         g_active_volume = old;
         return -5;
@@ -6783,29 +6910,19 @@ int storage_install_mount_target(uint32_t disk_id)
         disk->target_mounted = 1;
         storage_memzero(esp, sizeof(*esp));
         *esp = *target;
-        esp->drive = 2;
+        esp->volume_id = STORAGE_VOLUME_BOOT;
         esp->ready = false;
+        storage_copy_text(esp->mount_path, sizeof(esp->mount_path), "/target/boot");
         g_active_volume = esp;
         ret = fat32_mount();
         if (ret == 0) esp->ready = true;
-    } else if (ret == 0) {
-        /* A single ESP FAT32 disk from older LeonOS releases remains mountable
-         * as drive 1 so the updater can explicitly report its legacy layout. */
-        ret = fat32_mount();
-        if (ret == 0) {
-            target->ready = true;
-            disk->target_mounted = 1;
-        }
     }
     if (ret == 0 && target->filesystem == STORAGE_FILESYSTEM_EXT2) {
-        console_printf("[ntclks] installer target mounted root=1:/ ext2_lba=%llu esp=2:/ esp_lba=%llu disk=%u port=%u\n",
+        console_printf("[ntclks] installer target mounted root=/target ext2_lba=%llu esp=/target/boot esp_lba=%llu disk=%u port=%u\n",
                        (unsigned long long)target->ext2_start_lba,
                        (unsigned long long)esp->esp_start_lba,
                        disk_id,
                        disk->port);
-    } else if (ret == 0) {
-        console_printf("[ntclks] installer target mounted legacy FAT32 root=1:/ disk=%u port=%u esp_lba=%llu\n",
-                       disk_id, disk->port, (unsigned long long)target->esp_start_lba);
     } else {
         storage_memzero(target, sizeof(*target));
         storage_memzero(esp, sizeof(*esp));

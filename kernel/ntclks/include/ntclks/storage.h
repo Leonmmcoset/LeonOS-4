@@ -14,7 +14,7 @@ struct storage_node {
     uint32_t type;
     uint32_t flags;
     uint32_t first_cluster;
-    uint32_t drive;
+    uint32_t volume_id;
     uint64_t size;
 };
 
@@ -98,6 +98,8 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len);
  * @return Result, status, or value defined by this API.
  */
 int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t cap);
+/** Resolves a path to its internal mounted-volume identity. */
+int storage_path_volume_id(const char *path, uint32_t *out_volume_id);
 /**
  * @brief Coordinates the storage lookup path operation.
  * @param path LeonOS path consumed by this operation.
@@ -203,8 +205,7 @@ int storage_mkdir(const char *path);
 int storage_unlink(const char *path);
 /**
  * Writes a small control file to the ESP belonging to the current boot disk.
- * The ESP is mounted only for the duration of the operation when it is not
- * otherwise exposed as a user-visible drive.
+ * The ESP is available through the normal `/boot` mount.
  */
 int storage_write_boot_esp_file(const char *path, const void *buf, uint32_t len);
 /** Removes a control file from the current boot disk ESP. */
@@ -279,20 +280,23 @@ int storage_disk_delete_partition(const struct leonos_disk_partition_delete *req
  */
 int storage_disk_create_partition(const struct leonos_disk_partition_create *request);
 /**
- * @brief Mounts one FAT32 or ext2 data partition on the next free numeric drive.
- * @param request Disk and GPT-entry selector; receives the selected drive.
+ * @brief Mounts one FAT32 or ext2 data partition at its deterministic path.
+ * @param request Disk and GPT-entry selector; receives the mount path.
  * @return Zero on success or a negative errno-style storage error.
  */
 int storage_disk_mount_partition(struct leonos_disk_partition_mount *request);
 /**
- * @brief Returns the assigned drive for a runtime data-partition mount.
+ * @brief Returns the mounted path for a runtime data partition.
  * @param disk_id AHCI disk identifier.
  * @param partition_index Zero-based GPT entry index.
- * @param out_drive Receives the mounted numeric drive.
+ * @param out_path Receives the mounted absolute path.
  * @return Zero when mounted, or a negative errno-style storage error.
  */
-int storage_disk_partition_mounted_drive(uint32_t disk_id, uint32_t partition_index,
-                                         uint32_t *out_drive);
+int storage_disk_partition_mount_path(uint32_t disk_id, uint32_t partition_index,
+                                      char *out_path, uint32_t capacity);
+/** Returns the internal mounted-volume identity for kernel busy checks. */
+int storage_disk_partition_volume_id(uint32_t disk_id, uint32_t partition_index,
+                                     uint32_t *out_volume_id);
 /**
  * @brief Tears down one runtime data-partition mount after the kernel checks usage.
  * @param request Disk and GPT-entry selector.

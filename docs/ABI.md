@@ -11,10 +11,10 @@ Unimplemented syscalls return `-ENOSYS`.
 
 ## Dynamic Library ABI
 
-Dynamic PIE executables use `0:/system/lib/ld-leonos.elf` and must contain one
+Dynamic PIE executables use `/system/lib/ld-leonos.elf` and must contain one
 `DT_NEEDED=libleonos.so.1` entry. They may additionally require ABI-v1 shared
 libraries. The loader resolves an unqualified library name from the requesting
-module directory and then `0:/system/lib`, validates each LeonOS ABI note, and
+module directory and then `/system/lib`, validates each LeonOS ABI note, and
 loads recursive dependencies before relocating the main executable.
 
 The system libraries currently include `libleonos.so.1`, `libmagic.so.1`, and
@@ -91,7 +91,7 @@ service tasks, so ordinary applications cannot change system time.
 
 The current devfs surface exposes the framebuffer as:
 
-- `0:/dev/fb0`
+- `/dev/fb0`
 
 Keyboard and mouse state are owned by the kernel input path and delivered to
 Ring-3 through GUI/window event ioctls rather than stable devfs file nodes.
@@ -107,14 +107,14 @@ module filename, ABI version, state, and diagnostic text to all user sessions.
 `LEONOS_IOCTL_DRIVER_CONTROL` accepts load, unload, forced-unload, rescan, and
 boot-enable actions, but the kernel permits it only for administrator tasks.
 
-The kernel loads unsigned ELF64 `ET_REL` files from `0:/drivers` after the
+The kernel loads unsigned ELF64 `ET_REL` files from `/drivers` after the
 root filesystem is mounted. The complete binary format, restricted kernel API,
-and persistent `0:/system/config/drivers.conf` policy are documented in
+and persistent `/system/config/drivers.conf` policy are documented in
 [Drivers](DRIVERS.md).
 
 ## Kernel Debug Module ABI
 
-`0:/system/kerneldebug.sys` is a built-in-only x86_64 little-endian `ET_REL`
+`/system/kerneldebug.sys` is a built-in-only x86_64 little-endian `ET_REL`
 module. It must contain a `.note.leonos.kerneldebug` ELF note owned by
 `LEONKDBG`, type `0x4c4b4447`, ABI `1`, and the fixed entry-name hash. The
 loader accepts only PIC-free kernel sections and the `NONE`, `64`, `32`,
@@ -128,21 +128,21 @@ continue, reboot, and shutdown operations. A valid module owns the diagnostic
 session; the kernel's minimal menu is only a recovery path for a missing or
 rejected module.
 
-The one-shot marker is `2:/system/state/kerneldebug.next`. The loader consumes
+The one-shot marker is `/boot/system/state/kerneldebug.next`. The loader consumes
 and deletes it before validating its contents, preventing repeated entry after
 an interrupted or malformed debug boot. The persistent activation flag is
-`0:/system/state/kerneldebug.enabled`.
+`/system/state/kerneldebug.enabled`.
 
 ## Appearance ABI
 
 The runtime UI appearance is a Desktop-owned state. `Metro` is the default
 (`LEONOS_UI_THEME_METRO`); `LEONOS_UI_THEME_WIN95` restores the legacy Win95
-palette and bevelled controls. The global `0:/system/config/display.conf`
+palette and bevelled controls. The global `/system/config/display.conf`
 `theme=` key remains the boot/default style used before a user session is
 available, including early framebuffer output and bugcheck rendering.
 
 Per-user personalization is saved separately in
-`0:/users/<name>/appearance.conf`. `struct leonos_appearance_state` and
+`/users/<name>/appearance.conf`. `struct leonos_appearance_state` and
 `struct leonos_appearance_request` carry the active theme, independent Metro
 and Win95 basic color scheme IDs, a wallpaper display mode, and a wallpaper BMP
 path. Wallpaper BMP decoding is bounded to 1280 x 720 and accepts
@@ -229,8 +229,8 @@ grant allowed permissions; an unchecked permission bit means no grant.
 the selected disk's entries with `leonos_disk_list_partitions`. Each
 `struct leonos_disk_partition` carries its zero-based GPT entry index, LBA
 range, decoded filesystem, GPT type GUID, display name, protection flags, and
-the assigned numeric drive when `LEONOS_DISK_PARTITION_FLAG_MOUNTED` is set.
-Unmounted entries report `LEONOS_DISK_DRIVE_NONE`.
+the absolute `mount_path` when `LEONOS_DISK_PARTITION_FLAG_MOUNTED` is set.
+Unmounted entries have an empty `mount_path`.
 
 The associated ioctls are:
 
@@ -248,11 +248,11 @@ FAT32 uses the GPT Microsoft Basic Data type and ext2 uses the Linux filesystem
 type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
 claim to securely erase the old data area.
 
-`MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount` whose
-`drive` input is `LEONOS_DISK_DRIVE_NONE`; it returns the first free runtime
-drive. The mount is not persistent across reboot. `UNMOUNT_PARTITION` takes a
+`MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount` and
+returns a normalized `/mnt/disk<N>p<M>` path in its `mount_path` field. The
+mount is not persistent across reboot. `UNMOUNT_PARTITION` takes a
 `struct leonos_disk_partition_unmount` and returns busy when a live task still
-uses the drive through a CWD, descriptor, image, or file mapping.
+uses the mounted volume through a CWD, descriptor, image, or file mapping.
 
 Listing is available to disk-management clients, while create, format, delete,
 mount, and unmount are checked through the administrator install authorization
@@ -263,11 +263,11 @@ initial ABI accepts the standard 128-entry, 128-byte GPT table emitted by
 LeonOS; malformed, out of range, overlapping, or CRC-invalid tables are never
 mutated.
 
-## Middlelayer ABI v5
+## Middlelayer ABI v6
 
 The loader starts `kernel.sys` and `middlelayer.sys`. The middlelayer module
 returns a `struct leonos_middlelayer_api` with version
-`LEONOS_MIDDLELAYER_API_VERSION` set to `5`.
+`LEONOS_MIDDLELAYER_API_VERSION` set to `6`.
 
 Current API callbacks:
 
@@ -294,8 +294,8 @@ Middlelayer owns higher-level policy or semantic services that can run on top
 of those kernel facts.
 
 The file services are trusted kernel-to-middlelayer calls. They are used by the
-auth service to own `0:/system/state/accounts.db` and to create or repair
-`0:/users/<name>` home directories without exposing direct account-database
+auth service to own `/system/state/accounts.db` and to create or repair
+`/users/<name>` home directories without exposing direct account-database
 access to ordinary user tasks.
 
 ## VFS path service
@@ -305,12 +305,12 @@ access to ordinary user tasks.
 - `cwd`: current directory, for relative inputs.
 - `input`: raw path from kernel or userland.
 - `out` and `capacity`: normalized output buffer.
-- `drive`: resolved numbered drive.
 - `node_kind`: coarse directory/file/device classification.
 
-The service resolves `cwd + input` into a normalized numbered-drive path such as
-`0:/system/apps/desktop/desktop.elf`. Kernel storage code calls this first and keeps a C
-fallback resolver for bootstrapping and compatibility.
+The service resolves `cwd + input` into a normalized Unix path such as
+`/system/apps/desktop/desktop.elf`. It rejects any input containing `:`.
+Kernel storage code calls this first and keeps a C fallback resolver for
+bootstrapping.
 
 ## Device catalog service
 
@@ -353,8 +353,8 @@ DHCP renew, DNS A lookups, ICMP ping, a compatibility fixed-buffer
 
 Runtime DHCP renew mutates the global IPv4 configuration, so
 `LEONOS_IOCTL_NET_DHCP` is restricted to administrators and trusted service
-tasks. The license OOBE has a narrow pre-login exception: `0:/system/apps/oobe/oobe.elf`
-may renew DHCP only while `0:/system/state/oobe.done` is absent. Ordinary users can still
+tasks. The license OOBE has a narrow pre-login exception: `/system/apps/oobe/oobe.elf`
+may renew DHCP only while `/system/state/oobe.done` is absent. Ordinary users can still
 read network configuration and use DNS, HTTP, ping, and TCP client socket APIs.
 
 Socket requests use:
@@ -404,30 +404,30 @@ the default `.wav` handler; without a path it plays a short test melody.
 
 The launcher library in `leonos/launch.h` owns user-facing file launch policy.
 It supports `.lnk` shortcuts, built-in program aliases, and persistent extension
-associations stored in `0:/system/config/fileassoc.cfg`. Settings can edit the common
+associations stored in `/system/config/fileassoc.cfg`. Settings can edit the common
 associations for `.txt`, `.md`, `.html`, `.htm`, `.bmp`, `.wav`, and `.hlp`.
-The default `.hlp` handler is `0:/programs/oshlp/oshlp.elf`; it accepts
+The default `.hlp` handler is `/programs/oshlp/oshlp.elf`; it accepts
 `oshlp.elf <file.hlp> [doc.id]` and opens a Markdown page inside a LeonOS help
 container.
 
 Current companion applications:
 
 - `downloadmgr.elf`: uses the libc HTTP client and saves HTTP/HTTPS downloads to
-  the current user's `0:/users/<name>/downloads` directory.
+  the current user's `/users/<name>/downloads` directory.
 - `imageview.elf`: opens uncompressed 24/32-bit BMP files, supports Fit/1x/2x
   zoom, and can move to previous/next BMP siblings in the same directory.
 - `wavplay.elf`: plays 16-bit stereo PCM WAV files through the active audio
   driver, or a built-in test melody when started without a file.
-- `oshlp.elf`: opens LeonOS `.hlp` help containers from `0:/docs` or any path
+- `oshlp.elf`: opens LeonOS `.hlp` help containers from `/docs` or any path
   passed by another app. The help viewer uses the current system language as its
   default but language changes inside the window are local to that process.
 - `serviced.elf`: protected background service runtime. Desktop starts it once
-  after the window server is ready. It writes `0:/var/run/services.state`,
-  consumes `0:/var/run/services.cmd`, logs to `0:/var/log/services.log`, and
+  after the window server is ready. It writes `/var/run/services.state`,
+  consumes `/var/run/services.cmd`, logs to `/var/log/services.log`, and
   keeps retrying DHCP while the static fallback is active.
-- `servicemgr.elf`: edits `0:/system/config/services.cfg`, reads the runtime state file,
+- `servicemgr.elf`: edits `/system/config/services.cfg`, reads the runtime state file,
   and queues administrator start/stop/restart commands through
-  `0:/var/run/services.cmd`.
+  `/var/run/services.cmd`.
 
 The current service keys are `desktop`, `dhcp`, `network_icon`, `rtc_clock`,
 and `ntp_sync`. `desktop` is fixed on. `dhcp` controls whether kernel boot

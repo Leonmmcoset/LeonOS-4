@@ -213,7 +213,7 @@ void DG_SetWindowTitle(const char *title)
 int main(int argc, char **argv, char **envp)
 {
     static char *default_argv[] = {
-        "doom.elf", "-iwad", "0:/programs/doom/freedoom1.wad", "-nosound", 0
+        "doom.elf", "-iwad", "/programs/doom/freedoom1.wad", "-nosound", 0
     };
     (void)envp;
     if (argc <= 1 || !argv || !argv[0]) {

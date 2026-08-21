@@ -2,8 +2,7 @@
 
 int is_root_path(const char *path)
 {
-    return path && path[0] >= '0' && path[0] <= '9' &&
-           path[1] == ':' && path[2] == '/' && path[3] == 0;
+    return path && path[0] == '/' && path[1] == 0;
 }
 
 int selected_entry_valid(void)
@@ -88,8 +87,8 @@ static void fileman_settings_path(char *path, uint32_t capacity)
         build_path_join(path, capacity, user.home, ".fileman.conf");
         return;
     }
-    (void)mkdir("0:/var", 0);
-    build_path_join(path, capacity, "0:/var", ".fileman.conf");
+    (void)mkdir("/var", 0);
+    build_path_join(path, capacity, "/var", ".fileman.conf");
 }
 
 static uint8_t fileman_settings_show_hidden_value(const char *config)
@@ -386,10 +385,10 @@ void build_parent_path(char *dst, uint32_t dst_len)
         return;
     }
     len = text_len(dst);
-    while (len > 3 && dst[len - 1] != '/') {
+    while (len > 1 && dst[len - 1] != '/') {
         dst[--len] = 0;
     }
-    if (len > 3) {
+    if (len > 1) {
         dst[len - 1] = 0;
     }
 }
@@ -1240,49 +1239,19 @@ static void tree_add_node(const char *path, const char *label, uint32_t id,
 
 void fileman_tree_reset(void)
 {
-    char path[4];
-    struct leonos_stat st;
     for (uint32_t i = 0; i < FILEMAN_TREE_MAX_NODES; ++i) {
         fileman_tree_nodes[i] = (struct fileman_tree_node){0};
     }
     fileman_tree_node_count = 0;
     fileman_tree_next_id = 11;
     fileman_tree_scroll = 0;
-    tree_add_node("0:/", "0:/", 1, 0);
-    for (uint32_t drive = 1; drive < 10; ++drive) {
-        path[0] = (char)('0' + drive);
-        path[1] = ':';
-        path[2] = '/';
-        path[3] = 0;
-        if (stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR) {
-            tree_add_node(path, path, drive + 1, 0);
-        }
-    }
+    tree_add_node("/", "/", 1, 0);
 }
 
-/** Refreshes only the drive roots when another application mounts or unmounts media. */
-static void fileman_tree_refresh_drives(void)
+/** Refresh the root tree so new /mnt and /media mounts become visible. */
+static void fileman_tree_refresh_mounts(void)
 {
-    struct leonos_stat st;
-    if (fileman_tree_node_count == 0) {
-        return;
-    }
-    for (uint32_t drive = 0; drive < 10u; ++drive) {
-        char path[4] = {(char)('0' + drive), ':', '/', 0};
-        uint8_t present = stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
-        uint8_t listed = 0;
-        for (uint32_t i = 0; i < fileman_tree_node_count; ++i) {
-            const struct fileman_tree_node *node = &fileman_tree_nodes[i];
-            if (node->used && node->parent_id == 0 && text_eq(node->path, path)) {
-                listed = 1;
-                break;
-            }
-        }
-        if (present != listed) {
-            fileman_tree_reset();
-            return;
-        }
-    }
+    fileman_tree_reset();
 }
 
 static void tree_init_if_needed(void)
@@ -1352,23 +1321,25 @@ static int tree_ensure_path(const char *path)
     char partial[LEONOS_FS_PATH_LEN];
     uint32_t pos;
     int index;
-    if (!path || path[0] < '0' || path[0] > '9' || path[1] != ':' || path[2] != '/') {
+    if (!path || path[0] != '/') {
         return -1;
     }
-    partial[0] = path[0];
-    partial[1] = ':';
-    partial[2] = '/';
-    partial[3] = 0;
+    partial[0] = '/';
+    partial[1] = 0;
     index = tree_node_index_for_path(partial);
     if (index < 0) {
         return -1;
     }
-    pos = 3;
+    pos = 1;
     while (path[pos]) {
         uint32_t end = pos;
         uint32_t partial_len;
         while (path[end] && path[end] != '/') {
             ++end;
+        }
+        if (end == pos) {
+            pos = path[end] == '/' ? end + 1 : end;
+            continue;
         }
         partial_len = text_len(partial);
         if (!is_root_path(partial)) {
@@ -1511,7 +1482,7 @@ uint32_t build_tree_items(struct leonos_ui_tree_item *items, uint32_t cap)
 {
     uint32_t count = 0;
     tree_init_if_needed();
-    fileman_tree_refresh_drives();
+    fileman_tree_refresh_mounts();
     if (!items || cap == 0) {
         return 0;
     }

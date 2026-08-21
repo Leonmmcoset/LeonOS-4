@@ -74,7 +74,7 @@ fn write(fd: u64, _buf: u64, len: u64) -> i64 {
     match fd {
         1 | 2 => len as i64,
         _ => {
-            let _ = storage::append_log("0:/var/log/osmlayer.log", &[]);
+            let _ = storage::append_log("/var/log/osmlayer.log", &[]);
             -EBADF
         }
     }
@@ -90,7 +90,7 @@ fn ioctl(_fd: u64, request: u64, _arg: u64) -> i64 {
     match request {
         0x4c_47_55_49 => gui::client_api_version() as i64,
         0x4c_50_41_54 => {
-            if vfs::resolve_drive_path("0:/dev/fb0").is_some() {
+            if vfs::path_is_absolute("/dev/fb0") {
                 0
             } else {
                 -ENOSYS

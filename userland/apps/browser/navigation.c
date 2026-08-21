@@ -173,7 +173,7 @@ void load_about(void)
         "<h2>Status / 状态</h2>"
         "<table>"
         "<tr><td><strong>Network</strong></td><td class=\"ok\">HTTP and HTTPS enabled / HTTP 和 HTTPS 已启用</td></tr>"
-        "<tr><td><strong>Files</strong></td><td class=\"ok\">0:/ paths and .html files / 支持 0:/ 路径和 .html 文件</td></tr>"
+        "<tr><td><strong>Files</strong></td><td class=\"ok\">/ paths and .html files / 支持 / 路径和 .html 文件</td></tr>"
         "<tr><td><strong>Limit</strong></td><td class=\"warn\">No JavaScript yet / 暂不支持 JavaScript</td></tr>"
         "</table>"
         "<h3>Tip / 提示</h3>"
@@ -763,7 +763,7 @@ void browser_start_download(const char *url)
     char target[LEONOS_HTTP_URL_LEN];
     char *argv[3];
     copy_text(target, sizeof(target), url);
-    argv[0] = "0:/programs/downloadmgr/downloadmgr.elf";
+    argv[0] = "/programs/downloadmgr/downloadmgr.elf";
     argv[1] = target;
     argv[2] = 0;
     if (leonos_launch_argv(argv) < 0) {
@@ -778,7 +778,7 @@ static void browser_start_api_install(const char *url)
     char target[LEONOS_HTTP_URL_LEN];
     char *argv[3];
     copy_text(target, sizeof(target), url);
-    argv[0] = "0:/system/apps/apiapp/apiapp.elf";
+    argv[0] = "/system/apps/apiapp/apiapp.elf";
     argv[1] = target;
     argv[2] = 0;
     if (leonos_launch_argv(argv) < 0) {
@@ -806,12 +806,12 @@ void navigate_to(const char *input, uint8_t add_to_history)
         } else {
             load_http_url(url);
         }
-    } else if (is_drive_path(url)) {
+    } else if (is_local_path(url)) {
         load_local_file(url);
     } else {
         render_message_page(T("Unsupported Address", "不支持的地址"),
-                            T("Use http://, https://, about:, or a LeonOS file path such as 0:/file.html.",
-                              "请使用 http://、https://、about:，或类似 0:/file.html 的 LeonOS 文件路径。"),
+                            T("Use http://, https://, about:, or a LeonOS file path such as /file.html.",
+                              "请使用 http://、https://、about:，或类似 /file.html 的 LeonOS 文件路径。"),
                             browser_safe_detail(url));
     }
     if (add_to_history) {

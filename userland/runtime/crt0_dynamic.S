@@ -2,7 +2,7 @@
  * interpreter path with the dynamic CRT so every PIE has a loader contract
  * even when linked through our custom linker script. */
 .section .interp, "a"
-.asciz "0:/system/lib/ld-leonos.elf"
+.asciz "/system/lib/ld-leonos.elf"
 
 .section .text, "ax"
 .global _start

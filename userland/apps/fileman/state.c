@@ -3,7 +3,7 @@
 uint32_t pixels[FILEMAN_MAX_W * FILEMAN_MAX_H];
 uint32_t details_pixels[FILEMAN_DETAILS_W * FILEMAN_DETAILS_H];
 struct leonos_dir_entry entries[FILEMAN_MAX_ENTRIES];
-char current_path[LEONOS_FS_PATH_LEN] = "0:/";
+char current_path[LEONOS_FS_PATH_LEN] = "/";
 char home_path[LEONOS_AUTH_HOME_LEN];
 char status_text[160] = "Ready";
 uint32_t entry_count;

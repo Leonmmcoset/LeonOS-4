@@ -35,6 +35,12 @@
 
 static uint8_t kernel_ring0_stack[65536] __attribute__((aligned(16)));
 
+static bool boot_handoff_is_current(const struct leonos_boot_handoff *handoff)
+{
+    return handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC &&
+           handoff->version == LEONOS_BOOT_HANDOFF_VERSION;
+}
+
 /**
  * @brief Coordinates the kernel idle loop operation.
  */
@@ -96,7 +102,7 @@ static int boot_text_eq(const char *a, const char *b)
 static void boot_import_handoff_modules(struct boot_info *boot,
                                         const struct leonos_boot_handoff *handoff)
 {
-    if (!boot || !handoff || handoff->magic != LEONOS_BOOT_HANDOFF_MAGIC ||
+    if (!boot || !boot_handoff_is_current(handoff) ||
         handoff->installer_root.end <= handoff->installer_root.start) {
         return;
     }
@@ -241,7 +247,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     }
     userland_init(&boot);
     sched_dump();
-    console_printf("[ntclks] boot complete: version=%s root=0:/ fs=%s desktop=desktop.elf\n",
+    console_printf("[ntclks] boot complete: version=%s root=/ fs=%s desktop=desktop.elf\n",
                    system->kernel_version, storage_root_filesystem_name());
     boot_splash_update(100u);
     if (boot_log_screen) {
@@ -260,8 +266,12 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
  */
 void kernel_entry(const struct leonos_boot_handoff *handoff)
 {
-    if (!handoff || handoff->magic != LEONOS_BOOT_HANDOFF_MAGIC) {
-        kernel_start(0, 0, handoff);
+    if (!boot_handoff_is_current(handoff)) {
+        console_init();
+        console_printf("[ntclks] rejected loader handoff abi=%u expected=%u\n",
+                       handoff ? handoff->version : 0u,
+                       LEONOS_BOOT_HANDOFF_VERSION);
+        kernel_idle_loop();
     }
     kernel_start(handoff->multiboot_magic, (uint32_t)handoff->multiboot_info, handoff);
 }

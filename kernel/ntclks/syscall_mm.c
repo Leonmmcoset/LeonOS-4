@@ -116,7 +116,7 @@ static int storage_nodes_equal(const struct storage_node *a, const struct storag
            a->type == b->type &&
            a->flags == b->flags &&
            a->first_cluster == b->first_cluster &&
-           a->drive == b->drive &&
+           a->volume_id == b->volume_id &&
            a->size == b->size;
 }
 

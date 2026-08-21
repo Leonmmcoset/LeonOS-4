@@ -16,7 +16,7 @@ struct osmlayer_boot_summary {
     uint32_t abi_version;
     uint32_t module_count;
     uint64_t memory_kib;
-    uint32_t root_drive;
+    uint32_t reserved;
 };
 
 /**

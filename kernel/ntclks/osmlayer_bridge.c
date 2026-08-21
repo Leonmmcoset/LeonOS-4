@@ -432,6 +432,7 @@ void osmlayer_bridge_init(const struct boot_info *boot,
 {
     console_printf("[osmlayer] bridge init entering\n");
     if (!handoff || handoff->magic != LEONOS_BOOT_HANDOFF_MAGIC ||
+        handoff->version != LEONOS_BOOT_HANDOFF_VERSION ||
         !handoff->middlelayer.entry) {
         console_printf("[osmlayer] no middlelayer module in loader handoff\n");
         return;
@@ -480,13 +481,11 @@ void osmlayer_bridge_init(const struct boot_info *boot,
     if (summary.memory_kib == 0) {
         summary.memory_kib = mm_total_memory_kib();
     }
-    console_printf("[osmlayer] init abi=%u modules=%u memory=%llu KiB root=%u:/\n",
+    console_printf("[osmlayer] init abi=%u modules=%u memory=%llu KiB root=/\n",
                    summary.abi_version,
                    summary.module_count,
-                   (unsigned long long)summary.memory_kib,
-                   summary.root_drive);
-    console_printf("[osmlayer] VFS policy owner=middlelayer root=%u:/ linux_syscall=1\n",
-                   summary.root_drive);
+                   (unsigned long long)summary.memory_kib);
+    console_printf("[osmlayer] VFS policy owner=middlelayer root=/ linux_syscall=1\n");
 }
 
 /**

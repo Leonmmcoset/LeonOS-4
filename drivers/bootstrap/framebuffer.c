@@ -1314,9 +1314,9 @@ static void draw_window(uint8_t id)
         framebuffer_text(body_x + 16, body_y + 42, "Drag title bar. Use buttons.", black, w->body_color);
         framebuffer_text(body_x + 16, body_y + 66, "Start opens closed windows.", black, w->body_color);
     } else if (id == 1) {
-        framebuffer_text(body_x + 16, body_y + 18, "0:/", black, w->body_color);
+        framebuffer_text(body_x + 16, body_y + 18, "/", black, w->body_color);
         framebuffer_text(body_x + 16, body_y + 42, "boot  system  userland", black, w->body_color);
-        framebuffer_text(body_x + 16, body_y + 66, "System root drive view", black, w->body_color);
+        framebuffer_text(body_x + 16, body_y + 66, "System root view", black, w->body_color);
     } else {
         framebuffer_text(body_x + 16, body_y + 18, "Settings", black, w->body_color);
         framebuffer_text(body_x + 16, body_y + 42, "Win98 style controls", black, w->body_color);
@@ -1374,7 +1374,7 @@ static void desktop_redraw(void)
     framebuffer_rect(24, 32, 2, 38, white);
     framebuffer_rect(70, 32, 2, 38, black);
     framebuffer_rect(24, 68, 48, 2, black);
-    framebuffer_text(16, 78, "0:/", white, teal);
+    framebuffer_text(16, 78, "/", white, teal);
 
     framebuffer_rect(24, 112, 48, 38, gray);
     framebuffer_rect(24, 112, 48, 2, white);

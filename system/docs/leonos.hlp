@@ -208,7 +208,7 @@ LeonOS uses a Windows-style permission model for files and directories. The curr
 ## Important rules
 
 - Administrators can manage system-wide objects and repair broken ACL metadata.
-- Normal users are expected to control their own `0:/users/<name>` files.
+- Normal users are expected to control their own `/users/<name>` files.
 - Opening a shortcut checks permission on both the `.lnk` file and its target.
 - Missing ACL metadata falls back to system default rules.
 
@@ -229,7 +229,7 @@ LeonOS 使用类似 Windows 的文件和文件夹权限模型。当前 v1 权限
 ## 重要规则
 
 - 管理员可以管理系统对象，并修复损坏的 ACL 元数据。
-- 普通用户默认管理自己的 `0:/users/<name>` 文件。
+- 普通用户默认管理自己的 `/users/<name>` 文件。
 - 打开快捷方式时，会同时检查 `.lnk` 本身和目标文件的权限。
 - 缺失 ACL 元数据时，会按系统默认规则合成权限。
 

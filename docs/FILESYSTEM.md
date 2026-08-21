@@ -6,21 +6,21 @@ and a separate writable ext2 root partition.
 
 ## Installed Disk Layout
 
-| GPT partition | Type | Contents | Mounted drive |
+| GPT partition | Type | Contents | Runtime mount |
 | --- | --- | --- | --- |
-| 1 | EFI System Partition / FAT32 | `EFI/`, `boot/`, `system/kernel.sys`, `system/middlelayer.sys` | `2:/` while Installer is running; boot-only in a normal session |
-| 2 | Linux filesystem data / ext2 | normal system files: `system/`, `programs/`, `drivers/`, `docs/`, `users/`, `var/`, `tmp/` | `0:/` in a normal session, `1:/` while Installer is running |
+| 1 | EFI System Partition / FAT32 | `EFI/`, `loader.elf`, `grub/`, `system/kernel.sys`, `system/middlelayer.sys` | `/boot` normally, `/target/boot` while Installer is running |
+| 2 | Linux filesystem data / ext2 | normal system files: `system/`, `programs/`, `drivers/`, `docs/`, `users/`, `var/`, `tmp/` | `/` in a normal session, `/target` while Installer is running |
 
 UEFI GRUB and the early loader read partition 1. Once the kernel is running,
-the storage layer selects partition 2 as `0:/`. A legacy one-partition FAT32
-LeonOS disk remains readable and writable as `0:/`; it is a compatibility
+the storage layer selects partition 2 as `/`. A legacy one-partition FAT32
+LeonOS disk remains readable and writable as `/`; it is a compatibility
 fallback, not the layout produced by current image or installer builds.
 
 The installer itself keeps using a FAT32 ramdisk root because it must start
 before any target disk is trusted. Its payload is deliberately split:
 
-- `0:/install/root` is copied to the ext2 target root `1:/`.
-- `0:/install/esp` is copied to the FAT32 target ESP `2:/`.
+- `/install/root` is copied to the ext2 target root `/target`.
+- `/install/esp` is copied to the FAT32 target ESP `/target/boot`.
 
 Fresh installation creates both GPT partitions. Update requires both a valid
 ext2 root and ESP; old FAT32-only installations should use a fresh install.
@@ -54,32 +54,33 @@ on.
 
 ### ISO 9660
 
-Optical media is discovered through AHCI ATAPI and automatically assigned the
-next free numeric drive. ISO 9660 volumes are read-only. This is independent
+Optical media is discovered through AHCI ATAPI and automatically mounted at
+`/media/cdrom<N>`. ISO 9660 volumes are read-only. This is independent
 of whether the boot/root disk uses ext2 or FAT32.
 
 ## Runtime Data Mounts
 
 Disk Manager can mount a supported, unprotected FAT32 or ext2 GPT data
-partition for the current boot. The kernel assigns the first free numeric
-drive (`1:/` through `9:/`), skipping mounted optical media and the installer's
-temporary target drives. The assigned drive is shown in the partition status
-and appears in File Manager's sidebar without restarting File Manager.
+partition for the current boot. The kernel mounts it at the stable path
+`/mnt/disk<N>p<M>`, where `N` is the disk ID and `M` is the GPT entry index plus
+one. The mount path is shown in the partition status and appears in File
+Manager's sidebar without restarting File Manager.
 
 Runtime data mounts are deliberately non-persistent in this first version:
 they are removed on reboot and no automatic mounting policy is stored on disk.
-Mounting the same partition again is idempotent and returns its existing drive.
+Mounting the same partition again is idempotent and returns its existing mount
+path.
 Only the FAT32 and classic ext2 subsets documented above are accepted; an
 unknown or unsupported on-disk filesystem is rejected rather than mounted
 according to its GPT type alone.
 
-The installer reserves `1:/` for the target root and `2:/` for its ESP while a
+The installer reserves `/target` for the target root and `/target/boot` for its ESP while a
 target is mounted. Formatting or mounting an installer target is rejected with
-busy if those drives contain an optical, data, or other runtime volume; this
-prevents an installer operation from silently replacing a live drive mapping.
+busy if those paths contain an optical, data, or other runtime volume; this
+prevents an installer operation from silently replacing a live mount.
 
 Unmounting is administrator-gated. The kernel refuses it while any live task
-has that drive as its working directory, owns an open file on it, is executing
+has that volume as its working directory, owns an open file on it, is executing
 an image from it, or retains a file-backed mapping from it. Format and delete
 are likewise refused while the partition is mounted. This avoids stale file
 nodes and mappings after a volume is removed.
@@ -88,7 +89,7 @@ nodes and mappings after a volume is removed.
 
 Disk Manager presents the GPT entries of every detected AHCI disk, including
 their name, LBA range, filesystem probe, capacity, GPT role, protection state,
-and assigned drive when mounted. It can create a 1 MiB-aligned FAT32 or ext2
+and mount path when mounted. It can create a 1 MiB-aligned FAT32 or ext2
 data partition in free space, format an existing data partition as either
 filesystem, delete an existing data partition's GPT entry, and mount or
 unmount a supported data partition. New partition creation includes formatting
@@ -109,14 +110,15 @@ out-of-range, or CRC-invalid table before making a modification.
 
 ## VFS and Paths
 
-LeonOS paths use numeric drive syntax, for example
-`0:/system/apps/desktop/desktop.elf`. The middlelayer resolves `.` and `..`
-and the storage layer selects a drive before dispatching the operation to its
-filesystem implementation. Filesystem names are case-insensitive at the
+LeonOS paths use Unix absolute syntax, for example
+`/system/apps/desktop/desktop.elf`. The middlelayer resolves `.` and `..`,
+and the storage layer dispatches the result through the longest matching mount
+path. Paths containing `:` are rejected; legacy disk prefixes are not
+supported. Filesystem names are case-insensitive at the
 LeonOS path layer for compatibility with historical FAT32 behavior; avoid
 creating names that differ only by case on ext2.
 
-The device directory is synthesized at `0:/dev`. `LEONACL.SYS` is internal
+The device directory is synthesized at `/dev`. `LEONACL.SYS` is internal
 ACL sidecar metadata: it remains readable by the authorization service but is
 hidden from normal FAT32 and ext2 directory enumeration.
 
@@ -129,7 +131,7 @@ Current file syscalls support all writable ext2 and FAT32 roots:
 - `mkdir`, `unlink`, `rmdir`, and `rename` within one mounted filesystem.
 - Directory listing, `stat`, seek, and ACL service integration.
 
-Cross-drive rename is rejected. ISO 9660 returns a read-only error for all
+Cross-mount rename is rejected. ISO 9660 returns a read-only error for all
 mutation operations. ext2 allocation updates its inode/block bitmaps and free
 counts; FAT32 retains its cluster-chain allocator and LFN handling.
 

@@ -38,8 +38,8 @@ UEFI/GRUB
 ```
 
 安装器 ISO 是另一条启动路径：顶层 ISO 只包含启动所需的 loader、内核、
-中间层和 installer root；真正安装到磁盘的系统分为 `0:/install/esp`（FAT32
-启动载荷）和 `0:/install/root`（ext2 运行时根载荷）。不要把“安装器运行时
+中间层和 installer root；真正安装到磁盘的系统分为 `/install/esp`（FAT32
+启动载荷）和 `/install/root`（ext2 运行时根载荷）。不要把“安装器运行时
 镜像内容”和“安装后系统内容”混为一谈。
 
 ### 根目录职责
@@ -76,8 +76,8 @@ UEFI/GRUB
 - GUI 客户端与 `desktop.elf` 通过 GUI IPC/ioctl 通信，而不是共享窗口服务器
   的私有像素内存。应用提交自己的缓冲内容；不要把窗口服务器内部 buffer
   当作公共 ABI。
-- 路径使用 LeonOS 盘符格式，例如 `0:/system/apps/desktop/desktop.elf`。
-  相对路径依赖任务当前目录，不能假定 Unix `/` 或 Windows 盘符可用。
+- 路径使用 Unix 根目录格式，例如 `/system/apps/desktop/desktop.elf`。
+  相对路径依赖任务当前目录；路径统一使用 Unix 根目录语义。
 
 ## 3. 公共 ABI、库和 SDK 的联动规则
 
@@ -127,9 +127,9 @@ UI 修改必须横向检查，而不是只改一个应用。典型关联范围�
 
 ### 主题与个性化
 
-- 用户个性化数据属于 `0:/users/<name>/appearance.conf`；Metro 与 Win95
+- 用户个性化数据属于 `/users/<name>/appearance.conf`；Metro 与 Win95
   的基础色配置相互独立，不能相互覆盖。
-- `0:/system/config/display.conf` 是尚无用户会话时的启动/默认外观，用于早期
+- `/system/config/display.conf` 是尚无用户会话时的启动/默认外观，用于早期
   framebuffer、bugcheck、登录、OOBE 和安装器等场景。它不能替代每用户配置。
 - 修改个性化设置后应立即经 Desktop 发布状态并让已打开应用收到主题变化；
   不要只写文件、等下次启动才生效。
@@ -200,6 +200,7 @@ UI 修改必须横向检查，而不是只改一个应用。典型关联范围�
 python3 build.py help
 python3 build.py run userland
 python3 build.py run kernel
+python3 build.py run test-unix-paths
 python3 build.py run all
 python3 build.py run image-vmdk
 python3 build.py run installer
@@ -266,8 +267,8 @@ python3 build.py run image-vmdk --set CONFIG_KEY=VALUE
 - 常规系统 staging tree 是 `build/esp/`；镜像工具从它派生 FAT32 ESP 与 ext2 根，VMDK 位于
   `build/images/leonos4.vmdk`，普通 ISO 位于 `build/images/leonos4.iso`，
   Installer ISO 位于 `build/images/leonos4-installer.iso`。
-- 安装器 root 是 `build/install/root.fat`；其 `0:/install/esp` 会复制到安装目标
-  的 FAT32 `2:/`，`0:/install/root` 会复制到 ext2 `1:/`。改变程序是否进入镜像时
+- 安装器 root 是 `build/install/root.fat`；其 `/install/esp` 会复制到安装目标
+  的 FAT32 `/target/boot`，`/install/root` 会复制到 ext2 `/target`。改变程序是否进入镜像时
   必须验证常规 VMDK、installer root 与安装后两组 payload 的对应行为。
 - 每次 OS 构建、生成或 profile 任务都可能更新构建号和
   `include/generated/build_info.h`。不要把这种自动改动误认为用户业务逻辑；

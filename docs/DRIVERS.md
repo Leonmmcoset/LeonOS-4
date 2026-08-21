@@ -10,7 +10,7 @@ All driver source code lives in the repository-root `drivers/` directory.
   implementations built as `mouse.drv`, `serial.drv`, and `e1000.drv`.
 
 The normal image, normal ISO, installer runtime root, and installed ESP place
-loadable modules directly in `0:/drivers`.
+loadable modules directly in `/drivers`.
 
 ## Module ABI
 
@@ -26,11 +26,11 @@ mouse input provider, serial console provider, or e1000 link provider.
 
 ## Startup and Configuration
 
-After `0:/` is mounted, the kernel scans the direct files in `0:/drivers`.
+After `/` is mounted, the kernel scans the direct files in `/drivers`.
 Every valid, enabled `.drv` is loaded in deterministic directory order. A
 failed module is retried once, then recorded as failed while boot continues.
 
-`0:/system/config/drivers.conf` is optional. It uses UTF-8 text with a `version=1` line
+`/system/config/drivers.conf` is optional. It uses UTF-8 text with a `version=1` line
 and one `disabled=<file>.drv` line per module excluded from automatic startup.
 Absent entries are enabled by default.
 
@@ -61,4 +61,4 @@ again from its file without restarting.
 
 `.drv` files execute in Ring 0 and are intentionally not signed or hashed in
 this version. Only trusted administrators should be allowed to write
-`0:/drivers` or modify its contents.
+`/drivers` or modify its contents.

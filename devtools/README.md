@@ -88,7 +88,7 @@ make APP=examples/myapp APP_NAME=myapp
 结果是 `build/myapp.elf`。将其复制到 LeonOS 分区中的可执行位置，例如：
 
 ```text
-0:/programs/myapp/myapp.elf
+/programs/myapp/myapp.elf
 ```
 
 可由桌面、文件管理器或 `leonos_launch_argv()` 启动；需要 POSIX 启动语义时使用
@@ -117,15 +117,15 @@ C++ 运行时的 freestanding C++17 参数。应用可包含上游头文件，�
 extern "C" int main(int argc, char **argv, char **envp);
 ```
 
-主题名称会先查找当前用户目录，随后查找 `0:/etc/stardustui/theme`。镜像预装
+主题名称会先查找当前用户目录，随后查找 `/etc/stardustui/theme`。镜像预装
 `md3-light`、`md3-dark`、`green_light` 和 `green_dark` 四个上游主题样例。
 LeonOS 使用现有 UI 字体渲染器；StardustUI 的字体路径配置不会替换系统字体。
 
 ### 虚拟终端应用
 
 不创建 GUI 窗口、而是需要标准输入输出渲染的应用，可在 ELF 同目录放置同名
-sidecar manifest。例如 `0:/programs/myapp/myapp.elf` 的标记文件是
-`0:/programs/myapp/myapp.app.ini`：
+sidecar manifest。例如 `/programs/myapp/myapp.elf` 的标记文件是
+`/programs/myapp/myapp.app.ini`：
 
 ```ini
 [app]
@@ -154,8 +154,8 @@ terminal=1
 
 `leonos/stdio.h` 提供 `puts()` 和 `printf()`。`leonos/syscall.h` 提供
 文件、进程、内存和调度相关接口。`leonos/gui.h` 与 `leonos/ui.h` 提供
-窗口、事件与软件绘制接口。文件路径使用 LeonOS 驱动器格式，例如
-`0:/programs/myapp/data.txt`。
+窗口、事件与软件绘制接口。文件路径使用 Unix 风格根目录，例如
+`/programs/myapp/data.txt`；可移动卷使用 `/mnt` 或 `/media` 下的挂载点。
 
 ### 窗口与鼠标控制
 
@@ -184,7 +184,7 @@ leonos_mouse_set_style(window_id, LEONOS_GUI_CURSOR_HAND);
 `window_id`；窗口销毁后，任务栏和光标样式会自动恢复。
 
 程序必须是 freestanding：不要依赖宿主系统的动态链接器、POSIX 运行时或
-宿主系统的库。默认构建使用 LeonOS 的 `0:/system/lib/ld-leonos.elf` 和
+宿主系统的库。默认构建使用 LeonOS 的 `/system/lib/ld-leonos.elf` 和
 `libleonos.so.1`；请保留 Makefile 的编译和链接参数。`STATIC=1` 才会改用
 SDK 中的静态归档与 `linker.ld`。
 
@@ -200,7 +200,7 @@ LeonOS 的受限文件解码接口：
 uint32_t *pixels;
 uint32_t width;
 uint32_t height;
-if (leonos_png_decode_file("0:/programs/demo/image.png", &pixels, &width, &height) == 0) {
+if (leonos_png_decode_file("/programs/demo/image.png", &pixels, &width, &height) == 0) {
     /* pixels are 0x00RRGGBB and alpha has been composited on white. */
     leonos_png_free(pixels);
 }

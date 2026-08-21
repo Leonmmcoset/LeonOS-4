@@ -413,12 +413,8 @@ struct task *sched_find_by_name(const char *name);
 struct task *sched_find_by_path(const char *path);
 struct task *sched_find_by_path_basename(const char *basename);
 struct task *sched_find_window_server(void);
-/**
- * @brief Determines whether a live task still refers to a numeric drive.
- * @param drive Numeric LeonOS drive identifier.
- * @return True when a CWD, open file, image, or file mapping uses the drive.
- */
-bool sched_drive_in_use(uint32_t drive);
+/** Returns true when a CWD, file, image, or mapping references a volume. */
+bool sched_volume_in_use(uint32_t volume_id);
 struct task *sched_select_next_user(void);
 struct trap_frame *sched_task_frame(struct task *task);
 /**

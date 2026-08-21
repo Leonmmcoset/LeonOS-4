@@ -183,9 +183,9 @@ static int shell_dispatch(char *line)
             shell_line(cwd);
         }
     } else if (shell_same(argv[0], "cd")) {
-        int result = chdir(argc > 1 ? argv[1] : "0:/");
+        int result = chdir(argc > 1 ? argv[1] : "/");
         if (result < 0) {
-            printf("cd: %s (%d)\n", argc > 1 ? argv[1] : "0:/", result);
+            printf("cd: %s (%d)\n", argc > 1 ? argv[1] : "/", result);
         }
     } else if (shell_same(argv[0], "ls")) {
         shell_list(argc > 1 ? argv[1] : ".");

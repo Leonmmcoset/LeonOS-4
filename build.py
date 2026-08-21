@@ -814,7 +814,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             continue
         if component_enabled(component.id, "image") and not component_enabled(component.id, "entry"):
             root = "system/apps" if component.kind == "system-app" else "programs"
-            hidden_desktop_entries.append(f"hide=0:/{root}/{component.id}")
+            hidden_desktop_entries.append(f"hide=/{root}/{component.id}")
     graph.add(Target(
         name="generate:desktop-entry-policy",
         outputs=(desktop_entry_policy,),
@@ -893,7 +893,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     cflags_runtime += ["-include", relative(autoconf), "-fPIC"]
     asflags_runtime = [*asflags_user, "-fPIC"]
     dynamic_link_flags = [
-        "-pie", "--hash-style=sysv", "--dynamic-linker", "0:/system/lib/ld-leonos.elf",
+        "-pie", "--hash-style=sysv", "--dynamic-linker", "/system/lib/ld-leonos.elf",
         "-z", "relro", "-z", "now", "-z", "max-page-size=0x1000",
     ]
 
@@ -1870,6 +1870,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     component_prune_stamp = paths.out / "generated/component-staging-prune.json"
 
     def prune_component_staging(context: ActionContext) -> None:
+        # Remove the pre-Unix flat-layout directory left by incremental builds.
+        legacy_boot = paths.staging / "boot"
+        if legacy_boot.exists():
+            context.detail(f"remove obsolete staging directory: {relative(legacy_boot)}")
+            shutil.rmtree(legacy_boot, ignore_errors=True)
         for component in components:
             selected = component_enabled(component.id, "image")
             if component.kind in {"system-app", "program-app"}:
@@ -1924,20 +1929,20 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         depends_on=("config-sync",),
         kind="generate",
         action=prune_component_staging,
-        action_key="staging-prune-v1",
+        action_key="staging-prune-v3",
     ))
     esp_names = ["staging-prune", "grub-efi"]
     esp_outputs: list[Path] = [grub_efi]
-    grub_font_destination = paths.staging / "boot/grub/fonts/leonos-unicode.pf2"
+    grub_font_destination = paths.staging / "grub/fonts/leonos-unicode.pf2"
     target = add_copy(graph, "esp:grub-font", grub_font, grub_font_destination)
     esp_names.append(target.name)
     esp_outputs.append(grub_font_destination)
     grub_theme = ROOT / "boot/grub/theme/theme.txt"
-    grub_theme_destination = paths.staging / "boot/grub/theme/theme.txt"
+    grub_theme_destination = paths.staging / "grub/theme/theme.txt"
     target = add_copy(graph, "esp:grub-theme", grub_theme, grub_theme_destination)
     esp_names.append(target.name)
     esp_outputs.append(grub_theme_destination)
-    for source, destination_rel in [(ROOT / "boot/grub/grub.cfg", "boot/grub/grub.cfg"), (loader_elf, "boot/loader.elf"), (kernel_sys, "system/kernel.sys"), (middle_sys, "system/middlelayer.sys")]:
+    for source, destination_rel in [(ROOT / "boot/grub/grub.cfg", "grub/grub.cfg"), (loader_elf, "loader.elf"), (kernel_sys, "system/kernel.sys"), (middle_sys, "system/middlelayer.sys")]:
         destination = paths.staging / destination_rel
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
         esp_names.append(target.name)
@@ -1948,7 +1953,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     esp_names.append("kerneldebug-module")
     esp_outputs.append(kerneldebug_destination)
     manifest = paths.staging / "system/osmlayer.manifest"
-    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=1\nroot=0:/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v2"))
+    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=2\nroot=/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v3"))
     esp_names.append("esp:manifest")
     esp_outputs.append(manifest)
     for source, destination_rel in ((runtime_loader, "system/lib/ld-leonos.elf"),
@@ -1984,7 +1989,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     browser_cjk_font_destination = paths.staging / "system/fonts/simsun.ttc"
 
     def sync_ui_font(context: ActionContext) -> None:
-        for legacy_dir in ("etc", "userland"):
+        for legacy_dir in ("boot", "etc", "userland"):
             context.detail(f"remove obsolete staging directory: {relative(paths.staging / legacy_dir)}")
             shutil.rmtree(paths.staging / legacy_dir, ignore_errors=True)
         for legacy_name in ("system.psf", "cjk16.lbf", "metro-latin.lbf", "leonos.lbf", "leonos-ui.ttf"):
@@ -2183,7 +2188,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "--name", "DOOM",
                 "--version", "1.0.0-freedoom",
                 "--main-exe", "doomlauncher.elf",
-                "--default-path", "0:/programs/doom",
+                "--default-path", "/programs/doom",
                 "--requires-admin",
                 "--desktop-shortcut",
                 "--icon", "doom.bmp",
@@ -2228,7 +2233,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "--name", "LeonOS 4 Chinese Input",
                 "--version", "1.0.0",
                 "--main-exe", "oschinpt.elf",
-                "--default-path", "0:/programs/oschinpt",
+                "--default-path", "/programs/oschinpt",
                 "--requires-admin",
                 "--input-method-id", "oschinpt",
                 "--input-method-abbreviation", "OSC",
@@ -2403,6 +2408,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     graph.add(Target(name="test-license-server", inputs=(ROOT / "tools/test_license_server.py", ROOT / "tools/license_server.py"), kind="command", command=(PYTHON, "tools/test_license_server.py")))
     graph.add(Target(name="test-los2w", inputs=tuple(collect("los2w/*.py")), kind="command", command=(PYTHON, "-c", "from los2w.selftest import run_self_tests; print('\\n'.join(run_self_tests()))")))
+    graph.add(Target(name="test-unix-paths", inputs=(ROOT / "tools/check_unix_paths.py",), kind="command", command=(PYTHON, "tools/check_unix_paths.py")))
     graph.add(Target(
         name="test-component-config",
         inputs=(ROOT / "tools/test_component_config.py",
@@ -2488,40 +2494,40 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             if not screenshot.is_file() or screenshot.stat().st_size == 0:
                 raise BuildFailure(f"QMP {test_name} test did not produce a terminal screenshot")
         if desktop_app:
-            expected_spawns = (f"spawn path=0:/programs/{desktop_app}/{desktop_app}.elf",)
+            expected_spawns = (f"spawn path=/programs/{desktop_app}/{desktop_app}.elf",)
             expected_exits = (f"name={desktop_app}.elf",)
         elif tcc_smoke:
             expected_spawns = (
-                "spawn path=0:/programs/tcc/tcc.elf",
-                "spawn path=0:/programs/tcc/examples/a.out",
+                "spawn path=/programs/tcc/tcc.elf",
+                "spawn path=/programs/tcc/examples/a.out",
             )
             expected_exits = ("name=tcc.elf", "name=a.out")
         elif fastfetch_smoke:
-            expected_spawns = ("spawn path=0:/programs/fastfetch/fastfetch.elf",)
+            expected_spawns = ("spawn path=/programs/fastfetch/fastfetch.elf",)
             expected_exits = ("name=fastfetch.elf",)
         elif sl_smoke:
-            expected_spawns = ("spawn path=0:/programs/sl/sl.elf",)
+            expected_spawns = ("spawn path=/programs/sl/sl.elf",)
             expected_exits = ("name=sl.elf",)
         elif less_smoke:
-            expected_spawns = ("spawn path=0:/programs/less/less.elf",)
+            expected_spawns = ("spawn path=/programs/less/less.elf",)
             expected_exits = ("name=less.elf",)
         elif dynlinkerror_smoke:
             expected_spawns = (
-                "spawn path=0:/programs/nano/nano.elf",
-                "spawn path=0:/system/apps/dynlinkerror/dynlinkerror.elf",
+                "spawn path=/programs/nano/nano.elf",
+                "spawn path=/system/apps/dynlinkerror/dynlinkerror.elf",
             )
             expected_exits = ("name=nano.elf",)
         elif cmd_pipeline_smoke:
             expected_spawns = (
-                "spawn path=0:/programs/cmd/cmd.elf",
-                "spawn path=0:/programs/busybox/busybox.elf",
+                "spawn path=/programs/cmd/cmd.elf",
+                "spawn path=/programs/busybox/busybox.elf",
             )
             expected_exits = ("name=busybox.elf",)
         elif editor == "vi":
-            expected_spawns = ("spawn path=0:/programs/busybox/busybox.elf",)
+            expected_spawns = ("spawn path=/programs/busybox/busybox.elf",)
             expected_exits = ("name=busybox.elf",)
         else:
-            expected_spawns = (f"spawn path=0:/programs/{editor}/{editor}.elf",)
+            expected_spawns = (f"spawn path=/programs/{editor}/{editor}.elf",)
             expected_exits = (f"name={editor}.elf",)
         for expected_spawn in expected_spawns:
             # Desktop launchers still use the kernel's direct launcher API,
@@ -2537,7 +2543,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 raise BuildFailure(f"QMP test did not observe {test_name} exit: missing {expected_exit}")
         if cmd_pipeline_smoke:
             cmd_pids = re.findall(
-                r"\[ntclks\] exec pid=(\d+) path=0:/programs/cmd/cmd\.elf",
+                r"\[ntclks\] exec pid=(\d+) path=/programs/cmd/cmd\.elf",
                 serial_text,
             )
             if not cmd_pids:
@@ -2549,7 +2555,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             )
             stage_pids = [
                 pid for pid in forked_children
-                if f"[ntclks] exec pid={pid} path=0:/programs/busybox/busybox.elf" in serial_text
+                if f"[ntclks] exec pid={pid} path=/programs/busybox/busybox.elf" in serial_text
             ]
             if len(stage_pids) < 2:
                 raise BuildFailure(

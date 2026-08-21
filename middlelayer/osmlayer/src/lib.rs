@@ -65,7 +65,7 @@ pub struct OsmlayerBootSummary {
     abi_version: u32,
     module_count: u32,
     memory_kib: u64,
-    root_drive: u32,
+    reserved: u32,
 }
 
 #[repr(C)]
@@ -92,7 +92,7 @@ pub struct LeonosBootHandoff {
     magic: u32,
     version: u32,
     multiboot_magic: u32,
-    reserved: u32,
+    ui_theme: u32,
     multiboot_info: u64,
     cmdline: *const c_char,
     bootloader: *const c_char,
@@ -101,7 +101,13 @@ pub struct LeonosBootHandoff {
     framebuffer_height: u32,
     framebuffer_pitch: u32,
     framebuffer_bpp: u8,
-    reserved_fb: [u8; 7],
+    framebuffer_type: u8,
+    framebuffer_red_field_position: u8,
+    framebuffer_red_mask_size: u8,
+    framebuffer_green_field_position: u8,
+    framebuffer_green_mask_size: u8,
+    framebuffer_blue_field_position: u8,
+    framebuffer_blue_mask_size: u8,
     mmap_addr: u64,
     mmap_entry_size: u32,
     mmap_entry_count: u32,
@@ -116,6 +122,9 @@ pub struct LeonosBootHandoff {
     installer_root: LeonosBootModuleInfo,
     middlelayer_api: u64,
     boot_log: LeonosBootLogState,
+    boot_uptime_us: u64,
+    kernel_debug_mode: u32,
+    kernel_debug_reserved: u32,
 }
 
 #[repr(C)]
@@ -145,13 +154,13 @@ pub struct LeonosMiddlelayerApi {
 
 const ENOSYS: i64 = 38;
 const EINVAL: i64 = 22;
-const LEONOS_MIDDLELAYER_API_VERSION: u32 = 5;
+const LEONOS_MIDDLELAYER_API_VERSION: u32 = 6;
 
 static mut SUMMARY: OsmlayerBootSummary = OsmlayerBootSummary {
     abi_version: 1,
     module_count: 0,
     memory_kib: 0,
-    root_drive: 0,
+    reserved: 0,
 };
 
 static mut SERVICES: *const LeonosKernelServices = core::ptr::null();
@@ -220,14 +229,12 @@ pub extern "C" fn osmlayer_rust_init(boot: *const BootInfo) -> OsmlayerBootSumma
         .map(|b| b.memory_lower_kib.saturating_add(b.memory_upper_kib))
         .unwrap_or(0);
     vfs::init_root(boot);
-    let root_drive = vfs::root_drive();
-
     unsafe {
         SUMMARY = OsmlayerBootSummary {
             abi_version: 1,
             module_count,
             memory_kib,
-            root_drive,
+            reserved: 0,
         };
     }
 
@@ -243,7 +250,7 @@ pub extern "C" fn osmlayer_rust_init(boot: *const BootInfo) -> OsmlayerBootSumma
             abi_version: SUMMARY.abi_version,
             module_count: SUMMARY.module_count,
             memory_kib: SUMMARY.memory_kib,
-            root_drive: SUMMARY.root_drive,
+            reserved: SUMMARY.reserved,
         }
     }
 }
@@ -299,7 +306,7 @@ pub extern "C" fn osmlayer_rust_unicode_op(op: u32, arg: *mut core::ffi::c_void)
  */
 pub extern "C" fn osmlayer_rust_selftest() -> u32 {
     let mut passed = 0;
-    if vfs::resolve_drive_path("0:/system/apps/desktop/desktop.elf").is_some() {
+    if vfs::path_is_absolute("/system/apps/desktop/desktop.elf") {
         passed += 1;
     }
     if storage::supports_basic_write() {

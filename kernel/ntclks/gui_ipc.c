@@ -27,7 +27,7 @@ static struct gui_ipc_appearance_state appearance_state = {
     .metro_color_scheme = 0u,
     .win95_color_scheme = 0u,
     .wallpaper_mode = GUI_IPC_WALLPAPER_MODE_FILL,
-    .wallpaper_path = "0:/system/resources/wallpaper-metro.bmp",
+    .wallpaper_path = "/system/resources/wallpaper-metro.bmp",
 };
 static struct gui_ipc_appearance_request appearance_request;
 static uint8_t appearance_request_pending;

@@ -79,8 +79,8 @@
 #define BROWSER_GO_W 54U
 #define BROWSER_DEVTOOLS_MIN_H 118U
 #define BROWSER_DEVTOOLS_MAX_H 142U
-#define BROWSER_FONT_PATH "0:/system/fonts/times-new-roman.ttf"
-#define BROWSER_FONT_FALLBACK_PATH "0:/system/fonts/simsun.ttc"
+#define BROWSER_FONT_PATH "/system/fonts/times-new-roman.ttf"
+#define BROWSER_FONT_FALLBACK_PATH "/system/fonts/simsun.ttc"
 #define BROWSER_USER_AGENT                                                   \
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "        \
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -268,7 +268,7 @@ const char *net_status_name(uint32_t status);
 int parse_http_url(const char *url, struct parsed_http_url *out);
 void build_http_url(char *dst, uint32_t cap, const char *host, uint32_t port,
                     uint8_t secure, const char *path);
-int is_drive_path(const char *text);
+int is_local_path(const char *text);
 void normalize_location(const char *input, char *out, uint32_t cap);
 void render_html_source(const char *source, const char *base_url);
 void render_plain_source(const char *source);

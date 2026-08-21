@@ -7,7 +7,7 @@
 
 #define LEONOS_FONT_W 8u
 #define LEONOS_FONT_H 16u
-#define LEONOS_SYSTEM_FONT_PATH "0:/system/fonts/system.psf"
+#define LEONOS_SYSTEM_FONT_PATH "/system/fonts/system.psf"
 
 struct leonos_psf_view {
     const uint8_t *glyphs;

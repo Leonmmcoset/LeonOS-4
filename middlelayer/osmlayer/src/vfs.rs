@@ -5,9 +5,9 @@ use crate::BootInfo;
 use core::ffi::c_char;
 
 
-pub const MOUNT_POLICY_VERSION: u32 = 1;
+pub const MOUNT_POLICY_VERSION: u32 = 2;
 pub const MOUNT_MAX_ENTRIES: usize = 8;
-pub const MOUNT_PATH_LEN: usize = 16;
+pub const MOUNT_PATH_LEN: usize = 64;
 pub const MOUNT_SOURCE_LEN: usize = 64;
 
 pub const MOUNT_KIND_NONE: u32 = 0;
@@ -30,16 +30,25 @@ pub enum NodeKind {
     Device,
 }
 
-pub struct ResolvedPath<'a> {
-    pub drive: u32,
-    pub path: &'a str,
-    pub kind: NodeKind,
+/** Returns whether a path uses the canonical Unix absolute form. */
+pub fn path_is_absolute(path: &str) -> bool {
+    if !path.starts_with('/') {
+        return false;
+    }
+    let bytes = path.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b':' || bytes[index] == b'\\' {
+            return false;
+        }
+        index += 1;
+    }
+    true
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LeonosMountEntry {
-    pub drive: u32,
     pub kind: u32,
     pub flags: u32,
     pub reserved: u32,
@@ -56,7 +65,6 @@ impl LeonosMountEntry {
  */
     pub const fn empty() -> Self {
         Self {
-            drive: 0,
             kind: MOUNT_KIND_NONE,
             flags: 0,
             reserved: 0,
@@ -73,8 +81,8 @@ impl LeonosMountEntry {
 pub struct LeonosMountPolicy {
     pub version: u32,
     pub count: u32,
-    pub root_drive: u32,
     pub flags: u32,
+    pub reserved: u32,
     pub entries: [LeonosMountEntry; MOUNT_MAX_ENTRIES],
 }
 
@@ -87,8 +95,8 @@ impl LeonosMountPolicy {
         Self {
             version: MOUNT_POLICY_VERSION,
             count: 0,
-            root_drive: 0,
             flags: 0,
+            reserved: 0,
             entries: [LeonosMountEntry::empty(); MOUNT_MAX_ENTRIES],
         }
     }
@@ -107,10 +115,9 @@ pub fn init_root(boot: Option<&BootInfo>) {
 
     if installer {
         let mut ramdisk = LeonosMountEntry::empty();
-        ramdisk.drive = 0;
         ramdisk.kind = MOUNT_KIND_FAT32_RAMDISK;
         ramdisk.flags = MOUNT_FLAG_RUNTIME_ROOT | MOUNT_FLAG_READONLY;
-        copy_bytes(&mut ramdisk.path, b"0:/");
+        copy_bytes(&mut ramdisk.path, b"/");
         copy_bytes(&mut ramdisk.source, b"leonos-installer-root");
         if let Some((start, len)) = find_module(boot, b"leonos-installer-root") {
             ramdisk.module_start = start;
@@ -119,44 +126,46 @@ pub fn init_root(boot: Option<&BootInfo>) {
         add_entry(&mut policy, ramdisk);
 
         let mut devfs = LeonosMountEntry::empty();
-        devfs.drive = 0;
         devfs.kind = MOUNT_KIND_DEVFS;
         devfs.flags = MOUNT_FLAG_DEVICE_TREE;
-        copy_bytes(&mut devfs.path, b"0:/dev");
+        copy_bytes(&mut devfs.path, b"/dev");
         copy_bytes(&mut devfs.source, b"devfs");
         add_entry(&mut policy, devfs);
 
         let mut target = LeonosMountEntry::empty();
-        target.drive = 1;
         target.kind = MOUNT_KIND_TARGET_ROOT;
         target.flags = MOUNT_FLAG_OPTIONAL;
-        copy_bytes(&mut target.path, b"1:/");
+        copy_bytes(&mut target.path, b"/target");
         copy_bytes(&mut target.source, b"installer-target-root");
         add_entry(&mut policy, target);
 
         let mut target_esp = LeonosMountEntry::empty();
-        target_esp.drive = 2;
         target_esp.kind = MOUNT_KIND_TARGET_ESP;
         target_esp.flags = MOUNT_FLAG_OPTIONAL;
-        copy_bytes(&mut target_esp.path, b"2:/");
+        copy_bytes(&mut target_esp.path, b"/target/boot");
         copy_bytes(&mut target_esp.source, b"installer-target-esp");
         add_entry(&mut policy, target_esp);
     } else {
         let mut root = LeonosMountEntry::empty();
-        root.drive = 0;
         root.kind = MOUNT_KIND_EXT2_BOOT;
         root.flags = MOUNT_FLAG_RUNTIME_ROOT;
-        copy_bytes(&mut root.path, b"0:/");
+        copy_bytes(&mut root.path, b"/");
         copy_bytes(&mut root.source, b"ahci-ext2:auto");
         add_entry(&mut policy, root);
 
         let mut devfs = LeonosMountEntry::empty();
-        devfs.drive = 0;
         devfs.kind = MOUNT_KIND_DEVFS;
         devfs.flags = MOUNT_FLAG_DEVICE_TREE;
-        copy_bytes(&mut devfs.path, b"0:/dev");
+        copy_bytes(&mut devfs.path, b"/dev");
         copy_bytes(&mut devfs.source, b"devfs");
         add_entry(&mut policy, devfs);
+
+        let mut boot = LeonosMountEntry::empty();
+        boot.kind = MOUNT_KIND_FAT32_BOOT;
+        boot.flags = 0;
+        copy_bytes(&mut boot.path, b"/boot");
+        copy_bytes(&mut boot.source, b"ahci-esp:auto");
+        add_entry(&mut policy, boot);
     }
 
     unsafe {
@@ -171,45 +180,6 @@ pub fn current_policy() -> LeonosMountPolicy {
     unsafe { POLICY }
 }
 /**
- * @brief Coordinates the root drive operation.
- * @return Result, status, or value defined by this API.
- */
-pub fn root_drive() -> u32 {
-    unsafe { POLICY.root_drive }
-}
-/**
- * @brief Coordinates the resolve drive path operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
- */
-pub fn resolve_drive_path(path: &str) -> Option<ResolvedPath<'_>> {
-    let bytes = path.as_bytes();
-    if bytes.len() < 3 || !bytes[0].is_ascii_digit() || bytes[1] != b':' || bytes[2] != b'/' {
-        return None;
-    }
-
-    let drive = (bytes[0] - b'0') as u32;
-    if !drive_mounted(drive) {
-        return None;
-    }
-
-    let kind = if path == "0:/dev" {
-        NodeKind::Directory
-    } else if path.starts_with("0:/dev/") && devfs_mounted(0) {
-        NodeKind::Device
-    } else if path.ends_with('/') {
-        NodeKind::Directory
-    } else {
-        NodeKind::File
-    };
-
-    Some(ResolvedPath {
-        drive,
-        path: &path[2..],
-        kind,
-    })
-}
-/**
  * @brief Coordinates the add entry operation.
  * @param policy Input or output value used by this operation.
  * @param entry Input or output value used by this operation.
@@ -217,9 +187,6 @@ pub fn resolve_drive_path(path: &str) -> Option<ResolvedPath<'_>> {
 fn add_entry(policy: &mut LeonosMountPolicy, entry: LeonosMountEntry) {
     let idx = policy.count as usize;
     if idx < MOUNT_MAX_ENTRIES {
-        if (entry.flags & MOUNT_FLAG_RUNTIME_ROOT) != 0 {
-            policy.root_drive = entry.drive;
-        }
         policy.entries[idx] = entry;
         policy.count += 1;
     }
@@ -241,40 +208,6 @@ fn copy_bytes(dst: &mut [u8], src: &[u8]) {
         dst[j] = src[j];
         j += 1;
     }
-}
-/**
- * @brief Coordinates the drive mounted operation.
- * @param drive Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-fn drive_mounted(drive: u32) -> bool {
-    let policy = current_policy();
-    let mut i = 0;
-    while i < policy.count as usize && i < MOUNT_MAX_ENTRIES {
-        let entry = policy.entries[i];
-        if entry.drive == drive && entry.kind != MOUNT_KIND_NONE {
-            return true;
-        }
-        i += 1;
-    }
-    false
-}
-/**
- * @brief Coordinates the devfs mounted operation.
- * @param drive Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
-fn devfs_mounted(drive: u32) -> bool {
-    let policy = current_policy();
-    let mut i = 0;
-    while i < policy.count as usize && i < MOUNT_MAX_ENTRIES {
-        let entry = policy.entries[i];
-        if entry.drive == drive && entry.kind == MOUNT_KIND_DEVFS {
-            return true;
-        }
-        i += 1;
-    }
-    false
 }
 /**
  * @brief Finds module.
