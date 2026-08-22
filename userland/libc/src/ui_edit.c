@@ -146,6 +146,11 @@ void leonos_ui_edit_state_draw(struct leonos_ui_surface *surface, uint32_t x,
         leonos_ui_edit(surface, x, y, w, "", 0, 0, flags);
         return;
     }
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_TEXT,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     leonos_ui_edit_state_sync(state);
     if (state->focused && !state->readonly && !(flags & LEONOS_UI_EDIT_DISABLED)) {
         uint32_t context_flags = LEONOS_INPUTM_CONTEXT_FOCUSED;
@@ -683,6 +688,11 @@ void leonos_ui_text_area_state_draw(struct leonos_ui_surface *surface, uint32_t 
         leonos_ui_text_area(surface, x, y, w, h, "", 0, 0, flags);
         return;
     }
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_TEXT,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     leonos_ui_text_area_state_sync(state, w);
     if (state->focused && !state->readonly && !(flags & LEONOS_UI_EDIT_DISABLED)) {
         uint32_t context_flags = LEONOS_INPUTM_CONTEXT_FOCUSED;

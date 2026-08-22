@@ -172,6 +172,18 @@ void desktop_run(void)
         if (full_redraw_pending) {
             redraw_all();
             did_work = 1;
+        } else if (desktop_damage_pending) {
+            struct rect damage = desktop_damage_rect;
+            uint8_t cursor_only = desktop_damage_cursor_only;
+            desktop_damage_pending = 0;
+            desktop_damage_cursor_only = 0;
+            desktop_damage_rect = rect_make(0, 0, 0, 0);
+            if (cursor_only) {
+                repaint_cursor_and_flush(damage);
+            } else {
+                repaint_and_flush(damage);
+            }
+            did_work = 1;
         }
         int mouse_visible = leonos_mouse_is_visible();
         if (mouse_visible != last_mouse_visible) {

@@ -219,6 +219,12 @@ void leonos_ui_context_menu_animated(struct leonos_ui_surface *surface, uint32_t
                            w > 8 ? w - 8 : w, 1, LEONOS_UI_WHITE);
             continue;
         }
+        leonos_ui_cursor_region(surface, (int32_t)x + 4, (int32_t)row_y,
+                                w > 8 ? w - 8 : w, row_h,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
         leonos_ui_text_transparent_clipped(surface, x + 8, row_y + 4,
                                            w > 16 ? w - 16 : w,
                                            label ? label : "",
@@ -384,6 +390,8 @@ void leonos_ui_tree(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
         uint32_t fg = bg == LEONOS_UI_ACTIVE_TITLE ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
         uint32_t icon_x = x + 4 + indent;
         uint32_t text_x = x + 20 + indent;
+        leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)row_y, w, row_h,
+                                LEONOS_GUI_CURSOR_HAND, 0);
         leonos_ui_rect(surface, x, row_y, w, row_h, bg);
         if (items && !(items[i].flags & LEONOS_UI_TREE_LEAF)) {
             leonos_ui_button(surface, icon_x, row_y + 3, 12, 12,

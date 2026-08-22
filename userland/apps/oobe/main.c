@@ -771,8 +771,8 @@ int main(void)
         OOBE_LOG("[oobe.elf] create window failed=%d\n", window_id);
         return 1;
     }
+    leonos_ui_bind(&ui, pixels, surface_w, surface_h, OOBE_MAX_W);
     for (;;) {
-        leonos_ui_bind(&ui, pixels, surface_w, surface_h, OOBE_MAX_W);
         draw_oobe(&ui);
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                                   OOBE_MAX_W, pixels);
@@ -781,6 +781,7 @@ int main(void)
         if (leonos_gui_wait_app_event(&event, 20U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
                 update_surface_size(event.width, event.height);
+                leonos_ui_bind(&ui, pixels, surface_w, surface_h, OOBE_MAX_W);
                 if (current_page == OOBE_PAGE_LICENSE_BROWSER) {
                     browser_embed_resize(surface_w, surface_h);
                 }

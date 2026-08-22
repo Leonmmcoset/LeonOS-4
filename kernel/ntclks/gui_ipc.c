@@ -13,7 +13,7 @@
 #define GUI_IPC_MAX_WINDOWS 32
 #define GUI_IPC_WINDOW_EVENT_CAP 32
 #define GUI_IPC_PAGE_SIZE 4096ULL
-#define GUI_IPC_CURSOR_REGION_CAP 32u
+#define GUI_IPC_CURSOR_REGION_CAP 64u
 
 static struct gui_ipc_window queue[GUI_IPC_QUEUE_CAP];
 static uint32_t head;

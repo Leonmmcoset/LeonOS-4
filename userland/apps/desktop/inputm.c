@@ -432,6 +432,40 @@ int desktop_inputm_handle_click(uint32_t x, uint32_t y)
     return 1;
 }
 
+uint32_t desktop_inputm_cursor_style(uint32_t x, uint32_t y)
+{
+    uint32_t tb_y = taskbar_y();
+    uint32_t tray_w = desktop_tray_width();
+    uint32_t icon_x = fb_w() > tray_w ? fb_w() - tray_w : 0U;
+    uint32_t rows = desktop_inputm_entry_count + 1U;
+    uint32_t menu_h = 8U + rows * DESKTOP_INPUTM_MENU_ROW_H + 8U;
+    uint32_t menu_x = fb_w() > DESKTOP_INPUTM_MENU_W + 4U
+                          ? fb_w() - DESKTOP_INPUTM_MENU_W - 4U : 0U;
+    uint32_t menu_y = tb_y > menu_h + 4U ? tb_y - menu_h - 4U : 0U;
+
+    if (hit_rect(x, y, (int)icon_x, (int)tb_y + 5,
+                 TASKBAR_INPUTM_W - 4U, LEONOS_UI_BUTTON_H)) {
+        return LEONOS_GUI_CURSOR_HAND;
+    }
+    if (!desktop_inputm_menu_open ||
+        !hit_rect(x, y, (int)menu_x, (int)menu_y, DESKTOP_INPUTM_MENU_W, menu_h)) {
+        return LEONOS_GUI_CURSOR_ARROW;
+    }
+    if (y >= menu_y + 8U &&
+        y < menu_y + 8U + desktop_inputm_entry_count * DESKTOP_INPUTM_MENU_ROW_H) {
+        uint32_t index = (y - menu_y - 8U) / DESKTOP_INPUTM_MENU_ROW_H;
+        if (index < desktop_inputm_entry_count) {
+            return desktop_inputm_entries[index].enabled
+                       ? LEONOS_GUI_CURSOR_HAND : LEONOS_GUI_CURSOR_NO;
+        }
+    }
+    if (y >= menu_y + 8U + desktop_inputm_entry_count * DESKTOP_INPUTM_MENU_ROW_H &&
+        y < menu_y + 8U + rows * DESKTOP_INPUTM_MENU_ROW_H) {
+        return LEONOS_GUI_CURSOR_HAND;
+    }
+    return LEONOS_GUI_CURSOR_ARROW;
+}
+
 void draw_inputm_overlay(void)
 {
     uint32_t rows;

@@ -373,6 +373,9 @@ void leonos_ui_date_input(struct leonos_ui_surface *surface, uint32_t x, uint32_
         uint32_t cell_x = (uint32_t)popup_x + 6 + (index % 7U) * cell_w;
         uint32_t cell_y = (uint32_t)popup_y + 50 + (index / 7U) * 20U;
         uint32_t selected = day == state->day;
+        leonos_ui_cursor_region(surface, (int32_t)cell_x, (int32_t)cell_y,
+                                cell_w > 2 ? cell_w - 2 : cell_w, 18,
+                                LEONOS_GUI_CURSOR_HAND, 0);
         day_text[0] = (char)('0' + day / 10U);
         day_text[1] = (char)('0' + day % 10U);
         day_text[2] = 0;

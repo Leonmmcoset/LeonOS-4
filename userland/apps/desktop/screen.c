@@ -1,5 +1,63 @@
 #include "desktop.h"
 
+static char taskbar_clock_cache[16];
+static unsigned long taskbar_clock_cache_second = ~0UL;
+static uint8_t taskbar_network_cache_valid;
+static uint8_t taskbar_network_connected;
+static uint32_t taskbar_network_color = 0x00c00000u;
+static unsigned long taskbar_network_cache_ms;
+static uint32_t cursor_saved_pixels[CURSOR_TILE_W * CURSOR_TILE_H];
+static struct rect cursor_saved_rect;
+static uint8_t cursor_saved_valid;
+
+static void cursor_capture_background(void)
+{
+    struct rect rect = cursor_rect_for_style(cursor_x, cursor_y, desktop_cursor_style);
+    cursor_saved_rect = rect;
+    for (uint32_t row = 0; row < CURSOR_TILE_H; ++row) {
+        for (uint32_t col = 0; col < CURSOR_TILE_W; ++col) {
+            int x = rect.x + (int)col;
+            int y = rect.y + (int)row;
+            cursor_saved_pixels[row * CURSOR_TILE_W + col] =
+                (x >= 0 && y >= 0 && x < (int)fb_w() && y < (int)fb_h())
+                    ? screen[(uint64_t)y * MAX_FB_W + (uint32_t)x]
+                    : 0;
+        }
+    }
+    cursor_saved_valid = 1;
+}
+
+static void cursor_restore_background(void)
+{
+    if (!cursor_saved_valid) {
+        return;
+    }
+    for (uint32_t row = 0; row < CURSOR_TILE_H; ++row) {
+        for (uint32_t col = 0; col < CURSOR_TILE_W; ++col) {
+            int x = cursor_saved_rect.x + (int)col;
+            int y = cursor_saved_rect.y + (int)row;
+            if (x >= 0 && y >= 0 && x < (int)fb_w() && y < (int)fb_h()) {
+                screen[(uint64_t)y * MAX_FB_W + (uint32_t)x] =
+                    cursor_saved_pixels[row * CURSOR_TILE_W + col];
+            }
+        }
+    }
+}
+
+static void draw_cursor_if_intersects(struct rect dirty)
+{
+    if (cursor_visible && leonos_mouse_is_visible() > 0) {
+        struct rect cursor_rect = cursor_rect_for_style(cursor_x, cursor_y,
+                                                        desktop_cursor_style);
+        if (rect_intersects(dirty, cursor_rect)) {
+            cursor_capture_background();
+            draw_cursor_shape(cursor_x, cursor_y);
+        }
+    } else if (cursor_saved_valid && rect_intersects(dirty, cursor_saved_rect)) {
+        cursor_saved_valid = 0;
+    }
+}
+
 static void format_taskbar_clock(char *buf, uint32_t cap)
 {
     struct leonos_time_info time_info;
@@ -37,36 +95,46 @@ static void format_taskbar_clock(char *buf, uint32_t cap)
 
 static void draw_taskbar_clock(uint32_t tb_y)
 {
-    char clock[16];
     uint32_t x;
+    unsigned long second;
     if (!desktop_service_rtc_clock || fb_w() < TASKBAR_CLOCK_W + 8) {
         return;
     }
     x = fb_w() - TASKBAR_CLOCK_W;
-    format_taskbar_clock(clock, sizeof(clock));
+    second = leonos_uptime_ms() / 1000UL;
+    if (taskbar_clock_cache_second != second) {
+        format_taskbar_clock(taskbar_clock_cache, sizeof(taskbar_clock_cache));
+        taskbar_clock_cache_second = second;
+    }
     leonos_ui_button(&ui, x + 4, tb_y + 5, TASKBAR_CLOCK_W - 10,
-                     LEONOS_UI_BUTTON_H, clock, LEONOS_UI_BUTTON_PRESSED);
+                     LEONOS_UI_BUTTON_H, taskbar_clock_cache, LEONOS_UI_BUTTON_PRESSED);
 }
 
 static void draw_taskbar_network_icon(uint32_t tb_y)
 {
-    struct leonos_net_config config;
     uint32_t x;
     uint32_t icon_x;
     uint32_t icon_y;
-    uint32_t color = 0x00c00000u;
-    uint8_t connected = 0;
     uint32_t tray_w = desktop_tray_width();
+    unsigned long now;
     if (!desktop_service_network_icon || fb_w() < tray_w + 8) {
         return;
     }
-    if (leonos_net_config(&config) == 0 &&
-        (config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE) &&
-        (config.flags & LEONOS_NET_CONFIG_FLAG_DHCP) &&
-        config.source == LEONOS_NET_CONFIG_SOURCE_DHCP &&
-        config.local_ip && config.gateway_ip) {
-        connected = 1;
-        color = 0x0000a000u;
+    now = leonos_uptime_ms();
+    if (!taskbar_network_cache_valid || now - taskbar_network_cache_ms >= 500UL) {
+        struct leonos_net_config config;
+        taskbar_network_connected = 0;
+        taskbar_network_color = 0x00c00000u;
+        if (leonos_net_config(&config) == 0 &&
+            (config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE) &&
+            (config.flags & LEONOS_NET_CONFIG_FLAG_DHCP) &&
+            config.source == LEONOS_NET_CONFIG_SOURCE_DHCP &&
+            config.local_ip && config.gateway_ip) {
+            taskbar_network_connected = 1;
+            taskbar_network_color = 0x0000a000u;
+        }
+        taskbar_network_cache_ms = now;
+        taskbar_network_cache_valid = 1;
     }
     x = fb_w() - (desktop_service_rtc_clock ? TASKBAR_CLOCK_W : 0U) - TASKBAR_NET_W;
     icon_x = x + 10;
@@ -88,14 +156,14 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
     leonos_ui_rect(&ui, icon_x + 11, icon_y + 8, 8, 1, LEONOS_UI_BLACK);
     leonos_ui_rect(&ui, icon_x + 14, icon_y + 9, 2, 2, LEONOS_UI_BLACK);
 
-    if (connected) {
-        leonos_ui_rect(&ui, icon_x + 7, icon_y + 8, 6, 1, color);
-        leonos_ui_rect(&ui, icon_x + 10, icon_y + 6, 1, 5, color);
+    if (taskbar_network_connected) {
+        leonos_ui_rect(&ui, icon_x + 7, icon_y + 8, 6, 1, taskbar_network_color);
+        leonos_ui_rect(&ui, icon_x + 10, icon_y + 6, 1, 5, taskbar_network_color);
     } else {
-        leonos_ui_rect(&ui, icon_x + 8, icon_y + 5, 8, 2, color);
-        leonos_ui_rect(&ui, icon_x + 11, icon_y + 2, 2, 8, color);
+        leonos_ui_rect(&ui, icon_x + 8, icon_y + 5, 8, 2, taskbar_network_color);
+        leonos_ui_rect(&ui, icon_x + 11, icon_y + 2, 2, 8, taskbar_network_color);
     }
-    leonos_ui_rect(&ui, icon_x + 20, icon_y + 11, 4, 4, color);
+    leonos_ui_rect(&ui, icon_x + 20, icon_y + 11, 4, 4, taskbar_network_color);
 }
 
 static void draw_taskbar_inputm(uint32_t tb_y)
@@ -462,6 +530,7 @@ void redraw_region(struct rect dirty)
     if (dirty.w <= 0 || dirty.h <= 0) {
         return;
     }
+    leonos_ui_set_clip(&ui, dirty.x, dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h);
 
     if (wallpaper_loaded) {
         draw_wallpaper(dirty);
@@ -474,9 +543,9 @@ void redraw_region(struct rect dirty)
         if (rect_intersects(dirty, window_rect((uint8_t)active_window))) {
             draw_window((uint8_t)active_window);
         }
-        if (cursor_visible && leonos_mouse_is_visible() > 0) {
-            draw_cursor_shape(cursor_x, cursor_y);
-        }
+        draw_cursor_if_intersects(dirty);
+        leonos_ui_clear_clip(&ui);
+        leonos_ui_cursor_clear(&ui);
         return;
     }
 
@@ -492,26 +561,58 @@ void redraw_region(struct rect dirty)
 
     uint32_t tb_y = taskbar_y();
     if (desktop_taskbar_visible && (uint32_t)(dirty.y + dirty.h) >= tb_y) {
+        struct rect start_rect = rect_make(6, (int)tb_y + 5, 86, LEONOS_UI_BUTTON_H);
+        struct rect network_rect = rect_make(0, 0, 0, 0);
+        struct rect clock_rect = rect_make(0, 0, 0, 0);
+        struct rect inputm_rect = rect_make(0, 0, 0, 0);
+        if (desktop_service_network_icon && fb_w() >= desktop_tray_width() + 8U) {
+            uint32_t network_x = fb_w() -
+                                  (desktop_service_rtc_clock ? TASKBAR_CLOCK_W : 0U) -
+                                  TASKBAR_NET_W;
+            network_rect = rect_make((int)network_x + 4, (int)tb_y + 5,
+                                     TASKBAR_NET_W - 6, LEONOS_UI_BUTTON_H);
+        }
+        if (desktop_service_rtc_clock && fb_w() >= TASKBAR_CLOCK_W + 8U) {
+            clock_rect = rect_make((int)fb_w() - TASKBAR_CLOCK_W + 4,
+                                   (int)tb_y + 5, TASKBAR_CLOCK_W - 10,
+                                   LEONOS_UI_BUTTON_H);
+        }
+        {
+            uint32_t tray_w = desktop_tray_width();
+            uint32_t inputm_x = fb_w() > tray_w ? fb_w() - tray_w : 0;
+            inputm_rect = rect_make((int)inputm_x + 4, (int)tb_y + 5,
+                                    TASKBAR_INPUTM_W - 6, LEONOS_UI_BUTTON_H);
+        }
         leonos_ui_taskbar(&ui, tb_y, TASKBAR_H);
-        leonos_ui_button(&ui, 6, tb_y + 5, 86, LEONOS_UI_BUTTON_H, leonos_i18n("Start", "开始"),
-                         start_menu_open ? LEONOS_UI_BUTTON_PRESSED : 0);
+        if (rect_intersects(dirty, start_rect)) {
+            leonos_ui_button(&ui, 6, tb_y + 5, 86, LEONOS_UI_BUTTON_H,
+                             leonos_i18n("Start", "开始"),
+                             start_menu_open ? LEONOS_UI_BUTTON_PRESSED : 0);
+        }
         uint32_t x = 106;
         uint32_t button_w = taskbar_button_width(running_window_count());
         for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
             if (windows[i].visible &&
                 (windows[i].flags & LEONOS_GUI_WINDOW_HIDE_TASKBAR) == 0 &&
                 button_w > 0) {
-                draw_taskbar_button(i, x, tb_y + 5, button_w);
+                struct rect button_rect = rect_make((int)x, (int)tb_y + 5,
+                                                    button_w > 8 ? button_w - 8 : button_w,
+                                                    LEONOS_UI_BUTTON_H);
+                if (rect_intersects(dirty, button_rect)) {
+                    draw_taskbar_button(i, x, tb_y + 5, button_w);
+                }
                 x += button_w;
             }
         }
-        if (desktop_service_network_icon) {
+        if (rect_intersects(dirty, network_rect)) {
             draw_taskbar_network_icon(tb_y);
         }
-        if (desktop_service_rtc_clock) {
+        if (rect_intersects(dirty, clock_rect)) {
             draw_taskbar_clock(tb_y);
         }
-        draw_taskbar_inputm(tb_y);
+        if (rect_intersects(dirty, inputm_rect)) {
+            draw_taskbar_inputm(tb_y);
+        }
     }
 
     for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
@@ -527,9 +628,10 @@ void redraw_region(struct rect dirty)
     draw_desktop_shortcut_input();
     draw_desktop_message();
     draw_inputm_overlay();
-    if (cursor_visible && leonos_mouse_is_visible() > 0) {
-        draw_cursor_shape(cursor_x, cursor_y);
-    }
+    draw_cursor_if_intersects(dirty);
+    leonos_ui_clear_clip(&ui);
+    /* Desktop controls are drawn on the framebuffer, not submitted as a GUI window. */
+    leonos_ui_cursor_clear(&ui);
 }
 
 void draw_power_confirm(void)
@@ -619,6 +721,54 @@ void repaint_and_flush(struct rect dirty)
     flush_region(dirty);
 }
 
+void repaint_cursor_and_flush(struct rect dirty)
+{
+    dirty = rect_clip(dirty);
+    if (dirty.w <= 0 || dirty.h <= 0) {
+        return;
+    }
+    cursor_restore_background();
+    leonos_ui_clear_clip(&ui);
+    if (cursor_visible && leonos_mouse_is_visible() > 0) {
+        cursor_capture_background();
+        draw_cursor_shape(cursor_x, cursor_y);
+    } else {
+        cursor_saved_valid = 0;
+    }
+    flush_region(dirty);
+}
+
+void desktop_queue_damage(struct rect dirty)
+{
+    /* Coalesce non-cursor updates until the event batch is drained. */
+    dirty = rect_clip(dirty);
+    if (dirty.w <= 0 || dirty.h <= 0) {
+        return;
+    }
+    if (desktop_damage_pending) {
+        desktop_damage_rect = rect_union(desktop_damage_rect, dirty);
+    } else {
+        desktop_damage_rect = dirty;
+        desktop_damage_pending = 1;
+    }
+    desktop_damage_cursor_only = 0;
+}
+
+void desktop_queue_cursor_damage(struct rect dirty)
+{
+    dirty = rect_clip(dirty);
+    if (dirty.w <= 0 || dirty.h <= 0) {
+        return;
+    }
+    if (desktop_damage_pending) {
+        desktop_damage_rect = rect_union(desktop_damage_rect, dirty);
+    } else {
+        desktop_damage_rect = dirty;
+        desktop_damage_pending = 1;
+        desktop_damage_cursor_only = 1;
+    }
+}
+
 void redraw_all(void)
 {
     struct rect full = rect_make(0, 0, (int)fb_w(), (int)fb_h());
@@ -634,6 +784,9 @@ void redraw_all(void)
     }
     redraw_region(full);
     flush_region(full);
+    desktop_damage_pending = 0;
+    desktop_damage_cursor_only = 0;
+    desktop_damage_rect = rect_make(0, 0, 0, 0);
     full_redraw_pending =
         (start_menu_animating || desktop_context_menu_animating ||
          desktop_window_animation_active()) ? 1 : 0;

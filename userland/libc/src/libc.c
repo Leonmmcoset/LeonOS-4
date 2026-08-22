@@ -1628,6 +1628,7 @@ int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t heigh
         .stride = stride,
         .pixels = pixels,
     };
+    leonos_ui_present_for_pixels(pixels, window_id);
     return ioctl(3, LEONOS_GUI_IOCTL_PRESENT_WINDOW, &cmd);
 }
 

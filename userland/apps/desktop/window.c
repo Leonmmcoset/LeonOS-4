@@ -458,7 +458,11 @@ void fetch_window_surface(uint8_t slot)
                                 app_client_scratch, &out_w, &out_h) > 0) {
         windows[slot].client_width = out_w;
         windows[slot].client_height = out_h;
-        full_redraw_pending = 1;
+        if (window_is_fullscreen(&windows[slot]) || windows[slot].anim) {
+            full_redraw_pending = 1;
+        } else {
+            desktop_queue_damage(rect_pad(window_rect(slot), 2));
+        }
     }
 }
 

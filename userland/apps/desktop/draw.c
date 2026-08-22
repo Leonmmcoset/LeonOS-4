@@ -16,9 +16,17 @@ struct rect window_rect(uint8_t id)
 
 struct rect cursor_rect_at(uint32_t x, uint32_t y)
 {
-    /* Cover both the previous and next hotspot when a hover style changes. */
-    return rect_make((int)x - CURSOR_TILE_W, (int)y - CURSOR_TILE_H,
-                     CURSOR_TILE_W * 2, CURSOR_TILE_H * 2);
+    return cursor_rect_for_style(x, y, desktop_cursor_style);
+}
+
+struct rect cursor_rect_for_style(uint32_t x, uint32_t y, uint32_t style)
+{
+    if (style >= CURSOR_STYLE_COUNT) {
+        style = LEONOS_GUI_CURSOR_ARROW;
+    }
+    return rect_make((int)x - cursor_hotspot_x[style],
+                     (int)y - cursor_hotspot_y[style],
+                     CURSOR_TILE_W, CURSOR_TILE_H);
 }
 
 struct rect rect_union(struct rect a, struct rect b)

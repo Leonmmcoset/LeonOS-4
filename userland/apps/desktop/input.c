@@ -254,9 +254,14 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
         return;
     }
     if (msg->type == 6) {
+        uint8_t cursor_changed = 0;
+        uint32_t old_cursor_style = desktop_cursor_style;
+        uint8_t old_cursor_auto = desktop_cursor_auto;
         if (msg->flags & LEONOS_GUI_CURSOR_REQUEST_POSITION) {
             int32_t requested_x = (int32_t)msg->width;
             int32_t requested_y = (int32_t)msg->height;
+            uint32_t old_cursor_x = cursor_x;
+            uint32_t old_cursor_y = cursor_y;
             cursor_x = requested_x < 0 ? 0 : (uint32_t)requested_x;
             cursor_y = requested_y < 0 ? 0 : (uint32_t)requested_y;
             if (cursor_x >= fb_w()) {
@@ -266,16 +271,21 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
                 cursor_y = fb_h() ? fb_h() - 1 : 0;
             }
             cursor_visible = 1;
+            cursor_changed = old_cursor_x != cursor_x || old_cursor_y != cursor_y;
         }
         if (msg->flags & LEONOS_GUI_CURSOR_REQUEST_AUTO) {
             desktop_cursor_auto = 1;
             desktop_cursor_style = LEONOS_GUI_CURSOR_ARROW;
+            cursor_changed |= !old_cursor_auto || old_cursor_style != desktop_cursor_style;
         } else if ((msg->flags & LEONOS_GUI_CURSOR_REQUEST_STYLE) &&
                    msg->data < LEONOS_GUI_CURSOR_STYLE_COUNT) {
             desktop_cursor_auto = 0;
             desktop_cursor_style = msg->data;
+            cursor_changed |= old_cursor_auto || old_cursor_style != desktop_cursor_style;
         }
-        full_redraw_pending = 1;
+        if (cursor_changed) {
+            full_redraw_pending = 1;
+        }
         return;
     }
     if (msg->type == LEONOS_GUI_WINDOW_MSG_CURSOR_REGION) {
@@ -285,6 +295,8 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
             msg->cursor_operation <= LEONOS_GUI_CURSOR_REGION_CLEAR) {
             struct desktop_window *w = &windows[existing];
             uint32_t index = DESKTOP_CURSOR_REGION_CAP;
+            uint8_t region_changed = 0;
+            uint32_t old_cursor_style = desktop_cursor_style;
             for (uint32_t i = 0; i < DESKTOP_CURSOR_REGION_CAP; ++i) {
                 if (w->cursor_regions[i].used &&
                     w->cursor_regions[i].id == msg->cursor_region_id) {
@@ -297,12 +309,21 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
             }
             if (msg->cursor_operation == LEONOS_GUI_CURSOR_REGION_CLEAR) {
                 for (uint32_t i = 0; i < DESKTOP_CURSOR_REGION_CAP; ++i) {
+                    region_changed |= w->cursor_regions[i].used;
                     w->cursor_regions[i].used = 0;
                 }
             } else if (index < DESKTOP_CURSOR_REGION_CAP) {
                 if (msg->cursor_operation == LEONOS_GUI_CURSOR_REGION_REMOVE) {
+                    region_changed = w->cursor_regions[index].used;
                     w->cursor_regions[index].used = 0;
                 } else {
+                    region_changed = !w->cursor_regions[index].used ||
+                                     w->cursor_regions[index].x != msg->cursor_x ||
+                                     w->cursor_regions[index].y != msg->cursor_y ||
+                                     w->cursor_regions[index].width != msg->width ||
+                                     w->cursor_regions[index].height != msg->height ||
+                                     w->cursor_regions[index].style != msg->cursor_style ||
+                                     w->cursor_regions[index].flags != msg->cursor_flags;
                     w->cursor_regions[index].used = 1;
                     w->cursor_regions[index].id = msg->cursor_region_id;
                     w->cursor_regions[index].x = msg->cursor_x;
@@ -313,10 +334,14 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
                     w->cursor_regions[index].flags = msg->cursor_flags;
                 }
             }
-            if (desktop_cursor_auto) {
-                desktop_cursor_style = desktop_cursor_style_for_pointer(cursor_x, cursor_y);
+            if (region_changed && desktop_cursor_auto) {
+                uint32_t next_cursor_style =
+                    desktop_cursor_style_for_pointer(cursor_x, cursor_y);
+                if (next_cursor_style != old_cursor_style) {
+                    desktop_cursor_style = next_cursor_style;
+                    full_redraw_pending = 1;
+                }
             }
-            full_redraw_pending = 1;
         }
         return;
     }
@@ -911,6 +936,41 @@ int handle_taskbar_click(uint32_t x, uint32_t y)
     return 1;
 }
 
+static uint32_t desktop_taskbar_cursor_style(uint32_t x, uint32_t y)
+{
+    uint32_t tb_y = taskbar_y();
+    if (!desktop_taskbar_visible || y < tb_y || y >= tb_y + TASKBAR_H) {
+        return LEONOS_GUI_CURSOR_ARROW;
+    }
+    if (hit_rect(x, y, 6, (int)tb_y + 5, 86, LEONOS_UI_BUTTON_H)) {
+        return LEONOS_GUI_CURSOR_HAND;
+    }
+    if (desktop_service_network_icon && fb_w() >= desktop_tray_width() + 8U) {
+        uint32_t network_x = fb_w() -
+                              (desktop_service_rtc_clock ? TASKBAR_CLOCK_W : 0U) -
+                              TASKBAR_NET_W;
+        if (hit_rect(x, y, (int)network_x + 4, (int)tb_y + 5,
+                     TASKBAR_NET_W - 6, LEONOS_UI_BUTTON_H)) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+    }
+    uint32_t bx = 106U;
+    uint32_t button_w = taskbar_button_width(running_window_count());
+    for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
+        if (!windows[i].visible ||
+            (windows[i].flags & LEONOS_GUI_WINDOW_HIDE_TASKBAR) != 0 ||
+            !button_w) {
+            continue;
+        }
+        uint32_t hit_w = button_w > 8U ? button_w - 8U : button_w;
+        if (hit_rect(x, y, (int)bx, (int)tb_y + 5, hit_w, LEONOS_UI_BUTTON_H)) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+        bx += button_w;
+    }
+    return LEONOS_GUI_CURSOR_ARROW;
+}
+
 void update_snap_preview(uint32_t x, uint32_t y)
 {
     uint8_t next = SNAP_NONE;
@@ -930,6 +990,7 @@ uint32_t desktop_cursor_style_for_pointer(uint32_t x, uint32_t y)
     struct desktop_window *w;
     int bx;
     int by;
+    int resizable;
     int resize_edge_x;
     int resize_edge_y;
 
@@ -996,32 +1057,67 @@ uint32_t desktop_cursor_style_for_pointer(uint32_t x, uint32_t y)
         }
         return LEONOS_GUI_CURSOR_NO;
     }
+    if (desktop_inputm_menu_open) {
+        uint32_t inputm_style = desktop_inputm_cursor_style(x, y);
+        if (inputm_style != LEONOS_GUI_CURSOR_ARROW || y < taskbar_y()) {
+            return inputm_style;
+        }
+    }
     if (start_menu_open || start_menu_animating) {
-        return start_menu_hit_test(x, y) ? LEONOS_GUI_CURSOR_HAND : LEONOS_GUI_CURSOR_NO;
+        if (start_menu_hit_test(x, y)) {
+            return start_menu_cursor_style(x, y);
+        }
+        if (desktop_taskbar_visible && y >= taskbar_y()) {
+            uint32_t inputm_style = desktop_inputm_cursor_style(x, y);
+            if (inputm_style != LEONOS_GUI_CURSOR_ARROW) {
+                return inputm_style;
+            }
+            return desktop_taskbar_cursor_style(x, y);
+        }
+        return LEONOS_GUI_CURSOR_ARROW;
     }
     if (desktop_context_menu_active || desktop_context_menu_animating) {
-        return hit_rect(x, y, (int)desktop_context_menu_x,
-                        (int)desktop_context_menu_y, DESKTOP_CONTEXT_MENU_W,
-                        leonos_ui_context_menu_height(DESKTOP_CONTEXT_MENU_COUNT))
-                   ? LEONOS_GUI_CURSOR_HAND
-                   : LEONOS_GUI_CURSOR_NO;
+        if (desktop_context_menu_animating) {
+            return LEONOS_GUI_CURSOR_ARROW;
+        }
+        uint32_t row_h = LEONOS_FONT_H + 8U;
+        uint32_t menu_h = leonos_ui_context_menu_height(DESKTOP_CONTEXT_MENU_COUNT);
+        if (!hit_rect(x, y, (int)desktop_context_menu_x,
+                      (int)desktop_context_menu_y, DESKTOP_CONTEXT_MENU_W, menu_h)) {
+            return LEONOS_GUI_CURSOR_ARROW;
+        }
+        if (y < desktop_context_menu_y + 4U) {
+            return LEONOS_GUI_CURSOR_ARROW;
+        }
+        uint32_t index = (y - desktop_context_menu_y - 4U) / row_h;
+        return index < DESKTOP_CONTEXT_MENU_COUNT ? LEONOS_GUI_CURSOR_HAND
+                                                  : LEONOS_GUI_CURSOR_ARROW;
     }
     if (desktop_taskbar_visible && y >= taskbar_y()) {
-        return LEONOS_GUI_CURSOR_HAND;
+        uint32_t inputm_style = desktop_inputm_cursor_style(x, y);
+        if (inputm_style != LEONOS_GUI_CURSOR_ARROW) {
+            return inputm_style;
+        }
+        return desktop_taskbar_cursor_style(x, y);
     }
     id = hit_window(x, y);
     if (id < BUILTIN_WINDOWS || id >= MAX_WINDOWS) {
         return LEONOS_GUI_CURSOR_ARROW;
     }
     w = &windows[id];
+    resizable = window_allows_resize(w);
     if (!window_is_fullscreen(w) && !window_is_borderless(w)) {
         bx = w->x + (int)w->width - 64;
-        by = w->y + 7;
-        if (hit_rect(x, y, bx, by, 60, 20)) {
+        by = w->y + 6;
+        if (hit_rect(x, y, resizable ? bx : bx + 20, by, 18, 20) ||
+            (resizable && hit_rect(x, y, bx + 20, by, 18, 20)) ||
+            hit_rect(x, y, bx + 40, by, 18, 20)) {
             return LEONOS_GUI_CURSOR_HAND;
         }
         if (window_allows_resize(w) &&
-            hit_rect(x, y, w->x + (int)w->width - 20, w->y + (int)w->height - 20, 20, 20)) {
+            !w->maximized &&
+            hit_rect(x, y, w->x + (int)w->width - 18,
+                     w->y + (int)w->height - 18, 18, 18)) {
             return LEONOS_GUI_CURSOR_SIZE_NWSE;
         }
         if (hit_rect(x, y, w->x + 4, w->y + 4,
@@ -1040,7 +1136,7 @@ uint32_t desktop_cursor_style_for_pointer(uint32_t x, uint32_t y)
         if (client_x < 0 || client_y < 0) {
             return LEONOS_GUI_CURSOR_ARROW;
         }
-        for (uint32_t i = 0; i < DESKTOP_CURSOR_REGION_CAP; ++i) {
+        for (int i = DESKTOP_CURSOR_REGION_CAP - 1; i >= 0; --i) {
             struct desktop_cursor_region *region = &w->cursor_regions[i];
             if (region->used && hit_rect((uint32_t)client_x, (uint32_t)client_y,
                                          region->x, region->y,
@@ -1056,6 +1152,24 @@ uint32_t desktop_cursor_style_for_pointer(uint32_t x, uint32_t y)
     return LEONOS_GUI_CURSOR_ARROW;
 }
 
+static int rect_same(struct rect a, struct rect b)
+{
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
+static void queue_mouse_damage(struct rect dirty, struct rect cursor_dirty)
+{
+    if (!full_redraw_pending) {
+        dirty = rect_pad(dirty, 2);
+        cursor_dirty = rect_pad(cursor_dirty, 2);
+        if (rect_same(dirty, cursor_dirty)) {
+            desktop_queue_cursor_damage(dirty);
+        } else {
+            desktop_queue_damage(dirty);
+        }
+    }
+}
+
 void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
 {
     if (x >= fb_w()) {
@@ -1065,6 +1179,12 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         y = fb_h() ? fb_h() - 1 : 0;
     }
 
+    if (cursor_visible && x == cursor_x && y == cursor_y &&
+        buttons == previous_buttons) {
+        return;
+    }
+
+    uint32_t old_cursor_style = desktop_cursor_style;
     if (desktop_cursor_auto) {
         desktop_cursor_style = desktop_cursor_style_for_pointer(x, y);
     }
@@ -1076,8 +1196,12 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
     uint8_t new_left = left && !was_left;
     uint8_t new_right = right && !was_right;
     int hover_id = hit_window(x, y);
-    struct rect dirty = cursor_visible ? cursor_rect_at(cursor_x, cursor_y) : rect_make(0, 0, 0, 0);
-    dirty = rect_union(dirty, cursor_rect_at(x, y));
+    struct rect dirty = cursor_visible
+                            ? cursor_rect_for_style(cursor_x, cursor_y,
+                                                    old_cursor_style)
+                            : rect_make(0, 0, 0, 0);
+    dirty = rect_union(dirty, cursor_rect_for_style(x, y, desktop_cursor_style));
+    struct rect cursor_dirty = dirty;
 
     if (desktop_shortcut_input_active) {
         if (new_left || new_right) {
@@ -1087,11 +1211,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         cursor_x = x;
         cursor_y = y;
         cursor_visible = 1;
-        if (full_redraw_pending) {
-            redraw_all();
-        } else {
-            repaint_and_flush(rect_pad(dirty, 2));
-        }
+        queue_mouse_damage(dirty, cursor_dirty);
         return;
     }
 
@@ -1100,7 +1220,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         cursor_x = x;
         cursor_y = y;
         cursor_visible = 1;
-        redraw_all();
+        full_redraw_pending = 1;
         return;
     }
 
@@ -1112,11 +1232,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         cursor_x = x;
         cursor_y = y;
         cursor_visible = 1;
-        if (full_redraw_pending) {
-            redraw_all();
-        } else {
-            repaint_and_flush(rect_pad(dirty, 2));
-        }
+        queue_mouse_damage(dirty, cursor_dirty);
         return;
     }
 
@@ -1128,11 +1244,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         cursor_x = x;
         cursor_y = y;
         cursor_visible = 1;
-        if (full_redraw_pending) {
-            redraw_all();
-        } else {
-            repaint_and_flush(rect_pad(dirty, 2));
-        }
+        queue_mouse_damage(dirty, cursor_dirty);
         return;
     }
 
@@ -1149,11 +1261,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         cursor_x = x;
         cursor_y = y;
         cursor_visible = 1;
-        if (full_redraw_pending) {
-            redraw_all();
-        } else {
-            repaint_and_flush(rect_pad(dirty, 2));
-        }
+        queue_mouse_damage(dirty, cursor_dirty);
         return;
     }
 
@@ -1163,11 +1271,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         cursor_x = x;
         cursor_y = y;
         cursor_visible = 1;
-        if (full_redraw_pending) {
-            redraw_all();
-        } else {
-            repaint_and_flush(rect_pad(dirty, 2));
-        }
+        queue_mouse_damage(dirty, cursor_dirty);
         return;
     }
 
@@ -1177,11 +1281,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         cursor_x = x;
         cursor_y = y;
         cursor_visible = 1;
-        if (full_redraw_pending) {
-            redraw_all();
-        } else {
-            repaint_and_flush(rect_pad(dirty, 2));
-        }
+        queue_mouse_damage(dirty, cursor_dirty);
         return;
     }
 
@@ -1191,11 +1291,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         cursor_x = x;
         cursor_y = y;
         cursor_visible = 1;
-        if (full_redraw_pending) {
-            redraw_all();
-        } else {
-            repaint_and_flush(rect_pad(dirty, 2));
-        }
+        queue_mouse_damage(dirty, cursor_dirty);
         return;
     }
 
@@ -1348,11 +1444,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
     cursor_x = x;
     cursor_y = y;
     cursor_visible = 1;
-    if (full_redraw_pending) {
-        redraw_all();
-    } else {
-        repaint_and_flush(rect_pad(dirty, 2));
-    }
+    queue_mouse_damage(dirty, cursor_dirty);
 }
 
 void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
@@ -1380,7 +1472,7 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
         return;
     }
     if (start_menu_handle_wheel(x, y, wheel)) {
-        redraw_all();
+        full_redraw_pending = 1;
         return;
     }
     int hover_id = hit_window(x, y);

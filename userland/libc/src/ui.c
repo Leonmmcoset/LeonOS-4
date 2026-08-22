@@ -2044,6 +2044,11 @@ void leonos_ui_combobox(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
     uint32_t h = LEONOS_FONT_H + 8;
     leonos_ui_edit(surface, x, y, w, text, ui_strlen(text), 0,
                    (flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_EDIT_DISABLED : 0);
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     leonos_ui_button(surface, x + w - h, y, h, h, open ? "^" : "v", flags & LEONOS_UI_EDIT_DISABLED ? LEONOS_UI_BUTTON_DISABLED : 0);
 }
 
@@ -2188,6 +2193,11 @@ void leonos_ui_dropdown(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
                            w > 8 ? w - 8 : w, 1, LEONOS_UI_WHITE);
             continue;
         }
+        leonos_ui_cursor_region(surface, popup_x, (int32_t)row_y, w, row_h,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
         if (items && items[i].id == selected_id && !(flags & LEONOS_UI_MENU_DISABLED)) {
             leonos_ui_rect(surface, (uint32_t)popup_x + 3, row_y, w > 6 ? w - 6 : w,
                            row_h, LEONOS_UI_ACTIVE_TITLE);
@@ -2375,6 +2385,9 @@ void leonos_ui_menubar_draw(struct leonos_ui_surface *surface, uint32_t x, uint3
                                items ? items[i].label : "",
                                items && items[i].id == active_id);
         if (flags & LEONOS_UI_MENU_DISABLED) {
+            leonos_ui_cursor_region(surface, (int32_t)item_x, (int32_t)y, iw,
+                                    ui_menubar_h(), LEONOS_GUI_CURSOR_NO,
+                                    LEONOS_GUI_CURSOR_REGION_DISABLED);
             leonos_ui_text_transparent_clipped(surface, item_x + 8, y + 4,
                                                iw > 16 ? iw - 16 : iw,
                                                items ? items[i].label : "",
@@ -2470,6 +2483,12 @@ void leonos_ui_menu_popup(struct leonos_ui_surface *surface, uint32_t x, uint32_
         }
         leonos_ui_menu_item(surface, (uint32_t)popup_x + 34, row_y, w > 42 ? w - 42 : w,
                             items ? items[i].label : "", flags);
+        leonos_ui_cursor_region(surface, popup_x + 4, (int32_t)row_y,
+                                w > 8 ? w - 8 : w, row_h,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     }
 }
 
@@ -2771,6 +2790,9 @@ void leonos_ui_stepper(struct leonos_ui_surface *surface, uint32_t x, uint32_t y
     ui_format_i32(text, sizeof(text), value);
     leonos_ui_edit(surface, x, y, edit_w, text, ui_strlen(text), 0,
                    disabled ? LEONOS_UI_EDIT_DISABLED : LEONOS_UI_EDIT_READONLY);
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, edit_w, h,
+                            disabled ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_ARROW,
+                            disabled ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     leonos_ui_button(surface, x + edit_w, y, button_w, h, "-",
                      disabled || value <= min ? LEONOS_UI_BUTTON_DISABLED : 0);
     leonos_ui_button(surface, x + edit_w + button_w, y, button_w, h, "+",
