@@ -125,6 +125,43 @@ def runtime_app_relative(app: str, extension: str, system_apps: set[str]) -> Pat
     root = "system/apps" if app in system_apps else "programs"
     return Path(root) / app / f"{app}.{extension}"
 
+
+def find_compiler_rt_archive(cc: str) -> Path | None:
+    """Locate Clang's x86_64 compiler-rt builtins archive across layouts."""
+    compiler_rt = subprocess.run(
+        (cc, "-target", "x86_64-unknown-none", "-rtlib=compiler-rt",
+         "--print-libgcc-file-name"),
+        check=False, text=True, capture_output=True,
+    )
+    candidates: list[Path] = []
+    queried_path = compiler_rt.stdout.strip()
+    if queried_path:
+        queried_archive = Path(queried_path)
+        candidates.append(queried_archive)
+        # Some Debian/Ubuntu Clang versions return a cross-target path while
+        # packaging the archive in a sibling ``lib/linux`` directory.
+        candidates.append(queried_archive.parent / "linux" / queried_archive.name)
+
+    resource_dir_result = subprocess.run(
+        (cc, "-print-resource-dir"), check=False, text=True, capture_output=True,
+    )
+    resource_dir = resource_dir_result.stdout.strip()
+    if resource_dir:
+        resource_root = Path(resource_dir) / "lib"
+        # Arch/CachyOS and newer Clang packages use this resource-directory
+        # layout, with the x86_64 suffix in the archive name.
+        candidates.append(resource_root / "linux" / "libclang_rt.builtins-x86_64.a")
+        # Keep compatibility with target-specific packages using the generic
+        # archive name returned by --print-libgcc-file-name.
+        candidates.append(resource_root / "x86_64-unknown-none" / "libclang_rt.builtins.a")
+        candidates.append(resource_root / "x86_64-unknown-none" / "linux" / "libclang_rt.builtins.a")
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 MBEDTLS_SOURCES = [
     "aes.c", "asn1parse.c", "asn1write.c", "base64.c", "bignum.c", "cipher.c",
     "cipher_wrap.c", "constant_time.c", "ctr_drbg.c", "ecdh.c", "ecdsa.c", "ecp.c",
@@ -496,19 +533,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ar = os.environ.get("AR", "llvm-ar")
     ld = os.environ.get("LD", "ld.lld")
     objcopy = os.environ.get("OBJCOPY", "llvm-objcopy")
-    compiler_rt = subprocess.run(
-        (cc, "-target", "x86_64-unknown-none", "-rtlib=compiler-rt",
-         "--print-libgcc-file-name"),
-        check=False, text=True, capture_output=True,
-    )
-    compiler_rt_archive = Path(compiler_rt.stdout.strip())
-    # Debian/Ubuntu package compiler-rt under ``lib/linux`` while Clang's
-    # generic target query returns the adjacent cross-target location.
-    if not compiler_rt_archive.is_file():
-        linux_candidate = compiler_rt_archive.parent / "linux" / compiler_rt_archive.name
-        if linux_candidate.is_file():
-            compiler_rt_archive = linux_candidate
-    if compiler_rt.returncode or not compiler_rt_archive.is_file():
+    compiler_rt_archive = find_compiler_rt_archive(cc)
+    if compiler_rt_archive is None:
         raise GraphError("Clang compiler-rt builtins archive is required for the dynamic runtime")
     generated = paths.generated_include
     autoconf = generated / "autoconf.h"
@@ -2768,7 +2794,10 @@ def resolve_build_config(
         if interactive and not overrides:
             return source
     else:
-        source = paths.kconfig if paths.kconfig.exists() else ROOT / "configs/default.conf"
+        if not paths.kconfig.exists():
+            paths.kconfig.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "configs/default.conf", paths.kconfig)
+        source = paths.kconfig
         if interactive and not overrides:
             return source
     if not overrides and not profile:
