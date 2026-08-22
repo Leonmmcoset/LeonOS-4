@@ -51,6 +51,7 @@
         "installer",
         "user",
         "third-party",
-        "mouse"
+        "mouse",
+        "build"
     ]
 }
