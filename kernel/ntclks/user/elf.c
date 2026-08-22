@@ -67,9 +67,7 @@ static uint64_t aslr_counter;
 static bool weak_entropy_reported;
 
 /**
- * @brief Coordinates the align down operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round value down to the previous 4096-byte page boundary.
  */
 static uint64_t align_down(uint64_t value)
 {
@@ -77,9 +75,7 @@ static uint64_t align_down(uint64_t value)
 }
 
 /**
- * @brief Coordinates the align up operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round value up to the next page boundary; returns 0 on overflow.
  */
 static uint64_t align_up(uint64_t value)
 {
@@ -90,9 +86,7 @@ static uint64_t align_up(uint64_t value)
 }
 
 /**
- * @brief Coordinates the align4 up operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round value up to a 4-byte boundary; returns 0 on overflow.
  */
 static uint64_t align4_up(uint64_t value)
 {
@@ -103,9 +97,7 @@ static uint64_t align4_up(uint64_t value)
 }
 
 /**
- * @brief Coordinates the elf64 random u64 operation.
- * @param strong Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return a random 64-bit value: RDRAND when available, else a TSC/counter mix; *strong reports whether hardware randomness was used.
  */
 static uint64_t elf64_random_u64(bool *strong)
 {
@@ -140,8 +132,7 @@ static uint64_t elf64_random_u64(bool *strong)
 }
 
 /**
- * @brief Coordinates the elf64 fill random operation.
- * @param out Caller-provided storage that receives output from this operation.
+ * @brief Fill a 16-byte buffer with two random u64s; log once if RDRAND is missing.
  */
 static void elf64_fill_random(uint8_t out[16])
 {
@@ -159,10 +150,7 @@ static void elf64_fill_random(uint8_t out[16])
 }
 
 /**
- * @brief Coordinates the elf64 program headers fit operation.
- * @param eh Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true if every program header fits within len bytes of the image.
  */
 static bool elf64_program_headers_fit(const struct elf64_ehdr *eh, size_t len)
 {
@@ -173,11 +161,7 @@ static bool elf64_program_headers_fit(const struct elf64_ehdr *eh, size_t len)
 }
 
 /**
- * @brief Coordinates the elf64 phdr at operation.
- * @param eh Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param index Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return a pointer to the index-th program header within image.
  */
 static const struct elf64_phdr *elf64_phdr_at(const struct elf64_ehdr *eh,
                                                const void *image, uint16_t index)
@@ -187,12 +171,7 @@ static const struct elf64_phdr *elf64_phdr_at(const struct elf64_ehdr *eh,
 }
 
 /**
- * @brief Coordinates the elf64 note abi operation.
- * @param eh Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out_major Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Scan PT_NOTE segments for the LeonOS ABI note; store its major version and return true only when it matches the kernel's ABI major.
  */
 static bool elf64_note_abi(const struct elf64_ehdr *eh, const void *image, size_t len,
                            uint32_t *out_major)
@@ -240,12 +219,7 @@ static bool elf64_note_abi(const struct elf64_ehdr *eh, const void *image, size_
 }
 
 /**
- * @brief Coordinates the elf64 interp operation.
- * @param eh Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the PT_INTERP path string (if any) into out; returns false when absent or not NUL-terminated within the segment.
  */
 static bool elf64_interp(const struct elf64_ehdr *eh, const void *image, size_t len,
                          char out[64])
@@ -272,13 +246,7 @@ static bool elf64_interp(const struct elf64_ehdr *eh, const void *image, size_t 
 }
 
 /**
- * @brief Coordinates the elf64 validate dynamic header operation.
- * @param eh Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param is_interpreter Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Verify a dynamic image's PHDR/ABI-note layout; the main image must also carry a matching PT_INTERP, while the interpreter must not. Records phdr_vaddr, interp, and abi_major in out.
  */
 static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const void *image,
                                           size_t len, bool is_interpreter,
@@ -321,8 +289,9 @@ static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const voi
     return true;
 }
 
-/* header_len is the amount available in image. file_len is the full backing
- * file size, which is larger when the kernel lazily maps an ELF from storage. */
+/**
+ * @brief header_len is the amount available in image. file_len is the full backing file size, which is larger when the kernel lazily maps an ELF from storage.
+ */
 static bool elf64_probe_image(const void *image, size_t header_len, uint64_t file_len,
                               bool is_interpreter, struct elf_image_info *out)
 {
@@ -380,11 +349,7 @@ static bool elf64_probe_image(const void *image, size_t header_len, uint64_t fil
 }
 
 /**
- * @brief Coordinates the elf64 probe operation.
- * @param image Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Validate image as an ELF64 x86_64 executable and fill out; wrapper that treats the whole buffer as the file.
  */
 bool elf64_probe(const void *image, size_t len, struct elf_image_info *out)
 {
@@ -392,11 +357,7 @@ bool elf64_probe(const void *image, size_t len, struct elf_image_info *out)
 }
 
 /**
- * @brief Coordinates the elf64 segment valid operation.
- * @param ph Input or output value used by this operation.
- * @param file_len Length, size, or element count associated with the operation.
- * @param bias Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true if the LOAD segment fits the file and, at bias, stays inside user address space without overflow.
  */
 static bool elf64_segment_valid(const struct elf64_phdr *ph, uint64_t file_len,
                                 uint64_t bias)
@@ -412,12 +373,7 @@ static bool elf64_segment_valid(const struct elf64_phdr *ph, uint64_t file_len,
 }
 
 /**
- * @brief Coordinates the ensure segment pages operation.
- * @param as Input or output value used by this operation.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate and map physical pages to back [start, end) in the address space, leaving already-mapped pages alone; returns false on failure.
  */
 static bool ensure_segment_pages(struct address_space *as, uint64_t start,
                                  uint64_t end, uint64_t flags)
@@ -439,12 +395,7 @@ static bool ensure_segment_pages(struct address_space *as, uint64_t start,
 }
 
 /**
- * @brief Copies to address space.
- * @param as Input or output value used by this operation.
- * @param vaddr Address used by this operation; its address-space interpretation follows the API.
- * @param src Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy len bytes from src into the address space at vaddr, crossing page boundaries; returns false if any page is unmapped.
  */
 static bool copy_to_address_space(struct address_space *as, uint64_t vaddr,
                                   const uint8_t *src, uint64_t len)
@@ -469,12 +420,7 @@ static bool copy_to_address_space(struct address_space *as, uint64_t vaddr,
 }
 
 /**
- * @brief Coordinates the elf64 load address space operation.
- * @param as Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Map a static ELF image into the address space: probe it, then allocate pages and copy each LOAD segment; rejects dynamic images.
  */
 bool elf64_load_address_space(struct address_space *as, const void *image, size_t len,
                               struct elf_image_info *out)
@@ -508,11 +454,7 @@ bool elf64_load_address_space(struct address_space *as, const void *image, size_
 }
 
 /**
- * @brief Coordinates the elf64 read headers operation.
- * @param node Input or output value used by this operation.
- * @param out_image Caller-provided storage that receives output from this operation.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read the ELF header plus program headers from node into the scratch buffer and expose them via out_image/out_len.
  */
 static bool elf64_read_headers(const struct storage_node *node, const void **out_image,
                                size_t *out_len)
@@ -549,11 +491,7 @@ static bool elf64_read_headers(const struct storage_node *node, const void **out
 }
 
 /**
- * @brief Coordinates the elf64 task range available operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true if [start, end) is a valid user range that neither overlaps the task's stack nor any of its existing VMAs.
  */
 static bool elf64_task_range_available(const struct task *task, uint64_t start, uint64_t end)
 {
@@ -585,9 +523,7 @@ static bool elf64_task_range_available(const struct task *task, uint64_t start, 
 }
 
 /**
- * @brief Coordinates the elf64 task free vma operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * @brief Return the first unused VMA slot of the task, or NULL when none remain.
  */
 static struct task_vma *elf64_task_free_vma(struct task *task)
 {
@@ -601,13 +537,7 @@ static struct task_vma *elf64_task_free_vma(struct task *task)
 }
 
 /**
- * @brief Coordinates the elf64 segments nonoverlapping operation.
- * @param eh Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param file_len Length, size, or element count associated with the operation.
- * @param bias Input or output value used by this operation.
- * @param strict_page_layout Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Validate each LOAD segment's range and file/va page alignment; when strict, also require their page ranges to be pairwise disjoint.
  */
 static bool elf64_segments_nonoverlapping(const struct elf64_ehdr *eh, const void *image,
                                           uint64_t file_len, uint64_t bias,
@@ -649,11 +579,9 @@ static bool elf64_segments_nonoverlapping(const struct elf64_ehdr *eh, const voi
     return true;
 }
 
-/* Older ET_EXEC images can place a tiny writable GOT at the tail of a
- * read-only file page.  They remain supported by recording one VMA for that
- * common file page, with the union of their page permissions.  PIE images
- * must keep page-granular LOAD ranges disjoint so their protections are
- * exact from the first fault onward. */
+/**
+ * @brief Older ET_EXEC images can place a tiny writable GOT at the tail of a read-only file page. They remain supported by recording one VMA for that common file page, with the union of their page permissions. PIE images must keep page-granular LOAD ranges disjoint so their protections are exact from the first fault onward.
+ */
 static struct task_vma *elf64_legacy_shared_page_vma(struct task *task,
                                                       const struct storage_node *node,
                                                       uint64_t start, uint64_t end,
@@ -679,10 +607,7 @@ static struct task_vma *elf64_legacy_shared_page_vma(struct task *task,
 }
 
 /**
- * @brief Coordinates the elf64 choose bias operation.
- * @param info Input or output value used by this operation.
- * @param interpreter Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Pick a random 2 MiB-aligned load bias inside the main/interpreter ASLR window that fits the image; returns 0 when the layout cannot fit.
  */
 static uint64_t elf64_choose_bias(const struct elf_image_info *info, bool interpreter)
 {
@@ -703,14 +628,7 @@ static uint64_t elf64_choose_bias(const struct elf_image_info *info, bool interp
 }
 
 /**
- * @brief Coordinates the elf64 map one operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param node Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param info Input or output value used by this operation.
- * @param bias Input or output value used by this operation.
- * @param image_name Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Create lazy file-backed VMAs for every LOAD segment of image at bias, coalescing shared read-only pages of static ET_EXEC images.
  */
 static bool elf64_map_one(struct task *task, const struct storage_node *node,
                           const void *image, const struct elf_image_info *info,
@@ -835,11 +753,7 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
 }
 
 /**
- * @brief Coordinates the elf64 map task image operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param node Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Map the task's main ELF (and its dynamic interpreter when PIE) into the task, recording entry/PHDR/interpreter addresses and ASLR biases in out.
  */
 bool elf64_map_task_image(struct task *task, const struct storage_node *node,
                           struct elf_image_info *out)

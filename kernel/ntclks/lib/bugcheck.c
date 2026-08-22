@@ -13,10 +13,7 @@
 #include "../arch/x86_64/port.h"
 
 /**
- * @brief Coordinates the bugcheck color operation.
- * @param win95 Input or output value used by this operation.
- * @param metro Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Pick the Win95 or Metro palette color depending on the active GUI theme.
  */
 static uint32_t bugcheck_color(uint32_t win95, uint32_t metro)
 {
@@ -47,10 +44,7 @@ struct bugcheck_info {
 };
 
 /**
- * @brief Copies text.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Copy src into dst, keeping room for a NUL terminator; a NULL src or empty dst is a no-op.
  */
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -66,11 +60,7 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
 }
 
 /**
- * @brief Appends char.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ch Input or output value used by this operation.
+ * @brief Write ch at *pos, advance *pos, and re-terminate the buffer; drops the char if full.
  */
 static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -83,11 +73,7 @@ static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 }
 
 /**
- * @brief Appends text.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param text Input or output value used by this operation.
+ * @brief Append every character of text one at a time via append_char.
  */
 static void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
@@ -97,11 +83,7 @@ static void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text
 }
 
 /**
- * @brief Appends u64 dec.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * @brief Append value in decimal, building the digits least-significant first into a scratch buffer.
  */
 static void append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -121,11 +103,7 @@ static void append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t valu
 }
 
 /**
- * @brief Appends u64 hex.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * @brief Append value as a fixed-width "0x" + 16 uppercase hex digits (zero-padded).
  */
 static void append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -137,9 +115,7 @@ static void append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t valu
 }
 
 /**
- * @brief Coordinates the exception name operation.
- * @param vector Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Map an x86 exception vector to its human-readable name, defaulting to "CPU Exception".
  */
 static const char *exception_name(uint64_t vector)
 {
@@ -172,9 +148,7 @@ static const char *exception_name(uint64_t vector)
 }
 
 /**
- * @brief Coordinates the fault mode operation.
- * @param info Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Report "user" when the faulting code segment runs in ring 3, otherwise "kernel".
  */
 static const char *fault_mode(const struct bugcheck_info *info)
 {
@@ -182,11 +156,7 @@ static const char *fault_mode(const struct bugcheck_info *info)
 }
 
 /**
- * @brief Appends page fault flags.
- * @param line Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param error Input or output value used by this operation.
+ * @brief Encode the page-fault error code's P/W/U/RSVD/IF bits as "P=1 W=0 ..." fields.
  */
 static void append_page_fault_flags(char *line, uint32_t *pos, uint32_t cap,
                                     uint64_t error)
@@ -204,8 +174,7 @@ static void append_page_fault_flags(char *line, uint32_t *pos, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the collect bugcheck info operation.
- * @param info Input or output value used by this operation.
+ * @brief Capture the runtime snapshot: tick count, uptime, and the current task's pid and name.
  */
 static void collect_bugcheck_info(struct bugcheck_info *info)
 {
@@ -221,8 +190,7 @@ static void collect_bugcheck_info(struct bugcheck_info *info)
 }
 
 /**
- * @brief Coordinates the draw bugcheck vga operation.
- * @param info Input or output value used by this operation.
+ * @brief Draw the fatal-error STOP screen in text mode, including registers and fault detail.
  */
 static void draw_bugcheck_vga(const struct bugcheck_info *info)
 {
@@ -284,8 +252,7 @@ static void draw_bugcheck_vga(const struct bugcheck_info *info)
 }
 
 /**
- * @brief Coordinates the draw bugcheck fb operation.
- * @param info Input or output value used by this operation.
+ * @brief Render the fatal-error panel into the framebuffer, falling back to VGA if none is available.
  */
 static void draw_bugcheck_fb(const struct bugcheck_info *info)
 {
@@ -392,7 +359,7 @@ static void draw_bugcheck_fb(const struct bugcheck_info *info)
 }
 
 /**
- * @brief Coordinates the bugcheck halt forever operation.
+ * @brief Disable the framebuffer and spin with interrupts off on hlt; never returns.
  */
 static __attribute__((noreturn)) void bugcheck_halt_forever(void)
 {
@@ -403,8 +370,7 @@ static __attribute__((noreturn)) void bugcheck_halt_forever(void)
 }
 
 /**
- * @brief Coordinates the bugcheck commit operation.
- * @param info Input or output value used by this operation.
+ * @brief Print diagnostics, draw the error screen, and halt; a nested call halts immediately to avoid recursion.
  */
 static __attribute__((noreturn)) void bugcheck_commit(struct bugcheck_info *info)
 {
@@ -451,8 +417,7 @@ static __attribute__((noreturn)) void bugcheck_commit(struct bugcheck_info *info
 }
 
 /**
- * @brief Coordinates the bugcheck panic operation.
- * @param message Input or output value used by this operation.
+ * @brief Turn a panic message into a zeroed fault record and commit it; never returns.
  */
 __attribute__((noreturn)) void bugcheck_panic(const char *message)
 {
@@ -472,15 +437,7 @@ __attribute__((noreturn)) void bugcheck_panic(const char *message)
 }
 
 /**
- * @brief Coordinates the bugcheck exception operation.
- * @param vector Input or output value used by this operation.
- * @param error Input or output value used by this operation.
- * @param rip Input or output value used by this operation.
- * @param cs Input or output value used by this operation.
- * @param rflags Input or output value used by this operation.
- * @param rsp Input or output value used by this operation.
- * @param ss Input or output value used by this operation.
- * @param cr2 Input or output value used by this operation.
+ * @brief Build and commit a fault record for an unhandled CPU exception, naming it from the vector.
  */
 __attribute__((noreturn)) void bugcheck_exception(uint64_t vector, uint64_t error,
                                                   uint64_t rip, uint64_t cs,
@@ -503,10 +460,7 @@ __attribute__((noreturn)) void bugcheck_exception(uint64_t vector, uint64_t erro
 }
 
 /**
- * @brief Coordinates the bugcheck trap operation.
- * @param reason Input or output value used by this operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param cr2 Input or output value used by this operation.
+ * @brief Commit a fault record copied from an architecture trap frame, zeroing fields when absent.
  */
 __attribute__((noreturn)) void bugcheck_trap(const char *reason, const struct trap_frame *frame,
                                              uint64_t cr2)

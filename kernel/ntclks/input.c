@@ -11,7 +11,7 @@ static volatile uint32_t head;
 static volatile uint32_t tail;
 
 /**
- * @brief Coordinates the input init operation.
+ * @brief Reset the keyboard/pointer event queue to empty.
  */
 void input_init(void)
 {
@@ -20,8 +20,7 @@ void input_init(void)
 }
 
 /**
- * @brief Coordinates the push event operation.
- * @param event Input or output value used by this operation.
+ * @brief Append event to the ring, coalescing consecutive mouse moves with unchanged buttons; drops the oldest event when full.
  */
 static void push_event(const struct input_event *event)
 {
@@ -44,12 +43,7 @@ static void push_event(const struct input_event *event)
 }
 
 /**
- * @brief Coordinates the input push mouse operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param dx Input or output value used by this operation.
- * @param dy Input or output value used by this operation.
- * @param buttons Input or output value used by this operation.
+ * @brief Queue an absolute mouse move/drag event.
  */
 void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t buttons)
 {
@@ -65,11 +59,7 @@ void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t butt
 }
 
 /**
- * @brief Coordinates the input push mouse wheel operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param wheel Input or output value used by this operation.
- * @param buttons Input or output value used by this operation.
+ * @brief Queue a mouse wheel event (delta carried in dy).
  */
 void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons)
 {
@@ -84,9 +74,7 @@ void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons
 }
 
 /**
- * @brief Coordinates the input push key operation.
- * @param keycode Input or output value used by this operation.
- * @param pressed Input or output value used by this operation.
+ * @brief Queue a keyboard press/release event.
  */
 void input_push_key(uint8_t keycode, uint8_t pressed)
 {
@@ -99,9 +87,7 @@ void input_push_key(uint8_t keycode, uint8_t pressed)
 }
 
 /**
- * @brief Coordinates the input pop operation.
- * @param event Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Remove the oldest queued event into *event; returns 1 on success, 0 when empty or null.
  */
 int input_pop(struct input_event *event)
 {

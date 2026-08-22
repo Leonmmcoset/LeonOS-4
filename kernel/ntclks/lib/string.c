@@ -5,11 +5,7 @@
 #include <ntclks/types.h>
 
 /**
- * @brief Coordinates the memset operation.
- * @param dst Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Fill len bytes at dst with the low byte of value and return dst.
  */
 void *memset(void *dst, int value, size_t len)
 {
@@ -21,11 +17,7 @@ void *memset(void *dst, int value, size_t len)
 }
 
 /**
- * @brief Coordinates the memcpy operation.
- * @param dst Input or output value used by this operation.
- * @param src Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy len bytes from src to dst and return dst; regions must not overlap.
  */
 void *memcpy(void *dst, const void *src, size_t len)
 {
@@ -38,11 +30,7 @@ void *memcpy(void *dst, const void *src, size_t len)
 }
 
 /**
- * @brief Coordinates the memcmp operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Compare len bytes; return the first differing byte difference, or 0 when equal.
  */
 int memcmp(const void *a, const void *b, size_t len)
 {
@@ -57,9 +45,7 @@ int memcmp(const void *a, const void *b, size_t len)
 }
 
 /**
- * @brief Coordinates the strlen operation.
- * @param s Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Count bytes up to the NUL terminator; a NULL pointer is treated as length 0.
  */
 size_t strlen(const char *s)
 {
@@ -71,10 +57,7 @@ size_t strlen(const char *s)
 }
 
 /**
- * @brief Coordinates the strcmp operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Compare strings byte-wise; return the first differing unsigned byte difference.
  */
 int strcmp(const char *a, const char *b)
 {
@@ -86,11 +69,7 @@ int strcmp(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the strncmp operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Compare up to len bytes, stopping early at a difference or a NUL in either string.
  */
 int strncmp(const char *a, const char *b, size_t len)
 {

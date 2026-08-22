@@ -39,37 +39,31 @@ struct storage_read_cursor {
 struct boot_info;
 
 /**
- * @brief Coordinates the storage init operation.
+ * @brief Initialize the storage subsystem and mount the boot filesystems.
  */
 void storage_init(void);
 /**
- * @brief Coordinates the storage set io async context operation.
- * @param enabled Input or output value used by this operation.
+ * @brief Toggle asynchronous I/O for the calling context on or off.
  */
 void storage_set_io_async_context(bool enabled);
 /**
- * @brief Coordinates the storage release task io operation.
- * @param pid Input or output value used by this operation.
+ * @brief Abandon any in-flight I/O owned by pid without completing it.
  */
 void storage_release_task_io(uint32_t pid);
 /**
- * @brief Coordinates the storage drain task io operation.
- * @param pid Input or output value used by this operation.
+ * @brief Wait for pid's outstanding I/O to finish.
  */
 void storage_drain_task_io(uint32_t pid);
 /**
- * @brief Coordinates the storage init installer root operation.
- * @param boot Boot information supplied by the loader.
+ * @brief Mount the installer's root filesystem from boot info.
  */
 void storage_init_installer_root(const struct boot_info *boot);
 /**
- * @brief Coordinates the storage apply mount policy operation.
- * @param policy Input or output value used by this operation.
+ * @brief Mount or unmount volumes according to policy.
  */
 void storage_apply_mount_policy(const struct leonos_mount_policy *policy);
 /**
- * @brief Coordinates the storage ready operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true once the root filesystem is mounted and usable.
  */
 bool storage_ready(void);
 /**
@@ -78,43 +72,25 @@ bool storage_ready(void);
  */
 const char *storage_root_filesystem_name(void);
 /**
- * @brief Coordinates the storage installer root active operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true when the installer's root filesystem is mounted.
  */
 bool storage_installer_root_active(void);
 /**
- * @brief Coordinates the storage mount ramdisk root operation.
- * @param image Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Mount image (len bytes) as the root filesystem; 0 on success.
  */
 int storage_mount_ramdisk_root(const void *image, uint64_t len);
 /**
- * @brief Coordinates the storage resolve path operation.
- * @param cwd Input or output value used by this operation.
- * @param input Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @return Result, status, or value defined by this API.
+ * @brief Resolve input against cwd into out (cap bytes); 0 on success.
  */
 int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t cap);
 /** Resolves a path to its internal mounted-volume identity. */
 int storage_path_volume_id(const char *path, uint32_t *out_volume_id);
 /**
- * @brief Coordinates the storage lookup path operation.
- * @param path LeonOS path consumed by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Look up path and fill out with its storage node; 0 on success.
  */
 int storage_lookup_path(const char *path, struct storage_node *out);
 /**
- * @brief Coordinates the storage read node operation.
- * @param node Input or output value used by this operation.
- * @param offset Input or output value used by this operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out_read Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read len bytes of node from offset into buf, reporting bytes read in out_read.
  */
 int storage_read_node(const struct storage_node *node, uint64_t offset,
                       void *buf, uint32_t len, uint32_t *out_read);
@@ -132,75 +108,42 @@ int storage_read_node_cursor(const struct storage_node *node, uint64_t offset,
                              void *buf, uint32_t len, uint32_t *out_read,
                              struct storage_read_cursor *cursor);
 /**
- * @brief Coordinates the storage readdir node operation.
- * @param node Input or output value used by this operation.
- * @param cursor Input or output value used by this operation.
- * @param entry Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read the next directory entry of node into entry, advancing cursor; 0 on success.
  */
 int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
                          struct leonos_dir_entry *entry);
 /**
- * @brief Coordinates the storage read file operation.
- * @param path LeonOS path consumed by this operation.
- * @param out_data Caller-provided storage that receives output from this operation.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Load the whole file at path into a buffer returned via out_data/out_len.
  */
 int storage_read_file(const char *path, const void **out_data, size_t *out_len);
 /**
- * @brief Coordinates the storage write file operation.
- * @param path LeonOS path consumed by this operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Overwrite the file at path with len bytes from buf; 0 on success.
  */
 int storage_write_file(const char *path, const void *buf, uint32_t len);
 /**
- * @brief Coordinates the storage truncate file operation.
- * @param path LeonOS path consumed by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Resize the file at path to length bytes; 0 on success.
  */
 int storage_truncate_file(const char *path, uint64_t length);
 /**
- * @brief Coordinates the storage write node operation.
- * @param path LeonOS path consumed by this operation.
- * @param offset Input or output value used by this operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out_written Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Write len bytes of buf to the node at path from offset; reports bytes in out_written.
  */
 int storage_write_node(const char *path, uint64_t offset,
                        const void *buf, uint32_t len, uint32_t *out_written);
 /**
- * @brief Coordinates the storage list dir operation.
- * @param path LeonOS path consumed by this operation.
- * @param entries Input or output value used by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_count Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief List up to capacity directory entries of path into entries; count in out_count.
  */
 int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
                      uint32_t capacity, uint32_t *out_count);
 /**
- * @brief Coordinates the storage stat path operation.
- * @param path LeonOS path consumed by this operation.
- * @param st Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Fill st with metadata for path; 0 on success.
  */
 int storage_stat_path(const char *path, struct leonos_stat *st);
 /**
- * @brief Coordinates the storage mkdir operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Create the directory path; 0 on success.
  */
 int storage_mkdir(const char *path);
 /**
- * @brief Coordinates the storage unlink operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Delete the file path; 0 on success.
  */
 int storage_unlink(const char *path);
 /**
@@ -211,31 +154,20 @@ int storage_write_boot_esp_file(const char *path, const void *buf, uint32_t len)
 /** Removes a control file from the current boot disk ESP. */
 int storage_unlink_boot_esp_file(const char *path);
 /**
- * @brief Coordinates the storage rmdir operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Remove the empty directory path; 0 on success.
  */
 int storage_rmdir(const char *path);
 /**
- * @brief Coordinates the storage rename operation.
- * @param old_path LeonOS path consumed by this operation.
- * @param new_path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Rename old_path to new_path; 0 on success.
  */
 int storage_rename(const char *old_path, const char *new_path);
 /**
- * @brief Coordinates the storage install list disks operation.
- * @param disks Input or output value used by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_count Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief List up to capacity install disks into disks; count in out_count.
  */
 int storage_install_list_disks(struct leonos_install_disk *disks,
                                uint32_t capacity, uint32_t *out_count);
 /**
- * @brief Coordinates the storage install format esp operation.
- * @param disk_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Format the EFI system partition on disk_id; 0 on success.
  */
 int storage_install_format_esp(uint32_t disk_id);
 /**
@@ -245,9 +177,7 @@ int storage_install_format_esp(uint32_t disk_id);
  */
 int storage_install_format_target(uint32_t disk_id);
 /**
- * @brief Coordinates the storage install mount target operation.
- * @param disk_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Mount the installer target on disk_id for file placement; 0 on success.
  */
 int storage_install_mount_target(uint32_t disk_id);
 /**
@@ -304,8 +234,7 @@ int storage_disk_partition_volume_id(uint32_t disk_id, uint32_t partition_index,
  */
 int storage_disk_unmount_partition(const struct leonos_disk_partition_unmount *request);
 /**
- * @brief Coordinates the storage boot identity operation.
- * @param identity Input or output value used by this operation.
+ * @brief Fill identity with the boot disk/model information known to storage.
  */
 void storage_boot_identity(struct leonos_machine_identity *identity);
 

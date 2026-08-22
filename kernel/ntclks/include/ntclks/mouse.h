@@ -16,42 +16,36 @@ struct mouse_state {
 };
 
 /**
- * @brief Coordinates the mouse init operation.
+ * @brief Initialize the mouse device and its shared state.
  */
 void mouse_init(void);
 /**
- * @brief Coordinates the mouse poll operation.
+ * @brief Read pending PS/2 mouse bytes and update position/buttons/wheel.
  */
 void mouse_poll(void);
 const struct mouse_state *mouse_get_state(void);
 /**
- * @brief Coordinates the mouse set visible operation.
- * @param visible Input or output value used by this operation.
+ * @brief Show or hide the mouse cursor.
  */
 void mouse_set_visible(bool visible);
 /**
- * @brief Coordinates the mouse is visible operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true when the mouse cursor is visible.
  */
 bool mouse_is_visible(void);
 /**
- * @brief Coordinates the mouse event count operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return how many mouse events are waiting in the queue.
  */
 uint32_t mouse_event_count(void);
 /**
- * @brief Coordinates the mouse last status operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the last PS/2 mouse status byte received.
  */
 uint8_t mouse_last_status(void);
 /**
- * @brief Coordinates the mouse last data operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the last PS/2 mouse data byte received.
  */
 uint8_t mouse_last_data(void);
 /**
- * @brief Coordinates the mouse last ack operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the last PS/2 mouse acknowledge byte received.
  */
 uint8_t mouse_last_ack(void);
 

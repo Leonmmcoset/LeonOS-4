@@ -142,17 +142,17 @@ struct task_snapshot_user {
 };
 
 /**
- * @brief Coordinates the task effective role operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Task effective role.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t task_effective_role(const struct task *task);
 
 /**
- * @brief Coordinates the device copy text operation.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * Device copy text.
+ * @param dst Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param src Value supplied by the caller.
  */
 static void device_copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -168,11 +168,11 @@ static void device_copy_text(char *dst, uint32_t cap, const char *src)
 }
 
 /**
- * @brief Coordinates the device append char operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ch Input or output value used by this operation.
+ * Device append char.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param ch Value supplied by the caller.
  */
 static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -183,10 +183,10 @@ static void device_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 }
 
 /**
- * @brief Coordinates the text eq cstr operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Text eq cstr.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int text_eq_cstr(const char *a, const char *b)
 {
@@ -201,9 +201,9 @@ static int text_eq_cstr(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the oobe dhcp renew allowed operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Oobe dhcp renew allowed.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int oobe_dhcp_renew_allowed(const struct task *task)
 {
@@ -216,8 +216,8 @@ static int oobe_dhcp_renew_allowed(const struct task *task)
 }
 
 /**
- * @brief Validates permission for window server.
- * @return Result, status, or value defined by this API.
+ * Require window server.
+ * @return The value or status produced by the operation.
  */
 static int require_window_server(void)
 {
@@ -229,8 +229,8 @@ static int require_window_server(void)
 }
 
 /**
- * @brief Validates permission for network config access.
- * @return Result, status, or value defined by this API.
+ * Require network config access.
+ * @return The value or status produced by the operation.
  */
 static int require_network_config_access(void)
 {
@@ -252,8 +252,8 @@ static int require_network_config_access(void)
 }
 
 /**
- * @brief Validates permission for driver management.
- * @return Result, status, or value defined by this API.
+ * Require driver management.
+ * @return The value or status produced by the operation.
  */
 static int require_driver_management(void)
 {
@@ -264,9 +264,9 @@ static int require_driver_management(void)
 }
 
 /**
- * @brief Coordinates the task effective role operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Task effective role.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t task_effective_role(const struct task *task)
 {
@@ -281,8 +281,8 @@ static uint32_t task_effective_role(const struct task *task)
 }
 
 /**
- * @brief Validates permission for background service.
- * @return Result, status, or value defined by this API.
+ * Require background service.
+ * @return The value or status produced by the operation.
  */
 static int require_background_service(void)
 {
@@ -295,11 +295,11 @@ static int require_background_service(void)
 }
 
 /**
- * @brief Coordinates the device append text operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param text Input or output value used by this operation.
+ * Device append text.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param text NUL-terminated text supplied by the caller.
  */
 static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
@@ -309,11 +309,11 @@ static void device_append_text(char *buf, uint32_t *pos, uint32_t cap, const cha
 }
 
 /**
- * @brief Coordinates the device append u64 operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * Device append u64.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param value Value supplied by the caller.
  */
 static void device_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -333,11 +333,11 @@ static void device_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
 }
 
 /**
- * @brief Coordinates the device append i32 operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * Device append i32.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param value Value supplied by the caller.
  */
 static void device_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t value)
 {
@@ -349,11 +349,11 @@ static void device_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t va
 }
 
 /**
- * @brief Coordinates the device append ipv4 operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ip Input or output value used by this operation.
+ * Device append ipv4.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param ip Value supplied by the caller.
  */
 static void device_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t ip)
 {
@@ -367,17 +367,17 @@ static void device_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t 
 }
 
 /**
- * @brief Coordinates the device add operation.
- * @param devices Input or output value used by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param count Length, size, or element count associated with the operation.
- * @param device_class Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param name Input or output value used by this operation.
- * @param status Input or output value used by this operation.
- * @param detail Input or output value used by this operation.
- * @param value0 Input or output value used by this operation.
- * @param value1 Input or output value used by this operation.
+ * Device add.
+ * @param devices Caller-owned structure read or updated by the function.
+ * @param capacity Maximum number of elements available in the related buffer.
+ * @param count Output storage updated by the function.
+ * @param device_class Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param name NUL-terminated text supplied by the caller.
+ * @param status Output storage updated by the function.
+ * @param detail Value supplied by the caller.
+ * @param value0 Value supplied by the caller.
+ * @param value1 Value supplied by the caller.
  */
 static void device_add(struct leonos_device_info *devices, uint32_t capacity,
                        uint32_t *count, uint32_t device_class, uint32_t flags,
@@ -405,15 +405,15 @@ static void device_add(struct leonos_device_info *devices, uint32_t capacity,
 }
 
 /**
- * @brief Coordinates the raw device add operation.
- * @param raw Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @param kind Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param aux0 Input or output value used by this operation.
- * @param aux1 Input or output value used by this operation.
- * @param value0 Input or output value used by this operation.
- * @param value1 Input or output value used by this operation.
+ * Raw device add.
+ * @param raw Caller-owned structure read or updated by the function.
+ * @param count Output storage updated by the function.
+ * @param kind Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param aux0 Value supplied by the caller.
+ * @param aux1 Value supplied by the caller.
+ * @param value0 Value supplied by the caller.
+ * @param value1 Value supplied by the caller.
  */
 static void raw_device_add(struct leonos_raw_device_info *raw, uint32_t *count,
                            uint32_t kind, uint32_t flags, uint32_t aux0, uint32_t aux1,
@@ -435,10 +435,10 @@ static void raw_device_add(struct leonos_raw_device_info *raw, uint32_t *count,
 }
 
 /**
- * @brief Coordinates the device format fb operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param fb Input or output value used by this operation.
+ * Device format fb.
+ * @param buf Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param fb Value supplied by the caller.
  */
 static void device_format_fb(char *buf, uint32_t cap, const struct framebuffer *fb)
 {
@@ -458,10 +458,10 @@ static void device_format_fb(char *buf, uint32_t cap, const struct framebuffer *
 }
 
 /**
- * @brief Coordinates the device format mouse operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param mouse Input or output value used by this operation.
+ * Device format mouse.
+ * @param buf Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param mouse Value supplied by the caller.
  */
 static void device_format_mouse(char *buf, uint32_t cap, const struct mouse_state *mouse)
 {
@@ -481,10 +481,10 @@ static void device_format_mouse(char *buf, uint32_t cap, const struct mouse_stat
 }
 
 /**
- * @brief Coordinates the device format disk operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param disk Input or output value used by this operation.
+ * Device format disk.
+ * @param buf Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param disk Value supplied by the caller.
  */
 static void device_format_disk(char *buf, uint32_t cap, const struct leonos_install_disk *disk)
 {
@@ -500,10 +500,10 @@ static void device_format_disk(char *buf, uint32_t cap, const struct leonos_inst
 }
 
 /**
- * @brief Coordinates the device format time operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param time Input or output value used by this operation.
+ * Device format time.
+ * @param buf Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param time Value supplied by the caller.
  */
 static void device_format_time(char *buf, uint32_t cap, const struct leonos_time_info *time)
 {
@@ -599,8 +599,8 @@ struct exec_params_kernel {
 };
 
 /**
- * @brief Coordinates the normalize dir path operation.
- * @param path LeonOS path consumed by this operation.
+ * Normalize dir path.
+ * @param path NUL-terminated text supplied by the caller.
  */
 static void normalize_dir_path(char *path)
 {
@@ -617,10 +617,10 @@ static void normalize_dir_path(char *path)
 }
 
 /**
- * @brief Copies text.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * Copy text.
+ * @param dst Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param src Value supplied by the caller.
  */
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -636,14 +636,14 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
 }
 
 /**
- * @brief Coordinates the clear task file operation.
- * @param file Input or output value used by this operation.
+ * Clear task file.
+ * @param file Value supplied by the caller.
  */
 void clear_task_file(struct task_file *file)
 {
-    /* Descriptor cleanup can be reached both from the immediate exit path
-     * and from later zombie reaping.  A released pipe end must only decrement
-     * its shared reference count once. */
+    /**
+ * @brief Descriptor cleanup can be reached both from the immediate exit path and from later zombie reaping. A released pipe end must only decrement its shared reference count once.
+ */
     if (!file || !file->used) {
         return;
     }
@@ -663,8 +663,8 @@ void clear_task_file(struct task_file *file)
 }
 
 /**
- * @brief Coordinates the clear task files operation.
- * @param task Task whose state or authority is inspected or updated.
+ * Clear task files.
+ * @param task Value supplied by the caller.
  */
 static void clear_task_files(struct task *task)
 {
@@ -681,8 +681,8 @@ static void clear_task_files(struct task *task)
 }
 
 /**
- * @brief Coordinates the syscall release task files operation.
- * @param task Task whose state or authority is inspected or updated.
+ * Syscall release task files.
+ * @param task Value supplied by the caller.
  */
 void syscall_release_task_files(struct task *task)
 {
@@ -746,10 +746,10 @@ void syscall_close_cloexec_files(struct task *task)
 }
 
 /**
- * @brief Coordinates the task file for fd operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param fd Open file descriptor used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task file for fd.
+ * @param task Value supplied by the caller.
+ * @param fd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct task_file *task_file_for_fd(struct task *task, int fd)
 {
@@ -775,10 +775,10 @@ struct task_file *task_file_for_fd(struct task *task, int fd)
 #define LEONOS_FD_CLOEXEC 1
 
 /**
- * @brief Coordinates the task pty fd for fd operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param fd Open file descriptor used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task pty fd for fd.
+ * @param task Value supplied by the caller.
+ * @param fd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
 {
@@ -795,10 +795,10 @@ struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
 }
 
 /**
- * @brief Coordinates the task pty stream for fd operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param fd Open file descriptor used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task pty stream for fd.
+ * @param task Value supplied by the caller.
+ * @param fd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_pty_stream_for_fd(struct task *task, int fd)
 {
@@ -806,7 +806,9 @@ static int task_pty_stream_for_fd(struct task *task, int fd)
     if (!task || !task->pty_id) {
         return -1;
     }
-    /* A redirected stdio descriptor shadows the implicit PTY stream. */
+    /**
+ * @brief A redirected stdio descriptor shadows the implicit PTY stream.
+ */
     if (task_file_for_fd(task, fd)) {
         return -1;
     }
@@ -818,10 +820,10 @@ static int task_pty_stream_for_fd(struct task *task, int fd)
 }
 
 /**
- * @brief Coordinates the task pty fd available operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param fd Open file descriptor used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task pty fd available.
+ * @param task Value supplied by the caller.
+ * @param fd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_pty_fd_available(struct task *task, int fd)
 {
@@ -831,9 +833,9 @@ static int task_pty_fd_available(struct task *task, int fd)
     return 1;
 }
 
-/* RLIMIT_NOFILE applies to descriptors allocated in addition to the three
- * implicit PTY standard streams.  Files and explicit PTY aliases share the
- * same process limit even though they use separate backing tables. */
+/**
+ * @brief RLIMIT_NOFILE applies to descriptors allocated in addition to the three implicit PTY standard streams. Files and explicit PTY aliases share the same process limit even though they use separate backing tables.
+ */
 static uint32_t task_allocated_fd_count(const struct task *task)
 {
     uint32_t count = 0;
@@ -860,12 +862,12 @@ int task_can_allocate_fd(const struct task *task)
 }
 
 /**
- * @brief Coordinates the task pty duplicate fd operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param old_fd Input or output value used by this operation.
- * @param minimum_fd Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task pty duplicate fd.
+ * @param task Value supplied by the caller.
+ * @param old_fd Value supplied by the caller.
+ * @param minimum_fd Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @return The value or status produced by the operation.
  */
 static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
                                  uint32_t flags)
@@ -903,11 +905,11 @@ static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
 }
 
 /**
- * @brief Coordinates the task pty dup2 fd operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param old_fd Input or output value used by this operation.
- * @param new_fd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task pty dup2 fd.
+ * @param task Value supplied by the caller.
+ * @param old_fd Value supplied by the caller.
+ * @param new_fd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
 {
@@ -919,7 +921,9 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
     if (old_fd == new_fd) {
         return new_fd;
     }
-    /* Restore an implicit PTY stream after a temporary redirection. */
+    /**
+ * @brief Restore an implicit PTY stream after a temporary redirection.
+ */
     if (new_fd < 3) {
         struct task_file *stdio = &task->stdio_files[new_fd];
         if (stdio->used) {
@@ -930,7 +934,9 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
     if (new_fd == 3) {
         return -LEONOS_EBADF;
     }
-    /* dup2() replaces an existing descriptor regardless of its backing kind. */
+    /**
+ * @brief dup2() replaces an existing descriptor regardless of its backing kind.
+ */
     if (task_file_for_fd(task, new_fd)) {
         clear_task_file(task_file_for_fd(task, new_fd));
     }
@@ -957,12 +963,12 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
 }
 
 /**
- * @brief Allocates task fd.
- * @param task Task whose state or authority is inspected or updated.
- * @param node Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * Alloc task fd.
+ * @param task Value supplied by the caller.
+ * @param node Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param path NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int alloc_task_fd(struct task *task, const struct storage_node *node, uint32_t flags, const char *path)
 {
@@ -1095,9 +1101,9 @@ int syscall_inherit_task_fds(struct task *parent, struct task *child,
 }
 
 /**
- * @brief Coordinates the file can read operation.
- * @param file Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * File can read.
+ * @param file Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int file_can_read(const struct task_file *file)
 {
@@ -1106,9 +1112,9 @@ int file_can_read(const struct task_file *file)
 }
 
 /**
- * @brief Coordinates the file can write operation.
- * @param file Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * File can write.
+ * @param file Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int file_can_write(const struct task_file *file)
 {
@@ -1117,11 +1123,11 @@ int file_can_write(const struct task_file *file)
 }
 
 /**
- * @brief Copies user path.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param user_ptr Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Copy user path.
+ * @param dst Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param user_ptr Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int copy_user_path(char *dst, uint32_t cap, uint64_t user_ptr)
 {
@@ -1140,12 +1146,12 @@ static int copy_user_path(char *dst, uint32_t cap, uint64_t user_ptr)
 }
 
 /**
- * @brief Coordinates the resolve user path operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param user_ptr Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @return Result, status, or value defined by this API.
+ * Resolve user path.
+ * @param task Value supplied by the caller.
+ * @param user_ptr Value supplied by the caller.
+ * @param out Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, uint32_t cap)
 {
@@ -1163,9 +1169,9 @@ static int resolve_user_path(struct task *task, uint64_t user_ptr, char *out, ui
 }
 
 /**
- * @brief Coordinates the storage errno operation.
- * @param ret Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Storage errno.
+ * @param ret Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int storage_errno(int ret)
 {
@@ -1188,12 +1194,12 @@ int storage_errno(int ret)
 }
 
 /**
- * @brief Copies user string fixed.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param user_ptr Input or output value used by this operation.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Copy user string fixed.
+ * @param dst Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param user_ptr Value supplied by the caller.
+ * @param out_len Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr, uint32_t *out_len)
 {
@@ -1218,10 +1224,10 @@ static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr, ui
 }
 
 /**
- * @brief Coordinates the kernel string len cap operation.
- * @param text Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @return Result, status, or value defined by this API.
+ * Kernel string len cap.
+ * @param text NUL-terminated text supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static uint32_t kernel_string_len_cap(const char *text, uint32_t cap)
 {
@@ -1233,9 +1239,9 @@ static uint32_t kernel_string_len_cap(const char *text, uint32_t cap)
 }
 
 /**
- * @brief Coordinates the kernel clear secret operation.
- * @param data Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
+ * Kernel clear secret.
+ * @param data Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
  */
 static void kernel_clear_secret(void *data, uint32_t len)
 {
@@ -1247,10 +1253,10 @@ static void kernel_clear_secret(void *data, uint32_t len)
 }
 
 /**
- * @brief Coordinates the auth copy current user operation.
- * @param user Input or output value used by this operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Auth copy current user.
+ * @param user Value supplied by the caller.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int auth_copy_current_user(struct leonos_user_info *user, const struct task *task)
 {
@@ -1270,13 +1276,13 @@ static int auth_copy_current_user(struct leonos_user_info *user, const struct ta
 }
 
 /**
- * @brief Coordinates the authz check path operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param op Input or output value used by this operation.
- * @param path LeonOS path consumed by this operation.
- * @param target_uid Input or output value used by this operation.
- * @param target_role Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Authz check path.
+ * @param task Value supplied by the caller.
+ * @param op Identifier or flags controlling the operation.
+ * @param path NUL-terminated text supplied by the caller.
+ * @param target_uid Value supplied by the caller.
+ * @param target_role Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int authz_check_path(const struct task *task, uint32_t op,
                             const char *path, uint32_t target_uid,
@@ -1316,9 +1322,9 @@ static int authz_check_path(const struct task *task, uint32_t op,
 }
 
 /**
- * @brief Coordinates the authz check install operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Authz check install.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int authz_check_install(const struct task *task)
 {
@@ -1326,9 +1332,9 @@ static int authz_check_install(const struct task *task)
 }
 
 /**
- * @brief Coordinates the fs acl fill actor operation.
- * @param req Input or output value used by this operation.
- * @param task Task whose state or authority is inspected or updated.
+ * Fs acl fill actor.
+ * @param req Caller-owned structure read or updated by the function.
+ * @param task Value supplied by the caller.
  */
 static void fs_acl_fill_actor(struct leonos_fs_acl_request *req,
                               const struct task *task)
@@ -1351,9 +1357,9 @@ static void fs_acl_fill_actor(struct leonos_fs_acl_request *req,
 }
 
 /**
- * @brief Coordinates the fs acl dispatch operation.
- * @param req Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fs acl dispatch.
+ * @param req Caller-owned structure read or updated by the function.
+ * @return The value or status produced by the operation.
  */
 static int fs_acl_dispatch(struct leonos_fs_acl_request *req)
 {
@@ -1364,11 +1370,11 @@ static int fs_acl_dispatch(struct leonos_fs_acl_request *req)
 }
 
 /**
- * @brief Coordinates the fs acl notify operation.
- * @param action Input or output value used by this operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param path LeonOS path consumed by this operation.
- * @param path2 LeonOS path consumed by this operation.
+ * Fs acl notify.
+ * @param action Value supplied by the caller.
+ * @param task Value supplied by the caller.
+ * @param path NUL-terminated text supplied by the caller.
+ * @param path2 Value supplied by the caller.
  */
 static void fs_acl_notify(uint32_t action, const struct task *task,
                           const char *path, const char *path2)
@@ -1385,18 +1391,18 @@ static void fs_acl_notify(uint32_t action, const struct task *task,
     }
     fs_acl_fill_actor(&req, task);
     /**
- * @brief Coordinates the fs acl dispatch operation.
- * @param req Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fs acl handle ioctl.
+ * @param req Caller-owned structure read or updated by the function.
+ * @return The value or status produced by the operation.
  */
     (void)fs_acl_dispatch(&req);
 }
 
 /**
- * @brief Coordinates the fs acl handle ioctl operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param user_arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fs acl handle ioctl.
+ * @param request Value supplied by the caller.
+ * @param user_arg Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
@@ -1455,9 +1461,9 @@ static int fs_acl_handle_ioctl(uint64_t request, uint64_t user_arg)
 }
 
 /**
- * @brief Coordinates the auth apply session login operation.
- * @param caller Input or output value used by this operation.
- * @param user Input or output value used by this operation.
+ * Auth apply session login.
+ * @param caller Value supplied by the caller.
+ * @param user Value supplied by the caller.
  */
 static void auth_apply_session_login(struct task *caller,
                                      const struct leonos_user_info *user)
@@ -1474,8 +1480,8 @@ static void auth_apply_session_login(struct task *caller,
 }
 
 /**
- * @brief Coordinates the auth cleanup logged out task operation.
- * @param pid Input or output value used by this operation.
+ * Auth cleanup logged out task.
+ * @param pid Identifier or flags controlling the operation.
  */
 static void auth_cleanup_logged_out_task(uint32_t pid)
 {
@@ -1485,10 +1491,10 @@ static void auth_cleanup_logged_out_task(uint32_t pid)
 }
 
 /**
- * @brief Coordinates the auth kill session tasks for logout operation.
- * @param uid Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
- * @param keep_pid Input or output value used by this operation.
+ * Auth kill session tasks for logout.
+ * @param uid Identifier or flags controlling the operation.
+ * @param session_id Identifier or flags controlling the operation.
+ * @param keep_pid Value supplied by the caller.
  */
 static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                                uint32_t keep_pid)
@@ -1525,10 +1531,10 @@ static void auth_kill_session_tasks_for_logout(uint32_t uid, uint32_t session_id
 }
 
 /**
- * @brief Coordinates the auth handle ioctl operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param user_arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Auth handle ioctl.
+ * @param request Value supplied by the caller.
+ * @param user_arg Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
@@ -1723,9 +1729,9 @@ static int auth_handle_ioctl(uint64_t request, uint64_t user_arg)
 }
 
 /**
- * @brief Coordinates the startup release file operation.
- * @param data Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
+ * Startup release file.
+ * @param data Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
  */
 static void startup_release_file(const void *data, size_t len)
 {
@@ -1736,9 +1742,9 @@ static void startup_release_file(const void *data, size_t len)
 }
 
 /**
- * @brief Coordinates the startup command is well formed operation.
- * @param command Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup command is well formed.
+ * @param command Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_command_is_well_formed(const struct leonos_startup_command *command)
 {
@@ -1756,9 +1762,9 @@ static int startup_command_is_well_formed(const struct leonos_startup_command *c
 }
 
 /**
- * @brief Coordinates the startup db is well formed operation.
- * @param db Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup db is well formed.
+ * @param db Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_db_is_well_formed(const struct startup_db *db)
 {
@@ -1776,9 +1782,9 @@ static int startup_db_is_well_formed(const struct startup_db *db)
 }
 
 /**
- * @brief Coordinates the startup denial db is well formed operation.
- * @param db Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup denial db is well formed.
+ * @param db Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_denial_db_is_well_formed(const struct startup_denial_db *db)
 {
@@ -1798,7 +1804,7 @@ static int startup_denial_db_is_well_formed(const struct startup_denial_db *db)
 }
 
 /**
- * @brief Coordinates the startup db load operation.
+ * Startup db load.
  */
 static void startup_db_load(void)
 {
@@ -1818,8 +1824,8 @@ static void startup_db_load(void)
 }
 
 /**
- * @brief Coordinates the startup db save operation.
- * @return Result, status, or value defined by this API.
+ * Startup db save.
+ * @return The value or status produced by the operation.
  */
 static int startup_db_save(void)
 {
@@ -1830,7 +1836,7 @@ static int startup_db_save(void)
 }
 
 /**
- * @brief Coordinates the startup denial db load operation.
+ * Startup denial db load.
  */
 static void startup_denial_db_load(void)
 {
@@ -1849,8 +1855,8 @@ static void startup_denial_db_load(void)
 }
 
 /**
- * @brief Coordinates the startup denial db save operation.
- * @return Result, status, or value defined by this API.
+ * Startup denial db save.
+ * @return The value or status produced by the operation.
  */
 static int startup_denial_db_save(void)
 {
@@ -1861,10 +1867,10 @@ static int startup_denial_db_save(void)
 }
 
 /**
- * @brief Coordinates the startup text eq operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup text eq.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_text_eq(const char *a, const char *b)
 {
@@ -1879,10 +1885,10 @@ static int startup_text_eq(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the startup command equal operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup command equal.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_command_equal(const struct leonos_startup_command *a,
                                  const struct leonos_startup_command *b)
@@ -1899,10 +1905,10 @@ static int startup_command_equal(const struct leonos_startup_command *a,
 }
 
 /**
- * @brief Coordinates the startup command validate operation.
- * @param command Request structure consumed and, where defined, updated by this operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Startup command validate.
+ * @param command Value supplied by the caller.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_command_validate(struct leonos_startup_command *command,
                                     const struct task *task)
@@ -1953,10 +1959,10 @@ static int startup_command_validate(struct leonos_startup_command *command,
 }
 
 /**
- * @brief Coordinates the startup can manage uid operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param uid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup can manage uid.
+ * @param task Value supplied by the caller.
+ * @param uid Identifier or flags controlling the operation.
+ * @return The value or status produced by the operation.
  */
 static int startup_can_manage_uid(const struct task *task, uint32_t uid)
 {
@@ -1966,10 +1972,10 @@ static int startup_can_manage_uid(const struct task *task, uint32_t uid)
 }
 
 /**
- * @brief Coordinates the startup db find operation.
- * @param uid Input or output value used by this operation.
- * @param command Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup db find.
+ * @param uid Identifier or flags controlling the operation.
+ * @param command Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_db_find(uint32_t uid, const struct leonos_startup_command *command)
 {
@@ -1983,11 +1989,11 @@ static int startup_db_find(uint32_t uid, const struct leonos_startup_command *co
 }
 
 /**
- * @brief Coordinates the startup denial find operation.
- * @param uid Input or output value used by this operation.
- * @param requester_path LeonOS path consumed by this operation.
- * @param command Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup denial find.
+ * @param uid Identifier or flags controlling the operation.
+ * @param requester_path NUL-terminated text supplied by the caller.
+ * @param command Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_denial_find(uint32_t uid, const char *requester_path,
                                const struct leonos_startup_command *command)
@@ -2003,11 +2009,11 @@ static int startup_denial_find(uint32_t uid, const char *requester_path,
 }
 
 /**
- * @brief Coordinates the startup remember denial operation.
- * @param uid Input or output value used by this operation.
- * @param requester_path LeonOS path consumed by this operation.
- * @param command Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup remember denial.
+ * @param uid Identifier or flags controlling the operation.
+ * @param requester_path NUL-terminated text supplied by the caller.
+ * @param command Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_remember_denial(uint32_t uid, const char *requester_path,
                                    const struct leonos_startup_command *command)
@@ -2025,9 +2031,9 @@ static int startup_remember_denial(uint32_t uid, const char *requester_path,
 }
 
 /**
- * @brief Coordinates the startup request find operation.
- * @param id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup request find.
+ * @param id Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct startup_request_slot *startup_request_find(uint32_t id)
 {
@@ -2040,8 +2046,8 @@ static struct startup_request_slot *startup_request_find(uint32_t id)
 }
 
 /**
- * @brief Coordinates the startup request reconcile operation.
- * @param slot Input or output value used by this operation.
+ * Startup request reconcile.
+ * @param slot Value supplied by the caller.
  */
 static void startup_request_reconcile(struct startup_request_slot *slot)
 {
@@ -2056,8 +2062,8 @@ static void startup_request_reconcile(struct startup_request_slot *slot)
 }
 
 /**
- * @brief Coordinates the startup request alloc operation.
- * @return Result, status, or value defined by this API.
+ * Startup request alloc.
+ * @return The value or status produced by the operation.
  */
 static struct startup_request_slot *startup_request_alloc(void)
 {
@@ -2084,10 +2090,10 @@ static struct startup_request_slot *startup_request_alloc(void)
 }
 
 /**
- * @brief Coordinates the startup add entry operation.
- * @param uid Input or output value used by this operation.
- * @param command Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup add entry.
+ * @param uid Identifier or flags controlling the operation.
+ * @param command Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_add_entry(uint32_t uid, const struct leonos_startup_command *command)
 {
@@ -2121,9 +2127,9 @@ static int startup_add_entry(uint32_t uid, const struct leonos_startup_command *
 }
 
 /**
- * @brief Coordinates the startup dialog spawn operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup dialog spawn.
+ * @param slot Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_dialog_spawn(struct startup_request_slot *slot)
 {
@@ -2144,10 +2150,10 @@ static int startup_dialog_spawn(struct startup_request_slot *slot)
 }
 
 /**
- * @brief Coordinates the startup handle ioctl operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param user_arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Startup handle ioctl.
+ * @param request Value supplied by the caller.
+ * @param user_arg Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int startup_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
@@ -2359,15 +2365,15 @@ static int startup_handle_ioctl(uint64_t request, uint64_t user_arg)
 }
 
 /**
- * @brief Copies user vector.
- * @param user_ptr Input or output value used by this operation.
- * @param max_count Length, size, or element count associated with the operation.
- * @param out_ptrs Caller-provided storage that receives output from this operation.
- * @param data Input or output value used by this operation.
- * @param data_cap Capacity, in elements or bytes, of the related output buffer.
- * @param out_count Caller-provided storage that receives output from this operation.
- * @param data_len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Copy user vector.
+ * @param user_ptr Value supplied by the caller.
+ * @param max_count Value supplied by the caller.
+ * @param out_ptrs Value supplied by the caller.
+ * @param data Value supplied by the caller.
+ * @param data_cap Value supplied by the caller.
+ * @param out_count Value supplied by the caller.
+ * @param data_len Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int copy_user_vector(uint64_t user_ptr, uint32_t max_count,
                             char *out_ptrs[], char *data,
@@ -2410,15 +2416,15 @@ static int copy_user_vector(uint64_t user_ptr, uint32_t max_count,
 }
 
 /**
- * @brief Copies exec params from user.
- * @param task Task whose state or authority is inspected or updated.
- * @param path_ptr LeonOS path consumed by this operation.
- * @param argv_ptr Input or output value used by this operation.
- * @param envp_ptr Input or output value used by this operation.
- * @param path_out LeonOS path consumed by this operation.
- * @param path_cap Capacity, in elements or bytes, of the related output buffer.
- * @param params Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Copy exec params from user.
+ * @param task Value supplied by the caller.
+ * @param path_ptr Value supplied by the caller.
+ * @param argv_ptr Value supplied by the caller.
+ * @param envp_ptr Value supplied by the caller.
+ * @param path_out Value supplied by the caller.
+ * @param path_cap Value supplied by the caller.
+ * @param params Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int copy_exec_params_from_user(struct task *task, uint64_t path_ptr, uint64_t argv_ptr, uint64_t envp_ptr,
                                       char *path_out, uint32_t path_cap, struct exec_params_kernel *params)
@@ -2476,11 +2482,11 @@ static int copy_exec_params_from_user(struct task *task, uint64_t path_ptr, uint
 }
 
 /**
- * @brief Coordinates the stat for fd operation.
- * @param fd Open file descriptor used by this operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param st Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Stat for fd.
+ * @param fd Value supplied by the caller.
+ * @param task Value supplied by the caller.
+ * @param st Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
 {
@@ -2520,9 +2526,9 @@ void syscall_init(void)
  * @return Syscall result or negative errno.
  */
 /**
- * @brief Coordinates the syscall dispatch operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Syscall dispatch.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int64_t syscall_dispatch(const struct syscall_frame *frame)
 {
@@ -2589,15 +2595,15 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
 }
 
 /**
- * @brief Coordinates the syscall dispatch regs operation.
- * @param number Input or output value used by this operation.
- * @param a0 Input or output value used by this operation.
- * @param a1 Input or output value used by this operation.
- * @param a2 Input or output value used by this operation.
- * @param a3 Input or output value used by this operation.
- * @param a4 Input or output value used by this operation.
- * @param a5 Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Syscall dispatch regs legacy.
+ * @param number Value supplied by the caller.
+ * @param a0 Value supplied by the caller.
+ * @param a1 Value supplied by the caller.
+ * @param a2 Value supplied by the caller.
+ * @param a3 Value supplied by the caller.
+ * @param a4 Value supplied by the caller.
+ * @param a5 Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, uint64_t a2,
                                      uint64_t a3, uint64_t a4, uint64_t a5)
@@ -2657,10 +2663,9 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                               : (uint32_t)a2;
             return pty_write_output(task->pty_id, (const char *)(uintptr_t)a1, request_len);
         }
-        /* A redirected stdio descriptor must be handled by the regular file
-         * path below.  Only an unbound implicit PTY stream falls back to the
-         * kernel console; otherwise a pipe on fd 1/2 would be silently
-         * bypassed and its consumer would receive EOF/zero bytes. */
+        /**
+ * @brief A redirected stdio descriptor must be handled by the regular file path below. Only an unbound implicit PTY stream falls back to the kernel console; otherwise a pipe on fd 1/2 would be silently bypassed and its consumer would receive EOF/zero bytes.
+ */
         if ((a0 == 1 || a0 == 2) && !task_file_for_fd(task, (int)a0)) {
             request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
                               ? LEONOS_FS_IO_SLICE_BYTES
@@ -4786,9 +4791,9 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             !user_range_ok((uint64_t)(uintptr_t)spawn->path, len + 1)) {
             return -LEONOS_EFAULT;
         }
-        /* The terminal owns the PTY, while its shell and commands inherit it.
-         * Permit both the owner and an attached descendant to spawn, but do
-         * not accept arbitrary PTY ids from an unrelated process. */
+        /**
+ * @brief The terminal owns the PTY, while its shell and commands inherit it. Permit both the owner and an attached descendant to spawn, but do not accept arbitrary PTY ids from an unrelated process.
+ */
         if (!task || !pty_is_active(spawn->pty_id) ||
             (!pty_is_owner(spawn->pty_id, sched_current_pid()) &&
              task->pty_id != spawn->pty_id)) {
@@ -4838,8 +4843,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
 }
 
 /**
- * @brief Coordinates the syscall dispatch frame operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
+ * Syscall dispatch regs.
+ * @param frame Value supplied by the caller.
  */
 static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
                                      uint64_t a2, uint64_t a3, uint64_t a4,
@@ -4873,8 +4878,9 @@ void syscall_dispatch_frame(struct trap_frame *frame)
     number = frame->rax;
     storage_set_io_async_context(true);
     if (number == LINUX_SYS_FORK || number == LINUX_SYS_VFORK) {
-        /* vfork intentionally uses fork semantics for now: sharing the
-         * address space would let the child corrupt its suspended parent. */
+        /**
+ * @brief vfork intentionally uses fork semantics for now: sharing the address space would let the child corrupt its suspended parent.
+ */
         result = sched_fork_current(frame);
     } else {
         result = syscall_dispatch_regs(number,

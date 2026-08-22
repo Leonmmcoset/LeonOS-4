@@ -80,10 +80,7 @@ struct __attribute__((packed)) smbios_header {
 static struct leonos_machine_identity platform_identity;
 
 /**
- * @brief Coordinates the guid equal operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if the two EFI GUIDs are identical.
  */
 static int guid_equal(const struct efi_guid *a, const struct efi_guid *b)
 {
@@ -102,11 +99,7 @@ static int guid_equal(const struct efi_guid *a, const struct efi_guid *b)
 }
 
 /**
- * @brief Coordinates the bytes eq operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if the first len bytes of a and b are equal.
  */
 static int bytes_eq(const char *a, const char *b, uint32_t len)
 {
@@ -119,10 +112,7 @@ static int bytes_eq(const char *a, const char *b, uint32_t len)
 }
 
 /**
- * @brief Copies text.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Copy src into dst up to cap-1 chars, always NUL-terminating dst.
  */
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -138,10 +128,7 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
 }
 
 /**
- * @brief Copies efi text.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Convert a UTF-16 string to ASCII into dst, replacing non-printable chars with '?'.
  */
 static void copy_efi_text(char *dst, uint32_t cap, const uint16_t *src)
 {
@@ -158,9 +145,7 @@ static void copy_efi_text(char *dst, uint32_t cap, const uint16_t *src)
 }
 
 /**
- * @brief Coordinates the uuid valid operation.
- * @param uuid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if the 16-byte UUID is neither all-zero nor all-0xff.
  */
 static int uuid_valid(const uint8_t uuid[16])
 {
@@ -174,11 +159,7 @@ static int uuid_valid(const uint8_t uuid[16])
 }
 
 /**
- * @brief Appends hex2.
- * @param dst Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * @brief Append a two-digit lowercase hex byte to dst at *pos if it fits.
  */
 static void append_hex2(char *dst, uint32_t *pos, uint32_t cap, uint8_t value)
 {
@@ -192,10 +173,7 @@ static void append_hex2(char *dst, uint32_t *pos, uint32_t cap, uint8_t value)
 }
 
 /**
- * @brief Coordinates the format uuid raw operation.
- * @param uuid Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @brief Format the 16-byte UUID as the canonical 8-4-4-4-12 string into out.
  */
 static void format_uuid_raw(const uint8_t uuid[16], char *out, uint32_t cap)
 {
@@ -220,10 +198,7 @@ static void format_uuid_raw(const uint8_t uuid[16], char *out, uint32_t cap)
 }
 
 /**
- * @brief Coordinates the checksum8 operation.
- * @param data Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the 8-bit sum of len bytes at data.
  */
 static uint8_t checksum8(const void *data, uint32_t len)
 {
@@ -236,10 +211,7 @@ static uint8_t checksum8(const void *data, uint32_t len)
 }
 
 /**
- * @brief Coordinates the smbios next operation.
- * @param ptr Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Advance past the current SMBIOS structure and its string table to the next one, or return end.
  */
 static const uint8_t *smbios_next(const uint8_t *ptr, const uint8_t *end)
 {
@@ -260,10 +232,7 @@ static const uint8_t *smbios_next(const uint8_t *ptr, const uint8_t *end)
 }
 
 /**
- * @brief Parses smbios table.
- * @param table_addr Address used by this operation; its address-space interpretation follows the API.
- * @param table_len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Walk the SMBIOS structures looking for a type-1 system UUID; record it and return 0, else -1.
  */
 static int parse_smbios_table(uint64_t table_addr, uint32_t table_len)
 {
@@ -298,9 +267,7 @@ static int parse_smbios_table(uint64_t table_addr, uint32_t table_len)
 }
 
 /**
- * @brief Parses smbios3.
- * @param entry Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Validate an SMBIOS 3.0 entry (anchor + checksum) and parse its table.
  */
 static int parse_smbios3(const void *entry)
 {
@@ -314,9 +281,7 @@ static int parse_smbios3(const void *entry)
 }
 
 /**
- * @brief Parses smbios2.
- * @param entry Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Validate an SMBIOS 2.x entry (anchors + checksum) and parse its table.
  */
 static int parse_smbios2(const void *entry)
 {
@@ -331,8 +296,7 @@ static int parse_smbios2(const void *entry)
 }
 
 /**
- * @brief Coordinates the platform identity init operation.
- * @param boot Boot information supplied by the loader.
+ * @brief Populate the machine identity from the EFI system table's SMBIOS3/SMBIOS2 config tables when present.
  */
 void platform_identity_init(const struct boot_info *boot)
 {
@@ -383,8 +347,7 @@ void platform_identity_init(const struct boot_info *boot)
 }
 
 /**
- * @brief Coordinates the platform machine identity operation.
- * @param identity Input or output value used by this operation.
+ * @brief Copy the cached machine identity into *identity.
  */
 void platform_machine_identity(struct leonos_machine_identity *identity)
 {

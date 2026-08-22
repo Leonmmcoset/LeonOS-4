@@ -11,21 +11,13 @@ pub struct GuiCreateWindow {
     pub height: u32,
     pub title_ptr: u64,
 }
-/**
- * @brief Initializes protocol.
- */
+/// No-op: the GUI protocol keeps no runtime state to set up.
 pub fn init_protocol() {}
-/**
- * @brief Coordinates the client api version operation.
- * @return Result, status, or value defined by this API.
- */
+/// Reports the GUI client ABI version, currently pinned to 1.
 pub fn client_api_version() -> u32 {
     1
 }
-/**
- * @brief Reports whether window server.
- * @return Result, status, or value defined by this API.
- */
+/// True once a window-server endpoint has been registered with the IPC registry.
 pub fn has_window_server() -> bool {
     ipc::window_server().is_some()
 }

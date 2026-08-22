@@ -34,12 +34,12 @@ extern void x86_64_ltr(uint16_t selector);
 void paging_init_user_identity(void);
 
 /**
- * @brief Coordinates the descriptor operation.
- * @param base Input or output value used by this operation.
- * @param limit Input or output value used by this operation.
- * @param access Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Descriptor.
+ * @param base Value supplied by the caller.
+ * @param limit Value supplied by the caller.
+ * @param access Identifier or flags controlling the operation.
+ * @param flags Identifier or flags controlling the operation.
+ * @return The value or status produced by the operation.
  */
 static uint64_t descriptor(uint32_t base, uint32_t limit, uint8_t access, uint8_t flags)
 {
@@ -54,10 +54,10 @@ static uint64_t descriptor(uint32_t base, uint32_t limit, uint8_t access, uint8_
 }
 
 /**
- * @brief Updates tss descriptor.
- * @param index Input or output value used by this operation.
- * @param base Input or output value used by this operation.
- * @param limit Input or output value used by this operation.
+ * Set tss descriptor.
+ * @param index Identifier or flags controlling the operation.
+ * @param base Value supplied by the caller.
+ * @param limit Value supplied by the caller.
  */
 static void set_tss_descriptor(uint32_t index, uint64_t base, uint32_t limit)
 {
@@ -74,8 +74,8 @@ static void set_tss_descriptor(uint32_t index, uint64_t base, uint32_t limit)
 }
 
 /**
- * @brief Coordinates the framebuffer survives identity map operation.
- * @return Result, status, or value defined by this API.
+ * Framebuffer survives identity map.
+ * @return The value or status produced by the operation.
  */
 static int framebuffer_survives_identity_map(void)
 {
@@ -92,8 +92,8 @@ static int framebuffer_survives_identity_map(void)
 }
 
 /**
- * @brief Coordinates the arch userland init operation.
- * @param kernel_stack_top Input or output value used by this operation.
+ * Arch userland init.
+ * @param kernel_stack_top Value supplied by the caller.
  */
 void arch_userland_init(void *kernel_stack_top)
 {

@@ -8,17 +8,11 @@
 #include <ntclks/types.h>
 
 /**
- * @brief Coordinates the user range ok operation.
- * @param ptr Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true when the user range [ptr, ptr+len) is mapped and accessible.
  */
 bool user_range_ok(uint64_t ptr, uint64_t len);
 /**
- * @brief Coordinates the user strlen operation.
- * @param s Input or output value used by this operation.
- * @param max Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the length of the NUL-terminated user string s, up to max bytes.
  */
 size_t user_strlen(const char *s, size_t max);
 

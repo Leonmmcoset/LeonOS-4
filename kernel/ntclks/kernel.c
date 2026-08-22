@@ -42,7 +42,7 @@ static bool boot_handoff_is_current(const struct leonos_boot_handoff *handoff)
 }
 
 /**
- * @brief Coordinates the kernel idle loop operation.
+ * @brief Halt the CPU forever; used when there is nothing left to run.
  */
 void kernel_idle_loop(void)
 {
@@ -52,10 +52,7 @@ void kernel_idle_loop(void)
 }
 
 /**
- * @brief Coordinates the cmdline has operation.
- * @param boot Boot information supplied by the loader.
- * @param needle Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if the boot command line contains the substring needle.
  */
 static int cmdline_has(const struct boot_info *boot, const char *needle)
 {
@@ -77,10 +74,7 @@ static int cmdline_has(const struct boot_info *boot, const char *needle)
 }
 
 /**
- * @brief Coordinates the boot text eq operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if the two NUL-terminated strings are identical.
  */
 static int boot_text_eq(const char *a, const char *b)
 {
@@ -95,9 +89,7 @@ static int boot_text_eq(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the boot import handoff modules operation.
- * @param boot Boot information supplied by the loader.
- * @param handoff Input or output value used by this operation.
+ * @brief Replace or append the installer-root module in boot from the loader handoff.
  */
 static void boot_import_handoff_modules(struct boot_info *boot,
                                         const struct leonos_boot_handoff *handoff)
@@ -127,10 +119,7 @@ static void boot_import_handoff_modules(struct boot_info *boot,
 }
 
 /**
- * @brief Coordinates the kernel start operation.
- * @param magic Input or output value used by this operation.
- * @param multiboot_info Input or output value used by this operation.
- * @param handoff Input or output value used by this operation.
+ * @brief Full boot sequence: parse Multiboot2/EFI info, then initialize every kernel subsystem in order and enter userland.
  */
 static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                          const struct leonos_boot_handoff *handoff)
@@ -157,10 +146,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
-    /* UEFI GRUB keeps boot services active for the second-stage loader and
-     * may therefore omit Multiboot2 memory-map tags.  The loader captures a
-     * stable EFI map after loading all images; use it before the allocator
-     * falls back to the legacy 512 MiB estimate. */
+    /**
+ * @brief UEFI GRUB keeps boot services active for the second-stage loader and may therefore omit Multiboot2 memory-map tags. The loader captures a stable EFI map after loading all images; use it before the allocator falls back to the legacy 512 MiB estimate.
+ */
     if (!boot.mmap_entry_count && !boot.efi_mmap_entry_count &&
         handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC &&
         handoff->efi_mmap_addr && handoff->efi_mmap_entry_count) {
@@ -174,7 +162,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     if (!boot.rsdp_addr && handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC) {
         boot.rsdp_addr = handoff->rsdp_addr;
     }
-    /* Parse ACPI before the physical allocator can reclaim ACPI memory. */
+    /**
+ * @brief Parse ACPI before the physical allocator can reclaim ACPI memory.
+ */
     power_init(&boot);
     boot_import_handoff_modules(&boot, handoff);
     platform_identity_init(&boot);
@@ -251,8 +241,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                    system->kernel_version, storage_root_filesystem_name());
     boot_splash_update(100u);
     if (boot_log_screen) {
-        /* Keep the original log console visible until the Ring-3 desktop
-         * replaces it.  The graphical path retains the completed splash. */
+        /**
+ * @brief Keep the original log console visible until the Ring-3 desktop replaces it. The graphical path retains the completed splash.
+ */
         console_printf("[ntclks] starting Ring-3 desktop.elf\n");
     }
 
@@ -261,8 +252,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 }
 
 /**
- * @brief Coordinates the kernel entry operation.
- * @param handoff Input or output value used by this operation.
+ * @brief Validate the loader handoff and start the kernel, or idle-loop on a mismatch.
  */
 void kernel_entry(const struct leonos_boot_handoff *handoff)
 {
@@ -277,9 +267,7 @@ void kernel_entry(const struct leonos_boot_handoff *handoff)
 }
 
 /**
- * @brief Coordinates the kernel main operation.
- * @param magic Input or output value used by this operation.
- * @param multiboot_info Input or output value used by this operation.
+ * @brief Legacy Multiboot2 entry point; starts the kernel without a loader handoff.
  */
 void kernel_main(uint32_t magic, uint32_t multiboot_info)
 {

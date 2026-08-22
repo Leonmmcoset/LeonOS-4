@@ -70,10 +70,10 @@ extern void irq32_stub(void);
 extern uint64_t x86_64_read_cr2(void);
 
 /**
- * @brief Coordinates the idt set operation.
- * @param vector Input or output value used by this operation.
- * @param handler Input or output value used by this operation.
- * @param dpl Input or output value used by this operation.
+ * Idt set.
+ * @param vector Identifier or flags controlling the operation.
+ * @param handler Value supplied by the caller.
+ * @param dpl Identifier or flags controlling the operation.
  */
 static void idt_set(uint8_t vector, void *handler, uint8_t dpl)
 {
@@ -88,7 +88,7 @@ static void idt_set(uint8_t vector, void *handler, uint8_t dpl)
 }
 
 /**
- * @brief Coordinates the idt init operation.
+ * Idt init.
  */
 void idt_init(void)
 {
@@ -139,14 +139,14 @@ void idt_init(void)
 }
 
 /**
- * @brief Coordinates the exception dispatch operation.
- * @param vector Input or output value used by this operation.
- * @param error Input or output value used by this operation.
- * @param rip Input or output value used by this operation.
- * @param cs Input or output value used by this operation.
- * @param rflags Input or output value used by this operation.
- * @param rsp Input or output value used by this operation.
- * @param ss Input or output value used by this operation.
+ * Exception dispatch.
+ * @param vector Identifier or flags controlling the operation.
+ * @param error Value supplied by the caller.
+ * @param rip Value supplied by the caller.
+ * @param cs Value supplied by the caller.
+ * @param rflags Value supplied by the caller.
+ * @param rsp Value supplied by the caller.
+ * @param ss Value supplied by the caller.
  */
 void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t cs,
                         uint64_t rflags, uint64_t rsp, uint64_t ss)
@@ -177,11 +177,11 @@ void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t 
 }
 
 /**
- * @brief Coordinates the pf append char operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ch Input or output value used by this operation.
+ * Pf append char.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param ch Value supplied by the caller.
  */
 static void pf_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -194,11 +194,11 @@ static void pf_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 }
 
 /**
- * @brief Coordinates the pf append text operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param text Input or output value used by this operation.
+ * Pf append text.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param text NUL-terminated text supplied by the caller.
  */
 static void pf_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
@@ -211,11 +211,11 @@ static void pf_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *t
 }
 
 /**
- * @brief Coordinates the pf append u64 dec operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * Pf append u64 dec.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param value Value supplied by the caller.
  */
 static void pf_append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -235,11 +235,11 @@ static void pf_append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
 }
 
 /**
- * @brief Coordinates the pf append u64 hex operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * Pf append u64 hex.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param value Value supplied by the caller.
  */
 static void pf_append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -256,12 +256,12 @@ static void pf_append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
 }
 
 /**
- * @brief Coordinates the format user page fault report operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param task Task whose state or authority is inspected or updated.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param cr2 Input or output value used by this operation.
+ * Format user page fault report.
+ * @param buf Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param task Value supplied by the caller.
+ * @param frame Value supplied by the caller.
+ * @param cr2 Value supplied by the caller.
  */
 static void format_user_page_fault_report(char *buf, uint32_t cap,
                                           const struct task *task,
@@ -336,10 +336,10 @@ static void format_user_page_fault_report(char *buf, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the abort user page fault task operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param cr2 Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Abort user page fault task.
+ * @param frame Value supplied by the caller.
+ * @param cr2 Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_t cr2)
 {
@@ -376,26 +376,23 @@ static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_
 }
 
 /**
- * @brief Coordinates the page fault dispatch operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Page fault dispatch.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct task *page_fault_dispatch(struct trap_frame *frame)
 {
     uint64_t cr2 = x86_64_read_cr2();
     if (frame && syscall_handle_user_page_fault(cr2, frame->error)) {
-        /* Kernel helpers may write a current user's COW buffer while serving
-         * a syscall.  Its page is now private, so resume the interrupted
-         * kernel instruction instead of trying to iret through a kernel-mode
-         * trap frame. */
+        /**
+ * @brief Kernel helpers may write a current user's COW buffer while serving a syscall. Its page is now private, so resume the interrupted kernel instruction instead of trying to iret through a kernel-mode trap frame.
+ */
         if ((frame->cs & 3ULL) != 3ULL) {
             return NULL;
         }
-        /*
-         * A lazy file-backed page may require a synchronous FAT read.  Switch
-         * away after each resolved fault so a newly-starting app cannot hold
-         * the desktop in a long run of consecutive page-ins.
-         */
+        /**
+ * @brief A lazy file-backed page may require a synchronous FAT read. Switch away after each resolved fault so a newly-starting app cannot hold the desktop in a long run of consecutive page-ins.
+ */
         return userland_schedule_from_frame(frame);
     }
     if (!frame) {
@@ -419,9 +416,9 @@ struct task *page_fault_dispatch(struct trap_frame *frame)
 }
 
 /**
- * @brief Coordinates the int80 dispatch operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Int80 dispatch.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct task *int80_dispatch(struct trap_frame *frame)
 {

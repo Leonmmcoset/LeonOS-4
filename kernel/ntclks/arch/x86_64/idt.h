@@ -6,7 +6,7 @@
 #define NTCLKS_X86_64_IDT_H
 
 /**
- * @brief Coordinates the idt init operation.
+ * Idt init.
  */
 void idt_init(void);
 

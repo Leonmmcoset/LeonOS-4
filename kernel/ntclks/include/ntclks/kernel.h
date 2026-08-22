@@ -8,8 +8,7 @@
 #include <leonos/boot_handoff.h>
 
 /**
- * @brief Coordinates the kernel entry operation.
- * @param handoff Input or output value used by this operation.
+ * @brief Top-level kernel entry point, called once after boot with the loader's handoff data.
  */
 void kernel_entry(const struct leonos_boot_handoff *handoff);
 void kernel_idle_loop(void) __attribute__((noreturn));

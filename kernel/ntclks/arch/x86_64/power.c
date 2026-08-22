@@ -9,7 +9,7 @@
 #include "port.h"
 
 /**
- * @brief Coordinates the io delay operation.
+ * Io delay.
  */
 static void io_delay(void)
 {
@@ -56,10 +56,10 @@ struct acpi_power_state {
 static struct acpi_power_state acpi_power;
 
 /**
- * @brief Coordinates the acpi read32 operation.
- * @param base Input or output value used by this operation.
- * @param offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi read32.
+ * @param base Value supplied by the caller.
+ * @param offset Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t acpi_read32(const uint8_t *base, uint32_t offset)
 {
@@ -74,10 +74,10 @@ static uint32_t acpi_read32(const uint8_t *base, uint32_t offset)
 }
 
 /**
- * @brief Coordinates the acpi read64 operation.
- * @param base Input or output value used by this operation.
- * @param offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi read64.
+ * @param base Value supplied by the caller.
+ * @param offset Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint64_t acpi_read64(const uint8_t *base, uint32_t offset)
 {
@@ -92,10 +92,10 @@ static uint64_t acpi_read64(const uint8_t *base, uint32_t offset)
 }
 
 /**
- * @brief Coordinates the acpi guid equal operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi guid equal.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int acpi_guid_equal(const uint8_t *a, const uint8_t *b)
 {
@@ -111,11 +111,11 @@ static int acpi_guid_equal(const uint8_t *a, const uint8_t *b)
 }
 
 /**
- * @brief Coordinates the acpi bytes equal operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Acpi bytes equal.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @param length Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static int acpi_bytes_equal(const char *a, const char *b, uint32_t length)
 {
@@ -131,10 +131,10 @@ static int acpi_bytes_equal(const char *a, const char *b, uint32_t length)
 }
 
 /**
- * @brief Coordinates the acpi checksum valid operation.
- * @param table Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Acpi checksum valid.
+ * @param table Value supplied by the caller.
+ * @param length Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static int acpi_checksum_valid(const uint8_t *table, uint32_t length)
 {
@@ -149,9 +149,9 @@ static int acpi_checksum_valid(const uint8_t *table, uint32_t length)
 }
 
 /**
- * @brief Coordinates the acpi rsdp valid operation.
- * @param rsdp Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi rsdp valid.
+ * @param rsdp Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int acpi_rsdp_valid(const struct acpi_rsdp *rsdp)
 {
@@ -174,10 +174,10 @@ static int acpi_rsdp_valid(const struct acpi_rsdp *rsdp)
 }
 
 /**
- * @brief Coordinates the acpi scan rsdp range operation.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi scan rsdp range.
+ * @param start Value supplied by the caller.
+ * @param end Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static const struct acpi_rsdp *acpi_scan_rsdp_range(uint32_t start,
                                                      uint32_t end)
@@ -195,8 +195,8 @@ static const struct acpi_rsdp *acpi_scan_rsdp_range(uint32_t start,
 }
 
 /**
- * @brief Coordinates the acpi scan rsdp operation.
- * @return Result, status, or value defined by this API.
+ * Acpi scan rsdp.
+ * @return The value or status produced by the operation.
  */
 static const struct acpi_rsdp *acpi_scan_rsdp(void)
 {
@@ -217,9 +217,9 @@ static const struct acpi_rsdp *acpi_scan_rsdp(void)
 }
 
 /**
- * @brief Coordinates the acpi rsdp from efi operation.
- * @param system_table Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi rsdp from efi.
+ * @param system_table Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static const struct acpi_rsdp *acpi_rsdp_from_efi(uint64_t system_table)
 {
@@ -235,7 +235,9 @@ static const struct acpi_rsdp *acpi_rsdp_from_efi(uint64_t system_table)
     if (!system_table || system_table > 0xffffffffULL) {
         return 0;
     }
-    /* EFI_SYSTEM_TABLE.ConfigurationTable fields are at offsets 104/112. */
+    /**
+ * @brief EFI_SYSTEM_TABLE.ConfigurationTable fields are at offsets 104/112.
+ */
     entry_count = acpi_read64((const uint8_t *)(uintptr_t)system_table, 104);
     config_table = acpi_read64((const uint8_t *)(uintptr_t)system_table, 112);
     if (!entry_count || entry_count > 1024U || !config_table ||
@@ -261,10 +263,10 @@ static const struct acpi_rsdp *acpi_rsdp_from_efi(uint64_t system_table)
 }
 
 /**
- * @brief Coordinates the acpi find table operation.
- * @param rsdp Input or output value used by this operation.
- * @param signature Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi find table.
+ * @param rsdp Value supplied by the caller.
+ * @param signature Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static const struct acpi_sdt_header *acpi_find_table(const struct acpi_rsdp *rsdp,
                                                       const char signature[4])
@@ -303,12 +305,6 @@ static const struct acpi_sdt_header *acpi_find_table(const struct acpi_rsdp *rsd
         entry_count = (root_length - sizeof(struct acpi_sdt_header)) / entry_size;
         for (uint32_t i = 0; i < entry_count; ++i) {
             uint64_t address = entry_size == 8
-                                   /**
- * @brief Coordinates the acpi read32 operation.
- * @param root Input or output value used by this operation.
- * @param U Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
                                    ? acpi_read64(root, sizeof(struct acpi_sdt_header) + i * 8U)
                                    : acpi_read32(root, sizeof(struct acpi_sdt_header) + i * 4U);
             const struct acpi_sdt_header *table;
@@ -327,11 +323,11 @@ static const struct acpi_sdt_header *acpi_find_table(const struct acpi_rsdp *rsd
 }
 
 /**
- * @brief Coordinates the acpi pkg length operation.
- * @param aml Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @param consumed Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi pkg length.
+ * @param aml Value supplied by the caller.
+ * @param length Maximum number of elements available in the related buffer.
+ * @param consumed Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t acpi_pkg_length(const uint8_t *aml, uint32_t length,
                                 uint32_t *consumed)
@@ -347,8 +343,9 @@ static uint32_t acpi_pkg_length(const uint8_t *aml, uint32_t length,
     if (follow + 1U > length) {
         return 0;
     }
-    /* A one-byte PkgLength uses six payload bits; longer encodings use
-     * the low nibble and the following bytes. */
+    /**
+ * @brief A one-byte PkgLength uses six payload bits; longer encodings use the low nibble and the following bytes.
+ */
     value = follow ? (lead & 0x0fU) : (lead & 0x3fU);
     for (uint32_t i = 0; i < follow; ++i) {
         value |= (uint32_t)aml[i + 1U] << (4U + i * 8U);
@@ -358,12 +355,12 @@ static uint32_t acpi_pkg_length(const uint8_t *aml, uint32_t length,
 }
 
 /**
- * @brief Coordinates the acpi aml integer operation.
- * @param aml Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @param consumed Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi aml integer.
+ * @param aml Value supplied by the caller.
+ * @param length Maximum number of elements available in the related buffer.
+ * @param consumed Value supplied by the caller.
+ * @param value Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int acpi_aml_integer(const uint8_t *aml, uint32_t length,
                             uint32_t *consumed, uint16_t *value)
@@ -381,21 +378,27 @@ static int acpi_aml_integer(const uint8_t *aml, uint32_t length,
         *consumed = 1;
         *value = 1;
         return 1;
-    case 0x0a: /* BytePrefix */
+    case 0x0a: /**
+ * @brief BytePrefix
+ */
         if (length < 2) {
             return 0;
         }
         *consumed = 2;
         *value = aml[1];
         return 1;
-    case 0x0b: /* WordPrefix */
+    case 0x0b: /**
+ * @brief WordPrefix
+ */
         if (length < 3) {
             return 0;
         }
         *consumed = 3;
         *value = (uint16_t)(aml[1] | ((uint16_t)aml[2] << 8));
         return 1;
-    case 0x0c: /* DWordPrefix */
+    case 0x0c: /**
+ * @brief DWordPrefix
+ */
         if (length < 5) {
             return 0;
         }
@@ -409,11 +412,11 @@ static int acpi_aml_integer(const uint8_t *aml, uint32_t length,
 }
 
 /**
- * @brief Coordinates the acpi find sleep types operation.
- * @param dsdt Input or output value used by this operation.
- * @param sleep_type_a Input or output value used by this operation.
- * @param sleep_type_b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi find sleep types.
+ * @param dsdt Value supplied by the caller.
+ * @param sleep_type_a Value supplied by the caller.
+ * @param sleep_type_b Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int acpi_find_sleep_types(const struct acpi_sdt_header *dsdt,
                                  uint16_t *sleep_type_a, uint16_t *sleep_type_b)
@@ -455,7 +458,9 @@ static int acpi_find_sleep_types(const struct acpi_sdt_header *dsdt,
             if (package_offset >= package_end) {
                 continue;
             }
-            /* The first package byte is the element count. */
+            /**
+ * @brief The first package byte is the element count.
+ */
             if (aml[package_offset] < 2U) {
                 continue;
             }
@@ -483,10 +488,10 @@ static int acpi_find_sleep_types(const struct acpi_sdt_header *dsdt,
 }
 
 /**
- * @brief Coordinates the acpi gas io port operation.
- * @param fadt Input or output value used by this operation.
- * @param offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Acpi gas io port.
+ * @param fadt Value supplied by the caller.
+ * @param offset Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint16_t acpi_gas_io_port(const uint8_t *fadt, uint32_t offset)
 {
@@ -494,7 +499,9 @@ static uint16_t acpi_gas_io_port(const uint8_t *fadt, uint32_t offset)
     if (!fadt) {
         return 0;
     }
-    /* Generic Address Structure: address space 1 is system I/O. */
+    /**
+ * @brief Generic Address Structure: address space 1 is system I/O.
+ */
     if (fadt[offset] != 1 || fadt[offset + 1U] == 0) {
         return 0;
     }
@@ -503,8 +510,8 @@ static uint16_t acpi_gas_io_port(const uint8_t *fadt, uint32_t offset)
 }
 
 /**
- * @brief Coordinates the power init operation.
- * @param boot Boot information supplied by the loader.
+ * Power init.
+ * @param boot Value supplied by the caller.
  */
 void power_init(const struct boot_info *boot)
 {
@@ -587,8 +594,8 @@ void power_init(const struct boot_info *boot)
 }
 
 /**
- * @brief Coordinates the acpi enable power management operation.
- * @return Result, status, or value defined by this API.
+ * Acpi enable power management.
+ * @return The value or status produced by the operation.
  */
 static int acpi_enable_power_management(void)
 {
@@ -610,7 +617,7 @@ static int acpi_enable_power_management(void)
 }
 
 /**
- * @brief Coordinates the power reboot operation.
+ * Power reboot.
  */
 void power_reboot(void)
 {
@@ -624,7 +631,7 @@ void power_reboot(void)
 }
 
 /**
- * @brief Coordinates the power shutdown operation.
+ * Power shutdown.
  */
 void power_shutdown(void)
 {
@@ -643,7 +650,9 @@ void power_shutdown(void)
         }
         io_delay();
     }
-    /* QEMU, Bochs and VirtualBox expose these legacy power ports. */
+    /**
+ * @brief QEMU, Bochs and VirtualBox expose these legacy power ports.
+ */
     x86_64_outw(0x2000, 0x604);
     io_delay();
     x86_64_outw(0x3400, 0xb004);

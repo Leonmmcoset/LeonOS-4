@@ -15,9 +15,7 @@
 static uint8_t initial_fpu_state[512] __attribute__((aligned(16)));
 
 /**
- * @brief Copies fpu state.
- * @param dst Input or output value used by this operation.
- * @param src Input or output value used by this operation.
+ * @brief Copy the 512-byte saved FPU/SSE context from src into dst.
  */
 static void copy_fpu_state(void *dst, const void *src)
 {
@@ -29,7 +27,7 @@ static void copy_fpu_state(void *dst, const void *src)
 }
 
 /**
- * @brief Coordinates the arch init operation.
+ * @brief Report that the architecture layer has initialized.
  */
 void arch_init(void)
 {
@@ -37,7 +35,7 @@ void arch_init(void)
 }
 
 /**
- * @brief Coordinates the arch fpu init operation.
+ * @brief Enable x87/SSE in CR0/CR4, set the default MXCSR, and snapshot the clean FPU state.
  */
 void arch_fpu_init(void)
 {
@@ -60,8 +58,7 @@ void arch_fpu_init(void)
 }
 
 /**
- * @brief Coordinates the arch fpu task init operation.
- * @param state Input or output value used by this operation.
+ * @brief Initialize a new task's FPU area with the clean, saved FPU state.
  */
 void arch_fpu_task_init(void *state)
 {
@@ -69,8 +66,7 @@ void arch_fpu_task_init(void *state)
 }
 
 /**
- * @brief Coordinates the arch fpu save operation.
- * @param state Input or output value used by this operation.
+ * @brief Save the current FPU/SSE state into the task's FXSAVE area.
  */
 void arch_fpu_save(void *state)
 {
@@ -78,8 +74,7 @@ void arch_fpu_save(void *state)
 }
 
 /**
- * @brief Coordinates the arch fpu restore operation.
- * @param state Input or output value used by this operation.
+ * @brief Load the task's FPU/SSE state back into the CPU with FXRSTOR.
  */
 void arch_fpu_restore(const void *state)
 {

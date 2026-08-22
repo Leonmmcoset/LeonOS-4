@@ -5,10 +5,12 @@
 #ifndef NTCLKS_USB_H
 #define NTCLKS_USB_H
 
-/* Bootstrap USB host support for standard HID keyboard and mouse devices. */
+/**
+ * @brief Bootstrap USB host support for standard HID keyboard and mouse devices.
+ */
 void usb_init(void);
 /**
- * @brief Coordinates the usb poll operation.
+ * @brief Pump the USB host controller and deliver any pending HID key/mouse events.
  */
 void usb_poll(void);
 

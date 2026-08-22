@@ -8,39 +8,27 @@
 #include <ntclks/types.h>
 
 /**
- * @brief Coordinates the x86 64 outb operation.
- * @param value Input or output value used by this operation.
- * @param port Input or output value used by this operation.
+ * @brief Write the byte value to the I/O port.
  */
 void x86_64_outb(uint8_t value, uint16_t port);
 /**
- * @brief Coordinates the x86 64 inb operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read a byte from the I/O port.
  */
 uint8_t x86_64_inb(uint16_t port);
 /**
- * @brief Coordinates the x86 64 outw operation.
- * @param value Input or output value used by this operation.
- * @param port Input or output value used by this operation.
+ * @brief Write the 16-bit value to the I/O port.
  */
 void x86_64_outw(uint16_t value, uint16_t port);
 /**
- * @brief Coordinates the x86 64 inw operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read a 16-bit value from the I/O port.
  */
 uint16_t x86_64_inw(uint16_t port);
 /**
- * @brief Coordinates the x86 64 outl operation.
- * @param value Input or output value used by this operation.
- * @param port Input or output value used by this operation.
+ * @brief Write the 32-bit value to the I/O port.
  */
 void x86_64_outl(uint32_t value, uint16_t port);
 /**
- * @brief Coordinates the x86 64 inl operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read a 32-bit value from the I/O port.
  */
 uint32_t x86_64_inl(uint16_t port);
 

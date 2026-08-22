@@ -34,10 +34,7 @@ static bool autospawn_memtest;
 static bool autospawn_installer;
 
 /**
- * @brief Coordinates the name contains operation.
- * @param name Input or output value used by this operation.
- * @param needle Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if name contains the substring needle, else 0.
  */
 static int name_contains(const char *name, const char *needle)
 {
@@ -59,10 +56,7 @@ static int name_contains(const char *name, const char *needle)
 }
 
 /**
- * @brief Coordinates the path eq operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if the two NUL-terminated strings are exactly equal, else 0.
  */
 static int path_eq(const char *a, const char *b)
 {
@@ -77,9 +71,7 @@ static int path_eq(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the ascii tolower operation.
- * @param ch Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Lowercase an ASCII letter, otherwise return the character unchanged.
  */
 static char ascii_tolower(char ch)
 {
@@ -90,10 +82,7 @@ static char ascii_tolower(char ch)
 }
 
 /**
- * @brief Coordinates the path eq ignore case operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Case-insensitive ASCII comparison of two paths; returns 1 on an exact match.
  */
 static int path_eq_ignore_case(const char *a, const char *b)
 {
@@ -108,10 +97,7 @@ static int path_eq_ignore_case(const char *a, const char *b)
 }
 
 /**
- * @brief Copies text.
- * @param dst Input or output value used by this operation.
- * @param dst_len Length, size, or element count associated with the operation.
- * @param src Input or output value used by this operation.
+ * @brief Copy src into dst up to dst_len-1 chars, always NUL-terminating dst.
  */
 static void copy_text(char *dst, uint32_t dst_len, const char *src)
 {
@@ -144,10 +130,7 @@ static void clear_task_vmas(struct task *task)
 }
 
 /**
- * @brief Coordinates the task name from path operation.
- * @param path LeonOS path consumed by this operation.
- * @param dst Input or output value used by this operation.
- * @param dst_len Length, size, or element count associated with the operation.
+ * @brief Copy the final path component (after the last '/') into dst.
  */
 static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
 {
@@ -165,9 +148,7 @@ static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
 }
 
 /**
- * @brief Coordinates the path is system desktop operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if path is the desktop.elf window-server path.
  */
 static int path_is_system_desktop(const char *path)
 {
@@ -175,9 +156,7 @@ static int path_is_system_desktop(const char *path)
 }
 
 /**
- * @brief Coordinates the path is system service daemon operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if path is the serviced.elf daemon path.
  */
 static int path_is_system_service_daemon(const char *path)
 {
@@ -185,12 +164,7 @@ static int path_is_system_service_daemon(const char *path)
 }
 
 /**
- * @brief Coordinates the dir add operation.
- * @param entries Input or output value used by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param count Length, size, or element count associated with the operation.
- * @param type Input or output value used by this operation.
- * @param name Input or output value used by this operation.
+ * @brief Append one directory entry (type + name) to entries if it fits; always increments *count.
  */
 static void dir_add(struct leonos_dir_entry *entries, uint32_t capacity, uint32_t *count,
                     uint32_t type, const char *name)
@@ -203,9 +177,7 @@ static void dir_add(struct leonos_dir_entry *entries, uint32_t capacity, uint32_
 }
 
 /**
- * @brief Releases image buffer.
- * @param image Input or output value used by this operation.
- * @param image_len Length, size, or element count associated with the operation.
+ * @brief Free the page-backed buffer allocated for a loaded executable image.
  */
 static void free_image_buffer(const void *image, size_t image_len)
 {
@@ -218,14 +190,7 @@ static void free_image_buffer(const void *image, size_t image_len)
 }
 
 /**
- * @brief Copies exec vector.
- * @param dst Input or output value used by this operation.
- * @param dst_cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
- * @param data Input or output value used by this operation.
- * @param data_cap Capacity, in elements or bytes, of the related output buffer.
- * @param data_len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Pack a NUL-terminated argv/envp array into the shared data buffer and record pointers into dst; returns the entry count, or 0xffffffff on overflow.
  */
 static uint32_t copy_exec_vector(char *dst[], uint32_t dst_cap,
                                  const char *const src[], char *data,
@@ -260,12 +225,7 @@ static uint32_t copy_exec_vector(char *dst[], uint32_t dst_cap,
 }
 
 /**
- * @brief Coordinates the build exec launch operation.
- * @param launch Input or output value used by this operation.
- * @param path LeonOS path consumed by this operation.
- * @param argv Input or output value used by this operation.
- * @param envp Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Populate launch with the packed argv/envp for path; returns 0, or a negative errno (-22 no path, -7 overflow).
  */
 static int build_exec_launch(struct exec_launch *launch, const char *path,
                              const char *const argv[], const char *const envp[])
@@ -302,10 +262,7 @@ static int build_exec_launch(struct exec_launch *launch, const char *path,
 }
 
 /**
- * @brief Coordinates the user ptr for phys operation.
- * @param as Input or output value used by this operation.
- * @param vaddr Address used by this operation; its address-space interpretation follows the API.
- * @return Result, status, or value defined by this API.
+ * @brief Return a kernel pointer to the physical page backing vaddr, or NULL if unmapped.
  */
 static void *user_ptr_for_phys(const struct address_space *as, uint64_t vaddr)
 {
@@ -317,11 +274,7 @@ static void *user_ptr_for_phys(const struct address_space *as, uint64_t vaddr)
 }
 
 /**
- * @brief Writes user u64.
- * @param as Input or output value used by this operation.
- * @param vaddr Address used by this operation; its address-space interpretation follows the API.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Write value into the address space at vaddr byte by byte; returns 0, or -12 on an unmapped page.
  */
 static int write_user_u64(const struct address_space *as, uint64_t vaddr, uint64_t value)
 {
@@ -336,9 +289,7 @@ static int write_user_u64(const struct address_space *as, uint64_t vaddr, uint64
 }
 
 /**
- * @brief Coordinates the prepare user exec stack operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * @brief Lay out argv/envp (and the dynamic-launch record) on the task's user stack and point the initial frame at them.
  */
 static int prepare_user_exec_stack(struct task *task)
 {
@@ -414,9 +365,7 @@ static int prepare_user_exec_stack(struct task *task)
 }
 
 /**
- * @brief Coordinates the userland load task image operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * @brief Map or load the task's pending executable, set the entry frame and exec stack, and mark it started.
  */
 static bool userland_load_task_image(struct task *task)
 {
@@ -471,15 +420,7 @@ static bool userland_load_task_image(struct task *task)
 }
 
 /**
- * @brief Starts pending image.
- * @param path LeonOS path consumed by this operation.
- * @param task_name Input or output value used by this operation.
- * @param node Input or output value used by this operation.
- * @param launch Input or output value used by this operation.
- * @param parent Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Create the user task for path, attach image/exec/fd parameters, and return its PID or a negative errno.
  */
 static int64_t spawn_pending_image(const char *path, const char *task_name,
                                    const struct storage_node *node,
@@ -517,14 +458,7 @@ static int64_t spawn_pending_image(const char *path, const char *task_name,
 }
 
 /**
- * @brief Starts path internal.
- * @param path LeonOS path consumed by this operation.
- * @param task_name Input or output value used by this operation.
- * @param launch Input or output value used by this operation.
- * @param parent Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Tag desktop/service-daemon paths with their flags, reject duplicate instances, then create the task.
  */
 static int64_t spawn_path_internal(const char *path, const char *task_name,
                                    const struct exec_launch *launch,
@@ -561,7 +495,7 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
 }
 
 /**
- * @brief Waits for for runnable task.
+ * @brief Halt with interrupts enabled until a user task is ready to run.
  */
 static void wait_for_runnable_task(void)
 {
@@ -571,16 +505,16 @@ static void wait_for_runnable_task(void)
 }
 
 /**
- * @brief Coordinates the userland schedule from frame operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * @brief Save the current task's frame/FPU, pick and prepare the next user task, and return it (or NULL).
  */
 struct task *userland_schedule_from_frame(struct trap_frame *frame)
 {
     struct task *current = sched_current_task();
     if (current && current->kind == TASK_KIND_USER && frame) {
         current->frame = *frame;
-        /* The kernel is integer-only, so the incoming user FPU state is intact. */
+        /**
+ * @brief The kernel is integer-only, so the incoming user FPU state is intact.
+ */
         arch_fpu_save(current->fpu_state);
         if (current->state == TASK_RUNNING) {
             current->state = TASK_READY;
@@ -611,8 +545,7 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
 static void userland_enter_task(struct task *task) __attribute__((noreturn));
 
 /**
- * @brief Coordinates the userland enter task operation.
- * @param task Task whose state or authority is inspected or updated.
+ * @brief Log and enter the task's user frame at its CR3; falls into the idle loop if none.
  */
 static void userland_enter_task(struct task *task)
 {
@@ -630,8 +563,7 @@ static void userland_enter_task(struct task *task)
 }
 
 /**
- * @brief Coordinates the userland init operation.
- * @param boot Boot information supplied by the loader.
+ * @brief Parse autospawn cmdline flags, then spawn init.elf and desktop.elf (or the installer desktop) to seed userland.
  */
 void userland_init(const struct boot_info *boot)
 {
@@ -695,7 +627,7 @@ void userland_init(const struct boot_info *boot)
 }
 
 /**
- * @brief Coordinates the userland enter first operation.
+ * @brief Enter the first runnable user task; falls to the idle loop if userland failed to load.
  */
 void userland_enter_first(void)
 {
@@ -707,8 +639,7 @@ void userland_enter_first(void)
 }
 
 /**
- * @brief Coordinates the userland process exit operation.
- * @param code Input or output value used by this operation.
+ * @brief Log and terminate the current task with the given exit code.
  */
 void userland_process_exit(uint64_t code)
 {
@@ -765,9 +696,9 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     task->image = NULL;
     task->image_len = 0;
     task->image_node = node;
-    /* A fork child inherits its parent's VMA records.  Its replacement page
-     * tables are blank, so retaining those records would make the ELF mapper
-     * reject valid PIE ranges as overlaps with the discarded image. */
+    /**
+ * @brief A fork child inherits its parent's VMA records. Its replacement page tables are blank, so retaining those records would make the ELF mapper reject valid PIE ranges as overlaps with the discarded image.
+ */
     clear_task_vmas(task);
     task->frame = (struct trap_frame){0};
     task->frame.cs = NTCLKS_USER_CS;
@@ -775,8 +706,9 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     task->frame.rflags = 0x202;
     task->frame.rsp = USER_STACK_TOP;
     task->dynamic_launch = (struct leonos_dynamic_launch){0};
-    /* exec replaces the image and its authority.  A child of the desktop is
-     * never allowed to retain window-server/service privileges across exec. */
+    /**
+ * @brief exec replaces the image and its authority. A child of the desktop is never allowed to retain window-server/service privileges across exec.
+ */
     preserved_flags = task->flags & (TASK_FLAG_ELEVATED_ADMIN | TASK_FLAG_WAITABLE_CHILD);
     if (path_is_system_service_daemon(path)) {
         preserved_flags |= TASK_FLAG_SERVICE;
@@ -795,12 +727,7 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
 }
 
 /**
- * @brief Coordinates the userland spawn path argv operation.
- * @param path LeonOS path consumed by this operation.
- * @param argv Input or output value used by this operation.
- * @param envp Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Build the exec vector and spawn path as a child of the current task; returns the child PID or a negative errno.
  */
 int64_t userland_spawn_path_argv(const char *path,
                                  const char *const argv[],
@@ -873,14 +800,7 @@ int64_t userland_spawn_path_argv_with_fds(const char *path,
 }
 
 /**
- * @brief Coordinates the userland spawn path argv for user operation.
- * @param path LeonOS path consumed by this operation.
- * @param argv Input or output value used by this operation.
- * @param envp Input or output value used by this operation.
- * @param parent_pid Input or output value used by this operation.
- * @param user Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Spawn path as a child of parent_pid and tag it with the given user identity/session; returns the PID or a negative errno.
  */
 int64_t userland_spawn_path_argv_for_user(const char *path,
                                           const char *const argv[],
@@ -915,10 +835,7 @@ int64_t userland_spawn_path_argv_for_user(const char *path,
 }
 
 /**
- * @brief Coordinates the userland spawn path with pty operation.
- * @param path LeonOS path consumed by this operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Spawn path attached to pty_id with no argv/envp.
  */
 int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id)
 {
@@ -926,9 +843,7 @@ int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id)
 }
 
 /**
- * @brief Coordinates the userland spawn path operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Spawn path with no argv/envp or PTY.
  */
 int64_t userland_spawn_path(const char *path)
 {
@@ -936,7 +851,7 @@ int64_t userland_spawn_path(const char *path)
 }
 
 /**
- * @brief Coordinates the userland yield if runnable operation.
+ * @brief One-shot autospawn: launch each requested debug/installer program when the desktop first runs.
  */
 void userland_yield_if_runnable(void)
 {
@@ -968,12 +883,7 @@ void userland_yield_if_runnable(void)
 }
 
 /**
- * @brief Coordinates the userland list dir operation.
- * @param path LeonOS path consumed by this operation.
- * @param entries Input or output value used by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_count Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief List directory entries into entries (special-casing /dev with fb0) and set *out_count; returns count or a negative errno.
  */
 int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
                       uint32_t capacity, uint32_t *out_count)

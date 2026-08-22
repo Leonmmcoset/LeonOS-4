@@ -136,10 +136,7 @@ void sched_task_file_release(struct task *task)
 }
 
 /**
- * @brief Coordinates the str eq operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when both strings are non-NULL and byte-for-byte identical.
  */
 static int str_eq(const char *a, const char *b)
 {
@@ -154,9 +151,7 @@ static int str_eq(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the task copy name operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param name Input or output value used by this operation.
+ * @brief Copy name into the task's fixed buffer (bounded, NUL-terminated) and point task->name at it.
  */
 static void task_copy_name(struct task *task, const char *name)
 {
@@ -175,9 +170,7 @@ static void task_copy_name(struct task *task, const char *name)
 }
 
 /**
- * @brief Coordinates the task copy cwd operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param cwd Input or output value used by this operation.
+ * @brief Copy cwd into the task's fixed buffer, defaulting an empty or NULL value to "/".
  */
 static void task_copy_cwd(struct task *task, const char *cwd)
 {
@@ -196,9 +189,7 @@ static void task_copy_cwd(struct task *task, const char *cwd)
 }
 
 /**
- * @brief Coordinates the task copy path operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param path LeonOS path consumed by this operation.
+ * @brief Copy path into the task's fixed buffer, NUL-terminating even for a NULL source.
  */
 static void task_copy_path(struct task *task, const char *path)
 {
@@ -214,9 +205,7 @@ static void task_copy_path(struct task *task, const char *path)
 }
 
 /**
- * @brief Coordinates the task path basename operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the substring after the final '/', or "" for a NULL or slash-free path.
  */
 static const char *task_path_basename(const char *path)
 {
@@ -233,10 +222,7 @@ static const char *task_path_basename(const char *path)
 }
 
 /**
- * @brief Coordinates the task copy identity text operation.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Bounded, always-NUL-terminated copy used for username and home identity strings.
  */
 static void task_copy_identity_text(char *dst, size_t cap, const char *src)
 {
@@ -252,8 +238,7 @@ static void task_copy_identity_text(char *dst, size_t cap, const char *src)
 }
 
 /**
- * @brief Coordinates the task clear identity operation.
- * @param task Task whose state or authority is inspected or updated.
+ * @brief Strip admin flag, uid, role, session, username, and home, leaving an anonymous task.
  */
 static void task_clear_identity(struct task *task)
 {
@@ -269,9 +254,7 @@ static void task_clear_identity(struct task *task)
 }
 
 /**
- * @brief Coordinates the task copy identity from parent operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param parent Input or output value used by this operation.
+ * @brief Inherit uid, role, session, username, and home from the parent task.
  */
 static void task_copy_identity_from_parent(struct task *task, const struct task *parent)
 {
@@ -286,7 +269,7 @@ static void task_copy_identity_from_parent(struct task *task, const struct task 
 }
 
 /**
- * @brief Coordinates the sched init operation.
+ * @brief Reset the task table, pid/session counters, and tick statistics to their initial state.
  */
 void sched_init(void)
 {
@@ -303,8 +286,7 @@ void sched_init(void)
 }
 
 /**
- * @brief Coordinates the task zero operation.
- * @param task Task whose state or authority is inspected or updated.
+ * @brief Clear every byte of a task struct so it starts from a well-defined zero state.
  */
 static void task_zero(struct task *task)
 {
@@ -317,8 +299,7 @@ static void task_zero(struct task *task)
 }
 
 /**
- * @brief Allocates a PID that is not currently present in the task table.
- * @return A non-zero PID, or zero when the identifier space is exhausted.
+ * @brief Scan forward from next_pid for an unused non-zero pid; 0 when the identifier space is exhausted.
  */
 static uint32_t task_allocate_pid(void)
 {
@@ -342,8 +323,7 @@ static uint32_t task_allocate_pid(void)
 }
 
 /**
- * @brief Allocates task slot.
- * @return Result, status, or value defined by this API.
+ * @brief Return a zeroed task slot, recycling a reaped EXITED entry or growing the table as needed.
  */
 static struct task *alloc_task_slot(void)
 {
@@ -386,10 +366,7 @@ static struct task *alloc_task_slot(void)
 }
 
 /**
- * @brief Coordinates the sched create kernel task operation.
- * @param name Input or output value used by this operation.
- * @param entry Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate and initialize a kernel task with an entry point, no stack, and cleared identity.
  */
 uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
 {
@@ -440,13 +417,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
 }
 
 /**
- * @brief Coordinates the sched create user task operation.
- * @param name Input or output value used by this operation.
- * @param entry Input or output value used by this operation.
- * @param stack_top Input or output value used by this operation.
- * @param parent_pid Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate a user task, build its address space and stack, and inherit cwd/identity from parent.
  */
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags)
@@ -528,9 +499,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
 }
 
 /**
- * @brief Creates a runnable fork child with COW memory and a copied user register frame.
- * @param parent_frame Saved frame for the calling process; its child copy receives rax equal to zero.
- * @return Positive child PID for the parent, or a negative errno-style value on failure.
+ * @brief Fork the calling user task: clone its address space COW-style, copy its register frame with rax zeroed in the child, and copy descriptors; returns the child pid or a negative errno.
  */
 int64_t sched_fork_current(const struct trap_frame *parent_frame)
 {
@@ -559,8 +528,9 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     child->as = empty_as;
     child->image = NULL;
     child->image_len = 0;
-    /* Service and window-server authority belongs to the launched image, not
-     * to an arbitrary child created by that process. */
+    /**
+ * @brief Service and window-server authority belongs to the launched image, not to an arbitrary child created by that process.
+ */
     child->flags &= ~(TASK_FLAG_RESOURCES_RELEASED | TASK_FLAG_PENDING_LOAD |
                       TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER);
     child->flags |= TASK_FLAG_WAITABLE_CHILD | TASK_FLAG_STARTED;
@@ -621,8 +591,9 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
         child->flags = TASK_FLAG_RESOURCES_RELEASED;
         return -12;
     }
-    /* exec_argv and exec_envp are interior pointers, so rebuild them to
-     * reference the child-owned packed string storage after the structure copy. */
+    /**
+ * @brief exec_argv and exec_envp are interior pointers, so rebuild them to reference the child-owned packed string storage after the structure copy.
+ */
     sched_set_task_exec_params(child_pid, parent->exec_argc, parent->exec_argv,
                                parent->exec_envc, parent->exec_envp,
                                parent->exec_data, parent->exec_data_len);
@@ -632,10 +603,7 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
 }
 
 /**
- * @brief Coordinates the sched set task image operation.
- * @param pid Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param image_len Length, size, or element count associated with the operation.
+ * @brief Attach an in-memory image and its length to the task with the given pid.
  */
 void sched_set_task_image(uint32_t pid, const void *image, size_t image_len)
 {
@@ -648,9 +616,7 @@ void sched_set_task_image(uint32_t pid, const void *image, size_t image_len)
 }
 
 /**
- * @brief Coordinates the sched set task image node operation.
- * @param pid Input or output value used by this operation.
- * @param node Input or output value used by this operation.
+ * @brief Record the storage node backing a task's image and flag it for a lazy load.
  */
 void sched_set_task_image_node(uint32_t pid, const struct storage_node *node)
 {
@@ -663,9 +629,7 @@ void sched_set_task_image_node(uint32_t pid, const struct storage_node *node)
 }
 
 /**
- * @brief Coordinates the sched set task path operation.
- * @param pid Input or output value used by this operation.
- * @param path LeonOS path consumed by this operation.
+ * @brief Copy path into the task's fixed path field, resolving the task by pid.
  */
 void sched_set_task_path(uint32_t pid, const char *path)
 {
@@ -673,14 +637,7 @@ void sched_set_task_path(uint32_t pid, const char *path)
 }
 
 /**
- * @brief Coordinates the sched set task exec params operation.
- * @param pid Input or output value used by this operation.
- * @param argc Input or output value used by this operation.
- * @param argv Input or output value used by this operation.
- * @param envc Input or output value used by this operation.
- * @param envp Input or output value used by this operation.
- * @param data Input or output value used by this operation.
- * @param data_len Length, size, or element count associated with the operation.
+ * @brief Store clamped argc/argv/envc/envp/data, rebinding interior pointers into the owned buffer.
  */
 void sched_set_task_exec_params(uint32_t pid,
                                 uint32_t argc, char *const argv[],
@@ -742,7 +699,7 @@ void sched_set_task_exec_params(uint32_t pid,
 }
 
 /**
- * @brief Coordinates the sched create idle task operation.
+ * @brief Create the pid-0 kernel idle task and mark it the running task.
  */
 void sched_create_idle_task(void)
 {
@@ -779,8 +736,7 @@ void sched_create_idle_task(void)
 }
 
 /**
- * @brief Coordinates the sched set running operation.
- * @param pid Input or output value used by this operation.
+ * @brief Make pid the running task and demote every other RUNNING task back to READY.
  */
 void sched_set_running(uint32_t pid)
 {
@@ -795,17 +751,15 @@ void sched_set_running(uint32_t pid)
 }
 
 /**
- * @brief Coordinates the sched exit operation.
- * @param pid Input or output value used by this operation.
- * @param code Input or output value used by this operation.
+ * @brief Close the task's files, mark it exited with code, reparent its children, and clear current.
  */
 void sched_exit(uint32_t pid, uint64_t code)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i]->pid == pid) {
-            /* Exit paths such as SIGKILL and a failed lazy image load bypass
-             * the normal SYS_exit handler.  Close their descriptors here so
-             * pipe readers receive EOF once the final writer is gone. */
+            /**
+ * @brief Exit paths such as SIGKILL and a failed lazy image load bypass the normal SYS_exit handler. Close their descriptors here so pipe readers receive EOF once the final writer is gone.
+ */
             syscall_release_task_files(tasks[i]);
             tasks[i]->state = TASK_EXITED;
             tasks[i]->exit_code = code;
@@ -831,8 +785,7 @@ void sched_exit(uint32_t pid, uint64_t code)
 }
 
 /**
- * @brief Coordinates the sched release task resources operation.
- * @param task Task whose state or authority is inspected or updated.
+ * @brief Free a user task's storage, files, and address space once, guarded by a released flag.
  */
 void sched_release_task_resources(struct task *task)
 {
@@ -849,7 +802,7 @@ void sched_release_task_resources(struct task *task)
 }
 
 /**
- * @brief Coordinates the sched on tick operation.
+ * @brief Advance scheduler time, credit busy/idle ticks, and wake blocked tasks past their deadline.
  */
 void sched_on_tick(void)
 {
@@ -873,8 +826,7 @@ void sched_on_tick(void)
 }
 
 /**
- * @brief Coordinates the sched tick count operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the total number of scheduler ticks since init.
  */
 uint64_t sched_tick_count(void)
 {
@@ -883,16 +835,14 @@ uint64_t sched_tick_count(void)
 
 void sched_yield_current(void)
 {
-    /* The kernel debugger runs before the first user task exists.  A real
-     * context switch is therefore neither useful nor safe here; the timer
-     * interrupt remains the scheduling boundary for the normal system. */
+    /**
+ * @brief The kernel debugger runs before the first user task exists. A real context switch is therefore neither useful nor safe here; the timer interrupt remains the scheduling boundary for the normal system.
+ */
     __asm__ volatile("pause");
 }
 
 /**
- * @brief Coordinates the sched cpu ticks operation.
- * @param busy_ticks Input or output value used by this operation.
- * @param idle_ticks Input or output value used by this operation.
+ * @brief Write the accumulated busy and idle tick counters into the caller's outputs.
  */
 void sched_cpu_ticks(uint64_t *busy_ticks, uint64_t *idle_ticks)
 {
@@ -905,11 +855,7 @@ void sched_cpu_ticks(uint64_t *busy_ticks, uint64_t *idle_ticks)
 }
 
 /**
- * @brief Coordinates the sched task counts operation.
- * @param out_task_count Caller-provided storage that receives output from this operation.
- * @param running_tasks Input or output value used by this operation.
- * @param ready_tasks Input or output value used by this operation.
- * @param sleeping_tasks Input or output value used by this operation.
+ * @brief Count tasks by RUNNING/READY/BLOCKED state and report each plus the total count.
  */
 void sched_task_counts(uint32_t *out_task_count, uint32_t *running_tasks,
                        uint32_t *ready_tasks, uint32_t *sleeping_tasks)
@@ -941,8 +887,7 @@ void sched_task_counts(uint32_t *out_task_count, uint32_t *running_tasks,
 }
 
 /**
- * @brief Coordinates the sched current pid operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the pid of the currently running task (0 before the first switch).
  */
 uint32_t sched_current_pid(void)
 {
@@ -950,9 +895,7 @@ uint32_t sched_current_pid(void)
 }
 
 /**
- * @brief Coordinates the sched find operation.
- * @param pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Linear scan for the task with the given pid, or NULL when absent.
  */
 struct task *sched_find(uint32_t pid)
 {
@@ -965,9 +908,7 @@ struct task *sched_find(uint32_t pid)
 }
 
 /**
- * @brief Coordinates the sched find by name operation.
- * @param name Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the first task whose name matches, or NULL when none does.
  */
 struct task *sched_find_by_name(const char *name)
 {
@@ -980,9 +921,7 @@ struct task *sched_find_by_name(const char *name)
 }
 
 /**
- * @brief Coordinates the sched find by path operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the live user task whose path matches exactly, or NULL.
  */
 struct task *sched_find_by_path(const char *path)
 {
@@ -996,9 +935,7 @@ struct task *sched_find_by_path(const char *path)
 }
 
 /**
- * @brief Coordinates the sched find by path basename operation.
- * @param basename Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the live user task whose path's basename matches, or NULL.
  */
 struct task *sched_find_by_path_basename(const char *basename)
 {
@@ -1013,8 +950,7 @@ struct task *sched_find_by_path_basename(const char *basename)
 }
 
 /**
- * @brief Coordinates the sched find window server operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the live user task flagged as the window server, or NULL.
  */
 struct task *sched_find_window_server(void)
 {
@@ -1029,7 +965,7 @@ struct task *sched_find_window_server(void)
 }
 
 /**
- * @brief Tests whether a canonical LeonOS path resolves to a mounted volume.
+ * @brief True when path resolves to the given volume id (used to detect in-use mounts).
  */
 static bool sched_path_uses_volume(const char *path, uint32_t volume_id)
 {
@@ -1039,7 +975,7 @@ static bool sched_path_uses_volume(const char *path, uint32_t volume_id)
 }
 
 /**
- * @brief Determines whether a live task still refers to one mounted volume.
+ * @brief True when any live task's cwd, path, image node, or open files/VMA reference this volume.
  */
 bool sched_volume_in_use(uint32_t volume_id)
 {
@@ -1076,8 +1012,7 @@ bool sched_volume_in_use(uint32_t volume_id)
 }
 
 /**
- * @brief Coordinates the sched current task operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the struct task for the currently running pid, or NULL.
  */
 struct task *sched_current_task(void)
 {
@@ -1085,8 +1020,7 @@ struct task *sched_current_task(void)
 }
 
 /**
- * @brief Coordinates the sched select next user operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round-robin scan for the next READY, fully-loaded user task with the lowest priority.
  */
 struct task *sched_select_next_user(void)
 {
@@ -1124,9 +1058,7 @@ struct task *sched_select_next_user(void)
 }
 
 /**
- * @brief Coordinates the sched task frame operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * @brief Return a pointer to the task's saved trap frame, or NULL for a NULL task.
  */
 struct trap_frame *sched_task_frame(struct task *task)
 {
@@ -1134,9 +1066,7 @@ struct trap_frame *sched_task_frame(struct task *task)
 }
 
 /**
- * @brief Coordinates the sched task cr3 operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * @brief Return the task's address-space CR3, or 0 for a NULL task.
  */
 uint64_t sched_task_cr3(struct task *task)
 {
@@ -1144,8 +1074,7 @@ uint64_t sched_task_cr3(struct task *task)
 }
 
 /**
- * @brief Coordinates the sched mark ready operation.
- * @param pid Input or output value used by this operation.
+ * @brief Wake a non-exited task: clear its wait state and set it READY.
  */
 void sched_mark_ready(uint32_t pid)
 {
@@ -1159,8 +1088,7 @@ void sched_mark_ready(uint32_t pid)
 }
 
 /**
- * @brief Coordinates the sched sleep current until operation.
- * @param wake_tick Input or output value used by this operation.
+ * @brief Put the current task to sleep until wake_tick (no-op for the idle or an exited task).
  */
 void sched_sleep_current_until(uint64_t wake_tick)
 {
@@ -1174,9 +1102,7 @@ void sched_sleep_current_until(uint64_t wake_tick)
 }
 
 /**
- * @brief Coordinates the sched wait current for window event operation.
- * @param window_id Input or output value used by this operation.
- * @param wake_tick Input or output value used by this operation.
+ * @brief Block the current task until window_id gets an event or wake_tick elapses.
  */
 void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick)
 {
@@ -1190,9 +1116,7 @@ void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick)
 }
 
 /**
- * @brief Coordinates the sched wake window event operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
+ * @brief Wake a BLOCKED task only when it is waiting for exactly this window event.
  */
 void sched_wake_window_event(uint32_t pid, uint32_t window_id)
 {
@@ -1206,10 +1130,7 @@ void sched_wake_window_event(uint32_t pid, uint32_t window_id)
 }
 
 /**
- * @brief Coordinates the sched kill user task operation.
- * @param pid Input or output value used by this operation.
- * @param code Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Terminate a user task by pid, returning a negative error for idle/services/exited/self.
  */
 int sched_kill_user_task(uint32_t pid, uint64_t code)
 {
@@ -1226,10 +1147,7 @@ int sched_kill_user_task(uint32_t pid, uint64_t code)
 }
 
 /**
- * @brief Sends a supported process-control signal to a user task.
- * @param pid Target process identifier.
- * @param signal_number POSIX signal number.
- * @return Zero on success or a negative scheduler error.
+ * @brief Record a POSIX signal on a user task, handling STOP/CONT state changes and fatal signals.
  */
 int sched_signal_user_task(uint32_t pid, int signal_number)
 {
@@ -1250,7 +1168,9 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
         task->child_event = TASK_CHILD_EVENT_STOPPED;
         return 0;
     }
-    if (signal_number == 19) { /* SIGCONT */
+    if (signal_number == 19) { /**
+ * @brief SIGCONT
+ */
         task->pending_signals &= ~((1u << 17) | (1u << 18));
         if (task->state == TASK_STOPPED) {
             task->wake_tick = 0;
@@ -1270,11 +1190,7 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
 }
 
 /**
- * @brief Sends a signal to all members of a process group owned by the caller.
- * @param sender_pid Process issuing the request.
- * @param process_group Target process group.
- * @param signal_number POSIX signal number.
- * @return Number of signalled tasks, or a negative scheduler error.
+ * @brief Signal every user task in a group the caller owns; returns the count or a negative error.
  */
 int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
                                int signal_number)
@@ -1308,11 +1224,7 @@ int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
 }
 
 /**
- * @brief Changes the process group for a task controlled by the caller.
- * @param caller_pid Process issuing the request.
- * @param pid Target task, or zero for the caller.
- * @param process_group Target group, or zero to create one led by the target.
- * @return Zero on success or a negative scheduler error.
+ * @brief Move a caller-controlled task into an existing or newly created process group.
  */
 int sched_set_process_group(uint32_t caller_pid, uint32_t pid,
                             uint32_t process_group)
@@ -1362,9 +1274,7 @@ int sched_set_process_group(uint32_t caller_pid, uint32_t pid,
 }
 
 /**
- * @brief Returns the process group assigned to a task.
- * @param pid Task identifier, or zero for the current task.
- * @return Process-group identifier or a negative scheduler error.
+ * @brief Return the process group of pid (0 = current), or a negative error.
  */
 int64_t sched_get_process_group(uint32_t pid)
 {
@@ -1381,9 +1291,7 @@ int64_t sched_get_process_group(uint32_t pid)
 }
 
 /**
- * @brief Creates a process session whose leader and initial group are the caller.
- * @param pid Calling task identifier.
- * @return New session identifier or a negative scheduler error.
+ * @brief Make the calling task the leader of a new session and process group.
  */
 int64_t sched_create_process_session(uint32_t pid)
 {
@@ -1407,10 +1315,7 @@ int64_t sched_create_process_session(uint32_t pid)
 }
 
 /**
- * @brief Checks whether an attached task belongs to a process group.
- * @param process_group Process group to inspect.
- * @param pty_id PTY to match.
- * @return Non-zero if a matching live task exists.
+ * @brief True when some live task in this process group is attached to the given PTY.
  */
 int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id)
 {
@@ -1429,9 +1334,7 @@ int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id)
 }
 
 /**
- * @brief Returns the POSIX-style process session for a task.
- * @param pid Task identifier.
- * @return Session identifier or a negative scheduler error.
+ * @brief Return the process session of pid, or a negative error.
  */
 int64_t sched_get_process_session(uint32_t pid)
 {
@@ -1444,11 +1347,7 @@ int64_t sched_get_process_session(uint32_t pid)
 }
 
 /**
- * @brief Reads or updates a task's nice-style priority.
- * @param pid Target process identifier.
- * @param priority New priority when set is non-zero.
- * @param set Non-zero to update, zero to read.
- * @return Priority on success or a negative error.
+ * @brief Read or set a user task's nice-style priority, clamping new values to [-20, 19].
  */
 int sched_task_priority(uint32_t pid, int priority, int set)
 {
@@ -1466,11 +1365,7 @@ int sched_task_priority(uint32_t pid, int priority, int set)
 }
 
 /**
- * @brief Coordinates the sched kill user tasks for pty operation.
- * @param pty_id Input or output value used by this operation.
- * @param keep_pid Input or output value used by this operation.
- * @param code Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Kill every user task (except keep_pid) attached to pty_id and clear its PTY fds.
  */
 int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
                                   uint64_t code)
@@ -1498,12 +1393,7 @@ int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
 }
 
 /**
- * @brief Coordinates the sched kill user tasks for logout operation.
- * @param uid Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
- * @param keep_pid Input or output value used by this operation.
- * @param code Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Kill every non-service user task in this uid/session except keep_pid.
  */
 int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                      uint32_t keep_pid, uint64_t code)
@@ -1527,12 +1417,7 @@ int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
 }
 
 /**
- * @brief Coordinates the sched wait reap operation.
- * @param waiter_pid Input or output value used by this operation.
- * @param wanted_pid Input or output value used by this operation.
- * @param options waitpid option bit mask.
- * @param status Destination for the encoded wait status.
- * @return Result, status, or value defined by this API.
+ * @brief Reap an exited child (or report stop/continue events) matching waitpid semantics.
  */
 int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
                         uint32_t options, int *status)
@@ -1608,10 +1493,7 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
 }
 
 /**
- * @brief Coordinates the snapshot name operation.
- * @param dst Input or output value used by this operation.
- * @param dst_len Length, size, or element count associated with the operation.
- * @param src Input or output value used by this operation.
+ * @brief Bounded, always-NUL-terminated copy for task snapshot string fields.
  */
 static void snapshot_name(char *dst, size_t dst_len, const char *src)
 {
@@ -1629,11 +1511,7 @@ static void snapshot_name(char *dst, size_t dst_len, const char *src)
 }
 
 /**
- * @brief Coordinates the sched snapshot operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param tick Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Fill out[] with up to capacity task snapshots, storing the tick count via tick.
  */
 uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint64_t *tick)
 {
@@ -1668,10 +1546,7 @@ uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint6
 }
 
 /**
- * @brief Coordinates the sched set task identity operation.
- * @param pid Input or output value used by this operation.
- * @param user Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
+ * @brief Set a task's uid/role/session/username/home from user, or clear it when user is empty.
  */
 void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
                              uint32_t session_id)
@@ -1697,10 +1572,7 @@ void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
 }
 
 /**
- * @brief Coordinates the sched set session identity operation.
- * @param parent_pid Input or output value used by this operation.
- * @param user Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
+ * @brief Apply identity to the given task and its non-service children in a session.
  */
 void sched_set_session_identity(uint32_t parent_pid, const struct leonos_user_info *user,
                                 uint32_t session_id)
@@ -1716,8 +1588,7 @@ void sched_set_session_identity(uint32_t parent_pid, const struct leonos_user_in
 }
 
 /**
- * @brief Coordinates the sched clear session identity operation.
- * @param session_id Input or output value used by this operation.
+ * @brief Clear identity and reset cwd for every non-service task in this session.
  */
 void sched_clear_session_identity(uint32_t session_id)
 {
@@ -1735,8 +1606,7 @@ void sched_clear_session_identity(uint32_t session_id)
 }
 
 /**
- * @brief Coordinates the sched next session id operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the next session id, wrapping past zero back to 1.
  */
 uint32_t sched_next_session_id(void)
 {
@@ -1747,7 +1617,7 @@ uint32_t sched_next_session_id(void)
 }
 
 /**
- * @brief Coordinates the sched dump operation.
+ * @brief Print one console line per task with pid, identity, name, state, and flags.
  */
 void sched_dump(void)
 {

@@ -25,7 +25,7 @@ static uint8_t key_states[128];
 static uint8_t e0_prefix;
 
 /**
- * @brief Coordinates the io wait operation.
+ * Io wait.
  */
 static void io_wait(void)
 {
@@ -33,8 +33,8 @@ static void io_wait(void)
 }
 
 /**
- * @brief Coordinates the pic send eoi operation.
- * @param irq Input or output value used by this operation.
+ * Pic send eoi.
+ * @param irq Value supplied by the caller.
  */
 static void pic_send_eoi(uint8_t irq)
 {
@@ -45,7 +45,7 @@ static void pic_send_eoi(uint8_t irq)
 }
 
 /**
- * @brief Coordinates the pic remap operation.
+ * Pic remap.
  */
 static void pic_remap(void)
 {
@@ -79,7 +79,7 @@ static void pic_remap(void)
 }
 
 /**
- * @brief Coordinates the pit init 100hz operation.
+ * Pit init 100hz.
  */
 static void pit_init_100hz(void)
 {
@@ -90,7 +90,7 @@ static void pit_init_100hz(void)
 }
 
 /**
- * @brief Coordinates the irq init operation.
+ * Irq init.
  */
 void irq_init(void)
 {
@@ -101,9 +101,9 @@ void irq_init(void)
 }
 
 /**
- * @brief Coordinates the irq dispatch operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Irq dispatch.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct task *irq_dispatch(struct trap_frame *frame)
 {

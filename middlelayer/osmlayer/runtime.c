@@ -98,11 +98,7 @@ static const struct leonos_kernel_services *osmlayer_services;
 static struct osmlayer_account osmlayer_auth_accounts[LEONOS_AUTH_MAX_USERS];
 
 /**
- * @brief Coordinates the memset operation.
- * @param dst Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Fill `len` bytes at `dst` with the low byte of `value`, returning `dst`.
  */
 void *memset(void *dst, int value, size_t len)
 {
@@ -114,11 +110,7 @@ void *memset(void *dst, int value, size_t len)
 }
 
 /**
- * @brief Coordinates the memcpy operation.
- * @param dst Input or output value used by this operation.
- * @param src Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy `len` bytes from `src` to `dst`, returning `dst`.
  */
 void *memcpy(void *dst, const void *src, size_t len)
 {
@@ -131,11 +123,7 @@ void *memcpy(void *dst, const void *src, size_t len)
 }
 
 /**
- * @brief Coordinates the memcmp operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Bytewise-compare `len` bytes; returns the first differing byte delta, or 0 when equal.
  */
 int memcmp(const void *a, const void *b, size_t len)
 {
@@ -150,10 +138,7 @@ int memcmp(const void *a, const void *b, size_t len)
 }
 
 /**
- * @brief Coordinates the osmlayer text eq operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when `a` and `b` are non-NULL and equal as NUL-terminated strings.
  */
 static int osmlayer_text_eq(const char *a, const char *b)
 {
@@ -165,10 +150,7 @@ static int osmlayer_text_eq(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the osmlayer text starts with operation.
- * @param text Input or output value used by this operation.
- * @param prefix Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when `text` begins with `prefix` (both non-NULL).
  */
 static int osmlayer_text_starts_with(const char *text, const char *prefix)
 {
@@ -186,10 +168,7 @@ static int osmlayer_text_starts_with(const char *text, const char *prefix)
 }
 
 /**
- * @brief Coordinates the osmlayer path under operation.
- * @param path LeonOS path consumed by this operation.
- * @param base Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when `path` equals `base` or is a descendant, matching at a `/` boundary.
  */
 static int osmlayer_path_under(const char *path, const char *base)
 {
@@ -208,9 +187,7 @@ static int osmlayer_path_under(const char *path, const char *base)
 }
 
 /**
- * @brief Coordinates the osmlayer strlen operation.
- * @param s Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Returns the length of the NUL-terminated string `s` (0 for NULL).
  */
 static uint32_t osmlayer_strlen(const char *s)
 {
@@ -222,10 +199,7 @@ static uint32_t osmlayer_strlen(const char *s)
 }
 
 /**
- * @brief Coordinates the osmlayer copy text operation.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Copies `src` into `dst`, leaving room for a NUL terminator and truncating when needed.
  */
 static void osmlayer_copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -241,11 +215,7 @@ static void osmlayer_copy_text(char *dst, uint32_t cap, const char *src)
 }
 
 /**
- * @brief Coordinates the osmlayer append char operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ch Input or output value used by this operation.
+ * @brief Appends `ch` at `*pos` and keeps the buffer NUL-terminated, respecting `cap`.
  */
 static void osmlayer_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -256,11 +226,7 @@ static void osmlayer_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch
 }
 
 /**
- * @brief Coordinates the osmlayer append text operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param text Input or output value used by this operation.
+ * @brief Appends `text` at `*pos`, stopping at the NUL terminator or the buffer capacity.
  */
 static void osmlayer_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
@@ -270,11 +236,7 @@ static void osmlayer_append_text(char *buf, uint32_t *pos, uint32_t cap, const c
 }
 
 /**
- * @brief Coordinates the osmlayer append u64 operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * @brief Appends the decimal digits of `value` at `*pos`.
  */
 static void osmlayer_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -294,8 +256,7 @@ static void osmlayer_append_u64(char *buf, uint32_t *pos, uint32_t cap, uint64_t
 }
 
 /**
- * @brief Coordinates the osmlayer c bind services operation.
- * @param services Input or output value used by this operation.
+ * @brief Stores the kernel service table for later file/mkdir callbacks.
  */
 void osmlayer_c_bind_services(const struct leonos_kernel_services *services)
 {
@@ -303,12 +264,7 @@ void osmlayer_c_bind_services(const struct leonos_kernel_services *services)
 }
 
 /**
- * @brief Coordinates the osmlayer service read file operation.
- * @param path LeonOS path consumed by this operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Delegates file reads to the kernel service; returns -ENOSYS when it is unavailable.
  */
 static int osmlayer_service_read_file(const char *path, void *buf,
                                       uint32_t capacity, uint32_t *out_len)
@@ -320,11 +276,7 @@ static int osmlayer_service_read_file(const char *path, void *buf,
 }
 
 /**
- * @brief Coordinates the osmlayer service write file operation.
- * @param path LeonOS path consumed by this operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Delegates file writes to the kernel service; returns -ENOSYS when it is unavailable.
  */
 static int osmlayer_service_write_file(const char *path, const void *buf, uint32_t len)
 {
@@ -335,9 +287,7 @@ static int osmlayer_service_write_file(const char *path, const void *buf, uint32
 }
 
 /**
- * @brief Coordinates the osmlayer service mkdir operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Creates a directory via the kernel service, treating an existing dir (-EEXIST) as success.
  */
 static int osmlayer_service_mkdir(const char *path)
 {
@@ -350,11 +300,7 @@ static int osmlayer_service_mkdir(const char *path)
 }
 
 /**
- * @brief Coordinates the osmlayer append i32 operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * @brief Appends a signed decimal at `*pos`, prefixing '-' when negative.
  */
 static void osmlayer_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t value)
 {
@@ -366,11 +312,7 @@ static void osmlayer_append_i32(char *buf, uint32_t *pos, uint32_t cap, int32_t 
 }
 
 /**
- * @brief Coordinates the osmlayer append ipv4 operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ip Input or output value used by this operation.
+ * @brief Appends `ip` as dotted-decimal IPv4 (a.b.c.d).
  */
 static void osmlayer_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_t ip)
 {
@@ -384,9 +326,7 @@ static void osmlayer_append_ipv4(char *buf, uint32_t *pos, uint32_t cap, uint32_
 }
 
 /**
- * @brief Tests a canonical Unix absolute path.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when `path` is a canonical Unix absolute path with no ':' separator.
  */
 static int osmlayer_abs_path(const char *path)
 {
@@ -403,10 +343,7 @@ static int osmlayer_abs_path(const char *path)
 }
 
 /**
- * @brief Coordinates the osmlayer push path parts operation.
- * @param part_count Length, size, or element count associated with the operation.
- * @param source Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Splits `source` on '/' into normalized parts (resolving '.' and '..'); returns -EINVAL on overflow.
  */
 static int osmlayer_push_path_parts(char parts[16][OSMLAYER_FS_NAME_LEN],
                                     uint32_t *part_count, const char *source)
@@ -448,9 +385,7 @@ static int osmlayer_push_path_parts(char parts[16][OSMLAYER_FS_NAME_LEN],
 }
 
 /**
- * @brief Coordinates the osmlayer resolve path operation.
- * @param query Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Joins cwd + input (or an absolute input) into a normalized path and classifies its node kind.
  */
 static int osmlayer_resolve_path(struct osmlayer_vfs_resolve_path *query)
 {
@@ -508,10 +443,7 @@ static int osmlayer_resolve_path(struct osmlayer_vfs_resolve_path *query)
 }
 
 /**
- * @brief Coordinates the osmlayer c vfs op operation.
- * @param op Input or output value used by this operation.
- * @param arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dispatches VFS ops; supports resolve-path and returns -ENOSYS for anything else.
  */
 int osmlayer_c_vfs_op(uint32_t op, void *arg)
 {
@@ -548,10 +480,7 @@ static const uint32_t osmlayer_sha256_k[64] = {
 };
 
 /**
- * @brief Coordinates the osmlayer rotr32 operation.
- * @param value Input or output value used by this operation.
- * @param bits Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Rotates `value` right by `bits` (SHA-256 helper).
  */
 static uint32_t osmlayer_rotr32(uint32_t value, uint32_t bits)
 {
@@ -559,9 +488,7 @@ static uint32_t osmlayer_rotr32(uint32_t value, uint32_t bits)
 }
 
 /**
- * @brief Coordinates the osmlayer sha256 transform operation.
- * @param ctx Input or output value used by this operation.
- * @param data Input or output value used by this operation.
+ * @brief Processes one 64-byte block into the SHA-256 state.
  */
 static void osmlayer_sha256_transform(struct osmlayer_sha256_ctx *ctx,
                                       const uint8_t data[64])
@@ -620,8 +547,7 @@ static void osmlayer_sha256_transform(struct osmlayer_sha256_ctx *ctx,
 }
 
 /**
- * @brief Coordinates the osmlayer sha256 init operation.
- * @param ctx Input or output value used by this operation.
+ * @brief Resets the SHA-256 context to the standard IV and an empty buffer.
  */
 static void osmlayer_sha256_init(struct osmlayer_sha256_ctx *ctx)
 {
@@ -638,10 +564,13 @@ static void osmlayer_sha256_init(struct osmlayer_sha256_ctx *ctx)
 }
 
 /**
- * @brief Coordinates the osmlayer sha256 update operation.
- * @param ctx Input or output value used by this operation.
- * @param input Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
+ * @brief Adds a byte range to an incremental SHA-256 calculation.
+ *
+ * Complete 64-byte blocks are compressed immediately; the final partial block
+ * remains in the context until `osmlayer_sha256_final` is called.
+ * @param ctx Hash state to update.
+ * @param input Bytes to hash.
+ * @param len Number of bytes at `input`.
  */
 static void osmlayer_sha256_update(struct osmlayer_sha256_ctx *ctx,
                                    const void *input, uint32_t len)
@@ -658,9 +587,9 @@ static void osmlayer_sha256_update(struct osmlayer_sha256_ctx *ctx,
 }
 
 /**
- * @brief Coordinates the osmlayer sha256 final operation.
- * @param ctx Input or output value used by this operation.
- * @param hash Input or output value used by this operation.
+ * @brief Pads and finalizes a SHA-256 calculation.
+ * @param ctx Hash state containing all bytes supplied so far.
+ * @param hash 32-byte buffer receiving the digest in big-endian order.
  */
 static void osmlayer_sha256_final(struct osmlayer_sha256_ctx *ctx, uint8_t hash[32])
 {
@@ -701,9 +630,9 @@ static void osmlayer_sha256_final(struct osmlayer_sha256_ctx *ctx, uint8_t hash[
 }
 
 /**
- * @brief Coordinates the osmlayer password valid operation.
- * @param password Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Checks the password length accepted by the authentication ABI.
+ * @param password NUL-terminated password to validate.
+ * @return Non-zero when the password is non-empty and fits the ABI field.
  */
 static int osmlayer_password_valid(const char *password)
 {
@@ -712,9 +641,11 @@ static int osmlayer_password_valid(const char *password)
 }
 
 /**
- * @brief Coordinates the osmlayer username valid operation.
- * @param username Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Validates an account name.
+ *
+ * LeonOS account names use lower-case ASCII letters, digits, and underscores.
+ * @param username NUL-terminated account name.
+ * @return Non-zero when the name is valid and fits the ABI field.
  */
 static int osmlayer_username_valid(const char *username)
 {
@@ -734,10 +665,10 @@ static int osmlayer_username_valid(const char *username)
 }
 
 /**
- * @brief Coordinates the osmlayer home for user operation.
- * @param home Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param username Input or output value used by this operation.
+ * @brief Builds the home path for an account.
+ * @param home Destination buffer.
+ * @param cap Capacity of `home`, including its terminator.
+ * @param username Account name appended after `/users/`.
  */
 static void osmlayer_home_for_user(char *home, uint32_t cap, const char *username)
 {
@@ -751,9 +682,9 @@ static void osmlayer_home_for_user(char *home, uint32_t cap, const char *usernam
 }
 
 /**
- * @brief Coordinates the osmlayer fill user info operation.
- * @param info Input or output value used by this operation.
- * @param account Input or output value used by this operation.
+ * @brief Converts an internal account record to the public user structure.
+ * @param info Destination user information structure.
+ * @param account Account record to expose.
  */
 static void osmlayer_fill_user_info(struct leonos_user_info *info,
                                     const struct osmlayer_account *account)
@@ -770,10 +701,10 @@ static void osmlayer_fill_user_info(struct leonos_user_info *info,
 }
 
 /**
- * @brief Coordinates the osmlayer parse u32 operation.
- * @param text Input or output value used by this operation.
- * @param ok Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Parses an unsigned decimal integer without libc dependencies.
+ * @param text NUL-terminated decimal text.
+ * @param ok Optional result flag, set only when the entire string is valid.
+ * @return Parsed value, or zero for invalid input.
  */
 static uint32_t osmlayer_parse_u32(const char *text, int *ok)
 {
@@ -799,9 +730,9 @@ static uint32_t osmlayer_parse_u32(const char *text, int *ok)
 }
 
 /**
- * @brief Coordinates the osmlayer hex value operation.
- * @param ch Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Converts one hexadecimal digit to its numeric value.
+ * @param ch ASCII hexadecimal character.
+ * @return A value from 0 through 15, or -1 when `ch` is not hexadecimal.
  */
 static int osmlayer_hex_value(char ch)
 {
@@ -818,11 +749,11 @@ static int osmlayer_hex_value(char ch)
 }
 
 /**
- * @brief Coordinates the osmlayer parse hex operation.
- * @param text Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param bytes Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Decodes an exact-length hexadecimal string into bytes.
+ * @param text Hexadecimal input containing exactly `bytes * 2` characters.
+ * @param out Destination byte array.
+ * @param bytes Number of bytes to decode.
+ * @return 0 on success, or -EINVAL for malformed/extra input.
  */
 static int osmlayer_parse_hex(const char *text, uint8_t *out, uint32_t bytes)
 {
@@ -838,12 +769,12 @@ static int osmlayer_parse_hex(const char *text, uint8_t *out, uint32_t bytes)
 }
 
 /**
- * @brief Coordinates the osmlayer append hex operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param bytes Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
+ * @brief Appends `count` bytes as lower-case hexadecimal text.
+ * @param buf Destination string buffer.
+ * @param pos Current output offset, advanced after each emitted digit.
+ * @param cap Capacity of `buf`.
+ * @param bytes Bytes to encode.
+ * @param count Number of bytes in `bytes`.
  */
 static void osmlayer_append_hex(char *buf, uint32_t *pos, uint32_t cap,
                                 const uint8_t *bytes, uint32_t count)
@@ -856,11 +787,11 @@ static void osmlayer_append_hex(char *buf, uint32_t *pos, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the osmlayer hash seed operation.
- * @param username Input or output value used by this operation.
- * @param password Input or output value used by this operation.
- * @param uid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Derives deterministic seed material for password hashing.
+ * @param username Account name.
+ * @param password Password text.
+ * @param uid Numeric user ID mixed into the seed.
+ * @return Non-zero seed value used by the salt generator.
  */
 static uint64_t osmlayer_hash_seed(const char *username, const char *password, uint32_t uid)
 {
@@ -877,11 +808,11 @@ static uint64_t osmlayer_hash_seed(const char *username, const char *password, u
 }
 
 /**
- * @brief Coordinates the osmlayer make salt operation.
- * @param salt Input or output value used by this operation.
- * @param username Input or output value used by this operation.
- * @param password Input or output value used by this operation.
- * @param uid Input or output value used by this operation.
+ * @brief Generates the eight-byte per-account password salt.
+ * @param salt Destination salt buffer.
+ * @param username Account name used as entropy input.
+ * @param password Password text used as entropy input.
+ * @param uid User ID used as entropy input.
  */
 static void osmlayer_make_salt(uint8_t salt[8], const char *username,
                                const char *password, uint32_t uid)
@@ -896,10 +827,10 @@ static void osmlayer_make_salt(uint8_t salt[8], const char *username,
 }
 
 /**
- * @brief Coordinates the osmlayer hash password operation.
- * @param salt Input or output value used by this operation.
- * @param password Input or output value used by this operation.
- * @param hash Input or output value used by this operation.
+ * @brief Computes the stored password digest from a salt and password.
+ * @param salt Eight-byte account salt.
+ * @param password NUL-terminated password.
+ * @param hash Destination 32-byte digest.
  */
 static void osmlayer_hash_password(const uint8_t salt[8], const char *password,
                                    uint8_t hash[32])
@@ -913,11 +844,11 @@ static void osmlayer_hash_password(const uint8_t salt[8], const char *password,
 }
 
 /**
- * @brief Coordinates the osmlayer split fields operation.
- * @param line Input or output value used by this operation.
- * @param fields Input or output value used by this operation.
- * @param max_fields Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Splits an account database line in place at `|` separators.
+ * @param line Mutable line buffer; separators are replaced with NUL bytes.
+ * @param fields Output pointers into `line`.
+ * @param max_fields Capacity of `fields`.
+ * @return Number of fields found, or zero for invalid arguments.
  */
 static int osmlayer_split_fields(char *line, char *fields[], uint32_t max_fields)
 {
@@ -938,10 +869,10 @@ static int osmlayer_split_fields(char *line, char *fields[], uint32_t max_fields
 }
 
 /**
- * @brief Coordinates the osmlayer accounts load operation.
- * @param accounts Input or output value used by this operation.
- * @param out_count Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Loads and validates the persistent account database.
+ * @param accounts Destination array for at most `LEONOS_AUTH_MAX_USERS` records.
+ * @param out_count Optional number of records successfully loaded.
+ * @return Zero on success (including a missing database), or a storage error.
  */
 static int osmlayer_accounts_load(struct osmlayer_account accounts[LEONOS_AUTH_MAX_USERS],
                                   uint32_t *out_count)
@@ -1007,11 +938,11 @@ static int osmlayer_accounts_load(struct osmlayer_account accounts[LEONOS_AUTH_M
 }
 
 /**
- * @brief Coordinates the osmlayer append dec operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * @brief Appends an unsigned decimal value to a bounded string.
+ * @param buf Destination string buffer.
+ * @param pos Current output offset.
+ * @param cap Capacity of `buf`.
+ * @param value Number to append.
  */
 static void osmlayer_append_dec(char *buf, uint32_t *pos, uint32_t cap, uint32_t value)
 {
@@ -1019,10 +950,10 @@ static void osmlayer_append_dec(char *buf, uint32_t *pos, uint32_t cap, uint32_t
 }
 
 /**
- * @brief Coordinates the osmlayer accounts save operation.
- * @param accounts Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Serializes account records and writes the authentication database.
+ * @param accounts Records to persist.
+ * @param count Number of entries in `accounts`.
+ * @return Zero on success, or a capacity/storage error.
  */
 static int osmlayer_accounts_save(const struct osmlayer_account accounts[LEONOS_AUTH_MAX_USERS],
                                   uint32_t count)
@@ -1054,10 +985,10 @@ static int osmlayer_accounts_save(const struct osmlayer_account accounts[LEONOS_
 }
 
 /**
- * @brief Coordinates the osmlayer account enabled admin count operation.
- * @param accounts Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Counts enabled administrator accounts.
+ * @param accounts Account records to inspect.
+ * @param count Number of entries in `accounts`.
+ * @return Number of records with the administrator role and no disabled flag.
  */
 static int osmlayer_account_enabled_admin_count(const struct osmlayer_account *accounts,
                                                 uint32_t count)
@@ -1073,11 +1004,11 @@ static int osmlayer_account_enabled_admin_count(const struct osmlayer_account *a
 }
 
 /**
- * @brief Coordinates the osmlayer find account by name operation.
- * @param accounts Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @param username Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Finds an account by its case-sensitive username.
+ * @param accounts Account records to search.
+ * @param count Number of entries in `accounts`.
+ * @param username Name to find.
+ * @return Array index, or -1 when no matching used record exists.
  */
 static int osmlayer_find_account_by_name(struct osmlayer_account *accounts,
                                          uint32_t count, const char *username)
@@ -1091,11 +1022,11 @@ static int osmlayer_find_account_by_name(struct osmlayer_account *accounts,
 }
 
 /**
- * @brief Coordinates the osmlayer find account by uid operation.
- * @param accounts Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @param uid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Finds an account by numeric user ID.
+ * @param accounts Account records to search.
+ * @param count Number of entries in `accounts`.
+ * @param uid User ID to find.
+ * @return Array index, or -1 when no matching used record exists.
  */
 static int osmlayer_find_account_by_uid(struct osmlayer_account *accounts,
                                         uint32_t count, uint32_t uid)
@@ -1109,9 +1040,9 @@ static int osmlayer_find_account_by_uid(struct osmlayer_account *accounts,
 }
 
 /**
- * @brief Coordinates the osmlayer path is accounts db operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Tests whether a path names the protected account database.
+ * @param path Path to compare with `OSMLAYER_ACCOUNTS_PATH`.
+ * @return Non-zero when the path is the account database.
  */
 static int osmlayer_path_is_accounts_db(const char *path);
 
@@ -1139,9 +1070,9 @@ struct osmlayer_acl_dir {
 static char osmlayer_acl_buf[OSMLAYER_ACL_MAX_BYTES];
 
 /**
- * @brief Coordinates the osmlayer lower operation.
- * @param ch Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Converts one ASCII upper-case letter to lower case.
+ * @param ch Character to convert.
+ * @return Lower-case equivalent, or `ch` when it is not an upper-case letter.
  */
 static char osmlayer_lower(char ch)
 {
@@ -1149,10 +1080,10 @@ static char osmlayer_lower(char ch)
 }
 
 /**
- * @brief Coordinates the osmlayer text eq ci operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Compares two NUL-terminated strings case-insensitively.
+ * @param a First string.
+ * @param b Second string.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_text_eq_ci(const char *a, const char *b)
 {
@@ -1167,9 +1098,9 @@ static int osmlayer_text_eq_ci(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the osmlayer path is acl file operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Tests whether a path is an ACL sidecar file.
+ * @param path Path to inspect.
+ * @return Non-zero when the final component is `LEONACL.SYS`.
  */
 static int osmlayer_path_is_acl_file(const char *path)
 {
@@ -1186,9 +1117,9 @@ static int osmlayer_path_is_acl_file(const char *path)
 }
 
 /**
- * @brief Coordinates the osmlayer get u16 operation.
- * @param p Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Reads a little-endian 16-bit integer from a byte buffer.
+ * @param p Pointer to at least two readable bytes.
+ * @return Decoded unsigned value.
  */
 static uint16_t osmlayer_get_u16(const uint8_t *p)
 {
@@ -1196,9 +1127,9 @@ static uint16_t osmlayer_get_u16(const uint8_t *p)
 }
 
 /**
- * @brief Coordinates the osmlayer get u32 operation.
- * @param p Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Reads a little-endian 32-bit integer from a byte buffer.
+ * @param p Pointer to at least four readable bytes.
+ * @return Decoded unsigned value.
  */
 static uint32_t osmlayer_get_u32(const uint8_t *p)
 {
@@ -1209,9 +1140,9 @@ static uint32_t osmlayer_get_u32(const uint8_t *p)
 }
 
 /**
- * @brief Coordinates the osmlayer put u16 operation.
- * @param p Input or output value used by this operation.
- * @param value Input or output value used by this operation.
+ * @brief Stores a 16-bit integer in little-endian order.
+ * @param p Destination byte buffer.
+ * @param value Value to store.
  */
 static void osmlayer_put_u16(uint8_t *p, uint16_t value)
 {
@@ -1220,9 +1151,9 @@ static void osmlayer_put_u16(uint8_t *p, uint16_t value)
 }
 
 /**
- * @brief Coordinates the osmlayer put u32 operation.
- * @param p Input or output value used by this operation.
- * @param value Input or output value used by this operation.
+ * @brief Stores a 32-bit integer in little-endian order.
+ * @param p Destination byte buffer.
+ * @param value Value to store.
  */
 static void osmlayer_put_u32(uint8_t *p, uint32_t value)
 {
@@ -1233,10 +1164,10 @@ static void osmlayer_put_u32(uint8_t *p, uint32_t value)
 }
 
 /**
- * @brief Coordinates the osmlayer acl checksum operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Computes the checksum stored in an ACL directory header.
+ * @param buf Serialized ACL bytes.
+ * @param len Number of bytes covered by the checksum.
+ * @return 32-bit checksum value.
  */
 static uint32_t osmlayer_acl_checksum(const uint8_t *buf, uint32_t len)
 {
@@ -1249,13 +1180,13 @@ static uint32_t osmlayer_acl_checksum(const uint8_t *buf, uint32_t len)
 }
 
 /**
- * @brief Coordinates the osmlayer path parent name operation.
- * @param path LeonOS path consumed by this operation.
- * @param parent Input or output value used by this operation.
- * @param parent_cap Capacity, in elements or bytes, of the related output buffer.
- * @param name Input or output value used by this operation.
- * @param name_cap Capacity, in elements or bytes, of the related output buffer.
- * @return Result, status, or value defined by this API.
+ * @brief Splits a path into its parent directory and final component.
+ * @param path Absolute path to split.
+ * @param parent Destination parent buffer.
+ * @param parent_cap Capacity of `parent`.
+ * @param name Destination basename buffer.
+ * @param name_cap Capacity of `name`.
+ * @return Zero on success, or -EINVAL/-ENAMETOOLONG for invalid input.
  */
 static int osmlayer_path_parent_name(const char *path, char *parent,
                                      uint32_t parent_cap, char *name,
@@ -1301,10 +1232,10 @@ static int osmlayer_path_parent_name(const char *path, char *parent,
 }
 
 /**
- * @brief Coordinates the osmlayer acl file path operation.
- * @param dir Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
+ * @brief Appends the ACL sidecar filename to a directory path.
+ * @param dir Directory path; NULL or empty means `/`.
+ * @param out Destination path buffer.
+ * @param cap Capacity of `out`.
  */
 static void osmlayer_acl_file_path(const char *dir, char *out, uint32_t cap)
 {
@@ -1321,10 +1252,10 @@ static void osmlayer_acl_file_path(const char *dir, char *out, uint32_t cap)
 }
 
 /**
- * @brief Coordinates the osmlayer acl find record operation.
- * @param dir Input or output value used by this operation.
- * @param name Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl find record.
+ * @param dir Value supplied by the caller.
+ * @param name NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_find_record(struct osmlayer_acl_dir *dir, const char *name)
 {
@@ -1340,10 +1271,10 @@ static int osmlayer_acl_find_record(struct osmlayer_acl_dir *dir, const char *na
 }
 
 /**
- * @brief Coordinates the osmlayer acl load dir operation.
- * @param dir_path LeonOS path consumed by this operation.
- * @param dir Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl load dir.
+ * @param dir_path NUL-terminated text supplied by the caller.
+ * @param dir Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_load_dir(const char *dir_path, struct osmlayer_acl_dir *dir)
 {
@@ -1404,11 +1335,6 @@ static int osmlayer_acl_load_dir(const char *dir_path, struct osmlayer_acl_dir *
                 rec->aces[i].principal = osmlayer_get_u32(ace + i * 12u);
                 rec->aces[i].flags = 0;
                 rec->aces[i].permissions =
-                    /**
- * @brief Coordinates the osmlayer get u32 operation.
- * @param u Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
                     (legacy_flags & OSMLAYER_ACL_LEGACY_ACE_DENY)
                         ? 0
                         : osmlayer_get_u32(ace + i * 12u + 8u);
@@ -1421,10 +1347,10 @@ static int osmlayer_acl_load_dir(const char *dir_path, struct osmlayer_acl_dir *
 }
 
 /**
- * @brief Coordinates the osmlayer acl save dir operation.
- * @param dir_path LeonOS path consumed by this operation.
- * @param dir Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl save dir.
+ * @param dir_path NUL-terminated text supplied by the caller.
+ * @param dir Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_save_dir(const char *dir_path, const struct osmlayer_acl_dir *dir)
 {
@@ -1472,11 +1398,11 @@ static int osmlayer_acl_save_dir(const char *dir_path, const struct osmlayer_acl
 }
 
 /**
- * @brief Coordinates the osmlayer acl add ace operation.
- * @param acl Input or output value used by this operation.
- * @param principal Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param permissions Input or output value used by this operation.
+ * Osmlayer acl add ace.
+ * @param acl ACL structure whose next ACE is appended.
+ * @param principal Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param permissions Identifier or flags controlling the operation.
  */
 static void osmlayer_acl_add_ace(struct leonos_fs_acl *acl, uint32_t principal,
                                  uint32_t flags, uint32_t permissions)
@@ -1493,11 +1419,11 @@ static void osmlayer_acl_add_ace(struct leonos_fs_acl *acl, uint32_t principal,
 }
 
 /**
- * @brief Coordinates the osmlayer owner for path operation.
- * @param path LeonOS path consumed by this operation.
- * @param accounts Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer owner for path.
+ * @param path NUL-terminated text supplied by the caller.
+ * @param accounts Loaded account records used to determine ownership.
+ * @param count Output storage updated by the function.
+ * @return The value or status produced by the operation.
  */
 static uint32_t osmlayer_owner_for_path(const char *path,
                                         struct osmlayer_account *accounts,
@@ -1517,9 +1443,9 @@ static uint32_t osmlayer_owner_for_path(const char *path,
 }
 
 /**
- * @brief Coordinates the osmlayer path is system tree operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer path is system tree.
+ * @param path NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_path_is_system_tree(const char *path)
 {
@@ -1534,11 +1460,11 @@ static int osmlayer_path_is_system_tree(const char *path)
 }
 
 /**
- * @brief Coordinates the osmlayer acl default for path operation.
- * @param path LeonOS path consumed by this operation.
- * @param accounts Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @param acl Input or output value used by this operation.
+ * Osmlayer acl default for path.
+ * @param path NUL-terminated text supplied by the caller.
+ * @param accounts Loaded account records used for default ownership.
+ * @param count Output storage updated by the function.
+ * @param acl Destination ACL receiving synthesized rules.
  */
 static void osmlayer_acl_default_for_path(const char *path,
                                           struct osmlayer_account *accounts,
@@ -1574,12 +1500,12 @@ static void osmlayer_acl_default_for_path(const char *path,
 }
 
 /**
- * @brief Coordinates the osmlayer acl get explicit or default operation.
- * @param path LeonOS path consumed by this operation.
- * @param accounts Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @param acl Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl get explicit or default.
+ * @param path NUL-terminated text supplied by the caller.
+ * @param accounts Account records used to resolve the owner.
+ * @param count Output storage updated by the function.
+ * @param acl Destination ACL receiving the explicit or synthesized rules.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_get_explicit_or_default(const char *path,
                                                 struct osmlayer_account *accounts,
@@ -1620,10 +1546,10 @@ static int osmlayer_acl_get_explicit_or_default(const char *path,
 }
 
 /**
- * @brief Coordinates the osmlayer acl store operation.
- * @param path LeonOS path consumed by this operation.
- * @param acl Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl store.
+ * @param path NUL-terminated text supplied by the caller.
+ * @param acl ACL to serialize and store.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_store(const char *path, const struct leonos_fs_acl *acl)
 {
@@ -1666,9 +1592,9 @@ static int osmlayer_acl_store(const char *path, const struct leonos_fs_acl *acl)
 }
 
 /**
- * @brief Coordinates the osmlayer acl remove operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl remove.
+ * @param path NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_remove(const char *path)
 {
@@ -1696,10 +1622,10 @@ static int osmlayer_acl_remove(const char *path)
 }
 
 /**
- * @brief Coordinates the osmlayer acl rename operation.
- * @param old_path LeonOS path consumed by this operation.
- * @param new_path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl rename.
+ * @param old_path NUL-terminated text supplied by the caller.
+ * @param new_path NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_rename(const char *old_path, const char *new_path)
 {
@@ -1728,13 +1654,13 @@ static int osmlayer_acl_rename(const char *old_path, const char *new_path)
 }
 
 /**
- * @brief Coordinates the osmlayer acl principal matches operation.
- * @param ace Input or output value used by this operation.
- * @param actor_uid Input or output value used by this operation.
- * @param actor_role Input or output value used by this operation.
- * @param actor_flags Input or output value used by this operation.
- * @param owner_uid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl principal matches.
+ * @param ace Access-control entry to match.
+ * @param actor_uid Value supplied by the caller.
+ * @param actor_role Value supplied by the caller.
+ * @param actor_flags Value supplied by the caller.
+ * @param owner_uid Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_principal_matches(const struct leonos_fs_acl_ace *ace,
                                           uint32_t actor_uid, uint32_t actor_role,
@@ -1760,12 +1686,12 @@ static int osmlayer_acl_principal_matches(const struct leonos_fs_acl_ace *ace,
 }
 
 /**
- * @brief Coordinates the osmlayer acl actor permissions operation.
- * @param acl Input or output value used by this operation.
- * @param actor_uid Input or output value used by this operation.
- * @param actor_role Input or output value used by this operation.
- * @param actor_flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl actor permissions.
+ * @param acl ACL whose entries are evaluated.
+ * @param actor_uid Value supplied by the caller.
+ * @param actor_role Value supplied by the caller.
+ * @param actor_flags Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t osmlayer_acl_actor_permissions(const struct leonos_fs_acl *acl,
                                                uint32_t actor_uid,
@@ -1791,12 +1717,12 @@ static uint32_t osmlayer_acl_actor_permissions(const struct leonos_fs_acl *acl,
 }
 
 /**
- * @brief Coordinates the osmlayer acl actor allow operation.
- * @param acl Input or output value used by this operation.
- * @param actor_uid Input or output value used by this operation.
- * @param actor_role Input or output value used by this operation.
- * @param actor_flags Input or output value used by this operation.
- * @param allow Input or output value used by this operation.
+ * Osmlayer acl actor allow.
+ * @param acl ACL whose entries are evaluated.
+ * @param actor_uid Value supplied by the caller.
+ * @param actor_role Value supplied by the caller.
+ * @param actor_flags Value supplied by the caller.
+ * @param allow Output storage updated by the function.
  */
 static void osmlayer_acl_actor_allow(const struct leonos_fs_acl *acl,
                                      uint32_t actor_uid, uint32_t actor_role,
@@ -1819,9 +1745,9 @@ static void osmlayer_acl_actor_allow(const struct leonos_fs_acl *acl,
 }
 
 /**
- * @brief Coordinates the osmlayer authz permission bit operation.
- * @param op Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer authz permission bit.
+ * @param op Identifier or flags controlling the operation.
+ * @return The value or status produced by the operation.
  */
 static uint32_t osmlayer_authz_permission_bit(uint32_t op)
 {
@@ -1842,13 +1768,13 @@ static uint32_t osmlayer_authz_permission_bit(uint32_t op)
 }
 
 /**
- * @brief Coordinates the osmlayer acl path has permission operation.
- * @param path LeonOS path consumed by this operation.
- * @param accounts Input or output value used by this operation.
- * @param count Length, size, or element count associated with the operation.
- * @param req Input or output value used by this operation.
- * @param needed Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer acl path has permission.
+ * @param path NUL-terminated text supplied by the caller.
+ * @param accounts Account records used for owner and role checks.
+ * @param count Output storage updated by the function.
+ * @param req Authorization request containing path and required permissions.
+ * @param needed Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_acl_path_has_permission(const char *path,
                                             struct osmlayer_account *accounts,
@@ -1914,9 +1840,9 @@ static int osmlayer_acl_path_has_permission(const char *path,
 }
 
 /**
- * @brief Coordinates the osmlayer fsacl authorize operation.
- * @param req Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer fsacl authorize.
+ * @param req Caller-owned structure read or updated by the function.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_fsacl_authorize(struct leonos_authz_request *req)
 {
@@ -1954,9 +1880,9 @@ static int osmlayer_fsacl_authorize(struct leonos_authz_request *req)
 }
 
 /**
- * @brief Coordinates the osmlayer fsacl handle operation.
- * @param req Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer fsacl handle.
+ * @param req Caller-owned structure read or updated by the function.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_fsacl_handle(struct leonos_fs_acl_request *req)
 {
@@ -2039,9 +1965,9 @@ static int osmlayer_fsacl_handle(struct leonos_fs_acl_request *req)
 }
 
 /**
- * @brief Coordinates the osmlayer ensure user dirs operation.
- * @param username Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer ensure user dirs.
+ * @param username NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_ensure_user_dirs(const char *username)
 {
@@ -2052,15 +1978,7 @@ static int osmlayer_ensure_user_dirs(const char *username)
     if (!osmlayer_username_valid(username)) {
         return -22;
     }
-    /**
- * @brief Coordinates the osmlayer service mkdir operation.
- * @return Result, status, or value defined by this API.
- */
     (void)osmlayer_service_mkdir("/users");
-    /**
- * @brief Coordinates the osmlayer service mkdir operation.
- * @return Result, status, or value defined by this API.
- */
     (void)osmlayer_service_mkdir("/tmp");
     osmlayer_home_for_user(home, sizeof(home), username);
     ret = osmlayer_service_mkdir(home);
@@ -2083,11 +2001,11 @@ static int osmlayer_ensure_user_dirs(const char *username)
 }
 
 /**
- * @brief Coordinates the osmlayer write desktop shortcut operation.
- * @param home Input or output value used by this operation.
- * @param name Input or output value used by this operation.
- * @param target Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer write desktop shortcut.
+ * @param home Value supplied by the caller.
+ * @param name NUL-terminated text supplied by the caller.
+ * @param target Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_write_desktop_shortcut(const char *home,
                                            const char *name,
@@ -2138,9 +2056,9 @@ static int osmlayer_system_language_is_chinese(void)
 }
 
 /**
- * @brief Coordinates the osmlayer seed desktop shortcuts operation.
- * @param username Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer seed desktop shortcuts.
+ * @param username NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_seed_desktop_shortcuts(const char *username)
 {
@@ -2173,9 +2091,9 @@ static int osmlayer_seed_desktop_shortcuts(const char *username)
 }
 
 /**
- * @brief Coordinates the osmlayer auth status operation.
- * @param status Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Reports whether accounts and an enabled administrator exist.
+ * @param status Optional destination for the account summary.
+ * @return Zero on success, or the account database read error.
  */
 static int osmlayer_auth_status(struct leonos_auth_status *status)
 {
@@ -2185,20 +2103,8 @@ static int osmlayer_auth_status(struct leonos_auth_status *status)
     if (ret < 0) {
         return ret;
     }
-    /**
- * @brief Coordinates the osmlayer service mkdir operation.
- * @return Result, status, or value defined by this API.
- */
     (void)osmlayer_service_mkdir("/system/state");
-    /**
- * @brief Coordinates the osmlayer service mkdir operation.
- * @return Result, status, or value defined by this API.
- */
     (void)osmlayer_service_mkdir("/users");
-    /**
- * @brief Coordinates the osmlayer service mkdir operation.
- * @return Result, status, or value defined by this API.
- */
     (void)osmlayer_service_mkdir("/tmp");
     if (status) {
         status->user_count = count;
@@ -2210,9 +2116,9 @@ static int osmlayer_auth_status(struct leonos_auth_status *status)
 }
 
 /**
- * @brief Coordinates the osmlayer auth list operation.
- * @param list Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer auth list.
+ * @param list Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_auth_list(struct leonos_user_list *list)
 {
@@ -2244,9 +2150,9 @@ static int osmlayer_auth_list(struct leonos_user_list *list)
 }
 
 /**
- * @brief Coordinates the osmlayer auth login operation.
- * @param login Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer auth login.
+ * @param login Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_auth_login(struct leonos_auth_login *login)
 {
@@ -2280,9 +2186,9 @@ static int osmlayer_auth_login(struct leonos_auth_login *login)
 }
 
 /**
- * @brief Coordinates the osmlayer auth create operation.
- * @param create Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer auth create.
+ * @param create Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_auth_create(struct leonos_auth_create *create)
 {
@@ -2343,9 +2249,9 @@ static int osmlayer_auth_create(struct leonos_auth_create *create)
 }
 
 /**
- * @brief Coordinates the osmlayer auth update operation.
- * @param update Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer auth update.
+ * @param update Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_auth_update(struct leonos_auth_update *update)
 {
@@ -2389,9 +2295,9 @@ static int osmlayer_auth_update(struct leonos_auth_update *update)
 }
 
 /**
- * @brief Coordinates the osmlayer auth change password operation.
- * @param password Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer auth change password.
+ * @param password NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_auth_change_password(struct leonos_auth_password *password)
 {
@@ -2430,9 +2336,9 @@ static int osmlayer_auth_change_password(struct leonos_auth_password *password)
 }
 
 /**
- * @brief Coordinates the osmlayer path is accounts db operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer path is accounts db.
+ * @param path NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_path_is_accounts_db(const char *path)
 {
@@ -2440,9 +2346,9 @@ static int osmlayer_path_is_accounts_db(const char *path)
 }
 
 /**
- * @brief Coordinates the osmlayer auth authorize operation.
- * @param req Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer auth authorize.
+ * @param req Caller-owned structure read or updated by the function.
+ * @return The value or status produced by the operation.
  */
 static int osmlayer_auth_authorize(struct leonos_authz_request *req)
 {
@@ -2470,10 +2376,10 @@ static int osmlayer_auth_authorize(struct leonos_authz_request *req)
 }
 
 /**
- * @brief Coordinates the osmlayer c auth op operation.
- * @param op Input or output value used by this operation.
- * @param arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer c auth op.
+ * @param op Identifier or flags controlling the operation.
+ * @param arg Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int osmlayer_c_auth_op(uint32_t op, void *arg)
 {
@@ -2500,9 +2406,9 @@ int osmlayer_c_auth_op(uint32_t op, void *arg)
 }
 
 /**
- * @brief Coordinates the osmlayer active operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Tests whether a device is present and currently active.
+ * @param flags Device state flags.
+ * @return Non-zero when both the present and active bits are set.
  */
 static int osmlayer_active(uint32_t flags)
 {
@@ -2511,15 +2417,15 @@ static int osmlayer_active(uint32_t flags)
 }
 
 /**
- * @brief Coordinates the osmlayer catalog add operation.
- * @param query Request structure consumed and, where defined, updated by this operation.
- * @param device_class Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param name Input or output value used by this operation.
- * @param status Input or output value used by this operation.
- * @param detail Input or output value used by this operation.
- * @param value0 Input or output value used by this operation.
- * @param value1 Input or output value used by this operation.
+ * Osmlayer catalog add.
+ * @param query Caller-owned structure read or updated by the function.
+ * @param device_class Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param name NUL-terminated text supplied by the caller.
+ * @param status Output storage updated by the function.
+ * @param detail Value supplied by the caller.
+ * @param value0 Value supplied by the caller.
+ * @param value1 Value supplied by the caller.
  */
 static void osmlayer_catalog_add(struct osmlayer_device_catalog_query *query,
                                  uint32_t device_class, uint32_t flags,
@@ -2544,9 +2450,9 @@ static void osmlayer_catalog_add(struct osmlayer_device_catalog_query *query,
 }
 
 /**
- * @brief Coordinates the osmlayer catalog raw operation.
- * @param query Request structure consumed and, where defined, updated by this operation.
- * @param raw Input or output value used by this operation.
+ * Osmlayer catalog raw.
+ * @param query Caller-owned structure read or updated by the function.
+ * @param raw Caller-owned structure read or updated by the function.
  */
 static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
                                  const struct osmlayer_raw_device_info *raw)
@@ -2708,9 +2614,9 @@ static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
 }
 
 /**
- * @brief Coordinates the osmlayer c device catalog operation.
- * @param query Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer c device catalog.
+ * @param query Caller-owned structure read or updated by the function.
+ * @return The value or status produced by the operation.
  */
 int osmlayer_c_device_catalog(struct osmlayer_device_catalog_query *query)
 {
@@ -2733,8 +2639,8 @@ int osmlayer_c_device_catalog(struct osmlayer_device_catalog_query *query)
 }
 
 /**
- * @brief Coordinates the osmlayer c services selftest operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer c services selftest.
+ * @return The value or status produced by the operation.
  */
 int osmlayer_c_services_selftest(void)
 {

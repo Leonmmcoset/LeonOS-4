@@ -134,10 +134,7 @@ static struct mouse_state mouse_cache;
 static uint8_t e1000_empty_mac[6];
 
 /**
- * @brief Coordinates the driver copy text operation.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Copy src into dst up to cap-1 bytes and always NUL-terminate; safe with NULL src or cap 0.
  */
 static void driver_copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -153,10 +150,7 @@ static void driver_copy_text(char *dst, uint32_t cap, const char *src)
 }
 
 /**
- * @brief Coordinates the driver text equal operation.
- * @param left Input or output value used by this operation.
- * @param right Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 when left and right are equal NUL-terminated strings (NULL never equals).
  */
 static int driver_text_equal(const char *left, const char *right)
 {
@@ -171,11 +165,7 @@ static int driver_text_equal(const char *left, const char *right)
 }
 
 /**
- * @brief Coordinates the driver elf string equal operation.
- * @param left Input or output value used by this operation.
- * @param available Input or output value used by this operation.
- * @param right Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Compare a string embedded in a buffer (bounded by available bytes) with right; the NUL must fit.
  */
 static int driver_elf_string_equal(const char *left, uint64_t available,
                                    const char *right)
@@ -191,10 +181,7 @@ static int driver_elf_string_equal(const char *left, uint64_t available,
 }
 
 /**
- * @brief Coordinates the driver text starts with operation.
- * @param text Input or output value used by this operation.
- * @param prefix Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 when text begins with the whole of prefix (NULL-safe).
  */
 static int driver_text_starts_with(const char *text, const char *prefix)
 {
@@ -209,10 +196,7 @@ static int driver_text_starts_with(const char *text, const char *prefix)
 }
 
 /**
- * @brief Coordinates the driver text length operation.
- * @param text Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @return Result, status, or value defined by this API.
+ * @brief Length of a NUL-terminated string, never reading past cap bytes.
  */
 static uint32_t driver_text_length(const char *text, uint32_t cap)
 {
@@ -224,9 +208,7 @@ static uint32_t driver_text_length(const char *text, uint32_t cap)
 }
 
 /**
- * @brief Coordinates the driver has drv suffix operation.
- * @param name Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 when name ends with the ".drv" extension.
  */
 static int driver_has_drv_suffix(const char *name)
 {
@@ -237,9 +219,7 @@ static int driver_has_drv_suffix(const char *name)
 }
 
 /**
- * @brief Coordinates the driver file name valid operation.
- * @param file Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True for a ".drv" name of legal length using only [A-Za-z0-9._-].
  */
 static int driver_file_name_valid(const char *file)
 {
@@ -258,10 +238,7 @@ static int driver_file_name_valid(const char *file)
 }
 
 /**
- * @brief Coordinates the driver name compare operation.
- * @param left Input or output value used by this operation.
- * @param right Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Case-sensitive ordering compare (negative/zero/positive); NULL is treated as unequal.
  */
 static int driver_name_compare(const char *left, const char *right)
 {
@@ -279,10 +256,7 @@ static int driver_name_compare(const char *left, const char *right)
 }
 
 /**
- * @brief Coordinates the driver load order compare operation.
- * @param left Input or output value used by this operation.
- * @param right Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Sort comparator that forces serial.drv ahead of everything, then alphabetical order.
  */
 static int driver_load_order_compare(const char *left, const char *right)
 {
@@ -295,10 +269,7 @@ static int driver_load_order_compare(const char *left, const char *right)
 }
 
 /**
- * @brief Coordinates the driver make path operation.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param file Input or output value used by this operation.
+ * @brief Build "/drivers/<file>" into dst, clamped to cap bytes and NUL-terminated.
  */
 static void driver_make_path(char *dst, uint32_t cap, const char *file)
 {
@@ -318,10 +289,7 @@ static void driver_make_path(char *dst, uint32_t cap, const char *file)
 }
 
 /**
- * @brief Coordinates the driver set error operation.
- * @param slot Input or output value used by this operation.
- * @param status Input or output value used by this operation.
- * @param error Input or output value used by this operation.
+ * @brief Mark the slot failed, record the error text, and log it only when status is negative.
  */
 static void driver_set_error(struct driver_slot *slot, int status, const char *error)
 {
@@ -337,10 +305,7 @@ static void driver_set_error(struct driver_slot *slot, int status, const char *e
 }
 
 /**
- * @brief Coordinates the driver align up operation.
- * @param value Input or output value used by this operation.
- * @param alignment Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round value up to a multiple of alignment, clamping alignment to 1..4096.
  */
 static uint64_t driver_align_up(uint64_t value, uint64_t alignment)
 {
@@ -354,11 +319,7 @@ static uint64_t driver_align_up(uint64_t value, uint64_t alignment)
 }
 
 /**
- * @brief Coordinates the driver range valid operation.
- * @param offset Input or output value used by this operation.
- * @param size Length, size, or element count associated with the operation.
- * @param total Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 when [offset, offset+size) fits inside total without overflow.
  */
 static int driver_range_valid(uint64_t offset, uint64_t size, uint64_t total)
 {
@@ -366,9 +327,7 @@ static int driver_range_valid(uint64_t offset, uint64_t size, uint64_t total)
 }
 
 /**
- * @brief Coordinates the driver memzero operation.
- * @param address Address used by this operation; its address-space interpretation follows the API.
- * @param size Length, size, or element count associated with the operation.
+ * @brief Zero size bytes starting at address.
  */
 static void driver_memzero(void *address, uint64_t size)
 {
@@ -379,10 +338,7 @@ static void driver_memzero(void *address, uint64_t size)
 }
 
 /**
- * @brief Coordinates the driver memcpy operation.
- * @param dst Input or output value used by this operation.
- * @param src Input or output value used by this operation.
- * @param size Length, size, or element count associated with the operation.
+ * @brief Copy size bytes from src to dst.
  */
 static void driver_memcpy(void *dst, const void *src, uint64_t size)
 {
@@ -394,9 +350,7 @@ static void driver_memcpy(void *dst, const void *src, uint64_t size)
 }
 
 /**
- * @brief Coordinates the driver config disabled operation.
- * @param file Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 when drivers.conf contains a "disabled=<file>" line for this driver.
  */
 static int driver_config_disabled(const char *file)
 {
@@ -431,8 +385,7 @@ static int driver_config_disabled(const char *file)
 }
 
 /**
- * @brief Coordinates the driver write config operation.
- * @return Result, status, or value defined by this API.
+ * @brief Rebuild drivers.conf: a version header plus one "disabled=" line per disabled driver.
  */
 static int driver_write_config(void)
 {
@@ -464,9 +417,7 @@ static int driver_write_config(void)
 }
 
 /**
- * @brief Coordinates the driver find file operation.
- * @param file Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the driver slot whose file name matches, or NULL when absent.
  */
 static struct driver_slot *driver_find_file(const char *file)
 {
@@ -480,9 +431,7 @@ static struct driver_slot *driver_find_file(const char *file)
 }
 
 /**
- * @brief Coordinates the driver get slot operation.
- * @param file Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Find a slot by file, or claim a free one and seed its disabled/autostart state from drivers.conf.
  */
 static struct driver_slot *driver_get_slot(const char *file)
 {
@@ -509,11 +458,7 @@ static struct driver_slot *driver_get_slot(const char *file)
 }
 
 /**
- * @brief Coordinates the driver read file operation.
- * @param path LeonOS path consumed by this operation.
- * @param out_data Caller-provided storage that receives output from this operation.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read the whole file into freshly allocated memory and return its bytes and length.
  */
 static int driver_read_file(const char *path, const uint8_t **out_data, uint64_t *out_len)
 {
@@ -529,9 +474,7 @@ static int driver_read_file(const char *path, const uint8_t **out_data, uint64_t
 }
 
 /**
- * @brief Coordinates the driver release file operation.
- * @param data Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
+ * @brief Release the pages that driver_read_file allocated for a file's contents.
  */
 static void driver_release_file(const void *data, uint64_t length)
 {
@@ -542,13 +485,7 @@ static void driver_release_file(const void *data, uint64_t length)
 }
 
 /**
- * @brief Coordinates the driver symbol value operation.
- * @param symbol Input or output value used by this operation.
- * @param shnum Input or output value used by this operation.
- * @param sections Input or output value used by this operation.
- * @param section_addresses Address used by this operation; its address-space interpretation follows the API.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Resolve a symbol to its runtime address: its own value if absolute, else its section base plus value.
  */
 static int driver_symbol_value(const struct elf64_sym *symbol, uint16_t shnum,
                                const struct elf64_shdr *sections,
@@ -571,13 +508,7 @@ static int driver_symbol_value(const struct elf64_sym *symbol, uint16_t shnum,
 }
 
 /**
- * @brief Coordinates the driver apply relocations operation.
- * @param data Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @param header Input or output value used by this operation.
- * @param sections Input or output value used by this operation.
- * @param section_addresses Address used by this operation; its address-space interpretation follows the API.
- * @return Result, status, or value defined by this API.
+ * @brief Patch every RELA relocation in the loaded image; -8 on malformed data, -95 on an unknown type.
  */
 static int driver_apply_relocations(const uint8_t *data, uint64_t length,
                                     const struct elf64_ehdr *header,
@@ -661,14 +592,7 @@ static int driver_apply_relocations(const uint8_t *data, uint64_t length,
 }
 
 /**
- * @brief Coordinates the driver find module operation.
- * @param data Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @param header Input or output value used by this operation.
- * @param sections Input or output value used by this operation.
- * @param section_addresses Address used by this operation; its address-space interpretation follows the API.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Locate the exported leonos_driver_module symbol and resolve it to a pointer in the loaded image.
  */
 static int driver_find_module(const uint8_t *data, uint64_t length,
                               const struct elf64_ehdr *header,
@@ -723,9 +647,7 @@ static int driver_find_module(const uint8_t *data, uint64_t length,
 }
 
 /**
- * @brief Coordinates the driver register mouse operation.
- * @param ops Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Bind the currently-loading driver's mouse ops as the active mouse backend.
  */
 static int driver_register_mouse(const struct leonos_driver_mouse_ops *ops)
 {
@@ -738,9 +660,7 @@ static int driver_register_mouse(const struct leonos_driver_mouse_ops *ops)
 }
 
 /**
- * @brief Coordinates the driver register serial operation.
- * @param ops Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Bind the currently-loading driver's serial ops as the active serial backend.
  */
 static int driver_register_serial(const struct leonos_driver_serial_ops *ops)
 {
@@ -753,9 +673,7 @@ static int driver_register_serial(const struct leonos_driver_serial_ops *ops)
 }
 
 /**
- * @brief Coordinates the driver register e1000 operation.
- * @param ops Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Bind the currently-loading driver's e1000 ops as the active network backend.
  */
 static int driver_register_e1000(const struct leonos_driver_e1000_ops *ops)
 {
@@ -769,9 +687,7 @@ static int driver_register_e1000(const struct leonos_driver_e1000_ops *ops)
 }
 
 /**
- * @brief Coordinates the driver register audio operation.
- * @param ops Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Bind the currently-loading driver's audio ops as the active audio backend.
  */
 static int driver_register_audio(const struct leonos_driver_audio_ops *ops)
 {
@@ -785,9 +701,7 @@ static int driver_register_audio(const struct leonos_driver_audio_ops *ops)
 }
 
 /**
- * @brief Coordinates the driver api inb operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read a byte from an I/O port (exposed to drivers through the ABI).
  */
 static uint8_t driver_api_inb(uint16_t port)
 {
@@ -795,9 +709,7 @@ static uint8_t driver_api_inb(uint16_t port)
 }
 
 /**
- * @brief Coordinates the driver api outb operation.
- * @param port Input or output value used by this operation.
- * @param value Input or output value used by this operation.
+ * @brief Write a byte to an I/O port (exposed to drivers through the ABI).
  */
 static void driver_api_outb(uint16_t port, uint8_t value)
 {
@@ -805,9 +717,7 @@ static void driver_api_outb(uint16_t port, uint8_t value)
 }
 
 /**
- * @brief Coordinates the driver api inl operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read a 32-bit value from an I/O port (exposed to drivers through the ABI).
  */
 static uint32_t driver_api_inl(uint16_t port)
 {
@@ -815,9 +725,7 @@ static uint32_t driver_api_inl(uint16_t port)
 }
 
 /**
- * @brief Coordinates the driver api outl operation.
- * @param port Input or output value used by this operation.
- * @param value Input or output value used by this operation.
+ * @brief Write a 32-bit value to an I/O port (exposed to drivers through the ABI).
  */
 static void driver_api_outl(uint16_t port, uint32_t value)
 {
@@ -825,10 +733,7 @@ static void driver_api_outl(uint16_t port, uint32_t value)
 }
 
 /**
- * @brief Coordinates the driver api framebuffer size operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Report the framebuffer's width and height, or -2 when no framebuffer is available.
  */
 static int driver_api_framebuffer_size(uint32_t *width, uint32_t *height)
 {
@@ -846,11 +751,7 @@ static int driver_api_framebuffer_size(uint32_t *width, uint32_t *height)
 }
 
 /**
- * @brief Coordinates the driver api pci find operation.
- * @param vendor_id Input or output value used by this operation.
- * @param device_id Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Find a PCI device by vendor/device id and copy its identity into the driver-ABI struct.
  */
 static int driver_api_pci_find(uint16_t vendor_id, uint16_t device_id,
                                struct leonos_driver_pci_device *out)
@@ -901,8 +802,7 @@ static const struct leonos_driver_kernel_api driver_kernel_api = {
 };
 
 /**
- * @brief Coordinates the driver clear services operation.
- * @param slot_id Input or output value used by this operation.
+ * @brief Detach any device ops owned by slot_id and reset their state (notifying net on e1000).
  */
 static void driver_clear_services(uint32_t slot_id)
 {
@@ -927,9 +827,7 @@ static void driver_clear_services(uint32_t slot_id)
 }
 
 /**
- * @brief Coordinates the driver load slot operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Load and start a driver: read the ELF, lay out its image, apply relocations, then call init().
  */
 static int driver_load_slot(struct driver_slot *slot)
 {
@@ -1071,10 +969,7 @@ out:
 }
 
 /**
- * @brief Coordinates the driver unload slot operation.
- * @param slot Input or output value used by this operation.
- * @param force Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Stop a driver: run fini(), drop its services and image, and mark it unloaded (force skips the network guard).
  */
 static int driver_unload_slot(struct driver_slot *slot, uint32_t force)
 {
@@ -1106,7 +1001,7 @@ static int driver_unload_slot(struct driver_slot *slot, uint32_t force)
 }
 
 /**
- * @brief Coordinates the driver scan operation.
+ * @brief Enumerate /drivers, sort entries by load order, and register each valid file as a slot.
  */
 static void driver_scan(void)
 {
@@ -1128,18 +1023,14 @@ static void driver_scan(void)
     for (uint32_t index = 0; index < count; ++index) {
         if (entries[index].type == LEONOS_FS_TYPE_FILE &&
             driver_file_name_valid(entries[index].name)) {
-            /**
- * @brief Coordinates the driver get slot operation.
- * @param name Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+            /* Register this driver file as a slot for later autoload. */
             (void)driver_get_slot(entries[index].name);
         }
     }
 }
 
 /**
- * @brief Coordinates the driver manager init operation.
+ * @brief Clear all driver slots and the cached mouse state at startup.
  */
 void driver_manager_init(void)
 {
@@ -1149,7 +1040,7 @@ void driver_manager_init(void)
 }
 
 /**
- * @brief Coordinates the driver manager autoload operation.
+ * @brief Scan for drivers and load every autostart slot that is not disabled or already loaded.
  */
 void driver_manager_autoload(void)
 {
@@ -1162,20 +1053,14 @@ void driver_manager_autoload(void)
         }
         if (driver_load_slot(slot) < 0) {
             console_printf("[driver] retrying %s\n", slot->info.file);
-            /**
- * @brief Coordinates the driver load slot operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+            /* Second load attempt after the first failed. */
             (void)driver_load_slot(slot);
         }
     }
 }
 
 /**
- * @brief Coordinates the driver manager list operation.
- * @param query Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Fill the query with up to capacity driver infos and set the total count.
  */
 int driver_manager_list(struct leonos_driver_list *query)
 {
@@ -1200,9 +1085,7 @@ int driver_manager_list(struct leonos_driver_list *query)
 }
 
 /**
- * @brief Coordinates the driver manager control operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dispatch a control action (rescan, load, unload, or enable/disable boot) on a driver.
  */
 int driver_manager_control(struct leonos_driver_control *request)
 {
@@ -1259,14 +1142,14 @@ int driver_manager_control(struct leonos_driver_control *request)
 }
 
 /**
- * @brief Coordinates the mouse init operation.
+ * @brief Reserved startup hook; mouse state arrives through the registered driver.
  */
 void mouse_init(void)
 {
 }
 
 /**
- * @brief Coordinates the mouse poll operation.
+ * @brief Poll the active mouse driver for new events, if one is registered.
  */
 void mouse_poll(void)
 {
@@ -1276,8 +1159,7 @@ void mouse_poll(void)
 }
 
 /**
- * @brief Coordinates the mouse get state operation.
- * @return Result, status, or value defined by this API.
+ * @brief Refresh the cached mouse state from the driver and return a pointer to it.
  */
 const struct mouse_state *mouse_get_state(void)
 {
@@ -1297,8 +1179,7 @@ const struct mouse_state *mouse_get_state(void)
 }
 
 /**
- * @brief Coordinates the mouse set visible operation.
- * @param visible Input or output value used by this operation.
+ * @brief Record whether the mouse cursor should be drawn.
  */
 void mouse_set_visible(bool visible)
 {
@@ -1306,8 +1187,7 @@ void mouse_set_visible(bool visible)
 }
 
 /**
- * @brief Coordinates the mouse is visible operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the cached cursor visibility flag.
  */
 bool mouse_is_visible(void)
 {
@@ -1315,8 +1195,7 @@ bool mouse_is_visible(void)
 }
 
 /**
- * @brief Coordinates the mouse event count operation.
- * @return Result, status, or value defined by this API.
+ * @brief Report the driver's pending-event counter, or 0 when no driver is registered.
  */
 uint32_t mouse_event_count(void)
 {
@@ -1329,8 +1208,7 @@ uint32_t mouse_event_count(void)
 }
 
 /**
- * @brief Coordinates the mouse last status operation.
- * @return Result, status, or value defined by this API.
+ * @brief Report the driver's last PS/2 status byte, or 0 when no driver is registered.
  */
 uint8_t mouse_last_status(void)
 {
@@ -1343,8 +1221,7 @@ uint8_t mouse_last_status(void)
 }
 
 /**
- * @brief Coordinates the mouse last data operation.
- * @return Result, status, or value defined by this API.
+ * @brief Report the driver's last PS/2 data byte, or 0 when no driver is registered.
  */
 uint8_t mouse_last_data(void)
 {
@@ -1357,8 +1234,7 @@ uint8_t mouse_last_data(void)
 }
 
 /**
- * @brief Coordinates the mouse last ack operation.
- * @return Result, status, or value defined by this API.
+ * @brief Report the driver's last PS/2 ack byte, or 0 when no driver is registered.
  */
 uint8_t mouse_last_ack(void)
 {
@@ -1371,8 +1247,7 @@ uint8_t mouse_last_ack(void)
 }
 
 /**
- * @brief Coordinates the driver manager mouse state operation.
- * @param out Caller-provided storage that receives output from this operation.
+ * @brief Copy the current cached mouse state into out.
  */
 void driver_manager_mouse_state(struct mouse_state *out)
 {
@@ -1382,8 +1257,7 @@ void driver_manager_mouse_state(struct mouse_state *out)
 }
 
 /**
- * @brief Coordinates the driver manager mouse event count operation.
- * @return Result, status, or value defined by this API.
+ * @brief Forward mouse_event_count to callers outside this file.
  */
 uint32_t driver_manager_mouse_event_count(void)
 {
@@ -1391,8 +1265,7 @@ uint32_t driver_manager_mouse_event_count(void)
 }
 
 /**
- * @brief Coordinates the driver manager mouse last status operation.
- * @return Result, status, or value defined by this API.
+ * @brief Forward mouse_last_status to callers outside this file.
  */
 uint8_t driver_manager_mouse_last_status(void)
 {
@@ -1400,8 +1273,7 @@ uint8_t driver_manager_mouse_last_status(void)
 }
 
 /**
- * @brief Coordinates the driver manager mouse last data operation.
- * @return Result, status, or value defined by this API.
+ * @brief Forward mouse_last_data to callers outside this file.
  */
 uint8_t driver_manager_mouse_last_data(void)
 {
@@ -1409,8 +1281,7 @@ uint8_t driver_manager_mouse_last_data(void)
 }
 
 /**
- * @brief Coordinates the driver manager mouse last ack operation.
- * @return Result, status, or value defined by this API.
+ * @brief Forward mouse_last_ack to callers outside this file.
  */
 uint8_t driver_manager_mouse_last_ack(void)
 {
@@ -1418,7 +1289,7 @@ uint8_t driver_manager_mouse_last_ack(void)
 }
 
 /**
- * @brief Coordinates the driver manager mouse poll operation.
+ * @brief Forward mouse_poll to callers outside this file.
  */
 void driver_manager_mouse_poll(void)
 {
@@ -1426,7 +1297,7 @@ void driver_manager_mouse_poll(void)
 }
 
 /**
- * @brief Coordinates the serial init operation.
+ * @brief Program the COM1 UART (baud, frame format, FIFO, IRQ) and enable the early serial path.
  */
 void serial_init(void)
 {
@@ -1441,8 +1312,7 @@ void serial_init(void)
 }
 
 /**
- * @brief Coordinates the serial is ready operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 when a serial driver is registered and reports ready.
  */
 int serial_is_ready(void)
 {
@@ -1450,8 +1320,7 @@ int serial_is_ready(void)
 }
 
 /**
- * @brief Coordinates the serial write operation.
- * @param text Input or output value used by this operation.
+ * @brief Write text through the serial driver, or the built-in COM1 path before one loads.
  */
 void serial_write(const char *text)
 {
@@ -1463,15 +1332,14 @@ void serial_write(const char *text)
 }
 
 /**
- * @brief Coordinates the e1000 init operation.
+ * @brief Reserved startup hook; the NIC is brought up by its driver's init().
  */
 void e1000_init(void)
 {
 }
 
 /**
- * @brief Coordinates the e1000 is ready operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 when an e1000 driver is registered and reports ready.
  */
 int e1000_is_ready(void)
 {
@@ -1479,8 +1347,7 @@ int e1000_is_ready(void)
 }
 
 /**
- * @brief Coordinates the e1000 mac operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the NIC's MAC address, or a zeroed placeholder when no driver is ready.
  */
 const uint8_t *e1000_mac(void)
 {
@@ -1488,10 +1355,7 @@ const uint8_t *e1000_mac(void)
 }
 
 /**
- * @brief Coordinates the e1000 send operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Send an Ethernet frame through the driver, or -19 when no driver is ready.
  */
 int e1000_send(const void *frame, uint32_t len)
 {
@@ -1499,11 +1363,7 @@ int e1000_send(const void *frame, uint32_t len)
 }
 
 /**
- * @brief Coordinates the e1000 poll operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Poll received frames from the driver, or -19 when no driver is ready.
  */
 int e1000_poll(void *frame, uint32_t capacity, uint32_t *out_len)
 {
@@ -1511,8 +1371,7 @@ int e1000_poll(void *frame, uint32_t capacity, uint32_t *out_len)
 }
 
 /**
- * @brief Coordinates the e1000 get info operation.
- * @param info Input or output value used by this operation.
+ * @brief Copy the driver's NIC info into info, zeroing it first when no driver is ready.
  */
 void e1000_get_info(struct e1000_info *info)
 {
@@ -1538,9 +1397,7 @@ void e1000_get_info(struct e1000_info *info)
 }
 
 /**
- * @brief Coordinates the driver manager audio configure operation.
- * @param format Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Configure the audio output format on the active driver, or -19 when absent.
  */
 int driver_manager_audio_configure(const struct leonos_audio_format *format)
 {
@@ -1552,11 +1409,7 @@ int driver_manager_audio_configure(const struct leonos_audio_format *format)
 }
 
 /**
- * @brief Coordinates the driver manager audio write operation.
- * @param data Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @param out_status Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Write audio samples; returns -19 and a NO_DEVICE status when no driver is ready.
  */
 long driver_manager_audio_write(const void *data, uint32_t length,
                                 uint32_t *out_status)
@@ -1572,8 +1425,7 @@ long driver_manager_audio_write(const void *data, uint32_t length,
 }
 
 /**
- * @brief Coordinates the driver manager audio get state operation.
- * @param out Caller-provided storage that receives output from this operation.
+ * @brief Copy the audio driver's state into out, zeroing it when no driver is ready.
  */
 void driver_manager_audio_get_state(struct leonos_audio_state *out)
 {

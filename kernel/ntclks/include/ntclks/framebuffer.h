@@ -86,92 +86,56 @@ struct framebuffer_blit_cmd {
 };
 
 /**
- * @brief Coordinates the framebuffer init operation.
- * @param boot Boot information supplied by the loader.
+ * @brief Discover and set up the framebuffer described by the boot info.
  */
 void framebuffer_init(const struct boot_info *boot);
 const struct framebuffer *framebuffer_get(void);
 /**
- * @brief Coordinates the framebuffer set mode operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Switch the display to width x height; returns 0 on success.
  */
 int framebuffer_set_mode(uint32_t width, uint32_t height);
 /**
- * @brief Coordinates the framebuffer clear operation.
- * @param color Input or output value used by this operation.
+ * @brief Fill the whole screen with color.
  */
 void framebuffer_clear(uint32_t color);
 /**
- * @brief Coordinates the framebuffer rect operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param w Input or output value used by this operation.
- * @param h Input or output value used by this operation.
- * @param color Input or output value used by this operation.
+ * @brief Fill the axis-aligned rectangle at (x,y) of size w x h with color.
  */
 void framebuffer_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
 /**
- * @brief Coordinates the framebuffer text operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param text Input or output value used by this operation.
- * @param fg Input or output value used by this operation.
- * @param bg Input or output value used by this operation.
+ * @brief Draw text at (x,y) using fg as the foreground and bg as the background color.
  */
 void framebuffer_text(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg);
 /**
- * @brief Coordinates the framebuffer blit operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param w Input or output value used by this operation.
- * @param h Input or output value used by this operation.
- * @param stride Input or output value used by this operation.
- * @param pixels Input or output value used by this operation.
+ * @brief Copy a w x h pixel buffer (stride words per row) to (x,y).
  */
 void framebuffer_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t stride, const uint32_t *pixels);
 /**
- * @brief Coordinates the framebuffer present operation.
+ * @brief Flush the back buffer so pending drawing becomes visible.
  */
 void framebuffer_present(void);
 /**
- * @brief Coordinates the framebuffer present region operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
+ * @brief Flush only the (x,y,width,height) sub-region of the back buffer.
  */
 void framebuffer_present_region(uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 /**
- * @brief Coordinates the framebuffer get pixel public operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read the color of the pixel at (x,y).
  */
 uint32_t framebuffer_get_pixel_public(uint32_t x, uint32_t y);
 /**
- * @brief Coordinates the framebuffer put pixel public operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param color Input or output value used by this operation.
+ * @brief Set the pixel at (x,y) to color.
  */
 void framebuffer_put_pixel_public(uint32_t x, uint32_t y, uint32_t color);
 /**
- * @brief Coordinates the desktop boot paint operation.
+ * @brief Draw the initial desktop wallpaper/background at startup.
  */
 void desktop_boot_paint(void);
 /**
- * @brief Coordinates the desktop handle mouse operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param buttons Input or output value used by this operation.
+ * @brief Update desktop state for a mouse move to (x,y) with the given buttons.
  */
 void desktop_handle_mouse(uint32_t x, uint32_t y, uint8_t buttons);
 /**
- * @brief Coordinates the desktop draw mouse operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
+ * @brief Repaint the mouse cursor at (x,y).
  */
 void desktop_draw_mouse(uint32_t x, uint32_t y);
 

@@ -79,7 +79,7 @@ struct syscall_frame {
 };
 
 /**
- * @brief Coordinates the syscall init operation.
+ * @brief Set up syscall dispatch tables and register the kernel entry handlers.
  */
 void syscall_init(void);
 /**
@@ -88,21 +88,15 @@ void syscall_init(void);
 int64_t syscall_process_control(uint64_t number, uint64_t a0, uint64_t a1,
                                 uint64_t a2, uint64_t a3);
 /**
- * @brief Coordinates the syscall dispatch operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * @brief Execute the syscall described by frame and return its result.
  */
 int64_t syscall_dispatch(const struct syscall_frame *frame);
 /**
- * @brief Coordinates the syscall dispatch frame operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
+ * @brief Run the syscall encoded in the trap frame and update its return registers.
  */
 void syscall_dispatch_frame(struct trap_frame *frame);
 /**
- * @brief Coordinates the syscall handle user page fault operation.
- * @param fault_addr Address used by this operation; its address-space interpretation follows the API.
- * @param error Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Resolve a user page fault at fault_addr with the given error code; 0 if handled.
  */
 int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error);
 int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
@@ -110,8 +104,7 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
 int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot);
 int64_t syscall_mm_munmap(uint64_t addr, uint64_t len);
 /**
- * @brief Coordinates the syscall release task files operation.
- * @param task Task whose state or authority is inspected or updated.
+ * @brief Close and free every file descriptor still open in task.
  */
 void syscall_release_task_files(struct task *task);
 /**

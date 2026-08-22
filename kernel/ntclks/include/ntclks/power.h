@@ -8,8 +8,7 @@
 struct boot_info;
 
 /**
- * @brief Coordinates the power init operation.
- * @param boot Boot information supplied by the loader.
+ * @brief Locate ACPI tables and record the S5 shutdown control state for later use.
  */
 void power_init(const struct boot_info *boot);
 void power_reboot(void) __attribute__((noreturn));

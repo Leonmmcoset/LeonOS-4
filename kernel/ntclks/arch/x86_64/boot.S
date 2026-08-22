@@ -52,8 +52,9 @@ boot_stack_bottom:
 boot_stack_top:
 
 .section .text, "ax"
-/**
- * @brief Coordinates the  start operation.
+/*
+ * Kernel entry point: stash the multiboot magic and info pointer, set up the
+ * boot stack, then hand control to kernel_main.
  */
 .global _start
 .type _start, @function
@@ -74,9 +75,7 @@ _start:
     jmp .halt
 #endif
 
-/**
- * @brief Coordinates the x86 64 outb operation.
- */
+/** @brief Writes one byte to the x86 I/O port in `dx`. */
 .global x86_64_outb
 .type x86_64_outb, @function
 x86_64_outb:
@@ -85,9 +84,7 @@ x86_64_outb:
     out %al, %dx
     ret
 
-/**
- * @brief Coordinates the x86 64 inb operation.
- */
+/** @brief Reads one byte from the x86 I/O port in `dx`. */
 .global x86_64_inb
 .type x86_64_inb, @function
 x86_64_inb:
@@ -95,9 +92,7 @@ x86_64_inb:
     in %dx, %al
     ret
 
-/**
- * @brief Coordinates the x86 64 outw operation.
- */
+/** @brief Writes a 16-bit value to the x86 I/O port in `dx`. */
 .global x86_64_outw
 .type x86_64_outw, @function
 x86_64_outw:
@@ -106,9 +101,7 @@ x86_64_outw:
     out %ax, %dx
     ret
 
-/**
- * @brief Coordinates the x86 64 outl operation.
- */
+/** @brief Writes a 32-bit value to the x86 I/O port in `dx`. */
 .global x86_64_outl
 .type x86_64_outl, @function
 x86_64_outl:
@@ -117,9 +110,7 @@ x86_64_outl:
     out %eax, %dx
     ret
 
-/**
- * @brief Coordinates the x86 64 inw operation.
- */
+/** @brief Reads a 16-bit value from the x86 I/O port in `dx`. */
 .global x86_64_inw
 .type x86_64_inw, @function
 x86_64_inw:
@@ -128,9 +119,7 @@ x86_64_inw:
     in %dx, %ax
     ret
 
-/**
- * @brief Coordinates the x86 64 inl operation.
- */
+/** @brief Reads a 32-bit value from the x86 I/O port in `dx`. */
 .global x86_64_inl
 .type x86_64_inl, @function
 x86_64_inl:
@@ -138,9 +127,7 @@ x86_64_inl:
     in %dx, %eax
     ret
 
-/**
- * @brief Coordinates the x86 64 halt operation.
- */
+/** @brief Disables interrupts and halts the current CPU indefinitely. */
 .global x86_64_halt
 .type x86_64_halt, @function
 x86_64_halt:
@@ -149,63 +136,49 @@ x86_64_halt:
     hlt
     jmp 1b
 
-/**
- * @brief Coordinates the x86 64 lgdt operation.
- */
+/** @brief Loads GDTR from the descriptor pointer in `rdi`. */
 .global x86_64_lgdt
 .type x86_64_lgdt, @function
 x86_64_lgdt:
     lgdt (%rdi)
     ret
 
-/**
- * @brief Coordinates the x86 64 lidt operation.
- */
+/** @brief Loads IDTR from the descriptor pointer in `rdi`. */
 .global x86_64_lidt
 .type x86_64_lidt, @function
 x86_64_lidt:
     lidt (%rdi)
     ret
 
-/**
- * @brief Coordinates the x86 64 ltr operation.
- */
+/** @brief Loads TR from the selector in `di`. */
 .global x86_64_ltr
 .type x86_64_ltr, @function
 x86_64_ltr:
     ltr %di
     ret
 
-/**
- * @brief Coordinates the x86 64 load cr3 operation.
- */
+/** @brief Switches to the page-table root address in `rdi`. */
 .global x86_64_load_cr3
 .type x86_64_load_cr3, @function
 x86_64_load_cr3:
     mov %rdi, %cr3
     ret
 
-/**
- * @brief Coordinates the x86 64 read cr2 operation.
- */
+/** @brief Returns the faulting virtual address recorded in CR2. */
 .global x86_64_read_cr2
 .type x86_64_read_cr2, @function
 x86_64_read_cr2:
     mov %cr2, %rax
     ret
 
-/**
- * @brief Coordinates the x86 64 invlpg operation.
- */
+/** @brief Invalidates the TLB entry for the page address in `rdi`. */
 .global x86_64_invlpg
 .type x86_64_invlpg, @function
 x86_64_invlpg:
     invlpg (%rdi)
     ret
 
-/**
- * @brief Coordinates the x86 64 load segments operation.
- */
+/** @brief Reloads segment registers and returns with the kernel code selector. */
 .global x86_64_load_segments
 .type x86_64_load_segments, @function
 x86_64_load_segments:
@@ -222,8 +195,9 @@ x86_64_load_segments:
 1:
     ret
 
-/**
- * @brief Coordinates the arch enter user operation.
+/*
+ * Drop to ring 3: build an iretq frame that jumps to the entry point in rdi
+ * with the user stack in rsi and interrupts enabled.
  */
 .global arch_enter_user
 .type arch_enter_user, @function
@@ -240,9 +214,7 @@ arch_enter_user:
     pushq %r11
     iretq
 
-/**
- * @brief Coordinates the arch enter user frame operation.
- */
+/* Load the task's CR3 and switch to its stack, then pop its trap frame. */
 .global arch_enter_user_frame
 .type arch_enter_user_frame, @function
 arch_enter_user_frame:
@@ -330,9 +302,7 @@ ISR_ERR isr29_stub 29
 ISR_ERR isr30_stub 30
 ISR_NOERR isr31_stub 31
 
-/**
- * @brief Coordinates the isr14 stub operation.
- */
+/* Page-fault entry: save all registers, dispatch the fault, then switch tasks or resume. */
 .global isr14_stub
 .type isr14_stub, @function
 isr14_stub:
@@ -423,9 +393,7 @@ IRQ_STUB irq1_stub 0x21
 IRQ_STUB irq12_stub 0x2c
 IRQ_STUB irq32_stub 0x40
 
-/**
- * @brief Coordinates the isr80 stub operation.
- */
+/* int 0x80 entry: push a trap frame, dispatch the syscall, then switch tasks or resume. */
 .global isr80_stub
 .type isr80_stub, @function
 isr80_stub:
@@ -450,9 +418,7 @@ isr80_stub:
 1:
     jmp trap_restore_frame
 
-/**
- * @brief Coordinates the trap restore frame operation.
- */
+/* Pop a saved trap frame off the stack and return to it with iretq. */
 .global trap_restore_frame
 .type trap_restore_frame, @function
 trap_restore_frame:

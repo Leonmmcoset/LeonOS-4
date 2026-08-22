@@ -153,15 +153,15 @@ static struct net_socket net_sockets[LEONOS_NET_SOCKET_MAX];
 static int32_t net_next_socket_handle = 1;
 
 /**
- * @brief Coordinates the net socket handle tcp operation.
- * @param src_ip Input or output value used by this operation.
- * @param src_port Input or output value used by this operation.
- * @param dst_port Input or output value used by this operation.
- * @param seq Input or output value used by this operation.
- * @param ack Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param payload Input or output value used by this operation.
- * @param payload_len Length, size, or element count associated with the operation.
+ * Net socket handle tcp.
+ * @param src_ip Value supplied by the caller.
+ * @param src_port Value supplied by the caller.
+ * @param dst_port Value supplied by the caller.
+ * @param seq Value supplied by the caller.
+ * @param ack Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param payload Value supplied by the caller.
+ * @param payload_len Value supplied by the caller.
  */
 static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
                                   uint16_t dst_port, uint32_t seq,
@@ -170,7 +170,7 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
                                   uint32_t payload_len);
 
 /**
- * @brief Coordinates the net cpu relax operation.
+ * Net cpu relax.
  */
 static void net_cpu_relax(void)
 {
@@ -178,10 +178,10 @@ static void net_cpu_relax(void)
 }
 
 /**
- * @brief Coordinates the net memcpy operation.
- * @param dst Input or output value used by this operation.
- * @param src Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
+ * Net memcpy.
+ * @param dst Value supplied by the caller.
+ * @param src Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
  */
 static void net_memcpy(void *dst, const void *src, uint32_t len)
 {
@@ -193,9 +193,9 @@ static void net_memcpy(void *dst, const void *src, uint32_t len)
 }
 
 /**
- * @brief Coordinates the net memzero operation.
- * @param dst Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
+ * Net memzero.
+ * @param dst Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
  */
 static void net_memzero(void *dst, uint32_t len)
 {
@@ -206,10 +206,10 @@ static void net_memzero(void *dst, uint32_t len)
 }
 
 /**
- * @brief Coordinates the net strlen operation.
- * @param text Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @return Result, status, or value defined by this API.
+ * Net strlen.
+ * @param text NUL-terminated text supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_strlen(const char *text, uint32_t cap)
 {
@@ -221,9 +221,9 @@ static uint32_t net_strlen(const char *text, uint32_t cap)
 }
 
 /**
- * @brief Coordinates the net mac is zero operation.
- * @param mac Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net mac is zero.
+ * @param mac Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_mac_is_zero(const uint8_t mac[6])
 {
@@ -231,11 +231,11 @@ static int net_mac_is_zero(const uint8_t mac[6])
 }
 
 /**
- * @brief Coordinates the net memeq operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net memeq.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static int net_memeq(const uint8_t *a, const uint8_t *b, uint32_t len)
 {
@@ -248,11 +248,11 @@ static int net_memeq(const uint8_t *a, const uint8_t *b, uint32_t len)
 }
 
 /**
- * @brief Coordinates the net text eq len operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net text eq len.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static int net_text_eq_len(const char *a, const char *b, uint32_t len)
 {
@@ -265,12 +265,12 @@ static int net_text_eq_len(const char *a, const char *b, uint32_t len)
 }
 
 /**
- * @brief Coordinates the net service line value operation.
- * @param line Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param key Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net service line value.
+ * @param line Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param key Value supplied by the caller.
+ * @param value Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_service_line_value(const char *line, uint32_t len,
                                   const char *key, uint8_t *value)
@@ -290,13 +290,13 @@ static int net_service_line_value(const char *line, uint32_t len,
 }
 
 /**
- * @brief Coordinates the net line value operation.
- * @param line Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param key Input or output value used by this operation.
- * @param out_value Caller-provided storage that receives output from this operation.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Net line value.
+ * @param line Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param key Value supplied by the caller.
+ * @param out_value Value supplied by the caller.
+ * @param out_len Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_line_value(const char *line, uint32_t len, const char *key,
                           const char **out_value, uint32_t *out_len)
@@ -312,11 +312,11 @@ static int net_line_value(const char *line, uint32_t len, const char *key,
 }
 
 /**
- * @brief Coordinates the net value eq operation.
- * @param value Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param expected Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net value eq.
+ * @param value Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param expected Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_value_eq(const char *value, uint32_t len, const char *expected)
 {
@@ -331,11 +331,11 @@ static int net_value_eq(const char *value, uint32_t len, const char *expected)
 }
 
 /**
- * @brief Coordinates the net parse ipv4 operation.
- * @param text Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out_ip Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Net parse ipv4.
+ * @param text NUL-terminated text supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param out_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_parse_ipv4(const char *text, uint32_t len, uint32_t *out_ip)
 {
@@ -369,9 +369,9 @@ static int net_parse_ipv4(const char *text, uint32_t len, uint32_t *out_ip)
 }
 
 /**
- * @brief Coordinates the net load dns policy file operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * Net load dns policy file.
+ * @param path NUL-terminated text supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_load_dns_policy_file(const char *path)
 {
@@ -420,18 +420,13 @@ static int net_load_dns_policy_file(const char *path)
 }
 
 /**
- * @brief Coordinates the net load dns policy operation.
+ * Net load dns policy.
  */
 static void net_load_dns_policy(void)
 {
     net_dns_mode = LEONOS_NET_DNS_MODE_CLOUDFLARE;
     net_dns_custom_ip = 0;
     if (net_load_dns_policy_file(NET_NETWORK_CONFIG_PATH) < 0) {
-        /**
- * @brief Coordinates the net load dns policy file operation.
- * @param NET_NETWORK_CONFIG_BACKUP_PATH LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
- */
         (void)net_load_dns_policy_file(NET_NETWORK_CONFIG_BACKUP_PATH);
     }
     if (net_dns_mode == LEONOS_NET_DNS_MODE_CUSTOM && !net_dns_custom_ip) {
@@ -440,9 +435,9 @@ static void net_load_dns_policy(void)
 }
 
 /**
- * @brief Coordinates the net effective dns ip operation.
- * @param dhcp_dns_ip Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net effective dns ip.
+ * @param dhcp_dns_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_effective_dns_ip(uint32_t dhcp_dns_ip)
 {
@@ -456,10 +451,10 @@ static uint32_t net_effective_dns_ip(uint32_t dhcp_dns_ip)
 }
 
 /**
- * @brief Coordinates the net service enabled operation.
- * @param key Input or output value used by this operation.
- * @param default_value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net service enabled.
+ * @param key Value supplied by the caller.
+ * @param default_value Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint8_t net_service_enabled(const char *key, uint8_t default_value)
 {
@@ -496,9 +491,9 @@ static uint8_t net_service_enabled(const char *key, uint8_t default_value)
 }
 
 /**
- * @brief Coordinates the net get u16 operation.
- * @param p Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net get u16.
+ * @param p Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint16_t net_get_u16(const uint8_t *p)
 {
@@ -506,9 +501,9 @@ static uint16_t net_get_u16(const uint8_t *p)
 }
 
 /**
- * @brief Coordinates the net get u32 operation.
- * @param p Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net get u32.
+ * @param p Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_get_u32(const uint8_t *p)
 {
@@ -519,9 +514,9 @@ static uint32_t net_get_u32(const uint8_t *p)
 }
 
 /**
- * @brief Coordinates the net put u16 operation.
- * @param p Input or output value used by this operation.
- * @param value Input or output value used by this operation.
+ * Net put u16.
+ * @param p Value supplied by the caller.
+ * @param value Value supplied by the caller.
  */
 static void net_put_u16(uint8_t *p, uint16_t value)
 {
@@ -530,9 +525,9 @@ static void net_put_u16(uint8_t *p, uint16_t value)
 }
 
 /**
- * @brief Coordinates the net put u32 operation.
- * @param p Input or output value used by this operation.
- * @param value Input or output value used by this operation.
+ * Net put u32.
+ * @param p Value supplied by the caller.
+ * @param value Value supplied by the caller.
  */
 static void net_put_u32(uint8_t *p, uint32_t value)
 {
@@ -543,10 +538,10 @@ static void net_put_u32(uint8_t *p, uint32_t value)
 }
 
 /**
- * @brief Coordinates the net tcp seq after or equal operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net tcp seq after or equal.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_tcp_seq_after_or_equal(uint32_t a, uint32_t b)
 {
@@ -554,10 +549,10 @@ static int net_tcp_seq_after_or_equal(uint32_t a, uint32_t b)
 }
 
 /**
- * @brief Coordinates the net checksum operation.
- * @param data Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net checksum.
+ * @param data Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static uint16_t net_checksum(const uint8_t *data, uint32_t len)
 {
@@ -577,11 +572,11 @@ static uint16_t net_checksum(const uint8_t *data, uint32_t len)
 }
 
 /**
- * @brief Coordinates the net checksum partial operation.
- * @param sum Input or output value used by this operation.
- * @param data Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net checksum partial.
+ * @param sum Value supplied by the caller.
+ * @param data Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_checksum_partial(uint32_t sum, const uint8_t *data,
                                      uint32_t len)
@@ -598,9 +593,9 @@ static uint32_t net_checksum_partial(uint32_t sum, const uint8_t *data,
 }
 
 /**
- * @brief Coordinates the net checksum finish operation.
- * @param sum Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net checksum finish.
+ * @param sum Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint16_t net_checksum_finish(uint32_t sum)
 {
@@ -611,12 +606,12 @@ static uint16_t net_checksum_finish(uint32_t sum)
 }
 
 /**
- * @brief Coordinates the net tcp checksum operation.
- * @param src_ip Input or output value used by this operation.
- * @param dst_ip Input or output value used by this operation.
- * @param tcp Input or output value used by this operation.
- * @param tcp_len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net tcp checksum.
+ * @param src_ip Value supplied by the caller.
+ * @param dst_ip Value supplied by the caller.
+ * @param tcp Value supplied by the caller.
+ * @param tcp_len Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint16_t net_tcp_checksum(uint32_t src_ip, uint32_t dst_ip,
                                  const uint8_t *tcp, uint16_t tcp_len)
@@ -634,11 +629,11 @@ static uint16_t net_tcp_checksum(uint32_t src_ip, uint32_t dst_ip,
 }
 
 /**
- * @brief Coordinates the net append char operation.
- * @param dst Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ch Input or output value used by this operation.
+ * Net append char.
+ * @param dst Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param ch Value supplied by the caller.
  */
 static void net_append_char(char *dst, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -650,11 +645,11 @@ static void net_append_char(char *dst, uint32_t *pos, uint32_t cap, char ch)
 }
 
 /**
- * @brief Coordinates the net append text operation.
- * @param dst Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param text Input or output value used by this operation.
+ * Net append text.
+ * @param dst Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param text NUL-terminated text supplied by the caller.
  */
 static void net_append_text(char *dst, uint32_t *pos, uint32_t cap,
                             const char *text)
@@ -665,11 +660,11 @@ static void net_append_text(char *dst, uint32_t *pos, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the net append u32 operation.
- * @param dst Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * Net append u32.
+ * @param dst Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param value Value supplied by the caller.
  */
 static void net_append_u32(char *dst, uint32_t *pos, uint32_t cap,
                            uint32_t value)
@@ -690,11 +685,11 @@ static void net_append_u32(char *dst, uint32_t *pos, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the net timeout expired operation.
- * @param start_ms Input or output value used by this operation.
- * @param timeout_ms Input or output value used by this operation.
- * @param spins Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net timeout expired.
+ * @param start_ms Value supplied by the caller.
+ * @param timeout_ms Value supplied by the caller.
+ * @param spins Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_timeout_expired(uint64_t start_ms, uint32_t timeout_ms,
                                uint32_t spins)
@@ -708,7 +703,7 @@ static int net_timeout_expired(uint64_t start_ms, uint32_t timeout_ms,
 }
 
 /**
- * @brief Coordinates the net arp cache clear operation.
+ * Net arp cache clear.
  */
 static void net_arp_cache_clear(void)
 {
@@ -717,10 +712,10 @@ static void net_arp_cache_clear(void)
 }
 
 /**
- * @brief Coordinates the net arp cache lookup operation.
- * @param ip Input or output value used by this operation.
- * @param mac Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net arp cache lookup.
+ * @param ip Value supplied by the caller.
+ * @param mac Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_arp_cache_lookup(uint32_t ip, uint8_t mac[6])
 {
@@ -738,9 +733,9 @@ static int net_arp_cache_lookup(uint32_t ip, uint8_t mac[6])
 }
 
 /**
- * @brief Coordinates the net arp cache store operation.
- * @param ip Input or output value used by this operation.
- * @param mac Input or output value used by this operation.
+ * Net arp cache store.
+ * @param ip Value supplied by the caller.
+ * @param mac Value supplied by the caller.
  */
 static void net_arp_cache_store(uint32_t ip, const uint8_t mac[6])
 {
@@ -762,7 +757,7 @@ static void net_arp_cache_store(uint32_t ip, const uint8_t mac[6])
 }
 
 /**
- * @brief Coordinates the net update config flags operation.
+ * Net update config flags.
  */
 static void net_update_config_flags(void)
 {
@@ -781,7 +776,7 @@ static void net_update_config_flags(void)
 }
 
 /**
- * @brief Coordinates the net set static fallback operation.
+ * Net set static fallback.
  */
 static void net_set_static_fallback(void)
 {
@@ -800,8 +795,8 @@ static void net_set_static_fallback(void)
 }
 
 /**
- * @brief Coordinates the net apply dhcp offer operation.
- * @param offer Input or output value used by this operation.
+ * Net apply dhcp offer.
+ * @param offer Value supplied by the caller.
  */
 static void net_apply_dhcp_offer(const struct net_dhcp_offer *offer)
 {
@@ -818,10 +813,10 @@ static void net_apply_dhcp_offer(const struct net_dhcp_offer *offer)
 }
 
 /**
- * @brief Coordinates the net write eth operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param dst_mac Input or output value used by this operation.
- * @param type Input or output value used by this operation.
+ * Net write eth.
+ * @param frame Value supplied by the caller.
+ * @param dst_mac Value supplied by the caller.
+ * @param type Value supplied by the caller.
  */
 static void net_write_eth(uint8_t *frame, const uint8_t *dst_mac,
                           uint16_t type)
@@ -833,12 +828,12 @@ static void net_write_eth(uint8_t *frame, const uint8_t *dst_mac,
 }
 
 /**
- * @brief Coordinates the net write arp ipv4 operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param op Input or output value used by this operation.
- * @param dst_eth_mac Input or output value used by this operation.
- * @param target_mac Input or output value used by this operation.
- * @param target_ip Input or output value used by this operation.
+ * Net write arp ipv4.
+ * @param frame Value supplied by the caller.
+ * @param op Identifier or flags controlling the operation.
+ * @param dst_eth_mac Value supplied by the caller.
+ * @param target_mac Value supplied by the caller.
+ * @param target_ip Value supplied by the caller.
  */
 static void net_write_arp_ipv4(uint8_t *frame, uint16_t op,
                                const uint8_t *dst_eth_mac,
@@ -859,9 +854,9 @@ static void net_write_arp_ipv4(uint8_t *frame, uint16_t op,
 }
 
 /**
- * @brief Coordinates the net send arp request operation.
- * @param target_ip Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net send arp request.
+ * @param target_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_send_arp_request(uint32_t target_ip)
 {
@@ -874,10 +869,10 @@ static int net_send_arp_request(uint32_t target_ip)
 }
 
 /**
- * @brief Coordinates the net send arp reply operation.
- * @param target_mac Input or output value used by this operation.
- * @param target_ip Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net send arp reply.
+ * @param target_mac Value supplied by the caller.
+ * @param target_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_send_arp_reply(const uint8_t *target_mac, uint32_t target_ip)
 {
@@ -888,9 +883,9 @@ static int net_send_arp_reply(const uint8_t *target_mac, uint32_t target_ip)
 }
 
 /**
- * @brief Coordinates the net route arp ip operation.
- * @param target_ip Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net route arp ip.
+ * @param target_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_route_arp_ip(uint32_t target_ip)
 {
@@ -902,9 +897,9 @@ static uint32_t net_route_arp_ip(uint32_t target_ip)
 }
 
 /**
- * @brief Coordinates the net frame for us operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Net frame for us.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_frame_for_us(const uint8_t *frame)
 {
@@ -913,9 +908,9 @@ static int net_frame_for_us(const uint8_t *frame)
 }
 
 /**
- * @brief Coordinates the net ip for us operation.
- * @param dst_ip Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net ip for us.
+ * @param dst_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_ip_for_us(uint32_t dst_ip)
 {
@@ -925,15 +920,15 @@ static int net_ip_for_us(uint32_t dst_ip)
 }
 
 /**
- * @brief Coordinates the net send udp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param src_ip Input or output value used by this operation.
- * @param dst_ip Input or output value used by this operation.
- * @param src_port Input or output value used by this operation.
- * @param dst_port Input or output value used by this operation.
- * @param payload Input or output value used by this operation.
- * @param payload_len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net send udp to mac.
+ * @param dst_mac Value supplied by the caller.
+ * @param src_ip Value supplied by the caller.
+ * @param dst_ip Value supplied by the caller.
+ * @param src_port Value supplied by the caller.
+ * @param dst_port Value supplied by the caller.
+ * @param payload Value supplied by the caller.
+ * @param payload_len Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_send_udp_to_mac(const uint8_t *dst_mac, uint32_t src_ip,
                                uint32_t dst_ip, uint16_t src_port,
@@ -971,18 +966,18 @@ static int net_send_udp_to_mac(const uint8_t *dst_mac, uint32_t src_ip,
 }
 
 /**
- * @brief Coordinates the net send tcp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param src_ip Input or output value used by this operation.
- * @param dst_ip Input or output value used by this operation.
- * @param src_port Input or output value used by this operation.
- * @param dst_port Input or output value used by this operation.
- * @param seq Input or output value used by this operation.
- * @param ack Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param payload Input or output value used by this operation.
- * @param payload_len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net send tcp to mac.
+ * @param dst_mac Value supplied by the caller.
+ * @param src_ip Value supplied by the caller.
+ * @param dst_ip Value supplied by the caller.
+ * @param src_port Value supplied by the caller.
+ * @param dst_port Value supplied by the caller.
+ * @param seq Value supplied by the caller.
+ * @param ack Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param payload Value supplied by the caller.
+ * @param payload_len Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_send_tcp_to_mac(const uint8_t *dst_mac, uint32_t src_ip,
                                uint32_t dst_ip, uint16_t src_port,
@@ -1038,10 +1033,10 @@ static int net_send_tcp_to_mac(const uint8_t *dst_mac, uint32_t src_ip,
 }
 
 /**
- * @brief Coordinates the net handle arp operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param len Length, size, or element count associated with the operation.
- * @param arp_wait Input or output value used by this operation.
+ * Net handle arp.
+ * @param frame Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param arp_wait Value supplied by the caller.
  */
 static void net_handle_arp(const uint8_t *frame, uint32_t len,
                            struct net_arp_wait *arp_wait)
@@ -1062,12 +1057,6 @@ static void net_handle_arp(const uint8_t *frame, uint32_t len,
     target_ip = net_get_u32(frame + 38);
     net_arp_cache_store(sender_ip, sender_mac);
     if (op == ARP_OPER_REQUEST && target_ip == net_config.local_ip) {
-        /**
- * @brief Coordinates the net send arp reply operation.
- * @param sender_mac Input or output value used by this operation.
- * @param sender_ip Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
         (void)net_send_arp_reply(sender_mac, sender_ip);
         return;
     }
@@ -1078,12 +1067,12 @@ static void net_handle_arp(const uint8_t *frame, uint32_t len,
 }
 
 /**
- * @brief Coordinates the net send icmp echo request operation.
- * @param dst_mac Input or output value used by this operation.
- * @param target_ip Input or output value used by this operation.
- * @param ident Input or output value used by this operation.
- * @param sequence Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net send icmp echo request.
+ * @param dst_mac Value supplied by the caller.
+ * @param target_ip Value supplied by the caller.
+ * @param ident Value supplied by the caller.
+ * @param sequence Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_send_icmp_echo_request(const uint8_t *dst_mac, uint32_t target_ip,
                                       uint16_t ident, uint16_t sequence)
@@ -1119,12 +1108,12 @@ static int net_send_icmp_echo_request(const uint8_t *dst_mac, uint32_t target_ip
 }
 
 /**
- * @brief Coordinates the net handle udp operation.
- * @param ip Input or output value used by this operation.
- * @param total_len Length, size, or element count associated with the operation.
- * @param ihl Input or output value used by this operation.
- * @param src_ip Input or output value used by this operation.
- * @param udp_wait Input or output value used by this operation.
+ * Net handle udp.
+ * @param ip Value supplied by the caller.
+ * @param total_len Value supplied by the caller.
+ * @param ihl Value supplied by the caller.
+ * @param src_ip Value supplied by the caller.
+ * @param udp_wait Value supplied by the caller.
  */
 static void net_handle_udp(const uint8_t *ip, uint32_t total_len,
                            uint32_t ihl, uint32_t src_ip,
@@ -1164,12 +1153,12 @@ static void net_handle_udp(const uint8_t *ip, uint32_t total_len,
 }
 
 /**
- * @brief Coordinates the net handle tcp operation.
- * @param ip Input or output value used by this operation.
- * @param total_len Length, size, or element count associated with the operation.
- * @param ihl Input or output value used by this operation.
- * @param src_ip Input or output value used by this operation.
- * @param tcp_wait Input or output value used by this operation.
+ * Net handle tcp.
+ * @param ip Value supplied by the caller.
+ * @param total_len Value supplied by the caller.
+ * @param ihl Value supplied by the caller.
+ * @param src_ip Value supplied by the caller.
+ * @param tcp_wait Value supplied by the caller.
  */
 static void net_handle_tcp(const uint8_t *ip, uint32_t total_len,
                            uint32_t ihl, uint32_t src_ip,
@@ -1258,12 +1247,12 @@ static void net_handle_tcp(const uint8_t *ip, uint32_t total_len,
 }
 
 /**
- * @brief Coordinates the net handle ipv4 operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param len Length, size, or element count associated with the operation.
- * @param ping_wait Input or output value used by this operation.
- * @param udp_wait Input or output value used by this operation.
- * @param tcp_wait Input or output value used by this operation.
+ * Net handle ipv4.
+ * @param frame Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param ping_wait Value supplied by the caller.
+ * @param udp_wait Value supplied by the caller.
+ * @param tcp_wait Value supplied by the caller.
  */
 static void net_handle_ipv4(const uint8_t *frame, uint32_t len,
                             struct net_ping_wait *ping_wait,
@@ -1322,13 +1311,13 @@ static void net_handle_ipv4(const uint8_t *frame, uint32_t len,
 }
 
 /**
- * @brief Coordinates the net process frame operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param len Length, size, or element count associated with the operation.
- * @param arp_wait Input or output value used by this operation.
- * @param ping_wait Input or output value used by this operation.
- * @param udp_wait Input or output value used by this operation.
- * @param tcp_wait Input or output value used by this operation.
+ * Net process frame.
+ * @param frame Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param arp_wait Value supplied by the caller.
+ * @param ping_wait Value supplied by the caller.
+ * @param udp_wait Value supplied by the caller.
+ * @param tcp_wait Value supplied by the caller.
  */
 static void net_process_frame(const uint8_t *frame, uint32_t len,
                               struct net_arp_wait *arp_wait,
@@ -1349,11 +1338,11 @@ static void net_process_frame(const uint8_t *frame, uint32_t len,
 }
 
 /**
- * @brief Coordinates the net poll once operation.
- * @param arp_wait Input or output value used by this operation.
- * @param ping_wait Input or output value used by this operation.
- * @param udp_wait Input or output value used by this operation.
- * @param tcp_wait Input or output value used by this operation.
+ * Net poll once.
+ * @param arp_wait Value supplied by the caller.
+ * @param ping_wait Value supplied by the caller.
+ * @param udp_wait Value supplied by the caller.
+ * @param tcp_wait Value supplied by the caller.
  */
 static void net_poll_once(struct net_arp_wait *arp_wait,
                           struct net_ping_wait *ping_wait,
@@ -1369,11 +1358,11 @@ static void net_poll_once(struct net_arp_wait *arp_wait,
 }
 
 /**
- * @brief Coordinates the net resolve mac operation.
- * @param ip Input or output value used by this operation.
- * @param timeout_ms Input or output value used by this operation.
- * @param out_mac Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Net resolve mac.
+ * @param ip Value supplied by the caller.
+ * @param timeout_ms Value supplied by the caller.
+ * @param out_mac Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_resolve_mac(uint32_t ip, uint32_t timeout_ms, uint8_t *out_mac)
 {
@@ -1406,8 +1395,8 @@ static int net_resolve_mac(uint32_t ip, uint32_t timeout_ms, uint8_t *out_mac)
 }
 
 /**
- * @brief Coordinates the net now32 operation.
- * @return Result, status, or value defined by this API.
+ * Net now32.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_now32(void)
 {
@@ -1415,8 +1404,8 @@ static uint32_t net_now32(void)
 }
 
 /**
- * @brief Coordinates the net socket clear operation.
- * @param socket Input or output value used by this operation.
+ * Net socket clear.
+ * @param socket Value supplied by the caller.
  */
 static void net_socket_clear(struct net_socket *socket)
 {
@@ -1426,8 +1415,8 @@ static void net_socket_clear(struct net_socket *socket)
 }
 
 /**
- * @brief Coordinates the net socket touch operation.
- * @param socket Input or output value used by this operation.
+ * Net socket touch.
+ * @param socket Value supplied by the caller.
  */
 static void net_socket_touch(struct net_socket *socket)
 {
@@ -1437,7 +1426,7 @@ static void net_socket_touch(struct net_socket *socket)
 }
 
 /**
- * @brief Coordinates the net socket gc operation.
+ * Net socket gc.
  */
 static void net_socket_gc(void)
 {
@@ -1456,11 +1445,11 @@ static void net_socket_gc(void)
 }
 
 /**
- * @brief Coordinates the net socket find operation.
- * @param handle Input or output value used by this operation.
- * @param owner_pid Input or output value used by this operation.
- * @param allow_closed Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket find.
+ * @param handle Value supplied by the caller.
+ * @param owner_pid Value supplied by the caller.
+ * @param allow_closed Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct net_socket *net_socket_find(int32_t handle, uint32_t owner_pid,
                                           int allow_closed)
@@ -1485,11 +1474,11 @@ static struct net_socket *net_socket_find(int32_t handle, uint32_t owner_pid,
 }
 
 /**
- * @brief Coordinates the net socket match operation.
- * @param src_ip Input or output value used by this operation.
- * @param src_port Input or output value used by this operation.
- * @param dst_port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket match.
+ * @param src_ip Value supplied by the caller.
+ * @param src_port Value supplied by the caller.
+ * @param dst_port Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct net_socket *net_socket_match(uint32_t src_ip, uint16_t src_port,
                                            uint16_t dst_port)
@@ -1509,9 +1498,9 @@ static struct net_socket *net_socket_match(uint32_t src_ip, uint16_t src_port,
 }
 
 /**
- * @brief Coordinates the net socket mark closed operation.
- * @param socket Input or output value used by this operation.
- * @param status Input or output value used by this operation.
+ * Net socket mark closed.
+ * @param socket Value supplied by the caller.
+ * @param status Output storage updated by the function.
  */
 static void net_socket_mark_closed(struct net_socket *socket, uint32_t status)
 {
@@ -1524,9 +1513,9 @@ static void net_socket_mark_closed(struct net_socket *socket, uint32_t status)
 }
 
 /**
- * @brief Coordinates the net socket trace tls operation.
- * @param socket Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket trace tls.
+ * @param socket Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_socket_trace_tls(const struct net_socket *socket)
 {
@@ -1534,15 +1523,15 @@ static int net_socket_trace_tls(const struct net_socket *socket)
 }
 
 /**
- * @brief Coordinates the net socket handle tcp operation.
- * @param src_ip Input or output value used by this operation.
- * @param src_port Input or output value used by this operation.
- * @param dst_port Input or output value used by this operation.
- * @param seq Input or output value used by this operation.
- * @param ack Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param payload Input or output value used by this operation.
- * @param payload_len Length, size, or element count associated with the operation.
+ * Net socket handle tcp.
+ * @param src_ip Value supplied by the caller.
+ * @param src_port Value supplied by the caller.
+ * @param dst_port Value supplied by the caller.
+ * @param seq Value supplied by the caller.
+ * @param ack Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param payload Value supplied by the caller.
+ * @param payload_len Value supplied by the caller.
  */
 static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
                                   uint16_t dst_port, uint32_t seq,
@@ -1582,18 +1571,6 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
                                socket->handle, socket->local_port,
                                socket->remote_port);
             }
-            /**
- * @brief Coordinates the net send tcp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param local_ip Input or output value used by this operation.
- * @param remote_ip Input or output value used by this operation.
- * @param local_port Input or output value used by this operation.
- * @param remote_port Input or output value used by this operation.
- * @param local_seq Input or output value used by this operation.
- * @param remote_seq Input or output value used by this operation.
- * @param TCP_FLAG_ACK Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
             (void)net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
                                       socket->remote_ip, socket->local_port,
                                       socket->remote_port, socket->local_seq,
@@ -1632,18 +1609,6 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
             console_printf("[net] tls rx ignored socket=%d seq=%u expected=%u bytes=%u\\n",
                            socket->handle, seq, socket->remote_seq, payload_len);
         }
-        /**
- * @brief Coordinates the net send tcp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param local_ip Input or output value used by this operation.
- * @param remote_ip Input or output value used by this operation.
- * @param local_port Input or output value used by this operation.
- * @param remote_port Input or output value used by this operation.
- * @param local_seq Input or output value used by this operation.
- * @param remote_seq Input or output value used by this operation.
- * @param TCP_FLAG_ACK Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
         (void)net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
                                   socket->remote_ip, socket->local_port,
                                   socket->remote_port, socket->local_seq,
@@ -1657,16 +1622,16 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
             socket->status = LEONOS_NET_STATUS_OK;
             net_socket_touch(socket);
             /**
- * @brief Coordinates the net send tcp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param local_ip Input or output value used by this operation.
- * @param remote_ip Input or output value used by this operation.
- * @param local_port Input or output value used by this operation.
- * @param remote_port Input or output value used by this operation.
- * @param local_seq Input or output value used by this operation.
- * @param remote_seq Input or output value used by this operation.
- * @param TCP_FLAG_ACK Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp add option.
+ * @param dst_mac Value supplied by the caller.
+ * @param local_ip Value supplied by the caller.
+ * @param remote_ip Value supplied by the caller.
+ * @param local_port Value supplied by the caller.
+ * @param remote_port Value supplied by the caller.
+ * @param local_seq Value supplied by the caller.
+ * @param remote_seq Value supplied by the caller.
+ * @param TCP_FLAG_ACK Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
             (void)net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
                                       socket->remote_ip, socket->local_port,
@@ -1677,14 +1642,14 @@ static void net_socket_handle_tcp(uint32_t src_ip, uint16_t src_port,
 }
 
 /**
- * @brief Coordinates the net dhcp add option operation.
- * @param payload Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param code Input or output value used by this operation.
- * @param data Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp add option.
+ * @param payload Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param code Value supplied by the caller.
+ * @param data Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_dhcp_add_option(uint8_t *payload, uint32_t pos,
                                     uint32_t cap, uint8_t code,
@@ -1700,13 +1665,13 @@ static uint32_t net_dhcp_add_option(uint8_t *payload, uint32_t pos,
 }
 
 /**
- * @brief Coordinates the net dhcp add u8 operation.
- * @param payload Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param code Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp add u8.
+ * @param payload Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param code Value supplied by the caller.
+ * @param value Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_dhcp_add_u8(uint8_t *payload, uint32_t pos,
                                 uint32_t cap, uint8_t code, uint8_t value)
@@ -1715,13 +1680,13 @@ static uint32_t net_dhcp_add_u8(uint8_t *payload, uint32_t pos,
 }
 
 /**
- * @brief Coordinates the net dhcp add u32 operation.
- * @param payload Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param code Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp add u32.
+ * @param payload Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param code Value supplied by the caller.
+ * @param value Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_dhcp_add_u32(uint8_t *payload, uint32_t pos,
                                  uint32_t cap, uint8_t code, uint32_t value)
@@ -1732,14 +1697,14 @@ static uint32_t net_dhcp_add_u32(uint8_t *payload, uint32_t pos,
 }
 
 /**
- * @brief Coordinates the net build dhcp packet operation.
- * @param payload Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param xid Input or output value used by this operation.
- * @param msg_type Input or output value used by this operation.
- * @param requested_ip Input or output value used by this operation.
- * @param server_ip Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net build dhcp packet.
+ * @param payload Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param xid Value supplied by the caller.
+ * @param msg_type Value supplied by the caller.
+ * @param requested_ip Value supplied by the caller.
+ * @param server_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_build_dhcp_packet(uint8_t *payload, uint32_t cap,
                                       uint32_t xid, uint8_t msg_type,
@@ -1779,12 +1744,12 @@ static uint32_t net_build_dhcp_packet(uint8_t *payload, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the net dhcp parse packet operation.
- * @param payload Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param xid Input or output value used by this operation.
- * @param offer Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp parse packet.
+ * @param payload Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param xid Value supplied by the caller.
+ * @param offer Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_dhcp_parse_packet(const uint8_t *payload, uint32_t len,
                                  uint32_t xid, struct net_dhcp_offer *offer)
@@ -1840,12 +1805,12 @@ static int net_dhcp_parse_packet(const uint8_t *payload, uint32_t len,
 }
 
 /**
- * @brief Coordinates the net dhcp send operation.
- * @param xid Input or output value used by this operation.
- * @param msg_type Input or output value used by this operation.
- * @param requested_ip Input or output value used by this operation.
- * @param server_ip Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp send.
+ * @param xid Value supplied by the caller.
+ * @param msg_type Value supplied by the caller.
+ * @param requested_ip Value supplied by the caller.
+ * @param server_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_dhcp_send(uint32_t xid, uint8_t msg_type,
                          uint32_t requested_ip, uint32_t server_ip)
@@ -1862,12 +1827,12 @@ static int net_dhcp_send(uint32_t xid, uint8_t msg_type,
 }
 
 /**
- * @brief Coordinates the net dhcp wait operation.
- * @param xid Input or output value used by this operation.
- * @param timeout_ms Input or output value used by this operation.
- * @param expected_type Input or output value used by this operation.
- * @param offer Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp wait.
+ * @param xid Value supplied by the caller.
+ * @param timeout_ms Value supplied by the caller.
+ * @param expected_type Value supplied by the caller.
+ * @param offer Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_dhcp_wait(uint32_t xid, uint32_t timeout_ms,
                          uint8_t expected_type, struct net_dhcp_offer *offer)
@@ -1899,10 +1864,10 @@ static int net_dhcp_wait(uint32_t xid, uint32_t timeout_ms,
 }
 
 /**
- * @brief Coordinates the net dhcp request operation.
- * @param timeout_ms Input or output value used by this operation.
- * @param out_config Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp request.
+ * @param timeout_ms Value supplied by the caller.
+ * @param out_config Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_dhcp_request(uint32_t timeout_ms,
                                  struct leonos_net_config *out_config)
@@ -1957,10 +1922,10 @@ static uint32_t net_dhcp_request(uint32_t timeout_ms,
 }
 
 /**
- * @brief Coordinates the net ensure ipv4 config operation.
- * @param timeout_ms Input or output value used by this operation.
- * @param require_dns Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net ensure ipv4 config.
+ * @param timeout_ms Value supplied by the caller.
+ * @param require_dns Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_ensure_ipv4_config(uint32_t timeout_ms, int require_dns)
 {
@@ -1975,8 +1940,8 @@ static uint32_t net_ensure_ipv4_config(uint32_t timeout_ms, int require_dns)
 }
 
 /**
- * @brief Coordinates the net console ipv4 operation.
- * @param ip Input or output value used by this operation.
+ * Net console ipv4.
+ * @param ip Value supplied by the caller.
  */
 static void net_console_ipv4(uint32_t ip)
 {
@@ -1986,8 +1951,8 @@ static void net_console_ipv4(uint32_t ip)
 }
 
 /**
- * @brief Coordinates the net log config operation.
- * @param prefix Input or output value used by this operation.
+ * Net log config.
+ * @param prefix Value supplied by the caller.
  */
 static void net_log_config(const char *prefix)
 {
@@ -2001,7 +1966,7 @@ static void net_log_config(const char *prefix)
 }
 
 /**
- * @brief Coordinates the net init operation.
+ * Net init.
  */
 void net_init(void)
 {
@@ -2033,8 +1998,8 @@ void net_init(void)
 }
 
 /**
- * @brief Coordinates the net is ready operation.
- * @return Result, status, or value defined by this API.
+ * Net is ready.
+ * @return The value or status produced by the operation.
  */
 int net_is_ready(void)
 {
@@ -2042,9 +2007,9 @@ int net_is_ready(void)
 }
 
 /**
- * @brief Coordinates the net get config operation.
- * @param config Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net get config.
+ * @param config Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_get_config(struct leonos_net_config *config)
 {
@@ -2057,9 +2022,9 @@ int net_get_config(struct leonos_net_config *config)
 }
 
 /**
- * @brief Coordinates the net set dns policy operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Net set dns policy.
+ * @param request Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_set_dns_policy(struct leonos_net_dns_policy *request)
 {
@@ -2099,9 +2064,9 @@ int net_set_dns_policy(struct leonos_net_dns_policy *request)
 }
 
 /**
- * @brief Coordinates the net dhcp renew operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dhcp renew.
+ * @param request Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_dhcp_renew(struct leonos_net_dhcp *request)
 {
@@ -2117,9 +2082,9 @@ int net_dhcp_renew(struct leonos_net_dhcp *request)
 }
 
 /**
- * @brief Coordinates the net ping operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Net ping.
+ * @param request Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_ping(struct leonos_net_ping *request)
 {
@@ -2198,12 +2163,12 @@ int net_ping(struct leonos_net_ping *request)
 }
 
 /**
- * @brief Coordinates the net dns encode name operation.
- * @param name Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Net dns encode name.
+ * @param name NUL-terminated text supplied by the caller.
+ * @param out Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param out_len Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_dns_encode_name(const char *name, uint8_t *out,
                                uint32_t cap, uint32_t *out_len)
@@ -2235,11 +2200,11 @@ static int net_dns_encode_name(const char *name, uint8_t *out,
 }
 
 /**
- * @brief Coordinates the net dns skip name operation.
- * @param packet Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param pos Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dns skip name.
+ * @param packet Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param pos Output storage updated by the function.
+ * @return The value or status produced by the operation.
  */
 static int net_dns_skip_name(const uint8_t *packet, uint32_t len, uint32_t *pos)
 {
@@ -2270,12 +2235,12 @@ static int net_dns_skip_name(const uint8_t *packet, uint32_t len, uint32_t *pos)
 }
 
 /**
- * @brief Coordinates the net dns build query operation.
- * @param packet Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param name Input or output value used by this operation.
- * @param ident Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dns build query.
+ * @param packet Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param name NUL-terminated text supplied by the caller.
+ * @param ident Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_dns_build_query(uint8_t *packet, uint32_t cap,
                                     const char *name, uint16_t ident)
@@ -2299,12 +2264,12 @@ static uint32_t net_dns_build_query(uint8_t *packet, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the net dns parse response operation.
- * @param packet Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param ident Input or output value used by this operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dns parse response.
+ * @param packet Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param ident Value supplied by the caller.
+ * @param request Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_dns_parse_response(const uint8_t *packet, uint32_t len,
                                   uint16_t ident, struct leonos_net_dns *request)
@@ -2353,9 +2318,9 @@ static int net_dns_parse_response(const uint8_t *packet, uint32_t len,
 }
 
 /**
- * @brief Coordinates the net dns resolve operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Net dns resolve.
+ * @param request Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_dns_resolve(struct leonos_net_dns *request)
 {
@@ -2444,9 +2409,9 @@ int net_dns_resolve(struct leonos_net_dns *request)
 }
 
 /**
- * @brief Coordinates the net ntp sync operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Net ntp sync.
+ * @param request Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_ntp_sync(struct leonos_time_sync *request)
 {
@@ -2486,11 +2451,6 @@ int net_ntp_sync(struct leonos_time_sync *request)
         dns.name[i] = request->server[i];
     }
     dns.timeout_ms = timeout_ms;
-    /**
- * @brief Coordinates the net dns resolve operation.
- * @param dns Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
     (void)net_dns_resolve(&dns);
     if (dns.status != LEONOS_NET_STATUS_OK || !dns.address_count ||
         !dns.addresses[0]) {
@@ -2550,11 +2510,11 @@ int net_ntp_sync(struct leonos_time_sync *request)
 }
 
 /**
- * @brief Coordinates the net parse ipv4 literal operation.
- * @param text Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out_ip Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Net parse ipv4 literal.
+ * @param text NUL-terminated text supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param out_ip Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_parse_ipv4_literal(const char *text, uint32_t len,
                                   uint32_t *out_ip)
@@ -2592,14 +2552,14 @@ static int net_parse_ipv4_literal(const char *text, uint32_t len,
 }
 
 /**
- * @brief Coordinates the net http resolve hosts operation.
- * @param host Input or output value used by this operation.
- * @param host_len Length, size, or element count associated with the operation.
- * @param timeout_ms Input or output value used by this operation.
- * @param out_ips Caller-provided storage that receives output from this operation.
- * @param out_count Caller-provided storage that receives output from this operation.
- * @param out_status Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Net http resolve hosts.
+ * @param host Value supplied by the caller.
+ * @param host_len Value supplied by the caller.
+ * @param timeout_ms Value supplied by the caller.
+ * @param out_ips Value supplied by the caller.
+ * @param out_count Value supplied by the caller.
+ * @param out_status Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_http_resolve_hosts(const char *host, uint32_t host_len,
                                   uint32_t timeout_ms, uint32_t *out_ips,
@@ -2651,10 +2611,10 @@ static int net_http_resolve_hosts(const char *host, uint32_t host_len,
 }
 
 /**
- * @brief Coordinates the net socket alloc operation.
- * @param owner_pid Input or output value used by this operation.
- * @param owner_uid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket alloc.
+ * @param owner_pid Value supplied by the caller.
+ * @param owner_uid Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct net_socket *net_socket_alloc(uint32_t owner_pid, uint32_t owner_uid)
 {
@@ -2701,9 +2661,9 @@ static struct net_socket *net_socket_alloc(uint32_t owner_pid, uint32_t owner_ui
 }
 
 /**
- * @brief Coordinates the net socket clamp timeout operation.
- * @param timeout_ms Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket clamp timeout.
+ * @param timeout_ms Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_socket_clamp_timeout(uint32_t timeout_ms)
 {
@@ -2717,11 +2677,11 @@ static uint32_t net_socket_clamp_timeout(uint32_t timeout_ms)
 }
 
 /**
- * @brief Coordinates the net socket open operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param owner_pid Input or output value used by this operation.
- * @param owner_uid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket open.
+ * @param request Value supplied by the caller.
+ * @param owner_pid Value supplied by the caller.
+ * @param owner_uid Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_socket_open(struct leonos_net_socket_open *request, uint32_t owner_pid,
                     uint32_t owner_uid)
@@ -2749,12 +2709,12 @@ int net_socket_open(struct leonos_net_socket_open *request, uint32_t owner_pid,
 }
 
 /**
- * @brief Coordinates the net socket connect ip operation.
- * @param socket Input or output value used by this operation.
- * @param remote_ip Input or output value used by this operation.
- * @param remote_port Input or output value used by this operation.
- * @param timeout_ms Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket connect ip.
+ * @param socket Value supplied by the caller.
+ * @param remote_ip Value supplied by the caller.
+ * @param remote_port Value supplied by the caller.
+ * @param timeout_ms Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_socket_connect_ip(struct net_socket *socket,
                                       uint32_t remote_ip, uint16_t remote_port,
@@ -2831,10 +2791,10 @@ static uint32_t net_socket_connect_ip(struct net_socket *socket,
 }
 
 /**
- * @brief Coordinates the net socket connect operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param owner_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket connect.
+ * @param request Value supplied by the caller.
+ * @param owner_pid Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_socket_connect(struct leonos_net_socket_connect *request,
                        uint32_t owner_pid)
@@ -2910,10 +2870,10 @@ int net_socket_connect(struct leonos_net_socket_connect *request,
 }
 
 /**
- * @brief Coordinates the net socket send operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param owner_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket send.
+ * @param request Value supplied by the caller.
+ * @param owner_pid Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_socket_send(struct leonos_net_socket_io *request, uint32_t owner_pid)
 {
@@ -3017,10 +2977,10 @@ int net_socket_send(struct leonos_net_socket_io *request, uint32_t owner_pid)
 }
 
 /**
- * @brief Coordinates the net socket recv operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param owner_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket recv.
+ * @param request Value supplied by the caller.
+ * @param owner_pid Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_socket_recv(struct leonos_net_socket_io *request, uint32_t owner_pid)
 {
@@ -3070,18 +3030,6 @@ int net_socket_recv(struct leonos_net_socket_io *request, uint32_t owner_pid)
                 socket->rx[i - copy_len] = socket->rx[i];
             }
             socket->rx_len -= copy_len;
-            /**
- * @brief Coordinates the net send tcp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param local_ip Input or output value used by this operation.
- * @param remote_ip Input or output value used by this operation.
- * @param local_port Input or output value used by this operation.
- * @param remote_port Input or output value used by this operation.
- * @param local_seq Input or output value used by this operation.
- * @param remote_seq Input or output value used by this operation.
- * @param TCP_FLAG_ACK Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
             (void)net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
                                       socket->remote_ip, socket->local_port,
                                       socket->remote_port, socket->local_seq,
@@ -3109,10 +3057,10 @@ int net_socket_recv(struct leonos_net_socket_io *request, uint32_t owner_pid)
 }
 
 /**
- * @brief Coordinates the net socket close operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param owner_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket close.
+ * @param request Value supplied by the caller.
+ * @param owner_pid Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_socket_close(struct leonos_net_socket_close *request,
                      uint32_t owner_pid)
@@ -3128,16 +3076,16 @@ int net_socket_close(struct leonos_net_socket_close *request,
     }
     if (socket->state == LEONOS_NET_TCP_ESTABLISHED) {
         /**
- * @brief Coordinates the net send tcp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param local_ip Input or output value used by this operation.
- * @param remote_ip Input or output value used by this operation.
- * @param local_port Input or output value used by this operation.
- * @param remote_port Input or output value used by this operation.
- * @param local_seq Input or output value used by this operation.
- * @param remote_seq Input or output value used by this operation.
- * @param TCP_FLAG_ACK Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net socket touch.
+ * @param dst_mac Value supplied by the caller.
+ * @param local_ip Value supplied by the caller.
+ * @param remote_ip Value supplied by the caller.
+ * @param local_port Value supplied by the caller.
+ * @param remote_port Value supplied by the caller.
+ * @param local_seq Value supplied by the caller.
+ * @param remote_seq Value supplied by the caller.
+ * @param TCP_FLAG_ACK Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
         (void)net_send_tcp_to_mac(socket->dst_mac, net_config.local_ip,
                                   socket->remote_ip, socket->local_port,
@@ -3159,10 +3107,10 @@ int net_socket_close(struct leonos_net_socket_close *request,
 }
 
 /**
- * @brief Coordinates the net connection visible operation.
- * @param socket Input or output value used by this operation.
- * @param viewer Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net connection visible.
+ * @param socket Value supplied by the caller.
+ * @param viewer Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int net_connection_visible(const struct net_socket *socket,
                                   const struct task *viewer)
@@ -3181,10 +3129,10 @@ static int net_connection_visible(const struct net_socket *socket,
 }
 
 /**
- * @brief Coordinates the net connections operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param viewer Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net connections.
+ * @param request Value supplied by the caller.
+ * @param viewer Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_connections(struct leonos_net_connection_list *request,
                     const struct task *viewer)
@@ -3222,8 +3170,8 @@ int net_connections(struct leonos_net_connection_list *request,
 }
 
 /**
- * @brief Coordinates the net close owner sockets operation.
- * @param owner_pid Input or output value used by this operation.
+ * Net close owner sockets.
+ * @param owner_pid Value supplied by the caller.
  */
 void net_close_owner_sockets(uint32_t owner_pid)
 {
@@ -3240,7 +3188,7 @@ void net_close_owner_sockets(uint32_t owner_pid)
 }
 
 /**
- * @brief Coordinates the net driver detached operation.
+ * Net driver detached.
  */
 void net_driver_detached(void)
 {
@@ -3251,13 +3199,13 @@ void net_driver_detached(void)
 }
 
 /**
- * @brief Coordinates the net http build request operation.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param host Input or output value used by this operation.
- * @param path LeonOS path consumed by this operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net http build request.
+ * @param dst Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param host Value supplied by the caller.
+ * @param path NUL-terminated text supplied by the caller.
+ * @param port Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_http_build_request(char *dst, uint32_t cap,
                                        const char *host, const char *path,
@@ -3292,10 +3240,10 @@ static uint32_t net_http_build_request(char *dst, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the net http parse status operation.
- * @param response Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Net http parse status.
+ * @param response Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_http_parse_status(const char *response, uint32_t len)
 {
@@ -3326,14 +3274,14 @@ static uint32_t net_http_parse_status(const char *response, uint32_t len)
 }
 
 /**
- * @brief Coordinates the net http exchange ip operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param http_request Input or output value used by this operation.
- * @param http_len Length, size, or element count associated with the operation.
- * @param remote_ip Input or output value used by this operation.
- * @param port Input or output value used by this operation.
- * @param timeout_ms Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net http exchange ip.
+ * @param request Value supplied by the caller.
+ * @param http_request Value supplied by the caller.
+ * @param http_len Value supplied by the caller.
+ * @param remote_ip Value supplied by the caller.
+ * @param port Value supplied by the caller.
+ * @param timeout_ms Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t net_http_exchange_ip(struct leonos_net_http_get *request,
                                      const char *http_request,
@@ -3446,18 +3394,6 @@ static uint32_t net_http_exchange_ip(struct leonos_net_http_get *request,
             return request->status;
         }
         if (wait.changed != before && wait.remote_seq != acked_remote_seq) {
-            /**
- * @brief Coordinates the net send tcp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param local_ip Input or output value used by this operation.
- * @param remote_ip Input or output value used by this operation.
- * @param local_port Input or output value used by this operation.
- * @param port Input or output value used by this operation.
- * @param local_seq Input or output value used by this operation.
- * @param remote_seq Input or output value used by this operation.
- * @param TCP_FLAG_ACK Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
             (void)net_send_tcp_to_mac(dst_mac, net_config.local_ip, remote_ip,
                                       local_port, (uint16_t)port, local_seq,
                                       wait.remote_seq, TCP_FLAG_ACK, 0, 0);
@@ -3507,16 +3443,16 @@ static uint32_t net_http_exchange_ip(struct leonos_net_http_get *request,
         }
     }
     /**
- * @brief Coordinates the net send tcp to mac operation.
- * @param dst_mac Input or output value used by this operation.
- * @param local_ip Input or output value used by this operation.
- * @param remote_ip Input or output value used by this operation.
- * @param local_port Input or output value used by this operation.
- * @param port Input or output value used by this operation.
- * @param local_seq Input or output value used by this operation.
- * @param remote_seq Input or output value used by this operation.
- * @param TCP_FLAG_ACK Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Net http get.
+ * @param dst_mac Value supplied by the caller.
+ * @param local_ip Value supplied by the caller.
+ * @param remote_ip Value supplied by the caller.
+ * @param local_port Value supplied by the caller.
+ * @param port Value supplied by the caller.
+ * @param local_seq Value supplied by the caller.
+ * @param remote_seq Value supplied by the caller.
+ * @param TCP_FLAG_ACK Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
     (void)net_send_tcp_to_mac(dst_mac, net_config.local_ip, remote_ip,
                               local_port, (uint16_t)port, local_seq,
@@ -3526,9 +3462,9 @@ static uint32_t net_http_exchange_ip(struct leonos_net_http_get *request,
 }
 
 /**
- * @brief Coordinates the net http get operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * Net http get.
+ * @param request Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int net_http_get(struct leonos_net_http_get *request)
 {
@@ -3603,10 +3539,10 @@ int net_http_get(struct leonos_net_http_get *request)
 }
 
 /**
- * @brief Coordinates the net device info operation.
- * @param flags Input or output value used by this operation.
- * @param mac_value Input or output value used by this operation.
- * @param local_ip Input or output value used by this operation.
+ * Net device info.
+ * @param flags Identifier or flags controlling the operation.
+ * @param mac_value Value supplied by the caller.
+ * @param local_ip Value supplied by the caller.
  */
 void net_device_info(uint32_t *flags, uint64_t *mac_value, uint32_t *local_ip)
 {

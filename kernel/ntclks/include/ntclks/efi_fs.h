@@ -9,30 +9,19 @@
 #include <ntclks/types.h>
 
 /**
- * @brief Coordinates the efi fs init operation.
- * @param system_table_addr Address used by this operation; its address-space interpretation follows the API.
+ * @brief Bring up the EFI firmware filesystem using the system table at system_table_addr.
  */
 void efi_fs_init(uint64_t system_table_addr);
 /**
- * @brief Coordinates the efi fs ready operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true once the EFI filesystem is usable.
  */
 bool efi_fs_ready(void);
 /**
- * @brief Coordinates the efi fs read file operation.
- * @param path LeonOS path consumed by this operation.
- * @param out_data Caller-provided storage that receives output from this operation.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Load the file at path into memory, returning a pointer in out_data and its size in out_len.
  */
 int efi_fs_read_file(const char *path, const void **out_data, size_t *out_len);
 /**
- * @brief Coordinates the efi fs list dir operation.
- * @param path LeonOS path consumed by this operation.
- * @param entries Input or output value used by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_count Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief List up to capacity directory entries from path into entries, setting out_count.
  */
 int efi_fs_list_dir(const char *path, struct leonos_dir_entry *entries,
                     uint32_t capacity, uint32_t *out_count);

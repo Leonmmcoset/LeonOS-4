@@ -23,36 +23,23 @@ struct input_event {
 };
 
 /**
- * @brief Coordinates the input init operation.
+ * @brief Initialize the input event queue.
  */
 void input_init(void);
 /**
- * @brief Coordinates the input push mouse operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param dx Input or output value used by this operation.
- * @param dy Input or output value used by this operation.
- * @param buttons Input or output value used by this operation.
+ * @brief Enqueue a mouse move/drag: absolute position (x,y), relative delta (dx,dy), button mask.
  */
 void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t buttons);
 /**
- * @brief Coordinates the input push mouse wheel operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param wheel Input or output value used by this operation.
- * @param buttons Input or output value used by this operation.
+ * @brief Enqueue a mouse wheel event: position (x,y), scroll amount wheel, button mask.
  */
 void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons);
 /**
- * @brief Coordinates the input push key operation.
- * @param keycode Input or output value used by this operation.
- * @param pressed Input or output value used by this operation.
+ * @brief Enqueue a keyboard event: keycode is the key, pressed is 1 for down / 0 for up.
  */
 void input_push_key(uint8_t keycode, uint8_t pressed);
 /**
- * @brief Coordinates the input pop operation.
- * @param event Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dequeue the oldest event into event; returns non-zero when one was available.
  */
 int input_pop(struct input_event *event);
 

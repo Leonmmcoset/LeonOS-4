@@ -21,9 +21,9 @@ static int32_t (*middlelayer_auth_op)(uint32_t op, void *arg);
 static struct leonos_kernel_services kernel_services;
 
 /**
- * @brief Reports whether utf8 cont.
- * @param byte Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Is utf8 cont.
+ * @param byte Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int is_utf8_cont(uint8_t byte)
 {
@@ -31,13 +31,13 @@ static int is_utf8_cont(uint8_t byte)
 }
 
 /**
- * @brief Coordinates the fallback decode utf8 operation.
- * @param text Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param off Input or output value used by this operation.
- * @param byte_len Length, size, or element count associated with the operation.
- * @param valid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fallback decode utf8.
+ * @param text NUL-terminated text supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param off Value supplied by the caller.
+ * @param byte_len Value supplied by the caller.
+ * @param valid Output storage updated by the function.
+ * @return The value or status produced by the operation.
  */
 static uint32_t fallback_decode_utf8(const char *text, uint32_t len,
                                      uint32_t off, uint32_t *byte_len,
@@ -129,9 +129,9 @@ static uint32_t fallback_decode_utf8(const char *text, uint32_t len,
 }
 
 /**
- * @brief Coordinates the fallback is wide operation.
- * @param cp Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fallback is wide.
+ * @param cp Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int fallback_is_wide(uint32_t cp)
 {
@@ -148,9 +148,9 @@ static int fallback_is_wide(uint32_t cp)
 }
 
 /**
- * @brief Coordinates the fallback cell width operation.
- * @param cp Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fallback cell width.
+ * @param cp Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t fallback_cell_width(uint32_t cp)
 {
@@ -164,9 +164,9 @@ static uint32_t fallback_cell_width(uint32_t cp)
 }
 
 /**
- * @brief Coordinates the fallback unicode layout operation.
- * @param layout Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fallback unicode layout.
+ * @param layout Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int fallback_unicode_layout(struct leonos_text_layout *layout)
 {
@@ -200,9 +200,9 @@ static int fallback_unicode_layout(struct leonos_text_layout *layout)
 }
 
 /**
- * @brief Coordinates the fallback unicode utf8 to utf16 operation.
- * @param cmd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fallback unicode utf8 to utf16.
+ * @param cmd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int fallback_unicode_utf8_to_utf16(struct leonos_unicode_utf8_to_utf16 *cmd)
 {
@@ -237,12 +237,12 @@ static int fallback_unicode_utf8_to_utf16(struct leonos_unicode_utf8_to_utf16 *c
 }
 
 /**
- * @brief Coordinates the fallback encode utf8 operation.
- * @param cp Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param pos Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fallback encode utf8.
+ * @param cp Value supplied by the caller.
+ * @param out Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param pos Output storage updated by the function.
+ * @return The value or status produced by the operation.
  */
 static uint32_t fallback_encode_utf8(uint32_t cp, char *out, uint32_t cap, uint32_t pos)
 {
@@ -292,9 +292,9 @@ static uint32_t fallback_encode_utf8(uint32_t cp, char *out, uint32_t cap, uint3
 }
 
 /**
- * @brief Coordinates the fallback unicode utf16 to utf8 operation.
- * @param cmd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Fallback unicode utf16 to utf8.
+ * @param cmd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int fallback_unicode_utf16_to_utf8(struct leonos_unicode_utf16_to_utf8 *cmd)
 {
@@ -330,10 +330,7 @@ static int fallback_unicode_utf16_to_utf8(struct leonos_unicode_utf16_to_utf8 *c
     return 0;
 }
 
-/**
- * @brief Coordinates the osmlayer log operation.
- * @param message Input or output value used by this operation.
- */
+/** @brief Writes a NUL-terminated message through the kernel console service. */
 static void osmlayer_log(const char *message)
 {
     if (message) {
@@ -342,9 +339,9 @@ static void osmlayer_log(const char *message)
 }
 
 /**
- * @brief Coordinates the osmlayer log len operation.
- * @param message Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
+ * @brief Writes a bounded message through the kernel console service.
+ * @param message Bytes to write.
+ * @param len Number of bytes available at `message`.
  */
 static void osmlayer_log_len(const char *message, uint64_t len)
 {
@@ -354,12 +351,12 @@ static void osmlayer_log_len(const char *message, uint64_t len)
 }
 
 /**
- * @brief Coordinates the osmlayer read file service operation.
- * @param path LeonOS path consumed by this operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Reads a complete file through the kernel storage API.
+ * @param path Absolute path to the file.
+ * @param buf Destination buffer.
+ * @param capacity Capacity of `buf` in bytes.
+ * @param out_len Optional output size; set before capacity validation.
+ * @return Zero on success, or a negative errno-style status.
  */
 static int32_t osmlayer_read_file_service(const char *path, void *buf,
                                           uint32_t capacity, uint32_t *out_len)
@@ -395,11 +392,11 @@ static int32_t osmlayer_read_file_service(const char *path, void *buf,
 }
 
 /**
- * @brief Coordinates the osmlayer write file service operation.
- * @param path LeonOS path consumed by this operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Writes a byte range through the kernel storage API.
+ * @param path Absolute destination path.
+ * @param buf Bytes to write; may be NULL only when `len` is zero.
+ * @param len Number of bytes to write.
+ * @return Zero on success, or a negative errno-style status.
  */
 static int32_t osmlayer_write_file_service(const char *path, const void *buf, uint32_t len)
 {
@@ -410,9 +407,9 @@ static int32_t osmlayer_write_file_service(const char *path, const void *buf, ui
 }
 
 /**
- * @brief Coordinates the osmlayer mkdir service operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Creates a directory through the kernel storage API.
+ * @param path Absolute directory path.
+ * @return Zero on success, or a negative errno-style status.
  */
 static int32_t osmlayer_mkdir_service(const char *path)
 {
@@ -423,9 +420,9 @@ static int32_t osmlayer_mkdir_service(const char *path)
 }
 
 /**
- * @brief Coordinates the osmlayer bridge init operation.
- * @param boot Boot information supplied by the loader.
- * @param handoff Input or output value used by this operation.
+ * @brief Validates the loader handoff and binds the middle-layer entry points.
+ * @param boot Boot information passed to the middle layer during initialization.
+ * @param handoff Loader-provided module and ABI handoff structure.
  */
 void osmlayer_bridge_init(const struct boot_info *boot,
                           const struct leonos_boot_handoff *handoff)
@@ -489,10 +486,10 @@ void osmlayer_bridge_init(const struct boot_info *boot,
 }
 
 /**
- * @brief Coordinates the osmlayer bridge mount policy operation.
- * @param boot Boot information supplied by the loader.
- * @param policy Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Obtains the middle layer's mount policy for the current boot.
+ * @param boot Boot information used to select normal or installer mounts.
+ * @param policy Destination mount policy structure.
+ * @return Zero on success, or -ENOSYS when no middle layer is bound.
  */
 int osmlayer_bridge_mount_policy(const struct boot_info *boot,
                                  struct leonos_mount_policy *policy)
@@ -504,9 +501,9 @@ int osmlayer_bridge_mount_policy(const struct boot_info *boot,
 }
 
 /**
- * @brief Coordinates the osmlayer unicode layout utf8 operation.
- * @param layout Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer unicode layout utf8.
+ * @param layout Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int osmlayer_unicode_layout_utf8(struct leonos_text_layout *layout)
 {
@@ -517,9 +514,9 @@ int osmlayer_unicode_layout_utf8(struct leonos_text_layout *layout)
 }
 
 /**
- * @brief Coordinates the osmlayer unicode utf8 to utf16le operation.
- * @param cmd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer unicode utf8 to utf16le.
+ * @param cmd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int osmlayer_unicode_utf8_to_utf16le(struct leonos_unicode_utf8_to_utf16 *cmd)
 {
@@ -530,9 +527,9 @@ int osmlayer_unicode_utf8_to_utf16le(struct leonos_unicode_utf8_to_utf16 *cmd)
 }
 
 /**
- * @brief Coordinates the osmlayer unicode utf16le to utf8 operation.
- * @param cmd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer unicode utf16le to utf8.
+ * @param cmd Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int osmlayer_unicode_utf16le_to_utf8(struct leonos_unicode_utf16_to_utf8 *cmd)
 {
@@ -543,10 +540,10 @@ int osmlayer_unicode_utf16le_to_utf8(struct leonos_unicode_utf16_to_utf8 *cmd)
 }
 
 /**
- * @brief Coordinates the osmlayer unicode safe truncate utf8 operation.
- * @param text Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @return Result, status, or value defined by this API.
+ * Osmlayer unicode safe truncate utf8.
+ * @param text NUL-terminated text supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 uint32_t osmlayer_unicode_safe_truncate_utf8(const char *text, uint32_t cap)
 {
@@ -559,15 +556,6 @@ uint32_t osmlayer_unicode_safe_truncate_utf8(const char *text, uint32_t cap)
     while (text[off] && off < limit) {
         uint32_t len = 1;
         int valid = 0;
-        /**
- * @brief Coordinates the fallback decode utf8 operation.
- * @param text Input or output value used by this operation.
- * @param u Input or output value used by this operation.
- * @param off Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @param valid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
         (void)fallback_decode_utf8(text, limit + 1u, off, &len, &valid);
         if (!valid || off + len > limit) {
             break;
@@ -578,9 +566,9 @@ uint32_t osmlayer_unicode_safe_truncate_utf8(const char *text, uint32_t cap)
 }
 
 /**
- * @brief Coordinates the osmlayer vfs resolve path operation.
- * @param query Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Resolves a path through the middle layer's VFS implementation.
+ * @param query Path query containing CWD, input, and output buffer.
+ * @return Zero on success, or a negative errno-style status.
  */
 int osmlayer_vfs_resolve_path(struct leonos_vfs_resolve_path *query)
 {
@@ -591,9 +579,9 @@ int osmlayer_vfs_resolve_path(struct leonos_vfs_resolve_path *query)
 }
 
 /**
- * @brief Coordinates the osmlayer device catalog operation.
- * @param query Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Builds the normalized device catalog exposed to user space.
+ * @param query Raw device input and destination catalog buffers.
+ * @return Zero on success, or a negative errno-style status.
  */
 int osmlayer_device_catalog(struct leonos_device_catalog_query *query)
 {
@@ -604,10 +592,10 @@ int osmlayer_device_catalog(struct leonos_device_catalog_query *query)
 }
 
 /**
- * @brief Coordinates the osmlayer auth op operation.
- * @param op Input or output value used by this operation.
- * @param arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Osmlayer auth op.
+ * @param op Identifier or flags controlling the operation.
+ * @param arg Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int osmlayer_auth_op(uint32_t op, void *arg)
 {
@@ -618,9 +606,9 @@ int osmlayer_auth_op(uint32_t op, void *arg)
 }
 
 /**
- * @brief Coordinates the osmlayer bridge syscall operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Osmlayer bridge syscall.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int64_t osmlayer_bridge_syscall(const struct syscall_frame *frame)
 {
@@ -631,7 +619,7 @@ int64_t osmlayer_bridge_syscall(const struct syscall_frame *frame)
 }
 
 /**
- * @brief Coordinates the osmlayer bridge selftest operation.
+ * Osmlayer bridge selftest.
  */
 void osmlayer_bridge_selftest(void)
 {
