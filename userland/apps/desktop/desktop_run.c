@@ -119,7 +119,13 @@ void desktop_run(void)
         desktop_update_window_animations();
 
         struct leonos_input_event event;
-        while (leonos_gui_next_event(&event) > 0) {
+        struct leonos_input_event deferred_motion = {0};
+        uint8_t have_deferred_motion = 0;
+        /* Keep a continuously moving pointer from starving repaint. The
+         * kernel coalesces moves, but a busy device can still refill the
+         * queue while this loop is running. */
+        uint32_t event_budget = 64;
+        while (event_budget-- && leonos_gui_next_event(&event) > 0) {
             did_work = 1;
             if (desktop_scale > 1) {
                 event.x /= (int32_t)desktop_scale;
@@ -128,6 +134,22 @@ void desktop_run(void)
                 event.dy = event.type == LEONOS_INPUT_MOUSE_WHEEL
                                ? event.dy
                                : event.dy / (int32_t)desktop_scale;
+            }
+            /* A plain pointer move has no ordering-sensitive action. Keep
+             * only the newest one in this batch so a high-rate mouse cannot
+             * make the desktop render dozens of stale cursor positions. Any
+             * button transition, wheel, or keyboard event flushes it first. */
+            if (event.type == LEONOS_INPUT_MOUSE && event.buttons == 0 &&
+                previous_buttons == 0 && drag_window < 0) {
+                deferred_motion = event;
+                have_deferred_motion = 1;
+                continue;
+            }
+            if (have_deferred_motion) {
+                handle_mouse((uint32_t)deferred_motion.x,
+                             (uint32_t)deferred_motion.y,
+                             deferred_motion.buttons);
+                have_deferred_motion = 0;
             }
             if (event.type == LEONOS_INPUT_MOUSE) {
                 handle_mouse((uint32_t)event.x, (uint32_t)event.y, event.buttons);
@@ -161,11 +183,20 @@ void desktop_run(void)
                 printf("[desktop.elf] key scancode=%x pressed=%d\n", event.keycode, event.pressed);
             }
         }
+        if (have_deferred_motion) {
+            handle_mouse((uint32_t)deferred_motion.x,
+                         (uint32_t)deferred_motion.y,
+                         deferred_motion.buttons);
+        }
         if (desktop_cursor_auto) {
             uint32_t next_cursor_style = desktop_cursor_style_for_pointer(cursor_x, cursor_y);
             if (next_cursor_style != desktop_cursor_style) {
+                struct rect old_cursor_rect = cursor_rect_for_style(
+                    cursor_x, cursor_y, desktop_cursor_style);
                 desktop_cursor_style = next_cursor_style;
-                full_redraw_pending = 1;
+                desktop_queue_cursor_damage(rect_union(
+                    old_cursor_rect,
+                    cursor_rect_for_style(cursor_x, cursor_y, next_cursor_style)));
                 did_work = 1;
             }
         }
@@ -174,15 +205,10 @@ void desktop_run(void)
             did_work = 1;
         } else if (desktop_damage_pending) {
             struct rect damage = desktop_damage_rect;
-            uint8_t cursor_only = desktop_damage_cursor_only;
             desktop_damage_pending = 0;
             desktop_damage_cursor_only = 0;
             desktop_damage_rect = rect_make(0, 0, 0, 0);
-            if (cursor_only) {
-                repaint_cursor_and_flush(damage);
-            } else {
-                repaint_and_flush(damage);
-            }
+            repaint_and_flush(damage);
             did_work = 1;
         }
         int mouse_visible = leonos_mouse_is_visible();
@@ -203,13 +229,26 @@ void desktop_run(void)
         if (!desktop_items_ready && now >= desktop_items_retry_ms) {
             if (desktop_refresh_items() < 0) {
                 desktop_items_retry_ms = now + 1000UL;
+            } else {
+                /* Only a successful directory refresh changes the desktop
+                 * composition. Retrying a missing/unavailable home every
+                 * second must not force a full-screen repaint; doing so
+                 * starves the software cursor and makes taskbar motion update
+                 * at the one-second retry cadence. */
+                full_redraw_pending = 1;
             }
-            full_redraw_pending = 1;
             did_work = 1;
         }
         if (desktop_taskbar_visible && now / 1000UL != last_clock_second) {
             last_clock_second = now / 1000UL;
-            repaint_and_flush(rect_make(0, (int)taskbar_y(), (int)fb_w(), TASKBAR_H));
+            /* The clock is the only once-per-second taskbar change. Updating
+             * the entire panel forces a synchronous VMware SVGA sync and can
+             * stall pointer motion for the duration of the device wait. */
+            if (desktop_service_rtc_clock && fb_w() >= TASKBAR_CLOCK_W + 8U) {
+                repaint_and_flush(rect_make((int)fb_w() - TASKBAR_CLOCK_W,
+                                            (int)taskbar_y(),
+                                            TASKBAR_CLOCK_W, TASKBAR_H));
+            }
             did_work = 1;
         }
         if (now - last_services_refresh >= 2000UL) {

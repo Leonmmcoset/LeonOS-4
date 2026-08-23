@@ -6,56 +6,63 @@ static uint8_t taskbar_network_cache_valid;
 static uint8_t taskbar_network_connected;
 static uint32_t taskbar_network_color = 0x00c00000u;
 static unsigned long taskbar_network_cache_ms;
-static uint32_t cursor_saved_pixels[CURSOR_TILE_W * CURSOR_TILE_H];
-static struct rect cursor_saved_rect;
-static uint8_t cursor_saved_valid;
+/* The shadow surface is always the base desktop without a software cursor.
+ * Cursor pixels are composed into this small staging tile only when it is
+ * submitted to the real framebuffer. */
+static uint32_t cursor_composite[CURSOR_TILE_W * CURSOR_TILE_H];
+#define CURSOR_FRAME_MAX_W 160U
+#define CURSOR_FRAME_MAX_H 64U
+static uint32_t cursor_frame[CURSOR_FRAME_MAX_W * CURSOR_FRAME_MAX_H];
+static uint32_t *cursor_target;
+static int cursor_target_x;
+static int cursor_target_y;
+static uint32_t cursor_target_width;
+static uint32_t cursor_target_height;
+static uint32_t cursor_target_stride;
 
-static void cursor_capture_background(void)
+static void draw_taskbar_plain_button(uint32_t x, uint32_t y, uint32_t width,
+                                      const char *label, uint8_t pressed)
 {
-    struct rect rect = cursor_rect_for_style(cursor_x, cursor_y, desktop_cursor_style);
-    cursor_saved_rect = rect;
-    for (uint32_t row = 0; row < CURSOR_TILE_H; ++row) {
-        for (uint32_t col = 0; col < CURSOR_TILE_W; ++col) {
-            int x = rect.x + (int)col;
-            int y = rect.y + (int)row;
-            cursor_saved_pixels[row * CURSOR_TILE_W + col] =
-                (x >= 0 && y >= 0 && x < (int)fb_w() && y < (int)fb_h())
-                    ? screen[(uint64_t)y * MAX_FB_W + (uint32_t)x]
-                    : 0;
-        }
-    }
-    cursor_saved_valid = 1;
-}
+    uint32_t text_width;
+    uint32_t text_x;
+    uint32_t text_y;
 
-static void cursor_restore_background(void)
-{
-    if (!cursor_saved_valid) {
+    leonos_ui_bevel(&ui, x, y, width, LEONOS_UI_BUTTON_H,
+                    LEONOS_UI_GRAY,
+                    pressed ? LEONOS_UI_BUTTON_PRESSED : 0);
+    if (!label || !label[0] || width <= 8) {
         return;
     }
-    for (uint32_t row = 0; row < CURSOR_TILE_H; ++row) {
-        for (uint32_t col = 0; col < CURSOR_TILE_W; ++col) {
-            int x = cursor_saved_rect.x + (int)col;
-            int y = cursor_saved_rect.y + (int)row;
-            if (x >= 0 && y >= 0 && x < (int)fb_w() && y < (int)fb_h()) {
-                screen[(uint64_t)y * MAX_FB_W + (uint32_t)x] =
-                    cursor_saved_pixels[row * CURSOR_TILE_W + col];
-            }
-        }
+    text_width = leonos_ui_text_width(label);
+    text_x = text_width < width ? x + (width - text_width) / 2 : x + 4;
+    text_y = y + (LEONOS_UI_BUTTON_H > LEONOS_FONT_H
+                      ? (LEONOS_UI_BUTTON_H - LEONOS_FONT_H) / 2 : 2);
+    if (pressed) {
+        ++text_x;
+        ++text_y;
     }
+    leonos_ui_text_transparent_clipped(&ui, text_x, text_y,
+                                       width > 8 ? width - 8 : width,
+                                       label, LEONOS_UI_BLACK);
 }
 
-static void draw_cursor_if_intersects(struct rect dirty)
+static void cursor_put_pixel(int x, int y, uint32_t color)
 {
-    if (cursor_visible && leonos_mouse_is_visible() > 0) {
-        struct rect cursor_rect = cursor_rect_for_style(cursor_x, cursor_y,
-                                                        desktop_cursor_style);
-        if (rect_intersects(dirty, cursor_rect)) {
-            cursor_capture_background();
-            draw_cursor_shape(cursor_x, cursor_y);
-        }
-    } else if (cursor_saved_valid && rect_intersects(dirty, cursor_saved_rect)) {
-        cursor_saved_valid = 0;
+    if (x < 0 || y < 0 || x >= (int)fb_w() || y >= (int)fb_h()) {
+        return;
     }
+    if (cursor_target) {
+        int target_x = x - cursor_target_x;
+        int target_y = y - cursor_target_y;
+        if (target_x >= 0 && target_y >= 0 &&
+            (uint32_t)target_x < cursor_target_width &&
+            (uint32_t)target_y < cursor_target_height) {
+            cursor_target[(uint64_t)target_y * cursor_target_stride +
+                          (uint32_t)target_x] = color;
+        }
+        return;
+    }
+    screen[(uint64_t)y * MAX_FB_W + (uint32_t)x] = color;
 }
 
 static void format_taskbar_clock(char *buf, uint32_t cap)
@@ -106,8 +113,8 @@ static void draw_taskbar_clock(uint32_t tb_y)
         format_taskbar_clock(taskbar_clock_cache, sizeof(taskbar_clock_cache));
         taskbar_clock_cache_second = second;
     }
-    leonos_ui_button(&ui, x + 4, tb_y + 5, TASKBAR_CLOCK_W - 10,
-                     LEONOS_UI_BUTTON_H, taskbar_clock_cache, LEONOS_UI_BUTTON_PRESSED);
+    draw_taskbar_plain_button(x + 4, tb_y + 5, TASKBAR_CLOCK_W - 10,
+                              taskbar_clock_cache, 1);
 }
 
 static void draw_taskbar_network_icon(uint32_t tb_y)
@@ -139,8 +146,7 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
     x = fb_w() - (desktop_service_rtc_clock ? TASKBAR_CLOCK_W : 0U) - TASKBAR_NET_W;
     icon_x = x + 10;
     icon_y = tb_y + 11;
-    leonos_ui_button(&ui, x + 4, tb_y + 5, TASKBAR_NET_W - 6,
-                     LEONOS_UI_BUTTON_H, "", LEONOS_UI_BUTTON_PRESSED);
+    draw_taskbar_plain_button(x + 4, tb_y + 5, TASKBAR_NET_W - 6, "", 1);
 
     leonos_ui_rect(&ui, icon_x, icon_y, 8, 6, LEONOS_UI_WHITE);
     leonos_ui_rect(&ui, icon_x, icon_y, 8, 1, LEONOS_UI_BLACK);
@@ -178,9 +184,8 @@ static void draw_taskbar_inputm(uint32_t tb_y)
             break;
         }
     }
-    leonos_ui_button(&ui, x + 4U, tb_y + 5U, TASKBAR_INPUTM_W - 6U,
-                     LEONOS_UI_BUTTON_H, label,
-                     desktop_inputm_menu_open ? LEONOS_UI_BUTTON_PRESSED : 0);
+    draw_taskbar_plain_button(x + 4U, tb_y + 5U, TASKBAR_INPUTM_W - 6U,
+                              label, desktop_inputm_menu_open);
 }
 
 static void wallpaper_draw_pixel(uint32_t x, uint32_t y,
@@ -335,26 +340,28 @@ static void draw_wallpaper(struct rect dirty)
     }
 }
 
-static void draw_custom_cursor(uint32_t x, uint32_t y)
+#define put_pixel(x, y, color) cursor_put_pixel((int)(x), (int)(y), (color))
+
+static void draw_custom_cursor(int x, int y)
 {
     const uint32_t black = 0x00000000u;
     const uint32_t white = 0x00ffffffu;
     if (desktop_cursor_style == LEONOS_GUI_CURSOR_TEXT) {
         for (uint32_t row = 0; row < FALLBACK_CURSOR_H; ++row) {
-            put_pixel(x + 7, y + row, black);
+            cursor_put_pixel((int)x + 7, (int)y + (int)row, black);
         }
         for (uint32_t col = 4; col < 11; ++col) {
-            put_pixel(x + col, y, black);
-            put_pixel(x + col, y + FALLBACK_CURSOR_H - 1, black);
+            cursor_put_pixel((int)x + (int)col, (int)y, black);
+            cursor_put_pixel((int)x + (int)col, (int)y + FALLBACK_CURSOR_H - 1, black);
         }
         return;
     }
     if (desktop_cursor_style == LEONOS_GUI_CURSOR_CROSSHAIR) {
         for (uint32_t i = 0; i < FALLBACK_CURSOR_H; ++i) {
-            put_pixel(x + 7, y + i, black);
-            put_pixel(x + i, y + 7, black);
+            cursor_put_pixel((int)x + 7, (int)y + (int)i, black);
+            cursor_put_pixel((int)x + (int)i, (int)y + 7, black);
         }
-        put_pixel(x + 7, y + 7, white);
+        cursor_put_pixel((int)x + 7, (int)y + 7, white);
         return;
     }
     if (desktop_cursor_style == LEONOS_GUI_CURSOR_MOVE) {
@@ -483,7 +490,9 @@ static void draw_custom_cursor(uint32_t x, uint32_t y)
     }
 }
 
-void draw_cursor_shape(uint32_t x, uint32_t y)
+#undef put_pixel
+
+static void draw_cursor_shape_target(uint32_t x, uint32_t y)
 {
     uint32_t style = desktop_cursor_style < CURSOR_STYLE_COUNT
                          ? desktop_cursor_style : LEONOS_GUI_CURSOR_ARROW;
@@ -498,18 +507,19 @@ void draw_cursor_shape(uint32_t x, uint32_t y)
                     draw_y + (int)row >= 0 &&
                     draw_x + (int)col < (int)fb_w() &&
                     draw_y + (int)row < (int)fb_h()) {
-                    put_pixel((uint32_t)(draw_x + (int)col),
-                              (uint32_t)(draw_y + (int)row), px & 0x00ffffffu);
+                    cursor_put_pixel(draw_x + (int)col, draw_y + (int)row,
+                                     px & 0x00ffffffu);
                 }
             }
         }
         return;
     }
     if (style != LEONOS_GUI_CURSOR_ARROW) {
-        x = x > FALLBACK_CURSOR_W ? x - FALLBACK_CURSOR_W : 0;
-        y = y > FALLBACK_CURSOR_H ? y - FALLBACK_CURSOR_H : 0;
         desktop_cursor_style = style;
-        draw_custom_cursor(x, y);
+        /* draw_x/draw_y already apply the style hotspot. Keep the fallback
+         * shape anchored at that hotspot so every cursor style stays inside
+         * the same compositing tile. */
+        draw_custom_cursor(draw_x, draw_y);
         return;
     }
     for (uint32_t row = 0; row < FALLBACK_CURSOR_H; ++row) {
@@ -522,6 +532,31 @@ void draw_cursor_shape(uint32_t x, uint32_t y)
             }
         }
     }
+}
+
+void draw_cursor_shape(uint32_t x, uint32_t y)
+{
+    uint32_t *saved_target = cursor_target;
+    int saved_target_x = cursor_target_x;
+    int saved_target_y = cursor_target_y;
+    uint32_t saved_target_width = cursor_target_width;
+    uint32_t saved_target_height = cursor_target_height;
+    uint32_t saved_target_stride = cursor_target_stride;
+
+    cursor_target = screen;
+    cursor_target_x = 0;
+    cursor_target_y = 0;
+    cursor_target_width = fb_w();
+    cursor_target_height = fb_h();
+    cursor_target_stride = MAX_FB_W;
+    draw_cursor_shape_target(x, y);
+
+    cursor_target = saved_target;
+    cursor_target_x = saved_target_x;
+    cursor_target_y = saved_target_y;
+    cursor_target_width = saved_target_width;
+    cursor_target_height = saved_target_height;
+    cursor_target_stride = saved_target_stride;
 }
 
 void redraw_region(struct rect dirty)
@@ -543,7 +578,6 @@ void redraw_region(struct rect dirty)
         if (rect_intersects(dirty, window_rect((uint8_t)active_window))) {
             draw_window((uint8_t)active_window);
         }
-        draw_cursor_if_intersects(dirty);
         leonos_ui_clear_clip(&ui);
         leonos_ui_cursor_clear(&ui);
         return;
@@ -585,9 +619,9 @@ void redraw_region(struct rect dirty)
         }
         leonos_ui_taskbar(&ui, tb_y, TASKBAR_H);
         if (rect_intersects(dirty, start_rect)) {
-            leonos_ui_button(&ui, 6, tb_y + 5, 86, LEONOS_UI_BUTTON_H,
-                             leonos_i18n("Start", "开始"),
-                             start_menu_open ? LEONOS_UI_BUTTON_PRESSED : 0);
+            draw_taskbar_plain_button(6, tb_y + 5, 86,
+                                      leonos_i18n("Start", "开始"),
+                                      start_menu_open);
         }
         uint32_t x = 106;
         uint32_t button_w = taskbar_button_width(running_window_count());
@@ -628,7 +662,6 @@ void redraw_region(struct rect dirty)
     draw_desktop_shortcut_input();
     draw_desktop_message();
     draw_inputm_overlay();
-    draw_cursor_if_intersects(dirty);
     leonos_ui_clear_clip(&ui);
     /* Desktop controls are drawn on the framebuffer, not submitted as a GUI window. */
     leonos_ui_cursor_clear(&ui);
@@ -662,31 +695,30 @@ void draw_power_confirm(void)
                      leonos_i18n("No", "否"), 0);
 }
 
-void flush_region(struct rect dirty)
+static void flush_pixels(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
+                         uint32_t stride, const uint32_t *pixels)
 {
-    dirty = rect_clip(dirty);
-    if (dirty.w <= 0 || dirty.h <= 0) {
+    if (!width || !height || !pixels) {
         return;
     }
     if (desktop_scale <= 1) {
-        const uint32_t *src = screen + (uint64_t)dirty.y * MAX_FB_W + dirty.x;
-        leonos_fb_blit((uint32_t)dirty.x, (uint32_t)dirty.y, (uint32_t)dirty.w, (uint32_t)dirty.h, MAX_FB_W, src);
+        leonos_fb_blit(x, y, width, height, stride, pixels);
         return;
     }
     uint32_t scale = desktop_scale;
     static uint32_t scaled[384 * 384];
     const uint32_t max_out_w = 384;
     const uint32_t max_out_h = 384;
-    for (uint32_t chunk_y = 0; chunk_y < (uint32_t)dirty.h;) {
-        uint32_t logical_h = (uint32_t)dirty.h - chunk_y;
+    for (uint32_t chunk_y = 0; chunk_y < height;) {
+        uint32_t logical_h = height - chunk_y;
         if (logical_h * scale > max_out_h) {
             logical_h = max_out_h / scale;
         }
         if (!logical_h) {
             logical_h = 1;
         }
-        for (uint32_t chunk_x = 0; chunk_x < (uint32_t)dirty.w;) {
-            uint32_t logical_w = (uint32_t)dirty.w - chunk_x;
+        for (uint32_t chunk_x = 0; chunk_x < width;) {
+            uint32_t logical_w = width - chunk_x;
             if (logical_w * scale > max_out_w) {
                 logical_w = max_out_w / scale;
             }
@@ -694,7 +726,8 @@ void flush_region(struct rect dirty)
                 logical_w = 1;
             }
             for (uint32_t y = 0; y < logical_h; ++y) {
-                const uint32_t *src = screen + (uint64_t)(dirty.y + (int)chunk_y + (int)y) * MAX_FB_W + dirty.x + (int)chunk_x;
+                const uint32_t *src = pixels +
+                    (uint64_t)(chunk_y + y) * stride + chunk_x;
                 for (uint32_t sy = 0; sy < scale; ++sy) {
                     uint32_t *dst = scaled + (uint64_t)(y * scale + sy) * max_out_w;
                     for (uint32_t x = 0; x < logical_w; ++x) {
@@ -704,14 +737,136 @@ void flush_region(struct rect dirty)
                     }
                 }
             }
-            leonos_fb_blit((uint32_t)(dirty.x + (int)chunk_x) * scale,
-                           (uint32_t)(dirty.y + (int)chunk_y) * scale,
+            leonos_fb_blit((x + chunk_x) * scale,
+                           (y + chunk_y) * scale,
                            logical_w * scale, logical_h * scale,
                            max_out_w, scaled);
             chunk_x += logical_w;
         }
         chunk_y += logical_h;
     }
+}
+
+static void flush_base_region(struct rect dirty)
+{
+    dirty = rect_clip(dirty);
+    if (dirty.w <= 0 || dirty.h <= 0) {
+        return;
+    }
+    flush_pixels((uint32_t)dirty.x, (uint32_t)dirty.y,
+                 (uint32_t)dirty.w, (uint32_t)dirty.h, MAX_FB_W,
+                 screen + (uint64_t)dirty.y * MAX_FB_W + dirty.x);
+}
+
+static int build_cursor_composite(struct rect *raw_out, struct rect *clip_out)
+{
+    struct rect raw;
+    struct rect clip;
+
+    if (!cursor_visible || leonos_mouse_is_visible() <= 0) {
+        return 0;
+    }
+    raw = cursor_rect_for_style(cursor_x, cursor_y, desktop_cursor_style);
+    clip = rect_clip(raw);
+    if (clip.w <= 0 || clip.h <= 0) {
+        return 0;
+    }
+    for (uint32_t row = 0; row < CURSOR_TILE_H; ++row) {
+        for (uint32_t col = 0; col < CURSOR_TILE_W; ++col) {
+            int x = raw.x + (int)col;
+            int y = raw.y + (int)row;
+            cursor_composite[row * CURSOR_TILE_W + col] =
+                (x >= 0 && y >= 0 && x < (int)fb_w() && y < (int)fb_h())
+                    ? screen[(uint64_t)y * MAX_FB_W + (uint32_t)x]
+                    : 0;
+        }
+    }
+    cursor_target = cursor_composite;
+    cursor_target_x = raw.x;
+    cursor_target_y = raw.y;
+    cursor_target_width = CURSOR_TILE_W;
+    cursor_target_height = CURSOR_TILE_H;
+    cursor_target_stride = CURSOR_TILE_W;
+    draw_cursor_shape_target(cursor_x, cursor_y);
+    cursor_target = 0;
+    if (raw_out) {
+        *raw_out = raw;
+    }
+    if (clip_out) {
+        *clip_out = clip;
+    }
+    return 1;
+}
+
+static void flush_cursor_overlay(struct rect dirty)
+{
+    struct rect cursor_rect;
+    struct rect cursor_clip;
+    const uint32_t *source;
+
+    if (!build_cursor_composite(&cursor_rect, &cursor_clip) ||
+        !rect_intersects(dirty, cursor_rect)) {
+        return;
+    }
+    source = cursor_composite +
+             (uint32_t)(cursor_clip.y - cursor_rect.y) * CURSOR_TILE_W +
+             (uint32_t)(cursor_clip.x - cursor_rect.x);
+    flush_pixels((uint32_t)cursor_clip.x, (uint32_t)cursor_clip.y,
+                 (uint32_t)cursor_clip.w, (uint32_t)cursor_clip.h,
+                 CURSOR_TILE_W, source);
+}
+
+static int flush_small_composited_region(struct rect dirty)
+{
+    struct rect cursor_rect;
+    uint32_t width = (uint32_t)dirty.w;
+    uint32_t height = (uint32_t)dirty.h;
+
+    if (width > CURSOR_FRAME_MAX_W || height > CURSOR_FRAME_MAX_H) {
+        return 0;
+    }
+    for (uint32_t row = 0; row < height; ++row) {
+        const uint32_t *source = screen +
+            (uint64_t)(dirty.y + (int)row) * MAX_FB_W + dirty.x;
+        for (uint32_t col = 0; col < width; ++col) {
+            cursor_frame[row * CURSOR_FRAME_MAX_W + col] = source[col];
+        }
+    }
+    if (cursor_visible && leonos_mouse_is_visible() > 0) {
+        cursor_rect = cursor_rect_for_style(cursor_x, cursor_y,
+                                            desktop_cursor_style);
+        if (rect_intersects(dirty, cursor_rect)) {
+            cursor_target = cursor_frame;
+            cursor_target_x = dirty.x;
+            cursor_target_y = dirty.y;
+            cursor_target_width = width;
+            cursor_target_height = height;
+            cursor_target_stride = CURSOR_FRAME_MAX_W;
+            draw_cursor_shape_target(cursor_x, cursor_y);
+            cursor_target = 0;
+        }
+    }
+    flush_pixels((uint32_t)dirty.x, (uint32_t)dirty.y,
+                 width, height, CURSOR_FRAME_MAX_W, cursor_frame);
+    return 1;
+}
+
+void flush_region(struct rect dirty)
+{
+    dirty = rect_clip(dirty);
+    if (dirty.w <= 0 || dirty.h <= 0) {
+        return;
+    }
+    /* Small pointer and clock damages can be submitted in one composite
+     * command, avoiding two synchronous VMware updates per mouse sample. */
+    if (flush_small_composited_region(dirty)) {
+        return;
+    }
+    /* Publish the clean base first, then overlay the current cursor. The
+     * damage union contains the old cursor rectangle, so moving the pointer
+     * naturally erases its previous pixels without a saved background. */
+    flush_base_region(dirty);
+    flush_cursor_overlay(dirty);
 }
 
 void repaint_and_flush(struct rect dirty)
@@ -723,19 +878,7 @@ void repaint_and_flush(struct rect dirty)
 
 void repaint_cursor_and_flush(struct rect dirty)
 {
-    dirty = rect_clip(dirty);
-    if (dirty.w <= 0 || dirty.h <= 0) {
-        return;
-    }
-    cursor_restore_background();
-    leonos_ui_clear_clip(&ui);
-    if (cursor_visible && leonos_mouse_is_visible() > 0) {
-        cursor_capture_background();
-        draw_cursor_shape(cursor_x, cursor_y);
-    } else {
-        cursor_saved_valid = 0;
-    }
-    flush_region(dirty);
+    repaint_and_flush(dirty);
 }
 
 void desktop_queue_damage(struct rect dirty)
@@ -794,6 +937,11 @@ void redraw_all(void)
 
 int hit_window(uint32_t x, uint32_t y)
 {
+    /* The taskbar is composited above windows, so underlying windows must not
+     * receive hover or mouse events through the taskbar area. */
+    if (desktop_taskbar_visible && y >= taskbar_y()) {
+        return -1;
+    }
     for (int zi = MAX_WINDOWS - 1; zi >= 0; --zi) {
         uint8_t id = z_order[zi];
         struct desktop_window *w = &windows[id];

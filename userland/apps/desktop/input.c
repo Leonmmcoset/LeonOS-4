@@ -942,32 +942,11 @@ static uint32_t desktop_taskbar_cursor_style(uint32_t x, uint32_t y)
     if (!desktop_taskbar_visible || y < tb_y || y >= tb_y + TASKBAR_H) {
         return LEONOS_GUI_CURSOR_ARROW;
     }
-    if (hit_rect(x, y, 6, (int)tb_y + 5, 86, LEONOS_UI_BUTTON_H)) {
-        return LEONOS_GUI_CURSOR_HAND;
-    }
-    if (desktop_service_network_icon && fb_w() >= desktop_tray_width() + 8U) {
-        uint32_t network_x = fb_w() -
-                              (desktop_service_rtc_clock ? TASKBAR_CLOCK_W : 0U) -
-                              TASKBAR_NET_W;
-        if (hit_rect(x, y, (int)network_x + 4, (int)tb_y + 5,
-                     TASKBAR_NET_W - 6, LEONOS_UI_BUTTON_H)) {
-            return LEONOS_GUI_CURSOR_HAND;
-        }
-    }
-    uint32_t bx = 106U;
-    uint32_t button_w = taskbar_button_width(running_window_count());
-    for (uint8_t i = 0; i < MAX_WINDOWS; ++i) {
-        if (!windows[i].visible ||
-            (windows[i].flags & LEONOS_GUI_WINDOW_HIDE_TASKBAR) != 0 ||
-            !button_w) {
-            continue;
-        }
-        uint32_t hit_w = button_w > 8U ? button_w - 8U : button_w;
-        if (hit_rect(x, y, (int)bx, (int)tb_y + 5, hit_w, LEONOS_UI_BUTTON_H)) {
-            return LEONOS_GUI_CURSOR_HAND;
-        }
-        bx += button_w;
-    }
+    (void)x;
+    /* Application buttons are handled by the desktop, not by GUI cursor
+     * regions. Keep the regular arrow here: the hand cursor path performs a
+     * much more expensive software cursor composition on every motion sample
+     * and is unnecessary for a panel that has no hover state. */
     return LEONOS_GUI_CURSOR_ARROW;
 }
 
@@ -1195,13 +1174,29 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
     uint8_t was_right = previous_buttons & 2;
     uint8_t new_left = left && !was_left;
     uint8_t new_right = right && !was_right;
-    int hover_id = hit_window(x, y);
+    int hover_id;
     struct rect dirty = cursor_visible
                             ? cursor_rect_for_style(cursor_x, cursor_y,
                                                     old_cursor_style)
                             : rect_make(0, 0, 0, 0);
     dirty = rect_union(dirty, cursor_rect_for_style(x, y, desktop_cursor_style));
     struct rect cursor_dirty = dirty;
+
+    /* A taskbar hover is purely a desktop-cursor operation. Do not run the
+     * window hit-test/application dispatch path for every motion sample while
+     * crossing task buttons; the normal cursor damage queue still coalesces
+     * and rate-limits the synchronous framebuffer update. */
+    if (desktop_taskbar_visible && y >= taskbar_y() &&
+        buttons == 0 && previous_buttons == 0) {
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        queue_mouse_damage(dirty, cursor_dirty);
+        return;
+    }
+
+    hover_id = hit_window(x, y);
 
     if (desktop_shortcut_input_active) {
         if (new_left || new_right) {

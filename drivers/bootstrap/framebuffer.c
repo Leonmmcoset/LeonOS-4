@@ -52,7 +52,7 @@ static int framebuffer_range_valid(uint64_t start, uint64_t bytes);
 #define VMWARE_SVGA_REG_CONFIG_DONE 20u
 #define VMWARE_SVGA_REG_SYNC 21u
 #define VMWARE_SVGA_REG_BUSY 22u
-#define VMWARE_SVGA_SYNC_POLL_LIMIT 100000u
+#define VMWARE_SVGA_SYNC_POLL_LIMIT 4000u
 
 #define VMWARE_SVGA_FIFO_MIN 0u
 #define VMWARE_SVGA_FIFO_MAX 1u
@@ -1110,7 +1110,14 @@ void framebuffer_present_region(uint32_t x, uint32_t y, uint32_t width, uint32_t
     if (height > fb.height - y) {
         height = fb.height - y;
     }
-    (void)framebuffer_vmware_fifo_update(x, y, width, height);
+    if (!framebuffer_vmware_fifo_update(x, y, width, height)) {
+        return;
+    }
+    /* Always drain the FIFO after publishing an update. Leaving cursor
+     * updates asynchronous allows NEXT_CMD to outrun STOP; once the FIFO
+     * fills, every subsequent cursor blit is dropped and the pointer freezes.
+     * Keep the bounded wait short enough that a slow VMware device cannot
+     * stall the desktop for a full second. */
     framebuffer_vmware_sync();
 }
 

@@ -709,6 +709,9 @@ void desktop_items_clear(void)
     desktop_context_menu_active = 0;
     desktop_context_menu_animating = 0;
     desktop_context_menu_opening = 0;
+    /* Keep retry scheduling owned by the caller. Clearing the item model
+     * during a failed refresh must not accidentally make the main loop treat
+     * the next one-second retry as a repaint request. */
 }
 
 int desktop_refresh_items(void)

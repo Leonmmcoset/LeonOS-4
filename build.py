@@ -1892,7 +1892,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     grub_efi = paths.staging / "EFI/BOOT/BOOTX64.EFI"
     # 如果是系统 GRUB 路径，使用绝对路径；否则使用相对路径
     grub_dir_arg = str(grub_efi_dir) if using_system_grub else relative(grub_efi_dir)
-    graph.add(Target(name="grub-efi", outputs=(grub_efi,), inputs=(ROOT / "boot/grub/embedded.cfg", grub_efi_dir / "modinfo.sh"), kind="generate", command=("grub-mkstandalone", "-d", grub_dir_arg, "-O", "x86_64-efi", "-o", relative(grub_efi), "--modules=part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video font gfxterm", "boot/grub/grub.cfg=boot/grub/embedded.cfg")))
+    graph.add(Target(name="grub-efi", outputs=(grub_efi,), inputs=(ROOT / "boot/grub/embedded.cfg", grub_efi_dir / "modinfo.sh"), kind="generate", command=("grub-mkstandalone", "-d", grub_dir_arg, "-O", "x86_64-efi", "-o", relative(grub_efi), "--modules=part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video font gfxterm gfxmenu", "boot/grub/grub.cfg=boot/grub/embedded.cfg")))
     component_prune_stamp = paths.out / "generated/component-staging-prune.json"
 
     def prune_component_staging(context: ActionContext) -> None:

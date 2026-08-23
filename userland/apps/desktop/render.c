@@ -296,8 +296,13 @@ void draw_taskbar_button(uint8_t id, uint32_t x, uint32_t y, uint32_t w)
     }
     int active = active_window == id && !windows[id].minimized;
     uint32_t button_w = w > 8 ? w - 8 : w;
-    leonos_ui_taskbar_button(&ui, x, y, button_w, "",
-                             active ? LEONOS_UI_BUTTON_ACTIVE : 0);
+    /* The desktop owns taskbar hit testing. Drawing these as ordinary
+     * buttons avoids registering an implicit GUI cursor region for every
+     * application button on each composition; those registrations are meant
+     * for app-owned surfaces and can make taskbar hover contend with IPC. */
+    leonos_ui_bevel(&ui, x, y, button_w, LEONOS_UI_BUTTON_H,
+                    LEONOS_UI_GRAY,
+                    active ? LEONOS_UI_BUTTON_PRESSED : 0);
     if (button_w >= 26) {
         draw_app_icon(windows[id].icon_path, (int)x + 6, (int)y + 4);
     }

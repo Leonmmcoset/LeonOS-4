@@ -603,6 +603,15 @@ int load_cursor_bmp(void)
         cursor_height = FALLBACK_CURSOR_H;
         return 0;
     }
+    /* The atlas is stored as XRGB by some BMP writers, so its transparent
+     * background arrives with an opaque alpha byte. The cursor artwork uses
+     * pure black only for that background; restore its intended transparency
+     * before the software cursor compositor starts copying pixels. */
+    for (uint32_t i = 0; i < CURSOR_MAX_W * CURSOR_MAX_H; ++i) {
+        if ((cursor_pixels[i] & 0x00ffffffu) == 0) {
+            cursor_pixels[i] = 0;
+        }
+    }
     cursor_bitmap_loaded = 1;
     printf("[desktop.elf] loaded cursor atlas %s %dx%d (%d styles)\n",
            CURSOR_BMP_PATH, (int)atlas_width, (int)atlas_height,
