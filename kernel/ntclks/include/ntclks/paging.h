@@ -18,6 +18,12 @@
 #define NTCLKS_USER_HEAP_LIMIT NTCLKS_USER_MMAP_BASE
 #define NTCLKS_USER_STACK_PAGES 16u
 #define NTCLKS_USER_STACK_MAX_PAGES 2048u
+/* Every address space retains this supervisor-only alias of the kernel's
+ * first 16 GiB physical direct map.  Kernel code that must access a boot
+ * module after a user CR3 has replaced part of the low identity map uses this
+ * alias instead of a physical address as a virtual pointer. */
+#define NTCLKS_KERNEL_DIRECT_MAP_BASE 0xffffff8000000000ULL
+#define NTCLKS_KERNEL_DIRECT_MAP_SIZE (16ULL * 1024ULL * 1024ULL * 1024ULL)
 /* The current loader places the kernel and middlelayer at 128 MiB.  Keep a
  * supervisor-only hole in every user CR3 so creating user page tables never
  * replaces those identity-mapped kernel PDEs. */
@@ -64,6 +70,14 @@ uint64_t paging_kernel_cr3(void);
  * @brief Switch the CPU's page table to the root given by cr3.
  */
 void paging_load_cr3(uint64_t cr3);
+/**
+ * @brief Return true when [phys, phys + len) is reachable through the shared kernel direct map.
+ */
+bool paging_kernel_direct_map_range(uint64_t phys, uint64_t len);
+/**
+ * @brief Translate a physical address to the supervisor-only shared kernel direct map, or NULL.
+ */
+void *paging_kernel_direct_map(uint64_t phys);
 
 /**
  * @brief Allocate and initialize an empty address space; true on success.

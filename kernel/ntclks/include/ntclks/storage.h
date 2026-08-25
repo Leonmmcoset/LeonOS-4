@@ -76,7 +76,11 @@ const char *storage_root_filesystem_name(void);
  */
 bool storage_installer_root_active(void);
 /**
- * @brief Mount image (len bytes) as the root filesystem; 0 on success.
+ * @brief Mount a read-only boot-module image (len bytes) as the root filesystem; 0 on success.
+ *
+ * The caller owns the image backing and must keep it mapped, immutable, and
+ * reserved for the lifetime of the mount. The installer passes its Multiboot
+ * module, which the physical-memory manager reserves before storage starts.
  */
 int storage_mount_ramdisk_root(const void *image, uint64_t len);
 /**

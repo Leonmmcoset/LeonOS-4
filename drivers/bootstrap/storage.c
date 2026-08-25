@@ -2,6 +2,7 @@
 #include <ntclks/console.h>
 #include <ntclks/multiboot2.h>
 #include <ntclks/osmlayer.h>
+#include <ntclks/paging.h>
 #include <ntclks/pci.h>
 #include <ntclks/sched.h>
 #include <ntclks/smp.h>
@@ -3791,46 +3792,44 @@ void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
 int storage_mount_ramdisk_root(const void *image, uint64_t len)
 {
     struct storage_volume *root = &g_volumes[0];
-    uint64_t copy_phys;
-    uint32_t copy_pages;
+    uint64_t image_phys = (uint64_t)(uintptr_t)image;
+    void *image_mapping;
     storage_memzero(root, sizeof(*root));
     g_active_volume = root;
     g_installer_root_active = 0;
     ahci_pending_clear();
     storage_cache_invalidate();
-    if (!image || len < SECTOR_SIZE || (len % SECTOR_SIZE) != 0) {
+    if (!image || len < SECTOR_SIZE || (len % SECTOR_SIZE) != 0 ||
+        !paging_kernel_direct_map_range(image_phys, len)) {
         return -22;
     }
-    /* GRUB owns Multiboot module storage.  Keep an allocator-owned snapshot
-     * for the Installer filesystem: later image mapping must not depend on
-     * that bootloader backing staying untouched. */
-    if ((len + 4095ULL) / 4096ULL > 0xffffffffULL) {
+    image_mapping = paging_kernel_direct_map(image_phys);
+    if (!image_mapping) {
         return -22;
     }
-    copy_pages = (uint32_t)((len + 4095ULL) / 4096ULL);
-    copy_phys = mm_alloc_pages(copy_pages);
-    if (!copy_phys) {
-        return -12;
-    }
-    storage_memcpy((void *)(uintptr_t)copy_phys, image, (size_t)len);
+    /* The installer image is a named Multiboot module.  mm_init() reserves
+     * every module range before storage starts.  It is mounted through the
+     * supervisor-only high direct map, which remains valid after a user CR3
+     * replaces the overlapping low identity pages.  Copying a 400 MiB image
+     * into another contiguous allocation would double its RAM requirement.
+     * The RAM-backed storage write path is deliberately read-only. */
     root->volume_id = 0;
     root->kind = STORAGE_VOLUME_RAM;
     root->filesystem = STORAGE_FILESYSTEM_FAT32;
-    root->ram_base = (uint8_t *)(uintptr_t)copy_phys;
+    root->ram_base = (uint8_t *)image_mapping;
     root->ram_bytes = len;
     root->esp_start_lba = 0;
     root->esp_sector_count = len / SECTOR_SIZE;
     storage_copy_text(root->mount_path, sizeof(root->mount_path), "/");
     if (fat32_mount() < 0) {
         storage_memzero(root, sizeof(*root));
-        mm_free_pages(copy_phys, copy_pages);
         return -2;
     }
     root->ready = true;
     g_installer_root_active = 1;
-    console_printf("[ntclks] storage installer root ready ramdisk=%p copy=%p bytes=%llu fat32_root=%u\n",
+    console_printf("[ntclks] storage installer root ready ramdisk=%p kernel_map=%p bytes=%llu mode=direct fat32_root=%u\n",
                    image,
-                   (void *)(uintptr_t)copy_phys,
+                   image_mapping,
                    (unsigned long long)len,
                    root->root_cluster);
     return 0;
@@ -3838,6 +3837,8 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
 
 void storage_init_installer_root(const struct boot_info *boot)
 {
+    int mount_ret = -2;
+    bool found = false;
     storage_memzero(g_volumes, sizeof(g_volumes));
     g_active_volume = &g_volumes[0];
     g_installer_root_active = 0;
@@ -3845,15 +3846,29 @@ void storage_init_installer_root(const struct boot_info *boot)
     if (boot) {
         for (uint32_t i = 0; i < boot->module_count; ++i) {
             const struct boot_module *mod = &boot->modules[i];
-            if (storage_text_eq(mod->name, "leonos-installer-root") &&
-                mod->end > mod->start &&
-                storage_mount_ramdisk_root((const void *)(uintptr_t)mod->start,
-                                           mod->end - mod->start) == 0) {
+            if (storage_text_eq(mod->name, "leonos-installer-root")) {
+                found = true;
+                if (mod->end > mod->start) {
+                    mount_ret = storage_mount_ramdisk_root(
+                        (const void *)(uintptr_t)mod->start,
+                        mod->end - mod->start);
+                    if (mount_ret == 0) {
+                        return;
+                    }
+                } else {
+                    mount_ret = -22;
+                }
+                console_printf("[ntclks] installer root ramdisk module mount failed ret=%d bytes=%llu\n",
+                               mount_ret,
+                               (unsigned long long)(mod->end > mod->start
+                                   ? mod->end - mod->start : 0));
                 return;
             }
         }
     }
-    console_printf("[ntclks] installer root ramdisk module not found\n");
+    if (!found) {
+        console_printf("[ntclks] installer root ramdisk module not found; ensure GRUB had enough RAM to load /install/root.fat\n");
+    }
 }
 
 bool storage_ready(void)
@@ -4408,8 +4423,6 @@ int storage_write_node(const char *path, uint64_t offset,
                        const void *buf, uint32_t len, uint32_t *out_written)
 {
     struct storage_node node;
-    char resolved[LEONOS_FS_PATH_LEN];
-    char backend_path[LEONOS_FS_PATH_LEN];
     uint64_t end64;
     uint32_t total_len;
     uint32_t final_len;
@@ -4437,12 +4450,12 @@ int storage_write_node(const char *path, uint64_t offset,
         return -21;
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
-        if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0 ||
-            storage_backend_path(resolved, backend_path, sizeof(backend_path)) < 0) {
-            return -22;
-        }
         storage_begin_mutation();
-        return ext2_write_node(backend_path, offset, buf, len, out_written);
+        /* storage_lookup_path() already selected /target's ext2 volume and
+         * returned its inode. Passing a backend-local string through the
+         * global router again would reinterpret /docs/foo as the installer
+         * FAT root rather than /target/docs/foo. */
+        return ext2_write_node(&node, offset, buf, len, out_written);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -4868,8 +4881,6 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
 int storage_truncate_file(const char *path, uint64_t length)
 {
     struct storage_node node;
-    char resolved[LEONOS_FS_PATH_LEN];
-    char backend_path[LEONOS_FS_PATH_LEN];
     uint64_t phys;
     uint32_t pages;
     uint32_t got = 0;
@@ -4887,12 +4898,8 @@ int storage_truncate_file(const char *path, uint64_t length)
         return -21;
     }
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
-        if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0 ||
-            storage_backend_path(resolved, backend_path, sizeof(backend_path)) < 0) {
-            return -22;
-        }
         storage_begin_mutation();
-        return ext2_truncate_file(backend_path, length);
+        return ext2_truncate_file(&node, length);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;

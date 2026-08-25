@@ -36,7 +36,12 @@ config IMAGE_SIZE_MIB
 config INSTALLER_ROOT_SIZE_MIB
     int "Installer runtime root size in MiB"
     range 32 4096
-    default 128
+    default 400
+    help
+      The installer root is passed by GRUB as one complete Multiboot module.
+      Its size therefore consumes guest RAM before the kernel starts. A 400
+      MiB root requires a guest with at least 1 GiB RAM; use a smaller root or
+      increase the VM memory rather than expecting a 512 MiB guest to load it.
 
 menu "Image defaults"
 
@@ -138,7 +143,7 @@ menu "QEMU Run"
 config QEMU_MEMORY_MB
     int "QEMU memory size in MiB"
     range 128 65536
-    default 512
+    default 1024
 
 config QEMU_SMP_CPUS
     int "QEMU virtual CPU count"

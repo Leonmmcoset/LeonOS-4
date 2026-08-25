@@ -84,6 +84,20 @@ stages:
 This keeps installer boot and installed-system boot on the same matched
 component set.
 
+`install/root.fat` is one read-only Multiboot module. It is mapped directly by
+the kernel and is not copied into a second RAM buffer. The guest nevertheless
+needs enough physical memory for GRUB to load the complete module before the
+kernel begins. In particular, a 400 MiB installer root requires at least 1 GiB
+of VM RAM; a 512 MiB VM can omit the module before the loader receives control.
+If GRUB places that module over the kernel or middlelayer's fixed ELF load
+range, the Loader relocates it into EFI LoaderData before loading either image;
+the relocated range is reserved and mounted directly by the kernel.
+
+For VirtualBox installation tests, attach the target VDI through a SATA
+controller configured as AHCI. The installer currently supports AHCI target
+disks only; the PIIX4 IDE controller can boot the ISO but cannot provide an
+install target.
+
 The installer runtime itself only needs `desktop.elf` and `installer.elf` under
 `/system/apps`. The installed-system root payload under `/install/root/system/apps`
 and `/install/root/programs` contains the normal app set, including `login.elf`

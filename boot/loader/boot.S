@@ -16,7 +16,9 @@ multiboot2_header:
 
     .align 8
     .short 5
-    .short 0
+    /* A framebuffer improves the splash and boot log, but serial-only and
+       restricted GOP firmware must still be able to hand control to Loader. */
+    .short 1
     .long 20
     .long 0
     .long 0

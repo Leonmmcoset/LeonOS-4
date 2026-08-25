@@ -79,9 +79,20 @@ int desktop_load_service_config(void)
 
 void desktop_service_daemon_update(void)
 {
+    struct leonos_stat st;
     unsigned long now;
     int pid;
     if (desktop_service_daemon_started) {
+        return;
+    }
+    /* The installer runtime deliberately contains only the window server,
+     * installer, and recovery UI. serviced.elf is payload under
+     * /install/root, not an executable for the read-only installer root. */
+    if (stat("/system/apps/installer/installer.elf", &st) == 0 &&
+        st.type == LEONOS_FS_TYPE_FILE &&
+        stat(SERVICE_DAEMON_PATH, &st) < 0) {
+        desktop_service_daemon_started = 1;
+        puts("[desktop.elf] installer runtime; service daemon disabled");
         return;
     }
     now = leonos_uptime_ms();

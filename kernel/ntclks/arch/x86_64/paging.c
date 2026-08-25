@@ -11,6 +11,7 @@
 #define PAGE_SIZE_FLAG 0x080ULL
 #define USER_PDPT_INDEX 0
 #define LOW_PD_INDEX 0
+#define KERNEL_DIRECT_PML4_INDEX 511u
 #define KERNEL_PD_COUNT 16u /* 16 GiB identity map using 2 MiB leaves. */
 #define X86_EFER_MSR 0xc0000080u
 #define X86_EFER_NXE (1ULL << 11)
@@ -120,6 +121,12 @@ void paging_init_user_identity(void)
     }
 
     kernel_pml4[0] = (uint64_t)(uintptr_t)kernel_pdpt | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE;
+    /* User address spaces replace portions of PML4[0]'s low identity map.
+     * Keep a second supervisor-only view at a canonical high address so
+     * kernel code can safely read reserved Multiboot modules regardless of
+     * where GRUB placed them in low physical memory. */
+    kernel_pml4[KERNEL_DIRECT_PML4_INDEX] =
+        (uint64_t)(uintptr_t)kernel_pdpt | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE;
     for (uint64_t i = 0; i < KERNEL_PD_COUNT; ++i) {
         kernel_pdpt[i] = (uint64_t)(uintptr_t)kernel_pd[i] | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_WRITABLE;
     }
@@ -148,6 +155,20 @@ uint64_t paging_kernel_cr3(void)
 void paging_load_cr3(uint64_t cr3)
 {
     x86_64_load_cr3(cr3 ? cr3 : paging_kernel_cr3());
+}
+
+bool paging_kernel_direct_map_range(uint64_t phys, uint64_t len)
+{
+    return phys < NTCLKS_KERNEL_DIRECT_MAP_SIZE &&
+           len <= NTCLKS_KERNEL_DIRECT_MAP_SIZE - phys;
+}
+
+void *paging_kernel_direct_map(uint64_t phys)
+{
+    if (!paging_kernel_direct_map_range(phys, 1)) {
+        return NULL;
+    }
+    return (void *)(uintptr_t)(NTCLKS_KERNEL_DIRECT_MAP_BASE + phys);
 }
 
 /**
