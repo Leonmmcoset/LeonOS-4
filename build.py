@@ -496,7 +496,10 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
         # QEMU's host CPU model is valid only with KVM/HVF.  TCG uses max so
         # the smoke tests remain runnable on hosts without hardware access.
         command += ["-cpu", "max"]
-    command += ["-machine", "q35", "-m", f"{memory}M", "-smp", str(cpus)]
+    # Set LEONOS_QEMU_IDE=1 for a legacy PIIX IDE/PATA smoke run.  The
+    # default remains the production AHCI topology used by existing images.
+    ide_mode = os.environ.get("LEONOS_QEMU_IDE", "").lower() in {"1", "y", "yes", "true"}
+    command += ["-machine", "pc" if ide_mode else "q35", "-m", f"{memory}M", "-smp", str(cpus)]
     configured_ovmf = config_string(values, "CONFIG_QEMU_OVMF_PATH")
     ovmf = resolve_qemu_ovmf_path(configured_ovmf)
     if ovmf is not None:
@@ -509,12 +512,24 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
     if net_model and all(character.isalnum() or character in "._-" for character in net_model):
         command += ["-netdev", "user,id=net0", "-device", f"{net_model},netdev=net0"]
     command += ["-audiodev", "sdl,id=snd0", "-device", "AC97,audiodev=snd0"]
-    if iso:
+    if iso and not ide_mode:
         command += ["-cdrom", relative(paths.images / "leonos4.iso")]
-    command += [
-        "-drive", f"file={relative(paths.images / 'leonos4.vmdk')},if=none,id=sata0,format=vmdk",
-        "-device", "ich9-ahci,id=ahci", "-device", "ide-hd,drive=sata0,bus=ahci.0",
-    ]
+    if ide_mode:
+        command += [
+            "-device", "piix3-ide,id=ide",
+            "-drive", f"file={relative(paths.images / 'leonos4.vmdk')},if=none,id=ide_disk,format=vmdk",
+            "-device", f"ide-hd,drive=ide_disk,bus=ide.0,unit=0,bootindex={'2' if iso else '1'}",
+        ]
+        if iso:
+            command += [
+                "-drive", f"file={relative(paths.images / 'leonos4.iso')},if=none,id=ide_cd,format=raw,readonly=on",
+                "-device", "ide-cd,drive=ide_cd,bus=ide.1,unit=0,bootindex=1",
+            ]
+    else:
+        command += [
+            "-drive", f"file={relative(paths.images / 'leonos4.vmdk')},if=none,id=sata0,format=vmdk",
+            "-device", "ich9-ahci,id=ahci", "-device", "ide-hd,drive=sata0,bus=ahci.0",
+        ]
     return tuple(command)
 
 

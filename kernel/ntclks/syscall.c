@@ -493,7 +493,8 @@ static void device_format_disk(char *buf, uint32_t cap, const struct leonos_inst
     uint32_t pos = 0;
     uint64_t mib = disk ? (disk->sector_count * (uint64_t)disk->sector_size) / (1024ULL * 1024ULL) : 0;
     buf[0] = 0;
-    device_append_text(buf, &pos, cap, "AHCI port ");
+    device_append_text(buf, &pos, cap,
+                       disk && disk->name[0] == 'I' ? "IDE/PATA port " : "AHCI port ");
     device_append_u64(buf, &pos, cap, disk ? disk->port : 0);
     device_append_text(buf, &pos, cap, ", ");
     device_append_u64(buf, &pos, cap, mib);
@@ -4447,13 +4448,27 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                            ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
                            : 0,
                        0, 0, disk_count, 0);
+        {
+            uint32_t ide_disk_count = 0;
+            for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
+                if (disks[i].name[0] == 'I' && disks[i].name[1] == 'D' &&
+                    disks[i].name[2] == 'E') {
+                    ++ide_disk_count;
+                }
+            }
+            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_IDE,
+                           ide_disk_count
+                               ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
+                               : 0,
+                           0, 0, ide_disk_count, 0);
+        }
         for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
             uint32_t flags = LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE;
             if (disks[i].flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT) {
                 flags |= LEONOS_DEVICE_FLAG_BOOT;
             }
             raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_DISK,
-                           flags, disks[i].port, (uint32_t)i,
+                           flags, disks[i].name[0] == 'I' ? 2u : 1u, (uint32_t)i,
                            disks[i].sector_count, disks[i].sector_size);
         }
         raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_SERIAL,
@@ -4545,13 +4560,13 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         {
             uint32_t pos = 0;
             detail[0] = 0;
-            device_append_text(detail, &pos, sizeof(detail), "SATA/AHCI controller, disks=");
+            device_append_text(detail, &pos, sizeof(detail), "AHCI/IDE storage controllers, disks=");
             device_append_u64(detail, &pos, sizeof(detail), disk_count);
             device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_STORAGE,
                        storage_ready()
                            ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
                            : 0,
-                       "AHCI Controller", storage_ready() ? "Running" : "Unavailable",
+                       "Storage Controller", storage_ready() ? "Running" : "Unavailable",
                        detail, disk_count, 0);
         }
 

@@ -325,6 +325,7 @@ Current raw device kinds:
 - PS/2 mouse
 - Framebuffer
 - AHCI controller
+- IDE/PATA controller
 - Disk
 - Serial COM1
 - Intel e1000 network adapter

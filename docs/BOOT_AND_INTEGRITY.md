@@ -88,11 +88,10 @@ output is unavailable.
 
 ## Installer compatibility
 
-The current installer writes target disks through AHCI. In VirtualBox, attach
-the destination VDI to a SATA controller with the controller type set to
-`AHCI`; do not use the default PIIX4 IDE controller. The ISO may boot from its
-virtual optical device independently, but IDE target disks are not installable
-until an IDE driver is added.
+The installer writes target disks through AHCI or legacy IDE/PATA PIO. In
+VirtualBox, attach the destination VDI through either a SATA/AHCI controller
+or the default PIIX4 IDE controller. IDE/ATAPI optical media is read-only and
+is supported for ISO reads.
 
 The installer payload is built from the same matched runtime staging tree:
 

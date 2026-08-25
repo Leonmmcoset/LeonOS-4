@@ -4,6 +4,7 @@
 #include <ntclks/osmlayer.h>
 #include <ntclks/paging.h>
 #include <ntclks/pci.h>
+#include <ntclks/port.h>
 #include <ntclks/sched.h>
 #include <ntclks/smp.h>
 #include <ntclks/storage.h>
@@ -14,6 +15,29 @@
 #define ATA_CLASS_MASS_STORAGE 0x01u
 #define ATA_SUBCLASS_SATA 0x06u
 #define ATA_PROGIF_AHCI 0x01u
+#define ATA_SUBCLASS_IDE 0x01u
+
+#define IDE_PRIMARY_CMD_DEFAULT 0x1f0u
+#define IDE_PRIMARY_CTRL_DEFAULT 0x3f6u
+#define IDE_SECONDARY_CMD_DEFAULT 0x170u
+#define IDE_SECONDARY_CTRL_DEFAULT 0x376u
+#define IDE_STATUS_BSY 0x80u
+#define IDE_STATUS_DRDY 0x40u
+#define IDE_STATUS_DF 0x20u
+#define IDE_STATUS_DRQ 0x08u
+#define IDE_STATUS_ERR 0x01u
+#define IDE_CMD_READ_PIO 0x20u
+#define IDE_CMD_WRITE_PIO 0x30u
+#define IDE_CMD_READ_PIO_EXT 0x24u
+#define IDE_CMD_WRITE_PIO_EXT 0x34u
+#define IDE_CMD_IDENTIFY_PACKET 0xa1u
+#define IDE_CMD_SRST 0x04u
+#define IDE_CMD_PACKET 0xa0u
+#define IDE_ATAPI_SIG_MID 0x14u
+#define IDE_ATAPI_SIG_HIGH 0xebu
+#define IDE_WAIT_SPINS 4000000u
+#define IDE_MAX_PIO_SECTORS 128u
+#define IDE_MAX_ATAPI_BLOCKS 16u
 
 #define AHCI_GHC_AE 0x80000000u
 #define AHCI_PORT_CMD_ST 0x0001u
@@ -117,6 +141,12 @@ enum storage_volume_kind {
     STORAGE_VOLUME_NONE = 0,
     STORAGE_VOLUME_AHCI = 1,
     STORAGE_VOLUME_RAM = 2,
+    STORAGE_VOLUME_IDE = 3,
+};
+
+enum storage_transport {
+    STORAGE_TRANSPORT_AHCI = 1,
+    STORAGE_TRANSPORT_IDE_PIO = 2,
 };
 
 enum storage_filesystem_kind {
@@ -394,6 +424,14 @@ struct storage_volume {
     uint8_t slot;
     uint8_t function;
     uint8_t port;
+    uint8_t transport;
+    uint8_t ide_channel;
+    uint8_t ide_drive;
+    uint8_t ide_atapi;
+    uint16_t ide_command_base;
+    uint16_t ide_control_base;
+    uint8_t ide_lba48;
+    char device_model[41];
     struct ahci_hba_mem *abar;
     struct ahci_hba_port *hba_port;
     uint8_t *ram_base;
@@ -443,6 +481,14 @@ struct install_disk_state {
     uint8_t slot;
     uint8_t function;
     uint8_t port;
+    uint8_t transport;
+    uint8_t ide_channel;
+    uint8_t ide_drive;
+    uint8_t ide_atapi;
+    uint8_t ide_lba48;
+    uint16_t ide_command_base;
+    uint16_t ide_control_base;
+    char device_model[41];
     uint8_t boot_root;
     uint8_t target_mounted;
     struct ahci_hba_mem *abar;
@@ -1110,6 +1156,352 @@ static uint64_t fat_sector_for_cluster(uint32_t cluster)
            ((cluster * 4u) / g_storage.bytes_per_sector);
 }
 
+struct ide_device_info {
+    uint8_t present;
+    uint8_t atapi;
+    uint8_t lba48;
+    uint8_t channel;
+    uint8_t drive;
+    uint16_t command_base;
+    uint16_t control_base;
+    uint64_t sector_count;
+    char model[41];
+};
+
+static void ide_io_delay(uint16_t control)
+{
+    if (control) {
+        (void)x86_64_inb(control);
+        (void)x86_64_inb(control);
+        (void)x86_64_inb(control);
+        (void)x86_64_inb(control);
+    }
+}
+
+static uint8_t ide_status(const struct ide_device_info *device)
+{
+    return device ? x86_64_inb((uint16_t)(device->command_base + 7u)) : 0xffu;
+}
+
+static int ide_select(const struct ide_device_info *device)
+{
+    if (!device || !device->command_base || device->drive > 1u) {
+        return -22;
+    }
+    x86_64_outb((uint8_t)(0xa0u | (device->drive << 4)),
+                (uint16_t)(device->command_base + 6u));
+    ide_io_delay(device->control_base);
+    return 0;
+}
+
+static int ide_wait_ready(const struct ide_device_info *device, uint8_t want_drq)
+{
+    uint8_t status;
+    if (!device) {
+        return -22;
+    }
+    for (uint32_t spin = 0; spin < IDE_WAIT_SPINS; ++spin) {
+        status = ide_status(device);
+        if (status == 0xffu || status == 0x00u) {
+            return -19;
+        }
+        if (status & IDE_STATUS_ERR) {
+            return -5;
+        }
+        if (status & IDE_STATUS_DF) {
+            return -5;
+        }
+        if (!(status & IDE_STATUS_BSY)) {
+            if (want_drq) {
+                if (status & IDE_STATUS_DRQ) {
+                    return 0;
+                }
+            } else if (!(status & IDE_STATUS_DRQ)) {
+                return 0;
+            }
+        }
+        __asm__ volatile("pause");
+    }
+    return -110;
+}
+
+static int ide_soft_reset(const struct ide_device_info *device)
+{
+    uint8_t status;
+    if (!device || !device->control_base) {
+        return -22;
+    }
+    x86_64_outb(IDE_CMD_SRST, device->control_base);
+    for (uint32_t i = 0; i < 10000u; ++i) {
+        __asm__ volatile("pause");
+    }
+    x86_64_outb(0, device->control_base);
+    for (uint32_t i = 0; i < IDE_WAIT_SPINS / 16u; ++i) {
+        status = ide_status(device);
+        if (!(status & IDE_STATUS_BSY)) {
+            return 0;
+        }
+        __asm__ volatile("pause");
+    }
+    return -110;
+}
+
+static void ide_copy_model(char out[41], const uint16_t *identify)
+{
+    uint32_t pos = 0;
+    uint32_t start = 0;
+    if (!out || !identify) {
+        return;
+    }
+    for (uint32_t word = 27; word <= 46 && pos + 1u < 41u; ++word) {
+        uint16_t value = identify[word];
+        char hi = (char)(value >> 8);
+        char lo = (char)(value & 0xffu);
+        out[pos++] = hi ? hi : ' ';
+        if (pos + 1u < 41u) {
+            out[pos++] = lo ? lo : ' ';
+        }
+    }
+    while (start < pos && out[start] == ' ') {
+        ++start;
+    }
+    while (pos && out[pos - 1u] == ' ') {
+        --pos;
+    }
+    if (start && start < pos) {
+        uint32_t write = 0;
+        while (start < pos) {
+            out[write++] = out[start++];
+        }
+        pos = write;
+    }
+    out[pos] = 0;
+}
+
+static int ide_identify_device(struct ide_device_info *device)
+{
+    uint16_t identify[256];
+    uint8_t status;
+    uint8_t lba_mid;
+    uint8_t lba_high;
+    if (!device || !device->command_base) {
+        return -22;
+    }
+    if (ide_select(device) < 0) {
+        return -22;
+    }
+    status = ide_status(device);
+    if (status == 0xffu || status == 0x00u) {
+        return -19;
+    }
+    if (ide_wait_ready(device, 0) < 0) {
+        return -19;
+    }
+    x86_64_outb(0, (uint16_t)(device->command_base + 2u));
+    x86_64_outb(0, (uint16_t)(device->command_base + 3u));
+    x86_64_outb(0, (uint16_t)(device->command_base + 4u));
+    x86_64_outb(0, (uint16_t)(device->command_base + 5u));
+    x86_64_outb(ATA_CMD_IDENTIFY_DEVICE, (uint16_t)(device->command_base + 7u));
+    status = ide_status(device);
+    if (status == 0x00u || status == 0xffu) {
+        return -19;
+    }
+    for (uint32_t spin = 0; spin < IDE_WAIT_SPINS; ++spin) {
+        status = ide_status(device);
+        if (status & IDE_STATUS_ERR) {
+            break;
+        }
+        if (!(status & IDE_STATUS_BSY) && (status & IDE_STATUS_DRQ)) {
+            for (uint32_t i = 0; i < 256u; ++i) {
+                identify[i] = x86_64_inw(device->command_base);
+            }
+            device->present = 1;
+            device->atapi = 0;
+            device->lba48 = (identify[83] & (1u << 10)) != 0;
+            if ((identify[106] & (1u << 14)) && (identify[106] & (1u << 12))) {
+                uint32_t logical_words = ((uint32_t)identify[118] << 16) | identify[117];
+                if (logical_words && logical_words != (SECTOR_SIZE / 2u)) {
+                    return -95;
+                }
+            }
+            device->sector_count = device->lba48
+                                       ? ((uint64_t)identify[103] << 48) |
+                                             ((uint64_t)identify[102] << 32) |
+                                             ((uint64_t)identify[101] << 16) | identify[100]
+                                       : ((uint64_t)identify[61] << 16) | identify[60];
+            if (!device->sector_count) {
+                return -5;
+            }
+            ide_copy_model(device->model, identify);
+            return 0;
+        }
+        __asm__ volatile("pause");
+    }
+
+    /* A packet device reports the ATAPI signature after the IDENTIFY probe. */
+    lba_mid = x86_64_inb((uint16_t)(device->command_base + 4u));
+    lba_high = x86_64_inb((uint16_t)(device->command_base + 5u));
+    if (lba_mid != IDE_ATAPI_SIG_MID || lba_high != IDE_ATAPI_SIG_HIGH) {
+        return -5;
+    }
+    if (ide_select(device) < 0) {
+        return -22;
+    }
+    x86_64_outb(IDE_CMD_IDENTIFY_PACKET, (uint16_t)(device->command_base + 7u));
+    if (ide_wait_ready(device, 1) < 0) {
+        return -5;
+    }
+    for (uint32_t i = 0; i < 256u; ++i) {
+        identify[i] = x86_64_inw(device->command_base);
+    }
+    device->present = 1;
+    device->atapi = 1;
+    device->lba48 = 0;
+    device->sector_count = 0;
+    ide_copy_model(device->model, identify);
+    return 0;
+}
+
+static int ide_pio_transfer(const struct ide_device_info *device, uint64_t lba,
+                            uint32_t sectors, void *buffer, uint8_t write)
+{
+    uint8_t *bytes = (uint8_t *)buffer;
+    uint8_t use_lba48;
+    if (!device || !device->present || device->atapi || !buffer || !sectors ||
+        sectors > IDE_MAX_PIO_SECTORS || lba + sectors < lba ||
+        (device->sector_count && lba + sectors > device->sector_count)) {
+        return -22;
+    }
+    use_lba48 = device->lba48;
+    if (use_lba48) {
+        if (ide_select(device) < 0 || ide_wait_ready(device, 0) < 0) {
+            return -5;
+        }
+        x86_64_outb(0, (uint16_t)(device->command_base + 2u));
+        x86_64_outb((uint8_t)(lba >> 24), (uint16_t)(device->command_base + 3u));
+        x86_64_outb((uint8_t)(lba >> 32), (uint16_t)(device->command_base + 4u));
+        x86_64_outb((uint8_t)(lba >> 40), (uint16_t)(device->command_base + 5u));
+        x86_64_outb((uint8_t)(sectors >> 8), (uint16_t)(device->command_base + 2u));
+        x86_64_outb((uint8_t)lba, (uint16_t)(device->command_base + 3u));
+        x86_64_outb((uint8_t)(lba >> 8), (uint16_t)(device->command_base + 4u));
+        x86_64_outb((uint8_t)(lba >> 16), (uint16_t)(device->command_base + 5u));
+        x86_64_outb((uint8_t)(0x40u | (device->drive << 4)),
+                    (uint16_t)(device->command_base + 6u));
+        x86_64_outb(write ? IDE_CMD_WRITE_PIO_EXT : IDE_CMD_READ_PIO_EXT,
+                    (uint16_t)(device->command_base + 7u));
+    } else {
+        if (lba > 0x0fffffffu || ide_select(device) < 0 || ide_wait_ready(device, 0) < 0) {
+            return -22;
+        }
+        x86_64_outb((uint8_t)sectors, (uint16_t)(device->command_base + 2u));
+        x86_64_outb((uint8_t)lba, (uint16_t)(device->command_base + 3u));
+        x86_64_outb((uint8_t)(lba >> 8), (uint16_t)(device->command_base + 4u));
+        x86_64_outb((uint8_t)(lba >> 16), (uint16_t)(device->command_base + 5u));
+        x86_64_outb((uint8_t)(0xe0u | (device->drive << 4) | ((lba >> 24) & 0x0fu)),
+                    (uint16_t)(device->command_base + 6u));
+        x86_64_outb(write ? IDE_CMD_WRITE_PIO : IDE_CMD_READ_PIO,
+                    (uint16_t)(device->command_base + 7u));
+    }
+    for (uint32_t sector = 0; sector < sectors; ++sector) {
+        int wait_ret = ide_wait_ready(device, 1);
+        if (wait_ret < 0) {
+            (void)ide_soft_reset(device);
+            return wait_ret;
+        }
+        uint16_t *words = (uint16_t *)(void *)(bytes + sector * SECTOR_SIZE);
+        for (uint32_t i = 0; i < 256u; ++i) {
+            if (write) {
+                x86_64_outw(words[i], device->command_base);
+            } else {
+                words[i] = x86_64_inw(device->command_base);
+            }
+        }
+    }
+    {
+        int wait_ret = ide_wait_ready(device, 0);
+        if (wait_ret < 0) {
+            (void)ide_soft_reset(device);
+        }
+        return wait_ret;
+    }
+}
+
+static int ide_atapi_read_blocks(const struct ide_device_info *device, uint64_t lba,
+                                 uint32_t blocks, void *buffer)
+{
+    uint8_t packet[12] = {0};
+    uint8_t *dst = (uint8_t *)buffer;
+    uint32_t bytes_left = blocks * ISO9660_BLOCK_SIZE;
+    if (!device || !device->present || !device->atapi || !buffer || !blocks ||
+        blocks > IDE_MAX_ATAPI_BLOCKS) {
+        return -22;
+    }
+    packet[0] = SCSI_CMD_READ10;
+    packet[2] = (uint8_t)(lba >> 24);
+    packet[3] = (uint8_t)(lba >> 16);
+    packet[4] = (uint8_t)(lba >> 8);
+    packet[5] = (uint8_t)lba;
+    packet[7] = (uint8_t)(blocks >> 8);
+    packet[8] = (uint8_t)blocks;
+    if (ide_select(device) < 0 || ide_wait_ready(device, 0) < 0) {
+        return -5;
+    }
+    x86_64_outb(0, (uint16_t)(device->command_base + 1u));
+    x86_64_outb((uint8_t)(ISO9660_BLOCK_SIZE & 0xffu), (uint16_t)(device->command_base + 4u));
+    x86_64_outb((uint8_t)(ISO9660_BLOCK_SIZE >> 8), (uint16_t)(device->command_base + 5u));
+    x86_64_outb(IDE_CMD_PACKET, (uint16_t)(device->command_base + 7u));
+    if (ide_wait_ready(device, 1) < 0) {
+        return -5;
+    }
+    for (uint32_t i = 0; i < 6u; ++i) {
+        x86_64_outw((uint16_t)packet[i * 2u] | ((uint16_t)packet[i * 2u + 1u] << 8),
+                    device->command_base);
+    }
+    for (uint32_t spin = 0; bytes_left && spin < IDE_WAIT_SPINS; ++spin) {
+        uint8_t status = ide_status(device);
+        if (status & (IDE_STATUS_ERR | IDE_STATUS_DF)) {
+            return -5;
+        }
+        if (status & IDE_STATUS_BSY) {
+            __asm__ volatile("pause");
+            continue;
+        }
+        if (!(status & IDE_STATUS_DRQ)) {
+            if (!bytes_left) {
+                break;
+            }
+            return -5;
+        }
+        uint32_t phase = (uint32_t)x86_64_inb((uint16_t)(device->command_base + 4u)) |
+                         ((uint32_t)x86_64_inb((uint16_t)(device->command_base + 5u)) << 8);
+        if (!phase || (phase & 1u) || phase > bytes_left) {
+            return -5;
+        }
+        for (uint32_t i = 0; i < phase / 2u; ++i) {
+            uint16_t word = x86_64_inw(device->command_base);
+            dst[i * 2u] = (uint8_t)word;
+            dst[i * 2u + 1u] = (uint8_t)(word >> 8);
+        }
+        dst += phase;
+        bytes_left -= phase;
+    }
+    if (bytes_left) {
+        (void)ide_soft_reset(device);
+        return -110;
+    }
+    return ide_wait_ready(device, 0);
+}
+
+static void ide_fill_device(struct ide_device_info *device, uint8_t channel,
+                            uint8_t drive, uint16_t command, uint16_t control)
+{
+    storage_memzero(device, sizeof(*device));
+    device->channel = channel;
+    device->drive = drive;
+    device->command_base = command;
+    device->control_base = control;
+}
+
 static uint32_t fat_offset_for_cluster(uint32_t cluster)
 {
     return (cluster * 4u) % g_storage.bytes_per_sector;
@@ -1631,22 +2023,91 @@ static int ahci_write_lba_retry(struct ahci_hba_port *port, uint64_t lba,
     return ret;
 }
 
-static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffer)
+static void storage_volume_ide_device(const struct storage_volume *volume,
+                                      struct ide_device_info *device)
 {
-    uint8_t *dst = (uint8_t *)buffer;
-    if (g_storage.kind == STORAGE_VOLUME_RAM) {
+    if (!device) {
+        return;
+    }
+    storage_memzero(device, sizeof(*device));
+    if (!volume) {
+        return;
+    }
+    device->present = volume->ready || volume->ide_command_base != 0;
+    device->atapi = volume->ide_atapi;
+    device->lba48 = volume->ide_lba48;
+    device->channel = volume->ide_channel;
+    device->drive = volume->ide_drive;
+    device->command_base = volume->ide_command_base;
+    device->control_base = volume->ide_control_base;
+    ide_fill_device(device, volume->ide_channel, volume->ide_drive,
+                    volume->ide_command_base, volume->ide_control_base);
+    device->present = volume->ready || volume->ide_command_base != 0;
+    device->atapi = volume->ide_atapi;
+    device->lba48 = volume->ide_lba48;
+    /* The volume passes absolute disk LBAs; capacity is validated at the
+     * installer-disk layer, so do not mistake a partition length for disk
+     * capacity here. */
+    device->sector_count = 0;
+}
+
+static void storage_disk_ide_device(const struct install_disk_state *disk,
+                                    struct ide_device_info *device)
+{
+    if (!device) {
+        return;
+    }
+    storage_memzero(device, sizeof(*device));
+    if (!disk) {
+        return;
+    }
+    ide_fill_device(device, disk->ide_channel, disk->ide_drive,
+                    disk->ide_command_base, disk->ide_control_base);
+    device->present = disk->present;
+    device->atapi = disk->ide_atapi;
+    device->lba48 = disk->ide_lba48;
+    device->sector_count = disk->sector_count;
+    storage_copy_text(device->model, sizeof(device->model), disk->device_model);
+}
+
+static int storage_read_device(const struct storage_volume *volume, uint64_t lba,
+                               uint32_t sector_count, void *buffer)
+{
+    if (!volume || !buffer || !sector_count) {
+        return -22;
+    }
+    if (volume->kind == STORAGE_VOLUME_RAM) {
         uint64_t offset = lba * SECTOR_SIZE;
         uint64_t bytes = (uint64_t)sector_count * SECTOR_SIZE;
-        if (!buffer || !g_storage.ram_base || offset + bytes < offset ||
-            offset + bytes > g_storage.ram_bytes) {
+        if (!volume->ram_base || offset + bytes < offset || offset + bytes > volume->ram_bytes) {
             return -22;
         }
-        storage_memcpy(buffer, g_storage.ram_base + offset, (size_t)bytes);
+        storage_memcpy(buffer, volume->ram_base + offset, (size_t)bytes);
         return 0;
     }
+    if (volume->transport == STORAGE_TRANSPORT_IDE_PIO) {
+        struct ide_device_info device;
+        storage_volume_ide_device(volume, &device);
+        if (device.atapi) {
+            return -30;
+        }
+        uint8_t *dst = (uint8_t *)buffer;
+        while (sector_count) {
+            uint32_t chunk = min_u32(sector_count, IDE_MAX_PIO_SECTORS);
+            int ret = ide_pio_transfer(&device, lba, chunk, dst, 0);
+            if (ret < 0) {
+                return ret;
+            }
+            lba += chunk;
+            sector_count -= chunk;
+            dst += chunk * SECTOR_SIZE;
+        }
+        return 0;
+    }
+    uint8_t *dst = (uint8_t *)buffer;
     while (sector_count) {
         uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
-        int ret = ahci_read_lba_retry(g_storage.hba_port, lba, chunk, dst);
+        int ret = ahci_read_lba_retry(volume->hba_port, lba, chunk, dst);
         if (ret < 0) {
             return ret;
         }
@@ -1655,6 +2116,50 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
         dst += chunk * SECTOR_SIZE;
     }
     return 0;
+}
+
+static int storage_write_device(const struct storage_volume *volume, uint64_t lba,
+                                uint32_t sector_count, const void *buffer)
+{
+    if (!volume || !buffer || !sector_count || volume->kind == STORAGE_VOLUME_RAM) {
+        return -30;
+    }
+    if (volume->transport == STORAGE_TRANSPORT_IDE_PIO) {
+        struct ide_device_info device;
+        storage_volume_ide_device(volume, &device);
+        if (device.atapi) {
+            return -30;
+        }
+        const uint8_t *src = (const uint8_t *)buffer;
+        while (sector_count) {
+            uint32_t chunk = min_u32(sector_count, IDE_MAX_PIO_SECTORS);
+            int ret = ide_pio_transfer(&device, lba, chunk, (void *)src, 1);
+            if (ret < 0) {
+                return ret;
+            }
+            lba += chunk;
+            sector_count -= chunk;
+            src += chunk * SECTOR_SIZE;
+        }
+        return 0;
+    }
+    const uint8_t *src = (const uint8_t *)buffer;
+    while (sector_count) {
+        uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
+        int ret = ahci_write_lba_retry(volume->hba_port, lba, chunk, src);
+        if (ret < 0) {
+            return ret;
+        }
+        lba += chunk;
+        sector_count -= chunk;
+        src += chunk * SECTOR_SIZE;
+    }
+    return 0;
+}
+
+static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffer)
+{
+    return storage_read_device(&g_storage, lba, sector_count, buffer);
 }
 
 static int storage_read_iso_blocks(uint64_t lba, uint32_t block_count, void *buffer)
@@ -1669,6 +2174,21 @@ static int storage_read_iso_blocks(uint64_t lba, uint32_t block_count, void *buf
         (lba >= g_storage.iso_sector_count ||
          (uint64_t)block_count > g_storage.iso_sector_count - lba)) {
         return -5;
+    }
+    if (g_storage.transport == STORAGE_TRANSPORT_IDE_PIO) {
+        struct ide_device_info device;
+        storage_volume_ide_device(&g_storage, &device);
+        while (block_count) {
+            uint32_t chunk = min_u32(block_count, IDE_MAX_ATAPI_BLOCKS);
+            int ret = ide_atapi_read_blocks(&device, lba, chunk, dst);
+            if (ret < 0) {
+                return ret;
+            }
+            lba += chunk;
+            block_count -= chunk;
+            dst += chunk * ISO9660_BLOCK_SIZE;
+        }
+        return 0;
     }
     while (block_count) {
         uint32_t chunk = min_u32(block_count, 32u);
@@ -1695,8 +2215,10 @@ static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void
     storage_begin_mutation();
     storage_sector_cache_invalidate();
     while (sector_count) {
-        uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
-        int ret = ahci_write_lba_retry(g_storage.hba_port, lba, chunk, src);
+        uint32_t chunk = min_u32(sector_count,
+                                  g_storage.transport == STORAGE_TRANSPORT_IDE_PIO
+                                      ? IDE_MAX_PIO_SECTORS : STORAGE_WRITE_MAX_SECTORS);
+        int ret = storage_write_device(&g_storage, lba, chunk, src);
         if (ret < 0) {
             return ret;
         }
@@ -2285,7 +2807,26 @@ static int storage_install_identify(struct install_disk_state *disk, uint64_t *o
 {
     uint16_t *id = (uint16_t *)storage_scratch;
     int ret;
-    if (!disk || !disk->hba_port || !out_sectors) {
+    if (!disk || !out_sectors) {
+        return -22;
+    }
+    if (disk->transport == STORAGE_TRANSPORT_IDE_PIO) {
+        struct ide_device_info device;
+        storage_disk_ide_device(disk, &device);
+        ret = ide_identify_device(&device);
+        if (ret < 0 || device.atapi || !device.sector_count) {
+            return ret < 0 ? ret : -95;
+        }
+        disk->ide_lba48 = device.lba48;
+        disk->ide_atapi = device.atapi;
+        disk->ide_command_base = device.command_base;
+        disk->ide_control_base = device.control_base;
+        disk->sector_count = device.sector_count;
+        storage_copy_text(disk->device_model, sizeof(disk->device_model), device.model);
+        *out_sectors = device.sector_count;
+        return 0;
+    }
+    if (!disk->hba_port) {
         return -22;
     }
     ret = ahci_wait_idle(disk->hba_port);
@@ -3506,7 +4047,7 @@ static int storage_mount_runtime_boot(void)
     struct storage_volume *boot = &g_volumes[STORAGE_VOLUME_BOOT];
     struct storage_volume *old = g_active_volume;
     int ret;
-    if (!root->ready || root->kind != STORAGE_VOLUME_AHCI || root->esp_sector_count == 0) {
+    if (!root->ready || root->transport == 0 || root->esp_sector_count == 0) {
         return -2;
     }
     storage_memzero(boot, sizeof(*boot));
@@ -3526,6 +4067,177 @@ static int storage_mount_runtime_boot(void)
     g_active_volume = old;
     storage_cache_invalidate();
     return ret;
+}
+
+static uint16_t ide_pci_bar_io(uint8_t bus, uint8_t slot, uint8_t function,
+                               uint8_t offset, uint16_t fallback)
+{
+    uint32_t bar = pci_config_read32(bus, slot, function, offset);
+    if (!(bar & 1u)) {
+        return fallback;
+    }
+    bar &= ~3u;
+    return bar && bar <= 0xffffu ? (uint16_t)bar : fallback;
+}
+
+static void storage_copy_disk_transport(struct storage_volume *volume,
+                                        const struct install_disk_state *disk)
+{
+    volume->kind = disk->transport == STORAGE_TRANSPORT_IDE_PIO
+                       ? STORAGE_VOLUME_IDE : STORAGE_VOLUME_AHCI;
+    volume->transport = disk->transport;
+    volume->bus = disk->bus;
+    volume->slot = disk->slot;
+    volume->function = disk->function;
+    volume->port = disk->port;
+    volume->ide_channel = disk->ide_channel;
+    volume->ide_drive = disk->ide_drive;
+    volume->ide_atapi = disk->ide_atapi;
+    volume->ide_lba48 = disk->ide_lba48;
+    volume->ide_command_base = disk->ide_command_base;
+    volume->ide_control_base = disk->ide_control_base;
+    storage_copy_text(volume->device_model, sizeof(volume->device_model), disk->device_model);
+    volume->abar = disk->abar;
+    volume->hba_port = disk->hba_port;
+}
+
+static int storage_try_mount_root_disk(struct install_disk_state *disk)
+{
+    struct storage_volume *root = &g_volumes[STORAGE_VOLUME_ROOT];
+    struct storage_volume *old = g_active_volume;
+    int ret;
+    if (!disk || !disk->present) {
+        return -22;
+    }
+    storage_memzero(root, sizeof(*root));
+    root->volume_id = STORAGE_VOLUME_ROOT;
+    storage_copy_disk_transport(root, disk);
+    storage_copy_text(root->mount_path, sizeof(root->mount_path), "/");
+    g_active_volume = root;
+    ret = gpt_find_esp();
+    if (ret == 0) {
+        int ext2_ret = root->ext2_start_lba ? ext2_mount() : -2;
+        if (ext2_ret < 0) {
+            ret = fat32_mount();
+            if (ret == 0) {
+                root->filesystem = STORAGE_FILESYSTEM_FAT32;
+            }
+        }
+    }
+    if (ret == 0) {
+        root->ready = true;
+        if (storage_mount_runtime_boot() < 0) {
+            console_printf("[ntclks] storage boot ESP mount unavailable\n");
+        }
+        disk->boot_root = 1;
+        console_printf("[ntclks] storage ready transport=%s pci=%u:%u.%u channel=%u drive=%u root=%s\n",
+                       disk->transport == STORAGE_TRANSPORT_IDE_PIO ? "ide-pio" : "ahci",
+                       disk->bus, disk->slot, disk->function, disk->ide_channel,
+                       disk->ide_drive,
+                       root->filesystem == STORAGE_FILESYSTEM_EXT2 ? "ext2" : "fat32");
+    } else {
+        storage_memzero(root, sizeof(*root));
+    }
+    g_active_volume = old;
+    storage_cache_invalidate();
+    return ret;
+}
+
+static void storage_scan_ide_controller(uint8_t bus, uint8_t slot, uint8_t function,
+                                         uint32_t *optical_slot, uint32_t *optical_index,
+                                         uint8_t *root_ready)
+{
+    uint8_t native = (uint8_t)(pci_config_read32(bus, slot, function, 0x08) >> 8);
+    uint16_t command[2];
+    uint16_t control[2];
+    command[0] = (native & 1u) ? ide_pci_bar_io(bus, slot, function, 0x10,
+                                                IDE_PRIMARY_CMD_DEFAULT)
+                               : IDE_PRIMARY_CMD_DEFAULT;
+    control[0] = (native & 1u) ? ide_pci_bar_io(bus, slot, function, 0x14,
+                                                IDE_PRIMARY_CTRL_DEFAULT)
+                               : IDE_PRIMARY_CTRL_DEFAULT;
+    command[1] = (native & 4u) ? ide_pci_bar_io(bus, slot, function, 0x18,
+                                                IDE_SECONDARY_CMD_DEFAULT)
+                               : IDE_SECONDARY_CMD_DEFAULT;
+    control[1] = (native & 4u) ? ide_pci_bar_io(bus, slot, function, 0x1c,
+                                                IDE_SECONDARY_CTRL_DEFAULT)
+                               : IDE_SECONDARY_CTRL_DEFAULT;
+    console_printf("[ntclks] IDE controller detected pci=%u:%u.%u primary=0x%x/0x%x secondary=0x%x/0x%x\n",
+                   bus, slot, function, command[0], control[0], command[1], control[1]);
+    for (uint8_t channel = 0; channel < 2u; ++channel) {
+        for (uint8_t drive = 0; drive < 2u; ++drive) {
+            struct ide_device_info device;
+            struct install_disk_state *disk;
+            ide_fill_device(&device, channel, drive, command[channel], control[channel]);
+            if (ide_identify_device(&device) < 0) {
+                continue;
+            }
+            console_printf("[ntclks] IDE %s detected channel=%s drive=%s model=\"%s\" sectors=%llu lba48=%u\n",
+                           device.atapi ? "ATAPI" : "disk",
+                           channel ? "secondary" : "primary",
+                           drive ? "slave" : "master", device.model,
+                           (unsigned long long)device.sector_count, device.lba48);
+            if (device.atapi) {
+                if (*optical_slot >= STORAGE_MAX_VOLUMES) {
+                    continue;
+                }
+                struct storage_volume *optical = &g_volumes[*optical_slot];
+                storage_memzero(optical, sizeof(*optical));
+                optical->volume_id = (uint8_t)*optical_slot;
+                optical->kind = STORAGE_VOLUME_IDE;
+                optical->transport = STORAGE_TRANSPORT_IDE_PIO;
+                optical->ide_channel = channel;
+                optical->ide_drive = drive;
+                optical->ide_atapi = 1;
+                optical->ide_command_base = command[channel];
+                optical->ide_control_base = control[channel];
+                optical->bus = bus;
+                optical->slot = slot;
+                optical->function = function;
+                optical->port = (uint8_t)(channel * 2u + drive);
+                storage_copy_text(optical->device_model, sizeof(optical->device_model), device.model);
+                g_active_volume = optical;
+                if (iso9660_mount() < 0) {
+                    storage_memzero(optical, sizeof(*optical));
+                    continue;
+                }
+                storage_copy_text(optical->mount_path, sizeof(optical->mount_path), "/media/cdrom");
+                uint32_t position = storage_strlen(optical->mount_path);
+                if (storage_path_append_u32(optical->mount_path, sizeof(optical->mount_path),
+                                            &position, *optical_index) < 0) {
+                    storage_memzero(optical, sizeof(*optical));
+                    continue;
+                }
+                optical->ready = true;
+                console_printf("[ntclks] storage auto-mounted iso9660 path=%s transport=ide-pio\n",
+                               optical->mount_path);
+                ++*optical_slot;
+                ++*optical_index;
+                continue;
+            }
+            if (g_install_disk_count >= STORAGE_MAX_INSTALL_DISKS) {
+                continue;
+            }
+            disk = &g_install_disks[g_install_disk_count++];
+            storage_memzero(disk, sizeof(*disk));
+            disk->present = true;
+            disk->bus = bus;
+            disk->slot = slot;
+            disk->function = function;
+            disk->port = (uint8_t)(channel * 2u + drive);
+            disk->transport = STORAGE_TRANSPORT_IDE_PIO;
+            disk->ide_channel = channel;
+            disk->ide_drive = drive;
+            disk->ide_lba48 = device.lba48;
+            disk->ide_command_base = command[channel];
+            disk->ide_control_base = control[channel];
+            disk->sector_count = device.sector_count;
+            storage_copy_text(disk->device_model, sizeof(disk->device_model), device.model);
+            if (!*root_ready && storage_try_mount_root_disk(disk) == 0) {
+                *root_ready = 1;
+            }
+        }
+    }
 }
 
 void storage_init(void)
@@ -3558,9 +4270,15 @@ void storage_init(void)
                 uint8_t class_code = (uint8_t)(class_reg >> 24);
                 uint8_t subclass = (uint8_t)(class_reg >> 16);
                 uint8_t progif = (uint8_t)(class_reg >> 8);
-                if (class_code != ATA_CLASS_MASS_STORAGE ||
-                    subclass != ATA_SUBCLASS_SATA ||
-                    progif != ATA_PROGIF_AHCI) {
+                if (class_code != ATA_CLASS_MASS_STORAGE) {
+                    continue;
+                }
+                if (subclass == ATA_SUBCLASS_IDE) {
+                    storage_scan_ide_controller((uint8_t)bus, slot, func,
+                                                &optical_slot, &optical_index, &root_ready);
+                    continue;
+                }
+                if (subclass != ATA_SUBCLASS_SATA || progif != ATA_PROGIF_AHCI) {
                     continue;
                 }
                 uint32_t abar_lo = pci_config_read32((uint8_t)bus, slot, func, 0x24);
@@ -3595,6 +4313,7 @@ void storage_init(void)
                         storage_memzero(optical, sizeof(*optical));
                         optical->volume_id = (uint8_t)optical_slot;
                         optical->kind = STORAGE_VOLUME_AHCI;
+                        optical->transport = STORAGE_TRANSPORT_AHCI;
                         optical->bus = (uint8_t)bus;
                         optical->slot = slot;
                         optical->function = func;
@@ -3640,6 +4359,7 @@ void storage_init(void)
                             g_install_disks[disk_id].slot = slot;
                             g_install_disks[disk_id].function = func;
                             g_install_disks[disk_id].port = port;
+                            g_install_disks[disk_id].transport = STORAGE_TRANSPORT_AHCI;
                             g_install_disks[disk_id].abar = abar;
                             g_install_disks[disk_id].hba_port = p;
                             g_install_disks[disk_id].sector_count = 0;
@@ -3657,6 +4377,7 @@ void storage_init(void)
                     g_storage.hba_port = p;
                     g_storage.port = port;
                     g_storage.kind = STORAGE_VOLUME_AHCI;
+                    g_storage.transport = STORAGE_TRANSPORT_AHCI;
                     g_storage.volume_id = STORAGE_VOLUME_ROOT;
                     storage_copy_text(g_storage.mount_path, sizeof(g_storage.mount_path), "/");
                     if (gpt_find_esp() < 0) {
@@ -3705,7 +4426,7 @@ void storage_init(void)
     }
     g_active_volume = &g_volumes[0];
     if (!root_ready) {
-        console_printf("[ntclks] storage init failed: no AHCI GPT ESP/root filesystem found\n");
+        console_printf("[ntclks] storage init failed: no AHCI/IDE GPT ESP/root filesystem found\n");
     }
 }
 
@@ -5359,7 +6080,7 @@ static int install_write_sectors(struct install_disk_state *disk, uint64_t lba,
                                  uint32_t sector_count, const void *buffer)
 {
     const uint8_t *src = (const uint8_t *)buffer;
-    if (!disk || !disk->present || !disk->hba_port || !buffer) {
+    if (!disk || !disk->present || !buffer) {
         return -22;
     }
     /* Installer formatting is also a filesystem mutation: do not make its
@@ -5367,8 +6088,20 @@ static int install_write_sectors(struct install_disk_state *disk, uint64_t lba,
     storage_begin_mutation();
     storage_cache_invalidate();
     while (sector_count) {
-        uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
-        int ret = ahci_write_lba_retry(disk->hba_port, lba, chunk, src);
+        uint32_t chunk = min_u32(sector_count,
+                                  disk->transport == STORAGE_TRANSPORT_IDE_PIO
+                                      ? IDE_MAX_PIO_SECTORS : STORAGE_WRITE_MAX_SECTORS);
+        int ret;
+        if (disk->transport == STORAGE_TRANSPORT_IDE_PIO) {
+            struct ide_device_info device;
+            storage_disk_ide_device(disk, &device);
+            ret = ide_pio_transfer(&device, lba, chunk, (void *)src, 1);
+        } else {
+            if (!disk->hba_port) {
+                return -22;
+            }
+            ret = ahci_write_lba_retry(disk->hba_port, lba, chunk, src);
+        }
         if (ret < 0) {
             return ret;
         }
@@ -5391,12 +6124,24 @@ static int install_read_sectors(struct install_disk_state *disk, uint64_t lba,
                                 uint32_t sector_count, void *buffer)
 {
     uint8_t *dst = (uint8_t *)buffer;
-    if (!disk || !disk->present || !disk->hba_port || !buffer) {
+    if (!disk || !disk->present || !buffer) {
         return -22;
     }
     while (sector_count) {
-        uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
-        int ret = ahci_read_lba_retry(disk->hba_port, lba, chunk, dst);
+        uint32_t chunk = min_u32(sector_count,
+                                  disk->transport == STORAGE_TRANSPORT_IDE_PIO
+                                      ? IDE_MAX_PIO_SECTORS : AHCI_MAX_SECTORS);
+        int ret;
+        if (disk->transport == STORAGE_TRANSPORT_IDE_PIO) {
+            struct ide_device_info device;
+            storage_disk_ide_device(disk, &device);
+            ret = ide_pio_transfer(&device, lba, chunk, dst, 0);
+        } else {
+            if (!disk->hba_port) {
+                return -22;
+            }
+            ret = ahci_read_lba_retry(disk->hba_port, lba, chunk, dst);
+        }
         if (ret < 0) {
             return ret;
         }
@@ -5995,7 +6740,8 @@ static int disk_manage_prepare(uint32_t disk_id, struct install_disk_state **out
         return -22;
     }
     disk = &g_install_disks[disk_id];
-    if (ahci_setup_port(disk->hba_port) < 0) {
+    if (disk->transport != STORAGE_TRANSPORT_IDE_PIO &&
+        ahci_setup_port(disk->hba_port) < 0) {
         return -5;
     }
     sector_count = disk->sector_count;
@@ -6746,11 +7492,20 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     storage_cache_invalidate();
     storage_memzero(volume, sizeof(*volume));
     volume->volume_id = (uint8_t)volume_id;
-    volume->kind = STORAGE_VOLUME_AHCI;
+    volume->kind = disk->transport == STORAGE_TRANSPORT_IDE_PIO
+                       ? STORAGE_VOLUME_IDE : STORAGE_VOLUME_AHCI;
     volume->bus = disk->bus;
     volume->slot = disk->slot;
     volume->function = disk->function;
     volume->port = disk->port;
+    volume->transport = disk->transport;
+    volume->ide_channel = disk->ide_channel;
+    volume->ide_drive = disk->ide_drive;
+    volume->ide_atapi = disk->ide_atapi;
+    volume->ide_lba48 = disk->ide_lba48;
+    volume->ide_command_base = disk->ide_command_base;
+    volume->ide_control_base = disk->ide_control_base;
+    storage_copy_text(volume->device_model, sizeof(volume->device_model), disk->device_model);
     volume->abar = disk->abar;
     volume->hba_port = disk->hba_port;
     volume->source_disk_id = request->disk_id;
@@ -6861,7 +7616,9 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
             disks[i].flags |= LEONOS_INSTALL_DISK_FLAG_TARGET_MOUNTED;
         }
         disks[i].sector_count = src->sector_count;
-        storage_copy_text(disks[i].name, sizeof(disks[i].name), "SATA/AHCI Disk");
+        storage_copy_text(disks[i].name, sizeof(disks[i].name),
+                          src->transport == STORAGE_TRANSPORT_IDE_PIO
+                              ? "IDE/PATA Disk" : "SATA/AHCI Disk");
     }
     return 0;
 }
@@ -6886,7 +7643,8 @@ int storage_install_format_target(uint32_t disk_id)
         storage_installer_mounts_busy()) {
         return -LEONOS_EBUSY;
     }
-    if (ahci_setup_port(disk->hba_port) < 0) {
+    if (disk->transport != STORAGE_TRANSPORT_IDE_PIO &&
+        ahci_setup_port(disk->hba_port) < 0) {
         return -5;
     }
     sector_count = disk->sector_count;
@@ -6953,15 +7711,25 @@ int storage_install_mount_target(uint32_t disk_id)
     storage_cache_invalidate();
     storage_memzero(target, sizeof(*target));
     target->volume_id = STORAGE_VOLUME_TARGET_ROOT;
-    target->kind = STORAGE_VOLUME_AHCI;
+    target->kind = disk->transport == STORAGE_TRANSPORT_IDE_PIO
+                       ? STORAGE_VOLUME_IDE : STORAGE_VOLUME_AHCI;
     target->bus = disk->bus;
     target->slot = disk->slot;
     target->function = disk->function;
     target->port = disk->port;
+    target->transport = disk->transport;
+    target->ide_channel = disk->ide_channel;
+    target->ide_drive = disk->ide_drive;
+    target->ide_atapi = disk->ide_atapi;
+    target->ide_lba48 = disk->ide_lba48;
+    target->ide_command_base = disk->ide_command_base;
+    target->ide_control_base = disk->ide_control_base;
+    storage_copy_text(target->device_model, sizeof(target->device_model), disk->device_model);
     target->abar = disk->abar;
     target->hba_port = disk->hba_port;
     storage_copy_text(target->mount_path, sizeof(target->mount_path), "/target");
-    if (ahci_setup_port(disk->hba_port) < 0) {
+    if (disk->transport != STORAGE_TRANSPORT_IDE_PIO &&
+        ahci_setup_port(disk->hba_port) < 0) {
         g_active_volume = old;
         return -5;
     }

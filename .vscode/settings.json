@@ -53,6 +53,7 @@
         "third-party",
         "mouse",
         "build",
-        "boot"
+        "boot",
+        "disk"
     ]
 }

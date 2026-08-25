@@ -87,7 +87,7 @@ nodes and mappings after a volume is removed.
 
 ## Disk Manager Partitions
 
-Disk Manager presents the GPT entries of every detected AHCI disk, including
+Disk Manager presents the GPT entries of every detected AHCI or IDE/PATA disk, including
 their name, LBA range, filesystem probe, capacity, GPT role, protection state,
 and mount path when mounted. It can create a 1 MiB-aligned FAT32 or ext2
 data partition in free space, format an existing data partition as either

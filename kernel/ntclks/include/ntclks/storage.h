@@ -176,7 +176,7 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
 int storage_install_format_esp(uint32_t disk_id);
 /**
  * @brief Formats an installer target as a GPT disk with FAT32 ESP and ext2 root.
- * @param disk_id Installer-selected AHCI disk identifier.
+ * @param disk_id Installer-selected AHCI or IDE/PATA disk identifier.
  * @return Zero on success or a negative errno-style storage error.
  */
 int storage_install_format_target(uint32_t disk_id);
@@ -185,8 +185,8 @@ int storage_install_format_target(uint32_t disk_id);
  */
 int storage_install_mount_target(uint32_t disk_id);
 /**
- * @brief Lists GPT partitions on an AHCI disk exposed to disk management.
- * @param disk_id Detected AHCI disk identifier.
+ * @brief Lists GPT partitions on a detected block disk exposed to disk management.
+ * @param disk_id Detected AHCI or IDE/PATA disk identifier.
  * @param partitions Caller buffer receiving partition metadata.
  * @param capacity Number of partition records available in @p partitions.
  * @param out_count Receives the complete number of usable GPT entries.
@@ -221,7 +221,7 @@ int storage_disk_create_partition(const struct leonos_disk_partition_create *req
 int storage_disk_mount_partition(struct leonos_disk_partition_mount *request);
 /**
  * @brief Returns the mounted path for a runtime data partition.
- * @param disk_id AHCI disk identifier.
+ * @param disk_id AHCI or IDE/PATA disk identifier.
  * @param partition_index Zero-based GPT entry index.
  * @param out_path Receives the mounted absolute path.
  * @return Zero when mounted, or a negative errno-style storage error.

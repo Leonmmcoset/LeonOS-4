@@ -40,6 +40,7 @@
 #define OSMLAYER_RAW_DEVICE_KIND_SERIAL 7u
 #define OSMLAYER_RAW_DEVICE_KIND_E1000 8u
 #define OSMLAYER_RAW_DEVICE_KIND_AC97 9u
+#define OSMLAYER_RAW_DEVICE_KIND_IDE 10u
 
 struct osmlayer_vfs_resolve_path {
     const char *cwd;
@@ -2535,6 +2536,16 @@ static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
                              "AHCI Controller", osmlayer_active(raw->flags) ? "Running" : "Unavailable",
                              detail, raw->value0, raw->value1);
         break;
+    case OSMLAYER_RAW_DEVICE_KIND_IDE:
+        pos = 0;
+        detail[0] = 0;
+        osmlayer_append_text(detail, &pos, sizeof(detail), "IDE/PATA controller, disks=");
+        osmlayer_append_u64(detail, &pos, sizeof(detail), raw->value0);
+        osmlayer_catalog_add(query, OSMLAYER_DEVICE_CLASS_STORAGE, raw->flags,
+                             "IDE/PATA Controller",
+                             osmlayer_active(raw->flags) ? "Running" : "Unavailable",
+                             detail, raw->value0, raw->value1);
+        break;
     case OSMLAYER_RAW_DEVICE_KIND_DISK:
         pos = 0;
         name[0] = 0;
@@ -2542,7 +2553,8 @@ static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
         osmlayer_append_u64(name, &pos, sizeof(name), raw->aux1);
         pos = 0;
         detail[0] = 0;
-        osmlayer_append_text(detail, &pos, sizeof(detail), "AHCI port ");
+        osmlayer_append_text(detail, &pos, sizeof(detail),
+                             raw->aux0 == 2u ? "IDE/PATA port " : "AHCI port ");
         osmlayer_append_u64(detail, &pos, sizeof(detail), raw->aux0);
         osmlayer_append_text(detail, &pos, sizeof(detail), ", ");
         osmlayer_append_u64(detail, &pos, sizeof(detail),
