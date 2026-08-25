@@ -1,6 +1,7 @@
 #include <leonos/fs.h>
 #include <leonos/ini.h>
 #include <leonos/launch.h>
+#include <leonos/pty.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <errno.h>
@@ -259,23 +260,21 @@ static int launch_in_terminal(char *argv[])
 
 int leonos_spawn_argv(const char *path, char *const argv[])
 {
-    pid_t pid;
-    int result;
+    struct leonos_pty_spawn spawn;
 
     if (!path || !path[0] || !argv || !argv[0]) {
         return LEONOS_LAUNCH_ERR_EMPTY;
     }
-    pid = fork();
-    if (pid < 0) {
-        return errno ? -errno : -LEONOS_EAGAIN;
-    }
-    if (pid != 0) {
-        return (int)pid;
-    }
-
-    result = execve(path, argv, 0);
-    (void)result;
-    _exit(127);
+    spawn = (struct leonos_pty_spawn){
+        .pty_id = 0,
+        .path = path,
+        .argv = argv,
+        .envp = 0,
+        .stdin_fd = -1,
+        .stdout_fd = -1,
+        .stderr_fd = -1,
+    };
+    return ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
 }
 
 static void build_child_path(char *dst, uint32_t capacity,

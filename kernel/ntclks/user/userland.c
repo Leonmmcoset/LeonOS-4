@@ -11,6 +11,8 @@
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
+#include <ntclks/lock.h>
+#include <ntclks/smp.h>
 #include <ntclks/userland.h>
 
 #define USER_STACK_TOP (NTCLKS_USER_TOP - 0x1000ULL)
@@ -32,6 +34,25 @@ static bool autospawn_uidemo;
 static bool autospawn_terminal;
 static bool autospawn_memtest;
 static bool autospawn_installer;
+/* elf.c keeps a bounded header scratch buffer and ASLR state at file scope.
+ * Serialize lazy image construction so APs cannot overwrite that state while
+ * the BSP (or another AP) is mapping a different executable. */
+static struct kernel_spinlock image_load_lock = KERNEL_SPINLOCK_INIT;
+
+void userland_loader_lock(uint64_t *flags)
+{
+    /* ELF header probing uses one scratch buffer, but loading may perform
+     * storage IO. Preserve interrupt delivery while waiting for the scratch
+     * buffer so AP timers continue to account progress. */
+    __asm__ volatile("pushfq; popq %0" : "=r"(*flags) : : "memory");
+    kernel_spin_lock(&image_load_lock);
+}
+
+void userland_loader_unlock(uint64_t flags)
+{
+    kernel_spin_unlock(&image_load_lock);
+    kernel_irq_restore(flags);
+}
 
 /**
  * @brief Return 1 if name contains the substring needle, else 0.
@@ -367,12 +388,23 @@ static int prepare_user_exec_stack(struct task *task)
 /**
  * @brief Map or load the task's pending executable, set the entry frame and exec stack, and mark it started.
  */
-static bool userland_load_task_image(struct task *task)
+static bool userland_load_task_image_locked(struct task *task)
 {
     struct elf_image_info loaded;
 
-    if (!task || (task->flags & TASK_FLAG_STARTED)) {
-        return task != NULL;
+    if (!task) {
+        return false;
+    }
+    if ((task->flags & TASK_FLAG_STARTED) && task->frame.rip != 0) {
+        return true;
+    }
+    /* A started task must have a complete saved frame. Rebuilding a zero RIP
+     * from the ELF entry would hide a scheduler ownership bug and lose the
+     * rest of the register state, so fail it instead of changing semantics. */
+    if ((task->flags & TASK_FLAG_STARTED) && task->entry != 0 && task->frame.rip == 0) {
+        console_printf("[ntclks] refusing started task with zero RIP pid=%u entry=0x%llx\n",
+                       task->pid, (unsigned long long)task->entry);
+        return false;
     }
     if (task->flags & TASK_FLAG_PENDING_LOAD) {
         if (task->image_node.type != LEONOS_FS_TYPE_FILE) {
@@ -419,6 +451,26 @@ static bool userland_load_task_image(struct task *task)
     return true;
 }
 
+static bool userland_load_task_image(struct task *task)
+{
+    bool result;
+    uint64_t execution_flags;
+    uint64_t loader_flags;
+    /* Keep the lock order consistent with page-fault lazy mapping:
+     * execution transaction -> ELF scratch lock -> storage.  Taking the ELF
+     * lock first here used to deadlock with a CPU handling a file-backed page
+     * fault: the scheduler-side loader then waited for storage's execution
+     * lock while the fault path already owned that lock and waited for the
+     * ELF scratch buffer.  The execution lock is reentrant, so storage calls
+     * below safely join this transaction. */
+    kernel_execution_lock_irqsave(&execution_flags);
+    userland_loader_lock(&loader_flags);
+    result = userland_load_task_image_locked(task);
+    userland_loader_unlock(loader_flags);
+    kernel_execution_unlock_irqrestore(execution_flags);
+    return result;
+}
+
 /**
  * @brief Create the user task for path, attach image/exec/fd parameters, and return its PID or a negative errno.
  */
@@ -454,6 +506,9 @@ static int64_t spawn_pending_image(const char *path, const char *task_name,
             return -9;
         }
     }
+    /* Make the task runnable only after every field used by the loader and
+     * scheduler has been published. */
+    sched_mark_ready(pid);
     return pid;
 }
 
@@ -497,11 +552,13 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
 /**
  * @brief Halt with interrupts enabled until a user task is ready to run.
  */
-static void wait_for_runnable_task(void)
+static struct task *wait_for_runnable_task(void)
 {
-    while (!sched_select_next_user()) {
+    struct task *next;
+    while (!(next = sched_select_next_user())) {
         __asm__ volatile("sti; hlt; cli");
     }
+    return next;
 }
 
 /**
@@ -510,24 +567,38 @@ static void wait_for_runnable_task(void)
 struct task *userland_schedule_from_frame(struct trap_frame *frame)
 {
     struct task *current = sched_current_task();
-    if (current && current->kind == TASK_KIND_USER && frame) {
-        current->frame = *frame;
-        /**
- * @brief The kernel is integer-only, so the incoming user FPU state is intact.
- */
-        arch_fpu_save(current->fpu_state);
-        if (current->state == TASK_RUNNING) {
-            current->state = TASK_READY;
+    if (current && current->kind == TASK_KIND_USER && frame &&
+        current->state != TASK_EXITED) {
+        /* A malformed interrupt frame must not erase a live task context.
+         * RIP=0 is never a valid LeonOS user entry and would make the next
+         * iretq fault while fetching its first instruction. */
+        if (frame->rip != 0 && (frame->cs & 3ULL) == 3ULL) {
+            arch_fpu_save(current->fpu_state);
+            if (!sched_capture_current_user_frame(frame)) {
+                console_printf("[ntclks] rejected scheduler frame pid=%u rip=0x%llx cs=0x%llx\n",
+                               current->pid,
+                               (unsigned long long)frame->rip,
+                               (unsigned long long)frame->cs);
+                return NULL;
+            }
+        } else {
+            console_printf("[ntclks] ignored invalid scheduler frame pid=%u rip=0x%llx cs=0x%llx\n",
+                           current->pid,
+                           (unsigned long long)frame->rip,
+                           (unsigned long long)frame->cs);
+            return NULL;
         }
+    }
+    if (current && current->kind == TASK_KIND_USER && current->state == TASK_EXITED) {
+        sched_quiesce_exited_current();
     }
 
     struct task *next = sched_select_next_user();
     if (!next && current && current->kind == TASK_KIND_USER && current->state == TASK_READY) {
-        next = current;
+        next = sched_reclaim_current_user();
     }
     if (!next) {
-        wait_for_runnable_task();
-        next = sched_select_next_user();
+        next = wait_for_runnable_task();
     }
     if (!next) {
         return NULL;
@@ -536,7 +607,6 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
         sched_exit(next->pid, 127);
         return userland_schedule_from_frame(NULL);
     }
-    sched_set_running(next->pid);
     userland_yield_if_runnable();
     arch_fpu_restore(next->fpu_state);
     return next;
@@ -559,6 +629,7 @@ static void userland_enter_task(struct task *task)
                    (unsigned long long)task->frame.rip,
                    (unsigned long long)task->frame.rsp,
                    (unsigned long long)task->as.cr3);
+    smp_mark_bsp_user_entry();
     arch_enter_user_frame(&task->frame, task->as.cr3);
 }
 
@@ -631,11 +702,16 @@ void userland_init(const struct boot_info *boot)
  */
 void userland_enter_first(void)
 {
+    struct task *first;
     if (!init_pid && !desktop_pid) {
         console_printf("[ntclks] no Ring-3 userland loaded\n");
         kernel_idle_loop();
     }
-    userland_enter_task(userland_schedule_from_frame(NULL));
+    /* Load and reserve the first task on the BSP before releasing APs. This
+     * avoids concurrent lazy ELF mapping and gives every AP a stable initial
+     * task table/address space to observe. */
+    first = userland_schedule_from_frame(NULL);
+    userland_enter_task(first);
 }
 
 /**
@@ -719,6 +795,15 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     copy_text(task->path, sizeof(task->path), path);
     sched_set_task_exec_params(task->pid, argc, argv, envc, envp, data, data_len);
     syscall_close_cloexec_files(task);
+
+    /* The int 0x80 handler is still executing with the old process CR3 at
+     * this point.  Freeing that page-table tree while it is active is a
+     * use-after-free: on SMP another CPU can immediately reuse a released
+     * table page, corrupting this CPU's instruction/stack translation before
+     * the interrupt return path installs the replacement CR3.  Continue the
+     * kernel half of exec on the permanent kernel address space first.  The
+     * scheduler will install task->as.cr3 when it next returns to Ring 3. */
+    paging_load_cr3(paging_kernel_cr3());
     address_space_destroy(&old_as);
     arch_fpu_task_init(task->fpu_state);
     console_printf("[ntclks] exec pid=%u path=%s pending cr3=0x%llx\n",

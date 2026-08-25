@@ -140,6 +140,11 @@ config QEMU_MEMORY_MB
     range 128 65536
     default 512
 
+config QEMU_SMP_CPUS
+    int "QEMU virtual CPU count"
+    range 1 64
+    default 4
+
 config QEMU_DISPLAY_WIDTH
     int "QEMU VGA display width"
     range 640 7680

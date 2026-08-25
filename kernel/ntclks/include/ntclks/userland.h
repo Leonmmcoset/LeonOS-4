@@ -13,6 +13,11 @@
 
 struct task;
 
+/* Serialize executable and lazy file-backed page loading.  The storage
+ * backend and ELF parser both contain shared state and are not reentrant. */
+void userland_loader_lock(uint64_t *flags);
+void userland_loader_unlock(uint64_t flags);
+
 /**
  * @brief Set up userspace support and prepare the first user process from boot info.
  */

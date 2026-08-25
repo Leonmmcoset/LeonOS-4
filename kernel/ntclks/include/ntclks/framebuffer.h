@@ -19,6 +19,8 @@ struct framebuffer {
     uint32_t backend;
     uint64_t reservation_start;
     uint32_t reservation_bytes;
+    uint64_t auxiliary_reservation_start;
+    uint32_t auxiliary_reservation_bytes;
     uint8_t bpp;
     uint8_t bytes_per_pixel;
     uint16_t capabilities;

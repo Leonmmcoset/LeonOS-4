@@ -5,6 +5,7 @@
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>
+#include <ntclks/lock.h>
 #include <ntclks/heap.h>
 #include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
@@ -17,6 +18,7 @@
 #include <ntclks/power.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
+#include <ntclks/smp.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/syscall_internal.h>
@@ -3721,6 +3723,45 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return 0;
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_TASK_AFFINITY) {
+        struct leonos_task_affinity request;
+        struct task *caller = sched_current_task();
+        struct task *target;
+        uint32_t target_pid;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_task_affinity *)(uintptr_t)a2;
+        if (request.operation != LEONOS_TASK_AFFINITY_GET &&
+            request.operation != LEONOS_TASK_AFFINITY_SET) {
+            return -LEONOS_EINVAL;
+        }
+        target_pid = request.pid ? request.pid : sched_current_pid();
+        target = sched_find(target_pid);
+        if (!target || target->state == TASK_EXITED) {
+            return -LEONOS_ENOENT;
+        }
+        if (!caller || (caller->pid != target_pid && caller->uid != 0 &&
+                        caller->role != LEONOS_AUTH_ROLE_ADMIN)) {
+            return -LEONOS_EPERM;
+        }
+        if (request.operation == LEONOS_TASK_AFFINITY_GET) {
+            ret = sched_get_task_affinity(target_pid, &request.mask);
+            if (ret < 0) {
+                return ret == -2 ? -LEONOS_ENOENT : -LEONOS_EINVAL;
+            }
+        } else {
+            ret = sched_set_task_affinity(target_pid, request.mask);
+            if (ret < 0) {
+                return ret == -2 ? -LEONOS_ENOENT : -LEONOS_EINVAL;
+            }
+        }
+        request.allowed_mask = sched_all_cpu_mask();
+        *(struct leonos_task_affinity *)(uintptr_t)a2 = request;
+        return 0;
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_REBOOT) {
         power_reboot();
     }
@@ -4616,9 +4657,40 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         info->uptime_ms = time_uptime_ms();
         info->total_memory_kib = mm_total_memory_kib();
         info->free_memory_kib = mm_free_memory_kib();
-        sched_cpu_ticks(&info->busy_ticks, &info->idle_ticks);
         sched_task_counts(&info->task_count, &info->running_tasks,
                           &info->ready_tasks, &info->sleeping_tasks);
+        info->cpu_count = smp_cpu_count();
+        if (info->cpu_count > LEONOS_PERF_MAX_CPUS) {
+            info->cpu_count = LEONOS_PERF_MAX_CPUS;
+        }
+        info->reserved = 0;
+        info->sample_tick = sched_tick_count();
+        info->online_cpu_count = 0;
+        info->reserved2 = 0;
+        {
+            uint64_t busy[LEONOS_PERF_MAX_CPUS];
+            uint64_t idle[LEONOS_PERF_MAX_CPUS];
+            uint32_t current_pids[LEONOS_PERF_MAX_CPUS];
+            uint32_t ready_counts[LEONOS_PERF_MAX_CPUS];
+            sched_cpu_runtime_snapshot(busy, idle, current_pids, ready_counts,
+                                       info->cpu_count);
+            info->busy_ticks = 0;
+            info->idle_ticks = 0;
+            for (uint32_t i = 0; i < LEONOS_PERF_MAX_CPUS; ++i) {
+                const struct smp_cpu_info *cpu = smp_cpu_info(i);
+                info->cpus[i].busy_ticks = i < info->cpu_count ? busy[i] : 0;
+                info->cpus[i].idle_ticks = i < info->cpu_count ? idle[i] : 0;
+                info->cpus[i].online = i < info->cpu_count && smp_cpu_online(i) ? 1U : 0U;
+                info->cpus[i].apic_id = cpu ? cpu->apic_id : 0xffffffffU;
+                info->cpus[i].current_pid = i < info->cpu_count ? current_pids[i] : 0;
+                info->cpus[i].runqueue_length = i < info->cpu_count ? ready_counts[i] : 0;
+                if (info->cpus[i].online) {
+                    ++info->online_cpu_count;
+                    info->busy_ticks += info->cpus[i].busy_ticks;
+                    info->idle_ticks += info->cpus[i].idle_ticks;
+                }
+            }
+        }
         return 0;
     }
 
@@ -4794,8 +4866,9 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         /**
  * @brief The terminal owns the PTY, while its shell and commands inherit it. Permit both the owner and an attached descendant to spawn, but do not accept arbitrary PTY ids from an unrelated process.
  */
-        if (!task || !pty_is_active(spawn->pty_id) ||
-            (!pty_is_owner(spawn->pty_id, sched_current_pid()) &&
+        if (!task ||
+            (spawn->pty_id && !pty_is_active(spawn->pty_id)) ||
+            (spawn->pty_id && !pty_is_owner(spawn->pty_id, sched_current_pid()) &&
              task->pty_id != spawn->pty_id)) {
             return -LEONOS_EINVAL;
         }
@@ -4871,10 +4944,15 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
 void syscall_dispatch_frame(struct trap_frame *frame)
 {
     uint64_t number;
+    uint64_t lock_flags;
     int64_t result;
     if (!frame) {
         return;
     }
+    /* Storage, GUI IPC, startup databases, text layout scratch and several
+     * legacy device services remain globally buffered. User instructions run
+     * in parallel; serialize only their kernel service transition. */
+    kernel_execution_lock_irqsave(&lock_flags);
     number = frame->rax;
     storage_set_io_async_context(true);
     if (number == LINUX_SYS_FORK || number == LINUX_SYS_VFORK) {
@@ -4902,8 +4980,10 @@ void syscall_dispatch_frame(struct trap_frame *frame)
          * blocking read/open/stat semantics and never observe EAGAIN. */
         frame->rax = number;
         frame->rip -= 2u;
+        kernel_execution_unlock_irqrestore(lock_flags);
         sched_sleep_current_until(time_ticks() + 1u);
         return;
     }
     frame->rax = (uint64_t)result;
+    kernel_execution_unlock_irqrestore(lock_flags);
 }

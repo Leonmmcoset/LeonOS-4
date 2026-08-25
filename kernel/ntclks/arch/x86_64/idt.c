@@ -6,6 +6,7 @@
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
 #include <ntclks/gui_ipc.h>
+#include <ntclks/lock.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/syscall.h>
@@ -28,6 +29,11 @@ struct __attribute__((packed)) idt_ptr {
 };
 
 static struct idt_entry idt[256];
+/* Lazy executable pages and user-copy faults share storage/page-cache
+ * scratch state. Serialize that transaction without disabling local timer
+ * interrupts, so another CPU can continue scheduling while one CPU reads a
+ * backing page. */
+static struct kernel_spinlock user_page_fault_lock = KERNEL_SPINLOCK_INIT;
 
 extern void x86_64_lidt(const struct idt_ptr *ptr);
 extern void isr0_stub(void);
@@ -67,6 +73,7 @@ extern void irq0_stub(void);
 extern void irq1_stub(void);
 extern void irq12_stub(void);
 extern void irq32_stub(void);
+extern void irqff_stub(void);
 extern uint64_t x86_64_read_cr2(void);
 
 /**
@@ -88,10 +95,23 @@ static void idt_set(uint8_t vector, void *handler, uint8_t dpl)
 }
 
 /**
+ * Load the shared IDT descriptor on the current CPU.
+ */
+void idt_load(void)
+{
+    struct idt_ptr ptr = {
+        .limit = sizeof(idt) - 1,
+        .base = (uint64_t)(uintptr_t)idt,
+    };
+    x86_64_lidt(&ptr);
+}
+
+/**
  * Idt init.
  */
 void idt_init(void)
 {
+    kernel_spin_init(&user_page_fault_lock);
     idt_set(0, isr0_stub, 0);
     idt_set(1, isr1_stub, 0);
     idt_set(2, isr2_stub, 0);
@@ -130,12 +150,17 @@ void idt_init(void)
     for (uint8_t vector = 0x30; vector < 0x50; ++vector) {
         idt_set(vector, irq32_stub, 0);
     }
+    /* Local APIC uses 0xff as the architectural spurious-interrupt vector.
+     * A valid gate is required even though the handler only acknowledges and
+     * discards the interrupt; otherwise the CPU raises #GP with an IDT error
+     * code of (0xff << 3) | 2. */
+    idt_set(0xff, irqff_stub, 0);
+    /* Syscalls may select a different address space before returning. Use an
+     * interrupt gate so a local timer cannot nest inside that decision and
+     * overwrite current_pid/running_cpu between frame selection and iretq.
+     * DPL=3 still permits Ring-3 int $0x80 entry. */
     idt_set(0x80, isr80_stub, 3);
-    struct idt_ptr ptr = {
-        .limit = sizeof(idt) - 1,
-        .base = (uint64_t)(uintptr_t)idt,
-    };
-    x86_64_lidt(&ptr);
+    idt_load();
 }
 
 /**
@@ -383,19 +408,35 @@ static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_
 struct task *page_fault_dispatch(struct trap_frame *frame)
 {
     uint64_t cr2 = x86_64_read_cr2();
+    uint64_t execution_flags;
+
+    /* A lazy page-in touches the same VFS and device state as a filesystem
+     * syscall.  Share the transaction boundary with syscalls so page faults
+     * cannot reprogram AHCI or mutate filesystem caches midway through an
+     * ordinary operation.  The execution lock is reentrant for a fault that
+     * occurs while the same CPU copies user memory inside a syscall. */
+    kernel_execution_lock_irqsave(&execution_flags);
+    kernel_spin_lock(&user_page_fault_lock);
+
     if (frame && syscall_handle_user_page_fault(cr2, frame->error)) {
         /**
  * @brief Kernel helpers may write a current user's COW buffer while serving a syscall. Its page is now private, so resume the interrupted kernel instruction instead of trying to iret through a kernel-mode trap frame.
  */
         if ((frame->cs & 3ULL) != 3ULL) {
+            kernel_spin_unlock(&user_page_fault_lock);
+            kernel_execution_unlock_irqrestore(execution_flags);
             return NULL;
         }
         /**
  * @brief A lazy file-backed page may require a synchronous FAT read. Switch away after each resolved fault so a newly-starting app cannot hold the desktop in a long run of consecutive page-ins.
  */
+        kernel_spin_unlock(&user_page_fault_lock);
+        kernel_execution_unlock_irqrestore(execution_flags);
         return userland_schedule_from_frame(frame);
     }
     if (!frame) {
+        kernel_spin_unlock(&user_page_fault_lock);
+        kernel_execution_unlock_irqrestore(execution_flags);
         bugcheck_exception(14, 0, 0, 0, 0, 0, 0, cr2);
     }
     console_printf("[ntclks] page fault unhandled cr2=0x%llx error=0x%llx rip=0x%llx cs=0x%llx\n",
@@ -410,8 +451,12 @@ struct task *page_fault_dispatch(struct trap_frame *frame)
                    (unsigned)((frame->error >> 3) & 1u),
                    (unsigned)((frame->error >> 4) & 1u));
     if ((frame->cs & 3ULL) == 3ULL) {
+        kernel_spin_unlock(&user_page_fault_lock);
+        kernel_execution_unlock_irqrestore(execution_flags);
         return abort_user_page_fault_task(frame, cr2);
     }
+    kernel_spin_unlock(&user_page_fault_lock);
+    kernel_execution_unlock_irqrestore(execution_flags);
     bugcheck_trap("Unhandled Page Fault", frame, cr2);
 }
 

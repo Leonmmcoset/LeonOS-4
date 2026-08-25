@@ -6,6 +6,7 @@
 #include <ntclks/framebuffer.h>
 #include <ntclks/mm.h>
 #include <ntclks/paging.h>
+#include <ntclks/lock.h>
 
 static uint64_t total_kib;
 
@@ -32,6 +33,7 @@ static uint32_t reserved_range_count;
  * and is large enough for the supported physical address range while still
  * allowing COW and shared file pages to use the same ownership accounting. */
 static uint16_t page_refs[MM_PAGE_COUNT];
+static struct kernel_spinlock mm_lock = KERNEL_SPINLOCK_INIT;
 
 /**
  * @brief Convert a physical address to its index in the page_refs array.
@@ -349,6 +351,13 @@ static void reserve_boot_ranges(const struct boot_info *boot,
             reserve_bytes(reservation_start, reservation_bytes,
                           "framebuffer-vram");
         }
+        if (fb->auxiliary_reservation_start && fb->auxiliary_reservation_bytes &&
+            (fb->auxiliary_reservation_start != reservation_start ||
+             fb->auxiliary_reservation_bytes != reservation_bytes)) {
+            reserve_bytes(fb->auxiliary_reservation_start,
+                          fb->auxiliary_reservation_bytes,
+                          "framebuffer-device");
+        }
     }
     for (uint32_t i = 0; i < boot->module_count; ++i) {
         reserve_range(boot->modules[i].start, boot->modules[i].end, "module");
@@ -395,6 +404,7 @@ static void print_memory_map(void)
  */
 void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *handoff)
 {
+    kernel_spin_init(&mm_lock);
     total_kib = 0;
     free_range_count = 0;
     reserved_range_count = 0;
@@ -430,11 +440,14 @@ uint64_t mm_total_memory_kib(void)
 uint64_t mm_free_memory_kib(void)
 {
     uint64_t free_kib = 0;
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&mm_lock, &flags);
     for (uint32_t i = 0; i < free_range_count; ++i) {
         if (free_ranges[i].end > free_ranges[i].start) {
             free_kib += (free_ranges[i].end - free_ranges[i].start) / 1024ULL;
         }
     }
+    kernel_spin_unlock_irqrestore(&mm_lock, flags);
     return free_kib;
 }
 
@@ -443,9 +456,12 @@ uint64_t mm_free_memory_kib(void)
  */
 uint64_t mm_alloc_pages(uint32_t page_count)
 {
+    uint64_t result = 0;
+    uint64_t flags;
     if (!page_count) {
         return 0;
     }
+    kernel_spin_lock_irqsave(&mm_lock, &flags);
     uint64_t bytes = (uint64_t)page_count * PAGE_SIZE;
     for (uint32_t i = 0; i < free_range_count; ++i) {
         uint64_t start = align_up(free_ranges[i].start, PAGE_SIZE);
@@ -461,9 +477,11 @@ uint64_t mm_alloc_pages(uint32_t page_count)
         for (uint32_t page = 0; page < page_count; ++page) {
             page_refs[page_index(phys + (uint64_t)page * PAGE_SIZE)] = 1;
         }
-        return phys;
+        result = phys;
+        break;
     }
-    return 0;
+    kernel_spin_unlock_irqrestore(&mm_lock, flags);
+    return result;
 }
 
 /**
@@ -479,6 +497,7 @@ uint64_t mm_alloc_page(void)
  */
 void mm_free_pages(uint64_t phys, uint32_t page_count)
 {
+    uint64_t flags;
     if (!phys || !page_count || (phys & (PAGE_SIZE - 1))) {
         return;
     }
@@ -486,6 +505,7 @@ void mm_free_pages(uint64_t phys, uint32_t page_count)
     if (end <= phys || end > PAGE_ALLOC_LIMIT || overlaps_reserved(phys, end)) {
         return;
     }
+    kernel_spin_lock_irqsave(&mm_lock, &flags);
     for (uint32_t page = 0; page < page_count; ++page) {
         uint64_t current = phys + (uint64_t)page * PAGE_SIZE;
         uint16_t *refs = &page_refs[page_index(current)];
@@ -506,6 +526,7 @@ void mm_free_pages(uint64_t phys, uint32_t page_count)
             (struct phys_range){current, current + PAGE_SIZE, "free"};
         coalesce_free_ranges();
     }
+    kernel_spin_unlock_irqrestore(&mm_lock, flags);
 }
 
 /**
@@ -521,11 +542,14 @@ void mm_free_page(uint64_t phys)
  */
 void mm_retain_page(uint64_t phys)
 {
+    uint64_t flags;
     if (!phys || (phys & (PAGE_SIZE - 1)) || phys >= PAGE_ALLOC_LIMIT) {
         return;
     }
+    kernel_spin_lock_irqsave(&mm_lock, &flags);
     uint16_t *refs = &page_refs[page_index(phys)];
     if (*refs && *refs != UINT16_MAX) {
         ++*refs;
     }
+    kernel_spin_unlock_irqrestore(&mm_lock, flags);
 }

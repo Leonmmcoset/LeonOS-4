@@ -54,6 +54,7 @@ struct acpi_power_state {
 };
 
 static struct acpi_power_state acpi_power;
+static const struct acpi_rsdp *acpi_root_rsdp;
 
 /**
  * Acpi read32.
@@ -523,6 +524,7 @@ void power_init(const struct boot_info *boot)
     for (uint32_t i = 0; i < sizeof(acpi_power); ++i) {
         ((uint8_t *)&acpi_power)[i] = 0;
     }
+    acpi_root_rsdp = 0;
     if (boot && boot->rsdp_addr <= 0xffffffffULL) {
         rsdp = (const struct acpi_rsdp *)(uintptr_t)boot->rsdp_addr;
         if (!acpi_rsdp_valid(rsdp)) {
@@ -539,6 +541,7 @@ void power_init(const struct boot_info *boot)
         console_printf("[ntclks] ACPI RSDP unavailable\n");
         return;
     }
+    acpi_root_rsdp = rsdp;
     fadt = acpi_find_table(rsdp, "FACP");
     if (!fadt || fadt->length < 90U) {
         console_printf("[ntclks] ACPI FADT unavailable\n");
@@ -591,6 +594,11 @@ void power_init(const struct boot_info *boot)
     acpi_power.available = 1;
     console_printf("[ntclks] ACPI S5 shutdown ready pm1a=0x%x pm1b=0x%x\n",
                    acpi_power.pm1a_control, acpi_power.pm1b_control);
+}
+
+const void *power_acpi_find_table(const char signature[4])
+{
+    return acpi_find_table(acpi_root_rsdp, signature);
 }
 
 /**

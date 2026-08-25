@@ -236,6 +236,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
         console_printf("[ntclks] kernel debug tool finished; continuing normal startup\n");
     }
     userland_init(&boot);
+    /* All initial task objects are now present. APs may enter the shared
+     * scheduler without racing the bootstrap task construction above. */
+    smp_start_aps();
     sched_dump();
     console_printf("[ntclks] boot complete: version=%s root=/ fs=%s desktop=desktop.elf\n",
                    system->kernel_version, storage_root_filesystem_name());

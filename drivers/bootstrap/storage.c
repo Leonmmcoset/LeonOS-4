@@ -4,9 +4,11 @@
 #include <ntclks/osmlayer.h>
 #include <ntclks/pci.h>
 #include <ntclks/sched.h>
+#include <ntclks/smp.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
+#include <ntclks/lock.h>
 
 #define ATA_CLASS_MASS_STORAGE 0x01u
 #define ATA_SUBCLASS_SATA 0x06u
@@ -575,6 +577,16 @@ static uint32_t storage_get_u32(const uint8_t *p)
 
 void storage_set_io_async_context(bool enabled)
 {
+    /* The asynchronous path stores a single pending command, scratch DMA
+     * buffer and owner PID globally.  It is safe only while there is one
+     * possible caller.  On SMP every operation is completed synchronously
+     * inside its storage transaction; a page fault must never inherit or
+     * overwrite another CPU's resumable command state. */
+    if (smp_cpu_count() > 1u) {
+        storage_io_async_context = false;
+        storage_io_write_started = true;
+        return;
+    }
     storage_io_async_context = enabled;
     storage_io_write_started = false;
 }
@@ -606,7 +618,14 @@ void storage_release_task_io(uint32_t pid)
 
 static bool storage_async_can_yield(void)
 {
-    return storage_io_async_context && !storage_io_write_started;
+    /* AHCI command descriptors, DMA staging buffers, filesystem caches and
+     * the pending-command record are still single-instance state.  Allowing
+     * a command to survive a syscall yield lets another CPU reuse that state
+     * before the original instruction is retried.  Keep the fast retry mode
+     * for the single-CPU legacy path, but use a fully synchronous transaction
+     * once SMP is active. */
+    return storage_io_async_context && !storage_io_write_started &&
+           smp_cpu_count() <= 1u;
 }
 
 static void storage_begin_mutation(void)
@@ -3948,7 +3967,7 @@ int storage_resolve_path(const char *cwd, const char *input, char *out, uint32_t
     return 0;
 }
 
-int storage_lookup_path(const char *path, struct storage_node *out)
+static int storage_lookup_path_unlocked(const char *path, struct storage_node *out)
 {
     char resolved[LEONOS_FS_PATH_LEN];
     char backend_path[LEONOS_FS_PATH_LEN];
@@ -4052,7 +4071,21 @@ int storage_lookup_path(const char *path, struct storage_node *out)
     return 0;
 }
 
-int storage_read_node_cursor(const struct storage_node *node, uint64_t offset,
+int storage_lookup_path(const char *path, struct storage_node *out)
+{
+    int ret;
+    uint64_t flags;
+    /* Filesystem metadata, caches, the active-volume selector and the
+     * polled AHCI command path are shared by all CPUs.  Use the reentrant
+     * execution transaction shared with syscalls and page faults, so lazy
+     * ELF loading cannot observe a write transaction halfway through. */
+    kernel_execution_lock_irqsave(&flags);
+    ret = storage_lookup_path_unlocked(path, out);
+    kernel_execution_unlock_irqrestore(flags);
+    return ret;
+}
+
+static int storage_read_node_cursor_unlocked(const struct storage_node *node, uint64_t offset,
                              void *buf, uint32_t len, uint32_t *out_read,
                              struct storage_read_cursor *cursor)
 {
@@ -4251,7 +4284,19 @@ int storage_read_node(const struct storage_node *node, uint64_t offset,
     return storage_read_node_cursor(node, offset, buf, len, out_read, NULL);
 }
 
-int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
+int storage_read_node_cursor(const struct storage_node *node, uint64_t offset,
+                             void *buf, uint32_t len, uint32_t *out_read,
+                             struct storage_read_cursor *cursor)
+{
+    int ret;
+    uint64_t flags;
+    kernel_execution_lock_irqsave(&flags);
+    ret = storage_read_node_cursor_unlocked(node, offset, buf, len, out_read, cursor);
+    kernel_execution_unlock_irqrestore(flags);
+    return ret;
+}
+
+static int storage_readdir_node_unlocked(const struct storage_node *node, uint64_t *cursor,
                          struct leonos_dir_entry *entry)
 {
     struct storage_volume *old_volume = 0;
@@ -4306,6 +4351,17 @@ int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
     if (ret == -2) {
         return 0;
     }
+    return ret;
+}
+
+int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
+                         struct leonos_dir_entry *entry)
+{
+    int ret;
+    uint64_t flags;
+    kernel_execution_lock_irqsave(&flags);
+    ret = storage_readdir_node_unlocked(node, cursor, entry);
+    kernel_execution_unlock_irqrestore(flags);
     return ret;
 }
 

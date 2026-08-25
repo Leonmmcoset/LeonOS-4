@@ -120,6 +120,9 @@ struct task_process_state {
     uint32_t flags;
     uint64_t cpu_ticks;
     int32_t priority;
+    /* CPUs on which this task may execute. A zero mask is treated as all
+     * discovered CPUs for compatibility with older task initializers. */
+    uint64_t affinity_mask;
 };
 
 struct task_address_space_state {
@@ -197,6 +200,7 @@ struct task {
             uint32_t flags;
             uint64_t cpu_ticks;
             int32_t priority;
+            uint64_t affinity_mask;
         };
     };
     union {
@@ -268,6 +272,7 @@ struct task {
     };
     struct trap_frame frame;
     uint8_t fpu_state[512] __attribute__((aligned(16)));
+    uint32_t running_cpu;
 };
 
 struct task_snapshot_info {
@@ -286,6 +291,7 @@ struct task_snapshot_info {
     uint64_t wake_tick;
     uint64_t entry;
     uint64_t cr3;
+    uint64_t affinity_mask;
     char name[SCHED_TASK_NAME_LEN];
     char username[LEONOS_AUTH_USERNAME_LEN];
 };
@@ -354,6 +360,8 @@ void sched_release_task_resources(struct task *task);
  * @brief Advance scheduler time and preempt or wake tasks as needed.
  */
 void sched_on_tick(void);
+/** Account a local APIC tick without advancing the BSP's global clock. */
+void sched_on_cpu_tick(void);
 /**
  * @brief Return the number of scheduler ticks since boot.
  */
@@ -363,6 +371,14 @@ void sched_yield_current(void);
  * @brief Report the total busy and idle ticks accumulated so far.
  */
 void sched_cpu_ticks(uint64_t *busy_ticks, uint64_t *idle_ticks);
+/** Copy the accumulated busy and idle tick counters for each CPU. */
+void sched_cpu_ticks_per_cpu(uint64_t *busy_ticks, uint64_t *idle_ticks,
+                             uint32_t capacity);
+/** Copy a coherent per-CPU runtime snapshot, including current pid and
+ * eligible ready-queue counts. */
+void sched_cpu_runtime_snapshot(uint64_t *busy_ticks, uint64_t *idle_ticks,
+                                uint32_t *current_pids, uint32_t *ready_counts,
+                                uint32_t capacity);
 /**
  * @brief Report the current task totals: all, running, ready, and sleeping.
  */
@@ -372,6 +388,9 @@ void sched_task_counts(uint32_t *task_count, uint32_t *running_tasks,
  * @brief Return the pid of the task currently running on this CPU.
  */
 uint32_t sched_current_pid(void);
+uint64_t sched_all_cpu_mask(void);
+int sched_get_task_affinity(uint32_t pid, uint64_t *mask);
+int sched_set_task_affinity(uint32_t pid, uint64_t mask);
 struct task *sched_current_task(void);
 struct task *sched_find(uint32_t pid);
 struct task *sched_find_by_name(const char *name);
@@ -380,7 +399,13 @@ struct task *sched_find_by_path_basename(const char *basename);
 struct task *sched_find_window_server(void);
 /** Returns true when a CWD, file, image, or mapping references a volume. */
 bool sched_volume_in_use(uint32_t volume_id);
+/** Save this CPU's user trap frame and release its current task when runnable. */
+bool sched_capture_current_user_frame(const struct trap_frame *frame);
+/** Release this CPU's ownership after its current task was marked EXITED. */
+void sched_quiesce_exited_current(void);
 struct task *sched_select_next_user(void);
+/* Reclaim the task just saved by this CPU when no other task is runnable. */
+struct task *sched_reclaim_current_user(void);
 struct trap_frame *sched_task_frame(struct task *task);
 /**
  * @brief Return the page-table root (CR3 value) of task.

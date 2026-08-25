@@ -20,5 +20,9 @@ uint64_t kernel_irq_save(void);
 void kernel_irq_restore(uint64_t flags);
 void kernel_spin_lock_irqsave(struct kernel_spinlock *lock, uint64_t *flags);
 void kernel_spin_unlock_irqrestore(struct kernel_spinlock *lock, uint64_t flags);
+/* Serializes non-reentrant kernel service paths while user code runs in
+ * parallel on separate CPUs. Never hold it across a scheduler wait. */
+void kernel_execution_lock_irqsave(uint64_t *flags);
+void kernel_execution_unlock_irqrestore(uint64_t flags);
 
 #endif

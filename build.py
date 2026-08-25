@@ -370,6 +370,36 @@ def config_string(values: dict[str, str], key: str) -> str:
     return value.replace('\\"', '"').replace("\\\\", "\\")
 
 
+def resolve_qemu_ovmf_path(configured: str) -> Path | None:
+    """Resolve OVMF across Debian/Ubuntu and Arch/CachyOS layouts."""
+    candidates: list[Path] = []
+    if configured:
+        configured_path = Path(configured).expanduser()
+        candidates.append(
+            configured_path if configured_path.is_absolute()
+            else ROOT / configured_path
+        )
+    candidates.extend((
+        ROOT / "buildsystem/firmware/OVMF.fd",
+        ROOT / "build/firmware/OVMF.fd",
+        Path("/usr/share/ovmf/OVMF.fd"),
+        Path("/usr/share/edk2/x64/OVMF.4m.fd"),
+        Path("/usr/share/OVMF/OVMF_CODE_4M.fd"),
+        Path("/usr/share/qemu/OVMF.fd"),
+    ))
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            if candidate.is_file() and candidate.stat().st_size >= 1024 * 1024:
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
 def ensure_parent(context: ActionContext, output: Path, text: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     previous = output.read_text(encoding="utf-8") if output.exists() else None
@@ -456,6 +486,7 @@ def add_link(
 
 def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = False, iso: bool = False) -> tuple[str, ...]:
     memory = config_int(values, "CONFIG_QEMU_MEMORY_MB")
+    cpus = max(1, min(64, config_int(values, "CONFIG_QEMU_SMP_CPUS", 1)))
     width = config_int(values, "CONFIG_QEMU_DISPLAY_WIDTH")
     height = config_int(values, "CONFIG_QEMU_DISPLAY_HEIGHT")
     command = ["qemu-system-x86_64"]
@@ -465,10 +496,11 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
         # QEMU's host CPU model is valid only with KVM/HVF.  TCG uses max so
         # the smoke tests remain runnable on hosts without hardware access.
         command += ["-cpu", "max"]
-    command += ["-machine", "q35", "-m", f"{memory}M"]
-    ovmf = config_string(values, "CONFIG_QEMU_OVMF_PATH")
-    if ovmf:
-        command += ["-bios", ovmf]
+    command += ["-machine", "q35", "-m", f"{memory}M", "-smp", str(cpus)]
+    configured_ovmf = config_string(values, "CONFIG_QEMU_OVMF_PATH")
+    ovmf = resolve_qemu_ovmf_path(configured_ovmf)
+    if ovmf is not None:
+        command += ["-bios", str(ovmf)]
     command += ["-serial", "stdio"]
     command += ["-device", f"VGA,xres={width},yres={height}"]
     if debug or iso:
@@ -2575,12 +2607,21 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             if not cmd_pids:
                 raise BuildFailure("QMP cmd pipeline test did not identify the cmd process")
             cmd_pid = cmd_pids[-1]
-            forked_children = re.findall(
-                rf"\[ntclks\] fork parent={re.escape(cmd_pid)} child=(\d+) ",
+            fork_edges = re.findall(
+                r"\[ntclks\] fork parent=(\d+) child=(\d+) ",
                 serial_text,
             )
+            descendants = {cmd_pid}
+            changed = True
+            while changed:
+                changed = False
+                for parent_pid, child_pid in fork_edges:
+                    if parent_pid in descendants and child_pid not in descendants:
+                        descendants.add(child_pid)
+                        changed = True
             stage_pids = [
-                pid for pid in forked_children
+                pid for pid in descendants
+                if pid != cmd_pid
                 if f"[ntclks] exec pid={pid} path=/programs/busybox/busybox.elf" in serial_text
             ]
             if len(stage_pids) < 2:

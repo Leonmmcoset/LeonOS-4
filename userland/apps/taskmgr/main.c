@@ -9,7 +9,7 @@
 #include <leonos/ui.h>
 
 #define TASKMGR_W 720
-#define TASKMGR_H 420
+#define TASKMGR_H 560
 #define TASKMGR_MAX_W LEONOS_GUI_MAX_WINDOW_WIDTH
 #define TASKMGR_MAX_H LEONOS_GUI_MAX_WINDOW_HEIGHT
 #define TASKMGR_DETAILS_W 430
@@ -60,9 +60,14 @@ static uint32_t previous_task_count;
 static uint64_t task_tick;
 static uint64_t previous_task_tick;
 static uint32_t task_cpu_percent[LEONOS_TASK_MAX];
+static uint32_t previous_task_cpu_percent[LEONOS_TASK_MAX];
 static struct leonos_perf_info perf_info;
 static uint64_t last_busy_ticks;
 static uint64_t last_idle_ticks;
+static uint64_t last_cpu_busy_ticks[LEONOS_PERF_MAX_CPUS];
+static uint64_t last_cpu_idle_ticks[LEONOS_PERF_MAX_CPUS];
+static uint32_t cpu_percent_by_core[LEONOS_PERF_MAX_CPUS];
+static uint8_t cpu_snapshot_valid;
 static uint32_t cpu_percent;
 static uint32_t mem_percent;
 static uint8_t perf_valid;
@@ -302,11 +307,18 @@ static void refresh_tasks(void)
 {
     uint64_t next_tick = 0;
     uint64_t tick_delta = 0;
+    uint64_t sample_total;
     int count;
     count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &next_tick);
     task_count = count > 0 ? (uint32_t)count : 0;
-    if (previous_task_tick && next_tick > previous_task_tick) {
-        tick_delta = next_tick - previous_task_tick;
+    /* cpu_ticks is charged by every CPU's local scheduling tick.  The BSP
+     * wall-clock tick is not necessarily phase- or frequency-identical to
+     * the AP LAPIC ticks, so `wall_ticks * cpu_count` can report a runnable
+     * process as 0% on SMP.  Use the aggregate accounting denominator from
+     * the same per-CPU sources that charged the task instead. */
+    sample_total = perf_info.busy_ticks + perf_info.idle_ticks;
+    if (previous_task_tick && sample_total > previous_task_tick) {
+        tick_delta = sample_total - previous_task_tick;
     }
     for (uint32_t i = 0; i < task_count; ++i) {
         int previous = task_index_by_pid(previous_tasks, previous_task_count, tasks[i].pid);
@@ -314,20 +326,25 @@ static void refresh_tasks(void)
         if (previous >= 0 && tasks[i].cpu_ticks >= previous_tasks[previous].cpu_ticks) {
             used_ticks = tasks[i].cpu_ticks - previous_tasks[previous].cpu_ticks;
         }
-        task_cpu_percent[i] = tick_delta
-                                  ? (uint32_t)((used_ticks * 100ULL) / tick_delta)
-                                  : 0;
+        if (tick_delta) {
+            task_cpu_percent[i] = (uint32_t)((used_ticks * 100ULL) / tick_delta);
+        } else if (previous >= 0) {
+            task_cpu_percent[i] = previous_task_cpu_percent[previous];
+        } else {
+            task_cpu_percent[i] = 0;
+        }
         if (task_cpu_percent[i] > 100U) {
             task_cpu_percent[i] = 100U;
         }
     }
     rebuild_process_tree_items();
     previous_task_count = task_count;
-    previous_task_tick = next_tick;
+    previous_task_tick = sample_total;
     for (uint32_t i = 0; i < task_count; ++i) {
+        previous_task_cpu_percent[i] = task_cpu_percent[i];
         previous_tasks[i] = tasks[i];
     }
-    task_tick = next_tick;
+    task_tick = sample_total;
 }
 
 static void refresh_startup_users(void)
@@ -410,6 +427,7 @@ static void refresh_performance(void)
     uint64_t new_total;
     uint64_t delta_total;
     uint64_t delta_busy;
+    uint32_t cpu_count;
     if (leonos_perf_info(&next) < 0) {
         perf_valid = 0;
         set_status(T("Performance data unavailable", "性能数据不可用"));
@@ -421,7 +439,7 @@ static void refresh_performance(void)
         delta_total = new_total - old_total;
         delta_busy = next.busy_ticks >= last_busy_ticks ? next.busy_ticks - last_busy_ticks : 0;
         cpu_percent = delta_total ? (uint32_t)((delta_busy * 100ULL) / delta_total) : 0;
-    } else {
+    } else if (!cpu_snapshot_valid) {
         cpu_percent = new_total ? (uint32_t)((next.busy_ticks * 100ULL) / new_total) : 0;
     }
     if (cpu_percent > 100) {
@@ -436,16 +454,47 @@ static void refresh_performance(void)
     if (mem_percent > 100) {
         mem_percent = 100;
     }
+    cpu_count = next.cpu_count;
+    if (cpu_count > LEONOS_PERF_MAX_CPUS) {
+        cpu_count = LEONOS_PERF_MAX_CPUS;
+    }
+    for (uint32_t i = 0; i < LEONOS_PERF_MAX_CPUS; ++i) {
+        uint64_t old_cpu_total = last_cpu_busy_ticks[i] + last_cpu_idle_ticks[i];
+        uint64_t new_cpu_total = next.cpus[i].busy_ticks + next.cpus[i].idle_ticks;
+        uint64_t cpu_delta_total;
+        uint64_t cpu_delta_busy;
+        if (i >= cpu_count || !next.cpus[i].online) {
+            cpu_percent_by_core[i] = 0;
+        } else if (cpu_snapshot_valid && old_cpu_total && new_cpu_total > old_cpu_total) {
+            cpu_delta_total = new_cpu_total - old_cpu_total;
+            cpu_delta_busy = next.cpus[i].busy_ticks >= last_cpu_busy_ticks[i]
+                                 ? next.cpus[i].busy_ticks - last_cpu_busy_ticks[i] : 0;
+            cpu_percent_by_core[i] = cpu_delta_total
+                                         ? (uint32_t)((cpu_delta_busy * 100ULL) / cpu_delta_total)
+                                         : 0;
+        } else if (!cpu_snapshot_valid) {
+            cpu_percent_by_core[i] = new_cpu_total
+                                         ? (uint32_t)((next.cpus[i].busy_ticks * 100ULL) /
+                                                      new_cpu_total)
+                                         : 0;
+        }
+        if (cpu_percent_by_core[i] > 100) {
+            cpu_percent_by_core[i] = 100;
+        }
+        last_cpu_busy_ticks[i] = next.cpus[i].busy_ticks;
+        last_cpu_idle_ticks[i] = next.cpus[i].idle_ticks;
+    }
     perf_info = next;
     last_busy_ticks = next.busy_ticks;
     last_idle_ticks = next.idle_ticks;
+    cpu_snapshot_valid = 1;
     perf_valid = 1;
 }
 
 static void refresh_all(void)
 {
-    refresh_tasks();
     refresh_performance();
+    refresh_tasks();
     if (active_tab == TASKMGR_TAB_STARTUP) {
         refresh_startup();
     }
@@ -706,8 +755,13 @@ static void draw_performance(struct leonos_ui_surface *ui)
 {
     char value[64];
     char value2[64];
+    char core_label[24];
     uint32_t y = 80;
     uint32_t bar_w = view_w > 280 ? view_w - 188 : 180;
+    uint32_t cpu_count = perf_info.cpu_count;
+    uint32_t columns;
+    uint32_t rows;
+    uint32_t cpu_start_y;
     uint64_t used_kib = perf_info.total_memory_kib >= perf_info.free_memory_kib
                             ? perf_info.total_memory_kib - perf_info.free_memory_kib
                             : 0;
@@ -732,7 +786,44 @@ static void draw_performance(struct leonos_ui_surface *ui)
     leonos_ui_text(ui, view_w > 128 ? view_w - 112 : 220, y + 22, value,
                    LEONOS_UI_BLACK, LEONOS_UI_WHITE);
 
+    if (cpu_count > LEONOS_PERF_MAX_CPUS) {
+        cpu_count = LEONOS_PERF_MAX_CPUS;
+    }
+    columns = cpu_count > 16 ? 4 : (cpu_count > 8 ? 3 : 2);
+    if (cpu_count == 1) {
+        columns = 1;
+    }
+    rows = cpu_count ? (cpu_count + columns - 1) / columns : 1;
     y += 58;
+    leonos_ui_text(ui, 24, y, T("Per-core usage", "每核占用"),
+                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    cpu_start_y = y + 22;
+    {
+        uint32_t available_w = view_w > 48 ? view_w - 48 : view_w;
+        uint32_t column_w = columns ? available_w / columns : available_w;
+        for (uint32_t i = 0; i < cpu_count; ++i) {
+            uint32_t column = i % columns;
+            uint32_t row = i / columns;
+            uint32_t x = 24 + column * column_w;
+            uint32_t row_y = cpu_start_y + row * 34;
+            uint32_t progress_x = x + 48;
+            uint32_t progress_w = column_w > 104 ? column_w - 104 : 24;
+            uint32_t percent_x = x + column_w - 48;
+            uint32_t pos = 0;
+            core_label[0] = 0;
+            append_text(core_label, &pos, sizeof(core_label), "CPU ");
+            append_dec(core_label, &pos, sizeof(core_label), i);
+            leonos_ui_text_clipped(ui, x, row_y + 2, 46, core_label,
+                                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+            leonos_ui_progress(ui, progress_x, row_y, progress_w, 18,
+                               cpu_percent_by_core[i], 100);
+            format_percent(value, sizeof(value), cpu_percent_by_core[i]);
+            leonos_ui_text_clipped(ui, percent_x, row_y + 2, 46, value,
+                                   LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+        }
+    }
+    y = cpu_start_y + rows * 34 + 10;
+
     format_kib(value, sizeof(value), perf_info.total_memory_kib);
     draw_perf_text_line(ui, 24, y, T("Total memory:", "总内存:"), value);
     y += 22;

@@ -21,6 +21,8 @@ void arch_init(void);
  * @brief Install GDT/TSS and user page tables so ring-3 code can run; kernel_stack_top becomes the ring-0 stack used when an interrupt arrives.
  */
 void arch_userland_init(void *kernel_stack_top);
+/** Initialize architecture tables on an application processor. */
+void arch_ap_init(uint32_t cpu_index, void *kernel_stack_top);
 /**
  * @brief Enable x87/SSE and capture the default FPU state used for new tasks.
  */

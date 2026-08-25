@@ -323,6 +323,7 @@ struct leonos_task_info {
     uint64_t wake_tick;
     uint64_t entry;
     uint64_t cr3;
+    uint64_t affinity_mask;
     char name[LEONOS_TASK_NAME_LEN];
     char username[32];
 };

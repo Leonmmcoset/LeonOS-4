@@ -392,6 +392,7 @@ IRQ_STUB irq0_stub 0x20
 IRQ_STUB irq1_stub 0x21
 IRQ_STUB irq12_stub 0x2c
 IRQ_STUB irq32_stub 0x40
+IRQ_STUB irqff_stub 0xff
 
 /* int 0x80 entry: push a trap frame, dispatch the syscall, then switch tasks or resume. */
 .global isr80_stub

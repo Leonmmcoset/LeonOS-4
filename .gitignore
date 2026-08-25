@@ -1,4 +1,5 @@
 build/
+buildsystem/firmware/
 buildsystem/state/*
 !buildsystem/state/build_number.txt
 buildsystem/logs/

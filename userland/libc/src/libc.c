@@ -1759,6 +1759,29 @@ int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint
     return ret < 0 ? ret : (int)snapshot.count;
 }
 
+int leonos_task_affinity_get(uint32_t pid, uint64_t *mask)
+{
+    struct leonos_task_affinity request = {
+        .pid = pid,
+        .operation = LEONOS_TASK_AFFINITY_GET,
+    };
+    int ret = ioctl(3, LEONOS_IOCTL_TASK_AFFINITY, &request);
+    if (ret == 0 && mask) {
+        *mask = request.mask;
+    }
+    return ret;
+}
+
+int leonos_task_affinity_set(uint32_t pid, uint64_t mask)
+{
+    struct leonos_task_affinity request = {
+        .pid = pid,
+        .operation = LEONOS_TASK_AFFINITY_SET,
+        .mask = mask,
+    };
+    return ioctl(3, LEONOS_IOCTL_TASK_AFFINITY, &request);
+}
+
 int leonos_task_kill(uint32_t pid)
 {
     return ioctl(3, LEONOS_GUI_IOCTL_TASK_KILL, (void *)(uintptr_t)pid);

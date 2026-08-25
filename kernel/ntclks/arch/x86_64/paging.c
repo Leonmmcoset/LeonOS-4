@@ -127,6 +127,11 @@ void paging_init_user_identity(void)
     x86_64_load_cr3((uint64_t)(uintptr_t)kernel_pml4);
 }
 
+void paging_init_cpu(void)
+{
+    paging_enable_nx();
+}
+
 /**
  * Paging kernel cr3.
  * @return The value or status produced by the operation.

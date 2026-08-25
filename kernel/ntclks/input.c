@@ -3,20 +3,25 @@
  * Exposes bounded producer/consumer operations to interrupt and user paths.
  */
 #include <ntclks/input.h>
+#include <ntclks/lock.h>
 
 #define INPUT_QUEUE_CAP 512
 
 static struct input_event queue[INPUT_QUEUE_CAP];
 static volatile uint32_t head;
 static volatile uint32_t tail;
+static struct kernel_spinlock input_lock = KERNEL_SPINLOCK_INIT;
 
 /**
  * @brief Reset the keyboard/pointer event queue to empty.
  */
 void input_init(void)
 {
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&input_lock, &flags);
     head = 0;
     tail = 0;
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
 /**
@@ -47,6 +52,7 @@ static void push_event(const struct input_event *event)
  */
 void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t buttons)
 {
+    uint64_t flags;
     struct input_event event = {
         .type = INPUT_EVENT_MOUSE,
         .x = x,
@@ -55,7 +61,9 @@ void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t butt
         .dy = dy,
         .buttons = buttons,
     };
+    kernel_spin_lock_irqsave(&input_lock, &flags);
     push_event(&event);
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
 /**
@@ -63,6 +71,7 @@ void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t butt
  */
 void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons)
 {
+    uint64_t flags;
     struct input_event event = {
         .type = INPUT_EVENT_MOUSE_WHEEL,
         .x = x,
@@ -70,7 +79,9 @@ void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons
         .dy = wheel,
         .buttons = buttons,
     };
+    kernel_spin_lock_irqsave(&input_lock, &flags);
     push_event(&event);
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
 /**
@@ -78,12 +89,15 @@ void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons
  */
 void input_push_key(uint8_t keycode, uint8_t pressed)
 {
+    uint64_t flags;
     struct input_event event = {
         .type = INPUT_EVENT_KEYBOARD,
         .keycode = keycode,
         .pressed = pressed,
     };
+    kernel_spin_lock_irqsave(&input_lock, &flags);
     push_event(&event);
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
 /**
@@ -91,10 +105,17 @@ void input_push_key(uint8_t keycode, uint8_t pressed)
  */
 int input_pop(struct input_event *event)
 {
-    if (!event || tail == head) {
+    uint64_t flags;
+    int available = 0;
+    if (!event) {
         return 0;
     }
-    *event = queue[tail];
-    tail = (tail + 1) % INPUT_QUEUE_CAP;
-    return 1;
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    if (tail != head) {
+        *event = queue[tail];
+        tail = (tail + 1) % INPUT_QUEUE_CAP;
+        available = 1;
+    }
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    return available;
 }

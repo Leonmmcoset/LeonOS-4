@@ -10,6 +10,7 @@
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/syscall_internal.h>
+#include <ntclks/userland.h>
 
 #define PAGE_SIZE 4096ULL
 #define LINUX_PROT_READ TASK_VMA_PROT_READ
@@ -666,7 +667,10 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
         return 0;
     }
     {
+        uint64_t loader_flags;
+        userland_loader_lock(&loader_flags);
         int ret = task_map_file_vma_page(task, vma, page);
+        userland_loader_unlock(loader_flags);
         if (ret < 0) {
             console_printf("[ntclks] lazy file map failed pid=%u page=0x%llx "
                            "fault=0x%llx error=0x%llx vma=0x%llx-0x%llx "

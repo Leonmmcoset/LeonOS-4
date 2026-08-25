@@ -51,6 +51,12 @@ struct address_space {
  */
 void paging_init_user_identity(void);
 /**
+ * Enable per-CPU paging features required by user address spaces.
+ * The NXE bit lives in an MSR and must be configured independently on every
+ * AP; it is not inherited from the BSP when an AP starts.
+ */
+void paging_init_cpu(void);
+/**
  * @brief Return the physical address of the kernel page-table root (the CR3 value).
  */
 uint64_t paging_kernel_cr3(void);
