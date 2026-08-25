@@ -390,7 +390,23 @@ isr14_stub:
 
 IRQ_STUB irq0_stub 0x20
 IRQ_STUB irq1_stub 0x21
+/* Masked legacy PIC lines can still produce spurious IRQs (notably IRQ7,
+ * vector 0x27) while IOAPIC routing is enabled. Keep every legacy vector
+ * valid so it cannot turn into a #GP during an iretq into user mode. */
+IRQ_STUB irq2_stub 0x22
+IRQ_STUB irq3_stub 0x23
+IRQ_STUB irq4_stub 0x24
+IRQ_STUB irq5_stub 0x25
+IRQ_STUB irq6_stub 0x26
+IRQ_STUB irq7_stub 0x27
+IRQ_STUB irq8_stub 0x28
+IRQ_STUB irq9_stub 0x29
+IRQ_STUB irq10_stub 0x2a
+IRQ_STUB irq11_stub 0x2b
 IRQ_STUB irq12_stub 0x2c
+IRQ_STUB irq13_stub 0x2d
+IRQ_STUB irq14_stub 0x2e
+IRQ_STUB irq15_stub 0x2f
 IRQ_STUB irq32_stub 0x40
 IRQ_STUB irqff_stub 0xff
 

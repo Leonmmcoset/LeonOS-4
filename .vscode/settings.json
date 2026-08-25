@@ -52,6 +52,7 @@
         "user",
         "third-party",
         "mouse",
-        "build"
+        "build",
+        "boot"
     ]
 }
