@@ -37,6 +37,7 @@ static const struct builtin_program builtin_programs[] = {
     {"run", "/system/apps/run/run.elf"},
     {"osver", "/system/apps/osver/osver.elf"},
     {"memtest", "/programs/memtest/memtest.elf"},
+    {"smptest", "/programs/smptest/smptest.elf"},
     {"ping", "/programs/ping/ping.elf"},
     {"netctl", "/system/apps/netctl/netctl.elf"},
     {"serviced", "/system/apps/serviced/serviced.elf"},
