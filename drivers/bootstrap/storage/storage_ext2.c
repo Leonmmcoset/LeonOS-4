@@ -1,4 +1,4 @@
-/* ext2 implementation is included by storage.c after the AHCI and common
+/* ext2 implementation is included by the storage facade after the AHCI and common
  * storage helpers. It deliberately supports the classic on-disk format only:
  * 1/2/4 KiB blocks, 128+ byte inodes, direct and indirect block pointers,
  * and no journal, extents, encryption, or metadata checksums. */

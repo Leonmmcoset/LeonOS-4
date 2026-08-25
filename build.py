@@ -984,10 +984,21 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     loader_sources = collect("boot/loader/**/*.c", "boot/loader/**/*.S")
     kernel_sources = collect("kernel/ntclks/**/*.c", "kernel/ntclks/**/*.S", "kernel/ostui/**/*.c", "drivers/bootstrap/**/*.c", "drivers/bootstrap/**/*.S")
+    # storage.c is a facade for the private storage modules.  The modules are
+    # included into that one translation unit and must not also be compiled as
+    # independent kernel objects (many intentionally begin/end at function
+    # boundaries and share private state).
+    storage_facade = ROOT / "drivers/bootstrap/storage.c"
+    storage_modules = collect("drivers/bootstrap/storage/*.c")
+    kernel_sources = [source for source in kernel_sources
+                      if source not in storage_modules]
     rust_sources = collect("middlelayer/osmlayer/src/**/*.rs")
     kernel_objects: list[Path] = []
     for source in kernel_sources:
         implicit: list[Path] = [autoconf]
+        if source == storage_facade:
+            implicit += [ROOT / "drivers/bootstrap/storage/storage_internal.h",
+                         *storage_modules]
         if source == ROOT / "drivers/bootstrap/boot_splash.c":
             implicit.append(boot_logo)
         if source == ROOT / "kernel/ntclks/version.c":
