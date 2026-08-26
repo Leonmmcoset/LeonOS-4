@@ -1,5 +1,48 @@
 #!/usr/bin/env python3
-"""LeonOS BuildSystem: the only supported build entry point."""
+"""LeonOS BuildSystem: the only supported build entry point.
+
+开发者导航（先读这里，再改代码）
+================================
+``build.py`` 只负责把配置和源码组织成 BuildGraph；真正执行编译、链接和
+文件操作的是 ``buildsystem/core`` 中的 runner。新增功能时，请按下面的归属
+修改，避免把业务逻辑塞进 ``main``：
+
+* **新增或修改配置项**：先改 ``Kconfig``、``configs/default.conf`` 或
+  ``Kconfig.components``；组件开关和依赖写在 ``configs/components.toml``。
+  运行 ``python3 build.py run config-sync`` 生成头文件，
+  本文件中的 ``parse_kconfig`` 只做读取和预设覆盖，不要在这里硬编码默认值。
+* **新增内核、驱动或通用 C/汇编源文件**：把源文件放到对应目录，然后在
+  ``build_graph`` 的“源文件收集/compile targets”区域加入 ``collect(...)``、
+  ``add_compile(...)`` 和依赖关系；需要导出头文件时，同时增加 staging target。
+* **新增用户程序**：优先在 ``configs/components.toml`` 声明 component，再把
+  程序放到 ``userland/apps/<name>``。只有特殊链接参数、生成步骤或第三方源码
+  才需要在 ``build_graph`` 中增加专用 target；普通 C 程序会由
+  ``user_app_sources`` 自动收集。
+* **接入第三方库/移植包**：在 ``build_graph`` 中为源码、port 目录、配置文件、
+  stamp 和最终 ELF/库建立独立 target，并把所有输入写进 ``inputs`` 或
+  ``implicit_inputs``，这样增量构建和 ``why/affected`` 才准确。不要直接在
+  ``main`` 里调用 make/cmake。
+* **修改启动盘、VMDK/ISO 或发布包**：查找 ``make_iso``、``make_release`` 以及
+  它们上游的 staging targets；新增资源先放入 ``SYSTEM_FILES`` 或对应资源列表，
+  再用 ``add_copy``/生成 target 描述来源和目标。
+* **新增 QEMU 设备或运行参数**：只改 ``qemu_command``，配置来源放在 Kconfig；
+  需要可测试的启动流程则在 ``qmp_test``/``qmp_test_suite`` 增加测试 target，
+  不要在编译 target 中启动 QEMU。
+* **新增构建测试**：在 ``build_graph`` 创建 ``test-*`` target，并把它加入
+  ``BUILD_NUMBER_EXEMPT_TARGETS``（若测试不应递增 build number），再在
+  ``parser`` 的 ``test.item`` choices 和 ``main`` 的分发逻辑登记命令。
+* **新增 CLI 子命令**：在 ``parser`` 注册参数，在 ``main`` 中只做参数校验、
+  graph 调用和结果输出；耗时工作放到独立函数。需要后台执行时复用
+  ``run_client``/``TaskStore``，不要自行 fork 进程。
+* **改变工具链、路径或缓存行为**：路径集中在 ``BuildPaths``；编译/链接命令
+  通过 ``add_compile``、``add_link`` 生成；缓存语义由 ``BuildRunner`` 管理。
+  修改后务必检查 ``inputs``、depfile 和 ``action_key``，否则可能得到陈旧产物。
+
+代码阅读顺序建议：路径与 glob 工具 -> 配置解析 -> target 辅助函数 ->
+``build_graph``（全部构建规则）-> QEMU/测试动作 -> CLI 与 ``main``。
+每个 target 都应声明完整输入、输出和依赖；注释解释“为什么”，变量名和函数
+名解释“是什么”。
+"""
 
 from __future__ import annotations
 
@@ -53,6 +96,8 @@ if os.name == "nt":
     )
 
 DRIVER_MODULES = ["mouse", "serial", "e1000", "ac97", "es1371"]
+# 配置选择组用于保证互斥选项只有一个生效；新增互斥配置时在这里登记，
+# 同时在 Kconfig 使用 choice 定义，避免命令行覆盖后出现不一致状态。
 CONFIG_CHOICE_GROUPS = (
     ("CONFIG_VMDK_DEFAULT_LANGUAGE_EN", "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH"),
     ("CONFIG_VMDK_DEFAULT_THEME_METRO", "CONFIG_VMDK_DEFAULT_THEME_WIN95"),
@@ -122,6 +167,7 @@ SYSTEM_FILES = [
 
 
 def runtime_app_relative(app: str, extension: str, system_apps: set[str]) -> Path:
+    """返回应用在 ESP 中的标准安装位置；目录布局变化时只改这里。"""
     root = "system/apps" if app in system_apps else "programs"
     return Path(root) / app / f"{app}.{extension}"
 
@@ -189,8 +235,12 @@ _COLLECT_RELATIVE_CACHE: dict[Path, tuple[str, ...]] = {}
 _COLLECT_PATTERN_CACHE: dict[str, tuple[str, ...]] = {}
 _GLOB_MARKERS = frozenset("*?[")
 
+# ---- 路径与源码收集工具 ----
+# 这些函数保证 glob、相对路径和对象目录在整个构建图中保持一致；如果改变
+# 仓库目录布局，先修改这里和 object_path，再调整各 target 的模式。
 
 def root_path(value: str | Path) -> Path:
+    """把配置/命令行中的相对路径统一解释为仓库根目录下的路径。"""
     path = Path(value)
     return ROOT / path if not path.is_absolute() else path
 
@@ -276,6 +326,7 @@ def _match_segments(pattern: tuple[str, ...], value: tuple[str, ...]) -> bool:
 
 
 def collect(*patterns: str) -> list[Path]:
+    """收集源码文件并缓存结果；新增源码目录时优先扩展调用方的 glob。"""
     cached = _COLLECT_CACHE.get(patterns)
     if cached is not None:
         return list(cached)
@@ -295,11 +346,13 @@ def collect(*patterns: str) -> list[Path]:
 
 
 def object_path(paths: BuildPaths, source: Path, prefix: str) -> Path:
+    """为源文件生成不冲突的对象文件路径，prefix 用于隔离不同 ABI/编译模式。"""
     rel = source.relative_to(ROOT)
     return paths.objects / prefix / rel.with_suffix(rel.suffix + ".o")
 
 
 def user_app_sources(app: str) -> list[Path]:
+    """收集普通用户程序源码；特殊应用的额外源码在此明确列出并过滤。"""
     sources = collect(f"userland/apps/{app}/*.c", f"userland/apps/{app}/*.S")
     if app == "doom":
         sources.extend(
@@ -318,6 +371,7 @@ def user_app_sources(app: str) -> list[Path]:
 
 
 def parse_config_values(path: Path) -> dict[str, str]:
+    """解析 .conf 的 ``CONFIG_KEY=value`` 和 ``is not set`` 两种写法。"""
     values: dict[str, str] = {}
     if not path.exists():
         return values
@@ -334,6 +388,7 @@ def parse_config_values(path: Path) -> dict[str, str]:
 
 
 def parse_kconfig(path: Path) -> dict[str, str]:
+    """读取默认配置和当前配置，并应用 preset；不要在构建规则中重复解析配置。"""
     values = parse_config_values(ROOT / "configs/default.conf")
     configured = parse_config_values(path)
     components = load_components(ROOT / "configs/components.toml")
@@ -353,6 +408,7 @@ def parse_kconfig(path: Path) -> dict[str, str]:
 
 
 def config_int(values: dict[str, str], key: str, default: int = 0) -> int:
+    """读取整数配置并在缺失或非法时使用明确默认值。"""
     try:
         return int(values[key], 10)
     except (KeyError, ValueError):
@@ -360,10 +416,12 @@ def config_int(values: dict[str, str], key: str, default: int = 0) -> int:
 
 
 def config_bool(values: dict[str, str], key: str) -> bool:
+    """读取 Kconfig 布尔值；Kconfig 中只有字符串 ``y`` 表示启用。"""
     return values.get(key) == "y"
 
 
 def config_string(values: dict[str, str], key: str) -> str:
+    """读取并反转义带引号的 Kconfig 字符串。"""
     value = values.get(key, "").strip()
     if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
         value = value[1:-1]
@@ -401,6 +459,7 @@ def resolve_qemu_ovmf_path(configured: str) -> Path | None:
 
 
 def ensure_parent(context: ActionContext, output: Path, text: str) -> None:
+    """创建父目录并按内容写文件，未变化时保持 mtime 以利于增量构建。"""
     output.parent.mkdir(parents=True, exist_ok=True)
     previous = output.read_text(encoding="utf-8") if output.exists() else None
     if previous != text:
@@ -446,6 +505,7 @@ def add_compile(
     *,
     kind: str = "compile",
 ) -> Path:
+    """向图中加入一次编译/汇编，并生成 depfile 让头文件变化能触发重编译。"""
     output = object_path(paths, source, prefix)
     depfile = output.with_suffix(output.suffix + ".d")
     command = tuple(flags + ["-MMD", "-MF", relative(depfile), "-c", relative(source), "-o", relative(output)])
@@ -472,6 +532,7 @@ def add_link(
     command: list[str],
     implicit: Iterable[Path] = (),
 ) -> Target:
+    """向图中加入链接目标；所有参与链接的文件都必须放入 inputs。"""
     return graph.add(
         Target(
             name=name,
@@ -485,6 +546,7 @@ def add_link(
 
 
 def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = False, iso: bool = False) -> tuple[str, ...]:
+    """根据配置拼装 QEMU 命令；设备拓扑和启动介质的修改集中在此函数。"""
     memory = config_int(values, "CONFIG_QEMU_MEMORY_MB")
     cpus = max(1, min(64, config_int(values, "CONFIG_QEMU_SMP_CPUS", 1)))
     width = config_int(values, "CONFIG_QEMU_DISPLAY_WIDTH")
@@ -504,6 +566,12 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
     ovmf = resolve_qemu_ovmf_path(configured_ovmf)
     if ovmf is not None:
         command += ["-bios", str(ovmf)]
+    # Keep the host pointer captured while it is over the guest window.  The
+    # LeonOS input stack consumes QEMU's default PS/2 mouse, so a USB tablet
+    # would not fix input and would instead add an unsupported device path.
+    # Explicit GTK also avoids frontend-dependent grab behaviour when the
+    # command is launched through `build.py run run`.
+    command += ["-display", "gtk,grab-on-hover=on,show-cursor=on"]
     command += ["-serial", "stdio"]
     command += ["-device", f"VGA,xres={width},yres={height}"]
     if debug or iso:
@@ -534,6 +602,12 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
 
 
 def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGraph:
+    """声明完整构建图。
+
+    本函数按“生成配置 -> 工具链/库 -> 内核和驱动 -> 用户态 -> ESP/镜像 ->
+    发布与测试”的顺序建立 target。新增产物应放在对应区域，并连接到上游
+    target；不要只在列表末尾追加一个没有 inputs/depends_on 的孤立节点。
+    """
     graph = BuildGraph(ROOT)
     config_path = config_path or paths.kconfig
     values = parse_kconfig(config_path)
@@ -686,6 +760,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         grub_efi_dir = system_grub_efi_dir
         using_system_grub = True
 
+    # ---- 配置同步 ----
+    # 先从 components.toml 生成组件 Kconfig，再将用户配置转换成 C/Rust 可消费的
+    # 生成文件。新增配置输出格式时修改 tools/kconfig_sync.py，并把脚本加入 inputs。
     def sync_config(context: ActionContext) -> None:
         context.run(
             (
@@ -787,6 +864,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/sqlite is missing; initialize the SQLite source tree")
     if not (sqlite_port / "leonos_sqlite_vfs.c").is_file():
         raise GraphError("the LeonOS SQLite VFS port metadata is missing")
+    # ---- 全局编译策略 ----
+    # 这些 flag 影响内核、运行库和应用；组件若需例外，应在自己的 target
+    # 中追加参数，避免改变所有产物的 ABI。
     optimization_level = config_int(values, "CONFIG_BUILD_OPTIMIZATION_LEVEL", 2)
     optimization_flag = f"-O{max(0, min(3, optimization_level))}"
     build_compile_flags: list[str] = [optimization_flag]
@@ -931,7 +1011,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
     cflags_user = cflags_user_base + ["-include", relative(autoconf)]
-    cflags_doom = cflags_user + ["-DLEONOS_DOOM", "-Ithird_party/doomgeneric/doomgeneric"]
+    cflags_doom = cflags_user + ["-DLEONOS_DOOM", "-DFEATURE_SOUND", "-Ithird_party/doomgeneric/doomgeneric"]
     cflags_mp3play = [flag for flag in cflags_user if flag != "-mgeneral-regs-only"] + [
         "-mno-avx", "-mno-avx2",
         "-Ithird_party/minimp3",
@@ -970,6 +1050,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "-z", "relro", "-z", "now", "-z", "max-page-size=0x1000",
     ]
 
+    # ---- 启动链：boot logo、loader、kernel、middlelayer ----
+    # 启动链 target 按依赖顺序连接。新增启动阶段时要同时声明输入、输出，
+    # 并把最终产物接入 all/esp，否则命令行看似成功但镜像不会包含它。
     boot_logo = paths.out / "include/generated/boot_logo.h"
     graph.add(
         Target(
@@ -1157,6 +1240,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         graph, paths, "compile:runtime:abi-note", ROOT / "userland/runtime/abi_note.S",
         "runtime-crt", asflags_runtime, (), kind="assemble")
 
+    # ---- 用户态基础设施：libc、动态运行库和第三方基础库 ----
+    # static、dynamic、installer 三套库是不同 ABI；修改其中一套时检查另外两套。
     libc_sources = collect("userland/libc/src/*.c", "userland/libc/src/*.S")
     libc_sources += [ROOT / "third_party/mbedtls/library" / source for source in MBEDTLS_SOURCES]
     libc_objects: list[Path] = []
@@ -1770,6 +1855,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         app_elfs[app] = output
         user_targets.append(f"app:{app}")
 
+    # ---- 用户程序和 installer policy 程序 ----
+    # 普通应用走 user_app_sources；只有自定义构建命令或特殊链接的程序才在此单独建 target。
     installer_policy_elfs: dict[str, Path] = {}
     user_targets.append("archive:installer-libc")
     for app in installer_policy_apps:
@@ -1783,6 +1870,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         installer_policy_elfs[app] = output
         user_targets.append(name)
 
+    # ---- 资源生成与 ESP staging ----
+    # staging 是源码产物进入镜像前的边界。新增资源先复制/生成到 staging，
+    # 由 image-vmdk/image-iso 统一打包，禁止在动作中直接修改最终镜像。
     app_icons = tuple(paths.out / f"generated/app-icons/{app}.bmp" for app in build_user_apps)
     minesweeper_assets = tuple(paths.out / f"generated/minesweeper-assets/{name}"
                                for name in MINESWEEPER_ASSETS)
@@ -2364,6 +2454,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         esp_outputs.append(destination)
     graph.add(Target(name="esp", depends_on=tuple(esp_names), group=True, kind="aggregate"))
 
+    # ---- 磁盘镜像、ISO、安装器和运行目标 ----
+    # image-* 只消费 staging；分区大小、文件系统或 GRUB 参数的变更应同步更新
+    # 对应 tools 脚本的 inputs，确保增量缓存能感知脚本变化。
     vmdk = paths.images / "leonos4.vmdk"
     raw = paths.images / "leonos4.raw"
     esp_fat = paths.images / "esp.fat"
@@ -2490,6 +2583,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     graph.add(Target(name="clean", kind="command", action=clean, action_key="clean-v1", always=True))
 
+    # ---- 主机单元测试和 QEMU 冒烟测试 ----
+    # 主机测试直接运行 Python；QEMU 测试统一经过 qmp_test，负责启动、超时、
+    # 串口采集和失败诊断，并且必须依赖 image-vmdk。
     graph.add(Target(name="test-license-server", inputs=(ROOT / "tools/test_license_server.py", ROOT / "tools/license_server.py"), kind="command", command=(PYTHON, "tools/test_license_server.py")))
     graph.add(Target(name="test-los2w", inputs=tuple(collect("los2w/*.py")), kind="command", command=(PYTHON, "-c", "from los2w.selftest import run_self_tests; print('\\n'.join(run_self_tests()))")))
     graph.add(Target(name="test-unix-paths", inputs=(ROOT / "tools/check_unix_paths.py",), kind="command", command=(PYTHON, "tools/check_unix_paths.py")))
@@ -2719,6 +2815,7 @@ def require_linux() -> None:
 
 
 def require_tools(names: Iterable[str]) -> None:
+    """在构建前检查当前 target 所需的宿主工具，错误信息比 subprocess 更易读。"""
     missing = [name for name in names if shutil.which(name) is None]
     if missing:
         raise BuildFailure("missing required tools: " + ", ".join(missing))
@@ -2739,6 +2836,7 @@ def require_grub_efi_modules(paths: BuildPaths, task: str) -> None:
 
 
 def task_tools(task: str) -> tuple[str, ...]:
+    """按 target 类型返回最小宿主依赖；新增外部工具时在这里登记。"""
     compiler = ("clang", "ld.lld")
     host_userland = ("autoreconf", "autoconf", "automake", "libtoolize", "make",
                      "gcc", "gawk")
@@ -2786,6 +2884,7 @@ def create_runner(
     verbose: bool = False,
     theme: str = "default",
 ) -> BuildRunner:
+    """创建执行器；日志、任务状态和缓存均通过该执行器维护。"""
     return BuildRunner(graph, paths, load_settings(paths), task_id, verbose=verbose, theme=theme)
 
 
@@ -2854,6 +2953,7 @@ def resolve_build_config(
     *,
     interactive: bool = False,
 ) -> Path:
+    """为一次构建确定有效配置，支持 profile 和不落盘的 --set 覆盖。"""
     if profile:
         source = profile_path(profile)
         if not source.exists():
@@ -3027,6 +3127,7 @@ def tree_stats(path: Path) -> dict[str, int]:
 
 
 def cache_report(paths: BuildPaths, store: TaskStore) -> dict[str, object]:
+    """收集缓存统计；新增缓存目录时在这里暴露，便于诊断空间占用。"""
     states = store.target_states()
     return {
         "tracked_targets": len(states),
@@ -3121,6 +3222,7 @@ def profile_target(
     verbose: bool,
     theme: str = "default",
 ) -> dict[str, object]:
+    """运行 target 并返回耗时/命中率报告；JSON 模式会隐藏 runner 的过程输出。"""
     require_linux()
     require_tools(task_tools(target.name))
     require_grub_efi_modules(paths, target.name)
@@ -3146,6 +3248,7 @@ def run_foreground(
     verbose: bool,
     theme: str = "default",
 ) -> int:
+    """在前台执行单个 target，并统一执行 Linux、工具和 GRUB 前置检查。"""
     require_linux()
     require_tools(task_tools(target.name))
     require_grub_efi_modules(paths, target.name)
@@ -3164,6 +3267,7 @@ def run_client(
     verbose: bool,
     theme: str = "default",
 ) -> int:
+    """登记并启动后台 worker；后台输出只写 TaskStore 日志，不污染客户端终端。"""
     if not command or command[0] not in {"run", "gen", "test", "profile"}:
         raise BuildFailure("client accepts run, gen, test, or profile followed by its arguments")
     store.update(task_id, status="queued", queued_at=utc_now(), task=" ".join(command))
@@ -3211,6 +3315,7 @@ def run_client(
 
 
 def parser() -> argparse.ArgumentParser:
+    """定义 CLI 表面；新增命令须同时在 main 中实现分发和任务记录。"""
     argument_parser = argparse.ArgumentParser(add_help=False, prog="build.py")
     argument_parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     argument_parser.add_argument("--task-id", help=argparse.SUPPRESS)
@@ -3278,6 +3383,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
+    """预处理全局选项并交给 argparse；兼容选项出现在子命令前后两种写法。"""
     values = list(argv if argv is not None else sys.argv[1:])
     json_output = "--json" in values
     verbose = any(value in {"-v", "--verbose"} for value in values)
@@ -3308,6 +3414,11 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI 调度入口。
+
+    轻量查询命令在构图前返回；run/gen/test/profile 等命令先解析有效配置，
+    再构建图并交给 runner。新命令不要绕过此流程，以保持日志和后台任务一致。
+    """
     arguments = parse_arguments(argv)
     if arguments.command is None:
         arguments.command = "help"

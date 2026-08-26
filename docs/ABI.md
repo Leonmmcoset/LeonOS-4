@@ -392,14 +392,19 @@ management are still out of scope for this ABI version.
 
 ## Audio ABI
 
-`include/leonos/audio.h` exposes a synchronous PCM playback interface backed by
-autoloaded audio driver modules. `LEONOS_IOCTL_AUDIO_CONFIGURE` selects the
-stream format, `LEONOS_IOCTL_AUDIO_WRITE` plays at most 64 KiB per call, and
+`include/leonos/audio.h` exposes a bounded, non-blocking PCM submission
+interface backed by autoloaded audio driver modules. `LEONOS_IOCTL_AUDIO_CONFIGURE`
+selects the stream format, `LEONOS_IOCTL_AUDIO_WRITE` submits at most 64 KiB per
+call and may return a short write when the device cannot accept more data, and
 `LEONOS_IOCTL_AUDIO_GET_STATE` returns device and stream state. The initial
 `ac97.drv` supports QEMU's Intel ICH AC'97 controller, while `es1371.drv`
 supports VMware's Ensoniq AudioPCI ES1371 controller. Both accept 16-bit,
-stereo PCM at 8000–48000 Hz. `wavplay.elf` opens matching PCM WAV files and is
-the default `.wav` handler; without a path it plays a short test melody.
+stereo PCM at 8000–48000 Hz. The AC'97 backend keeps a persistent DMA ring and
+reports short writes with `LEONOS_AUDIO_STATUS_WOULD_BLOCK`; callers should
+retain and retry the unwritten tail. `doom.elf` and the built-in `wavplay.elf`
+test tone use native 48000 Hz output to avoid emulator-side resampling.
+`wavplay.elf` also opens matching PCM WAV files and is the default `.wav`
+handler.
 
 ## Application Services
 

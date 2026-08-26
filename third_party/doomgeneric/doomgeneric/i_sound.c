@@ -18,7 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#if defined(FEATURE_SOUND) && !defined(__DJGPP__)
+#if defined(FEATURE_SOUND) && !defined(__DJGPP__) && !defined(LEONOS_DOOM)
 #include <SDL_mixer.h>
 #endif
 
@@ -36,7 +36,7 @@
 
 // Sound sample rate to use for digital output (Hz)
 
-int snd_samplerate = 44100;
+int snd_samplerate = 48000;
 
 // Maximum number of bytes to dedicate to allocated sound effects.
 // (Default: 64MB)
@@ -417,4 +417,3 @@ void I_BindSoundVariables(void)
     // to crash when it looped.  If this is an old SDL_mixer version,
     // disable MIDI.
 }
-

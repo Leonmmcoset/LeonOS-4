@@ -44,7 +44,7 @@
     },
     "files.associations": {
         "*.inc": "c",
-        "*.S": "asm",
+        "*.S": "asm-intel-x86-generic",
         "Kconfig*": "makefile"
     },
     "conventionalCommits.scopes": [
@@ -54,6 +54,7 @@
         "mouse",
         "build",
         "boot",
-        "disk"
+        "disk",
+        "sound"
     ]
 }

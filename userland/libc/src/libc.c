@@ -2167,6 +2167,10 @@ long leonos_audio_write(const void *data, uint32_t length,
             }
             return done ? (long)done : ret;
         }
+        if (request.transferred == 0 &&
+            request.status == LEONOS_AUDIO_STATUS_WOULD_BLOCK) {
+            break;
+        }
         if (request.transferred == 0 || request.transferred > chunk) {
             if (out_status) {
                 *out_status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;

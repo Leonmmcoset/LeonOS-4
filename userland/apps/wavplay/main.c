@@ -5,6 +5,8 @@
 
 #define WAVPLAY_BUFFER_BYTES 4096U
 #define WAVPLAY_TONE_FRAMES 1024U
+#define WAVPLAY_TEST_RATE 48000U
+#define WAVPLAY_TEST_SECONDS 30U
 
 static int16_t tone_samples[WAVPLAY_TONE_FRAMES * 2U];
 
@@ -12,6 +14,42 @@ struct wav_info {
     struct leonos_audio_format format;
     uint32_t data_bytes;
 };
+
+static void wait_audio_frames(uint32_t frames, uint32_t sample_rate)
+{
+    uint32_t milliseconds;
+    if (!frames || !sample_rate) {
+        return;
+    }
+    milliseconds = (uint32_t)(((uint64_t)frames * 1000ULL + sample_rate - 1ULL) /
+                              sample_rate);
+    if (milliseconds) {
+        sleep_ms(milliseconds);
+    }
+}
+
+static int write_audio_retry(const void *data, uint32_t length)
+{
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint32_t offset = 0;
+    uint32_t waits = 0;
+    while (offset < length) {
+        uint32_t status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
+        long written = leonos_audio_write(bytes + offset, length - offset, &status);
+        if (written > 0 && (uint32_t)written <= length - offset) {
+            offset += (uint32_t)written;
+            waits = 0;
+            continue;
+        }
+        if (written == 0 && status == LEONOS_AUDIO_STATUS_WOULD_BLOCK &&
+            waits++ < 200U) {
+            sleep_ms(5U);
+            continue;
+        }
+        return -1;
+    }
+    return 0;
+}
 
 static uint16_t read_le16(const uint8_t *bytes)
 {
@@ -140,8 +178,6 @@ static int play_wav(const char *path)
                               : remaining;
         long got = read(fd, buffer, wanted);
         uint32_t padded;
-        uint32_t status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
-        long played;
         if (got <= 0) {
             puts("wavplay: truncated WAV data");
             free(buffer);
@@ -152,14 +188,13 @@ static int play_wav(const char *path)
         while ((uint32_t)got < padded) {
             buffer[got++] = 0;
         }
-        played = leonos_audio_write(buffer, padded, &status);
-        if (played != (long)padded || status != LEONOS_AUDIO_STATUS_OK) {
-            printf("wavplay: playback failed ret=%d status=%u\n",
-                   (int)played, status);
+        if (write_audio_retry(buffer, padded) < 0) {
+            puts("wavplay: playback failed");
             free(buffer);
             close(fd);
             return 1;
         }
+        wait_audio_frames(padded / 4U, info.format.sample_rate);
         remaining -= (uint32_t)got > remaining ? remaining : (uint32_t)got;
     }
     free(buffer);
@@ -173,17 +208,16 @@ static int play_square_note(uint32_t period, uint32_t frames)
     uint32_t phase = 0;
     while (frames) {
         uint32_t count = frames > WAVPLAY_TONE_FRAMES ? WAVPLAY_TONE_FRAMES : frames;
-        uint32_t status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
         for (uint32_t index = 0; index < count; ++index) {
             int16_t value = phase < period / 2U ? 6000 : -6000;
             tone_samples[index * 2U] = value;
             tone_samples[index * 2U + 1U] = value;
             phase = (phase + 1U) % period;
         }
-        if (leonos_audio_write(tone_samples, count * 4U, &status) != (long)(count * 4U) ||
-            status != LEONOS_AUDIO_STATUS_OK) {
+        if (write_audio_retry(tone_samples, count * 4U) < 0) {
             return -1;
         }
+        wait_audio_frames(count, WAVPLAY_TEST_RATE);
         frames -= count;
     }
     return 0;
@@ -192,7 +226,7 @@ static int play_square_note(uint32_t period, uint32_t frames)
 static int play_test_melody(void)
 {
     struct leonos_audio_format format = {
-        .sample_rate = 48000U,
+        .sample_rate = WAVPLAY_TEST_RATE,
         .channels = 2U,
         .bits_per_sample = 16U,
         .flags = 0,
@@ -201,15 +235,12 @@ static int play_test_melody(void)
         puts("wavplay: PCM audio device is unavailable");
         return 1;
     }
-    puts("wavplay: playing test melody");
-    if (play_square_note(183U, 12000U) < 0 ||
-        play_square_note(145U, 12000U) < 0 ||
-        play_square_note(122U, 12000U) < 0 ||
-        play_square_note(91U, 24000U) < 0) {
-        puts("wavplay: test melody failed");
+    puts("wavplay: playing 30-second 48000 Hz PCM tone");
+    if (play_square_note(50U, WAVPLAY_TEST_RATE * WAVPLAY_TEST_SECONDS) < 0) {
+        puts("wavplay: PCM tone failed");
         return 1;
     }
-    puts("wavplay: test melody complete");
+    puts("wavplay: PCM tone complete");
     return 0;
 }
 
