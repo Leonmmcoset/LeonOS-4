@@ -31,20 +31,8 @@ static int install_write_sectors(struct install_disk_state *disk, uint64_t lba,
     storage_begin_mutation();
     storage_cache_invalidate();
     while (sector_count) {
-        uint32_t chunk = min_u32(sector_count,
-                                  disk->transport == STORAGE_TRANSPORT_IDE_PIO
-                                      ? IDE_MAX_PIO_SECTORS : STORAGE_WRITE_MAX_SECTORS);
-        int ret;
-        if (disk->transport == STORAGE_TRANSPORT_IDE_PIO) {
-            struct ide_device_info device;
-            storage_disk_ide_device(disk, &device);
-            ret = ide_pio_transfer(&device, lba, chunk, (void *)src, 1);
-        } else {
-            if (!disk->hba_port) {
-                return -22;
-            }
-            ret = ahci_write_lba_retry(disk->hba_port, lba, chunk, src);
-        }
+        uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
+        int ret = storage_write_install_disk(disk, lba, chunk, src);
         if (ret < 0) {
             return ret;
         }
@@ -56,8 +44,8 @@ static int install_write_sectors(struct install_disk_state *disk, uint64_t lba,
 }
 
 /**
- * @brief Reads sectors directly from a managed AHCI disk.
- * @param disk Managed AHCI disk state.
+ * @brief Reads sectors directly from a managed block disk.
+ * @param disk Managed AHCI, IDE/PATA, or NVMe disk state.
  * @param lba First sector to read.
  * @param sector_count Number of sectors to read.
  * @param buffer Destination buffer.
@@ -71,20 +59,8 @@ static int install_read_sectors(struct install_disk_state *disk, uint64_t lba,
         return -22;
     }
     while (sector_count) {
-        uint32_t chunk = min_u32(sector_count,
-                                  disk->transport == STORAGE_TRANSPORT_IDE_PIO
-                                      ? IDE_MAX_PIO_SECTORS : AHCI_MAX_SECTORS);
-        int ret;
-        if (disk->transport == STORAGE_TRANSPORT_IDE_PIO) {
-            struct ide_device_info device;
-            storage_disk_ide_device(disk, &device);
-            ret = ide_pio_transfer(&device, lba, chunk, dst, 0);
-        } else {
-            if (!disk->hba_port) {
-                return -22;
-            }
-            ret = ahci_read_lba_retry(disk->hba_port, lba, chunk, dst);
-        }
+        uint32_t chunk = min_u32(sector_count, STORAGE_WRITE_MAX_SECTORS);
+        int ret = storage_read_install_disk(disk, lba, chunk, dst);
         if (ret < 0) {
             return ret;
         }
@@ -297,7 +273,7 @@ static int install_ext2_make_group_desc(struct ext2_group_desc *descriptor,
 
 /**
  * @brief Creates a writable classic ext2 filesystem for the installed root.
- * @param disk AHCI disk containing the target partition.
+ * @param disk Block disk containing the target partition.
  * @param start_lba First sector of the ext2 partition.
  * @param sector_count Number of sectors available to ext2.
  * @return Zero on success or a negative errno-style storage status.
@@ -585,4 +561,3 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
     *out_root_sectors = last_usable - root_first + 1u;
     return 0;
 }
-

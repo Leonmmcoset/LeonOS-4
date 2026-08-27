@@ -558,9 +558,13 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
         # QEMU's host CPU model is valid only with KVM/HVF.  TCG uses max so
         # the smoke tests remain runnable on hosts without hardware access.
         command += ["-cpu", "max"]
-    # Set LEONOS_QEMU_IDE=1 for a legacy PIIX IDE/PATA smoke run.  The
-    # default remains the production AHCI topology used by existing images.
+    # The default remains the production AHCI topology used by existing
+    # images. LEONOS_QEMU_IDE and LEONOS_QEMU_NVME select focused transport
+    # smoke topologies without changing the shipped image layout.
     ide_mode = os.environ.get("LEONOS_QEMU_IDE", "").lower() in {"1", "y", "yes", "true"}
+    nvme_mode = os.environ.get("LEONOS_QEMU_NVME", "").lower() in {"1", "y", "yes", "true"}
+    if nvme_mode:
+        ide_mode = False
     command += ["-machine", "pc" if ide_mode else "q35", "-m", f"{memory}M", "-smp", str(cpus)]
     configured_ovmf = config_string(values, "CONFIG_QEMU_OVMF_PATH")
     ovmf = resolve_qemu_ovmf_path(configured_ovmf)
@@ -593,6 +597,11 @@ def qemu_command(paths: BuildPaths, values: dict[str, str], *, debug: bool = Fal
                 "-drive", f"file={relative(paths.images / 'leonos4.iso')},if=none,id=ide_cd,format=raw,readonly=on",
                 "-device", "ide-cd,drive=ide_cd,bus=ide.1,unit=0,bootindex=1",
             ]
+    elif nvme_mode:
+        command += [
+            "-drive", f"file={relative(paths.images / 'leonos4.vmdk')},if=none,id=nvme0,format=vmdk",
+            "-device", f"nvme,drive=nvme0,serial=leonosnvme,bootindex={'2' if iso else '1'}",
+        ]
     else:
         command += [
             "-drive", f"file={relative(paths.images / 'leonos4.vmdk')},if=none,id=sata0,format=vmdk",

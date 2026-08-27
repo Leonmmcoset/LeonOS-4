@@ -45,9 +45,78 @@ static void storage_disk_ide_device(const struct install_disk_state *disk,
     storage_copy_text(device->model, sizeof(device->model), disk->device_model);
 }
 
+static uint8_t storage_volume_kind_for_transport(uint8_t transport)
+{
+    if (transport == STORAGE_TRANSPORT_IDE_PIO) {
+        return STORAGE_VOLUME_IDE;
+    }
+    if (transport == STORAGE_TRANSPORT_NVME) {
+        return STORAGE_VOLUME_NVME;
+    }
+    return STORAGE_VOLUME_AHCI;
+}
+
+static const char *storage_transport_name(uint8_t transport)
+{
+    if (transport == STORAGE_TRANSPORT_IDE_PIO) {
+        return "ide-pio";
+    }
+    if (transport == STORAGE_TRANSPORT_NVME) {
+        return "nvme";
+    }
+    return "ahci";
+}
+
+static void storage_volume_from_install_disk(struct storage_volume *volume,
+                                             const struct install_disk_state *disk)
+{
+    if (!volume || !disk) {
+        return;
+    }
+    volume->kind = storage_volume_kind_for_transport(disk->transport);
+    volume->transport = disk->transport;
+    volume->bus = disk->bus;
+    volume->slot = disk->slot;
+    volume->function = disk->function;
+    volume->port = disk->port;
+    volume->ide_channel = disk->ide_channel;
+    volume->ide_drive = disk->ide_drive;
+    volume->ide_atapi = disk->ide_atapi;
+    volume->ide_lba48 = disk->ide_lba48;
+    volume->ide_command_base = disk->ide_command_base;
+    volume->ide_control_base = disk->ide_control_base;
+    volume->abar = disk->abar;
+    volume->hba_port = disk->hba_port;
+    volume->nvme = disk->nvme;
+    volume->nvme_nsid = disk->nvme_nsid;
+    storage_copy_text(volume->device_model, sizeof(volume->device_model), disk->device_model);
+}
+
+static int storage_prepare_install_disk(struct install_disk_state *disk)
+{
+    int ret;
+    if (!disk || !disk->present) {
+        return -22;
+    }
+    if (disk->transport == STORAGE_TRANSPORT_IDE_PIO) {
+        return disk->ide_atapi ? -30 : 0;
+    }
+    if (disk->transport == STORAGE_TRANSPORT_NVME) {
+        return disk->nvme && disk->nvme->ready && disk->nvme_nsid ? 0 : -5;
+    }
+    if (disk->transport != STORAGE_TRANSPORT_AHCI || !disk->hba_port) {
+        return -22;
+    }
+    kernel_spin_lock(&storage_transport_lock);
+    ret = ahci_setup_port(disk->hba_port);
+    kernel_spin_unlock(&storage_transport_lock);
+    return ret;
+}
+
 static int storage_read_device(const struct storage_volume *volume, uint64_t lba,
                                uint32_t sector_count, void *buffer)
 {
+    int ret = 0;
     if (!volume || !buffer || !sector_count) {
         return -22;
     }
@@ -60,76 +129,154 @@ static int storage_read_device(const struct storage_volume *volume, uint64_t lba
         storage_memcpy(buffer, volume->ram_base + offset, (size_t)bytes);
         return 0;
     }
+    kernel_spin_lock(&storage_transport_lock);
     if (volume->transport == STORAGE_TRANSPORT_IDE_PIO) {
         struct ide_device_info device;
         storage_volume_ide_device(volume, &device);
         if (device.atapi) {
-            return -30;
+            ret = -30;
+            goto out;
         }
         uint8_t *dst = (uint8_t *)buffer;
         while (sector_count) {
             uint32_t chunk = min_u32(sector_count, IDE_MAX_PIO_SECTORS);
-            int ret = ide_pio_transfer(&device, lba, chunk, dst, 0);
+            ret = ide_pio_transfer(&device, lba, chunk, dst, 0);
             if (ret < 0) {
-                return ret;
+                goto out;
             }
             lba += chunk;
             sector_count -= chunk;
             dst += chunk * SECTOR_SIZE;
         }
-        return 0;
+        goto out;
+    }
+    if (volume->transport == STORAGE_TRANSPORT_NVME) {
+        uint8_t *dst = (uint8_t *)buffer;
+        if (!volume->nvme || !volume->nvme_nsid) {
+            ret = -22;
+            goto out;
+        }
+        while (sector_count) {
+            uint32_t chunk = min_u32(sector_count, NVME_MAX_SECTORS);
+            ret = nvme_readwrite(volume->nvme, volume->nvme_nsid, lba, chunk, dst, 0);
+            if (ret < 0) {
+                goto out;
+            }
+            lba += chunk;
+            sector_count -= chunk;
+            dst += chunk * SECTOR_SIZE;
+        }
+        goto out;
+    }
+    if (volume->transport != STORAGE_TRANSPORT_AHCI || !volume->hba_port) {
+        ret = -95;
+        goto out;
     }
     uint8_t *dst = (uint8_t *)buffer;
     while (sector_count) {
         uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
-        int ret = ahci_read_lba_retry(volume->hba_port, lba, chunk, dst);
+        ret = ahci_read_lba_retry(volume->hba_port, lba, chunk, dst);
         if (ret < 0) {
-            return ret;
+            goto out;
         }
         lba += chunk;
         sector_count -= chunk;
         dst += chunk * SECTOR_SIZE;
     }
-    return 0;
+out:
+    kernel_spin_unlock(&storage_transport_lock);
+    return ret;
 }
 
 static int storage_write_device(const struct storage_volume *volume, uint64_t lba,
                                 uint32_t sector_count, const void *buffer)
 {
+    int ret = 0;
     if (!volume || !buffer || !sector_count || volume->kind == STORAGE_VOLUME_RAM) {
         return -30;
     }
+    kernel_spin_lock(&storage_transport_lock);
     if (volume->transport == STORAGE_TRANSPORT_IDE_PIO) {
         struct ide_device_info device;
         storage_volume_ide_device(volume, &device);
         if (device.atapi) {
-            return -30;
+            ret = -30;
+            goto out;
         }
         const uint8_t *src = (const uint8_t *)buffer;
         while (sector_count) {
             uint32_t chunk = min_u32(sector_count, IDE_MAX_PIO_SECTORS);
-            int ret = ide_pio_transfer(&device, lba, chunk, (void *)src, 1);
+            ret = ide_pio_transfer(&device, lba, chunk, (void *)src, 1);
             if (ret < 0) {
-                return ret;
+                goto out;
             }
             lba += chunk;
             sector_count -= chunk;
             src += chunk * SECTOR_SIZE;
         }
-        return 0;
+        goto out;
+    }
+    if (volume->transport == STORAGE_TRANSPORT_NVME) {
+        const uint8_t *src = (const uint8_t *)buffer;
+        if (!volume->nvme || !volume->nvme_nsid) {
+            ret = -22;
+            goto out;
+        }
+        while (sector_count) {
+            uint32_t chunk = min_u32(sector_count, NVME_MAX_SECTORS);
+            ret = nvme_readwrite(volume->nvme, volume->nvme_nsid, lba, chunk,
+                                 (void *)src, 1);
+            if (ret < 0) {
+                goto out;
+            }
+            lba += chunk;
+            sector_count -= chunk;
+            src += chunk * SECTOR_SIZE;
+        }
+        goto out;
+    }
+    if (volume->transport != STORAGE_TRANSPORT_AHCI || !volume->hba_port) {
+        ret = -95;
+        goto out;
     }
     const uint8_t *src = (const uint8_t *)buffer;
     while (sector_count) {
         uint32_t chunk = min_u32(sector_count, AHCI_MAX_SECTORS);
-        int ret = ahci_write_lba_retry(volume->hba_port, lba, chunk, src);
+        ret = ahci_write_lba_retry(volume->hba_port, lba, chunk, src);
         if (ret < 0) {
-            return ret;
+            goto out;
         }
         lba += chunk;
         sector_count -= chunk;
         src += chunk * SECTOR_SIZE;
     }
-    return 0;
+out:
+    kernel_spin_unlock(&storage_transport_lock);
+    return ret;
+}
+
+static int storage_read_install_disk(const struct install_disk_state *disk, uint64_t lba,
+                                     uint32_t sector_count, void *buffer)
+{
+    struct storage_volume volume;
+    if (!disk || !disk->present) {
+        return -22;
+    }
+    storage_memzero(&volume, sizeof(volume));
+    storage_volume_from_install_disk(&volume, disk);
+    return storage_read_device(&volume, lba, sector_count, buffer);
+}
+
+static int storage_write_install_disk(const struct install_disk_state *disk, uint64_t lba,
+                                      uint32_t sector_count, const void *buffer)
+{
+    struct storage_volume volume;
+    if (!disk || !disk->present) {
+        return -22;
+    }
+    storage_memzero(&volume, sizeof(volume));
+    storage_volume_from_install_disk(&volume, disk);
+    return storage_write_device(&volume, lba, sector_count, buffer);
 }
 
 static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffer)
@@ -153,28 +300,37 @@ static int storage_read_iso_blocks(uint64_t lba, uint32_t block_count, void *buf
     if (g_storage.transport == STORAGE_TRANSPORT_IDE_PIO) {
         struct ide_device_info device;
         storage_volume_ide_device(&g_storage, &device);
+        kernel_spin_lock(&storage_transport_lock);
         while (block_count) {
             uint32_t chunk = min_u32(block_count, IDE_MAX_ATAPI_BLOCKS);
             int ret = ide_atapi_read_blocks(&device, lba, chunk, dst);
             if (ret < 0) {
+                kernel_spin_unlock(&storage_transport_lock);
                 return ret;
             }
             lba += chunk;
             block_count -= chunk;
             dst += chunk * ISO9660_BLOCK_SIZE;
         }
+        kernel_spin_unlock(&storage_transport_lock);
         return 0;
     }
+    if (g_storage.transport != STORAGE_TRANSPORT_AHCI || !g_storage.hba_port) {
+        return -95;
+    }
+    kernel_spin_lock(&storage_transport_lock);
     while (block_count) {
         uint32_t chunk = min_u32(block_count, 32u);
         int ret = ahci_read_atapi_blocks_retry(g_storage.hba_port, lba, chunk, dst);
         if (ret < 0) {
+            kernel_spin_unlock(&storage_transport_lock);
             return ret;
         }
         lba += chunk;
         block_count -= chunk;
         dst += chunk * ISO9660_BLOCK_SIZE;
     }
+    kernel_spin_unlock(&storage_transport_lock);
     return 0;
 }
 
@@ -256,4 +412,3 @@ static int gpt_find_esp(void)
     mm_free_pages(phys, (total_sectors + 7u) / 8u);
     return esp_found ? 0 : -2;
 }
-

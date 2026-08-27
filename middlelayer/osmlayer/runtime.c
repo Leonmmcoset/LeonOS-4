@@ -41,6 +41,7 @@
 #define OSMLAYER_RAW_DEVICE_KIND_E1000 8u
 #define OSMLAYER_RAW_DEVICE_KIND_AC97 9u
 #define OSMLAYER_RAW_DEVICE_KIND_IDE 10u
+#define OSMLAYER_RAW_DEVICE_KIND_NVME 11u
 
 struct osmlayer_vfs_resolve_path {
     const char *cwd;
@@ -2546,6 +2547,16 @@ static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
                              osmlayer_active(raw->flags) ? "Running" : "Unavailable",
                              detail, raw->value0, raw->value1);
         break;
+    case OSMLAYER_RAW_DEVICE_KIND_NVME:
+        pos = 0;
+        detail[0] = 0;
+        osmlayer_append_text(detail, &pos, sizeof(detail), "NVMe controller, namespaces=");
+        osmlayer_append_u64(detail, &pos, sizeof(detail), raw->value0);
+        osmlayer_catalog_add(query, OSMLAYER_DEVICE_CLASS_STORAGE, raw->flags,
+                             "NVMe Controller",
+                             osmlayer_active(raw->flags) ? "Running" : "Unavailable",
+                             detail, raw->value0, raw->value1);
+        break;
     case OSMLAYER_RAW_DEVICE_KIND_DISK:
         pos = 0;
         name[0] = 0;
@@ -2554,15 +2565,21 @@ static void osmlayer_catalog_raw(struct osmlayer_device_catalog_query *query,
         pos = 0;
         detail[0] = 0;
         osmlayer_append_text(detail, &pos, sizeof(detail),
-                             raw->aux0 == 2u ? "IDE/PATA port " : "AHCI port ");
+                             raw->aux0 == 2u ? "IDE/PATA port "
+                             : (raw->aux0 == 3u ? "NVMe namespace " : "AHCI port "));
         osmlayer_append_u64(detail, &pos, sizeof(detail), raw->aux0);
         osmlayer_append_text(detail, &pos, sizeof(detail), ", ");
         osmlayer_append_u64(detail, &pos, sizeof(detail),
                             (raw->value0 * raw->value1) / (1024ULL * 1024ULL));
         osmlayer_append_text(detail, &pos, sizeof(detail), " MiB, sector ");
         osmlayer_append_u64(detail, &pos, sizeof(detail), raw->value1);
-        osmlayer_catalog_add(query, OSMLAYER_DEVICE_CLASS_STORAGE, raw->flags,
-                             name,
+        if (raw->aux0 == 3u) {
+            pos = 0;
+            name[0] = 0;
+            osmlayer_append_text(name, &pos, sizeof(name), "NVMe Namespace ");
+            osmlayer_append_u64(name, &pos, sizeof(name), raw->aux1);
+        }
+        osmlayer_catalog_add(query, OSMLAYER_DEVICE_CLASS_STORAGE, raw->flags, name,
                              (raw->flags & OSMLAYER_DEVICE_FLAG_BOOT) ? "Boot root" : "Ready",
                              detail, raw->value0, raw->value1);
         break;

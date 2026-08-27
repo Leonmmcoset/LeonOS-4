@@ -44,6 +44,7 @@
 #define LEONOS_RAW_DEVICE_KIND_E1000 8u
 #define LEONOS_RAW_DEVICE_KIND_AC97 9u
 #define LEONOS_RAW_DEVICE_KIND_IDE 10u
+#define LEONOS_RAW_DEVICE_KIND_NVME 11u
 
 struct leonos_device_info;
 

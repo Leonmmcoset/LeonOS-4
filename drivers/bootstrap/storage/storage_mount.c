@@ -82,22 +82,7 @@ static uint16_t ide_pci_bar_io(uint8_t bus, uint8_t slot, uint8_t function,
 static void storage_copy_disk_transport(struct storage_volume *volume,
                                         const struct install_disk_state *disk)
 {
-    volume->kind = disk->transport == STORAGE_TRANSPORT_IDE_PIO
-                       ? STORAGE_VOLUME_IDE : STORAGE_VOLUME_AHCI;
-    volume->transport = disk->transport;
-    volume->bus = disk->bus;
-    volume->slot = disk->slot;
-    volume->function = disk->function;
-    volume->port = disk->port;
-    volume->ide_channel = disk->ide_channel;
-    volume->ide_drive = disk->ide_drive;
-    volume->ide_atapi = disk->ide_atapi;
-    volume->ide_lba48 = disk->ide_lba48;
-    volume->ide_command_base = disk->ide_command_base;
-    volume->ide_control_base = disk->ide_control_base;
-    storage_copy_text(volume->device_model, sizeof(volume->device_model), disk->device_model);
-    volume->abar = disk->abar;
-    volume->hba_port = disk->hba_port;
+    storage_volume_from_install_disk(volume, disk);
 }
 
 static int storage_try_mount_root_disk(struct install_disk_state *disk)
@@ -129,10 +114,10 @@ static int storage_try_mount_root_disk(struct install_disk_state *disk)
             console_printf("[ntclks] storage boot ESP mount unavailable\n");
         }
         disk->boot_root = 1;
-        console_printf("[ntclks] storage ready transport=%s pci=%u:%u.%u channel=%u drive=%u root=%s\n",
-                       disk->transport == STORAGE_TRANSPORT_IDE_PIO ? "ide-pio" : "ahci",
-                       disk->bus, disk->slot, disk->function, disk->ide_channel,
-                       disk->ide_drive,
+        console_printf("[ntclks] storage ready transport=%s pci=%u:%u.%u unit=%u root=%s\n",
+                       storage_transport_name(disk->transport),
+                       disk->bus, disk->slot, disk->function,
+                       disk->transport == STORAGE_TRANSPORT_NVME ? disk->nvme_nsid : disk->port,
                        root->filesystem == STORAGE_FILESYSTEM_EXT2 ? "ext2" : "fat32");
     } else {
         storage_memzero(root, sizeof(*root));
@@ -140,6 +125,40 @@ static int storage_try_mount_root_disk(struct install_disk_state *disk)
     g_active_volume = old;
     storage_cache_invalidate();
     return ret;
+}
+
+static uint32_t storage_disk_sort_unit(const struct install_disk_state *disk)
+{
+    if (disk->transport == STORAGE_TRANSPORT_NVME) {
+        return disk->nvme_nsid;
+    }
+    if (disk->transport == STORAGE_TRANSPORT_IDE_PIO) {
+        return (uint32_t)disk->ide_channel * 2u + disk->ide_drive;
+    }
+    return disk->port;
+}
+
+static int storage_disk_precedes(const struct install_disk_state *left,
+                                 const struct install_disk_state *right)
+{
+    if (left->bus != right->bus) return left->bus < right->bus;
+    if (left->slot != right->slot) return left->slot < right->slot;
+    if (left->function != right->function) return left->function < right->function;
+    if (left->transport != right->transport) return left->transport < right->transport;
+    return storage_disk_sort_unit(left) < storage_disk_sort_unit(right);
+}
+
+static void storage_sort_install_disks(void)
+{
+    for (uint32_t i = 1; i < g_install_disk_count; ++i) {
+        struct install_disk_state value = g_install_disks[i];
+        uint32_t j = i;
+        while (j && storage_disk_precedes(&value, &g_install_disks[j - 1u])) {
+            g_install_disks[j] = g_install_disks[j - 1u];
+            --j;
+        }
+        g_install_disks[j] = value;
+    }
 }
 
 static void storage_scan_ide_controller(uint8_t bus, uint8_t slot, uint8_t function,
@@ -253,6 +272,7 @@ void storage_init(void)
     storage_io_async_context = false;
     storage_io_write_started = false;
     ahci_pending_clear();
+    nvme_reset_all_controllers();
     g_active_volume = &g_volumes[0];
     storage_cache_invalidate();
 
@@ -275,6 +295,10 @@ void storage_init(void)
                 if (subclass == ATA_SUBCLASS_IDE) {
                     storage_scan_ide_controller((uint8_t)bus, slot, func,
                                                 &optical_slot, &optical_index, &root_ready);
+                    continue;
+                }
+                if (subclass == ATA_SUBCLASS_NVM && progif == ATA_PROGIF_NVME) {
+                    storage_scan_nvme_controller((uint8_t)bus, slot, func, &root_ready);
                     continue;
                 }
                 if (subclass != ATA_SUBCLASS_SATA || progif != ATA_PROGIF_AHCI) {
@@ -350,82 +374,32 @@ void storage_init(void)
                         continue;
                     }
 
-                    {
-                        uint32_t disk_id = g_install_disk_count;
-                        if (disk_id < STORAGE_MAX_INSTALL_DISKS) {
-                            g_install_disks[disk_id].present = true;
-                            g_install_disks[disk_id].bus = (uint8_t)bus;
-                            g_install_disks[disk_id].slot = slot;
-                            g_install_disks[disk_id].function = func;
-                            g_install_disks[disk_id].port = port;
-                            g_install_disks[disk_id].transport = STORAGE_TRANSPORT_AHCI;
-                            g_install_disks[disk_id].abar = abar;
-                            g_install_disks[disk_id].hba_port = p;
-                            g_install_disks[disk_id].sector_count = 0;
-                            ++g_install_disk_count;
+                    if (g_install_disk_count < STORAGE_MAX_INSTALL_DISKS) {
+                        struct install_disk_state *disk =
+                            &g_install_disks[g_install_disk_count++];
+                        storage_memzero(disk, sizeof(*disk));
+                        disk->present = true;
+                        disk->bus = (uint8_t)bus;
+                        disk->slot = slot;
+                        disk->function = func;
+                        disk->port = port;
+                        disk->transport = STORAGE_TRANSPORT_AHCI;
+                        disk->abar = abar;
+                        disk->hba_port = p;
+                        storage_copy_text(disk->device_model, sizeof(disk->device_model),
+                                          "SATA/AHCI Disk");
+                        if (!root_ready && storage_try_mount_root_disk(disk) == 0) {
+                            root_ready = 1;
                         }
                     }
-                    if (root_ready) {
-                        continue;
-                    }
-                    g_active_volume = &g_volumes[0];
-                    g_storage.bus = (uint8_t)bus;
-                    g_storage.slot = slot;
-                    g_storage.function = func;
-                    g_storage.abar = abar;
-                    g_storage.hba_port = p;
-                    g_storage.port = port;
-                    g_storage.kind = STORAGE_VOLUME_AHCI;
-                    g_storage.transport = STORAGE_TRANSPORT_AHCI;
-                    g_storage.volume_id = STORAGE_VOLUME_ROOT;
-                    storage_copy_text(g_storage.mount_path, sizeof(g_storage.mount_path), "/");
-                    if (gpt_find_esp() < 0) {
-                        storage_memzero(&g_volumes[0], sizeof(g_volumes[0]));
-                        g_active_volume = &g_volumes[0];
-                        continue;
-                    }
-                    /* A modern LeonOS disk has a small FAT32 ESP for UEFI/GRUB
-                     * and an ext2 data partition for the normal writable root.
-                     * Keep the legacy ESP-only FAT32 image path for upgrades and
-                     * removable-media compatibility. */
-                    int ext2_ret = g_storage.ext2_start_lba ? ext2_mount() : -2;
-                    if (ext2_ret < 0) {
-                        console_printf("[ntclks] ext2 root mount unavailable lba=%llu sectors=%llu error=%d; falling back to FAT32 ESP\n",
-                                       (unsigned long long)g_storage.ext2_start_lba,
-                                       (unsigned long long)g_storage.ext2_sector_count,
-                                       ext2_ret);
-                        if (fat32_mount() < 0) {
-                            storage_memzero(&g_volumes[0], sizeof(g_volumes[0]));
-                            g_active_volume = &g_volumes[0];
-                            continue;
-                        }
-                        g_storage.filesystem = STORAGE_FILESYSTEM_FAT32;
-                        console_printf("[ntclks] storage using legacy FAT32 root esp_lba=%llu\n",
-                                       (unsigned long long)g_storage.esp_start_lba);
-                    }
-                    g_storage.ready = true;
-                    if (storage_mount_runtime_boot() < 0) {
-                        console_printf("[ntclks] storage boot ESP mount unavailable\n");
-                    }
-                    root_ready = 1;
-                    if (g_install_disk_count != 0 &&
-                        g_install_disks[g_install_disk_count - 1u].present) {
-                        g_install_disks[g_install_disk_count - 1u].boot_root = 1;
-                    }
-                    console_printf("[ntclks] storage ready ahci=%u:%u.%u port=%u esp_lba=%llu root=%s\n",
-                                   g_storage.bus,
-                                   g_storage.slot,
-                                   g_storage.function,
-                                   g_storage.port,
-                                   (unsigned long long)g_storage.esp_start_lba,
-                                   g_storage.filesystem == STORAGE_FILESYSTEM_EXT2 ? "ext2" : "fat32");
                 }
             }
         }
     }
+    storage_sort_install_disks();
     g_active_volume = &g_volumes[0];
     if (!root_ready) {
-        console_printf("[ntclks] storage init failed: no AHCI/IDE GPT ESP/root filesystem found\n");
+        console_printf("[ntclks] storage init failed: no AHCI/IDE/NVMe GPT ESP/root filesystem found\n");
     }
 }
 
@@ -590,4 +564,3 @@ void storage_init_installer_root(const struct boot_info *boot)
         console_printf("[ntclks] installer root ramdisk module not found; ensure GRUB had enough RAM to load /install/root.fat\n");
     }
 }
-

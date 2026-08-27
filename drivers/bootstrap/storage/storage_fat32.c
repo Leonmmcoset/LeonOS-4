@@ -318,8 +318,10 @@ static int storage_install_identify(struct install_disk_state *disk, uint64_t *o
     if (disk->transport == STORAGE_TRANSPORT_IDE_PIO) {
         struct ide_device_info device;
         storage_disk_ide_device(disk, &device);
+        kernel_spin_lock(&storage_transport_lock);
         ret = ide_identify_device(&device);
         if (ret < 0 || device.atapi || !device.sector_count) {
+            kernel_spin_unlock(&storage_transport_lock);
             return ret < 0 ? ret : -95;
         }
         disk->ide_lba48 = device.lba48;
@@ -329,14 +331,24 @@ static int storage_install_identify(struct install_disk_state *disk, uint64_t *o
         disk->sector_count = device.sector_count;
         storage_copy_text(disk->device_model, sizeof(disk->device_model), device.model);
         *out_sectors = device.sector_count;
+        kernel_spin_unlock(&storage_transport_lock);
         return 0;
     }
-    if (!disk->hba_port) {
+    if (disk->transport == STORAGE_TRANSPORT_NVME) {
+        if (!disk->nvme || !disk->nvme->ready || !disk->nvme_nsid || !disk->sector_count) {
+            return -95;
+        }
+        *out_sectors = disk->sector_count;
+        return 0;
+    }
+    if (disk->transport != STORAGE_TRANSPORT_AHCI || !disk->hba_port) {
         return -22;
     }
+    kernel_spin_lock(&storage_transport_lock);
     ret = ahci_wait_idle(disk->hba_port);
     if (ret < 0) {
-        return storage_read_failure(ret);
+        ret = storage_read_failure(ret);
+        goto out_unlock;
     }
     disk->hba_port->is = 0xffffffffu;
     storage_memzero(ahci_cmd_headers, sizeof(ahci_cmd_headers));
@@ -359,13 +371,16 @@ static int storage_install_identify(struct install_disk_state *disk, uint64_t *o
         fis->countl = 1;
         ret = ahci_wait_cmd_slot(disk->hba_port);
         if (ret < 0) {
-            return storage_read_failure(ret);
+            ret = storage_read_failure(ret);
+            goto out_unlock;
         }
+        ahci_memory_barrier();
         disk->hba_port->ci = 1u;
         for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
             if ((disk->hba_port->ci & 1u) == 0) {
                 if (disk->hba_port->is & AHCI_PORT_IS_TFES) {
-                    return -5;
+                    ret = -5;
+                    goto out_unlock;
                 }
                 *out_sectors = ((uint64_t)id[103] << 48) |
                                ((uint64_t)id[102] << 32) |
@@ -374,12 +389,16 @@ static int storage_install_identify(struct install_disk_state *disk, uint64_t *o
                 if (*out_sectors == 0) {
                     *out_sectors = ((uint64_t)id[61] << 16) | id[60];
                 }
-                return 0;
+                ret = *out_sectors ? 0 : -5;
+                goto out_unlock;
             }
             ahci_cpu_relax();
         }
     }
-    return -5;
+    ret = -5;
+out_unlock:
+    kernel_spin_unlock(&storage_transport_lock);
+    return ret;
 }
 
 static int fat32_is_short_compatible_char(char ch)

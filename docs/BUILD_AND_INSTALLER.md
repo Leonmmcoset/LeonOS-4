@@ -93,15 +93,18 @@ If GRUB places that module over the kernel or middlelayer's fixed ELF load
 range, the Loader relocates it into EFI LoaderData before loading either image;
 the relocated range is reserved and mounted directly by the kernel.
 
-For VirtualBox installation tests, attach the target VDI through either the
-SATA/AHCI controller or the legacy PIIX4 IDE controller. IDE/PATA disks use
-synchronous PIO with LBA48 (and LBA28 fallback); IDE/ATAPI optical media is
-read-only and can provide the Installer ISO.
+For VirtualBox installation tests, attach the target VDI through a SATA/AHCI,
+NVMe, or legacy PIIX4 IDE controller. NVMe namespaces use synchronous polling
+queues and require 512-byte logical sectors. IDE/PATA disks use synchronous
+PIO with LBA48 (and LBA28 fallback); IDE/ATAPI optical media is read-only and
+can provide the Installer ISO.
 
 For QEMU, the normal `python3 build.py run run` command keeps the AHCI topology. Set
 `LEONOS_QEMU_IDE=1` when running `python3 build.py run run-iso` or a QMP smoke test to use
 a PIIX3 IDE controller with the disk on primary master and the ISO on the
 secondary channel.
+Set `LEONOS_QEMU_NVME=1` to attach the same VMDK through a QEMU NVMe controller;
+this is intentionally opt-in so normal QEMU runs retain the AHCI regression path.
 
 The installer runtime itself only needs `desktop.elf` and `installer.elf` under
 `/system/apps`. The installed-system root payload under `/install/root/system/apps`

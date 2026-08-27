@@ -326,6 +326,7 @@ Current raw device kinds:
 - Framebuffer
 - AHCI controller
 - IDE/PATA controller
+- NVMe controller
 - Disk
 - Serial COM1
 - Intel e1000 network adapter

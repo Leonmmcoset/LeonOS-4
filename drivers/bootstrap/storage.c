@@ -10,6 +10,7 @@
 #include "storage/storage_state.c"
 #include "storage/storage_ide.c"
 #include "storage/storage_ahci.c"
+#include "storage/storage_nvme.c"
 #include "storage/storage_block.c"
 #include "storage/storage_iso.c"
 #include "storage/storage_fat32.c"

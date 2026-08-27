@@ -16,6 +16,8 @@
 #define ATA_SUBCLASS_SATA 0x06u
 #define ATA_PROGIF_AHCI 0x01u
 #define ATA_SUBCLASS_IDE 0x01u
+#define ATA_SUBCLASS_NVM 0x08u
+#define ATA_PROGIF_NVME 0x02u
 
 #define IDE_PRIMARY_CMD_DEFAULT 0x1f0u
 #define IDE_PRIMARY_CTRL_DEFAULT 0x3f6u
@@ -142,11 +144,13 @@ enum storage_volume_kind {
     STORAGE_VOLUME_AHCI = 1,
     STORAGE_VOLUME_RAM = 2,
     STORAGE_VOLUME_IDE = 3,
+    STORAGE_VOLUME_NVME = 4,
 };
 
 enum storage_transport {
     STORAGE_TRANSPORT_AHCI = 1,
     STORAGE_TRANSPORT_IDE_PIO = 2,
+    STORAGE_TRANSPORT_NVME = 3,
 };
 
 enum storage_filesystem_kind {
@@ -399,6 +403,8 @@ struct __attribute__((packed)) ext2_dirent {
     char name[];
 };
 
+struct nvme_controller;
+
 static const uint8_t esp_guid[16] = {
     0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11,
     0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b,
@@ -434,6 +440,8 @@ struct storage_volume {
     char device_model[41];
     struct ahci_hba_mem *abar;
     struct ahci_hba_port *hba_port;
+    struct nvme_controller *nvme;
+    uint32_t nvme_nsid;
     uint8_t *ram_base;
     uint64_t ram_bytes;
     uint64_t esp_start_lba;
@@ -493,6 +501,8 @@ struct install_disk_state {
     uint8_t target_mounted;
     struct ahci_hba_mem *abar;
     struct ahci_hba_port *hba_port;
+    struct nvme_controller *nvme;
+    uint32_t nvme_nsid;
     uint64_t sector_count;
 };
 
@@ -518,6 +528,12 @@ static struct install_disk_state g_install_disks[STORAGE_MAX_INSTALL_DISKS];
 static uint32_t g_install_disk_count;
 static uint8_t g_devfs_enabled = 1;
 static uint8_t g_installer_root_active;
+
+/* AHCI uses shared command RAM and IDE PIO owns channel registers while an
+ * operation is in flight.  NVMe has a queue per controller, but it shares a
+ * staging page with the transport.  Serialize these synchronous operations
+ * without disabling interrupts, so SMP callers cannot corrupt a command. */
+static struct kernel_spinlock storage_transport_lock = KERNEL_SPINLOCK_INIT;
 
 static uint8_t ahci_received_fis[256] __attribute__((aligned(256)));
 static uint8_t ahci_cmd_table_buf[256] __attribute__((aligned(128)));
@@ -548,6 +564,11 @@ struct ahci_pending_command {
 };
 
 static struct ahci_pending_command ahci_pending_command;
+
+/* Defined by storage_mount.c after transport discovery helpers.  NVMe's
+ * namespace enumerator calls this to give root selection identical behavior
+ * to AHCI and IDE disks. */
+static int storage_try_mount_root_disk(struct install_disk_state *disk);
 
 struct storage_sector_cache {
     struct storage_volume *volume;
@@ -621,4 +642,3 @@ static uint32_t storage_get_u32(const uint8_t *p)
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
-

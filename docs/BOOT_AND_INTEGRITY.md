@@ -88,10 +88,11 @@ output is unavailable.
 
 ## Installer compatibility
 
-The installer writes target disks through AHCI or legacy IDE/PATA PIO. In
-VirtualBox, attach the destination VDI through either a SATA/AHCI controller
-or the default PIIX4 IDE controller. IDE/ATAPI optical media is read-only and
-is supported for ISO reads.
+The installer writes target disks through AHCI, legacy IDE/PATA PIO, or NVMe.
+NVMe namespaces with 512-byte logical sectors are supported as boot and install
+targets. In VirtualBox, attach the destination VDI through a SATA/AHCI,
+NVMe, or default PIIX4 IDE controller. IDE/ATAPI optical media is read-only
+and is supported for ISO reads.
 
 The installer payload is built from the same matched runtime staging tree:
 

@@ -78,9 +78,9 @@ static int disk_gpt_header_valid(const struct gpt_header *header, uint64_t secto
 }
 
 /**
- * @brief Prepares an AHCI disk for a synchronous disk-management operation.
- * @param disk_id Detected AHCI disk index.
- * @param out_disk Receives the selected AHCI disk state.
+ * @brief Prepares a block disk for a synchronous disk-management operation.
+ * @param disk_id Detected AHCI, IDE/PATA, or NVMe disk index.
+ * @param out_disk Receives the selected block-disk state.
  * @param out_sector_count Receives the total disk sectors.
  * @return Zero on success or a negative errno-style storage error.
  */
@@ -95,9 +95,9 @@ static int disk_manage_prepare(uint32_t disk_id, struct install_disk_state **out
         return -22;
     }
     disk = &g_install_disks[disk_id];
-    if (disk->transport != STORAGE_TRANSPORT_IDE_PIO &&
-        ahci_setup_port(disk->hba_port) < 0) {
-        return -5;
+    ret = storage_prepare_install_disk(disk);
+    if (ret < 0) {
+        return ret;
     }
     sector_count = disk->sector_count;
     if (sector_count == 0) {
@@ -114,7 +114,7 @@ static int disk_manage_prepare(uint32_t disk_id, struct install_disk_state **out
 
 /**
  * @brief Reads and validates both GPT headers and the primary partition table.
- * @param disk Prepared AHCI disk state.
+ * @param disk Prepared block-disk state.
  * @param sector_count Total number of disk sectors.
  * @param out_table Receives validated GPT header metadata.
  * @return Zero on success or a negative errno-style storage error.
@@ -176,7 +176,7 @@ static int disk_gpt_load(struct install_disk_state *disk, uint64_t sector_count,
 
 /**
  * @brief Writes one updated GPT header to a managed disk.
- * @param disk Prepared AHCI disk state.
+ * @param disk Prepared block-disk state.
  * @param header Header to serialize.
  * @return Zero on success or a negative errno-style storage error.
  */
@@ -193,7 +193,7 @@ static int disk_gpt_write_header(struct install_disk_state *disk,
 
 /**
  * @brief Commits the GPT table in the crash-tolerant backup-before-primary order.
- * @param disk Prepared AHCI disk state.
+ * @param disk Prepared block-disk state.
  * @param table Validated table headers for the managed disk.
  * @return Zero on success or a negative errno-style storage error.
  */
@@ -263,7 +263,7 @@ static int disk_gpt_entries_valid(const struct disk_gpt_table *table)
 
 /**
  * @brief Detects the filesystem superblock at a GPT partition start.
- * @param disk Prepared AHCI disk state.
+ * @param disk Prepared block-disk state.
  * @param entry Validated GPT partition entry.
  * @return A LEONOS_DISK_FILESYSTEM value.
  */
@@ -316,8 +316,8 @@ static void disk_gpt_name_to_text(const uint16_t source[36], char *target, uint3
 
 /**
  * @brief Builds public metadata for one validated GPT partition.
- * @param disk_id AHCI disk identifier.
- * @param disk Prepared AHCI disk state.
+ * @param disk_id Block-disk identifier.
+ * @param disk Prepared block-disk state.
  * @param entry_index GPT entry index.
  * @param entry GPT partition entry.
  * @param out Destination public partition record.
@@ -356,7 +356,7 @@ static void disk_partition_export(uint32_t disk_id, const struct install_disk_st
 
 /**
  * @brief Checks whether an operation may mutate a disk-management partition.
- * @param disk AHCI disk state that owns the partition.
+ * @param disk Block-disk state that owns the partition.
  * @return Zero if the disk is not a startup or mounted installer target.
  */
 static int disk_partition_mutable(const struct install_disk_state *disk)
@@ -368,8 +368,8 @@ static int disk_partition_mutable(const struct install_disk_state *disk)
 }
 
 /**
- * @brief Checks whether a runtime data mount belongs to an AHCI disk.
- * @param disk_id AHCI disk identifier to test.
+ * @brief Checks whether a runtime data mount belongs to a block disk.
+ * @param disk_id Block-disk identifier to test.
  * @return Nonzero when a dynamic data mount references @p disk_id.
  */
 static int storage_disk_has_data_mount(uint32_t disk_id)
@@ -414,7 +414,7 @@ static int disk_filesystem_format_supported(uint32_t filesystem)
 
 /**
  * @brief Formats a validated data extent using the selected LeonOS filesystem.
- * @param disk Prepared AHCI disk state.
+ * @param disk Prepared block-disk state.
  * @param entry GPT partition entry defining the data extent.
  * @param filesystem Selected LEONOS_DISK_FILESYSTEM value.
  * @return Zero on success or a negative errno-style storage error.
@@ -528,7 +528,7 @@ static void disk_gpt_set_name(uint16_t destination[36], const char *source)
 
 /**
  * @brief Lists GPT partitions for an administrator-facing disk-management client.
- * @param disk_id Detected AHCI disk identifier.
+ * @param disk_id Detected block-disk identifier.
  * @param partitions Caller buffer receiving public partition records.
  * @param capacity Number of records available in @p partitions.
  * @param out_count Receives the total number of used GPT entries.
@@ -847,22 +847,7 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     storage_cache_invalidate();
     storage_memzero(volume, sizeof(*volume));
     volume->volume_id = (uint8_t)volume_id;
-    volume->kind = disk->transport == STORAGE_TRANSPORT_IDE_PIO
-                       ? STORAGE_VOLUME_IDE : STORAGE_VOLUME_AHCI;
-    volume->bus = disk->bus;
-    volume->slot = disk->slot;
-    volume->function = disk->function;
-    volume->port = disk->port;
-    volume->transport = disk->transport;
-    volume->ide_channel = disk->ide_channel;
-    volume->ide_drive = disk->ide_drive;
-    volume->ide_atapi = disk->ide_atapi;
-    volume->ide_lba48 = disk->ide_lba48;
-    volume->ide_command_base = disk->ide_command_base;
-    volume->ide_control_base = disk->ide_control_base;
-    storage_copy_text(volume->device_model, sizeof(volume->device_model), disk->device_model);
-    volume->abar = disk->abar;
-    volume->hba_port = disk->hba_port;
+    storage_volume_from_install_disk(volume, disk);
     volume->source_disk_id = request->disk_id;
     volume->source_partition_index = request->partition_index;
     if (storage_set_data_mount_path(volume, request->disk_id, request->partition_index) < 0) {
@@ -961,7 +946,8 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
             }
         }
         disks[i].id = i;
-        disks[i].port = src->port;
+        disks[i].port = src->transport == STORAGE_TRANSPORT_NVME
+                            ? src->nvme_nsid : src->port;
         disks[i].sector_size = SECTOR_SIZE;
         disks[i].flags = 0;
         if (src->boot_root) {
@@ -973,7 +959,9 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
         disks[i].sector_count = src->sector_count;
         storage_copy_text(disks[i].name, sizeof(disks[i].name),
                           src->transport == STORAGE_TRANSPORT_IDE_PIO
-                              ? "IDE/PATA Disk" : "SATA/AHCI Disk");
+                              ? "IDE/PATA Disk"
+                              : (src->transport == STORAGE_TRANSPORT_NVME
+                                     ? "NVMe Namespace" : "SATA/AHCI Disk"));
     }
     return 0;
 }
@@ -998,9 +986,9 @@ int storage_install_format_target(uint32_t disk_id)
         storage_installer_mounts_busy()) {
         return -LEONOS_EBUSY;
     }
-    if (disk->transport != STORAGE_TRANSPORT_IDE_PIO &&
-        ahci_setup_port(disk->hba_port) < 0) {
-        return -5;
+    ret = storage_prepare_install_disk(disk);
+    if (ret < 0) {
+        return ret;
     }
     sector_count = disk->sector_count;
     if (sector_count == 0) {
@@ -1066,25 +1054,9 @@ int storage_install_mount_target(uint32_t disk_id)
     storage_cache_invalidate();
     storage_memzero(target, sizeof(*target));
     target->volume_id = STORAGE_VOLUME_TARGET_ROOT;
-    target->kind = disk->transport == STORAGE_TRANSPORT_IDE_PIO
-                       ? STORAGE_VOLUME_IDE : STORAGE_VOLUME_AHCI;
-    target->bus = disk->bus;
-    target->slot = disk->slot;
-    target->function = disk->function;
-    target->port = disk->port;
-    target->transport = disk->transport;
-    target->ide_channel = disk->ide_channel;
-    target->ide_drive = disk->ide_drive;
-    target->ide_atapi = disk->ide_atapi;
-    target->ide_lba48 = disk->ide_lba48;
-    target->ide_command_base = disk->ide_command_base;
-    target->ide_control_base = disk->ide_control_base;
-    storage_copy_text(target->device_model, sizeof(target->device_model), disk->device_model);
-    target->abar = disk->abar;
-    target->hba_port = disk->hba_port;
+    storage_volume_from_install_disk(target, disk);
     storage_copy_text(target->mount_path, sizeof(target->mount_path), "/target");
-    if (disk->transport != STORAGE_TRANSPORT_IDE_PIO &&
-        ahci_setup_port(disk->hba_port) < 0) {
+    if (storage_prepare_install_disk(disk) < 0) {
         g_active_volume = old;
         return -5;
     }
@@ -1117,4 +1089,3 @@ int storage_install_mount_target(uint32_t disk_id)
     g_active_volume = old;
     return ret;
 }
-
