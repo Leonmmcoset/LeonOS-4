@@ -138,6 +138,15 @@
 #define INSTALL_EXT2_BLOCK_SIZE 4096u
 #define INSTALL_EXT2_BLOCKS_PER_GROUP 32768u
 #define INSTALL_EXT2_INODES_PER_GROUP 8192u
+#define EXFAT_EOC 0xffffffffu
+#define EXFAT_ENTRY_SIZE 32u
+#define EXFAT_ENTRY_FILE 0x85u
+#define EXFAT_ENTRY_STREAM 0xc0u
+#define EXFAT_ENTRY_NAME 0xc1u
+#define EXFAT_ENTRY_BITMAP 0x81u
+#define EXFAT_ENTRY_UPCASE 0x82u
+#define EXFAT_ATTR_DIRECTORY 0x0010u
+#define EXFAT_STREAM_NO_FAT_CHAIN 0x02u
 
 enum storage_volume_kind {
     STORAGE_VOLUME_NONE = 0,
@@ -158,6 +167,7 @@ enum storage_filesystem_kind {
     STORAGE_FILESYSTEM_FAT32 = 1,
     STORAGE_FILESYSTEM_ISO9660 = 2,
     STORAGE_FILESYSTEM_EXT2 = 3,
+    STORAGE_FILESYSTEM_EXFAT = 4,
 };
 
 struct __attribute__((packed)) ahci_hba_port {
@@ -417,7 +427,7 @@ static const uint8_t linux_filesystem_guid[16] = {
 
 /* Microsoft Basic Data GUID in GPT's little-endian on-disk byte order. */
 static const uint8_t basic_data_guid[16] = {
-    0xeb, 0xd0, 0xa0, 0xa2, 0xb9, 0xe5, 0x44, 0x33,
+    0xa2, 0xa0, 0xd0, 0xeb, 0xe5, 0xb9, 0x33, 0x44,
     0x87, 0xc0, 0x68, 0xb6, 0xb7, 0x26, 0x99, 0xc7,
 };
 
@@ -448,6 +458,8 @@ struct storage_volume {
     uint64_t esp_sector_count;
     uint64_t ext2_start_lba;
     uint64_t ext2_sector_count;
+    uint64_t exfat_start_lba;
+    uint64_t exfat_sector_count;
     uint32_t bytes_per_sector;
     uint32_t sectors_per_cluster;
     uint32_t cluster_bytes;
@@ -469,6 +481,20 @@ struct storage_volume {
     uint32_t ext2_inode_size;
     uint32_t ext2_first_data_block;
     uint32_t ext2_group_count;
+    uint32_t exfat_fat_offset;
+    uint32_t exfat_fat_length;
+    uint32_t exfat_cluster_heap_offset;
+    uint32_t exfat_cluster_count;
+    uint32_t exfat_root_cluster;
+    uint32_t exfat_bitmap_cluster;
+    uint32_t exfat_upcase_cluster;
+    uint64_t exfat_bitmap_length;
+    uint64_t exfat_upcase_length;
+    uint32_t exfat_upcase_checksum;
+    uint32_t exfat_next_free_cluster;
+    uint8_t exfat_sectors_per_cluster_shift;
+    uint8_t exfat_bitmap_nofat;
+    uint8_t exfat_upcase_nofat;
     uint32_t iso_block_size;
     uint32_t iso_root_extent;
     uint32_t iso_root_size;
@@ -635,6 +661,8 @@ struct storage_dir_iter_cache {
 static struct storage_dir_iter_cache storage_dir_iter_cache;
 
 static int fat32_mount(void);
+static int exfat_mount(void);
+static void exfat_cache_invalidate(void);
 static void storage_put_u32(uint8_t *p, uint32_t value);
 
 static uint32_t storage_get_u32(const uint8_t *p)

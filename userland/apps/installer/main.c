@@ -1363,10 +1363,10 @@ static void draw_confirm_page(struct leonos_ui_surface *ui)
     }
     leonos_ui_text_clipped(ui, l.content_x, l.content_y + 130, l.content_w,
                            install_mode == INSTALL_MODE_UPDATE
-                       ? T("The FAT32 boot partition, ext2 system files, dynamic runtime libraries, kernel debugger, and bundled docs will be refreshed. Selected program packages will be refreshed.",
-                                   "FAT32 启动分区、ext2 系统文件、动态运行库、内核调试模块和内置文档会刷新；已选程序包会刷新。")
-                               : T("The selected disk will be erased and formatted with a FAT32 ESP and ext2 system root.",
-                                   "所选硬盘会被清空并格式化为 FAT32 ESP 和 ext2 系统根分区。"),
+                       ? T("The FAT32 boot partition, exFAT or ext2 system files, dynamic runtime libraries, kernel debugger, and bundled docs will be refreshed. Selected program packages will be refreshed.",
+                                   "FAT32 启动分区、exFAT 或 ext2 系统文件、动态运行库、内核调试模块和内置文档会刷新；已选程序包会刷新。")
+                               : T("The selected disk will be erased and formatted with a FAT32 ESP and exFAT system root.",
+                                   "所选硬盘会被清空并格式化为 FAT32 ESP 和 exFAT 系统根分区。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, l.content_x, l.content_y + 174,
                    install_mode == INSTALL_MODE_UPDATE
@@ -2765,7 +2765,7 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
         return;
     }
 
-    show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (ext2), ESP: /target/boot (FAT32)");
+    show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (exFAT or ext2), ESP: /target/boot (FAT32)");
     ret = leonos_install_mount_target(disk_id);
     if (ret < 0) {
         finish_install(window_id, ui, ret, "Mount failed");

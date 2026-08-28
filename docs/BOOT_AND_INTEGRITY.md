@@ -99,7 +99,7 @@ The installer payload is built from the same matched runtime staging tree:
 - `build/esp` contains the loader, kernel, middlelayer, resources, config, and
   userland applications for the installed system.
 - `tools/make_installer_root.py` splits `build/esp` into `install/esp` (the
-  FAT32 ESP boot subset) and `install/root` (the ext2 runtime root) inside
+  FAT32 ESP boot subset) and `install/root` (the exFAT runtime root) inside
   `build/install/root.fat`.
 - `tools/make_installer_iso.py` stages top-level installer copies of
   `boot/loader.elf`, `system/kernel.sys`, `system/middlelayer.sys`, and

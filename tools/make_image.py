@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a LeonOS GPT disk with a FAT32 ESP and an ext2 runtime root."""
+"""Create a LeonOS GPT disk with a FAT32 ESP and an exFAT runtime root."""
 from __future__ import annotations
 
 import argparse
@@ -27,6 +27,7 @@ GPT_PRIMARY_HEADER_LBA = 1
 GPT_PRIMARY_ENTRIES_LBA = 2
 EFI_SYSTEM_PARTITION_GUID = uuid.UUID("c12a7328-f81f-11d2-ba4b-00a0c93ec93b")
 LINUX_FILESYSTEM_GUID = uuid.UUID("0fc63daf-8483-4772-8e79-3d69d8477de4")
+MICROSOFT_BASIC_DATA_GUID = uuid.UUID("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7")
 
 
 def run(cmd: list[str]) -> None:
@@ -137,7 +138,7 @@ def write_gpt(image: Path, partitions: list[tuple[uuid.UUID, int, int, str]]) ->
 
 
 def make_boot_tree(staging: Path, destination: Path) -> None:
-    """Stage only files GRUB and the LeonOS loader must read before ext2 mounts."""
+    """Stage only files GRUB and the LeonOS loader need before the root mounts."""
     copy_file(staging / "EFI/BOOT/BOOTX64.EFI", destination / "EFI/BOOT/BOOTX64.EFI")
     copy_file(staging / "loader.elf", destination / "loader.elf")
     shutil.copytree(staging / "grub", destination / "grub", dirs_exist_ok=True)
@@ -159,11 +160,13 @@ def make_root_tree(staging: Path, destination: Path, language: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create LeonOS 4 GPT FAT32-ESP/ext2-root VMDK")
+    parser = argparse.ArgumentParser(description="Create LeonOS 4 GPT FAT32-ESP/exFAT-root VMDK")
     parser.add_argument("--out", default="build/images/leonos4.vmdk")
     parser.add_argument("--raw", default="build/images/leonos4.raw")
     parser.add_argument("--esp-tree", default="build/esp")
-    parser.add_argument("--root-image", default="build/images/root.ext2")
+    parser.add_argument("--root-image")
+    parser.add_argument("--root-fs", choices=("exfat", "ext2"), default="exfat",
+                        help="Runtime root filesystem; ext2 is retained for compatibility regression builds")
     parser.add_argument("--esp-image", default="build/images/esp.fat")
     parser.add_argument("--default-language", choices=("en", "zh"), default="en",
                         help="Language seed written into this VMDK root filesystem")
@@ -174,12 +177,12 @@ def main() -> int:
     raw = ROOT / args.raw
     out = ROOT / args.out
     esp_tree = ROOT / args.esp_tree
-    root_image = ROOT / args.root_image
+    root_image = ROOT / (args.root_image or f"build/images/root.{args.root_fs}")
     esp_image = ROOT / args.esp_image
     if not esp_tree.is_dir():
         raise SystemExit(f"ESP staging tree does not exist: {esp_tree}")
     if args.esp_size_mib < 128 or args.size_mib <= args.esp_size_mib + 128:
-        raise SystemExit("VMDK needs a 128 MiB+ FAT32 ESP and at least 128 MiB ext2 root space")
+        raise SystemExit("VMDK needs a 128 MiB+ FAT32 ESP and at least 128 MiB runtime root space")
 
     for path in (raw, out, root_image, esp_image):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,10 +204,11 @@ def main() -> int:
             root_first = (esp_last + 1 + 2047) & ~2047
             root_last = total_sectors - 2048
             if root_last <= root_first or root_last - root_first + 1 < 262144:
-                raise SystemExit("VMDK root partition is smaller than the 128 MiB ext2 minimum")
+                raise SystemExit("VMDK root partition is smaller than the 128 MiB minimum")
             write_gpt(raw_temp, [
                 (EFI_SYSTEM_PARTITION_GUID, ESP_FIRST_SECTOR, esp_last, "LEONOS4_ESP"),
-                (LINUX_FILESYSTEM_GUID, root_first, root_last, "LEONOS4_ROOT"),
+                (MICROSOFT_BASIC_DATA_GUID if args.root_fs == "exfat" else LINUX_FILESYSTEM_GUID,
+                 root_first, root_last, "LEONOS4_ROOT"),
             ])
 
             with tempfile.TemporaryDirectory(prefix="leonos-vmdk-") as temp_dir:
@@ -221,20 +225,25 @@ def main() -> int:
 
                 root_bytes = (root_last - root_first + 1) * SECTOR_SIZE
                 run(["truncate", "-s", str(root_bytes), str(root_temp)])
-                # The kernel supports the stable classic ext2 subset only. Explicitly
-                # disable modern ext4 extensions rather than relying on host defaults.
-                run([
-                    "mke2fs", "-q", "-t", "ext2", "-F", "-b", "4096", "-I", "128",
-                    "-O", "^has_journal,^resize_inode,^dir_index,^metadata_csum,^64bit",
-                    "-d", str(root_tree), str(root_temp),
-                ])
+                if args.root_fs == "exfat":
+                    # exFAT volume labels are limited to 11 UTF-16 units;
+                    # the exact LEONOS4_ROOT identity is retained in GPT.
+                    run(["mkfs.exfat", "-q", "-s", "512", "-L", "LEONOS4ROOT", str(root_temp)])
+                    run(["python3", "tools/populate_exfat.py", "--image", str(root_temp),
+                         "--tree", str(root_tree)])
+                else:
+                    # The kernel supports the stable classic ext2 subset only. Explicitly
+                    # disable modern ext4 extensions rather than relying on host defaults.
+                    run([
+                        "mke2fs", "-q", "-t", "ext2", "-F", "-b", "4096", "-I", "128",
+                        "-O", "^has_journal,^resize_inode,^dir_index,^metadata_csum,^64bit",
+                        "-d", str(root_tree), str(root_temp),
+                    ])
 
-            run(["dd", f"if={esp_temp}", f"of={raw_temp}", "bs=4M",
-                 f"seek={ESP_FIRST_SECTOR * SECTOR_SIZE}", "oflag=seek_bytes",
-                 "conv=notrunc", "status=none"])
-            run(["dd", f"if={root_temp}", f"of={raw_temp}", "bs=4M",
-                 f"seek={root_first * SECTOR_SIZE}", "oflag=seek_bytes",
-                 "conv=notrunc", "status=none"])
+            run(["dd", f"if={esp_temp}", f"of={raw_temp}", "bs=512",
+                 f"seek={ESP_FIRST_SECTOR}", "conv=notrunc", "status=none"])
+            run(["dd", f"if={root_temp}", f"of={raw_temp}", "bs=512",
+                 f"seek={root_first}", "conv=notrunc", "status=none"])
             run(["qemu-img", "convert", "-f", "raw", "-O", "vmdk", str(raw_temp), str(out_temp)])
             for source, destination in ((esp_temp, esp_image), (root_temp, root_image),
                                         (raw_temp, raw), (out_temp, out)):

@@ -13,7 +13,7 @@ Middlelayer currently owns:
 - Device catalog formatting from raw kernel device facts.
 - Local account storage, salted SHA-256 password checks, session/user policy,
   and path/task/install authorization decisions.
-- ACL policy through hidden `LEONACL.SYS` metadata files on FAT32 and ext2, including
+- ACL policy through hidden `LEONACL.SYS` metadata files on exFAT, FAT32, and ext2, including
   default ACL synthesis, corrupt-ACL handling, and owner/role checks.
 - Service-runtime authorization for protected service tasks writing
   `/var` state/log files and `/system/config/services.cfg`.
@@ -31,7 +31,7 @@ The boot log should report:
 The kernel still owns the low-level and privileged work:
 
 - AHCI probing and block I/O.
-- FAT32 and ext2 directory and file mutation.
+- exFAT, FAT32, and ext2 directory and file mutation.
 - Physical page allocation, VMA tracking, page tables, and user mappings.
 - Scheduler, tasks, and syscall dispatch.
 - Framebuffer, PS/2, RTC, disk, and serial facts.

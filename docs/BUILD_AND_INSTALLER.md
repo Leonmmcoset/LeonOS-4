@@ -44,7 +44,7 @@ Common build outputs:
 - `build/images/leonos4-installer.iso`
 - `build/install/root.fat`
 - `build/images/esp.fat`
-- `build/images/root.ext2`
+- `build/images/root.exfat` (default; `root.ext2` is available for compatibility builds)
 
 The common system staging tree is:
 
@@ -61,7 +61,7 @@ the account database is intentionally not staged.
 The installer has two related payload groups:
 
 - Top-level ISO boot payload: loader, kernel, middlelayer, and installer root.
-- Installed-system ext2 root payload: a copy of `build/esp` without `EFI/`,
+- Installed-system root payload: a copy of `build/esp` without `EFI/`,
   `boot/`, `system/kernel.sys`, or `system/middlelayer.sys`, stored under
   `install/root` inside `build/install/root.fat`.
 - Installed-system FAT32 ESP payload: the UEFI/GRUB and early loader files
@@ -120,8 +120,8 @@ the license server. To build an image without license validation, change the
 corresponding source macro through Kconfig and regenerate/rebuild so the
 generated binaries contain `LEONOS_LICENSE_REQUIRE 0`.
 
-Installer update mode refreshes FAT32 ESP boot files from `/install/esp`, ext2
-system files from `/install/root`, selected changed or missing `programs`
+Installer update mode refreshes FAT32 ESP boot files from `/install/esp`, exFAT
+or ext2 system files from `/install/root`, selected changed or missing `programs`
 packages, and bundled docs from `/install/root/docs`. The core update replaces
 `/target/system/lib` as a unit, including `ld-leonos.elf`, `libleonos.so.1`, and
 versioned component libraries such as `libmagic.so.1`, `liblua.so.5`, and

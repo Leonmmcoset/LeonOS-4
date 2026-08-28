@@ -29,7 +29,7 @@ config INSTALLER_INSTALLED_REQUIRE_LICENSE
     default y
 
 config IMAGE_SIZE_MIB
-    int "Standalone VMDK image size in MiB (FAT32 ESP plus ext2 root)"
+    int "Standalone VMDK image size in MiB (FAT32 ESP plus exFAT root)"
     range 384 4096
     default 512
 

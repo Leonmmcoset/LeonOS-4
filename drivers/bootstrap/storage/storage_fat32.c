@@ -58,9 +58,9 @@ static int fat32_mount(void)
             }
         }
     }
-    /* Installer targets clone the ext2 root volume before mounting its ESP as
-     * the target ESP. Always set the filesystem kind here so later path lookups do
-     * not accidentally dispatch FAT32 paths through the ext2 backend. */
+    /* Installer targets clone the exFAT/ext2 root volume before mounting its
+     * ESP as the target ESP. Always set the filesystem kind here so later path
+     * lookups do not accidentally dispatch FAT32 paths through another backend. */
     g_storage.filesystem = STORAGE_FILESYSTEM_FAT32;
     return 0;
 }

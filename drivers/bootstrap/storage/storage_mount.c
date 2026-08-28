@@ -100,8 +100,21 @@ static int storage_try_mount_root_disk(struct install_disk_state *disk)
     g_active_volume = root;
     ret = gpt_find_esp();
     if (ret == 0) {
-        int ext2_ret = root->ext2_start_lba ? ext2_mount() : -2;
-        if (ext2_ret < 0) {
+        if (root->exfat_start_lba) {
+            /* A named exFAT root is authoritative. Never silently mount the
+             * ESP as / when its metadata is corrupt: that hides the real
+             * failure and starts an incomplete system. */
+            console_printf("[ntclks] attempting exFAT mount lba=%llu sectors=%u\n",
+                           (unsigned long long)root->exfat_start_lba,
+                           (unsigned int)root->exfat_sector_count);
+            ret = exfat_mount();
+            console_printf("[ntclks] exfat_mount returned %d\n", ret);
+            if (ret < 0 && root->ext2_start_lba) {
+                ret = ext2_mount();
+            }
+        } else if (root->ext2_start_lba) {
+            ret = ext2_mount();
+        } else {
             ret = fat32_mount();
             if (ret == 0) {
                 root->filesystem = STORAGE_FILESYSTEM_FAT32;
@@ -118,7 +131,8 @@ static int storage_try_mount_root_disk(struct install_disk_state *disk)
                        storage_transport_name(disk->transport),
                        disk->bus, disk->slot, disk->function,
                        disk->transport == STORAGE_TRANSPORT_NVME ? disk->nvme_nsid : disk->port,
-                       root->filesystem == STORAGE_FILESYSTEM_EXT2 ? "ext2" : "fat32");
+                       root->filesystem == STORAGE_FILESYSTEM_EXFAT ? "exfat" :
+                       (root->filesystem == STORAGE_FILESYSTEM_EXT2 ? "ext2" : "fat32"));
     } else {
         storage_memzero(root, sizeof(*root));
     }
@@ -433,6 +447,11 @@ void storage_apply_mount_policy(const struct leonos_mount_policy *policy)
             break;
         case LEONOS_MOUNT_KIND_EXT2_BOOT:
             console_printf("[ntclks] mount policy %s kind=ahci-ext2 flags=0x%x\n",
+                           entry->path,
+                           entry->flags);
+            break;
+        case LEONOS_MOUNT_KIND_EXFAT_BOOT:
+            console_printf("[ntclks] mount policy %s kind=block-exfat flags=0x%x\n",
                            entry->path,
                            entry->flags);
             break;

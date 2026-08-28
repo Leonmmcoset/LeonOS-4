@@ -6,7 +6,7 @@
 #define LEONOS_IOCTL_LIST_DIR 0x4c444952UL
 #define LEONOS_INSTALL_IOCTL_LIST_DISKS 0x4c49444bUL
 #define LEONOS_INSTALL_IOCTL_FORMAT_TARGET 0x4c49464dUL
-/* ABI compatibility name: the operation now creates ESP + ext2 root. */
+/* ABI compatibility name: the operation creates an ESP plus runtime root. */
 #define LEONOS_INSTALL_IOCTL_FORMAT_ESP LEONOS_INSTALL_IOCTL_FORMAT_TARGET
 #define LEONOS_INSTALL_IOCTL_MOUNT_TARGET 0x4c494d54UL
 #define LEONOS_DISK_IOCTL_LIST_PARTITIONS 0x4c44504cUL
@@ -137,6 +137,7 @@ struct leonos_fs_acl_request {
 #define LEONOS_DISK_FILESYSTEM_FAT32 1U
 #define LEONOS_DISK_FILESYSTEM_EXT2 2U
 #define LEONOS_DISK_FILESYSTEM_ISO9660 3U
+#define LEONOS_DISK_FILESYSTEM_EXFAT 4U
 
 #define LEONOS_DISK_PARTITION_FLAG_ESP 0x00000001U
 #define LEONOS_DISK_PARTITION_FLAG_BOOT_ROOT 0x00000002U
@@ -238,7 +239,7 @@ int leonos_disk_format_partition(const struct leonos_disk_partition_format *requ
 int leonos_disk_delete_partition(const struct leonos_disk_partition_delete *request);
 /** Creates and formats a new GPT data partition in free disk space. */
 int leonos_disk_create_partition(const struct leonos_disk_partition_create *request);
-/** Mounts a FAT32 or ext2 data partition and returns its absolute mount path. */
+/** Mounts a FAT32, exFAT, or ext2 data partition and returns its absolute mount path. */
 int leonos_disk_mount_partition(uint32_t disk_id, uint32_t partition_index,
                                 char *mount_path, uint32_t mount_path_capacity);
 /** Unmounts a data partition when no live task is using its mount. */

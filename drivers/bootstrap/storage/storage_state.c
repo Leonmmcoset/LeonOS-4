@@ -79,6 +79,7 @@ static void storage_memzero(void *dst, size_t len)
 
 static void storage_cache_invalidate(void)
 {
+    exfat_cache_invalidate();
     storage_fat_cache.valid = 0;
     storage_read_cache.valid = 0;
     storage_dir_lookup_cache.valid = 0;
@@ -531,4 +532,3 @@ static uint64_t fat_sector_for_cluster(uint32_t cluster)
     return g_storage.esp_start_lba + g_storage.fat_start_sector +
            ((cluster * 4u) / g_storage.bytes_per_sector);
 }
-

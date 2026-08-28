@@ -17,6 +17,7 @@ pub const MOUNT_KIND_DEVFS: u32 = 3;
 pub const MOUNT_KIND_TARGET_ESP: u32 = 4;
 pub const MOUNT_KIND_EXT2_BOOT: u32 = 5;
 pub const MOUNT_KIND_TARGET_ROOT: u32 = 6;
+pub const MOUNT_KIND_EXFAT_BOOT: u32 = 7;
 
 pub const MOUNT_FLAG_READONLY: u32 = 0x0000_0001;
 pub const MOUNT_FLAG_RUNTIME_ROOT: u32 = 0x0000_0002;
@@ -97,7 +98,7 @@ impl LeonosMountPolicy {
 }
 
 static mut POLICY: LeonosMountPolicy = LeonosMountPolicy::empty();
-/// Builds the mount table: installer mode uses ramdisk/ESP/devfs, otherwise ext2 root + FAT32 boot + devfs.
+/// Builds the mount table: installer mode uses ramdisk/ESP/devfs, otherwise exFAT root + FAT32 boot + devfs.
 pub fn init_root(boot: Option<&BootInfo>) {
     let mut policy = LeonosMountPolicy::empty();
     let installer = boot
@@ -138,10 +139,10 @@ pub fn init_root(boot: Option<&BootInfo>) {
         add_entry(&mut policy, target_esp);
     } else {
         let mut root = LeonosMountEntry::empty();
-        root.kind = MOUNT_KIND_EXT2_BOOT;
+        root.kind = MOUNT_KIND_EXFAT_BOOT;
         root.flags = MOUNT_FLAG_RUNTIME_ROOT;
         copy_bytes(&mut root.path, b"/");
-        copy_bytes(&mut root.source, b"ahci-ext2:auto");
+        copy_bytes(&mut root.source, b"block-exfat:auto");
         add_entry(&mut policy, root);
 
         let mut devfs = LeonosMountEntry::empty();

@@ -10,6 +10,8 @@ bool storage_ready(void)
 const char *storage_root_filesystem_name(void)
 {
     switch (g_volumes[0].filesystem) {
+    case STORAGE_FILESYSTEM_EXFAT:
+        return "exfat";
     case STORAGE_FILESYSTEM_EXT2:
         return "ext2";
     case STORAGE_FILESYSTEM_FAT32:
@@ -160,6 +162,11 @@ static int storage_lookup_path_unlocked(const char *path, struct storage_node *o
         if (ret == 0 && out) storage_path_cache_store(resolved, out);
         return ret;
     }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        ret = exfat_lookup_path(backend_path, out);
+        if (ret == 0 && out) storage_path_cache_store(resolved, out);
+        return ret;
+    }
 
     struct storage_node node = {
         .type = LEONOS_FS_TYPE_DIR,
@@ -295,6 +302,12 @@ static int storage_read_node_cursor_unlocked(const struct storage_node *node, ui
             cursor->valid = 0;
         }
         ret = ext2_read_node(node, offset, buf, len, out_read);
+        storage_restore_volume(old_volume);
+        return ret;
+    }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        if (cursor) cursor->valid = 0;
+        ret = exfat_read_node(node, offset, buf, len, out_read);
         storage_restore_volume(old_volume);
         return ret;
     }
@@ -484,6 +497,17 @@ static int storage_readdir_node_unlocked(const struct storage_node *node, uint64
         }
         return ret == -2 ? 0 : ret;
     }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        ret = exfat_iter_dir_entry(node->first_cluster,
+                                   (node->flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0,
+                                   *cursor, entry);
+        storage_restore_volume(old_volume);
+        if (ret == 0) {
+            ++(*cursor);
+            return 1;
+        }
+        return ret == -2 ? 0 : ret;
+    }
     ret = fat32_iter_dir_entry(node->first_cluster, *cursor, entry);
     storage_restore_volume(old_volume);
     if (ret == 0) {
@@ -510,6 +534,7 @@ int storage_readdir_node(const struct storage_node *node, uint64_t *cursor,
 int storage_read_file(const char *path, const void **out_data, size_t *out_len)
 {
     struct storage_node node;
+    struct storage_volume *old_volume = g_active_volume;
     uint64_t pages;
     uint64_t phys;
     uint32_t got = 0;
@@ -520,29 +545,35 @@ int storage_read_file(const char *path, const void **out_data, size_t *out_len)
     *out_len = 0;
     int ret = storage_lookup_path(path, &node);
     if (ret < 0) {
+        storage_restore_volume(old_volume);
         return ret;
     }
     if (node.type != LEONOS_FS_TYPE_FILE) {
+        storage_restore_volume(old_volume);
         return -21;
     }
     /* storage_read_node() and the page allocator use 32-bit lengths. Do not
      * silently truncate a larger FAT32 file into a short executable/image. */
     if (node.size > 0xffffffffULL ||
         (node.size + 4095ULL) / 4096ULL > 0xffffffffULL) {
+        storage_restore_volume(old_volume);
         return -28;
     }
     pages = (node.size + 4095u) / 4096u;
     phys = pages ? mm_alloc_pages((uint32_t)pages) : mm_alloc_page();
     if (!phys) {
+        storage_restore_volume(old_volume);
         return -12;
     }
     ret = storage_read_node(&node, 0, (void *)(uintptr_t)phys, (uint32_t)node.size, &got);
     if (ret < 0 || got != node.size) {
         mm_free_pages(phys, pages ? (uint32_t)pages : 1u);
+        storage_restore_volume(old_volume);
         return ret < 0 ? ret : -5;
     }
     *out_data = (const void *)(uintptr_t)phys;
     *out_len = node.size;
+    storage_restore_volume(old_volume);
     return 0;
 }
 
@@ -550,6 +581,7 @@ int storage_write_node(const char *path, uint64_t offset,
                        const void *buf, uint32_t len, uint32_t *out_written)
 {
     struct storage_node node;
+    char backend_path[LEONOS_FS_PATH_LEN];
     uint64_t end64;
     uint32_t total_len;
     uint32_t final_len;
@@ -583,6 +615,12 @@ int storage_write_node(const char *path, uint64_t offset,
          * global router again would reinterpret /docs/foo as the installer
          * FAT root rather than /target/docs/foo. */
         return ext2_write_node(&node, offset, buf, len, out_written);
+    }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        ret = storage_backend_path(path, backend_path, sizeof(backend_path));
+        if (ret < 0) return ret;
+        storage_begin_mutation();
+        return exfat_write_node_path(backend_path, offset, buf, len, out_written);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -832,6 +870,12 @@ int storage_write_file(const char *path, const void *buf, uint32_t len)
         storage_begin_mutation();
         return ext2_write_file(backend_path, buf, len);
     }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        ret = storage_backend_path(resolved, backend_path, sizeof(backend_path));
+        if (ret < 0) return ret;
+        storage_begin_mutation();
+        return exfat_write_file(backend_path, buf, len);
+    }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
     }
@@ -1028,6 +1072,13 @@ int storage_truncate_file(const char *path, uint64_t length)
         storage_begin_mutation();
         return ext2_truncate_file(&node, length);
     }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        char backend_path[LEONOS_FS_PATH_LEN];
+        ret = storage_backend_path(path, backend_path, sizeof(backend_path));
+        if (ret < 0) return ret;
+        storage_begin_mutation();
+        return exfat_truncate_file(backend_path, length);
+    }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
     }
@@ -1087,6 +1138,12 @@ int storage_mkdir(const char *path)
         }
         storage_begin_mutation();
         return ext2_mkdir(backend_path);
+    }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        ret = storage_backend_path(resolved, backend_path, sizeof(backend_path));
+        if (ret < 0) return ret;
+        storage_begin_mutation();
+        return exfat_mkdir(backend_path);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -1197,6 +1254,13 @@ int storage_unlink(const char *path)
         storage_begin_mutation();
         return ext2_unlink(backend_path);
     }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        if (node.type == LEONOS_FS_TYPE_DIR) return -21;
+        ret = storage_backend_path(resolved, backend_path, sizeof(backend_path));
+        if (ret < 0) return ret;
+        storage_begin_mutation();
+        return exfat_unlink(backend_path);
+    }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
     }
@@ -1282,6 +1346,13 @@ int storage_rmdir(const char *path)
         }
         storage_begin_mutation();
         return ext2_rmdir(backend_path);
+    }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        if (node.type != LEONOS_FS_TYPE_DIR) return -20;
+        ret = storage_backend_path(resolved, backend_path, sizeof(backend_path));
+        if (ret < 0) return ret;
+        storage_begin_mutation();
+        return exfat_rmdir(backend_path);
     }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
@@ -1372,6 +1443,21 @@ int storage_rename(const char *old_path, const char *new_path)
         storage_begin_mutation();
         return ext2_rename(old_backend_path, new_backend_path);
     }
+    if (g_storage.filesystem == STORAGE_FILESYSTEM_EXFAT) {
+        struct storage_volume *old_volume;
+        struct storage_volume *new_volume;
+        ret = storage_route_path(old_resolved, &old_volume, old_backend_path,
+                                 sizeof(old_backend_path));
+        if (ret < 0) return ret;
+        ret = storage_route_path(new_resolved, &new_volume, new_backend_path,
+                                 sizeof(new_backend_path));
+        if (ret < 0) return ret;
+        if (old_volume->volume_id != new_volume->volume_id) return -18;
+        ret = storage_select_volume(old_volume->volume_id);
+        if (ret < 0) return ret;
+        storage_begin_mutation();
+        return exfat_rename(old_backend_path, new_backend_path);
+    }
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
     }
@@ -1460,4 +1546,3 @@ int storage_stat_path(const char *path, struct leonos_stat *st)
     st->size = node.size;
     return 0;
 }
-

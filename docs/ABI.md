@@ -241,11 +241,11 @@ The associated ioctls are:
 - `LEONOS_DISK_IOCTL_MOUNT_PARTITION`
 - `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`
 
-`FORMAT_PARTITION` accepts FAT32 and ext2 through
+`FORMAT_PARTITION` accepts FAT32, exFAT, and ext2 through
 `struct leonos_disk_partition_format`. `CREATE_PARTITION` allocates a
 1 MiB-aligned range with the requested size in MiB and formats it immediately;
-FAT32 uses the GPT Microsoft Basic Data type and ext2 uses the Linux filesystem
-type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
+FAT32 and exFAT use the GPT Microsoft Basic Data type; ext2 uses the Linux
+filesystem type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
 claim to securely erase the old data area.
 
 `MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount` and
@@ -289,7 +289,7 @@ The kernel service table passed to middlelayer is intentionally small:
 - `mkdir`
 
 Kernel code owns hardware probing, interrupts, page tables, physical memory,
-scheduling, user pointer validation, storage block I/O, and FAT32/ext2 mutation.
+scheduling, user pointer validation, storage block I/O, and exFAT/FAT32/ext2 mutation.
 Middlelayer owns higher-level policy or semantic services that can run on top
 of those kernel facts.
 

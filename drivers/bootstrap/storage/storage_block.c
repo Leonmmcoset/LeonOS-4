@@ -350,6 +350,24 @@ static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void
                                   g_storage.transport == STORAGE_TRANSPORT_IDE_PIO
                                       ? IDE_MAX_PIO_SECTORS : STORAGE_WRITE_MAX_SECTORS);
         int ret = storage_write_device(&g_storage, lba, chunk, src);
+        if (ret < 0 && chunk > 1u) {
+            /* A few virtual AHCI implementations occasionally fail a
+             * multi-sector DMA command even though the media is healthy.
+             * Retry the same idempotent payload one sector at a time so a
+             * filesystem transaction is not abandoned after a transient
+             * controller error. */
+            console_printf("[ntclks] storage write batch fallback lba=%llu sectors=%u ret=%d\n",
+                           (unsigned long long)lba, chunk, ret);
+            ret = 0;
+            for (uint32_t i = 0; i < chunk; ++i) {
+                int one = storage_write_device(&g_storage, lba + i, 1u,
+                                               src + (size_t)i * SECTOR_SIZE);
+                if (one < 0) {
+                    ret = one;
+                    break;
+                }
+            }
+        }
         if (ret < 0) {
             return ret;
         }
@@ -373,6 +391,7 @@ static int gpt_find_esp(void)
     }
     uint32_t count = hdr->partition_entry_count;
     uint32_t size = hdr->partition_entry_size;
+    console_printf("[ntclks] GPT found entries=%u entry_size=%u\n", count, size);
     if (!count || !size || size < sizeof(struct gpt_entry)) {
         return -2;
     }
@@ -391,8 +410,18 @@ static int gpt_find_esp(void)
     for (uint32_t i = 0; i < count; ++i) {
         struct gpt_entry *entry = (struct gpt_entry *)(void *)(table + (uint64_t)i * size);
         if (!entry->first_lba || entry->last_lba < entry->first_lba) {
+            if (i < 3) {
+                console_printf("[ntclks] GPT entry %u: first=%llu last=%llu (skip)\n",
+                               i, (unsigned long long)entry->first_lba,
+                               (unsigned long long)entry->last_lba);
+            }
             continue;
         }
+        console_printf("[ntclks] GPT entry %u: first=%llu last=%llu guid=%x%x%x%x\n",
+                       i, (unsigned long long)entry->first_lba,
+                       (unsigned long long)entry->last_lba,
+                       (unsigned)entry->type_guid[0], (unsigned)entry->type_guid[1],
+                       (unsigned)entry->type_guid[2], (unsigned)entry->type_guid[3]);
         if (storage_memcmp(entry->type_guid, esp_guid, 16) == 0) {
             g_storage.esp_start_lba = entry->first_lba;
             g_storage.esp_sector_count = entry->last_lba - entry->first_lba + 1u;
@@ -404,6 +433,22 @@ static int gpt_find_esp(void)
                 storage_guid_valid(g_storage.gpt_disk_guid) &&
                 storage_guid_valid(g_storage.esp_unique_guid);
             esp_found = 1;
+            console_printf("[ntclks] GPT ESP found lba=%llu\n",
+                           (unsigned long long)entry->first_lba);
+        } else if (storage_memcmp(entry->type_guid, basic_data_guid, 16) == 0) {
+            console_printf("[ntclks] GPT basic data partition found lba=%llu name[0]=0x%04x\n",
+                           (unsigned long long)entry->first_lba, (unsigned int)entry->name[0]);
+            if (entry->name[0] == 'L' && entry->name[1] == 'E' && entry->name[2] == 'O' &&
+                entry->name[3] == 'N' && entry->name[4] == 'O' && entry->name[5] == 'S' &&
+                entry->name[6] == '4' && entry->name[7] == '_' && entry->name[8] == 'R' &&
+                entry->name[9] == 'O' && entry->name[10] == 'O' && entry->name[11] == 'T' &&
+                entry->name[12] == 0) {
+                g_storage.exfat_start_lba = entry->first_lba;
+                g_storage.exfat_sector_count = entry->last_lba - entry->first_lba + 1u;
+                console_printf("[ntclks] GPT exFAT root found lba=%llu sectors=%u\n",
+                               (unsigned long long)entry->first_lba,
+                               (unsigned int)(entry->last_lba - entry->first_lba + 1u));
+            }
         } else if (storage_memcmp(entry->type_guid, linux_filesystem_guid, 16) == 0) {
             g_storage.ext2_start_lba = entry->first_lba;
             g_storage.ext2_sector_count = entry->last_lba - entry->first_lba + 1u;

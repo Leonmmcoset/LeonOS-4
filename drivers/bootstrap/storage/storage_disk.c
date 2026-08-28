@@ -282,6 +282,11 @@ static uint32_t disk_partition_filesystem(struct install_disk_state *disk,
         storage_memcmp(storage_scratch + 82u, "FAT32   ", 8u) == 0) {
         return LEONOS_DISK_FILESYSTEM_FAT32;
     }
+    if (storage_scratch[510] == 0x55 && storage_scratch[511] == 0xaa &&
+        storage_memcmp(storage_scratch + 3u, "EXFAT   ", 8u) == 0 &&
+        storage_scratch[108u] == 9u && storage_scratch[110u] == 1u) {
+        return LEONOS_DISK_FILESYSTEM_EXFAT;
+    }
     if (sectors > 2u && install_read_sectors(disk, entry->first_lba + 2u, 1u,
                                               storage_scratch) == 0) {
         const struct ext2_superblock *super =
@@ -404,12 +409,13 @@ static int storage_installer_mounts_busy(void)
 /**
  * @brief Tests a user-visible filesystem selection accepted by the formatter.
  * @param filesystem LEONOS_DISK_FILESYSTEM value.
- * @return Nonzero when the selection is FAT32 or ext2.
+ * @return Nonzero when the selection is FAT32, exFAT, or ext2.
  */
 static int disk_filesystem_format_supported(uint32_t filesystem)
 {
     return filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ||
-           filesystem == LEONOS_DISK_FILESYSTEM_EXT2;
+           filesystem == LEONOS_DISK_FILESYSTEM_EXT2 ||
+           filesystem == LEONOS_DISK_FILESYSTEM_EXFAT;
 }
 
 /**
@@ -428,9 +434,13 @@ static int disk_format_entry(struct install_disk_state *disk, const struct gpt_e
         return -22;
     }
     sector_count = entry->last_lba - entry->first_lba + 1u;
-    return filesystem == LEONOS_DISK_FILESYSTEM_FAT32
-               ? install_format_fat32(disk, entry->first_lba, sector_count)
-               : install_format_ext2(disk, entry->first_lba, sector_count);
+    if (filesystem == LEONOS_DISK_FILESYSTEM_FAT32) {
+        return install_format_fat32(disk, entry->first_lba, sector_count);
+    }
+    if (filesystem == LEONOS_DISK_FILESYSTEM_EXFAT) {
+        return install_format_exfat(disk, entry->first_lba, sector_count);
+    }
+    return install_format_ext2(disk, entry->first_lba, sector_count);
 }
 
 /**
@@ -443,7 +453,8 @@ static void disk_gpt_set_filesystem_type(struct gpt_entry *entry, uint32_t files
     if (!entry) {
         return;
     }
-    if (filesystem == LEONOS_DISK_FILESYSTEM_FAT32) {
+    if (filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ||
+        filesystem == LEONOS_DISK_FILESYSTEM_EXFAT) {
         storage_memcpy(entry->type_guid, basic_data_guid, sizeof(entry->type_guid));
     } else if (filesystem == LEONOS_DISK_FILESYSTEM_EXT2) {
         storage_memcpy(entry->type_guid, linux_filesystem_guid, sizeof(entry->type_guid));
@@ -580,7 +591,7 @@ int storage_disk_list_partitions(uint32_t disk_id,
 }
 
 /**
- * @brief Formats an existing unprotected GPT partition as FAT32 or ext2.
+ * @brief Formats an existing unprotected GPT partition as FAT32, exFAT, or ext2.
  * @param request Validated disk-management format request.
  * @return Zero on success or a negative errno-style storage error.
  */
@@ -857,15 +868,21 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     if (filesystem == LEONOS_DISK_FILESYSTEM_FAT32) {
         volume->esp_start_lba = entry.first_lba;
         volume->esp_sector_count = entry.last_lba - entry.first_lba + 1u;
+    } else if (filesystem == LEONOS_DISK_FILESYSTEM_EXFAT) {
+        volume->exfat_start_lba = entry.first_lba;
+        volume->exfat_sector_count = entry.last_lba - entry.first_lba + 1u;
     } else {
         volume->ext2_start_lba = entry.first_lba;
         volume->ext2_sector_count = entry.last_lba - entry.first_lba + 1u;
     }
     g_active_volume = volume;
-    ret = filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ? fat32_mount() : ext2_mount();
+    ret = filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ? fat32_mount() :
+          (filesystem == LEONOS_DISK_FILESYSTEM_EXFAT ? exfat_mount() : ext2_mount());
     if (ret == 0 &&
         ((filesystem == LEONOS_DISK_FILESYSTEM_FAT32 &&
           volume->filesystem != STORAGE_FILESYSTEM_FAT32) ||
+         (filesystem == LEONOS_DISK_FILESYSTEM_EXFAT &&
+          volume->filesystem != STORAGE_FILESYSTEM_EXFAT) ||
          (filesystem == LEONOS_DISK_FILESYSTEM_EXT2 &&
           volume->filesystem != STORAGE_FILESYSTEM_EXT2))) {
         ret = -5;
@@ -876,7 +893,8 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
         storage_copy_text(request->mount_path, sizeof(request->mount_path), volume->mount_path);
         console_printf("[ntclks] storage mounted data partition disk=%u entry=%u path=%s fs=%s\\n",
                        request->disk_id, request->partition_index, volume->mount_path,
-                       filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ? "fat32" : "ext2");
+                       filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ? "fat32" :
+                       (filesystem == LEONOS_DISK_FILESYSTEM_EXFAT ? "exfat" : "ext2"));
     } else {
         storage_memzero(volume, sizeof(*volume));
     }
@@ -1007,7 +1025,7 @@ int storage_install_format_target(uint32_t disk_id)
     if (ret < 0) {
         return ret;
     }
-    ret = install_format_ext2(disk, root_lba, root_sectors);
+    ret = install_format_exfat(disk, root_lba, root_sectors);
     if (ret < 0) {
         return ret;
     }
@@ -1025,7 +1043,7 @@ int storage_install_format_target(uint32_t disk_id)
 /**
  * @brief Preserves the historical installer formatting ABI.
  * @param disk_id Installer disk identifier.
- * @return Zero after formatting the ESP plus ext2 root, or a negative error.
+ * @return Zero after formatting the ESP plus exFAT root, or a negative error.
  */
 int storage_install_format_esp(uint32_t disk_id)
 {
@@ -1062,8 +1080,15 @@ int storage_install_mount_target(uint32_t disk_id)
     }
     g_active_volume = target;
     int ret = gpt_find_esp();
-    if (ret == 0 && target->ext2_start_lba) ret = ext2_mount();
-    if (ret == 0 && target->filesystem == STORAGE_FILESYSTEM_EXT2) {
+    if (ret == 0 && target->exfat_start_lba) {
+        ret = exfat_mount();
+        console_printf("[ntclks] installer exFAT target mount returned %d\n", ret);
+    }
+    if (ret == 0 && target->filesystem != STORAGE_FILESYSTEM_EXFAT && target->ext2_start_lba) {
+        ret = ext2_mount();
+    }
+    if (ret == 0 && (target->filesystem == STORAGE_FILESYSTEM_EXFAT ||
+                     target->filesystem == STORAGE_FILESYSTEM_EXT2)) {
         target->ready = true;
         disk->target_mounted = 1;
         storage_memzero(esp, sizeof(*esp));
@@ -1073,11 +1098,19 @@ int storage_install_mount_target(uint32_t disk_id)
         storage_copy_text(esp->mount_path, sizeof(esp->mount_path), "/target/boot");
         g_active_volume = esp;
         ret = fat32_mount();
+        if (ret < 0) {
+            console_printf("[ntclks] installer ESP mount failed ret=%d lba=%llu sectors=%llu\n",
+                           ret, (unsigned long long)esp->esp_start_lba,
+                           (unsigned long long)esp->esp_sector_count);
+        }
         if (ret == 0) esp->ready = true;
     }
-    if (ret == 0 && target->filesystem == STORAGE_FILESYSTEM_EXT2) {
-        console_printf("[ntclks] installer target mounted root=/target ext2_lba=%llu esp=/target/boot esp_lba=%llu disk=%u port=%u\n",
-                       (unsigned long long)target->ext2_start_lba,
+    if (ret == 0 && (target->filesystem == STORAGE_FILESYSTEM_EXFAT ||
+                     target->filesystem == STORAGE_FILESYSTEM_EXT2)) {
+        console_printf("[ntclks] installer target mounted root=/target %s_lba=%llu esp=/target/boot esp_lba=%llu disk=%u port=%u\n",
+                       target->filesystem == STORAGE_FILESYSTEM_EXFAT ? "exfat" : "ext2",
+                       (unsigned long long)(target->filesystem == STORAGE_FILESYSTEM_EXFAT
+                                            ? target->exfat_start_lba : target->ext2_start_lba),
                        (unsigned long long)esp->esp_start_lba,
                        disk_id,
                        disk->port);

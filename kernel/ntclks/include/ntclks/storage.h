@@ -35,6 +35,8 @@ struct storage_read_cursor {
 #define STORAGE_NODE_FLAG_DEV_DIR 0x00000002u
 #define STORAGE_NODE_FLAG_DEV_FB0 0x00000004u
 #define STORAGE_NODE_FLAG_EXT2    0x00000008u
+#define STORAGE_NODE_FLAG_EXFAT   0x00000010u
+#define STORAGE_NODE_FLAG_EXFAT_NOFAT 0x00000020u
 
 struct boot_info;
 
@@ -175,7 +177,7 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
  */
 int storage_install_format_esp(uint32_t disk_id);
 /**
- * @brief Formats an installer target as a GPT disk with FAT32 ESP and ext2 root.
+ * @brief Formats an installer target as a GPT disk with FAT32 ESP and exFAT root.
  * @param disk_id Installer-selected AHCI, IDE/PATA, or NVMe disk identifier.
  * @return Zero on success or a negative errno-style storage error.
  */
@@ -196,7 +198,7 @@ int storage_disk_list_partitions(uint32_t disk_id,
                                  struct leonos_disk_partition *partitions,
                                  uint32_t capacity, uint32_t *out_count);
 /**
- * @brief Formats an unprotected GPT partition as FAT32 or ext2.
+ * @brief Formats an unprotected GPT partition as FAT32, exFAT, or ext2.
  * @param request Partition selector and requested filesystem.
  * @return Zero on success or a negative errno-style storage error.
  */
@@ -214,7 +216,7 @@ int storage_disk_delete_partition(const struct leonos_disk_partition_delete *req
  */
 int storage_disk_create_partition(const struct leonos_disk_partition_create *request);
 /**
- * @brief Mounts one FAT32 or ext2 data partition at its deterministic path.
+ * @brief Mounts one FAT32, exFAT, or ext2 data partition at its deterministic path.
  * @param request Disk and GPT-entry selector; receives the mount path.
  * @return Zero on success or a negative errno-style storage error.
  */

@@ -3996,7 +3996,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         request = *(const struct leonos_disk_partition_format *)(uintptr_t)a2;
         if (request.reserved != 0 ||
             (request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
-             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2)) {
+             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2 &&
+             request.filesystem != LEONOS_DISK_FILESYSTEM_EXFAT)) {
             return -LEONOS_EINVAL;
         }
         ret = authz_check_install(sched_current_task());
@@ -4033,7 +4034,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         request.name[LEONOS_DISK_PARTITION_NAME_LEN - 1u] = 0;
         if (request.reserved != 0 || request.size_mib == 0 ||
             (request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
-             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2)) {
+             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2 &&
+             request.filesystem != LEONOS_DISK_FILESYSTEM_EXFAT)) {
             return -LEONOS_EINVAL;
         }
         ret = authz_check_install(sched_current_task());

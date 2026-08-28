@@ -11,7 +11,7 @@ terminal and prints the applet list. Invoke a specific applet with:
 The profile includes BusyBox `ash` behind the `sh` applet with native
 `fork`/`exec`, pipelines, redirections, background jobs, and `jobs`/`fg`/`bg`.
 It supports simple command lines, shell built-ins, and the bundled applets (`ls`, `pwd`, `cat`,
-`echo`, `clear`, `grep`, `head`, `tail`, `wc`, `basename`, `dirname`, `printf`, `diff`,
+`echo`, `clear`, `grep`, `head`, `tail`, `wc`, `sha256sum`, `basename`, `dirname`, `printf`, `diff`,
 `less`, `ps`, and `kill`,
 `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`,
 `true`, `false`, and `vi`). The GUI terminal launches this shell by default.

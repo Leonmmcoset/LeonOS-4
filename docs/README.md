@@ -6,7 +6,7 @@ when changing the kernel, loader, middlelayer, installer, or user ABI.
 - [ABI](ABI.md): syscall subset, device model, and middlelayer ABI.
 - [Syscalls](SYSCALLS.md): syscall entry convention, syscall table,
   `mmap`/`munmap`, process calls, and ioctl groups.
-- [Filesystem](FILESYSTEM.md): Unix-style root paths, mount policy, ext2 root plus FAT32/ISO 9660 support,
+- [Filesystem](FILESYSTEM.md): Unix-style root paths, mount policy, exFAT root plus ext2/FAT32/ISO 9660 support,
   bundled `.hlp` help documents, and current limits.
 - [Drivers](DRIVERS.md): bootstrap drivers, loadable `.drv` modules, ABI, and
   management policy.

@@ -2136,7 +2136,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     esp_names.append("kerneldebug-module")
     esp_outputs.append(kerneldebug_destination)
     manifest = paths.staging / "system/osmlayer.manifest"
-    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=2\nroot=/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v3"))
+    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=2\nroot=/\nfs=exfat\ngui=desktop.elf\n"), action_key="manifest-v4"))
     esp_names.append("esp:manifest")
     esp_outputs.append(manifest)
     for source, destination_rel in ((runtime_loader, "system/lib/ld-leonos.elf"),
@@ -2469,14 +2469,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     vmdk = paths.images / "leonos4.vmdk"
     raw = paths.images / "leonos4.raw"
     esp_fat = paths.images / "esp.fat"
-    root_ext2 = paths.images / "root.ext2"
+    root_exfat = paths.images / "root.exfat"
     vmdk_language = "zh" if config_bool(values, "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH") else "en"
-    graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat, root_ext2),
-                     inputs=tuple([*esp_outputs, config_path, ROOT / "tools/make_image.py"]),
+    graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat, root_exfat),
+                     inputs=tuple([*esp_outputs, config_path, ROOT / "tools/make_image.py", ROOT / "tools/populate_exfat.py"]),
                      depends_on=("esp",), kind="generate", command=(PYTHON, "tools/make_image.py", "--out",
                      relative(vmdk), "--raw", relative(raw), "--esp-tree",
                      relative(paths.staging), "--esp-image", relative(esp_fat),
-                     "--root-image", relative(root_ext2), "--default-language", vmdk_language,
+                     "--root-image", relative(root_exfat), "--root-fs", "exfat", "--default-language", vmdk_language,
                      "--size-mib", str(config_int(values, "CONFIG_IMAGE_SIZE_MIB")))))
 
     iso = paths.images / "leonos4.iso"
