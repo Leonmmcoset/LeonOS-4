@@ -19,6 +19,12 @@ extern int sleep_ms(unsigned long milliseconds);
 extern unsigned long leonos_uptime_ms(void);
 extern char **environ;
 
+/* BusyBox's env applet normally gets this helper from libbb/executable.o.
+ * That object is intentionally omitted from the LeonOS minimal libbb set;
+ * keep the same execvp and SUSv3 exit-code behavior in the port shim. */
+extern unsigned char xfunc_error_retval;
+void bb_perror_msg_and_die(const char *message, ...);
+
 /* Ash and libbb/lineedit share this latch when an input wait is interrupted.
  * The rest of BusyBox's signals.c is intentionally replaced by the LeonOS
  * signal shim below, so keep this small state definition here as well. */
@@ -228,6 +234,21 @@ int execvp(const char *file, char *const argv[])
         return -1;
     }
     return leonos_exec_busybox_applet(argv);
+}
+
+__attribute__((__noreturn__)) void BB_EXECVP_or_die(char **argv)
+{
+    int saved_errno;
+
+    if (!argv || !argv[0]) {
+        errno = EINVAL;
+        bb_perror_msg_and_die("can't execute");
+    }
+    execvp(argv[0], argv);
+    saved_errno = errno;
+    xfunc_error_retval = (saved_errno == ENOENT) ? 127 : 126;
+    errno = saved_errno;
+    bb_perror_msg_and_die("can't execute '%s'", argv[0]);
 }
 
 int glob(const char *pattern, int flags,

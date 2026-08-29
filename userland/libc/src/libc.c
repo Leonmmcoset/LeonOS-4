@@ -1,4 +1,5 @@
 #include <leonos/device.h>
+#include <leonos/environment.h>
 #include <leonos/driver.h>
 #include <leonos/auth.h>
 #include <leonos/audio.h>
@@ -4216,16 +4217,28 @@ int leonos_pty_spawn_argv_with_fds(const char *path, uint32_t pty_id,
                                    char *const argv[], char *const envp[],
                                    int stdin_fd, int stdout_fd, int stderr_fd)
 {
+    char **owned_envp = 0;
+    char *const *effective_envp = envp;
+    int result;
+    if (!effective_envp) {
+        result = leonos_environment_build(0, &owned_envp);
+        if (result < 0) {
+            return result;
+        }
+        effective_envp = owned_envp;
+    }
     struct leonos_pty_spawn spawn = {
         .pty_id = pty_id,
         .path = path,
         .argv = argv,
-        .envp = envp,
+        .envp = effective_envp,
         .stdin_fd = stdin_fd,
         .stdout_fd = stdout_fd,
         .stderr_fd = stderr_fd,
     };
-    return ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
+    result = ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
+    leonos_environment_free(owned_envp);
+    return result;
 }
 
 int leonos_pty_self(void)

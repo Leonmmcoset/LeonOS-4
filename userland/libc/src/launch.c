@@ -1,4 +1,5 @@
 #include <leonos/fs.h>
+#include <leonos/environment.h>
 #include <leonos/ini.h>
 #include <leonos/launch.h>
 #include <leonos/pty.h>
@@ -262,20 +263,28 @@ static int launch_in_terminal(char *argv[])
 int leonos_spawn_argv(const char *path, char *const argv[])
 {
     struct leonos_pty_spawn spawn;
+    char **envp = 0;
+    int result;
 
     if (!path || !path[0] || !argv || !argv[0]) {
         return LEONOS_LAUNCH_ERR_EMPTY;
+    }
+    result = leonos_environment_build(0, &envp);
+    if (result < 0) {
+        return result;
     }
     spawn = (struct leonos_pty_spawn){
         .pty_id = 0,
         .path = path,
         .argv = argv,
-        .envp = 0,
+        .envp = envp,
         .stdin_fd = -1,
         .stdout_fd = -1,
         .stderr_fd = -1,
     };
-    return ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
+    result = ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
+    leonos_environment_free(envp);
+    return result;
 }
 
 static void build_child_path(char *dst, uint32_t capacity,

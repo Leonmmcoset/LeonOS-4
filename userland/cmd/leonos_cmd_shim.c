@@ -224,7 +224,7 @@ static int copy_exec_path(char *out, size_t out_size, const char *path)
 }
 
 static const char *const busybox_applets[] = {
-    "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo",
+    "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo", "env",
     "false", "grep", "head", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
     "rm", "rmdir", "sha256sum", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc", NULL,
 };

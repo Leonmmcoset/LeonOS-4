@@ -1,4 +1,5 @@
 #include <leonos/gui.h>
+#include <leonos/environment.h>
 #include <leonos/i18n.h>
 #include <leonos/pty.h>
 #include <leonos/psf_font.h>
@@ -1441,8 +1442,10 @@ int main(int argc, char **argv, char **envp)
     char shell_prompt[] = "PS1=\\w \\$ ";
     char shell_term[] = "TERM=xterm";
     char *shell_envp[] = { shell_prompt, shell_term, 0 };
+    char **command_env_owned = 0;
     char *const *command_argv;
     char *const *command_envp;
+    char *const *environment_overrides = 0;
     const char *command_path;
     uint8_t shift_down = 0;
     uint8_t ctrl_down = 0;
@@ -1462,13 +1465,21 @@ int main(int argc, char **argv, char **envp)
         shell_argv[3] = 0;
         command_path = shell_argv[0];
         command_argv = shell_argv;
-        command_envp = shell_envp;
+        command_envp = 0;
+        environment_overrides = shell_envp;
     }
+    if (leonos_environment_build((char *const *)environment_overrides,
+                                 &command_env_owned) < 0) {
+        printf("terminal: environment setup failed\n");
+        return 1;
+    }
+    command_envp = command_env_owned;
     window_id = leonos_gui_create_app_window_ex(T("Terminal", "终端"),
                                                 "", TERMINAL_DEFAULT_W,
                                                 TERMINAL_DEFAULT_H, 0);
     if (window_id <= 0) {
         printf("terminal: window creation failed (%d)\n", window_id);
+        leonos_environment_free(command_env_owned);
         return 1;
     }
     leonos_ui_bind(&ui, pixels, terminal_view_width, terminal_view_height,
@@ -1476,6 +1487,7 @@ int main(int argc, char **argv, char **envp)
     leonos_ui_tab_state_init(&tabs_state, 0);
     if (!terminal_open_session(command_path, command_argv, command_envp)) {
         printf("terminal: PTY creation failed\n");
+        leonos_environment_free(command_env_owned);
         return 1;
     }
     terminal_draw(&ui);
@@ -1492,6 +1504,7 @@ int main(int argc, char **argv, char **envp)
         if (leonos_gui_wait_app_event(&event, 40U) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 terminal_close_all_sessions();
+                leonos_environment_free(command_env_owned);
                 return 0;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN) {
@@ -1501,6 +1514,7 @@ int main(int argc, char **argv, char **envp)
                 } else if (ctrl_down && shift_down && event.keycode == TERMINAL_KEY_W) {
                     int close_result = terminal_close_session(tabs_state.selected_id);
                     if (close_result < 0) {
+                        leonos_environment_free(command_env_owned);
                         return 0;
                     }
                     redraw |= close_result;
@@ -1514,10 +1528,13 @@ int main(int argc, char **argv, char **envp)
                 (void)terminal_send_key(event.keycode, 0, &shift_down,
                                         &ctrl_down, &alt_down);
             } else if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON) {
-            int mouse_result = terminal_handle_mouse(event.x, event.y, event.buttons,
-                                                      command_path, command_argv,
-                                                      command_envp);
+                int mouse_result = terminal_handle_mouse(event.x, event.y,
+                                                         event.buttons,
+                                                         command_path,
+                                                         command_argv,
+                                                         command_envp);
                 if (mouse_result < 0) {
+                    leonos_environment_free(command_env_owned);
                     return 0;
                 }
                 redraw |= mouse_result;
