@@ -24,6 +24,8 @@
 #define LEONOS_GUI_IOCTL_UPDATE_WINDOW 0x4c475755UL
 #define LEONOS_GUI_IOCTL_SET_TASKBAR_VISIBLE 0x4c475442UL
 #define LEONOS_GUI_IOCTL_CURSOR_REQUEST 0x4c474352UL
+#define LEONOS_GUI_IOCTL_MOUSE_STATE 0x4c4d5354UL
+#define LEONOS_GUI_IOCTL_CURSOR_REGION 0x4c474347UL
 
 #define GUI_IPC_WINDOW_MSG_CREATE 1u
 #define GUI_IPC_WINDOW_MSG_DIRTY 2u
@@ -31,6 +33,7 @@
 #define GUI_IPC_WINDOW_MSG_UPDATE 4u
 #define GUI_IPC_WINDOW_MSG_TASKBAR 5u
 #define GUI_IPC_WINDOW_MSG_CURSOR 6u
+#define GUI_IPC_WINDOW_MSG_CURSOR_REGION 7u
 
 #define GUI_IPC_WINDOW_NO_RESIZE 0x00000001u
 #define GUI_IPC_WINDOW_FULLSCREEN 0x00000002u
@@ -46,11 +49,18 @@
                                    GUI_IPC_WINDOW_UPDATE_TASKBAR)
 
 #define GUI_IPC_CURSOR_ARROW 0u
-#define GUI_IPC_CURSOR_STYLE_COUNT 6u
+#define GUI_IPC_CURSOR_STYLE_COUNT 15u
 #define GUI_IPC_CURSOR_REQUEST_POSITION 0x00000001u
 #define GUI_IPC_CURSOR_REQUEST_STYLE 0x00000002u
+#define GUI_IPC_CURSOR_REQUEST_AUTO 0x00000004u
 #define GUI_IPC_CURSOR_REQUEST_ALL (GUI_IPC_CURSOR_REQUEST_POSITION | \
-                                    GUI_IPC_CURSOR_REQUEST_STYLE)
+                                    GUI_IPC_CURSOR_REQUEST_STYLE | \
+                                    GUI_IPC_CURSOR_REQUEST_AUTO)
+#define GUI_IPC_CURSOR_REGION_SET 1u
+#define GUI_IPC_CURSOR_REGION_REMOVE 2u
+#define GUI_IPC_CURSOR_REGION_CLEAR 3u
+#define GUI_IPC_CURSOR_REGION_DISABLED 0x00000001u
+
 
 #define GUI_IPC_APP_EVENT_CLOSE 1u
 #define GUI_IPC_APP_EVENT_FOCUS 2u
@@ -88,6 +98,12 @@ struct gui_ipc_window {
     char title[GUI_IPC_WINDOW_TITLE_MAX];
     char text[GUI_IPC_WINDOW_TEXT_MAX];
     char app_path[GUI_IPC_WINDOW_PATH_MAX];
+    int32_t cursor_x;
+    int32_t cursor_y;
+    uint32_t cursor_region_id;
+    uint32_t cursor_style;
+    uint32_t cursor_flags;
+    uint32_t cursor_operation;
 };
 
 struct gui_ipc_app_event {
@@ -139,218 +155,138 @@ struct gui_ipc_appearance_request {
     char wallpaper_path[LEONOS_FS_PATH_LEN];
 };
 
+struct gui_ipc_mouse_state {
+    int32_t x;
+    int32_t y;
+    uint8_t buttons;
+    uint8_t visible;
+    uint8_t present;
+    uint8_t absolute;
+};
+
 /**
- * @brief Coordinates the gui ipc init operation.
+ * @brief Initialize the GUI IPC subsystem: window slots, queues, and default state.
  */
 void gui_ipc_init(void);
 /**
- * @brief Coordinates the gui ipc validate surface geometry operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param stride Input or output value used by this operation.
- * @param bytes Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Check that width/height/stride fit the native UI limits and write the needed byte size to bytes.
  */
 int gui_ipc_validate_surface_geometry(uint32_t width, uint32_t height,
                                       uint32_t stride, uint64_t *bytes);
 /**
- * @brief Coordinates the gui ipc create window operation.
- * @param pid Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param title Input or output value used by this operation.
- * @param text Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Create a window for pid and return its id, or 0 on failure.
  */
 int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
                               const char *title, const char *text, uint32_t flags);
 /**
- * @brief Coordinates the gui ipc post system window operation.
- * @param pid Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param title Input or output value used by this operation.
- * @param text Input or output value used by this operation.
- * @param app_path LeonOS path consumed by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Ask the window server to create a system window (e.g. taskbar) backed by app_path.
  */
 int gui_ipc_post_system_window(uint32_t pid, uint32_t width, uint32_t height,
                                const char *title, const char *text,
                                const char *app_path, uint32_t flags);
 /**
- * @brief Coordinates the gui ipc pop window operation.
- * @param caller_pid Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dequeue the next window message (create/dirty/close/...) for the window server.
  */
 int gui_ipc_pop_window(uint32_t caller_pid, struct gui_ipc_window *out);
 /**
- * @brief Coordinates the gui ipc present window operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param stride Input or output value used by this operation.
- * @param pixels Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the app's pixel buffer into the window's back buffer and mark it dirty.
  */
 int gui_ipc_present_window(uint32_t pid, uint32_t window_id, uint32_t width, uint32_t height,
                            uint32_t stride, const uint32_t *pixels);
 /**
- * @brief Coordinates the gui ipc destroy window operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Destroy the window owned by pid; returns 0 on failure.
  */
 int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id);
 /**
- * @brief Coordinates the gui ipc update window operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param mask Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param title Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Apply the title/flags/taskbar updates selected by mask to the window.
  */
 int gui_ipc_update_window(uint32_t pid, uint32_t window_id, uint32_t mask,
                           uint32_t flags, const char *title);
 /**
- * @brief Coordinates the gui ipc set taskbar visible operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param visible Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Show or hide the taskbar for a window.
  */
 int gui_ipc_set_taskbar_visible(uint32_t pid, uint32_t window_id, uint32_t visible);
 /**
- * @brief Coordinates the gui ipc request cursor operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param style Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Request a cursor shape/style at (x,y) for a window.
  */
 int gui_ipc_request_cursor(uint32_t pid, uint32_t window_id, int32_t x, int32_t y,
                            uint32_t style, uint32_t flags);
+int gui_ipc_request_cursor_region(uint32_t pid, uint32_t window_id,
+                                  uint32_t region_id, int32_t x, int32_t y,
+                                  uint32_t width, uint32_t height,
+                                  uint32_t style, uint32_t flags,
+                                  uint32_t operation);
+int gui_ipc_mouse_state(struct gui_ipc_mouse_state *out);
 /**
- * @brief Coordinates the gui ipc fetch window operation.
- * @param caller_pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param capacity_width Input or output value used by this operation.
- * @param capacity_height Input or output value used by this operation.
- * @param stride Input or output value used by this operation.
- * @param pixels Input or output value used by this operation.
- * @param out_width Caller-provided storage that receives output from this operation.
- * @param out_height Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Read a window's pixels back for compositing, clipped to the capacity; returns the copied size.
  */
 int gui_ipc_fetch_window(uint32_t caller_pid, uint32_t window_id,
                          uint32_t capacity_width, uint32_t capacity_height,
                          uint32_t stride, uint32_t *pixels,
                          uint32_t *out_width, uint32_t *out_height);
 /**
- * @brief Coordinates the gui ipc push event operation.
- * @param caller_pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param event Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Push an app event (key/mouse/focus/...) into the window's event queue.
  */
 int gui_ipc_push_event(uint32_t caller_pid, uint32_t window_id,
                        const struct gui_ipc_app_event *event);
 /**
- * @brief Coordinates the gui ipc pop event operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dequeue the oldest event for the window into out; returns 0 when empty.
  */
 int gui_ipc_pop_event(uint32_t pid, uint32_t window_id, struct gui_ipc_app_event *out);
 /**
- * @brief Coordinates the gui ipc set mouse visible operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param visible Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Show or hide the cursor over a window.
  */
 int gui_ipc_set_mouse_visible(uint32_t pid, uint32_t window_id, uint32_t visible);
 /**
- * @brief Coordinates the gui ipc mouse visible operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return non-zero when the cursor is currently visible.
  */
 int gui_ipc_mouse_visible(void);
 /**
- * @brief Coordinates the gui ipc destroy owner operation.
- * @param pid Input or output value used by this operation.
+ * @brief Free all windows and resources owned by pid (called when the process exits).
  */
 void gui_ipc_destroy_owner(uint32_t pid);
 /**
- * @brief Coordinates the gui ipc display state operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the current display mode/scale state into out; returns 0 when unset.
  */
 int gui_ipc_display_state(struct gui_ipc_display_state *out);
 /**
- * @brief Coordinates the gui ipc publish display state operation.
- * @param caller_pid Input or output value used by this operation.
- * @param state Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Record the display state published by the window server.
  */
 int gui_ipc_publish_display_state(uint32_t caller_pid,
                                   const struct gui_ipc_display_state *state);
 /**
- * @brief Coordinates the gui ipc request display operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Queue an app's request to change display mode/scale for the window server.
  */
 int gui_ipc_request_display(const struct gui_ipc_display_request *request);
 /**
- * @brief Coordinates the gui ipc pop display request operation.
- * @param caller_pid Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dequeue the pending display request for the window server.
  */
 int gui_ipc_pop_display_request(uint32_t caller_pid,
                                 struct gui_ipc_display_request *out);
 /**
- * @brief Coordinates the gui ipc appearance state operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the current theme/wallpaper appearance state into out.
  */
 int gui_ipc_appearance_state(struct gui_ipc_appearance_state *out);
 /**
- * @brief Coordinates the gui ipc publish appearance state operation.
- * @param caller_pid Input or output value used by this operation.
- * @param state Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Record the appearance state published by the window server.
  */
 int gui_ipc_publish_appearance_state(uint32_t caller_pid,
                                      const struct gui_ipc_appearance_state *state);
 /**
- * @brief Coordinates the gui ipc request appearance operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Queue an app's appearance change request for the window server.
  */
 int gui_ipc_request_appearance(const struct gui_ipc_appearance_request *request);
 /**
- * @brief Coordinates the gui ipc pop appearance request operation.
- * @param caller_pid Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dequeue the pending appearance request for the window server.
  */
 int gui_ipc_pop_appearance_request(uint32_t caller_pid,
                                    struct gui_ipc_appearance_request *out);
 /**
- * @brief Coordinates the gui ipc set boot theme operation.
- * @param theme Input or output value used by this operation.
+ * @brief Set the boot-time appearance theme (0 or 1).
  */
 void gui_ipc_set_boot_theme(uint32_t theme);
 /**
- * @brief Coordinates the gui ipc appearance theme operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the current appearance theme.
  */
 uint32_t gui_ipc_appearance_theme(void);
 

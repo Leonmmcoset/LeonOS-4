@@ -15,7 +15,7 @@ on:
       installed_system_requires_license:
         description: Require activation after the installer deploys the system
         required: false
-        default: true
+        default: false
         type: boolean
       license_server_url:
         description: HTTP(S) license server URL baked into the installer
@@ -85,7 +85,8 @@ jobs:
             automake \
             libtool \
             libtool-bin \
-            gawk
+            gawk \
+            exfatprogs
 
       - name: Install Rust
         run: |

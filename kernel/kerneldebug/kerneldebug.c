@@ -5,8 +5,9 @@
  */
 #include <ntclks/kernel_debug.h>
 
-/* Keep the module contract in a real ELF note.  The loader checks both the
- * ABI and the entry-name hash before it maps any executable section. */
+/**
+ * @brief Keep the module contract in a real ELF note. The loader checks both the ABI and the entry-name hash before it maps any executable section.
+ */
 __asm__(
     ".pushsection .note.leonos.kerneldebug,\"a\",@note\n"
     ".balign 4\n"

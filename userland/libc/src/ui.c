@@ -2044,6 +2044,11 @@ void leonos_ui_combobox(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
     uint32_t h = LEONOS_FONT_H + 8;
     leonos_ui_edit(surface, x, y, w, text, ui_strlen(text), 0,
                    (flags & LEONOS_UI_EDIT_DISABLED) ? LEONOS_UI_EDIT_DISABLED : 0);
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_EDIT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     leonos_ui_button(surface, x + w - h, y, h, h, open ? "^" : "v", flags & LEONOS_UI_EDIT_DISABLED ? LEONOS_UI_BUTTON_DISABLED : 0);
 }
 
@@ -2138,6 +2143,8 @@ void leonos_ui_dropdown(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
                         uint32_t count, uint32_t selected_id, uint32_t row_h,
                         uint32_t progress)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            LEONOS_UI_BUTTON_H, LEONOS_GUI_CURSOR_HAND, 0);
     uint32_t visible_h = leonos_ui_dropdown_height(count, row_h, progress);
     int32_t popup_x;
     int32_t popup_y;
@@ -2186,6 +2193,11 @@ void leonos_ui_dropdown(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
                            w > 8 ? w - 8 : w, 1, LEONOS_UI_WHITE);
             continue;
         }
+        leonos_ui_cursor_region(surface, popup_x, (int32_t)row_y, w, row_h,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
         if (items && items[i].id == selected_id && !(flags & LEONOS_UI_MENU_DISABLED)) {
             leonos_ui_rect(surface, (uint32_t)popup_x + 3, row_y, w > 6 ? w - 6 : w,
                            row_h, LEONOS_UI_ACTIVE_TITLE);
@@ -2248,6 +2260,11 @@ int leonos_ui_dropdown_hit(int32_t px, int32_t py, uint32_t x, uint32_t y,
 void leonos_ui_radio(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                      const char *label, int checked, uint32_t flags)
 {
+    uint32_t disabled = flags & LEONOS_UI_BUTTON_DISABLED;
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y,
+                            22 + leonos_ui_text_width(label), 18,
+                            disabled ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            disabled ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     uint32_t fg = (flags & LEONOS_UI_BUTTON_DISABLED) ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
     leonos_ui_rect(surface, x + 3, y + 2, 8, 1, fg);
     leonos_ui_rect(surface, x + 2, y + 3, 10, 1, fg);
@@ -2296,6 +2313,8 @@ void leonos_ui_toolbar_button(struct leonos_ui_surface *surface, uint32_t x, uin
 void leonos_ui_splitter(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, uint32_t h, uint32_t vertical)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            LEONOS_GUI_CURSOR_MOVE, 0);
     leonos_ui_rect(surface, x, y, w, h, LEONOS_UI_GRAY);
     if (vertical) {
         leonos_ui_rect(surface, x, y, 1, h, LEONOS_UI_DARK);
@@ -2316,6 +2335,8 @@ void leonos_ui_menubar(struct leonos_ui_surface *surface, uint32_t x, uint32_t y
 void leonos_ui_menubar_item(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                             uint32_t w, const char *label, uint32_t active)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            LEONOS_FONT_H + 8, LEONOS_GUI_CURSOR_HAND, 0);
     if (active) {
         leonos_ui_bevel(surface, x, y + 2, w, LEONOS_FONT_H + 4, LEONOS_UI_LIGHT, LEONOS_UI_BUTTON_PRESSED);
     }
@@ -2364,6 +2385,9 @@ void leonos_ui_menubar_draw(struct leonos_ui_surface *surface, uint32_t x, uint3
                                items ? items[i].label : "",
                                items && items[i].id == active_id);
         if (flags & LEONOS_UI_MENU_DISABLED) {
+            leonos_ui_cursor_region(surface, (int32_t)item_x, (int32_t)y, iw,
+                                    ui_menubar_h(), LEONOS_GUI_CURSOR_NO,
+                                    LEONOS_GUI_CURSOR_REGION_DISABLED);
             leonos_ui_text_transparent_clipped(surface, item_x + 8, y + 4,
                                                iw > 16 ? iw - 16 : iw,
                                                items ? items[i].label : "",
@@ -2459,6 +2483,12 @@ void leonos_ui_menu_popup(struct leonos_ui_surface *surface, uint32_t x, uint32_
         }
         leonos_ui_menu_item(surface, (uint32_t)popup_x + 34, row_y, w > 42 ? w - 42 : w,
                             items ? items[i].label : "", flags);
+        leonos_ui_cursor_region(surface, popup_x + 4, (int32_t)row_y,
+                                w > 8 ? w - 8 : w, row_h,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     }
 }
 
@@ -2662,6 +2692,11 @@ void leonos_ui_slider(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                       uint32_t w, uint32_t h, uint32_t value, uint32_t max,
                       uint32_t flags)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_BUTTON_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_BUTTON_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     uint32_t track_y;
     uint32_t thumb_w = 10;
     uint32_t usable;
@@ -2755,6 +2790,9 @@ void leonos_ui_stepper(struct leonos_ui_surface *surface, uint32_t x, uint32_t y
     ui_format_i32(text, sizeof(text), value);
     leonos_ui_edit(surface, x, y, edit_w, text, ui_strlen(text), 0,
                    disabled ? LEONOS_UI_EDIT_DISABLED : LEONOS_UI_EDIT_READONLY);
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, edit_w, h,
+                            disabled ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_ARROW,
+                            disabled ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     leonos_ui_button(surface, x + edit_w, y, button_w, h, "-",
                      disabled || value <= min ? LEONOS_UI_BUTTON_DISABLED : 0);
     leonos_ui_button(surface, x + edit_w + button_w, y, button_w, h, "+",

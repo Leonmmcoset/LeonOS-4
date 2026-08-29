@@ -13,6 +13,7 @@
 #define GUI_IPC_MAX_WINDOWS 32
 #define GUI_IPC_WINDOW_EVENT_CAP 32
 #define GUI_IPC_PAGE_SIZE 4096ULL
+#define GUI_IPC_CURSOR_REGION_CAP 64u
 
 static struct gui_ipc_window queue[GUI_IPC_QUEUE_CAP];
 static uint32_t head;
@@ -50,14 +51,22 @@ struct gui_window_slot {
     char title[GUI_IPC_WINDOW_TITLE_MAX];
     char text[GUI_IPC_WINDOW_TEXT_MAX];
     char app_path[GUI_IPC_WINDOW_PATH_MAX];
+    struct {
+        uint8_t used;
+        uint32_t id;
+        int32_t x;
+        int32_t y;
+        uint32_t width;
+        uint32_t height;
+        uint32_t style;
+        uint32_t flags;
+    } cursor_regions[GUI_IPC_CURSOR_REGION_CAP];
 };
 
 static struct gui_window_slot windows[GUI_IPC_MAX_WINDOWS];
 
 /**
- * @brief Coordinates the utf8 cont operation.
- * @param byte Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when byte is a UTF-8 continuation byte (0b10xxxxxx).
  */
 static int utf8_cont(uint8_t byte)
 {
@@ -65,9 +74,7 @@ static int utf8_cont(uint8_t byte)
 }
 
 /**
- * @brief Coordinates the user utf8 sequence len operation.
- * @param src Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Byte length of the valid UTF-8 sequence at src (user memory), or 0 when invalid or NUL.
  */
 static uint32_t user_utf8_sequence_len(const char *src)
 {
@@ -126,10 +133,7 @@ static uint32_t user_utf8_sequence_len(const char *src)
 }
 
 /**
- * @brief Copies user string.
- * @param dst Input or output value used by this operation.
- * @param dst_len Length, size, or element count associated with the operation.
- * @param src Input or output value used by this operation.
+ * @brief Copy a user-space string into dst one valid UTF-8 sequence at a time, NUL-terminated.
  */
 static void copy_user_string(char *dst, size_t dst_len, const char *src)
 {
@@ -153,10 +157,7 @@ static void copy_user_string(char *dst, size_t dst_len, const char *src)
 }
 
 /**
- * @brief Copies kernel string.
- * @param dst Input or output value used by this operation.
- * @param dst_len Length, size, or element count associated with the operation.
- * @param src Input or output value used by this operation.
+ * @brief Copy a kernel string into dst, truncating on a UTF-8 boundary and NUL-terminating.
  */
 static void copy_kernel_string(char *dst, size_t dst_len, const char *src)
 {
@@ -175,9 +176,7 @@ static void copy_kernel_string(char *dst, size_t dst_len, const char *src)
 }
 
 /**
- * @brief Finds window.
- * @param window_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the window slot with the given id, or NULL when absent.
  */
 static struct gui_window_slot *find_window(uint32_t window_id)
 {
@@ -190,14 +189,16 @@ static struct gui_window_slot *find_window(uint32_t window_id)
 }
 
 /**
- * @brief Allocates window slot.
- * @return Result, status, or value defined by this API.
+ * @brief Claim a free window slot (clearing its cursor regions) or return NULL when the table is full.
  */
 static struct gui_window_slot *alloc_window_slot(void)
 {
     for (uint32_t i = 0; i < GUI_IPC_MAX_WINDOWS; ++i) {
         if (!windows[i].used) {
             windows[i].used = 1;
+            for (uint32_t j = 0; j < GUI_IPC_CURSOR_REGION_CAP; ++j) {
+                windows[i].cursor_regions[j].used = 0;
+            }
             return &windows[i];
         }
     }
@@ -205,10 +206,7 @@ static struct gui_window_slot *alloc_window_slot(void)
 }
 
 /**
- * @brief Coordinates the min u32 operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the smaller of a and b.
  */
 static uint32_t min_u32(uint32_t a, uint32_t b)
 {
@@ -216,9 +214,7 @@ static uint32_t min_u32(uint32_t a, uint32_t b)
 }
 
 /**
- * @brief Coordinates the window pixels operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the window's pixel-buffer base, or NULL when no buffer is attached.
  */
 static uint32_t *window_pixels(const struct gui_window_slot *slot)
 {
@@ -226,11 +222,7 @@ static uint32_t *window_pixels(const struct gui_window_slot *slot)
 }
 
 /**
- * @brief Coordinates the checked mul u64 operation.
- * @param left Input or output value used by this operation.
- * @param right Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Multiply left*right, returning 0 (and leaving out untouched) on overflow.
  */
 static int checked_mul_u64(uint64_t left, uint64_t right, uint64_t *out)
 {
@@ -242,12 +234,7 @@ static int checked_mul_u64(uint64_t left, uint64_t right, uint64_t *out)
 }
 
 /**
- * @brief Coordinates the gui ipc validate surface geometry operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param stride Input or output value used by this operation.
- * @param bytes Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Validate a surface's width/height/stride against the limits and, when valid, store its byte size.
  */
 int gui_ipc_validate_surface_geometry(uint32_t width, uint32_t height,
                                       uint32_t stride, uint64_t *bytes)
@@ -269,9 +256,7 @@ int gui_ipc_validate_surface_geometry(uint32_t width, uint32_t height,
 }
 
 /**
- * @brief Coordinates the caller is window server operation.
- * @param caller_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when caller_pid's task carries the window-server flag.
  */
 static int caller_is_window_server(uint32_t caller_pid)
 {
@@ -280,8 +265,7 @@ static int caller_is_window_server(uint32_t caller_pid)
 }
 
 /**
- * @brief Releases window buffer.
- * @param slot Input or output value used by this operation.
+ * @brief Free every page of the window's pixel buffer and clear its bookkeeping.
  */
 static void free_window_buffer(struct gui_window_slot *slot)
 {
@@ -296,11 +280,7 @@ static void free_window_buffer(struct gui_window_slot *slot)
 }
 
 /**
- * @brief Coordinates the ensure window buffer operation.
- * @param slot Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Ensure the slot has a buffer large enough for width*height, reallocating only when needed.
  */
 static int ensure_window_buffer(struct gui_window_slot *slot, uint32_t width, uint32_t height)
 {
@@ -331,10 +311,7 @@ static int ensure_window_buffer(struct gui_window_slot *slot, uint32_t width, ui
 }
 
 /**
- * @brief Coordinates the fill message operation.
- * @param msg Input or output value used by this operation.
- * @param type Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
+ * @brief Populate a window message with the slot's identity, geometry, and copied strings.
  */
 static void fill_message(struct gui_ipc_window *msg, uint32_t type,
                          const struct gui_window_slot *slot)
@@ -346,16 +323,19 @@ static void fill_message(struct gui_ipc_window *msg, uint32_t type,
     msg->height = slot->height;
     msg->flags = slot->flags;
     msg->data = 0;
+    msg->cursor_x = 0;
+    msg->cursor_y = 0;
+    msg->cursor_region_id = 0;
+    msg->cursor_style = GUI_IPC_CURSOR_ARROW;
+    msg->cursor_flags = 0;
+    msg->cursor_operation = 0;
     copy_kernel_string(msg->title, sizeof(msg->title), slot->title);
     copy_kernel_string(msg->text, sizeof(msg->text), slot->text);
     copy_kernel_string(msg->app_path, sizeof(msg->app_path), slot->app_path);
 }
 
 /**
- * @brief Coordinates the coalesce dirty message operation.
- * @param type Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Refresh an already-queued dirty message for this window instead of enqueuing a duplicate.
  */
 static int coalesce_dirty_message(uint32_t type, const struct gui_window_slot *slot)
 {
@@ -377,10 +357,7 @@ static int coalesce_dirty_message(uint32_t type, const struct gui_window_slot *s
 }
 
 /**
- * @brief Coordinates the push message operation.
- * @param type Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Enqueue a window message, coalescing dirty updates and dropping the oldest when the queue is full.
  */
 static int push_message(uint32_t type, const struct gui_window_slot *slot)
 {
@@ -402,14 +379,7 @@ static int push_message(uint32_t type, const struct gui_window_slot *slot)
 }
 
 /**
- * @brief Coordinates the push control message operation.
- * @param type Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param data Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Enqueue a control message, overriding its geometry/flags/data before it is sent.
  */
 static int push_control_message(uint32_t type, const struct gui_window_slot *slot,
                                 uint32_t width, uint32_t height,
@@ -433,16 +403,37 @@ static int push_control_message(uint32_t type, const struct gui_window_slot *slo
     return 1;
 }
 
+static int push_cursor_region_message(const struct gui_window_slot *slot,
+                                      uint32_t region_id, int32_t x, int32_t y,
+                                      uint32_t width, uint32_t height,
+                                      uint32_t style, uint32_t flags,
+                                      uint32_t operation)
+{
+    uint32_t next;
+    struct gui_ipc_window *msg;
+    if (!slot) {
+        return 0;
+    }
+    next = (head + 1) % GUI_IPC_QUEUE_CAP;
+    if (next == tail) {
+        tail = (tail + 1) % GUI_IPC_QUEUE_CAP;
+    }
+    msg = &queue[head];
+    fill_message(msg, GUI_IPC_WINDOW_MSG_CURSOR_REGION, slot);
+    msg->cursor_region_id = region_id;
+    msg->cursor_x = x;
+    msg->cursor_y = y;
+    msg->width = width;
+    msg->height = height;
+    msg->cursor_style = style;
+    msg->cursor_flags = flags;
+    msg->cursor_operation = operation;
+    head = next;
+    return 1;
+}
+
 /**
- * @brief Coordinates the push system window message operation.
- * @param pid Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param title Input or output value used by this operation.
- * @param text Input or output value used by this operation.
- * @param app_path LeonOS path consumed by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Enqueue a synthetic window-create message on behalf of a system component.
  */
 static int push_system_window_message(uint32_t pid, uint32_t width, uint32_t height,
                                       const char *title, const char *text,
@@ -472,7 +463,7 @@ static int push_system_window_message(uint32_t pid, uint32_t width, uint32_t hei
 }
 
 /**
- * @brief Coordinates the gui ipc init operation.
+ * @brief Reset the message queue, window ids, and every window slot at startup.
  */
 void gui_ipc_init(void)
 {
@@ -492,9 +483,7 @@ void gui_ipc_init(void)
 }
 
 /**
- * @brief Coordinates the gui ipc display state operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the cached display state into out, or 0 when none has been published yet.
  */
 int gui_ipc_display_state(struct gui_ipc_display_state *out)
 {
@@ -506,10 +495,7 @@ int gui_ipc_display_state(struct gui_ipc_display_state *out)
 }
 
 /**
- * @brief Coordinates the gui ipc publish display state operation.
- * @param caller_pid Input or output value used by this operation.
- * @param state Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Let the window server publish the current display state for other callers to read.
  */
 int gui_ipc_publish_display_state(uint32_t caller_pid,
                                   const struct gui_ipc_display_state *state)
@@ -523,9 +509,7 @@ int gui_ipc_publish_display_state(uint32_t caller_pid,
 }
 
 /**
- * @brief Coordinates the gui ipc request display operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Queue an app's display-change request for the window server to consume.
  */
 int gui_ipc_request_display(const struct gui_ipc_display_request *request)
 {
@@ -538,10 +522,7 @@ int gui_ipc_request_display(const struct gui_ipc_display_request *request)
 }
 
 /**
- * @brief Coordinates the gui ipc pop display request operation.
- * @param caller_pid Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Hand the window server the pending display request, if any.
  */
 int gui_ipc_pop_display_request(uint32_t caller_pid,
                                 struct gui_ipc_display_request *out)
@@ -555,9 +536,7 @@ int gui_ipc_pop_display_request(uint32_t caller_pid,
 }
 
 /**
- * @brief Coordinates the gui ipc appearance state operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the cached appearance state into out.
  */
 int gui_ipc_appearance_state(struct gui_ipc_appearance_state *out)
 {
@@ -569,9 +548,7 @@ int gui_ipc_appearance_state(struct gui_ipc_appearance_state *out)
 }
 
 /**
- * @brief Coordinates the gui ipc appearance path valid operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when path is NUL-terminated within the filesystem path limit.
  */
 static int gui_ipc_appearance_path_valid(const char *path)
 {
@@ -587,13 +564,7 @@ static int gui_ipc_appearance_path_valid(const char *path)
 }
 
 /**
- * @brief Coordinates the gui ipc appearance valid operation.
- * @param theme Input or output value used by this operation.
- * @param metro_color_scheme Input or output value used by this operation.
- * @param win95_color_scheme Input or output value used by this operation.
- * @param wallpaper_mode Input or output value used by this operation.
- * @param wallpaper_path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when every appearance field is within its legal range.
  */
 static int gui_ipc_appearance_valid(uint32_t theme,
                                     uint32_t metro_color_scheme,
@@ -609,10 +580,7 @@ static int gui_ipc_appearance_valid(uint32_t theme,
 }
 
 /**
- * @brief Coordinates the gui ipc publish appearance state operation.
- * @param caller_pid Input or output value used by this operation.
- * @param state Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Let the window server publish a validated appearance state.
  */
 int gui_ipc_publish_appearance_state(uint32_t caller_pid,
                                      const struct gui_ipc_appearance_state *state)
@@ -629,9 +597,7 @@ int gui_ipc_publish_appearance_state(uint32_t caller_pid,
 }
 
 /**
- * @brief Coordinates the gui ipc request appearance operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Queue an app's validated appearance-change request.
  */
 int gui_ipc_request_appearance(const struct gui_ipc_appearance_request *request)
 {
@@ -648,10 +614,7 @@ int gui_ipc_request_appearance(const struct gui_ipc_appearance_request *request)
 }
 
 /**
- * @brief Coordinates the gui ipc pop appearance request operation.
- * @param caller_pid Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Hand the window server the pending appearance request, if any.
  */
 int gui_ipc_pop_appearance_request(uint32_t caller_pid,
                                    struct gui_ipc_appearance_request *out)
@@ -665,8 +628,7 @@ int gui_ipc_pop_appearance_request(uint32_t caller_pid,
 }
 
 /**
- * @brief Coordinates the gui ipc set boot theme operation.
- * @param theme Input or output value used by this operation.
+ * @brief Coerce the boot theme to 0 (classic) or 1 (metro).
  */
 void gui_ipc_set_boot_theme(uint32_t theme)
 {
@@ -674,8 +636,7 @@ void gui_ipc_set_boot_theme(uint32_t theme)
 }
 
 /**
- * @brief Coordinates the gui ipc appearance theme operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the current appearance theme.
  */
 uint32_t gui_ipc_appearance_theme(void)
 {
@@ -683,14 +644,7 @@ uint32_t gui_ipc_appearance_theme(void)
 }
 
 /**
- * @brief Coordinates the gui ipc create window operation.
- * @param pid Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param title Input or output value used by this operation.
- * @param text Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Create a window: allocate a slot, assign a fresh id, and enqueue its CREATE message.
  */
 int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
                               const char *title, const char *text, uint32_t flags)
@@ -734,15 +688,7 @@ int32_t gui_ipc_create_window(uint32_t pid, uint32_t width, uint32_t height,
 }
 
 /**
- * @brief Coordinates the gui ipc post system window operation.
- * @param pid Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param title Input or output value used by this operation.
- * @param text Input or output value used by this operation.
- * @param app_path LeonOS path consumed by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Enqueue a system-created window message for an existing task.
  */
 int gui_ipc_post_system_window(uint32_t pid, uint32_t width, uint32_t height,
                                const char *title, const char *text,
@@ -755,10 +701,7 @@ int gui_ipc_post_system_window(uint32_t pid, uint32_t width, uint32_t height,
 }
 
 /**
- * @brief Coordinates the gui ipc pop window operation.
- * @param caller_pid Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Hand the window server the next queued window message, if any.
  */
 int gui_ipc_pop_window(uint32_t caller_pid, struct gui_ipc_window *out)
 {
@@ -771,14 +714,7 @@ int gui_ipc_pop_window(uint32_t caller_pid, struct gui_ipc_window *out)
 }
 
 /**
- * @brief Coordinates the gui ipc present window operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param width Input or output value used by this operation.
- * @param height Input or output value used by this operation.
- * @param stride Input or output value used by this operation.
- * @param pixels Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the caller's pixels into the window buffer and enqueue a dirty update.
  */
 int gui_ipc_present_window(uint32_t pid, uint32_t window_id, uint32_t width, uint32_t height,
                            uint32_t stride, const uint32_t *pixels)
@@ -804,10 +740,7 @@ int gui_ipc_present_window(uint32_t pid, uint32_t window_id, uint32_t width, uin
 }
 
 /**
- * @brief Coordinates the gui ipc destroy window operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Destroy a window: restore global UI state, free its buffer, and enqueue a CLOSE message.
  */
 int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
 {
@@ -817,34 +750,19 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
     }
     if (taskbar_hidden_window_id == window_id) {
         taskbar_hidden_window_id = 0;
-        /**
- * @brief Coordinates the push control message operation.
- * @param GUI_IPC_WINDOW_MSG_TASKBAR Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+        /* Re-show the taskbar now that its hiding window is gone. */
         (void)push_control_message(GUI_IPC_WINDOW_MSG_TASKBAR, slot, 0, 0, 0, 1);
     }
     if (cursor_style_window_id == window_id) {
         cursor_style_window_id = 0;
-        /**
- * @brief Coordinates the push control message operation.
- * @param GUI_IPC_WINDOW_MSG_CURSOR Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @param GUI_IPC_CURSOR_REQUEST_STYLE Input or output value used by this operation.
- * @param GUI_IPC_CURSOR_ARROW Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+/**
+ * @brief /* Restore the automatic arrow cursor now that its styling window is gone.
  */
         (void)push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot, 0, 0,
-                                   GUI_IPC_CURSOR_REQUEST_STYLE,
+                                   GUI_IPC_CURSOR_REQUEST_STYLE | GUI_IPC_CURSOR_REQUEST_AUTO,
                                    GUI_IPC_CURSOR_ARROW);
     }
-    /**
- * @brief Coordinates the push message operation.
- * @param GUI_IPC_WINDOW_MSG_CLOSE Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+    /* Tell the window server this window is closing. */
     (void)push_message(GUI_IPC_WINDOW_MSG_CLOSE, slot);
     if (mouse_hidden_window_id == window_id) {
         mouse_hidden_window_id = 0;
@@ -866,13 +784,7 @@ int gui_ipc_destroy_window(uint32_t pid, uint32_t window_id)
 }
 
 /**
- * @brief Coordinates the gui ipc update window operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param mask Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param title Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Apply the requested title/borderless/taskbar changes and enqueue an UPDATE message.
  */
 int gui_ipc_update_window(uint32_t pid, uint32_t window_id, uint32_t mask,
                           uint32_t flags, const char *title)
@@ -906,11 +818,7 @@ int gui_ipc_update_window(uint32_t pid, uint32_t window_id, uint32_t mask,
 }
 
 /**
- * @brief Coordinates the gui ipc set taskbar visible operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param visible Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Record that this window hides/shows the taskbar and notify the window server.
  */
 int gui_ipc_set_taskbar_visible(uint32_t pid, uint32_t window_id, uint32_t visible)
 {
@@ -934,14 +842,7 @@ int gui_ipc_set_taskbar_visible(uint32_t pid, uint32_t window_id, uint32_t visib
 }
 
 /**
- * @brief Coordinates the gui ipc request cursor operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param x Input or output value used by this operation.
- * @param y Input or output value used by this operation.
- * @param style Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Apply an app cursor request (style or auto) and notify the window server.
  */
 int gui_ipc_request_cursor(uint32_t pid, uint32_t window_id, int32_t x, int32_t y,
                            uint32_t style, uint32_t flags)
@@ -952,19 +853,68 @@ int gui_ipc_request_cursor(uint32_t pid, uint32_t window_id, int32_t x, int32_t 
         ((flags & GUI_IPC_CURSOR_REQUEST_STYLE) && style >= GUI_IPC_CURSOR_STYLE_COUNT)) {
         return 0;
     }
-    if (flags & GUI_IPC_CURSOR_REQUEST_STYLE) {
+    if (flags & GUI_IPC_CURSOR_REQUEST_AUTO) {
+        cursor_style_window_id = 0;
+    } else if (flags & GUI_IPC_CURSOR_REQUEST_STYLE) {
         cursor_style_window_id = window_id;
     }
     return push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot,
                                 (uint32_t)x, (uint32_t)y, flags, style);
 }
 
+int gui_ipc_request_cursor_region(uint32_t pid, uint32_t window_id,
+                                  uint32_t region_id, int32_t x, int32_t y,
+                                  uint32_t width, uint32_t height,
+                                  uint32_t style, uint32_t flags,
+                                  uint32_t operation)
+{
+    struct gui_window_slot *slot = find_window(window_id);
+    uint32_t free_index = GUI_IPC_CURSOR_REGION_CAP;
+    if (!slot || slot->owner_pid != pid ||
+        operation < GUI_IPC_CURSOR_REGION_SET ||
+        operation > GUI_IPC_CURSOR_REGION_CLEAR ||
+        (flags & ~GUI_IPC_CURSOR_REGION_DISABLED) ||
+        (operation != GUI_IPC_CURSOR_REGION_CLEAR && !region_id) ||
+        (operation == GUI_IPC_CURSOR_REGION_SET &&
+         (!width || !height || style >= GUI_IPC_CURSOR_STYLE_COUNT))) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < GUI_IPC_CURSOR_REGION_CAP; ++i) {
+        if (slot->cursor_regions[i].used && slot->cursor_regions[i].id == region_id) {
+            free_index = i;
+            break;
+        }
+        if (!slot->cursor_regions[i].used && free_index == GUI_IPC_CURSOR_REGION_CAP) {
+            free_index = i;
+        }
+    }
+    if (operation == GUI_IPC_CURSOR_REGION_SET) {
+        if (free_index == GUI_IPC_CURSOR_REGION_CAP) {
+            return 0;
+        }
+        slot->cursor_regions[free_index].used = 1;
+        slot->cursor_regions[free_index].id = region_id;
+        slot->cursor_regions[free_index].x = x;
+        slot->cursor_regions[free_index].y = y;
+        slot->cursor_regions[free_index].width = width;
+        slot->cursor_regions[free_index].height = height;
+        slot->cursor_regions[free_index].style = style;
+        slot->cursor_regions[free_index].flags = flags;
+    } else if (operation == GUI_IPC_CURSOR_REGION_REMOVE) {
+        if (free_index < GUI_IPC_CURSOR_REGION_CAP) {
+            slot->cursor_regions[free_index].used = 0;
+        }
+    } else {
+        for (uint32_t i = 0; i < GUI_IPC_CURSOR_REGION_CAP; ++i) {
+            slot->cursor_regions[i].used = 0;
+        }
+    }
+    return push_cursor_region_message(slot, region_id, x, y, width, height,
+                                      style, flags, operation);
+}
+
 /**
- * @brief Coordinates the gui ipc set mouse visible operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param visible Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Record whether this window hides the mouse and apply the resulting cursor visibility.
  */
 int gui_ipc_set_mouse_visible(uint32_t pid, uint32_t window_id, uint32_t visible)
 {
@@ -984,25 +934,34 @@ int gui_ipc_set_mouse_visible(uint32_t pid, uint32_t window_id, uint32_t visible
 }
 
 /**
- * @brief Coordinates the gui ipc mouse visible operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return whether the mouse cursor is currently visible.
  */
 int gui_ipc_mouse_visible(void)
 {
     return mouse_is_visible();
 }
 
+int gui_ipc_mouse_state(struct gui_ipc_mouse_state *out)
+{
+    const struct mouse_state *state;
+    if (!out) {
+        return 0;
+    }
+    state = mouse_get_state();
+    if (!state) {
+        return 0;
+    }
+    out->x = state->x;
+    out->y = state->y;
+    out->buttons = state->buttons;
+    out->visible = mouse_is_visible() ? 1u : 0u;
+    out->present = state->present ? 1u : 0u;
+    out->absolute = state->absolute ? 1u : 0u;
+    return 1;
+}
+
 /**
- * @brief Coordinates the gui ipc fetch window operation.
- * @param caller_pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param capacity_width Input or output value used by this operation.
- * @param capacity_height Input or output value used by this operation.
- * @param stride Input or output value used by this operation.
- * @param pixels Input or output value used by this operation.
- * @param out_width Caller-provided storage that receives output from this operation.
- * @param out_height Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the window's pixels into the caller's buffer, clamped to its capacity.
  */
 int gui_ipc_fetch_window(uint32_t caller_pid, uint32_t window_id,
                          uint32_t capacity_width, uint32_t capacity_height,
@@ -1036,11 +995,7 @@ int gui_ipc_fetch_window(uint32_t caller_pid, uint32_t window_id,
 }
 
 /**
- * @brief Coordinates the gui ipc push event operation.
- * @param caller_pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param event Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Enqueue an app event for the window and wake its owning task.
  */
 int gui_ipc_push_event(uint32_t caller_pid, uint32_t window_id,
                        const struct gui_ipc_app_event *event)
@@ -1061,11 +1016,7 @@ int gui_ipc_push_event(uint32_t caller_pid, uint32_t window_id,
 }
 
 /**
- * @brief Coordinates the gui ipc pop event operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Hand the window's owning app its next queued event, if any.
  */
 int gui_ipc_pop_event(uint32_t pid, uint32_t window_id, struct gui_ipc_app_event *out)
 {
@@ -1079,8 +1030,7 @@ int gui_ipc_pop_event(uint32_t pid, uint32_t window_id, struct gui_ipc_app_event
 }
 
 /**
- * @brief Coordinates the gui ipc destroy owner operation.
- * @param pid Input or output value used by this operation.
+ * @brief Destroy every window owned by pid (used on process exit).
  */
 void gui_ipc_destroy_owner(uint32_t pid)
 {
@@ -1091,34 +1041,19 @@ void gui_ipc_destroy_owner(uint32_t pid)
         }
         if (taskbar_hidden_window_id == slot->id) {
             taskbar_hidden_window_id = 0;
-            /**
- * @brief Coordinates the push control message operation.
- * @param GUI_IPC_WINDOW_MSG_TASKBAR Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+            /* Re-show the taskbar now that its hiding window is gone. */
             (void)push_control_message(GUI_IPC_WINDOW_MSG_TASKBAR, slot, 0, 0, 0, 1);
         }
         if (cursor_style_window_id == slot->id) {
             cursor_style_window_id = 0;
-            /**
- * @brief Coordinates the push control message operation.
- * @param GUI_IPC_WINDOW_MSG_CURSOR Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @param GUI_IPC_CURSOR_REQUEST_STYLE Input or output value used by this operation.
- * @param GUI_IPC_CURSOR_ARROW Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+/**
+ * @brief /* Restore the automatic arrow cursor now that its styling window is gone.
  */
             (void)push_control_message(GUI_IPC_WINDOW_MSG_CURSOR, slot, 0, 0,
-                                       GUI_IPC_CURSOR_REQUEST_STYLE,
+                                       GUI_IPC_CURSOR_REQUEST_STYLE | GUI_IPC_CURSOR_REQUEST_AUTO,
                                        GUI_IPC_CURSOR_ARROW);
         }
-        /**
- * @brief Coordinates the push message operation.
- * @param GUI_IPC_WINDOW_MSG_CLOSE Input or output value used by this operation.
- * @param slot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+        /* Tell the window server this window is closing. */
         (void)push_message(GUI_IPC_WINDOW_MSG_CLOSE, slot);
         if (mouse_hidden_window_id == slot->id) {
             mouse_hidden_window_id = 0;

@@ -12,38 +12,31 @@
 struct leonos_time_info;
 
 /**
- * @brief Coordinates the time init operation.
+ * @brief Initialize the tick counter and read the RTC wall clock.
  */
 void time_init(void);
 /**
- * @brief Coordinates the time on tick operation.
+ * @brief Advance the tick counter, poll USB input, and drive the scheduler.
  */
 void time_on_tick(void);
 /**
- * @brief Coordinates the time ticks operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the number of ticks since boot.
  */
 uint64_t time_ticks(void);
 /**
- * @brief Coordinates the time uptime ms operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return milliseconds elapsed since boot.
  */
 uint64_t time_uptime_ms(void);
 /**
- * @brief Coordinates the time wall clock operation.
- * @param info Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Fill info with the current wall-clock time; 0 on success.
  */
 int time_wall_clock(struct leonos_time_info *info);
 /**
- * @brief Coordinates the time set wall clock operation.
- * @param unix_seconds Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Set the wall clock to unix_seconds (Unix epoch); 0 on success.
  */
 int time_set_wall_clock(uint64_t unix_seconds);
 /**
- * @brief Coordinates the time sleep ms operation.
- * @param ms Input or output value used by this operation.
+ * @brief Busy-sleep the current CPU for ms milliseconds.
  */
 void time_sleep_ms(uint64_t ms);
 

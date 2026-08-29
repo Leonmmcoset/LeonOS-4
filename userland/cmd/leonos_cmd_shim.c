@@ -226,7 +226,7 @@ static int copy_exec_path(char *out, size_t out_size, const char *path)
 static const char *const busybox_applets[] = {
     "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo",
     "false", "grep", "head", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
-    "rm", "rmdir", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc", NULL,
+    "rm", "rmdir", "sha256sum", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc", NULL,
 };
 
 struct program_path {

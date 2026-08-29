@@ -12,14 +12,21 @@
 
 #include "../arch/x86_64/port.h"
 
+/* Set before any diagnostic work.  A second CPU fault must not recurse into
+ * the formatter/console while the first fault is already being rendered. */
+static volatile int g_bugcheck_active;
+static volatile int g_bugcheck_emergency;
+
 /**
- * @brief Coordinates the bugcheck color operation.
- * @param win95 Input or output value used by this operation.
- * @param metro Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Pick the Win95 or Metro palette color depending on the active GUI theme.
  */
 static uint32_t bugcheck_color(uint32_t win95, uint32_t metro)
 {
+    if (g_bugcheck_emergency) {
+        /* The GUI/theme state may be the object that faulted.  Keep the fatal
+         * screen on a fixed palette for double fault/NMI/machine-check paths. */
+        return win95;
+    }
     return gui_ipc_appearance_theme() == 0u ? win95 : metro;
 }
 
@@ -27,7 +34,6 @@ static uint32_t bugcheck_color(uint32_t win95, uint32_t metro)
 #define BUGCHECK_FG bugcheck_color(0x00ffffffU, 0x00202020U)
 #define BUGCHECK_SUB bugcheck_color(0x00d8d8ffU, 0x006b6b6bU)
 #define BUGCHECK_PANEL bugcheck_color(0x001c1cb8U, 0x00f3f3f3U)
-static int g_bugcheck_active;
 
 struct bugcheck_info {
     const char *reason;
@@ -47,10 +53,7 @@ struct bugcheck_info {
 };
 
 /**
- * @brief Copies text.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Copy src into dst, keeping room for a NUL terminator; a NULL src or empty dst is a no-op.
  */
 static void copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -66,11 +69,7 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
 }
 
 /**
- * @brief Appends char.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ch Input or output value used by this operation.
+ * @brief Write ch at *pos, advance *pos, and re-terminate the buffer; drops the char if full.
  */
 static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -83,11 +82,7 @@ static void append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 }
 
 /**
- * @brief Appends text.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param text Input or output value used by this operation.
+ * @brief Append every character of text one at a time via append_char.
  */
 static void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
@@ -97,11 +92,7 @@ static void append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text
 }
 
 /**
- * @brief Appends u64 dec.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * @brief Append value in decimal, building the digits least-significant first into a scratch buffer.
  */
 static void append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -121,11 +112,7 @@ static void append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t valu
 }
 
 /**
- * @brief Appends u64 hex.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * @brief Append value as a fixed-width "0x" + 16 uppercase hex digits (zero-padded).
  */
 static void append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -137,9 +124,7 @@ static void append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t valu
 }
 
 /**
- * @brief Coordinates the exception name operation.
- * @param vector Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Map an x86 exception vector to its human-readable name, defaulting to "CPU Exception".
  */
 static const char *exception_name(uint64_t vector)
 {
@@ -172,9 +157,7 @@ static const char *exception_name(uint64_t vector)
 }
 
 /**
- * @brief Coordinates the fault mode operation.
- * @param info Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Report "user" when the faulting code segment runs in ring 3, otherwise "kernel".
  */
 static const char *fault_mode(const struct bugcheck_info *info)
 {
@@ -182,11 +165,7 @@ static const char *fault_mode(const struct bugcheck_info *info)
 }
 
 /**
- * @brief Appends page fault flags.
- * @param line Input or output value used by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param error Input or output value used by this operation.
+ * @brief Encode the page-fault error code's P/W/U/RSVD/IF bits as "P=1 W=0 ..." fields.
  */
 static void append_page_fault_flags(char *line, uint32_t *pos, uint32_t cap,
                                     uint64_t error)
@@ -204,13 +183,22 @@ static void append_page_fault_flags(char *line, uint32_t *pos, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the collect bugcheck info operation.
- * @param info Input or output value used by this operation.
+ * @brief Capture the runtime snapshot: tick count, uptime, and the current task's pid and name.
  */
 static void collect_bugcheck_info(struct bugcheck_info *info)
 {
     struct task *task;
     if (!info) {
+        return;
+    }
+    info->ticks = 0;
+    info->uptime_ms = 0;
+    info->pid = 0;
+    info->task_name = "(unavailable)";
+    /* Do not dereference scheduler/time state from the emergency stack.  The
+     * raw CPU frame is still rendered below and remains the authoritative
+     * diagnostic when the fault happened during scheduler teardown. */
+    if (g_bugcheck_emergency) {
         return;
     }
     info->ticks = time_ticks();
@@ -221,8 +209,7 @@ static void collect_bugcheck_info(struct bugcheck_info *info)
 }
 
 /**
- * @brief Coordinates the draw bugcheck vga operation.
- * @param info Input or output value used by this operation.
+ * @brief Draw the fatal-error STOP screen in text mode, including registers and fault detail.
  */
 static void draw_bugcheck_vga(const struct bugcheck_info *info)
 {
@@ -262,30 +249,45 @@ static void draw_bugcheck_vga(const struct bugcheck_info *info)
     line[0] = 0;
     append_text(line, &pos, sizeof(line), "RIP ");
     append_u64_hex(line, &pos, sizeof(line), info->rip);
-    append_text(line, &pos, sizeof(line), "  CR2 ");
-    append_u64_hex(line, &pos, sizeof(line), info->cr2);
+    append_text(line, &pos, sizeof(line), "  CS ");
+    append_u64_hex(line, &pos, sizeof(line), info->cs);
     vga_write_at(0, 8, line);
 
     pos = 0;
     line[0] = 0;
-    append_text(line, &pos, sizeof(line), "ERR ");
+    append_text(line, &pos, sizeof(line), "RFLAGS ");
+    append_u64_hex(line, &pos, sizeof(line), info->rflags);
+    append_text(line, &pos, sizeof(line), "  ERR ");
     append_u64_hex(line, &pos, sizeof(line), info->error);
     append_text(line, &pos, sizeof(line), "  VEC ");
     append_u64_dec(line, &pos, sizeof(line), info->vector);
     vga_write_at(0, 9, line);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), "RSP ");
+    append_u64_hex(line, &pos, sizeof(line), info->rsp);
+    append_text(line, &pos, sizeof(line), "  SS ");
+    append_u64_hex(line, &pos, sizeof(line), info->ss);
+    vga_write_at(0, 10, line);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), "CR2 ");
+    append_u64_hex(line, &pos, sizeof(line), info->cr2);
+    vga_write_at(0, 11, line);
 
     if (info->vector == 14) {
         pos = 0;
         line[0] = 0;
         append_text(line, &pos, sizeof(line), "PF ");
         append_page_fault_flags(line, &pos, sizeof(line), info->error);
-        vga_write_at(0, 10, line);
+        vga_write_at(0, 12, line);
     }
 }
 
 /**
- * @brief Coordinates the draw bugcheck fb operation.
- * @param info Input or output value used by this operation.
+ * @brief Render the fatal-error panel into the framebuffer, falling back to VGA if none is available.
  */
 static void draw_bugcheck_fb(const struct bugcheck_info *info)
 {
@@ -387,12 +389,12 @@ static void draw_bugcheck_fb(const struct bugcheck_info *info)
     }
 
     framebuffer_text(x + 18, y + panel_h - 32,
-                     "Restart the virtual machine after collecting the information above.",
+                     "Restart the machine after collecting the information above.",
                      BUGCHECK_SUB, BUGCHECK_PANEL);
 }
 
 /**
- * @brief Coordinates the bugcheck halt forever operation.
+ * @brief Disable the framebuffer and spin with interrupts off on hlt; never returns.
  */
 static __attribute__((noreturn)) void bugcheck_halt_forever(void)
 {
@@ -403,22 +405,26 @@ static __attribute__((noreturn)) void bugcheck_halt_forever(void)
 }
 
 /**
- * @brief Coordinates the bugcheck commit operation.
- * @param info Input or output value used by this operation.
+ * @brief Print diagnostics, draw the error screen, and halt; a nested call halts immediately to avoid recursion.
  */
 static __attribute__((noreturn)) void bugcheck_commit(struct bugcheck_info *info)
 {
     if (!info) {
         x86_64_halt();
     }
-    if (g_bugcheck_active) {
-        console_printf("[bugcheck] recursive halt reason=%s rip=0x%llx\n",
-                       info->reason ? info->reason : "(null)",
-                       (unsigned long long)info->rip);
+    __asm__ volatile("cli" : : : "memory");
+    if (__sync_lock_test_and_set(&g_bugcheck_active, 1)) {
         bugcheck_halt_forever();
     }
-    g_bugcheck_active = 1;
+    g_bugcheck_emergency = info->vector == 2 || info->vector == 8 || info->vector == 18;
     collect_bugcheck_info(info);
+    if (g_bugcheck_emergency) {
+        /* Keep this path allocation-free and independent of console/theme
+         * bookkeeping.  The framebuffer/VGA renderer contains the complete
+         * vector/error/RIP/stack record. */
+        draw_bugcheck_fb(info);
+        bugcheck_halt_forever();
+    }
     console_printf("\n[bugcheck] %s\n", info->reason ? info->reason : "KERNEL PANIC");
     if (info->detail) {
         console_printf("[bugcheck] detail=%s\n", info->detail);
@@ -451,8 +457,7 @@ static __attribute__((noreturn)) void bugcheck_commit(struct bugcheck_info *info
 }
 
 /**
- * @brief Coordinates the bugcheck panic operation.
- * @param message Input or output value used by this operation.
+ * @brief Turn a panic message into a zeroed fault record and commit it; never returns.
  */
 __attribute__((noreturn)) void bugcheck_panic(const char *message)
 {
@@ -472,15 +477,7 @@ __attribute__((noreturn)) void bugcheck_panic(const char *message)
 }
 
 /**
- * @brief Coordinates the bugcheck exception operation.
- * @param vector Input or output value used by this operation.
- * @param error Input or output value used by this operation.
- * @param rip Input or output value used by this operation.
- * @param cs Input or output value used by this operation.
- * @param rflags Input or output value used by this operation.
- * @param rsp Input or output value used by this operation.
- * @param ss Input or output value used by this operation.
- * @param cr2 Input or output value used by this operation.
+ * @brief Build and commit a fault record for an unhandled CPU exception, naming it from the vector.
  */
 __attribute__((noreturn)) void bugcheck_exception(uint64_t vector, uint64_t error,
                                                   uint64_t rip, uint64_t cs,
@@ -503,10 +500,7 @@ __attribute__((noreturn)) void bugcheck_exception(uint64_t vector, uint64_t erro
 }
 
 /**
- * @brief Coordinates the bugcheck trap operation.
- * @param reason Input or output value used by this operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param cr2 Input or output value used by this operation.
+ * @brief Commit a fault record copied from an architecture trap frame, zeroing fields when absent.
  */
 __attribute__((noreturn)) void bugcheck_trap(const char *reason, const struct trap_frame *frame,
                                              uint64_t cr2)

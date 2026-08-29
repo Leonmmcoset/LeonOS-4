@@ -8,20 +8,17 @@
 #include <ntclks/types.h>
 
 /**
- * @brief Initializes the graphical boot splash when it is enabled.
- * @param enabled Whether the graphical splash is selected for this boot.
+ * @brief Start the graphical boot splash when enabled is true.
  */
 void boot_splash_init(bool enabled);
 
 /**
- * @brief Updates the graphical boot splash progress indicator.
- * @param percent Completed startup percentage, from zero through one hundred.
+ * @brief Move the splash progress bar to percent (0 through 100).
  */
 void boot_splash_update(uint32_t percent);
 
 /**
- * @brief Reports whether the graphical boot splash owns the framebuffer.
- * @return True when the splash is currently active.
+ * @brief Return true while the splash still owns the framebuffer.
  */
 bool boot_splash_active(void);
 

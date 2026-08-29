@@ -9,101 +9,59 @@
 #include <leonos/pty.h>
 
 /**
- * @brief Coordinates the pty init operation.
+ * @brief Initialize the pseudo-terminal subsystem and its backing storage.
  */
 void pty_init(void);
 /**
- * @brief Coordinates the pty create operation.
- * @param owner_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate a new PTY for owner_pid and return its id, or a negative error.
  */
 int32_t pty_create(uint32_t owner_pid);
 /**
- * @brief Coordinates the pty destroy operation.
- * @param owner_pid Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Tear down the PTY pty_id if it is owned by owner_pid; 0 on success.
  */
 int pty_destroy(uint32_t owner_pid, uint32_t pty_id);
 /**
- * @brief Coordinates the pty is owner operation.
- * @param pty_id Input or output value used by this operation.
- * @param owner_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return non-zero when owner_pid owns pty_id.
  */
 int pty_is_owner(uint32_t pty_id, uint32_t owner_pid);
 /**
- * @brief Coordinates the pty is active operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return non-zero when pty_id refers to a live PTY.
  */
 int pty_is_active(uint32_t pty_id);
 /**
- * @brief Coordinates the pty read output operation.
- * @param owner_pid Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy up to length bytes of pty_id's terminal output into buffer; returns bytes read.
  */
 int64_t pty_read_output(uint32_t owner_pid, uint32_t pty_id, char *buffer, uint32_t length);
 /**
- * @brief Coordinates the pty write input operation.
- * @param owner_pid Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Feed up to length bytes of buffer into pty_id as terminal input; returns bytes accepted.
  */
 int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer, uint32_t length);
 /**
- * @brief Coordinates the pty read input operation.
- * @param pty_id Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy up to length bytes of pty_id's pending input into buffer; returns bytes read.
  */
 int64_t pty_read_input(uint32_t pty_id, char *buffer, uint32_t length);
 /**
- * @brief Coordinates the pty input available operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return how many bytes of input are buffered for pty_id.
  */
 uint32_t pty_input_available(uint32_t pty_id);
 /**
- * @brief Coordinates the pty write output operation.
- * @param pty_id Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Write up to length bytes of buffer to pty_id's terminal output; returns bytes written.
  */
 int64_t pty_write_output(uint32_t pty_id, const char *buffer, uint32_t length);
 /**
- * @brief Coordinates the pty get termios operation.
- * @param pty_id Input or output value used by this operation.
- * @param termios Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy pty_id's terminal mode settings into termios; 0 on success.
  */
 int pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios);
 /**
- * @brief Coordinates the pty set termios operation.
- * @param pty_id Input or output value used by this operation.
- * @param termios Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Apply the terminal mode settings in termios to pty_id; 0 on success.
  */
 int pty_set_termios(uint32_t pty_id, const struct leonos_pty_termios *termios);
 /**
- * @brief Coordinates the pty get winsize operation.
- * @param pty_id Input or output value used by this operation.
- * @param winsize Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy pty_id's terminal window size into winsize; 0 on success.
  */
 int pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize);
 /**
- * @brief Coordinates the pty set winsize operation.
- * @param pty_id Input or output value used by this operation.
- * @param winsize Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Set pty_id's terminal window size from winsize; 0 on success.
  */
 int pty_set_winsize(uint32_t pty_id, const struct leonos_pty_winsize *winsize);
 /**
@@ -123,8 +81,7 @@ int pty_get_foreground_pgid(uint32_t pty_id, uint32_t *process_group);
 int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
                             uint32_t process_group);
 /**
- * @brief Coordinates the pty process exit operation.
- * @param pid Input or output value used by this operation.
+ * @brief Detach pid from any PTY it is attached to.
  */
 void pty_process_exit(uint32_t pid);
 

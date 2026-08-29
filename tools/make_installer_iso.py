@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GRUB_MODULES = (
     "part_gpt fat iso9660 multiboot2 normal search search_fs_file configfile echo serial "
-    "terminal video video_bochs video_cirrus efi_gop efi_uga all_video font gfxterm"
+    "terminal video video_bochs video_cirrus efi_gop efi_uga all_video font gfxterm gfxmenu"
 )
 
 

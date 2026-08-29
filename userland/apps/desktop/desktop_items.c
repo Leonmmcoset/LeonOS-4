@@ -1,7 +1,5 @@
 #include "desktop.h"
 
-#define DESKTOP_MESSAGE_W 380
-#define DESKTOP_MESSAGE_H 150
 #define DESKTOP_ITEM_LABEL_LINES 2
 #define DESKTOP_SHORTCUT_MAX_BYTES 384U
 
@@ -711,6 +709,9 @@ void desktop_items_clear(void)
     desktop_context_menu_active = 0;
     desktop_context_menu_animating = 0;
     desktop_context_menu_opening = 0;
+    /* Keep retry scheduling owned by the caller. Clearing the item model
+     * during a failed refresh must not accidentally make the main loop treat
+     * the next one-second retry as a repaint request. */
 }
 
 int desktop_refresh_items(void)
@@ -772,6 +773,58 @@ int desktop_refresh_items(void)
     desktop_items_ready = 1;
     desktop_items_retry_ms = 0;
     return 0;
+}
+
+/* Check only the visible directory entries.  This keeps the normal desktop
+ * loop cheap while still noticing files created, removed, or replaced by
+ * another application.  A failed probe is deliberately reported as an
+ * error so a transient storage failure does not clear the current model. */
+int desktop_items_directory_changed(void)
+{
+    struct leonos_dir_entry entry;
+    int fd;
+    int ret;
+    uint32_t count = 0;
+
+    if (!desktop_items_ready || !desktop_folder_path[0]) {
+        return 0;
+    }
+    fd = open(desktop_folder_path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    for (;;) {
+        uint8_t matched = 0;
+        ret = leonos_readdir(fd, &entry);
+        if (ret < 0) {
+            close(fd);
+            return ret;
+        }
+        if (ret == 0) {
+            break;
+        }
+        if (entry.name[0] == '.') {
+            continue;
+        }
+        if (count >= DESKTOP_ITEM_MAX) {
+            close(fd);
+            return 1;
+        }
+        for (uint32_t i = 0; i < desktop_item_count; ++i) {
+            if (desktop_items[i].entry.type == entry.type &&
+                text_eq(desktop_items[i].entry.name, entry.name)) {
+                matched = 1;
+                break;
+            }
+        }
+        if (!matched) {
+            close(fd);
+            return 1;
+        }
+        ++count;
+    }
+    close(fd);
+    return count == desktop_item_count ? 0 : 1;
 }
 
 void draw_desktop_items(struct rect dirty)

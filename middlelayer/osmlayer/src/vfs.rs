@@ -17,6 +17,7 @@ pub const MOUNT_KIND_DEVFS: u32 = 3;
 pub const MOUNT_KIND_TARGET_ESP: u32 = 4;
 pub const MOUNT_KIND_EXT2_BOOT: u32 = 5;
 pub const MOUNT_KIND_TARGET_ROOT: u32 = 6;
+pub const MOUNT_KIND_EXFAT_BOOT: u32 = 7;
 
 pub const MOUNT_FLAG_READONLY: u32 = 0x0000_0001;
 pub const MOUNT_FLAG_RUNTIME_ROOT: u32 = 0x0000_0002;
@@ -59,10 +60,7 @@ pub struct LeonosMountEntry {
 }
 
 impl LeonosMountEntry {
-    /**
- * @brief Coordinates the empty operation.
- * @return Result, status, or value defined by this API.
- */
+    // Returns a zeroed, unmounted entry (kind MOUNT_KIND_NONE).
     pub const fn empty() -> Self {
         Self {
             kind: MOUNT_KIND_NONE,
@@ -87,10 +85,7 @@ pub struct LeonosMountPolicy {
 }
 
 impl LeonosMountPolicy {
-    /**
- * @brief Coordinates the empty operation.
- * @return Result, status, or value defined by this API.
- */
+    // Returns an empty policy at MOUNT_POLICY_VERSION with no mount entries.
     pub const fn empty() -> Self {
         Self {
             version: MOUNT_POLICY_VERSION,
@@ -103,10 +98,7 @@ impl LeonosMountPolicy {
 }
 
 static mut POLICY: LeonosMountPolicy = LeonosMountPolicy::empty();
-/**
- * @brief Initializes root.
- * @param boot Boot information supplied by the loader.
- */
+/// Builds the mount table: installer mode uses ramdisk/ESP/devfs, otherwise exFAT root + FAT32 boot + devfs.
 pub fn init_root(boot: Option<&BootInfo>) {
     let mut policy = LeonosMountPolicy::empty();
     let installer = boot
@@ -147,10 +139,10 @@ pub fn init_root(boot: Option<&BootInfo>) {
         add_entry(&mut policy, target_esp);
     } else {
         let mut root = LeonosMountEntry::empty();
-        root.kind = MOUNT_KIND_EXT2_BOOT;
+        root.kind = MOUNT_KIND_EXFAT_BOOT;
         root.flags = MOUNT_FLAG_RUNTIME_ROOT;
         copy_bytes(&mut root.path, b"/");
-        copy_bytes(&mut root.source, b"ahci-ext2:auto");
+        copy_bytes(&mut root.source, b"block-exfat:auto");
         add_entry(&mut policy, root);
 
         let mut devfs = LeonosMountEntry::empty();
@@ -172,18 +164,11 @@ pub fn init_root(boot: Option<&BootInfo>) {
         POLICY = policy;
     }
 }
-/**
- * @brief Coordinates the current policy operation.
- * @return Result, status, or value defined by this API.
- */
+/// Returns a copy of the current mount policy.
 pub fn current_policy() -> LeonosMountPolicy {
     unsafe { POLICY }
 }
-/**
- * @brief Coordinates the add entry operation.
- * @param policy Input or output value used by this operation.
- * @param entry Input or output value used by this operation.
- */
+/// Appends `entry` to `policy` if there is room under MOUNT_MAX_ENTRIES.
 fn add_entry(policy: &mut LeonosMountPolicy, entry: LeonosMountEntry) {
     let idx = policy.count as usize;
     if idx < MOUNT_MAX_ENTRIES {
@@ -191,11 +176,7 @@ fn add_entry(policy: &mut LeonosMountPolicy, entry: LeonosMountEntry) {
         policy.count += 1;
     }
 }
-/**
- * @brief Copies bytes.
- * @param dst Input or output value used by this operation.
- * @param src Input or output value used by this operation.
- */
+/// Copies `src` into fixed `dst`, zero-padding and reserving the last byte for a NUL terminator.
 fn copy_bytes(dst: &mut [u8], src: &[u8]) {
     let mut i = 0;
     while i < dst.len() {
@@ -209,12 +190,7 @@ fn copy_bytes(dst: &mut [u8], src: &[u8]) {
         j += 1;
     }
 }
-/**
- * @brief Finds module.
- * @param boot Boot information supplied by the loader.
- * @param name Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Finds the boot module whose NUL-terminated name matches `name`; returns its (start, length).
 fn find_module(boot: Option<&BootInfo>, name: &[u8]) -> Option<(u64, u64)> {
     let boot = boot?;
     let count = if boot.module_count < boot.modules.len() as u32 {
@@ -232,12 +208,7 @@ fn find_module(boot: Option<&BootInfo>, name: &[u8]) -> Option<(u64, u64)> {
     }
     None
 }
-/**
- * @brief Coordinates the cstr eq operation.
- * @param ptr Input or output value used by this operation.
- * @param needle Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// True when the NUL-terminated C string at `ptr` equals `needle` exactly.
 unsafe fn cstr_eq(ptr: *const c_char, needle: &[u8]) -> bool {
     if ptr.is_null() {
         return needle.is_empty();
@@ -254,12 +225,7 @@ unsafe fn cstr_eq(ptr: *const c_char, needle: &[u8]) -> bool {
         i += 1;
     }
 }
-/**
- * @brief Coordinates the cstr contains operation.
- * @param ptr Input or output value used by this operation.
- * @param needle Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// True when the C string at `ptr` contains `needle` as a substring.
 unsafe fn cstr_contains(ptr: *const c_char, needle: &[u8]) -> bool {
     if ptr.is_null() || needle.is_empty() {
         return false;

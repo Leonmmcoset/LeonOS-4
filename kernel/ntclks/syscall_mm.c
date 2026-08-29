@@ -10,6 +10,7 @@
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/syscall_internal.h>
+#include <ntclks/userland.h>
 
 #define PAGE_SIZE 4096ULL
 #define LINUX_PROT_READ TASK_VMA_PROT_READ
@@ -21,9 +22,9 @@
 #define LINUX_MAP_SUPPORTED (LINUX_MAP_PRIVATE | LINUX_MAP_FIXED | LINUX_MAP_ANONYMOUS)
 
 /**
- * @brief Coordinates the align up page operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Align up page.
+ * @param value Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint64_t align_up_page(uint64_t value)
 {
@@ -31,9 +32,9 @@ static uint64_t align_up_page(uint64_t value)
 }
 
 /**
- * @brief Coordinates the align down page operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Align down page.
+ * @param value Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint64_t align_down_page(uint64_t value)
 {
@@ -41,10 +42,10 @@ static uint64_t align_down_page(uint64_t value)
 }
 
 /**
- * @brief Coordinates the align user len operation.
- * @param len Length, size, or element count associated with the operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * Align user len.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param out Output storage updated by the function.
+ * @return The value or status produced by the operation.
  */
 static int align_user_len(uint64_t len, uint64_t *out)
 {
@@ -59,9 +60,9 @@ static int align_user_len(uint64_t len, uint64_t *out)
 }
 
 /**
- * @brief Coordinates the task mmap top operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Task mmap top.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint64_t task_mmap_top(const struct task *task)
 {
@@ -74,9 +75,9 @@ static uint64_t task_mmap_top(const struct task *task)
 }
 
 /**
- * @brief Coordinates the task vma free slot operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Task vma free slot.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct task_vma *task_vma_free_slot(struct task *task)
 {
@@ -93,11 +94,11 @@ static struct task_vma *task_vma_free_slot(struct task *task)
 }
 
 /**
- * @brief Coordinates the task vma attrs match operation.
- * @param vma Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task vma attrs match.
+ * @param vma Value supplied by the caller.
+ * @param prot Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @return The value or status produced by the operation.
  */
 static int task_vma_attrs_match(const struct task_vma *vma, uint64_t prot, uint32_t flags)
 {
@@ -105,10 +106,10 @@ static int task_vma_attrs_match(const struct task_vma *vma, uint64_t prot, uint3
 }
 
 /**
- * @brief Coordinates the storage nodes equal operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Storage nodes equal.
+ * @param a Value supplied by the caller.
+ * @param b Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int storage_nodes_equal(const struct storage_node *a, const struct storage_node *b)
 {
@@ -121,10 +122,10 @@ static int storage_nodes_equal(const struct storage_node *a, const struct storag
 }
 
 /**
- * @brief Coordinates the task vma file attrs match operation.
- * @param vma Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task vma file attrs match.
+ * @param vma Value supplied by the caller.
+ * @param file_node Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_vma_file_attrs_match(const struct task_vma *vma,
                                      const struct storage_node *file_node)
@@ -137,8 +138,8 @@ static int task_vma_file_attrs_match(const struct task_vma *vma,
 }
 
 /**
- * @brief Coordinates the task vma clear operation.
- * @param vma Input or output value used by this operation.
+ * Task vma clear.
+ * @param vma Value supplied by the caller.
  */
 static void task_vma_clear(struct task_vma *vma)
 {
@@ -148,11 +149,11 @@ static void task_vma_clear(struct task_vma *vma)
 }
 
 /**
- * @brief Coordinates the task vma containing operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task vma containing.
+ * @param task Value supplied by the caller.
+ * @param start Value supplied by the caller.
+ * @param end Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct task_vma *task_vma_containing(struct task *task, uint64_t start, uint64_t end)
 {
@@ -169,14 +170,14 @@ static struct task_vma *task_vma_containing(struct task *task, uint64_t start, u
 }
 
 /**
- * @brief Coordinates the task vma left adjacent operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @param file_offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task vma left adjacent.
+ * @param task Value supplied by the caller.
+ * @param start Value supplied by the caller.
+ * @param prot Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param file_node Value supplied by the caller.
+ * @param file_offset Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start,
                                                 uint64_t prot, uint32_t flags,
@@ -201,15 +202,15 @@ static struct task_vma *task_vma_left_adjacent(struct task *task, uint64_t start
 }
 
 /**
- * @brief Coordinates the task vma right adjacent operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param end Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @param file_offset Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Task vma right adjacent.
+ * @param task Value supplied by the caller.
+ * @param end Value supplied by the caller.
+ * @param prot Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param file_node Value supplied by the caller.
+ * @param file_offset Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
                                                  uint64_t prot, uint32_t flags,
@@ -235,15 +236,15 @@ static struct task_vma *task_vma_right_adjacent(struct task *task, uint64_t end,
 }
 
 /**
- * @brief Coordinates the task vma can record mapping operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @param file_offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task vma can record mapping.
+ * @param task Value supplied by the caller.
+ * @param start Value supplied by the caller.
+ * @param end Value supplied by the caller.
+ * @param prot Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param file_node Value supplied by the caller.
+ * @param file_offset Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_vma_can_record_mapping(struct task *task, uint64_t start, uint64_t end,
                                        uint64_t prot, uint32_t flags,
@@ -257,15 +258,15 @@ static int task_vma_can_record_mapping(struct task *task, uint64_t start, uint64
 }
 
 /**
- * @brief Coordinates the task vma record mapping operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param file_node Input or output value used by this operation.
- * @param file_offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task vma record mapping.
+ * @param task Value supplied by the caller.
+ * @param start Value supplied by the caller.
+ * @param end Value supplied by the caller.
+ * @param prot Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param file_node Value supplied by the caller.
+ * @param file_offset Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t end,
                                    uint64_t prot, uint32_t flags,
@@ -311,11 +312,11 @@ static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t e
 }
 
 /**
- * @brief Coordinates the task vma overlaps operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task vma overlaps.
+ * @param task Value supplied by the caller.
+ * @param start Value supplied by the caller.
+ * @param end Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t end)
 {
@@ -332,11 +333,11 @@ static int task_vma_overlaps(const struct task *task, uint64_t start, uint64_t e
 }
 
 /**
- * @brief Coordinates the task user pages free operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task user pages free.
+ * @param task Value supplied by the caller.
+ * @param start Value supplied by the caller.
+ * @param end Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_user_pages_free(const struct task *task, uint64_t start, uint64_t end)
 {
@@ -358,9 +359,9 @@ static int task_user_pages_free(const struct task *task, uint64_t start, uint64_
 }
 
 /**
- * @brief Coordinates the task vma count operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * Task vma count.
+ * @param task Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static uint32_t task_vma_count(const struct task *task)
 {
@@ -398,10 +399,10 @@ static uint64_t task_vma_total_bytes(const struct task *task)
 }
 
 /**
- * @brief Coordinates the task find mmap region operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Task find mmap region.
+ * @param task Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
 {
@@ -417,10 +418,9 @@ static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
     return 0;
 }
 
-/* Picolibc grows its sbrk heap upward from the first anonymous mapping. Keep
- * read-only file mappings at the opposite end of the mmap interval so a
- * large font, dictionary, or other resource cannot occupy the heap's next
- * contiguous extension. */
+/**
+ * @brief Picolibc grows its sbrk heap upward from the first anonymous mapping. Keep read-only file mappings at the opposite end of the mmap interval so a large font, dictionary, or other resource cannot occupy the heap's next contiguous extension.
+ */
 static uint64_t task_find_file_mmap_region(struct task *task, uint64_t len)
 {
     uint64_t top = task_mmap_top(task);
@@ -442,10 +442,10 @@ static uint64_t task_find_file_mmap_region(struct task *task, uint64_t len)
 }
 
 /**
- * @brief Coordinates the task unmap pages operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
+ * Task unmap pages.
+ * @param task Value supplied by the caller.
+ * @param start Value supplied by the caller.
+ * @param end Value supplied by the caller.
  */
 static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
 {
@@ -466,8 +466,8 @@ static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
 }
 
 /**
- * @brief Coordinates the zero phys page operation.
- * @param phys Input or output value used by this operation.
+ * Zero phys page.
+ * @param phys Value supplied by the caller.
  */
 static void zero_phys_page(uint64_t phys)
 {
@@ -478,12 +478,12 @@ static void zero_phys_page(uint64_t phys)
 }
 
 /**
- * @brief Coordinates the task map anonymous pages operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param page_flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Task map anonymous pages.
+ * @param task Value supplied by the caller.
+ * @param start Value supplied by the caller.
+ * @param end Value supplied by the caller.
+ * @param page_flags Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t end,
                                     uint64_t page_flags)
@@ -517,11 +517,11 @@ static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t 
 }
 
 /**
- * @brief Coordinates the task map file vma page operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param vma Input or output value used by this operation.
- * @param page Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Load file cache page.
+ * @param task Value supplied by the caller.
+ * @param vma Value supplied by the caller.
+ * @param page Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct file_page_load_context {
     const struct storage_node *node;
@@ -586,10 +586,9 @@ static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
         uint32_t want = available < PAGE_SIZE ? (uint32_t)available : (uint32_t)PAGE_SIZE;
         uint32_t got = 0;
         int ret;
-        /* A user page fault is not a restartable filesystem syscall.  Force
-         * this backing-page read through the synchronous AHCI path so an
-         * in-flight async storage operation cannot surface as EAGAIN and
-         * turn a valid lazy mapping into a process-killing fault. */
+        /**
+ * @brief A user page fault is not a restartable filesystem syscall. Force this backing-page read through the synchronous AHCI path so an in-flight async storage operation cannot surface as EAGAIN and turn a valid lazy mapping into a process-killing fault.
+ */
         storage_set_io_async_context(false);
         ret = storage_read_node(&vma->file_node, file_offset,
                                 (void *)(uintptr_t)phys, want, &got);
@@ -614,10 +613,10 @@ static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
 }
 
 /**
- * @brief Coordinates the syscall handle user page fault operation.
- * @param fault_addr Address used by this operation; its address-space interpretation follows the API.
- * @param error Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Syscall handle user page fault.
+ * @param fault_addr Value supplied by the caller.
+ * @param error Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
 {
@@ -629,10 +628,9 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
     if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
         return 0;
     }
-    /* A write through either Ring-3 code or a kernel syscall helper can touch
-     * the calling process's present, read-only COW PTE.  Resolve only that
-     * precise protection fault; reserved-bit and instruction-fetch faults
-     * remain fatal and ordinary kernel faults never reach this path. */
+    /**
+ * @brief A write through either Ring-3 code or a kernel syscall helper can touch the calling process's present, read-only COW PTE. Resolve only that precise protection fault; reserved-bit and instruction-fetch faults remain fatal and ordinary kernel faults never reach this path.
+ */
     if ((error & 0x3ULL) == 0x3ULL && !(error & 0x18ULL)) {
         return address_space_handle_cow_fault(&task->as, page);
     }
@@ -643,9 +641,9 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
         return 0;
     }
 
-    /* Grow the anonymous user stack on demand.  The initial image maps a
-     * small working set; accesses below it consume pages down to the fixed
-     * maximum and leave one unmapped guard page below the stack. */
+    /**
+ * @brief Grow the anonymous user stack on demand. The initial image maps a small working set; accesses below it consume pages down to the fixed maximum and leave one unmapped guard page below the stack.
+ */
     if (!(error & 0x1ULL) && (error & 0x4ULL) && task->stack_top &&
         task->stack_low && page < task->stack_low &&
         page >= task->stack_top - (uint64_t)NTCLKS_USER_STACK_MAX_PAGES * PAGE_SIZE &&
@@ -669,7 +667,10 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
         return 0;
     }
     {
+        uint64_t loader_flags;
+        userland_loader_lock(&loader_flags);
         int ret = task_map_file_vma_page(task, vma, page);
+        userland_loader_unlock(loader_flags);
         if (ret < 0) {
             console_printf("[ntclks] lazy file map failed pid=%u page=0x%llx "
                            "fault=0x%llx error=0x%llx vma=0x%llx-0x%llx "
@@ -687,14 +688,14 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
 }
 
 /**
- * @brief Handles the mmap.
- * @param addr Address used by this operation; its address-space interpretation follows the API.
- * @param len Length, size, or element count associated with the operation.
- * @param prot Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @param fd Open file descriptor used by this operation.
- * @param offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Syscall mm mmap.
+ * @param addr Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param prot Value supplied by the caller.
+ * @param flags Identifier or flags controlling the operation.
+ * @param fd Value supplied by the caller.
+ * @param offset Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
                         uint64_t flags, uint64_t fd, uint64_t offset)
@@ -799,9 +800,9 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
         return -LEONOS_ENOMEM;
     }
 
-    /* File mappings are lazy: reserve the page-table range now so a first
-     * instruction/data fault can replace the inherited kernel huge-page
-     * identity mapping even when the CPU reports the fault as present. */
+    /**
+ * @brief File mappings are lazy: reserve the page-table range now so a first instruction/data fault can replace the inherited kernel huge-page identity mapping even when the CPU reports the fault as present.
+ */
     if (!anonymous && !address_space_prepare_user_range(&task->as, start, end)) {
         return -LEONOS_ENOMEM;
     }
@@ -830,11 +831,11 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
 }
 
 /**
- * @brief Handles the mprotect.
- * @param addr Address used by this operation; its address-space interpretation follows the API.
- * @param len Length, size, or element count associated with the operation.
- * @param prot Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Syscall mm mprotect.
+ * @param addr Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @param prot Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
 {
@@ -895,9 +896,9 @@ int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
             return -LEONOS_EACCES;
         }
     }
-    /* A partial protection change needs independent VMA metadata.  In
-     * particular, PT_GNU_RELRO protects only the GOT page while BSS in the
-     * same original load segment must remain writable and lazily mappable. */
+    /**
+ * @brief A partial protection change needs independent VMA metadata. In particular, PT_GNU_RELRO protects only the GOT page while BSS in the same original load segment must remain writable and lazily mappable.
+ */
     if (addr > original.start) {
         left = task_vma_free_slot(task);
         if (!left) {
@@ -928,10 +929,10 @@ int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
 }
 
 /**
- * @brief Handles the munmap.
- * @param addr Address used by this operation; its address-space interpretation follows the API.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * Syscall mm munmap.
+ * @param addr Value supplied by the caller.
+ * @param len Maximum number of elements available in the related buffer.
+ * @return The value or status produced by the operation.
  */
 int64_t syscall_mm_munmap(uint64_t addr, uint64_t len)
 {

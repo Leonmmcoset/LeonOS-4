@@ -10,6 +10,8 @@
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/heap.h>
+#include <ntclks/lock.h>
+#include <ntclks/smp.h>
 
 /* The table grows by moving only pointers; task objects keep stable addresses
  * because wait queues and interrupt paths may retain struct task pointers. */
@@ -17,11 +19,57 @@ static struct task **tasks;
 static uint32_t task_count;
 static uint32_t task_capacity;
 static uint32_t next_pid = 1;
-static uint32_t current_pid;
+static uint32_t current_pid[SMP_MAX_CPUS];
 static uint32_t next_session_id = 1;
 static uint64_t scheduler_ticks;
 static uint64_t scheduler_busy_ticks;
 static uint64_t scheduler_idle_ticks;
+static uint64_t scheduler_cpu_busy_ticks[SMP_MAX_CPUS];
+static uint64_t scheduler_cpu_idle_ticks[SMP_MAX_CPUS];
+static struct kernel_spinlock scheduler_lock = KERNEL_SPINLOCK_INIT;
+
+/* A READY task can still be owned by the CPU that just saved its interrupt
+ * frame.  Keep that reservation until the owner either reclaims or replaces
+ * it; otherwise another CPU can select the same address space concurrently. */
+#define SCHED_CPU_NONE UINT32_MAX
+
+static uint32_t scheduler_cpu_index(void)
+{
+    uint32_t cpu = smp_current_cpu();
+    return cpu < SMP_MAX_CPUS ? cpu : 0;
+}
+
+uint64_t sched_all_cpu_mask(void)
+{
+    uint32_t count = smp_cpu_count();
+    if (count == 0) {
+        count = 1;
+    }
+    if (count >= 64u) {
+        return UINT64_MAX;
+    }
+    return (1ULL << count) - 1ULL;
+}
+
+static bool task_cpu_allowed(const struct task *task, uint32_t cpu)
+{
+    uint64_t mask = task && task->affinity_mask ? task->affinity_mask : sched_all_cpu_mask();
+    return cpu < 64u && (mask & (1ULL << cpu)) != 0;
+}
+
+static uint32_t scheduler_current_pid(void)
+{
+    return current_pid[scheduler_cpu_index()];
+}
+
+static bool task_frame_valid(const struct task *task, const struct trap_frame *frame)
+{
+    return task && frame && task->as.cr3 && task->stack_low && task->stack_top &&
+           frame->rip >= NTCLKS_USER_BASE && frame->rip < NTCLKS_USER_TOP &&
+           frame->rsp >= task->stack_low && frame->rsp <= task->stack_top &&
+           frame->cs == NTCLKS_USER_CS && frame->ss == NTCLKS_USER_DS &&
+           (frame->rflags & (1ULL << 9));
+}
 
 struct task_vma *sched_task_vma_at(struct task *task, uint32_t index)
 {
@@ -136,10 +184,7 @@ void sched_task_file_release(struct task *task)
 }
 
 /**
- * @brief Coordinates the str eq operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when both strings are non-NULL and byte-for-byte identical.
  */
 static int str_eq(const char *a, const char *b)
 {
@@ -154,9 +199,7 @@ static int str_eq(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the task copy name operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param name Input or output value used by this operation.
+ * @brief Copy name into the task's fixed buffer (bounded, NUL-terminated) and point task->name at it.
  */
 static void task_copy_name(struct task *task, const char *name)
 {
@@ -175,9 +218,7 @@ static void task_copy_name(struct task *task, const char *name)
 }
 
 /**
- * @brief Coordinates the task copy cwd operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param cwd Input or output value used by this operation.
+ * @brief Copy cwd into the task's fixed buffer, defaulting an empty or NULL value to "/".
  */
 static void task_copy_cwd(struct task *task, const char *cwd)
 {
@@ -196,9 +237,7 @@ static void task_copy_cwd(struct task *task, const char *cwd)
 }
 
 /**
- * @brief Coordinates the task copy path operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param path LeonOS path consumed by this operation.
+ * @brief Copy path into the task's fixed buffer, NUL-terminating even for a NULL source.
  */
 static void task_copy_path(struct task *task, const char *path)
 {
@@ -214,9 +253,7 @@ static void task_copy_path(struct task *task, const char *path)
 }
 
 /**
- * @brief Coordinates the task path basename operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the substring after the final '/', or "" for a NULL or slash-free path.
  */
 static const char *task_path_basename(const char *path)
 {
@@ -233,10 +270,7 @@ static const char *task_path_basename(const char *path)
 }
 
 /**
- * @brief Coordinates the task copy identity text operation.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Bounded, always-NUL-terminated copy used for username and home identity strings.
  */
 static void task_copy_identity_text(char *dst, size_t cap, const char *src)
 {
@@ -252,8 +286,7 @@ static void task_copy_identity_text(char *dst, size_t cap, const char *src)
 }
 
 /**
- * @brief Coordinates the task clear identity operation.
- * @param task Task whose state or authority is inspected or updated.
+ * @brief Strip admin flag, uid, role, session, username, and home, leaving an anonymous task.
  */
 static void task_clear_identity(struct task *task)
 {
@@ -269,9 +302,7 @@ static void task_clear_identity(struct task *task)
 }
 
 /**
- * @brief Coordinates the task copy identity from parent operation.
- * @param task Task whose state or authority is inspected or updated.
- * @param parent Input or output value used by this operation.
+ * @brief Inherit uid, role, session, username, and home from the parent task.
  */
 static void task_copy_identity_from_parent(struct task *task, const struct task *parent)
 {
@@ -286,25 +317,29 @@ static void task_copy_identity_from_parent(struct task *task, const struct task 
 }
 
 /**
- * @brief Coordinates the sched init operation.
+ * @brief Reset the task table, pid/session counters, and tick statistics to their initial state.
  */
 void sched_init(void)
 {
+    kernel_spin_init(&scheduler_lock);
     tasks = NULL;
     task_count = 0;
     task_capacity = 0;
     next_pid = 1;
-    current_pid = 0;
+    for (uint32_t i = 0; i < SMP_MAX_CPUS; ++i) current_pid[i] = 0;
     next_session_id = 1;
     scheduler_ticks = 0;
     scheduler_busy_ticks = 0;
     scheduler_idle_ticks = 0;
+    for (uint32_t i = 0; i < SMP_MAX_CPUS; ++i) {
+        scheduler_cpu_busy_ticks[i] = 0;
+        scheduler_cpu_idle_ticks[i] = 0;
+    }
     console_printf("[ntclks] scheduler initialized\n");
 }
 
 /**
- * @brief Coordinates the task zero operation.
- * @param task Task whose state or authority is inspected or updated.
+ * @brief Clear every byte of a task struct so it starts from a well-defined zero state.
  */
 static void task_zero(struct task *task)
 {
@@ -317,8 +352,7 @@ static void task_zero(struct task *task)
 }
 
 /**
- * @brief Allocates a PID that is not currently present in the task table.
- * @return A non-zero PID, or zero when the identifier space is exhausted.
+ * @brief Scan forward from next_pid for an unused non-zero pid; 0 when the identifier space is exhausted.
  */
 static uint32_t task_allocate_pid(void)
 {
@@ -342,13 +376,13 @@ static uint32_t task_allocate_pid(void)
 }
 
 /**
- * @brief Allocates task slot.
- * @return Result, status, or value defined by this API.
+ * @brief Return a zeroed task slot, recycling a reaped EXITED entry or growing the table as needed.
  */
 static struct task *alloc_task_slot(void)
 {
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i] && tasks[i]->state == TASK_EXITED &&
+            tasks[i]->running_cpu == SCHED_CPU_NONE &&
             (!(tasks[i]->flags & TASK_FLAG_WAITABLE_CHILD) || tasks[i]->parent_pid == 0)) {
             sched_release_task_resources(tasks[i]);
             task_zero(tasks[i]);
@@ -386,22 +420,23 @@ static struct task *alloc_task_slot(void)
 }
 
 /**
- * @brief Coordinates the sched create kernel task operation.
- * @param name Input or output value used by this operation.
- * @param entry Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate and initialize a kernel task with an entry point, no stack, and cleared identity.
  */
 uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
 {
+    uint64_t lock_flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
     struct task *task = alloc_task_slot();
     uint32_t pid;
     if (!task) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return 0;
     }
     pid = task_allocate_pid();
     if (!pid) {
         task_zero(task);
         task->state = TASK_EXITED;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return 0;
     }
     task_zero(task);
@@ -415,6 +450,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task->stack_low = 0;
     task->wake_tick = 0;
     task->priority = 0;
+    task->affinity_mask = sched_all_cpu_mask();
     task->pending_signals = 0;
     task->rlimit_nofile = SCHED_TASK_FILE_LIMIT;
     task->rlimit_as = 0;
@@ -429,6 +465,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
         ((uint8_t *)&task->frame)[i] = 0;
     }
     task->state = TASK_READY;
+    task->running_cpu = SCHED_CPU_NONE;
     task->kind = TASK_KIND_KERNEL;
     task->flags = 0;
     task->pty_id = 0;
@@ -436,30 +473,29 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task_copy_cwd(task, "/");
     console_printf("[ntclks] task pid=%u name=%s entry=0x%llx\n",
                    task->pid, task->name, (unsigned long long)task->entry);
+    kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
     return task->pid;
 }
 
 /**
- * @brief Coordinates the sched create user task operation.
- * @param name Input or output value used by this operation.
- * @param entry Input or output value used by this operation.
- * @param stack_top Input or output value used by this operation.
- * @param parent_pid Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate a user task, build its address space and stack, and inherit cwd/identity from parent.
  */
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags)
 {
+    uint64_t lock_flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
     struct task *task = alloc_task_slot();
     uint32_t pid;
     if (!task) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return 0;
     }
     pid = task_allocate_pid();
     if (!pid) {
         task_zero(task);
         task->state = TASK_EXITED;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return 0;
     }
     task_zero(task);
@@ -474,6 +510,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
                       stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL : 0;
     task->wake_tick = 0;
     task->priority = 0;
+    task->affinity_mask = sched_all_cpu_mask();
     task->pending_signals = 0;
     task->rlimit_nofile = SCHED_TASK_FILE_LIMIT;
     task->rlimit_as = 0;
@@ -491,6 +528,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
         task->image_len = 0;
         task->state = TASK_EXITED;
         task->flags = TASK_FLAG_RESOURCES_RELEASED;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return 0;
     }
     task->frame.rip = entry;
@@ -499,7 +537,10 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->frame.rsp = stack_top;
     task->frame.ss = NTCLKS_USER_DS;
     arch_fpu_task_init(task->fpu_state);
-    task->state = TASK_READY;
+    /* Keep a newly allocated user task off the run queue until its creator
+     * has attached the executable metadata and launch arguments. */
+    task->state = TASK_BLOCKED;
+    task->running_cpu = SCHED_CPU_NONE;
     task->kind = TASK_KIND_USER;
     task->flags = flags;
     task_clear_identity(task);
@@ -515,6 +556,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
             task->rlimit_as = parent->rlimit_as;
             task->process_group = parent->process_group;
             task->process_session = parent->process_session;
+            task->affinity_mask = parent->affinity_mask;
         }
     }
     console_printf("[ntclks] task pid=%u ppid=%u name=%s user entry=0x%llx stack=0x%llx flags=0x%x\n",
@@ -524,32 +566,36 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
                    (unsigned long long)task->entry,
                    (unsigned long long)task->stack_top,
                    task->flags);
+    kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
     return task->pid;
 }
 
 /**
- * @brief Creates a runnable fork child with COW memory and a copied user register frame.
- * @param parent_frame Saved frame for the calling process; its child copy receives rax equal to zero.
- * @return Positive child PID for the parent, or a negative errno-style value on failure.
+ * @brief Fork the calling user task: clone its address space COW-style, copy its register frame with rax zeroed in the child, and copy descriptors; returns the child pid or a negative errno.
  */
 int64_t sched_fork_current(const struct trap_frame *parent_frame)
 {
+    uint64_t lock_flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
     struct task *parent = sched_current_task();
     struct task *child;
     struct address_space empty_as = {0};
     uint32_t child_pid;
     if (!parent || !parent_frame || parent->kind != TASK_KIND_USER ||
         parent->state == TASK_EXITED || !parent->as.cr3) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return -22;
     }
     child = alloc_task_slot();
     if (!child) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return -12;
     }
     child_pid = task_allocate_pid();
     if (!child_pid) {
         task_zero(child);
         child->state = TASK_EXITED;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return -12;
     }
     task_zero(child);
@@ -559,12 +605,14 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     child->as = empty_as;
     child->image = NULL;
     child->image_len = 0;
-    /* Service and window-server authority belongs to the launched image, not
-     * to an arbitrary child created by that process. */
+    /**
+ * @brief Service and window-server authority belongs to the launched image, not to an arbitrary child created by that process.
+ */
     child->flags &= ~(TASK_FLAG_RESOURCES_RELEASED | TASK_FLAG_PENDING_LOAD |
                       TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER);
     child->flags |= TASK_FLAG_WAITABLE_CHILD | TASK_FLAG_STARTED;
     child->state = TASK_READY;
+    child->running_cpu = SCHED_CPU_NONE;
     child->wake_tick = 0;
     child->wait_window_id = 0;
     child->exit_code = 0;
@@ -577,6 +625,7 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
         task_zero(child);
         child->state = TASK_EXITED;
         child->flags = TASK_FLAG_RESOURCES_RELEASED;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return -12;
     }
     child->vma_extra = NULL;
@@ -591,6 +640,7 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
                 task_zero(child);
                 child->state = TASK_EXITED;
                 child->flags = TASK_FLAG_RESOURCES_RELEASED;
+                kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
                 return -12;
             }
             *dst = parent->vma_extra[i];
@@ -608,6 +658,7 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
             task_zero(child);
             child->state = TASK_EXITED;
             child->flags = TASK_FLAG_RESOURCES_RELEASED;
+            kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
             return -12;
         }
         *dst = parent->file_extra[i];
@@ -619,23 +670,23 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
         task_zero(child);
         child->state = TASK_EXITED;
         child->flags = TASK_FLAG_RESOURCES_RELEASED;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return -12;
     }
-    /* exec_argv and exec_envp are interior pointers, so rebuild them to
-     * reference the child-owned packed string storage after the structure copy. */
+    /**
+ * @brief exec_argv and exec_envp are interior pointers, so rebuild them to reference the child-owned packed string storage after the structure copy.
+ */
     sched_set_task_exec_params(child_pid, parent->exec_argc, parent->exec_argv,
                                parent->exec_envc, parent->exec_envp,
                                parent->exec_data, parent->exec_data_len);
     console_printf("[ntclks] fork parent=%u child=%u cr3=0x%llx\n",
                    parent->pid, child_pid, (unsigned long long)child->as.cr3);
+    kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
     return (int64_t)child_pid;
 }
 
 /**
- * @brief Coordinates the sched set task image operation.
- * @param pid Input or output value used by this operation.
- * @param image Input or output value used by this operation.
- * @param image_len Length, size, or element count associated with the operation.
+ * @brief Attach an in-memory image and its length to the task with the given pid.
  */
 void sched_set_task_image(uint32_t pid, const void *image, size_t image_len)
 {
@@ -648,9 +699,7 @@ void sched_set_task_image(uint32_t pid, const void *image, size_t image_len)
 }
 
 /**
- * @brief Coordinates the sched set task image node operation.
- * @param pid Input or output value used by this operation.
- * @param node Input or output value used by this operation.
+ * @brief Record the storage node backing a task's image and flag it for a lazy load.
  */
 void sched_set_task_image_node(uint32_t pid, const struct storage_node *node)
 {
@@ -663,9 +712,7 @@ void sched_set_task_image_node(uint32_t pid, const struct storage_node *node)
 }
 
 /**
- * @brief Coordinates the sched set task path operation.
- * @param pid Input or output value used by this operation.
- * @param path LeonOS path consumed by this operation.
+ * @brief Copy path into the task's fixed path field, resolving the task by pid.
  */
 void sched_set_task_path(uint32_t pid, const char *path)
 {
@@ -673,14 +720,7 @@ void sched_set_task_path(uint32_t pid, const char *path)
 }
 
 /**
- * @brief Coordinates the sched set task exec params operation.
- * @param pid Input or output value used by this operation.
- * @param argc Input or output value used by this operation.
- * @param argv Input or output value used by this operation.
- * @param envc Input or output value used by this operation.
- * @param envp Input or output value used by this operation.
- * @param data Input or output value used by this operation.
- * @param data_len Length, size, or element count associated with the operation.
+ * @brief Store clamped argc/argv/envc/envp/data, rebinding interior pointers into the owned buffer.
  */
 void sched_set_task_exec_params(uint32_t pid,
                                 uint32_t argc, char *const argv[],
@@ -742,7 +782,7 @@ void sched_set_task_exec_params(uint32_t pid,
 }
 
 /**
- * @brief Coordinates the sched create idle task operation.
+ * @brief Create the pid-0 kernel idle task and mark it the running task.
  */
 void sched_create_idle_task(void)
 {
@@ -779,34 +819,54 @@ void sched_create_idle_task(void)
 }
 
 /**
- * @brief Coordinates the sched set running operation.
- * @param pid Input or output value used by this operation.
+ * @brief Make pid the running task and demote every other RUNNING task back to READY.
  */
 void sched_set_running(uint32_t pid)
 {
-    current_pid = pid;
+    uint64_t flags;
+    uint32_t cpu = scheduler_cpu_index();
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    struct task *selected = NULL;
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i]->pid == pid) {
-            tasks[i]->state = TASK_RUNNING;
-        } else if (tasks[i]->state == TASK_RUNNING) {
-            tasks[i]->state = TASK_READY;
+            selected = tasks[i];
+            break;
         }
     }
+    if (!selected || selected->kind != TASK_KIND_USER ||
+        selected->state == TASK_EXITED || !selected->as.cr3 ||
+        !selected->frame.rip || (selected->frame.cs & 3ULL) != 3ULL ||
+        (selected->frame.ss & 3ULL) != 3ULL ||
+        !(selected->frame.rflags & (1ULL << 9))) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return;
+    }
+    current_pid[cpu] = pid;
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i] == selected) {
+            tasks[i]->state = TASK_RUNNING;
+            tasks[i]->running_cpu = cpu;
+        } else if (tasks[i]->state == TASK_RUNNING && tasks[i]->running_cpu == cpu) {
+            tasks[i]->state = TASK_READY;
+            tasks[i]->running_cpu = SCHED_CPU_NONE;
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched exit operation.
- * @param pid Input or output value used by this operation.
- * @param code Input or output value used by this operation.
+ * @brief Close the task's files, mark it exited with code, reparent its children, and clear current.
  */
 void sched_exit(uint32_t pid, uint64_t code)
 {
+    uint64_t flags;
+
+    /* Publish the terminal state atomically, but preserve running_cpu until
+     * its owner reaches a scheduling boundary.  A remote CPU may still be
+     * executing this task's user frame when a terminal/PTY destroys it. */
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i]->pid == pid) {
-            /* Exit paths such as SIGKILL and a failed lazy image load bypass
-             * the normal SYS_exit handler.  Close their descriptors here so
-             * pipe readers receive EOF once the final writer is gone. */
-            syscall_release_task_files(tasks[i]);
             tasks[i]->state = TASK_EXITED;
             tasks[i]->exit_code = code;
             tasks[i]->child_event = TASK_CHILD_EVENT_NONE;
@@ -818,25 +878,22 @@ void sched_exit(uint32_t pid, uint64_t code)
             break;
         }
     }
-    inputm_destroy_owner(pid);
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i]->parent_pid == pid) {
             tasks[i]->parent_pid = 0;
             tasks[i]->flags &= ~TASK_FLAG_WAITABLE_CHILD;
         }
     }
-    if (current_pid == pid) {
-        current_pid = 0;
-    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched release task resources operation.
- * @param task Task whose state or authority is inspected or updated.
+ * @brief Free a user task's storage, files, and address space once, guarded by a released flag.
  */
 void sched_release_task_resources(struct task *task)
 {
     if (!task || task->kind != TASK_KIND_USER ||
+        task->running_cpu != SCHED_CPU_NONE ||
         (task->flags & TASK_FLAG_RESOURCES_RELEASED)) {
         return;
     }
@@ -845,22 +902,28 @@ void sched_release_task_resources(struct task *task)
     address_space_destroy(&task->as);
     sched_task_vma_release(task);
     sched_task_file_release(task);
+    inputm_destroy_owner(task->pid);
     task->flags |= TASK_FLAG_RESOURCES_RELEASED;
 }
 
 /**
- * @brief Coordinates the sched on tick operation.
+ * @brief Advance scheduler time, credit busy/idle ticks, and wake blocked tasks past their deadline.
  */
 void sched_on_tick(void)
 {
     struct task *current;
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     ++scheduler_ticks;
-    current = sched_find(current_pid);
+    current = sched_find(scheduler_current_pid());
+    uint32_t cpu = scheduler_cpu_index();
     if (current && current->state == TASK_RUNNING) {
         ++scheduler_busy_ticks;
+        ++scheduler_cpu_busy_ticks[cpu];
         ++current->cpu_ticks;
     } else {
         ++scheduler_idle_ticks;
+        ++scheduler_cpu_idle_ticks[cpu];
     }
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i]->state == TASK_BLOCKED && tasks[i]->wake_tick &&
@@ -868,13 +931,40 @@ void sched_on_tick(void)
             tasks[i]->wake_tick = 0;
             tasks[i]->wait_window_id = 0;
             tasks[i]->state = TASK_READY;
+            /* A blocked task may still be reserved by the CPU that is
+             * finishing its syscall.  Preserve that reservation; the owner
+             * will either reclaim it or release it when selecting another
+             * task. */
         }
     }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched tick count operation.
- * @return Result, status, or value defined by this API.
+ * Account a local-APIC preemption tick. The BSP PIT alone advances wall time
+ * and sleepers; AP ticks only account and preempt the task owned by that CPU.
+ */
+void sched_on_cpu_tick(void)
+{
+    struct task *current;
+    uint32_t cpu = scheduler_cpu_index();
+    uint64_t flags;
+
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    current = sched_find(current_pid[cpu]);
+    if (current && current->state == TASK_RUNNING && current->running_cpu == cpu) {
+        ++scheduler_busy_ticks;
+        ++scheduler_cpu_busy_ticks[cpu];
+        ++current->cpu_ticks;
+    } else {
+        ++scheduler_idle_ticks;
+        ++scheduler_cpu_idle_ticks[cpu];
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
+/**
+ * @brief Return the total number of scheduler ticks since init.
  */
 uint64_t sched_tick_count(void)
 {
@@ -883,33 +973,77 @@ uint64_t sched_tick_count(void)
 
 void sched_yield_current(void)
 {
-    /* The kernel debugger runs before the first user task exists.  A real
-     * context switch is therefore neither useful nor safe here; the timer
-     * interrupt remains the scheduling boundary for the normal system. */
+    /**
+ * @brief The kernel debugger runs before the first user task exists. A real context switch is therefore neither useful nor safe here; the timer interrupt remains the scheduling boundary for the normal system.
+ */
     __asm__ volatile("pause");
 }
 
 /**
- * @brief Coordinates the sched cpu ticks operation.
- * @param busy_ticks Input or output value used by this operation.
- * @param idle_ticks Input or output value used by this operation.
+ * @brief Write the accumulated busy and idle tick counters into the caller's outputs.
  */
 void sched_cpu_ticks(uint64_t *busy_ticks, uint64_t *idle_ticks)
 {
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     if (busy_ticks) {
         *busy_ticks = scheduler_busy_ticks;
     }
     if (idle_ticks) {
         *idle_ticks = scheduler_idle_ticks;
     }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
+void sched_cpu_ticks_per_cpu(uint64_t *busy_ticks, uint64_t *idle_ticks,
+                             uint32_t capacity)
+{
+    uint64_t flags;
+    uint32_t count = capacity < SMP_MAX_CPUS ? capacity : SMP_MAX_CPUS;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (busy_ticks) {
+            busy_ticks[i] = scheduler_cpu_busy_ticks[i];
+        }
+        if (idle_ticks) {
+            idle_ticks[i] = scheduler_cpu_idle_ticks[i];
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
+void sched_cpu_runtime_snapshot(uint64_t *busy_ticks, uint64_t *idle_ticks,
+                                uint32_t *current_pids, uint32_t *ready_counts,
+                                uint32_t capacity)
+{
+    uint64_t flags;
+    uint32_t count = capacity < SMP_MAX_CPUS ? capacity : SMP_MAX_CPUS;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    for (uint32_t cpu = 0; cpu < count; ++cpu) {
+        if (busy_ticks) {
+            busy_ticks[cpu] = scheduler_cpu_busy_ticks[cpu];
+        }
+        if (idle_ticks) {
+            idle_ticks[cpu] = scheduler_cpu_idle_ticks[cpu];
+        }
+        if (current_pids) {
+            current_pids[cpu] = current_pid[cpu];
+        }
+        if (ready_counts) {
+            uint32_t ready = 0;
+            for (uint32_t i = 0; i < task_count; ++i) {
+                if (tasks[i]->state == TASK_READY && task_cpu_allowed(tasks[i], cpu)) {
+                    ++ready;
+                }
+            }
+            ready_counts[cpu] = ready;
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched task counts operation.
- * @param out_task_count Caller-provided storage that receives output from this operation.
- * @param running_tasks Input or output value used by this operation.
- * @param ready_tasks Input or output value used by this operation.
- * @param sleeping_tasks Input or output value used by this operation.
+ * @brief Count tasks by RUNNING/READY/BLOCKED state and report each plus the total count.
  */
 void sched_task_counts(uint32_t *out_task_count, uint32_t *running_tasks,
                        uint32_t *ready_tasks, uint32_t *sleeping_tasks)
@@ -917,6 +1051,8 @@ void sched_task_counts(uint32_t *out_task_count, uint32_t *running_tasks,
     uint32_t running = 0;
     uint32_t ready = 0;
     uint32_t sleeping = 0;
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i]->state == TASK_RUNNING) {
             ++running;
@@ -938,21 +1074,65 @@ void sched_task_counts(uint32_t *out_task_count, uint32_t *running_tasks,
     if (sleeping_tasks) {
         *sleeping_tasks = sleeping;
     }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched current pid operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the pid of the currently running task (0 before the first switch).
  */
 uint32_t sched_current_pid(void)
 {
-    return current_pid;
+    return scheduler_current_pid();
+}
+
+int sched_get_task_affinity(uint32_t pid, uint64_t *mask)
+{
+    uint64_t flags;
+    int result = -2;
+    if (!mask) {
+        return -22;
+    }
+    if (!pid) {
+        pid = scheduler_current_pid();
+    }
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i]->pid == pid && tasks[i]->state != TASK_EXITED) {
+            *mask = tasks[i]->affinity_mask ? tasks[i]->affinity_mask : sched_all_cpu_mask();
+            result = 0;
+            break;
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return result;
+}
+
+int sched_set_task_affinity(uint32_t pid, uint64_t mask)
+{
+    uint64_t flags;
+    uint64_t allowed = sched_all_cpu_mask();
+    int result = -2;
+    if (!pid) {
+        pid = scheduler_current_pid();
+    }
+    if (!mask || !(mask & allowed)) {
+        return -22;
+    }
+    mask &= allowed;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i]->pid == pid && tasks[i]->state != TASK_EXITED) {
+            tasks[i]->affinity_mask = mask;
+            result = 0;
+            break;
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return result;
 }
 
 /**
- * @brief Coordinates the sched find operation.
- * @param pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Linear scan for the task with the given pid, or NULL when absent.
  */
 struct task *sched_find(uint32_t pid)
 {
@@ -965,9 +1145,7 @@ struct task *sched_find(uint32_t pid)
 }
 
 /**
- * @brief Coordinates the sched find by name operation.
- * @param name Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the first task whose name matches, or NULL when none does.
  */
 struct task *sched_find_by_name(const char *name)
 {
@@ -980,9 +1158,7 @@ struct task *sched_find_by_name(const char *name)
 }
 
 /**
- * @brief Coordinates the sched find by path operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the live user task whose path matches exactly, or NULL.
  */
 struct task *sched_find_by_path(const char *path)
 {
@@ -996,9 +1172,7 @@ struct task *sched_find_by_path(const char *path)
 }
 
 /**
- * @brief Coordinates the sched find by path basename operation.
- * @param basename Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the live user task whose path's basename matches, or NULL.
  */
 struct task *sched_find_by_path_basename(const char *basename)
 {
@@ -1013,8 +1187,7 @@ struct task *sched_find_by_path_basename(const char *basename)
 }
 
 /**
- * @brief Coordinates the sched find window server operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the live user task flagged as the window server, or NULL.
  */
 struct task *sched_find_window_server(void)
 {
@@ -1029,7 +1202,7 @@ struct task *sched_find_window_server(void)
 }
 
 /**
- * @brief Tests whether a canonical LeonOS path resolves to a mounted volume.
+ * @brief True when path resolves to the given volume id (used to detect in-use mounts).
  */
 static bool sched_path_uses_volume(const char *path, uint32_t volume_id)
 {
@@ -1039,7 +1212,7 @@ static bool sched_path_uses_volume(const char *path, uint32_t volume_id)
 }
 
 /**
- * @brief Determines whether a live task still refers to one mounted volume.
+ * @brief True when any live task's cwd, path, image node, or open files/VMA reference this volume.
  */
 bool sched_volume_in_use(uint32_t volume_id)
 {
@@ -1076,24 +1249,97 @@ bool sched_volume_in_use(uint32_t volume_id)
 }
 
 /**
- * @brief Coordinates the sched current task operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the struct task for the currently running pid, or NULL.
  */
 struct task *sched_current_task(void)
 {
-    return sched_find(current_pid);
+    return sched_find(scheduler_current_pid());
 }
 
 /**
- * @brief Coordinates the sched select next user operation.
- * @return Result, status, or value defined by this API.
+ * Save the interrupted Ring-3 state before its CPU releases the task. The
+ * frame copy and ownership change share one scheduler-lock transaction so no
+ * other CPU can claim a partially published return context.
+ */
+bool sched_capture_current_user_frame(const struct trap_frame *frame)
+{
+    uint64_t flags;
+    uint32_t cpu = scheduler_cpu_index();
+    struct task *current = NULL;
+
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i]->pid == current_pid[cpu]) {
+            current = tasks[i];
+            break;
+        }
+    }
+    if (!current || current->kind != TASK_KIND_USER ||
+        current->state == TASK_EXITED || current->running_cpu != cpu) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return false;
+    }
+    /* execve has already installed a fresh address space and reset the saved
+     * frame for the pending image.  The trap frame passed here still belongs
+     * to the replaced program; copying it would resurrect the old RIP and
+     * register state.  Only release this CPU's reservation so the normal
+     * image-loader path can construct the new initial frame. */
+    if (!(current->flags & TASK_FLAG_PENDING_LOAD)) {
+        if (!task_frame_valid(current, frame)) {
+            kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+            return false;
+        }
+        current->frame = *frame;
+    }
+    if (current->state == TASK_RUNNING) {
+        current->state = TASK_READY;
+    }
+    /* The interrupted frame is fully published under scheduler_lock. The
+     * task is no longer executing on this CPU, so release the reservation and
+     * allow another eligible CPU to steal it if this CPU has better work. */
+    current->running_cpu = SCHED_CPU_NONE;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return true;
+}
+
+/**
+ * A remote exit may mark a task terminal while it is still executing in
+ * Ring-3 on this CPU.  Keep its address space and descriptor table alive
+ * until this CPU reaches a scheduling boundary, then drop only this CPU's
+ * reservation.  Reapers and slot recycling require running_cpu == NONE.
+ */
+void sched_quiesce_exited_current(void)
+{
+    uint32_t cpu = scheduler_cpu_index();
+    uint32_t pid;
+    uint64_t flags;
+
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    pid = current_pid[cpu];
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i]->pid == pid && tasks[i]->state == TASK_EXITED) {
+            if (tasks[i]->running_cpu == cpu ||
+                tasks[i]->running_cpu == SCHED_CPU_NONE) {
+                tasks[i]->running_cpu = SCHED_CPU_NONE;
+                current_pid[cpu] = 0;
+            }
+            break;
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
+/**
+ * @brief Round-robin scan for the next READY, fully-loaded user task with the lowest priority.
  */
 struct task *sched_select_next_user(void)
 {
     uint32_t current_index = 0;
     struct task *best = NULL;
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i]->pid == current_pid) {
+        if (tasks[i]->pid == scheduler_current_pid()) {
             current_index = i;
             break;
         }
@@ -1108,7 +1354,11 @@ struct task *sched_select_next_user(void)
      */
     for (uint32_t n = 1; n <= task_count; ++n) {
         uint32_t i = (current_index + n) % task_count;
-        if (tasks[i]->kind != TASK_KIND_USER || tasks[i]->state != TASK_READY) {
+        if (tasks[i]->kind != TASK_KIND_USER || tasks[i]->state != TASK_READY ||
+            (tasks[i]->running_cpu != SCHED_CPU_NONE && tasks[i]->running_cpu != scheduler_cpu_index())) {
+            continue;
+        }
+        if (!task_cpu_allowed(tasks[i], scheduler_cpu_index())) {
             continue;
         }
         if ((!tasks[i]->entry && !(tasks[i]->image && tasks[i]->image_len) &&
@@ -1120,23 +1370,80 @@ struct task *sched_select_next_user(void)
             best = tasks[i];
         }
     }
+    if (best) {
+        uint32_t cpu = scheduler_cpu_index();
+        uint32_t old_pid = current_pid[cpu];
+        if (old_pid && old_pid != best->pid) {
+            struct task *old = sched_find(old_pid);
+            if (old && old->running_cpu == cpu) {
+                old->running_cpu = SCHED_CPU_NONE;
+            }
+        }
+        best->state = TASK_RUNNING;
+        best->running_cpu = cpu;
+        current_pid[cpu] = best->pid;
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
     return best;
 }
 
 /**
- * @brief Coordinates the sched task frame operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * @brief Atomically put this CPU's saved task back on the running slot.
+ *
+ * A preemption path first changes RUNNING to READY while publishing the
+ * interrupted frame. If the run queue is otherwise empty, the same task must
+ * be claimed again before its frame is returned to the iret path. Leaving it
+ * READY permits another CPU to claim the same address space concurrently.
  */
-struct trap_frame *sched_task_frame(struct task *task)
+struct task *sched_reclaim_current_user(void)
 {
-    return task ? &task->frame : NULL;
+    uint32_t cpu = scheduler_cpu_index();
+    uint32_t pid;
+    struct task *task = NULL;
+    uint64_t flags;
+
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    pid = current_pid[cpu];
+    for (uint32_t i = 0; i < task_count; ++i) {
+        if (tasks[i]->pid == pid) {
+            task = tasks[i];
+            break;
+        }
+    }
+    if (!task || task->kind != TASK_KIND_USER || task->state != TASK_READY ||
+        (task->running_cpu != SCHED_CPU_NONE && task->running_cpu != cpu) ||
+        !task_cpu_allowed(task, cpu) ||
+        !task_frame_valid(task, &task->frame)) {
+        task = NULL;
+    } else {
+        task->state = TASK_RUNNING;
+        task->running_cpu = cpu;
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return task;
 }
 
 /**
- * @brief Coordinates the sched task cr3 operation.
- * @param task Task whose state or authority is inspected or updated.
- * @return Result, status, or value defined by this API.
+ * @brief Return a pointer to the task's saved trap frame, or NULL for a NULL task.
+ */
+struct trap_frame *sched_task_frame(struct task *task)
+{
+    if (!task || task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
+        !task_frame_valid(task, &task->frame)) {
+        if (task) {
+            console_printf("[ntclks] rejected invalid user frame pid=%u rip=0x%llx rsp=0x%llx cr3=0x%llx\n",
+                           task->pid,
+                           (unsigned long long)task->frame.rip,
+                           (unsigned long long)task->frame.rsp,
+                           (unsigned long long)task->as.cr3);
+        }
+        return NULL;
+    }
+    return &task->frame;
+}
+
+/**
+ * @brief Return the task's address-space CR3, or 0 for a NULL task.
  */
 uint64_t sched_task_cr3(struct task *task)
 {
@@ -1144,72 +1451,96 @@ uint64_t sched_task_cr3(struct task *task)
 }
 
 /**
- * @brief Coordinates the sched mark ready operation.
- * @param pid Input or output value used by this operation.
+ * @brief Wake a non-exited task: clear its wait state and set it READY.
  */
 void sched_mark_ready(uint32_t pid)
 {
+    uint64_t flags;
+    uint32_t cpu = scheduler_cpu_index();
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     struct task *task = sched_find(pid);
     if (!task || task->state == TASK_EXITED) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return;
+    }
+    /* A running task is already runnable.  In particular, an event emitted
+     * by CPU0 must not publish a task currently executing on CPU1 as READY:
+     * doing so lets a third CPU claim its address space and eventually return
+     * through a corrupted trap frame. */
+    if (task->state == TASK_RUNNING) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return;
+    }
+    if (task->running_cpu != SCHED_CPU_NONE && task->running_cpu != cpu) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
         return;
     }
     task->wake_tick = 0;
     task->wait_window_id = 0;
     task->state = TASK_READY;
+    task->running_cpu = SCHED_CPU_NONE;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched sleep current until operation.
- * @param wake_tick Input or output value used by this operation.
+ * @brief Put the current task to sleep until wake_tick (no-op for the idle or an exited task).
  */
 void sched_sleep_current_until(uint64_t wake_tick)
 {
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     struct task *task = sched_current_task();
     if (!task || task->pid == 0 || task->state == TASK_EXITED) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
         return;
     }
     task->wait_window_id = 0;
     task->wake_tick = wake_tick;
+    /* Keep the CPU reservation until the interrupt frame is captured by
+     * userland_schedule_from_frame().  Clearing it here would make that
+     * capture look like a second CPU owns the task. */
     task->state = TASK_BLOCKED;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched wait current for window event operation.
- * @param window_id Input or output value used by this operation.
- * @param wake_tick Input or output value used by this operation.
+ * @brief Block the current task until window_id gets an event or wake_tick elapses.
  */
 void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick)
 {
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     struct task *task = sched_current_task();
     if (!task || task->pid == 0 || task->state == TASK_EXITED || !window_id) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
         return;
     }
     task->wait_window_id = window_id;
     task->wake_tick = wake_tick;
     task->state = TASK_BLOCKED;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched wake window event operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
+ * @brief Wake a BLOCKED task only when it is waiting for exactly this window event.
  */
 void sched_wake_window_event(uint32_t pid, uint32_t window_id)
 {
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     struct task *task = sched_find(pid);
     if (!task || task->state != TASK_BLOCKED || task->wait_window_id != window_id) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
         return;
     }
     task->wake_tick = 0;
     task->wait_window_id = 0;
     task->state = TASK_READY;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
 /**
- * @brief Coordinates the sched kill user task operation.
- * @param pid Input or output value used by this operation.
- * @param code Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Terminate a user task by pid, returning a negative error for idle/services/exited/self.
  */
 int sched_kill_user_task(uint32_t pid, uint64_t code)
 {
@@ -1218,7 +1549,7 @@ int sched_kill_user_task(uint32_t pid, uint64_t code)
         return -2;
     }
     if (task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
-        (task->flags & TASK_FLAG_SERVICE) || pid == current_pid) {
+        (task->flags & TASK_FLAG_SERVICE) || pid == scheduler_current_pid()) {
         return -1;
     }
     sched_exit(pid, code);
@@ -1226,10 +1557,7 @@ int sched_kill_user_task(uint32_t pid, uint64_t code)
 }
 
 /**
- * @brief Sends a supported process-control signal to a user task.
- * @param pid Target process identifier.
- * @param signal_number POSIX signal number.
- * @return Zero on success or a negative scheduler error.
+ * @brief Record a POSIX signal on a user task, handling STOP/CONT state changes and fatal signals.
  */
 int sched_signal_user_task(uint32_t pid, int signal_number)
 {
@@ -1250,7 +1578,9 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
         task->child_event = TASK_CHILD_EVENT_STOPPED;
         return 0;
     }
-    if (signal_number == 19) { /* SIGCONT */
+    if (signal_number == 19) { /**
+ * @brief SIGCONT
+ */
         task->pending_signals &= ~((1u << 17) | (1u << 18));
         if (task->state == TASK_STOPPED) {
             task->wake_tick = 0;
@@ -1270,11 +1600,7 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
 }
 
 /**
- * @brief Sends a signal to all members of a process group owned by the caller.
- * @param sender_pid Process issuing the request.
- * @param process_group Target process group.
- * @param signal_number POSIX signal number.
- * @return Number of signalled tasks, or a negative scheduler error.
+ * @brief Signal every user task in a group the caller owns; returns the count or a negative error.
  */
 int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
                                int signal_number)
@@ -1308,11 +1634,7 @@ int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
 }
 
 /**
- * @brief Changes the process group for a task controlled by the caller.
- * @param caller_pid Process issuing the request.
- * @param pid Target task, or zero for the caller.
- * @param process_group Target group, or zero to create one led by the target.
- * @return Zero on success or a negative scheduler error.
+ * @brief Move a caller-controlled task into an existing or newly created process group.
  */
 int sched_set_process_group(uint32_t caller_pid, uint32_t pid,
                             uint32_t process_group)
@@ -1362,9 +1684,7 @@ int sched_set_process_group(uint32_t caller_pid, uint32_t pid,
 }
 
 /**
- * @brief Returns the process group assigned to a task.
- * @param pid Task identifier, or zero for the current task.
- * @return Process-group identifier or a negative scheduler error.
+ * @brief Return the process group of pid (0 = current), or a negative error.
  */
 int64_t sched_get_process_group(uint32_t pid)
 {
@@ -1381,9 +1701,7 @@ int64_t sched_get_process_group(uint32_t pid)
 }
 
 /**
- * @brief Creates a process session whose leader and initial group are the caller.
- * @param pid Calling task identifier.
- * @return New session identifier or a negative scheduler error.
+ * @brief Make the calling task the leader of a new session and process group.
  */
 int64_t sched_create_process_session(uint32_t pid)
 {
@@ -1407,10 +1725,7 @@ int64_t sched_create_process_session(uint32_t pid)
 }
 
 /**
- * @brief Checks whether an attached task belongs to a process group.
- * @param process_group Process group to inspect.
- * @param pty_id PTY to match.
- * @return Non-zero if a matching live task exists.
+ * @brief True when some live task in this process group is attached to the given PTY.
  */
 int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id)
 {
@@ -1429,9 +1744,7 @@ int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id)
 }
 
 /**
- * @brief Returns the POSIX-style process session for a task.
- * @param pid Task identifier.
- * @return Session identifier or a negative scheduler error.
+ * @brief Return the process session of pid, or a negative error.
  */
 int64_t sched_get_process_session(uint32_t pid)
 {
@@ -1444,11 +1757,7 @@ int64_t sched_get_process_session(uint32_t pid)
 }
 
 /**
- * @brief Reads or updates a task's nice-style priority.
- * @param pid Target process identifier.
- * @param priority New priority when set is non-zero.
- * @param set Non-zero to update, zero to read.
- * @return Priority on success or a negative error.
+ * @brief Read or set a user task's nice-style priority, clamping new values to [-20, 19].
  */
 int sched_task_priority(uint32_t pid, int priority, int set)
 {
@@ -1466,11 +1775,7 @@ int sched_task_priority(uint32_t pid, int priority, int set)
 }
 
 /**
- * @brief Coordinates the sched kill user tasks for pty operation.
- * @param pty_id Input or output value used by this operation.
- * @param keep_pid Input or output value used by this operation.
- * @param code Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Kill every user task (except keep_pid) attached to pty_id and clear its PTY fds.
  */
 int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
                                   uint64_t code)
@@ -1486,24 +1791,17 @@ int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
             (task->flags & TASK_FLAG_SERVICE) || task->pty_id != pty_id) {
             continue;
         }
+        /* This task may still be executing on another CPU.  It becomes
+         * reclaimable only after that CPU observes TASK_EXITED and clears
+         * running_cpu at its next scheduling boundary. */
         sched_exit(task->pid, code);
-        task->pty_id = 0;
-        for (uint32_t fd = 0; fd < SCHED_TASK_PTY_FD_MAX; ++fd) {
-            task->pty_fds[fd] = (struct task_pty_fd){0};
-        }
-        sched_release_task_resources(task);
         ++killed;
     }
     return killed;
 }
 
 /**
- * @brief Coordinates the sched kill user tasks for logout operation.
- * @param uid Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
- * @param keep_pid Input or output value used by this operation.
- * @param code Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Kill every non-service user task in this uid/session except keep_pid.
  */
 int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
                                      uint32_t keep_pid, uint64_t code)
@@ -1527,20 +1825,22 @@ int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
 }
 
 /**
- * @brief Coordinates the sched wait reap operation.
- * @param waiter_pid Input or output value used by this operation.
- * @param wanted_pid Input or output value used by this operation.
- * @param options waitpid option bit mask.
- * @param status Destination for the encoded wait status.
- * @return Result, status, or value defined by this API.
+ * @brief Reap an exited child (or report stop/continue events) matching waitpid semantics.
  */
 int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
                         uint32_t options, int *status)
 {
-    struct task *waiter = sched_find(waiter_pid);
+    uint64_t lock_flags;
+    struct task *waiter;
+    struct task *reap_task = NULL;
+    uint32_t reap_pid = 0;
+    int reap_status = 0;
     int found_child = 0;
     uint32_t wanted_group = 0;
+    kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
+    waiter = sched_find(waiter_pid);
     if (!waiter) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return -2;
     }
     if (wanted_pid < -1) {
@@ -1563,35 +1863,24 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
             continue;
         }
         found_child = 1;
-        if (task->state == TASK_EXITED) {
-            uint32_t pid = task->pid;
+        if (task->state == TASK_EXITED && task->running_cpu == SCHED_CPU_NONE &&
+            !(task->flags & TASK_FLAG_REAP_IN_PROGRESS)) {
+            reap_task = task;
+            reap_pid = task->pid;
             if (status) {
-                *status = task->exit_signal
-                              ? (int)(task->exit_signal & 0x7fU)
-                              : (int)((task->exit_code & 0xffU) << 8);
+                reap_status = task->exit_signal
+                                  ? (int)(task->exit_signal & 0x7fU)
+                                  : (int)((task->exit_code & 0xffU) << 8);
             }
-            sched_release_task_resources(task);
-            task->parent_pid = 0;
-            task->flags &= ~TASK_FLAG_WAITABLE_CHILD;
-            task_copy_name(task, "reaped");
-            task->image = NULL;
-            task->image_len = 0;
-            task->pty_id = 0;
-            task_clear_identity(task);
-            task_copy_cwd(task, "/");
-            for (size_t j = 0; j < SCHED_TASK_FILE_MAX; ++j) {
-                task->files[j].used = 0;
-                task->files[j].offset = 0;
-                task->files[j].aux = 0;
-            }
-            console_printf("[ntclks] scheduler wait reaped pid=%u by pid=%u\n", pid, waiter_pid);
-            return pid;
+            task->flags |= TASK_FLAG_REAP_IN_PROGRESS;
+            break;
         }
         if (task->child_event == TASK_CHILD_EVENT_STOPPED && (options & 2U)) {
             if (status) {
                 *status = (int)(((task->stop_signal & 0xffU) << 8) | 0x7fU);
             }
             task->child_event = TASK_CHILD_EVENT_NONE;
+            kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
             return task->pid;
         }
         if (task->child_event == TASK_CHILD_EVENT_CONTINUED && (options & 4U)) {
@@ -1599,19 +1888,50 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
                 *status = 0xffff;
             }
             task->child_event = TASK_CHILD_EVENT_NONE;
+            kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
             return task->pid;
         }
     }
+    if (reap_task) {
+        /* Address-space, storage, and pipe teardown can take other locks and
+         * may touch page tables.  Never perform that work while holding the
+         * scheduler spinlock with interrupts disabled. */
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
+        sched_release_task_resources(reap_task);
+
+        kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
+        if (reap_task->pid == reap_pid &&
+            (reap_task->flags & TASK_FLAG_REAP_IN_PROGRESS)) {
+            reap_task->parent_pid = 0;
+            reap_task->flags &= ~(TASK_FLAG_WAITABLE_CHILD | TASK_FLAG_REAP_IN_PROGRESS);
+            task_copy_name(reap_task, "reaped");
+            reap_task->image = NULL;
+            reap_task->image_len = 0;
+            reap_task->pty_id = 0;
+            task_clear_identity(reap_task);
+            task_copy_cwd(reap_task, "/");
+            for (size_t j = 0; j < SCHED_TASK_FILE_MAX; ++j) {
+                reap_task->files[j].used = 0;
+                reap_task->files[j].offset = 0;
+                reap_task->files[j].aux = 0;
+            }
+            console_printf("[ntclks] scheduler wait reaped pid=%u by pid=%u\n",
+                           reap_pid, waiter_pid);
+        }
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
+        if (status) {
+            *status = reap_status;
+        }
+        return reap_pid;
+    }
     /* The syscall trap retries EAGAIN after parking the caller.  This is
      * distinct from ECHILD, which means no matching child exists at all. */
+    kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
     return found_child ? -LEONOS_EAGAIN : 0;
 }
 
 /**
- * @brief Coordinates the snapshot name operation.
- * @param dst Input or output value used by this operation.
- * @param dst_len Length, size, or element count associated with the operation.
- * @param src Input or output value used by this operation.
+ * @brief Bounded, always-NUL-terminated copy for task snapshot string fields.
  */
 static void snapshot_name(char *dst, size_t dst_len, const char *src)
 {
@@ -1629,19 +1949,20 @@ static void snapshot_name(char *dst, size_t dst_len, const char *src)
 }
 
 /**
- * @brief Coordinates the sched snapshot operation.
- * @param out Caller-provided storage that receives output from this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param tick Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Fill out[] with up to capacity task snapshots, storing the tick count via tick.
  */
 uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint64_t *tick)
 {
+    uint64_t flags;
+    uint32_t result;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     if (tick) {
         *tick = scheduler_ticks;
     }
     if (!out || capacity == 0) {
-        return task_count;
+        result = task_count;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return result;
     }
     uint32_t n = task_count < capacity ? task_count : capacity;
     for (uint32_t i = 0; i < n; ++i) {
@@ -1661,17 +1982,17 @@ uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint6
         dst->wake_tick = tasks[i]->wake_tick;
         dst->entry = tasks[i]->entry;
         dst->cr3 = tasks[i]->as.cr3;
+        dst->affinity_mask = tasks[i]->affinity_mask;
         snapshot_name(dst->name, sizeof(dst->name), tasks[i]->name);
         snapshot_name(dst->username, sizeof(dst->username), tasks[i]->username);
     }
-    return n;
+    result = n;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return result;
 }
 
 /**
- * @brief Coordinates the sched set task identity operation.
- * @param pid Input or output value used by this operation.
- * @param user Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
+ * @brief Set a task's uid/role/session/username/home from user, or clear it when user is empty.
  */
 void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
                              uint32_t session_id)
@@ -1697,10 +2018,7 @@ void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
 }
 
 /**
- * @brief Coordinates the sched set session identity operation.
- * @param parent_pid Input or output value used by this operation.
- * @param user Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
+ * @brief Apply identity to the given task and its non-service children in a session.
  */
 void sched_set_session_identity(uint32_t parent_pid, const struct leonos_user_info *user,
                                 uint32_t session_id)
@@ -1716,8 +2034,7 @@ void sched_set_session_identity(uint32_t parent_pid, const struct leonos_user_in
 }
 
 /**
- * @brief Coordinates the sched clear session identity operation.
- * @param session_id Input or output value used by this operation.
+ * @brief Clear identity and reset cwd for every non-service task in this session.
  */
 void sched_clear_session_identity(uint32_t session_id)
 {
@@ -1735,8 +2052,7 @@ void sched_clear_session_identity(uint32_t session_id)
 }
 
 /**
- * @brief Coordinates the sched next session id operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the next session id, wrapping past zero back to 1.
  */
 uint32_t sched_next_session_id(void)
 {
@@ -1747,7 +2063,7 @@ uint32_t sched_next_session_id(void)
 }
 
 /**
- * @brief Coordinates the sched dump operation.
+ * @brief Print one console line per task with pid, identity, name, state, and flags.
  */
 void sched_dump(void)
 {

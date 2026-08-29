@@ -178,8 +178,8 @@ int main(void)
         };
         (void)leonos_inputm_set_context(&context);
     }
+    leonos_ui_bind(&ui, pixels, surface_w, surface_h, LOGIN_MAX_W);
     for (;;) {
-        leonos_ui_bind(&ui, pixels, surface_w, surface_h, LOGIN_MAX_W);
         draw_login(&ui);
         leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                                   LOGIN_MAX_W, pixels);
@@ -187,6 +187,7 @@ int main(void)
         if (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
             if (event.type == LEONOS_GUI_APP_EVENT_RESIZE) {
                 update_surface_size(event.width, event.height);
+                leonos_ui_bind(&ui, pixels, surface_w, surface_h, LOGIN_MAX_W);
                 continue;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event.pressed) {

@@ -13,15 +13,18 @@
 
 struct task;
 
+/* Serialize executable and lazy file-backed page loading.  The storage
+ * backend and ELF parser both contain shared state and are not reentrant. */
+void userland_loader_lock(uint64_t *flags);
+void userland_loader_unlock(uint64_t flags);
+
 /**
- * @brief Coordinates the userland init operation.
- * @param boot Boot information supplied by the loader.
+ * @brief Set up userspace support and prepare the first user process from boot info.
  */
 void userland_init(const struct boot_info *boot);
 void userland_enter_first(void) __attribute__((noreturn));
 /**
- * @brief Coordinates the userland process exit operation.
- * @param code Input or output value used by this operation.
+ * @brief End the current user process with code, freeing its resources.
  */
 void userland_process_exit(uint64_t code);
 /**
@@ -39,25 +42,15 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
                                uint32_t envc, char *const envp[],
                                const char *data, uint32_t data_len);
 /**
- * @brief Coordinates the userland spawn path operation.
- * @param path LeonOS path consumed by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Spawn a new process from path; returns the child pid or a negative error.
  */
 int64_t userland_spawn_path(const char *path);
 /**
- * @brief Coordinates the userland spawn path with pty operation.
- * @param path LeonOS path consumed by this operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Spawn path attached to pty_id; returns the child pid or a negative error.
  */
 int64_t userland_spawn_path_with_pty(const char *path, uint32_t pty_id);
 /**
- * @brief Coordinates the userland spawn path argv operation.
- * @param path LeonOS path consumed by this operation.
- * @param argv Input or output value used by this operation.
- * @param envp Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Spawn path with argv/envp and optional pty_id; returns child pid or error.
  */
 int64_t userland_spawn_path_argv(const char *path,
                                  const char *const argv[],
@@ -81,14 +74,7 @@ int64_t userland_spawn_path_argv_with_fds(const char *path,
                                           int stdin_fd, int stdout_fd,
                                           int stderr_fd);
 /**
- * @brief Coordinates the userland spawn path argv for user operation.
- * @param path LeonOS path consumed by this operation.
- * @param argv Input or output value used by this operation.
- * @param envp Input or output value used by this operation.
- * @param parent_pid Input or output value used by this operation.
- * @param user Input or output value used by this operation.
- * @param session_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Spawn path with argv/envp running as user/session; returns child pid or error.
  */
 int64_t userland_spawn_path_argv_for_user(const char *path,
                                           const char *const argv[],
@@ -97,17 +83,12 @@ int64_t userland_spawn_path_argv_for_user(const char *path,
                                           const struct leonos_user_info *user,
                                           uint32_t session_id);
 /**
- * @brief Coordinates the userland yield if runnable operation.
+ * @brief Yield the CPU to a ready task if one exists.
  */
 void userland_yield_if_runnable(void);
 struct task *userland_schedule_from_frame(struct trap_frame *frame);
 /**
- * @brief Coordinates the userland list dir operation.
- * @param path LeonOS path consumed by this operation.
- * @param entries Input or output value used by this operation.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_count Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief List up to capacity entries of path into entries; count in out_count.
  */
 int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
                       uint32_t capacity, uint32_t *out_count);

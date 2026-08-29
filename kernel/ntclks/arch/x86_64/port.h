@@ -8,43 +8,43 @@
 #include <stdint.h>
 
 /**
- * @brief Coordinates the x86 64 outb operation.
- * @param value Input or output value used by this operation.
- * @param port Input or output value used by this operation.
+ * X86 64 outb.
+ * @param value Value supplied by the caller.
+ * @param port Value supplied by the caller.
  */
 void x86_64_outb(uint8_t value, uint16_t port);
 /**
- * @brief Coordinates the x86 64 inb operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * X86 64 inb.
+ * @param port Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 uint8_t x86_64_inb(uint16_t port);
 /**
- * @brief Coordinates the x86 64 outw operation.
- * @param value Input or output value used by this operation.
- * @param port Input or output value used by this operation.
+ * X86 64 outw.
+ * @param value Value supplied by the caller.
+ * @param port Value supplied by the caller.
  */
 void x86_64_outw(uint16_t value, uint16_t port);
 /**
- * @brief Coordinates the x86 64 inw operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * X86 64 inw.
+ * @param port Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 uint16_t x86_64_inw(uint16_t port);
 /**
- * @brief Coordinates the x86 64 outl operation.
- * @param value Input or output value used by this operation.
- * @param port Input or output value used by this operation.
+ * X86 64 outl.
+ * @param value Value supplied by the caller.
+ * @param port Value supplied by the caller.
  */
 void x86_64_outl(uint32_t value, uint16_t port);
 /**
- * @brief Coordinates the x86 64 inl operation.
- * @param port Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * X86 64 inl.
+ * @param port Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 uint32_t x86_64_inl(uint16_t port);
 /**
- * @brief Coordinates the x86 64 halt operation.
+ *   attribute  .
  */
 __attribute__((noreturn)) void x86_64_halt(void);
 

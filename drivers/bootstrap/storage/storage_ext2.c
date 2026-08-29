@@ -1,4 +1,4 @@
-/* ext2 implementation is included by storage.c after the AHCI and common
+/* ext2 implementation is included by the storage facade after the AHCI and common
  * storage helpers. It deliberately supports the classic on-disk format only:
  * 1/2/4 KiB blocks, 128+ byte inodes, direct and indirect block pointers,
  * and no journal, extents, encryption, or metadata checksums. */
@@ -1111,26 +1111,24 @@ static int ext2_write_file(const char *path, const void *buffer, uint32_t len)
 
 /**
  * @brief Writes a range to an existing ext2 regular file.
- * @param path Absolute LeonOS path to an existing file.
+ * @param node Resolved existing file on the currently selected ext2 volume.
  * @param offset Starting byte offset.
  * @param buffer Source byte buffer.
  * @param len Number of bytes to write.
  * @param out_written Optional receiver for completed bytes.
  * @return Zero on success, or a negative errno-style status.
  */
-static int ext2_write_node(const char *path, uint64_t offset, const void *buffer,
+static int ext2_write_node(const struct storage_node *node, uint64_t offset, const void *buffer,
                            uint32_t len, uint32_t *out_written)
 {
-    struct storage_node node;
     struct ext2_inode inode;
     int ret;
     if (out_written) *out_written = 0;
-    ret = storage_lookup_path(path, &node);
+    if (!node || node->type != LEONOS_FS_TYPE_FILE ||
+        node->volume_id != g_storage.volume_id) return -2;
+    ret = ext2_read_inode(node->first_cluster, &inode);
     if (ret < 0) return ret;
-    if (node.type != LEONOS_FS_TYPE_FILE) return -21;
-    ret = ext2_read_inode(node.first_cluster, &inode);
-    if (ret < 0) return ret;
-    ret = ext2_write_inode_range(node.first_cluster, &inode, offset, buffer, len);
+    ret = ext2_write_inode_range(node->first_cluster, &inode, offset, buffer, len);
     if (ret < 0) return ret;
     if (out_written) *out_written = len;
     storage_cache_invalidate();
@@ -1139,21 +1137,19 @@ static int ext2_write_node(const char *path, uint64_t offset, const void *buffer
 
 /**
  * @brief Changes the visible length of an ext2 regular file.
- * @param path Absolute LeonOS path to an existing file.
+ * @param node Resolved existing file on the currently selected ext2 volume.
  * @param length New byte length.
  * @return Zero on success, or a negative errno-style status.
  */
-static int ext2_truncate_file(const char *path, uint64_t length)
+static int ext2_truncate_file(const struct storage_node *node, uint64_t length)
 {
-    struct storage_node node;
     struct ext2_inode inode;
     uint64_t old_size;
     int ret;
     if (length > 0xffffffffULL) return -28;
-    ret = storage_lookup_path(path, &node);
-    if (ret < 0) return ret;
-    if (node.type != LEONOS_FS_TYPE_FILE) return -21;
-    ret = ext2_read_inode(node.first_cluster, &inode);
+    if (!node || node->type != LEONOS_FS_TYPE_FILE ||
+        node->volume_id != g_storage.volume_id) return -2;
+    ret = ext2_read_inode(node->first_cluster, &inode);
     if (ret < 0) return ret;
     old_size = ext2_inode_size(&inode);
     if (length < old_size) {
@@ -1176,7 +1172,7 @@ static int ext2_truncate_file(const char *path, uint64_t length)
         }
     }
     ext2_set_inode_size(&inode, length);
-    ret = ext2_write_inode(node.first_cluster, &inode);
+    ret = ext2_write_inode(node->first_cluster, &inode);
     if (ret == 0) storage_cache_invalidate();
     return ret;
 }

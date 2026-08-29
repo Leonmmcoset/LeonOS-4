@@ -9,6 +9,9 @@
 #define LEONOS_IOCTL_TIME_INFO 0x4c54494dUL
 #define LEONOS_IOCTL_TIME_NTP_SYNC 0x4c544e54UL
 #define LEONOS_IOCTL_MACHINE_IDENTITY 0x4c4d4944UL
+#define LEONOS_IOCTL_TASK_AFFINITY 0x4c414646UL
+#define LEONOS_TASK_AFFINITY_GET 0U
+#define LEONOS_TASK_AFFINITY_SET 1U
 
 #define LEONOS_SYSTEM_NAME_LEN 32U
 #define LEONOS_SYSTEM_VERSION_LEN 32U
@@ -22,6 +25,7 @@
 #define LEONOS_MACHINE_IDENTITY_FLAG_PLATFORM_UUID 0x00000001U
 #define LEONOS_MACHINE_IDENTITY_FLAG_BOOT_DISK_GUID 0x00000002U
 #define LEONOS_MACHINE_IDENTITY_FLAG_BOOT_PARTITION_GUID 0x00000004U
+#define LEONOS_PERF_MAX_CPUS 64U
 
 struct leonos_system_info {
     char kernel_name[LEONOS_SYSTEM_NAME_LEN];
@@ -36,6 +40,15 @@ struct leonos_system_info {
     uint32_t copyright_year;
 };
 
+struct leonos_perf_cpu_info {
+    uint64_t busy_ticks;
+    uint64_t idle_ticks;
+    uint32_t online;
+    uint32_t apic_id;
+    uint32_t current_pid;
+    uint32_t runqueue_length;
+};
+
 struct leonos_perf_info {
     uint64_t uptime_ms;
     uint64_t total_memory_kib;
@@ -46,6 +59,19 @@ struct leonos_perf_info {
     uint32_t running_tasks;
     uint32_t ready_tasks;
     uint32_t sleeping_tasks;
+    uint32_t cpu_count;
+    uint32_t reserved;
+    uint64_t sample_tick;
+    uint32_t online_cpu_count;
+    uint32_t reserved2;
+    struct leonos_perf_cpu_info cpus[LEONOS_PERF_MAX_CPUS];
+};
+
+struct leonos_task_affinity {
+    uint32_t pid;
+    uint32_t operation;
+    uint64_t mask;
+    uint64_t allowed_mask;
 };
 
 struct leonos_time_info {
@@ -84,6 +110,8 @@ struct leonos_machine_identity {
 
 int leonos_system_info(struct leonos_system_info *info);
 int leonos_perf_info(struct leonos_perf_info *info);
+int leonos_task_affinity_get(uint32_t pid, uint64_t *mask);
+int leonos_task_affinity_set(uint32_t pid, uint64_t mask);
 int leonos_time_info(struct leonos_time_info *info);
 int leonos_time_ntp_sync(uint32_t timeout_ms, struct leonos_time_sync *result);
 int leonos_machine_identity(struct leonos_machine_identity *identity);

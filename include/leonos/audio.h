@@ -15,6 +15,7 @@
 #define LEONOS_AUDIO_STATUS_NO_DEVICE 1U
 #define LEONOS_AUDIO_STATUS_BAD_FORMAT 2U
 #define LEONOS_AUDIO_STATUS_PLAYBACK_FAILED 3U
+#define LEONOS_AUDIO_STATUS_WOULD_BLOCK 4U
 
 struct leonos_audio_format {
     uint32_t sample_rate;

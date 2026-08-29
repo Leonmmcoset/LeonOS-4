@@ -132,10 +132,7 @@ struct boot_info {
 };
 
 /**
- * @brief Coordinates the multiboot2 parse operation.
- * @param magic Input or output value used by this operation.
- * @param info_addr Address used by this operation; its address-space interpretation follows the API.
- * @param out Caller-provided storage that receives output from this operation.
+ * @brief Parse the Multiboot2 info block at info_addr into out, checking magic first.
  */
 void multiboot2_parse(uint32_t magic, uintptr_t info_addr, struct boot_info *out);
 

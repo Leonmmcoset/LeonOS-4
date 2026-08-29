@@ -85,8 +85,30 @@ leonos_mouse_set_style(window, LEONOS_GUI_CURSOR_HAND);
 leonos_mouse_show(window);
 ```
 
-坐标是桌面逻辑像素。光标样式包括箭头、手形、文本、等待、十字和移动。隐藏
-鼠标是按窗口记录的，窗口销毁或应用退出后桌面会恢复默认可见状态。
+坐标是桌面逻辑像素。支持箭头、手形、文本、等待、十字、移动、禁止、帮助、
+后台进度、四种调整大小、向上箭头和应用启动中等 Windows 风格样式。
+调用 `leonos_mouse_set_style()` 会为当前窗口关闭自动样式；调用
+`leonos_mouse_set_auto(window)` 恢复桌面根据悬浮目标切换样式的行为。
+
+应用可以为自己的客户区注册更精确的悬浮区域。区域坐标相对于窗口客户区，
+`region_id` 在窗口内保持唯一；设置 `LEONOS_GUI_CURSOR_REGION_DISABLED` 可
+显示禁止光标：
+
+```c
+struct leonos_gui_cursor_region_request region = {
+    .window_id = window,
+    .region_id = 1,
+    .x = 24, .y = 104, .width = 180, .height = 28,
+    .style = LEONOS_GUI_CURSOR_HAND,
+    .operation = LEONOS_GUI_CURSOR_REGION_SET,
+};
+leonos_mouse_set_region(&region);
+leonos_mouse_clear_regions(window);
+```
+
+还可以通过 `leonos_mouse_get_position()` 或 `leonos_mouse_get_state()` 查询
+当前坐标、按键、可见性和设备状态。隐藏鼠标是按窗口记录的，窗口销毁或应用
+退出后桌面会恢复默认可见状态。
 
 ## 主题与显示
 

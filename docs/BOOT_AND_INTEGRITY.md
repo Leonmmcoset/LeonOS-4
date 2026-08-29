@@ -26,6 +26,21 @@ Installer ISOs pass kernel, middlelayer, and installer root as GRUB modules:
 - `/system/middlelayer.sys` with module tag `leonos-middlelayer`
 - `/install/root.fat` with module tag `leonos-installer-root`
 
+The installer root remains resident for the installer session. It is accessed
+through a shared supervisor-only high direct map so user page tables cannot
+replace its low physical placement. The VM must provide enough RAM for GRUB to
+load the whole module; a 400 MiB root is supported with 1 GiB or more of guest
+memory.
+
+GRUB chooses module placement, while `kernel.sys` and `middlelayer.sys` have
+fixed physical `PT_LOAD` destinations. Before loading either executable, the
+Loader checks those destinations against the installer-root module. When they
+overlap, it allocates replacement EFI LoaderData pages below 4 GiB, copies the
+module, and records the new range in the boot handoff. That remains inside the
+kernel's 16 GiB direct map. The kernel imports the range before physical-memory
+initialization, so the original Multiboot range can be reclaimed without
+corrupting the FAT filesystem.
+
 ## Build-time hashes
 
 `tools/gen_loader_integrity.py` calculates SHA-256 hashes for:
@@ -73,12 +88,18 @@ output is unavailable.
 
 ## Installer compatibility
 
+The installer writes target disks through AHCI, legacy IDE/PATA PIO, or NVMe.
+NVMe namespaces with 512-byte logical sectors are supported as boot and install
+targets. In VirtualBox, attach the destination VDI through a SATA/AHCI,
+NVMe, or default PIIX4 IDE controller. IDE/ATAPI optical media is read-only
+and is supported for ISO reads.
+
 The installer payload is built from the same matched runtime staging tree:
 
 - `build/esp` contains the loader, kernel, middlelayer, resources, config, and
   userland applications for the installed system.
 - `tools/make_installer_root.py` splits `build/esp` into `install/esp` (the
-  FAT32 ESP boot subset) and `install/root` (the ext2 runtime root) inside
+  FAT32 ESP boot subset) and `install/root` (the exFAT runtime root) inside
   `build/install/root.fat`.
 - `tools/make_installer_iso.py` stages top-level installer copies of
   `boot/loader.elf`, `system/kernel.sys`, `system/middlelayer.sys`, and

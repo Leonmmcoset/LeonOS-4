@@ -8,21 +8,15 @@
 #include <ntclks/types.h>
 
 /**
- * @brief Coordinates the inputm handles ioctl operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 when request is an input-manager ioctl, 0 otherwise.
  */
 int inputm_handles_ioctl(uint64_t request);
 /**
- * @brief Coordinates the inputm handle ioctl operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param user_arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dispatch an input-manager ioctl, reading its argument from user_arg; returns result/errno.
  */
 int64_t inputm_handle_ioctl(uint64_t request, uint64_t user_arg);
 /**
- * @brief Coordinates the inputm destroy owner operation.
- * @param pid Input or output value used by this operation.
+ * @brief Release every input provider owned by pid (called when the process exits).
  */
 void inputm_destroy_owner(uint32_t pid);
 

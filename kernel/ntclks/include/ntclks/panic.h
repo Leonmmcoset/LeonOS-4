@@ -8,8 +8,7 @@
 #include <ntclks/bugcheck.h>
 
 /**
- * @brief Coordinates the panic operation.
- * @param message Input or output value used by this operation.
+ * @brief Print message and halt the kernel; never returns.
  */
 __attribute__((noreturn)) void panic(const char *message);
 

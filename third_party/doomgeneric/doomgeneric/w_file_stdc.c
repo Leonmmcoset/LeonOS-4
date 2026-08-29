@@ -20,6 +20,7 @@
 
 #if defined(LEONOS_DOOM)
 #include "doomgeneric.h"
+#include <leonos/fs.h>
 #endif
 
 #include "m_misc.h"
@@ -73,6 +74,42 @@ static wad_file_t *W_StdC_OpenFile(char *path)
     return &result->wad;
 }
 
+/* The kernel's filesystem API may complete a large read in several slices.
+ * stdio's fread() is allowed to return a short count, but a WAD reader must
+ * never silently accept one: the caller would then parse uninitialised bytes
+ * as a lump directory and report misleading renderer errors such as
+ * "Missing patch".  Keep the retry/short-read handling at this boundary so
+ * every WAD access (header, directory and lump data) has the same contract. */
+static size_t W_StdC_ReadExact(FILE *stream, unsigned int offset,
+                               void *buffer, size_t length)
+{
+    size_t done = 0;
+    unsigned char *dst = (unsigned char *)buffer;
+    while (done < length)
+    {
+        size_t request = length - done;
+#if defined(LEONOS_DOOM)
+        /* The LeonOS file path is sliced at 32 KiB. Keep a WAD read inside
+         * one such window so an unaligned lump directory cannot straddle two
+         * filesystem stream transactions. In particular, Freedoom's entry
+         * 1615 starts four bytes into the following window. */
+        size_t window_remaining = LEONOS_FS_READ_SLICE_BYTES -
+                                  ((offset + done) % LEONOS_FS_READ_SLICE_BYTES);
+        if (request > window_remaining)
+        {
+            request = window_remaining;
+        }
+#endif
+        size_t got = fread(dst + done, 1, request, stream);
+        if (got == 0)
+        {
+            break;
+        }
+        done += got;
+    }
+    return done;
+}
+
 static void W_StdC_CloseFile(wad_file_t *wad)
 {
     stdc_wad_file_t *stdc_wad;
@@ -94,13 +131,26 @@ size_t W_StdC_Read(wad_file_t *wad, unsigned int offset,
 
     stdc_wad = (stdc_wad_file_t *) wad;
 
+    if (!stdc_wad || !stdc_wad->fstream || (!buffer && buffer_len != 0))
+    {
+        return 0;
+    }
+
     // Jump to the specified position in the file.
+    if (fseek(stdc_wad->fstream, (long)offset, SEEK_SET) != 0)
+    {
+        printf("[doom] WAD seek failed offset=%u length=%u\n", offset,
+               (unsigned int)buffer_len);
+        return 0;
+    }
 
-    fseek(stdc_wad->fstream, offset, SEEK_SET);
-
-    // Read into the buffer.
-
-    result = fread(buffer, 1, buffer_len, stdc_wad->fstream);
+    // Read the complete request or return the exact short count.
+    result = W_StdC_ReadExact(stdc_wad->fstream, offset, buffer, buffer_len);
+    if (result != buffer_len)
+    {
+        printf("[doom] WAD short read offset=%u requested=%u got=%u\n",
+               offset, (unsigned int)buffer_len, (unsigned int)result);
+    }
     W_StdC_YieldAfterRead();
 
     return result;
@@ -113,4 +163,3 @@ wad_file_class_t stdc_wad_file =
     W_StdC_CloseFile,
     W_StdC_Read,
 };
-

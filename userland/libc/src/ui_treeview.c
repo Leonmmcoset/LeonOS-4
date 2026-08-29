@@ -289,6 +289,8 @@ void leonos_ui_treeview(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
     if (rows > state->visible_rows) {
         rows = state->visible_rows;
     }
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)rows_y, w,
+                            rows * row_h, LEONOS_GUI_CURSOR_HAND, 0);
     for (uint32_t row = 0; row < rows; ++row) {
         uint32_t visible_index = state->scroll + row;
         uint32_t item_index = state->visible_indices[visible_index];

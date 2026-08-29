@@ -216,7 +216,9 @@ static void ostui_finish_csi(char final)
         state.row = state.saved_row;
         state.col = state.saved_col;
     } else if (final == 'h' || final == 'l') {
-        /* Alternate-screen mode is represented by a full clear. */
+        /**
+ * @brief Alternate-screen mode is represented by a full clear.
+ */
         if (state.private_mode && state.param_count && state.params[0] == 1049U) {
             ostui_clear();
         }

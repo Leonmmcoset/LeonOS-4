@@ -55,6 +55,11 @@ void leonos_ui_inset(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
 void leonos_ui_button(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                       uint32_t w, uint32_t h, const char *label, uint32_t flags)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, h,
+                            (flags & LEONOS_UI_BUTTON_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_BUTTON_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     uint32_t fill = (flags & LEONOS_UI_BUTTON_DISABLED) ? LEONOS_UI_LIGHT : LEONOS_UI_GRAY;
     uint32_t pressed = flags & LEONOS_UI_BUTTON_PRESSED;
     leonos_ui_bevel(surface, x, y, w, h, fill, pressed);
@@ -160,6 +165,9 @@ void leonos_ui_menu_item(struct leonos_ui_surface *surface, uint32_t x, uint32_t
         leonos_ui_rect(surface, x, y + 10, w, 1, LEONOS_UI_WHITE);
         return;
     }
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, LEONOS_FONT_H + 8,
+                            disabled ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            disabled ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     if ((flags & LEONOS_UI_MENU_SELECTED) && !disabled) {
         leonos_ui_rect(surface, x, y, w, LEONOS_FONT_H + 8, LEONOS_UI_ACTIVE_TITLE);
         leonos_ui_text_transparent(surface, x + 4, y + 4, label, LEONOS_UI_WHITE);
@@ -211,6 +219,12 @@ void leonos_ui_context_menu_animated(struct leonos_ui_surface *surface, uint32_t
                            w > 8 ? w - 8 : w, 1, LEONOS_UI_WHITE);
             continue;
         }
+        leonos_ui_cursor_region(surface, (int32_t)x + 4, (int32_t)row_y,
+                                w > 8 ? w - 8 : w, row_h,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                                (flags & LEONOS_UI_MENU_DISABLED)
+                                    ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
         leonos_ui_text_transparent_clipped(surface, x + 8, row_y + 4,
                                            w > 16 ? w - 16 : w,
                                            label ? label : "",
@@ -376,6 +390,8 @@ void leonos_ui_tree(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
         uint32_t fg = bg == LEONOS_UI_ACTIVE_TITLE ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;
         uint32_t icon_x = x + 4 + indent;
         uint32_t text_x = x + 20 + indent;
+        leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)row_y, w, row_h,
+                                LEONOS_GUI_CURSOR_HAND, 0);
         leonos_ui_rect(surface, x, row_y, w, row_h, bg);
         if (items && !(items[i].flags & LEONOS_UI_TREE_LEAF)) {
             leonos_ui_button(surface, icon_x, row_y + 3, 12, 12,
@@ -427,6 +443,11 @@ void leonos_ui_checkbox(struct leonos_ui_surface *surface, uint32_t x, uint32_t 
                         const char *label, int checked, uint32_t flags)
 {
     uint32_t disabled = flags & LEONOS_UI_BUTTON_DISABLED;
+    uint32_t label_w = leonos_ui_text_width(label);
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y,
+                            22 + label_w, 18,
+                            disabled ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            disabled ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     uint32_t bg = disabled ? LEONOS_UI_LIGHT : LEONOS_UI_WHITE;
     uint32_t fg = disabled ? LEONOS_UI_DARK : LEONOS_UI_BLACK;
     leonos_ui_inset(surface, x, y + 2, 14, 14, bg);
@@ -469,6 +490,8 @@ void leonos_ui_list_header(struct leonos_ui_surface *surface, uint32_t x, uint32
 void leonos_ui_list_row(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                         uint32_t w, const char *text, uint32_t flags)
 {
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w, LEONOS_FONT_H + 4,
+                            LEONOS_GUI_CURSOR_HAND, 0);
     uint32_t selected = flags & LEONOS_UI_MENU_SELECTED;
     uint32_t bg = selected ? LEONOS_UI_ACTIVE_TITLE : LEONOS_UI_WHITE;
     uint32_t fg = selected ? LEONOS_UI_WHITE : LEONOS_UI_BLACK;

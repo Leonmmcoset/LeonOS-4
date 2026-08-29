@@ -52,6 +52,8 @@ static void set_status(char *status, uint32_t capacity, const char *text, int re
 static const char *cursor_name(uint32_t style)
 {
     switch (style) {
+    case LEONOS_GUI_CURSOR_ARROW:
+        return T("Arrow", "箭头");
     case LEONOS_GUI_CURSOR_HAND:
         return T("Hand", "手形");
     case LEONOS_GUI_CURSOR_TEXT:
@@ -62,6 +64,24 @@ static const char *cursor_name(uint32_t style)
         return T("Crosshair", "十字");
     case LEONOS_GUI_CURSOR_MOVE:
         return T("Move", "移动");
+    case LEONOS_GUI_CURSOR_NO:
+        return T("Not allowed", "禁止");
+    case LEONOS_GUI_CURSOR_HELP:
+        return T("Help", "帮助");
+    case LEONOS_GUI_CURSOR_PROGRESS:
+        return T("Progress", "进度");
+    case LEONOS_GUI_CURSOR_SIZE_NS:
+        return T("Resize vertical", "垂直调整大小");
+    case LEONOS_GUI_CURSOR_SIZE_WE:
+        return T("Resize horizontal", "水平调整大小");
+    case LEONOS_GUI_CURSOR_SIZE_NWSE:
+        return T("Resize diagonal", "对角调整大小");
+    case LEONOS_GUI_CURSOR_SIZE_NESW:
+        return T("Resize diagonal", "对角调整大小");
+    case LEONOS_GUI_CURSOR_UP:
+        return T("Up arrow", "向上箭头");
+    case LEONOS_GUI_CURSOR_APP_STARTING:
+        return T("App starting", "应用启动");
     default:
         return T("Arrow", "箭头");
     }
@@ -72,7 +92,7 @@ static void reset_desktop_state(uint32_t window_id)
     (void)leonos_gui_set_window_borderless(window_id, 0);
     (void)leonos_gui_set_window_taskbar_visible(window_id, 1);
     (void)leonos_gui_set_taskbar_visible(window_id, 1);
-    (void)leonos_mouse_set_style(window_id, LEONOS_GUI_CURSOR_ARROW);
+    (void)leonos_mouse_set_auto(window_id);
     (void)leonos_gui_set_window_title(window_id, T("GUI API Tester", "GUI API 测试"));
 }
 
@@ -166,8 +186,10 @@ int main(void)
     }
     leonos_ui_bind(&ui, pixels, view_w, view_h, GUI_TEST_MAX_W);
     for (;;) {
+        leonos_ui_cursor_begin(&ui, (uint32_t)window_id);
         draw_test_window(&ui, view_w, view_h, status, title_index, borderless,
                          taskbar_list_visible, desktop_taskbar_visible, cursor_style);
+        leonos_ui_cursor_end(&ui);
         (void)leonos_gui_present_window((uint32_t)window_id, view_w, view_h,
                                         GUI_TEST_MAX_W, pixels);
 

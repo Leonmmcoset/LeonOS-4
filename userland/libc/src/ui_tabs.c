@@ -55,6 +55,10 @@ void leonos_ui_tab_control(struct leonos_ui_surface *surface, uint32_t x, uint32
         if (cursor + width > right) {
             width = right - cursor;
         }
+        leonos_ui_cursor_region(surface, (int32_t)cursor, (int32_t)y, width,
+                                leonos_ui_tab_height(),
+                                disabled ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                                disabled ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
         leonos_ui_bevel(surface, cursor, y, width, leonos_ui_tab_height(),
                         active ? LEONOS_UI_WHITE : LEONOS_UI_GRAY,
                         active ? LEONOS_UI_BUTTON_PRESSED : 0);

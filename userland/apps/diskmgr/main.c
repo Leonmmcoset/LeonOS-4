@@ -50,7 +50,7 @@ static char create_label_text[LEONOS_DISK_PARTITION_NAME_LEN] = "Data";
 static struct leonos_ui_edit_state confirm_edit;
 static struct leonos_ui_edit_state create_size_edit;
 static struct leonos_ui_edit_state create_label_edit;
-static uint32_t selected_filesystem = LEONOS_DISK_FILESYSTEM_FAT32;
+static uint32_t selected_filesystem = LEONOS_DISK_FILESYSTEM_EXFAT;
 static uint32_t action_mode;
 static uint8_t action_armed;
 static uint8_t filesystem_dropdown_open;
@@ -186,6 +186,9 @@ static const char *filesystem_label(uint32_t filesystem)
     }
     if (filesystem == LEONOS_DISK_FILESYSTEM_EXT2) {
         return "ext2";
+    }
+    if (filesystem == LEONOS_DISK_FILESYSTEM_EXFAT) {
+        return "exFAT";
     }
     if (filesystem == LEONOS_DISK_FILESYSTEM_ISO9660) {
         return "ISO 9660";
@@ -348,7 +351,8 @@ static int selected_partition_mountable(void)
            !(partitions[index].flags &
              (LEONOS_DISK_PARTITION_FLAG_PROTECTED | LEONOS_DISK_PARTITION_FLAG_MOUNTED)) &&
            (partitions[index].filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ||
-            partitions[index].filesystem == LEONOS_DISK_FILESYSTEM_EXT2);
+            partitions[index].filesystem == LEONOS_DISK_FILESYSTEM_EXT2 ||
+            partitions[index].filesystem == LEONOS_DISK_FILESYSTEM_EXFAT);
 }
 
 static int selected_partition_unmountable(void)
@@ -486,17 +490,18 @@ static void open_action(uint32_t mode)
     reset_action();
     action_mode = mode;
     if (mode == DISKMGR_ACTION_FORMAT && part_index >= 0 &&
-        partitions[part_index].filesystem == LEONOS_DISK_FILESYSTEM_EXT2) {
-        selected_filesystem = LEONOS_DISK_FILESYSTEM_EXT2;
+        (partitions[part_index].filesystem == LEONOS_DISK_FILESYSTEM_EXT2 ||
+         partitions[part_index].filesystem == LEONOS_DISK_FILESYSTEM_EXFAT)) {
+        selected_filesystem = partitions[part_index].filesystem;
     } else if (mode == DISKMGR_ACTION_CREATE) {
-        selected_filesystem = LEONOS_DISK_FILESYSTEM_EXT2;
+        selected_filesystem = LEONOS_DISK_FILESYSTEM_EXFAT;
         copy_text(create_size_text, sizeof(create_size_text), "512");
         copy_text(create_label_text, sizeof(create_label_text), "Data");
         leonos_ui_edit_state_init(&create_size_edit, create_size_text, sizeof(create_size_text));
         leonos_ui_edit_state_init(&create_label_edit, create_label_text, sizeof(create_label_text));
         create_size_edit.focused = 1;
     } else {
-        selected_filesystem = LEONOS_DISK_FILESYSTEM_FAT32;
+        selected_filesystem = LEONOS_DISK_FILESYSTEM_EXFAT;
     }
     confirm_edit.focused = mode != DISKMGR_ACTION_CREATE;
     copy_text(status_text, sizeof(status_text),
@@ -593,8 +598,8 @@ static void mount_selected_partition(void)
     uint32_t pos = 0;
     if (disk_index < 0 || part_index < 0 || !selected_partition_mountable()) {
         copy_text(status_text, sizeof(status_text),
-                  T("Select an unmounted FAT32 or ext2 data partition",
-                    "请选择未挂载的 FAT32 或 ext2 数据分区"));
+                  T("Select an unmounted exFAT, FAT32, or ext2 data partition",
+                    "请选择未挂载的 exFAT、FAT32 或 ext2 数据分区"));
         return;
     }
     if (!leonos_admin_elevate()) {
@@ -668,6 +673,7 @@ static void draw_disk_details(struct leonos_ui_surface *ui)
 static void draw_action_panel(struct leonos_ui_surface *ui)
 {
     static const struct leonos_ui_dropdown_item filesystem_items[] = {
+        {"exFAT", LEONOS_DISK_FILESYSTEM_EXFAT, 0},
         {"FAT32", LEONOS_DISK_FILESYSTEM_FAT32, 0},
         {"ext2", LEONOS_DISK_FILESYSTEM_EXT2, 0},
     };
@@ -818,8 +824,8 @@ static void draw_diskmgr(struct leonos_ui_surface *ui)
         leonos_ui_groupbox(ui, 16, y, view_w > 32u ? view_w - 32u : 1u, action_panel_height(),
                            T("Partition safety", "分区安全"));
         leonos_ui_text_clipped(ui, 30, y + 22, view_w > 60u ? view_w - 60u : 1u,
-                               T("Mount FAT32 or ext2 data partitions at stable /mnt paths.",
-                                 "可将 FAT32 或 ext2 数据分区挂载到稳定的 /mnt 路径。"),
+                               T("Mount exFAT, FAT32, or ext2 data partitions at stable /mnt paths.",
+                                 "可将 exFAT、FAT32 或 ext2 数据分区挂载到稳定的 /mnt 路径。"),
                                LEONOS_UI_BLACK, LEONOS_UI_WHITE);
         leonos_ui_text_clipped(ui, 30, y + 46, view_w > 60u ? view_w - 60u : 1u,
                                T("Unmount requires administrator approval and no task may use the mount.",
@@ -839,6 +845,7 @@ static void present_diskmgr(uint32_t window_id, struct leonos_ui_surface *ui)
 static int select_filesystem_from_dropdown(int32_t x, int32_t y)
 {
     static const struct leonos_ui_dropdown_item filesystem_items[] = {
+        {"exFAT", LEONOS_DISK_FILESYSTEM_EXFAT, 0},
         {"FAT32", LEONOS_DISK_FILESYSTEM_FAT32, 0},
         {"ext2", LEONOS_DISK_FILESYSTEM_EXT2, 0},
     };
@@ -851,7 +858,9 @@ static int select_filesystem_from_dropdown(int32_t x, int32_t y)
                                 DISKMGR_ROW_H, 1000, &selected)) {
         return 0;
     }
-    if (selected == LEONOS_DISK_FILESYSTEM_FAT32 || selected == LEONOS_DISK_FILESYSTEM_EXT2) {
+    if (selected == LEONOS_DISK_FILESYSTEM_FAT32 ||
+        selected == LEONOS_DISK_FILESYSTEM_EXT2 ||
+        selected == LEONOS_DISK_FILESYSTEM_EXFAT) {
         selected_filesystem = selected;
     }
     filesystem_dropdown_open = 0;

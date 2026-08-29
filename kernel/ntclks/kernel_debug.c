@@ -845,11 +845,8 @@ static void debug_tui_u64(uint64_t value)
     ostui_write_u64(value);
 }
 
-/*
- * The staged module runs before the first schedulable user task exists.
- * sched_yield_current() is deliberately only a pause in that phase, so a
- * polling menu would leave interrupts disabled forever.  Sleep until the
- * keyboard IRQ has delivered an event, then return its normalized keycode.
+/**
+ * @brief The staged module runs before the first schedulable user task exists. sched_yield_current() is deliberately only a pause in that phase, so a polling menu would leave interrupts disabled forever. Sleep until the keyboard IRQ has delivered an event, then return its normalized keycode.
  */
 static int debug_wait_key(void)
 {

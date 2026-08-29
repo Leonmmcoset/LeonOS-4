@@ -6,6 +6,7 @@
 #include <ntclks/framebuffer.h>
 #include <ntclks/mm.h>
 #include <ntclks/paging.h>
+#include <ntclks/lock.h>
 
 static uint64_t total_kib;
 
@@ -32,11 +33,10 @@ static uint32_t reserved_range_count;
  * and is large enough for the supported physical address range while still
  * allowing COW and shared file pages to use the same ownership accounting. */
 static uint16_t page_refs[MM_PAGE_COUNT];
+static struct kernel_spinlock mm_lock = KERNEL_SPINLOCK_INIT;
 
 /**
- * @brief Coordinates the page index operation.
- * @param phys Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Convert a physical address to its index in the page_refs array.
  */
 static uint32_t page_index(uint64_t phys)
 {
@@ -44,9 +44,7 @@ static uint32_t page_index(uint64_t phys)
 }
 
 /**
- * @brief Coordinates the efi memory usable operation.
- * @param type Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True for EFI memory types the allocator may hand out (conventional, boot, loader, etc.).
  */
 static int efi_memory_usable(uint32_t type)
 {
@@ -54,10 +52,7 @@ static int efi_memory_usable(uint32_t type)
 }
 
 /**
- * @brief Coordinates the align down operation.
- * @param value Input or output value used by this operation.
- * @param align Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round value down to a multiple of align, which must be a power of two.
  */
 static uint64_t align_down(uint64_t value, uint64_t align)
 {
@@ -65,10 +60,7 @@ static uint64_t align_down(uint64_t value, uint64_t align)
 }
 
 /**
- * @brief Coordinates the align up operation.
- * @param value Input or output value used by this operation.
- * @param align Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round value up to a multiple of align, which must be a power of two.
  */
 static uint64_t align_up(uint64_t value, uint64_t align)
 {
@@ -76,8 +68,7 @@ static uint64_t align_up(uint64_t value, uint64_t align)
 }
 
 /**
- * @brief Coordinates the zero page operation.
- * @param phys Input or output value used by this operation.
+ * @brief Zero the full 4 KiB page starting at phys (identity-mapped).
  */
 static void zero_page(uint64_t phys)
 {
@@ -88,9 +79,7 @@ static void zero_page(uint64_t phys)
 }
 
 /**
- * @brief Coordinates the zero pages operation.
- * @param phys Input or output value used by this operation.
- * @param page_count Length, size, or element count associated with the operation.
+ * @brief Zero page_count consecutive pages starting at phys.
  */
 static void zero_pages(uint64_t phys, uint32_t page_count)
 {
@@ -100,9 +89,7 @@ static void zero_pages(uint64_t phys, uint32_t page_count)
 }
 
 /**
- * @brief Coordinates the add free range operation.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
+ * @brief Clamp and page-align [start,end) into the allocator window, then append it as a free range.
  */
 static void add_free_range(uint64_t start, uint64_t end)
 {
@@ -111,9 +98,9 @@ static void add_free_range(uint64_t start, uint64_t end)
     }
     start = align_up(start, PAGE_SIZE);
     end = align_down(end, PAGE_SIZE);
-    /* User address spaces replace the identity mapping above their lower
-     * boundary.  Physical pages below that boundary cannot safely be touched
-     * while a user CR3 is active, so keep allocator pages outside the alias. */
+    /**
+ * @brief User address spaces replace the identity mapping above their lower boundary. Physical pages below that boundary cannot safely be touched while a user CR3 is active, so keep allocator pages outside the alias.
+ */
     if (start < PAGE_ALLOC_MIN) {
         start = PAGE_ALLOC_MIN;
     }
@@ -124,10 +111,7 @@ static void add_free_range(uint64_t start, uint64_t end)
 }
 
 /**
- * @brief Coordinates the add reserved range operation.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param name Input or output value used by this operation.
+ * @brief Grow [start,end) outward to page boundaries and append it to the reserved table.
  */
 static void add_reserved_range(uint64_t start, uint64_t end, const char *name)
 {
@@ -140,8 +124,7 @@ static void add_reserved_range(uint64_t start, uint64_t end, const char *name)
 }
 
 /**
- * @brief Coordinates the remove free range operation.
- * @param index Input or output value used by this operation.
+ * @brief Drop free_ranges[index] and shift the remaining entries left to close the gap.
  */
 static void remove_free_range(uint32_t index)
 {
@@ -155,7 +138,7 @@ static void remove_free_range(uint32_t index)
 }
 
 /**
- * @brief Coordinates the sort free ranges operation.
+ * @brief Order free ranges by ascending start address (simple selection sort).
  */
 static void sort_free_ranges(void)
 {
@@ -171,7 +154,7 @@ static void sort_free_ranges(void)
 }
 
 /**
- * @brief Coordinates the coalesce free ranges operation.
+ * @brief Sort then merge adjacent or overlapping free ranges into the fewest contiguous spans.
  */
 static void coalesce_free_ranges(void)
 {
@@ -189,9 +172,7 @@ static void coalesce_free_ranges(void)
 }
 
 /**
- * @brief Coordinates the reserve from free operation.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
+ * @brief Carve [start,end) out of every free range it overlaps, splitting ranges as needed.
  */
 static void reserve_from_free(uint64_t start, uint64_t end)
 {
@@ -231,10 +212,7 @@ static void reserve_from_free(uint64_t start, uint64_t end)
 }
 
 /**
- * @brief Coordinates the reserve range operation.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @param name Input or output value used by this operation.
+ * @brief Record a reserved range and simultaneously remove those pages from the free list.
  */
 static void reserve_range(uint64_t start, uint64_t end, const char *name)
 {
@@ -243,10 +221,7 @@ static void reserve_range(uint64_t start, uint64_t end, const char *name)
 }
 
 /**
- * @brief Coordinates the overlaps reserved operation.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief True when [start,end) intersects any previously reserved range.
  */
 static int overlaps_reserved(uint64_t start, uint64_t end)
 {
@@ -259,10 +234,7 @@ static int overlaps_reserved(uint64_t start, uint64_t end)
 }
 
 /**
- * @brief Coordinates the reserve bytes operation.
- * @param start Input or output value used by this operation.
- * @param bytes Input or output value used by this operation.
- * @param name Input or output value used by this operation.
+ * @brief Guard against null or overflowing ranges, then reserve [start, start+bytes).
  */
 static void reserve_bytes(uint64_t start, uint64_t bytes, const char *name)
 {
@@ -273,7 +245,7 @@ static void reserve_bytes(uint64_t start, uint64_t bytes, const char *name)
 }
 
 /**
- * @brief Coordinates the add fallback free range operation.
+ * @brief Register a synthetic free range when the loader supplied no usable memory map.
  */
 static void add_fallback_free_range(void)
 {
@@ -288,8 +260,7 @@ static void add_fallback_free_range(void)
 }
 
 /**
- * @brief Coordinates the seed free ranges from boot operation.
- * @param boot Boot information supplied by the loader.
+ * @brief Populate the free list from the multiboot or EFI memory map, falling back to a guess.
  */
 static void seed_free_ranges_from_boot(const struct boot_info *boot)
 {
@@ -333,9 +304,7 @@ static void recompute_total_allocatable_kib(void)
 }
 
 /**
- * @brief Coordinates the reserve boot ranges operation.
- * @param boot Boot information supplied by the loader.
- * @param handoff Input or output value used by this operation.
+ * @brief Protect loader structures, framebuffer, modules, and the handoff regions from allocation.
  */
 static void reserve_boot_ranges(const struct boot_info *boot,
                                 const struct leonos_boot_handoff *handoff)
@@ -382,6 +351,13 @@ static void reserve_boot_ranges(const struct boot_info *boot,
             reserve_bytes(reservation_start, reservation_bytes,
                           "framebuffer-vram");
         }
+        if (fb->auxiliary_reservation_start && fb->auxiliary_reservation_bytes &&
+            (fb->auxiliary_reservation_start != reservation_start ||
+             fb->auxiliary_reservation_bytes != reservation_bytes)) {
+            reserve_bytes(fb->auxiliary_reservation_start,
+                          fb->auxiliary_reservation_bytes,
+                          "framebuffer-device");
+        }
     }
     for (uint32_t i = 0; i < boot->module_count; ++i) {
         reserve_range(boot->modules[i].start, boot->modules[i].end, "module");
@@ -400,7 +376,7 @@ static void reserve_boot_ranges(const struct boot_info *boot,
 }
 
 /**
- * @brief Coordinates the print memory map operation.
+ * @brief Dump the free and reserved range tables to the console for diagnostics.
  */
 static void print_memory_map(void)
 {
@@ -424,12 +400,11 @@ static void print_memory_map(void)
 }
 
 /**
- * @brief Coordinates the mm init operation.
- * @param boot Boot information supplied by the loader.
- * @param handoff Input or output value used by this operation.
+ * @brief Reset accounting, seed free ranges from boot, reserve kernel-owned areas, then coalesce.
  */
 void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *handoff)
 {
+    kernel_spin_init(&mm_lock);
     total_kib = 0;
     free_range_count = 0;
     reserved_range_count = 0;
@@ -439,9 +414,9 @@ void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *han
     seed_free_ranges_from_boot(boot);
     reserve_boot_ranges(boot, handoff);
     coalesce_free_ranges();
-    /* Report the same range the allocator can actually serve.  Previously
-     * this value came from the legacy lower/upper fields and could include
-     * low reserved memory or addresses above the allocator limit. */
+    /**
+ * @brief Report the same range the allocator can actually serve. Previously this value came from the legacy lower/upper fields and could include low reserved memory or addresses above the allocator limit.
+ */
     recompute_total_allocatable_kib();
 
     console_printf("[ntclks] mm initialized usable=%llu KiB mmap_entries=%u efi_mmap_entries=%u\n",
@@ -452,8 +427,7 @@ void mm_init(const struct boot_info *boot, const struct leonos_boot_handoff *han
 }
 
 /**
- * @brief Coordinates the mm total memory kib operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the total allocatable memory in KiB, computed once during mm_init.
  */
 uint64_t mm_total_memory_kib(void)
 {
@@ -461,30 +435,33 @@ uint64_t mm_total_memory_kib(void)
 }
 
 /**
- * @brief Coordinates the mm free memory kib operation.
- * @return Result, status, or value defined by this API.
+ * @brief Sum the current free ranges and report the free byte count in KiB.
  */
 uint64_t mm_free_memory_kib(void)
 {
     uint64_t free_kib = 0;
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&mm_lock, &flags);
     for (uint32_t i = 0; i < free_range_count; ++i) {
         if (free_ranges[i].end > free_ranges[i].start) {
             free_kib += (free_ranges[i].end - free_ranges[i].start) / 1024ULL;
         }
     }
+    kernel_spin_unlock_irqrestore(&mm_lock, flags);
     return free_kib;
 }
 
 /**
- * @brief Coordinates the mm alloc pages operation.
- * @param page_count Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Carve page_count contiguous, zeroed pages off the first fitting free range, mark them referenced, and return the base address; 0 when no range is large enough.
  */
 uint64_t mm_alloc_pages(uint32_t page_count)
 {
+    uint64_t result = 0;
+    uint64_t flags;
     if (!page_count) {
         return 0;
     }
+    kernel_spin_lock_irqsave(&mm_lock, &flags);
     uint64_t bytes = (uint64_t)page_count * PAGE_SIZE;
     for (uint32_t i = 0; i < free_range_count; ++i) {
         uint64_t start = align_up(free_ranges[i].start, PAGE_SIZE);
@@ -500,14 +477,15 @@ uint64_t mm_alloc_pages(uint32_t page_count)
         for (uint32_t page = 0; page < page_count; ++page) {
             page_refs[page_index(phys + (uint64_t)page * PAGE_SIZE)] = 1;
         }
-        return phys;
+        result = phys;
+        break;
     }
-    return 0;
+    kernel_spin_unlock_irqrestore(&mm_lock, flags);
+    return result;
 }
 
 /**
- * @brief Coordinates the mm alloc page operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate a single page via mm_alloc_pages(1).
  */
 uint64_t mm_alloc_page(void)
 {
@@ -515,12 +493,11 @@ uint64_t mm_alloc_page(void)
 }
 
 /**
- * @brief Coordinates the mm free pages operation.
- * @param phys Input or output value used by this operation.
- * @param page_count Length, size, or element count associated with the operation.
+ * @brief Drop one reference per page; a page whose count reaches zero is returned to the free list.
  */
 void mm_free_pages(uint64_t phys, uint32_t page_count)
 {
+    uint64_t flags;
     if (!phys || !page_count || (phys & (PAGE_SIZE - 1))) {
         return;
     }
@@ -528,6 +505,7 @@ void mm_free_pages(uint64_t phys, uint32_t page_count)
     if (end <= phys || end > PAGE_ALLOC_LIMIT || overlaps_reserved(phys, end)) {
         return;
     }
+    kernel_spin_lock_irqsave(&mm_lock, &flags);
     for (uint32_t page = 0; page < page_count; ++page) {
         uint64_t current = phys + (uint64_t)page * PAGE_SIZE;
         uint16_t *refs = &page_refs[page_index(current)];
@@ -548,11 +526,11 @@ void mm_free_pages(uint64_t phys, uint32_t page_count)
             (struct phys_range){current, current + PAGE_SIZE, "free"};
         coalesce_free_ranges();
     }
+    kernel_spin_unlock_irqrestore(&mm_lock, flags);
 }
 
 /**
- * @brief Coordinates the mm free page operation.
- * @param phys Input or output value used by this operation.
+ * @brief Free a single page via mm_free_pages(phys, 1).
  */
 void mm_free_page(uint64_t phys)
 {
@@ -560,16 +538,18 @@ void mm_free_page(uint64_t phys)
 }
 
 /**
- * @brief Coordinates the mm retain page operation.
- * @param phys Input or output value used by this operation.
+ * @brief Increment a page's reference count, saturating at UINT16_MAX and ignoring free (zero) pages.
  */
 void mm_retain_page(uint64_t phys)
 {
+    uint64_t flags;
     if (!phys || (phys & (PAGE_SIZE - 1)) || phys >= PAGE_ALLOC_LIMIT) {
         return;
     }
+    kernel_spin_lock_irqsave(&mm_lock, &flags);
     uint16_t *refs = &page_refs[page_index(phys)];
     if (*refs && *refs != UINT16_MAX) {
         ++*refs;
     }
+    kernel_spin_unlock_irqrestore(&mm_lock, flags);
 }

@@ -16,7 +16,17 @@ struct rect window_rect(uint8_t id)
 
 struct rect cursor_rect_at(uint32_t x, uint32_t y)
 {
-    return rect_make((int)x, (int)y, (int)cursor_width, (int)cursor_height);
+    return cursor_rect_for_style(x, y, desktop_cursor_style);
+}
+
+struct rect cursor_rect_for_style(uint32_t x, uint32_t y, uint32_t style)
+{
+    if (style >= CURSOR_STYLE_COUNT) {
+        style = LEONOS_GUI_CURSOR_ARROW;
+    }
+    return rect_make((int)x - cursor_hotspot_x[style],
+                     (int)y - cursor_hotspot_y[style],
+                     CURSOR_TILE_W, CURSOR_TILE_H);
 }
 
 struct rect rect_union(struct rect a, struct rect b)
@@ -580,17 +590,32 @@ static int load_bmp_argb(const char *path, uint32_t max_w, uint32_t max_h,
 
 int load_cursor_bmp(void)
 {
+    uint32_t atlas_width = 0;
+    uint32_t atlas_height = 0;
     cursor_bitmap_loaded = 0;
-    cursor_width = FALLBACK_CURSOR_W;
-    cursor_height = FALLBACK_CURSOR_H;
+    cursor_width = CURSOR_TILE_W;
+    cursor_height = CURSOR_TILE_H;
     if (!load_bmp_argb(CURSOR_BMP_PATH, CURSOR_MAX_W, CURSOR_MAX_H,
                        CURSOR_BMP_MAX_BYTES, cursor_pixels, CURSOR_MAX_W,
-                       &cursor_width, &cursor_height)) {
+                       &atlas_width, &atlas_height) ||
+        atlas_width != CURSOR_TILE_W || atlas_height != CURSOR_MAX_H) {
+        cursor_width = FALLBACK_CURSOR_W;
+        cursor_height = FALLBACK_CURSOR_H;
         return 0;
     }
+    /* The atlas is stored as XRGB by some BMP writers, so its transparent
+     * background arrives with an opaque alpha byte. The cursor artwork uses
+     * pure black only for that background; restore its intended transparency
+     * before the software cursor compositor starts copying pixels. */
+    for (uint32_t i = 0; i < CURSOR_MAX_W * CURSOR_MAX_H; ++i) {
+        if ((cursor_pixels[i] & 0x00ffffffu) == 0) {
+            cursor_pixels[i] = 0;
+        }
+    }
     cursor_bitmap_loaded = 1;
-    printf("[desktop.elf] loaded cursor bmp %s %dx%d\n",
-           CURSOR_BMP_PATH, (int)cursor_width, (int)cursor_height);
+    printf("[desktop.elf] loaded cursor atlas %s %dx%d (%d styles)\n",
+           CURSOR_BMP_PATH, (int)atlas_width, (int)atlas_height,
+           CURSOR_STYLE_COUNT);
     return 1;
 }
 

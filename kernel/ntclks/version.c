@@ -29,8 +29,7 @@ static const struct leonos_system_info system_info = {
 };
 
 /**
- * @brief Coordinates the ntclks system info operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the build-time system information record.
  */
 const struct leonos_system_info *ntclks_system_info(void)
 {

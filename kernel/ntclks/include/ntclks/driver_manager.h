@@ -11,73 +11,57 @@
 #include <ntclks/types.h>
 
 /**
- * @brief Coordinates the driver manager init operation.
+ * @brief Initialize the driver manager and its driver/device registries.
  */
 void driver_manager_init(void);
 /**
- * @brief Coordinates the driver manager autoload operation.
+ * @brief Discover and load the drivers marked for boot-time activation.
  */
 void driver_manager_autoload(void);
 /**
- * @brief Coordinates the driver manager list operation.
- * @param query Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Fill query with the registered drivers and set query->count; returns 0 or a negative errno.
  */
 int driver_manager_list(struct leonos_driver_list *query);
 /**
- * @brief Coordinates the driver manager control operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Load, unload, or rescan the driver named in request, storing the outcome in request->status.
  */
 int driver_manager_control(struct leonos_driver_control *request);
 
 /**
- * @brief Coordinates the driver manager mouse state operation.
- * @param out Caller-provided storage that receives output from this operation.
+ * @brief Copy the current mouse position and button state into out.
  */
 void driver_manager_mouse_state(struct mouse_state *out);
 /**
- * @brief Coordinates the driver manager mouse event count operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return how many mouse events are waiting in the queue.
  */
 uint32_t driver_manager_mouse_event_count(void);
 /**
- * @brief Coordinates the driver manager mouse last status operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the last PS/2 mouse status byte received.
  */
 uint8_t driver_manager_mouse_last_status(void);
 /**
- * @brief Coordinates the driver manager mouse last data operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the last PS/2 mouse data byte received.
  */
 uint8_t driver_manager_mouse_last_data(void);
 /**
- * @brief Coordinates the driver manager mouse last ack operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the last PS/2 mouse acknowledge byte received.
  */
 uint8_t driver_manager_mouse_last_ack(void);
 /**
- * @brief Coordinates the driver manager mouse poll operation.
+ * @brief Service pending mouse events and refresh the shared mouse state.
  */
 void driver_manager_mouse_poll(void);
 /**
- * @brief Coordinates the driver manager audio configure operation.
- * @param format Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Configure the audio device with the given sample format; returns status.
  */
 int driver_manager_audio_configure(const struct leonos_audio_format *format);
 /**
- * @brief Coordinates the driver manager audio write operation.
- * @param data Input or output value used by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @param out_status Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Write length bytes of audio samples, reporting the device status in out_status.
  */
 long driver_manager_audio_write(const void *data, uint32_t length,
                                 uint32_t *out_status);
 /**
- * @brief Coordinates the driver manager audio get state operation.
- * @param out Caller-provided storage that receives output from this operation.
+ * @brief Copy the current audio device state into out.
  */
 void driver_manager_audio_get_state(struct leonos_audio_state *out);
 

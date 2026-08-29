@@ -216,6 +216,25 @@ config LEON_COMPONENT_APP_MEMTEST_SDK
     default n
     depends on LEON_COMPONENT_APP_MEMTEST_BUILD
 
+config LEON_COMPONENT_APP_SMPTEST_BUILD
+    bool "Build SMP test"
+    default y
+
+config LEON_COMPONENT_APP_SMPTEST_IMAGE
+    bool "Include SMP test in system images"
+    default y
+    depends on LEON_COMPONENT_APP_SMPTEST_BUILD
+
+config LEON_COMPONENT_APP_SMPTEST_ENTRY
+    bool "Generate a desktop entry for SMP test"
+    default n
+    depends on LEON_COMPONENT_APP_SMPTEST_BUILD
+
+config LEON_COMPONENT_APP_SMPTEST_SDK
+    bool "Include SMP test in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_SMPTEST_BUILD
+
 config LEON_COMPONENT_APP_BUGTEST_BUILD
     bool "Build Bug test"
     default y

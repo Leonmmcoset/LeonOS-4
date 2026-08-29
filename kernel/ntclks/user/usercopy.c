@@ -10,9 +10,7 @@
 #define PAGE_SIZE 4096ULL
 
 /**
- * @brief Coordinates the align down page operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round value down to the previous 4096-byte page boundary.
  */
 static uint64_t align_down_page(uint64_t value)
 {
@@ -20,10 +18,7 @@ static uint64_t align_down_page(uint64_t value)
 }
 
 /**
- * @brief Coordinates the user range ok operation.
- * @param ptr Input or output value used by this operation.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return true if [ptr, ptr+len) is a valid user range with every page mapped, faulting pages in for the current user task on demand.
  */
 bool user_range_ok(uint64_t ptr, uint64_t len)
 {
@@ -57,10 +52,7 @@ bool user_range_ok(uint64_t ptr, uint64_t len)
 }
 
 /**
- * @brief Coordinates the user strlen operation.
- * @param s Input or output value used by this operation.
- * @param max Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the length of the NUL-terminated string at s, checking each byte is user-accessible and never exceeding max.
  */
 size_t user_strlen(const char *s, size_t max)
 {

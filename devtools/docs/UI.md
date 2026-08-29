@@ -18,6 +18,24 @@ leonos_gui_present_window(window, width, height, width, pixels);
 `stride` 以像素为单位。所有绘制函数都要求矩形位于应用自己的缓冲区内；库会
 裁剪部分边界，但应用仍应先验证外部尺寸。
 
+## 悬浮光标区域
+
+窗口每次重绘前可以开启一帧光标区域收集。控件绘制函数会自动注册按钮、输入框、
+列表行等区域；应用自绘控件可调用 `leonos_ui_cursor_region()` 补充区域。区域坐标
+相对于窗口客户区，帧结束后没有再次出现的区域会自动移除：
+
+```c
+leonos_ui_cursor_begin(&ui, window_id);
+draw_controls(&ui);
+leonos_ui_cursor_region(&ui, 20, 80, 120, 28,
+                        LEONOS_GUI_CURSOR_HAND, 0);
+leonos_ui_cursor_end(&ui);
+```
+
+如果应用需要完全接管光标，可使用 `leonos_mouse_set_style()` 固定样式，再用
+`leonos_mouse_set_auto()` 恢复桌面自动判断。禁用控件的区域应设置
+`LEONOS_GUI_CURSOR_REGION_DISABLED`，桌面会显示禁止光标。
+
 ## 主题
 
 ```c

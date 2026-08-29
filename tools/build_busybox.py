@@ -47,6 +47,7 @@ MINIMAL_LIBBB_OBJECTS = (
     "get_line_from_file.o",
     "getopt32.o",
     "getopt_allopts.o",
+    "hash_md5_sha.o",
     "human_readable.o",
     "inode_hash.o",
     "isqrt.o",

@@ -39,7 +39,7 @@ def remove_file(path: Path) -> None:
 
 
 def stage_installed_payloads(esp_tree: Path, destination: Path) -> None:
-    """Split normal staging into ext2 root and the minimal FAT32 boot payload."""
+    """Split normal staging into exFAT root and the minimal FAT32 boot payload."""
     root = destination / "install/root"
     esp = destination / "install/esp"
     copy_tree(esp_tree, root)
@@ -104,7 +104,8 @@ def main() -> int:
     copy_tree(esp_tree / "system/config", stage / "system/config")
     (stage / "system/state").mkdir(parents=True, exist_ok=True)
     # The installer itself runs from this FAT32 ramdisk. The staged installed
-    # root below retains the normal ext2 manifest copied from esp_tree.
+    # The root payload retains the normal exFAT manifest copied from esp_tree;
+    # the installer can also update an existing ext2 target.
     (stage / "system/osmlayer.manifest").write_text(
         "name=osmlayer\nabi=2\nroot=/\nfs=fat32\ngui=desktop.elf\n",
         encoding="ascii",

@@ -20,33 +20,24 @@ struct e1000_info {
 };
 
 /**
- * @brief Coordinates the e1000 init operation.
+ * @brief Probe and initialize the Intel e1000 NIC, if one is present.
  */
 void e1000_init(void);
 /**
- * @brief Coordinates the e1000 is ready operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return non-zero when the e1000 driver is present and usable.
  */
 int e1000_is_ready(void);
 const uint8_t *e1000_mac(void);
 /**
- * @brief Coordinates the e1000 send operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param len Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Transmit len bytes of frame over the NIC; returns 0, or -ENODEV when absent.
  */
 int e1000_send(const void *frame, uint32_t len);
 /**
- * @brief Coordinates the e1000 poll operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param capacity Capacity, in elements or bytes, of the related output buffer.
- * @param out_len Caller-provided storage that receives output from this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Receive one packet into frame (up to capacity bytes), writing its size to out_len.
  */
 int e1000_poll(void *frame, uint32_t capacity, uint32_t *out_len);
 /**
- * @brief Coordinates the e1000 get info operation.
- * @param info Input or output value used by this operation.
+ * @brief Fill info with the NIC's presence, PCI location, and MAC address.
  */
 void e1000_get_info(struct e1000_info *info);
 

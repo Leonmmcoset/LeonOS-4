@@ -51,10 +51,7 @@ static struct inputm_context_slot contexts[INPUTM_CONTEXT_CAP];
 static struct inputm_user_slot users[INPUTM_UID_CAP];
 
 /**
- * @brief Coordinates the inputm copy text operation.
- * @param dst Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param src Input or output value used by this operation.
+ * @brief Copy src into dst up to cap-1 chars, always NUL-terminating dst.
  */
 static void inputm_copy_text(char *dst, uint32_t cap, const char *src)
 {
@@ -70,10 +67,7 @@ static void inputm_copy_text(char *dst, uint32_t cap, const char *src)
 }
 
 /**
- * @brief Coordinates the inputm text valid operation.
- * @param text Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if text is a NUL-terminated string of printable non-path characters (no '/', '\\', ':') that fits within cap.
  */
 static int inputm_text_valid(const char *text, uint32_t cap)
 {
@@ -92,10 +86,7 @@ static int inputm_text_valid(const char *text, uint32_t cap)
 }
 
 /**
- * @brief Coordinates the inputm text equal operation.
- * @param a Input or output value used by this operation.
- * @param b Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if the two NUL-terminated strings are identical.
  */
 static int inputm_text_equal(const char *a, const char *b)
 {
@@ -110,11 +101,7 @@ static int inputm_text_equal(const char *a, const char *b)
 }
 
 /**
- * @brief Coordinates the inputm utf8 valid operation.
- * @param text Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param require_text Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if text is valid UTF-8 (rejecting control chars and overlong, surrogate, or out-of-range sequences) and fits cap; require_text also rejects an empty string.
  */
 static int inputm_utf8_valid(const char *text, uint32_t cap, uint8_t require_text)
 {
@@ -168,9 +155,7 @@ static int inputm_utf8_valid(const char *text, uint32_t cap, uint8_t require_tex
 }
 
 /**
- * @brief Coordinates the inputm task alive operation.
- * @param pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if pid names a task that has not exited.
  */
 static int inputm_task_alive(uint32_t pid)
 {
@@ -179,10 +164,7 @@ static int inputm_task_alive(uint32_t pid)
 }
 
 /**
- * @brief Coordinates the inputm find user operation.
- * @param uid Input or output value used by this operation.
- * @param create Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the inputm state slot for uid, creating and defaulting one (active layout "en", sequence 1) when create is set; NULL if none available.
  */
 static struct inputm_user_slot *inputm_find_user(uint32_t uid, uint8_t create)
 {
@@ -211,9 +193,7 @@ static struct inputm_user_slot *inputm_find_user(uint32_t uid, uint8_t create)
 }
 
 /**
- * @brief Coordinates the inputm find provider operation.
- * @param pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the provider slot registered by pid, or NULL.
  */
 static struct inputm_provider_slot *inputm_find_provider(uint32_t pid)
 {
@@ -226,10 +206,7 @@ static struct inputm_provider_slot *inputm_find_provider(uint32_t pid)
 }
 
 /**
- * @brief Coordinates the inputm find provider for user operation.
- * @param uid Input or output value used by this operation.
- * @param id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the live provider owned by uid with the given id, or NULL.
  */
 static struct inputm_provider_slot *inputm_find_provider_for_user(uint32_t uid, const char *id)
 {
@@ -244,10 +221,7 @@ static struct inputm_provider_slot *inputm_find_provider_for_user(uint32_t uid, 
 }
 
 /**
- * @brief Coordinates the inputm find issued event operation.
- * @param provider Input or output value used by this operation.
- * @param result Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the index of the issued event matching result's sequence, client pid, and window, or -1 when not found.
  */
 static int inputm_find_issued_event(const struct inputm_provider_slot *provider,
                                     const struct leonos_inputm_result *result)
@@ -267,11 +241,7 @@ static int inputm_find_issued_event(const struct inputm_provider_slot *provider,
 }
 
 /**
- * @brief Coordinates the inputm find context operation.
- * @param pid Input or output value used by this operation.
- * @param window_id Input or output value used by this operation.
- * @param create Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the per-pid/window context slot, creating one when create is set; NULL if none available.
  */
 static struct inputm_context_slot *inputm_find_context(uint32_t pid, uint32_t window_id,
                                                         uint8_t create)
@@ -297,9 +267,7 @@ static struct inputm_context_slot *inputm_find_context(uint32_t pid, uint32_t wi
 }
 
 /**
- * @brief Coordinates the inputm queue event operation.
- * @param provider Input or output value used by this operation.
- * @param event Input or output value used by this operation.
+ * @brief Append event to the provider's pending ring, dropping the oldest when full.
  */
 static void inputm_queue_event(struct inputm_provider_slot *provider,
                                const struct leonos_inputm_key_event *event)
@@ -317,10 +285,7 @@ static void inputm_queue_event(struct inputm_provider_slot *provider,
 }
 
 /**
- * @brief Coordinates the inputm queue result operation.
- * @param pid Input or output value used by this operation.
- * @param result Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Store result for pid in the first free result slot; returns 1, or 0 when full.
  */
 static int inputm_queue_result(uint32_t pid, const struct leonos_inputm_result *result)
 {
@@ -336,9 +301,7 @@ static int inputm_queue_result(uint32_t pid, const struct leonos_inputm_result *
 }
 
 /**
- * @brief Coordinates the inputm handles ioctl operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if request is a recognized inputm ioctl code, else 0.
  */
 int inputm_handles_ioctl(uint64_t request)
 {
@@ -361,10 +324,7 @@ int inputm_handles_ioctl(uint64_t request)
 }
 
 /**
- * @brief Coordinates the inputm handle ioctl operation.
- * @param request Request structure consumed and, where defined, updated by this operation.
- * @param user_arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Dispatch an inputm ioctl from the current task: provider register/unregister, key routing to IME providers, and result/context/state queries.
  */
 int64_t inputm_handle_ioctl(uint64_t request, uint64_t user_arg)
 {
@@ -526,7 +486,9 @@ int64_t inputm_handle_ioctl(uint64_t request, uint64_t user_arg)
             return -LEONOS_EINVAL;
         }
         context = inputm_find_context(task->pid, input->window_id, 0);
-        /* An application must explicitly opt an editable control into IME input. */
+        /**
+ * @brief An application must explicitly opt an editable control into IME input.
+ */
         if (!context || !(context->context.flags & LEONOS_INPUTM_CONTEXT_FOCUSED) ||
             (context->context.flags & LEONOS_INPUTM_CONTEXT_SECURE)) {
             return 0;
@@ -696,8 +658,7 @@ int64_t inputm_handle_ioctl(uint64_t request, uint64_t user_arg)
 }
 
 /**
- * @brief Coordinates the inputm destroy owner operation.
- * @param pid Input or output value used by this operation.
+ * @brief Remove all providers, contexts, and queued results owned by pid, resetting any user whose active IME that pid supplied back to "en".
  */
 void inputm_destroy_owner(uint32_t pid)
 {

@@ -18,6 +18,12 @@
 #define NTCLKS_USER_HEAP_LIMIT NTCLKS_USER_MMAP_BASE
 #define NTCLKS_USER_STACK_PAGES 16u
 #define NTCLKS_USER_STACK_MAX_PAGES 2048u
+/* Every address space retains this supervisor-only alias of the kernel's
+ * first 16 GiB physical direct map.  Kernel code that must access a boot
+ * module after a user CR3 has replaced part of the low identity map uses this
+ * alias instead of a physical address as a virtual pointer. */
+#define NTCLKS_KERNEL_DIRECT_MAP_BASE 0xffffff8000000000ULL
+#define NTCLKS_KERNEL_DIRECT_MAP_SIZE (16ULL * 1024ULL * 1024ULL * 1024ULL)
 /* The current loader places the kernel and middlelayer at 128 MiB.  Keep a
  * supervisor-only hole in every user CR3 so creating user page tables never
  * replaces those identity-mapped kernel PDEs. */
@@ -47,24 +53,34 @@ struct address_space {
 };
 
 /**
- * @brief Coordinates the paging init user identity operation.
+ * @brief Build the shared low identity mapping used as the base of every address space.
  */
 void paging_init_user_identity(void);
 /**
- * @brief Coordinates the paging kernel cr3 operation.
- * @return Result, status, or value defined by this API.
+ * Enable per-CPU paging features required by user address spaces.
+ * The NXE bit lives in an MSR and must be configured independently on every
+ * AP; it is not inherited from the BSP when an AP starts.
+ */
+void paging_init_cpu(void);
+/**
+ * @brief Return the physical address of the kernel page-table root (the CR3 value).
  */
 uint64_t paging_kernel_cr3(void);
 /**
- * @brief Coordinates the paging load cr3 operation.
- * @param cr3 Input or output value used by this operation.
+ * @brief Switch the CPU's page table to the root given by cr3.
  */
 void paging_load_cr3(uint64_t cr3);
+/**
+ * @brief Return true when [phys, phys + len) is reachable through the shared kernel direct map.
+ */
+bool paging_kernel_direct_map_range(uint64_t phys, uint64_t len);
+/**
+ * @brief Translate a physical address to the supervisor-only shared kernel direct map, or NULL.
+ */
+void *paging_kernel_direct_map(uint64_t phys);
 
 /**
- * @brief Coordinates the address space create operation.
- * @param as Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate and initialize an empty address space; true on success.
  */
 bool address_space_create(struct address_space *as);
 /**
@@ -75,63 +91,38 @@ bool address_space_create(struct address_space *as);
  */
 bool address_space_clone_cow(struct address_space *source, struct address_space *destination);
 /**
- * @brief Coordinates the address space destroy operation.
- * @param as Input or output value used by this operation.
+ * @brief Free every page table and page owned by as.
  */
 void address_space_destroy(struct address_space *as);
 /**
- * @brief Coordinates the address space prepare user range operation.
- * @param as Input or output value used by this operation.
- * @param start Input or output value used by this operation.
- * @param end Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate page-table structures covering the user range [start, end); true on success.
  */
 bool address_space_prepare_user_range(struct address_space *as, uint64_t start,
                                       uint64_t end);
 /**
- * @brief Coordinates the address space map user page operation.
- * @param as Input or output value used by this operation.
- * @param vaddr Address used by this operation; its address-space interpretation follows the API.
- * @param phys Input or output value used by this operation.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Map user vaddr to phys with the given present/writable/user/noexec flags; true on success.
  */
 bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
                                  uint64_t phys, uint64_t flags);
 /**
- * @brief Coordinates the address space protect user page operation.
- * @param as Input or output value used by this operation.
- * @param vaddr Address used by this operation; its address-space interpretation follows the API.
- * @param flags Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Replace the protection flags of the user mapping at vaddr; true on success.
  */
 bool address_space_protect_user_page(struct address_space *as, uint64_t vaddr,
                                      uint64_t flags);
 /**
- * @brief Coordinates the address space unmap user page operation.
- * @param as Input or output value used by this operation.
- * @param vaddr Address used by this operation; its address-space interpretation follows the API.
- * @return Result, status, or value defined by this API.
+ * @brief Remove the user mapping at vaddr and return the physical page it held.
  */
 uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr);
 /**
- * @brief Coordinates the address space user page phys operation.
- * @param as Input or output value used by this operation.
- * @param vaddr Address used by this operation; its address-space interpretation follows the API.
- * @return Result, status, or value defined by this API.
+ * @brief Return the physical address backing user vaddr, or 0 if unmapped.
  */
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr);
 /**
- * @brief Coordinates the address space user memory kib operation.
- * @param as Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return how much user memory, in KiB, is currently mapped in as.
  */
 uint32_t address_space_user_memory_kib(const struct address_space *as);
 /**
- * @brief Coordinates the address space map user stack operation.
- * @param as Input or output value used by this operation.
- * @param stack_top Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Map the initial user stack pages ending at stack_top; true on success.
  */
 bool address_space_map_user_stack(struct address_space *as, uint64_t stack_top);
 bool address_space_map_user_stack_page(struct address_space *as, uint64_t page);

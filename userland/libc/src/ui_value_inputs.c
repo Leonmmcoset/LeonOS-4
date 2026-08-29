@@ -126,6 +126,12 @@ void leonos_ui_color_input(struct leonos_ui_surface *surface, uint32_t x, uint32
     if (!state || w < 36) {
         return;
     }
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            LEONOS_UI_BUTTON_H,
+                            (flags & LEONOS_UI_INPUT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_INPUT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     color_format(value, state->color);
     leonos_ui_bevel(surface, x, y, w, LEONOS_UI_BUTTON_H, LEONOS_UI_WHITE,
                     state->focused ? LEONOS_UI_BUTTON_PRESSED : 0);
@@ -330,6 +336,12 @@ void leonos_ui_date_input(struct leonos_ui_surface *surface, uint32_t x, uint32_
     if (!state || w < 48) {
         return;
     }
+    leonos_ui_cursor_region(surface, (int32_t)x, (int32_t)y, w,
+                            LEONOS_UI_BUTTON_H,
+                            (flags & LEONOS_UI_INPUT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_NO : LEONOS_GUI_CURSOR_HAND,
+                            (flags & LEONOS_UI_INPUT_DISABLED)
+                                ? LEONOS_GUI_CURSOR_REGION_DISABLED : 0);
     date_format(value, state);
     leonos_ui_bevel(surface, x, y, w, LEONOS_UI_BUTTON_H, LEONOS_UI_WHITE,
                     state->focused ? LEONOS_UI_BUTTON_PRESSED : 0);
@@ -361,6 +373,9 @@ void leonos_ui_date_input(struct leonos_ui_surface *surface, uint32_t x, uint32_
         uint32_t cell_x = (uint32_t)popup_x + 6 + (index % 7U) * cell_w;
         uint32_t cell_y = (uint32_t)popup_y + 50 + (index / 7U) * 20U;
         uint32_t selected = day == state->day;
+        leonos_ui_cursor_region(surface, (int32_t)cell_x, (int32_t)cell_y,
+                                cell_w > 2 ? cell_w - 2 : cell_w, 18,
+                                LEONOS_GUI_CURSOR_HAND, 0);
         day_text[0] = (char)('0' + day / 10U);
         day_text[1] = (char)('0' + day % 10U);
         day_text[2] = 0;

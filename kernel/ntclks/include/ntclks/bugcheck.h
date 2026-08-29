@@ -9,30 +9,18 @@
 #include <ntclks/types.h>
 
 /**
- * @brief Coordinates the bugcheck panic operation.
- * @param message Input or output value used by this operation.
+ * @brief Stop the kernel immediately, print message, and halt.
  */
 __attribute__((noreturn)) void bugcheck_panic(const char *message);
 /**
- * @brief Coordinates the bugcheck exception operation.
- * @param vector Input or output value used by this operation.
- * @param error Input or output value used by this operation.
- * @param rip Input or output value used by this operation.
- * @param cs Input or output value used by this operation.
- * @param rflags Input or output value used by this operation.
- * @param rsp Input or output value used by this operation.
- * @param ss Input or output value used by this operation.
- * @param cr2 Input or output value used by this operation.
+ * @brief Report a fatal CPU exception with its vector, error code, and register state, then halt. The arguments mirror the exception frame the CPU pushed.
  */
 __attribute__((noreturn)) void bugcheck_exception(uint64_t vector, uint64_t error,
                                                   uint64_t rip, uint64_t cs,
                                                   uint64_t rflags, uint64_t rsp,
                                                   uint64_t ss, uint64_t cr2);
 /**
- * @brief Coordinates the bugcheck trap operation.
- * @param reason Input or output value used by this operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param cr2 Input or output value used by this operation.
+ * @brief Report a fatal trap with a human-readable reason and the saved frame; never returns.
  */
 __attribute__((noreturn)) void bugcheck_trap(const char *reason, const struct trap_frame *frame,
                                              uint64_t cr2);

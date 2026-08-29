@@ -52,10 +52,10 @@ The kernel-side numbers and errno constants are in:
 | 61 | `wait4` | `wait4` | Waits for a child and writes a Linux-style shifted status. |
 | 79 | `getcwd` | `getcwd` | Copies the task current directory. |
 | 80 | `chdir` | `chdir` | Changes the task current directory after path lookup. |
-| 82 | `rename` | `rename` | Renames FAT32 or ext2 files/directories within one filesystem. |
-| 83 | `mkdir` | `mkdir` | Creates a FAT32 or ext2 directory. |
-| 84 | `rmdir` | `rmdir` | Removes an empty FAT32 or ext2 directory. |
-| 87 | `unlink` | `unlink` | Removes a FAT32 or ext2 file. |
+| 82 | `rename` | `rename` | Renames exFAT, FAT32, or ext2 files/directories within one filesystem. |
+| 83 | `mkdir` | `mkdir` | Creates an exFAT, FAT32, or ext2 directory. |
+| 84 | `rmdir` | `rmdir` | Removes an empty exFAT, FAT32, or ext2 directory. |
+| 87 | `unlink` | `unlink` | Removes an exFAT, FAT32, or ext2 file. |
 
 ## File and Directory Calls
 
@@ -319,7 +319,7 @@ kills ordinary user tasks in the session, then desktop returns to `login.elf`.
 
 The kernel asks middlelayer policy before file, task-kill, user-management, and
 installer-storage operations. File authorization uses the `LEONACL.SYS` ACL
-sidecar model on FAT32 and ext2 roots. The mapping is:
+sidecar model on exFAT, FAT32, and ext2 roots. The mapping is:
 
 - `stat`, directory reads, and file reads: Read/List.
 - `open` create/truncate, `write`, and `mkdir`: Write/Create.

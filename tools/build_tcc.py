@@ -268,6 +268,41 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
         "reject unavailable LeonOS output modes",
     )
 
+    replace_once(
+        source / "tcc.c",
+        "int main(int argc, char **argv)\n{\n",
+        "static void leonos_write_help(const char *text)\n"
+        "{\n"
+        "    size_t remaining = strlen(text);\n"
+        "    while (remaining) {\n"
+        "        long written = write(1, text, remaining);\n"
+        "        if (written <= 0) {\n"
+        "            return;\n"
+        "        }\n"
+        "        text += written;\n"
+        "        remaining -= (size_t)written;\n"
+        "    }\n"
+        "}\n\n"
+        "int main(int argc, char **argv)\n{\n",
+        "LeonOS direct help output",
+    )
+    replace_once(
+        source / "tcc.c",
+        "redo:\n",
+        "    /*\n"
+        "     * No-input invocation only needs the usage text. Avoid creating a\n"
+        "     * complete compiler state here: that state is unnecessary for help\n"
+        "     * and its allocator teardown makes this fast path needlessly fragile\n"
+        "     * on a small user process.\n"
+        "     */\n"
+        "    if (argc == 1) {\n"
+        "        leonos_write_help(help);\n"
+        "        return 0;\n"
+        "    }\n\n"
+        "redo:\n",
+        "LeonOS no-input help fast path",
+    )
+
 
 def compile_source(flags: list[str], source: Path, output: Path) -> None:
     run(["clang", *flags, "-c", str(source), "-o", str(output)])

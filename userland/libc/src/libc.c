@@ -520,6 +520,52 @@ int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
     return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
 }
 
+int leonos_mouse_set_auto(uint32_t window_id)
+{
+    struct leonos_gui_cursor_request request = {
+        .window_id = window_id,
+        .x = 0,
+        .y = 0,
+        .style = LEONOS_GUI_CURSOR_ARROW,
+        .flags = LEONOS_GUI_CURSOR_REQUEST_AUTO,
+    };
+    return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
+}
+
+int leonos_mouse_get_state(struct leonos_mouse_state *state)
+{
+    return state ? ioctl(3, LEONOS_GUI_IOCTL_MOUSE_STATE, state) : -1;
+}
+
+int leonos_mouse_get_position(int32_t *x, int32_t *y)
+{
+    struct leonos_mouse_state state;
+    int ret;
+    if (!x || !y) {
+        return -1;
+    }
+    ret = leonos_mouse_get_state(&state);
+    if (ret > 0) {
+        *x = state.x;
+        *y = state.y;
+    }
+    return ret;
+}
+
+int leonos_mouse_set_region(const struct leonos_gui_cursor_region_request *region)
+{
+    return region ? ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REGION, (void *)region) : -1;
+}
+
+int leonos_mouse_clear_regions(uint32_t window_id)
+{
+    struct leonos_gui_cursor_region_request region = {
+        .window_id = window_id,
+        .operation = LEONOS_GUI_CURSOR_REGION_CLEAR,
+    };
+    return window_id ? leonos_mouse_set_region(&region) : -1;
+}
+
 int sleep_ms(unsigned long ms)
 {
     return (int)syscall2(SYS_nanosleep, (long)ms, 0);
@@ -1582,6 +1628,7 @@ int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t heigh
         .stride = stride,
         .pixels = pixels,
     };
+    leonos_ui_present_for_pixels(pixels, window_id);
     return ioctl(3, LEONOS_GUI_IOCTL_PRESENT_WINDOW, &cmd);
 }
 
@@ -1710,6 +1757,29 @@ int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint
         *tick = snapshot.tick;
     }
     return ret < 0 ? ret : (int)snapshot.count;
+}
+
+int leonos_task_affinity_get(uint32_t pid, uint64_t *mask)
+{
+    struct leonos_task_affinity request = {
+        .pid = pid,
+        .operation = LEONOS_TASK_AFFINITY_GET,
+    };
+    int ret = ioctl(3, LEONOS_IOCTL_TASK_AFFINITY, &request);
+    if (ret == 0 && mask) {
+        *mask = request.mask;
+    }
+    return ret;
+}
+
+int leonos_task_affinity_set(uint32_t pid, uint64_t mask)
+{
+    struct leonos_task_affinity request = {
+        .pid = pid,
+        .operation = LEONOS_TASK_AFFINITY_SET,
+        .mask = mask,
+    };
+    return ioctl(3, LEONOS_IOCTL_TASK_AFFINITY, &request);
 }
 
 int leonos_task_kill(uint32_t pid)
@@ -2096,6 +2166,10 @@ long leonos_audio_write(const void *data, uint32_t length,
                 *out_status = status;
             }
             return done ? (long)done : ret;
+        }
+        if (request.transferred == 0 &&
+            request.status == LEONOS_AUDIO_STATUS_WOULD_BLOCK) {
+            break;
         }
         if (request.transferred == 0 || request.transferred > chunk) {
             if (out_status) {

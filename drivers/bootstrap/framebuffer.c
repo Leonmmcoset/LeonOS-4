@@ -52,7 +52,7 @@ static int framebuffer_range_valid(uint64_t start, uint64_t bytes);
 #define VMWARE_SVGA_REG_CONFIG_DONE 20u
 #define VMWARE_SVGA_REG_SYNC 21u
 #define VMWARE_SVGA_REG_BUSY 22u
-#define VMWARE_SVGA_SYNC_POLL_LIMIT 100000u
+#define VMWARE_SVGA_SYNC_POLL_LIMIT 4000u
 
 #define VMWARE_SVGA_FIFO_MIN 0u
 #define VMWARE_SVGA_FIFO_MAX 1u
@@ -457,12 +457,22 @@ static void framebuffer_vmware_fifo_init(void)
     uint32_t mem_start = vmware_svga_read(VMWARE_SVGA_REG_MEM_START);
     uint32_t mem_size = vmware_svga_read(VMWARE_SVGA_REG_MEM_SIZE);
 
+    /* SVGA II may discard the FIFO contents when ENABLE or the display mode
+     * changes.  Keep the device in the unconfigured state while replacing
+     * the guest-owned ring, then publish CONFIG_DONE only after every header
+     * field has been written. */
+    vmware_svga_write(VMWARE_SVGA_REG_CONFIG_DONE, 0u);
     vmware_svga.fifo = 0;
     vmware_svga.fifo_present = false;
+    fb.auxiliary_reservation_start = 0;
+    fb.auxiliary_reservation_bytes = 0;
     if (mem_size < VMWARE_SVGA_FIFO_MIN_BYTES +
                        VMWARE_SVGA_UPDATE_WORDS * sizeof(uint32_t) ||
         mem_size > FRAMEBUFFER_MAX_VRAM_BYTES ||
+        (mem_start & (sizeof(uint32_t) - 1u)) != 0u ||
         !framebuffer_range_valid(mem_start, mem_size)) {
+        console_printf("[ntclks] VMware SVGA FIFO unavailable mem=%p size=%u\n",
+                       (void *)(uintptr_t)mem_start, mem_size);
         return;
     }
 
@@ -474,7 +484,23 @@ static void framebuffer_vmware_fifo_init(void)
     vmware_svga.fifo[VMWARE_SVGA_FIFO_NEXT_CMD] = vmware_svga.fifo_min;
     vmware_svga.fifo[VMWARE_SVGA_FIFO_STOP] = vmware_svga.fifo_min;
     vmware_svga_memory_fence();
+    vmware_svga_write(VMWARE_SVGA_REG_CONFIG_DONE, 1u);
+
+    /* A broken or stale MMIO mapping must not be treated as a working FIFO.
+     * Read back all four control words after CONFIG_DONE so the present path
+     * can recover instead of silently dropping every update. */
+    if (vmware_svga.fifo[VMWARE_SVGA_FIFO_MIN] != vmware_svga.fifo_min ||
+        vmware_svga.fifo[VMWARE_SVGA_FIFO_MAX] != vmware_svga.fifo_max ||
+        vmware_svga.fifo[VMWARE_SVGA_FIFO_NEXT_CMD] != vmware_svga.fifo_min ||
+        vmware_svga.fifo[VMWARE_SVGA_FIFO_STOP] != vmware_svga.fifo_min) {
+        vmware_svga.fifo = 0;
+        console_printf("[ntclks] VMware SVGA FIFO header validation failed\n");
+        return;
+    }
+    vmware_svga.fifo_full_logged = false;
     vmware_svga.fifo_present = true;
+    fb.auxiliary_reservation_start = mem_start;
+    fb.auxiliary_reservation_bytes = mem_size;
 }
 
 static int framebuffer_vmware_fifo_update(uint32_t x, uint32_t y,
@@ -493,6 +519,8 @@ static int framebuffer_vmware_fifo_update(uint32_t x, uint32_t y,
     if (next < vmware_svga.fifo_min || next >= vmware_svga.fifo_max ||
         stop < vmware_svga.fifo_min || stop >= vmware_svga.fifo_max) {
         vmware_svga.fifo_present = false;
+        console_printf("[ntclks] VMware SVGA FIFO state invalid next=%u stop=%u\n",
+                       next, stop);
         return 0;
     }
     if (next + bytes >= vmware_svga.fifo_max) {
@@ -729,6 +757,8 @@ static int framebuffer_vmware_set_mode(uint32_t width, uint32_t height)
     if (!vmware_svga.present) {
         return 0;
     }
+    fb.auxiliary_reservation_start = 0;
+    fb.auxiliary_reservation_bytes = 0;
     vmware_svga_write(VMWARE_SVGA_REG_ENABLE, 0u);
     vmware_svga_write(VMWARE_SVGA_REG_WIDTH, width);
     vmware_svga_write(VMWARE_SVGA_REG_HEIGHT, height);
@@ -736,7 +766,9 @@ static int framebuffer_vmware_set_mode(uint32_t width, uint32_t height)
     vmware_svga_write(VMWARE_SVGA_REG_BITS_PER_PIXEL, 32u);
     vmware_svga_write(VMWARE_SVGA_REG_PSEUDOCOLOR, 0u);
     vmware_svga_write(VMWARE_SVGA_REG_ENABLE, 1u);
-    vmware_svga_write(VMWARE_SVGA_REG_CONFIG_DONE, 1u);
+    /* CONFIG_DONE is asserted by framebuffer_vmware_fifo_init after the
+     * mode has been accepted and the FIFO has been rebuilt for this mode. */
+    framebuffer_vmware_fifo_init();
 
     actual_width = vmware_svga_read(VMWARE_SVGA_REG_WIDTH);
     actual_height = vmware_svga_read(VMWARE_SVGA_REG_HEIGHT);
@@ -1110,7 +1142,23 @@ void framebuffer_present_region(uint32_t x, uint32_t y, uint32_t width, uint32_t
     if (height > fb.height - y) {
         height = fb.height - y;
     }
-    (void)framebuffer_vmware_fifo_update(x, y, width, height);
+    if (!framebuffer_vmware_fifo_update(x, y, width, height)) {
+        /* A mode switch can invalidate the old FIFO, and a slow host can
+         * leave it full.  Drain first, rebuild only when the ring was marked
+         * invalid, then retry this exact damage region once. */
+        framebuffer_vmware_sync();
+        if (!vmware_svga.fifo_present) {
+            framebuffer_vmware_fifo_init();
+        }
+        if (!framebuffer_vmware_fifo_update(x, y, width, height)) {
+            return;
+        }
+    }
+    /* Always drain the FIFO after publishing an update. Leaving cursor
+     * updates asynchronous allows NEXT_CMD to outrun STOP; once the FIFO
+     * fills, every subsequent cursor blit is dropped and the pointer freezes.
+     * Keep the bounded wait short enough that a slow VMware device cannot
+     * stall the desktop for a full second. */
     framebuffer_vmware_sync();
 }
 

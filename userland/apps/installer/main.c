@@ -852,10 +852,10 @@ static const char *mode_progress_title(void)
 static void set_disk_select_status(void)
 {
     if (install_mode == INSTALL_MODE_UPDATE) {
-        set_status(T("Select the SATA/AHCI disk to update", "请选择要更新的 SATA/AHCI 硬盘"),
+        set_status(T("Select the disk to update", "请选择要更新的硬盘"),
                    T("Setup will check for an existing LeonOS 4 system.", "安装程序会检测现有 LeonOS 4 系统。"));
     } else {
-        set_status(T("Select the target SATA/AHCI disk", "请选择目标 SATA/AHCI 硬盘"),
+        set_status(T("Select the target disk", "请选择目标硬盘"),
                    T("The selected disk will be erased.", "所选硬盘将被清空。"));
     }
 }
@@ -883,7 +883,9 @@ static void format_disk_line(char *buf, uint32_t cap,
     buf[0] = 0;
     append_text(buf, &pos, cap, "Disk ");
     append_u64(buf, &pos, cap, disk->id);
-    append_text(buf, &pos, cap, "  AHCI port ");
+    append_text(buf, &pos, cap, "  ");
+    append_text(buf, &pos, cap, disk->name[0] ? disk->name : "Disk");
+    append_text(buf, &pos, cap, " port ");
     append_u64(buf, &pos, cap, disk->port);
     append_text(buf, &pos, cap, "  ");
     if (mib >= 1024) {
@@ -921,14 +923,14 @@ static void refresh_disks(void)
     if (ret < 0) {
         disk_count = 0;
         selected_disk = -1;
-        set_error_status("Could not list SATA disks", ret);
+        set_error_status("Could not list disks", ret);
         dirty = 1;
         return;
     }
     disk_count = count;
     if (disk_count == 0) {
         selected_disk = -1;
-        set_status(T("No SATA/AHCI disks were found", "未找到 SATA/AHCI 硬盘"), T("Attach a SATA disk and click Refresh.", "连接 SATA 硬盘后点击刷新。"));
+        set_status(T("No disks were found", "未找到硬盘"), T("Attach a disk and click Refresh.", "连接硬盘后点击刷新。"));
     } else {
         if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
             selected_disk = 0;
@@ -1198,7 +1200,7 @@ static void draw_welcome(struct leonos_ui_surface *ui)
     draw_title(ui, T("LeonOS 4 Setup", "LeonOS 4 安装程序"), T("Install a new system or update an existing LeonOS 4 disk.", "全新安装系统，或更新现有 LeonOS 4 硬盘。"));
     leonos_ui_text(ui, l.content_x, l.content_y + 84, T("Setup can copy the full normal system payload", "安装程序可以复制完整的普通系统文件"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, l.content_x, l.content_y + 108, T("or replace the boot/system files on an existing installation.", "也可以替换现有安装中的启动和系统文件。"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-    leonos_ui_text(ui, l.content_x, l.content_y + 164, T("Only SATA/AHCI target disks are supported by this build.", "当前版本仅支持 SATA/AHCI 目标硬盘。"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+    leonos_ui_text(ui, l.content_x, l.content_y + 164, T("SATA/AHCI and IDE/PATA target disks are supported.", "支持 SATA/AHCI 和 IDE/PATA 目标硬盘。"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
 static void draw_mode_page(struct leonos_ui_surface *ui)
@@ -1229,13 +1231,13 @@ static void draw_disk_page(struct leonos_ui_surface *ui)
     draw_title(ui,
                install_mode == INSTALL_MODE_UPDATE ? T("Select Disk to Update", "选择要更新的硬盘")
                                                    : T("Select Installation Disk", "选择安装硬盘"),
-               install_mode == INSTALL_MODE_UPDATE ? T("Choose the SATA/AHCI disk that already contains LeonOS 4.", "选择已经包含 LeonOS 4 的 SATA/AHCI 硬盘。")
-                                                   : T("Choose the SATA/AHCI disk that will receive LeonOS.", "选择用于安装 LeonOS 的 SATA/AHCI 硬盘。"));
+               install_mode == INSTALL_MODE_UPDATE ? T("Choose the disk that already contains LeonOS 4.", "选择已经包含 LeonOS 4 的硬盘。")
+                                                   : T("Choose the disk that will receive LeonOS.", "选择用于安装 LeonOS 的硬盘。"));
     leonos_ui_button(ui, l.disk_refresh_x, l.disk_refresh_y, 92, BUTTON_H, T("Refresh", "刷新"), 0);
-    leonos_ui_list_header(ui, l.content_x, l.disk_header_y, l.table_w, T("Available SATA/AHCI disks", "可用 SATA/AHCI 硬盘"));
+    leonos_ui_list_header(ui, l.content_x, l.disk_header_y, l.table_w, T("Available disks", "可用硬盘"));
     leonos_ui_inset(ui, l.content_x, l.disk_list_y, l.table_w, l.disk_list_h, LEONOS_UI_WHITE);
     if (disk_count == 0) {
-        leonos_ui_text(ui, l.content_x + 12, l.disk_list_y + 20, T("No SATA/AHCI disks were found.", "未找到 SATA/AHCI 硬盘。"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+        leonos_ui_text(ui, l.content_x + 12, l.disk_list_y + 20, T("No disks were found.", "未找到硬盘。"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
     }
     for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
         uint32_t row_y = l.disk_list_y + 2 + i * 24;
@@ -1361,10 +1363,10 @@ static void draw_confirm_page(struct leonos_ui_surface *ui)
     }
     leonos_ui_text_clipped(ui, l.content_x, l.content_y + 130, l.content_w,
                            install_mode == INSTALL_MODE_UPDATE
-                       ? T("The FAT32 boot partition, ext2 system files, dynamic runtime libraries, kernel debugger, and bundled docs will be refreshed. Selected program packages will be refreshed.",
-                                   "FAT32 启动分区、ext2 系统文件、动态运行库、内核调试模块和内置文档会刷新；已选程序包会刷新。")
-                               : T("The selected disk will be erased and formatted with a FAT32 ESP and ext2 system root.",
-                                   "所选硬盘会被清空并格式化为 FAT32 ESP 和 ext2 系统根分区。"),
+                       ? T("The FAT32 boot partition, exFAT or ext2 system files, dynamic runtime libraries, kernel debugger, and bundled docs will be refreshed. Selected program packages will be refreshed.",
+                                   "FAT32 启动分区、exFAT 或 ext2 系统文件、动态运行库、内核调试模块和内置文档会刷新；已选程序包会刷新。")
+                               : T("The selected disk will be erased and formatted with a FAT32 ESP and exFAT system root.",
+                                   "所选硬盘会被清空并格式化为 FAT32 ESP 和 exFAT 系统根分区。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, l.content_x, l.content_y + 174,
                    install_mode == INSTALL_MODE_UPDATE
@@ -2763,7 +2765,7 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
         return;
     }
 
-    show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (ext2), ESP: /target/boot (FAT32)");
+    show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (exFAT or ext2), ESP: /target/boot (FAT32)");
     ret = leonos_install_mount_target(disk_id);
     if (ret < 0) {
         finish_install(window_id, ui, ret, "Mount failed");

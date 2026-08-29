@@ -8,19 +8,13 @@ pub struct Endpoint {
 }
 
 static mut WINDOW_SERVER: Option<Endpoint> = None;
-/**
- * @brief Initializes registry.
- */
+/// Clears the window-server endpoint so the registry starts empty at boot.
 pub fn init_registry() {
     unsafe {
         WINDOW_SERVER = None;
     }
 }
-/**
- * @brief Registers window server.
- * @param pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Records the window server as (pid, port 1) and returns the stored endpoint.
 pub fn register_window_server(pid: u32) -> Result<Endpoint, i32> {
     let endpoint = Endpoint { pid, port: 1 };
     unsafe {
@@ -28,10 +22,7 @@ pub fn register_window_server(pid: u32) -> Result<Endpoint, i32> {
     }
     Ok(endpoint)
 }
-/**
- * @brief Coordinates the window server operation.
- * @return Result, status, or value defined by this API.
- */
+/// Returns the registered window-server endpoint, if any.
 pub fn window_server() -> Option<Endpoint> {
     unsafe { WINDOW_SERVER }
 }

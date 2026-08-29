@@ -5,8 +5,7 @@
 #include <ntclks/panic.h>
 
 /**
- * @brief Coordinates the panic operation.
- * @param message Input or output value used by this operation.
+ * @brief Forward the panic message into the full bugcheck path; never returns.
  */
 __attribute__((noreturn)) void panic(const char *message)
 {

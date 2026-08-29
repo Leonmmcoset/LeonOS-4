@@ -25,6 +25,8 @@
 #define EFI_SUCCESS 0ULL
 #define EFI_BUFFER_TOO_SMALL 0x8000000000000005ULL
 #define EFI_NOT_READY 0x8000000000000006ULL
+#define EFI_ALLOCATE_MAX_ADDRESS 1U
+#define EFI_LOADER_DATA 2U
 
 #define EI_NIDENT 16
 #define ET_EXEC 2
@@ -40,6 +42,8 @@
 #define LOADER_SPLASH_BACKGROUND 0x00ffffffu
 #define LOADER_SPLASH_TRACK 0x00e6f2fbu
 #define LOADER_SPLASH_PROGRESS 0x000078d4u
+#define LOADER_PAGE_SIZE 4096ULL
+#define LOADER_IDENTITY_MAP_LIMIT (4ULL * 1024ULL * 1024ULL * 1024ULL)
 
 struct multiboot2_info {
     uint32_t total_size;
@@ -132,12 +136,17 @@ typedef efi_status_t (__attribute__((ms_abi)) *efi_get_memory_map_fn)(
     uint64_t *map_key,
     uint64_t *descriptor_size,
     uint32_t *descriptor_version);
+typedef efi_status_t (__attribute__((ms_abi)) *efi_allocate_pages_fn)(
+    uint32_t allocation_type,
+    uint32_t memory_type,
+    uint64_t pages,
+    uint64_t *memory);
 
 struct efi_boot_services {
     struct efi_table_header hdr;
     efi_status_t (*raise_tpl)(uint64_t tpl);
     void (*restore_tpl)(uint64_t tpl);
-    void *allocate_pages;
+    efi_allocate_pages_fn allocate_pages;
     void *free_pages;
     efi_get_memory_map_fn get_memory_map;
     void *allocate_pool;
@@ -1312,7 +1321,7 @@ static int loader_cmdline_has(const char *needle)
     return 0;
 }
 
-static const struct loader_module *find_loader_module(const char *name)
+static struct loader_module *find_loader_module(const char *name)
 {
     for (uint32_t i = 0; i < loader_module_count; ++i) {
         if (text_eq(loader_modules[i].name, name)) {
@@ -1320,6 +1329,144 @@ static const struct loader_module *find_loader_module(const char *name)
         }
     }
     return 0;
+}
+
+/** @brief Returns nonzero when two half-open physical ranges intersect. */
+static int loader_ranges_intersect(uint64_t left_start, uint64_t left_end,
+                                   uint64_t right_start, uint64_t right_end)
+{
+    return left_start < left_end && right_start < right_end &&
+           left_start < right_end && right_start < left_end;
+}
+
+/**
+ * @brief Tests whether any loadable segment of an executable overlaps a physical range.
+ *
+ * This is intentionally a preflight only. elf_load_exec() remains the
+ * authoritative ELF validator and reports malformed images through its
+ * established boot failure path.
+ */
+static int elf_load_range_overlaps(const void *image, uint64_t len,
+                                   uint64_t range_start, uint64_t range_end)
+{
+    const struct elf64_ehdr *eh = (const struct elf64_ehdr *)image;
+
+    if (!image || range_end <= range_start || len < sizeof(*eh) ||
+        eh->e_phoff + (uint64_t)eh->e_phnum * eh->e_phentsize > len) {
+        return 0;
+    }
+    for (uint16_t i = 0; i < eh->e_phnum; ++i) {
+        const struct elf64_phdr *ph =
+            (const struct elf64_phdr *)((const uint8_t *)image + eh->e_phoff +
+                                        (uint64_t)i * eh->e_phentsize);
+        uint64_t start;
+        uint64_t end;
+
+        if (ph->p_type != PT_LOAD || ph->p_memsz == 0) {
+            continue;
+        }
+        start = ph->p_paddr ? ph->p_paddr : ph->p_vaddr;
+        end = start + ph->p_memsz;
+        if (!start || end < start) {
+            continue;
+        }
+        if (loader_ranges_intersect(start, end, range_start, range_end)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/**
+ * @brief Moves the installer FAT module to firmware-owned pages outside all ELF destinations.
+ *
+ * GRUB is free to place a large Multiboot module anywhere in conventional
+ * memory. The kernel and middlelayer are linked at fixed physical addresses,
+ * so retaining an overlapping module would silently corrupt its FAT contents
+ * while the loader copies either ELF image. The kernel later replaces the
+ * original Multiboot range with this handoff range before reserving modules.
+ */
+static int loader_relocate_installer_root(struct loader_module *module)
+{
+    uint64_t length;
+    uint64_t pages;
+    uint64_t relocated_start;
+    efi_status_t status;
+
+    if (!module || module->end <= module->start || !boot_services ||
+        !boot_services->allocate_pages) {
+        return -1;
+    }
+    length = module->end - module->start;
+    pages = (length + LOADER_PAGE_SIZE - 1ULL) / LOADER_PAGE_SIZE;
+    if (!pages || pages > (LOADER_IDENTITY_MAP_LIMIT / LOADER_PAGE_SIZE)) {
+        return -1;
+    }
+    /* Multiboot module addresses are 32-bit and GRUB's Loader mapping only
+     * promises that low physical window is directly accessible. Keep the
+     * replacement below 4 GiB; it remains inside the kernel's 16 GiB
+     * supervisor direct map. AllocatePages will not reuse an active module
+     * or the fixed kernel destination pages. */
+    relocated_start = LOADER_IDENTITY_MAP_LIMIT - LOADER_PAGE_SIZE;
+    status = boot_services->allocate_pages(EFI_ALLOCATE_MAX_ADDRESS,
+                                           EFI_LOADER_DATA, pages,
+                                           &relocated_start);
+    if (status != EFI_SUCCESS || relocated_start == 0 ||
+        relocated_start + length < relocated_start ||
+        relocated_start + length > LOADER_IDENTITY_MAP_LIMIT) {
+        serial_write("[loader] installer root relocation allocation failed status=");
+        serial_write_hex(status);
+        serial_write(" bytes=");
+        serial_write_hex(length);
+        serial_write("\n");
+        return -1;
+    }
+
+    memcpy_local((void *)(uintptr_t)relocated_start,
+                 (const void *)(uintptr_t)module->start, (size_t)length);
+    serial_write("[loader] installer root relocated old=");
+    serial_write_hex(module->start);
+    serial_write(" new=");
+    serial_write_hex(relocated_start);
+    serial_write(" bytes=");
+    serial_write_hex(length);
+    serial_write("\n");
+    module->start = relocated_start;
+    module->end = relocated_start + length;
+    handoff.installer_root.start = module->start;
+    handoff.installer_root.end = module->end;
+    return 0;
+}
+
+/** @brief Relocates an installer module only when fixed ELF destinations would overwrite it. */
+static int loader_protect_installer_root(struct loader_module *installer_root,
+                                         const struct loader_module *kernel,
+                                         const struct loader_module *middlelayer)
+{
+    uint64_t start;
+    uint64_t end;
+    int overlaps = 0;
+
+    if (!installer_root || installer_root->end <= installer_root->start) {
+        return 0;
+    }
+    start = installer_root->start;
+    end = installer_root->end;
+    if (kernel && kernel->end > kernel->start) {
+        overlaps |= elf_load_range_overlaps((const void *)(uintptr_t)kernel->start,
+                                            kernel->end - kernel->start,
+                                            start, end);
+    }
+    if (middlelayer && middlelayer->end > middlelayer->start) {
+        overlaps |= elf_load_range_overlaps((const void *)(uintptr_t)middlelayer->start,
+                                            middlelayer->end - middlelayer->start,
+                                            start, end);
+    }
+    if (!overlaps) {
+        return 0;
+    }
+    serial_write("[loader] installer root overlaps fixed ELF load range; relocating\n");
+    return loader_relocate_installer_root(installer_root);
 }
 
 static int build_efi_path(const char *path, uint16_t *out, uint32_t cap)
@@ -1763,7 +1910,7 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     uint64_t len;
     const struct loader_module *kernel_module;
     const struct loader_module *middlelayer_module;
-    const struct loader_module *installer_root_module;
+    struct loader_module *installer_root_module;
 
     loader_tsc_start = loader_rdtsc();
     serial_init();
@@ -1787,6 +1934,15 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
         loader_load_ui_theme();
         loader_framebuffer_set_theme(handoff.ui_theme);
     }
+    kernel_module = find_loader_module("leonos-kernel");
+    middlelayer_module = find_loader_module("leonos-middlelayer");
+    if (loader_protect_installer_root(installer_root_module,
+                                      kernel_module, middlelayer_module) < 0) {
+        serial_write("[loader] unable to protect installer root module\n");
+        for (;;) {
+            __asm__ volatile("hlt");
+        }
+    }
     if (loader_boot_log_screen) {
         boot_write("[loader] framebuffer boot log active\n");
     } else {
@@ -1794,7 +1950,6 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
         serial_write("[loader] graphical boot splash active\n");
     }
 
-    kernel_module = find_loader_module("leonos-kernel");
     if (kernel_module) {
         len = kernel_module->end - kernel_module->start;
         serial_write("[loader] using module leonos-kernel bytes=");
@@ -1850,7 +2005,6 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_write("\n");
     loader_framebuffer_draw_boot_splash(50u);
 
-    middlelayer_module = find_loader_module("leonos-middlelayer");
     if (middlelayer_module) {
         len = middlelayer_module->end - middlelayer_module->start;
         serial_write("[loader] using module leonos-middlelayer bytes=");

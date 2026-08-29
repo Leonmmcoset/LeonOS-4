@@ -3,9 +3,11 @@
  * Routes timer, input, storage, and device interrupts to kernel subsystems.
  */
 #include <ntclks/console.h>
+#include <ntclks/apic.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/input.h>
 #include <ntclks/sched.h>
+#include <ntclks/smp.h>
 #include <ntclks/time.h>
 #include <ntclks/trap.h>
 #include <ntclks/userland.h>
@@ -23,9 +25,11 @@
 
 static uint8_t key_states[128];
 static uint8_t e0_prefix;
+static bool irq_uses_local_apic;
+static bool irq_uses_ioapic;
 
 /**
- * @brief Coordinates the io wait operation.
+ * Io wait.
  */
 static void io_wait(void)
 {
@@ -33,8 +37,8 @@ static void io_wait(void)
 }
 
 /**
- * @brief Coordinates the pic send eoi operation.
- * @param irq Input or output value used by this operation.
+ * Pic send eoi.
+ * @param irq Value supplied by the caller.
  */
 static void pic_send_eoi(uint8_t irq)
 {
@@ -45,7 +49,7 @@ static void pic_send_eoi(uint8_t irq)
 }
 
 /**
- * @brief Coordinates the pic remap operation.
+ * Pic remap.
  */
 static void pic_remap(void)
 {
@@ -78,8 +82,24 @@ static void pic_remap(void)
     pic_send_eoi(0);
 }
 
+static void pic_mask_all(void)
+{
+    x86_64_outb(0xff, PIC1_DATA);
+    x86_64_outb(0xff, PIC2_DATA);
+}
+
+static void irq_send_eoi(uint8_t irq)
+{
+    if (!irq_uses_ioapic) {
+        pic_send_eoi(irq);
+    }
+    if (irq_uses_local_apic) {
+        apic_eoi();
+    }
+}
+
 /**
- * @brief Coordinates the pit init 100hz operation.
+ * Pit init 100hz.
  */
 static void pit_init_100hz(void)
 {
@@ -90,20 +110,49 @@ static void pit_init_100hz(void)
 }
 
 /**
- * @brief Coordinates the irq init operation.
+ * Irq init.
  */
 void irq_init(void)
 {
+    bool routed = false;
+
     __asm__ volatile("cli");
     pic_remap();
     pit_init_100hz();
-    console_printf("[ntclks] PIC remapped, PIT=%uHz, IRQ0/1/12 enabled\n", (unsigned)NTCLKS_TICK_HZ);
+    irq_uses_local_apic = false;
+    irq_uses_ioapic = false;
+
+    if (apic_available()) {
+        apic_enable();
+        irq_uses_local_apic = apic_enabled();
+        if (irq_uses_local_apic && ioapic_available()) {
+            routed = ioapic_route_irq(0u, 0x20u, apic_bsp_id()) &&
+                     ioapic_route_irq(1u, 0x21u, apic_bsp_id()) &&
+                     ioapic_route_irq(12u, 0x2cu, apic_bsp_id());
+        }
+        if (routed) {
+            pic_mask_all();
+            irq_uses_ioapic = true;
+            console_printf("[ntclks] IOAPIC owns PIT/keyboard/mouse, PIT=%uHz BSP=%u\n",
+                           (unsigned)NTCLKS_TICK_HZ, (unsigned)apic_bsp_id());
+            return;
+        }
+        /* Fall back to the LAPIC virtual-wire bridge.  This keeps legacy PIC
+         * delivery alive after SMP enables the BSP local APIC. */
+        apic_enable_legacy_pic();
+        irq_uses_local_apic = apic_enabled();
+        console_printf("[ntclks] PIC virtual-wire owns IRQ0/1/12, PIT=%uHz\n",
+                       (unsigned)NTCLKS_TICK_HZ);
+        return;
+    }
+    console_printf("[ntclks] PIC remapped, PIT=%uHz, IRQ0/1/12 enabled\n",
+                   (unsigned)NTCLKS_TICK_HZ);
 }
 
 /**
- * @brief Coordinates the irq dispatch operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Irq dispatch.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct task *irq_dispatch(struct trap_frame *frame)
 {
@@ -111,8 +160,20 @@ struct task *irq_dispatch(struct trap_frame *frame)
     bool from_user = frame && ((frame->cs & 3ULL) == 3ULL);
     if (vector == 0x20) {
         time_on_tick();
-        pic_send_eoi(0);
-        return from_user ? userland_schedule_from_frame(frame) : NULL;
+        irq_send_eoi(0);
+        /* The BSP marks the handoff just before iretq, so a kernel-mode PIT
+         * tick can still arrive in that small window.  Only a timer that
+         * entered from Ring 3 proves the BSP completed its first user return;
+         * releasing APs from a kernel tick lets them race the initial iret
+         * and corrupt shared scheduler/address-space state.  Finish this
+         * CPU's scheduling decision first as well, so APs never observe the
+         * selected task with an unprepared entry frame. */
+        if (from_user) {
+            struct task *next = userland_schedule_from_frame(frame);
+            smp_release_aps();
+            return next;
+        }
+        return NULL;
     } else if (vector == 0x21) {
         uint8_t scancode = x86_64_inb(PS2_DATA);
         if (scancode == 0xe0) {
@@ -147,12 +208,30 @@ struct task *irq_dispatch(struct trap_frame *frame)
                 input_push_key(keycode, pressed);
             }
         }
-        pic_send_eoi(1);
+        irq_send_eoi(1);
     } else if (vector == 0x2c) {
         driver_manager_mouse_poll();
-        pic_send_eoi(12);
+        irq_send_eoi(12);
+    } else if (vector == 0x40) {
+        /* LAPIC timer interrupts are local to APs. The BSP remains the sole
+         * owner of wall-clock/PIT wakeups and device IRQs; each AP uses this
+         * vector only to account and preempt its own Ring-3 task. */
+        apic_eoi();
+        if (smp_current_cpu() != 0) {
+            sched_on_cpu_tick();
+            if (from_user) {
+                struct task *next = userland_schedule_from_frame(frame);
+                return next;
+            }
+            return NULL;
+        }
+        return NULL;
+    } else if (vector == 0xff) {
+        /* Spurious local-APIC interrupts have no work to dispatch. */
+        apic_eoi();
+        return NULL;
     } else {
-        pic_send_eoi(0);
+        irq_send_eoi(0);
     }
     return NULL;
 }

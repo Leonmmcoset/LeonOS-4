@@ -19,7 +19,7 @@
                 "quoteArgs": true
             },
             "sourceFileMap": {
-                "/mnt/d/Projects/C/LeonOS 4": "${workspaceFolder}"
+                "${config:leonos.wslProjectRoot}": "${workspaceFolder}"
             },
             "targetArchitecture": "x86_64",
             "stopAtEntry": false,
@@ -61,7 +61,7 @@
                 "quoteArgs": true
             },
             "sourceFileMap": {
-                "/mnt/d/Projects/C/LeonOS 4": "${workspaceFolder}"
+                "${config:leonos.wslProjectRoot}": "${workspaceFolder}"
             },
             "targetArchitecture": "x86_64",
             "stopAtEntry": false,

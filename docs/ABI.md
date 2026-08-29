@@ -241,11 +241,11 @@ The associated ioctls are:
 - `LEONOS_DISK_IOCTL_MOUNT_PARTITION`
 - `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`
 
-`FORMAT_PARTITION` accepts FAT32 and ext2 through
+`FORMAT_PARTITION` accepts FAT32, exFAT, and ext2 through
 `struct leonos_disk_partition_format`. `CREATE_PARTITION` allocates a
 1 MiB-aligned range with the requested size in MiB and formats it immediately;
-FAT32 uses the GPT Microsoft Basic Data type and ext2 uses the Linux filesystem
-type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
+FAT32 and exFAT use the GPT Microsoft Basic Data type; ext2 uses the Linux
+filesystem type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
 claim to securely erase the old data area.
 
 `MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount` and
@@ -289,7 +289,7 @@ The kernel service table passed to middlelayer is intentionally small:
 - `mkdir`
 
 Kernel code owns hardware probing, interrupts, page tables, physical memory,
-scheduling, user pointer validation, storage block I/O, and FAT32/ext2 mutation.
+scheduling, user pointer validation, storage block I/O, and exFAT/FAT32/ext2 mutation.
 Middlelayer owns higher-level policy or semantic services that can run on top
 of those kernel facts.
 
@@ -325,6 +325,8 @@ Current raw device kinds:
 - PS/2 mouse
 - Framebuffer
 - AHCI controller
+- IDE/PATA controller
+- NVMe controller
 - Disk
 - Serial COM1
 - Intel e1000 network adapter
@@ -391,14 +393,19 @@ management are still out of scope for this ABI version.
 
 ## Audio ABI
 
-`include/leonos/audio.h` exposes a synchronous PCM playback interface backed by
-autoloaded audio driver modules. `LEONOS_IOCTL_AUDIO_CONFIGURE` selects the
-stream format, `LEONOS_IOCTL_AUDIO_WRITE` plays at most 64 KiB per call, and
+`include/leonos/audio.h` exposes a bounded, non-blocking PCM submission
+interface backed by autoloaded audio driver modules. `LEONOS_IOCTL_AUDIO_CONFIGURE`
+selects the stream format, `LEONOS_IOCTL_AUDIO_WRITE` submits at most 64 KiB per
+call and may return a short write when the device cannot accept more data, and
 `LEONOS_IOCTL_AUDIO_GET_STATE` returns device and stream state. The initial
 `ac97.drv` supports QEMU's Intel ICH AC'97 controller, while `es1371.drv`
 supports VMware's Ensoniq AudioPCI ES1371 controller. Both accept 16-bit,
-stereo PCM at 8000–48000 Hz. `wavplay.elf` opens matching PCM WAV files and is
-the default `.wav` handler; without a path it plays a short test melody.
+stereo PCM at 8000–48000 Hz. The AC'97 backend keeps a persistent DMA ring and
+reports short writes with `LEONOS_AUDIO_STATUS_WOULD_BLOCK`; callers should
+retain and retry the unwritten tail. `doom.elf` and the built-in `wavplay.elf`
+test tone use native 48000 Hz output to avoid emulator-side resampling.
+`wavplay.elf` also opens matching PCM WAV files and is the default `.wav`
+handler.
 
 ## Application Services
 

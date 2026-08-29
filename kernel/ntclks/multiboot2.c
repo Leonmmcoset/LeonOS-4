@@ -6,9 +6,7 @@
 #include <ntclks/multiboot2.h>
 
 /**
- * @brief Coordinates the align8 operation.
- * @param value Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Round value up to the next 8-byte boundary.
  */
 static uintptr_t align8(uintptr_t value)
 {
@@ -16,10 +14,7 @@ static uintptr_t align8(uintptr_t value)
 }
 
 /**
- * @brief Coordinates the multiboot2 parse operation.
- * @param magic Input or output value used by this operation.
- * @param info_addr Address used by this operation; its address-space interpretation follows the API.
- * @param out Caller-provided storage that receives output from this operation.
+ * @brief Decode the Multiboot2 tag list at info_addr into out (cmdline, modules, memory map, framebuffer, EFI, ACPI).
  */
 void multiboot2_parse(uint32_t magic, uintptr_t info_addr, struct boot_info *out)
 {

@@ -46,12 +46,7 @@ pub struct Utf16ToUtf8 {
     utf8_capacity: u32,
     utf8_len: u32,
 }
-/**
- * @brief Dispatches the subsystem.
- * @param op Input or output value used by this operation.
- * @param arg Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Routes a Unicode op to its converter; null `arg` returns -EINVAL, unknown ops return -ENOSYS.
 pub fn dispatch(op: u32, arg: *mut core::ffi::c_void) -> i32 {
     if arg.is_null() {
         return -22;
@@ -64,11 +59,7 @@ pub fn dispatch(op: u32, arg: *mut core::ffi::c_void) -> i32 {
         _ => -38,
     }
 }
-/**
- * @brief Coordinates the layout utf8 operation.
- * @param cmd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Lays out UTF-8 text into glyphs, filling cmd.count/total_cells/total_px (and glyphs when capacity allows).
 fn layout_utf8(cmd: *mut TextLayout) -> i32 {
     let Some(cmd) = (unsafe { cmd.as_mut() }) else {
         return -22;
@@ -108,11 +99,7 @@ fn layout_utf8(cmd: *mut TextLayout) -> i32 {
     cmd.total_px = total_cells.saturating_mul(8);
     0
 }
-/**
- * @brief Validates utf8.
- * @param cmd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Checks every byte run decodes as valid UTF-8; returns -EINVAL at the first bad sequence.
 fn validate_utf8(cmd: *mut TextLayout) -> i32 {
     let Some(cmd) = (unsafe { cmd.as_ref() }) else {
         return -22;
@@ -131,11 +118,7 @@ fn validate_utf8(cmd: *mut TextLayout) -> i32 {
     }
     0
 }
-/**
- * @brief Coordinates the utf8 to utf16 operation.
- * @param cmd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Converts UTF-8 to UTF-16LE into a caller buffer, setting cmd.utf16_len; bad code points become U+FFFD.
 fn utf8_to_utf16(cmd: *mut Utf8ToUtf16) -> i32 {
     let Some(cmd) = (unsafe { cmd.as_mut() }) else {
         return -22;
@@ -177,11 +160,7 @@ fn utf8_to_utf16(cmd: *mut Utf8ToUtf16) -> i32 {
     cmd.utf16_len = out_len as u32;
     0
 }
-/**
- * @brief Coordinates the utf16 to utf8 operation.
- * @param cmd Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Converts UTF-16 (with surrogate pairs) to UTF-8, NUL-terminating when space allows; lone surrogates become U+FFFD.
 fn utf16_to_utf8(cmd: *mut Utf16ToUtf8) -> i32 {
     let Some(cmd) = (unsafe { cmd.as_mut() }) else {
         return -22;
@@ -225,12 +204,7 @@ fn utf16_to_utf8(cmd: *mut Utf16ToUtf8) -> i32 {
     cmd.utf8_len = out_len as u32;
     0
 }
-/**
- * @brief Coordinates the decode one operation.
- * @param input Input or output value used by this operation.
- * @param offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Decodes one UTF-8 code point at `offset`, returning (code point, byte length, valid).
 fn decode_one(input: &[u8], offset: usize) -> (u32, usize, bool) {
     let b0 = byte_at(input, offset);
     if b0 < 0x80 {
@@ -291,30 +265,15 @@ fn decode_one(input: &[u8], offset: usize) -> (u32, usize, bool) {
     }
     (REPLACEMENT, 1, false)
 }
-/**
- * @brief Coordinates the byte at operation.
- * @param input Input or output value used by this operation.
- * @param index Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Reads the byte at `index` without a bounds check; the caller guarantees it is in range.
 fn byte_at(input: &[u8], index: usize) -> u8 {
     unsafe { *input.as_ptr().add(index) }
 }
-/**
- * @brief Reports whether cont.
- * @param byte Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// True when `byte` is a UTF-8 continuation byte (0b10xxxxxx).
 fn is_cont(byte: u8) -> bool {
     (byte & 0xc0) == 0x80
 }
-/**
- * @brief Coordinates the encode utf8 operation.
- * @param cp Input or output value used by this operation.
- * @param output Caller-provided storage that receives output from this operation.
- * @param offset Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Encodes `cp` as UTF-8 into `output` at `offset`; returns the byte count (1-4).
 fn encode_utf8(cp: u32, output: &mut [u8], offset: usize) -> usize {
     let cp = if cp > 0x10ffff { REPLACEMENT } else { cp };
     if cp < 0x80 {
@@ -339,22 +298,13 @@ fn encode_utf8(cp: u32, output: &mut [u8], offset: usize) -> usize {
         4
     }
 }
-/**
- * @brief Writes byte.
- * @param output Caller-provided storage that receives output from this operation.
- * @param offset Input or output value used by this operation.
- * @param value Input or output value used by this operation.
- */
+/// Writes `value` at `offset` only if it fits within the buffer.
 fn write_byte(output: &mut [u8], offset: usize, value: u8) {
     if offset < output.len() {
         output[offset] = value;
     }
 }
-/**
- * @brief Coordinates the cell width operation.
- * @param cp Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// Returns the terminal cell width of `cp`: 0 for control chars, 4 for tab, 2 for wide glyphs, else 1.
 fn cell_width(cp: u32) -> u32 {
     if cp == 0 || cp == b'\n' as u32 || cp == b'\r' as u32 {
         0
@@ -366,11 +316,7 @@ fn cell_width(cp: u32) -> u32 {
         1
     }
 }
-/**
- * @brief Reports whether wide.
- * @param cp Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
- */
+/// True when `cp` falls in a Unicode range rendered with two cells.
 fn is_wide(cp: u32) -> bool {
     matches!(
         cp,

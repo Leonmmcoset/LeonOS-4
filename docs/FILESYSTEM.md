@@ -2,14 +2,15 @@
 
 LeonOS 4 uses a multi-filesystem storage layer. The normal installed system is
 not a FAT32 root filesystem: it has a small FAT32 EFI System Partition (ESP)
-and a separate writable ext2 root partition.
+and a separate writable exFAT root partition. Existing ext2 installations
+remain fully supported and are not automatically migrated.
 
 ## Installed Disk Layout
 
 | GPT partition | Type | Contents | Runtime mount |
 | --- | --- | --- | --- |
 | 1 | EFI System Partition / FAT32 | `EFI/`, `loader.elf`, `grub/`, `system/kernel.sys`, `system/middlelayer.sys` | `/boot` normally, `/target/boot` while Installer is running |
-| 2 | Linux filesystem data / ext2 | normal system files: `system/`, `programs/`, `drivers/`, `docs/`, `users/`, `var/`, `tmp/` | `/` in a normal session, `/target` while Installer is running |
+| 2 | Microsoft Basic Data / exFAT | normal system files: `system/`, `programs/`, `drivers/`, `docs/`, `users/`, `var/`, `tmp/` | `/` in a normal session, `/target` while Installer is running |
 
 UEFI GRUB and the early loader read partition 1. Once the kernel is running,
 the storage layer selects partition 2 as `/`. A legacy one-partition FAT32
@@ -19,11 +20,13 @@ fallback, not the layout produced by current image or installer builds.
 The installer itself keeps using a FAT32 ramdisk root because it must start
 before any target disk is trusted. Its payload is deliberately split:
 
-- `/install/root` is copied to the ext2 target root `/target`.
+- `/install/root` is copied to the exFAT target root `/target` (or to an
+  existing ext2 target during update mode).
 - `/install/esp` is copied to the FAT32 target ESP `/target/boot`.
 
 Fresh installation creates both GPT partitions. Update requires both a valid
-ext2 root and ESP; old FAT32-only installations should use a fresh install.
+exFAT or ext2 root and ESP; old FAT32-only installations should use a fresh
+install.
 
 ## Supported Formats
 
@@ -44,6 +47,24 @@ numbers, encryption, and unsupported incompatible feature bits. Build images
 with `mke2fs -t ext2`; `tools/make_image.py` disables unsupported modern
 extensions explicitly.
 
+### exFAT
+
+New images and fresh installations use the standard single-FAT exFAT subset:
+
+- 512-byte logical sectors with a validated primary and backup boot region.
+- Allocation bitmap, compressed Microsoft upcase table, and directory
+  entry-set checksums.
+- UTF-8/UTF-16 names (up to 255 UTF-16 units) with case-insensitive lookup.
+- Contiguous `NoFatChain` and ordinary FAT-chain files; reads, writes,
+  truncation, directory creation/removal, deletion, enumeration, and same-
+  volume rename.
+- Microsoft Basic Data GPT type and GPT partition name `LEONOS4_ROOT`. The
+  exFAT volume-label limit means the on-volume label is `LEONOS4ROOT`.
+
+TexFAT, multiple FATs, non-512-byte sectors, POSIX inode metadata, and native
+permissions are rejected. `LEONACL.SYS` remains the hidden LeonOS ACL
+sidecar. Sudden-power-loss repair is expected to use the host `fsck.exfat`.
+
 ### FAT32
 
 FAT32 remains supported for the ESP, installer ramdisk, legacy installed
@@ -56,11 +77,11 @@ on.
 
 Optical media is discovered through AHCI ATAPI and automatically mounted at
 `/media/cdrom<N>`. ISO 9660 volumes are read-only. This is independent
-of whether the boot/root disk uses ext2 or FAT32.
+of whether the boot/root disk uses exFAT, ext2, or FAT32.
 
 ## Runtime Data Mounts
 
-Disk Manager can mount a supported, unprotected FAT32 or ext2 GPT data
+Disk Manager can mount a supported, unprotected FAT32, exFAT, or ext2 GPT data
 partition for the current boot. The kernel mounts it at the stable path
 `/mnt/disk<N>p<M>`, where `N` is the disk ID and `M` is the GPT entry index plus
 one. The mount path is shown in the partition status and appears in File
@@ -70,7 +91,7 @@ Runtime data mounts are deliberately non-persistent in this first version:
 they are removed on reboot and no automatic mounting policy is stored on disk.
 Mounting the same partition again is idempotent and returns its existing mount
 path.
-Only the FAT32 and classic ext2 subsets documented above are accepted; an
+FAT32, exFAT, and the classic ext2 subsets documented above are accepted; an
 unknown or unsupported on-disk filesystem is rejected rather than mounted
 according to its GPT type alone.
 
@@ -87,17 +108,18 @@ nodes and mappings after a volume is removed.
 
 ## Disk Manager Partitions
 
-Disk Manager presents the GPT entries of every detected AHCI disk, including
+Disk Manager presents the GPT entries of every detected AHCI, IDE/PATA, or NVMe disk, including
 their name, LBA range, filesystem probe, capacity, GPT role, protection state,
-and mount path when mounted. It can create a 1 MiB-aligned FAT32 or ext2
+and mount path when mounted. It can create a 1 MiB-aligned FAT32, exFAT, or ext2
 data partition in free space, format an existing data partition as either
 filesystem, delete an existing data partition's GPT entry, and mount or
 unmount a supported data partition. New partition creation includes formatting
 as part of the operation.
 
-Formatting reuses the installer-grade FAT32 and ext2 formatters but applies
-only to the selected partition extent. FAT32 data partitions use the Microsoft
-Basic Data GPT type; ext2 data partitions use the Linux filesystem type.
+Formatting reuses the installer-grade FAT32, exFAT, and ext2 formatters but
+applies only to the selected partition extent. FAT32 and exFAT data partitions
+use the Microsoft Basic Data GPT type; ext2 data partitions use the Linux
+filesystem type.
 Deleting a partition removes its GPT metadata only, so it is not a secure-wipe
 operation.
 
@@ -120,11 +142,11 @@ creating names that differ only by case on ext2.
 
 The device directory is synthesized at `/dev`. `LEONACL.SYS` is internal
 ACL sidecar metadata: it remains readable by the authorization service but is
-hidden from normal FAT32 and ext2 directory enumeration.
+hidden from normal exFAT, FAT32, and ext2 directory enumeration.
 
 ## API Behavior
 
-Current file syscalls support all writable ext2 and FAT32 roots:
+Current file syscalls support all writable exFAT, ext2, and FAT32 roots:
 
 - File reads and short, bounded writes.
 - Create and overwrite through `open` flags.
@@ -132,8 +154,9 @@ Current file syscalls support all writable ext2 and FAT32 roots:
 - Directory listing, `stat`, seek, and ACL service integration.
 
 Cross-mount rename is rejected. ISO 9660 returns a read-only error for all
-mutation operations. ext2 allocation updates its inode/block bitmaps and free
-counts; FAT32 retains its cluster-chain allocator and LFN handling.
+mutation operations. exFAT allocation updates its bitmap and FAT chains; ext2
+allocation updates its inode/block bitmaps and free counts; FAT32 retains its
+cluster-chain allocator and LFN handling.
 
 ## Safety and Recovery
 
@@ -144,5 +167,4 @@ normal image generator and installer formatter reserve distinct boot and root
 partitions so a large runtime file cannot consume ESP space.
 
 Use `tools/analyze_boot_log.py` when boot diagnostics show a root mount failure.
-The log identifies whether ext2 was selected or the legacy FAT32 fallback was
-used.
+The log identifies whether exFAT, ext2, or the legacy FAT32 fallback was used.

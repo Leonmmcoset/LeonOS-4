@@ -249,6 +249,12 @@ def main() -> int:
         time.sleep(2.0)
 
     if tcc_smoke:
+        # TCC must report its no-input diagnostic and return to Ash before a
+        # normal compile. This catches help/error exit paths that a compile
+        # only smoke test would leave untouched.
+        send_keys(sock, text_keys("tcc") + ("ret",))
+        time.sleep(3.0)
+
         # Compile the image-staged example with the on-device compiler, then
         # execute the resulting ELF through the resident BusyBox shell. Use
         # an absolute source path so this test exercises TCC rather than

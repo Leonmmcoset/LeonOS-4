@@ -32,10 +32,14 @@
 #define MIN_H 96
 #define FALLBACK_CURSOR_W 16
 #define FALLBACK_CURSOR_H 16
-#define CURSOR_MAX_W 64
-#define CURSOR_MAX_H 64
+#define CURSOR_TILE_W 32
+#define CURSOR_TILE_H 32
+#define CURSOR_STYLE_COUNT LEONOS_GUI_CURSOR_STYLE_COUNT
+#define CURSOR_MAX_W CURSOR_TILE_W
+#define CURSOR_MAX_H (CURSOR_TILE_H * CURSOR_STYLE_COUNT)
 #define CURSOR_BMP_MAX_BYTES (CURSOR_MAX_W * CURSOR_MAX_H * 4 + 128)
 #define CURSOR_BMP_PATH "/system/resources/mouse.bmp"
+#define DESKTOP_CURSOR_REGION_CAP 64
 #define WALLPAPER_MAX_W 1280
 #define WALLPAPER_MAX_H 720
 #define WALLPAPER_BMP_MAX_BYTES (WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4 + 128)
@@ -116,6 +120,8 @@
 #define DESKTOP_CONTEXT_ACTION_CREATE_SHORTCUT 3
 #define DESKTOP_MESSAGE_TITLE_LEN 48
 #define DESKTOP_MESSAGE_TEXT_LEN 160
+#define DESKTOP_MESSAGE_W 380
+#define DESKTOP_MESSAGE_H 150
 #define DESKTOP_SHORTCUT_INPUT_W 480
 #define DESKTOP_SHORTCUT_INPUT_H 170
 #define DESKTOP_INPUTM_CONFIG_NAME ".inputm.conf"
@@ -175,6 +181,16 @@ struct desktop_window {
     int anim_to_y;
     uint32_t anim_to_w;
     uint32_t anim_to_h;
+    struct desktop_cursor_region {
+        uint8_t used;
+        uint32_t id;
+        int32_t x;
+        int32_t y;
+        uint32_t width;
+        uint32_t height;
+        uint32_t style;
+        uint32_t flags;
+    } cursor_regions[DESKTOP_CURSOR_REGION_CAP];
 };
 
 struct rect {
@@ -286,9 +302,12 @@ extern uint32_t cursor_y;
 extern uint32_t cursor_width;
 extern uint32_t cursor_height;
 extern uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
+extern uint8_t cursor_hotspot_x[CURSOR_STYLE_COUNT];
+extern uint8_t cursor_hotspot_y[CURSOR_STYLE_COUNT];
 extern uint8_t cursor_visible;
 extern uint8_t cursor_bitmap_loaded;
 extern uint32_t desktop_cursor_style;
+extern uint8_t desktop_cursor_auto;
 extern uint8_t desktop_taskbar_visible;
 extern uint32_t wallpaper_pixels[WALLPAPER_MAX_W * WALLPAPER_MAX_H];
 extern uint32_t wallpaper_width;
@@ -305,6 +324,9 @@ extern uint8_t desktop_service_rtc_clock;
 extern uint8_t desktop_service_daemon_started;
 extern unsigned long desktop_service_daemon_last_spawn_ms;
 extern uint8_t full_redraw_pending;
+extern uint8_t desktop_damage_pending;
+extern uint8_t desktop_damage_cursor_only;
+extern struct rect desktop_damage_rect;
 extern uint8_t power_confirm_action;
 extern uint8_t oobe_lock_active;
 extern unsigned long oobe_last_spawn_ms;
@@ -374,6 +396,7 @@ int is_win_down(void);
 struct rect rect_make(int x, int y, int w, int h);
 struct rect window_rect(uint8_t id);
 struct rect cursor_rect_at(uint32_t x, uint32_t y);
+struct rect cursor_rect_for_style(uint32_t x, uint32_t y, uint32_t style);
 struct rect rect_union(struct rect a, struct rect b);
 struct rect rect_pad(struct rect r, int pad);
 struct rect rect_clip(struct rect r);
@@ -457,10 +480,12 @@ void start_menu_ensure_docs(void);
 int start_menu_handle_key(uint8_t keycode, uint8_t pressed);
 void start_menu_handle_click(uint32_t x, uint32_t y);
 int start_menu_hit_test(uint32_t x, uint32_t y);
+uint32_t start_menu_cursor_style(uint32_t x, uint32_t y);
 int start_menu_handle_wheel(uint32_t x, uint32_t y, int32_t wheel);
 void draw_start_menu(void);
 void desktop_items_clear(void);
 int desktop_refresh_items(void);
+int desktop_items_directory_changed(void);
 void draw_desktop_items(struct rect dirty);
 void draw_desktop_context_menu(void);
 void draw_desktop_message(void);
@@ -475,10 +500,14 @@ int desktop_handle_background_click(uint32_t x, uint32_t y);
 int desktop_handle_background_right_click(uint32_t x, uint32_t y);
 void draw_power_confirm(void);
 void draw_cursor_shape(uint32_t x, uint32_t y);
+uint32_t desktop_cursor_style_for_pointer(uint32_t x, uint32_t y);
 void redraw_region(struct rect dirty);
 void flush_region(struct rect dirty);
 void repaint_and_flush(struct rect dirty);
+void repaint_cursor_and_flush(struct rect dirty);
 void redraw_all(void);
+void desktop_queue_damage(struct rect dirty);
+void desktop_queue_cursor_damage(struct rect dirty);
 int hit_window(uint32_t x, uint32_t y);
 void minimize_window(uint8_t id);
 void restore_window(uint8_t id);
@@ -523,6 +552,7 @@ void desktop_inputm_launch_login_providers(void);
 void desktop_inputm_cycle(void);
 int desktop_inputm_hotkey_is_alt_shift(void);
 int desktop_inputm_handle_click(uint32_t x, uint32_t y);
+uint32_t desktop_inputm_cursor_style(uint32_t x, uint32_t y);
 void draw_inputm_overlay(void);
 void desktop_publish_display_state(void);
 void desktop_handle_display_requests(void);

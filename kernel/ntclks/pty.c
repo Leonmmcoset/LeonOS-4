@@ -31,9 +31,7 @@ struct pty_session {
 static struct pty_session sessions[PTY_MAX];
 
 /**
- * @brief Finds session.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the PTY session for pty_id (1-based), or NULL if invalid/unused.
  */
 static struct pty_session *find_session(uint32_t pty_id)
 {
@@ -47,14 +45,7 @@ static struct pty_session *find_session(uint32_t pty_id)
 }
 
 /**
- * @brief Coordinates the ring push operation.
- * @param ring Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param head Input or output value used by this operation.
- * @param tail Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Append length bytes into the ring, overwriting the oldest when full; returns bytes written.
  */
 static uint32_t ring_push(uint8_t *ring, uint32_t cap, uint32_t *head, uint32_t *tail,
                           const char *buffer, uint32_t length)
@@ -73,14 +64,7 @@ static uint32_t ring_push(uint8_t *ring, uint32_t cap, uint32_t *head, uint32_t 
 }
 
 /**
- * @brief Coordinates the ring pop operation.
- * @param ring Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param head Input or output value used by this operation.
- * @param tail Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Remove up to length bytes from the ring into buffer; returns bytes read.
  */
 static uint32_t ring_pop(uint8_t *ring, uint32_t cap, uint32_t *head, uint32_t *tail,
                          char *buffer, uint32_t length)
@@ -94,23 +78,15 @@ static uint32_t ring_pop(uint8_t *ring, uint32_t cap, uint32_t *head, uint32_t *
 }
 
 /**
- * @brief Coordinates the pty commit canonical input operation.
- * @param session Input or output value used by this operation.
+ * @brief Move the buffered canonical line into the input queue and clear it.
  */
 static void pty_commit_canonical_input(struct pty_session *session)
 {
     if (!session || !session->canonical_length) {
         return;
     }
-    /**
- * @brief Coordinates the ring push operation.
- * @param input Input or output value used by this operation.
- * @param PTY_INPUT_CAP Capacity, in elements or bytes, of the related output buffer.
- * @param input_head Input or output value used by this operation.
- * @param input_tail Input or output value used by this operation.
- * @param canonical_input Input or output value used by this operation.
- * @param canonical_length Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+/**
+ * @brief /* Flush the completed canonical line into the input queue.
  */
     (void)ring_push(session->input, PTY_INPUT_CAP,
                     &session->input_head, &session->input_tail,
@@ -120,9 +96,7 @@ static void pty_commit_canonical_input(struct pty_session *session)
 }
 
 /**
- * @brief Coordinates the pty canonical mode operation.
- * @param session Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if the session is in ICANON line mode.
  */
 static int pty_canonical_mode(const struct pty_session *session)
 {
@@ -131,7 +105,7 @@ static int pty_canonical_mode(const struct pty_session *session)
 }
 
 /**
- * @brief Coordinates the pty init operation.
+ * @brief Zero all PTY sessions.
  */
 void pty_init(void)
 {
@@ -143,9 +117,7 @@ void pty_init(void)
 }
 
 /**
- * @brief Coordinates the pty create operation.
- * @param owner_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Allocate and initialize a PTY for owner_pid with default termios/winsize; returns its id, or -12 when exhausted.
  */
 int32_t pty_create(uint32_t owner_pid)
 {
@@ -192,10 +164,7 @@ int32_t pty_create(uint32_t owner_pid)
 }
 
 /**
- * @brief Coordinates the pty destroy operation.
- * @param owner_pid Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Kill the PTY's attached tasks and free the session; returns 0, or -22 if not owned.
  */
 int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
 {
@@ -211,10 +180,7 @@ int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
 }
 
 /**
- * @brief Coordinates the pty is owner operation.
- * @param pty_id Input or output value used by this operation.
- * @param owner_pid Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if owner_pid owns pty_id.
  */
 int pty_is_owner(uint32_t pty_id, uint32_t owner_pid)
 {
@@ -223,9 +189,7 @@ int pty_is_owner(uint32_t pty_id, uint32_t owner_pid)
 }
 
 /**
- * @brief Coordinates the pty is active operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return 1 if pty_id is an allocated session.
  */
 int pty_is_active(uint32_t pty_id)
 {
@@ -233,12 +197,7 @@ int pty_is_active(uint32_t pty_id)
 }
 
 /**
- * @brief Coordinates the pty read output operation.
- * @param owner_pid Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Drain up to length bytes of terminal output for the owner; returns bytes read, or -22 if not owned.
  */
 int64_t pty_read_output(uint32_t owner_pid, uint32_t pty_id, char *buffer, uint32_t length)
 {
@@ -255,12 +214,7 @@ int64_t pty_read_output(uint32_t owner_pid, uint32_t pty_id, char *buffer, uint3
 }
 
 /**
- * @brief Coordinates the pty write input operation.
- * @param owner_pid Input or output value used by this operation.
- * @param pty_id Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Process input bytes through termios (CR->NL, signals, line editing) and queue the results; returns bytes consumed.
  */
 int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer, uint32_t length)
 {
@@ -322,7 +276,9 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
         } else if (input == (char)session->termios.c_cc[LEONOS_PTY_CC_VKILL]) {
             session->canonical_length = 0;
         } else if (input == (char)session->termios.c_cc[LEONOS_PTY_CC_VEOF]) {
-            /* VEOF is a delimiter, not a byte delivered to the reader. */
+            /**
+ * @brief VEOF is a delimiter, not a byte delivered to the reader.
+ */
             pty_commit_canonical_input(session);
         } else {
             if (session->canonical_length + 1U < PTY_INPUT_CAP) {
@@ -340,11 +296,7 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
 }
 
 /**
- * @brief Coordinates the pty read input operation.
- * @param pty_id Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Drain up to length bytes from the input queue; returns bytes read, or -5 if the session is invalid.
  */
 int64_t pty_read_input(uint32_t pty_id, char *buffer, uint32_t length)
 {
@@ -361,9 +313,7 @@ int64_t pty_read_input(uint32_t pty_id, char *buffer, uint32_t length)
 }
 
 /**
- * @brief Coordinates the pty input available operation.
- * @param pty_id Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Return the number of unread input bytes.
  */
 uint32_t pty_input_available(uint32_t pty_id)
 {
@@ -378,11 +328,7 @@ uint32_t pty_input_available(uint32_t pty_id)
 }
 
 /**
- * @brief Coordinates the pty write output operation.
- * @param pty_id Input or output value used by this operation.
- * @param buffer Buffer consumed or filled by this operation.
- * @param length Length, size, or element count associated with the operation.
- * @return Result, status, or value defined by this API.
+ * @brief Queue up to length bytes of output for the reader; returns bytes written, or -5 if the session is invalid.
  */
 int64_t pty_write_output(uint32_t pty_id, const char *buffer, uint32_t length)
 {
@@ -399,10 +345,7 @@ int64_t pty_write_output(uint32_t pty_id, const char *buffer, uint32_t length)
 }
 
 /**
- * @brief Coordinates the pty get termios operation.
- * @param pty_id Input or output value used by this operation.
- * @param termios Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the session termios into *termios; returns 0, or -22 on a bad id or null pointer.
  */
 int pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios)
 {
@@ -415,10 +358,7 @@ int pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios)
 }
 
 /**
- * @brief Coordinates the pty set termios operation.
- * @param pty_id Input or output value used by this operation.
- * @param termios Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Replace the session termios, first flushing any pending canonical line when leaving ICANON; returns 0 or -22.
  */
 int pty_set_termios(uint32_t pty_id, const struct leonos_pty_termios *termios)
 {
@@ -426,8 +366,9 @@ int pty_set_termios(uint32_t pty_id, const struct leonos_pty_termios *termios)
     if (!session || !termios) {
         return -22;
     }
-    /* A program switching to raw mode must be able to read a line that was
-     * already typed in cooked mode instead of leaving it stranded forever. */
+    /**
+ * @brief A program switching to raw mode must be able to read a line that was already typed in cooked mode instead of leaving it stranded forever.
+ */
     if (pty_canonical_mode(session) &&
         (termios->c_lflag & LEONOS_PTY_LFLAG_ICANON) == 0) {
         pty_commit_canonical_input(session);
@@ -437,10 +378,7 @@ int pty_set_termios(uint32_t pty_id, const struct leonos_pty_termios *termios)
 }
 
 /**
- * @brief Coordinates the pty get winsize operation.
- * @param pty_id Input or output value used by this operation.
- * @param winsize Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Copy the session window size into *winsize; returns 0, or -22 on a bad id or null pointer.
  */
 int pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize)
 {
@@ -453,10 +391,7 @@ int pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize)
 }
 
 /**
- * @brief Coordinates the pty set winsize operation.
- * @param pty_id Input or output value used by this operation.
- * @param winsize Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * @brief Update the session window size, rejecting zero dimensions; returns 0 or -22.
  */
 int pty_set_winsize(uint32_t pty_id, const struct leonos_pty_winsize *winsize)
 {
@@ -509,8 +444,7 @@ int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
 }
 
 /**
- * @brief Coordinates the pty process exit operation.
- * @param pid Input or output value used by this operation.
+ * @brief Free any PTY session owned by the exiting pid.
  */
 void pty_process_exit(uint32_t pid)
 {

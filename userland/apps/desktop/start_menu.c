@@ -1097,6 +1097,122 @@ int start_menu_hit_test(uint32_t x, uint32_t y)
     return hit_rect(x, y, (int)panel.x, (int)visible_y, panel.w, visible_h);
 }
 
+uint32_t start_menu_cursor_style(uint32_t x, uint32_t y)
+{
+    struct start_panel_layout panel;
+    struct start_panel_content content;
+    uint8_t view;
+    uint32_t visible_h;
+    uint32_t visible_y;
+    uint32_t content_x;
+    uint32_t content_w;
+
+    if (!start_menu_open || start_menu_animating) {
+        return LEONOS_GUI_CURSOR_ARROW;
+    }
+    panel = start_menu_panel_layout();
+    visible_h = panel.h;
+    visible_y = panel.y;
+    if (!hit_rect(x, y, (int)panel.x, (int)visible_y, panel.w, visible_h) ||
+        panel.h < START_PANEL_HEADER_H + START_PANEL_TAB_H + START_MENU_SEARCH_H +
+                    START_PANEL_FOOTER_H) {
+        return LEONOS_GUI_CURSOR_ARROW;
+    }
+    content = start_menu_content_layout(&panel);
+    content_x = panel.x + START_PANEL_MARGIN;
+    content_w = panel.w > START_PANEL_MARGIN * 2U
+                    ? panel.w - START_PANEL_MARGIN * 2U : 0U;
+
+    if (hit_rect(x, y, (int)content_x, (int)content.tabs_y, content_w,
+                 START_PANEL_TAB_H)) {
+        return LEONOS_GUI_CURSOR_HAND;
+    }
+    if (hit_rect(x, y, (int)content_x, (int)content.search_y, content_w,
+                 START_MENU_SEARCH_H)) {
+        return LEONOS_GUI_CURSOR_TEXT;
+    }
+
+    if (hit_rect(x, y, (int)content_x, (int)content.footer_y, content_w,
+                 START_PANEL_FOOTER_H)) {
+        uint32_t power_w = 92U;
+        uint32_t session_w = content_w > power_w + START_PANEL_GAP
+                                 ? content_w - power_w - START_PANEL_GAP : 0U;
+        if (x < content_x + session_w) {
+            return desktop_session_logged_in() ? LEONOS_GUI_CURSOR_HAND
+                                               : LEONOS_GUI_CURSOR_NO;
+        }
+        if (x >= content_x + session_w + START_PANEL_GAP &&
+            x < content_x + session_w + START_PANEL_GAP + power_w) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+        return LEONOS_GUI_CURSOR_ARROW;
+    }
+
+    view = start_menu_effective_view();
+    if (view == START_MENU_VIEW_HOME) {
+        struct start_home_layout home = start_menu_home_layout(&content);
+        uint32_t tile_w = content_w > START_SHORTCUT_GAP * 2U
+                              ? (content_w - START_SHORTCUT_GAP * 2U) /
+                                    START_SHORTCUT_COLUMNS : 0U;
+        if (tile_w) {
+            for (uint32_t index = 0; index < 5U; ++index) {
+                uint32_t row = index / START_SHORTCUT_COLUMNS;
+                uint32_t col = index % START_SHORTCUT_COLUMNS;
+                if (row >= home.shortcut_rows) {
+                    break;
+                }
+                if (hit_rect(x, y,
+                             (int)content_x + (int)(col * (tile_w + START_SHORTCUT_GAP)),
+                             (int)home.shortcuts_y + (int)(row * (START_SHORTCUT_H + START_SHORTCUT_GAP)),
+                             tile_w, START_SHORTCUT_H)) {
+                    return LEONOS_GUI_CURSOR_HAND;
+                }
+            }
+        }
+        uint32_t browse_w = content_w > START_SHORTCUT_GAP
+                                ? (content_w - START_SHORTCUT_GAP) / 2U : 0U;
+        if (hit_rect(x, y, (int)content_x, (int)home.browse_y,
+                     browse_w, START_MENU_ITEM_H) ||
+            hit_rect(x, y, (int)content_x + (int)(browse_w + START_SHORTCUT_GAP),
+                     (int)home.browse_y, browse_w, START_MENU_ITEM_H)) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+        uint32_t minimized = start_menu_minimized_count();
+        uint32_t shown = minimized < home.window_rows ? minimized : home.window_rows;
+        if (shown && hit_rect(x, y, (int)content_x, (int)home.windows_y,
+                              content_w, shown * START_MENU_ITEM_H)) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+        return LEONOS_GUI_CURSOR_ARROW;
+    }
+    if (view == START_MENU_VIEW_POWER) {
+        uint32_t power_y = content.body_y + START_LIST_TITLE_H;
+        uint32_t rows = start_menu_kernel_debug_enabled() ? 4U : 3U;
+        if (hit_rect(x, y, (int)content_x, (int)power_y, content_w,
+                     rows * START_MENU_ITEM_H + (rows - 1U) * START_PANEL_GAP)) {
+            uint32_t row = (y - power_y) / (START_MENU_ITEM_H + START_PANEL_GAP);
+            uint32_t row_y = power_y + row * (START_MENU_ITEM_H + START_PANEL_GAP);
+            if (row < rows && hit_rect(x, y, (int)content_x, (int)row_y,
+                                       content_w, START_MENU_ITEM_H)) {
+                return LEONOS_GUI_CURSOR_HAND;
+            }
+        }
+        return LEONOS_GUI_CURSOR_ARROW;
+    }
+
+    {
+        struct start_list_layout list = start_menu_list_layout(&content);
+        uint32_t count = start_menu_result_count(view);
+        uint32_t available = count > start_menu_scroll ? count - start_menu_scroll : 0U;
+        uint32_t shown = available < list.rows ? available : list.rows;
+        if (shown && hit_rect(x, y, (int)content_x, (int)list.y,
+                              content_w, shown * START_MENU_ITEM_H)) {
+            return LEONOS_GUI_CURSOR_HAND;
+        }
+    }
+    return LEONOS_GUI_CURSOR_ARROW;
+}
+
 static int start_menu_hit_tab(uint32_t x, uint32_t y, const struct start_panel_layout *panel,
                               const struct start_panel_content *content, uint8_t *view)
 {

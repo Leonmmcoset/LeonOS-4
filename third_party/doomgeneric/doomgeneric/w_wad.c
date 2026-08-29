@@ -182,7 +182,10 @@ wad_file_t *W_AddFile (char *filename)
     else 
     {
     	// WAD file
-        W_Read(wad_file, 0, &header, sizeof(header));
+        if (W_Read(wad_file, 0, &header, sizeof(header)) != sizeof(header))
+        {
+            I_Error ("Wad file %s header read failed\n", filename);
+        }
 
 		if (strncmp(header.identification,"IWAD",4))
 		{
@@ -198,10 +201,40 @@ wad_file_t *W_AddFile (char *filename)
 
 		header.numlumps = LONG(header.numlumps);
 		header.infotableofs = LONG(header.infotableofs);
+		/* Validate the directory before allocating or parsing it.  A short
+		 * filesystem read must not turn an uninitialised directory into a
+		 * renderer-level "Missing patch" diagnostic. */
+		if (header.numlumps <= 0 || header.infotableofs < (int)sizeof(header) ||
+		    header.infotableofs > wad_file->length ||
+		    (unsigned int)header.numlumps >
+		        ((unsigned int)wad_file->length - (unsigned int)header.infotableofs) /
+		            sizeof(filelump_t))
+		{
+		    I_Error ("Wad file %s has an invalid lump directory\n", filename);
+		}
 		length = header.numlumps*sizeof(filelump_t);
 		fileinfo = Z_Malloc(length, PU_STATIC, 0);
 
-        W_Read(wad_file, header.infotableofs, fileinfo, length);
+		{
+		    size_t directory_read = W_Read(wad_file, header.infotableofs,
+		                                   fileinfo, length);
+		    if (directory_read != (size_t)length)
+		    {
+		        I_Error ("Wad file %s directory read failed\n", filename);
+		    }
+		}
+
+		for (i = 0; i < (unsigned int)header.numlumps; ++i)
+		{
+		    unsigned int position = LONG(fileinfo[i].filepos);
+		    unsigned int lump_size = LONG(fileinfo[i].size);
+		    if (position > (unsigned int)wad_file->length ||
+		        lump_size > (unsigned int)wad_file->length - position)
+		    {
+		        I_Error ("Wad file %s has an out-of-range lump %u\n",
+		                 filename, i);
+		    }
+		}
         newnumlumps += header.numlumps;
     }
 

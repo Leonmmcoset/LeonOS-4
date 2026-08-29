@@ -6,6 +6,7 @@
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
 #include <ntclks/gui_ipc.h>
+#include <ntclks/lock.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/syscall.h>
@@ -28,6 +29,11 @@ struct __attribute__((packed)) idt_ptr {
 };
 
 static struct idt_entry idt[256];
+/* Lazy executable pages and user-copy faults share storage/page-cache
+ * scratch state. Serialize that transaction without disabling local timer
+ * interrupts, so another CPU can continue scheduling while one CPU reads a
+ * backing page. */
+static struct kernel_spinlock user_page_fault_lock = KERNEL_SPINLOCK_INIT;
 
 extern void x86_64_lidt(const struct idt_ptr *ptr);
 extern void isr0_stub(void);
@@ -65,15 +71,29 @@ extern void isr31_stub(void);
 extern void isr80_stub(void);
 extern void irq0_stub(void);
 extern void irq1_stub(void);
+extern void irq2_stub(void);
+extern void irq3_stub(void);
+extern void irq4_stub(void);
+extern void irq5_stub(void);
+extern void irq6_stub(void);
+extern void irq7_stub(void);
+extern void irq8_stub(void);
+extern void irq9_stub(void);
+extern void irq10_stub(void);
+extern void irq11_stub(void);
 extern void irq12_stub(void);
+extern void irq13_stub(void);
+extern void irq14_stub(void);
+extern void irq15_stub(void);
 extern void irq32_stub(void);
+extern void irqff_stub(void);
 extern uint64_t x86_64_read_cr2(void);
 
 /**
- * @brief Coordinates the idt set operation.
- * @param vector Input or output value used by this operation.
- * @param handler Input or output value used by this operation.
- * @param dpl Input or output value used by this operation.
+ * Idt set.
+ * @param vector Identifier or flags controlling the operation.
+ * @param handler Value supplied by the caller.
+ * @param dpl Identifier or flags controlling the operation.
  */
 static void idt_set(uint8_t vector, void *handler, uint8_t dpl)
 {
@@ -87,11 +107,31 @@ static void idt_set(uint8_t vector, void *handler, uint8_t dpl)
     idt[vector].zero = 0;
 }
 
+/* Select a TSS interrupt-stack-table slot after installing a gate.  The IDT
+ * stores IST as a three-bit value where zero means "use the current stack". */
+static void idt_set_ist(uint8_t vector, uint8_t ist)
+{
+    idt[vector].ist = ist & 7u;
+}
+
 /**
- * @brief Coordinates the idt init operation.
+ * Load the shared IDT descriptor on the current CPU.
+ */
+void idt_load(void)
+{
+    struct idt_ptr ptr = {
+        .limit = sizeof(idt) - 1,
+        .base = (uint64_t)(uintptr_t)idt,
+    };
+    x86_64_lidt(&ptr);
+}
+
+/**
+ * Idt init.
  */
 void idt_init(void)
 {
+    kernel_spin_init(&user_page_fault_lock);
     idt_set(0, isr0_stub, 0);
     idt_set(1, isr1_stub, 0);
     idt_set(2, isr2_stub, 0);
@@ -124,35 +164,66 @@ void idt_init(void)
     idt_set(29, isr29_stub, 0);
     idt_set(30, isr30_stub, 0);
     idt_set(31, isr31_stub, 0);
+    /* These faults are the ones most likely to arrive after the current
+     * kernel stack or return frame has already become unusable.  Keep their
+     * entry path independent so the normal bugcheck screen can still run. */
+    idt_set_ist(2, 2);
+    idt_set_ist(8, 1);
+    idt_set_ist(18, 3);
     idt_set(0x20, irq0_stub, 0);
     idt_set(0x21, irq1_stub, 0);
+    idt_set(0x22, irq2_stub, 0);
+    idt_set(0x23, irq3_stub, 0);
+    idt_set(0x24, irq4_stub, 0);
+    idt_set(0x25, irq5_stub, 0);
+    idt_set(0x26, irq6_stub, 0);
+    idt_set(0x27, irq7_stub, 0);
+    idt_set(0x28, irq8_stub, 0);
+    idt_set(0x29, irq9_stub, 0);
+    idt_set(0x2a, irq10_stub, 0);
+    idt_set(0x2b, irq11_stub, 0);
     idt_set(0x2c, irq12_stub, 0);
+    idt_set(0x2d, irq13_stub, 0);
+    idt_set(0x2e, irq14_stub, 0);
+    idt_set(0x2f, irq15_stub, 0);
     for (uint8_t vector = 0x30; vector < 0x50; ++vector) {
         idt_set(vector, irq32_stub, 0);
     }
+    /* Local APIC uses 0xff as the architectural spurious-interrupt vector.
+     * A valid gate is required even though the handler only acknowledges and
+     * discards the interrupt; otherwise the CPU raises #GP with an IDT error
+     * code of (0xff << 3) | 2. */
+    idt_set(0xff, irqff_stub, 0);
+    /* Syscalls may select a different address space before returning. Use an
+     * interrupt gate so a local timer cannot nest inside that decision and
+     * overwrite current_pid/running_cpu between frame selection and iretq.
+     * DPL=3 still permits Ring-3 int $0x80 entry. */
     idt_set(0x80, isr80_stub, 3);
-    struct idt_ptr ptr = {
-        .limit = sizeof(idt) - 1,
-        .base = (uint64_t)(uintptr_t)idt,
-    };
-    x86_64_lidt(&ptr);
+    idt_load();
 }
 
 /**
- * @brief Coordinates the exception dispatch operation.
- * @param vector Input or output value used by this operation.
- * @param error Input or output value used by this operation.
- * @param rip Input or output value used by this operation.
- * @param cs Input or output value used by this operation.
- * @param rflags Input or output value used by this operation.
- * @param rsp Input or output value used by this operation.
- * @param ss Input or output value used by this operation.
+ * Exception dispatch.
+ * @param vector Identifier or flags controlling the operation.
+ * @param error Value supplied by the caller.
+ * @param rip Value supplied by the caller.
+ * @param cs Value supplied by the caller.
+ * @param rflags Value supplied by the caller.
+ * @param rsp Value supplied by the caller.
+ * @param ss Value supplied by the caller.
  */
 void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t cs,
                         uint64_t rflags, uint64_t rsp, uint64_t ss)
 {
     uint64_t cr2 = x86_64_read_cr2();
     const char *mode = (cs & 3u) == 3u ? "user" : "kernel";
+    /* #DF/#MC/#NMI can be delivered after the interrupted stack or scheduler
+     * state is already corrupt.  Go straight to the emergency bugcheck path
+     * so diagnostic logging cannot turn a recoverable second fault into a
+     * triple fault and hardware reset. */
+    if (vector == 2 || vector == 8 || vector == 18) {
+        bugcheck_exception(vector, error, rip, cs, rflags, rsp, ss, cr2);
+    }
     console_printf("[ntclks] exception vector=%llu error=0x%llx rip=0x%llx cs=0x%llx rflags=0x%llx rsp=0x%llx ss=0x%llx\n",
                    (unsigned long long)vector,
                    (unsigned long long)error,
@@ -177,11 +248,11 @@ void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t 
 }
 
 /**
- * @brief Coordinates the pf append char operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param ch Input or output value used by this operation.
+ * Pf append char.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param ch Value supplied by the caller.
  */
 static void pf_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 {
@@ -194,11 +265,11 @@ static void pf_append_char(char *buf, uint32_t *pos, uint32_t cap, char ch)
 }
 
 /**
- * @brief Coordinates the pf append text operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param text Input or output value used by this operation.
+ * Pf append text.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param text NUL-terminated text supplied by the caller.
  */
 static void pf_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *text)
 {
@@ -211,11 +282,11 @@ static void pf_append_text(char *buf, uint32_t *pos, uint32_t cap, const char *t
 }
 
 /**
- * @brief Coordinates the pf append u64 dec operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * Pf append u64 dec.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param value Value supplied by the caller.
  */
 static void pf_append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -235,11 +306,11 @@ static void pf_append_u64_dec(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
 }
 
 /**
- * @brief Coordinates the pf append u64 hex operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param pos Input or output value used by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param value Input or output value used by this operation.
+ * Pf append u64 hex.
+ * @param buf Value supplied by the caller.
+ * @param pos Output storage updated by the function.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param value Value supplied by the caller.
  */
 static void pf_append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t value)
 {
@@ -256,12 +327,12 @@ static void pf_append_u64_hex(char *buf, uint32_t *pos, uint32_t cap, uint64_t v
 }
 
 /**
- * @brief Coordinates the format user page fault report operation.
- * @param buf Buffer consumed or filled by this operation.
- * @param cap Capacity, in elements or bytes, of the related output buffer.
- * @param task Task whose state or authority is inspected or updated.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param cr2 Input or output value used by this operation.
+ * Format user page fault report.
+ * @param buf Value supplied by the caller.
+ * @param cap Maximum number of elements available in the related buffer.
+ * @param task Value supplied by the caller.
+ * @param frame Value supplied by the caller.
+ * @param cr2 Value supplied by the caller.
  */
 static void format_user_page_fault_report(char *buf, uint32_t cap,
                                           const struct task *task,
@@ -336,10 +407,10 @@ static void format_user_page_fault_report(char *buf, uint32_t cap,
 }
 
 /**
- * @brief Coordinates the abort user page fault task operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @param cr2 Input or output value used by this operation.
- * @return Result, status, or value defined by this API.
+ * Abort user page fault task.
+ * @param frame Value supplied by the caller.
+ * @param cr2 Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_t cr2)
 {
@@ -376,29 +447,42 @@ static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_
 }
 
 /**
- * @brief Coordinates the page fault dispatch operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Page fault dispatch.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct task *page_fault_dispatch(struct trap_frame *frame)
 {
     uint64_t cr2 = x86_64_read_cr2();
+    uint64_t execution_flags;
+
+    /* A lazy page-in touches the same VFS and device state as a filesystem
+     * syscall.  Share the transaction boundary with syscalls so page faults
+     * cannot reprogram AHCI or mutate filesystem caches midway through an
+     * ordinary operation.  The execution lock is reentrant for a fault that
+     * occurs while the same CPU copies user memory inside a syscall. */
+    kernel_execution_lock_irqsave(&execution_flags);
+    kernel_spin_lock(&user_page_fault_lock);
+
     if (frame && syscall_handle_user_page_fault(cr2, frame->error)) {
-        /* Kernel helpers may write a current user's COW buffer while serving
-         * a syscall.  Its page is now private, so resume the interrupted
-         * kernel instruction instead of trying to iret through a kernel-mode
-         * trap frame. */
+        /**
+ * @brief Kernel helpers may write a current user's COW buffer while serving a syscall. Its page is now private, so resume the interrupted kernel instruction instead of trying to iret through a kernel-mode trap frame.
+ */
         if ((frame->cs & 3ULL) != 3ULL) {
+            kernel_spin_unlock(&user_page_fault_lock);
+            kernel_execution_unlock_irqrestore(execution_flags);
             return NULL;
         }
-        /*
-         * A lazy file-backed page may require a synchronous FAT read.  Switch
-         * away after each resolved fault so a newly-starting app cannot hold
-         * the desktop in a long run of consecutive page-ins.
-         */
+        /**
+ * @brief A lazy file-backed page may require a synchronous FAT read. Switch away after each resolved fault so a newly-starting app cannot hold the desktop in a long run of consecutive page-ins.
+ */
+        kernel_spin_unlock(&user_page_fault_lock);
+        kernel_execution_unlock_irqrestore(execution_flags);
         return userland_schedule_from_frame(frame);
     }
     if (!frame) {
+        kernel_spin_unlock(&user_page_fault_lock);
+        kernel_execution_unlock_irqrestore(execution_flags);
         bugcheck_exception(14, 0, 0, 0, 0, 0, 0, cr2);
     }
     console_printf("[ntclks] page fault unhandled cr2=0x%llx error=0x%llx rip=0x%llx cs=0x%llx\n",
@@ -413,18 +497,30 @@ struct task *page_fault_dispatch(struct trap_frame *frame)
                    (unsigned)((frame->error >> 3) & 1u),
                    (unsigned)((frame->error >> 4) & 1u));
     if ((frame->cs & 3ULL) == 3ULL) {
+        kernel_spin_unlock(&user_page_fault_lock);
+        kernel_execution_unlock_irqrestore(execution_flags);
         return abort_user_page_fault_task(frame, cr2);
     }
+    kernel_spin_unlock(&user_page_fault_lock);
+    kernel_execution_unlock_irqrestore(execution_flags);
     bugcheck_trap("Unhandled Page Fault", frame, cr2);
 }
 
 /**
- * @brief Coordinates the int80 dispatch operation.
- * @param frame Trap or syscall frame supplied by the architecture layer.
- * @return Result, status, or value defined by this API.
+ * Int80 dispatch.
+ * @param frame Value supplied by the caller.
+ * @return The value or status produced by the operation.
  */
 struct task *int80_dispatch(struct trap_frame *frame)
 {
     syscall_dispatch_frame(frame);
     return userland_schedule_from_frame(frame);
+}
+
+/* Called only when the assembly syscall return path could not obtain a
+ * validated user frame.  Returning through the stale frame would turn a
+ * scheduler consistency bug into an unreportable triple fault. */
+__attribute__((noreturn)) void arch_schedule_failure(struct trap_frame *frame)
+{
+    bugcheck_trap("Scheduler Return Failure", frame, x86_64_read_cr2());
 }

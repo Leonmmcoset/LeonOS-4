@@ -479,13 +479,20 @@ int wgetch(WINDOW *window)
         pending_input = ERR;
         return input;
     }
+
+    /* libc's read() deliberately waits for PTY input so ordinary terminal
+     * reads have blocking semantics.  Curses nodelay mode is different: nano
+     * uses it to probe for bytes already queued after the first key.  Bypass
+     * that blocking wrapper and perform exactly one kernel read here. */
+    if (window->nodelay_enabled) {
+        result = syscall3(SYS_read, STDIN_FILENO, (long)&value, 1);
+        return result == 1 ? value : ERR;
+    }
+
     do {
         result = read(STDIN_FILENO, &value, 1);
         if (result == 1) {
             return value;
-        }
-        if (window->nodelay_enabled) {
-            return ERR;
         }
         /* LeonOS PTYs report an empty input queue as a zero-byte read rather
          * than blocking in the kernel.  Nano expects blocking curses reads;

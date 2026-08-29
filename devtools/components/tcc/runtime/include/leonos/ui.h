@@ -70,12 +70,38 @@
 #define LEONOS_UI_FILE_DIALOG_INPUT_CHECKBOX 1u
 #define LEONOS_UI_FILE_DIALOG_INPUT_DROPDOWN 2u
 #define LEONOS_UI_FILE_DIALOG_MAX_INPUTS 4u
+#define LEONOS_UI_CURSOR_REGION_MAX 64u
+#define LEONOS_UI_CURSOR_MAGIC 0x4c554943UL
+
+struct leonos_ui_cursor_region_cache {
+    uint32_t id;
+    int32_t x;
+    int32_t y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t style;
+    uint32_t flags;
+    uint8_t seen;
+    uint8_t synced;
+};
 
 struct leonos_ui_surface {
     uint32_t *pixels;
     uint32_t width;
     uint32_t height;
     uint32_t stride;
+    uint32_t cursor_magic;
+    uint32_t cursor_window_id;
+    uint32_t cursor_region_count;
+    uint32_t cursor_next_region_id;
+    uint8_t cursor_tracking;
+    uint8_t cursor_implicit;
+    uint8_t clip_enabled;
+    int32_t clip_x;
+    int32_t clip_y;
+    uint32_t clip_width;
+    uint32_t clip_height;
+    struct leonos_ui_cursor_region_cache cursor_regions[LEONOS_UI_CURSOR_REGION_MAX];
 };
 
 struct leonos_ui_rect {
@@ -278,6 +304,16 @@ struct leonos_ui_toast_state {
 
 void leonos_ui_bind(struct leonos_ui_surface *surface, uint32_t *pixels,
                     uint32_t width, uint32_t height, uint32_t stride);
+void leonos_ui_set_clip(struct leonos_ui_surface *surface, int32_t x, int32_t y,
+                        uint32_t width, uint32_t height);
+void leonos_ui_clear_clip(struct leonos_ui_surface *surface);
+void leonos_ui_cursor_begin(struct leonos_ui_surface *surface, uint32_t window_id);
+void leonos_ui_cursor_end(struct leonos_ui_surface *surface);
+int leonos_ui_cursor_region(struct leonos_ui_surface *surface,
+                            int32_t x, int32_t y, uint32_t width, uint32_t height,
+                            uint32_t style, uint32_t flags);
+void leonos_ui_cursor_clear(struct leonos_ui_surface *surface);
+void leonos_ui_present_for_pixels(const uint32_t *pixels, uint32_t window_id);
 int leonos_ui_set_font_path(const char *path);
 int leonos_ui_set_font_fallback_path(const char *path);
 uint32_t leonos_ui_text_width(const char *text);
@@ -604,4 +640,3 @@ void leonos_ui_toast_draw(struct leonos_ui_surface *surface,
                           unsigned long now);
 
 #endif
-

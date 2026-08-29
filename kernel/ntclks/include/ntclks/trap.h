@@ -34,4 +34,12 @@ struct trap_frame {
     uint64_t ss;
 };
 
+/* boot.S pushes the general registers in reverse declaration order, followed
+ * by vector/error and the CPU's iret frame. Keep both layouts coupled. */
+_Static_assert(offsetof(struct trap_frame, vector) == 120, "trap vector offset");
+_Static_assert(offsetof(struct trap_frame, error) == 128, "trap error offset");
+_Static_assert(offsetof(struct trap_frame, rip) == 136, "trap RIP offset");
+_Static_assert(offsetof(struct trap_frame, cs) == 144, "trap CS offset");
+_Static_assert(sizeof(struct trap_frame) == 176, "trap frame size");
+
 #endif

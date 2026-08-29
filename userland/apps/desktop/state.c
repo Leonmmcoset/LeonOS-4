@@ -79,9 +79,16 @@ uint32_t cursor_y;
 uint32_t cursor_width = FALLBACK_CURSOR_W;
 uint32_t cursor_height = FALLBACK_CURSOR_H;
 uint32_t cursor_pixels[CURSOR_MAX_W * CURSOR_MAX_H];
+uint8_t cursor_hotspot_x[CURSOR_STYLE_COUNT] = {
+    0, 6, 16, 8, 16, 11, 8, 0, 0, 5, 12, 8, 8, 5, 0,
+};
+uint8_t cursor_hotspot_y[CURSOR_STYLE_COUNT] = {
+    0, 0, 16, 8, 16, 11, 8, 0, 4, 11, 5, 8, 8, 0, 4,
+};
 uint8_t cursor_visible;
 uint8_t cursor_bitmap_loaded;
 uint32_t desktop_cursor_style = LEONOS_GUI_CURSOR_ARROW;
+uint8_t desktop_cursor_auto = 1;
 uint8_t desktop_taskbar_visible = 1;
 uint32_t wallpaper_pixels[WALLPAPER_MAX_W * WALLPAPER_MAX_H];
 uint32_t wallpaper_width;
@@ -98,6 +105,9 @@ uint8_t desktop_service_rtc_clock = 1;
 uint8_t desktop_service_daemon_started;
 unsigned long desktop_service_daemon_last_spawn_ms;
 uint8_t full_redraw_pending;
+uint8_t desktop_damage_pending;
+uint8_t desktop_damage_cursor_only;
+struct rect desktop_damage_rect;
 uint8_t power_confirm_action;
 uint8_t oobe_lock_active;
 unsigned long oobe_last_spawn_ms;

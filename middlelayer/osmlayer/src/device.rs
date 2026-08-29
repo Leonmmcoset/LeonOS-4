@@ -35,10 +35,7 @@ pub struct LeonosDeviceCatalogQuery {
     count: u32,
     reserved: u32,
 }
-/**
- * @brief Coordinates the catalog selftest operation.
- * @return Result, status, or value defined by this API.
- */
+/// Stub self-check: always reports the device catalog as healthy.
 pub fn catalog_selftest() -> bool {
     true
 }

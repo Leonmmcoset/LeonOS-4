@@ -173,6 +173,116 @@
             }
         },
         {
+            "label": "LeonOS: Generate compile database (all regions)",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": [
+                "--cd",
+                "${config:leonos.wslProjectRoot}",
+                "--",
+                "bash",
+                "-lc",
+                "python3 tools/vscode/generate_compile_commands.py --region all"
+            ],
+            "group": "build",
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: Generate compile database (kernel)",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/generate_compile_commands.py --region kernel"],
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: Generate compile database (libc)",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/generate_compile_commands.py --region libc"],
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: Generate compile database (userland)",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/generate_compile_commands.py --region userland"],
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: Generate compile database (loader)",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/generate_compile_commands.py --region loader"],
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: Generate compile database (devtools SDK)",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/generate_compile_commands.py --region devtools"],
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: clang-tidy kernel",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/run_clang_tidy.py --region kernel"],
+            "dependsOn": "LeonOS: Generate compile database (kernel)",
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: clang-tidy libc",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/run_clang_tidy.py --region libc"],
+            "dependsOn": "LeonOS: Generate compile database (libc)",
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: clang-tidy userland",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/run_clang_tidy.py --region userland"],
+            "dependsOn": "LeonOS: Generate compile database (userland)",
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: clang-tidy loader",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/run_clang_tidy.py --region loader"],
+            "dependsOn": "LeonOS: Generate compile database (loader)",
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: clang-tidy devtools SDK",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/run_clang_tidy.py --region devtools"],
+            "dependsOn": "LeonOS: Generate compile database (devtools SDK)",
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "shared", "clear": false}
+        },
+        {
+            "label": "LeonOS: clang-tidy all first-party code",
+            "type": "process",
+            "command": "wsl.exe",
+            "args": ["--cd", "${config:leonos.wslProjectRoot}", "--", "bash", "-lc", "python3 tools/vscode/run_clang_tidy.py --region all"],
+            "dependsOn": "LeonOS: Generate compile database (all regions)",
+            "problemMatcher": [],
+            "presentation": {"reveal": "always", "panel": "dedicated", "clear": false}
+        },
+        {
             "label": "LeonOS: Clean build outputs",
             "type": "process",
             "command": "wsl.exe",
