@@ -103,6 +103,7 @@ void desktop_run(void)
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
     unsigned long last_services_refresh = leonos_uptime_ms();
     unsigned long last_inputm_refresh = 0;
+    unsigned long last_desktop_items_poll = 0;
     unsigned idle_sleep_ms = 10;
     int last_mouse_visible = 1;
     for (;;) {
@@ -238,6 +239,18 @@ void desktop_run(void)
                 full_redraw_pending = 1;
             }
             did_work = 1;
+        }
+        if (desktop_items_ready && desktop_folder_path[0] &&
+            now - last_desktop_items_poll >= 1000UL) {
+            int changed;
+            last_desktop_items_poll = now;
+            changed = desktop_items_directory_changed();
+            if (changed > 0) {
+                if (desktop_refresh_items() == 0) {
+                    full_redraw_pending = 1;
+                    did_work = 1;
+                }
+            }
         }
         if (desktop_taskbar_visible && now / 1000UL != last_clock_second) {
             last_clock_second = now / 1000UL;

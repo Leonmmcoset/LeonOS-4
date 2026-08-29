@@ -485,6 +485,7 @@ int start_menu_handle_wheel(uint32_t x, uint32_t y, int32_t wheel);
 void draw_start_menu(void);
 void desktop_items_clear(void);
 int desktop_refresh_items(void);
+int desktop_items_directory_changed(void);
 void draw_desktop_items(struct rect dirty);
 void draw_desktop_context_menu(void);
 void draw_desktop_message(void);

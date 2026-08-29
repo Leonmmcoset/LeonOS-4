@@ -775,6 +775,58 @@ int desktop_refresh_items(void)
     return 0;
 }
 
+/* Check only the visible directory entries.  This keeps the normal desktop
+ * loop cheap while still noticing files created, removed, or replaced by
+ * another application.  A failed probe is deliberately reported as an
+ * error so a transient storage failure does not clear the current model. */
+int desktop_items_directory_changed(void)
+{
+    struct leonos_dir_entry entry;
+    int fd;
+    int ret;
+    uint32_t count = 0;
+
+    if (!desktop_items_ready || !desktop_folder_path[0]) {
+        return 0;
+    }
+    fd = open(desktop_folder_path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) {
+        return fd;
+    }
+    for (;;) {
+        uint8_t matched = 0;
+        ret = leonos_readdir(fd, &entry);
+        if (ret < 0) {
+            close(fd);
+            return ret;
+        }
+        if (ret == 0) {
+            break;
+        }
+        if (entry.name[0] == '.') {
+            continue;
+        }
+        if (count >= DESKTOP_ITEM_MAX) {
+            close(fd);
+            return 1;
+        }
+        for (uint32_t i = 0; i < desktop_item_count; ++i) {
+            if (desktop_items[i].entry.type == entry.type &&
+                text_eq(desktop_items[i].entry.name, entry.name)) {
+                matched = 1;
+                break;
+            }
+        }
+        if (!matched) {
+            close(fd);
+            return 1;
+        }
+        ++count;
+    }
+    close(fd);
+    return count == desktop_item_count ? 0 : 1;
+}
+
 void draw_desktop_items(struct rect dirty)
 {
     uint32_t visible = desktop_visible_item_count();

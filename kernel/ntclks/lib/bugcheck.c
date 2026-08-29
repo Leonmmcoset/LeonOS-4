@@ -354,7 +354,7 @@ static void draw_bugcheck_fb(const struct bugcheck_info *info)
     }
 
     framebuffer_text(x + 18, y + panel_h - 32,
-                     "Restart the virtual machine after collecting the information above.",
+                     "Restart the machine after collecting the information above.",
                      BUGCHECK_SUB, BUGCHECK_PANEL);
 }
 
