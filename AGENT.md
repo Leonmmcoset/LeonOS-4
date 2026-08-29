@@ -242,6 +242,7 @@ python3 build.py -v run image-vmdk
 
 ```sh
 python3 build.py run menuconfig
+python3 build.py run defconfig
 python3 build.py config list
 python3 build.py config save <name>
 python3 build.py config load <name>

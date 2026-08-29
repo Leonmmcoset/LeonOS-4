@@ -132,6 +132,7 @@ BUILD_PRESET_VALUES = {
 BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "clean",
     "config-sync",
+    "defconfig",
     "menuconfig",
     "test-license-server",
     "test-los2w",
@@ -2904,7 +2905,33 @@ def build_roots(graph: BuildGraph, target: Target) -> tuple[Target, ...]:
 
 
 def display_help() -> str:
-    return """LeonOS BuildSystem\n\nCommands:\n  build.py help\n  build.py tui\n  build.py [-v|--verbose] run <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py profile <task> [--profile NAME] [--set CONFIG_KEY=VALUE]\n  build.py config <list|save|load|reset|import|export> [name] [path]\n  build.py info <file-or-task>\n  build.py why <file-or-task>\n  build.py affected <file>\n  build.py cache <stats|prune>\n  build.py settings\n  build.py map\n  build.py gen <file>\n  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|all>\n  build.py client <run|gen|test|profile> ...\n  build.py status <task-id>\n  build.py log <task-id>\n\nOptions:\n  -v, --verbose  Print target graph, cache decisions, commands, process diagnostics, and actions.\n  --profile       Build from configs/profiles/<name>.conf without modifying the active config.\n\nTasks:\n  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, release, run, run-debug, run-iso, menuconfig, clean\n"""
+    return """LeonOS BuildSystem
+
+Commands:
+  build.py help
+  build.py tui
+  build.py [-v|--verbose] run <task> [--profile NAME] [--set CONFIG_KEY=VALUE]
+  build.py profile <task> [--profile NAME] [--set CONFIG_KEY=VALUE]
+  build.py config <list|save|load|reset|import|export> [name] [path]
+  build.py info <file-or-task>
+  build.py why <file-or-task>
+  build.py affected <file>
+  build.py cache <stats|prune>
+  build.py settings
+  build.py map
+  build.py gen <file>
+  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|all>
+  build.py client <run|gen|test|profile> ...
+  build.py status <task-id>
+  build.py log <task-id>
+
+Options:
+  -v, --verbose  Print target graph, cache decisions, commands, process diagnostics, and actions.
+  --profile       Build from configs/profiles/<name>.conf without modifying the active config.
+
+Tasks:
+  all, config-sync, build-info, loader, kernel, drivers, middlelayer, userland, sdk, esp, image-vmdk, image-iso, installer, release, run, run-debug, run-iso, menuconfig, defconfig, clean
+"""
 
 
 PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -3012,6 +3039,13 @@ def normalize_config_copy(paths: BuildPaths, source: Path, stem: str) -> Path:
     return temporary
 
 
+def apply_defconfig(paths: BuildPaths) -> None:
+    """Install the checked-in default template as the developer config."""
+    paths.kconfig.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "configs/default.conf", paths.kconfig)
+    sync_config_file(paths, paths.kconfig)
+
+
 def handle_config_command(paths: BuildPaths, arguments: argparse.Namespace) -> int:
     action = arguments.action
     if action == "list":
@@ -3020,9 +3054,7 @@ def handle_config_command(paths: BuildPaths, arguments: argparse.Namespace) -> i
             print(profile.stem)
         return 0
     if action == "reset":
-        paths.kconfig.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / "configs/default.conf", paths.kconfig)
-        sync_config_file(paths, paths.kconfig)
+        apply_defconfig(paths)
         print("active configuration reset to defaults")
         return 0
     if not arguments.name:
@@ -3489,6 +3521,14 @@ def main(argv: list[str] | None = None) -> int:
             result = run_tui(paths, lambda: build_graph(paths))
             complete_simple(store, task_id, "tui", "tui closed", success=result == 0)
             return result
+        if arguments.command == "run" and arguments.task == "defconfig":
+            if arguments.config_profile or arguments.config_overrides:
+                raise BuildFailure("run defconfig does not accept --profile or --set")
+            apply_defconfig(paths)
+            text = "developer configuration updated from configs/default.conf"
+            print(text)
+            complete_simple(store, task_id, "run defconfig", text)
+            return 0
         config_path = resolve_build_config(
             paths,
             task_id,

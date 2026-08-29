@@ -16,6 +16,8 @@ LeonOS 使用根目录的 `build.py` 作为唯一构建入口，运行环境为 
 - `run installer`：生成安装器 ISO；`run clean` 清理可再生产物。
 - `run release`：生成 VMDK、普通 ISO、安装器 ISO 和开发 SDK；按 menuconfig
   中的发布开关写入 `build/release/SHA256SUMS.txt` 及第三方声明副本。
+- `run defconfig`：将 `configs/default.conf` 模板写入开发者配置
+  `buildsystem/config/leonos.conf`，并同步生成配置头文件；不执行编译。
 
 ## 动态配置与 Profile
 
@@ -40,6 +42,7 @@ API 包的是 `helloworld`、`doom` 和 `oschinpt`；DOOM 的 `doomlauncher` 是
 - `python3 build.py config list`：列出 `configs/profiles/*.conf`。
 - `python3 build.py config save <name>` / `load <name>`：保存或加载可提交的 profile。
 - `python3 build.py config reset`：恢复 `configs/default.conf`。
+- `python3 build.py run defconfig`：将默认模板应用到开发者配置并同步生成物。
 - `python3 build.py config import <name> <file>` / `export <name> <file>`：导入或导出 profile。
 - 构建目标可追加 `--profile <name>`；`--set CONFIG_KEY=VALUE` 仅对本次构建生效，
   不修改 active 配置或 profile。
