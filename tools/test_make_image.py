@@ -122,7 +122,7 @@ class ExfatPopulationTests(unittest.TestCase):
 
             with image_path.open("wb") as image:
                 image.truncate(32 * 1024 * 1024)
-            subprocess.run(["mkfs.exfat", "-q", "-s", "512", "-L", "LEONOS4ROOT", str(image_path)],
+            subprocess.run(["mkfs.exfat", "-q", "-L", "LEONOS4ROOT", str(image_path)],
                            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             volume = ExfatVolume(image_path)
             try:
