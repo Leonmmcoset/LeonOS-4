@@ -227,8 +227,11 @@ def main() -> int:
                 run(["truncate", "-s", str(root_bytes), str(root_temp)])
                 if args.root_fs == "exfat":
                     # exFAT volume labels are limited to 11 UTF-16 units;
-                    # the exact LEONOS4_ROOT identity is retained in GPT.
-                    run(["mkfs.exfat", "-q", "-s", "512", "-L", "LEONOS4ROOT", str(root_temp)])
+                    # the exact LEONOS4_ROOT identity is retained in GPT.  Do
+                    # not pass -s here: older exfatprogs releases used by
+                    # GitHub-hosted runners do not recognize that option, and
+                    # 512-byte sectors are their default.
+                    run(["mkfs.exfat", "-q", "-L", "LEONOS4ROOT", str(root_temp)])
                     run(["python3", "tools/populate_exfat.py", "--image", str(root_temp),
                          "--tree", str(root_tree)])
                 else:
