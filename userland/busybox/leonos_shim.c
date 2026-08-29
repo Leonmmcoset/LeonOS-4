@@ -4,6 +4,7 @@
 #include <glob.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
+#include <sys/reboot.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -18,6 +19,19 @@
 extern int sleep_ms(unsigned long milliseconds);
 extern unsigned long leonos_uptime_ms(void);
 extern char **environ;
+
+int reboot(unsigned int command)
+{
+    if (command == RB_AUTOBOOT) {
+        return leonos_system_reboot();
+    }
+    return leonos_system_shutdown();
+}
+
+void sync(void)
+{
+    /* LeonOS filesystem writes are committed synchronously. */
+}
 
 /* BusyBox's env applet normally gets this helper from libbb/executable.o.
  * That object is intentionally omitted from the LeonOS minimal libbb set;
