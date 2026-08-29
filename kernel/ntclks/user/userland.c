@@ -29,6 +29,7 @@ struct exec_launch {
 
 static uint32_t init_pid;
 static uint32_t desktop_pid;
+static uint32_t tty_pid;
 static bool autospawn_hello;
 static bool autospawn_uidemo;
 static bool autospawn_terminal;
@@ -347,7 +348,13 @@ static int prepare_user_exec_stack(struct task *task)
     }
 
     for (uint32_t i = 0; i < task->exec_argc; ++i) {
-        uint64_t offset = (uint64_t)(uintptr_t)task->exec_argv[i] - (uint64_t)(uintptr_t)task->exec_data;
+        uintptr_t ptr = (uintptr_t)task->exec_argv[i];
+        uintptr_t data_begin = (uintptr_t)task->exec_data;
+        uintptr_t data_end = data_begin + task->exec_data_len;
+        if (!task->exec_argv[i] || ptr < data_begin || ptr >= data_end) {
+            return -22;
+        }
+        uint64_t offset = (uint64_t)(ptr - data_begin);
         if (write_user_u64(&task->as, argv_base + (uint64_t)i * sizeof(uint64_t),
                            strings_base + offset) < 0) {
             return -12;
@@ -357,7 +364,13 @@ static int prepare_user_exec_stack(struct task *task)
         return -12;
     }
     for (uint32_t i = 0; i < task->exec_envc; ++i) {
-        uint64_t offset = (uint64_t)(uintptr_t)task->exec_envp[i] - (uint64_t)(uintptr_t)task->exec_data;
+        uintptr_t ptr = (uintptr_t)task->exec_envp[i];
+        uintptr_t data_begin = (uintptr_t)task->exec_data;
+        uintptr_t data_end = data_begin + task->exec_data_len;
+        if (!task->exec_envp[i] || ptr < data_begin || ptr >= data_end) {
+            return -22;
+        }
+        uint64_t offset = (uint64_t)(ptr - data_begin);
         if (write_user_u64(&task->as, envp_base + (uint64_t)i * sizeof(uint64_t),
                            strings_base + offset) < 0) {
             return -12;
@@ -634,11 +647,13 @@ static void userland_enter_task(struct task *task)
 }
 
 /**
- * @brief Parse autospawn cmdline flags, then spawn init.elf and desktop.elf (or the installer desktop) to seed userland.
+ * @brief Parse autospawn cmdline flags, then seed the installer desktop or the
+ * normal init plus the configured desktop/TTY interface.
  */
 void userland_init(const struct boot_info *boot)
 {
     int64_t pid;
+    int tty_mode;
 
     console_printf("[ntclks] userland storage load started modules=%u\n",
                    boot ? boot->module_count : 0);
@@ -680,12 +695,64 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
+#ifdef CONFIG_STARTUP_TTY
+    tty_mode = 1;
+#else
+    tty_mode = 0;
+#endif
+    if (boot && name_contains(boot->cmdline, "startup=tty")) {
+        tty_mode = 1;
+    } else if (boot && name_contains(boot->cmdline, "startup=desktop")) {
+        tty_mode = 0;
+    }
+
     pid = spawn_path_internal("/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load init.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
     }
     init_pid = (uint32_t)pid;
+
+    if (tty_mode) {
+        static const char *tty_argv[] = {
+            "busybox", "sh", "-c",
+            "/system/apps/oobe/oobe.elf; /system/apps/login/login.elf; exec /programs/busybox/busybox.elf sh", 0
+        };
+        static const char *tty_envp[] = {
+            "TERM=xterm-256color", "COLORTERM=truecolor", 0
+        };
+        struct exec_launch launch = {0};
+        int32_t pty_id;
+        if (build_exec_launch(&launch, "/programs/busybox/busybox.elf",
+                              tty_argv, tty_envp) < 0) {
+            console_printf("[ntclks] failed to prepare TTY shell arguments\n");
+            kernel_idle_loop();
+        }
+        pid = spawn_path_internal("/programs/busybox/busybox.elf", "busybox.elf tty",
+                                  &launch, init_pid, 0, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load busybox.elf for TTY ret=%lld\n",
+                           (long long)pid);
+            kernel_idle_loop();
+        }
+        tty_pid = (uint32_t)pid;
+        pty_id = pty_create(tty_pid);
+        if (pty_id <= 0 || pty_bind_console((uint32_t)pty_id, tty_pid) < 0) {
+            console_printf("[ntclks] failed to bind console PTY ret=%d\n", (int)pty_id);
+            sched_exit(tty_pid, 127);
+            tty_pid = 0;
+            kernel_idle_loop();
+        }
+        {
+            struct task *tty_task = sched_find(tty_pid);
+            if (tty_task) {
+                tty_task->pty_id = (uint32_t)pty_id;
+            }
+        }
+        console_printf("[ntclks] TTY startup selected; busybox shell pid=%u pty=%d\n",
+                       tty_pid, (int)pty_id);
+        return;
+    }
 
     pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
                               0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
@@ -703,7 +770,7 @@ void userland_init(const struct boot_info *boot)
 void userland_enter_first(void)
 {
     struct task *first;
-    if (!init_pid && !desktop_pid) {
+    if (!init_pid && !desktop_pid && !tty_pid) {
         console_printf("[ntclks] no Ring-3 userland loaded\n");
         kernel_idle_loop();
     }

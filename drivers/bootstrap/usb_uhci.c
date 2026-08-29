@@ -1,6 +1,7 @@
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/input.h>
+#include <ntclks/pty.h>
 #include <ntclks/pci.h>
 #include <ntclks/time.h>
 #include <ntclks/usb.h>
@@ -563,7 +564,9 @@ static void usb_hid_keyboard_report(struct usb_hid_device *device,
         uint8_t old_state = (uint8_t)((device->modifier >> bit) & 1u);
         uint8_t new_state = (uint8_t)((modifier >> bit) & 1u);
         if (old_state != new_state) {
-            input_push_key(usb_hid_modifier_keycode(bit), new_state);
+            uint8_t code = usb_hid_modifier_keycode(bit);
+            input_push_key(code, new_state);
+            pty_console_key_event(code, new_state);
         }
     }
     for (uint32_t i = 0; i < 6; ++i) {
@@ -571,6 +574,7 @@ static void usb_hid_keyboard_report(struct usb_hid_device *device,
             uint8_t code = usb_hid_usage_to_keycode(device->keys[i]);
             if (code) {
                 input_push_key(code, 0);
+                pty_console_key_event(code, 0);
             }
         }
     }
@@ -579,6 +583,7 @@ static void usb_hid_keyboard_report(struct usb_hid_device *device,
             uint8_t code = usb_hid_usage_to_keycode(keys[i]);
             if (code) {
                 input_push_key(code, 1);
+                pty_console_key_event(code, 1);
             }
         }
     }

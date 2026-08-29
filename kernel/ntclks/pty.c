@@ -3,7 +3,10 @@
  * Connects shells and terminal applications to their controlling sessions.
  */
 #include <ntclks/pty.h>
+#include <ntclks/console.h>
+#include <ntclks/framebuffer.h>
 #include <ntclks/sched.h>
+#include <leonos/psf_font.h>
 
 #define PTY_MAX 8u
 #define PTY_INPUT_CAP 1024u
@@ -11,7 +14,8 @@
 
 struct pty_session {
     uint8_t used;
-    uint8_t reserved[3];
+    uint8_t console;
+    uint8_t reserved[2];
     uint32_t owner_pid;
     uint32_t process_session;
     uint32_t foreground_pgid;
@@ -29,6 +33,9 @@ struct pty_session {
 };
 
 static struct pty_session sessions[PTY_MAX];
+static uint32_t console_pty_id;
+static uint8_t console_shift_down;
+static uint8_t console_ctrl_down;
 
 /**
  * @brief Return the PTY session for pty_id (1-based), or NULL if invalid/unused.
@@ -85,9 +92,6 @@ static void pty_commit_canonical_input(struct pty_session *session)
     if (!session || !session->canonical_length) {
         return;
     }
-/**
- * @brief /* Flush the completed canonical line into the input queue.
- */
     (void)ring_push(session->input, PTY_INPUT_CAP,
                     &session->input_head, &session->input_tail,
                     (const char *)session->canonical_input,
@@ -109,9 +113,119 @@ static int pty_canonical_mode(const struct pty_session *session)
  */
 void pty_init(void)
 {
+    console_pty_id = 0;
+    console_shift_down = 0;
+    console_ctrl_down = 0;
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
         for (uint32_t j = 0; j < sizeof(sessions[i]); ++j) {
             ((uint8_t *)&sessions[i])[j] = 0;
+        }
+    }
+}
+
+int pty_bind_console(uint32_t pty_id, uint32_t owner_pid)
+{
+    struct pty_session *session = find_session(pty_id);
+    struct task *owner = owner_pid ? sched_find(owner_pid) : 0;
+    if (!session || !owner) {
+        return -22;
+    }
+    session->owner_pid = owner_pid;
+    session->process_session = owner_pid;
+    session->foreground_pgid = owner_pid;
+    session->console = 1;
+    console_pty_id = pty_id;
+    owner->process_session = owner_pid;
+    owner->process_group = owner_pid;
+    return 0;
+}
+
+static int console_key_to_bytes(uint8_t keycode, char *buffer, uint32_t *length)
+{
+    char ch = 0;
+    if (!buffer || !length) {
+        return 0;
+    }
+    *length = 0;
+    switch (keycode) {
+    case 1: buffer[0] = '\033'; *length = 1; return 1;
+    case 72: buffer[0] = '\033'; buffer[1] = '['; buffer[2] = 'A'; *length = 3; return 1;
+    case 80: buffer[0] = '\033'; buffer[1] = '['; buffer[2] = 'B'; *length = 3; return 1;
+    case 75: buffer[0] = '\033'; buffer[1] = '['; buffer[2] = 'D'; *length = 3; return 1;
+    case 77: buffer[0] = '\033'; buffer[1] = '['; buffer[2] = 'C'; *length = 3; return 1;
+    case 71: buffer[0] = '\033'; buffer[1] = '['; buffer[2] = 'H'; *length = 3; return 1;
+    case 79: buffer[0] = '\033'; buffer[1] = '['; buffer[2] = 'F'; *length = 3; return 1;
+    case 28: ch = '\r'; break;
+    case 14: ch = '\177'; break;
+    case 15: ch = '\t'; break;
+    case 57: ch = ' '; break;
+    case 2: ch = '1'; break; case 3: ch = '2'; break; case 4: ch = '3'; break;
+    case 5: ch = '4'; break; case 6: ch = '5'; break; case 7: ch = '6'; break;
+    case 8: ch = '7'; break; case 9: ch = '8'; break; case 10: ch = '9'; break;
+    case 11: ch = '0'; break; case 12: ch = '-'; break; case 13: ch = '='; break;
+    case 16: ch = 'q'; break; case 17: ch = 'w'; break; case 18: ch = 'e'; break;
+    case 19: ch = 'r'; break; case 20: ch = 't'; break; case 21: ch = 'y'; break;
+    case 22: ch = 'u'; break; case 23: ch = 'i'; break; case 24: ch = 'o'; break;
+    case 25: ch = 'p'; break; case 26: ch = '['; break; case 27: ch = ']'; break;
+    case 30: ch = 'a'; break; case 31: ch = 's'; break; case 32: ch = 'd'; break;
+    case 33: ch = 'f'; break; case 34: ch = 'g'; break; case 35: ch = 'h'; break;
+    case 36: ch = 'j'; break; case 37: ch = 'k'; break; case 38: ch = 'l'; break;
+    case 39: ch = ';'; break; case 40: ch = '\''; break; case 41: ch = '`'; break;
+    case 43: ch = '\\'; break; case 44: ch = 'z'; break; case 45: ch = 'x'; break;
+    case 46: ch = 'c'; break; case 47: ch = 'v'; break; case 48: ch = 'b'; break;
+    case 49: ch = 'n'; break; case 50: ch = 'm'; break; case 51: ch = ','; break;
+    case 52: ch = '.'; break; case 53: ch = '/'; break;
+    default: return 0;
+    }
+    if (console_shift_down && ch >= 'a' && ch <= 'z') {
+        ch = (char)(ch - 'a' + 'A');
+    } else if (console_shift_down) {
+        switch (ch) {
+        case '1': ch = '!'; break; case '2': ch = '@'; break; case '3': ch = '#'; break;
+        case '4': ch = '$'; break; case '5': ch = '%'; break; case '6': ch = '^'; break;
+        case '7': ch = '&'; break; case '8': ch = '*'; break; case '9': ch = '('; break;
+        case '0': ch = ')'; break; case '-': ch = '_'; break; case '=': ch = '+'; break;
+        case '[': ch = '{'; break; case ']': ch = '}'; break; case ';': ch = ':'; break;
+        case '\'': ch = '"'; break; case '`': ch = '~'; break; case '\\': ch = '|'; break;
+        case ',': ch = '<'; break; case '.': ch = '>'; break; case '/': ch = '?'; break;
+        default: break;
+        }
+    }
+    if (console_ctrl_down && ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))) {
+        ch = (char)(((ch | 0x20) - 'a') + 1);
+    }
+    buffer[0] = ch;
+    *length = 1;
+    return 1;
+}
+
+void pty_console_key_event(uint8_t keycode, uint8_t pressed)
+{
+    struct pty_session *session = find_session(console_pty_id);
+    char bytes[8];
+    uint32_t length;
+    if (keycode == 42 || keycode == 54) {
+        console_shift_down = pressed ? 1 : 0;
+        return;
+    }
+    if (keycode == 29 || keycode == 116) {
+        console_ctrl_down = pressed ? 1 : 0;
+        return;
+    }
+    if (!pressed || !session || !console_key_to_bytes(keycode, bytes, &length)) {
+        return;
+    }
+    /* Feed through the same canonical/ISIG handling used by PTY hosts. */
+    (void)pty_write_input(session->owner_pid, console_pty_id, bytes, length);
+    if (session->termios.c_lflag & LEONOS_PTY_LFLAG_ECHO) {
+        if (keycode == 14) {
+            static const char erase[] = "\b \b";
+            console_write_tty_len(erase, sizeof(erase) - 1U);
+        } else if (keycode == 28) {
+            static const char newline[] = "\r\n";
+            console_write_tty_len(newline, sizeof(newline) - 1U);
+        } else if (length == 1 && (uint8_t)bytes[0] >= 32U) {
+            console_write_tty_len(bytes, 1);
         }
     }
 }
@@ -155,8 +269,15 @@ int32_t pty_create(uint32_t owner_pid)
             sessions[i].termios.c_cc[LEONOS_PTY_CC_VTIME] = 0;
             sessions[i].termios.c_ispeed = 115200U;
             sessions[i].termios.c_ospeed = 115200U;
-            sessions[i].winsize.ws_row = 24;
-            sessions[i].winsize.ws_col = 80;
+            {
+                const struct framebuffer *fb = framebuffer_get();
+                uint32_t cols = fb && fb->available ? fb->width / LEONOS_FONT_W : 80u;
+                uint32_t rows = fb && fb->available ? fb->height / LEONOS_FONT_H : 24u;
+                sessions[i].winsize.ws_row = (uint16_t)(rows > 0xffffu ? 0xffffu : rows);
+                sessions[i].winsize.ws_col = (uint16_t)(cols > 0xffffu ? 0xffffu : cols);
+                if (!sessions[i].winsize.ws_row) sessions[i].winsize.ws_row = 24;
+                if (!sessions[i].winsize.ws_col) sessions[i].winsize.ws_col = 80;
+            }
             return (int32_t)(i + 1);
         }
     }
@@ -338,6 +459,10 @@ int64_t pty_write_output(uint32_t pty_id, const char *buffer, uint32_t length)
     }
     if (!buffer || length == 0) {
         return 0;
+    }
+    if (session->console) {
+        console_write_tty_len(buffer, length);
+        return (int64_t)length;
     }
     return (int64_t)ring_push(session->output, PTY_OUTPUT_CAP,
                               &session->output_head, &session->output_tail,

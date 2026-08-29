@@ -13,6 +13,14 @@
  */
 void pty_init(void);
 /**
+ * @brief Bind a PTY to the physical console for the kernel-created TTY shell.
+ */
+int pty_bind_console(uint32_t pty_id, uint32_t owner_pid);
+/**
+ * @brief Deliver a normalized keyboard event to the console PTY.
+ */
+void pty_console_key_event(uint8_t keycode, uint8_t pressed);
+/**
  * @brief Allocate a new PTY for owner_pid and return its id, or a negative error.
  */
 int32_t pty_create(uint32_t owner_pid);

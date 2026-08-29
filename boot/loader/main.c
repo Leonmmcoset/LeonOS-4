@@ -1916,7 +1916,11 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_init();
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
-    loader_boot_log_screen = loader_cmdline_has("bootlog=1");
+    /* TTY startup is itself a text-console request.  Treat it like an
+     * explicit bootlog request so the graphical splash never owns the
+     * framebuffer while the kernel is preparing the shell. */
+    loader_boot_log_screen = loader_cmdline_has("bootlog=1") ||
+                             loader_cmdline_has("startup=tty");
     installer_root_module = find_loader_module("leonos-installer-root");
     if (installer_root_module && installer_root_module->end > installer_root_module->start) {
         handoff.installer_root.start = installer_root_module->start;

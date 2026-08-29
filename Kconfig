@@ -74,6 +74,26 @@ endchoice
 
 endmenu
 
+menu "Startup"
+
+choice
+    prompt "Default startup interface"
+    default STARTUP_DESKTOP
+    help
+      Select whether a normal system boot starts the graphical desktop or a
+      console-backed TTY with BusyBox. Installer mode always keeps its own
+      desktop runtime regardless of this setting.
+
+config STARTUP_DESKTOP
+    bool "Desktop"
+
+config STARTUP_TTY
+    bool "TTY (BusyBox)"
+
+endchoice
+
+endmenu
+
 menu "Compiler and diagnostics"
 
 choice

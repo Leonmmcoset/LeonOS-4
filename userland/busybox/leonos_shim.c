@@ -180,6 +180,8 @@ const char *leonos_shell_command_path(const char *name)
     if (strcmp(name, "less") == 0) return "/programs/less/less.elf";
     if (strcmp(name, "sl") == 0) return "/programs/sl/sl.elf";
     if (strcmp(name, "cmd") == 0) return "/programs/cmd/cmd.elf";
+    if (strcmp(name, "oobe") == 0) return "/system/apps/oobe/oobe.elf";
+    if (strcmp(name, "login") == 0) return "/system/apps/login/login.elf";
     return 0;
 }
 

@@ -6,6 +6,7 @@
 #include <ntclks/apic.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/input.h>
+#include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/smp.h>
 #include <ntclks/time.h>
@@ -206,6 +207,7 @@ struct task *irq_dispatch(struct trap_frame *frame)
             if (keycode < sizeof(key_states) && key_states[keycode] != pressed) {
                 key_states[keycode] = pressed;
                 input_push_key(keycode, pressed);
+                pty_console_key_event(keycode, pressed);
             }
         }
         irq_send_eoi(1);

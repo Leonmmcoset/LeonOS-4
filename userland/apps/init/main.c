@@ -45,7 +45,7 @@ int main(void)
         close(fd);
     }
     chdir("/");
-    puts("[init.elf] launching desktop.elf as window server");
+    puts("[init.elf] startup services initialized");
     int status = 0;
     int reaped = wait4(2, &status, 0, 0);
     printf("[init.elf] initial child reap result=%d status=%d\n", reaped, status);
