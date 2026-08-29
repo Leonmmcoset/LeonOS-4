@@ -24,6 +24,14 @@
  * remains the authoritative 100 Hz wall clock; this only prevents an AP's
  * compute-bound user task from monopolising that CPU. */
 #define AP_LAPIC_TIMER_INITIAL_COUNT 1000000u
+/*
+ * The shared task/address-space table is not yet ready for concurrent user
+ * execution.  Keep AP startup available for a later SMP implementation, but
+ * run the production scheduler on the BSP until task ownership and teardown
+ * are fully synchronized.  This also avoids VMware triple faults when a
+ * short-lived child is reaped while another CPU is leaving its user frame.
+ */
+#define SMP_USER_SCHEDULER_ENABLED 0
 
 extern uint8_t smp_trampoline_start[];
 extern uint8_t smp_trampoline_end[];
@@ -82,7 +90,8 @@ static void copy_trampoline_for(uint32_t index, uint64_t stack_top)
 void smp_init(void)
 {
     uint32_t discovered = apic_cpu_count();
-    cpu_count = discovered && discovered <= SMP_MAX_CPUS ? discovered : 1;
+    cpu_count = SMP_USER_SCHEDULER_ENABLED && discovered &&
+                discovered <= SMP_MAX_CPUS ? discovered : 1;
     for (uint32_t i = 0; i < SMP_MAX_CPUS; ++i) {
         cpus[i] = (struct smp_cpu_info){0};
         if (i < cpu_count) cpus[i].apic_id = apic_cpu_id_at(i);
@@ -98,8 +107,10 @@ void smp_init(void)
     smp_ready = cpu_count <= 1;
     smp_scheduler_started = cpu_count <= 1;
     smp_bsp_user_entry_pending = cpu_count <= 1;
-    console_printf("[ntclks] SMP topology CPUs=%u BSP APIC=%u\n",
-                   (unsigned)cpu_count, (unsigned)apic_bsp_id());
+    console_printf("[ntclks] SMP topology CPUs=%u BSP APIC=%u discovered=%u%s\n",
+                   (unsigned)cpu_count, (unsigned)apic_bsp_id(),
+                   (unsigned)discovered,
+                   SMP_USER_SCHEDULER_ENABLED ? "" : " (AP scheduler disabled)");
 }
 
 void smp_mark_bsp_user_entry(void)

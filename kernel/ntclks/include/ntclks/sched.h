@@ -94,6 +94,9 @@ enum task_kind {
 #define TASK_FLAG_PENDING_LOAD 0x00000020u
 /* Real fork children remain zombies until their parent calls waitpid. */
 #define TASK_FLAG_WAITABLE_CHILD 0x00000040u
+/* A wait4 caller has claimed this zombie and is releasing it outside the
+ * scheduler lock.  It prevents a second waiter from recycling the same slot. */
+#define TASK_FLAG_REAP_IN_PROGRESS 0x00000080u
 
 /* A stopped or continued child retains its task slot until its parent has
  * observed the state transition through waitpid. */

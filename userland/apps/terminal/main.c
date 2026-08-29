@@ -282,6 +282,24 @@ static uint32_t terminal_columns(void)
     return columns > TERMINAL_MAX_COLUMNS ? TERMINAL_MAX_COLUMNS : columns;
 }
 
+static void terminal_normalize_cursor(void)
+{
+    uint32_t columns = terminal_columns();
+    if (cursor_column > columns) {
+        cursor_column = columns;
+    }
+    if (active_line >= TERMINAL_HISTORY_ROWS) {
+        active_line = 0;
+    }
+    if (history_count == 0) {
+        history_first = 0;
+        history_count = 1;
+        active_line = 0;
+    } else if (history_count > TERMINAL_HISTORY_ROWS) {
+        history_count = TERMINAL_HISTORY_ROWS;
+    }
+}
+
 static uint32_t terminal_visible_rows(void)
 {
     uint32_t body_y = leonos_ui_tab_height();
@@ -407,6 +425,7 @@ static void terminal_select_logical(uint32_t row)
 
 static struct terminal_line *terminal_current_line(void)
 {
+    terminal_normalize_cursor();
     return &history[active_line];
 }
 
@@ -595,12 +614,18 @@ static void terminal_put_utf8_byte(uint8_t byte)
 static void terminal_move_up(uint32_t amount)
 {
     uint32_t row = terminal_logical_active();
+    if (amount >= TERMINAL_HISTORY_ROWS) {
+        amount = TERMINAL_HISTORY_ROWS - 1U;
+    }
     terminal_select_logical(row > amount ? row - amount : 0);
 }
 
 static void terminal_move_down(uint32_t amount)
 {
     uint32_t row = terminal_logical_active();
+    if (amount >= TERMINAL_HISTORY_ROWS) {
+        amount = TERMINAL_HISTORY_ROWS - 1U;
+    }
     uint32_t target = row + amount;
     while (target >= history_count) {
         terminal_append_line();
@@ -753,8 +778,11 @@ static uint16_t terminal_csi_param(uint32_t index, uint16_t default_value)
 static void terminal_finish_csi(char final)
 {
     uint16_t amount = terminal_csi_param(0, 1);
+    uint32_t columns;
     struct terminal_line *line;
     uint32_t column;
+    terminal_normalize_cursor();
+    columns = terminal_columns();
     if (final == 'm') {
         uint32_t index;
         for (index = 0; index < csi_param_count; ++index) {
@@ -766,8 +794,8 @@ static void terminal_finish_csi(char final)
         terminal_move_down(amount);
     } else if (final == 'C') {
         cursor_column += amount;
-        if (cursor_column > terminal_columns()) {
-            cursor_column = terminal_columns();
+        if (cursor_column > columns) {
+            cursor_column = columns;
         }
     } else if (final == 'D') {
         cursor_column = cursor_column > amount ? cursor_column - amount : 0;
@@ -779,8 +807,8 @@ static void terminal_finish_csi(char final)
         cursor_column = 0;
     } else if (final == 'a') {
         cursor_column += amount;
-        if (cursor_column > terminal_columns()) {
-            cursor_column = terminal_columns();
+        if (cursor_column > columns) {
+            cursor_column = columns;
         }
     } else if (final == 'G') {
         cursor_column = amount - 1U;
@@ -795,10 +823,12 @@ static void terminal_finish_csi(char final)
         terminal_erase_line(csi_params[0]);
     } else if (final == '@') {
         line = terminal_current_line();
-        if (amount > terminal_columns() - cursor_column) {
-            amount = (uint16_t)(terminal_columns() - cursor_column);
+        if (cursor_column >= columns) {
+            amount = 0;
+        } else if (amount > columns - cursor_column) {
+            amount = (uint16_t)(columns - cursor_column);
         }
-        for (column = terminal_columns(); column-- > cursor_column + amount;) {
+        for (column = columns; column-- > cursor_column + amount;) {
             line->cells[column] = line->cells[column - amount];
         }
         for (column = cursor_column; column < cursor_column + amount; ++column) {
@@ -806,19 +836,23 @@ static void terminal_finish_csi(char final)
         }
     } else if (final == 'P') {
         line = terminal_current_line();
-        if (amount > terminal_columns() - cursor_column) {
-            amount = (uint16_t)(terminal_columns() - cursor_column);
+        if (cursor_column >= columns) {
+            amount = 0;
+        } else if (amount > columns - cursor_column) {
+            amount = (uint16_t)(columns - cursor_column);
         }
-        for (column = cursor_column; column + amount < terminal_columns(); ++column) {
+        for (column = cursor_column; column + amount < columns; ++column) {
             line->cells[column] = line->cells[column + amount];
         }
-        for (; column < terminal_columns(); ++column) {
+        for (; column < columns; ++column) {
             terminal_blank_cell(&line->cells[column]);
         }
     } else if (final == 'X') {
         line = terminal_current_line();
-        if (amount > terminal_columns() - cursor_column) {
-            amount = (uint16_t)(terminal_columns() - cursor_column);
+        if (cursor_column >= columns) {
+            amount = 0;
+        } else if (amount > columns - cursor_column) {
+            amount = (uint16_t)(columns - cursor_column);
         }
         for (column = cursor_column; column < cursor_column + amount; ++column) {
             terminal_blank_cell(&line->cells[column]);

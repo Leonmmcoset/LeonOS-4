@@ -12,11 +12,21 @@
 
 #include "../arch/x86_64/port.h"
 
+/* Set before any diagnostic work.  A second CPU fault must not recurse into
+ * the formatter/console while the first fault is already being rendered. */
+static volatile int g_bugcheck_active;
+static volatile int g_bugcheck_emergency;
+
 /**
  * @brief Pick the Win95 or Metro palette color depending on the active GUI theme.
  */
 static uint32_t bugcheck_color(uint32_t win95, uint32_t metro)
 {
+    if (g_bugcheck_emergency) {
+        /* The GUI/theme state may be the object that faulted.  Keep the fatal
+         * screen on a fixed palette for double fault/NMI/machine-check paths. */
+        return win95;
+    }
     return gui_ipc_appearance_theme() == 0u ? win95 : metro;
 }
 
@@ -24,7 +34,6 @@ static uint32_t bugcheck_color(uint32_t win95, uint32_t metro)
 #define BUGCHECK_FG bugcheck_color(0x00ffffffU, 0x00202020U)
 #define BUGCHECK_SUB bugcheck_color(0x00d8d8ffU, 0x006b6b6bU)
 #define BUGCHECK_PANEL bugcheck_color(0x001c1cb8U, 0x00f3f3f3U)
-static int g_bugcheck_active;
 
 struct bugcheck_info {
     const char *reason;
@@ -182,6 +191,16 @@ static void collect_bugcheck_info(struct bugcheck_info *info)
     if (!info) {
         return;
     }
+    info->ticks = 0;
+    info->uptime_ms = 0;
+    info->pid = 0;
+    info->task_name = "(unavailable)";
+    /* Do not dereference scheduler/time state from the emergency stack.  The
+     * raw CPU frame is still rendered below and remains the authoritative
+     * diagnostic when the fault happened during scheduler teardown. */
+    if (g_bugcheck_emergency) {
+        return;
+    }
     info->ticks = time_ticks();
     info->uptime_ms = time_uptime_ms();
     info->pid = sched_current_pid();
@@ -230,24 +249,40 @@ static void draw_bugcheck_vga(const struct bugcheck_info *info)
     line[0] = 0;
     append_text(line, &pos, sizeof(line), "RIP ");
     append_u64_hex(line, &pos, sizeof(line), info->rip);
-    append_text(line, &pos, sizeof(line), "  CR2 ");
-    append_u64_hex(line, &pos, sizeof(line), info->cr2);
+    append_text(line, &pos, sizeof(line), "  CS ");
+    append_u64_hex(line, &pos, sizeof(line), info->cs);
     vga_write_at(0, 8, line);
 
     pos = 0;
     line[0] = 0;
-    append_text(line, &pos, sizeof(line), "ERR ");
+    append_text(line, &pos, sizeof(line), "RFLAGS ");
+    append_u64_hex(line, &pos, sizeof(line), info->rflags);
+    append_text(line, &pos, sizeof(line), "  ERR ");
     append_u64_hex(line, &pos, sizeof(line), info->error);
     append_text(line, &pos, sizeof(line), "  VEC ");
     append_u64_dec(line, &pos, sizeof(line), info->vector);
     vga_write_at(0, 9, line);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), "RSP ");
+    append_u64_hex(line, &pos, sizeof(line), info->rsp);
+    append_text(line, &pos, sizeof(line), "  SS ");
+    append_u64_hex(line, &pos, sizeof(line), info->ss);
+    vga_write_at(0, 10, line);
+
+    pos = 0;
+    line[0] = 0;
+    append_text(line, &pos, sizeof(line), "CR2 ");
+    append_u64_hex(line, &pos, sizeof(line), info->cr2);
+    vga_write_at(0, 11, line);
 
     if (info->vector == 14) {
         pos = 0;
         line[0] = 0;
         append_text(line, &pos, sizeof(line), "PF ");
         append_page_fault_flags(line, &pos, sizeof(line), info->error);
-        vga_write_at(0, 10, line);
+        vga_write_at(0, 12, line);
     }
 }
 
@@ -377,14 +412,19 @@ static __attribute__((noreturn)) void bugcheck_commit(struct bugcheck_info *info
     if (!info) {
         x86_64_halt();
     }
-    if (g_bugcheck_active) {
-        console_printf("[bugcheck] recursive halt reason=%s rip=0x%llx\n",
-                       info->reason ? info->reason : "(null)",
-                       (unsigned long long)info->rip);
+    __asm__ volatile("cli" : : : "memory");
+    if (__sync_lock_test_and_set(&g_bugcheck_active, 1)) {
         bugcheck_halt_forever();
     }
-    g_bugcheck_active = 1;
+    g_bugcheck_emergency = info->vector == 2 || info->vector == 8 || info->vector == 18;
     collect_bugcheck_info(info);
+    if (g_bugcheck_emergency) {
+        /* Keep this path allocation-free and independent of console/theme
+         * bookkeeping.  The framebuffer/VGA renderer contains the complete
+         * vector/error/RIP/stack record. */
+        draw_bugcheck_fb(info);
+        bugcheck_halt_forever();
+    }
     console_printf("\n[bugcheck] %s\n", info->reason ? info->reason : "KERNEL PANIC");
     if (info->detail) {
         console_printf("[bugcheck] detail=%s\n", info->detail);

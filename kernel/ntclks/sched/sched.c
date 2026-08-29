@@ -1830,10 +1830,17 @@ int sched_kill_user_tasks_for_logout(uint32_t uid, uint32_t session_id,
 int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
                         uint32_t options, int *status)
 {
-    struct task *waiter = sched_find(waiter_pid);
+    uint64_t lock_flags;
+    struct task *waiter;
+    struct task *reap_task = NULL;
+    uint32_t reap_pid = 0;
+    int reap_status = 0;
     int found_child = 0;
     uint32_t wanted_group = 0;
+    kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
+    waiter = sched_find(waiter_pid);
     if (!waiter) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return -2;
     }
     if (wanted_pid < -1) {
@@ -1856,35 +1863,24 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
             continue;
         }
         found_child = 1;
-        if (task->state == TASK_EXITED && task->running_cpu == SCHED_CPU_NONE) {
-            uint32_t pid = task->pid;
+        if (task->state == TASK_EXITED && task->running_cpu == SCHED_CPU_NONE &&
+            !(task->flags & TASK_FLAG_REAP_IN_PROGRESS)) {
+            reap_task = task;
+            reap_pid = task->pid;
             if (status) {
-                *status = task->exit_signal
-                              ? (int)(task->exit_signal & 0x7fU)
-                              : (int)((task->exit_code & 0xffU) << 8);
+                reap_status = task->exit_signal
+                                  ? (int)(task->exit_signal & 0x7fU)
+                                  : (int)((task->exit_code & 0xffU) << 8);
             }
-            sched_release_task_resources(task);
-            task->parent_pid = 0;
-            task->flags &= ~TASK_FLAG_WAITABLE_CHILD;
-            task_copy_name(task, "reaped");
-            task->image = NULL;
-            task->image_len = 0;
-            task->pty_id = 0;
-            task_clear_identity(task);
-            task_copy_cwd(task, "/");
-            for (size_t j = 0; j < SCHED_TASK_FILE_MAX; ++j) {
-                task->files[j].used = 0;
-                task->files[j].offset = 0;
-                task->files[j].aux = 0;
-            }
-            console_printf("[ntclks] scheduler wait reaped pid=%u by pid=%u\n", pid, waiter_pid);
-            return pid;
+            task->flags |= TASK_FLAG_REAP_IN_PROGRESS;
+            break;
         }
         if (task->child_event == TASK_CHILD_EVENT_STOPPED && (options & 2U)) {
             if (status) {
                 *status = (int)(((task->stop_signal & 0xffU) << 8) | 0x7fU);
             }
             task->child_event = TASK_CHILD_EVENT_NONE;
+            kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
             return task->pid;
         }
         if (task->child_event == TASK_CHILD_EVENT_CONTINUED && (options & 4U)) {
@@ -1892,11 +1888,45 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
                 *status = 0xffff;
             }
             task->child_event = TASK_CHILD_EVENT_NONE;
+            kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
             return task->pid;
         }
     }
+    if (reap_task) {
+        /* Address-space, storage, and pipe teardown can take other locks and
+         * may touch page tables.  Never perform that work while holding the
+         * scheduler spinlock with interrupts disabled. */
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
+        sched_release_task_resources(reap_task);
+
+        kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
+        if (reap_task->pid == reap_pid &&
+            (reap_task->flags & TASK_FLAG_REAP_IN_PROGRESS)) {
+            reap_task->parent_pid = 0;
+            reap_task->flags &= ~(TASK_FLAG_WAITABLE_CHILD | TASK_FLAG_REAP_IN_PROGRESS);
+            task_copy_name(reap_task, "reaped");
+            reap_task->image = NULL;
+            reap_task->image_len = 0;
+            reap_task->pty_id = 0;
+            task_clear_identity(reap_task);
+            task_copy_cwd(reap_task, "/");
+            for (size_t j = 0; j < SCHED_TASK_FILE_MAX; ++j) {
+                reap_task->files[j].used = 0;
+                reap_task->files[j].offset = 0;
+                reap_task->files[j].aux = 0;
+            }
+            console_printf("[ntclks] scheduler wait reaped pid=%u by pid=%u\n",
+                           reap_pid, waiter_pid);
+        }
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
+        if (status) {
+            *status = reap_status;
+        }
+        return reap_pid;
+    }
     /* The syscall trap retries EAGAIN after parking the caller.  This is
      * distinct from ECHILD, which means no matching child exists at all. */
+    kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
     return found_child ? -LEONOS_EAGAIN : 0;
 }
 

@@ -107,6 +107,13 @@ static void idt_set(uint8_t vector, void *handler, uint8_t dpl)
     idt[vector].zero = 0;
 }
 
+/* Select a TSS interrupt-stack-table slot after installing a gate.  The IDT
+ * stores IST as a three-bit value where zero means "use the current stack". */
+static void idt_set_ist(uint8_t vector, uint8_t ist)
+{
+    idt[vector].ist = ist & 7u;
+}
+
 /**
  * Load the shared IDT descriptor on the current CPU.
  */
@@ -157,6 +164,12 @@ void idt_init(void)
     idt_set(29, isr29_stub, 0);
     idt_set(30, isr30_stub, 0);
     idt_set(31, isr31_stub, 0);
+    /* These faults are the ones most likely to arrive after the current
+     * kernel stack or return frame has already become unusable.  Keep their
+     * entry path independent so the normal bugcheck screen can still run. */
+    idt_set_ist(2, 2);
+    idt_set_ist(8, 1);
+    idt_set_ist(18, 3);
     idt_set(0x20, irq0_stub, 0);
     idt_set(0x21, irq1_stub, 0);
     idt_set(0x22, irq2_stub, 0);
@@ -204,6 +217,13 @@ void exception_dispatch(uint64_t vector, uint64_t error, uint64_t rip, uint64_t 
 {
     uint64_t cr2 = x86_64_read_cr2();
     const char *mode = (cs & 3u) == 3u ? "user" : "kernel";
+    /* #DF/#MC/#NMI can be delivered after the interrupted stack or scheduler
+     * state is already corrupt.  Go straight to the emergency bugcheck path
+     * so diagnostic logging cannot turn a recoverable second fault into a
+     * triple fault and hardware reset. */
+    if (vector == 2 || vector == 8 || vector == 18) {
+        bugcheck_exception(vector, error, rip, cs, rflags, rsp, ss, cr2);
+    }
     console_printf("[ntclks] exception vector=%llu error=0x%llx rip=0x%llx cs=0x%llx rflags=0x%llx rsp=0x%llx ss=0x%llx\n",
                    (unsigned long long)vector,
                    (unsigned long long)error,
@@ -495,4 +515,12 @@ struct task *int80_dispatch(struct trap_frame *frame)
 {
     syscall_dispatch_frame(frame);
     return userland_schedule_from_frame(frame);
+}
+
+/* Called only when the assembly syscall return path could not obtain a
+ * validated user frame.  Returning through the stale frame would turn a
+ * scheduler consistency bug into an unreportable triple fault. */
+__attribute__((noreturn)) void arch_schedule_failure(struct trap_frame *frame)
+{
+    bugcheck_trap("Scheduler Return Failure", frame, x86_64_read_cr2());
 }

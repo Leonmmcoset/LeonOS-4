@@ -433,7 +433,10 @@ isr80_stub:
     mov %rdi, %rsp
     jmp trap_restore_frame
 1:
-    jmp trap_restore_frame
+    /* A syscall that terminates or replaces the current task must never
+     * return through its old frame when no replacement was published. */
+    mov %rsp, %rdi
+    call arch_schedule_failure
 
 /* Pop a saved trap frame off the stack and return to it with iretq. */
 .global trap_restore_frame

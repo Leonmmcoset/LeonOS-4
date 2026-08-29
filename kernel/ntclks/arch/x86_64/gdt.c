@@ -8,6 +8,11 @@
 #include <ntclks/paging.h>
 
 #define ARCH_MAX_CPUS 64u
+/* Exception handlers must not depend on the interrupted task's kernel stack.
+ * A small per-CPU IST stack gives double-fault/NMI/machine-check entry a
+ * clean, known-good stack even when a task overflowed or corrupted rsp0. */
+#define ARCH_IST_STACK_SIZE 16384u
+#define ARCH_IST_STACK_COUNT 3u
 
 struct __attribute__((packed)) gdt_ptr {
     uint16_t limit;
@@ -29,6 +34,8 @@ struct __attribute__((packed)) tss64 {
 static uint64_t gdt[ARCH_MAX_CPUS][7];
 static struct tss64 tss[ARCH_MAX_CPUS];
 static struct gdt_ptr loaded_gdt_ptr[ARCH_MAX_CPUS];
+static uint8_t exception_ist_stack[ARCH_MAX_CPUS][ARCH_IST_STACK_COUNT][ARCH_IST_STACK_SIZE]
+    __attribute__((aligned(16)));
 
 #define IDENTITY_MAP_LIMIT (1ULL << 32)
 
@@ -83,7 +90,17 @@ static void arch_setup_cpu(uint32_t cpu_index, void *kernel_stack_top)
     if (cpu_index >= ARCH_MAX_CPUS) cpu_index = 0;
     table = gdt[cpu_index];
     cpu_tss = &tss[cpu_index];
+    /* Reinitialize the complete TSS when an AP is brought online.  Leaving
+     * stale IST/reserved fields in a reused static TSS makes fault delivery
+     * depend on whatever happened during an earlier boot attempt. */
+    for (size_t i = 0; i < sizeof(*cpu_tss); ++i) {
+        ((uint8_t *)cpu_tss)[i] = 0;
+    }
     cpu_tss->rsp0 = (uint64_t)(uintptr_t)kernel_stack_top;
+    for (uint32_t i = 0; i < ARCH_IST_STACK_COUNT; ++i) {
+        cpu_tss->ist[i] = (uint64_t)(uintptr_t)exception_ist_stack[cpu_index][i] +
+                          ARCH_IST_STACK_SIZE;
+    }
     cpu_tss->io_map_base = sizeof(*cpu_tss);
     table[0] = 0;
     table[1] = descriptor(0, 0xfffff, 0x9a, 0x0a);

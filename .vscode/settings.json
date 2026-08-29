@@ -55,6 +55,8 @@
         "build",
         "boot",
         "disk",
-        "sound"
+        "sound",
+        "desktop",
+        "cpu"
     ]
 }
