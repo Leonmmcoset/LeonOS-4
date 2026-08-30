@@ -35,6 +35,7 @@ static const struct builtin_program builtin_programs[] = {
     {"nano", "/programs/nano/nano.elf"},
     {"fastfetch", "/programs/fastfetch/fastfetch.elf"},
     {"less", "/programs/less/less.elf"},
+    {"tmux", "/programs/tmux/tmux.elf"},
     {"run", "/system/apps/run/run.elf"},
     {"osver", "/system/apps/osver/osver.elf"},
     {"memtest", "/programs/memtest/memtest.elf"},

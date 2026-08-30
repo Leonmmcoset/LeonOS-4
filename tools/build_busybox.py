@@ -420,6 +420,166 @@ def patch_power_applets_for_leonos(source: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def patch_fdisk_for_leonos(source: Path) -> None:
+    """Replace Linux block-device fdisk with a LeonOS read-only disk view."""
+    path = source / "util-linux/fdisk.c"
+    path.write_text(r'''/* LeonOS read-only fdisk adapter. */
+//config:config FDISK
+//config:	bool "fdisk (read-only LeonOS disk view)"
+//config:	default y
+//config:
+//config:config FEATURE_FDISK_WRITABLE
+//config:	bool "Write support"
+//config:	default n
+//config:	depends on FDISK
+//applet:IF_FDISK(APPLET_NOEXEC(fdisk, fdisk, BB_DIR_SBIN, BB_SUID_DROP, fdisk))
+//kbuild:lib-$(CONFIG_FDISK) += fdisk.o
+
+//usage:#define fdisk_trivial_usage
+//usage:       "-l [DISK_ID|DISK_NAME]"
+//usage:#define fdisk_full_usage "\n\n"
+//usage:       "List disks and GPT partitions (read-only)\n"
+
+#include "libbb.h"
+#pragma push_macro("stat")
+#pragma push_macro("fstat")
+#undef stat
+#undef fstat
+#include <leonos/fs.h>
+#pragma pop_macro("fstat")
+#pragma pop_macro("stat")
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+static const char *leonos_fdisk_filesystem(uint32_t filesystem)
+{
+	switch (filesystem) {
+	case LEONOS_DISK_FILESYSTEM_FAT32: return "FAT32";
+	case LEONOS_DISK_FILESYSTEM_EXT2: return "ext2";
+	case LEONOS_DISK_FILESYSTEM_ISO9660: return "ISO9660";
+	case LEONOS_DISK_FILESYSTEM_EXFAT: return "exFAT";
+	default: return "unknown";
+	}
+}
+
+static int leonos_fdisk_id(const char *text, uint32_t *out_id)
+{
+	uint64_t value = 0;
+	uint32_t index;
+
+	if (!text || !text[0] || !out_id) return 0;
+	for (index = 0; text[index]; ++index) {
+		uint32_t digit;
+		if (text[index] < '0' || text[index] > '9') return 0;
+		digit = (uint32_t)(text[index] - '0');
+		if (value > ((uint64_t)UINT32_MAX - digit) / 10u) return 0;
+		value = value * 10u + digit;
+	}
+	*out_id = (uint32_t)value;
+	return 1;
+}
+
+static int leonos_fdisk_selected(const struct leonos_install_disk *disk,
+				 const char *selector)
+{
+	uint32_t id;
+	if (!selector) return 1;
+	if (leonos_fdisk_id(selector, &id)) return disk->id == id;
+	return strcmp(disk->name, selector) == 0;
+}
+
+static void leonos_fdisk_print_disk(const struct leonos_install_disk *disk,
+				    const struct leonos_disk_partition *parts,
+				    uint32_t part_count)
+{
+	unsigned long long bytes = (unsigned long long)disk->sector_count *
+				    (unsigned long long)disk->sector_size;
+	unsigned long long mib = bytes / (1024ULL * 1024ULL);
+	uint32_t index;
+
+	printf("Disk /dev/leonos-disk%u: %llu MiB, %llu bytes, %llu sectors\n",
+	       disk->id, mib, bytes, (unsigned long long)disk->sector_count);
+	printf("Sector size (logical): %u bytes\n", disk->sector_size);
+	puts("Disklabel type: GPT (read-only)");
+	puts("Device                         Start        End    Sectors   Size Type      Mountpoint");
+	for (index = 0; index < part_count; ++index) {
+		const struct leonos_disk_partition *part = &parts[index];
+		if (!part->sector_count) continue;
+		unsigned long long end = part->first_lba + part->sector_count - 1ULL;
+		unsigned long long size_mib = (part->sector_count *
+					       (unsigned long long)disk->sector_size) /
+					      (1024ULL * 1024ULL);
+		printf("/dev/leonos-disk%up%-3u %11llu %11llu %10llu %6lluM %-9s %s",
+		       disk->id, part->index + 1U,
+		       (unsigned long long)part->first_lba, end,
+		       (unsigned long long)part->sector_count, size_mib,
+		       leonos_fdisk_filesystem(part->filesystem),
+		       part->mount_path[0] ? part->mount_path : "-");
+		if (part->name[0]) printf(" [%s]", part->name);
+		puts("");
+	}
+	puts("");
+}
+
+int fdisk_main(int argc, char **argv)
+{
+	struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
+	struct leonos_disk_partition parts[LEONOS_DISK_MAX_PARTITIONS];
+	const char *selector = NULL;
+	uint32_t disk_count = 0;
+	uint32_t index;
+	uint32_t matched = 0;
+	int list = 0;
+
+	for (index = 1; index < (uint32_t)argc; ++index) {
+		if (strcmp(argv[index], "-l") == 0 ||
+		    strcmp(argv[index], "--list") == 0) {
+			list = 1;
+		} else if (argv[index][0] == '-') {
+			puts("fdisk: this LeonOS build is read-only; use fdisk -l");
+			return EXIT_FAILURE;
+		} else if (!selector) {
+			selector = argv[index];
+		} else {
+			puts("fdisk: expected at most one disk selector");
+			return EXIT_FAILURE;
+		}
+	}
+	if (!list) {
+		puts("fdisk: read-only mode; use fdisk -l to list disks and partitions");
+		return EXIT_SUCCESS;
+	}
+	if (leonos_install_list_disks(disks, LEONOS_INSTALL_MAX_DISKS, &disk_count) < 0) {
+		puts("fdisk: unable to read disk inventory");
+		return EXIT_FAILURE;
+	}
+	for (index = 0; index < disk_count && index < LEONOS_INSTALL_MAX_DISKS; ++index) {
+		uint32_t part_count = LEONOS_DISK_MAX_PARTITIONS;
+		if (!leonos_fdisk_selected(&disks[index], selector)) continue;
+		++matched;
+		if (leonos_disk_list_partitions(disks[index].id, parts,
+						LEONOS_DISK_MAX_PARTITIONS,
+						&part_count) < 0) {
+			puts("fdisk: unable to read partition inventory");
+			return EXIT_FAILURE;
+		}
+		if (part_count > LEONOS_DISK_MAX_PARTITIONS)
+			part_count = LEONOS_DISK_MAX_PARTITIONS;
+		leonos_fdisk_print_disk(&disks[index], parts, part_count);
+	}
+	if (!matched) {
+		if (selector) {
+			puts("fdisk: disk selector did not match any detected disk");
+			return EXIT_FAILURE;
+		}
+		puts("fdisk: no disks detected");
+	}
+	return EXIT_SUCCESS;
+}
+''', encoding="utf-8")
+
+
 def patch_time_for_leonos(source: Path) -> None:
     """Keep monotonic helpers in the LeonOS shim as the single definition."""
     path = source / "libbb/time.c"
@@ -600,6 +760,7 @@ def main() -> None:
     patch_ls_colors_for_leonos(source_dir)
     patch_nohup_for_leonos(source_dir)
     patch_power_applets_for_leonos(source_dir)
+    patch_fdisk_for_leonos(source_dir)
     patch_ash_for_leonos(source_dir)
     work_root = source_dir.parent
     output_dir = work_root / "output"

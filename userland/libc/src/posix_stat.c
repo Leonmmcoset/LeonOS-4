@@ -1,5 +1,6 @@
 /* POSIX file-status adapters shared by dynamic applications and port shims. */
 #include <errno.h>
+#include <leonos/auth.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -49,6 +50,17 @@ static ino_t posix_path_inode(const char *path)
     return (ino_t)(hash ? hash : 1ULL);
 }
 
+static int posix_tmux_socket_directory(const char *path)
+{
+    static const char prefix[] = "/tmp/tmux-";
+    size_t index;
+    if (!path || strncmp(path, prefix, sizeof(prefix) - 1u) != 0) return 0;
+    for (index = sizeof(prefix) - 1u; path[index]; ++index) {
+        if (path[index] == '/') return 0;
+    }
+    return index > sizeof(prefix) - 1u;
+}
+
 int leonos_posix_stat(const char *path, struct stat *status)
 {
     struct leonos_posix_stat_raw raw;
@@ -67,6 +79,14 @@ int leonos_posix_stat(const char *path, struct stat *status)
     }
     status->st_dev = 1;
     status->st_ino = posix_path_inode(path);
+    if (raw.type == LEONOS_FS_TYPE_DIR && posix_tmux_socket_directory(path)) {
+        struct leonos_user_info user = {0};
+        status->st_mode = S_IFDIR | S_IRWXU;
+        if (leonos_auth_current(&user) == 0 && user.uid) {
+            status->st_uid = user.uid;
+            status->st_gid = user.uid;
+        }
+    }
     return 0;
 }
 

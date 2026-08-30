@@ -551,6 +551,19 @@ sdk = false
 api = false
 
 [[components]]
+id = "tmux"
+symbol = "TOOL_TMUX"
+label = "tmux terminal multiplexer"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "sl"
 symbol = "TOOL_SL"
 label = "sl Steam Locomotive"

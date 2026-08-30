@@ -8,10 +8,12 @@
 #include <fcntl.h>
 #include <leonos/gui.h>
 #include <leonos/pty.h>
+#include <leonos/posix.h>
 #include <leonos/system.h>
 #include <leonos/syscall.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <sys/time.h>
@@ -130,22 +132,14 @@ int poll(struct pollfd *fds, nfds_t count, int timeout_ms)
     for (;;) {
         nfds_t index;
         int ready = 0;
-        int input_ready = leonos_pty_input_available() > 0;
-        for (index = 0; index < count; ++index) {
-            fds[index].revents = 0;
-            if (fds[index].fd < 0) {
-                continue;
-            }
-            if (fds[index].events & (POLLIN | POLLPRI)) {
-                /* Files are immediately readable; PTY input is not. */
-                if (fds[index].fd >= 3 || input_ready) {
-                    fds[index].revents |= POLLIN;
-                }
-            }
-            if (fds[index].revents) {
-                ++ready;
-            }
+        long result = syscall3(SYS_poll, (long)fds, (long)count, 0);
+        if (result < 0) {
+            errno = (int)-result;
+            return -1;
         }
+        ready = (int)result;
+        leonos_dispatch_pending_signals();
+        (void)index;
         if (ready || timeout_ms == 0) {
             return ready;
         }

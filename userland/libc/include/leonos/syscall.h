@@ -15,15 +15,34 @@
 #define SYS_stat 4
 #define SYS_fstat 5
 #define SYS_lseek 8
+#define SYS_poll 7
 #define SYS_mmap 9
 #define SYS_mprotect 10
 #define SYS_munmap 11
 #define SYS_ioctl 16
+#define SYS_rt_sigaction 13
+#define SYS_rt_sigprocmask 14
+#define SYS_rt_sigreturn 15
+#define SYS_rt_sigsuspend 130
 #define SYS_sched_yield 24
 #define SYS_dup 32
 #define SYS_dup2 33
 #define SYS_nanosleep 35
 #define SYS_getpid 39
+#define SYS_socket 41
+#define SYS_connect 42
+#define SYS_accept 43
+#define SYS_sendto 44
+#define SYS_recvfrom 45
+#define SYS_sendmsg 46
+#define SYS_recvmsg 47
+#define SYS_shutdown 48
+#define SYS_bind 49
+#define SYS_listen 50
+#define SYS_getsockname 51
+#define SYS_setsockopt 54
+#define SYS_getsockopt 55
+#define SYS_socketpair 53
 #define SYS_setpgid 109
 #define SYS_fork 57
 #define SYS_vfork 58
@@ -58,12 +77,18 @@
 #define LEONOS_MAP_FAILED ((void *)-1)
 
 #define LEONOS_EPERM 1
+#define LEONOS_EINTR 4
 #define LEONOS_EACCES 13
 #define LEONOS_EBUSY 16
 #define LEONOS_EIO 5
 #define LEONOS_EAGAIN 11
 #define LEONOS_EEXIST 17
 #define LEONOS_EPIPE 32
+#define LEONOS_ENOTSOCK 88
+#define LEONOS_ECONNREFUSED 111
+#define LEONOS_ECONNRESET 104
+#define LEONOS_EADDRINUSE 98
+#define LEONOS_ENOTCONN 107
 
 long syscall0(long n);
 long syscall1(long n, long a0);

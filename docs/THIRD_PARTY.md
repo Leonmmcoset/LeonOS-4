@@ -17,6 +17,7 @@ commits are the revisions recorded by the LeonOS checkout.
 | `third_party/fastfetch` | `https://github.com/fastfetch-cli/fastfetch.git` | `56da8f811068289f6352db8881418aa6e0f994e8` |
 | `third_party/file` | `https://github.com/file/file.git` | `711ccc264519cdc5073ccb26651c0a9bafc3b47a` |
 | `third_party/less` | `https://github.com/gwsw/less.git` | `b8bbf4297169e20d35e1cc3e015180e8a011bcf2` |
+| `third_party/libevent` | `https://github.com/libevent/libevent.git` | `5df3037d10556bfcb675bc73e516978b75fc7bc7` |
 | `third_party/libpng` | `https://github.com/pnggroup/libpng.git` | `3061454d980de7d53608f594194cfac722721d2a` |
 | `third_party/litehtml` | `https://github.com/litehtml/litehtml.git` | `b9e89f0b9494ff9a5f008800af35503efabddf59` |
 | `third_party/lua` | `https://github.com/lua/lua.git` | `6e22fedb74cf0c9b6656e9fce8b7331db847c605` |
@@ -29,6 +30,7 @@ commits are the revisions recorded by the LeonOS checkout.
 | `third_party/stardustui` | `https://github.com/xingji-studio/StardustUI.git` | `67aae17214a0d27bb6a8b0caf10b7c1f98313086` |
 | `third_party/stardustui/third_party/ab_glyph_rasterizer/upstream` | `https://github.com/alexheretic/ab-glyph.git` | `791b15214d376dec06ae1c886da4c5f92f31e2e0` |
 | `third_party/tinycc` | `https://github.com/TinyCC/tinycc.git` | `2ba12e83b3599ca8f5d50c179fe5138fe956f0c9` |
+| `third_party/tmux` | `https://github.com/tmux/tmux.git` | `549c35b06165f6ae023115eb76f83f2cbf945395` |
 | `third_party/zlib` | `https://github.com/madler/zlib.git` | `da607da739fa6047df13e66a2af6b8bec7c2a498` |
 
 ## Mbed TLS
@@ -172,6 +174,22 @@ LeonOS installs the upstream pager at `/programs/less/less.elf`. It uses the
 shared PTY, polling and POSIX regular-expression runtime through a small ANSI
 termcap adapter. Shell escapes, external editor commands, tags, user key files,
 logfile output and shell pipes are disabled for the system build.
+
+## tmux
+
+- Path: `third_party/tmux`
+- Upstream: `https://github.com/tmux/tmux.git`
+- Version: `3.5a`
+- Pinned commit: `549c35b06165f6ae023115eb76f83f2cbf945395`
+- Dependency: `third_party/libevent` at `5df3037d10556bfcb675bc73e516978b75fc7bc7`
+  (`2.1.12-stable`), built as a static poll-only event loop.
+- License: ISC; the upstream `COPYING` file is staged beside the executable.
+
+LeonOS installs tmux at `/programs/tmux/tmux.elf`. It runs from the graphical
+Terminal and TTY shell, preserving detached sessions through AF_UNIX sockets
+at `/tmp/tmux-<uid>/default`. The port supports standard server/client use,
+windows, panes, resize handling, status lines and the usual `Ctrl-b` key
+bindings. Control mode, sixel and utempter integration are not included.
 
 ## TinyCC
 

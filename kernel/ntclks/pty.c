@@ -8,15 +8,26 @@
 #include <ntclks/sched.h>
 #include <leonos/psf_font.h>
 
-#define PTY_MAX 8u
-#define PTY_INPUT_CAP 1024u
-#define PTY_OUTPUT_CAP 8192u
+#ifndef CONFIG_PTY_SESSION_LIMIT
+#define CONFIG_PTY_SESSION_LIMIT 32u
+#endif
+#ifndef CONFIG_PTY_INPUT_BUFFER_BYTES
+#define CONFIG_PTY_INPUT_BUFFER_BYTES 4096u
+#endif
+#ifndef CONFIG_PTY_OUTPUT_BUFFER_BYTES
+#define CONFIG_PTY_OUTPUT_BUFFER_BYTES 16384u
+#endif
+
+#define PTY_MAX CONFIG_PTY_SESSION_LIMIT
+#define PTY_INPUT_CAP CONFIG_PTY_INPUT_BUFFER_BYTES
+#define PTY_OUTPUT_CAP CONFIG_PTY_OUTPUT_BUFFER_BYTES
 
 struct pty_session {
     uint8_t used;
     uint8_t console;
     uint8_t reserved[2];
     uint32_t owner_pid;
+    uint32_t master_refs;
     uint32_t process_session;
     uint32_t foreground_pgid;
     uint8_t input[PTY_INPUT_CAP];
@@ -49,6 +60,15 @@ static struct pty_session *find_session(uint32_t pty_id)
         return 0;
     }
     return &sessions[pty_id - 1];
+}
+
+static void pty_clear_session(struct pty_session *session)
+{
+    uint32_t index;
+    if (!session) return;
+    for (index = 0; index < sizeof(*session); ++index) {
+        ((uint8_t *)session)[index] = 0;
+    }
 }
 
 /**
@@ -294,10 +314,25 @@ int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
         return -22;
     }
     (void)sched_hangup_user_tasks_for_pty(pty_id, owner_pid);
-    for (uint32_t j = 0; j < sizeof(*session); ++j) {
-        ((uint8_t *)session)[j] = 0;
-    }
+    pty_clear_session(session);
     return 0;
+}
+
+int pty_master_retain(uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || session->master_refs == 0xffffffffu) return -22;
+    ++session->master_refs;
+    return 0;
+}
+
+void pty_master_release(uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || !session->master_refs) return;
+    if (--session->master_refs != 0) return;
+    (void)sched_hangup_user_tasks_for_pty(pty_id, session->owner_pid);
+    pty_clear_session(session);
 }
 
 /**
@@ -469,6 +504,26 @@ int64_t pty_write_output(uint32_t pty_id, const char *buffer, uint32_t length)
                               buffer, length);
 }
 
+uint32_t pty_output_available(uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session) return 0;
+    return session->output_head >= session->output_tail
+               ? session->output_head - session->output_tail
+               : PTY_OUTPUT_CAP - session->output_tail + session->output_head;
+}
+
+int pty_attach_slave(uint32_t pty_id, uint32_t pid)
+{
+    struct pty_session *session = find_session(pty_id);
+    struct task *task = sched_find(pid);
+    if (!session || !task || task->kind != TASK_KIND_USER) return -22;
+    task->pty_id = pty_id;
+    session->process_session = task->process_session;
+    session->foreground_pgid = task->process_group;
+    return 0;
+}
+
 /**
  * @brief Copy the session termios into *termios; returns 0, or -22 on a bad id or null pointer.
  */
@@ -528,6 +583,10 @@ int pty_set_winsize(uint32_t pty_id, const struct leonos_pty_winsize *winsize)
         return -22;
     }
     session->winsize = *winsize;
+    if (session->foreground_pgid) {
+        (void)sched_signal_process_group(session->owner_pid,
+                                         session->foreground_pgid, 28); /* SIGWINCH */
+    }
     return 0;
 }
 
@@ -576,9 +635,7 @@ void pty_process_exit(uint32_t pid)
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
         if (sessions[i].used && sessions[i].owner_pid == pid) {
             (void)sched_hangup_user_tasks_for_pty(i + 1U, pid);
-            for (uint32_t j = 0; j < sizeof(sessions[i]); ++j) {
-                ((uint8_t *)&sessions[i])[j] = 0;
-            }
+            pty_clear_session(&sessions[i]);
         }
     }
 }

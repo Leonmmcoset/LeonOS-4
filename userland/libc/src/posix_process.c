@@ -17,6 +17,11 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/socket.h>
+
+static _sig_func_ptr leonos_signal_handlers[32];
+static __sigset_t leonos_signal_masks[32];
+static int leonos_dispatching_signal;
 
 static int syscall_error(long result)
 {
@@ -85,6 +90,168 @@ int pipe(int filedes[2])
     }
     result = syscall1(SYS_pipe, (long)filedes);
     return syscall_error(result);
+}
+
+int socket(int domain, int type, int protocol)
+{
+    return syscall_error(syscall3(SYS_socket, domain, type, protocol));
+}
+
+int socketpair(int domain, int type, int protocol, int filedes[2])
+{
+    if (!filedes) {
+        errno = EINVAL;
+        return -1;
+    }
+    return syscall_error(syscall6(SYS_socketpair, domain, type, protocol,
+                                  (long)filedes, 0, 0));
+}
+
+int bind(int fd, const struct sockaddr *address, socklen_t length)
+{
+    return syscall_error(syscall3(SYS_bind, fd, (long)address, length));
+}
+
+int listen(int fd, int backlog)
+{
+    return syscall_error(syscall2(SYS_listen, fd, backlog));
+}
+
+int accept(int fd, struct sockaddr *address, socklen_t *length)
+{
+    return syscall_error(syscall3(SYS_accept, fd, (long)address, (long)length));
+}
+
+int connect(int fd, const struct sockaddr *address, socklen_t length)
+{
+    return syscall_error(syscall3(SYS_connect, fd, (long)address, length));
+}
+
+ssize_t sendto(int fd, const void *buffer, size_t length, int flags,
+               const struct sockaddr *address, socklen_t address_length)
+{
+    long result = syscall6(SYS_sendto, fd, (long)buffer, (long)length, flags,
+                           (long)address, address_length);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return (ssize_t)result;
+}
+
+ssize_t recvfrom(int fd, void *buffer, size_t length, int flags,
+                 struct sockaddr *address, socklen_t *address_length)
+{
+    long result = syscall6(SYS_recvfrom, fd, (long)buffer, (long)length, flags,
+                           (long)address, (long)address_length);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return (ssize_t)result;
+}
+
+ssize_t send(int fd, const void *buffer, size_t length, int flags)
+{
+    return sendto(fd, buffer, length, flags, 0, 0);
+}
+
+ssize_t recv(int fd, void *buffer, size_t length, int flags)
+{
+    return recvfrom(fd, buffer, length, flags, 0, 0);
+}
+
+ssize_t sendmsg(int fd, const struct msghdr *message, int flags)
+{
+    long result;
+    if (!message) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = syscall3(SYS_sendmsg, fd, (long)message, flags);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return (ssize_t)result;
+}
+
+ssize_t recvmsg(int fd, struct msghdr *message, int flags)
+{
+    long result;
+    if (!message) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = syscall3(SYS_recvmsg, fd, (long)message, flags);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return (ssize_t)result;
+}
+
+ssize_t readv(int fd, const struct iovec *iov, int iovcnt)
+{
+    ssize_t total = 0;
+    if (!iov || iovcnt < 0 || iovcnt > LEONOS_IOV_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (int index = 0; index < iovcnt; ++index) {
+        ssize_t result = read(fd, iov[index].iov_base, iov[index].iov_len);
+        if (result < 0) return total ? total : -1;
+        total += result;
+        if ((size_t)result != iov[index].iov_len) break;
+    }
+    return total;
+}
+
+ssize_t writev(int fd, const struct iovec *iov, int iovcnt)
+{
+    ssize_t total = 0;
+    if (!iov || iovcnt < 0 || iovcnt > LEONOS_IOV_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+    for (int index = 0; index < iovcnt; ++index) {
+        ssize_t result = write(fd, iov[index].iov_base, iov[index].iov_len);
+        if (result < 0) return total ? total : -1;
+        total += result;
+        if ((size_t)result != iov[index].iov_len) break;
+    }
+    return total;
+}
+
+int shutdown(int fd, int how)
+{
+    return syscall_error(syscall2(SYS_shutdown, fd, how));
+}
+
+int getsockname(int fd, struct sockaddr *address, socklen_t *length)
+{
+    return syscall_error(syscall3(SYS_getsockname, fd, (long)address, (long)length));
+}
+
+int getpeername(int fd, struct sockaddr *address, socklen_t *length)
+{
+    (void)fd;
+    (void)address;
+    (void)length;
+    errno = ENOTSUP;
+    return -1;
+}
+
+int getsockopt(int fd, int level, int option, void *value, socklen_t *length)
+{
+    return syscall_error(syscall6(SYS_getsockopt, fd, level, option,
+                                  (long)value, (long)length, 0));
+}
+
+int setsockopt(int fd, int level, int option, const void *value, socklen_t length)
+{
+    return syscall_error(syscall6(SYS_setsockopt, fd, level, option,
+                                  (long)value, length, 0));
 }
 
 void _exit(int code)
@@ -252,19 +419,23 @@ int tcsetpgrp(int fd, pid_t process_group)
 
 int sigprocmask(int how, const __sigset_t *set, __sigset_t *old_set)
 {
-    (void)how;
-    (void)set;
-    if (old_set) {
-        *old_set = 0;
-    }
-    errno = ENOSYS;
-    return -1;
+    long result = syscall6(SYS_rt_sigprocmask, how, (long)set, (long)old_set,
+                           sizeof(__sigset_t), 0, 0);
+    return syscall_error(result);
 }
 
 int sigsuspend(const __sigset_t *mask)
 {
-    (void)mask;
-    (void)sched_yield();
+    long result;
+    if (!mask) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = syscall2(SYS_rt_sigsuspend, (long)mask, sizeof(*mask));
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
     errno = EINTR;
     return -1;
 }
@@ -272,37 +443,57 @@ int sigsuspend(const __sigset_t *mask)
 int sigaction(int signal_number, const struct sigaction *action,
               struct sigaction *previous)
 {
-    struct leonos_signal_action request;
+    struct leonos_rt_sigaction request;
+    struct leonos_rt_sigaction old_request;
     long result;
     if (signal_number <= 0 || signal_number >= 32) {
         errno = EINVAL;
         return -1;
     }
-    request = (struct leonos_signal_action){
-        .operation = action ? LEONOS_SIGNAL_ACTION_SET : LEONOS_SIGNAL_ACTION_GET,
-        .signal_number = (uint32_t)signal_number,
-        .disposition = LEONOS_SIGNAL_DISPOSITION_DEFAULT,
-    };
+    request = (struct leonos_rt_sigaction){0};
+    old_request = (struct leonos_rt_sigaction){0};
     if (action) {
-        if (action->sa_handler == SIG_IGN) {
-            request.disposition = LEONOS_SIGNAL_DISPOSITION_IGNORE;
-        } else if (action->sa_handler != SIG_DFL) {
-            errno = ENOSYS;
-            return -1;
-        }
+        request.handler = (uint64_t)(uintptr_t)action->sa_handler;
+        request.mask = (uint64_t)action->sa_mask;
+        request.flags = (uint64_t)(uint32_t)action->sa_flags;
     }
-    result = syscall3(SYS_ioctl, 3, LEONOS_SIGNAL_IOCTL_ACTION, (long)&request);
+    result = syscall6(SYS_rt_sigaction, signal_number,
+                      action ? (long)&request : 0,
+                      previous ? (long)&old_request : 0,
+                      sizeof(__sigset_t), 0, 0);
     if (result < 0) {
         errno = (int)-result;
         return -1;
     }
     if (previous) {
         *previous = (struct sigaction){
-            .sa_handler = request.previous_disposition == LEONOS_SIGNAL_DISPOSITION_IGNORE
-                              ? SIG_IGN : SIG_DFL,
+            .sa_handler = (_sig_func_ptr)(uintptr_t)old_request.handler,
+            .sa_mask = (__sigset_t)old_request.mask,
+            .sa_flags = (int)old_request.flags,
         };
     }
+    if (action) {
+        leonos_signal_handlers[signal_number] = action->sa_handler;
+        leonos_signal_masks[signal_number] = action->sa_mask;
+    }
     return 0;
+}
+
+void leonos_dispatch_pending_signals(void)
+{
+    int signal_number;
+    if (leonos_dispatching_signal) return;
+    leonos_dispatching_signal = 1;
+    while ((signal_number = (int)syscall0(SYS_rt_sigreturn)) > 0) {
+        _sig_func_ptr handler = leonos_signal_handlers[signal_number];
+        if (handler && handler != SIG_IGN && handler != SIG_DFL) {
+            __sigset_t old_mask;
+            (void)sigprocmask(SIG_BLOCK, &leonos_signal_masks[signal_number], &old_mask);
+            handler(signal_number);
+            (void)sigprocmask(SIG_SETMASK, &old_mask, 0);
+        }
+    }
+    leonos_dispatching_signal = 0;
 }
 
 /* The kernel supports default and ignore dispositions. User callbacks remain
@@ -322,7 +513,9 @@ _sig_func_ptr signal(int signal_number, _sig_func_ptr handler)
 
 int raise(int signal_number)
 {
-    return kill(getpid(), signal_number);
+    int result = kill(getpid(), signal_number);
+    leonos_dispatch_pending_signals();
+    return result;
 }
 
 uid_t getuid(void)

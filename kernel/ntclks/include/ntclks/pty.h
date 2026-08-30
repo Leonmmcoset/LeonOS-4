@@ -28,6 +28,9 @@ int32_t pty_create(uint32_t owner_pid);
  * @brief Tear down the PTY pty_id if it is owned by owner_pid; 0 on success.
  */
 int pty_destroy(uint32_t owner_pid, uint32_t pty_id);
+/** Retain or release an anonymous PTY master descriptor. */
+int pty_master_retain(uint32_t pty_id);
+void pty_master_release(uint32_t pty_id);
 /**
  * @brief Return non-zero when owner_pid owns pty_id.
  */
@@ -56,6 +59,8 @@ uint32_t pty_input_available(uint32_t pty_id);
  * @brief Write up to length bytes of buffer to pty_id's terminal output; returns bytes written.
  */
 int64_t pty_write_output(uint32_t pty_id, const char *buffer, uint32_t length);
+uint32_t pty_output_available(uint32_t pty_id);
+int pty_attach_slave(uint32_t pty_id, uint32_t pid);
 /**
  * @brief Copy pty_id's terminal mode settings into termios; 0 on success.
  */

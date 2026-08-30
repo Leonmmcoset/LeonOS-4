@@ -52,3 +52,9 @@
 [submodule "third_party/less"]
 	path = third_party/less
 	url = https://github.com/gwsw/less.git
+[submodule "third_party/tmux"]
+	path = third_party/tmux
+	url = https://github.com/tmux/tmux.git
+[submodule "third_party/libevent"]
+	path = third_party/libevent
+	url = https://github.com/libevent/libevent.git

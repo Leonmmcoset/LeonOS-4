@@ -683,6 +683,8 @@ void userland_init(const struct boot_info *boot)
         console_printf("[ntclks] no block-backed root filesystem available for userland\n");
         kernel_idle_loop();
     }
+    /* Session-scoped tools can use /tmp before any GUI application starts. */
+    (void)storage_mkdir("/tmp");
 
     installer_mode = boot && name_contains(boot->cmdline, "mode=installer");
 

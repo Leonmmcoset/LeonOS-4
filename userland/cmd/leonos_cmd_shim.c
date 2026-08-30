@@ -225,7 +225,7 @@ static int copy_exec_path(char *out, size_t out_size, const char *path)
 
 static const char *const busybox_applets[] = {
     "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo", "env",
-    "false", "grep", "head", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
+    "false", "fdisk", "grep", "head", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
     "rm", "rmdir", "sha256sum", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc", NULL,
 };
 
@@ -239,6 +239,7 @@ static const struct program_path programs[] = {
     {"file", "/programs/file/file.elf"},
     {"fastfetch", "/programs/fastfetch/fastfetch.elf"},
     {"less", "/programs/less/less.elf"},
+    {"tmux", "/programs/tmux/tmux.elf"},
     {"sl", "/programs/sl/sl.elf"},
     {"lua", "/programs/lua/lua.elf"},
     {"nano", "/programs/nano/nano.elf"},

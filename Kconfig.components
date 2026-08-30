@@ -354,6 +354,25 @@ config LEON_COMPONENT_TOOL_LESS_SDK
     default n
     depends on LEON_COMPONENT_TOOL_LESS_BUILD
 
+config LEON_COMPONENT_TOOL_TMUX_BUILD
+    bool "Build tmux terminal multiplexer"
+    default y
+
+config LEON_COMPONENT_TOOL_TMUX_IMAGE
+    bool "Include tmux terminal multiplexer in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_TMUX_BUILD
+
+config LEON_COMPONENT_TOOL_TMUX_ENTRY
+    bool "Generate a desktop entry for tmux terminal multiplexer"
+    default n
+    depends on LEON_COMPONENT_TOOL_TMUX_BUILD
+
+config LEON_COMPONENT_TOOL_TMUX_SDK
+    bool "Include tmux terminal multiplexer in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_TMUX_BUILD
+
 config LEON_COMPONENT_TOOL_SL_BUILD
     bool "Build sl Steam Locomotive"
     default y

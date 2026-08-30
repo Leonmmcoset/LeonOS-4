@@ -63,6 +63,9 @@ struct task_file {
 #define TASK_FILE_FLAG_PIPE       0x80000000u
 #define TASK_FILE_FLAG_PIPE_WRITE 0x40000000u
 #define TASK_FILE_FLAG_DEV_NULL   0x20000000u
+#define TASK_FILE_FLAG_PTY_MASTER 0x10000000u
+#define TASK_FILE_FLAG_PTY_SLAVE  0x08000000u
+#define TASK_FILE_FLAG_UNIX_SOCKET 0x04000000u
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {
@@ -149,10 +152,14 @@ struct task_fd_table_state {
 
 struct task_signal_state {
     uint32_t pending_signals;
+    uint32_t blocked_signals;
     uint32_t child_event;
     uint32_t stop_signal;
     uint32_t exit_signal;
     uint32_t ignored_signals;
+    uint64_t handlers[32];
+    uint64_t handler_masks[32];
+    uint64_t handler_flags[32];
 };
 
 struct task_credentials_state {
@@ -235,10 +242,14 @@ struct task {
         struct task_signal_state signal_state;
         struct {
             uint32_t pending_signals;
+            uint32_t blocked_signals;
             uint32_t child_event;
             uint32_t stop_signal;
             uint32_t exit_signal;
             uint32_t ignored_signals;
+            uint64_t handlers[32];
+            uint64_t handler_masks[32];
+            uint64_t handler_flags[32];
         };
     };
     union {
@@ -457,6 +468,10 @@ int sched_signal_user_task(uint32_t pid, int signal_number);
  */
 int sched_signal_action(uint32_t pid, int signal_number, uint32_t operation,
                         uint32_t *disposition);
+int sched_signal_rt_action(uint32_t pid, int signal_number, uint64_t *handler,
+                           uint64_t *mask, uint64_t *flags, int set);
+int sched_signal_mask(uint32_t pid, int how, uint32_t set, uint32_t *old_set);
+int sched_take_pending_signal(uint32_t pid);
 /**
  * @brief Sends a signal to all eligible user tasks in a process group.
  * @param sender_pid Process that requested the signal.

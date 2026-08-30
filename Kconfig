@@ -158,6 +158,28 @@ endmenu
 
 endmenu
 
+menu "Kernel resource limits"
+
+config PTY_SESSION_LIMIT
+    int "Maximum concurrent pseudo-terminals"
+    range 8 128
+    default 32
+    help
+      Limits concurrently allocated pseudo-terminals. tmux uses one PTY per
+      pane, so the default supports several independent sessions and windows.
+
+config PTY_INPUT_BUFFER_BYTES
+    int "Pseudo-terminal input buffer size"
+    range 1024 16384
+    default 4096
+
+config PTY_OUTPUT_BUFFER_BYTES
+    int "Pseudo-terminal output buffer size"
+    range 4096 65536
+    default 16384
+
+endmenu
+
 menu "QEMU Run"
 
 config QEMU_MEMORY_MB
@@ -213,6 +235,10 @@ config TEST_QMP_TERMINAL
 config TEST_QMP_TCC
     bool "Include TCC QMP smoke test in test-all"
     default y
+
+config TEST_QMP_TMUX
+    bool "Include tmux QMP smoke test in test-all"
+    default n
 
 config TEST_QMP_STARDUST
     bool "Include StardustUI QMP smoke test in test-all"

@@ -19,6 +19,7 @@
 #include <leonos/tls.h>
 #include <leonos/ui.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +27,7 @@
 #include <sys/types.h>
 #include <sys/resource.h>
 #include <termios.h>
+#include <unistd.h>
 
 /* TinyCC's static archive scan can leave Picolibc's environ member out when
  * the generated program only needs the CRT startup object. Keep a real
@@ -386,17 +388,6 @@ int open(const char *path, int flags, ...)
     va_list args;
     int mode = 0;
 
-    /*
-     * LeonOS exposes a process' controlling PTY as the implicit standard
-     * descriptors instead of materialising a /dev/tty filesystem node.
-     * POSIX terminal programs (including less) use the conventional device
-     * path to obtain a raw keyboard descriptor, so map read-only opens to a
-     * duplicate of stdin before falling through to the filesystem syscall.
-     */
-    if (path && strcmp(path, "/dev/tty") == 0 &&
-        (flags & LEONOS_O_ACCMODE) == LEONOS_O_RDONLY) {
-        return dup(0);
-    }
     if (flags & LEONOS_O_CREAT) {
         va_start(args, flags);
         mode = va_arg(args, int);
@@ -4407,4 +4398,115 @@ int ftruncate(int fd, off_t length)
     }
     result = syscall2(77, fd, (long)length);
     return leonos_pty_error((int)result);
+}
+
+int posix_openpt(int flags)
+{
+    (void)flags;
+    return ioctl(3, LEONOS_PTY_IOCTL_OPEN_MASTER, 0);
+}
+
+int grantpt(int fd)
+{
+    if (fd < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    return 0;
+}
+
+int unlockpt(int fd)
+{
+    if (fd < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    return 0;
+}
+
+char *ptsname(int fd)
+{
+    static char name[32];
+    if (fd < 0) {
+        errno = EINVAL;
+        return 0;
+    }
+    snprintf(name, sizeof(name), "/dev/pts/%d", fd);
+    return name;
+}
+
+int openpty(int *master, int *slave, char *name,
+            const struct termios *termios, const struct winsize *winsize)
+{
+    int fd;
+    if (!master || !slave) {
+        errno = EINVAL;
+        return -1;
+    }
+    fd = posix_openpt(O_RDWR);
+    if (fd < 0) return -1;
+    if (termios && tcsetattr(fd, TCSANOW, termios) < 0) {
+        (void)close(fd);
+        return -1;
+    }
+    if (winsize && tcsetwinsize(fd, winsize) < 0) {
+        (void)close(fd);
+        return -1;
+    }
+    *master = fd;
+    *slave = dup(fd);
+    if (*slave < 0) {
+        (void)close(fd);
+        return -1;
+    }
+    if (name) {
+        const char *source = ptsname(fd);
+        size_t index = 0;
+        while (source[index] && index + 1u < 32u) {
+            name[index] = source[index];
+            ++index;
+        }
+        name[index] = 0;
+    }
+    return 0;
+}
+
+pid_t forkpty(int *master, char *name, const struct termios *termios,
+              const struct winsize *winsize)
+{
+    int fd = posix_openpt(O_RDWR);
+    pid_t pid;
+    if (fd < 0) return -1;
+    if (termios && tcsetattr(fd, TCSANOW, termios) < 0) {
+        (void)close(fd);
+        return -1;
+    }
+    if (winsize && tcsetwinsize(fd, winsize) < 0) {
+        (void)close(fd);
+        return -1;
+    }
+    pid = fork();
+    if (pid < 0) {
+        (void)close(fd);
+        return -1;
+    }
+    if (pid == 0) {
+        if (setsid() < 0 || ioctl(fd, LEONOS_PTY_IOCTL_ATTACH_SLAVE, 0) < 0) {
+            _exit(127);
+        }
+        (void)close(fd);
+        return 0;
+    }
+    if (master) *master = fd;
+    else (void)close(fd);
+    if (name) {
+        const char *source = ptsname(fd);
+        size_t index = 0;
+        while (source[index] && index + 1u < 32u) {
+            name[index] = source[index];
+            ++index;
+        }
+        name[index] = 0;
+    }
+    return pid;
 }

@@ -65,6 +65,7 @@
 #define LEONOS_O_CREAT 0x0040
 #define LEONOS_O_TRUNC 0x0200
 #define LEONOS_O_APPEND 0x0400
+#define LEONOS_O_NONBLOCK 0x0800
 
 /* Keep terminal and console writes short enough for prompt scheduling.
  * Regular files use the same 32 KiB window as reads: archive extraction and

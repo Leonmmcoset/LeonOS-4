@@ -12,7 +12,7 @@ The profile includes BusyBox `ash` behind the `sh` applet with native
 `fork`/`exec`, pipelines, redirections, background jobs, and `jobs`/`fg`/`bg`.
 It supports simple command lines, shell built-ins, and the bundled applets (`ls`, `pwd`, `cat`,
 `echo`, `clear`, `grep`, `head`, `tail`, `wc`, `sha256sum`, `basename`, `dirname`, `printf`, `diff`,
-`less`, `ps`, and `kill`,
+`less`, `ps`, `fdisk`, and `kill`,
 `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`,
 `true`, `false`, `nohup`, and `vi`). The GUI terminal launches this shell by default.
 
@@ -45,6 +45,11 @@ stdout/stderr to `nohup.out` in the current directory, falling back to
 `cp`, `mv`, and `rm` operate on regular files and directories through the
 LeonOS filesystem ABI. Symbolic links, ownership changes, and special device
 nodes remain unsupported by the filesystem and return an error.
+
+The fdisk applet is a LeonOS-specific read-only view. `fdisk -l` lists the
+detected disks and GPT partitions through the native disk inventory ABI; an
+optional numeric disk ID or exact disk name limits the output. It does not
+open Linux block nodes and has no partition-table or filesystem write path.
 
 The `file` command is provided as an external program backed by upstream
 libmagic. Ash resolves it to `/programs/file/file.elf`; the matching

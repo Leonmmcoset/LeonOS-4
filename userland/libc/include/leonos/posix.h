@@ -12,4 +12,7 @@ int leonos_posix_stat(const char *path, struct stat *status);
 int leonos_posix_fstat(int fd, struct stat *status);
 int leonos_posix_lstat(const char *path, struct stat *status);
 
+/* Deliver pending user signal callbacks after a syscall boundary. */
+void leonos_dispatch_pending_signals(void);
+
 #endif

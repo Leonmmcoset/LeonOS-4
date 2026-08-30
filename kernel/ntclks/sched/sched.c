@@ -860,6 +860,7 @@ void sched_set_running(uint32_t pid)
 void sched_exit(uint32_t pid, uint64_t code)
 {
     uint64_t flags;
+    uint32_t parent_pid = 0;
 
     /* Publish the terminal state atomically, but preserve running_cpu until
      * its owner reaches a scheduling boundary.  A remote CPU may still be
@@ -868,6 +869,7 @@ void sched_exit(uint32_t pid, uint64_t code)
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i]->pid == pid) {
             tasks[i]->state = TASK_EXITED;
+            parent_pid = tasks[i]->parent_pid;
             tasks[i]->exit_code = code;
             tasks[i]->child_event = TASK_CHILD_EVENT_NONE;
             tasks[i]->stop_signal = 0;
@@ -885,6 +887,9 @@ void sched_exit(uint32_t pid, uint64_t code)
         }
     }
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    if (parent_pid) {
+        (void)sched_signal_user_task(parent_pid, 20); /* SIGCHLD */
+    }
 }
 
 /**
@@ -1597,8 +1602,11 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
         }
         return 0;
     }
+    if (task->handlers[signal_number] != 0) {
+        return 0;
+    }
     if (signal_number == 1 || signal_number == 2 || signal_number == 3 || signal_number == 9 ||
-        signal_number == 15) {
+        signal_number == 13 || signal_number == 15) {
         task->exit_signal = (uint32_t)signal_number;
         sched_exit(pid, (uint64_t)(128 + signal_number));
     }
@@ -1636,10 +1644,81 @@ int sched_signal_action(uint32_t pid, int signal_number, uint32_t operation,
         if (*disposition) {
             task->ignored_signals |= bit;
             task->pending_signals &= ~bit;
+            task->handlers[signal_number] = 0;
         } else {
             task->ignored_signals &= ~bit;
+            task->handlers[signal_number] = 0;
         }
         *disposition = previous;
+    }
+    return 0;
+}
+
+int sched_signal_rt_action(uint32_t pid, int signal_number, uint64_t *handler,
+                           uint64_t *mask, uint64_t *flags, int set)
+{
+    struct task *task = sched_find(pid);
+    uint32_t bit;
+    if (!task || task->pid == 0 || task->kind != TASK_KIND_USER ||
+        task->state == TASK_EXITED || !handler || !mask || !flags ||
+        signal_number <= 0 || signal_number >= 32 || signal_number == 9 ||
+        signal_number == 17) {
+        return -1;
+    }
+    bit = 1u << (uint32_t)signal_number;
+    if (!set) {
+        *handler = task->ignored_signals & bit ? 1u : task->handlers[signal_number];
+        *mask = task->handler_masks[signal_number];
+        *flags = task->handler_flags[signal_number];
+        return 0;
+    }
+    {
+        uint64_t previous_handler = task->ignored_signals & bit
+                                        ? 1u : task->handlers[signal_number];
+        uint64_t previous_mask = task->handler_masks[signal_number];
+        uint64_t previous_flags = task->handler_flags[signal_number];
+        uint64_t requested_handler = *handler;
+    if (*handler == 1u) {
+        task->ignored_signals |= bit;
+        task->pending_signals &= ~bit;
+        task->handlers[signal_number] = 0;
+    } else {
+        task->ignored_signals &= ~bit;
+        task->handlers[signal_number] = requested_handler;
+    }
+    task->handler_masks[signal_number] = *mask;
+    task->handler_flags[signal_number] = *flags;
+        *handler = previous_handler;
+        *mask = previous_mask;
+        *flags = previous_flags;
+    }
+    return 0;
+}
+
+int sched_signal_mask(uint32_t pid, int how, uint32_t set, uint32_t *old_set)
+{
+    struct task *task = sched_find(pid);
+    uint32_t unmaskable = (1u << 9) | (1u << 17);
+    if (!task || task->pid == 0 || task->kind != TASK_KIND_USER || !old_set) return -1;
+    *old_set = task->blocked_signals;
+    set &= ~unmaskable;
+    if (how == 0) task->blocked_signals = set;
+    else if (how == 1) task->blocked_signals |= set;
+    else if (how == 2) task->blocked_signals &= ~set;
+    else return -1;
+    return 0;
+}
+
+int sched_take_pending_signal(uint32_t pid)
+{
+    struct task *task = sched_find(pid);
+    if (!task || task->kind != TASK_KIND_USER) return -1;
+    for (int signal_number = 1; signal_number < 32; ++signal_number) {
+        uint32_t bit = 1u << (uint32_t)signal_number;
+        if (!(task->pending_signals & bit) || (task->blocked_signals & bit)) continue;
+        task->pending_signals &= ~bit;
+        if ((task->ignored_signals & bit) || task->handlers[signal_number] == 0) continue;
+        return signal_number;
     }
     return 0;
 }

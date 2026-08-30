@@ -140,6 +140,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-qmp-terminal",
     "test-qmp-pleditor",
     "test-qmp-tcc",
+    "test-qmp-tmux",
     "test-qmp-fastfetch",
     "test-qmp-sl",
     "test-qmp-less",
@@ -740,6 +741,16 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     less_elf = paths.out / "userland/less.elf"
     less_stamp = paths.out / "userland/less.stamp"
     less_work_dir = paths.out / "less-work"
+    libevent_source = ROOT / "third_party/libevent"
+    libevent_port = ROOT / "userland/libevent"
+    libevent_archive = paths.out / "libevent/libevent_core.a"
+    libevent_stamp = paths.out / "libevent/libevent.stamp"
+    libevent_work_dir = paths.out / "libevent-work"
+    tmux_source = ROOT / "third_party/tmux"
+    tmux_port = ROOT / "userland/tmux"
+    tmux_elf = paths.out / "userland/tmux.elf"
+    tmux_stamp = paths.out / "userland/tmux.stamp"
+    tmux_work_dir = paths.out / "tmux-work"
     tcc_source = ROOT / "third_party/tinycc"
     tcc_port = ROOT / "userland/tcc"
     tcc_app_manifest = ROOT / "userland/apps/tcc/tcc.app.ini"
@@ -853,6 +864,19 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     if (not (less_port / "leonos_termcap.c").is_file() or
             not (less_port / "include/defines.h").is_file()):
         raise GraphError("the LeonOS less port metadata is missing")
+    if (not (libevent_source / "event.c").is_file() or
+            not (libevent_source / "include/event2/event.h").is_file()):
+        raise GraphError("third_party/libevent is missing; initialize the libevent source tree")
+    if (not (libevent_port / "leonos_compat.c").is_file() or
+            not (libevent_port / "include/event2/event-config.h").is_file()):
+        raise GraphError("the LeonOS libevent port metadata is missing")
+    if (not (tmux_source / "tmux.c").is_file() or
+            not (tmux_source / "COPYING").is_file()):
+        raise GraphError("third_party/tmux is missing; initialize the tmux source tree")
+    if (not (tmux_port / "leonos_port.c").is_file() or
+            not (tmux_port / "leonos_termcap.c").is_file() or
+            not (tmux_port / "include/config.h").is_file()):
+        raise GraphError("the LeonOS tmux port metadata is missing")
     if not (tcc_source / "tcc.c").is_file():
         raise GraphError("third_party/tinycc is missing; initialize the TinyCC source tree")
     if not (lua_source / "lua.c").is_file() or not (lua_source / "lua.h").is_file():
@@ -1615,6 +1639,52 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ),
     ))
 
+    libevent_inputs = collect(
+        "third_party/libevent/*.c", "third_party/libevent/*.h",
+        "third_party/libevent/include/**/*.h", "userland/libevent/**/*.c",
+        "userland/libevent/**/*.h", "tools/build_libevent.py",
+    )
+    graph.add(Target(
+        name="libevent",
+        outputs=(libevent_archive, libevent_stamp),
+        inputs=tuple([*libevent_inputs, picolibc_archive, runtime_so]),
+        depends_on=("picolibc", "runtime"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_libevent.py", "--source", "third_party/libevent",
+            "--port", "userland/libevent", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--work-dir", relative(libevent_work_dir), "--output", relative(libevent_archive),
+            "--stamp", relative(libevent_stamp), *compile_option_args,
+        ),
+    ))
+
+    tmux_inputs = collect(
+        "third_party/tmux/*.c", "third_party/tmux/*.h", "third_party/tmux/*.y",
+        "third_party/tmux/compat/*.c", "third_party/tmux/compat/*.h",
+        "third_party/tmux/COPYING", "userland/tmux/**/*.c", "userland/tmux/**/*.h",
+        "userland/tmux/**/*.md", "tools/build_tmux.py",
+    )
+    graph.add(Target(
+        name="tmux",
+        outputs=(tmux_elf, tmux_stamp),
+        inputs=tuple([*tmux_inputs, libevent_archive, libevent_stamp, ROOT / "userland/dynamic-app.ld",
+                      runtime_so, dynamic_crt_obj, dynamic_note_obj]),
+        depends_on=("libevent", "runtime", "runtime-loader"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_tmux.py", "--source", "third_party/tmux",
+            "--port", "userland/tmux", "--libevent", relative(libevent_archive),
+            "--libevent-port", "userland/libevent", "--libevent-source", "third_party/libevent",
+            "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--linker-script", "userland/dynamic-app.ld", "--leonos-lib", relative(runtime_so),
+            "--dynamic-crt", relative(dynamic_crt_obj), "--abi-note", relative(dynamic_note_obj),
+            "--work-dir", relative(tmux_work_dir), "--output", relative(tmux_elf),
+            "--stamp", relative(tmux_stamp), *compile_option_args, *linker_option_args,
+        ),
+    ))
+
     tcc_inputs = collect(
         "third_party/tinycc/**/*.c", "third_party/tinycc/**/*.h",
         "third_party/tinycc/**/*.S", "third_party/tinycc/**/*.def",
@@ -1822,6 +1892,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         user_targets.append("sl")
     if component_enabled("less"):
         user_targets.append("less")
+    if component_enabled("tmux"):
+        user_targets.append("tmux")
     if component_enabled("tcc"):
         user_targets.append("tcc")
     if component_enabled("lua"):
@@ -2333,6 +2405,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             target = add_copy(graph, f"esp:less:{destination.name}", source, destination)
             esp_names.append(target.name)
             esp_outputs.append(destination)
+    if component_enabled("tmux", "image"):
+        tmux_destination = paths.staging / "programs/tmux"
+        for source in (tmux_elf, tmux_source / "COPYING", tmux_port / "README.md"):
+            destination = tmux_destination / ("tmux.elf" if source == tmux_elf else source.name)
+            target = add_copy(graph, f"esp:tmux:{destination.name}", source, destination)
+            esp_names.append(target.name)
+            esp_outputs.append(destination)
     if component_enabled("pleditor", "image"):
         pleditor_license_destination = paths.staging / "programs/pleditor/LICENSE"
         target = add_copy(graph, "esp:pleditor:LICENSE", ROOT / "third_party/pl_editor/LICENSE",
@@ -2611,6 +2690,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ))
 
     def qmp_test(context: ActionContext, editor: str = "nano", tcc_smoke: bool = False,
+                 tmux_smoke: bool = False,
                  fastfetch_smoke: bool = False,
                  sl_smoke: bool = False,
                  less_smoke: bool = False,
@@ -2622,6 +2702,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "QMP cmd pipeline test requires CONFIG_LEON_COMPONENT_TOOL_CMD_IMAGE=y"
             )
         test_name = desktop_app if desktop_app else (
+            "tmux" if tmux_smoke else
             "dynlinkerror" if dynlinkerror_smoke else
             "cmd" if cmd_pipeline_smoke else
             "less" if less_smoke else
@@ -2646,6 +2727,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 smoke_command = [PYTHON, "tools/qmp_terminal_smoke.py"]
                 if tcc_smoke:
                     smoke_command.append("--tcc")
+                elif tmux_smoke:
+                    smoke_command.append("--tmux")
                 elif fastfetch_smoke:
                     smoke_command.append("--fastfetch")
                 elif sl_smoke:
@@ -2679,8 +2762,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         # Once the graphical desktop owns the console, the framebuffer remains
         # the most reliable user-visible assertion. Keep serial checks as well
         # when a specific process launch is expected.
-        if cmd_pipeline_smoke or less_smoke:
-            screenshot_name = "less-qmp-smoke.ppm" if less_smoke else "cmd-pipeline-qmp-smoke.ppm"
+        if cmd_pipeline_smoke or less_smoke or tmux_smoke:
+            screenshot_name = ("tmux-qmp-smoke.ppm" if tmux_smoke else
+                               "less-qmp-smoke.ppm" if less_smoke else
+                               "cmd-pipeline-qmp-smoke.ppm")
             screenshot = paths.images / screenshot_name
             if not screenshot.is_file() or screenshot.stat().st_size == 0:
                 raise BuildFailure(f"QMP {test_name} test did not produce a terminal screenshot")
@@ -2693,6 +2778,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "spawn path=/programs/tcc/examples/a.out",
             )
             expected_exits = ("name=tcc.elf", "name=a.out")
+        elif tmux_smoke:
+            expected_spawns = ("spawn path=/programs/tmux/tmux.elf",)
+            expected_exits = ("name=tmux.elf",)
         elif fastfetch_smoke:
             expected_spawns = ("spawn path=/programs/fastfetch/fastfetch.elf",)
             expected_exits = ("name=fastfetch.elf",)
@@ -2774,6 +2862,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-qmp-pleditor", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "pleditor"), action_key="qmp-pleditor-v1"))
     graph.add(Target(name="test-qmp-vi", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "vi"), action_key="qmp-vi-v1"))
     graph.add(Target(name="test-qmp-tcc", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, tcc_smoke=True), action_key="qmp-tcc-v1"))
+    graph.add(Target(name="test-qmp-tmux", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, tmux_smoke=True), action_key="qmp-tmux-v1"))
     graph.add(Target(name="test-qmp-fastfetch", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, fastfetch_smoke=True), action_key="qmp-fastfetch-v1"))
     graph.add(Target(name="test-qmp-sl", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, sl_smoke=True), action_key="qmp-sl-v1"))
     graph.add(Target(name="test-qmp-less", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, less_smoke=True), action_key="qmp-less-v1"))
@@ -2785,6 +2874,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         qmp_suite_specs.append({})
     if config_bool(values, "CONFIG_TEST_QMP_TCC") and component_enabled("tcc", "image"):
         qmp_suite_specs.append({"tcc_smoke": True})
+    if config_bool(values, "CONFIG_TEST_QMP_TMUX") and component_enabled("tmux", "image"):
+        qmp_suite_specs.append({"tmux_smoke": True})
     if component_enabled("cmd", "image"):
         qmp_suite_specs.append({"cmd_pipeline_smoke": True})
     if component_enabled("less", "image"):
@@ -2881,7 +2972,7 @@ def task_tools(task: str) -> tuple[str, ...]:
         return (*vmdk, "grub-mkrescue", "xorriso", "qemu-system-x86_64")
     if task == "menuconfig":
         return ("kconfig-mconf",)
-    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-fastfetch", "test-qmp-sl", "test-qmp-less",
+    if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-tmux", "test-qmp-fastfetch", "test-qmp-sl", "test-qmp-less",
                 "test-qmp-dynlinkerror", "test-qmp-cmd", "test-qmp-stardust", "test-all"}:
         return (*vmdk, "qemu-system-x86_64")
     return ()
@@ -2921,7 +3012,7 @@ Commands:
   build.py settings
   build.py map
   build.py gen <file>
-  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|all>
+  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-tmux|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|all>
   build.py client <run|gen|test|profile> ...
   build.py status <task-id>
   build.py log <task-id>
@@ -3408,7 +3499,7 @@ def parser() -> argparse.ArgumentParser:
     add_config_options(generate)
     test = commands.add_parser("test")
     test.add_argument("item", choices=("license-server", "los2w", "component-config",
-                                       "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl", "qmp-less",
+                                       "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-tmux", "qmp-fastfetch", "qmp-sl", "qmp-less",
                                        "qmp-dynlinkerror", "qmp-cmd", "qmp-stardust", "all"))
     add_config_options(test)
     config = commands.add_parser("config")

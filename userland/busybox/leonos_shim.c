@@ -192,6 +192,7 @@ const char *leonos_shell_command_path(const char *name)
     if (strcmp(name, "file") == 0) return "/programs/file/file.elf";
     if (strcmp(name, "fastfetch") == 0) return "/programs/fastfetch/fastfetch.elf";
     if (strcmp(name, "less") == 0) return "/programs/less/less.elf";
+    if (strcmp(name, "tmux") == 0) return "/programs/tmux/tmux.elf";
     if (strcmp(name, "sl") == 0) return "/programs/sl/sl.elf";
     if (strcmp(name, "cmd") == 0) return "/programs/cmd/cmd.elf";
     if (strcmp(name, "oobe") == 0) return "/system/apps/oobe/oobe.elf";

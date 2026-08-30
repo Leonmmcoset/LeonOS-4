@@ -17,4 +17,19 @@ struct leonos_signal_action {
     uint32_t previous_disposition;
 };
 
+/* Linux-compatible rt_sigaction payload used by the freestanding ABI.
+ * Handler invocation is mediated by libleonos at syscall return boundaries,
+ * so a pending signal never requires the kernel to trust a writable user
+ * stack frame. */
+struct leonos_rt_sigaction {
+    uint64_t handler;
+    uint64_t flags;
+    uint64_t mask;
+    uint64_t restorer;
+};
+
+#define LEONOS_SIGMASK_SET 0
+#define LEONOS_SIGMASK_BLOCK 1
+#define LEONOS_SIGMASK_UNBLOCK 2
+
 #endif

@@ -74,6 +74,7 @@ def main() -> int:
     dynlinkerror_smoke = False
     cmd_pipeline_smoke = False
     fancy_prompt_smoke = False
+    tmux_smoke = False
     if arguments and arguments[0] == "--skip-oobe":
         skip_oobe = True
         arguments = arguments[1:]
@@ -113,6 +114,9 @@ def main() -> int:
     if arguments and arguments[0] == "--fancy-prompt":
         fancy_prompt_smoke = True
         arguments = arguments[1:]
+    if arguments and arguments[0] == "--tmux":
+        tmux_smoke = True
+        arguments = arguments[1:]
     if len(arguments) >= 2 and arguments[0] == "--desktop-app":
         desktop_app = arguments[1]
         arguments = arguments[2:]
@@ -127,7 +131,7 @@ def main() -> int:
     if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
         return 2
     if desktop_app is not None and (tcc_smoke or fastfetch_smoke or fastfetch_single or sl_smoke or less_smoke or start_menu_smoke or iso9660_smoke or
-                                    dynlinkerror_smoke or cmd_pipeline_smoke or fancy_prompt_smoke or exit_only):
+                                    dynlinkerror_smoke or cmd_pipeline_smoke or fancy_prompt_smoke or tmux_smoke or exit_only):
         return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
         return 2
@@ -238,6 +242,21 @@ def main() -> int:
         send_keys(sock, text_keys("pwd") + ("ret",))
         time.sleep(2.0)
         hmp(sock, "screendump build/images/fancy-prompt-qmp-smoke.ppm", 0.4)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
+    if tmux_smoke:
+        # Create a detached server first. The following commands deliberately
+        # use separate shell invocations so a failure leaves its diagnostic in
+        # the terminal and does not hide a broken client/server handshake.
+        for command in (
+            "tmux -vv new-session -d -s smoke",
+        ):
+            send_keys(sock, text_keys(command) + ("ret",))
+            time.sleep(4.0)
+        send_keys(sock, text_keys("tail -n 100 /users/admin/tmux-client-10.log") + ("ret",), 0.12)
+        time.sleep(3.0)
+        hmp(sock, "screendump build/images/tmux-qmp-smoke.ppm", 0.4)
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 

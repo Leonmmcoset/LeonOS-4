@@ -12,8 +12,19 @@ int file_can_write(const struct task_file *file);
 int storage_errno(int ret);
 void task_pipe_retain(struct task_file *file);
 void task_pipe_release(struct task_file *file);
+int task_pipe_poll(const struct task_file *file, int16_t events);
 int task_pipe_read(struct task_file *file, void *buffer, uint32_t length);
 int task_pipe_write(struct task_file *file, const void *buffer, uint32_t length);
+void task_unix_socket_retain(struct task_file *file);
+void task_unix_socket_release(struct task_file *file);
+int task_unix_socket_read(struct task_file *file, void *buffer, uint32_t length);
+int task_unix_socket_write(struct task_file *file, const void *buffer, uint32_t length);
+int task_unix_socket_poll(const struct task_file *file, int16_t events);
+int task_unix_socket_syscall(uint64_t number, uint64_t a0, uint64_t a1,
+                             uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
+int task_pty_master_poll(const struct task_file *file, int16_t events);
+int task_allocate_anon_fd(struct task *task, uint32_t flags, uint64_t aux,
+                          const char *path);
 int syscall_ipc_pipe(uint64_t user_ptr);
 int syscall_fs_owns(uint64_t number);
 int64_t syscall_fs_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
