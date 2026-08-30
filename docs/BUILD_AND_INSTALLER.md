@@ -106,6 +106,12 @@ secondary channel.
 Set `LEONOS_QEMU_NVME=1` to attach the same VMDK through a QEMU NVMe controller;
 this is intentionally opt-in so normal QEMU runs retain the AHCI regression path.
 
+The installer ISO GRUB menu provides the default graphical installer and an
+`Install LeonOS 4 (TTY)` entry. The TTY entry starts `installer.elf` directly
+on the console PTY, presents an interactive CLI for policy, mode, disk, and
+destructive-action confirmation, and uses the same format, mount, copy, and
+update implementation as the graphical installer.
+
 The installer runtime itself only needs `desktop.elf` and `installer.elf` under
 `/system/apps`. The installed-system root payload under `/install/root/system/apps`
 and `/install/root/programs` contains the normal app set, including `login.elf`

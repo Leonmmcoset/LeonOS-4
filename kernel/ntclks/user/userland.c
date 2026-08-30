@@ -654,6 +654,7 @@ void userland_init(const struct boot_info *boot)
 {
     int64_t pid;
     int tty_mode;
+    int installer_mode;
 
     console_printf("[ntclks] userland storage load started modules=%u\n",
                    boot ? boot->module_count : 0);
@@ -683,17 +684,7 @@ void userland_init(const struct boot_info *boot)
         kernel_idle_loop();
     }
 
-    if (boot && name_contains(boot->cmdline, "mode=installer")) {
-        pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
-                                  0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
-        if (pid <= 0) {
-            console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
-            kernel_idle_loop();
-        }
-        desktop_pid = (uint32_t)pid;
-        console_printf("[ntclks] installer mode desktop.elf window server selected\n");
-        return;
-    }
+    installer_mode = boot && name_contains(boot->cmdline, "mode=installer");
 
 #ifdef CONFIG_STARTUP_TTY
     tty_mode = 1;
@@ -704,6 +695,47 @@ void userland_init(const struct boot_info *boot)
         tty_mode = 1;
     } else if (boot && name_contains(boot->cmdline, "startup=desktop")) {
         tty_mode = 0;
+    }
+
+    if (installer_mode && tty_mode) {
+        int32_t pty_id;
+        pid = spawn_path_internal("/system/apps/installer/installer.elf", "installer.elf tty",
+                                  0, 0, 0, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load TTY installer.elf ret=%lld\n",
+                           (long long)pid);
+            kernel_idle_loop();
+        }
+        tty_pid = (uint32_t)pid;
+        pty_id = pty_create(tty_pid);
+        if (pty_id <= 0 || pty_bind_console((uint32_t)pty_id, tty_pid) < 0) {
+            console_printf("[ntclks] failed to bind installer console PTY ret=%d\n",
+                           (int)pty_id);
+            sched_exit(tty_pid, 127);
+            tty_pid = 0;
+            kernel_idle_loop();
+        }
+        {
+            struct task *tty_task = sched_find(tty_pid);
+            if (tty_task) {
+                tty_task->pty_id = (uint32_t)pty_id;
+            }
+        }
+        console_printf("[ntclks] installer TTY selected; installer pid=%u pty=%d\n",
+                       tty_pid, (int)pty_id);
+        return;
+    }
+
+    if (installer_mode) {
+        pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
+                                  0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
+            kernel_idle_loop();
+        }
+        desktop_pid = (uint32_t)pid;
+        console_printf("[ntclks] installer mode desktop.elf window server selected\n");
+        return;
     }
 
     pid = spawn_path_internal("/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0, -1, -1, -1);

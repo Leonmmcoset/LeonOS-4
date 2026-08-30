@@ -7,6 +7,8 @@
 #define CONSOLE_LOG_CAP 8192
 #define CONSOLE_MAX_COLS 512u
 #define CONSOLE_MAX_ROWS 192u
+#define FB_ANSI_MAX_PARAMS 16u
+#define FB_CONSOLE_CURSOR_BYTES (LEONOS_FONT_W * LEONOS_FONT_H * 4u)
 
 static char log_buffer[CONSOLE_LOG_CAP];
 static size_t log_len;
@@ -30,8 +32,25 @@ static uint32_t fb_console_bg_color;
 static bool fb_console_bold;
 static bool fb_console_underline;
 static bool fb_console_reverse;
+static uint32_t fb_console_underline_color;
+static bool fb_console_underline_color_set;
 static uint32_t fb_scroll_top;
 static uint32_t fb_scroll_bottom;
+static bool fb_console_tty_cursor_active;
+static bool fb_console_tty_cursor_visible;
+static uint32_t fb_console_tty_cursor_x;
+static uint32_t fb_console_tty_cursor_y;
+static uint8_t fb_console_tty_cursor_bpp;
+static uint8_t fb_console_tty_cursor_saved[FB_CONSOLE_CURSOR_BYTES];
+
+/* Match the desktop terminal's readable ANSI palette while retaining a
+ * black ANSI background for conventional TTY output. */
+static const uint32_t fb_ansi_colors[16] = {
+    0x00000000u, 0x00d06060u, 0x006fc77au, 0x00d5b85au,
+    0x007f9ee8u, 0x00c38bd7u, 0x006bc8d8u, 0x00d7e3f4u,
+    0x00708090u, 0x00ff8484u, 0x008de39au, 0x00f0d37bu,
+    0x009bb7ffu, 0x00e8a5ffu, 0x0088e8fau, 0x00ffffffu,
+};
 
 static bool console_is_ntclks_format(const char *fmt)
 {
@@ -53,7 +72,8 @@ enum fb_ansi_state {
 };
 
 static uint8_t fb_ansi_state;
-static uint32_t fb_ansi_params[8];
+static uint32_t fb_ansi_params[FB_ANSI_MAX_PARAMS];
+static bool fb_ansi_param_colon[FB_ANSI_MAX_PARAMS];
 static uint32_t fb_ansi_param_count;
 static uint32_t fb_ansi_param_value;
 static bool fb_ansi_param_active;
@@ -61,7 +81,9 @@ static bool fb_ansi_private;
 
 static uint32_t console_panel(void)
 {
-    return console_ui_theme == 0u ? 0x00000000u : 0x001b2a3au;
+    /* Kernel logs and the fullscreen TTY always use the conventional
+     * terminal background, independent of the desktop appearance theme. */
+    return 0x00000000u;
 }
 
 static uint32_t console_fg(void)
@@ -74,6 +96,8 @@ static void fb_console_reset_attributes(void)
     fb_console_bold = false;
     fb_console_underline = false;
     fb_console_reverse = false;
+    fb_console_underline_color = console_fg();
+    fb_console_underline_color_set = false;
     fb_console_fg_color = console_fg();
     fb_console_bg_color = console_panel();
 }
@@ -117,6 +141,69 @@ static void fb_console_clear_log(void)
     }
     framebuffer_rect(fb_x, fb_y, fb_cols * LEONOS_FONT_W,
                      fb_rows * LEONOS_FONT_H, fb_console_bg_color);
+}
+
+static void fb_console_hide_tty_cursor(void)
+{
+    const struct framebuffer *fb = framebuffer_get();
+    uint32_t row;
+    uint32_t row_bytes;
+
+    if (!fb_console_tty_cursor_visible) {
+        return;
+    }
+    fb_console_tty_cursor_visible = false;
+    if (!fb->available || !fb->pixels || !fb_console_tty_cursor_bpp ||
+        fb_console_tty_cursor_bpp > 4u ||
+        fb_console_tty_cursor_x + LEONOS_FONT_W > fb->width ||
+        fb_console_tty_cursor_y + LEONOS_FONT_H > fb->height) {
+        return;
+    }
+    row_bytes = LEONOS_FONT_W * fb_console_tty_cursor_bpp;
+    for (row = 0; row < LEONOS_FONT_H; ++row) {
+        uint8_t *dst = (uint8_t *)fb->pixels +
+                       (uint64_t)(fb_console_tty_cursor_y + row) * fb->pitch +
+                       (uint64_t)fb_console_tty_cursor_x * fb_console_tty_cursor_bpp;
+        uint8_t *src = fb_console_tty_cursor_saved + row * row_bytes;
+        for (uint32_t byte = 0; byte < row_bytes; ++byte) {
+            dst[byte] = src[byte];
+        }
+    }
+}
+
+static void fb_console_show_tty_cursor(void)
+{
+    const struct framebuffer *fb = framebuffer_get();
+    uint32_t row;
+    uint32_t row_bytes;
+
+    if (!fb_console_tty_cursor_active || fb_console_tty_cursor_visible ||
+        !fb->available || !fb->pixels || !fb_cols || !fb_rows ||
+        fb_col >= fb_cols || fb_row >= fb_rows || !fb->bytes_per_pixel ||
+        fb->bytes_per_pixel > 4u) {
+        return;
+    }
+    fb_console_tty_cursor_x = fb_x + fb_col * LEONOS_FONT_W;
+    fb_console_tty_cursor_y = fb_y + fb_row * LEONOS_FONT_H;
+    if (fb_console_tty_cursor_x + LEONOS_FONT_W > fb->width ||
+        fb_console_tty_cursor_y + LEONOS_FONT_H > fb->height) {
+        return;
+    }
+    fb_console_tty_cursor_bpp = fb->bytes_per_pixel;
+    row_bytes = LEONOS_FONT_W * fb_console_tty_cursor_bpp;
+    for (row = 0; row < LEONOS_FONT_H; ++row) {
+        const uint8_t *src = (const uint8_t *)fb->pixels +
+                             (uint64_t)(fb_console_tty_cursor_y + row) * fb->pitch +
+                             (uint64_t)fb_console_tty_cursor_x * fb_console_tty_cursor_bpp;
+        uint8_t *dst = fb_console_tty_cursor_saved + row * row_bytes;
+        for (uint32_t byte = 0; byte < row_bytes; ++byte) {
+            dst[byte] = src[byte];
+        }
+    }
+    framebuffer_rect(fb_console_tty_cursor_x,
+                     fb_console_tty_cursor_y + LEONOS_FONT_H - 2u,
+                     LEONOS_FONT_W, 2u, fb_console_fg_color);
+    fb_console_tty_cursor_visible = true;
 }
 
 static void fb_console_scroll(void)
@@ -226,7 +313,8 @@ static void fb_console_putc(char ch)
             framebuffer_text(x + 1u, y, (char[]){ch, 0}, fg, bg);
         }
         if (fb_console_underline) {
-            framebuffer_rect(x, y + LEONOS_FONT_H - 2u, LEONOS_FONT_W, 1u, fg);
+            framebuffer_rect(x, y + LEONOS_FONT_H - 2u, LEONOS_FONT_W, 1u,
+                             fb_console_underline_color_set ? fb_console_underline_color : fg);
         }
     }
     ++fb_col;
@@ -260,32 +348,18 @@ static void fb_console_clear_row_range(uint32_t row, uint32_t first, uint32_t la
 
 static uint32_t fb_ansi_color(uint32_t code)
 {
-    static const uint32_t colors[8] = {
-        0x00000000u, 0x00aa0000u, 0x0000aa00u, 0x00aa5500u,
-        0x000000aau, 0x00aa00aau, 0x0000aaaaau, 0x00aaaaaau,
-    };
-    static const uint32_t bright[8] = {
-        0x00555555u, 0x00ff5555u, 0x0055ff55u, 0x00ffff55u,
-        0x005555ffu, 0x00ff55ffu, 0x0055ffffu, 0x00ffffffu,
-    };
     if (code >= 90u && code <= 97u) {
-        return bright[code - 90u];
+        return fb_ansi_colors[code - 90u + 8u];
     }
     if (code >= 30u && code <= 37u) {
-        return colors[code - 30u];
+        return fb_ansi_colors[code - 30u];
     }
     return console_fg();
 }
 
 static uint32_t fb_ansi_palette(uint32_t index)
 {
-    static const uint32_t base[16] = {
-        0x00000000u, 0x00aa0000u, 0x0000aa00u, 0x00aa5500u,
-        0x000000aau, 0x00aa00aau, 0x0000aaaaau, 0x00aaaaaau,
-        0x00555555u, 0x00ff5555u, 0x0055ff55u, 0x00ffff55u,
-        0x005555ffu, 0x00ff55ffu, 0x0055ffffu, 0x00ffffffu,
-    };
-    if (index < 16u) return base[index];
+    if (index < 16u) return fb_ansi_colors[index];
     if (index >= 232u) {
         uint32_t level = 8u + (index - 232u) * 10u;
         return (level << 16) | (level << 8) | level;
@@ -300,6 +374,66 @@ static uint32_t fb_ansi_palette(uint32_t index)
         b = b ? 55u + b * 40u : 0u;
         return (r << 16) | (g << 8) | b;
     }
+}
+
+enum fb_ansi_color_target {
+    FB_ANSI_COLOR_FOREGROUND,
+    FB_ANSI_COLOR_BACKGROUND,
+    FB_ANSI_COLOR_UNDERLINE,
+};
+
+static void fb_console_set_ansi_color(enum fb_ansi_color_target target, uint32_t color)
+{
+    if (target == FB_ANSI_COLOR_FOREGROUND) {
+        fb_console_fg_color = color;
+    } else if (target == FB_ANSI_COLOR_BACKGROUND) {
+        fb_console_bg_color = color;
+    } else {
+        fb_console_underline_color = color;
+        fb_console_underline_color_set = true;
+    }
+}
+
+static bool fb_console_apply_extended_color(uint32_t index,
+                                            enum fb_ansi_color_target target,
+                                            uint32_t *last_index)
+{
+    uint32_t mode_index = index + 1u;
+    uint32_t color;
+
+    if (mode_index >= fb_ansi_param_count) {
+        return false;
+    }
+    if (fb_ansi_params[mode_index] == 5u) {
+        if (mode_index + 1u >= fb_ansi_param_count) {
+            return false;
+        }
+        color = fb_ansi_palette(fb_ansi_params[mode_index + 1u] > 255u
+                                    ? 255u : fb_ansi_params[mode_index + 1u]);
+        *last_index = mode_index + 1u;
+    } else if (fb_ansi_params[mode_index] == 2u) {
+        uint32_t rgb_index = mode_index + 1u;
+        if (fb_ansi_param_colon[index]) {
+            /* ISO 8613-6 form: 38:2:<color-space>:red:green:blue. */
+            if (mode_index + 4u >= fb_ansi_param_count) {
+                return false;
+            }
+            rgb_index = mode_index + 2u;
+            *last_index = mode_index + 4u;
+        } else {
+            if (mode_index + 3u >= fb_ansi_param_count) {
+                return false;
+            }
+            *last_index = mode_index + 3u;
+        }
+        color = ((fb_ansi_params[rgb_index] > 255u ? 255u : fb_ansi_params[rgb_index]) << 16) |
+                ((fb_ansi_params[rgb_index + 1u] > 255u ? 255u : fb_ansi_params[rgb_index + 1u]) << 8) |
+                (fb_ansi_params[rgb_index + 2u] > 255u ? 255u : fb_ansi_params[rgb_index + 2u]);
+    } else {
+        return false;
+    }
+    fb_console_set_ansi_color(target, color);
+    return true;
 }
 
 static void fb_console_execute_csi(char final)
@@ -434,22 +568,16 @@ static void fb_console_execute_csi(char final)
                 fb_console_bg_color = fb_ansi_color(code - 10u);
             } else if (code == 49u) {
                 fb_console_bg_color = console_panel();
-            } else if (code == 38u || code == 48u) {
-                bool background = code == 48u;
-                if (i + 2u < n && fb_ansi_params[i + 1u] == 5u) {
-                    uint32_t color = fb_ansi_palette(fb_ansi_params[i + 2u] > 255u
-                                                         ? 255u : fb_ansi_params[i + 2u]);
-                    if (background) fb_console_bg_color = color;
-                    else fb_console_fg_color = color;
-                    i += 2u;
-                } else if (i + 4u < n && fb_ansi_params[i + 1u] == 2u) {
-                    uint32_t r = fb_ansi_params[i + 2u] > 255u ? 255u : fb_ansi_params[i + 2u];
-                    uint32_t g = fb_ansi_params[i + 3u] > 255u ? 255u : fb_ansi_params[i + 3u];
-                    uint32_t b = fb_ansi_params[i + 4u] > 255u ? 255u : fb_ansi_params[i + 4u];
-                    uint32_t color = (r << 16) | (g << 8) | b;
-                    if (background) fb_console_bg_color = color;
-                    else fb_console_fg_color = color;
-                    i += 4u;
+            } else if (code == 59u) {
+                fb_console_underline_color = console_fg();
+                fb_console_underline_color_set = false;
+            } else if (code == 38u || code == 48u || code == 58u) {
+                enum fb_ansi_color_target target = code == 38u ? FB_ANSI_COLOR_FOREGROUND :
+                                                    code == 48u ? FB_ANSI_COLOR_BACKGROUND :
+                                                                 FB_ANSI_COLOR_UNDERLINE;
+                uint32_t last_index = i;
+                if (fb_console_apply_extended_color(i, target, &last_index)) {
+                    i = last_index;
                 }
             }
         }
@@ -575,19 +703,22 @@ static void fb_console_ansi_feed(char ch)
         fb_ansi_param_active = true;
         return;
     }
-    if (ch == ';') {
-        if (fb_ansi_param_count < 8u) {
+    if (ch == ';' || ch == ':') {
+        if (fb_ansi_param_count < FB_ANSI_MAX_PARAMS) {
             fb_ansi_params[fb_ansi_param_count++] =
                 fb_ansi_param_active ? fb_ansi_param_value : 0u;
+            fb_ansi_param_colon[fb_ansi_param_count - 1u] = ch == ':';
         }
         fb_ansi_param_value = 0;
         fb_ansi_param_active = false;
         return;
     }
     if (byte >= 0x40u && byte <= 0x7eu) {
-        if (fb_ansi_param_count < 8u && (fb_ansi_param_active || fb_ansi_param_count)) {
+        if (fb_ansi_param_count < FB_ANSI_MAX_PARAMS &&
+            (fb_ansi_param_active || fb_ansi_param_count)) {
             fb_ansi_params[fb_ansi_param_count++] =
                 fb_ansi_param_active ? fb_ansi_param_value : 0u;
+            fb_ansi_param_colon[fb_ansi_param_count - 1u] = false;
         }
         if (!fb_ansi_private) {
             fb_console_execute_csi(ch);
@@ -662,6 +793,7 @@ static void fb_console_initialize_fullscreen(void)
 static void console_emit_raw(char ch)
 {
     char s[2] = {ch, 0};
+    fb_console_hide_tty_cursor();
     log_store(ch);
     serial_write(s);
     if (vga_console_enabled) {
@@ -677,6 +809,7 @@ static void console_present(void)
         return;
     }
     console_presenting = true;
+    fb_console_show_tty_cursor();
     if (fb_cols && fb_rows) {
         framebuffer_present_region(fb_x, fb_y,
                                    fb_cols * LEONOS_FONT_W,
@@ -707,7 +840,7 @@ static void print_unsigned_raw(uint64_t value, unsigned base, bool upper)
 
 static void console_emit_timestamp(void)
 {
-    uint64_t uptime_us = console_boot_uptime_us + time_uptime_ms() * 1000ULL;
+    uint64_t uptime_us = console_boot_uptime_us + time_uptime_us();
     uint64_t seconds = uptime_us / 1000000ULL;
     uint64_t micros = uptime_us % 1000000ULL;
     uint64_t divisor = 1ULL;
@@ -772,6 +905,7 @@ void console_write_len(const char *s, size_t len)
 
 void console_write_tty_len(const char *s, size_t len)
 {
+    fb_console_hide_tty_cursor();
     for (size_t i = 0; i < len; ++i) {
         char byte[2] = {s[i], 0};
         log_store(s[i]);
@@ -790,6 +924,7 @@ void console_enter_tty_runtime(void)
     console_runtime_quiet = true;
     console_line_start = true;
     if (fb_console_enabled) {
+        fb_console_hide_tty_cursor();
         fb_col = 0;
         fb_row = 0;
         fb_scroll_top = 0;
@@ -797,6 +932,7 @@ void console_enter_tty_runtime(void)
         fb_console_reset_attributes();
         fb_console_reset_ansi();
         fb_console_clear_log();
+        fb_console_tty_cursor_active = true;
         console_present();
     } else if (vga_console_enabled) {
         vga_init();
@@ -908,6 +1044,8 @@ void console_enable_framebuffer(const struct leonos_boot_log_state *boot_log)
 
 void console_disable_framebuffer(void)
 {
+    fb_console_hide_tty_cursor();
+    fb_console_tty_cursor_active = false;
     fb_console_enabled = false;
 }
 

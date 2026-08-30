@@ -7,6 +7,7 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <termios.h>
 
 #define LOGIN_MAX_W 1920
 #define LOGIN_MAX_H 1080
@@ -174,7 +175,11 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
         }
         if (input == '\n') {
             buffer[length] = 0;
-            write(1, "\r\n", 2);
+            /* Ordinary input is echoed by the terminal; secret input has
+             * ECHO disabled and needs an explicit line ending. */
+            if (masked) {
+                write(1, "\r\n", 2);
+            }
             return 1;
         }
         if (input == '\b' || (uint8_t)input == 127U) {
@@ -195,13 +200,32 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
     return 0;
 }
 
+static int tty_read_secret(const char *prompt, char *buffer, uint32_t capacity)
+{
+    struct termios termios;
+    struct termios saved_termios;
+    int ret;
+
+    /* Login is a PTY child. The fd interface is available to it, unlike the
+     * owner-only PTY management interface. */
+    if (tcgetattr(0, &termios) != 0) {
+        return 0;
+    }
+    saved_termios = termios;
+    termios.c_lflag &= (tcflag_t)~(ECHO | ECHONL);
+    if (tcsetattr(0, TCSANOW, &termios) != 0) {
+        return 0;
+    }
+    ret = tty_read_line(prompt, buffer, capacity, 1);
+    (void)tcsetattr(0, TCSANOW, &saved_termios);
+    return ret;
+}
+
 static int tty_login_main(void)
 {
     char username_input[LEONOS_AUTH_USERNAME_LEN];
     char password_input[LEONOS_AUTH_PASSWORD_LEN];
     struct leonos_user_info user;
-    struct leonos_pty_termios termios;
-    int echo_changed = 0;
     puts("LeonOS login");
     refresh_users();
     if (!user_count) {
@@ -212,27 +236,13 @@ static int tty_login_main(void)
         if (!tty_read_line("Username: ", username_input, sizeof(username_input), 0)) {
             return 1;
         }
-        if (leonos_pty_get_termios((uint32_t)leonos_pty_self(), &termios) == 0) {
-            termios.c_lflag &= ~(LEONOS_PTY_LFLAG_ECHO | LEONOS_PTY_LFLAG_ECHONL);
-            (void)leonos_pty_set_termios((uint32_t)leonos_pty_self(), &termios);
-            echo_changed = 1;
-            if (!tty_read_line("Password: ", password_input, sizeof(password_input), 1)) {
-                termios.c_lflag |= LEONOS_PTY_LFLAG_ECHO | LEONOS_PTY_LFLAG_ECHONL;
-                (void)leonos_pty_set_termios((uint32_t)leonos_pty_self(), &termios);
-                return 1;
-            }
-            termios.c_lflag |= LEONOS_PTY_LFLAG_ECHO | LEONOS_PTY_LFLAG_ECHONL;
-            (void)leonos_pty_set_termios((uint32_t)leonos_pty_self(), &termios);
-        } else if (!tty_read_line("Password: ", password_input, sizeof(password_input), 0)) {
+        if (!tty_read_secret("Password: ", password_input, sizeof(password_input))) {
+            puts("Secure password input is unavailable.");
             return 1;
         }
         if (leonos_auth_login(username_input, password_input, &user) == 0) {
             puts("Login successful.");
             return 0;
-        }
-        if (echo_changed) {
-            termios.c_lflag |= LEONOS_PTY_LFLAG_ECHO | LEONOS_PTY_LFLAG_ECHONL;
-            (void)leonos_pty_set_termios((uint32_t)leonos_pty_self(), &termios);
         }
         puts("Login failed.");
     }

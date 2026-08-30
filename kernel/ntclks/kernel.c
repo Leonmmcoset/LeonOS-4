@@ -152,10 +152,10 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 #else
     startup_tty = 0;
 #endif
-    if (cmdline_has(&boot, "mode=installer")) {
-        startup_tty = 0;
-    } else if (cmdline_has(&boot, "startup=tty")) {
+    if (cmdline_has(&boot, "startup=tty")) {
         startup_tty = 1;
+    } else if (cmdline_has(&boot, "mode=installer")) {
+        startup_tty = 0;
     } else if (cmdline_has(&boot, "startup=desktop")) {
         startup_tty = 0;
     }

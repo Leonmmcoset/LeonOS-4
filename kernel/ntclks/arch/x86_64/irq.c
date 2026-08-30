@@ -108,6 +108,7 @@ static void pit_init_100hz(void)
     x86_64_outb(0x36, PIT_COMMAND);
     x86_64_outb((uint8_t)(divisor & 0xff), PIT_CHANNEL0);
     x86_64_outb((uint8_t)(divisor >> 8), PIT_CHANNEL0);
+    time_set_pit_divisor(divisor);
 }
 
 /**

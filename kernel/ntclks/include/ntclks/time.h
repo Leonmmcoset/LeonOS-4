@@ -28,6 +28,14 @@ uint64_t time_ticks(void);
  */
 uint64_t time_uptime_ms(void);
 /**
+ * @brief Return microseconds elapsed since boot, interpolated within a PIT tick.
+ */
+uint64_t time_uptime_us(void);
+/**
+ * @brief Publish the active PIT divisor for sub-tick uptime interpolation.
+ */
+void time_set_pit_divisor(uint16_t divisor);
+/**
  * @brief Fill info with the current wall-clock time; 0 on success.
  */
 int time_wall_clock(struct leonos_time_info *info);

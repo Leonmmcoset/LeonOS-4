@@ -847,7 +847,7 @@ static void loader_framebuffer_set_theme(uint32_t theme)
         framebuffer_console.panel = 0x00000000U;
         framebuffer_console.text = 0x0000ff00U;
     } else {
-        framebuffer_console.panel = 0x001b2a3aU;
+        framebuffer_console.panel = 0x00000000U;
         framebuffer_console.text = 0x00ffffffU;
     }
     loader_framebuffer_reset();

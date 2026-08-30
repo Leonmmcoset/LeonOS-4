@@ -10,6 +10,7 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <termios.h>
 
 #define OOBE_MAX_W 1920
 #define OOBE_MAX_H 1080
@@ -753,7 +754,11 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
         }
         if (input == '\n') {
             buffer[length] = 0;
-            write(1, "\r\n", 2);
+            /* The terminal echoes the newline for ordinary fields. Secret
+             * fields disable ECHO, so add their line ending explicitly. */
+            if (masked) {
+                write(1, "\r\n", 2);
+            }
             return 1;
         }
         if (input == '\b' || (uint8_t)input == 127U) {
@@ -776,17 +781,22 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
 
 static int tty_read_secret(const char *prompt, char *buffer, uint32_t capacity)
 {
-    struct leonos_pty_termios termios;
-    uint32_t pty_id = (uint32_t)leonos_pty_self();
+    struct termios termios;
+    struct termios saved_termios;
     int ret;
-    if (!pty_id || leonos_pty_get_termios(pty_id, &termios) < 0) {
-        return tty_read_line(prompt, buffer, capacity, 0);
+
+    /* OOBE is a child of the console PTY owner, so use fd-oriented termios
+     * requests rather than the owner-only PTY management interface. */
+    if (tcgetattr(0, &termios) != 0) {
+        return 0;
     }
-    termios.c_lflag &= ~(LEONOS_PTY_LFLAG_ECHO | LEONOS_PTY_LFLAG_ECHONL);
-    (void)leonos_pty_set_termios(pty_id, &termios);
+    saved_termios = termios;
+    termios.c_lflag &= (tcflag_t)~(ECHO | ECHONL);
+    if (tcsetattr(0, TCSANOW, &termios) != 0) {
+        return 0;
+    }
     ret = tty_read_line(prompt, buffer, capacity, 1);
-    termios.c_lflag |= LEONOS_PTY_LFLAG_ECHO | LEONOS_PTY_LFLAG_ECHONL;
-    (void)leonos_pty_set_termios(pty_id, &termios);
+    (void)tcsetattr(0, TCSANOW, &saved_termios);
     return ret;
 }
 

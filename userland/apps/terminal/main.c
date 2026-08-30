@@ -202,7 +202,7 @@ static uint32_t terminal_style_background(void)
 static void terminal_reset_style(void)
 {
     text_foreground = 0x00d7e3f4U;
-    text_background = 0x000b1019U;
+    text_background = 0x00000000U;
     foreground_index = -1;
     background_index = -1;
     text_bright = 0;
@@ -1030,7 +1030,7 @@ static void terminal_draw(struct leonos_ui_surface *ui)
 
     tab_count = terminal_tab_items(tab_items);
 
-    leonos_ui_rect(ui, 0, 0, terminal_view_width, terminal_view_height, 0x000b1019U);
+    leonos_ui_rect(ui, 0, 0, terminal_view_width, terminal_view_height, 0x00000000U);
     leonos_ui_rect(ui, 0, 0, terminal_view_width, leonos_ui_tab_height(), LEONOS_UI_GRAY);
     leonos_ui_tab_control(ui, 0, 0, terminal_view_width - TERMINAL_TAB_ADD_W,
                           tab_items, tab_count, &tabs_state);
