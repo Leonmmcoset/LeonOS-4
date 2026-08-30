@@ -30,8 +30,8 @@ tcc viewer.c -lpng -lz -o viewer.elf
 例如 `/programs/demo/main.c`。如果要在 `C_INCLUDE_PATH`、`CPATH` 或
 `LIBRARY_PATH` 中指定多个目录，请用分号（`;`）分隔；路径本身不带卷名前缀。
 
-生成程序暂不具备 LeonOS 进程计时和 POSIX 信号 ABI，因此 `times()` 返回
-`ENOSYS`，`signal()` 返回 `SIG_ERR`。
+生成程序暂不具备 LeonOS 进程计时和完整 POSIX 信号 ABI，因此 `times()` 返回
+`ENOSYS`；`signal()` 支持 `SIG_DFL`/`SIG_IGN`，但用户回调仍返回 `SIG_ERR`。
 
 本 SDK 的 `Makefile` 仍面向宿主交叉工具链；它与设备端 TinyCC 使用相同的
 Picolibc/LeonOS ABI，但不是对 TCC 的替代或封装。

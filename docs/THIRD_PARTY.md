@@ -135,11 +135,14 @@ LeonOS builds a static, basic-applet BusyBox profile at
 `/programs/busybox/busybox.elf`. It includes file/text utilities such as
 `ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `diff`, `less`, `mkdir`,
 `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`, `true`,
-`false`, `vi`, and `printf`. The `sh` entry point is BusyBox Ash built for
+`false`, `nohup`, `vi`, and `printf`. The `sh` entry point is BusyBox Ash built for
 LeonOS's MMU path. It uses the kernel COW `fork`/`execve` ABI, inherited file
 descriptors, process groups and PTY foreground groups for pipelines,
 redirection, background jobs, and `jobs`/`fg`/`bg`. The image profile selects
-Ash as its shell implementation.
+Ash as its shell implementation. `nohup` is available from both the GUI
+Terminal and TTY shell; it ignores `SIGHUP`, uses `/dev/null` for terminal
+stdin, and appends terminal output to `nohup.out` with the usual `$HOME`
+fallback.
 
 ## GNU nano
 
@@ -187,8 +190,8 @@ ELF programs. Picolibc headers are staged unchanged; LeonOS ABI predefines are
 owned by TinyCC's target definition layer. Dynamic linking, shared libraries,
 PIE and in-memory `tcc -run` execution are deliberately unavailable until the
 runtime loader ABI exists. The target runtime currently reports `ENOSYS` for
-`times()` and `SIG_ERR` for `signal()` because those LeonOS ABIs do not yet
-exist.
+`times()`; `signal()` supports the `SIG_DFL` and `SIG_IGN` dispositions, while
+arbitrary user callbacks remain unavailable.
 
 ## Lua
 

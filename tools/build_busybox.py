@@ -371,6 +371,25 @@ def patch_ls_colors_for_leonos(source: Path) -> None:
     path.write_text(text.replace(colors_before, colors_after, 1), encoding="utf-8")
 
 
+def patch_nohup_for_leonos(source: Path) -> None:
+    """Open /dev/null write-only when it is used as nohup stdout fallback."""
+    path = source / "coreutils/nohup.c"
+    text = path.read_text(encoding="utf-8")
+    marker = "\t\t\t\txopen(bb_dev_null, O_RDONLY); /* will be fd 1 */"
+    replacement = "\t\t\t\txopen(bb_dev_null, O_WRONLY); /* will be fd 1 */"
+    if replacement in text:
+        return
+    if marker not in text:
+        raise SystemExit("unsupported BusyBox nohup source revision: fallback marker missing")
+    # The source contains an identical-looking stdin fallback. Restrict this
+    # replacement to the branch that handles a failed stdout destination.
+    stdout_marker = "\t\t\t} else {\n" + marker
+    if stdout_marker not in text:
+        raise SystemExit("unsupported BusyBox nohup source revision: stdout fallback marker missing")
+    text = text.replace(stdout_marker, "\t\t\t} else {\n" + replacement, 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def patch_power_applets_for_leonos(source: Path) -> None:
     """Expose shutdown and route power applets directly to the LeonOS ABI."""
     path = source / "init/halt.c"
@@ -579,6 +598,7 @@ def main() -> None:
     patch_ps_for_leonos(source_dir)
     patch_less_for_leonos(source_dir)
     patch_ls_colors_for_leonos(source_dir)
+    patch_nohup_for_leonos(source_dir)
     patch_power_applets_for_leonos(source_dir)
     patch_ash_for_leonos(source_dir)
     work_root = source_dir.parent

@@ -165,6 +165,7 @@ dedicated syscall numbers. Current request groups:
 - Minimal networking: `include/leonos/net.h`
 - Text layout and Unicode services: `include/leonos/text.h`
 - PTY creation, I/O, and spawn: `include/leonos/pty.h`
+- Minimal signal dispositions: `include/leonos/signal.h`
 
 Important requests include:
 
@@ -218,6 +219,9 @@ Important requests include:
 - `LEONOS_PTY_IOCTL_CREATE`, `LEONOS_PTY_IOCTL_SELF`,
   `LEONOS_PTY_IOCTL_READ_OUTPUT`, `LEONOS_PTY_IOCTL_WRITE_INPUT`,
   `LEONOS_PTY_IOCTL_SPAWN`
+- `LEONOS_SIGNAL_IOCTL_ACTION` provides the `SIG_DFL` and `SIG_IGN`
+  dispositions used by `signal()` and `sigaction()`; arbitrary handlers and
+  signal masks are not supported.
 
 ## Networking
 
@@ -352,9 +356,9 @@ remain available to any logged-in user.
 - `nice` and `getpriority` return standard priorities in the `-20..19` range.
   Raw syscall users receive `priority + 20` and must subtract 20 after checking
   for a negative errno; the shared runtime performs that decoding.
-- Terminal Ctrl+C/Ctrl+Z actions are delivered to the foreground process group,
-  but `signal`, `sigaction`, `sigprocmask`, and user-installed signal handlers
-  are not available yet (`signal()` returns `SIG_ERR` with `ENOSYS`).
+- Terminal Ctrl+C/Ctrl+Z actions are delivered to the foreground process group.
+  `signal()` and `sigaction()` support only `SIG_DFL` and `SIG_IGN` dispositions;
+  `sigprocmask` and arbitrary user-installed signal handlers remain unavailable.
 - The shared runtime contains the common ANSI curses subset used by Nano and
   `sl`; applications should include the SDK's `<curses.h>` or `<ncurses.h>`
   instead of carrying a private terminal shim.

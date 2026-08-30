@@ -50,8 +50,9 @@ binary compatibility with host ncurses.
 
 The runtime also exports `usleep()`. The SDK Makefile enables
 `_DEFAULT_SOURCE`, so Picolibc exposes its standard declaration without an
-application-local `unistd.h` shim. Signal-handler installation remains
-unsupported until the kernel signal ABI is complete.
+application-local `unistd.h` shim. `signal()` and `sigaction()` support the
+default and ignore dispositions; arbitrary user callbacks remain unsupported
+until the kernel has a signal-frame ABI.
 
 `userland/libc/src/posix_process.c` is the single POSIX process and descriptor
 adapter used by both dynamic applications and static ports. It implements
@@ -64,9 +65,10 @@ intentionally COW-fork equivalent until LeonOS has a parent-suspending vfork
 ABI. `nice()` and `getpriority()` return the normal `-20..19` priority range.
 
 The kernel applies default terminal signal actions to the foreground process
-group. `signal`, `sigaction`, `sigprocmask`, and `raise` currently report
-`ENOSYS` (`signal` returns `SIG_ERR`), while `sigsuspend` yields and returns
-`EINTR`; applications must not rely on custom user-space signal handlers yet.
+group. `signal()` and `sigaction()` support `SIG_DFL` and `SIG_IGN`, including
+`SIGHUP` immunity for detached jobs; `raise()` uses the normal `kill()` path.
+`sigprocmask` remains unavailable and `sigsuspend` yields then returns `EINTR`.
+Applications must not rely on arbitrary user-space signal handlers yet.
 
 The runtime also owns the common POSIX file-port adapters: `stat`, `fstat`,
 and `lstat` are available as the explicit `leonos_posix_*` adapters in

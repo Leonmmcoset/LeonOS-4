@@ -1067,7 +1067,7 @@ void userland_yield_if_runnable(void)
 }
 
 /**
- * @brief List directory entries into entries (special-casing /dev with fb0) and set *out_count; returns count or a negative errno.
+ * @brief List directory entries into entries (special-casing /dev) and set *out_count; returns count or a negative errno.
  */
 int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
                       uint32_t capacity, uint32_t *out_count)
@@ -1084,6 +1084,7 @@ int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
 
     if (path_eq(path, "/dev")) {
         dir_add(entries, capacity, &count, LEONOS_FS_TYPE_DEVICE, "fb0");
+        dir_add(entries, capacity, &count, LEONOS_FS_TYPE_DEVICE, "null");
         *out_count = count;
         return (int)count;
     }

@@ -62,6 +62,7 @@ struct task_file {
 
 #define TASK_FILE_FLAG_PIPE       0x80000000u
 #define TASK_FILE_FLAG_PIPE_WRITE 0x40000000u
+#define TASK_FILE_FLAG_DEV_NULL   0x20000000u
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {
@@ -139,6 +140,8 @@ struct task_address_space_state {
 struct task_fd_table_state {
     struct task_file files[SCHED_TASK_FILE_MAX];
     struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
+    /* Bits for closed implicit stdin/stdout/stderr descriptors. */
+    uint32_t closed_stdio_mask;
     struct task_file *file_extra;
     uint32_t file_extra_count;
     uint32_t file_extra_capacity;
@@ -149,6 +152,7 @@ struct task_signal_state {
     uint32_t child_event;
     uint32_t stop_signal;
     uint32_t exit_signal;
+    uint32_t ignored_signals;
 };
 
 struct task_credentials_state {
@@ -221,6 +225,7 @@ struct task {
         struct {
             struct task_file files[SCHED_TASK_FILE_MAX];
             struct task_file stdio_files[SCHED_TASK_STDIO_MAX];
+            uint32_t closed_stdio_mask;
             struct task_file *file_extra;
             uint32_t file_extra_count;
             uint32_t file_extra_capacity;
@@ -233,6 +238,7 @@ struct task {
             uint32_t child_event;
             uint32_t stop_signal;
             uint32_t exit_signal;
+            uint32_t ignored_signals;
         };
     };
     union {
@@ -442,6 +448,16 @@ int sched_kill_user_task(uint32_t pid, uint64_t code);
  */
 int sched_signal_user_task(uint32_t pid, int signal_number);
 /**
+ * @brief Read or update a task's default/ignored signal disposition.
+ * @param pid Target user-task ID.
+ * @param signal_number POSIX signal number.
+ * @param operation Query or update operation.
+ * @param disposition Requested value for update and previous value on return.
+ * @return Zero on success or a negative scheduler error.
+ */
+int sched_signal_action(uint32_t pid, int signal_number, uint32_t operation,
+                        uint32_t *disposition);
+/**
  * @brief Sends a signal to all eligible user tasks in a process group.
  * @param sender_pid Process that requested the signal.
  * @param process_group Target process group identifier.
@@ -497,6 +513,13 @@ int sched_task_priority(uint32_t pid, int priority, int set);
  */
 int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
                                   uint64_t code);
+/**
+ * @brief Send SIGHUP to tasks attached to a closed PTY and detach survivors.
+ * @param pty_id Closed PTY identifier.
+ * @param keep_pid PTY owner to leave untouched.
+ * @return Number of signalled tasks, or zero when no PTY was supplied.
+ */
+int sched_hangup_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid);
 /**
  * @brief Kill tasks of uid/session_id except keep_pid; returns the count.
  */

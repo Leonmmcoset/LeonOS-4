@@ -285,7 +285,7 @@ int32_t pty_create(uint32_t owner_pid)
 }
 
 /**
- * @brief Kill the PTY's attached tasks and free the session; returns 0, or -22 if not owned.
+ * @brief Hang up the PTY's attached tasks and free the session; returns 0, or -22 if not owned.
  */
 int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
 {
@@ -293,7 +293,7 @@ int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
     if (!session || session->owner_pid != owner_pid) {
         return -22;
     }
-    (void)sched_kill_user_tasks_for_pty(pty_id, owner_pid, 137);
+    (void)sched_hangup_user_tasks_for_pty(pty_id, owner_pid);
     for (uint32_t j = 0; j < sizeof(*session); ++j) {
         ((uint8_t *)session)[j] = 0;
     }
@@ -575,6 +575,7 @@ void pty_process_exit(uint32_t pid)
 {
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
         if (sessions[i].used && sessions[i].owner_pid == pid) {
+            (void)sched_hangup_user_tasks_for_pty(i + 1U, pid);
             for (uint32_t j = 0; j < sizeof(sessions[i]); ++j) {
                 ((uint8_t *)&sessions[i])[j] = 0;
             }
