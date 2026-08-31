@@ -28,6 +28,16 @@ Fresh installation creates both GPT partitions. Update requires both a valid
 exFAT or ext2 root and ESP; old FAT32-only installations should use a fresh
 install.
 
+## Device Namespace
+
+`/dev` is a kernel-provided synthetic filesystem. It is present on every
+runtime root and is not stored in the disk image. Directory reads enumerate
+the complete set of device nodes, including `/dev/null`, `/dev/zero`,
+`/dev/tty`, `/dev/console`, `/dev/fb0`, `/dev/input/event0`, `/dev/audio0`,
+`/dev/serial0`, `/dev/net0`, and block-device aliases such as `/dev/disk0`.
+The corresponding libc APIs open these paths before issuing device ioctls;
+legacy fd 3 calls are translated for older binaries.
+
 ## Supported Formats
 
 ### ext2
@@ -58,8 +68,10 @@ New images and fresh installations use the standard single-FAT exFAT subset:
 - Contiguous `NoFatChain` and ordinary FAT-chain files; reads, writes,
   truncation, directory creation/removal, deletion, enumeration, and same-
   volume rename.
-- Microsoft Basic Data GPT type and GPT partition name `LEONOS4_ROOT`. The
-  exFAT volume-label limit means the on-volume label is `LEONOS4ROOT`.
+- Microsoft Basic Data GPT type is required for the runtime root. The
+  recommended GPT partition name is `LEONOS4_ROOT`; boot discovery also
+  accepts a valid exFAT signature when that label is missing or was changed.
+  The exFAT volume-label limit means the on-volume label is `LEONOS4ROOT`.
 
 TexFAT, multiple FATs, non-512-byte sectors, POSIX inode metadata, and native
 permissions are rejected. `LEONACL.SYS` remains the hidden LeonOS ACL
@@ -85,7 +97,8 @@ Disk Manager can mount a supported, unprotected FAT32, exFAT, or ext2 GPT data
 partition for the current boot. The kernel mounts it at the stable path
 `/mnt/disk<N>p<M>`, where `N` is the disk ID and `M` is the GPT entry index plus
 one. The mount path is shown in the partition status and appears in File
-Manager's sidebar without restarting File Manager.
+Manager's sidebar without restarting File Manager. BusyBox `mount` exposes
+the same operation and accepts an explicit absolute target path.
 
 Runtime data mounts are deliberately non-persistent in this first version:
 they are removed on reboot and no automatic mounting policy is stored on disk.
@@ -140,7 +153,9 @@ supported. Filesystem names are case-insensitive at the
 LeonOS path layer for compatibility with historical FAT32 behavior; avoid
 creating names that differ only by case on ext2.
 
-The device directory is synthesized at `/dev`. `LEONACL.SYS` is internal
+The device directory is synthesized at `/dev`; it contains standard device
+nodes and `input`/`pts` subdirectories even when the backing filesystem has no
+physical directory entry. `LEONACL.SYS` is internal
 ACL sidecar metadata: it remains readable by the authorization service but is
 hidden from normal exFAT, FAT32, and ext2 directory enumeration.
 

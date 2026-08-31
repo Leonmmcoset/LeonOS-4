@@ -31,6 +31,7 @@
 #define TASK_VMA_FLAG_LAZY    0x00000008u
 #define TASK_VMA_FLAG_SHARED_FILE 0x00000010u
 #define TASK_VMA_FLAG_DYNAMIC_LOAD 0x00000020u
+#define TASK_VMA_FLAG_DEVICE  0x00000040u
 
 #define TASK_VMA_PROT_READ  0x1u
 #define TASK_VMA_PROT_WRITE 0x2u
@@ -63,6 +64,7 @@ struct task_file {
 #define TASK_FILE_FLAG_PIPE       0x80000000u
 #define TASK_FILE_FLAG_PIPE_WRITE 0x40000000u
 #define TASK_FILE_FLAG_DEV_NULL   0x20000000u
+#define TASK_FILE_FLAG_DEV_NODE   0x10000000u
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {

@@ -104,6 +104,7 @@ MINIMAL_LIBBB_OBJECTS = (
     "procps.o",
     "bb_getgroups.o",
     "u_signal_names.o",
+    "leonos_storage.o",
 )
 
 def run(command: list[str], *, cwd: Path | None = None) -> None:
@@ -151,6 +152,7 @@ def source_cache_key(revision: str) -> str:
     for path in (
         Path(__file__),
         ROOT / "userland/busybox/leonos_shim.c",
+        ROOT / "userland/busybox/leonos_storage.c",
         ROOT / "userland/busybox/leonos.config",
     ):
         digest.update(path.read_bytes())
@@ -185,6 +187,7 @@ def write_minimal_libbb_kbuild(kbuild: Path, generated: bool) -> None:
 
 def trim_libbb(source: Path) -> None:
     shutil.copyfile(ROOT / "userland/busybox/leonos_shim.c", source / "libbb/leonos_shim.c")
+    shutil.copyfile(ROOT / "userland/busybox/leonos_storage.c", source / "libbb/leonos_storage.c")
     patch_percentm_for_leonos(source)
     patch_time_for_leonos(source)
     write_minimal_libbb_kbuild(source / "libbb/Kbuild.src", False)
@@ -586,6 +589,7 @@ def main() -> None:
         source / "Makefile", args.config, args.picolibc_prefix / "include",
         args.leonos_libc_include, args.leonos_include, args.linker_script,
         args.leonos_lib, args.picolibc_lib, ROOT / "userland/busybox/leonos_shim.c",
+        ROOT / "userland/busybox/leonos_storage.c",
     ]
     for path in required:
         if not path.exists():

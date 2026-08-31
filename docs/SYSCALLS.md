@@ -34,12 +34,12 @@ The kernel-side numbers and errno constants are in:
 | ---: | --- | --- | --- |
 | 0 | `read` | `read` | Reads files, directories, stdin PTY input, and directory entries. |
 | 1 | `write` | `write` | Writes files, stdout/stderr console output, and PTY output. |
-| 2 | `open` | `open` | Opens files, directories, and `/dev/fb0`; supports LeonOS open flags. |
+| 2 | `open` | `open` | Opens files, directories, and synthetic `/dev/*` device nodes. |
 | 3 | `close` | `close` | Closes task file descriptors above the stdio/device range. |
 | 4 | `stat` | `stat` | Stats a path into `struct leonos_stat`. |
 | 5 | `fstat` | `fstat` | Stats an open file descriptor. |
 | 8 | `lseek` | `lseek` | Supports files and directory cursors. |
-| 9 | `mmap` | `mmap` | Supports private anonymous mappings and private read-only file mappings. |
+| 9 | `mmap` | `mmap` | Supports private anonymous/file mappings and writable `/dev/fb0` framebuffer mappings. |
 | 11 | `munmap` | `munmap` | Supports whole and partial unmapping of existing VMAs. |
 | 16 | `ioctl` | `ioctl` | Multiplexes GUI, filesystem, system, installer, text, device, and PTY APIs. |
 | 24 | `sched_yield` | `sched_yield` | Yields the current task if another task can run. |
@@ -156,6 +156,11 @@ implementation.
 `ioctl(fd, request, arg)` is the extension point for APIs that do not yet have
 dedicated syscall numbers. Current request groups:
 
+All libc wrappers now open a matching synthetic `/dev` node before issuing an
+ioctl (`/dev/fb0`, `/dev/input/event0`, `/dev/audio0`, `/dev/net0`,
+`/dev/disk0`, `/dev/ptmx`, or `/dev/tty`). The kernel still accepts the legacy fd 3 control
+channel for ABI compatibility with older binaries.
+
 - Authentication and users: `include/leonos/auth.h`
 - GUI and framebuffer: `userland/libc/include/leonos/gui.h`
 - Filesystem and installer storage: `include/leonos/fs.h`
@@ -209,10 +214,14 @@ Important requests include:
 - `LEONOS_DISK_IOCTL_LIST_PARTITIONS`, `LEONOS_DISK_IOCTL_FORMAT_PARTITION`,
   `LEONOS_DISK_IOCTL_DELETE_PARTITION`, `LEONOS_DISK_IOCTL_CREATE_PARTITION`,
   `LEONOS_DISK_IOCTL_MOUNT_PARTITION`,
-  `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`. These use the fixed-size records in
+  `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`, `LEONOS_DISK_IOCTL_EDIT_PARTITION`,
+  and `LEONOS_DISK_IOCTL_INITIALIZE_GPT`.
+  These use the fixed-size records in
   `leonos/fs.h`; listing reads a GPT table, while create/format/delete/mount/
-  unmount require administrator install authorization and reject current boot
-  or mounted installer-target disks. A data mount returns a stable
+  unmount/edit/initialize require administrator install authorization and
+  reject current boot or mounted installer-target disks. GPT initialization
+  writes a protective MBR and both GPT copies and is intended for the
+  installer-only `gptinit` utility. A data mount returns a stable
   `/mnt/disk<N>p<M>` path; unmount is rejected with busy while a live process
   holds a CWD, descriptor, executable image, or file mapping on that volume.
 - `LEONOS_TEXT_IOCTL_LAYOUT_UTF8`

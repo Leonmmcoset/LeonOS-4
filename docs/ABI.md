@@ -91,14 +91,21 @@ service tasks, so ordinary applications cannot change system time.
 
 ## Device model
 
-The current devfs surface exposes the framebuffer as:
+The runtime exposes a synthetic devfs namespace. Common nodes are
+`/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`,
+`/dev/tty`, `/dev/console`, `/dev/fb0`, `/dev/audio0`, `/dev/serial0`,
+`/dev/ttyS0`, `/dev/net0`, `/dev/ethernet0`, `/dev/disk0`, `/dev/sda`,
+`/dev/vda`, `/dev/nvme0n1`, `/dev/rtc`, `/dev/kmsg`, and `/dev/input/event0`.
+`/dev/stdin`, `/dev/stdout`, and `/dev/stderr` alias the current process
+streams. `/dev/input` and `/dev/pts` are directories and are enumerated
+through normal directory syscalls. Device nodes are synthetic and are not
+stored in the filesystem image.
 
-- `/dev/fb0`
-
-Keyboard and mouse state are owned by the kernel input path and delivered to
-Ring-3 through GUI/window event ioctls rather than stable devfs file nodes.
-Client applications talk to the window server through osmlayer IPC and GUI
-ioctls. System applications query device inventory through
+Framebuffer, audio, input, network, disk, PTY, and GUI libc helpers open their
+corresponding `/dev` node and issue the existing ioctl ABI. Calls made by old
+applications with the historical descriptor 3 are translated to the matching
+node by libc, so existing binaries continue to work while using the devfs
+namespace. System applications query the complete hardware inventory through
 `LEONOS_IOCTL_DEVICE_LIST`.
 
 ## Driver Module ABI
@@ -242,6 +249,8 @@ The associated ioctls are:
 - `LEONOS_DISK_IOCTL_CREATE_PARTITION`
 - `LEONOS_DISK_IOCTL_MOUNT_PARTITION`
 - `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`
+- `LEONOS_DISK_IOCTL_EDIT_PARTITION`
+- `LEONOS_DISK_IOCTL_INITIALIZE_GPT`
 
 `FORMAT_PARTITION` accepts FAT32, exFAT, and ext2 through
 `struct leonos_disk_partition_format`. `CREATE_PARTITION` allocates a
@@ -250,11 +259,23 @@ FAT32 and exFAT use the GPT Microsoft Basic Data type; ext2 uses the Linux
 filesystem type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
 claim to securely erase the old data area.
 
-`MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount` and
-returns a normalized `/mnt/disk<N>p<M>` path in its `mount_path` field. The
-mount is not persistent across reboot. `UNMOUNT_PARTITION` takes a
+`MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount`. An
+empty `mount_path` selects the normalized `/mnt/disk<N>p<M>` path; callers may
+instead provide an absolute runtime target such as `/mnt/data`. The mount is
+not persistent across reboot. `UNMOUNT_PARTITION` takes a
 `struct leonos_disk_partition_unmount` and returns busy when a live task still
 uses the mounted volume through a CWD, descriptor, image, or file mapping.
+
+`EDIT_PARTITION` accepts `struct leonos_disk_partition_edit` and updates the
+standard GPT type (`basic-data`, `ESP`, or `Linux filesystem`) and/or its
+printable UTF-16 name. Both primary and backup GPT copies are rewritten with
+fresh CRCs; protected or mounted partitions are rejected.
+
+`INITIALIZE_GPT` accepts `struct leonos_disk_gpt_initialize` and writes a
+protective MBR, an empty standard 128-entry GPT, and matching primary and
+backup headers. It is destructive and is exposed only through the installer
+ISO's `gptinit` utility. A valid existing GPT is rejected unless the utility is
+run with `--force`; the operation never creates or formats partitions.
 
 Listing is available to disk-management clients, while create, format, delete,
 mount, and unmount are checked through the administrator install authorization

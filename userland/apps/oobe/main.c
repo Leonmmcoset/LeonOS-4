@@ -57,7 +57,7 @@ enum license_field {
 static uint32_t pixels[OOBE_MAX_W * OOBE_MAX_H];
 static uint32_t surface_w = OOBE_INITIAL_W;
 static uint32_t surface_h = OOBE_INITIAL_H;
-static char username[LEONOS_AUTH_USERNAME_LEN] = "admin";
+static char username[LEONOS_AUTH_USERNAME_LEN] = "root";
 static char password[LEONOS_AUTH_PASSWORD_LEN];
 static char online_email[LEONOS_LICENSE_EMAIL_LEN];
 static char online_key[LEONOS_LICENSE_KEY_LEN];
@@ -826,10 +826,10 @@ static int tty_oobe_main(void)
         puts("Administrator already exists.");
         return 0;
     }
-    copy_text(account, sizeof(account), "admin");
-    if (!tty_read_line("Administrator name [admin]: ", account, sizeof(account), 0) ||
+    copy_text(account, sizeof(account), "root");
+    if (!tty_read_line("Administrator name [root]: ", account, sizeof(account), 0) ||
         !account[0]) {
-        copy_text(account, sizeof(account), "admin");
+        copy_text(account, sizeof(account), "root");
     }
     {
         uint32_t i;

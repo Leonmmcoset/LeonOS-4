@@ -37,6 +37,32 @@ struct storage_read_cursor {
 #define STORAGE_NODE_FLAG_EXT2    0x00000008u
 #define STORAGE_NODE_FLAG_EXFAT   0x00000010u
 #define STORAGE_NODE_FLAG_EXFAT_NOFAT 0x00000020u
+#define STORAGE_NODE_FLAG_DEV_NODE 0x00000040u
+
+/* Synthetic devfs node kinds.  They are stored in storage_node.first_cluster
+ * for device nodes; filesystem nodes continue to use that field as their
+ * backend cluster/inode identifier. */
+#define STORAGE_DEV_KIND_DIR       1u
+#define STORAGE_DEV_KIND_NULL      2u
+#define STORAGE_DEV_KIND_ZERO      3u
+#define STORAGE_DEV_KIND_FULL      4u
+#define STORAGE_DEV_KIND_RANDOM    5u
+#define STORAGE_DEV_KIND_URANDOM   6u
+#define STORAGE_DEV_KIND_TTY       7u
+#define STORAGE_DEV_KIND_CONSOLE   8u
+#define STORAGE_DEV_KIND_PTMX      9u
+#define STORAGE_DEV_KIND_FB0       10u
+#define STORAGE_DEV_KIND_KEYBOARD  11u
+#define STORAGE_DEV_KIND_MOUSE     12u
+#define STORAGE_DEV_KIND_AUDIO     13u
+#define STORAGE_DEV_KIND_SERIAL    14u
+#define STORAGE_DEV_KIND_DISK      15u
+#define STORAGE_DEV_KIND_INPUT_DIR 16u
+#define STORAGE_DEV_KIND_PTS_DIR   17u
+#define STORAGE_DEV_KIND_NET       18u
+#define STORAGE_DEV_KIND_RTC       19u
+#define STORAGE_DEV_KIND_KMSG      20u
+#define STORAGE_DEV_KIND_DRIVERCTL 21u
 
 struct boot_info;
 
@@ -78,10 +104,11 @@ const char *storage_root_filesystem_name(void);
  */
 bool storage_installer_root_active(void);
 /**
- * @brief Mount a read-only boot-module image (len bytes) as the root filesystem; 0 on success.
+ * @brief Mount a boot-module FAT32 image (len bytes) as a writable live root; 0 on success.
  *
- * The caller owns the image backing and must keep it mapped, immutable, and
- * reserved for the lifetime of the mount. The installer passes its Multiboot
+ * The caller owns the image backing and must keep it mapped and reserved for
+ * the lifetime of the mount. Writes are kept in memory for the current
+ * session and never reach the ISO source; the installer passes its Multiboot
  * module, which the physical-memory manager reserves before storage starts.
  */
 int storage_mount_ramdisk_root(const void *image, uint64_t len);
@@ -239,6 +266,10 @@ int storage_disk_partition_volume_id(uint32_t disk_id, uint32_t partition_index,
  * @return Zero on success or a negative errno-style storage error.
  */
 int storage_disk_unmount_partition(const struct leonos_disk_partition_unmount *request);
+/** Edit GPT partition type GUID and/or UTF-16 name metadata. */
+int storage_disk_edit_partition(const struct leonos_disk_partition_edit *request);
+/** Initialize an empty primary/backup GPT on a managed disk. */
+int storage_disk_initialize_gpt(const struct leonos_disk_gpt_initialize *request);
 /**
  * @brief Fill identity with the boot disk/model information known to storage.
  */

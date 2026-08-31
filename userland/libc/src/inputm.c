@@ -1,4 +1,17 @@
 #include <leonos/inputm.h>
+#include <leonos/device.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+static int inputm_device_fd(void)
+{
+    static int fd = -1;
+    if (fd < 0) {
+        fd = open(LEONOS_DEV_INPUT_EVENT0, O_RDWR, 0);
+        if (fd < 0) fd = 3;
+    }
+    return fd;
+}
 #include <leonos/syscall.h>
 
 #define INPUTM_PENDING_COMMIT_CAP 8U
@@ -49,22 +62,22 @@ static int inputm_copy_id(char *dst, uint32_t capacity, const char *id)
 
 int leonos_inputm_register(const struct leonos_inputm_provider *provider)
 {
-    return provider ? ioctl(3, LEONOS_INPUTM_IOCTL_REGISTER, (void *)provider) : -1;
+    return provider ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_REGISTER, (void *)provider) : -1;
 }
 
 int leonos_inputm_unregister(void)
 {
-    return ioctl(3, LEONOS_INPUTM_IOCTL_UNREGISTER, 0);
+    return ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_UNREGISTER, 0);
 }
 
 int leonos_inputm_provider_next(struct leonos_inputm_key_event *event)
 {
-    return event ? ioctl(3, LEONOS_INPUTM_IOCTL_PROVIDER_NEXT, event) : -1;
+    return event ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_PROVIDER_NEXT, event) : -1;
 }
 
 int leonos_inputm_provider_result(const struct leonos_inputm_result *result)
 {
-    return result ? ioctl(3, LEONOS_INPUTM_IOCTL_PROVIDER_RESULT, (void *)result) : -1;
+    return result ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_PROVIDER_RESULT, (void *)result) : -1;
 }
 
 int leonos_inputm_submit_key(uint32_t window_id, uint8_t keycode, uint8_t pressed)
@@ -76,12 +89,12 @@ int leonos_inputm_submit_key(uint32_t window_id, uint8_t keycode, uint8_t presse
     event.window_id = window_id;
     event.keycode = keycode;
     event.pressed = pressed ? 1U : 0U;
-    return ioctl(3, LEONOS_INPUTM_IOCTL_SUBMIT_KEY, &event);
+    return ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_SUBMIT_KEY, &event);
 }
 
 int leonos_inputm_poll_result(struct leonos_inputm_result *result)
 {
-    return result ? ioctl(3, LEONOS_INPUTM_IOCTL_POLL_RESULT, result) : -1;
+    return result ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_POLL_RESULT, result) : -1;
 }
 
 int leonos_inputm_set_active(uint32_t uid, const char *id)
@@ -91,14 +104,14 @@ int leonos_inputm_set_active(uint32_t uid, const char *id)
         return -1;
     }
     request.uid = uid;
-    return ioctl(3, LEONOS_INPUTM_IOCTL_SET_ACTIVE, &request);
+    return ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_SET_ACTIVE, &request);
 }
 
 int leonos_inputm_list(uint32_t uid, struct leonos_inputm_provider *providers,
                        uint32_t capacity, uint32_t *out_count)
 {
     struct leonos_inputm_provider_list list = {uid, capacity, 0, 0, providers};
-    int ret = ioctl(3, LEONOS_INPUTM_IOCTL_LIST, &list);
+    int ret = ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_LIST, &list);
     if (out_count) {
         *out_count = list.count;
     }
@@ -107,7 +120,7 @@ int leonos_inputm_list(uint32_t uid, struct leonos_inputm_provider *providers,
 
 int leonos_inputm_set_context(const struct leonos_inputm_context *context)
 {
-    return context ? ioctl(3, LEONOS_INPUTM_IOCTL_CONTEXT, (void *)context) : -1;
+    return context ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_CONTEXT, (void *)context) : -1;
 }
 
 void leonos_inputm_note_gui_window(uint32_t window_id)
@@ -141,13 +154,13 @@ int leonos_inputm_get_state(uint32_t uid, struct leonos_inputm_state *state)
         return -1;
     }
     state->uid = uid;
-    return ioctl(3, LEONOS_INPUTM_IOCTL_GET_STATE, state);
+    return ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_GET_STATE, state);
 }
 
 int leonos_inputm_notify_config(uint32_t uid)
 {
     struct leonos_inputm_config_request request = {uid};
-    return uid ? ioctl(3, LEONOS_INPUTM_IOCTL_NOTIFY_CONFIG, &request) : -1;
+    return uid ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_NOTIFY_CONFIG, &request) : -1;
 }
 
 int leonos_inputm_observe_gui_key(uint32_t window_id, uint8_t *keycode, uint8_t pressed)

@@ -386,17 +386,6 @@ int open(const char *path, int flags, ...)
     va_list args;
     int mode = 0;
 
-    /*
-     * LeonOS exposes a process' controlling PTY as the implicit standard
-     * descriptors instead of materialising a /dev/tty filesystem node.
-     * POSIX terminal programs (including less) use the conventional device
-     * path to obtain a raw keyboard descriptor, so map read-only opens to a
-     * duplicate of stdin before falling through to the filesystem syscall.
-     */
-    if (path && strcmp(path, "/dev/tty") == 0 &&
-        (flags & LEONOS_O_ACCMODE) == LEONOS_O_RDONLY) {
-        return dup(0);
-    }
     if (flags & LEONOS_O_CREAT) {
         va_start(args, flags);
         mode = va_arg(args, int);
@@ -468,6 +457,126 @@ char *getcwd(char *buf, size_t len)
 
 int ioctl(int fd, unsigned long request, void *arg)
 {
+    /* File descriptor 3 was the pre-devfs control channel.  Keep accepting
+     * it for old binaries, but resolve it to a real device node so every
+     * hardware operation follows the /dev namespace.  The kernel currently
+     * dispatches the ioctl by request code; selecting the matching node here
+     * also makes descriptor ownership and diagnostics consistent. */
+    if (fd == 3) {
+        static int console_fd = -1;
+        static int fb_fd = -1;
+        static int input_fd = -1;
+        static int audio_fd = -1;
+        static int net_fd = -1;
+        static int disk_fd = -1;
+        static int driver_fd = -1;
+        static int dev_fd = -1;
+        static int tty_fd = -1;
+        int *slot = &console_fd;
+        const char *path = LEONOS_DEV_CONSOLE;
+        int open_flags = LEONOS_O_RDWR;
+
+        if (request == LEONOS_GUI_IOCTL_VERSION ||
+            request == LEONOS_GUI_IOCTL_CREATE_WINDOW ||
+            request == LEONOS_GUI_IOCTL_POLL_WINDOW ||
+            request == LEONOS_GUI_IOCTL_PRESENT_WINDOW ||
+            request == LEONOS_GUI_IOCTL_FETCH_WINDOW ||
+            request == LEONOS_GUI_IOCTL_WINDOW_EVENT ||
+            request == LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT ||
+            request == LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT ||
+            request == LEONOS_GUI_IOCTL_DESTROY_WINDOW ||
+            request == LEONOS_GUI_IOCTL_UPDATE_WINDOW ||
+            request == LEONOS_GUI_IOCTL_SET_TASKBAR_VISIBLE ||
+            request == LEONOS_GUI_IOCTL_TASKS ||
+            request == LEONOS_GUI_IOCTL_TASK_KILL ||
+            request == LEONOS_GUI_IOCTL_DISPLAY_STATE ||
+            request == LEONOS_GUI_IOCTL_DISPLAY_REQUEST ||
+            request == LEONOS_GUI_IOCTL_POLL_DISPLAY_REQUEST ||
+            request == LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE ||
+            request == LEONOS_GUI_IOCTL_APPEARANCE_STATE ||
+            request == LEONOS_GUI_IOCTL_APPEARANCE_REQUEST ||
+            request == LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST ||
+            request == LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE ||
+            request == LEONOS_GUI_IOCTL_REBOOT ||
+            request == LEONOS_GUI_IOCTL_SHUTDOWN ||
+            request == LEONOS_GUI_IOCTL_FB_INFO ||
+            request == LEONOS_GUI_IOCTL_FB_CAPS ||
+            request == LEONOS_GUI_IOCTL_FB_SET_MODE ||
+            request == LEONOS_GUI_IOCTL_FB_FILL ||
+            request == LEONOS_GUI_IOCTL_FB_RECT ||
+            request == LEONOS_GUI_IOCTL_FB_TEXT ||
+            request == LEONOS_GUI_IOCTL_FB_PIXEL ||
+            request == LEONOS_GUI_IOCTL_FB_BLIT) {
+            path = LEONOS_DEV_FB0;
+            slot = &fb_fd;
+            open_flags = LEONOS_O_RDWR;
+        } else if (request == LEONOS_GUI_IOCTL_EVENT ||
+                   request == LEONOS_GUI_IOCTL_MOUSE_STATE ||
+                   request == LEONOS_GUI_IOCTL_CURSOR_REQUEST ||
+            request == LEONOS_GUI_IOCTL_CURSOR_REGION ||
+            request == LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE) {
+            path = LEONOS_DEV_INPUT_EVENT0;
+            slot = &input_fd;
+        } else if (request == LEONOS_IOCTL_AUDIO_CONFIGURE ||
+                   request == LEONOS_IOCTL_AUDIO_WRITE ||
+            request == LEONOS_IOCTL_AUDIO_GET_STATE) {
+            path = LEONOS_DEV_AUDIO0;
+            slot = &audio_fd;
+            open_flags = LEONOS_O_RDWR;
+        } else if ((request & 0xffff0000UL) == 0x4c4e0000UL) {
+            path = LEONOS_DEV_NET0;
+            slot = &net_fd;
+        } else if (request == LEONOS_INSTALL_IOCTL_LIST_DISKS ||
+                   request == LEONOS_INSTALL_IOCTL_FORMAT_TARGET ||
+                   request == LEONOS_INSTALL_IOCTL_MOUNT_TARGET ||
+                   request == LEONOS_DISK_IOCTL_LIST_PARTITIONS ||
+                   request == LEONOS_DISK_IOCTL_FORMAT_PARTITION ||
+                   request == LEONOS_DISK_IOCTL_DELETE_PARTITION ||
+                   request == LEONOS_DISK_IOCTL_CREATE_PARTITION ||
+                   request == LEONOS_DISK_IOCTL_INITIALIZE_GPT ||
+                   request == LEONOS_DISK_IOCTL_MOUNT_PARTITION ||
+                   request == LEONOS_DISK_IOCTL_UNMOUNT_PARTITION) {
+            path = LEONOS_DEV_DISK0;
+            slot = &disk_fd;
+        } else if (request == LEONOS_IOCTL_DRIVER_LIST ||
+                   request == LEONOS_IOCTL_DRIVER_CONTROL) {
+            path = LEONOS_DEV_DRIVERCTL;
+            slot = &driver_fd;
+        } else if (request == LEONOS_IOCTL_DEVICE_LIST) {
+            path = "/dev";
+            slot = &dev_fd;
+            open_flags = LEONOS_O_RDONLY;
+        } else if ((request >= LEONOS_PTY_IOCTL_CREATE &&
+                    request <= LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE) ||
+                   request == LEONOS_PTY_IOCTL_GET_ATTR ||
+                   request == LEONOS_PTY_IOCTL_SET_ATTR ||
+                   request == LEONOS_PTY_IOCTL_GET_WINSIZE ||
+                   request == LEONOS_PTY_IOCTL_SET_WINSIZE) {
+            path = LEONOS_DEV_PTMX;
+            slot = &tty_fd;
+        }
+
+        if (*slot < 0) {
+            *slot = open(path, open_flags, 0);
+        }
+        if (*slot >= 0) {
+            fd = *slot;
+        }
+        {
+            int result = (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
+            /* Applications may close a cached descriptor explicitly. Retry
+             * once with a fresh node if the kernel reports a stale handle. */
+            if (result == -9 && fd >= 4 && *slot == fd) {
+                (void)close(fd);
+                *slot = open(path, open_flags, 0);
+                if (*slot >= 0) {
+                    result = (int)syscall3(SYS_ioctl, *slot,
+                                           (long)request, (long)arg);
+                }
+            }
+            return result;
+        }
+    }
     return (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
 }
 
@@ -584,7 +693,17 @@ int fstat(int fd, struct leonos_stat *st)
 
 int mkdir(const char *path, int mode)
 {
-    return (int)syscall2(SYS_mkdir, (long)path, mode);
+    long result = syscall2(SYS_mkdir, (long)path, mode);
+    /* The native syscall ABI returns negative errno values, while the POSIX
+     * mkdir contract is -1 with errno set.  Returning the raw value makes
+     * callers such as BusyBox print only their generic message (errno remains
+     * stale), hiding whether the parent is missing, the filesystem is full,
+     * or the operation hit an I/O/read-only failure. */
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
 }
 
 int unlink(const char *path)
@@ -1434,15 +1553,24 @@ int isatty(int fd)
     return tcgetattr(fd, &termios) == 0;
 }
 
+/* Keep one descriptor per process so per-frame drawing does not repeatedly
+ * allocate and release a device fd.  The kernel still accepts the legacy
+ * control descriptor for old statically linked applications. */
+static int leonos_framebuffer_fd(void)
+{
+    static int fd = -1;
+    if (fd < 0) {
+        fd = open(LEONOS_DEV_FB0, LEONOS_O_RDWR, 0);
+        if (fd < 0) {
+            fd = 3;
+        }
+    }
+    return fd;
+}
+
 int leonos_gui_connect(void)
 {
-    int fb = open("/dev/fb0", 0, 0);
-    if (fb < 0) {
-        return fb;
-    }
-    int version = ioctl(fb, LEONOS_GUI_IOCTL_VERSION, 0);
-    close(fb);
-    return version;
+    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_VERSION, 0);
 }
 
 int leonos_gui_create_window(const struct leonos_gui_window *window)
@@ -1466,12 +1594,12 @@ unsigned long leonos_uptime_ms(void)
 
 int leonos_fb_info(struct leonos_fb_info *info)
 {
-    return ioctl(3, LEONOS_GUI_IOCTL_FB_INFO, info);
+    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_INFO, info);
 }
 
 int leonos_fb_capabilities(struct leonos_fb_capabilities *caps)
 {
-    return ioctl(3, LEONOS_GUI_IOCTL_FB_CAPS, caps);
+    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_CAPS, caps);
 }
 
 int leonos_fb_set_mode(uint32_t width, uint32_t height)
@@ -1480,12 +1608,12 @@ int leonos_fb_set_mode(uint32_t width, uint32_t height)
         .width = width,
         .height = height,
     };
-    return ioctl(3, LEONOS_GUI_IOCTL_FB_SET_MODE, &mode);
+    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_SET_MODE, &mode);
 }
 
 int leonos_fb_fill(uint32_t color)
 {
-    return ioctl(3, LEONOS_GUI_IOCTL_FB_FILL, (void *)(long)color);
+    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_FILL, (void *)(long)color);
 }
 
 int leonos_fb_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color)
@@ -1497,7 +1625,7 @@ int leonos_fb_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint
         .height = height,
         .color = color,
     };
-    return ioctl(3, LEONOS_GUI_IOCTL_FB_RECT, &rect);
+    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_RECT, &rect);
 }
 
 int leonos_fb_text(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg)
@@ -1509,13 +1637,13 @@ int leonos_fb_text(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32
         .bg = bg,
         .text = text,
     };
-    return ioctl(3, LEONOS_GUI_IOCTL_FB_TEXT, &cmd);
+    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_TEXT, &cmd);
 }
 
 uint32_t leonos_fb_pixel(uint32_t x, uint32_t y)
 {
     unsigned long packed = ((unsigned long)y << 32) | x;
-    return (uint32_t)ioctl(3, LEONOS_GUI_IOCTL_FB_PIXEL, (void *)packed);
+    return (uint32_t)ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_PIXEL, (void *)packed);
 }
 
 int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t stride, const uint32_t *pixels)
@@ -1528,7 +1656,7 @@ int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint
         .stride = stride,
         .pixels = pixels,
     };
-    return ioctl(3, LEONOS_GUI_IOCTL_FB_BLIT, &cmd);
+    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_BLIT, &cmd);
 }
 
 int leonos_gui_create_app_window(const char *title, const char *text, uint32_t width, uint32_t height)
@@ -2035,6 +2163,22 @@ int leonos_disk_delete_partition(const struct leonos_disk_partition_delete *requ
     return ioctl(3, LEONOS_DISK_IOCTL_DELETE_PARTITION, (void *)request);
 }
 
+int leonos_disk_edit_partition(const struct leonos_disk_partition_edit *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_DISK_IOCTL_EDIT_PARTITION, (void *)request);
+}
+
+int leonos_disk_initialize_gpt(const struct leonos_disk_gpt_initialize *request)
+{
+    if (!request) {
+        return -1;
+    }
+    return ioctl(3, LEONOS_DISK_IOCTL_INITIALIZE_GPT, (void *)request);
+}
+
 int leonos_disk_create_partition(const struct leonos_disk_partition_create *request)
 {
     if (!request) {
@@ -2046,22 +2190,41 @@ int leonos_disk_create_partition(const struct leonos_disk_partition_create *requ
 int leonos_disk_mount_partition(uint32_t disk_id, uint32_t partition_index,
                                 char *mount_path, uint32_t mount_path_capacity)
 {
+    return leonos_disk_mount_partition_at(disk_id, partition_index, "",
+                                           mount_path, mount_path_capacity);
+}
+
+int leonos_disk_mount_partition_at(uint32_t disk_id, uint32_t partition_index,
+                                   const char *mount_path,
+                                   char *out_mount_path,
+                                   uint32_t out_mount_path_capacity)
+{
     struct leonos_disk_partition_mount request = {
         .disk_id = disk_id,
         .partition_index = partition_index,
     };
-    if (!mount_path || mount_path_capacity == 0) {
+    if (!out_mount_path || out_mount_path_capacity == 0) {
         return -1;
     }
-    request.mount_path[0] = 0;
+    if (mount_path) {
+        size_t i = 0;
+        while (i + 1 < sizeof(request.mount_path) && mount_path[i]) {
+            request.mount_path[i] = mount_path[i];
+            ++i;
+        }
+        if (mount_path[i] != 0) {
+            return -1;
+        }
+        request.mount_path[i] = 0;
+    }
     int ret = ioctl(3, LEONOS_DISK_IOCTL_MOUNT_PARTITION, &request);
     if (ret == 0) {
         size_t i = 0;
-        while (i + 1 < mount_path_capacity && request.mount_path[i]) {
-            mount_path[i] = request.mount_path[i];
+        while (i + 1 < out_mount_path_capacity && request.mount_path[i]) {
+            out_mount_path[i] = request.mount_path[i];
             ++i;
         }
-        mount_path[i] = 0;
+        out_mount_path[i] = 0;
     }
     return ret;
 }
@@ -2133,19 +2296,29 @@ int leonos_driver_control(uint32_t action, const char *file)
 
 int leonos_audio_configure(const struct leonos_audio_format *format)
 {
+    static int audio_fd = -1;
     if (!format) {
         return -1;
     }
-    return ioctl(3, LEONOS_IOCTL_AUDIO_CONFIGURE, (void *)format);
+    if (audio_fd < 0) {
+        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
+        if (audio_fd < 0) audio_fd = 3;
+    }
+    return ioctl(audio_fd, LEONOS_IOCTL_AUDIO_CONFIGURE, (void *)format);
 }
 
 long leonos_audio_write(const void *data, uint32_t length,
                         uint32_t *out_status)
 {
+    static int audio_fd = -1;
     uint32_t done = 0;
     uint32_t status = LEONOS_AUDIO_STATUS_OK;
     if (length && !data) {
         return -1;
+    }
+    if (audio_fd < 0) {
+        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
+        if (audio_fd < 0) audio_fd = 3;
     }
     while (done < length) {
         uint32_t chunk = length - done;
@@ -2160,7 +2333,7 @@ long leonos_audio_write(const void *data, uint32_t length,
             .transferred = 0,
             .status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED,
         };
-        ret = ioctl(3, LEONOS_IOCTL_AUDIO_WRITE, &request);
+        ret = ioctl(audio_fd, LEONOS_IOCTL_AUDIO_WRITE, &request);
         status = request.status;
         if (ret < 0) {
             if (out_status) {
@@ -2191,10 +2364,15 @@ long leonos_audio_write(const void *data, uint32_t length,
 
 int leonos_audio_get_state(struct leonos_audio_state *state)
 {
+    static int audio_fd = -1;
     if (!state) {
         return -1;
     }
-    return ioctl(3, LEONOS_IOCTL_AUDIO_GET_STATE, state);
+    if (audio_fd < 0) {
+        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
+        if (audio_fd < 0) audio_fd = 3;
+    }
+    return ioctl(audio_fd, LEONOS_IOCTL_AUDIO_GET_STATE, state);
 }
 
 int leonos_net_config(struct leonos_net_config *config)

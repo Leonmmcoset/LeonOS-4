@@ -192,8 +192,17 @@ static int storage_write_device(const struct storage_volume *volume, uint64_t lb
                                 uint32_t sector_count, const void *buffer)
 {
     int ret = 0;
-    if (!volume || !buffer || !sector_count || volume->kind == STORAGE_VOLUME_RAM) {
+    if (!volume || !buffer || !sector_count) {
         return -30;
+    }
+    if (volume->kind == STORAGE_VOLUME_RAM) {
+        uint64_t offset = lba * SECTOR_SIZE;
+        uint64_t bytes = (uint64_t)sector_count * SECTOR_SIZE;
+        if (!volume->ram_base || offset + bytes < offset || offset + bytes > volume->ram_bytes) {
+            return -22;
+        }
+        storage_memcpy(volume->ram_base + offset, buffer, (size_t)bytes);
+        return 0;
     }
     kernel_spin_lock(&storage_transport_lock);
     if (volume->transport == STORAGE_TRANSPORT_IDE_PIO) {
@@ -284,6 +293,54 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
     return storage_read_device(&g_storage, lba, sector_count, buffer);
 }
 
+/* GPT names are UTF-16LE on disk, but partition editors commonly differ in
+ * ASCII case.  Compare the canonical LeonOS root label without making the
+ * filesystem probe depend on a particular editor's spelling. */
+static int storage_gpt_name_matches(const uint16_t name[36], const char *ascii)
+{
+    uint32_t i;
+    if (!name || !ascii) {
+        return 0;
+    }
+    for (i = 0; i < 36u && ascii[i]; ++i) {
+        uint16_t ch = name[i];
+        uint8_t expected = (uint8_t)ascii[i];
+        if (ch >= 'a' && ch <= 'z') {
+            ch = (uint16_t)(ch - ('a' - 'A'));
+        }
+        if (expected >= 'a' && expected <= 'z') {
+            expected = (uint8_t)(expected - ('a' - 'A'));
+        }
+        if (ch != expected) {
+            return 0;
+        }
+    }
+    return ascii[i] == 0 && i < 36u && name[i] == 0;
+}
+
+/* A filesystem signature is authoritative; GPT type/name metadata is not.
+ * Keep this probe deliberately small because it runs once per GPT entry and
+ * the full exFAT boot-region validation is performed by exfat_mount(). */
+static int storage_probe_exfat_signature(uint64_t lba)
+{
+    int ret = storage_read_sectors(lba, 1u, storage_scratch);
+    if (ret < 0) {
+        return ret;
+    }
+    return storage_memcmp(storage_scratch + 3u, "EXFAT   ", 8u) == 0 &&
+           storage_scratch[510] == 0x55u && storage_scratch[511] == 0xaau;
+}
+
+static int storage_probe_fat32_signature(uint64_t lba)
+{
+    int ret = storage_read_sectors(lba, 1u, storage_scratch);
+    if (ret < 0) {
+        return ret;
+    }
+    return storage_scratch[510] == 0x55u && storage_scratch[511] == 0xaau &&
+           storage_memcmp(storage_scratch + 82u, "FAT32   ", 8u) == 0;
+}
+
 static int storage_read_iso_blocks(uint64_t lba, uint32_t block_count, void *buffer)
 {
     uint8_t *dst = (uint8_t *)buffer;
@@ -337,10 +394,8 @@ static int storage_read_iso_blocks(uint64_t lba, uint32_t block_count, void *buf
 static int storage_write_sectors(uint64_t lba, uint32_t sector_count, const void *buffer)
 {
     const uint8_t *src = (const uint8_t *)buffer;
-    /* The installer payload is a reserved Multiboot module and must stay immutable. */
-    if (g_storage.kind == STORAGE_VOLUME_RAM) {
-        return -30;
-    }
+    /* RAM-backed installer roots are a writable live environment. Changes
+     * affect the in-memory FAT image only and disappear when it reboots. */
     /* From this point the caller may have changed filesystem metadata.  Do
      * not return EAGAIN and replay a partially completed mutation. */
     storage_begin_mutation();
@@ -382,6 +437,11 @@ static int gpt_find_esp(void)
 {
     struct gpt_header *hdr = (struct gpt_header *)(void *)storage_scratch;
     uint8_t esp_found = 0;
+    uint8_t canonical_exfat_root_found = 0;
+    uint8_t basic_data_candidate_found = 0;
+    uint64_t basic_data_candidate_lba = 0;
+    uint8_t fat32_candidate_found = 0;
+    uint64_t fat32_candidate_lba = 0;
     int ret = storage_read_sectors(1, 1, storage_scratch);
     if (ret < 0) {
         return storage_read_failure(ret);
@@ -436,15 +496,32 @@ static int gpt_find_esp(void)
             console_printf("[ntclks] GPT ESP found lba=%llu\n",
                            (unsigned long long)entry->first_lba);
         } else if (storage_memcmp(entry->type_guid, basic_data_guid, 16) == 0) {
+            uint8_t is_exfat = 0;
+            uint8_t canonical_name = 0;
+            int signature_ret;
             console_printf("[ntclks] GPT basic data partition found lba=%llu name[0]=0x%04x\n",
                            (unsigned long long)entry->first_lba, (unsigned int)entry->name[0]);
-            if (entry->name[0] == 'L' && entry->name[1] == 'E' && entry->name[2] == 'O' &&
-                entry->name[3] == 'N' && entry->name[4] == 'O' && entry->name[5] == 'S' &&
-                entry->name[6] == '4' && entry->name[7] == '_' && entry->name[8] == 'R' &&
-                entry->name[9] == 'O' && entry->name[10] == 'O' && entry->name[11] == 'T' &&
-                entry->name[12] == 0) {
+            if (!basic_data_candidate_found) {
+                basic_data_candidate_found = 1;
+                basic_data_candidate_lba = entry->first_lba;
+            }
+            canonical_name = storage_gpt_name_matches(entry->name, "LEONOS4_ROOT");
+            signature_ret = storage_probe_exfat_signature(entry->first_lba);
+            is_exfat = signature_ret > 0;
+            if (!fat32_candidate_found && storage_probe_fat32_signature(entry->first_lba) > 0) {
+                fat32_candidate_found = 1;
+                fat32_candidate_lba = entry->first_lba;
+            }
+            if (is_exfat && !canonical_name && !canonical_exfat_root_found) {
+                console_printf("[ntclks] GPT exFAT signature found lba=%llu\n",
+                               (unsigned long long)entry->first_lba);
+            }
+            if (is_exfat && (canonical_name || !canonical_exfat_root_found)) {
                 g_storage.exfat_start_lba = entry->first_lba;
                 g_storage.exfat_sector_count = entry->last_lba - entry->first_lba + 1u;
+                if (canonical_name) {
+                    canonical_exfat_root_found = 1;
+                }
                 console_printf("[ntclks] GPT exFAT root found lba=%llu sectors=%u\n",
                                (unsigned long long)entry->first_lba,
                                (unsigned int)(entry->last_lba - entry->first_lba + 1u));
@@ -453,6 +530,81 @@ static int gpt_find_esp(void)
             g_storage.ext2_start_lba = entry->first_lba;
             g_storage.ext2_sector_count = entry->last_lba - entry->first_lba + 1u;
         }
+    }
+    /* A hand-created GPT may carry a non-standard type or a damaged label.
+     * Probe every non-ESP extent before falling back to the first Basic Data
+     * entry, so an exFAT root remains discoverable even when its GPT type was
+     * edited incorrectly. */
+    if (!g_storage.exfat_start_lba) {
+        for (uint32_t i = 0; i < count; ++i) {
+            struct gpt_entry *candidate =
+                (struct gpt_entry *)(void *)(table + (uint64_t)i * size);
+            if (!candidate->first_lba || candidate->last_lba < candidate->first_lba ||
+                storage_memcmp(candidate->type_guid, esp_guid, 16) == 0) {
+                continue;
+            }
+            if (storage_probe_exfat_signature(candidate->first_lba) > 0) {
+                g_storage.exfat_start_lba = candidate->first_lba;
+                g_storage.exfat_sector_count =
+                    candidate->last_lba - candidate->first_lba + 1u;
+                console_printf("[ntclks] GPT exFAT signature found lba=%llu type=non-basic\n",
+                               (unsigned long long)candidate->first_lba);
+                break;
+            }
+        }
+    }
+    /* Formatting a FAT32 ESP through the installer intentionally preserves
+     * its bytes but some partition tools reset the GPT type to Basic Data.
+     * Recover the ESP from its FAT32 boot signature when no ESP GUID was
+     * present, so the root and boot partitions are still usable. */
+    if (!esp_found && !fat32_candidate_found) {
+        for (uint32_t i = 0; i < count; ++i) {
+            struct gpt_entry *candidate =
+                (struct gpt_entry *)(void *)(table + (uint64_t)i * size);
+            if (!candidate->first_lba || candidate->last_lba < candidate->first_lba ||
+                storage_memcmp(candidate->type_guid, esp_guid, 16) == 0) {
+                continue;
+            }
+            if (storage_probe_fat32_signature(candidate->first_lba) > 0) {
+                fat32_candidate_found = 1;
+                fat32_candidate_lba = candidate->first_lba;
+                break;
+            }
+        }
+    }
+    if (!esp_found && fat32_candidate_found) {
+        g_storage.esp_start_lba = fat32_candidate_lba;
+        for (uint32_t i = 0; i < count; ++i) {
+            struct gpt_entry *candidate =
+                (struct gpt_entry *)(void *)(table + (uint64_t)i * size);
+            if (candidate->first_lba == fat32_candidate_lba &&
+                candidate->last_lba >= candidate->first_lba) {
+                g_storage.esp_sector_count =
+                    candidate->last_lba - candidate->first_lba + 1u;
+                break;
+            }
+        }
+        esp_found = 1;
+        console_printf("[ntclks] GPT ESP signature found without ESP type lba=%llu\n",
+                       (unsigned long long)fat32_candidate_lba);
+    }
+    /* If the signature itself is damaged, retain the first Basic Data extent
+     * as a mount candidate so exfat_mount() can report the actual corruption.
+     * Never silently mount the ESP as the system root. */
+    if (!g_storage.exfat_start_lba && !g_storage.ext2_start_lba && basic_data_candidate_found) {
+        g_storage.exfat_start_lba = basic_data_candidate_lba;
+        for (uint32_t i = 0; i < count; ++i) {
+            struct gpt_entry *candidate =
+                (struct gpt_entry *)(void *)(table + (uint64_t)i * size);
+            if (candidate->first_lba == basic_data_candidate_lba &&
+                candidate->last_lba >= candidate->first_lba) {
+                g_storage.exfat_sector_count =
+                    candidate->last_lba - candidate->first_lba + 1u;
+                break;
+            }
+        }
+        console_printf("[ntclks] GPT exFAT signature not confirmed; trying Basic Data root lba=%llu\n",
+                       (unsigned long long)g_storage.exfat_start_lba);
     }
     mm_free_pages(phys, (total_sectors + 7u) / 8u);
     return esp_found ? 0 : -2;

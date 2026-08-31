@@ -1,4 +1,5 @@
 #include <leonos/fs.h>
+#include <leonos/device.h>
 #include <leonos/environment.h>
 #include <leonos/ini.h>
 #include <leonos/launch.h>
@@ -6,6 +7,7 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #define LEONOS_ASSOC_CONFIG_PATH "/system/config/fileassoc.cfg"
@@ -282,7 +284,17 @@ int leonos_spawn_argv(const char *path, char *const argv[])
         .stdout_fd = -1,
         .stderr_fd = -1,
     };
-    result = ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
+    /* Keep the launcher on the same device ABI as the rest of libc.  The
+     * descriptor is opened explicitly so standalone launch users no longer
+     * depend on the historical fd=3 control channel. */
+    int pty_device = open(LEONOS_DEV_PTMX, O_RDWR, 0);
+    if (pty_device < 0) {
+        pty_device = 3;
+    }
+    result = ioctl(pty_device, LEONOS_PTY_IOCTL_SPAWN, &spawn);
+    if (pty_device >= 4) {
+        (void)close(pty_device);
+    }
     leonos_environment_free(envp);
     return result;
 }

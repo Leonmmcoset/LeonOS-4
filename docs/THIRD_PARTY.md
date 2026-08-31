@@ -144,6 +144,14 @@ Terminal and TTY shell; it ignores `SIGHUP`, uses `/dev/null` for terminal
 stdin, and appends terminal output to `nohup.out` with the usual `$HOME`
 fallback.
 
+The profile also provides LeonOS storage applets: `fdisk` (including GPT type
+and name editing), `mkfs.fat`/`mkfs.fat32` (with `mkfs.vfat` as an alias),
+`mkfs.ext2`, `mkfs.exfat`, read-only `fsck.*`, `blkid`, `lsblk`, `mount`,
+`umount`, `sync`, and `leonos-grub-installer`. They operate on the kernel
+GPT/storage ABI using `/dev/disk0` and `/dev/disk0pN`; partition mutation and
+runtime mounts require administrator authorization and the active boot disk is
+protected.
+
 ## GNU nano
 
 - Path: `third_party/nano`

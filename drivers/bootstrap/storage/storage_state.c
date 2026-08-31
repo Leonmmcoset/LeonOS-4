@@ -472,7 +472,11 @@ int storage_path_volume_id(const char *path, uint32_t *out_volume_id)
     }
     if (g_devfs_enabled &&
         (storage_text_eq_ci(resolved, "/dev") ||
-         (storage_memcmp(resolved, "/dev/", 5u) == 0))) {
+         ((resolved[0] == '/') &&
+          (resolved[1] == 'd' || resolved[1] == 'D') &&
+          (resolved[2] == 'e' || resolved[2] == 'E') &&
+          (resolved[3] == 'v' || resolved[3] == 'V') &&
+          resolved[4] == '/'))) {
         *out_volume_id = STORAGE_VOLUME_ROOT;
         return 0;
     }

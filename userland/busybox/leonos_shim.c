@@ -194,6 +194,18 @@ const char *leonos_shell_command_path(const char *name)
     if (strcmp(name, "less") == 0) return "/programs/less/less.elf";
     if (strcmp(name, "sl") == 0) return "/programs/sl/sl.elf";
     if (strcmp(name, "cmd") == 0) return "/programs/cmd/cmd.elf";
+    if (strcmp(name, "fdisk") == 0 || strcmp(name, "mkfs.fat") == 0 ||
+        strcmp(name, "mkfs.fat32") == 0 || strcmp(name, "mkfs.vfat") == 0 ||
+        strcmp(name, "mkfs.ext2") == 0 || strcmp(name, "mkfs.exfat") == 0 ||
+        strcmp(name, "mount") == 0 || strcmp(name, "umount") == 0 ||
+        strcmp(name, "fsck") == 0 || strcmp(name, "fsck.fat") == 0 ||
+        strcmp(name, "fsck.fat32") == 0 || strcmp(name, "fsck.vfat") == 0 ||
+        strcmp(name, "fsck.ext2") == 0 || strcmp(name, "fsck.exfat") == 0 ||
+        strcmp(name, "blkid") == 0 || strcmp(name, "lsblk") == 0 ||
+        strcmp(name, "leonos-grub-installer") == 0 || strcmp(name, "sync") == 0)
+        return "/programs/busybox/busybox.elf";
+    if (strcmp(name, "gptinit") == 0)
+        return "/programs/gptinit/gptinit.elf";
     if (strcmp(name, "oobe") == 0) return "/system/apps/oobe/oobe.elf";
     if (strcmp(name, "login") == 0) return "/system/apps/login/login.elf";
     return 0;

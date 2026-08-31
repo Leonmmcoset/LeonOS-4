@@ -84,8 +84,11 @@ stages:
 This keeps installer boot and installed-system boot on the same matched
 component set.
 
-`install/root.fat` is one read-only Multiboot module. It is mapped directly by
-the kernel and is not copied into a second RAM buffer. The guest nevertheless
+`install/root.fat` is one Multiboot module. It is mapped directly by
+the kernel and is not copied into a second RAM buffer. The installer ISO mounts
+this FAT32 image as a writable live environment: file and directory changes are
+kept in the mapped RAM image for the session and discarded on reboot; they never
+modify the ISO. The guest nevertheless
 needs enough physical memory for GRUB to load the complete module before the
 kernel begins. In particular, a 400 MiB installer root requires at least 1 GiB
 of VM RAM; a 512 MiB VM can omit the module before the loader receives control.
@@ -106,14 +109,20 @@ secondary channel.
 Set `LEONOS_QEMU_NVME=1` to attach the same VMDK through a QEMU NVMe controller;
 this is intentionally opt-in so normal QEMU runs retain the AHCI regression path.
 
-The installer ISO GRUB menu provides the default graphical installer and an
-`Install LeonOS 4 (TTY)` entry. The TTY entry starts `installer.elf` directly
-on the console PTY, presents an interactive CLI for policy, mode, disk, and
-destructive-action confirmation, and uses the same format, mount, copy, and
-update implementation as the graphical installer.
+The installer ISO GRUB menu provides the default graphical installer, an
+`Install LeonOS 4 (TTY)` entry, and an `Install LeonOS 4 (Advanced mode, TTY
+shell)` entry. The regular TTY entry starts `installer.elf` directly on the
+console PTY. Advanced mode starts a BusyBox shell in the installer root instead,
+with the LeonOS `fdisk`, `mkfs.fat`/`mkfs.fat32`, `mkfs.ext2`, `mkfs.exfat`,
+`fsck.*`, `blkid`, `lsblk`, `mount`, `umount`, `sync`, and
+`leonos-grub-installer` tools available for manual preparation. The
+installer-only `/programs/gptinit/gptinit.elf` utility initializes an empty
+GPT; `fdisk` can edit GPT partition type and name; `fsck.*` performs read-only
+superblock validation. It does not start the installer application or perform
+automatic partitioning.
 
-The installer runtime itself only needs `desktop.elf` and `installer.elf` under
-`/system/apps`. The installed-system root payload under `/install/root/system/apps`
+The installer runtime includes `desktop.elf`, `installer.elf`, and
+`/programs/busybox/busybox.elf`. The installed-system root payload under `/install/root/system/apps`
 and `/install/root/programs` contains the normal app set, including `login.elf`
 and `oobe.elf`, so a fresh
 install boots into license OOBE and then first-administrator creation instead

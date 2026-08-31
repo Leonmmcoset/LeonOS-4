@@ -16,6 +16,38 @@ It supports simple command lines, shell built-ins, and the bundled applets (`ls`
 `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`,
 `true`, `false`, `nohup`, and `vi`). The GUI terminal launches this shell by default.
 
+Storage administration applets are also included: `fdisk` can list and
+interactively create/delete GPT entries and edit their type/name (`t` and `r`),
+`mkfs.fat`/`mkfs.fat32`/`mkfs.ext2`/`mkfs.exfat` format an existing LeonOS
+partition, and `mount`/`umount` manage runtime data mounts. `blkid` and `lsblk`
+show the same disk metadata, while `fsck`, `fsck.fat`, `fsck.fat32`,
+`fsck.vfat`, `fsck.ext2`, and `fsck.exfat` perform read-only superblock checks.
+`leonos-grub-installer ESP` copies the staged EFI/GRUB payload to a mounted
+ESP, and `sync` is available as a synchronous-write compatibility command.
+They use `/dev/disk0` and `/dev/disk0pN` paths and the kernel storage ABI rather
+than Linux block-device ioctls. Formatting, partition changes, and mount
+operations require an administrator account; the running boot disk is
+protected.
+
+The installer ISO additionally provides `/programs/gptinit/gptinit.elf` for
+blank disks. `gptinit /dev/diskN` initializes a protective MBR and empty
+primary/backup GPT pair after an explicit `YES` confirmation;
+`gptinit --force /dev/diskN` skips confirmation and may replace a valid GPT.
+The utility is not staged into installed LeonOS systems.
+
+Examples:
+
+```text
+fdisk -l /dev/disk0
+fdisk /dev/disk0
+blkid
+lsblk
+fsck.ext2 /dev/disk0p3
+mkfs.ext2 /dev/disk0p3
+mount -t ext2 /dev/disk0p3 /mnt/data
+umount /mnt/data
+```
+
 Ash's fancy prompt support is enabled: `\\w` expands to the current directory
 and `\\$` expands to `$` for ordinary users or `#` for root. BusyBox's line
 editor calculates the visible prompt width while the Terminal consumes ANSI

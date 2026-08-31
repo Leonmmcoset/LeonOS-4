@@ -115,10 +115,11 @@ static int storage_try_mount_root_disk(struct install_disk_state *disk)
         } else if (root->ext2_start_lba) {
             ret = ext2_mount();
         } else {
-            ret = fat32_mount();
-            if (ret == 0) {
-                root->filesystem = STORAGE_FILESYSTEM_FAT32;
-            }
+            /* A GPT disk with an ESP but no recognized root must fail
+             * explicitly. Mounting the ESP as / leaves a seemingly bootable
+             * system with no /system tree and hides the real storage error. */
+            console_printf("[ntclks] GPT root filesystem not identified; refusing ESP fallback\n");
+            ret = -2;
         }
     }
     if (ret == 0) {
@@ -525,7 +526,8 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
      * supervisor-only high direct map, which remains valid after a user CR3
      * replaces the overlapping low identity pages.  Copying a 400 MiB image
      * into another contiguous allocation would double its RAM requirement.
-     * The RAM-backed storage write path is deliberately read-only. */
+     * The direct map is writable for the live installer session; changes are
+     * intentionally ephemeral and never modify the ISO source. */
     root->volume_id = 0;
     root->kind = STORAGE_VOLUME_RAM;
     root->filesystem = STORAGE_FILESYSTEM_FAT32;
@@ -537,6 +539,13 @@ int storage_mount_ramdisk_root(const void *image, uint64_t len)
     if (fat32_mount() < 0) {
         storage_memzero(root, sizeof(*root));
         return -2;
+    }
+    /* storage_init() probes physical disks before the installer module is
+     * mounted. Those probes may mark a pre-existing LeonOS disk as boot_root,
+     * but an ISO boot is independent of that disk and must be able to repartition
+     * it. The normal disk-boot path never enters this RAM-root branch. */
+    for (uint32_t i = 0; i < g_install_disk_count; ++i) {
+        g_install_disks[i].boot_root = 0;
     }
     root->ready = true;
     g_installer_root_active = 1;
