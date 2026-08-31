@@ -393,6 +393,32 @@ def patch_nohup_for_leonos(source: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def patch_whoami_for_leonos(source: Path) -> None:
+    """Resolve the current LeonOS account instead of /etc/passwd."""
+    path = source / "coreutils/whoami.c"
+    text = path.read_text(encoding="utf-8")
+    include_marker = '#include "libbb.h"\n'
+    declaration = "extern const char *leonos_shell_user_name(void);\n"
+    if declaration not in text:
+        if include_marker not in text:
+            raise SystemExit("unsupported BusyBox whoami source revision: include marker missing")
+        text = text.replace(include_marker, include_marker + declaration, 1)
+    old = "\tputs(xuid2uname(geteuid()));\n"
+    replacement = (
+        "\t{\n"
+        "\t\tconst char *leonos_name = leonos_shell_user_name();\n"
+        "\t\tif (!leonos_name || !leonos_name[0])\n"
+        "\t\t\tleonos_name = xuid2uname(geteuid());\n"
+        "\t\tputs(leonos_name);\n"
+        "\t}\n"
+    )
+    if replacement not in text:
+        if old not in text:
+            raise SystemExit("unsupported BusyBox whoami source revision: output marker missing")
+        text = text.replace(old, replacement, 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def patch_power_applets_for_leonos(source: Path) -> None:
     """Expose shutdown and route power applets directly to the LeonOS ABI."""
     path = source / "init/halt.c"
@@ -450,6 +476,7 @@ def patch_ash_for_leonos(source: Path) -> None:
         "/* LeonOS has no Unix-style applet links or program directories. */\n"
         "extern const char *leonos_shell_command_path(const char *name);\n\n"
     )
+    home_declaration = "/* Resolve the current logged-in user's home for TTY shells. */\nextern const char *leonos_shell_home(void);\n\n"
     declaration_marker = "/* ============ Hashing commands */\n"
     command_lookup = """#endif
 
@@ -477,6 +504,11 @@ def patch_ash_for_leonos(source: Path) -> None:
     exec_lookup_marker = """\tenvp = listvars(VEXPORT, VUNSET, /*strlist:*/ NULL, /*end:*/ NULL);
 	if (strchr(prog, '/') != NULL
 """
+    # Ash uses leonos_shell_home() in code that appears before the main
+    # LeonOS declaration block, so its prototype must be visible from the
+    # beginning of the translation unit.
+    if home_declaration not in text:
+        text = home_declaration + text
     if declaration not in text:
         if declaration_marker not in text:
             raise SystemExit("unsupported BusyBox ash source revision: declaration marker missing")
@@ -515,6 +547,29 @@ def patch_ash_for_leonos(source: Path) -> None:
         if exec_lookup_marker not in text:
             raise SystemExit("unsupported BusyBox ash source revision: exec lookup marker missing")
         text = text.replace(exec_lookup_marker, exec_lookup, 1)
+
+    home_lookup = "\t\thome = lookupvar(\"HOME\");\n"
+    home_lookup_replacement = (
+        "\t\thome = lookupvar(\"HOME\");\n"
+        "\t\tif (!home)\n"
+        "\t\t\thome = leonos_shell_home();\n"
+    )
+    if "home = leonos_shell_home();" not in text:
+        if home_lookup not in text:
+            raise SystemExit("unsupported BusyBox ash source revision: HOME lookup marker missing")
+        text = text.replace(home_lookup, home_lookup_replacement, 1)
+
+    cd_home_lookup = "\tif (!dest)\n\t\tdest = nullstr;\n"
+    cd_home_replacement = (
+        "\tif (!dest)\n"
+        "\t\tdest = leonos_shell_home();\n"
+        "\tif (!dest)\n"
+        "\t\tdest = nullstr;\n"
+    )
+    if "dest = leonos_shell_home();" not in text:
+        if cd_home_lookup not in text:
+            raise SystemExit("unsupported BusyBox ash source revision: cd HOME marker missing")
+        text = text.replace(cd_home_lookup, cd_home_replacement, 1)
     path.write_text(text, encoding="utf-8")
 
 
@@ -603,6 +658,7 @@ def main() -> None:
     patch_less_for_leonos(source_dir)
     patch_ls_colors_for_leonos(source_dir)
     patch_nohup_for_leonos(source_dir)
+    patch_whoami_for_leonos(source_dir)
     patch_power_applets_for_leonos(source_dir)
     patch_ash_for_leonos(source_dir)
     work_root = source_dir.parent

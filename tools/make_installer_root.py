@@ -113,8 +113,9 @@ def main() -> int:
     # Keep the conventional live-environment mount point available before the
     # advanced shell starts.  Without this, the documented `mkdir /mnt/esp`
     # and `mkdir /mnt/root` commands fail because POSIX mkdir does not create
-    # missing parents unless -p is supplied.
-    for directory in ("mnt", "tmp", "media"):
+    # missing parents unless -p is supplied.  Keep /root available as the
+    # default HOME for the installer advanced shell as well.
+    for directory in ("mnt", "tmp", "media", "root"):
         (stage / directory).mkdir(parents=True, exist_ok=True)
     # The installer itself runs from this FAT32 ramdisk. The staged installed
     # The root payload retains the normal exFAT manifest copied from esp_tree;

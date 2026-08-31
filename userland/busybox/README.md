@@ -14,7 +14,8 @@ It supports simple command lines, shell built-ins, and the bundled applets (`ls`
 `echo`, `clear`, `grep`, `head`, `tail`, `wc`, `sha256sum`, `basename`, `dirname`, `printf`, `diff`,
 `less`, `ps`, and `kill`,
 `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`,
-`true`, `false`, `nohup`, and `vi`). The GUI terminal launches this shell by default.
+`true`, `false`, `nohup`, `whoami`, and `vi`). The GUI terminal launches this
+shell by default.
 
 Storage administration applets are also included: `fdisk` can list and
 interactively create/delete GPT entries and edit their type/name (`t` and `r`),
@@ -53,6 +54,10 @@ and `\\$` expands to `$` for ordinary users or `#` for root. BusyBox's line
 editor calculates the visible prompt width while the Terminal consumes ANSI
 color sequences without moving its cursor, so colored prompts can use the
 usual `\\[...\\]` markers.
+
+In TTY mode, `~` and `~/path` resolve to the home directory of the account that
+logged in. This is resolved from the current LeonOS session, so it remains
+correct even though the shell starts before the login program completes.
 
 Interactive Ash uses BusyBox's line editor with Tab command/path completion. The terminal sends
 the Tab byte to the PTY and applies only the cursor updates returned by Ash or the foreground

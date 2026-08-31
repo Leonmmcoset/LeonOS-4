@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <leonos/auth.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
 #include <sys/reboot.h>
@@ -54,6 +55,45 @@ void record_signo(int signal_number)
 static char *leonos_empty_environment[] = { 0 };
 
 const char *leonos_shell_command_path(const char *name);
+
+/* Login updates the kernel task identity of the shell's session, but the
+ * shell environment was created before login and therefore may not contain a
+ * user-specific HOME variable. Ash calls this on demand for ~ expansion. */
+const char *leonos_shell_home(void)
+{
+    static char home[LEONOS_AUTH_HOME_LEN];
+    struct leonos_user_info user;
+    uint32_t index;
+    if (leonos_auth_current(&user) < 0 || !user.uid || !user.home[0]) {
+        return 0;
+    }
+    for (index = 0; index + 1U < sizeof(home) && user.home[index]; ++index) {
+        home[index] = user.home[index];
+    }
+    home[index] = 0;
+    return home[0] ? home : 0;
+}
+
+/* BusyBox whoami normally resolves the effective UID through /etc/passwd.
+ * LeonOS keeps accounts in the authentication service instead, so expose the
+ * session username directly. The unauthenticated installer shell runs as the
+ * system administrator context and uses the conventional root name. */
+const char *leonos_shell_user_name(void)
+{
+    static char username[LEONOS_AUTH_USERNAME_LEN];
+    struct leonos_user_info user;
+    uint32_t index;
+    if (leonos_auth_current(&user) == 0 && user.username[0]) {
+        for (index = 0; index + 1U < sizeof(username) && user.username[index]; ++index) {
+            username[index] = user.username[index];
+        }
+        username[index] = 0;
+        return username;
+    }
+    strncpy(username, "root", sizeof(username) - 1U);
+    username[sizeof(username) - 1U] = 0;
+    return username;
+}
 
 /*
  * LeonOS terminals are inherited standard streams, not reopenable named tty
