@@ -1008,6 +1008,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c11", "-ffreestanding",
         "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
         "-Wall", "-Wextra", "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-include", relative(autoconf),
     ]
     asflags_loader = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-ffreestanding", "-mno-red-zone",
@@ -1202,7 +1203,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     loader_objects: list[Path] = []
     for source in loader_sources:
         flags = asflags_loader if source.suffix == ".S" else cflags_loader
-        implicit = (loader_integrity, boot_logo) if source == ROOT / "boot/loader/main.c" else (loader_integrity,)
+        if source == ROOT / "boot/loader/main.c":
+            implicit = (autoconf, loader_integrity, boot_logo)
+        else:
+            implicit = (loader_integrity,)
         loader_objects.append(add_compile(graph, paths, f"compile:loader:{relative(source)}", source, "loader", flags, implicit, kind="assemble" if source.suffix == ".S" else "compile"))
     loader_elf = paths.out / "boot/loader.elf"
     graph.add(
