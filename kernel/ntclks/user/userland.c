@@ -29,6 +29,7 @@ struct exec_launch {
 
 static uint32_t init_pid;
 static uint32_t desktop_pid;
+static uint32_t tty_pid;
 static bool autospawn_hello;
 static bool autospawn_uidemo;
 static bool autospawn_terminal;
@@ -79,18 +80,6 @@ static int name_contains(const char *name, const char *needle)
 /**
  * @brief Return 1 if the two NUL-terminated strings are exactly equal, else 0.
  */
-static int path_eq(const char *a, const char *b)
-{
-    if (!a || !b) {
-        return 0;
-    }
-    while (*a && *b && *a == *b) {
-        ++a;
-        ++b;
-    }
-    return *a == 0 && *b == 0;
-}
-
 /**
  * @brief Lowercase an ASCII letter, otherwise return the character unchanged.
  */
@@ -187,16 +176,6 @@ static int path_is_system_service_daemon(const char *path)
 /**
  * @brief Append one directory entry (type + name) to entries if it fits; always increments *count.
  */
-static void dir_add(struct leonos_dir_entry *entries, uint32_t capacity, uint32_t *count,
-                    uint32_t type, const char *name)
-{
-    if (*count < capacity && entries) {
-        entries[*count].type = type;
-        copy_text(entries[*count].name, sizeof(entries[*count].name), name);
-    }
-    ++(*count);
-}
-
 /**
  * @brief Free the page-backed buffer allocated for a loaded executable image.
  */
@@ -347,7 +326,13 @@ static int prepare_user_exec_stack(struct task *task)
     }
 
     for (uint32_t i = 0; i < task->exec_argc; ++i) {
-        uint64_t offset = (uint64_t)(uintptr_t)task->exec_argv[i] - (uint64_t)(uintptr_t)task->exec_data;
+        uintptr_t ptr = (uintptr_t)task->exec_argv[i];
+        uintptr_t data_begin = (uintptr_t)task->exec_data;
+        uintptr_t data_end = data_begin + task->exec_data_len;
+        if (!task->exec_argv[i] || ptr < data_begin || ptr >= data_end) {
+            return -22;
+        }
+        uint64_t offset = (uint64_t)(ptr - data_begin);
         if (write_user_u64(&task->as, argv_base + (uint64_t)i * sizeof(uint64_t),
                            strings_base + offset) < 0) {
             return -12;
@@ -357,7 +342,13 @@ static int prepare_user_exec_stack(struct task *task)
         return -12;
     }
     for (uint32_t i = 0; i < task->exec_envc; ++i) {
-        uint64_t offset = (uint64_t)(uintptr_t)task->exec_envp[i] - (uint64_t)(uintptr_t)task->exec_data;
+        uintptr_t ptr = (uintptr_t)task->exec_envp[i];
+        uintptr_t data_begin = (uintptr_t)task->exec_data;
+        uintptr_t data_end = data_begin + task->exec_data_len;
+        if (!task->exec_envp[i] || ptr < data_begin || ptr >= data_end) {
+            return -22;
+        }
+        uint64_t offset = (uint64_t)(ptr - data_begin);
         if (write_user_u64(&task->as, envp_base + (uint64_t)i * sizeof(uint64_t),
                            strings_base + offset) < 0) {
             return -12;
@@ -634,11 +625,15 @@ static void userland_enter_task(struct task *task)
 }
 
 /**
- * @brief Parse autospawn cmdline flags, then spawn init.elf and desktop.elf (or the installer desktop) to seed userland.
+ * @brief Parse autospawn cmdline flags, then seed the installer desktop or the
+ * normal init plus the configured desktop/TTY interface.
  */
 void userland_init(const struct boot_info *boot)
 {
     int64_t pid;
+    int tty_mode;
+    int installer_mode;
+    int installer_advanced;
 
     console_printf("[ntclks] userland storage load started modules=%u\n",
                    boot ? boot->module_count : 0);
@@ -668,7 +663,69 @@ void userland_init(const struct boot_info *boot)
         kernel_idle_loop();
     }
 
-    if (boot && name_contains(boot->cmdline, "mode=installer")) {
+    installer_mode = boot && name_contains(boot->cmdline, "mode=installer");
+    installer_advanced = boot && name_contains(boot->cmdline, "installer_advanced=1");
+
+#ifdef CONFIG_STARTUP_TTY
+    tty_mode = 1;
+#else
+    tty_mode = 0;
+#endif
+    if (boot && name_contains(boot->cmdline, "startup=tty")) {
+        tty_mode = 1;
+    } else if (boot && name_contains(boot->cmdline, "startup=desktop")) {
+        tty_mode = 0;
+    }
+
+    if (installer_mode && tty_mode) {
+        static const char *advanced_argv[] = {
+            "busybox", "sh", 0
+        };
+        static const char *advanced_envp[] = {
+            "PATH=/programs/busybox:/bin:/sbin:/usr/bin:/usr/sbin",
+            "HOME=/root", "TERM=xterm-256color", "COLORTERM=truecolor", 0
+        };
+        struct exec_launch advanced_launch = {0};
+        int32_t pty_id;
+        if (installer_advanced &&
+            build_exec_launch(&advanced_launch, "/programs/busybox/busybox.elf",
+                              advanced_argv, advanced_envp) < 0) {
+            console_printf("[ntclks] failed to prepare advanced installer shell arguments\n");
+            kernel_idle_loop();
+        }
+        pid = installer_advanced
+                  ? spawn_path_internal("/programs/busybox/busybox.elf",
+                                        "busybox.elf installer advanced", &advanced_launch,
+                                        0, 0, 0, -1, -1, -1)
+                  : spawn_path_internal("/system/apps/installer/installer.elf",
+                                        "installer.elf tty", 0, 0, 0, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load installer TTY environment ret=%lld\n",
+                           (long long)pid);
+            kernel_idle_loop();
+        }
+        tty_pid = (uint32_t)pid;
+        pty_id = pty_create(tty_pid);
+        if (pty_id <= 0 || pty_bind_console((uint32_t)pty_id, tty_pid) < 0) {
+            console_printf("[ntclks] failed to bind installer console PTY ret=%d\n",
+                           (int)pty_id);
+            sched_exit(tty_pid, 127);
+            tty_pid = 0;
+            kernel_idle_loop();
+        }
+        {
+            struct task *tty_task = sched_find(tty_pid);
+            if (tty_task) {
+                tty_task->pty_id = (uint32_t)pty_id;
+            }
+        }
+        console_printf("[ntclks] installer %s TTY selected; pid=%u pty=%d\n",
+                       installer_advanced ? "advanced shell" : "application",
+                       tty_pid, (int)pty_id);
+        return;
+    }
+
+    if (installer_mode) {
         pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
                                   0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
         if (pid <= 0) {
@@ -687,6 +744,47 @@ void userland_init(const struct boot_info *boot)
     }
     init_pid = (uint32_t)pid;
 
+    if (tty_mode) {
+        static const char *tty_argv[] = {
+            "busybox", "sh", "-c",
+            "/system/apps/oobe/oobe.elf; /system/apps/login/login.elf; exec /programs/busybox/busybox.elf sh", 0
+        };
+        static const char *tty_envp[] = {
+            "TERM=xterm-256color", "COLORTERM=truecolor", 0
+        };
+        struct exec_launch launch = {0};
+        int32_t pty_id;
+        if (build_exec_launch(&launch, "/programs/busybox/busybox.elf",
+                              tty_argv, tty_envp) < 0) {
+            console_printf("[ntclks] failed to prepare TTY shell arguments\n");
+            kernel_idle_loop();
+        }
+        pid = spawn_path_internal("/programs/busybox/busybox.elf", "busybox.elf tty",
+                                  &launch, init_pid, 0, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load busybox.elf for TTY ret=%lld\n",
+                           (long long)pid);
+            kernel_idle_loop();
+        }
+        tty_pid = (uint32_t)pid;
+        pty_id = pty_create(tty_pid);
+        if (pty_id <= 0 || pty_bind_console((uint32_t)pty_id, tty_pid) < 0) {
+            console_printf("[ntclks] failed to bind console PTY ret=%d\n", (int)pty_id);
+            sched_exit(tty_pid, 127);
+            tty_pid = 0;
+            kernel_idle_loop();
+        }
+        {
+            struct task *tty_task = sched_find(tty_pid);
+            if (tty_task) {
+                tty_task->pty_id = (uint32_t)pty_id;
+            }
+        }
+        console_printf("[ntclks] TTY startup selected; busybox shell pid=%u pty=%d\n",
+                       tty_pid, (int)pty_id);
+        return;
+    }
+
     pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
                               0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
     if (pid <= 0) {
@@ -703,7 +801,7 @@ void userland_init(const struct boot_info *boot)
 void userland_enter_first(void)
 {
     struct task *first;
-    if (!init_pid && !desktop_pid) {
+    if (!init_pid && !desktop_pid && !tty_pid) {
         console_printf("[ntclks] no Ring-3 userland loaded\n");
         kernel_idle_loop();
     }
@@ -968,7 +1066,7 @@ void userland_yield_if_runnable(void)
 }
 
 /**
- * @brief List directory entries into entries (special-casing /dev with fb0) and set *out_count; returns count or a negative errno.
+ * @brief List directory entries into entries (special-casing /dev) and set *out_count; returns count or a negative errno.
  */
 int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
                       uint32_t capacity, uint32_t *out_count)
@@ -981,12 +1079,6 @@ int userland_list_dir(const char *path, struct leonos_dir_entry *entries,
     }
     if (capacity > LEONOS_FS_MAX_ENTRIES) {
         capacity = LEONOS_FS_MAX_ENTRIES;
-    }
-
-    if (path_eq(path, "/dev")) {
-        dir_add(entries, capacity, &count, LEONOS_FS_TYPE_DEVICE, "fb0");
-        *out_count = count;
-        return (int)count;
     }
 
     ret = storage_list_dir(path, entries, capacity, &count);

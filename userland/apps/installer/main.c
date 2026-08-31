@@ -1,10 +1,13 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
+#include <leonos/pty.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 #include <leonos/ui.h>
+#include "installer_sha256.h"
+#include "installer_tty.h"
 #include <stdlib.h>
 
 #define INSTALLER_MAX_W 1920
@@ -21,7 +24,6 @@
 #define KEY_UP 72U
 #define KEY_DOWN 80U
 #define COPY_BUF_SIZE (256U * 1024U)
-#define SHA256_HASH_LEN 32U
 #define UPDATE_APP_ROW_H 24U
 #define UPDATE_APP_MAX LEONOS_FS_MAX_ENTRIES
 #define POLICY_SCROLLBAR_W 18U
@@ -40,7 +42,6 @@
 
 enum installer_page {
     PAGE_LANGUAGE = 0,
-    PAGE_POLICY,
     PAGE_THANKS,
     PAGE_THEME,
     PAGE_WELCOME,
@@ -94,7 +95,7 @@ struct installer_markdown_line {
     uint8_t kind;
 };
 
-struct installer_policy_view {
+struct installer_text_view {
     uint32_t x;
     uint32_t y;
     uint32_t w;
@@ -127,8 +128,6 @@ static uint8_t install_mode = INSTALL_MODE_FRESH;
 static uint8_t installer_lang = LEONOS_LANG_EN;
 static uint8_t installer_theme = LEONOS_UI_THEME_METRO;
 static uint8_t installer_theme_explicit;
-static uint8_t policy_accepted;
-static uint32_t policy_scroll_y;
 static uint32_t acknowledgements_scroll_y;
 static struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
 static uint32_t disk_count;
@@ -140,6 +139,7 @@ static uint32_t update_app_count;
 static struct leonos_ui_listview_state update_app_list;
 static char status_text[128] = "Ready";
 static char detail_text[128] = "";
+static char progress_text[256] = "Ready";
 static uint32_t progress_value;
 static uint32_t copy_total;
 static uint32_t copy_done;
@@ -148,57 +148,12 @@ static uint64_t copy_done_bytes;
 static uint8_t install_success;
 static uint8_t install_running;
 static uint8_t dirty = 1;
+static uint8_t installer_tty_mode;
+static uint32_t tty_last_progress = 0xffffffffu;
+static char tty_last_status[128];
 static uint8_t copy_buf[COPY_BUF_SIZE];
 static struct installer_markdown_line policy_lines[POLICY_MAX_LINES];
 static uint32_t policy_line_count;
-
-static const char privacy_policy_en[] =
-    "# LeonOS 4 Privacy and Acceptable Use Policy\n"
-    "\n"
-    "**Effective date:** 10 July 2026\n"
-    "\n"
-    "## Privacy\n"
-    "- LeonOS is designed to run locally. Setup does not require an account and does not send personal data, hardware identifiers, or disk contents to LeonOS services.\n"
-    "- Setup reads the installation media and the disk you select. A fresh installation erases the selected disk; an update replaces the system items described later in Setup.\n"
-    "- Diagnostics, crash reports, and application logs remain on this device unless you choose to copy, upload, or otherwise share them.\n"
-    "- Network applications communicate with the destinations you choose. Their handling of data is governed by their own policies, and you decide what information to provide.\n"
-    "\n"
-    "## Acceptable use\n"
-    "- Use LeonOS only for lawful purposes and on devices, accounts, networks, and data that you own or are authorized to use.\n"
-    "- Do not use LeonOS to harm people or systems, bypass access controls, distribute malware, disrupt services, or violate privacy, intellectual-property, or other rights.\n"
-    "- Security testing is allowed only with clear authorization from the owner of the systems being tested.\n"
-    "- Respect the licenses and terms that apply to LeonOS, bundled software, and any third-party content you add or access.\n"
-    "\n"
-    "## Updates and responsibility\n"
-    "- Back up important files before installing or updating. You are responsible for reviewing the selected disk and protecting your data.\n"
-    "- LeonOS is provided as-is, without a promise that it will be uninterrupted, error-free, or suitable for every purpose.\n"
-    "- Policy updates may be included with future releases. The version shown by a newer installer replaces this version for that release.\n"
-    "\n"
-    "> Selecting Agree confirms that you have read and accept this Privacy and Acceptable Use Policy.\n";
-
-static const char privacy_policy_zh[] =
-    "# LeonOS 4 隐私与使用政策\n"
-    "\n"
-    "**生效日期：**2026 年 7 月 10 日\n"
-    "\n"
-    "## 隐私\n"
-    "- LeonOS 以本地运行为设计目标。安装程序不需要账户，也不会向 LeonOS 服务发送个人数据、硬件标识或磁盘内容。\n"
-    "- 安装程序会读取安装介质和你选择的硬盘。全新安装会清空所选硬盘；更新会替换后续安装步骤中说明的系统项目。\n"
-    "- 诊断信息、崩溃报告和应用日志默认保留在本设备上，除非你主动复制、上传或以其他方式共享它们。\n"
-    "- 网络应用会与您选择的目标通信。目标对数据的处理受其自身政策约束，你可以决定是否连接以及提供哪些信息。\n"
-    "\n"
-    "## 使用规范\n"
-    "- 只能将 LeonOS 用于合法目的，并且只能操作你拥有或已获授权使用的设备、账户、网络和数据。\n"
-    "- 不得使用 LeonOS 伤害他人或系统、绕过访问控制、传播恶意软件、干扰服务，或侵犯隐私、知识产权及其他权利。\n"
-    "- 安全测试仅限于已获得系统所有者明确授权的范围。\n"
-    "- 请遵守适用于 LeonOS、随附软件以及你添加或访问的第三方内容的许可与使用条款。\n"
-    "\n"
-    "## 更新与责任\n"
-    "- 安装或更新前请备份重要文件。你有责任核对所选硬盘并保护自己的数据。\n"
-    "- LeonOS 按现状提供，不保证服务不中断、没有错误，或适合所有用途。\n"
-    "- 后续版本可能附带更新后的政策。新安装程序显示的版本适用于对应发行版，并替代本版本。\n"
-    "\n"
-    "> 选择同意即表示你已阅读并接受本隐私与使用政策。\n";
 
 static const char acknowledgements_en[] =
     "# Acknowledgements\n"
@@ -652,12 +607,6 @@ static void markdown_reflow(const char *source, uint32_t width)
     }
 }
 
-static void policy_reflow(uint32_t width)
-{
-    markdown_reflow(installer_lang == LEONOS_LANG_ZH ? privacy_policy_zh : privacy_policy_en,
-                    width);
-}
-
 static void acknowledgements_reflow(uint32_t width)
 {
     markdown_reflow(installer_lang == LEONOS_LANG_ZH
@@ -706,6 +655,17 @@ static void set_status(const char *status, const char *detail)
 {
     copy_text(status_text, sizeof(status_text), status);
     copy_text(detail_text, sizeof(detail_text), detail);
+}
+
+static void set_progress_text(const char *status, const char *detail)
+{
+    uint32_t pos = 0;
+    progress_text[0] = 0;
+    (void)append_text(progress_text, &pos, sizeof(progress_text), status ? status : "");
+    if (detail && detail[0]) {
+        (void)append_text(progress_text, &pos, sizeof(progress_text), " - ");
+        (void)append_text(progress_text, &pos, sizeof(progress_text), detail);
+    }
 }
 
 static void set_error_status(const char *prefix, int ret)
@@ -785,29 +745,10 @@ static struct installer_layout get_layout(void)
     return l;
 }
 
-static struct installer_policy_view get_policy_view(void)
+static struct installer_text_view get_acknowledgements_view(void)
 {
     struct installer_layout l = get_layout();
-    struct installer_policy_view view;
-    view.x = l.content_x;
-    view.y = l.content_y + 56;
-    view.w = l.table_w;
-    view.checkbox_y = l.footer_y > 48 ? l.footer_y - 48 : view.y + 80;
-    if (view.checkbox_y < view.y + 80) {
-        view.checkbox_y = view.y + 80;
-    }
-    view.h = view.checkbox_y > view.y + 12 ? view.checkbox_y - view.y - 12 : 64;
-    view.text_x = view.x + 10;
-    view.text_w = view.w > POLICY_SCROLLBAR_W + 30
-                      ? view.w - POLICY_SCROLLBAR_W - 30
-                      : 80;
-    return view;
-}
-
-static struct installer_policy_view get_acknowledgements_view(void)
-{
-    struct installer_layout l = get_layout();
-    struct installer_policy_view view;
+    struct installer_text_view view;
     view.x = l.content_x;
     view.y = l.content_y + 56;
     view.w = l.table_w;
@@ -959,8 +900,6 @@ static void draw_sidebar(struct leonos_ui_surface *ui)
         const char *label = "";
         if (i == PAGE_LANGUAGE) {
             label = T("Language", "语言");
-        } else if (i == PAGE_POLICY) {
-            label = T("Policy", "政策");
         } else if (i == PAGE_THANKS) {
             label = T("Thanks", "感谢");
         } else if (i == PAGE_THEME) {
@@ -1002,9 +941,6 @@ static uint32_t primary_disabled(void)
     }
     if (page == PAGE_DISK) {
         return selected_disk < 0 || (uint32_t)selected_disk >= disk_count;
-    }
-    if (page == PAGE_POLICY) {
-        return !policy_accepted;
     }
     if (page == PAGE_CONFIRM) {
         return !confirmation_ok();
@@ -1058,69 +994,9 @@ static void draw_language_page(struct leonos_ui_surface *ui)
                    LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
-static void draw_policy_page(struct leonos_ui_surface *ui)
-{
-    struct installer_policy_view view = get_policy_view();
-    uint32_t total_h;
-    uint32_t max_scroll;
-    uint32_t offset = 0;
-    draw_title(ui, T("Privacy and Acceptable Use", "隐私与使用政策"),
-               T("Review the policy and agree before continuing.",
-                 "请阅读政策并同意后继续。"));
-    policy_reflow(view.text_w);
-    total_h = policy_total_height();
-    max_scroll = total_h > view.h ? total_h - view.h : 0;
-    if (policy_scroll_y > max_scroll) {
-        policy_scroll_y = max_scroll;
-    }
-    leonos_ui_scroll_view_frame(ui, view.x, view.y, view.w, view.h);
-    for (uint32_t i = 0; i < policy_line_count; ++i) {
-        uint32_t line_h = policy_line_height(policy_lines[i].kind);
-        int32_t line_y = (int32_t)view.y + (int32_t)offset - (int32_t)policy_scroll_y;
-        if (line_y >= (int32_t)view.y &&
-            line_y + (int32_t)line_h <= (int32_t)(view.y + view.h)) {
-            if (policy_lines[i].kind == POLICY_LINE_H1) {
-                leonos_ui_text_resized_clipped(ui, view.text_x, (uint32_t)line_y,
-                                                view.text_w, policy_lines[i].text,
-                                                LEONOS_UI_ACTIVE_TITLE, LEONOS_UI_WHITE, 9, 18);
-            } else if (policy_lines[i].kind == POLICY_LINE_H2) {
-                leonos_ui_text_resized_clipped(ui, view.text_x, (uint32_t)line_y,
-                                                view.text_w, policy_lines[i].text,
-                                                LEONOS_UI_ACTIVE_TITLE, LEONOS_UI_WHITE, 9, 17);
-            } else if (policy_lines[i].kind == POLICY_LINE_RULE) {
-                leonos_ui_rect(ui, view.text_x, (uint32_t)line_y + 5,
-                               view.text_w, 1, LEONOS_UI_DARK);
-            } else if (policy_lines[i].kind == POLICY_LINE_QUOTE) {
-                leonos_ui_rect(ui, view.text_x, (uint32_t)line_y + 1, 3,
-                               line_h > 2 ? line_h - 2 : line_h, LEONOS_UI_ACTIVE_TITLE);
-                leonos_ui_text_clipped(ui, view.text_x + 9, (uint32_t)line_y,
-                                       view.text_w > 9 ? view.text_w - 9 : view.text_w,
-                                       policy_lines[i].text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
-            } else {
-                leonos_ui_text_clipped(ui, view.text_x, (uint32_t)line_y,
-                                       view.text_w, policy_lines[i].text,
-                                       policy_lines[i].kind == POLICY_LINE_BULLET
-                                           ? LEONOS_UI_BLACK : LEONOS_UI_DARK,
-                                       LEONOS_UI_WHITE);
-            }
-        }
-        offset += line_h;
-    }
-    leonos_ui_vscrollbar(ui, view.x + view.w - POLICY_SCROLLBAR_W, view.y,
-                         POLICY_SCROLLBAR_W, view.h, policy_scroll_y,
-                         total_h > view.h ? total_h : view.h, view.h,
-                         total_h <= view.h ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
-    leonos_ui_checkbox(ui, view.x, view.checkbox_y, "", policy_accepted, 0);
-    leonos_ui_text_clipped(ui, view.x + 28, view.checkbox_y + 4,
-                           view.w > 28 ? view.w - 28 : view.w,
-                           T("I agree to the Privacy and Acceptable Use Policy.",
-                             "我同意本隐私与使用政策。"),
-                           LEONOS_UI_BLACK, LEONOS_UI_WHITE);
-}
-
 static void draw_acknowledgements_page(struct leonos_ui_surface *ui)
 {
-    struct installer_policy_view view = get_acknowledgements_view();
+    struct installer_text_view view = get_acknowledgements_view();
     uint32_t total_h;
     uint32_t max_scroll;
     uint32_t offset = 0;
@@ -1380,9 +1256,9 @@ static void draw_progress_page(struct leonos_ui_surface *ui)
 {
     struct installer_layout l = get_layout();
     draw_title(ui, mode_progress_title(), T("Do not turn off this machine.", "请勿关闭此计算机。"));
-    leonos_ui_text(ui, l.content_x, l.content_y + 94, status_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+    leonos_ui_text_clipped(ui, l.content_x, l.content_y + 94, l.content_w,
+                           progress_text, LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_progress(ui, l.content_x, l.content_y + 130, l.content_w, 24, progress_value, 100);
-    leonos_ui_text_clipped(ui, l.content_x, l.content_y + 174, l.content_w, detail_text, LEONOS_UI_DARK, LEONOS_UI_WHITE);
 }
 
 static void draw_finish_page(struct leonos_ui_surface *ui)
@@ -1412,9 +1288,6 @@ static void draw_installer(struct leonos_ui_surface *ui)
     switch (page) {
     case PAGE_LANGUAGE:
         draw_language_page(ui);
-        break;
-    case PAGE_POLICY:
-        draw_policy_page(ui);
         break;
     case PAGE_THANKS:
         draw_acknowledgements_page(ui);
@@ -1450,6 +1323,9 @@ static void draw_installer(struct leonos_ui_surface *ui)
 
 static void present_installer(int window_id, struct leonos_ui_surface *ui)
 {
+    if (installer_tty_mode || !ui || window_id <= 0) {
+        return;
+    }
     draw_installer(ui);
     leonos_gui_present_window((uint32_t)window_id, surface_w, surface_h,
                               INSTALLER_MAX_W, pixels);
@@ -1465,6 +1341,17 @@ static void show_progress(int window_id, struct leonos_ui_surface *ui,
     }
     progress_value = value;
     set_status(status, detail);
+    set_progress_text(status, detail);
+    if (installer_tty_mode) {
+        /* File copying calls this for every file. Keep the CLI readable by
+         * emitting only stage changes and new percentage values. */
+        if (value != tty_last_progress || !text_eq(progress_text, tty_last_status)) {
+            printf("[%3u%%] %s\n", value, progress_text);
+            tty_last_progress = value;
+            copy_text(tty_last_status, sizeof(tty_last_status), progress_text);
+        }
+        return;
+    }
     present_installer(window_id, ui);
 }
 
@@ -1567,237 +1454,6 @@ static int add_file_copy_work(const char *path)
     return 0;
 }
 
-struct installer_sha256_ctx {
-    uint8_t data[64];
-    uint32_t datalen;
-    uint64_t bitlen;
-    uint32_t state[8];
-};
-
-static const uint32_t installer_sha256_k[64] = {
-    0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u,
-    0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
-    0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u,
-    0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
-    0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu,
-    0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
-    0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u,
-    0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u,
-    0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u,
-    0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u,
-    0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u,
-    0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
-    0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u,
-    0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
-    0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u,
-    0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u,
-};
-
-static uint32_t installer_rotr32(uint32_t value, uint32_t bits)
-{
-    return (value >> bits) | (value << (32u - bits));
-}
-
-static void installer_sha256_transform(struct installer_sha256_ctx *ctx,
-                                       const uint8_t data[64])
-{
-    uint32_t m[64];
-    uint32_t a, b, c, d, e, f, g, h;
-    for (uint32_t i = 0, j = 0; i < 16; ++i, j += 4) {
-        m[i] = ((uint32_t)data[j] << 24) |
-               ((uint32_t)data[j + 1] << 16) |
-               ((uint32_t)data[j + 2] << 8) |
-               (uint32_t)data[j + 3];
-    }
-    for (uint32_t i = 16; i < 64; ++i) {
-        uint32_t s0 = installer_rotr32(m[i - 15], 7) ^
-                      installer_rotr32(m[i - 15], 18) ^
-                      (m[i - 15] >> 3);
-        uint32_t s1 = installer_rotr32(m[i - 2], 17) ^
-                      installer_rotr32(m[i - 2], 19) ^
-                      (m[i - 2] >> 10);
-        m[i] = m[i - 16] + s0 + m[i - 7] + s1;
-    }
-    a = ctx->state[0];
-    b = ctx->state[1];
-    c = ctx->state[2];
-    d = ctx->state[3];
-    e = ctx->state[4];
-    f = ctx->state[5];
-    g = ctx->state[6];
-    h = ctx->state[7];
-    for (uint32_t i = 0; i < 64; ++i) {
-        uint32_t s1 = installer_rotr32(e, 6) ^ installer_rotr32(e, 11) ^
-                      installer_rotr32(e, 25);
-        uint32_t ch = (e & f) ^ ((~e) & g);
-        uint32_t temp1 = h + s1 + ch + installer_sha256_k[i] + m[i];
-        uint32_t s0 = installer_rotr32(a, 2) ^ installer_rotr32(a, 13) ^
-                      installer_rotr32(a, 22);
-        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
-        uint32_t temp2 = s0 + maj;
-        h = g;
-        g = f;
-        f = e;
-        e = d + temp1;
-        d = c;
-        c = b;
-        b = a;
-        a = temp1 + temp2;
-    }
-    ctx->state[0] += a;
-    ctx->state[1] += b;
-    ctx->state[2] += c;
-    ctx->state[3] += d;
-    ctx->state[4] += e;
-    ctx->state[5] += f;
-    ctx->state[6] += g;
-    ctx->state[7] += h;
-}
-
-static void installer_sha256_init(struct installer_sha256_ctx *ctx)
-{
-    ctx->datalen = 0;
-    ctx->bitlen = 0;
-    ctx->state[0] = 0x6a09e667u;
-    ctx->state[1] = 0xbb67ae85u;
-    ctx->state[2] = 0x3c6ef372u;
-    ctx->state[3] = 0xa54ff53au;
-    ctx->state[4] = 0x510e527fu;
-    ctx->state[5] = 0x9b05688cu;
-    ctx->state[6] = 0x1f83d9abu;
-    ctx->state[7] = 0x5be0cd19u;
-}
-
-static void installer_sha256_update(struct installer_sha256_ctx *ctx,
-                                    const void *input, uint32_t len)
-{
-    const uint8_t *data = (const uint8_t *)input;
-    for (uint32_t i = 0; i < len; ++i) {
-        ctx->data[ctx->datalen++] = data[i];
-        if (ctx->datalen == 64) {
-            installer_sha256_transform(ctx, ctx->data);
-            ctx->bitlen += 512;
-            ctx->datalen = 0;
-        }
-    }
-}
-
-static void installer_sha256_zero(uint8_t *data, uint32_t len)
-{
-    for (uint32_t i = 0; i < len; ++i) {
-        data[i] = 0;
-    }
-}
-
-static void installer_sha256_final(struct installer_sha256_ctx *ctx,
-                                   uint8_t hash[SHA256_HASH_LEN])
-{
-    uint32_t i = ctx->datalen;
-    if (ctx->datalen < 56) {
-        ctx->data[i++] = 0x80u;
-        while (i < 56) {
-            ctx->data[i++] = 0;
-        }
-    } else {
-        ctx->data[i++] = 0x80u;
-        while (i < 64) {
-            ctx->data[i++] = 0;
-        }
-        installer_sha256_transform(ctx, ctx->data);
-        installer_sha256_zero(ctx->data, 56);
-    }
-    ctx->bitlen += (uint64_t)ctx->datalen * 8u;
-    ctx->data[63] = (uint8_t)(ctx->bitlen);
-    ctx->data[62] = (uint8_t)(ctx->bitlen >> 8);
-    ctx->data[61] = (uint8_t)(ctx->bitlen >> 16);
-    ctx->data[60] = (uint8_t)(ctx->bitlen >> 24);
-    ctx->data[59] = (uint8_t)(ctx->bitlen >> 32);
-    ctx->data[58] = (uint8_t)(ctx->bitlen >> 40);
-    ctx->data[57] = (uint8_t)(ctx->bitlen >> 48);
-    ctx->data[56] = (uint8_t)(ctx->bitlen >> 56);
-    installer_sha256_transform(ctx, ctx->data);
-    for (i = 0; i < 4; ++i) {
-        hash[i] = (uint8_t)(ctx->state[0] >> (24u - i * 8u));
-        hash[i + 4u] = (uint8_t)(ctx->state[1] >> (24u - i * 8u));
-        hash[i + 8u] = (uint8_t)(ctx->state[2] >> (24u - i * 8u));
-        hash[i + 12u] = (uint8_t)(ctx->state[3] >> (24u - i * 8u));
-        hash[i + 16u] = (uint8_t)(ctx->state[4] >> (24u - i * 8u));
-        hash[i + 20u] = (uint8_t)(ctx->state[5] >> (24u - i * 8u));
-        hash[i + 24u] = (uint8_t)(ctx->state[6] >> (24u - i * 8u));
-        hash[i + 28u] = (uint8_t)(ctx->state[7] >> (24u - i * 8u));
-    }
-}
-
-static int hash_file(const char *path, uint8_t hash[SHA256_HASH_LEN])
-{
-    struct installer_sha256_ctx ctx;
-    int fd = open(path, LEONOS_O_RDONLY, 0);
-    long got;
-    if (fd < 0) {
-        return fd;
-    }
-    installer_sha256_init(&ctx);
-    while ((got = read(fd, copy_buf, sizeof(copy_buf))) > 0) {
-        installer_sha256_update(&ctx, copy_buf, (uint32_t)got);
-    }
-    close(fd);
-    if (got < 0) {
-        return (int)got;
-    }
-    installer_sha256_final(&ctx, hash);
-    return 0;
-}
-
-static int buffers_equal(const uint8_t *a, const uint8_t *b, uint32_t len)
-{
-    for (uint32_t i = 0; i < len; ++i) {
-        if (a[i] != b[i]) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int files_equal(const char *src, const char *dst, uint8_t *out_missing,
-                       uint8_t *out_diff)
-{
-    uint8_t src_hash[SHA256_HASH_LEN];
-    uint8_t dst_hash[SHA256_HASH_LEN];
-    struct leonos_stat src_st;
-    struct leonos_stat dst_st;
-    int ret;
-    if (out_missing) {
-        *out_missing = 0;
-    }
-    if (out_diff) {
-        *out_diff = 1;
-    }
-    if (stat(src, &src_st) < 0 || src_st.type != LEONOS_FS_TYPE_FILE) {
-        return -2;
-    }
-    if (stat(dst, &dst_st) < 0 || dst_st.type != LEONOS_FS_TYPE_FILE) {
-        if (out_missing) {
-            *out_missing = 1;
-        }
-        return 0;
-    }
-    ret = hash_file(src, src_hash);
-    if (ret < 0) {
-        return ret;
-    }
-    ret = hash_file(dst, dst_hash);
-    if (ret < 0) {
-        return ret;
-    }
-    if (!buffers_equal(src_hash, dst_hash, SHA256_HASH_LEN)) {
-        return 0;
-    }
-    if (out_diff) {
-        *out_diff = 0;
-    }
-    return 0;
-}
-
 static int remove_path_recursive(const char *path)
 {
     struct leonos_stat st;
@@ -1894,7 +1550,9 @@ static int copy_file_path(const char *src, const char *dst,
         printf("[installer.elf] open target %s ret=%d\n", dst, out_fd);
         return out_fd;
     }
-    printf("[installer.elf] copying %s -> %s\n", src, dst);
+    if (!installer_tty_mode) {
+        printf("[installer.elf] copying %s -> %s\n", src, dst);
+    }
     show_copy_progress(window_id, ui, dst);
     while ((got = read(in_fd, copy_buf, sizeof(copy_buf))) > 0) {
         long written = 0;
@@ -2070,7 +1728,7 @@ static int package_has_changes(const char *src, const char *dst)
         } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
             uint8_t missing;
             uint8_t different;
-            ret = files_equal(src_child, dst_child, &missing, &different);
+            ret = installer_files_equal(src_child, dst_child, &missing, &different);
             if (ret < 0) {
                 goto out;
             }
@@ -2115,7 +1773,7 @@ static int count_changed_files_recursive(const char *src, const char *dst)
         } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
             uint8_t missing;
             uint8_t different;
-            ret = files_equal(src_child, dst_child, &missing, &different);
+            ret = installer_files_equal(src_child, dst_child, &missing, &different);
             if (ret >= 0 && (missing || different)) {
                 ret = add_file_copy_work(src_child);
             }
@@ -2188,7 +1846,7 @@ static int copy_changed_dir_recursive(const char *src, const char *dst,
                 ret = dst_ret;
                 goto out;
             }
-            ret = files_equal(src_child, dst_child, &missing, &different);
+            ret = installer_files_equal(src_child, dst_child, &missing, &different);
             if (ret >= 0 && (missing || different)) {
                 ret = copy_file_path(src_child, dst_child, window_id, ui);
                 if (ret >= 0) {
@@ -2443,12 +2101,12 @@ static int scan_update_apps(void)
         }
         copy_replace_extension(src_icon, sizeof(src_icon), src_elf, ".bmp");
         copy_replace_extension(dst_icon, sizeof(dst_icon), dst_elf, ".bmp");
-        ret = files_equal(src_elf, dst_elf, &missing, &elf_diff);
+        ret = installer_files_equal(src_elf, dst_elf, &missing, &elf_diff);
         if (ret < 0) {
             return ret;
         }
         if (source_file_exists(src_icon)) {
-            ret = files_equal(src_icon, dst_icon, &icon_missing, &icon_diff);
+            ret = installer_files_equal(src_icon, dst_icon, &icon_missing, &icon_diff);
             if (ret < 0) {
                 return ret;
             }
@@ -2694,7 +2352,49 @@ static void finish_install(int window_id, struct leonos_ui_surface *ui, int ret,
                        : T("Installation completed successfully", "安装成功完成"),
                    T("Press Restart to boot from the installed disk.", "点击重启从已安装硬盘启动。"));
     }
-    present_installer(window_id, ui);
+    if (installer_tty_mode) {
+        if (ret < 0) {
+            printf("\n%s (error %d)\n", prefix ? prefix : "Install failed", ret);
+        } else {
+            puts("\nInstallation completed successfully.");
+            puts("Remove the installation media before rebooting.");
+        }
+    } else {
+        present_installer(window_id, ui);
+    }
+}
+
+static void perform_install(int window_id, struct leonos_ui_surface *ui);
+static void perform_update(int window_id, struct leonos_ui_surface *ui);
+static void prepare_update_target(int window_id, struct leonos_ui_surface *ui);
+
+static void tty_print_update_packages(void)
+{
+    char line[160];
+    if (!update_app_count) {
+        puts("No program package differences were found.");
+        return;
+    }
+    puts("Program packages selected for update:");
+    for (uint32_t i = 0; i < update_app_count; ++i) {
+        format_update_reason(line, sizeof(line), &update_apps[i]);
+        printf("  [%u] %s %s\n", i, update_apps[i].name, line);
+    }
+}
+
+static void tty_prepare_update(void)
+{
+    prepare_update_target(0, 0);
+}
+
+static void tty_perform_install(void)
+{
+    perform_install(0, 0);
+}
+
+static void tty_perform_update(void)
+{
+    perform_update(0, 0);
 }
 
 static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
@@ -2992,10 +2692,8 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
 
 static void go_back(void)
 {
-    if (page == PAGE_POLICY) {
+    if (page == PAGE_THANKS) {
         page = PAGE_LANGUAGE;
-    } else if (page == PAGE_THANKS) {
-        page = PAGE_POLICY;
     } else if (page == PAGE_THEME) {
         page = PAGE_THANKS;
     } else if (page == PAGE_WELCOME) {
@@ -3020,11 +2718,6 @@ static int go_primary(int window_id, struct leonos_ui_surface *ui)
         return 0;
     }
     if (page == PAGE_LANGUAGE) {
-        page = PAGE_POLICY;
-        dirty = 1;
-        return 0;
-    }
-    if (page == PAGE_POLICY) {
         page = PAGE_THANKS;
         dirty = 1;
         return 0;
@@ -3146,57 +2839,14 @@ static void handle_language_click(int32_t x, int32_t y)
     if (language != installer_lang) {
         installer_lang = language;
         installer_apply_language_font();
-        policy_accepted = 0;
-        policy_scroll_y = 0;
         acknowledgements_scroll_y = 0;
-        dirty = 1;
-    }
-}
-
-static void handle_policy_click(int32_t x, int32_t y)
-{
-    struct installer_policy_view view = get_policy_view();
-    uint32_t total_h;
-    policy_reflow(view.text_w);
-    total_h = policy_total_height();
-    if (leonos_ui_vscrollbar_handle_mouse(&policy_scroll_y,
-                                           total_h > view.h ? total_h : view.h,
-                                           view.h,
-                                           view.x + view.w - POLICY_SCROLLBAR_W,
-                                           view.y, POLICY_SCROLLBAR_W, view.h,
-                                           x, y)) {
-        dirty = 1;
-        return;
-    }
-    if (hit_rect_i(x, y, (int32_t)view.x, (int32_t)view.checkbox_y,
-                   (int32_t)view.w, BUTTON_H)) {
-        policy_accepted = policy_accepted ? 0 : 1;
-        dirty = 1;
-    }
-}
-
-static void handle_policy_wheel(int32_t delta)
-{
-    struct installer_policy_view view = get_policy_view();
-    uint32_t total_h;
-    uint32_t steps = delta < 0 ? (uint32_t)(-delta) : (uint32_t)delta;
-    int32_t pixels;
-    if (!steps) {
-        steps = 1;
-    }
-    policy_reflow(view.text_w);
-    total_h = policy_total_height();
-    pixels = delta > 0 ? (int32_t)(steps * 36U) : -(int32_t)(steps * 36U);
-    if (leonos_ui_vscrollbar_handle_wheel(&policy_scroll_y,
-                                          total_h > view.h ? total_h : view.h,
-                                          view.h, pixels)) {
         dirty = 1;
     }
 }
 
 static void handle_acknowledgements_click(int32_t x, int32_t y)
 {
-    struct installer_policy_view view = get_acknowledgements_view();
+    struct installer_text_view view = get_acknowledgements_view();
     uint32_t total_h;
     acknowledgements_reflow(view.text_w);
     total_h = policy_total_height();
@@ -3212,7 +2862,7 @@ static void handle_acknowledgements_click(int32_t x, int32_t y)
 
 static void handle_acknowledgements_wheel(int32_t delta)
 {
-    struct installer_policy_view view = get_acknowledgements_view();
+    struct installer_text_view view = get_acknowledgements_view();
     uint32_t total_h;
     uint32_t steps = delta < 0 ? (uint32_t)(-delta) : (uint32_t)delta;
     int32_t pixels;
@@ -3315,9 +2965,6 @@ static int handle_mouse(int window_id, struct leonos_ui_surface *ui,
     if (page == PAGE_LANGUAGE) {
         handle_language_click(event->x, event->y);
     }
-    if (page == PAGE_POLICY) {
-        handle_policy_click(event->x, event->y);
-    }
     if (page == PAGE_THANKS) {
         handle_acknowledgements_click(event->x, event->y);
     }
@@ -3350,11 +2997,6 @@ static int handle_key(int window_id, struct leonos_ui_surface *ui,
     if (event->type == LEONOS_GUI_APP_EVENT_KEY_DOWN && event->pressed) {
         if (event->keycode == KEY_ESCAPE && page != PAGE_PROGRESS) {
             return 1;
-        }
-        if (page == PAGE_POLICY && event->keycode == KEY_SPACE) {
-            policy_accepted = policy_accepted ? 0 : 1;
-            dirty = 1;
-            return 0;
         }
         if (page == PAGE_UPDATE_APPS) {
             uint32_t activated = 0;
@@ -3406,8 +3048,27 @@ int main(void)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
+    struct installer_tty_context tty_context;
     int window_id;
 
+    if (leonos_pty_self() > 0) {
+        installer_tty_mode = 1;
+        installer_lang = (uint8_t)leonos_i18n_language();
+        tty_context.disks = disks;
+        tty_context.disk_count = &disk_count;
+        tty_context.selected_disk = &selected_disk;
+        tty_context.install_mode = &install_mode;
+        tty_context.install_success = &install_success;
+        tty_context.page = &page;
+        tty_context.update_apps_page = PAGE_UPDATE_APPS;
+        tty_context.refresh_disks = refresh_disks;
+        tty_context.format_disk_line = format_disk_line;
+        tty_context.print_update_packages = tty_print_update_packages;
+        tty_context.prepare_update = tty_prepare_update;
+        tty_context.perform_install = tty_perform_install;
+        tty_context.perform_update = tty_perform_update;
+        return installer_tty_main(&tty_context);
+    }
     puts("[installer.elf] starting installer wizard");
     update_surface_size_from_framebuffer();
     window_id = leonos_gui_create_app_window_ex("LeonOS Setup", "Install LeonOS 4",
@@ -3448,8 +3109,6 @@ int main(void)
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL) {
                 if (page == PAGE_UPDATE_APPS) {
                     handle_update_apps_wheel(event.dy);
-                } else if (page == PAGE_POLICY) {
-                    handle_policy_wheel(event.dy);
                 } else if (page == PAGE_THANKS) {
                     handle_acknowledgements_wheel(event.dy);
                 }

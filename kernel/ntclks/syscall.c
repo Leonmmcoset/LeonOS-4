@@ -41,6 +41,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
 #include <leonos/inputm.h>
 #include <leonos/net.h>
 #include <leonos/pty.h>
+#include <leonos/signal.h>
 #include <leonos/system.h>
 #include <leonos/startup.h>
 #include <leonos/text.h>
@@ -740,6 +741,7 @@ void syscall_close_cloexec_files(struct task *task)
     for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
         if (task->stdio_files[i].used && (task->stdio_files[i].fd_flags & 1u)) {
             clear_task_file(&task->stdio_files[i]);
+            task->closed_stdio_mask |= 1u << i;
         }
     }
     for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
@@ -798,6 +800,8 @@ struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
     return NULL;
 }
 
+static int task_device_is(const struct task_file *file, uint32_t kind);
+
 /**
  * Task pty stream for fd.
  * @param task Value supplied by the caller.
@@ -807,13 +811,25 @@ struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
 static int task_pty_stream_for_fd(struct task *task, int fd)
 {
     struct task_pty_fd *entry;
+    struct task_file *file;
     if (!task || !task->pty_id) {
+        return -1;
+    }
+    if (fd >= 0 && fd < (int)SCHED_TASK_STDIO_MAX &&
+        (task->closed_stdio_mask & (1u << (uint32_t)fd)) != 0) {
         return -1;
     }
     /**
  * @brief A redirected stdio descriptor shadows the implicit PTY stream.
  */
-    if (task_file_for_fd(task, fd)) {
+    file = task_file_for_fd(task, fd);
+    if (file) {
+        /* A real /dev/tty node is an alias for the caller's controlling PTY.
+         * Keep it visible to termios/ioctl and terminal process-group calls,
+         * while leaving /dev/console and ordinary files on their own paths. */
+        if (task_device_is(file, STORAGE_DEV_KIND_TTY)) {
+            return 0;
+        }
         return -1;
     }
     if (fd >= 0 && fd <= 2) {
@@ -933,6 +949,7 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
         if (stdio->used) {
             clear_task_file(stdio);
         }
+        task->closed_stdio_mask &= ~(1u << (uint32_t)new_fd);
         return new_fd;
     }
     if (new_fd == 3) {
@@ -976,15 +993,37 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
  */
 static int alloc_task_fd(struct task *task, const struct storage_node *node, uint32_t flags, const char *path)
 {
+    struct task_file *file;
     if (!task || !node) {
         return -LEONOS_EINVAL;
+    }
+    /* POSIX open() reuses a closed standard descriptor before allocating a
+     * regular descriptor.  nohup relies on this after closing stdin. */
+    for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
+        uint32_t bit = 1u << i;
+        if ((task->closed_stdio_mask & bit) == 0) {
+            continue;
+        }
+        file = &task->stdio_files[i];
+        if (file->used) {
+            continue;
+        }
+        file->used = 1;
+        file->node = *node;
+        file->offset = 0;
+        file->aux = 0;
+        file->flags = flags;
+        file->fd_flags = 0;
+        copy_text(file->path, sizeof(file->path), path);
+        task->closed_stdio_mask &= ~bit;
+        return (int)i;
     }
     if (!task_can_allocate_fd(task)) {
         return -LEONOS_EMFILE;
     }
     for (uint32_t i = 0; i < sched_task_file_capacity(task); ++i) {
         int fd = (int)i + 4;
-        struct task_file *file = sched_task_file_at(task, i);
+        file = sched_task_file_at(task, i);
         if (!file || file->used) {
             continue;
         }
@@ -1002,7 +1041,7 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node, uin
     }
     {
         uint32_t i = sched_task_file_capacity(task);
-        struct task_file *file = sched_task_file_at(task, i);
+        file = sched_task_file_at(task, i);
         int fd = (int)i + 4;
         if (file && !task_pty_fd_for_fd(task, fd)) {
             file->used = 1;
@@ -1047,6 +1086,9 @@ static int task_dup2_fd(struct task *task, int old_fd, int new_fd)
     *new_file = *old_file;
     new_file->used = 1;
     new_file->fd_flags = 0;
+    if (new_fd < (int)SCHED_TASK_STDIO_MAX) {
+        task->closed_stdio_mask &= ~(1u << (uint32_t)new_fd);
+    }
     task_pipe_retain(new_file);
     return new_fd;
 }
@@ -1091,6 +1133,11 @@ int syscall_inherit_task_fds(struct task *parent, struct task *child,
         struct task_file *target = &child->stdio_files[i];
         if (requested[i] < 0) continue;
         source = task_file_for_fd(parent, requested[i]);
+        if (parent && requested[i] < (int)SCHED_TASK_STDIO_MAX &&
+            (parent->closed_stdio_mask & (1u << (uint32_t)requested[i])) != 0) {
+            child->closed_stdio_mask |= 1u << (uint32_t)i;
+            continue;
+        }
         /* No explicit file means the child's PTY supplies this stream. */
         if (!source && requested[i] >= 0 && requested[i] <= 2) continue;
         if (!source) {
@@ -1124,6 +1171,91 @@ int file_can_write(const struct task_file *file)
 {
     uint32_t acc = file ? (file->flags & LEONOS_O_ACCMODE) : LEONOS_O_RDONLY;
     return acc == LEONOS_O_WRONLY || acc == LEONOS_O_RDWR;
+}
+
+static int task_device_is(const struct task_file *file, uint32_t kind)
+{
+    return file && (file->flags & TASK_FILE_FLAG_DEV_NODE) &&
+           file->node.first_cluster == kind;
+}
+
+static int task_device_read(struct task *task, struct task_file *file,
+                            void *buffer, uint32_t length)
+{
+    if (!task || !file || !buffer || !length) return 0;
+    if (task_device_is(file, STORAGE_DEV_KIND_NULL) ||
+        task_device_is(file, STORAGE_DEV_KIND_FULL) ||
+        task_device_is(file, STORAGE_DEV_KIND_CONSOLE) ||
+        task_device_is(file, STORAGE_DEV_KIND_AUDIO) ||
+        task_device_is(file, STORAGE_DEV_KIND_SERIAL)) return 0;
+    if (task_device_is(file, STORAGE_DEV_KIND_ZERO) ||
+        task_device_is(file, STORAGE_DEV_KIND_RANDOM) ||
+        task_device_is(file, STORAGE_DEV_KIND_URANDOM)) {
+        uint8_t *dst = (uint8_t *)buffer;
+        for (uint32_t i = 0; i < length; ++i) dst[i] = 0;
+        return (int)length;
+    }
+    if (task_device_is(file, STORAGE_DEV_KIND_TTY)) {
+        return (int)pty_read_input(task->pty_id, (char *)buffer, length);
+    }
+    if (task_device_is(file, STORAGE_DEV_KIND_KEYBOARD) ||
+        task_device_is(file, STORAGE_DEV_KIND_MOUSE)) {
+        struct input_event event;
+        if (length < sizeof(event)) {
+            return -LEONOS_EINVAL;
+        }
+        if (!input_pop(&event)) {
+            return 0;
+        }
+        for (uint32_t i = 0; i < sizeof(event); ++i) {
+            ((uint8_t *)buffer)[i] = ((const uint8_t *)&event)[i];
+        }
+        return (int)sizeof(event);
+    }
+    return -LEONOS_EBADF;
+}
+
+static int task_device_write(struct task *task, struct task_file *file,
+                             const void *buffer, uint32_t length)
+{
+    if (!task || !file) return -LEONOS_EBADF;
+    if (task_device_is(file, STORAGE_DEV_KIND_NULL) ||
+        task_device_is(file, STORAGE_DEV_KIND_ZERO) ||
+        task_device_is(file, STORAGE_DEV_KIND_RANDOM) ||
+        task_device_is(file, STORAGE_DEV_KIND_URANDOM)) return (int)length;
+    if (task_device_is(file, STORAGE_DEV_KIND_FULL)) return -LEONOS_ENOSPC;
+    if (task_device_is(file, STORAGE_DEV_KIND_TTY) ||
+        task_device_is(file, STORAGE_DEV_KIND_CONSOLE)) {
+        if (!buffer) return -LEONOS_EFAULT;
+        return (int)pty_write_output(task->pty_id, (const char *)buffer, length);
+    }
+    if (task_device_is(file, STORAGE_DEV_KIND_KMSG)) {
+        if (!buffer) return -LEONOS_EFAULT;
+        console_write_len((const char *)buffer, length);
+        return (int)length;
+    }
+    if (task_device_is(file, STORAGE_DEV_KIND_SERIAL)) {
+        const char *src = (const char *)buffer;
+        uint32_t done = 0;
+        if (!buffer) return -LEONOS_EFAULT;
+        /* The serial driver exposes a string-oriented backend.  Keep each
+         * temporary chunk bounded and preserve the write length. */
+        while (done < length) {
+            char chunk[128];
+            uint32_t take = length - done;
+            if (take >= sizeof(chunk)) take = sizeof(chunk) - 1u;
+            for (uint32_t i = 0; i < take; ++i) chunk[i] = src[done + i];
+            chunk[take] = 0;
+            serial_write(chunk);
+            done += take;
+        }
+        return (int)done;
+    }
+    if (task_device_is(file, STORAGE_DEV_KIND_AUDIO)) {
+        uint32_t status = LEONOS_AUDIO_STATUS_OK;
+        return (int)driver_manager_audio_write(buffer, length, &status);
+    }
+    return -LEONOS_EBADF;
 }
 
 /**
@@ -2500,11 +2632,16 @@ static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
     }
     file = task_file_for_fd(task, fd);
     if (file) {
-        st->type = (file->flags & TASK_FILE_FLAG_PIPE) ? LEONOS_FS_TYPE_DEVICE
+        st->type = ((file->flags & (TASK_FILE_FLAG_PIPE | TASK_FILE_FLAG_DEV_NULL)) != 0)
+                       ? LEONOS_FS_TYPE_DEVICE
                                                          : file->node.type;
         st->reserved = 0;
         st->size = file->node.size;
         return 0;
+    }
+    if (fd >= 0 && fd < (int)SCHED_TASK_STDIO_MAX &&
+        (task->closed_stdio_mask & (1u << (uint32_t)fd)) != 0) {
+        return -LEONOS_EBADF;
     }
     if (fd >= 0 && fd <= 3) {
         st->type = LEONOS_FS_TYPE_DEVICE;
@@ -2646,6 +2783,30 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return fs_acl_handle_ioctl(a1, a2);
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_SIGNAL_IOCTL_ACTION) {
+        struct task *task = sched_current_task();
+        struct leonos_signal_action action;
+        uint32_t disposition;
+        int ret;
+        if (!task || !user_range_ok(a2, sizeof(action))) {
+            return -LEONOS_EFAULT;
+        }
+        action = *(const struct leonos_signal_action *)(uintptr_t)a2;
+        if (action.operation != LEONOS_SIGNAL_ACTION_GET &&
+            action.operation != LEONOS_SIGNAL_ACTION_SET) {
+            return -LEONOS_EINVAL;
+        }
+        disposition = action.disposition;
+        ret = sched_signal_action(task->pid, (int)action.signal_number,
+                                  action.operation, &disposition);
+        if (ret < 0) {
+            return -LEONOS_EINVAL;
+        }
+        action.previous_disposition = disposition;
+        *(struct leonos_signal_action *)(uintptr_t)a2 = action;
+        return 0;
+    }
+
     if (number == LINUX_SYS_WRITE) {
         struct task *task = sched_current_task();
         uint32_t request_len;
@@ -2670,7 +2831,9 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         /**
  * @brief A redirected stdio descriptor must be handled by the regular file path below. Only an unbound implicit PTY stream falls back to the kernel console; otherwise a pipe on fd 1/2 would be silently bypassed and its consumer would receive EOF/zero bytes.
  */
-        if ((a0 == 1 || a0 == 2) && !task_file_for_fd(task, (int)a0)) {
+        if ((a0 == 1 || a0 == 2) &&
+            (task->closed_stdio_mask & (1u << (uint32_t)a0)) == 0 &&
+            !task_file_for_fd(task, (int)a0)) {
             request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
                               ? LEONOS_FS_IO_SLICE_BYTES
                               : (uint32_t)a2;
@@ -2682,6 +2845,19 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         int ret;
         if (!file) {
             return -LEONOS_EBADF;
+        }
+        if (file->flags & TASK_FILE_FLAG_DEV_NODE) {
+            if (!file_can_write(file)) return -LEONOS_EBADF;
+            request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
+                              ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
+            return task_device_write(task, file, (const void *)(uintptr_t)a1,
+                                     request_len);
+        }
+        if (file->flags & TASK_FILE_FLAG_DEV_NULL) {
+            if (!file_can_write(file)) {
+                return -LEONOS_EBADF;
+            }
+            return (int64_t)a2;
         }
         if (!file_can_write(file)) {
             return -LEONOS_EBADF;
@@ -2742,6 +2918,19 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         file = task_file_for_fd(task, (int)a0);
         if (!file) {
             return -LEONOS_EBADF;
+        }
+        if (file->flags & TASK_FILE_FLAG_DEV_NODE) {
+            if (!file_can_read(file)) return -LEONOS_EBADF;
+            request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
+                              ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
+            return task_device_read(task, file, (void *)(uintptr_t)a1,
+                                    request_len);
+        }
+        if (file->flags & TASK_FILE_FLAG_DEV_NULL) {
+            if (!file_can_read(file)) {
+                return -LEONOS_EBADF;
+            }
+            return 0;
         }
         if (file->path[0]) {
             int ret = authz_check_path(task, LEONOS_AUTHZ_READ, file->path, 0, 0);
@@ -2830,18 +3019,53 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         char path[LEONOS_FS_PATH_LEN];
         uint32_t flags = (uint32_t)a1;
         uint8_t created = 0;
+        uint8_t dev_path = 0;
         int ret = resolve_user_path(task, a0, path, sizeof(path));
         if (ret < 0) {
             return ret;
         }
-        ret = authz_check_path(task,
-                               ((flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY ||
-                                (flags & (LEONOS_O_CREAT | LEONOS_O_TRUNC)))
-                                   ? LEONOS_AUTHZ_WRITE
-                                   : LEONOS_AUTHZ_READ,
-                               path, 0, 0);
-        if (ret < 0) {
-            return ret;
+        /* POSIX stream aliases follow the caller's current descriptors,
+         * including redirections installed by dup2().  Do this before the
+         * synthetic devfs lookup so /dev/stdin is not mistaken for a fresh
+         * PTY device node. */
+        if (text_eq_cstr(path, "/dev/stdin") ||
+            text_eq_cstr(path, "/dev/stdout") ||
+            text_eq_cstr(path, "/dev/stderr")) {
+            int source = text_eq_cstr(path, "/dev/stdin") ? 0 :
+                         (text_eq_cstr(path, "/dev/stdout") ? 1 : 2);
+            struct task_file *source_file = task_file_for_fd(task, source);
+            if (source_file) {
+                return task_duplicate_file_fd(task, source, 4, 0);
+            }
+            if (task_pty_stream_for_fd(task, source) >= 0) {
+                return task_pty_duplicate_fd(task, source, 4, 0);
+            }
+            return -LEONOS_EBADF;
+        }
+        if (text_eq_cstr(path, "/dev/null")) {
+            struct storage_node null_node = {
+                .type = LEONOS_FS_TYPE_DEVICE,
+                .first_cluster = STORAGE_DEV_KIND_NULL,
+            };
+            return alloc_task_fd(task, &null_node,
+                                 flags | TASK_FILE_FLAG_DEV_NULL |
+                                 TASK_FILE_FLAG_DEV_NODE, path);
+        }
+        if (path[0] == '/' && (path[1] == 'd' || path[1] == 'D') &&
+            (path[2] == 'e' || path[2] == 'E') &&
+            (path[3] == 'v' || path[3] == 'V') && path[4] == '/') {
+            dev_path = 1;
+        }
+        if (!dev_path) {
+            ret = authz_check_path(task,
+                                   ((flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY ||
+                                    (flags & (LEONOS_O_CREAT | LEONOS_O_TRUNC)))
+                                       ? LEONOS_AUTHZ_WRITE
+                                       : LEONOS_AUTHZ_READ,
+                                   path, 0, 0);
+            if (ret < 0) {
+                return ret;
+            }
         }
         ret = storage_lookup_path(path, &node);
         if (ret < 0) {
@@ -2857,8 +3081,9 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                 return ret == -2 ? -LEONOS_ENOENT : ret;
             }
         }
-        if ((node.flags & STORAGE_NODE_FLAG_DEV_FB0) != 0) {
-            return 3;
+        if (node.flags & STORAGE_NODE_FLAG_DEV_NODE) {
+            return alloc_task_fd(task, &node,
+                                 flags | TASK_FILE_FLAG_DEV_NODE, path);
         }
         if (node.type == LEONOS_FS_TYPE_DIR && ((flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY)) {
             return -LEONOS_EISDIR;
@@ -2892,9 +3117,10 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
 
     if (number == LINUX_SYS_CLOSE) {
         struct task *task = sched_current_task();
-        if (a0 <= 3) {
+        if (a0 < SCHED_TASK_STDIO_MAX) {
             struct task_file *stdio_file = task_file_for_fd(task, (int)a0);
             if (stdio_file) clear_task_file(stdio_file);
+            task->closed_stdio_mask |= 1u << (uint32_t)a0;
             return 0;
         }
         struct task_file *file = task_file_for_fd(task, (int)a0);
@@ -3005,6 +3231,13 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         ret = resolve_user_path(task, a0, path, sizeof(path));
         if (ret < 0) {
             return ret;
+        }
+        if (text_eq_cstr(path, "/dev/null")) {
+            st.type = LEONOS_FS_TYPE_DEVICE;
+            st.reserved = 0;
+            st.size = 0;
+            *(struct leonos_stat *)(uintptr_t)a1 = st;
+            return 0;
         }
         ret = authz_check_path(task, LEONOS_AUTHZ_READ, path, 0, 0);
         if (ret < 0) {
@@ -4007,6 +4240,23 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return storage_disk_format_partition(&request);
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_INITIALIZE_GPT) {
+        struct leonos_disk_gpt_initialize request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_gpt_initialize *)(uintptr_t)a2;
+        if (request.flags & ~LEONOS_DISK_GPT_INITIALIZE_FORCE) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        return storage_disk_initialize_gpt(&request);
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_DELETE_PARTITION) {
         struct leonos_disk_partition_delete request;
         int ret;
@@ -4024,6 +4274,30 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return storage_disk_delete_partition(&request);
     }
 
+    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_EDIT_PARTITION) {
+        struct leonos_disk_partition_edit request;
+        int ret;
+        if (!user_range_ok(a2, sizeof(request))) {
+            return -LEONOS_EFAULT;
+        }
+        request = *(const struct leonos_disk_partition_edit *)(uintptr_t)a2;
+        request.name[LEONOS_DISK_PARTITION_NAME_LEN - 1u] = 0;
+        if (request.reserved != 0 || request.edit_mask == 0 ||
+            (request.edit_mask & ~(LEONOS_DISK_PARTITION_EDIT_TYPE |
+                                   LEONOS_DISK_PARTITION_EDIT_NAME)) != 0 ||
+            ((request.edit_mask & LEONOS_DISK_PARTITION_EDIT_TYPE) != 0 &&
+             request.type != LEONOS_DISK_PARTITION_TYPE_BASIC_DATA &&
+             request.type != LEONOS_DISK_PARTITION_TYPE_ESP &&
+             request.type != LEONOS_DISK_PARTITION_TYPE_LINUX)) {
+            return -LEONOS_EINVAL;
+        }
+        ret = authz_check_install(sched_current_task());
+        if (ret < 0) {
+            return ret;
+        }
+        return storage_disk_edit_partition(&request);
+    }
+
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_CREATE_PARTITION) {
         struct leonos_disk_partition_create request;
         int ret;
@@ -4033,7 +4307,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         request = *(const struct leonos_disk_partition_create *)(uintptr_t)a2;
         request.name[LEONOS_DISK_PARTITION_NAME_LEN - 1u] = 0;
         if (request.reserved != 0 || request.size_mib == 0 ||
-            (request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
+            (request.filesystem != LEONOS_DISK_FILESYSTEM_UNKNOWN &&
+             request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
              request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2 &&
              request.filesystem != LEONOS_DISK_FILESYSTEM_EXFAT)) {
             return -LEONOS_EINVAL;
@@ -4054,9 +4329,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         query = (struct leonos_disk_partition_mount *)(uintptr_t)a2;
         request = *query;
-        if (request.mount_path[0] != 0) {
-            return -LEONOS_EINVAL;
-        }
+        request.mount_path[sizeof(request.mount_path) - 1u] = 0;
         ret = authz_check_install(sched_current_task());
         if (ret < 0) {
             return ret;

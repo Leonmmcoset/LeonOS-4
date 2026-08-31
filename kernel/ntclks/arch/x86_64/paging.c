@@ -258,24 +258,33 @@ bool address_space_clone_cow(struct address_space *source, struct address_space 
                 continue;
             }
             phys = entry & NTCLKS_PHYS_ADDR_MASK;
-            flags = entry & (NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC | NTCLKS_PAGE_COW);
+            flags = entry & (NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC |
+                             NTCLKS_PAGE_COW | NTCLKS_PAGE_DEVICE);
             page = base + (uint64_t)slot * PAGE_SIZE;
-            if ((entry & NTCLKS_PAGE_WRITABLE) || (entry & NTCLKS_PAGE_COW)) {
+            if (!(entry & NTCLKS_PAGE_DEVICE) &&
+                ((entry & NTCLKS_PAGE_WRITABLE) || (entry & NTCLKS_PAGE_COW))) {
                 flags &= ~NTCLKS_PAGE_WRITABLE;
                 flags |= NTCLKS_PAGE_COW;
                 source->user_pt[table][slot] = phys | NTCLKS_PAGE_PRESENT |
                                                NTCLKS_PAGE_USER | flags;
                 x86_64_invlpg(page);
             }
-            cached = page_cache_retain(phys) == 0;
-            if (!cached) {
-                mm_retain_page(phys);
+            if (entry & NTCLKS_PAGE_DEVICE) {
+                cached = 0;
+            } else {
+                cached = page_cache_retain(phys) == 0;
+                if (!cached) {
+                    mm_retain_page(phys);
+                }
             }
             if (!address_space_map_user_page(destination, page, phys, flags)) {
-                if (cached) {
+                if (entry & NTCLKS_PAGE_DEVICE) {
+                    /* Device pages are borrowed from the framebuffer. */
+                } else if (cached) {
                     page_cache_release(phys);
+                } else {
+                    mm_free_page(phys);
                 }
-                mm_free_page(phys);
                 address_space_destroy(destination);
                 return false;
             }
@@ -298,7 +307,9 @@ void address_space_destroy(struct address_space *as)
             for (uint32_t i = 0; i < 512; ++i) {
                 uint64_t entry = as->user_pt[table][i];
                 if (entry & NTCLKS_PAGE_PRESENT) {
-                    if (page_cache_owns(entry & NTCLKS_PHYS_ADDR_MASK)) {
+                    if (entry & NTCLKS_PAGE_DEVICE) {
+                        /* Device mappings refer to reserved physical memory. */
+                    } else if (page_cache_owns(entry & NTCLKS_PHYS_ADDR_MASK)) {
                         page_cache_release(entry & NTCLKS_PHYS_ADDR_MASK);
                     } else {
                         mm_free_page(entry & NTCLKS_PHYS_ADDR_MASK);
@@ -503,6 +514,25 @@ uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t v
     }
     uint64_t entry = as->user_pt[table][slot];
     return (entry & NTCLKS_PAGE_PRESENT) ? (entry & NTCLKS_PHYS_ADDR_MASK) : 0;
+}
+
+bool address_space_user_page_is_device(const struct address_space *as, uint64_t vaddr)
+{
+    if (!as) {
+        return false;
+    }
+    uint64_t page = align_down(vaddr, PAGE_SIZE);
+    if (page < NTCLKS_USER_BASE || page >= NTCLKS_USER_TOP) {
+        return false;
+    }
+    uint64_t index = (page - NTCLKS_USER_BASE) / PAGE_SIZE;
+    uint64_t table = index / 512;
+    uint64_t slot = index % 512;
+    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) {
+        return false;
+    }
+    return (as->user_pt[table][slot] & (NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_DEVICE)) ==
+           (NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_DEVICE);
 }
 
 /**

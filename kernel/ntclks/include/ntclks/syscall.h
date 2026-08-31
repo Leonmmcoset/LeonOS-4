@@ -70,6 +70,7 @@
 #define LEONOS_EAGAIN 11
 #define LEONOS_EPIPE 32
 #define LEONOS_ENOTTY 25
+#define LEONOS_ENOSPC 28
 
 struct task;
 

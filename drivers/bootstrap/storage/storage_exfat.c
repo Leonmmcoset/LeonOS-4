@@ -2236,16 +2236,62 @@ static int exfat_dir_is_empty(const struct storage_node *node)
     uint64_t limit;
     if (!node || node->type != LEONOS_FS_TYPE_DIR) return -22;
     limit = exfat_dir_entry_limit();
-    for (uint64_t pos = 0; pos < limit; ++pos) {
+    for (uint64_t pos = 0; pos < limit; ) {
         uint8_t entry[EXFAT_ENTRY_SIZE];
         int ret = exfat_dir_read_entry(node->first_cluster,
                                        (node->flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0,
                                        (uint32_t)pos, entry);
         if (ret < 0) return ret;
         if (entry[0] == 0u) return 1;
-        if (entry[0] == EXFAT_ENTRY_FILE) return 0;
+        if (entry[0] == EXFAT_ENTRY_FILE) {
+            uint8_t raw[20][EXFAT_ENTRY_SIZE];
+            uint16_t name[255];
+            char rendered[LEONOS_FS_NAME_LEN];
+            uint8_t count;
+            uint32_t length;
+            struct storage_node child;
+            struct leonos_unicode_utf16_to_utf8 convert;
+
+            ret = exfat_read_file_set(node->first_cluster,
+                                      (node->flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0,
+                                      (uint32_t)pos, raw, &count, name, &length, &child);
+            if (ret < 0) return ret;
+            convert.utf16 = name;
+            convert.utf16_len = length;
+            convert.utf8 = rendered;
+            convert.utf8_capacity = sizeof(rendered);
+            convert.utf8_len = 0;
+            if (osmlayer_unicode_utf16le_to_utf8(&convert) < 0) return -5;
+            if (!storage_is_acl_metadata_name(rendered)) return 0;
+            pos += count + 1u;
+            continue;
+        }
+        ++pos;
     }
     return -5;
+}
+
+/* ACL metadata is hidden from normal directory listings, so it must not keep
+ * a directory artificially non-empty or leak its clusters after rmdir. */
+static int exfat_delete_acl_metadata_file(const struct storage_node *directory)
+{
+    struct storage_node metadata;
+    struct exfat_dir_ref metadata_ref;
+    int ret;
+
+    ret = exfat_find_in_dir_ref(directory->first_cluster,
+                                (directory->flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0,
+                                "LEONACL.SYS", &metadata, &metadata_ref);
+    if (ret == -2) return 0;
+    if (ret < 0) return ret;
+    if (metadata.type != LEONOS_FS_TYPE_FILE) return -5;
+    ret = exfat_delete_entry(&metadata_ref);
+    if (ret == 0) {
+        ret = exfat_free_clusters(metadata.first_cluster,
+                                  (metadata.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0,
+                                  metadata.size);
+    }
+    return ret;
 }
 
 static int exfat_unlink(const char *path)
@@ -2296,7 +2342,8 @@ static int exfat_rmdir(const char *path)
     ret = exfat_dir_is_empty(&node);
     if (ret <= 0) return ret < 0 ? ret : -39;
     storage_begin_mutation();
-    ret = exfat_delete_entry(&ref);
+    ret = exfat_delete_acl_metadata_file(&node);
+    if (ret == 0) ret = exfat_delete_entry(&ref);
     if (ret == 0) ret = exfat_free_clusters(node.first_cluster,
                                              (node.flags & STORAGE_NODE_FLAG_EXFAT_NOFAT) != 0,
                                              node.size ? node.size : g_storage.cluster_bytes);

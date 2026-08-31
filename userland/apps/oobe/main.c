@@ -5,10 +5,12 @@
 #include <leonos/inputm.h>
 #include <leonos/license.h>
 #include <leonos/net.h>
+#include <leonos/pty.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <termios.h>
 
 #define OOBE_MAX_W 1920
 #define OOBE_MAX_H 1080
@@ -55,7 +57,7 @@ enum license_field {
 static uint32_t pixels[OOBE_MAX_W * OOBE_MAX_H];
 static uint32_t surface_w = OOBE_INITIAL_W;
 static uint32_t surface_h = OOBE_INITIAL_H;
-static char username[LEONOS_AUTH_USERNAME_LEN] = "admin";
+static char username[LEONOS_AUTH_USERNAME_LEN] = "root";
 static char password[LEONOS_AUTH_PASSWORD_LEN];
 static char online_email[LEONOS_LICENSE_EMAIL_LEN];
 static char online_key[LEONOS_LICENSE_KEY_LEN];
@@ -734,11 +736,138 @@ static void oobe_update_inputm_context(uint32_t window_id)
     (void)leonos_inputm_set_context(&context);
 }
 
+static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
+                         uint8_t masked)
+{
+    uint32_t length = 0;
+    char input;
+    if (!buffer || capacity < 2U) {
+        return 0;
+    }
+    buffer[0] = 0;
+    if (prompt) {
+        write(1, prompt, strlen(prompt));
+    }
+    while (read(0, &input, 1) > 0) {
+        if (input == '\r') {
+            continue;
+        }
+        if (input == '\n') {
+            buffer[length] = 0;
+            /* The terminal echoes the newline for ordinary fields. Secret
+             * fields disable ECHO, so add their line ending explicitly. */
+            if (masked) {
+                write(1, "\r\n", 2);
+            }
+            return 1;
+        }
+        if (input == '\b' || (uint8_t)input == 127U) {
+            if (length) {
+                --length;
+                write(1, "\b \b", 3);
+            }
+            continue;
+        }
+        if ((uint8_t)input >= 32U && length + 1U < capacity) {
+            buffer[length++] = input;
+            buffer[length] = 0;
+            if (masked) {
+                write(1, "*", 1);
+            }
+        }
+    }
+    return 0;
+}
+
+static int tty_read_secret(const char *prompt, char *buffer, uint32_t capacity)
+{
+    struct termios termios;
+    struct termios saved_termios;
+    int ret;
+
+    /* OOBE is a child of the console PTY owner, so use fd-oriented termios
+     * requests rather than the owner-only PTY management interface. */
+    if (tcgetattr(0, &termios) != 0) {
+        return 0;
+    }
+    saved_termios = termios;
+    termios.c_lflag &= (tcflag_t)~(ECHO | ECHONL);
+    if (tcsetattr(0, TCSANOW, &termios) != 0) {
+        return 0;
+    }
+    ret = tty_read_line(prompt, buffer, capacity, 1);
+    (void)tcsetattr(0, TCSANOW, &saved_termios);
+    return ret;
+}
+
+static int tty_oobe_main(void)
+{
+    struct leonos_license_info license;
+    struct leonos_user_info user;
+    char email[LEONOS_LICENSE_EMAIL_LEN];
+    char key[LEONOS_LICENSE_KEY_LEN];
+    char account[LEONOS_AUTH_USERNAME_LEN];
+    char password_input[LEONOS_AUTH_PASSWORD_LEN];
+    puts("LeonOS first-run setup (TTY)");
+    license = (struct leonos_license_info){0};
+    if (leonos_license_required() &&
+        (leonos_license_status(&license) < 0 ||
+         license.status != LEONOS_LICENSE_STATUS_OK)) {
+        if (!tty_read_line("License email: ", email, sizeof(email), 0) ||
+            !tty_read_secret("License key: ", key, sizeof(key)) ||
+            leonos_license_activate_online(email, key, license_status_text,
+                                           sizeof(license_status_text)) != LEONOS_LICENSE_STATUS_OK) {
+            puts("License activation failed.");
+            return 1;
+        }
+    }
+    if (admin_exists()) {
+        (void)write_completion_marker();
+        puts("Administrator already exists.");
+        return 0;
+    }
+    copy_text(account, sizeof(account), "root");
+    if (!tty_read_line("Administrator name [root]: ", account, sizeof(account), 0) ||
+        !account[0]) {
+        copy_text(account, sizeof(account), "root");
+    }
+    {
+        uint32_t i;
+        for (i = 0; account[i]; ++i) {
+            if (!((account[i] >= 'a' && account[i] <= 'z') ||
+                  (account[i] >= '0' && account[i] <= '9') || account[i] == '_')) {
+                break;
+            }
+        }
+        if (!account[0] || account[i]) {
+            puts("Invalid administrator name.");
+            return 1;
+        }
+    }
+    if (!tty_read_secret("Administrator password: ", password_input,
+                         sizeof(password_input)) || !password_input[0]) {
+        puts("Password is required.");
+        return 1;
+    }
+    if (leonos_auth_create_user(account, password_input,
+                                LEONOS_AUTH_ROLE_ADMIN, &user) < 0 ||
+        leonos_auth_login(account, password_input, &user) < 0 ||
+        write_completion_marker() < 0) {
+        puts("Administrator setup failed.");
+        return 1;
+    }
+    puts("Administrator created. Setup complete.");
+    return 0;
+}
+
 int main(void)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     int window_id;
+    if (leonos_pty_self() > 0) {
+        return tty_oobe_main();
+    }
     OOBE_LOG_LINE("[oobe.elf] starting first-run setup");
     license_ready = (uint8_t)license_is_valid();
     if (!leonos_license_required()) {

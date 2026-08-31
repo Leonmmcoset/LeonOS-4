@@ -103,6 +103,7 @@ CONFIG_CHOICE_GROUPS = (
     ("CONFIG_VMDK_DEFAULT_THEME_METRO", "CONFIG_VMDK_DEFAULT_THEME_WIN95"),
     ("CONFIG_VMDK_WALLPAPER_FILL", "CONFIG_VMDK_WALLPAPER_STRETCH",
      "CONFIG_VMDK_WALLPAPER_CENTER"),
+    ("CONFIG_STARTUP_DESKTOP", "CONFIG_STARTUP_TTY"),
     ("CONFIG_BUILD_PRESET_DEBUG", "CONFIG_BUILD_PRESET_DEVELOP",
      "CONFIG_BUILD_PRESET_RELEASE"),
 )
@@ -658,6 +659,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     installer_policy_apps = tuple(
         app for app in ("desktop", "oobe", "settings") if component_enabled(app, "image")
     )
+    gptinit_source = ROOT / "userland/apps/gptinit/main.c"
     cc = os.environ.get("CC", "clang")
     cxx = os.environ.get("CXX", "clang++")
     rustc = os.environ.get("RUSTC", "rustc")
@@ -715,6 +717,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     busybox_source = ROOT / "third_party/busybox"
     busybox_config = ROOT / "userland/busybox/leonos.config"
     busybox_shim = ROOT / "userland/busybox/leonos_shim.c"
+    busybox_storage = ROOT / "userland/busybox/leonos_storage.c"
     busybox_headers = collect("userland/busybox/include/**/*.h")
     busybox_source_stamp = paths.out / "busybox/source-revision.txt"
     busybox_elf = paths.out / "userland/busybox.elf"
@@ -1005,6 +1008,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c11", "-ffreestanding",
         "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
         "-Wall", "-Wextra", "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-include", relative(autoconf),
     ]
     asflags_loader = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-ffreestanding", "-mno-red-zone",
@@ -1199,7 +1203,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     loader_objects: list[Path] = []
     for source in loader_sources:
         flags = asflags_loader if source.suffix == ".S" else cflags_loader
-        implicit = (loader_integrity, boot_logo) if source == ROOT / "boot/loader/main.c" else (loader_integrity,)
+        if source == ROOT / "boot/loader/main.c":
+            implicit = (autoconf, loader_integrity, boot_logo)
+        else:
+            implicit = (loader_integrity,)
         loader_objects.append(add_compile(graph, paths, f"compile:loader:{relative(source)}", source, "loader", flags, implicit, kind="assemble" if source.suffix == ".S" else "compile"))
     loader_elf = paths.out / "boot/loader.elf"
     graph.add(
@@ -1494,7 +1501,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         outputs=(busybox_elf, busybox_stamp),
         inputs=tuple([
             busybox_source_stamp, ROOT / "tools/build_busybox.py", busybox_config,
-            busybox_shim, *busybox_headers, ROOT / "userland/linker.ld", libc_a,
+            busybox_shim, busybox_storage, *busybox_headers, ROOT / "userland/linker.ld", libc_a,
             picolibc_archive,
         ]),
         depends_on=("busybox-source-revision", "picolibc", "archive:libc"),
@@ -1879,6 +1886,28 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         graph.add(Target(name=name, outputs=(output,), inputs=tuple([*objects, installer_runtime_so, dynamic_crt_obj, dynamic_note_obj]), implicit_inputs=(ROOT / "userland/dynamic-app.ld",), kind="link", command=(ld, "-nostdlib", "--gc-sections", *build_link_flags, *dynamic_link_flags, "-T", "userland/dynamic-app.ld", "-o", relative(output), relative(dynamic_crt_obj), relative(dynamic_note_obj), *map(relative, objects), relative(installer_runtime_so))))
         installer_policy_elfs[app] = output
         user_targets.append(name)
+
+    # gptinit is an installer-only utility. It is built with the installer
+    # runtime and copied only into the ISO live root.
+    gptinit_obj = add_compile(
+        graph, paths, "compile:installer-tool:gptinit", gptinit_source,
+        "user-installer-tool-gptinit", cflags_installer,
+        (installer_autoconf, picolibc_header_stamp),
+    )
+    gptinit_elf = paths.out / "userland-installer/gptinit.elf"
+    graph.add(Target(
+        name="installer-tool:gptinit",
+        outputs=(gptinit_elf,),
+        inputs=(gptinit_obj, installer_runtime_so, dynamic_crt_obj, dynamic_note_obj,
+                ROOT / "userland/dynamic-app.ld"),
+        depends_on=("installer-runtime", "runtime-loader"),
+        implicit_inputs=(ROOT / "userland/dynamic-app.ld",),
+        kind="link",
+        command=(ld, "-nostdlib", "--gc-sections", *build_link_flags,
+                 *dynamic_link_flags, "-T", "userland/dynamic-app.ld", "-o",
+                 relative(gptinit_elf), relative(dynamic_crt_obj), relative(dynamic_note_obj),
+                 relative(gptinit_obj), relative(installer_runtime_so)),
+    ))
 
     # ---- 资源生成与 ESP staging ----
     # staging 是源码产物进入镜像前的边界。新增资源先复制/生成到 staging，
@@ -2495,7 +2524,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
 
     installer_root = paths.out / "install/root.fat"
     installer_stage = paths.out / "install/root"
-    graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], installer_runtime_so, *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), depends_on=("esp", "installer-runtime"), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--policy-runtime", relative(installer_runtime_so), "--policy-apps", *installer_policy_apps, "--userland-dir", relative(paths.out / "userland"), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
+    graph.add(Target(name="installer-root", outputs=(installer_root,), inputs=tuple([*esp_outputs, app_elfs["desktop"], app_elfs["installer"], busybox_elf, gptinit_elf, installer_runtime_so, *(installer_policy_elfs.values()), ROOT / "tools/make_installer_root.py"]), depends_on=("esp", "installer-runtime", "busybox", "installer-tool:gptinit"), kind="generate", command=(PYTHON, "tools/make_installer_root.py", "--out", relative(installer_root), "--stage", relative(installer_stage), "--esp-tree", relative(paths.staging), "--installed-policy-dir", relative(paths.out / "userland-installer-policy"), "--policy-runtime", relative(installer_runtime_so), "--policy-apps", *installer_policy_apps, "--userland-dir", relative(paths.out / "userland"), "--gptinit", relative(gptinit_elf), "--generated-icons-dir", relative(paths.out / "generated/app-icons"), "--size-mib", str(config_int(values, "CONFIG_INSTALLER_ROOT_SIZE_MIB")))))
     installer_iso = paths.images / "leonos4-installer.iso"
     installer_boot_image = paths.out / "install/installer-efiboot.img"
     graph.add(Target(name="installer-image", outputs=(installer_iso, installer_boot_image), inputs=(loader_elf, kernel_sys, middle_sys, installer_root, grub_font, grub_theme, grub_efi_dir / "modinfo.sh", ROOT / "boot/grub/installer.cfg", ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"), kind="generate", command=(PYTHON, "tools/make_installer_iso.py", "--out", relative(installer_iso), "--stage", relative(paths.out / "installer-iso"), "--boot-image", relative(installer_boot_image), "--loader", relative(loader_elf), "--kernel", relative(kernel_sys), "--middlelayer", relative(middle_sys), "--installer-root", relative(installer_root), "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "install"), "--grub-efi-dir", grub_dir_arg)))

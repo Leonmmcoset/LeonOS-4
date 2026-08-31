@@ -1,5 +1,6 @@
 #include <leonos/boot_handoff.h>
 #include <leonos/psf_font.h>
+#include <generated/autoconf.h>
 #include <generated/loader_integrity.h>
 #include <generated/boot_logo.h>
 #include <stdint.h>
@@ -415,6 +416,7 @@ static void *memcpy_local(void *dst, const void *src, size_t len)
     return dst;
 }
 
+#if CONFIG_LOADER_VERIFY_SHA256
 struct sha256_ctx {
     uint8_t data[64];
     uint32_t data_len;
@@ -581,6 +583,7 @@ static int bytes_eq(const uint8_t *a, const uint8_t *b, uint64_t len)
     }
     return diff == 0;
 }
+#endif
 
 static int loader_framebuffer_color_format_valid(void)
 {
@@ -847,12 +850,13 @@ static void loader_framebuffer_set_theme(uint32_t theme)
         framebuffer_console.panel = 0x00000000U;
         framebuffer_console.text = 0x0000ff00U;
     } else {
-        framebuffer_console.panel = 0x001b2a3aU;
+        framebuffer_console.panel = 0x00000000U;
         framebuffer_console.text = 0x00ffffffU;
     }
     loader_framebuffer_reset();
 }
 
+#if CONFIG_LOADER_VERIFY_SHA256
 static void loader_framebuffer_switch_to_log(void)
 {
     if (loader_boot_log_screen) {
@@ -861,6 +865,7 @@ static void loader_framebuffer_switch_to_log(void)
     loader_boot_log_screen = 1u;
     loader_framebuffer_set_theme(handoff.ui_theme);
 }
+#endif
 
 static void loader_framebuffer_init(void)
 {
@@ -1095,6 +1100,7 @@ static void serial_write_hex(uint64_t value)
     }
 }
 
+#if CONFIG_LOADER_VERIFY_SHA256
 static int serial_poll_char(void)
 {
     if ((loader_inb(0x3fdu) & 0x01u) == 0) {
@@ -1102,6 +1108,7 @@ static int serial_poll_char(void)
     }
     return (int)loader_inb(0x3f8u);
 }
+#endif
 
 static void serial_init(void)
 {
@@ -1172,6 +1179,7 @@ static void boot_write(const char *s)
     }
 }
 
+#if CONFIG_LOADER_VERIFY_SHA256
 static void boot_write_sha256(const uint8_t digest[32])
 {
     const char *digits = "0123456789abcdef";
@@ -1272,6 +1280,17 @@ static int verify_image_integrity(const char *label, const void *image,
     boot_write("[loader] Boot stopped by integrity policy.\n");
     return -1;
 }
+#else
+static int verify_image_integrity(const char *label, const void *image,
+                                  uint64_t len, const uint8_t expected[32])
+{
+    (void)label;
+    (void)image;
+    (void)len;
+    (void)expected;
+    return 0;
+}
+#endif
 
 static int text_eq(const char *a, const char *b)
 {
@@ -1916,7 +1935,11 @@ void loader_main(uint32_t magic, uint32_t multiboot_info)
     serial_init();
     serial_write("[loader] LeonOS two-stage loader starting\n");
     parse_multiboot2(magic, multiboot_info);
-    loader_boot_log_screen = loader_cmdline_has("bootlog=1");
+    /* TTY startup is itself a text-console request.  Treat it like an
+     * explicit bootlog request so the graphical splash never owns the
+     * framebuffer while the kernel is preparing the shell. */
+    loader_boot_log_screen = loader_cmdline_has("bootlog=1") ||
+                             loader_cmdline_has("startup=tty");
     installer_root_module = find_loader_module("leonos-installer-root");
     if (installer_root_module && installer_root_module->end > installer_root_module->start) {
         handoff.installer_root.start = installer_root_module->start;

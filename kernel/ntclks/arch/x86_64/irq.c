@@ -6,6 +6,7 @@
 #include <ntclks/apic.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/input.h>
+#include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/smp.h>
 #include <ntclks/time.h>
@@ -107,6 +108,7 @@ static void pit_init_100hz(void)
     x86_64_outb(0x36, PIT_COMMAND);
     x86_64_outb((uint8_t)(divisor & 0xff), PIT_CHANNEL0);
     x86_64_outb((uint8_t)(divisor >> 8), PIT_CHANNEL0);
+    time_set_pit_divisor(divisor);
 }
 
 /**
@@ -206,6 +208,7 @@ struct task *irq_dispatch(struct trap_frame *frame)
             if (keycode < sizeof(key_states) && key_states[keycode] != pressed) {
                 key_states[keycode] = pressed;
                 input_push_key(keycode, pressed);
+                pty_console_key_event(keycode, pressed);
             }
         }
         irq_send_eoi(1);

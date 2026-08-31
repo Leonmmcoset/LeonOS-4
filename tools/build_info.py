@@ -26,7 +26,7 @@ def main() -> int:
     parser.add_argument("--state", default="build/version/build_number.txt")
     parser.add_argument("--major", type=int, default=4)
     parser.add_argument("--minor", type=int, default=6)
-    parser.add_argument("--patch", type=int, default=1)
+    parser.add_argument("--patch", type=int, default=2)
     parser.add_argument("--kernel-name", default="ntclks")
     parser.add_argument("--middlelayer-name", default="osmlayer")
     args = parser.parse_args()

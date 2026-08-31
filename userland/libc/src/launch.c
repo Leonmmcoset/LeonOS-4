@@ -1,10 +1,13 @@
 #include <leonos/fs.h>
+#include <leonos/device.h>
+#include <leonos/environment.h>
 #include <leonos/ini.h>
 #include <leonos/launch.h>
 #include <leonos/pty.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #define LEONOS_ASSOC_CONFIG_PATH "/system/config/fileassoc.cfg"
@@ -262,20 +265,38 @@ static int launch_in_terminal(char *argv[])
 int leonos_spawn_argv(const char *path, char *const argv[])
 {
     struct leonos_pty_spawn spawn;
+    char **envp = 0;
+    int result;
 
     if (!path || !path[0] || !argv || !argv[0]) {
         return LEONOS_LAUNCH_ERR_EMPTY;
+    }
+    result = leonos_environment_build(0, &envp);
+    if (result < 0) {
+        return result;
     }
     spawn = (struct leonos_pty_spawn){
         .pty_id = 0,
         .path = path,
         .argv = argv,
-        .envp = 0,
+        .envp = envp,
         .stdin_fd = -1,
         .stdout_fd = -1,
         .stderr_fd = -1,
     };
-    return ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
+    /* Keep the launcher on the same device ABI as the rest of libc.  The
+     * descriptor is opened explicitly so standalone launch users no longer
+     * depend on the historical fd=3 control channel. */
+    int pty_device = open(LEONOS_DEV_PTMX, O_RDWR, 0);
+    if (pty_device < 0) {
+        pty_device = 3;
+    }
+    result = ioctl(pty_device, LEONOS_PTY_IOCTL_SPAWN, &spawn);
+    if (pty_device >= 4) {
+        (void)close(pty_device);
+    }
+    leonos_environment_free(envp);
+    return result;
 }
 
 static void build_child_path(char *dst, uint32_t capacity,

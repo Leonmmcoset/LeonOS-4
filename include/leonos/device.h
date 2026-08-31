@@ -23,6 +23,24 @@
 #define LEONOS_DEVICE_FLAG_BOOT 0x00000004U
 #define LEONOS_DEVICE_FLAG_REMOVABLE 0x00000008U
 
+/* Canonical devfs paths.  Applications should use these names instead of
+ * relying on the historical control descriptor (fd 3). */
+#define LEONOS_DEV_NULL "/dev/null"
+#define LEONOS_DEV_ZERO "/dev/zero"
+#define LEONOS_DEV_FULL "/dev/full"
+#define LEONOS_DEV_RANDOM "/dev/random"
+#define LEONOS_DEV_URANDOM "/dev/urandom"
+#define LEONOS_DEV_TTY "/dev/tty"
+#define LEONOS_DEV_CONSOLE "/dev/console"
+#define LEONOS_DEV_PTMX "/dev/ptmx"
+#define LEONOS_DEV_FB0 "/dev/fb0"
+#define LEONOS_DEV_INPUT_EVENT0 "/dev/input/event0"
+#define LEONOS_DEV_AUDIO0 "/dev/audio0"
+#define LEONOS_DEV_SERIAL0 "/dev/serial0"
+#define LEONOS_DEV_NET0 "/dev/net0"
+#define LEONOS_DEV_DISK0 "/dev/disk0"
+#define LEONOS_DEV_DRIVERCTL "/dev/driverctl"
+
 struct leonos_device_info {
     uint32_t id;
     uint32_t device_class;

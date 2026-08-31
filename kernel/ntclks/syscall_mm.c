@@ -3,6 +3,7 @@
  * and mmap/mprotect/munmap operations.
  */
 #include <ntclks/console.h>
+#include <ntclks/framebuffer.h>
 #include <ntclks/mm.h>
 #include <ntclks/paging.h>
 #include <ntclks/page_cache.h>
@@ -16,10 +17,11 @@
 #define LINUX_PROT_READ TASK_VMA_PROT_READ
 #define LINUX_PROT_WRITE TASK_VMA_PROT_WRITE
 #define LINUX_PROT_EXEC TASK_VMA_PROT_EXEC
+#define LINUX_MAP_SHARED 0x01u
 #define LINUX_MAP_PRIVATE 0x02u
 #define LINUX_MAP_FIXED 0x10u
 #define LINUX_MAP_ANONYMOUS 0x20u
-#define LINUX_MAP_SUPPORTED (LINUX_MAP_PRIVATE | LINUX_MAP_FIXED | LINUX_MAP_ANONYMOUS)
+#define LINUX_MAP_SUPPORTED (LINUX_MAP_SHARED | LINUX_MAP_PRIVATE | LINUX_MAP_FIXED | LINUX_MAP_ANONYMOUS)
 
 /**
  * Align up page.
@@ -456,7 +458,10 @@ static void task_unmap_pages(struct task *task, uint64_t start, uint64_t end)
         struct task_vma *vma = task_vma_containing(task, page, page + PAGE_SIZE);
         uint64_t phys = address_space_unmap_user_page(&task->as, page);
         if (phys) {
-            if (vma && (vma->flags & TASK_VMA_FLAG_SHARED_FILE)) {
+            if ((vma && (vma->flags & TASK_VMA_FLAG_DEVICE)) ||
+                address_space_user_page_is_device(&task->as, page)) {
+                /* Framebuffer mappings borrow reserved VRAM. */
+            } else if (vma && (vma->flags & TASK_VMA_FLAG_SHARED_FILE)) {
                 page_cache_release(phys);
             } else {
                 mm_free_page(phys);
@@ -708,6 +713,8 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     uint64_t page_flags = 0;
     uint32_t vma_flags = TASK_VMA_FLAG_PRIVATE;
     int anonymous;
+    int device_mapping = 0;
+    uint64_t device_phys = 0;
     int ret;
 
     if (!task || task->kind != TASK_KIND_USER) {
@@ -730,10 +737,13 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
         (LINUX_PROT_WRITE | LINUX_PROT_EXEC)) {
         return -LEONOS_EACCES;
     }
-    if ((flags & ~((uint64_t)LINUX_MAP_SUPPORTED)) != 0 || (flags & LINUX_MAP_PRIVATE) == 0) {
+    if ((flags & ~((uint64_t)LINUX_MAP_SUPPORTED)) != 0) {
         return -LEONOS_EINVAL;
     }
     anonymous = (flags & LINUX_MAP_ANONYMOUS) != 0;
+    if (anonymous && !(flags & LINUX_MAP_PRIVATE)) {
+        return -LEONOS_EINVAL;
+    }
     /* File-backed mappings remain private until page-cache ownership is
      * complete for fork/COW and address-space teardown.  This keeps dynamic
      * loader mmap() pages on the same well-tested lazy private path as ELF
@@ -761,7 +771,28 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
         if (!file || !file_can_read(file)) {
             return -LEONOS_EBADF;
         }
-        if (file->node.type != LEONOS_FS_TYPE_FILE) {
+        if (file->flags & TASK_FILE_FLAG_DEV_NODE) {
+            const struct framebuffer *fb;
+            uint64_t bytes;
+            if (file->node.first_cluster != STORAGE_DEV_KIND_FB0) {
+                return -LEONOS_EINVAL;
+            }
+            fb = framebuffer_get();
+            if (!fb || !fb->available || !fb->pixels) {
+                return -LEONOS_EINVAL;
+            }
+            bytes = (uint64_t)fb->pitch * fb->height;
+            if (offset > bytes || mapped_len > bytes - offset) {
+                return -LEONOS_EINVAL;
+            }
+            device_phys = (uint64_t)(uintptr_t)fb->pixels + offset;
+            if (device_phys & (PAGE_SIZE - 1ULL)) {
+                return -LEONOS_EINVAL;
+            }
+            device_mapping = 1;
+            vma_flags = TASK_VMA_FLAG_PRIVATE | TASK_VMA_FLAG_DEVICE;
+        } else if (file->node.type != LEONOS_FS_TYPE_FILE ||
+                   !(flags & LINUX_MAP_PRIVATE)) {
             return -LEONOS_EINVAL;
         }
     }
@@ -803,7 +834,7 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     /**
  * @brief File mappings are lazy: reserve the page-table range now so a first instruction/data fault can replace the inherited kernel huge-page identity mapping even when the CPU reports the fault as present.
  */
-    if (!anonymous && !address_space_prepare_user_range(&task->as, start, end)) {
+    if (!anonymous && !device_mapping && !address_space_prepare_user_range(&task->as, start, end)) {
         return -LEONOS_ENOMEM;
     }
 
@@ -813,7 +844,17 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     if (!(prot & LINUX_PROT_EXEC)) {
         page_flags |= NTCLKS_PAGE_NOEXEC;
     }
-    if (anonymous) {
+    if (device_mapping) {
+        uint64_t phys = device_phys;
+        for (uint64_t page = start; page < end; page += PAGE_SIZE, phys += PAGE_SIZE) {
+            if (!address_space_map_user_page(&task->as, page, phys,
+                                             page_flags | NTCLKS_PAGE_DEVICE)) {
+                task_unmap_pages(task, start, page);
+                return -LEONOS_ENOMEM;
+            }
+        }
+        ret = 0;
+    } else if (anonymous) {
         ret = task_map_anonymous_pages(task, start, end, page_flags);
     } else {
         ret = 0;
@@ -889,6 +930,9 @@ int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
     }
     if (!(prot & LINUX_PROT_EXEC)) {
         page_flags |= NTCLKS_PAGE_NOEXEC;
+    }
+    if (vma->flags & TASK_VMA_FLAG_DEVICE) {
+        page_flags |= NTCLKS_PAGE_DEVICE;
     }
     for (uint64_t page = addr; page < end; page += PAGE_SIZE) {
         if (address_space_user_page_phys(&task->as, page) &&

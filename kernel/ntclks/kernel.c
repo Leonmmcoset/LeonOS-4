@@ -125,6 +125,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                          const struct leonos_boot_handoff *handoff)
 {
     bool boot_log_screen;
+    int startup_tty;
 
     __asm__ volatile("cli");
     console_init();
@@ -146,6 +147,18 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
 
     struct boot_info boot;
     multiboot2_parse(magic, (uintptr_t)multiboot_info, &boot);
+#ifdef CONFIG_STARTUP_TTY
+    startup_tty = 1;
+#else
+    startup_tty = 0;
+#endif
+    if (cmdline_has(&boot, "startup=tty")) {
+        startup_tty = 1;
+    } else if (cmdline_has(&boot, "mode=installer")) {
+        startup_tty = 0;
+    } else if (cmdline_has(&boot, "startup=desktop")) {
+        startup_tty = 0;
+    }
     /**
  * @brief UEFI GRUB keeps boot services active for the second-stage loader and may therefore omit Multiboot2 memory-map tags. The loader captures a stable EFI map after loading all images; use it before the allocator falls back to the legacy 512 MiB estimate.
  */
@@ -174,7 +187,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     ioapic_init();
     smp_init();
     framebuffer_init(&boot);
-    boot_splash_init(!boot_log_screen);
+    /* A TTY boot owns the framebuffer after kernel initialization, so leave
+     * the splash disabled and route the console to the visible text panel. */
+    boot_splash_init(!boot_log_screen && !startup_tty);
     mm_init(&boot, handoff);
     kernel_heap_init();
     page_cache_init();
@@ -188,7 +203,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                                ? handoff->ui_theme
                                : 1u);
     console_set_ui_theme(gui_ipc_appearance_theme());
-    if (boot_log_screen) {
+    if (boot_log_screen || startup_tty) {
         console_enable_framebuffer(handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC
                                        ? &handoff->boot_log
                                        : 0);
@@ -240,14 +255,27 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
      * scheduler without racing the bootstrap task construction above. */
     smp_start_aps();
     sched_dump();
-    console_printf("[ntclks] boot complete: version=%s root=/ fs=%s desktop=desktop.elf\n",
-                   system->kernel_version, storage_root_filesystem_name());
+    if (startup_tty) {
+        console_printf("[ntclks] boot complete: version=%s root=/ fs=%s startup=tty\n",
+                       system->kernel_version, storage_root_filesystem_name());
+    } else {
+        console_printf("[ntclks] boot complete: version=%s root=/ fs=%s desktop=desktop.elf\n",
+                       system->kernel_version, storage_root_filesystem_name());
+    }
     boot_splash_update(100u);
     if (boot_log_screen) {
-        /**
- * @brief Keep the original log console visible until the Ring-3 desktop replaces it. The graphical path retains the completed splash.
- */
-        console_printf("[ntclks] starting Ring-3 desktop.elf\n");
+        if (startup_tty) {
+            console_printf("[ntclks] starting Ring-3 BusyBox TTY\n");
+        } else {
+            /**
+             * @brief Keep the original log console visible until the Ring-3 desktop replaces it. The graphical path retains the completed splash.
+             */
+            console_printf("[ntclks] starting Ring-3 desktop.elf\n");
+        }
+    }
+
+    if (startup_tty) {
+        console_enter_tty_runtime();
     }
 
     userland_enter_first();

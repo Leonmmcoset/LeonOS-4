@@ -104,6 +104,7 @@ MINIMAL_LIBBB_OBJECTS = (
     "procps.o",
     "bb_getgroups.o",
     "u_signal_names.o",
+    "leonos_storage.o",
 )
 
 def run(command: list[str], *, cwd: Path | None = None) -> None:
@@ -151,6 +152,7 @@ def source_cache_key(revision: str) -> str:
     for path in (
         Path(__file__),
         ROOT / "userland/busybox/leonos_shim.c",
+        ROOT / "userland/busybox/leonos_storage.c",
         ROOT / "userland/busybox/leonos.config",
     ):
         digest.update(path.read_bytes())
@@ -185,6 +187,7 @@ def write_minimal_libbb_kbuild(kbuild: Path, generated: bool) -> None:
 
 def trim_libbb(source: Path) -> None:
     shutil.copyfile(ROOT / "userland/busybox/leonos_shim.c", source / "libbb/leonos_shim.c")
+    shutil.copyfile(ROOT / "userland/busybox/leonos_storage.c", source / "libbb/leonos_storage.c")
     patch_percentm_for_leonos(source)
     patch_time_for_leonos(source)
     write_minimal_libbb_kbuild(source / "libbb/Kbuild.src", False)
@@ -371,6 +374,55 @@ def patch_ls_colors_for_leonos(source: Path) -> None:
     path.write_text(text.replace(colors_before, colors_after, 1), encoding="utf-8")
 
 
+def patch_nohup_for_leonos(source: Path) -> None:
+    """Open /dev/null write-only when it is used as nohup stdout fallback."""
+    path = source / "coreutils/nohup.c"
+    text = path.read_text(encoding="utf-8")
+    marker = "\t\t\t\txopen(bb_dev_null, O_RDONLY); /* will be fd 1 */"
+    replacement = "\t\t\t\txopen(bb_dev_null, O_WRONLY); /* will be fd 1 */"
+    if replacement in text:
+        return
+    if marker not in text:
+        raise SystemExit("unsupported BusyBox nohup source revision: fallback marker missing")
+    # The source contains an identical-looking stdin fallback. Restrict this
+    # replacement to the branch that handles a failed stdout destination.
+    stdout_marker = "\t\t\t} else {\n" + marker
+    if stdout_marker not in text:
+        raise SystemExit("unsupported BusyBox nohup source revision: stdout fallback marker missing")
+    text = text.replace(stdout_marker, "\t\t\t} else {\n" + replacement, 1)
+    path.write_text(text, encoding="utf-8")
+
+
+def patch_power_applets_for_leonos(source: Path) -> None:
+    """Expose shutdown and route power applets directly to the LeonOS ABI."""
+    path = source / "init/halt.c"
+    text = path.read_text(encoding="utf-8")
+    applet_marker = "//applet:IF_REBOOT(  APPLET_ODDNAME(reboot,   halt, BB_DIR_SBIN, BB_SUID_DROP, reboot))\n"
+    applet_line = applet_marker + "//applet:IF_HALT(APPLET_ODDNAME(shutdown, halt, BB_DIR_SBIN, BB_SUID_DROP, poweroff))\n"
+    if applet_line not in text:
+        if applet_marker not in text:
+            raise SystemExit("unsupported BusyBox halt source revision: applet marker missing")
+        text = text.replace(applet_marker, applet_line, 1)
+    old_select = '''\telse
+\tfor (which = 0; "hpr"[which] != applet_name[0]; which++)
+\t\tcontinue;
+'''
+    new_select = '''\telse if (applet_name[0] == 's')
+\t\twhich = 1;
+\telse
+\tfor (which = 0; "hpr"[which] != applet_name[0]; which++)
+\t\tcontinue;
+'''
+    if new_select not in text:
+        if old_select not in text:
+            raise SystemExit("unsupported BusyBox halt source revision: applet selector missing")
+        text = text.replace(old_select, new_select, 1)
+    old_flow = "\tif (!(flags & 4)) { /* no -f */"
+    if old_flow in text:
+        text = text.replace(old_flow, "\tif (0) { /* LeonOS invokes the kernel power ABI directly. */", 1)
+    path.write_text(text, encoding="utf-8")
+
+
 def patch_time_for_leonos(source: Path) -> None:
     """Keep monotonic helpers in the LeonOS shim as the single definition."""
     path = source / "libbb/time.c"
@@ -537,6 +589,7 @@ def main() -> None:
         source / "Makefile", args.config, args.picolibc_prefix / "include",
         args.leonos_libc_include, args.leonos_include, args.linker_script,
         args.leonos_lib, args.picolibc_lib, ROOT / "userland/busybox/leonos_shim.c",
+        ROOT / "userland/busybox/leonos_storage.c",
     ]
     for path in required:
         if not path.exists():
@@ -549,6 +602,8 @@ def main() -> None:
     patch_ps_for_leonos(source_dir)
     patch_less_for_leonos(source_dir)
     patch_ls_colors_for_leonos(source_dir)
+    patch_nohup_for_leonos(source_dir)
+    patch_power_applets_for_leonos(source_dir)
     patch_ash_for_leonos(source_dir)
     work_root = source_dir.parent
     output_dir = work_root / "output"

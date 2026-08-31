@@ -224,9 +224,12 @@ static int copy_exec_path(char *out, size_t out_size, const char *path)
 }
 
 static const char *const busybox_applets[] = {
-    "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo",
+    "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo", "env",
     "false", "grep", "head", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
-    "rm", "rmdir", "sha256sum", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc", NULL,
+    "rm", "rmdir", "sha256sum", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc",
+    "fdisk", "mkfs.fat", "mkfs.fat32", "mkfs.vfat", "mkfs.ext2", "mkfs.exfat",
+    "mount", "umount", "fsck", "fsck.fat", "fsck.fat32", "fsck.vfat", "fsck.ext2",
+    "fsck.exfat", "blkid", "lsblk", "leonos-grub-installer", "sync", NULL,
 };
 
 struct program_path {
@@ -244,6 +247,7 @@ static const struct program_path programs[] = {
     {"nano", "/programs/nano/nano.elf"},
     {"pleditor", "/programs/pleditor/pleditor.elf"},
     {"tcc", "/programs/tcc/tcc.elf"},
+    {"gptinit", "/programs/gptinit/gptinit.elf"},
     {NULL, NULL},
 };
 

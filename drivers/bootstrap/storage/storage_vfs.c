@@ -3,6 +3,85 @@ bool storage_ready(void)
     return g_volumes[0].ready;
 }
 
+struct storage_dev_entry {
+    const char *name;
+    uint32_t kind;
+    uint32_t type;
+    uint8_t directory;
+};
+
+/* The devfs namespace is intentionally small and stable.  Drivers expose
+ * their portable userspace ABI through these names; the legacy ioctl entry
+ * points remain available for applications that have not migrated yet. */
+static const struct storage_dev_entry storage_dev_entries[] = {
+    {"null",      STORAGE_DEV_KIND_NULL,     LEONOS_FS_TYPE_DEVICE, 0},
+    {"zero",      STORAGE_DEV_KIND_ZERO,     LEONOS_FS_TYPE_DEVICE, 0},
+    {"full",      STORAGE_DEV_KIND_FULL,     LEONOS_FS_TYPE_DEVICE, 0},
+    {"random",    STORAGE_DEV_KIND_RANDOM,   LEONOS_FS_TYPE_DEVICE, 0},
+    {"urandom",   STORAGE_DEV_KIND_URANDOM,  LEONOS_FS_TYPE_DEVICE, 0},
+    {"tty",       STORAGE_DEV_KIND_TTY,      LEONOS_FS_TYPE_DEVICE, 0},
+    {"console",   STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},
+    {"ptmx",      STORAGE_DEV_KIND_PTMX,     LEONOS_FS_TYPE_DEVICE, 0},
+    {"fb0",       STORAGE_DEV_KIND_FB0,      LEONOS_FS_TYPE_DEVICE, 0},
+    {"keyboard",  STORAGE_DEV_KIND_KEYBOARD, LEONOS_FS_TYPE_DEVICE, 0},
+    {"mouse",     STORAGE_DEV_KIND_MOUSE,    LEONOS_FS_TYPE_DEVICE, 0},
+    {"audio",     STORAGE_DEV_KIND_AUDIO,    LEONOS_FS_TYPE_DEVICE, 0},
+    {"audio0",    STORAGE_DEV_KIND_AUDIO,    LEONOS_FS_TYPE_DEVICE, 0},
+    {"ttyS0",     STORAGE_DEV_KIND_SERIAL,   LEONOS_FS_TYPE_DEVICE, 0},
+    {"serial0",   STORAGE_DEV_KIND_SERIAL,   LEONOS_FS_TYPE_DEVICE, 0},
+    {"sda",       STORAGE_DEV_KIND_DISK,     LEONOS_FS_TYPE_DEVICE, 0},
+    {"vda",       STORAGE_DEV_KIND_DISK,     LEONOS_FS_TYPE_DEVICE, 0},
+    {"nvme0n1",   STORAGE_DEV_KIND_DISK,     LEONOS_FS_TYPE_DEVICE, 0},
+    {"disk0",     STORAGE_DEV_KIND_DISK,     LEONOS_FS_TYPE_DEVICE, 0},
+    {"net0",      STORAGE_DEV_KIND_NET,      LEONOS_FS_TYPE_DEVICE, 0},
+    {"ethernet0", STORAGE_DEV_KIND_NET,      LEONOS_FS_TYPE_DEVICE, 0},
+    {"rtc",       STORAGE_DEV_KIND_RTC,      LEONOS_FS_TYPE_DEVICE, 0},
+    {"kmsg",      STORAGE_DEV_KIND_KMSG,      LEONOS_FS_TYPE_DEVICE, 0},
+    {"driverctl", STORAGE_DEV_KIND_DRIVERCTL, LEONOS_FS_TYPE_DEVICE, 0},
+    {"stdin",     STORAGE_DEV_KIND_TTY,      LEONOS_FS_TYPE_DEVICE, 0},
+    {"stdout",    STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},
+    {"stderr",    STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},
+    {"input",     STORAGE_DEV_KIND_INPUT_DIR, LEONOS_FS_TYPE_DIR, 1},
+    {"pts",       STORAGE_DEV_KIND_PTS_DIR,   LEONOS_FS_TYPE_DIR, 1},
+};
+
+static const struct storage_dev_entry storage_dev_input_entries[] = {
+    {"event0",    STORAGE_DEV_KIND_KEYBOARD, LEONOS_FS_TYPE_DEVICE, 0},
+    {"keyboard",  STORAGE_DEV_KIND_KEYBOARD, LEONOS_FS_TYPE_DEVICE, 0},
+    {"mouse0",    STORAGE_DEV_KIND_MOUSE,    LEONOS_FS_TYPE_DEVICE, 0},
+    {"mouse",     STORAGE_DEV_KIND_MOUSE,    LEONOS_FS_TYPE_DEVICE, 0},
+};
+
+static const struct storage_dev_entry *storage_dev_find(const char *name,
+                                                         const struct storage_dev_entry *entries,
+                                                         uint32_t count)
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        if (storage_text_eq_ci(name, entries[i].name)) {
+            return &entries[i];
+        }
+    }
+    return NULL;
+}
+
+static void storage_dev_node(const struct storage_dev_entry *entry,
+                             struct storage_node *out)
+{
+    if (!entry || !out) {
+        return;
+    }
+    *out = (struct storage_node){
+        .type = entry->type,
+        .flags = entry->directory ? STORAGE_NODE_FLAG_DEV_DIR
+                                  : (STORAGE_NODE_FLAG_DEV_NODE |
+                                     (entry->kind == STORAGE_DEV_KIND_FB0
+                                          ? STORAGE_NODE_FLAG_DEV_FB0 : 0u)),
+        .first_cluster = entry->kind,
+        .volume_id = STORAGE_VOLUME_ROOT,
+        .size = 0,
+    };
+}
+
 /**
  * @brief Reports the filesystem implementation backing the runtime root at runtime.
  * @return A static lowercase name suitable for boot diagnostics.
@@ -125,23 +204,73 @@ static int storage_lookup_path_unlocked(const char *path, struct storage_node *o
     }
     if (g_devfs_enabled && storage_text_eq_ci(resolved, "/dev")) {
         if (out) {
-            out->type = LEONOS_FS_TYPE_DIR;
-            out->flags = STORAGE_NODE_FLAG_DEV_DIR;
-            out->first_cluster = 0;
-            out->volume_id = STORAGE_VOLUME_ROOT;
-            out->size = 0;
+            *out = (struct storage_node){
+                .type = LEONOS_FS_TYPE_DIR,
+                .flags = STORAGE_NODE_FLAG_DEV_DIR,
+                .first_cluster = STORAGE_DEV_KIND_DIR,
+                .volume_id = STORAGE_VOLUME_ROOT,
+                .size = 0,
+            };
         }
         return 0;
     }
-    if (g_devfs_enabled && storage_text_eq_ci(resolved, "/dev/fb0")) {
+    if (g_devfs_enabled && storage_text_eq_ci(resolved, "/dev/input")) {
         if (out) {
-            out->type = LEONOS_FS_TYPE_DEVICE;
-            out->flags = STORAGE_NODE_FLAG_DEV_FB0;
-            out->first_cluster = 0;
-            out->volume_id = STORAGE_VOLUME_ROOT;
-            out->size = 0;
+            *out = (struct storage_node){
+                .type = LEONOS_FS_TYPE_DIR,
+                .flags = STORAGE_NODE_FLAG_DEV_DIR,
+                .first_cluster = STORAGE_DEV_KIND_INPUT_DIR,
+                .volume_id = STORAGE_VOLUME_ROOT,
+                .size = 0,
+            };
         }
         return 0;
+    }
+    if (g_devfs_enabled && storage_text_eq_ci(resolved, "/dev/pts")) {
+        if (out) {
+            *out = (struct storage_node){
+                .type = LEONOS_FS_TYPE_DIR,
+                .flags = STORAGE_NODE_FLAG_DEV_DIR,
+                .first_cluster = STORAGE_DEV_KIND_PTS_DIR,
+                .volume_id = STORAGE_VOLUME_ROOT,
+                .size = 0,
+            };
+        }
+        return 0;
+    }
+    if (g_devfs_enabled && storage_strlen(resolved) > 5u &&
+        (resolved[0] == '/' && (resolved[1] == 'd' || resolved[1] == 'D') &&
+         (resolved[2] == 'e' || resolved[2] == 'E') &&
+         (resolved[3] == 'v' || resolved[3] == 'V') && resolved[4] == '/')) {
+        const char *name = resolved + 5;
+        const struct storage_dev_entry *entry = NULL;
+        if (storage_strlen(name) > 6u &&
+            (name[0] == 'i' || name[0] == 'I') &&
+            (name[1] == 'n' || name[1] == 'N') &&
+            (name[2] == 'p' || name[2] == 'P') &&
+            (name[3] == 'u' || name[3] == 'U') &&
+            (name[4] == 't' || name[4] == 'T') && name[5] == '/') {
+            entry = storage_dev_find(name + 6, storage_dev_input_entries,
+                                     (uint32_t)(sizeof(storage_dev_input_entries) /
+                                                sizeof(storage_dev_input_entries[0])));
+        } else if (!storage_text_eq_ci(name, "input") &&
+                   !storage_text_eq_ci(name, "pts") &&
+                   !storage_strlen(name)) {
+            entry = NULL;
+        } else if (!storage_text_eq_ci(name, "input") &&
+                   !storage_text_eq_ci(name, "pts")) {
+            entry = storage_dev_find(name, storage_dev_entries,
+                                     (uint32_t)(sizeof(storage_dev_entries) /
+                                                sizeof(storage_dev_entries[0])));
+        }
+        if (entry && !entry->directory && out) {
+            storage_dev_node(entry, out);
+            return 0;
+        }
+        if (entry && entry->directory) {
+            return -20;
+        }
+        return -2;
     }
 
     ret = storage_route_path(resolved, &volume, backend_path, sizeof(backend_path));
@@ -463,10 +592,21 @@ static int storage_readdir_node_unlocked(const struct storage_node *node, uint64
         return -20;
     }
     if (node->flags & STORAGE_NODE_FLAG_DEV_DIR) {
-        if (*cursor == 0) {
-            entry->type = LEONOS_FS_TYPE_DEVICE;
-            storage_copy_text(entry->name, sizeof(entry->name), "fb0");
-            *cursor = 1;
+        const struct storage_dev_entry *entries = storage_dev_entries;
+        uint32_t count = (uint32_t)(sizeof(storage_dev_entries) /
+                                     sizeof(storage_dev_entries[0]));
+        if (node->first_cluster == STORAGE_DEV_KIND_INPUT_DIR) {
+            entries = storage_dev_input_entries;
+            count = (uint32_t)(sizeof(storage_dev_input_entries) /
+                               sizeof(storage_dev_input_entries[0]));
+        } else if (node->first_cluster == STORAGE_DEV_KIND_PTS_DIR) {
+            return 0;
+        }
+        while (*cursor < count) {
+            const struct storage_dev_entry *dev = &entries[*cursor];
+            ++(*cursor);
+            entry->type = dev->type;
+            storage_copy_text(entry->name, sizeof(entry->name), dev->name);
             return 1;
         }
         return 0;
@@ -1492,6 +1632,7 @@ int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
                      uint32_t capacity, uint32_t *out_count)
 {
     struct storage_node node;
+    char resolved[LEONOS_FS_PATH_LEN];
     uint64_t cursor = 0;
     uint32_t count = 0;
     if (!out_count) {
@@ -1519,8 +1660,9 @@ int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
         }
         ++count;
     }
-    if (g_devfs_enabled && node.volume_id == 0 &&
-        (node.flags & STORAGE_NODE_FLAG_ROOT) && count < capacity) {
+    if (g_devfs_enabled && storage_resolve_path("/", path, resolved,
+                                                sizeof(resolved)) == 0 &&
+        storage_text_eq_ci(resolved, "/") && count < capacity) {
         if (entries) {
             entries[count].type = LEONOS_FS_TYPE_DIR;
             storage_copy_text(entries[count].name, sizeof(entries[count].name), "dev");

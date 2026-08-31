@@ -7,6 +7,8 @@
 #define CONSOLE_LOG_CAP 8192
 #define CONSOLE_MAX_COLS 512u
 #define CONSOLE_MAX_ROWS 192u
+#define FB_ANSI_MAX_PARAMS 16u
+#define FB_CONSOLE_CURSOR_BYTES (LEONOS_FONT_W * LEONOS_FONT_H * 4u)
 
 static char log_buffer[CONSOLE_LOG_CAP];
 static size_t log_len;
@@ -20,16 +22,93 @@ static uint32_t fb_col;
 static uint32_t fb_row;
 static uint32_t console_ui_theme = 1u;
 static bool console_line_start = true;
+static bool console_runtime_quiet;
 static uint64_t console_boot_uptime_us;
+static bool console_presenting;
+static uint32_t fb_saved_col;
+static uint32_t fb_saved_row;
+static uint32_t fb_console_fg_color;
+static uint32_t fb_console_bg_color;
+static bool fb_console_bold;
+static bool fb_console_underline;
+static bool fb_console_reverse;
+static uint32_t fb_console_underline_color;
+static bool fb_console_underline_color_set;
+static uint32_t fb_scroll_top;
+static uint32_t fb_scroll_bottom;
+static bool fb_console_tty_cursor_active;
+static bool fb_console_tty_cursor_visible;
+static uint32_t fb_console_tty_cursor_x;
+static uint32_t fb_console_tty_cursor_y;
+static uint8_t fb_console_tty_cursor_bpp;
+static uint8_t fb_console_tty_cursor_saved[FB_CONSOLE_CURSOR_BYTES];
+
+/* Match the desktop terminal's readable ANSI palette while retaining a
+ * black ANSI background for conventional TTY output. */
+static const uint32_t fb_ansi_colors[16] = {
+    0x00000000u, 0x00d06060u, 0x006fc77au, 0x00d5b85au,
+    0x007f9ee8u, 0x00c38bd7u, 0x006bc8d8u, 0x00d7e3f4u,
+    0x00708090u, 0x00ff8484u, 0x008de39au, 0x00f0d37bu,
+    0x009bb7ffu, 0x00e8a5ffu, 0x0088e8fau, 0x00ffffffu,
+};
+
+static bool console_is_ntclks_format(const char *fmt)
+{
+    static const char prefix[] = "[ntclks]";
+    if (!fmt) return false;
+    for (uint32_t i = 0; i < sizeof(prefix) - 1u; ++i) {
+        if (!fmt[i] || fmt[i] != prefix[i]) return false;
+    }
+    return true;
+}
+
+enum fb_ansi_state {
+    FB_ANSI_NORMAL = 0,
+    FB_ANSI_ESC,
+    FB_ANSI_CSI,
+    FB_ANSI_OSC,
+    FB_ANSI_OSC_ESC,
+    FB_ANSI_CHARSET,
+};
+
+static uint8_t fb_ansi_state;
+static uint32_t fb_ansi_params[FB_ANSI_MAX_PARAMS];
+static bool fb_ansi_param_colon[FB_ANSI_MAX_PARAMS];
+static uint32_t fb_ansi_param_count;
+static uint32_t fb_ansi_param_value;
+static bool fb_ansi_param_active;
+static bool fb_ansi_private;
 
 static uint32_t console_panel(void)
 {
-    return console_ui_theme == 0u ? 0x00000000u : 0x001b2a3au;
+    /* Kernel logs and the fullscreen TTY always use the conventional
+     * terminal background, independent of the desktop appearance theme. */
+    return 0x00000000u;
 }
 
 static uint32_t console_fg(void)
 {
     return console_ui_theme == 0u ? 0x0000ff00u : 0x00ffffffu;
+}
+
+static void fb_console_reset_attributes(void)
+{
+    fb_console_bold = false;
+    fb_console_underline = false;
+    fb_console_reverse = false;
+    fb_console_underline_color = console_fg();
+    fb_console_underline_color_set = false;
+    fb_console_fg_color = console_fg();
+    fb_console_bg_color = console_panel();
+}
+
+static void fb_console_reset_ansi(void)
+{
+    fb_ansi_state = FB_ANSI_NORMAL;
+    fb_ansi_param_count = 0;
+    fb_ansi_param_value = 0;
+    fb_ansi_param_active = false;
+    fb_ansi_private = false;
 }
 
 static void log_store(char ch)
@@ -51,7 +130,7 @@ static void fb_console_clear_log_line(uint32_t row)
         return;
     }
     framebuffer_rect(fb_x, fb_y + row * LEONOS_FONT_H,
-                     fb_cols * LEONOS_FONT_W, LEONOS_FONT_H, console_panel());
+                     fb_cols * LEONOS_FONT_W, LEONOS_FONT_H, fb_console_bg_color);
 }
 
 static void fb_console_clear_log(void)
@@ -61,15 +140,84 @@ static void fb_console_clear_log(void)
         return;
     }
     framebuffer_rect(fb_x, fb_y, fb_cols * LEONOS_FONT_W,
-                     fb_rows * LEONOS_FONT_H, console_panel());
+                     fb_rows * LEONOS_FONT_H, fb_console_bg_color);
+}
+
+static void fb_console_hide_tty_cursor(void)
+{
+    const struct framebuffer *fb = framebuffer_get();
+    uint32_t row;
+    uint32_t row_bytes;
+
+    if (!fb_console_tty_cursor_visible) {
+        return;
+    }
+    fb_console_tty_cursor_visible = false;
+    if (!fb->available || !fb->pixels || !fb_console_tty_cursor_bpp ||
+        fb_console_tty_cursor_bpp > 4u ||
+        fb_console_tty_cursor_x + LEONOS_FONT_W > fb->width ||
+        fb_console_tty_cursor_y + LEONOS_FONT_H > fb->height) {
+        return;
+    }
+    row_bytes = LEONOS_FONT_W * fb_console_tty_cursor_bpp;
+    for (row = 0; row < LEONOS_FONT_H; ++row) {
+        uint8_t *dst = (uint8_t *)fb->pixels +
+                       (uint64_t)(fb_console_tty_cursor_y + row) * fb->pitch +
+                       (uint64_t)fb_console_tty_cursor_x * fb_console_tty_cursor_bpp;
+        uint8_t *src = fb_console_tty_cursor_saved + row * row_bytes;
+        for (uint32_t byte = 0; byte < row_bytes; ++byte) {
+            dst[byte] = src[byte];
+        }
+    }
+}
+
+static void fb_console_show_tty_cursor(void)
+{
+    const struct framebuffer *fb = framebuffer_get();
+    uint32_t row;
+    uint32_t row_bytes;
+
+    if (!fb_console_tty_cursor_active || fb_console_tty_cursor_visible ||
+        !fb->available || !fb->pixels || !fb_cols || !fb_rows ||
+        fb_col >= fb_cols || fb_row >= fb_rows || !fb->bytes_per_pixel ||
+        fb->bytes_per_pixel > 4u) {
+        return;
+    }
+    fb_console_tty_cursor_x = fb_x + fb_col * LEONOS_FONT_W;
+    fb_console_tty_cursor_y = fb_y + fb_row * LEONOS_FONT_H;
+    if (fb_console_tty_cursor_x + LEONOS_FONT_W > fb->width ||
+        fb_console_tty_cursor_y + LEONOS_FONT_H > fb->height) {
+        return;
+    }
+    fb_console_tty_cursor_bpp = fb->bytes_per_pixel;
+    row_bytes = LEONOS_FONT_W * fb_console_tty_cursor_bpp;
+    for (row = 0; row < LEONOS_FONT_H; ++row) {
+        const uint8_t *src = (const uint8_t *)fb->pixels +
+                             (uint64_t)(fb_console_tty_cursor_y + row) * fb->pitch +
+                             (uint64_t)fb_console_tty_cursor_x * fb_console_tty_cursor_bpp;
+        uint8_t *dst = fb_console_tty_cursor_saved + row * row_bytes;
+        for (uint32_t byte = 0; byte < row_bytes; ++byte) {
+            dst[byte] = src[byte];
+        }
+    }
+    framebuffer_rect(fb_console_tty_cursor_x,
+                     fb_console_tty_cursor_y + LEONOS_FONT_H - 2u,
+                     LEONOS_FONT_W, 2u, fb_console_fg_color);
+    fb_console_tty_cursor_visible = true;
 }
 
 static void fb_console_scroll(void)
 {
     const struct framebuffer *fb = framebuffer_get();
-    if (!fb->available || fb_rows < 2u || fb_x >= fb->width || fb_y >= fb->height) {
+    uint32_t top = fb_scroll_top < fb_rows ? fb_scroll_top : 0u;
+    uint32_t bottom = fb_scroll_bottom < fb_rows ? fb_scroll_bottom : fb_rows - 1u;
+    if (bottom <= top) {
+        top = 0u;
+        bottom = fb_rows - 1u;
+    }
+    if (!fb->available || bottom <= top || fb_x >= fb->width || fb_y >= fb->height) {
         fb_console_clear_log();
-        fb_row = 0;
+        fb_row = top;
         return;
     }
 
@@ -78,20 +226,20 @@ static void fb_console_scroll(void)
         width = fb->width - fb_x;
     }
 
-    uint32_t src_y = fb_y + LEONOS_FONT_H;
+    uint32_t src_y = fb_y + (top + 1u) * LEONOS_FONT_H;
     if (src_y >= fb->height) {
         fb_console_clear_log();
         fb_row = 0;
         return;
     }
 
-    uint32_t copy_h = (fb_rows - 1u) * LEONOS_FONT_H;
+    uint32_t copy_h = (bottom - top) * LEONOS_FONT_H;
     if (copy_h > fb->height - src_y) {
         copy_h = fb->height - src_y;
     }
 
     for (uint32_t y = 0; y < copy_h; ++y) {
-        uint8_t *dst = (uint8_t *)fb->pixels + (uint64_t)(fb_y + y) * fb->pitch +
+        uint8_t *dst = (uint8_t *)fb->pixels + (uint64_t)(fb_y + top * LEONOS_FONT_H + y) * fb->pitch +
                        (uint64_t)fb_x * fb->bytes_per_pixel;
         const uint8_t *src = (const uint8_t *)fb->pixels +
                              (uint64_t)(src_y + y) * fb->pitch +
@@ -101,14 +249,15 @@ static void fb_console_scroll(void)
         }
     }
 
-    fb_row = fb_rows - 1u;
+    fb_row = bottom;
     fb_console_clear_log_line(fb_row);
 }
 
 static void fb_console_newline(void)
 {
     fb_col = 0;
-    if (fb_row + 1u < fb_rows) {
+    uint32_t bottom = fb_scroll_bottom < fb_rows ? fb_scroll_bottom : fb_rows - 1u;
+    if (fb_row < bottom) {
         ++fb_row;
     } else {
         fb_console_scroll();
@@ -121,20 +270,463 @@ static void fb_console_putc(char ch)
         return;
     }
     if (ch == '\r') {
+        fb_col = 0;
         return;
     }
     if (ch == '\n') {
         fb_console_newline();
         return;
     }
+    if (ch == '\b') {
+        if (fb_col) {
+            --fb_col;
+            framebuffer_rect(fb_x + fb_col * LEONOS_FONT_W,
+                             fb_y + fb_row * LEONOS_FONT_H,
+                             LEONOS_FONT_W, LEONOS_FONT_H, fb_console_bg_color);
+        }
+        return;
+    }
+    if (ch == '\t') {
+        uint32_t next = (fb_col + 8u) & ~7u;
+        while (fb_col < next) {
+            fb_console_putc(' ');
+        }
+        return;
+    }
+    if ((unsigned char)ch < 0x20u) {
+        return;
+    }
+    if ((unsigned char)ch == 0x7fu) {
+        return;
+    }
     if (fb_col >= fb_cols) {
         fb_console_newline();
     }
-    framebuffer_rect(fb_x + fb_col * LEONOS_FONT_W, fb_y + fb_row * LEONOS_FONT_H,
-                     LEONOS_FONT_W, LEONOS_FONT_H, console_panel());
-    framebuffer_text(fb_x + fb_col * LEONOS_FONT_W, fb_y + fb_row * LEONOS_FONT_H,
-                     (char[]){ch, 0}, console_fg(), console_panel());
+    {
+        uint32_t fg = fb_console_reverse ? fb_console_bg_color : fb_console_fg_color;
+        uint32_t bg = fb_console_reverse ? fb_console_fg_color : fb_console_bg_color;
+        uint32_t x = fb_x + fb_col * LEONOS_FONT_W;
+        uint32_t y = fb_y + fb_row * LEONOS_FONT_H;
+        framebuffer_rect(x, y, LEONOS_FONT_W, LEONOS_FONT_H, bg);
+        framebuffer_text(x, y, (char[]){ch, 0}, fg, bg);
+        if (fb_console_bold && x + 1u < framebuffer_get()->width) {
+            framebuffer_text(x + 1u, y, (char[]){ch, 0}, fg, bg);
+        }
+        if (fb_console_underline) {
+            framebuffer_rect(x, y + LEONOS_FONT_H - 2u, LEONOS_FONT_W, 1u,
+                             fb_console_underline_color_set ? fb_console_underline_color : fg);
+        }
+    }
     ++fb_col;
+}
+
+static uint32_t fb_ansi_param(uint32_t index, uint32_t fallback)
+{
+    if (index >= fb_ansi_param_count) {
+        return fallback;
+    }
+    return fb_ansi_params[index];
+}
+
+static void fb_console_clear_row_range(uint32_t row, uint32_t first, uint32_t last)
+{
+    const struct framebuffer *fb = framebuffer_get();
+    if (!fb->available || row >= fb_rows || first >= fb_cols) {
+        return;
+    }
+    if (last > fb_cols) {
+        last = fb_cols;
+    }
+    if (last <= first) {
+        return;
+    }
+    framebuffer_rect(fb_x + first * LEONOS_FONT_W,
+                     fb_y + row * LEONOS_FONT_H,
+                     (last - first) * LEONOS_FONT_W, LEONOS_FONT_H,
+                     fb_console_bg_color);
+}
+
+static uint32_t fb_ansi_color(uint32_t code)
+{
+    if (code >= 90u && code <= 97u) {
+        return fb_ansi_colors[code - 90u + 8u];
+    }
+    if (code >= 30u && code <= 37u) {
+        return fb_ansi_colors[code - 30u];
+    }
+    return console_fg();
+}
+
+static uint32_t fb_ansi_palette(uint32_t index)
+{
+    if (index < 16u) return fb_ansi_colors[index];
+    if (index >= 232u) {
+        uint32_t level = 8u + (index - 232u) * 10u;
+        return (level << 16) | (level << 8) | level;
+    }
+    index -= 16u;
+    {
+        uint32_t r = index / 36u;
+        uint32_t g = (index / 6u) % 6u;
+        uint32_t b = index % 6u;
+        r = r ? 55u + r * 40u : 0u;
+        g = g ? 55u + g * 40u : 0u;
+        b = b ? 55u + b * 40u : 0u;
+        return (r << 16) | (g << 8) | b;
+    }
+}
+
+enum fb_ansi_color_target {
+    FB_ANSI_COLOR_FOREGROUND,
+    FB_ANSI_COLOR_BACKGROUND,
+    FB_ANSI_COLOR_UNDERLINE,
+};
+
+static void fb_console_set_ansi_color(enum fb_ansi_color_target target, uint32_t color)
+{
+    if (target == FB_ANSI_COLOR_FOREGROUND) {
+        fb_console_fg_color = color;
+    } else if (target == FB_ANSI_COLOR_BACKGROUND) {
+        fb_console_bg_color = color;
+    } else {
+        fb_console_underline_color = color;
+        fb_console_underline_color_set = true;
+    }
+}
+
+static bool fb_console_apply_extended_color(uint32_t index,
+                                            enum fb_ansi_color_target target,
+                                            uint32_t *last_index)
+{
+    uint32_t mode_index = index + 1u;
+    uint32_t color;
+
+    if (mode_index >= fb_ansi_param_count) {
+        return false;
+    }
+    if (fb_ansi_params[mode_index] == 5u) {
+        if (mode_index + 1u >= fb_ansi_param_count) {
+            return false;
+        }
+        color = fb_ansi_palette(fb_ansi_params[mode_index + 1u] > 255u
+                                    ? 255u : fb_ansi_params[mode_index + 1u]);
+        *last_index = mode_index + 1u;
+    } else if (fb_ansi_params[mode_index] == 2u) {
+        uint32_t rgb_index = mode_index + 1u;
+        if (fb_ansi_param_colon[index]) {
+            /* ISO 8613-6 form: 38:2:<color-space>:red:green:blue. */
+            if (mode_index + 4u >= fb_ansi_param_count) {
+                return false;
+            }
+            rgb_index = mode_index + 2u;
+            *last_index = mode_index + 4u;
+        } else {
+            if (mode_index + 3u >= fb_ansi_param_count) {
+                return false;
+            }
+            *last_index = mode_index + 3u;
+        }
+        color = ((fb_ansi_params[rgb_index] > 255u ? 255u : fb_ansi_params[rgb_index]) << 16) |
+                ((fb_ansi_params[rgb_index + 1u] > 255u ? 255u : fb_ansi_params[rgb_index + 1u]) << 8) |
+                (fb_ansi_params[rgb_index + 2u] > 255u ? 255u : fb_ansi_params[rgb_index + 2u]);
+    } else {
+        return false;
+    }
+    fb_console_set_ansi_color(target, color);
+    return true;
+}
+
+static void fb_console_execute_csi(char final)
+{
+    uint32_t n = fb_ansi_param_count;
+    uint32_t p0 = fb_ansi_param(0, (final == 'J' || final == 'K') ? 0u : 1u);
+    uint32_t p1 = fb_ansi_param(1, 1);
+    uint32_t movement = p0 ? p0 : 1u;
+    if (p0 == 0u && (final == 'G' || final == 'H' || final == 'f')) {
+        p0 = 1u;
+    }
+    if (p1 == 0u && (final == 'H' || final == 'f')) {
+        p1 = 1u;
+    }
+
+    switch (final) {
+    case 'A':
+        fb_row = fb_row >= movement ? fb_row - movement : 0;
+        break;
+    case 'B':
+        fb_row = fb_row + movement < fb_rows ? fb_row + movement : fb_rows - 1u;
+        break;
+    case 'C':
+        fb_col = fb_col + movement < fb_cols ? fb_col + movement : fb_cols - 1u;
+        break;
+    case 'D':
+        fb_col = fb_col >= movement ? fb_col - movement : 0;
+        break;
+    case 'G':
+        fb_col = p0 > fb_cols ? fb_cols - 1u : p0 - 1u;
+        break;
+    case 'H':
+    case 'f':
+        fb_row = p0 > fb_rows ? fb_rows - 1u : p0 - 1u;
+        fb_col = p1 > fb_cols ? fb_cols - 1u : p1 - 1u;
+        break;
+    case 'J':
+        if (p0 == 2u || p0 == 3u) {
+            fb_console_clear_log();
+        } else if (p0 == 1u) {
+            for (uint32_t row = 0; row < fb_row; ++row) {
+                fb_console_clear_row_range(row, 0, fb_cols);
+            }
+            fb_console_clear_row_range(fb_row, 0, fb_col + 1u);
+        } else {
+            fb_console_clear_row_range(fb_row, fb_col, fb_cols);
+            for (uint32_t row = fb_row + 1u; row < fb_rows; ++row) {
+                fb_console_clear_row_range(row, 0, fb_cols);
+            }
+        }
+        break;
+    case 'K':
+        if (p0 == 2u) {
+            fb_console_clear_row_range(fb_row, 0, fb_cols);
+        } else if (p0 == 1u) {
+            fb_console_clear_row_range(fb_row, 0, fb_col + 1u);
+        } else {
+            fb_console_clear_row_range(fb_row, fb_col, fb_cols);
+        }
+        break;
+    case 'E':
+        fb_row += movement;
+        if (fb_row >= fb_rows) fb_row = fb_rows - 1u;
+        fb_col = 0;
+        break;
+    case 'F':
+        fb_row = fb_row >= movement ? fb_row - movement : 0u;
+        fb_col = 0;
+        break;
+    case 'd':
+        fb_row = p0 > fb_rows ? fb_rows - 1u : p0 - 1u;
+        break;
+    case 'e':
+        fb_row += movement;
+        if (fb_row >= fb_rows) fb_row = fb_rows - 1u;
+        break;
+    case 'h':
+    case 'l':
+        /* Accept cursor visibility, bracketed paste and other mode toggles. */
+        break;
+    case 'r':
+        if (n >= 2u && p0 >= 1u && p1 >= p0 && p1 <= fb_rows) {
+            fb_scroll_top = p0 - 1u;
+            fb_scroll_bottom = p1 - 1u;
+            fb_row = fb_scroll_top;
+            fb_col = 0;
+        }
+        break;
+    case 'S':
+        for (uint32_t i = 0; i < movement; ++i) fb_console_scroll();
+        break;
+    case 'X':
+    case '@':
+    case 'P':
+        fb_console_clear_row_range(fb_row, fb_col,
+                                   fb_col + movement > fb_cols ? fb_cols : fb_col + movement);
+        break;
+    case 'L':
+    case 'M':
+        fb_console_clear_row_range(fb_row, 0, fb_cols);
+        break;
+    case 'm':
+        if (!n) {
+            fb_console_reset_attributes();
+            break;
+        }
+        for (uint32_t i = 0; i < n; ++i) {
+            uint32_t code = fb_ansi_params[i];
+            if (code == 0u) {
+                fb_console_reset_attributes();
+            } else if (code == 1u) {
+                fb_console_bold = true;
+            } else if (code == 2u) {
+                fb_console_bold = false;
+            } else if (code == 4u) {
+                fb_console_underline = true;
+            } else if (code == 7u) {
+                fb_console_reverse = true;
+            } else if (code == 22u) {
+                fb_console_bold = false;
+            } else if (code == 24u) {
+                fb_console_underline = false;
+            } else if (code == 27u) {
+                fb_console_reverse = false;
+            } else if ((code >= 30u && code <= 37u) || (code >= 90u && code <= 97u)) {
+                fb_console_fg_color = fb_ansi_color(code);
+            } else if (code == 39u) {
+                fb_console_fg_color = console_fg();
+            } else if (code >= 40u && code <= 47u) {
+                fb_console_bg_color = fb_ansi_color(code - 10u);
+            } else if (code >= 100u && code <= 107u) {
+                fb_console_bg_color = fb_ansi_color(code - 10u);
+            } else if (code == 49u) {
+                fb_console_bg_color = console_panel();
+            } else if (code == 59u) {
+                fb_console_underline_color = console_fg();
+                fb_console_underline_color_set = false;
+            } else if (code == 38u || code == 48u || code == 58u) {
+                enum fb_ansi_color_target target = code == 38u ? FB_ANSI_COLOR_FOREGROUND :
+                                                    code == 48u ? FB_ANSI_COLOR_BACKGROUND :
+                                                                 FB_ANSI_COLOR_UNDERLINE;
+                uint32_t last_index = i;
+                if (fb_console_apply_extended_color(i, target, &last_index)) {
+                    i = last_index;
+                }
+            }
+        }
+        break;
+    case 's':
+        fb_saved_col = fb_col;
+        fb_saved_row = fb_row;
+        break;
+    case 'u':
+        fb_col = fb_saved_col < fb_cols ? fb_saved_col : 0u;
+        fb_row = fb_saved_row < fb_rows ? fb_saved_row : 0u;
+        break;
+    default:
+        break;
+    }
+}
+
+static void fb_console_ansi_feed(char ch)
+{
+    unsigned char byte = (unsigned char)ch;
+    if (!fb_console_enabled) {
+        return;
+    }
+    if (fb_ansi_state == FB_ANSI_NORMAL) {
+        if (byte == 0x07u || byte == 0x7fu || byte == 0x00u || byte == 0x0eu || byte == 0x0fu) {
+            return;
+        }
+        if (byte == 0x1bU) {
+            fb_ansi_state = FB_ANSI_ESC;
+            return;
+        }
+        fb_console_putc(ch);
+        return;
+    }
+    if (fb_ansi_state == FB_ANSI_ESC) {
+        if (ch == '[') {
+            fb_ansi_state = FB_ANSI_CSI;
+            fb_ansi_param_count = 0;
+            fb_ansi_param_value = 0;
+            fb_ansi_param_active = false;
+            return;
+        }
+        if (ch == '7') {
+            fb_saved_col = fb_col;
+            fb_saved_row = fb_row;
+            fb_console_reset_ansi();
+            return;
+        }
+        if (ch == 'c') {
+            fb_col = 0;
+            fb_row = 0;
+            fb_scroll_top = 0;
+            fb_scroll_bottom = fb_rows ? fb_rows - 1u : 0u;
+            fb_console_reset_attributes();
+            fb_console_clear_log();
+            fb_console_reset_ansi();
+            return;
+        }
+        if (ch == 'D') {
+            fb_console_newline();
+            fb_console_reset_ansi();
+            return;
+        }
+        if (ch == 'M') {
+            if (fb_row > fb_scroll_top) --fb_row;
+            fb_console_reset_ansi();
+            return;
+        }
+        if (ch == 'E') {
+            fb_console_newline();
+            fb_col = 0;
+            fb_console_reset_ansi();
+            return;
+        }
+        if (ch == '(' || ch == ')') {
+            fb_ansi_state = FB_ANSI_CHARSET;
+            return;
+        }
+        if (ch == ']' || ch == 'P' || ch == '^' || ch == '_' || ch == 'X') {
+            fb_ansi_state = FB_ANSI_OSC;
+            return;
+        }
+        if (ch == '\\' || ch == '=' || ch == '>') {
+            fb_console_reset_ansi();
+            return;
+        }
+        if (ch == '8') {
+            fb_col = fb_saved_col < fb_cols ? fb_saved_col : 0u;
+            fb_row = fb_saved_row < fb_rows ? fb_saved_row : 0u;
+            fb_console_reset_ansi();
+            return;
+        }
+        /* Unknown ESC sequences are control traffic; never render their
+         * final byte as user-visible text. */
+        fb_console_reset_ansi();
+        return;
+    }
+    if (fb_ansi_state == FB_ANSI_CHARSET) {
+        fb_console_reset_ansi();
+        return;
+    }
+    if (fb_ansi_state == FB_ANSI_OSC) {
+        if (byte == 0x07u) {
+            fb_console_reset_ansi();
+        } else if (byte == 0x1bu) {
+            fb_ansi_state = FB_ANSI_OSC_ESC;
+        }
+        return;
+    }
+    if (fb_ansi_state == FB_ANSI_OSC_ESC) {
+        fb_console_reset_ansi();
+        return;
+    }
+    if ((ch == '?' || ch == '>') && !fb_ansi_param_count &&
+        !fb_ansi_param_active) {
+        fb_ansi_private = true;
+        return;
+    }
+    if (byte >= '0' && byte <= '9') {
+        if (fb_ansi_param_value < 10000u) {
+            fb_ansi_param_value = fb_ansi_param_value * 10u + (byte - '0');
+        }
+        fb_ansi_param_active = true;
+        return;
+    }
+    if (ch == ';' || ch == ':') {
+        if (fb_ansi_param_count < FB_ANSI_MAX_PARAMS) {
+            fb_ansi_params[fb_ansi_param_count++] =
+                fb_ansi_param_active ? fb_ansi_param_value : 0u;
+            fb_ansi_param_colon[fb_ansi_param_count - 1u] = ch == ':';
+        }
+        fb_ansi_param_value = 0;
+        fb_ansi_param_active = false;
+        return;
+    }
+    if (byte >= 0x40u && byte <= 0x7eu) {
+        if (fb_ansi_param_count < FB_ANSI_MAX_PARAMS &&
+            (fb_ansi_param_active || fb_ansi_param_count)) {
+            fb_ansi_params[fb_ansi_param_count++] =
+                fb_ansi_param_active ? fb_ansi_param_value : 0u;
+            fb_ansi_param_colon[fb_ansi_param_count - 1u] = false;
+        }
+        if (!fb_ansi_private) {
+            fb_console_execute_csi(ch);
+        }
+        fb_console_reset_ansi();
+        return;
+    }
+    fb_console_reset_ansi();
 }
 
 static bool fb_console_use_handoff_state(const struct leonos_boot_log_state *boot_log)
@@ -162,6 +754,12 @@ static bool fb_console_use_handoff_state(const struct leonos_boot_log_state *boo
 
     fb_col = boot_log->column < fb_cols ? boot_log->column : 0u;
     fb_row = boot_log->row < fb_rows ? boot_log->row : fb_rows - 1u;
+    fb_scroll_top = 0u;
+    fb_scroll_bottom = fb_rows - 1u;
+    fb_saved_col = fb_col;
+    fb_saved_row = fb_row;
+    fb_console_reset_attributes();
+    fb_console_reset_ansi();
     return true;
 }
 
@@ -183,12 +781,19 @@ static void fb_console_initialize_fullscreen(void)
     }
     fb_col = 0;
     fb_row = 0;
+    fb_saved_col = 0;
+    fb_saved_row = 0;
+    fb_scroll_top = 0u;
+    fb_scroll_bottom = fb_rows ? fb_rows - 1u : 0u;
+    fb_console_reset_attributes();
+    fb_console_reset_ansi();
     framebuffer_rect(0, 0, fb->width, fb->height, console_panel());
 }
 
 static void console_emit_raw(char ch)
 {
     char s[2] = {ch, 0};
+    fb_console_hide_tty_cursor();
     log_store(ch);
     serial_write(s);
     if (vga_console_enabled) {
@@ -196,6 +801,21 @@ static void console_emit_raw(char ch)
     }
     fb_console_putc(ch);
     console_line_start = ch == '\n';
+}
+
+static void console_present(void)
+{
+    if (console_presenting || !fb_console_enabled || !framebuffer_get()->available) {
+        return;
+    }
+    console_presenting = true;
+    fb_console_show_tty_cursor();
+    if (fb_cols && fb_rows) {
+        framebuffer_present_region(fb_x, fb_y,
+                                   fb_cols * LEONOS_FONT_W,
+                                   fb_rows * LEONOS_FONT_H);
+    }
+    console_presenting = false;
 }
 
 static void print_unsigned_raw(uint64_t value, unsigned base, bool upper)
@@ -220,7 +840,7 @@ static void print_unsigned_raw(uint64_t value, unsigned base, bool upper)
 
 static void console_emit_timestamp(void)
 {
-    uint64_t uptime_us = console_boot_uptime_us + time_uptime_ms() * 1000ULL;
+    uint64_t uptime_us = console_boot_uptime_us + time_uptime_us();
     uint64_t seconds = uptime_us / 1000000ULL;
     uint64_t micros = uptime_us % 1000000ULL;
     uint64_t divisor = 1ULL;
@@ -283,9 +903,49 @@ void console_write_len(const char *s, size_t len)
     }
 }
 
+void console_write_tty_len(const char *s, size_t len)
+{
+    fb_console_hide_tty_cursor();
+    for (size_t i = 0; i < len; ++i) {
+        char byte[2] = {s[i], 0};
+        log_store(s[i]);
+        serial_write(byte);
+        if (vga_console_enabled) {
+            vga_putc(s[i]);
+        }
+        fb_console_ansi_feed(s[i]);
+        console_line_start = s[i] == '\n';
+    }
+    console_present();
+}
+
+void console_enter_tty_runtime(void)
+{
+    console_runtime_quiet = true;
+    console_line_start = true;
+    if (fb_console_enabled) {
+        fb_console_hide_tty_cursor();
+        fb_col = 0;
+        fb_row = 0;
+        fb_scroll_top = 0;
+        fb_scroll_bottom = fb_rows ? fb_rows - 1u : 0u;
+        fb_console_reset_attributes();
+        fb_console_reset_ansi();
+        fb_console_clear_log();
+        fb_console_tty_cursor_active = true;
+        console_present();
+    } else if (vga_console_enabled) {
+        vga_init();
+    }
+}
+
 void console_printf(const char *fmt, ...)
 {
     va_list ap;
+
+    if (console_runtime_quiet && console_is_ntclks_format(fmt)) {
+        return;
+    }
 
     if (fmt && fmt[0] && console_line_start) {
         console_emit_timestamp();
@@ -363,6 +1023,7 @@ void console_printf(const char *fmt, ...)
     }
 
     va_end(ap);
+    console_present();
 }
 
 void console_enable_framebuffer(const struct leonos_boot_log_state *boot_log)
@@ -376,12 +1037,15 @@ void console_enable_framebuffer(const struct leonos_boot_log_state *boot_log)
         fb_console_clear_log();
     }
     for (size_t i = 0; i < log_len; ++i) {
-        fb_console_putc(log_buffer[i]);
+        fb_console_ansi_feed(log_buffer[i]);
     }
+    console_present();
 }
 
 void console_disable_framebuffer(void)
 {
+    fb_console_hide_tty_cursor();
+    fb_console_tty_cursor_active = false;
     fb_console_enabled = false;
 }
 

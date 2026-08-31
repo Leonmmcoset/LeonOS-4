@@ -30,6 +30,14 @@ void console_write(const char *s);
  */
 void console_write_len(const char *s, size_t len);
 /**
+ * @brief Write terminal data without adding diagnostic timestamps.
+ */
+void console_write_tty_len(const char *s, size_t len);
+/**
+ * @brief Enter the TTY runtime: hide kernel diagnostics and reset the visible console.
+ */
+void console_enter_tty_runtime(void);
+/**
  * @brief Format and write a message to the console, printf-style.
  */
 void console_printf(const char *fmt, ...);

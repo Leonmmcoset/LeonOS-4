@@ -40,6 +40,7 @@
  * mapping is deliberately read-only; the page-fault handler copies it before
  * restoring write permission for the faulting address space. */
 #define NTCLKS_PAGE_COW 0x200ULL
+#define NTCLKS_PAGE_DEVICE 0x400ULL
 #define NTCLKS_PAGE_NOEXEC (1ULL << 63)
 #define NTCLKS_PHYS_ADDR_MASK 0x000ffffffffff000ULL
 
@@ -117,6 +118,7 @@ uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
  * @brief Return the physical address backing user vaddr, or 0 if unmapped.
  */
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr);
+bool address_space_user_page_is_device(const struct address_space *as, uint64_t vaddr);
 /**
  * @brief Return how much user memory, in KiB, is currently mapped in as.
  */

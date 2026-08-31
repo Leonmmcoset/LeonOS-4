@@ -1569,6 +1569,12 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
     if (signal_number == 0) {
         return 0;
     }
+    /* SIGKILL and SIGSTOP cannot be ignored. */
+    if (signal_number != 9 && signal_number != 17 &&
+        (task->ignored_signals & (1u << (uint32_t)signal_number)) != 0) {
+        task->pending_signals &= ~(1u << (uint32_t)signal_number);
+        return 0;
+    }
     task->pending_signals |= 1u << (uint32_t)signal_number;
     if (signal_number == 17 || signal_number == 18) { /* SIGSTOP or SIGTSTP */
         task->wake_tick = 0;
@@ -1595,6 +1601,45 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
         signal_number == 15) {
         task->exit_signal = (uint32_t)signal_number;
         sched_exit(pid, (uint64_t)(128 + signal_number));
+    }
+    return 0;
+}
+
+/**
+ * @brief Read or update a task's default/ignored signal disposition.
+ * @param pid Target user-task ID.
+ * @param signal_number POSIX signal number.
+ * @param operation Query or update operation.
+ * @param disposition Requested value for update and previous value on return.
+ * @return Zero on success or a negative scheduler error.
+ */
+int sched_signal_action(uint32_t pid, int signal_number, uint32_t operation,
+                        uint32_t *disposition)
+{
+    struct task *task = sched_find(pid);
+    uint32_t bit;
+    if (!task || task->pid == 0 || task->kind != TASK_KIND_USER ||
+        task->state == TASK_EXITED || !disposition || signal_number <= 0 ||
+        signal_number >= 32 || signal_number == 9 || signal_number == 17) {
+        return -1;
+    }
+    bit = 1u << (uint32_t)signal_number;
+    if (operation == 1U) {
+        *disposition = (task->ignored_signals & bit) ? 1U : 0U;
+        return 0;
+    }
+    if (operation != 2U || *disposition > 1U) {
+        return -1;
+    }
+    {
+        uint32_t previous = (task->ignored_signals & bit) ? 1U : 0U;
+        if (*disposition) {
+            task->ignored_signals |= bit;
+            task->pending_signals &= ~bit;
+        } else {
+            task->ignored_signals &= ~bit;
+        }
+        *disposition = previous;
     }
     return 0;
 }
@@ -1798,6 +1843,41 @@ int sched_kill_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid,
         ++killed;
     }
     return killed;
+}
+
+/**
+ * @brief Send SIGHUP to every user task attached to a closing PTY.
+ * @param pty_id Closed PTY identifier.
+ * @param keep_pid PTY owner to leave untouched.
+ * @return Number of signalled tasks, or zero when no PTY was supplied.
+ */
+int sched_hangup_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid)
+{
+    int signalled = 0;
+    if (!pty_id) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = tasks[i];
+        if (task->pid == 0 || task->pid == keep_pid ||
+            task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
+            (task->flags & TASK_FLAG_SERVICE) || task->pty_id != pty_id) {
+            continue;
+        }
+        if (sched_signal_user_task(task->pid, 1) == 0) {
+            ++signalled;
+        }
+        /* A process that ignored SIGHUP can outlive the terminal.  Avoid
+         * leaving it attached to a PTY id which may later be reused. */
+        if (task->state != TASK_EXITED) {
+            task->pty_id = 0;
+            task->wait_pty_id = 0;
+            for (uint32_t fd = 0; fd < SCHED_TASK_PTY_FD_MAX; ++fd) {
+                task->pty_fds[fd] = (struct task_pty_fd){0};
+            }
+        }
+    }
+    return signalled;
 }
 
 /**

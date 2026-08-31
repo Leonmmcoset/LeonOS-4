@@ -22,11 +22,15 @@
 #define CMOS_STATUS_A 0x0au
 #define CMOS_STATUS_B 0x0bu
 #define CMOS_CENTURY 0x32u
+#define PIT_CHANNEL0 0x40u
+#define PIT_COMMAND 0x43u
+#define PIT_LATCH_CHANNEL0 0x00u
 
 static volatile uint64_t ticks;
 static uint64_t wall_unix_seconds;
 static uint64_t wall_subticks;
 static uint8_t wall_clock_valid;
+static volatile uint16_t pit_divisor;
 
 /**
  * @brief Short I/O delay between CMOS register select and read.
@@ -216,6 +220,7 @@ void time_init(void)
     wall_unix_seconds = 0;
     wall_subticks = 0;
     wall_clock_valid = 0;
+    pit_divisor = 0;
     if (rtc_read_unix_seconds(&wall_unix_seconds) == 0) {
         struct leonos_time_info info;
         wall_clock_valid = 1;
@@ -259,6 +264,49 @@ uint64_t time_ticks(void)
 uint64_t time_uptime_ms(void)
 {
     return (ticks * 1000ULL) / NTCLKS_TICK_HZ;
+}
+
+void time_set_pit_divisor(uint16_t divisor)
+{
+    pit_divisor = divisor;
+}
+
+static uint16_t pit_current_count(void)
+{
+    uint8_t low;
+    uint8_t high;
+
+    x86_64_outb(PIT_LATCH_CHANNEL0, PIT_COMMAND);
+    low = x86_64_inb(PIT_CHANNEL0);
+    high = x86_64_inb(PIT_CHANNEL0);
+    return (uint16_t)((uint16_t)low | ((uint16_t)high << 8));
+}
+
+uint64_t time_uptime_us(void)
+{
+    uint64_t tick_count;
+    uint64_t elapsed_counts;
+    uint16_t divisor = pit_divisor;
+
+    if (!divisor) {
+        return (ticks * 1000000ULL) / NTCLKS_TICK_HZ;
+    }
+
+    /* A tick may interrupt the PIT latch sequence.  Retry if that happens so
+     * the counter fraction and its whole-tick base always come from one tick. */
+    for (uint32_t attempt = 0; attempt < 3U; ++attempt) {
+        uint64_t before = ticks;
+        uint16_t counter = pit_current_count();
+        uint64_t after = ticks;
+        if (before != after) {
+            continue;
+        }
+        tick_count = before;
+        elapsed_counts = counter <= divisor ? (uint64_t)(divisor - counter) : 0ULL;
+        return (tick_count * 1000000ULL) / NTCLKS_TICK_HZ +
+               (elapsed_counts * 1000000ULL) / ((uint64_t)divisor * NTCLKS_TICK_HZ);
+    }
+    return (ticks * 1000000ULL) / NTCLKS_TICK_HZ;
 }
 
 /**

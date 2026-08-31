@@ -4,6 +4,7 @@
 #include <glob.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
+#include <sys/reboot.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -18,6 +19,25 @@
 extern int sleep_ms(unsigned long milliseconds);
 extern unsigned long leonos_uptime_ms(void);
 extern char **environ;
+
+int reboot(unsigned int command)
+{
+    if (command == RB_AUTOBOOT) {
+        return leonos_system_reboot();
+    }
+    return leonos_system_shutdown();
+}
+
+void sync(void)
+{
+    /* LeonOS filesystem writes are committed synchronously. */
+}
+
+/* BusyBox's env applet normally gets this helper from libbb/executable.o.
+ * That object is intentionally omitted from the LeonOS minimal libbb set;
+ * keep the same execvp and SUSv3 exit-code behavior in the port shim. */
+extern unsigned char xfunc_error_retval;
+void bb_perror_msg_and_die(const char *message, ...);
 
 /* Ash and libbb/lineedit share this latch when an input wait is interrupted.
  * The rest of BusyBox's signals.c is intentionally replaced by the LeonOS
@@ -174,6 +194,20 @@ const char *leonos_shell_command_path(const char *name)
     if (strcmp(name, "less") == 0) return "/programs/less/less.elf";
     if (strcmp(name, "sl") == 0) return "/programs/sl/sl.elf";
     if (strcmp(name, "cmd") == 0) return "/programs/cmd/cmd.elf";
+    if (strcmp(name, "fdisk") == 0 || strcmp(name, "mkfs.fat") == 0 ||
+        strcmp(name, "mkfs.fat32") == 0 || strcmp(name, "mkfs.vfat") == 0 ||
+        strcmp(name, "mkfs.ext2") == 0 || strcmp(name, "mkfs.exfat") == 0 ||
+        strcmp(name, "mount") == 0 || strcmp(name, "umount") == 0 ||
+        strcmp(name, "fsck") == 0 || strcmp(name, "fsck.fat") == 0 ||
+        strcmp(name, "fsck.fat32") == 0 || strcmp(name, "fsck.vfat") == 0 ||
+        strcmp(name, "fsck.ext2") == 0 || strcmp(name, "fsck.exfat") == 0 ||
+        strcmp(name, "blkid") == 0 || strcmp(name, "lsblk") == 0 ||
+        strcmp(name, "leonos-grub-installer") == 0 || strcmp(name, "sync") == 0)
+        return "/programs/busybox/busybox.elf";
+    if (strcmp(name, "gptinit") == 0)
+        return "/programs/gptinit/gptinit.elf";
+    if (strcmp(name, "oobe") == 0) return "/system/apps/oobe/oobe.elf";
+    if (strcmp(name, "login") == 0) return "/system/apps/login/login.elf";
     return 0;
 }
 
@@ -228,6 +262,21 @@ int execvp(const char *file, char *const argv[])
         return -1;
     }
     return leonos_exec_busybox_applet(argv);
+}
+
+__attribute__((__noreturn__)) void BB_EXECVP_or_die(char **argv)
+{
+    int saved_errno;
+
+    if (!argv || !argv[0]) {
+        errno = EINVAL;
+        bb_perror_msg_and_die("can't execute");
+    }
+    execvp(argv[0], argv);
+    saved_errno = errno;
+    xfunc_error_retval = (saved_errno == ENOENT) ? 127 : 126;
+    errno = saved_errno;
+    bb_perror_msg_and_die("can't execute '%s'", argv[0]);
 }
 
 int glob(const char *pattern, int flags,

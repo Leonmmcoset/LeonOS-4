@@ -64,6 +64,7 @@ def main() -> int:
     parser.add_argument("--installed-policy-dir", default="build/userland-installer-policy")
     parser.add_argument("--policy-apps", nargs="*", default=("desktop", "oobe", "settings"))
     parser.add_argument("--userland-dir", default="build/userland")
+    parser.add_argument("--gptinit", default="build/userland-installer/gptinit.elf")
     parser.add_argument("--policy-runtime", default="build/userland-installer-policy/libleonos.so.1")
     parser.add_argument("--generated-icons-dir", default="build/generated/app-icons")
     # Accepted only so a build.py process started before the payload split can
@@ -77,6 +78,7 @@ def main() -> int:
     esp_tree = ROOT / args.esp_tree
     installed_policy_dir = ROOT / args.installed_policy_dir
     userland_dir = ROOT / args.userland_dir
+    gptinit = ROOT / args.gptinit
     generated_icons_dir = ROOT / args.generated_icons_dir
     policy_runtime = ROOT / args.policy_runtime
 
@@ -85,7 +87,7 @@ def main() -> int:
     if not installed_policy_dir.exists():
         raise FileNotFoundError(f"missing installed policy directory: {installed_policy_dir}")
     if (not userland_dir.exists() or not generated_icons_dir.exists() or
-            not policy_runtime.is_file()):
+            not policy_runtime.is_file() or not gptinit.is_file()):
         raise FileNotFoundError("missing installer build inputs")
 
     if stage.exists():
@@ -97,12 +99,23 @@ def main() -> int:
 
     copy_file(userland_dir / "desktop.elf", stage / "system/apps/desktop/desktop.elf")
     copy_file(userland_dir / "installer.elf", stage / "system/apps/installer/installer.elf")
+    # Advanced installer mode enters the installer root directly through the
+    # BusyBox shell, so keep the command environment available on the ISO.
+    copy_file(userland_dir / "busybox.elf", stage / "programs/busybox/busybox.elf")
+    # gptinit is installer-only and must never enter the installed root tree.
+    copy_file(gptinit, stage / "programs/gptinit/gptinit.elf")
     copy_file(esp_tree / "system/apps/dynlinkerror/dynlinkerror.elf",
               stage / "system/apps/dynlinkerror/dynlinkerror.elf")
     copy_file(generated_icons_dir / "desktop.bmp", stage / "system/apps/desktop/desktop.bmp")
     copy_file(generated_icons_dir / "installer.bmp", stage / "system/apps/installer/installer.bmp")
     copy_tree(esp_tree / "system/config", stage / "system/config")
     (stage / "system/state").mkdir(parents=True, exist_ok=True)
+    # Keep the conventional live-environment mount point available before the
+    # advanced shell starts.  Without this, the documented `mkdir /mnt/esp`
+    # and `mkdir /mnt/root` commands fail because POSIX mkdir does not create
+    # missing parents unless -p is supplied.
+    for directory in ("mnt", "tmp", "media"):
+        (stage / directory).mkdir(parents=True, exist_ok=True)
     # The installer itself runs from this FAT32 ramdisk. The staged installed
     # The root payload retains the normal exFAT manifest copied from esp_tree;
     # the installer can also update an existing ext2 target.

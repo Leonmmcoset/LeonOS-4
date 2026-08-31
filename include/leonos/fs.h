@@ -15,6 +15,8 @@
 #define LEONOS_DISK_IOCTL_CREATE_PARTITION 0x4c445043UL
 #define LEONOS_DISK_IOCTL_MOUNT_PARTITION 0x4c44504dUL
 #define LEONOS_DISK_IOCTL_UNMOUNT_PARTITION 0x4c445055UL
+#define LEONOS_DISK_IOCTL_EDIT_PARTITION 0x4c445045UL
+#define LEONOS_DISK_IOCTL_INITIALIZE_GPT 0x4c445047UL
 #define LEONOS_FS_IOCTL_ACL_GET 0x4c465047UL
 #define LEONOS_FS_IOCTL_ACL_SET 0x4c465053UL
 #define LEONOS_FS_IOCTL_ACL_TAKE_OWNERSHIP 0x4c465054UL
@@ -133,6 +135,13 @@ struct leonos_fs_acl_request {
 #define LEONOS_DISK_MAX_PARTITIONS 128U
 #define LEONOS_DISK_PARTITION_NAME_LEN 72U
 
+/* GPT partition type choices exposed by fdisk and advanced installer tools. */
+#define LEONOS_DISK_PARTITION_TYPE_BASIC_DATA 1U
+#define LEONOS_DISK_PARTITION_TYPE_ESP 2U
+#define LEONOS_DISK_PARTITION_TYPE_LINUX 3U
+#define LEONOS_DISK_PARTITION_EDIT_TYPE 0x00000001U
+#define LEONOS_DISK_PARTITION_EDIT_NAME 0x00000002U
+
 #define LEONOS_DISK_FILESYSTEM_UNKNOWN 0U
 #define LEONOS_DISK_FILESYSTEM_FAT32 1U
 #define LEONOS_DISK_FILESYSTEM_EXT2 2U
@@ -222,6 +231,24 @@ struct leonos_disk_partition_unmount {
     uint32_t reserved1;
 };
 
+/** Selects GPT type and/or UTF-16 partition name metadata to edit. */
+struct leonos_disk_partition_edit {
+    uint32_t disk_id;
+    uint32_t partition_index;
+    uint32_t edit_mask;
+    uint32_t type;
+    uint32_t reserved;
+    char name[LEONOS_DISK_PARTITION_NAME_LEN];
+};
+
+/** Initializes a blank GPT layout on one whole disk. */
+struct leonos_disk_gpt_initialize {
+    uint32_t disk_id;
+    uint32_t flags;
+};
+
+#define LEONOS_DISK_GPT_INITIALIZE_FORCE 0x00000001U
+
 int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
                     uint32_t capacity, uint32_t *out_count);
 int leonos_install_list_disks(struct leonos_install_disk *disks,
@@ -242,8 +269,16 @@ int leonos_disk_create_partition(const struct leonos_disk_partition_create *requ
 /** Mounts a FAT32, exFAT, or ext2 data partition and returns its absolute mount path. */
 int leonos_disk_mount_partition(uint32_t disk_id, uint32_t partition_index,
                                 char *mount_path, uint32_t mount_path_capacity);
+/** Mounts one partition at an explicit absolute path. */
+int leonos_disk_mount_partition_at(uint32_t disk_id, uint32_t partition_index,
+                                   const char *mount_path,
+                                   char *out_mount_path,
+                                   uint32_t out_mount_path_capacity);
 /** Unmounts a data partition when no live task is using its mount. */
 int leonos_disk_unmount_partition(uint32_t disk_id, uint32_t partition_index);
+int leonos_disk_edit_partition(const struct leonos_disk_partition_edit *request);
+/** Initializes or forcibly replaces the primary and backup GPT metadata. */
+int leonos_disk_initialize_gpt(const struct leonos_disk_gpt_initialize *request);
 int stat(const char *path, struct leonos_stat *st);
 int fstat(int fd, struct leonos_stat *st);
 long lseek(int fd, long offset, int whence);
