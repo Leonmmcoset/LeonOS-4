@@ -20,6 +20,8 @@
 #undef gears_idle
 #undef main
 
+#define GLXGEARS_KEY_P 25U
+
 static void gears_idle(void)
 {
     static unsigned long previous_ms;
@@ -46,6 +48,37 @@ static void gears_idle(void)
                frames, seconds, seconds > 0.0 ? (double)frames / seconds : 0.0);
         report_ms = now;
         frames = 0;
+    }
+}
+
+static void handle_key_event(const struct leonos_gui_app_event *event)
+{
+    if (!event || event->type != LEONOS_GUI_APP_EVENT_KEY_DOWN || !event->pressed)
+        return;
+    switch (event->keycode) {
+    case GLXGEARS_KEY_P:
+        polygon_mode = (polygon_mode + 1) % 3;
+        if (polygon_mode == 0)
+            glPolygonMode(GL_FRONT_AND_BACK, GL_POINT);
+        else if (polygon_mode == 1)
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        else
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        break;
+    case LEONOS_KEY_LEFT:
+        view_rot[1] += 5.0f;
+        break;
+    case LEONOS_KEY_RIGHT:
+        view_rot[1] -= 5.0f;
+        break;
+    case LEONOS_KEY_UP:
+        view_rot[0] += 5.0f;
+        break;
+    case LEONOS_KEY_DOWN:
+        view_rot[0] -= 5.0f;
+        break;
+    default:
+        break;
     }
 }
 
@@ -95,6 +128,7 @@ int main(void)
                     glViewport(0, 0, (GLint)width, (GLint)height);
                 }
             }
+            handle_key_event(&event);
         }
         if (should_close)
             break;
