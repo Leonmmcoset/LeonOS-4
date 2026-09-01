@@ -125,6 +125,11 @@ def main() -> None:
     parser.add_argument("--sqlite-source", type=Path)
     parser.add_argument("--sqlite-header", type=Path)
     parser.add_argument("--sqlite-stamp", type=Path)
+    parser.add_argument("--portablegl-lib", type=Path)
+    parser.add_argument("--portablegl-so", type=Path)
+    parser.add_argument("--portablegl-source", type=Path)
+    parser.add_argument("--portablegl-header", type=Path)
+    parser.add_argument("--portablegl-stamp", type=Path)
     parser.add_argument("--stardustui-lib", type=Path)
     parser.add_argument("--stardustui-source", type=Path)
     parser.add_argument("--component-metadata", type=Path)
@@ -203,6 +208,23 @@ def main() -> None:
                          args.sqlite_header, args.sqlite_stamp):
             if not required.exists():
                 raise SystemExit(f"required SQLite SDK input is missing: {required}")
+    include_portablegl = any((args.portablegl_lib is not None, args.portablegl_so is not None,
+                              args.portablegl_source is not None, args.portablegl_header is not None,
+                              args.portablegl_stamp is not None))
+    if include_portablegl and not all((args.portablegl_lib is not None, args.portablegl_so is not None,
+                                       args.portablegl_source is not None, args.portablegl_header is not None,
+                                       args.portablegl_stamp is not None)):
+        raise SystemExit("PortableGL SDK inputs must be provided together")
+    if include_portablegl:
+        assert args.portablegl_lib is not None and args.portablegl_so is not None
+        assert args.portablegl_source is not None and args.portablegl_header is not None
+        assert args.portablegl_stamp is not None
+        for required in (args.portablegl_lib, args.portablegl_so,
+                         args.portablegl_source / "portablegl.h",
+                         args.portablegl_source / "LICENSE", args.portablegl_header,
+                         args.portablegl_stamp):
+            if not required.exists():
+                raise SystemExit(f"required PortableGL SDK input is missing: {required}")
     if include_stardustui:
         if args.stardustui_lib is None or args.stardustui_source is None:
             raise SystemExit("StardustUI SDK inputs must be provided together")
@@ -275,6 +297,7 @@ def main() -> None:
                         "include/pnglibconf.h",
                         "include/curses.h", "include/ncurses.h",
                         "include/leonos/posix.h",
+                        "include/portablegl.h", "include/leonos/pgl.h",
                     }
                     or relative_name.startswith("include/stardustui/")
                 ):
@@ -320,6 +343,19 @@ def main() -> None:
                 add_file(archive, f"{SDK_PREFIX}/include/sqlite3.h", args.sqlite_header)
                 add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/SQLITE-LICENSE", args.sqlite_source / "LICENSE.md")
                 add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/SQLITE-VERSION.txt", args.sqlite_stamp)
+            if include_portablegl:
+                assert args.portablegl_lib is not None and args.portablegl_so is not None
+                assert args.portablegl_source is not None and args.portablegl_header is not None
+                assert args.portablegl_stamp is not None
+                add_file(archive, f"{SDK_PREFIX}/lib/libportablegl.a", args.portablegl_lib)
+                add_file(archive, f"{SDK_PREFIX}/lib/libportablegl.so.1", args.portablegl_so)
+                add_file(archive, f"{SDK_PREFIX}/include/portablegl.h",
+                         args.portablegl_source / "portablegl.h")
+                add_file(archive, f"{SDK_PREFIX}/include/leonos/pgl.h", args.portablegl_header)
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/PORTABLEGL-LICENSE",
+                         args.portablegl_source / "LICENSE")
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/PORTABLEGL-VERSION.txt",
+                         args.portablegl_stamp)
             if include_stardustui:
                 assert args.stardustui_lib is not None
                 assert args.stardustui_source is not None

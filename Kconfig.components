@@ -488,6 +488,45 @@ config LEON_COMPONENT_TOOL_CMD_SDK
     default n
     depends on LEON_COMPONENT_TOOL_CMD_BUILD
 
+config LEON_COMPONENT_APP_GLXGEARS_BUILD
+    bool "Build PortableGL renderer test"
+    default y
+    select LEON_COMPONENT_LIB_PORTABLEGL_BUILD
+
+config LEON_COMPONENT_APP_GLXGEARS_IMAGE
+    bool "Include PortableGL renderer test in system images"
+    default y
+    depends on LEON_COMPONENT_APP_GLXGEARS_BUILD
+
+config LEON_COMPONENT_APP_GLXGEARS_ENTRY
+    bool "Generate a desktop entry for PortableGL renderer test"
+    default y
+    depends on LEON_COMPONENT_APP_GLXGEARS_BUILD
+
+config LEON_COMPONENT_APP_GLXGEARS_SDK
+    bool "Include PortableGL renderer test in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_GLXGEARS_BUILD
+
+config LEON_COMPONENT_APP_XIAOBAI_BUILD
+    bool "Build Xiaobai easter egg"
+    default y
+
+config LEON_COMPONENT_APP_XIAOBAI_IMAGE
+    bool "Include Xiaobai easter egg in system images"
+    default y
+    depends on LEON_COMPONENT_APP_XIAOBAI_BUILD
+
+config LEON_COMPONENT_APP_XIAOBAI_ENTRY
+    bool "Generate a desktop entry for Xiaobai easter egg"
+    default n
+    depends on LEON_COMPONENT_APP_XIAOBAI_BUILD
+
+config LEON_COMPONENT_APP_XIAOBAI_SDK
+    bool "Include Xiaobai easter egg in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_XIAOBAI_BUILD
+
 endmenu
 
 menu "Games"
@@ -943,5 +982,24 @@ config LEON_COMPONENT_LIB_SQLITE_SDK
     bool "Include SQLite database library in the developer SDK"
     default y
     depends on LEON_COMPONENT_LIB_SQLITE_BUILD
+
+config LEON_COMPONENT_LIB_PORTABLEGL_BUILD
+    bool "Build PortableGL 3D renderer"
+    default y
+
+config LEON_COMPONENT_LIB_PORTABLEGL_IMAGE
+    bool "Include PortableGL 3D renderer in system images"
+    default y
+    depends on LEON_COMPONENT_LIB_PORTABLEGL_BUILD
+
+config LEON_COMPONENT_LIB_PORTABLEGL_ENTRY
+    bool "Generate a desktop entry for PortableGL 3D renderer"
+    default n
+    depends on LEON_COMPONENT_LIB_PORTABLEGL_BUILD
+
+config LEON_COMPONENT_LIB_PORTABLEGL_SDK
+    bool "Include PortableGL 3D renderer in the developer SDK"
+    default y
+    depends on LEON_COMPONENT_LIB_PORTABLEGL_BUILD
 
 endmenu

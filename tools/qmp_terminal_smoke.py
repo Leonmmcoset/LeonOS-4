@@ -180,7 +180,10 @@ def main() -> int:
         send_keys(sock, text_keys(desktop_app) + ("ret",))
         time.sleep(10.0)
         hmp(sock, f"screendump build/images/{desktop_app}-qmp-smoke.ppm", 0.4)
-        hmp(sock, "sendkey alt-f4", 2.0)
+        # glxgears handles Escape through its PortableGL event adapter.  Use
+        # that explicit path so the smoke test verifies application cleanup,
+        # while other desktop apps retain the window-server Alt-F4 path.
+        hmp(sock, "sendkey esc" if desktop_app == "glxgears" else "sendkey alt-f4", 2.0)
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 

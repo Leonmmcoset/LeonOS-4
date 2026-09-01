@@ -752,3 +752,43 @@ stage = true
 entry = false
 sdk = true
 api = false
+
+[[components]]
+id = "portablegl"
+symbol = "LIB_PORTABLEGL"
+label = "PortableGL 3D renderer"
+category = "Third-party libraries"
+kind = "library"
+default = true
+required = false
+stage = true
+entry = false
+sdk = true
+api = false
+
+[[components]]
+id = "glxgears"
+symbol = "APP_GLXGEARS"
+label = "PortableGL renderer test"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = true
+sdk = false
+api = false
+depends = ["portablegl"]
+
+[[components]]
+id = "xiaobai"
+symbol = "APP_XIAOBAI"
+label = "Xiaobai easter egg"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false

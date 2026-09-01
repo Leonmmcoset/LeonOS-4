@@ -379,3 +379,20 @@ resource; the runtime ships only the generated 16x16 bitmap resource.
   `https://images.nasa.gov/details-PIA18033`.
 - Credit and usage: NASA; see `system/resources/wallpaper-metro.source.txt`
   and NASA media usage guidelines.
+
+## PortableGL
+
+- Path: `third_party/portablegl`
+- Upstream: `https://github.com/rswinkle/PortableGL.git`
+- Pinned commit: `7cf39dc1741ea2be60ce3bd327f6e5337f60207f`
+- License: MIT; the complete upstream `LICENSE` is staged at
+  `/system/docs/PORTABLEGL-LICENSE` and in the Developer SDK.
+
+LeonOS builds the single-header implementation as ABI-v1
+`/system/lib/libportablegl.so.1` and also exposes `libportablegl.a` and the
+`leonos/pgl.h` window wrapper in the Developer SDK. The port fixes the
+framebuffer to ABGR32 and depth/stencil to D24S8 and connects presentation to
+the LeonOS pixel-buffer window service. The system build uses PortableGL's
+small-memory profile (50,000 output vertices per draw call) to fit the current
+user address-space budget. `glxgears` is the bundled GUI smoke test; GLX/X11,
+hardware acceleration and multi-threaded contexts are not part of this port.

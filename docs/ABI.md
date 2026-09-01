@@ -432,6 +432,18 @@ handler.
 
 ## Application Services
 
+## PortableGL Rendering ABI
+
+`/system/lib/libportablegl.so.1` provides the PortableGL 0.101 API with the
+LeonOS ABI-v1 window wrapper declared by `leonos/pgl.h`. The wrapper manages a
+GUI window, an ABGR32 color buffer and a D24S8 depth/stencil buffer, and submits
+frames through `leonos_gui_present_window`. Contexts are single-process and
+single-current; callers must handle resize events through
+`leonos_pgl_process_event` before drawing the next frame. The SDK includes the
+matching `portablegl.h`, `leonos/pgl.h`, shared library and static archive. The
+system build limits one draw call to 50,000 output vertices, leaving the
+renderer usable within the current user address-space budget.
+
 The launcher library in `leonos/launch.h` owns user-facing file launch policy.
 It supports `.lnk` shortcuts, built-in program aliases, and persistent extension
 associations stored in `/system/config/fileassoc.cfg`. Settings can edit the common

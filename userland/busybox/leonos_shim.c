@@ -234,6 +234,8 @@ const char *leonos_shell_command_path(const char *name)
     if (strcmp(name, "less") == 0) return "/programs/less/less.elf";
     if (strcmp(name, "sl") == 0) return "/programs/sl/sl.elf";
     if (strcmp(name, "cmd") == 0) return "/programs/cmd/cmd.elf";
+    if (strcmp(name, "glxgears") == 0) return "/programs/glxgears/glxgears.elf";
+    if (strcmp(name, "xiaobai") == 0) return "/programs/xiaobai/xiaobai.elf";
     if (strcmp(name, "fdisk") == 0 || strcmp(name, "mkfs.fat") == 0 ||
         strcmp(name, "mkfs.fat32") == 0 || strcmp(name, "mkfs.vfat") == 0 ||
         strcmp(name, "mkfs.ext2") == 0 || strcmp(name, "mkfs.exfat") == 0 ||

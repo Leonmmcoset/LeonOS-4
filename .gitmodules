@@ -52,3 +52,6 @@
 [submodule "third_party/less"]
 	path = third_party/less
 	url = https://github.com/gwsw/less.git
+[submodule "third_party/portablegl"]
+	path = third_party/portablegl
+	url = https://github.com/rswinkle/PortableGL.git
