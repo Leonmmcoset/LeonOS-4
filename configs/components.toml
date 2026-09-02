@@ -262,6 +262,8 @@ stage = true
 entry = false
 sdk = false
 api = false
+open_with = true
+extensions = [".api"]
 
 [[components]]
 id = "hello"
@@ -314,6 +316,8 @@ stage = true
 entry = true
 sdk = false
 api = false
+open_with = true
+extensions = [".txt", ".md", ".log", ".cfg", ".conf", ".ini"]
 
 [[components]]
 id = "calc"
@@ -431,6 +435,8 @@ stage = true
 entry = true
 sdk = false
 api = false
+open_with = true
+extensions = [".html", ".htm"]
 
 [[components]]
 id = "imageview"
@@ -444,6 +450,8 @@ stage = true
 entry = true
 sdk = false
 api = false
+open_with = true
+extensions = [".bmp", ".dib"]
 
 [[components]]
 id = "wavplay"
@@ -457,6 +465,8 @@ stage = true
 entry = false
 sdk = false
 api = false
+open_with = true
+extensions = [".wav"]
 
 [[components]]
 id = "mp3play"
@@ -470,6 +480,8 @@ stage = true
 entry = false
 sdk = false
 api = false
+open_with = true
+extensions = [".mp3"]
 
 [[components]]
 id = "oshlp"
@@ -483,6 +495,8 @@ stage = true
 entry = true
 sdk = false
 api = false
+open_with = true
+extensions = [".hlp"]
 
 [[components]]
 id = "helloworld"

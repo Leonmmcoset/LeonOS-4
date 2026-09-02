@@ -258,7 +258,8 @@ def main() -> None:
     if args.leonos_libc_include is not None:
         shared_posix_headers = tuple(
             args.leonos_libc_include / name
-            for name in (Path("curses.h"), Path("ncurses.h"), Path("leonos/posix.h"))
+            for name in (Path("curses.h"), Path("ncurses.h"), Path("leonos/posix.h"),
+                         Path("leonos/app.h"))
         )
         for required in shared_posix_headers:
             if not required.is_file():
@@ -296,7 +297,7 @@ def main() -> None:
                         "include/zconf.h", "include/png.h", "include/pngconf.h",
                         "include/pnglibconf.h",
                         "include/curses.h", "include/ncurses.h",
-                        "include/leonos/posix.h",
+                        "include/leonos/posix.h", "include/leonos/app.h",
                         "include/portablegl.h", "include/leonos/pgl.h",
                     }
                     or relative_name.startswith("include/stardustui/")

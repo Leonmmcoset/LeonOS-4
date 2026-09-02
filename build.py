@@ -1999,6 +1999,55 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     # staging 是源码产物进入镜像前的边界。新增资源先复制/生成到 staging，
     # 由 image-vmdk/image-iso 统一打包，禁止在动作中直接修改最终镜像。
     app_icons = tuple(paths.out / f"generated/app-icons/{app}.bmp" for app in build_user_apps)
+    # Every runnable image component gets one runtime manifest.  Third-party
+    # API packages write the same format at install time, so the registry does
+    # not need a second compiled-in application table.
+    registry_apps = list(staged_user_apps)
+    registry_tool_outputs = {
+        "busybox": busybox_elf,
+        "file": file_elf,
+        "tcc": tcc_elf,
+        "lua": lua_elf,
+        "cmd": cmd_elf,
+        "less": less_elf,
+        "sl": sl_elf,
+    }
+    for app in registry_tool_outputs:
+        if component_enabled(app, "image") and app not in registry_apps:
+            registry_apps.append(app)
+    registry_manifest_dir = paths.out / "generated/app-manifests"
+    registry_manifest_outputs = tuple(
+        registry_manifest_dir / (runtime_app_relative(app, "elf", system_apps).parent / "manifest.ini")
+        for app in registry_apps
+    )
+    registry_manifest_inputs: list[Path] = [
+        ROOT / "tools/generate_app_manifests.py", ROOT / "configs/components.toml",
+    ]
+    registry_manifest_inputs.extend(
+        app_elfs[app] for app in staged_user_apps if app in app_elfs
+    )
+    registry_manifest_inputs.extend(
+        output for app, output in registry_tool_outputs.items()
+        if app in registry_apps
+    )
+    registry_manifest_inputs.extend(
+        source for app in registry_apps
+        for source in (
+            ROOT / "userland/apps" / app / f"{app}.app.ini",
+            ROOT / "userland" / app / f"{app}.app.ini",
+        ) if source.is_file()
+    )
+    graph.add(Target(
+        name="app-manifests",
+        outputs=registry_manifest_outputs,
+        inputs=tuple(registry_manifest_inputs),
+        depends_on=("userland",),
+        kind="generate",
+        command=(PYTHON, "tools/generate_app_manifests.py", "--out-dir",
+                 relative(registry_manifest_dir), "--apps", *registry_apps,
+                 "--system-apps", *sorted(system_apps)),
+        action_key="app-manifests-v1",
+    ))
     minesweeper_assets = tuple(paths.out / f"generated/minesweeper-assets/{name}"
                                for name in MINESWEEPER_ASSETS)
     stardustui_theme_files = tuple(
@@ -2042,6 +2091,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ROOT / "third_party/zlib/LICENSE", ROOT / "third_party/libpng/LICENSE",
         ROOT / "userland/libc/include/curses.h", ROOT / "userland/libc/include/ncurses.h",
         ROOT / "userland/libc/include/leonos/posix.h",
+        ROOT / "userland/libc/include/leonos/app.h",
         libpng_config,
         # The packager copies these build outputs verbatim. Keep them as
         # explicit inputs so a rebuilt runtime cannot leave a stale SDK ZIP.
@@ -2358,15 +2408,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         target = add_copy(graph, f"esp:icon:{app}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
-    for app in staged_user_apps:
-        if not component_enabled(app, "entry"):
-            continue
-        source = ROOT / "userland/apps" / app / f"{app}.app.ini"
-        if source.exists():
-            destination = paths.staging / runtime_app_relative(app, "app.ini", system_apps)
-            target = add_copy(graph, f"esp:manifest:{app}", source, destination)
-            esp_names.append(target.name)
-            esp_outputs.append(destination)
+    for app in registry_apps:
+        source = registry_manifest_dir / (runtime_app_relative(app, "elf", system_apps).parent / "manifest.ini")
+        destination = paths.staging / source.relative_to(registry_manifest_dir)
+        target = add_copy(graph, f"esp:manifest:{app}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
     if component_enabled("xiaobai", "image"):
         source = ROOT / "userland/apps/xiaobai/xiaobai.png"
         destination = paths.staging / runtime_app_relative("xiaobai", "png", system_apps)
@@ -2487,8 +2534,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             outputs=(helloworld_api,),
             inputs=(app_elfs["helloworld"], ROOT / "tools/build_api.py"),
             kind="generate",
-            command=(PYTHON, "tools/build_api.py", relative(app_elfs["helloworld"]),
-                     relative(helloworld_api)),
+            command=(PYTHON, "tools/build_api.py",
+                     "--name", "Hello World", "--id", "helloworld",
+                     "--version", "1.0.0", "--category", "Developer applications",
+                     "--main-exe", "helloworld.elf", "--default-path", "/programs/helloworld",
+                     "--requires-admin", "--desktop-shortcut",
+                     "--file", relative(app_elfs["helloworld"]), "helloworld.elf",
+                     "--output", relative(helloworld_api)),
         ))
         target = add_copy(graph, "esp:api:helloworld-copy", helloworld_api, api_destination)
         esp_names.append(target.name)
@@ -2507,9 +2559,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             command=(
                 PYTHON, "tools/build_api.py",
                 "--name", "DOOM",
+                "--id", "doom",
                 "--version", "1.0.0-freedoom",
+                "--category", "Games",
                 "--main-exe", "doomlauncher.elf",
                 "--default-path", "/programs/doom",
+                "--commands", "doom,doomlauncher",
                 "--requires-admin",
                 "--desktop-shortcut",
                 "--icon", "doom.bmp",
@@ -2552,7 +2607,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             command=(
                 PYTHON, "tools/build_api.py",
                 "--name", "LeonOS 4 Chinese Input",
+                "--id", "oschinpt",
                 "--version", "1.0.0",
+                "--category", "Input methods",
                 "--main-exe", "oschinpt.elf",
                 "--default-path", "/programs/oschinpt",
                 "--requires-admin",

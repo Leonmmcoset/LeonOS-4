@@ -1,4 +1,5 @@
 #include <leonos/auth.h>
+#include <leonos/app.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
@@ -137,6 +138,18 @@ static const struct assoc_row assoc_rows[SETTINGS_ASSOC_ROWS] = {
     {".bmp", "Bitmap images", "BMP 图片"},
     {".hlp", "Help files", "帮助文件"},
 };
+/* Open-with buttons are populated from the application registry.  The UI has
+ * four compact slots, while the registry may contain more handlers. */
+#define SETTINGS_ASSOC_CANDIDATE_MAX 4U
+static struct leonos_app_info settings_assoc_apps[LEONOS_APP_REGISTRY_MAX];
+static uint32_t settings_assoc_app_count;
+static uint8_t settings_assoc_apps_loaded;
+static const uint32_t settings_assoc_button_x[SETTINGS_ASSOC_CANDIDATE_MAX] = {
+    450U, 520U, 596U, 660U,
+};
+static const uint32_t settings_assoc_button_w[SETTINGS_ASSOC_CANDIDATE_MAX] = {
+    64U, 70U, 58U, 50U,
+};
 static struct service_row service_rows[SETTINGS_SERVICE_ROWS] = {
     {"desktop", "Desktop window service", "桌面窗口服务",
      "Required system shell. Cannot be disabled here.", "必需的系统外壳，不能在这里禁用。", 1, 1},
@@ -209,6 +222,21 @@ static int text_eq(const char *a, const char *b)
         return 0;
     }
     while (a[i] && b[i] && a[i] == b[i]) {
+        ++i;
+    }
+    return a[i] == 0 && b[i] == 0;
+}
+
+static int text_eq_ignore_case(const char *a, const char *b)
+{
+    uint32_t i = 0;
+    if (!a || !b) return 0;
+    while (a[i] && b[i]) {
+        char left = a[i];
+        char right = b[i];
+        if (left >= 'A' && left <= 'Z') left = (char)(left - 'A' + 'a');
+        if (right >= 'A' && right <= 'Z') right = (char)(right - 'A' + 'a');
+        if (left != right) return 0;
         ++i;
     }
     return a[i] == 0 && b[i] == 0;
@@ -364,25 +392,75 @@ static const char *role_label(uint32_t role)
 
 static const char *program_label(const char *program)
 {
-    if (text_eq(program, "/programs/browser/browser.elf")) {
-        return T("Browser", "浏览器");
-    }
-    if (text_eq(program, "/programs/notepad/notepad.elf")) {
-        return T("Notepad", "记事本");
-    }
-    if (text_eq(program, "/programs/imageview/imageview.elf")) {
-        return T("Image Viewer", "图片查看器");
-    }
-    if (text_eq(program, "/programs/oshlp/oshlp.elf")) {
-        return T("Help Viewer", "帮助查看器");
-    }
-    if (text_eq(program, "/system/apps/terminal/terminal.elf")) {
-        return T("Terminal", "终端");
-    }
-    if (text_eq(program, "/system/apps/run/run.elf")) {
-        return T("Run", "运行");
+    static char label[LEONOS_APP_NAME_LEN];
+    if (program && program[0] &&
+        leonos_app_registry_label(program, label, sizeof(label)) == 0) {
+        return label;
     }
     return program && program[0] ? program : T("None", "无");
+}
+
+static void settings_load_assoc_apps(void)
+{
+    uint32_t total;
+    settings_assoc_app_count = 0;
+    settings_assoc_apps_loaded = 0;
+    (void)leonos_app_registry_refresh();
+    total = leonos_app_registry_count();
+    for (uint32_t i = 0; i < total && settings_assoc_app_count <
+                            LEONOS_APP_REGISTRY_MAX; ++i) {
+        struct leonos_app_info info;
+        if (leonos_app_registry_get(i, &info) < 0 ||
+            (info.flags & LEONOS_APP_FLAG_OPEN_WITH) == 0 ||
+            !info.extensions[0]) {
+            continue;
+        }
+        settings_assoc_apps[settings_assoc_app_count++] = info;
+    }
+    settings_assoc_apps_loaded = 1;
+}
+
+static void settings_ensure_assoc_apps(void)
+{
+    if (!settings_assoc_apps_loaded) {
+        settings_load_assoc_apps();
+    }
+}
+
+static int settings_assoc_extension_matches(const char *list, const char *wanted)
+{
+    char item[32];
+    uint32_t pos = 0;
+    uint32_t out = 0;
+    if (!list || !wanted || !wanted[0]) return 0;
+    while (1) {
+        char ch = list[pos++];
+        if (ch == ',' || ch == 0) {
+            while (out && (item[out - 1U] == ' ' || item[out - 1U] == '\t')) --out;
+            item[out] = 0;
+            if (text_eq_ignore_case(item, wanted)) return 1;
+            out = 0;
+            if (ch == 0) break;
+            continue;
+        }
+        if (out + 1U < sizeof(item) && ch != ' ' && ch != '\t') item[out++] = ch;
+    }
+    return 0;
+}
+
+static uint32_t settings_assoc_row_candidates(uint32_t row,
+                                              uint32_t *indices,
+                                              uint32_t capacity)
+{
+    uint32_t count = 0;
+    if (row >= SETTINGS_ASSOC_ROWS || !indices || capacity == 0) return 0;
+    for (uint32_t i = 0; i < settings_assoc_app_count && count < capacity; ++i) {
+        if (settings_assoc_extension_matches(settings_assoc_apps[i].extensions,
+                                             assoc_rows[row].extension)) {
+            indices[count++] = i;
+        }
+    }
+    return count;
 }
 
 static const char *license_status_label(uint32_t status)
@@ -1434,6 +1512,8 @@ static void draw_assoc_page(struct leonos_ui_surface *ui)
         {T("Type", "类型"), 170},
         {T("Default app", "默认应用"), 160},
     };
+    uint32_t candidate_indices[SETTINGS_ASSOC_CANDIDATE_MAX];
+    settings_ensure_assoc_apps();
     leonos_ui_text(ui, 34, 64,
                    T("Choose the default app used by File Manager and desktop shortcuts.",
                      "选择文件资源管理器和桌面快捷方式打开文件时使用的默认应用。"),
@@ -1450,18 +1530,22 @@ static void draw_assoc_page(struct leonos_ui_surface *ui)
         cells[1] = T(assoc_rows[i].description_en, assoc_rows[i].description_zh);
         cells[2] = program_label(program);
         leonos_ui_listview_row(ui, 34, y, 412, cols, cells, 3, 0);
-        leonos_ui_button(ui, 450, y + 2, 64, LEONOS_UI_BUTTON_H,
-                         T("Browser", "浏览器"),
-                         text_eq(program, "/programs/browser/browser.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
-        leonos_ui_button(ui, 520, y + 2, 70, LEONOS_UI_BUTTON_H,
-                         T("Notepad", "记事本"),
-                         text_eq(program, "/programs/notepad/notepad.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
-        leonos_ui_button(ui, 596, y + 2, 58, LEONOS_UI_BUTTON_H,
-                         T("Image", "图片"),
-                         text_eq(program, "/programs/imageview/imageview.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
-        leonos_ui_button(ui, 660, y + 2, 50, LEONOS_UI_BUTTON_H,
-                         T("Help", "帮助"),
-                         text_eq(program, "/programs/oshlp/oshlp.elf") ? LEONOS_UI_BUTTON_PRESSED : 0);
+        uint32_t candidate_count = settings_assoc_row_candidates(
+            i, candidate_indices, SETTINGS_ASSOC_CANDIDATE_MAX);
+        for (uint32_t slot = 0; slot < SETTINGS_ASSOC_CANDIDATE_MAX; ++slot) {
+            const char *label = "";
+            uint32_t flags = LEONOS_UI_BUTTON_DISABLED;
+            if (slot < candidate_count) {
+                const struct leonos_app_info *candidate =
+                    &settings_assoc_apps[candidate_indices[slot]];
+                label = candidate->name;
+                flags = text_eq(program, candidate->exec)
+                            ? LEONOS_UI_BUTTON_PRESSED : 0;
+            }
+            leonos_ui_button(ui, settings_assoc_button_x[slot], y + 2,
+                             settings_assoc_button_w[slot], LEONOS_UI_BUTTON_H,
+                             label, flags);
+        }
     }
 }
 
@@ -1906,23 +1990,19 @@ static void set_assoc_for_row(uint32_t row, const char *program)
 
 static void handle_assoc_click(int32_t x, int32_t y)
 {
+    uint32_t candidate_indices[SETTINGS_ASSOC_CANDIDATE_MAX];
+    settings_ensure_assoc_apps();
     for (uint32_t i = 0; i < SETTINGS_ASSOC_ROWS; ++i) {
         int32_t row_y = 124 + (int32_t)i * 40;
-        if (hit_rect_i(x, y, 450, row_y + 2, 64, LEONOS_UI_BUTTON_H)) {
-            set_assoc_for_row(i, "/programs/browser/browser.elf");
-            return;
-        }
-        if (hit_rect_i(x, y, 520, row_y + 2, 70, LEONOS_UI_BUTTON_H)) {
-            set_assoc_for_row(i, "/programs/notepad/notepad.elf");
-            return;
-        }
-        if (hit_rect_i(x, y, 596, row_y + 2, 58, LEONOS_UI_BUTTON_H)) {
-            set_assoc_for_row(i, "/programs/imageview/imageview.elf");
-            return;
-        }
-        if (hit_rect_i(x, y, 660, row_y + 2, 50, LEONOS_UI_BUTTON_H)) {
-            set_assoc_for_row(i, "/programs/oshlp/oshlp.elf");
-            return;
+        uint32_t candidate_count = settings_assoc_row_candidates(
+            i, candidate_indices, SETTINGS_ASSOC_CANDIDATE_MAX);
+        for (uint32_t slot = 0; slot < candidate_count; ++slot) {
+            if (hit_rect_i(x, y, (int32_t)settings_assoc_button_x[slot],
+                           row_y + 2, settings_assoc_button_w[slot],
+                           LEONOS_UI_BUTTON_H)) {
+                set_assoc_for_row(i, settings_assoc_apps[candidate_indices[slot]].exec);
+                return;
+            }
         }
     }
 }

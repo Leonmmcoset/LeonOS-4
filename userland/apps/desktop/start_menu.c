@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include <string.h>
 
 /* Generated per image. Unknown (for example, post-install) programs remain
  * visible; only build-managed packages are listed here. */
@@ -15,7 +16,6 @@
 #define START_SHORTCUT_H 42U
 #define START_SHORTCUT_GAP 4U
 #define START_LIST_TITLE_H 18U
-#define START_DOC_ICON_PATH "/programs/oshlp/oshlp.bmp"
 
 struct start_panel_layout {
     uint32_t x;
@@ -65,7 +65,23 @@ static int start_menu_kernel_debug_enabled(void)
 static int start_menu_entry_policy_matches(const char *path)
 {
     for (uint32_t index = 0; index < start_menu_disabled_package_count; ++index) {
-        if (text_eq(path, start_menu_disabled_packages[index])) {
+        const char *policy = start_menu_disabled_packages[index];
+        uint32_t policy_len = 0;
+        uint32_t path_len = 0;
+        while (policy && policy[policy_len]) {
+            ++policy_len;
+        }
+        while (path && path[path_len]) {
+            ++path_len;
+        }
+        /* The generated policy names an application directory while the
+         * registry stores its executable path. Accept both forms and require
+         * a path-component boundary to avoid hiding similarly named apps. */
+        if (text_eq(path, policy) ||
+            (path && policy && policy_len > 1U &&
+             path_len > policy_len &&
+             memcmp(path, policy, policy_len) == 0 &&
+             path[policy_len] == '/')) {
             return 1;
         }
     }
@@ -117,17 +133,6 @@ static void start_menu_load_entry_policy(void)
             ++offset;
         }
     }
-}
-
-int start_menu_is_hidden_app(const char *name)
-{
-    return text_eq(name, "init.elf") ||
-           text_eq(name, "desktop.elf") ||
-           text_eq(name, "serviced.elf") ||
-           text_eq(name, "oobe.elf") ||
-           text_eq(name, "login.elf") ||
-           text_eq(name, "sysconfdialog.elf") ||
-           text_eq(name, "shell.elf");
 }
 
 static int start_menu_label_compare(const char *left, const char *right)
@@ -193,88 +198,28 @@ static void start_menu_sort_docs(void)
     }
 }
 
-static int start_menu_add_package(const char *root, const char *package)
-{
-    char elf_name[LEONOS_FS_PATH_LEN];
-    char path[LEONOS_FS_PATH_LEN];
-    uint32_t pos = 0;
-    struct leonos_stat st;
-    if (!root || !package || !package[0] ||
-        start_menu_app_count >= START_MENU_MAX_APPS) {
-        return 0;
-    }
-    copy_text(elf_name, sizeof(elf_name), package);
-    while (elf_name[pos]) {
-        ++pos;
-    }
-    append_text(elf_name, &pos, sizeof(elf_name), ".elf");
-    if (start_menu_is_hidden_app(elf_name)) {
-        return 0;
-    }
-    copy_text(path, sizeof(path), root);
-    pos = 0;
-    while (path[pos]) {
-        ++pos;
-    }
-    append_char(path, &pos, sizeof(path), '/');
-    append_text(path, &pos, sizeof(path), package);
-    if (start_menu_entry_policy_matches(path)) {
-        return 0;
-    }
-    append_char(path, &pos, sizeof(path), '/');
-    append_text(path, &pos, sizeof(path), elf_name);
-    {
-        int ret = stat(path, &st);
-        if (ret < 0) {
-            return (ret == -LEONOS_EAGAIN || ret == -LEONOS_EIO) ? ret : 0;
-        }
-        if (st.type != LEONOS_FS_TYPE_FILE) {
-            return 0;
-        }
-    }
-    copy_app_label_from_elf(start_menu_app_labels[start_menu_app_count],
-                            sizeof(start_menu_app_labels[start_menu_app_count]), elf_name);
-    copy_text(start_menu_app_paths[start_menu_app_count],
-              sizeof(start_menu_app_paths[start_menu_app_count]), path);
-    ++start_menu_app_count;
-    return 0;
-}
-
-static int start_menu_load_root(const char *root)
-{
-    struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
-    uint32_t count = 0;
-    int ret = leonos_list_dir(root, entries, LEONOS_FS_MAX_ENTRIES, &count);
-    if (ret < 0) {
-        return ret;
-    }
-    for (uint32_t i = 0; i < count && start_menu_app_count < START_MENU_MAX_APPS; ++i) {
-        if (entries[i].type != LEONOS_FS_TYPE_DIR) {
-            continue;
-        }
-        ret = start_menu_add_package(root, entries[i].name);
-        if (ret < 0) {
-            return ret;
-        }
-    }
-    return 0;
-}
-
 int start_menu_load_apps(void)
 {
-    int ret;
+    struct leonos_app_info info;
     start_menu_app_count = 0;
     start_menu_apps_loaded = 0;
     start_menu_load_entry_policy();
-    ret = start_menu_load_root("/system/apps");
-    if (ret < 0) {
-        start_menu_app_count = 0;
-        return ret;
+    if (leonos_app_registry_refresh() < 0) {
+        return -1;
     }
-    ret = start_menu_load_root("/programs");
-    if (ret < 0) {
-        start_menu_app_count = 0;
-        return ret;
+    for (uint32_t i = 0; i < leonos_app_registry_count() &&
+                          start_menu_app_count < START_MENU_MAX_APPS; ++i) {
+        if (leonos_app_registry_get(i, &info) < 0 ||
+            (info.flags & LEONOS_APP_FLAG_ENTRY) == 0 ||
+            (info.flags & LEONOS_APP_FLAG_HIDDEN) != 0 ||
+            start_menu_entry_policy_matches(info.exec)) {
+            continue;
+        }
+        copy_text(start_menu_app_labels[start_menu_app_count],
+                  sizeof(start_menu_app_labels[start_menu_app_count]), info.name);
+        copy_text(start_menu_app_paths[start_menu_app_count],
+                  sizeof(start_menu_app_paths[start_menu_app_count]), info.exec);
+        ++start_menu_app_count;
     }
     start_menu_sort_apps();
     start_menu_apps_loaded = 1;
@@ -679,26 +624,28 @@ static int start_menu_minimized_window(uint32_t wanted)
 
 static const char *start_menu_shortcut_label(uint32_t index)
 {
-    switch (index) {
-    case 0: return leonos_i18n("File Manager", "文件管理器");
-    case 1: return leonos_i18n("Terminal", "终端");
-    case 2: return leonos_i18n("Settings", "设置");
-    case 3: return leonos_i18n("Run", "运行");
-    case 4: return leonos_i18n("Task Manager", "任务管理器");
-    default: return "";
+    static const char *const ids[] = {
+        "fileman", "terminal", "settings", "run", "taskmgr",
+    };
+    static char label[LEONOS_APP_NAME_LEN];
+    if (index < sizeof(ids) / sizeof(ids[0]) &&
+        leonos_app_registry_label(ids[index], label, sizeof(label)) == 0) {
+        return label;
     }
+    return index < sizeof(ids) / sizeof(ids[0]) ? ids[index] : "";
 }
 
 static const char *start_menu_shortcut_path(uint32_t index)
 {
-    static const char *const paths[] = {
-        "/system/apps/fileman/fileman.elf",
-        "/system/apps/terminal/terminal.elf",
-        "/system/apps/settings/settings.elf",
-        "/system/apps/run/run.elf",
-        "/system/apps/taskmgr/taskmgr.elf",
+    static const char *const ids[] = {
+        "fileman", "terminal", "settings", "run", "taskmgr",
     };
-    return index < sizeof(paths) / sizeof(paths[0]) ? paths[index] : 0;
+    static char path[LEONOS_APP_PATH_LEN];
+    if (index >= sizeof(ids) / sizeof(ids[0]) ||
+        leonos_app_registry_resolve(ids[index], path, sizeof(path)) < 0) {
+        path[0] = 0;
+    }
+    return path;
 }
 
 static void start_menu_draw_header(const struct start_panel_layout *panel)
@@ -877,7 +824,10 @@ static void start_menu_draw_results(const struct start_panel_layout *panel,
             break;
         }
         if (result.document) {
-            copy_text(icon_path, sizeof(icon_path), START_DOC_ICON_PATH);
+            /* Help files use the installed help viewer's registered icon.
+             * This keeps document UI independent of its package directory. */
+            (void)leonos_app_registry_icon("oshlp", icon_path,
+                                           sizeof(icon_path));
         } else {
             desktop_icon_path_for_app(result.path, icon_path, sizeof(icon_path));
         }

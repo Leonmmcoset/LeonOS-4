@@ -8,6 +8,7 @@
 #include <leonos/inputm.h>
 #include <leonos/license.h>
 #include <leonos/launch.h>
+#include <leonos/app.h>
 #include <leonos/mouse.h>
 #include <leonos/net.h>
 #include <leonos/psf_font.h>
@@ -377,7 +378,6 @@ uint32_t read_le32(const uint8_t *p);
 int32_t read_le32s(const uint8_t *p);
 int hit_rect(uint32_t x, uint32_t y, int rx, int ry, uint32_t rw, uint32_t rh);
 int text_ends_with(const char *text, const char *suffix);
-void copy_app_label_from_elf(char *dst, uint32_t dst_len, const char *name);
 void desktop_icon_path_for_app(const char *app_path, char *dst, uint32_t dst_len);
 uint32_t taskbar_y(void);
 uint32_t desktop_tray_width(void);
@@ -470,7 +470,6 @@ void alt_tab_begin(void);
 void alt_tab_advance(void);
 void alt_tab_commit(void);
 void draw_alt_tab_overlay(void);
-int start_menu_is_hidden_app(const char *name);
 int start_menu_load_apps(void);
 void start_menu_ensure_apps(void);
 uint32_t start_menu_filtered_app_count(void);

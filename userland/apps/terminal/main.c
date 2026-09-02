@@ -1,5 +1,6 @@
 #include <leonos/gui.h>
 #include <leonos/environment.h>
+#include <leonos/launch.h>
 #include <leonos/i18n.h>
 #include <leonos/pty.h>
 #include <leonos/psf_font.h>
@@ -1459,7 +1460,7 @@ int main(int argc, char **argv, char **envp)
         command_argv = &argv[2];
         command_envp = 0;
     } else {
-        shell_argv[0] = "/programs/busybox/busybox.elf";
+        shell_argv[0] = (char *)leonos_launch_builtin_path("busybox");
         shell_argv[1] = "sh";
         shell_argv[2] = 0;
         shell_argv[3] = 0;

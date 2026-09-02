@@ -1,4 +1,5 @@
 #include <leonos/admin.h>
+#include <leonos/app.h>
 #include <leonos/api.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
@@ -308,6 +309,54 @@ static int api_bool_value_in_section(const char *section, const char *key,
     return 0;
 }
 
+static int api_write_app_manifest(const struct leonos_api_info *info,
+                                  const char *install_root)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    char manifest[1200];
+    uint32_t pos = 0;
+    int fd;
+    if (!info || !install_root || !install_root[0] ||
+        !api_join_path(path, sizeof(path), install_root, "manifest.ini")) {
+        return 0;
+    }
+    manifest[0] = 0;
+    api_append_text(manifest, &pos, sizeof(manifest), "[app]\nid=");
+    api_append_text(manifest, &pos, sizeof(manifest), info->id[0] ? info->id : info->name);
+    api_append_text(manifest, &pos, sizeof(manifest), "\nname=");
+    api_append_text(manifest, &pos, sizeof(manifest), info->name);
+    api_append_text(manifest, &pos, sizeof(manifest), "\nversion=");
+    api_append_text(manifest, &pos, sizeof(manifest), info->version);
+    api_append_text(manifest, &pos, sizeof(manifest), "\ncategory=");
+    api_append_text(manifest, &pos, sizeof(manifest), info->category[0] ? info->category : "Applications");
+    api_append_text(manifest, &pos, sizeof(manifest), "\nexec=");
+    api_append_text(manifest, &pos, sizeof(manifest), info->main_exe);
+    api_append_text(manifest, &pos, sizeof(manifest), "\nicon=");
+    api_append_text(manifest, &pos, sizeof(manifest), info->icon);
+    api_append_text(manifest, &pos, sizeof(manifest), "\nentry=");
+    api_append_uint(manifest, &pos, sizeof(manifest), info->desktop_shortcut ? 1U : 0U);
+    api_append_text(manifest, &pos, sizeof(manifest), "\nterminal=");
+    api_append_uint(manifest, &pos, sizeof(manifest), info->terminal ? 1U : 0U);
+    api_append_text(manifest, &pos, sizeof(manifest), "\nhidden=");
+    api_append_uint(manifest, &pos, sizeof(manifest), info->hidden ? 1U : 0U);
+    api_append_text(manifest, &pos, sizeof(manifest), "\nopen_with=");
+    api_append_uint(manifest, &pos, sizeof(manifest), info->open_with ? 1U : 0U);
+    api_append_text(manifest, &pos, sizeof(manifest), "\ncommands=");
+    api_append_text(manifest, &pos, sizeof(manifest), info->commands);
+    api_append_text(manifest, &pos, sizeof(manifest), "\nextensions=");
+    api_append_text(manifest, &pos, sizeof(manifest), info->extensions);
+    api_append_text(manifest, &pos, sizeof(manifest), "\n");
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    {
+        long wrote = write(fd, manifest, pos);
+        close(fd);
+        return wrote == (long)pos ? 1 : 0;
+    }
+}
+
 static int api_input_method_id_is_safe(const char *id)
 {
     uint32_t i = 0;
@@ -324,6 +373,23 @@ static int api_input_method_id_is_safe(const char *id)
     return i < LEONOS_INPUTM_ID_LEN;
 }
 
+static int api_app_id_is_safe(const char *id)
+{
+    uint32_t i = 0;
+    if (!id || !id[0] ||
+        !((id[0] >= 'a' && id[0] <= 'z'))) {
+        return 0;
+    }
+    while (id[i]) {
+        char ch = id[i++];
+        if (!((ch >= 'a' && ch <= 'z') ||
+              (ch >= '0' && ch <= '9') || ch == '_' || ch == '-')) {
+            return 0;
+        }
+    }
+    return i < sizeof(((struct leonos_api_info *)0)->id);
+}
+
 static int api_validate_info(struct leonos_api_info *info)
 {
     if (!info || !info->name[0] || !info->version[0] ||
@@ -335,6 +401,15 @@ static int api_validate_info(struct leonos_api_info *info)
         return 0;
     }
     if (!api_default_path_is_allowed(info->default_path)) {
+        return 0;
+    }
+    if (info->id[0] && !api_app_id_is_safe(info->id)) {
+        return 0;
+    }
+    if (info->commands[0] && (strchr(info->commands, '\n') || strchr(info->commands, '\r'))) {
+        return 0;
+    }
+    if (info->extensions[0] && (strchr(info->extensions, '\n') || strchr(info->extensions, '\r'))) {
         return 0;
     }
     if (info->icon[0] && !api_relative_path_is_safe(info->icon)) {
@@ -379,11 +454,15 @@ int leonos_api_parse_info(const char *api_path, struct leonos_api_info *info)
     char ini_path[LEONOS_API_PATH_MAX];
     char format[32];
     char package_version[16];
+    char id_value[LEONOS_INI_VALUE_LEN];
     char name_value[LEONOS_INI_VALUE_LEN];
     char version_value[LEONOS_INI_VALUE_LEN];
+    char category_value[LEONOS_INI_VALUE_LEN];
     char main_exe_value[LEONOS_INI_VALUE_LEN];
     char default_path_value[LEONOS_INI_VALUE_LEN];
     char icon_value[LEONOS_INI_VALUE_LEN];
+    char commands_value[LEONOS_INI_VALUE_LEN];
+    char extensions_value[LEONOS_INI_VALUE_LEN];
     char input_type[32];
     char input_id[LEONOS_INI_VALUE_LEN];
     char input_abbreviation[LEONOS_INI_VALUE_LEN];
@@ -413,6 +492,10 @@ int leonos_api_parse_info(const char *api_path, struct leonos_api_info *info)
         !api_text_eq(package_version, API_PACKAGE_VERSION)) {
         goto cleanup;
     }
+    id_value[0] = 0;
+    category_value[0] = 0;
+    commands_value[0] = 0;
+    extensions_value[0] = 0;
     icon_value[0] = 0;
     if (!leonos_ini_get("app", "name", name_value, sizeof(name_value)) ||
         !leonos_ini_get("app", "version", version_value,
@@ -426,8 +509,25 @@ int leonos_api_parse_info(const char *api_path, struct leonos_api_info *info)
         goto cleanup;
     }
     (void)leonos_ini_get("app", "icon", icon_value, sizeof(icon_value));
-    if (!api_copy_field(info->name, sizeof(info->name), name_value) ||
+    (void)leonos_ini_get("app", "id", id_value, sizeof(id_value));
+    (void)leonos_ini_get("app", "category", category_value, sizeof(category_value));
+    (void)leonos_ini_get("app", "commands", commands_value, sizeof(commands_value));
+    (void)leonos_ini_get("app", "extensions", extensions_value, sizeof(extensions_value));
+    (void)api_bool_value("terminal", &info->terminal);
+    (void)api_bool_value("hidden", &info->hidden);
+    (void)api_bool_value("open_with", &info->open_with);
+    if (!id_value[0]) {
+        const char *base = strrchr(default_path_value, '/');
+        base = base ? base + 1 : default_path_value;
+        memcpy(id_value, base, strlen(base) + 1U);
+    }
+    if (!category_value[0]) {
+        memcpy(category_value, "Applications", sizeof("Applications"));
+    }
+    if (!api_copy_field(info->id, sizeof(info->id), id_value) ||
+        !api_copy_field(info->name, sizeof(info->name), name_value) ||
         !api_copy_field(info->version, sizeof(info->version), version_value) ||
+        !api_copy_field(info->category, sizeof(info->category), category_value) ||
         !api_copy_field(info->main_exe, sizeof(info->main_exe),
                         main_exe_value) ||
         !api_copy_field(info->default_path, sizeof(info->default_path),
@@ -435,6 +535,8 @@ int leonos_api_parse_info(const char *api_path, struct leonos_api_info *info)
         !api_copy_field(info->icon, sizeof(info->icon), icon_value)) {
         goto cleanup;
     }
+    (void)api_copy_field(info->commands, sizeof(info->commands), commands_value);
+    (void)api_copy_field(info->extensions, sizeof(info->extensions), extensions_value);
     input_type[0] = 0;
     if (leonos_ini_get("input_method", "type", input_type, sizeof(input_type))) {
         if (!api_text_eq(input_type, "input-method") ||
@@ -784,6 +886,10 @@ int leonos_api_install_with_progress(const char *api_path, const char *dest_dir,
         exe_stat.type != LEONOS_FS_TYPE_FILE) {
         return 0;
     }
+    if (!api_write_app_manifest(&info, install_root)) {
+        return 0;
+    }
+    (void)leonos_app_registry_refresh();
     if (info.input_method && !api_install_input_method(&info, exe_path)) {
         return 0;
     }

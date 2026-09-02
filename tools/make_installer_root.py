@@ -104,6 +104,12 @@ def main() -> int:
     copy_file(userland_dir / "busybox.elf", stage / "programs/busybox/busybox.elf")
     # gptinit is installer-only and must never enter the installed root tree.
     copy_file(gptinit, stage / "programs/gptinit/gptinit.elf")
+    (stage / "programs/gptinit/manifest.ini").write_text(
+        "[app]\nid=gptinit\nname=GPT initializer\nversion=installer\n"
+        "category=Installer tools\nexec=gptinit.elf\nentry=0\nterminal=1\n"
+        "hidden=1\ncommands=gptinit\n",
+        encoding="ascii",
+    )
     copy_file(esp_tree / "system/apps/dynlinkerror/dynlinkerror.elf",
               stage / "system/apps/dynlinkerror/dynlinkerror.elf")
     copy_file(generated_icons_dir / "desktop.bmp", stage / "system/apps/desktop/desktop.bmp")
