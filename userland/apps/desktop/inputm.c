@@ -421,7 +421,7 @@ int desktop_inputm_handle_click(uint32_t x, uint32_t y)
             }
         } else if (y >= menu_y + 8U +
                    desktop_inputm_entry_count * DESKTOP_INPUTM_MENU_ROW_H) {
-            spawn_program_path("/system/apps/settings/settings.elf");
+            spawn_program_path("settings");
         }
         desktop_inputm_menu_open = 0;
         full_redraw_pending = 1;

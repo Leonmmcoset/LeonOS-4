@@ -2,6 +2,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <leonos/auth.h>
+#include <leonos/app.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
 #include <sys/reboot.h>
@@ -54,6 +56,45 @@ void record_signo(int signal_number)
 static char *leonos_empty_environment[] = { 0 };
 
 const char *leonos_shell_command_path(const char *name);
+
+/* Login updates the kernel task identity of the shell's session, but the
+ * shell environment was created before login and therefore may not contain a
+ * user-specific HOME variable. Ash calls this on demand for ~ expansion. */
+const char *leonos_shell_home(void)
+{
+    static char home[LEONOS_AUTH_HOME_LEN];
+    struct leonos_user_info user;
+    uint32_t index;
+    if (leonos_auth_current(&user) < 0 || !user.uid || !user.home[0]) {
+        return 0;
+    }
+    for (index = 0; index + 1U < sizeof(home) && user.home[index]; ++index) {
+        home[index] = user.home[index];
+    }
+    home[index] = 0;
+    return home[0] ? home : 0;
+}
+
+/* BusyBox whoami normally resolves the effective UID through /etc/passwd.
+ * LeonOS keeps accounts in the authentication service instead, so expose the
+ * session username directly. The unauthenticated installer shell runs as the
+ * system administrator context and uses the conventional root name. */
+const char *leonos_shell_user_name(void)
+{
+    static char username[LEONOS_AUTH_USERNAME_LEN];
+    struct leonos_user_info user;
+    uint32_t index;
+    if (leonos_auth_current(&user) == 0 && user.username[0]) {
+        for (index = 0; index + 1U < sizeof(username) && user.username[index]; ++index) {
+            username[index] = user.username[index];
+        }
+        username[index] = 0;
+        return username;
+    }
+    strncpy(username, "root", sizeof(username) - 1U);
+    username[sizeof(username) - 1U] = 0;
+    return username;
+}
 
 /*
  * LeonOS terminals are inherited standard streams, not reopenable named tty
@@ -183,17 +224,9 @@ int getgroups(int count, gid_t groups[])
 
 const char *leonos_shell_command_path(const char *name)
 {
+    static char resolved[LEONOS_APP_PATH_LEN];
     if (!name || !name[0]) return 0;
     if (strchr(name, '/') || strchr(name, ':')) return name;
-    if (strcmp(name, "nano") == 0) return "/programs/nano/nano.elf";
-    if (strcmp(name, "pleditor") == 0) return "/programs/pleditor/pleditor.elf";
-    if (strcmp(name, "tcc") == 0) return "/programs/tcc/tcc.elf";
-    if (strcmp(name, "lua") == 0) return "/programs/lua/lua.elf";
-    if (strcmp(name, "file") == 0) return "/programs/file/file.elf";
-    if (strcmp(name, "fastfetch") == 0) return "/programs/fastfetch/fastfetch.elf";
-    if (strcmp(name, "less") == 0) return "/programs/less/less.elf";
-    if (strcmp(name, "sl") == 0) return "/programs/sl/sl.elf";
-    if (strcmp(name, "cmd") == 0) return "/programs/cmd/cmd.elf";
     if (strcmp(name, "fdisk") == 0 || strcmp(name, "mkfs.fat") == 0 ||
         strcmp(name, "mkfs.fat32") == 0 || strcmp(name, "mkfs.vfat") == 0 ||
         strcmp(name, "mkfs.ext2") == 0 || strcmp(name, "mkfs.exfat") == 0 ||
@@ -204,10 +237,8 @@ const char *leonos_shell_command_path(const char *name)
         strcmp(name, "blkid") == 0 || strcmp(name, "lsblk") == 0 ||
         strcmp(name, "leonos-grub-installer") == 0 || strcmp(name, "sync") == 0)
         return "/programs/busybox/busybox.elf";
-    if (strcmp(name, "gptinit") == 0)
-        return "/programs/gptinit/gptinit.elf";
-    if (strcmp(name, "oobe") == 0) return "/system/apps/oobe/oobe.elf";
-    if (strcmp(name, "login") == 0) return "/system/apps/login/login.elf";
+    if (leonos_app_registry_resolve(name, resolved, sizeof(resolved)) == 0)
+        return resolved;
     return 0;
 }
 

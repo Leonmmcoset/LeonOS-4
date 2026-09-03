@@ -763,7 +763,7 @@ void browser_start_download(const char *url)
     char target[LEONOS_HTTP_URL_LEN];
     char *argv[3];
     copy_text(target, sizeof(target), url);
-    argv[0] = "/programs/downloadmgr/downloadmgr.elf";
+    argv[0] = (char *)leonos_launch_builtin_path("downloadmgr");
     argv[1] = target;
     argv[2] = 0;
     if (leonos_launch_argv(argv) < 0) {
@@ -778,7 +778,7 @@ static void browser_start_api_install(const char *url)
     char target[LEONOS_HTTP_URL_LEN];
     char *argv[3];
     copy_text(target, sizeof(target), url);
-    argv[0] = "/system/apps/apiapp/apiapp.elf";
+    argv[0] = (char *)leonos_launch_builtin_path("apiapp");
     argv[1] = target;
     argv[2] = 0;
     if (leonos_launch_argv(argv) < 0) {

@@ -39,6 +39,8 @@ class Component:
     api_stage_path: str = ""
     depends: tuple[str, ...] = ()
     api_requires: tuple[str, ...] = ()
+    open_with: bool = False
+    extensions: tuple[str, ...] = ()
 
     @property
     def build_symbol(self) -> str:
@@ -62,6 +64,18 @@ def _stage_path(raw: dict[str, object], component_id: str) -> str:
     )):
         raise ComponentError(f"component {component_id} has invalid api_stage_path")
     return value
+
+
+def _extensions(raw: dict[str, object], component_id: str) -> tuple[str, ...]:
+    value = raw.get("extensions", [])
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ComponentError(f"component {component_id} has invalid extensions")
+    result: list[str] = []
+    for extension in value:
+        if not re.fullmatch(r"\.[A-Za-z0-9][A-Za-z0-9._-]*", extension):
+            raise ComponentError(f"component {component_id} has invalid extension {extension!r}")
+        result.append(extension.lower())
+    return tuple(result)
 
 
 def load_components(path: Path) -> tuple[Component, ...]:
@@ -114,6 +128,9 @@ def load_components(path: Path) -> tuple[Component, ...]:
             raise ComponentError(f"component {component_id} has invalid api_requires")
         if component_id in api_requires:
             raise ComponentError(f"component {component_id} cannot require itself for an API package")
+        open_with = raw.get("open_with", False)
+        if not isinstance(open_with, bool):
+            raise ComponentError(f"component {component_id} has invalid open_with")
         components.append(Component(
             id=component_id,
             symbol=symbol,
@@ -129,6 +146,8 @@ def load_components(path: Path) -> tuple[Component, ...]:
             api_stage_path=_stage_path(raw, component_id),
             depends=tuple(depends),
             api_requires=tuple(api_requires),
+            open_with=open_with,
+            extensions=_extensions(raw, component_id),
         ))
 
     by_id = {component.id: component for component in components}

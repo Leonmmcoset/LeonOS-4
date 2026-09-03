@@ -104,6 +104,12 @@ def main() -> int:
     copy_file(userland_dir / "busybox.elf", stage / "programs/busybox/busybox.elf")
     # gptinit is installer-only and must never enter the installed root tree.
     copy_file(gptinit, stage / "programs/gptinit/gptinit.elf")
+    (stage / "programs/gptinit/manifest.ini").write_text(
+        "[app]\nid=gptinit\nname=GPT initializer\nversion=installer\n"
+        "category=Installer tools\nexec=gptinit.elf\nentry=0\nterminal=1\n"
+        "hidden=1\ncommands=gptinit\n",
+        encoding="ascii",
+    )
     copy_file(esp_tree / "system/apps/dynlinkerror/dynlinkerror.elf",
               stage / "system/apps/dynlinkerror/dynlinkerror.elf")
     copy_file(generated_icons_dir / "desktop.bmp", stage / "system/apps/desktop/desktop.bmp")
@@ -113,8 +119,9 @@ def main() -> int:
     # Keep the conventional live-environment mount point available before the
     # advanced shell starts.  Without this, the documented `mkdir /mnt/esp`
     # and `mkdir /mnt/root` commands fail because POSIX mkdir does not create
-    # missing parents unless -p is supplied.
-    for directory in ("mnt", "tmp", "media"):
+    # missing parents unless -p is supplied.  Keep /root available as the
+    # default HOME for the installer advanced shell as well.
+    for directory in ("mnt", "tmp", "media", "root"):
         (stage / directory).mkdir(parents=True, exist_ok=True)
     # The installer itself runs from this FAT32 ramdisk. The staged installed
     # The root payload retains the normal exFAT manifest copied from esp_tree;

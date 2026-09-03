@@ -9,13 +9,20 @@
 #define LEONOS_API_VERSION_LEN 16U
 
 struct leonos_api_info {
+    char id[64];
     char name[LEONOS_API_NAME_LEN];
     char version[LEONOS_API_VERSION_LEN];
+    char category[64];
     char main_exe[LEONOS_API_PATH_MAX];
     char default_path[LEONOS_API_PATH_MAX];
     char icon[LEONOS_API_PATH_MAX];
     uint32_t requires_admin;
     uint32_t desktop_shortcut;
+    uint32_t terminal;
+    uint32_t hidden;
+    uint32_t open_with;
+    char commands[256];
+    char extensions[256];
     uint32_t input_method;
     char input_method_id[LEONOS_INPUTM_ID_LEN];
     char input_method_abbreviation[LEONOS_INPUTM_ABBREV_LEN];

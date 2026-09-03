@@ -146,6 +146,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-qmp-dynlinkerror",
     "test-qmp-cmd",
     "test-qmp-stardust",
+    "test-qmp-glxgears",
     "test-component-config",
     "test-all",
 })
@@ -165,6 +166,7 @@ SYSTEM_FILES = [
     ("system/resources/wallpaper-metro.bmp", "system/resources/wallpaper-metro.bmp"),
     ("system/certs/cacert.pem", "system/certs/cacert.pem"),
     ("third_party/doomgeneric/FREEDOOM-COPYING.txt", "system/docs/FREEDOOM-COPYING.txt"),
+    ("third_party/portablegl/LICENSE", "system/docs/PORTABLEGL-LICENSE"),
 ]
 
 
@@ -647,6 +649,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         record = component_selection.get(component_id)
         return bool(record and record.get(option))
 
+    # glxgears has a runtime dependency on PortableGL. Keep the shared object
+    # in images whenever the test application is staged, even if a legacy
+    # profile disabled the library's standalone IMAGE toggle.
+    portablegl_image = (component_enabled("portablegl", "image") or
+                        component_enabled("glxgears", "image"))
+
     def component_api_destination(component_id: str) -> Path:
         stage_path = components_by_id[component_id].api_stage_path
         if not stage_path:
@@ -688,6 +696,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     runtime_loader = paths.out / "system/lib/ld-leonos.elf"
     libmagic_so = paths.out / "system/lib/libmagic.so.1"
     liblua_so = paths.out / "system/lib/liblua.so.5"
+    portablegl_source = ROOT / "third_party/portablegl"
+    portablegl_port = ROOT / "userland/portablegl"
+    portablegl_so = paths.out / "system/lib/libportablegl.so.1"
+    portablegl_archive = paths.out / "userland/libportablegl.a"
+    portablegl_stamp = paths.out / "userland/portablegl.stamp"
+    portablegl_work_dir = paths.out / "portablegl-work"
+    glxgears_source = paths.out / "generated/glxgears/gears-upstream.c"
     sqlite_source = ROOT / "third_party/sqlite"
     sqlite_port = ROOT / "userland/sqlite"
     sqlite_so = paths.out / "system/lib/sqlite.so.3"
@@ -877,6 +892,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/sqlite is missing; initialize the SQLite source tree")
     if not (sqlite_port / "leonos_sqlite_vfs.c").is_file():
         raise GraphError("the LeonOS SQLite VFS port metadata is missing")
+    if (not (portablegl_source / "portablegl.h").is_file() or
+            not (portablegl_source / "LICENSE").is_file() or
+            not (portablegl_port / "leonos_pgl.c").is_file() or
+            not (ROOT / "userland/libc/include/leonos/pgl.h").is_file()):
+        raise GraphError("the PortableGL source or LeonOS port metadata is missing")
     # ---- 全局编译策略 ----
     # 这些 flag 影响内核、运行库和应用；组件若需例外，应在自己的 target
     # 中追加参数，避免改变所有产物的 ABI。
@@ -1029,6 +1049,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     cflags_mp3play = [flag for flag in cflags_user if flag != "-mgeneral-regs-only"] + [
         "-mno-avx", "-mno-avx2",
         "-Ithird_party/minimp3",
+    ]
+    # PortableGL uses the x86-64 SSE floating-point ABI for its shader and
+    # matrix callbacks. Keep it isolated from the normal GPR-only app ABI.
+    cflags_glxgears = [flag for flag in cflags_user if flag != "-mgeneral-regs-only"] + [
+        "-mno-avx", "-mno-avx2", "-Ithird_party/portablegl",
+        "-Iuserland/apps/glxgears", f"-I{relative(glxgears_source.parent)}",
     ]
     cflags_installer = cflags_user_base + ["-include", relative(installer_autoconf)]
     cflags_user_libc_base = [
@@ -1479,6 +1505,55 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ),
     ))
 
+    portablegl_inputs = tuple([
+        ROOT / "tools/build_portablegl.py", portablegl_source / "portablegl.h",
+        portablegl_source / "LICENSE", portablegl_port / "leonos_pgl.c",
+        ROOT / "userland/libc/include/leonos/pgl.h",
+    ])
+    graph.add(Target(
+        name="portablegl",
+        outputs=(portablegl_so, portablegl_archive, portablegl_stamp),
+        inputs=tuple([*portablegl_inputs, ROOT / "userland/dynamic-app.ld",
+                      runtime_so, dynamic_note_obj, autoconf]),
+        depends_on=("runtime", "runtime-loader"),
+        kind="compile",
+        command=(
+            PYTHON, "tools/build_portablegl.py", "--source", "third_party/portablegl",
+            "--port", "userland/portablegl", "--picolibc-prefix", relative(picolibc_prefix),
+            "--leonos-libc-include", "userland/libc/include", "--leonos-include", "include",
+            "--generated-include", relative(paths.generated_include), "--autoconf", relative(autoconf),
+            "--dynamic-linker-script", "userland/dynamic-app.ld", "--runtime-so", relative(runtime_so),
+            "--abi-note", relative(dynamic_note_obj), "--library", relative(portablegl_so),
+            "--static-library", relative(portablegl_archive), "--work-dir", relative(portablegl_work_dir),
+            "--stamp", relative(portablegl_stamp), *compile_option_args, *linker_option_args,
+        ),
+    ))
+
+    def generate_glxgears_source(context: ActionContext) -> None:
+        # The upstream example intentionally defines PORTABLEGL_IMPLEMENTATION
+        # because it is normally a standalone SDL program. LeonOS supplies the
+        # implementation through libportablegl.so.1, so remove only that one
+        # line in a generated copy and leave the vendored source untouched.
+        upstream = portablegl_source / "examples/classic/gears.c"
+        text = upstream.read_text(encoding="utf-8")
+        marker = "#define PORTABLEGL_IMPLEMENTATION"
+        if text.count(marker) != 1:
+            raise GraphError("unexpected PortableGL gears implementation marker")
+        ensure_parent(
+            context,
+            glxgears_source,
+            text.replace(marker, "/* LeonOS links PortableGL dynamically. */", 1),
+        )
+
+    graph.add(Target(
+        name="generate:glxgears-source",
+        outputs=(glxgears_source,),
+        inputs=(portablegl_source / "examples/classic/gears.c",),
+        kind="generate",
+        action=generate_glxgears_source,
+        action_key="portablegl-gears-adapter-v1",
+    ))
+
     def busybox_source_revision_action(context: ActionContext) -> None:
         context.detail(f"reading source revision: git -C {relative(busybox_source)} rev-parse HEAD")
         result = subprocess.run(
@@ -1818,6 +1893,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         user_targets.extend(("file-magic", "file"))
     if component_enabled("sqlite"):
         user_targets.append("sqlite")
+    if component_enabled("portablegl"):
+        user_targets.append("portablegl")
     if component_enabled("busybox"):
         user_targets.append("busybox")
     if component_enabled("nano"):
@@ -1857,10 +1934,19 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         objects: list[Path] = []
         for source in user_app_sources(app):
             is_asm = source.suffix == ".S"
-            cflags_app = cflags_doom if app == "doom" else (cflags_mp3play if app == "mp3play" else cflags_user)
-            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, (autoconf, picolibc_header_stamp, libpng_config) if not is_asm else (), kind="assemble" if is_asm else "compile"))
+            cflags_app = (
+                cflags_doom if app == "doom" else
+                cflags_mp3play if app == "mp3play" else
+                cflags_glxgears if app == "glxgears" else cflags_user
+            )
+            implicit = (autoconf, picolibc_header_stamp, libpng_config)
+            if app == "glxgears":
+                implicit += (glxgears_source,)
+            objects.append(add_compile(graph, paths, f"compile:app:{app}:{relative(source)}", source, f"user-{app}", asflags_user if is_asm else cflags_app, implicit if not is_asm else (), kind="assemble" if is_asm else "compile"))
         output = paths.out / f"userland/{app}.elf"
         app_archives = [runtime_so]
+        if app == "glxgears":
+            app_archives.append(portablegl_so)
         graph.add(Target(name=f"app:{app}", outputs=(output,),
                          inputs=tuple([*objects, *app_archives, dynamic_crt_obj, dynamic_note_obj,
                                        ROOT / "userland/dynamic-app.ld"]),
@@ -1868,7 +1954,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                          command=(ld, "-nostdlib", "--gc-sections", *build_link_flags, *dynamic_link_flags,
                                   "-T", "userland/dynamic-app.ld", "-o", relative(output),
                                   relative(dynamic_crt_obj), relative(dynamic_note_obj),
-                                  *map(relative, objects), relative(runtime_so))))
+                                  *map(relative, objects), *map(relative, app_archives))))
         app_elfs[app] = output
         user_targets.append(f"app:{app}")
 
@@ -1913,6 +1999,55 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     # staging 是源码产物进入镜像前的边界。新增资源先复制/生成到 staging，
     # 由 image-vmdk/image-iso 统一打包，禁止在动作中直接修改最终镜像。
     app_icons = tuple(paths.out / f"generated/app-icons/{app}.bmp" for app in build_user_apps)
+    # Every runnable image component gets one runtime manifest.  Third-party
+    # API packages write the same format at install time, so the registry does
+    # not need a second compiled-in application table.
+    registry_apps = list(staged_user_apps)
+    registry_tool_outputs = {
+        "busybox": busybox_elf,
+        "file": file_elf,
+        "tcc": tcc_elf,
+        "lua": lua_elf,
+        "cmd": cmd_elf,
+        "less": less_elf,
+        "sl": sl_elf,
+    }
+    for app in registry_tool_outputs:
+        if component_enabled(app, "image") and app not in registry_apps:
+            registry_apps.append(app)
+    registry_manifest_dir = paths.out / "generated/app-manifests"
+    registry_manifest_outputs = tuple(
+        registry_manifest_dir / (runtime_app_relative(app, "elf", system_apps).parent / "manifest.ini")
+        for app in registry_apps
+    )
+    registry_manifest_inputs: list[Path] = [
+        ROOT / "tools/generate_app_manifests.py", ROOT / "configs/components.toml",
+    ]
+    registry_manifest_inputs.extend(
+        app_elfs[app] for app in staged_user_apps if app in app_elfs
+    )
+    registry_manifest_inputs.extend(
+        output for app, output in registry_tool_outputs.items()
+        if app in registry_apps
+    )
+    registry_manifest_inputs.extend(
+        source for app in registry_apps
+        for source in (
+            ROOT / "userland/apps" / app / f"{app}.app.ini",
+            ROOT / "userland" / app / f"{app}.app.ini",
+        ) if source.is_file()
+    )
+    graph.add(Target(
+        name="app-manifests",
+        outputs=registry_manifest_outputs,
+        inputs=tuple(registry_manifest_inputs),
+        depends_on=("userland",),
+        kind="generate",
+        command=(PYTHON, "tools/generate_app_manifests.py", "--out-dir",
+                 relative(registry_manifest_dir), "--apps", *registry_apps,
+                 "--system-apps", *sorted(system_apps)),
+        action_key="app-manifests-v1",
+    ))
     minesweeper_assets = tuple(paths.out / f"generated/minesweeper-assets/{name}"
                                for name in MINESWEEPER_ASSETS)
     stardustui_theme_files = tuple(
@@ -1956,6 +2091,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ROOT / "third_party/zlib/LICENSE", ROOT / "third_party/libpng/LICENSE",
         ROOT / "userland/libc/include/curses.h", ROOT / "userland/libc/include/ncurses.h",
         ROOT / "userland/libc/include/leonos/posix.h",
+        ROOT / "userland/libc/include/leonos/app.h",
         libpng_config,
         # The packager copies these build outputs verbatim. Keep them as
         # explicit inputs so a rebuilt runtime cannot leave a stale SDK ZIP.
@@ -1996,6 +2132,18 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             "--sqlite-lib", relative(sqlite_archive), "--sqlite-so", relative(sqlite_so),
             "--sqlite-source", "third_party/sqlite", "--sqlite-header", relative(sqlite_header),
             "--sqlite-stamp", relative(sqlite_stamp),
+        ))
+    if component_enabled("portablegl", "sdk"):
+        sdk_inputs_list.extend((portablegl_source / "LICENSE", portablegl_source / "portablegl.h",
+                                portablegl_so, portablegl_archive, portablegl_stamp,
+                                ROOT / "userland/libc/include/leonos/pgl.h"))
+        sdk_depends.append("portablegl")
+        sdk_command.extend((
+            "--portablegl-lib", relative(portablegl_archive),
+            "--portablegl-so", relative(portablegl_so),
+            "--portablegl-source", "third_party/portablegl",
+            "--portablegl-header", "userland/libc/include/leonos/pgl.h",
+            "--portablegl-stamp", relative(portablegl_stamp),
         ))
     if component_enabled("stardustui", "sdk"):
         sdk_inputs_list.extend((
@@ -2101,9 +2249,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 context.detail(f"remove disabled component staging: {relative(target_dir)}")
                 shutil.rmtree(target_dir)
         for component, library_name in (("file", "libmagic.so.1"), ("lua", "liblua.so.5"),
-                                        ("sqlite", "sqlite.so.3")):
+                                        ("sqlite", "sqlite.so.3"),
+                                        ("portablegl", "libportablegl.so.1")):
             library = paths.staging / "system/lib" / library_name
-            if not component_enabled(component, "image") and library.exists():
+            keep = portablegl_image if component == "portablegl" else component_enabled(component, "image")
+            if not keep and library.exists():
                 context.detail(f"remove disabled shared library staging: {relative(library)}")
                 library.unlink()
         for app in staged_user_apps:
@@ -2179,8 +2329,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ("file", libmagic_so, "libmagic.so.1"),
         ("lua", liblua_so, "liblua.so.5"),
         ("sqlite", sqlite_so, "sqlite.so.3"),
+        ("portablegl", portablegl_so, "libportablegl.so.1"),
     ):
-        if not component_enabled(component, "image"):
+        enabled = portablegl_image if component == "portablegl" else component_enabled(component, "image")
+        if not enabled:
             continue
         destination = paths.staging / "system/lib" / filename
         target = add_copy(graph, f"esp:system/lib/{filename}", source, destination)
@@ -2256,15 +2408,18 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         target = add_copy(graph, f"esp:icon:{app}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
-    for app in staged_user_apps:
-        if not component_enabled(app, "entry"):
-            continue
-        source = ROOT / "userland/apps" / app / f"{app}.app.ini"
-        if source.exists():
-            destination = paths.staging / runtime_app_relative(app, "app.ini", system_apps)
-            target = add_copy(graph, f"esp:manifest:{app}", source, destination)
-            esp_names.append(target.name)
-            esp_outputs.append(destination)
+    for app in registry_apps:
+        source = registry_manifest_dir / (runtime_app_relative(app, "elf", system_apps).parent / "manifest.ini")
+        destination = paths.staging / source.relative_to(registry_manifest_dir)
+        target = add_copy(graph, f"esp:manifest:{app}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
+    if component_enabled("xiaobai", "image"):
+        source = ROOT / "userland/apps/xiaobai/xiaobai.png"
+        destination = paths.staging / runtime_app_relative("xiaobai", "png", system_apps)
+        target = add_copy(graph, "esp:asset:xiaobai", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
     if component_enabled("busybox", "image"):
         busybox_destination = paths.staging / "programs/busybox/busybox.elf"
         target = add_copy(graph, "esp:busybox", busybox_elf, busybox_destination)
@@ -2379,8 +2534,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             outputs=(helloworld_api,),
             inputs=(app_elfs["helloworld"], ROOT / "tools/build_api.py"),
             kind="generate",
-            command=(PYTHON, "tools/build_api.py", relative(app_elfs["helloworld"]),
-                     relative(helloworld_api)),
+            command=(PYTHON, "tools/build_api.py",
+                     "--name", "Hello World", "--id", "helloworld",
+                     "--version", "1.0.0", "--category", "Developer applications",
+                     "--main-exe", "helloworld.elf", "--default-path", "/programs/helloworld",
+                     "--requires-admin", "--desktop-shortcut",
+                     "--file", relative(app_elfs["helloworld"]), "helloworld.elf",
+                     "--output", relative(helloworld_api)),
         ))
         target = add_copy(graph, "esp:api:helloworld-copy", helloworld_api, api_destination)
         esp_names.append(target.name)
@@ -2399,9 +2559,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             command=(
                 PYTHON, "tools/build_api.py",
                 "--name", "DOOM",
+                "--id", "doom",
                 "--version", "1.0.0-freedoom",
+                "--category", "Games",
                 "--main-exe", "doomlauncher.elf",
                 "--default-path", "/programs/doom",
+                "--commands", "doom,doomlauncher",
                 "--requires-admin",
                 "--desktop-shortcut",
                 "--icon", "doom.bmp",
@@ -2444,7 +2607,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             command=(
                 PYTHON, "tools/build_api.py",
                 "--name", "LeonOS 4 Chinese Input",
+                "--id", "oschinpt",
                 "--version", "1.0.0",
+                "--category", "Input methods",
                 "--main-exe", "oschinpt.elf",
                 "--default-path", "/programs/oschinpt",
                 "--requires-admin",
@@ -2757,9 +2922,21 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             fork_exec_seen = "exec pid=" in serial_text and f"path={executable_path}" in serial_text
             if expected_spawn not in serial_text and not fork_exec_seen:
                 raise BuildFailure(f"QMP test did not start {test_name}: missing {expected_spawn}")
-        for expected_exit in expected_exits:
-            if expected_exit not in serial_text:
-                raise BuildFailure(f"QMP test did not observe {test_name} exit: missing {expected_exit}")
+        if desktop_app == "glxgears":
+            app_name = f"{desktop_app}.elf"
+            app_pids = re.findall(
+                rf"\[ntclks\] task pid=(\d+) .*name={re.escape(app_name)} ",
+                serial_text,
+            )
+            if not app_pids or not any(
+                f"scheduler task exited pid={pid} name={app_name}" in serial_text
+                for pid in app_pids
+            ):
+                raise BuildFailure(f"QMP test did not observe {test_name} exit")
+        else:
+            for expected_exit in expected_exits:
+                if expected_exit not in serial_text:
+                    raise BuildFailure(f"QMP test did not observe {test_name} exit: missing {expected_exit}")
         if cmd_pipeline_smoke:
             cmd_pids = re.findall(
                 r"\[ntclks\] exec pid=(\d+) path=/programs/cmd/cmd\.elf",
@@ -2808,6 +2985,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-qmp-dynlinkerror", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, dynlinkerror_smoke=True), action_key="qmp-dynlinkerror-v1"))
     graph.add(Target(name="test-qmp-cmd", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, cmd_pipeline_smoke=True), action_key="qmp-cmd-v3"))
     graph.add(Target(name="test-qmp-stardust", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="stardusthello"), action_key="qmp-stardust-v1"))
+    graph.add(Target(name="test-qmp-glxgears", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="glxgears"), action_key="qmp-glxgears-v1"))
     qmp_suite_specs: list[dict[str, object]] = []
     if config_bool(values, "CONFIG_TEST_QMP_TERMINAL"):
         qmp_suite_specs.append({})
@@ -2883,7 +3061,7 @@ def task_tools(task: str) -> tuple[str, ...]:
     esp = (*userland, "rustc", "grub-mkfont", "grub-mkstandalone")
     vmdk = (*esp, "truncate", "mkfs.fat", "mcopy", "mke2fs", "dd", "qemu-img")
     iso = (*esp, "grub-mkrescue", "xorriso")
-    if task in {"file", "file-magic", "sqlite"}:
+    if task in {"file", "file-magic", "sqlite", "portablegl", "app:glxgears"}:
         return userland
     if task in {"kernel", "loader", "drivers"}:
         return compiler
@@ -2910,7 +3088,7 @@ def task_tools(task: str) -> tuple[str, ...]:
     if task == "menuconfig":
         return ("kconfig-mconf",)
     if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-fastfetch", "test-qmp-sl", "test-qmp-less",
-                "test-qmp-dynlinkerror", "test-qmp-cmd", "test-qmp-stardust", "test-all"}:
+                "test-qmp-dynlinkerror", "test-qmp-cmd", "test-qmp-stardust", "test-qmp-glxgears", "test-all"}:
         return (*vmdk, "qemu-system-x86_64")
     return ()
 
@@ -2949,7 +3127,7 @@ Commands:
   build.py settings
   build.py map
   build.py gen <file>
-  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|all>
+  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|qmp-glxgears|all>
   build.py client <run|gen|test|profile> ...
   build.py status <task-id>
   build.py log <task-id>
@@ -3437,7 +3615,7 @@ def parser() -> argparse.ArgumentParser:
     test = commands.add_parser("test")
     test.add_argument("item", choices=("license-server", "los2w", "component-config",
                                        "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl", "qmp-less",
-                                       "qmp-dynlinkerror", "qmp-cmd", "qmp-stardust", "all"))
+                                       "qmp-dynlinkerror", "qmp-cmd", "qmp-stardust", "qmp-glxgears", "all"))
     add_config_options(test)
     config = commands.add_parser("config")
     config.add_argument("action", choices=("list", "save", "load", "reset", "import", "export"))

@@ -109,7 +109,7 @@ int handle_global_key(uint8_t keycode, uint8_t pressed)
         ch = lower_ascii(ch);
         if (ch == 'r') {
             start_menu_set_open(0);
-            spawn_program_path("/system/apps/run/run.elf");
+            spawn_program_path("run");
             full_redraw_pending = 1;
             return 1;
         }
@@ -435,7 +435,7 @@ int spawn_help_path(const char *path)
 {
     char *argv[3];
     int pid;
-    argv[0] = "/programs/oshlp/oshlp.elf";
+    argv[0] = (char *)leonos_launch_builtin_path("oshlp");
     argv[1] = (char *)path;
     argv[2] = 0;
     pid = leonos_spawn_argv(argv[0], argv);
@@ -472,7 +472,7 @@ void maybe_launch_oobe(void)
     oobe_lock_active = 1;
     oobe_last_spawn_ms = leonos_uptime_ms();
     {
-        int pid = spawn_program_path(OOBE_APP_PATH);
+        int pid = spawn_program_path("oobe");
         oobe_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
     }
 }
@@ -578,7 +578,7 @@ void oobe_lock_update(void)
     if (now - oobe_last_spawn_ms >= OOBE_RESPAWN_MS) {
         oobe_last_spawn_ms = now;
         {
-            int pid = spawn_program_path(OOBE_APP_PATH);
+            int pid = spawn_program_path("oobe");
             oobe_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
         }
     }
@@ -689,7 +689,7 @@ void maybe_launch_login(void)
     }
     login_last_spawn_ms = leonos_uptime_ms();
     {
-        int pid = spawn_program_path(LOGIN_APP_PATH);
+        int pid = spawn_program_path("login");
         login_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
     }
 }
@@ -743,7 +743,7 @@ void login_lock_update(void)
     if (now - login_last_spawn_ms >= LOGIN_RESPAWN_MS) {
         login_last_spawn_ms = now;
         {
-            int pid = spawn_program_path(LOGIN_APP_PATH);
+            int pid = spawn_program_path("login");
             login_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
         }
     }
@@ -908,7 +908,7 @@ int handle_taskbar_click(uint32_t x, uint32_t y)
                               TASKBAR_NET_W;
         if (hit_rect(x, y, (int)network_x + 4, (int)tb_y + 5,
                      TASKBAR_NET_W - 6, LEONOS_UI_BUTTON_H)) {
-            spawn_program_path(NETWORK_CONTROLLER_APP_PATH);
+            spawn_program_path("netctl");
             start_menu_set_open(0);
             return 1;
         }

@@ -101,7 +101,7 @@ void desktop_service_daemon_update(void)
         return;
     }
     desktop_service_daemon_last_spawn_ms = now;
-    pid = spawn_program_path(SERVICE_DAEMON_PATH);
+    pid = spawn_program_path("serviced");
     if (pid > 0 || pid == -LEONOS_EEXIST) {
         desktop_service_daemon_started = 1;
     }

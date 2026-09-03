@@ -1381,6 +1381,21 @@ static struct leonos_dir_entry *alloc_dir_entries(void)
                                              LEONOS_FS_MAX_ENTRIES);
 }
 
+/* mkdir(3) follows the POSIX convention and returns -1 on failure, while
+ * installer traversal needs the native negative errno values (in particular
+ * -17 for an already-existing directory).  Keep this narrow compatibility
+ * helper local to the installer instead of changing libc semantics for every
+ * application. */
+static int installer_mkdir(const char *path)
+{
+    long ret;
+    if (!path) {
+        return -22;
+    }
+    ret = syscall2(SYS_mkdir, (long)path, 0);
+    return ret < 0 ? (int)ret : 0;
+}
+
 static int count_files_recursive(const char *src, uint32_t *out_count)
 {
     struct leonos_dir_entry *entries = alloc_dir_entries();
@@ -1525,10 +1540,12 @@ static int replace_payload_dir_at(const char *source_root, const char *target_ro
     show_copy_progress(window_id, ui, dst);
     ret = remove_path_recursive(dst);
     if (ret < 0) {
+        printf("[installer.elf] remove payload dir %s ret=%d\n", dst, ret);
         return ret;
     }
-    ret = mkdir(dst, 0);
+    ret = installer_mkdir(dst);
     if (ret < 0 && ret != -17) {
+        printf("[installer.elf] mkdir payload dir %s ret=%d\n", dst, ret);
         return ret;
     }
     return copy_dir_recursive(src, dst, window_id, ui);
@@ -1561,7 +1578,11 @@ static int copy_file_path(const char *src, const char *dst,
             if (ret <= 0) {
                 close(in_fd);
                 close(out_fd);
-                printf("[installer.elf] write target %s ret=%d\n", dst, ret < 0 ? (int)ret : -1);
+                /* Keep the native negative errno in the TTY log.  Older
+                 * installer builds collapsed this to -1, hiding whether the
+                 * failure came from FAT allocation, directory lookup, or I/O. */
+                printf("[installer.elf] write target %s ret=%d\n", dst,
+                       ret < 0 ? (int)ret : -1);
                 return ret < 0 ? (int)ret : -1;
             }
             written += ret;
@@ -1585,10 +1606,12 @@ static int copy_dir_recursive(const char *src, const char *dst,
     uint32_t count = 0;
     int ret;
     if (!entries) {
+        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
         return -12;
     }
     ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
     if (ret < 0) {
+        printf("[installer.elf] list source dir %s ret=%d\n", src, ret);
         goto out;
     }
     for (uint32_t i = 0; i < count; ++i) {
@@ -1600,11 +1623,12 @@ static int copy_dir_recursive(const char *src, const char *dst,
         if (path_join(src_child, sizeof(src_child), src, entries[i].name) < 0 ||
             path_join(dst_child, sizeof(dst_child), dst, entries[i].name) < 0) {
             set_status(T("Installation failed", "安装失败"), T("Copy path is too long", "复制路径过长"));
+            printf("[installer.elf] copy path too long src=%s dst=%s\n", src, dst);
             ret = -1;
             goto out;
         }
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
-            ret = mkdir(dst_child, 0);
+            ret = installer_mkdir(dst_child);
             if (ret == -17) {
                 struct leonos_stat dst_st;
                 ret = stat(dst_child, &dst_st);
@@ -1612,6 +1636,8 @@ static int copy_dir_recursive(const char *src, const char *dst,
                     ret = 0;
                 } else if (ret == 0) {
                     ret = -20;
+                } else {
+                    printf("[installer.elf] stat existing dir %s ret=%d\n", dst_child, ret);
                 }
             }
             if (ret < 0) {
@@ -1620,6 +1646,8 @@ static int copy_dir_recursive(const char *src, const char *dst,
             }
             ret = copy_dir_recursive(src_child, dst_child, window_id, ui);
             if (ret < 0) {
+                printf("[installer.elf] recurse copy %s -> %s ret=%d\n",
+                       src_child, dst_child, ret);
                 goto out;
             }
         } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
@@ -1645,14 +1673,17 @@ static int merge_dir_recursive(const char *src, const char *dst,
     uint32_t count = 0;
     int ret;
     if (!entries) {
+        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
         return -12;
     }
-    ret = mkdir(dst, 0);
+    ret = installer_mkdir(dst);
     if (ret < 0 && ret != -17) {
+        printf("[installer.elf] mkdir merge dir %s ret=%d\n", dst, ret);
         goto out;
     }
     ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
     if (ret < 0) {
+        printf("[installer.elf] list merge source dir %s ret=%d\n", src, ret);
         goto out;
     }
     for (uint32_t i = 0; i < count; ++i) {
@@ -1664,12 +1695,15 @@ static int merge_dir_recursive(const char *src, const char *dst,
         if (path_join(src_child, sizeof(src_child), src, entries[i].name) < 0 ||
             path_join(dst_child, sizeof(dst_child), dst, entries[i].name) < 0) {
             set_status(T("Installation failed", "安装失败"), T("Copy path is too long", "复制路径过长"));
+            printf("[installer.elf] merge path too long src=%s dst=%s\n", src, dst);
             ret = -1;
             goto out;
         }
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
             ret = merge_dir_recursive(src_child, dst_child, window_id, ui);
             if (ret < 0) {
+                printf("[installer.elf] recurse merge %s -> %s ret=%d\n",
+                       src_child, dst_child, ret);
                 goto out;
             }
         } else if (entries[i].type == LEONOS_FS_TYPE_FILE) {
@@ -1797,14 +1831,17 @@ static int copy_changed_dir_recursive(const char *src, const char *dst,
     uint32_t count = 0;
     int ret;
     if (!entries) {
+        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
         return -12;
     }
-    ret = mkdir(dst, 0);
+    ret = installer_mkdir(dst);
     if (ret < 0 && ret != -17) {
+        printf("[installer.elf] mkdir changed dir %s ret=%d\n", dst, ret);
         goto out;
     }
     ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
     if (ret < 0) {
+        printf("[installer.elf] list changed source dir %s ret=%d\n", src, ret);
         goto out;
     }
     for (uint32_t i = 0; i < count; ++i) {
@@ -1816,6 +1853,7 @@ static int copy_changed_dir_recursive(const char *src, const char *dst,
         if (path_join(src_child, sizeof(src_child), src, entries[i].name) < 0 ||
             path_join(dst_child, sizeof(dst_child), dst, entries[i].name) < 0) {
             set_status(T("Installation failed", "安装失败"), T("Copy path is too long", "复制路径过长"));
+            printf("[installer.elf] changed path too long src=%s dst=%s\n", src, dst);
             ret = -1;
             goto out;
         }
@@ -1858,6 +1896,8 @@ static int copy_changed_dir_recursive(const char *src, const char *dst,
             continue;
         }
         if (ret < 0) {
+            printf("[installer.elf] recurse changed copy %s -> %s ret=%d\n",
+                   src_child, dst_child, ret);
             goto out;
         }
     }
@@ -1870,11 +1910,56 @@ out:
 static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
 {
     int ret = copy_dir_recursive(INSTALL_ROOT_PAYLOAD, INSTALL_ROOT_MOUNT, window_id, ui);
-    if (ret < 0) return ret;
+    if (ret < 0) {
+        printf("[installer.elf] root payload copy failed src=%s dst=%s ret=%d\n",
+               INSTALL_ROOT_PAYLOAD, INSTALL_ROOT_MOUNT, ret);
+        return ret;
+    }
     ret = copy_dir_recursive(INSTALL_ESP_PAYLOAD, INSTALL_ESP_MOUNT, window_id, ui);
-    if (ret < 0) return ret;
-    ret = mkdir("/target/system/state", 0);
-    return ret < 0 && ret != -17 ? ret : 0;
+    if (ret < 0) {
+        printf("[installer.elf] ESP payload copy failed src=%s dst=%s ret=%d\n",
+               INSTALL_ESP_PAYLOAD, INSTALL_ESP_MOUNT, ret);
+        return ret;
+    }
+
+    /* The root payload normally creates this empty directory.  Verify it
+     * explicitly and make the operation idempotent for filesystems that keep
+     * an end-marker or directory cache across the preceding copy. */
+    {
+        const char *state_path = "/target/system/state";
+        struct leonos_stat state_st;
+        ret = stat(state_path, &state_st);
+        if (ret == 0) {
+            if (state_st.type == LEONOS_FS_TYPE_DIR) {
+                return 0;
+            }
+            printf("[installer.elf] target state has wrong type=%u path=%s\n",
+                   state_st.type, state_path);
+            ret = remove_path_recursive(state_path);
+            if (ret < 0) {
+                printf("[installer.elf] remove wrong target state %s ret=%d\n",
+                       state_path, ret);
+                return ret;
+            }
+        } else if (ret != -2) {
+            printf("[installer.elf] stat target state %s ret=%d\n", state_path, ret);
+            return ret;
+        }
+        ret = installer_mkdir(state_path);
+        if (ret == -17) {
+            ret = stat(state_path, &state_st);
+            if (ret == 0 && state_st.type == LEONOS_FS_TYPE_DIR) {
+                return 0;
+            }
+            printf("[installer.elf] verify existing target state %s ret=%d type=%u\n",
+                   state_path, ret, ret == 0 ? state_st.type : 0u);
+            return ret < 0 ? ret : -20;
+        }
+        if (ret < 0) {
+            printf("[installer.elf] mkdir target state %s ret=%d\n", state_path, ret);
+        }
+        return ret;
+    }
 }
 
 static int replace_system_payload(int window_id, struct leonos_ui_surface *ui)
@@ -2179,7 +2264,7 @@ static int count_selected_update_work(void)
 static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui)
 {
     int ret;
-    ret = mkdir("/target/programs", 0);
+    ret = installer_mkdir("/target/programs");
     if (ret < 0 && ret != -17) {
         return ret;
     }
@@ -2204,7 +2289,7 @@ static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui
             } else if (ret != -2) {
                 return ret;
             }
-            ret = mkdir(package_dir, 0);
+            ret = installer_mkdir(package_dir);
             if (ret < 0 && ret != -17) {
                 return ret;
             }

@@ -226,11 +226,21 @@ static int fat32_write_fat_entry(uint32_t cluster, uint32_t value)
         if (ret < 0) {
             return storage_read_failure(ret);
         }
+        /* Keep the cache associated with the primary FAT, and only publish
+         * the new contents after the media write succeeded.  Publishing the
+         * pre-write buffer makes the allocator see an entry as free again;
+         * publishing the backup FAT would associate primary-FAT metadata with
+         * the wrong sector when the two copies differ. */
+        if (fat == 0u) {
+            storage_memcpy(storage_fat_cache_data, storage_scratch, SECTOR_SIZE);
+        }
     }
     /* storage_write_sectors() invalidates the read cache. Re-seed the FAT
      * cache with the just-written sector so freeing/appending a long chain
      * does not issue a disk read for every adjacent FAT entry. */
-    storage_memcpy(storage_fat_cache_data, storage_scratch, SECTOR_SIZE);
+    if (g_storage.fat_count == 0u) {
+        return -22;
+    }
     storage_fat_cache.volume = g_active_volume;
     storage_fat_cache.first_lba = first_fat_lba;
     storage_fat_cache.sector_count = 1;

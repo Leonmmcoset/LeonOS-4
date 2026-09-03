@@ -165,6 +165,14 @@ def icon_minesweeper(c: list[list[tuple[int, int, int, int]]]) -> None:
     put(c, 11, 4, RED)
 
 
+def icon_glxgears(c: list[list[tuple[int, int, int, int]]]) -> None:
+    """Small three-gear mark for the PortableGL renderer demo."""
+    for cx, cy, color in ((5, 6, RED), (10, 6, GREEN), (8, 11, BLUE)):
+        fill(c, cx - 2, cy - 1, 5, 3, color)
+        fill(c, cx - 1, cy - 2, 3, 5, color)
+        put(c, cx, cy, WHITE)
+
+
 def icon_run(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 3, 4, 10, 8, BLUE)
     rect(c, 3, 4, 10, 8, DARK)
@@ -388,6 +396,8 @@ def draw_icon(name: str) -> list[list[tuple[int, int, int, int]]]:
         icon_calc(c)
     elif name == "minesweeper":
         icon_minesweeper(c)
+    elif name == "glxgears":
+        icon_glxgears(c)
     elif name == "taskmgr":
         icon_taskmgr(c)
     elif name == "run":

@@ -5,6 +5,7 @@ import sys
 import struct
 import io
 import argparse
+import re
 
 BLOCK_SIZE = 512
 MAX_FILE_SIZE = 32 * 1024 * 1024
@@ -48,6 +49,10 @@ def validate_input_method_id(value):
         raise ValueError("input method id is empty or too long")
     if not all(ch.isascii() and (ch.isalnum() or ch in '_-') for ch in value):
         raise ValueError("input method id must use ASCII letters, digits, _ or -")
+
+def validate_app_id(value):
+    if not value or not re.fullmatch(r"[a-z][a-z0-9_-]*", value):
+        raise ValueError("app id must use lowercase ASCII letters, digits, _ or -")
 
 def octal_str(value, length):
     fmt = f"%0{length - 1}o"
@@ -98,10 +103,19 @@ def build_api_file(name, version, main_exe_arcname, default_path,
                    files_list, output_path, input_method_id="",
                    input_method_abbreviation="", input_method_startup="manual",
                    input_method_settings="", input_method_settings_app="",
-                   launch_after_install=False, virtual_terminal=False):
+                   launch_after_install=False, virtual_terminal=False,
+                   app_id="", category="Applications", commands="",
+                   extensions="", hidden=False, open_with=False):
     """files_list: list of (local_path, arcname) tuples"""
     validate_ini_value("name", name, 64)
     validate_ini_value("version", version, 16)
+    if app_id:
+        validate_app_id(app_id)
+    validate_ini_value("category", category, 64)
+    if commands:
+        validate_ini_value("commands", commands, 256)
+    if extensions:
+        validate_ini_value("extensions", extensions, 256)
     validate_member_name(main_exe_arcname)
     if not main_exe_arcname.endswith('.elf'):
         raise ValueError("main_exe must be a .elf file")
@@ -155,14 +169,20 @@ format={API_FORMAT}
 version={API_FORMAT_VERSION}
 
 [app]
+id={app_id}
 name={name}
 version={version}
+category={category}
 main_exe={main_exe_arcname}
 default_path={default_path}
 requires_admin={1 if requires_admin else 0}
 desktop_shortcut={1 if desktop_shortcut else 0}
 icon={icon_arcname}
 terminal={1 if virtual_terminal else 0}
+hidden={1 if hidden else 0}
+open_with={1 if open_with else 0}
+commands={commands}
+extensions={extensions}
 """
     if input_method_id:
         ini_content += f"""
@@ -223,7 +243,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("legacy", nargs="*", help=argparse.SUPPRESS)
     parser.add_argument("--name")
+    parser.add_argument("--id", dest="app_id", default="")
     parser.add_argument("--version")
+    parser.add_argument("--category", default="Applications")
     parser.add_argument("--main-exe")
     parser.add_argument("--default-path")
     parser.add_argument("--icon", default="")
@@ -238,6 +260,10 @@ def main():
     parser.add_argument("--launch-after-install", action="store_true")
     parser.add_argument("--virtual-terminal", action="store_true",
                         help="run the installed main executable through Terminal")
+    parser.add_argument("--hidden", action="store_true")
+    parser.add_argument("--open-with", action="store_true")
+    parser.add_argument("--commands", default="")
+    parser.add_argument("--extensions", default="")
     parser.add_argument("--file", dest="files", action="append", nargs=2,
                         metavar=("LOCAL", "ARCHIVE"), default=[])
     parser.add_argument("--output")
@@ -284,6 +310,12 @@ def main():
         input_method_settings_app = args.input_method_settings_app
         launch_after_install = args.launch_after_install
         virtual_terminal = args.virtual_terminal
+        app_id = args.app_id
+        category = args.category
+        commands = args.commands
+        extensions = args.extensions
+        hidden = args.hidden
+        open_with = args.open_with
 
     if args.legacy:
         input_method_id = ""
@@ -293,6 +325,12 @@ def main():
         input_method_settings_app = ""
         launch_after_install = False
         virtual_terminal = False
+        app_id = ""
+        category = "Applications"
+        commands = ""
+        extensions = ""
+        hidden = False
+        open_with = False
 
     build_api_file(
         name=name,
@@ -311,6 +349,12 @@ def main():
         input_method_settings_app=input_method_settings_app,
         launch_after_install=launch_after_install,
         virtual_terminal=virtual_terminal,
+        app_id=app_id,
+        category=category,
+        commands=commands,
+        extensions=extensions,
+        hidden=hidden,
+        open_with=open_with,
     )
 
 

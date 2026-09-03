@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <leonos/posix.h>
+#include <leonos/app.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
 #include <signal.h>
@@ -232,25 +233,6 @@ static const char *const busybox_applets[] = {
     "fsck.exfat", "blkid", "lsblk", "leonos-grub-installer", "sync", NULL,
 };
 
-struct program_path {
-    const char *name;
-    const char *path;
-};
-
-static const struct program_path programs[] = {
-    {"cmd", "/programs/cmd/cmd.elf"},
-    {"file", "/programs/file/file.elf"},
-    {"fastfetch", "/programs/fastfetch/fastfetch.elf"},
-    {"less", "/programs/less/less.elf"},
-    {"sl", "/programs/sl/sl.elf"},
-    {"lua", "/programs/lua/lua.elf"},
-    {"nano", "/programs/nano/nano.elf"},
-    {"pleditor", "/programs/pleditor/pleditor.elf"},
-    {"tcc", "/programs/tcc/tcc.elf"},
-    {"gptinit", "/programs/gptinit/gptinit.elf"},
-    {NULL, NULL},
-};
-
 static int job_name_equal(const char *left, const char *right)
 {
     return left && right && command_name_equal(left, right);
@@ -400,10 +382,8 @@ int libcmd_find_exec(const char *name, const char *path_env, char *out, size_t o
         if (command_name_equal(name, busybox_applets[index]))
             return copy_exec_path(out, out_size, "/programs/busybox/busybox.elf");
     }
-    for (index = 0; programs[index].name; ++index) {
-        if (command_name_equal(name, programs[index].name))
-            return copy_exec_path(out, out_size, programs[index].path);
-    }
+    if (leonos_app_registry_resolve(name, out, out_size) == 0)
+        return 0;
     return -1;
 }
 

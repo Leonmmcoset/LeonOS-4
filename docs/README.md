@@ -18,6 +18,8 @@ when changing the kernel, loader, middlelayer, installer, or user ABI.
   kernel/middlelayer responsibility split.
 - [Build and Installer](BUILD_AND_INSTALLER.md): generated build graph,
   packaging outputs, installer payload layout, and WSL validation commands.
+- [Application Registry](APP_REGISTRY.md): manifest format, discovery roots,
+  compatibility behavior, and SDK API.
 - [Advanced Installation](ADVANCED_INSTALL.md): TTY-only manual installation,
   GPT initialization, partitioning, filesystem setup, and UEFI payload install.
 - [Browser](BROWSER.md): `browser.elf`, current HTML renderer limits, and the

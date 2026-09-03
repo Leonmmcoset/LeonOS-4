@@ -3510,7 +3510,10 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_VERSION) {
-        return 1;
+        /* A framebuffer device is also present in TTY mode. Report GUI
+         * availability only when the window server is actually alive so
+         * GUI-only applications can fail cleanly without orphaning a window. */
+        return sched_find_window_server() ? 1 : -LEONOS_EPERM;
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_EVENT) {

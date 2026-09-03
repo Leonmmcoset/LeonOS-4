@@ -1,7 +1,7 @@
 #include <leonos/fs.h>
+#include <leonos/app.h>
 #include <leonos/device.h>
 #include <leonos/environment.h>
-#include <leonos/ini.h>
 #include <leonos/launch.h>
 #include <leonos/pty.h>
 #include <leonos/stdio.h>
@@ -16,75 +16,10 @@
 #define LEONOS_SHORTCUT_MAX_DEPTH 8U
 #define LEONOS_TERMINAL_APP_PATH "/system/apps/terminal/terminal.elf"
 
-struct builtin_program {
-    const char *name;
-    const char *path;
-};
-
-struct builtin_assoc {
-    const char *extension;
-    const char *program_path;
-};
-
-static const struct builtin_program builtin_programs[] = {
-    {"hello", "/programs/hello/hello.elf"},
-    {"uidemo", "/programs/uidemo/uidemo.elf"},
-    {"taskmgr", "/system/apps/taskmgr/taskmgr.elf"},
-    {"fileman", "/system/apps/fileman/fileman.elf"},
-    {"terminal", "/system/apps/terminal/terminal.elf"},
-    {"notepad", "/programs/notepad/notepad.elf"},
-    {"calc", "/programs/calc/calc.elf"},
-    {"nano", "/programs/nano/nano.elf"},
-    {"fastfetch", "/programs/fastfetch/fastfetch.elf"},
-    {"less", "/programs/less/less.elf"},
-    {"run", "/system/apps/run/run.elf"},
-    {"osver", "/system/apps/osver/osver.elf"},
-    {"memtest", "/programs/memtest/memtest.elf"},
-    {"smptest", "/programs/smptest/smptest.elf"},
-    {"ping", "/programs/ping/ping.elf"},
-    {"netctl", "/system/apps/netctl/netctl.elf"},
-    {"serviced", "/system/apps/serviced/serviced.elf"},
-    {"servicemgr", "/system/apps/servicemgr/servicemgr.elf"},
-    {"httpget", "/programs/httpget/httpget.elf"},
-    {"downloadmgr", "/programs/downloadmgr/downloadmgr.elf"},
-    {"browser", "/programs/browser/browser.elf"},
-    {"imageview", "/programs/imageview/imageview.elf"},
-    {"wavplay", "/programs/wavplay/wavplay.elf"},
-    {"mp3play", "/programs/mp3play/mp3play.elf"},
-    {"oshlp", "/programs/oshlp/oshlp.elf"},
-    {"doom", "/programs/doom/doomlauncher.elf"},
-    {"doomlauncher", "/programs/doom/doomlauncher.elf"},
-    {"diskmgr", "/system/apps/diskmgr/diskmgr.elf"},
-    {"devmgr", "/system/apps/devmgr/devmgr.elf"},
-};
-
-static const struct builtin_assoc builtin_assocs[] = {
-    {".html", "/programs/browser/browser.elf"},
-    {".htm", "/programs/browser/browser.elf"},
-    {".txt", "/programs/notepad/notepad.elf"},
-    {".md", "/programs/notepad/notepad.elf"},
-    {".log", "/programs/notepad/notepad.elf"},
-    {".cfg", "/programs/notepad/notepad.elf"},
-    {".conf", "/programs/notepad/notepad.elf"},
-    {".ini", "/programs/notepad/notepad.elf"},
-    {".api", "/system/apps/apiapp/apiapp.elf"},
-    {".bmp", "/programs/imageview/imageview.elf"},
-    {".dib", "/programs/imageview/imageview.elf"},
-    {".wav", "/programs/wavplay/wavplay.elf"},
-    {".mp3", "/programs/mp3play/mp3play.elf"},
-    {".hlp", "/programs/oshlp/oshlp.elf"},
-};
-
-static const struct leonos_launch_assoc_app assoc_apps[] = {
-    {"LeonOS Browser", "Open the HTML page", "/programs/browser/browser.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"Notepad", "Open the file as text", "/programs/notepad/notepad.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"Image Viewer", "Open BMP images", "/programs/imageview/imageview.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"WAV Player", "Play PCM WAV audio", "/programs/wavplay/wavplay.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"MP3 Player", "Play MP3 audio", "/programs/mp3play/mp3play.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"Help Viewer", "Open LeonOS help files", "/programs/oshlp/oshlp.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-    {"Terminal", "Run cat in a terminal window", "/system/apps/terminal/terminal.elf", LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT},
-    {"Run", "Pass the path to the Run dialog", "/system/apps/run/run.elf", LEONOS_LAUNCH_ASSOC_MODE_EXEC},
-};
+#define LEONOS_LAUNCH_ASSOC_CACHE_MAX LEONOS_APP_REGISTRY_MAX
+static struct leonos_launch_assoc_app assoc_cache[LEONOS_LAUNCH_ASSOC_CACHE_MAX];
+static struct leonos_app_info assoc_info_cache[LEONOS_LAUNCH_ASSOC_CACHE_MAX];
+static uint32_t assoc_cache_count;
 
 static uint32_t text_len(const char *text)
 {
@@ -210,46 +145,24 @@ static void build_parent_path(char *dst, uint32_t capacity, const char *path)
     }
 }
 
-static int app_manifest_path(const char *program_path, char *manifest,
-                             uint32_t capacity)
-{
-    uint32_t length;
-    uint32_t pos;
-    if (!program_path || !manifest || capacity == 0 ||
-        !ends_with_ignore_case(program_path, ".elf")) {
-        return 0;
-    }
-    length = text_len(program_path);
-    if (length < 4U || length + 4U >= capacity) {
-        return 0;
-    }
-    for (uint32_t i = 0; i < length - 4U; ++i) {
-        manifest[i] = program_path[i];
-    }
-    pos = length - 4U;
-    manifest[pos] = 0;
-    append_text(manifest, &pos, capacity, ".app.ini");
-    return 1;
-}
-
 static int app_requires_terminal(const char *program_path)
 {
-    char manifest[LEONOS_FS_PATH_LEN];
-    char value[8];
-    if (!app_manifest_path(program_path, manifest, sizeof(manifest)) ||
-        !leonos_ini_load_strict(manifest) ||
-        !leonos_ini_get("app", "terminal", value, sizeof(value))) {
-        return 0;
-    }
-    return text_eq(value, "1") || text_eq_ignore_case(value, "true") ||
-           text_eq_ignore_case(value, "yes");
+    struct leonos_app_info info;
+    return leonos_app_registry_find(program_path, &info) == 0 &&
+           (info.flags & LEONOS_APP_FLAG_TERMINAL) != 0;
 }
 
 static int launch_in_terminal(char *argv[])
 {
     char *terminal_argv[LEONOS_LAUNCH_MAX_ARGS + 3U];
+    char terminal_path[LEONOS_APP_PATH_LEN];
+    const char *terminal = LEONOS_TERMINAL_APP_PATH;
     uint32_t argc = 0;
-    terminal_argv[0] = (char *)LEONOS_TERMINAL_APP_PATH;
+    if (leonos_app_registry_resolve("terminal", terminal_path,
+                                    sizeof(terminal_path)) == 0) {
+        terminal = terminal_path;
+    }
+    terminal_argv[0] = (char *)terminal;
     terminal_argv[1] = "--run";
     while (argv[argc]) {
         if (argc >= LEONOS_LAUNCH_MAX_ARGS) {
@@ -434,13 +347,22 @@ int leonos_launch_create_shortcut_in_dir(const char *dir_path, const char *targe
 
 static const struct leonos_launch_assoc_app *find_assoc_app(const char *program_path)
 {
-    uint32_t count = (uint32_t)(sizeof(assoc_apps) / sizeof(assoc_apps[0]));
-    for (uint32_t i = 0; i < count; ++i) {
-        if (text_eq(assoc_apps[i].program_path, program_path)) {
-            return &assoc_apps[i];
-        }
+    struct leonos_app_info info;
+    if (leonos_app_registry_find(program_path, &info) < 0) {
+        return 0;
     }
-    return 0;
+    if ((info.flags & LEONOS_APP_FLAG_OPEN_WITH) == 0 &&
+        !text_eq(info.id, "terminal")) {
+        return 0;
+    }
+    assoc_info_cache[0] = info;
+    assoc_cache[0].name = assoc_info_cache[0].name;
+    assoc_cache[0].detail = assoc_info_cache[0].category;
+    assoc_cache[0].program_path = assoc_info_cache[0].exec;
+    assoc_cache[0].mode = text_eq(info.id, "terminal")
+                              ? LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT
+                              : LEONOS_LAUNCH_ASSOC_MODE_EXEC;
+    return &assoc_cache[0];
 }
 
 static int normalize_extension(const char *extension, char *buffer, uint32_t capacity)
@@ -599,28 +521,12 @@ static int parse_assoc_line(const char *line, uint32_t len,
     return pos != 0;
 }
 
-static const char *builtin_assoc_for_extension(const char *extension)
-{
-    uint32_t count = (uint32_t)(sizeof(builtin_assocs) / sizeof(builtin_assocs[0]));
-    for (uint32_t i = 0; i < count; ++i) {
-        if (text_eq_ignore_case(builtin_assocs[i].extension, extension)) {
-            return builtin_assocs[i].program_path;
-        }
-    }
-    return 0;
-}
-
 const char *leonos_launch_builtin_path(const char *name_or_path)
 {
-    uint32_t count = (uint32_t)(sizeof(builtin_programs) / sizeof(builtin_programs[0]));
-    if (!name_or_path || !name_or_path[0]) {
-        return name_or_path;
-    }
-    for (uint32_t i = 0; i < count; ++i) {
-        if (text_eq(name_or_path, builtin_programs[i].name) ||
-            text_eq(name_or_path, builtin_programs[i].path)) {
-            return builtin_programs[i].path;
-        }
+    static char resolved[LEONOS_APP_PATH_LEN];
+    if (name_or_path && name_or_path[0] &&
+        leonos_app_registry_resolve(name_or_path, resolved, sizeof(resolved)) == 0) {
+        return resolved;
     }
     return name_or_path;
 }
@@ -757,25 +663,40 @@ int leonos_launch_set_extension_association(const char *extension, const char *p
 
 const struct leonos_launch_assoc_app *leonos_launch_assoc_apps(uint32_t *count)
 {
-    if (count) {
-        *count = (uint32_t)(sizeof(assoc_apps) / sizeof(assoc_apps[0]));
+    uint32_t total = leonos_app_registry_count();
+    assoc_cache_count = 0;
+    for (uint32_t i = 0; i < total && assoc_cache_count < LEONOS_LAUNCH_ASSOC_CACHE_MAX; ++i) {
+        if (leonos_app_registry_get(i, &assoc_info_cache[assoc_cache_count]) < 0) continue;
+        if ((assoc_info_cache[assoc_cache_count].flags & LEONOS_APP_FLAG_OPEN_WITH) == 0 &&
+            !text_eq(assoc_info_cache[assoc_cache_count].id, "terminal") &&
+            !text_eq(assoc_info_cache[assoc_cache_count].id, "run")) continue;
+        assoc_cache[assoc_cache_count].name = assoc_info_cache[assoc_cache_count].name;
+        assoc_cache[assoc_cache_count].detail = assoc_info_cache[assoc_cache_count].category;
+        assoc_cache[assoc_cache_count].program_path = assoc_info_cache[assoc_cache_count].exec;
+        assoc_cache[assoc_cache_count].mode = text_eq(assoc_info_cache[assoc_cache_count].id, "terminal")
+                                                  ? LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT
+                                                  : LEONOS_LAUNCH_ASSOC_MODE_EXEC;
+        ++assoc_cache_count;
     }
-    return assoc_apps;
+    if (count) {
+        *count = assoc_cache_count;
+    }
+    return assoc_cache;
 }
 
 const char *leonos_launch_resolve_default_app_for_path(const char *path)
 {
     static char program[LEONOS_FS_PATH_LEN];
     char extension[16];
-    const char *builtin_program;
     if (!leonos_launch_get_extension_for_path(path, extension, sizeof(extension))) {
         return 0;
     }
     if (leonos_launch_get_extension_association(extension, program, sizeof(program)) > 0) {
         return program;
     }
-    builtin_program = builtin_assoc_for_extension(extension);
-    return builtin_program ? builtin_program : 0;
+    return leonos_app_registry_default_for_extension(extension, program,
+                                                     sizeof(program)) == 0
+               ? program : 0;
 }
 
 static int shortcut_line_starts_with(const char *line, uint32_t len, const char *prefix)
@@ -899,7 +820,13 @@ int leonos_launch_file_with_app(const char *target_path, const char *program_pat
         argv[0] = (char *)resolved_program;
         argv[1] = (char *)target_path;
         argv[2] = 0;
-        return leonos_launch_argv(argv);
+        /* The caller explicitly selected this executable as the handler.
+         * Do not feed it back through leonos_launch_argv(): that routine is
+         * for user-entered paths and may reinterpret its first argument as a
+         * directory or another associated document.  An explicit handler
+         * must be spawned directly, otherwise selecting Notepad can fall
+         * through to File Manager when the path is re-resolved. */
+        return leonos_spawn_argv(resolved_program, argv);
     }
 }
 
@@ -967,6 +894,7 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
 {
     struct leonos_stat st;
     char extension[16];
+    char associated_program[LEONOS_FS_PATH_LEN];
     char *path;
     const char *default_program;
     if (!argv || !argv[0] || !argv[0][0]) {
@@ -1010,7 +938,12 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
     }
     if (st.type == LEONOS_FS_TYPE_DIR) {
         char *dir_argv[3];
-        dir_argv[0] = "/system/apps/fileman/fileman.elf";
+        char fileman_path[LEONOS_APP_PATH_LEN];
+        if (leonos_app_registry_resolve("fileman", fileman_path,
+                                        sizeof(fileman_path)) < 0) {
+            return LEONOS_LAUNCH_ERR_NOT_FOUND;
+        }
+        dir_argv[0] = fileman_path;
         dir_argv[1] = path;
         dir_argv[2] = 0;
         return leonos_spawn_argv(dir_argv[0], dir_argv);
@@ -1020,8 +953,9 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         return leonos_launch_file_with_app(path, default_program);
     }
     if (leonos_launch_get_extension_for_path(path, extension, sizeof(extension))) {
-        default_program = builtin_assoc_for_extension(extension);
-        if (default_program) {
+        if (leonos_app_registry_default_for_extension(extension, associated_program,
+                                                      sizeof(associated_program)) == 0) {
+            default_program = associated_program;
             return leonos_launch_file_with_app(path, default_program);
         }
     }
