@@ -207,7 +207,7 @@ static int read_file_all(const char *path, uint8_t **out_data, uint32_t *out_len
     uint8_t *data;
     uint32_t len = 0;
     int fd;
-    if (!out_data || !out_len || stat(path, &st) < 0 ||
+    if (!out_data || !out_len || leonos_stat_legacy(path, &st) < 0 ||
         st.type != LEONOS_FS_TYPE_FILE || st.size == 0 ||
         st.size > 8U * 1024U * 1024U) {
         return -1;

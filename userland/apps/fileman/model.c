@@ -592,7 +592,7 @@ int accumulate_folder_size(const char *path, struct folder_size_info *info, uint
         }
         ++info->visited;
         build_path_join(child, sizeof(child), path, entry.name);
-        if (stat(child, &st) < 0) {
+        if (leonos_stat_legacy(child, &st) < 0) {
             info->partial = 1;
             continue;
         }
@@ -830,7 +830,7 @@ void show_details_selected(void)
         return;
     }
     build_child_path(path, sizeof(path), entries[file_list.selected].name);
-    if (stat(path, &st) < 0) {
+    if (leonos_stat_legacy(path, &st) < 0) {
         set_status("Details stat failed");
         return;
     }

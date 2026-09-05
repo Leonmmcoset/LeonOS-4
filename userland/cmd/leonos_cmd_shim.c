@@ -374,7 +374,7 @@ int libcmd_find_exec(const char *name, const char *path_env, char *out, size_t o
         return -1;
     }
     if (command_has_path(name)) {
-        if (leonos_posix_stat(name, &st) == 0 && S_ISREG(st.st_mode))
+        if (stat(name, &st) == 0 && S_ISREG(st.st_mode))
             return copy_exec_path(out, out_size, name);
         return -1;
     }

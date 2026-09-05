@@ -52,6 +52,8 @@ int64_t pty_read_input(uint32_t pty_id, char *buffer, uint32_t length);
  * @brief Return how many bytes of input are buffered for pty_id.
  */
 uint32_t pty_input_available(uint32_t pty_id);
+/** Return bytes buffered from the PTY slave toward its master. */
+uint32_t pty_output_available(uint32_t pty_id);
 /**
  * @brief Write up to length bytes of buffer to pty_id's terminal output; returns bytes written.
  */

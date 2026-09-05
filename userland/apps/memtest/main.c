@@ -229,7 +229,7 @@ static int run_file_mmap_tests(void)
         return fail("file-open", fd);
     }
     struct leonos_stat st;
-    if (fstat(fd, &st) < 0) {
+    if (leonos_fstat_legacy(fd, &st) < 0) {
         close(fd);
         return fail("file-fstat", -1);
     }

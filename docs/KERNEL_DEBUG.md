@@ -29,6 +29,14 @@ continues the already initialized kernel through the ordinary init/desktop
 path. If the ESP cannot be written, the Start menu reports the error and does
 not reboot.
 
+## TTY display diagnostic
+
+While the kernel-created TTY is active, press `Ctrl+Alt+Shift+F12`. The
+kernel writes `Test message` directly to the framebuffer TTY and the serial
+console without a timestamp. If the serial log contains the message but the
+screen does not, the TTY renderer or framebuffer path is stuck; if neither
+contains it, keyboard interrupt delivery or the kernel is not responding.
+
 ## API diagnostics
 
 The first menu item runs the registered syscall and ioctl probes. The current

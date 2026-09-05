@@ -997,7 +997,7 @@ static int ui_file_dialog_activate(const char *title, int save_mode,
             return 0;
         }
         ui_build_child_path(full_path, sizeof(full_path), dir_path, filename);
-        if (stat(full_path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE) {
+        if (leonos_stat_legacy(full_path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE) {
             ui_file_dialog_status(status, status_cap,
                                   UI_T("File not found ", "找不到文件："), full_path);
             return 0;
@@ -1021,7 +1021,7 @@ static int ui_file_dialog_activate(const char *title, int save_mode,
     } else {
         ui_build_child_path(full_path, sizeof(full_path), dir_path, filename);
     }
-    if (stat(full_path, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
+    if (leonos_stat_legacy(full_path, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
         if (!leonos_ui_show_confirm_dialog(title ? title : UI_T("Save As", "另存为"),
                                            UI_T("This file already exists. Replace it?",
                                                 "文件已存在。是否替换？"),

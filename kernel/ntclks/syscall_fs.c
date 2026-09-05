@@ -9,6 +9,7 @@ int syscall_fs_owns(uint64_t number)
     case LINUX_SYS_READ:
     case LINUX_SYS_WRITE:
     case LINUX_SYS_OPEN:
+    case LINUX_SYS_OPENAT:
     case LINUX_SYS_CLOSE:
     case LINUX_SYS_STAT:
     case LINUX_SYS_FSTAT:
@@ -21,6 +22,8 @@ int syscall_fs_owns(uint64_t number)
     case LINUX_SYS_RMDIR:
     case LINUX_SYS_UNLINK:
     case LINUX_SYS_FCNTL:
+    case LINUX_SYS_MOUNT:
+    case LINUX_SYS_UMOUNT2:
         return 1;
     default:
         return 0;

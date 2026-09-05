@@ -45,6 +45,13 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
 #include <leonos/system.h>
 #include <leonos/startup.h>
 #include <leonos/text.h>
+#include <linux/tty.h>
+#include <linux/fb.h>
+#include <linux/input.h>
+#include <linux/ioctl.h>
+#include <linux/soundcard.h>
+#include <linux/fs.h>
+#include <linux/mount.h>
 
 #define LEONOS_GUI_IOCTL_EVENT 0x4c455654ULL
 #define LEONOS_GUI_IOCTL_VERSION 0x4c475549ULL
@@ -76,6 +83,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
 #define LEONOS_TEXT_LAYOUT_MAX_BYTES 4096U
 #define LEONOS_TEXT_LAYOUT_MAX_GLYPHS 512U
 #define PAGE_SIZE 4096ULL
+#define LEONOS_O_NONBLOCK 0x800u
 #define LINUX_PROT_READ TASK_VMA_PROT_READ
 #define LINUX_PROT_WRITE TASK_VMA_PROT_WRITE
 #define LINUX_PROT_EXEC TASK_VMA_PROT_EXEC
@@ -93,9 +101,14 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
 #define STARTUP_DB_ENTRY_MAX 64U
 #define STARTUP_DENIAL_MAX 64U
 #define STARTUP_REQUEST_MAX 16U
+/* Both supported PCM drivers accept 16-bit stereo samples.  This is the
+ * portable OSS queue shape reported by /dev/dsp, not driver-private DMA
+ * layout. */
+#define OSS_DSP_FRAGMENT_BYTES 2048U
+#define OSS_DSP_FRAGMENT_COUNT 8U
+#define OSS_DSP_QUEUE_BYTES (OSS_DSP_FRAGMENT_BYTES * OSS_DSP_FRAGMENT_COUNT)
 
 static struct leonos_user_info auth_user_scratch[LEONOS_AUTH_MAX_USERS];
-static struct leonos_disk_partition disk_partition_scratch[LEONOS_DISK_MAX_PARTITIONS];
 
 struct startup_db {
     uint32_t magic;
@@ -653,6 +666,7 @@ void clear_task_file(struct task_file *file)
         return;
     }
     task_pipe_release(file);
+    task_socket_release(file);
     file->used = 0;
     file->node.type = 0;
     file->node.flags = 0;
@@ -713,11 +727,13 @@ int syscall_clone_task_files(const struct task *parent, struct task *child)
         struct task_file *file = sched_task_file_at(child, i);
         if (file && file->used) {
             task_pipe_retain(file);
+            task_socket_retain(file);
         }
     }
     for (uint32_t i = 0; i < SCHED_TASK_STDIO_MAX; ++i) {
         if (child->stdio_files[i].used) {
             task_pipe_retain(&child->stdio_files[i]);
+            task_socket_retain(&child->stdio_files[i]);
         }
     }
     return 0;
@@ -788,7 +804,7 @@ struct task_file *task_file_for_fd(struct task *task, int fd)
  */
 struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
 {
-    if (!task || !task->pty_id || fd < 4) {
+    if (!task || fd < 4) {
         return NULL;
     }
     for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
@@ -798,6 +814,61 @@ struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
         }
     }
     return NULL;
+}
+
+static int task_pty_fd_available(struct task *task, int fd);
+
+static struct task_pty_fd *task_pty_endpoint_for_fd(struct task *task, int fd)
+{
+    struct task_pty_fd *entry = task_pty_fd_for_fd(task, fd);
+    return entry && entry->endpoint && entry->pty_id ? entry : NULL;
+}
+
+static int task_pty_endpoint_fd(struct task *task, uint32_t pty_id,
+                                uint32_t endpoint, uint32_t flags)
+{
+    int candidate;
+    (void)flags;
+    if (!task || !pty_id || !endpoint || !pty_is_active(pty_id) ||
+        !task_can_allocate_fd(task)) {
+        return -LEONOS_EMFILE;
+    }
+    candidate = 4;
+    for (uint32_t attempts = 0;
+         attempts < SCHED_TASK_PTY_FD_MAX + SCHED_TASK_FILE_MAX + 4u;
+         ++attempts, ++candidate) {
+        if (!task_pty_fd_available(task, candidate)) continue;
+        for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
+            struct task_pty_fd *entry = &task->pty_fds[i];
+            if (!entry->used) {
+                *entry = (struct task_pty_fd){
+                    .used = 1, .fd = candidate, .flags = 0,
+                    .pty_id = pty_id, .endpoint = endpoint,
+                };
+                return candidate;
+            }
+        }
+        return -LEONOS_EMFILE;
+    }
+    return -LEONOS_EMFILE;
+}
+
+static int task_pty_endpoint_path(const char *path, uint32_t *pty_id)
+{
+    const char *prefix = "/dev/pts/";
+    uint32_t value = 0;
+    uint32_t digits = 0;
+    if (!path || !pty_id) return 0;
+    while (*prefix && *path && *prefix == *path) { ++prefix; ++path; }
+    if (*prefix || !*path) return 0;
+    while (*path >= '0' && *path <= '9') {
+        value = value * 10u + (uint32_t)(*path - '0');
+        ++path; ++digits;
+        if (value > 0xffffu) return 0;
+    }
+    if (!digits || *path || !value || !pty_is_active(value)) return 0;
+    *pty_id = value;
+    return 1;
 }
 
 static int task_device_is(const struct task_file *file, uint32_t kind);
@@ -1090,6 +1161,7 @@ static int task_dup2_fd(struct task *task, int old_fd, int new_fd)
         task->closed_stdio_mask &= ~(1u << (uint32_t)new_fd);
     }
     task_pipe_retain(new_file);
+    task_socket_retain(new_file);
     return new_fd;
 }
 
@@ -1118,6 +1190,7 @@ static int task_duplicate_file_fd(struct task *task, int old_fd, int minimum_fd,
         target->used = 1;
         target->fd_flags = fd_flags;
         task_pipe_retain(target);
+        task_socket_retain(target);
         return fd;
     }
     return -LEONOS_EMFILE;
@@ -1147,6 +1220,7 @@ int syscall_inherit_task_fds(struct task *parent, struct task *child,
         *target = *source;
         target->used = 1;
         task_pipe_retain(target);
+        task_socket_retain(target);
     }
     return 0;
 }
@@ -1179,14 +1253,35 @@ static int task_device_is(const struct task_file *file, uint32_t kind)
            file->node.first_cluster == kind;
 }
 
+static int task_block_device(const struct task_file *file, uint32_t *disk_id,
+                             int32_t *partition_index)
+{
+    if (!file || !(file->flags & TASK_FILE_FLAG_DEV_BLOCK) ||
+        !task_device_is(file, STORAGE_DEV_KIND_DISK)) return 0;
+    if (disk_id) *disk_id = STORAGE_BLOCK_DISK_ID(file->node.volume_id);
+    if (partition_index) *partition_index = STORAGE_BLOCK_PARTITION(file->node.volume_id);
+    return 1;
+}
+
 static int task_device_read(struct task *task, struct task_file *file,
                             void *buffer, uint32_t length)
 {
+    uint32_t disk_id;
+    int32_t partition_index;
+    uint32_t got = 0;
     if (!task || !file || !buffer || !length) return 0;
+    if (task_block_device(file, &disk_id, &partition_index)) {
+        if (task_effective_role(task) != LEONOS_AUTH_ROLE_ADMIN &&
+            !(task->uid == 0 && storage_installer_root_active())) {
+            return -LEONOS_EACCES;
+        }
+        int ret = storage_disk_block_read(disk_id, partition_index, file->offset,
+                                          buffer, length, &got);
+        return ret < 0 ? ret : (int)got;
+    }
     if (task_device_is(file, STORAGE_DEV_KIND_NULL) ||
         task_device_is(file, STORAGE_DEV_KIND_FULL) ||
         task_device_is(file, STORAGE_DEV_KIND_CONSOLE) ||
-        task_device_is(file, STORAGE_DEV_KIND_AUDIO) ||
         task_device_is(file, STORAGE_DEV_KIND_SERIAL)) return 0;
     if (task_device_is(file, STORAGE_DEV_KIND_ZERO) ||
         task_device_is(file, STORAGE_DEV_KIND_RANDOM) ||
@@ -1200,17 +1295,16 @@ static int task_device_read(struct task *task, struct task_file *file,
     }
     if (task_device_is(file, STORAGE_DEV_KIND_KEYBOARD) ||
         task_device_is(file, STORAGE_DEV_KIND_MOUSE)) {
-        struct input_event event;
-        if (length < sizeof(event)) {
-            return -LEONOS_EINVAL;
+        int ret = input_evdev_read(file->node.first_cluster, &file->aux,
+                                   buffer, length);
+        if (ret == 0 && (file->flags & LEONOS_O_NONBLOCK)) {
+            return -LEONOS_EAGAIN;
         }
-        if (!input_pop(&event)) {
-            return 0;
-        }
-        for (uint32_t i = 0; i < sizeof(event); ++i) {
-            ((uint8_t *)buffer)[i] = ((const uint8_t *)&event)[i];
-        }
-        return (int)sizeof(event);
+        return ret;
+    }
+    /* The first OSS implementation is playback-only. */
+    if (task_device_is(file, STORAGE_DEV_KIND_AUDIO)) {
+        return -LEONOS_EBADF;
     }
     return -LEONOS_EBADF;
 }
@@ -1218,7 +1312,19 @@ static int task_device_read(struct task *task, struct task_file *file,
 static int task_device_write(struct task *task, struct task_file *file,
                              const void *buffer, uint32_t length)
 {
+    uint32_t disk_id;
+    int32_t partition_index;
+    uint32_t wrote = 0;
     if (!task || !file) return -LEONOS_EBADF;
+    if (task_block_device(file, &disk_id, &partition_index)) {
+        if (task_effective_role(task) != LEONOS_AUTH_ROLE_ADMIN &&
+            !(task->uid == 0 && storage_installer_root_active())) {
+            return -LEONOS_EACCES;
+        }
+        int ret = storage_disk_block_write(disk_id, partition_index, file->offset,
+                                           buffer, length, &wrote);
+        return ret < 0 ? ret : (int)wrote;
+    }
     if (task_device_is(file, STORAGE_DEV_KIND_NULL) ||
         task_device_is(file, STORAGE_DEV_KIND_ZERO) ||
         task_device_is(file, STORAGE_DEV_KIND_RANDOM) ||
@@ -1253,9 +1359,266 @@ static int task_device_write(struct task *task, struct task_file *file,
     }
     if (task_device_is(file, STORAGE_DEV_KIND_AUDIO)) {
         uint32_t status = LEONOS_AUDIO_STATUS_OK;
-        return (int)driver_manager_audio_write(buffer, length, &status);
+        long written;
+        if (length && !buffer) return -LEONOS_EFAULT;
+        written = driver_manager_audio_write(buffer, length, &status);
+        if (written == 0 && status == LEONOS_AUDIO_STATUS_WOULD_BLOCK &&
+            (file->flags & LEONOS_O_NONBLOCK)) {
+            return -LEONOS_EAGAIN;
+        }
+        return (int)written;
     }
     return -LEONOS_EBADF;
+}
+
+static void evdev_set_bit(uint8_t *bits, uint32_t capacity, uint32_t bit)
+{
+    uint32_t byte = bit / 8U;
+    if (bits && byte < capacity) {
+        bits[byte] |= (uint8_t)(1U << (bit % 8U));
+    }
+}
+
+static void evdev_copy_text(char *dst, uint32_t capacity, const char *src)
+{
+    uint32_t i = 0;
+    if (!dst || !capacity) return;
+    while (src && src[i] && i + 1U < capacity) {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = 0;
+}
+
+static int task_evdev_ioctl(const struct task_file *file, uint64_t request,
+                            uint64_t user_arg)
+{
+    uint32_t device_kind;
+    uint32_t size;
+    if (!file || !(file->flags & TASK_FILE_FLAG_DEV_NODE) ||
+        (file->node.first_cluster != STORAGE_DEV_KIND_KEYBOARD &&
+         file->node.first_cluster != STORAGE_DEV_KIND_MOUSE)) {
+        return -LEONOS_ENOTTY;
+    }
+    device_kind = file->node.first_cluster;
+    if (request == EVIOCGVERSION) {
+        if (!user_range_ok(user_arg, sizeof(int))) return -LEONOS_EFAULT;
+        *(int *)(uintptr_t)user_arg = 0x00010001;
+        return 0;
+    }
+    if (request == EVIOCGID) {
+        struct input_id id = {
+            .bustype = BUS_I8042,
+            .vendor = 0x0001,
+            .product = device_kind == STORAGE_DEV_KIND_KEYBOARD ? 0x0001 : 0x0002,
+            .version = 0x0100,
+        };
+        if (!user_range_ok(user_arg, sizeof(id))) return -LEONOS_EFAULT;
+        *(struct input_id *)(uintptr_t)user_arg = id;
+        return 0;
+    }
+    if (request == EVIOCGRAB) {
+        return 0;
+    }
+    if (_IOC_TYPE(request) != 'E') {
+        return -LEONOS_ENOTTY;
+    }
+    size = _IOC_SIZE(request);
+    if (!size || !user_range_ok(user_arg, size)) {
+        return -LEONOS_EFAULT;
+    }
+    if (_IOC_NR(request) == 0x06 || _IOC_NR(request) == 0x07) {
+        const char *value;
+        if (_IOC_NR(request) == 0x06) {
+            value = device_kind == STORAGE_DEV_KIND_KEYBOARD
+                        ? "LeonOS PS/2 Keyboard" : "LeonOS PS/2 Mouse";
+        } else {
+            value = device_kind == STORAGE_DEV_KIND_KEYBOARD
+                        ? "platform/i8042/serio0" : "platform/i8042/serio1";
+        }
+        evdev_copy_text((char *)(uintptr_t)user_arg, size, value);
+        return 0;
+    }
+    if (_IOC_NR(request) == 0x18) {
+        uint8_t *bits = (uint8_t *)(uintptr_t)user_arg;
+        for (uint32_t i = 0; i < size; ++i) bits[i] = 0;
+        return 0;
+    }
+    if (_IOC_NR(request) >= 0x20 && _IOC_NR(request) <= 0x20 + EV_MAX) {
+        uint8_t bits[(KEY_CNT + 7U) / 8U] = {0};
+        uint32_t event_type = _IOC_NR(request) - 0x20U;
+        uint32_t copy = size < sizeof(bits) ? size : sizeof(bits);
+        if (event_type == 0) {
+            /* EVIOCGBIT(0, ...) reports supported event classes. */
+            evdev_set_bit(bits, sizeof(bits), EV_SYN);
+            evdev_set_bit(bits, sizeof(bits), EV_KEY);
+            if (device_kind == STORAGE_DEV_KIND_MOUSE) {
+                evdev_set_bit(bits, sizeof(bits), EV_REL);
+            }
+        } else if (event_type == EV_KEY) {
+            if (device_kind == STORAGE_DEV_KIND_KEYBOARD) {
+                for (uint32_t key = KEY_ESC; key <= KEY_COMPOSE; ++key) {
+                    evdev_set_bit(bits, sizeof(bits), key);
+                }
+            } else {
+                evdev_set_bit(bits, sizeof(bits), BTN_LEFT);
+                evdev_set_bit(bits, sizeof(bits), BTN_RIGHT);
+                evdev_set_bit(bits, sizeof(bits), BTN_MIDDLE);
+            }
+        } else if (event_type == EV_REL &&
+                   device_kind == STORAGE_DEV_KIND_MOUSE) {
+            evdev_set_bit(bits, sizeof(bits), REL_X);
+            evdev_set_bit(bits, sizeof(bits), REL_Y);
+            evdev_set_bit(bits, sizeof(bits), REL_WHEEL);
+        }
+        for (uint32_t i = 0; i < copy; ++i) {
+            ((uint8_t *)(uintptr_t)user_arg)[i] = bits[i];
+        }
+        for (uint32_t i = copy; i < size; ++i) {
+            ((uint8_t *)(uintptr_t)user_arg)[i] = 0;
+        }
+        return 0;
+    }
+    return -LEONOS_ENOTTY;
+}
+
+static int task_oss_dsp_state(struct leonos_audio_state *out)
+{
+    if (!out) return -LEONOS_EINVAL;
+    driver_manager_audio_get_state(out);
+    return out->present && out->active ? 0 : -LEONOS_ENODEV;
+}
+
+static int task_oss_dsp_set_rate(uint32_t requested_rate, uint32_t *actual_rate)
+{
+    struct leonos_audio_format format;
+    struct leonos_audio_state state = {0};
+    int ret;
+    ret = task_oss_dsp_state(&state);
+    if (ret < 0) return ret;
+    format = (struct leonos_audio_format){
+        .sample_rate = requested_rate ? requested_rate : state.sample_rate,
+        .channels = 2U,
+        .bits_per_sample = 16U,
+    };
+    if (!format.sample_rate) format.sample_rate = 48000U;
+    ret = driver_manager_audio_configure(&format);
+    if (ret < 0) return ret;
+    driver_manager_audio_get_state(&state);
+    if (actual_rate) *actual_rate = state.sample_rate;
+    return state.active ? 0 : -LEONOS_ENODEV;
+}
+
+static int task_oss_dsp_writable(const struct task_file *file)
+{
+    struct leonos_audio_state state = {0};
+    if (!task_device_is(file, STORAGE_DEV_KIND_AUDIO) || !file_can_write(file) ||
+        task_oss_dsp_state(&state) < 0) {
+        return 0;
+    }
+    return state.queued_bytes + OSS_DSP_FRAGMENT_BYTES <= OSS_DSP_QUEUE_BYTES;
+}
+
+static int task_oss_dsp_ioctl(struct task_file *file, uint64_t request,
+                              uint64_t user_arg)
+{
+    struct leonos_audio_state state = {0};
+    int value;
+    int ret;
+    if (!task_device_is(file, STORAGE_DEV_KIND_AUDIO)) return -LEONOS_ENOTTY;
+    if (request != SNDCTL_DSP_RESET && request != SNDCTL_DSP_SYNC &&
+        request != SNDCTL_DSP_NONBLOCK && request != SNDCTL_DSP_GETFMTS &&
+        request != SNDCTL_DSP_GETCAPS && request != SNDCTL_DSP_GETBLKSIZE &&
+        request != SNDCTL_DSP_SETFMT && request != SNDCTL_DSP_SPEED &&
+        request != SNDCTL_DSP_STEREO && request != SNDCTL_DSP_CHANNELS &&
+        request != SOUND_PCM_READ_CHANNELS && request != SOUND_PCM_READ_RATE &&
+        request != SNDCTL_DSP_GETODELAY && request != SNDCTL_DSP_GETOSPACE) {
+        return -LEONOS_ENOTTY;
+    }
+    ret = task_oss_dsp_state(&state);
+    if (ret < 0) return ret;
+
+    if (request == SNDCTL_DSP_RESET || request == SNDCTL_DSP_SYNC) {
+        /* Hardware drains asynchronously. There is no software-only PCM
+         * queue to reset or flush at this layer. */
+        return 0;
+    }
+    if (request == SNDCTL_DSP_NONBLOCK) {
+        file->flags |= LEONOS_O_NONBLOCK;
+        return 0;
+    }
+    if (request == SNDCTL_DSP_GETFMTS || request == SNDCTL_DSP_GETCAPS ||
+        request == SNDCTL_DSP_GETBLKSIZE || request == SNDCTL_DSP_SETFMT ||
+        request == SNDCTL_DSP_SPEED || request == SNDCTL_DSP_STEREO ||
+        request == SNDCTL_DSP_CHANNELS || request == SOUND_PCM_READ_CHANNELS ||
+        request == SOUND_PCM_READ_RATE || request == SNDCTL_DSP_GETODELAY) {
+        if (!user_range_ok(user_arg, sizeof(int))) return -LEONOS_EFAULT;
+    }
+
+    if (request == SNDCTL_DSP_GETFMTS) {
+        *(int *)(uintptr_t)user_arg = AFMT_S16_LE;
+        return 0;
+    }
+    if (request == SNDCTL_DSP_GETCAPS) {
+        *(int *)(uintptr_t)user_arg = DSP_CAP_OUTPUT;
+        return 0;
+    }
+    if (request == SNDCTL_DSP_GETBLKSIZE) {
+        *(int *)(uintptr_t)user_arg = OSS_DSP_FRAGMENT_BYTES;
+        return 0;
+    }
+    if (request == SNDCTL_DSP_SETFMT) {
+        value = *(int *)(uintptr_t)user_arg;
+        /* OSS callers use the returned value to detect the selected format. */
+        *(int *)(uintptr_t)user_arg = AFMT_S16_LE;
+        return value == AFMT_QUERY || value == AFMT_S16_LE ? 0 : -LEONOS_ENOTSUP;
+    }
+    if (request == SNDCTL_DSP_STEREO) {
+        value = *(int *)(uintptr_t)user_arg;
+        *(int *)(uintptr_t)user_arg = 1;
+        return value == 0 || value == 1 ? 0 : -LEONOS_EINVAL;
+    }
+    if (request == SNDCTL_DSP_CHANNELS) {
+        value = *(int *)(uintptr_t)user_arg;
+        *(int *)(uintptr_t)user_arg = 2;
+        return value == 0 || value == 2 ? 0 : -LEONOS_EINVAL;
+    }
+    if (request == SOUND_PCM_READ_CHANNELS) {
+        *(int *)(uintptr_t)user_arg = 2;
+        return 0;
+    }
+    if (request == SNDCTL_DSP_SPEED) {
+        value = *(int *)(uintptr_t)user_arg;
+        ret = task_oss_dsp_set_rate(value > 0 ? (uint32_t)value : 0, &state.sample_rate);
+        if (ret < 0) return ret;
+        *(int *)(uintptr_t)user_arg = (int)state.sample_rate;
+        return 0;
+    }
+    if (request == SOUND_PCM_READ_RATE) {
+        *(int *)(uintptr_t)user_arg = (int)state.sample_rate;
+        return 0;
+    }
+    if (request == SNDCTL_DSP_GETODELAY) {
+        *(int *)(uintptr_t)user_arg = (int)state.queued_bytes;
+        return 0;
+    }
+    if (request == SNDCTL_DSP_GETOSPACE) {
+        struct audio_buf_info info;
+        uint32_t available;
+        if (!user_range_ok(user_arg, sizeof(info))) return -LEONOS_EFAULT;
+        driver_manager_audio_get_state(&state);
+        available = state.queued_bytes < OSS_DSP_QUEUE_BYTES
+                        ? OSS_DSP_QUEUE_BYTES - state.queued_bytes : 0;
+        info = (struct audio_buf_info){
+            .fragments = (int)(available / OSS_DSP_FRAGMENT_BYTES),
+            .fragstotal = OSS_DSP_FRAGMENT_COUNT,
+            .fragsize = OSS_DSP_FRAGMENT_BYTES,
+            .bytes = (int)available,
+        };
+        *(struct audio_buf_info *)(uintptr_t)user_arg = info;
+        return 0;
+    }
+    return -LEONOS_ENOTTY;
 }
 
 /**
@@ -2652,6 +3015,98 @@ static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
     return -LEONOS_EBADF;
 }
 
+int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms)
+{
+    struct task *task = sched_current_task();
+        struct pollfd *fds;
+    uint64_t ready = 0;
+    (void)timeout_ms;
+
+    if (!task || count > 1024U || (count && !user_range_ok(fds_ptr,
+                                                            count * sizeof(*fds)))) {
+        return -LEONOS_EFAULT;
+    }
+    if (!count) {
+        return 0;
+    }
+    fds = (struct pollfd *)(uintptr_t)fds_ptr;
+    for (uint64_t i = 0; i < count; ++i) {
+        short events = fds[i].events;
+        short revents = 0;
+        int fd = fds[i].fd;
+        struct task_file *file;
+        fds[i].revents = 0;
+        if (fd < 0) {
+            continue;
+        }
+        file = task_file_for_fd(task, fd);
+        {
+            struct task_pty_fd *endpoint = task_pty_endpoint_for_fd(task, fd);
+            if (endpoint) {
+                if (events & POLLIN) {
+                    uint32_t available = endpoint->endpoint == TASK_PTY_ENDPOINT_MASTER
+                                             ? pty_output_available(endpoint->pty_id)
+                                             : pty_input_available(endpoint->pty_id);
+                    if (available) revents |= POLLIN;
+                }
+                if (events & POLLOUT) revents |= POLLOUT;
+                fds[i].revents = revents;
+                if (revents) ++ready;
+                continue;
+            }
+        }
+        if (file && (file->flags & TASK_FILE_FLAG_PIPE)) {
+            revents = task_pipe_poll(file, events);
+        } else if (file && (file->flags & TASK_FILE_FLAG_SOCKET_UNIX)) {
+            revents = task_socket_poll(file, events);
+        } else if (file && (file->flags & TASK_FILE_FLAG_DEV_NODE)) {
+            if (task_device_is(file, STORAGE_DEV_KIND_KEYBOARD) ||
+                task_device_is(file, STORAGE_DEV_KIND_MOUSE)) {
+                if ((events & POLLIN) &&
+                    input_evdev_available(file->node.first_cluster, file->aux)) {
+                    revents |= POLLIN;
+                }
+            } else if (task_device_is(file, STORAGE_DEV_KIND_AUDIO)) {
+                struct leonos_audio_state audio = {0};
+                if (task_oss_dsp_state(&audio) < 0) {
+                    revents |= POLLERR;
+                } else if ((events & POLLOUT) && task_oss_dsp_writable(file)) {
+                    revents |= POLLOUT;
+                }
+            } else if (task_device_is(file, STORAGE_DEV_KIND_TTY)) {
+                if (pty_input_available(task->pty_id)) revents |= POLLIN;
+            } else if (events & POLLIN) {
+                revents |= POLLIN;
+            }
+            if ((events & POLLOUT) && file_can_write(file) &&
+                !task_device_is(file, STORAGE_DEV_KIND_KEYBOARD) &&
+                !task_device_is(file, STORAGE_DEV_KIND_MOUSE) &&
+                !task_device_is(file, STORAGE_DEV_KIND_AUDIO)) {
+                revents |= POLLOUT;
+            }
+        } else if (file) {
+            if ((events & POLLIN) && file_can_read(file)) {
+                if (file->node.type == LEONOS_FS_TYPE_DIR || file->offset < file->node.size)
+                    revents |= POLLIN;
+            }
+            if ((events & POLLOUT) && file_can_write(file)) revents |= POLLOUT;
+        } else if (fd >= 0 && fd <= 2 && task_pty_stream_for_fd(task, fd) >= 0) {
+            if (fd == 0) {
+                if (pty_input_available(task->pty_id)) revents |= POLLIN;
+            } else if (events & POLLOUT) {
+                revents |= POLLOUT;
+            }
+        } else if (fd == 3 || !task_pty_fd_for_fd(task, fd)) {
+            revents |= POLLNVAL;
+        } else if (events & POLLOUT) {
+            revents |= POLLOUT;
+        }
+        fds[i].revents = revents;
+        if (revents) ++ready;
+    }
+    return (int64_t)ready;
+}
+
 void syscall_init(void)
 {
     console_printf("[ntclks] Linux x86_64 syscall ABI registered\n");
@@ -2681,12 +3136,14 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
     case LINUX_SYS_READ:
     case LINUX_SYS_WRITE:
     case LINUX_SYS_OPEN:
+    case LINUX_SYS_OPENAT:
     case LINUX_SYS_CLOSE:
     case LINUX_SYS_STAT:
     case LINUX_SYS_FSTAT:
     case LINUX_SYS_LSEEK:
     case LINUX_SYS_FTRUNCATE:
     case LINUX_SYS_IOCTL:
+    case LINUX_SYS_POLL:
     case LINUX_SYS_SCHED_YIELD:
     case LINUX_SYS_NANOSLEEP:
     case LINUX_SYS_EXECVE:
@@ -2704,6 +3161,20 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
     case LINUX_SYS_FORK:
     case LINUX_SYS_VFORK:
     case LINUX_SYS_FCNTL:
+    case LINUX_SYS_SOCKET:
+    case LINUX_SYS_CONNECT:
+    case LINUX_SYS_ACCEPT:
+    case LINUX_SYS_BIND:
+    case LINUX_SYS_LISTEN:
+    case LINUX_SYS_GETSOCKNAME:
+    case LINUX_SYS_GETSOCKOPT:
+    case LINUX_SYS_SETSOCKOPT:
+    case LINUX_SYS_SHUTDOWN:
+    case LINUX_SYS_SEND:
+    case LINUX_SYS_RECV:
+    case LINUX_SYS_RT_SIGACTION:
+    case LINUX_SYS_RT_SIGPROCMASK:
+    case LINUX_SYS_RT_SIGSUSPEND:
         return syscall_dispatch_regs(frame->number, frame->args[0], frame->args[1],
                                      frame->args[2], frame->args[3], frame->args[4],
                                      frame->args[5]);
@@ -2749,6 +3220,56 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
 int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, uint64_t a2,
                                      uint64_t a3, uint64_t a4, uint64_t a5)
 {
+    if (number == LINUX_SYS_SOCKET || number == LINUX_SYS_CONNECT ||
+        number == LINUX_SYS_ACCEPT || number == LINUX_SYS_BIND ||
+        number == LINUX_SYS_LISTEN || number == LINUX_SYS_GETSOCKNAME ||
+        number == LINUX_SYS_GETSOCKOPT || number == LINUX_SYS_SETSOCKOPT ||
+        number == LINUX_SYS_SHUTDOWN || number == LINUX_SYS_SEND ||
+        number == LINUX_SYS_RECV || number == LINUX_SYS_SENDTO ||
+        number == LINUX_SYS_RECVFROM) {
+        return syscall_socket_dispatch(number, a0, a1, a2, a3, a4);
+    }
+    if (number == LINUX_SYS_RT_SIGACTION || number == LINUX_SYS_RT_SIGPROCMASK ||
+        number == LINUX_SYS_RT_SIGSUSPEND) {
+        return syscall_linux_signal(number, a0, a1, a2, a3, a4);
+    }
+    if (number == LINUX_SYS_POLL) {
+        return syscall_poll(a0, a1, (int64_t)a2);
+    }
+    /* openat is the canonical Linux file-open entry point.  LeonOS currently
+     * has no directory-FD lookup object, so AT_FDCWD is handled by the same
+     * path resolver as open(2); other dirfds fail explicitly instead of
+     * silently ignoring the caller's directory. */
+    if (number == LINUX_SYS_OPENAT) {
+        if (a0 != (uint64_t)-100) { /* AT_FDCWD */
+            struct task *task = sched_current_task();
+            struct task_file *directory = task_file_for_fd(task, (int)a0);
+            char raw[LEONOS_FS_PATH_LEN];
+            char saved_cwd[LEONOS_FS_PATH_LEN];
+            int ret;
+            if (!task || !directory) return -LEONOS_EBADF;
+            if (directory->node.type != LEONOS_FS_TYPE_DIR) return -LEONOS_ENOTDIR;
+            ret = copy_user_path(raw, sizeof(raw), a1);
+            if (ret < 0) return ret;
+            if (raw[0] != '/') {
+                copy_text(saved_cwd, sizeof(saved_cwd), task->cwd);
+                copy_text(task->cwd, sizeof(task->cwd), directory->path[0] ? directory->path : "/");
+                ret = (int)syscall_dispatch_regs_legacy(LINUX_SYS_OPEN, a1, a2, a3, a4, a5, 0);
+                copy_text(task->cwd, sizeof(task->cwd), saved_cwd);
+                return ret;
+            }
+            number = LINUX_SYS_OPEN;
+            a0 = a1;
+            a1 = a2;
+            a2 = a3;
+        } else {
+            number = LINUX_SYS_OPEN;
+            a0 = a1;
+            a1 = a2;
+            a2 = a3;
+        }
+    }
+
     if (number == LINUX_SYS_IOCTL &&
         (a1 == LEONOS_AUTH_IOCTL_STATUS ||
           a1 == LEONOS_AUTH_IOCTL_CURRENT ||
@@ -2815,10 +3336,28 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         {
+            struct task_pty_fd *endpoint = task_pty_endpoint_for_fd(task, (int)a0);
+            if (endpoint) {
+                uint32_t request = a2 > LEONOS_FS_IO_SLICE_BYTES
+                                       ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
+                if (endpoint->endpoint == TASK_PTY_ENDPOINT_MASTER) {
+                    return pty_write_input(0, endpoint->pty_id,
+                                           (const char *)(uintptr_t)a1, request);
+                }
+                return pty_write_output(endpoint->pty_id,
+                                        (const char *)(uintptr_t)a1, request);
+            }
+        }
+        {
             struct task_file *pipe_file = task_file_for_fd(task, (int)a0);
             if (pipe_file && (pipe_file->flags & TASK_FILE_FLAG_PIPE)) {
                 uint32_t request = a2 > TASK_PIPE_CAP ? TASK_PIPE_CAP : (uint32_t)a2;
                 return task_pipe_write(pipe_file, (const void *)(uintptr_t)a1, request);
+            }
+            if (pipe_file && (pipe_file->flags & TASK_FILE_FLAG_SOCKET_UNIX)) {
+                uint32_t request = a2 > LEONOS_FS_IO_SLICE_BYTES ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
+                if (!user_range_ok(a1, request)) return -LEONOS_EFAULT;
+                return task_socket_write(pipe_file, (const void *)(uintptr_t)a1, request);
             }
         }
         pty_stream = task_pty_stream_for_fd(task, (int)a0);
@@ -2850,8 +3389,14 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             if (!file_can_write(file)) return -LEONOS_EBADF;
             request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
                               ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
-            return task_device_write(task, file, (const void *)(uintptr_t)a1,
-                                     request_len);
+            {
+                int result = task_device_write(task, file, (const void *)(uintptr_t)a1,
+                                               request_len);
+                if (result > 0 && (file->flags & TASK_FILE_FLAG_DEV_BLOCK)) {
+                    file->offset += (uint32_t)result;
+                }
+                return result;
+            }
         }
         if (file->flags & TASK_FILE_FLAG_DEV_NULL) {
             if (!file_can_write(file)) {
@@ -2905,10 +3450,28 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         {
+            struct task_pty_fd *endpoint = task_pty_endpoint_for_fd(task, (int)a0);
+            if (endpoint) {
+                uint32_t request = a2 > LEONOS_FS_IO_SLICE_BYTES
+                                       ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
+                if (endpoint->endpoint == TASK_PTY_ENDPOINT_MASTER) {
+                    return pty_read_output(0, endpoint->pty_id,
+                                           (char *)(uintptr_t)a1, request);
+                }
+                return pty_read_input(endpoint->pty_id,
+                                      (char *)(uintptr_t)a1, request);
+            }
+        }
+        {
             struct task_file *pipe_file = task_file_for_fd(task, (int)a0);
             if (pipe_file && (pipe_file->flags & TASK_FILE_FLAG_PIPE)) {
                 uint32_t request = a2 > TASK_PIPE_CAP ? TASK_PIPE_CAP : (uint32_t)a2;
                 return task_pipe_read(pipe_file, (void *)(uintptr_t)a1, request);
+            }
+            if (pipe_file && (pipe_file->flags & TASK_FILE_FLAG_SOCKET_UNIX)) {
+                uint32_t request = a2 > LEONOS_FS_IO_SLICE_BYTES ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
+                if (!user_range_ok(a1, request)) return -LEONOS_EFAULT;
+                return task_socket_read(pipe_file, (void *)(uintptr_t)a1, request);
             }
         }
         pty_stream = task_pty_stream_for_fd(task, (int)a0);
@@ -2923,8 +3486,14 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             if (!file_can_read(file)) return -LEONOS_EBADF;
             request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
                               ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
-            return task_device_read(task, file, (void *)(uintptr_t)a1,
-                                    request_len);
+            {
+                int result = task_device_read(task, file, (void *)(uintptr_t)a1,
+                                              request_len);
+                if (result > 0 && (file->flags & TASK_FILE_FLAG_DEV_BLOCK)) {
+                    file->offset += (uint32_t)result;
+                }
+                return result;
+            }
         }
         if (file->flags & TASK_FILE_FLAG_DEV_NULL) {
             if (!file_can_read(file)) {
@@ -3051,6 +3620,25 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                                  flags | TASK_FILE_FLAG_DEV_NULL |
                                  TASK_FILE_FLAG_DEV_NODE, path);
         }
+        /* Unix98 PTY allocation is represented by explicit endpoint FDs.
+         * The session owner is the opening task; fork/exec inherit the fd. */
+        if (text_eq_cstr(path, "/dev/ptmx")) {
+            int32_t pty_id = pty_create(task ? task->pid : 0);
+            if (pty_id < 0) return pty_id;
+            ret = task_pty_endpoint_fd(task, (uint32_t)pty_id,
+                                       TASK_PTY_ENDPOINT_MASTER, flags);
+            if (ret < 0) {
+                (void)pty_destroy(task ? task->pid : 0, (uint32_t)pty_id);
+            }
+            return ret;
+        }
+        {
+            uint32_t pty_id;
+            if (task_pty_endpoint_path(path, &pty_id)) {
+                return task_pty_endpoint_fd(task, pty_id,
+                                            TASK_PTY_ENDPOINT_SLAVE, flags);
+            }
+        }
         if (path[0] == '/' && (path[1] == 'd' || path[1] == 'D') &&
             (path[2] == 'e' || path[2] == 'E') &&
             (path[3] == 'v' || path[3] == 'V') && path[4] == '/') {
@@ -3082,8 +3670,18 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             }
         }
         if (node.flags & STORAGE_NODE_FLAG_DEV_NODE) {
-            return alloc_task_fd(task, &node,
-                                 flags | TASK_FILE_FLAG_DEV_NODE, path);
+            uint32_t device_flags = TASK_FILE_FLAG_DEV_NODE;
+            if (node.flags & STORAGE_NODE_FLAG_DEV_BLOCK) {
+                device_flags |= TASK_FILE_FLAG_DEV_BLOCK;
+            }
+            int fd = alloc_task_fd(task, &node,
+                                   flags | device_flags, path);
+            if (fd >= 0 && (node.first_cluster == STORAGE_DEV_KIND_KEYBOARD ||
+                            node.first_cluster == STORAGE_DEV_KIND_MOUSE)) {
+                struct task_file *file = task_file_for_fd(task, fd);
+                if (file) file->aux = input_evdev_cursor_now();
+            }
+            return fd;
         }
         if (node.type == LEONOS_FS_TYPE_DIR && ((flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY)) {
             return -LEONOS_EISDIR;
@@ -3131,6 +3729,10 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         {
             struct task_pty_fd *pty_fd = task_pty_fd_for_fd(task, (int)a0);
             if (pty_fd) {
+                if (pty_fd->endpoint == TASK_PTY_ENDPOINT_MASTER &&
+                    pty_is_owner(pty_fd->pty_id, task ? task->pid : 0)) {
+                    (void)pty_destroy(task->pid, pty_fd->pty_id);
+                }
                 *pty_fd = (struct task_pty_fd){0};
                 return 0;
             }
@@ -3213,7 +3815,15 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                 }
                 return 0;
             }
-            if (a1 == LEONOS_F_GETFL || a1 == LEONOS_F_SETFL) {
+            if (a1 == LEONOS_F_GETFL) {
+                return file_fd ? (int64_t)(file_fd->flags &
+                    (LEONOS_O_ACCMODE | LEONOS_O_APPEND | LEONOS_O_NONBLOCK)) : 0;
+            }
+            if (a1 == LEONOS_F_SETFL) {
+                if (file_fd) {
+                    file_fd->flags = (file_fd->flags & LEONOS_O_ACCMODE) |
+                                     ((uint32_t)a2 & (LEONOS_O_APPEND | LEONOS_O_NONBLOCK));
+                }
                 return 0;
             }
         }
@@ -3291,6 +3901,19 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             } else if ((int)a2 == LEONOS_SEEK_SET) {
                 base = 0;
             } else {
+                return -LEONOS_EINVAL;
+            }
+        } else if (file->flags & TASK_FILE_FLAG_DEV_BLOCK) {
+            /* Block devices are seekable byte streams.  GPT editors and
+             * filesystem tools use lseek(2) before issuing aligned raw I/O;
+             * treating them as non-seekable makes every read after offset
+             * zero fail with EINVAL. */
+            size = (int64_t)file->node.size;
+            if ((int)a2 == LEONOS_SEEK_CUR) {
+                base = (int64_t)file->offset;
+            } else if ((int)a2 == LEONOS_SEEK_END) {
+                base = size;
+            } else if ((int)a2 != LEONOS_SEEK_SET) {
                 return -LEONOS_EINVAL;
             }
         } else {
@@ -3435,6 +4058,100 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return 0;
     }
 
+    if (number == LINUX_SYS_MOUNT) {
+        struct task *task = sched_current_task();
+        struct storage_node source_node;
+        struct storage_node target_node;
+        char source[LEONOS_FS_PATH_LEN];
+        char target[LEONOS_FS_PATH_LEN];
+        char filesystem[16];
+        uint32_t disk_id;
+        int32_t partition_index;
+        int ret;
+
+        if (a4 != 0 ||
+            (a3 & ~(MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC |
+                     MS_SYNCHRONOUS | MS_DIRSYNC | MS_NOATIME | MS_NODIRATIME |
+                     MS_RELATIME | MS_STRICTATIME | MS_LAZYTIME)) != 0) {
+            return -LEONOS_ENOTSUP;
+        }
+        /* The storage backends are read/write today. Do not claim a
+         * read-only mount while later writes would still succeed. */
+        if (a3 & MS_RDONLY) {
+            return -LEONOS_ENOTSUP;
+        }
+        ret = authz_check_install(task);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = resolve_user_path(task, a0, source, sizeof(source));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = resolve_user_path(task, a1, target, sizeof(target));
+        if (ret < 0) {
+            return ret;
+        }
+        if (a2) {
+            ret = copy_user_string_fixed(filesystem, sizeof(filesystem), a2, NULL);
+            if (ret < 0) {
+                return ret;
+            }
+        } else {
+            filesystem[0] = 0;
+        }
+        ret = storage_lookup_path(source, &source_node);
+        if (ret < 0) {
+            return storage_errno(ret);
+        }
+        if (!(source_node.flags & STORAGE_NODE_FLAG_DEV_BLOCK)) {
+            return -LEONOS_ENOTTY;
+        }
+        disk_id = STORAGE_BLOCK_DISK_ID(source_node.volume_id);
+        partition_index = STORAGE_BLOCK_PARTITION(source_node.volume_id);
+        if (partition_index < 0) {
+            return -LEONOS_EINVAL;
+        }
+        ret = storage_lookup_path(target, &target_node);
+        if (ret < 0) {
+            return storage_errno(ret);
+        }
+        if (target_node.type != LEONOS_FS_TYPE_DIR) {
+            return -LEONOS_ENOTDIR;
+        }
+        ret = storage_mount_block_partition(disk_id, (uint32_t)partition_index,
+                                            target, filesystem[0] ? filesystem : NULL,
+                                            a3, NULL);
+        return ret < 0 ? storage_errno(ret) : 0;
+    }
+
+    if (number == LINUX_SYS_UMOUNT2) {
+        struct task *task = sched_current_task();
+        char target[LEONOS_FS_PATH_LEN];
+        uint32_t volume_id;
+        int ret;
+        if (a1 & ~(uint64_t)UMOUNT_NOFOLLOW) {
+            return -LEONOS_ENOTSUP;
+        }
+        ret = authz_check_install(task);
+        if (ret < 0) {
+            return ret;
+        }
+        ret = resolve_user_path(task, a0, target, sizeof(target));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = storage_mount_path_volume_id(target, &volume_id);
+        if (ret < 0) {
+            return storage_errno(ret);
+        }
+        if (sched_volume_in_use(volume_id)) {
+            return -LEONOS_EBUSY;
+        }
+        ret = storage_unmount_path(target, NULL);
+        return ret < 0 ? storage_errno(ret) : 0;
+    }
+
     if (number == LINUX_SYS_GETPID || number == LINUX_SYS_GETPPID ||
         number == LINUX_SYS_SETPGID || number == LINUX_SYS_GETPGRP ||
         number == LINUX_SYS_SETSID || number == LINUX_SYS_GETPGID ||
@@ -3498,8 +4215,137 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return pid;
     }
 
+    if (number == LINUX_SYS_IOCTL) {
+        struct task *task = sched_current_task();
+        struct task_file *file = task_file_for_fd(task, (int)a0);
+        int evdev_ret = task_evdev_ioctl(file, a1, a2);
+        if (evdev_ret != -LEONOS_ENOTTY) {
+            return evdev_ret;
+        }
+        {
+            int oss_ret = task_oss_dsp_ioctl(file, a1, a2);
+            if (oss_ret != -LEONOS_ENOTTY) {
+                return oss_ret;
+            }
+        }
+    }
+
+    /* Linux block-device UAPI.  A descriptor carries the physical disk and
+     * optional GPT entry, so standard tools do not need the private disk
+     * management ioctl family just to inspect or stream sectors. */
+    if (number == LINUX_SYS_IOCTL) {
+        struct task *task = sched_current_task();
+        struct task_file *file = task_file_for_fd(task, (int)a0);
+        uint32_t disk_id;
+        int32_t partition_index;
+        uint64_t first_lba;
+        uint64_t sector_count;
+        if (task_block_device(file, &disk_id, &partition_index)) {
+            if (a1 == BLKGETSIZE64 || a1 == BLKGETSIZE) {
+                if (!a2 || !user_range_ok(a2, sizeof(uint64_t))) {
+                    return -LEONOS_EFAULT;
+                }
+                {
+                    int ret = storage_disk_block_info(disk_id, partition_index,
+                                                      &first_lba, &sector_count);
+                    if (ret < 0) return ret;
+                }
+                *(uint64_t *)(uintptr_t)a2 = a1 == BLKGETSIZE64
+                                                  ? sector_count * 512ULL
+                                                  : sector_count;
+                return 0;
+            }
+            if (a1 == BLKSSZGET) {
+                if (!a2 || !user_range_ok(a2, sizeof(int))) return -LEONOS_EFAULT;
+                *(int *)(uintptr_t)a2 = 512;
+                return 0;
+            }
+            if (a1 == BLKROGET) {
+                if (!a2 || !user_range_ok(a2, sizeof(int))) return -LEONOS_EFAULT;
+                *(int *)(uintptr_t)a2 = 0;
+                return 0;
+            }
+            if (a1 == BLKRRPART) {
+                if (!task || (task_effective_role(task) != LEONOS_AUTH_ROLE_ADMIN &&
+                              !(task->uid == 0 && storage_installer_root_active()))) {
+                    return -LEONOS_EACCES;
+                }
+                if (partition_index >= 0) return -LEONOS_EINVAL;
+                return storage_disk_block_reread(disk_id);
+            }
+            if (a1 == BLKROSET) {
+                return -LEONOS_EPERM;
+            }
+        }
+    }
+
     if (number == LINUX_SYS_IOCTL && inputm_handles_ioctl(a1)) {
+        struct task *task = sched_current_task();
+        struct task_file *file = task_file_for_fd(task, (int)a0);
+        if ((int)a0 != 3 && !task_device_is(file, STORAGE_DEV_KIND_INPUT_METHOD)) {
+            return -LEONOS_ENOTTY;
+        }
         return inputm_handle_ioctl(a1, a2);
+    }
+
+    /* Linux fbdev compatibility is intentionally scoped to the /dev/fb0
+     * descriptor.  The old GUI framebuffer requests remain available to the
+     * windowing transition layer, while standard fb applications use these
+     * three Linux UAPI operations. */
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == FBIOGET_VSCREENINFO || a1 == FBIOPUT_VSCREENINFO ||
+         a1 == FBIOGET_FSCREENINFO)) {
+        struct task *task = sched_current_task();
+        struct task_file *file = task_file_for_fd(task, (int)a0);
+        const struct framebuffer *fb = framebuffer_get();
+        if (!file || !(file->flags & TASK_FILE_FLAG_DEV_NODE) ||
+            file->node.first_cluster != STORAGE_DEV_KIND_FB0 || !fb ||
+            !fb->available || !a2) {
+            return -LEONOS_ENOTTY;
+        }
+        if (a1 == FBIOGET_VSCREENINFO) {
+            struct fb_var_screeninfo info;
+            if (!user_range_ok(a2, sizeof(info))) return -LEONOS_EFAULT;
+            info = (struct fb_var_screeninfo){
+                .xres = fb->width,
+                .yres = fb->height,
+                .xres_virtual = fb->width,
+                .yres_virtual = fb->height,
+                .bits_per_pixel = fb->bpp,
+                .red = { .offset = fb->red_field_position,
+                         .length = fb->red_mask_size },
+                .green = { .offset = fb->green_field_position,
+                           .length = fb->green_mask_size },
+                .blue = { .offset = fb->blue_field_position,
+                          .length = fb->blue_mask_size },
+            };
+            *(struct fb_var_screeninfo *)(uintptr_t)a2 = info;
+            return 0;
+        }
+        if (a1 == FBIOGET_FSCREENINFO) {
+            struct fb_fix_screeninfo info = {0};
+            if (!user_range_ok(a2, sizeof(info))) return -LEONOS_EFAULT;
+            copy_text(info.id, sizeof(info.id), "leonos-fb");
+            info.smem_start = (uint64_t)(uintptr_t)fb->pixels;
+            info.smem_len = fb->pitch * fb->height;
+            info.type = 0;
+            info.line_length = fb->pitch;
+            *(struct fb_fix_screeninfo *)(uintptr_t)a2 = info;
+            return 0;
+        }
+        if (!user_range_ok(a2, sizeof(struct fb_var_screeninfo))) {
+            return -LEONOS_EFAULT;
+        }
+        {
+            const struct fb_var_screeninfo *info =
+                (const struct fb_var_screeninfo *)(uintptr_t)a2;
+            if (!info->xres || !info->yres || info->xres > fb->max_width ||
+                info->yres > fb->max_height || info->bits_per_pixel != fb->bpp) {
+                return -LEONOS_EINVAL;
+            }
+            return framebuffer_set_mode(info->xres, info->yres) == 0
+                       ? 0 : -LEONOS_EINVAL;
+        }
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_KERNEL_DEBUG_IOCTL_CONTROL) {
@@ -3517,7 +4363,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_GUI_IOCTL_EVENT) {
-        struct input_event event;
+        struct input_raw_event event;
         int ret = require_window_server();
         if (ret < 0) {
             return ret;
@@ -3528,7 +4374,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         if (!input_pop(&event)) {
             return 0;
         }
-        struct input_event *dst = (struct input_event *)(uintptr_t)a2;
+        struct input_raw_event *dst = (struct input_raw_event *)(uintptr_t)a2;
         *dst = event;
         return 1;
     }
@@ -4146,230 +4992,6 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return 0;
     }
 
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_LIST_DISKS) {
-        struct leonos_install_disk_list *query;
-        struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
-        uint32_t count = LEONOS_INSTALL_MAX_DISKS;
-        if (!user_range_ok(a2, sizeof(struct leonos_install_disk_list))) {
-            return -LEONOS_EFAULT;
-        }
-        query = (struct leonos_install_disk_list *)(uintptr_t)a2;
-        if (query->capacity > LEONOS_INSTALL_MAX_DISKS) {
-            query->capacity = LEONOS_INSTALL_MAX_DISKS;
-        }
-        if (query->capacity && (!query->disks ||
-            !user_range_ok((uint64_t)(uintptr_t)query->disks,
-                           (uint64_t)query->capacity * sizeof(struct leonos_install_disk)))) {
-            return -LEONOS_EFAULT;
-        }
-        if (storage_install_list_disks(disks, count, &count) < 0) {
-            return -LEONOS_EINVAL;
-        }
-        query->count = count;
-        if (query->capacity < count) {
-            count = query->capacity;
-        }
-        for (uint32_t i = 0; i < count; ++i) {
-            ((struct leonos_install_disk *)(uintptr_t)query->disks)[i] = disks[i];
-        }
-        return 0;
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_FORMAT_TARGET) {
-        int ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        return storage_install_format_target((uint32_t)a2);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_INSTALL_IOCTL_MOUNT_TARGET) {
-        int ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        return storage_install_mount_target((uint32_t)a2);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_LIST_PARTITIONS) {
-        struct leonos_disk_partition_list *query;
-        struct leonos_disk_partition_list request;
-        uint32_t count = 0;
-        uint32_t copy_count;
-        int ret;
-        if (!user_range_ok(a2, sizeof(struct leonos_disk_partition_list))) {
-            return -LEONOS_EFAULT;
-        }
-        query = (struct leonos_disk_partition_list *)(uintptr_t)a2;
-        request = *query;
-        if (request.reserved != 0 || request.capacity > LEONOS_DISK_MAX_PARTITIONS) {
-            return -LEONOS_EINVAL;
-        }
-        if (request.capacity && (!request.partitions ||
-            !user_range_ok((uint64_t)(uintptr_t)request.partitions,
-                           (uint64_t)request.capacity * sizeof(struct leonos_disk_partition)))) {
-            return -LEONOS_EFAULT;
-        }
-        ret = storage_disk_list_partitions(request.disk_id, disk_partition_scratch,
-                                           LEONOS_DISK_MAX_PARTITIONS, &count);
-        if (ret < 0) {
-            return ret;
-        }
-        query->count = count;
-        copy_count = count < request.capacity ? count : request.capacity;
-        for (uint32_t i = 0; i < copy_count; ++i) {
-            request.partitions[i] = disk_partition_scratch[i];
-        }
-        return 0;
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_FORMAT_PARTITION) {
-        struct leonos_disk_partition_format request;
-        int ret;
-        if (!user_range_ok(a2, sizeof(request))) {
-            return -LEONOS_EFAULT;
-        }
-        request = *(const struct leonos_disk_partition_format *)(uintptr_t)a2;
-        if (request.reserved != 0 ||
-            (request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
-             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2 &&
-             request.filesystem != LEONOS_DISK_FILESYSTEM_EXFAT)) {
-            return -LEONOS_EINVAL;
-        }
-        ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        return storage_disk_format_partition(&request);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_INITIALIZE_GPT) {
-        struct leonos_disk_gpt_initialize request;
-        int ret;
-        if (!user_range_ok(a2, sizeof(request))) {
-            return -LEONOS_EFAULT;
-        }
-        request = *(const struct leonos_disk_gpt_initialize *)(uintptr_t)a2;
-        if (request.flags & ~LEONOS_DISK_GPT_INITIALIZE_FORCE) {
-            return -LEONOS_EINVAL;
-        }
-        ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        return storage_disk_initialize_gpt(&request);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_DELETE_PARTITION) {
-        struct leonos_disk_partition_delete request;
-        int ret;
-        if (!user_range_ok(a2, sizeof(request))) {
-            return -LEONOS_EFAULT;
-        }
-        request = *(const struct leonos_disk_partition_delete *)(uintptr_t)a2;
-        if (request.reserved0 != 0 || request.reserved1 != 0) {
-            return -LEONOS_EINVAL;
-        }
-        ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        return storage_disk_delete_partition(&request);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_EDIT_PARTITION) {
-        struct leonos_disk_partition_edit request;
-        int ret;
-        if (!user_range_ok(a2, sizeof(request))) {
-            return -LEONOS_EFAULT;
-        }
-        request = *(const struct leonos_disk_partition_edit *)(uintptr_t)a2;
-        request.name[LEONOS_DISK_PARTITION_NAME_LEN - 1u] = 0;
-        if (request.reserved != 0 || request.edit_mask == 0 ||
-            (request.edit_mask & ~(LEONOS_DISK_PARTITION_EDIT_TYPE |
-                                   LEONOS_DISK_PARTITION_EDIT_NAME)) != 0 ||
-            ((request.edit_mask & LEONOS_DISK_PARTITION_EDIT_TYPE) != 0 &&
-             request.type != LEONOS_DISK_PARTITION_TYPE_BASIC_DATA &&
-             request.type != LEONOS_DISK_PARTITION_TYPE_ESP &&
-             request.type != LEONOS_DISK_PARTITION_TYPE_LINUX)) {
-            return -LEONOS_EINVAL;
-        }
-        ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        return storage_disk_edit_partition(&request);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_CREATE_PARTITION) {
-        struct leonos_disk_partition_create request;
-        int ret;
-        if (!user_range_ok(a2, sizeof(request))) {
-            return -LEONOS_EFAULT;
-        }
-        request = *(const struct leonos_disk_partition_create *)(uintptr_t)a2;
-        request.name[LEONOS_DISK_PARTITION_NAME_LEN - 1u] = 0;
-        if (request.reserved != 0 || request.size_mib == 0 ||
-            (request.filesystem != LEONOS_DISK_FILESYSTEM_UNKNOWN &&
-             request.filesystem != LEONOS_DISK_FILESYSTEM_FAT32 &&
-             request.filesystem != LEONOS_DISK_FILESYSTEM_EXT2 &&
-             request.filesystem != LEONOS_DISK_FILESYSTEM_EXFAT)) {
-            return -LEONOS_EINVAL;
-        }
-        ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        return storage_disk_create_partition(&request);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_MOUNT_PARTITION) {
-        struct leonos_disk_partition_mount *query;
-        struct leonos_disk_partition_mount request;
-        int ret;
-        if (!user_range_ok(a2, sizeof(request))) {
-            return -LEONOS_EFAULT;
-        }
-        query = (struct leonos_disk_partition_mount *)(uintptr_t)a2;
-        request = *query;
-        request.mount_path[sizeof(request.mount_path) - 1u] = 0;
-        ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        ret = storage_disk_mount_partition(&request);
-        if (ret == 0) {
-            *query = request;
-        }
-        return ret;
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_DISK_IOCTL_UNMOUNT_PARTITION) {
-        struct leonos_disk_partition_unmount request;
-        uint32_t volume_id;
-        int ret;
-        if (!user_range_ok(a2, sizeof(request))) {
-            return -LEONOS_EFAULT;
-        }
-        request = *(const struct leonos_disk_partition_unmount *)(uintptr_t)a2;
-        if (request.reserved0 != 0 || request.reserved1 != 0) {
-            return -LEONOS_EINVAL;
-        }
-        ret = authz_check_install(sched_current_task());
-        if (ret < 0) {
-            return ret;
-        }
-        ret = storage_disk_partition_volume_id(request.disk_id, request.partition_index,
-                                               &volume_id);
-        if (ret < 0) {
-            return ret;
-        }
-        if (sched_volume_in_use(volume_id)) {
-            return -LEONOS_EBUSY;
-        }
-        return storage_disk_unmount_partition(&request);
-    }
-
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_LIST_DIR) {
         char path[LEONOS_FS_PATH_LEN];
         size_t len;
@@ -4613,6 +5235,16 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         request = (struct leonos_driver_control *)(uintptr_t)a2;
         return driver_manager_control(request);
+    }
+
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == LEONOS_IOCTL_AUDIO_CONFIGURE || a1 == LEONOS_IOCTL_AUDIO_WRITE ||
+         a1 == LEONOS_IOCTL_AUDIO_GET_STATE)) {
+        struct task *task = sched_current_task();
+        struct task_file *file = task_file_for_fd(task, (int)a0);
+        if ((int)a0 != 3 && !task_device_is(file, STORAGE_DEV_KIND_AUDIO)) {
+            return -LEONOS_ENOTTY;
+        }
     }
 
     if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_AUDIO_CONFIGURE) {
@@ -5047,6 +5679,75 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         return pty_set_foreground_pgid(task->pty_id, task->pid,
                                        (uint32_t)*process_group);
+    }
+
+    /* Linux/POSIX terminal requests.  Keep the conversion here so the
+     * kernel's compact PTY state is independent of the libc termios ABI. */
+    if (number == LINUX_SYS_IOCTL &&
+        (a1 == TCGETS || a1 == TCSETS || a1 == TCSETSW || a1 == TCSETSF ||
+         a1 == TIOCGWINSZ || a1 == TIOCSWINSZ || a1 == TIOCGPTN ||
+         a1 == TIOCSPTLCK || a1 == TIOCGPGRP || a1 == TIOCSPGRP)) {
+        struct task *task = sched_current_task();
+        struct task_pty_fd *endpoint = task_pty_endpoint_for_fd(task, (int)a0);
+        int stream = task_pty_stream_for_fd(task, (int)a0);
+        uint32_t pty_id = endpoint ? endpoint->pty_id : (stream >= 0 && task ? task->pty_id : 0);
+        if (!pty_id || !pty_is_active(pty_id)) return -LEONOS_ENOTTY;
+        if (a1 == TIOCGPGRP || a1 == TIOCSPGRP) {
+            int *process_group;
+            if (!user_range_ok(a2, sizeof(*process_group))) {
+                return -LEONOS_EFAULT;
+            }
+            process_group = (int *)(uintptr_t)a2;
+            if (a1 == TIOCGPGRP) {
+                uint32_t value = 0;
+                int result = pty_get_foreground_pgid(pty_id, &value);
+                if (result < 0) {
+                    return result;
+                }
+                *process_group = (int)value;
+                return 0;
+            }
+            if (*process_group <= 0 || !task) {
+                return -LEONOS_EINVAL;
+            }
+            return pty_set_foreground_pgid(pty_id, task->pid,
+                                           (uint32_t)*process_group);
+        }
+        if (a1 == TIOCGPTN) {
+            if (!endpoint || endpoint->endpoint != TASK_PTY_ENDPOINT_MASTER ||
+                !user_range_ok(a2, sizeof(uint32_t))) return -LEONOS_EINVAL;
+            *(uint32_t *)(uintptr_t)a2 = pty_id;
+            return 0;
+        }
+        if (a1 == TIOCSPTLCK) {
+            /* PTY locking is not needed for LeonOS' in-kernel devpts tree. */
+            return 0;
+        }
+        if (a1 == TIOCGWINSZ || a1 == TIOCSWINSZ) {
+            struct winsize *size;
+            struct leonos_pty_winsize native;
+            if (!user_range_ok(a2, sizeof(*size))) return -LEONOS_EFAULT;
+            size = (struct winsize *)(uintptr_t)a2;
+            if (a1 == TIOCGWINSZ) {
+                int ret = pty_get_winsize(pty_id, &native);
+                if (ret < 0) return ret;
+                size->ws_row = native.ws_row;
+                size->ws_col = native.ws_col;
+                size->ws_xpixel = 0;
+                size->ws_ypixel = 0;
+                return 0;
+            }
+            native.ws_row = size->ws_row;
+            native.ws_col = size->ws_col;
+            return pty_set_winsize(pty_id, &native);
+        }
+        {
+            struct leonos_pty_termios *termios;
+            if (!user_range_ok(a2, sizeof(*termios))) return -LEONOS_EFAULT;
+            termios = (struct leonos_pty_termios *)(uintptr_t)a2;
+            if (a1 == TCGETS) return pty_get_termios(pty_id, termios);
+            return pty_set_termios(pty_id, termios);
+        }
     }
 
     if (number == LINUX_SYS_IOCTL &&

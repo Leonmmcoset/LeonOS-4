@@ -1,7 +1,9 @@
-#include <leonos/audio.h>
 #include <leonos/fs.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/soundcard.h>
 
 #define WAVPLAY_BUFFER_BYTES 4096U
 #define WAVPLAY_TONE_FRAMES 1024U
@@ -9,11 +11,32 @@
 #define WAVPLAY_TEST_SECONDS 30U
 
 static int16_t tone_samples[WAVPLAY_TONE_FRAMES * 2U];
+static int dsp_fd = -1;
 
 struct wav_info {
-    struct leonos_audio_format format;
+    uint32_t sample_rate;
     uint32_t data_bytes;
 };
+
+static int configure_audio(uint32_t requested_rate, uint32_t *actual_rate)
+{
+    int format = AFMT_S16_LE;
+    int channels = 2;
+    int rate = (int)requested_rate;
+    if (requested_rate < 8000U || requested_rate > 48000U) {
+        return -1;
+    }
+    if (dsp_fd < 0) {
+        dsp_fd = open("/dev/dsp", O_WRONLY | O_NONBLOCK, 0);
+    }
+    if (dsp_fd < 0 || ioctl(dsp_fd, SNDCTL_DSP_SETFMT, &format) < 0 ||
+        format != AFMT_S16_LE || ioctl(dsp_fd, SNDCTL_DSP_CHANNELS, &channels) < 0 ||
+        channels != 2 || ioctl(dsp_fd, SNDCTL_DSP_SPEED, &rate) < 0 || rate <= 0) {
+        return -1;
+    }
+    if (actual_rate) *actual_rate = (uint32_t)rate;
+    return 0;
+}
 
 static void wait_audio_frames(uint32_t frames, uint32_t sample_rate)
 {
@@ -34,15 +57,13 @@ static int write_audio_retry(const void *data, uint32_t length)
     uint32_t offset = 0;
     uint32_t waits = 0;
     while (offset < length) {
-        uint32_t status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
-        long written = leonos_audio_write(bytes + offset, length - offset, &status);
+        long written = write(dsp_fd, bytes + offset, length - offset);
         if (written > 0 && (uint32_t)written <= length - offset) {
             offset += (uint32_t)written;
             waits = 0;
             continue;
         }
-        if (written == 0 && status == LEONOS_AUDIO_STATUS_WOULD_BLOCK &&
-            waits++ < 200U) {
+        if ((written == 0 || written == -EAGAIN) && waits++ < 200U) {
             sleep_ms(5U);
             continue;
         }
@@ -115,12 +136,7 @@ static int parse_wav_header(int fd, struct wav_info *out)
                 skip_bytes(fd, chunk_size - sizeof(format)) < 0) {
                 return -1;
             }
-            out->format = (struct leonos_audio_format){
-                .sample_rate = read_le32(format + 4),
-                .channels = read_le16(format + 2),
-                .bits_per_sample = read_le16(format + 14),
-                .flags = 0,
-            };
+            out->sample_rate = read_le32(format + 4);
             found_format = 1;
         } else if (text_eq_n(chunk, "data", 4)) {
             if (!found_format) {
@@ -140,7 +156,6 @@ static int parse_wav_header(int fd, struct wav_info *out)
 static int play_wav(const char *path)
 {
     struct wav_info info;
-    struct leonos_audio_state state;
     uint8_t *buffer;
     uint32_t remaining;
     int fd;
@@ -155,16 +170,13 @@ static int play_wav(const char *path)
         close(fd);
         return 1;
     }
-    ret = leonos_audio_configure(&info.format);
+    ret = configure_audio(info.sample_rate, &info.sample_rate);
     if (ret < 0) {
         printf("wavplay: audio format rejected %d\n", ret);
         close(fd);
         return 1;
     }
-    state = (struct leonos_audio_state){0};
-    leonos_audio_get_state(&state);
-    printf("wavplay: %u Hz stereo PCM through %04x:%04x\n",
-           info.format.sample_rate, state.vendor_id, state.device_id);
+    printf("wavplay: %u Hz stereo PCM through /dev/dsp\n", info.sample_rate);
     buffer = malloc(WAVPLAY_BUFFER_BYTES + 4U);
     if (!buffer) {
         puts("wavplay: out of memory");
@@ -194,7 +206,7 @@ static int play_wav(const char *path)
             close(fd);
             return 1;
         }
-        wait_audio_frames(padded / 4U, info.format.sample_rate);
+        wait_audio_frames(padded / 4U, info.sample_rate);
         remaining -= (uint32_t)got > remaining ? remaining : (uint32_t)got;
     }
     free(buffer);
@@ -225,13 +237,7 @@ static int play_square_note(uint32_t period, uint32_t frames)
 
 static int play_test_melody(void)
 {
-    struct leonos_audio_format format = {
-        .sample_rate = WAVPLAY_TEST_RATE,
-        .channels = 2U,
-        .bits_per_sample = 16U,
-        .flags = 0,
-    };
-    if (leonos_audio_configure(&format) < 0) {
+    if (configure_audio(WAVPLAY_TEST_RATE, 0) < 0) {
         puts("wavplay: PCM audio device is unavailable");
         return 1;
     }

@@ -94,7 +94,6 @@ static void storage_volume_from_install_disk(struct storage_volume *volume,
 
 static int storage_prepare_install_disk(struct install_disk_state *disk)
 {
-    int ret;
     if (!disk || !disk->present) {
         return -22;
     }
@@ -107,10 +106,14 @@ static int storage_prepare_install_disk(struct install_disk_state *disk)
     if (disk->transport != STORAGE_TRANSPORT_AHCI || !disk->hba_port) {
         return -22;
     }
-    kernel_spin_lock(&storage_transport_lock);
-    ret = ahci_setup_port(disk->hba_port);
-    kernel_spin_unlock(&storage_transport_lock);
-    return ret;
+    /* AHCI command state is shared with the resumable syscall path.  The
+     * scanner initializes each port before publishing the disk, and the
+     * controller recovery path reinitializes it after a real failure.  Do
+     * not reset the port for every open/read/ioctl: a retry can be polling a
+     * live command, and clearing PxCI/its command table here would make the
+     * still-running DMA look complete with stale data (notably an invalid
+     * GPT header). */
+    return 0;
 }
 
 static int storage_read_device(const struct storage_volume *volume, uint64_t lba,
@@ -293,6 +296,101 @@ static int storage_read_sectors(uint64_t lba, uint32_t sector_count, void *buffe
     return storage_read_device(&g_storage, lba, sector_count, buffer);
 }
 
+static uint32_t storage_gpt_crc32(const void *data, uint32_t length)
+{
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint32_t crc = 0xffffffffu;
+    for (uint32_t i = 0; i < length; ++i) {
+        crc ^= bytes[i];
+        for (uint32_t bit = 0; bit < 8u; ++bit) {
+            crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+        }
+    }
+    return ~crc;
+}
+
+static int storage_gpt_guid_empty(const uint8_t guid[16])
+{
+    if (!guid) return 1;
+    for (uint32_t i = 0; i < 16u; ++i) {
+        if (guid[i] != 0) return 0;
+    }
+    return 1;
+}
+
+/* Validate the primary GPT before allocating or reading its entry array. The
+ * implementation supports up to LeonOS's fixed 128-entry in-memory limit,
+ * but does not require the table itself to start at LBA 2: valid GPT tools
+ * may choose another table position. */
+static int storage_gpt_header_valid_for_root(const struct gpt_header *header)
+{
+    struct gpt_header copy;
+    uint64_t table_bytes;
+    uint64_t table_sectors;
+    uint64_t table_last_lba;
+    if (!header || header->signature != 0x5452415020494645ULL ||
+        header->revision < 0x00010000u ||
+        header->header_size != sizeof(struct gpt_header) ||
+        header->reserved != 0 || header->current_lba != 1u ||
+        header->backup_lba <= header->current_lba ||
+        header->first_usable_lba < 2u ||
+        header->first_usable_lba > header->last_usable_lba ||
+        header->last_usable_lba >= header->backup_lba ||
+        header->partition_entries_lba < 2u ||
+        header->partition_entry_count == 0 ||
+        header->partition_entry_count > GPT_ENTRY_COUNT ||
+        header->partition_entry_size != sizeof(struct gpt_entry)) {
+        return -22;
+    }
+    table_bytes = (uint64_t)header->partition_entry_count *
+                  header->partition_entry_size;
+    table_sectors = (table_bytes + SECTOR_SIZE - 1u) / SECTOR_SIZE;
+    if (!table_sectors || table_bytes > sizeof(storage_cluster_buf) ||
+        table_sectors > header->first_usable_lba - header->partition_entries_lba) {
+        return -22;
+    }
+    table_last_lba = header->partition_entries_lba + table_sectors - 1u;
+    if (table_last_lba >= header->first_usable_lba ||
+        table_last_lba >= header->backup_lba) {
+        return -22;
+    }
+    copy = *header;
+    copy.header_crc32 = 0;
+    return storage_gpt_crc32(&copy, header->header_size) == header->header_crc32
+               ? 0 : -5;
+}
+
+static int storage_gpt_entries_valid_for_root(const struct gpt_header *header,
+                                              const uint8_t *table)
+{
+    uint32_t count;
+    if (!header || !table) return -22;
+    count = header->partition_entry_count;
+    for (uint32_t i = 0; i < count; ++i) {
+        const struct gpt_entry *entry =
+            (const struct gpt_entry *)(const void *)(table + (uint64_t)i *
+                                                     sizeof(struct gpt_entry));
+        if (storage_gpt_guid_empty(entry->type_guid)) continue;
+        if (storage_gpt_guid_empty(entry->unique_guid) ||
+            entry->first_lba < header->first_usable_lba ||
+            entry->last_lba < entry->first_lba ||
+            entry->last_lba > header->last_usable_lba) {
+            return -22;
+        }
+        for (uint32_t j = 0; j < i; ++j) {
+            const struct gpt_entry *other =
+                (const struct gpt_entry *)(const void *)(table +
+                    (uint64_t)j * sizeof(struct gpt_entry));
+            if (!storage_gpt_guid_empty(other->type_guid) &&
+                !(entry->last_lba < other->first_lba ||
+                  entry->first_lba > other->last_lba)) {
+                return -22;
+            }
+        }
+    }
+    return 0;
+}
+
 /* GPT names are UTF-16LE on disk, but partition editors commonly differ in
  * ASCII case.  Compare the canonical LeonOS root label without making the
  * filesystem probe depend on a particular editor's spelling. */
@@ -449,14 +547,20 @@ static int gpt_find_esp(void)
     if (hdr->signature != 0x5452415020494645ULL) {
         return -2;
     }
-    uint32_t count = hdr->partition_entry_count;
-    uint32_t size = hdr->partition_entry_size;
-    console_printf("[ntclks] GPT found entries=%u entry_size=%u\n", count, size);
-    if (!count || !size || size < sizeof(struct gpt_entry)) {
-        return -2;
+    uint32_t count;
+    uint32_t size;
+    uint32_t total_bytes;
+    uint32_t total_sectors;
+    uint32_t table_crc;
+    if (storage_gpt_header_valid_for_root(hdr) < 0) {
+        console_printf("[ntclks] GPT primary header invalid\n");
+        return -22;
     }
-    uint32_t total_bytes = count * size;
-    uint32_t total_sectors = (total_bytes + SECTOR_SIZE - 1u) / SECTOR_SIZE;
+    count = hdr->partition_entry_count;
+    size = hdr->partition_entry_size;
+    console_printf("[ntclks] GPT found entries=%u entry_size=%u\n", count, size);
+    total_bytes = count * size;
+    total_sectors = (total_bytes + SECTOR_SIZE - 1u) / SECTOR_SIZE;
     uint64_t phys = mm_alloc_pages((total_sectors + 7u) / 8u);
     if (!phys) {
         return -12;
@@ -466,6 +570,13 @@ static int gpt_find_esp(void)
     if (ret < 0) {
         mm_free_pages(phys, (total_sectors + 7u) / 8u);
         return ret;
+    }
+    table_crc = storage_gpt_crc32(table, total_bytes);
+    if (table_crc != hdr->partition_entries_crc32 ||
+        storage_gpt_entries_valid_for_root(hdr, table) < 0) {
+        mm_free_pages(phys, (total_sectors + 7u) / 8u);
+        console_printf("[ntclks] GPT partition table invalid\n");
+        return -5;
     }
     for (uint32_t i = 0; i < count; ++i) {
         struct gpt_entry *entry = (struct gpt_entry *)(void *)(table + (uint64_t)i * size);

@@ -7,48 +7,72 @@
 
 #include <ntclks/trap.h>
 #include <ntclks/types.h>
+#include <linux/syscall.h>
+#include <linux/poll.h>
 
-#define LINUX_SYS_READ 0
-#define LINUX_SYS_WRITE 1
-#define LINUX_SYS_OPEN 2
-#define LINUX_SYS_CLOSE 3
-#define LINUX_SYS_PIPE 22
-#define LINUX_SYS_STAT 4
-#define LINUX_SYS_FSTAT 5
-#define LINUX_SYS_LSEEK 8
-#define LINUX_SYS_FTRUNCATE 77
-#define LINUX_SYS_MMAP 9
-#define LINUX_SYS_MUNMAP 11
-#define LINUX_SYS_MPROTECT 10
-#define LINUX_SYS_IOCTL 16
-#define LINUX_SYS_SCHED_YIELD 24
-#define LINUX_SYS_DUP 32
-#define LINUX_SYS_DUP2 33
-#define LINUX_SYS_FORK 57
-#define LINUX_SYS_VFORK 58
-#define LINUX_SYS_GETPID 39
-#define LINUX_SYS_SETPGID 109
-#define LINUX_SYS_GETCWD 79
-#define LINUX_SYS_CHDIR 80
-#define LINUX_SYS_RENAME 82
-#define LINUX_SYS_MKDIR 83
-#define LINUX_SYS_RMDIR 84
-#define LINUX_SYS_UNLINK 87
-#define LINUX_SYS_FCNTL 72
-#define LINUX_SYS_NANOSLEEP 35
-#define LINUX_SYS_EXECVE 59
-#define LINUX_SYS_EXIT 60
-#define LINUX_SYS_WAIT4 61
-#define LINUX_SYS_KILL 62
-#define LINUX_SYS_GETPPID 110
-#define LINUX_SYS_GETPGRP 111
-#define LINUX_SYS_SETSID 112
-#define LINUX_SYS_GETPGID 121
+#define LINUX_SYS_READ __NR_read
+#define LINUX_SYS_WRITE __NR_write
+#define LINUX_SYS_OPEN __NR_open
+#define LINUX_SYS_CLOSE __NR_close
+#define LINUX_SYS_PIPE __NR_pipe
+#define LINUX_SYS_SEND __NR_send
+#define LINUX_SYS_RECV __NR_recv
+#define LINUX_SYS_SOCKET __NR_socket
+#define LINUX_SYS_CONNECT __NR_connect
+#define LINUX_SYS_ACCEPT __NR_accept
+#define LINUX_SYS_BIND __NR_bind
+#define LINUX_SYS_LISTEN __NR_listen
+#define LINUX_SYS_GETSOCKNAME __NR_getsockname
+#define LINUX_SYS_GETSOCKOPT __NR_getsockopt
+#define LINUX_SYS_SETSOCKOPT __NR_setsockopt
+#define LINUX_SYS_SHUTDOWN __NR_shutdown
+#define LINUX_SYS_SENDTO __NR_sendto
+#define LINUX_SYS_RECVFROM __NR_recvfrom
+#define LINUX_SYS_STAT __NR_stat
+#define LINUX_SYS_FSTAT __NR_fstat
+#define LINUX_SYS_LSEEK __NR_lseek
+#define LINUX_SYS_FTRUNCATE __NR_ftruncate
+#define LINUX_SYS_MMAP __NR_mmap
+#define LINUX_SYS_MUNMAP __NR_munmap
+#define LINUX_SYS_MPROTECT __NR_mprotect
+#define LINUX_SYS_IOCTL __NR_ioctl
+#define LINUX_SYS_POLL __NR_poll
+#define LINUX_SYS_SCHED_YIELD __NR_sched_yield
+#define LINUX_SYS_DUP __NR_dup
+#define LINUX_SYS_DUP2 __NR_dup2
+#define LINUX_SYS_FORK __NR_fork
+#define LINUX_SYS_VFORK __NR_vfork
+#define LINUX_SYS_GETPID __NR_getpid
+#define LINUX_SYS_SETPGID __NR_setpgid
+#define LINUX_SYS_GETCWD __NR_getcwd
+#define LINUX_SYS_CHDIR __NR_chdir
+#define LINUX_SYS_RENAME __NR_rename
+#define LINUX_SYS_MKDIR __NR_mkdir
+#define LINUX_SYS_RMDIR __NR_rmdir
+#define LINUX_SYS_UNLINK __NR_unlink
+#define LINUX_SYS_FCNTL __NR_fcntl
+#define LINUX_SYS_NANOSLEEP __NR_nanosleep
+#define LINUX_SYS_EXECVE __NR_execve
+#define LINUX_SYS_EXIT __NR_exit
+#define LINUX_SYS_WAIT4 __NR_wait4
+#define LINUX_SYS_KILL __NR_kill
+#define LINUX_SYS_GETPPID __NR_getppid
+#define LINUX_SYS_GETPGRP __NR_getpgrp
+#define LINUX_SYS_SETSID __NR_setsid
+#define LINUX_SYS_GETPGID __NR_getpgid
 #define LINUX_SYS_NICE 34
-#define LINUX_SYS_GETPRIORITY 140
-#define LINUX_SYS_SETPRIORITY 141
-#define LINUX_SYS_GETRLIMIT 97
-#define LINUX_SYS_SETRLIMIT 160
+#define LINUX_SYS_GETPRIORITY __NR_getpriority
+#define LINUX_SYS_SETPRIORITY __NR_setpriority
+#define LINUX_SYS_GETRLIMIT __NR_getrlimit
+#define LINUX_SYS_SETRLIMIT __NR_setrlimit
+#define LINUX_SYS_OPENAT __NR_openat
+#define LINUX_SYS_CLOCK_GETTIME __NR_clock_gettime
+#define LINUX_SYS_RT_SIGACTION __NR_rt_sigaction
+#define LINUX_SYS_RT_SIGPROCMASK __NR_rt_sigprocmask
+#define LINUX_SYS_RT_SIGRETURN __NR_rt_sigreturn
+#define LINUX_SYS_RT_SIGSUSPEND __NR_rt_sigsuspend
+#define LINUX_SYS_MOUNT __NR_mount
+#define LINUX_SYS_UMOUNT2 __NR_umount2
 
 #define LEONOS_ENOSYS 38
 #define LEONOS_EFAULT 14
@@ -66,11 +90,16 @@
 #define LEONOS_EPERM 1
 #define LEONOS_EACCES 13
 #define LEONOS_EBUSY 16
+#define LEONOS_ENODEV 19
 #define LEONOS_EIO 5
 #define LEONOS_EAGAIN 11
 #define LEONOS_EPIPE 32
 #define LEONOS_ENOTTY 25
 #define LEONOS_ENOSPC 28
+#define LEONOS_ENOTSUP 95
+#define LEONOS_EADDRINUSE 98
+#define LEONOS_EISCONN 106
+#define LEONOS_EINTR 4
 
 struct task;
 
@@ -100,6 +129,10 @@ void syscall_dispatch_frame(struct trap_frame *frame);
  * @brief Resolve a user page fault at fault_addr with the given error code; 0 if handled.
  */
 int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error);
+int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms);
+int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
+                             uint64_t action_ptr, uint64_t old_action_ptr,
+                             uint64_t mask_ptr, uint64_t sigset_size);
 int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
                         uint64_t flags, uint64_t fd, uint64_t offset);
 int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot);

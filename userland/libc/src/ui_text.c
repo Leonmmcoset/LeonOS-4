@@ -224,7 +224,7 @@ static int ui_ttf_read_file(struct ui_ttf_font *font, const char *path)
         printf("[ui] TTF invalid load request\n");
         return 0;
     }
-    if (stat(path, &st) != 0) {
+    if (leonos_stat_legacy(path, &st) != 0) {
         printf("[ui] TTF stat failed path=%s\n", path);
         return 0;
     }

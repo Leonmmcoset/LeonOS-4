@@ -5,12 +5,12 @@
 #include <leonos/inputm.h>
 #include <leonos/license.h>
 #include <leonos/net.h>
-#include <leonos/pty.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 #include <termios.h>
+#include <unistd.h>
 
 #define OOBE_MAX_W 1920
 #define OOBE_MAX_H 1080
@@ -173,7 +173,7 @@ static int write_completion_marker(void)
         return close_ret;
     }
     st = (struct leonos_stat){0};
-    if (stat(OOBE_DONE_PATH, &st) < 0 ||
+    if (leonos_stat_legacy(OOBE_DONE_PATH, &st) < 0 ||
         st.type != LEONOS_FS_TYPE_FILE ||
         st.size != sizeof(done) - 1U) {
         return -1;
@@ -865,7 +865,7 @@ int main(void)
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     int window_id;
-    if (leonos_pty_self() > 0) {
+    if (isatty(STDIN_FILENO)) {
         return tty_oobe_main();
     }
     OOBE_LOG_LINE("[oobe.elf] starting first-run setup");

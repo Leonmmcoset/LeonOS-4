@@ -1,4 +1,3 @@
-#include <leonos/audio.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
@@ -6,6 +5,9 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/soundcard.h>
 #include <string.h>
 
 #define T(en, zh) leonos_i18n((en), (zh))
@@ -40,6 +42,7 @@ struct mp3_player {
     uint64_t file_size;
     uint64_t read_bytes;
     int fd;
+    int dsp_fd;
 };
 
 static uint32_t pixels[MP3PLAY_W * MP3PLAY_H];
@@ -187,7 +190,9 @@ static void player_discard_input(struct mp3_player *player, uint32_t bytes)
 static int player_configure_audio(struct mp3_player *player,
                                   const mp3dec_frame_info_t *info)
 {
-    struct leonos_audio_format format;
+    int format = AFMT_S16_LE;
+    int channels = 2;
+    int rate = info->hz;
     if (info->hz <= 0 || info->hz > 48000 || (info->channels != 1 && info->channels != 2)) {
         player_finish(player, "Unsupported MP3 audio format");
         return -1;
@@ -195,18 +200,20 @@ static int player_configure_audio(struct mp3_player *player,
     if (player->configured && player->sample_rate == (uint32_t)info->hz) {
         return 0;
     }
-    format = (struct leonos_audio_format){
-        .sample_rate = (uint32_t)info->hz,
-        .channels = 2U,
-        .bits_per_sample = 16U,
-        .flags = 0,
-    };
-    if (leonos_audio_configure(&format) < 0) {
+    if (player->dsp_fd < 0) {
+        player->dsp_fd = open("/dev/dsp", O_WRONLY | O_NONBLOCK, 0);
+    }
+    if (player->dsp_fd < 0 ||
+        ioctl(player->dsp_fd, SNDCTL_DSP_SETFMT, &format) < 0 ||
+        format != AFMT_S16_LE ||
+        ioctl(player->dsp_fd, SNDCTL_DSP_CHANNELS, &channels) < 0 ||
+        channels != 2 || ioctl(player->dsp_fd, SNDCTL_DSP_SPEED, &rate) < 0 ||
+        rate <= 0) {
         player_finish(player, "Audio device rejected 16-bit stereo PCM");
         return -1;
     }
     player->configured = 1;
-    player->sample_rate = format.sample_rate;
+    player->sample_rate = (uint32_t)rate;
     player_set_detail(player, info);
     copy_text(player->status, sizeof(player->status), "Playing");
     return 1;
@@ -215,9 +222,9 @@ static int player_configure_audio(struct mp3_player *player,
 static int player_write_frame(struct mp3_player *player, int samples,
                               const mp3dec_frame_info_t *info)
 {
-    uint32_t status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
     uint32_t bytes;
-    long written;
+    uint32_t offset = 0;
+    uint32_t waits = 0;
     if (info->channels == 1) {
         for (int index = samples - 1; index >= 0; --index) {
             player->pcm[index * 2] = player->pcm[index];
@@ -225,8 +232,18 @@ static int player_write_frame(struct mp3_player *player, int samples,
         }
     }
     bytes = (uint32_t)samples * 4U;
-    written = leonos_audio_write(player->pcm, bytes, &status);
-    if (written != (long)bytes || status != LEONOS_AUDIO_STATUS_OK) {
+    while (offset < bytes) {
+        long written = write(player->dsp_fd, (const uint8_t *)player->pcm + offset,
+                             bytes - offset);
+        if (written > 0 && (uint32_t)written <= bytes - offset) {
+            offset += (uint32_t)written;
+            waits = 0;
+            continue;
+        }
+        if ((written == 0 || written == -EAGAIN) && waits++ < 20U) {
+            sleep_ms(5U);
+            continue;
+        }
         player_finish(player, "PCM playback failed");
         return -1;
     }
@@ -305,7 +322,7 @@ static int player_start(struct mp3_player *player, const char *path)
     }
     player->fd = fd;
     player->file_size = 0;
-    if (fstat(fd, &stat_info) == 0 && stat_info.type == LEONOS_FS_TYPE_FILE) {
+    if (leonos_fstat_legacy(fd, &stat_info) == 0 && stat_info.type == LEONOS_FS_TYPE_FILE) {
         player->file_size = stat_info.size;
     }
     player->read_bytes = 0;
@@ -401,7 +418,7 @@ int main(int argc, char **argv, char **envp)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
-    struct mp3_player player = {.fd = -1};
+    struct mp3_player player = {.fd = -1, .dsp_fd = -1};
     int window_id;
     int running = 1;
     (void)envp;

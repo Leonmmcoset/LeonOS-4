@@ -67,12 +67,14 @@ ABI. `nice()` and `getpriority()` return the normal `-20..19` priority range.
 The kernel applies default terminal signal actions to the foreground process
 group. `signal()` and `sigaction()` support `SIG_DFL` and `SIG_IGN`, including
 `SIGHUP` immunity for detached jobs; `raise()` uses the normal `kill()` path.
-`sigprocmask` remains unavailable and `sigsuspend` yields then returns `EINTR`.
-Applications must not rely on arbitrary user-space signal handlers yet.
+`sigprocmask` and `sigsuspend` use the Linux `rt_sig*` syscall subset. Signal
+delivery still supports the default and ignored dispositions; applications
+must not rely on arbitrary user-space handler frames yet.
 
-The runtime also owns the common POSIX file-port adapters: `stat`, `fstat`,
-and `lstat` are available as the explicit `leonos_posix_*` adapters in
-`<leonos/posix.h>`; `access`, `fcntl`, `opendir`, `readdir`, `closedir`,
+The runtime exports standard POSIX `stat`, `fstat`, and `lstat` symbols using
+the Picolibc `struct stat` layout. The compact metadata record remains
+available only through the explicitly named `leonos_stat_legacy` and
+`leonos_fstat_legacy` transition functions. `access`, `fcntl`, `opendir`, `readdir`, `closedir`,
 `dirfd`, and `rewinddir` are supplied through Picolibc's normal POSIX headers.
 Directory entries expose LeonOS's file, directory, and device kinds.  They do
 not yet provide filesystem-native inode or ownership metadata.
@@ -93,7 +95,7 @@ service tasks, so ordinary applications cannot change system time.
 
 The runtime exposes a synthetic devfs namespace. Common nodes are
 `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`, `/dev/urandom`,
-`/dev/tty`, `/dev/console`, `/dev/fb0`, `/dev/audio0`, `/dev/serial0`,
+`/dev/tty`, `/dev/console`, `/dev/ptmx` and `/dev/pts/<id>`, `/dev/fb0`, `/dev/dsp`, `/dev/serial0`,
 `/dev/ttyS0`, `/dev/net0`, `/dev/ethernet0`, `/dev/disk0`, `/dev/sda`,
 `/dev/vda`, `/dev/nvme0n1`, `/dev/rtc`, `/dev/kmsg`, and `/dev/input/event0`.
 `/dev/stdin`, `/dev/stdout`, and `/dev/stderr` alias the current process
@@ -102,11 +104,20 @@ through normal directory syscalls. Device nodes are synthetic and are not
 stored in the filesystem image.
 
 Framebuffer, audio, input, network, disk, PTY, and GUI libc helpers open their
-corresponding `/dev` node and issue the existing ioctl ABI. Calls made by old
+corresponding `/dev` node and issue the device ABI. PTY users can use the
+standard `posix_openpt/openpty/forkpty` functions; master/slave data flows
+through normal `read/write/poll` descriptors. Calls made by old
 applications with the historical descriptor 3 are translated to the matching
 node by libc, so existing binaries continue to work while using the devfs
 namespace. System applications query the complete hardware inventory through
 `LEONOS_IOCTL_DEVICE_LIST`.
+
+PCM applications use OSS `/dev/dsp` with `<linux/soundcard.h>`. The current
+device accepts 16-bit little-endian stereo output and provides normal
+`write`, `O_NONBLOCK`, and `poll(POLLOUT)` behavior plus the basic
+`SNDCTL_DSP_*` format and queue ioctls. `/dev/audio` and `/dev/audio0` are
+temporary aliases retained only for binaries that still use the private audio
+request family.
 
 ## Driver Module ABI
 
@@ -231,60 +242,13 @@ Administrators, Users, and Everyone. Supported permission bits are Read/List,
 Write/Create, Execute/Traverse, Delete, and Manage Permissions. ACL rows only
 grant allowed permissions; an unchecked permission bit means no grant.
 
-## Disk Management ABI
+## Block Storage ABI
 
-`include/leonos/fs.h` also defines the GPT disk-management ABI used by
-`diskmgr.elf`. A caller first uses `leonos_install_list_disks`, then requests
-the selected disk's entries with `leonos_disk_list_partitions`. Each
-`struct leonos_disk_partition` carries its zero-based GPT entry index, LBA
-range, decoded filesystem, GPT type GUID, display name, protection flags, and
-the absolute `mount_path` when `LEONOS_DISK_PARTITION_FLAG_MOUNTED` is set.
-Unmounted entries have an empty `mount_path`.
-
-The associated ioctls are:
-
-- `LEONOS_DISK_IOCTL_LIST_PARTITIONS`
-- `LEONOS_DISK_IOCTL_FORMAT_PARTITION`
-- `LEONOS_DISK_IOCTL_DELETE_PARTITION`
-- `LEONOS_DISK_IOCTL_CREATE_PARTITION`
-- `LEONOS_DISK_IOCTL_MOUNT_PARTITION`
-- `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`
-- `LEONOS_DISK_IOCTL_EDIT_PARTITION`
-- `LEONOS_DISK_IOCTL_INITIALIZE_GPT`
-
-`FORMAT_PARTITION` accepts FAT32, exFAT, and ext2 through
-`struct leonos_disk_partition_format`. `CREATE_PARTITION` allocates a
-1 MiB-aligned range with the requested size in MiB and formats it immediately;
-FAT32 and exFAT use the GPT Microsoft Basic Data type; ext2 uses the Linux
-filesystem type. `DELETE_PARTITION` removes only the GPT entry and deliberately does not
-claim to securely erase the old data area.
-
-`MOUNT_PARTITION` accepts a writable `struct leonos_disk_partition_mount`. An
-empty `mount_path` selects the normalized `/mnt/disk<N>p<M>` path; callers may
-instead provide an absolute runtime target such as `/mnt/data`. The mount is
-not persistent across reboot. `UNMOUNT_PARTITION` takes a
-`struct leonos_disk_partition_unmount` and returns busy when a live task still
-uses the mounted volume through a CWD, descriptor, image, or file mapping.
-
-`EDIT_PARTITION` accepts `struct leonos_disk_partition_edit` and updates the
-standard GPT type (`basic-data`, `ESP`, or `Linux filesystem`) and/or its
-printable UTF-16 name. Both primary and backup GPT copies are rewritten with
-fresh CRCs; protected or mounted partitions are rejected.
-
-`INITIALIZE_GPT` accepts `struct leonos_disk_gpt_initialize` and writes a
-protective MBR, an empty standard 128-entry GPT, and matching primary and
-backup headers. It is destructive and is exposed only through the installer
-ISO's `gptinit` utility. A valid existing GPT is rejected unless the utility is
-run with `--force`; the operation never creates or formats partitions.
-
-Listing is available to disk-management clients, while create, format, delete,
-mount, and unmount are checked through the administrator install authorization
-path in the kernel. The running boot disk and an installer target that is
-currently mounted are exported as protected and their partitions are rejected
-by the kernel even if a client constructs an ioctl request directly. The
-initial ABI accepts the standard 128-entry, 128-byte GPT table emitted by
-LeonOS; malformed, out of range, overlapping, or CRC-invalid tables are never
-mutated.
+Disk tools operate on `/dev/diskN` and `/dev/diskNpN`. They obtain capacity
+and sector geometry through `<linux/fs.h>` `BLKGETSIZE64` and `BLKSSZGET`,
+update GPT metadata with aligned raw I/O followed by `BLKRRPART`, and mount
+FAT32, exFAT, or ext2 volumes with `<sys/mount.h>` `mount(2)` and `umount2(2)`.
+The SDK no longer defines LeonOS-specific disk-management ioctl records.
 
 ## Middlelayer ABI v6
 
@@ -480,3 +444,11 @@ also supervised by `serviced.elf` after the desktop starts. `network_icon` and
 the kernel software wall clock after validating the server reply. It retries
 failed synchronization after five minutes and refreshes a successful sync every
 six hours. This updates the runtime clock only; it does not write the RTC/CMOS.
+## POSIX/Linux ABI migration status
+
+The public `stat`, `fstat`, and `lstat` symbols use the Picolibc/POSIX
+`struct stat` layout. LeonOS first-party code that needs the compact metadata
+record must call the explicitly named `leonos_stat_legacy` or
+`leonos_fstat_legacy` functions. Linux fbdev applications can open `/dev/fb0`,
+map its framebuffer, and use the `FBIOGET_VSCREENINFO`, `FBIOGET_FSCREENINFO`,
+and `FBIOPUT_VSCREENINFO` requests from `<linux/fb.h>`.

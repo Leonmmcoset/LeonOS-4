@@ -2,12 +2,12 @@
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/inputm.h>
-#include <leonos/pty.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 #include <termios.h>
+#include <unistd.h>
 
 #define LOGIN_MAX_W 1920
 #define LOGIN_MAX_H 1080
@@ -253,7 +253,7 @@ int main(void)
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     int window_id;
-    if (leonos_pty_self() > 0) {
+    if (isatty(STDIN_FILENO)) {
         return tty_login_main();
     }
     puts("[login.elf] starting login UI");

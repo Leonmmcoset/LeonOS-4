@@ -250,5 +250,5 @@ bool pleditor_platform_write_file(const char *filename, const char *buffer, size
 bool pleditor_platform_path_exists(const char *filename)
 {
     struct leonos_stat status;
-    return filename && stat(filename, &status) == 0;
+    return filename && leonos_stat_legacy(filename, &status) == 0;
 }

@@ -5,6 +5,80 @@
 #include <ntclks/sched.h>
 #include <ntclks/syscall.h>
 #include <ntclks/usercopy.h>
+#include <stdint.h>
+
+struct linux_sigaction_user {
+    uint64_t handler;
+    uint64_t mask;
+    uint32_t flags;
+    uint32_t reserved;
+};
+
+int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
+                             uint64_t action_ptr, uint64_t old_action_ptr,
+                             uint64_t mask_ptr, uint64_t sigset_size)
+{
+    struct task *task = sched_current_task();
+    uint32_t bit;
+    (void)sigset_size;
+    if (number == LINUX_SYS_RT_SIGSUSPEND) {
+        if (signal_number && !user_range_ok(signal_number, sizeof(uint64_t))) return -LEONOS_EFAULT;
+        if (action_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
+        return -LEONOS_EINTR;
+    }
+    if (!task) return -LEONOS_EPERM;
+    if (number == LINUX_SYS_RT_SIGPROCMASK) {
+        uint64_t set = 0;
+        uint64_t old = task->blocked_signals;
+        if (mask_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
+        if (action_ptr) {
+            if (!user_range_ok(action_ptr, sizeof(uint64_t))) return -LEONOS_EFAULT;
+            set = *(const uint64_t *)(uintptr_t)action_ptr;
+        }
+        if (old_action_ptr) {
+            if (!user_range_ok(old_action_ptr, sizeof(uint64_t))) return -LEONOS_EFAULT;
+            *(uint64_t *)(uintptr_t)old_action_ptr = old;
+        }
+        if (signal_number == 0) task->blocked_signals |= (uint32_t)set;
+        else if (signal_number == 1) task->blocked_signals &= ~(uint32_t)set;
+        else if (signal_number == 2) task->blocked_signals = (uint32_t)set;
+        else return -LEONOS_EINVAL;
+        task->blocked_signals &= ~((1u << 9) | (1u << 17));
+        return 0;
+    }
+    if (signal_number == 0 || signal_number >= 32 || signal_number == 9 ||
+        signal_number == 17) return -LEONOS_EINVAL;
+    bit = 1u << (uint32_t)signal_number;
+    if (number == LINUX_SYS_RT_SIGACTION) {
+        struct linux_sigaction_user current = {0};
+        struct linux_sigaction_user *action;
+        struct linux_sigaction_user *old_action;
+        if (mask_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
+        if (action_ptr && !user_range_ok(action_ptr, sizeof(current))) return -LEONOS_EFAULT;
+        if (old_action_ptr && !user_range_ok(old_action_ptr, sizeof(current))) return -LEONOS_EFAULT;
+        if (action_ptr) {
+            action = (struct linux_sigaction_user *)(uintptr_t)action_ptr;
+            if (action->handler != 0 && action->handler != 1) return -LEONOS_ENOSYS;
+        }
+        current.handler = (task->ignored_signals & bit) ? 1u : 0u;
+        current.mask = 0;
+        current.flags = 0;
+        if (old_action_ptr) {
+            old_action = (struct linux_sigaction_user *)(uintptr_t)old_action_ptr;
+            *old_action = current;
+        }
+        if (action_ptr) {
+            if (((struct linux_sigaction_user *)(uintptr_t)action_ptr)->handler == 1u) {
+                task->ignored_signals |= bit;
+                task->pending_signals &= ~bit;
+            } else {
+                task->ignored_signals &= ~bit;
+            }
+        }
+        return 0;
+    }
+    return -LEONOS_ENOSYS;
+}
 
 int64_t syscall_process_control(uint64_t number, uint64_t a0,
                                        uint64_t a1, uint64_t a2, uint64_t a3)

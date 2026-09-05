@@ -225,7 +225,7 @@ static int tar_ensure_dir(const char *path)
     if (tar_is_root_path(path)) {
         return 1;
     }
-    if (stat(path, &st) == 0) {
+    if (leonos_stat_legacy(path, &st) == 0) {
         return st.type == LEONOS_FS_TYPE_DIR ? 1 : 0;
     }
     if (tar_parent_path(path, parent, sizeof(parent))) {
@@ -236,7 +236,7 @@ static int tar_ensure_dir(const char *path)
     if (mkdir(path, 0) == 0) {
         return 1;
     }
-    return stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
+    return leonos_stat_legacy(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
 }
 
 static int tar_ensure_parent_dir(const char *path)
@@ -434,7 +434,7 @@ int leonos_tar_pack_file_append(int tar_fd, const char *file_path,
     if (name_len >= LEONOS_TAR_NAME_LEN) {
         return 0;
     }
-    if (stat(file_path, &st) != 0 || st.type != LEONOS_FS_TYPE_FILE) {
+    if (leonos_stat_legacy(file_path, &st) != 0 || st.type != LEONOS_FS_TYPE_FILE) {
         return 0;
     }
     file_size = (uint32_t)st.size;
@@ -714,7 +714,7 @@ int leonos_tar_extract_all_with_progress(const char *tar_path,
     if (tar_fd < 0) {
         return 0;
     }
-    if (fstat(tar_fd, &archive_stat) == 0 && archive_stat.size <= 0xffffffffULL) {
+    if (leonos_fstat_legacy(tar_fd, &archive_stat) == 0 && archive_stat.size <= 0xffffffffULL) {
         total = (uint32_t)archive_stat.size;
     }
     if (progress && progress(0, total, context) < 0) {

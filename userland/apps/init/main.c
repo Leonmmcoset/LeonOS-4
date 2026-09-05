@@ -17,7 +17,7 @@ int main(void)
     printf("[init.elf] chdir root => %d\n", ret);
     printf("[init.elf] getcwd => %x\n", (unsigned int)(uintptr_t)getcwd(cwd, sizeof(cwd)));
     printf("[init.elf] cwd=%s\n", cwd);
-    ret = stat("/system/config/leonos.conf", &st);
+    ret = leonos_stat_legacy("/system/config/leonos.conf", &st);
     printf("[init.elf] stat leonos.conf => %d type=%d size=%d\n", ret, (int)st.type, (int)st.size);
     ret = chdir("/system/config");
     printf("[init.elf] chdir system config => %d\n", ret);
@@ -34,7 +34,7 @@ int main(void)
     fd = open("leonos.conf", 0, 0);
     printf("[init.elf] open leonos.conf => %d\n", fd);
     if (fd >= 0) {
-        ret = fstat(fd, &st);
+        ret = leonos_fstat_legacy(fd, &st);
         printf("[init.elf] fstat leonos.conf => %d type=%d size=%d\n", ret, (int)st.type, (int)st.size);
         got = read(fd, conf, sizeof(conf) - 1);
         printf("[init.elf] read leonos.conf => %d\n", (int)got);

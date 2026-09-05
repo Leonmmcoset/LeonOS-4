@@ -308,8 +308,8 @@ def compile_source(flags: list[str], source: Path, output: Path) -> None:
     run(["clang", *flags, "-c", str(source), "-o", str(output)])
 
 
-def copy_headers(picolibc_include: Path, sdk_include: Path, tcc_source: Path,
-                 runtime_include: Path, zlib_source: Path,
+def copy_headers(picolibc_include: Path, sdk_include: Path, uapi_include: Path,
+                 tcc_source: Path, runtime_include: Path, zlib_source: Path,
                  libpng_source: Path, libpng_config: Path) -> None:
     shutil.copytree(picolibc_include, runtime_include)
     for source in sorted(sdk_include.rglob("*")):
@@ -321,6 +321,15 @@ def copy_headers(picolibc_include: Path, sdk_include: Path, tcc_source: Path,
         # and compatibility-only files that Picolibc does not supply.
         if destination.exists() and relative.parts[0] != "leonos":
             continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+    # The runtime sysroot is also the installed TCC SDK.  Keep its Linux UAPI
+    # headers in the standard include/linux namespace, matching the release
+    # SDK and the regular application build flags.
+    for source in sorted(uapi_include.rglob("*")):
+        if not source.is_file():
+            continue
+        destination = runtime_include / "linux" / source.relative_to(uapi_include)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
     # Picolibc intentionally does not install a few compiler-owned headers
@@ -349,6 +358,7 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--port", type=Path, required=True)
     parser.add_argument("--sdk-include", type=Path, required=True)
+    parser.add_argument("--uapi-include", type=Path, required=True)
     parser.add_argument("--picolibc-prefix", type=Path, required=True)
     parser.add_argument("--leonos-lib", type=Path, required=True)
     parser.add_argument("--picolibc-lib", type=Path, required=True)
@@ -372,6 +382,7 @@ def main() -> None:
     source = args.source.resolve()
     port = args.port.resolve()
     sdk_include = args.sdk_include.resolve()
+    uapi_include = args.uapi_include.resolve()
     picolibc_prefix = args.picolibc_prefix.resolve()
     leonos_lib = args.leonos_lib.resolve()
     picolibc_lib = args.picolibc_lib.resolve()
@@ -391,7 +402,7 @@ def main() -> None:
         port / "leonos_tcc_host_shim.c", port / "leonos_tcc_runtime.c",
         port / "leonos_tcc_float_runtime.c",
         port / "leonos_tccdefs.h", port / "README.md",
-        port / "examples/hello.c", sdk_include,
+        port / "examples/hello.c", sdk_include, uapi_include,
         picolibc_include, leonos_lib, picolibc_lib, zlib_lib, libpng_lib,
         zlib_source / "zlib.h", zlib_source / "zconf.h", libpng_source / "png.h",
         libpng_source / "pngconf.h", libpng_config, linker_script,
@@ -451,7 +462,7 @@ def main() -> None:
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
     (staging_dir / "lib").mkdir(parents=True)
-    copy_headers(picolibc_include, sdk_include, work_source,
+    copy_headers(picolibc_include, sdk_include, uapi_include, work_source,
                  staging_dir / "include", zlib_source, libpng_source,
                  libpng_config)
     shutil.copyfile(libtcc1, staging_dir / "lib/libtcc1.a")

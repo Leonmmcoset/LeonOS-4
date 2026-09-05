@@ -453,9 +453,9 @@ void maybe_launch_oobe(void)
     if (oobe_lock_active) {
         return;
     }
-    if (stat("/system/apps/installer/installer.elf", &st) == 0 &&
+    if (leonos_stat_legacy("/system/apps/installer/installer.elf", &st) == 0 &&
         st.type == LEONOS_FS_TYPE_FILE &&
-        stat(OOBE_APP_PATH, &st) < 0) {
+        leonos_stat_legacy(OOBE_APP_PATH, &st) < 0) {
         puts("[desktop.elf] installer runtime detected; OOBE disabled");
         return;
     }

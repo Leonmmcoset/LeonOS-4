@@ -281,6 +281,7 @@ void storage_init(void)
 
     storage_memzero(g_volumes, sizeof(g_volumes));
     storage_memzero(g_install_disks, sizeof(g_install_disks));
+    storage_disk_block_cache_reset();
     g_install_disk_count = 0;
     g_devfs_enabled = 1;
     g_installer_root_active = 0;
@@ -562,6 +563,7 @@ void storage_init_installer_root(const struct boot_info *boot)
     int mount_ret = -2;
     bool found = false;
     storage_memzero(g_volumes, sizeof(g_volumes));
+    storage_disk_block_cache_reset();
     g_active_volume = &g_volumes[0];
     g_installer_root_active = 0;
     storage_cache_invalidate();

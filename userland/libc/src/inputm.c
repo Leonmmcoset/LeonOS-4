@@ -7,8 +7,7 @@ static int inputm_device_fd(void)
 {
     static int fd = -1;
     if (fd < 0) {
-        fd = open(LEONOS_DEV_INPUT_EVENT0, O_RDWR, 0);
-        if (fd < 0) fd = 3;
+        fd = open(LEONOS_DEV_INPUT_METHOD, O_RDWR, 0);
     }
     return fd;
 }

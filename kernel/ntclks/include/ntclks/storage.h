@@ -10,6 +10,51 @@
 #include <leonos/system.h>
 #include <ntclks/types.h>
 
+/* Legacy installation records are internal-only while boot storage is being
+ * simplified.  They are deliberately absent from the public SDK; userland
+ * reaches disks exclusively through /dev and Linux-compatible interfaces. */
+#define LEONOS_INSTALL_MAX_DISKS 8U
+#define LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT 0x00000001U
+#define LEONOS_INSTALL_DISK_FLAG_TARGET_MOUNTED 0x00000002U
+#define LEONOS_DISK_MAX_PARTITIONS 128U
+#define LEONOS_DISK_PARTITION_NAME_LEN 72U
+#define LEONOS_DISK_PARTITION_TYPE_BASIC_DATA 1U
+#define LEONOS_DISK_PARTITION_TYPE_ESP 2U
+#define LEONOS_DISK_PARTITION_TYPE_LINUX 3U
+#define LEONOS_DISK_PARTITION_EDIT_TYPE 0x00000001U
+#define LEONOS_DISK_PARTITION_EDIT_NAME 0x00000002U
+#define LEONOS_DISK_FILESYSTEM_UNKNOWN 0U
+#define LEONOS_DISK_FILESYSTEM_FAT32 1U
+#define LEONOS_DISK_FILESYSTEM_EXT2 2U
+#define LEONOS_DISK_FILESYSTEM_ISO9660 3U
+#define LEONOS_DISK_FILESYSTEM_EXFAT 4U
+#define LEONOS_DISK_PARTITION_FLAG_ESP 0x00000001U
+#define LEONOS_DISK_PARTITION_FLAG_BOOT_ROOT 0x00000002U
+#define LEONOS_DISK_PARTITION_FLAG_TARGET_MOUNTED 0x00000004U
+#define LEONOS_DISK_PARTITION_FLAG_PROTECTED 0x00000008U
+#define LEONOS_DISK_PARTITION_FLAG_MOUNTED 0x00000010U
+#define LEONOS_DISK_GPT_INITIALIZE_FORCE 0x00000001U
+
+struct leonos_install_disk {
+    uint32_t id, port, sector_size, flags;
+    uint64_t sector_count;
+    char name[32];
+};
+struct leonos_disk_partition {
+    uint32_t disk_id, index, filesystem, flags;
+    char mount_path[LEONOS_FS_PATH_LEN];
+    uint64_t first_lba, sector_count;
+    uint8_t type_guid[16];
+    char name[LEONOS_DISK_PARTITION_NAME_LEN];
+};
+struct leonos_disk_partition_format { uint32_t disk_id, partition_index, filesystem, reserved; };
+struct leonos_disk_partition_delete { uint32_t disk_id, partition_index, reserved0, reserved1; };
+struct leonos_disk_partition_create { uint32_t disk_id, filesystem, size_mib, reserved; char name[LEONOS_DISK_PARTITION_NAME_LEN]; };
+struct leonos_disk_partition_mount { uint32_t disk_id, partition_index; char mount_path[LEONOS_FS_PATH_LEN]; };
+struct leonos_disk_partition_unmount { uint32_t disk_id, partition_index, reserved0, reserved1; };
+struct leonos_disk_partition_edit { uint32_t disk_id, partition_index, edit_mask, type, reserved; char name[LEONOS_DISK_PARTITION_NAME_LEN]; };
+struct leonos_disk_gpt_initialize { uint32_t disk_id, flags; };
+
 struct storage_node {
     uint32_t type;
     uint32_t flags;
@@ -38,6 +83,15 @@ struct storage_read_cursor {
 #define STORAGE_NODE_FLAG_EXFAT   0x00000010u
 #define STORAGE_NODE_FLAG_EXFAT_NOFAT 0x00000020u
 #define STORAGE_NODE_FLAG_DEV_NODE 0x00000040u
+#define STORAGE_NODE_FLAG_DEV_BLOCK 0x00000080u
+
+/* Device-node volume_id encoding for block devices.  The low 16 bits select
+ * the physical disk; the high 16 bits contain GPT entry + 1, or zero for the
+ * whole disk.  Device nodes never use volume_id for mounted-volume lookup. */
+#define STORAGE_BLOCK_DISK_ID(value) ((uint32_t)(value) & 0xffffu)
+#define STORAGE_BLOCK_PARTITION(value) ((int32_t)(((uint32_t)(value) >> 16) & 0xffffu) - 1)
+#define STORAGE_BLOCK_VOLUME_ID(disk, partition) \
+    ((uint32_t)(disk) & 0xffffu) | ((uint32_t)((partition) + 1) << 16)
 
 /* Synthetic devfs node kinds.  They are stored in storage_node.first_cluster
  * for device nodes; filesystem nodes continue to use that field as their
@@ -63,6 +117,7 @@ struct storage_read_cursor {
 #define STORAGE_DEV_KIND_RTC       19u
 #define STORAGE_DEV_KIND_KMSG      20u
 #define STORAGE_DEV_KIND_DRIVERCTL 21u
+#define STORAGE_DEV_KIND_INPUT_METHOD 22u
 
 struct boot_info;
 
@@ -224,6 +279,26 @@ int storage_install_mount_target(uint32_t disk_id);
 int storage_disk_list_partitions(uint32_t disk_id,
                                  struct leonos_disk_partition *partitions,
                                  uint32_t capacity, uint32_t *out_count);
+/** Returns the LBA range represented by a whole-disk or partition node. */
+int storage_disk_block_info(uint32_t disk_id, int32_t partition_index,
+                            uint64_t *out_first_lba, uint64_t *out_sector_count);
+/** Reads/writes a block node at a byte offset; offsets and lengths are sector aligned. */
+int storage_disk_block_read(uint32_t disk_id, int32_t partition_index,
+                            uint64_t offset, void *buffer, uint32_t length,
+                            uint32_t *out_read);
+int storage_disk_block_write(uint32_t disk_id, int32_t partition_index,
+                             uint64_t offset, const void *buffer, uint32_t length,
+                             uint32_t *out_written);
+/** Revalidates a disk's GPT metadata after an external partition-table change. */
+int storage_disk_block_reread(uint32_t disk_id);
+/** Mount a GPT partition exposed through a /dev block node. */
+int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
+                                  const char *target, const char *filesystem,
+                                  uint64_t flags, uint32_t *out_volume_id);
+/** Resolve an exact mounted path to its internal volume identity. */
+int storage_mount_path_volume_id(const char *target, uint32_t *out_volume_id);
+/** Tear down an exact standard mount after the syscall layer checks use. */
+int storage_unmount_path(const char *target, uint32_t *out_volume_id);
 /**
  * @brief Formats an unprotected GPT partition as FAT32, exFAT, or ext2.
  * @param request Partition selector and requested filesystem.

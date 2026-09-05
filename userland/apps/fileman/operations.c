@@ -40,7 +40,7 @@ static int build_recycle_dir(char *dst, uint32_t cap)
         return -1;
     }
     build_path_join(dst, cap, home_path, "recycle-bin");
-    return mkdir(dst, 0) < 0 && stat(dst, &(struct leonos_stat){0}) < 0 ? -1 : 0;
+    return mkdir(dst, 0) < 0 && leonos_stat_legacy(dst, &(struct leonos_stat){0}) < 0 ? -1 : 0;
 }
 
 static void build_path_in_dir(char *dst, uint32_t cap, const char *dir,
@@ -101,7 +101,7 @@ static int choose_target_path(const char *dir, const char *name,
     struct leonos_stat st;
     char candidate[LEONOS_FS_NAME_LEN];
     build_path_in_dir(dst, cap, dir, name);
-    if (stat(dst, &st) < 0) {
+    if (leonos_stat_legacy(dst, &st) < 0) {
         return 0;
     }
     if (leonos_ui_show_confirm_dialog(T("File Conflict", "文件冲突"),
@@ -114,7 +114,7 @@ static int choose_target_path(const char *dir, const char *name,
     for (uint32_t serial = 2; serial < 100U; ++serial) {
         build_copy_name(candidate, sizeof(candidate), name, serial);
         build_path_in_dir(dst, cap, dir, candidate);
-        if (stat(dst, &st) < 0) {
+        if (leonos_stat_legacy(dst, &st) < 0) {
             return 0;
         }
     }
@@ -127,13 +127,13 @@ static int choose_free_target_path(const char *dir, const char *name,
     struct leonos_stat st;
     char candidate[LEONOS_FS_NAME_LEN];
     build_path_in_dir(dst, cap, dir, name);
-    if (stat(dst, &st) < 0) {
+    if (leonos_stat_legacy(dst, &st) < 0) {
         return 0;
     }
     for (uint32_t serial = 2; serial < 100U; ++serial) {
         build_copy_name(candidate, sizeof(candidate), name, serial);
         build_path_in_dir(dst, cap, dir, candidate);
-        if (stat(dst, &st) < 0) {
+        if (leonos_stat_legacy(dst, &st) < 0) {
             return 0;
         }
     }
@@ -145,7 +145,7 @@ static int remove_tree(const char *path, uint32_t depth)
     struct leonos_stat st;
     int fd;
     int ret;
-    if (depth > FILEMAN_COPY_MAX_DEPTH || stat(path, &st) < 0) {
+    if (depth > FILEMAN_COPY_MAX_DEPTH || leonos_stat_legacy(path, &st) < 0) {
         return -1;
     }
     if (st.type != LEONOS_FS_TYPE_DIR) {
@@ -221,14 +221,14 @@ static int copy_tree(const char *src, const char *dst, uint64_t total,
 {
     struct leonos_stat st;
     int ret;
-    if (depth > FILEMAN_COPY_MAX_DEPTH || stat(src, &st) < 0) {
+    if (depth > FILEMAN_COPY_MAX_DEPTH || leonos_stat_legacy(src, &st) < 0) {
         return -1;
     }
     if (st.type != LEONOS_FS_TYPE_DIR) {
         return copy_file(src, dst, total, done, base_percent, span_percent);
     }
     ret = mkdir(dst, 0);
-    if (ret < 0 && stat(dst, &(struct leonos_stat){0}) < 0) {
+    if (ret < 0 && leonos_stat_legacy(dst, &(struct leonos_stat){0}) < 0) {
         return ret;
     }
     {
@@ -262,7 +262,7 @@ static uint64_t path_bytes(const char *path)
 {
     struct leonos_stat st;
     struct folder_size_info info = {0};
-    if (stat(path, &st) < 0) {
+    if (leonos_stat_legacy(path, &st) < 0) {
         return 0;
     }
     if (st.type == LEONOS_FS_TYPE_DIR) {
@@ -558,12 +558,12 @@ void restore_selected_entry(void)
         return;
     }
     build_child_path(src, sizeof(src), entries[file_list.selected].name);
-    if (stat(origin, &(struct leonos_stat){0}) == 0 &&
+    if (leonos_stat_legacy(origin, &(struct leonos_stat){0}) == 0 &&
         !leonos_ui_show_confirm_dialog(T("Restore Conflict", "还原冲突"),
                                        T("Original path exists. Replace it?", "原始路径已存在。要替换它吗？"), 0)) {
         return;
     }
-    if (stat(origin, &(struct leonos_stat){0}) == 0 && remove_tree(origin, 0) < 0) {
+    if (leonos_stat_legacy(origin, &(struct leonos_stat){0}) == 0 && remove_tree(origin, 0) < 0) {
         set_status(T("Could not replace original item", "无法替换原始项目"));
         return;
     }

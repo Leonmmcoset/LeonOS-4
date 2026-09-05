@@ -1569,6 +1569,11 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
     if (signal_number == 0) {
         return 0;
     }
+    if (signal_number != 9 && signal_number != 17 &&
+        (task->blocked_signals & (1u << (uint32_t)signal_number)) != 0) {
+        task->pending_signals |= 1u << (uint32_t)signal_number;
+        return 0;
+    }
     /* SIGKILL and SIGSTOP cannot be ignored. */
     if (signal_number != 9 && signal_number != 17 &&
         (task->ignored_signals & (1u << (uint32_t)signal_number)) != 0) {

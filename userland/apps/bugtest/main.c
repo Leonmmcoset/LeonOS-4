@@ -1,11 +1,13 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/psf_font.h>
-#include <leonos/pty.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 #include <leonos/ui.h>
+#include <fcntl.h>
+#include <pty.h>
+#include <unistd.h>
 
 #define BUGTEST_W 620
 #define BUGTEST_H 430
@@ -134,7 +136,7 @@ static int safe_open_bad_path(void)
 
 static int safe_stat_bad_out(void)
 {
-    return nonfatal_result(stat("/system/config/leonos.conf", (struct leonos_stat *)0x200000ULL));
+    return nonfatal_result(leonos_stat_legacy("/system/config/leonos.conf", (struct leonos_stat *)0x200000ULL));
 }
 
 static int safe_getcwd_bad_out(void)
@@ -249,15 +251,15 @@ static int safe_task_snapshot_bad_tasks(void)
 
 static int safe_pty_bad_buffer(void)
 {
-    int pty = leonos_pty_create();
-    struct leonos_pty_io io;
-    if (pty <= 0) {
+    char *bad_buffer = (char *)0x200000ULL;
+    int pty = posix_openpt(O_RDWR);
+    int result;
+    if (pty < 0) {
         return 0;
     }
-    io.pty_id = (uint32_t)pty;
-    io.length = 8;
-    io.buffer = (char *)0x200000ULL;
-    return nonfatal_result(ioctl(3, LEONOS_PTY_IOCTL_READ_OUTPUT, &io));
+    result = (int)read(pty, bad_buffer, 8);
+    (void)close(pty);
+    return nonfatal_result(result);
 }
 
 static int destructive_null_write(void)
@@ -283,7 +285,7 @@ static const struct bug_test tests[TEST_COUNT] = {
     {"read bad dst", "read(fd=0) into unmapped user pointer 0x200000", TEST_SAFE, safe_read_bad_dst},
     {"write bad src", "write(fd=1) from unmapped user pointer 0x200000", TEST_SAFE, safe_write_bad_src},
     {"open bad path", "open() with path pointer outside user range", TEST_SAFE, safe_open_bad_path},
-    {"stat bad out", "stat() writes result to bad user pointer", TEST_SAFE, safe_stat_bad_out},
+    {"stat bad out", "leonos_stat_legacy() writes result to bad user pointer", TEST_SAFE, safe_stat_bad_out},
     {"getcwd bad out", "getcwd() writes cwd to bad user pointer", TEST_SAFE, safe_getcwd_bad_out},
     {"listdir bad entries", "LIST_DIR writes entries to bad pointer", TEST_SAFE, safe_list_dir_bad_entries},
     {"system info bad out", "SYSTEM_INFO writes struct to bad pointer", TEST_SAFE, safe_system_info_bad_out},

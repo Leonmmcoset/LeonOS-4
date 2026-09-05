@@ -11,7 +11,7 @@
 #define INPUT_EVENT_KEYBOARD 2
 #define INPUT_EVENT_MOUSE_WHEEL 3
 
-struct input_event {
+struct input_raw_event {
     uint32_t type;
     int32_t x;
     int32_t y;
@@ -41,6 +41,14 @@ void input_push_key(uint8_t keycode, uint8_t pressed);
 /**
  * @brief Dequeue the oldest event into event; returns non-zero when one was available.
  */
-int input_pop(struct input_event *event);
+int input_pop(struct input_raw_event *event);
+
+/* Linux evdev readers receive their own cursor into a bounded fan-out ring.
+ * Raw input delivery to the desktop remains independent, so opening an
+ * event device cannot consume the desktop compositor's input queue. */
+uint64_t input_evdev_cursor_now(void);
+int input_evdev_read(uint32_t device_kind, uint64_t *cursor,
+                     void *buffer, uint32_t length);
+int input_evdev_available(uint32_t device_kind, uint64_t cursor);
 
 #endif

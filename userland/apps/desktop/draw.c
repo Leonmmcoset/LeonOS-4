@@ -512,7 +512,7 @@ static int load_bmp_argb(const char *path, uint32_t max_w, uint32_t max_h,
         out_stride < max_w || max_bytes > sizeof(bmp_scratch)) {
         return 0;
     }
-    if (stat(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
+    if (leonos_stat_legacy(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
         st.size < 54 || st.size > max_bytes) {
         return 0;
     }

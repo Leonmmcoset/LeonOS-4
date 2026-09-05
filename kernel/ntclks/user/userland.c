@@ -465,11 +465,12 @@ static bool userland_load_task_image(struct task *task)
 /**
  * @brief Create the user task for path, attach image/exec/fd parameters, and return its PID or a negative errno.
  */
-static int64_t spawn_pending_image(const char *path, const char *task_name,
-                                   const struct storage_node *node,
-                                   const struct exec_launch *launch,
-                                   uint32_t parent, uint32_t flags, uint32_t pty_id,
-                                   int stdin_fd, int stdout_fd, int stderr_fd)
+static int64_t spawn_pending_image_ex(const char *path, const char *task_name,
+                                      const struct storage_node *node,
+                                      const struct exec_launch *launch,
+                                      uint32_t parent, uint32_t flags, uint32_t pty_id,
+                                      int stdin_fd, int stdout_fd, int stderr_fd,
+                                      int make_ready)
 {
     uint32_t pid = sched_create_user_task(task_name, 0, USER_STACK_TOP, parent, flags);
     if (!pid) {
@@ -498,18 +499,22 @@ static int64_t spawn_pending_image(const char *path, const char *task_name,
         }
     }
     /* Make the task runnable only after every field used by the loader and
-     * scheduler has been published. */
-    sched_mark_ready(pid);
+     * scheduler has been published.  Bootstrap callers may defer this one
+     * final transition while they attach the controlling PTY. */
+    if (make_ready) {
+        sched_mark_ready(pid);
+    }
     return pid;
 }
 
 /**
  * @brief Tag desktop/service-daemon paths with their flags, reject duplicate instances, then create the task.
  */
-static int64_t spawn_path_internal(const char *path, const char *task_name,
-                                   const struct exec_launch *launch,
-                                   uint32_t parent, uint32_t flags, uint32_t pty_id,
-                                   int stdin_fd, int stdout_fd, int stderr_fd)
+static int64_t spawn_path_internal_ex(const char *path, const char *task_name,
+                                      const struct exec_launch *launch,
+                                      uint32_t parent, uint32_t flags, uint32_t pty_id,
+                                      int stdin_fd, int stdout_fd, int stderr_fd,
+                                      int make_ready)
 {
     struct storage_node node;
     int ret;
@@ -533,11 +538,29 @@ static int64_t spawn_path_internal(const char *path, const char *task_name,
                            ret < 0 ? ret : -21);
             return ret < 0 ? ret : -21;
         }
-        return spawn_pending_image(path, task_name, &node, launch, parent, flags, pty_id,
-                                   stdin_fd, stdout_fd, stderr_fd);
+        return spawn_pending_image_ex(path, task_name, &node, launch, parent, flags, pty_id,
+                                      stdin_fd, stdout_fd, stderr_fd, make_ready);
     }
-    return spawn_pending_image(path, task_name, NULL, launch, parent, flags, pty_id,
-                               stdin_fd, stdout_fd, stderr_fd);
+    return spawn_pending_image_ex(path, task_name, NULL, launch, parent, flags, pty_id,
+                                  stdin_fd, stdout_fd, stderr_fd, make_ready);
+}
+
+static int64_t spawn_path_internal(const char *path, const char *task_name,
+                                   const struct exec_launch *launch,
+                                   uint32_t parent, uint32_t flags, uint32_t pty_id,
+                                   int stdin_fd, int stdout_fd, int stderr_fd)
+{
+    return spawn_path_internal_ex(path, task_name, launch, parent, flags, pty_id,
+                                  stdin_fd, stdout_fd, stderr_fd, 1);
+}
+
+static int64_t spawn_path_internal_deferred(const char *path, const char *task_name,
+                                            const struct exec_launch *launch,
+                                            uint32_t parent, uint32_t flags, uint32_t pty_id,
+                                            int stdin_fd, int stdout_fd, int stderr_fd)
+{
+    return spawn_path_internal_ex(path, task_name, launch, parent, flags, pty_id,
+                                  stdin_fd, stdout_fd, stderr_fd, 0);
 }
 
 /**
@@ -683,7 +706,8 @@ void userland_init(const struct boot_info *boot)
         };
         static const char *advanced_envp[] = {
             "PATH=/programs/busybox:/bin:/sbin:/usr/bin:/usr/sbin",
-            "HOME=/root", "TERM=xterm-256color", "COLORTERM=truecolor", 0
+            "HOME=/root", "PWD=/", "PS1=\\w \\$ ",
+            "TERM=xterm-256color", "COLORTERM=truecolor", 0
         };
         struct exec_launch advanced_launch = {0};
         int32_t pty_id;
@@ -694,11 +718,11 @@ void userland_init(const struct boot_info *boot)
             kernel_idle_loop();
         }
         pid = installer_advanced
-                  ? spawn_path_internal("/programs/busybox/busybox.elf",
-                                        "busybox.elf installer advanced", &advanced_launch,
-                                        0, 0, 0, -1, -1, -1)
-                  : spawn_path_internal("/system/apps/installer/installer.elf",
-                                        "installer.elf tty", 0, 0, 0, 0, -1, -1, -1);
+                  ? spawn_path_internal_deferred("/programs/busybox/busybox.elf",
+                                                  "busybox.elf installer advanced", &advanced_launch,
+                                                  0, 0, 0, -1, -1, -1)
+                  : spawn_path_internal_deferred("/system/apps/installer/installer.elf",
+                                                  "installer.elf tty", 0, 0, 0, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer TTY environment ret=%lld\n",
                            (long long)pid);
@@ -713,15 +737,10 @@ void userland_init(const struct boot_info *boot)
             tty_pid = 0;
             kernel_idle_loop();
         }
-        {
-            struct task *tty_task = sched_find(tty_pid);
-            if (tty_task) {
-                tty_task->pty_id = (uint32_t)pty_id;
-            }
-        }
         console_printf("[ntclks] installer %s TTY selected; pid=%u pty=%d\n",
                        installer_advanced ? "advanced shell" : "application",
                        tty_pid, (int)pty_id);
+        sched_mark_ready(tty_pid);
         return;
     }
 
@@ -750,6 +769,8 @@ void userland_init(const struct boot_info *boot)
             "/system/apps/oobe/oobe.elf; /system/apps/login/login.elf; exec /programs/busybox/busybox.elf sh", 0
         };
         static const char *tty_envp[] = {
+            "PATH=/programs/busybox:/bin:/sbin:/usr/bin:/usr/sbin",
+            "HOME=/root", "PWD=/", "PS1=\\w \\$ ",
             "TERM=xterm-256color", "COLORTERM=truecolor", 0
         };
         struct exec_launch launch = {0};
@@ -759,8 +780,8 @@ void userland_init(const struct boot_info *boot)
             console_printf("[ntclks] failed to prepare TTY shell arguments\n");
             kernel_idle_loop();
         }
-        pid = spawn_path_internal("/programs/busybox/busybox.elf", "busybox.elf tty",
-                                  &launch, init_pid, 0, 0, -1, -1, -1);
+        pid = spawn_path_internal_deferred("/programs/busybox/busybox.elf", "busybox.elf tty",
+                                          &launch, init_pid, 0, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load busybox.elf for TTY ret=%lld\n",
                            (long long)pid);
@@ -774,14 +795,9 @@ void userland_init(const struct boot_info *boot)
             tty_pid = 0;
             kernel_idle_loop();
         }
-        {
-            struct task *tty_task = sched_find(tty_pid);
-            if (tty_task) {
-                tty_task->pty_id = (uint32_t)pty_id;
-            }
-        }
         console_printf("[ntclks] TTY startup selected; busybox shell pid=%u pty=%d\n",
                        tty_pid, (int)pty_id);
+        sched_mark_ready(tty_pid);
         return;
     }
 

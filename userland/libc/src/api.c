@@ -195,7 +195,7 @@ static int api_ensure_dir(const char *path)
     if (api_is_root_path(clean)) {
         return 1;
     }
-    if (stat(clean, &st) == 0) {
+    if (leonos_stat_legacy(clean, &st) == 0) {
         return st.type == LEONOS_FS_TYPE_DIR ? 1 : 0;
     }
     if (api_parent_path(clean, parent, sizeof(parent)) &&
@@ -205,7 +205,7 @@ static int api_ensure_dir(const char *path)
     if (mkdir(clean, 0) == 0) {
         return 1;
     }
-    return stat(clean, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
+    return leonos_stat_legacy(clean, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
 }
 
 static int api_component_path_is_safe(const char *path, uint32_t start)
@@ -882,7 +882,7 @@ int leonos_api_install_with_progress(const char *api_path, const char *dest_dir,
     }
     if (!api_join_path(exe_path, sizeof(exe_path), install_root,
                        info.main_exe) ||
-        stat(exe_path, &exe_stat) != 0 ||
+        leonos_stat_legacy(exe_path, &exe_stat) != 0 ||
         exe_stat.type != LEONOS_FS_TYPE_FILE) {
         return 0;
     }

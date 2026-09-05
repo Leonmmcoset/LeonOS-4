@@ -1,36 +1,104 @@
 /*
- * LeonOS kernel input queue: stores normalized keyboard and pointer events.
- * Exposes bounded producer/consumer operations to interrupt and user paths.
+ * Kernel input fan-out: the desktop consumes normalized raw events while
+ * /dev/input/event* exposes independent Linux evdev streams.
  */
 #include <ntclks/input.h>
 #include <ntclks/lock.h>
+#include <ntclks/storage.h>
+#include <ntclks/time.h>
+#include <linux/input.h>
 
-#define INPUT_QUEUE_CAP 512
+#define INPUT_QUEUE_CAP 512U
+#define INPUT_EVDEV_QUEUE_CAP 1024U
 
-static struct input_event queue[INPUT_QUEUE_CAP];
+struct input_evdev_record {
+    uint64_t sequence;
+    uint32_t device_kind;
+    struct input_event event;
+};
+
+static struct input_raw_event queue[INPUT_QUEUE_CAP];
+static struct input_evdev_record evdev_queue[INPUT_EVDEV_QUEUE_CAP];
 static volatile uint32_t head;
 static volatile uint32_t tail;
+static uint64_t evdev_next_sequence;
+static uint8_t evdev_mouse_buttons;
 static struct kernel_spinlock input_lock = KERNEL_SPINLOCK_INIT;
 
-/**
- * @brief Reset the keyboard/pointer event queue to empty.
- */
-void input_init(void)
+static uint64_t evdev_oldest_sequence(void)
 {
-    uint64_t flags;
-    kernel_spin_lock_irqsave(&input_lock, &flags);
-    head = 0;
-    tail = 0;
-    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    return evdev_next_sequence > INPUT_EVDEV_QUEUE_CAP
+               ? evdev_next_sequence - INPUT_EVDEV_QUEUE_CAP
+               : 1U;
 }
 
-/**
- * @brief Append event to the ring, coalescing consecutive mouse moves with unchanged buttons; drops the oldest event when full.
- */
-static void push_event(const struct input_event *event)
+static void evdev_publish(uint32_t device_kind, uint16_t type, uint16_t code,
+                          int32_t value)
+{
+    struct input_evdev_record *record;
+    uint64_t microseconds = time_uptime_us();
+
+    record = &evdev_queue[evdev_next_sequence % INPUT_EVDEV_QUEUE_CAP];
+    *record = (struct input_evdev_record){
+        .sequence = evdev_next_sequence,
+        .device_kind = device_kind,
+        .event = {
+            .time_sec = (int64_t)(microseconds / 1000000ULL),
+            .time_usec = (int64_t)(microseconds % 1000000ULL),
+            .type = type,
+            .code = code,
+            .value = value,
+        },
+    };
+    ++evdev_next_sequence;
+}
+
+static uint16_t evdev_keycode(uint8_t keycode)
+{
+    /* The legacy GUI uses set-1 scan codes for cursor keys and extended
+     * modifiers. Convert those exceptional values to Linux input codes; the
+     * ordinary PC set-1 keyboard range already matches Linux key codes. */
+    switch (keycode) {
+    case 71: return KEY_HOME;
+    case 72: return KEY_UP;
+    case 73: return KEY_PAGEUP;
+    case 75: return KEY_LEFT;
+    case 77: return KEY_RIGHT;
+    case 79: return KEY_END;
+    case 80: return KEY_DOWN;
+    case 81: return KEY_PAGEDOWN;
+    case 82: return KEY_INSERT;
+    case 83: return KEY_DELETE;
+    case 112: return KEY_LEFTMETA;
+    case 113: return KEY_RIGHTMETA;
+    case 114: return KEY_COMPOSE;
+    case 115: return KEY_RIGHTALT;
+    case 116: return KEY_RIGHTCTRL;
+    default: return keycode;
+    }
+}
+
+static uint8_t evdev_publish_mouse_buttons(uint8_t buttons)
+{
+    static const uint16_t codes[] = {BTN_LEFT, BTN_RIGHT, BTN_MIDDLE};
+    uint8_t changed = (uint8_t)(buttons ^ evdev_mouse_buttons);
+    uint8_t published = 0;
+    for (uint32_t bit = 0; bit < sizeof(codes) / sizeof(codes[0]); ++bit) {
+        if ((changed & (1U << bit)) != 0) {
+            evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_KEY, codes[bit],
+                          (buttons & (1U << bit)) != 0 ? 1 : 0);
+            published = 1;
+        }
+    }
+    evdev_mouse_buttons = buttons;
+    return published;
+}
+
+/* Caller holds input_lock. */
+static void push_event(const struct input_raw_event *event)
 {
     if (event && event->type == INPUT_EVENT_MOUSE && head != tail) {
-        uint32_t prev = (head + INPUT_QUEUE_CAP - 1) % INPUT_QUEUE_CAP;
+        uint32_t prev = (head + INPUT_QUEUE_CAP - 1U) % INPUT_QUEUE_CAP;
         if (queue[prev].type == INPUT_EVENT_MOUSE && queue[prev].buttons == event->buttons) {
             queue[prev].x = event->x;
             queue[prev].y = event->y;
@@ -39,21 +107,32 @@ static void push_event(const struct input_event *event)
             return;
         }
     }
-    uint32_t next = (head + 1) % INPUT_QUEUE_CAP;
-    if (next == tail) {
-        tail = (tail + 1) % INPUT_QUEUE_CAP;
+    {
+        uint32_t next = (head + 1U) % INPUT_QUEUE_CAP;
+        if (next == tail) {
+            tail = (tail + 1U) % INPUT_QUEUE_CAP;
+        }
+        queue[head] = *event;
+        head = next;
     }
-    queue[head] = *event;
-    head = next;
 }
 
-/**
- * @brief Queue an absolute mouse move/drag event.
- */
+void input_init(void)
+{
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    head = 0;
+    tail = 0;
+    evdev_next_sequence = 1;
+    evdev_mouse_buttons = 0;
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+}
+
 void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t buttons)
 {
     uint64_t flags;
-    struct input_event event = {
+    uint8_t published = 0;
+    struct input_raw_event event = {
         .type = INPUT_EVENT_MOUSE,
         .x = x,
         .y = y,
@@ -63,16 +142,28 @@ void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t butt
     };
     kernel_spin_lock_irqsave(&input_lock, &flags);
     push_event(&event);
+    if (dx != 0) {
+        evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_REL, REL_X, dx);
+        published = 1;
+    }
+    if (dy != 0) {
+        evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_REL, REL_Y, dy);
+        published = 1;
+    }
+    if (evdev_publish_mouse_buttons(buttons)) {
+        published = 1;
+    }
+    if (published) {
+        evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_SYN, SYN_REPORT, 0);
+    }
     kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
-/**
- * @brief Queue a mouse wheel event (delta carried in dy).
- */
 void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons)
 {
     uint64_t flags;
-    struct input_event event = {
+    uint8_t published = 0;
+    struct input_raw_event event = {
         .type = INPUT_EVENT_MOUSE_WHEEL,
         .x = x,
         .y = y,
@@ -81,29 +172,36 @@ void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons
     };
     kernel_spin_lock_irqsave(&input_lock, &flags);
     push_event(&event);
+    if (wheel != 0) {
+        evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_REL, REL_WHEEL, wheel);
+        published = 1;
+    }
+    if (evdev_publish_mouse_buttons(buttons)) {
+        published = 1;
+    }
+    if (published) {
+        evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_SYN, SYN_REPORT, 0);
+    }
     kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
-/**
- * @brief Queue a keyboard press/release event.
- */
 void input_push_key(uint8_t keycode, uint8_t pressed)
 {
     uint64_t flags;
-    struct input_event event = {
+    struct input_raw_event event = {
         .type = INPUT_EVENT_KEYBOARD,
         .keycode = keycode,
         .pressed = pressed,
     };
     kernel_spin_lock_irqsave(&input_lock, &flags);
     push_event(&event);
+    evdev_publish(STORAGE_DEV_KIND_KEYBOARD, EV_KEY, evdev_keycode(keycode),
+                  pressed ? 1 : 0);
+    evdev_publish(STORAGE_DEV_KIND_KEYBOARD, EV_SYN, SYN_REPORT, 0);
     kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
-/**
- * @brief Remove the oldest queued event into *event; returns 1 on success, 0 when empty or null.
- */
-int input_pop(struct input_event *event)
+int input_pop(struct input_raw_event *event)
 {
     uint64_t flags;
     int available = 0;
@@ -113,8 +211,79 @@ int input_pop(struct input_event *event)
     kernel_spin_lock_irqsave(&input_lock, &flags);
     if (tail != head) {
         *event = queue[tail];
-        tail = (tail + 1) % INPUT_QUEUE_CAP;
+        tail = (tail + 1U) % INPUT_QUEUE_CAP;
         available = 1;
+    }
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    return available;
+}
+
+uint64_t input_evdev_cursor_now(void)
+{
+    uint64_t flags;
+    uint64_t cursor;
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    cursor = evdev_next_sequence;
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    return cursor;
+}
+
+int input_evdev_read(uint32_t device_kind, uint64_t *cursor,
+                     void *buffer, uint32_t length)
+{
+    struct input_event *events = (struct input_event *)buffer;
+    uint32_t capacity;
+    uint32_t count = 0;
+    uint64_t flags;
+    if (!cursor || !buffer || length < sizeof(*events) ||
+        (length % sizeof(*events)) != 0) {
+        return -22;
+    }
+    if (device_kind != STORAGE_DEV_KIND_KEYBOARD &&
+        device_kind != STORAGE_DEV_KIND_MOUSE) {
+        return -22;
+    }
+    capacity = length / sizeof(*events);
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    if (*cursor == 0 || *cursor < evdev_oldest_sequence()) {
+        *cursor = evdev_oldest_sequence();
+    }
+    while (*cursor < evdev_next_sequence && count < capacity) {
+        const struct input_evdev_record *record =
+            &evdev_queue[*cursor % INPUT_EVDEV_QUEUE_CAP];
+        if (record->sequence != *cursor) {
+            *cursor = evdev_oldest_sequence();
+            continue;
+        }
+        ++(*cursor);
+        if (record->device_kind == device_kind) {
+            events[count++] = record->event;
+        }
+    }
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    return (int)(count * sizeof(*events));
+}
+
+int input_evdev_available(uint32_t device_kind, uint64_t cursor)
+{
+    uint64_t flags;
+    int available = 0;
+    if (device_kind != STORAGE_DEV_KIND_KEYBOARD &&
+        device_kind != STORAGE_DEV_KIND_MOUSE) {
+        return 0;
+    }
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    if (cursor == 0 || cursor < evdev_oldest_sequence()) {
+        cursor = evdev_oldest_sequence();
+    }
+    while (cursor < evdev_next_sequence) {
+        const struct input_evdev_record *record =
+            &evdev_queue[cursor % INPUT_EVDEV_QUEUE_CAP];
+        if (record->sequence == cursor && record->device_kind == device_kind) {
+            available = 1;
+            break;
+        }
+        ++cursor;
     }
     kernel_spin_unlock_irqrestore(&input_lock, flags);
     return available;

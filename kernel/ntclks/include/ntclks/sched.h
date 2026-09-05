@@ -65,6 +65,9 @@ struct task_file {
 #define TASK_FILE_FLAG_PIPE_WRITE 0x40000000u
 #define TASK_FILE_FLAG_DEV_NULL   0x20000000u
 #define TASK_FILE_FLAG_DEV_NODE   0x10000000u
+#define TASK_FILE_FLAG_DEV_BLOCK  0x02000000u
+#define TASK_FILE_FLAG_SOCKET     0x08000000u
+#define TASK_FILE_FLAG_SOCKET_UNIX 0x04000000u
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {
@@ -72,7 +75,14 @@ struct task_pty_fd {
     int32_t fd;
     uint32_t stream;
     uint32_t flags;
+    /* Unix98 PTY endpoints use an explicit session and direction. Legacy
+     * aliases leave pty_id/endpoint zero and continue using stream. */
+    uint32_t pty_id;
+    uint32_t endpoint;
 };
+
+#define TASK_PTY_ENDPOINT_MASTER 1u
+#define TASK_PTY_ENDPOINT_SLAVE  2u
 
 enum task_state {
     TASK_READY = 0,
@@ -151,6 +161,7 @@ struct task_fd_table_state {
 
 struct task_signal_state {
     uint32_t pending_signals;
+    uint32_t blocked_signals;
     uint32_t child_event;
     uint32_t stop_signal;
     uint32_t exit_signal;
@@ -237,6 +248,7 @@ struct task {
         struct task_signal_state signal_state;
         struct {
             uint32_t pending_signals;
+            uint32_t blocked_signals;
             uint32_t child_event;
             uint32_t stop_signal;
             uint32_t exit_signal;

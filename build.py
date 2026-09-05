@@ -732,7 +732,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     busybox_source = ROOT / "third_party/busybox"
     busybox_config = ROOT / "userland/busybox/leonos.config"
     busybox_shim = ROOT / "userland/busybox/leonos_shim.c"
-    busybox_storage = ROOT / "userland/busybox/leonos_storage.c"
+    busybox_storage = ROOT / "userland/busybox/block_storage.c"
     busybox_headers = collect("userland/busybox/include/**/*.h")
     busybox_source_stamp = paths.out / "busybox/source-revision.txt"
     busybox_elf = paths.out / "userland/busybox.elf"
@@ -1018,16 +1018,16 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c11", "-ffreestanding",
         "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
         "-mcmodel=kernel", "-Wall", "-Wextra", "-Ikernel/ntclks/include",
-        "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-Iinclude/uapi", "-Iinclude", f"-I{relative(paths.out / 'include')}",
     ]
     asflags_kernel = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-ffreestanding", "-mno-red-zone",
-        "-mgeneral-regs-only", "-Ikernel/ntclks/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-mgeneral-regs-only", "-Ikernel/ntclks/include", "-Iinclude/uapi", "-Iinclude", f"-I{relative(paths.out / 'include')}",
     ]
     cflags_loader = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-std=c11", "-ffreestanding",
         "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone", "-mgeneral-regs-only",
-        "-Wall", "-Wextra", "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-Wall", "-Wextra", "-Iinclude/uapi", "-Iinclude", f"-I{relative(paths.out / 'include')}",
         "-include", relative(autoconf),
     ]
     asflags_loader = [
@@ -1040,7 +1040,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-DLEONOS_USE_PICOLIBC",
         "-D_POSIX_C_SOURCE=200809L",
         f"-I{relative(picolibc_prefix / 'include')}", "-Iuserland/libc/include",
-        "-Iinclude", f"-I{relative(paths.out / 'include')}", "-Ithird_party/mbedtls/include",
+        "-Iinclude/uapi", "-Iinclude", f"-I{relative(paths.out / 'include')}", "-Ithird_party/mbedtls/include",
         "-Ithird_party/zlib", "-Ithird_party/libpng", f"-I{relative(libpng_generated_dir)}",
         '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
@@ -1062,7 +1062,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "-fno-stack-protector", "-fPIC", "-mno-red-zone", "-mgeneral-regs-only",
         "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-DLEONOS_USE_PICOLIBC",
         f"-I{relative(picolibc_prefix / 'include')}",
-        "-Iuserland/libc/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-Iuserland/libc/include", "-Iinclude/uapi", "-Iinclude", f"-I{relative(paths.out / 'include')}",
         "-Ithird_party/mbedtls/include", "-Ithird_party/zlib", "-Ithird_party/libpng",
         f"-I{relative(libpng_generated_dir)}", '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
     ]
@@ -1080,7 +1080,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     cflags_installer_libc = cflags_user_libc_base + ["-include", relative(installer_autoconf)]
     asflags_user = [
         cc, "-target", "x86_64-unknown-none", *build_compile_flags, "-ffreestanding", "-mno-red-zone",
-        "-mgeneral-regs-only", "-Iuserland/libc/include", "-Iinclude", f"-I{relative(paths.out / 'include')}",
+        "-mgeneral-regs-only", "-Iuserland/libc/include", "-Iinclude/uapi", "-Iinclude", f"-I{relative(paths.out / 'include')}",
     ]
     cflags_runtime = [flag for flag in cflags_user_libc if flag not in {"-include", relative(autoconf)}]
     cflags_runtime += ["-include", relative(autoconf), "-fPIC"]
@@ -1701,6 +1701,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "third_party/tinycc/**/*.S", "third_party/tinycc/**/*.def",
         "third_party/tinycc/VERSION", "third_party/tinycc/COPYING",
         "userland/tcc/**/*.c", "userland/tcc/**/*.h", "userland/tcc/**/*.md",
+        "include/uapi/**/*.h",
         "tools/build_tcc.py",
     )
     graph.add(Target(
@@ -1713,6 +1714,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         command=(
             PYTHON, "tools/build_tcc.py", "--source", "third_party/tinycc",
             "--port", "userland/tcc", "--sdk-include", "devtools/include",
+            "--uapi-include", "include/uapi/linux",
             "--picolibc-prefix", relative(picolibc_static_prefix), "--leonos-lib", relative(static_libc_a),
             "--picolibc-lib", relative(picolibc_static_archive), "--linker-script", "userland/linker.ld",
             "--zlib-lib", relative(zlib_archive), "--libpng-lib", relative(libpng_archive),
@@ -2090,8 +2092,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ROOT / "tools/package_devtools.py", ROOT / "third_party/picolibc/COPYING.picolibc",
         ROOT / "third_party/zlib/LICENSE", ROOT / "third_party/libpng/LICENSE",
         ROOT / "userland/libc/include/curses.h", ROOT / "userland/libc/include/ncurses.h",
+        ROOT / "userland/libc/include/pty.h",
+        ROOT / "userland/libc/include/arpa/inet.h",
+        ROOT / "userland/libc/include/netinet/in.h",
+        ROOT / "userland/libc/include/sys/socket.h",
+        ROOT / "userland/libc/include/sys/un.h",
         ROOT / "userland/libc/include/leonos/posix.h",
         ROOT / "userland/libc/include/leonos/app.h",
+        *collect("include/uapi/**/*.h"),
         libpng_config,
         # The packager copies these build outputs verbatim. Keep them as
         # explicit inputs so a rebuilt runtime cannot leave a stale SDK ZIP.
@@ -2112,6 +2120,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "--picolibc-include", relative(picolibc_prefix / "include"),
         "--picolibc-source", "third_party/picolibc",
         "--leonos-libc-include", "userland/libc/include",
+        "--uapi-include", "include/uapi/linux",
         "--zlib-lib", relative(zlib_archive), "--zlib-source", "third_party/zlib",
         "--libpng-lib", relative(libpng_archive), "--libpng-source", "third_party/libpng",
         "--libpng-config", relative(libpng_config),
@@ -2793,6 +2802,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-license-server", inputs=(ROOT / "tools/test_license_server.py", ROOT / "tools/license_server.py"), kind="command", command=(PYTHON, "tools/test_license_server.py")))
     graph.add(Target(name="test-los2w", inputs=tuple(collect("los2w/*.py")), kind="command", command=(PYTHON, "-c", "from los2w.selftest import run_self_tests; print('\\n'.join(run_self_tests()))")))
     graph.add(Target(name="test-unix-paths", inputs=(ROOT / "tools/check_unix_paths.py",), kind="command", command=(PYTHON, "tools/check_unix_paths.py")))
+    abi_report = paths.out / "generated/abi-migration-report.txt"
+    graph.add(Target(
+        name="test-abi-migration",
+        outputs=(abi_report,),
+        inputs=(ROOT / "tools/check_abi_migration.py", ROOT / "docs/ABI_MIGRATION.md"),
+        kind="generate",
+        command=(PYTHON, "tools/check_abi_migration.py", "--report", relative(abi_report)),
+    ))
     graph.add(Target(
         name="test-component-config",
         inputs=(ROOT / "tools/test_component_config.py",

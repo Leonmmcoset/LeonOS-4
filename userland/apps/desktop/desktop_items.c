@@ -290,7 +290,7 @@ static void desktop_icon_path_for_target(const char *path, char *dst, uint32_t d
         desktop_icon_path_for_app(path, dst, dst_len);
         return;
     }
-    if (stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR) {
+    if (leonos_stat_legacy(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR) {
         char fileman_path[LEONOS_APP_PATH_LEN];
         if (leonos_app_registry_resolve("fileman", fileman_path,
                                         sizeof(fileman_path)) == 0) {

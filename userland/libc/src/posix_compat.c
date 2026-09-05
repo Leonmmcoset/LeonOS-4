@@ -15,15 +15,62 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <sys/time.h>
+#include <sys/socket.h>
+#include <sys/mount.h>
+#include "../include/arpa/inet.h"
 #include <sys/times.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
+/* picolibc may expose htons/htonl as macros when its arpa header is
+ * included indirectly.  The LeonOS libc exports real functions so callers
+ * can take their address and link them normally. */
+#ifdef htons
+#undef htons
+#endif
+#ifdef ntohs
+#undef ntohs
+#endif
+#ifdef htonl
+#undef htonl
+#endif
+#ifdef ntohl
+#undef ntohl
+#endif
+
 static int unsupported(void)
 {
     errno = ENOSYS;
     return -1;
+}
+
+int mount(const char *source, const char *target, const char *filesystemtype,
+          unsigned long mountflags, const void *data)
+{
+    long result = syscall6(SYS_mount, (long)source, (long)target,
+                           (long)filesystemtype, (long)mountflags,
+                           (long)data, 0);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
+}
+
+int umount2(const char *target, int flags)
+{
+    long result = syscall2(SYS_umount2, (long)target, flags);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
+}
+
+int umount(const char *target)
+{
+    return umount2(target, 0);
 }
 
 int getentropy(void *buffer, size_t length)
@@ -128,30 +175,159 @@ int poll(struct pollfd *fds, nfds_t count, int timeout_ms)
         return -1;
     }
     for (;;) {
-        nfds_t index;
-        int ready = 0;
-        int input_ready = leonos_pty_input_available() > 0;
-        for (index = 0; index < count; ++index) {
-            fds[index].revents = 0;
-            if (fds[index].fd < 0) {
-                continue;
-            }
-            if (fds[index].events & (POLLIN | POLLPRI)) {
-                /* Files are immediately readable; PTY input is not. */
-                if (fds[index].fd >= 3 || input_ready) {
-                    fds[index].revents |= POLLIN;
-                }
-            }
-            if (fds[index].revents) {
-                ++ready;
-            }
+        long result = syscall3(SYS_poll, (long)fds, (long)count, timeout_ms);
+        if (result < 0 && result != -LEONOS_EAGAIN) {
+            errno = (int)-result;
+            return -1;
         }
-        if (ready || timeout_ms == 0) {
-            return ready;
-        }
+        if (result > 0 || timeout_ms == 0) return (int)result;
         if (timeout_ms > 0 && leonos_uptime_ms() - started >= (unsigned long)timeout_ms) {
             return 0;
         }
         (void)sleep_ms(4);
     }
+}
+
+static int socket_result(long result)
+{
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return (int)result;
+}
+
+int socket(int domain, int type, int protocol)
+{
+    return socket_result(syscall3(SYS_socket, domain, type, protocol));
+}
+
+int connect(int fd, const struct sockaddr *address, socklen_t length)
+{
+    return socket_result(syscall3(SYS_connect, fd, (long)address, length));
+}
+
+int bind(int fd, const struct sockaddr *address, socklen_t length)
+{
+    return socket_result(syscall3(SYS_bind, fd, (long)address, length));
+}
+
+int listen(int fd, int backlog)
+{
+    return socket_result(syscall2(SYS_listen, fd, backlog));
+}
+
+int accept(int fd, struct sockaddr *address, socklen_t *length)
+{
+    return socket_result(syscall3(SYS_accept, fd, (long)address, (long)length));
+}
+
+int getsockname(int fd, struct sockaddr *address, socklen_t *length)
+{
+    return socket_result(syscall3(SYS_getsockname, fd, (long)address, (long)length));
+}
+
+int getsockopt(int fd, int level, int option, void *value, socklen_t *length)
+{
+    return socket_result(syscall6(SYS_getsockopt, fd, level, option,
+                                  (long)value, (long)length, 0));
+}
+
+int setsockopt(int fd, int level, int option, const void *value, socklen_t length)
+{
+    return socket_result(syscall6(SYS_setsockopt, fd, level, option,
+                                  (long)value, length, 0));
+}
+
+int shutdown(int fd, int how)
+{
+    return socket_result(syscall2(SYS_shutdown, fd, how));
+}
+
+ssize_t send(int fd, const void *buffer, size_t length, int flags)
+{
+    long result = syscall6(SYS_send, fd, (long)buffer, (long)length, flags, 0, 0);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return (ssize_t)result;
+}
+
+ssize_t recv(int fd, void *buffer, size_t length, int flags)
+{
+    long result = syscall6(SYS_recv, fd, (long)buffer, (long)length, flags, 0, 0);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return (ssize_t)result;
+}
+
+ssize_t sendto(int fd, const void *buffer, size_t length, int flags,
+               const struct sockaddr *destination, socklen_t destination_length)
+{
+    long result = syscall6(SYS_sendto, fd, (long)buffer, (long)length, flags,
+                           (long)destination, destination_length);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return (ssize_t)result;
+}
+
+ssize_t recvfrom(int fd, void *buffer, size_t length, int flags,
+                 struct sockaddr *source, socklen_t *source_length)
+{
+    long result = syscall6(SYS_recvfrom, fd, (long)buffer, (long)length, flags,
+                           (long)source, (long)source_length);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return (ssize_t)result;
+}
+
+uint16_t htons(uint16_t value) { return (uint16_t)((value << 8) | (value >> 8)); }
+uint16_t ntohs(uint16_t value) { return htons(value); }
+uint32_t htonl(uint32_t value)
+{
+    return ((value & 0x000000ffU) << 24) | ((value & 0x0000ff00U) << 8) |
+           ((value & 0x00ff0000U) >> 8) | ((value & 0xff000000U) >> 24);
+}
+uint32_t ntohl(uint32_t value) { return htonl(value); }
+
+static int parse_ipv4(const char *text, uint32_t *network_value)
+{
+    uint32_t host = 0;
+    if (!text || !network_value) return 0;
+    for (int octet = 0; octet < 4; ++octet) {
+        uint32_t value = 0;
+        int digits = 0;
+        while (*text >= '0' && *text <= '9') {
+            value = value * 10u + (uint32_t)(*text - '0');
+            if (value > 255u) return 0;
+            ++text;
+            ++digits;
+        }
+        if (!digits) return 0;
+        host = (host << 8) | value;
+        if (octet != 3) {
+            if (*text != '.') return 0;
+            ++text;
+        }
+    }
+    if (*text != 0) return 0;
+    *network_value = htonl(host);
+    return 1;
+}
+
+in_addr_t inet_addr(const char *text)
+{
+    uint32_t value;
+    return parse_ipv4(text, &value) ? value : (in_addr_t)0xffffffffU;
+}
+
+int inet_pton(int family, const char *source, void *destination)
+{
+    uint32_t value;
+    if (family != AF_INET) {
+        errno = EAFNOSUPPORT;
+        return -1;
+    }
+    if (!destination) {
+        errno = EFAULT;
+        return -1;
+    }
+    if (!parse_ipv4(source, &value)) return 0;
+    *(in_addr_t *)destination = value;
+    return 1;
 }

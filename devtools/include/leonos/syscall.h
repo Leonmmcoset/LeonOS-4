@@ -43,6 +43,8 @@
 #define SYS_mkdir 83
 #define SYS_rmdir 84
 #define SYS_unlink 87
+#define SYS_mount 165
+#define SYS_umount2 166
 
 #define LEONOS_PROT_READ 0x1
 #define LEONOS_PROT_WRITE 0x2
@@ -79,8 +81,8 @@ int ioctl(int fd, unsigned long request, void *arg);
 int sched_yield(void);
 int sleep_ms(unsigned long ms);
 int getpid(void);
-int stat(const char *path, struct leonos_stat *st);
-int fstat(int fd, struct leonos_stat *st);
+int leonos_stat_legacy(const char *path, struct leonos_stat *st);
+int leonos_fstat_legacy(int fd, struct leonos_stat *st);
 int wait4(int pid, int *status, int options, void *rusage);
 int execve(const char *path, char *const argv[], char *const envp[]);
 int mkdir(const char *path, int mode);

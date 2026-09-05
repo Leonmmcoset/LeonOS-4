@@ -228,7 +228,7 @@ static int leonos_tls_load_roots(void)
         return leonos_tls_roots_state > 0 ? 0 : -1;
     }
     leonos_tls_roots_state = -1;
-    ret = stat(LEONOS_TLS_CA_BUNDLE, &stat_info);
+    ret = leonos_stat_legacy(LEONOS_TLS_CA_BUNDLE, &stat_info);
     if (ret < 0 ||
         stat_info.type != LEONOS_FS_TYPE_FILE || stat_info.size == 0 ||
         stat_info.size > LEONOS_TLS_CA_BUNDLE_MAX) {

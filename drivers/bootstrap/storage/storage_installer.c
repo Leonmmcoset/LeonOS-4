@@ -132,8 +132,9 @@ static int install_format_fat32(struct install_disk_state *disk, uint64_t start_
         return -28;
     }
 
-    if (install_clear_sectors(disk, start_lba, (uint64_t)data_start + sectors_per_cluster) < 0) {
-        return -5;
+    int ret = install_clear_sectors(disk, start_lba, (uint64_t)data_start + sectors_per_cluster);
+    if (ret < 0) {
+        return ret;
     }
 
     storage_memzero(storage_scratch, SECTOR_SIZE);
@@ -165,9 +166,13 @@ static int install_format_fat32(struct install_disk_state *disk, uint64_t start_
     storage_memcpy(bpb->fs_type, "FAT32   ", 8);
     storage_scratch[510] = 0x55;
     storage_scratch[511] = 0xaa;
-    if (install_write_sectors(disk, start_lba, 1, storage_scratch) < 0 ||
-        install_write_sectors(disk, start_lba + 6, 1, storage_scratch) < 0) {
-        return -5;
+    ret = install_write_sectors(disk, start_lba, 1, storage_scratch);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = install_write_sectors(disk, start_lba + 6, 1, storage_scratch);
+    if (ret < 0) {
+        return ret;
     }
 
     storage_memzero(storage_scratch, SECTOR_SIZE);
@@ -176,9 +181,13 @@ static int install_format_fat32(struct install_disk_state *disk, uint64_t start_
     storage_put_u32(storage_scratch + 488, clusters - 1u);
     storage_put_u32(storage_scratch + 492, 3u);
     storage_put_u32(storage_scratch + 508, 0xaa550000u);
-    if (install_write_sectors(disk, start_lba + 1, 1, storage_scratch) < 0 ||
-        install_write_sectors(disk, start_lba + 7, 1, storage_scratch) < 0) {
-        return -5;
+    ret = install_write_sectors(disk, start_lba + 1, 1, storage_scratch);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = install_write_sectors(disk, start_lba + 7, 1, storage_scratch);
+    if (ret < 0) {
+        return ret;
     }
 
     for (uint32_t fat = 0; fat < fat_count; ++fat) {
@@ -187,8 +196,9 @@ static int install_format_fat32(struct install_disk_state *disk, uint64_t start_
         storage_put_u32(storage_scratch + 0, 0x0ffffff8u);
         storage_put_u32(storage_scratch + 4, 0xffffffffu);
         storage_put_u32(storage_scratch + 8, FAT32_EOC);
-        if (install_write_sectors(disk, fat_lba, 1, storage_scratch) < 0) {
-            return -5;
+        ret = install_write_sectors(disk, fat_lba, 1, storage_scratch);
+        if (ret < 0) {
+            return ret;
         }
     }
 
@@ -514,6 +524,7 @@ static int install_format_exfat(struct install_disk_state *disk, uint64_t start_
     uint32_t upcase_cluster;
     uint32_t root_cluster;
     uint32_t checksum = 0;
+    int ret;
     if (!disk || sector_count < 262144ULL || sector_count > UINT32_MAX) return -28;
     spc_shift = install_choose_exfat_spc_shift(sector_count);
     sectors_per_cluster = 1u << spc_shift;
@@ -540,10 +551,11 @@ static int install_format_exfat(struct install_disk_state *disk, uint64_t start_
     if ((uint64_t)root_cluster - 2u >= cluster_count) return -28;
 
     storage_begin_mutation();
-    if (install_clear_sectors(disk, start_lba,
-                              (uint64_t)heap_offset +
-                              (uint64_t)(1u + bitmap_clusters + upcase_clusters) * sectors_per_cluster) < 0) {
-        return -5;
+    ret = install_clear_sectors(disk, start_lba,
+                                (uint64_t)heap_offset +
+                                (uint64_t)(1u + bitmap_clusters + upcase_clusters) * sectors_per_cluster);
+    if (ret < 0) {
+        return ret;
     }
 
     /* exFAT system files are contiguous extents and do not require FAT links.
@@ -567,8 +579,9 @@ static int install_format_exfat(struct install_disk_state *disk, uint64_t start_
                                 EXFAT_EOC);
             }
         }
-        if (install_write_sectors(disk, start_lba + fat_offset + fat_sector, 1u,
-                                  storage_scratch) < 0) return -5;
+        ret = install_write_sectors(disk, start_lba + fat_offset + fat_sector, 1u,
+                                    storage_scratch);
+        if (ret < 0) return ret;
     }
 
     /* Mark root, allocation bitmap and upcase-table clusters allocated. */
@@ -586,9 +599,10 @@ static int install_format_exfat(struct install_disk_state *disk, uint64_t start_
                     (uint8_t)(1u << ((bit - first_bit) & 7u));
             }
         }
-        if (install_write_sectors(disk, start_lba + heap_offset +
-                                  (uint64_t)(bitmap_cluster - 2u) * sectors_per_cluster +
-                                  bitmap_sector, 1u, storage_scratch) < 0) return -5;
+        ret = install_write_sectors(disk, start_lba + heap_offset +
+                                    (uint64_t)(bitmap_cluster - 2u) * sectors_per_cluster +
+                                    bitmap_sector, 1u, storage_scratch);
+        if (ret < 0) return ret;
     }
 
     /* Write the recommended compressed standard exFAT upcase table. */
@@ -600,9 +614,10 @@ static int install_format_exfat(struct install_disk_state *disk, uint64_t start_
         for (uint32_t off = 0; off < bytes; ++off) {
             checksum = install_exfat_upcase_checksum(checksum, storage_scratch[off]);
         }
-        if (install_write_sectors(disk, start_lba + heap_offset +
-                                  (uint64_t)(upcase_cluster - 2u) * sectors_per_cluster +
-                                  byte_offset / SECTOR_SIZE, sectors, storage_scratch) < 0) return -5;
+        ret = install_write_sectors(disk, start_lba + heap_offset +
+                                    (uint64_t)(upcase_cluster - 2u) * sectors_per_cluster +
+                                    byte_offset / SECTOR_SIZE, sectors, storage_scratch);
+        if (ret < 0) return ret;
         byte_offset += bytes;
     }
 
@@ -620,10 +635,11 @@ static int install_format_exfat(struct install_disk_state *disk, uint64_t start_
     storage_put_u32(storage_scratch + 64u + 4u, checksum);
     storage_put_u32(storage_scratch + 64u + 20u, upcase_cluster);
     exfat_put_u64(storage_scratch + 64u + 24u, upcase_bytes);
-    if (install_write_sectors(disk, start_lba + heap_offset +
-                              (uint64_t)(root_cluster - 2u) * sectors_per_cluster,
-                              STORAGE_SCRATCH_SECTORS,
-                              storage_scratch) < 0) return -5;
+    ret = install_write_sectors(disk, start_lba + heap_offset +
+                                (uint64_t)(root_cluster - 2u) * sectors_per_cluster,
+                                STORAGE_SCRATCH_SECTORS,
+                                storage_scratch);
+    if (ret < 0) return ret;
 
     storage_memzero(boot, sizeof(boot));
     boot[0] = 0xebu; boot[1] = 0x76u; boot[2] = 0x90u;
@@ -643,16 +659,20 @@ static int install_format_exfat(struct install_disk_state *disk, uint64_t start_
     boot[111u] = 0x80u;
     boot[112u] = (uint8_t)(((uint64_t)(1u + bitmap_clusters + upcase_clusters) * 100u) / cluster_count);
     boot[510u] = 0x55u; boot[511u] = 0xaau;
-    if (install_write_sectors(disk, start_lba, 1u, boot) < 0 ||
-        install_write_sectors(disk, start_lba + 12u, 1u, boot) < 0) return -5;
+    ret = install_write_sectors(disk, start_lba, 1u, boot);
+    if (ret < 0) return ret;
+    ret = install_write_sectors(disk, start_lba + 12u, 1u, boot);
+    if (ret < 0) return ret;
     storage_memzero(storage_scratch, sizeof(storage_scratch));
     for (uint32_t sector = 1u; sector < 11u; ++sector) {
         if (sector <= 8u) {
             storage_scratch[510u] = 0x55u;
             storage_scratch[511u] = 0xaau;
         }
-        if (install_write_sectors(disk, start_lba + sector, 1u, storage_scratch) < 0 ||
-            install_write_sectors(disk, start_lba + 12u + sector, 1u, storage_scratch) < 0) return -5;
+        ret = install_write_sectors(disk, start_lba + sector, 1u, storage_scratch);
+        if (ret < 0) return ret;
+        ret = install_write_sectors(disk, start_lba + 12u + sector, 1u, storage_scratch);
+        if (ret < 0) return ret;
         storage_scratch[510u] = 0u;
         storage_scratch[511u] = 0u;
     }
@@ -660,8 +680,10 @@ static int install_format_exfat(struct install_disk_state *disk, uint64_t start_
     for (uint32_t offset = 0; offset < SECTOR_SIZE; offset += 4u) {
         storage_put_u32(storage_scratch + offset, install_exfat_boot_checksum(boot));
     }
-    if (install_write_sectors(disk, start_lba + 11u, 1u, storage_scratch) < 0 ||
-        install_write_sectors(disk, start_lba + 23u, 1u, storage_scratch) < 0) return -5;
+    ret = install_write_sectors(disk, start_lba + 11u, 1u, storage_scratch);
+    if (ret < 0) return ret;
+    ret = install_write_sectors(disk, start_lba + 23u, 1u, storage_scratch);
+    if (ret < 0) return ret;
     return 0;
 }
 
@@ -681,6 +703,7 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
     uint32_t table_crc;
     uint64_t esp_last;
     uint64_t root_first;
+    int ret;
     if (!disk || !out_esp_lba || !out_esp_sectors || !out_root_lba || !out_root_sectors ||
         sector_count < 655360ULL) {
         return -28;
@@ -699,9 +722,13 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
         return -28;
     }
 
-    if (install_clear_sectors(disk, 0, first_usable) < 0 ||
-        install_clear_sectors(disk, backup_entries_lba, table_sectors + 1u) < 0) {
-        return -5;
+    ret = install_clear_sectors(disk, 0, first_usable);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = install_clear_sectors(disk, backup_entries_lba, table_sectors + 1u);
+    if (ret < 0) {
+        return ret;
     }
 
     storage_memzero(storage_scratch, SECTOR_SIZE);
@@ -711,8 +738,9 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
                     sector_count - 1u > 0xffffffffULL ? 0xffffffffu : (uint32_t)(sector_count - 1u));
     storage_scratch[510] = 0x55;
     storage_scratch[511] = 0xaa;
-    if (install_write_sectors(disk, 0, 1, storage_scratch) < 0) {
-        return -5;
+    ret = install_write_sectors(disk, 0, 1, storage_scratch);
+    if (ret < 0) {
+        return ret;
     }
 
     storage_memzero(storage_cluster_buf, table_bytes);
@@ -731,9 +759,13 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
     entry->attrs = 0;
     install_utf16_name(entry->name, "LEONOS4_ROOT");
     table_crc = storage_crc32(storage_cluster_buf, table_bytes);
-    if (install_write_sectors(disk, 2, table_sectors, storage_cluster_buf) < 0 ||
-        install_write_sectors(disk, backup_entries_lba, table_sectors, storage_cluster_buf) < 0) {
-        return -5;
+    ret = install_write_sectors(disk, 2, table_sectors, storage_cluster_buf);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = install_write_sectors(disk, backup_entries_lba, table_sectors, storage_cluster_buf);
+    if (ret < 0) {
+        return ret;
     }
 
     storage_memzero(storage_scratch, SECTOR_SIZE);
@@ -752,8 +784,9 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
     hdr->partition_entries_crc32 = table_crc;
     hdr->header_crc32 = 0;
     hdr->header_crc32 = storage_crc32(hdr, hdr->header_size);
-    if (install_write_sectors(disk, 1, 1, storage_scratch) < 0) {
-        return -5;
+    ret = install_write_sectors(disk, 1, 1, storage_scratch);
+    if (ret < 0) {
+        return ret;
     }
 
     hdr->header_crc32 = 0;
@@ -761,8 +794,9 @@ static int install_write_gpt(struct install_disk_state *disk, uint64_t sector_co
     hdr->backup_lba = 1;
     hdr->partition_entries_lba = backup_entries_lba;
     hdr->header_crc32 = storage_crc32(hdr, hdr->header_size);
-    if (install_write_sectors(disk, last_lba, 1, storage_scratch) < 0) {
-        return -5;
+    ret = install_write_sectors(disk, last_lba, 1, storage_scratch);
+    if (ret < 0) {
+        return ret;
     }
 
     *out_esp_lba = first_usable;

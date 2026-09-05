@@ -114,7 +114,7 @@ static int read_key(const char *manifest, const char *key, char *value,
 static int manifest_exists(const char *path)
 {
     struct leonos_stat st;
-    return path && stat(path, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE;
+    return path && leonos_stat_legacy(path, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE;
 }
 
 /* Manifest paths are package metadata, not arbitrary filesystem paths.  Keep
@@ -272,7 +272,7 @@ static int add_package(const char *root, const char *package)
         }
     }
     if (!info.icon[0]) derive_icon(info.icon, sizeof(info.icon), info.exec, package_dir, 0);
-    if (stat(info.exec, &st) != 0 || st.type != LEONOS_FS_TYPE_FILE || app_has_id(info.id)) return 0;
+    if (leonos_stat_legacy(info.exec, &st) != 0 || st.type != LEONOS_FS_TYPE_FILE || app_has_id(info.id)) return 0;
     if (!info.commands[0]) copy_text(info.commands, sizeof(info.commands), info.id);
     registry[registry_count++] = info;
     return 1;

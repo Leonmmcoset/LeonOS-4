@@ -4,6 +4,8 @@ extern "C" {
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/ui.h>
+#include <leonos/posix.h>
+#include <sys/stat.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -355,8 +357,8 @@ void clear_text_font() {}
 
 bool file_exists_platform(const char *path)
 {
-    struct leonos_stat info{};
-    return path != nullptr && stat(path, &info) == 0;
+    struct stat info{};
+    return path != nullptr && leonos_posix_stat(path, &info) == 0;
 }
 
 bool file_remove_platform(const char *path)
@@ -369,22 +371,22 @@ bool file_read_bytes_platform(const char *path, File::byte *&out_data, int &out_
     out_data = nullptr;
     out_size = 0;
     if (path == nullptr || path[0] == '\0') return false;
-    struct leonos_stat info{};
-    if (stat(path, &info) != 0 || info.size > 0x7FFFFFFFULL) return false;
+    struct stat info{};
+    if (leonos_posix_stat(path, &info) != 0 || info.st_size > 0x7FFFFFFFULL) return false;
     const int fd = open(path, LEONOS_O_RDONLY, 0);
     if (fd < 0) return false;
-    if (info.size == 0) { close(fd); return true; }
-    File::byte *data = new File::byte[static_cast<int>(info.size)];
+    if (info.st_size == 0) { close(fd); return true; }
+    File::byte *data = new File::byte[static_cast<int>(info.st_size)];
     if (data == nullptr) { close(fd); return false; }
     uint64_t done = 0;
-    while (done < info.size) {
-        long got = read(fd, data + done, static_cast<size_t>(info.size - done));
+    while (done < static_cast<uint64_t>(info.st_size)) {
+        long got = read(fd, data + done, static_cast<size_t>(info.st_size - done));
         if (got <= 0) { delete[] data; close(fd); return false; }
         done += static_cast<uint64_t>(got);
     }
     close(fd);
     out_data = data;
-    out_size = static_cast<int>(info.size);
+    out_size = static_cast<int>(info.st_size);
     return true;
 }
 

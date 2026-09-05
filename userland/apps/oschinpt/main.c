@@ -460,7 +460,7 @@ static int dictionary_index_load(void)
     dictionary_index_attempted = 1;
     dictionary_index_count = 0;
     dictionary_fd = open(OSCHINPT_DICT_PATH, LEONOS_O_RDONLY, 0);
-    if (dictionary_fd < 0 || fstat(dictionary_fd, &dictionary_stat) < 0) {
+    if (dictionary_fd < 0 || leonos_fstat_legacy(dictionary_fd, &dictionary_stat) < 0) {
         if (dictionary_fd >= 0) {
             close(dictionary_fd);
         }
@@ -594,7 +594,7 @@ static int dictionary_index_build(void)
     int index_fd;
     long got;
     dictionary_fd = open(OSCHINPT_DICT_PATH, LEONOS_O_RDONLY, 0);
-    if (dictionary_fd < 0 || fstat(dictionary_fd, &dictionary_stat) < 0 ||
+    if (dictionary_fd < 0 || leonos_fstat_legacy(dictionary_fd, &dictionary_stat) < 0 ||
         dictionary_stat.size > 0xffffffffULL) {
         if (dictionary_fd >= 0) {
             close(dictionary_fd);

@@ -19,6 +19,7 @@
 #include <leonos/tls.h>
 #include <leonos/ui.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +27,9 @@
 #include <sys/types.h>
 #include <sys/resource.h>
 #include <termios.h>
+#include <pty.h>
+#include <linux/tty.h>
+#include <unistd.h>
 
 /* TinyCC's static archive scan can leave Picolibc's environ member out when
  * the generated program only needs the CRT startup object. Keep a real
@@ -285,23 +289,21 @@ char *strrchr(const char *text, int value)
 long read(int fd, void *buf, size_t len)
 {
     struct leonos_stat stat_info;
+    struct termios termios;
     size_t done = 0;
-    int pty_id = 0;
     int pty_input = 0;
+    int nonblock = 0;
 
     /* The kernel reports an empty PTY queue as a zero-length read.  That is
      * not EOF for a terminal: wait for input so both canonical and raw-mode
      * POSIX programs see the expected blocking read semantics. */
     if (len != 0) {
-        struct termios termios;
-        pty_id = leonos_pty_self();
-        /*
-         * This process is the PTY child, not its terminal-owner process.
-         * Use the standard fd-oriented request here; the owner-only helper
-         * rejects child processes and would silently disable this wait loop.
-        */
-        if (pty_id > 0 && tcgetattr(fd, &termios) == 0) {
+        if (tcgetattr(fd, &termios) == 0) {
             pty_input = 1;
+        }
+        {
+            int flags = fcntl(fd, F_GETFL);
+            nonblock = flags >= 0 && (flags & O_NONBLOCK) != 0;
         }
     }
 
@@ -312,6 +314,9 @@ long read(int fd, void *buf, size_t len)
         do {
             result = syscall3(SYS_read, fd, (long)buf, (long)len);
             if (result == -LEONOS_EAGAIN) {
+                if (nonblock) {
+                    return result;
+                }
                 sleep_ms(1);
                 continue;
             }
@@ -319,16 +324,19 @@ long read(int fd, void *buf, size_t len)
                 return result;
             }
             sleep_ms(4);
-        } while (leonos_pty_self() == pty_id);
+        } while (tcgetattr(fd, &termios) == 0);
         return 0;
     }
-    if (fstat(fd, &stat_info) < 0 || stat_info.type != LEONOS_FS_TYPE_FILE) {
+    if (leonos_fstat_legacy(fd, &stat_info) < 0 || stat_info.type != LEONOS_FS_TYPE_FILE) {
         /* Pipes, terminals, and device-like descriptors do not expose a
          * regular-file size. Keep the direct path, but preserve the same
          * transparent EAGAIN retry guarantee as regular files. */
         for (;;) {
             long result = syscall3(SYS_read, fd, (long)buf, (long)len);
             if (result != -LEONOS_EAGAIN) {
+                return result;
+            }
+            if (nonblock) {
                 return result;
             }
             sleep_ms(1);
@@ -392,6 +400,25 @@ int open(const char *path, int flags, ...)
         va_end(args);
     }
     return (int)syscall3(SYS_open, (long)path, flags, mode);
+}
+
+int openat(int dirfd, const char *path, int flags, ...)
+{
+    va_list args;
+    int mode = 0;
+    long result;
+
+    if (flags & LEONOS_O_CREAT) {
+        va_start(args, flags);
+        mode = va_arg(args, int);
+        va_end(args);
+    }
+    result = syscall6(SYS_openat, dirfd, (long)path, flags, mode, 0, 0);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return (int)result;
 }
 
 int close(int fd)
@@ -465,10 +492,9 @@ int ioctl(int fd, unsigned long request, void *arg)
     if (fd == 3) {
         static int console_fd = -1;
         static int fb_fd = -1;
-        static int input_fd = -1;
+        static int input_method_fd = -1;
         static int audio_fd = -1;
         static int net_fd = -1;
-        static int disk_fd = -1;
         static int driver_fd = -1;
         static int dev_fd = -1;
         static int tty_fd = -1;
@@ -515,8 +541,24 @@ int ioctl(int fd, unsigned long request, void *arg)
                    request == LEONOS_GUI_IOCTL_CURSOR_REQUEST ||
             request == LEONOS_GUI_IOCTL_CURSOR_REGION ||
             request == LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE) {
-            path = LEONOS_DEV_INPUT_EVENT0;
-            slot = &input_fd;
+            /* GUI event routing is a window-service operation. It must not
+             * claim the raw evdev keyboard descriptor. */
+            path = LEONOS_DEV_FB0;
+            slot = &fb_fd;
+            open_flags = LEONOS_O_RDWR;
+        } else if (request == LEONOS_INPUTM_IOCTL_REGISTER ||
+                   request == LEONOS_INPUTM_IOCTL_UNREGISTER ||
+                   request == LEONOS_INPUTM_IOCTL_PROVIDER_NEXT ||
+                   request == LEONOS_INPUTM_IOCTL_PROVIDER_RESULT ||
+                   request == LEONOS_INPUTM_IOCTL_SUBMIT_KEY ||
+                   request == LEONOS_INPUTM_IOCTL_POLL_RESULT ||
+                   request == LEONOS_INPUTM_IOCTL_SET_ACTIVE ||
+                   request == LEONOS_INPUTM_IOCTL_LIST ||
+                   request == LEONOS_INPUTM_IOCTL_CONTEXT ||
+                   request == LEONOS_INPUTM_IOCTL_GET_STATE ||
+                   request == LEONOS_INPUTM_IOCTL_NOTIFY_CONFIG) {
+            path = LEONOS_DEV_INPUT_METHOD;
+            slot = &input_method_fd;
         } else if (request == LEONOS_IOCTL_AUDIO_CONFIGURE ||
                    request == LEONOS_IOCTL_AUDIO_WRITE ||
             request == LEONOS_IOCTL_AUDIO_GET_STATE) {
@@ -526,18 +568,6 @@ int ioctl(int fd, unsigned long request, void *arg)
         } else if ((request & 0xffff0000UL) == 0x4c4e0000UL) {
             path = LEONOS_DEV_NET0;
             slot = &net_fd;
-        } else if (request == LEONOS_INSTALL_IOCTL_LIST_DISKS ||
-                   request == LEONOS_INSTALL_IOCTL_FORMAT_TARGET ||
-                   request == LEONOS_INSTALL_IOCTL_MOUNT_TARGET ||
-                   request == LEONOS_DISK_IOCTL_LIST_PARTITIONS ||
-                   request == LEONOS_DISK_IOCTL_FORMAT_PARTITION ||
-                   request == LEONOS_DISK_IOCTL_DELETE_PARTITION ||
-                   request == LEONOS_DISK_IOCTL_CREATE_PARTITION ||
-                   request == LEONOS_DISK_IOCTL_INITIALIZE_GPT ||
-                   request == LEONOS_DISK_IOCTL_MOUNT_PARTITION ||
-                   request == LEONOS_DISK_IOCTL_UNMOUNT_PARTITION) {
-            path = LEONOS_DEV_DISK0;
-            slot = &disk_fd;
         } else if (request == LEONOS_IOCTL_DRIVER_LIST ||
                    request == LEONOS_IOCTL_DRIVER_CONTROL) {
             path = LEONOS_DEV_DRIVERCTL;
@@ -552,7 +582,9 @@ int ioctl(int fd, unsigned long request, void *arg)
                    request == LEONOS_PTY_IOCTL_SET_ATTR ||
                    request == LEONOS_PTY_IOCTL_GET_WINSIZE ||
                    request == LEONOS_PTY_IOCTL_SET_WINSIZE) {
-            path = LEONOS_DEV_PTMX;
+            /* Legacy PTY controls operate on the caller's controlling TTY;
+             * opening /dev/ptmx here would allocate an unrelated master. */
+            path = LEONOS_DEV_TTY;
             slot = &tty_fd;
         }
 
@@ -681,12 +713,12 @@ int sleep_ms(unsigned long ms)
     return (int)syscall2(SYS_nanosleep, (long)ms, 0);
 }
 
-int stat(const char *path, struct leonos_stat *st)
+int leonos_stat_legacy(const char *path, struct leonos_stat *st)
 {
     return (int)syscall2(SYS_stat, (long)path, (long)st);
 }
 
-int fstat(int fd, struct leonos_stat *st)
+int leonos_fstat_legacy(int fd, struct leonos_stat *st)
 {
     return (int)syscall2(SYS_fstat, fd, (long)st);
 }
@@ -1428,7 +1460,7 @@ FILE *fopen(const char *path, const char *mode)
     struct leonos_stat info;
     file->fd = fd;
     file->position = 0;
-    file->length = stat(path, &info) == 0 ? (long)info.size : 0;
+    file->length = leonos_stat_legacy(path, &info) == 0 ? (long)info.size : 0;
     file->eof = 0;
     file->writable = (flags & LEONOS_O_ACCMODE) != LEONOS_O_RDONLY;
     if (flags & LEONOS_O_APPEND) {
@@ -2097,147 +2129,6 @@ int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
         *out_layout = query;
     }
     return ret;
-}
-
-int leonos_install_list_disks(struct leonos_install_disk *disks,
-                              uint32_t capacity, uint32_t *out_count)
-{
-    struct leonos_install_disk_list query = {
-        .capacity = capacity,
-        .count = 0,
-        .disks = disks,
-    };
-    int ret = ioctl(3, LEONOS_INSTALL_IOCTL_LIST_DISKS, &query);
-    if (out_count) {
-        *out_count = query.count;
-    }
-    return ret;
-}
-
-int leonos_install_format_esp(uint32_t disk_id)
-{
-    return leonos_install_format_target(disk_id);
-}
-
-int leonos_install_format_target(uint32_t disk_id)
-{
-    return ioctl(3, LEONOS_INSTALL_IOCTL_FORMAT_TARGET, (void *)(uintptr_t)disk_id);
-}
-
-int leonos_install_mount_target(uint32_t disk_id)
-{
-    return ioctl(3, LEONOS_INSTALL_IOCTL_MOUNT_TARGET, (void *)(uintptr_t)disk_id);
-}
-
-int leonos_disk_list_partitions(uint32_t disk_id,
-                                struct leonos_disk_partition *partitions,
-                                uint32_t capacity, uint32_t *out_count)
-{
-    struct leonos_disk_partition_list query = {
-        .disk_id = disk_id,
-        .capacity = capacity,
-        .count = 0,
-        .reserved = 0,
-        .partitions = partitions,
-    };
-    int ret = ioctl(3, LEONOS_DISK_IOCTL_LIST_PARTITIONS, &query);
-    if (out_count) {
-        *out_count = query.count;
-    }
-    return ret;
-}
-
-int leonos_disk_format_partition(const struct leonos_disk_partition_format *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_DISK_IOCTL_FORMAT_PARTITION, (void *)request);
-}
-
-int leonos_disk_delete_partition(const struct leonos_disk_partition_delete *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_DISK_IOCTL_DELETE_PARTITION, (void *)request);
-}
-
-int leonos_disk_edit_partition(const struct leonos_disk_partition_edit *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_DISK_IOCTL_EDIT_PARTITION, (void *)request);
-}
-
-int leonos_disk_initialize_gpt(const struct leonos_disk_gpt_initialize *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_DISK_IOCTL_INITIALIZE_GPT, (void *)request);
-}
-
-int leonos_disk_create_partition(const struct leonos_disk_partition_create *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_DISK_IOCTL_CREATE_PARTITION, (void *)request);
-}
-
-int leonos_disk_mount_partition(uint32_t disk_id, uint32_t partition_index,
-                                char *mount_path, uint32_t mount_path_capacity)
-{
-    return leonos_disk_mount_partition_at(disk_id, partition_index, "",
-                                           mount_path, mount_path_capacity);
-}
-
-int leonos_disk_mount_partition_at(uint32_t disk_id, uint32_t partition_index,
-                                   const char *mount_path,
-                                   char *out_mount_path,
-                                   uint32_t out_mount_path_capacity)
-{
-    struct leonos_disk_partition_mount request = {
-        .disk_id = disk_id,
-        .partition_index = partition_index,
-    };
-    if (!out_mount_path || out_mount_path_capacity == 0) {
-        return -1;
-    }
-    if (mount_path) {
-        size_t i = 0;
-        while (i + 1 < sizeof(request.mount_path) && mount_path[i]) {
-            request.mount_path[i] = mount_path[i];
-            ++i;
-        }
-        if (mount_path[i] != 0) {
-            return -1;
-        }
-        request.mount_path[i] = 0;
-    }
-    int ret = ioctl(3, LEONOS_DISK_IOCTL_MOUNT_PARTITION, &request);
-    if (ret == 0) {
-        size_t i = 0;
-        while (i + 1 < out_mount_path_capacity && request.mount_path[i]) {
-            out_mount_path[i] = request.mount_path[i];
-            ++i;
-        }
-        out_mount_path[i] = 0;
-    }
-    return ret;
-}
-
-int leonos_disk_unmount_partition(uint32_t disk_id, uint32_t partition_index)
-{
-    struct leonos_disk_partition_unmount request = {
-        .disk_id = disk_id,
-        .partition_index = partition_index,
-        .reserved0 = 0,
-        .reserved1 = 0,
-    };
-    return ioctl(3, LEONOS_DISK_IOCTL_UNMOUNT_PARTITION, &request);
 }
 
 int leonos_device_list(struct leonos_device_info *devices,
@@ -4493,6 +4384,97 @@ int leonos_pty_set_winsize(uint32_t pty_id,
     return leonos_pty_error(ioctl(3, LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE, &io));
 }
 
+int posix_openpt(int flags)
+{
+    return open("/dev/ptmx", flags, 0);
+}
+
+int grantpt(int fd)
+{
+    uint32_t number = 0;
+    return ioctl(fd, TIOCGPTN, &number);
+}
+
+int unlockpt(int fd)
+{
+    uint32_t lock = 0;
+    return ioctl(fd, TIOCSPTLCK, &lock);
+}
+
+char *ptsname(int fd)
+{
+    static char path[32];
+    uint32_t number = 0;
+    if (ioctl(fd, TIOCGPTN, &number) < 0) return NULL;
+    if (snprintf(path, sizeof(path), "/dev/pts/%u", number) < 0) return NULL;
+    return path;
+}
+
+int openpty(int *master, int *slave, char *name,
+            const struct termios *termios, const struct winsize *winsize)
+{
+    int mfd;
+    int sfd;
+    char *path;
+    if (!master || !slave) {
+        errno = EINVAL;
+        return -1;
+    }
+    mfd = posix_openpt(LEONOS_O_RDWR);
+    if (mfd < 0) return -1;
+    if (grantpt(mfd) < 0 || unlockpt(mfd) < 0 || !(path = ptsname(mfd))) {
+        close(mfd);
+        return -1;
+    }
+    sfd = open(path, LEONOS_O_RDWR, 0);
+    if (sfd < 0) {
+        close(mfd);
+        return -1;
+    }
+    if (termios) (void)tcsetattr(sfd, TCSANOW, termios);
+    if (winsize) (void)tcsetwinsize(sfd, winsize);
+    if (name) {
+        size_t i = 0;
+        while (path[i] && i + 1 < 32) { name[i] = path[i]; ++i; }
+        name[i] = 0;
+    }
+    *master = mfd;
+    *slave = sfd;
+    return 0;
+}
+
+pid_t forkpty(int *master, const char *name,
+              const struct termios *termios, const struct winsize *winsize)
+{
+    int mfd;
+    int sfd;
+    pid_t pid;
+    char path[32];
+    if (openpty(&mfd, &sfd, path, termios, winsize) < 0) return -1;
+    pid = fork();
+    if (pid == 0) {
+        (void)setsid();
+        (void)dup2(sfd, 0);
+        (void)dup2(sfd, 1);
+        (void)dup2(sfd, 2);
+        close(mfd);
+        close(sfd);
+        return 0;
+    }
+    close(sfd);
+    if (master) *master = mfd;
+    else close(mfd);
+    (void)name;
+    return pid;
+}
+
+struct leonos_linux_winsize {
+    uint16_t ws_row;
+    uint16_t ws_col;
+    uint16_t ws_xpixel;
+    uint16_t ws_ypixel;
+};
+
 static int leonos_pty_error(int result)
 {
     if (result < 0) {
@@ -4510,7 +4492,7 @@ int tcgetattr(int fd, struct termios *termios)
         errno = EINVAL;
         return -1;
     }
-    result = ioctl(fd, LEONOS_PTY_IOCTL_GET_ATTR, &native);
+    result = ioctl(fd, TCGETS, &native);
     if (result < 0) {
         return leonos_pty_error(result);
     }
@@ -4550,29 +4532,45 @@ int tcsetattr(int fd, int action, const struct termios *termios)
     request.termios.reserved = 0;
     request.termios.c_ispeed = termios->c_ispeed;
     request.termios.c_ospeed = termios->c_ospeed;
-    result = ioctl(fd, LEONOS_PTY_IOCTL_SET_ATTR, &request);
+    result = ioctl(fd,
+                   action == TCSADRAIN ? TCSETSW :
+                   (action == TCSAFLUSH ? TCSETSF : TCSETS),
+                   &request.termios);
     return leonos_pty_error(result);
 }
 
 int tcgetwinsize(int fd, struct winsize *winsize)
 {
+    struct leonos_linux_winsize native;
     int result;
     if (fd < 0 || !winsize) {
         errno = EINVAL;
         return -1;
     }
-    result = ioctl(fd, LEONOS_PTY_IOCTL_GET_WINSIZE, winsize);
+    native = (struct leonos_linux_winsize){0};
+    result = ioctl(fd, TIOCGWINSZ, &native);
+    if (result == 0) {
+        winsize->ws_row = native.ws_row;
+        winsize->ws_col = native.ws_col;
+    }
     return leonos_pty_error(result);
 }
 
 int tcsetwinsize(int fd, const struct winsize *winsize)
 {
+    struct leonos_linux_winsize native;
     int result;
     if (fd < 0 || !winsize) {
         errno = EINVAL;
         return -1;
     }
-    result = ioctl(fd, LEONOS_PTY_IOCTL_SET_WINSIZE, (void *)winsize);
+    native = (struct leonos_linux_winsize){
+        .ws_row = winsize->ws_row,
+        .ws_col = winsize->ws_col,
+        .ws_xpixel = 0,
+        .ws_ypixel = 0,
+    };
+    result = ioctl(fd, TIOCSWINSZ, &native);
     return leonos_pty_error(result);
 }
 

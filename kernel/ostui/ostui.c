@@ -318,7 +318,7 @@ void ostui_write_u64(uint64_t value)
 
 int ostui_poll_key(void)
 {
-    struct input_event event;
+    struct input_raw_event event;
     while (input_pop(&event)) {
         if (event.type == INPUT_EVENT_KEYBOARD && event.pressed) return event.keycode;
     }

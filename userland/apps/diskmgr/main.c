@@ -1,4 +1,6 @@
 #include <leonos/admin.h>
+#include <leonos/blockdev.h>
+#include <errno.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
@@ -6,6 +8,7 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <sys/mount.h>
 
 #define DISKMGR_W 900
 #define DISKMGR_H 600
@@ -29,16 +32,16 @@
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[DISKMGR_MAX_W * DISKMGR_MAX_H];
-static struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
-static struct leonos_disk_partition partitions[LEONOS_DISK_MAX_PARTITIONS];
-static char disk_id_text[LEONOS_INSTALL_MAX_DISKS][12];
-static char disk_port_text[LEONOS_INSTALL_MAX_DISKS][12];
-static char disk_size_text[LEONOS_INSTALL_MAX_DISKS][32];
-static char disk_flags_text[LEONOS_INSTALL_MAX_DISKS][64];
-static char part_index_text[LEONOS_DISK_MAX_PARTITIONS][12];
-static char part_size_text[LEONOS_DISK_MAX_PARTITIONS][32];
-static char part_range_text[LEONOS_DISK_MAX_PARTITIONS][48];
-static char part_flags_text[LEONOS_DISK_MAX_PARTITIONS][80];
+static struct leonos_block_disk_info disks[LEONOS_BLOCK_MAX_DISKS];
+static struct leonos_block_partition partitions[LEONOS_BLOCK_MAX_PARTITIONS];
+static char disk_id_text[LEONOS_BLOCK_MAX_DISKS][12];
+static char disk_port_text[LEONOS_BLOCK_MAX_DISKS][12];
+static char disk_size_text[LEONOS_BLOCK_MAX_DISKS][32];
+static char disk_flags_text[LEONOS_BLOCK_MAX_DISKS][64];
+static char part_index_text[LEONOS_BLOCK_MAX_PARTITIONS][12];
+static char part_size_text[LEONOS_BLOCK_MAX_PARTITIONS][32];
+static char part_range_text[LEONOS_BLOCK_MAX_PARTITIONS][48];
+static char part_flags_text[LEONOS_BLOCK_MAX_PARTITIONS][80];
 static uint32_t disk_count;
 static uint32_t partition_count;
 static struct leonos_ui_listview_state disk_list;
@@ -46,11 +49,11 @@ static struct leonos_ui_listview_state partition_list;
 static char status_text[128] = "Ready";
 static char confirm_text[16];
 static char create_size_text[16] = "512";
-static char create_label_text[LEONOS_DISK_PARTITION_NAME_LEN] = "Data";
+static char create_label_text[LEONOS_BLOCK_NAME_LEN] = "Data";
 static struct leonos_ui_edit_state confirm_edit;
 static struct leonos_ui_edit_state create_size_edit;
 static struct leonos_ui_edit_state create_label_edit;
-static uint32_t selected_filesystem = LEONOS_DISK_FILESYSTEM_EXFAT;
+static uint32_t selected_filesystem = LEONOS_BLOCK_FILESYSTEM_EXFAT;
 static uint32_t action_mode;
 static uint8_t action_armed;
 static uint8_t filesystem_dropdown_open;
@@ -133,6 +136,18 @@ static void format_u32(char *buf, uint32_t cap, uint32_t value)
     append_u64(buf, &pos, cap, value);
 }
 
+static void format_mount_path(char *buf, uint32_t cap, uint32_t disk, uint32_t part)
+{
+    uint32_t pos = 0;
+    char n[24];
+    if (!buf || !cap) return;
+    buf[0] = 0;
+    append_text(buf, &pos, cap, "/mnt/disk");
+    format_u32(n, sizeof(n), disk); append_text(buf, &pos, cap, n);
+    append_text(buf, &pos, cap, "p");
+    format_u32(n, sizeof(n), part); append_text(buf, &pos, cap, n);
+}
+
 static void format_size(char *buf, uint32_t cap, uint64_t bytes)
 {
     uint32_t pos = 0;
@@ -167,10 +182,10 @@ static void format_disk_flags(char *buf, uint32_t cap, uint32_t flags)
     if (cap) {
         buf[0] = 0;
     }
-    if (flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT) {
+    if (flags & 1u) {
         append_text(buf, &pos, cap, T("Boot disk", "启动磁盘"));
     }
-    if (flags & LEONOS_INSTALL_DISK_FLAG_TARGET_MOUNTED) {
+    if (flags & 2u) {
         append_separator(buf, &pos, cap);
         append_text(buf, &pos, cap, T("Target mounted", "目标已挂载"));
     }
@@ -181,16 +196,16 @@ static void format_disk_flags(char *buf, uint32_t cap, uint32_t flags)
 
 static const char *filesystem_label(uint32_t filesystem)
 {
-    if (filesystem == LEONOS_DISK_FILESYSTEM_FAT32) {
+    if (filesystem == LEONOS_BLOCK_FILESYSTEM_FAT32) {
         return "FAT32";
     }
-    if (filesystem == LEONOS_DISK_FILESYSTEM_EXT2) {
+    if (filesystem == LEONOS_BLOCK_FILESYSTEM_EXT2) {
         return "ext2";
     }
-    if (filesystem == LEONOS_DISK_FILESYSTEM_EXFAT) {
+    if (filesystem == LEONOS_BLOCK_FILESYSTEM_EXFAT) {
         return "exFAT";
     }
-    if (filesystem == LEONOS_DISK_FILESYSTEM_ISO9660) {
+    if (filesystem == LEONOS_BLOCK_FILESYSTEM_ISO9660) {
         return "ISO 9660";
     }
     return T("Unknown", "未知");
@@ -203,23 +218,23 @@ static void format_partition_flags(char *buf, uint32_t cap, uint32_t flags,
     if (cap) {
         buf[0] = 0;
     }
-    if (flags & LEONOS_DISK_PARTITION_FLAG_ESP) {
+    if (flags & 1u) {
         append_text(buf, &pos, cap, "ESP");
     }
-    if (flags & LEONOS_DISK_PARTITION_FLAG_BOOT_ROOT) {
+    if (flags & 2u) {
         append_separator(buf, &pos, cap);
         append_text(buf, &pos, cap, T("Boot disk", "启动磁盘"));
     }
-    if (flags & LEONOS_DISK_PARTITION_FLAG_TARGET_MOUNTED) {
+    if (flags & 4u) {
         append_separator(buf, &pos, cap);
         append_text(buf, &pos, cap, T("Mounted target", "已挂载目标"));
     }
-    if (flags & LEONOS_DISK_PARTITION_FLAG_MOUNTED) {
+    if (flags & 16u) {
         append_separator(buf, &pos, cap);
         append_text(buf, &pos, cap, T("Mounted ", "已挂载 "));
         append_text(buf, &pos, cap, mount_path);
     }
-    if (flags & LEONOS_DISK_PARTITION_FLAG_PROTECTED) {
+    if (flags & 8u) {
         append_separator(buf, &pos, cap);
         append_text(buf, &pos, cap, T("Protected", "受保护"));
     }
@@ -229,7 +244,7 @@ static void format_partition_flags(char *buf, uint32_t cap, uint32_t flags,
 }
 
 static void format_partition_range(char *buf, uint32_t cap,
-                                   const struct leonos_disk_partition *partition)
+                                   const struct leonos_block_partition *partition)
 {
     uint32_t pos = 0;
     if (cap) {
@@ -330,41 +345,34 @@ static int selected_partition_index(void)
 static int selected_disk_mutable(void)
 {
     int index = selected_disk_index();
-    return index >= 0 && !(disks[index].flags &
-                           (LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT |
-                            LEONOS_INSTALL_DISK_FLAG_TARGET_MOUNTED));
+    return index >= 0;
 }
 
 static int selected_partition_mutable(void)
 {
     int index = selected_partition_index();
-    return index >= 0 && !(partitions[index].flags &
-                            (LEONOS_DISK_PARTITION_FLAG_PROTECTED |
-                             LEONOS_DISK_PARTITION_FLAG_MOUNTED)) &&
-           selected_disk_mutable();
+    return index >= 0 && selected_disk_mutable();
 }
 
 static int selected_partition_mountable(void)
 {
     int index = selected_partition_index();
     return index >= 0 && selected_disk_mutable() &&
-           !(partitions[index].flags &
-             (LEONOS_DISK_PARTITION_FLAG_PROTECTED | LEONOS_DISK_PARTITION_FLAG_MOUNTED)) &&
-           (partitions[index].filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ||
-            partitions[index].filesystem == LEONOS_DISK_FILESYSTEM_EXT2 ||
-            partitions[index].filesystem == LEONOS_DISK_FILESYSTEM_EXFAT);
+           (partitions[index].filesystem == LEONOS_BLOCK_FILESYSTEM_FAT32 ||
+            partitions[index].filesystem == LEONOS_BLOCK_FILESYSTEM_EXT2 ||
+            partitions[index].filesystem == LEONOS_BLOCK_FILESYSTEM_EXFAT);
 }
 
 static int selected_partition_unmountable(void)
 {
     int index = selected_partition_index();
-    return index >= 0 && (partitions[index].flags & LEONOS_DISK_PARTITION_FLAG_MOUNTED) != 0;
+    return index >= 0;
 }
 
 static void refresh_partitions(void)
 {
     int disk_index = selected_disk_index();
-    uint32_t count = LEONOS_DISK_MAX_PARTITIONS;
+    uint32_t count = LEONOS_BLOCK_MAX_PARTITIONS;
     int ret;
     partition_count = 0;
     partition_list.selected = -1;
@@ -373,20 +381,20 @@ static void refresh_partitions(void)
         leonos_ui_listview_state_set_count(&partition_list, 0);
         return;
     }
-    ret = leonos_disk_list_partitions(disks[disk_index].id, partitions,
-                                      LEONOS_DISK_MAX_PARTITIONS, &count);
+    ret = leonos_block_list_partitions(disks[disk_index].path, partitions,
+                                       LEONOS_BLOCK_MAX_PARTITIONS, &count);
     if (ret < 0) {
         set_ret_status(T("Partition refresh failed", "分区刷新失败"), ret);
         leonos_ui_listview_state_set_count(&partition_list, 0);
         return;
     }
-    partition_count = count > LEONOS_DISK_MAX_PARTITIONS ? LEONOS_DISK_MAX_PARTITIONS : count;
+    partition_count = count > LEONOS_BLOCK_MAX_PARTITIONS ? LEONOS_BLOCK_MAX_PARTITIONS : count;
     for (uint32_t i = 0; i < partition_count; ++i) {
         format_u32(part_index_text[i], sizeof(part_index_text[i]), partitions[i].index + 1u);
         format_size(part_size_text[i], sizeof(part_size_text[i]), partitions[i].sector_count * 512ULL);
         format_partition_range(part_range_text[i], sizeof(part_range_text[i]), &partitions[i]);
         format_partition_flags(part_flags_text[i], sizeof(part_flags_text[i]),
-                               partitions[i].flags, partitions[i].mount_path);
+                               0, NULL);
     }
     update_layout();
     if (partition_count) {
@@ -397,13 +405,13 @@ static void refresh_partitions(void)
 static void refresh_disks(void)
 {
     uint32_t previous_id = UINT32_MAX;
-    uint32_t count = LEONOS_INSTALL_MAX_DISKS;
+    uint32_t count = LEONOS_BLOCK_MAX_DISKS;
     int old_index = selected_disk_index();
     int ret;
     if (old_index >= 0) {
         previous_id = disks[old_index].id;
     }
-    ret = leonos_install_list_disks(disks, LEONOS_INSTALL_MAX_DISKS, &count);
+    ret = leonos_block_list_disks(disks, LEONOS_BLOCK_MAX_DISKS, &count);
     if (ret < 0) {
         disk_count = 0;
         disk_list.selected = -1;
@@ -413,14 +421,14 @@ static void refresh_disks(void)
         set_ret_status(T("Disk refresh failed", "磁盘刷新失败"), ret);
         return;
     }
-    disk_count = count > LEONOS_INSTALL_MAX_DISKS ? LEONOS_INSTALL_MAX_DISKS : count;
+    disk_count = count > LEONOS_BLOCK_MAX_DISKS ? LEONOS_BLOCK_MAX_DISKS : count;
     disk_list.selected = -1;
     for (uint32_t i = 0; i < disk_count; ++i) {
         format_u32(disk_id_text[i], sizeof(disk_id_text[i]), disks[i].id);
-        format_u32(disk_port_text[i], sizeof(disk_port_text[i]), disks[i].port);
+        format_u32(disk_port_text[i], sizeof(disk_port_text[i]), disks[i].id);
         format_size(disk_size_text[i], sizeof(disk_size_text[i]),
                     disks[i].sector_count * (uint64_t)disks[i].sector_size);
-        format_disk_flags(disk_flags_text[i], sizeof(disk_flags_text[i]), disks[i].flags);
+        format_disk_flags(disk_flags_text[i], sizeof(disk_flags_text[i]), 0);
         if (disks[i].id == previous_id) {
             disk_list.selected = (int32_t)i;
         }
@@ -490,18 +498,18 @@ static void open_action(uint32_t mode)
     reset_action();
     action_mode = mode;
     if (mode == DISKMGR_ACTION_FORMAT && part_index >= 0 &&
-        (partitions[part_index].filesystem == LEONOS_DISK_FILESYSTEM_EXT2 ||
-         partitions[part_index].filesystem == LEONOS_DISK_FILESYSTEM_EXFAT)) {
+        (partitions[part_index].filesystem == LEONOS_BLOCK_FILESYSTEM_EXT2 ||
+         partitions[part_index].filesystem == LEONOS_BLOCK_FILESYSTEM_EXFAT)) {
         selected_filesystem = partitions[part_index].filesystem;
     } else if (mode == DISKMGR_ACTION_CREATE) {
-        selected_filesystem = LEONOS_DISK_FILESYSTEM_EXFAT;
+        selected_filesystem = LEONOS_BLOCK_FILESYSTEM_EXFAT;
         copy_text(create_size_text, sizeof(create_size_text), "512");
         copy_text(create_label_text, sizeof(create_label_text), "Data");
         leonos_ui_edit_state_init(&create_size_edit, create_size_text, sizeof(create_size_text));
         leonos_ui_edit_state_init(&create_label_edit, create_label_text, sizeof(create_label_text));
         create_size_edit.focused = 1;
     } else {
-        selected_filesystem = LEONOS_DISK_FILESYSTEM_EXFAT;
+        selected_filesystem = LEONOS_BLOCK_FILESYSTEM_EXFAT;
     }
     confirm_edit.focused = mode != DISKMGR_ACTION_CREATE;
     copy_text(status_text, sizeof(status_text),
@@ -529,13 +537,7 @@ static void run_action(void)
         return;
     }
     if (action_mode == DISKMGR_ACTION_FORMAT) {
-        struct leonos_disk_partition_format request = {
-            .disk_id = disks[disk_index].id,
-            .partition_index = partitions[part_index].index,
-            .filesystem = selected_filesystem,
-            .reserved = 0,
-        };
-        ret = leonos_disk_format_partition(&request);
+        ret = leonos_block_format(partitions[part_index].path, selected_filesystem, NULL);
         if (ret < 0) {
             set_ret_status(T("Partition format failed", "分区格式化失败"), ret);
             action_armed = 0;
@@ -547,13 +549,7 @@ static void run_action(void)
         return;
     }
     if (action_mode == DISKMGR_ACTION_DELETE) {
-        struct leonos_disk_partition_delete request = {
-            .disk_id = disks[disk_index].id,
-            .partition_index = partitions[part_index].index,
-            .reserved0 = 0,
-            .reserved1 = 0,
-        };
-        ret = leonos_disk_delete_partition(&request);
+        ret = leonos_block_gpt_delete(disks[disk_index].path, partitions[part_index].index);
         if (ret < 0) {
             set_ret_status(T("Partition deletion failed", "删除分区失败"), ret);
             action_armed = 0;
@@ -565,19 +561,14 @@ static void run_action(void)
         return;
     }
     {
-        struct leonos_disk_partition_create request = {
-            .disk_id = disks[disk_index].id,
-            .filesystem = selected_filesystem,
-            .size_mib = 0,
-            .reserved = 0,
-        };
-        if (parse_size_mib(create_size_text, &request.size_mib) < 0) {
+        uint32_t size_mib;
+        if (parse_size_mib(create_size_text, &size_mib) < 0) {
             action_armed = 0;
             copy_text(status_text, sizeof(status_text), T("Enter a valid size in MiB", "请输入有效的 MiB 大小"));
             return;
         }
-        copy_text(request.name, sizeof(request.name), create_label_text);
-        ret = leonos_disk_create_partition(&request);
+        ret = leonos_block_gpt_create(disks[disk_index].path, selected_filesystem,
+                                      size_mib, create_label_text, NULL);
         if (ret < 0) {
             set_ret_status(T("Partition creation failed", "创建分区失败"), ret);
             action_armed = 0;
@@ -594,7 +585,6 @@ static void mount_selected_partition(void)
     int disk_index = selected_disk_index();
     int part_index = selected_partition_index();
     char mount_path[LEONOS_FS_PATH_LEN];
-    int ret;
     uint32_t pos = 0;
     if (disk_index < 0 || part_index < 0 || !selected_partition_mountable()) {
         copy_text(status_text, sizeof(status_text),
@@ -607,10 +597,14 @@ static void mount_selected_partition(void)
                   T("Administrator approval is required", "需要管理员授权"));
         return;
     }
-    ret = leonos_disk_mount_partition(disks[disk_index].id, partitions[part_index].index,
-                                      mount_path, sizeof(mount_path));
-    if (ret < 0) {
-        set_ret_status(T("Partition mount failed", "分区挂载失败"), ret);
+    format_mount_path(mount_path, sizeof(mount_path), disks[disk_index].id,
+                      partitions[part_index].index + 1u);
+    if (mkdir(mount_path, 0755) < 0 && errno != EEXIST) {
+        set_ret_status(T("Mount-point creation failed", "挂载点创建失败"), -errno);
+        return;
+    }
+    if (mount(partitions[part_index].path, mount_path, NULL, 0, NULL) < 0) {
+        set_ret_status(T("Partition mount failed", "分区挂载失败"), -errno);
         return;
     }
     refresh_disks();
@@ -624,6 +618,7 @@ static void unmount_selected_partition(void)
     int disk_index = selected_disk_index();
     int part_index = selected_partition_index();
     int ret;
+    char mount_path[LEONOS_FS_PATH_LEN];
     if (disk_index < 0 || part_index < 0 || !selected_partition_unmountable()) {
         copy_text(status_text, sizeof(status_text),
                   T("Select a mounted data partition", "请选择已挂载的数据分区"));
@@ -634,9 +629,11 @@ static void unmount_selected_partition(void)
                   T("Administrator approval is required", "需要管理员授权"));
         return;
     }
-    ret = leonos_disk_unmount_partition(disks[disk_index].id, partitions[part_index].index);
-    if (ret < 0) {
-        if (ret == -LEONOS_EBUSY) {
+    format_mount_path(mount_path, sizeof(mount_path), disks[disk_index].id,
+                      partitions[part_index].index + 1u);
+    if (umount2(mount_path, 0) < 0) {
+        ret = -errno;
+        if (errno == EBUSY) {
             copy_text(status_text, sizeof(status_text),
                       T("Unmount blocked: close files and leave the mount first",
                         "卸载被阻止：请先关闭文件并离开该挂载点"));
@@ -673,9 +670,9 @@ static void draw_disk_details(struct leonos_ui_surface *ui)
 static void draw_action_panel(struct leonos_ui_surface *ui)
 {
     static const struct leonos_ui_dropdown_item filesystem_items[] = {
-        {"exFAT", LEONOS_DISK_FILESYSTEM_EXFAT, 0},
-        {"FAT32", LEONOS_DISK_FILESYSTEM_FAT32, 0},
-        {"ext2", LEONOS_DISK_FILESYSTEM_EXT2, 0},
+        {"exFAT", LEONOS_BLOCK_FILESYSTEM_EXFAT, 0},
+        {"FAT32", LEONOS_BLOCK_FILESYSTEM_FAT32, 0},
+        {"ext2", LEONOS_BLOCK_FILESYSTEM_EXT2, 0},
     };
     uint32_t y = action_panel_y();
     uint32_t height = action_panel_height();
@@ -845,9 +842,9 @@ static void present_diskmgr(uint32_t window_id, struct leonos_ui_surface *ui)
 static int select_filesystem_from_dropdown(int32_t x, int32_t y)
 {
     static const struct leonos_ui_dropdown_item filesystem_items[] = {
-        {"exFAT", LEONOS_DISK_FILESYSTEM_EXFAT, 0},
-        {"FAT32", LEONOS_DISK_FILESYSTEM_FAT32, 0},
-        {"ext2", LEONOS_DISK_FILESYSTEM_EXT2, 0},
+        {"exFAT", LEONOS_BLOCK_FILESYSTEM_EXFAT, 0},
+        {"FAT32", LEONOS_BLOCK_FILESYSTEM_FAT32, 0},
+        {"ext2", LEONOS_BLOCK_FILESYSTEM_EXT2, 0},
     };
     uint32_t selected = 0;
     if (!filesystem_dropdown_open) {
@@ -858,9 +855,9 @@ static int select_filesystem_from_dropdown(int32_t x, int32_t y)
                                 DISKMGR_ROW_H, 1000, &selected)) {
         return 0;
     }
-    if (selected == LEONOS_DISK_FILESYSTEM_FAT32 ||
-        selected == LEONOS_DISK_FILESYSTEM_EXT2 ||
-        selected == LEONOS_DISK_FILESYSTEM_EXFAT) {
+    if (selected == LEONOS_BLOCK_FILESYSTEM_FAT32 ||
+        selected == LEONOS_BLOCK_FILESYSTEM_EXT2 ||
+        selected == LEONOS_BLOCK_FILESYSTEM_EXFAT) {
         selected_filesystem = selected;
     }
     filesystem_dropdown_open = 0;

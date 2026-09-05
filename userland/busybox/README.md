@@ -9,8 +9,11 @@ terminal and prints the applet list. Invoke a specific applet with:
 ```
 
 The profile includes BusyBox `ash` behind the `sh` applet with native
-`fork`/`exec`, pipelines, redirections, background jobs, and `jobs`/`fg`/`bg`.
-It supports simple command lines, shell built-ins, and the bundled applets (`ls`, `pwd`, `cat`,
+`fork`/`exec`, pipelines, redirections, and background process creation.
+Interactive ash job-control (`jobs`/`fg`/`bg`) is disabled until the kernel
+implements the Linux SIGTTIN/SIGTTOU stop-and-continue protocol; this avoids
+an initialization loop before the first TTY prompt. It supports simple
+command lines, shell built-ins, and the bundled applets (`ls`, `pwd`, `cat`,
 `echo`, `clear`, `grep`, `head`, `tail`, `wc`, `sha256sum`, `basename`, `dirname`, `printf`, `diff`,
 `less`, `ps`, and `kill`,
 `mkdir`, `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`,
@@ -93,7 +96,9 @@ The kernel provides process inspection through the task snapshot ABI,
 same-user signal termination, COW `fork`, `execve`, process groups, foreground
 PTY groups, and nice-style priorities. `kill` and graphical task tools use
 those interfaces. Ash uses normal pipelines and redirections (`<`, `>`, `>>`,
-`2>`), and handles `Ctrl+C`/`Ctrl+Z` through the PTY foreground group. The
+`2>`), and handles `Ctrl+C` through the PTY input path. Interactive ash job
+control remains disabled because the kernel does not yet implement the
+SIGTTIN/SIGTTOU stop-and-continue protocol. The
 POSIX `SIG_DFL` and `SIG_IGN` dispositions are available; arbitrary user-space
 signal handlers and shared file offsets after `fork` are not yet exposed.
 Ash does not use the legacy PTY-launch adapter: its commands use the upstream

@@ -1,6 +1,8 @@
-#include <leonos/audio.h>
 #include <leonos/syscall.h>
 
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/soundcard.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,12 +91,7 @@ struct leonos_doom_music_state {
     struct leonos_doom_music_voice voices[LEONOS_DOOM_AUDIO_MUS_VOICES];
 };
 
-static struct leonos_audio_format leonos_doom_audio_format = {
-    .sample_rate = LEONOS_DOOM_AUDIO_RATE,
-    .channels = LEONOS_DOOM_AUDIO_CHANNELS,
-    .bits_per_sample = LEONOS_DOOM_AUDIO_BITS,
-    .flags = 0,
-};
+static int leonos_doom_dsp_fd = -1;
 static uint8_t leonos_doom_audio_available;
 static uint8_t leonos_doom_audio_reported;
 static uint8_t leonos_doom_sound_initialized;
@@ -136,6 +133,31 @@ static void leonos_doom_audio_log_once(uint8_t *flag, const char *message)
         printf("%s\n", message);
         *flag = 1U;
     }
+}
+
+static int leonos_doom_configure_audio(void)
+{
+    int format = AFMT_S16_LE;
+    int channels = LEONOS_DOOM_AUDIO_CHANNELS;
+    int rate = LEONOS_DOOM_AUDIO_RATE;
+    if (leonos_doom_dsp_fd < 0) {
+        leonos_doom_dsp_fd = open("/dev/dsp", O_WRONLY | O_NONBLOCK, 0);
+    }
+    if (leonos_doom_dsp_fd < 0 ||
+        ioctl(leonos_doom_dsp_fd, SNDCTL_DSP_SETFMT, &format) < 0 ||
+        format != AFMT_S16_LE ||
+        ioctl(leonos_doom_dsp_fd, SNDCTL_DSP_CHANNELS, &channels) < 0 ||
+        channels != LEONOS_DOOM_AUDIO_CHANNELS ||
+        ioctl(leonos_doom_dsp_fd, SNDCTL_DSP_SPEED, &rate) < 0 ||
+        rate != LEONOS_DOOM_AUDIO_RATE) {
+        return -1;
+    }
+    return 0;
+}
+
+static long leonos_doom_write_audio(const void *data, uint32_t length)
+{
+    return write(leonos_doom_dsp_fd, data, length);
 }
 
 static int16_t leonos_doom_clamp16(int32_t value)
@@ -249,22 +271,19 @@ static int leonos_doom_get_sfx_lump(sfxinfo_t *sfx)
 static boolean leonos_doom_init_sound(boolean use_sfx_prefix)
 {
     int ret;
-    struct leonos_audio_state state;
     leonos_doom_use_sfx_prefix = use_sfx_prefix ? 1U : 0U;
     leonos_doom_sound_initialized = 1U;
     leonos_doom_music_only = 0U;
-    ret = leonos_audio_configure(&leonos_doom_audio_format);
+    ret = leonos_doom_configure_audio();
     if (ret < 0) {
         printf("[doom] PCM configure failed ret=%d rate=%u\n", ret,
-               leonos_doom_audio_format.sample_rate);
+               LEONOS_DOOM_AUDIO_RATE);
         leonos_doom_audio_available = 0;
         leonos_doom_audio_log_unavailable();
         return true;
     }
     leonos_doom_audio_available = 1;
     printf("[doom] PCM audio enabled: 48000 Hz stereo signed-16\n");
-    state = (struct leonos_audio_state){0};
-    (void)leonos_audio_get_state(&state);
     return true;
 }
 
@@ -282,6 +301,10 @@ static void leonos_doom_shutdown_sound(void)
     leonos_doom_sample_cache_count = 0;
     leonos_doom_sound_initialized = 0;
     leonos_doom_audio_available = 0;
+    if (leonos_doom_dsp_fd >= 0) {
+        close(leonos_doom_dsp_fd);
+        leonos_doom_dsp_fd = -1;
+    }
     leonos_doom_last_audio_ms = 0;
     leonos_doom_audio_frame_remainder = 0;
     leonos_doom_pending_bytes = 0;
@@ -867,15 +890,12 @@ static void leonos_doom_mix_music(int32_t *left, int32_t *right, uint32_t frames
 static int leonos_doom_flush_pending(void)
 {
     while (leonos_doom_pending_bytes) {
-        uint32_t status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
-        long written = leonos_audio_write(leonos_doom_pending,
-                                          leonos_doom_pending_bytes, &status);
-        if (written == 0 && status == LEONOS_AUDIO_STATUS_WOULD_BLOCK) {
+        long written = leonos_doom_write_audio(leonos_doom_pending,
+                                                leonos_doom_pending_bytes);
+        if (written == 0 || written == -EAGAIN) {
             return 1;
         }
-        if (written < 0 ||
-            (status != LEONOS_AUDIO_STATUS_OK &&
-             status != LEONOS_AUDIO_STATUS_WOULD_BLOCK)) {
+        if (written < 0) {
             return -1;
         }
         if ((uint32_t)written > leonos_doom_pending_bytes) {
@@ -885,9 +905,6 @@ static int leonos_doom_flush_pending(void)
         if (leonos_doom_pending_bytes) {
             memmove(leonos_doom_pending, leonos_doom_pending + written,
                     leonos_doom_pending_bytes);
-        }
-        if (status == LEONOS_AUDIO_STATUS_WOULD_BLOCK) {
-            return 1;
         }
     }
     return 0;
@@ -904,7 +921,6 @@ static void leonos_doom_update_sound(void)
     uint32_t elapsed;
     uint32_t output_bytes;
     long written;
-    uint32_t status = LEONOS_AUDIO_STATUS_OK;
     uint8_t mixed = 0;
     /* Keep unsent data until the device has room.  Dropping a short write
      * produces exactly the symptom of a running DMA engine with silence. */
@@ -972,18 +988,17 @@ static void leonos_doom_update_sound(void)
     }
     if (leonos_doom_audio_available) {
         output_bytes = frames * 4U;
-        written = leonos_audio_write(leonos_doom_mix, output_bytes, &status);
-        if (written < 0 ||
-            (status != LEONOS_AUDIO_STATUS_OK &&
-             status != LEONOS_AUDIO_STATUS_WOULD_BLOCK) ||
-            (uint32_t)written > output_bytes) {
+        written = leonos_doom_write_audio(leonos_doom_mix, output_bytes);
+        if ((written < 0 && written != -EAGAIN) ||
+            (written > 0 && (uint32_t)written > output_bytes)) {
             leonos_doom_audio_available = 0;
             leonos_doom_audio_log_once(&leonos_doom_song_reported,
                                        "[doom] PCM submission failed");
             leonos_doom_audio_log_unavailable();
-        } else if ((uint32_t)written < output_bytes) {
-            leonos_doom_pending_bytes = output_bytes - (uint32_t)written;
-            memcpy(leonos_doom_pending, (uint8_t *)leonos_doom_mix + written,
+        } else if ((uint32_t)(written > 0 ? written : 0) < output_bytes) {
+            uint32_t submitted = written > 0 ? (uint32_t)written : 0;
+            leonos_doom_pending_bytes = output_bytes - submitted;
+            memcpy(leonos_doom_pending, (uint8_t *)leonos_doom_mix + submitted,
                    leonos_doom_pending_bytes);
         }
     }
@@ -997,7 +1012,7 @@ static boolean leonos_doom_music_init(void)
         return true;
     }
     if (!leonos_doom_sound_initialized && !leonos_doom_audio_available) {
-        if (leonos_audio_configure(&leonos_doom_audio_format) == 0) {
+        if (leonos_doom_configure_audio() == 0) {
             leonos_doom_audio_available = 1;
         } else {
             leonos_doom_audio_log_unavailable();

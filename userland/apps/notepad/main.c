@@ -357,7 +357,7 @@ static int load_document(const char *path)
         begin_new_document();
         return 0;
     }
-    ret = stat(path, &st);
+    ret = leonos_stat_legacy(path, &st);
     if (ret < 0) {
         set_error_status(T("stat failed ", "状态读取失败 "), ret);
         return ret;

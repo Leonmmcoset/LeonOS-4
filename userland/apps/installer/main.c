@@ -1,7 +1,7 @@
 #include <leonos/fs.h>
+#include <leonos/blockdev.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
-#include <leonos/pty.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/system.h>
@@ -9,6 +9,9 @@
 #include "installer_sha256.h"
 #include "installer_tty.h"
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/mount.h>
+#include <errno.h>
 
 #define INSTALLER_MAX_W 1920
 #define INSTALLER_MAX_H 1080
@@ -129,7 +132,7 @@ static uint8_t installer_lang = LEONOS_LANG_EN;
 static uint8_t installer_theme = LEONOS_UI_THEME_METRO;
 static uint8_t installer_theme_explicit;
 static uint32_t acknowledgements_scroll_y;
-static struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
+static struct leonos_block_disk_info disks[LEONOS_BLOCK_MAX_DISKS];
 static uint32_t disk_count;
 static int32_t selected_disk = -1;
 static char confirm_text[16];
@@ -810,7 +813,7 @@ static void reset_update_app_list(void)
 }
 
 static void format_disk_line(char *buf, uint32_t cap,
-                             const struct leonos_install_disk *disk)
+                             const struct leonos_block_disk_info *disk)
 {
     uint32_t pos = 0;
     uint64_t mib = 0;
@@ -826,8 +829,6 @@ static void format_disk_line(char *buf, uint32_t cap,
     append_u64(buf, &pos, cap, disk->id);
     append_text(buf, &pos, cap, "  ");
     append_text(buf, &pos, cap, disk->name[0] ? disk->name : "Disk");
-    append_text(buf, &pos, cap, " port ");
-    append_u64(buf, &pos, cap, disk->port);
     append_text(buf, &pos, cap, "  ");
     if (mib >= 1024) {
         append_u64(buf, &pos, cap, mib / 1024);
@@ -836,12 +837,6 @@ static void format_disk_line(char *buf, uint32_t cap,
         append_u64(buf, &pos, cap, mib);
         append_text(buf, &pos, cap, " MiB");
     }
-    if (disk->flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT) {
-        append_text(buf, &pos, cap, "  boot");
-    }
-    if (disk->flags & LEONOS_INSTALL_DISK_FLAG_TARGET_MOUNTED) {
-        append_text(buf, &pos, cap, "  mounted");
-    }
 }
 
 static void reset_confirm(void)
@@ -849,6 +844,73 @@ static void reset_confirm(void)
     confirm_text[0] = 0;
     leonos_ui_edit_state_init(&confirm_edit, confirm_text, sizeof(confirm_text));
     confirm_edit.focused = 1;
+}
+
+static int installer_target_partitions(const char *disk_path, int fresh,
+                                       char *esp_path, uint32_t esp_cap,
+                                       char *root_path, uint32_t root_cap)
+{
+    struct leonos_block_partition parts[LEONOS_BLOCK_MAX_PARTITIONS];
+    uint32_t count = 0, esp = UINT32_MAX, root = UINT32_MAX;
+    int ret;
+    if (!disk_path || !esp_path || !root_path) return -EINVAL;
+    if (fresh) {
+        struct leonos_block_disk_info info;
+        uint32_t root_mib;
+        ret = leonos_block_get_info(disk_path, &info);
+        if (ret < 0) return ret;
+        ret = leonos_block_gpt_initialize(disk_path, 1);
+        if (ret < 0) return ret;
+        ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_FAT32,
+                                      128, "LeonOS ESP", &esp);
+        if (ret < 0) return ret;
+        ret = leonos_block_gpt_set_type(disk_path, esp, LEONOS_BLOCK_GPT_ESP);
+        if (ret < 0) return ret;
+        root_mib = (uint32_t)((info.sector_count * info.sector_size) / (1024ULL * 1024ULL));
+        if (root_mib > 256u) root_mib -= 192u; else root_mib = 64u;
+        ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_EXT2,
+                                      root_mib, "LeonOS Root", &root);
+        if (ret < 0) return ret;
+        ret = leonos_block_gpt_set_type(disk_path, root, LEONOS_BLOCK_GPT_LINUX);
+        if (ret < 0) return ret;
+        /* Format through the partition nodes after the GPT reread. */
+        ret = leonos_block_partition_path(disk_path, esp, esp_path, esp_cap);
+        if (ret < 0) return ret;
+        ret = leonos_block_partition_path(disk_path, root, root_path, root_cap);
+        if (ret < 0) return ret;
+        ret = leonos_block_format(esp_path, LEONOS_BLOCK_FILESYSTEM_FAT32, NULL);
+        if (ret < 0) return ret;
+        return leonos_block_format(root_path, LEONOS_BLOCK_FILESYSTEM_EXT2, NULL);
+    }
+    ret = leonos_block_list_partitions(disk_path, parts, LEONOS_BLOCK_MAX_PARTITIONS, &count);
+    if (ret < 0) return ret;
+    for (uint32_t i = 0; i < count && i < LEONOS_BLOCK_MAX_PARTITIONS; ++i) {
+        if (parts[i].filesystem == LEONOS_BLOCK_FILESYSTEM_FAT32 && esp == UINT32_MAX) esp = i;
+        if ((parts[i].filesystem == LEONOS_BLOCK_FILESYSTEM_EXT2 ||
+             parts[i].filesystem == LEONOS_BLOCK_FILESYSTEM_EXFAT) && root == UINT32_MAX) root = i;
+    }
+    if (esp == UINT32_MAX || root == UINT32_MAX) return -ENOENT;
+    copy_text(esp_path, esp_cap, parts[esp].path);
+    copy_text(root_path, root_cap, parts[root].path);
+    return 0;
+}
+
+static int installer_mount_targets(const char *disk_path, int fresh)
+{
+    char esp_path[LEONOS_BLOCK_PATH_LEN], root_path[LEONOS_BLOCK_PATH_LEN];
+    int ret = installer_target_partitions(disk_path, fresh, esp_path, sizeof(esp_path),
+                                          root_path, sizeof(root_path));
+    if (ret < 0) return ret;
+    if (mount(root_path, INSTALL_ROOT_MOUNT, NULL, 0, NULL) < 0) return -errno;
+    if (mkdir(INSTALL_ESP_MOUNT, 0755) < 0 && errno != EEXIST) {
+        (void)umount2(INSTALL_ROOT_MOUNT, 0);
+        return -errno;
+    }
+    if (mount(esp_path, INSTALL_ESP_MOUNT, "fat32", 0, NULL) < 0) {
+        (void)umount2(INSTALL_ROOT_MOUNT, 0);
+        return -errno;
+    }
+    return 0;
 }
 
 static int confirmation_ok(void)
@@ -860,7 +922,7 @@ static int confirmation_ok(void)
 static void refresh_disks(void)
 {
     uint32_t count = 0;
-    int ret = leonos_install_list_disks(disks, LEONOS_INSTALL_MAX_DISKS, &count);
+    int ret = leonos_block_list_disks(disks, LEONOS_BLOCK_MAX_DISKS, &count);
     if (ret < 0) {
         disk_count = 0;
         selected_disk = -1;
@@ -868,7 +930,7 @@ static void refresh_disks(void)
         dirty = 1;
         return;
     }
-    disk_count = count;
+    disk_count = count > LEONOS_BLOCK_MAX_DISKS ? LEONOS_BLOCK_MAX_DISKS : count;
     if (disk_count == 0) {
         selected_disk = -1;
         set_status(T("No disks were found", "未找到硬盘"), T("Attach a disk and click Refresh.", "连接硬盘后点击刷新。"));
@@ -1115,7 +1177,7 @@ static void draw_disk_page(struct leonos_ui_surface *ui)
     if (disk_count == 0) {
         leonos_ui_text(ui, l.content_x + 12, l.disk_list_y + 20, T("No disks were found.", "未找到硬盘。"), LEONOS_UI_DARK, LEONOS_UI_WHITE);
     }
-    for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
+    for (uint32_t i = 0; i < disk_count && i < LEONOS_BLOCK_MAX_DISKS; ++i) {
         uint32_t row_y = l.disk_list_y + 2 + i * 24;
         if (row_y + 22 > l.disk_list_y + l.disk_list_h) {
             break;
@@ -1420,7 +1482,7 @@ static int count_files_recursive(const char *src, uint32_t *out_count)
         }
         if (entries[i].type == LEONOS_FS_TYPE_FILE) {
             struct leonos_stat st;
-            if (stat(child, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
+            if (leonos_stat_legacy(child, &st) == 0 && st.type == LEONOS_FS_TYPE_FILE) {
                 copy_total_bytes += st.size;
             }
             ++*out_count;
@@ -1442,7 +1504,7 @@ out:
 static int path_has_type(const char *path, uint32_t type)
 {
     struct leonos_stat st;
-    int ret = stat(path, &st);
+    int ret = leonos_stat_legacy(path, &st);
     if (ret < 0) {
         return ret;
     }
@@ -1457,7 +1519,7 @@ static int source_file_exists(const char *path)
 static int add_file_copy_work(const char *path)
 {
     struct leonos_stat st;
-    int ret = stat(path, &st);
+    int ret = leonos_stat_legacy(path, &st);
     if (ret < 0) {
         return ret;
     }
@@ -1473,7 +1535,7 @@ static int remove_path_recursive(const char *path)
 {
     struct leonos_stat st;
     struct leonos_dir_entry *entries;
-    int ret = stat(path, &st);
+    int ret = leonos_stat_legacy(path, &st);
     if (ret < 0) {
         return ret == -2 ? 0 : ret;
     }
@@ -1631,7 +1693,7 @@ static int copy_dir_recursive(const char *src, const char *dst,
             ret = installer_mkdir(dst_child);
             if (ret == -17) {
                 struct leonos_stat dst_st;
-                ret = stat(dst_child, &dst_st);
+                ret = leonos_stat_legacy(dst_child, &dst_st);
                 if (ret == 0 && dst_st.type == LEONOS_FS_TYPE_DIR) {
                     ret = 0;
                 } else if (ret == 0) {
@@ -1750,7 +1812,7 @@ static int package_has_changes(const char *src, const char *dst)
         }
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
             struct leonos_stat dst_stat;
-            ret = stat(dst_child, &dst_stat);
+            ret = leonos_stat_legacy(dst_child, &dst_stat);
             if (ret < 0 || dst_stat.type != LEONOS_FS_TYPE_DIR) {
                 ret = 1;
                 goto out;
@@ -1859,7 +1921,7 @@ static int copy_changed_dir_recursive(const char *src, const char *dst,
         }
         if (entries[i].type == LEONOS_FS_TYPE_DIR) {
             struct leonos_stat dst_st;
-            int dst_ret = stat(dst_child, &dst_st);
+            int dst_ret = leonos_stat_legacy(dst_child, &dst_st);
             if (dst_ret == 0 && dst_st.type != LEONOS_FS_TYPE_DIR) {
                 ret = remove_path_recursive(dst_child);
                 if (ret < 0) {
@@ -1874,7 +1936,7 @@ static int copy_changed_dir_recursive(const char *src, const char *dst,
             uint8_t missing;
             uint8_t different;
             struct leonos_stat dst_st;
-            int dst_ret = stat(dst_child, &dst_st);
+            int dst_ret = leonos_stat_legacy(dst_child, &dst_st);
             if (dst_ret == 0 && dst_st.type != LEONOS_FS_TYPE_FILE) {
                 ret = remove_path_recursive(dst_child);
                 if (ret < 0) {
@@ -1928,7 +1990,7 @@ static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
     {
         const char *state_path = "/target/system/state";
         struct leonos_stat state_st;
-        ret = stat(state_path, &state_st);
+        ret = leonos_stat_legacy(state_path, &state_st);
         if (ret == 0) {
             if (state_st.type == LEONOS_FS_TYPE_DIR) {
                 return 0;
@@ -1947,7 +2009,7 @@ static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
         }
         ret = installer_mkdir(state_path);
         if (ret == -17) {
-            ret = stat(state_path, &state_st);
+            ret = leonos_stat_legacy(state_path, &state_st);
             if (ret == 0 && state_st.type == LEONOS_FS_TYPE_DIR) {
                 return 0;
             }
@@ -2278,7 +2340,7 @@ static int copy_selected_update_apps(int window_id, struct leonos_ui_surface *ui
         }
         {
             struct leonos_stat package_stat;
-            ret = stat(package_dir, &package_stat);
+            ret = leonos_stat_legacy(package_dir, &package_stat);
             if (ret == 0) {
                 if (package_stat.type != LEONOS_FS_TYPE_DIR) {
                     ret = remove_path_recursive(package_dir);
@@ -2336,7 +2398,7 @@ static int write_target_theme(void)
     uint32_t input_len = 0;
     uint32_t output_len = 0;
     uint32_t offset = 0;
-    int ret = stat("/target/system/config/display.conf", &stat_info);
+    int ret = leonos_stat_legacy("/target/system/config/display.conf", &stat_info);
     if (ret == 0) {
         int fd;
         long got;
@@ -2484,19 +2546,17 @@ static void tty_perform_update(void)
 
 static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
 {
-    uint32_t disk_id;
     int ret;
     if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
         return;
     }
-    disk_id = disks[selected_disk].id;
     page = PAGE_PROGRESS;
     progress_value = 0;
     reset_update_app_list();
     show_progress(window_id, ui, 5,
                   T("Mounting target filesystems", "正在挂载目标文件系统"),
                   T("Root: /target; ESP: /target/boot", "根分区：/target；ESP：/target/boot"));
-    ret = leonos_install_mount_target(disk_id);
+    ret = installer_mount_targets(disks[selected_disk].path, 0);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Mount failed", "挂载失败"));
         return;
@@ -2529,12 +2589,10 @@ static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
 
 static void perform_install(int window_id, struct leonos_ui_surface *ui)
 {
-    uint32_t disk_id;
     int ret;
     if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
         return;
     }
-    disk_id = disks[selected_disk].id;
     install_running = 1;
     install_success = 0;
     page = PAGE_PROGRESS;
@@ -2544,14 +2602,8 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
     copy_done_bytes = 0;
 
     show_progress(window_id, ui, 2, "Preparing target disk", "");
-    ret = leonos_install_format_target(disk_id);
-    if (ret < 0) {
-        finish_install(window_id, ui, ret, "Format failed");
-        return;
-    }
-
     show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (exFAT or ext2), ESP: /target/boot (FAT32)");
-    ret = leonos_install_mount_target(disk_id);
+    ret = installer_mount_targets(disks[selected_disk].path, 1);
     if (ret < 0) {
         finish_install(window_id, ui, ret, "Mount failed");
         return;
@@ -2609,12 +2661,10 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
         "system/kernel.sys",
         "system/middlelayer.sys",
     };
-    uint32_t disk_id;
     int ret;
     if (selected_disk < 0 || (uint32_t)selected_disk >= disk_count) {
         return;
     }
-    disk_id = disks[selected_disk].id;
     install_running = 1;
     install_success = 0;
     page = PAGE_PROGRESS;
@@ -2625,7 +2675,7 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
 
     show_progress(window_id, ui, 2, T("Mounting target filesystems", "正在挂载目标文件系统"),
                   T("Root: /target; ESP: /target/boot", "根分区：/target；ESP：/target/boot"));
-    ret = leonos_install_mount_target(disk_id);
+    ret = installer_mount_targets(disks[selected_disk].path, 0);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Mount failed", "挂载失败"));
         return;
@@ -3136,7 +3186,7 @@ int main(void)
     struct installer_tty_context tty_context;
     int window_id;
 
-    if (leonos_pty_self() > 0) {
+    if (isatty(STDIN_FILENO)) {
         installer_tty_mode = 1;
         installer_lang = (uint8_t)leonos_i18n_language();
         tty_context.disks = disks;

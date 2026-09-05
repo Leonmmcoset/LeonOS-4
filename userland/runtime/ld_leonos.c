@@ -687,7 +687,7 @@ static int map_module_file(const char *path, struct loader_module *module)
     clear_missing_shared_object();
     fd = open(path, O_RDONLY, 0);
     if (fd < 0) {
-        if (stat(path, &stat_result) < 0) {
+        if (leonos_stat_legacy(path, &stat_result) < 0) {
             text_copy(missing_shared_object, sizeof(missing_shared_object), path);
             set_error("shared object not found");
         } else {

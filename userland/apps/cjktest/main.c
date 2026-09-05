@@ -76,7 +76,7 @@ static void run_file_test(void)
         write_ret = (int)write(fd, content, strlen(content));
         close(fd);
     }
-    stat_ret = stat(path, &st);
+    stat_ret = leonos_stat_legacy(path, &st);
     fd = open(dir, LEONOS_O_RDONLY, 0);
     if (fd >= 0) {
         while (leonos_readdir(fd, &entry) > 0) {

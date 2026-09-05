@@ -347,7 +347,7 @@ static int validate_wallpaper_bmp(const char *path)
     if (!path || !path[0]) {
         return 0;
     }
-    if (stat(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
+    if (leonos_stat_legacy(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
         st.size < sizeof(header) || st.size > SETTINGS_WALLPAPER_BMP_MAX_BYTES) {
         return 0;
     }

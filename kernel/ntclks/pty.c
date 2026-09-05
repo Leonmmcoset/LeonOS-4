@@ -36,6 +36,7 @@ static struct pty_session sessions[PTY_MAX];
 static uint32_t console_pty_id;
 static uint8_t console_shift_down;
 static uint8_t console_ctrl_down;
+static uint8_t console_alt_down;
 
 /**
  * @brief Return the PTY session for pty_id (1-based), or NULL if invalid/unused.
@@ -116,6 +117,7 @@ void pty_init(void)
     console_pty_id = 0;
     console_shift_down = 0;
     console_ctrl_down = 0;
+    console_alt_down = 0;
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
         for (uint32_t j = 0; j < sizeof(sessions[i]); ++j) {
             ((uint8_t *)&sessions[i])[j] = 0;
@@ -135,6 +137,10 @@ int pty_bind_console(uint32_t pty_id, uint32_t owner_pid)
     session->foreground_pgid = owner_pid;
     session->console = 1;
     console_pty_id = pty_id;
+    /* Publish the controlling PTY together with the session and foreground
+     * group.  Callers may bind a console before the task is first scheduled,
+     * so terminal ioctls must never observe a partially attached owner. */
+    owner->pty_id = pty_id;
     owner->process_session = owner_pid;
     owner->process_group = owner_pid;
     return 0;
@@ -210,6 +216,20 @@ void pty_console_key_event(uint8_t keycode, uint8_t pressed)
     }
     if (keycode == 29 || keycode == 116) {
         console_ctrl_down = pressed ? 1 : 0;
+        return;
+    }
+    if (keycode == 56 || keycode == 115) {
+        console_alt_down = pressed ? 1 : 0;
+        return;
+    }
+    /* Diagnostic escape hatch for distinguishing a frozen display from a
+     * stalled TTY process.  console_write_tty_len() deliberately bypasses
+     * kernel-log timestamps and writes the same bytes to the framebuffer,
+     * serial console, and log buffer. */
+    if (pressed && keycode == 88 && console_ctrl_down &&
+        console_alt_down && console_shift_down) {
+        static const char test_message[] = "\r\nTest message\r\n";
+        console_write_tty_len(test_message, sizeof(test_message) - 1U);
         return;
     }
     if (!pressed || !session || !console_key_to_bytes(keycode, bytes, &length)) {
@@ -323,7 +343,7 @@ int pty_is_active(uint32_t pty_id)
 int64_t pty_read_output(uint32_t owner_pid, uint32_t pty_id, char *buffer, uint32_t length)
 {
     struct pty_session *session = find_session(pty_id);
-    if (!session || session->owner_pid != owner_pid) {
+    if (!session || (owner_pid && session->owner_pid != owner_pid)) {
         return -22;
     }
     if (!buffer || length == 0) {
@@ -341,7 +361,7 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
 {
     struct pty_session *session = find_session(pty_id);
     uint32_t written = 0;
-    if (!session || session->owner_pid != owner_pid) {
+    if (!session || (owner_pid && session->owner_pid != owner_pid)) {
         return -22;
     }
     if (!buffer || length == 0) {
@@ -446,6 +466,16 @@ uint32_t pty_input_available(uint32_t pty_id)
         return session->input_head - session->input_tail;
     }
     return PTY_INPUT_CAP - session->input_tail + session->input_head;
+}
+
+uint32_t pty_output_available(uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session) return 0;
+    if (session->output_head >= session->output_tail) {
+        return session->output_head - session->output_tail;
+    }
+    return PTY_OUTPUT_CAP - session->output_tail + session->output_head;
 }
 
 /**

@@ -8,6 +8,6 @@ struct winsize {
 
 int ioctl(int fd, unsigned long request, void *arg);
 
-#define TIOCGWINSZ 0x5401UL
+#define TIOCGWINSZ 0x5413UL
 
 #endif

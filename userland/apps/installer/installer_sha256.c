@@ -165,8 +165,8 @@ int installer_files_equal(const char *source, const char *target,
     int ret;
     if (out_missing) *out_missing = 0;
     if (out_diff) *out_diff = 1;
-    if (stat(source, &source_st) < 0 || source_st.type != LEONOS_FS_TYPE_FILE) return -2;
-    if (stat(target, &target_st) < 0 || target_st.type != LEONOS_FS_TYPE_FILE) {
+    if (leonos_stat_legacy(source, &source_st) < 0 || source_st.type != LEONOS_FS_TYPE_FILE) return -2;
+    if (leonos_stat_legacy(target, &target_st) < 0 || target_st.type != LEONOS_FS_TYPE_FILE) {
         if (out_missing) *out_missing = 1;
         return 0;
     }

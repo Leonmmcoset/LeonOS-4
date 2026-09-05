@@ -157,7 +157,7 @@ implementation.
 dedicated syscall numbers. Current request groups:
 
 All libc wrappers now open a matching synthetic `/dev` node before issuing an
-ioctl (`/dev/fb0`, `/dev/input/event0`, `/dev/audio0`, `/dev/net0`,
+ioctl (`/dev/fb0`, `/dev/input-method`, `/dev/dsp`, `/dev/net0`,
 `/dev/disk0`, `/dev/ptmx`, or `/dev/tty`). The kernel still accepts the legacy fd 3 control
 channel for ABI compatibility with older binaries.
 
@@ -171,6 +171,21 @@ channel for ABI compatibility with older binaries.
 - Text layout and Unicode services: `include/leonos/text.h`
 - PTY creation, I/O, and spawn: `include/leonos/pty.h`
 - Minimal signal dispositions: `include/leonos/signal.h`
+
+Raw input uses `read(2)` rather than LeonOS request codes: `/dev/input/event0`
+and `/dev/input/event1` return Linux `struct input_event` records. The kernel
+implements `EVIOCGVERSION`, `EVIOCGID`, `EVIOCGNAME`, `EVIOCGPHYS`,
+`EVIOCGBIT`, `EVIOCGKEY`, and no-op `EVIOCGRAB`, plus `O_NONBLOCK` and
+`poll(POLLIN)`. Text-input methods remain a separate transition service at
+`/dev/input-method` until the GUI socket protocol replaces it.
+
+PCM playback uses the OSS `/dev/dsp` interface rather than a LeonOS request
+code. Include `<linux/soundcard.h>`, set `AFMT_S16_LE`, two channels and the
+desired 8-48 kHz rate with `SNDCTL_DSP_*`, then use `write(2)`. The initial
+subset includes format/rate/channel setup, `GETFMTS`, `GETCAPS`,
+`GETBLKSIZE`, `GETOSPACE`, `GETODELAY`, `NONBLOCK`, and `poll(POLLOUT)`.
+`/dev/audio0` is only a compatibility endpoint for old private audio ioctl
+clients.
 
 Important requests include:
 
@@ -208,22 +223,10 @@ Important requests include:
 - `LEONOS_IOCTL_NET_SOCKET_OPEN`, `LEONOS_IOCTL_NET_SOCKET_CONNECT`,
   `LEONOS_IOCTL_NET_SOCKET_SEND`, `LEONOS_IOCTL_NET_SOCKET_RECV`,
   `LEONOS_IOCTL_NET_SOCKET_CLOSE`, `LEONOS_IOCTL_NET_CONNECTIONS`
-- `LEONOS_INSTALL_IOCTL_LIST_DISKS`, `LEONOS_INSTALL_IOCTL_FORMAT_TARGET`
-  (with `LEONOS_INSTALL_IOCTL_FORMAT_ESP` retained as an ABI alias),
-  `LEONOS_INSTALL_IOCTL_MOUNT_TARGET`
-- `LEONOS_DISK_IOCTL_LIST_PARTITIONS`, `LEONOS_DISK_IOCTL_FORMAT_PARTITION`,
-  `LEONOS_DISK_IOCTL_DELETE_PARTITION`, `LEONOS_DISK_IOCTL_CREATE_PARTITION`,
-  `LEONOS_DISK_IOCTL_MOUNT_PARTITION`,
-  `LEONOS_DISK_IOCTL_UNMOUNT_PARTITION`, `LEONOS_DISK_IOCTL_EDIT_PARTITION`,
-  and `LEONOS_DISK_IOCTL_INITIALIZE_GPT`.
-  These use the fixed-size records in
-  `leonos/fs.h`; listing reads a GPT table, while create/format/delete/mount/
-  unmount/edit/initialize require administrator install authorization and
-  reject current boot or mounted installer-target disks. GPT initialization
-  writes a protective MBR and both GPT copies and is intended for the
-  installer-only `gptinit` utility. A data mount returns a stable
-  `/mnt/disk<N>p<M>` path; unmount is rejected with busy while a live process
-  holds a CWD, descriptor, executable image, or file mapping on that volume.
+- Block storage uses `/dev/diskN` and `/dev/diskNpN` with `BLKGETSIZE64`,
+  `BLKSSZGET`, `BLKRRPART`, aligned `read`/`write`/`lseek`, and
+  `mount(2)`/`umount2(2)`. The former LeonOS disk-management ioctl ABI is
+  removed from the public SDK and syscall dispatcher.
 - `LEONOS_TEXT_IOCTL_LAYOUT_UTF8`
 - `LEONOS_PTY_IOCTL_CREATE`, `LEONOS_PTY_IOCTL_SELF`,
   `LEONOS_PTY_IOCTL_READ_OUTPUT`, `LEONOS_PTY_IOCTL_WRITE_INPUT`,

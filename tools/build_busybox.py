@@ -104,7 +104,7 @@ MINIMAL_LIBBB_OBJECTS = (
     "procps.o",
     "bb_getgroups.o",
     "u_signal_names.o",
-    "leonos_storage.o",
+    "block_storage.o",
 )
 
 def run(command: list[str], *, cwd: Path | None = None) -> None:
@@ -152,7 +152,8 @@ def source_cache_key(revision: str) -> str:
     for path in (
         Path(__file__),
         ROOT / "userland/busybox/leonos_shim.c",
-        ROOT / "userland/busybox/leonos_storage.c",
+        ROOT / "userland/busybox/block_storage.c",
+        ROOT / "userland/busybox/include/sys/ioctl.h",
         ROOT / "userland/busybox/leonos.config",
     ):
         digest.update(path.read_bytes())
@@ -187,7 +188,7 @@ def write_minimal_libbb_kbuild(kbuild: Path, generated: bool) -> None:
 
 def trim_libbb(source: Path) -> None:
     shutil.copyfile(ROOT / "userland/busybox/leonos_shim.c", source / "libbb/leonos_shim.c")
-    shutil.copyfile(ROOT / "userland/busybox/leonos_storage.c", source / "libbb/leonos_storage.c")
+    shutil.copyfile(ROOT / "userland/busybox/block_storage.c", source / "libbb/block_storage.c")
     patch_percentm_for_leonos(source)
     patch_time_for_leonos(source)
     write_minimal_libbb_kbuild(source / "libbb/Kbuild.src", False)
@@ -225,6 +226,27 @@ def patch_optional_config_macros(source: Path) -> None:
             raise SystemExit("unable to add BusyBox ps config fallback")
         text = text.replace(marker, fallback, 1)
         path.write_text(text, encoding="utf-8")
+
+
+def patch_picolibc_termios_for_leonos(picolibc_include: Path) -> None:
+    """Make the temporary BusyBox winsize ABI match Linux's eight-byte UAPI."""
+    path = picolibc_include / "sys/termios.h"
+    text = path.read_text(encoding="utf-8")
+    old = """struct winsize {
+    unsigned short ws_row;
+    unsigned short ws_col;
+};"""
+    new = """struct winsize {
+    unsigned short ws_row;
+    unsigned short ws_col;
+    unsigned short ws_xpixel;
+    unsigned short ws_ypixel;
+};"""
+    if new in text:
+        return
+    if old not in text:
+        raise SystemExit("unsupported Picolibc termios header: winsize marker missing")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
 def patch_percentm_for_leonos(source: Path) -> None:
@@ -469,7 +491,7 @@ def patch_time_for_leonos(source: Path) -> None:
 
 
 def patch_ash_for_leonos(source: Path) -> None:
-    """Resolve LeonOS image applications before Ash searches Linux paths."""
+    """Resolve LeonOS image applications and adapt ash job control."""
     path = source / "shell/ash.c"
     text = path.read_text(encoding="utf-8")
     declaration = (
@@ -570,6 +592,96 @@ def patch_ash_for_leonos(source: Path) -> None:
         if cd_home_lookup not in text:
             raise SystemExit("unsupported BusyBox ash source revision: cd HOME marker missing")
         text = text.replace(cd_home_lookup, cd_home_replacement, 1)
+
+    # LeonOS PTYs do not implement the traditional stop-and-resume delivery
+    # of SIGTTIN.  Upstream ash retries tcgetpgrp() forever when it observes
+    # a background process group, so a transient/inherited foreground group
+    # mismatch would leave the shell after its banner with no prompt.  Give
+    # the kernel a chance to report the correct group once, then degrade to
+    # the POSIX no-job-control mode instead of spinning indefinitely.
+    jobctl_loop = """\t\twhile (1) { /* while we are in the background */
+\t\t\tpgrp = tcgetpgrp(fd);
+\t\t\tif (pgrp < 0) {
+"""
+    jobctl_loop_replacement = """\t\t{
+\t\t\tunsigned leonos_jobctl_retries = 0;
+\t\t\twhile (1) { /* while we are in the background */
+\t\t\t\tpgrp = tcgetpgrp(fd);
+\t\t\t\tif (pgrp < 0) {
+"""
+    if "leonos_jobctl_retries" not in text:
+        if jobctl_loop not in text:
+            raise SystemExit("unsupported BusyBox ash source revision: job-control loop marker missing")
+        text = text.replace(jobctl_loop, jobctl_loop_replacement, 1)
+    retry_call = "\t\t\tkillpg(0, SIGTTIN);\n\t\t}\n\t\tinitialpgrp = pgrp;"
+    retry_call_replacement = """\t\t\tif (killpg(0, SIGTTIN) < 0 || ++leonos_jobctl_retries >= 2) {
+\t\t\t\tash_msg("can't access tty; job control turned off");
+\t\t\t\tmflag = on = 0;
+\t\t\t\tgoto close;
+\t\t\t}
+\t\t\t}
+\t\t}
+\t\tinitialpgrp = pgrp;"""
+    if "leonos_jobctl_retries >= 2" not in text:
+        if retry_call not in text:
+            raise SystemExit("unsupported BusyBox ash source revision: job-control retry marker missing")
+        text = text.replace(retry_call, retry_call_replacement, 1)
+    path.write_text(text, encoding="utf-8")
+
+
+def patch_lineedit_for_leonos(source: Path) -> None:
+    """Use the LeonOS account service for the interactive prompt.
+
+    Picolibc's passwd helpers read /etc/passwd, while LeonOS accounts are
+    supplied by the authentication service. The default fancy ash prompt
+    asks the line editor for the home directory, so falling through to
+    getpwuid() can block or repeatedly fail before the first prompt.
+    """
+    path = source / "libbb/lineedit.c"
+    text = path.read_text(encoding="utf-8")
+    declarations = (
+        "/* LeonOS account lookup for the interactive prompt. */\n"
+        "extern const char *leonos_shell_home(void);\n"
+        "extern const char *leonos_shell_user_name(void);\n\n"
+    )
+    marker = "#if ENABLE_USERNAME_OR_HOMEDIR\n"
+    if declarations not in text:
+        if marker not in text:
+            raise SystemExit("unsupported BusyBox lineedit source revision: account marker missing")
+        text = text.replace(marker, declarations + marker, 1)
+
+    old_get_user = (
+        "static void get_user_strings(void)\n"
+        "{\n"
+        "\tstruct passwd *entry;\n"
+        "\n"
+        "\tgot_user_strings = 1;\n"
+        "\tentry = getpwuid(geteuid());\n"
+        "\tif (entry) {\n"
+        "\t\tuser_buf = xstrdup(entry->pw_name);\n"
+        "\t\thome_pwd_buf = xstrdup(entry->pw_dir);\n"
+        "\t}\n"
+        "}\n"
+    )
+    new_get_user = (
+        "static void get_user_strings(void)\n"
+        "{\n"
+        "\tconst char *username;\n"
+        "\tconst char *home;\n"
+        "\n"
+        "\tgot_user_strings = 1;\n"
+        "\tusername = leonos_shell_user_name();\n"
+        "\thome = leonos_shell_home();\n"
+        "\tif (username && username[0])\n"
+        "\t\tuser_buf = xstrdup(username);\n"
+        "\tif (home && home[0])\n"
+        "\t\thome_pwd_buf = xstrdup(home);\n"
+        "}\n"
+    )
+    if new_get_user not in text:
+        if old_get_user not in text:
+            raise SystemExit("unsupported BusyBox lineedit source revision: passwd lookup marker missing")
+        text = text.replace(old_get_user, new_get_user, 1)
     path.write_text(text, encoding="utf-8")
 
 
@@ -644,7 +756,7 @@ def main() -> None:
         source / "Makefile", args.config, args.picolibc_prefix / "include",
         args.leonos_libc_include, args.leonos_include, args.linker_script,
         args.leonos_lib, args.picolibc_lib, ROOT / "userland/busybox/leonos_shim.c",
-        ROOT / "userland/busybox/leonos_storage.c",
+        ROOT / "userland/busybox/block_storage.c",
     ]
     for path in required:
         if not path.exists():
@@ -661,6 +773,7 @@ def main() -> None:
     patch_whoami_for_leonos(source_dir)
     patch_power_applets_for_leonos(source_dir)
     patch_ash_for_leonos(source_dir)
+    patch_lineedit_for_leonos(source_dir)
     work_root = source_dir.parent
     output_dir = work_root / "output"
     sdk_dir = work_root / "sdk"
@@ -674,6 +787,7 @@ def main() -> None:
 
     # BusyBox cannot handle the repository's space-containing path in O=.
     copy_tree(args.picolibc_prefix, sdk_dir / "picolibc")
+    patch_picolibc_termios_for_leonos(sdk_dir / "picolibc/include")
     copy_tree(args.leonos_libc_include, sdk_dir / "leonos-libc")
     copy_tree(args.leonos_include, sdk_dir / "include")
     copy_tree(ROOT / "userland/busybox/include", sdk_dir / "busybox-include")

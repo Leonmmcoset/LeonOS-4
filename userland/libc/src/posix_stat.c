@@ -49,7 +49,7 @@ static ino_t posix_path_inode(const char *path)
     return (ino_t)(hash ? hash : 1ULL);
 }
 
-int leonos_posix_stat(const char *path, struct stat *status)
+int stat(const char *path, struct stat *status)
 {
     struct leonos_posix_stat_raw raw;
     long result;
@@ -70,7 +70,7 @@ int leonos_posix_stat(const char *path, struct stat *status)
     return 0;
 }
 
-int leonos_posix_fstat(int fd, struct stat *status)
+int fstat(int fd, struct stat *status)
 {
     struct leonos_posix_stat_raw raw;
     long result;
@@ -86,14 +86,26 @@ int leonos_posix_fstat(int fd, struct stat *status)
     return fill_posix_stat(&raw, status);
 }
 
-int leonos_posix_lstat(const char *path, struct stat *status)
-{
-    return leonos_posix_stat(path, status);
-}
-
 int lstat(const char *path, struct stat *status)
 {
-    return leonos_posix_lstat(path, status);
+    return stat(path, status);
+}
+
+/* Compatibility names used by the standalone BusyBox port.  They retain
+ * POSIX struct stat semantics; they are not the compact legacy ABI. */
+int leonos_posix_stat(const char *path, struct stat *status)
+{
+    return stat(path, status);
+}
+
+int leonos_posix_fstat(int fd, struct stat *status)
+{
+    return fstat(fd, status);
+}
+
+int leonos_posix_lstat(const char *path, struct stat *status)
+{
+    return lstat(path, status);
 }
 
 int access(const char *path, int mode)

@@ -35,6 +35,13 @@
 #define LEONOS_DEV_PTMX "/dev/ptmx"
 #define LEONOS_DEV_FB0 "/dev/fb0"
 #define LEONOS_DEV_INPUT_EVENT0 "/dev/input/event0"
+#define LEONOS_DEV_INPUT_EVENT1 "/dev/input/event1"
+/* Transitional text-input service. This is deliberately distinct from the
+ * evdev streams above and will move to the GUI service socket. */
+#define LEONOS_DEV_INPUT_METHOD "/dev/input-method"
+/* Linux OSS PCM playback device. */
+#define LEONOS_DEV_DSP "/dev/dsp"
+/* Legacy alias retained solely for old binaries during the ABI migration. */
 #define LEONOS_DEV_AUDIO0 "/dev/audio0"
 #define LEONOS_DEV_SERIAL0 "/dev/serial0"
 #define LEONOS_DEV_NET0 "/dev/net0"

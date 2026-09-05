@@ -101,7 +101,7 @@ static int load_sprite_bmp(const char *path, struct minesweeper_sprite *sprite)
     int top_down;
     int fd;
 
-    if (!path || !sprite || stat(path, &st) < 0 ||
+    if (!path || !sprite || leonos_stat_legacy(path, &st) < 0 ||
         st.type != LEONOS_FS_TYPE_FILE || st.size < 54 ||
         st.size > sizeof(bmp)) {
         return 0;

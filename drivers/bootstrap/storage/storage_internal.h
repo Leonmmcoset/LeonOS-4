@@ -566,6 +566,9 @@ static uint8_t ahci_cmd_table_buf[256] __attribute__((aligned(128)));
 static struct ahci_cmd_header ahci_cmd_headers[32] __attribute__((aligned(1024)));
 static uint8_t storage_scratch[STORAGE_SCRATCH_SECTORS * SECTOR_SIZE] __attribute__((aligned(4096)));
 static uint8_t storage_cluster_buf[64 * SECTOR_SIZE] __attribute__((aligned(4096)));
+
+/* The public /dev block namespace is rebuilt whenever storage is probed. */
+void storage_disk_block_cache_reset(void);
 static uint8_t storage_fat_cache_data[STORAGE_FAT_CACHE_SECTORS * SECTOR_SIZE]
     __attribute__((aligned(4096)));
 static uint8_t storage_read_cache_data[STORAGE_READAHEAD_SECTORS * SECTOR_SIZE]
@@ -595,6 +598,10 @@ static struct ahci_pending_command ahci_pending_command;
  * namespace enumerator calls this to give root selection identical behavior
  * to AHCI and IDE disks. */
 static int storage_try_mount_root_disk(struct install_disk_state *disk);
+
+/* Implemented by storage_disk.c, which is included after this module. */
+int storage_disk_block_info(uint32_t disk_id, int32_t partition_index,
+                            uint64_t *out_first_lba, uint64_t *out_sector_count);
 
 struct storage_sector_cache {
     struct storage_volume *volume;

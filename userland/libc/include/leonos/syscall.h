@@ -4,49 +4,73 @@
 #include <leonos/fs.h>
 #include <leonos/auth.h>
 #include <leonos/startup.h>
+#include <linux/syscall.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define SYS_read 0
-#define SYS_write 1
-#define SYS_open 2
-#define SYS_close 3
-#define SYS_pipe 22
-#define SYS_stat 4
-#define SYS_fstat 5
-#define SYS_lseek 8
-#define SYS_mmap 9
-#define SYS_mprotect 10
-#define SYS_munmap 11
-#define SYS_ioctl 16
-#define SYS_sched_yield 24
-#define SYS_dup 32
-#define SYS_dup2 33
-#define SYS_nanosleep 35
-#define SYS_getpid 39
-#define SYS_setpgid 109
-#define SYS_fork 57
-#define SYS_vfork 58
-#define SYS_execve 59
-#define SYS_exit 60
-#define SYS_wait4 61
-#define SYS_kill 62
+#define SYS_read __NR_read
+#define SYS_write __NR_write
+#define SYS_open __NR_open
+#define SYS_close __NR_close
+#define SYS_pipe __NR_pipe
+#define SYS_socket __NR_socket
+#define SYS_connect __NR_connect
+#define SYS_accept __NR_accept
+#define SYS_bind __NR_bind
+#define SYS_listen __NR_listen
+#define SYS_getsockname __NR_getsockname
+#define SYS_getsockopt __NR_getsockopt
+#define SYS_setsockopt __NR_setsockopt
+#define SYS_shutdown __NR_shutdown
+#define SYS_sendto __NR_sendto
+#define SYS_recvfrom __NR_recvfrom
+#define SYS_send __NR_send
+#define SYS_recv __NR_recv
+#define SYS_stat __NR_stat
+#define SYS_fstat __NR_fstat
+#define SYS_lseek __NR_lseek
+#define SYS_ftruncate __NR_ftruncate
+#define SYS_mmap __NR_mmap
+#define SYS_mprotect __NR_mprotect
+#define SYS_munmap __NR_munmap
+#define SYS_ioctl __NR_ioctl
+#define SYS_poll __NR_poll
+#define SYS_sched_yield __NR_sched_yield
+#define SYS_dup __NR_dup
+#define SYS_dup2 __NR_dup2
+#define SYS_nanosleep __NR_nanosleep
+#define SYS_getpid __NR_getpid
+#define SYS_setpgid __NR_setpgid
+#define SYS_fork __NR_fork
+#define SYS_vfork __NR_vfork
+#define SYS_execve __NR_execve
+#define SYS_exit __NR_exit
+#define SYS_wait4 __NR_wait4
+#define SYS_kill __NR_kill
 #define SYS_nice 34
-#define SYS_getppid 110
-#define SYS_getpgrp 111
-#define SYS_setsid 112
-#define SYS_getpgid 121
-#define SYS_getpriority 140
-#define SYS_setpriority 141
-#define SYS_getrlimit 97
-#define SYS_setrlimit 160
-#define SYS_getcwd 79
-#define SYS_chdir 80
-#define SYS_rename 82
-#define SYS_mkdir 83
-#define SYS_rmdir 84
-#define SYS_unlink 87
-#define SYS_fcntl 72
+#define SYS_getppid __NR_getppid
+#define SYS_getpgrp __NR_getpgrp
+#define SYS_setsid __NR_setsid
+#define SYS_getpgid __NR_getpgid
+#define SYS_getpriority __NR_getpriority
+#define SYS_setpriority __NR_setpriority
+#define SYS_getrlimit __NR_getrlimit
+#define SYS_setrlimit __NR_setrlimit
+#define SYS_getcwd __NR_getcwd
+#define SYS_chdir __NR_chdir
+#define SYS_rename __NR_rename
+#define SYS_mkdir __NR_mkdir
+#define SYS_rmdir __NR_rmdir
+#define SYS_unlink __NR_unlink
+#define SYS_fcntl __NR_fcntl
+#define SYS_openat __NR_openat
+#define SYS_clock_gettime __NR_clock_gettime
+#define SYS_rt_sigaction __NR_rt_sigaction
+#define SYS_rt_sigprocmask __NR_rt_sigprocmask
+#define SYS_rt_sigreturn __NR_rt_sigreturn
+#define SYS_rt_sigsuspend __NR_rt_sigsuspend
+#define SYS_mount __NR_mount
+#define SYS_umount2 __NR_umount2
 
 #define LEONOS_PROT_READ 0x1
 #define LEONOS_PROT_WRITE 0x2
@@ -72,6 +96,7 @@ long syscall3(long n, long a0, long a1, long a2);
 long syscall6(long n, long a0, long a1, long a2, long a3, long a4, long a5);
 
 int open(const char *path, int flags, ...);
+int openat(int dirfd, const char *path, int flags, ...);
 long read(int fd, void *buf, size_t len);
 long write(int fd, const void *buf, size_t len);
 int close(int fd);
@@ -85,8 +110,8 @@ int ioctl(int fd, unsigned long request, void *arg);
 int sched_yield(void);
 int sleep_ms(unsigned long ms);
 int getpid(void);
-int stat(const char *path, struct leonos_stat *st);
-int fstat(int fd, struct leonos_stat *st);
+int leonos_stat_legacy(const char *path, struct leonos_stat *st);
+int leonos_fstat_legacy(int fd, struct leonos_stat *st);
 int wait4(int pid, int *status, int options, void *rusage);
 int execve(const char *path, char *const argv[], char *const envp[]);
 int mkdir(const char *path, int mode);

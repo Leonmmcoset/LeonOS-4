@@ -33,10 +33,30 @@ install.
 `/dev` is a kernel-provided synthetic filesystem. It is present on every
 runtime root and is not stored in the disk image. Directory reads enumerate
 the complete set of device nodes, including `/dev/null`, `/dev/zero`,
-`/dev/tty`, `/dev/console`, `/dev/fb0`, `/dev/input/event0`, `/dev/audio0`,
+`/dev/tty`, `/dev/console`, `/dev/fb0`, `/dev/input/event0`,
+`/dev/input/event1`, `/dev/input-method`, `/dev/dsp`,
 `/dev/serial0`, `/dev/net0`, and block-device aliases such as `/dev/disk0`.
 The corresponding libc APIs open these paths before issuing device ioctls;
 legacy fd 3 calls are translated for older binaries.
+
+Whole disks and GPT partitions are exposed as `/dev/diskN` and
+`/dev/diskNpN` block nodes. They support sector-aligned `read`/`write`, and
+the Linux UAPI requests `BLKGETSIZE64`, `BLKGETSIZE`, `BLKSSZGET`, `BLKROGET`
+and `BLKRRPART` from `<linux/fs.h>`. Raw sector reads/writes require an
+administrator (or the installer ISO's uid-0 shell); writes and partition-table
+rereads are rejected for booted or mounted disks.
+
+`/dev/input/event0` is the Linux evdev keyboard stream and
+`/dev/input/event1` is the mouse stream. Each opened descriptor has its own
+event cursor, so readers do not consume Desktop input. The legacy text-input
+method provider protocol is intentionally separate at `/dev/input-method`;
+it is a temporary GUI service endpoint rather than a hardware device ABI.
+
+`/dev/dsp` is the Linux OSS-compatible PCM playback node. It accepts
+16-bit little-endian stereo samples through normal `write` calls, supports
+nonblocking mode and `poll(POLLOUT)`, and exposes the supported OSS setup
+ioctls from `<linux/soundcard.h>`. `/dev/audio` and `/dev/audio0` remain
+compatibility aliases for legacy binaries only.
 
 ## Supported Formats
 

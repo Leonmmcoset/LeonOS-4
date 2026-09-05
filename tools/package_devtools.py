@@ -108,6 +108,7 @@ def main() -> None:
     parser.add_argument("--picolibc-include", type=Path, required=True)
     parser.add_argument("--picolibc-source", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path)
+    parser.add_argument("--uapi-include", type=Path)
     parser.add_argument("--zlib-lib", type=Path, required=True)
     parser.add_argument("--zlib-source", type=Path, required=True)
     parser.add_argument("--libpng-lib", type=Path, required=True)
@@ -258,16 +259,30 @@ def main() -> None:
     if args.leonos_libc_include is not None:
         shared_posix_headers = tuple(
             args.leonos_libc_include / name
-            for name in (Path("curses.h"), Path("ncurses.h"), Path("leonos/posix.h"),
-                         Path("leonos/app.h"))
+            for name in (Path("curses.h"), Path("ncurses.h"), Path("pty.h"),
+                         Path("arpa/inet.h"), Path("netinet/in.h"),
+                         Path("sys/socket.h"), Path("sys/un.h"),
+                         Path("leonos/posix.h"), Path("leonos/app.h"))
         )
         for required in shared_posix_headers:
             if not required.is_file():
                 raise SystemExit(f"required shared POSIX header is missing: {required}")
+    uapi_headers: tuple[Path, ...] = ()
+    if args.uapi_include is not None:
+        if not args.uapi_include.is_dir():
+            raise SystemExit(f"UAPI include directory is missing: {args.uapi_include}")
+        uapi_headers = tuple(sorted(
+            source for source in args.uapi_include.rglob("*")
+            if source.is_file()
+        ))
     picolibc_names = {
         source.relative_to(args.picolibc_include).as_posix()
         for source in picolibc_headers
     }
+    shared_posix_names = {
+        source.relative_to(args.leonos_libc_include).as_posix()
+        for source in shared_posix_headers
+    } if args.leonos_libc_include is not None else set()
     output = args.out.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(delete=False, dir=output.parent,
@@ -303,13 +318,20 @@ def main() -> None:
                     or relative_name.startswith("include/stardustui/")
                 ):
                     continue
+                if relative_name.removeprefix("include/") in shared_posix_names:
+                    continue
                 if relative_name.removeprefix("include/") in picolibc_names:
                     continue
                 add_file(archive, f"{SDK_PREFIX}/{relative_name}", source)
             for source in picolibc_headers:
-                add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.picolibc_include).as_posix()}", source)
+                relative = source.relative_to(args.picolibc_include).as_posix()
+                if relative in shared_posix_names:
+                    continue
+                add_file(archive, f"{SDK_PREFIX}/include/{relative}", source)
             for source in shared_posix_headers:
                 add_file(archive, f"{SDK_PREFIX}/include/{source.relative_to(args.leonos_libc_include).as_posix()}", source)
+            for source in uapi_headers:
+                add_file(archive, f"{SDK_PREFIX}/include/linux/{source.relative_to(args.uapi_include).as_posix()}", source)
             add_file(archive, f"{SDK_PREFIX}/lib/leonos.a", args.leonos_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libleonos.so.1", args.runtime_so)
             add_file(archive, f"{SDK_PREFIX}/lib/ld-leonos.elf", args.runtime_loader)

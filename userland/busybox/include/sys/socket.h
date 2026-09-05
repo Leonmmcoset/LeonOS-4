@@ -16,6 +16,11 @@ struct sockaddr_storage {
     char __padding[126];
 };
 
+struct sockaddr_un {
+    sa_family_t sun_family;
+    char sun_path[108];
+};
+
 #define AF_UNSPEC 0
 #define AF_UNIX 1
 #define AF_INET 2
@@ -37,6 +42,8 @@ int getsockname(int fd, struct sockaddr *address, socklen_t *length);
 int getsockopt(int fd, int level, int option, void *value, socklen_t *length);
 int setsockopt(int fd, int level, int option, const void *value, socklen_t length);
 int shutdown(int fd, int how);
+ssize_t send(int fd, const void *buffer, size_t length, int flags);
+ssize_t recv(int fd, void *buffer, size_t length, int flags);
 ssize_t sendto(int fd, const void *buffer, size_t length, int flags,
                const struct sockaddr *destination, socklen_t destination_length);
 

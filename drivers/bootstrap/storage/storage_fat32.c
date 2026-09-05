@@ -261,16 +261,17 @@ static int fat32_write_fsinfo(void)
     storage_put_u32(storage_scratch + 492u, g_storage.next_free_cluster);
     storage_put_u32(storage_scratch + 508u, 0xaa550000u);
     primary_lba = g_storage.esp_start_lba + g_storage.fat_fs_info_sector;
-    if (storage_write_sectors(primary_lba, 1u, storage_scratch) < 0) {
-        return -5;
+    int ret = storage_write_sectors(primary_lba, 1u, storage_scratch);
+    if (ret < 0) {
+        return ret;
     }
     if (g_storage.fat_backup_boot_sector &&
         (uint32_t)g_storage.fat_backup_boot_sector + g_storage.fat_fs_info_sector <
             g_storage.fat_start_sector &&
-        storage_write_sectors(g_storage.esp_start_lba + g_storage.fat_backup_boot_sector +
-                                  g_storage.fat_fs_info_sector,
-                              1u, storage_scratch) < 0) {
-        return -5;
+        (ret = storage_write_sectors(g_storage.esp_start_lba + g_storage.fat_backup_boot_sector +
+                                     g_storage.fat_fs_info_sector,
+                                     1u, storage_scratch)) < 0) {
+        return ret;
     }
     return 0;
 }

@@ -226,7 +226,7 @@ static int choose_target_path(char *dst, uint32_t cap, const char *url)
             build_numbered_name(numbered, sizeof(numbered), name, i + 1U);
             build_child_path(dst, cap, dir, numbered);
         }
-        if (stat(dst, &st) < 0) {
+        if (leonos_stat_legacy(dst, &st) < 0) {
             return 0;
         }
     }

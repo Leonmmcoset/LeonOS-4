@@ -17,8 +17,8 @@
 #define LEONOS_PTY_IOCTL_OWNER_GET_WINSIZE 0x4c50544fUL
 #define LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE 0x4c505450UL
 /* Keep the standard small-TTY requests usable by portable applications. */
-#define LEONOS_PTY_IOCTL_GET_WINSIZE 0x5401UL
-#define LEONOS_PTY_IOCTL_SET_WINSIZE 0x5402UL
+#define LEONOS_PTY_IOCTL_GET_WINSIZE 0x5413UL
+#define LEONOS_PTY_IOCTL_SET_WINSIZE 0x5414UL
 /* Linux-compatible process-group TTY requests used by Picolibc. */
 #define LEONOS_PTY_IOCTL_GET_PGRP 0x540fUL
 #define LEONOS_PTY_IOCTL_SET_PGRP 0x5410UL

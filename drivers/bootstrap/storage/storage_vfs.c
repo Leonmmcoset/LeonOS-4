@@ -25,6 +25,8 @@ static const struct storage_dev_entry storage_dev_entries[] = {
     {"fb0",       STORAGE_DEV_KIND_FB0,      LEONOS_FS_TYPE_DEVICE, 0},
     {"keyboard",  STORAGE_DEV_KIND_KEYBOARD, LEONOS_FS_TYPE_DEVICE, 0},
     {"mouse",     STORAGE_DEV_KIND_MOUSE,    LEONOS_FS_TYPE_DEVICE, 0},
+    {"dsp",       STORAGE_DEV_KIND_AUDIO,    LEONOS_FS_TYPE_DEVICE, 0},
+    /* Compatibility aliases for the retired private audio interface. */
     {"audio",     STORAGE_DEV_KIND_AUDIO,    LEONOS_FS_TYPE_DEVICE, 0},
     {"audio0",    STORAGE_DEV_KIND_AUDIO,    LEONOS_FS_TYPE_DEVICE, 0},
     {"ttyS0",     STORAGE_DEV_KIND_SERIAL,   LEONOS_FS_TYPE_DEVICE, 0},
@@ -38,6 +40,7 @@ static const struct storage_dev_entry storage_dev_entries[] = {
     {"rtc",       STORAGE_DEV_KIND_RTC,      LEONOS_FS_TYPE_DEVICE, 0},
     {"kmsg",      STORAGE_DEV_KIND_KMSG,      LEONOS_FS_TYPE_DEVICE, 0},
     {"driverctl", STORAGE_DEV_KIND_DRIVERCTL, LEONOS_FS_TYPE_DEVICE, 0},
+    {"input-method", STORAGE_DEV_KIND_INPUT_METHOD, LEONOS_FS_TYPE_DEVICE, 0},
     {"stdin",     STORAGE_DEV_KIND_TTY,      LEONOS_FS_TYPE_DEVICE, 0},
     {"stdout",    STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},
     {"stderr",    STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},
@@ -47,6 +50,7 @@ static const struct storage_dev_entry storage_dev_entries[] = {
 
 static const struct storage_dev_entry storage_dev_input_entries[] = {
     {"event0",    STORAGE_DEV_KIND_KEYBOARD, LEONOS_FS_TYPE_DEVICE, 0},
+    {"event1",    STORAGE_DEV_KIND_MOUSE,    LEONOS_FS_TYPE_DEVICE, 0},
     {"keyboard",  STORAGE_DEV_KIND_KEYBOARD, LEONOS_FS_TYPE_DEVICE, 0},
     {"mouse0",    STORAGE_DEV_KIND_MOUSE,    LEONOS_FS_TYPE_DEVICE, 0},
     {"mouse",     STORAGE_DEV_KIND_MOUSE,    LEONOS_FS_TYPE_DEVICE, 0},
@@ -62,6 +66,103 @@ static const struct storage_dev_entry *storage_dev_find(const char *name,
         }
     }
     return NULL;
+}
+
+static int storage_parse_block_name(const char *name, uint32_t *disk_id,
+                                    int32_t *partition_index)
+{
+    const char *p;
+    uint32_t value;
+    if (!name || !disk_id || !partition_index) return -22;
+    *partition_index = -1;
+    if ((name[0] == 's' || name[0] == 'S' || name[0] == 'v' || name[0] == 'V') &&
+        (name[1] == 'd' || name[1] == 'D') &&
+        ((name[2] >= 'a' && name[2] <= 'h') || (name[2] >= 'A' && name[2] <= 'H'))) {
+        *disk_id = (uint32_t)((name[2] >= 'a' && name[2] <= 'h') ? name[2] - 'a' : name[2] - 'A');
+        p = name + 3;
+        if (*p >= '1' && *p <= '9') {
+            value = 0;
+            while (*p >= '0' && *p <= '9') {
+                if (value >= LEONOS_DISK_MAX_PARTITIONS) return -22;
+                value = value * 10u + (uint32_t)(*p++ - '0');
+            }
+            if (*p || value == 0 || value > LEONOS_DISK_MAX_PARTITIONS) return -22;
+            *partition_index = (int32_t)value - 1;
+            return 0;
+        }
+        if (*p) return -22;
+    } else if ((name[0] == 'n' || name[0] == 'N') &&
+               (name[1] == 'v' || name[1] == 'V') &&
+               (name[2] == 'm' || name[2] == 'M') &&
+               (name[3] == 'e' || name[3] == 'E')) {
+        p = name + 4;
+        value = 0;
+        if (!*p || *p < '0' || *p > '9') return -22;
+        while (*p >= '0' && *p <= '9') {
+            if (value >= STORAGE_MAX_INSTALL_DISKS) return -22;
+            value = value * 10u + (uint32_t)(*p++ - '0');
+        }
+        if ((p[0] != 'n' && p[0] != 'N') || p[1] != '1') return -22;
+        *disk_id = value;
+        p += 2;
+        if (*p && *p != 'p') return -22;
+    } else if (name[0] == 'd' || name[0] == 'D') {
+        if ((name[1] != 'i' && name[1] != 'I') ||
+            (name[2] != 's' && name[2] != 'S') ||
+            (name[3] != 'k' && name[3] != 'K')) return -22;
+        p = name + 4;
+        value = 0;
+        if (!*p || *p < '0' || *p > '9') return -22;
+        while (*p >= '0' && *p <= '9') {
+            if (value >= STORAGE_MAX_INSTALL_DISKS) return -22;
+            value = value * 10u + (uint32_t)(*p++ - '0');
+        }
+        *disk_id = value;
+    } else {
+        return -22;
+    }
+    if (!*p) return 0;
+    if (*p != 'p') return -22;
+    ++p;
+    value = 0;
+    if (!*p || *p < '1' || *p > '9') return -22;
+    while (*p >= '0' && *p <= '9') {
+        value = value * 10u + (uint32_t)(*p++ - '0');
+    }
+    if (*p || value == 0 || value > LEONOS_DISK_MAX_PARTITIONS) return -22;
+    *partition_index = (int32_t)value - 1;
+    return 0;
+}
+
+static void storage_format_u32(char *out, uint32_t cap, const char *prefix,
+                               uint32_t value, int partition)
+{
+    char digits[11];
+    uint32_t n = 0;
+    uint32_t pos = 0;
+    if (!out || cap == 0) return;
+    if (prefix) {
+        while (prefix[pos] && pos + 1u < cap) {
+            out[pos] = prefix[pos];
+            ++pos;
+        }
+    }
+    do {
+        digits[n++] = (char)('0' + value % 10u);
+        value /= 10u;
+    } while (value && n < sizeof(digits));
+    while (n && pos + 1u < cap) out[pos++] = digits[--n];
+    if (partition >= 0 && pos + 2u < cap) {
+        out[pos++] = 'p';
+        value = (uint32_t)partition + 1u;
+        n = 0;
+        do {
+            digits[n++] = (char)('0' + value % 10u);
+            value /= 10u;
+        } while (value && n < sizeof(digits));
+        while (n && pos + 1u < cap) out[pos++] = digits[--n];
+    }
+    out[pos] = 0;
 }
 
 static void storage_dev_node(const struct storage_dev_entry *entry,
@@ -264,11 +365,68 @@ static int storage_lookup_path_unlocked(const char *path, struct storage_node *o
                                                 sizeof(storage_dev_entries[0])));
         }
         if (entry && !entry->directory && out) {
-            storage_dev_node(entry, out);
-            return 0;
+            if (entry->kind != STORAGE_DEV_KIND_DISK) {
+                storage_dev_node(entry, out);
+                return 0;
+            }
+            /* Disk aliases (disk0/sda/vda/nvme0n1) are backed by the same
+             * dynamically sized block node as their canonical /dev/diskN
+             * name.  Resolve the capacity here instead of returning the old
+             * zero-sized compatibility alias. */
+            {
+                uint32_t disk_id;
+                int32_t partition_index;
+                uint64_t first_lba;
+                uint64_t sector_count;
+                int block_ret = storage_parse_block_name(name, &disk_id, &partition_index);
+                if (block_ret == 0) {
+                    block_ret = storage_disk_block_info(disk_id, partition_index,
+                                                        &first_lba, &sector_count);
+                }
+                if (block_ret == 0) {
+                    *out = (struct storage_node){
+                        .type = LEONOS_FS_TYPE_DEVICE,
+                        .flags = STORAGE_NODE_FLAG_DEV_NODE | STORAGE_NODE_FLAG_DEV_BLOCK,
+                        .first_cluster = STORAGE_DEV_KIND_DISK,
+                        .volume_id = STORAGE_BLOCK_VOLUME_ID(disk_id, partition_index),
+                        .size = sector_count * 512u,
+                    };
+                    return 0;
+                }
+                /* The alias exists, so only a genuine missing disk should
+                 * become ENOENT. Do not disguise an I/O or busy error as a
+                 * missing /dev node: block tools need the real diagnostic. */
+                return block_ret == -2 ? -2 : block_ret;
+            }
         }
         if (entry && entry->directory) {
             return -20;
+        }
+        /* GPT disks and partitions are generated by the block layer rather
+         * than stored in the fixed devfs alias table. */
+        {
+            uint32_t disk_id;
+            int32_t partition_index;
+            uint64_t first_lba;
+            uint64_t sector_count;
+            int parsed = storage_parse_block_name(name, &disk_id, &partition_index);
+            int block_ret = parsed;
+            if (parsed == 0)
+                block_ret = storage_disk_block_info(disk_id, partition_index,
+                                                    &first_lba, &sector_count);
+            if (block_ret == 0) {
+                if (out) {
+                    *out = (struct storage_node){
+                        .type = LEONOS_FS_TYPE_DEVICE,
+                        .flags = STORAGE_NODE_FLAG_DEV_NODE | STORAGE_NODE_FLAG_DEV_BLOCK,
+                        .first_cluster = STORAGE_DEV_KIND_DISK,
+                        .volume_id = STORAGE_BLOCK_VOLUME_ID(disk_id, partition_index),
+                        .size = sector_count * 512u,
+                    };
+                }
+                return 0;
+            }
+            if (parsed == 0) return block_ret;
         }
         return -2;
     }
@@ -608,6 +766,46 @@ static int storage_readdir_node_unlocked(const struct storage_node *node, uint64
             entry->type = dev->type;
             storage_copy_text(entry->name, sizeof(entry->name), dev->name);
             return 1;
+        }
+        if (node->first_cluster == STORAGE_DEV_KIND_DIR) {
+            /* Expose canonical block nodes and GPT partitions in devfs. The
+             * fixed aliases above remain for compatibility, while these
+             * names reflect disks actually discovered at boot. */
+            uint64_t dynamic = *cursor - count;
+            for (uint32_t disk_id = 0; disk_id < g_install_disk_count;
+                 ++disk_id) {
+                uint64_t first_lba;
+                uint64_t sectors;
+                int block_ret = storage_disk_block_info(disk_id, -1, &first_lba, &sectors);
+                if (block_ret < 0) {
+                    if (block_ret == -2) continue;
+                    return block_ret;
+                }
+                if (disk_id != 0 && dynamic == 0) {
+                    ++(*cursor);
+                    entry->type = LEONOS_FS_TYPE_DEVICE;
+                    storage_format_u32(entry->name, sizeof(entry->name),
+                                       "disk", disk_id, -1);
+                    return 1;
+                }
+                if (disk_id != 0) --dynamic;
+                for (uint32_t part = 0; part < LEONOS_DISK_MAX_PARTITIONS; ++part) {
+                    block_ret = storage_disk_block_info(disk_id, (int32_t)part,
+                                                        &first_lba, &sectors);
+                    if (block_ret < 0) {
+                        if (block_ret == -2) continue;
+                        return block_ret;
+                    }
+                    if (dynamic == 0) {
+                        ++(*cursor);
+                        entry->type = LEONOS_FS_TYPE_DEVICE;
+                        storage_format_u32(entry->name, sizeof(entry->name),
+                                           "disk", disk_id, (int32_t)part);
+                        return 1;
+                    }
+                    --dynamic;
+                }
+            }
         }
         return 0;
     }

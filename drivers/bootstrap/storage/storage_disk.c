@@ -5,6 +5,125 @@ struct disk_gpt_table {
     uint32_t table_sectors;
 };
 
+static int disk_gpt_load(struct install_disk_state *disk, uint64_t sector_count,
+                         struct disk_gpt_table *out_table);
+static int disk_gpt_entry_used(const struct gpt_entry *entry);
+static int disk_gpt_entries_valid(const struct disk_gpt_table *table);
+static int storage_disk_has_data_mount(uint32_t disk_id);
+
+struct disk_block_partition_range {
+    uint64_t first_lba;
+    uint64_t sector_count;
+    uint8_t present;
+};
+
+struct disk_block_partition_cache {
+    uint64_t disk_sectors;
+    struct disk_block_partition_range entries[LEONOS_DISK_MAX_PARTITIONS];
+    int32_t status;
+    uint8_t valid;
+};
+
+static struct disk_block_partition_cache disk_block_partition_cache[STORAGE_MAX_INSTALL_DISKS];
+
+static void disk_block_cache_invalidate(uint32_t disk_id)
+{
+    if (disk_id < STORAGE_MAX_INSTALL_DISKS) {
+        disk_block_partition_cache[disk_id].valid = 0;
+    }
+}
+
+/* Disk IDs are assigned during every storage probe.  Never carry partition
+ * ranges (or a previous probe's error) across that reassignment. */
+void storage_disk_block_cache_reset(void)
+{
+    storage_memzero(disk_block_partition_cache,
+                    sizeof(disk_block_partition_cache));
+}
+
+static void disk_block_cache_invalidate_disk(const struct install_disk_state *disk)
+{
+    if (!disk) return;
+    for (uint32_t i = 0; i < g_install_disk_count; ++i) {
+        if (&g_install_disks[i] == disk) {
+            disk_block_cache_invalidate(i);
+            return;
+        }
+    }
+}
+
+static int disk_block_cache_load(uint32_t disk_id, struct install_disk_state *disk,
+                                 uint64_t sector_count)
+{
+    struct disk_block_partition_cache *cache;
+    struct disk_gpt_table table;
+    const struct gpt_entry *entries;
+    int ret;
+    if (disk_id >= STORAGE_MAX_INSTALL_DISKS || !disk) return -22;
+    cache = &disk_block_partition_cache[disk_id];
+    if (cache->valid && cache->disk_sectors == sector_count) {
+        return cache->status;
+    }
+    ret = disk_gpt_load(disk, sector_count, &table);
+    if (ret < 0) {
+        /* Only content errors are stable enough to cache. Transport failures
+         * such as EIO may be transient (especially on AHCI after reset); a
+         * cached EIO made every later /dev/diskNpM lookup fail until reboot. */
+        if (ret == -2 || ret == -22) {
+            storage_memzero(cache, sizeof(*cache));
+            cache->disk_sectors = sector_count;
+            cache->status = ret;
+            cache->valid = 1;
+        }
+        return ret;
+    }
+    ret = disk_gpt_entries_valid(&table);
+    if (ret < 0) {
+        /* Entry validation has completed from disk data, so this is a stable
+         * malformed-GPT result rather than an in-flight transport failure. */
+        storage_memzero(cache, sizeof(*cache));
+        cache->disk_sectors = sector_count;
+        cache->status = ret;
+        cache->valid = 1;
+        return ret;
+    }
+    entries = (const struct gpt_entry *)(const void *)storage_cluster_buf;
+    storage_memzero(cache, sizeof(*cache));
+    cache->disk_sectors = sector_count;
+    cache->status = 0;
+    for (uint32_t i = 0; i < table.primary.partition_entry_count; ++i) {
+        if (!disk_gpt_entry_used(&entries[i])) continue;
+        cache->entries[i].first_lba = entries[i].first_lba;
+        cache->entries[i].sector_count = entries[i].last_lba - entries[i].first_lba + 1u;
+        cache->entries[i].present = 1;
+    }
+    cache->valid = 1;
+    return 0;
+}
+
+static int disk_block_range(uint32_t disk_id, struct install_disk_state *disk,
+                            uint64_t sector_count, int32_t partition_index,
+                            uint64_t *out_first_lba, uint64_t *out_sector_count)
+{
+    int ret;
+
+    if (!disk || !out_first_lba || !out_sector_count) return -22;
+    if (partition_index == -1) {
+        *out_first_lba = 0;
+        *out_sector_count = sector_count;
+        return 0;
+    }
+    if (partition_index < -1 || (uint32_t)partition_index >= LEONOS_DISK_MAX_PARTITIONS) {
+        return -22;
+    }
+    ret = disk_block_cache_load(disk_id, disk, sector_count);
+    if (ret < 0) return ret;
+    if (!disk_block_partition_cache[disk_id].entries[partition_index].present) return -2;
+    *out_first_lba = disk_block_partition_cache[disk_id].entries[partition_index].first_lba;
+    *out_sector_count = disk_block_partition_cache[disk_id].entries[partition_index].sector_count;
+    return 0;
+}
+
 /**
  * @brief Checks whether a GPT GUID is all zeroes.
  * @param guid GPT type or unique GUID.
@@ -47,11 +166,13 @@ static int disk_gpt_header_valid(const struct gpt_header *header, uint64_t secto
     uint64_t table_last_lba;
     if (!header || sector_count < 2u ||
         header->signature != 0x5452415020494645ULL ||
+        header->revision < 0x00010000u ||
         header->header_size != sizeof(struct gpt_header) ||
+        header->reserved != 0 ||
         header->current_lba >= sector_count || header->backup_lba >= sector_count ||
         header->backup_lba == header->current_lba ||
         header->first_usable_lba > header->last_usable_lba ||
-        header->last_usable_lba >= sector_count ||
+        header->last_usable_lba >= sector_count || header->first_usable_lba < 2u ||
         header->partition_entry_count == 0 ||
         header->partition_entry_count > LEONOS_DISK_MAX_PARTITIONS ||
         header->partition_entry_size != sizeof(struct gpt_entry)) {
@@ -59,12 +180,15 @@ static int disk_gpt_header_valid(const struct gpt_header *header, uint64_t secto
     }
     table_bytes = (uint64_t)header->partition_entry_count * header->partition_entry_size;
     table_sectors = (table_bytes + SECTOR_SIZE - 1u) / SECTOR_SIZE;
-    table_last_lba = header->partition_entries_lba + table_sectors - 1u;
     if (table_bytes > sizeof(storage_cluster_buf) ||
         header->partition_entries_lba < 2u ||
         header->partition_entries_lba >= sector_count ||
         table_sectors > sector_count - header->partition_entries_lba ||
-        (header->current_lba >= header->first_usable_lba &&
+        table_sectors == 0) {
+        return -22;
+    }
+    table_last_lba = header->partition_entries_lba + table_sectors - 1u;
+    if ((header->current_lba >= header->first_usable_lba &&
          header->current_lba <= header->last_usable_lba) ||
         (header->backup_lba >= header->first_usable_lba &&
          header->backup_lba <= header->last_usable_lba) ||
@@ -92,7 +216,7 @@ static int disk_manage_prepare(uint32_t disk_id, struct install_disk_state **out
     int ret;
     if (!out_disk || !out_sector_count || disk_id >= g_install_disk_count ||
         !g_install_disks[disk_id].present) {
-        return -22;
+        return -2;
     }
     disk = &g_install_disks[disk_id];
     ret = storage_prepare_install_disk(disk);
@@ -142,23 +266,40 @@ static int disk_gpt_load(struct install_disk_state *disk, uint64_t sector_count,
     if (ret < 0 || primary.current_lba != 1u) {
         return ret < 0 ? ret : -22;
     }
+    table_bytes = primary.partition_entry_count * primary.partition_entry_size;
+    table_sectors = (table_bytes + SECTOR_SIZE - 1u) / SECTOR_SIZE;
     ret = install_read_sectors(disk, primary.backup_lba, 1u, storage_scratch);
-    if (ret < 0) {
+    if (ret == -LEONOS_EAGAIN) {
+        /* The AHCI async path still owns the pending command.  Do not treat
+         * an incomplete backup-header read as a missing header and submit a
+         * second request against the shared command slot. */
         return ret;
     }
-    storage_memcpy(&backup, storage_scratch, sizeof(backup));
+    if (ret < 0) {
+        storage_memcpy(&backup, &primary, sizeof(backup));
+        backup.current_lba = sector_count - 1u;
+        backup.backup_lba = primary.current_lba;
+        backup.partition_entries_lba = sector_count - table_sectors - 1u;
+        backup.header_crc32 = 0;
+    } else {
+        storage_memcpy(&backup, storage_scratch, sizeof(backup));
+    }
     ret = disk_gpt_header_valid(&backup, sector_count);
     if (ret < 0 || backup.current_lba != primary.backup_lba ||
         backup.backup_lba != primary.current_lba ||
         backup.partition_entry_count != primary.partition_entry_count ||
         backup.partition_entry_size != primary.partition_entry_size ||
+        storage_memcmp(backup.disk_guid, primary.disk_guid,
+                       sizeof(primary.disk_guid)) != 0 ||
         backup.first_usable_lba != primary.first_usable_lba ||
         backup.last_usable_lba != primary.last_usable_lba ||
         backup.partition_entries_crc32 != primary.partition_entries_crc32) {
-        return ret < 0 ? ret : -22;
+        storage_memcpy(&backup, &primary, sizeof(backup));
+        backup.current_lba = sector_count - 1u;
+        backup.backup_lba = primary.current_lba;
+        backup.partition_entries_lba = sector_count - table_sectors - 1u;
+        backup.header_crc32 = 0;
     }
-    table_bytes = primary.partition_entry_count * primary.partition_entry_size;
-    table_sectors = (table_bytes + SECTOR_SIZE - 1u) / SECTOR_SIZE;
     ret = install_read_sectors(disk, primary.partition_entries_lba, table_sectors,
                                storage_cluster_buf);
     if (ret < 0) {
@@ -171,6 +312,136 @@ static int disk_gpt_load(struct install_disk_state *disk, uint64_t sector_count,
     out_table->backup = backup;
     out_table->table_bytes = table_bytes;
     out_table->table_sectors = table_sectors;
+    return 0;
+}
+
+int storage_disk_block_info(uint32_t disk_id, int32_t partition_index,
+                            uint64_t *out_first_lba, uint64_t *out_sector_count)
+{
+    struct install_disk_state *disk;
+    uint64_t sector_count;
+    int ret;
+    if (!out_first_lba || !out_sector_count) return -22;
+    *out_first_lba = 0;
+    *out_sector_count = 0;
+    ret = storage_acquire_task_io();
+    if (ret < 0) return ret;
+    ret = disk_manage_prepare(disk_id, &disk, &sector_count);
+    if (ret < 0) return ret;
+    return disk_block_range(disk_id, disk, sector_count, partition_index,
+                            out_first_lba, out_sector_count);
+}
+
+int storage_disk_block_read(uint32_t disk_id, int32_t partition_index,
+                            uint64_t offset, void *buffer, uint32_t length,
+                            uint32_t *out_read)
+{
+    uint64_t first_lba, sectors;
+    uint32_t count;
+    uint32_t done = 0;
+    uint8_t *destination = (uint8_t *)buffer;
+    struct install_disk_state *disk;
+    int ret;
+    if (out_read) *out_read = 0;
+    if (!buffer || (offset & 511u) || (length & 511u)) return -22;
+    if (!length) return 0;
+    ret = storage_acquire_task_io();
+    if (ret < 0) return ret;
+    ret = disk_manage_prepare(disk_id, &disk, &sectors);
+    if (ret < 0) return ret;
+    ret = disk_block_range(disk_id, disk, sectors, partition_index, &first_lba, &sectors);
+    if (ret < 0) return ret;
+    if (offset / 512u >= sectors || (uint64_t)(length / 512u) > sectors - offset / 512u) return -22;
+    count = length / 512u;
+    /* Block drivers program DMA with physical kernel addresses.  A raw
+     * device syscall receives a user virtual address, so it must never be
+     * used directly as a DMA target.  Transfer through the kernel-owned,
+     * page-aligned scratch buffer in bounded chunks instead. */
+    while (done < count) {
+        uint32_t chunk = min_u32(STORAGE_SCRATCH_SECTORS, count - done);
+        ret = install_read_sectors(disk, first_lba + offset / 512u + done,
+                                   chunk, storage_scratch);
+        if (ret < 0) return ret;
+        storage_memcpy(destination + (uint64_t)done * SECTOR_SIZE,
+                       storage_scratch, chunk * SECTOR_SIZE);
+        done += chunk;
+    }
+    if (out_read) *out_read = length;
+    return 0;
+}
+
+int storage_disk_block_write(uint32_t disk_id, int32_t partition_index,
+                             uint64_t offset, const void *buffer, uint32_t length,
+                             uint32_t *out_written)
+{
+    uint64_t first_lba, sectors;
+    uint32_t count;
+    uint32_t done = 0;
+    const uint8_t *source = (const uint8_t *)buffer;
+    struct install_disk_state *disk;
+    int ret;
+    if (out_written) *out_written = 0;
+    if (!buffer || (offset & 511u) || (length & 511u)) return -22;
+    if (!length) return 0;
+    ret = storage_acquire_task_io();
+    if (ret < 0) return ret;
+    ret = disk_manage_prepare(disk_id, &disk, &sectors);
+    if (ret < 0) return ret;
+    ret = disk_block_range(disk_id, disk, sectors, partition_index, &first_lba, &sectors);
+    if (ret < 0) return ret;
+    if (offset / 512u >= sectors || (uint64_t)(length / 512u) > sectors - offset / 512u) return -22;
+    /* The raw node is intentionally not a back door around mounted-volume
+     * protection. Installer advanced mode may write an unmounted target; a
+     * running system or mounted target must use filesystem operations. */
+    if ((disk->boot_root && !storage_installer_root_active()) ||
+        disk->target_mounted || storage_disk_has_data_mount(disk_id)) {
+        return -16;
+    }
+    if (partition_index < 0) {
+        /* A whole-disk write may modify either GPT copy even when the caller
+         * ultimately reports an I/O error.  Drop cached partition extents
+         * before issuing the first sector so a subsequent operation cannot
+         * use metadata from before a partially completed update. */
+        disk_block_cache_invalidate(disk_id);
+    }
+    count = length / 512u;
+    /* See storage_disk_block_read(): source user mappings are not DMA-safe.
+     * Copy each sector-aligned request into kernel memory before submitting it
+     * to the controller. */
+    while (done < count) {
+        uint32_t chunk = min_u32(STORAGE_SCRATCH_SECTORS, count - done);
+        storage_memcpy(storage_scratch, source + (uint64_t)done * SECTOR_SIZE,
+                       chunk * SECTOR_SIZE);
+        ret = install_write_sectors(disk, first_lba + offset / 512u + done,
+                                    chunk, storage_scratch);
+        if (ret < 0) return ret;
+        done += chunk;
+    }
+    /* A write through a partition node cannot change its GPT extent. Keeping
+     * that range cached avoids re-reading the table before every 4 KiB mkfs
+     * write. Whole-disk raw writes may alter GPT metadata, so they still
+     * force rediscovery before the next partition access. */
+    if (partition_index < 0) {
+        disk_block_cache_invalidate(disk_id);
+    }
+    if (out_written) *out_written = length;
+    return 0;
+}
+
+int storage_disk_block_reread(uint32_t disk_id)
+{
+    struct install_disk_state *disk;
+    uint64_t sectors;
+    int ret = storage_acquire_task_io();
+    if (ret < 0) return ret;
+    ret = disk_manage_prepare(disk_id, &disk, &sectors);
+    if (ret < 0) return ret;
+    if ((disk->boot_root && !storage_installer_root_active()) ||
+        disk->target_mounted || storage_disk_has_data_mount(disk_id)) {
+        return -16;
+    }
+    storage_cache_invalidate();
+    disk_block_cache_invalidate(disk_id);
     return 0;
 }
 
@@ -205,6 +476,11 @@ static int disk_gpt_write(struct install_disk_state *disk, struct disk_gpt_table
         table->table_bytes > sizeof(storage_cluster_buf)) {
         return -22;
     }
+    /* A failed or partial metadata update must never leave a stale extent
+     * cache available to a later /dev/diskNpM lookup.  Invalidate before the
+     * first sector and keep it invalid on every error path; successful writes
+     * are invalidated again below for clarity. */
+    disk_block_cache_invalidate_disk(disk);
     table_crc = storage_crc32(storage_cluster_buf, table->table_bytes);
     table->backup.partition_entries_crc32 = table_crc;
     table->backup.header_crc32 = 0;
@@ -226,7 +502,9 @@ static int disk_gpt_write(struct install_disk_state *disk, struct disk_gpt_table
     if (ret < 0) {
         return ret;
     }
-    return disk_gpt_write_header(disk, &table->primary);
+    ret = disk_gpt_write_header(disk, &table->primary);
+    disk_block_cache_invalidate_disk(disk);
+    return ret;
 }
 
 /**
@@ -246,6 +524,7 @@ static int disk_gpt_entries_valid(const struct disk_gpt_table *table)
             continue;
         }
         if (entry->first_lba < table->primary.first_usable_lba ||
+            disk_gpt_guid_empty(entry->unique_guid) ||
             entry->last_lba < entry->first_lba ||
             entry->last_lba > table->primary.last_usable_lba) {
             return -22;
@@ -265,37 +544,48 @@ static int disk_gpt_entries_valid(const struct disk_gpt_table *table)
  * @brief Detects the filesystem superblock at a GPT partition start.
  * @param disk Prepared block-disk state.
  * @param entry Validated GPT partition entry.
- * @return A LEONOS_DISK_FILESYSTEM value.
+ * @param out_filesystem Receives a LEONOS_DISK_FILESYSTEM value.
+ * @return Zero when probing completed, including an unknown filesystem; a
+ *         negative storage error when the partition could not be read.
  */
-static uint32_t disk_partition_filesystem(struct install_disk_state *disk,
-                                          const struct gpt_entry *entry)
+static int disk_partition_filesystem(struct install_disk_state *disk,
+                                     const struct gpt_entry *entry,
+                                     uint32_t *out_filesystem)
 {
     uint64_t sectors;
-    if (!disk || !entry || entry->last_lba < entry->first_lba) {
-        return LEONOS_DISK_FILESYSTEM_UNKNOWN;
+    int ret;
+    if (!disk || !entry || !out_filesystem || entry->last_lba < entry->first_lba) {
+        return -22;
     }
+    *out_filesystem = LEONOS_DISK_FILESYSTEM_UNKNOWN;
     sectors = entry->last_lba - entry->first_lba + 1u;
-    if (install_read_sectors(disk, entry->first_lba, 1u, storage_scratch) < 0) {
-        return LEONOS_DISK_FILESYSTEM_UNKNOWN;
+    ret = install_read_sectors(disk, entry->first_lba, 1u, storage_scratch);
+    if (ret < 0) {
+        return ret;
     }
     if (storage_scratch[510] == 0x55 && storage_scratch[511] == 0xaa &&
         storage_memcmp(storage_scratch + 82u, "FAT32   ", 8u) == 0) {
-        return LEONOS_DISK_FILESYSTEM_FAT32;
+        *out_filesystem = LEONOS_DISK_FILESYSTEM_FAT32;
+        return 0;
     }
     if (storage_scratch[510] == 0x55 && storage_scratch[511] == 0xaa &&
         storage_memcmp(storage_scratch + 3u, "EXFAT   ", 8u) == 0 &&
         storage_scratch[108u] == 9u && storage_scratch[110u] == 1u) {
-        return LEONOS_DISK_FILESYSTEM_EXFAT;
+        *out_filesystem = LEONOS_DISK_FILESYSTEM_EXFAT;
+        return 0;
     }
-    if (sectors > 2u && install_read_sectors(disk, entry->first_lba + 2u, 1u,
-                                              storage_scratch) == 0) {
+    if (sectors > 2u) {
+        ret = install_read_sectors(disk, entry->first_lba + 2u, 1u, storage_scratch);
+        if (ret < 0) {
+            return ret;
+        }
         const struct ext2_superblock *super =
             (const struct ext2_superblock *)(const void *)storage_scratch;
         if (super->magic == EXT2_SUPER_MAGIC) {
-            return LEONOS_DISK_FILESYSTEM_EXT2;
+            *out_filesystem = LEONOS_DISK_FILESYSTEM_EXT2;
         }
     }
-    return LEONOS_DISK_FILESYSTEM_UNKNOWN;
+    return 0;
 }
 
 /**
@@ -327,12 +617,12 @@ static void disk_gpt_name_to_text(const uint16_t source[36], char *target, uint3
  * @param entry GPT partition entry.
  * @param out Destination public partition record.
  */
-static void disk_partition_export(uint32_t disk_id, const struct install_disk_state *disk,
-                                  uint32_t entry_index, const struct gpt_entry *entry,
-                                  struct leonos_disk_partition *out)
+static int disk_partition_export(uint32_t disk_id, struct install_disk_state *disk,
+                                 uint32_t entry_index, const struct gpt_entry *entry,
+                                 struct leonos_disk_partition *out)
 {
     if (!disk || !entry || !out) {
-        return;
+        return -22;
     }
     storage_memzero(out, sizeof(*out));
     out->disk_id = disk_id;
@@ -356,7 +646,7 @@ static void disk_partition_export(uint32_t disk_id, const struct install_disk_st
                                           sizeof(out->mount_path)) == 0) {
         out->flags |= LEONOS_DISK_PARTITION_FLAG_MOUNTED;
     }
-    out->filesystem = disk_partition_filesystem((struct install_disk_state *)disk, entry);
+    return disk_partition_filesystem(disk, entry, &out->filesystem);
 }
 
 /**
@@ -374,7 +664,7 @@ static int disk_partition_mutable(const struct install_disk_state *disk)
      * found an existing LeonOS root. Keep the boot-disk guard for normal disk
      * boots while allowing the ISO's advanced environment to manage targets. */
     return ((disk->boot_root && !storage_installer_root_active()) ||
-            disk->target_mounted) ? -1 : 0;
+            disk->target_mounted) ? -16 : 0;
 }
 
 /**
@@ -384,7 +674,7 @@ static int disk_partition_mutable(const struct install_disk_state *disk)
  */
 static int storage_disk_has_data_mount(uint32_t disk_id)
 {
-    for (uint32_t volume_id = STORAGE_VOLUME_DYNAMIC_FIRST;
+    for (uint32_t volume_id = STORAGE_VOLUME_TARGET_ROOT;
          volume_id < STORAGE_MAX_VOLUMES; ++volume_id) {
         const struct storage_volume *volume = &g_volumes[volume_id];
         if (volume->ready && volume->data_partition_mount &&
@@ -577,12 +867,13 @@ int storage_disk_list_partitions(uint32_t disk_id,
     const struct gpt_entry *entries;
     uint64_t sector_count;
     uint32_t count = 0;
+    if (!out_count || (capacity && !partitions)) {
+        return -22;
+    }
+    *out_count = 0;
     int ret = storage_acquire_task_io();
     if (ret < 0) {
         return ret;
-    }
-    if (!out_count || (capacity && !partitions)) {
-        return -22;
     }
     if (capacity > LEONOS_DISK_MAX_PARTITIONS) {
         capacity = LEONOS_DISK_MAX_PARTITIONS;
@@ -593,7 +884,11 @@ int storage_disk_list_partitions(uint32_t disk_id,
     }
     ret = disk_gpt_load(disk, sector_count, &table);
     if (ret < 0) {
-        return ret == -2 ? 0 : ret;
+        if (ret == -2) {
+            *out_count = 0;
+            return 0;
+        }
+        return ret;
     }
     ret = disk_gpt_entries_valid(&table);
     if (ret < 0) {
@@ -605,7 +900,10 @@ int storage_disk_list_partitions(uint32_t disk_id,
             continue;
         }
         if (count < capacity) {
-            disk_partition_export(disk_id, disk, i, &entries[i], &partitions[count]);
+            ret = disk_partition_export(disk_id, disk, i, &entries[i], &partitions[count]);
+            if (ret < 0) {
+                return ret;
+            }
         }
         ++count;
     }
@@ -643,9 +941,17 @@ int storage_disk_initialize_gpt(const struct leonos_disk_gpt_initialize *request
         return -22;
     }
     ret = disk_manage_prepare(request->disk_id, &disk, &sector_count);
-    if (ret < 0 || disk_partition_mutable(disk) < 0) {
-        return ret < 0 ? ret : -1;
+    if (ret < 0) {
+        return ret;
     }
+    ret = disk_partition_mutable(disk);
+    if (ret < 0) {
+        return ret;
+    }
+    /* This operation intentionally replaces all partition metadata.  Drop
+     * any extents learned from a previous table before clearing sector 0 and
+     * the GPT copies, including when a later write fails. */
+    disk_block_cache_invalidate_disk(disk);
     if (sector_count < 655360ULL) {
         return -28;
     }
@@ -727,7 +1033,9 @@ int storage_disk_initialize_gpt(const struct leonos_disk_gpt_initialize *request
     header->backup_lba = 1u;
     header->partition_entries_lba = backup_entries_lba;
     header->header_crc32 = storage_crc32(header, header->header_size);
-    return install_write_sectors(disk, last_lba, 1u, storage_scratch);
+    ret = install_write_sectors(disk, last_lba, 1u, storage_scratch);
+    if (ret == 0) disk_block_cache_invalidate_disk(disk);
+    return ret;
 }
 
 /**
@@ -751,9 +1059,9 @@ int storage_disk_format_partition(const struct leonos_disk_partition_format *req
         return -22;
     }
     ret = disk_manage_prepare(request->disk_id, &disk, &sector_count);
-    if (ret < 0 || disk_partition_mutable(disk) < 0) {
-        return ret < 0 ? ret : -1;
-    }
+    if (ret < 0) return ret;
+    ret = disk_partition_mutable(disk);
+    if (ret < 0) return ret;
     ret = disk_gpt_load(disk, sector_count, &table);
     if (ret < 0 || request->partition_index >= table.primary.partition_entry_count) {
         return ret < 0 ? ret : -22;
@@ -808,9 +1116,9 @@ int storage_disk_delete_partition(const struct leonos_disk_partition_delete *req
         return -22;
     }
     ret = disk_manage_prepare(request->disk_id, &disk, &sector_count);
-    if (ret < 0 || disk_partition_mutable(disk) < 0) {
-        return ret < 0 ? ret : -1;
-    }
+    if (ret < 0) return ret;
+    ret = disk_partition_mutable(disk);
+    if (ret < 0) return ret;
     ret = disk_gpt_load(disk, sector_count, &table);
     if (ret < 0 || request->partition_index >= table.primary.partition_entry_count) {
         return ret < 0 ? ret : -22;
@@ -849,9 +1157,9 @@ int storage_disk_edit_partition(const struct leonos_disk_partition_edit *request
         return -22;
     }
     ret = disk_manage_prepare(request->disk_id, &disk, &sector_count);
-    if (ret < 0 || disk_partition_mutable(disk) < 0) {
-        return ret < 0 ? ret : -1;
-    }
+    if (ret < 0) return ret;
+    ret = disk_partition_mutable(disk);
+    if (ret < 0) return ret;
     ret = disk_gpt_load(disk, sector_count, &table);
     if (ret < 0 || request->partition_index >= table.primary.partition_entry_count) {
         return ret < 0 ? ret : -22;
@@ -905,9 +1213,9 @@ int storage_disk_create_partition(const struct leonos_disk_partition_create *req
     }
     required_sectors = (uint64_t)request->size_mib * 2048u;
     ret = disk_manage_prepare(request->disk_id, &disk, &sector_count);
-    if (ret < 0 || disk_partition_mutable(disk) < 0) {
-        return ret < 0 ? ret : -1;
-    }
+    if (ret < 0) return ret;
+    ret = disk_partition_mutable(disk);
+    if (ret < 0) return ret;
     ret = disk_gpt_load(disk, sector_count, &table);
     if (ret < 0) {
         return ret;
@@ -954,7 +1262,7 @@ int storage_disk_partition_volume_id(uint32_t disk_id, uint32_t partition_index,
     if (!out_volume_id || partition_index >= LEONOS_DISK_MAX_PARTITIONS) {
         return -22;
     }
-    for (uint32_t volume_id = STORAGE_VOLUME_DYNAMIC_FIRST;
+    for (uint32_t volume_id = STORAGE_VOLUME_TARGET_ROOT;
          volume_id < STORAGE_MAX_VOLUMES; ++volume_id) {
         const struct storage_volume *volume = &g_volumes[volume_id];
         if (volume->ready && volume->data_partition_mount &&
@@ -1003,13 +1311,16 @@ static int storage_mount_path_allowed(const char *path)
     if (length < 2u || length >= LEONOS_FS_PATH_LEN || path[length] != 0) {
         return -22;
     }
-    /* Never let a user mount over a kernel-managed namespace. */
-    if (storage_text_eq_ci(path, "/boot") ||
-        storage_text_eq_ci(path, "/target") ||
-        storage_text_eq_ci(path, "/dev")) {
+    /* Never let a user mount over a kernel-managed namespace. /target and
+     * /target/boot are the installer ISO's explicit standard mount points. */
+    if (storage_text_eq_ci(path, "/boot") || storage_text_eq_ci(path, "/dev")) {
         return -16;
     }
-    for (uint32_t i = STORAGE_VOLUME_DYNAMIC_FIRST; i < STORAGE_MAX_VOLUMES; ++i) {
+    if ((storage_text_eq_ci(path, "/target") ||
+         storage_text_eq_ci(path, "/target/boot")) && !storage_installer_root_active()) {
+        return -16;
+    }
+    for (uint32_t i = STORAGE_VOLUME_TARGET_ROOT; i < STORAGE_MAX_VOLUMES; ++i) {
         if (g_volumes[i].ready && storage_text_eq_ci(g_volumes[i].mount_path, path)) {
             return -16;
         }
@@ -1017,8 +1328,46 @@ static int storage_mount_path_allowed(const char *path)
     return 0;
 }
 
-/** Mounts one supported data partition at its deterministic Unix path. */
-int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
+static int storage_filesystem_from_name(const char *filesystem, uint32_t *out_filesystem)
+{
+    if (!out_filesystem) {
+        return -22;
+    }
+    if (!filesystem || !filesystem[0] || storage_text_eq_ci(filesystem, "auto")) {
+        *out_filesystem = LEONOS_DISK_FILESYSTEM_UNKNOWN;
+        return 0;
+    }
+    if (storage_text_eq_ci(filesystem, "fat") || storage_text_eq_ci(filesystem, "vfat") ||
+        storage_text_eq_ci(filesystem, "fat32")) {
+        *out_filesystem = LEONOS_DISK_FILESYSTEM_FAT32;
+        return 0;
+    }
+    if (storage_text_eq_ci(filesystem, "ext2")) {
+        *out_filesystem = LEONOS_DISK_FILESYSTEM_EXT2;
+        return 0;
+    }
+    if (storage_text_eq_ci(filesystem, "exfat")) {
+        *out_filesystem = LEONOS_DISK_FILESYSTEM_EXFAT;
+        return 0;
+    }
+    return -95;
+}
+
+static uint32_t storage_mount_volume_for_target(const char *target)
+{
+    if (target && storage_text_eq_ci(target, "/target")) {
+        return STORAGE_VOLUME_TARGET_ROOT;
+    }
+    if (target && storage_text_eq_ci(target, "/target/boot")) {
+        return STORAGE_VOLUME_BOOT;
+    }
+    return storage_next_data_mount_volume();
+}
+
+/** Mount a GPT partition through the standard block-device and mount ABI. */
+int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
+                                  const char *target, const char *filesystem_name,
+                                  uint64_t flags, uint32_t *out_volume_id)
 {
     struct install_disk_state *disk;
     struct disk_gpt_table table;
@@ -1030,23 +1379,24 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     uint32_t volume_id;
     int ret;
     char mounted_path[LEONOS_FS_PATH_LEN];
+    uint32_t requested_filesystem;
 
-    if (!request) {
+    if (flags != 0 || storage_filesystem_from_name(filesystem_name, &requested_filesystem) < 0) {
         return -22;
     }
-    if (request->mount_path[0] != 0 && storage_mount_path_allowed(request->mount_path) < 0) {
+    if (target && target[0] && storage_mount_path_allowed(target) < 0) {
         return -22;
     }
     ret = storage_acquire_task_io();
     if (ret < 0) {
         return ret;
     }
-    ret = disk_manage_prepare(request->disk_id, &disk, &sector_count);
-    if (ret < 0 || disk_partition_mutable(disk) < 0) {
-        return ret < 0 ? ret : -1;
-    }
+    ret = disk_manage_prepare(disk_id, &disk, &sector_count);
+    if (ret < 0) return ret;
+    ret = disk_partition_mutable(disk);
+    if (ret < 0) return ret;
     ret = disk_gpt_load(disk, sector_count, &table);
-    if (ret < 0 || request->partition_index >= table.primary.partition_entry_count) {
+    if (ret < 0 || partition_index >= table.primary.partition_entry_count) {
         return ret < 0 ? ret : -22;
     }
     ret = disk_gpt_entries_valid(&table);
@@ -1055,23 +1405,38 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     }
     {
         const struct gpt_entry *entries = (const struct gpt_entry *)(const void *)storage_cluster_buf;
-        if (!disk_gpt_entry_used(&entries[request->partition_index])) {
+        if (!disk_gpt_entry_used(&entries[partition_index])) {
             return -2;
         }
-        entry = entries[request->partition_index];
+        entry = entries[partition_index];
     }
-    if (storage_disk_partition_mount_path(request->disk_id, request->partition_index,
+    if (storage_disk_partition_mount_path(disk_id, partition_index,
                                           mounted_path, sizeof(mounted_path)) == 0) {
-        storage_copy_text(request->mount_path, sizeof(request->mount_path), mounted_path);
+        if (target && !storage_text_eq_ci(target, mounted_path)) {
+            return -16;
+        }
+        if (out_volume_id) {
+            (void)storage_disk_partition_volume_id(disk_id, partition_index,
+                                                   out_volume_id);
+        }
         return 0;
     }
-    filesystem = disk_partition_filesystem(disk, &entry);
+    ret = disk_partition_filesystem(disk, &entry, &filesystem);
+    if (ret < 0) {
+        return ret;
+    }
     if (!disk_filesystem_format_supported(filesystem)) {
         return -95;
     }
-    volume_id = storage_next_data_mount_volume();
+    if (requested_filesystem && requested_filesystem != filesystem) {
+        return -22;
+    }
+    volume_id = storage_mount_volume_for_target(target);
     if (volume_id == STORAGE_MAX_VOLUMES) {
         return -28;
+    }
+    if (g_volumes[volume_id].ready) {
+        return -16;
     }
 
     volume = &g_volumes[volume_id];
@@ -1080,15 +1445,15 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     storage_memzero(volume, sizeof(*volume));
     volume->volume_id = (uint8_t)volume_id;
     storage_volume_from_install_disk(volume, disk);
-    volume->source_disk_id = request->disk_id;
-    volume->source_partition_index = request->partition_index;
-    if (request->mount_path[0] == 0) {
-        if (storage_set_data_mount_path(volume, request->disk_id, request->partition_index) < 0) {
+    volume->source_disk_id = disk_id;
+    volume->source_partition_index = partition_index;
+    if (!target || !target[0]) {
+        if (storage_set_data_mount_path(volume, disk_id, partition_index) < 0) {
             storage_memzero(volume, sizeof(*volume));
             return -22;
         }
     } else {
-        storage_copy_text(volume->mount_path, sizeof(volume->mount_path), request->mount_path);
+        storage_copy_text(volume->mount_path, sizeof(volume->mount_path), target);
     }
     if (filesystem == LEONOS_DISK_FILESYSTEM_FAT32) {
         volume->esp_start_lba = entry.first_lba;
@@ -1115,17 +1480,93 @@ int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
     if (ret == 0) {
         volume->data_partition_mount = 1;
         volume->ready = true;
-        storage_copy_text(request->mount_path, sizeof(request->mount_path), volume->mount_path);
         console_printf("[ntclks] storage mounted data partition disk=%u entry=%u path=%s fs=%s\\n",
-                       request->disk_id, request->partition_index, volume->mount_path,
+                       disk_id, partition_index, volume->mount_path,
                        filesystem == LEONOS_DISK_FILESYSTEM_FAT32 ? "fat32" :
                        (filesystem == LEONOS_DISK_FILESYSTEM_EXFAT ? "exfat" : "ext2"));
+        if (out_volume_id) {
+            *out_volume_id = volume_id;
+        }
     } else {
         storage_memzero(volume, sizeof(*volume));
     }
     g_active_volume = old_volume;
     storage_cache_invalidate();
     return ret;
+}
+
+/** Legacy ABI adapter retained until all callers have moved to mount(2). */
+int storage_disk_mount_partition(struct leonos_disk_partition_mount *request)
+{
+    uint32_t volume_id;
+    int ret;
+    if (!request) {
+        return -22;
+    }
+    ret = storage_mount_block_partition(request->disk_id, request->partition_index,
+                                        request->mount_path[0] ? request->mount_path : NULL,
+                                        NULL, 0, &volume_id);
+    if (ret == 0 && volume_id < STORAGE_MAX_VOLUMES) {
+        storage_copy_text(request->mount_path, sizeof(request->mount_path),
+                          g_volumes[volume_id].mount_path);
+    }
+    return ret;
+}
+
+int storage_mount_path_volume_id(const char *target, uint32_t *out_volume_id)
+{
+    if (!target || !out_volume_id) {
+        return -22;
+    }
+    for (uint32_t volume_id = STORAGE_VOLUME_TARGET_ROOT;
+         volume_id < STORAGE_MAX_VOLUMES; ++volume_id) {
+        const struct storage_volume *volume = &g_volumes[volume_id];
+        if (volume->ready && volume->data_partition_mount &&
+            storage_text_eq_ci(volume->mount_path, target)) {
+            *out_volume_id = volume_id;
+            return 0;
+        }
+    }
+    return -2;
+}
+
+int storage_unmount_path(const char *target, uint32_t *out_volume_id)
+{
+    uint32_t volume_id;
+    uint32_t target_length;
+    int ret;
+    if (!target) {
+        return -22;
+    }
+    ret = storage_mount_path_volume_id(target, &volume_id);
+    if (ret < 0) {
+        return ret;
+    }
+    target_length = storage_strlen(target);
+    for (uint32_t i = STORAGE_VOLUME_TARGET_ROOT; i < STORAGE_MAX_VOLUMES; ++i) {
+        const struct storage_volume *volume = &g_volumes[i];
+        if (i != volume_id && volume->ready &&
+            storage_memcmp(volume->mount_path, target, target_length) == 0 &&
+            volume->mount_path[target_length] == '/') {
+            return -16;
+        }
+    }
+    ret = storage_acquire_task_io();
+    if (ret < 0) {
+        return ret;
+    }
+    if (g_active_volume == &g_volumes[volume_id]) {
+        g_active_volume = &g_volumes[STORAGE_VOLUME_ROOT];
+    }
+    console_printf("[ntclks] storage unmounted data partition disk=%u entry=%u path=%s\\n",
+                   g_volumes[volume_id].source_disk_id,
+                   g_volumes[volume_id].source_partition_index, target);
+    storage_memzero(&g_volumes[volume_id], sizeof(g_volumes[volume_id]));
+    storage_cache_invalidate();
+    if (out_volume_id) {
+        *out_volume_id = volume_id;
+    }
+    return 0;
 }
 
 /**
@@ -1149,18 +1590,10 @@ int storage_disk_unmount_partition(const struct leonos_disk_partition_unmount *r
     if (ret < 0) {
         return ret;
     }
-    if (volume_id < STORAGE_VOLUME_DYNAMIC_FIRST || volume_id >= STORAGE_MAX_VOLUMES ||
-        !g_volumes[volume_id].data_partition_mount) {
+    if (volume_id >= STORAGE_MAX_VOLUMES || !g_volumes[volume_id].data_partition_mount) {
         return -2;
     }
-    if (g_active_volume == &g_volumes[volume_id]) {
-        g_active_volume = &g_volumes[0];
-    }
-    storage_memzero(&g_volumes[volume_id], sizeof(g_volumes[volume_id]));
-    storage_cache_invalidate();
-    console_printf("[ntclks] storage unmounted data partition disk=%u entry=%u\\n",
-                   request->disk_id, request->partition_index);
-    return 0;
+    return storage_unmount_path(g_volumes[volume_id].mount_path, NULL);
 }
 
 int storage_install_list_disks(struct leonos_install_disk *disks,
@@ -1262,6 +1695,7 @@ int storage_install_format_target(uint32_t disk_id)
         g_active_volume == &g_volumes[STORAGE_VOLUME_BOOT]) {
         g_active_volume = &g_volumes[STORAGE_VOLUME_ROOT];
     }
+    disk_block_cache_invalidate(disk_id);
     return 0;
 }
 
@@ -1299,12 +1733,13 @@ int storage_install_mount_target(uint32_t disk_id)
     target->volume_id = STORAGE_VOLUME_TARGET_ROOT;
     storage_volume_from_install_disk(target, disk);
     storage_copy_text(target->mount_path, sizeof(target->mount_path), "/target");
-    if (storage_prepare_install_disk(disk) < 0) {
+    int ret = storage_prepare_install_disk(disk);
+    if (ret < 0) {
         g_active_volume = old;
-        return -5;
+        return ret;
     }
     g_active_volume = target;
-    int ret = gpt_find_esp();
+    ret = gpt_find_esp();
     if (ret == 0 && target->exfat_start_lba) {
         ret = exfat_mount();
         console_printf("[ntclks] installer exFAT target mount returned %d\n", ret);

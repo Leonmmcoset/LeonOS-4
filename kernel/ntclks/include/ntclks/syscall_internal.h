@@ -14,6 +14,14 @@ void task_pipe_retain(struct task_file *file);
 void task_pipe_release(struct task_file *file);
 int task_pipe_read(struct task_file *file, void *buffer, uint32_t length);
 int task_pipe_write(struct task_file *file, const void *buffer, uint32_t length);
+short task_pipe_poll(const struct task_file *file, short events);
+void task_socket_retain(struct task_file *file);
+void task_socket_release(struct task_file *file);
+int task_socket_read(struct task_file *file, void *buffer, uint32_t length);
+int task_socket_write(struct task_file *file, const void *buffer, uint32_t length);
+short task_socket_poll(const struct task_file *file, short events);
+int64_t syscall_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
+                                uint64_t a2, uint64_t a3, uint64_t a4);
 int syscall_ipc_pipe(uint64_t user_ptr);
 int syscall_fs_owns(uint64_t number);
 int64_t syscall_fs_dispatch(uint64_t number, uint64_t a0, uint64_t a1,

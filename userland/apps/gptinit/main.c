@@ -1,15 +1,15 @@
-#include <leonos/fs.h>
+#include <leonos/blockdev.h>
 #include <stdio.h>
 #include <string.h>
 
 #include <stdlib.h>
 
-static int parse_disk(const char *path, uint32_t *disk_id)
+static int parse_disk(const char *path)
 {
     const char *digits;
     char *end;
     unsigned long value;
-    if (!path || !disk_id || strncmp(path, "/dev/disk", 9) != 0) {
+    if (!path || strncmp(path, "/dev/disk", 9) != 0) {
         return -1;
     }
     digits = path + 9;
@@ -17,10 +17,9 @@ static int parse_disk(const char *path, uint32_t *disk_id)
         return -1;
     }
     value = strtoul(digits, &end, 10);
-    if (!end || *end || value >= LEONOS_INSTALL_MAX_DISKS) {
+    if (!end || *end || value >= LEONOS_BLOCK_MAX_DISKS) {
         return -1;
     }
-    *disk_id = (uint32_t)value;
     return 0;
 }
 
@@ -38,31 +37,27 @@ static int confirm_initialization(const char *path)
 int main(int argc, char **argv)
 {
     const char *path;
-    uint32_t disk_id;
-    uint32_t flags = 0;
-    struct leonos_disk_gpt_initialize request;
+    int force = 0;
     int ret;
 
     if (argc == 2) {
         path = argv[1];
     } else if (argc == 3 && strcmp(argv[1], "--force") == 0) {
         path = argv[2];
-        flags = LEONOS_DISK_GPT_INITIALIZE_FORCE;
+        force = 1;
     } else {
         puts("usage: gptinit [--force] /dev/diskN");
         return 2;
     }
-    if (parse_disk(path, &disk_id) < 0) {
+    if (parse_disk(path) < 0) {
         puts("gptinit: expected a whole disk such as /dev/disk0");
         return 2;
     }
-    if (!(flags & LEONOS_DISK_GPT_INITIALIZE_FORCE) && !confirm_initialization(path)) {
+    if (!force && !confirm_initialization(path)) {
         puts("gptinit: cancelled");
         return 1;
     }
-    request.disk_id = disk_id;
-    request.flags = flags;
-    ret = leonos_disk_initialize_gpt(&request);
+    ret = leonos_block_gpt_initialize(path, force);
     if (ret < 0) {
         printf("gptinit: GPT initialization failed for %s (ret=%d)\n", path, ret);
         if (ret == -17) {

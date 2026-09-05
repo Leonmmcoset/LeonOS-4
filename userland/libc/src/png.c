@@ -15,7 +15,7 @@ static int png_read_file(const char *path, uint8_t **out_data, uint32_t *out_siz
     int fd;
 
     if (!path || !path[0] || !out_data || !out_size ||
-        stat(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
+        leonos_stat_legacy(path, &st) < 0 || st.type != LEONOS_FS_TYPE_FILE ||
         st.size == 0 || st.size > LEONOS_PNG_MAX_FILE_BYTES) {
         return -1;
     }

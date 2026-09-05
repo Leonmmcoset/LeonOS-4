@@ -6,11 +6,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <leonos/gui.h>
-#include <leonos/pty.h>
 #include <leonos/signal.h>
 #include <leonos/syscall.h>
+#include <linux/tty.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -26,6 +27,13 @@ static int syscall_error(long result)
     }
     return (int)result;
 }
+
+struct leonos_linux_sigaction {
+    uintptr_t handler;
+    __sigset_t mask;
+    uint32_t flags;
+    uint32_t reserved;
+};
 
 pid_t fork(void)
 {
@@ -229,7 +237,7 @@ pid_t setsid(void)
 pid_t tcgetpgrp(int fd)
 {
     int process_group = 0;
-    long result = syscall3(SYS_ioctl, fd, LEONOS_PTY_IOCTL_GET_PGRP,
+    long result = syscall3(SYS_ioctl, fd, TIOCGPGRP,
                            (long)&process_group);
     if (result < 0) {
         errno = (int)-result;
@@ -245,61 +253,53 @@ int tcsetpgrp(int fd, pid_t process_group)
         errno = EINVAL;
         return -1;
     }
-    result = syscall3(SYS_ioctl, fd, LEONOS_PTY_IOCTL_SET_PGRP,
+    result = syscall3(SYS_ioctl, fd, TIOCSPGRP,
                       (long)&process_group);
     return syscall_error(result);
 }
 
 int sigprocmask(int how, const __sigset_t *set, __sigset_t *old_set)
 {
-    (void)how;
-    (void)set;
-    if (old_set) {
-        *old_set = 0;
-    }
-    errno = ENOSYS;
-    return -1;
+    long result = syscall6(SYS_rt_sigprocmask, how, (long)set, (long)old_set,
+                           (long)sizeof(__sigset_t), 0, 0);
+    return syscall_error(result);
 }
 
 int sigsuspend(const __sigset_t *mask)
 {
-    (void)mask;
-    (void)sched_yield();
-    errno = EINTR;
-    return -1;
+    long result = syscall6(SYS_rt_sigsuspend, (long)mask,
+                           (long)sizeof(__sigset_t), 0, 0, 0, 0);
+    return syscall_error(result);
 }
 
 int sigaction(int signal_number, const struct sigaction *action,
               struct sigaction *previous)
 {
-    struct leonos_signal_action request;
+    struct leonos_linux_sigaction request;
+    struct leonos_linux_sigaction previous_request;
     long result;
     if (signal_number <= 0 || signal_number >= 32) {
         errno = EINVAL;
         return -1;
     }
-    request = (struct leonos_signal_action){
-        .operation = action ? LEONOS_SIGNAL_ACTION_SET : LEONOS_SIGNAL_ACTION_GET,
-        .signal_number = (uint32_t)signal_number,
-        .disposition = LEONOS_SIGNAL_DISPOSITION_DEFAULT,
-    };
+    request = (struct leonos_linux_sigaction){0};
     if (action) {
-        if (action->sa_handler == SIG_IGN) {
-            request.disposition = LEONOS_SIGNAL_DISPOSITION_IGNORE;
-        } else if (action->sa_handler != SIG_DFL) {
-            errno = ENOSYS;
-            return -1;
-        }
+        request.handler = (uintptr_t)action->sa_handler;
+        request.mask = action->sa_mask;
+        request.flags = (uint32_t)action->sa_flags;
     }
-    result = syscall3(SYS_ioctl, 3, LEONOS_SIGNAL_IOCTL_ACTION, (long)&request);
+    result = syscall6(SYS_rt_sigaction, signal_number, action ? (long)&request : 0,
+                      previous ? (long)&previous_request : 0,
+                      (long)sizeof(__sigset_t), 0, 0);
     if (result < 0) {
         errno = (int)-result;
         return -1;
     }
     if (previous) {
         *previous = (struct sigaction){
-            .sa_handler = request.previous_disposition == LEONOS_SIGNAL_DISPOSITION_IGNORE
-                              ? SIG_IGN : SIG_DFL,
+            .sa_handler = previous_request.handler == 1 ? SIG_IGN : SIG_DFL,
+            .sa_mask = previous_request.mask,
+            .sa_flags = (int)previous_request.flags,
         };
     }
     return 0;

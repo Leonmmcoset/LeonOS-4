@@ -317,7 +317,7 @@ void extract_tar_with_path(const char *tar_path)
     }
     if (mkdir(dest_dir, 0) < 0) {
         struct leonos_stat st;
-        if (stat(dest_dir, &st) != 0 || st.type != LEONOS_FS_TYPE_DIR) {
+        if (leonos_stat_legacy(dest_dir, &st) != 0 || st.type != LEONOS_FS_TYPE_DIR) {
             set_status_code("Extract mkdir failed ", -1);
             return;
         }

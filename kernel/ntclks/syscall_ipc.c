@@ -141,6 +141,32 @@ int task_pipe_write(struct task_file *file, const void *buffer, uint32_t length)
     return (int)count;
 }
 
+short task_pipe_poll(const struct task_file *file, short events)
+{
+    const struct task_pipe *pipe = task_pipe_for_file(file);
+    short result = 0;
+    if (!pipe) {
+        return POLLNVAL;
+    }
+    if (file->flags & TASK_FILE_FLAG_PIPE_WRITE) {
+        if (pipe->readers == 0) {
+            result |= POLLERR;
+        } else if (events & POLLOUT) {
+            uint32_t next = (pipe->head + 1U) % TASK_PIPE_RING_CAP;
+            if (next != pipe->tail) {
+                result |= POLLOUT;
+            }
+        }
+    } else {
+        if (pipe->tail != pipe->head) {
+            result |= POLLIN;
+        } else if (pipe->writers == 0) {
+            result |= POLLHUP;
+        }
+    }
+    return result;
+}
+
 int syscall_ipc_pipe(uint64_t user_ptr)
 {
     struct task *task = sched_current_task();

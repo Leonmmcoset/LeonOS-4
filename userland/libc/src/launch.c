@@ -3,11 +3,11 @@
 #include <leonos/device.h>
 #include <leonos/environment.h>
 #include <leonos/launch.h>
-#include <leonos/pty.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <unistd.h>
 
 #define LEONOS_ASSOC_CONFIG_PATH "/system/config/fileassoc.cfg"
@@ -177,8 +177,8 @@ static int launch_in_terminal(char *argv[])
 
 int leonos_spawn_argv(const char *path, char *const argv[])
 {
-    struct leonos_pty_spawn spawn;
     char **envp = 0;
+    pid_t pid;
     int result;
 
     if (!path || !path[0] || !argv || !argv[0]) {
@@ -188,26 +188,12 @@ int leonos_spawn_argv(const char *path, char *const argv[])
     if (result < 0) {
         return result;
     }
-    spawn = (struct leonos_pty_spawn){
-        .pty_id = 0,
-        .path = path,
-        .argv = argv,
-        .envp = envp,
-        .stdin_fd = -1,
-        .stdout_fd = -1,
-        .stderr_fd = -1,
-    };
-    /* Keep the launcher on the same device ABI as the rest of libc.  The
-     * descriptor is opened explicitly so standalone launch users no longer
-     * depend on the historical fd=3 control channel. */
-    int pty_device = open(LEONOS_DEV_PTMX, O_RDWR, 0);
-    if (pty_device < 0) {
-        pty_device = 3;
+    pid = fork();
+    if (pid == 0) {
+        (void)execve(path, argv, envp);
+        _exit(127);
     }
-    result = ioctl(pty_device, LEONOS_PTY_IOCTL_SPAWN, &spawn);
-    if (pty_device >= 4) {
-        (void)close(pty_device);
-    }
+    result = pid < 0 ? -1 : (int)pid;
     leonos_environment_free(envp);
     return result;
 }
@@ -291,10 +277,10 @@ int leonos_launch_create_shortcut(const char *shortcut_path, const char *target_
     if (!ends_with_ignore_case(shortcut_path, ".lnk")) {
         return LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
     }
-    if (stat(target_path, &st) < 0) {
+    if (leonos_stat_legacy(target_path, &st) < 0) {
         return LEONOS_LAUNCH_ERR_NOT_FOUND;
     }
-    if (stat(shortcut_path, &st) == 0) {
+    if (leonos_stat_legacy(shortcut_path, &st) == 0) {
         return LEONOS_LAUNCH_ERR_EXISTS;
     }
     body[0] = 0;
@@ -324,7 +310,7 @@ int leonos_launch_create_shortcut_in_dir(const char *dir_path, const char *targe
     if (!dir_path || !dir_path[0] || !target_path || !target_path[0]) {
         return LEONOS_LAUNCH_ERR_EMPTY;
     }
-    if (stat(dir_path, &st) < 0 || st.type != LEONOS_FS_TYPE_DIR) {
+    if (leonos_stat_legacy(dir_path, &st) < 0 || st.type != LEONOS_FS_TYPE_DIR) {
         return LEONOS_LAUNCH_ERR_NOT_FOUND;
     }
     leonos_launch_default_shortcut_name(target_path, name, sizeof(name));
@@ -333,7 +319,7 @@ int leonos_launch_create_shortcut_in_dir(const char *dir_path, const char *targe
             build_numbered_shortcut_name(name, sizeof(name), target_path, i + 1);
         }
         build_child_path(path, sizeof(path), dir_path, name);
-        if (stat(path, &st) == 0) {
+        if (leonos_stat_legacy(path, &st) == 0) {
             continue;
         }
         ret = leonos_launch_create_shortcut(path, target_path);
@@ -787,7 +773,7 @@ static int read_shortcut_target(const char *shortcut_path, char *target, uint32_
     if (ret < 0) {
         return ret;
     }
-    return stat(target, &st) < 0 ? LEONOS_LAUNCH_ERR_NOT_FOUND : 0;
+    return leonos_stat_legacy(target, &st) < 0 ? LEONOS_LAUNCH_ERR_NOT_FOUND : 0;
 }
 
 int leonos_launch_file_with_app(const char *target_path, const char *program_path)
@@ -799,7 +785,7 @@ int leonos_launch_file_with_app(const char *target_path, const char *program_pat
         return LEONOS_LAUNCH_ERR_EMPTY;
     }
     resolved_program = leonos_launch_builtin_path(program_path);
-    if (stat(resolved_program, &st) < 0) {
+    if (leonos_stat_legacy(resolved_program, &st) < 0) {
         return LEONOS_LAUNCH_ERR_NOT_FOUND;
     }
     app = find_assoc_app(resolved_program);
@@ -933,7 +919,7 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         }
         return ret;
     }
-    if (stat(path, &st) < 0) {
+    if (leonos_stat_legacy(path, &st) < 0) {
         return LEONOS_LAUNCH_ERR_NOT_FOUND;
     }
     if (st.type == LEONOS_FS_TYPE_DIR) {

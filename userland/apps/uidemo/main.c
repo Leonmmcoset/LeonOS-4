@@ -139,7 +139,7 @@ static void run_unicode_file_test(void)
         close(fd);
         printf("[uidemo.elf] unicode write bytes=%d\n", (int)wrote);
     }
-    ret = stat(path, &st);
+    ret = leonos_stat_legacy(path, &st);
     printf("[uidemo.elf] unicode stat %s ret=%d type=%d size=%d\n",
            path, ret, ret == 0 ? (int)st.type : -1, ret == 0 ? (int)st.size : -1);
     fd = open(dir, LEONOS_O_RDONLY, 0);

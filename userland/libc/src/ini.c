@@ -204,7 +204,7 @@ static int ini_load_mode(const char *path, uint32_t strict)
     if (!path || !path[0]) {
         return 0;
     }
-    if (stat(path, &st) == 0) {
+    if (leonos_stat_legacy(path, &st) == 0) {
         if (st.type != LEONOS_FS_TYPE_FILE ||
             st.size >= (uint64_t)sizeof(ini_buffer)) {
             return 0;
