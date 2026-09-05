@@ -1141,6 +1141,10 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     struct leonos_pty_termios termios;
     int have_termios;
     int local_echo;
+    leonos_ui_caps_lock_event(keycode, pressed);
+    if (keycode == LEONOS_KEY_CAPS_LOCK) {
+        return 0;
+    }
     if (keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT) {
         *shift_down = pressed ? 1 : 0;
         return 0;

@@ -4,9 +4,25 @@
 
 uint8_t ui_shift_down;
 
+static uint8_t ui_caps_lock;
+
 int ui_is_shift_key(uint8_t keycode)
 {
     return keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT;
+}
+
+static int ui_keycode_is_letter(uint8_t keycode)
+{
+    return (keycode >= 16 && keycode <= 25) ||
+           (keycode >= 30 && keycode <= 38) ||
+           (keycode >= 44 && keycode <= 50);
+}
+
+void leonos_ui_caps_lock_event(uint8_t keycode, uint8_t pressed)
+{
+    if (keycode == LEONOS_KEY_CAPS_LOCK && pressed) {
+        ui_caps_lock ^= 1;
+    }
 }
 
 int leonos_ui_keycode_to_char(uint8_t keycode, char *out)
@@ -18,6 +34,10 @@ int leonos_ui_keycode_to_char_shift(uint8_t keycode, uint8_t shifted, char *out)
 {
     if (!out) {
         return 0;
+    }
+    /* Caps Lock only changes alphabetic keys; Shift and Caps Lock XOR. */
+    if (ui_keycode_is_letter(keycode)) {
+        shifted = (shifted != ui_caps_lock);
     }
     switch (keycode) {
     case LEONOS_KEY_BACKSPACE: *out = '\b'; return 1;

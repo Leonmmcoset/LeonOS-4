@@ -158,6 +158,7 @@ void desktop_run(void)
                 handle_mouse_wheel((uint32_t)event.x, (uint32_t)event.y,
                                    event.dy, event.buttons);
             } else if (event.type == LEONOS_INPUT_KEYBOARD) {
+                leonos_ui_caps_lock_event(event.keycode, event.pressed);
                 if (desktop_handle_shortcut_input_key(event.keycode, event.pressed)) {
                     continue;
                 }
