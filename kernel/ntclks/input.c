@@ -10,6 +10,8 @@
 
 #define INPUT_QUEUE_CAP 512U
 #define INPUT_EVDEV_QUEUE_CAP 1024U
+#define INPUT_EVDEV_DEVICES 2U
+#define INPUT_EVDEV_KEY_BYTES ((KEY_CNT + 7U) / 8U)
 
 struct input_evdev_record {
     uint64_t sequence;
@@ -23,6 +25,11 @@ static volatile uint32_t head;
 static volatile uint32_t tail;
 static uint64_t evdev_next_sequence;
 static uint8_t evdev_mouse_buttons;
+static uint8_t evdev_key_state[INPUT_EVDEV_KEY_BYTES];
+static uint8_t evdev_present[INPUT_EVDEV_DEVICES];
+static uint32_t evdev_grab_owner[INPUT_EVDEV_DEVICES];
+static uint64_t evdev_grab_token[INPUT_EVDEV_DEVICES];
+static uint64_t evdev_next_grab_token = 1;
 static struct kernel_spinlock input_lock = KERNEL_SPINLOCK_INIT;
 
 static uint64_t evdev_oldest_sequence(void)
@@ -30,6 +37,22 @@ static uint64_t evdev_oldest_sequence(void)
     return evdev_next_sequence > INPUT_EVDEV_QUEUE_CAP
                ? evdev_next_sequence - INPUT_EVDEV_QUEUE_CAP
                : 1U;
+}
+
+static uint32_t evdev_device_index(uint32_t device_kind)
+{
+    if (device_kind == STORAGE_DEV_KIND_KEYBOARD) return 0;
+    if (device_kind == STORAGE_DEV_KIND_MOUSE) return 1;
+    return INPUT_EVDEV_DEVICES;
+}
+
+static void evdev_set_key(uint16_t code, int32_t value)
+{
+    if (code < KEY_CNT && value != 0) {
+        evdev_key_state[code / 8U] |= (uint8_t)(1U << (code % 8U));
+    } else if (code < KEY_CNT) {
+        evdev_key_state[code / 8U] &= (uint8_t)~(1U << (code % 8U));
+    }
 }
 
 static void evdev_publish(uint32_t device_kind, uint16_t type, uint16_t code,
@@ -50,6 +73,9 @@ static void evdev_publish(uint32_t device_kind, uint16_t type, uint16_t code,
             .value = value,
         },
     };
+    if (type == EV_KEY) {
+        evdev_set_key(code, value);
+    }
     ++evdev_next_sequence;
 }
 
@@ -125,6 +151,15 @@ void input_init(void)
     tail = 0;
     evdev_next_sequence = 1;
     evdev_mouse_buttons = 0;
+    evdev_next_grab_token = 1;
+    for (uint32_t i = 0; i < INPUT_EVDEV_DEVICES; ++i) {
+        evdev_present[i] = 1;
+        evdev_grab_owner[i] = 0;
+        evdev_grab_token[i] = 0;
+    }
+    for (uint32_t i = 0; i < sizeof(evdev_key_state); ++i) {
+        evdev_key_state[i] = 0;
+    }
     kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
@@ -229,22 +264,23 @@ uint64_t input_evdev_cursor_now(void)
 }
 
 int input_evdev_read(uint32_t device_kind, uint64_t *cursor,
-                     void *buffer, uint32_t length)
+                     void *buffer, uint32_t length, uint64_t grab_token)
 {
     struct input_event *events = (struct input_event *)buffer;
+    uint32_t index = evdev_device_index(device_kind);
     uint32_t capacity;
     uint32_t count = 0;
     uint64_t flags;
     if (!cursor || !buffer || length < sizeof(*events) ||
-        (length % sizeof(*events)) != 0) {
-        return -22;
-    }
-    if (device_kind != STORAGE_DEV_KIND_KEYBOARD &&
-        device_kind != STORAGE_DEV_KIND_MOUSE) {
+        (length % sizeof(*events)) != 0 || index >= INPUT_EVDEV_DEVICES) {
         return -22;
     }
     capacity = length / sizeof(*events);
     kernel_spin_lock_irqsave(&input_lock, &flags);
+    if (!evdev_present[index]) {
+        kernel_spin_unlock_irqrestore(&input_lock, flags);
+        return -19; /* ENODEV */
+    }
     if (*cursor == 0 || *cursor < evdev_oldest_sequence()) {
         *cursor = evdev_oldest_sequence();
     }
@@ -256,7 +292,13 @@ int input_evdev_read(uint32_t device_kind, uint64_t *cursor,
             continue;
         }
         ++(*cursor);
-        if (record->device_kind == device_kind) {
+        if (record->device_kind != device_kind) {
+            continue;
+        }
+        /* EVIOCGRAB is exclusive: non-owning descriptors advance over events
+         * but do not observe them while another client holds the grab. */
+        if (evdev_grab_token[index] == 0 ||
+            (grab_token && grab_token == evdev_grab_token[index])) {
             events[count++] = record->event;
         }
     }
@@ -264,22 +306,29 @@ int input_evdev_read(uint32_t device_kind, uint64_t *cursor,
     return (int)(count * sizeof(*events));
 }
 
-int input_evdev_available(uint32_t device_kind, uint64_t cursor)
+int input_evdev_available(uint32_t device_kind, uint64_t cursor,
+                          uint64_t grab_token)
 {
+    uint32_t index = evdev_device_index(device_kind);
     uint64_t flags;
     int available = 0;
-    if (device_kind != STORAGE_DEV_KIND_KEYBOARD &&
-        device_kind != STORAGE_DEV_KIND_MOUSE) {
+    if (index >= INPUT_EVDEV_DEVICES) {
         return 0;
     }
     kernel_spin_lock_irqsave(&input_lock, &flags);
+    if (!evdev_present[index]) {
+        kernel_spin_unlock_irqrestore(&input_lock, flags);
+        return 0;
+    }
     if (cursor == 0 || cursor < evdev_oldest_sequence()) {
         cursor = evdev_oldest_sequence();
     }
     while (cursor < evdev_next_sequence) {
         const struct input_evdev_record *record =
             &evdev_queue[cursor % INPUT_EVDEV_QUEUE_CAP];
-        if (record->sequence == cursor && record->device_kind == device_kind) {
+        if (record->sequence == cursor && record->device_kind == device_kind &&
+            (evdev_grab_token[index] == 0 ||
+             (grab_token && grab_token == evdev_grab_token[index]))) {
             available = 1;
             break;
         }
@@ -287,4 +336,126 @@ int input_evdev_available(uint32_t device_kind, uint64_t cursor)
     }
     kernel_spin_unlock_irqrestore(&input_lock, flags);
     return available;
+}
+
+int64_t input_evdev_grab(uint32_t device_kind, uint64_t current_token,
+                         int enable, uint32_t pid)
+{
+    uint32_t index = evdev_device_index(device_kind);
+    uint64_t flags;
+    if (index >= INPUT_EVDEV_DEVICES || !pid) return -22;
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    if (!enable) {
+        if (current_token && current_token == evdev_grab_token[index] &&
+            evdev_grab_owner[index] == pid) {
+            evdev_grab_owner[index] = 0;
+            evdev_grab_token[index] = 0;
+        }
+        kernel_spin_unlock_irqrestore(&input_lock, flags);
+        return 0;
+    }
+    if (evdev_grab_token[index] != 0 &&
+        evdev_grab_token[index] != current_token) {
+        kernel_spin_unlock_irqrestore(&input_lock, flags);
+        return -16; /* EBUSY */
+    }
+    if (current_token && current_token == evdev_grab_token[index] &&
+        evdev_grab_owner[index] == pid) {
+        kernel_spin_unlock_irqrestore(&input_lock, flags);
+        return (int64_t)current_token;
+    }
+    if (evdev_next_grab_token == 0) evdev_next_grab_token = 1;
+    evdev_grab_token[index] = evdev_next_grab_token;
+    evdev_grab_owner[index] = pid;
+    ++evdev_next_grab_token;
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    return (int64_t)evdev_grab_token[index];
+}
+
+void input_evdev_release(uint32_t device_kind, uint64_t grab_token,
+                         uint32_t pid)
+{
+    uint32_t index = evdev_device_index(device_kind);
+    uint64_t flags;
+    if (index >= INPUT_EVDEV_DEVICES || !grab_token) return;
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    if (evdev_grab_token[index] == grab_token &&
+        evdev_grab_owner[index] == pid) {
+        evdev_grab_token[index] = 0;
+        evdev_grab_owner[index] = 0;
+    }
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+}
+
+void input_evdev_key_state(void *buffer, uint32_t length)
+{
+    uint64_t flags;
+    uint32_t copy;
+    if (!buffer || !length) return;
+    copy = length < sizeof(evdev_key_state) ? length : sizeof(evdev_key_state);
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    for (uint32_t i = 0; i < copy; ++i) {
+        ((uint8_t *)buffer)[i] = evdev_key_state[i];
+    }
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    for (uint32_t i = copy; i < length; ++i) {
+        ((uint8_t *)buffer)[i] = 0;
+    }
+}
+
+static void input_evdev_set_cap(uint8_t *bits, uint32_t capacity, uint32_t bit)
+{
+    if (bits && bit / 8U < capacity) {
+        bits[bit / 8U] |= (uint8_t)(1U << (bit % 8U));
+    }
+}
+
+void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
+                              void *buffer, uint32_t length)
+{
+    uint8_t bits[INPUT_EVDEV_KEY_BYTES] = {0};
+    uint64_t flags;
+    uint32_t copy = length < sizeof(bits) ? length : sizeof(bits);
+    if (!buffer || !length) return;
+    if (event_type == 0) {
+        input_evdev_set_cap(bits, sizeof(bits), EV_SYN);
+        input_evdev_set_cap(bits, sizeof(bits), EV_KEY);
+        if (device_kind == STORAGE_DEV_KIND_MOUSE) {
+            input_evdev_set_cap(bits, sizeof(bits), EV_REL);
+        }
+    } else if (event_type == EV_KEY) {
+        if (device_kind == STORAGE_DEV_KIND_KEYBOARD) {
+            for (uint32_t key = KEY_ESC; key <= KEY_COMPOSE; ++key) {
+                input_evdev_set_cap(bits, sizeof(bits), key);
+            }
+        } else {
+            input_evdev_set_cap(bits, sizeof(bits), BTN_LEFT);
+            input_evdev_set_cap(bits, sizeof(bits), BTN_RIGHT);
+            input_evdev_set_cap(bits, sizeof(bits), BTN_MIDDLE);
+        }
+    } else if (event_type == EV_REL &&
+               device_kind == STORAGE_DEV_KIND_MOUSE) {
+        input_evdev_set_cap(bits, sizeof(bits), REL_X);
+        input_evdev_set_cap(bits, sizeof(bits), REL_Y);
+        input_evdev_set_cap(bits, sizeof(bits), REL_WHEEL);
+    }
+    (void)flags;
+    for (uint32_t i = 0; i < copy; ++i) {
+        ((uint8_t *)buffer)[i] = bits[i];
+    }
+    for (uint32_t i = copy; i < length; ++i) {
+        ((uint8_t *)buffer)[i] = 0;
+    }
+}
+
+int input_evdev_present(uint32_t device_kind)
+{
+    uint32_t index = evdev_device_index(device_kind);
+    uint64_t flags;
+    int present;
+    if (index >= INPUT_EVDEV_DEVICES) return 0;
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    present = evdev_present[index];
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    return present;
 }

@@ -37,6 +37,10 @@ int pty_is_owner(uint32_t pty_id, uint32_t owner_pid);
  */
 int pty_is_active(uint32_t pty_id);
 /**
+ * @brief Return non-zero when pty_id's master side has closed.
+ */
+int pty_is_hungup(uint32_t pty_id);
+/**
  * @brief Copy up to length bytes of pty_id's terminal output into buffer; returns bytes read.
  */
 int64_t pty_read_output(uint32_t owner_pid, uint32_t pty_id, char *buffer, uint32_t length);
@@ -90,6 +94,14 @@ int pty_get_foreground_pgid(uint32_t pty_id, uint32_t *process_group);
  */
 int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
                             uint32_t process_group);
+/**
+ * @brief Adopt caller_pid's session and process group as the PTY controlling session.
+ */
+void pty_acquire_controlling(uint32_t pty_id, uint32_t caller_pid);
+/**
+ * @brief Reclaim a hung-up PTY session when no descriptor still references it.
+ */
+void pty_reap_hungup(uint32_t pty_id);
 /**
  * @brief Detach pid from any PTY it is attached to.
  */

@@ -2,9 +2,9 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
-#include <leonos/inputm.h>
+#include <leonos/text_input.h>
 #include <leonos/license.h>
-#include <leonos/net.h>
+#include <leonos/net_service.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -530,17 +530,17 @@ static void open_license_browser(void)
 
 static void renew_dhcp(void)
 {
-    struct leonos_net_dhcp dhcp;
+    net_service_dhcp_t dhcp;
     char msg[160];
     uint32_t pos = 0;
-    dhcp = (struct leonos_net_dhcp){0};
+    dhcp = (net_service_dhcp_t){0};
     OOBE_LOG_LINE("[oobe.elf] DHCP renew requested from license page");
-    int ret = leonos_net_dhcp_renew(8000U, &dhcp);
+    int ret = net_service_dhcp_renew(8000U, &dhcp);
     OOBE_LOG("[oobe.elf] DHCP renew ret=%d status=%d ip=0x%x gateway=0x%x dns=0x%x\n",
              ret, (int)dhcp.status, dhcp.config.local_ip,
              dhcp.config.gateway_ip, dhcp.config.dns_ip);
     if (ret < 0 ||
-        dhcp.status != LEONOS_NET_STATUS_OK) {
+        dhcp.status != NET_SERVICE_STATUS_OK) {
         msg[0] = 0;
         append_text(msg, &pos, sizeof(msg), "DHCP renew failed, status ");
         append_u32(msg, &pos, sizeof(msg), dhcp.status);
@@ -726,14 +726,14 @@ static void handle_key_up(uint8_t keycode)
 
 static void oobe_update_inputm_context(uint32_t window_id)
 {
-    struct leonos_inputm_context context = {
+    text_input_context_t context = {
         .window_id = window_id,
-        .flags = LEONOS_INPUTM_CONTEXT_FOCUSED,
+        .flags = TEXT_INPUT_CONTEXT_FOCUSED,
     };
     if (current_page == OOBE_PAGE_ADMIN && active_admin_field == 1U) {
-        context.flags |= LEONOS_INPUTM_CONTEXT_SECURE;
+        context.flags |= TEXT_INPUT_CONTEXT_SECURE;
     }
-    (void)leonos_inputm_set_context(&context);
+    (void)text_input_set_context(&context);
 }
 
 static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,

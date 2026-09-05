@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <leonos/pgl.h>
-#include <leonos/gpu.h>
+#include <leonos/gpu_sdk.h>
 
 #define main portablegl_upstream_main
 #include "gears-upstream.c"
@@ -12,37 +12,37 @@
 
 static unsigned create_calls, destroy_calls, render_calls;
 static int info_result, create_result, render_result;
-static uint32_t gpu_flags = LEONOS_GPU_AVAILABLE;
+static uint32_t gpu_flags = GPU_SDK_AVAILABLE;
 
-int leonos_gpu_info(struct leonos_gpu_info *info)
+int gpu_sdk_info(gpu_sdk_info_t *info)
 {
     assert(info->size == sizeof(*info));
-    assert(info->version == LEONOS_GPU_ABI_VERSION);
+    assert(info->version == GPU_SDK_ABI_VERSION);
     info->flags = gpu_flags;
     return info_result;
 }
 
-int leonos_gpu_create(struct leonos_gpu_context *context)
+int gpu_sdk_create(gpu_sdk_context_t *context)
 {
     assert(context->size == sizeof(*context));
-    assert(context->version == LEONOS_GPU_ABI_VERSION);
+    assert(context->version == GPU_SDK_ABI_VERSION);
     assert(context->vertex_capacity == 2400);
     ++create_calls;
     context->handle = create_result ? 0 : create_calls;
     return create_result;
 }
 
-int leonos_gpu_destroy(uint64_t handle)
+int gpu_sdk_destroy(uint64_t handle)
 {
     assert(handle);
     ++destroy_calls;
     return 0;
 }
 
-int leonos_gpu_render(const struct leonos_gpu_frame *frame)
+int gpu_sdk_render(const gpu_sdk_frame_t *frame)
 {
     assert(frame->size == sizeof(*frame));
-    assert(frame->version == LEONOS_GPU_ABI_VERSION);
+    assert(frame->version == GPU_SDK_ABI_VERSION);
     assert(frame->vertex_count == 2400);
     assert(frame->draw_count == 3);
     assert(frame->pixel_capacity == 320 * 240);
@@ -98,9 +98,9 @@ static void check_mesh_and_shader(struct gears_gpu_backend *gpu)
             struct vertex_strip *strip = &gear->strips[strip_index];
             for (int triangle = 0; triangle < strip->count - 2; ++triangle) {
                 int indices[] = {triangle + (triangle & 1), triangle + !(triangle & 1), triangle + 2};
-                const struct leonos_gpu_vertex *a = &gpu->vertices[cursor];
-                const struct leonos_gpu_vertex *b = a + 1;
-                const struct leonos_gpu_vertex *c = a + 2;
+                const gpu_sdk_vertex_t *a = &gpu->vertices[cursor];
+                const gpu_sdk_vertex_t *b = a + 1;
+                const gpu_sdk_vertex_t *c = a + 2;
                 vec3 ab = {b->x - a->x, b->y - a->y, b->z - a->z};
                 vec3 ac = {c->x - a->x, c->y - a->y, c->z - a->z};
                 vec3 face_normal = cross_v3s(ab, ac);
@@ -109,7 +109,7 @@ static void check_mesh_and_shader(struct gears_gpu_backend *gpu)
                 assert(dot_v3s(face_normal, source_normal) > 0);
                 for (unsigned corner = 0; corner < 3; ++corner, ++cursor) {
                     const float *source = gear->vertices[strip->first + indices[corner]];
-                    const struct leonos_gpu_vertex *vertex = &gpu->vertices[cursor];
+                    const gpu_sdk_vertex_t *vertex = &gpu->vertices[cursor];
                     vec4 attrs[] = {{source[0], source[1], source[2], 1}, {source[3], source[4], source[5], 1}};
                     Shader_Builtins builtins = {0};
                     float rgb[3];

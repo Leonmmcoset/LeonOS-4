@@ -120,6 +120,7 @@ static int storage_read_device(const struct storage_volume *volume, uint64_t lba
                                uint32_t sector_count, void *buffer)
 {
     int ret = 0;
+    uint64_t start_lba = lba;
     if (!volume || !buffer || !sector_count) {
         return -22;
     }
@@ -127,6 +128,9 @@ static int storage_read_device(const struct storage_volume *volume, uint64_t lba
         uint64_t offset = lba * SECTOR_SIZE;
         uint64_t bytes = (uint64_t)sector_count * SECTOR_SIZE;
         if (!volume->ram_base || offset + bytes < offset || offset + bytes > volume->ram_bytes) {
+            console_printf("[storage] ram read out of range volume=%u lba=%llu sectors=%u ram_bytes=%llu\n",
+                           volume->volume_id, (unsigned long long)lba,
+                           sector_count, (unsigned long long)volume->ram_bytes);
             return -22;
         }
         storage_memcpy(buffer, volume->ram_base + offset, (size_t)bytes);
@@ -188,6 +192,11 @@ static int storage_read_device(const struct storage_volume *volume, uint64_t lba
     }
 out:
     kernel_spin_unlock(&storage_transport_lock);
+    if (ret < 0) {
+        console_printf("[storage] device read failed volume=%u kind=%u transport=%u lba=%llu sectors=%u ret=%d\n",
+                       volume->volume_id, volume->kind, volume->transport,
+                       (unsigned long long)start_lba, sector_count, ret);
+    }
     return ret;
 }
 

@@ -1,4 +1,4 @@
-#include <leonos/device.h>
+#include <leonos/devmgr_service.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/psf_font.h>
@@ -22,9 +22,9 @@
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[DEVMGR_MAX_W * DEVMGR_MAX_H];
-static struct leonos_device_info devices[LEONOS_DEVICE_MAX];
-static const char *class_text[LEONOS_DEVICE_MAX];
-static char flags_text[LEONOS_DEVICE_MAX][48];
+static system_device_info_t devices[SYSTEM_DEVICE_MAX];
+static const char *class_text[SYSTEM_DEVICE_MAX];
+static char flags_text[SYSTEM_DEVICE_MAX][48];
 static uint32_t device_count;
 static struct leonos_ui_listview_state device_list;
 static char status_text[128] = "Ready";
@@ -79,19 +79,19 @@ static void set_status_code(const char *prefix, int value)
 static const char *device_class_name(uint32_t cls)
 {
     switch (cls) {
-    case LEONOS_DEVICE_CLASS_SYSTEM:
+    case SYSTEM_DEVICE_CLASS_SYSTEM:
         return T("System", "系统");
-    case LEONOS_DEVICE_CLASS_INPUT:
+    case SYSTEM_DEVICE_CLASS_INPUT:
         return T("Input", "输入");
-    case LEONOS_DEVICE_CLASS_DISPLAY:
+    case SYSTEM_DEVICE_CLASS_DISPLAY:
         return T("Display", "显示");
-    case LEONOS_DEVICE_CLASS_STORAGE:
+    case SYSTEM_DEVICE_CLASS_STORAGE:
         return T("Storage", "存储");
-    case LEONOS_DEVICE_CLASS_SERIAL:
+    case SYSTEM_DEVICE_CLASS_SERIAL:
         return T("Serial", "串口");
-    case LEONOS_DEVICE_CLASS_NETWORK:
+    case SYSTEM_DEVICE_CLASS_NETWORK:
         return T("Network", "网络");
-    case LEONOS_DEVICE_CLASS_AUDIO:
+    case SYSTEM_DEVICE_CLASS_AUDIO:
         return T("Audio", "音频");
     default:
         return T("Other", "其它");
@@ -102,16 +102,16 @@ static void format_flags(char *buf, uint32_t cap, uint32_t flags)
 {
     uint32_t pos = 0;
     buf[0] = 0;
-    if (flags & LEONOS_DEVICE_FLAG_PRESENT) {
+    if (flags & SYSTEM_DEVICE_FLAG_PRESENT) {
         append_text(buf, &pos, cap, T("Present", "存在"));
     }
-    if (flags & LEONOS_DEVICE_FLAG_ACTIVE) {
+    if (flags & SYSTEM_DEVICE_FLAG_ACTIVE) {
         if (pos) {
             append_text(buf, &pos, cap, ", ");
         }
         append_text(buf, &pos, cap, T("Active", "活动"));
     }
-    if (flags & LEONOS_DEVICE_FLAG_BOOT) {
+    if (flags & SYSTEM_DEVICE_FLAG_BOOT) {
         if (pos) {
             append_text(buf, &pos, cap, ", ");
         }
@@ -124,8 +124,8 @@ static void format_flags(char *buf, uint32_t cap, uint32_t flags)
 
 static void refresh_devices(void)
 {
-    uint32_t count = LEONOS_DEVICE_MAX;
-    int ret = leonos_device_list(devices, LEONOS_DEVICE_MAX, &count);
+    uint32_t count = SYSTEM_DEVICE_MAX;
+    int ret = system_device_list(devices, SYSTEM_DEVICE_MAX, &count);
     if (ret < 0) {
         device_count = 0;
         device_list.selected = -1;
@@ -133,7 +133,7 @@ static void refresh_devices(void)
         set_status_code(T("Device refresh failed", "设备刷新失败"), ret);
         return;
     }
-    device_count = count > LEONOS_DEVICE_MAX ? LEONOS_DEVICE_MAX : count;
+    device_count = count > SYSTEM_DEVICE_MAX ? SYSTEM_DEVICE_MAX : count;
     for (uint32_t i = 0; i < device_count; ++i) {
         class_text[i] = device_class_name(devices[i].device_class);
         format_flags(flags_text[i], sizeof(flags_text[i]), devices[i].flags);
@@ -153,7 +153,7 @@ static void refresh_devices(void)
     }
 }
 
-static const struct leonos_device_info *selected_device(void)
+static const system_device_info_t *selected_device(void)
 {
     if (device_list.selected < 0 || (uint32_t)device_list.selected >= device_count) {
         return 0;
@@ -210,7 +210,7 @@ static void draw_devmgr(struct leonos_ui_surface *ui)
     };
     update_device_list_layout();
     uint32_t rows = device_count > device_list.visible_rows ? device_list.visible_rows : device_count;
-    const struct leonos_device_info *selected;
+    const system_device_info_t *selected;
     leonos_ui_rect(ui, 0, 0, view_w, view_h, LEONOS_UI_GRAY);
     leonos_ui_toolbar(ui, 8, DEVMGR_TOOLBAR_Y, view_w > 16 ? view_w - 16 : view_w, 36);
     leonos_ui_toolbar_button(ui, 18, DEVMGR_BUTTON_Y, 88, T("Refresh", "刷新"), 0);

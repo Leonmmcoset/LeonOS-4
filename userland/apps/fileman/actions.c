@@ -1,4 +1,5 @@
 #include "fileman.h"
+#include <leonos/launch_result.h>
 
 void open_selected_entry(void)
 {
@@ -23,9 +24,9 @@ void open_selected_entry(void)
         pid = leonos_launch_argv(argv);
     }
     if (pid < 0) {
-        if (pid == LEONOS_LAUNCH_ERR_NO_ASSOCIATION) {
+        if (pid == LAUNCH_RESULT_NO_ASSOCIATION) {
             show_open_with_for_path(path, 0);
-        } else if (pid <= LEONOS_LAUNCH_ERR_EMPTY && pid >= LEONOS_LAUNCH_ERR_EXISTS) {
+        } else if (leonos_launch_is_error(pid)) {
             set_status(leonos_launch_error_text(pid));
         } else {
             set_status_code("Launch failed ", pid);
@@ -124,7 +125,7 @@ void create_shortcut_for_selected(void)
     ret = leonos_launch_create_shortcut_in_dir(dest_dir, target_path,
                                                shortcut_path, sizeof(shortcut_path));
     if (ret < 0) {
-        if (ret <= LEONOS_LAUNCH_ERR_EMPTY && ret >= LEONOS_LAUNCH_ERR_EXISTS) {
+        if (leonos_launch_is_error(ret)) {
             set_status(leonos_launch_error_text(ret));
         } else {
             set_status_error("Create shortcut failed ", ret);

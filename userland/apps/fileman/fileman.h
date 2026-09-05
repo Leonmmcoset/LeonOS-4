@@ -11,6 +11,7 @@
 #include <leonos/syscall.h>
 #include <leonos/tar.h>
 #include <leonos/ui.h>
+#include <sys/stat.h>
 
 #define FILEMAN_W 560
 #define FILEMAN_H 360
@@ -162,6 +163,8 @@ void append_dec(char *buf, uint32_t *pos, uint32_t cap, uint32_t value);
 void append_size(char *buf, uint32_t *pos, uint32_t cap, uint64_t value);
 int is_root_path(const char *path);
 int selected_entry_valid(void);
+int fileman_entry_is_device(uint32_t index);
+int fileman_entry_device(const struct leonos_dir_entry *entry);
 int selected_entry_is_file(void);
 int selected_entry_is_mutable(void);
 int fileman_entry_marked(uint32_t index);

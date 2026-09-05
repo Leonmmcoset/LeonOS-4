@@ -6,6 +6,7 @@
 #include <ntclks/arch.h>
 #include <ntclks/inputm.h>
 #include <ntclks/paging.h>
+#include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
@@ -1577,45 +1578,10 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
     if (signal_number == 0) {
         return 0;
     }
-    if (signal_number != 9 && signal_number != 17 &&
-        (task->blocked_signals & (1u << (uint32_t)signal_number)) != 0) {
-        task->pending_signals |= 1u << (uint32_t)signal_number;
-        return 0;
-    }
-    /* SIGKILL and SIGSTOP cannot be ignored. */
-    if (signal_number != 9 && signal_number != 17 &&
-        (task->ignored_signals & (1u << (uint32_t)signal_number)) != 0) {
-        task->pending_signals &= ~(1u << (uint32_t)signal_number);
-        return 0;
-    }
-    task->pending_signals |= 1u << (uint32_t)signal_number;
-    if (signal_number == 17 || signal_number == 18) { /* SIGSTOP or SIGTSTP */
-        task->wake_tick = 0;
-        task->wait_window_id = 0;
-        task->state = TASK_STOPPED;
-        task->stop_signal = (uint32_t)signal_number;
-        task->child_event = TASK_CHILD_EVENT_STOPPED;
-        return 0;
-    }
-    if (signal_number == 19) { /**
- * @brief SIGCONT
- */
-        task->pending_signals &= ~((1u << 17) | (1u << 18));
-        if (task->state == TASK_STOPPED) {
-            task->wake_tick = 0;
-            task->wait_window_id = 0;
-            task->state = TASK_READY;
-            task->stop_signal = 0;
-            task->child_event = TASK_CHILD_EVENT_CONTINUED;
-        }
-        return 0;
-    }
-    if (signal_number == 1 || signal_number == 2 || signal_number == 3 || signal_number == 9 ||
-        signal_number == 15) {
-        task->exit_signal = (uint32_t)signal_number;
-        sched_exit(pid, (uint64_t)(128 + signal_number));
-    }
-    return 0;
+    /* User-handler delivery now lives beside the signal-frame ABI. Default,
+     * ignored, STOP/CONT, blocked and wakeup behavior are all applied here so
+     * wait/kill/PTY/console paths do not implement their own signal policy. */
+    return kernel_signal_queue_task(task, signal_number);
 }
 
 /**
@@ -1783,6 +1749,31 @@ int64_t sched_create_process_session(uint32_t pid)
 }
 
 /**
+ * @brief Count open PTY endpoint descriptors and controlling attachments.
+ * @param pty_id PTY identifier.
+ * @return Number of live references.
+ */
+uint32_t sched_pty_reference_count(uint32_t pty_id)
+{
+    uint32_t count = 0;
+    uint64_t flags;
+    if (!pty_id) return 0;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = tasks[i];
+        if (!task || task->kind != TASK_KIND_USER) continue;
+        if (task->pty_id == pty_id) ++count;
+        for (uint32_t fd = 0; fd < SCHED_TASK_PTY_FD_MAX; ++fd) {
+            if (task->pty_fds[fd].used && task->pty_fds[fd].pty_id == pty_id) {
+                ++count;
+            }
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return count;
+}
+
+/**
  * @brief True when some live task in this process group is attached to the given PTY.
  */
 int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id)
@@ -1890,6 +1881,7 @@ int sched_hangup_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid)
             }
         }
     }
+    pty_reap_hungup(pty_id);
     return signalled;
 }
 

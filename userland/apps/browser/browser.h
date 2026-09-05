@@ -7,7 +7,7 @@
 #include <leonos/http.h>
 #include <leonos/i18n.h>
 #include <leonos/launch.h>
-#include <leonos/net.h>
+#include <leonos/net_service.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -128,8 +128,8 @@ enum browser_menu_command {
 };
 
 struct parsed_http_url {
-    char host[LEONOS_NET_HOSTNAME_LEN];
-    char path[LEONOS_NET_HTTP_PATH_LEN];
+    char host[NET_SERVICE_HOSTNAME_LEN];
+    char path[NET_SERVICE_HTTP_PATH_LEN];
     uint32_t port;
     uint8_t secure;
 };
@@ -193,7 +193,7 @@ struct browser_bookmark {
 };
 
 struct browser_basic_auth {
-    char host[LEONOS_NET_HOSTNAME_LEN];
+    char host[NET_SERVICE_HOSTNAME_LEN];
     uint32_t port;
     char header[256];
 };

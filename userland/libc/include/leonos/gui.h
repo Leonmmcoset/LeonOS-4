@@ -417,6 +417,10 @@ int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeo
 int leonos_gui_send_app_event(const struct leonos_gui_app_event *event);
 int leonos_gui_set_mouse_visible(uint32_t window_id, uint32_t visible);
 int leonos_gui_mouse_visible(void);
+int leonos_gui_cursor_request(const struct leonos_gui_cursor_request *request);
+int leonos_gui_set_cursor_position(uint32_t window_id, int32_t x, int32_t y);
+int leonos_gui_set_cursor_style(uint32_t window_id, uint32_t style);
+int leonos_gui_set_cursor_auto(uint32_t window_id);
 int leonos_mouse_get_state(struct leonos_mouse_state *state);
 int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint64_t *tick);
 int leonos_task_kill(uint32_t pid);

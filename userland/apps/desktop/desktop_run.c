@@ -213,7 +213,7 @@ void desktop_run(void)
             repaint_and_flush(damage);
             did_work = 1;
         }
-        int mouse_visible = leonos_mouse_is_visible();
+        int mouse_visible = leonos_gui_mouse_visible();
         if (mouse_visible != last_mouse_visible) {
             last_mouse_visible = mouse_visible;
             redraw_all();

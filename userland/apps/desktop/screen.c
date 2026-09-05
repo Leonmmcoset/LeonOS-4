@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include <leonos/net_service.h>
 
 static char taskbar_clock_cache[16];
 static unsigned long taskbar_clock_cache_second = ~0UL;
@@ -129,13 +130,13 @@ static void draw_taskbar_network_icon(uint32_t tb_y)
     }
     now = leonos_uptime_ms();
     if (!taskbar_network_cache_valid || now - taskbar_network_cache_ms >= 500UL) {
-        struct leonos_net_config config;
+        net_service_config_t config;
         taskbar_network_connected = 0;
         taskbar_network_color = 0x00c00000u;
-        if (leonos_net_config(&config) == 0 &&
-            (config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE) &&
-            (config.flags & LEONOS_NET_CONFIG_FLAG_DHCP) &&
-            config.source == LEONOS_NET_CONFIG_SOURCE_DHCP &&
+        if (net_service_config(&config) == 0 &&
+            (config.flags & NET_SERVICE_CONFIG_FLAG_ACTIVE) &&
+            (config.flags & NET_SERVICE_CONFIG_FLAG_DHCP) &&
+            config.source == NET_SERVICE_CONFIG_SOURCE_DHCP &&
             config.local_ip && config.gateway_ip) {
             taskbar_network_connected = 1;
             taskbar_network_color = 0x0000a000u;
@@ -812,7 +813,7 @@ static int build_cursor_composite(struct rect *raw_out, struct rect *clip_out)
     struct rect raw;
     struct rect clip;
 
-    if (!cursor_visible || leonos_mouse_is_visible() <= 0) {
+    if (!cursor_visible || leonos_gui_mouse_visible() <= 0) {
         return 0;
     }
     raw = cursor_rect_for_style(cursor_x, cursor_y, desktop_cursor_style);
@@ -881,7 +882,7 @@ static int flush_small_composited_region(struct rect dirty)
             cursor_frame[row * CURSOR_FRAME_MAX_W + col] = source[col];
         }
     }
-    if (cursor_visible && leonos_mouse_is_visible() > 0) {
+    if (cursor_visible && leonos_gui_mouse_visible() > 0) {
         cursor_rect = cursor_rect_for_style(cursor_x, cursor_y,
                                             desktop_cursor_style);
         if (rect_intersects(dirty, cursor_rect)) {

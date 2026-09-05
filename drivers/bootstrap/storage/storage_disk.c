@@ -1381,26 +1381,49 @@ int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
     char mounted_path[LEONOS_FS_PATH_LEN];
     uint32_t requested_filesystem;
 
+    console_printf("[storage] mount enter disk=%u part=%u target=%s fs=%s flags=%llu\n",
+                   disk_id, partition_index, target ? target : "(auto)",
+                   filesystem_name ? filesystem_name : "auto",
+                   (unsigned long long)flags);
     if (flags != 0 || storage_filesystem_from_name(filesystem_name, &requested_filesystem) < 0) {
+        console_printf("[storage] mount invalid arguments flags=%llu fs_name=%s\n",
+                       (unsigned long long)flags,
+                       filesystem_name ? filesystem_name : "(null)");
         return -22;
     }
-    if (target && target[0] && storage_mount_path_allowed(target) < 0) {
-        return -22;
+    if (target && target[0]) {
+        ret = storage_mount_path_allowed(target);
+        if (ret < 0) {
+            console_printf("[storage] mount path not allowed target=%s ret=%d\n",
+                           target, ret);
+            return ret;
+        }
     }
     ret = storage_acquire_task_io();
     if (ret < 0) {
+        console_printf("[storage] mount acquire io failed ret=%d\n", ret);
         return ret;
     }
     ret = disk_manage_prepare(disk_id, &disk, &sector_count);
-    if (ret < 0) return ret;
+    if (ret < 0) {
+        console_printf("[storage] mount disk prepare failed disk=%u ret=%d\n", disk_id, ret);
+        return ret;
+    }
     ret = disk_partition_mutable(disk);
-    if (ret < 0) return ret;
+    if (ret < 0) {
+        console_printf("[storage] mount disk immutable disk=%u ret=%d\n", disk_id, ret);
+        return ret;
+    }
     ret = disk_gpt_load(disk, sector_count, &table);
     if (ret < 0 || partition_index >= table.primary.partition_entry_count) {
+        console_printf("[storage] mount gpt load failed disk=%u part=%u ret=%d\n",
+                       disk_id, partition_index, ret < 0 ? ret : -22);
         return ret < 0 ? ret : -22;
     }
     ret = disk_gpt_entries_valid(&table);
     if (ret < 0) {
+        console_printf("[storage] mount gpt entries invalid disk=%u part=%u ret=%d\n",
+                       disk_id, partition_index, ret);
         return ret;
     }
     {
@@ -1423,12 +1446,18 @@ int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
     }
     ret = disk_partition_filesystem(disk, &entry, &filesystem);
     if (ret < 0) {
+        console_printf("[storage] mount filesystem probe failed disk=%u part=%u ret=%d\n",
+                       disk_id, partition_index, ret);
         return ret;
     }
     if (!disk_filesystem_format_supported(filesystem)) {
+        console_printf("[storage] mount unsupported filesystem disk=%u part=%u fs=%u\n",
+                       disk_id, partition_index, filesystem);
         return -95;
     }
     if (requested_filesystem && requested_filesystem != filesystem) {
+        console_printf("[storage] mount filesystem mismatch disk=%u part=%u detected=%u requested=%u\n",
+                       disk_id, partition_index, filesystem, requested_filesystem);
         return -22;
     }
     volume_id = storage_mount_volume_for_target(target);

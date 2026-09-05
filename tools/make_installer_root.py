@@ -121,7 +121,9 @@ def main() -> int:
     # and `mkdir /mnt/root` commands fail because POSIX mkdir does not create
     # missing parents unless -p is supplied.  Keep /root available as the
     # default HOME for the installer advanced shell as well.
-    for directory in ("mnt", "tmp", "media", "root"):
+    # Installer mount targets must exist before mount(2) is called: the
+    # Linux mount ABI requires the target directory to already be present.
+    for directory in ("mnt", "tmp", "media", "root", "target"):
         (stage / directory).mkdir(parents=True, exist_ok=True)
     # The installer itself runs from this FAT32 ramdisk. The staged installed
     # The root payload retains the normal exFAT manifest copied from esp_tree;

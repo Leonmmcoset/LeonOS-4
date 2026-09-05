@@ -1,7 +1,7 @@
 #ifndef TASKMGR_GPU_SAMPLE_H
 #define TASKMGR_GPU_SAMPLE_H
 
-#include <leonos/gpu.h>
+#include <leonos/gpu_sdk.h>
 
 struct taskmgr_gpu_sample {
     uint64_t sample_ticks, busy_ticks;
@@ -11,13 +11,13 @@ struct taskmgr_gpu_sample {
 
 /* Returns nonzero when the caller must discard the old GPU history. */
 static inline int taskmgr_gpu_sample_update(struct taskmgr_gpu_sample *state,
-                                             const struct leonos_gpu_info *info)
+                                             const gpu_sdk_info_t *info)
 {
     uint64_t elapsed, busy;
     int reset;
     state->percent = 0;
     state->valid = 0;
-    if (!info || !(info->flags & LEONOS_GPU_AVAILABLE)) {
+    if (!info || !(info->flags & GPU_SDK_AVAILABLE)) {
         state->available = 0;
         state->baseline_valid = 0;
         return 1;

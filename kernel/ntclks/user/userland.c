@@ -588,6 +588,9 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
          * RIP=0 is never a valid LeonOS user entry and would make the next
          * iretq fault while fetching its first instruction. */
         if (frame->rip != 0 && (frame->cs & 3ULL) == 3ULL) {
+            /* Install a pending user signal handler on this live return
+             * frame before it is published to the scheduler. */
+            (void)kernel_signal_deliver_pending(current, frame);
             arch_fpu_save(current->fpu_state);
             if (!sched_capture_current_user_frame(frame)) {
                 console_printf("[ntclks] rejected scheduler frame pid=%u rip=0x%llx cs=0x%llx\n",
@@ -618,6 +621,9 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
     if (!next) {
         return NULL;
     }
+    /* A task that was woken for a pending signal never passed through the
+     * live-frame path above; prepare its saved frame before entering it. */
+    (void)kernel_signal_deliver_pending(next, &next->frame);
     if (!userland_load_task_image(next)) {
         sched_exit(next->pid, 127);
         return userland_schedule_from_frame(NULL);
@@ -892,6 +898,8 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
  * @brief A fork child inherits its parent's VMA records. Its replacement page tables are blank, so retaining those records would make the ELF mapper reject valid PIE ranges as overlaps with the discarded image.
  */
     clear_task_vmas(task);
+    /* POSIX execve preserves ignored signals but resets caught dispositions. */
+    kernel_signal_reset_handlers(task);
     task->frame = (struct trap_frame){0};
     task->frame.cs = NTCLKS_USER_CS;
     task->frame.ss = NTCLKS_USER_DS;
@@ -922,8 +930,9 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     paging_load_cr3(paging_kernel_cr3());
     address_space_destroy(&old_as);
     arch_fpu_task_init(task->fpu_state);
-    console_printf("[ntclks] exec pid=%u path=%s pending cr3=0x%llx\n",
-                   task->pid, path, (unsigned long long)task->as.cr3);
+    console_printf("[ntclks] exec pid=%u path=%s pty=%u pending cr3=0x%llx\n",
+                   task->pid, path, task->pty_id,
+                   (unsigned long long)task->as.cr3);
     return 0;
 }
 

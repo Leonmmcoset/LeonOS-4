@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include <leonos/launch_result.h>
 
 #define DESKTOP_ITEM_LABEL_LINES 2
 #define DESKTOP_SHORTCUT_MAX_BYTES 384U
@@ -516,23 +517,23 @@ static const char *desktop_launch_error_text(int code)
         return leonos_i18n("Permission denied", "权限被拒绝");
     }
     switch (code) {
-    case LEONOS_LAUNCH_ERR_EMPTY:
+    case LAUNCH_RESULT_EMPTY:
         return leonos_i18n("No item selected.", "未选择项目。");
-    case LEONOS_LAUNCH_ERR_TOO_MANY_ARGS:
+    case LAUNCH_RESULT_TOO_MANY_ARGS:
         return leonos_i18n("Too many launch arguments.", "启动参数过多。");
-    case LEONOS_LAUNCH_ERR_UNCLOSED_QUOTE:
+    case LAUNCH_RESULT_UNCLOSED_QUOTE:
         return leonos_i18n("Launch command has an unfinished quote.", "启动命令存在未闭合引号。");
-    case LEONOS_LAUNCH_ERR_NOT_FOUND:
+    case LAUNCH_RESULT_NOT_FOUND:
         return leonos_i18n("Program or path not found.", "程序或路径不存在。");
-    case LEONOS_LAUNCH_ERR_NO_ASSOCIATION:
+    case LAUNCH_RESULT_NO_ASSOCIATION:
         return leonos_i18n("No file association for this item.", "此项目没有默认打开方式。");
-    case LEONOS_LAUNCH_ERR_INVALID_SHORTCUT:
+    case LAUNCH_RESULT_INVALID_SHORTCUT:
         return leonos_i18n("Invalid shortcut.", "快捷方式无效。");
-    case LEONOS_LAUNCH_ERR_SHORTCUT_LOOP:
+    case LAUNCH_RESULT_SHORTCUT_LOOP:
         return leonos_i18n("Shortcut loop detected.", "检测到快捷方式循环。");
-    case LEONOS_LAUNCH_ERR_EXISTS:
+    case LAUNCH_RESULT_EXISTS:
         return leonos_i18n("Shortcut already exists.", "快捷方式已存在。");
-    case LEONOS_LAUNCH_ERR_ALREADY_RUNNING:
+    case LAUNCH_RESULT_ALREADY_RUNNING:
         return leonos_i18n("Desktop is already running.", "桌面已在运行。");
     default:
         return 0;

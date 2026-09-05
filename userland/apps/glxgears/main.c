@@ -29,9 +29,9 @@ static void use_software_renderer(struct gears_gpu_backend *gpu,
                                   const char *reason, int result)
 {
     if (gpu->handle) {
-        struct leonos_gpu_diagnostics diagnostic = {.size = sizeof(diagnostic),
-                                                    .version = LEONOS_GPU_ABI_VERSION};
-        int query = leonos_gpu_diagnostics(&diagnostic);
+        gpu_sdk_diagnostics_t diagnostic = {.size = sizeof(diagnostic),
+                                                    .version = GPU_SDK_ABI_VERSION};
+        int query = gpu_sdk_diagnostics(&diagnostic);
         if (query < 0) {
             printf("glxgears: GPU_DIAGNOSTICS failed, error=%d\n", query);
         } else if (diagnostic.status && diagnostic.handle == gpu->handle) {
@@ -94,9 +94,9 @@ static void gears_idle(const struct gears_gpu_backend *gpu)
         printf("%lu frames in %3.1f seconds = %6.3f FPS\n",
                frames, seconds, seconds > 0.0 ? (double)frames / seconds : 0.0);
         if (gpu->handle) {
-            struct leonos_gpu_info info = {.size = sizeof(info),
-                                           .version = LEONOS_GPU_ABI_VERSION};
-            int result = leonos_gpu_info(&info);
+            gpu_sdk_info_t info = {.size = sizeof(info),
+                                           .version = GPU_SDK_ABI_VERSION};
+            int result = gpu_sdk_info(&info);
             if (result < 0) {
                 printf("glxgears: GPU_INFO failed, error=%d\n", result);
             } else {

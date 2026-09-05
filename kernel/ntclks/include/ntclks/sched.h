@@ -6,6 +6,7 @@
 #define NTCLKS_SCHED_H
 
 #include <ntclks/paging.h>
+#include <ntclks/signal.h>
 #include <ntclks/storage.h>
 #include <ntclks/trap.h>
 #include <ntclks/types.h>
@@ -54,9 +55,12 @@ struct task_file {
     uint32_t used;
     uint32_t flags;
     uint32_t fd_flags;
+    uint32_t reserved;
     struct storage_node node;
     uint64_t offset;
     uint64_t aux;
+    /* Per-descriptor device state; currently the evdev EVIOCGRAB token. */
+    uint64_t aux2;
     struct storage_read_cursor read_cursor;
     char path[LEONOS_FS_PATH_LEN];
 };
@@ -74,7 +78,10 @@ struct task_pty_fd {
     uint32_t used;
     int32_t fd;
     uint32_t stream;
+    /* Descriptor flags: currently only FD_CLOEXEC. */
     uint32_t flags;
+    /* Open status flags: O_ACCMODE, O_APPEND and O_NONBLOCK. */
+    uint32_t status_flags;
     /* Unix98 PTY endpoints use an explicit session and direction. Legacy
      * aliases leave pty_id/endpoint zero and continue using stream. */
     uint32_t pty_id;
@@ -295,6 +302,7 @@ struct task {
     };
     struct trap_frame frame;
     uint8_t fpu_state[512] __attribute__((aligned(16)));
+    struct kernel_signal_action signal_actions[KERNEL_SIGNAL_ACTION_MAX];
     uint32_t running_cpu;
 };
 
@@ -508,6 +516,11 @@ int64_t sched_create_process_session(uint32_t pid);
  * @return Non-zero when an attached group member exists.
  */
 int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id);
+/**
+ * @brief Count open PTY endpoint descriptors and legacy controlling-TTY
+ * attachments referencing pty_id.
+ */
+uint32_t sched_pty_reference_count(uint32_t pty_id);
 /**
  * @brief Returns the POSIX process session containing a task.
  * @param pid Task process identifier.

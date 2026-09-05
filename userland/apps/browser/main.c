@@ -1,23 +1,23 @@
 #include "browser.h"
 
-#include <leonos/inputm.h>
+#include <leonos/text_input.h>
 
 static void browser_update_inputm_context(void)
 {
-    struct leonos_inputm_context context = {
+    text_input_context_t context = {
         .window_id = (uint32_t)window_id,
         .flags = 0,
     };
     if (address_edit.focused || browser_form_focus_active) {
-        context.flags |= LEONOS_INPUTM_CONTEXT_FOCUSED;
+        context.flags |= TEXT_INPUT_CONTEXT_FOCUSED;
     }
     if (browser_form_focus_active &&
         browser_form_focus_control < browser_form_control_count &&
         browser_form_controls[browser_form_focus_control].kind ==
             BROWSER_FORM_CONTROL_PASSWORD) {
-        context.flags |= LEONOS_INPUTM_CONTEXT_SECURE;
+        context.flags |= TEXT_INPUT_CONTEXT_SECURE;
     }
-    (void)leonos_inputm_set_context(&context);
+    (void)text_input_set_context(&context);
 }
 
 int main(int argc, char **argv, char **envp)

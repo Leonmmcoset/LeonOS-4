@@ -83,25 +83,25 @@ int leonos_pgl_process_event(leonos_pgl_context *ctx, const struct leonos_gui_ap
         return LEONOS_PGL_EVENT_RESIZED;
     return LEONOS_PGL_EVENT_NONE;
 }
-int leonos_gpu_info(struct leonos_gpu_info *info)
+int gpu_sdk_info(gpu_sdk_info_t *info)
 {
-    info->flags = mode == UNAVAILABLE ? 0 : LEONOS_GPU_AVAILABLE;
+    info->flags = mode == UNAVAILABLE ? 0 : GPU_SDK_AVAILABLE;
     return 0;
 }
-int leonos_gpu_diagnostics(struct leonos_gpu_diagnostics *diagnostic)
+int gpu_sdk_diagnostics(gpu_sdk_diagnostics_t *diagnostic)
 {
     assert((mode == RENDER_FAILURE || mode == DIAGNOSTIC_UNAVAILABLE) && renders == 1);
     assert(!destroys && diagnostic->size == sizeof(*diagnostic) && diagnostic->version == 1);
     ++diagnostic_queries;
     if (mode == DIAGNOSTIC_UNAVAILABLE) return -25;
-    *diagnostic = (struct leonos_gpu_diagnostics){.size = sizeof(*diagnostic), .version = 1,
-        .status = -110, .stage = LEONOS_GPU_ERROR_FENCE, .handle = 1,
+    *diagnostic = (gpu_sdk_diagnostics_t){.size = sizeof(*diagnostic), .version = 1,
+        .status = -110, .stage = GPU_SDK_ERROR_FENCE, .handle = 1,
         .generation = 2, .fifo_min = 1164, .fifo_max = 65536,
         .fifo_next = 2048, .fifo_stop = 1800, .fifo_fence = 15, .issued_fence = 16,
         .fifo_busy = 1, .submitted_frames = 1};
     return 0;
 }
-int leonos_gpu_create(struct leonos_gpu_context *context)
+int gpu_sdk_create(gpu_sdk_context_t *context)
 {
     ++creates;
     if (mode == CREATE_FAILURE || (mode == RESIZE_FAILURE && creates == 2))
@@ -109,12 +109,12 @@ int leonos_gpu_create(struct leonos_gpu_context *context)
     context->handle = creates;
     return 0;
 }
-int leonos_gpu_destroy(uint64_t handle) { assert(handle); ++destroys; return 0; }
-int leonos_gpu_render(const struct leonos_gpu_frame *frame)
+int gpu_sdk_destroy(uint64_t handle) { assert(handle); ++destroys; return 0; }
+int gpu_sdk_render(const gpu_sdk_frame_t *frame)
 {
     ++renders;
     assert(frame->fill_mode == ((mode == POLYGON_MODE && renders == 2) ?
-                               LEONOS_GPU_FILL_POINT : LEONOS_GPU_FILL_SOLID));
+                               GPU_SDK_FILL_POINT : GPU_SDK_FILL_SOLID));
     return mode == RENDER_FAILURE || mode == DIAGNOSTIC_UNAVAILABLE ? -110 : 0;
 }
 

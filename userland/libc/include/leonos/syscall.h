@@ -114,7 +114,7 @@ int leonos_stat_legacy(const char *path, struct leonos_stat *st);
 int leonos_fstat_legacy(int fd, struct leonos_stat *st);
 int wait4(int pid, int *status, int options, void *rusage);
 int execve(const char *path, char *const argv[], char *const envp[]);
-int mkdir(const char *path, int mode);
+int mkdir(const char *path, unsigned int mode);
 int unlink(const char *path);
 int rmdir(const char *path);
 int rename(const char *old_path, const char *new_path);

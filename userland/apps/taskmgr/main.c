@@ -452,16 +452,16 @@ static void set_status(const char *text)
 static void refresh_performance(void)
 {
     struct leonos_perf_info next;
-    struct leonos_gpu_info next_gpu = {
-        .size = sizeof(struct leonos_gpu_info),
-        .version = LEONOS_GPU_ABI_VERSION,
+    gpu_sdk_info_t next_gpu = {
+        .size = sizeof(gpu_sdk_info_t),
+        .version = GPU_SDK_ABI_VERSION,
     };
     uint64_t old_total;
     uint64_t new_total;
     uint64_t delta_total;
     uint64_t delta_busy;
     uint32_t cpu_count;
-    int gpu_result = leonos_gpu_info(&next_gpu);
+    int gpu_result = gpu_sdk_info(&next_gpu);
     if (taskmgr_gpu_sample_update(&gpu_sample, gpu_result < 0 ? 0 : &next_gpu)) {
         for (uint32_t i = 0; i < TASKMGR_PERF_HISTORY; ++i) {
             perf_gpu_history[i] = TASKMGR_PERF_MISSING;

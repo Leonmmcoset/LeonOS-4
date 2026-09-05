@@ -1,5 +1,4 @@
 #include <leonos/gui.h>
-#include <leonos/mouse.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 #include <stdint.h>
@@ -28,7 +27,7 @@ static struct leonos_ui_surface ui;
 static void restore_mouse(void)
 {
     if (window_id) {
-        leonos_mouse_show(window_id);
+        leonos_gui_set_mouse_visible(window_id, 1);
     }
 }
 
@@ -121,7 +120,7 @@ static void pump_events(void)
     struct leonos_gui_app_event event = {.window_id = window_id};
     while (leonos_gui_poll_app_event(&event) > 0) {
         if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
-            leonos_mouse_show(window_id);
+            leonos_gui_set_mouse_visible(window_id, 1);
             leonos_gui_destroy_app_window(window_id);
             exit(0);
         }
@@ -147,7 +146,7 @@ void DG_Init(void)
         exit(1);
     }
     if (flags & LEONOS_GUI_WINDOW_FULLSCREEN) {
-        leonos_mouse_hide(window_id);
+        leonos_gui_set_mouse_visible(window_id, 0);
     }
     I_AtExit(restore_mouse, true);
 }
@@ -224,7 +223,7 @@ int main(int argc, char **argv, char **envp)
     for (;;) {
         doomgeneric_Tick();
     }
-    leonos_mouse_show(window_id);
+    leonos_gui_set_mouse_visible(window_id, 1);
     leonos_gui_destroy_app_window(window_id);
     return 0;
 }

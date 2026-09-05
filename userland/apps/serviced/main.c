@@ -1,6 +1,6 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
-#include <leonos/net.h>
+#include <leonos/net_service.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/system.h>
@@ -195,19 +195,19 @@ static void log_line(const char *message)
 static const char *net_status_name(uint32_t status)
 {
     switch (status) {
-    case LEONOS_NET_STATUS_OK:
+    case NET_SERVICE_STATUS_OK:
         return "OK";
-    case LEONOS_NET_STATUS_NO_DEVICE:
+    case NET_SERVICE_STATUS_NO_DEVICE:
         return "no e1000 adapter";
-    case LEONOS_NET_STATUS_DHCP_TIMEOUT:
+    case NET_SERVICE_STATUS_DHCP_TIMEOUT:
         return "DHCP timeout";
-    case LEONOS_NET_STATUS_DHCP_FAILED:
+    case NET_SERVICE_STATUS_DHCP_FAILED:
         return "DHCP failed";
-    case LEONOS_NET_STATUS_TX_FAILED:
+    case NET_SERVICE_STATUS_TX_FAILED:
         return "transmit failed";
-    case LEONOS_NET_STATUS_DNS_TIMEOUT:
+    case NET_SERVICE_STATUS_DNS_TIMEOUT:
         return "DNS timeout";
-    case LEONOS_NET_STATUS_DNS_FAILED:
+    case NET_SERVICE_STATUS_DNS_FAILED:
         return "DNS failed";
     default:
         return "network error";
@@ -382,7 +382,7 @@ static void process_commands(void)
 
 static void update_dhcp(unsigned long now)
 {
-    struct leonos_net_config config;
+    net_service_config_t config;
     uint32_t pid = (uint32_t)getpid();
     char detail[SERVICE_DETAIL_LEN];
     uint32_t pos = 0;
@@ -391,13 +391,13 @@ static void update_dhcp(unsigned long now)
         set_service_state(1, "stopped", "disabled by policy", 0);
         return;
     }
-    if (leonos_net_config(&config) < 0) {
+    if (net_service_config(&config) < 0) {
         set_service_state(1, "failed", "network config query failed", pid);
         return;
     }
-    if ((config.flags & LEONOS_NET_CONFIG_FLAG_ACTIVE) &&
-        (config.flags & LEONOS_NET_CONFIG_FLAG_DHCP) &&
-        config.source == LEONOS_NET_CONFIG_SOURCE_DHCP &&
+    if ((config.flags & NET_SERVICE_CONFIG_FLAG_ACTIVE) &&
+        (config.flags & NET_SERVICE_CONFIG_FLAG_DHCP) &&
+        config.source == NET_SERVICE_CONFIG_SOURCE_DHCP &&
         config.local_ip && config.gateway_ip) {
         detail[0] = 0;
         append_text(detail, &pos, sizeof(detail), "DHCP lease active ip=");
@@ -408,14 +408,14 @@ static void update_dhcp(unsigned long now)
     }
     if (force_dhcp_renew || !dhcp_attempted ||
         now - last_dhcp_attempt_ms >= DHCP_RETRY_MS) {
-        struct leonos_net_dhcp dhcp;
+        net_service_dhcp_t dhcp;
         int ret;
         last_dhcp_attempt_ms = now;
         dhcp_attempted = 1;
         force_dhcp_renew = 0;
         log_line("DHCP renew attempt");
-        ret = leonos_net_dhcp_renew(DHCP_TIMEOUT_MS, &dhcp);
-        if (ret == 0 && dhcp.status == LEONOS_NET_STATUS_OK) {
+        ret = net_service_dhcp_renew(DHCP_TIMEOUT_MS, &dhcp);
+        if (ret == 0 && dhcp.status == NET_SERVICE_STATUS_OK) {
             detail[0] = 0;
             pos = 0;
             append_text(detail, &pos, sizeof(detail), "DHCP lease active ip=");
@@ -473,7 +473,7 @@ static void update_ntp(unsigned long now)
     ntp_attempted = 1;
     sync = (struct leonos_time_sync){0};
     ret = leonos_time_ntp_sync(NTP_TIMEOUT_MS, &sync);
-    if (ret == 0 && sync.status == LEONOS_NET_STATUS_OK && sync.valid) {
+    if (ret == 0 && sync.status == NET_SERVICE_STATUS_OK && sync.valid) {
         ntp_last_result_ok = 1;
         detail[0] = 0;
         append_text(detail, &pos, sizeof(detail), "synced from ");

@@ -97,7 +97,7 @@ static int boot_text_eq(const char *a, const char *b)
  */
 static void boot_log_wait_for_enter(void)
 {
-    struct input_event event;
+    struct input_raw_event event;
     while (input_pop(&event)) {
     }
     console_printf("[boot] Boot log paused. Press Enter to continue.\n");

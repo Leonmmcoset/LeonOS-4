@@ -848,12 +848,14 @@ static void reset_confirm(void)
 
 static int installer_target_partitions(const char *disk_path, int fresh,
                                        char *esp_path, uint32_t esp_cap,
-                                       char *root_path, uint32_t root_cap)
+                                       char *root_path, uint32_t root_cap,
+                                       uint32_t *root_filesystem)
 {
     struct leonos_block_partition parts[LEONOS_BLOCK_MAX_PARTITIONS];
     uint32_t count = 0, esp = UINT32_MAX, root = UINT32_MAX;
     int ret;
-    if (!disk_path || !esp_path || !root_path) return -EINVAL;
+    if (!disk_path || !esp_path || !root_path || !root_filesystem) return -EINVAL;
+    *root_filesystem = LEONOS_BLOCK_FILESYSTEM_UNKNOWN;
     if (fresh) {
         struct leonos_block_disk_info info;
         uint32_t root_mib;
@@ -862,16 +864,20 @@ static int installer_target_partitions(const char *disk_path, int fresh,
         ret = leonos_block_gpt_initialize(disk_path, 1);
         if (ret < 0) return ret;
         ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_FAT32,
-                                      128, "LeonOS ESP", &esp);
+                                      128, "LeonOS 4 ESP", &esp);
         if (ret < 0) return ret;
         ret = leonos_block_gpt_set_type(disk_path, esp, LEONOS_BLOCK_GPT_ESP);
         if (ret < 0) return ret;
         root_mib = (uint32_t)((info.sector_count * info.sector_size) / (1024ULL * 1024ULL));
-        if (root_mib > 256u) root_mib -= 192u; else root_mib = 64u;
-        ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_EXT2,
-                                      root_mib, "LeonOS Root", &root);
+        /* Match main's install_write_gpt layout: a fixed 128 MiB ESP, then
+         * the exFAT root consumes the remaining usable GPT area. The extra
+         * 3 MiB reserve covers the primary/backup GPT and 1 MiB alignment
+         * slop after the ESP. */
+        if (root_mib > 256u) root_mib -= 131u; else root_mib = 64u;
+        ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_EXFAT,
+                                      root_mib, "LEONOS4_ROOT", &root);
         if (ret < 0) return ret;
-        ret = leonos_block_gpt_set_type(disk_path, root, LEONOS_BLOCK_GPT_LINUX);
+        ret = leonos_block_gpt_set_type(disk_path, root, LEONOS_BLOCK_GPT_BASIC_DATA);
         if (ret < 0) return ret;
         /* Format through the partition nodes after the GPT reread. */
         ret = leonos_block_partition_path(disk_path, esp, esp_path, esp_cap);
@@ -880,33 +886,68 @@ static int installer_target_partitions(const char *disk_path, int fresh,
         if (ret < 0) return ret;
         ret = leonos_block_format(esp_path, LEONOS_BLOCK_FILESYSTEM_FAT32, NULL);
         if (ret < 0) return ret;
-        return leonos_block_format(root_path, LEONOS_BLOCK_FILESYSTEM_EXT2, NULL);
+        *root_filesystem = LEONOS_BLOCK_FILESYSTEM_EXFAT;
+        return leonos_block_format(root_path, LEONOS_BLOCK_FILESYSTEM_EXFAT, NULL);
     }
     ret = leonos_block_list_partitions(disk_path, parts, LEONOS_BLOCK_MAX_PARTITIONS, &count);
+    printf("[installer.elf] block list partitions ret=%d count=%u disk=%s\n",
+           ret, count, disk_path ? disk_path : "?");
     if (ret < 0) return ret;
     for (uint32_t i = 0; i < count && i < LEONOS_BLOCK_MAX_PARTITIONS; ++i) {
+        printf("[installer.elf] partition[%u] path=%s fs=%u gpt_type=%u\n",
+               i, parts[i].path, parts[i].filesystem, parts[i].gpt_type);
         if (parts[i].filesystem == LEONOS_BLOCK_FILESYSTEM_FAT32 && esp == UINT32_MAX) esp = i;
         if ((parts[i].filesystem == LEONOS_BLOCK_FILESYSTEM_EXT2 ||
              parts[i].filesystem == LEONOS_BLOCK_FILESYSTEM_EXFAT) && root == UINT32_MAX) root = i;
     }
-    if (esp == UINT32_MAX || root == UINT32_MAX) return -ENOENT;
+    if (esp == UINT32_MAX || root == UINT32_MAX) {
+        printf("[installer.elf] block partitions missing esp=%u root=%u\n", esp, root);
+        return -ENOENT;
+    }
     copy_text(esp_path, esp_cap, parts[esp].path);
     copy_text(root_path, root_cap, parts[root].path);
+    *root_filesystem = parts[root].filesystem;
     return 0;
 }
 
 static int installer_mount_targets(const char *disk_path, int fresh)
 {
     char esp_path[LEONOS_BLOCK_PATH_LEN], root_path[LEONOS_BLOCK_PATH_LEN];
+    uint32_t root_filesystem = LEONOS_BLOCK_FILESYSTEM_UNKNOWN;
+    const char *root_fs_name = NULL;
     int ret = installer_target_partitions(disk_path, fresh, esp_path, sizeof(esp_path),
-                                          root_path, sizeof(root_path));
-    if (ret < 0) return ret;
-    if (mount(root_path, INSTALL_ROOT_MOUNT, NULL, 0, NULL) < 0) return -errno;
+                                          root_path, sizeof(root_path),
+                                          &root_filesystem);
+    if (ret < 0) {
+        printf("[installer.elf] mount target partitions failed ret=%d disk=%s fresh=%d\n",
+               ret, disk_path ? disk_path : "?", fresh);
+        return ret;
+    }
+    printf("[installer.elf] mount targets disk=%s root=%s esp=%s fresh=%d root_fs=%u\n",
+           disk_path ? disk_path : "?", root_path, esp_path, fresh,
+           root_filesystem);
+    if (root_filesystem == LEONOS_BLOCK_FILESYSTEM_EXFAT) {
+        root_fs_name = "exfat";
+    } else if (root_filesystem == LEONOS_BLOCK_FILESYSTEM_EXT2) {
+        root_fs_name = "ext2";
+    }
+    /* A previous attempt can leave /target or /target/boot mounted when the
+     * user returns to the disk-selection page and retries.  Unmount both
+     * before issuing the new mount(2) calls; ENOENT/EINVAL are expected. */
+    (void)umount2(INSTALL_ESP_MOUNT, 0);
+    (void)umount2(INSTALL_ROOT_MOUNT, 0);
+    if (mount(root_path, INSTALL_ROOT_MOUNT, root_fs_name, 0, NULL) < 0) {
+        printf("[installer.elf] mount root failed path=%s errno=%d\n", root_path, errno);
+        return -errno;
+    }
     if (mkdir(INSTALL_ESP_MOUNT, 0755) < 0 && errno != EEXIST) {
+        printf("[installer.elf] mount esp mkdir failed path=%s errno=%d\n",
+               INSTALL_ESP_MOUNT, errno);
         (void)umount2(INSTALL_ROOT_MOUNT, 0);
         return -errno;
     }
     if (mount(esp_path, INSTALL_ESP_MOUNT, "fat32", 0, NULL) < 0) {
+        printf("[installer.elf] mount esp failed path=%s errno=%d\n", esp_path, errno);
         (void)umount2(INSTALL_ROOT_MOUNT, 0);
         return -errno;
     }
@@ -2212,6 +2253,8 @@ static int scan_update_apps(void)
     reset_update_app_list();
     ret = leonos_list_dir(source_root, entries,
                           LEONOS_FS_MAX_ENTRIES, &count);
+    printf("[installer.elf] scan programs list ret=%d count=%u path=%s\n",
+           ret, count, source_root);
     if (ret < 0) {
         return ret;
     }
@@ -2250,6 +2293,8 @@ static int scan_update_apps(void)
         copy_replace_extension(dst_icon, sizeof(dst_icon), dst_elf, ".bmp");
         ret = installer_files_equal(src_elf, dst_elf, &missing, &elf_diff);
         if (ret < 0) {
+            printf("[installer.elf] scan compare elf failed app=%s src=%s dst=%s ret=%d\n",
+                   entries[i].name, src_elf, dst_elf, ret);
             return ret;
         }
         if (source_file_exists(src_icon)) {
@@ -2269,6 +2314,8 @@ static int scan_update_apps(void)
         } else {
             ret = package_has_changes(src_package, dst_package);
             if (ret < 0) {
+                printf("[installer.elf] scan package changes failed app=%s src=%s dst=%s ret=%d\n",
+                       entries[i].name, src_package, dst_package, ret);
                 return ret;
             }
             package_diff = ret ? 1 : 0;

@@ -1419,6 +1419,8 @@ static struct terminal_session *terminal_open_session(const char *path,
         if (flags >= 0) {
             (void)fcntl(new_pty, F_SETFL, flags | O_NONBLOCK);
         }
+        printf("terminal: PTY ready master=%d child=%d flags=%d\n",
+               new_pty, child_pid, flags);
     }
     *session = (struct terminal_session){0};
     session->used = 1;

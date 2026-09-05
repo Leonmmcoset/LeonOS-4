@@ -2,6 +2,7 @@
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/launch.h>
+#include <leonos/launch_result.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -74,7 +75,7 @@ static void launch_path(int window_id)
     int pid;
     pid = leonos_launch_command_line(input_path, argv, LEONOS_LAUNCH_MAX_ARGS + 1);
     if (pid < 0) {
-        if (pid <= LEONOS_LAUNCH_ERR_EMPTY && pid >= LEONOS_LAUNCH_ERR_NO_ASSOCIATION) {
+        if (leonos_launch_is_error(pid)) {
             copy_text(status_text, sizeof(status_text), leonos_launch_error_text(pid));
         } else {
             append_text(status_text, sizeof(status_text), T("Launch failed ", "启动失败 "), pid);

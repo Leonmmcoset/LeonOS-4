@@ -48,7 +48,33 @@ int input_pop(struct input_raw_event *event);
  * event device cannot consume the desktop compositor's input queue. */
 uint64_t input_evdev_cursor_now(void);
 int input_evdev_read(uint32_t device_kind, uint64_t *cursor,
-                     void *buffer, uint32_t length);
-int input_evdev_available(uint32_t device_kind, uint64_t cursor);
+                     void *buffer, uint32_t length, uint64_t grab_token);
+int input_evdev_available(uint32_t device_kind, uint64_t cursor,
+                          uint64_t grab_token);
+/**
+ * @brief Acquire or release EVIOCGRAB ownership for an event node.
+ * @return New grab token on acquire/release, 0 when the device is invalid,
+ *         or -16 when another client owns the exclusive grab.
+ */
+int64_t input_evdev_grab(uint32_t device_kind, uint64_t current_token,
+                         int enable, uint32_t pid);
+/**
+ * @brief Release a closing descriptor's grab ownership.
+ */
+void input_evdev_release(uint32_t device_kind, uint64_t grab_token,
+                         uint32_t pid);
+/**
+ * @brief Copy the current key state bitmap for EVIOCGKEY.
+ */
+void input_evdev_key_state(void *buffer, uint32_t length);
+/**
+ * @brief Copy the supported event/capability bitmap for EVIOCGBIT.
+ */
+void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
+                              void *buffer, uint32_t length);
+/**
+ * @brief Return non-zero when the event device is currently present.
+ */
+int input_evdev_present(uint32_t device_kind);
 
 #endif

@@ -2,8 +2,8 @@
 
 #define DESKTOP_INPUTM_CONFIG_MAX 2048U
 
-static char desktop_inputm_default_id[LEONOS_INPUTM_ID_LEN] = "en";
-static char desktop_inputm_pending_id[LEONOS_INPUTM_ID_LEN];
+static char desktop_inputm_default_id[TEXT_INPUT_ID_LEN] = "en";
+static char desktop_inputm_pending_id[TEXT_INPUT_ID_LEN];
 static char desktop_inputm_hotkey[16] = "win-space";
 static uint32_t desktop_inputm_config_generation;
 
@@ -16,8 +16,8 @@ static uint32_t inputm_text_len(const char *text)
     return n;
 }
 
-static int inputm_state_changed(const struct leonos_inputm_state *left,
-                                const struct leonos_inputm_state *right)
+static int inputm_state_changed(const text_input_state_t *left,
+                                const text_input_state_t *right)
 {
     const uint8_t *a = (const uint8_t *)left;
     const uint8_t *b = (const uint8_t *)right;
@@ -126,9 +126,9 @@ static void desktop_inputm_reset(void)
               sizeof(desktop_inputm_entries[0].abbreviation), "EN");
     desktop_inputm_entries[0].enabled = 1;
     desktop_inputm_entries[0].running = 1;
-    desktop_inputm_entries[0].startup_mode = LEONOS_INPUTM_START_MANUAL;
+    desktop_inputm_entries[0].startup_mode = TEXT_INPUT_START_MANUAL;
     desktop_inputm_entries[0].order = 0;
-    desktop_inputm_state = (struct leonos_inputm_state){0};
+    desktop_inputm_state = (text_input_state_t){0};
     copy_text(desktop_inputm_state.active_id, sizeof(desktop_inputm_state.active_id), "en");
     copy_text(desktop_inputm_default_id, sizeof(desktop_inputm_default_id), "en");
     copy_text(desktop_inputm_hotkey, sizeof(desktop_inputm_hotkey), "win-space");
@@ -150,7 +150,7 @@ static int desktop_inputm_entry_for_id(const char *id)
 static int desktop_inputm_append_provider(const char *id)
 {
     struct desktop_inputm_entry *entry;
-    if (!id || !id[0] || desktop_inputm_entry_count >= LEONOS_INPUTM_MAX_PROVIDERS + 1U) {
+    if (!id || !id[0] || desktop_inputm_entry_count >= TEXT_INPUT_MAX_PROVIDERS + 1U) {
         return -1;
     }
     entry = &desktop_inputm_entries[desktop_inputm_entry_count];
@@ -158,7 +158,7 @@ static int desktop_inputm_append_provider(const char *id)
     copy_text(entry->id, sizeof(entry->id), id);
     copy_text(entry->abbreviation, sizeof(entry->abbreviation), "?");
     entry->enabled = 1;
-    entry->startup_mode = LEONOS_INPUTM_START_ON_DEMAND;
+    entry->startup_mode = TEXT_INPUT_START_ON_DEMAND;
     entry->order = desktop_inputm_entry_count;
     ++desktop_inputm_entry_count;
     return (int)(desktop_inputm_entry_count - 1U);
@@ -209,8 +209,8 @@ void desktop_inputm_load_config(void)
     if (inputm_config_get(config, "provider_count", value, sizeof(value))) {
         count = inputm_parse_u32(value, 0);
     }
-    if (count > LEONOS_INPUTM_MAX_PROVIDERS) {
-        count = LEONOS_INPUTM_MAX_PROVIDERS;
+    if (count > TEXT_INPUT_MAX_PROVIDERS) {
+        count = TEXT_INPUT_MAX_PROVIDERS;
     }
     for (uint32_t i = 0; i < count; ++i) {
         char key[48];
@@ -236,9 +236,9 @@ void desktop_inputm_load_config(void)
         }
         inputm_config_key(key, sizeof(key), i, "startup");
         if (inputm_config_get(config, key, value, sizeof(value))) {
-            uint32_t startup = inputm_parse_u32(value, LEONOS_INPUTM_START_ON_DEMAND);
+            uint32_t startup = inputm_parse_u32(value, TEXT_INPUT_START_ON_DEMAND);
             desktop_inputm_entries[index].startup_mode =
-                startup <= LEONOS_INPUTM_START_ON_DEMAND ? startup : LEONOS_INPUTM_START_ON_DEMAND;
+                startup <= TEXT_INPUT_START_ON_DEMAND ? startup : TEXT_INPUT_START_ON_DEMAND;
         }
         inputm_config_key(key, sizeof(key), i, "order");
         if (inputm_config_get(config, key, value, sizeof(value))) {
@@ -257,15 +257,15 @@ int desktop_inputm_hotkey_is_alt_shift(void)
 
 static void desktop_inputm_refresh_registered(uint32_t uid)
 {
-    struct leonos_inputm_provider providers[LEONOS_INPUTM_MAX_PROVIDERS + 1U];
+    text_input_provider_t providers[TEXT_INPUT_MAX_PROVIDERS + 1U];
     uint32_t count = 0;
-    if (leonos_inputm_list(uid, providers, LEONOS_INPUTM_MAX_PROVIDERS + 1U, &count) < 0) {
+    if (text_input_list(uid, providers, TEXT_INPUT_MAX_PROVIDERS + 1U, &count) < 0) {
         return;
     }
     for (uint32_t i = 0; i < desktop_inputm_entry_count; ++i) {
         desktop_inputm_entries[i].running = text_eq(desktop_inputm_entries[i].id, "en") ? 1 : 0;
     }
-    for (uint32_t i = 0; i < count && i < LEONOS_INPUTM_MAX_PROVIDERS + 1U; ++i) {
+    for (uint32_t i = 0; i < count && i < TEXT_INPUT_MAX_PROVIDERS + 1U; ++i) {
         int index = desktop_inputm_entry_for_id(providers[i].id);
         uint8_t configured = index >= 0;
         if (index < 0) {
@@ -314,7 +314,7 @@ static void desktop_inputm_activate_index(uint32_t index)
         desktop_inputm_start_entry(index);
         return;
     }
-    if (leonos_inputm_set_active(uid, desktop_inputm_entries[index].id) > 0) {
+    if (text_input_set_active(uid, desktop_inputm_entries[index].id) > 0) {
         copy_text(desktop_inputm_status, sizeof(desktop_inputm_status),
                   desktop_inputm_entries[index].id);
     }
@@ -324,7 +324,7 @@ void desktop_inputm_refresh(void)
 {
     char path[LEONOS_FS_PATH_LEN];
     uint32_t uid;
-    struct leonos_inputm_state previous = desktop_inputm_state;
+    text_input_state_t previous = desktop_inputm_state;
     if (!inputm_config_path(path, sizeof(path), &uid)) {
         return;
     }
@@ -339,7 +339,7 @@ void desktop_inputm_refresh(void)
         int default_index = desktop_inputm_entry_for_id(desktop_inputm_default_id);
         if (default_index >= 0 && desktop_inputm_entries[default_index].enabled) {
             if (desktop_inputm_entries[default_index].running) {
-                (void)leonos_inputm_set_active(uid, desktop_inputm_default_id);
+                (void)text_input_set_active(uid, desktop_inputm_default_id);
                 copy_text(desktop_inputm_default_id, sizeof(desktop_inputm_default_id), "en");
             } else {
                 copy_text(desktop_inputm_pending_id, sizeof(desktop_inputm_pending_id),
@@ -348,9 +348,9 @@ void desktop_inputm_refresh(void)
             }
         }
     }
-    if (leonos_inputm_get_state(uid, &desktop_inputm_state) > 0) {
+    if (text_input_get_state(uid, &desktop_inputm_state) > 0) {
         if (desktop_inputm_state.config_generation != desktop_inputm_config_generation) {
-            struct leonos_inputm_state observed = desktop_inputm_state;
+            text_input_state_t observed = desktop_inputm_state;
             desktop_inputm_config_generation = observed.config_generation;
             desktop_inputm_load_config();
             desktop_inputm_state = observed;
@@ -507,7 +507,7 @@ void draw_inputm_overlay(void)
                             leonos_i18n("Input method settings", "输入法设置"), 0);
     }
     if (desktop_inputm_state.composition[0] && !desktop_inputm_menu_open &&
-        !(desktop_inputm_state.render_flags & LEONOS_INPUTM_RENDER_PIXELS)) {
+        !(desktop_inputm_state.render_flags & TEXT_INPUT_RENDER_PIXELS)) {
         uint32_t width = 320U;
         uint32_t height = 34U + desktop_inputm_state.candidate_count *
                           (LEONOS_FONT_H + 4U);
@@ -539,8 +539,8 @@ void draw_inputm_overlay(void)
                                desktop_inputm_state.composition,
                                LEONOS_UI_BLACK, LEONOS_UI_LIGHT);
         for (uint32_t i = 0; i < desktop_inputm_state.candidate_count &&
-                             i < LEONOS_INPUTM_MAX_CANDIDATES; ++i) {
-            char line[LEONOS_INPUTM_TEXT_LEN + 8U];
+                             i < TEXT_INPUT_MAX_CANDIDATES; ++i) {
+            char line[TEXT_INPUT_TEXT_LEN + 8U];
             uint32_t pos = 0;
             line[0] = 0;
             append_dec(line, &pos, sizeof(line), i + 1U);
