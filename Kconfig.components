@@ -508,6 +508,25 @@ config LEON_COMPONENT_APP_GLXGEARS_SDK
     default n
     depends on LEON_COMPONENT_APP_GLXGEARS_BUILD
 
+config LEON_COMPONENT_APP_LEONMMCOSSET_BUILD
+    bool "Build Leonmmcoset easter egg"
+    default y
+
+config LEON_COMPONENT_APP_LEONMMCOSSET_IMAGE
+    bool "Include Leonmmcoset easter egg in system images"
+    default y
+    depends on LEON_COMPONENT_APP_LEONMMCOSSET_BUILD
+
+config LEON_COMPONENT_APP_LEONMMCOSSET_ENTRY
+    bool "Generate a desktop entry for Leonmmcoset easter egg"
+    default n
+    depends on LEON_COMPONENT_APP_LEONMMCOSSET_BUILD
+
+config LEON_COMPONENT_APP_LEONMMCOSSET_SDK
+    bool "Include Leonmmcoset easter egg in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_LEONMMCOSSET_BUILD
+
 config LEON_COMPONENT_APP_XIAOBAI_BUILD
     bool "Build Xiaobai easter egg"
     default y

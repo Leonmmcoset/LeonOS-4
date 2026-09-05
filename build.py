@@ -2414,6 +2414,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         target = add_copy(graph, f"esp:manifest:{app}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    if component_enabled("leonmmcoset", "image"):
+        source = ROOT / "userland/apps/leonmmcoset/leonmmcoset.png"
+        destination = paths.staging / runtime_app_relative("leonmmcoset", "png", system_apps)
+        target = add_copy(graph, "esp:asset:leonmmcoset", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
     if component_enabled("xiaobai", "image"):
         source = ROOT / "userland/apps/xiaobai/xiaobai.png"
         destination = paths.staging / runtime_app_relative("xiaobai", "png", system_apps)
@@ -2683,6 +2689,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             shutil.rmtree(iso_stage)
         context.detail(f"copy ESP staging tree: {relative(paths.staging)} -> {relative(iso_stage)}")
         shutil.copytree(paths.staging, iso_stage)
+        # grub-mkrescue 的 BIOS/eltorito core.img 前缀固定为 /boot/grub，
+        # 需要提供该路径的 grub.cfg，否则 BIOS 启动会直接落入 GRUB 命令行。
+        bios_grub_dir = iso_stage / "boot/grub"
+        bios_grub_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(iso_stage / "grub/grub.cfg", bios_grub_dir / "grub.cfg")
         context.run(("grub-mkrescue", "-o", relative(iso), relative(iso_stage)), announce=True)
 
     graph.add(Target(name="image-iso", outputs=(iso,), inputs=tuple([*esp_outputs, ROOT / "boot/grub/grub.cfg"]), depends_on=("esp",), kind="generate", action=make_iso, action_key="iso-stage-v1"))

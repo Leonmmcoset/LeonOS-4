@@ -795,6 +795,19 @@ api = false
 depends = ["portablegl"]
 
 [[components]]
+id = "leonmmcoset"
+symbol = "APP_LEONMMCOSSET"
+label = "Leonmmcoset easter egg"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "xiaobai"
 symbol = "APP_XIAOBAI"
 label = "Xiaobai easter egg"
