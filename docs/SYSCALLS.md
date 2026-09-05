@@ -57,6 +57,18 @@ The kernel-side numbers and errno constants are in:
 | 84 | `rmdir` | `rmdir` | Removes an empty exFAT, FAT32, or ext2 directory. |
 | 87 | `unlink` | `unlink` | Removes an exFAT, FAT32, or ext2 file. |
 
+## GPU Calls
+
+GPU extensions use syscall 16 (`ioctl`) with the existing logical device
+descriptor 3. The commands in `include/leonos/gpu.h` are `LEONOS_IOCTL_GPU_INFO`
+(`0x4c475001`), `CREATE` (`0x4c475002`), `RENDER` (`0x4c475003`), `DESTROY`
+(`0x4c475004`) and `DIAGNOSTICS` (`0x4c475005`). DIAGNOSTICS returns the latest
+device render-failure snapshot only to its owner. Requests carry exact structure
+size and ABI version 1; pointers are 64-bit user addresses. Invalid ranges return
+`-EFAULT`, invalid versions or counts return `-EINVAL`, and unavailable hardware
+returns a negative SVGA status.
+Only the creator can use a render handle. See [SVGA3D.md](SVGA3D.md) for details.
+
 ## File and Directory Calls
 
 Paths use Unix syntax such as `/system/apps/desktop/desktop.elf`. Relative

@@ -86,6 +86,14 @@ Metro theme after the loader reads `/system/config/display.conf`. It requires a 
 linear framebuffer; serial logging remains available when GOP/framebuffer
 output is unavailable.
 
+`bootlog-pause=1` also enables the log panel, repeats the SVGA3D initialization
+summary after the other boot services, and waits for Enter before launching
+user processes. The installed system's `with boot log` and `SVGA II 3D test`
+entries and the installer's `Enable boot log screen` entry enable this pause.
+The normal boot entries and `bootlog=1` alone still continue automatically.
+IRQ/timer input remains active while paused; queued input, mouse events, and
+key releases are ignored. Press Enter in the virtual machine to resume boot.
+
 ## Installer compatibility
 
 The installer writes target disks through AHCI, legacy IDE/PATA PIO, or NVMe.
