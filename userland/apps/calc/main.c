@@ -473,6 +473,10 @@ static int map_keycode(uint8_t keycode, uint8_t pressed, char *out)
         shift_down = pressed ? 1 : 0;
         return 0;
     }
+    leonos_ui_caps_lock_event(keycode, pressed);
+    if (keycode == LEONOS_KEY_CAPS_LOCK) {
+        return 0;
+    }
     if (!pressed) {
         return 0;
     }
