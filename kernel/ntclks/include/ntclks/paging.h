@@ -36,6 +36,9 @@
 #define NTCLKS_PAGE_PRESENT 0x001ULL
 #define NTCLKS_PAGE_WRITABLE 0x002ULL
 #define NTCLKS_PAGE_USER 0x004ULL
+#define NTCLKS_PAGE_PWT 0x008ULL
+#define NTCLKS_PAGE_PCD 0x010ULL
+#define NTCLKS_PAGE_PAT 0x080ULL
 /* x86_64 makes bits 9-11 of a present PTE available to software.  A COW
  * mapping is deliberately read-only; the page-fault handler copies it before
  * restoring write permission for the faulting address space. */
@@ -79,6 +82,13 @@ bool paging_kernel_direct_map_range(uint64_t phys, uint64_t len);
  * @brief Translate a physical address to the supervisor-only shared kernel direct map, or NULL.
  */
 void *paging_kernel_direct_map(uint64_t phys);
+/**
+ * @brief Validate that a device range can be exposed with uncached semantics.
+ * @param phys Physical start of the device range.
+ * @param len Byte length of the range.
+ * @return True when the range is page-aligned, addressable and reserved for a device.
+ */
+bool paging_mmio_uncached(uint64_t phys, uint64_t len);
 
 /**
  * @brief Allocate and initialize an empty address space; true on success.
@@ -118,6 +128,13 @@ uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
  * @brief Return the physical address backing user vaddr, or 0 if unmapped.
  */
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr);
+/**
+ * @brief Check a present user mapping's write permission without resolving COW.
+ * @param as Address space, or NULL for an invalid mapping.
+ * @param vaddr Address within the queried page.
+ * @return True only for a present, user-accessible, writable page.
+ */
+bool address_space_user_page_writable(const struct address_space *as, uint64_t vaddr);
 bool address_space_user_page_is_device(const struct address_space *as, uint64_t vaddr);
 /**
  * @brief Return how much user memory, in KiB, is currently mapped in as.

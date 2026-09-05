@@ -148,6 +148,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-qmp-stardust",
     "test-qmp-glxgears",
     "test-component-config",
+    "test-svga",
     "test-all",
 })
 WINDOW_BUTTON_ICONS = [
@@ -2414,6 +2415,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         target = add_copy(graph, f"esp:manifest:{app}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    if component_enabled("leonmmcoset", "image"):
+        source = ROOT / "userland/apps/leonmmcoset/leonmmcoset.png"
+        destination = paths.staging / runtime_app_relative("leonmmcoset", "png", system_apps)
+        target = add_copy(graph, "esp:asset:leonmmcoset", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
     if component_enabled("xiaobai", "image"):
         source = ROOT / "userland/apps/xiaobai/xiaobai.png"
         destination = paths.staging / runtime_app_relative("xiaobai", "png", system_apps)
@@ -2683,6 +2690,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             shutil.rmtree(iso_stage)
         context.detail(f"copy ESP staging tree: {relative(paths.staging)} -> {relative(iso_stage)}")
         shutil.copytree(paths.staging, iso_stage)
+        # grub-mkrescue 的 BIOS/eltorito core.img 前缀固定为 /boot/grub，
+        # 需要提供该路径的 grub.cfg，否则 BIOS 启动会直接落入 GRUB 命令行。
+        bios_grub_dir = iso_stage / "boot/grub"
+        bios_grub_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(iso_stage / "grub/grub.cfg", bios_grub_dir / "grub.cfg")
         context.run(("grub-mkrescue", "-o", relative(iso), relative(iso_stage)), announce=True)
 
     graph.add(Target(name="image-iso", outputs=(iso,), inputs=tuple([*esp_outputs, ROOT / "boot/grub/grub.cfg"]), depends_on=("esp",), kind="generate", action=make_iso, action_key="iso-stage-v1"))
@@ -2788,6 +2800,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="clean", kind="command", action=clean, action_key="clean-v1", always=True))
 
     # ---- 主机单元测试和 QEMU 冒烟测试 ----
+    graph.add(Target(name="test-svga",
+                     inputs=tuple(collect("drivers/bootstrap/svga/**/*.[ch]")) +
+                            tuple(collect("tools/tests/*.[ch]", "userland/apps/glxgears/**/*.[ch]",
+                                          "userland/apps/taskmgr/gpu_sample.h")) +
+                            (ROOT / "tools/test_svga.py", ROOT / "tools/test_gpu.py",
+                             ROOT / "kernel/ntclks/gpu.c", ROOT / "kernel/ntclks/user/usercopy.c",
+                             ROOT / "include/leonos/gpu.h", ROOT / "devtools/include/leonos/gpu.h"),
+                     kind="command", command=(PYTHON, "tools/test_svga.py")))
     # 主机测试直接运行 Python；QEMU 测试统一经过 qmp_test，负责启动、超时、
     # 串口采集和失败诊断，并且必须依赖 image-vmdk。
     graph.add(Target(name="test-license-server", inputs=(ROOT / "tools/test_license_server.py", ROOT / "tools/license_server.py"), kind="command", command=(PYTHON, "tools/test_license_server.py")))
@@ -3613,7 +3633,7 @@ def parser() -> argparse.ArgumentParser:
     generate.add_argument("file")
     add_config_options(generate)
     test = commands.add_parser("test")
-    test.add_argument("item", choices=("license-server", "los2w", "component-config",
+    test.add_argument("item", choices=("license-server", "los2w", "component-config", "svga",
                                        "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl", "qmp-less",
                                        "qmp-dynlinkerror", "qmp-cmd", "qmp-stardust", "qmp-glxgears", "all"))
     add_config_options(test)
@@ -3747,7 +3767,14 @@ def main(argv: list[str] | None = None) -> int:
             ),
         )
         graph_started = time.perf_counter()
-        graph = build_graph(paths, config_path)
+        if arguments.command == "test" and arguments.item == "svga":
+            # This driver test has no userland or submodule dependencies.
+            graph = BuildGraph(ROOT)
+            graph.add(Target(name="test-svga", kind="command",
+                             inputs=(ROOT / "tools/test_svga.py",),
+                             command=(PYTHON, "tools/test_svga.py")))
+        else:
+            graph = build_graph(paths, config_path)
         graph_seconds = time.perf_counter() - graph_started
         effective_verbose = arguments.verbose or config_bool(
             parse_kconfig(config_path), "CONFIG_BUILD_VERBOSE_LOG"

@@ -729,11 +729,9 @@ int gui_ipc_present_window(uint32_t pid, uint32_t window_id, uint32_t width, uin
         return 0;
     }
     dst = window_pixels(slot);
-    for (uint32_t y = 0; y < height; ++y) {
-        for (uint32_t x = 0; x < width; ++x) {
-            dst[(uint64_t)y * width + x] = pixels[(uint64_t)y * stride + x];
-        }
-    }
+    for (uint32_t y = 0; y < height; ++y)
+        __builtin_memcpy(dst + (uint64_t)y * width, pixels + (uint64_t)y * stride,
+                         (size_t)width * sizeof(*dst));
     slot->width = width;
     slot->height = height;
     return push_message(GUI_IPC_WINDOW_MSG_DIRTY, slot);
@@ -980,11 +978,9 @@ int gui_ipc_fetch_window(uint32_t caller_pid, uint32_t window_id,
     copy_w = min_u32(slot->width, capacity_width);
     copy_h = min_u32(slot->height, capacity_height);
     src = window_pixels(slot);
-    for (uint32_t y = 0; y < copy_h; ++y) {
-        for (uint32_t x = 0; x < copy_w; ++x) {
-            pixels[(uint64_t)y * stride + x] = src[(uint64_t)y * slot->width + x];
-        }
-    }
+    for (uint32_t y = 0; y < copy_h; ++y)
+        __builtin_memcpy(pixels + (uint64_t)y * stride, src + (uint64_t)y * slot->width,
+                         (size_t)copy_w * sizeof(*pixels));
     if (out_width) {
         *out_width = copy_w;
     }
