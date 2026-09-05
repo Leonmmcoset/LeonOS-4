@@ -49,6 +49,10 @@ class BuildPaths:
     root: Path
 
     @property
+    def build_modules(self) -> Path:
+        return self.root / "boot" / "grub_modules_x86_64-efi"
+
+    @property
     def home(self) -> Path:
         return self.root / "buildsystem"
 

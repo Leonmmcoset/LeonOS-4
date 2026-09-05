@@ -16,3 +16,4 @@ dist/
 tools/dist/
 LeonOS4-Developer-SDK.zip
 .trae-html-share-packages/
+.zig_cache/
