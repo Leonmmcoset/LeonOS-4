@@ -52,8 +52,25 @@ bool user_range_ok(uint64_t ptr, uint64_t len)
 }
 
 /**
- * @brief Return the length of the NUL-terminated string at s, checking each byte is user-accessible and never exceeding max.
+ * @brief Resolve lazy/COW output pages before a kernel copy under the execution lock.
+ * @param ptr Start of the current user's output range.
+ * @param len Byte length; zero succeeds for a current user task.
+ * @return True for writable pages, false for invalid memory or allocation failure.
  */
+bool user_range_writable(uint64_t ptr, uint64_t len)
+{
+    struct task *task = sched_current_task();
+    if (!task || task->kind != TASK_KIND_USER || !user_range_ok(ptr, len)) return false;
+    if (!len) return true;
+    for (uint64_t page = align_down_page(ptr); page < ptr + len; page += PAGE_SIZE) {
+        if (!address_space_user_page_writable(&task->as, page) &&
+            !address_space_handle_cow_fault(&task->as, page)) return false;
+        if (!address_space_user_page_writable(&task->as, page)) return false;
+    }
+    return true;
+}
+
+/** @brief Return a bounded length, checking each user byte before reading. */
 size_t user_strlen(const char *s, size_t max)
 {
     size_t n = 0;

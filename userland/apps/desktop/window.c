@@ -491,17 +491,20 @@ static uint32_t desktop_map_legacy_ui_color(uint32_t color)
 
 static void desktop_map_app_surface(uint32_t width, uint32_t height)
 {
+    uint32_t y;
+    if (leonos_ui_theme() != LEONOS_UI_THEME_METRO) {
+        return;
+    }
     if (width > APP_CLIENT_MAX_W) {
         width = APP_CLIENT_MAX_W;
     }
     if (height > APP_CLIENT_MAX_H) {
         height = APP_CLIENT_MAX_H;
     }
-    for (uint32_t y = 0; y < height; ++y) {
-        for (uint32_t x = 0; x < width; ++x) {
-            uint32_t index = y * APP_CLIENT_MAX_W + x;
-            app_client_scratch[index] = desktop_map_legacy_ui_color(app_client_scratch[index]);
-        }
+    for (y = 0; y < height; ++y) {
+        uint32_t *pixels = app_client_scratch + (uint64_t)y * APP_CLIENT_MAX_W;
+        for (uint32_t x = 0; x < width; ++x)
+            pixels[x] = desktop_map_legacy_ui_color(pixels[x]);
     }
 }
 
@@ -554,10 +557,10 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
         clip = rect_clip(rect_make(draw_x, draw_y, (int)draw_w, (int)draw_h));
         for (int yy = 0; yy < clip.h; ++yy) {
             uint32_t src_y = (uint32_t)((uint64_t)(clip.y - draw_y + yy) * out_h / draw_h);
+            uint32_t *dst = screen + (uint64_t)(clip.y + yy) * MAX_FB_W + clip.x;
             for (int xx = 0; xx < clip.w; ++xx) {
                 uint32_t src_x = (uint32_t)((uint64_t)(clip.x - draw_x + xx) * out_w / draw_w);
-                put_pixel((uint32_t)(clip.x + xx), (uint32_t)(clip.y + yy),
-                          app_client_scratch[(uint64_t)src_y * APP_CLIENT_MAX_W + src_x]);
+                dst[xx] = app_client_scratch[(uint64_t)src_y * APP_CLIENT_MAX_W + src_x];
             }
         }
         return;
@@ -565,10 +568,10 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
     clip = rect_clip(rect_make(body_x, body_y, (int)out_w, (int)out_h));
     for (int yy = 0; yy < clip.h; ++yy) {
         uint32_t src_y = (uint32_t)(clip.y - body_y + yy);
-        for (int xx = 0; xx < clip.w; ++xx) {
-            uint32_t src_x = (uint32_t)(clip.x - body_x + xx);
-            put_pixel((uint32_t)(clip.x + xx), (uint32_t)(clip.y + yy),
-                      app_client_scratch[(uint64_t)src_y * APP_CLIENT_MAX_W + src_x]);
-        }
+        uint32_t src_x = (uint32_t)(clip.x - body_x);
+        uint32_t *dst = screen + (uint64_t)(clip.y + yy) * MAX_FB_W + clip.x;
+        __builtin_memcpy(dst, app_client_scratch +
+                         (uint64_t)src_y * APP_CLIENT_MAX_W + src_x,
+                         (size_t)clip.w * sizeof(*dst));
     }
 }

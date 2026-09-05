@@ -12,6 +12,7 @@
 #include <ntclks/heap.h>
 #include <ntclks/lock.h>
 #include <ntclks/smp.h>
+#include <ntclks/svga.h>
 
 /* The table grows by moving only pointers; task objects keep stable addresses
  * because wait queues and interrupt paths may retain struct task pointers. */
@@ -860,6 +861,7 @@ void sched_set_running(uint32_t pid)
 void sched_exit(uint32_t pid, uint64_t code)
 {
     uint64_t flags;
+    bool gpu_owner_quiescent = false;
 
     /* Publish the terminal state atomically, but preserve running_cpu until
      * its owner reaches a scheduling boundary.  A remote CPU may still be
@@ -871,6 +873,7 @@ void sched_exit(uint32_t pid, uint64_t code)
             tasks[i]->exit_code = code;
             tasks[i]->child_event = TASK_CHILD_EVENT_NONE;
             tasks[i]->stop_signal = 0;
+            gpu_owner_quiescent = tasks[i]->running_cpu == SCHED_CPU_NONE;
             console_printf("[ntclks] scheduler task exited pid=%u name=%s code=%llu\n",
                            pid,
                            tasks[i]->name,
@@ -885,6 +888,7 @@ void sched_exit(uint32_t pid, uint64_t code)
         }
     }
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    if (gpu_owner_quiescent) svga_gpu_release_owner(pid);
 }
 
 /**
@@ -903,6 +907,7 @@ void sched_release_task_resources(struct task *task)
     sched_task_vma_release(task);
     sched_task_file_release(task);
     inputm_destroy_owner(task->pid);
+    svga_gpu_release_owner(task->pid);
     task->flags |= TASK_FLAG_RESOURCES_RELEASED;
 }
 
@@ -1313,6 +1318,7 @@ void sched_quiesce_exited_current(void)
     uint32_t cpu = scheduler_cpu_index();
     uint32_t pid;
     uint64_t flags;
+    uint32_t gpu_owner = 0;
 
     kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     pid = current_pid[cpu];
@@ -1322,11 +1328,13 @@ void sched_quiesce_exited_current(void)
                 tasks[i]->running_cpu == SCHED_CPU_NONE) {
                 tasks[i]->running_cpu = SCHED_CPU_NONE;
                 current_pid[cpu] = 0;
+                gpu_owner = pid;
             }
             break;
         }
     }
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    if (gpu_owner) svga_gpu_release_owner(gpu_owner);
 }
 
 /**

@@ -9,6 +9,18 @@
 
 Unimplemented syscalls return `-ENOSYS`.
 
+## GPU Rendering ABI
+
+`include/leonos/gpu.h` defines the versioned, process-owned offscreen rendering
+API used by glxgears. `leonos_gpu_create`, `leonos_gpu_render` and
+`leonos_gpu_destroy` manage bounded SVGA3D triangle batches; `leonos_gpu_info`
+reports capabilities, resource counters and estimated busy time.
+`leonos_gpu_diagnostics` retrieves the latest device render-failure
+snapshot only for its owning process, without advancing the hardware FIFO.
+Existing rendering request layouts and the CPU/memory performance structure
+are unchanged. See [SVGA3D.md](SVGA3D.md)
+for layout semantics, limits, synchronization, software fallback and validation.
+
 ## Dynamic Library ABI
 
 Dynamic PIE executables use `/system/lib/ld-leonos.elf` and must contain one

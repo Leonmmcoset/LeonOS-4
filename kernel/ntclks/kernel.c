@@ -26,6 +26,7 @@
 #include <ntclks/smp.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
+#include <ntclks/svga.h>
 #include <ntclks/time.h>
 #include <ntclks/usb.h>
 #include <ntclks/userland.h>
@@ -89,6 +90,29 @@ static int boot_text_eq(const char *a, const char *b)
 }
 
 /**
+ * @brief Hold the boot console until Enter is pressed after discarding queued input.
+ * Called with interrupts disabled after IRQ/USB initialization and before user
+ * tasks or APs are started. Keyboard and timer IRQs run during each halt; returns
+ * with interrupts disabled. Pointer events and key releases do not resume boot.
+ */
+static void boot_log_wait_for_enter(void)
+{
+    struct input_event event;
+    while (input_pop(&event)) {
+    }
+    console_printf("[boot] Boot log paused. Press Enter to continue.\n");
+    for (;;) {
+        while (input_pop(&event)) {
+            if (event.type == INPUT_EVENT_KEYBOARD && event.pressed &&
+                event.keycode == 28u) {
+                return;
+            }
+        }
+        __asm__ volatile("sti; hlt; cli" ::: "memory");
+    }
+}
+
+/**
  * @brief Replace or append the installer-root module in boot from the loader handoff.
  */
 static void boot_import_handoff_modules(struct boot_info *boot,
@@ -125,6 +149,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
                          const struct leonos_boot_handoff *handoff)
 {
     bool boot_log_screen;
+    bool boot_log_pause;
     int startup_tty;
 
     __asm__ volatile("cli");
@@ -171,7 +196,8 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
         console_printf("[ntclks] using loader-captured EFI memory map entries=%u descriptor=%u\n",
                        boot.efi_mmap_entry_count, boot.efi_mmap_entry_size);
     }
-    boot_log_screen = cmdline_has(&boot, "bootlog=1");
+    boot_log_pause = cmdline_has(&boot, "bootlog-pause=1");
+    boot_log_screen = cmdline_has(&boot, "bootlog=1") || boot_log_pause;
     if (!boot.rsdp_addr && handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC) {
         boot.rsdp_addr = handoff->rsdp_addr;
     }
@@ -213,6 +239,16 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     sched_create_idle_task();
     syscall_init();
     arch_userland_init(kernel_ring0_stack + sizeof(kernel_ring0_stack));
+    /* The bootstrap page tables are complete now, so SVGA BARs can be marked
+     * UC before any 3D FIFO or guest-memory command is issued. */
+    int svga_ret = svga3d_init();
+    struct svga_info boot_svga_info;
+    svga_get_info(&boot_svga_info);
+    int triangle_ret = svga_ret;
+    if (cmdline_has(&boot, "svga3d-triangle=1")) {
+        triangle_ret = svga_ret == 0 ? svga3d_triangle_test() : svga_ret;
+        console_printf("[svga3d] triangle-test=%d\n", triangle_ret);
+    }
     idt_init();
     irq_init();
     boot_splash_update(90u);
@@ -249,6 +285,28 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
         console_printf("[ntclks] entering kernel debug tool before userland\n");
         (void)kernel_debug_run_module();
         console_printf("[ntclks] kernel debug tool finished; continuing normal startup\n");
+    }
+    if (boot_log_pause) {
+        console_printf("[svga3d] init=%d available=%u fifo-ready=%u\n",
+                       svga_ret, (unsigned)boot_svga_info.available,
+                       (unsigned)boot_svga_info.fifo_ready);
+        console_printf("[svga3d] caps=0x%x fifo=0x%x\n",
+                       boot_svga_info.device_caps, boot_svga_info.fifo_caps);
+        console_printf("[svga3d] host=0x%x guest=0x%x\n",
+                       boot_svga_info.host_version, boot_svga_info.guest_version);
+        const struct svga_probe_info *probe = &boot_svga_info.probe;
+        console_printf("[svga3d] probe=%s status=%d\n",
+                       probe->stage ? probe->stage : "not-run", probe->status);
+        console_printf("[svga3d] probe-fifo=0x%x min=%u mem-regs=%u\n",
+                       probe->fifo_caps, probe->fifo_min, probe->mem_regs);
+        console_printf("[svga3d] raw-hw=0x%x revised=0x%x enable=0x%x\n",
+                       probe->host_legacy, probe->host_revised, probe->enable);
+        console_printf("[svga3d] gb=%u devcap3d=%u\n",
+                       (unsigned)probe->gb_objects, probe->devcap_3d);
+        if (cmdline_has(&boot, "svga3d-triangle=1")) {
+            console_printf("[svga3d] triangle-test=%d\n", triangle_ret);
+        }
+        boot_log_wait_for_enter();
     }
     userland_init(&boot);
     /* All initial task objects are now present. APs may enter the shared

@@ -12,6 +12,13 @@
  */
 bool user_range_ok(uint64_t ptr, uint64_t len);
 /**
+ * @brief Prepare writable user pages for copy-out, faulting in and resolving COW.
+ * @param ptr Start of the current user's output range.
+ * @param len Range length in bytes; zero succeeds for a current user task.
+ * @return False for unmapped/read-only memory, overflow, or failed COW allocation.
+ */
+bool user_range_writable(uint64_t ptr, uint64_t len);
+/**
  * @brief Return the length of the NUL-terminated user string s, up to max bytes.
  */
 size_t user_strlen(const char *s, size_t max);

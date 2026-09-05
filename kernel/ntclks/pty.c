@@ -35,6 +35,7 @@ struct pty_session {
 static struct pty_session sessions[PTY_MAX];
 static uint32_t console_pty_id;
 static uint8_t console_shift_down;
+static uint8_t console_caps_lock;
 static uint8_t console_ctrl_down;
 static uint8_t console_alt_down;
 
@@ -116,6 +117,7 @@ void pty_init(void)
 {
     console_pty_id = 0;
     console_shift_down = 0;
+    console_caps_lock = 0;
     console_ctrl_down = 0;
     console_alt_down = 0;
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
@@ -183,8 +185,10 @@ static int console_key_to_bytes(uint8_t keycode, char *buffer, uint32_t *length)
     case 52: ch = '.'; break; case 53: ch = '/'; break;
     default: return 0;
     }
-    if (console_shift_down && ch >= 'a' && ch <= 'z') {
-        ch = (char)(ch - 'a' + 'A');
+    if (ch >= 'a' && ch <= 'z') {
+        if ((console_shift_down ? 1 : 0) != (console_caps_lock ? 1 : 0)) {
+            ch = (char)(ch - 'a' + 'A');
+        }
     } else if (console_shift_down) {
         switch (ch) {
         case '1': ch = '!'; break; case '2': ch = '@'; break; case '3': ch = '#'; break;
@@ -212,6 +216,12 @@ void pty_console_key_event(uint8_t keycode, uint8_t pressed)
     uint32_t length;
     if (keycode == 42 || keycode == 54) {
         console_shift_down = pressed ? 1 : 0;
+        return;
+    }
+    if (keycode == 58) {
+        if (pressed) {
+            console_caps_lock ^= 1;
+        }
         return;
     }
     if (keycode == 29 || keycode == 116) {

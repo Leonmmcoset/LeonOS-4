@@ -14,6 +14,7 @@
 #include <ntclks/lock.h>
 #include <ntclks/smp.h>
 #include <ntclks/userland.h>
+#include <ntclks/svga.h>
 
 #define USER_STACK_TOP (NTCLKS_USER_TOP - 0x1000ULL)
 #define EXEC_STACK_ALIGN 16ULL
@@ -878,6 +879,7 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
 
     /* No operation after this point can fail.  Keep all old process identity,
      * cwd, PTY association, limits, process parentage and waitability intact. */
+    svga_gpu_release_owner(task->pid);
     old_as = task->as;
     task->as = replacement;
     task->entry = 0;
