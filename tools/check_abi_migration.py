@@ -22,11 +22,13 @@ TEXT_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".S", ".rs", ".py", ".toml", ".md"}
 EXCLUDED_PREFIXES = ("third_party/", "build/", ".git/")
 PRIVATE_RE = re.compile(
     r"\b(?:LEONOS_[A-Z0-9_]*(?:IOCTL|PTY|INPUTM|DISK|INSTALL|AUDIO|NET|DEVICE|DRIVER|GUI)"
-    r"|leonos_(?:pty|inputm|disk|install|audio|socket|net|device|driver|mouse)_[A-Za-z0-9_]+)\b"
+    r"|LEONOS_IOCTL_GPU_[A-Z0-9_]+"
+    r"|leonos_(?:pty|inputm|disk|install|audio|socket|net|device|driver|mouse|gpu)_[A-Za-z0-9_]+)\b"
 )
 HARDWARE_RE = re.compile(
     r"\b(?:LEONOS_[A-Z0-9_]*(?:IOCTL|PTY|INPUTM|DISK|INSTALL|AUDIO|NET|DEVICE|DRIVER)"
-    r"|leonos_(?:pty|inputm|disk|install|audio|socket|net|device|driver|mouse)_[A-Za-z0-9_]+)\b"
+    r"|LEONOS_IOCTL_GPU_[A-Z0-9_]+"
+    r"|leonos_(?:pty|inputm|disk|install|audio|socket|net|device|driver|mouse|gpu)_[A-Za-z0-9_]+)\b"
 )
 
 
