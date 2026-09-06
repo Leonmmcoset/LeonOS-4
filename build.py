@@ -2386,8 +2386,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         target = add_copy(graph, f"esp:window-icon:{icon}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    minesweeper_asset_dir = runtime_app_relative("minesweeper", "elf", system_apps).parent
     for source, name in zip(minesweeper_assets, MINESWEEPER_ASSETS):
-        destination = paths.staging / "system/resources" / name
+        destination = paths.staging / minesweeper_asset_dir / name
         target = add_copy(graph, f"esp:minesweeper-asset:{name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)

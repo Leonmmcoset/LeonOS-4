@@ -51,7 +51,7 @@ Current limits:
 
 - No JavaScript.
 - No inline image loading. Image links can be downloaded and opened with
-  `imageview.elf` when saved as BMP.
+  `imageview.elf` when saved as BMP or PNG.
 - No full CSS cascade, box model, floats, flex/grid, or media queries.
 - HTTP uses `HTTP/1.1` over TCP sockets with `Connection: close`; HTTPS uses a
   TLS 1.2 client profile backed by Mbed TLS and the bundled CA roots. Cookies,
@@ -108,7 +108,7 @@ Download and image companion apps are registered as:
 
 - `/programs/downloadmgr/downloadmgr.elf`, launch alias `downloadmgr`
 - `/programs/imageview/imageview.elf`, launch alias `imageview`
-- default app for `.bmp` and `.dib`
+- default app for `.bmp`, `.dib`, and `.png`
 
 The generated icon is `/programs/browser/browser.bmp`, following the existing
 same-directory/same-basename application icon convention.

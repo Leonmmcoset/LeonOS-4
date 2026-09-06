@@ -115,6 +115,7 @@ void desktop_run(void)
         }
         desktop_handle_display_requests();
         desktop_handle_appearance_requests();
+        desktop_lifecycle_update();
         oobe_lock_update();
         login_lock_update();
         desktop_update_window_animations();
@@ -159,6 +160,9 @@ void desktop_run(void)
                                    event.dy, event.buttons);
             } else if (event.type == LEONOS_INPUT_KEYBOARD) {
                 leonos_ui_caps_lock_event(event.keycode, event.pressed);
+                if (desktop_lifecycle_handle_key(event.keycode, event.pressed)) {
+                    continue;
+                }
                 if (desktop_handle_shortcut_input_key(event.keycode, event.pressed)) {
                     continue;
                 }
@@ -189,6 +193,9 @@ void desktop_run(void)
             handle_mouse((uint32_t)deferred_motion.x,
                          (uint32_t)deferred_motion.y,
                          deferred_motion.buttons);
+        }
+        if (start_menu_update()) {
+            did_work = 1;
         }
         if (desktop_cursor_auto) {
             uint32_t next_cursor_style = desktop_cursor_style_for_pointer(cursor_x, cursor_y);

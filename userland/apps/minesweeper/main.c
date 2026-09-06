@@ -1,9 +1,11 @@
+#include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <unistd.h>
 
 #define MS_COLS 9
 #define MS_ROWS 9
@@ -18,8 +20,8 @@
 #define MS_H (MS_BOARD_Y + MS_ROWS * MS_TILE + 18)
 #define MS_SPRITE_SIZE 20
 #define MS_SPRITE_BMP_MAX_BYTES (MS_SPRITE_SIZE * MS_SPRITE_SIZE * 4U + 128U)
-#define MS_MINE_SPRITE_PATH "/system/resources/minesweeper-mine.bmp"
-#define MS_FLAG_SPRITE_PATH "/system/resources/minesweeper-flag.bmp"
+#define MS_MINE_SPRITE_PATH "minesweeper-mine.bmp"
+#define MS_FLAG_SPRITE_PATH "minesweeper-flag.bmp"
 
 #define CELL_MINE 0x01u
 #define CELL_REVEALED 0x02u
@@ -61,6 +63,29 @@ static void copy_text(char *dst, uint32_t cap, const char *src)
         ++i;
     }
     dst[i] = 0;
+}
+
+static int change_to_executable_directory(const char *path)
+{
+    char directory[LEONOS_FS_PATH_LEN];
+    uint32_t length = 0;
+    uint32_t last_separator = 0;
+
+    if (!path || !path[0]) {
+        return chdir("/programs/minesweeper");
+    }
+    while (path[length]) {
+        if (path[length] == '/') {
+            last_separator = length;
+        }
+        ++length;
+    }
+    if (last_separator == 0 || last_separator >= sizeof(directory)) {
+        return chdir("/programs/minesweeper");
+    }
+    copy_text(directory, sizeof(directory), path);
+    directory[last_separator] = 0;
+    return chdir(directory);
 }
 
 static uint32_t text_len(const char *text)
@@ -428,11 +453,15 @@ static int board_pos(int32_t px, int32_t py, int *out_x, int *out_y)
     return in_board(*out_x, *out_y);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     int window_id;
+
+    if (change_to_executable_directory(argc > 0 ? argv[0] : 0) < 0) {
+        puts("[minesweeper.elf] could not change to executable directory");
+    }
     puts("[minesweeper.elf] starting");
     if (!load_game_assets()) {
         puts("[minesweeper.elf] required BMP assets unavailable");

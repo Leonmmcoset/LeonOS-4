@@ -33,6 +33,10 @@ struct leonos_app_info {
 };
 
 int leonos_app_registry_refresh(void);
+int leonos_app_registry_begin_refresh(void);
+int leonos_app_registry_refresh_step(uint32_t budget);
+int leonos_app_registry_is_loading(void);
+int leonos_app_registry_is_loaded(void);
 uint32_t leonos_app_registry_count(void);
 int leonos_app_registry_get(uint32_t index, struct leonos_app_info *info);
 int leonos_app_registry_find(const char *id_or_path,

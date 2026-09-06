@@ -348,7 +348,8 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
     if (msg->type != 1) {
         return;
     }
-    if (oobe_lock_blocks_window_msg(msg) || login_lock_blocks_window_msg(msg)) {
+    if (desktop_lifecycle_state != DESKTOP_LIFECYCLE_IDLE ||
+        oobe_lock_blocks_window_msg(msg) || login_lock_blocks_window_msg(msg)) {
         return;
     }
     uint8_t slot = MAX_WINDOWS;
@@ -803,6 +804,50 @@ void desktop_shutdown(void)
 void desktop_logout(void)
 {
     printf("[desktop.elf] logout requested from Start menu\n");
+    desktop_lifecycle_begin(POWER_CONFIRM_LOGOUT);
+}
+
+static void desktop_lifecycle_reset(void)
+{
+    desktop_lifecycle_state = DESKTOP_LIFECYCLE_IDLE;
+    desktop_lifecycle_action = POWER_CONFIRM_NONE;
+    desktop_lifecycle_force_requested = 0;
+    desktop_lifecycle_started_ms = 0;
+    desktop_lifecycle_target_count = 0;
+    desktop_lifecycle_remaining_count = 0;
+    for (uint32_t i = 0; i < DESKTOP_LIFECYCLE_MAX_TARGETS; ++i) {
+        desktop_lifecycle_pids[i] = 0;
+    }
+}
+
+static int desktop_lifecycle_window_requested(uint32_t pid)
+{
+    int requested = 0;
+    for (uint8_t i = BUILTIN_WINDOWS; i < MAX_WINDOWS; ++i) {
+        if (windows[i].visible && windows[i].owner_pid == pid) {
+            request_close_window(i);
+            requested = 1;
+        }
+    }
+    return requested;
+}
+
+static void desktop_lifecycle_finish(void)
+{
+    uint8_t action = desktop_lifecycle_action;
+    desktop_lifecycle_reset();
+    power_confirm_action = POWER_CONFIRM_NONE;
+    if (action == POWER_CONFIRM_REBOOT) {
+        desktop_reboot();
+        return;
+    }
+    if (action == POWER_CONFIRM_SHUTDOWN) {
+        desktop_shutdown();
+        return;
+    }
+    if (action != POWER_CONFIRM_LOGOUT) {
+        return;
+    }
     leonos_auth_logout();
     desktop_load_appearance_config();
     desktop_inputm_load_config();
@@ -817,6 +862,175 @@ void desktop_logout(void)
     start_menu_set_open(0);
     maybe_launch_login();
     full_redraw_pending = 1;
+}
+
+void desktop_lifecycle_begin(uint8_t action)
+{
+    struct leonos_task_info tasks[LEONOS_TASK_MAX];
+    struct leonos_user_info user;
+    uint64_t tick;
+    int count;
+    uint32_t session_id = 0;
+    uint32_t uid = 0;
+    if (action != POWER_CONFIRM_LOGOUT && action != POWER_CONFIRM_REBOOT &&
+        action != POWER_CONFIRM_SHUTDOWN) {
+        return;
+    }
+    if (desktop_lifecycle_state != DESKTOP_LIFECYCLE_IDLE) {
+        return;
+    }
+    user = (struct leonos_user_info){0};
+    if (leonos_auth_current(&user) == 0) {
+        uid = user.uid;
+    }
+    count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &tick);
+    if (count < 0) {
+        printf("[desktop.elf] lifecycle task snapshot failed ret=%d\n", count);
+        power_confirm_action = action;
+        full_redraw_pending = 1;
+        return;
+    }
+    if (count > (int)LEONOS_TASK_MAX) {
+        count = (int)LEONOS_TASK_MAX;
+    }
+    for (int i = 0; i < count; ++i) {
+        if (tasks[i].pid == (uint32_t)getpid()) {
+            session_id = tasks[i].session_id;
+            if (!uid) {
+                uid = tasks[i].uid;
+            }
+            break;
+        }
+    }
+    desktop_lifecycle_reset();
+    desktop_lifecycle_action = action;
+    for (int i = 0; i < count && desktop_lifecycle_target_count < DESKTOP_LIFECYCLE_MAX_TARGETS; ++i) {
+        const struct leonos_task_info *task = &tasks[i];
+        if (!task->pid || task->pid == (uint32_t)getpid() ||
+            task->kind != 1U || task->state == 3U ||
+            (task->flags & DESKTOP_TASK_FLAG_SERVICE) ||
+            !uid || task->uid != uid ||
+            (session_id && task->session_id != session_id)) {
+            continue;
+        }
+        desktop_lifecycle_pids[desktop_lifecycle_target_count++] = task->pid;
+    }
+    desktop_lifecycle_remaining_count = desktop_lifecycle_target_count;
+    desktop_lifecycle_state = DESKTOP_LIFECYCLE_WAITING;
+    desktop_lifecycle_started_ms = leonos_uptime_ms();
+    power_confirm_action = POWER_CONFIRM_NONE;
+    start_menu_set_open(0);
+    for (uint32_t i = 0; i < desktop_lifecycle_target_count; ++i) {
+        uint32_t pid = desktop_lifecycle_pids[i];
+        if (!desktop_lifecycle_window_requested(pid)) {
+            (void)kill((pid_t)pid, SIGTERM);
+        }
+    }
+    full_redraw_pending = 1;
+}
+
+void desktop_lifecycle_update(void)
+{
+    static unsigned long last_poll_ms;
+    struct leonos_task_info tasks[LEONOS_TASK_MAX];
+    uint64_t tick;
+    unsigned long now;
+    int count;
+    uint32_t remaining = 0;
+    if (desktop_lifecycle_state == DESKTOP_LIFECYCLE_IDLE) {
+        return;
+    }
+    now = leonos_uptime_ms();
+    if (now - last_poll_ms < DESKTOP_LIFECYCLE_POLL_MS) {
+        return;
+    }
+    last_poll_ms = now;
+    count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &tick);
+    if (count < 0) {
+        /* Keep the shutdown gate active when the task service is temporarily
+         * unavailable; treating an error as an empty snapshot would bypass
+         * the graceful-close and force-confirmation path. */
+        if (desktop_lifecycle_state == DESKTOP_LIFECYCLE_WAITING &&
+            now - desktop_lifecycle_started_ms >= DESKTOP_LIFECYCLE_TIMEOUT_MS) {
+            desktop_lifecycle_state = DESKTOP_LIFECYCLE_FORCE_PROMPT;
+            full_redraw_pending = 1;
+        }
+        return;
+    }
+    if (count > (int)LEONOS_TASK_MAX) {
+        count = (int)LEONOS_TASK_MAX;
+    }
+    for (uint32_t i = 0; i < desktop_lifecycle_target_count; ++i) {
+        uint8_t alive = 0;
+        for (int j = 0; j < count; ++j) {
+            if (tasks[j].pid == desktop_lifecycle_pids[i] && tasks[j].state != 3U) {
+                alive = 1;
+                break;
+            }
+        }
+        remaining += alive;
+    }
+    desktop_lifecycle_remaining_count = remaining;
+    if (!remaining) {
+        desktop_lifecycle_finish();
+        full_redraw_pending = 1;
+        return;
+    }
+    if (desktop_lifecycle_state == DESKTOP_LIFECYCLE_WAITING &&
+        now - desktop_lifecycle_started_ms >= DESKTOP_LIFECYCLE_TIMEOUT_MS) {
+        desktop_lifecycle_state = DESKTOP_LIFECYCLE_FORCE_PROMPT;
+        full_redraw_pending = 1;
+    }
+}
+
+static void desktop_lifecycle_force(void)
+{
+    if (desktop_lifecycle_state != DESKTOP_LIFECYCLE_FORCE_PROMPT) {
+        return;
+    }
+    for (uint32_t i = 0; i < desktop_lifecycle_target_count; ++i) {
+        uint32_t pid = desktop_lifecycle_pids[i];
+        if (pid) {
+            (void)leonos_task_kill(pid);
+        }
+    }
+    desktop_lifecycle_force_requested = 1;
+    desktop_lifecycle_state = DESKTOP_LIFECYCLE_WAITING;
+    desktop_lifecycle_started_ms = leonos_uptime_ms();
+    full_redraw_pending = 1;
+}
+
+int desktop_lifecycle_handle_key(uint8_t keycode, uint8_t pressed)
+{
+    if (desktop_lifecycle_state == DESKTOP_LIFECYCLE_IDLE && power_confirm_action) {
+        if (!pressed) {
+            return 1;
+        }
+        if (keycode == LEONOS_KEY_ENTER) {
+            uint8_t action = power_confirm_action;
+            power_confirm_action = POWER_CONFIRM_NONE;
+            desktop_lifecycle_begin(action);
+        } else if (keycode == LEONOS_KEY_ESCAPE) {
+            power_confirm_action = POWER_CONFIRM_NONE;
+            full_redraw_pending = 1;
+        }
+        return 1;
+    }
+    if (desktop_lifecycle_state == DESKTOP_LIFECYCLE_IDLE) {
+        return 0;
+    }
+    if (!pressed) {
+        return 1;
+    }
+    if (desktop_lifecycle_state == DESKTOP_LIFECYCLE_FORCE_PROMPT) {
+        if (keycode == LEONOS_KEY_ENTER) {
+            desktop_lifecycle_force();
+        } else if (keycode == LEONOS_KEY_ESCAPE) {
+            desktop_lifecycle_reset();
+            full_redraw_pending = 1;
+        }
+    }
+    return 1;
 }
 
 void desktop_launch_startup_apps(void)
@@ -835,6 +1049,9 @@ void desktop_request_power_confirm(uint8_t action)
     if (action != POWER_CONFIRM_REBOOT && action != POWER_CONFIRM_SHUTDOWN) {
         return;
     }
+    if (desktop_lifecycle_state != DESKTOP_LIFECYCLE_IDLE) {
+        return;
+    }
     power_confirm_action = action;
     start_menu_set_open(0);
     full_redraw_pending = 1;
@@ -842,25 +1059,38 @@ void desktop_request_power_confirm(uint8_t action)
 
 int desktop_handle_power_confirm_click(uint32_t x, uint32_t y)
 {
-    enum { W = 360, H = 150 };
+    enum { W = 420, H = 170 };
     uint32_t dialog_x = fb_w() > W ? (fb_w() - W) / 2 : 0;
     uint32_t dialog_y = fb_h() > H ? (fb_h() - H) / 2 : 0;
     uint8_t action = power_confirm_action;
-    if (!action) {
-        return 0;
-    }
-    if (hit_rect(x, y, (int)dialog_x + W - 168, (int)dialog_y + H - 38,
-                 72, LEONOS_UI_BUTTON_H)) {
-        power_confirm_action = POWER_CONFIRM_NONE;
-        full_redraw_pending = 1;
-        if (action == POWER_CONFIRM_REBOOT) {
-            desktop_reboot();
-        } else {
-            desktop_shutdown();
+    if (desktop_lifecycle_state == DESKTOP_LIFECYCLE_FORCE_PROMPT) {
+        if (hit_rect(x, y, (int)dialog_x + W - 188, (int)dialog_y + H - 38,
+                     84, LEONOS_UI_BUTTON_H)) {
+            desktop_lifecycle_force();
+            return 1;
+        }
+        if (hit_rect(x, y, (int)dialog_x + W - 96, (int)dialog_y + H - 38,
+                     72, LEONOS_UI_BUTTON_H) ||
+            !hit_rect(x, y, (int)dialog_x, (int)dialog_y, W, H)) {
+            desktop_lifecycle_reset();
+            full_redraw_pending = 1;
         }
         return 1;
     }
-    if (hit_rect(x, y, (int)dialog_x + W - 88, (int)dialog_y + H - 38,
+    if (desktop_lifecycle_state == DESKTOP_LIFECYCLE_WAITING) {
+        return 1;
+    }
+    if (!action) {
+        return 0;
+    }
+    if (hit_rect(x, y, (int)dialog_x + W - 188, (int)dialog_y + H - 38,
+                 84, LEONOS_UI_BUTTON_H)) {
+        power_confirm_action = POWER_CONFIRM_NONE;
+        full_redraw_pending = 1;
+        desktop_lifecycle_begin(action);
+        return 1;
+    }
+    if (hit_rect(x, y, (int)dialog_x + W - 96, (int)dialog_y + H - 38,
                  72, LEONOS_UI_BUTTON_H) ||
         !hit_rect(x, y, (int)dialog_x, (int)dialog_y, W, H)) {
         power_confirm_action = POWER_CONFIRM_NONE;
@@ -990,13 +1220,13 @@ uint32_t desktop_cursor_style_for_pointer(uint32_t x, uint32_t y)
             return resize_edge_x ? LEONOS_GUI_CURSOR_SIZE_WE : LEONOS_GUI_CURSOR_SIZE_NS;
         }
     }
-    if (power_confirm_action) {
-        enum { dialog_w = 360, dialog_h = 150 };
+    if (power_confirm_action || desktop_lifecycle_state != DESKTOP_LIFECYCLE_IDLE) {
+        enum { dialog_w = 420, dialog_h = 170 };
         uint32_t dialog_x = fb_w() > dialog_w ? (fb_w() - dialog_w) / 2 : 0;
         uint32_t dialog_y = fb_h() > dialog_h ? (fb_h() - dialog_h) / 2 : 0;
-        if (hit_rect(x, y, (int)dialog_x + dialog_w - 168,
-                     (int)dialog_y + dialog_h - 38, 72, LEONOS_UI_BUTTON_H) ||
-            hit_rect(x, y, (int)dialog_x + dialog_w - 88,
+        if (hit_rect(x, y, (int)dialog_x + dialog_w - 188,
+                     (int)dialog_y + dialog_h - 38, 84, LEONOS_UI_BUTTON_H) ||
+            hit_rect(x, y, (int)dialog_x + dialog_w - 96,
                      (int)dialog_y + dialog_h - 38, 72, LEONOS_UI_BUTTON_H)) {
             return LEONOS_GUI_CURSOR_HAND;
         }
@@ -1198,6 +1428,18 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
 
     hover_id = hit_window(x, y);
 
+    if (power_confirm_action || desktop_lifecycle_state != DESKTOP_LIFECYCLE_IDLE) {
+        if (new_left) {
+            (void)desktop_handle_power_confirm_click(x, y);
+        }
+        previous_buttons = buttons;
+        cursor_x = x;
+        cursor_y = y;
+        cursor_visible = 1;
+        queue_mouse_damage(dirty, cursor_dirty);
+        return;
+    }
+
     if (desktop_shortcut_input_active) {
         if (new_left || new_right) {
             (void)desktop_handle_shortcut_input_click(x, y);
@@ -1222,18 +1464,6 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
     if (desktop_message_active) {
         if (new_left || new_right) {
             (void)desktop_handle_message_click(x, y);
-        }
-        previous_buttons = buttons;
-        cursor_x = x;
-        cursor_y = y;
-        cursor_visible = 1;
-        queue_mouse_damage(dirty, cursor_dirty);
-        return;
-    }
-
-    if (power_confirm_action) {
-        if (new_left) {
-            (void)desktop_handle_power_confirm_click(x, y);
         }
         previous_buttons = buttons;
         cursor_x = x;
@@ -1450,7 +1680,7 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
     if (y >= fb_h()) {
         y = fb_h() ? fb_h() - 1 : 0;
     }
-    if (power_confirm_action) {
+    if (power_confirm_action || desktop_lifecycle_state != DESKTOP_LIFECYCLE_IDLE) {
         return;
     }
     if (desktop_shortcut_input_active || desktop_message_active || desktop_context_menu_active) {

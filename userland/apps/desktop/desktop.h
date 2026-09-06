@@ -16,6 +16,9 @@
 #include <leonos/system.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <unistd.h>
+#include <signal.h>
+#include <stdio.h>
 
 #define MAX_WINDOWS 32
 #define BUILTIN_WINDOWS 4
@@ -148,6 +151,15 @@
 #define POWER_CONFIRM_NONE 0
 #define POWER_CONFIRM_REBOOT 1
 #define POWER_CONFIRM_SHUTDOWN 2
+#define POWER_CONFIRM_LOGOUT 3
+
+#define DESKTOP_LIFECYCLE_IDLE 0
+#define DESKTOP_LIFECYCLE_WAITING 1
+#define DESKTOP_LIFECYCLE_FORCE_PROMPT 2
+#define DESKTOP_LIFECYCLE_TIMEOUT_MS 5000UL
+#define DESKTOP_LIFECYCLE_MAX_TARGETS LEONOS_TASK_MAX
+#define DESKTOP_LIFECYCLE_POLL_MS 50UL
+#define DESKTOP_TASK_FLAG_SERVICE 0x00000001U
 
 struct desktop_window {
     int x;
@@ -329,6 +341,13 @@ extern uint8_t desktop_damage_pending;
 extern uint8_t desktop_damage_cursor_only;
 extern struct rect desktop_damage_rect;
 extern uint8_t power_confirm_action;
+extern uint8_t desktop_lifecycle_state;
+extern uint8_t desktop_lifecycle_action;
+extern uint8_t desktop_lifecycle_force_requested;
+extern unsigned long desktop_lifecycle_started_ms;
+extern uint32_t desktop_lifecycle_target_count;
+extern uint32_t desktop_lifecycle_remaining_count;
+extern uint32_t desktop_lifecycle_pids[DESKTOP_LIFECYCLE_MAX_TARGETS];
 extern uint8_t oobe_lock_active;
 extern unsigned long oobe_last_spawn_ms;
 extern uint32_t oobe_spawn_pid;
@@ -472,6 +491,7 @@ void alt_tab_commit(void);
 void draw_alt_tab_overlay(void);
 int start_menu_load_apps(void);
 void start_menu_ensure_apps(void);
+int start_menu_update(void);
 uint32_t start_menu_filtered_app_count(void);
 uint32_t start_menu_filtered_app_index(uint32_t filtered_index);
 void start_menu_load_docs(void);
@@ -540,6 +560,9 @@ void desktop_launch_startup_apps(void);
 void desktop_reboot(void);
 void desktop_shutdown(void);
 void desktop_logout(void);
+void desktop_lifecycle_begin(uint8_t action);
+void desktop_lifecycle_update(void);
+int desktop_lifecycle_handle_key(uint8_t keycode, uint8_t pressed);
 void desktop_request_power_confirm(uint8_t action);
 int desktop_handle_power_confirm_click(uint32_t x, uint32_t y);
 void handle_start_click(uint32_t x, uint32_t y);

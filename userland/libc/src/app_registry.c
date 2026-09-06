@@ -13,6 +13,16 @@
 static struct leonos_app_info registry[LEONOS_APP_REGISTRY_MAX];
 static uint32_t registry_count;
 static uint8_t registry_loaded;
+static uint8_t registry_scanning;
+static uint8_t registry_root_index;
+static int registry_scan_fd = -1;
+static int registry_scan_error;
+static struct leonos_dir_entry registry_scan_entry;
+
+static const char *const registry_roots[] = {
+    APP_ROOT_SYSTEM,
+    APP_ROOT_PROGRAMS,
+};
 
 static void copy_text(char *dst, uint32_t capacity, const char *src)
 {
@@ -278,33 +288,91 @@ static int add_package(const char *root, const char *package)
     return 1;
 }
 
-static int scan_root(const char *root)
+int leonos_app_registry_begin_refresh(void)
 {
-    struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
-    uint32_t count = 0;
-    int ret = leonos_list_dir(root, entries, LEONOS_FS_MAX_ENTRIES, &count);
-    if (ret < 0) return ret;
-    for (uint32_t i = 0; i < count; ++i) {
-        if (entries[i].type == LEONOS_FS_TYPE_DIR) add_package(root, entries[i].name);
+    if (registry_scan_fd >= 0) {
+        close(registry_scan_fd);
+        registry_scan_fd = -1;
     }
+    registry_count = 0;
+    registry_loaded = 0;
+    registry_scanning = 1;
+    registry_root_index = 0;
+    registry_scan_error = 0;
     return 0;
+}
+
+int leonos_app_registry_refresh_step(uint32_t budget)
+{
+    if (registry_loaded) return 0;
+    if (!registry_scanning) return registry_scan_error < 0 ? registry_scan_error : -1;
+    if (budget == 0) budget = 1;
+    while (budget) {
+        int ret;
+        if (registry_scan_fd < 0) {
+            while (registry_root_index < sizeof(registry_roots) / sizeof(registry_roots[0])) {
+                registry_scan_fd = open(registry_roots[registry_root_index], LEONOS_O_RDONLY, 0);
+                if (registry_scan_fd >= 0) break;
+                if (registry_scan_fd != -ENOENT) {
+                    registry_scan_error = registry_scan_fd;
+                    registry_scanning = 0;
+                    return registry_scan_error;
+                }
+                ++registry_root_index;
+            }
+            if (registry_scan_fd < 0) {
+                registry_scanning = 0;
+                registry_loaded = 1;
+                return 0;
+            }
+        }
+        ret = leonos_readdir(registry_scan_fd, &registry_scan_entry);
+        if (ret < 0) {
+            close(registry_scan_fd);
+            registry_scan_fd = -1;
+            registry_scan_error = ret;
+            registry_scanning = 0;
+            return ret;
+        }
+        if (ret == 0) {
+            close(registry_scan_fd);
+            registry_scan_fd = -1;
+            ++registry_root_index;
+            continue;
+        }
+        if (registry_scan_entry.type == LEONOS_FS_TYPE_DIR) {
+            (void)add_package(registry_roots[registry_root_index],
+                              registry_scan_entry.name);
+        }
+        --budget;
+    }
+    return 1;
 }
 
 int leonos_app_registry_refresh(void)
 {
-    registry_count = 0;
-    registry_loaded = 0;
-    int ret = scan_root(APP_ROOT_SYSTEM);
-    if (ret < 0 && ret != -ENOENT) return ret;
-    ret = scan_root(APP_ROOT_PROGRAMS);
-    if (ret < 0 && ret != -ENOENT) return ret;
-    registry_loaded = 1;
-    return 0;
+    int ret;
+    leonos_app_registry_begin_refresh();
+    do {
+        ret = leonos_app_registry_refresh_step(LEONOS_FS_MAX_ENTRIES);
+    } while (ret > 0);
+    return ret;
 }
 
 static int ensure_registry(void)
 {
+    if (registry_scanning) return 0;
     return registry_loaded ? 0 : leonos_app_registry_refresh();
+}
+
+int leonos_app_registry_is_loading(void)
+{
+    return registry_scanning != 0;
+}
+
+int leonos_app_registry_is_loaded(void)
+{
+    return registry_loaded != 0;
 }
 
 uint32_t leonos_app_registry_count(void)

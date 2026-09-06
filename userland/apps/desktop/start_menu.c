@@ -55,6 +55,12 @@ struct start_menu_result {
 
 static char start_menu_disabled_packages[START_MENU_ENTRY_POLICY_MAX][LEONOS_FS_PATH_LEN];
 static uint32_t start_menu_disabled_package_count;
+static uint8_t start_menu_apps_started;
+static uint32_t start_menu_registry_count;
+static uint8_t start_menu_docs_started;
+static int start_menu_docs_fd = -1;
+static struct leonos_dir_entry start_menu_doc_entry;
+static void start_menu_collect_apps(void);
 static int start_menu_kernel_debug_enabled(void)
 {
     uint32_t flags = 0;
@@ -200,15 +206,32 @@ static void start_menu_sort_docs(void)
 
 int start_menu_load_apps(void)
 {
-    struct leonos_app_info info;
+    if (start_menu_apps_loaded || start_menu_apps_started) {
+        return 0;
+    }
     start_menu_app_count = 0;
-    start_menu_apps_loaded = 0;
+    start_menu_registry_count = 0;
     start_menu_load_entry_policy();
-    if (leonos_app_registry_refresh() < 0) {
+    if (leonos_app_registry_is_loaded()) {
+        start_menu_apps_started = 1;
+        start_menu_collect_apps();
+        start_menu_apps_started = 0;
+        start_menu_apps_loaded = 1;
+        return 0;
+    }
+    if (leonos_app_registry_begin_refresh() < 0) {
         return -1;
     }
-    for (uint32_t i = 0; i < leonos_app_registry_count() &&
-                          start_menu_app_count < START_MENU_MAX_APPS; ++i) {
+    start_menu_apps_started = 1;
+    return 0;
+}
+
+static void start_menu_collect_apps(void)
+{
+    struct leonos_app_info info;
+    uint32_t total = leonos_app_registry_count();
+    for (uint32_t i = start_menu_registry_count;
+         i < total && start_menu_app_count < START_MENU_MAX_APPS; ++i) {
         if (leonos_app_registry_get(i, &info) < 0 ||
             (info.flags & LEONOS_APP_FLAG_ENTRY) == 0 ||
             (info.flags & LEONOS_APP_FLAG_HIDDEN) != 0 ||
@@ -221,9 +244,8 @@ int start_menu_load_apps(void)
                   sizeof(start_menu_app_paths[start_menu_app_count]), info.exec);
         ++start_menu_app_count;
     }
+    start_menu_registry_count = total;
     start_menu_sort_apps();
-    start_menu_apps_loaded = 1;
-    return 0;
 }
 
 void start_menu_ensure_apps(void)
@@ -349,47 +371,53 @@ static int read_hlp_menu_title(const char *path, char *dst, uint32_t cap)
 
 void start_menu_load_docs(void)
 {
-    struct leonos_dir_entry entries[LEONOS_FS_MAX_ENTRIES];
-    uint32_t count = 0;
-    start_menu_doc_count = 0;
-    start_menu_docs_loaded = 0;
-    if (leonos_list_dir("/docs", entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
+    if (start_menu_docs_loaded || start_menu_docs_started) {
         return;
     }
-    for (uint32_t i = 0; i < count && start_menu_doc_count < START_MENU_MAX_DOCS; ++i) {
-        uint32_t pos = 0;
-        if (entries[i].type != LEONOS_FS_TYPE_FILE || !text_ends_with(entries[i].name, ".hlp")) {
-            continue;
-        }
-        copy_text(start_menu_doc_paths[start_menu_doc_count],
-                  sizeof(start_menu_doc_paths[start_menu_doc_count]), "/docs/");
-        while (start_menu_doc_paths[start_menu_doc_count][pos]) {
-            ++pos;
-        }
-        append_text(start_menu_doc_paths[start_menu_doc_count], &pos,
-                    sizeof(start_menu_doc_paths[start_menu_doc_count]), entries[i].name);
-        if (read_hlp_menu_title(start_menu_doc_paths[start_menu_doc_count],
-                                start_menu_doc_labels[start_menu_doc_count],
-                                sizeof(start_menu_doc_labels[start_menu_doc_count])) < 0) {
-            copy_hlp_filename_label(start_menu_doc_labels[start_menu_doc_count],
-                                    sizeof(start_menu_doc_labels[start_menu_doc_count]),
-                                    entries[i].name);
-        }
-        ++start_menu_doc_count;
+    start_menu_doc_count = 0;
+    start_menu_docs_fd = open("/docs", LEONOS_O_RDONLY, 0);
+    if (start_menu_docs_fd < 0) {
+        return;
     }
-    start_menu_sort_docs();
-    start_menu_docs_loaded = 1;
+    start_menu_docs_started = 1;
 }
 
 void start_menu_ensure_docs(void)
 {
     unsigned long now = leonos_uptime_ms();
-    if (!start_menu_docs_loaded && now >= start_menu_docs_retry_ms) {
+    if (!start_menu_docs_loaded && !start_menu_docs_started &&
+        now >= start_menu_docs_retry_ms) {
         start_menu_load_docs();
         if (!start_menu_docs_loaded) {
             start_menu_docs_retry_ms = now + 1000UL;
         }
     }
+}
+
+static void start_menu_collect_docs(void)
+{
+    uint32_t pos = 0;
+    if (start_menu_doc_entry.type != LEONOS_FS_TYPE_FILE ||
+        !text_ends_with(start_menu_doc_entry.name, ".hlp") ||
+        start_menu_doc_count >= START_MENU_MAX_DOCS) {
+        return;
+    }
+    copy_text(start_menu_doc_paths[start_menu_doc_count],
+              sizeof(start_menu_doc_paths[start_menu_doc_count]), "/docs/");
+    while (start_menu_doc_paths[start_menu_doc_count][pos]) {
+        ++pos;
+    }
+    append_text(start_menu_doc_paths[start_menu_doc_count], &pos,
+                sizeof(start_menu_doc_paths[start_menu_doc_count]),
+                start_menu_doc_entry.name);
+    if (read_hlp_menu_title(start_menu_doc_paths[start_menu_doc_count],
+                            start_menu_doc_labels[start_menu_doc_count],
+                            sizeof(start_menu_doc_labels[start_menu_doc_count])) < 0) {
+        copy_hlp_filename_label(start_menu_doc_labels[start_menu_doc_count],
+                                sizeof(start_menu_doc_labels[start_menu_doc_count]),
+                                start_menu_doc_entry.name);
+    }
+    ++start_menu_doc_count;
 }
 
 static int start_menu_contains(const char *text, const char *query)
@@ -482,6 +510,75 @@ static uint32_t start_menu_filtered_doc_index(uint32_t filtered_index)
 static uint8_t start_menu_effective_view(void)
 {
     return start_menu_query[0] ? START_MENU_VIEW_SEARCH : start_menu_view;
+}
+
+int start_menu_update(void)
+{
+    unsigned long now = leonos_uptime_ms();
+    uint8_t view = start_menu_effective_view();
+    uint8_t old_apps_loaded = start_menu_apps_loaded;
+    uint8_t old_docs_loaded = start_menu_docs_loaded;
+    uint8_t old_apps_started = start_menu_apps_started;
+    uint8_t old_docs_started = start_menu_docs_started;
+    uint32_t old_app_count = start_menu_app_count;
+    uint32_t old_doc_count = start_menu_doc_count;
+    int changed = 0;
+
+    if (start_menu_open || start_menu_animating) {
+        if (view == START_MENU_VIEW_APPS || view == START_MENU_VIEW_SEARCH) {
+            start_menu_ensure_apps();
+        }
+        if (view == START_MENU_VIEW_DOCUMENTS || view == START_MENU_VIEW_SEARCH) {
+            start_menu_ensure_docs();
+        }
+    }
+    if (start_menu_apps_started) {
+        int ret = leonos_app_registry_refresh_step(1);
+        if (ret < 0) {
+            start_menu_apps_started = 0;
+            start_menu_apps_loaded = 0;
+            start_menu_app_count = 0;
+            start_menu_registry_count = 0;
+            start_menu_apps_retry_ms = now + 1000UL;
+        } else {
+            start_menu_collect_apps();
+            if (ret == 0) {
+                start_menu_apps_started = 0;
+                start_menu_apps_loaded = 1;
+            }
+        }
+    }
+    if (start_menu_docs_started) {
+        int ret = leonos_readdir(start_menu_docs_fd, &start_menu_doc_entry);
+        if (ret < 0) {
+            close(start_menu_docs_fd);
+            start_menu_docs_fd = -1;
+            start_menu_docs_started = 0;
+            start_menu_docs_loaded = 0;
+            start_menu_doc_count = 0;
+            start_menu_docs_retry_ms = now + 1000UL;
+        } else if (ret == 0) {
+            close(start_menu_docs_fd);
+            start_menu_docs_fd = -1;
+            start_menu_docs_started = 0;
+            start_menu_docs_loaded = 1;
+            start_menu_sort_docs();
+        } else {
+            start_menu_collect_docs();
+        }
+    }
+    if (old_apps_loaded != start_menu_apps_loaded ||
+        old_docs_loaded != start_menu_docs_loaded ||
+        old_apps_started != start_menu_apps_started ||
+        old_docs_started != start_menu_docs_started ||
+        old_app_count != start_menu_app_count ||
+        old_doc_count != start_menu_doc_count) {
+        changed = 1;
+    }
+    if (changed) {
+        full_redraw_pending = 1;
+    }
+    return changed;
 }
 
 static uint32_t start_menu_result_count(uint8_t view)
@@ -809,9 +906,17 @@ static void start_menu_draw_results(const struct start_panel_layout *panel,
     leonos_ui_text(&ui, content_x, content->body_y, start_menu_list_title(view),
                    LEONOS_UI_DARK, LEONOS_UI_GRAY);
     if (!count) {
+        const char *empty_text = leonos_i18n("Nothing found", "没有找到内容");
+        if ((view == START_MENU_VIEW_APPS || view == START_MENU_VIEW_SEARCH) &&
+            !start_menu_apps_loaded) {
+            empty_text = leonos_i18n("Loading applications...", "正在加载应用程序...");
+        } else if ((view == START_MENU_VIEW_DOCUMENTS || view == START_MENU_VIEW_SEARCH) &&
+                   !start_menu_docs_loaded) {
+            empty_text = leonos_i18n("Loading documents...", "正在加载文档...");
+        }
         leonos_ui_menu_item(&ui, content_x + 5U, list.y,
                             content_w > 10U ? content_w - 10U : 0U,
-                            leonos_i18n("Nothing found", "没有找到内容"),
+                            empty_text,
                             LEONOS_UI_MENU_DISABLED);
         return;
     }
@@ -1236,7 +1341,7 @@ static void start_menu_handle_power_click(uint32_t x, uint32_t y,
             if (hit_rect(x, y, (int)left, (int)first_y, width, START_MENU_ITEM_H)) {
                 start_menu_set_open(0);
                 if (leonos_kernel_debug_arm_next_boot() == 0) {
-                    leonos_system_reboot();
+                    desktop_lifecycle_begin(POWER_CONFIRM_REBOOT);
                 } else {
                     desktop_show_message(leonos_i18n("Kernel debugger", "内核调试工具"),
                                          leonos_i18n("Could not arm the next debug boot.",

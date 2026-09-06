@@ -468,8 +468,9 @@ Current companion applications:
 
 - `downloadmgr.elf`: uses the libc HTTP client and saves HTTP/HTTPS downloads to
   the current user's `/users/<name>/downloads` directory.
-- `imageview.elf`: opens uncompressed 24/32-bit BMP files, supports Fit/1x/2x
-  zoom, and can move to previous/next BMP siblings in the same directory.
+- `imageview.elf`: opens uncompressed 24/32-bit BMP/DIB files and PNG files,
+  supports Fit/1x/2x zoom, and can move to previous/next supported images in the
+  same directory.
 - `wavplay.elf`: plays 16-bit stereo PCM WAV files through the active audio
   driver, or a built-in test melody when started without a file.
 - `oshlp.elf`: opens LeonOS `.hlp` help containers from `/docs` or any path

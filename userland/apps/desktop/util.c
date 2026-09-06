@@ -737,8 +737,6 @@ void start_menu_set_open(uint8_t open)
         return;
     }
     if (open) {
-        start_menu_apps_loaded = 0;
-        start_menu_docs_loaded = 0;
         start_menu_view = START_MENU_VIEW_HOME;
         start_menu_scroll = 0;
         start_menu_selected = 0;

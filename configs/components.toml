@@ -451,7 +451,7 @@ entry = true
 sdk = false
 api = false
 open_with = true
-extensions = [".bmp", ".dib"]
+extensions = [".bmp", ".dib", ".png"]
 
 [[components]]
 id = "wavplay"
