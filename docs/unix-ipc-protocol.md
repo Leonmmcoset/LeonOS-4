@@ -156,3 +156,19 @@ never use this control socket.
 Run `/programs/ipctest/ipctest.elf` on the target. It covers blocking
 socketpair reads, SCM_RIGHTS passing of a `/dev/shm0` descriptor, shared mmap,
 credential syscalls, `uname`, and an AF_INET connect probe.
+
+## Migration status
+
+| Phase | New service | New protocol files | Removed kernel files | Removed macro families |
+|---|---|---|---|---|
+| 0 | kernel IPC | `unix_ipc.h/c`, `syscall_socket.c` blocking, `shm.c` | none | none (added syscalls) |
+| 1 | windowd | `windowd.h`, `wind.c`, `apps/windowd/` | `gui_ipc.c`, `gui_ipc.h` | `LEONOS_GUI_IOCTL_*` |
+| 2 | imd | `inputmd.h`, `apps/imd/` | `inputm.c`, `inputm.h` | `LEONOS_INPUTM_IOCTL_*` |
+| 3 | netmand (serviced) | `netmand.h`, `netsock.c`, `serviced/netmand.c` | none (`/dev/net0` entry removed) | `LEONOS_IOCTL_NET_*` |
+| 4 | authd/sessiond | `authd.h`, `sessiond.h`, `apps/authd/`, `serviced/sessiond.c` | none (syscall branches removed) | `LEONOS_AUTH_IOCTL_*`, `LEONOS_STARTUP_IOCTL_*` |
+| 5 | devmand/procfs | `devmand.h`, `procfs.c`, `procsys.c`, `serviced/devmand.c` | none (`/dev/hwinfo`, `/dev/driverctl` removed) | device/driver/system/time/machine/perf/affinity ioctls |
+| 6 | n/a | security/ABI/path tools | legacy ACL/signal/text/audio/PTY/kernel-debug branches | remaining private ioctl macros |
+
+Legacy application exports (`leonos_gui_*`, `leonos_auth_*`, `leonos_net_*`,
+`text_input_*`, `leonos_startup_*`, device/driver/system helpers) remain in
+libleonos with unchanged signatures; only their transport changed.
