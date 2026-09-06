@@ -57,6 +57,7 @@
         "disk",
         "sound",
         "desktop",
-        "cpu"
+        "cpu",
+        "apps"
     ]
 }

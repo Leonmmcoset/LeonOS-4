@@ -318,6 +318,18 @@ def icon_imageview(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 10, 5, 2, 2, YELLOW)
 
 
+def icon_paint(c: list[list[tuple[int, int, int, int]]]) -> None:
+    """Paint palette and brush mark for the drawing application."""
+    fill(c, 2, 9, 10, 4, WHITE)
+    rect(c, 2, 9, 10, 4, DARK)
+    for x, swatch in ((4, RED), (6, YELLOW), (8, GREEN), (10, BLUE)):
+        put(c, x, 10, swatch)
+    line(c, 8, 7, 13, 2, ORANGE)
+    line(c, 9, 8, 14, 3, DARK)
+    fill(c, 12, 2, 3, 2, ORANGE)
+    put(c, 8, 7, BLUE)
+
+
 def icon_wavplay(c: list[list[tuple[int, int, int, int]]]) -> None:
     fill(c, 3, 6, 4, 5, BLUE)
     fill(c, 6, 4, 3, 9, BLUE)
@@ -437,6 +449,8 @@ def draw_icon(name: str) -> list[list[tuple[int, int, int, int]]]:
         icon_browser(c)
     elif name == "imageview":
         icon_imageview(c)
+    elif name == "paint":
+        icon_paint(c)
     elif name == "wavplay":
         icon_wavplay(c)
     elif name == "oshlp":

@@ -117,6 +117,25 @@ config LEON_COMPONENT_APP_IMAGEVIEW_SDK
     default n
     depends on LEON_COMPONENT_APP_IMAGEVIEW_BUILD
 
+config LEON_COMPONENT_APP_PAINT_BUILD
+    bool "Build Paint"
+    default y
+
+config LEON_COMPONENT_APP_PAINT_IMAGE
+    bool "Include Paint in system images"
+    default y
+    depends on LEON_COMPONENT_APP_PAINT_BUILD
+
+config LEON_COMPONENT_APP_PAINT_ENTRY
+    bool "Generate a desktop entry for Paint"
+    default y
+    depends on LEON_COMPONENT_APP_PAINT_BUILD
+
+config LEON_COMPONENT_APP_PAINT_SDK
+    bool "Include Paint in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_PAINT_BUILD
+
 config LEON_COMPONENT_APP_OSHLP_BUILD
     bool "Build Help viewer"
     default y
