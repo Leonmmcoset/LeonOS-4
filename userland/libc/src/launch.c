@@ -212,6 +212,25 @@ static int launch_in_terminal(char *argv[])
     return leonos_spawn_argv(terminal_argv[0], terminal_argv);
 }
 
+static void launch_apply_session_uid(void)
+{
+    char text[16] = {0};
+    int fd;
+    uint32_t uid = 0;
+    if (getuid() != 0) return;
+    fd = open("/run/leonos/session-user", LEONOS_O_RDONLY, 0);
+    if (fd < 0) return;
+    (void)read(fd, text, sizeof(text) - 1u);
+    close(fd);
+    for (uint32_t i = 0; text[i] >= '0' && text[i] <= '9'; ++i) {
+        uid = uid * 10u + (uint32_t)(text[i] - '0');
+    }
+    if (uid) {
+        (void)setgid(uid);
+        (void)setuid(uid);
+    }
+}
+
 int leonos_spawn_argv(const char *path, char *const argv[])
 {
     char **envp = 0;
@@ -227,6 +246,7 @@ int leonos_spawn_argv(const char *path, char *const argv[])
     }
     pid = fork();
     if (pid == 0) {
+        launch_apply_session_uid();
         (void)execve(path, argv, envp);
         _exit(127);
     }

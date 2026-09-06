@@ -1,31 +1,13 @@
-/* Security and policy syscall category boundary. */
+/* Security syscall category boundary: only filesystem ACL compatibility
+ * remains here; auth and startup policies moved to userspace daemons. */
 #include <ntclks/syscall_internal.h>
 #include <ntclks/syscall.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
-#include <leonos/startup.h>
 
 static int security_ioctl(uint32_t command)
 {
     switch (command) {
-    case LEONOS_AUTH_IOCTL_STATUS:
-    case LEONOS_AUTH_IOCTL_CURRENT:
-    case LEONOS_AUTH_IOCTL_LIST_USERS:
-    case LEONOS_AUTH_IOCTL_LOGIN:
-    case LEONOS_AUTH_IOCTL_ELEVATE_ADMIN:
-    case LEONOS_AUTH_IOCTL_DELEGATE_ELEVATION:
-    case LEONOS_AUTH_IOCTL_LOGOUT:
-    case LEONOS_AUTH_IOCTL_CREATE_USER:
-    case LEONOS_AUTH_IOCTL_UPDATE_USER:
-    case LEONOS_AUTH_IOCTL_CHANGE_PASSWORD:
-    case LEONOS_STARTUP_IOCTL_REQUEST:
-    case LEONOS_STARTUP_IOCTL_REQUEST_STATUS:
-    case LEONOS_STARTUP_IOCTL_DIALOG_GET:
-    case LEONOS_STARTUP_IOCTL_DIALOG_RESOLVE:
-    case LEONOS_STARTUP_IOCTL_LIST:
-    case LEONOS_STARTUP_IOCTL_SET_ENABLED:
-    case LEONOS_STARTUP_IOCTL_REMOVE:
-    case LEONOS_STARTUP_IOCTL_LAUNCH_CURRENT:
     case LEONOS_FS_IOCTL_ACL_GET:
     case LEONOS_FS_IOCTL_ACL_SET:
     case LEONOS_FS_IOCTL_ACL_TAKE_OWNERSHIP:

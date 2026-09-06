@@ -32,6 +32,7 @@ static uint32_t init_pid;
 static uint32_t desktop_pid;
 static uint32_t windowd_pid;
 static uint32_t imd_pid;
+static uint32_t authd_pid;
 static uint32_t tty_pid;
 static bool autospawn_hello;
 static bool autospawn_uidemo;
@@ -187,6 +188,11 @@ static int path_is_windowd(const char *path)
 static int path_is_imd(const char *path)
 {
     return path_eq_ignore_case(path, "/system/apps/imd/imd.elf");
+}
+
+static int path_is_authd(const char *path)
+{
+    return path_eq_ignore_case(path, "/system/apps/authd/authd.elf");
 }
 
 /**
@@ -537,7 +543,7 @@ static int64_t spawn_path_internal_ex(const char *path, const char *task_name,
     if (path_is_system_desktop(path)) {
         flags |= TASK_FLAG_SERVICE;
     } else if (path_is_windowd(path) || path_is_imd(path) ||
-               path_is_system_service_daemon(path)) {
+               path_is_authd(path) || path_is_system_service_daemon(path)) {
         flags |= TASK_FLAG_SERVICE;
     }
     if (path_is_system_service_daemon(path) && sched_find_by_path(path)) {
@@ -764,6 +770,13 @@ void userland_init(const struct boot_info *boot)
     }
 
     if (installer_mode) {
+        pid = spawn_path_internal("/system/apps/authd/authd.elf", "authd.elf authentication",
+                                  0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load installer authd.elf ret=%lld\n", (long long)pid);
+            kernel_idle_loop();
+        }
+        authd_pid = (uint32_t)pid;
         pid = spawn_path_internal("/system/apps/imd/imd.elf", "imd.elf input method",
                                   0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
         if (pid <= 0) {
@@ -834,6 +847,13 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
+    pid = spawn_path_internal("/system/apps/authd/authd.elf", "authd.elf authentication",
+                              0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+    if (pid <= 0) {
+        console_printf("[ntclks] failed to load authd.elf ret=%lld\n", (long long)pid);
+        kernel_idle_loop();
+    }
+    authd_pid = (uint32_t)pid;
     pid = spawn_path_internal("/system/apps/imd/imd.elf", "imd.elf input method",
                               0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
     if (pid <= 0) {
@@ -864,7 +884,8 @@ void userland_init(const struct boot_info *boot)
 void userland_enter_first(void)
 {
     struct task *first;
-    if (!init_pid && !desktop_pid && !windowd_pid && !imd_pid && !tty_pid) {
+    if (!init_pid && !desktop_pid && !windowd_pid && !imd_pid &&
+        !authd_pid && !tty_pid) {
         console_printf("[ntclks] no Ring-3 userland loaded\n");
         kernel_idle_loop();
     }

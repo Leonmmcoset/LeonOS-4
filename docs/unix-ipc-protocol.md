@@ -27,7 +27,7 @@ or the connection is rejected with `ERROR{code=EPERM}`.
 | 1 | windowd | `/run/leonos/windowd.sock` | implemented |
 | 2 | imd | `/run/leonos/input-method.sock` | implemented |
 | 3 | netmand | `/run/leonos/net.sock` | implemented |
-| 4 | authd / sessiond | `/run/leonos/authd.sock`, `/run/leonos/session.sock` | pending |
+| 4 | authd / sessiond | `/run/leonos/authd.sock`, `/run/leonos/session.sock` | implemented |
 | 5 | devmand / procfs | `/run/leonos/devman.sock`, `/proc` | pending |
 | 6 | fd-3 removal and cleanup | n/a | pending |
 
@@ -64,6 +64,36 @@ fd. Desktop connects with the policy handshake token
 | `CURSOR_REQUEST/CURSOR_REGION` | app -> windowd -> desktop | gui cursor structs | any app |
 | `DISPLAY_STATE/APPEARANCE_STATE` | publisher/query | gui state structs | policy publishes; app queries |
 | `DISPLAY_REQUEST/APPEARANCE_REQUEST` | app -> windowd -> desktop | gui request structs | policy receives |
+
+## authd (`/run/leonos/authd.sock`)
+
+authd runs uid==0 and owns `/system/config/users.db`. All mutating
+operations are gated by SO_PEERCRED: creation requires peer uid 0, updates
+require uid 0 or the same uid, and login never returns a password hash.
+
+| Message | Direction | Fields | Permission |
+|---|---|---|---|
+| `HELLO` | client -> authd | `u32 pid` | SO_PEERCRED pid match |
+| `ACK` | authd -> client | `s32 code` | any |
+| `STATUS` | client -> authd | none -> `struct leonos_auth_status` | any |
+| `LIST` | client -> authd | include_disabled, capacity -> count + user array | any |
+| `LOGIN` | client -> authd | username, password -> user | any |
+| `ELEVATE` | client -> authd | admin username/password -> user | peer uid 0 |
+| `CURRENT` | client -> authd | none -> user | peer uid or current session |
+| `LOGOUT` | client -> authd | none | current session |
+| `CREATE/UPDATE/CHANGE_PASSWORD` | client -> authd | authd structs | uid 0 / same uid |
+
+## sessiond (`/run/leonos/session.sock`, hosted by serviced)
+
+| Message | Direction | Fields | Permission |
+|---|---|---|---|
+| `HELLO` | client -> sessiond | `u32 pid,uid` | SO_PEERCRED match |
+| `ACK` | sessiond -> client | `s32 code,u32 request_id` | any |
+| `REQUEST` | client -> sessiond | `struct leonos_startup_command` | uid!=0 |
+| `REQUEST_STATUS` | client -> sessiond | request_id | any |
+| `DIALOG_GET/RESOLVE` | client -> sessiond | request_id/decision | any |
+| `LIST/SET_ENABLED/REMOVE` | client -> sessiond | startup entry records | uid owner |
+| `LAUNCH_CURRENT` | client -> sessiond | none | current session; child is setuid |
 
 ## netmand (`/run/leonos/net.sock`, hosted by serviced)
 

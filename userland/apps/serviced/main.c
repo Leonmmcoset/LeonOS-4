@@ -6,6 +6,7 @@
 #include <leonos/system.h>
 
 #include "netmand.h"
+#include "sessiond.h"
 
 #define SERVICE_CONFIG_PATH "/system/config/services.cfg"
 #define SERVICE_STATE_PATH "/var/run/services.state"
@@ -538,6 +539,7 @@ int main(void)
         load_config();
         process_commands();
         netmand_poll();
+        sessiond_poll();
         update_services();
         write_state();
         sleep_ms(100);
