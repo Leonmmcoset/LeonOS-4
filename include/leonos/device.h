@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 
-#define LEONOS_IOCTL_DEVICE_LIST 0x4c444556UL
 
 #define LEONOS_DEVICE_MAX 24U
 #define LEONOS_DEVICE_NAME_LEN 32U
@@ -42,8 +41,6 @@
 #define LEONOS_DEV_AUDIO0 "/dev/audio0"
 #define LEONOS_DEV_SERIAL0 "/dev/serial0"
 #define LEONOS_DEV_DISK0 "/dev/disk0"
-#define LEONOS_DEV_DRIVERCTL "/dev/driverctl"
-#define LEONOS_DEV_HWINFO "/dev/hwinfo"
 #define LEONOS_DEV_GPU "/dev/gpu"
 #define LEONOS_DEV_SHM0 "/dev/shm0"
 

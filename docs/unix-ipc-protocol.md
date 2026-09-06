@@ -28,7 +28,7 @@ or the connection is rejected with `ERROR{code=EPERM}`.
 | 2 | imd | `/run/leonos/input-method.sock` | implemented |
 | 3 | netmand | `/run/leonos/net.sock` | implemented |
 | 4 | authd / sessiond | `/run/leonos/authd.sock`, `/run/leonos/session.sock` | implemented |
-| 5 | devmand / procfs | `/run/leonos/devman.sock`, `/proc` | pending |
+| 5 | devmand / procfs | `/run/leonos/devman.sock`, `/proc` | implemented |
 | 6 | fd-3 removal and cleanup | n/a | pending |
 
 ## Common message set
@@ -94,6 +94,23 @@ require uid 0 or the same uid, and login never returns a password hash.
 | `DIALOG_GET/RESOLVE` | client -> sessiond | request_id/decision | any |
 | `LIST/SET_ENABLED/REMOVE` | client -> sessiond | startup entry records | uid owner |
 | `LAUNCH_CURRENT` | client -> sessiond | none | current session; child is setuid |
+
+## devmand (`/run/leonos/devman.sock`, hosted by serviced)
+
+| Message | Direction | Fields | Permission |
+|---|---|---|---|
+| `HELLO` | client -> devmand | `u32 pid,uid` | SO_PEERCRED match |
+| `ACK` | devmand -> client | `s32 code,u32 count` | any |
+| `DEVICE_LIST` | client -> devmand | capacity -> count + `struct leonos_device_info[]` | any |
+| `DRIVER_LIST` | client -> devmand | capacity -> count + `struct leonos_driver_info[]` | any |
+| `DRIVER_CONTROL` | client -> devmand | action/file | SO_PEERCRED uid==0 |
+
+## procfs (kernel, read-only)
+
+`/proc/uptime`, `/proc/meminfo`, `/proc/version`, `/proc/machine-id`,
+`/proc/<pid>/stat`, `/proc/<pid>/cmdline`, and `/proc/self/*` are synthetic
+storage nodes. They are read through ordinary open/read/readdir and are never
+served through a private ioctl.
 
 ## netmand (`/run/leonos/net.sock`, hosted by serviced)
 

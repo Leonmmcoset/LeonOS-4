@@ -5,6 +5,7 @@
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 
+#include "devmand.h"
 #include "netmand.h"
 #include "sessiond.h"
 
@@ -540,6 +541,7 @@ int main(void)
         process_commands();
         netmand_poll();
         sessiond_poll();
+        devmand_poll();
         update_services();
         write_state();
         sleep_ms(100);

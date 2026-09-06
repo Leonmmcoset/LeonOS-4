@@ -791,15 +791,6 @@ int leonos_mouse_clear_regions(uint32_t window_id)
     return window_id ? leonos_mouse_set_region(&region) : -1;
 }
 
-int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity,
-                         uint64_t *tick)
-{
-    /* Moved to procfs in Phase 5; kept as a named libc export for ABI v1. */
-    if (tasks) memset(tasks, 0, (size_t)capacity * sizeof(*tasks));
-    if (tick) *tick = 0;
-    return 0;
-}
-
 int leonos_task_affinity_get(uint32_t pid, uint64_t *mask)
 {
     return sched_getaffinity((pid_t)pid, sizeof(*mask), (cpu_set_t *)mask);

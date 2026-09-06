@@ -116,8 +116,6 @@ struct storage_read_cursor {
 #define STORAGE_DEV_KIND_NET       18u
 #define STORAGE_DEV_KIND_RTC       19u
 #define STORAGE_DEV_KIND_KMSG      20u
-#define STORAGE_DEV_KIND_DRIVERCTL 21u
-#define STORAGE_DEV_KIND_HWINFO      23u
 #define STORAGE_DEV_KIND_GPU         24u
 #define STORAGE_DEV_KIND_SHM         25u
 

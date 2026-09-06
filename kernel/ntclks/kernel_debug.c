@@ -601,11 +601,6 @@ static const struct debug_probe debug_syscall_probes[] = {
 
 #define DEBUG_IOCTL(name, request, skip) {name, request, LEONOS_KERNEL_DEBUG_BENCH_IOCTL, skip}
 static const struct debug_probe debug_ioctl_probes[] = {
-    DEBUG_IOCTL("system information", LEONOS_IOCTL_SYSTEM_INFO, 0),
-    DEBUG_IOCTL("performance information", LEONOS_IOCTL_PERF_INFO, 0),
-    DEBUG_IOCTL("clock information", LEONOS_IOCTL_TIME_INFO, 0),
-    DEBUG_IOCTL("NTP clock sync", LEONOS_IOCTL_TIME_NTP_SYNC, DEBUG_PROBE_SKIP),
-    DEBUG_IOCTL("machine identity", LEONOS_IOCTL_MACHINE_IDENTITY, 0),
     DEBUG_IOCTL("directory listing", LEONOS_IOCTL_LIST_DIR, 0),
     DEBUG_IOCTL("filesystem ACL get", LEONOS_FS_IOCTL_ACL_GET, 0),
     DEBUG_IOCTL("filesystem ACL set", LEONOS_FS_IOCTL_ACL_SET, DEBUG_PROBE_SKIP),

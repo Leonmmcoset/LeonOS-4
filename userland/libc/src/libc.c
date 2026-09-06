@@ -494,8 +494,6 @@ int ioctl(int fd, unsigned long request, void *arg)
         static int fb_fd = -1;
         static int input_method_fd = -1;
         static int audio_fd = -1;
-        static int driver_fd = -1;
-        static int dev_fd = -1;
         static int tty_fd = -1;
         int *slot = &console_fd;
         const char *path = LEONOS_DEV_CONSOLE;
@@ -507,14 +505,6 @@ int ioctl(int fd, unsigned long request, void *arg)
             path = LEONOS_DEV_AUDIO0;
             slot = &audio_fd;
             open_flags = LEONOS_O_RDWR;
-        } else if (request == LEONOS_IOCTL_DRIVER_LIST ||
-                   request == LEONOS_IOCTL_DRIVER_CONTROL) {
-            path = LEONOS_DEV_DRIVERCTL;
-            slot = &driver_fd;
-        } else if (request == LEONOS_IOCTL_DEVICE_LIST) {
-            path = "/dev";
-            slot = &dev_fd;
-            open_flags = LEONOS_O_RDONLY;
         } else if ((request >= LEONOS_PTY_IOCTL_CREATE &&
                     request <= LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE) ||
                    request == LEONOS_PTY_IOCTL_GET_ATTR ||
@@ -1548,60 +1538,6 @@ int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
         *out_layout = query;
     }
     return ret;
-}
-
-int leonos_device_list(struct leonos_device_info *devices,
-                       uint32_t capacity, uint32_t *out_count)
-{
-    struct leonos_device_list query = {
-        .capacity = capacity,
-        .count = 0,
-        .devices = devices,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_DEVICE_LIST, &query);
-    if (out_count) {
-        *out_count = query.count;
-    }
-    return ret;
-}
-
-int leonos_driver_list(struct leonos_driver_info *drivers, uint32_t capacity,
-                       uint32_t *out_count)
-{
-    struct leonos_driver_list query = {
-        .capacity = capacity,
-        .count = 0,
-        .drivers = drivers,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_DRIVER_LIST, &query);
-    if (out_count) {
-        *out_count = query.count;
-    }
-    return ret;
-}
-
-int leonos_driver_control(uint32_t action, const char *file)
-{
-    struct leonos_driver_control request = {
-        .action = action,
-        .flags = 0,
-        .status = -1,
-        .reserved = 0,
-        .file = {0},
-    };
-    uint32_t index = 0;
-    while (file && file[index] && index + 1U < sizeof(request.file)) {
-        request.file[index] = file[index];
-        ++index;
-    }
-    request.file[index] = 0;
-    if (action != LEONOS_DRIVER_CONTROL_RESCAN && !request.file[0]) {
-        return -1;
-    }
-    if (ioctl(3, LEONOS_IOCTL_DRIVER_CONTROL, &request) < 0) {
-        return request.status < 0 ? request.status : -1;
-    }
-    return request.status;
 }
 
 int leonos_audio_configure(const struct leonos_audio_format *format)
@@ -3056,48 +2992,6 @@ static void libc_clear_secret(void *data, uint32_t len)
         *p++ = 0;
         --len;
     }
-}
-
-int leonos_system_info(struct leonos_system_info *info)
-{
-    if (!info) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_SYSTEM_INFO, info);
-}
-
-int leonos_perf_info(struct leonos_perf_info *info)
-{
-    if (!info) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_PERF_INFO, info);
-}
-
-int leonos_time_info(struct leonos_time_info *info)
-{
-    if (!info) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_TIME_INFO, info);
-}
-
-int leonos_time_ntp_sync(uint32_t timeout_ms, struct leonos_time_sync *result)
-{
-    if (!result) {
-        return -1;
-    }
-    *result = (struct leonos_time_sync){0};
-    result->timeout_ms = timeout_ms;
-    return ioctl(3, LEONOS_IOCTL_TIME_NTP_SYNC, result);
-}
-
-int leonos_machine_identity(struct leonos_machine_identity *identity)
-{
-    if (!identity) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_MACHINE_IDENTITY, identity);
 }
 
 int leonos_system_reboot(void)

@@ -3156,6 +3156,30 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             }
             return 0;
         }
+        if (file->path[0] == '/' && file->path[1] == 'p' &&
+            file->path[2] == 'r' && file->path[3] == 'o' &&
+            file->path[4] == 'c') {
+            if (file->node.type == LEONOS_FS_TYPE_DIR) {
+                struct leonos_dir_entry entry;
+                int step = proc_readdir(file->path, &file->offset, &entry);
+                if (step < 0) return step;
+                if (step == 0) return 0;
+                if (a2 < sizeof(entry)) return -LEONOS_EINVAL;
+                *(struct leonos_dir_entry *)(uintptr_t)a1 = entry;
+                return (int64_t)sizeof(entry);
+            }
+            if (file->node.type == LEONOS_FS_TYPE_FILE) {
+                uint32_t request = a2 > LEONOS_FS_READ_SLICE_BYTES
+                                       ? LEONOS_FS_READ_SLICE_BYTES : (uint32_t)a2;
+                uint32_t proc_got = 0;
+                int ret = proc_read(file->path, file->offset,
+                                    (void *)(uintptr_t)a1, request, &proc_got);
+                if (ret < 0) return ret == -2 ? -LEONOS_ENOENT : ret;
+                file->offset += proc_got;
+                return (int64_t)proc_got;
+            }
+            return -LEONOS_EBADF;
+        }
         if (file->path[0]) {
             int ret = authz_check_path(task, LEONOS_AUTHZ_READ, file->path, 0, 0);
             if (ret < 0) {
@@ -3292,6 +3316,19 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                 return task_pty_endpoint_fd(task, pty_id,
                                             TASK_PTY_ENDPOINT_SLAVE, flags);
             }
+        }
+        if (path[0] == '/' && path[1] == 'p' && path[2] == 'r' &&
+            path[3] == 'o' && path[4] == 'c' && (path[5] == 0 || path[5] == '/')) {
+            struct storage_node proc_node;
+            if (proc_lookup(path, &proc_node) == 0) {
+                int fd = alloc_task_fd(task, &proc_node, flags, path);
+                if (fd >= 0) {
+                    struct task_file *proc_file = task_file_for_fd(task, fd);
+                    if (proc_file) proc_file->node = proc_node;
+                }
+                return fd;
+            }
+            return -LEONOS_ENOENT;
         }
         if (path[0] == '/' && (path[1] == 'd' || path[1] == 'D') &&
             (path[2] == 'e' || path[2] == 'E') &&
@@ -3547,6 +3584,16 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             st.size = 0;
             *(struct leonos_stat *)(uintptr_t)a1 = st;
             return 0;
+        }
+        {
+            struct storage_node proc_node;
+            if (proc_lookup(path, &proc_node) == 0) {
+                st.type = proc_node.type;
+                st.reserved = 0;
+                st.size = proc_node.size;
+                *(struct leonos_stat *)(uintptr_t)a1 = st;
+                return 0;
+            }
         }
         ret = authz_check_path(task, LEONOS_AUTHZ_READ, path, 0, 0);
         if (ret < 0) {
@@ -4152,78 +4199,6 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return ret;
     }
 
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_SYSTEM_INFO) {
-        if (!user_range_ok(a2, sizeof(struct leonos_system_info))) {
-            return -LEONOS_EFAULT;
-        }
-        *(struct leonos_system_info *)(uintptr_t)a2 = *ntclks_system_info();
-        return 0;
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_TIME_INFO) {
-        if (!user_range_ok(a2, sizeof(struct leonos_time_info))) {
-            return -LEONOS_EFAULT;
-        }
-        return time_wall_clock((struct leonos_time_info *)(uintptr_t)a2) == 0
-                   ? 0
-                    : -LEONOS_EINVAL;
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_TIME_NTP_SYNC) {
-        int ret = require_background_service();
-        if (ret < 0) {
-            return ret;
-        }
-        if (!user_range_ok(a2, sizeof(struct leonos_time_sync))) {
-            return -LEONOS_EFAULT;
-        }
-        return net_ntp_sync((struct leonos_time_sync *)(uintptr_t)a2);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_MACHINE_IDENTITY) {
-        struct leonos_machine_identity identity;
-        if (!user_range_ok(a2, sizeof(struct leonos_machine_identity))) {
-            return -LEONOS_EFAULT;
-        }
-        platform_machine_identity(&identity);
-        storage_boot_identity(&identity);
-        *(struct leonos_machine_identity *)(uintptr_t)a2 = identity;
-        return 0;
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DRIVER_LIST) {
-        struct leonos_driver_list *query;
-        if (!user_range_ok(a2, sizeof(struct leonos_driver_list))) {
-            return -LEONOS_EFAULT;
-        }
-        query = (struct leonos_driver_list *)(uintptr_t)a2;
-        if (query->capacity > LEONOS_DRIVER_MAX) {
-            query->capacity = LEONOS_DRIVER_MAX;
-        }
-        if (query->capacity &&
-            (!query->drivers ||
-             !user_range_ok((uint64_t)(uintptr_t)query->drivers,
-                            (uint64_t)query->capacity *
-                                sizeof(struct leonos_driver_info)))) {
-            return -LEONOS_EFAULT;
-        }
-        return driver_manager_list(query);
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DRIVER_CONTROL) {
-        struct leonos_driver_control *request;
-        int ret;
-        if (!user_range_ok(a2, sizeof(struct leonos_driver_control))) {
-            return -LEONOS_EFAULT;
-        }
-        ret = require_driver_management();
-        if (ret < 0) {
-            return ret;
-        }
-        request = (struct leonos_driver_control *)(uintptr_t)a2;
-        return driver_manager_control(request);
-    }
-
     if (number == LINUX_SYS_IOCTL &&
         (a1 == LEONOS_IOCTL_AUDIO_CONFIGURE || a1 == LEONOS_IOCTL_AUDIO_WRITE ||
          a1 == LEONOS_IOCTL_AUDIO_GET_STATE)) {
@@ -4271,352 +4246,6 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             return -LEONOS_EFAULT;
         }
         driver_manager_audio_get_state((struct leonos_audio_state *)(uintptr_t)a2);
-        return 0;
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_DEVICE_LIST) {
-        struct leonos_device_list *query;
-        struct leonos_device_info *devices;
-        struct leonos_time_info time_info = {0};
-        struct leonos_install_disk disks[LEONOS_INSTALL_MAX_DISKS];
-        struct leonos_raw_device_info raw[LEONOS_RAW_DEVICE_MAX];
-        uint32_t disk_count = LEONOS_INSTALL_MAX_DISKS;
-        uint32_t raw_count = 0;
-        uint32_t count = 0;
-        char detail[LEONOS_DEVICE_DETAIL_LEN];
-        if (!user_range_ok(a2, sizeof(struct leonos_device_list))) {
-            return -LEONOS_EFAULT;
-        }
-        query = (struct leonos_device_list *)(uintptr_t)a2;
-        if (query->capacity > LEONOS_DEVICE_MAX) {
-            query->capacity = LEONOS_DEVICE_MAX;
-        }
-        if (query->capacity) {
-            if (!query->devices ||
-                !user_range_ok((uint64_t)(uintptr_t)query->devices,
-                               (uint64_t)query->capacity * sizeof(struct leonos_device_info))) {
-                return -LEONOS_EFAULT;
-            }
-        }
-        devices = query->devices;
-
-        if (time_wall_clock(&time_info) == 0) {
-            uint32_t date = ((uint32_t)time_info.year << 16) |
-                            ((uint32_t)time_info.month << 8) |
-                            (uint32_t)time_info.day;
-            uint32_t clock = ((uint32_t)time_info.hour << 16) |
-                             ((uint32_t)time_info.minute << 8) |
-                             (uint32_t)time_info.second;
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_RTC,
-                           LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE,
-                           date, clock, time_info.unix_seconds, time_info.uptime_ms);
-        } else {
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_RTC, 0, 0, 0, 0, 0);
-        }
-        raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_KEYBOARD,
-                       LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE,
-                       1, 0, 1, 0);
-        {
-            const struct mouse_state *mouse = mouse_get_state();
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_MOUSE,
-                           mouse && mouse->present
-                               ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
-                               : 0,
-                           mouse ? mouse->buttons : 0,
-                           mouse && mouse->absolute ? 1u : 0u,
-                           mouse ? (uint64_t)(uint32_t)mouse->x : 0,
-                           mouse ? (uint64_t)(uint32_t)mouse->y : 0);
-        }
-        {
-            const struct framebuffer *fb = framebuffer_get();
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_FRAMEBUFFER,
-                           fb && fb->available
-                               ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
-                               : 0,
-                           fb ? fb->bpp : 0,
-                           fb ? fb->pitch : 0,
-                           fb ? fb->width : 0,
-                           fb ? fb->height : 0);
-        }
-        if (storage_install_list_disks(disks, LEONOS_INSTALL_MAX_DISKS, &disk_count) < 0) {
-            disk_count = 0;
-        }
-        {
-            uint32_t ahci_disk_count = 0;
-            uint32_t ide_disk_count = 0;
-            uint32_t nvme_disk_count = 0;
-            for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
-                if (disks[i].name[0] == 'I' && disks[i].name[1] == 'D' &&
-                    disks[i].name[2] == 'E') {
-                    ++ide_disk_count;
-                } else if (disks[i].name[0] == 'N' && disks[i].name[1] == 'V' &&
-                           disks[i].name[2] == 'M') {
-                    ++nvme_disk_count;
-                } else {
-                    ++ahci_disk_count;
-                }
-            }
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_AHCI,
-                           ahci_disk_count
-                               ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE : 0,
-                           0, 0, ahci_disk_count, 0);
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_IDE,
-                           ide_disk_count
-                               ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
-                               : 0,
-                           0, 0, ide_disk_count, 0);
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_NVME,
-                           nvme_disk_count
-                               ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE : 0,
-                           0, 0, nvme_disk_count, 0);
-        }
-        for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
-            uint32_t flags = LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE;
-            if (disks[i].flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT) {
-                flags |= LEONOS_DEVICE_FLAG_BOOT;
-            }
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_DISK,
-                           flags,
-                           disks[i].name[0] == 'I' ? 2u
-                           : (disks[i].name[0] == 'N' ? 3u : 1u),
-                           disks[i].name[0] == 'N' ? disks[i].port : (uint32_t)i,
-                           disks[i].sector_count, disks[i].sector_size);
-        }
-        raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_SERIAL,
-                       serial_is_ready()
-                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
-                           : 0,
-                       0x3f8, 0, 0x3f8, 0);
-        {
-            uint32_t net_flags = 0;
-            uint64_t net_mac = 0;
-            uint32_t net_ip = 0;
-            struct leonos_net_config net_cfg;
-            net_device_info(&net_flags, &net_mac, &net_ip);
-            if (net_get_config(&net_cfg) < 0) {
-                net_cfg = (struct leonos_net_config){0};
-            }
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_E1000,
-                           net_flags, net_ip, net_cfg.source, net_mac, net_cfg.gateway_ip);
-        }
-        {
-            struct leonos_audio_state audio = {0};
-            uint32_t flags = 0;
-            driver_manager_audio_get_state(&audio);
-            if (audio.present) {
-                flags |= LEONOS_DEVICE_FLAG_PRESENT;
-            }
-            if (audio.active) {
-                flags |= LEONOS_DEVICE_FLAG_ACTIVE;
-            }
-            raw_device_add(raw, &raw_count, LEONOS_RAW_DEVICE_KIND_AC97, flags,
-                           audio.sample_rate,
-                           ((uint32_t)audio.channels << 16) | audio.bits_per_sample,
-                           ((uint64_t)audio.vendor_id << 16) | audio.device_id,
-                           ((uint64_t)audio.bus << 16) |
-                               ((uint64_t)audio.slot << 8) | audio.function);
-        }
-        {
-            struct leonos_device_catalog_query catalog = {
-                .raw = raw,
-                .raw_count = raw_count,
-                .capacity = query->capacity,
-                .devices = devices,
-                .count = 0,
-                .reserved = 0,
-            };
-            if (osmlayer_device_catalog(&catalog) == 0) {
-                query->count = catalog.count;
-                return 0;
-            }
-        }
-
-        if (time_wall_clock(&time_info) == 0) {
-            device_format_time(detail, sizeof(detail), &time_info);
-            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_SYSTEM,
-                       LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE,
-                       "RTC", "Running", detail, time_info.unix_seconds, time_info.uptime_ms);
-        } else {
-            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_SYSTEM,
-                       0, "RTC", "Unavailable", "CMOS wall clock not available", 0, 0);
-        }
-
-        device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_INPUT,
-                   LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE,
-                   "PS/2 Keyboard", "Running", "IRQ1 scancode input", 1, 0);
-
-        {
-            const struct mouse_state *mouse = mouse_get_state();
-            device_format_mouse(detail, sizeof(detail), mouse);
-            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_INPUT,
-                       mouse && mouse->present
-                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
-                           : 0,
-                       "PS/2 Mouse", mouse && mouse->present ? "Running" : "Unavailable",
-                       detail, mouse ? (uint64_t)(uint32_t)mouse->x : 0,
-                       mouse ? (uint64_t)(uint32_t)mouse->y : 0);
-        }
-
-        {
-            const struct framebuffer *fb = framebuffer_get();
-            device_format_fb(detail, sizeof(detail), fb);
-            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_DISPLAY,
-                       fb && fb->available
-                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
-                           : 0,
-                       "Framebuffer", fb && fb->available ? "Running" : "Unavailable",
-                       detail, fb ? fb->width : 0, fb ? fb->height : 0);
-        }
-
-        {
-            uint32_t pos = 0;
-            detail[0] = 0;
-            device_append_text(detail, &pos, sizeof(detail), "AHCI/IDE/NVMe storage controllers, disks=");
-            device_append_u64(detail, &pos, sizeof(detail), disk_count);
-            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_STORAGE,
-                       storage_ready()
-                           ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
-                           : 0,
-                       "Storage Controller", storage_ready() ? "Running" : "Unavailable",
-                       detail, disk_count, 0);
-        }
-
-        for (uint32_t i = 0; i < disk_count && i < LEONOS_INSTALL_MAX_DISKS; ++i) {
-            char name[LEONOS_DEVICE_NAME_LEN];
-            uint32_t pos = 0;
-            uint32_t flags = LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE;
-            name[0] = 0;
-            device_append_text(name, &pos, sizeof(name), "Disk ");
-            device_append_u64(name, &pos, sizeof(name), i);
-            device_format_disk(detail, sizeof(detail), &disks[i]);
-            if (disks[i].flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT) {
-                flags |= LEONOS_DEVICE_FLAG_BOOT;
-            }
-            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_STORAGE,
-                       flags, name,
-                       (disks[i].flags & LEONOS_INSTALL_DISK_FLAG_BOOT_ROOT)
-                           ? "Boot root"
-                           : "Ready",
-                       detail, disks[i].sector_count, disks[i].sector_size);
-        }
-
-        device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_SERIAL,
-                   serial_is_ready()
-                       ? LEONOS_DEVICE_FLAG_PRESENT | LEONOS_DEVICE_FLAG_ACTIVE
-                       : 0,
-                   "Serial COM1", serial_is_ready() ? "Running" : "Unavailable",
-                   "I/O port 0x3f8 debug console", 0x3f8, 0);
-
-        {
-            uint32_t net_flags = 0;
-            uint64_t net_mac = 0;
-            uint32_t net_ip = 0;
-            struct leonos_net_config net_cfg;
-            uint32_t pos = 0;
-            net_device_info(&net_flags, &net_mac, &net_ip);
-            if (net_get_config(&net_cfg) < 0) {
-                net_cfg = (struct leonos_net_config){0};
-            }
-            detail[0] = 0;
-            device_append_text(detail, &pos, sizeof(detail), "Intel e1000, ");
-            device_append_text(detail, &pos, sizeof(detail),
-                               net_cfg.source == LEONOS_NET_CONFIG_SOURCE_DHCP ? "DHCP IPv4 " : "static IPv4 ");
-            device_append_ipv4(detail, &pos, sizeof(detail), net_cfg.local_ip);
-            device_append_text(detail, &pos, sizeof(detail), ", gateway ");
-            device_append_ipv4(detail, &pos, sizeof(detail), net_cfg.gateway_ip);
-            device_append_text(detail, &pos, sizeof(detail), ", DNS ");
-            device_append_ipv4(detail, &pos, sizeof(detail), net_cfg.dns_ip);
-            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_NETWORK,
-                       net_flags, "Intel e1000", net_is_ready() ? "Running" : "Unavailable",
-                       detail, net_mac, net_ip);
-        }
-
-        {
-            struct leonos_audio_state audio = {0};
-            const char *audio_name;
-            uint32_t flags = 0;
-            uint32_t pos = 0;
-            driver_manager_audio_get_state(&audio);
-            audio_name = audio.vendor_id == 0x1274U && audio.device_id == 0x1371U
-                             ? "Ensoniq AudioPCI ES1371"
-                             : audio.vendor_id == 0x8086U && audio.device_id == 0x2415U
-                                   ? "Intel ICH AC'97"
-                                   : "Audio Device";
-            if (audio.present) {
-                flags |= LEONOS_DEVICE_FLAG_PRESENT;
-            }
-            if (audio.active) {
-                flags |= LEONOS_DEVICE_FLAG_ACTIVE;
-            }
-            detail[0] = 0;
-            if (audio.active) {
-                device_append_u64(detail, &pos, sizeof(detail), audio.sample_rate);
-                device_append_text(detail, &pos, sizeof(detail), " Hz, ");
-                device_append_u64(detail, &pos, sizeof(detail), audio.channels);
-                device_append_text(detail, &pos, sizeof(detail), " ch, ");
-                device_append_u64(detail, &pos, sizeof(detail), audio.bits_per_sample);
-                device_append_text(detail, &pos, sizeof(detail), "-bit PCM");
-            } else if (audio.present) {
-                device_append_text(detail, &pos, sizeof(detail),
-                                   "Audio device detected but driver not active");
-            } else {
-                device_append_text(detail, &pos, sizeof(detail),
-                                   "No supported audio device detected");
-            }
-            device_add(devices, query->capacity, &count, LEONOS_DEVICE_CLASS_AUDIO,
-                       flags, audio_name, audio.active ? "Running" : "Unavailable",
-                       detail, ((uint64_t)audio.vendor_id << 16) | audio.device_id,
-                       ((uint64_t)audio.bus << 16) |
-                           ((uint64_t)audio.slot << 8) | audio.function);
-        }
-
-        query->count = count;
-        return 0;
-    }
-
-    if (number == LINUX_SYS_IOCTL && a1 == LEONOS_IOCTL_PERF_INFO) {
-        struct leonos_perf_info *info;
-        if (!user_range_ok(a2, sizeof(struct leonos_perf_info))) {
-            return -LEONOS_EFAULT;
-        }
-        info = (struct leonos_perf_info *)(uintptr_t)a2;
-        info->uptime_ms = time_uptime_ms();
-        info->total_memory_kib = mm_total_memory_kib();
-        info->free_memory_kib = mm_free_memory_kib();
-        sched_task_counts(&info->task_count, &info->running_tasks,
-                          &info->ready_tasks, &info->sleeping_tasks);
-        info->cpu_count = smp_cpu_count();
-        if (info->cpu_count > LEONOS_PERF_MAX_CPUS) {
-            info->cpu_count = LEONOS_PERF_MAX_CPUS;
-        }
-        info->reserved = 0;
-        info->sample_tick = sched_tick_count();
-        info->online_cpu_count = 0;
-        info->reserved2 = 0;
-        {
-            uint64_t busy[LEONOS_PERF_MAX_CPUS];
-            uint64_t idle[LEONOS_PERF_MAX_CPUS];
-            uint32_t current_pids[LEONOS_PERF_MAX_CPUS];
-            uint32_t ready_counts[LEONOS_PERF_MAX_CPUS];
-            sched_cpu_runtime_snapshot(busy, idle, current_pids, ready_counts,
-                                       info->cpu_count);
-            info->busy_ticks = 0;
-            info->idle_ticks = 0;
-            for (uint32_t i = 0; i < LEONOS_PERF_MAX_CPUS; ++i) {
-                const struct smp_cpu_info *cpu = smp_cpu_info(i);
-                info->cpus[i].busy_ticks = i < info->cpu_count ? busy[i] : 0;
-                info->cpus[i].idle_ticks = i < info->cpu_count ? idle[i] : 0;
-                info->cpus[i].online = i < info->cpu_count && smp_cpu_online(i) ? 1U : 0U;
-                info->cpus[i].apic_id = cpu ? cpu->apic_id : 0xffffffffU;
-                info->cpus[i].current_pid = i < info->cpu_count ? current_pids[i] : 0;
-                info->cpus[i].runqueue_length = i < info->cpu_count ? ready_counts[i] : 0;
-                if (info->cpus[i].online) {
-                    ++info->online_cpu_count;
-                    info->busy_ticks += info->cpus[i].busy_ticks;
-                    info->idle_ticks += info->cpus[i].idle_ticks;
-                }
-            }
-        }
         return 0;
     }
 
