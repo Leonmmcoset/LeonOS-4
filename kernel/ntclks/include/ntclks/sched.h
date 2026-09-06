@@ -139,6 +139,7 @@ struct task_process_state {
     uint64_t stack_top;
     uint64_t stack_low;
     uint64_t wake_tick;
+    uint64_t poll_deadline_ticks;
     uint64_t exit_code;
     enum task_state state;
     enum task_kind kind;
@@ -228,6 +229,7 @@ struct task {
             uint64_t stack_top;
             uint64_t stack_low;
             uint64_t wake_tick;
+            uint64_t poll_deadline_ticks;
             uint64_t exit_code;
             enum task_state state;
             enum task_kind kind;

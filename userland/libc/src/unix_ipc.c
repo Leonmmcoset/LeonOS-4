@@ -102,37 +102,36 @@ static int read_exact(int fd, void *buffer, uint32_t length)
     return 1;
 }
 
-static int write_exact(int fd, const void *buffer, uint32_t length)
-{
-    const uint8_t *src = (const uint8_t *)buffer;
-    uint32_t done = 0;
-    while (done < length) {
-        ssize_t put = send(fd, src + done, length - done, 0);
-        if (put < 0) {
-            if (errno == EAGAIN) return 0;
-            return -1;
-        }
-        if (put == 0) return -1;
-        done += (uint32_t)put;
-    }
-    return 1;
-}
-
 int leonos_ipc_send_fd(int fd, uint32_t type, const void *payload,
                        uint32_t length, int send_fd)
 {
-    struct leonos_ipc_frame frame = {
-        .magic = LEONOS_IPC_MAGIC,
-        .version = LEONOS_IPC_VERSION,
-        .length = sizeof(type) + length,
-    };
-    if (write_exact(fd, &frame, sizeof(frame)) <= 0) return -1;
-    if (write_exact(fd, &type, sizeof(type)) <= 0) return -1;
-    if (length && write_exact(fd, payload, length) <= 0) return -1;
+    /* One atomic stream write per frame: the kernel write is all-or-nothing,
+     * so the reader can never observe a torn frame header mid-stream. */
+    static uint8_t frame_buffer[LEONOS_IPC_ATOMIC_FRAME_CAP];
+    uint32_t offset = 0;
+    if (length > LEONOS_IPC_ATOMIC_FRAME_CAP - sizeof(struct leonos_ipc_frame) -
+                     sizeof(uint32_t)) {
+        errno = EMSGSIZE;
+        return -1;
+    }
+    {
+        struct leonos_ipc_frame frame = {
+            .magic = LEONOS_IPC_MAGIC,
+            .version = LEONOS_IPC_VERSION,
+            .length = sizeof(uint32_t) + length,
+        };
+        memcpy(frame_buffer + offset, &frame, sizeof(frame));
+        offset += (uint32_t)sizeof(frame);
+        memcpy(frame_buffer + offset, &type, sizeof(type));
+        offset += (uint32_t)sizeof(type);
+        if (length) {
+            memcpy(frame_buffer + offset, payload, length);
+            offset += length;
+        }
+    }
     if (send_fd >= 0) {
         char control[CMSG_SPACE(sizeof(int))];
-        char byte = 0;
-        struct iovec vector = {.iov_base = &byte, .iov_len = 1};
+        struct iovec vector = {.iov_base = frame_buffer, .iov_len = offset};
         struct msghdr message;
         struct cmsghdr *header;
         memset(control, 0, sizeof(control));
@@ -146,8 +145,10 @@ int leonos_ipc_send_fd(int fd, uint32_t type, const void *payload,
         header->cmsg_level = SOL_SOCKET;
         header->cmsg_type = SCM_RIGHTS;
         *(int *)CMSG_DATA(header) = send_fd;
-        if (sendmsg(fd, &message, 0) != 1) return -1;
+        if (sendmsg(fd, &message, 0) != (ssize_t)offset) return -1;
+        return 0;
     }
+    if (send(fd, frame_buffer, offset, 0) != (ssize_t)offset) return -1;
     return 0;
 }
 

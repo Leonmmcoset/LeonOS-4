@@ -148,8 +148,13 @@ int task_shm_map(const struct task_file *file, uint64_t offset, uint64_t length,
                                                       (uint32_t)file->aux,
                                                       KERNEL_OBJECT_DEVICE);
     if (!segment || !segment->physical) return -LEONOS_EBADF;
-    if (offset > segment->bytes || length > segment->bytes - offset) {
-        return -LEONOS_EINVAL;
+    /* mmap lengths are page-rounded up by the mmap entry path, so the bound
+     * must be the page-backed allocation, not the exact logical size. */
+    {
+        uint64_t capacity = (uint64_t)segment->pages * TASK_SHM_PAGE;
+        if (offset > capacity || length > capacity - offset) {
+            return -LEONOS_EINVAL;
+        }
     }
     *physical = segment->physical + offset;
     return 0;

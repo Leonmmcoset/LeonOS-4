@@ -2538,18 +2538,47 @@ static int stat_for_fd(int fd, struct task *task, struct leonos_stat *st)
     return -LEONOS_EBADF;
 }
 
+/**
+ * @brief Park the caller for one scheduler tick and report a retryable EAGAIN.
+ *
+ * The int 0x80 epilogue rewinds the instruction, so the poll rescans its
+ * descriptors after every tick until an event arrives or the deadline set in
+ * poll_deadline_ticks expires. This gives poll its POSIX timeout without a
+ * dedicated wait queue.
+ */
+static int64_t syscall_poll_park(struct task *task, int64_t timeout_ms)
+{
+    uint64_t now = time_ticks();
+    if (!task->poll_deadline_ticks) {
+        task->poll_deadline_ticks = timeout_ms < 0
+                                        ? UINT64_MAX
+                                        : now + (uint64_t)timeout_ms / 10u + 1u;
+    } else if (now >= task->poll_deadline_ticks) {
+        task->poll_deadline_ticks = 0;
+        return 0;
+    }
+    return -LEONOS_EAGAIN;
+}
+
 int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms)
 {
     struct task *task = sched_current_task();
         struct pollfd *fds;
     uint64_t ready = 0;
-    (void)timeout_ms;
 
     if (!task || count > 1024U || (count && !user_range_ok(fds_ptr,
                                                             count * sizeof(*fds)))) {
         return -LEONOS_EFAULT;
     }
     if (!count) {
+        /* poll(NULL, 0, timeout) is the classic millisecond sleep idiom. */
+        if (timeout_ms > 0) return syscall_poll_park(task, timeout_ms);
+        task->poll_deadline_ticks = 0;
+        return 0;
+    }
+    if (timeout_ms != 0 && task->poll_deadline_ticks &&
+        time_ticks() >= task->poll_deadline_ticks) {
+        task->poll_deadline_ticks = 0;
         return 0;
     }
     fds = (struct pollfd *)(uintptr_t)fds_ptr;
@@ -2644,7 +2673,15 @@ int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms)
         fds[i].revents = revents;
         if (revents) ++ready;
     }
-    return (int64_t)ready;
+    if (ready) {
+        task->poll_deadline_ticks = 0;
+        return (int64_t)ready;
+    }
+    if (timeout_ms == 0) {
+        task->poll_deadline_ticks = 0;
+        return 0;
+    }
+    return syscall_poll_park(task, timeout_ms);
 }
 
 void syscall_init(void)
@@ -4110,6 +4147,18 @@ static int syscall_eagain_is_nonblocking_device(struct task *task,
 {
     struct task_pty_fd *endpoint;
     struct task_file *file;
+    if (number == LINUX_SYS_RECV || number == LINUX_SYS_RECVFROM ||
+        number == LINUX_SYS_RECVMSG || number == LINUX_SYS_SEND ||
+        number == LINUX_SYS_SENDTO || number == LINUX_SYS_SENDMSG ||
+        number == LINUX_SYS_ACCEPT || number == LINUX_SYS_ACCEPT4 ||
+        number == LINUX_SYS_CONNECT) {
+        /* The dedicated socket calls report EAGAIN for genuinely nonblocking
+         * descriptors; the rewind path below would otherwise park the caller
+         * inside the kernel until data or space appears, silently disabling
+         * every user-space poll/deadline loop built on these calls. */
+        file = task_file_for_fd(task, (int)fd);
+        return file && (file->flags & LEONOS_O_NONBLOCK) ? 1 : 0;
+    }
     if (number != LINUX_SYS_READ && number != LINUX_SYS_WRITE) {
         return 0;
     }

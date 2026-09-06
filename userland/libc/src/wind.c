@@ -77,7 +77,13 @@ static int wind_open_connection(const char *path)
     uint32_t deadline = now_ms() + WIND_CONNECT_RETRY_MS;
     for (;;) {
         int fd = leonos_ipc_connect(path);
-        if (fd >= 0) return fd;
+        if (fd >= 0) {
+            /* Nonblocking from the start: every wait below is a deadline
+             * loop, and a blocking MSG_PEEK probe would otherwise park the
+             * caller in the kernel until unrelated traffic arrives. */
+            (void)leonos_ipc_set_nonblock(fd, 1);
+            return fd;
+        }
         if (now_ms() >= deadline) return -1;
         wind_sleep_ms(10);
     }

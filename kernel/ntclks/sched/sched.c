@@ -625,6 +625,7 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     child->state = TASK_READY;
     child->running_cpu = SCHED_CPU_NONE;
     child->wake_tick = 0;
+    child->poll_deadline_ticks = 0;
     child->wait_window_id = 0;
     child->exit_code = 0;
     child->cpu_ticks = 0;
