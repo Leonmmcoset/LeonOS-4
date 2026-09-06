@@ -12,6 +12,7 @@
 #include <leonos/syscall.h>
 #include <leonos/unix_ipc.h>
 #include <leonos/windowd.h>
+#include <stdio.h>
 #include <linux/fb.h>
 #include <poll.h>
 #include <signal.h>
@@ -329,6 +330,9 @@ static void *wind_fb_map(void)
     if (leonos_fb_info(&info) < 0) return 0;
     mapping = mmap(0, (size_t)info.pitch * info.height,
                    PROT_READ | PROT_WRITE, MAP_SHARED, wind_fb_fd(), 0);
+    /* mmap failure reports MAP_FAILED ((void*)-1), which is nonzero: a bare
+     * truthiness check would hand memcpy an invalid destination. */
+    if (mapping == MAP_FAILED) mapping = 0;
     return mapping;
 }
 
@@ -477,10 +481,20 @@ int leonos_gui_create_app_window_ex(const char *title, const char *text,
     int fd = -1;
     int shm_fd = -1;
     int64_t bytes;
+    static int wind_windows_ready;
+    if (!wind_windows_ready) {
+        /* BSS zeroes fd to 0, which is a valid descriptor: mark the unused
+         * table before the first slot search can run. */
+        for (uint32_t i = 0; i < WIND_MAX_WINDOWS; ++i) wind_windows[i].fd = -1;
+        wind_windows_ready = 1;
+    }
     if (!title || !text || !width || !height || width > LEONOS_GUI_MAX_WINDOW_WIDTH ||
         height > LEONOS_GUI_MAX_WINDOW_HEIGHT) return -1;
     fd = wind_app_ensure();
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        printf("[wind] create: app connection failed\n");
+        return -1;
+    }
     memset(&request, 0, sizeof(request));
     request.width = width;
     request.height = height;
@@ -488,11 +502,16 @@ int leonos_gui_create_app_window_ex(const char *title, const char *text,
     strncpy(request.title, title, sizeof(request.title) - 1u);
     strncpy(request.text, text, sizeof(request.text) - 1u);
     if (leonos_ipc_send(fd, LEONOS_WIN_MSG_CREATE, &request, sizeof(request)) < 0) {
+        printf("[wind] create: send failed errno=%d\n", errno);
         return -1;
     }
     if (wind_wait_type(fd, LEONOS_WIN_MSG_CREATE_ACK, &ack, sizeof(ack),
-                       &length, &shm_fd) < 0) return -1;
+                       &length, &shm_fd) < 0) {
+        printf("[wind] create: no ack errno=%d\n", errno);
+        return -1;
+    }
     if (!ack.window_id || shm_fd < 0) {
+        printf("[wind] create: bad ack id=%u shm_fd=%d\n", ack.window_id, shm_fd);
         if (shm_fd >= 0) close(shm_fd);
         return -1;
     }
@@ -500,6 +519,7 @@ int leonos_gui_create_app_window_ex(const char *title, const char *text,
         if (wind_windows[i].fd < 0) { window = &wind_windows[i]; break; }
     }
     if (!window) {
+        printf("[wind] create: window table full\n");
         close(shm_fd);
         return -1;
     }
@@ -511,6 +531,8 @@ int leonos_gui_create_app_window_ex(const char *title, const char *text,
     window->mapping = mmap(0, (size_t)bytes, PROT_READ | PROT_WRITE,
                            MAP_SHARED, shm_fd, 0);
     if (window->mapping == MAP_FAILED || !window->mapping) {
+        printf("[wind] create: shm mmap failed errno=%d bytes=%lld\n",
+               errno, (long long)bytes);
         window->mapping = 0;
         wind_release_window(window);
         return -1;

@@ -212,7 +212,9 @@ int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
         message.msg_control = control;
         message.msg_controllen = sizeof(control);
         got = recvmsg(fd, &message, MSG_PEEK);
-        if (got > 0 && message.msg_controllen >= sizeof(struct cmsghdr)) {
+        /* got == 0 is a control-only delivery: the kernel reports pending
+         * SCM_RIGHTS attachments on an otherwise empty receive ring. */
+        if (got >= 0 && message.msg_controllen >= sizeof(struct cmsghdr)) {
             header = (struct cmsghdr *)control;
             if (header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS) {
                 got = recvmsg(fd, &message, 0);

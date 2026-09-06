@@ -210,6 +210,7 @@ static int unix_clone_fd_to_task(struct task *target, const struct task_file *so
         file->read_cursor = (struct storage_read_cursor){0};
         task_pipe_retain(file);
         task_socket_retain(file);
+        task_shm_retain(file);
         return fd;
     }
     return -LEONOS_EMFILE;
@@ -591,7 +592,14 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
         } else {
             received = task_socket_read(file, vector.iov_base, data_len);
         }
-        if (received < 0) return received;
+        if (received < 0 && !(received == -LEONOS_EAGAIN && socket->rx_fd_count &&
+                              message.msg_control)) {
+            /* An empty ring normally reports EAGAIN, but a pending
+             * SCM_RIGHTS attachment must still be delivered: the sender
+             * attaches descriptors when the frame is written, and framed
+             * readers probe for them after consuming the payload. */
+            return received;
+        }
     } else {
         received = 0;
     }
@@ -618,7 +626,9 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
         output->msg_controllen = socket->rx_fd_count ? CMSG_LEN((uint64_t)socket->rx_fd_count * sizeof(int32_t)) : 0;
         output->msg_flags = message.msg_flags;
     }
-    return received;
+    /* A control-only delivery (empty ring, descriptors pending) reports zero
+     * bytes so framed readers still observe the ancillary data. */
+    return received < 0 ? 0 : received;
 }
 
 static int64_t unix_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,

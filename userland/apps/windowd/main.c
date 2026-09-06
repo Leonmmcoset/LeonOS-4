@@ -167,13 +167,23 @@ static int create_window(struct windowd_client *client,
     uint64_t bytes;
     if (!client || !request || !request->width || !request->height ||
         request->width > LEONOS_GUI_MAX_WINDOW_WIDTH ||
-        request->height > LEONOS_GUI_MAX_WINDOW_HEIGHT) return -1;
+        request->height > LEONOS_GUI_MAX_WINDOW_HEIGHT) {
+        printf("[windowd.elf] create reject: bad geometry %ux%u\n",
+               request ? request->width : 0, request ? request->height : 0);
+        return -1;
+    }
     for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {
         if (!windows[i].used) { window = &windows[i]; break; }
     }
-    if (!window) return -1;
+    if (!window) {
+        printf("[windowd.elf] create reject: window table full\n");
+        return -1;
+    }
     bytes = (uint64_t)request->width * request->height * 4ULL;
-    if (bytes > WINDOWD_MAX_BYTES) return -1;
+    if (bytes > WINDOWD_MAX_BYTES) {
+        printf("[windowd.elf] create reject: too large\n");
+        return -1;
+    }
     memset(window, 0, sizeof(*window));
     window->shm_fd = -1;
     window->used = 1;
@@ -188,12 +198,15 @@ static int create_window(struct windowd_client *client,
     copy_text(window->text, sizeof(window->text), request->text);
     window->shm_fd = open(LEONOS_DEV_SHM0, LEONOS_O_RDWR, 0);
     if (window->shm_fd < 0 || ftruncate(window->shm_fd, (long)bytes) < 0) {
+        printf("[windowd.elf] create fail: shm open/ftruncate errno=%d bytes=%llu\n",
+               errno, (unsigned long long)bytes);
         release_window(window);
         return -1;
     }
     window->mapping = mmap(0, (size_t)bytes, PROT_READ | PROT_WRITE,
                            MAP_SHARED, window->shm_fd, 0);
     if (window->mapping == MAP_FAILED || !window->mapping) {
+        printf("[windowd.elf] create fail: shm mmap errno=%d\n", errno);
         window->mapping = 0;
         release_window(window);
         return -1;
@@ -204,6 +217,7 @@ static int create_window(struct windowd_client *client,
     ack.stride = window->stride;
     if (leonos_ipc_send_fd(client->fd, LEONOS_WIN_MSG_CREATE_ACK, &ack,
                            sizeof(ack), window->shm_fd) < 0) {
+        printf("[windowd.elf] create fail: ack send errno=%d\n", errno);
         release_window(window);
         return -1;
     }
@@ -337,9 +351,16 @@ static void handle_client(int slot)
         }
         if (type == LEONOS_WIN_MSG_CREATE) {
             struct leonos_win_create request;
-            if (length < sizeof(request) || client->role != LEONOS_WIN_ROLE_APP) continue;
+            if (length < sizeof(request) || client->role != LEONOS_WIN_ROLE_APP) {
+                printf("[windowd.elf] create reject: role=%u length=%u\n",
+                       client->role, length);
+                continue;
+            }
             memcpy(&request, buffer, sizeof(request));
-            (void)create_window(client, &request);
+            if (create_window(client, &request) < 0) {
+                printf("[windowd.elf] create_window failed for pid=%u\n",
+                       client->pid);
+            }
             continue;
         }
         if (type == LEONOS_WIN_MSG_DESTROY) {

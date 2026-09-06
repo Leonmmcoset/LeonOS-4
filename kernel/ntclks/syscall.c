@@ -2839,7 +2839,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         number == LINUX_SYS_GETEUID || number == LINUX_SYS_GETEGID ||
         number == LINUX_SYS_SETUID || number == LINUX_SYS_SETGID ||
         number == LINUX_SYS_UNAME || number == LINUX_SYS_GETTIMEOFDAY ||
-        number == LINUX_SYS_SETTIMEOFDAY || number == LINUX_SYS_SCHED_SETAFFINITY ||
+        number == LINUX_SYS_SETTIMEOFDAY || number == LINUX_SYS_CLOCK_GETTIME ||
+        number == LINUX_SYS_SCHED_SETAFFINITY ||
         number == LINUX_SYS_SCHED_GETAFFINITY || number == LINUX_SYS_REBOOT) {
         return syscall_process_control(number, a0, a1, a2, a3);
     }
