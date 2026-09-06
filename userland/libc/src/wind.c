@@ -391,6 +391,7 @@ int leonos_fb_fill(uint32_t color)
     pixels = (uint32_t *)mapping;
     count = ((uint32_t)info.pitch / 4u) * info.height;
     for (uint32_t i = 0; i < count; ++i) pixels[i] = color;
+    (void)ioctl(wind_fb_fd(), FBIOPAN_DISPLAY, 0);
     return 0;
 }
 
@@ -460,6 +461,9 @@ int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
         memcpy((uint8_t *)mapping + (y + row) * info.pitch + x * 4u,
                (const uint8_t *)pixels + row * stride, (size_t)width * 4u);
     }
+    /* VMware SVGA scanout only refreshes from VRAM when the FIFO receives
+     * an update command; mmap writes alone never reach the display. */
+    (void)ioctl(wind_fb_fd(), FBIOPAN_DISPLAY, 0);
     return 0;
 }
 

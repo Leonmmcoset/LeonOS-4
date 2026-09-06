@@ -3984,13 +3984,23 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
      * three Linux UAPI operations. */
     if (number == LINUX_SYS_IOCTL &&
         (a1 == FBIOGET_VSCREENINFO || a1 == FBIOPUT_VSCREENINFO ||
-         a1 == FBIOGET_FSCREENINFO)) {
+         a1 == FBIOGET_FSCREENINFO || a1 == FBIOPAN_DISPLAY)) {
         struct task *task = sched_current_task();
         struct task_file *file = task_file_for_fd(task, (int)a0);
         const struct framebuffer *fb = framebuffer_get();
         if (!file || !(file->flags & TASK_FILE_FLAG_DEV_NODE) ||
             file->node.first_cluster != STORAGE_DEV_KIND_FB0 || !fb ||
-            !fb->available || !a2) {
+            !fb->available) {
+            return -LEONOS_ENOTTY;
+        }
+        /* Panning display is the Linux fbdev flush request: VMware SVGA
+         * scanout only refreshes from VRAM when the FIFO receives an
+         * update command, and mmap writers bypass every other path. */
+        if (a1 == FBIOPAN_DISPLAY) {
+            framebuffer_present_region(0, 0, fb->width, fb->height);
+            return 0;
+        }
+        if (!a2) {
             return -LEONOS_ENOTTY;
         }
         if (a1 == FBIOGET_VSCREENINFO) {
