@@ -295,7 +295,9 @@ int input_evdev_read(uint32_t device_kind, uint64_t *cursor,
         const struct input_evdev_record *record =
             &evdev_queue[*cursor % INPUT_EVDEV_QUEUE_CAP];
         if (record->sequence != *cursor) {
-            *cursor = evdev_oldest_sequence();
+            /* The producer is locked out. Rewinding on a damaged record
+             * would rescan it forever with interrupts disabled. */
+            ++(*cursor);
             continue;
         }
         ++(*cursor);

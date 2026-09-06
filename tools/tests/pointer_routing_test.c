@@ -49,8 +49,43 @@ int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
     return 0;
 }
 
+static void test_evdev_damaged_records(void)
+{
+    struct input_event events[2];
+    uint64_t cursor = 0;
+    input_init();
+    /* Reproduce the two damaged sequence numbers from the VMware core. */
+    while (evdev_next_sequence < 5842) {
+        evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_SYN, SYN_REPORT, 0);
+    }
+    evdev_queue[5103 % INPUT_EVDEV_QUEUE_CAP].sequence = 0xffffffa1u;
+    evdev_queue[5104 % INPUT_EVDEV_QUEUE_CAP].sequence = 0;
+    assert(!input_evdev_available(STORAGE_DEV_KIND_KEYBOARD, cursor, 0));
+    assert(input_evdev_read(STORAGE_DEV_KIND_KEYBOARD, &cursor,
+                            events, sizeof(events), 0) == 0);
+    assert(cursor == 5842);
+
+    input_push_key(30, 1);
+    assert(input_evdev_available(STORAGE_DEV_KIND_KEYBOARD, cursor, 0));
+    assert(input_evdev_read(STORAGE_DEV_KIND_KEYBOARD, &cursor,
+                            events, sizeof(events), 0) == sizeof(events));
+    assert(events[0].type == EV_KEY && events[0].code == 30 && events[0].value == 1);
+    assert(events[1].type == EV_SYN && events[1].code == SYN_REPORT);
+    assert(cursor == input_evdev_cursor_now());
+
+    /* The scan must also terminate when every retained record is damaged. */
+    for (unsigned i = 0; i < INPUT_EVDEV_QUEUE_CAP; ++i) {
+        evdev_queue[i].sequence = 0;
+    }
+    cursor = 0;
+    assert(input_evdev_read(STORAGE_DEV_KIND_MOUSE, &cursor,
+                            events, sizeof(events), 0) == 0);
+    assert(cursor == input_evdev_cursor_now());
+}
+
 int main(void)
 {
+    test_evdev_damaged_records();
     input_init();
     read_cursor = input_evdev_cursor_now();
     policy_slot = 0;
