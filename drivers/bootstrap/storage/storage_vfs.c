@@ -28,7 +28,6 @@ static const struct storage_dev_entry storage_dev_entries[] = {
     {"dsp",       STORAGE_DEV_KIND_AUDIO,    LEONOS_FS_TYPE_DEVICE, 0},
     /* Compatibility aliases for the retired private audio interface. */
     {"audio",     STORAGE_DEV_KIND_AUDIO,    LEONOS_FS_TYPE_DEVICE, 0},
-    {"audio0",    STORAGE_DEV_KIND_AUDIO,    LEONOS_FS_TYPE_DEVICE, 0},
     {"ttyS0",     STORAGE_DEV_KIND_SERIAL,   LEONOS_FS_TYPE_DEVICE, 0},
     {"serial0",   STORAGE_DEV_KIND_SERIAL,   LEONOS_FS_TYPE_DEVICE, 0},
     {"sda",       STORAGE_DEV_KIND_DISK,     LEONOS_FS_TYPE_DEVICE, 0},

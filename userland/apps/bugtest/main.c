@@ -146,18 +146,14 @@ static int safe_getcwd_bad_out(void)
 
 static int safe_list_dir_bad_entries(void)
 {
-    struct leonos_dir_list query = {
-        .path = "/programs",
-        .capacity = 4,
-        .count = 0,
-        .entries = (struct leonos_dir_entry *)0x200000ULL,
-    };
-    return nonfatal_result(ioctl(3, LEONOS_IOCTL_LIST_DIR, &query));
+    uint32_t count = 0;
+    return nonfatal_result(leonos_list_dir(
+        "/programs", (struct leonos_dir_entry *)0x200000ULL, 4, &count));
 }
 
 static int safe_system_info_bad_out(void)
 {
-    return nonfatal_result(ioctl(3, LEONOS_IOCTL_SYSTEM_INFO, (void *)0x200000ULL));
+    return nonfatal_result(leonos_system_info((void *)0x200000ULL));
 }
 
 static int safe_gui_event_bad_out(void)

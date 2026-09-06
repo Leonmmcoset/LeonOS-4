@@ -4,7 +4,6 @@
 #include <stdint.h>
 
 /* Minimal process-disposition ABI used by the shared POSIX signal wrappers. */
-#define LEONOS_SIGNAL_IOCTL_ACTION 0x4c534947UL
 #define LEONOS_SIGNAL_ACTION_GET 1U
 #define LEONOS_SIGNAL_ACTION_SET 2U
 #define LEONOS_SIGNAL_DISPOSITION_DEFAULT 0U
@@ -46,12 +45,6 @@ struct leonos_rt_sigframe {
 
 /* Legacy disposition ioctl record, retained only for the pre-rt_sigaction
  * transition path. New consumers must use rt_sigaction. */
-struct leonos_signal_action {
-    uint32_t operation;
-    uint32_t signal_number;
-    uint32_t disposition;
-    uint32_t previous_disposition;
-};
 
 /* Kernel/libc private syscall record.  The restorer field is the user address
  * of the libc trampoline that issues rt_sigreturn. */

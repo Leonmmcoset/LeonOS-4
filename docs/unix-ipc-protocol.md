@@ -29,7 +29,7 @@ or the connection is rejected with `ERROR{code=EPERM}`.
 | 3 | netmand | `/run/leonos/net.sock` | implemented |
 | 4 | authd / sessiond | `/run/leonos/authd.sock`, `/run/leonos/session.sock` | implemented |
 | 5 | devmand / procfs | `/run/leonos/devman.sock`, `/proc` | implemented |
-| 6 | fd-3 removal and cleanup | n/a | pending |
+| 6 | fd-3 removal and cleanup | n/a | implemented |
 
 ## Common message set
 
@@ -104,6 +104,15 @@ require uid 0 or the same uid, and login never returns a password hash.
 | `DEVICE_LIST` | client -> devmand | capacity -> count + `struct leonos_device_info[]` | any |
 | `DRIVER_LIST` | client -> devmand | capacity -> count + `struct leonos_driver_info[]` | any |
 | `DRIVER_CONTROL` | client -> devmand | action/file | SO_PEERCRED uid==0 |
+
+## Phase 6 cleanup
+
+* The fd 3 control-descriptor mechanism and every private service-request
+  ioctl family are deleted from kernel and libc source.
+* Remaining ioctls are device-UAPI only: TTY termios/winsize, evdev, OSS,
+  block BLK*, fbdev FBIO*, and `/dev/gpu` GPU commands.
+* ACL compatibility is expressed through `chmod`/`chown`; kernel-debug state
+  uses `/system/state/kernel-debug`.
 
 ## procfs (kernel, read-only)
 

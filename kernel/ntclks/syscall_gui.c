@@ -21,8 +21,7 @@ int64_t syscall_gui_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
     {
         struct task *task = sched_current_task();
         struct task_file *file = task_file_for_fd(task, (int)a0);
-        if ((uint64_t)a0 != 3 &&
-            !(file && (file->flags & TASK_FILE_FLAG_DEV_NODE) &&
+        if (!(file && (file->flags & TASK_FILE_FLAG_DEV_NODE) &&
               file->node.first_cluster == STORAGE_DEV_KIND_GPU)) {
             return -LEONOS_ENOTTY;
         }

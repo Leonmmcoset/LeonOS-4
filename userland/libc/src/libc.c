@@ -26,6 +26,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <pty.h>
 #include <linux/tty.h>
@@ -484,60 +485,8 @@ char *getcwd(char *buf, size_t len)
 
 int ioctl(int fd, unsigned long request, void *arg)
 {
-    /* File descriptor 3 was the pre-devfs control channel.  Keep accepting
-     * it for old binaries, but resolve it to a real device node so every
-     * hardware operation follows the /dev namespace.  The kernel currently
-     * dispatches the ioctl by request code; selecting the matching node here
-     * also makes descriptor ownership and diagnostics consistent. */
-    if (fd == 3) {
-        static int console_fd = -1;
-        static int fb_fd = -1;
-        static int input_method_fd = -1;
-        static int audio_fd = -1;
-        static int tty_fd = -1;
-        int *slot = &console_fd;
-        const char *path = LEONOS_DEV_CONSOLE;
-        int open_flags = LEONOS_O_RDWR;
-
-        if (request == LEONOS_IOCTL_AUDIO_CONFIGURE ||
-                   request == LEONOS_IOCTL_AUDIO_WRITE ||
-            request == LEONOS_IOCTL_AUDIO_GET_STATE) {
-            path = LEONOS_DEV_AUDIO0;
-            slot = &audio_fd;
-            open_flags = LEONOS_O_RDWR;
-        } else if ((request >= LEONOS_PTY_IOCTL_CREATE &&
-                    request <= LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE) ||
-                   request == LEONOS_PTY_IOCTL_GET_ATTR ||
-                   request == LEONOS_PTY_IOCTL_SET_ATTR ||
-                   request == LEONOS_PTY_IOCTL_GET_WINSIZE ||
-                   request == LEONOS_PTY_IOCTL_SET_WINSIZE) {
-            /* Legacy PTY controls operate on the caller's controlling TTY;
-             * opening /dev/ptmx here would allocate an unrelated master. */
-            path = LEONOS_DEV_TTY;
-            slot = &tty_fd;
-        }
-
-        if (*slot < 0) {
-            *slot = open(path, open_flags, 0);
-        }
-        if (*slot >= 0) {
-            fd = *slot;
-        }
-        {
-            int result = (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
-            /* Applications may close a cached descriptor explicitly. Retry
-             * once with a fresh node if the kernel reports a stale handle. */
-            if (result == -9 && fd >= 4 && *slot == fd) {
-                (void)close(fd);
-                *slot = open(path, open_flags, 0);
-                if (*slot >= 0) {
-                    result = (int)syscall3(SYS_ioctl, *slot,
-                                           (long)request, (long)arg);
-                }
-            }
-            return result;
-        }
-    }
+    /* The fd 3 control-descriptor mechanism is gone. Every ioctl now targets
+     * the descriptor returned by open(). */
     return (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
 }
 
@@ -1465,58 +1414,62 @@ int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
     return 0;
 }
 
-static int leonos_fs_acl_ioctl(unsigned long request, const char *path,
-                               const struct leonos_fs_acl *in_acl,
-                               struct leonos_fs_acl *out_acl)
+static void leonos_fs_acl_synthetic(const char *path,
+                                     struct leonos_fs_acl *acl)
 {
-    struct leonos_fs_acl_request query;
-    uint32_t i = 0;
-    query = (struct leonos_fs_acl_request){0};
-    while (path && path[i] && i + 1 < sizeof(query.path)) {
-        query.path[i] = path[i];
-        ++i;
-    }
-    query.path[i] = 0;
-    if (in_acl) {
-        query.acl = *in_acl;
-    }
-    int ret = ioctl(3, request, &query);
-    if (ret == 0 && out_acl) {
-        *out_acl = query.acl;
-    }
-    return ret;
+    if (!acl) return;
+    memset(acl, 0, sizeof(*acl));
+    acl->version = LEONOS_FS_ACL_VERSION;
+    acl->owner_uid = (uint32_t)getuid();
+    acl->flags = LEONOS_FS_ACL_FLAG_SYNTHETIC;
+    acl->ace_count = 2;
+    acl->aces[0] = (struct leonos_fs_acl_ace){
+        .principal = LEONOS_FS_ACL_PRINCIPAL_OWNER,
+        .permissions = LEONOS_FS_PERM_FULL,
+    };
+    acl->aces[1] = (struct leonos_fs_acl_ace){
+        .principal = LEONOS_FS_ACL_PRINCIPAL_EVERYONE,
+        .permissions = LEONOS_FS_PERM_READ,
+    };
+    (void)path;
 }
 
 int leonos_fs_acl_get(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path || !acl) {
-        return -1;
-    }
-    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_GET, path, 0, acl);
+    if (!path || !acl) return -1;
+    leonos_fs_acl_synthetic(path, acl);
+    return 0;
 }
 
 int leonos_fs_acl_set(const char *path, const struct leonos_fs_acl *acl)
 {
-    if (!path || !acl) {
-        return -1;
+    mode_t mode = 0600;
+    if (!path || !acl) return -1;
+    for (uint32_t i = 0; i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
+        if (acl->aces[i].principal == LEONOS_FS_ACL_PRINCIPAL_OWNER) {
+            mode = (mode & ~0700) |
+                   ((acl->aces[i].permissions & 7u) << 6);
+        } else if (acl->aces[i].principal == LEONOS_FS_ACL_PRINCIPAL_EVERYONE) {
+            mode = (mode & ~0007) | (acl->aces[i].permissions & 7u);
+        }
     }
-    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_SET, path, acl, 0);
+    return chmod(path, mode);
 }
 
 int leonos_fs_acl_take_ownership(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path) {
-        return -1;
-    }
-    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_TAKE_OWNERSHIP, path, 0, acl);
+    if (!path) return -1;
+    if (chown(path, getuid(), getgid()) < 0) return -1;
+    leonos_fs_acl_synthetic(path, acl);
+    return 0;
 }
 
 int leonos_fs_acl_repair(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path) {
-        return -1;
-    }
-    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_REPAIR, path, 0, acl);
+    if (!path) return -1;
+    if (chmod(path, 0700) < 0) return -1;
+    leonos_fs_acl_synthetic(path, acl);
+    return 0;
 }
 
 int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
@@ -1524,101 +1477,75 @@ int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
                             uint32_t capacity,
                             struct leonos_text_layout *out_layout)
 {
-    struct leonos_text_layout query = {
-        .text = text,
-        .byte_len = byte_len,
-        .capacity = capacity,
-        .count = 0,
-        .total_cells = 0,
-        .total_px = 0,
-        .glyphs = glyphs,
-    };
-    int ret = ioctl(3, LEONOS_TEXT_IOCTL_LAYOUT_UTF8, &query);
+    uint32_t pos = 0;
+    uint32_t count = 0;
+    uint32_t cells = 0;
+    uint32_t pixels = 0;
+    if (!text) return -1;
+    if (!byte_len) {
+        while (text[byte_len]) ++byte_len;
+    }
+    while (pos < byte_len) {
+        uint8_t first = (uint8_t)text[pos];
+        uint32_t sequence = 1;
+        uint32_t codepoint = first;
+        if ((first & 0x80u) == 0) {
+            codepoint = first;
+        } else if ((first & 0xe0u) == 0xc0u) {
+            sequence = 2;
+            codepoint = first & 0x1fu;
+        } else if ((first & 0xf0u) == 0xe0u) {
+            sequence = 3;
+            codepoint = first & 0x0fu;
+        } else if ((first & 0xf8u) == 0xf0u) {
+            sequence = 4;
+            codepoint = first & 0x07u;
+        } else {
+            codepoint = LEONOS_TEXT_REPLACEMENT_CHAR;
+            sequence = 1;
+        }
+        if (sequence > 1 && pos + sequence > byte_len) {
+            codepoint = LEONOS_TEXT_REPLACEMENT_CHAR;
+            sequence = 1;
+        }
+        for (uint32_t i = 1; i < sequence; ++i) {
+            uint8_t next = (uint8_t)text[pos + i];
+            if ((next & 0xc0u) != 0x80u) {
+                codepoint = LEONOS_TEXT_REPLACEMENT_CHAR;
+                sequence = 1;
+                break;
+            }
+            codepoint = (codepoint << 6) | (next & 0x3fu);
+        }
+        {
+            uint32_t width = codepoint < 0x1100u ? 1u : 2u;
+            cells += width;
+            pixels += width * 8u;
+            if (glyphs && count < capacity) {
+                glyphs[count] = (struct leonos_text_glyph){
+                    .codepoint = codepoint,
+                    .byte_offset = pos,
+                    .byte_len = sequence,
+                    .cell_width = width,
+                    .pixel_width = width * 8u,
+                };
+            }
+            ++count;
+        }
+        pos += sequence;
+    }
     if (out_layout) {
-        *out_layout = query;
-    }
-    return ret;
-}
-
-int leonos_audio_configure(const struct leonos_audio_format *format)
-{
-    static int audio_fd = -1;
-    if (!format) {
-        return -1;
-    }
-    if (audio_fd < 0) {
-        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
-        if (audio_fd < 0) audio_fd = 3;
-    }
-    return ioctl(audio_fd, LEONOS_IOCTL_AUDIO_CONFIGURE, (void *)format);
-}
-
-long leonos_audio_write(const void *data, uint32_t length,
-                        uint32_t *out_status)
-{
-    static int audio_fd = -1;
-    uint32_t done = 0;
-    uint32_t status = LEONOS_AUDIO_STATUS_OK;
-    if (length && !data) {
-        return -1;
-    }
-    if (audio_fd < 0) {
-        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
-        if (audio_fd < 0) audio_fd = 3;
-    }
-    while (done < length) {
-        uint32_t chunk = length - done;
-        struct leonos_audio_write request;
-        int ret;
-        if (chunk > LEONOS_AUDIO_IO_SLICE_BYTES) {
-            chunk = LEONOS_AUDIO_IO_SLICE_BYTES;
-        }
-        request = (struct leonos_audio_write){
-            .data = (const uint8_t *)data + done,
-            .length = chunk,
-            .transferred = 0,
-            .status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED,
+        *out_layout = (struct leonos_text_layout){
+            .text = text,
+            .byte_len = byte_len,
+            .capacity = capacity,
+            .count = count,
+            .total_cells = cells,
+            .total_px = pixels,
+            .glyphs = glyphs,
         };
-        ret = ioctl(audio_fd, LEONOS_IOCTL_AUDIO_WRITE, &request);
-        status = request.status;
-        if (ret < 0) {
-            if (out_status) {
-                *out_status = status;
-            }
-            return done ? (long)done : ret;
-        }
-        if (request.transferred == 0 &&
-            request.status == LEONOS_AUDIO_STATUS_WOULD_BLOCK) {
-            break;
-        }
-        if (request.transferred == 0 || request.transferred > chunk) {
-            if (out_status) {
-                *out_status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
-            }
-            return done ? (long)done : -1;
-        }
-        done += request.transferred;
-        if (request.transferred < chunk) {
-            break;
-        }
     }
-    if (out_status) {
-        *out_status = status;
-    }
-    return (long)done;
-}
-
-int leonos_audio_get_state(struct leonos_audio_state *state)
-{
-    static int audio_fd = -1;
-    if (!state) {
-        return -1;
-    }
-    if (audio_fd < 0) {
-        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
-        if (audio_fd < 0) audio_fd = 3;
-    }
-    return ioctl(audio_fd, LEONOS_IOCTL_AUDIO_GET_STATE, state);
+    return 0;
 }
 
 #define HTTP_REQUEST_MAX 1024U
@@ -3006,43 +2933,54 @@ int leonos_system_shutdown(void)
 
 int leonos_kernel_debug_get_state(uint32_t *flags)
 {
-    struct leonos_kernel_debug_control control = {
-        .version = LEONOS_KERNEL_DEBUG_VERSION,
-        .command = LEONOS_KERNEL_DEBUG_CONTROL_GET_STATE,
-    };
-    int ret;
+    char buffer[128] = {0};
+    int fd;
     if (!flags) return -1;
-    ret = ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
-    if (ret == 0) *flags = control.result_flags;
-    return ret;
+    *flags = 0;
+    fd = open("/system/state/kernel-debug", LEONOS_O_RDONLY, 0);
+    if (fd < 0) return 0;
+    {
+        long got = read(fd, buffer, sizeof(buffer) - 1u);
+        if (got > 0) {
+            if (buffer[0] == '1') *flags |= LEONOS_KERNEL_DEBUG_STATE_ENABLED;
+            for (long i = 0; i + 1 < got; ++i) {
+                if (buffer[i] == 'a' && buffer[i+1] == 'r' && buffer[i+2] == 'm') {
+                    *flags |= LEONOS_KERNEL_DEBUG_STATE_NEXT_BOOT;
+                }
+            }
+        }
+    }
+    close(fd);
+    return 0;
+}
+
+static int leonos_kernel_debug_write(const char *text)
+{
+    int fd = open("/system/state/kernel-debug",
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    uint32_t len = 0;
+    if (fd < 0) return fd;
+    while (text && text[len]) ++len;
+    {
+        long wrote = write(fd, text, len);
+        close(fd);
+        return wrote == (long)len ? 0 : -1;
+    }
 }
 
 int leonos_kernel_debug_set_enabled(int enabled)
 {
-    struct leonos_kernel_debug_control control = {
-        .version = LEONOS_KERNEL_DEBUG_VERSION,
-        .command = LEONOS_KERNEL_DEBUG_CONTROL_SET_ENABLED,
-        .flags = enabled ? LEONOS_KERNEL_DEBUG_STATE_ENABLED : 0U,
-    };
-    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+    return leonos_kernel_debug_write(enabled ? "1\n" : "0\n");
 }
 
 int leonos_kernel_debug_arm_next_boot(void)
 {
-    struct leonos_kernel_debug_control control = {
-        .version = LEONOS_KERNEL_DEBUG_VERSION,
-        .command = LEONOS_KERNEL_DEBUG_CONTROL_ARM_NEXT_BOOT,
-    };
-    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+    return leonos_kernel_debug_write("arm\n");
 }
 
 int leonos_kernel_debug_clear(void)
 {
-    struct leonos_kernel_debug_control control = {
-        .version = LEONOS_KERNEL_DEBUG_VERSION,
-        .command = LEONOS_KERNEL_DEBUG_CONTROL_CLEAR,
-    };
-    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+    return leonos_kernel_debug_write("");
 }
 
 int leonos_readdir(int fd, struct leonos_dir_entry *entry)
@@ -3120,148 +3058,7 @@ int leonos_i18n_set_language(int lang)
     return 0;
 }
 
-int leonos_pty_create(void)
-{
-    return ioctl(3, LEONOS_PTY_IOCTL_CREATE, 0);
-}
-
-int leonos_pty_destroy(uint32_t pty_id)
-{
-    return ioctl(3, LEONOS_PTY_IOCTL_DESTROY, (void *)(uintptr_t)pty_id);
-}
-
-int leonos_pty_read_output(uint32_t pty_id, char *buffer, uint32_t length)
-{
-    struct leonos_pty_io io = {
-        .pty_id = pty_id,
-        .length = length,
-        .buffer = buffer,
-    };
-    return ioctl(3, LEONOS_PTY_IOCTL_READ_OUTPUT, &io);
-}
-
-int leonos_pty_write_input(uint32_t pty_id, const char *buffer, uint32_t length)
-{
-    struct leonos_pty_io io = {
-        .pty_id = pty_id,
-        .length = length,
-        .buffer = (char *)buffer,
-    };
-    return ioctl(3, LEONOS_PTY_IOCTL_WRITE_INPUT, &io);
-}
-
-int leonos_pty_spawn(const char *path, uint32_t pty_id)
-{
-    return leonos_pty_spawn_argv(path, pty_id, 0, 0);
-}
-
-int leonos_pty_spawn_argv(const char *path, uint32_t pty_id,
-                          char *const argv[], char *const envp[])
-{
-    return leonos_pty_spawn_argv_with_fds(path, pty_id, argv, envp, -1, -1, -1);
-}
-
-int leonos_pty_spawn_argv_with_fds(const char *path, uint32_t pty_id,
-                                   char *const argv[], char *const envp[],
-                                   int stdin_fd, int stdout_fd, int stderr_fd)
-{
-    char **owned_envp = 0;
-    char *const *effective_envp = envp;
-    int result;
-    if (!effective_envp) {
-        result = leonos_environment_build(0, &owned_envp);
-        if (result < 0) {
-            return result;
-        }
-        effective_envp = owned_envp;
-    }
-    struct leonos_pty_spawn spawn = {
-        .pty_id = pty_id,
-        .path = path,
-        .argv = argv,
-        .envp = effective_envp,
-        .stdin_fd = stdin_fd,
-        .stdout_fd = stdout_fd,
-        .stderr_fd = stderr_fd,
-    };
-    result = ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
-    leonos_environment_free(owned_envp);
-    return result;
-}
-
-int leonos_pty_self(void)
-{
-    return ioctl(3, LEONOS_PTY_IOCTL_SELF, 0);
-}
-
-int leonos_pty_input_available(void)
-{
-    return ioctl(3, LEONOS_PTY_IOCTL_INPUT_AVAILABLE, 0);
-}
-
 static int leonos_pty_error(int result);
-
-int leonos_pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios)
-{
-    struct leonos_pty_termios_io io;
-    int result;
-    if (!pty_id || !termios) {
-        errno = EINVAL;
-        return -1;
-    }
-    io.pty_id = pty_id;
-    io.action = 0;
-    result = ioctl(3, LEONOS_PTY_IOCTL_OWNER_GET_ATTR, &io);
-    if (result < 0) {
-        return leonos_pty_error(result);
-    }
-    *termios = io.termios;
-    return 0;
-}
-
-int leonos_pty_set_termios(uint32_t pty_id,
-                           const struct leonos_pty_termios *termios)
-{
-    struct leonos_pty_termios_io io;
-    if (!pty_id || !termios) {
-        errno = EINVAL;
-        return -1;
-    }
-    io.pty_id = pty_id;
-    io.action = 0;
-    io.termios = *termios;
-    return leonos_pty_error(ioctl(3, LEONOS_PTY_IOCTL_OWNER_SET_ATTR, &io));
-}
-
-int leonos_pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize)
-{
-    struct leonos_pty_winsize_io io;
-    int result;
-    if (!pty_id || !winsize) {
-        errno = EINVAL;
-        return -1;
-    }
-    io.pty_id = pty_id;
-    result = ioctl(3, LEONOS_PTY_IOCTL_OWNER_GET_WINSIZE, &io);
-    if (result < 0) {
-        return leonos_pty_error(result);
-    }
-    *winsize = io.winsize;
-    return 0;
-}
-
-int leonos_pty_set_winsize(uint32_t pty_id,
-                            const struct leonos_pty_winsize *winsize)
-{
-    struct leonos_pty_winsize_io io;
-    if (!pty_id || !winsize) {
-        errno = EINVAL;
-        return -1;
-    }
-    io.pty_id = pty_id;
-    io.winsize = *winsize;
-    return leonos_pty_error(ioctl(3, LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE, &io));
-}
 
 int posix_openpt(int flags)
 {

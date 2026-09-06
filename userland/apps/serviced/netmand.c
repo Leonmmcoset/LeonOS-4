@@ -1,6 +1,6 @@
 /* netmand, hosted by serviced: network management plane over
- * /run/leonos/net.sock. Data traffic uses AF_INET sockets and never enters
- * this control path. */
+ * /run/leonos/net.sock. SO_PEERCRED is the connection trust boundary.
+ * Data traffic uses AF_INET sockets and never enters this control path. */
 #include <errno.h>
 #include <leonos/fs.h>
 #include <leonos/net.h>

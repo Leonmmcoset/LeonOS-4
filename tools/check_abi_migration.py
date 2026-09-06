@@ -35,6 +35,17 @@ PRIVATE_RE = re.compile(
     r"|LEONOS_IOCTL_GPU_[A-Z0-9_]+"
     r"|leonos_(?:pty|inputm|disk|install|audio|socket|net|device|driver|mouse|gpu)_[A-Za-z0-9_]+)\b"
 )
+DELETED_PRIVATE_RE = re.compile(
+    r"\b(?:LEONOS_GUI_IOCTL|LEONOS_AUTH_IOCTL|LEONOS_INPUTM_IOCTL|"
+    r"LEONOS_STARTUP_IOCTL|LEONOS_FS_IOCTL_|LEONOS_PTY_IOCTL|"
+    r"LEONOS_IOCTL_AUDIO_|LEONOS_IOCTL_NET_|LEONOS_IOCTL_DEVICE_LIST|"
+    r"LEONOS_IOCTL_DRIVER_|LEONOS_IOCTL_SYSTEM_INFO|LEONOS_IOCTL_TIME_|"
+    r"LEONOS_IOCTL_MACHINE_IDENTITY|LEONOS_IOCTL_PERF_INFO|"
+    r"LEONOS_IOCTL_TASK_AFFINITY|LEONOS_TEXT_IOCTL|LEONOS_IOCTL_LIST_DIR|"
+    r"LEONOS_SIGNAL_IOCTL|LEONOS_KERNEL_DEBUG_IOCTL)"
+    r"[A-Z0-9_]*\b"
+)
+
 HARDWARE_RE = re.compile(
     r"\b(?:LEONOS_[A-Z0-9_]*(?:IOCTL|PTY|INPUTM|DISK|INSTALL|AUDIO|NET|DEVICE|DRIVER)"
     r"|LEONOS_IOCTL_GPU_[A-Z0-9_]+"
@@ -78,8 +89,26 @@ def write_report(path: Path, uses: dict[str, set[str]]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def strict_failures(uses: dict[str, set[str]]) -> list[str]:
+def deleted_private_uses() -> list[str]:
     failures: list[str] = []
+    for relative in tracked_files():
+        path = Path(relative)
+        if path.suffix not in TEXT_SUFFIXES or relative.startswith(EXCLUDED_PREFIXES):
+            continue
+        if relative.startswith("docs/") or relative.startswith("tools/") or \
+                relative.startswith("los2w/") or relative == "tools/check_abi_migration.py":
+            continue
+        try:
+            text = (ROOT / relative).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for match in DELETED_PRIVATE_RE.finditer(text):
+            failures.append(f"{relative}: deleted private ioctl symbol {match.group(0)}")
+    return sorted(failures)
+
+
+def strict_failures(uses: dict[str, set[str]]) -> list[str]:
+    failures: list[str] = list(deleted_private_uses())
     for symbol, paths in uses.items():
         for relative in paths:
             # Kernel/libc transition code is allowed until the migration table
