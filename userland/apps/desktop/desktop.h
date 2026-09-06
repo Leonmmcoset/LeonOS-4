@@ -5,7 +5,7 @@
 #include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/i18n.h>
-#include <leonos/inputm.h>
+#include <leonos/text_input.h>
 #include <leonos/license.h>
 #include <leonos/launch.h>
 #include <leonos/app.h>
@@ -215,9 +215,9 @@ struct desktop_item {
 };
 
 struct desktop_inputm_entry {
-    char id[LEONOS_INPUTM_ID_LEN];
+    char id[TEXT_INPUT_ID_LEN];
     char path[LEONOS_FS_PATH_LEN];
-    char abbreviation[LEONOS_INPUTM_ABBREV_LEN];
+    char abbreviation[TEXT_INPUT_ABBREV_LEN];
     uint32_t startup_mode;
     uint32_t order;
     uint8_t enabled;
@@ -342,9 +342,9 @@ extern struct leonos_task_info task_infos[LEONOS_TASK_MAX];
 extern uint32_t task_info_count;
 extern uint64_t task_info_tick;
 extern unsigned long last_task_refresh;
-extern struct desktop_inputm_entry desktop_inputm_entries[LEONOS_INPUTM_MAX_PROVIDERS + 1U];
+extern struct desktop_inputm_entry desktop_inputm_entries[TEXT_INPUT_MAX_PROVIDERS + 1U];
 extern uint32_t desktop_inputm_entry_count;
-extern struct leonos_inputm_state desktop_inputm_state;
+extern text_input_state_t desktop_inputm_state;
 extern uint8_t desktop_inputm_menu_open;
 extern char desktop_inputm_status[96];
 extern struct leonos_ui_surface ui;

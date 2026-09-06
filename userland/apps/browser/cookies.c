@@ -798,9 +798,9 @@ static int browser_http_request_with_cookies(
         if (response_headers && response_headers_capacity) {
             cookie_accept_response_headers(current_url, response_headers);
         }
-        if (response->net_status != LEONOS_NET_STATUS_OK ||
+        if (response->net_status != NET_SERVICE_STATUS_OK ||
             !browser_http_is_redirect(response->http_status)) {
-            if (response->net_status == LEONOS_NET_STATUS_OK &&
+            if (response->net_status == NET_SERVICE_STATUS_OK &&
                 response->http_status == 401U && !auth_retry_done &&
                 browser_auth_retry_from_challenge(current_url,
                                                   response_headers)) {
@@ -817,7 +817,7 @@ static int browser_http_request_with_cookies(
         if (redirect_count >= LEONOS_HTTP_DEFAULT_REDIRECTS ||
             leonos_http_resolve_url(current_url, location,
                                     next_url, sizeof(next_url)) < 0) {
-            response->net_status = LEONOS_NET_STATUS_HTTP_FAILED;
+            response->net_status = NET_SERVICE_STATUS_HTTP_FAILED;
             return 0;
         }
         copy_text(current_url, sizeof(current_url), next_url);

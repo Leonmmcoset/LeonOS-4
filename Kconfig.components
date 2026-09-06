@@ -235,6 +235,25 @@ config LEON_COMPONENT_APP_SMPTEST_SDK
     default n
     depends on LEON_COMPONENT_APP_SMPTEST_BUILD
 
+config LEON_COMPONENT_APP_ABITEST_BUILD
+    bool "Build Linux ABI runtime tests"
+    default y
+
+config LEON_COMPONENT_APP_ABITEST_IMAGE
+    bool "Include Linux ABI runtime tests in system images"
+    default y
+    depends on LEON_COMPONENT_APP_ABITEST_BUILD
+
+config LEON_COMPONENT_APP_ABITEST_ENTRY
+    bool "Generate a desktop entry for Linux ABI runtime tests"
+    default n
+    depends on LEON_COMPONENT_APP_ABITEST_BUILD
+
+config LEON_COMPONENT_APP_ABITEST_SDK
+    bool "Include Linux ABI runtime tests in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_ABITEST_BUILD
+
 config LEON_COMPONENT_APP_BUGTEST_BUILD
     bool "Build Bug test"
     default y
@@ -507,6 +526,25 @@ config LEON_COMPONENT_APP_GLXGEARS_SDK
     bool "Include PortableGL renderer test in the developer SDK"
     default n
     depends on LEON_COMPONENT_APP_GLXGEARS_BUILD
+
+config LEON_COMPONENT_APP_LEONMMCOSSET_BUILD
+    bool "Build Leonmmcoset easter egg"
+    default y
+
+config LEON_COMPONENT_APP_LEONMMCOSSET_IMAGE
+    bool "Include Leonmmcoset easter egg in system images"
+    default y
+    depends on LEON_COMPONENT_APP_LEONMMCOSSET_BUILD
+
+config LEON_COMPONENT_APP_LEONMMCOSSET_ENTRY
+    bool "Generate a desktop entry for Leonmmcoset easter egg"
+    default n
+    depends on LEON_COMPONENT_APP_LEONMMCOSSET_BUILD
+
+config LEON_COMPONENT_APP_LEONMMCOSSET_SDK
+    bool "Include Leonmmcoset easter egg in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_LEONMMCOSSET_BUILD
 
 config LEON_COMPONENT_APP_XIAOBAI_BUILD
     bool "Build Xiaobai easter egg"

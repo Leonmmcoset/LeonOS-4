@@ -12,6 +12,7 @@ libc，但新应用不得增加对私有硬件入口的依赖。Linux 兼容范�
 | `leonos_pty_*` 和私有 PTY ioctl | Unix98 PTY + `termios`/`TIOCGWINSZ` | 进行中 | libc 已提供 `posix_openpt/openpty/forkpty`；新的程序应使用 `/dev/ptmx`、`/dev/pts/<id>`、`/dev/tty`，旧入口仅作过渡 |
 | `leonos_socket_*` 网络包装 | POSIX socket fd | 进行中 | `AF_UNIX/SOCK_STREAM` 已接入 socket syscall、FD 生命周期和 poll；IPv4 网络仍由过渡层驱动 |
 | `LEONOS_GUI_IOCTL_*` | 版本化 GUI IPC + SDK GUI 库 | 设计完成，迁移中 | GUI 不属于 POSIX，内核 ioctl 仅作为过渡实现 |
+| `leonos_gpu_*`/`LEONOS_IOCTL_GPU_*`（fd 3） | 版本化 GPU SDK + 设备/服务通道 | 迁移中 | 采用方案 A：`leonos_gpu_*` 仅为 fd 3 过渡入口；新 SDK 使用版本化 GPU 客户端 API，删除里程碑见阶段状态 |
 | 帧缓冲私有 ioctl | Linux fbdev UAPI (`/dev/fb0`) | 基础完成 | `/dev/fb0` 支持 mmap 以及 `FBIOGET_VSCREENINFO`、`FBIOGET_FSCREENINFO`、`FBIOPUT_VSCREENINFO`；绘制扩展仍由 GUI 服务负责 |
 | 原始键盘和鼠标输入 | evdev (`/dev/input/event*`) | 基础完成 | `/dev/input/event0` 是键盘、`event1` 是鼠标；独立 FD 游标支持 `read`、`O_NONBLOCK`、`poll` 和常用 `EVIOC*` 查询 |
 | 输入法管理私有 ioctl | 版本化 GUI 文本输入服务 | 迁移中 | 输入法不是硬件事件设备；过渡期改走 `/dev/input-method`，不再借用 `event0`，后续移入 GUI Unix socket 协议 |
@@ -63,6 +64,14 @@ libc，但新应用不得增加对私有硬件入口的依赖。Linux 兼容范�
 - [x] 磁盘工具迁移：BusyBox、installer、gptinit、diskmgr 使用块设备和 `mount(2)`
 - [ ] 应用迁移完成并启用严格旧 ABI 检查（Terminal、通用启动器、TTY OOBE/login、bugtest 已迁移）
 - [x] 删除公开磁盘 ioctl 和过渡头文件；内部启动期存储辅助代码不导出给用户态
+
+## GPU Rendering 子集
+
+GPU 渲染不属于 POSIX。当前 `syscall_gpu_dispatch()` 只识别 `LINUX_SYS_IOCTL`，
+没有新增 syscall 编号；`userland/libc/src/gpu.c` 的 `leonos_gpu_*` 兼容入口使用
+fd 3 控制通道，属于迁移表中的过渡实现（方案 A）。内核上下文按进程隔离，
+请求结构以 `size/version` 开头。应用应使用后续发布的版本化 GPU SDK 客户端
+函数；`leonos_gpu_*` 在应用消费者清零、严格检查启用并提升 GPU ABI 版本后删除。
 
 ## Socket 子集
 

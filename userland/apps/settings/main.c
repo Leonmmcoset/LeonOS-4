@@ -3,7 +3,7 @@
 #include <leonos/fs.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
-#include <leonos/inputm.h>
+#include <leonos/text_input.h>
 #include <leonos/launch.h>
 #include <leonos/license.h>
 #include <leonos/psf_font.h>
@@ -31,7 +31,7 @@
 #define SETTINGS_SERVICES_STATE_PATH "/var/run/services.state"
 #define SETTINGS_SERVICES_CONFIG_MAX 512U
 #define SETTINGS_INPUTM_CONFIG_MAX 2048U
-#define SETTINGS_INPUTM_ROWS (LEONOS_INPUTM_MAX_PROVIDERS + 1U)
+#define SETTINGS_INPUTM_ROWS (TEXT_INPUT_MAX_PROVIDERS + 1U)
 #define SETTINGS_INPUTM_OPTION_COUNT 4U
 #define SETTINGS_INPUTM_OPTION_KEY_LEN 64U
 #define SETTINGS_INPUTM_OPTION_LABEL_LEN 64U
@@ -77,7 +77,7 @@ static char ntp_runtime_state[16] = "unknown";
 static char ntp_runtime_detail[96] = "runtime state unavailable";
 
 struct settings_inputm_entry {
-    char id[LEONOS_INPUTM_ID_LEN];
+    char id[TEXT_INPUT_ID_LEN];
     char path[LEONOS_FS_PATH_LEN];
     char settings_path[LEONOS_FS_PATH_LEN];
     char settings_app[LEONOS_FS_PATH_LEN];
@@ -97,7 +97,7 @@ struct settings_inputm_option {
 static struct settings_inputm_entry inputm_entries[SETTINGS_INPUTM_ROWS];
 static uint32_t inputm_entry_count;
 static uint32_t inputm_selected;
-static char inputm_default[LEONOS_INPUTM_ID_LEN] = "en";
+static char inputm_default[TEXT_INPUT_ID_LEN] = "en";
 static char inputm_hotkey[16] = "win-space";
 static struct settings_inputm_option inputm_options[SETTINGS_INPUTM_OPTION_COUNT];
 static uint32_t inputm_option_count;
@@ -869,7 +869,7 @@ static int inputm_append_config(const char *key, const char *value)
     wrote = write(fd, line, pos);
     close(fd);
     if (wrote == (long)pos) {
-        (void)leonos_inputm_notify_config(current_user.uid);
+        (void)text_input_notify_config(current_user.uid);
         return 1;
     }
     return 0;
@@ -1057,7 +1057,7 @@ static void inputm_load_settings(void)
     inputm_entries[0] = (struct settings_inputm_entry){0};
     copy_text(inputm_entries[0].id, sizeof(inputm_entries[0].id), "en");
     inputm_entries[0].enabled = 1;
-    inputm_entries[0].startup_mode = LEONOS_INPUTM_START_MANUAL;
+    inputm_entries[0].startup_mode = TEXT_INPUT_START_MANUAL;
     inputm_entry_count = 1;
     inputm_selected = 0;
     copy_text(inputm_default, sizeof(inputm_default), "en");
@@ -1085,8 +1085,8 @@ static void inputm_load_settings(void)
     if (inputm_config_get(config, "provider_count", value, sizeof(value))) {
         configured = inputm_parse_u32(value, 0);
     }
-    if (configured > LEONOS_INPUTM_MAX_PROVIDERS) {
-        configured = LEONOS_INPUTM_MAX_PROVIDERS;
+    if (configured > TEXT_INPUT_MAX_PROVIDERS) {
+        configured = TEXT_INPUT_MAX_PROVIDERS;
     }
     for (uint32_t i = 0; i < configured && inputm_entry_count < SETTINGS_INPUTM_ROWS; ++i) {
         char key[48];
@@ -1100,7 +1100,7 @@ static void inputm_load_settings(void)
         copy_text(entry->id, sizeof(entry->id), value);
         entry->config_index = i;
         entry->enabled = 1;
-        entry->startup_mode = LEONOS_INPUTM_START_ON_DEMAND;
+        entry->startup_mode = TEXT_INPUT_START_ON_DEMAND;
         entry->order = i + 1U;
         inputm_provider_key(key, sizeof(key), i, "path");
         if (inputm_config_get(config, key, value, sizeof(value))) {
@@ -1120,9 +1120,9 @@ static void inputm_load_settings(void)
         }
         inputm_provider_key(key, sizeof(key), i, "startup");
         if (inputm_config_get(config, key, value, sizeof(value))) {
-            uint32_t mode = inputm_parse_u32(value, LEONOS_INPUTM_START_ON_DEMAND);
-            entry->startup_mode = mode <= LEONOS_INPUTM_START_ON_DEMAND ? mode :
-                                  LEONOS_INPUTM_START_ON_DEMAND;
+            uint32_t mode = inputm_parse_u32(value, TEXT_INPUT_START_ON_DEMAND);
+            entry->startup_mode = mode <= TEXT_INPUT_START_ON_DEMAND ? mode :
+                                  TEXT_INPUT_START_ON_DEMAND;
         }
         inputm_provider_key(key, sizeof(key), i, "order");
         if (inputm_config_get(config, key, value, sizeof(value))) {
@@ -1143,10 +1143,10 @@ static void inputm_load_settings(void)
 
 static const char *inputm_startup_label(uint32_t mode)
 {
-    if (mode == LEONOS_INPUTM_START_LOGIN) {
+    if (mode == TEXT_INPUT_START_LOGIN) {
         return T("At sign-in", "登录时启动");
     }
-    if (mode == LEONOS_INPUTM_START_ON_DEMAND) {
+    if (mode == TEXT_INPUT_START_ON_DEMAND) {
         return T("On demand", "按需启动");
     }
     return T("Manual", "手动启动");
@@ -1365,9 +1365,9 @@ static void draw_input_methods_page(struct leonos_ui_surface *ui)
         {T("Startup", "启动方式"), 150},
     };
     struct leonos_ui_dropdown_item startup_items[3] = {
-        {T("Manual", "手动"), LEONOS_INPUTM_START_MANUAL, 0},
-        {T("At sign-in", "登录时"), LEONOS_INPUTM_START_LOGIN, 0},
-        {T("On demand", "按需"), LEONOS_INPUTM_START_ON_DEMAND, 0},
+        {T("Manual", "手动"), TEXT_INPUT_START_MANUAL, 0},
+        {T("At sign-in", "登录时"), TEXT_INPUT_START_LOGIN, 0},
+        {T("On demand", "按需"), TEXT_INPUT_START_ON_DEMAND, 0},
     };
     struct leonos_ui_dropdown_item hotkey_items[2] = {
         {"Win + Space", 0, 0},
@@ -2050,9 +2050,9 @@ static void handle_input_methods_click(int32_t x, int32_t y)
         inputm_selected < inputm_entry_count ? &inputm_entries[inputm_selected] : 0;
     if (active_drop == DROP_INPUTM_STARTUP && entry) {
         struct leonos_ui_dropdown_item items[3] = {
-            {T("Manual", "手动"), LEONOS_INPUTM_START_MANUAL, 0},
-            {T("At sign-in", "登录时"), LEONOS_INPUTM_START_LOGIN, 0},
-            {T("On demand", "按需"), LEONOS_INPUTM_START_ON_DEMAND, 0},
+            {T("Manual", "手动"), TEXT_INPUT_START_MANUAL, 0},
+            {T("At sign-in", "登录时"), TEXT_INPUT_START_LOGIN, 0},
+            {T("On demand", "按需"), TEXT_INPUT_START_ON_DEMAND, 0},
         };
         uint32_t id = 0;
         if (leonos_ui_dropdown_hit(x, y, 510, 184, 156, items, 3,
@@ -2060,7 +2060,7 @@ static void handle_input_methods_click(int32_t x, int32_t y)
             char key[48];
             char value[4];
             active_drop = DROP_NONE;
-            if (id <= LEONOS_INPUTM_START_ON_DEMAND) {
+            if (id <= TEXT_INPUT_START_ON_DEMAND) {
                 entry->startup_mode = id;
                 inputm_provider_key(key, sizeof(key), entry->config_index, "startup");
                 value[0] = (char)('0' + id);
@@ -2068,7 +2068,7 @@ static void handle_input_methods_click(int32_t x, int32_t y)
                 inputm_set_status(inputm_append_config(key, value),
                                   T("Startup behavior saved", "启动方式已保存"),
                                   T("Could not save input method", "无法保存输入法设置"));
-                if (id == LEONOS_INPUTM_START_LOGIN) {
+                if (id == TEXT_INPUT_START_LOGIN) {
                     inputm_request_login_start(entry);
                 }
             }
@@ -2121,7 +2121,7 @@ static void handle_input_methods_click(int32_t x, int32_t y)
             (void)inputm_append_config("default", "en");
         }
         if (!entry->enabled) {
-            (void)leonos_inputm_set_active(current_user.uid, "en");
+            (void)text_input_set_active(current_user.uid, "en");
         }
         return;
     }

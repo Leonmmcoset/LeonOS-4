@@ -4,6 +4,7 @@
 #include <ntclks/gui_ipc.h>
 #include <ntclks/pci.h>
 #include <ntclks/port.h>
+#include "svga/device.h"
 
 static struct framebuffer fb;
 static void framebuffer_set_default_format(void);
@@ -499,6 +500,7 @@ static void framebuffer_vmware_fifo_init(void)
     }
     vmware_svga.fifo_full_logged = false;
     vmware_svga.fifo_present = true;
+    svga_platform_bind(vmware_svga.io_port, vmware_svga.fifo, mem_size);
     fb.auxiliary_reservation_start = mem_start;
     fb.auxiliary_reservation_bytes = mem_size;
 }
@@ -506,28 +508,32 @@ static void framebuffer_vmware_fifo_init(void)
 static int framebuffer_vmware_fifo_update(uint32_t x, uint32_t y,
                                           uint32_t width, uint32_t height)
 {
+    if (svga.available) {
+        return svga_update(x, y, width, height) == 0;
+    }
     uint32_t next;
     uint32_t stop;
     uint32_t bytes = VMWARE_SVGA_UPDATE_WORDS * sizeof(uint32_t);
     uint32_t index;
+    uint32_t fifo_min = (svga.bound && svga.fifo_ready) ? svga.min : vmware_svga.fifo_min;
 
     if (!vmware_svga.fifo_present || !vmware_svga.fifo || !width || !height) {
         return 0;
     }
     next = vmware_svga.fifo[VMWARE_SVGA_FIFO_NEXT_CMD];
     stop = vmware_svga.fifo[VMWARE_SVGA_FIFO_STOP];
-    if (next < vmware_svga.fifo_min || next >= vmware_svga.fifo_max ||
-        stop < vmware_svga.fifo_min || stop >= vmware_svga.fifo_max) {
+    if (next < fifo_min || next >= vmware_svga.fifo_max ||
+        stop < fifo_min || stop >= vmware_svga.fifo_max) {
         vmware_svga.fifo_present = false;
         console_printf("[ntclks] VMware SVGA FIFO state invalid next=%u stop=%u\n",
                        next, stop);
         return 0;
     }
     if (next + bytes >= vmware_svga.fifo_max) {
-        if (vmware_svga.fifo_min + bytes >= stop) {
+        if (fifo_min + bytes >= stop) {
             goto full;
         }
-        next = vmware_svga.fifo_min;
+        next = fifo_min;
     } else if (next < stop && next + bytes >= stop) {
         goto full;
     }
@@ -753,8 +759,13 @@ static int framebuffer_vmware_set_mode(uint32_t width, uint32_t height)
     uint32_t fb_max_size;
     uint32_t fb_size;
     uint64_t usable_bytes;
+    uint64_t svga_flags = 0;
+    bool restart_3d = svga.available;
 
     if (!vmware_svga.present) {
+        return 0;
+    }
+    if (restart_3d && svga_mode_begin(&svga_flags) != 0) {
         return 0;
     }
     fb.auxiliary_reservation_start = 0;
@@ -766,9 +777,12 @@ static int framebuffer_vmware_set_mode(uint32_t width, uint32_t height)
     vmware_svga_write(VMWARE_SVGA_REG_BITS_PER_PIXEL, 32u);
     vmware_svga_write(VMWARE_SVGA_REG_PSEUDOCOLOR, 0u);
     vmware_svga_write(VMWARE_SVGA_REG_ENABLE, 1u);
-    /* CONFIG_DONE is asserted by framebuffer_vmware_fifo_init after the
-     * mode has been accepted and the FIFO has been rebuilt for this mode. */
-    framebuffer_vmware_fifo_init();
+    /* Rebuild the legacy FIFO before 3D is initialized. When 3D was already
+     * active, mode_begin left the FIFO disabled and mode_end restores the
+     * extended register block after the mode is accepted. */
+    if (!restart_3d) {
+        framebuffer_vmware_fifo_init();
+    }
 
     actual_width = vmware_svga_read(VMWARE_SVGA_REG_WIDTH);
     actual_height = vmware_svga_read(VMWARE_SVGA_REG_HEIGHT);
@@ -790,10 +804,12 @@ static int framebuffer_vmware_set_mode(uint32_t width, uint32_t height)
                        width, height, actual_width, actual_height, depth, bpp,
                        pseudocolor, pitch, (void *)(uintptr_t)fb_start, fb_offset,
                        fb_size, fb_max_size);
+        if (restart_3d) svga_mode_end(svga_flags);
         return 0;
     }
     usable_bytes = (uint64_t)fb_max_size - fb_offset;
     if ((uint64_t)pitch * height > usable_bytes) {
+        if (restart_3d) svga_mode_end(svga_flags);
         return 0;
     }
     fb.pixels = (uint32_t *)(uintptr_t)((uint64_t)fb_start + fb_offset);
@@ -814,7 +830,13 @@ static int framebuffer_vmware_set_mode(uint32_t width, uint32_t height)
                    fb.width, fb.height, depth, bpp, pseudocolor,
                    fb.pitch, (void *)(uintptr_t)fb_start, fb_offset, fb_size,
                    fb_max_size);
-    framebuffer_vmware_sync();
+    if (restart_3d) {
+        svga_mode_end(svga_flags);
+        vmware_svga.fifo_min = svga.min;
+        vmware_svga.fifo_max = svga.fifo_bytes;
+    } else {
+        framebuffer_vmware_sync();
+    }
     return 1;
 }
 

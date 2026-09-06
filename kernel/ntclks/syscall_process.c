@@ -3,34 +3,38 @@
  * priorities, and resource limits.
  */
 #include <ntclks/sched.h>
+#include <ntclks/signal.h>
 #include <ntclks/syscall.h>
 #include <ntclks/usercopy.h>
+#include <leonos/signal.h>
 #include <stdint.h>
-
-struct linux_sigaction_user {
-    uint64_t handler;
-    uint64_t mask;
-    uint32_t flags;
-    uint32_t reserved;
-};
 
 int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
                              uint64_t action_ptr, uint64_t old_action_ptr,
                              uint64_t mask_ptr, uint64_t sigset_size)
 {
     struct task *task = sched_current_task();
-    uint32_t bit;
     (void)sigset_size;
+    if (!task) return -LEONOS_EPERM;
+
     if (number == LINUX_SYS_RT_SIGSUSPEND) {
-        if (signal_number && !user_range_ok(signal_number, sizeof(uint64_t))) return -LEONOS_EFAULT;
-        if (action_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
+        uint64_t requested_mask;
+        if (action_ptr != 0 && action_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
+        if (!signal_number || !user_range_ok(signal_number, sizeof(uint64_t))) {
+            return -LEONOS_EFAULT;
+        }
+        requested_mask = *(const uint64_t *)(uintptr_t)signal_number;
+        task->blocked_signals = (uint32_t)requested_mask;
+        task->blocked_signals &= ~((1u << 9) | (1u << 17));
+        /* The return-to-user path below the syscall dispatcher installs any
+         * now-unblocked handler frame before sigsuspend observes EINTR. */
         return -LEONOS_EINTR;
     }
-    if (!task) return -LEONOS_EPERM;
+
     if (number == LINUX_SYS_RT_SIGPROCMASK) {
         uint64_t set = 0;
         uint64_t old = task->blocked_signals;
-        if (mask_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
+        if (mask_ptr != 0 && mask_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
         if (action_ptr) {
             if (!user_range_ok(action_ptr, sizeof(uint64_t))) return -LEONOS_EFAULT;
             set = *(const uint64_t *)(uintptr_t)action_ptr;
@@ -39,41 +43,46 @@ int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
             if (!user_range_ok(old_action_ptr, sizeof(uint64_t))) return -LEONOS_EFAULT;
             *(uint64_t *)(uintptr_t)old_action_ptr = old;
         }
-        if (signal_number == 0) task->blocked_signals |= (uint32_t)set;
-        else if (signal_number == 1) task->blocked_signals &= ~(uint32_t)set;
-        else if (signal_number == 2) task->blocked_signals = (uint32_t)set;
+        /* Picolibc/libc pass the Linux values directly:
+         * SIG_SETMASK=0, SIG_BLOCK=1, SIG_UNBLOCK=2. */
+        if (signal_number == 0) task->blocked_signals = (uint32_t)set;
+        else if (signal_number == 1) task->blocked_signals |= (uint32_t)set;
+        else if (signal_number == 2) task->blocked_signals &= ~(uint32_t)set;
         else return -LEONOS_EINVAL;
         task->blocked_signals &= ~((1u << 9) | (1u << 17));
         return 0;
     }
-    if (signal_number == 0 || signal_number >= 32 || signal_number == 9 ||
-        signal_number == 17) return -LEONOS_EINVAL;
-    bit = 1u << (uint32_t)signal_number;
+
     if (number == LINUX_SYS_RT_SIGACTION) {
-        struct linux_sigaction_user current = {0};
-        struct linux_sigaction_user *action;
-        struct linux_sigaction_user *old_action;
-        if (mask_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
-        if (action_ptr && !user_range_ok(action_ptr, sizeof(current))) return -LEONOS_EFAULT;
-        if (old_action_ptr && !user_range_ok(old_action_ptr, sizeof(current))) return -LEONOS_EFAULT;
+        struct leonos_linux_sigaction request = {0};
+        struct kernel_signal_action previous = {0};
+        struct leonos_linux_sigaction *old_action;
+        int ret;
+
+        if (signal_number == 0 || signal_number >= 32 || signal_number == 9 ||
+            signal_number == 17) return -LEONOS_EINVAL;
+        if (mask_ptr != 0 && mask_ptr < sizeof(uint64_t)) return -LEONOS_EINVAL;
+        if (action_ptr && !user_range_ok(action_ptr, sizeof(request))) return -LEONOS_EFAULT;
+        if (old_action_ptr && !user_range_ok(old_action_ptr, sizeof(request))) return -LEONOS_EFAULT;
         if (action_ptr) {
-            action = (struct linux_sigaction_user *)(uintptr_t)action_ptr;
-            if (action->handler != 0 && action->handler != 1) return -LEONOS_ENOSYS;
+            request = *(const struct leonos_linux_sigaction *)(uintptr_t)action_ptr;
+            if (request.handler != 0 && request.handler != 1 &&
+                !request.restorer) return -LEONOS_EFAULT;
         }
-        current.handler = (task->ignored_signals & bit) ? 1u : 0u;
-        current.mask = 0;
-        current.flags = 0;
+        ret = kernel_signal_set_action(task, (int)signal_number,
+                                       action_ptr ? request.handler : 0,
+                                       action_ptr ? request.mask : 0,
+                                       action_ptr ? request.flags : 0,
+                                       action_ptr ? request.restorer : 0,
+                                       old_action_ptr ? &previous : NULL);
+        if (ret < 0) return -LEONOS_EINVAL;
         if (old_action_ptr) {
-            old_action = (struct linux_sigaction_user *)(uintptr_t)old_action_ptr;
-            *old_action = current;
-        }
-        if (action_ptr) {
-            if (((struct linux_sigaction_user *)(uintptr_t)action_ptr)->handler == 1u) {
-                task->ignored_signals |= bit;
-                task->pending_signals &= ~bit;
-            } else {
-                task->ignored_signals &= ~bit;
-            }
+            old_action = (struct leonos_linux_sigaction *)(uintptr_t)old_action_ptr;
+            old_action->handler = previous.handler;
+            old_action->mask = previous.mask;
+            old_action->flags = previous.flags;
+            old_action->reserved = 0;
+            old_action->restorer = previous.restorer;
         }
         return 0;
     }

@@ -15,7 +15,9 @@
 struct pty_session {
     uint8_t used;
     uint8_t console;
-    uint8_t reserved[2];
+    uint8_t hungup;
+    uint8_t output_reported;
+    uint8_t input_reported;
     uint32_t owner_pid;
     uint32_t process_session;
     uint32_t foreground_pgid;
@@ -35,6 +37,7 @@ struct pty_session {
 static struct pty_session sessions[PTY_MAX];
 static uint32_t console_pty_id;
 static uint8_t console_shift_down;
+static uint8_t console_caps_lock;
 static uint8_t console_ctrl_down;
 static uint8_t console_alt_down;
 
@@ -116,6 +119,7 @@ void pty_init(void)
 {
     console_pty_id = 0;
     console_shift_down = 0;
+    console_caps_lock = 0;
     console_ctrl_down = 0;
     console_alt_down = 0;
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
@@ -183,8 +187,10 @@ static int console_key_to_bytes(uint8_t keycode, char *buffer, uint32_t *length)
     case 52: ch = '.'; break; case 53: ch = '/'; break;
     default: return 0;
     }
-    if (console_shift_down && ch >= 'a' && ch <= 'z') {
-        ch = (char)(ch - 'a' + 'A');
+    if (ch >= 'a' && ch <= 'z') {
+        if ((console_shift_down ? 1 : 0) != (console_caps_lock ? 1 : 0)) {
+            ch = (char)(ch - 'a' + 'A');
+        }
     } else if (console_shift_down) {
         switch (ch) {
         case '1': ch = '!'; break; case '2': ch = '@'; break; case '3': ch = '#'; break;
@@ -212,6 +218,12 @@ void pty_console_key_event(uint8_t keycode, uint8_t pressed)
     uint32_t length;
     if (keycode == 42 || keycode == 54) {
         console_shift_down = pressed ? 1 : 0;
+        return;
+    }
+    if (keycode == 58) {
+        if (pressed) {
+            console_caps_lock ^= 1;
+        }
         return;
     }
     if (keycode == 29 || keycode == 116) {
@@ -256,6 +268,15 @@ void pty_console_key_event(uint8_t keycode, uint8_t pressed)
 int32_t pty_create(uint32_t owner_pid)
 {
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
+        if (sessions[i].used && sessions[i].hungup &&
+            !sessions[i].console &&
+            sched_pty_reference_count(i + 1U) == 0) {
+            for (uint32_t j = 0; j < sizeof(sessions[i]); ++j) {
+                ((uint8_t *)&sessions[i])[j] = 0;
+            }
+        }
+    }
+    for (uint32_t i = 0; i < PTY_MAX; ++i) {
         if (!sessions[i].used) {
             sessions[i].used = 1;
             sessions[i].owner_pid = owner_pid;
@@ -298,6 +319,10 @@ int32_t pty_create(uint32_t owner_pid)
                 if (!sessions[i].winsize.ws_row) sessions[i].winsize.ws_row = 24;
                 if (!sessions[i].winsize.ws_col) sessions[i].winsize.ws_col = 80;
             }
+            console_printf("[ntclks] pty create owner=%u id=%u session=%u pgrp=%u\n",
+                           owner_pid, (uint32_t)(i + 1),
+                           sessions[i].process_session,
+                           sessions[i].foreground_pgid);
             return (int32_t)(i + 1);
         }
     }
@@ -305,7 +330,27 @@ int32_t pty_create(uint32_t owner_pid)
 }
 
 /**
- * @brief Hang up the PTY's attached tasks and free the session; returns 0, or -22 if not owned.
+ * @brief Reclaim a hung-up PTY once no endpoint or controlling-TTY reference remains.
+ */
+void pty_reap_hungup(uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || !session->hungup || session->console) {
+        return;
+    }
+    if (sched_pty_reference_count(pty_id) == 0) {
+        for (uint32_t j = 0; j < sizeof(*session); ++j) {
+            ((uint8_t *)session)[j] = 0;
+        }
+    }
+}
+
+/**
+ * @brief Close the master side of pty_id using Unix98 hangup semantics.
+ *
+ * The session is not freed while slave descriptors remain open. The slave
+ * keeps draining buffered input, then reports EOF/POLLHUP and rejects writes
+ * with EIO. SIGHUP is delivered to the foreground process group.
  */
 int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
 {
@@ -313,10 +358,16 @@ int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
     if (!session || session->owner_pid != owner_pid) {
         return -22;
     }
-    (void)sched_hangup_user_tasks_for_pty(pty_id, owner_pid);
-    for (uint32_t j = 0; j < sizeof(*session); ++j) {
-        ((uint8_t *)session)[j] = 0;
+    if (session->hungup) {
+        return 0;
     }
+    session->hungup = 1;
+    session->owner_pid = 0;
+    if (session->foreground_pgid) {
+        (void)sched_signal_process_group(owner_pid, session->foreground_pgid, 1);
+    }
+    (void)sched_hangup_user_tasks_for_pty(pty_id, owner_pid);
+    pty_reap_hungup(pty_id);
     return 0;
 }
 
@@ -337,6 +388,12 @@ int pty_is_active(uint32_t pty_id)
     return find_session(pty_id) != 0;
 }
 
+int pty_is_hungup(uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    return session && session->hungup;
+}
+
 /**
  * @brief Drain up to length bytes of terminal output for the owner; returns bytes read, or -22 if not owned.
  */
@@ -349,9 +406,16 @@ int64_t pty_read_output(uint32_t owner_pid, uint32_t pty_id, char *buffer, uint3
     if (!buffer || length == 0) {
         return 0;
     }
-    return (int64_t)ring_pop(session->output, PTY_OUTPUT_CAP,
-                             &session->output_head, &session->output_tail,
-                             buffer, length);
+    {
+        int64_t queued = (int64_t)ring_pop(session->output, PTY_OUTPUT_CAP,
+                                           &session->output_head,
+                                           &session->output_tail,
+                                           buffer, length);
+        if (queued != 0 || !session->hungup) {
+            return queued;
+        }
+    }
+    return 0;
 }
 
 /**
@@ -364,8 +428,16 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
     if (!session || (owner_pid && session->owner_pid != owner_pid)) {
         return -22;
     }
+    if (session->hungup) {
+        return -5;
+    }
     if (!buffer || length == 0) {
         return 0;
+    }
+    if (!session->console && !session->input_reported) {
+        session->input_reported = 1;
+        console_printf("[ntclks] pty=%u first master input owner=%u len=%u\n",
+                       pty_id, session->owner_pid, length);
     }
     for (uint32_t i = 0; i < length; ++i) {
         char input = buffer[i];
@@ -448,9 +520,18 @@ int64_t pty_read_input(uint32_t pty_id, char *buffer, uint32_t length)
     if (!buffer || length == 0) {
         return 0;
     }
-    return (int64_t)ring_pop(session->input, PTY_INPUT_CAP,
-                             &session->input_head, &session->input_tail,
-                             buffer, length);
+    {
+        int64_t queued = (int64_t)ring_pop(session->input, PTY_INPUT_CAP,
+                                           &session->input_head,
+                                           &session->input_tail,
+                                           buffer, length);
+        if (queued != 0 || !session->hungup) {
+            return queued;
+        }
+    }
+    /* Unix98: a slave whose master has closed drains queued data, then every
+     * subsequent read observes end-of-file. */
+    return 0;
 }
 
 /**
@@ -487,12 +568,20 @@ int64_t pty_write_output(uint32_t pty_id, const char *buffer, uint32_t length)
     if (!session) {
         return -5;
     }
+    if (session->hungup) {
+        return -5; /* EIO */
+    }
     if (!buffer || length == 0) {
         return 0;
     }
     if (session->console) {
         console_write_tty_len(buffer, length);
         return (int64_t)length;
+    }
+    if (!session->output_reported) {
+        session->output_reported = 1;
+        console_printf("[ntclks] pty=%u first slave output len=%u\n",
+                       pty_id, length);
     }
     return (int64_t)ring_push(session->output, PTY_OUTPUT_CAP,
                               &session->output_head, &session->output_tail,
@@ -598,6 +687,29 @@ int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
     return 0;
 }
 
+void pty_acquire_controlling(uint32_t pty_id, uint32_t caller_pid)
+{
+    struct pty_session *session = find_session(pty_id);
+    struct task *caller = sched_find(caller_pid);
+    if (!session || !caller || caller->pty_id != pty_id) {
+        return;
+    }
+    /* forkpty children call setsid() before dup2(slave, 0/1/2).  The kernel
+     * publishes the controlling PTY at the first stdio dup2, so this is the
+     * point where the PTY must adopt the child's new session/pgrp. */
+    if (!session->console && caller->process_session == caller->pid) {
+        if (session->process_session != caller->process_session ||
+            session->foreground_pgid != caller->process_group) {
+            console_printf("[ntclks] pty=%u controlling session update pid=%u old_session=%u new_session=%u old_pgrp=%u new_pgrp=%u\n",
+                           pty_id, caller_pid, session->process_session,
+                           caller->process_session, session->foreground_pgid,
+                           caller->process_group);
+        }
+        session->process_session = caller->process_session;
+        session->foreground_pgid = caller->process_group;
+    }
+}
+
 /**
  * @brief Free any PTY session owned by the exiting pid.
  */
@@ -605,10 +717,7 @@ void pty_process_exit(uint32_t pid)
 {
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
         if (sessions[i].used && sessions[i].owner_pid == pid) {
-            (void)sched_hangup_user_tasks_for_pty(i + 1U, pid);
-            for (uint32_t j = 0; j < sizeof(sessions[i]); ++j) {
-                ((uint8_t *)&sessions[i])[j] = 0;
-            }
+            (void)pty_destroy(pid, i + 1U);
         }
     }
 }

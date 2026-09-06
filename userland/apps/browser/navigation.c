@@ -393,7 +393,7 @@ static uint32_t browser_fetch_external_css(const char *base_url)
                                           browser_css_headers,
                                           sizeof(browser_css_headers),
                                           &css_response) < 0 ||
-            css_response.net_status != LEONOS_NET_STATUS_OK ||
+            css_response.net_status != NET_SERVICE_STATUS_OK ||
             css_response.http_status < 200U ||
             css_response.http_status >= 400U) {
             continue;
@@ -468,15 +468,15 @@ static int is_retriable_error(int ret, uint32_t net_status)
     if (ret < 0) {
         return 1;
     }
-    if (net_status == LEONOS_NET_STATUS_DNS_TIMEOUT ||
-        net_status == LEONOS_NET_STATUS_DNS_FAILED ||
-        net_status == LEONOS_NET_STATUS_DNS_NO_ANSWER ||
-        net_status == LEONOS_NET_STATUS_TCP_TIMEOUT ||
-        net_status == LEONOS_NET_STATUS_TCP_RESET ||
-        net_status == LEONOS_NET_STATUS_TCP_FAILED ||
-        net_status == LEONOS_NET_STATUS_SOCKET_LIMIT ||
-        net_status == LEONOS_NET_STATUS_TX_FAILED ||
-        net_status == LEONOS_NET_STATUS_TLS_FAILED) {
+    if (net_status == NET_SERVICE_STATUS_DNS_TIMEOUT ||
+        net_status == NET_SERVICE_STATUS_DNS_FAILED ||
+        net_status == NET_SERVICE_STATUS_DNS_NO_ANSWER ||
+        net_status == NET_SERVICE_STATUS_TCP_TIMEOUT ||
+        net_status == NET_SERVICE_STATUS_TCP_RESET ||
+        net_status == NET_SERVICE_STATUS_TCP_FAILED ||
+        net_status == NET_SERVICE_STATUS_SOCKET_LIMIT ||
+        net_status == NET_SERVICE_STATUS_TX_FAILED ||
+        net_status == NET_SERVICE_STATUS_TLS_FAILED) {
         return 1;
     }
     return 0;
@@ -516,7 +516,7 @@ void load_http_form_post(const char *url, const char *body)
                                              browser_http_headers,
                                              sizeof(browser_http_headers),
                                              &response);
-        if (ret >= 0 && response.net_status == LEONOS_NET_STATUS_OK) {
+        if (ret >= 0 && response.net_status == NET_SERVICE_STATUS_OK) {
             break;
         }
         if (!is_retriable_error(ret, response.net_status)) {
@@ -562,7 +562,7 @@ void load_http_form_post(const char *url, const char *body)
     if (source_truncated) {
         append_text(status, &pos, sizeof(status), "  truncated");
     }
-    if (response.net_status != LEONOS_NET_STATUS_OK) {
+    if (response.net_status != NET_SERVICE_STATUS_OK) {
         render_message_page(T("Network Error", "网络错误"), status,
                             browser_safe_detail(normalized));
         return;
@@ -618,7 +618,7 @@ void load_http_url(const char *url)
                                             browser_http_headers,
                                             sizeof(browser_http_headers),
                                             &response);
-        if (ret >= 0 && response.net_status == LEONOS_NET_STATUS_OK) {
+        if (ret >= 0 && response.net_status == NET_SERVICE_STATUS_OK) {
             break;
         }
         if (!is_retriable_error(ret, response.net_status)) {
@@ -668,7 +668,7 @@ void load_http_url(const char *url)
     if (source_truncated) {
         append_text(status, &pos, sizeof(status), "  truncated");
     }
-    if (response.net_status != LEONOS_NET_STATUS_OK) {
+    if (response.net_status != NET_SERVICE_STATUS_OK) {
         render_message_page(T("Network Error", "网络错误"), status,
                             browser_safe_detail(normalized));
         return;

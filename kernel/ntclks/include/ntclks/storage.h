@@ -118,6 +118,8 @@ struct storage_read_cursor {
 #define STORAGE_DEV_KIND_KMSG      20u
 #define STORAGE_DEV_KIND_DRIVERCTL 21u
 #define STORAGE_DEV_KIND_INPUT_METHOD 22u
+#define STORAGE_DEV_KIND_HWINFO      23u
+#define STORAGE_DEV_KIND_GPU         24u
 
 struct boot_info;
 

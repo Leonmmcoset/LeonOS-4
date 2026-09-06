@@ -3,6 +3,7 @@
 #include <leonos/device.h>
 #include <leonos/environment.h>
 #include <leonos/launch.h>
+#include <leonos/launch_result.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <errno.h>
@@ -15,6 +16,42 @@
 #define LEONOS_SHORTCUT_MAX_BYTES 384U
 #define LEONOS_SHORTCUT_MAX_DEPTH 8U
 #define LEONOS_TERMINAL_APP_PATH "/system/apps/terminal/terminal.elf"
+
+static int launch_fail(int code)
+{
+    switch (code) {
+    case LEONOS_LAUNCH_ERR_EMPTY:
+        errno = EINVAL;
+        break;
+    case LEONOS_LAUNCH_ERR_TOO_MANY_ARGS:
+        errno = E2BIG;
+        break;
+    case LEONOS_LAUNCH_ERR_UNCLOSED_QUOTE:
+        errno = EINVAL;
+        break;
+    case LEONOS_LAUNCH_ERR_NOT_FOUND:
+        errno = ENOENT;
+        break;
+    case LEONOS_LAUNCH_ERR_NO_ASSOCIATION:
+        errno = ENOSYS;
+        break;
+    case LEONOS_LAUNCH_ERR_INVALID_SHORTCUT:
+        errno = EINVAL;
+        break;
+    case LEONOS_LAUNCH_ERR_SHORTCUT_LOOP:
+        errno = ELOOP;
+        break;
+    case LEONOS_LAUNCH_ERR_EXISTS:
+        errno = EEXIST;
+        break;
+    case LEONOS_LAUNCH_ERR_ALREADY_RUNNING:
+        errno = EALREADY;
+        break;
+    default:
+        break;
+    }
+    return code;
+}
 
 #define LEONOS_LAUNCH_ASSOC_CACHE_MAX LEONOS_APP_REGISTRY_MAX
 static struct leonos_launch_assoc_app assoc_cache[LEONOS_LAUNCH_ASSOC_CACHE_MAX];
@@ -166,7 +203,7 @@ static int launch_in_terminal(char *argv[])
     terminal_argv[1] = "--run";
     while (argv[argc]) {
         if (argc >= LEONOS_LAUNCH_MAX_ARGS) {
-            return LEONOS_LAUNCH_ERR_TOO_MANY_ARGS;
+            return launch_fail(LEONOS_LAUNCH_ERR_TOO_MANY_ARGS);
         }
         terminal_argv[argc + 2U] = argv[argc];
         ++argc;
@@ -182,7 +219,7 @@ int leonos_spawn_argv(const char *path, char *const argv[])
     int result;
 
     if (!path || !path[0] || !argv || !argv[0]) {
-        return LEONOS_LAUNCH_ERR_EMPTY;
+        return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
     }
     result = leonos_environment_build(0, &envp);
     if (result < 0) {
@@ -272,16 +309,16 @@ int leonos_launch_create_shortcut(const char *shortcut_path, const char *target_
     int fd;
     long wrote;
     if (!shortcut_path || !shortcut_path[0] || !target_path || !target_path[0]) {
-        return LEONOS_LAUNCH_ERR_EMPTY;
+        return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
     }
     if (!ends_with_ignore_case(shortcut_path, ".lnk")) {
-        return LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
+        return launch_fail(LEONOS_LAUNCH_ERR_INVALID_SHORTCUT);
     }
     if (leonos_stat_legacy(target_path, &st) < 0) {
-        return LEONOS_LAUNCH_ERR_NOT_FOUND;
+        return launch_fail(LEONOS_LAUNCH_ERR_NOT_FOUND);
     }
     if (leonos_stat_legacy(shortcut_path, &st) == 0) {
-        return LEONOS_LAUNCH_ERR_EXISTS;
+        return launch_fail(LEONOS_LAUNCH_ERR_EXISTS);
     }
     body[0] = 0;
     append_text(body, &pos, sizeof(body), "# LeonOS shortcut\n");
@@ -308,10 +345,10 @@ int leonos_launch_create_shortcut_in_dir(const char *dir_path, const char *targe
     char path[LEONOS_FS_PATH_LEN];
     int ret;
     if (!dir_path || !dir_path[0] || !target_path || !target_path[0]) {
-        return LEONOS_LAUNCH_ERR_EMPTY;
+        return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
     }
     if (leonos_stat_legacy(dir_path, &st) < 0 || st.type != LEONOS_FS_TYPE_DIR) {
-        return LEONOS_LAUNCH_ERR_NOT_FOUND;
+        return launch_fail(LEONOS_LAUNCH_ERR_NOT_FOUND);
     }
     leonos_launch_default_shortcut_name(target_path, name, sizeof(name));
     for (uint32_t i = 0; i < 100; ++i) {
@@ -328,7 +365,7 @@ int leonos_launch_create_shortcut_in_dir(const char *dir_path, const char *targe
         }
         return ret;
     }
-    return LEONOS_LAUNCH_ERR_EXISTS;
+    return launch_fail(LEONOS_LAUNCH_ERR_EXISTS);
 }
 
 static const struct leonos_launch_assoc_app *find_assoc_app(const char *program_path)
@@ -702,7 +739,7 @@ static int parse_shortcut_target(const char *buffer, uint32_t len,
 {
     uint32_t pos = 0;
     if (!target || capacity == 0) {
-        return LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
+        return launch_fail(LEONOS_LAUNCH_ERR_INVALID_SHORTCUT);
     }
     target[0] = 0;
     while (pos < len) {
@@ -738,7 +775,7 @@ static int parse_shortcut_target(const char *buffer, uint32_t len,
         target[out] = 0;
         return target[0] ? 0 : LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
     }
-    return LEONOS_LAUNCH_ERR_INVALID_SHORTCUT;
+    return launch_fail(LEONOS_LAUNCH_ERR_INVALID_SHORTCUT);
 }
 
 static int read_shortcut_target(const char *shortcut_path, char *target, uint32_t capacity)
@@ -749,7 +786,7 @@ static int read_shortcut_target(const char *shortcut_path, char *target, uint32_
     int ret;
     struct leonos_stat st;
     if (!shortcut_path || !target || capacity == 0) {
-        return LEONOS_LAUNCH_ERR_EMPTY;
+        return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
     }
     target[0] = 0;
     fd = open(shortcut_path, LEONOS_O_RDONLY, 0);
@@ -782,11 +819,11 @@ int leonos_launch_file_with_app(const char *target_path, const char *program_pat
     const struct leonos_launch_assoc_app *app;
     struct leonos_stat st;
     if (!target_path || !target_path[0] || !program_path || !program_path[0]) {
-        return LEONOS_LAUNCH_ERR_EMPTY;
+        return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
     }
     resolved_program = leonos_launch_builtin_path(program_path);
     if (leonos_stat_legacy(resolved_program, &st) < 0) {
-        return LEONOS_LAUNCH_ERR_NOT_FOUND;
+        return launch_fail(LEONOS_LAUNCH_ERR_NOT_FOUND);
     }
     app = find_assoc_app(resolved_program);
     if (app && app->mode == LEONOS_LAUNCH_ASSOC_MODE_TERMINAL_CAT) {
@@ -823,7 +860,7 @@ int leonos_cmdline_split(char *line, char *argv[], uint32_t max_args)
     char *src;
     char *dst;
     if (!line || !argv || max_args == 0) {
-        return LEONOS_LAUNCH_ERR_EMPTY;
+        return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
     }
     src = line;
     while (*src) {
@@ -835,7 +872,7 @@ int leonos_cmdline_split(char *line, char *argv[], uint32_t max_args)
         }
         if (argc + 1 >= max_args) {
             argv[0] = 0;
-            return LEONOS_LAUNCH_ERR_TOO_MANY_ARGS;
+            return launch_fail(LEONOS_LAUNCH_ERR_TOO_MANY_ARGS);
         }
         argv[argc++] = src;
         dst = src;
@@ -861,7 +898,7 @@ int leonos_cmdline_split(char *line, char *argv[], uint32_t max_args)
         }
         if (quote) {
             argv[0] = 0;
-            return LEONOS_LAUNCH_ERR_UNCLOSED_QUOTE;
+            return launch_fail(LEONOS_LAUNCH_ERR_UNCLOSED_QUOTE);
         }
         *dst = 0;
         while (*src == ' ' || *src == '\t' || *src == '\r' || *src == '\n') {
@@ -870,7 +907,7 @@ int leonos_cmdline_split(char *line, char *argv[], uint32_t max_args)
     }
     if (argc == 0) {
         argv[0] = 0;
-        return LEONOS_LAUNCH_ERR_EMPTY;
+        return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
     }
     argv[argc] = 0;
     return (int)argc;
@@ -884,7 +921,7 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
     char *path;
     const char *default_program;
     if (!argv || !argv[0] || !argv[0][0]) {
-        return LEONOS_LAUNCH_ERR_EMPTY;
+        return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
     }
     path = argv[0];
     path = (char *)leonos_launch_builtin_path(path);
@@ -895,7 +932,7 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         uint32_t i = 1;
         int ret;
         if (depth >= LEONOS_SHORTCUT_MAX_DEPTH) {
-            return LEONOS_LAUNCH_ERR_SHORTCUT_LOOP;
+            return launch_fail(LEONOS_LAUNCH_ERR_SHORTCUT_LOOP);
         }
         ret = read_shortcut_target(path, target, sizeof(target));
         if (ret < 0) {
@@ -915,19 +952,19 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
         }
         int ret = leonos_spawn_argv(path, argv);
         if (ret == -LEONOS_EEXIST && is_system_desktop_path(path)) {
-            return LEONOS_LAUNCH_ERR_ALREADY_RUNNING;
+            return launch_fail(LEONOS_LAUNCH_ERR_ALREADY_RUNNING);
         }
         return ret;
     }
     if (leonos_stat_legacy(path, &st) < 0) {
-        return LEONOS_LAUNCH_ERR_NOT_FOUND;
+        return launch_fail(LEONOS_LAUNCH_ERR_NOT_FOUND);
     }
     if (st.type == LEONOS_FS_TYPE_DIR) {
         char *dir_argv[3];
         char fileman_path[LEONOS_APP_PATH_LEN];
         if (leonos_app_registry_resolve("fileman", fileman_path,
                                         sizeof(fileman_path)) < 0) {
-            return LEONOS_LAUNCH_ERR_NOT_FOUND;
+            return launch_fail(LEONOS_LAUNCH_ERR_NOT_FOUND);
         }
         dir_argv[0] = fileman_path;
         dir_argv[1] = path;
@@ -945,7 +982,7 @@ static int leonos_launch_argv_depth(char *argv[], uint32_t depth)
             return leonos_launch_file_with_app(path, default_program);
         }
     }
-    return LEONOS_LAUNCH_ERR_NO_ASSOCIATION;
+    return launch_fail(LEONOS_LAUNCH_ERR_NO_ASSOCIATION);
 }
 
 int leonos_launch_argv(char *argv[])
@@ -985,5 +1022,40 @@ const char *leonos_launch_error_text(int code)
         return "Desktop is already running";
     default:
         return "Launch failed";
+    }
+}
+
+int leonos_launch_is_error(int result)
+{
+    return result <= LEONOS_LAUNCH_ERR_EMPTY && result >= LEONOS_LAUNCH_ERR_ALREADY_RUNNING;
+}
+
+int leonos_launch_error_kind(int result)
+{
+    return leonos_launch_is_error(result) ? result : 0;
+}
+
+int leonos_launch_errno(int result)
+{
+    (void)leonos_launch_error_kind(result);
+    switch (result) {
+    case LAUNCH_RESULT_EMPTY:
+    case LAUNCH_RESULT_UNCLOSED_QUOTE:
+    case LAUNCH_RESULT_INVALID_SHORTCUT:
+        return EINVAL;
+    case LAUNCH_RESULT_TOO_MANY_ARGS:
+        return E2BIG;
+    case LAUNCH_RESULT_NOT_FOUND:
+        return ENOENT;
+    case LAUNCH_RESULT_NO_ASSOCIATION:
+        return ENOSYS;
+    case LAUNCH_RESULT_SHORTCUT_LOOP:
+        return ELOOP;
+    case LAUNCH_RESULT_EXISTS:
+        return EEXIST;
+    case LAUNCH_RESULT_ALREADY_RUNNING:
+        return EALREADY;
+    default:
+        return result < 0 ? -result : 0;
     }
 }

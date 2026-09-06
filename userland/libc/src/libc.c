@@ -320,7 +320,7 @@ long read(int fd, void *buf, size_t len)
                 sleep_ms(1);
                 continue;
             }
-            if (result != 0 || !pty_input) {
+            if (result != 0 || !pty_input || nonblock) {
                 return result;
             }
             sleep_ms(4);
@@ -638,7 +638,12 @@ int leonos_mouse_is_visible(void)
     return leonos_gui_mouse_visible();
 }
 
-int leonos_mouse_set_position(uint32_t window_id, int32_t x, int32_t y)
+int leonos_gui_cursor_request(const struct leonos_gui_cursor_request *request)
+{
+    return request ? ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, (void *)request) : -1;
+}
+
+int leonos_gui_set_cursor_position(uint32_t window_id, int32_t x, int32_t y)
 {
     struct leonos_gui_cursor_request request = {
         .window_id = window_id,
@@ -647,10 +652,10 @@ int leonos_mouse_set_position(uint32_t window_id, int32_t x, int32_t y)
         .style = LEONOS_GUI_CURSOR_ARROW,
         .flags = LEONOS_GUI_CURSOR_REQUEST_POSITION,
     };
-    return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
+    return leonos_gui_cursor_request(&request);
 }
 
-int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
+int leonos_gui_set_cursor_style(uint32_t window_id, uint32_t style)
 {
     struct leonos_gui_cursor_request request = {
         .window_id = window_id,
@@ -659,10 +664,10 @@ int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
         .style = style,
         .flags = LEONOS_GUI_CURSOR_REQUEST_STYLE,
     };
-    return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
+    return leonos_gui_cursor_request(&request);
 }
 
-int leonos_mouse_set_auto(uint32_t window_id)
+int leonos_gui_set_cursor_auto(uint32_t window_id)
 {
     struct leonos_gui_cursor_request request = {
         .window_id = window_id,
@@ -671,7 +676,22 @@ int leonos_mouse_set_auto(uint32_t window_id)
         .style = LEONOS_GUI_CURSOR_ARROW,
         .flags = LEONOS_GUI_CURSOR_REQUEST_AUTO,
     };
-    return ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, &request);
+    return leonos_gui_cursor_request(&request);
+}
+
+int leonos_mouse_set_position(uint32_t window_id, int32_t x, int32_t y)
+{
+    return leonos_gui_set_cursor_position(window_id, x, y);
+}
+
+int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
+{
+    return leonos_gui_set_cursor_style(window_id, style);
+}
+
+int leonos_mouse_set_auto(uint32_t window_id)
+{
+    return leonos_gui_set_cursor_auto(window_id);
 }
 
 int leonos_mouse_get_state(struct leonos_mouse_state *state)
@@ -723,7 +743,7 @@ int leonos_fstat_legacy(int fd, struct leonos_stat *st)
     return (int)syscall2(SYS_fstat, fd, (long)st);
 }
 
-int mkdir(const char *path, int mode)
+int mkdir(const char *path, unsigned int mode)
 {
     long result = syscall2(SYS_mkdir, (long)path, mode);
     /* The native syscall ABI returns negative errno values, while the POSIX

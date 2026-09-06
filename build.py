@@ -145,9 +145,11 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-qmp-less",
     "test-qmp-dynlinkerror",
     "test-qmp-cmd",
+    "test-qmp-abittest",
     "test-qmp-stardust",
     "test-qmp-glxgears",
     "test-component-config",
+    "test-svga",
     "test-all",
 })
 WINDOW_BUTTON_ICONS = [
@@ -781,7 +783,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     pleditor_stamp = paths.out / "userland/pleditor.stamp"
     pleditor_work_dir = paths.out / "pleditor-work"
     developer_sdk = ROOT / "LeonOS4-Developer-SDK.zip"
-    grub_efi_dir = paths.deps / "grub-efi-amd64-bin/usr/lib/grub/x86_64-efi"
+    grub_efi_dir = paths.build_modules
     system_grub_efi_dir = Path("/usr/lib/grub/x86_64-efi")
     using_system_grub = False
     if not (grub_efi_dir / "modinfo.sh").exists() and (system_grub_efi_dir / "modinfo.sh").exists():
@@ -2236,7 +2238,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     grub_efi = paths.staging / "EFI/BOOT/BOOTX64.EFI"
     # 如果是系统 GRUB 路径，使用绝对路径；否则使用相对路径
     grub_dir_arg = str(grub_efi_dir) if using_system_grub else relative(grub_efi_dir)
-    graph.add(Target(name="grub-efi", outputs=(grub_efi,), inputs=(ROOT / "boot/grub/embedded.cfg", grub_efi_dir / "modinfo.sh"), kind="generate", command=("grub-mkstandalone", "-d", grub_dir_arg, "-O", "x86_64-efi", "-o", relative(grub_efi), "--modules=part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video font gfxterm gfxmenu", "boot/grub/grub.cfg=boot/grub/embedded.cfg")))
+    graph.add(Target(name="grub-efi", outputs=(grub_efi,), inputs=(ROOT / "boot/grub/embedded.cfg", grub_efi_dir / "modinfo.sh"), kind="generate", command=("grub-mkstandalone", "-d", grub_dir_arg, "-O", "x86_64-efi", "-o", relative(grub_efi), "--modules=part_gpt fat multiboot2 normal search search_fs_file configfile echo serial terminal video video_bochs video_cirrus efi_gop efi_uga all_video font gfxterm gfxmenu", "boot/grub/grub.cfg=boot/grub/embedded.cfg",)))
     component_prune_stamp = paths.out / "generated/component-staging-prune.json"
 
     def prune_component_staging(context: ActionContext) -> None:
@@ -2421,6 +2423,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         source = registry_manifest_dir / (runtime_app_relative(app, "elf", system_apps).parent / "manifest.ini")
         destination = paths.staging / source.relative_to(registry_manifest_dir)
         target = add_copy(graph, f"esp:manifest:{app}", source, destination)
+        esp_names.append(target.name)
+        esp_outputs.append(destination)
+    if component_enabled("leonmmcoset", "image"):
+        source = ROOT / "userland/apps/leonmmcoset/leonmmcoset.png"
+        destination = paths.staging / runtime_app_relative("leonmmcoset", "png", system_apps)
+        target = add_copy(graph, "esp:asset:leonmmcoset", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
     if component_enabled("xiaobai", "image"):
@@ -2692,6 +2700,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             shutil.rmtree(iso_stage)
         context.detail(f"copy ESP staging tree: {relative(paths.staging)} -> {relative(iso_stage)}")
         shutil.copytree(paths.staging, iso_stage)
+        # grub-mkrescue 的 BIOS/eltorito core.img 前缀固定为 /boot/grub，
+        # 需要提供该路径的 grub.cfg，否则 BIOS 启动会直接落入 GRUB 命令行。
+        bios_grub_dir = iso_stage / "boot/grub"
+        bios_grub_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(iso_stage / "grub/grub.cfg", bios_grub_dir / "grub.cfg")
         context.run(("grub-mkrescue", "-o", relative(iso), relative(iso_stage)), announce=True)
 
     graph.add(Target(name="image-iso", outputs=(iso,), inputs=tuple([*esp_outputs, ROOT / "boot/grub/grub.cfg"]), depends_on=("esp",), kind="generate", action=make_iso, action_key="iso-stage-v1"))
@@ -2797,6 +2810,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="clean", kind="command", action=clean, action_key="clean-v1", always=True))
 
     # ---- 主机单元测试和 QEMU 冒烟测试 ----
+    graph.add(Target(name="test-svga",
+                     inputs=tuple(collect("drivers/bootstrap/svga/**/*.[ch]")) +
+                            tuple(collect("tools/tests/*.[ch]", "userland/apps/glxgears/**/*.[ch]",
+                                          "userland/apps/taskmgr/gpu_sample.h")) +
+                            (ROOT / "tools/test_svga.py", ROOT / "tools/test_gpu.py",
+                             ROOT / "kernel/ntclks/gpu.c", ROOT / "kernel/ntclks/user/usercopy.c",
+                             ROOT / "include/leonos/gpu.h", ROOT / "devtools/include/leonos/gpu.h"),
+                     kind="command", command=(PYTHON, "tools/test_svga.py")))
     # 主机测试直接运行 Python；QEMU 测试统一经过 qmp_test，负责启动、超时、
     # 串口采集和失败诊断，并且必须依赖 image-vmdk。
     graph.add(Target(name="test-license-server", inputs=(ROOT / "tools/test_license_server.py", ROOT / "tools/license_server.py"), kind="command", command=(PYTHON, "tools/test_license_server.py")))
@@ -2826,12 +2847,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                  less_smoke: bool = False,
                  dynlinkerror_smoke: bool = False,
                  cmd_pipeline_smoke: bool = False,
+                 abittest_smoke: bool = False,
                  desktop_app: str | None = None) -> None:
         if cmd_pipeline_smoke and not component_enabled("cmd", "image"):
             raise BuildFailure(
                 "QMP cmd pipeline test requires CONFIG_LEON_COMPONENT_TOOL_CMD_IMAGE=y"
             )
         test_name = desktop_app if desktop_app else (
+            "abittest" if abittest_smoke else
             "dynlinkerror" if dynlinkerror_smoke else
             "cmd" if cmd_pipeline_smoke else
             "less" if less_smoke else
@@ -2843,11 +2866,22 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         # The test name also makes per-test serial logs and QMP diagnostics
         # unambiguous when individual tests are started independently.
         socket = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}-{test_name}.sock"
+        overlay = Path(tempfile.gettempdir()) / f"leonos4-qmp-{context.runner.task_id}-{test_name}.qcow2"
         serial_log = paths.out / f"qmp-{test_name}-serial.log"
         socket.unlink(missing_ok=True)
+        overlay.unlink(missing_ok=True)
         serial_log.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run([
+            "qemu-img", "create", "-q", "-f", "qcow2",
+            "-b", str(vmdk), "-F", "vmdk", str(overlay),
+        ], cwd=ROOT, check=True)
         command = list(qemu_command(paths, values, debug=True))
-        command += ["-snapshot", "-qmp", f"unix:{socket},server=on,wait=off"]
+        drive_file = f"file={relative(vmdk)}"
+        for index, argument in enumerate(command):
+            if drive_file in argument:
+                command[index] = (argument.replace(drive_file, f"file={overlay}")
+                                           .replace("format=vmdk", "format=qcow2"))
+        command += ["-qmp", f"unix:{socket},server=on,wait=off"]
         context.runner.logger.command(context.worker_id, command)
         with serial_log.open("wb") as serial_output:
             process = subprocess.Popen(command, cwd=ROOT, stdout=serial_output,
@@ -2866,6 +2900,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                     smoke_command.append("--dynlinkerror")
                 elif cmd_pipeline_smoke:
                     smoke_command.append("--cmd-pipeline")
+                elif abittest_smoke:
+                    smoke_command.append("--abittest")
                 elif desktop_app:
                     smoke_command += ["--desktop-app", desktop_app]
                 else:
@@ -2885,6 +2921,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                     except subprocess.TimeoutExpired:
                         process.kill()
                 socket.unlink(missing_ok=True)
+                overlay.unlink(missing_ok=True)
         serial_text = serial_log.read_text(encoding="utf-8", errors="replace")
         # Once the graphical desktop owns the console, the framebuffer remains
         # the most reliable user-visible assertion. Keep serial checks as well
@@ -2897,6 +2934,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         if desktop_app:
             expected_spawns = (f"spawn path=/programs/{desktop_app}/{desktop_app}.elf",)
             expected_exits = (f"name={desktop_app}.elf",)
+        elif abittest_smoke:
+            expected_spawns = (
+                "spawn path=/programs/busybox/busybox.elf",
+                "spawn path=/programs/abittest/abittest.elf",
+            )
+            expected_exits = ("name=busybox.elf", "name=abittest.elf")
         elif tcc_smoke:
             expected_spawns = (
                 "spawn path=/programs/tcc/tcc.elf",
@@ -2954,6 +2997,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             for expected_exit in expected_exits:
                 if expected_exit not in serial_text:
                     raise BuildFailure(f"QMP test did not observe {test_name} exit: missing {expected_exit}")
+        if abittest_smoke:
+            if "[abittest] signal PASS" not in serial_text or \
+               "[abittest] pty PASS" not in serial_text or \
+               "[abittest] evdev PASS" not in serial_text or \
+               "[abittest] ALL PASS" not in serial_text:
+                raise BuildFailure("QMP abittest did not report all Linux ABI v1 runtime passes")
         if cmd_pipeline_smoke:
             cmd_pids = re.findall(
                 r"\[ntclks\] exec pid=(\d+) path=/programs/cmd/cmd\.elf",
@@ -3000,6 +3049,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-qmp-sl", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, sl_smoke=True), action_key="qmp-sl-v1"))
     graph.add(Target(name="test-qmp-less", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, less_smoke=True), action_key="qmp-less-v1"))
     graph.add(Target(name="test-qmp-dynlinkerror", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, dynlinkerror_smoke=True), action_key="qmp-dynlinkerror-v1"))
+    graph.add(Target(name="test-qmp-abittest", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, abittest_smoke=True), action_key="qmp-abittest-v1"))
     graph.add(Target(name="test-qmp-cmd", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, cmd_pipeline_smoke=True), action_key="qmp-cmd-v3"))
     graph.add(Target(name="test-qmp-stardust", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="stardusthello"), action_key="qmp-stardust-v1"))
     graph.add(Target(name="test-qmp-glxgears", inputs=(vmdk, ROOT / "tools/qmp_terminal_smoke.py"), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, desktop_app="glxgears"), action_key="qmp-glxgears-v1"))
@@ -3105,7 +3155,7 @@ def task_tools(task: str) -> tuple[str, ...]:
     if task == "menuconfig":
         return ("kconfig-mconf",)
     if task in {"test-qmp-terminal", "test-qmp-pleditor", "test-qmp-tcc", "test-qmp-fastfetch", "test-qmp-sl", "test-qmp-less",
-                "test-qmp-dynlinkerror", "test-qmp-cmd", "test-qmp-stardust", "test-qmp-glxgears", "test-all"}:
+                "test-qmp-dynlinkerror", "test-qmp-cmd", "test-qmp-abittest", "test-qmp-stardust", "test-qmp-glxgears", "test-all"}:
         return (*vmdk, "qemu-system-x86_64")
     return ()
 
@@ -3630,9 +3680,9 @@ def parser() -> argparse.ArgumentParser:
     generate.add_argument("file")
     add_config_options(generate)
     test = commands.add_parser("test")
-    test.add_argument("item", choices=("license-server", "los2w", "component-config",
+    test.add_argument("item", choices=("license-server", "los2w", "component-config", "svga",
                                        "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl", "qmp-less",
-                                       "qmp-dynlinkerror", "qmp-cmd", "qmp-stardust", "qmp-glxgears", "all"))
+                                       "qmp-dynlinkerror", "qmp-cmd", "qmp-abittest", "qmp-stardust", "qmp-glxgears", "all"))
     add_config_options(test)
     config = commands.add_parser("config")
     config.add_argument("action", choices=("list", "save", "load", "reset", "import", "export"))
@@ -3764,7 +3814,14 @@ def main(argv: list[str] | None = None) -> int:
             ),
         )
         graph_started = time.perf_counter()
-        graph = build_graph(paths, config_path)
+        if arguments.command == "test" and arguments.item == "svga":
+            # This driver test has no userland or submodule dependencies.
+            graph = BuildGraph(ROOT)
+            graph.add(Target(name="test-svga", kind="command",
+                             inputs=(ROOT / "tools/test_svga.py",),
+                             command=(PYTHON, "tools/test_svga.py")))
+        else:
+            graph = build_graph(paths, config_path)
         graph_seconds = time.perf_counter() - graph_started
         effective_verbose = arguments.verbose or config_bool(
             parse_kconfig(config_path), "CONFIG_BUILD_VERBOSE_LOG"

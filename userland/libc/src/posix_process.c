@@ -28,13 +28,6 @@ static int syscall_error(long result)
     return (int)result;
 }
 
-struct leonos_linux_sigaction {
-    uintptr_t handler;
-    __sigset_t mask;
-    uint32_t flags;
-    uint32_t reserved;
-};
-
 pid_t fork(void)
 {
     long result = syscall0(SYS_fork);
@@ -287,6 +280,9 @@ int sigaction(int signal_number, const struct sigaction *action,
         request.handler = (uintptr_t)action->sa_handler;
         request.mask = action->sa_mask;
         request.flags = (uint32_t)action->sa_flags;
+        if (request.handler != 0 && request.handler != (uintptr_t)SIG_IGN) {
+            request.restorer = (uintptr_t)&leonos_rt_sigreturn_trampoline;
+        }
     }
     result = syscall6(SYS_rt_sigaction, signal_number, action ? (long)&request : 0,
                       previous ? (long)&previous_request : 0,
@@ -297,7 +293,9 @@ int sigaction(int signal_number, const struct sigaction *action,
     }
     if (previous) {
         *previous = (struct sigaction){
-            .sa_handler = previous_request.handler == 1 ? SIG_IGN : SIG_DFL,
+            .sa_handler = previous_request.handler == 1 ? SIG_IGN
+                          : previous_request.handler == 0 ? SIG_DFL
+                          : (void (*)(int))(uintptr_t)previous_request.handler,
             .sa_mask = previous_request.mask,
             .sa_flags = (int)previous_request.flags,
         };
@@ -305,8 +303,6 @@ int sigaction(int signal_number, const struct sigaction *action,
     return 0;
 }
 
-/* The kernel supports default and ignore dispositions. User callbacks remain
- * unavailable until LeonOS has a user signal-frame ABI. */
 _sig_func_ptr signal(int signal_number, _sig_func_ptr handler)
 {
     struct sigaction action;

@@ -47,6 +47,8 @@
 #define LEONOS_DEV_NET0 "/dev/net0"
 #define LEONOS_DEV_DISK0 "/dev/disk0"
 #define LEONOS_DEV_DRIVERCTL "/dev/driverctl"
+#define LEONOS_DEV_HWINFO "/dev/hwinfo"
+#define LEONOS_DEV_GPU "/dev/gpu"
 
 struct leonos_device_info {
     uint32_t id;

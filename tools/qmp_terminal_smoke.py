@@ -74,6 +74,7 @@ def main() -> int:
     dynlinkerror_smoke = False
     cmd_pipeline_smoke = False
     fancy_prompt_smoke = False
+    abittest_smoke = False
     if arguments and arguments[0] == "--skip-oobe":
         skip_oobe = True
         arguments = arguments[1:]
@@ -113,6 +114,9 @@ def main() -> int:
     if arguments and arguments[0] == "--fancy-prompt":
         fancy_prompt_smoke = True
         arguments = arguments[1:]
+    if arguments and arguments[0] == "--abittest":
+        abittest_smoke = True
+        arguments = arguments[1:]
     if len(arguments) >= 2 and arguments[0] == "--desktop-app":
         desktop_app = arguments[1]
         arguments = arguments[2:]
@@ -127,7 +131,7 @@ def main() -> int:
     if desktop_app is not None and (not desktop_app.isascii() or not desktop_app.isalnum()):
         return 2
     if desktop_app is not None and (tcc_smoke or fastfetch_smoke or fastfetch_single or sl_smoke or less_smoke or start_menu_smoke or iso9660_smoke or
-                                    dynlinkerror_smoke or cmd_pipeline_smoke or fancy_prompt_smoke or exit_only):
+                                    dynlinkerror_smoke or cmd_pipeline_smoke or fancy_prompt_smoke or abittest_smoke or exit_only):
         return 2
     if len(arguments) != 1 or (login_password is not None and not skip_oobe):
         return 2
@@ -192,6 +196,12 @@ def main() -> int:
     # read loop before sending the editor command.  A cold guest may still be
     # loading the font and starting BusyBox after the window first appears.
     time.sleep(18.0)
+
+    if abittest_smoke:
+        send_keys(sock, text_keys("abittest") + ("ret",))
+        time.sleep(8.0)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
 
     if fastfetch_single:
         send_keys(sock, text_keys("fastfetch") + ("ret",))

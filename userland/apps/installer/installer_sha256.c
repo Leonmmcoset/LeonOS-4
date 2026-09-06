@@ -133,16 +133,25 @@ static void installer_sha256_final(struct installer_sha256_ctx *ctx,
 static int installer_hash_file(const char *path, uint8_t hash[INSTALLER_SHA256_HASH_LEN])
 {
     struct installer_sha256_ctx ctx;
+    uint64_t total = 0;
     int fd = open(path, LEONOS_O_RDONLY, 0);
     long got;
-    if (fd < 0) return fd;
+    if (fd < 0) {
+        printf("[installer.elf] hash open failed path=%s ret=%d\n", path, fd);
+        return fd;
+    }
     installer_sha256_init(&ctx);
     while ((got = read(fd, installer_sha256_buffer,
                        sizeof(installer_sha256_buffer))) > 0) {
         installer_sha256_update(&ctx, installer_sha256_buffer, (uint32_t)got);
+        total += (uint64_t)got;
     }
     close(fd);
-    if (got < 0) return (int)got;
+    if (got < 0) {
+        printf("[installer.elf] hash read failed path=%s ret=%ld total=%llu\n",
+               path, got, (unsigned long long)total);
+        return (int)got;
+    }
     installer_sha256_final(&ctx, hash);
     return 0;
 }

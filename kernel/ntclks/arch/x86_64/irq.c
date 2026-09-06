@@ -23,6 +23,8 @@
 #define PIT_CHANNEL0 0x40
 #define PIT_COMMAND 0x43
 #define PS2_DATA 0x60
+/* PS/2 set-1 make code; repeated make codes implement press-and-hold. */
+#define KEYCODE_BACKSPACE 14U
 
 static uint8_t key_states[128];
 static uint8_t e0_prefix;
@@ -209,6 +211,12 @@ struct task *irq_dispatch(struct trap_frame *frame)
                 key_states[keycode] = pressed;
                 input_push_key(keycode, pressed);
                 pty_console_key_event(keycode, pressed);
+            } else if (keycode < sizeof(key_states) && pressed && keycode == KEYCODE_BACKSPACE) {
+                /* The keyboard controller repeats make codes while a key is
+                 * held. Forward Backspace repeats so text fields, terminals
+                 * and the console keep erasing without retyping the key. */
+                input_push_key(keycode, 1);
+                pty_console_key_event(keycode, 1);
             }
         }
         irq_send_eoi(1);

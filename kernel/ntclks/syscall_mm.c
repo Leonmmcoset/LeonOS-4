@@ -647,16 +647,26 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
     }
 
     /**
- * @brief Grow the anonymous user stack on demand. The initial image maps a small working set; accesses below it consume pages down to the fixed maximum and leave one unmapped guard page below the stack.
+ * @brief Grow the anonymous user stack on demand. The initial image maps a
+ * small working set; accesses below it consume pages down to the fixed
+ * maximum and leave one unmapped guard page below the stack.
+ *
+ * A single user instruction (notably a forward-running memset) can cross
+ * upward from a newly grown page into the originally unmapped gap between
+ * task->stack_low and the eager stack mapping. Therefore every missing page
+ * inside the legal stack range is mapped, and stack_low only moves when the
+ * fault is below the current lowest mapped page.
  */
     if (!(error & 0x1ULL) && (error & 0x4ULL) && task->stack_top &&
-        task->stack_low && page < task->stack_low &&
+        task->stack_low && page < task->stack_top &&
         page >= task->stack_top - (uint64_t)NTCLKS_USER_STACK_MAX_PAGES * PAGE_SIZE &&
         page >= NTCLKS_USER_BASE + PAGE_SIZE) {
         uint64_t guard = task->stack_top -
                          (uint64_t)NTCLKS_USER_STACK_MAX_PAGES * PAGE_SIZE - PAGE_SIZE;
         if (page > guard && address_space_map_user_stack_page(&task->as, page)) {
-            task->stack_low = page;
+            if (page < task->stack_low) {
+                task->stack_low = page;
+            }
             return 1;
         }
         return 0;

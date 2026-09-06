@@ -171,6 +171,38 @@ void *paging_kernel_direct_map(uint64_t phys)
     return (void *)(uintptr_t)(NTCLKS_KERNEL_DIRECT_MAP_BASE + phys);
 }
 
+bool paging_mmio_uncached(uint64_t phys, uint64_t len)
+{
+    const uint64_t large = PAGE_SIZE_2M;
+    uint64_t start;
+    uint64_t end;
+
+    if (!len || !paging_kernel_direct_map_range(phys, len) ||
+        phys > UINT64_MAX - len) {
+        return false;
+    }
+    /* The bootstrap map uses 2 MiB leaves. Mark the complete leaves covering
+     * a BAR as UC (PWT|PCD); both low identity and high direct-map aliases
+     * share these page-directory entries. */
+    start = align_down(phys, large);
+    end = (phys + len + large - 1ULL) & ~(large - 1ULL);
+    if (end < phys + len || end > NTCLKS_KERNEL_DIRECT_MAP_SIZE) {
+        return false;
+    }
+    for (uint64_t addr = start; addr < end; addr += large) {
+        uint32_t table = (uint32_t)(addr / (1ULL << 30));
+        uint32_t slot = (uint32_t)((addr % (1ULL << 30)) / large);
+        if (table >= KERNEL_PD_COUNT) {
+            return false;
+        }
+        kernel_pd[table][slot] |= NTCLKS_PAGE_PWT | NTCLKS_PAGE_PCD;
+        x86_64_invlpg(addr);
+        x86_64_invlpg(NTCLKS_KERNEL_DIRECT_MAP_BASE + addr);
+    }
+    __asm__ volatile("mfence" ::: "memory");
+    return true;
+}
+
 /**
  * Alloc table.
  * @return The value or status produced by the operation.
@@ -259,7 +291,8 @@ bool address_space_clone_cow(struct address_space *source, struct address_space 
             }
             phys = entry & NTCLKS_PHYS_ADDR_MASK;
             flags = entry & (NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC |
-                             NTCLKS_PAGE_COW | NTCLKS_PAGE_DEVICE);
+                             NTCLKS_PAGE_COW | NTCLKS_PAGE_DEVICE |
+                             NTCLKS_PAGE_PWT | NTCLKS_PAGE_PCD | NTCLKS_PAGE_PAT);
             page = base + (uint64_t)slot * PAGE_SIZE;
             if (!(entry & NTCLKS_PAGE_DEVICE) &&
                 ((entry & NTCLKS_PAGE_WRITABLE) || (entry & NTCLKS_PAGE_COW))) {
@@ -516,6 +549,22 @@ uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t v
     return (entry & NTCLKS_PAGE_PRESENT) ? (entry & NTCLKS_PHYS_ADDR_MASK) : 0;
 }
 
+/**
+ * @brief Inspect write permission on an existing user page without changing it.
+ * @param as Address space, or NULL.
+ * @param vaddr Address within the queried page.
+ * @return True for present user-writable PTEs; false for COW or absent pages.
+ */
+bool address_space_user_page_writable(const struct address_space *as, uint64_t vaddr)
+{
+    if (!as || vaddr < NTCLKS_USER_BASE || vaddr >= NTCLKS_USER_TOP) return false;
+    uint64_t index = (vaddr - NTCLKS_USER_BASE) / PAGE_SIZE;
+    uint64_t table = index / 512;
+    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) return false;
+    uint64_t required = NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER | NTCLKS_PAGE_WRITABLE;
+    return (as->user_pt[table][index % 512] & required) == required;
+}
+
 bool address_space_user_page_is_device(const struct address_space *as, uint64_t vaddr)
 {
     if (!as) {
@@ -635,7 +684,9 @@ bool address_space_handle_cow_fault(struct address_space *as, uint64_t vaddr)
     }
     copy_page(new_phys, old_phys);
     as->user_pt[table][slot] = new_phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER |
-                               NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC;
+                               NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC |
+                               (entry & (NTCLKS_PAGE_PWT | NTCLKS_PAGE_PCD |
+                                         NTCLKS_PAGE_PAT));
     x86_64_invlpg(page);
     mm_free_page(old_phys);
     return true;

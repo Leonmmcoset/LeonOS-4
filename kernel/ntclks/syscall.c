@@ -667,6 +667,13 @@ void clear_task_file(struct task_file *file)
     }
     task_pipe_release(file);
     task_socket_release(file);
+    if ((file->flags & TASK_FILE_FLAG_DEV_NODE) &&
+        (file->node.first_cluster == STORAGE_DEV_KIND_KEYBOARD ||
+         file->node.first_cluster == STORAGE_DEV_KIND_MOUSE) &&
+        file->aux2 != 0) {
+        input_evdev_release(file->node.first_cluster, file->aux2,
+                            sched_current_pid());
+    }
     file->used = 0;
     file->node.type = 0;
     file->node.flags = 0;
@@ -675,6 +682,7 @@ void clear_task_file(struct task_file *file)
     file->node.size = 0;
     file->offset = 0;
     file->aux = 0;
+    file->aux2 = 0;
     file->read_cursor = (struct storage_read_cursor){0};
     file->flags = 0;
     file->fd_flags = 0;
@@ -739,6 +747,8 @@ int syscall_clone_task_files(const struct task *parent, struct task *child)
     return 0;
 }
 
+static void task_pty_release_entry(struct task_pty_fd *entry);
+
 /**
  * @brief Closes file and explicit PTY aliases marked FD_CLOEXEC for execve.
  * @param task Process whose existing descriptor table survives the image replacement.
@@ -762,7 +772,7 @@ void syscall_close_cloexec_files(struct task *task)
     }
     for (uint32_t i = 0; i < SCHED_TASK_PTY_FD_MAX; ++i) {
         if (task->pty_fds[i].used && (task->pty_fds[i].flags & 1u)) {
-            task->pty_fds[i] = (struct task_pty_fd){0};
+            task_pty_release_entry(&task->pty_fds[i]);
         }
     }
 }
@@ -824,11 +834,23 @@ static struct task_pty_fd *task_pty_endpoint_for_fd(struct task *task, int fd)
     return entry && entry->endpoint && entry->pty_id ? entry : NULL;
 }
 
+static void task_pty_release_entry(struct task_pty_fd *entry)
+{
+    uint32_t pty_id;
+    if (!entry || !entry->used) {
+        return;
+    }
+    pty_id = entry->pty_id;
+    *entry = (struct task_pty_fd){0};
+    if (pty_id) {
+        pty_reap_hungup(pty_id);
+    }
+}
+
 static int task_pty_endpoint_fd(struct task *task, uint32_t pty_id,
                                 uint32_t endpoint, uint32_t flags)
 {
     int candidate;
-    (void)flags;
     if (!task || !pty_id || !endpoint || !pty_is_active(pty_id) ||
         !task_can_allocate_fd(task)) {
         return -LEONOS_EMFILE;
@@ -843,6 +865,10 @@ static int task_pty_endpoint_fd(struct task *task, uint32_t pty_id,
             if (!entry->used) {
                 *entry = (struct task_pty_fd){
                     .used = 1, .fd = candidate, .flags = 0,
+                    .status_flags = flags & (LEONOS_O_ACCMODE |
+                                             LEONOS_O_APPEND |
+                                             LEONOS_O_NONBLOCK),
+                    .stream = endpoint == TASK_PTY_ENDPOINT_MASTER ? 1u : 0u,
                     .pty_id = pty_id, .endpoint = endpoint,
                 };
                 return candidate;
@@ -963,9 +989,10 @@ int task_can_allocate_fd(const struct task *task)
 static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
                                  uint32_t flags)
 {
+    struct task_pty_fd *source = task_pty_fd_for_fd(task, old_fd);
     int stream = task_pty_stream_for_fd(task, old_fd);
     int candidate;
-    if (stream < 0 || minimum_fd < 0) {
+    if ((stream < 0 && !(source && source->endpoint)) || minimum_fd < 0) {
         return -LEONOS_EBADF;
     }
     if (!task_can_allocate_fd(task)) {
@@ -985,8 +1012,19 @@ static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
             if (!entry->used) {
                 entry->used = 1;
                 entry->fd = candidate;
-                entry->stream = (uint32_t)stream;
                 entry->flags = flags;
+                /* dup() of a Unix98 endpoint must preserve the endpoint and
+                 * direction, not degrade it into an implicit stdio alias. */
+                if (source && source->endpoint) {
+                    entry->pty_id = source->pty_id;
+                    entry->endpoint = source->endpoint;
+                    entry->stream = source->stream;
+                    entry->status_flags = source->status_flags;
+                } else {
+                    entry->stream = (uint32_t)stream;
+                    entry->status_flags = stream == 0 ? LEONOS_O_RDONLY
+                                                      : LEONOS_O_WRONLY;
+                }
                 return candidate;
             }
         }
@@ -1004,13 +1042,39 @@ static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
  */
 static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
 {
+    struct task_pty_fd *endpoint;
     int stream = task_pty_stream_for_fd(task, old_fd);
     struct task_pty_fd *entry;
-    if (stream < 0 || new_fd < 0) {
+    if (new_fd < 0) {
         return -LEONOS_EBADF;
     }
     if (old_fd == new_fd) {
         return new_fd;
+    }
+    /* forkpty/openpty children call dup2(slave, 0/1/2) before closing the
+     * original /dev/pts/N descriptor. That must publish the explicit PTY id
+     * as the child controlling terminal even when the parent had no legacy
+     * controlling TTY and task->pty_id was zero. */
+    endpoint = task_pty_endpoint_for_fd(task, old_fd);
+    if (new_fd < (int)SCHED_TASK_STDIO_MAX && endpoint &&
+        endpoint->endpoint == TASK_PTY_ENDPOINT_SLAVE) {
+        struct task_file *stdio = &task->stdio_files[new_fd];
+        if (stdio->used) clear_task_file(stdio);
+        task->closed_stdio_mask &= ~(1u << (uint32_t)new_fd);
+        task->pty_id = endpoint->pty_id;
+        if (new_fd == 0) {
+            /* setsid() ran before this dup2.  Adopt the child session/pgrp
+             * as the PTY controlling session so tcgetpgrp/tcsetpgrp work
+             * for job control and SIGTTIN/TTOU delivery. */
+            pty_acquire_controlling(endpoint->pty_id, task->pid);
+            console_printf("[ntclks] dup2 pty pid=%u old=%d new=%d pty=%u session=%u pgrp=%u\n",
+                           task->pid, old_fd, new_fd, endpoint->pty_id,
+                           task->process_session, task->process_group);
+        }
+        return new_fd;
+    }
+    if (stream < 0 && !endpoint) {
+        return -LEONOS_EBADF;
     }
     /**
  * @brief Restore an implicit PTY stream after a temporary redirection.
@@ -1049,7 +1113,18 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
     if (!entry) {
         return -LEONOS_EMFILE;
     }
-    entry->stream = (uint32_t)stream;
+    if (endpoint) {
+        entry->pty_id = endpoint->pty_id;
+        entry->endpoint = endpoint->endpoint;
+        entry->stream = endpoint->stream;
+        entry->status_flags = endpoint->status_flags;
+    } else {
+        entry->pty_id = 0;
+        entry->endpoint = 0;
+        entry->stream = (uint32_t)stream;
+        entry->status_flags = stream == 0 ? LEONOS_O_RDONLY
+                                          : LEONOS_O_WRONLY;
+    }
     entry->flags = 0;
     return new_fd;
 }
@@ -1083,6 +1158,7 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node, uin
         file->node = *node;
         file->offset = 0;
         file->aux = 0;
+        file->aux2 = 0;
         file->flags = flags;
         file->fd_flags = 0;
         copy_text(file->path, sizeof(file->path), path);
@@ -1105,6 +1181,7 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node, uin
         file->node = *node;
         file->offset = 0;
         file->aux = 0;
+        file->aux2 = 0;
         file->flags = flags;
         file->fd_flags = 0;
         copy_text(file->path, sizeof(file->path), path);
@@ -1119,6 +1196,7 @@ static int alloc_task_fd(struct task *task, const struct storage_node *node, uin
             file->node = *node;
             file->offset = 0;
             file->aux = 0;
+            file->aux2 = 0;
             file->flags = flags;
             file->fd_flags = 0;
             copy_text(file->path, sizeof(file->path), path);
@@ -1152,7 +1230,7 @@ static int task_dup2_fd(struct task *task, int old_fd, int new_fd)
     }
     if (new_file->used) clear_task_file(new_file);
     if (replaced_pty) {
-        *replaced_pty = (struct task_pty_fd){0};
+        task_pty_release_entry(replaced_pty);
     }
     *new_file = *old_file;
     new_file->used = 1;
@@ -1296,7 +1374,7 @@ static int task_device_read(struct task *task, struct task_file *file,
     if (task_device_is(file, STORAGE_DEV_KIND_KEYBOARD) ||
         task_device_is(file, STORAGE_DEV_KIND_MOUSE)) {
         int ret = input_evdev_read(file->node.first_cluster, &file->aux,
-                                   buffer, length);
+                                   buffer, length, file->aux2);
         if (ret == 0 && (file->flags & LEONOS_O_NONBLOCK)) {
             return -LEONOS_EAGAIN;
         }
@@ -1371,14 +1449,6 @@ static int task_device_write(struct task *task, struct task_file *file,
     return -LEONOS_EBADF;
 }
 
-static void evdev_set_bit(uint8_t *bits, uint32_t capacity, uint32_t bit)
-{
-    uint32_t byte = bit / 8U;
-    if (bits && byte < capacity) {
-        bits[byte] |= (uint8_t)(1U << (bit % 8U));
-    }
-}
-
 static void evdev_copy_text(char *dst, uint32_t capacity, const char *src)
 {
     uint32_t i = 0;
@@ -1390,7 +1460,7 @@ static void evdev_copy_text(char *dst, uint32_t capacity, const char *src)
     dst[i] = 0;
 }
 
-static int task_evdev_ioctl(const struct task_file *file, uint64_t request,
+static int task_evdev_ioctl(struct task_file *file, uint64_t request,
                             uint64_t user_arg)
 {
     uint32_t device_kind;
@@ -1418,6 +1488,14 @@ static int task_evdev_ioctl(const struct task_file *file, uint64_t request,
         return 0;
     }
     if (request == EVIOCGRAB) {
+        int enable;
+        int64_t token;
+        if (!user_range_ok(user_arg, sizeof(int))) return -LEONOS_EFAULT;
+        enable = *(int *)(uintptr_t)user_arg != 0;
+        token = input_evdev_grab(device_kind, file->aux2, enable,
+                                 sched_current_pid());
+        if (token < 0) return (int)token;
+        file->aux2 = (uint64_t)token;
         return 0;
     }
     if (_IOC_TYPE(request) != 'E') {
@@ -1440,43 +1518,17 @@ static int task_evdev_ioctl(const struct task_file *file, uint64_t request,
         return 0;
     }
     if (_IOC_NR(request) == 0x18) {
-        uint8_t *bits = (uint8_t *)(uintptr_t)user_arg;
-        for (uint32_t i = 0; i < size; ++i) bits[i] = 0;
+        input_evdev_key_state((void *)(uintptr_t)user_arg, size);
         return 0;
     }
+    if (_IOC_NR(request) == 0x40 + EV_ABS) {
+        /* The PS/2 pointer is a relative device and has no ABS records. */
+        return -LEONOS_EINVAL;
+    }
     if (_IOC_NR(request) >= 0x20 && _IOC_NR(request) <= 0x20 + EV_MAX) {
-        uint8_t bits[(KEY_CNT + 7U) / 8U] = {0};
         uint32_t event_type = _IOC_NR(request) - 0x20U;
-        uint32_t copy = size < sizeof(bits) ? size : sizeof(bits);
-        if (event_type == 0) {
-            /* EVIOCGBIT(0, ...) reports supported event classes. */
-            evdev_set_bit(bits, sizeof(bits), EV_SYN);
-            evdev_set_bit(bits, sizeof(bits), EV_KEY);
-            if (device_kind == STORAGE_DEV_KIND_MOUSE) {
-                evdev_set_bit(bits, sizeof(bits), EV_REL);
-            }
-        } else if (event_type == EV_KEY) {
-            if (device_kind == STORAGE_DEV_KIND_KEYBOARD) {
-                for (uint32_t key = KEY_ESC; key <= KEY_COMPOSE; ++key) {
-                    evdev_set_bit(bits, sizeof(bits), key);
-                }
-            } else {
-                evdev_set_bit(bits, sizeof(bits), BTN_LEFT);
-                evdev_set_bit(bits, sizeof(bits), BTN_RIGHT);
-                evdev_set_bit(bits, sizeof(bits), BTN_MIDDLE);
-            }
-        } else if (event_type == EV_REL &&
-                   device_kind == STORAGE_DEV_KIND_MOUSE) {
-            evdev_set_bit(bits, sizeof(bits), REL_X);
-            evdev_set_bit(bits, sizeof(bits), REL_Y);
-            evdev_set_bit(bits, sizeof(bits), REL_WHEEL);
-        }
-        for (uint32_t i = 0; i < copy; ++i) {
-            ((uint8_t *)(uintptr_t)user_arg)[i] = bits[i];
-        }
-        for (uint32_t i = copy; i < size; ++i) {
-            ((uint8_t *)(uintptr_t)user_arg)[i] = 0;
-        }
+        input_evdev_capabilities(device_kind, event_type,
+                                 (void *)(uintptr_t)user_arg, size);
         return 0;
     }
     return -LEONOS_ENOTTY;
@@ -3043,13 +3095,21 @@ int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms)
         {
             struct task_pty_fd *endpoint = task_pty_endpoint_for_fd(task, fd);
             if (endpoint) {
-                if (events & POLLIN) {
-                    uint32_t available = endpoint->endpoint == TASK_PTY_ENDPOINT_MASTER
-                                             ? pty_output_available(endpoint->pty_id)
-                                             : pty_input_available(endpoint->pty_id);
-                    if (available) revents |= POLLIN;
+                if (pty_is_hungup(endpoint->pty_id)) {
+                    if (events & POLLIN) revents |= POLLIN;
+                    revents |= POLLHUP;
+                    if (endpoint->endpoint == TASK_PTY_ENDPOINT_SLAVE) {
+                        revents |= POLLERR;
+                    }
+                } else {
+                    if (events & POLLIN) {
+                        uint32_t available = endpoint->endpoint == TASK_PTY_ENDPOINT_MASTER
+                                                 ? pty_output_available(endpoint->pty_id)
+                                                 : pty_input_available(endpoint->pty_id);
+                        if (available) revents |= POLLIN;
+                    }
+                    if (events & POLLOUT) revents |= POLLOUT;
                 }
-                if (events & POLLOUT) revents |= POLLOUT;
                 fds[i].revents = revents;
                 if (revents) ++ready;
                 continue;
@@ -3063,7 +3123,8 @@ int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms)
             if (task_device_is(file, STORAGE_DEV_KIND_KEYBOARD) ||
                 task_device_is(file, STORAGE_DEV_KIND_MOUSE)) {
                 if ((events & POLLIN) &&
-                    input_evdev_available(file->node.first_cluster, file->aux)) {
+                    input_evdev_available(file->node.first_cluster, file->aux,
+                                          file->aux2)) {
                     revents |= POLLIN;
                 }
             } else if (task_device_is(file, STORAGE_DEV_KIND_AUDIO)) {
@@ -3075,6 +3136,9 @@ int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms)
                 }
             } else if (task_device_is(file, STORAGE_DEV_KIND_TTY)) {
                 if (pty_input_available(task->pty_id)) revents |= POLLIN;
+                if (pty_is_hungup(task->pty_id)) {
+                    revents |= POLLHUP;
+                }
             } else if (events & POLLIN) {
                 revents |= POLLIN;
             }
@@ -3093,6 +3157,9 @@ int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms)
         } else if (fd >= 0 && fd <= 2 && task_pty_stream_for_fd(task, fd) >= 0) {
             if (fd == 0) {
                 if (pty_input_available(task->pty_id)) revents |= POLLIN;
+                if (pty_is_hungup(task->pty_id)) revents |= POLLHUP;
+            } else if (pty_is_hungup(task->pty_id)) {
+                revents |= POLLHUP;
             } else if (events & POLLOUT) {
                 revents |= POLLOUT;
             }
@@ -3178,6 +3245,10 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
         return syscall_dispatch_regs(frame->number, frame->args[0], frame->args[1],
                                      frame->args[2], frame->args[3], frame->args[4],
                                      frame->args[5]);
+    case LINUX_SYS_RT_SIGRETURN:
+        /* rt_sigreturn restores the live trap frame directly. The regs-only
+         * debug dispatch entry has no frame to restore and returns ENOSYS. */
+        return -LEONOS_ENOSYS;
     case LINUX_SYS_GETPID:
     case LINUX_SYS_GETPPID:
     case LINUX_SYS_SETPGID:
@@ -3455,8 +3526,18 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                 uint32_t request = a2 > LEONOS_FS_IO_SLICE_BYTES
                                        ? LEONOS_FS_IO_SLICE_BYTES : (uint32_t)a2;
                 if (endpoint->endpoint == TASK_PTY_ENDPOINT_MASTER) {
+                    if ((endpoint->status_flags & LEONOS_O_NONBLOCK) &&
+                        !pty_output_available(endpoint->pty_id) &&
+                        !pty_is_hungup(endpoint->pty_id)) {
+                        return -LEONOS_EAGAIN;
+                    }
                     return pty_read_output(0, endpoint->pty_id,
                                            (char *)(uintptr_t)a1, request);
+                }
+                if ((endpoint->status_flags & LEONOS_O_NONBLOCK) &&
+                    !pty_input_available(endpoint->pty_id) &&
+                    !pty_is_hungup(endpoint->pty_id)) {
+                    return -LEONOS_EAGAIN;
                 }
                 return pty_read_input(endpoint->pty_id,
                                       (char *)(uintptr_t)a1, request);
@@ -3733,7 +3814,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                     pty_is_owner(pty_fd->pty_id, task ? task->pid : 0)) {
                     (void)pty_destroy(task->pid, pty_fd->pty_id);
                 }
-                *pty_fd = (struct task_pty_fd){0};
+                task_pty_release_entry(pty_fd);
                 return 0;
             }
         }
@@ -3816,13 +3897,26 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                 return 0;
             }
             if (a1 == LEONOS_F_GETFL) {
-                return file_fd ? (int64_t)(file_fd->flags &
-                    (LEONOS_O_ACCMODE | LEONOS_O_APPEND | LEONOS_O_NONBLOCK)) : 0;
+                if (file_fd) {
+                    return (int64_t)(file_fd->flags &
+                        (LEONOS_O_ACCMODE | LEONOS_O_APPEND | LEONOS_O_NONBLOCK));
+                }
+                if (pty_fd) {
+                    return (int64_t)pty_fd->status_flags;
+                }
+                /* Implicit controlling-TTY stdio descriptors are readable
+                 * (fd 0) or writable (fd 1/2). */
+                return a0 == 0 ? (int64_t)LEONOS_O_RDONLY
+                               : (int64_t)LEONOS_O_WRONLY;
             }
             if (a1 == LEONOS_F_SETFL) {
                 if (file_fd) {
                     file_fd->flags = (file_fd->flags & LEONOS_O_ACCMODE) |
                                      ((uint32_t)a2 & (LEONOS_O_APPEND | LEONOS_O_NONBLOCK));
+                } else if (pty_fd) {
+                    pty_fd->status_flags = (pty_fd->status_flags & LEONOS_O_ACCMODE) |
+                                           ((uint32_t)a2 & (LEONOS_O_APPEND |
+                                                            LEONOS_O_NONBLOCK));
                 }
                 return 0;
             }
@@ -4122,6 +4216,10 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         ret = storage_mount_block_partition(disk_id, (uint32_t)partition_index,
                                             target, filesystem[0] ? filesystem : NULL,
                                             a3, NULL);
+        if (ret < 0) {
+            console_printf("[ntclks] mount syscall failed source=%s target=%s fs=%s ret=%d\n",
+                           source, target, filesystem[0] ? filesystem : "auto", ret);
+        }
         return ret < 0 ? storage_errno(ret) : 0;
     }
 
@@ -5949,11 +6047,48 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
     return syscall_dispatch_regs_legacy(number, a0, a1, a2, a3, a4, a5);
 }
 
+/**
+ * @brief Return 1 when an EAGAIN result is a real nonblocking-device status.
+ *
+ * The legacy storage path reuses EAGAIN to rewind and retry the int 0x80
+ * instruction after a one-tick DMA wait.  POSIX descriptors opened with
+ * O_NONBLOCK must observe EAGAIN instead.
+ */
+static int syscall_eagain_is_nonblocking_device(struct task *task,
+                                                uint64_t number, uint64_t fd)
+{
+    struct task_pty_fd *endpoint;
+    struct task_file *file;
+    if (number != LINUX_SYS_READ && number != LINUX_SYS_WRITE) {
+        return 0;
+    }
+    endpoint = task_pty_endpoint_for_fd(task, (int)fd);
+    if (endpoint) {
+        return (endpoint->status_flags & LEONOS_O_NONBLOCK) != 0;
+    }
+    file = task_file_for_fd(task, (int)fd);
+    if (file && (file->flags & LEONOS_O_NONBLOCK)) {
+        if (file->flags & (TASK_FILE_FLAG_PIPE |
+                           TASK_FILE_FLAG_SOCKET_UNIX)) {
+            return 1;
+        }
+        if ((file->flags & TASK_FILE_FLAG_DEV_NODE) &&
+            (task_device_is(file, STORAGE_DEV_KIND_KEYBOARD) ||
+             task_device_is(file, STORAGE_DEV_KIND_MOUSE) ||
+             task_device_is(file, STORAGE_DEV_KIND_AUDIO))) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void syscall_dispatch_frame(struct trap_frame *frame)
 {
     uint64_t number;
     uint64_t lock_flags;
     int64_t result;
+    int restored_signal_frame = 0;
+    int eagain_from_nonblocking = 0;
     if (!frame) {
         return;
     }
@@ -5963,7 +6098,11 @@ void syscall_dispatch_frame(struct trap_frame *frame)
     kernel_execution_lock_irqsave(&lock_flags);
     number = frame->rax;
     storage_set_io_async_context(true);
-    if (number == LINUX_SYS_FORK || number == LINUX_SYS_VFORK) {
+    if (number == LINUX_SYS_RT_SIGRETURN) {
+        struct task *task = sched_current_task();
+        result = task ? kernel_signal_rt_sigreturn(task, frame) : -LEONOS_EPERM;
+        restored_signal_frame = result >= 0;
+    } else if (number == LINUX_SYS_FORK || number == LINUX_SYS_VFORK) {
         /**
  * @brief vfork intentionally uses fork semantics for now: sharing the address space would let the child corrupt its suspended parent.
  */
@@ -5977,11 +6116,18 @@ void syscall_dispatch_frame(struct trap_frame *frame)
                                        frame->r8,
                                        frame->r9);
     }
-    if (result != -LEONOS_EAGAIN) {
+    eagain_from_nonblocking =
+        result == -LEONOS_EAGAIN &&
+        syscall_eagain_is_nonblocking_device(sched_current_task(),
+                                             number, frame->rdi);
+    if (result != -LEONOS_EAGAIN || eagain_from_nonblocking) {
         storage_release_task_io(sched_current_pid());
     }
     storage_set_io_async_context(false);
-    if (result == -LEONOS_EAGAIN) {
+    if (restored_signal_frame) {
+        /* The restored context already contains the interrupted syscall's
+         * original rax; do not overwrite it with rt_sigreturn's return value. */
+    } else if (result == -LEONOS_EAGAIN && !eagain_from_nonblocking) {
         /* int $0x80 has advanced RIP by two bytes.  Park this task for one
          * timer tick and re-execute the exact same instruction when its AHCI
          * DMA request can be polled again.  User programs keep normal
@@ -5992,6 +6138,8 @@ void syscall_dispatch_frame(struct trap_frame *frame)
         sched_sleep_current_until(time_ticks() + 1u);
         return;
     }
-    frame->rax = (uint64_t)result;
+    if (!restored_signal_frame) {
+        frame->rax = (uint64_t)result;
+    }
     kernel_execution_unlock_irqrestore(lock_flags);
 }

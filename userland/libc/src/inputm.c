@@ -1,4 +1,5 @@
 #include <leonos/inputm.h>
+#include <leonos/text_input.h>
 #include <leonos/device.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -59,27 +60,27 @@ static int inputm_copy_id(char *dst, uint32_t capacity, const char *id)
     return 1;
 }
 
-int leonos_inputm_register(const struct leonos_inputm_provider *provider)
+int text_input_register(const struct leonos_inputm_provider *provider)
 {
     return provider ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_REGISTER, (void *)provider) : -1;
 }
 
-int leonos_inputm_unregister(void)
+int text_input_unregister(void)
 {
     return ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_UNREGISTER, 0);
 }
 
-int leonos_inputm_provider_next(struct leonos_inputm_key_event *event)
+int text_input_provider_next(struct leonos_inputm_key_event *event)
 {
     return event ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_PROVIDER_NEXT, event) : -1;
 }
 
-int leonos_inputm_provider_result(const struct leonos_inputm_result *result)
+int text_input_provider_result(const struct leonos_inputm_result *result)
 {
     return result ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_PROVIDER_RESULT, (void *)result) : -1;
 }
 
-int leonos_inputm_submit_key(uint32_t window_id, uint8_t keycode, uint8_t pressed)
+int text_input_submit_key(uint32_t window_id, uint8_t keycode, uint8_t pressed)
 {
     struct leonos_inputm_key_event event = {0};
     if (!window_id) {
@@ -91,12 +92,12 @@ int leonos_inputm_submit_key(uint32_t window_id, uint8_t keycode, uint8_t presse
     return ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_SUBMIT_KEY, &event);
 }
 
-int leonos_inputm_poll_result(struct leonos_inputm_result *result)
+int text_input_poll_result(struct leonos_inputm_result *result)
 {
     return result ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_POLL_RESULT, result) : -1;
 }
 
-int leonos_inputm_set_active(uint32_t uid, const char *id)
+int text_input_set_active(uint32_t uid, const char *id)
 {
     struct leonos_inputm_active_request request = {0};
     if (!uid || !inputm_copy_id(request.id, sizeof(request.id), id)) {
@@ -106,7 +107,7 @@ int leonos_inputm_set_active(uint32_t uid, const char *id)
     return ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_SET_ACTIVE, &request);
 }
 
-int leonos_inputm_list(uint32_t uid, struct leonos_inputm_provider *providers,
+int text_input_list(uint32_t uid, struct leonos_inputm_provider *providers,
                        uint32_t capacity, uint32_t *out_count)
 {
     struct leonos_inputm_provider_list list = {uid, capacity, 0, 0, providers};
@@ -117,19 +118,19 @@ int leonos_inputm_list(uint32_t uid, struct leonos_inputm_provider *providers,
     return ret;
 }
 
-int leonos_inputm_set_context(const struct leonos_inputm_context *context)
+int text_input_set_context(const struct leonos_inputm_context *context)
 {
     return context ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_CONTEXT, (void *)context) : -1;
 }
 
-void leonos_inputm_note_gui_window(uint32_t window_id)
+void text_input_note_gui_window(uint32_t window_id)
 {
     if (window_id) {
         inputm_current_window_id = window_id;
     }
 }
 
-int leonos_inputm_set_current_context(uint32_t flags, int32_t caret_x,
+int text_input_set_current_context(uint32_t flags, int32_t caret_x,
                                       int32_t caret_y, uint32_t caret_w,
                                       uint32_t caret_h)
 {
@@ -144,10 +145,10 @@ int leonos_inputm_set_current_context(uint32_t flags, int32_t caret_x,
     context.caret_y = caret_y;
     context.caret_w = caret_w;
     context.caret_h = caret_h;
-    return leonos_inputm_set_context(&context);
+    return text_input_set_context(&context);
 }
 
-int leonos_inputm_get_state(uint32_t uid, struct leonos_inputm_state *state)
+int text_input_get_state(uint32_t uid, struct leonos_inputm_state *state)
 {
     if (!uid || !state) {
         return -1;
@@ -156,19 +157,19 @@ int leonos_inputm_get_state(uint32_t uid, struct leonos_inputm_state *state)
     return ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_GET_STATE, state);
 }
 
-int leonos_inputm_notify_config(uint32_t uid)
+int text_input_notify_config(uint32_t uid)
 {
     struct leonos_inputm_config_request request = {uid};
     return uid ? ioctl(inputm_device_fd(), LEONOS_INPUTM_IOCTL_NOTIFY_CONFIG, &request) : -1;
 }
 
-int leonos_inputm_observe_gui_key(uint32_t window_id, uint8_t *keycode, uint8_t pressed)
+int text_input_observe_gui_key(uint32_t window_id, uint8_t *keycode, uint8_t pressed)
 {
     int ret;
     if (!window_id || !keycode || *keycode == 0) {
         return 0;
     }
-    ret = leonos_inputm_submit_key(window_id, *keycode, pressed);
+    ret = text_input_submit_key(window_id, *keycode, pressed);
     if (ret > 0) {
         *keycode = 0;
         return 1;
@@ -200,7 +201,7 @@ static void inputm_queue_commit(const struct leonos_inputm_result *result)
 static void inputm_drain_commits(void)
 {
     struct leonos_inputm_result result = {0};
-    while (leonos_inputm_poll_result(&result) > 0) {
+    while (text_input_poll_result(&result) > 0) {
         if ((result.type == LEONOS_INPUTM_RESULT_COMMIT && result.text[0]) ||
             result.type == LEONOS_INPUTM_RESULT_PASSTHROUGH) {
             inputm_queue_commit(&result);
@@ -209,7 +210,7 @@ static void inputm_drain_commits(void)
     }
 }
 
-int leonos_inputm_poll_gui_commit(uint32_t window_id)
+int text_input_poll_gui_commit(uint32_t window_id)
 {
     if (!window_id) {
         return 0;
@@ -229,7 +230,7 @@ int leonos_inputm_poll_gui_commit(uint32_t window_id)
     return 0;
 }
 
-int leonos_inputm_take_text(char *buffer, uint32_t capacity)
+int text_input_take_text(char *buffer, uint32_t capacity)
 {
     if (!buffer || capacity == 0 || !inputm_taken_text[0]) {
         return 0;
@@ -239,7 +240,7 @@ int leonos_inputm_take_text(char *buffer, uint32_t capacity)
     return 1;
 }
 
-int leonos_inputm_take_key(uint8_t *keycode, uint8_t *pressed)
+int text_input_take_key(uint8_t *keycode, uint8_t *pressed)
 {
     if (!inputm_taken_keycode) {
         return 0;
@@ -254,3 +255,24 @@ int leonos_inputm_take_key(uint8_t *keycode, uint8_t *pressed)
     inputm_taken_key_pressed = 0;
     return 1;
 }
+
+/* Pre-migration compatibility names. They remain in libleonos only while the
+ * private input-method ABI is registered in the migration table; applications
+ * must link against the text_input_* service SDK above. */
+int leonos_inputm_register(const struct leonos_inputm_provider *provider) { return text_input_register(provider); }
+int leonos_inputm_unregister(void) { return text_input_unregister(); }
+int leonos_inputm_provider_next(struct leonos_inputm_key_event *event) { return text_input_provider_next(event); }
+int leonos_inputm_provider_result(const struct leonos_inputm_result *result) { return text_input_provider_result(result); }
+int leonos_inputm_submit_key(uint32_t window_id, uint8_t keycode, uint8_t pressed) { return text_input_submit_key(window_id, keycode, pressed); }
+int leonos_inputm_poll_result(struct leonos_inputm_result *result) { return text_input_poll_result(result); }
+int leonos_inputm_set_active(uint32_t uid, const char *id) { return text_input_set_active(uid, id); }
+int leonos_inputm_list(uint32_t uid, struct leonos_inputm_provider *providers, uint32_t capacity, uint32_t *out_count) { return text_input_list(uid, providers, capacity, out_count); }
+int leonos_inputm_set_context(const struct leonos_inputm_context *context) { return text_input_set_context(context); }
+void leonos_inputm_note_gui_window(uint32_t window_id) { text_input_note_gui_window(window_id); }
+int leonos_inputm_set_current_context(uint32_t flags, int32_t caret_x, int32_t caret_y, uint32_t caret_w, uint32_t caret_h) { return text_input_set_current_context(flags, caret_x, caret_y, caret_w, caret_h); }
+int leonos_inputm_get_state(uint32_t uid, struct leonos_inputm_state *state) { return text_input_get_state(uid, state); }
+int leonos_inputm_notify_config(uint32_t uid) { return text_input_notify_config(uid); }
+int leonos_inputm_observe_gui_key(uint32_t window_id, uint8_t *keycode, uint8_t pressed) { return text_input_observe_gui_key(window_id, keycode, pressed); }
+int leonos_inputm_poll_gui_commit(uint32_t window_id) { return text_input_poll_gui_commit(window_id); }
+int leonos_inputm_take_text(char *buffer, uint32_t capacity) { return text_input_take_text(buffer, capacity); }
+int leonos_inputm_take_key(uint8_t *keycode, uint8_t *pressed) { return text_input_take_key(keycode, pressed); }

@@ -96,6 +96,9 @@ static int fat32_read_fat_entry(uint32_t cluster, uint32_t *out_next)
     }
     offset += (uint32_t)(sector - storage_fat_cache.first_lba) * SECTOR_SIZE;
     if (offset + sizeof(uint32_t) > storage_fat_cache.sector_count * SECTOR_SIZE) {
+        console_printf("[storage] fat entry range cluster=%u sector=%llu offset=%u cache_sectors=%u\n",
+                       cluster, (unsigned long long)sector, offset,
+                       storage_fat_cache.sector_count);
         return -5;
     }
     uint32_t value = *(const uint32_t *)(const void *)(storage_fat_cache_data + offset);

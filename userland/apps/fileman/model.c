@@ -15,9 +15,32 @@ int selected_entry_is_file(void)
     return selected_entry_valid() && entries[file_list.selected].type == LEONOS_FS_TYPE_FILE;
 }
 
+int fileman_entry_is_device(uint32_t index)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    struct stat st;
+    if (index >= entry_count) {
+        return 0;
+    }
+    build_child_path(path, sizeof(path), entries[index].name);
+    return stat(path, &st) == 0 && S_ISCHR(st.st_mode);
+}
+
+int fileman_entry_device(const struct leonos_dir_entry *entry)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    struct stat st;
+    if (!entry) {
+        return 0;
+    }
+    build_child_path(path, sizeof(path), entry->name);
+    return stat(path, &st) == 0 && S_ISCHR(st.st_mode);
+}
+
 int selected_entry_is_mutable(void)
 {
-    return selected_entry_valid() && entries[file_list.selected].type != LEONOS_FS_TYPE_DEVICE;
+    return selected_entry_valid() &&
+           !fileman_entry_is_device((uint32_t)file_list.selected);
 }
 
 int fileman_entry_marked(uint32_t index)
@@ -415,7 +438,7 @@ const char *entry_type_name(const struct leonos_dir_entry *entry)
     if (entry->type == LEONOS_FS_TYPE_DIR) {
         return "DIR ";
     }
-    if (entry->type == LEONOS_FS_TYPE_DEVICE) {
+    if (fileman_entry_device(entry)) {
         return "DEV ";
     }
     if (ends_with(entry->name, ".elf")) {

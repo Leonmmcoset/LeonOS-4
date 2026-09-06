@@ -41,6 +41,8 @@ static const struct storage_dev_entry storage_dev_entries[] = {
     {"kmsg",      STORAGE_DEV_KIND_KMSG,      LEONOS_FS_TYPE_DEVICE, 0},
     {"driverctl", STORAGE_DEV_KIND_DRIVERCTL, LEONOS_FS_TYPE_DEVICE, 0},
     {"input-method", STORAGE_DEV_KIND_INPUT_METHOD, LEONOS_FS_TYPE_DEVICE, 0},
+    {"hwinfo",      STORAGE_DEV_KIND_HWINFO,       LEONOS_FS_TYPE_DEVICE, 0},
+    {"gpu",         STORAGE_DEV_KIND_GPU,          LEONOS_FS_TYPE_DEVICE, 0},
     {"stdin",     STORAGE_DEV_KIND_TTY,      LEONOS_FS_TYPE_DEVICE, 0},
     {"stdout",    STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},
     {"stderr",    STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},
@@ -602,6 +604,12 @@ static int storage_read_node_cursor_unlocked(const struct storage_node *node, ui
     uint32_t cluster = node->first_cluster;
     uint64_t skip_clusters = offset / g_storage.cluster_bytes;
     uint32_t cluster_off = (uint32_t)(offset % g_storage.cluster_bytes);
+    /* FAT32 directory/file reads alternate between the installer root and a
+     * mounted /target or /target/boot volume. A cached cluster cursor can
+     * survive a volume switch and turn a valid fragmented file into EIO.
+     * FAT cursors are an optimization only; re-walk the chain for each
+     * syscall slice until the read cache can be keyed by volume as well. */
+    if (cursor) cursor->valid = 0;
     if (cursor && cursor->valid) {
         cluster = cursor->cluster;
     } else {
@@ -613,6 +621,8 @@ static int storage_read_node_cursor_unlocked(const struct storage_node *node, ui
                 return storage_read_failure(ret);
             }
             if (next >= FAT32_EOC || next < 2u) {
+                console_printf("[storage] fat skip invalid cluster=%u next=%u off=%llu\n",
+                               cluster, next, (unsigned long long)offset);
                 storage_restore_volume(old_volume);
                 return -5;
             }
@@ -679,6 +689,10 @@ static int storage_read_node_cursor_unlocked(const struct storage_node *node, ui
                     next_cluster = next;
                 }
                 if (next_cluster < 2u || next_cluster >= FAT32_EOC) {
+                    console_printf("[storage] fat cursor invalid cluster=%u next=%u next_cluster=%u advanced=%u cache_clusters=%u consumed=%u off=%llu size=%llu\n",
+                                   cluster, next, next_cluster, advanced, cache_clusters,
+                                   consumed, (unsigned long long)offset,
+                                   (unsigned long long)node->size);
                     cursor->valid = 0;
                     storage_restore_volume(old_volume);
                     return -5;
@@ -692,6 +706,9 @@ static int storage_read_node_cursor_unlocked(const struct storage_node *node, ui
             break;
         }
         if (next >= FAT32_EOC) {
+            console_printf("[storage] fat mid eoc cluster=%u next=%u done=%u len=%u off=%llu size=%llu\n",
+                           cluster, next, done, len, (unsigned long long)offset,
+                           (unsigned long long)node->size);
             if (cursor) {
                 cursor->valid = 0;
             }
@@ -699,6 +716,9 @@ static int storage_read_node_cursor_unlocked(const struct storage_node *node, ui
             return -5;
         }
         if (next < 2u) {
+            console_printf("[storage] fat mid bad cluster=%u next=%u done=%u len=%u off=%llu size=%llu\n",
+                           cluster, next, done, len, (unsigned long long)offset,
+                           (unsigned long long)node->size);
             if (cursor) {
                 cursor->valid = 0;
             }

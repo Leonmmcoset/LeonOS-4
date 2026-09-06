@@ -323,6 +323,8 @@ uint32_t leonos_ui_text_fit_chars(uint32_t pixel_width);
 int leonos_ui_hit(uint32_t px, uint32_t py, int32_t x, int32_t y, uint32_t w, uint32_t h);
 int leonos_ui_keycode_to_char(uint8_t keycode, char *out);
 int leonos_ui_keycode_to_char_shift(uint8_t keycode, uint8_t shifted, char *out);
+/* Update the shared Caps Lock state; pass every key-down/key-up event. */
+void leonos_ui_caps_lock_event(uint8_t keycode, uint8_t pressed);
 void leonos_ui_pixel(struct leonos_ui_surface *surface, uint32_t x, uint32_t y, uint32_t color);
 void leonos_ui_rect(struct leonos_ui_surface *surface, uint32_t x, uint32_t y,
                     uint32_t w, uint32_t h, uint32_t color);

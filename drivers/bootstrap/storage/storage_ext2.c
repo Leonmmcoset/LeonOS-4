@@ -496,6 +496,10 @@ static int ext2_get_block(struct ext2_inode *inode, uint32_t index,
     uint32_t per = g_storage.ext2_block_size / sizeof(uint32_t);
     uint32_t *table = (uint32_t *)(void *)storage_fat_cache_data;
     uint32_t *child_table = (uint32_t *)(void *)storage_cluster_buf;
+    /* ext2 uses the FAT cache buffer as scratch. Invalidate it so a later
+     * installer-root FAT read cannot mistake ext2 pointer-table bytes for a
+     * valid FAT sector cache. */
+    storage_fat_cache.valid = 0;
     uint32_t pointer_index;
     uint32_t child_pointer_block;
     int ret;
@@ -983,6 +987,7 @@ static int ext2_release_trailing_blocks(struct ext2_inode *inode, uint32_t keep_
         uint32_t retain = keep_blocks > 12u ? keep_blocks - 12u : 0u;
         uint32_t *table = (uint32_t *)(void *)storage_fat_cache_data;
         uint8_t any = 0;
+        storage_fat_cache.valid = 0;
         ret = ext2_read_block(inode->block[12], table);
         if (ret < 0) return ret;
         for (i = retain; i < per; ++i) {
@@ -1009,6 +1014,7 @@ static int ext2_release_trailing_blocks(struct ext2_inode *inode, uint32_t keep_
         uint32_t *roots = (uint32_t *)(void *)storage_fat_cache_data;
         uint32_t *leaves = (uint32_t *)(void *)storage_cluster_buf;
         uint8_t any_root = 0;
+        storage_fat_cache.valid = 0;
         ret = ext2_read_block(inode->block[13], roots);
         if (ret < 0) return ret;
         for (i = 0; i < per; ++i) {

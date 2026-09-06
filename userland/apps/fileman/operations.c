@@ -283,7 +283,7 @@ void copy_selected_entries(uint8_t cut)
     for (uint32_t i = 0; i < entry_count && i < FILEMAN_CLIPBOARD_MAX; ++i) {
         if (fileman_entry_marked(i) ||
             (!fileman_selected_count() && i == (uint32_t)(file_list.selected < 0 ? entry_count : file_list.selected))) {
-            if (entries[i].type == LEONOS_FS_TYPE_DEVICE) {
+            if (fileman_entry_is_device(i)) {
                 continue;
             }
             build_child_path(clipboard_paths[count], sizeof(clipboard_paths[count]),
@@ -521,7 +521,7 @@ void recycle_selected_entries(void)
         char dst[LEONOS_FS_PATH_LEN];
         int selected = fileman_entry_marked(i) ||
             (!fileman_selected_count() && i == (uint32_t)file_list.selected);
-        if (!selected || entries[i].type == LEONOS_FS_TYPE_DEVICE) {
+        if (!selected || fileman_entry_is_device(i)) {
             continue;
         }
         build_child_path(src, sizeof(src), entries[i].name);
@@ -624,7 +624,7 @@ void permanent_delete_selected_entries(void)
         char path[LEONOS_FS_PATH_LEN];
         int selected = fileman_entry_marked(i) ||
             (!fileman_selected_count() && i == (uint32_t)file_list.selected);
-        if (!selected || entries[i].type == LEONOS_FS_TYPE_DEVICE) {
+        if (!selected || fileman_entry_is_device(i)) {
             continue;
         }
         build_child_path(path, sizeof(path), entries[i].name);

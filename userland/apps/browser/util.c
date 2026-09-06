@@ -150,47 +150,47 @@ void trim_copy(char *dst, uint32_t cap, const char *src)
 const char *net_status_name(uint32_t status)
 {
     switch (status) {
-    case LEONOS_NET_STATUS_OK:
+    case NET_SERVICE_STATUS_OK:
         return T("OK", "成功");
-    case LEONOS_NET_STATUS_NO_DEVICE:
+    case NET_SERVICE_STATUS_NO_DEVICE:
         return T("No e1000 adapter", "没有 e1000 网卡");
-    case LEONOS_NET_STATUS_ARP_TIMEOUT:
+    case NET_SERVICE_STATUS_ARP_TIMEOUT:
         return T("ARP timeout", "ARP 超时");
-    case LEONOS_NET_STATUS_BAD_ARGUMENT:
+    case NET_SERVICE_STATUS_BAD_ARGUMENT:
         return T("Bad argument", "参数无效");
-    case LEONOS_NET_STATUS_TX_FAILED:
+    case NET_SERVICE_STATUS_TX_FAILED:
         return T("Transmit failed", "发送失败");
-    case LEONOS_NET_STATUS_DHCP_TIMEOUT:
+    case NET_SERVICE_STATUS_DHCP_TIMEOUT:
         return T("DHCP timeout", "DHCP 超时");
-    case LEONOS_NET_STATUS_DHCP_FAILED:
+    case NET_SERVICE_STATUS_DHCP_FAILED:
         return T("DHCP failed", "DHCP 失败");
-    case LEONOS_NET_STATUS_DNS_TIMEOUT:
+    case NET_SERVICE_STATUS_DNS_TIMEOUT:
         return T("DNS timeout", "DNS 超时");
-    case LEONOS_NET_STATUS_DNS_FAILED:
+    case NET_SERVICE_STATUS_DNS_FAILED:
         return T("DNS failed", "DNS 失败");
-    case LEONOS_NET_STATUS_DNS_NO_ANSWER:
+    case NET_SERVICE_STATUS_DNS_NO_ANSWER:
         return T("No A record", "没有 A 记录");
-    case LEONOS_NET_STATUS_TCP_TIMEOUT:
+    case NET_SERVICE_STATUS_TCP_TIMEOUT:
         return T("TCP timeout", "TCP 超时");
-    case LEONOS_NET_STATUS_TCP_RESET:
+    case NET_SERVICE_STATUS_TCP_RESET:
         return T("TCP reset", "TCP 复位");
-    case LEONOS_NET_STATUS_TCP_FAILED:
+    case NET_SERVICE_STATUS_TCP_FAILED:
         return T("TCP failed", "TCP 失败");
-    case LEONOS_NET_STATUS_HTTP_FAILED:
+    case NET_SERVICE_STATUS_HTTP_FAILED:
         return T("HTTP failed", "HTTP 失败");
-    case LEONOS_NET_STATUS_HTTP_TOO_LARGE:
+    case NET_SERVICE_STATUS_HTTP_TOO_LARGE:
         return T("Response too large", "响应过大");
-    case LEONOS_NET_STATUS_SOCKET_LIMIT:
+    case NET_SERVICE_STATUS_SOCKET_LIMIT:
         return T("Socket limit reached", "Socket 数量已满");
-    case LEONOS_NET_STATUS_SOCKET_BAD_HANDLE:
+    case NET_SERVICE_STATUS_SOCKET_BAD_HANDLE:
         return T("Bad socket", "Socket 无效");
-    case LEONOS_NET_STATUS_SOCKET_NOT_CONNECTED:
+    case NET_SERVICE_STATUS_SOCKET_NOT_CONNECTED:
         return T("Socket not connected", "Socket 未连接");
-    case LEONOS_NET_STATUS_SOCKET_CLOSED:
+    case NET_SERVICE_STATUS_SOCKET_CLOSED:
         return T("Socket closed", "Socket 已关闭");
-    case LEONOS_NET_STATUS_PROTOCOL_UNSUPPORTED:
+    case NET_SERVICE_STATUS_PROTOCOL_UNSUPPORTED:
         return T("Protocol unsupported", "协议不支持");
-    case LEONOS_NET_STATUS_TLS_FAILED:
+    case NET_SERVICE_STATUS_TLS_FAILED:
         return T("TLS verification failed", "TLS 验证失败");
     default:
         return T("Unknown network status", "未知网络状态");

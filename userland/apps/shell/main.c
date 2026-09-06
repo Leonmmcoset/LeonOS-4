@@ -1,7 +1,11 @@
+#include <dirent.h>
+#include <errno.h>
 #include <leonos/fs.h>
 #include <leonos/launch.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #define SHELL_LINE_CAP 192U
 #define SHELL_ARG_CAP 12U
@@ -98,19 +102,40 @@ static int shell_split(char *line, char *argv[SHELL_ARG_CAP + 1U])
 
 static void shell_list(const char *path)
 {
-    struct leonos_dir_entry entry;
-    int fd = open(path && path[0] ? path : ".", LEONOS_O_RDONLY, 0);
-    if (fd < 0) {
-        printf("ls: cannot open %s (%d)\n", path && path[0] ? path : ".", fd);
+    const char *target = path && path[0] ? path : ".";
+    DIR *dir = opendir(target);
+    struct dirent *entry;
+    if (!dir) {
+        printf("ls: cannot open %s (%d)\n", target, errno);
         return;
     }
-    while (leonos_readdir(fd, &entry) > 0) {
-        const char *kind = entry.type == LEONOS_FS_TYPE_DIR ? "dir "
-                         : entry.type == LEONOS_FS_TYPE_DEVICE ? "dev "
-                                                               : "file";
-        printf("%s  %s\n", kind, entry.name);
+    while ((entry = readdir(dir)) != NULL) {
+        char child[LEONOS_FS_PATH_LEN];
+        struct stat st;
+        const char *kind = "file";
+        uint32_t pos = 0;
+        child[0] = 0;
+        while (target[pos] && pos + 1U < sizeof(child)) {
+            child[pos] = target[pos];
+            ++pos;
+        }
+        if (pos && child[pos - 1] != '/' && pos + 2U < sizeof(child)) {
+            child[pos++] = '/';
+        }
+        if (pos + 1U < sizeof(child)) {
+            uint32_t name = 0;
+            while (entry->d_name[name] && pos + 1U < sizeof(child)) {
+                child[pos++] = entry->d_name[name++];
+            }
+            child[pos] = 0;
+        }
+        if (stat(child, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) kind = "dir ";
+            else if (S_ISCHR(st.st_mode)) kind = "dev ";
+        }
+        printf("%s  %s\n", kind, entry->d_name);
     }
-    close(fd);
+    closedir(dir);
 }
 
 static void shell_cat(const char *path)

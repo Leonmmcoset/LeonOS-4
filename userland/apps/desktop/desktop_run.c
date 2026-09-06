@@ -158,6 +158,7 @@ void desktop_run(void)
                 handle_mouse_wheel((uint32_t)event.x, (uint32_t)event.y,
                                    event.dy, event.buttons);
             } else if (event.type == LEONOS_INPUT_KEYBOARD) {
+                leonos_ui_caps_lock_event(event.keycode, event.pressed);
                 if (desktop_handle_shortcut_input_key(event.keycode, event.pressed)) {
                     continue;
                 }
@@ -212,7 +213,7 @@ void desktop_run(void)
             repaint_and_flush(damage);
             did_work = 1;
         }
-        int mouse_visible = leonos_mouse_is_visible();
+        int mouse_visible = leonos_gui_mouse_visible();
         if (mouse_visible != last_mouse_visible) {
             last_mouse_visible = mouse_visible;
             redraw_all();

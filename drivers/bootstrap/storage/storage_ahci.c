@@ -177,6 +177,10 @@ void storage_drain_task_io(uint32_t pid)
 
 static int storage_read_failure(int ret)
 {
+    if (ret != -LEONOS_EAGAIN) {
+        console_printf("[storage] read failure ret=%d active_volume=%u\n",
+                       ret, g_active_volume ? g_active_volume->volume_id : 99u);
+    }
     return ret == -LEONOS_EAGAIN ? ret : -5;
 }
 

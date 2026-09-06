@@ -1,5 +1,5 @@
 #include <leonos/auth.h>
-#include <leonos/driver.h>
+#include <leonos/devmgr_service.h>
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
 #include <leonos/stdio.h>
@@ -17,7 +17,7 @@
 #define T(en, zh) leonos_i18n((en), (zh))
 
 static uint32_t pixels[DRVMGR_MAX_W * DRVMGR_MAX_H];
-static struct leonos_driver_info drivers[LEONOS_DRIVER_MAX];
+static system_driver_info_t drivers[SYSTEM_DRIVER_MAX];
 static struct leonos_ui_listview_state driver_list;
 static struct leonos_user_info current_user;
 static uint32_t driver_count;
@@ -76,13 +76,13 @@ static int hit_rect(int32_t x, int32_t y, int32_t rx, int32_t ry,
 static const char *driver_state_name(uint32_t state)
 {
     switch (state) {
-    case LEONOS_DRIVER_STATE_LOADING:
+    case SYSTEM_DRIVER_STATE_LOADING:
         return T("Loading", "加载中");
-    case LEONOS_DRIVER_STATE_LOADED:
+    case SYSTEM_DRIVER_STATE_LOADED:
         return T("Loaded", "已加载");
-    case LEONOS_DRIVER_STATE_DISABLED:
+    case SYSTEM_DRIVER_STATE_DISABLED:
         return T("Disabled", "已禁用");
-    case LEONOS_DRIVER_STATE_FAILED:
+    case SYSTEM_DRIVER_STATE_FAILED:
         return T("Failed", "失败");
     default:
         return T("Unloaded", "未加载");
@@ -131,10 +131,10 @@ static uint32_t list_height(void)
 
 static void refresh_drivers(void)
 {
-    uint32_t count = LEONOS_DRIVER_MAX;
+    uint32_t count = SYSTEM_DRIVER_MAX;
     int ret;
     refresh_user();
-    ret = leonos_driver_list(drivers, LEONOS_DRIVER_MAX, &count);
+    ret = system_driver_list(drivers, SYSTEM_DRIVER_MAX, &count);
     if (ret < 0) {
         driver_count = 0;
         driver_list.selected = -1;
@@ -142,7 +142,7 @@ static void refresh_drivers(void)
         set_status_code(T("Driver refresh failed", "驱动刷新失败"), ret);
         return;
     }
-    driver_count = count > LEONOS_DRIVER_MAX ? LEONOS_DRIVER_MAX : count;
+    driver_count = count > SYSTEM_DRIVER_MAX ? SYSTEM_DRIVER_MAX : count;
     leonos_ui_listview_state_set_count(&driver_list, driver_count);
     if (driver_count && driver_list.selected < 0) {
         driver_list.selected = 0;
@@ -155,7 +155,7 @@ static void refresh_drivers(void)
                          : T("Read-only: administrator required", "只读：需要管理员权限"));
 }
 
-static const struct leonos_driver_info *selected_driver(void)
+static const system_driver_info_t *selected_driver(void)
 {
     if (driver_list.selected < 0 || (uint32_t)driver_list.selected >= driver_count) {
         return 0;
@@ -207,7 +207,7 @@ static void draw_drvmgr(struct leonos_ui_surface *ui)
         cells[2] = driver_state_name(drivers[index].state);
         cells[3] = abi;
         cells[4] = drivers[index].error[0] ? drivers[index].error
-                                           : (drivers[index].flags & LEONOS_DRIVER_FLAG_DISABLED
+                                           : (drivers[index].flags & SYSTEM_DRIVER_FLAG_DISABLED
                                                   ? T("Skipped at boot", "启动时跳过")
                                                   : T("Available", "可用"));
         leonos_ui_listview_row(ui, 14, DRVMGR_LIST_Y + 26U + row * DRVMGR_ROW_H,
@@ -233,7 +233,7 @@ static void present(struct leonos_ui_surface *ui, uint32_t window_id)
 
 static void control_selected(uint32_t action)
 {
-    const struct leonos_driver_info *driver = selected_driver();
+    const system_driver_info_t *driver = selected_driver();
     int ret;
     if (!can_manage) {
         copy_text(status_text, sizeof(status_text), T("Administrator permission required", "需要管理员权限"));
@@ -243,7 +243,7 @@ static void control_selected(uint32_t action)
         copy_text(status_text, sizeof(status_text), T("Select a driver first", "请先选择驱动"));
         return;
     }
-    ret = leonos_driver_control(action, driver->file);
+    ret = system_driver_control(action, driver->file);
     if (ret < 0) {
         set_status_code(T("Driver operation failed", "驱动操作失败"), ret);
     } else {
@@ -281,15 +281,15 @@ int main(void)
                 if (hit_rect(event.x, event.y, 18, 16, 82, LEONOS_UI_BUTTON_H)) {
                     refresh_drivers();
                 } else if (hit_rect(event.x, event.y, 108, 16, 72, LEONOS_UI_BUTTON_H)) {
-                    control_selected(LEONOS_DRIVER_CONTROL_LOAD);
+                    control_selected(SYSTEM_DRIVER_CONTROL_LOAD);
                 } else if (hit_rect(event.x, event.y, 188, 16, 72, LEONOS_UI_BUTTON_H)) {
-                    control_selected(LEONOS_DRIVER_CONTROL_UNLOAD);
+                    control_selected(SYSTEM_DRIVER_CONTROL_UNLOAD);
                 } else if (hit_rect(event.x, event.y, 268, 16, 96, LEONOS_UI_BUTTON_H)) {
-                    control_selected(LEONOS_DRIVER_CONTROL_FORCE_UNLOAD);
+                    control_selected(SYSTEM_DRIVER_CONTROL_FORCE_UNLOAD);
                 } else if (hit_rect(event.x, event.y, 372, 16, 98, LEONOS_UI_BUTTON_H)) {
-                    control_selected(LEONOS_DRIVER_CONTROL_DISABLE_BOOT);
+                    control_selected(SYSTEM_DRIVER_CONTROL_DISABLE_BOOT);
                 } else if (hit_rect(event.x, event.y, 478, 16, 94, LEONOS_UI_BUTTON_H)) {
-                    control_selected(LEONOS_DRIVER_CONTROL_ENABLE_BOOT);
+                    control_selected(SYSTEM_DRIVER_CONTROL_ENABLE_BOOT);
                 } else if (event.x >= (int32_t)(view_w > 30U ? view_w - 30U : 690U) &&
                            event.y >= (int32_t)(DRVMGR_LIST_Y - 2U)) {
                     leonos_ui_vscrollbar_handle_mouse(&driver_list.scroll,

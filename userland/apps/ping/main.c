@@ -1,6 +1,6 @@
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
-#include <leonos/net.h>
+#include <leonos/net_service.h>
 #include <leonos/psf_font.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
@@ -130,21 +130,21 @@ static int parse_ipv4(const char *text, uint32_t *out)
 static const char *status_name(uint32_t status)
 {
     switch (status) {
-    case LEONOS_NET_STATUS_OK:
+    case NET_SERVICE_STATUS_OK:
         return T("OK", "成功");
-    case LEONOS_NET_STATUS_NO_DEVICE:
+    case NET_SERVICE_STATUS_NO_DEVICE:
         return T("No e1000 adapter is active", "没有活动的 e1000 网卡");
-    case LEONOS_NET_STATUS_ARP_TIMEOUT:
+    case NET_SERVICE_STATUS_ARP_TIMEOUT:
         return T("ARP timeout", "ARP 超时");
-    case LEONOS_NET_STATUS_ECHO_TIMEOUT:
+    case NET_SERVICE_STATUS_ECHO_TIMEOUT:
         return T("Request timed out", "请求超时");
-    case LEONOS_NET_STATUS_BAD_ARGUMENT:
+    case NET_SERVICE_STATUS_BAD_ARGUMENT:
         return T("Bad target address", "目标地址无效");
-    case LEONOS_NET_STATUS_TX_FAILED:
+    case NET_SERVICE_STATUS_TX_FAILED:
         return T("Transmit failed", "发送失败");
-    case LEONOS_NET_STATUS_DHCP_TIMEOUT:
+    case NET_SERVICE_STATUS_DHCP_TIMEOUT:
         return T("DHCP timeout", "DHCP 超时");
-    case LEONOS_NET_STATUS_DHCP_FAILED:
+    case NET_SERVICE_STATUS_DHCP_FAILED:
         return T("DHCP failed", "DHCP 失败");
     default:
         return T("Unknown network status", "未知网络状态");
@@ -162,12 +162,12 @@ static void set_status_ret(const char *prefix, int ret)
 
 static void refresh_detail(void)
 {
-    struct leonos_net_config cfg;
+    net_service_config_t cfg;
     char ip[24];
     char gateway[24];
     char dns[24];
     uint32_t pos = 0;
-    if (leonos_net_config(&cfg) < 0) {
+    if (net_service_config(&cfg) < 0) {
         copy_text(detail_text, sizeof(detail_text), T("Could not read network configuration.", "无法读取网络配置。"));
         return;
     }
@@ -176,7 +176,7 @@ static void refresh_detail(void)
     format_ipv4(dns, sizeof(dns), cfg.dns_ip);
     detail_text[0] = 0;
     append_text(detail_text, &pos, sizeof(detail_text),
-                cfg.source == LEONOS_NET_CONFIG_SOURCE_DHCP ? "DHCP " : "Static ");
+                cfg.source == NET_SERVICE_CONFIG_SOURCE_DHCP ? "DHCP " : "Static ");
     append_text(detail_text, &pos, sizeof(detail_text), "IPv4 ");
     append_text(detail_text, &pos, sizeof(detail_text), ip);
     append_text(detail_text, &pos, sizeof(detail_text), ", gateway ");
@@ -188,7 +188,7 @@ static void refresh_detail(void)
 static void run_ping(void)
 {
     uint32_t ip;
-    struct leonos_net_ping result;
+    net_service_ping_t result;
     char ip_text[24];
     uint32_t pos;
     int ret;
@@ -199,8 +199,8 @@ static void run_ping(void)
     }
     format_ipv4(ip_text, sizeof(ip_text), ip);
     copy_text(status_text, sizeof(status_text), T("Sending ICMP Echo request...", "正在发送 ICMP Echo 请求..."));
-    result = (struct leonos_net_ping){0};
-    ret = leonos_net_ping(ip, LEONOS_NET_DEFAULT_TIMEOUT_MS, &result);
+    result = (net_service_ping_t){0};
+    ret = net_service_ping(ip, NET_SERVICE_DEFAULT_TIMEOUT_MS, &result);
     if (ret < 0) {
         set_status_ret(T("Network ioctl failed", "网络 ioctl 失败"), ret);
         copy_text(result_text, sizeof(result_text), T("The kernel rejected the ping request.", "内核拒绝了 ping 请求。"));
@@ -208,7 +208,7 @@ static void run_ping(void)
     }
     pos = 0;
     result_text[0] = 0;
-    if (result.status == LEONOS_NET_STATUS_OK) {
+    if (result.status == NET_SERVICE_STATUS_OK) {
         append_text(result_text, &pos, sizeof(result_text), T("Reply from ", "来自 "));
         append_text(result_text, &pos, sizeof(result_text), ip_text);
         append_text(result_text, &pos, sizeof(result_text), ": bytes=16 time=");

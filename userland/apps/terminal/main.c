@@ -1145,6 +1145,10 @@ static int terminal_send_key(uint8_t keycode, uint8_t pressed,
     struct termios termios;
     int have_termios;
     int local_echo;
+    leonos_ui_caps_lock_event(keycode, pressed);
+    if (keycode == LEONOS_KEY_CAPS_LOCK) {
+        return 0;
+    }
     if (keycode == LEONOS_KEY_LEFT_SHIFT || keycode == LEONOS_KEY_RIGHT_SHIFT) {
         *shift_down = pressed ? 1 : 0;
         return 0;
@@ -1415,6 +1419,8 @@ static struct terminal_session *terminal_open_session(const char *path,
         if (flags >= 0) {
             (void)fcntl(new_pty, F_SETFL, flags | O_NONBLOCK);
         }
+        printf("terminal: PTY ready master=%d child=%d flags=%d\n",
+               new_pty, child_pid, flags);
     }
     *session = (struct terminal_session){0};
     session->used = 1;

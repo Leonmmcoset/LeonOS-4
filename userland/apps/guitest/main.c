@@ -1,6 +1,6 @@
 #include <leonos/gui.h>
 #include <leonos/i18n.h>
-#include <leonos/mouse.h>
+#include <leonos/gui.h>
 #include <leonos/stdio.h>
 #include <leonos/ui.h>
 
@@ -92,7 +92,7 @@ static void reset_desktop_state(uint32_t window_id)
     (void)leonos_gui_set_window_borderless(window_id, 0);
     (void)leonos_gui_set_window_taskbar_visible(window_id, 1);
     (void)leonos_gui_set_taskbar_visible(window_id, 1);
-    (void)leonos_mouse_set_auto(window_id);
+    (void)leonos_gui_set_cursor_auto((uint32_t)window_id);
     (void)leonos_gui_set_window_title(window_id, T("GUI API Tester", "GUI API 测试"));
 }
 
@@ -257,12 +257,12 @@ int main(void)
                 }
                 set_status(status, sizeof(status), "desktop taskbar", result);
             } else if (hit(event.x, event.y, left, 192U, button_w, GUI_TEST_BUTTON_H)) {
-                result = leonos_mouse_set_position((uint32_t)window_id,
+                result = leonos_gui_set_cursor_position((uint32_t)window_id,
                                                    320, 240);
                 set_status(status, sizeof(status), "mouse position", result);
             } else if (hit(event.x, event.y, right, 192U, button_w, GUI_TEST_BUTTON_H)) {
                 uint32_t next_cursor_style = (cursor_style + 1U) % LEONOS_GUI_CURSOR_STYLE_COUNT;
-                result = leonos_mouse_set_style((uint32_t)window_id, next_cursor_style);
+                result = leonos_gui_set_cursor_style((uint32_t)window_id, next_cursor_style);
                 if (result > 0) {
                     cursor_style = next_cursor_style;
                 }
