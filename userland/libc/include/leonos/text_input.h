@@ -3,10 +3,9 @@
 
 /* Versioned LeonOS text-input service SDK.
  *
- * Consumers open the registered /dev/input-method service device through this
- * library; they never use fd 3 or the pre-migration leonos_inputm_* ABI.
- * The on-device wire structures remain the versioned LeonOS input-method
- * service protocol, and the GUI Unix-socket protocol is the final target.
+ * Consumers talk to the imd daemon over /run/leonos/input-method.sock through
+ * this library; the pre-migration /dev/input-method device and fd 3 channel
+ * are gone. Wire structures are the versioned LeonOS input-method protocol.
  */
 #include <leonos/inputm.h>
 #include <stdint.h>

@@ -19,5 +19,9 @@ ssize_t sendto(int fd, const void *buffer, size_t length, int flags,
                const struct sockaddr *destination, socklen_t destination_length);
 ssize_t recvfrom(int fd, void *buffer, size_t length, int flags,
                  struct sockaddr *source, socklen_t *source_length);
+int socketpair(int domain, int type, int protocol, int socket_vector[2]);
+int accept4(int fd, struct sockaddr *address, socklen_t *length, int flags);
+ssize_t sendmsg(int fd, const struct msghdr *message, int flags);
+ssize_t recvmsg(int fd, struct msghdr *message, int flags);
 
 #endif

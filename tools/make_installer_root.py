@@ -97,6 +97,9 @@ def main() -> int:
     if out.exists():
         out.unlink()
 
+    copy_file(userland_dir / "authd.elf", stage / "system/apps/authd/authd.elf")
+    copy_file(userland_dir / "imd.elf", stage / "system/apps/imd/imd.elf")
+    copy_file(userland_dir / "windowd.elf", stage / "system/apps/windowd/windowd.elf")
     copy_file(userland_dir / "desktop.elf", stage / "system/apps/desktop/desktop.elf")
     copy_file(userland_dir / "installer.elf", stage / "system/apps/installer/installer.elf")
     # Advanced installer mode enters the installer root directly through the
@@ -141,7 +144,22 @@ def main() -> int:
     copy_tree(esp_tree / "drivers", stage / "drivers")
     copy_file(esp_tree / "system/lib/ld-leonos.elf", stage / "system/lib/ld-leonos.elf")
     copy_file(policy_runtime, stage / "system/lib/libleonos.so.1")
+    # Unix IPC service sockets live in /run/leonos and procfs is fixed at
+    # /proc; FAT/exFAT have no permission bits, so service-side SO_PEERCRED
+    # checks are the access-control boundary.
+    (stage / "run/leonos").mkdir(parents=True, exist_ok=True)
+    (stage / "proc").mkdir(parents=True, exist_ok=True)
+    (stage / "etc").mkdir(parents=True, exist_ok=True)
+    (stage / "etc/resolv.conf").write_text("nameserver 1.1.1.1\n", encoding="ascii")
+    (stage / "etc/machine-id").write_text("00000000000000000000000000000000\n", encoding="ascii")
+    (stage / "system/config/users.db").write_bytes(b"")
     stage_installed_payloads(esp_tree, stage)
+    (stage / "install/root/run/leonos").mkdir(parents=True, exist_ok=True)
+    (stage / "install/root/proc").mkdir(parents=True, exist_ok=True)
+    (stage / "install/root/etc").mkdir(parents=True, exist_ok=True)
+    (stage / "install/root/etc/resolv.conf").write_text("nameserver 1.1.1.1\n", encoding="ascii")
+    (stage / "install/root/etc/machine-id").write_text("00000000000000000000000000000000\n", encoding="ascii")
+    (stage / "install/root/system/config/users.db").write_bytes(b"")
     copy_file(policy_runtime, stage / "install/root/system/lib/libleonos.so.1")
     remove_file(stage / "install/root/etc/license.conf")
     remove_file(stage / "install/root/etc/install.id")

@@ -89,3 +89,22 @@ uint32_t kernel_wait_queue_wake_all(struct kernel_wait_queue *queue)
     }
     return count;
 }
+
+void kernel_wait_queue_block_current(struct kernel_wait_queue *queue)
+{
+    struct task *task;
+    if (!queue) {
+        return;
+    }
+    task = sched_current_task();
+    if (!task || task->pid == 0 || task->state == TASK_EXITED) {
+        return;
+    }
+    if (kernel_wait_queue_add(queue, task) < 0) {
+        return;
+    }
+    /* The syscall epilogue rewinds the interrupted int 0x80 and retries it
+     * after wakeup, so returning EAGAIN internally is not observable to user
+     * space unless the descriptor is O_NONBLOCK (handled by the caller). */
+    sched_block_current();
+}

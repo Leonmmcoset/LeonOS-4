@@ -17,6 +17,45 @@ sdk = false
 api = false
 
 [[components]]
+id = "authd"
+symbol = "APP_AUTHD"
+label = "Authentication daemon"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "imd"
+symbol = "APP_IMD"
+label = "Input method daemon"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "windowd"
+symbol = "APP_WINDOWD"
+label = "Window server daemon"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "desktop"
 symbol = "APP_DESKTOP"
 label = "Desktop window server"
@@ -375,6 +414,19 @@ api = false
 id = "abittest"
 symbol = "APP_ABITEST"
 label = "Linux ABI runtime tests"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "ipctest"
+symbol = "APP_IPCTEST"
+label = "Unix IPC smoke test"
 category = "Developer applications"
 kind = "program-app"
 default = true

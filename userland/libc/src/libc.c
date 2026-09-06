@@ -26,6 +26,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <pty.h>
 #include <linux/tty.h>
@@ -484,248 +485,9 @@ char *getcwd(char *buf, size_t len)
 
 int ioctl(int fd, unsigned long request, void *arg)
 {
-    /* File descriptor 3 was the pre-devfs control channel.  Keep accepting
-     * it for old binaries, but resolve it to a real device node so every
-     * hardware operation follows the /dev namespace.  The kernel currently
-     * dispatches the ioctl by request code; selecting the matching node here
-     * also makes descriptor ownership and diagnostics consistent. */
-    if (fd == 3) {
-        static int console_fd = -1;
-        static int fb_fd = -1;
-        static int input_method_fd = -1;
-        static int audio_fd = -1;
-        static int net_fd = -1;
-        static int driver_fd = -1;
-        static int dev_fd = -1;
-        static int tty_fd = -1;
-        int *slot = &console_fd;
-        const char *path = LEONOS_DEV_CONSOLE;
-        int open_flags = LEONOS_O_RDWR;
-
-        if (request == LEONOS_GUI_IOCTL_VERSION ||
-            request == LEONOS_GUI_IOCTL_CREATE_WINDOW ||
-            request == LEONOS_GUI_IOCTL_POLL_WINDOW ||
-            request == LEONOS_GUI_IOCTL_PRESENT_WINDOW ||
-            request == LEONOS_GUI_IOCTL_FETCH_WINDOW ||
-            request == LEONOS_GUI_IOCTL_WINDOW_EVENT ||
-            request == LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT ||
-            request == LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT ||
-            request == LEONOS_GUI_IOCTL_DESTROY_WINDOW ||
-            request == LEONOS_GUI_IOCTL_UPDATE_WINDOW ||
-            request == LEONOS_GUI_IOCTL_SET_TASKBAR_VISIBLE ||
-            request == LEONOS_GUI_IOCTL_TASKS ||
-            request == LEONOS_GUI_IOCTL_TASK_KILL ||
-            request == LEONOS_GUI_IOCTL_DISPLAY_STATE ||
-            request == LEONOS_GUI_IOCTL_DISPLAY_REQUEST ||
-            request == LEONOS_GUI_IOCTL_POLL_DISPLAY_REQUEST ||
-            request == LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE ||
-            request == LEONOS_GUI_IOCTL_APPEARANCE_STATE ||
-            request == LEONOS_GUI_IOCTL_APPEARANCE_REQUEST ||
-            request == LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST ||
-            request == LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE ||
-            request == LEONOS_GUI_IOCTL_REBOOT ||
-            request == LEONOS_GUI_IOCTL_SHUTDOWN ||
-            request == LEONOS_GUI_IOCTL_FB_INFO ||
-            request == LEONOS_GUI_IOCTL_FB_CAPS ||
-            request == LEONOS_GUI_IOCTL_FB_SET_MODE ||
-            request == LEONOS_GUI_IOCTL_FB_FILL ||
-            request == LEONOS_GUI_IOCTL_FB_RECT ||
-            request == LEONOS_GUI_IOCTL_FB_TEXT ||
-            request == LEONOS_GUI_IOCTL_FB_PIXEL ||
-            request == LEONOS_GUI_IOCTL_FB_BLIT) {
-            path = LEONOS_DEV_FB0;
-            slot = &fb_fd;
-            open_flags = LEONOS_O_RDWR;
-        } else if (request == LEONOS_GUI_IOCTL_EVENT ||
-                   request == LEONOS_GUI_IOCTL_MOUSE_STATE ||
-                   request == LEONOS_GUI_IOCTL_CURSOR_REQUEST ||
-            request == LEONOS_GUI_IOCTL_CURSOR_REGION ||
-            request == LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE) {
-            /* GUI event routing is a window-service operation. It must not
-             * claim the raw evdev keyboard descriptor. */
-            path = LEONOS_DEV_FB0;
-            slot = &fb_fd;
-            open_flags = LEONOS_O_RDWR;
-        } else if (request == LEONOS_INPUTM_IOCTL_REGISTER ||
-                   request == LEONOS_INPUTM_IOCTL_UNREGISTER ||
-                   request == LEONOS_INPUTM_IOCTL_PROVIDER_NEXT ||
-                   request == LEONOS_INPUTM_IOCTL_PROVIDER_RESULT ||
-                   request == LEONOS_INPUTM_IOCTL_SUBMIT_KEY ||
-                   request == LEONOS_INPUTM_IOCTL_POLL_RESULT ||
-                   request == LEONOS_INPUTM_IOCTL_SET_ACTIVE ||
-                   request == LEONOS_INPUTM_IOCTL_LIST ||
-                   request == LEONOS_INPUTM_IOCTL_CONTEXT ||
-                   request == LEONOS_INPUTM_IOCTL_GET_STATE ||
-                   request == LEONOS_INPUTM_IOCTL_NOTIFY_CONFIG) {
-            path = LEONOS_DEV_INPUT_METHOD;
-            slot = &input_method_fd;
-        } else if (request == LEONOS_IOCTL_AUDIO_CONFIGURE ||
-                   request == LEONOS_IOCTL_AUDIO_WRITE ||
-            request == LEONOS_IOCTL_AUDIO_GET_STATE) {
-            path = LEONOS_DEV_AUDIO0;
-            slot = &audio_fd;
-            open_flags = LEONOS_O_RDWR;
-        } else if ((request & 0xffff0000UL) == 0x4c4e0000UL) {
-            path = LEONOS_DEV_NET0;
-            slot = &net_fd;
-        } else if (request == LEONOS_IOCTL_DRIVER_LIST ||
-                   request == LEONOS_IOCTL_DRIVER_CONTROL) {
-            path = LEONOS_DEV_DRIVERCTL;
-            slot = &driver_fd;
-        } else if (request == LEONOS_IOCTL_DEVICE_LIST) {
-            path = "/dev";
-            slot = &dev_fd;
-            open_flags = LEONOS_O_RDONLY;
-        } else if ((request >= LEONOS_PTY_IOCTL_CREATE &&
-                    request <= LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE) ||
-                   request == LEONOS_PTY_IOCTL_GET_ATTR ||
-                   request == LEONOS_PTY_IOCTL_SET_ATTR ||
-                   request == LEONOS_PTY_IOCTL_GET_WINSIZE ||
-                   request == LEONOS_PTY_IOCTL_SET_WINSIZE) {
-            /* Legacy PTY controls operate on the caller's controlling TTY;
-             * opening /dev/ptmx here would allocate an unrelated master. */
-            path = LEONOS_DEV_TTY;
-            slot = &tty_fd;
-        }
-
-        if (*slot < 0) {
-            *slot = open(path, open_flags, 0);
-        }
-        if (*slot >= 0) {
-            fd = *slot;
-        }
-        {
-            int result = (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
-            /* Applications may close a cached descriptor explicitly. Retry
-             * once with a fresh node if the kernel reports a stale handle. */
-            if (result == -9 && fd >= 4 && *slot == fd) {
-                (void)close(fd);
-                *slot = open(path, open_flags, 0);
-                if (*slot >= 0) {
-                    result = (int)syscall3(SYS_ioctl, *slot,
-                                           (long)request, (long)arg);
-                }
-            }
-            return result;
-        }
-    }
+    /* The fd 3 control-descriptor mechanism is gone. Every ioctl now targets
+     * the descriptor returned by open(). */
     return (int)syscall3(SYS_ioctl, fd, (long)request, (long)arg);
-}
-
-int leonos_gui_set_mouse_visible(uint32_t window_id, uint32_t visible)
-{
-    unsigned long value = ((unsigned long)window_id << 32) | (visible ? 1UL : 0UL);
-    return ioctl(3, LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE, (void *)value);
-}
-
-int leonos_gui_mouse_visible(void)
-{
-    return ioctl(3, LEONOS_GUI_IOCTL_SET_MOUSE_VISIBLE, 0);
-}
-
-int leonos_mouse_hide(uint32_t window_id)
-{
-    return leonos_gui_set_mouse_visible(window_id, 0);
-}
-
-int leonos_mouse_show(uint32_t window_id)
-{
-    return leonos_gui_set_mouse_visible(window_id, 1);
-}
-
-int leonos_mouse_is_visible(void)
-{
-    return leonos_gui_mouse_visible();
-}
-
-int leonos_gui_cursor_request(const struct leonos_gui_cursor_request *request)
-{
-    return request ? ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REQUEST, (void *)request) : -1;
-}
-
-int leonos_gui_set_cursor_position(uint32_t window_id, int32_t x, int32_t y)
-{
-    struct leonos_gui_cursor_request request = {
-        .window_id = window_id,
-        .x = x,
-        .y = y,
-        .style = LEONOS_GUI_CURSOR_ARROW,
-        .flags = LEONOS_GUI_CURSOR_REQUEST_POSITION,
-    };
-    return leonos_gui_cursor_request(&request);
-}
-
-int leonos_gui_set_cursor_style(uint32_t window_id, uint32_t style)
-{
-    struct leonos_gui_cursor_request request = {
-        .window_id = window_id,
-        .x = 0,
-        .y = 0,
-        .style = style,
-        .flags = LEONOS_GUI_CURSOR_REQUEST_STYLE,
-    };
-    return leonos_gui_cursor_request(&request);
-}
-
-int leonos_gui_set_cursor_auto(uint32_t window_id)
-{
-    struct leonos_gui_cursor_request request = {
-        .window_id = window_id,
-        .x = 0,
-        .y = 0,
-        .style = LEONOS_GUI_CURSOR_ARROW,
-        .flags = LEONOS_GUI_CURSOR_REQUEST_AUTO,
-    };
-    return leonos_gui_cursor_request(&request);
-}
-
-int leonos_mouse_set_position(uint32_t window_id, int32_t x, int32_t y)
-{
-    return leonos_gui_set_cursor_position(window_id, x, y);
-}
-
-int leonos_mouse_set_style(uint32_t window_id, uint32_t style)
-{
-    return leonos_gui_set_cursor_style(window_id, style);
-}
-
-int leonos_mouse_set_auto(uint32_t window_id)
-{
-    return leonos_gui_set_cursor_auto(window_id);
-}
-
-int leonos_mouse_get_state(struct leonos_mouse_state *state)
-{
-    return state ? ioctl(3, LEONOS_GUI_IOCTL_MOUSE_STATE, state) : -1;
-}
-
-int leonos_mouse_get_position(int32_t *x, int32_t *y)
-{
-    struct leonos_mouse_state state;
-    int ret;
-    if (!x || !y) {
-        return -1;
-    }
-    ret = leonos_mouse_get_state(&state);
-    if (ret > 0) {
-        *x = state.x;
-        *y = state.y;
-    }
-    return ret;
-}
-
-int leonos_mouse_set_region(const struct leonos_gui_cursor_region_request *region)
-{
-    return region ? ioctl(3, LEONOS_GUI_IOCTL_CURSOR_REGION, (void *)region) : -1;
-}
-
-int leonos_mouse_clear_regions(uint32_t window_id)
-{
-    struct leonos_gui_cursor_region_request region = {
-        .window_id = window_id,
-        .operation = LEONOS_GUI_CURSOR_REGION_CLEAR,
-    };
-    return window_id ? leonos_mouse_set_region(&region) : -1;
 }
 
 int sleep_ms(unsigned long ms)
@@ -1608,430 +1370,6 @@ int isatty(int fd)
 /* Keep one descriptor per process so per-frame drawing does not repeatedly
  * allocate and release a device fd.  The kernel still accepts the legacy
  * control descriptor for old statically linked applications. */
-static int leonos_framebuffer_fd(void)
-{
-    static int fd = -1;
-    if (fd < 0) {
-        fd = open(LEONOS_DEV_FB0, LEONOS_O_RDWR, 0);
-        if (fd < 0) {
-            fd = 3;
-        }
-    }
-    return fd;
-}
-
-int leonos_gui_connect(void)
-{
-    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_VERSION, 0);
-}
-
-int leonos_gui_create_window(const struct leonos_gui_window *window)
-{
-    if (!window || !window->width || !window->height || !window->title || !window->text) {
-        return -1;
-    }
-    return leonos_gui_create_app_window_ex(window->title, window->text,
-                                           window->width, window->height, window->flags);
-}
-
-int leonos_gui_next_event(struct leonos_input_event *event)
-{
-    return ioctl(3, LEONOS_GUI_IOCTL_EVENT, event);
-}
-
-unsigned long leonos_uptime_ms(void)
-{
-    return (unsigned long)ioctl(3, LEONOS_GUI_IOCTL_UPTIME_MS, 0);
-}
-
-int leonos_fb_info(struct leonos_fb_info *info)
-{
-    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_INFO, info);
-}
-
-int leonos_fb_capabilities(struct leonos_fb_capabilities *caps)
-{
-    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_CAPS, caps);
-}
-
-int leonos_fb_set_mode(uint32_t width, uint32_t height)
-{
-    struct leonos_fb_mode mode = {
-        .width = width,
-        .height = height,
-    };
-    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_SET_MODE, &mode);
-}
-
-int leonos_fb_fill(uint32_t color)
-{
-    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_FILL, (void *)(long)color);
-}
-
-int leonos_fb_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t color)
-{
-    struct leonos_fb_rect rect = {
-        .x = x,
-        .y = y,
-        .width = width,
-        .height = height,
-        .color = color,
-    };
-    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_RECT, &rect);
-}
-
-int leonos_fb_text(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32_t bg)
-{
-    struct leonos_fb_text cmd = {
-        .x = x,
-        .y = y,
-        .fg = fg,
-        .bg = bg,
-        .text = text,
-    };
-    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_TEXT, &cmd);
-}
-
-uint32_t leonos_fb_pixel(uint32_t x, uint32_t y)
-{
-    unsigned long packed = ((unsigned long)y << 32) | x;
-    return (uint32_t)ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_PIXEL, (void *)packed);
-}
-
-int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height, uint32_t stride, const uint32_t *pixels)
-{
-    struct leonos_fb_blit cmd = {
-        .x = x,
-        .y = y,
-        .width = width,
-        .height = height,
-        .stride = stride,
-        .pixels = pixels,
-    };
-    return ioctl(leonos_framebuffer_fd(), LEONOS_GUI_IOCTL_FB_BLIT, &cmd);
-}
-
-int leonos_gui_create_app_window(const char *title, const char *text, uint32_t width, uint32_t height)
-{
-    return leonos_gui_create_app_window_ex(title, text, width, height, 0);
-}
-
-int leonos_gui_create_app_window_ex(const char *title, const char *text,
-                                    uint32_t width, uint32_t height, uint32_t flags)
-{
-    struct leonos_gui_create cmd = {
-        .width = width,
-        .height = height,
-        .title = title,
-        .text = text,
-        .flags = flags,
-    };
-    int ret = ioctl(3, LEONOS_GUI_IOCTL_CREATE_WINDOW, &cmd);
-    if (ret > 0) {
-        struct leonos_appearance_state appearance;
-        leonos_inputm_note_gui_window((uint32_t)ret);
-        if (ioctl(3, LEONOS_GUI_IOCTL_APPEARANCE_STATE, &appearance) > 0) {
-            (void)leonos_ui_theme_set_appearance(appearance.theme,
-                                                 appearance.metro_color_scheme,
-                                                 appearance.win95_color_scheme);
-        }
-    }
-    return ret;
-}
-
-int leonos_gui_destroy_app_window(uint32_t window_id)
-{
-    return ioctl(3, LEONOS_GUI_IOCTL_DESTROY_WINDOW, (void *)(unsigned long)window_id);
-}
-
-int leonos_gui_update_window(const struct leonos_gui_window_update *update)
-{
-    if (!update) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_UPDATE_WINDOW, (void *)update);
-}
-
-int leonos_gui_set_window_title(uint32_t window_id, const char *title)
-{
-    struct leonos_gui_window_update update = {
-        .window_id = window_id,
-        .mask = LEONOS_GUI_WINDOW_UPDATE_TITLE,
-        .flags = 0,
-        .title = title,
-    };
-    return leonos_gui_update_window(&update);
-}
-
-int leonos_gui_set_window_borderless(uint32_t window_id, uint32_t borderless)
-{
-    struct leonos_gui_window_update update = {
-        .window_id = window_id,
-        .mask = LEONOS_GUI_WINDOW_UPDATE_BORDERLESS,
-        .flags = borderless ? LEONOS_GUI_WINDOW_BORDERLESS : 0,
-        .title = 0,
-    };
-    return leonos_gui_update_window(&update);
-}
-
-int leonos_gui_set_window_taskbar_visible(uint32_t window_id, uint32_t visible)
-{
-    struct leonos_gui_window_update update = {
-        .window_id = window_id,
-        .mask = LEONOS_GUI_WINDOW_UPDATE_TASKBAR,
-        .flags = visible ? 0 : LEONOS_GUI_WINDOW_HIDE_TASKBAR,
-        .title = 0,
-    };
-    return leonos_gui_update_window(&update);
-}
-
-int leonos_gui_set_taskbar_visible(uint32_t window_id, uint32_t visible)
-{
-    struct leonos_gui_taskbar_request request = {
-        .window_id = window_id,
-        .visible = visible ? 1u : 0u,
-    };
-    return ioctl(3, LEONOS_GUI_IOCTL_SET_TASKBAR_VISIBLE, &request);
-}
-
-int leonos_gui_poll_window(struct leonos_gui_window_msg *message)
-{
-    return ioctl(3, LEONOS_GUI_IOCTL_POLL_WINDOW, message);
-}
-
-int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t height,
-                              uint32_t stride, const uint32_t *pixels)
-{
-    struct leonos_gui_present cmd = {
-        .window_id = window_id,
-        .width = width,
-        .height = height,
-        .stride = stride,
-        .pixels = pixels,
-    };
-    leonos_ui_present_for_pixels(pixels, window_id);
-    return ioctl(3, LEONOS_GUI_IOCTL_PRESENT_WINDOW, &cmd);
-}
-
-int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_t capacity_height,
-                            uint32_t stride, uint32_t *pixels,
-                            uint32_t *out_width, uint32_t *out_height)
-{
-    struct leonos_gui_fetch cmd = {
-        .window_id = window_id,
-        .capacity_width = capacity_width,
-        .capacity_height = capacity_height,
-        .stride = stride,
-        .out_width = 0,
-        .out_height = 0,
-        .pixels = pixels,
-    };
-    int ret = ioctl(3, LEONOS_GUI_IOCTL_FETCH_WINDOW, &cmd);
-    if (out_width) {
-        *out_width = cmd.out_width;
-    }
-    if (out_height) {
-        *out_height = cmd.out_height;
-    }
-    return ret;
-}
-
-static int leonos_gui_inputm_commit_event(struct leonos_gui_app_event *event)
-{
-    uint32_t window_id;
-    if (!event || !event->window_id) {
-        return 0;
-    }
-    window_id = event->window_id;
-    if (leonos_inputm_poll_gui_commit(window_id) <= 0) {
-        return 0;
-    }
-    *event = (struct leonos_gui_app_event){0};
-    event->window_id = window_id;
-    event->type = LEONOS_GUI_APP_EVENT_KEY_DOWN;
-    event->pressed = 1;
-    if (leonos_inputm_take_key(&event->keycode, &event->pressed)) {
-        event->type = event->pressed ? LEONOS_GUI_APP_EVENT_KEY_DOWN :
-                                     LEONOS_GUI_APP_EVENT_KEY_UP;
-    }
-    return 1;
-}
-
-static void leonos_gui_observe_inputm_key(struct leonos_gui_app_event *event)
-{
-    if (!event || (event->type != LEONOS_GUI_APP_EVENT_KEY_DOWN &&
-                   event->type != LEONOS_GUI_APP_EVENT_KEY_UP)) {
-        return;
-    }
-    (void)leonos_inputm_observe_gui_key(event->window_id, &event->keycode,
-                                         event->pressed);
-}
-
-int leonos_gui_poll_app_event(struct leonos_gui_app_event *event)
-{
-    int ret;
-    if (leonos_gui_inputm_commit_event(event)) {
-        return 1;
-    }
-    ret = ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, event);
-    if (ret > 0 && event && event->type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
-        (void)leonos_ui_theme_set_appearance((uint32_t)event->x,
-                                             (uint32_t)event->y,
-                                             (uint32_t)event->dx);
-        event->type = LEONOS_GUI_APP_EVENT_RESIZE;
-    }
-    if (ret > 0) {
-        leonos_inputm_note_gui_window(event->window_id);
-        leonos_gui_observe_inputm_key(event);
-    }
-    return ret;
-}
-
-int leonos_gui_wait_app_event(struct leonos_gui_app_event *event, uint32_t timeout_ms)
-{
-    struct leonos_gui_wait_app_event wait;
-    int ret;
-    if (!event) {
-        return -1;
-    }
-    if (leonos_gui_inputm_commit_event(event)) {
-        return 1;
-    }
-    wait.event = *event;
-    wait.timeout_ms = timeout_ms;
-    ret = ioctl(3, LEONOS_GUI_IOCTL_WAIT_WINDOW_EVENT, &wait);
-    if (ret == 0 && leonos_gui_inputm_commit_event(event)) {
-        return 1;
-    }
-    if (ret == 0) {
-        ret = ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, &wait.event);
-    }
-    if (ret > 0) {
-        *event = wait.event;
-        if (event->type == LEONOS_GUI_APP_EVENT_THEME_CHANGED) {
-            (void)leonos_ui_theme_set_appearance((uint32_t)event->x,
-                                                 (uint32_t)event->y,
-                                                 (uint32_t)event->dx);
-            event->type = LEONOS_GUI_APP_EVENT_RESIZE;
-        }
-        leonos_inputm_note_gui_window(event->window_id);
-        leonos_gui_observe_inputm_key(event);
-    }
-    return ret;
-}
-
-int leonos_gui_send_app_event(const struct leonos_gui_app_event *event)
-{
-    return ioctl(3, LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT, (void *)event);
-}
-
-int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity, uint64_t *tick)
-{
-    struct leonos_task_snapshot snapshot = {
-        .capacity = capacity,
-        .count = 0,
-        .tick = 0,
-        .tasks = tasks,
-    };
-    int ret = ioctl(3, LEONOS_GUI_IOCTL_TASKS, &snapshot);
-    if (tick) {
-        *tick = snapshot.tick;
-    }
-    return ret < 0 ? ret : (int)snapshot.count;
-}
-
-int leonos_task_affinity_get(uint32_t pid, uint64_t *mask)
-{
-    struct leonos_task_affinity request = {
-        .pid = pid,
-        .operation = LEONOS_TASK_AFFINITY_GET,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_TASK_AFFINITY, &request);
-    if (ret == 0 && mask) {
-        *mask = request.mask;
-    }
-    return ret;
-}
-
-int leonos_task_affinity_set(uint32_t pid, uint64_t mask)
-{
-    struct leonos_task_affinity request = {
-        .pid = pid,
-        .operation = LEONOS_TASK_AFFINITY_SET,
-        .mask = mask,
-    };
-    return ioctl(3, LEONOS_IOCTL_TASK_AFFINITY, &request);
-}
-
-int leonos_task_kill(uint32_t pid)
-{
-    return ioctl(3, LEONOS_GUI_IOCTL_TASK_KILL, (void *)(uintptr_t)pid);
-}
-
-int leonos_display_get_state(struct leonos_display_state *state)
-{
-    if (!state) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_DISPLAY_STATE, state);
-}
-
-int leonos_display_request(const struct leonos_display_request *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_DISPLAY_REQUEST, (void *)request);
-}
-
-int leonos_display_poll_request(struct leonos_display_request *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_POLL_DISPLAY_REQUEST, request);
-}
-
-int leonos_display_publish_state(const struct leonos_display_state *state)
-{
-    if (!state) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_PUBLISH_DISPLAY_STATE, (void *)state);
-}
-
-int leonos_appearance_get_state(struct leonos_appearance_state *state)
-{
-    if (!state) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_APPEARANCE_STATE, state);
-}
-
-int leonos_appearance_request_theme(const struct leonos_appearance_request *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_APPEARANCE_REQUEST, (void *)request);
-}
-
-int leonos_appearance_poll_request(struct leonos_appearance_request *request)
-{
-    if (!request) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_POLL_APPEARANCE_REQUEST, request);
-}
-
-int leonos_appearance_publish_state(const struct leonos_appearance_state *state)
-{
-    if (!state) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_GUI_IOCTL_PUBLISH_APPEARANCE_STATE, (void *)state);
-}
-
 int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
                     uint32_t capacity, uint32_t *out_count)
 {
@@ -2076,58 +1414,62 @@ int leonos_list_dir(const char *path, struct leonos_dir_entry *entries,
     return 0;
 }
 
-static int leonos_fs_acl_ioctl(unsigned long request, const char *path,
-                               const struct leonos_fs_acl *in_acl,
-                               struct leonos_fs_acl *out_acl)
+static void leonos_fs_acl_synthetic(const char *path,
+                                     struct leonos_fs_acl *acl)
 {
-    struct leonos_fs_acl_request query;
-    uint32_t i = 0;
-    query = (struct leonos_fs_acl_request){0};
-    while (path && path[i] && i + 1 < sizeof(query.path)) {
-        query.path[i] = path[i];
-        ++i;
-    }
-    query.path[i] = 0;
-    if (in_acl) {
-        query.acl = *in_acl;
-    }
-    int ret = ioctl(3, request, &query);
-    if (ret == 0 && out_acl) {
-        *out_acl = query.acl;
-    }
-    return ret;
+    if (!acl) return;
+    memset(acl, 0, sizeof(*acl));
+    acl->version = LEONOS_FS_ACL_VERSION;
+    acl->owner_uid = (uint32_t)getuid();
+    acl->flags = LEONOS_FS_ACL_FLAG_SYNTHETIC;
+    acl->ace_count = 2;
+    acl->aces[0] = (struct leonos_fs_acl_ace){
+        .principal = LEONOS_FS_ACL_PRINCIPAL_OWNER,
+        .permissions = LEONOS_FS_PERM_FULL,
+    };
+    acl->aces[1] = (struct leonos_fs_acl_ace){
+        .principal = LEONOS_FS_ACL_PRINCIPAL_EVERYONE,
+        .permissions = LEONOS_FS_PERM_READ,
+    };
+    (void)path;
 }
 
 int leonos_fs_acl_get(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path || !acl) {
-        return -1;
-    }
-    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_GET, path, 0, acl);
+    if (!path || !acl) return -1;
+    leonos_fs_acl_synthetic(path, acl);
+    return 0;
 }
 
 int leonos_fs_acl_set(const char *path, const struct leonos_fs_acl *acl)
 {
-    if (!path || !acl) {
-        return -1;
+    mode_t mode = 0600;
+    if (!path || !acl) return -1;
+    for (uint32_t i = 0; i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
+        if (acl->aces[i].principal == LEONOS_FS_ACL_PRINCIPAL_OWNER) {
+            mode = (mode & ~0700) |
+                   ((acl->aces[i].permissions & 7u) << 6);
+        } else if (acl->aces[i].principal == LEONOS_FS_ACL_PRINCIPAL_EVERYONE) {
+            mode = (mode & ~0007) | (acl->aces[i].permissions & 7u);
+        }
     }
-    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_SET, path, acl, 0);
+    return chmod(path, mode);
 }
 
 int leonos_fs_acl_take_ownership(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path) {
-        return -1;
-    }
-    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_TAKE_OWNERSHIP, path, 0, acl);
+    if (!path) return -1;
+    if (chown(path, getuid(), getgid()) < 0) return -1;
+    leonos_fs_acl_synthetic(path, acl);
+    return 0;
 }
 
 int leonos_fs_acl_repair(const char *path, struct leonos_fs_acl *acl)
 {
-    if (!path) {
-        return -1;
-    }
-    return leonos_fs_acl_ioctl(LEONOS_FS_IOCTL_ACL_REPAIR, path, 0, acl);
+    if (!path) return -1;
+    if (chmod(path, 0700) < 0) return -1;
+    leonos_fs_acl_synthetic(path, acl);
+    return 0;
 }
 
 int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
@@ -2135,400 +1477,75 @@ int leonos_text_layout_utf8(const char *text, uint32_t byte_len,
                             uint32_t capacity,
                             struct leonos_text_layout *out_layout)
 {
-    struct leonos_text_layout query = {
-        .text = text,
-        .byte_len = byte_len,
-        .capacity = capacity,
-        .count = 0,
-        .total_cells = 0,
-        .total_px = 0,
-        .glyphs = glyphs,
-    };
-    int ret = ioctl(3, LEONOS_TEXT_IOCTL_LAYOUT_UTF8, &query);
+    uint32_t pos = 0;
+    uint32_t count = 0;
+    uint32_t cells = 0;
+    uint32_t pixels = 0;
+    if (!text) return -1;
+    if (!byte_len) {
+        while (text[byte_len]) ++byte_len;
+    }
+    while (pos < byte_len) {
+        uint8_t first = (uint8_t)text[pos];
+        uint32_t sequence = 1;
+        uint32_t codepoint = first;
+        if ((first & 0x80u) == 0) {
+            codepoint = first;
+        } else if ((first & 0xe0u) == 0xc0u) {
+            sequence = 2;
+            codepoint = first & 0x1fu;
+        } else if ((first & 0xf0u) == 0xe0u) {
+            sequence = 3;
+            codepoint = first & 0x0fu;
+        } else if ((first & 0xf8u) == 0xf0u) {
+            sequence = 4;
+            codepoint = first & 0x07u;
+        } else {
+            codepoint = LEONOS_TEXT_REPLACEMENT_CHAR;
+            sequence = 1;
+        }
+        if (sequence > 1 && pos + sequence > byte_len) {
+            codepoint = LEONOS_TEXT_REPLACEMENT_CHAR;
+            sequence = 1;
+        }
+        for (uint32_t i = 1; i < sequence; ++i) {
+            uint8_t next = (uint8_t)text[pos + i];
+            if ((next & 0xc0u) != 0x80u) {
+                codepoint = LEONOS_TEXT_REPLACEMENT_CHAR;
+                sequence = 1;
+                break;
+            }
+            codepoint = (codepoint << 6) | (next & 0x3fu);
+        }
+        {
+            uint32_t width = codepoint < 0x1100u ? 1u : 2u;
+            cells += width;
+            pixels += width * 8u;
+            if (glyphs && count < capacity) {
+                glyphs[count] = (struct leonos_text_glyph){
+                    .codepoint = codepoint,
+                    .byte_offset = pos,
+                    .byte_len = sequence,
+                    .cell_width = width,
+                    .pixel_width = width * 8u,
+                };
+            }
+            ++count;
+        }
+        pos += sequence;
+    }
     if (out_layout) {
-        *out_layout = query;
-    }
-    return ret;
-}
-
-int leonos_device_list(struct leonos_device_info *devices,
-                       uint32_t capacity, uint32_t *out_count)
-{
-    struct leonos_device_list query = {
-        .capacity = capacity,
-        .count = 0,
-        .devices = devices,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_DEVICE_LIST, &query);
-    if (out_count) {
-        *out_count = query.count;
-    }
-    return ret;
-}
-
-int leonos_driver_list(struct leonos_driver_info *drivers, uint32_t capacity,
-                       uint32_t *out_count)
-{
-    struct leonos_driver_list query = {
-        .capacity = capacity,
-        .count = 0,
-        .drivers = drivers,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_DRIVER_LIST, &query);
-    if (out_count) {
-        *out_count = query.count;
-    }
-    return ret;
-}
-
-int leonos_driver_control(uint32_t action, const char *file)
-{
-    struct leonos_driver_control request = {
-        .action = action,
-        .flags = 0,
-        .status = -1,
-        .reserved = 0,
-        .file = {0},
-    };
-    uint32_t index = 0;
-    while (file && file[index] && index + 1U < sizeof(request.file)) {
-        request.file[index] = file[index];
-        ++index;
-    }
-    request.file[index] = 0;
-    if (action != LEONOS_DRIVER_CONTROL_RESCAN && !request.file[0]) {
-        return -1;
-    }
-    if (ioctl(3, LEONOS_IOCTL_DRIVER_CONTROL, &request) < 0) {
-        return request.status < 0 ? request.status : -1;
-    }
-    return request.status;
-}
-
-int leonos_audio_configure(const struct leonos_audio_format *format)
-{
-    static int audio_fd = -1;
-    if (!format) {
-        return -1;
-    }
-    if (audio_fd < 0) {
-        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
-        if (audio_fd < 0) audio_fd = 3;
-    }
-    return ioctl(audio_fd, LEONOS_IOCTL_AUDIO_CONFIGURE, (void *)format);
-}
-
-long leonos_audio_write(const void *data, uint32_t length,
-                        uint32_t *out_status)
-{
-    static int audio_fd = -1;
-    uint32_t done = 0;
-    uint32_t status = LEONOS_AUDIO_STATUS_OK;
-    if (length && !data) {
-        return -1;
-    }
-    if (audio_fd < 0) {
-        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
-        if (audio_fd < 0) audio_fd = 3;
-    }
-    while (done < length) {
-        uint32_t chunk = length - done;
-        struct leonos_audio_write request;
-        int ret;
-        if (chunk > LEONOS_AUDIO_IO_SLICE_BYTES) {
-            chunk = LEONOS_AUDIO_IO_SLICE_BYTES;
-        }
-        request = (struct leonos_audio_write){
-            .data = (const uint8_t *)data + done,
-            .length = chunk,
-            .transferred = 0,
-            .status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED,
+        *out_layout = (struct leonos_text_layout){
+            .text = text,
+            .byte_len = byte_len,
+            .capacity = capacity,
+            .count = count,
+            .total_cells = cells,
+            .total_px = pixels,
+            .glyphs = glyphs,
         };
-        ret = ioctl(audio_fd, LEONOS_IOCTL_AUDIO_WRITE, &request);
-        status = request.status;
-        if (ret < 0) {
-            if (out_status) {
-                *out_status = status;
-            }
-            return done ? (long)done : ret;
-        }
-        if (request.transferred == 0 &&
-            request.status == LEONOS_AUDIO_STATUS_WOULD_BLOCK) {
-            break;
-        }
-        if (request.transferred == 0 || request.transferred > chunk) {
-            if (out_status) {
-                *out_status = LEONOS_AUDIO_STATUS_PLAYBACK_FAILED;
-            }
-            return done ? (long)done : -1;
-        }
-        done += request.transferred;
-        if (request.transferred < chunk) {
-            break;
-        }
     }
-    if (out_status) {
-        *out_status = status;
-    }
-    return (long)done;
-}
-
-int leonos_audio_get_state(struct leonos_audio_state *state)
-{
-    static int audio_fd = -1;
-    if (!state) {
-        return -1;
-    }
-    if (audio_fd < 0) {
-        audio_fd = open(LEONOS_DEV_AUDIO0, LEONOS_O_RDWR, 0);
-        if (audio_fd < 0) audio_fd = 3;
-    }
-    return ioctl(audio_fd, LEONOS_IOCTL_AUDIO_GET_STATE, state);
-}
-
-int leonos_net_config(struct leonos_net_config *config)
-{
-    if (!config) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_NET_CONFIG, config);
-}
-
-int leonos_net_get_dns_policy(struct leonos_net_dns_policy *result)
-{
-    struct leonos_net_dns_policy query = {
-        .mode = LEONOS_NET_DNS_MODE_QUERY,
-        .status = LEONOS_NET_STATUS_BAD_ARGUMENT,
-    };
-    int ret;
-    if (!result) {
-        return -1;
-    }
-    ret = ioctl(3, LEONOS_IOCTL_NET_DNS_POLICY, &query);
-    *result = query;
-    return ret;
-}
-
-int leonos_net_set_dns_policy(uint32_t mode, uint32_t custom_dns_ip,
-                              struct leonos_net_dns_policy *result)
-{
-    struct leonos_net_dns_policy query = {
-        .mode = mode,
-        .custom_dns_ip = custom_dns_ip,
-        .status = LEONOS_NET_STATUS_BAD_ARGUMENT,
-    };
-    int ret;
-    if (!result) {
-        return -1;
-    }
-    ret = ioctl(3, LEONOS_IOCTL_NET_DNS_POLICY, &query);
-    *result = query;
-    return ret;
-}
-
-int leonos_net_dhcp_renew(uint32_t timeout_ms, struct leonos_net_dhcp *result)
-{
-    struct leonos_net_dhcp query = {
-        .timeout_ms = timeout_ms,
-        .status = LEONOS_NET_STATUS_DHCP_FAILED,
-    };
-    int ret;
-    if (!result) {
-        return -1;
-    }
-    ret = ioctl(3, LEONOS_IOCTL_NET_DHCP, &query);
-    *result = query;
-    return ret;
-}
-
-int leonos_net_ping(uint32_t target_ip, uint32_t timeout_ms,
-                    struct leonos_net_ping *result)
-{
-    struct leonos_net_ping query = {
-        .target_ip = target_ip,
-        .timeout_ms = timeout_ms,
-        .sequence = 0,
-        .status = LEONOS_NET_STATUS_BAD_ARGUMENT,
-    };
-    int ret;
-    if (!result) {
-        return -1;
-    }
-    ret = ioctl(3, LEONOS_IOCTL_NET_PING, &query);
-    *result = query;
-    return ret;
-}
-
-int leonos_net_dns_resolve(const char *name, uint32_t timeout_ms,
-                           struct leonos_net_dns *result)
-{
-    struct leonos_net_dns query;
-    uint32_t i = 0;
-    int ret;
-    if (!name || !result) {
-        return -1;
-    }
-    query = (struct leonos_net_dns){0};
-    query.timeout_ms = timeout_ms;
-    query.status = LEONOS_NET_STATUS_DNS_FAILED;
-    while (name[i] && i + 1 < sizeof(query.name)) {
-        query.name[i] = name[i];
-        ++i;
-    }
-    query.name[i] = 0;
-    ret = ioctl(3, LEONOS_IOCTL_NET_DNS, &query);
-    *result = query;
-    return ret;
-}
-
-int leonos_net_http_get(const char *host, const char *path,
-                        uint32_t port, uint32_t timeout_ms,
-                        struct leonos_net_http_get *result)
-{
-    struct leonos_net_http_get query;
-    uint32_t i = 0;
-    int ret;
-    if (!host || !result) {
-        return -1;
-    }
-    query = (struct leonos_net_http_get){0};
-    query.port = port;
-    query.timeout_ms = timeout_ms;
-    query.status = LEONOS_NET_STATUS_HTTP_FAILED;
-    while (host[i] && i + 1 < sizeof(query.host)) {
-        query.host[i] = host[i];
-        ++i;
-    }
-    query.host[i] = 0;
-    i = 0;
-    while (path && path[i] && i + 1 < sizeof(query.path)) {
-        query.path[i] = path[i];
-        ++i;
-    }
-    query.path[i] = 0;
-    ret = ioctl(3, LEONOS_IOCTL_NET_HTTP_GET, &query);
-    *result = query;
-    return ret;
-}
-
-int leonos_socket_tcp(void)
-{
-    struct leonos_net_socket_open query = {
-        .domain = LEONOS_NET_AF_INET,
-        .type = LEONOS_NET_SOCK_STREAM,
-        .protocol = LEONOS_NET_IPPROTO_TCP,
-        .timeout_ms = 0,
-        .status = LEONOS_NET_STATUS_TCP_FAILED,
-        .socket = -1,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_OPEN, &query);
-    if (ret < 0) {
-        return ret;
-    }
-    return query.status == LEONOS_NET_STATUS_OK ? query.socket : -1;
-}
-
-int leonos_socket_connect(int socket, const char *host,
-                          uint32_t port, uint32_t timeout_ms,
-                          struct leonos_net_socket_connect *result)
-{
-    struct leonos_net_socket_connect query;
-    uint32_t i = 0;
-    int ret;
-    if (!host || !result) {
-        return -1;
-    }
-    query = (struct leonos_net_socket_connect){0};
-    query.socket = socket;
-    query.port = port;
-    query.timeout_ms = timeout_ms;
-    query.status = LEONOS_NET_STATUS_TCP_FAILED;
-    while (host[i] && i + 1 < sizeof(query.host)) {
-        query.host[i] = host[i];
-        ++i;
-    }
-    query.host[i] = 0;
-    ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_CONNECT, &query);
-    *result = query;
-    return ret;
-}
-
-long leonos_socket_send(int socket, const void *buffer, uint32_t length,
-                        uint32_t timeout_ms, uint32_t *status)
-{
-    struct leonos_net_socket_io query = {
-        .socket = socket,
-        .buffer = (void *)buffer,
-        .length = length,
-        .timeout_ms = timeout_ms,
-        .status = LEONOS_NET_STATUS_TCP_FAILED,
-        .transferred = 0,
-    };
-    int ret;
-    if (length && !buffer) {
-        if (status) {
-            *status = LEONOS_NET_STATUS_BAD_ARGUMENT;
-        }
-        return -1;
-    }
-    ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_SEND, &query);
-    if (status) {
-        *status = query.status;
-    }
-    return ret < 0 ? ret : (long)query.transferred;
-}
-
-long leonos_socket_recv(int socket, void *buffer, uint32_t length,
-                        uint32_t timeout_ms, uint32_t *status)
-{
-    struct leonos_net_socket_io query = {
-        .socket = socket,
-        .buffer = buffer,
-        .length = length,
-        .timeout_ms = timeout_ms,
-        .status = LEONOS_NET_STATUS_TCP_FAILED,
-        .transferred = 0,
-    };
-    int ret;
-    if (length && !buffer) {
-        if (status) {
-            *status = LEONOS_NET_STATUS_BAD_ARGUMENT;
-        }
-        return -1;
-    }
-    ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_RECV, &query);
-    if (status) {
-        *status = query.status;
-    }
-    return ret < 0 ? ret : (long)query.transferred;
-}
-
-int leonos_socket_close(int socket)
-{
-    struct leonos_net_socket_close query = {
-        .socket = socket,
-        .status = LEONOS_NET_STATUS_SOCKET_CLOSED,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_NET_SOCKET_CLOSE, &query);
-    if (ret < 0) {
-        return ret;
-    }
-    return query.status == LEONOS_NET_STATUS_OK ? 0 : -1;
-}
-
-int leonos_net_connections(struct leonos_net_connection_info *entries,
-                           uint32_t capacity, uint32_t *out_count)
-{
-    struct leonos_net_connection_list query = {
-        .capacity = capacity,
-        .count = 0,
-        .entries = entries,
-    };
-    int ret = ioctl(3, LEONOS_IOCTL_NET_CONNECTIONS, &query);
-    if (out_count) {
-        *out_count = query.count;
-    }
-    return ret;
+    return 0;
 }
 
 #define HTTP_REQUEST_MAX 1024U
@@ -3904,286 +2921,66 @@ static void libc_clear_secret(void *data, uint32_t len)
     }
 }
 
-int leonos_auth_status(struct leonos_auth_status *status)
-{
-    if (!status) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_AUTH_IOCTL_STATUS, status);
-}
-
-int leonos_auth_current(struct leonos_user_info *user)
-{
-    if (!user) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_AUTH_IOCTL_CURRENT, user);
-}
-
-int leonos_auth_list_users(struct leonos_user_info *users, uint32_t capacity,
-                           uint32_t include_disabled, uint32_t *out_count)
-{
-    struct leonos_user_list query = {
-        .actor_uid = 0,
-        .actor_role = 0,
-        .include_disabled = include_disabled,
-        .capacity = capacity,
-        .count = 0,
-        .reserved = 0,
-        .users = users,
-    };
-    int ret = ioctl(3, LEONOS_AUTH_IOCTL_LIST_USERS, &query);
-    if (out_count) {
-        *out_count = query.count;
-    }
-    return ret;
-}
-
-int leonos_auth_login(const char *username, const char *password,
-                      struct leonos_user_info *user)
-{
-    struct leonos_auth_login login;
-    login = (struct leonos_auth_login){0};
-    libc_copy_fixed(login.username, sizeof(login.username), username);
-    libc_copy_fixed(login.password, sizeof(login.password), password);
-    int ret = ioctl(3, LEONOS_AUTH_IOCTL_LOGIN, &login);
-    if (ret == 0 && user) {
-        *user = login.user;
-    }
-    libc_clear_secret(login.password, sizeof(login.password));
-    return ret;
-}
-
-int leonos_auth_elevate_admin(const char *username, const char *password,
-                               struct leonos_user_info *user)
-{
-    struct leonos_auth_login login;
-    login = (struct leonos_auth_login){0};
-    libc_copy_fixed(login.username, sizeof(login.username), username);
-    libc_copy_fixed(login.password, sizeof(login.password), password);
-    int ret = ioctl(3, LEONOS_AUTH_IOCTL_ELEVATE_ADMIN, &login);
-    if (ret == 0 && user) {
-        *user = login.user;
-    }
-    libc_clear_secret(login.password, sizeof(login.password));
-    return ret;
-}
-
-int leonos_auth_delegate_elevation(uint32_t child_pid)
-{
-    struct leonos_auth_delegate_elevation delegation = {
-        .child_pid = child_pid,
-        .reserved = 0,
-    };
-    return ioctl(3, LEONOS_AUTH_IOCTL_DELEGATE_ELEVATION, &delegation);
-}
-
-int leonos_auth_logout(void)
-{
-    return ioctl(3, LEONOS_AUTH_IOCTL_LOGOUT, 0);
-}
-
-int leonos_auth_create_user(const char *username, const char *password,
-                            uint32_t role, struct leonos_user_info *user)
-{
-    struct leonos_auth_create create;
-    create = (struct leonos_auth_create){0};
-    create.role = role;
-    libc_copy_fixed(create.username, sizeof(create.username), username);
-    libc_copy_fixed(create.password, sizeof(create.password), password);
-    int ret = ioctl(3, LEONOS_AUTH_IOCTL_CREATE_USER, &create);
-    if (ret == 0 && user) {
-        *user = create.user;
-    }
-    libc_clear_secret(create.password, sizeof(create.password));
-    return ret;
-}
-
-int leonos_auth_update_user(uint32_t uid, uint32_t mask, uint32_t role,
-                            uint32_t flags)
-{
-    struct leonos_auth_update update;
-    update = (struct leonos_auth_update){0};
-    update.uid = uid;
-    update.mask = mask;
-    update.role = role;
-    update.flags = flags;
-    return ioctl(3, LEONOS_AUTH_IOCTL_UPDATE_USER, &update);
-}
-
-int leonos_auth_change_password(uint32_t uid, const char *old_password,
-                                const char *new_password)
-{
-    struct leonos_auth_password password;
-    password = (struct leonos_auth_password){0};
-    password.uid = uid;
-    libc_copy_fixed(password.old_password, sizeof(password.old_password), old_password);
-    libc_copy_fixed(password.new_password, sizeof(password.new_password), new_password);
-    {
-        int ret = ioctl(3, LEONOS_AUTH_IOCTL_CHANGE_PASSWORD, &password);
-        libc_clear_secret(password.old_password, sizeof(password.old_password));
-        libc_clear_secret(password.new_password, sizeof(password.new_password));
-        return ret;
-    }
-}
-
-int leonos_startup_request(const struct leonos_startup_command *command,
-                           uint32_t *out_request_id)
-{
-    struct leonos_startup_request request;
-    int ret;
-    if (!command) {
-        return -1;
-    }
-    request = (struct leonos_startup_request){0};
-    request.command = *command;
-    ret = ioctl(3, LEONOS_STARTUP_IOCTL_REQUEST, &request);
-    if (out_request_id) {
-        *out_request_id = request.request_id;
-    }
-    return ret;
-}
-
-int leonos_startup_request_status(uint32_t request_id, uint32_t *out_status)
-{
-    struct leonos_startup_request_status request = {request_id, 0};
-    int ret = ioctl(3, LEONOS_STARTUP_IOCTL_REQUEST_STATUS, &request);
-    if (out_status) {
-        *out_status = request.status;
-    }
-    return ret;
-}
-
-int leonos_startup_dialog_get(struct leonos_startup_dialog_request *request)
-{
-    return request ? ioctl(3, LEONOS_STARTUP_IOCTL_DIALOG_GET, request) : -1;
-}
-
-int leonos_startup_dialog_resolve(uint32_t request_id, uint32_t decision)
-{
-    struct leonos_startup_dialog_resolution resolution = {request_id, decision};
-    return ioctl(3, LEONOS_STARTUP_IOCTL_DIALOG_RESOLVE, &resolution);
-}
-
-int leonos_startup_list(uint32_t uid, struct leonos_startup_entry *entries,
-                        uint32_t capacity, uint32_t *out_count)
-{
-    struct leonos_startup_list list = {uid, capacity, 0, 0, entries};
-    int ret = ioctl(3, LEONOS_STARTUP_IOCTL_LIST, &list);
-    if (out_count) {
-        *out_count = list.count;
-    }
-    return ret;
-}
-
-int leonos_startup_set_enabled(uint32_t uid, uint32_t entry_id, uint32_t enabled)
-{
-    struct leonos_startup_update update = {uid, entry_id, enabled ? 1U : 0U, 0};
-    return ioctl(3, LEONOS_STARTUP_IOCTL_SET_ENABLED, &update);
-}
-
-int leonos_startup_remove(uint32_t uid, uint32_t entry_id)
-{
-    struct leonos_startup_update update = {uid, entry_id, 0, 0};
-    return ioctl(3, LEONOS_STARTUP_IOCTL_REMOVE, &update);
-}
-
-int leonos_startup_launch_current_user(void)
-{
-    return ioctl(3, LEONOS_STARTUP_IOCTL_LAUNCH_CURRENT, 0);
-}
-
-int leonos_system_info(struct leonos_system_info *info)
-{
-    if (!info) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_SYSTEM_INFO, info);
-}
-
-int leonos_perf_info(struct leonos_perf_info *info)
-{
-    if (!info) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_PERF_INFO, info);
-}
-
-int leonos_time_info(struct leonos_time_info *info)
-{
-    if (!info) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_TIME_INFO, info);
-}
-
-int leonos_time_ntp_sync(uint32_t timeout_ms, struct leonos_time_sync *result)
-{
-    if (!result) {
-        return -1;
-    }
-    *result = (struct leonos_time_sync){0};
-    result->timeout_ms = timeout_ms;
-    return ioctl(3, LEONOS_IOCTL_TIME_NTP_SYNC, result);
-}
-
-int leonos_machine_identity(struct leonos_machine_identity *identity)
-{
-    if (!identity) {
-        return -1;
-    }
-    return ioctl(3, LEONOS_IOCTL_MACHINE_IDENTITY, identity);
-}
-
 int leonos_system_reboot(void)
 {
-    return ioctl(3, LEONOS_GUI_IOCTL_REBOOT, 0);
+    return reboot(RB_AUTOBOOT);
 }
 
 int leonos_system_shutdown(void)
 {
-    return ioctl(3, LEONOS_GUI_IOCTL_SHUTDOWN, 0);
+    return reboot(RB_POWER_OFF);
 }
 
 int leonos_kernel_debug_get_state(uint32_t *flags)
 {
-    struct leonos_kernel_debug_control control = {
-        .version = LEONOS_KERNEL_DEBUG_VERSION,
-        .command = LEONOS_KERNEL_DEBUG_CONTROL_GET_STATE,
-    };
-    int ret;
+    char buffer[128] = {0};
+    int fd;
     if (!flags) return -1;
-    ret = ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
-    if (ret == 0) *flags = control.result_flags;
-    return ret;
+    *flags = 0;
+    fd = open("/system/state/kernel-debug", LEONOS_O_RDONLY, 0);
+    if (fd < 0) return 0;
+    {
+        long got = read(fd, buffer, sizeof(buffer) - 1u);
+        if (got > 0) {
+            if (buffer[0] == '1') *flags |= LEONOS_KERNEL_DEBUG_STATE_ENABLED;
+            for (long i = 0; i + 1 < got; ++i) {
+                if (buffer[i] == 'a' && buffer[i+1] == 'r' && buffer[i+2] == 'm') {
+                    *flags |= LEONOS_KERNEL_DEBUG_STATE_NEXT_BOOT;
+                }
+            }
+        }
+    }
+    close(fd);
+    return 0;
+}
+
+static int leonos_kernel_debug_write(const char *text)
+{
+    int fd = open("/system/state/kernel-debug",
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    uint32_t len = 0;
+    if (fd < 0) return fd;
+    while (text && text[len]) ++len;
+    {
+        long wrote = write(fd, text, len);
+        close(fd);
+        return wrote == (long)len ? 0 : -1;
+    }
 }
 
 int leonos_kernel_debug_set_enabled(int enabled)
 {
-    struct leonos_kernel_debug_control control = {
-        .version = LEONOS_KERNEL_DEBUG_VERSION,
-        .command = LEONOS_KERNEL_DEBUG_CONTROL_SET_ENABLED,
-        .flags = enabled ? LEONOS_KERNEL_DEBUG_STATE_ENABLED : 0U,
-    };
-    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+    return leonos_kernel_debug_write(enabled ? "1\n" : "0\n");
 }
 
 int leonos_kernel_debug_arm_next_boot(void)
 {
-    struct leonos_kernel_debug_control control = {
-        .version = LEONOS_KERNEL_DEBUG_VERSION,
-        .command = LEONOS_KERNEL_DEBUG_CONTROL_ARM_NEXT_BOOT,
-    };
-    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+    return leonos_kernel_debug_write("arm\n");
 }
 
 int leonos_kernel_debug_clear(void)
 {
-    struct leonos_kernel_debug_control control = {
-        .version = LEONOS_KERNEL_DEBUG_VERSION,
-        .command = LEONOS_KERNEL_DEBUG_CONTROL_CLEAR,
-    };
-    return ioctl(3, LEONOS_KERNEL_DEBUG_IOCTL_CONTROL, &control);
+    return leonos_kernel_debug_write("");
 }
 
 int leonos_readdir(int fd, struct leonos_dir_entry *entry)
@@ -4261,148 +3058,7 @@ int leonos_i18n_set_language(int lang)
     return 0;
 }
 
-int leonos_pty_create(void)
-{
-    return ioctl(3, LEONOS_PTY_IOCTL_CREATE, 0);
-}
-
-int leonos_pty_destroy(uint32_t pty_id)
-{
-    return ioctl(3, LEONOS_PTY_IOCTL_DESTROY, (void *)(uintptr_t)pty_id);
-}
-
-int leonos_pty_read_output(uint32_t pty_id, char *buffer, uint32_t length)
-{
-    struct leonos_pty_io io = {
-        .pty_id = pty_id,
-        .length = length,
-        .buffer = buffer,
-    };
-    return ioctl(3, LEONOS_PTY_IOCTL_READ_OUTPUT, &io);
-}
-
-int leonos_pty_write_input(uint32_t pty_id, const char *buffer, uint32_t length)
-{
-    struct leonos_pty_io io = {
-        .pty_id = pty_id,
-        .length = length,
-        .buffer = (char *)buffer,
-    };
-    return ioctl(3, LEONOS_PTY_IOCTL_WRITE_INPUT, &io);
-}
-
-int leonos_pty_spawn(const char *path, uint32_t pty_id)
-{
-    return leonos_pty_spawn_argv(path, pty_id, 0, 0);
-}
-
-int leonos_pty_spawn_argv(const char *path, uint32_t pty_id,
-                          char *const argv[], char *const envp[])
-{
-    return leonos_pty_spawn_argv_with_fds(path, pty_id, argv, envp, -1, -1, -1);
-}
-
-int leonos_pty_spawn_argv_with_fds(const char *path, uint32_t pty_id,
-                                   char *const argv[], char *const envp[],
-                                   int stdin_fd, int stdout_fd, int stderr_fd)
-{
-    char **owned_envp = 0;
-    char *const *effective_envp = envp;
-    int result;
-    if (!effective_envp) {
-        result = leonos_environment_build(0, &owned_envp);
-        if (result < 0) {
-            return result;
-        }
-        effective_envp = owned_envp;
-    }
-    struct leonos_pty_spawn spawn = {
-        .pty_id = pty_id,
-        .path = path,
-        .argv = argv,
-        .envp = effective_envp,
-        .stdin_fd = stdin_fd,
-        .stdout_fd = stdout_fd,
-        .stderr_fd = stderr_fd,
-    };
-    result = ioctl(3, LEONOS_PTY_IOCTL_SPAWN, &spawn);
-    leonos_environment_free(owned_envp);
-    return result;
-}
-
-int leonos_pty_self(void)
-{
-    return ioctl(3, LEONOS_PTY_IOCTL_SELF, 0);
-}
-
-int leonos_pty_input_available(void)
-{
-    return ioctl(3, LEONOS_PTY_IOCTL_INPUT_AVAILABLE, 0);
-}
-
 static int leonos_pty_error(int result);
-
-int leonos_pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios)
-{
-    struct leonos_pty_termios_io io;
-    int result;
-    if (!pty_id || !termios) {
-        errno = EINVAL;
-        return -1;
-    }
-    io.pty_id = pty_id;
-    io.action = 0;
-    result = ioctl(3, LEONOS_PTY_IOCTL_OWNER_GET_ATTR, &io);
-    if (result < 0) {
-        return leonos_pty_error(result);
-    }
-    *termios = io.termios;
-    return 0;
-}
-
-int leonos_pty_set_termios(uint32_t pty_id,
-                           const struct leonos_pty_termios *termios)
-{
-    struct leonos_pty_termios_io io;
-    if (!pty_id || !termios) {
-        errno = EINVAL;
-        return -1;
-    }
-    io.pty_id = pty_id;
-    io.action = 0;
-    io.termios = *termios;
-    return leonos_pty_error(ioctl(3, LEONOS_PTY_IOCTL_OWNER_SET_ATTR, &io));
-}
-
-int leonos_pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize)
-{
-    struct leonos_pty_winsize_io io;
-    int result;
-    if (!pty_id || !winsize) {
-        errno = EINVAL;
-        return -1;
-    }
-    io.pty_id = pty_id;
-    result = ioctl(3, LEONOS_PTY_IOCTL_OWNER_GET_WINSIZE, &io);
-    if (result < 0) {
-        return leonos_pty_error(result);
-    }
-    *winsize = io.winsize;
-    return 0;
-}
-
-int leonos_pty_set_winsize(uint32_t pty_id,
-                            const struct leonos_pty_winsize *winsize)
-{
-    struct leonos_pty_winsize_io io;
-    if (!pty_id || !winsize) {
-        errno = EINVAL;
-        return -1;
-    }
-    io.pty_id = pty_id;
-    io.winsize = *winsize;
-    return leonos_pty_error(ioctl(3, LEONOS_PTY_IOCTL_OWNER_SET_WINSIZE, &io));
-}
 
 int posix_openpt(int flags)
 {

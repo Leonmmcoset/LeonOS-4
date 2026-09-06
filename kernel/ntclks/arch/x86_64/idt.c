@@ -5,7 +5,6 @@
 #include <ntclks/bugcheck.h>
 #include <ntclks/arch.h>
 #include <ntclks/console.h>
-#include <ntclks/gui_ipc.h>
 #include <ntclks/lock.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
@@ -415,15 +414,9 @@ static void format_user_page_fault_report(char *buf, uint32_t cap,
 static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_t cr2)
 {
     struct task *task = sched_current_task();
-    struct task *window_server = sched_find_window_server();
-    char report[GUI_IPC_WINDOW_TEXT_MAX];
+    char report[LEONOS_FS_PATH_LEN];
     if (!task || task->kind != TASK_KIND_USER) {
         bugcheck_trap("Unhandled Page Fault", frame, cr2);
-    }
-    if (task->flags & TASK_FLAG_WINDOW_SERVER) {
-        console_printf("[ntclks] window server page fault pid=%u, falling back to bugcheck\n",
-                       task->pid);
-        bugcheck_trap("Window Server Page Fault", frame, cr2);
     }
     format_user_page_fault_report(report, sizeof(report), task, frame, cr2);
     console_printf("[ntclks] user page fault killed pid=%u name=%s cr2=0x%llx rip=0x%llx error=0x%llx\n",
@@ -433,15 +426,7 @@ static struct task *abort_user_page_fault_task(struct trap_frame *frame, uint64_
                    (unsigned long long)frame->rip,
                    (unsigned long long)frame->error);
     syscall_release_task_files(task);
-    gui_ipc_destroy_owner(task->pid);
     pty_process_exit(task->pid);
-    if (window_server && window_server->pid != task->pid) {
-        (void)gui_ipc_post_system_window(window_server->pid, 560, 270,
-                                         "Application Page Fault",
-                                         report,
-                                         task->path,
-                                         0);
-    }
     sched_exit(task->pid, 0x8000000eULL);
     return userland_schedule_from_frame(NULL);
 }

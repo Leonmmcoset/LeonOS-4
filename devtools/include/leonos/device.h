@@ -3,7 +3,6 @@
 
 #include <stdint.h>
 
-#define LEONOS_IOCTL_DEVICE_LIST 0x4c444556UL
 
 #define LEONOS_DEVICE_MAX 24U
 #define LEONOS_DEVICE_NAME_LEN 32U

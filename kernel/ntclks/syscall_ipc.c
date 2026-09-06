@@ -7,6 +7,7 @@
 #include <ntclks/usercopy.h>
 #include <ntclks/object.h>
 #include <ntclks/heap.h>
+#include <ntclks/wait.h>
 #include <leonos/fs.h>
 
 /* A 64-stage shell pipeline owns 63 pipes simultaneously.  Keep an extra
@@ -23,6 +24,8 @@ struct task_pipe {
     uint32_t head;
     uint32_t tail;
     uint8_t data[TASK_PIPE_RING_CAP];
+    struct kernel_wait_queue wait_read;
+    struct kernel_wait_queue wait_write;
 };
 
 static struct task_pipe *task_pipes[TASK_PIPE_MAX];
@@ -50,11 +53,15 @@ void task_pipe_release(struct task_file *file)
     if (!pipe) return;
     if (file->flags & TASK_FILE_FLAG_PIPE_WRITE) {
         if (pipe->writers) --pipe->writers;
+        if (!pipe->writers) (void)kernel_wait_queue_wake_all(&pipe->wait_read);
     } else if (pipe->readers) {
         --pipe->readers;
+        if (!pipe->readers) (void)kernel_wait_queue_wake_all(&pipe->wait_write);
     }
     if (!pipe->readers && !pipe->writers) {
         void *removed = NULL;
+        (void)kernel_wait_queue_wake_all(&pipe->wait_read);
+        (void)kernel_wait_queue_wake_all(&pipe->wait_write);
         kernel_object_remove(kernel_objects(), file->aux, KERNEL_OBJECT_PIPE, &removed);
         if (removed) {
             for (uint32_t i = 0; i < TASK_PIPE_MAX; ++i) {
@@ -116,11 +123,19 @@ int task_pipe_read(struct task_file *file, void *buffer, uint32_t length)
     uint32_t count = 0;
     if (!pipe || (file->flags & TASK_FILE_FLAG_PIPE_WRITE)) return -LEONOS_EBADF;
     if (length == 0) return 0;
+    kernel_wait_queue_remove(&pipe->wait_read, sched_current_task());
     while (pipe->tail != pipe->head && count < length) {
         ((uint8_t *)buffer)[count++] = pipe->data[pipe->tail];
         pipe->tail = (pipe->tail + 1U) % TASK_PIPE_RING_CAP;
     }
-    return count ? (int)count : (pipe->writers ? -LEONOS_EAGAIN : 0);
+    if (count) {
+        (void)kernel_wait_queue_wake_all(&pipe->wait_write);
+        return (int)count;
+    }
+    if (!pipe->writers) return 0;
+    if (file->flags & LEONOS_O_NONBLOCK) return -LEONOS_EAGAIN;
+    kernel_wait_queue_block_current(&pipe->wait_read);
+    return -LEONOS_EAGAIN;
 }
 
 int task_pipe_write(struct task_file *file, const void *buffer, uint32_t length)
@@ -130,14 +145,22 @@ int task_pipe_write(struct task_file *file, const void *buffer, uint32_t length)
     if (!pipe || !(file->flags & TASK_FILE_FLAG_PIPE_WRITE)) return -LEONOS_EBADF;
     if (length == 0) return 0;
     if (!pipe->readers) return -LEONOS_EPIPE;
+    kernel_wait_queue_remove(&pipe->wait_write, sched_current_task());
     while (count < length) {
         uint32_t next = (pipe->head + 1U) % TASK_PIPE_RING_CAP;
         if (next == pipe->tail) {
-            return count ? (int)count : -LEONOS_EAGAIN;
+            if (count) {
+                (void)kernel_wait_queue_wake_all(&pipe->wait_read);
+                return (int)count;
+            }
+            if (file->flags & LEONOS_O_NONBLOCK) return -LEONOS_EAGAIN;
+            kernel_wait_queue_block_current(&pipe->wait_write);
+            return -LEONOS_EAGAIN;
         }
         pipe->data[pipe->head] = ((const uint8_t *)buffer)[count++];
         pipe->head = next;
     }
+    (void)kernel_wait_queue_wake_all(&pipe->wait_read);
     return (int)count;
 }
 
@@ -189,6 +212,8 @@ int syscall_ipc_pipe(uint64_t user_ptr)
         return -LEONOS_ENOMEM;
     }
     *task_pipes[pipe_index] = (struct task_pipe){.used = 1};
+    kernel_wait_queue_init(&task_pipes[pipe_index]->wait_read);
+    kernel_wait_queue_init(&task_pipes[pipe_index]->wait_write);
     pipe_handle = kernel_object_insert(kernel_objects(), task_pipes[pipe_index],
                                        KERNEL_OBJECT_PIPE);
     if (!pipe_handle) {
@@ -215,10 +240,28 @@ int syscall_ipc_pipe(uint64_t user_ptr)
     return 0;
 }
 
+int syscall_ipc_pipe2(uint64_t user_ptr, uint64_t flags)
+{
+    struct task *task = sched_current_task();
+    int result = syscall_ipc_pipe(user_ptr);
+    if (result < 0 || !task) return result;
+    if (flags & ~(uint32_t)(LEONOS_O_NONBLOCK | LEONOS_FD_CLOEXEC)) {
+        return -LEONOS_EINVAL;
+    }
+    for (int fd = 4; fd < 4 + (int)sched_task_file_capacity(task); ++fd) {
+        struct task_file *file = task_file_for_fd(task, fd);
+        if (!file || !(file->flags & TASK_FILE_FLAG_PIPE)) continue;
+        if (flags & LEONOS_O_NONBLOCK) file->flags |= LEONOS_O_NONBLOCK;
+        if (flags & LEONOS_FD_CLOEXEC) file->fd_flags |= LEONOS_FD_CLOEXEC;
+    }
+    return 0;
+}
+
 int syscall_ipc_owns(uint64_t number)
 {
     switch (number) {
     case LINUX_SYS_PIPE:
+    case LINUX_SYS_PIPE2:
     case LINUX_SYS_DUP:
     case LINUX_SYS_DUP2:
     case LINUX_SYS_FORK:
@@ -235,5 +278,6 @@ int syscall_ipc_owns(uint64_t number)
 int64_t syscall_ipc_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
                              uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5)
 {
+    if (number == LINUX_SYS_PIPE2) return syscall_ipc_pipe2(a0, a1);
     return syscall_dispatch_regs_legacy(number, a0, a1, a2, a3, a4, a5);
 }

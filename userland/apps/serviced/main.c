@@ -5,6 +5,10 @@
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 
+#include "devmand.h"
+#include "netmand.h"
+#include "sessiond.h"
+
 #define SERVICE_CONFIG_PATH "/system/config/services.cfg"
 #define SERVICE_STATE_PATH "/var/run/services.state"
 #define SERVICE_COMMAND_PATH "/var/run/services.cmd"
@@ -535,8 +539,11 @@ int main(void)
     for (;;) {
         load_config();
         process_commands();
+        netmand_poll();
+        sessiond_poll();
+        devmand_poll();
         update_services();
         write_state();
-        sleep_ms(1000);
+        sleep_ms(100);
     }
 }

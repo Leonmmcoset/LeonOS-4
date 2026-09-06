@@ -5,6 +5,8 @@
 #include <leonos/auth.h>
 #include <leonos/startup.h>
 #include <linux/syscall.h>
+#include <linux/utsname.h>
+#include <linux/reboot.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -13,7 +15,12 @@
 #define SYS_open __NR_open
 #define SYS_close __NR_close
 #define SYS_pipe __NR_pipe
+#define SYS_pipe2 __NR_pipe2
 #define SYS_socket __NR_socket
+#define SYS_socketpair __NR_socketpair
+#define SYS_sendmsg __NR_sendmsg
+#define SYS_recvmsg __NR_recvmsg
+#define SYS_accept4 __NR_accept4
 #define SYS_connect __NR_connect
 #define SYS_accept __NR_accept
 #define SYS_bind __NR_bind
@@ -38,8 +45,25 @@
 #define SYS_sched_yield __NR_sched_yield
 #define SYS_dup __NR_dup
 #define SYS_dup2 __NR_dup2
+#define SYS_dup3 __NR_dup3
 #define SYS_nanosleep __NR_nanosleep
 #define SYS_getpid __NR_getpid
+#define SYS_getuid __NR_getuid
+#define SYS_getgid __NR_getgid
+#define SYS_geteuid __NR_geteuid
+#define SYS_getegid __NR_getegid
+#define SYS_setuid __NR_setuid
+#define SYS_setgid __NR_setgid
+#define SYS_uname __NR_uname
+#define SYS_gettimeofday __NR_gettimeofday
+#define SYS_settimeofday __NR_settimeofday
+#define SYS_chmod __NR_chmod
+#define SYS_fchmod __NR_fchmod
+#define SYS_chown __NR_chown
+#define SYS_fchown __NR_fchown
+#define SYS_sched_setaffinity __NR_sched_setaffinity
+#define SYS_sched_getaffinity __NR_sched_getaffinity
+#define SYS_reboot __NR_reboot
 #define SYS_setpgid __NR_setpgid
 #define SYS_fork __NR_fork
 #define SYS_vfork __NR_vfork
@@ -108,6 +132,8 @@ int chdir(const char *path);
 char *getcwd(char *buf, size_t len);
 int ioctl(int fd, unsigned long request, void *arg);
 int sched_yield(void);
+int uname(struct utsname *name);
+int reboot(int command);
 int sleep_ms(unsigned long ms);
 int getpid(void);
 int leonos_stat_legacy(const char *path, struct leonos_stat *st);

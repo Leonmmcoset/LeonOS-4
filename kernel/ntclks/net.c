@@ -6,6 +6,7 @@
 #include <ntclks/e1000.h>
 #include <ntclks/net.h>
 #include <ntclks/sched.h>
+#include <linux/poll.h>
 #include <ntclks/storage.h>
 #include <ntclks/time.h>
 
@@ -3173,6 +3174,35 @@ int net_connections(struct leonos_net_connection_list *request,
  * Net close owner sockets.
  * @param owner_pid Value supplied by the caller.
  */
+short net_socket_poll_fd(int32_t handle, uint32_t owner_pid, short events)
+{
+    struct net_socket *socket = net_socket_find(handle, owner_pid, 1);
+    short result = 0;
+    if (!socket) return POLLNVAL;
+    if (socket->state == LEONOS_NET_TCP_ESTABLISHED) {
+        if ((events & POLLIN) && (socket->rx_len || socket->fin_received)) result |= POLLIN;
+        if (events & POLLOUT) result |= POLLOUT;
+    } else if (socket->state == LEONOS_NET_TCP_TIME_WAIT) {
+        result |= POLLIN | POLLHUP;
+    } else if (socket->state == LEONOS_NET_TCP_CLOSED) {
+        result |= POLLHUP;
+    }
+    return result;
+}
+
+int net_socket_address(int32_t handle, uint32_t owner_pid,
+                       uint32_t *local_ip, uint16_t *local_port,
+                       uint32_t *remote_ip, uint16_t *remote_port)
+{
+    struct net_socket *socket = net_socket_find(handle, owner_pid, 1);
+    if (!socket) return -9;
+    if (local_ip) *local_ip = socket->local_ip;
+    if (local_port) *local_port = socket->local_port;
+    if (remote_ip) *remote_ip = socket->remote_ip;
+    if (remote_port) *remote_port = socket->remote_port;
+    return 0;
+}
+
 void net_close_owner_sockets(uint32_t owner_pid)
 {
     if (!owner_pid) {

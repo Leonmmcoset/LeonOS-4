@@ -18,6 +18,9 @@ EXCLUDED_PREFIXES = (
 )
 EXCLUDED_FILES = {
     "tools/check_unix_paths.py",
+    # This file rejects ':' and '\\' as manifest path separators; the
+    # checker's broad legacy-drive patterns are intentional there.
+    "userland/libc/src/app_registry.c",
     "devtools/components/tcc/runtime/include/sqlite3.h",
     "devtools/include/sqlite3.h",
 }

@@ -3,11 +3,9 @@
 
 /* Versioned LeonOS network service SDK.
  *
- * Consumers open the registered /dev/net0 service device through this
- * library; they never use fd 3 or the pre-migration leonos_net_* ABI.
- * IPv4 transport and control operations remain a versioned kernel service
- * until the AF_INET socket subset reaches parity. The wire structs are the
- * existing versioned network-service protocol records.
+ * Consumers talk to netmand (hosted by serviced) over /run/leonos/net.sock
+ * through this library; /dev/net0 and the fd 3 network channel are gone.
+ * Data traffic uses standard AF_INET sockets.
  */
 #include <leonos/net.h>
 #include <stdint.h>

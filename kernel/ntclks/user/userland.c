@@ -30,6 +30,9 @@ struct exec_launch {
 
 static uint32_t init_pid;
 static uint32_t desktop_pid;
+static uint32_t windowd_pid;
+static uint32_t imd_pid;
+static uint32_t authd_pid;
 static uint32_t tty_pid;
 static bool autospawn_hello;
 static bool autospawn_uidemo;
@@ -172,6 +175,24 @@ static int path_is_system_desktop(const char *path)
 static int path_is_system_service_daemon(const char *path)
 {
     return path_eq_ignore_case(path, "/system/apps/serviced/serviced.elf");
+}
+
+/**
+ * @brief Return 1 if path is the userspace windowd daemon.
+ */
+static int path_is_windowd(const char *path)
+{
+    return path_eq_ignore_case(path, "/system/apps/windowd/windowd.elf");
+}
+
+static int path_is_imd(const char *path)
+{
+    return path_eq_ignore_case(path, "/system/apps/imd/imd.elf");
+}
+
+static int path_is_authd(const char *path)
+{
+    return path_eq_ignore_case(path, "/system/apps/authd/authd.elf");
 }
 
 /**
@@ -520,13 +541,10 @@ static int64_t spawn_path_internal_ex(const char *path, const char *task_name,
     struct storage_node node;
     int ret;
     if (path_is_system_desktop(path)) {
-        flags |= TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER;
-    } else if (path_is_system_service_daemon(path)) {
         flags |= TASK_FLAG_SERVICE;
-    }
-    if ((flags & TASK_FLAG_WINDOW_SERVER) && sched_find_window_server()) {
-        console_printf("[ntclks] refusing second desktop instance path=%s\n", path);
-        return -LEONOS_EEXIST;
+    } else if (path_is_windowd(path) || path_is_imd(path) ||
+               path_is_authd(path) || path_is_system_service_daemon(path)) {
+        flags |= TASK_FLAG_SERVICE;
     }
     if (path_is_system_service_daemon(path) && sched_find_by_path(path)) {
         console_printf("[ntclks] refusing second service daemon path=%s\n", path);
@@ -752,14 +770,35 @@ void userland_init(const struct boot_info *boot)
     }
 
     if (installer_mode) {
-        pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
-                                  0, 0, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
+        pid = spawn_path_internal("/system/apps/authd/authd.elf", "authd.elf authentication",
+                                  0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load installer authd.elf ret=%lld\n", (long long)pid);
+            kernel_idle_loop();
+        }
+        authd_pid = (uint32_t)pid;
+        pid = spawn_path_internal("/system/apps/imd/imd.elf", "imd.elf input method",
+                                  0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load installer imd.elf ret=%lld\n", (long long)pid);
+            kernel_idle_loop();
+        }
+        imd_pid = (uint32_t)pid;
+        pid = spawn_path_internal("/system/apps/windowd/windowd.elf", "windowd.elf window server",
+                                  0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+        if (pid <= 0) {
+            console_printf("[ntclks] failed to load installer windowd.elf ret=%lld\n", (long long)pid);
+            kernel_idle_loop();
+        }
+        windowd_pid = (uint32_t)pid;
+        pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf shell",
+                                  0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
             kernel_idle_loop();
         }
         desktop_pid = (uint32_t)pid;
-        console_printf("[ntclks] installer mode desktop.elf window server selected\n");
+        console_printf("[ntclks] installer mode windowd+desktop selected\n");
         return;
     }
 
@@ -808,14 +847,35 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
-    pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf window server",
-                              0, init_pid, TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER, 0, -1, -1, -1);
+    pid = spawn_path_internal("/system/apps/authd/authd.elf", "authd.elf authentication",
+                              0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+    if (pid <= 0) {
+        console_printf("[ntclks] failed to load authd.elf ret=%lld\n", (long long)pid);
+        kernel_idle_loop();
+    }
+    authd_pid = (uint32_t)pid;
+    pid = spawn_path_internal("/system/apps/imd/imd.elf", "imd.elf input method",
+                              0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+    if (pid <= 0) {
+        console_printf("[ntclks] failed to load imd.elf ret=%lld\n", (long long)pid);
+        kernel_idle_loop();
+    }
+    imd_pid = (uint32_t)pid;
+    pid = spawn_path_internal("/system/apps/windowd/windowd.elf", "windowd.elf window server",
+                              0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+    if (pid <= 0) {
+        console_printf("[ntclks] failed to load windowd.elf ret=%lld\n", (long long)pid);
+        kernel_idle_loop();
+    }
+    windowd_pid = (uint32_t)pid;
+    pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf shell",
+                              0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load desktop.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
     }
     desktop_pid = (uint32_t)pid;
-    console_printf("[ntclks] desktop.elf window server selected for Ring-3 GUI\n");
+    console_printf("[ntclks] windowd.elf + desktop.elf selected for Ring-3 GUI\n");
 }
 
 /**
@@ -824,7 +884,8 @@ void userland_init(const struct boot_info *boot)
 void userland_enter_first(void)
 {
     struct task *first;
-    if (!init_pid && !desktop_pid && !tty_pid) {
+    if (!init_pid && !desktop_pid && !windowd_pid && !imd_pid &&
+        !authd_pid && !tty_pid) {
         console_printf("[ntclks] no Ring-3 userland loaded\n");
         kernel_idle_loop();
     }

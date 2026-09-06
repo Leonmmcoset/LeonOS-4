@@ -5,7 +5,6 @@
 #include <ntclks/bugcheck.h>
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
-#include <ntclks/gui_ipc.h>
 #include <ntclks/sched.h>
 #include <ntclks/time.h>
 #include <leonos/psf_font.h>
@@ -27,7 +26,7 @@ static uint32_t bugcheck_color(uint32_t win95, uint32_t metro)
          * screen on a fixed palette for double fault/NMI/machine-check paths. */
         return win95;
     }
-    return gui_ipc_appearance_theme() == 0u ? win95 : metro;
+    return metro;
 }
 
 #define BUGCHECK_BG bugcheck_color(0x000000aaU, 0x000078d4U)

@@ -3,9 +3,8 @@
 
 /* Versioned device/driver-management service SDK.
  *
- * system_device_list uses the registered /dev/hwinfo catalog service; driver
- * list/control use /dev/driverctl. Applications never use fd 3 or the
- * pre-migration leonos_device_* / leonos_driver_* ABI.
+ * All requests go to devmand over /run/leonos/devman.sock; /dev/hwinfo,
+ * /dev/driverctl and fd 3 are gone.
  */
 #include <leonos/device.h>
 #include <leonos/driver.h>
