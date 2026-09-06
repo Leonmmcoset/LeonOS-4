@@ -1203,21 +1203,6 @@ struct task *sched_find_by_path_basename(const char *basename)
 }
 
 /**
- * @brief Return the live user task flagged as the window server, or NULL.
- */
-struct task *sched_find_window_server(void)
-{
-    for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i]->pid && tasks[i]->kind == TASK_KIND_USER &&
-            tasks[i]->state != TASK_EXITED &&
-            (tasks[i]->flags & TASK_FLAG_WINDOW_SERVER)) {
-            return tasks[i];
-        }
-    }
-    return NULL;
-}
-
-/**
  * @brief True when path resolves to the given volume id (used to detect in-use mounts).
  */
 static bool sched_path_uses_volume(const char *path, uint32_t volume_id)
@@ -1534,42 +1519,6 @@ void sched_sleep_current_until(uint64_t wake_tick)
      * userland_schedule_from_frame().  Clearing it here would make that
      * capture look like a second CPU owns the task. */
     task->state = TASK_BLOCKED;
-    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
-}
-
-/**
- * @brief Block the current task until window_id gets an event or wake_tick elapses.
- */
-void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick)
-{
-    uint64_t flags;
-    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
-    struct task *task = sched_current_task();
-    if (!task || task->pid == 0 || task->state == TASK_EXITED || !window_id) {
-        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
-        return;
-    }
-    task->wait_window_id = window_id;
-    task->wake_tick = wake_tick;
-    task->state = TASK_BLOCKED;
-    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
-}
-
-/**
- * @brief Wake a BLOCKED task only when it is waiting for exactly this window event.
- */
-void sched_wake_window_event(uint32_t pid, uint32_t window_id)
-{
-    uint64_t flags;
-    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
-    struct task *task = sched_find(pid);
-    if (!task || task->state != TASK_BLOCKED || task->wait_window_id != window_id) {
-        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
-        return;
-    }
-    task->wake_tick = 0;
-    task->wait_window_id = 0;
-    task->state = TASK_READY;
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 

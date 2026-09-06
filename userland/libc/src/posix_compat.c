@@ -131,21 +131,16 @@ clock_t times(struct tms *buffer)
 
 int clock_gettime(clockid_t clock_id, struct timespec *value)
 {
-    struct leonos_time_info info;
-    uint64_t milliseconds;
-    if (!value || (clock_id != LEONOS_CLOCK_REALTIME &&
-                   clock_id != LEONOS_CLOCK_MONOTONIC)) {
+    long result;
+    if (!value) {
         errno = EINVAL;
         return -1;
     }
-    if (clock_id == LEONOS_CLOCK_REALTIME && leonos_time_info(&info) == 0 && info.valid) {
-        value->tv_sec = (time_t)info.unix_seconds;
-        value->tv_nsec = (long)((info.uptime_ms % 1000ULL) * 1000000ULL);
-        return 0;
+    result = syscall2(SYS_clock_gettime, (long)clock_id, (long)value);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
     }
-    milliseconds = leonos_uptime_ms();
-    value->tv_sec = (time_t)(milliseconds / 1000ULL);
-    value->tv_nsec = (long)((milliseconds % 1000ULL) * 1000000ULL);
     return 0;
 }
 

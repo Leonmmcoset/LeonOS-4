@@ -439,7 +439,6 @@ struct task *sched_find(uint32_t pid);
 struct task *sched_find_by_name(const char *name);
 struct task *sched_find_by_path(const char *path);
 struct task *sched_find_by_path_basename(const char *basename);
-struct task *sched_find_window_server(void);
 /** Returns true when a CWD, file, image, or mapping references a volume. */
 bool sched_volume_in_use(uint32_t volume_id);
 /** Save this CPU's user trap frame and release its current task when runnable. */
@@ -471,11 +470,9 @@ void sched_sleep_current_until(uint64_t wake_tick);
 /**
  * @brief Sleep the current task until a window event or the given tick.
  */
-void sched_wait_current_for_window_event(uint32_t window_id, uint64_t wake_tick);
 /**
  * @brief Wake task pid if it is waiting on window_id.
  */
-void sched_wake_window_event(uint32_t pid, uint32_t window_id);
 /**
  * @brief Terminate user task pid with code; 0 on success.
  */

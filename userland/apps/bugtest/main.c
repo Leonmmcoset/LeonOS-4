@@ -162,91 +162,53 @@ static int safe_system_info_bad_out(void)
 
 static int safe_gui_event_bad_out(void)
 {
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_EVENT, (void *)0x200000ULL));
+    return nonfatal_result(leonos_gui_next_event((void *)0x200000ULL));
 }
 
 static int safe_create_window_bad_title(void)
 {
-    struct leonos_gui_create cmd = {
-        .width = 120,
-        .height = 80,
-        .title = (const char *)0x200000ULL,
-        .text = "bad title",
-        .flags = 0,
-    };
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_CREATE_WINDOW, &cmd));
+    return nonfatal_result(leonos_gui_create_app_window_ex(
+        (const char *)0x200000ULL, "bad title", 120, 80, 0));
 }
 
 static int safe_fb_text_bad_string(void)
 {
-    struct leonos_fb_text cmd = {
-        .x = 0,
-        .y = 0,
-        .fg = LEONOS_UI_WHITE,
-        .bg = LEONOS_UI_BLACK,
-        .text = (const char *)0x200000ULL,
-    };
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_FB_TEXT, &cmd));
+    return nonfatal_result(leonos_fb_text(0, 0, (const char *)0x200000ULL,
+                                          LEONOS_UI_WHITE, LEONOS_UI_BLACK));
 }
 
 static int safe_fb_blit_bad_pixels(void)
 {
-    struct leonos_fb_blit cmd = {
-        .x = 0,
-        .y = 0,
-        .width = 8,
-        .height = 8,
-        .stride = 8,
-        .pixels = (const uint32_t *)0x200000ULL,
-    };
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_FB_BLIT, &cmd));
+    return nonfatal_result(leonos_fb_blit(0, 0, 8, 8, 8,
+                                          (const uint32_t *)0x200000ULL));
 }
 
 static int safe_present_bad_pixels(void)
 {
-    struct leonos_gui_present cmd = {
-        .window_id = 0x12345678U,
-        .width = 8,
-        .height = 8,
-        .stride = 8,
-        .pixels = (const uint32_t *)0x200000ULL,
-    };
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_PRESENT_WINDOW, &cmd));
+    return nonfatal_result(leonos_gui_present_window(
+        0x12345678U, 8, 8, 8, (const uint32_t *)0x200000ULL));
 }
 
 static int safe_fetch_bad_pixels(void)
 {
-    struct leonos_gui_fetch cmd = {
-        .window_id = 0x12345678U,
-        .capacity_width = 8,
-        .capacity_height = 8,
-        .stride = 8,
-        .out_width = 0,
-        .out_height = 0,
-        .pixels = (uint32_t *)0x200000ULL,
-    };
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_FETCH_WINDOW, &cmd));
+    return nonfatal_result(leonos_gui_fetch_window(
+        0x12345678U, 8, 8, 8, (uint32_t *)0x200000ULL, 0, 0));
 }
 
 static int safe_window_event_bad_out(void)
 {
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_WINDOW_EVENT, (void *)0x200000ULL));
+    return nonfatal_result(leonos_gui_poll_app_event((void *)0x200000ULL));
 }
 
 static int safe_send_window_event_bad_src(void)
 {
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_SEND_WINDOW_EVENT, (void *)0x200000ULL));
+    return nonfatal_result(leonos_gui_send_app_event((void *)0x200000ULL));
 }
 
 static int safe_task_snapshot_bad_tasks(void)
 {
-    struct leonos_task_snapshot snapshot = {
-        .capacity = 4,
-        .count = 0,
-        .tick = 0,
-        .tasks = (struct leonos_task_info *)0x200000ULL,
-    };
-    return nonfatal_result(ioctl(3, LEONOS_GUI_IOCTL_TASKS, &snapshot));
+    return nonfatal_result(leonos_task_snapshot(
+        (struct leonos_task_info *)0x200000ULL, 4, 0));
 }
 
 static int safe_pty_bad_buffer(void)

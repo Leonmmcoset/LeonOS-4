@@ -8,7 +8,6 @@
 #include <ntclks/console.h>
 #include <ntclks/driver_manager.h>
 #include <ntclks/framebuffer.h>
-#include <ntclks/gui_ipc.h>
 #include <ntclks/input.h>
 #include <ntclks/kernel_debug.h>
 #include <ntclks/kernel.h>
@@ -224,11 +223,9 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     time_init();
     input_init();
     pty_init();
-    gui_ipc_init();
-    gui_ipc_set_boot_theme(handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC
-                               ? handoff->ui_theme
-                               : 1u);
-    console_set_ui_theme(gui_ipc_appearance_theme());
+    console_set_ui_theme(handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC
+                              ? handoff->ui_theme
+                              : 1u);
     if (boot_log_screen || startup_tty) {
         console_enable_framebuffer(handoff && handoff->magic == LEONOS_BOOT_HANDOFF_MAGIC
                                        ? &handoff->boot_log

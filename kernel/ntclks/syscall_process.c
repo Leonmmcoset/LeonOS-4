@@ -208,6 +208,27 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         if (ret < 0) return ret == -2 ? -LEONOS_ENOENT : -LEONOS_EPERM;
         return 0;
     }
+    if (number == LINUX_SYS_CLOCK_GETTIME) {
+        int64_t timespec[2];
+        if (!a1 || !user_range_ok(a1, sizeof(timespec))) return -LEONOS_EFAULT;
+        if (a0 == 0 && time_wall_clock(&(struct leonos_time_info){0}) < 0) {
+            timespec[0] = 0;
+            timespec[1] = (int64_t)(time_uptime_us() % 1000000ULL) * 1000;
+        } else if (a0 == 0) {
+            struct leonos_time_info info;
+            if (time_wall_clock(&info) < 0) return -LEONOS_EINVAL;
+            timespec[0] = (int64_t)info.unix_seconds;
+            timespec[1] = (int64_t)(time_uptime_us() % 1000000ULL) * 1000;
+        } else if (a0 == 1) {
+            timespec[0] = (int64_t)(time_uptime_ms() / 1000ULL);
+            timespec[1] = (int64_t)(time_uptime_ms() % 1000ULL) * 1000000;
+        } else {
+            return -LEONOS_EINVAL;
+        }
+        ((int64_t *)(uintptr_t)a1)[0] = timespec[0];
+        ((int64_t *)(uintptr_t)a1)[1] = timespec[1];
+        return 0;
+    }
     if (number == LINUX_SYS_REBOOT) {
         struct task *task = sched_current_task();
         if (!task || task->uid != 0) return -LEONOS_EPERM;

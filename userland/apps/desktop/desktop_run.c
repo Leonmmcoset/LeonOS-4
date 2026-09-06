@@ -64,7 +64,9 @@ void desktop_run(void)
 {
     puts("[desktop.elf] Ring-3 Win98-style window server starting");
 
-    int version = leonos_gui_connect();
+    int policy = leonos_gui_policy_connect();
+    int version = policy == 0 ? leonos_gui_connect() : -1;
+    printf("[desktop.elf] windowd policy connect=%d protocol=%d\n", policy, version);
     printf("[desktop.elf] GUI protocol version=%d\n", version);
     printf("[desktop.elf] pid=%d service=window-server\n", getpid());
     int framebuffer_result = leonos_fb_info(&fb);

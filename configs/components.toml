@@ -17,6 +17,19 @@ sdk = false
 api = false
 
 [[components]]
+id = "windowd"
+symbol = "APP_WINDOWD"
+label = "Window server daemon"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "desktop"
 symbol = "APP_DESKTOP"
 label = "Desktop window server"

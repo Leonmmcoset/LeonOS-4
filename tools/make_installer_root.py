@@ -97,6 +97,7 @@ def main() -> int:
     if out.exists():
         out.unlink()
 
+    copy_file(userland_dir / "windowd.elf", stage / "system/apps/windowd/windowd.elf")
     copy_file(userland_dir / "desktop.elf", stage / "system/apps/desktop/desktop.elf")
     copy_file(userland_dir / "installer.elf", stage / "system/apps/installer/installer.elf")
     # Advanced installer mode enters the installer root directly through the
