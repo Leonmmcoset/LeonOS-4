@@ -97,7 +97,7 @@
 #define LINUX_SYS_DUP3 __NR_dup3
 
 /* Open-status flag shared by the descriptor and PTY paths. */
-#define LEONOS_O_NONBLOCK 0x800u
+#define LEONOS_O_NONBLOCK 0x4000u
 #define LEONOS_FD_CLOEXEC 0x1u
 
 #define LEONOS_ENOSYS 38
