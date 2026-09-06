@@ -458,8 +458,10 @@ int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
     if (width > info.width - x) width = info.width - x;
     if (height > info.height - y) height = info.height - y;
     for (uint32_t row = 0; row < height; ++row) {
+        /* stride counts pixels (caller buffers are uint32_t rows), the
+         * framebuffer mapping counts bytes. */
         memcpy((uint8_t *)mapping + (y + row) * info.pitch + x * 4u,
-               (const uint8_t *)pixels + row * stride, (size_t)width * 4u);
+               (const uint8_t *)pixels + row * stride * 4u, (size_t)width * 4u);
     }
     /* VMware SVGA scanout only refreshes from VRAM when the FIFO receives
      * an update command; mmap writes alone never reach the display. */
@@ -642,7 +644,7 @@ int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t heigh
         }
         for (uint32_t row = 0; row < copy_height; ++row) {
             memcpy((uint8_t *)window->mapping + row * window->stride,
-                   (const uint8_t *)pixels + row * stride,
+                   (const uint8_t *)pixels + row * stride * 4u,
                    (size_t)copy_width * 4u);
         }
     }
