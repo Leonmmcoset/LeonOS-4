@@ -20,6 +20,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEXT_SUFFIXES = {".c", ".h", ".cc", ".cpp", ".S", ".rs", ".py", ".toml", ".md"}
 EXCLUDED_PREFIXES = ("third_party/", "build/", ".git/")
+# Service daemons are the server side of a migrated protocol. They may use
+# the versioned wire structs that applications are no longer allowed to see.
+SERVICE_APP_PREFIXES = (
+    "userland/apps/windowd/",
+    "userland/apps/imd/",
+    "userland/apps/serviced/",
+    "userland/apps/authd/",
+    "userland/apps/sessiond/",
+    "userland/apps/devmand/",
+)
 PRIVATE_RE = re.compile(
     r"\b(?:LEONOS_[A-Z0-9_]*(?:IOCTL|PTY|INPUTM|DISK|INSTALL|AUDIO|NET|DEVICE|DRIVER|GUI)"
     r"|LEONOS_IOCTL_GPU_[A-Z0-9_]+"
@@ -75,7 +85,8 @@ def strict_failures(uses: dict[str, set[str]]) -> list[str]:
             # Kernel/libc transition code is allowed until the migration table
             # marks that subsystem complete. Application code is the boundary
             # that must not grow new private hardware dependencies.
-            if relative.startswith(("userland/apps/", "userland/programs/")):
+            if relative.startswith(("userland/apps/", "userland/programs/")) and \
+                    not relative.startswith(SERVICE_APP_PREFIXES):
                 failures.append(f"{relative}: private ABI symbol {symbol}")
     return sorted(failures)
 

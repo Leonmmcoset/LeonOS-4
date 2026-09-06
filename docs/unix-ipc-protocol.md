@@ -26,7 +26,7 @@ or the connection is rejected with `ERROR{code=EPERM}`.
 | 0 | kernel IPC infrastructure | blocking AF_UNIX, socketpair, SCM_RIGHTS, SO_PEERCRED, /dev/shm0, AF_INET fd path | implemented |
 | 1 | windowd | `/run/leonos/windowd.sock` | implemented |
 | 2 | imd | `/run/leonos/input-method.sock` | implemented |
-| 3 | netmand | `/run/leonos/net.sock` | pending |
+| 3 | netmand | `/run/leonos/net.sock` | implemented |
 | 4 | authd / sessiond | `/run/leonos/authd.sock`, `/run/leonos/session.sock` | pending |
 | 5 | devmand / procfs | `/run/leonos/devman.sock`, `/proc` | pending |
 | 6 | fd-3 removal and cleanup | n/a | pending |
@@ -64,6 +64,22 @@ fd. Desktop connects with the policy handshake token
 | `CURSOR_REQUEST/CURSOR_REGION` | app -> windowd -> desktop | gui cursor structs | any app |
 | `DISPLAY_STATE/APPEARANCE_STATE` | publisher/query | gui state structs | policy publishes; app queries |
 | `DISPLAY_REQUEST/APPEARANCE_REQUEST` | app -> windowd -> desktop | gui request structs | policy receives |
+
+## netmand (`/run/leonos/net.sock`, hosted by serviced)
+
+| Message | Direction | Fields | Permission |
+|---|---|---|---|
+| `HELLO` | client -> netmand | `u32 pid` | SO_PEERCRED pid match |
+| `ACK` | netmand -> client | `s32 code` | any |
+| `CONFIG` | client -> netmand | none, response `struct leonos_net_config` | any |
+| `DNS_POLICY` | client -> netmand | `struct leonos_net_dns_policy` | set requires uid==0 (SO_PEERCRED) |
+| `DHCP` | client -> netmand | `struct leonos_net_dhcp` | any; no-device status until NIC exists |
+| `PING` | client -> netmand | `struct leonos_net_ping` | any |
+| `DNS` | client -> netmand | `struct leonos_net_dns` | any |
+| `CONNECTIONS` | client -> netmand | count header + entries | any |
+
+Data-plane sockets (`socket(AF_INET, SOCK_STREAM)`, connect/send/recv/close)
+never use this control socket.
 
 ## imd (`/run/leonos/input-method.sock`)
 

@@ -35,7 +35,6 @@ static const struct storage_dev_entry storage_dev_entries[] = {
     {"vda",       STORAGE_DEV_KIND_DISK,     LEONOS_FS_TYPE_DEVICE, 0},
     {"nvme0n1",   STORAGE_DEV_KIND_DISK,     LEONOS_FS_TYPE_DEVICE, 0},
     {"disk0",     STORAGE_DEV_KIND_DISK,     LEONOS_FS_TYPE_DEVICE, 0},
-    {"net0",      STORAGE_DEV_KIND_NET,      LEONOS_FS_TYPE_DEVICE, 0},
     {"ethernet0", STORAGE_DEV_KIND_NET,      LEONOS_FS_TYPE_DEVICE, 0},
     {"rtc",       STORAGE_DEV_KIND_RTC,      LEONOS_FS_TYPE_DEVICE, 0},
     {"kmsg",      STORAGE_DEV_KIND_KMSG,      LEONOS_FS_TYPE_DEVICE, 0},

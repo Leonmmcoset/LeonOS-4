@@ -41,7 +41,6 @@
 /* Legacy alias retained solely for old binaries during the ABI migration. */
 #define LEONOS_DEV_AUDIO0 "/dev/audio0"
 #define LEONOS_DEV_SERIAL0 "/dev/serial0"
-#define LEONOS_DEV_NET0 "/dev/net0"
 #define LEONOS_DEV_DISK0 "/dev/disk0"
 #define LEONOS_DEV_DRIVERCTL "/dev/driverctl"
 #define LEONOS_DEV_HWINFO "/dev/hwinfo"
