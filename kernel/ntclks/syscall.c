@@ -3459,8 +3459,13 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             }
             if (a1 == LEONOS_F_SETFL) {
                 if (file_fd) {
-                    file_fd->flags = (file_fd->flags & LEONOS_O_ACCMODE) |
-                                     ((uint32_t)a2 & (LEONOS_O_APPEND | LEONOS_O_NONBLOCK));
+                    /* Preserve descriptor-kind/device bits (PIPE, SOCKET_*,
+                     * DEV_*) while updating only the open-status flags. */
+                    file_fd->flags = (file_fd->flags &
+                                      ~(LEONOS_O_APPEND | LEONOS_O_NONBLOCK)) |
+                                     (file_fd->flags & LEONOS_O_ACCMODE) |
+                                     ((uint32_t)a2 & (LEONOS_O_APPEND |
+                                                      LEONOS_O_NONBLOCK));
                 } else if (pty_fd) {
                     pty_fd->status_flags = (pty_fd->status_flags & LEONOS_O_ACCMODE) |
                                            ((uint32_t)a2 & (LEONOS_O_APPEND |
