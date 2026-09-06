@@ -90,6 +90,23 @@ static int wind_open_connection(const char *path)
     }
 }
 
+static int wind_msg_is_repaint(const struct leonos_gui_window_msg *message)
+{
+    return message->type == 2u ||
+           message->type == LEONOS_GUI_WINDOW_MSG_CURSOR_REGION;
+}
+
+static void wind_remove_msg(uint32_t index)
+{
+    uint32_t next = (index + 1u) % WIND_MSG_QUEUE;
+    while (next != wind_msg_head) {
+        wind_msgs[index] = wind_msgs[next];
+        index = next;
+        next = (next + 1u) % WIND_MSG_QUEUE;
+    }
+    wind_msg_head = index;
+}
+
 static void wind_route_frame(uint32_t type, const uint8_t *buffer, uint32_t got)
 {
     if (type == LEONOS_WIN_MSG_EVENT && got >= sizeof(struct leonos_gui_app_event)) {
@@ -115,18 +132,36 @@ static void wind_route_frame(uint32_t type, const uint8_t *buffer, uint32_t got)
     } else if (type == LEONOS_WIN_MSG_WINDOW_NOTIFY && got >= sizeof(struct leonos_gui_window_msg)) {
         struct leonos_gui_window_msg message;
         memcpy(&message, buffer, sizeof(message));
-        uint32_t last = (wind_msg_head + WIND_MSG_QUEUE - 1u) % WIND_MSG_QUEUE;
-        /* Repeated PRESENT notifications refer to the same shared buffer.
-         * Keep its newest state without crossing lifecycle messages. */
-        if (wind_msg_head != wind_msg_tail && message.type == 2u &&
-            wind_msgs[last].type == 2u && wind_msgs[last].window_id == message.window_id) {
-            wind_msgs[last] = message;
-            return;
+        /* Cursor updates interleave every PRESENT. Coalesce across those
+         * updates, but preserve creation/destruction and cursor-clear order. */
+        if (wind_msg_is_repaint(&message)) {
+            uint32_t index = wind_msg_head;
+            while (index != wind_msg_tail) {
+                index = (index + WIND_MSG_QUEUE - 1u) % WIND_MSG_QUEUE;
+                struct leonos_gui_window_msg *queued = &wind_msgs[index];
+                if (!wind_msg_is_repaint(queued)) break;
+                if (queued->window_id != message.window_id) continue;
+                if (queued->type == LEONOS_GUI_WINDOW_MSG_CURSOR_REGION &&
+                    queued->cursor_operation == LEONOS_GUI_CURSOR_REGION_CLEAR)
+                    break;
+                if (queued->type == message.type &&
+                    (message.type == 2u ||
+                     (message.cursor_operation != LEONOS_GUI_CURSOR_REGION_CLEAR &&
+                      queued->cursor_region_id == message.cursor_region_id))) {
+                    *queued = message;
+                    return;
+                }
+            }
+        }
+        if ((wind_msg_head + 1u) % WIND_MSG_QUEUE == wind_msg_tail) {
+            uint32_t index = wind_msg_tail;
+            while (index != wind_msg_head && !wind_msg_is_repaint(&wind_msgs[index]))
+                index = (index + 1u) % WIND_MSG_QUEUE;
+            if (index == wind_msg_head) return;
+            wind_remove_msg(index);
         }
         wind_msgs[wind_msg_head] = message;
         wind_msg_head = (wind_msg_head + 1u) % WIND_MSG_QUEUE;
-        if (wind_msg_head == wind_msg_tail)
-            wind_msg_tail = (wind_msg_tail + 1u) % WIND_MSG_QUEUE;
     } else if (type == LEONOS_WIN_MSG_DISPLAY_REQUEST && got >= sizeof(struct leonos_display_request)) {
         struct leonos_display_request request;
         memcpy(&request, buffer, sizeof(request));
@@ -209,6 +244,7 @@ static int wind_pump_fd(int fd)
     int result = 0;
     if (fd < 0) return 0;
     for (uint32_t budget = 0; budget < WIND_EVENT_QUEUE / 2u; ++budget) {
+        if ((wind_msg_head + 1u) % WIND_MSG_QUEUE == wind_msg_tail) break;
         struct pollfd pollfd = {.fd = fd, .events = POLLIN, .revents = 0};
         uint8_t buffer[WIND_FRAME_CAP];
         int poll_result = poll(&pollfd, 1, 0);
@@ -636,7 +672,7 @@ int leonos_gui_poll_window(struct leonos_gui_window_msg *message)
 {
     if (!message) return -1;
     if (wind_policy_fd < 0 && wind_policy_ensure() < 0) return -1;
-    (void)wind_pump_fd(wind_policy_fd);
+    if (wind_msg_head == wind_msg_tail) (void)wind_pump_fd(wind_policy_fd);
     if (wind_msg_head == wind_msg_tail) return 0;
     *message = wind_msgs[wind_msg_tail];
     wind_msg_tail = (wind_msg_tail + 1u) % WIND_MSG_QUEUE;

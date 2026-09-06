@@ -1591,8 +1591,9 @@ int main(int argc, char **argv, char **envp)
             }
         }
         if (redraw) {
-            leonos_ui_bind(&ui, pixels, terminal_view_width, terminal_view_height,
-                           TERMINAL_MAX_W);
+            if (ui.width != terminal_view_width || ui.height != terminal_view_height)
+                leonos_ui_bind(&ui, pixels, terminal_view_width, terminal_view_height,
+                               TERMINAL_MAX_W);
             terminal_draw(&ui);
             leonos_gui_present_window((uint32_t)window_id, terminal_view_width,
                                       terminal_view_height, TERMINAL_MAX_W, pixels);

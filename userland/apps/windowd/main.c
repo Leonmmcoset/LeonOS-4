@@ -36,6 +36,7 @@ struct windowd_client {
 
 struct windowd_window {
     uint32_t used;
+    uint32_t announce_pending;
     uint32_t id;
     uint32_t owner_pid;
     uint32_t width;
@@ -161,12 +162,22 @@ static void window_msg_from_window(struct leonos_gui_window_msg *message,
     }
 }
 
+static int announce_window(struct windowd_window *window)
+{
+    struct leonos_gui_window_msg message;
+    if (!window->announce_pending) return 0;
+    window_msg_from_window(&message, 1u, window);
+    if (send_to_policy(LEONOS_WIN_MSG_WINDOW_NOTIFY, &message, sizeof(message)) < 0)
+        return -1;
+    window->announce_pending = 0;
+    return 0;
+}
+
 static int create_window(struct windowd_client *client,
                          const struct leonos_win_create *request)
 {
     struct windowd_window *window = 0;
     struct leonos_win_create_ack ack;
-    struct leonos_gui_window_msg message;
     uint64_t bytes;
     if (!client || !request || !request->width || !request->height ||
         request->width > LEONOS_GUI_MAX_WINDOW_WIDTH ||
@@ -224,8 +235,9 @@ static int create_window(struct windowd_client *client,
         release_window(window);
         return -1;
     }
-    window_msg_from_window(&message, 1u, window);
-    notify_window_msg(&message);
+    /* A full nonblocking policy socket must not orphan an acknowledged window. */
+    window->announce_pending = 1;
+    (void)announce_window(window);
     return 0;
 }
 
@@ -364,13 +376,9 @@ static void handle_client(int slot)
              * with no policy client attached. Re-announce every live window so
              * a freshly registered desktop learns the existing composition. */
             for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {
-                struct leonos_gui_window_msg message;
                 if (!windows[i].used) continue;
-                window_msg_from_window(&message, 1u, &windows[i]);
-                printf("[windowd.elf] DBG reannounce wid=%u send=%d\n",
-                       windows[i].id,
-                       send_to_policy(LEONOS_WIN_MSG_WINDOW_NOTIFY,
-                                      &message, sizeof(message)));
+                windows[i].announce_pending = 1;
+                (void)announce_window(&windows[i]);
             }
             continue;
         }
@@ -410,6 +418,7 @@ static void handle_client(int slot)
             memcpy(&request, buffer, sizeof(request));
             window = find_window(request.window_id);
             if (window && window->owner_pid == client->pid) {
+                if (announce_window(window) < 0) continue;
                 window_msg_from_window(&message, 2u, window);
                 notify_window_msg(&message);
             }
@@ -586,6 +595,11 @@ int main(void)
         };
         int ready = poll(fds, 3, 8);
         if (ready < 0) continue;
+        /* Retry even for an application that presents only its first frame. */
+        for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {
+            if (windows[i].used && windows[i].announce_pending)
+                (void)announce_window(&windows[i]);
+        }
         if (fds[0].revents & POLLIN) {
             int fd;
             while ((fd = leonos_ipc_accept(listen_fd, 0)) >= 0) {

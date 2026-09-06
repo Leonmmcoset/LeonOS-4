@@ -213,7 +213,6 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
     if (!msg) {
         return;
     }
-    printf("[desktop.elf] DBG msg type=%u wid=%u\n", msg->type, msg->window_id);
     if (msg->type == 2) {
         existing = find_window_slot_by_window_id(msg->window_id);
         if (existing >= 0) {

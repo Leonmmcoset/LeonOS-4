@@ -8,6 +8,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class InstallerInputTests(unittest.TestCase):
+    def test_window_creation_is_retried_before_present(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-windowd-") as tmp:
+            executable = str(Path(tmp) / "windowd-announce")
+            subprocess.run([
+                "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-idirafter", "userland/libc/include", "-idirafter", "include",
+                "tools/tests/windowd_announce_test.c", "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
+
     def test_disconnected_ipc_clients_are_not_reported_as_would_block(self):
         with tempfile.TemporaryDirectory(prefix="leonos-ipc-disconnect-") as tmp:
             executable = str(Path(tmp) / "ipc-disconnect")

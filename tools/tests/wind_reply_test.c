@@ -98,6 +98,30 @@ int main(void)
     assert(wind_pump_fd(4) == 1);
     assert(frame_index > 0 && frame_index < 128);
     assert((wind_msg_head + WIND_MSG_QUEUE - wind_msg_tail) % WIND_MSG_QUEUE == 1);
+    wind_msg_head = wind_msg_tail = 0;
+    struct leonos_gui_window_msg create = {.type = 1, .window_id = 2};
+    wind_route_frame(LEONOS_WIN_MSG_WINDOW_NOTIFY, (const uint8_t *)&create,
+                      sizeof(create));
+    for (unsigned i = 0; i < 128; ++i) {
+        struct leonos_gui_window_msg region = {
+            .type = LEONOS_GUI_WINDOW_MSG_CURSOR_REGION, .window_id = 2,
+            .cursor_region_id = 1, .cursor_operation = LEONOS_GUI_CURSOR_REGION_SET,
+            .width = i + 1,
+        };
+        wind_route_frame(LEONOS_WIN_MSG_WINDOW_NOTIFY, (const uint8_t *)&region,
+                          sizeof(region));
+        present.window_id = 2;
+        wind_route_frame(LEONOS_WIN_MSG_WINDOW_NOTIFY, (const uint8_t *)&present,
+                          sizeof(present));
+    }
+    assert(wind_msgs[wind_msg_tail].type == 1);
+    assert(wind_msgs[wind_msg_tail].window_id == 2);
+    /* A queued lifecycle notification must be returned without reading a
+     * further batch of frames over it. */
+    frame_index = 0;
+    struct leonos_gui_window_msg next;
+    assert(leonos_gui_poll_window(&next) == 1 && next.type == 1);
+    assert(frame_index == 0);
     puts("Window reply tests passed: interleaved input preserves reply descriptor");
     return 0;
 }
