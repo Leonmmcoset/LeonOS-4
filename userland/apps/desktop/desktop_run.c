@@ -106,7 +106,6 @@ void desktop_run(void)
     unsigned long last_services_refresh = leonos_uptime_ms();
     unsigned long last_inputm_refresh = 0;
     unsigned long last_desktop_items_poll = 0;
-    unsigned idle_sleep_ms = 10;
     int last_mouse_visible = 1;
     for (;;) {
         struct leonos_gui_window_msg window_msg;
@@ -185,7 +184,6 @@ void desktop_run(void)
                                    event.pressed ? 7u : 8u,
                                    0, 0, 0, 0, 0, event.keycode, event.pressed);
                 }
-                printf("[desktop.elf] key scancode=%x pressed=%d\n", event.keycode, event.pressed);
             }
         }
         if (have_deferred_motion) {
@@ -210,10 +208,12 @@ void desktop_run(void)
             did_work = 1;
         } else if (desktop_damage_pending) {
             struct rect damage = desktop_damage_rect;
+            int cursor_only = desktop_damage_cursor_only;
             desktop_damage_pending = 0;
             desktop_damage_cursor_only = 0;
             desktop_damage_rect = rect_make(0, 0, 0, 0);
-            repaint_and_flush(damage);
+            if (cursor_only) repaint_cursor_and_flush(damage);
+            else repaint_and_flush(damage);
             did_work = 1;
         }
         int mouse_visible = leonos_gui_mouse_visible();
@@ -296,12 +296,8 @@ void desktop_run(void)
         }
         desktop_update_display_confirmation();
         if (did_work) {
-            idle_sleep_ms = 10;
             continue;
         }
-        sleep_ms(idle_sleep_ms);
-        if (idle_sleep_ms < 50) {
-            idle_sleep_ms += 10;
-        }
+        (void)leonos_gui_wait_policy(50);
     }
 }

@@ -679,6 +679,16 @@ int leonos_gui_poll_window(struct leonos_gui_window_msg *message)
     return 1;
 }
 
+int leonos_gui_wait_policy(uint32_t timeout_ms)
+{
+    if (wind_msg_head != wind_msg_tail || wind_input_head != wind_input_tail ||
+        wind_display_request_head != wind_display_request_tail ||
+        wind_appearance_request_head != wind_appearance_request_tail) return 1;
+    if (wind_policy_fd < 0 && wind_policy_ensure() < 0) return -1;
+    struct pollfd descriptor = {.fd = wind_policy_fd, .events = POLLIN};
+    return poll(&descriptor, 1, (int)timeout_ms);
+}
+
 int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t height,
                               uint32_t stride, const uint32_t *pixels)
 {
@@ -701,7 +711,9 @@ int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t heigh
                    (size_t)copy_width * 4u);
         }
     }
-    return leonos_ipc_send(fd, LEONOS_WIN_MSG_PRESENT, &request, sizeof(request));
+    /* The GUI ABI reports positive success; the transport reports zero. */
+    return leonos_ipc_send(fd, LEONOS_WIN_MSG_PRESENT, &request, sizeof(request)) < 0
+               ? -1 : 1;
 }
 
 int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width,

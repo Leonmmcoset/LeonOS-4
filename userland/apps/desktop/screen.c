@@ -972,7 +972,8 @@ void repaint_and_flush(struct rect dirty)
 
 void repaint_cursor_and_flush(struct rect dirty)
 {
-    repaint_and_flush(dirty);
+    /* screen retains the clean backing image after cursor composition. */
+    flush_region(dirty);
 }
 
 void desktop_queue_damage(struct rect dirty)

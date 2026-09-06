@@ -588,12 +588,16 @@ int main(void)
            LEONOS_IPC_SOCK_WINDOWD, keyboard_fd, mouse_fd);
 
     for (;;) {
-        struct pollfd fds[3] = {
+        struct pollfd fds[3 + WINDOWD_MAX_CLIENTS] = {
             {.fd = listen_fd, .events = POLLIN},
             {.fd = keyboard_fd, .events = POLLIN},
             {.fd = mouse_fd, .events = POLLIN},
         };
-        int ready = poll(fds, 3, 8);
+        for (uint32_t i = 0; i < WINDOWD_MAX_CLIENTS; ++i) {
+            fds[3 + i].fd = clients[i].used ? clients[i].fd : -1;
+            fds[3 + i].events = POLLIN;
+        }
+        int ready = poll(fds, 3 + WINDOWD_MAX_CLIENTS, 8);
         if (ready < 0) continue;
         /* Retry even for an application that presents only its first frame. */
         for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {

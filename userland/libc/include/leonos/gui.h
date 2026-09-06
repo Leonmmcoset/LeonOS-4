@@ -370,6 +370,8 @@ int leonos_gui_set_window_borderless(uint32_t window_id, uint32_t borderless);
 int leonos_gui_set_window_taskbar_visible(uint32_t window_id, uint32_t visible);
 int leonos_gui_set_taskbar_visible(uint32_t window_id, uint32_t visible);
 int leonos_gui_poll_window(struct leonos_gui_window_msg *message);
+/* Wait for policy messages/input without consuming queued events. */
+int leonos_gui_wait_policy(uint32_t timeout_ms);
 int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t height,
                               uint32_t stride, const uint32_t *pixels);
 int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width, uint32_t capacity_height,

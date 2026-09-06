@@ -5,20 +5,26 @@
 
 static unsigned frame_index;
 static int flood_mode;
+static int send_result = -1;
+static unsigned poll_calls;
+static int poll_timeout;
 
 int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
 {
     (void)fd; (void)type; (void)payload; (void)length;
     errno = EAGAIN;
-    return -1;
+    return send_result;
 }
+void leonos_ui_present_for_pixels(const uint32_t *pixels, uint32_t window_id)
+{ (void)pixels; (void)window_id; }
 int leonos_ipc_connect(const char *path) { (void)path; assert(0); return -1; }
 int leonos_ipc_set_nonblock(int fd, int enabled) { (void)fd; (void)enabled; return 0; }
 int leonos_ipc_close(int fd) { (void)fd; return 0; }
 
 int poll(struct pollfd *fds, nfds_t count, int timeout)
 {
-    (void)timeout;
+    ++poll_calls;
+    poll_timeout = timeout;
     if (!count) return 0;
     assert(count == 1 && fds[0].fd == 4);
     fds[0].revents = POLLIN;
@@ -122,6 +128,23 @@ int main(void)
     struct leonos_gui_window_msg next;
     assert(leonos_gui_poll_window(&next) == 1 && next.type == 1);
     assert(frame_index == 0);
+    uint32_t pixels[4] = {1, 2, 3, 4};
+    uint32_t shared[4] = {0};
+    wind_app_fd = 4;
+    wind_windows[0] = (struct wind_window){
+        .id = 1, .mapping = shared, .bytes = sizeof(shared), .stride = 8};
+    send_result = 0;
+    /* PortableGL and SVGA3D callers use the historical positive-success ABI. */
+    assert(leonos_gui_present_window(1, 2, 2, 2, pixels) > 0);
+    assert(memcmp(pixels, shared, sizeof(pixels)) == 0);
+    send_result = -1;
+    assert(leonos_gui_present_window(1, 2, 2, 2, pixels) < 0);
+    poll_calls = 0;
+    wind_msg_head = wind_msg_tail = 0;
+    assert(wind_input_head != wind_input_tail);
+    assert(leonos_gui_wait_policy(50) == 1 && poll_calls == 0);
+    wind_input_head = wind_input_tail = 0;
+    assert(leonos_gui_wait_policy(50) == 1 && poll_calls == 1 && poll_timeout == 50);
     puts("Window reply tests passed: interleaved input preserves reply descriptor");
     return 0;
 }

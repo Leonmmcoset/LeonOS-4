@@ -20,6 +20,20 @@ static int32_t (*middlelayer_device_catalog)(struct leonos_device_catalog_query 
 static int32_t (*middlelayer_auth_op)(uint32_t op, void *arg);
 static struct leonos_kernel_services kernel_services;
 
+#define OSMLAYER_READ_CACHE_ENTRIES 32u
+#define OSMLAYER_READ_CACHE_BYTES 8192u
+struct osmlayer_read_cache_entry {
+    uint64_t generation;
+    uint32_t length;
+    int32_t result;
+    char path[LEONOS_FS_PATH_LEN];
+    uint8_t data[OSMLAYER_READ_CACHE_BYTES];
+};
+/* Authorization repeatedly reads the same small account/ACL files, including
+ * absent ACLs. Storage mutations invalidate both successes and ENOENT results. */
+static struct osmlayer_read_cache_entry read_cache[OSMLAYER_READ_CACHE_ENTRIES];
+static uint32_t read_cache_next;
+
 /**
  * Is utf8 cont.
  * @param byte Value supplied by the caller.
@@ -365,13 +379,38 @@ static int32_t osmlayer_read_file_service(const char *path, void *buf,
     size_t len = 0;
     int ret;
     uint32_t pages;
+    uint32_t path_len = 0;
+    uint64_t generation = storage_metadata_generation();
     if (out_len) {
         *out_len = 0;
     }
     if (!path || (!buf && capacity != 0)) {
         return -22;
     }
+    while (path_len < LEONOS_FS_PATH_LEN && path[path_len]) ++path_len;
+    if (path_len < LEONOS_FS_PATH_LEN) {
+        for (uint32_t i = 0; i < OSMLAYER_READ_CACHE_ENTRIES; ++i) {
+            const struct osmlayer_read_cache_entry *entry = &read_cache[i];
+            if (entry->generation != generation ||
+                __builtin_memcmp(entry->path, path, path_len + 1u) != 0) continue;
+            if (out_len) *out_len = entry->length;
+            if (entry->result < 0) return entry->result;
+            if (entry->length > capacity) return -7;
+            if (entry->length) __builtin_memcpy(buf, entry->data, entry->length);
+            return 0;
+        }
+    }
     ret = storage_read_file(path, &data, &len);
+    if (path_len < LEONOS_FS_PATH_LEN &&
+        (ret == -2 || (ret == 0 && len <= OSMLAYER_READ_CACHE_BYTES))) {
+        struct osmlayer_read_cache_entry *entry =
+            &read_cache[read_cache_next++ % OSMLAYER_READ_CACHE_ENTRIES];
+        entry->result = ret;
+        entry->length = ret == 0 ? (uint32_t)len : 0;
+        __builtin_memcpy(entry->path, path, path_len + 1u);
+        if (entry->length) __builtin_memcpy(entry->data, data, entry->length);
+        entry->generation = storage_metadata_generation();
+    }
     if (ret < 0) {
         return ret;
     }

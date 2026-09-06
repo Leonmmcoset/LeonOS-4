@@ -129,6 +129,8 @@ void storage_init(void);
  * @brief Toggle asynchronous I/O for the calling context on or off.
  */
 void storage_set_io_async_context(bool enabled);
+/* Read under the kernel execution lock; changes on writes and mount/cache resets. */
+uint64_t storage_metadata_generation(void);
 /**
  * @brief Abandon any in-flight I/O owned by pid without completing it.
  */

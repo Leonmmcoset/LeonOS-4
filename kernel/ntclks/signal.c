@@ -5,6 +5,7 @@
 #include <ntclks/signal.h>
 #include <ntclks/sched.h>
 #include <ntclks/usercopy.h>
+#include <ntclks/paging.h>
 #include <leonos/signal.h>
 
 #define LEONOS_SA_NODEFER    0x00000040u
@@ -211,7 +212,19 @@ static int signal_setup_frame(struct task *task, int sig,
     signal_context_save(&user_frame.context, frame);
 
     if (!user_range_writable(base, size)) return -14;
-    __builtin_memcpy((void *)(uintptr_t)base, &user_frame, size);
+    /* The scheduler may have selected this task before switching CR3.
+     * Copy through its page tables, not the outgoing task's user mapping. */
+    for (uint64_t copied = 0; copied < size;) {
+        uint64_t address = base + copied;
+        uint64_t phys = address_space_user_page_phys(&task->as, address);
+        uint64_t offset = address & 4095u;
+        uint64_t take = 4096u - offset;
+        if (!phys) return -14;
+        if (take > size - copied) take = size - copied;
+        __builtin_memcpy((void *)(uintptr_t)(NTCLKS_KERNEL_DIRECT_MAP_BASE + phys + offset),
+                         (const uint8_t *)&user_frame + copied, take);
+        copied += take;
+    }
 
     /* The handler runs with the delivered signal and the action mask blocked;
      * SA_NODEFER omits only the automatic current-signal block. */
