@@ -73,6 +73,16 @@ int net_socket_close(struct leonos_net_socket_close *request, uint32_t owner_pid
  */
 int net_connections(struct leonos_net_connection_list *request, const struct task *viewer);
 /**
+ * @brief Report poll readiness for an AF_INET fd socket.
+ */
+short net_socket_poll_fd(int32_t handle, uint32_t owner_pid, short events);
+/**
+ * @brief Fill local/remote IPv4 endpoints for getsockname/getpeername.
+ */
+int net_socket_address(int32_t handle, uint32_t owner_pid,
+                       uint32_t *local_ip, uint16_t *local_port,
+                       uint32_t *remote_ip, uint16_t *remote_port);
+/**
  * @brief Close every socket owned by owner_pid (used when a process exits).
  */
 void net_close_owner_sockets(uint32_t owner_pid);

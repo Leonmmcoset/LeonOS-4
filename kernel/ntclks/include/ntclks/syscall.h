@@ -73,6 +73,32 @@
 #define LINUX_SYS_RT_SIGSUSPEND __NR_rt_sigsuspend
 #define LINUX_SYS_MOUNT __NR_mount
 #define LINUX_SYS_UMOUNT2 __NR_umount2
+#define LINUX_SYS_SOCKETPAIR __NR_socketpair
+#define LINUX_SYS_SENDMSG __NR_sendmsg
+#define LINUX_SYS_RECVMSG __NR_recvmsg
+#define LINUX_SYS_ACCEPT4 __NR_accept4
+#define LINUX_SYS_GETUID __NR_getuid
+#define LINUX_SYS_GETGID __NR_getgid
+#define LINUX_SYS_GETEUID __NR_geteuid
+#define LINUX_SYS_GETEGID __NR_getegid
+#define LINUX_SYS_SETUID __NR_setuid
+#define LINUX_SYS_SETGID __NR_setgid
+#define LINUX_SYS_UNAME __NR_uname
+#define LINUX_SYS_GETTIMEOFDAY __NR_gettimeofday
+#define LINUX_SYS_SETTIMEOFDAY __NR_settimeofday
+#define LINUX_SYS_CHMOD __NR_chmod
+#define LINUX_SYS_FCHMOD __NR_fchmod
+#define LINUX_SYS_CHOWN __NR_chown
+#define LINUX_SYS_FCHOWN __NR_fchown
+#define LINUX_SYS_SCHED_SETAFFINITY __NR_sched_setaffinity
+#define LINUX_SYS_SCHED_GETAFFINITY __NR_sched_getaffinity
+#define LINUX_SYS_REBOOT __NR_reboot
+#define LINUX_SYS_PIPE2 __NR_pipe2
+#define LINUX_SYS_DUP3 __NR_dup3
+
+/* Open-status flag shared by the descriptor and PTY paths. */
+#define LEONOS_O_NONBLOCK 0x800u
+#define LEONOS_FD_CLOEXEC 0x1u
 
 #define LEONOS_ENOSYS 38
 #define LEONOS_EFAULT 14

@@ -141,7 +141,14 @@ def main() -> int:
     copy_tree(esp_tree / "drivers", stage / "drivers")
     copy_file(esp_tree / "system/lib/ld-leonos.elf", stage / "system/lib/ld-leonos.elf")
     copy_file(policy_runtime, stage / "system/lib/libleonos.so.1")
+    # Unix IPC service sockets live in /run/leonos and procfs is fixed at
+    # /proc; FAT/exFAT have no permission bits, so service-side SO_PEERCRED
+    # checks are the access-control boundary.
+    (stage / "run/leonos").mkdir(parents=True, exist_ok=True)
+    (stage / "proc").mkdir(parents=True, exist_ok=True)
     stage_installed_payloads(esp_tree, stage)
+    (stage / "install/root/run/leonos").mkdir(parents=True, exist_ok=True)
+    (stage / "install/root/proc").mkdir(parents=True, exist_ok=True)
     copy_file(policy_runtime, stage / "install/root/system/lib/libleonos.so.1")
     remove_file(stage / "install/root/etc/license.conf")
     remove_file(stage / "install/root/etc/install.id")

@@ -72,6 +72,8 @@ struct task_file {
 #define TASK_FILE_FLAG_DEV_BLOCK  0x02000000u
 #define TASK_FILE_FLAG_SOCKET     0x08000000u
 #define TASK_FILE_FLAG_SOCKET_UNIX 0x04000000u
+#define TASK_FILE_FLAG_DEV_SHM    0x01000000u
+#define TASK_FILE_FLAG_SOCKET_INET 0x00800000u
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {
@@ -177,6 +179,11 @@ struct task_signal_state {
 
 struct task_credentials_state {
     uint32_t uid;
+    uint32_t gid;
+    uint32_t euid;
+    uint32_t egid;
+    uint32_t suid;
+    uint32_t sgid;
     uint32_t role;
     uint32_t session_id;
     uint64_t rlimit_nofile;
@@ -266,6 +273,11 @@ struct task {
         struct task_credentials_state credentials;
         struct {
             uint32_t uid;
+            uint32_t gid;
+            uint32_t euid;
+            uint32_t egid;
+            uint32_t suid;
+            uint32_t sgid;
             uint32_t role;
             uint32_t session_id;
             uint64_t rlimit_nofile;
@@ -446,6 +458,12 @@ uint64_t sched_task_cr3(struct task *task);
  * @brief Move task pid back onto the ready queue so it can be scheduled.
  */
 void sched_mark_ready(uint32_t pid);
+/**
+ * @brief Put the current task to sleep with no wake deadline (wait queues own
+ * the wakeup path). Used by IPC primitives before returning EAGAIN internally;
+ * the syscall epilogue rewinds and retries the instruction after wakeup.
+ */
+void sched_block_current(void);
 /**
  * @brief Put the current task to sleep until the given tick.
  */

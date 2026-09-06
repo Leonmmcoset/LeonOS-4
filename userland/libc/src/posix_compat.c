@@ -94,16 +94,23 @@ int nanosleep(const struct timespec *request, struct timespec *remaining)
     return (int)syscall2(SYS_nanosleep, (long)request, 0);
 }
 
-int gettimeofday(struct timeval *value, void *timezone)
+int gettimeofday(struct timeval *value, void *timezone) __attribute__((weak))
 {
-    struct leonos_time_info info;
-    (void)timezone;
-    if (!value || leonos_time_info(&info) < 0) {
-        errno = EINVAL;
+    long result = syscall2(SYS_gettimeofday, (long)value, (long)timezone);
+    if (result < 0) {
+        errno = (int)-result;
         return -1;
     }
-    value->tv_sec = (time_t)info.unix_seconds;
-    value->tv_usec = (suseconds_t)((info.uptime_ms % 1000ULL) * 1000ULL);
+    return 0;
+}
+
+int settimeofday(const struct timeval *value, const void *timezone) __attribute__((weak))
+{
+    long result = syscall2(SYS_settimeofday, (long)value, (long)timezone);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
     return 0;
 }
 
@@ -222,6 +229,36 @@ int accept(int fd, struct sockaddr *address, socklen_t *length)
     return socket_result(syscall3(SYS_accept, fd, (long)address, (long)length));
 }
 
+int socketpair(int domain, int type, int protocol, int socket_vector[2])
+{
+    if (!socket_vector) {
+        errno = EFAULT;
+        return -1;
+    }
+    return socket_result(syscall6(SYS_socketpair, domain, type, protocol,
+                                  (long)socket_vector, 0, 0));
+}
+
+int accept4(int fd, struct sockaddr *address, socklen_t *length, int flags)
+{
+    return socket_result(syscall6(SYS_accept4, fd, (long)address, (long)length,
+                                  flags, 0, 0));
+}
+
+ssize_t sendmsg(int fd, const struct msghdr *message, int flags)
+{
+    long result = syscall3(SYS_sendmsg, fd, (long)message, flags);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return (ssize_t)result;
+}
+
+ssize_t recvmsg(int fd, struct msghdr *message, int flags)
+{
+    long result = syscall3(SYS_recvmsg, fd, (long)message, flags);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return (ssize_t)result;
+}
+
 int getsockname(int fd, struct sockaddr *address, socklen_t *length)
 {
     return socket_result(syscall3(SYS_getsockname, fd, (long)address, (long)length));
@@ -274,6 +311,34 @@ ssize_t recvfrom(int fd, void *buffer, size_t length, int flags,
                            (long)source, (long)source_length);
     if (result < 0) { errno = (int)-result; return -1; }
     return (ssize_t)result;
+}
+
+int chmod(const char *path, mode_t mode) __attribute__((weak))
+{
+    long result = syscall2(SYS_chmod, (long)path, mode);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return 0;
+}
+
+int fchmod(int fd, mode_t mode) __attribute__((weak))
+{
+    long result = syscall2(SYS_fchmod, fd, mode);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return 0;
+}
+
+int chown(const char *path, uid_t owner, gid_t group) __attribute__((weak))
+{
+    long result = syscall3(SYS_chown, (long)path, owner, group);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return 0;
+}
+
+int fchown(int fd, uid_t owner, gid_t group) __attribute__((weak))
+{
+    long result = syscall3(SYS_fchown, fd, owner, group);
+    if (result < 0) { errno = (int)-result; return -1; }
+    return 0;
 }
 
 uint16_t htons(uint16_t value) { return (uint16_t)((value << 8) | (value >> 8)); }

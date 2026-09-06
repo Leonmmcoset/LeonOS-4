@@ -43,6 +43,7 @@ static const struct storage_dev_entry storage_dev_entries[] = {
     {"input-method", STORAGE_DEV_KIND_INPUT_METHOD, LEONOS_FS_TYPE_DEVICE, 0},
     {"hwinfo",      STORAGE_DEV_KIND_HWINFO,       LEONOS_FS_TYPE_DEVICE, 0},
     {"gpu",         STORAGE_DEV_KIND_GPU,          LEONOS_FS_TYPE_DEVICE, 0},
+    {"shm0",       STORAGE_DEV_KIND_SHM,          LEONOS_FS_TYPE_DEVICE, 0},
     {"stdin",     STORAGE_DEV_KIND_TTY,      LEONOS_FS_TYPE_DEVICE, 0},
     {"stdout",    STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},
     {"stderr",    STORAGE_DEV_KIND_CONSOLE,  LEONOS_FS_TYPE_DEVICE, 0},

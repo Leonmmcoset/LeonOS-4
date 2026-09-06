@@ -8,6 +8,7 @@
 #include <leonos/gui.h>
 #include <leonos/signal.h>
 #include <leonos/syscall.h>
+#include <linux/utsname.h>
 #include <linux/tty.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -18,6 +19,9 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+/* Picolibc's minimal <sched.h> does not define cpu_set_t on this target. */
+typedef uint64_t cpu_set_t;
 
 static int syscall_error(long result)
 {
@@ -321,7 +325,87 @@ int raise(int signal_number)
     return kill(getpid(), signal_number);
 }
 
-uid_t getuid(void)
+uid_t getuid(void) __attribute__((weak))
 {
+    return (uid_t)syscall0(SYS_getuid);
+}
+
+uid_t geteuid(void) __attribute__((weak))
+{
+    return (uid_t)syscall0(SYS_geteuid);
+}
+
+gid_t getgid(void) __attribute__((weak))
+{
+    return (gid_t)syscall0(SYS_getgid);
+}
+
+gid_t getegid(void) __attribute__((weak))
+{
+    return (gid_t)syscall0(SYS_getegid);
+}
+
+int setuid(uid_t uid) __attribute__((weak))
+{
+    return syscall_error(syscall1(SYS_setuid, (long)uid));
+}
+
+int setgid(gid_t gid) __attribute__((weak))
+{
+    return syscall_error(syscall1(SYS_setgid, (long)gid));
+}
+
+int pipe2(int filedes[2], int flags)
+{
+    long result;
+    if (!filedes) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = syscall2(SYS_pipe2, (long)filedes, flags);
+    return syscall_error(result);
+}
+
+int dup3(int old_fd, int new_fd, int flags)
+{
+    return syscall_error(syscall3(SYS_dup3, old_fd, new_fd, flags));
+}
+
+int uname(struct utsname *name) __attribute__((weak))
+{
+    long result = syscall1(SYS_uname, (long)name);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
     return 0;
+}
+
+int reboot(int command) __attribute__((weak))
+{
+    return syscall_error(syscall1(SYS_reboot, command));
+}
+
+int sched_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *set) __attribute__((weak))
+{
+    long result;
+    if (!set || cpusetsize > sizeof(uint64_t)) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = syscall3(SYS_sched_setaffinity, (long)pid, (long)sizeof(uint64_t),
+                      (long)set);
+    return syscall_error(result);
+}
+
+int sched_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *set) __attribute__((weak))
+{
+    long result;
+    if (!set || cpusetsize > sizeof(uint64_t)) {
+        errno = EINVAL;
+        return -1;
+    }
+    result = syscall3(SYS_sched_getaffinity, (long)pid, (long)sizeof(uint64_t),
+                      (long)set);
+    return syscall_error(result);
 }

@@ -385,6 +385,19 @@ sdk = false
 api = false
 
 [[components]]
+id = "ipctest"
+symbol = "APP_IPCTEST"
+label = "Unix IPC smoke test"
+category = "Developer applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "bugtest"
 symbol = "APP_BUGTEST"
 label = "Bug test"

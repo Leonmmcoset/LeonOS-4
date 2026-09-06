@@ -297,6 +297,11 @@ static void task_clear_identity(struct task *task)
     }
     task->flags &= ~TASK_FLAG_ELEVATED_ADMIN;
     task->uid = 0;
+    task->gid = 0;
+    task->euid = 0;
+    task->egid = 0;
+    task->suid = 0;
+    task->sgid = 0;
     task->role = LEONOS_AUTH_ROLE_NONE;
     task->session_id = 0;
     task->username[0] = 0;
@@ -312,6 +317,11 @@ static void task_copy_identity_from_parent(struct task *task, const struct task 
         return;
     }
     task->uid = parent->uid;
+    task->gid = parent->gid;
+    task->euid = parent->euid;
+    task->egid = parent->egid;
+    task->suid = parent->suid;
+    task->sgid = parent->sgid;
     task->role = parent->role;
     task->session_id = parent->session_id;
     task_copy_identity_text(task->username, sizeof(task->username), parent->username);
@@ -1462,6 +1472,21 @@ uint64_t sched_task_cr3(struct task *task)
 /**
  * @brief Wake a non-exited task: clear its wait state and set it READY.
  */
+void sched_block_current(void)
+{
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    struct task *task = sched_current_task();
+    if (!task || task->pid == 0 || task->state == TASK_EXITED) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return;
+    }
+    task->wake_tick = 0;
+    task->wait_window_id = 0;
+    task->state = TASK_BLOCKED;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
 void sched_mark_ready(uint32_t pid)
 {
     uint64_t flags;
@@ -2093,6 +2118,11 @@ void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
         return;
     }
     task->uid = user->uid;
+    task->gid = user->uid;
+    task->euid = user->uid;
+    task->egid = user->uid;
+    task->suid = user->uid;
+    task->sgid = user->uid;
     task->role = user->role;
     task->session_id = session_id;
     task_copy_identity_text(task->username, sizeof(task->username), user->username);
