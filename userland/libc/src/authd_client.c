@@ -16,10 +16,14 @@
 #include <unistd.h>
 
 #define AUTHD_FRAME_CAP 4096u
-#define AUTHD_RETRY_MS 5000u
+/* Short per-call retry plus backoff: authd normally listens within the boot
+ * second, and a world without authd must fail fast instead of stalling. */
+#define AUTHD_CONNECT_ATTEMPT_MS 50u
+#define AUTHD_CONNECT_BACKOFF_MS 1000u
 #define AUTHD_SESSION_FILE "/run/leonos/session-user"
 
 static int authd_fd = -1;
+static uint32_t authd_retry_after_ms;
 
 static uint32_t authd_now_ms(void)
 {
@@ -74,13 +78,18 @@ static int authd_open(void)
 {
     struct leonos_authd_hello hello;
     struct leonos_authd_ack ack;
-    uint32_t deadline = authd_now_ms() + AUTHD_RETRY_MS;
+    uint32_t deadline;
     if (authd_fd >= 0) return authd_fd;
+    if (authd_now_ms() < authd_retry_after_ms) return -1;
+    deadline = authd_now_ms() + AUTHD_CONNECT_ATTEMPT_MS;
     while (authd_fd < 0 && authd_now_ms() < deadline) {
         authd_fd = leonos_ipc_connect(LEONOS_IPC_SOCK_AUTH);
         if (authd_fd < 0) (void)poll(0, 0, 10);
     }
-    if (authd_fd < 0) return -1;
+    if (authd_fd < 0) {
+        authd_retry_after_ms = authd_now_ms() + AUTHD_CONNECT_BACKOFF_MS;
+        return -1;
+    }
     (void)leonos_ipc_set_nonblock(authd_fd, 1);
     hello.pid = (uint32_t)getpid();
     if (leonos_ipc_send(authd_fd, LEONOS_AUTHD_MSG_HELLO, &hello,
@@ -88,35 +97,54 @@ static int authd_open(void)
         authd_wait(LEONOS_AUTHD_MSG_ACK, &ack, sizeof(ack), 0) < 0) {
         leonos_ipc_close(authd_fd);
         authd_fd = -1;
+        authd_retry_after_ms = authd_now_ms() + AUTHD_CONNECT_BACKOFF_MS;
         return -1;
     }
     return authd_fd;
 }
 
-static int authd_write_session_user(uint32_t uid)
+static void authd_append_u32(char *text, uint32_t *length, uint32_t capacity,
+                             uint32_t value)
 {
-    char text[16];
+    char digits[12];
+    uint32_t count = 0;
+    if (!text || !length || *length >= capacity) {
+        return;
+    }
+    if (!value) {
+        digits[count++] = '0';
+    } else {
+        while (value && count < sizeof(digits)) {
+            digits[count++] = (char)('0' + value % 10U);
+            value /= 10U;
+        }
+    }
+    while (count && *length + 1U < capacity) {
+        text[(*length)++] = digits[--count];
+    }
+}
+
+static int authd_write_session_user(const struct leonos_user_info *user)
+{
+    char text[LEONOS_AUTH_USERNAME_LEN + LEONOS_AUTH_HOME_LEN + 32U];
     uint32_t len = 0;
     int fd;
     (void)mkdir("/run", 0);
     (void)mkdir("/run/leonos", 0);
-    if (!uid) {
+    if (!user || !user->uid) {
         (void)unlink(AUTHD_SESSION_FILE);
         return 0;
     }
-    {
-        uint32_t value = uid;
-        char tmp[12];
-        uint32_t n = 0;
-        if (!value) tmp[n++] = '0';
-        while (value && n + 1u < sizeof(tmp)) {
-            tmp[n++] = (char)('0' + value % 10u);
-            value /= 10u;
-        }
-        while (n) text[len++] = tmp[--n];
-        text[len++] = '\n';
-        text[len] = 0;
-    }
+    authd_append_u32(text, &len, sizeof(text), user->uid);
+    if (len + 1U < sizeof(text)) text[len++] = '\n';
+    authd_append_u32(text, &len, sizeof(text), user->role);
+    if (len + 1U < sizeof(text)) text[len++] = '\n';
+    authd_copy(text + len, sizeof(text) - len, user->username);
+    len += (uint32_t)strlen(text + len);
+    if (len + 1U < sizeof(text)) text[len++] = '\n';
+    authd_copy(text + len, sizeof(text) - len, user->home);
+    len += (uint32_t)strlen(text + len);
+    if (len + 1U < sizeof(text)) text[len++] = '\n';
     fd = open(AUTHD_SESSION_FILE, LEONOS_O_WRONLY | LEONOS_O_CREAT |
               LEONOS_O_TRUNC, 0);
     if (fd < 0) return -1;
@@ -183,7 +211,7 @@ int leonos_auth_login(const char *username, const char *password,
                         sizeof(login)) < 0) return -1;
     memset(login.password, 0, sizeof(login.password));
     if (authd_wait(LEONOS_AUTHD_MSG_LOGIN, user, sizeof(*user), 0) < 0) return -1;
-    (void)authd_write_session_user(user->uid);
+    (void)authd_write_session_user(user);
     /* The login process itself becomes the authenticated session bootstrap.
      * Processes launched later inherit the session uid through libc spawn. */
     if (getuid() == 0) (void)setuid(user->uid);

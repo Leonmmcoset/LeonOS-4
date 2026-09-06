@@ -753,6 +753,9 @@ void start_menu_set_open(uint8_t open)
     start_menu_opening = open;
     start_menu_animating = 1;
     start_menu_anim_start = leonos_uptime_ms();
+    if (open) {
+        printf("[desktop.elf] DBG menu-open t0=%lu\n", start_menu_anim_start);
+    }
     full_redraw_pending = 1;
 }
 

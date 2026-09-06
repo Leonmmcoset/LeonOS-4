@@ -1,12 +1,17 @@
 #include "desktop.h"
 #include <leonos/net_service.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
 
 static char taskbar_clock_cache[16];
 static unsigned long taskbar_clock_cache_second = ~0UL;
 static uint8_t taskbar_network_cache_valid;
 static uint8_t taskbar_network_connected;
 static uint32_t taskbar_network_color = 0x00c00000u;
-static unsigned long taskbar_network_cache_ms;
+static unsigned long taskbar_network_retry_ms;
+static int taskbar_network_worker_pid;
+static int taskbar_network_pipe = -1;
 /* The shadow surface is always the base desktop without a software cursor.
  * Cursor pixels are composed into this small staging tile only when it is
  * submitted to the real framebuffer. */
@@ -118,31 +123,70 @@ static void draw_taskbar_clock(uint32_t tb_y)
                               taskbar_clock_cache, 1);
 }
 
+void desktop_poll_network_state(void)
+{
+    unsigned long now = leonos_uptime_ms();
+    if (taskbar_network_worker_pid > 0) {
+        for (unsigned budget = 0; budget < 8; ++budget) {
+            struct pollfd fd = {.fd = taskbar_network_pipe, .events = POLLIN};
+            uint8_t connected;
+            if (poll(&fd, 1, 0) <= 0 || !(fd.revents & POLLIN) ||
+                read(taskbar_network_pipe, &connected, 1) != 1) break;
+            if (!taskbar_network_cache_valid || connected != taskbar_network_connected) {
+                taskbar_network_connected = connected;
+                taskbar_network_color = connected ? 0x0000a000u : 0x00c00000u;
+                taskbar_network_cache_valid = 1;
+                full_redraw_pending = 1;
+            }
+        }
+        if (wait4(taskbar_network_worker_pid, 0, 1 /* WNOHANG */, 0) ==
+            taskbar_network_worker_pid) {
+            close(taskbar_network_pipe);
+            taskbar_network_pipe = -1;
+            taskbar_network_worker_pid = 0;
+            taskbar_network_retry_ms = now + 1000UL;
+        }
+        return;
+    }
+    if (!desktop_taskbar_visible || !desktop_service_network_icon ||
+        oobe_lock_active || login_lock_active || now < taskbar_network_retry_ms) return;
+    int descriptors[2];
+    taskbar_network_retry_ms = now + 1000UL;
+    if (pipe(descriptors) < 0) return;
+    if (fcntl(descriptors[0], F_SETFD, FD_CLOEXEC) < 0 ||
+        fcntl(descriptors[1], F_SETFD, FD_CLOEXEC) < 0) {
+        close(descriptors[0]); close(descriptors[1]); return;
+    }
+    int pid = fork();
+    if (pid == 0) {
+        close(descriptors[0]);
+        /* Keep the synchronous network service client outside the compositor.
+         * Only one-byte state updates cross back to the drawing process. */
+        for (;;) {
+            net_service_config_t config;
+            uint8_t connected = net_service_config(&config) == 0 &&
+                (config.flags & NET_SERVICE_CONFIG_FLAG_ACTIVE) &&
+                (config.flags & NET_SERVICE_CONFIG_FLAG_DHCP) &&
+                config.source == NET_SERVICE_CONFIG_SOURCE_DHCP &&
+                config.local_ip && config.gateway_ip;
+            if (write(descriptors[1], &connected, 1) != 1) _exit(0);
+            sleep_ms(500);
+        }
+    }
+    close(descriptors[1]);
+    if (pid < 0) { close(descriptors[0]); return; }
+    taskbar_network_worker_pid = pid;
+    taskbar_network_pipe = descriptors[0];
+}
+
 static void draw_taskbar_network_icon(uint32_t tb_y)
 {
     uint32_t x;
     uint32_t icon_x;
     uint32_t icon_y;
     uint32_t tray_w = desktop_tray_width();
-    unsigned long now;
     if (!desktop_service_network_icon || fb_w() < tray_w + 8) {
         return;
-    }
-    now = leonos_uptime_ms();
-    if (!taskbar_network_cache_valid || now - taskbar_network_cache_ms >= 500UL) {
-        net_service_config_t config;
-        taskbar_network_connected = 0;
-        taskbar_network_color = 0x00c00000u;
-        if (net_service_config(&config) == 0 &&
-            (config.flags & NET_SERVICE_CONFIG_FLAG_ACTIVE) &&
-            (config.flags & NET_SERVICE_CONFIG_FLAG_DHCP) &&
-            config.source == NET_SERVICE_CONFIG_SOURCE_DHCP &&
-            config.local_ip && config.gateway_ip) {
-            taskbar_network_connected = 1;
-            taskbar_network_color = 0x0000a000u;
-        }
-        taskbar_network_cache_ms = now;
-        taskbar_network_cache_valid = 1;
     }
     x = fb_w() - (desktop_service_rtc_clock ? TASKBAR_CLOCK_W : 0U) - TASKBAR_NET_W;
     icon_x = x + 10;
@@ -848,22 +892,18 @@ static int build_cursor_composite(struct rect *raw_out, struct rect *clip_out)
     return 1;
 }
 
-static void flush_cursor_overlay(struct rect dirty)
+static void swap_cursor_composite(struct rect raw, struct rect clip)
 {
-    struct rect cursor_rect;
-    struct rect cursor_clip;
-    const uint32_t *source;
-
-    if (!build_cursor_composite(&cursor_rect, &cursor_clip) ||
-        !rect_intersects(dirty, cursor_rect)) {
-        return;
+    for (int y = 0; y < clip.h; ++y) {
+        for (int x = 0; x < clip.w; ++x) {
+            uint32_t *base = screen + (uint64_t)(clip.y + y) * MAX_FB_W + clip.x + x;
+            uint32_t *overlay = cursor_composite +
+                (uint32_t)(clip.y - raw.y + y) * CURSOR_TILE_W + clip.x - raw.x + x;
+            uint32_t saved = *base;
+            *base = *overlay;
+            *overlay = saved;
+        }
     }
-    source = cursor_composite +
-             (uint32_t)(cursor_clip.y - cursor_rect.y) * CURSOR_TILE_W +
-             (uint32_t)(cursor_clip.x - cursor_rect.x);
-    flush_pixels((uint32_t)cursor_clip.x, (uint32_t)cursor_clip.y,
-                 (uint32_t)cursor_clip.w, (uint32_t)cursor_clip.h,
-                 CURSOR_TILE_W, source);
 }
 
 static int flush_small_composited_region(struct rect dirty)
@@ -912,11 +952,15 @@ void flush_region(struct rect dirty)
     if (flush_small_composited_region(dirty)) {
         return;
     }
-    /* Publish the clean base first, then overlay the current cursor. The
-     * damage union contains the old cursor rectangle, so moving the pointer
-     * naturally erases its previous pixels without a saved background. */
+    struct rect cursor_raw;
+    struct rect cursor_clip;
+    int composite = build_cursor_composite(&cursor_raw, &cursor_clip) &&
+                    rect_intersects(dirty, cursor_raw);
+    /* Submit one image, including the pointer, even for a full repaint.
+     * Restore the clean backing pixels afterwards so moves leave no trails. */
+    if (composite) swap_cursor_composite(cursor_raw, cursor_clip);
     flush_base_region(dirty);
-    flush_cursor_overlay(dirty);
+    if (composite) swap_cursor_composite(cursor_raw, cursor_clip);
 }
 
 void repaint_and_flush(struct rect dirty)

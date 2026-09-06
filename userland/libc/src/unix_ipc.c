@@ -198,28 +198,22 @@ int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
     if (length) *length = want;
     if (received_fd) {
         char control[CMSG_SPACE(sizeof(int))];
-        struct iovec vector;
         struct msghdr message;
         struct cmsghdr *header;
-        char byte;
         ssize_t got;
         memset(control, 0, sizeof(control));
         memset(&message, 0, sizeof(message));
-        vector.iov_base = &byte;
-        vector.iov_len = 1;
-        message.msg_iov = &vector;
-        message.msg_iovlen = 1;
+        /* LeonOS queues SCM_RIGHTS separately from the byte stream. The
+         * frame is already consumed: receive only control data, otherwise
+         * the real receive steals the next queued frame's first byte. */
         message.msg_control = control;
         message.msg_controllen = sizeof(control);
         got = recvmsg(fd, &message, MSG_PEEK);
-        /* got == 0 is a control-only delivery: the kernel reports pending
-         * SCM_RIGHTS attachments on an otherwise empty receive ring. */
         if (got >= 0 && message.msg_controllen >= sizeof(struct cmsghdr)) {
             header = (struct cmsghdr *)control;
             if (header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS) {
                 got = recvmsg(fd, &message, 0);
-                (void)got;
-                if (header->cmsg_len >= CMSG_LEN(sizeof(int))) {
+                if (got >= 0 && header->cmsg_len >= CMSG_LEN(sizeof(int))) {
                     *received_fd = *(int *)CMSG_DATA(header);
                 }
             }

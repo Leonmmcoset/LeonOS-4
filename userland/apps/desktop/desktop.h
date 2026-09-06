@@ -455,7 +455,7 @@ void send_app_event_to_window(uint32_t window_id, uint32_t type,
 void send_app_event(uint8_t slot, uint32_t type, int32_t x, int32_t y,
                     int32_t dx, int32_t dy, uint8_t buttons,
                     uint8_t keycode, uint8_t pressed);
-void fetch_window_surface(uint8_t slot);
+void invalidate_window_surface(uint8_t slot);
 void draw_app_surface_i(uint8_t id, int body_x, int body_y,
                         uint32_t body_w, uint32_t body_h);
 int window_is_ui_demo(const struct desktop_window *w);
@@ -505,6 +505,7 @@ void flush_region(struct rect dirty);
 void repaint_and_flush(struct rect dirty);
 void repaint_cursor_and_flush(struct rect dirty);
 void redraw_all(void);
+void desktop_poll_network_state(void);
 void desktop_queue_damage(struct rect dirty);
 void desktop_queue_cursor_damage(struct rect dirty);
 int hit_window(uint32_t x, uint32_t y);

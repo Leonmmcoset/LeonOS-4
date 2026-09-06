@@ -90,20 +90,58 @@ static int wind_open_connection(const char *path)
     }
 }
 
-static int wind_read_frame(int fd, uint32_t *type, void *payload,
-                           uint32_t capacity, uint32_t *length, int *received_fd)
+static void wind_route_frame(uint32_t type, const uint8_t *buffer, uint32_t got)
 {
-    uint8_t buffer[WIND_FRAME_CAP];
-    int result;
-    if (capacity > sizeof(buffer)) capacity = sizeof(buffer);
-    result = leonos_ipc_recv_fd(fd, type, buffer, sizeof(buffer), length, received_fd);
-    if (result < 0) return -1;
-    if (*length > capacity) {
-        errno = EMSGSIZE;
-        return -1;
+    if (type == LEONOS_WIN_MSG_EVENT && got >= sizeof(struct leonos_gui_app_event)) {
+        struct leonos_gui_app_event event;
+        memcpy(&event, buffer, sizeof(event));
+        wind_events[wind_event_head] = event;
+        wind_event_head = (wind_event_head + 1u) % WIND_EVENT_QUEUE;
+        if (wind_event_head == wind_event_tail)
+            wind_event_tail = (wind_event_tail + 1u) % WIND_EVENT_QUEUE;
+    } else if (type == LEONOS_WIN_MSG_INPUT && got >= sizeof(struct leonos_input_event)) {
+        struct leonos_input_event event;
+        memcpy(&event, buffer, sizeof(event));
+        uint32_t last = (wind_input_head + WIND_EVENT_QUEUE - 1u) % WIND_EVENT_QUEUE;
+        if (wind_input_head != wind_input_tail && event.type == LEONOS_INPUT_MOUSE &&
+            wind_inputs[last].type == event.type && wind_inputs[last].buttons == event.buttons) {
+            wind_inputs[last] = event;
+            return;
+        }
+        wind_inputs[wind_input_head] = event;
+        wind_input_head = (wind_input_head + 1u) % WIND_EVENT_QUEUE;
+        if (wind_input_head == wind_input_tail)
+            wind_input_tail = (wind_input_tail + 1u) % WIND_EVENT_QUEUE;
+    } else if (type == LEONOS_WIN_MSG_WINDOW_NOTIFY && got >= sizeof(struct leonos_gui_window_msg)) {
+        struct leonos_gui_window_msg message;
+        memcpy(&message, buffer, sizeof(message));
+        uint32_t last = (wind_msg_head + WIND_MSG_QUEUE - 1u) % WIND_MSG_QUEUE;
+        /* Repeated PRESENT notifications refer to the same shared buffer.
+         * Keep its newest state without crossing lifecycle messages. */
+        if (wind_msg_head != wind_msg_tail && message.type == 2u &&
+            wind_msgs[last].type == 2u && wind_msgs[last].window_id == message.window_id) {
+            wind_msgs[last] = message;
+            return;
+        }
+        wind_msgs[wind_msg_head] = message;
+        wind_msg_head = (wind_msg_head + 1u) % WIND_MSG_QUEUE;
+        if (wind_msg_head == wind_msg_tail)
+            wind_msg_tail = (wind_msg_tail + 1u) % WIND_MSG_QUEUE;
+    } else if (type == LEONOS_WIN_MSG_DISPLAY_REQUEST && got >= sizeof(struct leonos_display_request)) {
+        struct leonos_display_request request;
+        memcpy(&request, buffer, sizeof(request));
+        wind_display_requests[wind_display_request_head] = request;
+        wind_display_request_head = (wind_display_request_head + 1u) % 4u;
+    } else if (type == LEONOS_WIN_MSG_APPEARANCE_REQUEST && got >= sizeof(struct leonos_appearance_request)) {
+        struct leonos_appearance_request request;
+        memcpy(&request, buffer, sizeof(request));
+        wind_appearance_requests[wind_appearance_request_head] = request;
+        wind_appearance_request_head = (wind_appearance_request_head + 1u) % 4u;
+    } else if (type == LEONOS_WIN_MSG_MOUSE_VISIBLE && got >= sizeof(struct leonos_win_mouse_visible)) {
+        struct leonos_win_mouse_visible state;
+        memcpy(&state, buffer, sizeof(state));
+        if (state.window_id == 0xffffffffu) wind_policy_mouse_visible = state.visible;
     }
-    if (*length) memcpy(payload, buffer, *length);
-    return 0;
 }
 
 static int wind_wait_type(int fd, uint32_t expected, void *payload,
@@ -112,43 +150,51 @@ static int wind_wait_type(int fd, uint32_t expected, void *payload,
     uint32_t type = 0;
     uint32_t got = 0;
     int ancillary = -1;
+    int reply_fd = -1;
     uint32_t deadline = now_ms() + 3000u;
     if (received_fd) *received_fd = -1;
     for (;;) {
-        if (wind_read_frame(fd, &type, payload, capacity, &got, &ancillary) == 0) {
+        uint8_t buffer[WIND_FRAME_CAP];
+        /* Read into a full-size buffer: frames that are not the expected
+         * reply must be routed into their queues. Reading into the (small)
+         * reply payload directly would consume and discard larger queued
+         * frames — WINDOW_NOTIFY arriving during a MOUSE_VISIBLE wait, for
+         * instance — and lose window registrations and input forever. */
+        if (leonos_ipc_recv_fd(fd, &type, buffer, sizeof(buffer), &got,
+                               received_fd ? &ancillary : 0) == 0) {
+            /* Requests are serialized, but LeonOS queues SCM_RIGHTS apart
+             * from frame bytes. Keep the reply's fd even if an earlier
+             * input/notification frame is the first to receive it. */
+            if (ancillary >= 0) {
+                if (reply_fd >= 0) close(reply_fd);
+                reply_fd = ancillary;
+            }
+            if (type == LEONOS_WIN_MSG_ERROR) {
+                struct leonos_win_error error;
+                if (reply_fd >= 0) close(reply_fd);
+                if (got < sizeof(error)) { errno = EPROTO; return -1; }
+                memcpy(&error, buffer, sizeof(error));
+                errno = error.code < 0 && error.code >= -4095 ? -error.code : EPROTO;
+                return -1;
+            }
             if (type == expected) {
+                if (got > capacity) {
+                    if (reply_fd >= 0) close(reply_fd);
+                    errno = EMSGSIZE;
+                    return -1;
+                }
                 if (length) *length = got;
-                if (received_fd && ancillary >= 0) *received_fd = ancillary;
+                if (received_fd) *received_fd = reply_fd;
+                if (payload && got) {
+                    memcpy(payload, buffer, got);
+                }
                 return 0;
             }
-            if (type == LEONOS_WIN_MSG_EVENT && got >= sizeof(struct leonos_gui_app_event)) {
-                struct leonos_gui_app_event event;
-                memcpy(&event, payload, sizeof(event));
-                wind_events[wind_event_head] = event;
-                wind_event_head = (wind_event_head + 1u) % WIND_EVENT_QUEUE;
-            } else if (type == LEONOS_WIN_MSG_INPUT && got >= sizeof(struct leonos_input_event)) {
-                struct leonos_input_event event;
-                memcpy(&event, payload, sizeof(event));
-                wind_inputs[wind_input_head] = event;
-                wind_input_head = (wind_input_head + 1u) % WIND_EVENT_QUEUE;
-            } else if (type == LEONOS_WIN_MSG_WINDOW_NOTIFY && got >= sizeof(struct leonos_gui_window_msg)) {
-                struct leonos_gui_window_msg message;
-                memcpy(&message, payload, sizeof(message));
-                wind_msgs[wind_msg_head] = message;
-                wind_msg_head = (wind_msg_head + 1u) % WIND_MSG_QUEUE;
-            } else if (type == LEONOS_WIN_MSG_DISPLAY_REQUEST && got >= sizeof(struct leonos_display_request)) {
-                struct leonos_display_request request;
-                memcpy(&request, payload, sizeof(request));
-                wind_display_requests[wind_display_request_head] = request;
-                wind_display_request_head = (wind_display_request_head + 1u) % 4u;
-            } else if (type == LEONOS_WIN_MSG_APPEARANCE_REQUEST && got >= sizeof(struct leonos_appearance_request)) {
-                struct leonos_appearance_request request;
-                memcpy(&request, payload, sizeof(request));
-                wind_appearance_requests[wind_appearance_request_head] = request;
-                wind_appearance_request_head = (wind_appearance_request_head + 1u) % 4u;
-            }
+            wind_route_frame(type, buffer, got);
+            if (now_ms() < deadline) continue;
         }
         if (now_ms() >= deadline) {
+            if (reply_fd >= 0) close(reply_fd);
             errno = ETIMEDOUT;
             return -1;
         }
@@ -162,43 +208,14 @@ static int wind_pump_fd(int fd)
     uint32_t got = 0;
     int result = 0;
     if (fd < 0) return 0;
-    for (;;) {
+    for (uint32_t budget = 0; budget < WIND_EVENT_QUEUE / 2u; ++budget) {
         struct pollfd pollfd = {.fd = fd, .events = POLLIN, .revents = 0};
         uint8_t buffer[WIND_FRAME_CAP];
         int poll_result = poll(&pollfd, 1, 0);
         if (poll_result <= 0) break;
         if (leonos_ipc_recv_fd(fd, &type, buffer, sizeof(buffer), &got, 0) < 0) break;
         result = 1;
-        if (type == LEONOS_WIN_MSG_EVENT && got >= sizeof(struct leonos_gui_app_event)) {
-            struct leonos_gui_app_event event;
-            memcpy(&event, buffer, sizeof(event));
-            wind_events[wind_event_head] = event;
-            wind_event_head = (wind_event_head + 1u) % WIND_EVENT_QUEUE;
-        } else if (type == LEONOS_WIN_MSG_INPUT && got >= sizeof(struct leonos_input_event)) {
-            struct leonos_input_event event;
-            memcpy(&event, buffer, sizeof(event));
-            wind_inputs[wind_input_head] = event;
-            wind_input_head = (wind_input_head + 1u) % WIND_EVENT_QUEUE;
-        } else if (type == LEONOS_WIN_MSG_WINDOW_NOTIFY && got >= sizeof(struct leonos_gui_window_msg)) {
-            struct leonos_gui_window_msg message;
-            memcpy(&message, buffer, sizeof(message));
-            wind_msgs[wind_msg_head] = message;
-            wind_msg_head = (wind_msg_head + 1u) % WIND_MSG_QUEUE;
-        } else if (type == LEONOS_WIN_MSG_DISPLAY_REQUEST && got >= sizeof(struct leonos_display_request)) {
-            struct leonos_display_request request;
-            memcpy(&request, buffer, sizeof(request));
-            wind_display_requests[wind_display_request_head] = request;
-            wind_display_request_head = (wind_display_request_head + 1u) % 4u;
-        } else if (type == LEONOS_WIN_MSG_APPEARANCE_REQUEST && got >= sizeof(struct leonos_appearance_request)) {
-            struct leonos_appearance_request request;
-            memcpy(&request, buffer, sizeof(request));
-            wind_appearance_requests[wind_appearance_request_head] = request;
-            wind_appearance_request_head = (wind_appearance_request_head + 1u) % 4u;
-        } else if (type == LEONOS_WIN_MSG_MOUSE_VISIBLE && got >= sizeof(struct leonos_win_mouse_visible)) {
-            struct leonos_win_mouse_visible state;
-            memcpy(&state, buffer, sizeof(state));
-            if (state.window_id == 0xffffffffu) wind_policy_mouse_visible = state.visible;
-        }
+        wind_route_frame(type, buffer, got);
     }
     return result;
 }
@@ -498,7 +515,7 @@ int leonos_gui_create_app_window_ex(const char *title, const char *text,
         height > LEONOS_GUI_MAX_WINDOW_HEIGHT) return -1;
     fd = wind_app_ensure();
     if (fd < 0) {
-        printf("[wind] create: app connection failed\n");
+        printf("[wind] create: app connection failed errno=%d\n", errno);
         return -1;
     }
     memset(&request, 0, sizeof(request));
@@ -660,36 +677,43 @@ int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width,
         .capacity_height = capacity_height, .stride = stride};
     struct leonos_win_fetch_ack ack;
     uint32_t length = 0;
-    int fd = -1;
     int shm_fd = -1;
     void *mapping;
     if (wind_policy_fd < 0 && wind_policy_ensure() < 0) return -1;
     if (leonos_ipc_send(wind_policy_fd, LEONOS_WIN_MSG_FETCH, &request,
                         sizeof(request)) < 0) return -1;
     if (wind_wait_type(wind_policy_fd, LEONOS_WIN_MSG_FETCH_ACK, &ack,
-                       sizeof(ack), &length, &shm_fd) < 0) return -1;
+                       sizeof(ack), &length, &shm_fd) < 0) {
+        if (errno != ENOENT)
+            printf("[wind] fetch window=%u: reply failed errno=%d\n", window_id, errno);
+        return -1;
+    }
     if (out_width) *out_width = ack.width;
     if (out_height) *out_height = ack.height;
     if (!pixels || shm_fd < 0) {
+        printf("[wind] fetch window=%u: missing buffer fd=%d\n", window_id, shm_fd);
         if (shm_fd >= 0) close(shm_fd);
         return -1;
     }
     mapping = mmap(0, (size_t)ack.stride * ack.height, PROT_READ, MAP_SHARED,
                    shm_fd, 0);
     if (mapping == MAP_FAILED || !mapping) {
+        printf("[wind] fetch window=%u: mmap failed errno=%d\n", window_id, errno);
         close(shm_fd);
         return -1;
     }
     uint32_t copy_width = capacity_width < ack.width ? capacity_width : ack.width;
     uint32_t copy_height = capacity_height < ack.height ? capacity_height : ack.height;
     for (uint32_t row = 0; row < copy_height; ++row) {
-        memcpy((uint8_t *)pixels + row * stride,
+        /* stride counts pixels (the destination is a uint32_t row buffer),
+         * the shared mapping counts bytes. */
+        memcpy((uint8_t *)pixels + row * stride * 4u,
                (const uint8_t *)mapping + row * ack.stride,
                (size_t)copy_width * 4u);
     }
     (void)munmap(mapping, (size_t)ack.stride * ack.height);
     close(shm_fd);
-    return 0;
+    return 1;
 }
 
 int leonos_gui_poll_app_event(struct leonos_gui_app_event *event)
@@ -737,14 +761,10 @@ int leonos_gui_set_mouse_visible(uint32_t window_id, uint32_t visible)
 
 int leonos_gui_mouse_visible(void)
 {
-    struct leonos_win_mouse_visible query = {.window_id = 0xffffffffu, .visible = 0};
-    int fd = wind_policy_fd >= 0 ? wind_policy_fd : wind_policy_ensure();
-    if (fd < 0) return -1;
-    if (leonos_ipc_send(fd, LEONOS_WIN_MSG_MOUSE_VISIBLE, &query,
-                        sizeof(query)) < 0) return -1;
-    (void)wind_wait_type(fd, LEONOS_WIN_MSG_MOUSE_VISIBLE, &query,
-                         sizeof(query), 0, 0);
-    return (int)query.visible;
+    if (wind_policy_fd < 0 && wind_policy_ensure() < 0) return -1;
+    /* windowd pushes visibility changes. Painting the cursor must not wait
+     * for IPC after the compositor has already submitted the clean base. */
+    return (int)wind_policy_mouse_visible;
 }
 
 int leonos_mouse_hide(uint32_t window_id) { return leonos_gui_set_mouse_visible(window_id, 0); }

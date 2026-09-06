@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <sys/mount.h>
 #include <errno.h>
+#include <string.h>
 
 #define INSTALLER_MAX_W 1920
 #define INSTALLER_MAX_H 1080
@@ -27,6 +28,9 @@
 #define KEY_UP 72U
 #define KEY_DOWN 80U
 #define COPY_BUF_SIZE (256U * 1024U)
+#define COPY_ESP_WRITE_SLICE 4096U
+#define COPY_PRESENT_INTERVAL_MS 50U
+#define INSTALLER_EVENT_BATCH_MAX 32U
 #define UPDATE_APP_ROW_H 24U
 #define UPDATE_APP_MAX LEONOS_FS_MAX_ENTRIES
 #define POLICY_SCROLLBAR_W 18U
@@ -1472,6 +1476,12 @@ static uint32_t copy_progress_percent(void)
 static void show_copy_progress(int window_id, struct leonos_ui_surface *ui,
                                const char *detail)
 {
+    static unsigned long last_present_ms;
+    if (!installer_tty_mode) {
+        unsigned long now = leonos_uptime_ms();
+        if (now - last_present_ms < COPY_PRESENT_INTERVAL_MS) return;
+        last_present_ms = now;
+    }
     show_progress(window_id, ui, copy_progress_percent(),
                   T("Copying system files", "正在复制系统文件"), detail);
 }
@@ -1660,6 +1670,11 @@ static int copy_file_path(const char *src, const char *dst,
     int in_fd = open(src, LEONOS_O_RDONLY, 0);
     int out_fd;
     long got;
+    uint32_t write_slice = sizeof(copy_buf);
+    /* FAT32 extends the ESP chain synchronously under the kernel lock.
+     * Bound each transaction so input and painting can run between writes. */
+    if (strncmp(dst, INSTALL_ESP_MOUNT "/", sizeof(INSTALL_ESP_MOUNT)) == 0)
+        write_slice = COPY_ESP_WRITE_SLICE;
     if (in_fd < 0) {
         printf("[installer.elf] open source %s ret=%d\n", src, in_fd);
         return in_fd;
@@ -1677,7 +1692,9 @@ static int copy_file_path(const char *src, const char *dst,
     while ((got = read(in_fd, copy_buf, sizeof(copy_buf))) > 0) {
         long written = 0;
         while (written < got) {
-            long ret = write(out_fd, copy_buf + written, (uint32_t)(got - written));
+            uint32_t chunk = (uint32_t)(got - written);
+            if (chunk > write_slice) chunk = write_slice;
+            long ret = write(out_fd, copy_buf + written, chunk);
             if (ret <= 0) {
                 close(in_fd);
                 close(out_fd);
@@ -1691,8 +1708,9 @@ static int copy_file_path(const char *src, const char *dst,
             written += ret;
             copy_done_bytes += (uint64_t)ret;
             show_copy_progress(window_id, ui, dst);
-            sleep_ms(1);
+            if (written < got) (void)sched_yield();
         }
+        sleep_ms(1);
     }
     close(in_fd);
     close(out_fd);
@@ -3271,8 +3289,15 @@ int main(void)
     present_installer(window_id, &ui);
 
     for (;;) {
+        uint32_t event_count = 0;
         event.window_id = (uint32_t)window_id;
-        while (leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS) > 0) {
+        /* Wait only when idle. A fresh idle wait after every event prevents
+         * painting for as long as mouse motion keeps arriving. */
+        while (event_count < INSTALLER_EVENT_BATCH_MAX &&
+               (event_count == 0
+                    ? leonos_gui_wait_app_event(&event, LEONOS_GUI_IDLE_WAIT_MS)
+                    : leonos_gui_poll_app_event(&event)) > 0) {
+            ++event_count;
             if (event.type == LEONOS_GUI_APP_EVENT_CLOSE) {
                 leonos_gui_destroy_app_window((uint32_t)window_id);
                 return 0;
@@ -3281,7 +3306,7 @@ int main(void)
                 update_surface_size(event.width, event.height);
                 leonos_ui_bind(&ui, pixels, surface_w, surface_h, INSTALLER_MAX_W);
                 dirty = 1;
-                continue;
+                break;
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON &&
                 handle_mouse(window_id, &ui, &event)) {
@@ -3301,10 +3326,12 @@ int main(void)
                 leonos_gui_destroy_app_window((uint32_t)window_id);
                 return 0;
             }
+            if (dirty) {
+                break;
+            }
         }
         if (dirty) {
             present_installer(window_id, &ui);
         }
-        sleep_ms(10);
     }
 }

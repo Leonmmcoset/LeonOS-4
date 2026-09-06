@@ -6,6 +6,9 @@
 #include <ntclks/signal.h>
 #include <ntclks/console.h>
 #include <ntclks/power.h>
+#include <ntclks/mm.h>
+#include <ntclks/osmlayer.h>
+#include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
 #include <ntclks/usercopy.h>
@@ -13,8 +16,89 @@
 #include <linux/reboot.h>
 #include <linux/utsname.h>
 #include <leonos/signal.h>
+#include <leonos/auth.h>
 #include <leonos/system.h>
 #include <stdint.h>
+
+static int process_find_account(uint32_t uid, struct leonos_user_info *user)
+{
+    struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
+    struct leonos_user_list list = {
+        .capacity = LEONOS_AUTH_MAX_USERS,
+        .users = users,
+    };
+
+    if (!uid || !user) {
+        return 0;
+    }
+    if (osmlayer_auth_op(LEONOS_AUTH_OP_LIST_USERS, &list) == 0) {
+        for (uint32_t i = 0; i < list.count && i < LEONOS_AUTH_MAX_USERS; ++i) {
+            if (users[i].uid == uid) {
+                *user = users[i];
+                return 1;
+            }
+        }
+    }
+
+    /* authd is the active account authority on current images. Its session
+     * handoff carries the same identity fields when the legacy middlelayer
+     * account database is absent or stale. */
+    {
+        const void *data = NULL;
+        size_t length = 0;
+        if (storage_read_file("/run/leonos/session-user", &data, &length) == 0 &&
+            data && length) {
+            const char *cursor = (const char *)data;
+            const char *end = cursor + length;
+            uint32_t values[2] = {0, 0};
+            char *text_fields[2] = {user->username, user->home};
+            uint32_t field = 0;
+            uint32_t text_len = 0;
+            int valid = 1;
+            *user = (struct leonos_user_info){0};
+            while (field < 4U && cursor < end) {
+                const char *line = cursor;
+                while (cursor < end && *cursor != '\n' && *cursor != '\r') ++cursor;
+                if (field < 2U) {
+                    uint32_t value = 0;
+                    if (line == cursor) valid = 0;
+                    while (line < cursor) {
+                        if (*line < '0' || *line > '9') { valid = 0; break; }
+                        value = value * 10U + (uint32_t)(*line - '0');
+                        ++line;
+                    }
+                    values[field] = value;
+                } else {
+                    text_len = (uint32_t)(cursor - line);
+                    if (!text_len || text_len >= (field == 2U
+                                                      ? sizeof(user->username)
+                                                      : sizeof(user->home))) {
+                        valid = 0;
+                    } else {
+                        for (uint32_t i = 0; i < text_len; ++i) {
+                            text_fields[field - 2U][i] = line[i];
+                        }
+                        text_fields[field - 2U][text_len] = 0;
+                    }
+                }
+                while (cursor < end && (*cursor == '\n' || *cursor == '\r')) ++cursor;
+                ++field;
+            }
+            if (valid && field == 4U && values[0] == uid && values[0] != 0) {
+                user->uid = values[0];
+                user->role = values[1];
+                uint32_t pages = (uint32_t)((length + 4095U) / 4096U);
+                mm_free_pages((uint64_t)(uintptr_t)data, pages);
+                return 1;
+            }
+            {
+                uint32_t pages = (uint32_t)((length + 4095U) / 4096U);
+                mm_free_pages((uint64_t)(uintptr_t)data, pages);
+            }
+        }
+    }
+    return 0;
+}
 
 int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
                              uint64_t action_ptr, uint64_t old_action_ptr,
@@ -118,6 +202,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
     }
     if (number == LINUX_SYS_SETUID) {
         struct task *task = sched_current_task();
+        struct leonos_user_info user = {0};
         uint32_t target = (uint32_t)a0;
         if (!task) return -LEONOS_EPERM;
         /* Only root may assume another identity. A non-root task may only
@@ -126,6 +211,18 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         task->uid = target;
         task->euid = target;
         task->suid = target;
+        if (process_find_account(target, &user)) {
+            uint32_t session_id = task->session_id;
+            struct task *parent = task->parent_pid ? sched_find(task->parent_pid) : NULL;
+            /* Login starts as a child of the desktop. Attach both to one
+             * session before later children inherit the desktop identity. */
+            if (!session_id && parent &&
+                (parent->flags & TASK_FLAG_WINDOW_SERVER)) {
+                session_id = sched_next_session_id();
+                sched_set_session_identity(parent->pid, &user, session_id);
+            }
+            sched_set_task_identity(task->pid, &user, session_id);
+        }
         return 0;
     }
     if (number == LINUX_SYS_SETGID) {

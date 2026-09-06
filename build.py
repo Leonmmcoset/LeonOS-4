@@ -150,6 +150,8 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-qmp-glxgears",
     "test-component-config",
     "test-svga",
+    "test-installer-input",
+    "test-oobe",
     "test-all",
 })
 WINDOW_BUTTON_ICONS = [
@@ -2816,6 +2818,17 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="clean", kind="command", action=clean, action_key="clean-v1", always=True))
 
     # ---- 主机单元测试和 QEMU 冒烟测试 ----
+    graph.add(Target(name="test-oobe", kind="command", always=True,
+                     command=(PYTHON, "tools/test_oobe.py")))
+    graph.add(Target(name="test-installer-input",
+                     inputs=(ROOT / "tools/test_installer_input.py",
+                             ROOT / "tools/tests/unix_ipc_frame_test.c",
+                             ROOT / "tools/tests/wind_reply_test.c",
+                             ROOT / "tools/tests/mouse_init_test.c",
+                             ROOT / "drivers/mouse/mouse.c",
+                             ROOT / "userland/libc/src/unix_ipc.c",
+                             ROOT / "userland/libc/src/wind.c"),
+                     kind="command", command=(PYTHON, "tools/test_installer_input.py")))
     graph.add(Target(name="test-svga",
                      inputs=tuple(collect("drivers/bootstrap/svga/**/*.[ch]")) +
                             tuple(collect("tools/tests/*.[ch]", "userland/apps/glxgears/**/*.[ch]",
@@ -3200,7 +3213,7 @@ Commands:
   build.py settings
   build.py map
   build.py gen <file>
-  build.py test <license-server|los2w|component-config|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|qmp-glxgears|all>
+  build.py test <license-server|los2w|component-config|svga|installer-input|oobe|qmp-terminal|qmp-pleditor|qmp-tcc|qmp-fastfetch|qmp-sl|qmp-less|qmp-dynlinkerror|qmp-cmd|qmp-stardust|qmp-glxgears|all>
   build.py client <run|gen|test|profile> ...
   build.py status <task-id>
   build.py log <task-id>
@@ -3686,7 +3699,7 @@ def parser() -> argparse.ArgumentParser:
     generate.add_argument("file")
     add_config_options(generate)
     test = commands.add_parser("test")
-    test.add_argument("item", choices=("license-server", "los2w", "component-config", "svga",
+    test.add_argument("item", choices=("license-server", "los2w", "component-config", "svga", "installer-input", "oobe",
                                        "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl", "qmp-less",
                                        "qmp-dynlinkerror", "qmp-cmd", "qmp-abittest", "qmp-stardust", "qmp-glxgears", "all"))
     add_config_options(test)

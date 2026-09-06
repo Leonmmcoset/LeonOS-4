@@ -1406,9 +1406,11 @@ static int task_evdev_ioctl(struct task_file *file, uint64_t request,
         input_evdev_key_state((void *)(uintptr_t)user_arg, size);
         return 0;
     }
-    if (_IOC_NR(request) == 0x40 + EV_ABS) {
-        /* The PS/2 pointer is a relative device and has no ABS records. */
-        return -LEONOS_EINVAL;
+    if (_IOC_NR(request) >= 0x40 && _IOC_NR(request) < 0x80) {
+        if (device_kind != STORAGE_DEV_KIND_MOUSE || size != sizeof(struct input_absinfo))
+            return -LEONOS_EINVAL;
+        return input_evdev_absinfo(_IOC_NR(request) - 0x40,
+                                   (struct input_absinfo *)(uintptr_t)user_arg);
     }
     if (_IOC_NR(request) >= 0x20 && _IOC_NR(request) <= 0x20 + EV_MAX) {
         uint32_t event_type = _IOC_NR(request) - 0x20U;

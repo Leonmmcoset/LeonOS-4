@@ -893,6 +893,10 @@ void draw_start_menu(void)
     }
     panel = start_menu_panel_layout();
     progress = start_menu_progress();
+    if (start_menu_animating) {
+        printf("[desktop.elf] DBG menu-draw progress=%u t=%lu\n",
+               progress, leonos_uptime_ms());
+    }
     visible_h = (panel.h * progress + 99U) / 100U;
     if (visible_h < panel.h) {
         uint32_t visible_y = taskbar_y() > visible_h ? taskbar_y() - visible_h : 0U;

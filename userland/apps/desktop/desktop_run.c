@@ -111,7 +111,8 @@ void desktop_run(void)
     for (;;) {
         struct leonos_gui_window_msg window_msg;
         int did_work = 0;
-        while (leonos_gui_poll_window(&window_msg) > 0) {
+        uint32_t window_budget = 64;
+        while (window_budget-- && leonos_gui_poll_window(&window_msg) > 0) {
             open_app_window_from_msg(&window_msg);
             did_work = 1;
         }
@@ -223,6 +224,7 @@ void desktop_run(void)
         }
 
         unsigned long now = leonos_uptime_ms();
+        desktop_poll_network_state();
         if (!wallpaper_loaded && now >= wallpaper_retry_ms) {
             if (load_wallpaper_bmp()) {
                 full_redraw_pending = 1;

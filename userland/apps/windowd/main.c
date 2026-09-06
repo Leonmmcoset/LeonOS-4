@@ -54,6 +54,7 @@ static struct windowd_window windows[WINDOWD_MAX_WINDOWS];
 static uint32_t next_window_id = 1u;
 static int policy_slot = -1;
 static uint32_t mouse_visible = 1u;
+static uint8_t mouse_visibility_pending;
 static struct leonos_display_state display_state;
 static struct leonos_appearance_state appearance_state = {
     .theme = 1u,
@@ -64,6 +65,8 @@ static int mouse_fd = -1;
 static int32_t cursor_x = 320;
 static int32_t cursor_y = 240;
 static uint8_t cursor_buttons;
+static uint8_t cursor_pending;
+static int32_t cursor_wheel;
 
 static int copy_text(char *dst, uint32_t capacity, const char *src)
 {
@@ -255,7 +258,7 @@ static void send_input_event(const struct leonos_input_event *event)
 
 static void pump_input_device(int fd, uint32_t type)
 {
-    for (;;) {
+    for (uint32_t budget = 0; budget < 256u; ++budget) {
         struct input_event event;
         struct leonos_input_event out;
         long got = syscall3(SYS_read, fd, (long)&event, (long)sizeof(event));
@@ -269,29 +272,18 @@ static void pump_input_device(int fd, uint32_t type)
         } else if (type == LEONOS_INPUT_MOUSE) {
             if (event.type == EV_REL && event.code == REL_X) {
                 cursor_x += event.value;
-                if (cursor_x < 0) cursor_x = 0;
-                if (cursor_x > 1920) cursor_x = 1920;
-                out.type = LEONOS_INPUT_MOUSE;
-                out.x = cursor_x;
-                out.y = cursor_y;
-                out.buttons = cursor_buttons;
-                send_input_event(&out);
+                cursor_pending = 1;
             } else if (event.type == EV_REL && event.code == REL_Y) {
                 cursor_y += event.value;
-                if (cursor_y < 0) cursor_y = 0;
-                if (cursor_y > 1080) cursor_y = 1080;
-                out.type = LEONOS_INPUT_MOUSE;
-                out.x = cursor_x;
-                out.y = cursor_y;
-                out.buttons = cursor_buttons;
-                send_input_event(&out);
+                cursor_pending = 1;
+            } else if (event.type == EV_ABS && event.code == ABS_X) {
+                cursor_x = event.value;
+                cursor_pending = 1;
+            } else if (event.type == EV_ABS && event.code == ABS_Y) {
+                cursor_y = event.value;
+                cursor_pending = 1;
             } else if (event.type == EV_REL && event.code == REL_WHEEL) {
-                out.type = LEONOS_INPUT_MOUSE_WHEEL;
-                out.x = cursor_x;
-                out.y = cursor_y;
-                out.dy = event.value;
-                out.buttons = cursor_buttons;
-                send_input_event(&out);
+                cursor_wheel += event.value;
             } else if (event.type == EV_KEY &&
                        (event.code == BTN_LEFT || event.code == BTN_RIGHT ||
                         event.code == BTN_MIDDLE)) {
@@ -299,11 +291,30 @@ static void pump_input_device(int fd, uint32_t type)
                               event.code == BTN_RIGHT ? 2u : 4u;
                 if (event.value) cursor_buttons |= bit;
                 else cursor_buttons &= (uint8_t)~bit;
-                out.type = LEONOS_INPUT_MOUSE;
+                cursor_pending = 1;
+            } else if (event.type == EV_SYN && event.code == SYN_REPORT) {
+                /* REL and ABS can describe the same packet. Commit once,
+                 * after absolute axes and button transitions are complete. */
+                int32_t max_x = (int32_t)(display_state.fb_width ? display_state.fb_width : 1920) - 1;
+                int32_t max_y = (int32_t)(display_state.fb_height ? display_state.fb_height : 1080) - 1;
+                if (cursor_x < 0) cursor_x = 0;
+                if (cursor_y < 0) cursor_y = 0;
+                if (cursor_x > max_x) cursor_x = max_x;
+                if (cursor_y > max_y) cursor_y = max_y;
                 out.x = cursor_x;
                 out.y = cursor_y;
                 out.buttons = cursor_buttons;
-                send_input_event(&out);
+                if (cursor_pending) {
+                    out.type = LEONOS_INPUT_MOUSE;
+                    send_input_event(&out);
+                }
+                if (cursor_wheel) {
+                    out.type = LEONOS_INPUT_MOUSE_WHEEL;
+                    out.dy = cursor_wheel;
+                    send_input_event(&out);
+                }
+                cursor_pending = 0;
+                cursor_wheel = 0;
             }
         }
     }
@@ -315,7 +326,7 @@ static void handle_client(int slot)
     uint8_t buffer[WINDOWD_FRAME_CAP];
     uint32_t type = 0;
     uint32_t length = 0;
-    for (;;) {
+    for (uint32_t budget = 0; budget < 64u; ++budget) {
         struct pollfd descriptor = {.fd = client->fd, .events = POLLIN, .revents = 0};
         if (poll(&descriptor, 1, 0) <= 0) return;
         if (leonos_ipc_recv_fd(client->fd, &type, buffer, sizeof(buffer),
@@ -345,8 +356,22 @@ static void handle_client(int slot)
             if (policy_slot >= 0) { close_client(slot); return; }
             client->role = LEONOS_WIN_ROLE_POLICY;
             policy_slot = slot;
+            mouse_visibility_pending = 1;
             (void)leonos_ipc_send(client->fd, LEONOS_WIN_MSG_HELLO_ACK,
                                   &ack, sizeof(ack));
+            /* Applications can create windows before the desktop finishes its
+             * policy handshake; those type-1 WINDOW_NOTIFY frames were dropped
+             * with no policy client attached. Re-announce every live window so
+             * a freshly registered desktop learns the existing composition. */
+            for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {
+                struct leonos_gui_window_msg message;
+                if (!windows[i].used) continue;
+                window_msg_from_window(&message, 1u, &windows[i]);
+                printf("[windowd.elf] DBG reannounce wid=%u send=%d\n",
+                       windows[i].id,
+                       send_to_policy(LEONOS_WIN_MSG_WINDOW_NOTIFY,
+                                      &message, sizeof(message)));
+            }
             continue;
         }
         if (type == LEONOS_WIN_MSG_CREATE) {
@@ -420,7 +445,13 @@ static void handle_client(int slot)
             if (client->role != LEONOS_WIN_ROLE_POLICY || length < sizeof(request)) continue;
             memcpy(&request, buffer, sizeof(request));
             window = find_window(request.window_id);
-            if (!window) continue;
+            if (!window) {
+                /* Destruction can race the policy client's pending repaint. */
+                struct leonos_win_error error = {.code = -ENOENT};
+                (void)leonos_ipc_send(client->fd, LEONOS_WIN_MSG_ERROR,
+                                      &error, sizeof(error));
+                continue;
+            }
             ack.window_id = window->id;
             ack.width = window->width;
             ack.height = window->height;
@@ -450,7 +481,8 @@ static void handle_client(int slot)
                 (void)leonos_ipc_send(client->fd, LEONOS_WIN_MSG_MOUSE_VISIBLE,
                                       &request, sizeof(request));
             } else {
-                mouse_visible = request.visible;
+                mouse_visible = request.visible ? 1u : 0u;
+                mouse_visibility_pending = 1;
             }
             continue;
         }
@@ -580,6 +612,12 @@ int main(void)
         if (fds[2].revents & POLLIN) pump_input_device(mouse_fd, LEONOS_INPUT_MOUSE);
         for (uint32_t i = 0; i < WINDOWD_MAX_CLIENTS; ++i) {
             if (clients[i].used) handle_client(i);
+        }
+        if (mouse_visibility_pending && policy_slot >= 0) {
+            struct leonos_win_mouse_visible state = {
+                .window_id = 0xffffffffu, .visible = mouse_visible};
+            if (send_to_policy(LEONOS_WIN_MSG_MOUSE_VISIBLE, &state, sizeof(state)) == 0)
+                mouse_visibility_pending = 0;
         }
     }
 }

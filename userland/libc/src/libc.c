@@ -522,7 +522,12 @@ int mkdir(const char *path, unsigned int mode)
 
 int unlink(const char *path)
 {
-    return (int)syscall1(SYS_unlink, (long)path);
+    long result = syscall1(SYS_unlink, (long)path);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
 }
 
 int rmdir(const char *path)

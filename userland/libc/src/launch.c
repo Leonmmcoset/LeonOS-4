@@ -282,19 +282,35 @@ static void build_cat_command(char *dst, uint32_t capacity, const char *path)
     append_char(dst, &pos, capacity, '"');
 }
 
+static void append_shortcut_base(char *dst, uint32_t *pos, uint32_t capacity,
+                                 const char *target_path)
+{
+    const char *base = path_basename(target_path);
+    uint32_t base_len = text_len(base);
+    if (!base || !base[0]) {
+        base = "Shortcut";
+        base_len = text_len(base);
+    } else if (ends_with_ignore_case(base, ".elf")) {
+        base_len -= 4U;
+    }
+    if (!base_len) {
+        base = "Shortcut";
+        base_len = text_len(base);
+    }
+    for (uint32_t i = 0; i < base_len; ++i) {
+        append_char(dst, pos, capacity, base[i]);
+    }
+}
+
 void leonos_launch_default_shortcut_name(const char *target_path, char *buffer,
                                          uint32_t capacity)
 {
     uint32_t pos = 0;
-    const char *base = path_basename(target_path);
     if (!buffer || capacity == 0) {
         return;
     }
     buffer[0] = 0;
-    if (!base || !base[0]) {
-        base = "Shortcut";
-    }
-    append_text(buffer, &pos, capacity, base);
+    append_shortcut_base(buffer, &pos, capacity, target_path);
     if (!ends_with_ignore_case(buffer, ".lnk")) {
         append_text(buffer, &pos, capacity, ".lnk");
     }
@@ -304,15 +320,11 @@ static void build_numbered_shortcut_name(char *dst, uint32_t capacity,
                                          const char *target_path, uint32_t number)
 {
     uint32_t pos = 0;
-    const char *base = path_basename(target_path);
     if (!dst || capacity == 0) {
         return;
     }
     dst[0] = 0;
-    if (!base || !base[0]) {
-        base = "Shortcut";
-    }
-    append_text(dst, &pos, capacity, base);
+    append_shortcut_base(dst, &pos, capacity, target_path);
     append_char(dst, &pos, capacity, ' ');
     if (number >= 10) {
         append_char(dst, &pos, capacity, (char)('0' + (number / 10) % 10));
