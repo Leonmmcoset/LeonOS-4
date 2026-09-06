@@ -98,12 +98,55 @@ int leonos_perf_info(struct leonos_perf_info *info)
         while (text[pos] && (text[pos] < '0' || text[pos] > '9')) ++pos;
         info->free_memory_kib = ps_parse_number(text, &pos);
     }
+    if (ps_read_file("/proc/stat", text, sizeof(text)) == 0) {
+        uint32_t line_pos = 0;
+        pos = 0;
+        while (text[line_pos] && text[line_pos] != ' ') ++line_pos;
+        if (text[line_pos] == ' ') {
+            ++line_pos;
+            info->busy_ticks = ps_parse_number(text, &line_pos);
+            (void)ps_parse_number(text, &line_pos);
+            (void)ps_parse_number(text, &line_pos);
+            info->idle_ticks = ps_parse_number(text, &line_pos);
+        }
+        while (text[pos]) {
+            uint32_t line_start = pos;
+            uint32_t cpu_index = 0;
+            uint32_t digits = 0;
+            while (text[pos] && text[pos] != '\n') ++pos;
+            if (text[line_start] == 'c' && text[line_start + 1u] == 'p' &&
+                text[line_start + 2u] == 'u' &&
+                text[line_start + 3u] >= '0' && text[line_start + 3u] <= '9') {
+                uint32_t cursor = line_start + 3u;
+                while (text[cursor] >= '0' && text[cursor] <= '9') {
+                    cpu_index = cpu_index * 10u + (uint32_t)(text[cursor] - '0');
+                    ++cursor;
+                    ++digits;
+                }
+                if (digits && cpu_index < LEONOS_PERF_MAX_CPUS && text[cursor] == ' ') {
+                    ++cursor;
+                    info->cpus[cpu_index].busy_ticks = ps_parse_number(text, &cursor);
+                    (void)ps_parse_number(text, &cursor);
+                    (void)ps_parse_number(text, &cursor);
+                    info->cpus[cpu_index].idle_ticks = ps_parse_number(text, &cursor);
+                    info->cpus[cpu_index].online = 1;
+                    if (cpu_index + 1u > info->cpu_count) info->cpu_count = cpu_index + 1u;
+                }
+            }
+            if (text[pos] == '\n') ++pos;
+        }
+    }
+    if (!info->cpu_count) {
+        info->cpu_count = 1;
+        info->cpus[0].busy_ticks = info->busy_ticks;
+        info->cpus[0].idle_ticks = info->idle_ticks;
+        info->cpus[0].online = 1;
+    }
+    info->online_cpu_count = info->cpu_count;
     info->task_count = ps_count_proc_tasks();
     info->running_tasks = 0;
     info->ready_tasks = 0;
     info->sleeping_tasks = 0;
-    info->cpu_count = 1;
-    info->online_cpu_count = 1;
     return 0;
 }
 
@@ -165,6 +208,9 @@ static int ps_parse_stat(const char *path, struct leonos_task_info *task)
     task->parent_pid = (uint32_t)ps_parse_number(text, &pos);
     (void)ps_parse_number(text, &pos); /* pgrp */
     (void)ps_parse_number(text, &pos); /* session */
+    for (uint32_t i = 0; i < 5u; ++i) {
+        (void)ps_parse_number(text, &pos);
+    }
     task->cpu_ticks = ps_parse_number(text, &pos);
     task->uid = (uint32_t)ps_parse_number(text, &pos);
     task->role = (uint32_t)ps_parse_number(text, &pos);

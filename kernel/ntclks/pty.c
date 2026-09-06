@@ -361,6 +361,10 @@ int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
     if (session->hungup) {
         return 0;
     }
+    /* Preserve bytes typed before the master closed.  Canonical input is
+     * held separately until a delimiter arrives, but a slave still needs to
+     * drain that pending line before observing EOF after hangup. */
+    pty_commit_canonical_input(session);
     session->hungup = 1;
     session->owner_pid = 0;
     if (session->foreground_pgid) {

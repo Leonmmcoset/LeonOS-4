@@ -7,6 +7,7 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 #include <pty.h>
+#include <errno.h>
 #include <stdio.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -1408,6 +1409,10 @@ static struct terminal_session *terminal_open_session(const char *path,
     };
     child_pid = forkpty(&new_pty, 0, 0, &initial_winsize);
     if (child_pid < 0 || new_pty < 0) {
+        if (new_pty >= 0) {
+            (void)close(new_pty);
+        }
+        printf("terminal: PTY creation failed errno=%d\n", errno);
         return 0;
     }
     if (child_pid == 0) {

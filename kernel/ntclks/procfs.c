@@ -1,6 +1,7 @@
 /* Read-only procfs implementation for the Unix migration. */
 #include <ntclks/mm.h>
 #include <ntclks/sched.h>
+#include <ntclks/smp.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall_internal.h>
 #include <ntclks/time.h>
@@ -60,7 +61,7 @@ static void proc_append_text(char *dst, uint32_t *pos, uint32_t cap, const char 
 
 static struct task *proc_task_for_path(const char *path)
 {
-    const char *p = path + 5; /* /proc/ */
+    const char *p = path + 6; /* /proc/ */
     uint32_t pid = 0;
     if (p[0] == 's' && p[1] == 'e' && p[2] == 'l' && p[3] == 'f') {
         return sched_current_task();
@@ -76,7 +77,7 @@ static struct task *proc_task_for_path(const char *path)
 static int proc_path_kind(const char *path, const char **file_name,
                           uint32_t *pid)
 {
-    const char *p = path + 5;
+    const char *p = path + 6;
     const char *slash = p;
     uint32_t value = 0;
     if (pid) *pid = 0;
@@ -92,7 +93,10 @@ static int proc_path_kind(const char *path, const char **file_name,
         if (pid) *pid = value;
         return 2;
     }
-    if (proc_text_eq(p, "self")) return 3;
+    if (p < slash && (uint32_t)(slash - p) == 4u &&
+        p[0] == 's' && p[1] == 'e' && p[2] == 'l' && p[3] == 'f') {
+        return 3;
+    }
     return 0;
 }
 
@@ -128,12 +132,36 @@ static int proc_fill_content(const char *path, char *buffer, uint32_t capacity)
                          "00000000000000000000000000000000\n");
         return 0;
     }
+    if (proc_text_eq(path, "/proc/stat")) {
+        uint64_t busy = 0;
+        uint64_t idle = 0;
+        uint64_t per_cpu_busy[SMP_MAX_CPUS] = {0};
+        uint64_t per_cpu_idle[SMP_MAX_CPUS] = {0};
+        uint32_t cpu_count = smp_cpu_count();
+        if (cpu_count > SMP_MAX_CPUS) cpu_count = SMP_MAX_CPUS;
+        sched_cpu_ticks(&busy, &idle);
+        sched_cpu_ticks_per_cpu(per_cpu_busy, per_cpu_idle, cpu_count);
+        proc_append_text(buffer, &pos, capacity, "cpu ");
+        proc_append_u64(buffer, &pos, capacity, busy);
+        proc_append_text(buffer, &pos, capacity, " 0 0 ");
+        proc_append_u64(buffer, &pos, capacity, idle);
+        proc_append_text(buffer, &pos, capacity, " 0 0 0 0 0 0\n");
+        for (uint32_t cpu = 0; cpu < cpu_count; ++cpu) {
+            proc_append_text(buffer, &pos, capacity, "cpu");
+            proc_append_u64(buffer, &pos, capacity, cpu);
+            proc_append_text(buffer, &pos, capacity, " ");
+            proc_append_u64(buffer, &pos, capacity, per_cpu_busy[cpu]);
+            proc_append_text(buffer, &pos, capacity, " 0 0 ");
+            proc_append_u64(buffer, &pos, capacity, per_cpu_idle[cpu]);
+            proc_append_text(buffer, &pos, capacity, " 0 0 0 0 0 0\n");
+        }
+        return 0;
+    }
     {
         const char *file = 0;
         uint32_t pid = 0;
         int kind = proc_path_kind(path, &file, &pid);
-        if (kind == 3 && proc_text_eq(path + 5, "self")) {
-            file = path + 10; /* /proc/self/ */
+        if (kind == 3) {
             pid = sched_current_pid();
             kind = 2;
         }
@@ -178,7 +206,7 @@ static int proc_fill_content(const char *path, char *buffer, uint32_t capacity)
 int proc_lookup(const char *path, struct storage_node *out)
 {
     char content[PROCFS_CONTENT_MAX];
-    if (!path || !proc_text_eq(path, "/proc") && path[0] != '/' ||
+    if (!path || (!proc_text_eq(path, "/proc") && path[0] != '/') ||
         path[0] != '/' || path[1] != 'p' || path[2] != 'r' ||
         path[3] != 'o' || path[4] != 'c') {
         return -2;
@@ -198,7 +226,8 @@ int proc_lookup(const char *path, struct storage_node *out)
     if (proc_text_eq(path, "/proc/uptime") ||
         proc_text_eq(path, "/proc/meminfo") ||
         proc_text_eq(path, "/proc/version") ||
-        proc_text_eq(path, "/proc/machine-id")) {
+        proc_text_eq(path, "/proc/machine-id") ||
+        proc_text_eq(path, "/proc/stat")) {
         uint32_t len = 0;
         int ret = proc_fill_content(path, content, sizeof(content));
         if (ret < 0) return ret;
@@ -259,7 +288,7 @@ int proc_read(const char *path, uint64_t offset, void *buffer, uint32_t length,
 int proc_readdir(const char *path, uint64_t *offset, struct leonos_dir_entry *entry)
 {
     uint32_t index;
-    static const char *files[] = {"uptime", "meminfo", "version", "machine-id"};
+    static const char *files[] = {"uptime", "meminfo", "version", "machine-id", "stat"};
     if (!path || !proc_text_eq(path, "/proc") || !offset || !entry) return -22;
     index = (uint32_t)*offset;
     if (index < sizeof(files) / sizeof(files[0])) {

@@ -1454,6 +1454,8 @@ int main(void)
     leonos_ui_listview_state_init(&startup_list, startup_visible_rows(), 24);
     leonos_ui_tab_state_init(&taskmgr_tabs, TASKMGR_TAB_PROCESSES);
     process_tree.focused = 1;
+    refresh_all();
+    present_taskmgr((uint32_t)window_id, &ui);
     for (;;) {
         unsigned long now = leonos_uptime_ms();
         event.window_id = (uint32_t)window_id;
