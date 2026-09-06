@@ -634,6 +634,9 @@ static void terminal_move_down(uint32_t amount)
         amount = TERMINAL_HISTORY_ROWS - 1U;
     }
     uint32_t target = row + amount;
+    if (target >= TERMINAL_HISTORY_ROWS) {
+        target = TERMINAL_HISTORY_ROWS - 1U;
+    }
     while (target >= history_count) {
         terminal_append_line();
     }
@@ -957,11 +960,11 @@ static void terminal_put_char(char value)
         terminal_clear();
     } else if (value == '\t') {
         uint32_t next_stop;
+        uint32_t columns = terminal_columns();
         terminal_flush_utf8();
         next_stop = (cursor_column + 4U) & ~3U;
-        while (cursor_column < next_stop) {
-            terminal_put_codepoint(' ');
-        }
+        /* A tab moves the cursor without wrapping or erasing existing text. */
+        cursor_column = next_stop < columns ? next_stop : columns - 1U;
     } else if (byte >= 32U) {
         terminal_put_utf8_byte(byte);
     }
@@ -1408,16 +1411,18 @@ static struct terminal_session *terminal_open_session(const char *path,
         .ws_col = (uint16_t)terminal_columns(),
     };
     child_pid = forkpty(&new_pty, 0, 0, &initial_winsize);
+    /* forkpty returns the master only to the parent; the child uses stdio. */
+    if (child_pid == 0) {
+        (void)execve(path, command_argv, command_envp);
+        fprintf(stderr, "terminal: exec %s failed errno=%d\n", path, errno);
+        _exit(127);
+    }
     if (child_pid < 0 || new_pty < 0) {
         if (new_pty >= 0) {
             (void)close(new_pty);
         }
         printf("terminal: PTY creation failed errno=%d\n", errno);
         return 0;
-    }
-    if (child_pid == 0) {
-        (void)execve(path, command_argv, command_envp);
-        _exit(127);
     }
     {
         int flags = fcntl(new_pty, F_GETFL);

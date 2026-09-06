@@ -96,7 +96,11 @@ static int read_exact(int fd, void *buffer, uint32_t length)
             if (errno == EAGAIN) return 0;
             return -1;
         }
-        if (got == 0) return -1;
+        if (got == 0) {
+            /* Service loops must release a disconnected client, not retry it. */
+            errno = ECONNRESET;
+            return -1;
+        }
         done += (uint32_t)got;
     }
     return 1;
@@ -167,7 +171,6 @@ int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
     if (received_fd) *received_fd = -1;
     if (length) *length = 0;
     if (read_exact(fd, &frame, sizeof(frame)) <= 0) {
-        errno = EAGAIN;
         return -1;
     }
     if (frame.magic != LEONOS_IPC_MAGIC || frame.version != LEONOS_IPC_VERSION ||

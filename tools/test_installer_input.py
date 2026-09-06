@@ -8,6 +8,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class InstallerInputTests(unittest.TestCase):
+    def test_disconnected_ipc_clients_are_not_reported_as_would_block(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-ipc-disconnect-") as tmp:
+            executable = str(Path(tmp) / "ipc-disconnect")
+            subprocess.run([
+                "cc", "-std=c11", "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror",
+                "-O1", "-g", "-include", "sys/un.h",
+                "-idirafter", "userland/libc/include",
+                "tools/tests/unix_ipc_disconnect_test.c", "userland/libc/src/unix_ipc.c",
+                "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
+
     def test_mouse_coordinates_survive_evdev_routing(self):
         with tempfile.TemporaryDirectory(prefix="leonos-pointer-") as tmp:
             executable = str(Path(tmp) / "pointer")
