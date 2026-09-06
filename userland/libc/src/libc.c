@@ -502,20 +502,7 @@ int ioctl(int fd, unsigned long request, void *arg)
         const char *path = LEONOS_DEV_CONSOLE;
         int open_flags = LEONOS_O_RDWR;
 
-        if (request == LEONOS_INPUTM_IOCTL_REGISTER ||
-                   request == LEONOS_INPUTM_IOCTL_UNREGISTER ||
-                   request == LEONOS_INPUTM_IOCTL_PROVIDER_NEXT ||
-                   request == LEONOS_INPUTM_IOCTL_PROVIDER_RESULT ||
-                   request == LEONOS_INPUTM_IOCTL_SUBMIT_KEY ||
-                   request == LEONOS_INPUTM_IOCTL_POLL_RESULT ||
-                   request == LEONOS_INPUTM_IOCTL_SET_ACTIVE ||
-                   request == LEONOS_INPUTM_IOCTL_LIST ||
-                   request == LEONOS_INPUTM_IOCTL_CONTEXT ||
-                   request == LEONOS_INPUTM_IOCTL_GET_STATE ||
-                   request == LEONOS_INPUTM_IOCTL_NOTIFY_CONFIG) {
-            path = LEONOS_DEV_INPUT_METHOD;
-            slot = &input_method_fd;
-        } else if (request == LEONOS_IOCTL_AUDIO_CONFIGURE ||
+        if (request == LEONOS_IOCTL_AUDIO_CONFIGURE ||
                    request == LEONOS_IOCTL_AUDIO_WRITE ||
             request == LEONOS_IOCTL_AUDIO_GET_STATE) {
             path = LEONOS_DEV_AUDIO0;

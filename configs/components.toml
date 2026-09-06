@@ -17,6 +17,19 @@ sdk = false
 api = false
 
 [[components]]
+id = "imd"
+symbol = "APP_IMD"
+label = "Input method daemon"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "windowd"
 symbol = "APP_WINDOWD"
 label = "Window server daemon"

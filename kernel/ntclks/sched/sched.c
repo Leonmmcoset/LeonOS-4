@@ -4,7 +4,6 @@
  */
 #include <ntclks/console.h>
 #include <ntclks/arch.h>
-#include <ntclks/inputm.h>
 #include <ntclks/paging.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
@@ -917,7 +916,6 @@ void sched_release_task_resources(struct task *task)
     address_space_destroy(&task->as);
     sched_task_vma_release(task);
     sched_task_file_release(task);
-    inputm_destroy_owner(task->pid);
     svga_gpu_release_owner(task->pid);
     task->flags |= TASK_FLAG_RESOURCES_RELEASED;
 }

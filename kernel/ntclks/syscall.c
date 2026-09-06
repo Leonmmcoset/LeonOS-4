@@ -8,7 +8,6 @@
 #include <ntclks/lock.h>
 #include <ntclks/heap.h>
 #include <ntclks/input.h>
-#include <ntclks/inputm.h>
 #include <ntclks/mm.h>
 #include <ntclks/mouse.h>
 #include <ntclks/net.h>
@@ -37,7 +36,6 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
 #include <leonos/driver.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
-#include <leonos/inputm.h>
 #include <leonos/net.h>
 #include <leonos/pty.h>
 #include <leonos/signal.h>
@@ -4445,15 +4443,6 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                 return -LEONOS_EPERM;
             }
         }
-    }
-
-    if (number == LINUX_SYS_IOCTL && inputm_handles_ioctl(a1)) {
-        struct task *task = sched_current_task();
-        struct task_file *file = task_file_for_fd(task, (int)a0);
-        if ((int)a0 != 3 && !task_device_is(file, STORAGE_DEV_KIND_INPUT_METHOD)) {
-            return -LEONOS_ENOTTY;
-        }
-        return inputm_handle_ioctl(a1, a2);
     }
 
     /* Linux fbdev compatibility is intentionally scoped to the /dev/fb0

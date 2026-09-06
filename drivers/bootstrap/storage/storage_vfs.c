@@ -40,7 +40,6 @@ static const struct storage_dev_entry storage_dev_entries[] = {
     {"rtc",       STORAGE_DEV_KIND_RTC,      LEONOS_FS_TYPE_DEVICE, 0},
     {"kmsg",      STORAGE_DEV_KIND_KMSG,      LEONOS_FS_TYPE_DEVICE, 0},
     {"driverctl", STORAGE_DEV_KIND_DRIVERCTL, LEONOS_FS_TYPE_DEVICE, 0},
-    {"input-method", STORAGE_DEV_KIND_INPUT_METHOD, LEONOS_FS_TYPE_DEVICE, 0},
     {"hwinfo",      STORAGE_DEV_KIND_HWINFO,       LEONOS_FS_TYPE_DEVICE, 0},
     {"gpu",         STORAGE_DEV_KIND_GPU,          LEONOS_FS_TYPE_DEVICE, 0},
     {"shm0",       STORAGE_DEV_KIND_SHM,          LEONOS_FS_TYPE_DEVICE, 0},

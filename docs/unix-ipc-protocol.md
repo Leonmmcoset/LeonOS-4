@@ -25,7 +25,7 @@ or the connection is rejected with `ERROR{code=EPERM}`.
 |---|---|---|---|
 | 0 | kernel IPC infrastructure | blocking AF_UNIX, socketpair, SCM_RIGHTS, SO_PEERCRED, /dev/shm0, AF_INET fd path | implemented |
 | 1 | windowd | `/run/leonos/windowd.sock` | implemented |
-| 2 | imd | `/run/leonos/input-method.sock` | pending |
+| 2 | imd | `/run/leonos/input-method.sock` | implemented |
 | 3 | netmand | `/run/leonos/net.sock` | pending |
 | 4 | authd / sessiond | `/run/leonos/authd.sock`, `/run/leonos/session.sock` | pending |
 | 5 | devmand / procfs | `/run/leonos/devman.sock`, `/proc` | pending |
@@ -64,6 +64,20 @@ fd. Desktop connects with the policy handshake token
 | `CURSOR_REQUEST/CURSOR_REGION` | app -> windowd -> desktop | gui cursor structs | any app |
 | `DISPLAY_STATE/APPEARANCE_STATE` | publisher/query | gui state structs | policy publishes; app queries |
 | `DISPLAY_REQUEST/APPEARANCE_REQUEST` | app -> windowd -> desktop | gui request structs | policy receives |
+
+## imd (`/run/leonos/input-method.sock`)
+
+| Message | Direction | Fields | Permission |
+|---|---|---|---|
+| `HELLO` | client -> imd | `u32 pid`, `u32 role(app/provider)` | SO_PEERCRED pid match |
+| `ACK` | imd -> client | `s32 code` | any |
+| `REGISTER` | provider -> imd | `struct leonos_inputm_provider` | uid!=0 |
+| `UNREGISTER` | provider -> imd | none | provider connection |
+| `KEY_EVENT` | imd -> provider | `struct leonos_inputm_key_event` | active provider |
+| `SUBMIT_KEY` | app -> imd | `struct leonos_inputm_key_event` (window_id/keycode/pressed) | focused context |
+| `RESULT` | provider -> imd; imd -> app | `struct leonos_inputm_result` | provider / target app |
+| `SET_CONTEXT` | app -> imd | `struct leonos_inputm_context` | owning pid |
+| `SET_ACTIVE/GET_STATE/LIST/NOTIFY_CONFIG` | app -> imd | uid + id / provider array / state | uid owner or uid==0 |
 
 ## Phase 0 verification
 
