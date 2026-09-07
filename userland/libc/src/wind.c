@@ -37,9 +37,17 @@ struct wind_window {
     uint32_t stride;
 };
 
+struct wind_surface {
+    struct wind_window buffer;
+    uint32_t width;
+    uint32_t height;
+};
+
 static int wind_app_fd = -1;
 static int wind_policy_fd = -1;
 static struct wind_window wind_windows[WIND_MAX_WINDOWS];
+static struct wind_surface wind_surfaces[WIND_MAX_WINDOWS];
+static uint32_t wind_surface_next;
 static struct leonos_gui_app_event wind_events[WIND_EVENT_QUEUE];
 static uint32_t wind_event_head;
 static uint32_t wind_event_tail;
@@ -56,6 +64,8 @@ static uint32_t wind_display_request_tail;
 static struct leonos_appearance_request wind_appearance_requests[4];
 static uint32_t wind_appearance_request_head;
 static uint32_t wind_appearance_request_tail;
+
+static void wind_release_window(struct wind_window *window);
 
 typedef uint64_t cpu_set_t;
 int sched_getaffinity(int pid, unsigned long cpusetsize, uint64_t *set);
@@ -132,6 +142,14 @@ static void wind_route_frame(uint32_t type, const uint8_t *buffer, uint32_t got)
     } else if (type == LEONOS_WIN_MSG_WINDOW_NOTIFY && got >= sizeof(struct leonos_gui_window_msg)) {
         struct leonos_gui_window_msg message;
         memcpy(&message, buffer, sizeof(message));
+        if (message.type == 3u && message.window_id) {
+            /* Release even when the notification queue is full, including
+             * a surface whose first FETCH is still waiting for its reply. */
+            for (uint32_t i = 0; i < WIND_MAX_WINDOWS; ++i) {
+                if (wind_surfaces[i].buffer.id == message.window_id)
+                    wind_release_window(&wind_surfaces[i].buffer);
+            }
+        }
         /* Cursor updates interleave every PRESENT. Coalesce across those
          * updates, but preserve creation/destruction and cursor-clear order. */
         if (wind_msg_is_repaint(&message)) {
@@ -296,6 +314,9 @@ static int wind_app_ensure(void)
 static int wind_policy_ensure(void)
 {
     if (wind_policy_fd >= 0) return wind_policy_fd;
+    for (uint32_t i = 0; i < WIND_MAX_WINDOWS; ++i) {
+        if (wind_surfaces[i].buffer.id) wind_release_window(&wind_surfaces[i].buffer);
+    }
     wind_policy_fd = wind_open_connection(LEONOS_IPC_SOCK_WINDOWD);
     if (wind_policy_fd < 0) return -1;
     if (wind_hello(wind_policy_fd, LEONOS_WIN_ROLE_POLICY, LEONOS_WIN_POLICY_TOKEN) < 0) {
@@ -720,47 +741,84 @@ int leonos_gui_fetch_window(uint32_t window_id, uint32_t capacity_width,
                             uint32_t capacity_height, uint32_t stride,
                             uint32_t *pixels, uint32_t *out_width, uint32_t *out_height)
 {
-    struct leonos_win_fetch request = {
-        .window_id = window_id, .capacity_width = capacity_width,
-        .capacity_height = capacity_height, .stride = stride};
-    struct leonos_win_fetch_ack ack;
-    uint32_t length = 0;
-    int shm_fd = -1;
-    void *mapping;
+    struct wind_surface *surface = 0;
+    if (!window_id || !pixels || !stride) { errno = EINVAL; return -1; }
     if (wind_policy_fd < 0 && wind_policy_ensure() < 0) return -1;
-    if (leonos_ipc_send(wind_policy_fd, LEONOS_WIN_MSG_FETCH, &request,
-                        sizeof(request)) < 0) return -1;
-    if (wind_wait_type(wind_policy_fd, LEONOS_WIN_MSG_FETCH_ACK, &ack,
-                       sizeof(ack), &length, &shm_fd) < 0) {
-        if (errno != ENOENT)
-            printf("[wind] fetch window=%u: reply failed errno=%d\n", window_id, errno);
-        return -1;
+    for (uint32_t i = 0; i < WIND_MAX_WINDOWS; ++i) {
+        if (wind_surfaces[i].buffer.id == window_id) {
+            surface = &wind_surfaces[i];
+            break;
+        }
     }
-    if (out_width) *out_width = ack.width;
-    if (out_height) *out_height = ack.height;
-    if (!pixels || shm_fd < 0) {
-        printf("[wind] fetch window=%u: missing buffer fd=%d\n", window_id, shm_fd);
-        if (shm_fd >= 0) close(shm_fd);
-        return -1;
+    if (!surface) {
+        struct leonos_win_fetch request = {
+            .window_id = window_id, .capacity_width = capacity_width,
+            .capacity_height = capacity_height, .stride = stride};
+        struct leonos_win_fetch_ack ack = {0};
+        uint32_t length = 0;
+        int shm_fd = -1;
+        for (uint32_t i = 0; i < WIND_MAX_WINDOWS; ++i) {
+            if (!wind_surfaces[i].buffer.id) { surface = &wind_surfaces[i]; break; }
+        }
+        if (!surface) {
+            surface = &wind_surfaces[wind_surface_next++ % WIND_MAX_WINDOWS];
+            wind_release_window(&surface->buffer);
+        }
+        surface->buffer = (struct wind_window){.id = window_id, .fd = -1};
+        if (leonos_ipc_send(wind_policy_fd, LEONOS_WIN_MSG_FETCH, &request,
+                            sizeof(request)) < 0 ||
+            wind_wait_type(wind_policy_fd, LEONOS_WIN_MSG_FETCH_ACK, &ack,
+                            sizeof(ack), &length, &shm_fd) < 0) {
+            wind_release_window(&surface->buffer);
+            return -1;
+        }
+        if (length != sizeof(ack) || ack.window_id != window_id || shm_fd < 0 ||
+            !ack.width || !ack.height || ack.width > LEONOS_GUI_MAX_WINDOW_WIDTH ||
+            ack.height > LEONOS_GUI_MAX_WINDOW_HEIGHT || ack.stride < ack.width * 4u ||
+            (uint64_t)ack.stride * ack.height >
+                (uint64_t)LEONOS_GUI_MAX_WINDOW_WIDTH * LEONOS_GUI_MAX_WINDOW_HEIGHT * 4u) {
+            if (shm_fd >= 0) close(shm_fd);
+            wind_release_window(&surface->buffer);
+            errno = EPROTO;
+            return -1;
+        }
+        if (surface->buffer.id != window_id) {
+            close(shm_fd);
+            errno = ENOENT;
+            return -1;
+        }
+        surface->buffer.fd = shm_fd;
+        /* The desktop forks applications; they must not retain its surfaces. */
+        if (fcntl(shm_fd, F_SETFD, FD_CLOEXEC) < 0) {
+            wind_release_window(&surface->buffer);
+            return -1;
+        }
+        surface->buffer.stride = ack.stride;
+        surface->buffer.bytes = (uint64_t)ack.stride * ack.height;
+        surface->buffer.mapping = mmap(0, (size_t)surface->buffer.bytes, PROT_READ,
+                                       MAP_SHARED, shm_fd, 0);
+        if (surface->buffer.mapping == MAP_FAILED || !surface->buffer.mapping) {
+            surface->buffer.mapping = 0;
+            wind_release_window(&surface->buffer);
+            return -1;
+        }
+        surface->width = ack.width;
+        surface->height = ack.height;
+        /* windowd keeps this allocation until DESTROY. Retain the FD too:
+         * LeonOS SHM pages are owned by descriptors, not by VM mappings. */
     }
-    mapping = mmap(0, (size_t)ack.stride * ack.height, PROT_READ, MAP_SHARED,
-                   shm_fd, 0);
-    if (mapping == MAP_FAILED || !mapping) {
-        printf("[wind] fetch window=%u: mmap failed errno=%d\n", window_id, errno);
-        close(shm_fd);
-        return -1;
-    }
-    uint32_t copy_width = capacity_width < ack.width ? capacity_width : ack.width;
-    uint32_t copy_height = capacity_height < ack.height ? capacity_height : ack.height;
+    if (out_width) *out_width = surface->width;
+    if (out_height) *out_height = surface->height;
+    uint32_t copy_width = capacity_width < surface->width ? capacity_width : surface->width;
+    uint32_t copy_height = capacity_height < surface->height ? capacity_height : surface->height;
+    if (copy_width > stride) copy_width = stride;
     for (uint32_t row = 0; row < copy_height; ++row) {
         /* stride counts pixels (the destination is a uint32_t row buffer),
          * the shared mapping counts bytes. */
-        memcpy((uint8_t *)pixels + row * stride * 4u,
-               (const uint8_t *)mapping + row * ack.stride,
+        memcpy((uint8_t *)pixels + (size_t)row * stride * 4u,
+               (const uint8_t *)surface->buffer.mapping + (size_t)row * surface->buffer.stride,
                (size_t)copy_width * 4u);
     }
-    (void)munmap(mapping, (size_t)ack.stride * ack.height);
-    close(shm_fd);
     return 1;
 }
 
