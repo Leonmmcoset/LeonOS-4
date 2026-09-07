@@ -1,0 +1,84 @@
+name: Bug 反馈
+description: 提交一个可复现的问题反馈。
+title: '[BUG]'
+labels:
+- bug
+assignees:
+- Leonmmcoset
+body:
+- type: input
+  id: version
+  attributes:
+    label: NTCLKS版本号
+    description: 操作系统的NTCLKS内核版本号（可通过/system/apps/osver/osver.elf应用程序查看）
+    placeholder: 1.0.0-9999
+  validations:
+    required: true
+- type: dropdown
+  id: area
+  attributes:
+    label: 机器类型
+    description: 请选择操作系统运行所在的机器
+    options:
+    - VMware
+    - VirtualBox
+    - QEMU
+    - Bochs
+    - UTM（无JIT版）
+    - UTM（有JIT版）
+    - WASM
+    - 真机
+    - 其他
+    - 所有机器（已确认此bug在所有机器都会出现）
+  validations:
+    required: true
+- type: textarea
+  id: details
+  attributes:
+    label: 错误的出现方式
+    description: 请描述错误的出现方式（比如直接蓝屏、xxx地方的xxx组件UI崩坏等）
+  validations:
+    required: true
+- type: textarea
+  id: tryagain
+  attributes:
+    label: 如何复现
+    description: 请告诉我们复现这个问题的步骤（如果是有几率性的也请告诉我们复现这个问题的几率）
+    placeholder: |
+      1. xxx
+      2. xxx
+      3. xxx
+      ...
+  validations:
+    required: true
+- type: upload
+  id: shots
+  attributes:
+    label: 问题出现时的截图、录像
+    description: 为了能更好的帮助您解决这个问题，也为了让开发者更好地知道这个问题的出现方式，请您尽可能地给我们看问题出现时的截图、录像。这部分可不填写
+  validations:
+    accept: .png,.jpg,.jpeg,.gif,.zip
+- type: upload
+  id: logs
+  attributes:
+    label: 系统日志
+    description: 请发送您的系统日志好让我们知道更多信息（系统日志会通过串口系统输出）如果您不知道如何操作串口，您可以忽略这一部分
+  validations:
+    accept: .log,.txt
+- type: textarea
+  id: more
+  attributes:
+    label: 更多信息
+    description: 如果您还有其他想说的可以在这里写上，此部分可以忽略
+- type: checkboxes
+  id: checks
+  attributes:
+    label: 提交确认
+    description: 提交前请确认以下事项
+    options:
+    - label: 我已确认过没有其他人提交相同问题
+      required: true
+    - label: 我已确认过我提交的问题在最新的版本中没有被修复
+      required: true
+  validations:
+    required: true
