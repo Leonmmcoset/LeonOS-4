@@ -1069,6 +1069,8 @@ struct osmlayer_acl_dir {
     struct osmlayer_acl_record records[OSMLAYER_ACL_MAX_RECORDS];
 };
 
+/* A directory occupies about 25 KiB. Its owners must stay noinline so the
+ * auth dispatcher does not reserve a second copy on the 64 KiB kernel stack. */
 static char osmlayer_acl_buf[OSMLAYER_ACL_MAX_BYTES];
 
 /**
@@ -1509,7 +1511,7 @@ static void osmlayer_acl_default_for_path(const char *path,
  * @param acl Destination ACL receiving the explicit or synthesized rules.
  * @return The value or status produced by the operation.
  */
-static int osmlayer_acl_get_explicit_or_default(const char *path,
+static __attribute__((noinline)) int osmlayer_acl_get_explicit_or_default(const char *path,
                                                 struct osmlayer_account *accounts,
                                                 uint32_t count,
                                                 struct leonos_fs_acl *acl)
@@ -1553,7 +1555,8 @@ static int osmlayer_acl_get_explicit_or_default(const char *path,
  * @param acl ACL to serialize and store.
  * @return The value or status produced by the operation.
  */
-static int osmlayer_acl_store(const char *path, const struct leonos_fs_acl *acl)
+static __attribute__((noinline)) int osmlayer_acl_store(const char *path,
+                                                       const struct leonos_fs_acl *acl)
 {
     char parent[LEONOS_FS_PATH_LEN];
     char name[LEONOS_FS_NAME_LEN];
@@ -1598,7 +1601,7 @@ static int osmlayer_acl_store(const char *path, const struct leonos_fs_acl *acl)
  * @param path NUL-terminated text supplied by the caller.
  * @return The value or status produced by the operation.
  */
-static int osmlayer_acl_remove(const char *path)
+static __attribute__((noinline)) int osmlayer_acl_remove(const char *path)
 {
     char parent[LEONOS_FS_PATH_LEN];
     char name[LEONOS_FS_NAME_LEN];
@@ -1629,7 +1632,8 @@ static int osmlayer_acl_remove(const char *path)
  * @param new_path NUL-terminated text supplied by the caller.
  * @return The value or status produced by the operation.
  */
-static int osmlayer_acl_rename(const char *old_path, const char *new_path)
+static __attribute__((noinline)) int osmlayer_acl_rename(const char *old_path,
+                                                        const char *new_path)
 {
     char old_parent[LEONOS_FS_PATH_LEN];
     char new_parent[LEONOS_FS_PATH_LEN];

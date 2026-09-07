@@ -3,6 +3,7 @@
  * /dev/input/event* exposes independent Linux evdev streams.
  */
 #include <ntclks/input.h>
+#include <ntclks/framebuffer.h>
 #include <ntclks/lock.h>
 #include <ntclks/storage.h>
 #include <ntclks/time.h>
@@ -25,6 +26,8 @@ static volatile uint32_t head;
 static volatile uint32_t tail;
 static uint64_t evdev_next_sequence;
 static uint8_t evdev_mouse_buttons;
+static int32_t evdev_mouse_x;
+static int32_t evdev_mouse_y;
 static uint8_t evdev_key_state[INPUT_EVDEV_KEY_BYTES];
 static uint8_t evdev_present[INPUT_EVDEV_DEVICES];
 static uint32_t evdev_grab_owner[INPUT_EVDEV_DEVICES];
@@ -143,6 +146,7 @@ static void push_event(const struct input_raw_event *event)
     }
 }
 
+/** @brief Reset raw and evdev input streams and their device state. */
 void input_init(void)
 {
     uint64_t flags;
@@ -151,6 +155,8 @@ void input_init(void)
     tail = 0;
     evdev_next_sequence = 1;
     evdev_mouse_buttons = 0;
+    evdev_mouse_x = 0;
+    evdev_mouse_y = 0;
     evdev_next_grab_token = 1;
     for (uint32_t i = 0; i < INPUT_EVDEV_DEVICES; ++i) {
         evdev_present[i] = 1;
@@ -163,10 +169,13 @@ void input_init(void)
     kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
+/**
+ * @brief Publish a normalized pointer packet, preserving its absolute position.
+ * Relative axes remain available for existing evdev consumers.
+ */
 void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t buttons)
 {
     uint64_t flags;
-    uint8_t published = 0;
     struct input_raw_event event = {
         .type = INPUT_EVENT_MOUSE,
         .x = x,
@@ -179,18 +188,16 @@ void input_push_mouse(int32_t x, int32_t y, int32_t dx, int32_t dy, uint8_t butt
     push_event(&event);
     if (dx != 0) {
         evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_REL, REL_X, dx);
-        published = 1;
     }
     if (dy != 0) {
         evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_REL, REL_Y, dy);
-        published = 1;
     }
-    if (evdev_publish_mouse_buttons(buttons)) {
-        published = 1;
-    }
-    if (published) {
-        evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_SYN, SYN_REPORT, 0);
-    }
+    evdev_mouse_x = x;
+    evdev_mouse_y = y;
+    evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_ABS, ABS_X, x);
+    evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_ABS, ABS_Y, y);
+    (void)evdev_publish_mouse_buttons(buttons);
+    evdev_publish(STORAGE_DEV_KIND_MOUSE, EV_SYN, SYN_REPORT, 0);
     kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
 
@@ -288,7 +295,9 @@ int input_evdev_read(uint32_t device_kind, uint64_t *cursor,
         const struct input_evdev_record *record =
             &evdev_queue[*cursor % INPUT_EVDEV_QUEUE_CAP];
         if (record->sequence != *cursor) {
-            *cursor = evdev_oldest_sequence();
+            /* The producer is locked out. Rewinding on a damaged record
+             * would rescan it forever with interrupts disabled. */
+            ++(*cursor);
             continue;
         }
         ++(*cursor);
@@ -410,6 +419,7 @@ static void input_evdev_set_cap(uint8_t *bits, uint32_t capacity, uint32_t bit)
     }
 }
 
+/** @brief Return the event types and axes supported by the normalized stream. */
 void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
                               void *buffer, uint32_t length)
 {
@@ -422,6 +432,7 @@ void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
         input_evdev_set_cap(bits, sizeof(bits), EV_KEY);
         if (device_kind == STORAGE_DEV_KIND_MOUSE) {
             input_evdev_set_cap(bits, sizeof(bits), EV_REL);
+            input_evdev_set_cap(bits, sizeof(bits), EV_ABS);
         }
     } else if (event_type == EV_KEY) {
         if (device_kind == STORAGE_DEV_KIND_KEYBOARD) {
@@ -438,6 +449,9 @@ void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
         input_evdev_set_cap(bits, sizeof(bits), REL_X);
         input_evdev_set_cap(bits, sizeof(bits), REL_Y);
         input_evdev_set_cap(bits, sizeof(bits), REL_WHEEL);
+    } else if (event_type == EV_ABS && device_kind == STORAGE_DEV_KIND_MOUSE) {
+        input_evdev_set_cap(bits, sizeof(bits), ABS_X);
+        input_evdev_set_cap(bits, sizeof(bits), ABS_Y);
     }
     (void)flags;
     for (uint32_t i = 0; i < copy; ++i) {
@@ -446,6 +460,22 @@ void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
     for (uint32_t i = copy; i < length; ++i) {
         ((uint8_t *)buffer)[i] = 0;
     }
+}
+
+/** @brief Report a normalized pointer axis in framebuffer pixels. */
+int input_evdev_absinfo(uint32_t axis, struct input_absinfo *info)
+{
+    const struct framebuffer *fb = framebuffer_get();
+    uint64_t flags;
+    uint32_t extent;
+    if (!info || (axis != ABS_X && axis != ABS_Y)) return -22;
+    extent = axis == ABS_X ? fb->width : fb->height;
+    if (!fb->available || !extent) extent = axis == ABS_X ? 1024u : 768u;
+    *info = (struct input_absinfo){.maximum = (int32_t)extent - 1};
+    kernel_spin_lock_irqsave(&input_lock, &flags);
+    info->value = axis == ABS_X ? evdev_mouse_x : evdev_mouse_y;
+    kernel_spin_unlock_irqrestore(&input_lock, flags);
+    return 0;
 }
 
 int input_evdev_present(uint32_t device_kind)

@@ -14,9 +14,13 @@
 #include <unistd.h>
 
 #define DEVMAND_FRAME_CAP 8192u
-#define DEVMAND_RETRY_MS 5000u
+/* Short per-call retry plus backoff so a missing devmand never turns a
+ * query into a multi-second stall. */
+#define DEVMAND_CONNECT_ATTEMPT_MS 50u
+#define DEVMAND_CONNECT_BACKOFF_MS 1000u
 
 static int devmand_fd = -1;
+static uint32_t devmand_retry_after_ms;
 
 static uint32_t devmand_now_ms(void)
 {
@@ -61,13 +65,18 @@ static int devmand_open(void)
 {
     struct leonos_devmand_hello hello;
     struct leonos_devmand_ack ack;
-    uint32_t deadline = devmand_now_ms() + DEVMAND_RETRY_MS;
+    uint32_t deadline;
     if (devmand_fd >= 0) return devmand_fd;
+    if (devmand_now_ms() < devmand_retry_after_ms) return -1;
+    deadline = devmand_now_ms() + DEVMAND_CONNECT_ATTEMPT_MS;
     while (devmand_fd < 0 && devmand_now_ms() < deadline) {
         devmand_fd = leonos_ipc_connect(LEONOS_IPC_SOCK_DEVICE);
         if (devmand_fd < 0) (void)poll(0, 0, 10);
     }
-    if (devmand_fd < 0) return -1;
+    if (devmand_fd < 0) {
+        devmand_retry_after_ms = devmand_now_ms() + DEVMAND_CONNECT_BACKOFF_MS;
+        return -1;
+    }
     (void)leonos_ipc_set_nonblock(devmand_fd, 1);
     hello.pid = (uint32_t)getpid();
     hello.uid = (uint32_t)getuid();
@@ -76,6 +85,7 @@ static int devmand_open(void)
         devmand_wait(LEONOS_DEVMAND_MSG_ACK, &ack, sizeof(ack), 0) < 0) {
         leonos_ipc_close(devmand_fd);
         devmand_fd = -1;
+        devmand_retry_after_ms = devmand_now_ms() + DEVMAND_CONNECT_BACKOFF_MS;
         return -1;
     }
     return devmand_fd;

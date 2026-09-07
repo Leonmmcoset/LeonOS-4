@@ -6,6 +6,9 @@
 
 #define LEONOS_IPC_MAGIC 0x554e4c4cU /* 'LNXU' */
 #define LEONOS_IPC_VERSION 1U
+/* Largest single-frame payload leonos_ipc_send_fd accepts; the frame header
+ * and message type are prepended in the same atomic stream write. */
+#define LEONOS_IPC_ATOMIC_FRAME_CAP 8192u
 
 #define LEONOS_IPC_SOCK_WINDOWD "/run/leonos/windowd.sock"
 #define LEONOS_IPC_SOCK_INPUT_METHOD "/run/leonos/input-method.sock"

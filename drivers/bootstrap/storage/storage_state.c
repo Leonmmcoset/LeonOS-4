@@ -1,3 +1,10 @@
+static uint64_t storage_metadata_epoch = 1;
+
+uint64_t storage_metadata_generation(void)
+{
+    return storage_metadata_epoch;
+}
+
 void storage_set_io_async_context(bool enabled)
 {
     /* The asynchronous path stores a single pending command, scratch DMA
@@ -53,6 +60,7 @@ static bool storage_async_can_yield(void)
 
 static void storage_begin_mutation(void)
 {
+    ++storage_metadata_epoch;
     if (storage_io_async_context) {
         storage_io_write_started = true;
     }
@@ -79,6 +87,7 @@ static void storage_memzero(void *dst, size_t len)
 
 static void storage_cache_invalidate(void)
 {
+    ++storage_metadata_epoch;
     exfat_cache_invalidate();
     storage_fat_cache.valid = 0;
     storage_read_cache.valid = 0;
@@ -97,6 +106,7 @@ static void storage_cache_invalidate(void)
 
 static void storage_sector_cache_invalidate(void)
 {
+    ++storage_metadata_epoch;
     storage_fat_cache.valid = 0;
     storage_read_cache.valid = 0;
     storage_dir_lookup_cache.valid = 0;

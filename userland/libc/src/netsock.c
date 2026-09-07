@@ -19,11 +19,16 @@
 #define NET_FRAME_CAP 4096u
 #define ntohs(value) ((uint16_t)((((uint16_t)(value) & 0xffu) << 8) | ((uint16_t)(value) >> 8)))
 #define htons(value) ntohs(value)
-#define ntohl(value) ((((uint32_t)(value) & 0xffu) << 24) | (((uint32_t)(value) & 0xff00u) << 8) | (((uint32_t)(value) & 0xff0000u) >> 8) | ((uint32_t)(value) >> 24))
+#define ntohl(value) ((((uint32_t)(value) & 0xffu) << 24) | ((uint32_t)((value) & 0xff00u) << 8) | ((uint32_t)((value) & 0xff0000u) >> 8) | ((uint32_t)(value) >> 24))
 #define htonl(value) ntohl(value)
-#define NET_CONNECT_RETRY_MS 5000u
+/* A caller must never stall for seconds on a daemon that may not exist at
+ * all (installer/recovery images). Each call retries briefly to absorb a
+ * daemon still starting, then backs off before probing again. */
+#define NET_CONNECT_ATTEMPT_MS 50u
+#define NET_CONNECT_BACKOFF_MS 1000u
 
 static int netmand_fd = -1;
+static uint32_t netmand_retry_after_ms;
 
 static uint32_t net_now_ms(void)
 {
@@ -70,12 +75,16 @@ static int net_open(void)
     struct leonos_netmand_ack ack;
     uint32_t deadline;
     if (netmand_fd >= 0) return netmand_fd;
-    deadline = net_now_ms() + NET_CONNECT_RETRY_MS;
+    if (net_now_ms() < netmand_retry_after_ms) return -1;
+    deadline = net_now_ms() + NET_CONNECT_ATTEMPT_MS;
     while (netmand_fd < 0 && net_now_ms() < deadline) {
         netmand_fd = leonos_ipc_connect(LEONOS_IPC_SOCK_NET);
         if (netmand_fd < 0) (void)poll(0, 0, 10);
     }
-    if (netmand_fd < 0) return -1;
+    if (netmand_fd < 0) {
+        netmand_retry_after_ms = net_now_ms() + NET_CONNECT_BACKOFF_MS;
+        return -1;
+    }
     (void)leonos_ipc_set_nonblock(netmand_fd, 1);
     hello.pid = (uint32_t)getpid();
     if (leonos_ipc_send(netmand_fd, LEONOS_NET_MSG_HELLO, &hello,
@@ -83,6 +92,7 @@ static int net_open(void)
         net_wait_response(LEONOS_NET_MSG_ACK, &ack, sizeof(ack), 0) < 0) {
         leonos_ipc_close(netmand_fd);
         netmand_fd = -1;
+        netmand_retry_after_ms = net_now_ms() + NET_CONNECT_BACKOFF_MS;
         return -1;
     }
     return netmand_fd;

@@ -522,7 +522,12 @@ int mkdir(const char *path, unsigned int mode)
 
 int unlink(const char *path)
 {
-    return (int)syscall1(SYS_unlink, (long)path);
+    long result = syscall1(SYS_unlink, (long)path);
+    if (result < 0) {
+        errno = (int)-result;
+        return -1;
+    }
+    return 0;
 }
 
 int rmdir(const char *path)
@@ -3122,24 +3127,40 @@ int openpty(int *master, int *slave, char *name,
 pid_t forkpty(int *master, const char *name,
               const struct termios *termios, const struct winsize *winsize)
 {
-    int mfd;
-    int sfd;
+    int mfd = -1;
+    int sfd = -1;
     pid_t pid;
     char path[32];
+    int child_setup_failed;
+
+    if (!master) {
+        errno = EINVAL;
+        return -1;
+    }
+    *master = -1;
     if (openpty(&mfd, &sfd, path, termios, winsize) < 0) return -1;
     pid = fork();
-    if (pid == 0) {
-        (void)setsid();
-        (void)dup2(sfd, 0);
-        (void)dup2(sfd, 1);
-        (void)dup2(sfd, 2);
+    if (pid < 0) {
+        int saved_errno = errno;
         close(mfd);
         close(sfd);
+        errno = saved_errno;
+        return -1;
+    }
+    if (pid == 0) {
+        child_setup_failed = setsid() < 0 ||
+                             dup2(sfd, 0) < 0 ||
+                             dup2(sfd, 1) < 0 ||
+                             dup2(sfd, 2) < 0;
+        if (child_setup_failed) {
+            _exit(127);
+        }
+        close(mfd);
+        if (sfd > 2) close(sfd);
         return 0;
     }
     close(sfd);
-    if (master) *master = mfd;
-    else close(mfd);
+    *master = mfd;
     (void)name;
     return pid;
 }

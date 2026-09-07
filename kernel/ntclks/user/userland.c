@@ -541,7 +541,11 @@ static int64_t spawn_path_internal_ex(const char *path, const char *task_name,
     struct storage_node node;
     int ret;
     if (path_is_system_desktop(path)) {
-        flags |= TASK_FLAG_SERVICE;
+        /* The desktop is a privileged service for window-server IPC, but it
+         * is also the session's identity root.  Keep the window-server bit so
+         * auth_apply_session_login/sched_set_session_identity can update its
+         * uid, role, home, and session along with the login task. */
+        flags |= TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER;
     } else if (path_is_windowd(path) || path_is_imd(path) ||
                path_is_authd(path) || path_is_system_service_daemon(path)) {
         flags |= TASK_FLAG_SERVICE;

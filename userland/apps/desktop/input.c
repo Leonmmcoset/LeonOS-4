@@ -1,10 +1,12 @@
 #include "desktop.h"
+#include <unistd.h>
 
 #define TITLEBAR_DOUBLE_CLICK_MS 350UL
 
 static uint8_t last_title_click_valid;
 static uint8_t last_title_click_window;
 static unsigned long last_title_click_ms;
+static int startup_worker_pid;
 
 void minimize_window(uint8_t id)
 {
@@ -214,7 +216,7 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
     if (msg->type == 2) {
         existing = find_window_slot_by_window_id(msg->window_id);
         if (existing >= 0) {
-            fetch_window_surface((uint8_t)existing);
+            invalidate_window_surface((uint8_t)existing);
         }
         return;
     }
@@ -416,7 +418,7 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
                    (int32_t)desktop_metro_color_scheme,
                    (int32_t)desktop_win95_color_scheme,
                    0, 0, 0, 0);
-    fetch_window_surface(slot);
+    invalidate_window_surface(slot);
     printf("[desktop.elf] GUI window from pid=%d wid=%d title=%s\n", msg->pid, msg->window_id, windows[slot].title);
 }
 
@@ -716,9 +718,18 @@ int login_window_slot(void)
     return -1;
 }
 
+static void desktop_reap_startup_worker(void)
+{
+    if (startup_worker_pid > 0 &&
+        wait4(startup_worker_pid, 0, 1 /* WNOHANG */, 0) == startup_worker_pid) {
+        startup_worker_pid = 0;
+    }
+}
+
 void login_lock_update(void)
 {
     unsigned long now;
+    desktop_reap_startup_worker();
     if (!login_lock_active) {
         return;
     }
@@ -821,13 +832,25 @@ void desktop_logout(void)
 
 void desktop_launch_startup_apps(void)
 {
-    int launched;
+    int pid;
     if (desktop_startup_launched) {
         return;
     }
+    /* Session services can be busy with disk/network work. Their reply must
+     * not hold up the compositor while the login window is closing. The
+     * child opens its own session connection; the desktop never uses it. */
+    pid = fork();
+    if (pid < 0) {
+        printf("[desktop.elf] could not start user startup worker\n");
+        return;
+    }
     desktop_startup_launched = 1;
-    launched = leonos_startup_launch_current_user();
-    printf("[desktop.elf] user startup applications launched=%d\n", launched);
+    if (pid == 0) {
+        int result = leonos_startup_launch_current_user();
+        printf("[desktop.elf] user startup request result=%d\n", result);
+        _exit(result < 0 ? 1 : 0);
+    }
+    startup_worker_pid = pid;
 }
 
 void desktop_request_power_confirm(uint8_t action)

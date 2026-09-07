@@ -781,22 +781,25 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
         if (!file || !file_can_read(file)) {
             return -LEONOS_EBADF;
         }
-        if (file->flags & TASK_FILE_FLAG_DEV_NODE) {
-            uint64_t bytes;
-            if (file->node.first_cluster == STORAGE_DEV_KIND_FB0) {
-                const struct framebuffer *fb = framebuffer_get();
-                if (!fb || !fb->available || !fb->pixels) {
-                    return -LEONOS_EINVAL;
-                }
-                bytes = (uint64_t)fb->pitch * fb->height;
-                if (offset > bytes || mapped_len > bytes - offset) {
-                    return -LEONOS_EINVAL;
-                }
-                device_phys = (uint64_t)(uintptr_t)fb->pixels + offset;
-                if (device_phys & (PAGE_SIZE - 1ULL)) {
-                    return -LEONOS_EINVAL;
-                }
-            } else if (file->flags & TASK_FILE_FLAG_DEV_SHM) {
+            if (file->flags & TASK_FILE_FLAG_DEV_NODE) {
+                uint64_t bytes;
+                if (file->node.first_cluster == STORAGE_DEV_KIND_FB0) {
+                    const struct framebuffer *fb = framebuffer_get();
+                    if (!fb || !fb->available || !fb->pixels) {
+                        return -LEONOS_EINVAL;
+                    }
+                    /* mmap lengths are page-rounded up by the entry path, so
+                     * the bound is the page-aligned framebuffer span: the
+                     * reserved VRAM region extends past pitch*height. */
+                    bytes = align_up_page((uint64_t)fb->pitch * fb->height);
+                    if (offset > bytes || mapped_len > bytes - offset) {
+                        return -LEONOS_EINVAL;
+                    }
+                    device_phys = (uint64_t)(uintptr_t)fb->pixels + offset;
+                    if (device_phys & (PAGE_SIZE - 1ULL)) {
+                        return -LEONOS_EINVAL;
+                    }
+                } else if (file->flags & TASK_FILE_FLAG_DEV_SHM) {
                 if (task_shm_map(file, offset, mapped_len, &device_phys) < 0) {
                     return -LEONOS_EINVAL;
                 }

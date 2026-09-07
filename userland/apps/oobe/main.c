@@ -599,15 +599,17 @@ static int create_admin(void)
                     "账户已创建，但尚未就绪。请重试。"));
         return 0;
     }
+    /* Login drops the bootstrap uid. Commit system state while the OOBE
+     * process still has permission to write /system/state. */
+    if (write_completion_marker() < 0) {
+        OOBE_LOG_LINE("[oobe.elf] administrator created; completion marker write failed");
+    }
     ret = login_created_admin(username, password, &user);
     OOBE_LOG("[oobe.elf] first administrator login username=%s ret=%d\n", username, ret);
     if (ret < 0) {
         copy_text(status_text, sizeof(status_text),
                   T("Created account, but sign-in failed.", "账户已创建，但登录失败。"));
         return 0;
-    }
-    if (write_completion_marker() < 0) {
-        OOBE_LOG_LINE("[oobe.elf] administrator created; completion marker write failed");
     }
     return 1;
 }

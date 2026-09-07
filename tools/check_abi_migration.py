@@ -96,7 +96,8 @@ def deleted_private_uses() -> list[str]:
         if path.suffix not in TEXT_SUFFIXES or relative.startswith(EXCLUDED_PREFIXES):
             continue
         if relative.startswith("docs/") or relative.startswith("tools/") or \
-                relative.startswith("los2w/") or relative == "tools/check_abi_migration.py":
+                relative.startswith("los2w/") or relative == "tools/check_abi_migration.py" or \
+                relative == "UNIXIFICATION_PROMPT.md":
             continue
         try:
             text = (ROOT / relative).read_text(encoding="utf-8")

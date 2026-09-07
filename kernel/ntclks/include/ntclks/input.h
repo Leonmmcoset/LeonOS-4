@@ -72,6 +72,9 @@ void input_evdev_key_state(void *buffer, uint32_t length);
  */
 void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
                               void *buffer, uint32_t length);
+struct input_absinfo;
+/** @brief Return the current pointer coordinate and framebuffer axis bounds. */
+int input_evdev_absinfo(uint32_t axis, struct input_absinfo *info);
 /**
  * @brief Return non-zero when the event device is currently present.
  */

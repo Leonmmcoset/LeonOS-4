@@ -36,6 +36,7 @@ struct windowd_client {
 
 struct windowd_window {
     uint32_t used;
+    uint32_t announce_pending;
     uint32_t id;
     uint32_t owner_pid;
     uint32_t width;
@@ -54,6 +55,7 @@ static struct windowd_window windows[WINDOWD_MAX_WINDOWS];
 static uint32_t next_window_id = 1u;
 static int policy_slot = -1;
 static uint32_t mouse_visible = 1u;
+static uint8_t mouse_visibility_pending;
 static struct leonos_display_state display_state;
 static struct leonos_appearance_state appearance_state = {
     .theme = 1u,
@@ -64,6 +66,8 @@ static int mouse_fd = -1;
 static int32_t cursor_x = 320;
 static int32_t cursor_y = 240;
 static uint8_t cursor_buttons;
+static uint8_t cursor_pending;
+static int32_t cursor_wheel;
 
 static int copy_text(char *dst, uint32_t capacity, const char *src)
 {
@@ -158,22 +162,42 @@ static void window_msg_from_window(struct leonos_gui_window_msg *message,
     }
 }
 
+static int announce_window(struct windowd_window *window)
+{
+    struct leonos_gui_window_msg message;
+    if (!window->announce_pending) return 0;
+    window_msg_from_window(&message, 1u, window);
+    if (send_to_policy(LEONOS_WIN_MSG_WINDOW_NOTIFY, &message, sizeof(message)) < 0)
+        return -1;
+    window->announce_pending = 0;
+    return 0;
+}
+
 static int create_window(struct windowd_client *client,
                          const struct leonos_win_create *request)
 {
     struct windowd_window *window = 0;
     struct leonos_win_create_ack ack;
-    struct leonos_gui_window_msg message;
     uint64_t bytes;
     if (!client || !request || !request->width || !request->height ||
         request->width > LEONOS_GUI_MAX_WINDOW_WIDTH ||
-        request->height > LEONOS_GUI_MAX_WINDOW_HEIGHT) return -1;
+        request->height > LEONOS_GUI_MAX_WINDOW_HEIGHT) {
+        printf("[windowd.elf] create reject: bad geometry %ux%u\n",
+               request ? request->width : 0, request ? request->height : 0);
+        return -1;
+    }
     for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {
         if (!windows[i].used) { window = &windows[i]; break; }
     }
-    if (!window) return -1;
+    if (!window) {
+        printf("[windowd.elf] create reject: window table full\n");
+        return -1;
+    }
     bytes = (uint64_t)request->width * request->height * 4ULL;
-    if (bytes > WINDOWD_MAX_BYTES) return -1;
+    if (bytes > WINDOWD_MAX_BYTES) {
+        printf("[windowd.elf] create reject: too large\n");
+        return -1;
+    }
     memset(window, 0, sizeof(*window));
     window->shm_fd = -1;
     window->used = 1;
@@ -188,12 +212,15 @@ static int create_window(struct windowd_client *client,
     copy_text(window->text, sizeof(window->text), request->text);
     window->shm_fd = open(LEONOS_DEV_SHM0, LEONOS_O_RDWR, 0);
     if (window->shm_fd < 0 || ftruncate(window->shm_fd, (long)bytes) < 0) {
+        printf("[windowd.elf] create fail: shm open/ftruncate errno=%d bytes=%llu\n",
+               errno, (unsigned long long)bytes);
         release_window(window);
         return -1;
     }
     window->mapping = mmap(0, (size_t)bytes, PROT_READ | PROT_WRITE,
                            MAP_SHARED, window->shm_fd, 0);
     if (window->mapping == MAP_FAILED || !window->mapping) {
+        printf("[windowd.elf] create fail: shm mmap errno=%d\n", errno);
         window->mapping = 0;
         release_window(window);
         return -1;
@@ -204,11 +231,13 @@ static int create_window(struct windowd_client *client,
     ack.stride = window->stride;
     if (leonos_ipc_send_fd(client->fd, LEONOS_WIN_MSG_CREATE_ACK, &ack,
                            sizeof(ack), window->shm_fd) < 0) {
+        printf("[windowd.elf] create fail: ack send errno=%d\n", errno);
         release_window(window);
         return -1;
     }
-    window_msg_from_window(&message, 1u, window);
-    notify_window_msg(&message);
+    /* A full nonblocking policy socket must not orphan an acknowledged window. */
+    window->announce_pending = 1;
+    (void)announce_window(window);
     return 0;
 }
 
@@ -241,7 +270,7 @@ static void send_input_event(const struct leonos_input_event *event)
 
 static void pump_input_device(int fd, uint32_t type)
 {
-    for (;;) {
+    for (uint32_t budget = 0; budget < 256u; ++budget) {
         struct input_event event;
         struct leonos_input_event out;
         long got = syscall3(SYS_read, fd, (long)&event, (long)sizeof(event));
@@ -255,29 +284,18 @@ static void pump_input_device(int fd, uint32_t type)
         } else if (type == LEONOS_INPUT_MOUSE) {
             if (event.type == EV_REL && event.code == REL_X) {
                 cursor_x += event.value;
-                if (cursor_x < 0) cursor_x = 0;
-                if (cursor_x > 1920) cursor_x = 1920;
-                out.type = LEONOS_INPUT_MOUSE;
-                out.x = cursor_x;
-                out.y = cursor_y;
-                out.buttons = cursor_buttons;
-                send_input_event(&out);
+                cursor_pending = 1;
             } else if (event.type == EV_REL && event.code == REL_Y) {
                 cursor_y += event.value;
-                if (cursor_y < 0) cursor_y = 0;
-                if (cursor_y > 1080) cursor_y = 1080;
-                out.type = LEONOS_INPUT_MOUSE;
-                out.x = cursor_x;
-                out.y = cursor_y;
-                out.buttons = cursor_buttons;
-                send_input_event(&out);
+                cursor_pending = 1;
+            } else if (event.type == EV_ABS && event.code == ABS_X) {
+                cursor_x = event.value;
+                cursor_pending = 1;
+            } else if (event.type == EV_ABS && event.code == ABS_Y) {
+                cursor_y = event.value;
+                cursor_pending = 1;
             } else if (event.type == EV_REL && event.code == REL_WHEEL) {
-                out.type = LEONOS_INPUT_MOUSE_WHEEL;
-                out.x = cursor_x;
-                out.y = cursor_y;
-                out.dy = event.value;
-                out.buttons = cursor_buttons;
-                send_input_event(&out);
+                cursor_wheel += event.value;
             } else if (event.type == EV_KEY &&
                        (event.code == BTN_LEFT || event.code == BTN_RIGHT ||
                         event.code == BTN_MIDDLE)) {
@@ -285,11 +303,30 @@ static void pump_input_device(int fd, uint32_t type)
                               event.code == BTN_RIGHT ? 2u : 4u;
                 if (event.value) cursor_buttons |= bit;
                 else cursor_buttons &= (uint8_t)~bit;
-                out.type = LEONOS_INPUT_MOUSE;
+                cursor_pending = 1;
+            } else if (event.type == EV_SYN && event.code == SYN_REPORT) {
+                /* REL and ABS can describe the same packet. Commit once,
+                 * after absolute axes and button transitions are complete. */
+                int32_t max_x = (int32_t)(display_state.fb_width ? display_state.fb_width : 1920) - 1;
+                int32_t max_y = (int32_t)(display_state.fb_height ? display_state.fb_height : 1080) - 1;
+                if (cursor_x < 0) cursor_x = 0;
+                if (cursor_y < 0) cursor_y = 0;
+                if (cursor_x > max_x) cursor_x = max_x;
+                if (cursor_y > max_y) cursor_y = max_y;
                 out.x = cursor_x;
                 out.y = cursor_y;
                 out.buttons = cursor_buttons;
-                send_input_event(&out);
+                if (cursor_pending) {
+                    out.type = LEONOS_INPUT_MOUSE;
+                    send_input_event(&out);
+                }
+                if (cursor_wheel) {
+                    out.type = LEONOS_INPUT_MOUSE_WHEEL;
+                    out.dy = cursor_wheel;
+                    send_input_event(&out);
+                }
+                cursor_pending = 0;
+                cursor_wheel = 0;
             }
         }
     }
@@ -301,7 +338,7 @@ static void handle_client(int slot)
     uint8_t buffer[WINDOWD_FRAME_CAP];
     uint32_t type = 0;
     uint32_t length = 0;
-    for (;;) {
+    for (uint32_t budget = 0; budget < 64u; ++budget) {
         struct pollfd descriptor = {.fd = client->fd, .events = POLLIN, .revents = 0};
         if (poll(&descriptor, 1, 0) <= 0) return;
         if (leonos_ipc_recv_fd(client->fd, &type, buffer, sizeof(buffer),
@@ -331,15 +368,32 @@ static void handle_client(int slot)
             if (policy_slot >= 0) { close_client(slot); return; }
             client->role = LEONOS_WIN_ROLE_POLICY;
             policy_slot = slot;
+            mouse_visibility_pending = 1;
             (void)leonos_ipc_send(client->fd, LEONOS_WIN_MSG_HELLO_ACK,
                                   &ack, sizeof(ack));
+            /* Applications can create windows before the desktop finishes its
+             * policy handshake; those type-1 WINDOW_NOTIFY frames were dropped
+             * with no policy client attached. Re-announce every live window so
+             * a freshly registered desktop learns the existing composition. */
+            for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {
+                if (!windows[i].used) continue;
+                windows[i].announce_pending = 1;
+                (void)announce_window(&windows[i]);
+            }
             continue;
         }
         if (type == LEONOS_WIN_MSG_CREATE) {
             struct leonos_win_create request;
-            if (length < sizeof(request) || client->role != LEONOS_WIN_ROLE_APP) continue;
+            if (length < sizeof(request) || client->role != LEONOS_WIN_ROLE_APP) {
+                printf("[windowd.elf] create reject: role=%u length=%u\n",
+                       client->role, length);
+                continue;
+            }
             memcpy(&request, buffer, sizeof(request));
-            (void)create_window(client, &request);
+            if (create_window(client, &request) < 0) {
+                printf("[windowd.elf] create_window failed for pid=%u\n",
+                       client->pid);
+            }
             continue;
         }
         if (type == LEONOS_WIN_MSG_DESTROY) {
@@ -364,6 +418,7 @@ static void handle_client(int slot)
             memcpy(&request, buffer, sizeof(request));
             window = find_window(request.window_id);
             if (window && window->owner_pid == client->pid) {
+                if (announce_window(window) < 0) continue;
                 window_msg_from_window(&message, 2u, window);
                 notify_window_msg(&message);
             }
@@ -399,7 +454,13 @@ static void handle_client(int slot)
             if (client->role != LEONOS_WIN_ROLE_POLICY || length < sizeof(request)) continue;
             memcpy(&request, buffer, sizeof(request));
             window = find_window(request.window_id);
-            if (!window) continue;
+            if (!window) {
+                /* Destruction can race the policy client's pending repaint. */
+                struct leonos_win_error error = {.code = -ENOENT};
+                (void)leonos_ipc_send(client->fd, LEONOS_WIN_MSG_ERROR,
+                                      &error, sizeof(error));
+                continue;
+            }
             ack.window_id = window->id;
             ack.width = window->width;
             ack.height = window->height;
@@ -429,7 +490,8 @@ static void handle_client(int slot)
                 (void)leonos_ipc_send(client->fd, LEONOS_WIN_MSG_MOUSE_VISIBLE,
                                       &request, sizeof(request));
             } else {
-                mouse_visible = request.visible;
+                mouse_visible = request.visible ? 1u : 0u;
+                mouse_visibility_pending = 1;
             }
             continue;
         }
@@ -526,13 +588,22 @@ int main(void)
            LEONOS_IPC_SOCK_WINDOWD, keyboard_fd, mouse_fd);
 
     for (;;) {
-        struct pollfd fds[3] = {
+        struct pollfd fds[3 + WINDOWD_MAX_CLIENTS] = {
             {.fd = listen_fd, .events = POLLIN},
             {.fd = keyboard_fd, .events = POLLIN},
             {.fd = mouse_fd, .events = POLLIN},
         };
-        int ready = poll(fds, 3, 8);
+        for (uint32_t i = 0; i < WINDOWD_MAX_CLIENTS; ++i) {
+            fds[3 + i].fd = clients[i].used ? clients[i].fd : -1;
+            fds[3 + i].events = POLLIN;
+        }
+        int ready = poll(fds, 3 + WINDOWD_MAX_CLIENTS, 8);
         if (ready < 0) continue;
+        /* Retry even for an application that presents only its first frame. */
+        for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {
+            if (windows[i].used && windows[i].announce_pending)
+                (void)announce_window(&windows[i]);
+        }
         if (fds[0].revents & POLLIN) {
             int fd;
             while ((fd = leonos_ipc_accept(listen_fd, 0)) >= 0) {
@@ -559,6 +630,12 @@ int main(void)
         if (fds[2].revents & POLLIN) pump_input_device(mouse_fd, LEONOS_INPUT_MOUSE);
         for (uint32_t i = 0; i < WINDOWD_MAX_CLIENTS; ++i) {
             if (clients[i].used) handle_client(i);
+        }
+        if (mouse_visibility_pending && policy_slot >= 0) {
+            struct leonos_win_mouse_visible state = {
+                .window_id = 0xffffffffu, .visible = mouse_visible};
+            if (send_to_policy(LEONOS_WIN_MSG_MOUSE_VISIBLE, &state, sizeof(state)) == 0)
+                mouse_visibility_pending = 0;
         }
     }
 }

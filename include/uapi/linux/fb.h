@@ -35,5 +35,9 @@ struct fb_fix_screeninfo {
 #define FBIOGET_VSCREENINFO 0x4600UL
 #define FBIOPUT_VSCREENINFO 0x4601UL
 #define FBIOGET_FSCREENINFO 0x4602UL
+/* Linux fbdev pan/flush request.  On VMware SVGA the visible surface is
+ * refreshed from VRAM only when the host receives an update command, so
+ * mmap writers need this to push frames to the display. */
+#define FBIOPAN_DISPLAY 0x4606UL
 
 #endif

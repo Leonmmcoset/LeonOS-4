@@ -5,6 +5,7 @@
 #include <leonos/auth.h>
 #include <leonos/authd.h>
 #include <leonos/fs.h>
+#include <leonos/launch.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/unix_ipc.h>
@@ -15,6 +16,7 @@
 #include <unistd.h>
 
 #define AUTHD_USERS_DB "/system/config/users.db"
+#define AUTHD_SESSION_FILE "/run/leonos/session-user"
 #define AUTHD_MAGIC 0x41555331U /* AUS1 */
 #define AUTHD_HASH_LEN 16u
 #define AUTHD_MAX_CLIENTS 16u
@@ -173,6 +175,58 @@ static int authd_verify(const struct authd_record *record, const char *password)
     return 1;
 }
 
+static int authd_ensure_dir(const char *path)
+{
+    struct leonos_stat st;
+    if (!path || !path[0]) {
+        return -1;
+    }
+    if (mkdir(path, 0755) == 0) {
+        return 0;
+    }
+    st = (struct leonos_stat){0};
+    return leonos_stat_legacy(path, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR ? 0 : -1;
+}
+
+static int authd_prepare_user_home(const struct leonos_user_info *user)
+{
+    static const char *const subdirs[] = {"desktop", "documents", "downloads"};
+    char path[LEONOS_FS_PATH_LEN];
+    char desktop_dir[LEONOS_FS_PATH_LEN];
+    uint32_t home_len;
+    if (!user || !user->home[0]) {
+        return -1;
+    }
+    if (authd_ensure_dir("/home") < 0 || authd_ensure_dir(user->home) < 0) {
+        return -1;
+    }
+    home_len = (uint32_t)strlen(user->home);
+    if (home_len + 16U >= sizeof(path)) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < sizeof(subdirs) / sizeof(subdirs[0]); ++i) {
+        memcpy(path, user->home, home_len);
+        path[home_len] = '/';
+        authd_copy(path + home_len + 1U, sizeof(path) - home_len - 1U, subdirs[i]);
+        if (authd_ensure_dir(path) < 0) {
+            return -1;
+        }
+    }
+    memcpy(desktop_dir, user->home, home_len);
+    memcpy(desktop_dir + home_len, "/desktop", 9U);
+    static const char *const targets[] = {
+        "/system/apps/fileman/fileman.elf",
+        "/system/apps/terminal/terminal.elf",
+        "/system/apps/settings/settings.elf",
+        "/system/apps/run/run.elf",
+        "/system/apps/taskmgr/taskmgr.elf",
+    };
+    for (uint32_t i = 0; i < sizeof(targets) / sizeof(targets[0]); ++i) {
+        (void)leonos_launch_create_shortcut_in_dir(desktop_dir, targets[i], NULL, 0);
+    }
+    return 0;
+}
+
 static void authd_send_ack(int slot, int32_t code)
 {
     struct leonos_authd_ack ack = {.code = code};
@@ -254,6 +308,11 @@ static void authd_handle_create(int slot, const uint8_t *buffer, uint32_t length
         char home[LEONOS_AUTH_HOME_LEN];
         (void)snprintf(home, sizeof(home), "/home/%s", create.username);
         authd_copy(record->user.home, sizeof(record->user.home), home);
+    }
+    if (authd_prepare_user_home(&record->user) < 0) {
+        memset(record, 0, sizeof(*record));
+        authd_send_ack(slot, -1);
+        return;
     }
     authd_password_hash(create.username, create.password, hash);
     memcpy(record->password_hash, hash, sizeof(hash));
@@ -405,6 +464,12 @@ int main(void)
     memset(users, 0, sizeof(users));
     memset(clients, 0, sizeof(clients));
     for (uint32_t i = 0; i < AUTHD_MAX_CLIENTS; ++i) clients[i].fd = -1;
+    /* /run is currently on the system filesystem. A previous boot's session
+     * must not make the launcher drop uid before starting the login app. */
+    if (unlink(AUTHD_SESSION_FILE) < 0 && errno != ENOENT) {
+        printf("[authd.elf] reset session state failed errno=%d\n", errno);
+        return 1;
+    }
     if (authd_load() < 0) {
         user_count = 0;
         (void)authd_save();

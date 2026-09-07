@@ -14,9 +14,13 @@
 #include <unistd.h>
 
 #define SESSION_FRAME_CAP 4096u
-#define SESSION_RETRY_MS 5000u
+/* Short per-call retry plus backoff so a missing sessiond (installer
+ * images) never turns a query into a multi-second stall. */
+#define SESSION_CONNECT_ATTEMPT_MS 50u
+#define SESSION_CONNECT_BACKOFF_MS 1000u
 
 static int session_fd = -1;
+static uint32_t session_retry_after_ms;
 
 static uint32_t session_now_ms(void)
 {
@@ -60,13 +64,18 @@ static int session_open(void)
 {
     struct leonos_sessiond_hello hello;
     struct leonos_sessiond_ack ack;
-    uint32_t deadline = session_now_ms() + SESSION_RETRY_MS;
+    uint32_t deadline;
     if (session_fd >= 0) return session_fd;
+    if (session_now_ms() < session_retry_after_ms) return -1;
+    deadline = session_now_ms() + SESSION_CONNECT_ATTEMPT_MS;
     while (session_fd < 0 && session_now_ms() < deadline) {
         session_fd = leonos_ipc_connect(LEONOS_IPC_SOCK_SESSION);
         if (session_fd < 0) (void)poll(0, 0, 10);
     }
-    if (session_fd < 0) return -1;
+    if (session_fd < 0) {
+        session_retry_after_ms = session_now_ms() + SESSION_CONNECT_BACKOFF_MS;
+        return -1;
+    }
     (void)leonos_ipc_set_nonblock(session_fd, 1);
     hello.pid = (uint32_t)getpid();
     hello.uid = (uint32_t)getuid();
@@ -75,6 +84,7 @@ static int session_open(void)
         session_wait(LEONOS_SESSIOND_MSG_ACK, &ack, sizeof(ack), 0) < 0) {
         leonos_ipc_close(session_fd);
         session_fd = -1;
+        session_retry_after_ms = session_now_ms() + SESSION_CONNECT_BACKOFF_MS;
         return -1;
     }
     return session_fd;

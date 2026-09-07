@@ -210,6 +210,7 @@ static int unix_clone_fd_to_task(struct task *target, const struct task_file *so
         file->read_cursor = (struct storage_read_cursor){0};
         task_pipe_retain(file);
         task_socket_retain(file);
+        task_shm_retain(file);
         return fd;
     }
     return -LEONOS_EMFILE;
@@ -254,22 +255,25 @@ int task_socket_write(struct task_file *file, const void *buffer, uint32_t lengt
     struct unix_socket *socket = unix_from_file(file);
     struct unix_socket *peer;
     uint32_t count = 0;
+    uint32_t free_space;
     if (!socket || !buffer || !(file->flags & TASK_FILE_FLAG_SOCKET_UNIX)) return -LEONOS_EBADF;
     if (socket->state != UNIX_SOCKET_CONNECTED || socket->shutdown_write) return -LEONOS_EPIPE;
     peer = unix_from_handle(socket->peer_handle);
     if (!peer || peer->shutdown_read) return -LEONOS_EPIPE;
     kernel_wait_queue_remove(&socket->wait_tx, sched_current_task());
+    /* Framed clients rely on one send carrying one whole frame, so an
+     * entry check makes the write all-or-nothing whenever the ring can hold
+     * the payload; a partial ring-full write would strand frame bytes and
+     * permanently desynchronize the receiver's stream. */
+    free_space = (peer->rx_tail + UNIX_SOCKET_RX_CAP - peer->rx_head - 1u) %
+                 UNIX_SOCKET_RX_CAP;
+    if (length > free_space) {
+        if (file->flags & LEONOS_O_NONBLOCK) return -LEONOS_EAGAIN;
+        kernel_wait_queue_block_current(&socket->wait_tx);
+        return -LEONOS_EAGAIN;
+    }
     while (count < length) {
         uint32_t next = (peer->rx_head + 1u) % UNIX_SOCKET_RX_CAP;
-        if (next == peer->rx_tail) {
-            if (count) {
-                (void)kernel_wait_queue_wake_all(&peer->wait_rx);
-                return (int)count;
-            }
-            if (file->flags & LEONOS_O_NONBLOCK) return -LEONOS_EAGAIN;
-            kernel_wait_queue_block_current(&socket->wait_tx);
-            return -LEONOS_EAGAIN;
-        }
         peer->rx[peer->rx_head] = ((const uint8_t *)buffer)[count++];
         peer->rx_head = next;
     }
@@ -551,7 +555,7 @@ static int unix_sendmsg(struct task *task, struct task_file *file,
 }
 
 static int unix_recvmsg(struct task *task, struct task_file *file,
-                       const struct msghdr *user_msg)
+                        const struct msghdr *user_msg, uint32_t msg_flags_user)
 {
     (void)task;
     struct unix_socket *socket = unix_from_file(file);
@@ -559,6 +563,7 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
     struct iovec vector;
     uint32_t data_len;
     int received;
+    int peek = (msg_flags_user & MSG_PEEK) != 0;
     if (!socket || !user_msg || !user_range_ok((uint64_t)(uintptr_t)user_msg,
                                                sizeof(*user_msg))) {
         return -LEONOS_EFAULT;
@@ -578,8 +583,23 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
                                                             data_len))) {
             return -LEONOS_EFAULT;
         }
-        received = task_socket_read(file, vector.iov_base, data_len);
-        if (received < 0) return received;
+        if (peek) {
+            /* MSG_PEEK must not consume: framed callers probe for a pending
+             * SCM_RIGHTS control byte before committing to a receive. */
+            uint32_t saved_tail = socket->rx_tail;
+            received = task_socket_read(file, vector.iov_base, data_len);
+            if (received > 0) socket->rx_tail = saved_tail;
+        } else {
+            received = task_socket_read(file, vector.iov_base, data_len);
+        }
+        if (received < 0 && !(received == -LEONOS_EAGAIN && socket->rx_fd_count &&
+                              message.msg_control)) {
+            /* An empty ring normally reports EAGAIN, but a pending
+             * SCM_RIGHTS attachment must still be delivered: the sender
+             * attaches descriptors when the frame is written, and framed
+             * readers probe for them after consuming the payload. */
+            return received;
+        }
     } else {
         received = 0;
     }
@@ -598,14 +618,17 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
                 fds[i] = socket->rx_fds[i];
             }
         }
-        socket->rx_fd_count = 0;
+        /* A peek leaves the pending descriptors queued for the real receive. */
+        if (!peek) socket->rx_fd_count = 0;
     }
     if (user_range_ok((uint64_t)(uintptr_t)user_msg, sizeof(message))) {
         struct msghdr *output = (struct msghdr *)(uintptr_t)user_msg;
         output->msg_controllen = socket->rx_fd_count ? CMSG_LEN((uint64_t)socket->rx_fd_count * sizeof(int32_t)) : 0;
         output->msg_flags = message.msg_flags;
     }
-    return received;
+    /* A control-only delivery (empty ring, descriptors pending) reports zero
+     * bytes so framed readers still observe the ancillary data. */
+    return received < 0 ? 0 : received;
 }
 
 static int64_t unix_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
@@ -840,7 +863,8 @@ int64_t syscall_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
         {
             struct task_file *file = task_file_for_fd(task, (int)a0);
             if (!file || !(file->flags & TASK_FILE_FLAG_SOCKET_UNIX)) return -LEONOS_EBADF;
-            return unix_recvmsg(task, file, (const struct msghdr *)(uintptr_t)a1);
+            return unix_recvmsg(task, file, (const struct msghdr *)(uintptr_t)a1,
+                                (uint32_t)a2);
         }
     }
     if (number == __NR_send || number == __NR_sendto) {

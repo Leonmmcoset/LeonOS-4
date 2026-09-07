@@ -20,6 +20,15 @@ struct input_id {
     uint16_t version;
 };
 
+struct input_absinfo {
+    int32_t value;
+    int32_t minimum;
+    int32_t maximum;
+    int32_t fuzz;
+    int32_t flat;
+    int32_t resolution;
+};
+
 #define EV_SYN 0x00
 #define EV_KEY 0x01
 #define EV_REL 0x02
@@ -73,12 +82,16 @@ struct input_id {
 #define REL_Y 0x01
 #define REL_WHEEL 0x08
 
+#define ABS_X 0x00
+#define ABS_Y 0x01
+
 #define EVIOCGVERSION _IOR('E', 0x01, int)
 #define EVIOCGID _IOR('E', 0x02, struct input_id)
 #define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, (len))
 #define EVIOCGPHYS(len) _IOC(_IOC_READ, 'E', 0x07, (len))
 #define EVIOCGBIT(ev, len) _IOC(_IOC_READ, 'E', 0x20 + (ev), (len))
 #define EVIOCGKEY(len) _IOC(_IOC_READ, 'E', 0x18, (len))
+#define EVIOCGABS(axis) _IOR('E', 0x40 + (axis), struct input_absinfo)
 #define EVIOCGRAB _IOW('E', 0x90, int)
 
 #endif
