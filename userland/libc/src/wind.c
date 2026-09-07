@@ -396,18 +396,33 @@ static int wind_fb_fd(void)
     return fd;
 }
 
-static void *wind_fb_map(void)
+static void *wind_fb_mapping;
+static size_t wind_fb_mapping_bytes;
+static struct leonos_fb_info wind_fb_mapped_info;
+
+static void wind_fb_unmap(void)
 {
-    static void *mapping;
-    struct leonos_fb_info info;
-    if (mapping) return mapping;
-    if (leonos_fb_info(&info) < 0) return 0;
-    mapping = mmap(0, (size_t)info.pitch * info.height,
-                   PROT_READ | PROT_WRITE, MAP_SHARED, wind_fb_fd(), 0);
+    if (wind_fb_mapping) munmap(wind_fb_mapping, wind_fb_mapping_bytes);
+    wind_fb_mapping = 0;
+    wind_fb_mapping_bytes = 0;
+}
+
+static void *wind_fb_map(struct leonos_fb_info *info)
+{
+    if (leonos_fb_info(info) < 0) return 0;
+    if (wind_fb_mapping &&
+        (info->width != wind_fb_mapped_info.width || info->height != wind_fb_mapped_info.height ||
+         info->pitch != wind_fb_mapped_info.pitch || info->bpp != wind_fb_mapped_info.bpp))
+        wind_fb_unmap();
+    if (wind_fb_mapping) return wind_fb_mapping;
+    wind_fb_mapping_bytes = (size_t)info->pitch * info->height;
+    wind_fb_mapping = mmap(0, wind_fb_mapping_bytes,
+                          PROT_READ | PROT_WRITE, MAP_SHARED, wind_fb_fd(), 0);
     /* mmap failure reports MAP_FAILED ((void*)-1), which is nonzero: a bare
      * truthiness check would hand memcpy an invalid destination. */
-    if (mapping == MAP_FAILED) mapping = 0;
-    return mapping;
+    if (wind_fb_mapping == MAP_FAILED) wind_fb_mapping = 0;
+    wind_fb_mapped_info = *info;
+    return wind_fb_mapping;
 }
 
 int leonos_fb_info(struct leonos_fb_info *info)
@@ -429,16 +444,10 @@ int leonos_fb_info(struct leonos_fb_info *info)
 
 int leonos_fb_capabilities(struct leonos_fb_capabilities *caps)
 {
-    struct leonos_fb_info info;
-    if (!caps || leonos_fb_info(&info) < 0) return -1;
+    int fd = wind_fb_fd();
+    if (!caps || fd < 0) return -1;
     memset(caps, 0, sizeof(*caps));
-    caps->bytes_per_pixel = 4;
-    caps->capabilities = LEONOS_FB_CAP_MODE_SET;
-    caps->max_width = LEONOS_GUI_MAX_WINDOW_WIDTH;
-    caps->max_height = LEONOS_GUI_MAX_WINDOW_HEIGHT;
-    caps->max_bytes = info.pitch * info.height;
-    caps->backend = LEONOS_FB_BACKEND_BOOT;
-    return 0;
+    return ioctl(fd, LEONOS_FBIOGET_CAPABILITIES, caps);
 }
 
 int leonos_fb_set_mode(uint32_t width, uint32_t height)
@@ -452,16 +461,19 @@ int leonos_fb_set_mode(uint32_t width, uint32_t height)
     variable.yres = height;
     variable.xres_virtual = width;
     variable.yres_virtual = height;
-    return ioctl(fd, FBIOPUT_VSCREENINFO, &variable);
+    if (ioctl(fd, FBIOPUT_VSCREENINFO, &variable) < 0) return -1;
+    /* The visible span and the device's framebuffer offset may both change. */
+    wind_fb_unmap();
+    return 0;
 }
 
 int leonos_fb_fill(uint32_t color)
 {
     struct leonos_fb_info info;
-    void *mapping = wind_fb_map();
+    void *mapping = wind_fb_map(&info);
     uint32_t *pixels;
     uint32_t count;
-    if (!mapping || leonos_fb_info(&info) < 0) return -1;
+    if (!mapping) return -1;
     pixels = (uint32_t *)mapping;
     count = ((uint32_t)info.pitch / 4u) * info.height;
     for (uint32_t i = 0; i < count; ++i) pixels[i] = color;
@@ -473,9 +485,9 @@ int leonos_fb_rect(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                    uint32_t color)
 {
     struct leonos_fb_info info;
-    void *mapping = wind_fb_map();
+    void *mapping = wind_fb_map(&info);
     uint8_t *base;
-    if (!mapping || leonos_fb_info(&info) < 0) return -1;
+    if (!mapping) return -1;
     if (x >= info.width || y >= info.height) return 0;
     if (width > info.width - x) width = info.width - x;
     if (height > info.height - y) height = info.height - y;
@@ -516,8 +528,8 @@ int leonos_fb_text(uint32_t x, uint32_t y, const char *text, uint32_t fg, uint32
 uint32_t leonos_fb_pixel(uint32_t x, uint32_t y)
 {
     struct leonos_fb_info info;
-    void *mapping = wind_fb_map();
-    if (!mapping || leonos_fb_info(&info) < 0) return 0;
+    void *mapping = wind_fb_map(&info);
+    if (!mapping) return 0;
     if (x >= info.width || y >= info.height) return 0;
     return *(uint32_t *)((uint8_t *)mapping + y * info.pitch + x * 4u);
 }
@@ -526,8 +538,8 @@ int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                    uint32_t stride, const uint32_t *pixels)
 {
     struct leonos_fb_info info;
-    void *mapping = wind_fb_map();
-    if (!pixels || !mapping || leonos_fb_info(&info) < 0) return -1;
+    void *mapping = wind_fb_map(&info);
+    if (!pixels || !mapping) return -1;
     if (x >= info.width || y >= info.height) return 0;
     if (width > info.width - x) width = info.width - x;
     if (height > info.height - y) height = info.height - y;
@@ -973,7 +985,7 @@ int leonos_display_get_state(struct leonos_display_state *state)
     memset(state, 0, sizeof(*state));
     return leonos_ipc_send(fd, LEONOS_WIN_MSG_DISPLAY_STATE, state, 0) < 0 ? -1 :
            (wind_wait_type(fd, LEONOS_WIN_MSG_DISPLAY_STATE, state,
-                           sizeof(*state), 0, 0) < 0 ? -1 : 0);
+                           sizeof(*state), 0, 0) < 0 ? -1 : 1);
 }
 
 int leonos_display_request(const struct leonos_display_request *request)

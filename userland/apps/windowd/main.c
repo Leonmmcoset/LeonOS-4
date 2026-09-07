@@ -17,6 +17,7 @@
 #include <linux/input.h>
 #include <poll.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -48,6 +49,7 @@ struct windowd_window {
     void *mapping;
     char title[48];
     char text[1024];
+    char app_path[LEONOS_FS_PATH_LEN];
 };
 
 static struct windowd_client clients[WINDOWD_MAX_CLIENTS];
@@ -159,6 +161,7 @@ static void window_msg_from_window(struct leonos_gui_window_msg *message,
         message->flags = window->flags;
         copy_text(message->title, sizeof(message->title), window->title);
         copy_text(message->text, sizeof(message->text), window->text);
+        copy_text(message->app_path, sizeof(message->app_path), window->app_path);
     }
 }
 
@@ -171,6 +174,21 @@ static int announce_window(struct windowd_window *window)
         return -1;
     window->announce_pending = 0;
     return 0;
+}
+
+static void window_read_app_path(struct windowd_window *window)
+{
+    char path[48];
+    snprintf(path, sizeof(path), "/proc/%u/cmdline", window->owner_pid);
+    int fd = open(path, LEONOS_O_RDONLY, 0);
+    if (fd < 0) return;
+    /* procfs exposes the kernel's executable path for the authenticated peer. */
+    ssize_t length = read(fd, window->app_path, sizeof(window->app_path) - 1u);
+    close(fd);
+    if (length <= 0) { window->app_path[0] = 0; return; }
+    while (length > 0 && (window->app_path[length - 1] == '\n' ||
+                           window->app_path[length - 1] == '\r')) --length;
+    window->app_path[length] = 0;
 }
 
 static int create_window(struct windowd_client *client,
@@ -203,6 +221,7 @@ static int create_window(struct windowd_client *client,
     window->used = 1;
     window->id = next_window_id++;
     window->owner_pid = client->pid;
+    window_read_app_path(window);
     window->width = request->width;
     window->height = request->height;
     window->flags = request->flags;

@@ -8,6 +8,7 @@ static int flood_mode;
 static int send_result = -1;
 static unsigned poll_calls;
 static int poll_timeout;
+static int display_reply;
 
 int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
 {
@@ -36,6 +37,16 @@ int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
 {
     (void)fd;
     if (received_fd) *received_fd = -1;
+    if (display_reply) {
+        struct leonos_display_state state = {.fb_width = 1920, .fb_height = 1080,
+            .logical_width = 1920, .logical_height = 1080, .scale = 1,
+            .pending_confirm = 1, .confirm_remaining_ms = 10000};
+        assert(capacity >= sizeof(state));
+        memcpy(payload, &state, sizeof(state));
+        *type = LEONOS_WIN_MSG_DISPLAY_STATE;
+        *length = sizeof(state);
+        return 0;
+    }
     if (flood_mode) {
         struct leonos_gui_window_msg present = {.type = 2, .window_id = 1};
         assert(++frame_index <= 128); /* An unbounded pump starves the caller. */
@@ -145,6 +156,11 @@ int main(void)
     assert(leonos_gui_wait_policy(50) == 1 && poll_calls == 0);
     wind_input_head = wind_input_tail = 0;
     assert(leonos_gui_wait_policy(50) == 1 && poll_calls == 1 && poll_timeout == 50);
+    display_reply = 1;
+    send_result = 0;
+    struct leonos_display_state state;
+    assert(leonos_display_get_state(&state) > 0);
+    assert(state.fb_width == 1920 && state.fb_height == 1080 && state.pending_confirm == 1);
     puts("Window reply tests passed: interleaved input preserves reply descriptor");
     return 0;
 }

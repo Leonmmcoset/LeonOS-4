@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdarg.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #define ioctl leonos_test_ioctl
 #include <leonos/syscall.h>
@@ -10,12 +11,18 @@
 #define ftruncate test_ftruncate
 #define mmap test_mmap
 #define munmap test_munmap
+#define read test_read
+#define close test_close
+ssize_t test_read(int fd, void *buffer, size_t length);
+int test_close(int fd);
 #include "../../userland/apps/windowd/main.c"
 #undef main
 #undef open
 #undef ftruncate
 #undef mmap
 #undef munmap
+#undef read
+#undef close
 
 static uint32_t backing[64];
 static unsigned sends;
@@ -23,7 +30,21 @@ static unsigned delivered;
 static unsigned incoming;
 static uint32_t delivered_types[4];
 
-int test_open(const char *path, int flags, ...) { (void)path; (void)flags; return 42; }
+int test_open(const char *path, int flags, ...)
+{
+    (void)flags;
+    if (!strcmp(path, "/dev/shm0")) return 42;
+    assert(!strcmp(path, "/proc/11/cmdline"));
+    return 43;
+}
+ssize_t test_read(int fd, void *buffer, size_t length)
+{
+    const char path[] = "/system/apps/terminal/terminal.elf\n";
+    assert(fd == 43 && length >= sizeof(path));
+    memcpy(buffer, path, sizeof(path) - 1);
+    return sizeof(path) - 1;
+}
+int test_close(int fd) { assert(fd == 42 || fd == 43); return 0; }
 int test_ftruncate(int fd, off_t size) { (void)fd; (void)size; return 0; }
 void *test_mmap(void *addr, size_t size, int prot, int flags, int fd, off_t off)
 {
@@ -43,6 +64,8 @@ int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
     assert(length == sizeof(struct leonos_gui_window_msg));
     if (++sends == 1) { errno = EAGAIN; return -1; }
     assert(delivered < 4);
+    const struct leonos_gui_window_msg *message = payload;
+    assert(!strcmp(message->app_path, "/system/apps/terminal/terminal.elf"));
     delivered_types[delivered++] = ((const struct leonos_gui_window_msg *)payload)->type;
     return 0;
 }

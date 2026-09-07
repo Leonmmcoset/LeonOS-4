@@ -8,6 +8,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RuntimeResponsivenessTests(unittest.TestCase):
+    def test_framebuffer_reports_hardware_limits_and_remaps_after_mode_change(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-wind-fb-") as tmp:
+            executable = str(Path(tmp) / "wind-framebuffer")
+            subprocess.run([
+                "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-idirafter", "userland/libc/include", "-idirafter", "include",
+                "tools/tests/wind_framebuffer_test.c", "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
+
     def test_window_repaints_reuse_live_shared_memory(self):
         with tempfile.TemporaryDirectory(prefix="leonos-wind-surface-") as tmp:
             executable = str(Path(tmp) / "wind-surface")

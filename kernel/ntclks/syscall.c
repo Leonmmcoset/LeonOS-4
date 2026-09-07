@@ -36,6 +36,7 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
 #include <leonos/driver.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
+#include <leonos/fb.h>
 #include <leonos/net.h>
 #include <leonos/pty.h>
 #include <leonos/signal.h>
@@ -3986,7 +3987,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
      * three Linux UAPI operations. */
     if (number == LINUX_SYS_IOCTL &&
         (a1 == FBIOGET_VSCREENINFO || a1 == FBIOPUT_VSCREENINFO ||
-         a1 == FBIOGET_FSCREENINFO || a1 == FBIOPAN_DISPLAY)) {
+         a1 == FBIOGET_FSCREENINFO || a1 == FBIOPAN_DISPLAY ||
+         a1 == LEONOS_FBIOGET_CAPABILITIES)) {
         struct task *task = sched_current_task();
         struct task_file *file = task_file_for_fd(task, (int)a0);
         const struct framebuffer *fb = framebuffer_get();
@@ -4004,6 +4006,20 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         if (!a2) {
             return -LEONOS_ENOTTY;
+        }
+        if (a1 == LEONOS_FBIOGET_CAPABILITIES) {
+            if (!user_range_ok(a2, sizeof(struct leonos_fb_capabilities)))
+                return -LEONOS_EFAULT;
+            *(struct leonos_fb_capabilities *)(uintptr_t)a2 =
+                (struct leonos_fb_capabilities){
+                    .bytes_per_pixel = fb->bytes_per_pixel,
+                    .capabilities = fb->capabilities,
+                    .max_width = fb->max_width,
+                    .max_height = fb->max_height,
+                    .max_bytes = fb->max_bytes,
+                    .backend = fb->backend,
+                };
+            return 0;
         }
         if (a1 == FBIOGET_VSCREENINFO) {
             struct fb_var_screeninfo info;

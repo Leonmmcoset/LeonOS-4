@@ -2,6 +2,7 @@
 #define LEONOS_GUI_H
 
 #include <stdint.h>
+#include <leonos/fb.h>
 #include <leonos/fs.h>
 
 
@@ -9,11 +10,6 @@
 #define LEONOS_DISPLAY_REQUEST_KEEP 2U
 #define LEONOS_DISPLAY_REQUEST_REVERT 3U
 #define LEONOS_DISPLAY_REQUEST_REFRESH 4U
-
-#define LEONOS_FB_CAP_MODE_SET 0x0001U
-#define LEONOS_FB_BACKEND_BOOT 0U
-#define LEONOS_FB_BACKEND_BOCHS_VBE 1U
-#define LEONOS_FB_BACKEND_VMWARE_SVGA 2U
 
 #define LEONOS_WALLPAPER_MODE_FILL 0U
 #define LEONOS_WALLPAPER_MODE_FIT 1U
@@ -136,16 +132,6 @@ struct leonos_fb_info {
     uint32_t height;
     uint32_t pitch;
     uint8_t bpp;
-};
-
-struct leonos_fb_capabilities {
-    uint8_t bytes_per_pixel;
-    uint8_t reserved;
-    uint16_t capabilities;
-    uint32_t max_width;
-    uint32_t max_height;
-    uint32_t max_bytes;
-    uint32_t backend;
 };
 
 struct leonos_fb_mode {
