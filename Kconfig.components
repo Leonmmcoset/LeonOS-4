@@ -588,6 +588,25 @@ config LEON_COMPONENT_APP_MINESWEEPER_SDK
     default n
     depends on LEON_COMPONENT_APP_MINESWEEPER_BUILD
 
+config LEON_COMPONENT_APP_SNAKE_BUILD
+    bool "Build Snake"
+    default y
+
+config LEON_COMPONENT_APP_SNAKE_IMAGE
+    bool "Include Snake in system images"
+    default y
+    depends on LEON_COMPONENT_APP_SNAKE_BUILD
+
+config LEON_COMPONENT_APP_SNAKE_ENTRY
+    bool "Generate a desktop entry for Snake"
+    default n
+    depends on LEON_COMPONENT_APP_SNAKE_BUILD
+
+config LEON_COMPONENT_APP_SNAKE_SDK
+    bool "Include Snake in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_SNAKE_BUILD
+
 config LEON_COMPONENT_APP_DOOMLAUNCHER_BUILD
     bool "Build DOOM launcher"
     default y
