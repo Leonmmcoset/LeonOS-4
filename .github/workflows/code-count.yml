@@ -1,0 +1,37 @@
+name: Code Statistics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leonos4-code-statistics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  count:
+    name: Count all source code
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install code counter
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes cloc
+
+      - name: Generate and publish complete code statistics
+        run: |
+          set -euo pipefail
+          python3 tools/count_code.py \
+            --format markdown \
+            --no-progress >> "$GITHUB_STEP_SUMMARY"

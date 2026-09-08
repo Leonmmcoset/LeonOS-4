@@ -25,6 +25,16 @@ def run(*arguments: str) -> dict:
     return json.loads(result.stdout)
 
 
+def run_markdown(*arguments: str) -> str:
+    result = subprocess.run(
+        [sys.executable, str(TOOL), *arguments, "--format", "markdown"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout
+
+
 def git(root: Path, *arguments: str) -> None:
     subprocess.run(["git", "-C", str(root), *arguments], check=True,
                    text=True, capture_output=True)
@@ -51,6 +61,13 @@ def main() -> int:
         assert summary["parts"]["src"]["code"] == 1
         assert "build" not in summary["parts"]
         assert "skip" not in summary["parts"]
+
+        markdown = run_markdown(str(root), "--no-config", "--exclude", "third_party",
+                               "--exclude-dir", "skip", "--jobs", "1", "--no-progress")
+        assert markdown.startswith("# LeonOS 4 Code Statistics")
+        assert "## By Part" in markdown
+        assert "| src |" in markdown
+        assert "| 1 |" in markdown
 
         config_path = root / ".codecount-config.json"
         config_path.write_text(json.dumps({
@@ -98,6 +115,11 @@ def main() -> int:
         assert history["commits"][0]["lines"] == 1
         assert history["commits"][1]["lines"] == 2
         assert history["final_lines"] == 2
+
+        history_markdown = run_markdown(str(history_root), "--history", "--no-config",
+                                        "--exclude", "third_party/cmd", "--no-progress")
+        assert history_markdown.startswith("# LeonOS 4 Code Growth History")
+        assert "Cumulative lines" in history_markdown
 
     print("test_code_count: ok")
     return 0

@@ -576,6 +576,84 @@ def format_text(summary: dict[str, Any], *, show_languages: bool) -> str:
     return "\n".join(lines)
 
 
+def markdown_cell(value: Any) -> str:
+    """Escape a value for use in a Markdown table cell."""
+    return str(value).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def format_markdown(summary: dict[str, Any]) -> str:
+    """Render a complete machine-produced summary as readable Markdown."""
+    engine = str(summary.get("engine", "cloc"))
+    total = summary.get("total", {})
+    has_complexity = "complexity" in total
+    metric_fields = ["files", "blank", "comment", "code"]
+    metric_labels = {"files": "Files", "blank": "Blank", "comment": "Comment",
+                     "code": "Code", "complexity": "Complexity"}
+    if has_complexity:
+        metric_fields.append("complexity")
+
+    lines = ["# LeonOS 4 Code Statistics", "",
+             f"- **Engine:** `{markdown_cell(engine)}`",
+             f"- **Scan root:** `{markdown_cell(summary.get('root', '.'))}`", "",
+             "## Total", "",
+             "| " + " | ".join(metric_labels[field] for field in metric_fields) + " |",
+             "|" + "|".join("---:" for _ in metric_fields) + "|"]
+    lines.append("| " + " | ".join(format_number(int(total.get(field, 0)))
+                                    for field in metric_fields) + " |")
+
+    lines.extend(["", "## By Part", "",
+                  "| Part | " + " | ".join(metric_labels[field] for field in metric_fields) + " |",
+                  "|---|" + "|".join("---:" for _ in metric_fields) + "|"])
+    for part, row in summary.get("parts", {}).items():
+        lines.append("| " + markdown_cell(part) + " | " + " | ".join(
+            format_number(int(row.get(field, 0))) for field in metric_fields) + " |")
+
+    lines.extend(["", "## By Language", "",
+                  "| Language | " + " | ".join(metric_labels[field] for field in metric_fields) + " |",
+                  "|---|" + "|".join("---:" for _ in metric_fields) + "|"])
+    for language, row in summary.get("languages", {}).items():
+        lines.append("| " + markdown_cell(language) + " | " + " | ".join(
+            format_number(int(row.get(field, 0))) for field in metric_fields) + " |")
+
+    metrics = summary.get("metrics")
+    if isinstance(metrics, dict):
+        cocomo = metrics.get("cocomo")
+        if isinstance(cocomo, dict):
+            lines.extend(["", "## COCOMO Estimate", "",
+                          f"Project model: `{markdown_cell(cocomo.get('project_type', 'organic'))}`", "",
+                          "| Metric | Value |", "|---|---:|"])
+            for field, label in (("effort_person_months", "Effort (person-months)"),
+                                 ("schedule_months", "Schedule (months)"),
+                                 ("people_required", "People required"),
+                                 ("estimated_cost", "Estimated cost"),
+                                 ("average_wage", "Average annual wage"),
+                                 ("overhead", "Overhead multiplier"),
+                                 ("eaf", "Effort adjustment factor")):
+                if field in cocomo:
+                    value = cocomo[field]
+                    rendered = f"${value:,.2f}" if field == "estimated_cost" else (
+                        format_number(value) if isinstance(value, int) else f"{value:,.4f}")
+                    lines.append(f"| {label} | {rendered} |")
+        locomo = metrics.get("locomo")
+        if isinstance(locomo, dict):
+            lines.extend(["", "## LOCOMO Estimate", "",
+                          f"Pricing preset: `{markdown_cell(locomo.get('preset', 'medium'))}`", "",
+                          "| Metric | Value |", "|---|---:|"])
+            for field, label in (("input_tokens", "Input tokens"),
+                                 ("output_tokens", "Output tokens"),
+                                 ("estimated_cost", "Estimated cost"),
+                                 ("generation_seconds", "Generation seconds"),
+                                 ("review_hours", "Review hours"),
+                                 ("iteration_factor", "Iteration factor"),
+                                 ("complexity_multiplier", "Complexity multiplier")):
+                if field in locomo:
+                    value = locomo[field]
+                    rendered = f"${value:,.4f}" if field == "estimated_cost" else (
+                        format_number(value) if isinstance(value, int) else f"{value:,.4f}")
+                    lines.append(f"| {label} | {rendered} |")
+    return "\n".join(lines)
+
+
 def find_counter(requested: str | None, engine: str) -> str:
     if requested:
         return requested
@@ -672,6 +750,26 @@ def format_history_text(history: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_history_markdown(history: dict[str, Any]) -> str:
+    """Render Git history growth as a readable Markdown report."""
+    lines = ["# LeonOS 4 Code Growth History", "",
+             f"- **Scan root:** `{markdown_cell(history.get('root', '.'))}`",
+             f"- **Metric:** `{markdown_cell(history.get('metric', 'physical_lines'))}`",
+             f"- **Method:** `{markdown_cell(history.get('method', 'git-numstat'))}`",
+             f"- **History mode:** {'all branches' if not history.get('first_parent', True) else 'first parent'}", "",
+             "| Date | Commit | Added | Deleted | Cumulative lines |",
+             "|---|---|---:|---:|---:|"]
+    for point in history.get("commits", []):
+        lines.append("| " + " | ".join((markdown_cell(str(point.get("date", ""))[:25]),
+                                          f"`{markdown_cell(str(point.get('hash', ''))[:8])}`",
+                                          format_number(int(point.get("added", 0))),
+                                          format_number(int(point.get("deleted", 0))),
+                                          format_number(int(point.get("lines", 0))))) + " |")
+    lines.extend(["", f"**Final lines:** {format_number(int(history.get('final_lines', 0)))}",
+                  f"**Commits reported:** {format_number(int(history.get('total_commits', 0)))}"])
+    return "\n".join(lines)
+
+
 def write_history_chart(history: dict[str, Any], output: Path) -> None:
     """Write a dependency-free SVG line chart for the history points."""
     points = history["commits"]
@@ -746,7 +844,8 @@ def parse_args() -> argparse.Namespace:
                         help="scc COCOMO effort adjustment factor (default: 1.0)")
     parser.add_argument("--locomo-preset", choices=tuple(SCC_LOCOMO_PRESETS), default="medium",
                         help="scc LOCOMO pricing/throughput preset (default: medium)")
-    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "markdown"), default="text",
+                        help="report format (default: text)")
     parser.add_argument("--output", type=Path, help="write output to a file instead of stdout")
     parser.add_argument("--languages", action="store_true", help="include a language summary in text output")
     parser.add_argument("--jobs", type=int, default=0, metavar="N",
@@ -788,7 +887,12 @@ def main() -> int:
         history = run_git_history(root, config,
                                   all_branches=args.history_all_branches,
                                   progress=not args.no_progress)
-        output = json.dumps(history, ensure_ascii=False, indent=2) if args.format == "json" else format_history_text(history)
+        if args.format == "json":
+            output = json.dumps(history, ensure_ascii=False, indent=2)
+        elif args.format == "markdown":
+            output = format_history_markdown(history)
+        else:
+            output = format_history_text(history)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(output + "\n", encoding="utf-8")
@@ -818,7 +922,12 @@ def main() -> int:
                                 cocomo_type=args.cocomo_project_type,
                                 avg_wage=args.avg_wage, overhead=args.overhead,
                                 eaf=args.eaf, locomo_preset=args.locomo_preset)
-    output = json.dumps(summary, ensure_ascii=False, indent=2) if args.format == "json" else format_text(summary, show_languages=args.languages)
+    if args.format == "json":
+        output = json.dumps(summary, ensure_ascii=False, indent=2)
+    elif args.format == "markdown":
+        output = format_markdown(summary)
+    else:
+        output = format_text(summary, show_languages=args.languages)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(output + "\n", encoding="utf-8")

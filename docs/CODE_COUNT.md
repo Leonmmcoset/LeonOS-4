@@ -11,6 +11,7 @@ Run it from the repository root:
 python3 tools/count_code.py
 python3 tools/count_code.py --languages
 python3 tools/count_code.py --format json --output build/code-count.json
+python3 tools/count_code.py --format markdown --output build/code-count.md
 python3 tools/count_code.py --jobs 8
 python3 tools/count_code.py --no-progress --format json
 python3 tools/count_code.py --engine scc
@@ -18,7 +19,22 @@ python3 tools/count_code.py --engine scc --cocomo-project-type semi-detached \
   --avg-wage 75000 --overhead 2.4 --eaf 1.0 --locomo-preset local
 python3 tools/count_code.py --history --history-chart build/code-growth.svg
 python3 tools/count_code.py --history --format json --output build/code-history.json
+python3 tools/count_code.py --history --format markdown --output build/code-history.md
 ```
+
+`--format markdown` produces the complete human-readable report: totals,
+directory groups, language groups, and when `--engine scc` is used, COCOMO and
+LOCOMO estimates. It is appropriate for CI summaries and review artifacts.
+
+## GitHub Actions
+
+The **Code Statistics** workflow is intentionally manual-only. In GitHub,
+open **Actions**, select **Code Statistics**, then choose **Run workflow**. It
+recursively checks out every Git submodule, runs this tool with the repository
+exclusions, and writes the complete Markdown report to the workflow's standard
+job summary by writing directly to `$GITHUB_STEP_SUMMARY`. The summary is
+rendered directly in the workflow run page and is not dependent on a generated
+or uploaded report file.
 
 The standard exclusions cover build products and temporary directories such as
 `build/`, `dist/`, `.git/`, `__pycache__/`, `buildsystem/deps/`, and
