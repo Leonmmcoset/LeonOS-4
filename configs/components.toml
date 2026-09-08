@@ -359,6 +359,19 @@ sdk = false
 api = false
 
 [[components]]
+id = "matrix"
+symbol = "APP_MATRIX"
+label = "Matrix"
+category = "Games"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
 id = "memtest"
 symbol = "APP_MEMTEST"
 label = "Memory test"
