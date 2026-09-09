@@ -47,6 +47,9 @@
 #ifndef CLOSE_RANGE_CLOEXEC
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
+#ifndef MFD_CLOEXEC
+#define MFD_CLOEXEC 0x0001U
+#endif
 #ifndef MREMAP_MAYMOVE
 #define MREMAP_MAYMOVE 1U
 #endif
@@ -109,6 +112,28 @@ static int timer_abi(void)
     return 0;
 }
 
+static int memfd_abi(void)
+{
+    int fd = syscall(SYS_memfd_create, "musl-abi-memfd", MFD_CLOEXEC);
+    CHECK(fd >= 0);
+    struct stat st;
+    CHECK(fstat(fd, &st) == 0 && st.st_size == 0);
+    CHECK(ftruncate(fd, 4096) == 0);
+    CHECK(write(fd, "memfd", 5) == 5);
+    CHECK(lseek(fd, 0, SEEK_SET) == 0);
+    char contents[6] = {0};
+    CHECK(read(fd, contents, 5) == 5 && !memcmp(contents, "memfd", 5));
+    unsigned char *mapping = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                                  MAP_SHARED, fd, 0);
+    CHECK(mapping != MAP_FAILED);
+    CHECK(!memcmp(mapping, "memfd", 5));
+    mapping[5] = '!';
+    CHECK(munmap(mapping, 4096) == 0);
+    CHECK(fcntl(fd, F_GETFD) & FD_CLOEXEC);
+    CHECK(close(fd) == 0);
+    return 0;
+}
+
 static int startup(int argc, char **argv)
 {
     CHECK(argc >= 1 && argv && argv[argc] == NULL);
@@ -155,6 +180,7 @@ static int startup(int argc, char **argv)
     CHECK(run_membarrier_abi_test() == 0);
     CHECK(run_openat2_abi_test() == 0);
     CHECK(timer_abi() == 0);
+    CHECK(memfd_abi() == 0);
     struct timespec invalid_clock = {.tv_sec = 0, .tv_nsec = 1000000000L};
     CHECK(syscall(SYS_clock_settime, CLOCK_REALTIME, &invalid_clock) == -1 && errno == EINVAL);
     CHECK(syscall(SYS_sched_getparam, 0x7fffffff, &sched_value) == -1 && errno == ESRCH);

@@ -195,8 +195,15 @@ int64_t syscall_rt_sigtimedwait(uint64_t mask, uint64_t info, uint64_t timeout,
     }
     int signal = __builtin_ctzll(pending) + 1;
     uint64_t bit = 1ULL << (uint32_t)(signal - 1);
-    uint64_t *timer_pending = sched_task_timer_pending(task);
-    bool timer_signal = timer_pending && (*timer_pending & bit) != 0;
+    /* SIGEV_THREAD_ID records the notification on the target thread, while
+     * process-directed timers record it on the thread-group leader.  Linux
+     * sigtimedwait must preserve SI_TIMER for either delivery form. */
+    uint64_t *timer_pending = &task->timer_pending_signals;
+    struct task *leader = sched_find(sched_task_tgid(task));
+    if (leader && (*timer_pending & bit) == 0 &&
+        (&leader->timer_pending_signals != timer_pending))
+        timer_pending = &leader->timer_pending_signals;
+    bool timer_signal = (*timer_pending & bit) != 0;
     task->pending_signals &= ~bit;
     *sched_task_process_pending(task) &= ~bit;
     if (timer_signal) *timer_pending &= ~bit;

@@ -4850,7 +4850,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         if (!file) {
             return -LEONOS_EBADF;
         }
-        if (file->node.type == LEONOS_FS_TYPE_FILE) {
+        if (file->node.type == LEONOS_FS_TYPE_FILE ||
+            (file->flags & TASK_FILE_FLAG_DEV_SHM)) {
             size = (int64_t)file->node.size;
             base = 0;
             if ((int)a2 == LEONOS_SEEK_CUR) {

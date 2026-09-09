@@ -823,7 +823,7 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
             max_prot &= ~LINUX_PROT_WRITE;
             if (prot & LINUX_PROT_WRITE) return -LEONOS_EACCES;
         }
-        if (file->flags & TASK_FILE_FLAG_DEV_NODE) {
+        if (file->flags & (TASK_FILE_FLAG_DEV_NODE | TASK_FILE_FLAG_DEV_SHM)) {
             uint64_t bytes;
             if (file->node.first_cluster == STORAGE_DEV_KIND_ZERO) {
                 anonymous = 1;
