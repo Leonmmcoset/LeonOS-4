@@ -87,6 +87,21 @@ static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr,
 #define OSS_DSP_FRAGMENT_BYTES 2048U
 #define OSS_DSP_FRAGMENT_COUNT 8U
 #define OSS_DSP_QUEUE_BYTES (OSS_DSP_FRAGMENT_BYTES * OSS_DSP_FRAGMENT_COUNT)
+#define TASK_EPOLL_MAX_ENTRIES 128u
+
+struct task_epoll_entry {
+    int32_t fd;
+    uint32_t events;
+    uint64_t data;
+    uint32_t ready;
+    uint32_t active;
+};
+
+struct task_epoll {
+    uint32_t entries;
+    uint32_t reserved;
+    struct task_epoll_entry item[TASK_EPOLL_MAX_ENTRIES];
+};
 
 #include <linux/stat.h>
 #include <linux/errno.h>
@@ -617,6 +632,9 @@ void clear_task_file(struct task_file *file)
     task_socket_release(file);
     task_inet_release(file);
     task_shm_release(file);
+    if ((file->flags & TASK_FILE_FLAG_EPOLL) && file->aux) {
+        kernel_free((void *)(uintptr_t)file->aux);
+    }
     if ((file->flags & TASK_FILE_FLAG_DEV_NODE) &&
         (file->node.first_cluster == STORAGE_DEV_KIND_KEYBOARD ||
          file->node.first_cluster == STORAGE_DEV_KIND_MOUSE) &&
@@ -2993,6 +3011,207 @@ int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms)
     return syscall_poll_impl(task, (struct pollfd *)(uintptr_t)fds_ptr, nfds, timeout_ms);
 }
 
+static uint32_t epoll_to_poll(uint32_t events)
+{
+    uint32_t result = 0;
+    if (events & (EPOLLIN | EPOLLRDNORM | EPOLLRDBAND | EPOLLMSG)) result |= POLLIN;
+    if (events & (EPOLLOUT | EPOLLWRNORM | EPOLLWRBAND)) result |= POLLOUT;
+    if (events & EPOLLPRI) result |= POLLPRI;
+    return result;
+}
+
+static uint32_t poll_to_epoll(short events)
+{
+    uint32_t result = 0;
+    if (events & (POLLIN | POLLRDNORM | POLLRDBAND)) result |= EPOLLIN;
+    if (events & (POLLOUT | POLLWRNORM | POLLWRBAND)) result |= EPOLLOUT;
+    if (events & POLLPRI) result |= EPOLLPRI;
+    if (events & POLLERR) result |= EPOLLERR;
+    if (events & POLLHUP) result |= EPOLLHUP;
+    if (events & POLLRDHUP) result |= EPOLLRDHUP;
+    if (events & POLLNVAL) result |= EPOLLERR;
+    return result;
+}
+
+static struct task_epoll *task_epoll_for_fd(struct task *task, int fd)
+{
+    struct task_file *file = task_file_for_fd(task, fd);
+    if (!file || !(file->flags & TASK_FILE_FLAG_EPOLL) || !file->aux) return NULL;
+    return (struct task_epoll *)(uintptr_t)file->aux;
+}
+
+static int64_t syscall_epoll_create(uint64_t size, uint32_t flags)
+{
+    struct task *task = sched_current_task();
+    struct storage_node node = {
+        .type = LEONOS_FS_TYPE_DEVICE,
+        .flags = STORAGE_NODE_FLAG_DEV_NODE,
+    };
+    struct task_epoll *epoll;
+    struct task_file *file;
+    int fd;
+    if (!task || (flags & ~LINUX_O_CLOEXEC) || (!flags && !size)) return -LEONOS_EINVAL;
+    epoll = kernel_malloc(sizeof(*epoll));
+    if (!epoll) return -LEONOS_ENOMEM;
+    *epoll = (struct task_epoll){0};
+    fd = alloc_task_fd(task, &node, TASK_FILE_FLAG_EPOLL | LEONOS_O_RDWR |
+                       (flags & LINUX_O_CLOEXEC), NULL);
+    if (fd < 0) {
+        kernel_free(epoll);
+        return fd;
+    }
+    file = task_file_for_fd(task, fd);
+    if (!file) {
+        kernel_free(epoll);
+        return -LEONOS_EMFILE;
+    }
+    file->aux = (uint64_t)(uintptr_t)epoll;
+    return fd;
+}
+
+static int epoll_event_valid(uint32_t events)
+{
+    const uint32_t supported = EPOLLIN | EPOLLPRI | EPOLLOUT | EPOLLERR | EPOLLHUP |
+        EPOLLRDNORM | EPOLLRDBAND | EPOLLWRNORM | EPOLLWRBAND | EPOLLMSG |
+        EPOLLRDHUP | EPOLLEXCLUSIVE | EPOLLWAKEUP | EPOLLONESHOT | EPOLLET;
+    return !(events & ~supported);
+}
+
+static int64_t syscall_epoll_ctl(uint64_t epfd_arg, uint64_t op_arg,
+                                 uint64_t fd_arg, uint64_t event_ptr)
+{
+    struct task *task = sched_current_task();
+    struct task_epoll *epoll;
+    struct task_file *target;
+    struct epoll_event event;
+    int epfd = (int)epfd_arg;
+    int fd = (int)fd_arg;
+    uint32_t op = (uint32_t)op_arg;
+    int found = -1;
+    if (!task || epfd_arg > INT32_MAX || fd_arg > INT32_MAX) return -LEONOS_EBADF;
+    epoll = task_epoll_for_fd(task, epfd);
+    target = task_file_for_fd(task, fd);
+    if (!epoll || !target || fd == epfd) return -LEONOS_EBADF;
+    if (op != EPOLL_CTL_DEL && (!event_ptr || !user_range_ok(event_ptr, sizeof(event))))
+        return -LEONOS_EFAULT;
+    if (op != EPOLL_CTL_DEL) {
+        event = *(const struct epoll_event *)(uintptr_t)event_ptr;
+        if (!epoll_event_valid(event.events) || (event.events & EPOLLEXCLUSIVE))
+            return -LEONOS_EINVAL;
+    }
+    for (uint32_t i = 0; i < TASK_EPOLL_MAX_ENTRIES; ++i) {
+        if (epoll->item[i].active && epoll->item[i].fd == fd) {
+            found = (int)i;
+            break;
+        }
+    }
+    if (op == EPOLL_CTL_ADD) {
+        if (found >= 0) return -LEONOS_EEXIST;
+        for (uint32_t i = 0; i < TASK_EPOLL_MAX_ENTRIES; ++i) {
+            if (epoll->item[i].active) continue;
+            epoll->item[i] = (struct task_epoll_entry){
+                .fd = fd, .events = event.events, .data = event.data,
+                .active = 1,
+            };
+            ++epoll->entries;
+            return 0;
+        }
+        return -LEONOS_ENOSPC;
+    }
+    if (op == EPOLL_CTL_MOD) {
+        if (found < 0) return -LEONOS_ENOENT;
+        epoll->item[found].events = event.events;
+        epoll->item[found].data = event.data;
+        epoll->item[found].ready = 0;
+        return 0;
+    }
+    if (op == EPOLL_CTL_DEL) {
+        if (found < 0) return -LEONOS_ENOENT;
+        epoll->item[found] = (struct task_epoll_entry){0};
+        --epoll->entries;
+        return 0;
+    }
+    return -LEONOS_EINVAL;
+}
+
+static int64_t syscall_epoll_wait_common(struct task *task, struct task_epoll *epoll,
+                                         uint64_t events_ptr, uint32_t maxevents,
+                                         int64_t timeout_ms)
+{
+    uint32_t written = 0;
+    if (!maxevents || maxevents > TASK_EPOLL_MAX_ENTRIES)
+        return -LEONOS_EINVAL;
+    if (!user_range_writable(events_ptr, (uint64_t)maxevents * sizeof(struct epoll_event)))
+        return -LEONOS_EFAULT;
+    if (timeout_ms < -1) return -LEONOS_EINVAL;
+    if (timeout_ms != 0 && task->poll_deadline_ticks && time_ticks() >= task->poll_deadline_ticks)
+        task->poll_deadline_ticks = 0;
+    for (uint32_t i = 0; i < TASK_EPOLL_MAX_ENTRIES && written < maxevents; ++i) {
+        struct task_epoll_entry *entry = &epoll->item[i];
+        struct pollfd pollfd;
+        uint32_t ready;
+        if (!entry->active || !entry->events) continue;
+        pollfd = (struct pollfd){.fd = entry->fd, .events = (int16_t)epoll_to_poll(entry->events)};
+        (void)syscall_poll_impl(task, &pollfd, 1, 0);
+        ready = poll_to_epoll(pollfd.revents);
+        if (!ready) {
+            entry->ready = 0;
+            continue;
+        }
+        if ((entry->events & EPOLLET) && entry->ready) {
+            entry->ready = ready;
+            continue;
+        }
+        ((struct epoll_event *)(uintptr_t)events_ptr)[written++] =
+            (struct epoll_event){.events = ready, .data = entry->data};
+        entry->ready = ready;
+        if (entry->events & EPOLLONESHOT) entry->events = 0;
+    }
+    if (written) {
+        task->poll_deadline_ticks = 0;
+        return written;
+    }
+    if (timeout_ms == 0) {
+        task->poll_deadline_ticks = 0;
+        return 0;
+    }
+    return syscall_poll_park(task, timeout_ms);
+}
+
+static int64_t syscall_epoll_wait(uint64_t epfd_arg, uint64_t events_ptr,
+                                  uint64_t maxevents_arg, int64_t timeout_ms)
+{
+    struct task *task = sched_current_task();
+    struct task_epoll *epoll;
+    if (!task || epfd_arg > INT32_MAX || maxevents_arg > UINT32_MAX)
+        return -LEONOS_EBADF;
+    epoll = task_epoll_for_fd(task, (int)epfd_arg);
+    if (!epoll) return -LEONOS_EBADF;
+    return syscall_epoll_wait_common(task, epoll, events_ptr, (uint32_t)maxevents_arg, timeout_ms);
+}
+
+static int64_t syscall_epoll_pwait2(uint64_t epfd, uint64_t events, uint64_t maxevents,
+                                    uint64_t timeout, uint64_t sigmask, uint64_t sigsetsize)
+{
+    int64_t timeout_ms = -1;
+    if (sigmask) {
+        if (sigsetsize != sizeof(uint64_t) || !user_range_ok(sigmask, sizeof(uint64_t)))
+            return -LEONOS_EINVAL;
+        /* Atomic temporary signal masks are not yet exposed by the scheduler. */
+        return -LEONOS_ENOSYS;
+    }
+    if (timeout) {
+        struct linux_timespec value;
+        if (!user_range_ok(timeout, sizeof(value))) return -LEONOS_EFAULT;
+        value = *(const struct linux_timespec *)(uintptr_t)timeout;
+        if (value.tv_sec < 0 || value.tv_nsec < 0 || value.tv_nsec >= 1000000000LL)
+            return -LEONOS_EINVAL;
+        if (value.tv_sec > INT64_MAX / 1000) timeout_ms = INT64_MAX;
+        else timeout_ms = value.tv_sec * 1000 + (value.tv_nsec + 999999) / 1000000;
+    }
+    return syscall_epoll_wait(epfd, events, maxevents, timeout_ms);
+}
+
 #define LINUX_SELECT_MAX_FDS 1024U
 
 static bool syscall_select_bit(const uint64_t *set, uint32_t fd)
@@ -3291,6 +3510,12 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
     case LINUX_SYS_COPY_FILE_RANGE:
     case LINUX_SYS_EVENTFD:
     case LINUX_SYS_EVENTFD2:
+    case LINUX_SYS_EPOLL_CREATE:
+    case LINUX_SYS_EPOLL_WAIT:
+    case LINUX_SYS_EPOLL_CTL:
+    case LINUX_SYS_EPOLL_PWAIT:
+    case LINUX_SYS_EPOLL_CREATE1:
+    case LINUX_SYS_EPOLL_PWAIT2:
     case LINUX_SYS_MEMFD_CREATE:
     case LINUX_SYS_LSEEK:
     case LINUX_SYS_FTRUNCATE:
@@ -3545,6 +3770,16 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         sched_block_current();
         return -LEONOS_EINTR;
     }
+    if (number == LINUX_SYS_EPOLL_CREATE)
+        return syscall_epoll_create(a0, 0);
+    if (number == LINUX_SYS_EPOLL_CREATE1)
+        return syscall_epoll_create(1, (uint32_t)a0);
+    if (number == LINUX_SYS_EPOLL_CTL)
+        return syscall_epoll_ctl(a0, a1, a2, a3);
+    if (number == LINUX_SYS_EPOLL_WAIT || number == LINUX_SYS_EPOLL_PWAIT)
+        return syscall_epoll_wait(a0, a1, a2, (int64_t)a3);
+    if (number == LINUX_SYS_EPOLL_PWAIT2)
+        return syscall_epoll_pwait2(a0, a1, a2, a3, a4, a5);
     if (number == LINUX_SYS_EVENTFD || number == LINUX_SYS_EVENTFD2) {
         return syscall_eventfd_create(a0, number == LINUX_SYS_EVENTFD2 ? (uint32_t)a1 : 0);
     }

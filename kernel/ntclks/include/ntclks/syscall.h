@@ -11,6 +11,7 @@
 #include <linux/poll.h>
 #include <linux/fcntl.h>
 #include <linux/eventfd.h>
+#include <linux/epoll.h>
 #include <linux/prctl.h>
 #include <linux/membarrier.h>
 #include <linux/openat2.h>
@@ -89,6 +90,12 @@
 #define LINUX_SYS_RT_SIGTIMEDWAIT __NR_rt_sigtimedwait
 #define LINUX_SYS_EVENTFD __NR_eventfd
 #define LINUX_SYS_EVENTFD2 __NR_eventfd2
+#define LINUX_SYS_EPOLL_CREATE __NR_epoll_create
+#define LINUX_SYS_EPOLL_WAIT __NR_epoll_wait
+#define LINUX_SYS_EPOLL_CTL __NR_epoll_ctl
+#define LINUX_SYS_EPOLL_PWAIT __NR_epoll_pwait
+#define LINUX_SYS_EPOLL_CREATE1 __NR_epoll_create1
+#define LINUX_SYS_EPOLL_PWAIT2 __NR_epoll_pwait2
 #define LINUX_SYS_EXECVE __NR_execve
 #define LINUX_SYS_EXIT __NR_exit
 #define LINUX_SYS_WAIT4 __NR_wait4

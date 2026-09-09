@@ -22,6 +22,7 @@
 #include <string.h>
 #include <sys/auxv.h>
 #include <sys/eventfd.h>
+#include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -134,6 +135,31 @@ static int memfd_abi(void)
     return 0;
 }
 
+static int epoll_abi(void)
+{
+    int pipefd[2];
+    CHECK(pipe(pipefd) == 0);
+    int epfd = syscall(SYS_epoll_create1, EPOLL_CLOEXEC);
+    CHECK(epfd >= 0);
+    struct epoll_event event = {.events = EPOLLIN, .data.u64 = 0xfeedbeef};
+    CHECK(syscall(SYS_epoll_ctl, epfd, EPOLL_CTL_ADD, pipefd[0], &event) == 0);
+    struct epoll_event output = {0};
+    CHECK(syscall(SYS_epoll_wait, epfd, &output, 1, 0) == 0);
+    CHECK(write(pipefd[1], "e", 1) == 1);
+    CHECK(syscall(SYS_epoll_wait, epfd, &output, 1, 100) == 1);
+    CHECK((output.events & EPOLLIN) && output.data.u64 == 0xfeedbeef);
+    char byte;
+    CHECK(read(pipefd[0], &byte, 1) == 1 && byte == 'e');
+    event.events = EPOLLIN | EPOLLONESHOT;
+    CHECK(syscall(SYS_epoll_ctl, epfd, EPOLL_CTL_MOD, pipefd[0], &event) == 0);
+    CHECK(write(pipefd[1], "e", 1) == 1);
+    CHECK(syscall(SYS_epoll_wait, epfd, &output, 1, 100) == 1);
+    CHECK(syscall(SYS_epoll_wait, epfd, &output, 1, 0) == 0);
+    CHECK(syscall(SYS_epoll_ctl, epfd, EPOLL_CTL_DEL, pipefd[0], NULL) == 0);
+    CHECK(close(epfd) == 0 && close(pipefd[0]) == 0 && close(pipefd[1]) == 0);
+    return 0;
+}
+
 static int startup(int argc, char **argv)
 {
     CHECK(argc >= 1 && argv && argv[argc] == NULL);
@@ -181,6 +207,7 @@ static int startup(int argc, char **argv)
     CHECK(run_openat2_abi_test() == 0);
     CHECK(timer_abi() == 0);
     CHECK(memfd_abi() == 0);
+    CHECK(epoll_abi() == 0);
     struct timespec invalid_clock = {.tv_sec = 0, .tv_nsec = 1000000000L};
     CHECK(syscall(SYS_clock_settime, CLOCK_REALTIME, &invalid_clock) == -1 && errno == EINVAL);
     CHECK(syscall(SYS_sched_getparam, 0x7fffffff, &sched_value) == -1 && errno == ESRCH);

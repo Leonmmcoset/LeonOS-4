@@ -17,7 +17,7 @@
 - 对照基线：Linux **v6.12 native x86-64**，只统计 syscall_64.tbl 中 `common` 和 `64`，排除 x32、i386 和没有编号的空洞。这是固定版本的覆盖审计，不是“当前最新 Linux”的调用数量。
 - 方法：检查真实 Ring 3 trap 分发、类别转发和实际处理函数，再与官方 Linux UAPI/实现及 musl v1.2.5 初始化路径对照。官方源码通过 `http://127.0.0.1:12334` 获取。
 - 初始报告是静态审计；截至 2026-09-09，已有源码修复、宿主测试、真实 musl 静态/动态程序和部分 LTP 的 QEMU 结果。VMware 尚未验证。逐项证据及完整剩余范围见 `docs/LINUX_ABI_PROGRESS_2026-09-08.md`。
-- CSV 仍覆盖 Linux v6.12 native x86-64 的 375 个编号。当前状态为：156 项 `missing_dispatch`、5 项定时器 `completed`、84 项 `routed_not_certified`、113 项 `implemented_pending_runtime`、17 项 Linux 保留/ni。部分调用通过定向测试，不表示整项兼容；`verification_scope` 和 `verification_evidence` 单独记录验证边界。
+- CSV 仍覆盖 Linux v6.12 native x86-64 的 375 个编号。当前状态为：149 项 `missing_dispatch`、5 项定时器 `completed`、84 项 `routed_not_certified`、120 项 `implemented_pending_runtime`、17 项 Linux 保留/ni。epoll 基础入口和 `rt_sigtimedwait` 已有实际 QEMU musl 探针证据；`epoll_pwait` 的原子信号掩码等完整语义仍待补齐。部分调用通过定向测试，不表示整项兼容；`verification_scope` 和 `verification_evidence` 单独记录验证边界。
 
 ## 本轮实际修复与状态
 
@@ -25,7 +25,7 @@
 
 状态定义：`implemented_pending_runtime` = 本轮新增了实现，但完整运行语义仍待验证或补齐，可有局部 QEMU/LTP 通过证据；`routed_not_certified` = 原有处理入口仍未证明完整 Linux 语义；`missing_dispatch` = 当前仍无 Linux 分发入口；`linux_reserved_or_ni` = Linux 自身保留或 `sys_ni_syscall`。B01-B46 另按未处理、已实现待验证、已验证、具体阻塞记录，没有把编译成功当作 ABI 兼容认证。
 
-已实现待运行验证的入口包括：`pause`(34)、`lstat`、`pread64`/`pwrite64`、`readv`/`writev`、`preadv`/`pwritev`、`preadv2`/`pwritev2`、`access`、`fsync`/`fdatasync`、`truncate`、`fchdir`、`umask`、`arch_prctl`、`gettid`、`futex`、`getdents64`、`set_tid_address`、`clock_getres`、`clock_nanosleep`、`time`、`getcpu`、`close_range`、`statx`、`sendfile`、`copy_file_range`、`eventfd`/`eventfd2`、`setreuid`/`setregid`、`setresuid`/`getresuid`、`setresgid`/`getresgid`、`exit_group`、`newfstatat`、`getrandom` 和 `personality`。这些行已在 CSV 中从缺失/冲突改为 `implemented_pending_runtime`，源码位置以 CSV 为准。
+已实现待运行验证的入口包括：`pause`(34)、`lstat`、`pread64`/`pwrite64`、`readv`/`writev`、`preadv`/`pwritev`、`preadv2`/`pwritev2`、`access`、`fsync`/`fdatasync`、`truncate`、`fchdir`、`umask`、`arch_prctl`、`gettid`、`futex`、`getdents64`、`set_tid_address`、`clock_getres`、`clock_nanosleep`、`time`、`getcpu`、`close_range`、`statx`、`sendfile`、`copy_file_range`、`eventfd`/`eventfd2`、`setreuid`/`setregid`、`setresuid`/`getresuid`、`setresgid`/`getresgid`、`exit_group`、`newfstatat`、`getrandom`、`personality`、`rt_sigtimedwait`、`epoll_create`/`epoll_create1`、`epoll_ctl`、`epoll_wait`、`epoll_pwait` 和 `epoll_pwait2`。这些行已在 CSV 中从缺失/冲突改为 `implemented_pending_runtime`，源码位置和验证边界以 CSV 为准。
 
 权限阶段另新增 12 个入口：`lchown`、`getgroups`/`setgroups`、`statfs`/`fstatfs`、`mkdirat`、`fchownat`、`unlinkat`、`fchmodat`、`faccessat`/`faccessat2`、`fchmodat2`。owner/group/other、32 位 UID/GID、umask、sticky 目录、附加组、目录遍历以及 chmod/chown 已有实际实现；FAT/exFAT 使用持久化元数据，ext2 写真实 inode。旧 ACL 记录按需迁移，文件属性页和 BusyBox/Picolibc 消费者同步修改。
 
@@ -512,7 +512,7 @@ Linux 用 ioctl(fd,EVIOCGRAB,1/0) 的参数值表示抓取或释放，虽然宏�
 
 #### B45 poll 就绪与无限等待语义
 
-poll 已修复 `poll(NULL,0,-1)` 的无限等待/信号中断、普通文件 EOF readiness、32 位 `nfds` 和 `revents` 可写校验，并补了 Unix shutdown/error/hangup 和 FIONREAD。当前仍依赖一 tick 重试轮询；10 ms 级轮询精度及 ppoll/pselect/epoll 的缺失仍属于 B45 未完成范围。
+poll 已修复 `poll(NULL,0,-1)` 的无限等待/信号中断、普通文件 EOF readiness、32 位 `nfds` 和 `revents` 可写校验，并补了 Unix shutdown/error/hangup 和 FIONREAD；epoll 基础 create/ctl/wait/oneshot/packed-event 路径已通过 static/dynamic musl QEMU 探针。当前仍依赖一 tick 重试轮询；10 ms 级轮询精度、ppoll/pselect、epoll 原子临时信号掩码及完整 wait queue/device/resource 语义属于 B45 未完成范围。
 
 代码：[kernel/ntclks/syscall.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/syscall.c:2551)，[kernel/ntclks/syscall.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/syscall.c:2584)，[kernel/ntclks/syscall.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/syscall.c:2656)，[kernel/ntclks/syscall.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/syscall.c:4264)。
 
