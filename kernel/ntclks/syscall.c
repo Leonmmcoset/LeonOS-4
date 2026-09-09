@@ -31,6 +31,8 @@
 static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
                                      uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5);
+static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr,
+                                  uint32_t *out_len);
 
 #include <ntclks/version.h>
 
@@ -988,6 +990,37 @@ static int64_t syscall_eventfd_create(uint64_t initial, uint32_t flags)
     if (!file) return -LEONOS_EMFILE;
     file->aux = initial;
     file->aux2 = (flags & LINUX_EFD_SEMAPHORE) != 0;
+    return fd;
+}
+
+static int64_t syscall_memfd_create(uint64_t name_ptr, uint32_t flags)
+{
+    struct task *task = sched_current_task();
+    struct storage_node node = {
+        .type = LEONOS_FS_TYPE_DEVICE,
+        .flags = STORAGE_NODE_FLAG_DEV_NODE,
+        .first_cluster = STORAGE_DEV_KIND_SHM,
+    };
+    struct task_file *file;
+    char name[256];
+    int fd;
+    int ret;
+    if (!task || !name_ptr || (flags & ~(1u | 2u))) return -LEONOS_EINVAL;
+    ret = copy_user_string_fixed(name, sizeof(name), name_ptr, NULL);
+    if (ret < 0) return ret;
+    if (!name[0]) return -LEONOS_EINVAL;
+    fd = alloc_task_fd(task, &node, LEONOS_O_RDWR, NULL);
+    if (fd < 0) return fd;
+    file = task_file_for_fd(task, fd);
+    if (!file || task_shm_attach(file) < 0) {
+        if (file) clear_task_file(file);
+        return -LEONOS_ENOMEM;
+    }
+    if (task_shm_truncate(file, 0) < 0) {
+        clear_task_file(file);
+        return -LEONOS_ENOMEM;
+    }
+    if (flags & 1u) file->fd_flags = LEONOS_FD_CLOEXEC;
     return fd;
 }
 
@@ -3258,6 +3291,7 @@ int64_t syscall_dispatch(const struct syscall_frame *frame)
     case LINUX_SYS_COPY_FILE_RANGE:
     case LINUX_SYS_EVENTFD:
     case LINUX_SYS_EVENTFD2:
+    case LINUX_SYS_MEMFD_CREATE:
     case LINUX_SYS_LSEEK:
     case LINUX_SYS_FTRUNCATE:
     case LINUX_SYS_BRK:
@@ -3514,6 +3548,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
     if (number == LINUX_SYS_EVENTFD || number == LINUX_SYS_EVENTFD2) {
         return syscall_eventfd_create(a0, number == LINUX_SYS_EVENTFD2 ? (uint32_t)a1 : 0);
     }
+    if (number == LINUX_SYS_MEMFD_CREATE) return syscall_memfd_create(a0, (uint32_t)a1);
     if (number == LINUX_SYS_POLL) {
         return syscall_poll(a0, a1, (int64_t)a2);
     }
@@ -3743,6 +3778,10 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             file->aux += value;
             return sizeof(uint64_t);
         }
+        if (file->flags & TASK_FILE_FLAG_DEV_SHM) {
+            if (a2 && !user_range_ok(a1, a2)) return -LEONOS_EFAULT;
+            return task_shm_write(file, (const void *)(uintptr_t)a1, (uint32_t)a2);
+        }
         if (file->flags & TASK_FILE_FLAG_DEV_NODE) {
             if (!file_can_write(file)) return -LEONOS_EBADF;
             request_len = a2 > LEONOS_FS_IO_SLICE_BYTES
@@ -3859,6 +3898,10 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             file->aux -= value;
             *(uint64_t *)(uintptr_t)a1 = value;
             return sizeof(uint64_t);
+        }
+        if (file->flags & TASK_FILE_FLAG_DEV_SHM) {
+            if (a2 && !user_range_writable(a1, a2)) return -LEONOS_EFAULT;
+            return task_shm_read(file, (void *)(uintptr_t)a1, (uint32_t)a2);
         }
         if (file->flags & TASK_FILE_FLAG_DEV_NODE) {
             if (!file_can_read(file)) return -LEONOS_EBADF;

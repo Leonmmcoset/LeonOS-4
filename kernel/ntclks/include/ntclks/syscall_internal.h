@@ -66,6 +66,8 @@ void task_shm_retain(struct task_file *file);
 void task_shm_release(struct task_file *file);
 int task_shm_attach(struct task_file *file);
 int task_shm_truncate(struct task_file *file, uint64_t size);
+int task_shm_read(struct task_file *file, void *buffer, uint32_t length);
+int task_shm_write(struct task_file *file, const void *buffer, uint32_t length);
 int task_shm_map(const struct task_file *file, uint64_t offset, uint64_t length,
                  uint64_t *physical);
 int syscall_fs_owns(uint64_t number);

@@ -17,7 +17,7 @@
 - 对照基线：Linux **v6.12 native x86-64**，只统计 syscall_64.tbl 中 `common` 和 `64`，排除 x32、i386 和没有编号的空洞。这是固定版本的覆盖审计，不是“当前最新 Linux”的调用数量。
 - 方法：检查真实 Ring 3 trap 分发、类别转发和实际处理函数，再与官方 Linux UAPI/实现及 musl v1.2.5 初始化路径对照。官方源码通过 `http://127.0.0.1:12334` 获取。
 - 初始报告是静态审计；截至 2026-09-09，已有源码修复、宿主测试、真实 musl 静态/动态程序和部分 LTP 的 QEMU 结果。VMware 尚未验证。逐项证据及完整剩余范围见 `docs/LINUX_ABI_PROGRESS_2026-09-08.md`。
-- CSV 仍覆盖 Linux v6.12 native x86-64 的 375 个编号。当前状态为：157 项 `missing_dispatch`、5 项定时器 `completed`、84 项 `routed_not_certified`、112 项 `implemented_pending_runtime`、17 项 Linux 保留/ni。部分调用通过定向测试，不表示整项兼容；`verification_scope` 和 `verification_evidence` 单独记录验证边界。
+- CSV 仍覆盖 Linux v6.12 native x86-64 的 375 个编号。当前状态为：156 项 `missing_dispatch`、5 项定时器 `completed`、84 项 `routed_not_certified`、113 项 `implemented_pending_runtime`、17 项 Linux 保留/ni。部分调用通过定向测试，不表示整项兼容；`verification_scope` 和 `verification_evidence` 单独记录验证边界。
 
 ## 本轮实际修复与状态
 

@@ -147,6 +147,7 @@
 #define LINUX_SYS_SETDOMAINNAME __NR_setdomainname
 #define LINUX_SYS_MEMBARRIER __NR_membarrier
 #define LINUX_SYS_OPENAT2 __NR_openat2
+#define LINUX_SYS_MEMFD_CREATE __NR_memfd_create
 #define LINUX_SYS_GETTIMEOFDAY __NR_gettimeofday
 #define LINUX_SYS_SETTIMEOFDAY __NR_settimeofday
 #define LINUX_SYS_CLOCK_SETTIME __NR_clock_settime

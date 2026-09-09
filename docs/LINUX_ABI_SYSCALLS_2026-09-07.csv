@@ -318,7 +318,7 @@ number,linux_name,linux_abi,linux_entry,leonos_status,leonos_dispatch_macro,leon
 316,renameat2,common,sys_renameat2,implemented_pending_runtime,LINUX_SYS_RENAMEAT2,kernel/ntclks/syscall.c,4118,partial_guest,Zero-flag renameat2 shares the native rename path; exchange/noreplace flags return EOPNOTSUPP until storage supports atomic variants
 317,seccomp,common,sys_seccomp,missing_dispatch,,,,not_verified,See LINUX_ABI_PROGRESS_2026-09-08.md; no full ABI certification
 318,getrandom,common,sys_getrandom,implemented_pending_runtime,LINUX_SYS_GETRANDOM,kernel/ntclks/syscall.c,4179,not_verified,See LINUX_ABI_PROGRESS_2026-09-08.md; no full ABI certification
-319,memfd_create,common,sys_memfd_create,missing_dispatch,,,,not_verified,See LINUX_ABI_PROGRESS_2026-09-08.md; no full ABI certification
+319,memfd_create,common,sys_memfd_create,implemented_pending_runtime,LINUX_SYS_MEMFD_CREATE,kernel/ntclks/syscall.c,3545,partial_guest,"Native anonymous shared-memory object with name/flag validation, CLOEXEC, zero initial size, ftruncate, read/write and mmap backing; kernel build passes; guest static musl coverage and sealing semantics remain"
 320,kexec_file_load,common,sys_kexec_file_load,missing_dispatch,,,,not_verified,See LINUX_ABI_PROGRESS_2026-09-08.md; no full ABI certification
 321,bpf,common,sys_bpf,missing_dispatch,,,,not_verified,See LINUX_ABI_PROGRESS_2026-09-08.md; no full ABI certification
 322,execveat,64,sys_execveat,missing_dispatch,,,,not_verified,See LINUX_ABI_PROGRESS_2026-09-08.md; no full ABI certification
