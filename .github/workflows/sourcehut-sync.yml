@@ -1,0 +1,88 @@
+name: Sync branches to SourceHut
+
+on:
+  push:
+    branches:
+      - "**"
+  delete:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Do not cancel an in-flight sync: a later push must wait for the earlier
+# force-push instead of allowing two branch sets to race on SourceHut.
+concurrency:
+  group: leonos4-sourcehut-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Force-sync all branches
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository history
+        uses: actions/checkout@v4
+        with:
+          # A delete event has no checkout-able deleted ref. The explicit
+          # fetch below is authoritative, so use the current default branch.
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: false
+          # The checkout token is needed for the explicit all-branches fetch.
+          persist-credentials: true
+
+      - name: Configure SourceHut SSH
+        env:
+          SOURCEHUT_SSH_PRIVATE_KEY: ${{ secrets.SOURCEHUT_SSH_PRIVATE_KEY }}
+          SOURCEHUT_REPOSITORY: ${{ secrets.SOURCEHUT_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          test -n "$SOURCEHUT_SSH_PRIVATE_KEY" || {
+            echo "Missing required secret: SOURCEHUT_SSH_PRIVATE_KEY" >&2
+            exit 1
+          }
+          test -n "$SOURCEHUT_REPOSITORY" || {
+            echo "Missing required secret: SOURCEHUT_REPOSITORY" >&2
+            exit 1
+          }
+          case "$SOURCEHUT_REPOSITORY" in
+            git@git.sr.ht:~*/*|ssh://git@git.sr.ht/~*/*) ;;
+            *)
+              echo "SOURCEHUT_REPOSITORY must be git@git.sr.ht:~user/repository" >&2
+              exit 1
+              ;;
+          esac
+
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SOURCEHUT_SSH_PRIVATE_KEY" > "$HOME/.ssh/sourcehut_sync_key"
+          chmod 600 "$HOME/.ssh/sourcehut_sync_key"
+
+          # Pinned git.sr.ht host keys. Keeping StrictHostKeyChecking enabled
+          # prevents a network interception from receiving the sync key.
+          cat > "$HOME/.ssh/known_hosts" <<'EOF'
+          git.sr.ht ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMZvRd4EtM7R+IHVMWmDkVU3VLQTSwQDSAvW0t2Tkj60
+          git.sr.ht ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDZ+l/lvYmaeOAPeijHL8d4794Am0MOvmXPyvHTtrqvgmvCJB8pen/qkQX2S1fgl9VkMGSNxbp7NF7HmKgs5ajTGV9mB5A5zq+161lcp5+f1qmn3Dp1MWKp/AzejWXKW+dwPBd3kkudDBA1fa3uK6g1gK5nLw3qcuv/V4emX9zv3P2ZNlq9XRvBxGY2KzaCyCXVkL48RVTTJJnYbVdRuq8/jQkDRA8lHvGvKI+jqnljmZi2aIrK9OGT2gkCtfyTw2GvNDV6aZ0bEza7nDLU/I+xmByAOO79R1Uk4EYCvSc1WXDZqhiuO2sZRmVxa0pQSBDn1DB3rpvqPYW+UvKB3SOz
+          git.sr.ht ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBCj6y+cJlqK3BHZRLZuM+KP2zGPrh4H66DacfliU1E2DHAd1GGwF4g1jwu3L8gOZUTIvUptqWTkmglpYhFp4Iy4=
+          EOF
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          git remote add sourcehut "$SOURCEHUT_REPOSITORY"
+          git config --local core.sshCommand \
+            "ssh -i $HOME/.ssh/sourcehut_sync_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+
+      - name: Fetch every GitHub branch
+        run: |
+          set -euo pipefail
+          git fetch --force --prune origin \
+            '+refs/heads/*:refs/sync/github/*'
+          test -n "$(git for-each-ref --format='%(refname)' refs/sync/github/)"
+
+      - name: Force-sync and prune SourceHut branches
+        run: |
+          set -euo pipefail
+          git push --force --prune sourcehut \
+            'refs/sync/github/*:refs/heads/*'
