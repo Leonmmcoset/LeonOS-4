@@ -90,6 +90,7 @@ static inline struct task_file *task_file_description(struct task_file *file)
 #define TASK_FILE_FLAG_SOCKET_INET 0x00800000u
 #define TASK_FILE_FLAG_EVENTFD     0x00400000u
 #define TASK_FILE_FLAG_EPOLL       0x00200000u
+#define TASK_FILE_FLAG_TIMERFD     0x00100000u
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {

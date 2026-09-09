@@ -1,0 +1,9 @@
+#ifndef LEONOS_UAPI_LINUX_TIMERFD_H
+#define LEONOS_UAPI_LINUX_TIMERFD_H
+
+#define TFD_TIMER_ABSTIME       1
+#define TFD_TIMER_CANCEL_ON_SET (1 << 1)
+#define TFD_CLOEXEC             02000000
+#define TFD_NONBLOCK            00004000
+
+#endif

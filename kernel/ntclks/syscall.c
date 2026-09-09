@@ -89,6 +89,14 @@ static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr,
 #define OSS_DSP_QUEUE_BYTES (OSS_DSP_FRAGMENT_BYTES * OSS_DSP_FRAGMENT_COUNT)
 #define TASK_EPOLL_MAX_ENTRIES 128u
 
+struct task_timerfd {
+    int32_t clockid;
+    uint32_t flags;
+    uint64_t expiry_tick;
+    uint64_t interval_ticks;
+    uint64_t expirations;
+};
+
 struct task_epoll_entry {
     int32_t fd;
     uint32_t events;
@@ -635,6 +643,9 @@ void clear_task_file(struct task_file *file)
     if ((file->flags & TASK_FILE_FLAG_EPOLL) && file->aux) {
         kernel_free((void *)(uintptr_t)file->aux);
     }
+    if ((file->flags & TASK_FILE_FLAG_TIMERFD) && file->aux) {
+        kernel_free((void *)(uintptr_t)file->aux);
+    }
     if ((file->flags & TASK_FILE_FLAG_DEV_NODE) &&
         (file->node.first_cluster == STORAGE_DEV_KIND_KEYBOARD ||
          file->node.first_cluster == STORAGE_DEV_KIND_MOUSE) &&
@@ -1009,6 +1020,120 @@ static int64_t syscall_eventfd_create(uint64_t initial, uint32_t flags)
     file->aux = initial;
     file->aux2 = (flags & LINUX_EFD_SEMAPHORE) != 0;
     return fd;
+}
+
+static struct task_timerfd *task_timerfd_for_fd(struct task *task, int fd)
+{
+    struct task_file *file = task_file_for_fd(task, fd);
+    if (!file || !(file->flags & TASK_FILE_FLAG_TIMERFD) || !file->aux) return NULL;
+    return (struct task_timerfd *)(uintptr_t)file->aux;
+}
+
+static void task_timerfd_update(struct task_timerfd *timer)
+{
+    uint64_t now = time_ticks();
+    if (!timer || !timer->expiry_tick || timer->expiry_tick > now) return;
+    if (!timer->interval_ticks) {
+        timer->expirations = 1;
+        timer->expiry_tick = 0;
+        return;
+    }
+    uint64_t periods = (now - timer->expiry_tick) / timer->interval_ticks + 1;
+    if (UINT64_MAX - timer->expirations < periods) timer->expirations = UINT64_MAX;
+    else timer->expirations += periods;
+    timer->expiry_tick += periods * timer->interval_ticks;
+}
+
+static int64_t syscall_timerfd_create(uint64_t clockid, uint32_t flags)
+{
+    struct task *task = sched_current_task();
+    struct storage_node node = {.type = LEONOS_FS_TYPE_DEVICE,
+                                .flags = STORAGE_NODE_FLAG_DEV_NODE,
+                                .first_cluster = 0};
+    struct task_timerfd *timer;
+    struct task_file *file;
+    int fd;
+    if (!task || (clockid != LINUX_CLOCK_REALTIME && clockid != LINUX_CLOCK_MONOTONIC) ||
+        (flags & ~(TFD_CLOEXEC | TFD_NONBLOCK))) return -LEONOS_EINVAL;
+    timer = kernel_malloc(sizeof(*timer));
+    if (!timer) return -LEONOS_ENOMEM;
+    *timer = (struct task_timerfd){.clockid = (int32_t)clockid, .flags = flags};
+    fd = alloc_task_fd(task, &node, TASK_FILE_FLAG_TIMERFD | LEONOS_O_RDWR |
+                       (flags & (TFD_CLOEXEC | TFD_NONBLOCK)), NULL);
+    if (fd < 0) { kernel_free(timer); return fd; }
+    file = task_file_for_fd(task, fd);
+    if (!file) { kernel_free(timer); return -LEONOS_EMFILE; }
+    file->aux = (uint64_t)(uintptr_t)timer;
+    return fd;
+}
+
+static int64_t syscall_timerfd_settime(uint64_t fd_arg, uint32_t flags,
+                                       uint64_t value_ptr, uint64_t old_ptr)
+{
+    struct task *task = sched_current_task();
+    struct task_timerfd *timer = task_timerfd_for_fd(task, (int)fd_arg);
+    struct linux_itimerspec value, old = {0};
+    uint64_t initial, interval;
+    if (!timer) return -LEONOS_EBADF;
+    if (flags & ~(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET)) return -LEONOS_EINVAL;
+    if (!user_range_ok(value_ptr, sizeof(value))) return -LEONOS_EFAULT;
+    value = *(const struct linux_itimerspec *)(uintptr_t)value_ptr;
+    if (value.it_value.tv_sec < 0 || value.it_value.tv_nsec < 0 || value.it_value.tv_nsec >= 1000000000LL ||
+        value.it_interval.tv_sec < 0 || value.it_interval.tv_nsec < 0 || value.it_interval.tv_nsec >= 1000000000LL)
+        return -LEONOS_EINVAL;
+    task_timerfd_update(timer);
+    if (timer->expiry_tick) {
+        uint64_t remaining = timer->expiry_tick > time_ticks() ? timer->expiry_tick - time_ticks() : 0;
+        old.it_value.tv_sec = (int64_t)(remaining / NTCLKS_TICK_HZ);
+        old.it_value.tv_nsec = (int64_t)((remaining % NTCLKS_TICK_HZ) * (1000000000ULL / NTCLKS_TICK_HZ));
+    }
+    old.it_interval.tv_sec = (int64_t)(timer->interval_ticks / NTCLKS_TICK_HZ);
+    old.it_interval.tv_nsec = (int64_t)((timer->interval_ticks % NTCLKS_TICK_HZ) * (1000000000ULL / NTCLKS_TICK_HZ));
+    if (flags & TFD_TIMER_ABSTIME) {
+        struct linux_timespec now = {0};
+        if (time_clock_get(timer->clockid, &now) < 0) return -LEONOS_EINVAL;
+        if (value.it_value.tv_sec < now.tv_sec ||
+            (value.it_value.tv_sec == now.tv_sec && value.it_value.tv_nsec <= now.tv_nsec)) {
+            initial = 1;
+        } else {
+            uint64_t sec = (uint64_t)(value.it_value.tv_sec - now.tv_sec);
+            int64_t nsec = value.it_value.tv_nsec - now.tv_nsec;
+            if (nsec < 0) { --sec; nsec += 1000000000LL; }
+            initial = sec * NTCLKS_TICK_HZ + ((uint64_t)nsec + 9999999ULL) / 10000000ULL;
+        }
+    } else {
+        initial = (uint64_t)value.it_value.tv_sec * NTCLKS_TICK_HZ +
+                  ((uint64_t)value.it_value.tv_nsec + 9999999ULL) / 10000000ULL;
+    }
+    interval = (uint64_t)value.it_interval.tv_sec * NTCLKS_TICK_HZ +
+               ((uint64_t)value.it_interval.tv_nsec + 9999999ULL) / 10000000ULL;
+    timer->interval_ticks = interval;
+    timer->expirations = 0;
+    timer->expiry_tick = initial ? time_ticks() + initial : 0;
+    if (old_ptr) {
+        if (!user_range_writable(old_ptr, sizeof(old))) return -LEONOS_EFAULT;
+        *(struct linux_itimerspec *)(uintptr_t)old_ptr = old;
+    }
+    return 0;
+}
+
+static int64_t syscall_timerfd_gettime(uint64_t fd_arg, uint64_t value_ptr)
+{
+    struct task *task = sched_current_task();
+    struct task_timerfd *timer = task_timerfd_for_fd(task, (int)fd_arg);
+    struct linux_itimerspec value = {0};
+    if (!timer) return -LEONOS_EBADF;
+    if (!user_range_writable(value_ptr, sizeof(value))) return -LEONOS_EFAULT;
+    task_timerfd_update(timer);
+    if (timer->expiry_tick) {
+        uint64_t remaining = timer->expiry_tick > time_ticks() ? timer->expiry_tick - time_ticks() : 0;
+        value.it_value.tv_sec = (int64_t)(remaining / NTCLKS_TICK_HZ);
+        value.it_value.tv_nsec = (int64_t)((remaining % NTCLKS_TICK_HZ) * (1000000000ULL / NTCLKS_TICK_HZ));
+    }
+    value.it_interval.tv_sec = (int64_t)(timer->interval_ticks / NTCLKS_TICK_HZ);
+    value.it_interval.tv_nsec = (int64_t)((timer->interval_ticks % NTCLKS_TICK_HZ) * (1000000000ULL / NTCLKS_TICK_HZ));
+    *(struct linux_itimerspec *)(uintptr_t)value_ptr = value;
+    return 0;
 }
 
 static int64_t syscall_memfd_create(uint64_t name_ptr, uint32_t flags)
@@ -2931,6 +3056,11 @@ static int64_t syscall_poll_impl(struct task *task, struct pollfd *fds,
             if ((events & (POLLIN | POLLRDNORM)) && file->aux) revents |= POLLIN | POLLRDNORM;
             if ((events & (POLLOUT | POLLWRNORM)) && file->aux < UINT64_MAX - 1ULL)
                 revents |= POLLOUT | POLLWRNORM;
+        } else if (file && (file->flags & TASK_FILE_FLAG_TIMERFD)) {
+            struct task_timerfd *timer = (struct task_timerfd *)(uintptr_t)file->aux;
+            task_timerfd_update(timer);
+            if ((events & (POLLIN | POLLRDNORM)) && timer && timer->expirations)
+                revents |= POLLIN | POLLRDNORM;
         } else if (file && (file->flags & TASK_FILE_FLAG_DEV_NODE)) {
             if (task_device_is(file, STORAGE_DEV_KIND_KEYBOARD) ||
                 task_device_is(file, STORAGE_DEV_KIND_MOUSE)) {
@@ -3783,6 +3913,12 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
     if (number == LINUX_SYS_EVENTFD || number == LINUX_SYS_EVENTFD2) {
         return syscall_eventfd_create(a0, number == LINUX_SYS_EVENTFD2 ? (uint32_t)a1 : 0);
     }
+    if (number == LINUX_SYS_TIMERFD_CREATE)
+        return syscall_timerfd_create(a0, (uint32_t)a1);
+    if (number == LINUX_SYS_TIMERFD_SETTIME)
+        return syscall_timerfd_settime(a0, (uint32_t)a1, a2, a3);
+    if (number == LINUX_SYS_TIMERFD_GETTIME)
+        return syscall_timerfd_gettime(a0, a1);
     if (number == LINUX_SYS_MEMFD_CREATE) return syscall_memfd_create(a0, (uint32_t)a1);
     if (number == LINUX_SYS_POLL) {
         return syscall_poll(a0, a1, (int64_t)a2);
@@ -4131,6 +4267,17 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             if (!file->aux) return -LEONOS_EAGAIN;
             value = file->aux2 ? 1 : file->aux;
             file->aux -= value;
+            *(uint64_t *)(uintptr_t)a1 = value;
+            return sizeof(uint64_t);
+        }
+        if (file->flags & TASK_FILE_FLAG_TIMERFD) {
+            struct task_timerfd *timer = (struct task_timerfd *)(uintptr_t)file->aux;
+            uint64_t value;
+            if (a2 != sizeof(uint64_t)) return -LEONOS_EINVAL;
+            task_timerfd_update(timer);
+            if (!timer || !timer->expirations) return -LEONOS_EAGAIN;
+            value = timer->expirations;
+            timer->expirations = 0;
             *(uint64_t *)(uintptr_t)a1 = value;
             return sizeof(uint64_t);
         }

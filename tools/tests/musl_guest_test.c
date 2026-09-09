@@ -23,6 +23,7 @@
 #include <sys/auxv.h>
 #include <sys/eventfd.h>
 #include <sys/epoll.h>
+#include <sys/timerfd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -160,6 +161,25 @@ static int epoll_abi(void)
     return 0;
 }
 
+static int timerfd_abi(void)
+{
+    int fd = syscall(SYS_timerfd_create, CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+    struct itimerspec value = {0}, current = {0};
+    uint64_t expirations = 0;
+    struct pollfd pfd;
+    CHECK(fd >= 0);
+    value.it_value.tv_nsec = 20 * 1000 * 1000;
+    value.it_interval.tv_nsec = 20 * 1000 * 1000;
+    CHECK(syscall(SYS_timerfd_settime, fd, 0, &value, NULL) == 0);
+    CHECK(syscall(SYS_timerfd_gettime, fd, &current) == 0 && current.it_value.tv_sec >= 0);
+    pfd = (struct pollfd){.fd = fd, .events = POLLIN};
+    CHECK(poll(&pfd, 1, 200) == 1 && (pfd.revents & POLLIN));
+    CHECK(read(fd, &expirations, sizeof(expirations)) == sizeof(expirations) && expirations >= 1);
+    CHECK(syscall(SYS_timerfd_settime, fd, 0, &(struct itimerspec){0}, NULL) == 0);
+    CHECK(close(fd) == 0);
+    return 0;
+}
+
 static int startup(int argc, char **argv)
 {
     CHECK(argc >= 1 && argv && argv[argc] == NULL);
@@ -208,6 +228,7 @@ static int startup(int argc, char **argv)
     CHECK(timer_abi() == 0);
     CHECK(memfd_abi() == 0);
     CHECK(epoll_abi() == 0);
+    CHECK(timerfd_abi() == 0);
     struct timespec invalid_clock = {.tv_sec = 0, .tv_nsec = 1000000000L};
     CHECK(syscall(SYS_clock_settime, CLOCK_REALTIME, &invalid_clock) == -1 && errno == EINVAL);
     CHECK(syscall(SYS_sched_getparam, 0x7fffffff, &sched_value) == -1 && errno == ESRCH);
