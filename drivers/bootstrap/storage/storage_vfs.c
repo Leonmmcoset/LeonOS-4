@@ -959,6 +959,10 @@ int storage_write_node(const char *path, uint64_t offset,
     if (ret < 0) {
         return ret;
     }
+    /* A descriptor may have populated the path cache before the write grew
+     * the file. Invalidate cached directory metadata before changing the
+     * directory entry so a later open sees the new first cluster and size. */
+    storage_cache_invalidate();
     if (node.type != LEONOS_FS_TYPE_FILE) {
         return -21;
     }
@@ -1770,9 +1774,6 @@ int storage_rename(const char *old_path, const char *new_path)
     if (!storage_text_eq_ci(old_parent, new_parent)) {
         return -22;
     }
-    if (storage_text_eq_ci(old_name, new_name)) {
-        return 0;
-    }
     ret = fat32_validate_name(new_name);
     if (ret < 0) {
         return ret;
@@ -1784,6 +1785,8 @@ int storage_rename(const char *old_path, const char *new_path)
     if (parent_node.type != LEONOS_FS_TYPE_DIR || (parent_node.flags & STORAGE_NODE_FLAG_DEV_DIR)) {
         return -20;
     }
+    ret = storage_lookup_path(old_resolved, &node);
+    if (ret < 0) return ret;
     if (g_storage.filesystem == STORAGE_FILESYSTEM_EXT2) {
         struct storage_volume *old_volume;
         struct storage_volume *new_volume;
@@ -1815,13 +1818,38 @@ int storage_rename(const char *old_path, const char *new_path)
     if (g_storage.filesystem != STORAGE_FILESYSTEM_FAT32) {
         return -30;
     }
+    if (storage_text_eq_ci(old_name, new_name)) return 0;
     ret = storage_lookup_path(old_resolved, &node);
     if (ret < 0) {
         return ret;
     }
     ret = storage_lookup_path(new_resolved, &existing);
     if (ret == 0) {
-        return -17;
+        struct fat32_dir_ref target;
+        if (node.type != existing.type) return node.type == LEONOS_FS_TYPE_DIR ? -20 : -21;
+        if (existing.type == LEONOS_FS_TYPE_DIR) {
+            ret = fat32_dir_is_empty(existing.first_cluster);
+            if (ret <= 0) return ret < 0 ? ret : -39;
+        }
+        ret = fat32_find_dirent_ref_in_dir(parent_node.first_cluster, new_name, &target);
+        if (ret < 0) return ret;
+        struct fat32_dirent saved = target.dirent;
+        target.dirent.first_cluster_hi = (uint16_t)(node.first_cluster >> 16);
+        target.dirent.first_cluster_lo = (uint16_t)node.first_cluster;
+        target.dirent.size = node.type == LEONOS_FS_TYPE_FILE ? (uint32_t)node.size : 0;
+        storage_begin_mutation();
+        ret = fat32_update_dirent(&target);
+        if (ret < 0) return ret;
+        ret = fat32_delete_dirent(parent_node.first_cluster, old_name, &deleted);
+        if (ret < 0) {
+            target.dirent = saved;
+            (void)fat32_update_dirent(&target);
+            return ret;
+        }
+        if (existing.type == LEONOS_FS_TYPE_DIR) ret = fat32_delete_acl_metadata_file(existing.first_cluster);
+        if (!ret && existing.first_cluster >= 2) ret = fat32_free_chain(existing.first_cluster);
+        storage_cache_invalidate();
+        return ret;
     }
     if (ret != -2) {
         return ret;
@@ -1900,5 +1928,30 @@ int storage_stat_path(const char *path, struct leonos_stat *st)
     st->type = node.type;
     st->reserved = 0;
     st->size = node.size;
+    return 0;
+}
+
+int storage_create_socket(const char *path, struct storage_node *out)
+{
+    struct storage_node existing;
+    int ret = storage_lookup_path(path, &existing);
+    if (!ret) return -17;
+    if (ret != -2) return ret;
+    ret = storage_write_file(path, "", 0);
+    if (ret < 0) return ret;
+    ret = storage_lookup_path(path, out);
+    if (ret < 0) return ret;
+    if (out->flags & STORAGE_NODE_FLAG_EXT2) {
+        struct storage_volume *previous = NULL;
+        char backend[LEONOS_FS_PATH_LEN];
+        ret = storage_select_node_volume(out, &previous);
+        if (!ret) ret = storage_backend_path(path, backend, sizeof(backend));
+        if (!ret) ret = ext2_mark_socket(backend, out);
+        storage_restore_volume(previous);
+    }
+    if (ret < 0) { (void)storage_unlink(path); return ret; }
+    /* FAT/exFAT retain the directory entry; its type and DAC metadata are
+     * persisted in LEONACL.SYS by fs_permissions_create. */
+    out->type = LEONOS_FS_TYPE_SOCKET;
     return 0;
 }

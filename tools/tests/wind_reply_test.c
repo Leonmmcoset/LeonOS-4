@@ -9,6 +9,8 @@ static int send_result = -1;
 static unsigned poll_calls;
 static int poll_timeout;
 static int display_reply;
+static unsigned unrelated_fd_closed;
+int close(int fd) { assert(fd == 43); ++unrelated_fd_closed; return 0; }
 
 int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
 {
@@ -64,9 +66,8 @@ int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
         *type = LEONOS_WIN_MSG_INPUT;
         *length = sizeof(input);
         memcpy(payload, &input, sizeof(input));
-        /* LeonOS queues descriptors separately from bytes: a later FETCH_ACK
-         * can already have attached its fd when this input frame is read. */
-        if (received_fd) *received_fd = 42;
+        /* An unexpected fd belongs to this input frame, never to a later ACK. */
+        if (received_fd) *received_fd = 43;
     } else {
         struct leonos_win_fetch_ack ack = {
             .window_id = 1, .width = 640, .height = 480, .stride = 2560,
@@ -75,6 +76,7 @@ int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
         *type = LEONOS_WIN_MSG_FETCH_ACK;
         *length = sizeof(ack);
         memcpy(payload, &ack, sizeof(ack));
+        if (received_fd) *received_fd = 42;
     }
     return 0;
 }
@@ -91,6 +93,7 @@ int main(void)
         fprintf(stderr, "FETCH_ACK lost shared buffer descriptor: fd=%d\n", fd);
         return 1;
     }
+    assert(unrelated_fd_closed == 1);
     assert(wind_input_head != wind_input_tail);
     assert(wind_inputs[wind_input_tail].x == 420 && wind_inputs[wind_input_tail].y == 250);
     struct leonos_gui_window_msg present = {.type = 2, .window_id = 1};

@@ -128,7 +128,7 @@ static void devmand_handle_client(int slot)
         if (poll(&descriptor, 1, 0) <= 0) return;
         if (leonos_ipc_recv(client->fd, &type, buffer, sizeof(buffer), &length) < 0) {
             if (errno == EAGAIN) return;
-            close(client->fd);
+            leonos_ipc_close(client->fd);
             memset(client, 0, sizeof(*client));
             client->fd = -1;
             return;
@@ -136,10 +136,10 @@ static void devmand_handle_client(int slot)
         if (type == LEONOS_DEVMAND_MSG_HELLO) {
             struct leonos_devmand_hello hello;
             struct leonos_devmand_ack ack = {.code = 1};
-            if (length < sizeof(hello)) { close(client->fd); memset(client,0,sizeof(*client)); client->fd=-1; return; }
+            if (length < sizeof(hello)) { leonos_ipc_close(client->fd); memset(client,0,sizeof(*client)); client->fd=-1; return; }
             memcpy(&hello, buffer, sizeof(hello));
             if (hello.pid != client->pid || hello.uid != client->uid) {
-                close(client->fd);
+                leonos_ipc_close(client->fd);
                 memset(client, 0, sizeof(*client));
                 client->fd = -1;
                 return;
@@ -204,7 +204,7 @@ static void devmand_handle_client(int slot)
 void devmand_poll(void)
 {
     if (listen_fd < 0) {
-        listen_fd = leonos_ipc_bind_listen(LEONOS_IPC_SOCK_DEVICE, 8);
+        listen_fd = leonos_ipc_bind_listen_mode(LEONOS_IPC_SOCK_DEVICE, 8, 0666);
         if (listen_fd < 0) {
             printf("[devmand] bind failed errno=%d\n", errno);
             return;

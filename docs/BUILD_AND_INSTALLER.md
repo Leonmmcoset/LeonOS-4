@@ -2,8 +2,8 @@
 
 ## Source of truth
 
-`tools/gen_ninja.py` generates the build graph. Treat `build.ninja` as
-generated output and regenerate it when the graph changes.
+`build.py` is the maintained build entry point. Component selection comes from
+`configs/components.toml` and Kconfig. Generated graph files are not edited by hand.
 
 Important generated files include:
 
@@ -44,7 +44,7 @@ Common build outputs:
 - `build/images/leonos4-installer.iso`
 - `build/install/root.fat`
 - `build/images/esp.fat`
-- `build/images/root.exfat` (default; `root.ext2` is available for compatibility builds)
+- `build/images/root.ext2` (default; exFAT remains available for explicit compatibility builds)
 
 The common system staging tree is:
 
@@ -53,6 +53,14 @@ The common system staging tree is:
 It contains the installed-system loader, kernel, middlelayer, resources,
 configuration, bundled help documents under `docs/`, system application packages,
 and application packages under `programs/`.
+Vim and ncurses are enabled by default. `python3 build.py run vim` builds the
+unmodified static Linux musl Vim and its ncurses dependency from pinned
+submodules. Both `image-vmdk` and `installer` package Vim's runtime and the
+ncurses terminfo database. `musl-desktop-vim` remains a compatible target name
+for the standalone GRUB live desktop ISO, now using this same normal payload.
+There is no dependency on `build/musl/vim-src` or other experimental downloads.
+`python3 build.py run test-terminal-packages` checks actual Linux executables
+on the host; it does not certify the kernel's whole Linux ABI.
 The normal application set includes `oobe.elf`, `login.elf`, and `oshlp.elf`;
 the account database is intentionally not staged.
 

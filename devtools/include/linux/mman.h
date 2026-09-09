@@ -1,0 +1,17 @@
+#ifndef LEONOS_UAPI_LINUX_MMAN_H
+#define LEONOS_UAPI_LINUX_MMAN_H
+
+/* Linux v6.12 native x86-64 mmap/mprotect wire flags. */
+#define LINUX_PROT_NONE 0x0u
+#define LINUX_PROT_READ 0x1u
+#define LINUX_PROT_WRITE 0x2u
+#define LINUX_PROT_EXEC 0x4u
+#define LINUX_MAP_SHARED 0x01u
+#define LINUX_MAP_PRIVATE 0x02u
+#define LINUX_MAP_SHARED_VALIDATE 0x03u
+#define LINUX_MAP_FIXED 0x10u
+#define LINUX_MAP_ANONYMOUS 0x20u
+#define LINUX_MAP_NORESERVE 0x4000u
+#define LINUX_MAP_FIXED_NOREPLACE 0x100000u
+
+#endif

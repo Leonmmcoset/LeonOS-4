@@ -7,7 +7,7 @@
 #include <sys/un.h>
 #include <leonos/unix_ipc.h>
 
-/* Model LeonOS's byte ring and separate pending SCM_RIGHTS queue. */
+/* Linux stream ancillary data accompanies bytes and reports its actual size. */
 static uint8_t stream[256];
 static size_t head, tail;
 static int pending_fd;
@@ -33,7 +33,7 @@ ssize_t recvmsg(int fd, struct msghdr *message, int flags)
         count = recv(fd, message->msg_iov[0].iov_base,
                      message->msg_iov[0].iov_len, flags);
     }
-    if (pending_fd >= 0 && message->msg_control) {
+    if (count > 0 && pending_fd >= 0 && message->msg_control) {
         assert(message->msg_controllen >= CMSG_LEN(sizeof(int)));
         struct cmsghdr *control = message->msg_control;
         control->cmsg_len = CMSG_LEN(sizeof(int));
@@ -41,9 +41,8 @@ ssize_t recvmsg(int fd, struct msghdr *message, int flags)
         control->cmsg_type = SCM_RIGHTS;
         memcpy(CMSG_DATA(control), &pending_fd, sizeof(pending_fd));
         if (!(flags & MSG_PEEK)) pending_fd = -1;
-        /* Match the current kernel, including its post-consume length. */
-        message->msg_controllen = pending_fd >= 0 ? CMSG_LEN(sizeof(int)) : 0;
-        return count < 0 ? 0 : count;
+        message->msg_controllen = CMSG_SPACE(sizeof(int));
+        return count;
     }
     message->msg_controllen = 0;
     return count;
@@ -86,6 +85,6 @@ int main(void)
         }
         assert(tail == head);
     }
-    puts("IPC frame tests passed: descriptor-only receive preserves following input");
+    puts("IPC frame tests passed: ancillary receive preserves following input");
     return 0;
 }

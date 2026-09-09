@@ -2,55 +2,26 @@
 
 ## 工具链和 Makefile
 
-SDK 默认使用生成 freestanding x86_64 ELF 的交叉工具链：
-
-```text
-x86_64-elf-gcc
-x86_64-elf-g++
-x86_64-elf-ld
-```
-
-可通过变量覆盖：
-
-```sh
-make CROSS=x86_64-unknown-elf-
-make CC=clang CXX=clang++ LD=ld.lld
-```
-
-常用变量如下：
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `APP` | `examples/helloworld` | 源文件目录 |
-| `APP_NAME` | `helloworld` | 输出 ELF 名称 |
-| `BUILD_DIR` | `build` | 中间文件目录 |
-| `USE_STARDUSTUI` | `0` | 为 C++ 应用链接 StardustUI |
-| `CROSS` | `x86_64-elf-` | 工具链前缀 |
-
-C 源文件使用 C11，C++ 源文件使用 C++17。Makefile 已固定这些运行时约束：
-`-ffreestanding`、`-fno-pie`、`-fno-pic`、`-mno-red-zone`、无栈保护、无
-异常和 RTTI（C++）。不要删除这些选项来复用宿主程序的默认 ABI。
-
-## 最小构建
+SDK 默认通过 `python3 bin/leonos-musl-cc` 驱动宿主 clang/lld，使用 SDK
+内的 musl 头文件与库。无需 x86_64-elf 工具链，不能链接宿主 glibc。
+需要 Python 3、clang、lld 和 make；可用 `LEONOS_CC` 指定 clang 路径。
 
 ```sh
 cd devtools
 make APP=examples/helloworld APP_NAME=helloworld
-make clean
+make APP=examples/helloworld APP_NAME=helloworld STATIC=1 BUILD_DIR=build-static
 ```
 
-应用入口仍然是普通的 `int main(void)` 或 C 兼容的 `main(int, char **, char **)`。
-`libc.a` 提供 `_start`，初始化 Picolibc 后调用 `main`，再通过 `exit` 结束。
+`APP` 选择源码目录，`APP_NAME` 选择输出名称，`BUILD_DIR` 选择中间目录。
+C 使用 C11，C++ 使用 C++17；所有用户程序遵循 Linux native x86-64 浮点、
+栈和 TLS ABI。C++ 的 freestanding 扩展仍不包含异常、RTTI 或宿主标准库。
 
-一个应用目录可以包含多个 `.c`、`.cpp`、`.cc`、`.cxx` 和 `.S` 文件；Makefile
-会将它们全部编译并链接。自定义构建系统应沿用 `devtools/linker.ld`，并按下面
-顺序链接：
+应用定义普通 `main`。驱动自动加入 musl 的 Scrt1/crt1、crti/crtn，链接
+mimalloc、LeonOS 扩展库及 musl。动态程序使用 `/lib/ld-musl-x86_64.so.1`，
+依赖 `libleonos.so.2`。STATIC=1 选择 musl 静态 CRT 与 mimalloc.o。
 
-```text
-应用对象 -> 可选库 -> leonos.a -> libpng.a -> libz.a -> libc.a
-```
-
-链接器使用 `--gc-sections` 和 4 KiB 最大页对齐，入口符号是 `_start`。
+自定义构建系统同样调用 SDK 驱动，不能复用旧 linker.ld、私有 CRT、旧
+FILE/errno 或 stat/termios 布局。旧 ABI 程序必须重新编译。
 
 ## C++ 和 StardustUI
 

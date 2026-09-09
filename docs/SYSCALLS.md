@@ -1,12 +1,14 @@
 # Syscalls
 
-LeonOS 4 exposes a small Linux-numbered x86_64 syscall ABI to Ring-3
-applications. The ABI is intentionally close to Linux where it is useful, but
-only the calls listed here are implemented.
+LeonOS targets the native Linux v6.12 x86-64 user ABI. The current full
+status is recorded in `LINUX_ABI_SYSCALLS_2026-09-07.csv` and
+`LINUX_ABI_PROGRESS_2026-09-08.md`. The tables below are an extension reference
+and historical subset, not a complete compatibility claim.
 
 ## Entry Convention
 
-Userland enters the kernel with `int $0x80`. The libc assembly helpers in
+musl enters the kernel with the native `syscall` instruction. The LeonOS
+extension assembly helpers in
 `userland/libc/src/syscall.S` translate C call arguments into the syscall ABI:
 
 - `rax`: syscall number.
@@ -362,37 +364,24 @@ by default, while administrators retain full control. Administrators can manage
 users and can take ownership or repair corrupt ACL metadata. Shutdown and reboot
 remain available to any logged-in user.
 
-## Current Limitations
+## Current behavior and limitations
 
-- `fork`, `vfork`, `pipe`, process groups and default signal actions are
-  available; user-installed signal handlers and `clone` are not yet supported.
-- Networking has TCP client sockets and a TLS 1.2 HTTPS client path, but no TCP
-  listener/server mode, UDP socket API, or full retransmission/window-management
-  surface yet.
-- `execve` replaces the caller; use `fork` followed by `execve` to launch a
-  child process.
-- `libleonos.so.1` owns the common process, descriptor, pipe, process-group,
-  PTY foreground-group, priority, resource-limit, and wait wrappers. Their
-  standard declarations come from the SDK's Picolibc headers. `waitpid` with
-  `WNOHANG` returns `0` when no child state is available; blocking waits yield
-  across the kernel's temporary `EAGAIN` response. `vfork` currently has the
-  same COW semantics as `fork`.
-- `nice` and `getpriority` return standard priorities in the `-20..19` range.
-  Raw syscall users receive `priority + 20` and must subtract 20 after checking
-  for a negative errno; the shared runtime performs that decoding.
-- Terminal Ctrl+C/Ctrl+Z actions are delivered to the foreground process group.
-  `signal()` and `sigaction()` support only `SIG_DFL` and `SIG_IGN` dispositions;
-  `sigprocmask` and arbitrary user-installed signal handlers remain unavailable.
-- The shared runtime contains the common ANSI curses subset used by Nano and
-  `sl`; applications should include the SDK's `<curses.h>` or `<ncurses.h>`
-  instead of carrying a private terminal shim.
-- `libleonos.so.1` also supplies the common POSIX adapters for file status,
-  directory iteration and `fcntl`; third-party ports should use the SDK's
-  normal Picolibc headers rather than copying those wrappers into each port.
-- File-backed `mmap` is private and read-only.
-- Open permissions are ACL checks, not a full Unix permission model.
-- FAT32 and the supported ext2 subset do not expose LeonOS ACLs as native
-  ownership/mode metadata; LeonOS stores ACL metadata in hidden `LEONACL.SYS`
-  sidecar files and enforces it at syscall/ioctl boundaries.
-- `ioctl` is intentionally broad and should be split into dedicated syscalls or
-  narrower devices as the ABI stabilizes.
+Standard C/POSIX wrappers, pthread and signals use musl. The kernel supports
+native signal frames, a clone/futex thread subset and Unix STREAM/DGRAM/
+SEQPACKET sockets including SCM_RIGHTS. Tested behavior and outstanding flags,
+errors, lifecycle and concurrency cases remain itemized in the ABI ledger.
+
+- True parent-suspending vfork, complete wait4 options/rusage and full clone
+  semantics remain incomplete. SIGCHLD group-exit notification is implemented;
+  complete siginfo, automatic reaping and reparenting remain outstanding.
+- Raw getpriority returns `20 - priority`; libc performs the API conversion.
+- NOFILE/AS soft/hard limits and prlimit64 share state across pthreads and copy
+  at fork; other resources and complete enforcement remain incomplete.
+- File access enforces owner/group/other Unix DAC with mode, UID and GID.
+  chmod/chown work for the verified subset. ext2 stores native metadata;
+  FAT/exFAT use LeonOS metadata records. Full inode lifetime and special-bit
+  behavior remain outstanding.
+- File-backed mappings, INET servers/UDP/IPv6, PTY lock/hangup, event APIs and
+  all remaining audit rows are still in scope. AP user scheduling is disabled;
+  BSP preemption tests do not establish SMP compatibility.
+

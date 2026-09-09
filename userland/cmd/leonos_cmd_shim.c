@@ -6,7 +6,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <leonos/posix.h>
 #include <leonos/app.h>
 #include <leonos/pty.h>
 #include <leonos/system.h>
@@ -22,6 +21,9 @@
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <linux/syscall.h>
+
+extern long syscall2(long number, long a0, long a1);
 
 #define LEONOS_CMD_JOB_MAX 16U
 #define LEONOS_CMD_JOB_PROCESS_MAX 64U
@@ -31,7 +33,7 @@
 
 /* Keep this local mirror of the task-snapshot wire layout so this POSIX
  * adapter does not include leonos/gui.h, which intentionally exposes the
- * native filesystem stat ABI rather than Picolibc's POSIX stat ABI. */
+ * LeonOS filesystem metadata extension ABI. */
 struct leonos_cmd_task_info {
     uint32_t pid;
     uint32_t parent_pid;
@@ -95,8 +97,8 @@ static void fill_exit_info(int status, libcmd_exit_info_t *exit_info)
 
 int chmod(const char *path, mode_t mode)
 {
-    (void)path;
-    (void)mode;
+    long ret = syscall2(SYS_chmod, (long)path, mode);
+    if (ret < 0) { errno = (int)-ret; return -1; }
     return 0;
 }
 

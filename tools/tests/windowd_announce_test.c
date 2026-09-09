@@ -15,6 +15,10 @@
 #define close test_close
 ssize_t test_read(int fd, void *buffer, size_t length);
 int test_close(int fd);
+int test_open(const char *path, int flags, ...);
+int test_ftruncate(int fd, off_t size);
+void *test_mmap(void *addr, size_t size, int prot, int flags, int fd, off_t off);
+int test_munmap(void *addr, size_t size);
 #include "../../userland/apps/windowd/main.c"
 #undef main
 #undef open

@@ -39,6 +39,9 @@ static bool autospawn_uidemo;
 static bool autospawn_terminal;
 static bool autospawn_memtest;
 static bool autospawn_installer;
+static bool autospawn_linuxabi;
+static bool autospawn_ltp;
+static bool autospawn_vim;
 /* elf.c keeps a bounded header scratch buffer and ASLR state at file scope.
  * Serialize lazy image construction so APs cannot overwrite that state while
  * the BSP (or another AP) is mapping a different executable. */
@@ -138,7 +141,7 @@ static void clear_task_vmas(struct task *task)
         return;
     }
     for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        task->vmas[i] = (struct task_vma){0};
+        sched_task_mm(task)->vmas[i] = (struct task_vma){0};
     }
     sched_task_vma_release(task);
 }
@@ -316,11 +319,35 @@ static int write_user_u64(const struct address_space *as, uint64_t vaddr, uint64
 static int prepare_user_exec_stack(struct task *task)
 {
     uint64_t sp;
+    uint64_t argc_base;
     uint64_t argv_base;
     uint64_t envp_base;
+    uint64_t auxv_base;
+    uint64_t random_base;
     uint64_t strings_base;
+    uint64_t execfn_base;
+    uint32_t argc;
+    size_t path_len;
     uint64_t argv_bytes;
     uint64_t envp_bytes;
+    const uint64_t auxv_count = 14;
+    const uint64_t auxv_bytes = auxv_count * 2 * sizeof(uint64_t);
+    enum {
+        AT_NULL = 0,
+        AT_PHDR = 3,
+        AT_PHENT = 4,
+        AT_PHNUM = 5,
+        AT_PAGESZ = 6,
+        AT_BASE = 7,
+        AT_ENTRY = 9,
+        AT_UID = 11,
+        AT_EUID = 12,
+        AT_GID = 13,
+        AT_EGID = 14,
+        AT_SECURE = 23,
+        AT_RANDOM = 25,
+        AT_EXECFN = 31,
+    };
     uint64_t launch_base = 0;
     if (!task) {
         return -22;
@@ -330,22 +357,39 @@ static int prepare_user_exec_stack(struct task *task)
         sp = (sp - sizeof(task->dynamic_launch)) & ~(EXEC_STACK_ALIGN - 1ULL);
         launch_base = sp;
     }
-    strings_base = (sp - task->exec_data_len) & ~(EXEC_STACK_ALIGN - 1ULL);
-    argv_bytes = (uint64_t)(task->exec_argc + 1) * sizeof(uint64_t);
-    argv_base = (strings_base - argv_bytes) & ~(EXEC_STACK_ALIGN - 1ULL);
+    argc = task->exec_argc ? task->exec_argc : 1;
+    path_len = __builtin_strlen(task->path);
+    strings_base = (sp - task->exec_data_len - path_len - 2) & ~(EXEC_STACK_ALIGN - 1ULL);
+    execfn_base = strings_base + task->exec_data_len;
+    random_base = (strings_base - 16ULL) & ~(EXEC_STACK_ALIGN - 1ULL);
     envp_bytes = (uint64_t)(task->exec_envc + 1) * sizeof(uint64_t);
-    envp_base = (argv_base - envp_bytes) & ~(EXEC_STACK_ALIGN - 1ULL);
-    if (envp_base < task->stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL) {
+    argv_bytes = (uint64_t)(argc + 1) * sizeof(uint64_t);
+    /* Align the entire vector once. Linux crt scans consecutive words. */
+    argc_base = (random_base - auxv_bytes - envp_bytes - argv_bytes - sizeof(uint64_t)) &
+                ~(EXEC_STACK_ALIGN - 1ULL);
+    argv_base = argc_base + sizeof(uint64_t);
+    envp_base = argv_base + argv_bytes;
+    auxv_base = envp_base + envp_bytes;
+    if (argc_base < task->stack_top - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL) {
         return -12;
     }
 
     for (uint32_t i = 0; i < task->exec_data_len; ++i) {
-        char *dst = (char *)user_ptr_for_phys(&task->as, strings_base + i);
+        char *dst = (char *)user_ptr_for_phys(sched_task_as(task), strings_base + i);
         if (!dst) {
             return -12;
         }
         *dst = task->exec_data[i];
     }
+
+    for (size_t i = 0; i < path_len + 2; ++i) {
+        char *dst = (char *)user_ptr_for_phys(sched_task_as(task), execfn_base + i);
+        if (!dst) return -12;
+        *dst = i < path_len ? task->path[i] : 0;
+    }
+    /* Linux supplies an empty argv[0] when execve receives an empty vector. */
+    if (!task->exec_argc &&
+        write_user_u64(sched_task_as(task), argv_base, execfn_base + path_len + 1) < 0) return -12;
 
     for (uint32_t i = 0; i < task->exec_argc; ++i) {
         uintptr_t ptr = (uintptr_t)task->exec_argv[i];
@@ -355,12 +399,12 @@ static int prepare_user_exec_stack(struct task *task)
             return -22;
         }
         uint64_t offset = (uint64_t)(ptr - data_begin);
-        if (write_user_u64(&task->as, argv_base + (uint64_t)i * sizeof(uint64_t),
+        if (write_user_u64(sched_task_as(task), argv_base + (uint64_t)i * sizeof(uint64_t),
                            strings_base + offset) < 0) {
             return -12;
         }
     }
-    if (write_user_u64(&task->as, argv_base + (uint64_t)task->exec_argc * sizeof(uint64_t), 0) < 0) {
+    if (write_user_u64(sched_task_as(task), argv_base + (uint64_t)argc * sizeof(uint64_t), 0) < 0) {
         return -12;
     }
     for (uint32_t i = 0; i < task->exec_envc; ++i) {
@@ -371,18 +415,48 @@ static int prepare_user_exec_stack(struct task *task)
             return -22;
         }
         uint64_t offset = (uint64_t)(ptr - data_begin);
-        if (write_user_u64(&task->as, envp_base + (uint64_t)i * sizeof(uint64_t),
+        if (write_user_u64(sched_task_as(task), envp_base + (uint64_t)i * sizeof(uint64_t),
                            strings_base + offset) < 0) {
             return -12;
         }
     }
-    if (write_user_u64(&task->as, envp_base + (uint64_t)task->exec_envc * sizeof(uint64_t), 0) < 0) {
+    if (write_user_u64(sched_task_as(task), envp_base + (uint64_t)task->exec_envc * sizeof(uint64_t), 0) < 0) {
         return -12;
     }
 
+    for (uint32_t i = 0; i < 16; ++i) {
+        uint8_t *dst = (uint8_t *)user_ptr_for_phys(sched_task_as(task), random_base + i);
+        if (!dst) return -12;
+        *dst = task->dynamic_launch.random[i];
+    }
+    {
+        uint64_t auxv[auxv_count * 2] = {
+            AT_PHDR, task->dynamic_launch.main_phdr,
+            AT_PHENT, 56,
+            AT_PHNUM, task->exec_phnum,
+            AT_PAGESZ, 4096,
+            AT_BASE, task->dynamic_launch.interp_base,
+            AT_ENTRY, task->dynamic_launch.main_entry,
+            AT_UID, task->uid,
+            AT_EUID, task->euid,
+            AT_GID, task->gid,
+            AT_EGID, task->egid,
+            AT_SECURE, task->uid != task->euid || task->gid != task->egid,
+            AT_RANDOM, random_base,
+            AT_EXECFN, execfn_base,
+            AT_NULL, 0,
+        };
+        for (uint32_t i = 0; i < sizeof(auxv) / sizeof(auxv[0]); ++i) {
+            if (write_user_u64(sched_task_as(task), auxv_base + (uint64_t)i * sizeof(uint64_t), auxv[i]) < 0) {
+                return -12;
+            }
+        }
+    }
+    if (write_user_u64(sched_task_as(task), argc_base, argc) < 0) return -12;
+
     if (launch_base) {
         for (uint32_t i = 0; i < sizeof(task->dynamic_launch); ++i) {
-            uint8_t *dst = (uint8_t *)user_ptr_for_phys(&task->as, launch_base + i);
+            uint8_t *dst = (uint8_t *)user_ptr_for_phys(sched_task_as(task), launch_base + i);
             if (!dst) {
                 return -12;
             }
@@ -390,8 +464,8 @@ static int prepare_user_exec_stack(struct task *task)
         }
     }
 
-    task->frame.rsp = envp_base;
-    task->frame.rdi = task->exec_argc;
+    task->frame.rsp = argc_base;
+    task->frame.rdi = argc;
     task->frame.rsi = argv_base;
     task->frame.rdx = envp_base;
     task->frame.r8 = launch_base;
@@ -432,9 +506,14 @@ static bool userland_load_task_image_locked(struct task *task)
             console_printf("[ntclks] failed to map executable %s\n", task->name);
             return false;
         }
+        task->program_break_base = loaded.program_break;
+        if (!task->program_break_base) {
+            task->program_break_base = (loaded.high_vaddr + loaded.load_bias + 4095ULL) & ~4095ULL;
+        }
+        task->program_break = task->program_break_base;
         task->flags &= ~TASK_FLAG_PENDING_LOAD;
     } else if (task->image && task->image_len) {
-        if (!elf64_load_address_space(&task->as, task->image, task->image_len, &loaded)) {
+        if (!elf64_load_address_space(sched_task_as(task), task->image, task->image_len, &loaded)) {
             console_printf("[ntclks] failed to load %s into private address space\n", task->name);
             return false;
         }
@@ -446,6 +525,12 @@ static bool userland_load_task_image_locked(struct task *task)
     }
 
     task->entry = loaded.dynamic ? loaded.interpreter_entry : loaded.entry;
+    arch_set_user_fs(task->fs_base);
+    task->exec_phnum = loaded.phnum;
+    elf64_random_fill(task->dynamic_launch.random, sizeof(task->dynamic_launch.random));
+    task->dynamic_launch.main_entry = loaded.entry;
+    task->dynamic_launch.main_phdr = loaded.phdr_vaddr;
+    task->dynamic_launch.main_base = loaded.load_bias;
     task->frame.rip = task->entry;
     task->frame.rsp = task->stack_top;
     task->frame.rflags = 0x202;
@@ -460,7 +545,7 @@ static bool userland_load_task_image_locked(struct task *task)
     console_printf("[ntclks] %s prepared lazy Ring-3 image entry=0x%llx cr3=0x%llx\n",
                    task->name,
                    (unsigned long long)task->entry,
-                   (unsigned long long)task->as.cr3);
+                   (unsigned long long)(*sched_task_as(task)).cr3);
     return true;
 }
 
@@ -612,8 +697,8 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
         if (frame->rip != 0 && (frame->cs & 3ULL) == 3ULL) {
             /* Install a pending user signal handler on this live return
              * frame before it is published to the scheduler. */
-            (void)kernel_signal_deliver_pending(current, frame);
             arch_fpu_save(current->fpu_state);
+            (void)kernel_signal_deliver_pending(current, frame);
             if (!sched_capture_current_user_frame(frame)) {
                 console_printf("[ntclks] rejected scheduler frame pid=%u rip=0x%llx cs=0x%llx\n",
                                current->pid,
@@ -630,7 +715,14 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
         }
     }
     if (current && current->kind == TASK_KIND_USER && current->state == TASK_EXITED) {
+        uint64_t cleanup_flags;
+        kernel_execution_lock_irqsave(&cleanup_flags);
+        /* Stop using the retiring page tables before releasing the last mm
+         * reference. Other threads retain their own reference to shared mm. */
+        paging_load_cr3(paging_kernel_cr3());
         sched_quiesce_exited_current();
+        sched_release_task_resources(current);
+        kernel_execution_unlock_irqrestore(cleanup_flags);
     }
 
     struct task *next = sched_select_next_user();
@@ -650,6 +742,7 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
         sched_exit(next->pid, 127);
         return userland_schedule_from_frame(NULL);
     }
+    arch_set_user_fs(next->fs_base);
     userland_yield_if_runnable();
     arch_fpu_restore(next->fpu_state);
     return next;
@@ -671,9 +764,9 @@ static void userland_enter_task(struct task *task)
                    task->name,
                    (unsigned long long)task->frame.rip,
                    (unsigned long long)task->frame.rsp,
-                   (unsigned long long)task->as.cr3);
+                   (unsigned long long)(*sched_task_as(task)).cr3);
     smp_mark_bsp_user_entry();
-    arch_enter_user_frame(&task->frame, task->as.cr3);
+    arch_enter_user_frame(&task->frame, (*sched_task_as(task)).cr3);
 }
 
 /**
@@ -694,6 +787,9 @@ void userland_init(const struct boot_info *boot)
     autospawn_terminal = boot && name_contains(boot->cmdline, "autospawn=terminal");
     autospawn_memtest = boot && name_contains(boot->cmdline, "autospawn=memtest");
     autospawn_installer = boot && name_contains(boot->cmdline, "autospawn=installer");
+    autospawn_linuxabi = boot && name_contains(boot->cmdline, "autospawn=linuxabi");
+    autospawn_ltp = boot && name_contains(boot->cmdline, "autospawn=ltp");
+    autospawn_vim = boot && name_contains(boot->cmdline, "autospawn=vim");
     if (autospawn_hello) {
         console_printf("[ntclks] debug autospawn hello enabled\n");
     }
@@ -733,20 +829,34 @@ void userland_init(const struct boot_info *boot)
         static const char *advanced_argv[] = {
             "busybox", "sh", 0
         };
+        static const char *vim_argv[] = {
+            "vim", "-u", "NONE", "-n", 0
+        };
         static const char *advanced_envp[] = {
             "PATH=/programs/busybox:/bin:/sbin:/usr/bin:/usr/sbin",
             "HOME=/root", "PWD=/", "PS1=\\w \\$ ",
             "TERM=xterm-256color", "COLORTERM=truecolor", 0
         };
         struct exec_launch advanced_launch = {0};
+        struct exec_launch vim_launch = {0};
         int32_t pty_id;
+        if (autospawn_vim &&
+            build_exec_launch(&vim_launch, "/system/apps/vim/vim.elf",
+                              vim_argv, 0) < 0) {
+            console_printf("[ntclks] failed to prepare Linux Vim arguments\n");
+            kernel_idle_loop();
+        }
         if (installer_advanced &&
             build_exec_launch(&advanced_launch, "/programs/busybox/busybox.elf",
                               advanced_argv, advanced_envp) < 0) {
             console_printf("[ntclks] failed to prepare advanced installer shell arguments\n");
             kernel_idle_loop();
         }
-        pid = installer_advanced
+        pid = autospawn_vim
+                  ? spawn_path_internal_deferred("/system/apps/vim/vim.elf",
+                                                  "vim.elf Linux binary", &vim_launch,
+                                                  0, 0, 0, -1, -1, -1)
+                  : installer_advanced
                   ? spawn_path_internal_deferred("/programs/busybox/busybox.elf",
                                                   "busybox.elf installer advanced", &advanced_launch,
                                                   0, 0, 0, -1, -1, -1)
@@ -767,7 +877,8 @@ void userland_init(const struct boot_info *boot)
             kernel_idle_loop();
         }
         console_printf("[ntclks] installer %s TTY selected; pid=%u pty=%d\n",
-                       installer_advanced ? "advanced shell" : "application",
+                       autospawn_vim ? "Linux Vim" :
+                       (installer_advanced ? "advanced shell" : "application"),
                        tty_pid, (int)pty_id);
         sched_mark_ready(tty_pid);
         return;
@@ -930,7 +1041,6 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     struct task *task = sched_current_task();
     struct storage_node node;
     struct address_space replacement = {0};
-    struct address_space old_as;
     char task_name[SCHED_TASK_NAME_LEN];
     uint32_t preserved_flags;
     int ret;
@@ -948,14 +1058,22 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
         return -12;
     }
 
+    ret = sched_prepare_exec_current(task);
+    if (ret < 0) {
+        address_space_destroy(&replacement);
+        return ret;
+    }
     /* No operation after this point can fail.  Keep all old process identity,
      * cwd, PTY association, limits, process parentage and waitability intact. */
     svga_gpu_release_owner(task->pid);
-    old_as = task->as;
-    task->as = replacement;
+    sched_exec_replace_mm(task, &replacement);
     task->entry = 0;
     task->stack_top = USER_STACK_TOP;
+    sched_task_mm(task)->initial_stack_top = USER_STACK_TOP;
     task->stack_low = USER_STACK_TOP - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL;
+    sched_task_mm(task)->initial_stack_low = task->stack_low;
+    task->program_break_base = 0;
+    task->program_break = 0;
     task->image = NULL;
     task->image_len = 0;
     task->image_node = node;
@@ -985,19 +1103,10 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     sched_set_task_exec_params(task->pid, argc, argv, envc, envp, data, data_len);
     syscall_close_cloexec_files(task);
 
-    /* The int 0x80 handler is still executing with the old process CR3 at
-     * this point.  Freeing that page-table tree while it is active is a
-     * use-after-free: on SMP another CPU can immediately reuse a released
-     * table page, corrupting this CPU's instruction/stack translation before
-     * the interrupt return path installs the replacement CR3.  Continue the
-     * kernel half of exec on the permanent kernel address space first.  The
-     * scheduler will install task->as.cr3 when it next returns to Ring 3. */
-    paging_load_cr3(paging_kernel_cr3());
-    address_space_destroy(&old_as);
     arch_fpu_task_init(task->fpu_state);
     console_printf("[ntclks] exec pid=%u path=%s pty=%u pending cr3=0x%llx\n",
                    task->pid, path, task->pty_id,
-                   (unsigned long long)task->as.cr3);
+                   (unsigned long long)(*sched_task_as(task)).cr3);
     return 0;
 }
 
@@ -1130,6 +1239,18 @@ int64_t userland_spawn_path(const char *path)
  */
 void userland_yield_if_runnable(void)
 {
+    if (autospawn_ltp && sched_current_pid() == desktop_pid) {
+        autospawn_ltp = false;
+        int64_t pid = userland_spawn_path("/system/tests/ltp-runner.elf");
+        console_printf("[ntclks] LTP musl runner pid=%lld\n", (long long)pid);
+    }
+    if (autospawn_linuxabi && sched_current_pid() == desktop_pid) {
+        autospawn_linuxabi = false;
+        int64_t dynamic_pid = userland_spawn_path("/system/tests/musl-abi-dynamic.elf");
+        int64_t static_pid = userland_spawn_path("/system/tests/musl-abi-static.elf");
+        console_printf("[ntclks] musl ABI probes dynamic=%lld static=%lld\n",
+                       (long long)dynamic_pid, (long long)static_pid);
+    }
     if (autospawn_hello && sched_current_pid() == desktop_pid) {
         autospawn_hello = false;
         int64_t pid = userland_spawn_path("/programs/hello/hello.elf");

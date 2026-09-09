@@ -23,15 +23,16 @@ for layout semantics, limits, synchronization, software fallback and validation.
 
 ## Dynamic Library ABI
 
-Dynamic PIE executables use `/system/lib/ld-leonos.elf` and must contain one
-`DT_NEEDED=libleonos.so.1` entry. They may additionally require ABI-v1 shared
-libraries. The loader resolves an unqualified library name from the requesting
-module directory and then `/system/lib`, validates each LeonOS ABI note, and
-loads recursive dependencies before relocating the main executable.
+Dynamic PIE executables use `/lib/ld-musl-x86_64.so.1`. musl supplies the
+loader and standard C/POSIX ABI; mimalloc supplies public allocation functions.
+LeonOS extensions live in `/system/lib/libleonos.so.2`. The build driver writes
+`/system/lib:/lib` as the application search path. A private LeonOS ABI note
+is not required for Linux ELF programs. Static binaries use musl CRT and the
+same allocator policy.
 
-The system libraries currently include `libleonos.so.1`, `libmagic.so.1`, and
-`liblua.so.5`. Static `ET_EXEC` binaries remain supported for recovery tools
-and SDK builds made with `STATIC=1`.
+Old binaries requiring `ld-leonos.elf` or `libleonos.so.1` must be rebuilt.
+Old static binaries using private stat/termios layouts also require rebuilding;
+renaming libraries cannot make their object layouts compatible.
 
 ## Syscall subset
 
@@ -45,54 +46,36 @@ LeonOS keeps Linux-compatible syscall numbers for the current user ABI:
 - Memory: `mmap`, `munmap`
 - Device and system extensions: `ioctl`
 
-The libc wrappers live in `userland/libc/include/leonos/syscall.h`,
-`userland/libc/src/libc.c`, and the POSIX-facing files beside it. `mmap`
+Standard libc wrappers come from `third_party/musl`. LeonOS extensions live in
+`userland/libc`. Canonical kernel wire definitions are in `include/uapi`; the
+complete per-call status is in `LINUX_ABI_SYSCALLS_2026-09-07.csv`. `mmap`
 supports anonymous private mappings and private file mappings; `munmap`
 supports whole or partial unmapping.
 
 ## Shared POSIX porting surface
 
-`libleonos.so.1` contains the shared ANSI curses subset in
-`userland/libc/src/ansi_curses.c`. Applications include either `<curses.h>` or
-`<ncurses.h>` from the SDK and link only the normal runtime; Nano and `sl` use
-the same implementation. It provides windows, cursor movement, buffered ANSI
-output, terminal-size refresh, raw/noecho mode, and the key/input functions
-used by those ports. It is a small LeonOS terminal API, not a promise of
-binary compatibility with host ncurses.
+`libleonos.so.2` provides the ANSI curses subset used by nano and `sl`.
+Applications include `<curses.h>` or `<ncurses.h>` from the SDK. This is a
+LeonOS terminal API, not binary compatibility with host ncurses.
 
-The runtime also exports `usleep()`. The SDK Makefile enables
-`_DEFAULT_SOURCE`, so Picolibc exposes its standard declaration without an
-application-local `unistd.h` shim. `signal()` and `sigaction()` support the
-default and ignore dispositions; arbitrary user callbacks remain unsupported
-until the kernel has a signal-frame ABI.
+Standard file, process, pthread, signal and socket APIs come from musl without
+private POSIX adapters. Raw syscalls return negative errno; musl converts
+errors according to each libc function's contract. For example raw getcwd
+returns a byte count, while libc getcwd returns a pointer.
 
-`userland/libc/src/posix_process.c` is the single POSIX process and descriptor
-adapter used by both dynamic applications and static ports. It implements
-`fork`, `vfork`, `execve`, `wait4`, `waitpid`, `pipe`, `dup`, `dup2`, `fcntl`,
-process IDs/groups, foreground PTY groups, `kill`, nice priorities, and resource
-limits. The wrappers convert raw negative errno values to `-1` with `errno`.
-`waitpid(..., WNOHANG)` returns `0` if the child has no state change; blocking
-waits yield while the scheduler reports its temporary `EAGAIN`. `vfork` is
-intentionally COW-fork equivalent until LeonOS has a parent-suspending vfork
-ABI. `nice()` and `getpriority()` return the normal `-20..19` priority range.
+The kernel supports native signal frames, red-zone preservation, alternate
+stacks and FP/SIMD restoration for the tested configurations. `forkpty` uses
+Linux ioctl encodings, setsid and TIOCSCTTY. The native regression suite covers
+pthread contention/cancellation and Unix descriptor passing. This does not
+certify complete signal, PTY, wait, clone, socket or SMP behavior; consult
+[the implementation ledger](LINUX_ABI_PROGRESS_2026-09-08.md).
 
-The kernel applies default terminal signal actions to the foreground process
-group. `signal()` and `sigaction()` support `SIG_DFL` and `SIG_IGN`, including
-`SIGHUP` immunity for detached jobs; `raise()` uses the normal `kill()` path.
-`sigprocmask` and `sigsuspend` use the Linux `rt_sig*` syscall subset. Signal
-delivery still supports the default and ignored dispositions; applications
-must not rely on arbitrary user-space handler frames yet.
+`stat`, `fstat` and `lstat` use Linux x86-64 layouts, including the 144-byte raw
+stat record. Compact LeonOS metadata is available through explicitly named
+`leonos_stat_legacy` and `leonos_fstat_legacy` extension functions only.
 
-The runtime exports standard POSIX `stat`, `fstat`, and `lstat` symbols using
-the Picolibc `struct stat` layout. The compact metadata record remains
-available only through the explicitly named `leonos_stat_legacy` and
-`leonos_fstat_legacy` transition functions. `access`, `fcntl`, `opendir`, `readdir`, `closedir`,
-`dirfd`, and `rewinddir` are supplied through Picolibc's normal POSIX headers.
-Directory entries expose LeonOS's file, directory, and device kinds.  They do
-not yet provide filesystem-native inode or ownership metadata.
-
-See [Syscalls](SYSCALLS.md) for the detailed syscall table, ioctl groups, and
-current limitations.
+See [Syscalls](SYSCALLS.md) for extension interfaces and the audit CSV for the
+full native Linux v6.12 syscall scope.
 
 ## Time Synchronization ABI
 
@@ -458,7 +441,7 @@ failed synchronization after five minutes and refreshes a successful sync every
 six hours. This updates the runtime clock only; it does not write the RTC/CMOS.
 ## POSIX/Linux ABI migration status
 
-The public `stat`, `fstat`, and `lstat` symbols use the Picolibc/POSIX
+The public `stat`, `fstat`, and `lstat` symbols use the musl/Linux x86-64
 `struct stat` layout. LeonOS first-party code that needs the compact metadata
 record must call the explicitly named `leonos_stat_legacy` or
 `leonos_fstat_legacy` functions. Linux fbdev applications can open `/dev/fb0`,

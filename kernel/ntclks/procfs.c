@@ -83,10 +83,11 @@ static int proc_path_kind(const char *path, const char **file_name,
     if (pid) *pid = 0;
     if (file_name) *file_name = 0;
     while (*slash && *slash != '/') ++slash;
-    if (!*slash) return 0; /* directory or unknown */
-    *file_name = slash + 1;
+    if (file_name && *slash) *file_name = slash + 1;
     while (p < slash && *p >= '0' && *p <= '9') {
-        value = value * 10u + (uint32_t)(*p - '0');
+        uint32_t digit = (uint32_t)(*p - '0');
+        if (value > (UINT32_MAX - digit) / 10u) return 0;
+        value = value * 10u + digit;
         ++p;
     }
     if (p == slash && value) {
@@ -117,7 +118,11 @@ static int proc_fill_content(const char *path, char *buffer, uint32_t capacity)
         proc_append_u64(buffer, &pos, capacity, mm_total_memory_kib());
         proc_append_text(buffer, &pos, capacity, " kB\nMemFree: ");
         proc_append_u64(buffer, &pos, capacity, mm_free_memory_kib());
-        proc_append_text(buffer, &pos, capacity, " kB\n");
+        /* There is no swap or reclaimable page-cache pool yet. All memory
+         * currently available for new allocations is in the free-page pool. */
+        proc_append_text(buffer, &pos, capacity, " kB\nMemAvailable: ");
+        proc_append_u64(buffer, &pos, capacity, mm_free_memory_kib());
+        proc_append_text(buffer, &pos, capacity, " kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n");
         return 0;
     }
     if (proc_text_eq(path, "/proc/version")) {
@@ -167,6 +172,41 @@ static int proc_fill_content(const char *path, char *buffer, uint32_t capacity)
         }
         if (kind == 2 && file && pid) {
             struct task *task = sched_find(pid);
+            if (proc_text_eq(file, "status")) {
+                if (!task) return -2;
+                proc_append_text(buffer, &pos, capacity, "Name:\t");
+                const char *name = task->name ? task->name : "?";
+                for (uint32_t i = 0; name[i] && i < 15; ++i) {
+                    char letter[2] = {name[i], 0};
+                    if (name[i] == '\n') proc_append_text(buffer, &pos, capacity, "\\n");
+                    else if (name[i] == '\\') proc_append_text(buffer, &pos, capacity, "\\\\");
+                    else proc_append_text(buffer, &pos, capacity, letter);
+                }
+                const char *state = task->state == TASK_EXITED ? "Z (zombie)" :
+                    task->state == TASK_STOPPED ? "T (stopped)" :
+                    task->state == TASK_BLOCKED ? "S (sleeping)" : "R (running)";
+                proc_append_text(buffer, &pos, capacity, "\nState:\t");
+                proc_append_text(buffer, &pos, capacity, state);
+                proc_append_text(buffer, &pos, capacity, "\nTgid:\t");
+                proc_append_u64(buffer, &pos, capacity, sched_task_tgid(task));
+                proc_append_text(buffer, &pos, capacity, "\nPid:\t");
+                proc_append_u64(buffer, &pos, capacity, task->pid);
+                proc_append_text(buffer, &pos, capacity, "\nPPid:\t");
+                proc_append_u64(buffer, &pos, capacity, task->parent_pid);
+                const uint32_t ids[] = {task->uid, task->euid, task->suid, task->fsuid,
+                                        task->gid, task->egid, task->sgid, task->fsgid};
+                for (uint32_t i = 0; i < 8; ++i) {
+                    proc_append_text(buffer, &pos, capacity, i == 0 ? "\nUid:\t" : i == 4 ? "\nGid:\t" : "\t");
+                    proc_append_u64(buffer, &pos, capacity, ids[i]);
+                }
+                if (sched_task_as(task)->cr3) {
+                    proc_append_text(buffer, &pos, capacity, "\nVmRSS:\t");
+                    proc_append_u64(buffer, &pos, capacity, address_space_user_resident_kib(sched_task_as(task)));
+                    proc_append_text(buffer, &pos, capacity, " kB");
+                }
+                proc_append_text(buffer, &pos, capacity, "\n");
+                return 0;
+            }
             if (proc_text_eq(file, "stat")) {
                 if (!task) return -2;
                 proc_append_u64(buffer, &pos, capacity, task->pid);
@@ -215,7 +255,7 @@ int proc_lookup(const char *path, struct storage_node *out)
         if (out) {
             *out = (struct storage_node){
                 .type = LEONOS_FS_TYPE_DIR,
-                .flags = 0,
+                .flags = STORAGE_NODE_FLAG_PROC,
                 .first_cluster = 0x50524f43u, /* PROC */
                 .volume_id = 0,
                 .size = 0,
@@ -235,7 +275,7 @@ int proc_lookup(const char *path, struct storage_node *out)
         if (out) {
             *out = (struct storage_node){
                 .type = LEONOS_FS_TYPE_FILE,
-                .flags = 0,
+                .flags = STORAGE_NODE_FLAG_PROC,
                 .first_cluster = 0x50524f43u,
                 .volume_id = 0,
                 .size = len,
@@ -247,13 +287,23 @@ int proc_lookup(const char *path, struct storage_node *out)
         const char *file = 0;
         uint32_t pid = 0;
         int kind = proc_path_kind(path, &file, &pid);
+        if ((kind == 2 || kind == 3) && !file) {
+            if (kind == 3) pid = sched_current_pid();
+            if (!pid || !sched_find(pid)) return -2;
+            if (out) *out = (struct storage_node){
+                .type = LEONOS_FS_TYPE_DIR,
+                .flags = STORAGE_NODE_FLAG_PROC,
+                .first_cluster = 0x50524f43u,
+            };
+            return 0;
+        }
         if ((kind == 2 || kind == 3) && file &&
-            (proc_text_eq(file, "stat") || proc_text_eq(file, "cmdline"))) {
+            (proc_text_eq(file, "stat") || proc_text_eq(file, "cmdline") || proc_text_eq(file, "status"))) {
             if (kind == 2 && !sched_find(pid)) return -2;
             if (out) {
                 *out = (struct storage_node){
                     .type = LEONOS_FS_TYPE_FILE,
-                    .flags = 0,
+                    .flags = STORAGE_NODE_FLAG_PROC,
                     .first_cluster = 0x50524f43u,
                     .volume_id = 0,
                     .size = 512,
@@ -289,7 +339,20 @@ int proc_readdir(const char *path, uint64_t *offset, struct leonos_dir_entry *en
 {
     uint32_t index;
     static const char *files[] = {"uptime", "meminfo", "version", "machine-id", "stat"};
-    if (!path || !proc_text_eq(path, "/proc") || !offset || !entry) return -22;
+    if (!path || !offset || !entry) return -22;
+    if (!proc_text_eq(path, "/proc")) {
+        const char *file = NULL;
+        uint32_t pid;
+        int kind = proc_path_kind(path, &file, &pid);
+        if (kind == 3) pid = sched_current_pid();
+        if ((kind != 2 && kind != 3) || file) return -20;
+        if (!sched_find(pid)) return -2;
+        static const char *task_files[] = {"stat", "cmdline", "status"};
+        if (*offset >= sizeof(task_files) / sizeof(task_files[0])) return 0;
+        *entry = (struct leonos_dir_entry){.type = LEONOS_FS_TYPE_FILE};
+        proc_copy(entry->name, sizeof(entry->name), task_files[(*offset)++]);
+        return 1;
+    }
     index = (uint32_t)*offset;
     if (index < sizeof(files) / sizeof(files[0])) {
         entry->type = LEONOS_FS_TYPE_FILE;
@@ -301,14 +364,15 @@ int proc_readdir(const char *path, uint64_t *offset, struct leonos_dir_entry *en
         struct task_snapshot_info snapshots[SCHED_TASK_MAX];
         uint32_t count = sched_snapshot(snapshots, SCHED_TASK_MAX, 0);
         uint32_t task_index = index - (uint32_t)(sizeof(files) / sizeof(files[0]));
-        if (task_index < count) {
+        while (task_index < count) {
+            ++*offset;
+            if (!snapshots[task_index].pid) { ++task_index; continue; }
             char name[16];
             uint32_t pos = 0;
             proc_copy(name, sizeof(name), "");
             proc_append_u64(name, &pos, sizeof(name), snapshots[task_index].pid);
             entry->type = LEONOS_FS_TYPE_DIR;
             proc_copy(entry->name, sizeof(entry->name), name);
-            *offset = index + 1u;
             return 1;
         }
     }

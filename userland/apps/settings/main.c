@@ -664,7 +664,7 @@ static void save_services_config(void)
         append_char(cfg, &pos, sizeof(cfg), '\n');
     }
     fd = open(SETTINGS_SERVICES_PATH,
-              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         copy_text(status_text, sizeof(status_text),
                   T("Could not save services.", "无法保存服务设置。"));
@@ -862,7 +862,7 @@ static int inputm_append_config(const char *key, const char *value)
     append_char(line, &pos, sizeof(line), '=');
     append_text(line, &pos, sizeof(line), value);
     append_char(line, &pos, sizeof(line), '\n');
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0666);
     if (fd < 0) {
         return 0;
     }

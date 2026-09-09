@@ -1,701 +1,231 @@
-/* Copyright (c) 2002, 2005, 2007 Joerg Wunsch
-   All rights reserved.
+#ifndef _STDIO_H
+#define _STDIO_H
 
-   Portions of documentation Copyright (c) 1990, 1991, 1993
-   The Regents of the University of California.
-
-   All rights reserved.
-
-   Redistribution and use in source and binary forms, with or without
-   modification, are permitted provided that the following conditions are met:
-
-   * Redistributions of source code must retain the above copyright
-     notice, this list of conditions and the following disclaimer.
-
-   * Redistributions in binary form must reproduce the above copyright
-     notice, this list of conditions and the following disclaimer in
-     the documentation and/or other materials provided with the
-     distribution.
-
-   * Neither the name of the copyright holders nor the names of
-     contributors may be used to endorse or promote products derived
-     from this software without specific prior written permission.
-
-  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-  ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
-  LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-  CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-  SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-  INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-  POSSIBILITY OF SUCH DAMAGE.
-
-  $Id: stdio.h 2527 2016-10-27 20:41:22Z joerg_wunsch $
-*/
-
-#ifndef _STDIO_H_
-#define _STDIO_H_ 1
-
-#include <sys/cdefs.h>
-#define __need_NULL
-#define __need_size_t
-#include <stddef.h>
-#define __need___va_list
-#include <stdarg.h>
-#include <sys/lock.h>
-#include <sys/_types.h>
-
-_BEGIN_STD_C
-
-#if !((defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L) \
-      || (defined(__cplusplus) && __cplusplus >= 201402L))
-// Provide this function for applications which use an earlier C standard before C11 and C++14
-#define _PICOLIBC_USE_DEPRECATED_GETS
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-/*
- * This is an internal structure of the library that is subject to be
- * changed without warnings at any time.  Please do *never* reference
- * elements of it beyond by using the official interfaces provided.
- */
+#include <features.h>
 
-#ifdef __ATOMIC_UNGETC
-#if defined(__riscv) || defined(__MICROBLAZE__) || (__loongarch__)
-/*
- * Use 32-bit ungetc storage when doing atomic ungetc on RISC-V and
- * MicroBlaze, which have 4-byte swap intrinsics but not 2-byte swap
- * intrinsics. This increases the size of the __file struct by four
- * bytes.
- */
-#define __PICOLIBC_UNGETC_SIZE 4
-#endif
+#define __NEED_FILE
+#define __NEED___isoc_va_list
+#define __NEED_size_t
+
+#if __STDC_VERSION__ < 201112L
+#define __NEED_struct__IO_FILE
 #endif
 
-#ifndef __PICOLIBC_UNGETC_SIZE
-#define __PICOLIBC_UNGETC_SIZE 2
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+#define __NEED_ssize_t
+#define __NEED_off_t
+#define __NEED_va_list
 #endif
 
-#if __PICOLIBC_UNGETC_SIZE == 4
-typedef __uint32_t __ungetc_t;
-#endif
+#include <bits/alltypes.h>
 
-#if __PICOLIBC_UNGETC_SIZE == 2
-typedef __uint16_t __ungetc_t;
-#endif
-
-struct __file {
-    __ungetc_t unget;                  /* ungetc() buffer */
-    __uint8_t  flags;                  /* flags, see below */
-#define __SRD    0x0001                /* OK to read */
-#define __SWR    0x0002                /* OK to write */
-#define __SERR   0x0004                /* found error */
-#define __SEOF   0x0008                /* found EOF */
-#define __SCLOSE 0x0010                /* struct is __file_close */
-#define __SEXT   0x0020                /* struct is __file_ext */
-#define __SBUF   0x0040                /* struct is __file_bufio */
-#define __SWIDE  0x0080                /* wchar output mode */
-    int (*put)(char, struct __file *); /* function to write one char to device */
-    int (*get)(struct __file *);       /* function to read one char from device */
-    int (*flush)(struct __file *);     /* function to flush output to device */
-#ifdef __STDIO_LOCKING
-    _LOCK_RECURSIVE_T lock;
-#endif
-};
-
-#ifdef __STDIO_LOCKING
-#define __STDIO_UNLOCKED(_fn) _fn##_unlocked
+#if __cplusplus >= 201103L
+#define NULL nullptr
+#elif defined(__cplusplus)
+#define NULL 0L
 #else
-#define __STDIO_UNLOCKED(_fn) _fn
+#define NULL ((void*)0)
 #endif
 
-/*
- * This variant includes a 'close' function which is
- * invoked from fclose when the __SCLOSE bit is set
- */
-struct __file_close {
-    struct __file file;                      /* main file struct */
-    int           (*close)(struct __file *); /* function to close file */
-};
+#undef EOF
+#define EOF (-1)
 
-#define FDEV_SETUP_CLOSE(__put, __get, __flush, __close, __flags)               \
-    {                                                                           \
-        .file = FDEV_SETUP_STREAM(__put, __get, __flush, (__flags) | __SCLOSE), \
-        .close = (__close),                                                     \
-    }
+#undef SEEK_SET
+#undef SEEK_CUR
+#undef SEEK_END
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
 
-struct __file_ext {
-    struct __file_close cfile; /* close file struct */
-    __off_t             (*seek)(struct __file *, __off_t offset, int whence);
-    int                 (*setvbuf)(struct __file *, char *buf, int mode, size_t size);
-};
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
 
-#define FDEV_SETUP_EXT(__put, __get, __flush, __close, __seek, __setvbuf, __flags)     \
-    {                                                                                  \
-        .cfile = FDEV_SETUP_CLOSE(__put, __get, __flush, __close, (__flags) | __SEXT), \
-        .seek = (__seek),                                                              \
-        .setvbuf = (__setvbuf),                                                        \
-    }
+#define BUFSIZ 1024
+#define FILENAME_MAX 4096
+#define FOPEN_MAX 1000
+#define TMP_MAX 10000
+#define L_tmpnam 20
 
-/*@{*/
-/**
-   \c FILE is the opaque structure that is passed around between the
-   various standard IO functions.
-*/
-#ifndef ___FILE_DECLARED
-typedef struct __file __FILE;
-#define ___FILE_DECLARED
+typedef union _G_fpos64_t {
+	char __opaque[16];
+	long long __lldata;
+	double __align;
+} fpos_t;
+
+extern FILE *const stdin;
+extern FILE *const stdout;
+extern FILE *const stderr;
+
+#define stdin  (stdin)
+#define stdout (stdout)
+#define stderr (stderr)
+
+FILE *fopen(const char *__restrict, const char *__restrict);
+FILE *freopen(const char *__restrict, const char *__restrict, FILE *__restrict);
+int fclose(FILE *);
+
+int remove(const char *);
+int rename(const char *, const char *);
+
+int feof(FILE *);
+int ferror(FILE *);
+int fflush(FILE *);
+void clearerr(FILE *);
+
+int fseek(FILE *, long, int);
+long ftell(FILE *);
+void rewind(FILE *);
+
+int fgetpos(FILE *__restrict, fpos_t *__restrict);
+int fsetpos(FILE *, const fpos_t *);
+
+size_t fread(void *__restrict, size_t, size_t, FILE *__restrict);
+size_t fwrite(const void *__restrict, size_t, size_t, FILE *__restrict);
+
+int fgetc(FILE *);
+int getc(FILE *);
+int getchar(void);
+int ungetc(int, FILE *);
+
+int fputc(int, FILE *);
+int putc(int, FILE *);
+int putchar(int);
+
+char *fgets(char *__restrict, int, FILE *__restrict);
+#if __STDC_VERSION__ < 201112L
+char *gets(char *);
 #endif
 
-#ifndef _FILE_DECLARED
-typedef __FILE FILE;
-#define _FILE_DECLARED
+int fputs(const char *__restrict, FILE *__restrict);
+int puts(const char *);
+
+int printf(const char *__restrict, ...);
+int fprintf(FILE *__restrict, const char *__restrict, ...);
+int sprintf(char *__restrict, const char *__restrict, ...);
+int snprintf(char *__restrict, size_t, const char *__restrict, ...);
+
+int vprintf(const char *__restrict, __isoc_va_list);
+int vfprintf(FILE *__restrict, const char *__restrict, __isoc_va_list);
+int vsprintf(char *__restrict, const char *__restrict, __isoc_va_list);
+int vsnprintf(char *__restrict, size_t, const char *__restrict, __isoc_va_list);
+
+int scanf(const char *__restrict, ...);
+int fscanf(FILE *__restrict, const char *__restrict, ...);
+int sscanf(const char *__restrict, const char *__restrict, ...);
+int vscanf(const char *__restrict, __isoc_va_list);
+int vfscanf(FILE *__restrict, const char *__restrict, __isoc_va_list);
+int vsscanf(const char *__restrict, const char *__restrict, __isoc_va_list);
+
+void perror(const char *);
+
+int setvbuf(FILE *__restrict, char *__restrict, int, size_t);
+void setbuf(FILE *__restrict, char *__restrict);
+
+char *tmpnam(char *);
+FILE *tmpfile(void);
+
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+FILE *fmemopen(void *__restrict, size_t, const char *__restrict);
+FILE *open_memstream(char **, size_t *);
+FILE *fdopen(int, const char *);
+FILE *popen(const char *, const char *);
+int pclose(FILE *);
+int fileno(FILE *);
+int fseeko(FILE *, off_t, int);
+off_t ftello(FILE *);
+int dprintf(int, const char *__restrict, ...);
+int vdprintf(int, const char *__restrict, __isoc_va_list);
+void flockfile(FILE *);
+int ftrylockfile(FILE *);
+void funlockfile(FILE *);
+int getc_unlocked(FILE *);
+int getchar_unlocked(void);
+int putc_unlocked(int, FILE *);
+int putchar_unlocked(int);
+ssize_t getdelim(char **__restrict, size_t *__restrict, int, FILE *__restrict);
+ssize_t getline(char **__restrict, size_t *__restrict, FILE *__restrict);
+int renameat(int, const char *, int, const char *);
+char *ctermid(char *);
+#define L_ctermid 20
 #endif
 
-/**
-   This symbol is defined when stdin/stdout/stderr are global
-   variables. When undefined, the old __iob array is used which
-   contains the pointers instead
-*/
-#define __PICOLIBC_STDIO_GLOBALS
+#if defined(_GNU_SOURCE)
+#define RENAME_NOREPLACE (1 << 0)
+#define RENAME_EXCHANGE  (1 << 1)
+#define RENAME_WHITEOUT  (1 << 2)
 
-extern __picolibc_export FILE * const stdin;
-extern __picolibc_export FILE * const stdout;
-extern __picolibc_export FILE * const stderr;
-
-/* The stdin, stdout, and stderr symbols are described as macros in the C
- * standard. */
-#define stdin             stdin
-#define stdout            stdout
-#define stderr            stderr
-
-#define EOF               (-1)
-
-#define _IOFBF            0 /* setvbuf should set fully buffered */
-#define _IOLBF            1 /* setvbuf should set line buffered */
-#define _IONBF            2 /* setvbuf should set unbuffered */
-
-#define _FDEV_SETUP_READ  __SRD           /**< fdev_setup_stream() with read intent */
-#define _FDEV_SETUP_WRITE __SWR           /**< fdev_setup_stream() with write intent */
-#define _FDEV_SETUP_RW    (__SRD | __SWR) /**< fdev_setup_stream() with read/write intent */
-
-/**
- * Return code for an error condition during device read.
- *
- * To be used in the get function of fdevopen().
- */
-#define _FDEV_ERR (-1)
-
-/**
- * Return code for an end-of-file condition during device read.
- *
- * To be used in the get function of fdevopen().
- */
-#define _FDEV_EOF (-2)
-
-#define FDEV_SETUP_STREAM(__put, __get, __flush, __flags) \
-    {                                                     \
-        .flags = (__flags),                               \
-        .put = (__put),                                   \
-        .get = (__get),                                   \
-        .flush = (__flush),                               \
-    }
-
-FILE *fdevopen(int (*__put)(char, FILE *), int (*__get)(FILE *),
-               int (*__flush)(FILE *)) __picolibc_export;
-int   fclose(FILE *__stream) __nonnull((1)) __picolibc_export;
-/* fflush(NULL) is a valid request to flush all active output streams. */
-int   fflush(FILE *stream) __picolibc_export;
-
-#define fdev_close(f) (fflush(f))
-
-/* Check for old-style printf selection symbols */
-
-#define __IO_VARIANT_DOUBLE  'd'
-#define __IO_VARIANT_FLOAT   'f'
-#define __IO_VARIANT_LLONG   'l'
-#define __IO_VARIANT_INTEGER 'i'
-#define __IO_VARIANT_MINIMAL 'm'
-
-#ifndef _PICOLIBC_PRINTF
-#if defined(PICOLIBC_DOUBLE_PRINTF_SCANF)
-#define _PICOLIBC_PRINTF __IO_VARIANT_DOUBLE
-#elif defined(PICOLIBC_FLOAT_PRINTF_SCANF)
-#define _PICOLIBC_PRINTF __IO_VARIANT_FLOAT
-#elif defined(PICOLIBC_LONG_LONG_PRINTF_SCANF)
-#define _PICOLIBC_PRINTF __IO_VARIANT_LLONG
-#elif defined(PICOLIBC_INTEGER_PRINTF_SCANF)
-#define _PICOLIBC_PRINTF __IO_VARIANT_INTEGER
-#elif defined(PICOLIBC_MINIMAL_PRINTF_SCANF)
-#define _PICOLIBC_PRINTF __IO_VARIANT_MINIMAL
-#else
-#define _PICOLIBC_PRINTF __IO_DEFAULT
-#endif
+int renameat2(int, const char *, int, const char *, unsigned);
 #endif
 
-/* Check for old-style scanf selection symbols */
-
-#ifndef _PICOLIBC_SCANF
-#if defined(PICOLIBC_DOUBLE_PRINTF_SCANF)
-#define _PICOLIBC_SCANF __IO_VARIANT_DOUBLE
-#elif defined(PICOLIBC_FLOAT_PRINTF_SCANF)
-#define _PICOLIBC_SCANF __IO_VARIANT_FLOAT
-#elif defined(PICOLIBC_LONG_LONG_PRINTF_SCANF)
-#define _PICOLIBC_SCANF __IO_VARIANT_LLONG
-#elif defined(PICOLIBC_INTEGER_PRINTF_SCANF)
-#define _PICOLIBC_SCANF __IO_VARIANT_INTEGER
-#elif defined(PICOLIBC_MINIMAL_PRINTF_SCANF)
-#define _PICOLIBC_SCANF __IO_VARIANT_MINIMAL
-#else
-#define _PICOLIBC_SCANF __IO_DEFAULT
-#endif
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+#define P_tmpdir "/tmp"
+char *tempnam(const char *, const char *);
 #endif
 
-#if _PICOLIBC_PRINTF == __IO_VARIANT_FLOAT
-#ifdef __GNUCLIKE_PRAGMA_DIAGNOSTIC
-#pragma GCC diagnostic ignored "-Wformat"
-#endif
-#define __FORMAT_ATTRIBUTE__(__a, __s, __f) __picolibc_format(__a, __s, 0)
-#else
-#define __FORMAT_ATTRIBUTE__(__a, __s, __f) __picolibc_format(__a, __s, __f)
-#endif
-
-#define __PRINTF_ATTRIBUTE__(__s, __f) __FORMAT_ATTRIBUTE__(printf, __s, __f)
-#define __SCANF_ATTRIBUTE__(__s, _f)   __FORMAT_ATTRIBUTE__(scanf, __s, __f)
-
-int fputc(int __c, FILE *__stream) __nonnull((2)) __picolibc_export;
-int putc(int __c, FILE *__stream) __nonnull((2)) __picolibc_export;
-int putchar(int __c) __picolibc_export;
-#define putc(__c, __stream) fputc(__c, __stream)
-#define putchar(__c)        fputc(__c, stdout)
-
-int printf(const char *__fmt, ...) __PRINTF_ATTRIBUTE__(1, 2) __picolibc_export;
-int fprintf(FILE *__stream, const char *__fmt, ...) __PRINTF_ATTRIBUTE__(2, 3)
-    __nonnull((1)) __picolibc_export;
-int vprintf(const char *__fmt, __gnuc_va_list __ap) __PRINTF_ATTRIBUTE__(1, 0) __picolibc_export;
-int vfprintf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap) __PRINTF_ATTRIBUTE__(2, 0)
-    __nonnull((1)) __picolibc_export;
-int sprintf(char *__s, const char *__fmt, ...) __PRINTF_ATTRIBUTE__(2, 3) __picolibc_export;
-int snprintf(char *__s, size_t __n, const char *__fmt, ...)
-    __PRINTF_ATTRIBUTE__(3, 4) __picolibc_export;
-int vsprintf(char *__s, const char *__fmt, __gnuc_va_list ap)
-    __PRINTF_ATTRIBUTE__(2, 0) __picolibc_export;
-int vsnprintf(char *__s, size_t __n, const char *__fmt, __gnuc_va_list ap)
-    __PRINTF_ATTRIBUTE__(3, 0) __picolibc_export;
-int   asprintf(char **strp, const char *fmt, ...) __PRINTF_ATTRIBUTE__(2, 3) __picolibc_export;
-char *asnprintf(char *str, size_t *lenp, const char *fmt, ...)
-    __PRINTF_ATTRIBUTE__(3, 4) __picolibc_export;
-int vasprintf(char **strp, const char *fmt, __gnuc_va_list ap)
-    __PRINTF_ATTRIBUTE__(2, 0) __picolibc_export;
-char *vasnprintf(char *str, size_t *lenp, const char *fmt, __gnuc_va_list ap)
-    __PRINTF_ATTRIBUTE__(3, 0) __picolibc_export;
-
-int    fputs(const char *__str, FILE *__stream) __nonnull((2)) __picolibc_export;
-int    puts(const char *__str) __picolibc_export;
-size_t fwrite(const void *__ptr, size_t __size, size_t __nmemb, FILE *__stream)
-    __nonnull((4)) __picolibc_export;
-
-int fgetc(FILE *__stream) __nonnull((1)) __picolibc_export;
-int getc(FILE *__stream) __nonnull((1)) __picolibc_export;
-int getchar(void) __picolibc_export;
-#define getchar() getc(stdin)
-int ungetc(int __c, FILE *__stream) __nonnull((2)) __picolibc_export;
-
-int scanf(const char *__fmt, ...) __FORMAT_ATTRIBUTE__(scanf, 1, 2) __picolibc_export;
-int fscanf(FILE *__stream, const char *__fmt, ...) __FORMAT_ATTRIBUTE__(scanf, 2, 3)
-    __nonnull((1)) __picolibc_export;
-int vscanf(const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(scanf, 1, 0) __picolibc_export;
-int vfscanf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(scanf, 2, 0) __nonnull((1)) __picolibc_export;
-int sscanf(const char *__buf, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(scanf, 2, 3) __picolibc_export;
-int vsscanf(const char *__buf, const char *__fmt, __gnuc_va_list ap)
-    __FORMAT_ATTRIBUTE__(scanf, 2, 0) __picolibc_export;
-
-char *fgets(char *__str, int __size, FILE *__stream) __nonnull((3)) __picolibc_export;
-#ifdef _PICOLIBC_USE_DEPRECATED_GETS
-char *gets(char *str) __picolibc_export;
-#endif
-size_t fread(void *__ptr, size_t __size, size_t __nmemb, FILE *__stream)
-    __nonnull((4)) __picolibc_export;
-
-void clearerr(FILE *__stream) __nonnull((1)) __picolibc_export;
-int  ferror(FILE *__stream) __nonnull((1)) __picolibc_export;
-int  feof(FILE *__stream) __nonnull((1)) __picolibc_export;
-#ifdef __MISC_VISIBLE
-void __fseterr(FILE *__stream) __nonnull((1)) __picolibc_export;
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define L_cuserid 20
+char *cuserid(char *);
+void setlinebuf(FILE *);
+void setbuffer(FILE *, char *, size_t);
+int fgetc_unlocked(FILE *);
+int fputc_unlocked(int, FILE *);
+int fflush_unlocked(FILE *);
+size_t fread_unlocked(void *, size_t, size_t, FILE *);
+size_t fwrite_unlocked(const void *, size_t, size_t, FILE *);
+void clearerr_unlocked(FILE *);
+int feof_unlocked(FILE *);
+int ferror_unlocked(FILE *);
+int fileno_unlocked(FILE *);
+int getw(FILE *);
+int putw(int, FILE *);
+char *fgetln(FILE *, size_t *);
+int asprintf(char **, const char *, ...);
+int vasprintf(char **, const char *, __isoc_va_list);
 #endif
 
-/* fast inlined versions */
-#define __clearerr_unlocked(s)  ((s)->flags &= (__uint8_t) ~(__SERR | __SEOF))
-#define __ferror_unlocked(s)    ((s)->flags & __SERR)
-#define __feof_unlocked(s)      ((s)->flags & __SEOF)
-#define ____fseterr_unlocked(s) ((s)->flags |= __SERR)
+#ifdef _GNU_SOURCE
+char *fgets_unlocked(char *, int, FILE *);
+int fputs_unlocked(const char *, FILE *);
 
-/* When locking is disabled, use the unlocked macros */
-#ifndef __STDIO_LOCKING
-#define clearerr(s) __clearerr_unlocked(s)
-#define ferror(s)   __ferror_unlocked(s)
-#define feof(s)     __feof_unlocked(s)
-#ifdef __MISC_VISIBLE
-#define __fseterr(s) ____fseterr_unlocked(s)
-#endif
-#endif
+typedef ssize_t (cookie_read_function_t)(void *, char *, size_t);
+typedef ssize_t (cookie_write_function_t)(void *, const char *, size_t);
+typedef int (cookie_seek_function_t)(void *, off_t *, int);
+typedef int (cookie_close_function_t)(void *);
 
-/* Expose the unlocked symbols when requested */
-#ifdef __MISC_VISIBLE
-void clearerr_unlocked(FILE *__stream) __nonnull((1)) __picolibc_export;
-int  ferror_unlocked(FILE *__stream) __nonnull((1)) __picolibc_export;
-int  feof_unlocked(FILE *__stream) __nonnull((1)) __picolibc_export;
-void __fseterr_unlocked(FILE *__stream) __nonnull((1)) __picolibc_export;
-#define clearerr_unlocked(s)  __clearerr_unlocked(s)
-#define ferror_unlocked(s)    __ferror_unlocked(s)
-#define feof_unlocked(s)      __feof_unlocked(s)
-#define __fseterr_unlocked(s) ____fseterr_unlocked(s)
-#endif
-
-/* Expose printf variants */
-#ifdef __GNU_VISIBLE
-int __d_vfprintf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-int __f_vfprintf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-int __i_vfprintf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-int __l_vfprintf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-int __m_vfprintf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-
-int __d_sprintf(char *__s, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-int __f_sprintf(char *__s, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-int __i_sprintf(char *__s, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-int __l_sprintf(char *__s, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-int __m_sprintf(char *__s, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 2, 0) __picolibc_export;
-
-int __d_snprintf(char *__s, size_t __n, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 3, 0) __picolibc_export;
-int __f_snprintf(char *__s, size_t __n, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 3, 0) __picolibc_export;
-int __i_snprintf(char *__s, size_t __n, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 3, 0) __picolibc_export;
-int __l_snprintf(char *__s, size_t __n, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 3, 0) __picolibc_export;
-int __m_snprintf(char *__s, size_t __n, const char *__fmt, ...)
-    __FORMAT_ATTRIBUTE__(printf, 3, 0) __picolibc_export;
-
-int __d_vfscanf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(scanf, 2, 0) __picolibc_export;
-int __f_vfscanf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(scanf, 2, 0) __picolibc_export;
-int __i_vfscanf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(scanf, 2, 0) __picolibc_export;
-int __l_vfscanf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(scanf, 2, 0) __picolibc_export;
-int __m_vfscanf(FILE *__stream, const char *__fmt, __gnuc_va_list __ap)
-    __FORMAT_ATTRIBUTE__(scanf, 2, 0) __picolibc_export;
-
-#endif
-
-#ifndef SEEK_SET
-#define SEEK_SET 0 /* set file offset to offset */
-#endif
-#ifndef SEEK_CUR
-#define SEEK_CUR 1 /* set file offset to current plus offset */
-#endif
-#ifndef SEEK_END
-#define SEEK_END 2 /* set file offset to EOF plus offset */
-#endif
-
-/* only mentioned for libstdc++ support, not implemented in library */
-#ifndef BUFSIZ
-#define BUFSIZ 512
-#endif
-
-/*
- * We don't have any way of knowing any underlying POSIX limits,
- * so just use a reasonably small values here
- */
-#ifndef FOPEN_MAX
-#define FOPEN_MAX 32
-#endif
-#ifndef FILENAME_MAX
-#define FILENAME_MAX 1024
-#endif
-
-/*
- * Declare required C types
- *
- * size_t comes from stddef.h (included from cdefs.h)
- */
-#ifndef _FPOS_T_DECLARED
-typedef __fpos_t fpos_t;
-#define _FPOS_T_DECLARED
-#endif
-
-#if __POSIX_VISIBLE
-/*
- * Declare required additional POSIX types.
- */
-
-#ifndef _OFF_T_DECLARED
-typedef __off_t off_t; /* file offset */
-#define _OFF_T_DECLARED
-#endif
-
-#ifndef _SSIZE_T_DECLARED
-typedef __ssize_t ssize_t;
-#define _SSIZE_T_DECLARED
-#endif
-
-/* This needs to agree with <stdarg.h> */
-#ifdef __GNUC__
-#ifndef _VA_LIST_DEFINED
-typedef __gnuc_va_list va_list;
-#define _VA_LIST_DEFINED
-#endif
-#else
-#include <stdarg.h>
-#endif
-
-int dprintf(int fd, const char * __restrict fmt, ...) __picolibc_export;
-int vdprintf(int fd, const char * __restrict fmt, __gnuc_va_list ap) __picolibc_export;
-
-#endif
-
-int   fgetpos(FILE   *__restrict stream, fpos_t   *__restrict pos) __nonnull((1)) __picolibc_export;
-FILE *fopen(const char *path, const char *mode)
-    __malloc_like_with_free(fclose, 1) __picolibc_export;
-FILE *freopen(const char *path, const char *mode, FILE *stream) __nonnull((3)) __picolibc_export;
-FILE *fdopen(int, const char *) __malloc_like_with_free(fclose, 1) __picolibc_export;
-FILE *fmemopen(void *buf, size_t size, const char *mode)
-    __malloc_like_with_free(fclose, 1) __picolibc_export;
-#if __POSIX_VISIBLE >= 200809
-FILE *open_memstream(char **bufp, size_t *sizep)
-    __malloc_like_with_free(fclose, 1) __picolibc_export;
-#endif
-int   fseek(FILE *stream, long offset, int whence) __nonnull((1)) __picolibc_export;
-int   fsetpos(FILE *stream, const fpos_t *pos) __nonnull((1)) __picolibc_export;
-long  ftell(FILE *stream) __nonnull((1)) __picolibc_export;
-int   fileno(FILE *stream) __nonnull((1)) __picolibc_export;
-void  perror(const char *s) __picolibc_export;
-int   remove(const char *pathname) __picolibc_export;
-int   rename(const char *oldpath, const char *newpath) __picolibc_export;
-void  rewind(FILE *stream) __nonnull((1)) __picolibc_export;
-void  setbuf(FILE *stream, char *buf) __nonnull((1)) __picolibc_export;
-void  setbuffer(FILE *stream, char *buf, size_t size) __nonnull((1)) __picolibc_export;
-void  setlinebuf(FILE *stream) __nonnull((1)) __picolibc_export;
-int   setvbuf(FILE *stream, char *buf, int mode, size_t size) __nonnull((1)) __picolibc_export;
-FILE *tmpfile(void) __picolibc_export;
-char *tmpnam(char *s) __picolibc_export;
-
-#if __POSIX_VISIBLE
-int     fseeko(FILE *stream, off_t offset, int whence) __nonnull((1)) __picolibc_export;
-off_t   ftello(FILE *stream) __nonnull((1)) __picolibc_export;
-ssize_t getline(char ** __restrict lineptr, size_t * __restrict n, FILE * __restrict stream)
-    __nonnull((3)) __picolibc_export;
-ssize_t getdelim(char ** __restrict lineptr, size_t * __restrict n, int delim,
-                 FILE * __restrict stream) __nonnull((4)) __picolibc_export;
-FILE   *popen(const char *command, const char *type) __picolibc_export;
-int     pclose(FILE *stream) __picolibc_export;
-#endif
-
-#if __BSD_VISIBLE
-FILE *funopen(const void *cookie, ssize_t (*readfn)(void *cookie, void *buf, size_t n),
-              ssize_t (*writefn)(void *cookie, const void *buf, size_t n),
-              off_t   (*seekfn)(void *cookie, off_t off, int whence),
-              int     (*closefn)(void *cookie)) __picolibc_export;
-#define fropen(__cookie, __fn) funopen(__cookie, __fn, NULL, NULL, NULL)
-#define fwopen(__cookie, __fn) funopen(__cookie, NULL, __fn, NULL, NULL)
-#endif /*__BSD_VISIBLE */
-
-#if __GNU_VISIBLE
-typedef ssize_t cookie_read_function_t(void *cookie, char *buf, size_t n);
-typedef ssize_t cookie_write_function_t(void *cookie, const char *buf, size_t n);
-typedef int     cookie_seek_function_t(void *cookie, off_t *pos, int whence);
-typedef int     cookie_close_function_t(void *cookie);
-
-typedef struct cookie_io_functions_t {
-    cookie_read_function_t  *read;
-    cookie_write_function_t *write;
-    cookie_seek_function_t  *seek;
-    cookie_close_function_t *close;
+typedef struct _IO_cookie_io_functions_t {
+	cookie_read_function_t *read;
+	cookie_write_function_t *write;
+	cookie_seek_function_t *seek;
+	cookie_close_function_t *close;
 } cookie_io_functions_t;
 
-FILE *fopencookie(void *cookie, const char *modes,
-                  cookie_io_functions_t io_funcs) __picolibc_export;
-#endif /* __GNU_VISIBLE */
-
-#if __POSIX_VISIBLE >= 199309L
-int getc_unlocked(FILE *) __nonnull((1)) __picolibc_export;
-int getchar_unlocked(void) __picolibc_export;
-#ifdef __STDIO_LOCKING
-void flockfile(FILE *__f) __nonnull((1)) __acquire_capability(__f->lock) __picolibc_export;
-int  ftrylockfile(FILE *) __nonnull((1)) __picolibc_export;
-void funlockfile(FILE *__f) __nonnull((1)) __release_capability(__f->lock) __picolibc_export;
-#else
-void flockfile(FILE *) __nonnull((1)) __picolibc_export;
-int  ftrylockfile(FILE *) __nonnull((1)) __picolibc_export;
-void funlockfile(FILE *) __nonnull((1)) __picolibc_export;
-#endif
-int putc_unlocked(int, FILE *) __nonnull((2)) __picolibc_export;
-int putchar_unlocked(int) __picolibc_export;
-#ifndef __STDIO_LOCKING
-#define getc_unlocked(f)       getc(f)
-#define getchar_unlocked(f)    getc(stdin)
-#define putc_unlocked(c, f)    putc(c, f)
-#define putchar_unlocked(c, f) putc(c, stdout)
-#endif
+FILE *fopencookie(void *, const char *, cookie_io_functions_t);
 #endif
 
-#if __GNU_VISIBLE
-int ungetc_unlocked(int c, FILE *) __nonnull((2)) __picolibc_export;
-#ifndef __STDIO_LOCKING
-#define ungetc_unlocked(c, f) ungetc(c, f)
-#endif
-#endif
-
-#if __STDC_WANT_LIB_EXT1__ == 1
-#ifndef __STDC_LIB_EXT1__
-#define __STDC_LIB_EXT1__ 1
-#endif
-
-#include <sys/_types.h>
-#include <stdarg.h>
-
-#ifndef _ERRNO_T_DEFINED
-typedef __errno_t errno_t;
-#define _ERRNO_T_DEFINED
+#if defined(_LARGEFILE64_SOURCE)
+#define tmpfile64 tmpfile
+#define fopen64 fopen
+#define freopen64 freopen
+#define fseeko64 fseeko
+#define ftello64 ftello
+#define fgetpos64 fgetpos
+#define fsetpos64 fsetpos
+#define fpos64_t fpos_t
+#define off64_t off_t
 #endif
 
-#ifndef _RSIZE_T_DEFINED
-typedef __rsize_t rsize_t;
-#define _RSIZE_T_DEFINED
-#endif
-
-int sprintf_s(char * __restrict __s, rsize_t __bufsize, const char * __restrict __format,
-              ...) __picolibc_export;
-int vsnprintf_s(char * __restrict s, rsize_t n, const char * __restrict fmt,
-                va_list arg) __picolibc_export;
-int vfprintf_s(FILE * __restrict stream, const char * __restrict fmt,
-               va_list ap_orig) __picolibc_export;
-#endif
-
-/*
- * P_tmpdir must be empty or end with a path separator; L_tmpnam must fit
- * P_tmpdir + the template + NUL. Both are set via meson or cmake tmpdir
- */
-#ifdef __L_tmpnam
-#define L_tmpnam __L_tmpnam
-#else
-#define L_tmpnam 8
-#endif
-
-#if __MISC_VISIBLE || XSI_VISIBLE
-#ifdef __P_tmpdir
-#define P_tmpdir __P_tmpdir
-#else
-#define P_tmpdir ""
-#endif
-#endif
-
-/*
- * We don't have any way of knowing any underlying POSIX limits,
- * so just use a reasonably small value here
- */
-#ifndef TMP_MAX
-#define TMP_MAX 32
-#endif
-
-/*@}*/
-
-static __inline __uint32_t
-__printf_float(float f)
-{
-    union {
-        float      f;
-        __uint32_t u;
-    } u = { .f = f };
-    return u.u;
+#ifdef __cplusplus
 }
-
-/* Express printf capabilities to applications in the form of _HAS_IO values */
-
-#if _PICOLIBC_PRINTF == __IO_VARIANT_MINIMAL
-#define printf_float(x) ((double)(x))
-#if defined(__IO_MINIMAL_LONG_LONG) || __SIZEOF_LONG_LONG__ == __SIZEOF_LONG__
-#define _HAS_IO_LONG_LONG
-#endif
-#ifdef __IO_C99_FORMATS
-#define _HAS_IO_C99_FORMATS
-#endif
-#elif _PICOLIBC_PRINTF == __IO_VARIANT_INTEGER
-#define printf_float(x) ((double)(x))
-#if defined(__IO_LONG_LONG) || __SIZEOF_LONG_LONG__ == __SIZEOF_LONG__
-#define _HAS_IO_LONG_LONG
-#endif
-#ifdef __IO_POS_ARGS
-#define _HAS_IO_POS_ARGS
-#endif
-#ifdef __IO_C99_FORMATS
-#define _HAS_IO_C99_FORMATS
-#endif
-#ifdef __IO_PERCENT_B
-#define _HAS_IO_PERCENT_B
-#endif
-#elif _PICOLIBC_PRINTF == __IO_VARIANT_LLONG
-#define printf_float(x) ((double)(x))
-#define _HAS_IO_LONG_LONG
-#ifdef __IO_POS_ARGS
-#define _HAS_IO_POS_ARGS
-#endif
-#ifdef __IO_C99_FORMATS
-#define _HAS_IO_C99_FORMATS
-#endif
-#ifdef __IO_PERCENT_B
-#define _HAS_IO_PERCENT_B
-#endif
-#elif _PICOLIBC_PRINTF == __IO_VARIANT_FLOAT
-#define printf_float(x) __printf_float(x)
-#define _HAS_IO_LONG_LONG
-#define _HAS_IO_POS_ARGS
-#define _HAS_IO_C99_FORMATS
-#ifdef __IO_PERCENT_B
-#define _HAS_IO_PERCENT_B
-#endif
-#define _HAS_IO_FLOAT
-#else /* _PICOLIBC_PRINTF == __IO_VARIANT_DOUBLE */
-#define printf_float(x) ((double)(x))
-#define _HAS_IO_LONG_LONG
-#define _HAS_IO_POS_ARGS
-#define _HAS_IO_C99_FORMATS
-#define _HAS_IO_DOUBLE
-#if defined(__MB_CAPABLE) || defined(__IO_WCHAR)
-#define _HAS_IO_WCHAR
-#endif
-#ifdef __MB_CAPABLE
-#define _HAS_IO_MBCHAR
-#endif
-#ifdef __IO_PERCENT_B
-#define _HAS_IO_PERCENT_B
-#endif
-#ifdef __IO_LONG_DOUBLE
-#define _HAS_IO_LONG_DOUBLE
-#endif
 #endif
 
-_END_STD_C
-
-#if __SSP_FORTIFY_LEVEL > 0
-#include <ssp/stdio.h>
 #endif
-
-#endif /* _STDIO_H_ */

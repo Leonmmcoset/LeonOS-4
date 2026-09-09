@@ -65,7 +65,7 @@ def main() -> int:
     parser.add_argument("--policy-apps", nargs="*", default=("desktop", "oobe", "settings"))
     parser.add_argument("--userland-dir", default="build/userland")
     parser.add_argument("--gptinit", default="build/userland-installer/gptinit.elf")
-    parser.add_argument("--policy-runtime", default="build/userland-installer-policy/libleonos.so.1")
+    parser.add_argument("--policy-runtime", default="build/userland-installer-policy/libleonos.so.2")
     parser.add_argument("--generated-icons-dir", default="build/generated/app-icons")
     # Accepted only so a build.py process started before the payload split can
     # finish. New build graphs no longer pass this option.
@@ -105,6 +105,11 @@ def main() -> int:
     # Advanced installer mode enters the installer root directly through the
     # BusyBox shell, so keep the command environment available on the ISO.
     copy_file(userland_dir / "busybox.elf", stage / "programs/busybox/busybox.elf")
+    # Ship the selected terminal packages in both the live installer and its payload.
+    copy_tree(esp_tree / "bin", stage / "bin")
+    copy_tree(esp_tree / "usr", stage / "usr")
+    if (esp_tree / "programs/vim").is_dir():
+        copy_tree(esp_tree / "programs/vim", stage / "programs/vim")
     # gptinit is installer-only and must never enter the installed root tree.
     copy_file(gptinit, stage / "programs/gptinit/gptinit.elf")
     (stage / "programs/gptinit/manifest.ini").write_text(
@@ -142,8 +147,9 @@ def main() -> int:
     copy_tree(esp_tree / "system/certs", stage / "system/certs")
     copy_tree(esp_tree / "system/resources", stage / "system/resources")
     copy_tree(esp_tree / "drivers", stage / "drivers")
-    copy_file(esp_tree / "system/lib/ld-leonos.elf", stage / "system/lib/ld-leonos.elf")
-    copy_file(policy_runtime, stage / "system/lib/libleonos.so.1")
+    copy_tree(esp_tree / "lib", stage / "lib")
+    copy_tree(esp_tree / "share/licenses", stage / "share/licenses")
+    copy_file(policy_runtime, stage / "system/lib/libleonos.so.2")
     # Unix IPC service sockets live in /run/leonos and procfs is fixed at
     # /proc; FAT/exFAT have no permission bits, so service-side SO_PEERCRED
     # checks are the access-control boundary.
@@ -160,7 +166,7 @@ def main() -> int:
     (stage / "install/root/etc/resolv.conf").write_text("nameserver 1.1.1.1\n", encoding="ascii")
     (stage / "install/root/etc/machine-id").write_text("00000000000000000000000000000000\n", encoding="ascii")
     (stage / "install/root/system/config/users.db").write_bytes(b"")
-    copy_file(policy_runtime, stage / "install/root/system/lib/libleonos.so.1")
+    copy_file(policy_runtime, stage / "install/root/system/lib/libleonos.so.2")
     remove_file(stage / "install/root/etc/license.conf")
     remove_file(stage / "install/root/etc/install.id")
     for app in args.policy_apps:
@@ -173,6 +179,9 @@ def main() -> int:
     payload_bytes = sum(item.stat().st_size for item in stage.rglob("*") if item.is_file())
     required_mib = (payload_bytes + (1024 * 1024 - 1)) // (1024 * 1024)
     required_mib += 8
+    # FAT32's root directory cannot represent both files when ncurses emits
+    # case-sensitive terminfo names. The normal staged root is copied into the
+    # installer payload once; do not duplicate it under the live root.
     size_mib = args.size_mib if args.size_mib > required_mib else required_mib
 
     run(["truncate", "-s", f"{size_mib}M", str(out)])

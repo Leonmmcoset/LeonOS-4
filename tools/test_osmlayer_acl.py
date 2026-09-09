@@ -16,7 +16,7 @@ class OsmlayerAclTests(unittest.TestCase):
                 "-fno-stack-protector", "-mno-red-zone", "-mgeneral-regs-only",
                 "-fno-pic", "-fno-pie", "-no-pie",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-Iinclude", "tools/tests/osmlayer_acl_stack_test.c",
+                "-Iinclude", "-Iinclude/uapi", "tools/tests/osmlayer_acl_stack_test.c",
                 "middlelayer/osmlayer/runtime.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)

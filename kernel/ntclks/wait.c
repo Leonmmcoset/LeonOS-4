@@ -23,6 +23,8 @@ int kernel_wait_queue_add(struct kernel_wait_queue *queue, struct task *task)
     if (!queue || !task) {
         return -1;
     }
+    if (task->waiting_queue && task->waiting_queue != queue)
+        kernel_wait_queue_remove(task->waiting_queue, task);
     kernel_spin_lock_irqsave(&queue->lock, &flags);
     for (uint32_t i = 0; i < queue->count; ++i) {
         if (queue->waiters[i] == task) {
@@ -35,6 +37,7 @@ int kernel_wait_queue_add(struct kernel_wait_queue *queue, struct task *task)
         return -1;
     }
     queue->waiters[queue->count++] = task;
+    task->waiting_queue = queue;
     kernel_spin_unlock_irqrestore(&queue->lock, flags);
     return 0;
 }
@@ -52,6 +55,7 @@ void kernel_wait_queue_remove(struct kernel_wait_queue *queue, struct task *task
                 queue->waiters[j - 1] = queue->waiters[j];
             }
             queue->waiters[--queue->count] = NULL;
+            if (task->waiting_queue == queue) task->waiting_queue = NULL;
             break;
         }
     }
@@ -72,6 +76,7 @@ uint32_t kernel_wait_queue_wake_one(struct kernel_wait_queue *queue)
             queue->waiters[i - 1] = queue->waiters[i];
         }
         queue->waiters[--queue->count] = NULL;
+        if (task->waiting_queue == queue) task->waiting_queue = NULL;
     }
     kernel_spin_unlock_irqrestore(&queue->lock, flags);
     if (task) {

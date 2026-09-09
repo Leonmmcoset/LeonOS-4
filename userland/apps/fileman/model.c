@@ -1,4 +1,9 @@
 #include "fileman.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
 
 int is_root_path(const char *path)
 {
@@ -110,7 +115,7 @@ static void fileman_settings_path(char *path, uint32_t capacity)
         build_path_join(path, capacity, user.home, ".fileman.conf");
         return;
     }
-    (void)mkdir("/var", 0);
+    (void)mkdir("/var", 0777);
     build_path_join(path, capacity, "/var", ".fileman.conf");
 }
 
@@ -173,7 +178,7 @@ static int fileman_settings_save(uint8_t show_hidden)
     uint32_t length = text_len(config);
     int fd;
     fileman_settings_path(path, sizeof(path));
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }
@@ -631,205 +636,43 @@ int accumulate_folder_size(const char *path, struct folder_size_info *info, uint
     return 0;
 }
 
-static const uint32_t acl_principals[] = {
-    LEONOS_FS_ACL_PRINCIPAL_OWNER,
-    LEONOS_FS_ACL_PRINCIPAL_SYSTEM,
-    LEONOS_FS_ACL_PRINCIPAL_ADMINISTRATORS,
-    LEONOS_FS_ACL_PRINCIPAL_USERS,
-    LEONOS_FS_ACL_PRINCIPAL_EVERYONE,
-};
-
-static const char *acl_principal_label(uint32_t principal)
+static void draw_permissions_page(struct leonos_ui_surface *ui,
+                                  const struct stat *st, const char *message)
 {
-    switch (principal) {
-    case LEONOS_FS_ACL_PRINCIPAL_OWNER:
-        return T("Owner", "所有者");
-    case LEONOS_FS_ACL_PRINCIPAL_SYSTEM:
-        return "System";
-    case LEONOS_FS_ACL_PRINCIPAL_ADMINISTRATORS:
-        return T("Administrators", "管理员");
-    case LEONOS_FS_ACL_PRINCIPAL_USERS:
-        return T("Users", "用户");
-    case LEONOS_FS_ACL_PRINCIPAL_EVERYONE:
-        return "Everyone";
-    default:
-        return "?";
+    char text[96];
+    snprintf(text, sizeof(text), "UID: %lu    GID: %lu",
+             (unsigned long)st->st_uid, (unsigned long)st->st_gid);
+    leonos_ui_text(ui, 24, 54, text, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    snprintf(text, sizeof(text), "%s %03o", T("Mode:", "权限:"), (unsigned)(st->st_mode & 07777));
+    leonos_ui_text(ui, 24, 80, text, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    const char *labels[] = {T("Owner", "所有者"), T("Group", "所属组"), T("Other", "其他用户")};
+    const char *bits[] = {"R", "W", "X"};
+    for (unsigned col = 0; col < 3; ++col)
+        leonos_ui_text(ui, 184 + col * 48, 110, bits[col], LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+    for (unsigned row = 0; row < 3; ++row) {
+        leonos_ui_text(ui, 24, 140 + row * 32, labels[row], LEONOS_UI_BLACK, LEONOS_UI_GRAY);
+        for (unsigned col = 0; col < 3; ++col)
+            leonos_ui_checkbox(ui, 180 + col * 48, 138 + row * 32, "",
+                               (st->st_mode & (0400u >> (row * 3 + col))) != 0, 0);
     }
-}
-
-static int acl_find_ace(struct leonos_fs_acl *acl, uint32_t principal)
-{
-    for (uint32_t i = 0; acl && i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
-        if (acl->aces[i].principal == principal) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
-
-static uint32_t acl_permissions_for(const struct leonos_fs_acl *acl,
-                                    uint32_t principal);
-
-static void acl_toggle_permission(struct leonos_fs_acl *acl, uint32_t principal,
-                                  uint32_t perm)
-{
-    int idx = acl_find_ace(acl, principal);
-    uint32_t current = acl_permissions_for(acl, principal);
-    if (!acl) {
-        return;
-    }
-    if (current & perm) {
-        for (uint32_t i = 0; i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
-            if (acl->aces[i].principal == principal) {
-                acl->aces[i].flags = 0;
-                acl->aces[i].permissions &= ~perm;
-            }
-        }
-        acl->flags &= ~(LEONOS_FS_ACL_FLAG_CORRUPT | LEONOS_FS_ACL_FLAG_SYNTHETIC);
-        return;
-    }
-    if (idx < 0) {
-        if (acl->ace_count >= LEONOS_FS_ACL_MAX_ACE) {
-            return;
-        }
-        idx = (int)acl->ace_count++;
-        acl->aces[idx] = (struct leonos_fs_acl_ace){
-            .principal = principal,
-            .flags = 0,
-            .permissions = 0,
-            .reserved = 0,
-        };
-    }
-    acl->aces[idx].flags = 0;
-    acl->aces[idx].permissions |= perm;
-    acl->aces[idx].permissions &= LEONOS_FS_PERM_FULL;
-    acl->flags &= ~(LEONOS_FS_ACL_FLAG_CORRUPT | LEONOS_FS_ACL_FLAG_SYNTHETIC);
-}
-
-static void acl_compact(struct leonos_fs_acl *acl)
-{
-    uint32_t out = 0;
-    if (!acl) {
-        return;
-    }
-    for (uint32_t i = 0; i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
-        if ((acl->aces[i].permissions & LEONOS_FS_PERM_FULL) == 0) {
-            continue;
-        }
-        acl->aces[out++] = acl->aces[i];
-    }
-    acl->ace_count = out;
-}
-
-static uint32_t acl_permissions_for(const struct leonos_fs_acl *acl,
-                                    uint32_t principal)
-{
-    uint32_t permissions = 0;
-    if (!acl) {
-        return 0;
-    }
-    for (uint32_t i = 0; i < acl->ace_count && i < LEONOS_FS_ACL_MAX_ACE; ++i) {
-        if (acl->aces[i].principal == principal) {
-            permissions |= acl->aces[i].permissions;
-        }
-    }
-    return permissions & LEONOS_FS_PERM_FULL;
-}
-
-static void acl_owner_text(uint32_t uid, char *buf, uint32_t cap)
-{
-    struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
-    uint32_t count = 0;
-    uint32_t pos = 0;
-    if (!buf || cap == 0) {
-        return;
-    }
-    buf[0] = 0;
-    if (uid == 0) {
-        copy_text(buf, cap, "System");
-        return;
-    }
-    if (leonos_auth_list_users(users, LEONOS_AUTH_MAX_USERS, 0, &count) == 0) {
-        for (uint32_t i = 0; i < count; ++i) {
-            if (users[i].uid == uid) {
-                copy_text(buf, cap, users[i].username);
-                return;
-            }
-        }
-    }
-    append_text(buf, &pos, cap, "uid ");
-    append_dec(buf, &pos, cap, uid);
-}
-
-static void draw_acl_security_page(struct leonos_ui_surface *ui,
-                                   const struct leonos_fs_acl *acl,
-                                   const char *message)
-{
-    static const uint32_t perms[] = {
-        LEONOS_FS_PERM_READ,
-        LEONOS_FS_PERM_WRITE,
-        LEONOS_FS_PERM_EXEC,
-        LEONOS_FS_PERM_DELETE,
-        LEONOS_FS_PERM_MANAGE,
-    };
-    static const char *perm_labels[] = {"R", "W", "X", "D", "M"};
-    char owner[48];
-    char state[96];
-    uint32_t pos = 0;
-    acl_owner_text(acl ? acl->owner_uid : 0, owner, sizeof(owner));
-    state[0] = 0;
-    append_text(state, &pos, sizeof(state), T("Owner: ", "所有者: "));
-    append_text(state, &pos, sizeof(state), owner);
-    if (acl && (acl->flags & LEONOS_FS_ACL_FLAG_SYNTHETIC)) {
-        append_text(state, &pos, sizeof(state), T("  inherited/default", "  继承/默认"));
-    }
-    if (acl && (acl->flags & LEONOS_FS_ACL_FLAG_CORRUPT)) {
-        append_text(state, &pos, sizeof(state), T("  corrupt", "  已损坏"));
-    }
-    leonos_ui_text(ui, 24, 50, state, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 24, 74, T("Principal", "主体"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_text(ui, 180, 74, T("Allow", "允许"), LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    for (uint32_t i = 0; i < 5; ++i) {
-        leonos_ui_text(ui, 174 + i * 28, 94, perm_labels[i], LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    }
-    for (uint32_t r = 0; r < 5; ++r) {
-        uint32_t y = 118 + r * 30;
-        uint32_t allow = acl_permissions_for(acl, acl_principals[r]);
-        leonos_ui_text_clipped(ui, 24, y + 3, 136,
-                               acl_principal_label(acl_principals[r]),
-                               LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-        for (uint32_t p = 0; p < 5; ++p) {
-            leonos_ui_checkbox(ui, 172 + p * 28, y, "", (allow & perms[p]) != 0, 0);
-        }
-    }
-    leonos_ui_text_clipped(ui, 24, 274, 330, message ? message : "",
+    leonos_ui_text_clipped(ui, 24, 258, FILEMAN_DETAILS_W - 48, message ? message : "",
                            LEONOS_UI_BLACK, LEONOS_UI_GRAY);
-    leonos_ui_button(ui, 24, FILEMAN_DETAILS_H - 38, 120, LEONOS_UI_BUTTON_H,
-                     T("Take Owner", "接管所有权"), 0);
-    leonos_ui_button(ui, 152, FILEMAN_DETAILS_H - 38, 88, LEONOS_UI_BUTTON_H,
-                     T("Repair", "修复"), 0);
+    leonos_ui_button(ui, 24, FILEMAN_DETAILS_H - 38, 144, LEONOS_UI_BUTTON_H,
+                     T("Owner / Group", "所有者 / 组"), 0);
+    leonos_ui_button(ui, 180, FILEMAN_DETAILS_H - 38, 88, LEONOS_UI_BUTTON_H,
+                     T("Mode", "权限数值"), 0);
     leonos_ui_button(ui, 368, FILEMAN_DETAILS_H - 38, 82, LEONOS_UI_BUTTON_H,
                      T("Save", "保存"), 0);
 }
 
-static int acl_security_hit(struct leonos_fs_acl *acl, int32_t x, int32_t y)
+static int permissions_hit(struct stat *st, int32_t x, int32_t y)
 {
-    static const uint32_t perms[] = {
-        LEONOS_FS_PERM_READ,
-        LEONOS_FS_PERM_WRITE,
-        LEONOS_FS_PERM_EXEC,
-        LEONOS_FS_PERM_DELETE,
-        LEONOS_FS_PERM_MANAGE,
-    };
-    for (uint32_t r = 0; r < 5; ++r) {
-        uint32_t row_y = 118 + r * 30;
-        for (uint32_t p = 0; p < 5; ++p) {
-            if (hit_rect_i(x, y, 172 + (int32_t)p * 28, (int32_t)row_y, 18, 18)) {
-                acl_toggle_permission(acl, acl_principals[r], perms[p]);
+    for (unsigned row = 0; row < 3; ++row)
+        for (unsigned col = 0; col < 3; ++col)
+            if (hit_rect_i(x, y, 180 + col * 48, 138 + row * 32, 18, 18)) {
+                st->st_mode ^= 0400u >> (row * 3 + col);
                 return 1;
             }
-        }
-    }
     return 0;
 }
 
@@ -838,7 +681,7 @@ void show_details_selected(void)
     struct leonos_ui_surface ui;
     struct leonos_gui_app_event event;
     struct leonos_stat st;
-    struct leonos_fs_acl acl;
+    struct stat permissions;
     char path[LEONOS_FS_PATH_LEN];
     char size_line[56];
     char contains_line[72];
@@ -865,11 +708,11 @@ void show_details_selected(void)
         format_size_text(size_line, sizeof(size_line), st.size);
         contains_line[0] = 0;
     }
-    acl = (struct leonos_fs_acl){0};
+    permissions = (struct stat){0};
     acl_message[0] = 0;
-    acl_loaded = leonos_fs_acl_get(path, &acl);
+    acl_loaded = stat(path, &permissions);
     if (acl_loaded < 0) {
-        set_status_error("ACL load failed ", acl_loaded);
+        set_status_error("Permission load failed ", errno);
         copy_text(acl_message, sizeof(acl_message), T("Could not load permissions", "无法加载权限"));
     }
 
@@ -906,7 +749,7 @@ void show_details_selected(void)
             leonos_ui_property_grid(&ui, 28, 56, FILEMAN_DETAILS_W - 56,
                                     props, prop_count, 86, 24);
         } else if (acl_loaded == 0) {
-            draw_acl_security_page(&ui, &acl, acl_message);
+            draw_permissions_page(&ui, &permissions, acl_message);
         } else {
             leonos_ui_text(&ui, 28, 56, T("Permission information is unavailable.",
                                           "权限信息不可用。"),
@@ -914,7 +757,7 @@ void show_details_selected(void)
             leonos_ui_text_clipped(&ui, 28, 84, FILEMAN_DETAILS_W - 56,
                                    acl_message, LEONOS_UI_BLACK, LEONOS_UI_GRAY);
             leonos_ui_button(&ui, 152, FILEMAN_DETAILS_H - 38, 88, LEONOS_UI_BUTTON_H,
-                             T("Repair", "修复"), 0);
+                             T("Reload", "重新读取"), 0);
         }
         leonos_ui_button(&ui, FILEMAN_DETAILS_W - 90, FILEMAN_DETAILS_H - 38,
                          72, LEONOS_UI_BUTTON_H, "OK", 0);
@@ -943,42 +786,65 @@ void show_details_selected(void)
                     break;
                 }
                 if (active_tab == 1) {
-                    if (acl_loaded == 0 && acl_security_hit(&acl, event.x, event.y)) {
+                    if (acl_loaded == 0 && permissions_hit(&permissions, event.x, event.y)) {
                         copy_text(acl_message, sizeof(acl_message),
                                   T("Unsaved changes", "有未保存的更改"));
                         continue;
                     }
-                    if (hit_rect_i(event.x, event.y, 24, FILEMAN_DETAILS_H - 38,
-                                   120, (int32_t)LEONOS_UI_BUTTON_H)) {
-                        int ret = leonos_fs_acl_take_ownership(path, &acl);
-                        acl_loaded = ret;
-                        copy_text(acl_message, sizeof(acl_message),
-                                  ret == 0 ? T("Ownership updated", "所有权已更新")
-                                           : T("Take ownership failed", "接管所有权失败"));
+                    if (acl_loaded == 0 && hit_rect_i(event.x, event.y, 24, FILEMAN_DETAILS_H - 38,
+                                   144, (int32_t)LEONOS_UI_BUTTON_H)) {
+                        char value[48], *end;
+                        snprintf(value, sizeof(value), "%lu:%lu", (unsigned long)permissions.st_uid,
+                                 (unsigned long)permissions.st_gid);
+                        if (leonos_ui_show_input_dialog(T("Ownership", "所有权"), "UID:GID", value, sizeof(value))) {
+                            errno = 0;
+                            unsigned long uid = strtoul(value, &end, 10);
+                            if (end != value && *end == ':' && uid < UINT32_MAX && !errno) {
+                                const char *group = end + 1;
+                                unsigned long gid = strtoul(group, &end, 10);
+                                if (end != group && !*end && gid < UINT32_MAX && !errno) {
+                                    permissions.st_uid = (uid_t)uid;
+                                    permissions.st_gid = (gid_t)gid;
+                                    copy_text(acl_message, sizeof(acl_message), T("Unsaved changes", "有未保存的更改"));
+                                    continue;
+                                }
+                            }
+                            copy_text(acl_message, sizeof(acl_message), T("Invalid UID or GID", "UID 或 GID 无效"));
+                        }
                         continue;
                     }
-                    if (hit_rect_i(event.x, event.y, 152, FILEMAN_DETAILS_H - 38,
+                    if (acl_loaded == 0 && hit_rect_i(event.x, event.y, 180, FILEMAN_DETAILS_H - 38,
                                    88, (int32_t)LEONOS_UI_BUTTON_H)) {
-                        int ret = leonos_fs_acl_repair(path, &acl);
-                        acl_loaded = ret;
-                        copy_text(acl_message, sizeof(acl_message),
-                                  ret == 0 ? T("Permissions repaired", "权限已修复")
-                                           : T("Repair failed", "修复失败"));
+                        char value[16], *end;
+                        snprintf(value, sizeof(value), "%03o", (unsigned)(permissions.st_mode & 07777));
+                        if (leonos_ui_show_input_dialog(T("Permissions", "权限"), T("Mode", "权限数值"), value, sizeof(value))) {
+                            errno = 0;
+                            unsigned long mode = strtoul(value, &end, 8);
+                            if (end != value && !*end && mode <= 07777 && !errno) {
+                                permissions.st_mode = (permissions.st_mode & ~07777) | (mode_t)mode;
+                                copy_text(acl_message, sizeof(acl_message), T("Unsaved changes", "有未保存的更改"));
+                            } else copy_text(acl_message, sizeof(acl_message), T("Invalid mode", "权限数值无效"));
+                        }
+                        continue;
+                    }
+                    if (acl_loaded < 0 && hit_rect_i(event.x, event.y, 152, FILEMAN_DETAILS_H - 38,
+                                                     88, (int32_t)LEONOS_UI_BUTTON_H)) {
+                        acl_loaded = stat(path, &permissions);
                         continue;
                     }
                     if (acl_loaded == 0 &&
                         hit_rect_i(event.x, event.y, 368, FILEMAN_DETAILS_H - 38,
                                    82, (int32_t)LEONOS_UI_BUTTON_H)) {
-                        int ret;
-                        acl.version = LEONOS_FS_ACL_VERSION;
-                        acl_compact(&acl);
-                        ret = leonos_fs_acl_set(path, &acl);
-                        if (ret == 0) {
-                            acl_loaded = leonos_fs_acl_get(path, &acl);
-                        }
-                        copy_text(acl_message, sizeof(acl_message),
-                                  ret == 0 ? T("Permissions saved", "权限已保存")
-                                           : T("Save failed", "保存失败"));
+                        struct stat current;
+                        int ret = stat(path, &current);
+                        if (!ret && (current.st_uid != permissions.st_uid || current.st_gid != permissions.st_gid))
+                            ret = chown(path, permissions.st_uid, permissions.st_gid);
+                        if (!ret) ret = chmod(path, permissions.st_mode & 07777);
+                        int error = errno;
+                        acl_loaded = stat(path, &permissions);
+                        if (!ret && acl_loaded < 0) error = errno;
+                        if (!ret && !acl_loaded) copy_text(acl_message, sizeof(acl_message), T("Permissions saved", "权限已保存"));
+                        else snprintf(acl_message, sizeof(acl_message), "%s: %s", T("Save failed", "保存失败"), strerror(error));
                         continue;
                     }
                 }

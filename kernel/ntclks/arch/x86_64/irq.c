@@ -237,6 +237,10 @@ struct task *irq_dispatch(struct trap_frame *frame)
             return NULL;
         }
         return NULL;
+    } else if (vector == SMP_MEMBARRIER_VECTOR) {
+        smp_membarrier_poll();
+        apic_eoi();
+        return NULL;
     } else if (vector == 0xff) {
         /* Spurious local-APIC interrupts have no work to dispatch. */
         apic_eoi();

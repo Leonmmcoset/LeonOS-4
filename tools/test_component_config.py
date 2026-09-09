@@ -58,6 +58,14 @@ def main() -> int:
     assert "config LEON_COMPONENT_APP_HELLOWORLD_API" in generated
     assert "config LEON_COMPONENT_TOOL_TCC_API" not in generated
     assert "select LEON_COMPONENT_LIB_STARDUSTUI_BUILD" in generated
+    assert "select LEON_COMPONENT_LIB_NCURSES_BUILD" in generated
+    vim_only = {component.build_symbol: "n" for component in components}
+    vim_only["CONFIG_LEON_COMPONENT_TOOL_VIM_BUILD"] = "y"
+    selected = resolve_components(components, vim_only)
+    assert selected["vim"]["build"] and selected["ncurses"]["build"]
+    shipped = resolve_components(components, {})
+    assert shipped["vim"]["image"] and shipped["ncurses"]["image"]
+    assert shipped["ncurses"]["sdk"]
 
     defaults = {
         component.build_symbol: "n"

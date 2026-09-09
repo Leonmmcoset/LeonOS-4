@@ -8,6 +8,7 @@
 #include <ntclks/types.h>
 
 #define SMP_MAX_CPUS 64u
+#define SMP_MEMBARRIER_VECTOR 0x41u
 
 struct smp_cpu_info {
     uint32_t apic_id;
@@ -27,5 +28,13 @@ void smp_release_aps(void);
 void smp_ap_entry(uint32_t cpu_index) __attribute__((noreturn));
 bool smp_cpu_online(uint32_t cpu_index);
 const struct smp_cpu_info *smp_cpu_info(uint32_t cpu_index);
+
+/** @brief Execute and acknowledge any pending CPU barrier; takes no locks. */
+void smp_membarrier_poll(void);
+/**
+ * @brief Order all online CPUs and wait for acknowledgements. The caller must
+ * hold the kernel execution lock; sync_core also serializes instruction fetch.
+ */
+void smp_membarrier(bool sync_core);
 
 #endif

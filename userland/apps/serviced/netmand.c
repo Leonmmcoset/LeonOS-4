@@ -132,7 +132,7 @@ static int net_read_file(const char *path, char *buffer, uint32_t capacity)
 
 static int net_write_file(const char *path, const char *text)
 {
-    int fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    int fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     uint32_t len;
     if (fd < 0) return fd;
     len = net_text_len(text);
@@ -223,7 +223,7 @@ static void net_handle_client(int slot)
         if (poll(&descriptor, 1, 0) <= 0) return;
         if (leonos_ipc_recv(client->fd, &type, buffer, sizeof(buffer), &length) < 0) {
             if (errno == EAGAIN) return;
-            close(client->fd);
+            leonos_ipc_close(client->fd);
             memset(client, 0, sizeof(*client));
             client->fd = -1;
             return;
@@ -231,9 +231,9 @@ static void net_handle_client(int slot)
         if (type == LEONOS_NET_MSG_HELLO) {
             struct leonos_netmand_hello hello;
             struct leonos_netmand_ack ack = {.code = 1};
-            if (length < sizeof(hello)) { close(client->fd); memset(client,0,sizeof(*client)); client->fd=-1; return; }
+            if (length < sizeof(hello)) { leonos_ipc_close(client->fd); memset(client,0,sizeof(*client)); client->fd=-1; return; }
             memcpy(&hello, buffer, sizeof(hello));
-            if (hello.pid != client->pid) { close(client->fd); memset(client,0,sizeof(*client)); client->fd=-1; return; }
+            if (hello.pid != client->pid) { leonos_ipc_close(client->fd); memset(client,0,sizeof(*client)); client->fd=-1; return; }
             (void)leonos_ipc_send(client->fd, LEONOS_NET_MSG_ACK, &ack, sizeof(ack));
             continue;
         }
@@ -306,7 +306,7 @@ void netmand_poll(void)
 {
     if (listen_fd < 0) {
         net_load_dns_policy();
-        listen_fd = leonos_ipc_bind_listen(LEONOS_IPC_SOCK_NET, 8);
+        listen_fd = leonos_ipc_bind_listen_mode(LEONOS_IPC_SOCK_NET, 8, 0666);
         if (listen_fd < 0) {
             printf("[netmand] bind failed errno=%d\n", errno);
             return;

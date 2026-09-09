@@ -604,6 +604,33 @@ sdk = false
 api = false
 
 [[components]]
+id = "vim"
+symbol = "TOOL_VIM"
+label = "Vim"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+depends = ["ncurses"]
+
+[[components]]
+id = "ncurses"
+symbol = "LIB_NCURSES"
+label = "ncurses wide-character terminal library"
+category = "Libraries"
+kind = "library"
+default = true
+required = false
+stage = true
+entry = false
+sdk = true
+api = false
+
+[[components]]
 id = "fastfetch"
 symbol = "APP_FASTFETCH"
 label = "fastfetch system summary"

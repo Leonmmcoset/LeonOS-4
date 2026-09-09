@@ -7,6 +7,7 @@
 #include <leonos/syscall.h>
 #include <leonos/system.h>
 #include <errno.h>
+#include <pwd.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/time.h>
@@ -240,7 +241,30 @@ int leonos_task_snapshot(struct leonos_task_info *tasks, uint32_t capacity,
             pos += (uint32_t)strlen(entry.name);
             ps_copy(path + pos, sizeof(path) - pos, "/stat");
         }
-        if (ps_parse_stat(path, &tasks[count]) == 0) ++count;
+        if (ps_parse_stat(path, &tasks[count]) == 0) {
+            char status[512], password_buffer[1024];
+            struct passwd record, *account = NULL;
+            /* Preserve the private stat consumer until its full Linux field
+             * migration; standard status already supplies UID and real RSS. */
+            char *suffix = strrchr(path, '/');
+            ps_copy(suffix + 1, (uint32_t)(sizeof(path) - (suffix + 1 - path)), "status");
+            if (ps_read_file(path, status, sizeof(status)) == 0) {
+                const char *value = strstr(status, "\nVmRSS:\t");
+                if (value) {
+                    uint32_t pos = 8;
+                    tasks[count].memory_kib = (uint32_t)ps_parse_number(value, &pos);
+                }
+                value = strstr(status, "\nUid:\t");
+                if (value) {
+                    uint32_t pos = 6;
+                    tasks[count].uid = (uint32_t)ps_parse_number(value, &pos);
+                }
+            }
+            if (getpwuid_r(tasks[count].uid, &record, password_buffer,
+                           sizeof(password_buffer), &account) == 0 && account && account->pw_name)
+                ps_copy(tasks[count].username, sizeof(tasks[count].username), account->pw_name);
+            ++count;
+        }
     }
     close(fd);
     return (int)count;

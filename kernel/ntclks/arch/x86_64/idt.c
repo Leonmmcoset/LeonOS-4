@@ -85,6 +85,7 @@ extern void irq13_stub(void);
 extern void irq14_stub(void);
 extern void irq15_stub(void);
 extern void irq32_stub(void);
+extern void irq_membarrier_stub(void);
 extern void irqff_stub(void);
 extern uint64_t x86_64_read_cr2(void);
 
@@ -192,6 +193,7 @@ void idt_init(void)
      * A valid gate is required even though the handler only acknowledges and
      * discards the interrupt; otherwise the CPU raises #GP with an IDT error
      * code of (0xff << 3) | 2. */
+    idt_set(0x41, irq_membarrier_stub, 0);
     idt_set(0xff, irqff_stub, 0);
     /* Syscalls may select a different address space before returning. Use an
      * interrupt gate so a local timer cannot nest inside that decision and

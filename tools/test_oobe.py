@@ -8,13 +8,38 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class OobeTests(unittest.TestCase):
+    def test_account_request_boundaries(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-auth-input-") as tmp:
+            executable = str(Path(tmp) / "input")
+            subprocess.run([
+                "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
+                "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
+                "tools/tests/authd_input_test.c", "userland/apps/authd/accounts.c",
+                "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
+
+    def test_posix_account_exports(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-auth-accounts-") as tmp:
+            executable = str(Path(tmp) / "accounts")
+            subprocess.run([
+                "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
+                "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                "-Iinclude", "-Iinclude/uapi",
+                "tools/tests/authd_accounts_test.c", "userland/apps/authd/accounts.c",
+                "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
+
     def test_taskbar_does_not_wait_for_network_service(self):
         with tempfile.TemporaryDirectory(prefix="leonos-oobe-network-") as tmp:
             executable = str(Path(tmp) / "network")
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-Iinclude", "-idirafter", "userland/libc/include",
+                "-Iinclude", "-Iinclude/uapi", "-idirafter", "userland/libc/include",
                 "tools/tests/oobe_network_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -25,7 +50,7 @@ class OobeTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-Iinclude", "-idirafter", "userland/libc/include",
+                "-Iinclude", "-Iinclude/uapi", "-idirafter", "userland/libc/include",
                 "tools/tests/oobe_startup_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -36,10 +61,10 @@ class OobeTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-idirafter", "userland/libc/include", "-idirafter", "include",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
                 "tools/tests/oobe_auth_boot_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
-            for scenario in ("stale", "missing", "denied"):
+            for scenario in ("stale", "missing", "denied", "database-formats"):
                 with self.subTest(scenario=scenario):
                     subprocess.run([executable, scenario], cwd=ROOT, check=True, timeout=10)
 
@@ -49,7 +74,7 @@ class OobeTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-Iinclude", "-idirafter", "userland/libc/include",
+                "-Iinclude", "-Iinclude/uapi", "-idirafter", "userland/libc/include",
                 "tools/tests/oobe_window_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -61,7 +86,7 @@ class OobeTests(unittest.TestCase):
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ftrivial-auto-var-init=zero",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-idirafter", "userland/libc/include", "-idirafter", "include",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
                 "tools/tests/oobe_inputm_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             for scenario in ("list", "state", "active", "context", "notify", "denied"):

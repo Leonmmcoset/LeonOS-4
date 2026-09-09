@@ -1,0 +1,141 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+/* Linux v6.12 asm-generic/termbits{,-common}.h, native x86-64 wire ABI. */
+#ifndef LEONOS_UAPI_LINUX_TERMIOS_H
+#define LEONOS_UAPI_LINUX_TERMIOS_H
+
+#include <stdint.h>
+
+#define LINUX_NCCS 19
+struct linux_termios {
+    uint32_t c_iflag, c_oflag, c_cflag, c_lflag;
+    uint8_t c_line;
+    uint8_t c_cc[LINUX_NCCS];
+};
+struct linux_termios2 {
+    uint32_t c_iflag, c_oflag, c_cflag, c_lflag;
+    uint8_t c_line;
+    uint8_t c_cc[LINUX_NCCS];
+    uint32_t c_ispeed, c_ospeed;
+};
+
+#define LINUX_VINTR 0
+#define LINUX_VQUIT 1
+#define LINUX_VERASE 2
+#define LINUX_VKILL 3
+#define LINUX_VEOF 4
+#define LINUX_VTIME 5
+#define LINUX_VMIN 6
+#define LINUX_VSWTC 7
+#define LINUX_VSTART 8
+#define LINUX_VSTOP 9
+#define LINUX_VSUSP 10
+#define LINUX_VEOL 11
+#define LINUX_VREPRINT 12
+#define LINUX_VDISCARD 13
+#define LINUX_VWERASE 14
+#define LINUX_VLNEXT 15
+#define LINUX_VEOL2 16
+
+#define LINUX_IGNBRK 0x001U
+#define LINUX_BRKINT 0x002U
+#define LINUX_IGNPAR 0x004U
+#define LINUX_PARMRK 0x008U
+#define LINUX_INPCK 0x010U
+#define LINUX_ISTRIP 0x020U
+#define LINUX_INLCR 0x040U
+#define LINUX_IGNCR 0x080U
+#define LINUX_ICRNL 0x100U
+#define LINUX_IUCLC 0x200U
+#define LINUX_IXON 0x400U
+#define LINUX_IXANY 0x800U
+#define LINUX_IXOFF 0x1000U
+#define LINUX_IMAXBEL 0x2000U
+#define LINUX_IUTF8 0x4000U
+
+#define LINUX_OPOST 0x01U
+#define LINUX_OLCUC 0x02U
+#define LINUX_ONLCR 0x04U
+#define LINUX_OCRNL 0x08U
+#define LINUX_ONOCR 0x10U
+#define LINUX_ONLRET 0x20U
+#define LINUX_OFILL 0x40U
+#define LINUX_OFDEL 0x80U
+#define LINUX_NLDLY 0x100U
+#define LINUX_CRDLY 0x600U
+#define LINUX_CR1 0x200U
+#define LINUX_CR2 0x400U
+#define LINUX_TABDLY 0x1800U
+#define LINUX_TAB1 0x800U
+#define LINUX_TAB2 0x1000U
+#define LINUX_BSDLY 0x2000U
+#define LINUX_VTDLY 0x4000U
+#define LINUX_FFDLY 0x8000U
+
+#define LINUX_CBAUD 0x100fU
+#define LINUX_CSIZE 0x30U
+#define LINUX_CS5 0x00U
+#define LINUX_CS6 0x10U
+#define LINUX_CS7 0x20U
+#define LINUX_CS8 0x30U
+#define LINUX_CSTOPB 0x40U
+#define LINUX_CREAD 0x80U
+#define LINUX_PARENB 0x100U
+#define LINUX_PARODD 0x200U
+#define LINUX_HUPCL 0x400U
+#define LINUX_CLOCAL 0x800U
+#define LINUX_BOTHER 0x1000U
+#define LINUX_CIBAUD 0x100f0000U
+#define LINUX_IBSHIFT 16
+#define LINUX_CMSPAR 0x40000000U
+#define LINUX_CRTSCTS 0x80000000U
+
+#define LINUX_B0 0x0U
+#define LINUX_B50 0x1U
+#define LINUX_B75 0x2U
+#define LINUX_B110 0x3U
+#define LINUX_B134 0x4U
+#define LINUX_B150 0x5U
+#define LINUX_B200 0x6U
+#define LINUX_B300 0x7U
+#define LINUX_B600 0x8U
+#define LINUX_B1200 0x9U
+#define LINUX_B1800 0xaU
+#define LINUX_B2400 0xbU
+#define LINUX_B4800 0xcU
+#define LINUX_B9600 0xdU
+#define LINUX_B19200 0xeU
+#define LINUX_B38400 0xfU
+#define LINUX_B57600 0x1001U
+#define LINUX_B115200 0x1002U
+#define LINUX_B230400 0x1003U
+#define LINUX_B460800 0x1004U
+#define LINUX_B500000 0x1005U
+#define LINUX_B576000 0x1006U
+#define LINUX_B921600 0x1007U
+#define LINUX_B1000000 0x1008U
+#define LINUX_B1152000 0x1009U
+#define LINUX_B1500000 0x100aU
+#define LINUX_B2000000 0x100bU
+#define LINUX_B2500000 0x100cU
+#define LINUX_B3000000 0x100dU
+#define LINUX_B3500000 0x100eU
+#define LINUX_B4000000 0x100fU
+
+#define LINUX_ISIG 0x00001U
+#define LINUX_ICANON 0x00002U
+#define LINUX_XCASE 0x00004U
+#define LINUX_ECHO 0x00008U
+#define LINUX_ECHOE 0x00010U
+#define LINUX_ECHOK 0x00020U
+#define LINUX_ECHONL 0x00040U
+#define LINUX_NOFLSH 0x00080U
+#define LINUX_TOSTOP 0x00100U
+#define LINUX_ECHOCTL 0x00200U
+#define LINUX_ECHOPRT 0x00400U
+#define LINUX_ECHOKE 0x00800U
+#define LINUX_FLUSHO 0x01000U
+#define LINUX_PENDIN 0x04000U
+#define LINUX_IEXTEN 0x08000U
+#define LINUX_EXTPROC 0x10000U
+
+#endif

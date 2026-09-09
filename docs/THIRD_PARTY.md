@@ -22,7 +22,10 @@ commits are the revisions recorded by the LeonOS checkout.
 | `third_party/lua` | `https://github.com/lua/lua.git` | `6e22fedb74cf0c9b6656e9fce8b7331db847c605` |
 | `third_party/mbedtls` | `https://github.com/Mbed-TLS/mbedtls.git` | `5a764e5555c64337ed17444410269ff21cb617b1` |
 | `third_party/nano` | `https://git.savannah.gnu.org/git/nano.git` | `8e6360d1663998c62ddd0cf934923d1f18004e3e` |
-| `third_party/picolibc` | `https://github.com/Leonmmcoset/LeonOS-4-picolibc.git` | `2fca8654025d367b3da4699a82c347840123bcd2` |
+| `third_party/vim` | `https://github.com/vim/vim.git` | `af9a7a04f18693eee4400dd134135527f4e8cd5f` |
+| `third_party/ncurses` | `https://github.com/ThomasDickey/ncurses-snapshots.git` | `0096bd402c4a9c8f39bd7ed266e1b8920327e4d8` |
+| `third_party/musl` | `https://git.musl-libc.org/git/musl` | `9fa28ece75d8a2191de7c5bb53bed224c5947417` |
+| `third_party/mimalloc` | `https://github.com/microsoft/mimalloc` | `34fbd7e7cd4627424490afe19b20f8066bfc537d` |
 | `third_party/pl_editor` | `https://github.com/Leonmmcoset/pl_editor.git` | `22fae7a1bc2362486d8bf845f0daf6ec7060a3a1` |
 | `third_party/sl` | `https://github.com/mtoyoda/sl.git` | `923e7d7ebc5c1f009755bdeb789ac25658ccce03` |
 | `third_party/sqlite` | `https://github.com/sqlite/sqlite.git` | `f3d536d37825302e31ed0eddd811c689f38f85a3` |
@@ -45,20 +48,15 @@ verification for the shared HTTP client. The system image includes
 `/system/certs/cacert.pem`, the curl CA Extract from
 `https://curl.se/ca/cacert.pem`, to establish public Web PKI trust.
 
-## Picolibc
+## musl and mimalloc
 
-- Path: `third_party/picolibc`
-- Upstream: `https://github.com/picolibc/picolibc.git`
-- LeonOS fork: `https://github.com/Leonmmcoset/LeonOS-4-picolibc.git`
-- Version: `1.8.12`
-- Pinned commit: `2fca8654025d367b3da4699a82c347840123bcd2`
-- License: BSD; preserve the complete upstream attribution and license notices
-  in `third_party/picolibc/COPYING.picolibc`.
-
-LeonOS builds Picolibc as its x86_64 freestanding user-space ISO C library.
-The LeonOS syscall and GUI bindings remain in the separate `leonos.a` adapter
-archive. The generated Developer SDK packages both archives, Picolibc headers,
-and the upstream license notice.
+The default userland uses unmodified musl 1.2.6 for Linux x86-64 C/POSIX,
+TLS, pthreads, startup and dynamic linking. mimalloc 3.5.1 provides application
+allocation. License texts are in `third_party/musl/COPYRIGHT` and
+`third_party/mimalloc/LICENSE` and ship in images and SDKs.
+`libleonos.so.2` and `libleonos.a` provide LeonOS extensions; they contain no
+replacement standard POSIX implementation. Legacy binaries must be rebuilt.
+See `MUSL_MIGRATION_2026-09-08.md` for exact validation and remaining gaps.
 
 ## StardustUI
 
@@ -152,6 +150,28 @@ GPT/storage ABI using `/dev/disk0` and `/dev/disk0pN`; partition mutation and
 runtime mounts require administrator authorization and the active boot disk is
 protected.
 
+## Vim and ncurses
+
+Vim 9.1.1590 and ncurses 6.6 are default components, built from the pinned,
+unmodified upstream submodules by `build.py run vim` and `build.py run ncurses`.
+Vim uses Linux x86-64 musl, mimalloc and the real wide-character ncurses library;
+its normal terminal profile retains timers and multibyte support. No LeonOS
+source patch or private syscall wrapper is applied to either upstream package.
+
+Normal images, the live installer and its installed payload contain
+`/programs/vim/vim.elf`, `/bin/vim`, `/usr/share/vim/vim91`, ncurses utilities in
+`/usr/bin`, and `/usr/share/terminfo`. Vim and these utilities are static Linux
+executables. The developer and musl SDKs include upstream curses headers,
+`libncursesw.a`, `libtinfow.a`, panel/menu/form archives and terminfo data.
+Link wide-character applications with `-lncursesw -ltinfow`.
+
+The earlier internal ANSI curses implementation remains an implementation
+detail of existing LeonOS applications; its headers are not the SDK's ncurses
+interface. Licenses ship as `/programs/vim/LICENSE` and
+`/usr/share/licenses/ncurses/COPYING`, with `THIRD_PARTY/NCURSES-COPYING` in the
+developer SDK. `build.py run test-terminal-packages` runs the actual binaries
+and library on Linux; guest validation is documented separately.
+
 ## GNU nano
 
 - Path: `third_party/nano`
@@ -191,10 +211,10 @@ logfile output and shell pipes are disabled for the system build.
   `/programs/tcc/COPYING` beside the executable and runtime files.
 
 LeonOS builds TinyCC as the static, on-device x86_64 C compiler at
-`/programs/tcc/tcc.elf`. It uses the installed Picolibc headers,
-`libleonos.a`, `libpicolibc.a`, LeonOS `crt0.o`, the target support archive
+`/programs/tcc/tcc.elf`. It uses the installed musl headers,
+`libleonos.a`, `libc.a`, musl CRT objects, the target support archive
 `libleonos-tcc-rt.a`, and TinyCC's `libtcc1.a` to produce normal static LeonOS
-ELF programs. Picolibc headers are staged unchanged; LeonOS ABI predefines are
+ELF programs. musl headers are staged unchanged; LeonOS ABI predefines are
 owned by TinyCC's target definition layer. Dynamic linking, shared libraries,
 PIE and in-memory `tcc -run` execution are deliberately unavailable until the
 runtime loader ABI exists. The target runtime currently reports `ENOSYS` for
@@ -277,7 +297,7 @@ semantics.
 LeonOS builds the upstream `file` command at `/programs/file/file.elf` and
 the ABI-v1 `libmagic.so.1` at `/system/lib/libmagic.so.1`. The compiled magic
 database is installed at `/system/share/misc/magic.mgc`; the port keeps the
-upstream recognizers while adapting file access to the LeonOS/Picolibc ABI.
+upstream recognizers while adapting file access to the Linux x86-64 musl ABI.
 
 ## Fastfetch
 

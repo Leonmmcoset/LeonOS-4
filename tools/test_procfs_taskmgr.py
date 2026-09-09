@@ -1,5 +1,7 @@
 """Regression checks for the procfs-backed task manager data path."""
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 
@@ -7,6 +9,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProcfsTaskmgrTests(unittest.TestCase):
+    def test_status_snapshot_consumer(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-procsys-") as directory:
+            executable = str(Path(directory) / "procsys")
+            subprocess.run(["cc", "-std=c11", "-O1", "-g", "-fsanitize=address,undefined",
+                            "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                            "-Iinclude", "-Iinclude/uapi", "-idirafter", "userland/libc/include",
+                            "tools/tests/procsys_status_test.c", "-o", executable],
+                           cwd=ROOT, check=True)
+            subprocess.run([executable], check=True, timeout=10)
+
+    def test_real_procfs_directory_lookup_and_enumeration(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-procfs-") as directory:
+            executable = str(Path(directory) / "procfs")
+            subprocess.run(["cc", "-std=c11", "-O1", "-g", "-fsanitize=address,undefined",
+                            "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include",
+                            "tools/tests/procfs_directories_test.c", "-o", executable],
+                           cwd=ROOT, check=True)
+            subprocess.run([executable], check=True, timeout=10)
+
     def test_proc_pid_paths_start_after_proc_slash(self):
         source = (ROOT / "kernel/ntclks/procfs.c").read_text()
         self.assertIn("const char *p = path + 6;", source)

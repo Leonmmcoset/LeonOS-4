@@ -57,7 +57,7 @@ def include_flags(root: Path, region: str) -> list[str]:
     elif region in {"libc", "userland"}:
         paths = common + [
             root / "userland/libc/include",
-            root / "build/picolibc/sysroot/include",
+            root / "build/musl/sysroot/include",
             root / "third_party/mbedtls/include",
             root / "third_party/zlib",
             root / "third_party/libpng",
@@ -70,7 +70,7 @@ def include_flags(root: Path, region: str) -> list[str]:
                  root / "devtools/components/tcc/port", root / "devtools/examples",
                  root / "devtools/components/lua/port", root / "include",
                  root / "build/include", root / "userland/libc/include",
-                 root / "build/picolibc/sysroot/include"]
+                 root / "build/musl/sysroot/include"]
     return [f"-I{path.relative_to(root).as_posix()}" for path in paths if path.is_dir()]
 
 
@@ -107,7 +107,7 @@ def compiler_flags(root: Path, region: str, source: Path) -> list[str]:
     elif region in {"libc", "userland"}:
         flags += ["-fPIC", *(["-fPIE"] if region == "userland" else []),
                   "-ffunction-sections", "-fdata-sections",
-                  "-DLEONOS_USE_PICOLIBC", "-D_POSIX_C_SOURCE=200809L",
+                  "-DLEONOS_USE_MUSL", "-D_POSIX_C_SOURCE=200809L",
                   '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"',
                   f"-DLEONOS_{region.upper()}=1",
                   *include_flags(root, region),
@@ -115,7 +115,7 @@ def compiler_flags(root: Path, region: str, source: Path) -> list[str]:
         if generated_autoconf.is_file():
             flags += ["-include", relative_path(root, generated_autoconf)]
     else:
-        flags += ["-fPIC", "-fPIE", "-DLEONOS_USE_PICOLIBC", "-D_POSIX_C_SOURCE=200809L",
+        flags += ["-fPIC", "-fPIE", "-DLEONOS_USE_MUSL", "-D_POSIX_C_SOURCE=200809L",
                   "-D_DEFAULT_SOURCE", *include_flags(root, region)]
     return flags
 

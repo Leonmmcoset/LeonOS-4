@@ -1,30 +1,31 @@
-/* Copyright (c) 2004 Jeff Johnston  <jjohnstn@redhat.com> */
-#ifndef __ARPA_INET_H__
-#define __ARPA_INET_H__
+#ifndef _ARPA_INET_H
+#define	_ARPA_INET_H
 
-#include <endian.h>
-
-/* byteorder(3) - simimlar to linux <arpa/inet.h> */
-#ifndef __machine_host_to_from_network_defined
-#if _BYTE_ORDER == _LITTLE_ENDIAN
-#define __htonl(_x) __bswap32(_x)
-#define __htons(_x) __bswap16(_x)
-#define __ntohl(_x) __bswap32(_x)
-#define __ntohs(_x) __bswap16(_x)
-#define htonl(_x)   __htonl(_x)
-#define htons(_x)   __htons(_x)
-#define ntohl(_x)   __htonl(_x)
-#define ntohs(_x)   __htons(_x)
-#else
-#define __htonl(_x) ((__uint32_t)(_x))
-#define __htons(_x) ((__uint16_t)(_x))
-#define __ntohl(_x) ((__uint32_t)(_x))
-#define __ntohs(_x) ((__uint16_t)(_x))
-#define htonl(_x)   __htonl(_x)
-#define htons(_x)   __htons(_x)
-#define ntohl(_x)   __ntohl(_x)
-#define ntohs(_x)   __ntohs(_x)
+#ifdef __cplusplus
+extern "C" {
 #endif
-#endif /* __machine_host_to_from_network_defined */
 
-#endif /* __ARPA_INET_H__ */
+#include <features.h>
+#include <netinet/in.h>
+
+uint32_t htonl(uint32_t);
+uint16_t htons(uint16_t);
+uint32_t ntohl(uint32_t);
+uint16_t ntohs(uint16_t);
+
+in_addr_t inet_addr (const char *);
+in_addr_t inet_network (const char *);
+char *inet_ntoa (struct in_addr);
+int inet_pton (int, const char *__restrict, void *__restrict);
+const char *inet_ntop (int, const void *__restrict, char *__restrict, socklen_t);
+
+int inet_aton (const char *, struct in_addr *);
+struct in_addr inet_makeaddr(in_addr_t, in_addr_t);
+in_addr_t inet_lnaof(struct in_addr);
+in_addr_t inet_netof(struct in_addr);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

@@ -44,6 +44,12 @@
  * restoring write permission for the faulting address space. */
 #define NTCLKS_PAGE_COW 0x200ULL
 #define NTCLKS_PAGE_DEVICE 0x400ULL
+/* Software-only bit outside the physical address field. Shared RAM is owned,
+ * unlike borrowed device pages, and must not become COW during fork. */
+#define NTCLKS_PAGE_SHARED (1ULL << 52)
+/* A non-present leaf still owns its backing page while PROT_NONE is active. */
+#define NTCLKS_PAGE_PROTNONE 0x800ULL
+#define NTCLKS_PAGE_BACKED (NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_PROTNONE)
 #define NTCLKS_PAGE_NOEXEC (1ULL << 63)
 #define NTCLKS_PHYS_ADDR_MASK 0x000ffffffffff000ULL
 
@@ -128,6 +134,7 @@ uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
  * @brief Return the physical address backing user vaddr, or 0 if unmapped.
  */
 uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t vaddr);
+bool address_space_user_page_readable(const struct address_space *as, uint64_t vaddr);
 /**
  * @brief Check a present user mapping's write permission without resolving COW.
  * @param as Address space, or NULL for an invalid mapping.
@@ -140,6 +147,8 @@ bool address_space_user_page_is_device(const struct address_space *as, uint64_t 
  * @brief Return how much user memory, in KiB, is currently mapped in as.
  */
 uint32_t address_space_user_memory_kib(const struct address_space *as);
+/** @brief Count resident user RAM mappings, excluding device PFN mappings. */
+uint32_t address_space_user_resident_kib(const struct address_space *as);
 /**
  * @brief Map the initial user stack pages ending at stack_top; true on success.
  */

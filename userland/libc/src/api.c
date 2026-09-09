@@ -202,7 +202,7 @@ static int api_ensure_dir(const char *path)
         !api_ensure_dir(parent)) {
         return 0;
     }
-    if (mkdir(clean, 0) == 0) {
+    if (mkdir(clean, 0777) == 0) {
         return 1;
     }
     return leonos_stat_legacy(clean, &st) == 0 && st.type == LEONOS_FS_TYPE_DIR;
@@ -346,7 +346,7 @@ static int api_write_app_manifest(const struct leonos_api_info *info,
     api_append_text(manifest, &pos, sizeof(manifest), "\nextensions=");
     api_append_text(manifest, &pos, sizeof(manifest), info->extensions);
     api_append_text(manifest, &pos, sizeof(manifest), "\n");
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return 0;
     }
@@ -770,7 +770,7 @@ append_provider:
     if (pos == 0 || pos + 1U >= sizeof(line)) {
         return 0;
     }
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0666);
     if (fd < 0) {
         return 0;
     }

@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <string.h>
 
@@ -170,7 +171,8 @@ static const char acknowledgements_en[] =
     "## Runtime, Toolchain, and Applications\n"
     "- GNU GRUB 2 - GPL-3.0-or-later\n"
     "- Mbed TLS 2.28.8 - Apache License 2.0\n"
-    "- Picolibc 1.8.12, including the LeonOS port - BSD\n"
+    "- musl 1.2.6 - MIT\n"
+    "- mimalloc 3.5.1 - MIT\n"
     "- zlib 1.3.2, the bundled compression library - zlib License\n"
     "- libpng 1.6.58, the bundled PNG decoder library - libpng License\n"
     "- SQLite 3.46.1 - public-domain dedication and blessing\n"
@@ -213,7 +215,8 @@ static const char acknowledgements_zh[] =
     "## 运行时、开发工具链与应用程序\n"
     "- GNU GRUB 2 - GPL-3.0-or-later\n"
     "- Mbed TLS 2.28.8 - Apache License 2.0\n"
-    "- Picolibc 1.8.12（含 LeonOS 移植）- BSD\n"
+    "- musl 1.2.6 - MIT\n"
+    "- mimalloc 3.5.1 - MIT\n"
     "- zlib 1.3.2（内置压缩库）- zlib License\n"
     "- libpng 1.6.58（内置 PNG 解码库）- libpng License\n"
     "- SQLite 3.46.1 - 公共领域声明与许可祝福文本\n"
@@ -1679,7 +1682,9 @@ static int copy_file_path(const char *src, const char *dst,
         printf("[installer.elf] open source %s ret=%d\n", src, in_fd);
         return in_fd;
     }
-    out_fd = open(dst, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    struct stat source;
+    if (fstat(in_fd, &source) < 0) { close(in_fd); return -1; }
+    out_fd = open(dst, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, source.st_mode & 07777);
     if (out_fd < 0) {
         close(in_fd);
         printf("[installer.elf] open target %s ret=%d\n", dst, out_fd);
@@ -1687,6 +1692,11 @@ static int copy_file_path(const char *src, const char *dst,
     }
     if (!installer_tty_mode) {
         printf("[installer.elf] copying %s -> %s\n", src, dst);
+    }
+    if (fchown(out_fd, source.st_uid, source.st_gid) < 0 || fchmod(out_fd, source.st_mode & 07777) < 0) {
+        close(in_fd);
+        close(out_fd);
+        return -1;
     }
     show_copy_progress(window_id, ui, dst);
     while ((got = read(in_fd, copy_buf, sizeof(copy_buf))) > 0) {
@@ -2086,6 +2096,7 @@ static int copy_payload_ordered(int window_id, struct leonos_ui_surface *ui)
 static int replace_system_payload(int window_id, struct leonos_ui_surface *ui)
 {
     static const char *const dirs[] = {
+        "lib",
         "system/apps",
         "system/certs",
         "system/fonts",
@@ -2206,6 +2217,7 @@ static int check_update_payload_required(void)
         "/install/root/system/apps",
         "/install/root/system/config",
         "/install/root/system/lib",
+        "/install/root/lib",
         "/install/root/programs",
         "/install/esp/grub",
         "/install/esp/system",
@@ -2213,8 +2225,10 @@ static int check_update_payload_required(void)
     };
     static const char *const required_files[] = {
         "/install/root/system/kerneldebug.sys",
-        "/install/root/system/lib/ld-leonos.elf",
-        "/install/root/system/lib/libleonos.so.1",
+        "/install/root/lib/ld-musl-x86_64.so.1",
+        "/install/root/lib/libc.so",
+        "/install/root/lib/libmimalloc.so.3",
+        "/install/root/system/lib/libleonos.so.2",
     };
     for (uint32_t i = 0; i < sizeof(required_dirs) / sizeof(required_dirs[0]); ++i) {
         int ret = path_has_type(required_dirs[i], LEONOS_FS_TYPE_DIR);
@@ -2435,7 +2449,7 @@ static int write_target_locale(void)
 {
     const char *text = installer_lang == LEONOS_LANG_ZH ? "lang=zh\n" : "lang=en\n";
     int fd = open("/target/system/config/locale.conf",
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     long wrote;
     if (fd < 0) {
         return fd;
@@ -2515,7 +2529,7 @@ static int write_target_theme(void)
     }
     {
         int fd = open("/target/system/config/display.conf",
-                      LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                      LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
         long wrote;
         if (fd < 0) {
             return fd;
@@ -2712,6 +2726,7 @@ static void perform_update(int window_id, struct leonos_ui_surface *ui)
         "loader.elf",
     };
     static const char *const root_system_dirs[] = {
+        "lib",
         "system/apps",
         "system/certs",
         "system/fonts",

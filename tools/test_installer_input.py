@@ -14,7 +14,7 @@ class InstallerInputTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-idirafter", "userland/libc/include", "-idirafter", "include",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
                 "tools/tests/windowd_announce_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -37,7 +37,7 @@ class InstallerInputTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-Iinclude", "-Ikernel/ntclks/include",
+                "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include",
                 "-idirafter", "userland/libc/include",
                 "tools/tests/pointer_routing_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
@@ -61,7 +61,7 @@ class InstallerInputTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-idirafter", "userland/libc/include", "-idirafter", "include",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
                 "tools/tests/wind_reply_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -72,7 +72,7 @@ class InstallerInputTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-Iinclude", "-Ikernel/ntclks/include",
+                "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include",
                 "tools/tests/mouse_init_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)

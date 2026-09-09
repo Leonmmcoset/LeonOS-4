@@ -77,44 +77,16 @@ void task_pipe_release(struct task_file *file)
 
 static int alloc_task_pipe_fd(struct task *task, uint32_t pipe_handle, int write_end)
 {
-    struct task_file *file;
-    int fd;
-    if (!task || !kernel_object_lookup(kernel_objects(), pipe_handle,
-                                       KERNEL_OBJECT_PIPE)) {
+    if (!task || !kernel_object_lookup(kernel_objects(), pipe_handle, KERNEL_OBJECT_PIPE))
         return -LEONOS_EINVAL;
-    }
-    if (!task_can_allocate_fd(task)) {
-        return -LEONOS_EMFILE;
-    }
-    for (uint32_t i = 0; i < sched_task_file_capacity(task); ++i) {
-        fd = (int)i + 4;
-        file = sched_task_file_at(task, i);
-        if (!file || file->used || task_pty_fd_for_fd(task, fd)) continue;
-        file->used = 1;
-        file->flags = TASK_FILE_FLAG_PIPE | (write_end ? TASK_FILE_FLAG_PIPE_WRITE : 0) |
-                      (write_end ? LEONOS_O_WRONLY : LEONOS_O_RDONLY);
-        file->fd_flags = 0;
-        file->aux = pipe_handle;
-        file->path[0] = 0;
-        task_pipe_retain(file);
-        return fd;
-    }
-    {
-        uint32_t i = sched_task_file_capacity(task);
-        fd = (int)i + 4;
-        file = sched_task_file_at(task, i);
-        if (file && !task_pty_fd_for_fd(task, fd)) {
-            file->used = 1;
-            file->flags = TASK_FILE_FLAG_PIPE | (write_end ? TASK_FILE_FLAG_PIPE_WRITE : 0) |
-                          (write_end ? LEONOS_O_WRONLY : LEONOS_O_RDONLY);
-            file->fd_flags = 0;
-            file->aux = pipe_handle;
-            file->path[0] = 0;
-            task_pipe_retain(file);
-            return fd;
-        }
-    }
-    return -LEONOS_EMFILE;
+    struct task_file *file;
+    int fd = task_allocate_fd(task, 0, &file);
+    if (fd < 0) return fd;
+    file->flags = TASK_FILE_FLAG_PIPE | (write_end ? TASK_FILE_FLAG_PIPE_WRITE : 0) |
+                  (write_end ? LEONOS_O_WRONLY : LEONOS_O_RDONLY);
+    file->aux = pipe_handle;
+    task_pipe_retain(file);
+    return fd;
 }
 
 int task_pipe_read(struct task_file *file, void *buffer, uint32_t length)
@@ -144,8 +116,21 @@ int task_pipe_write(struct task_file *file, const void *buffer, uint32_t length)
     uint32_t count = 0;
     if (!pipe || !(file->flags & TASK_FILE_FLAG_PIPE_WRITE)) return -LEONOS_EBADF;
     if (length == 0) return 0;
-    if (!pipe->readers) return -LEONOS_EPIPE;
+    if (!pipe->readers) {
+        (void)sched_signal_user_task(sched_current_pid(), 13); /* SIGPIPE */
+        return -LEONOS_EPIPE;
+    }
     kernel_wait_queue_remove(&pipe->wait_write, sched_current_task());
+    {
+        uint32_t used = (pipe->head + TASK_PIPE_RING_CAP - pipe->tail) % TASK_PIPE_RING_CAP;
+        uint32_t free_bytes = TASK_PIPE_CAP - used;
+        /* Linux guarantees that writes up to PIPE_BUF are atomic. */
+        if (length <= TASK_PIPE_CAP && free_bytes < length) {
+            if (file->flags & LEONOS_O_NONBLOCK) return -LEONOS_EAGAIN;
+            kernel_wait_queue_block_current(&pipe->wait_write);
+            return -LEONOS_EAGAIN;
+        }
+    }
     while (count < length) {
         uint32_t next = (pipe->head + 1U) % TASK_PIPE_RING_CAP;
         if (next == pipe->tail) {
@@ -196,7 +181,7 @@ int syscall_ipc_pipe(uint64_t user_ptr)
     int read_fd, write_fd;
     uint32_t pipe_index;
     uint32_t pipe_handle;
-    if (!task || !user_range_ok(user_ptr, sizeof(int) * 2U)) {
+    if (!task || !user_range_writable(user_ptr, sizeof(int) * 2U)) {
         return -LEONOS_EFAULT;
     }
     for (pipe_index = 0; pipe_index < TASK_PIPE_MAX; ++pipe_index) {
@@ -225,10 +210,10 @@ int syscall_ipc_pipe(uint64_t user_ptr)
     write_fd = alloc_task_pipe_fd(task, pipe_handle, 1);
     if (read_fd < 0 || write_fd < 0) {
         if (read_fd >= 0) {
-            clear_task_file(task_file_for_fd(task, read_fd));
+            task_discard_file_fd(task, read_fd);
         }
         if (write_fd >= 0) {
-            clear_task_file(task_file_for_fd(task, write_fd));
+            task_discard_file_fd(task, write_fd);
         }
         kernel_object_remove(kernel_objects(), pipe_handle, KERNEL_OBJECT_PIPE, NULL);
         kernel_free(task_pipes[pipe_index]);
@@ -242,17 +227,29 @@ int syscall_ipc_pipe(uint64_t user_ptr)
 
 int syscall_ipc_pipe2(uint64_t user_ptr, uint64_t flags)
 {
+    flags = (uint32_t)flags;
     struct task *task = sched_current_task();
-    int result = syscall_ipc_pipe(user_ptr);
-    if (result < 0 || !task) return result;
-    if (flags & ~(uint32_t)(LEONOS_O_NONBLOCK | LEONOS_FD_CLOEXEC)) {
+    int fds[2];
+    struct task_file *read_file;
+    struct task_file *write_file;
+    if (flags & ~(uint32_t)(LEONOS_O_NONBLOCK | LEONOS_O_CLOEXEC)) {
         return -LEONOS_EINVAL;
     }
-    for (int fd = 4; fd < 4 + (int)sched_task_file_capacity(task); ++fd) {
-        struct task_file *file = task_file_for_fd(task, fd);
-        if (!file || !(file->flags & TASK_FILE_FLAG_PIPE)) continue;
-        if (flags & LEONOS_O_NONBLOCK) file->flags |= LEONOS_O_NONBLOCK;
-        if (flags & LEONOS_FD_CLOEXEC) file->fd_flags |= LEONOS_FD_CLOEXEC;
+    if (!task || !user_range_writable(user_ptr, sizeof(fds))) return -LEONOS_EFAULT;
+    int result = syscall_ipc_pipe(user_ptr);
+    if (result < 0 || !task) return result;
+    fds[0] = ((const int *)(uintptr_t)user_ptr)[0];
+    fds[1] = ((const int *)(uintptr_t)user_ptr)[1];
+    read_file = task_file_for_fd(task, fds[0]);
+    write_file = task_file_for_fd(task, fds[1]);
+    if (!read_file || !write_file) return -LEONOS_EBADF;
+    if (flags & LEONOS_O_NONBLOCK) {
+        read_file->flags |= LEONOS_O_NONBLOCK;
+        write_file->flags |= LEONOS_O_NONBLOCK;
+    }
+    if (flags & LEONOS_O_CLOEXEC) {
+        read_file->fd_flags |= LEONOS_FD_CLOEXEC;
+        write_file->fd_flags |= LEONOS_FD_CLOEXEC;
     }
     return 0;
 }

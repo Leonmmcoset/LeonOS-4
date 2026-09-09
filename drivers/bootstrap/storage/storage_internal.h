@@ -125,6 +125,7 @@
 #define EXT2_FT_UNKNOWN 0u
 #define EXT2_FT_REG_FILE 1u
 #define EXT2_FT_DIR 2u
+#define EXT2_FT_SOCK 6u
 #define STORAGE_MAX_VOLUMES 10u
 #define STORAGE_VOLUME_ROOT 0u
 #define STORAGE_VOLUME_TARGET_ROOT 1u
@@ -481,6 +482,7 @@ struct storage_volume {
     uint32_t ext2_inode_size;
     uint32_t ext2_first_data_block;
     uint32_t ext2_group_count;
+    uint32_t ext2_feature_incompat;
     uint32_t exfat_fat_offset;
     uint32_t exfat_fat_length;
     uint32_t exfat_cluster_heap_offset;

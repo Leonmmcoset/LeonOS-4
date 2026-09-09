@@ -1,311 +1,168 @@
-/*
-Copyright (c) 1991, 1993
-The Regents of the University of California.  All rights reserved.
-All or some portions of this file are derived from material licensed
-to the University of California by American Telephone and Telegraph
-Co. or Unix System Laboratories, Inc. and are reproduced herein with
-the permission of UNIX System Laboratories, Inc.
+#ifndef	_TIME_H
+#define _TIME_H
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-1. Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-3. Neither the name of the University nor the names of its contributors
-may be used to endorse or promote products derived from this software
-without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGE.
- */
-/*
- * time.h
- *
- * Struct and function declarations for dealing with time.
- */
-
-#ifndef _TIME_H_
-#define _TIME_H_
-
-#include <sys/cdefs.h>
-
-#define __need_size_t
-#define __need_NULL
-#include <stddef.h>
-#include <sys/_types.h>
-#include <sys/_timespec.h>
-
-_BEGIN_STD_C
-
-#define __STDC_VERSION_TIME_H__ 202311L
-
-#ifndef _CLOCKS_PER_SEC_
-#define _CLOCKS_PER_SEC_ 1000000
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#ifndef CLOCKS_PER_SEC
-#define CLOCKS_PER_SEC _CLOCKS_PER_SEC_
+#include <features.h>
+
+#if __cplusplus >= 201103L
+#define NULL nullptr
+#elif defined(__cplusplus)
+#define NULL 0L
+#else
+#define NULL ((void*)0)
 #endif
 
-#ifndef _CLOCK_T_DECLARED
-typedef __clock_t clock_t;
-#define _CLOCK_T_DECLARED
+
+#define __NEED_size_t
+#define __NEED_time_t
+#define __NEED_clock_t
+#define __NEED_struct_timespec
+
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+#define __NEED_clockid_t
+#define __NEED_timer_t
+#define __NEED_pid_t
+#define __NEED_locale_t
 #endif
 
-#define TIME_UTC           1
-#define TIME_MONOTONIC     2
-#define TIME_ACTIVE        3
-#define TIME_THREAD_ACTIVE 4
+#include <bits/alltypes.h>
+
+#if defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
+#define __tm_gmtoff tm_gmtoff
+#define __tm_zone tm_zone
+#endif
 
 struct tm {
-    int tm_sec;
-    int tm_min;
-    int tm_hour;
-    int tm_mday;
-    int tm_mon;
-    int tm_year;
-    int tm_wday;
-    int tm_yday;
-    int tm_isdst;
+	int tm_sec;
+	int tm_min;
+	int tm_hour;
+	int tm_mday;
+	int tm_mon;
+	int tm_year;
+	int tm_wday;
+	int tm_yday;
+	int tm_isdst;
+	long __tm_gmtoff;
+	const char *__tm_zone;
 };
 
-#if __POSIX_VISIBLE
+clock_t clock (void);
+time_t time (time_t *);
+double difftime (time_t, time_t);
+time_t mktime (struct tm *);
+size_t strftime (char *__restrict, size_t, const char *__restrict, const struct tm *__restrict);
+struct tm *gmtime (const time_t *);
+struct tm *localtime (const time_t *);
+char *asctime (const struct tm *);
+char *ctime (const time_t *);
+int timespec_get(struct timespec *, int);
 
-#ifndef CLK_TCK
-#define CLK_TCK CLOCKS_PER_SEC
-#endif
+#define CLOCKS_PER_SEC 1000000L
 
-/* Flag indicating time is "absolute" with respect to the clock
-   associated with a time.  Value 4 is historic. */
+#define TIME_UTC 1
 
-#define TIMER_ABSTIME 4
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
 
-#include <sys/_locale.h>
+size_t strftime_l (char *  __restrict, size_t, const char *  __restrict, const struct tm *  __restrict, locale_t);
 
-#ifndef _CLOCKID_T_DECLARED
-typedef __clockid_t clockid_t;
-#define _CLOCKID_T_DECLARED
-#endif
+struct tm *gmtime_r (const time_t *__restrict, struct tm *__restrict);
+struct tm *localtime_r (const time_t *__restrict, struct tm *__restrict);
+char *asctime_r (const struct tm *__restrict, char *__restrict);
+char *ctime_r (const time_t *, char *);
 
-#ifndef _TIMER_T_DECLARED
-typedef __timer_t timer_t;
-#define _TIMER_T_DECLARED
-#endif
+void tzset (void);
 
-/*
- * Structure defined by POSIX.1b to be like a itimerval, but with
- * timespecs. Used in the timer_*() system calls.
- */
 struct itimerspec {
-    struct timespec it_interval;
-    struct timespec it_value;
+	struct timespec it_interval;
+	struct timespec it_value;
 };
 
-#ifndef _PID_T_DECLARED
-typedef __pid_t pid_t; /* process id */
-#define _PID_T_DECLARED
-#endif
+#define CLOCK_REALTIME           0
+#define CLOCK_MONOTONIC          1
+#define CLOCK_PROCESS_CPUTIME_ID 2
+#define CLOCK_THREAD_CPUTIME_ID  3
+#define CLOCK_MONOTONIC_RAW      4
+#define CLOCK_REALTIME_COARSE    5
+#define CLOCK_MONOTONIC_COARSE   6
+#define CLOCK_BOOTTIME           7
+#define CLOCK_REALTIME_ALARM     8
+#define CLOCK_BOOTTIME_ALARM     9
+#define CLOCK_SGI_CYCLE         10
+#define CLOCK_TAI               11
 
-#endif
+#define TIMER_ABSTIME 1
 
-#if __GNU_VISIBLE
-#define CLOCK_REALTIME_COARSE (0)
-#endif
+int nanosleep (const struct timespec *, struct timespec *);
+int clock_getres (clockid_t, struct timespec *);
+int clock_gettime (clockid_t, struct timespec *);
+int clock_settime (clockid_t, const struct timespec *);
+int clock_nanosleep (clockid_t, int, const struct timespec *, struct timespec *);
+int clock_getcpuclockid (pid_t, clockid_t *);
 
-#define CLOCK_REALTIME (1)
-
-/* Manifest Constants, P1003.4b/D8, p. 55 */
-
-#if defined(_POSIX_CPUTIME)
-
-/* When used in a clock or timer function call, this is interpreted as
-   the identifier of the CPU_time clock associated with the PROCESS
-   making the function call.  */
-
-#define CLOCK_PROCESS_CPUTIME_ID (2)
-
-#endif
-
-#if defined(_POSIX_THREAD_CPUTIME)
-
-/*  When used in a clock or timer function call, this is interpreted as
-    the identifier of the CPU_time clock associated with the THREAD
-    making the function call.  */
-
-#define CLOCK_THREAD_CPUTIME_ID (3)
-
-#endif
-
-#if defined(_POSIX_MONOTONIC_CLOCK) || __GNU_VISIBLE
-
-/*  The identifier for the system-wide monotonic clock, which is defined
- *  as a clock whose value cannot be set via clock_settime() and which
- *  cannot have backward clock jumps. */
-
-#define CLOCK_MONOTONIC (4)
-
-#endif
-
-#if __GNU_VISIBLE
-
-#define CLOCK_MONOTONIC_RAW      (5)
-#define CLOCK_MONOTONIC_COARSE   (6)
-#define CLOCK_BOOTTIME           (7)
-#define CLOCK_REALTIME_ALARM     (8)
-#define CLOCK_BOOTTIME_ALARM     (9)
-#define CLOCK_PROCESS_CPUTIME_ID (10)
-#define CLOCK_THREAD_CPUTIME_ID  (11)
-
-#endif
-
-/* defines for the opengroup specifications Derived from Issue 1 of the SVID.  */
-#if __SVID_VISIBLE || __XSI_VISIBLE
-extern __picolibc_export long timezone;
-extern __picolibc_export int  daylight;
-#endif
-
-#if __POSIX_VISIBLE
-extern __picolibc_export char * const tzname[2];
-#endif /* __POSIX_VISIBLE */
-
-char *asctime(const struct tm *_tblock) __picolibc_export;
-
-#if __POSIX_VISIBLE
-#define __ASCTIME_SIZE 26
-
-char *asctime_r(const struct tm * __restrict,
-                char[__restrict_arr __min_size(__ASCTIME_SIZE)]) __picolibc_export;
-#endif
-
-clock_t clock(void) __picolibc_export;
-
-#if defined(_POSIX_CPUTIME)
-int clock_getcpuclockid(pid_t pid, clockid_t *clock_id) __picolibc_export;
-#endif /* _POSIX_CPUTIME */
-
-#if __POSIX_VISIBLE
-int clock_getres(clockid_t clock_id, struct timespec *res) __picolibc_export;
-
-int clock_gettime(clockid_t clock_id, struct timespec *tp) __picolibc_export;
-
-int clock_nanosleep(clockid_t clock_id, int flags, const struct timespec *rqtp,
-                    struct timespec *rmtp) __picolibc_export;
-
-int clock_settime(clockid_t clock_id, const struct timespec *tp) __picolibc_export;
-#endif
-
-char *ctime(const time_t *_time) __picolibc_export;
-
-#if __POSIX_VISIBLE
-char *ctime_r(const time_t *, char[__restrict_arr __min_size(__ASCTIME_SIZE)]) __picolibc_export;
-#endif
-
-double difftime(time_t _time2, time_t _time1) __picolibc_export;
-
-#if __XSI_VISIBLE >= 4
-
-extern __picolibc_export int getdate_err;
-
-struct tm                   *getdate(const char *) __picolibc_export;
-#endif /* __XSI_VISIBLE >= 4 */
-
-#if __GNU_VISIBLE
-
-int getdate_r(const char *, struct tm *) __picolibc_export;
-#endif /* __GNU_VISIBLE */
-
-struct tm *gmtime(const time_t *_timer) __picolibc_export;
-
-#if __POSIX_VISIBLE || __ZEPHYR_VISIBLE
-struct tm *gmtime_r(const time_t * __restrict, struct tm * __restrict) __picolibc_export;
-#endif
-
-struct tm *localtime(const time_t *_timer) __picolibc_export;
-
-#if __POSIX_VISIBLE
-struct tm *localtime_r(const time_t * __restrict, struct tm * __restrict) __picolibc_export;
-#endif
-
-time_t mktime(struct tm *_timeptr) __picolibc_export;
-
-int    nanosleep(const struct timespec *rqtp, struct timespec *rmtp) __picolibc_export;
-
-size_t strftime(char * __restrict _s, size_t _maxsize, const char * __restrict _fmt,
-                const struct tm * __restrict _t) __picolibc_export;
-
-int    timespec_get(struct timespec *_ts, int _base) __picolibc_export;
-
-#if __ISO_C_VISIBLE >= 2023
-int timespec_getres(struct timespec *_ts, int base) __picolibc_export;
-#endif
-
-#if __POSIX_VISIBLE
-size_t strftime_l(char * __restrict _s, size_t              _maxsize, const char              *__restrict _fmt,
-                  const struct tm * __restrict _t, locale_t _l) __picolibc_export;
-#endif
-
-#if __XSI_VISIBLE
-char *strptime(const char * __restrict, const char * __restrict,
-               struct tm * __restrict) __picolibc_export;
-#endif
-#if __GNU_VISIBLE
-char *strptime_l(const char * __restrict, const char * __restrict, struct tm * __restrict,
-                 locale_t) __picolibc_export;
-#endif
-
-time_t time(time_t *_timer) __picolibc_export;
-
-#if __BSD_VISIBLE || __SVID_VISIBLE || __GNU_VISIBLE
-time_t timegm(struct tm *_timeptr) __picolibc_export;
-#endif
-
-#if __POSIX_VISIBLE
 struct sigevent;
-int timer_create(clockid_t clock_id, struct sigevent * __restrict evp,
-                 timer_t * __restrict timerid) __picolibc_export;
+int timer_create (clockid_t, struct sigevent *__restrict, timer_t *__restrict);
+int timer_delete (timer_t);
+int timer_settime (timer_t, int, const struct itimerspec *__restrict, struct itimerspec *__restrict);
+int timer_gettime (timer_t, struct itimerspec *);
+int timer_getoverrun (timer_t);
 
-int timer_delete(timer_t timerid) __picolibc_export;
+extern char *tzname[2];
 
-int timer_getoverrun(timer_t timerid) __picolibc_export;
-
-int timer_gettime(timer_t timerid, struct itimerspec *value) __picolibc_export;
-
-int timer_settime(timer_t timerid, int flags, const struct itimerspec * __restrict value,
-                  struct itimerspec * __restrict ovalue) __picolibc_export;
 #endif
 
-void tzset(void) __picolibc_export;
 
-#if __STDC_WANT_LIB_EXT1__ == 1
-#ifndef __STDC_LIB_EXT1__
-#define __STDC_LIB_EXT1__ 1
+#if defined(_XOPEN_SOURCE) || defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
+char *strptime (const char *__restrict, const char *__restrict, struct tm *__restrict);
+extern int daylight;
+extern long timezone;
+extern int getdate_err;
+struct tm *getdate (const char *);
 #endif
 
-#include <sys/_types.h>
 
-#ifndef _ERRNO_T_DEFINED
-typedef __errno_t errno_t;
-#define _ERRNO_T_DEFINED
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+int stime(const time_t *);
+time_t timegm(struct tm *);
 #endif
 
-#ifndef _RSIZE_T_DEFINED
-typedef __rsize_t rsize_t;
-#define _RSIZE_T_DEFINED
+#if _REDIR_TIME64
+__REDIR(time, __time64);
+__REDIR(difftime, __difftime64);
+__REDIR(mktime, __mktime64);
+__REDIR(gmtime, __gmtime64);
+__REDIR(localtime, __localtime64);
+__REDIR(ctime, __ctime64);
+__REDIR(timespec_get, __timespec_get_time64);
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+__REDIR(gmtime_r, __gmtime64_r);
+__REDIR(localtime_r, __localtime64_r);
+__REDIR(ctime_r, __ctime64_r);
+__REDIR(nanosleep, __nanosleep_time64);
+__REDIR(clock_getres, __clock_getres_time64);
+__REDIR(clock_gettime, __clock_gettime64);
+__REDIR(clock_settime, __clock_settime64);
+__REDIR(clock_nanosleep, __clock_nanosleep_time64);
+__REDIR(timer_settime, __timer_settime64);
+__REDIR(timer_gettime, __timer_gettime64);
+#endif
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+__REDIR(stime, __stime64);
+__REDIR(timegm, __timegm_time64);
 #endif
 #endif
 
-_END_STD_C
+#ifdef __cplusplus
+}
+#endif
 
-#endif /* _TIME_H_ */
+
+#endif

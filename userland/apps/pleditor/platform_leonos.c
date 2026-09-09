@@ -36,22 +36,6 @@ static int read_byte(unsigned char *value, unsigned long timeout_ms)
     }
 }
 
-/* Picolibc's time() is used to seed the editor's session welcome message. */
-int gettimeofday(struct timeval *value, void *timezone)
-{
-    struct leonos_time_info time_info;
-    uint64_t milliseconds;
-    (void)timezone;
-    if (!value || leonos_time_info(&time_info) < 0) {
-        return -1;
-    }
-    milliseconds = time_info.valid ? time_info.unix_seconds * 1000U :
-                                     time_info.uptime_ms;
-    value->tv_sec = (time_t)(milliseconds / 1000U);
-    value->tv_usec = (suseconds_t)((milliseconds % 1000U) * 1000U);
-    return 0;
-}
-
 static void write_all(const char *text, size_t length)
 {
     size_t offset = 0;

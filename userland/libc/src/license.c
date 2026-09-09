@@ -497,7 +497,7 @@ static int read_file_text(const char *path, char *out, uint32_t cap)
 
 static int write_file_text(const char *path, const char *text)
 {
-    int fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    int fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     uint32_t len = (uint32_t)strlen(text);
     long wrote;
     if (fd < 0) {

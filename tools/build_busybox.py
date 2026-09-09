@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a small static BusyBox for the LeonOS Picolibc userland."""
+"""Build a small static BusyBox for the LeonOS musl userland."""
 
 from __future__ import annotations
 
@@ -105,6 +105,8 @@ MINIMAL_LIBBB_OBJECTS = (
     "bb_getgroups.o",
     "u_signal_names.o",
     "block_storage.o",
+    "signals.o",
+    "sysconf.o",
 )
 
 def run(command: list[str], *, cwd: Path | None = None) -> None:
@@ -153,7 +155,6 @@ def source_cache_key(revision: str) -> str:
         Path(__file__),
         ROOT / "userland/busybox/leonos_shim.c",
         ROOT / "userland/busybox/block_storage.c",
-        ROOT / "userland/busybox/include/sys/ioctl.h",
         ROOT / "userland/busybox/leonos.config",
     ):
         digest.update(path.read_bytes())
@@ -189,8 +190,6 @@ def write_minimal_libbb_kbuild(kbuild: Path, generated: bool) -> None:
 def trim_libbb(source: Path) -> None:
     shutil.copyfile(ROOT / "userland/busybox/leonos_shim.c", source / "libbb/leonos_shim.c")
     shutil.copyfile(ROOT / "userland/busybox/block_storage.c", source / "libbb/block_storage.c")
-    patch_percentm_for_leonos(source)
-    patch_time_for_leonos(source)
     write_minimal_libbb_kbuild(source / "libbb/Kbuild.src", False)
     allowed = {Path(name).stem for name in MINIMAL_LIBBB_OBJECTS}
     for path in (source / "libbb").rglob("*.c"):
@@ -226,27 +225,6 @@ def patch_optional_config_macros(source: Path) -> None:
             raise SystemExit("unable to add BusyBox ps config fallback")
         text = text.replace(marker, fallback, 1)
         path.write_text(text, encoding="utf-8")
-
-
-def patch_picolibc_termios_for_leonos(picolibc_include: Path) -> None:
-    """Make the temporary BusyBox winsize ABI match Linux's eight-byte UAPI."""
-    path = picolibc_include / "sys/termios.h"
-    text = path.read_text(encoding="utf-8")
-    old = """struct winsize {
-    unsigned short ws_row;
-    unsigned short ws_col;
-};"""
-    new = """struct winsize {
-    unsigned short ws_row;
-    unsigned short ws_col;
-    unsigned short ws_xpixel;
-    unsigned short ws_ypixel;
-};"""
-    if new in text:
-        return
-    if old not in text:
-        raise SystemExit("unsupported Picolibc termios header: winsize marker missing")
-    path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
 def patch_percentm_for_leonos(source: Path) -> None:
@@ -632,7 +610,7 @@ def patch_ash_for_leonos(source: Path) -> None:
 def patch_lineedit_for_leonos(source: Path) -> None:
     """Use the LeonOS account service for the interactive prompt.
 
-    Picolibc's passwd helpers read /etc/passwd, while LeonOS accounts are
+    musl's passwd helpers read /etc/passwd, while LeonOS accounts are
     supplied by the authentication service. The default fancy ash prompt
     asks the line editor for the home directory, so falling through to
     getpwuid() can block or repeatedly fail before the first prompt.
@@ -737,12 +715,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path, required=True)
     parser.add_argument("--leonos-include", type=Path, required=True)
-    parser.add_argument("--linker-script", type=Path, required=True)
+
     parser.add_argument("--leonos-lib", type=Path, required=True)
-    parser.add_argument("--picolibc-lib", type=Path, required=True)
+    parser.add_argument("--musl-lib", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
     parser.add_argument("--compile-flag", action="append", default=[])
@@ -753,9 +731,14 @@ def main() -> None:
         raise SystemExit("BusyBox must be built from WSL/Linux, not Windows")
     source = args.source.resolve()
     required = [
-        source / "Makefile", args.config, args.picolibc_prefix / "include",
-        args.leonos_libc_include, args.leonos_include, args.linker_script,
-        args.leonos_lib, args.picolibc_lib, ROOT / "userland/busybox/leonos_shim.c",
+        source / "Makefile",
+        args.config,
+        args.musl_prefix / "include",
+        args.leonos_libc_include,
+        args.leonos_include,
+        args.leonos_lib,
+        args.musl_lib,
+        ROOT / "userland/busybox/leonos_shim.c",
         ROOT / "userland/busybox/block_storage.c",
     ]
     for path in required:
@@ -786,25 +769,15 @@ def main() -> None:
     lib_dir.mkdir()
 
     # BusyBox cannot handle the repository's space-containing path in O=.
-    copy_tree(args.picolibc_prefix, sdk_dir / "picolibc")
-    patch_picolibc_termios_for_leonos(sdk_dir / "picolibc/include")
+    copy_tree(args.musl_prefix, sdk_dir / "musl")
     copy_tree(args.leonos_libc_include, sdk_dir / "leonos-libc")
     copy_tree(args.leonos_include, sdk_dir / "include")
-    copy_tree(ROOT / "userland/busybox/include", sdk_dir / "busybox-include")
-    linker_script = sdk_dir / "linker.ld"
-    shutil.copyfile(args.linker_script, linker_script)
-    adapter_lib = lib_dir / "libleonos-adapter.a"
-    shutil.copyfile(args.leonos_lib, adapter_lib)
-    shutil.copyfile(args.picolibc_lib, lib_dir / "libc.a")
-    merge_static_archives(lib_dir / "libleonos.a",
-                          [adapter_lib, args.picolibc_lib.resolve()],
-                          work_root / "archive-merge")
-    # BusyBox's generic link recipe always probes crypt, m, and rt. The
-    # selected applets need none of them; keep empty archives so that probe
-    # does not accidentally link a second copy of Picolibc (and its syscall
-    # fallbacks) through libm.
-    for name in ("libcrypt.a", "libm.a", "librt.a"):
-        run(["llvm-ar", "rcs", str(lib_dir / name)])
+
+
+    shutil.copyfile(args.leonos_lib, lib_dir / "libleonos.a")
+    # musl supplies libm/librt as part of libc. Use its upstream linker inputs.
+    for library in (sdk_dir / "musl/lib").glob("*.a"):
+        shutil.copyfile(library, lib_dir / library.name)
 
     run(["make", "-C", str(source_dir), f"O={output_dir}", "allnoconfig"])
     generated_config = output_dir / ".config"
@@ -817,28 +790,29 @@ def main() -> None:
 
     headers = clang_resource_headers()
     cflags = " ".join([
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
-        "-D_POSIX_C_SOURCE=200809L",
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
+        "-D_POSIX_C_SOURCE=200809L", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL",
         # LeonOS's native stat/fstat use a compact private structure. Keep
-        # BusyBox on the Picolibc POSIX ABI through the port's adapter layer.
-        "-Dstat=leonos_posix_stat", "-Dfstat=leonos_posix_fstat",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone",
-        "-mgeneral-regs-only", "-ffunction-sections", "-fdata-sections",
+        # BusyBox on the musl POSIX ABI through the port's adapter layer.
+
+        "-fno-stack-protector", "-fno-pic", "-fno-pie",
+         "-ffunction-sections", "-fdata-sections",
         "-nostdinc", "-isystem", str(headers),
-        "-I" + str(sdk_dir / "busybox-include"),
-        "-I" + str(sdk_dir / "picolibc/include"),
+        "-I" + str(sdk_dir / "musl/include"),
         "-I" + str(sdk_dir / "leonos-libc"),
-        "-I" + str(sdk_dir / "include"),
+        "-I" + str(sdk_dir / "include"), "-I" + str(sdk_dir / "include/uapi"),
     ])
+    lib = sdk_dir / "musl/lib"
     ldflags = " ".join([
-        "-target", "x86_64-unknown-none", "-nostdlib", "-fuse-ld=lld",
-        "-Wl,-u,_start", "-Wl,--gc-sections", "-Wl,-T," + str(linker_script),
+        "-target", "x86_64-linux-musl", "-nostdlib", "-fuse-ld=lld",
+        "-Wl,--gc-sections", "-Wl,--image-base=0x4000000",
         "-L" + str(lib_dir),
         *["-Wl," + flag for flag in args.linker_flag],
     ])
+    startup = " ".join("-Wl," + str(lib / name) for name in ("crt1.o", "crti.o", "mimalloc.o", "crtn.o"))
     run([
         "make", "-C", str(source_dir), f"O={output_dir}", "CC=clang", "ARCH=x86_64",
-        "CFLAGS=" + cflags, "LDFLAGS=" + ldflags, "busybox_unstripped",
+        "CFLAGS=" + cflags, "LDFLAGS=" + ldflags, "LDLIBS=leonos c", "EXTRA_LDFLAGS=" + startup, "busybox_unstripped",
     ])
 
     built = output_dir / "busybox_unstripped"

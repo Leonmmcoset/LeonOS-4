@@ -25,6 +25,9 @@ static int ahci_async_fast_poll_idle(struct ahci_hba_port *port)
 static int ahci_async_fast_poll_command(struct ahci_hba_port *port)
 {
     for (uint32_t i = 0; i < AHCI_ASYNC_FAST_POLL_SPINS; ++i) {
+        if (port->is & AHCI_PORT_IS_TFES) {
+            return -5;
+        }
         if ((port->ci & 1u) == 0) {
             return 0;
         }
@@ -98,10 +101,14 @@ static int ahci_pending_poll(void)
     if (!ahci_pending_command.active || !port) {
         return -22;
     }
+    /* An aborted ATAPI command may report TFES with PxCI still set. */
+    if (port->is & AHCI_PORT_IS_TFES) {
+        goto command_complete;
+    }
     if ((port->ci & 1u) != 0) {
         if (storage_async_can_yield()) {
             int poll_ret = ahci_async_fast_poll_command(port);
-            if (poll_ret == 0) {
+            if (poll_ret != -LEONOS_EAGAIN) {
                 goto command_complete;
             }
             if (time_ticks() - ahci_pending_command.start_tick >=
@@ -116,6 +123,9 @@ static int ahci_pending_poll(void)
             return -LEONOS_EAGAIN;
         }
         for (uint32_t i = 0; i < AHCI_WAIT_SPINS; ++i) {
+            if (port->is & AHCI_PORT_IS_TFES) {
+                goto command_complete;
+            }
             if ((port->ci & 1u) == 0) {
                 break;
             }
@@ -517,4 +527,3 @@ static int ahci_write_lba_retry(struct ahci_hba_port *port, uint64_t lba,
     }
     return ret;
 }
-

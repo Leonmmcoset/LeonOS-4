@@ -7,12 +7,21 @@
 #include <ntclks/paging.h>
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
+#include <ntclks/permissions.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/heap.h>
 #include <ntclks/lock.h>
 #include <ntclks/smp.h>
 #include <ntclks/svga.h>
+#include <ntclks/usercopy.h>
+#include <linux/sched.h>
+#include <ntclks/futex.h>
+#include <ntclks/wait.h>
+#include <ntclks/time.h>
+#include <linux/time.h>
+#include <linux/signal.h>
+#include <linux/errno.h>
 
 /* The table grows by moving only pointers; task objects keep stable addresses
  * because wait queues and interrupt paths may retain struct task pointers. */
@@ -28,11 +37,22 @@ static uint64_t scheduler_idle_ticks;
 static uint64_t scheduler_cpu_busy_ticks[SMP_MAX_CPUS];
 static uint64_t scheduler_cpu_idle_ticks[SMP_MAX_CPUS];
 static struct kernel_spinlock scheduler_lock = KERNEL_SPINLOCK_INIT;
+static void sched_notify_parent_exit(struct task *task);
 
 /* A READY task can still be owned by the CPU that just saved its interrupt
  * frame.  Keep that reservation until the owner either reclaims or replaces
  * it; otherwise another CPU can select the same address space concurrently. */
 #define SCHED_CPU_NONE UINT32_MAX
+
+static bool thread_group_pending(uint32_t tgid, const struct task *except)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        const struct task *task = tasks[i];
+        if (task && task != except && task->pid && sched_task_tgid(task) == tgid &&
+            (task->state != TASK_EXITED || task->running_cpu != SCHED_CPU_NONE)) return true;
+    }
+    return false;
+}
 
 static uint32_t scheduler_cpu_index(void)
 {
@@ -65,9 +85,9 @@ static uint32_t scheduler_current_pid(void)
 
 static bool task_frame_valid(const struct task *task, const struct trap_frame *frame)
 {
-    return task && frame && task->as.cr3 && task->stack_low && task->stack_top &&
+    return task && frame && (*sched_task_as(task)).cr3 && task->stack_low && task->stack_top &&
            frame->rip >= NTCLKS_USER_BASE && frame->rip < NTCLKS_USER_TOP &&
-           frame->rsp >= task->stack_low && frame->rsp <= task->stack_top &&
+           frame->rsp >= NTCLKS_USER_BASE && frame->rsp <= NTCLKS_USER_TOP &&
            frame->cs == NTCLKS_USER_CS && frame->ss == NTCLKS_USER_DS &&
            (frame->rflags & (1ULL << 9));
 }
@@ -78,12 +98,12 @@ struct task_vma *sched_task_vma_at(struct task *task, uint32_t index)
         return NULL;
     }
     if (index < SCHED_TASK_VMA_MAX) {
-        return &task->vmas[index];
+        return &sched_task_mm(task)->vmas[index];
     }
     index -= SCHED_TASK_VMA_MAX;
-    if (index >= task->vma_extra_count) {
+    if (index >= sched_task_mm(task)->vma_extra_count) {
         uint32_t wanted = index + 1u;
-        uint32_t capacity = task->vma_extra_capacity ? task->vma_extra_capacity : 16u;
+        uint32_t capacity = sched_task_mm(task)->vma_extra_capacity ? sched_task_mm(task)->vma_extra_capacity : 16u;
         struct task_vma *replacement;
         while (capacity < wanted) {
             if (capacity > UINT32_MAX / 2u) {
@@ -99,33 +119,33 @@ struct task_vma *sched_task_vma_at(struct task *task, uint32_t index)
         for (uint32_t i = 0; i < capacity; ++i) {
             replacement[i] = (struct task_vma){0};
         }
-        for (uint32_t i = 0; i < task->vma_extra_count; ++i) {
-            replacement[i] = task->vma_extra[i];
+        for (uint32_t i = 0; i < sched_task_mm(task)->vma_extra_count; ++i) {
+            replacement[i] = sched_task_mm(task)->vma_extra[i];
         }
-        if (task->vma_extra) {
-            kernel_free(task->vma_extra);
+        if (sched_task_mm(task)->vma_extra) {
+            kernel_free(sched_task_mm(task)->vma_extra);
         }
-        task->vma_extra = replacement;
-        task->vma_extra_capacity = capacity;
-        task->vma_extra_count = wanted;
+        sched_task_mm(task)->vma_extra = replacement;
+        sched_task_mm(task)->vma_extra_capacity = capacity;
+        sched_task_mm(task)->vma_extra_count = wanted;
     }
-    return &task->vma_extra[index];
+    return &sched_task_mm(task)->vma_extra[index];
 }
 
 uint32_t sched_task_vma_capacity(const struct task *task)
 {
-    return task ? SCHED_TASK_VMA_MAX + task->vma_extra_count : 0;
+    return task ? SCHED_TASK_VMA_MAX + sched_task_mm(task)->vma_extra_count : 0;
 }
 
 void sched_task_vma_release(struct task *task)
 {
-    if (!task || !task->vma_extra) {
+    if (!task || !sched_task_mm(task)->vma_extra) {
         return;
     }
-    kernel_free(task->vma_extra);
-    task->vma_extra = NULL;
-    task->vma_extra_count = 0;
-    task->vma_extra_capacity = 0;
+    kernel_free(sched_task_mm(task)->vma_extra);
+    sched_task_mm(task)->vma_extra = NULL;
+    sched_task_mm(task)->vma_extra_count = 0;
+    sched_task_mm(task)->vma_extra_capacity = 0;
 }
 
 struct task_file *sched_task_file_at(struct task *task, uint32_t index)
@@ -134,12 +154,12 @@ struct task_file *sched_task_file_at(struct task *task, uint32_t index)
         return NULL;
     }
     if (index < SCHED_TASK_FILE_MAX) {
-        return &task->files[index];
+        return &sched_task_fds(task)->files[index];
     }
     index -= SCHED_TASK_FILE_MAX;
-    if (index >= task->file_extra_count) {
+    if (index >= sched_task_fds(task)->file_extra_count) {
         uint32_t wanted = index + 1u;
-        uint32_t capacity = task->file_extra_capacity ? task->file_extra_capacity : 16u;
+        uint32_t capacity = sched_task_fds(task)->file_extra_capacity ? sched_task_fds(task)->file_extra_capacity : 16u;
         struct task_file *replacement;
         while (capacity < wanted) {
             if (capacity > UINT32_MAX / 2u) {
@@ -155,33 +175,33 @@ struct task_file *sched_task_file_at(struct task *task, uint32_t index)
         for (uint32_t i = 0; i < capacity; ++i) {
             replacement[i] = (struct task_file){0};
         }
-        for (uint32_t i = 0; i < task->file_extra_count; ++i) {
-            replacement[i] = task->file_extra[i];
+        for (uint32_t i = 0; i < sched_task_fds(task)->file_extra_count; ++i) {
+            replacement[i] = sched_task_fds(task)->file_extra[i];
         }
-        if (task->file_extra) {
-            kernel_free(task->file_extra);
+        if (sched_task_fds(task)->file_extra) {
+            kernel_free(sched_task_fds(task)->file_extra);
         }
-        task->file_extra = replacement;
-        task->file_extra_capacity = capacity;
-        task->file_extra_count = wanted;
+        sched_task_fds(task)->file_extra = replacement;
+        sched_task_fds(task)->file_extra_capacity = capacity;
+        sched_task_fds(task)->file_extra_count = wanted;
     }
-    return &task->file_extra[index];
+    return &sched_task_fds(task)->file_extra[index];
 }
 
 uint32_t sched_task_file_capacity(const struct task *task)
 {
-    return task ? SCHED_TASK_FILE_MAX + task->file_extra_count : 0;
+    return task ? SCHED_TASK_FILE_MAX + sched_task_fds(task)->file_extra_count : 0;
 }
 
 void sched_task_file_release(struct task *task)
 {
-    if (!task || !task->file_extra) {
+    if (!task || !sched_task_fds(task)->file_extra) {
         return;
     }
-    kernel_free(task->file_extra);
-    task->file_extra = NULL;
-    task->file_extra_count = 0;
-    task->file_extra_capacity = 0;
+    kernel_free(sched_task_fds(task)->file_extra);
+    sched_task_fds(task)->file_extra = NULL;
+    sched_task_fds(task)->file_extra_count = 0;
+    sched_task_fds(task)->file_extra_capacity = 0;
 }
 
 /**
@@ -230,11 +250,11 @@ static void task_copy_cwd(struct task *task, const char *cwd)
     if (!cwd || !cwd[0]) {
         cwd = "/";
     }
-    while (i + 1 < sizeof(task->cwd) && cwd[i]) {
-        task->cwd[i] = cwd[i];
+    while (i + 1 < LEONOS_FS_PATH_LEN && cwd[i]) {
+        sched_task_cwd(task)[i] = cwd[i];
         ++i;
     }
-    task->cwd[i] = 0;
+    sched_task_cwd(task)[i] = 0;
 }
 
 /**
@@ -295,12 +315,15 @@ static void task_clear_identity(struct task *task)
         return;
     }
     task->flags &= ~TASK_FLAG_ELEVATED_ADMIN;
+    task_groups_release(task);
     task->uid = 0;
     task->gid = 0;
     task->euid = 0;
     task->egid = 0;
     task->suid = 0;
     task->sgid = 0;
+    task->fsuid = 0;
+    task->fsgid = 0;
     task->role = LEONOS_AUTH_ROLE_NONE;
     task->session_id = 0;
     task->username[0] = 0;
@@ -321,6 +344,10 @@ static void task_copy_identity_from_parent(struct task *task, const struct task 
     task->egid = parent->egid;
     task->suid = parent->suid;
     task->sgid = parent->sgid;
+    task->fsuid = parent->fsuid;
+    task->fsgid = parent->fsgid;
+    task->groups = parent->groups;
+    task_groups_retain(task->groups);
     task->role = parent->role;
     task->session_id = parent->session_id;
     task_copy_identity_text(task->username, sizeof(task->username), parent->username);
@@ -362,6 +389,25 @@ static void task_zero(struct task *task)
     }
 }
 
+/** @brief Drop the resource-limit reference only when a task is reaped/recycled. */
+static void task_release_limits(struct task *task)
+{
+    struct task_rlimit_state *shared = task->shared_limits;
+    if (!shared) return;
+    task->limits = *shared;
+    task->limits.references = 1;
+    task->shared_limits = NULL;
+    if (!--shared->references) kernel_free(shared);
+}
+
+/** @brief Initialize finite descriptor defaults and an unlimited address-space limit. */
+static void task_init_limits(struct task *task)
+{
+    task->limits = (struct task_rlimit_state){.references = 1,
+        .nofile = {SCHED_TASK_FILE_LIMIT, SCHED_NR_OPEN},
+        .as = {LINUX_RLIM_INFINITY, LINUX_RLIM_INFINITY}};
+}
+
 /**
  * @brief Scan forward from next_pid for an unused non-zero pid; 0 when the identifier space is exhausted.
  */
@@ -394,8 +440,10 @@ static struct task *alloc_task_slot(void)
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i] && tasks[i]->state == TASK_EXITED &&
             tasks[i]->running_cpu == SCHED_CPU_NONE &&
+            (tasks[i]->flags & TASK_FLAG_RESOURCES_RELEASED) &&
+            !thread_group_pending(sched_task_tgid(tasks[i]), tasks[i]) &&
             (!(tasks[i]->flags & TASK_FLAG_WAITABLE_CHILD) || tasks[i]->parent_pid == 0)) {
-            sched_release_task_resources(tasks[i]);
+            task_release_limits(tasks[i]);
             task_zero(tasks[i]);
             return tasks[i];
         }
@@ -463,14 +511,15 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     task->priority = 0;
     task->affinity_mask = sched_all_cpu_mask();
     task->pending_signals = 0;
-    task->rlimit_nofile = SCHED_TASK_FILE_LIMIT;
-    task->rlimit_as = 0;
+    task->timer_pending_signals = 0;
+    task_init_limits(task);
+    (*sched_task_umask(task)) = 022;
     task->wait_window_id = 0;
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
-    for (size_t i = 0; i < sizeof(task->as); ++i) {
-        ((uint8_t *)&task->as)[i] = 0;
+    for (size_t i = 0; i < sizeof((*sched_task_as(task))); ++i) {
+        ((uint8_t *)sched_task_as(task))[i] = 0;
     }
     for (size_t i = 0; i < sizeof(task->frame); ++i) {
         ((uint8_t *)&task->frame)[i] = 0;
@@ -512,6 +561,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task_zero(task);
     task->pid = pid;
     task->parent_pid = parent_pid;
+    task->parent_exit_signal = 17;
     task->process_group = task->pid;
     task->process_session = task->pid;
     task_copy_name(task, name);
@@ -523,15 +573,16 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     task->priority = 0;
     task->affinity_mask = sched_all_cpu_mask();
     task->pending_signals = 0;
-    task->rlimit_nofile = SCHED_TASK_FILE_LIMIT;
-    task->rlimit_as = 0;
+    task->timer_pending_signals = 0;
+    task_init_limits(task);
+    (*sched_task_umask(task)) = 022;
     task->wait_window_id = 0;
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
-    if (!address_space_create(&task->as) ||
-        !address_space_map_user_stack(&task->as, stack_top)) {
-        address_space_destroy(&task->as);
+    if (!address_space_create(sched_task_as(task)) ||
+        !address_space_map_user_stack(sched_task_as(task), stack_top)) {
+        address_space_destroy(sched_task_as(task));
         task_copy_name(task, "failed");
         task->entry = 0;
         task->stack_top = 0;
@@ -560,13 +611,15 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
         (!(flags & TASK_FLAG_SERVICE) || (flags & TASK_FLAG_WINDOW_SERVER))) {
         struct task *parent = sched_find(parent_pid);
         if (parent) {
-            task_copy_cwd(task, parent->cwd);
+            task_copy_cwd(task, sched_task_cwd(parent));
             task_copy_identity_from_parent(task, parent);
             task->priority = parent->priority;
-            task->rlimit_nofile = parent->rlimit_nofile;
-            task->rlimit_as = parent->rlimit_as;
+            task->limits = *sched_task_limits(parent);
+            task->limits.references = 1;
+            (*sched_task_umask(task)) = (*sched_task_umask(parent));
             task->process_group = parent->process_group;
             task->process_session = parent->process_session;
+            task->controlling_pty_id = parent->controlling_pty_id;
             task->affinity_mask = parent->affinity_mask;
         }
     }
@@ -584,18 +637,81 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
 /**
  * @brief Fork the calling user task: clone its address space COW-style, copy its register frame with rax zeroed in the child, and copy descriptors; returns the child pid or a negative errno.
  */
-int64_t sched_fork_current(const struct trap_frame *parent_frame)
+static int task_promote_shared(struct task *task, uint64_t flags)
 {
+    if ((flags & CLONE_THREAD) && !task->shared_limits) {
+        struct task_rlimit_state *limits = kernel_malloc(sizeof(*limits));
+        if (!limits) return -12;
+        *limits = task->limits;
+        limits->references = 1;
+        task->shared_limits = limits;
+    }
+    if ((flags & CLONE_VM) && !task->shared_mm) {
+        struct task_address_space_state *mm = kernel_malloc(sizeof(*mm));
+        if (!mm) return -12;
+        *mm = task->address_space;
+        mm->references = 1;
+        if (!mm->initial_stack_top) mm->initial_stack_top = task->stack_top;
+        if (!mm->initial_stack_low) mm->initial_stack_low = task->stack_low;
+        task->shared_mm = mm;
+    }
+    if ((flags & CLONE_FILES) && !task->shared_files) {
+        struct task_fd_table_state *files = kernel_malloc(sizeof(*files));
+        if (!files) return -12;
+        *files = task->fd_table;
+        files->references = 1;
+        task->shared_files = files;
+    }
+    if ((flags & CLONE_FS) && !task->shared_fs) {
+        struct task_fs_state *fs = kernel_malloc(sizeof(*fs));
+        if (!fs) return -12;
+        fs->umask = *sched_task_umask(task);
+        for (unsigned i = 0; i < sizeof(fs->cwd); ++i) fs->cwd[i] = sched_task_cwd(task)[i];
+        fs->references = 1;
+        task->shared_fs = fs;
+    }
+    if ((flags & CLONE_SIGHAND) && !task->shared_sighand) {
+        struct task_sighand_state *handlers = kernel_malloc(sizeof(*handlers));
+        if (!handlers) return -12;
+        for (unsigned i = 0; i < KERNEL_SIGNAL_ACTION_MAX; ++i)
+            handlers->actions[i] = task->signal_actions[i];
+        handlers->references = 1;
+        task->shared_sighand = handlers;
+    }
+    return 0;
+}
+
+int64_t sched_clone_current(const struct trap_frame *parent_frame, uint64_t flags,
+                           uint64_t stack, uint64_t parent_tid,
+                           uint64_t child_tid, uint64_t tls)
+{
+    const uint64_t supported = CSIGNAL | CLONE_VM | CLONE_FS | CLONE_FILES |
+        CLONE_SIGHAND | CLONE_PARENT | CLONE_THREAD | CLONE_SYSVSEM |
+        CLONE_SETTLS | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID |
+        CLONE_DETACHED | CLONE_UNTRACED | CLONE_CHILD_SETTID | CLONE_CLEAR_SIGHAND;
+    if ((flags & CLONE_CLEAR_SIGHAND) && (flags & CLONE_SIGHAND)) return -22;
+    if ((flags & CLONE_THREAD) && !(flags & CLONE_SIGHAND)) return -22;
+    if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM)) return -22;
+    if ((flags & CSIGNAL) > 64) return -22;
+    if (flags & ~supported) return -LEONOS_ENOSYS;
+    if ((flags & CLONE_SETTLS) && tls >= NTCLKS_USER_TLS_LIMIT) return -LEONOS_EPERM;
+    if ((flags & CLONE_PARENT_SETTID) && !user_range_writable(parent_tid, 4)) return -14;
+    if ((flags & CLONE_CHILD_SETTID) && !user_range_writable(child_tid, 4)) return -14;
+    if (stack && (stack < NTCLKS_USER_BASE || stack >= NTCLKS_USER_TOP)) return -14;
     uint64_t lock_flags;
     kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
     struct task *parent = sched_current_task();
     struct task *child;
-    struct address_space empty_as = {0};
     uint32_t child_pid;
+    bool files_retained = false;
     if (!parent || !parent_frame || parent->kind != TASK_KIND_USER ||
-        parent->state == TASK_EXITED || !parent->as.cr3) {
+        parent->state == TASK_EXITED || !(*sched_task_as(parent)).cr3) {
         kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
         return -22;
+    }
+    if (task_promote_shared(parent, flags) < 0) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
+        return -12;
     }
     child = alloc_task_slot();
     if (!child) {
@@ -611,9 +727,71 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     }
     task_zero(child);
     *child = *parent;
+    child->limits = *sched_task_limits(parent);
+    child->limits.references = 1;
+    child->shared_limits = NULL;
+    child->shared_mm = NULL;
+    child->shared_files = NULL;
+    child->shared_fs = NULL;
+    child->shared_sighand = NULL;
+    child->address_space = *sched_task_mm(parent);
+    child->address_space.as = (struct address_space){0};
+    child->address_space.vma_extra = NULL;
+    child->address_space.vma_extra_count = 0;
+    child->address_space.vma_extra_capacity = 0;
+    child->fd_table = *sched_task_fds(parent);
+    child->fd_table.file_extra = NULL;
+    child->fd_table.file_extra_count = 0;
+    child->fd_table.file_extra_capacity = 0;
+    task_copy_cwd(child, sched_task_cwd(parent));
+    *sched_task_umask(child) = *sched_task_umask(parent);
+    for (unsigned i = 0; i < KERNEL_SIGNAL_ACTION_MAX; ++i)
+        child->signal_actions[i] = sched_task_actions(parent)[i];
+    if (flags & CLONE_CLEAR_SIGHAND) {
+        for (unsigned i = 1; i < KERNEL_SIGNAL_ACTION_MAX; ++i) {
+            if (child->signal_actions[i].handler != 1)
+                child->signal_actions[i] = (struct kernel_signal_action){0};
+        }
+    }
     child->pid = child_pid;
-    child->parent_pid = parent->pid;
-    child->as = empty_as;
+    child->tgid = (flags & CLONE_THREAD) ? sched_task_tgid(parent) : child_pid;
+    child->process_pending_signals = 0;
+    child->alarm_deadline = 0;
+    child->alarm_interval_ns = child->alarm_last_expiry = 0;
+    /* The leader's task storage survives until the last group member exits. */
+    child->shared_process_pending = flags & CLONE_THREAD ? sched_task_process_pending(parent) : NULL;
+    child->parent_pid = flags & (CLONE_THREAD | CLONE_PARENT)
+        ? parent->parent_pid : sched_task_tgid(parent);
+    child->parent_exit_signal = flags & CLONE_THREAD ? 0 : flags & CLONE_PARENT
+        ? sched_find(sched_task_tgid(parent))->parent_exit_signal : flags & CSIGNAL;
+    child->parent_exit_notified = 0;
+    child->exit_signal = 0;
+    child->clear_child_tid = (flags & CLONE_CHILD_CLEARTID) ? child_tid : 0;
+    child->robust_list = 0;
+    child->restart_syscall = 0;
+    child->nanosleep_deadline = child->nanosleep_remaining = 0;
+    child->sigwait_deadline = child->sigwait_mask = 0;
+    /* POSIX timers are process objects; a forked child starts with none and
+     * a CLONE_THREAD child resolves timer operations through its leader. */
+    for (uint32_t i = 0; i < SCHED_TASK_TIMER_MAX; ++i)
+        child->timers[i] = (struct task_posix_timer){0};
+    child->waiting_queue = NULL;
+    child->socket_receive_file = NULL;
+    child->socket_receive_done = 0;
+    child->socket_receive_message = child->socket_receive_control_capacity = 0;
+    child->socket_receive_name_capacity = 0;
+    child->syscall_file = NULL;
+    child->socket_io_deadline = 0;
+    child->socket_io_timed = false;
+    if (flags & CLONE_VM) {
+        child->signal_stack_base = 0;
+        child->signal_stack_size = 0;
+        child->signal_stack_flags = 0;
+    }
+    child->futex_next = NULL;
+    child->futex_state = 0;
+    child->futex_address = 0;
+    if (flags & CLONE_SETTLS) child->fs_base = tls;
     child->image = NULL;
     child->image_len = 0;
     /**
@@ -621,8 +799,10 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
  */
     child->flags &= ~(TASK_FLAG_RESOURCES_RELEASED | TASK_FLAG_PENDING_LOAD |
                       TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER);
-    child->flags |= TASK_FLAG_WAITABLE_CHILD | TASK_FLAG_STARTED;
-    child->state = TASK_READY;
+    child->flags |= TASK_FLAG_STARTED;
+    if (flags & CLONE_THREAD) child->flags &= ~TASK_FLAG_WAITABLE_CHILD;
+    else child->flags |= TASK_FLAG_WAITABLE_CHILD;
+    child->state = TASK_BLOCKED;
     child->running_cpu = SCHED_CPU_NONE;
     child->wake_tick = 0;
     child->poll_deadline_ticks = 0;
@@ -630,60 +810,58 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     child->exit_code = 0;
     child->cpu_ticks = 0;
     child->pending_signals = 0;
+    child->timer_pending_signals = 0;
     child->frame = *parent_frame;
     child->frame.rax = 0;
-    task_copy_name(child, parent->name);
-    if (!address_space_clone_cow(&parent->as, &child->as)) {
-        task_zero(child);
-        child->state = TASK_EXITED;
-        child->flags = TASK_FLAG_RESOURCES_RELEASED;
-        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
-        return -12;
-    }
-    child->vma_extra = NULL;
-    child->vma_extra_count = 0;
-    child->vma_extra_capacity = 0;
-    if (parent->vma_extra_count) {
-        for (uint32_t i = 0; i < parent->vma_extra_count; ++i) {
-            struct task_vma *dst = sched_task_vma_at(child, SCHED_TASK_VMA_MAX + i);
-            if (!dst) {
-                address_space_destroy(&child->as);
-                sched_task_vma_release(child);
-                task_zero(child);
-                child->state = TASK_EXITED;
-                child->flags = TASK_FLAG_RESOURCES_RELEASED;
-                kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
-                return -12;
+    if (stack) {
+        child->frame.rsp = stack;
+        child->stack_low = stack & ~4095ULL;
+        child->stack_top = (stack + 4095) & ~4095ULL;
+        for (uint32_t i = 0; i < sched_task_vma_capacity(parent); ++i) {
+            struct task_vma *vma = sched_task_vma_at(parent, i);
+            if (vma && vma->used && stack > vma->start && stack <= vma->end) {
+                child->stack_low = vma->start;
+                child->stack_top = vma->end;
+                break;
             }
-            *dst = parent->vma_extra[i];
         }
     }
-    child->file_extra = NULL;
-    child->file_extra_count = 0;
-    child->file_extra_capacity = 0;
-    for (uint32_t i = 0; i < parent->file_extra_count; ++i) {
-        struct task_file *dst = sched_task_file_at(child, SCHED_TASK_FILE_MAX + i);
-        if (!dst) {
-            address_space_destroy(&child->as);
-            sched_task_vma_release(child);
-            sched_task_file_release(child);
-            task_zero(child);
-            child->state = TASK_EXITED;
-            child->flags = TASK_FLAG_RESOURCES_RELEASED;
-            kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
-            return -12;
+    arch_fpu_save(child->fpu_state);
+    task_copy_name(child, parent->name);
+    if (flags & CLONE_VM) {
+        child->shared_mm = parent->shared_mm;
+        ++child->shared_mm->references;
+    } else {
+        if (!address_space_clone_cow(sched_task_as(parent), sched_task_as(child))) goto fail;
+        for (uint32_t i = 0; i < sched_task_mm(parent)->vma_extra_count; ++i) {
+            struct task_vma *dst = sched_task_vma_at(child, SCHED_TASK_VMA_MAX + i);
+            if (!dst) goto fail;
+            *dst = sched_task_mm(parent)->vma_extra[i];
         }
-        *dst = parent->file_extra[i];
     }
-    if (syscall_clone_task_files(parent, child) < 0) {
-        address_space_destroy(&child->as);
-        sched_task_vma_release(child);
-        sched_task_file_release(child);
-        task_zero(child);
-        child->state = TASK_EXITED;
-        child->flags = TASK_FLAG_RESOURCES_RELEASED;
-        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
-        return -12;
+    if (flags & CLONE_FILES) {
+        child->shared_files = parent->shared_files;
+        ++child->shared_files->references;
+    } else {
+        for (uint32_t i = 0; i < sched_task_fds(parent)->file_extra_count; ++i) {
+            struct task_file *dst = sched_task_file_at(child, SCHED_TASK_FILE_MAX + i);
+            if (!dst) goto fail;
+            *dst = sched_task_fds(parent)->file_extra[i];
+        }
+        if (syscall_clone_task_files(parent, child) < 0) goto fail;
+        files_retained = true;
+    }
+    if (flags & CLONE_FS) {
+        child->shared_fs = parent->shared_fs;
+        ++child->shared_fs->references;
+    }
+    if (flags & CLONE_SIGHAND) {
+        child->shared_sighand = parent->shared_sighand;
+        ++child->shared_sighand->references;
+    }
+    if (flags & CLONE_THREAD) {
+        child->shared_limits = parent->shared_limits;
+        ++child->shared_limits->references;
     }
     /**
  * @brief exec_argv and exec_envp are interior pointers, so rebuild them to reference the child-owned packed string storage after the structure copy.
@@ -691,10 +869,39 @@ int64_t sched_fork_current(const struct trap_frame *parent_frame)
     sched_set_task_exec_params(child_pid, parent->exec_argc, parent->exec_argv,
                                parent->exec_envc, parent->exec_envp,
                                parent->exec_data, parent->exec_data_len);
-    console_printf("[ntclks] fork parent=%u child=%u cr3=0x%llx\n",
-                   parent->pid, child_pid, (unsigned long long)child->as.cr3);
+    task_groups_retain(child->groups);
+    if (flags & CLONE_PARENT_SETTID) *(uint32_t *)(uintptr_t)parent_tid = child_pid;
+    if (flags & CLONE_CHILD_SETTID) {
+        if (!address_space_user_page_writable(sched_task_as(child), child_tid))
+            address_space_handle_cow_fault(sched_task_as(child), child_tid);
+        uint64_t phys = address_space_user_page_phys(sched_task_as(child), child_tid);
+        *(uint32_t *)(uintptr_t)(NTCLKS_KERNEL_DIRECT_MAP_BASE + phys + (child_tid & 4095)) = child_pid;
+    }
+    child->state = TASK_READY;
     kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
     return (int64_t)child_pid;
+
+fail:
+    if (child->shared_mm) --child->shared_mm->references;
+    else {
+        address_space_destroy(sched_task_as(child));
+        sched_task_vma_release(child);
+    }
+    if (child->shared_files) --child->shared_files->references;
+    else {
+        if (files_retained) syscall_release_task_files(child);
+        sched_task_file_release(child);
+    }
+    task_zero(child);
+    child->state = TASK_EXITED;
+    child->flags = TASK_FLAG_RESOURCES_RELEASED;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
+    return -12;
+}
+
+int64_t sched_fork_current(const struct trap_frame *frame)
+{
+    return sched_clone_current(frame, 17, 0, 0, 0, 0);
 }
 
 /**
@@ -816,8 +1023,8 @@ void sched_create_idle_task(void)
     task->exit_code = 0;
     task->image = NULL;
     task->image_len = 0;
-    for (size_t i = 0; i < sizeof(task->as); ++i) {
-        ((uint8_t *)&task->as)[i] = 0;
+    for (size_t i = 0; i < sizeof((*sched_task_as(task))); ++i) {
+        ((uint8_t *)sched_task_as(task))[i] = 0;
     }
     for (size_t i = 0; i < sizeof(task->frame); ++i) {
         ((uint8_t *)&task->frame)[i] = 0;
@@ -846,7 +1053,7 @@ void sched_set_running(uint32_t pid)
         }
     }
     if (!selected || selected->kind != TASK_KIND_USER ||
-        selected->state == TASK_EXITED || !selected->as.cr3 ||
+        selected->state == TASK_EXITED || !(*sched_task_as(selected)).cr3 ||
         !selected->frame.rip || (selected->frame.cs & 3ULL) != 3ULL ||
         (selected->frame.ss & 3ULL) != 3ULL ||
         !(selected->frame.rflags & (1ULL << 9))) {
@@ -873,6 +1080,7 @@ void sched_exit(uint32_t pid, uint64_t code)
 {
     uint64_t flags;
     bool gpu_owner_quiescent = false;
+    struct task *exiting = NULL;
 
     /* Publish the terminal state atomically, but preserve running_cpu until
      * its owner reaches a scheduling boundary.  A remote CPU may still be
@@ -880,6 +1088,7 @@ void sched_exit(uint32_t pid, uint64_t code)
     kernel_spin_lock_irqsave(&scheduler_lock, &flags);
     for (uint32_t i = 0; i < task_count; ++i) {
         if (tasks[i]->pid == pid) {
+            exiting = tasks[i];
             tasks[i]->state = TASK_EXITED;
             tasks[i]->exit_code = code;
             tasks[i]->child_event = TASK_CHILD_EVENT_NONE;
@@ -893,13 +1102,19 @@ void sched_exit(uint32_t pid, uint64_t code)
         }
     }
     for (uint32_t i = 0; i < task_count; ++i) {
-        if (tasks[i]->parent_pid == pid) {
+        if (exiting && !thread_group_pending(sched_task_tgid(exiting), exiting) &&
+            tasks[i]->parent_pid == sched_task_tgid(exiting)) {
             tasks[i]->parent_pid = 0;
             tasks[i]->flags &= ~TASK_FLAG_WAITABLE_CHILD;
         }
     }
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
-    if (gpu_owner_quiescent) svga_gpu_release_owner(pid);
+    if (gpu_owner_quiescent) {
+        uint64_t execution_flags;
+        kernel_execution_lock_irqsave(&execution_flags);
+        sched_release_task_resources(exiting);
+        kernel_execution_unlock_irqrestore(execution_flags);
+    }
 }
 
 /**
@@ -913,17 +1128,427 @@ void sched_release_task_resources(struct task *task)
         return;
     }
     storage_drain_task_io(task->pid);
-    syscall_release_task_files(task);
-    address_space_destroy(&task->as);
-    sched_task_vma_release(task);
-    sched_task_file_release(task);
+    if (task->waiting_queue) kernel_wait_queue_remove(task->waiting_queue, task);
+    task_socket_cancel_receive(task);
+    task_release_syscall_file(task);
+    futex_task_exit(task);
+    if (!task->shared_files || __atomic_sub_fetch(&task->shared_files->references, 1, __ATOMIC_SEQ_CST) == 0) {
+        syscall_release_task_files(task);
+        if (task->shared_files) kernel_free(task->shared_files);
+    }
+    task->shared_files = NULL;
+    task_groups_release(task);
+    if (!task->shared_mm || __atomic_sub_fetch(&task->shared_mm->references, 1, __ATOMIC_SEQ_CST) == 0) {
+        address_space_destroy(sched_task_as(task));
+        sched_task_vma_release(task);
+        if (task->shared_mm) kernel_free(task->shared_mm);
+    }
+    task->shared_mm = NULL;
+    task->address_space = (struct task_address_space_state){0};
+    task->fd_table = (struct task_fd_table_state){0};
+    if (task->shared_fs && __atomic_sub_fetch(&task->shared_fs->references, 1, __ATOMIC_SEQ_CST) == 0)
+        kernel_free(task->shared_fs);
+    task->shared_fs = NULL;
+    if (task->shared_sighand && __atomic_sub_fetch(&task->shared_sighand->references, 1, __ATOMIC_SEQ_CST) == 0)
+        kernel_free(task->shared_sighand);
+    task->shared_sighand = NULL;
     svga_gpu_release_owner(task->pid);
     task->flags |= TASK_FLAG_RESOURCES_RELEASED;
+    sched_notify_parent_exit(task);
 }
 
-/**
- * @brief Advance scheduler time, credit busy/idle ticks, and wake blocked tasks past their deadline.
- */
+void sched_exit_group(uint32_t tgid, uint64_t code)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = tasks[i];
+        if (task && sched_task_tgid(task) == tgid && task->state != TASK_EXITED)
+            sched_exit(task->pid, code);
+        else if (task && task->pid == tgid) task->exit_code = code;
+    }
+}
+
+int sched_prepare_exec_current(struct task *task)
+{
+    int result = syscall_unshare_task_files(task);
+    if (result < 0) return result;
+    uint32_t group = sched_task_tgid(task);
+    struct task *leader = sched_find(group);
+    if (leader) {
+        /* Linux discards POSIX timers across execve. */
+        for (uint32_t i = 0; i < SCHED_TASK_TIMER_MAX; ++i)
+            leader->timers[i] = (struct task_posix_timer){0};
+    }
+    bool pending = false;
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *other = tasks[i];
+        if (other == task || sched_task_tgid(other) != group) continue;
+        sched_exit(other->pid, 0);
+        if (other->running_cpu != SCHED_CPU_NONE) pending = true;
+    }
+    /* Remote members retire at their next kernel boundary before mm changes. */
+    if (pending) return -11;
+    storage_drain_task_io(task->pid);
+    futex_task_exit(task);
+    task->robust_list = 0;
+    task->process_pending_signals = *sched_task_process_pending(task);
+    task->shared_process_pending = NULL;
+    if (leader) {
+        task->alarm_deadline = leader->alarm_deadline;
+        task->alarm_interval_ns = leader->alarm_interval_ns;
+        task->alarm_last_expiry = leader->alarm_last_expiry;
+    }
+    if (leader && leader != task) {
+        uint64_t flags;
+        kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+        uint32_t old_tid = task->pid;
+        task->parent_pid = leader->parent_pid;
+        task->parent_exit_signal = leader->parent_exit_signal;
+        task->parent_exit_notified = 0;
+        task->flags |= leader->flags & TASK_FLAG_WAITABLE_CHILD;
+        leader->flags &= ~TASK_FLAG_WAITABLE_CHILD;
+        leader->process_pending_signals = 0;
+        leader->alarm_deadline = 0;
+        leader->alarm_interval_ns = leader->alarm_last_expiry = 0;
+        leader->pid = old_tid;
+        task->pid = group;
+        current_pid[scheduler_cpu_index()] = group;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    }
+    if (task->shared_sighand) {
+        struct task_sighand_state *old = task->shared_sighand;
+        for (unsigned i = 0; i < KERNEL_SIGNAL_ACTION_MAX; ++i) task->signal_actions[i] = old->actions[i];
+        task->shared_sighand = NULL;
+        if (!--old->references) kernel_free(old);
+    }
+    if (task->shared_fs) {
+        struct task_fs_state *old = task->shared_fs;
+        task->shared_fs = NULL;
+        task_copy_cwd(task, old->cwd);
+        *sched_task_umask(task) = old->umask;
+        if (!--old->references) kernel_free(old);
+    }
+    task->fs_base = 0;
+    return 0;
+}
+
+void sched_exec_replace_mm(struct task *task, const struct address_space *replacement)
+{
+    struct task_address_space_state *old = task->shared_mm;
+    paging_load_cr3(paging_kernel_cr3());
+    if (!old || !--old->references) {
+        address_space_destroy(sched_task_as(task));
+        sched_task_vma_release(task);
+        if (old) kernel_free(old);
+    }
+    task->shared_mm = NULL;
+    task->address_space = (struct task_address_space_state){.as = *replacement};
+}
+
+static void sched_wake_process_signal(uint32_t tgid, uint64_t bit)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = tasks[i];
+        if (sched_task_tgid(task) == tgid && task->state == TASK_BLOCKED && !(task->blocked_signals & bit)) {
+            task->wake_tick = 0;
+            task->wait_window_id = 0;
+            task->state = TASK_READY;
+        }
+    }
+}
+
+/* Publish one group-exit notification, after the last user frame retires.
+ * Individual pthread exits and sibling destruction during exec are silent. */
+static void sched_notify_parent_exit(struct task *task)
+{
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    struct task *leader = sched_find(sched_task_tgid(task));
+    if (!leader || leader->state != TASK_EXITED || leader->running_cpu != SCHED_CPU_NONE ||
+        thread_group_pending(leader->pid, leader) || leader->parent_exit_notified) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return;
+    }
+    leader->parent_exit_notified = 1;
+    unsigned sig = leader->parent_exit_signal;
+    if (leader->parent_pid && sig && sig < KERNEL_SIGNAL_ACTION_MAX) {
+        for (uint32_t i = 0; i < task_count; ++i) {
+            struct task *parent = tasks[i];
+            if (sched_task_tgid(parent) != leader->parent_pid || parent->state == TASK_EXITED) continue;
+            if (sched_task_actions(parent)[sig].handler != 1) {
+                uint64_t bit = 1ULL << (sig - 1);
+                *sched_task_process_pending(parent) |= bit;
+                sched_wake_process_signal(leader->parent_pid, bit);
+            }
+            break;
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
+static uint64_t timeval_ns(struct linux_timeval value)
+{
+    if ((uint64_t)value.tv_sec > INT64_MAX / 1000000000ULL) return INT64_MAX;
+    uint64_t ns = (uint64_t)value.tv_sec * 1000000000ULL;
+    uint64_t fraction = (uint64_t)value.tv_usec * 1000;
+    return fraction > INT64_MAX - ns ? INT64_MAX : ns + fraction;
+}
+
+void sched_itimer_task(struct task *task, const struct linux_itimerval *value, struct linux_itimerval *old)
+{
+    struct task *leader = sched_find(sched_task_tgid(task));
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    uint64_t remaining = leader->alarm_deadline > scheduler_ticks ? leader->alarm_deadline - scheduler_ticks : 0;
+    if (old) {
+        old->it_value = (struct linux_timeval){remaining / NTCLKS_TICK_HZ,
+            (remaining % NTCLKS_TICK_HZ) * (1000000 / NTCLKS_TICK_HZ)};
+        old->it_interval = (struct linux_timeval){leader->alarm_interval_ns / 1000000000,
+            (leader->alarm_interval_ns % 1000000000) / 1000};
+    }
+    if (value) {
+        const uint64_t tick_ns = 1000000000ULL / NTCLKS_TICK_HZ;
+        uint64_t ns = timeval_ns(value->it_value);
+        uint64_t duration = (ns + tick_ns - 1) / tick_ns;
+        const uint64_t maximum = (INT64_MAX + tick_ns - 1) / tick_ns;
+        leader->alarm_deadline = !duration ? 0 : duration > maximum - scheduler_ticks
+            ? maximum : scheduler_ticks + duration;
+        leader->alarm_interval_ns = duration ? timeval_ns(value->it_interval) : 0;
+        leader->alarm_last_expiry = leader->alarm_deadline;
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
+uint32_t sched_alarm_task(struct task *task, uint32_t seconds)
+{
+    struct linux_itimerval value = {.it_value.tv_sec = seconds}, old;
+    sched_itimer_task(task, &value, &old);
+    uint64_t result = (uint64_t)old.it_value.tv_sec;
+    uint64_t fraction = (uint64_t)old.it_value.tv_usec;
+    /* Native Linux alarm rounds to nearest second, with a minimum of one while armed. */
+    if ((!result && fraction) || fraction >= 500000) ++result;
+    return (uint32_t)result;
+}
+
+void sched_alarm_rearm(struct task *task)
+{
+    struct task *leader = sched_find(sched_task_tgid(task));
+    uint64_t flags;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    if (!leader->alarm_deadline && leader->alarm_interval_ns) {
+        const uint64_t tick_ns = 1000000000ULL / NTCLKS_TICK_HZ;
+        uint64_t interval = (leader->alarm_interval_ns + tick_ns - 1) / tick_ns;
+        uint64_t expired = leader->alarm_last_expiry;
+        uint64_t periods = scheduler_ticks >= expired ? (scheduler_ticks - expired) / interval + 1 : 1;
+        leader->alarm_deadline = expired + periods * interval;
+        leader->alarm_last_expiry = leader->alarm_deadline;
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+}
+
+static void sched_alarm_expire(void)
+{
+    const uint64_t bit = 1ULL << 13;
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *leader = tasks[i];
+        if (leader->pid != sched_task_tgid(leader) || !leader->alarm_deadline ||
+            leader->alarm_deadline > scheduler_ticks) continue;
+        leader->alarm_deadline = 0;
+        for (uint32_t j = 0; j < task_count; ++j) {
+            struct task *live = tasks[j];
+            if (sched_task_tgid(live) != leader->pid || live->state == TASK_EXITED) continue;
+            if (sched_task_actions(live)[14].handler != 1) {
+                *sched_task_process_pending(live) |= bit;
+                sched_wake_process_signal(leader->pid, bit);
+            }
+            break;
+        }
+    }
+}
+
+static uint64_t timer_timespec_ticks(const struct linux_timespec *value)
+{
+    uint64_t seconds, ns;
+    uint64_t tick_ns = 1000000000ULL / NTCLKS_TICK_HZ;
+    if (!value || value->tv_sec < 0 || value->tv_nsec < 0 || value->tv_nsec >= 1000000000LL)
+        return UINT64_MAX;
+    seconds = (uint64_t)value->tv_sec;
+    if (seconds > UINT64_MAX / 1000000000ULL) return UINT64_MAX;
+    ns = seconds * 1000000000ULL + (uint64_t)value->tv_nsec;
+    if (ns < seconds * 1000000000ULL) return UINT64_MAX;
+    return ns / tick_ns + (ns % tick_ns != 0);
+}
+
+static void timer_ticks_timespec(uint64_t ticks, struct linux_timespec *value)
+{
+    if (!value) return;
+    value->tv_sec = (int64_t)(ticks / NTCLKS_TICK_HZ);
+    value->tv_nsec = (int64_t)((ticks % NTCLKS_TICK_HZ) * (1000000000ULL / NTCLKS_TICK_HZ));
+}
+
+static struct task_posix_timer *task_timer(struct task *task, int32_t timerid)
+{
+    struct task *leader = task ? sched_find(sched_task_tgid(task)) : NULL;
+    if (!leader || timerid < 0 || timerid >= (int32_t)SCHED_TASK_TIMER_MAX) return NULL;
+    struct task_posix_timer *timer = &leader->timers[timerid];
+    return timer->used ? timer : NULL;
+}
+
+int sched_timer_create(struct task *task, int32_t clockid, int32_t notify,
+                       int32_t signo, int32_t target_pid, uint64_t value,
+                       int32_t *timerid)
+{
+    uint64_t flags;
+    if (!task || !timerid || task->state == TASK_EXITED ||
+        (clockid != LINUX_CLOCK_REALTIME && clockid != LINUX_CLOCK_MONOTONIC &&
+         clockid != LINUX_CLOCK_BOOTTIME) ||
+        (notify != 0 && notify != 1 && notify != 4) ||
+        (notify != 1 && (signo <= 0 || signo >= LINUX_NSIG))) return -LINUX_EINVAL;
+    if (notify == 4) {
+        struct task *target = sched_find((uint32_t)target_pid);
+        if (!target || target->state == TASK_EXITED || sched_task_tgid(target) != sched_task_tgid(task))
+            return -LINUX_EINVAL;
+    }
+    struct task *owner = sched_find(sched_task_tgid(task));
+    if (!owner) return -LINUX_ESRCH;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    for (int32_t id = 0; id < (int32_t)SCHED_TASK_TIMER_MAX; ++id) {
+        if (owner->timers[id].used) continue;
+        owner->timers[id] = (struct task_posix_timer){
+            .used = 1, .id = (uint32_t)id, .clockid = clockid,
+            .notify = notify, .signo = signo,
+            .target_pid = notify == 4 ? target_pid : (int32_t)task->pid,
+            .value_data = value,
+        };
+        *timerid = id;
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return 0;
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return -LINUX_EAGAIN;
+}
+
+int sched_timer_delete(struct task *task, int32_t timerid)
+{
+    uint64_t flags;
+    if (!task) return -LINUX_EINVAL;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    struct task_posix_timer *timer = task_timer(task, timerid);
+    if (!timer) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return -LINUX_EINVAL;
+    }
+    *timer = (struct task_posix_timer){0};
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return 0;
+}
+
+int sched_timer_settime(struct task *task, int32_t timerid, uint32_t flags,
+                        const struct linux_itimerspec *value,
+                        struct linux_itimerspec *old)
+{
+    uint64_t lock_flags;
+    if (!task || !value || (flags & ~LINUX_TIMER_ABSTIME) ||
+        value->it_value.tv_sec < 0 || value->it_value.tv_nsec < 0 ||
+        value->it_value.tv_nsec >= 1000000000LL || value->it_interval.tv_sec < 0 ||
+        value->it_interval.tv_nsec < 0 || value->it_interval.tv_nsec >= 1000000000LL)
+        return -LINUX_EINVAL;
+    uint64_t initial = timer_timespec_ticks(&value->it_value);
+    uint64_t interval = timer_timespec_ticks(&value->it_interval);
+    if (initial == UINT64_MAX || interval == UINT64_MAX) return -LINUX_EINVAL;
+    kernel_spin_lock_irqsave(&scheduler_lock, &lock_flags);
+    struct task_posix_timer *timer = task_timer(task, timerid);
+    if (!timer) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
+        return -LINUX_EINVAL;
+    }
+    if (old) {
+        uint64_t remaining = timer->expiry_tick > scheduler_ticks ? timer->expiry_tick - scheduler_ticks : 0;
+        timer_ticks_timespec(remaining, &old->it_value);
+        timer_ticks_timespec(timer->interval_ticks, &old->it_interval);
+    }
+    timer->interval_ticks = interval;
+    timer->overrun = 0;
+    timer->expiry_tick = initial ? ((flags & LINUX_TIMER_ABSTIME) ? initial : scheduler_ticks + initial) : 0;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, lock_flags);
+    return 0;
+}
+
+int sched_timer_gettime(struct task *task, int32_t timerid,
+                        struct linux_itimerspec *value)
+{
+    uint64_t flags;
+    if (!task || !value) return -LINUX_EINVAL;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    struct task_posix_timer *timer = task_timer(task, timerid);
+    if (!timer) {
+        kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+        return -LINUX_EINVAL;
+    }
+    uint64_t remaining = timer->expiry_tick > scheduler_ticks ? timer->expiry_tick - scheduler_ticks : 0;
+    timer_ticks_timespec(remaining, &value->it_value);
+    timer_ticks_timespec(timer->interval_ticks, &value->it_interval);
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return 0;
+}
+
+int sched_timer_getoverrun(struct task *task, int32_t timerid)
+{
+    uint64_t flags;
+    if (!task) return -LINUX_EINVAL;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    struct task_posix_timer *timer = task_timer(task, timerid);
+    int result = timer ? (timer->overrun > INT32_MAX ? INT32_MAX : (int)timer->overrun) : -LINUX_EINVAL;
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return result;
+}
+
+static void sched_posix_timer_expire(void)
+{
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *owner = tasks[i];
+        if (!owner || owner->state == TASK_EXITED) continue;
+        for (uint32_t j = 0; j < SCHED_TASK_TIMER_MAX; ++j) {
+            struct task_posix_timer *timer = &owner->timers[j];
+            if (!timer->used || !timer->expiry_tick || timer->expiry_tick > scheduler_ticks) continue;
+            if (timer->notify != 1) {
+                uint64_t bit = 1ULL << (uint32_t)(timer->signo - 1);
+                if (timer->notify == 4) {
+                    /* SIGEV_THREAD_ID is the one notification mode that is
+                     * thread-directed on Linux. */
+                    struct task *target = sched_find((uint32_t)timer->target_pid);
+                    if (target && target->state != TASK_EXITED &&
+                        sched_task_tgid(target) == sched_task_tgid(owner)) {
+                        if (sched_task_pending(target) & bit) ++timer->overrun;
+                        target->timer_pending_signals |= bit;
+                        target->pending_signals |= bit;
+                        if (target->state == TASK_BLOCKED) {
+                            target->wake_tick = 0;
+                            target->state = TASK_READY;
+                        }
+                    }
+                } else {
+                    /* SIGEV_SIGNAL is process-directed.  Keep it in the
+                     * shared process queue so any eligible thread can
+                     * receive it, matching kill(2)/Linux signal selection. */
+                    uint64_t *pending = sched_task_process_pending(owner);
+                    if ((*pending & bit) != 0) ++timer->overrun;
+                    owner->timer_pending_signals |= bit;
+                    *pending |= bit;
+                    sched_wake_process_signal(sched_task_tgid(owner), bit);
+                }
+            }
+            if (!timer->interval_ticks) {
+                timer->expiry_tick = 0;
+            } else {
+                uint64_t periods = (scheduler_ticks - timer->expiry_tick) / timer->interval_ticks + 1;
+                if (periods > 1) timer->overrun += periods - 1;
+                timer->expiry_tick += periods * timer->interval_ticks;
+            }
+        }
+    }
+}
+
+/** @brief Account a tick and queue expirations; signal actions run on return to user mode. */
 void sched_on_tick(void)
 {
     struct task *current;
@@ -952,6 +1577,8 @@ void sched_on_tick(void)
              * task. */
         }
     }
+    sched_alarm_expire();
+    sched_posix_timer_expire();
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
 }
 
@@ -1221,26 +1848,27 @@ bool sched_volume_in_use(uint32_t volume_id)
         if (!task->pid || task->state == TASK_EXITED) {
             continue;
         }
-        if (sched_path_uses_volume(task->cwd, volume_id) ||
+        if (sched_path_uses_volume(sched_task_cwd(task), volume_id) ||
             sched_path_uses_volume(task->path, volume_id) ||
             task->image_node.volume_id == volume_id) {
             return true;
         }
         for (uint32_t fd = 0; fd < sched_task_file_capacity(task); ++fd) {
-            const struct task_file *file = sched_task_file_at((struct task *)task, fd);
+            const struct task_file *file = task_file_description(sched_task_file_at((struct task *)task, fd));
             if (file && file->used && file->node.volume_id == volume_id) {
                 return true;
             }
         }
         for (uint32_t fd = 0; fd < SCHED_TASK_STDIO_MAX; ++fd) {
-            if (task->stdio_files[fd].used && task->stdio_files[fd].node.volume_id == volume_id) {
+            struct task_file *file = task_file_description(&sched_task_fds(task)->stdio_files[fd]);
+            if (file->used && file->node.volume_id == volume_id) {
                 return true;
             }
         }
         for (uint32_t vma = 0; vma < SCHED_TASK_VMA_MAX; ++vma) {
-            if (task->vmas[vma].used &&
-                (task->vmas[vma].flags & TASK_VMA_FLAG_FILE) &&
-                task->vmas[vma].file_node.volume_id == volume_id) {
+            if (sched_task_mm(task)->vmas[vma].used &&
+                (sched_task_mm(task)->vmas[vma].flags & TASK_VMA_FLAG_FILE) &&
+                sched_task_mm(task)->vmas[vma].file_node.volume_id == volume_id) {
                 return true;
             }
         }
@@ -1366,7 +1994,7 @@ struct task *sched_select_next_user(void)
         }
         if ((!tasks[i]->entry && !(tasks[i]->image && tasks[i]->image_len) &&
              !(tasks[i]->flags & TASK_FLAG_PENDING_LOAD)) ||
-            !tasks[i]->stack_top || !tasks[i]->as.cr3) {
+            !tasks[i]->stack_top || !(*sched_task_as(tasks[i])).cr3) {
             continue;
         }
         if (!best || tasks[i]->priority < best->priority) {
@@ -1438,7 +2066,7 @@ struct trap_frame *sched_task_frame(struct task *task)
                            task->pid,
                            (unsigned long long)task->frame.rip,
                            (unsigned long long)task->frame.rsp,
-                           (unsigned long long)task->as.cr3);
+                           (unsigned long long)(*sched_task_as(task)).cr3);
         }
         return NULL;
     }
@@ -1450,7 +2078,7 @@ struct trap_frame *sched_task_frame(struct task *task)
  */
 uint64_t sched_task_cr3(struct task *task)
 {
-    return task ? task->as.cr3 : 0;
+    return task ? (*sched_task_as(task)).cr3 : 0;
 }
 
 /**
@@ -1545,7 +2173,7 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
 {
     struct task *task = sched_find(pid);
     if (!task || task->pid == 0 || task->kind != TASK_KIND_USER ||
-        task->state == TASK_EXITED || signal_number < 0 || signal_number >= 32) {
+        task->state == TASK_EXITED || signal_number < 0 || (unsigned)signal_number >= KERNEL_SIGNAL_ACTION_MAX) {
         return -1;
     }
     if (signal_number == 0) {
@@ -1555,6 +2183,64 @@ int sched_signal_user_task(uint32_t pid, int signal_number)
      * ignored, STOP/CONT, blocked and wakeup behavior are all applied here so
      * wait/kill/PTY/console paths do not implement their own signal policy. */
     return kernel_signal_queue_task(task, signal_number);
+}
+
+void sched_signal_discard(struct task *task, int signal_number)
+{
+    uint64_t bit = 1ULL << (signal_number - 1);
+    *sched_task_process_pending(task) &= ~bit;
+    for (uint32_t i = 0; i < task_count; ++i)
+        if (sched_task_tgid(tasks[i]) == sched_task_tgid(task)) tasks[i]->pending_signals &= ~bit;
+}
+
+void sched_signal_job_control(uint32_t tgid, int signal_number)
+{
+    const uint64_t stopped = (1ULL << 18) | (1ULL << 19) | (1ULL << 20) | (1ULL << 21);
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = tasks[i];
+        if (sched_task_tgid(task) != tgid || task->state == TASK_EXITED) continue;
+        uint64_t discard = signal_number == 18 ? stopped : 1ULL << 17;
+        task->pending_signals &= ~discard;
+        *sched_task_process_pending(task) &= ~discard;
+        if (signal_number == 18) {
+            if (task->state != TASK_STOPPED) continue;
+            task->state = TASK_READY;
+            task->stop_signal = 0;
+            task->child_event = TASK_CHILD_EVENT_CONTINUED;
+        } else {
+            task->state = TASK_STOPPED;
+            task->stop_signal = (uint32_t)signal_number;
+            task->child_event = TASK_CHILD_EVENT_STOPPED;
+        }
+        task->wake_tick = 0;
+        task->wait_window_id = 0;
+    }
+}
+
+int sched_signal_user_process(uint32_t tgid, int signal_number)
+{
+    struct task *leader = sched_find(tgid), *live = NULL, *eligible = NULL;
+    if (!leader || leader->kind != TASK_KIND_USER || sched_task_tgid(leader) != tgid ||
+        signal_number < 0 || (unsigned)signal_number >= KERNEL_SIGNAL_ACTION_MAX) return -1;
+    if (!signal_number) return 0;
+    uint64_t bit = 1ULL << (signal_number - 1);
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = tasks[i];
+        if (sched_task_tgid(task) != tgid || task->state == TASK_EXITED) continue;
+        if (!live) live = task;
+        if (!eligible && !(task->blocked_signals & bit)) eligible = task;
+    }
+    if (!live) return 0; /* A zombie still owns its PID until wait reaps it. */
+    if (signal_number == 18) sched_signal_job_control(tgid, signal_number);
+    if (signal_number >= 19 && signal_number <= 22) sched_signal_discard(live, 18);
+    struct kernel_signal_action *action = &sched_task_actions(live)[signal_number];
+    if (signal_number != 9 && signal_number != 19 && action->handler == 1) return 0;
+    if (signal_number == 9 || signal_number == 19 || (eligible && !action->handler))
+        return kernel_signal_queue_task(eligible ? eligible : live, signal_number);
+    *sched_task_process_pending(live) |= bit;
+    /* All eligible sleepers may recheck; only one consumes the process signal. */
+    sched_wake_process_signal(tgid, bit);
+    return 0;
 }
 
 /**
@@ -1623,7 +2309,7 @@ int sched_signal_process_group(uint32_t sender_pid, uint32_t process_group,
             task->state == TASK_EXITED || task->process_group != process_group) {
             continue;
         }
-        if (sched_signal_user_task(task->pid, signal_number) == 0) {
+        if (task->pid == sched_task_tgid(task) && sched_signal_user_process(task->pid, signal_number) == 0) {
             ++count;
         }
     }
@@ -1683,18 +2369,26 @@ int sched_set_process_group(uint32_t caller_pid, uint32_t pid,
 /**
  * @brief Return the process group of pid (0 = current), or a negative error.
  */
+static int64_t sched_process_identity(uint32_t pid, bool session)
+{
+    if (!pid) pid = sched_current_pid();
+    uint64_t flags;
+    int64_t result = -LINUX_ESRCH;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    const struct task *task = sched_find(pid);
+    /* A zombie still owns its identity. Reaped slots stay in the task table
+     * until recycled, but must no longer be visible through a Linux PID. */
+    if (task && task->kind == TASK_KIND_USER &&
+        (task->state != TASK_EXITED || (task->flags & TASK_FLAG_WAITABLE_CHILD))) {
+        result = session ? task->process_session : task->process_group;
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return result;
+}
+
 int64_t sched_get_process_group(uint32_t pid)
 {
-    struct task *task;
-    if (!pid) {
-        pid = sched_current_pid();
-    }
-    task = sched_find(pid);
-    if (!task || task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
-        !task->process_group) {
-        return -2;
-    }
-    return task->process_group;
+    return sched_process_identity(pid, false);
 }
 
 /**
@@ -1718,6 +2412,7 @@ int64_t sched_create_process_session(uint32_t pid)
     }
     task->process_session = pid;
     task->process_group = pid;
+    sched_set_controlling_pty(pid, 0);
     return pid;
 }
 
@@ -1737,9 +2432,28 @@ uint32_t sched_pty_reference_count(uint32_t pty_id)
         if (!task || task->kind != TASK_KIND_USER) continue;
         if (task->pty_id == pty_id) ++count;
         for (uint32_t fd = 0; fd < SCHED_TASK_PTY_FD_MAX; ++fd) {
-            if (task->pty_fds[fd].used && task->pty_fds[fd].pty_id == pty_id) {
+            if (sched_task_fds(task)->pty_fds[fd].used && sched_task_fds(task)->pty_fds[fd].pty_id == pty_id) {
                 ++count;
             }
+        }
+    }
+    kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
+    return count;
+}
+
+uint32_t sched_pty_master_reference_count(uint32_t pty_id)
+{
+    uint32_t count = 0;
+    uint64_t flags;
+    if (!pty_id) return 0;
+    kernel_spin_lock_irqsave(&scheduler_lock, &flags);
+    for (uint32_t i = 0; i < task_count; ++i) {
+        struct task *task = tasks[i];
+        if (!task || task->kind != TASK_KIND_USER) continue;
+        for (uint32_t fd = 0; fd < SCHED_TASK_PTY_FD_MAX; ++fd) {
+            const struct task_pty_fd *entry = &sched_task_fds(task)->pty_fds[fd];
+            if (entry->used && entry->pty_id == pty_id &&
+                entry->endpoint == TASK_PTY_ENDPOINT_MASTER) ++count;
         }
     }
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
@@ -1770,12 +2484,7 @@ int sched_process_group_has_pty(uint32_t process_group, uint32_t pty_id)
  */
 int64_t sched_get_process_session(uint32_t pid)
 {
-    struct task *task = sched_find(pid);
-    if (!task || task->kind != TASK_KIND_USER || task->state == TASK_EXITED ||
-        !task->process_session) {
-        return -2;
-    }
-    return task->process_session;
+    return sched_process_identity(pid, true);
 }
 
 /**
@@ -1850,7 +2559,7 @@ int sched_hangup_user_tasks_for_pty(uint32_t pty_id, uint32_t keep_pid)
             task->pty_id = 0;
             task->wait_pty_id = 0;
             for (uint32_t fd = 0; fd < SCHED_TASK_PTY_FD_MAX; ++fd) {
-                task->pty_fds[fd] = (struct task_pty_fd){0};
+                sched_task_fds(task)->pty_fds[fd] = (struct task_pty_fd){0};
             }
         }
     }
@@ -1911,7 +2620,8 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
         if (task->pid == 0 || task->kind != TASK_KIND_USER) {
             continue;
         }
-        if (task->parent_pid != waiter_pid && waiter_pid != 0) {
+        if (task->pid != sched_task_tgid(task)) continue;
+        if (task->parent_pid != sched_task_tgid(waiter) && waiter_pid != 0) {
             continue;
         }
         if (wanted_pid > 0 && task->pid != (uint32_t)wanted_pid) {
@@ -1922,6 +2632,7 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
         }
         found_child = 1;
         if (task->state == TASK_EXITED && task->running_cpu == SCHED_CPU_NONE &&
+            !thread_group_pending(sched_task_tgid(task), task) &&
             !(task->flags & TASK_FLAG_REAP_IN_PROGRESS)) {
             reap_task = task;
             reap_pid = task->pid;
@@ -1961,6 +2672,7 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
         if (reap_task->pid == reap_pid &&
             (reap_task->flags & TASK_FLAG_REAP_IN_PROGRESS)) {
             reap_task->parent_pid = 0;
+            task_release_limits(reap_task);
             reap_task->flags &= ~(TASK_FLAG_WAITABLE_CHILD | TASK_FLAG_REAP_IN_PROGRESS);
             task_copy_name(reap_task, "reaped");
             reap_task->image = NULL;
@@ -1969,9 +2681,9 @@ int64_t sched_wait_reap(uint32_t waiter_pid, int32_t wanted_pid,
             task_clear_identity(reap_task);
             task_copy_cwd(reap_task, "/");
             for (size_t j = 0; j < SCHED_TASK_FILE_MAX; ++j) {
-                reap_task->files[j].used = 0;
-                reap_task->files[j].offset = 0;
-                reap_task->files[j].aux = 0;
+                sched_task_fds(reap_task)->files[j].used = 0;
+                sched_task_fds(reap_task)->files[j].offset = 0;
+                sched_task_fds(reap_task)->files[j].aux = 0;
             }
             console_printf("[ntclks] scheduler wait reaped pid=%u by pid=%u\n",
                            reap_pid, waiter_pid);
@@ -2033,13 +2745,13 @@ uint32_t sched_snapshot(struct task_snapshot_info *out, uint32_t capacity, uint6
         dst->uid = tasks[i]->uid;
         dst->role = tasks[i]->role;
         dst->session_id = tasks[i]->session_id;
-        dst->memory_kib = address_space_user_memory_kib(&tasks[i]->as);
+        dst->memory_kib = address_space_user_memory_kib(sched_task_as(tasks[i]));
         dst->cpu_ticks = tasks[i]->cpu_ticks;
         dst->priority = tasks[i]->priority;
         dst->pending_signals = tasks[i]->pending_signals;
         dst->wake_tick = tasks[i]->wake_tick;
         dst->entry = tasks[i]->entry;
-        dst->cr3 = tasks[i]->as.cr3;
+        dst->cr3 = (*sched_task_as(tasks[i])).cr3;
         dst->affinity_mask = tasks[i]->affinity_mask;
         snapshot_name(dst->name, sizeof(dst->name), tasks[i]->name);
         snapshot_name(dst->username, sizeof(dst->username), tasks[i]->username);
@@ -2071,6 +2783,8 @@ void sched_set_task_identity(uint32_t pid, const struct leonos_user_info *user,
     task->egid = user->uid;
     task->suid = user->uid;
     task->sgid = user->uid;
+    task->fsuid = user->uid;
+    task->fsgid = user->uid;
     task->role = user->role;
     task->session_id = session_id;
     task_copy_identity_text(task->username, sizeof(task->username), user->username);
@@ -2142,4 +2856,29 @@ void sched_dump(void)
                        tasks[i]->kind,
                        tasks[i]->flags);
     }
+}
+
+/**
+ * @brief Publish a controlling tty change to the process thread group.
+ * @param pid Target thread ID.
+ * @param pty_id New tty ID, or zero.
+ */
+void sched_set_controlling_pty(uint32_t pid, uint32_t pty_id)
+{
+    struct task *target = sched_find(pid);
+    if (!target) return;
+    for (uint32_t i = 0; i < task_count; ++i)
+        if (tasks[i] && tasks[i]->tgid == target->tgid)
+            tasks[i]->controlling_pty_id = pty_id;
+}
+
+/**
+ * @brief Detach all processes when a privileged session steals a tty.
+ * @param pty_id Controlling tty ID to clear.
+ */
+void sched_clear_controlling_pty(uint32_t pty_id)
+{
+    for (uint32_t i = 0; i < task_count; ++i)
+        if (tasks[i] && tasks[i]->controlling_pty_id == pty_id)
+            tasks[i]->controlling_pty_id = 0;
 }

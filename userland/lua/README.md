@@ -8,7 +8,7 @@ applications.
 The port deliberately uses Lua's portable `LUA_USE_C89` configuration. Lua
 is compiled with the normal x86-64 SSE floating-point ABI. LeonOS saves and
 restores the x87/SSE state for every user task, and this is required to match
-Picolibc's `double` calling convention; compiling Lua with
+musl's `double` calling convention; compiling Lua with
 `-mgeneral-regs-only` would make `lua_version()` and the math library receive
 corrupted values. Lua scripts can be loaded from the current directory and from
 `/programs/lua/lua/`. Dynamic C modules, `package.loadlib`, POSIX-only

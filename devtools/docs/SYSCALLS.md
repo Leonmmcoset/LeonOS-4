@@ -2,7 +2,7 @@
 
 ## 进入方式
 
-LeonOS 4 x86_64 用户态通过 `int $0x80` 进入内核。SDK 中的
+musl 使用 x86-64 原生 `syscall` 进入内核；SDK 的 LeonOS 扩展中
 `syscall0`、`syscall1`、`syscall2`、`syscall3` 和 `syscall6` 已完成寄存器
 转换：
 
@@ -12,8 +12,10 @@ LeonOS 4 x86_64 用户态通过 `int $0x80` 进入内核。SDK 中的
 返回值:       rax
 ```
 
-应用通常不需要直接调用 `int $0x80`，应包含 `<leonos/syscall.h>` 并使用
-封装函数。系统调用号是公开 ABI 的一部分，但尚未实现的号不能自行假设。
+标准接口应使用 musl 的 POSIX 头文件；直接调用使用 `<sys/syscall.h>`
+中的编号和 `syscall()`。LeonOS 扩展使用 `<leonos/syscall.h>`。原生
+`syscall` 破坏 rcx/r11；返回负 errno 后由 libc 按各接口契约转换。
+下表是历史子集，完整状态以项目 Linux ABI CSV 清单为准。
 
 ## 当前公开调用号
 

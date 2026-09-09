@@ -9,6 +9,9 @@
 #include <leonos/fs.h>
 #include <leonos/system.h>
 #include <ntclks/types.h>
+#include <leonos/permissions.h>
+#include <linux/stat.h>
+#include <linux/statfs.h>
 
 /* Legacy installation records are internal-only while boot storage is being
  * simplified.  They are deliberately absent from the public SDK; userland
@@ -63,6 +66,12 @@ struct storage_node {
     uint64_t size;
 };
 
+int storage_inode_permissions(const struct storage_node *node,
+                              struct leonos_permissions *value, bool write);
+int storage_inode_stat(const struct storage_node *node, struct linux_stat_abi *value);
+int storage_create_socket(const char *path, struct storage_node *out);
+int storage_statfs(const struct storage_node *node, struct linux_statfs_abi *value);
+
 /**
  * @brief Maintains the next FAT32 cluster for one sequential file reader.
  *
@@ -84,6 +93,7 @@ struct storage_read_cursor {
 #define STORAGE_NODE_FLAG_EXFAT_NOFAT 0x00000020u
 #define STORAGE_NODE_FLAG_DEV_NODE 0x00000040u
 #define STORAGE_NODE_FLAG_DEV_BLOCK 0x00000080u
+#define STORAGE_NODE_FLAG_PROC    0x00000100u
 
 /* Device-node volume_id encoding for block devices.  The low 16 bits select
  * the physical disk; the high 16 bits contain GPT entry + 1, or zero for the

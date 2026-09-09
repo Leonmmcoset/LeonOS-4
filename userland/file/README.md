@@ -6,7 +6,7 @@ exposes it as the external `file` command. Its matching compiled database is loa
 `/system/share/misc/magic.mgc`.
 
 The port keeps the upstream magic database and format recognizers while using
-the LeonOS/Picolibc ABI. Host-process decompression, memory mapping, and
+the LeonOS/musl ABI. Host-process decompression, memory mapping, and
 directory-backed user magic files are disabled because LeonOS does not expose
 those POSIX interfaces yet; regular files, ELF, archives, text, JSON, images,
 and the other compiled database recognizers remain available.

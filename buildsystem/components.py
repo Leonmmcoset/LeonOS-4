@@ -325,6 +325,8 @@ def validate_component_targets(components: tuple[Component, ...], root: Path) ->
             candidates = (
                 root / "userland" / "apps" / component.id,
                 root / "userland" / component.id,
+                # nano now uses upstream C sources directly with musl.
+                *((root / "third_party/nano/src",) if component.id == "nano" else ()),
             )
             source = next(
                 (

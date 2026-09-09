@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+import musl_link
 
 
 LESS_COMMIT = "b8bbf4297169e20d35e1cc3e015180e8a011bcf2"
@@ -79,13 +80,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--port", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path, required=True)
     parser.add_argument("--leonos-include", type=Path, required=True)
-    parser.add_argument("--linker-script", type=Path, required=True)
+
     parser.add_argument("--leonos-lib", type=Path, required=True)
-    parser.add_argument("--dynamic-crt", type=Path, required=True)
-    parser.add_argument("--abi-note", type=Path, required=True)
+
+
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
@@ -97,18 +98,26 @@ def main() -> None:
         raise SystemExit("less must be built from WSL/Linux, not Windows")
     source = args.source.resolve()
     port = args.port.resolve()
-    picolibc = args.picolibc_prefix.resolve()
+    musl = args.musl_prefix.resolve()
     libc_include = args.leonos_libc_include.resolve()
     leonos_include = args.leonos_include.resolve()
     work = args.work_dir.resolve()
     output = args.output.resolve()
     stamp = args.stamp.resolve()
-    required = [source / "main.c", source / "less.hlp", source / "lessmsg",
-                source / "COPYING", source / "LICENSE", port / "leonos_termcap.c",
-                port / "include/defines.h", port / "include/termcap.h",
-                picolibc / "include", libc_include, leonos_include,
-                args.linker_script.resolve(), args.leonos_lib.resolve(),
-                args.dynamic_crt.resolve(), args.abi_note.resolve()]
+    required = [
+        source / "main.c",
+        source / "less.hlp",
+        source / "lessmsg",
+        source / "COPYING",
+        source / "LICENSE",
+        port / "leonos_termcap.c",
+        port / "include/defines.h",
+        port / "include/termcap.h",
+        musl / "include",
+        libc_include,
+        leonos_include,
+        args.leonos_lib.resolve(),
+    ]
     for path in required:
         if not path.exists():
             raise SystemExit(f"required less build input is missing: {path}")
@@ -127,15 +136,15 @@ def main() -> None:
     generate_help(source, generated / "help.c")
 
     flags = [
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]),
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]),
         "-std=gnu11", "-ffreestanding", "-fno-stack-protector", "-fPIC", "-fPIE",
-        "-mno-red-zone", "-mgeneral-regs-only", "-ffunction-sections", "-fdata-sections",
+          "-ffunction-sections", "-fdata-sections",
         "-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-sign-compare",
-        "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE", "-DLEONOS_USE_PICOLIBC",
-        "-Dstat=leonos_posix_stat", "-Dfstat=leonos_posix_fstat", "-Dlstat=leonos_posix_lstat",
+        "-D_POSIX_C_SOURCE=200809L", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL", "-D_DEFAULT_SOURCE", "-DLEONOS_USE_MUSL",
+
         "-nostdinc", "-isystem", str(clang_headers()), "-I" + str(port / "include"),
-        "-I" + str(generated), "-I" + str(picolibc / "include"),
-        "-I" + str(libc_include), "-I" + str(leonos_include), "-I" + str(source),
+        "-I" + str(generated), "-I" + str(musl / "include"),
+        "-I" + str(libc_include), "-I" + str(leonos_include), "-I" + str(leonos_include / "uapi"), "-I" + str(source),
     ]
     object_paths: list[Path] = []
     for name in LESS_SOURCES:
@@ -148,14 +157,7 @@ def main() -> None:
     object_paths.append(termcap_object)
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag,
-        "-pie", "--hash-style=sysv", "--dynamic-linker", "/system/lib/ld-leonos.elf",
-        "-z", "relro", "-z", "now", "-z", "max-page-size=0x1000",
-        "-T", str(args.linker_script.resolve()), "-o", str(output),
-        str(args.dynamic_crt.resolve()), str(args.abi_note.resolve()),
-        *map(str, object_paths), "--start-group", str(args.leonos_lib.resolve()), "--end-group",
-    ])
+    run(musl_link.executable(musl, output, object_paths, (args.leonos_lib.resolve(),), flags=args.linker_flag))
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps({
         "less_commit": revision,

@@ -20,6 +20,7 @@ struct elf_image_info {
     uint16_t phnum;
     uint64_t low_vaddr;
     uint64_t high_vaddr;
+    uint64_t program_break;
     uint64_t phdr_vaddr;
     uint64_t interpreter_entry;
     uint32_t abi_major;
@@ -40,5 +41,7 @@ bool elf64_load_address_space(struct address_space *as, const void *image, size_
  */
 bool elf64_map_task_image(struct task *task, const struct storage_node *node,
                           struct elf_image_info *out);
+/** Fill a kernel buffer using the same entropy source used for ELF AT_RANDOM. */
+void elf64_random_fill(void *buffer, size_t length);
 
 #endif

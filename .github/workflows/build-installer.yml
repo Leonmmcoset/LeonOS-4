@@ -112,9 +112,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -f third_party/picolibc/meson.build
+          test -f third_party/musl/configure
           test -f third_party/busybox/Makefile
-          git -C third_party/picolibc rev-parse --verify HEAD
+          git -C third_party/musl rev-parse --verify HEAD
           git -C third_party/busybox rev-parse --verify HEAD
           git submodule status --recursive
 

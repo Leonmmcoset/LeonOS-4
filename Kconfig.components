@@ -354,6 +354,26 @@ config LEON_COMPONENT_APP_NANO_SDK
     default n
     depends on LEON_COMPONENT_APP_NANO_BUILD
 
+config LEON_COMPONENT_TOOL_VIM_BUILD
+    bool "Build Vim"
+    default y
+    select LEON_COMPONENT_LIB_NCURSES_BUILD
+
+config LEON_COMPONENT_TOOL_VIM_IMAGE
+    bool "Include Vim in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_VIM_BUILD
+
+config LEON_COMPONENT_TOOL_VIM_ENTRY
+    bool "Generate a desktop entry for Vim"
+    default n
+    depends on LEON_COMPONENT_TOOL_VIM_BUILD
+
+config LEON_COMPONENT_TOOL_VIM_SDK
+    bool "Include Vim in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_VIM_BUILD
+
 config LEON_COMPONENT_APP_FASTFETCH_BUILD
     bool "Build fastfetch system summary"
     default y
@@ -678,6 +698,29 @@ config LEON_COMPONENT_APP_OSCHINPT_API
     bool "Build the API package for LeonOS 4 Chinese Input"
     default y
     depends on LEON_COMPONENT_APP_OSCHINPT_BUILD
+
+endmenu
+
+menu "Libraries"
+
+config LEON_COMPONENT_LIB_NCURSES_BUILD
+    bool "Build ncurses wide-character terminal library"
+    default y
+
+config LEON_COMPONENT_LIB_NCURSES_IMAGE
+    bool "Include ncurses wide-character terminal library in system images"
+    default y
+    depends on LEON_COMPONENT_LIB_NCURSES_BUILD
+
+config LEON_COMPONENT_LIB_NCURSES_ENTRY
+    bool "Generate a desktop entry for ncurses wide-character terminal library"
+    default n
+    depends on LEON_COMPONENT_LIB_NCURSES_BUILD
+
+config LEON_COMPONENT_LIB_NCURSES_SDK
+    bool "Include ncurses wide-character terminal library in the developer SDK"
+    default y
+    depends on LEON_COMPONENT_LIB_NCURSES_BUILD
 
 endmenu
 

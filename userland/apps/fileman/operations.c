@@ -40,7 +40,7 @@ static int build_recycle_dir(char *dst, uint32_t cap)
         return -1;
     }
     build_path_join(dst, cap, home_path, "recycle-bin");
-    return mkdir(dst, 0) < 0 && leonos_stat_legacy(dst, &(struct leonos_stat){0}) < 0 ? -1 : 0;
+    return mkdir(dst, 0777) < 0 && leonos_stat_legacy(dst, &(struct leonos_stat){0}) < 0 ? -1 : 0;
 }
 
 static void build_path_in_dir(char *dst, uint32_t cap, const char *dir,
@@ -183,7 +183,9 @@ static int copy_file(const char *src, const char *dst, uint64_t total,
     if (in < 0) {
         return in;
     }
-    out = open(dst, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    struct stat source;
+    if (fstat(in, &source) < 0) { close(in); return -1; }
+    out = open(dst, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, source.st_mode & 0777);
     if (out < 0) {
         close(in);
         return out;
@@ -227,7 +229,7 @@ static int copy_tree(const char *src, const char *dst, uint64_t total,
     if (st.type != LEONOS_FS_TYPE_DIR) {
         return copy_file(src, dst, total, done, base_percent, span_percent);
     }
-    ret = mkdir(dst, 0);
+    ret = mkdir(dst, 0777);
     if (ret < 0 && leonos_stat_legacy(dst, &(struct leonos_stat){0}) < 0) {
         return ret;
     }
@@ -418,7 +420,7 @@ static void recycle_map_save(const char *dir)
     char path[LEONOS_FS_PATH_LEN];
     int fd;
     build_path_in_dir(path, sizeof(path), dir, FILEMAN_RECYCLE_MAP);
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd >= 0) {
         (void)write(fd, recycle_map, text_len(recycle_map));
         close(fd);

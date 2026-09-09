@@ -99,7 +99,7 @@ static int sessiond_load(void)
 static int sessiond_save(void)
 {
     int fd = open(SESSIOND_DB_PATH,
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) return fd;
     if (write(fd, &db.magic, sizeof(db.magic)) != (long)sizeof(db.magic) ||
         write(fd, &db.count, sizeof(db.count)) != (long)sizeof(db.count) ||
@@ -211,17 +211,17 @@ static void sessiond_handle_client(int slot)
         if (poll(&descriptor, 1, 0) <= 0) return;
         if (leonos_ipc_recv(client->fd, &type, buffer, sizeof(buffer), &length) < 0) {
             if (errno == EAGAIN) return;
-            close(client->fd);
+            leonos_ipc_close(client->fd);
             memset(client, 0, sizeof(*client));
             client->fd = -1;
             return;
         }
         if (type == LEONOS_SESSIOND_MSG_HELLO) {
             struct leonos_sessiond_hello hello;
-            if (length < sizeof(hello)) { close(client->fd); memset(client,0,sizeof(*client)); client->fd=-1; return; }
+            if (length < sizeof(hello)) { leonos_ipc_close(client->fd); memset(client,0,sizeof(*client)); client->fd=-1; return; }
             memcpy(&hello, buffer, sizeof(hello));
             if (hello.pid != client->pid || hello.uid != client->uid) {
-                close(client->fd);
+                leonos_ipc_close(client->fd);
                 memset(client, 0, sizeof(*client));
                 client->fd = -1;
                 return;
@@ -295,7 +295,7 @@ void sessiond_poll(void)
             db.next_id = 1;
             (void)sessiond_save();
         }
-        listen_fd = leonos_ipc_bind_listen(LEONOS_IPC_SOCK_SESSION, 8);
+        listen_fd = leonos_ipc_bind_listen_mode(LEONOS_IPC_SOCK_SESSION, 8, 0666);
         if (listen_fd < 0) {
             printf("[sessiond] bind failed errno=%d\n", errno);
             return;

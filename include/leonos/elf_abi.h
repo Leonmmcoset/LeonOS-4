@@ -1,14 +1,17 @@
 #ifndef LEONOS_ELF_ABI_H
 #define LEONOS_ELF_ABI_H
 
-/* LeonOS user ABI note.  Every dynamically linked executable and shared
- * object carries this note; the loader rejects a different major ABI. */
+/* Historical private ABI identification used to diagnose old binaries.
+ * Current musl executables use the Linux initial stack and do not require
+ * this note. The old loader/runtime are no longer distributed. */
 #define LEONOS_ELF_NOTE_NAME "LeonOS"
 #define LEONOS_ELF_NOTE_TYPE 0x4c4f5341u /* "LOSA" */
 #define LEONOS_ELF_ABI_MAJOR 1u
 #define LEONOS_ELF_ABI_MINOR 0u
 
 #define LEONOS_ELF_INTERP_PATH "/system/lib/ld-leonos.elf"
+#define LEONOS_MUSL_INTERP_PATH "/lib/ld-musl-x86_64.so.1"
+#define LEONOS_GLIBC_INTERP_PATH "/lib64/ld-linux-x86-64.so.2"
 #define LEONOS_ELF_RUNTIME_SONAME "libleonos.so.1"
 #define LEONOS_ELF_RUNTIME_PATH "/system/lib/libleonos.so.1"
 

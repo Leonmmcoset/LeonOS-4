@@ -118,12 +118,12 @@ static void cookie_build_store_path(char *dst, uint32_t cap)
     if (leonos_auth_current(&user) == 0 && user.uid && user.home[0]) {
         cookie_append_path(dir, sizeof(dir), user.home,
                            BROWSER_COOKIE_STORE_DIR);
-        (void)mkdir(dir, 0);
+        (void)mkdir(dir, 0777);
     } else {
-        (void)mkdir("/var", 0);
+        (void)mkdir("/var", 0777);
         cookie_append_path(dir, sizeof(dir), "/var",
                            BROWSER_COOKIE_STORE_DIR);
-        (void)mkdir(dir, 0);
+        (void)mkdir(dir, 0777);
     }
     cookie_append_path(dst, cap, dir, BROWSER_COOKIE_STORE_FILE);
 }
@@ -270,7 +270,7 @@ static void cookie_save(void)
                     sizeof(browser_cookie_file_buffer), '\n');
     }
     fd = open(browser_cookie_store_path,
-              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0600);
     if (fd >= 0) {
         (void)write(fd, browser_cookie_file_buffer,
                     cookie_text_len(browser_cookie_file_buffer));

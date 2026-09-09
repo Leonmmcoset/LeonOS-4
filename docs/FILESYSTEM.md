@@ -2,7 +2,7 @@
 
 LeonOS 4 uses a multi-filesystem storage layer. The normal installed system is
 not a FAT32 root filesystem: it has a small FAT32 EFI System Partition (ESP)
-and a separate writable exFAT root partition. Existing ext2 installations
+and a separate writable ext2 root partition. Existing exFAT installations
 remain fully supported and are not automatically migrated.
 
 ## Installed Disk Layout
@@ -10,7 +10,7 @@ remain fully supported and are not automatically migrated.
 | GPT partition | Type | Contents | Runtime mount |
 | --- | --- | --- | --- |
 | 1 | EFI System Partition / FAT32 | `EFI/`, `loader.elf`, `grub/`, `system/kernel.sys`, `system/middlelayer.sys` | `/boot` normally, `/target/boot` while Installer is running |
-| 2 | Microsoft Basic Data / exFAT | normal system files: `system/`, `programs/`, `drivers/`, `docs/`, `users/`, `var/`, `tmp/` | `/` in a normal session, `/target` while Installer is running |
+| 2 | Linux filesystem / ext2 | normal system files: `system/`, `programs/`, `drivers/`, `docs/`, `users/`, `var/`, `tmp/` | `/` in a normal session, `/target` while Installer is running |
 
 UEFI GRUB and the early loader read partition 1. Once the kernel is running,
 the storage layer selects partition 2 as `/`. A legacy one-partition FAT32

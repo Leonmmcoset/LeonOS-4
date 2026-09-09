@@ -129,8 +129,8 @@ static int authd_write_session_user(const struct leonos_user_info *user)
     char text[LEONOS_AUTH_USERNAME_LEN + LEONOS_AUTH_HOME_LEN + 32U];
     uint32_t len = 0;
     int fd;
-    (void)mkdir("/run", 0);
-    (void)mkdir("/run/leonos", 0);
+    (void)mkdir("/run", 0777);
+    (void)mkdir("/run/leonos", 0777);
     if (!user || !user->uid) {
         (void)unlink(AUTHD_SESSION_FILE);
         return 0;
@@ -146,7 +146,7 @@ static int authd_write_session_user(const struct leonos_user_info *user)
     len += (uint32_t)strlen(text + len);
     if (len + 1U < sizeof(text)) text[len++] = '\n';
     fd = open(AUTHD_SESSION_FILE, LEONOS_O_WRONLY | LEONOS_O_CREAT |
-              LEONOS_O_TRUNC, 0);
+              LEONOS_O_TRUNC, 0666);
     if (fd < 0) return -1;
     {
         long wrote = write(fd, text, len);

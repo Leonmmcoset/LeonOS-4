@@ -149,6 +149,20 @@ static void elf64_fill_random(uint8_t out[16])
     }
 }
 
+void elf64_random_fill(void *buffer, size_t length)
+{
+    uint8_t *out = (uint8_t *)buffer;
+    while (out && length) {
+        uint64_t value = elf64_random_u64(NULL);
+        size_t take = length < sizeof(value) ? length : sizeof(value);
+        for (size_t i = 0; i < take; ++i) {
+            out[i] = (uint8_t)(value >> (i * 8));
+        }
+        out += take;
+        length -= take;
+    }
+}
+
 /**
  * @brief Return true if every program header fits within len bytes of the image.
  */
@@ -253,7 +267,7 @@ static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const voi
                                           struct elf_image_info *out)
 {
     bool dynamic = false;
-    bool phdr = false;
+    bool phdr = out->phdr_vaddr != 0;
     bool interp = false;
     uint32_t abi_major = 0;
     for (uint16_t i = 0; i < eh->e_phnum; ++i) {
@@ -267,7 +281,8 @@ static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const voi
             interp = true;
         }
     }
-    if ((!is_interpreter && !dynamic) || !phdr || !elf64_note_abi(eh, image, len, &abi_major)) {
+    bool legacy = elf64_note_abi(eh, image, len, &abi_major);
+    if ((!is_interpreter && !dynamic) || !phdr) {
         return false;
     }
     if (!is_interpreter) {
@@ -277,15 +292,32 @@ static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const voi
         if (!out->interp[0]) {
             return false;
         }
-        for (uint32_t i = 0; LEONOS_ELF_INTERP_PATH[i] || out->interp[i]; ++i) {
-            if (LEONOS_ELF_INTERP_PATH[i] != out->interp[i]) {
-                return false;
+        const char *expected = legacy ? LEONOS_ELF_INTERP_PATH : LEONOS_MUSL_INTERP_PATH;
+        bool accepted = true;
+        if (!legacy && out->interp[0]) {
+            /* A Linux binary may use the native glibc interpreter. It is
+             * still loaded by the same PT_INTERP contract; the root image
+             * must provide the interpreter and its libraries. */
+            const char *linux_interp = LEONOS_GLIBC_INTERP_PATH;
+            bool musl_match = true;
+            bool glibc_match = true;
+            for (uint32_t i = 0; expected[i] || out->interp[i]; ++i) {
+                if (expected[i] != out->interp[i]) musl_match = false;
+            }
+            for (uint32_t i = 0; linux_interp[i] || out->interp[i]; ++i) {
+                if (linux_interp[i] != out->interp[i]) glibc_match = false;
+            }
+            accepted = musl_match || glibc_match;
+        } else {
+            for (uint32_t i = 0; expected[i] || out->interp[i]; ++i) {
+                if (expected[i] != out->interp[i]) accepted = false;
             }
         }
+        if (!accepted) return false;
     } else if (interp) {
         return false;
     }
-    out->abi_major = abi_major;
+    out->abi_major = legacy ? abi_major : 0;
     return true;
 }
 
@@ -316,6 +348,17 @@ static bool elf64_probe_image(const void *image, size_t header_len, uint64_t fil
     out->entry = eh->e_entry;
     out->machine = eh->e_machine;
     out->phnum = eh->e_phnum;
+    /* PT_PHDR is optional. Infer AT_PHDR from the LOAD containing the table. */
+    for (uint16_t i = 0; i < eh->e_phnum; ++i) {
+        const struct elf64_phdr *ph = elf64_phdr_at(eh, image, i);
+        uint64_t bytes = (uint64_t)eh->e_phnum * eh->e_phentsize;
+        if (ph->p_type == PT_LOAD && eh->e_phoff >= ph->p_offset &&
+            eh->e_phoff - ph->p_offset <= ph->p_filesz &&
+            bytes <= ph->p_filesz - (eh->e_phoff - ph->p_offset)) {
+            out->phdr_vaddr = ph->p_vaddr + eh->e_phoff - ph->p_offset;
+            break;
+        }
+    }
     out->low_vaddr = UINT64_MAX;
     for (uint16_t i = 0; i < eh->e_phnum; ++i) {
         const struct elf64_phdr *ph = elf64_phdr_at(eh, image, i);
@@ -631,12 +674,13 @@ static uint64_t elf64_choose_bias(const struct elf_image_info *info, bool interp
  * @brief Create lazy file-backed VMAs for every LOAD segment of image at bias, coalescing shared read-only pages of static ET_EXEC images.
  */
 static bool elf64_map_one(struct task *task, const struct storage_node *node,
-                          const void *image, const struct elf_image_info *info,
+                          const void *image, struct elf_image_info *info,
                           uint64_t bias, const char *image_name)
 {
     const struct elf64_ehdr *eh = image;
     uint32_t loads = 0;
     uint32_t free_vmas = 0;
+    uint64_t program_break = 0;
     if (!elf64_segments_nonoverlapping(eh, image, node->size, bias, info->dynamic)) {
         console_printf("[ntclks] ELF %s segment layout rejected bias=0x%llx\n",
                        image_name, (unsigned long long)bias);
@@ -693,7 +737,7 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
                            (unsigned long long)end);
             return false;
         }
-        if (!address_space_prepare_user_range(&task->as, start, end)) {
+        if (!address_space_prepare_user_range(sched_task_as(task), start, end)) {
             console_printf("[ntclks] ELF %s LOAD[%u] page table preparation failed "
                            "0x%llx-0x%llx\n",
                            image_name, i, (unsigned long long)start,
@@ -710,6 +754,9 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
         }
         if (ph->p_flags & PF_X) {
             prot |= TASK_VMA_PROT_EXEC;
+        }
+        if ((ph->p_flags & PF_W) && end > program_break) {
+            program_break = end;
         }
         if (legacy_vma) {
             if ((legacy_vma->prot | prot) & TASK_VMA_PROT_WRITE &&
@@ -748,7 +795,7 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
             .file_node = segment_node,
         };
     }
-    (void)info;
+    info->program_break = program_break;
     return true;
 }
 
@@ -815,8 +862,8 @@ bool elf64_map_task_image(struct task *task, const struct storage_node *node,
         return true;
     }
 
-    if (storage_lookup_path(LEONOS_ELF_INTERP_PATH, &interp_node) < 0) {
-        console_printf("[ntclks] ELF interpreter lookup failed path=%s\n", LEONOS_ELF_INTERP_PATH);
+    if (storage_lookup_path(main_info.interp, &interp_node) < 0) {
+        console_printf("[ntclks] ELF interpreter lookup failed path=%s\n", main_info.interp);
         return false;
     }
     if (!elf64_read_headers(&interp_node, &interp_image, &interp_len)) {

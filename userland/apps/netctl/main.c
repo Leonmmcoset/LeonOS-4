@@ -392,7 +392,7 @@ static int save_dns_policy(uint32_t mode, uint32_t custom_dns_ip)
             unlink(NETCTL_NETWORK_CONFIG_BACKUP_PATH);
         }
         fd = open(NETCTL_NETWORK_CONFIG_TEMP_PATH,
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
         if (fd >= 0) {
             wrote = write(fd, config_text, pos);
             if (close(fd) == 0 && wrote == (long)pos) {

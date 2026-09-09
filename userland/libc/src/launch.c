@@ -357,7 +357,7 @@ int leonos_launch_create_shortcut(const char *shortcut_path, const char *target_
     append_text(body, &pos, sizeof(body), "target=");
     append_text(body, &pos, sizeof(body), target_path);
     append_char(body, &pos, sizeof(body), '\n');
-    fd = open(shortcut_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(shortcut_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }
@@ -489,7 +489,7 @@ static int read_assoc_config(char *buffer, uint32_t capacity, uint32_t *out_len)
 static int write_assoc_config(const char *buffer, uint32_t len)
 {
     int fd = open(LEONOS_ASSOC_CONFIG_PATH,
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }

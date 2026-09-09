@@ -18,6 +18,7 @@ struct pty_session {
     uint8_t hungup;
     uint8_t output_reported;
     uint8_t input_reported;
+    uint8_t locked;
     uint32_t owner_pid;
     uint32_t process_session;
     uint32_t foreground_pgid;
@@ -145,6 +146,7 @@ int pty_bind_console(uint32_t pty_id, uint32_t owner_pid)
      * group.  Callers may bind a console before the task is first scheduled,
      * so terminal ioctls must never observe a partially attached owner. */
     owner->pty_id = pty_id;
+    owner->controlling_pty_id = pty_id;
     owner->process_session = owner_pid;
     owner->process_group = owner_pid;
     return 0;
@@ -279,19 +281,20 @@ int32_t pty_create(uint32_t owner_pid)
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
         if (!sessions[i].used) {
             sessions[i].used = 1;
+            /* Linux devpts keeps the slave inaccessible until unlockpt(). */
+            sessions[i].locked = 1;
             sessions[i].owner_pid = owner_pid;
-            {
-                struct task *owner = sched_find(owner_pid);
-                sessions[i].process_session = owner ? owner->process_session : 0;
-                sessions[i].foreground_pgid = owner ? owner->process_group : 0;
-            }
+            /* Opening ptmx does not acquire a controlling terminal. */
+            sessions[i].process_session = 0;
+            sessions[i].foreground_pgid = 0;
             sessions[i].input_head = 0;
             sessions[i].input_tail = 0;
             sessions[i].output_head = 0;
             sessions[i].output_tail = 0;
             sessions[i].termios.c_iflag = LEONOS_PTY_IFLAG_ICRNL;
-            sessions[i].termios.c_oflag = 0x0003U; /* OPOST|ONLCR */
-            sessions[i].termios.c_cflag = 0x0228U; /* CLOCAL|CREAD|CS8 */
+            sessions[i].termios.c_oflag = LINUX_OPOST | LINUX_ONLCR;
+            sessions[i].termios.c_cflag = LINUX_CLOCAL | LINUX_CREAD |
+                                         LINUX_CS8 | LINUX_B115200;
             sessions[i].termios.c_lflag = LEONOS_PTY_LFLAG_ECHO |
                                           LEONOS_PTY_LFLAG_ECHONL |
                                           LEONOS_PTY_LFLAG_ICANON |
@@ -398,6 +401,28 @@ int pty_is_hungup(uint32_t pty_id)
     return session && session->hungup;
 }
 
+int pty_slave_open_allowed(uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    return session && !session->locked && !session->hungup;
+}
+
+int pty_set_lock(uint32_t pty_id, int locked)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || session->hungup) return -5;
+    session->locked = locked ? 1u : 0u;
+    return 0;
+}
+
+int pty_get_lock(uint32_t pty_id, int *locked)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || !locked) return -22;
+    *locked = session->locked ? 1 : 0;
+    return 0;
+}
+
 /**
  * @brief Drain up to length bytes of terminal output for the owner; returns bytes read, or -22 if not owned.
  */
@@ -464,7 +489,7 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
             session->canonical_length = 0;
             if (session->foreground_pgid) {
                 (void)sched_signal_process_group(session->owner_pid,
-                                                 session->foreground_pgid, 18);
+                                                 session->foreground_pgid, 20);
             }
             ++written;
             continue;
@@ -608,6 +633,26 @@ int pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios)
 /**
  * @brief Replace the session termios, first flushing any pending canonical line when leaving ICANON; returns 0 or -22.
  */
+static uint32_t pty_baud_rate(uint32_t encoding, uint32_t custom)
+{
+    static const uint32_t rates[] = {
+        0, 50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400,
+        4800, 9600, 19200, 38400, 0, 57600, 115200, 230400, 460800,
+        500000, 576000, 921600, 1000000, 1152000, 1500000, 2000000,
+        2500000, 3000000, 3500000, 4000000,
+    };
+    if (encoding == LINUX_BOTHER) return custom;
+    return rates[(encoding & 0xfU) | ((encoding & LINUX_BOTHER) ? 16U : 0U)];
+}
+
+void pty_flush_input(uint32_t pty_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session) return;
+    session->input_tail = session->input_head;
+    session->canonical_length = 0;
+}
+
 int pty_set_termios(uint32_t pty_id, const struct leonos_pty_termios *termios)
 {
     struct pty_session *session = find_session(pty_id);
@@ -622,6 +667,11 @@ int pty_set_termios(uint32_t pty_id, const struct leonos_pty_termios *termios)
         pty_commit_canonical_input(session);
     }
     session->termios = *termios;
+    uint32_t output = termios->c_cflag & LINUX_CBAUD;
+    uint32_t input = (termios->c_cflag & LINUX_CIBAUD) >> LINUX_IBSHIFT;
+    session->termios.c_ospeed = pty_baud_rate(output, termios->c_ospeed);
+    session->termios.c_ispeed = input ? pty_baud_rate(input, termios->c_ispeed)
+                                     : session->termios.c_ospeed;
     return 0;
 }
 
@@ -691,27 +741,33 @@ int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
     return 0;
 }
 
-void pty_acquire_controlling(uint32_t pty_id, uint32_t caller_pid)
+/**
+ * @brief Apply Linux TIOCSCTTY session-leader, read access and steal rules.
+ * @param pty_id Active terminal ID.
+ * @param caller_pid Calling thread ID.
+ * @param steal Raw ioctl argument, whose value 1 requests privileged stealing.
+ * @param readable Whether the descriptor was opened for reading.
+ * @return Zero on attachment or a negative Linux errno.
+ */
+int pty_acquire_controlling(uint32_t pty_id, uint32_t caller_pid, int steal, int readable)
 {
     struct pty_session *session = find_session(pty_id);
     struct task *caller = sched_find(caller_pid);
-    if (!session || !caller || caller->pty_id != pty_id) {
-        return;
+    if (!session || !caller) return -25;
+    uint32_t leader = caller->tgid ? caller->tgid : caller->pid;
+    if (caller->process_session == leader && session->process_session == leader)
+        return 0;
+    if (caller->process_session != leader || caller->controlling_pty_id)
+        return -1;
+    if (session->process_session) {
+        if (steal != 1 || caller->euid != 0) return -1;
+        sched_clear_controlling_pty(pty_id);
     }
-    /* forkpty children call setsid() before dup2(slave, 0/1/2).  The kernel
-     * publishes the controlling PTY at the first stdio dup2, so this is the
-     * point where the PTY must adopt the child's new session/pgrp. */
-    if (!session->console && caller->process_session == caller->pid) {
-        if (session->process_session != caller->process_session ||
-            session->foreground_pgid != caller->process_group) {
-            console_printf("[ntclks] pty=%u controlling session update pid=%u old_session=%u new_session=%u old_pgrp=%u new_pgrp=%u\n",
-                           pty_id, caller_pid, session->process_session,
-                           caller->process_session, session->foreground_pgid,
-                           caller->process_group);
-        }
-        session->process_session = caller->process_session;
-        session->foreground_pgid = caller->process_group;
-    }
+    if (!readable && caller->euid != 0) return -1;
+    session->process_session = caller->process_session;
+    session->foreground_pgid = caller->process_group;
+    sched_set_controlling_pty(caller_pid, pty_id);
+    return 0;
 }
 
 /**

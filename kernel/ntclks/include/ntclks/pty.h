@@ -40,6 +40,11 @@ int pty_is_active(uint32_t pty_id);
  * @brief Return non-zero when pty_id's master side has closed.
  */
 int pty_is_hungup(uint32_t pty_id);
+/** Return non-zero when the slave endpoint may be opened. */
+int pty_slave_open_allowed(uint32_t pty_id);
+/** Set or read the Unix98 PTY slave lock state. */
+int pty_set_lock(uint32_t pty_id, int locked);
+int pty_get_lock(uint32_t pty_id, int *locked);
 /**
  * @brief Copy up to length bytes of pty_id's terminal output into buffer; returns bytes read.
  */
@@ -70,6 +75,7 @@ int pty_get_termios(uint32_t pty_id, struct leonos_pty_termios *termios);
  * @brief Apply the terminal mode settings in termios to pty_id; 0 on success.
  */
 int pty_set_termios(uint32_t pty_id, const struct leonos_pty_termios *termios);
+void pty_flush_input(uint32_t pty_id);
 /**
  * @brief Copy pty_id's terminal window size into winsize; 0 on success.
  */
@@ -95,9 +101,14 @@ int pty_get_foreground_pgid(uint32_t pty_id, uint32_t *process_group);
 int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
                             uint32_t process_group);
 /**
- * @brief Adopt caller_pid's session and process group as the PTY controlling session.
+ * @brief Apply Linux TIOCSCTTY attachment rules.
+ * @param pty_id Active terminal ID.
+ * @param caller_pid Calling thread ID.
+ * @param steal Value 1 requests privileged terminal stealing.
+ * @param readable Nonzero when the descriptor permits reads.
+ * @return Zero on success or a negative Linux errno.
  */
-void pty_acquire_controlling(uint32_t pty_id, uint32_t caller_pid);
+int pty_acquire_controlling(uint32_t pty_id, uint32_t caller_pid, int steal, int readable);
 /**
  * @brief Reclaim a hung-up PTY session when no descriptor still references it.
  */

@@ -2,15 +2,11 @@
 # Override CROSS, CC, CXX, or LD for a locally installed cross toolchain.
 
 SDK_ROOT ?= $(CURDIR)
-CROSS ?= x86_64-elf-
 ifeq ($(origin CC), default)
-CC := $(CROSS)gcc
+CC := python3 "$(SDK_ROOT)/bin/leonos-musl-cc"
 endif
 ifeq ($(origin CXX), default)
-CXX := $(CROSS)g++
-endif
-ifeq ($(origin LD), default)
-LD := $(CROSS)ld
+CXX := python3 "$(SDK_ROOT)/bin/leonos-musl-cc"
 endif
 
 APP ?= examples/helloworld
@@ -27,32 +23,23 @@ OBJECTS := $(patsubst $(APP)/%.c,$(BUILD_DIR)/%.o,$(C_SOURCES)) \
            $(patsubst $(APP)/%.S,$(BUILD_DIR)/%.o,$(ASM_SOURCES))
 
 CFLAGS := -O2 -std=c11 -ffreestanding -fno-stack-protector -fPIC -fPIE \
-          -mno-red-zone -mgeneral-regs-only -ffunction-sections -fdata-sections \
-          -Wall -Wextra -DLEONOS_USE_PICOLIBC -D_POSIX_C_SOURCE=200809L \
+          -mno-avx -mno-avx2 -ffunction-sections -fdata-sections \
+          -Wall -Wextra -DLEONOS_USE_MUSL -D_POSIX_C_SOURCE=200809L \
           -D_DEFAULT_SOURCE \
           -I"$(SDK_ROOT)/include"
 CXXFLAGS := -O2 -std=c++17 -ffreestanding -fno-exceptions -fno-rtti \
             -fno-use-cxa-atexit -fno-threadsafe-statics -fno-stack-protector \
-            -fPIC -fPIE -mno-red-zone -mgeneral-regs-only \
+            -fPIC -fPIE -mno-avx -mno-avx2 \
             -ffunction-sections -fdata-sections -Wall -Wextra \
-            -DLEONOS_USE_PICOLIBC -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -nostdinc++ \
+            -DLEONOS_USE_MUSL -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE -nostdinc++ \
             -I"$(SDK_ROOT)/include/stardustui/leonos" \
             -I"$(SDK_ROOT)/include/stardustui" -I"$(SDK_ROOT)/include"
 STATIC ?= 0
 ifeq ($(STATIC),1)
-LDFLAGS := --gc-sections -z max-page-size=0x1000 -T "$(SDK_ROOT)/linker.ld"
-CRT :=
-RUNTIME_LIBS := $(LEONOS_LIB) $(LIBPNG_LIB) $(ZLIB_LIB) $(PICOLIBC_LIB)
+LDFLAGS := -static
 else
-LDFLAGS := -pie --hash-style=sysv --dynamic-linker /system/lib/ld-leonos.elf \
-           -z relro -z now -z max-page-size=0x1000 -T "$(SDK_ROOT)/dynamic-app.ld"
-CRT := "$(SDK_ROOT)/lib/crt0-dynamic.o" "$(SDK_ROOT)/lib/leonos-abi-note.o"
-RUNTIME_LIBS := "$(SDK_ROOT)/lib/libleonos.so.1"
+LDFLAGS :=
 endif
-LEONOS_LIB := "$(SDK_ROOT)/lib/leonos.a"
-PICOLIBC_LIB := "$(SDK_ROOT)/lib/libc.a"
-ZLIB_LIB := "$(SDK_ROOT)/lib/libz.a"
-LIBPNG_LIB := "$(SDK_ROOT)/lib/libpng.a"
 STARDUSTUI_LIB := "$(SDK_ROOT)/lib/libstardustui.a"
 LIBMAGIC_LIB := "$(SDK_ROOT)/lib/libmagic.a"
 LIBMAGIC_SO := "$(SDK_ROOT)/lib/libmagic.so.1"
@@ -64,6 +51,7 @@ USE_STARDUSTUI ?= 0
 USE_LIBMAGIC ?= 0
 USE_LUA ?= 0
 USE_SQLITE ?= 0
+USE_NCURSES ?= 0
 
 ifeq ($(USE_STARDUSTUI),1)
 APP_LIBS := $(STARDUSTUI_LIB)
@@ -97,6 +85,10 @@ endif
 
 .PHONY: all clean
 
+ifeq ($(USE_NCURSES),1)
+APP_LIBS += "$(SDK_ROOT)/lib/libncursesw.a" "$(SDK_ROOT)/lib/libtinfow.a"
+endif
+
 all: $(OUTPUT)
 
 $(BUILD_DIR):
@@ -118,7 +110,7 @@ $(BUILD_DIR)/%.o: $(APP)/%.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUTPUT): $(OBJECTS)
-	$(LD) $(LDFLAGS) -o $@ $(CRT) $(OBJECTS) --start-group $(APP_LIBS) $(RUNTIME_LIBS) --end-group
+	$(CC) $(LDFLAGS) -o $@ $(OBJECTS) -Wl,--start-group $(APP_LIBS) -Wl,--end-group
 
 clean:
 	rm -rf $(BUILD_DIR)

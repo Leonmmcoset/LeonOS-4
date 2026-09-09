@@ -1,5 +1,8 @@
 /* libwind: windowd AF_UNIX client. Exports the historical leonos_gui_*
  * entry points so existing applications keep working without source changes. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -15,6 +18,7 @@
 #include <stdio.h>
 #include <linux/fb.h>
 #include <poll.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
@@ -67,9 +71,6 @@ static uint32_t wind_appearance_request_tail;
 
 static void wind_release_window(struct wind_window *window);
 
-typedef uint64_t cpu_set_t;
-int sched_getaffinity(int pid, unsigned long cpusetsize, uint64_t *set);
-int sched_setaffinity(int pid, unsigned long cpusetsize, const uint64_t *set);
 
 static void wind_sleep_ms(uint32_t ms)
 {
@@ -215,13 +216,7 @@ static int wind_wait_type(int fd, uint32_t expected, void *payload,
          * instance — and lose window registrations and input forever. */
         if (leonos_ipc_recv_fd(fd, &type, buffer, sizeof(buffer), &got,
                                received_fd ? &ancillary : 0) == 0) {
-            /* Requests are serialized, but LeonOS queues SCM_RIGHTS apart
-             * from frame bytes. Keep the reply's fd even if an earlier
-             * input/notification frame is the first to receive it. */
-            if (ancillary >= 0) {
-                if (reply_fd >= 0) close(reply_fd);
-                reply_fd = ancillary;
-            }
+            reply_fd = ancillary;
             if (type == LEONOS_WIN_MSG_ERROR) {
                 struct leonos_win_error error;
                 if (reply_fd >= 0) close(reply_fd);
@@ -244,6 +239,7 @@ static int wind_wait_type(int fd, uint32_t expected, void *payload,
                 return 0;
             }
             wind_route_frame(type, buffer, got);
+            if (reply_fd >= 0) { close(reply_fd); reply_fd = -1; }
             if (now_ms() < deadline) continue;
         }
         if (now_ms() >= deadline) {

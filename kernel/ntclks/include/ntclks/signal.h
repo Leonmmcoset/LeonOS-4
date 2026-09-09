@@ -10,8 +10,8 @@
 
 struct task;
 
-#define KERNEL_SIGNAL_ACTION_MAX 32u
-#define KERNEL_SIGNAL_VALID_MASK 0xfffffffeu
+#define KERNEL_SIGNAL_ACTION_MAX 65u
+#define KERNEL_SIGNAL_VALID_MASK UINT64_MAX
 
 struct kernel_signal_action {
     uint64_t handler;
@@ -72,8 +72,8 @@ void kernel_signal_reset_handlers(struct task *task);
  * @brief Copy the task's currently effective signal state into out.
  */
 void kernel_signal_state_snapshot(const struct task *task,
-                                  struct kernel_signal_action actions[32],
-                                  uint32_t *pending, uint32_t *blocked,
-                                  uint32_t *ignored);
+                                  struct kernel_signal_action actions[KERNEL_SIGNAL_ACTION_MAX],
+                                  uint64_t *pending, uint64_t *blocked,
+                                  uint64_t *ignored);
 
 #endif

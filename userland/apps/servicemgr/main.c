@@ -256,7 +256,7 @@ static void save_config(void)
         append_char(cfg, &pos, sizeof(cfg), '\n');
     }
     fd = open(SERVICEMGR_CONFIG_PATH,
-              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         copy_text(status_text, sizeof(status_text),
                   T("Could not save service policy", "无法保存服务策略"));
@@ -404,10 +404,10 @@ static void write_command(const char *action, uint32_t row)
     append_char(cmd, &pos, sizeof(cmd), ' ');
     append_text(cmd, &pos, sizeof(cmd), service_rows[row].key);
     append_char(cmd, &pos, sizeof(cmd), '\n');
-    (void)mkdir("/var", 0);
-    (void)mkdir("/var/run", 0);
+    (void)mkdir("/var", 0777);
+    (void)mkdir("/var/run", 0777);
     fd = open(SERVICEMGR_COMMAND_PATH,
-              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         copy_text(status_text, sizeof(status_text),
                   T("Could not queue service command", "无法写入服务命令"));

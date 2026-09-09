@@ -1,398 +1,304 @@
-/*
-Copyright (c) 1991, 1993
-The Regents of the University of California.  All rights reserved.
-All or some portions of this file are derived from material licensed
-to the University of California by American Telephone and Telegraph
-Co. or Unix System Laboratories, Inc. and are reproduced herein with
-the permission of UNIX System Laboratories, Inc.
+#ifndef _SIGNAL_H
+#define _SIGNAL_H
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-1. Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-3. Neither the name of the University nor the names of its contributors
-may be used to endorse or promote products derived from this software
-without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-SUCH DAMAGE.
- */
-#ifndef _SIGNAL_H_
-#define _SIGNAL_H_
-
-#include <sys/cdefs.h>
-#define __need_size_t
-#include <stddef.h>
-#include <sys/_types.h>
-#include <sys/_sigset.h>
-#include <sys/_timespec.h>
-
-_BEGIN_STD_C
-
-typedef int  sig_atomic_t; /* Atomic entity type (ANSI) */
-
-typedef void (*_sig_func_ptr)(int);
-
-#define SIG_DFL ((_sig_func_ptr)0)    /* Default action */
-#define SIG_IGN ((_sig_func_ptr)1)    /* Ignore action */
-#define SIG_ERR ((_sig_func_ptr) - 1) /* Error return */
-
-#if __POSIX_VISIBLE
-
-#ifndef _PID_T_DECLARED
-typedef __pid_t pid_t; /* process id */
-#define _PID_T_DECLARED
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-#ifndef _UID_T_DECLARED
-typedef __uid_t uid_t; /* user id */
-#define _UID_T_DECLARED
+#include <features.h>
+
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+
+#ifdef _GNU_SOURCE
+#define __ucontext ucontext
 #endif
 
-#if !defined(_SIGSET_T_DECLARED)
-#define _SIGSET_T_DECLARED
-typedef __sigset_t sigset_t;
+#define __NEED_size_t
+#define __NEED_pid_t
+#define __NEED_uid_t
+#define __NEED_struct_timespec
+#define __NEED_pthread_t
+#define __NEED_pthread_attr_t
+#define __NEED_time_t
+#define __NEED_clock_t
+#define __NEED_sigset_t
+
+#include <bits/alltypes.h>
+
+#define SIG_BLOCK     0
+#define SIG_UNBLOCK   1
+#define SIG_SETMASK   2
+
+#define SI_ASYNCNL (-60)
+#define SI_TKILL (-6)
+#define SI_SIGIO (-5)
+#define SI_ASYNCIO (-4)
+#define SI_MESGQ (-3)
+#define SI_TIMER (-2)
+#define SI_QUEUE (-1)
+#define SI_USER 0
+#define SI_KERNEL 128
+
+typedef struct sigaltstack stack_t;
+
 #endif
+
+#include <bits/signal.h>
+
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+
+#define SIG_HOLD ((void (*)(int)) 2)
+
+#define FPE_INTDIV 1
+#define FPE_INTOVF 2
+#define FPE_FLTDIV 3
+#define FPE_FLTOVF 4
+#define FPE_FLTUND 5
+#define FPE_FLTRES 6
+#define FPE_FLTINV 7
+#define FPE_FLTSUB 8
+
+#define ILL_ILLOPC 1
+#define ILL_ILLOPN 2
+#define ILL_ILLADR 3
+#define ILL_ILLTRP 4
+#define ILL_PRVOPC 5
+#define ILL_PRVREG 6
+#define ILL_COPROC 7
+#define ILL_BADSTK 8
+
+#define SEGV_MAPERR 1
+#define SEGV_ACCERR 2
+#define SEGV_BNDERR 3
+#define SEGV_PKUERR 4
+#define SEGV_MTEAERR 8
+#define SEGV_MTESERR 9
+
+#define BUS_ADRALN 1
+#define BUS_ADRERR 2
+#define BUS_OBJERR 3
+#define BUS_MCEERR_AR 4
+#define BUS_MCEERR_AO 5
+
+#define CLD_EXITED 1
+#define CLD_KILLED 2
+#define CLD_DUMPED 3
+#define CLD_TRAPPED 4
+#define CLD_STOPPED 5
+#define CLD_CONTINUED 6
 
 union sigval {
-    int   sival_int; /* Integer signal value */
-    void *sival_ptr; /* Pointer signal value */
+	int sival_int;
+	void *sival_ptr;
 };
-
-/* Signal Actions, P1003.1b-1993, p. 64 */
-/* si_code values, p. 66 */
-
-#define SI_USER    1 /* Sent by a user. kill(), abort(), etc */
-#define SI_QUEUE   2 /* Sent by sigqueue() */
-#define SI_TIMER   3 /* Sent by expiration of a timer_settime() timer */
-#define SI_ASYNCIO 4 /* Indicates completion of asycnhronous IO */
-#define SI_MESGQ   5 /* Indicates arrival of a message at an empty queue */
 
 typedef struct {
-    int          si_signo;  /* Signal number */
-    int          si_code;   /* Cause of the signal */
-    int          si_errno;  /* If non-zero, the errno */
-    __pid_t      si_pid;    /* Sending process ID */
-    uid_t        si_uid;    /* Real UID of sending process */
-    void        *si_addr;   /* Address of faulting instruction */
-    int          si_status; /* Exit value or signal */
-    long         si_band;   /* Band event for SIGPOLL */
-    union sigval si_value;  /* Signal value */
+#ifdef __SI_SWAP_ERRNO_CODE
+	int si_signo, si_code, si_errno;
+#else
+	int si_signo, si_errno, si_code;
+#endif
+	union {
+		char __pad[128 - 2*sizeof(int) - sizeof(long)];
+		struct {
+			union {
+				struct {
+					pid_t si_pid;
+					uid_t si_uid;
+				} __piduid;
+				struct {
+					int si_timerid;
+					int si_overrun;
+				} __timer;
+			} __first;
+			union {
+				union sigval si_value;
+				struct {
+					int si_status;
+					clock_t si_utime, si_stime;
+				} __sigchld;
+			} __second;
+		} __si_common;
+		struct {
+			void *si_addr;
+			short si_addr_lsb;
+			union {
+				struct {
+					void *si_lower;
+					void *si_upper;
+				} __addr_bnd;
+				unsigned si_pkey;
+			} __first;
+		} __sigfault;
+		struct {
+			long si_band;
+			int si_fd;
+		} __sigpoll;
+		struct {
+			void *si_call_addr;
+			int si_syscall;
+			unsigned si_arch;
+		} __sigsys;
+	} __si_fields;
 } siginfo_t;
-
-typedef void (*_sig_action_ptr)(int, siginfo_t *, void *);
-
-/*
- * Possible values for sa_flags in sigaction below.
- */
-
-#define SA_NOCLDSTOP (1 << 0)
-#define SA_ONSTACK   (1 << 1)
-#define SA_RESETHAND (1 << 2)
-#define SA_RESTART   (1 << 3)
-#define SA_SIGINFO   (1 << 4)
-#define SA_NOCLDWAIT (1 << 5)
-#define SA_NODEFER   (1 << 6)
+#define si_pid     __si_fields.__si_common.__first.__piduid.si_pid
+#define si_uid     __si_fields.__si_common.__first.__piduid.si_uid
+#define si_status  __si_fields.__si_common.__second.__sigchld.si_status
+#define si_utime   __si_fields.__si_common.__second.__sigchld.si_utime
+#define si_stime   __si_fields.__si_common.__second.__sigchld.si_stime
+#define si_value   __si_fields.__si_common.__second.si_value
+#define si_addr    __si_fields.__sigfault.si_addr
+#define si_addr_lsb __si_fields.__sigfault.si_addr_lsb
+#define si_lower   __si_fields.__sigfault.__first.__addr_bnd.si_lower
+#define si_upper   __si_fields.__sigfault.__first.__addr_bnd.si_upper
+#define si_pkey    __si_fields.__sigfault.__first.si_pkey
+#define si_band    __si_fields.__sigpoll.si_band
+#define si_fd      __si_fields.__sigpoll.si_fd
+#define si_timerid __si_fields.__si_common.__first.__timer.si_timerid
+#define si_overrun __si_fields.__si_common.__first.__timer.si_overrun
+#define si_ptr     si_value.sival_ptr
+#define si_int     si_value.sival_int
+#define si_call_addr __si_fields.__sigsys.si_call_addr
+#define si_syscall __si_fields.__sigsys.si_syscall
+#define si_arch    __si_fields.__sigsys.si_arch
 
 struct sigaction {
-    union {
-        void (*sa_handler)(int);
-        void (*sa_sigaction)(int, siginfo_t *, void *);
-    };
-    sigset_t sa_mask;
-    int      sa_flags;
+	union {
+		void (*sa_handler)(int);
+		void (*sa_sigaction)(int, siginfo_t *, void *);
+	} __sa_handler;
+	sigset_t sa_mask;
+	int sa_flags;
+	void (*sa_restorer)(void);
 };
+#define sa_handler   __sa_handler.sa_handler
+#define sa_sigaction __sa_handler.sa_sigaction
 
-/*
- * Possible values for ss_flags in stack_t below.
- */
-#define SS_ONSTACK 0x1
-#define SS_DISABLE 0x2
-
-/*
- * Structure used in sigaltstack call.
- */
-typedef struct sigaltstack {
-    void  *ss_sp;    /* Stack base or pointer.  */
-    int    ss_flags; /* Flags.  */
-    size_t ss_size;  /* Stack size.  */
-} stack_t;
-
-#define SIG_SETMASK 0 /* set mask with sigprocmask() */
-#define SIG_BLOCK   1 /* set of signals to block */
-#define SIG_UNBLOCK 2 /* set of signals to unblock */
-
-#endif /* __POSIX_VISIBLE */
-
-#if defined(_POSIX_REALTIME_SIGNALS) || __POSIX_VISIBLE >= 199309
-
-/* sigev_notify values
-   NOTE: P1003.1c/D10, p. 34 adds SIGEV_THREAD.  */
-
-#define SIGEV_NONE 1   /* No asynchronous notification shall be delivered */
-                       /*   when the event of interest occurs. */
-#define SIGEV_SIGNAL 2 /* A queued signal, with an application defined */
-                       /*  value, shall be delivered when the event of */
-                       /*  interest occurs. */
-#define SIGEV_THREAD 3 /* A notification function shall be called to */
-                       /*   perform notification. */
-
-/*  Signal Generation and Delivery, P1003.1b-1993, p. 63
-    NOTE: P1003.1c/D10, p. 34 adds sigev_notify_function and
-          sigev_notify_attributes to the sigevent structure.  */
+#define SA_UNSUPPORTED 0x00000400
+#define SA_EXPOSE_TAGBITS 0x00000800
 
 struct sigevent {
-    int          sigev_notify; /* Notification type */
-    int          sigev_signo;  /* Signal number */
-    union sigval sigev_value;  /* Signal value */
-    void         (*sigev_notify_function)(union sigval);
-    /* Notification function */
-    void        *sigev_notify_attributes; /* Notification Attributes */
+	union sigval sigev_value;
+	int sigev_signo;
+	int sigev_notify;
+	union {
+		char __pad[64 - 2*sizeof(int) - sizeof(union sigval)];
+		pid_t sigev_notify_thread_id;
+		struct {
+			void (*sigev_notify_function)(union sigval);
+			pthread_attr_t *sigev_notify_attributes;
+		} __sev_thread;
+	} __sev_fields;
 };
-#endif /* defined(_POSIX_REALTIME_SIGNALS) || __POSIX_VISIBLE >= 199309 */
 
-#if __BSD_VISIBLE || __XSI_VISIBLE >= 4 || __POSIX_VISIBLE >= 200809
+#define sigev_notify_thread_id __sev_fields.sigev_notify_thread_id
+#define sigev_notify_function __sev_fields.__sev_thread.sigev_notify_function
+#define sigev_notify_attributes __sev_fields.__sev_thread.sigev_notify_attributes
 
-/*
- * Minimum and default signal stack constants. Allow for target overrides
- * from <sys/features.h>.
- */
-#ifndef MINSIGSTKSZ
-#define MINSIGSTKSZ 2048
+#define SIGEV_SIGNAL 0
+#define SIGEV_NONE 1
+#define SIGEV_THREAD 2
+#define SIGEV_THREAD_ID 4
+
+int __libc_current_sigrtmin(void);
+int __libc_current_sigrtmax(void);
+
+#define SIGRTMIN  (__libc_current_sigrtmin())
+#define SIGRTMAX  (__libc_current_sigrtmax())
+
+int kill(pid_t, int);
+
+int sigemptyset(sigset_t *);
+int sigfillset(sigset_t *);
+int sigaddset(sigset_t *, int);
+int sigdelset(sigset_t *, int);
+int sigismember(const sigset_t *, int);
+
+int sigprocmask(int, const sigset_t *__restrict, sigset_t *__restrict);
+int sigsuspend(const sigset_t *);
+int sigaction(int, const struct sigaction *__restrict, struct sigaction *__restrict);
+int sigpending(sigset_t *);
+int sigwait(const sigset_t *__restrict, int *__restrict);
+int sigwaitinfo(const sigset_t *__restrict, siginfo_t *__restrict);
+int sigtimedwait(const sigset_t *__restrict, siginfo_t *__restrict, const struct timespec *__restrict);
+int sigqueue(pid_t, int, union sigval);
+
+int pthread_sigmask(int, const sigset_t *__restrict, sigset_t *__restrict);
+int pthread_kill(pthread_t, int);
+
+void psiginfo(const siginfo_t *, const char *);
+void psignal(int, const char *);
+
 #endif
-#ifndef SIGSTKSZ
-#define SIGSTKSZ 8192
+
+#if defined(_XOPEN_SOURCE) || defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
+int killpg(pid_t, int);
+int sigaltstack(const stack_t *__restrict, stack_t *__restrict);
+int sighold(int);
+int sigignore(int);
+int siginterrupt(int, int);
+int sigpause(int);
+int sigrelse(int);
+void (*sigset(int, void (*)(int)))(int);
+#define TRAP_BRKPT 1
+#define TRAP_TRACE 2
+#define TRAP_BRANCH 3
+#define TRAP_HWBKPT 4
+#define TRAP_UNK 5
+#define POLL_IN 1
+#define POLL_OUT 2
+#define POLL_MSG 3
+#define POLL_ERR 4
+#define POLL_PRI 5
+#define POLL_HUP 6
+#define SS_ONSTACK    1
+#define SS_DISABLE    2
+#define SS_AUTODISARM (1U << 31)
+#define SS_FLAG_BITS SS_AUTODISARM
 #endif
 
-#endif
-
-#define SIGHUP    1     /* hangup */
-#define SIGINT    2     /* interrupt */
-#define SIGQUIT   3     /* quit */
-#define SIGILL    4     /* illegal instruction (not reset when caught) */
-#define SIGTRAP   5     /* trace trap (not reset when caught) */
-#define SIGIOT    6     /* IOT instruction */
-#define SIGABRT   6     /* used by abort, replace SIGIOT in the future */
-#define SIGEMT    7     /* EMT instruction */
-#define SIGFPE    8     /* floating point exception */
-#define SIGKILL   9     /* kill (cannot be caught or ignored) */
-#define SIGBUS    10    /* bus error */
-#define SIGSEGV   11    /* segmentation violation */
-#define SIGSYS    12    /* bad argument to system call */
-#define SIGPIPE   13    /* write on a pipe with no one to read it */
-#define SIGALRM   14    /* alarm clock */
-#define SIGTERM   15    /* software termination signal from kill */
-#define SIGURG    16    /* urgent condition on IO channel */
-#define SIGSTOP   17    /* sendable stop signal not from tty */
-#define SIGTSTP   18    /* stop signal from tty */
-#define SIGCONT   19    /* continue a stopped process */
-#define SIGCHLD   20    /* to parent on child stop or exit */
-#define SIGCLD    20    /* System V name for SIGCHLD */
-#define SIGTTIN   21    /* to readers pgrp upon background tty read */
-#define SIGTTOU   22    /* like TTIN for output if (tp->t_local&LTOSTOP) */
-#define SIGIO     23    /* input/output possible signal */
-#define SIGPOLL   SIGIO /* System V name for SIGIO */
-#define SIGXCPU   24    /* exceeded CPU time limit */
-#define SIGXFSZ   25    /* exceeded file size limit */
-#define SIGVTALRM 26    /* virtual time alarm */
-#define SIGPROF   27    /* profiling time alarm */
-#define SIGWINCH  28    /* window changed */
-#define SIGLOST   29    /* resource lost (eg, record-lock lost) */
-#define SIGUSR1   30    /* user defined signal 1 */
-#define SIGUSR2   31    /* user defined signal 2 */
-#define _NSIG     32
-
-#ifdef __GNU_VISIBLE
+#if defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
 #define NSIG _NSIG
+typedef void (*sig_t)(int);
+
+#define SYS_SECCOMP 1
+#define SYS_USER_DISPATCH 2
 #endif
 
-/* Using __MISC_VISIBLE until POSIX Issue 8 is officially released */
-#if __MISC_VISIBLE
-#if __SIZEOF_INT__ >= 4
-#define SIG2STR_MAX 17 /* (sizeof("RTMAX+") + sizeof("4294967295") - 1) */
-#else
-#define SIG2STR_MAX 12 /* (sizeof("RTMAX+") + sizeof("65535") - 1) */
+#ifdef _GNU_SOURCE
+typedef void (*sighandler_t)(int);
+void (*bsd_signal(int, void (*)(int)))(int);
+int sigisemptyset(const sigset_t *);
+int sigorset (sigset_t *, const sigset_t *, const sigset_t *);
+int sigandset(sigset_t *, const sigset_t *, const sigset_t *);
+
+#define SA_NOMASK SA_NODEFER
+#define SA_ONESHOT SA_RESETHAND
+#endif
+
+#define SIG_ERR  ((void (*)(int))-1)
+#define SIG_DFL  ((void (*)(int)) 0)
+#define SIG_IGN  ((void (*)(int)) 1)
+
+typedef int sig_atomic_t;
+
+void (*signal(int, void (*)(int)))(int);
+int raise(int);
+
+#if _REDIR_TIME64
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
+__REDIR(sigtimedwait, __sigtimedwait_time64);
 #endif
 #endif
 
-#if __BSD_VISIBLE
-typedef _sig_func_ptr sig_t; /* BSD naming */
-#endif
-
-#if __GNU_VISIBLE
-typedef _sig_func_ptr sighandler_t; /* glibc naming */
-#endif
-
-#if __POSIX_VISIBLE
-int kill(__pid_t pid, int sig) __picolibc_export;
-#endif
-#if __XSI_VISIBLE >= 500 || __GNU_VISIBLE || __BSD_VISIBLE
-int killpg(__pid_t pid, int sig) __picolibc_export;
-#endif
-#if __POSIX_VISIBLE >= 200809L
-void psiginfo(const siginfo_t *, const char *) __picolibc_export;
-#endif
-#if __BSD_VISIBLE || __SVID_VISIBLE
-void psignal(int, const char *) __picolibc_export;
-#endif
-int raise(int) __picolibc_export;
-int __fallback_raise(int) __picolibc_export;
-#if __MISC_VISIBLE
-int sig2str(int, char *) __picolibc_export;
-#endif
-#if __POSIX_VISIBLE
-int sigaction(int, const struct sigaction * __restrict,
-              struct sigaction * __restrict) __picolibc_export;
-
-int sigaddset(sigset_t *, const int) __picolibc_export;
-
-static __inline int
-__sigaddset(sigset_t *what, int sig)
-{
-    *what |= (sigset_t)1 << sig;
-    return 0;
+#ifdef __cplusplus
 }
-
-#define sigaddset(what, sig) __sigaddset(what, sig)
-
-#endif
-#if __BSD_VISIBLE || __XSI_VISIBLE >= 4 || __POSIX_VISIBLE >= 200809
-int sigaltstack(const stack_t * __restrict, stack_t * __restrict) __picolibc_export;
-#endif
-#if __POSIX_VISIBLE
-
-int sigdelset(sigset_t *, const int) __nonnull((1)) __picolibc_export;
-
-static __inline int
-__sigdelset(sigset_t *what, int sig)
-{
-    *what &= ~(sigset_t)1 << sig;
-    return 0;
-}
-
-#define sigdelset(what, sig) __sigdelset(what, sig)
-
-int sigemptyset(sigset_t *) __nonnull((1)) __picolibc_export;
-
-static __inline int
-__sigemptyset(sigset_t *what)
-{
-    *what = 0;
-    return 0;
-}
-
-#define sigemptyset(what) __sigemptyset(what)
-
-int sigfillset(sigset_t *) __nonnull((1)) __picolibc_export;
-
-static __inline int
-__sigfillset(sigset_t *what)
-{
-    *what = ~(sigset_t)0;
-    return 0;
-}
-
-#define sigfillset(what) __sigfillset(what)
-
-int sigismember(const sigset_t *, int) __nonnull((1)) __picolibc_export;
-
-static __inline int
-__sigismember(const sigset_t *what, int sig)
-{
-    return (*(what) >> sig) & 1;
-}
-
-#define sigismember(what, sig) __sigismember(what, sig)
-
-#endif
-_sig_func_ptr signal(int, _sig_func_ptr) __picolibc_export;
-_sig_func_ptr __fallback_signal(int, _sig_func_ptr) __picolibc_export;
-#if __POSIX_VISIBLE
-int sigpending(sigset_t *) __picolibc_export;
-int sigprocmask(int, const sigset_t *, sigset_t *) __picolibc_export;
-int __fallback_sigprocmask(int, const sigset_t *, sigset_t *) __picolibc_export;
-#endif
-#if __POSIX_VISIBLE >= 199309L
-int sigqueue(__pid_t, int, const union sigval) __picolibc_export;
-#endif
-#if __POSIX_VISIBLE
-int sigsuspend(const sigset_t *) __picolibc_export;
-#endif
-#if __POSIX_VISIBLE >= 199309L
-int sigtimedwait(const sigset_t *, siginfo_t *, const struct timespec *) __picolibc_export;
-#endif
-#if __POSIX_VISIBLE >= 199506L
-int sigwait(const sigset_t *, int *) __picolibc_export;
-#endif
-#if __POSIX_VISIBLE >= 199309L
-int sigwaitinfo(const sigset_t *, siginfo_t *) __picolibc_export;
-#endif
-#if __MISC_VISIBLE
-int str2sig(const char * __restrict, int * __restrict) __picolibc_export;
 #endif
 
-#if __GNU_VISIBLE
-
-int sigandset(sigset_t *dest, const sigset_t *left, const sigset_t *right)
-    __nonnull((1, 2, 3)) __picolibc_export;
-
-static __inline int
-__sigandset(sigset_t *dest, const sigset_t *left, const sigset_t *right)
-{
-    *dest = *left & *right;
-    return 0;
-}
-
-#define sigandset(d, l, r) __sigandset(d, l, r)
-
-int sigorset(sigset_t *dest, const sigset_t *left, const sigset_t *right)
-    __nonnull((1, 2, 3)) __picolibc_export;
-
-static __inline int
-__sigorset(sigset_t *dest, const sigset_t *left, const sigset_t *right)
-{
-    *dest = *left | *right;
-    return 0;
-}
-
-#define sigorset(d, l, r) __sigorset(d, l, r)
-
-int signotset(sigset_t *dest, const sigset_t *left) __nonnull((1, 2)) __picolibc_export;
-
-static __inline int
-__signotset(sigset_t *dest, const sigset_t *left)
-{
-    *dest = ~(*left);
-    return 0;
-}
-
-#define signotset(d, l) __signotset(d, l)
-
-int sigisemptyset(const sigset_t *set) __nonnull((1)) __picolibc_export;
-
-static __inline int
-__sigisemptyset(const sigset_t *set)
-{
-    return *set == 0;
-}
-
-#define sigisemptyset(s) __sigisemptyset(s)
-
 #endif
-
-_END_STD_C
-
-#endif /* _SIGNAL_H_ */

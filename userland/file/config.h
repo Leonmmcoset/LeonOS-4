@@ -1,7 +1,7 @@
 #ifndef LEONOS_FILE_CONFIG_H
 #define LEONOS_FILE_CONFIG_H
 
-/* Cross-configuration for libmagic on LeonOS's Picolibc userland. */
+/* Cross-configuration for libmagic on LeonOS's musl userland. */
 #define PACKAGE "file"
 #define PACKAGE_NAME "file"
 #define PACKAGE_TARNAME "file"

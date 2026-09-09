@@ -286,19 +286,20 @@ bool address_space_clone_cow(struct address_space *source, struct address_space 
             uint64_t phys;
             uint64_t page;
             int cached;
-            if (!(entry & NTCLKS_PAGE_PRESENT)) {
+            if (!(entry & NTCLKS_PAGE_BACKED)) {
                 continue;
             }
             phys = entry & NTCLKS_PHYS_ADDR_MASK;
             flags = entry & (NTCLKS_PAGE_WRITABLE | NTCLKS_PAGE_NOEXEC |
-                             NTCLKS_PAGE_COW | NTCLKS_PAGE_DEVICE |
+                             NTCLKS_PAGE_COW | NTCLKS_PAGE_DEVICE | NTCLKS_PAGE_PROTNONE |
+                             NTCLKS_PAGE_SHARED |
                              NTCLKS_PAGE_PWT | NTCLKS_PAGE_PCD | NTCLKS_PAGE_PAT);
             page = base + (uint64_t)slot * PAGE_SIZE;
-            if (!(entry & NTCLKS_PAGE_DEVICE) &&
+            if (!(entry & (NTCLKS_PAGE_DEVICE | NTCLKS_PAGE_SHARED)) &&
                 ((entry & NTCLKS_PAGE_WRITABLE) || (entry & NTCLKS_PAGE_COW))) {
                 flags &= ~NTCLKS_PAGE_WRITABLE;
                 flags |= NTCLKS_PAGE_COW;
-                source->user_pt[table][slot] = phys | NTCLKS_PAGE_PRESENT |
+                source->user_pt[table][slot] = phys | (entry & NTCLKS_PAGE_PRESENT) |
                                                NTCLKS_PAGE_USER | flags;
                 x86_64_invlpg(page);
             }
@@ -339,7 +340,7 @@ void address_space_destroy(struct address_space *as)
         if (as->user_pt[table]) {
             for (uint32_t i = 0; i < 512; ++i) {
                 uint64_t entry = as->user_pt[table][i];
-                if (entry & NTCLKS_PAGE_PRESENT) {
+                if (entry & NTCLKS_PAGE_BACKED) {
                     if (entry & NTCLKS_PAGE_DEVICE) {
                         /* Device mappings refer to reserved physical memory. */
                     } else if (page_cache_owns(entry & NTCLKS_PHYS_ADDR_MASK)) {
@@ -436,7 +437,7 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
         !address_space_prepare_user_range(as, page, page + PAGE_SIZE)) {
         return false;
     }
-    if (as->user_pt[table][slot] & NTCLKS_PAGE_PRESENT) {
+    if (as->user_pt[table][slot] & NTCLKS_PAGE_BACKED) {
         return false;
     }
     if ((flags & NTCLKS_PAGE_WRITABLE) && !(flags & NTCLKS_PAGE_NOEXEC)) {
@@ -447,7 +448,8 @@ bool address_space_map_user_page(struct address_space *as, uint64_t vaddr,
          * cannot enforce W^X.  Refuse the process rather than weaken it. */
         return false;
     }
-    as->user_pt[table][slot] = phys | NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER | flags;
+    as->user_pt[table][slot] = phys | NTCLKS_PAGE_USER | flags |
+        ((flags & NTCLKS_PAGE_PROTNONE) ? 0 : NTCLKS_PAGE_PRESENT);
     ++as->user_page_count;
     x86_64_invlpg(page);
     return true;
@@ -482,11 +484,20 @@ bool address_space_protect_user_page(struct address_space *as, uint64_t vaddr,
         return false;
     }
     entry = as->user_pt[table][slot];
-    if (!(entry & NTCLKS_PAGE_PRESENT)) {
+    if (!(entry & NTCLKS_PAGE_BACKED)) {
         return false;
     }
+    /* Read-only and inaccessible pages can still be shared after fork, or
+     * borrowed from the file cache. An upgrade must copy before writing. */
+    if ((flags & NTCLKS_PAGE_WRITABLE) && !(entry & NTCLKS_PAGE_WRITABLE) &&
+        !(entry & (NTCLKS_PAGE_DEVICE | NTCLKS_PAGE_SHARED))) {
+        flags = (flags & ~NTCLKS_PAGE_WRITABLE) | NTCLKS_PAGE_COW;
+    }
+    flags |= entry & (NTCLKS_PAGE_DEVICE | NTCLKS_PAGE_SHARED | NTCLKS_PAGE_PWT |
+                      NTCLKS_PAGE_PCD | NTCLKS_PAGE_PAT);
     as->user_pt[table][slot] = (entry & NTCLKS_PHYS_ADDR_MASK) |
-                                NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER | flags;
+        NTCLKS_PAGE_USER | flags |
+        ((flags & NTCLKS_PAGE_PROTNONE) ? 0 : NTCLKS_PAGE_PRESENT);
     x86_64_invlpg(page);
     return true;
 }
@@ -513,7 +524,7 @@ uint64_t address_space_unmap_user_page(struct address_space *as, uint64_t vaddr)
         return 0;
     }
     uint64_t entry = as->user_pt[table][slot];
-    if (!(entry & NTCLKS_PAGE_PRESENT)) {
+    if (!(entry & NTCLKS_PAGE_BACKED)) {
         return 0;
     }
     as->user_pt[table][slot] = 0;
@@ -546,7 +557,17 @@ uint64_t address_space_user_page_phys(const struct address_space *as, uint64_t v
         return 0;
     }
     uint64_t entry = as->user_pt[table][slot];
-    return (entry & NTCLKS_PAGE_PRESENT) ? (entry & NTCLKS_PHYS_ADDR_MASK) : 0;
+    return (entry & NTCLKS_PAGE_BACKED) ? (entry & NTCLKS_PHYS_ADDR_MASK) : 0;
+}
+
+bool address_space_user_page_readable(const struct address_space *as, uint64_t vaddr)
+{
+    if (!as || vaddr < NTCLKS_USER_BASE || vaddr >= NTCLKS_USER_TOP) return false;
+    uint64_t index = (vaddr - NTCLKS_USER_BASE) / PAGE_SIZE;
+    uint64_t table = index / 512;
+    if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) return false;
+    uint64_t required = NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_USER;
+    return (as->user_pt[table][index % 512] & required) == required;
 }
 
 /**
@@ -580,8 +601,8 @@ bool address_space_user_page_is_device(const struct address_space *as, uint64_t 
     if (table >= NTCLKS_USER_PD_COUNT || !as->user_pt[table]) {
         return false;
     }
-    return (as->user_pt[table][slot] & (NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_DEVICE)) ==
-           (NTCLKS_PAGE_PRESENT | NTCLKS_PAGE_DEVICE);
+    uint64_t entry = as->user_pt[table][slot];
+    return (entry & NTCLKS_PAGE_BACKED) && (entry & NTCLKS_PAGE_DEVICE);
 }
 
 /**
@@ -595,6 +616,21 @@ uint32_t address_space_user_memory_kib(const struct address_space *as)
         return 0;
     }
     return as->user_page_count * 4U;
+}
+
+/** @brief Count resident RAM pages, including owned PROT_NONE and shared pages. */
+uint32_t address_space_user_resident_kib(const struct address_space *as)
+{
+    uint32_t pages = 0;
+    if (!as) return 0;
+    for (uint32_t table = 0; table < NTCLKS_USER_PD_COUNT; ++table) {
+        if (!as->user_pt[table]) continue;
+        for (uint32_t slot = 0; slot < 512; ++slot) {
+            uint64_t entry = as->user_pt[table][slot];
+            if ((entry & NTCLKS_PAGE_BACKED) && !(entry & NTCLKS_PAGE_DEVICE)) ++pages;
+        }
+    }
+    return pages * 4U;
 }
 
 /**
@@ -688,6 +724,7 @@ bool address_space_handle_cow_fault(struct address_space *as, uint64_t vaddr)
                                (entry & (NTCLKS_PAGE_PWT | NTCLKS_PAGE_PCD |
                                          NTCLKS_PAGE_PAT));
     x86_64_invlpg(page);
-    mm_free_page(old_phys);
+    if (page_cache_owns(old_phys)) page_cache_release(old_phys);
+    else mm_free_page(old_phys);
     return true;
 }

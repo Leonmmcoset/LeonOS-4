@@ -1,7 +1,7 @@
 /*
  * Compiler support shared by the TCC process and its generated programs.
  *
- * Picolibc's strtold() converts a 128-bit intermediate through these
+ * musl's strtold() converts a 128-bit intermediate through these
  * compiler-rt entry points.  Keep them separate from both the compiler-host
  * shim and the generated-program POSIX compatibility stubs: their ABI is a
  * property of the x86_64 LeonOS target, not of either process role.

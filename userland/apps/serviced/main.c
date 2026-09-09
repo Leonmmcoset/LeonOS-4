@@ -171,7 +171,7 @@ static int write_file_text(const char *path, const char *buffer, uint32_t len,
     int fd;
     long wrote;
     flags |= append ? LEONOS_O_APPEND : LEONOS_O_TRUNC;
-    fd = open(path, flags, 0);
+    fd = open(path, flags, 0666);
     if (fd < 0) {
         return fd;
     }
@@ -523,9 +523,9 @@ static void write_state(void)
 
 static void ensure_runtime_dirs(void)
 {
-    (void)mkdir("/var", 0);
-    (void)mkdir("/var/run", 0);
-    (void)mkdir("/var/log", 0);
+    (void)mkdir("/var", 0777);
+    (void)mkdir("/var/run", 0777);
+    (void)mkdir("/var/log", 0777);
 }
 
 int main(void)

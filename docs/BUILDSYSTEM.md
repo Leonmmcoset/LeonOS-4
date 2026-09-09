@@ -30,7 +30,7 @@ LeonOS 使用根目录的 `build.py` 作为唯一构建入口，运行环境为 
 
 `Debug`、`Develop`、`Release` 预设默认直接决定优化、调试符号、LTO、二进制
 剥离和开发诊断；只有启用 `Override build preset defaults` 后，才可单独覆写这些
-高级项。该选择同时传递给内核、用户态、Picolibc 和所有受管第三方程序构建。
+高级项。该选择同时传递给内核、用户态、musl+mimalloc 和所有受管第三方程序构建。
 SDK 中的 `TCC`、`Lua` 与 StardustUI 示例开关会分别收录其运行时/端口或示例
 源码和二进制，公共 ABI 库仍独立由其组件开关控制。
 API 产物的镜像路径也由清单声明；带有附属组件的 API（例如 DOOM）由同步阶段

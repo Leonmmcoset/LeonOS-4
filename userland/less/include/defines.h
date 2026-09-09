@@ -127,9 +127,5 @@
 #define HAVE_USLEEP 1
 #define HAVE_SYS_WAIT_H 0
 
-/* Picolibc's freestanding limits.h omits ULONG_MAX for this target. */
-#ifndef ULONG_MAX
-#define ULONG_MAX (LONG_MAX * 2UL + 1UL)
-#endif
 
 #endif

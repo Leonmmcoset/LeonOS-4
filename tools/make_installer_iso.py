@@ -49,12 +49,13 @@ def stage_installer_tree(
     middlelayer: Path,
     installer_root: Path,
     grub_font: Path,
+    grub_config: Path,
 ) -> None:
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
     copy_file(boot_efi, stage / "EFI/BOOT/BOOTX64.EFI")
-    copy_file(ROOT / "boot/grub/installer.cfg", stage / "grub/grub.cfg")
+    copy_file(grub_config, stage / "grub/grub.cfg")
     copy_file(grub_font, stage / "grub/fonts/leonos-unicode.pf2")
     copy_file(ROOT / "boot/grub/theme/theme.txt", stage / "grub/theme/theme.txt")
     (stage / "leonos-installer-iso.marker").write_text("LeonOS installer ISO volume\n", encoding="ascii")
@@ -98,6 +99,7 @@ def main() -> int:
     parser.add_argument("--grub-font", default="build/generated/grub/leonos-unicode.pf2")
     parser.add_argument("--work-dir", default="build/install")
     parser.add_argument("--grub-efi-dir", default="/usr/lib/grub/x86_64-efi")
+    parser.add_argument("--grub-config", default="boot/grub/installer.cfg")
     args = parser.parse_args()
 
     out = ROOT / args.out
@@ -119,7 +121,8 @@ def main() -> int:
 
     boot_efi = build_installer_boot_efi(work_dir / "installer-BOOTX64.EFI", grub_efi_dir)
     create_boot_image(boot_image, boot_efi, work_dir / "efi-boot")
-    stage_installer_tree(stage, boot_image, boot_efi, loader, kernel, middlelayer, installer_root, grub_font)
+    stage_installer_tree(stage, boot_image, boot_efi, loader, kernel, middlelayer,
+                         installer_root, grub_font, ROOT / args.grub_config)
     run([
         "xorriso",
         "-as",

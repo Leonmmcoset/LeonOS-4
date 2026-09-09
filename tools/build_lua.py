@@ -5,7 +5,7 @@ The upstream source tree is not patched. Lua is compiled in its portable C89
 configuration: this deliberately leaves out POSIX-only behavior, Readline, and
 runtime loading of C modules. Lua is
 the exception to LeonOS's usual ``-mgeneral-regs-only`` userland compile mode:
-its ``double`` values must use the x86-64 SSE ABI used by Picolibc and the
+its ``double`` values must use the x86-64 SSE ABI used by musl and the
 compiler runtime.
 """
 
@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+import musl_link
 
 
 LUA_VERSION = "5.4.8"
@@ -62,16 +63,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--port", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path, required=True)
     parser.add_argument("--leonos-include", type=Path, required=True)
-    parser.add_argument("--linker-script", type=Path, required=True)
+
     parser.add_argument("--leonos-lib", type=Path, required=True)
-    parser.add_argument("--picolibc-lib", type=Path, required=True)
-    parser.add_argument("--dynamic-linker-script", type=Path, required=True)
+    parser.add_argument("--musl-lib", type=Path, required=True)
+
     parser.add_argument("--runtime-so", type=Path, required=True)
-    parser.add_argument("--dynamic-crt", type=Path, required=True)
-    parser.add_argument("--abi-note", type=Path, required=True)
+
+
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--static-library", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
@@ -86,26 +87,33 @@ def main() -> None:
 
     source = args.source.resolve()
     port = args.port.resolve()
-    picolibc_prefix = args.picolibc_prefix.resolve()
+    musl_prefix = args.musl_prefix.resolve()
     leonos_libc_include = args.leonos_libc_include.resolve()
     leonos_include = args.leonos_include.resolve()
-    linker_script = args.linker_script.resolve()
+
     leonos_lib = args.leonos_lib.resolve()
-    picolibc_lib = args.picolibc_lib.resolve()
-    dynamic_linker_script = args.dynamic_linker_script.resolve()
+    musl_lib = args.musl_lib.resolve()
+
     runtime_so = args.runtime_so.resolve()
-    dynamic_crt = args.dynamic_crt.resolve()
-    abi_note = args.abi_note.resolve()
+
+
     library = args.library.resolve()
     static_library = args.static_library.resolve()
     work_dir = args.work_dir.resolve()
     output = args.output.resolve()
     stamp = args.stamp.resolve()
     required = (
-        source / "lua.c", source / "lua.h", source / "luaconf.h", source / "lualib.h",
-        port / "LICENSE", port / "leonos_lua_time.c", picolibc_prefix / "include", leonos_libc_include,
-        leonos_include, linker_script, leonos_lib, picolibc_lib,
-        dynamic_linker_script, runtime_so, dynamic_crt, abi_note,
+        source / "lua.c",
+        source / "lua.h",
+        source / "luaconf.h",
+        source / "lualib.h",
+        port / "LICENSE",
+        musl_prefix / "include",
+        leonos_libc_include,
+        leonos_include,
+        leonos_lib,
+        musl_lib,
+        runtime_so,
     )
     for path in required:
         if not path.exists():
@@ -121,23 +129,23 @@ def main() -> None:
     # Lua uses lua_Number (double) throughout the VM and standard libraries.
     # Keep the normal x86-64 SSE floating-point ABI here.  The generic LeonOS
     # userland flags normally include -mgeneral-regs-only, but that flag moves
-    # floating-point arguments/results into GPRs while Picolibc/libclang
+    # floating-point arguments/results into GPRs while musl/libclang
     # floating-point helpers use XMM registers.  Mixing the two ABIs makes
     # lua_version()/luaL_checkversion_() compare unrelated bit patterns and
     # breaks every other arithmetic or math-library call as well.  The kernel
     # saves/restores each task's x87/SSE state with fxsave/fxrstor, so SSE is a
     # supported user-process ABI and is intentional for this target.
     common_flags = [
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=c99", "-ffreestanding",
-        "-fno-stack-protector", "-fPIC", "-mno-red-zone",
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]), "-std=c99", "-ffreestanding",
+        "-fno-stack-protector", "-fPIC",
         "-ffunction-sections", "-fdata-sections", "-Wall",
         "-Wextra", "-Wno-unused-parameter", "-DLUA_USE_C89",
         '-DLUA_PATH_DEFAULT="/programs/lua/lua/?.lua;/programs/lua/lua/?/init.lua;./?.lua;./?/init.lua"',
         '-DLUA_CPATH_DEFAULT=""',
         "-nostdinc", "-isystem", str(headers),
-        "-I" + str(picolibc_prefix / "include"),
+        "-I" + str(musl_prefix / "include"),
         "-I" + str(leonos_libc_include),
-        "-I" + str(leonos_include),
+        "-I" + str(leonos_include), "-I" + str(leonos_include / "uapi"),
         "-I" + str(source),
     ]
 
@@ -147,16 +155,9 @@ def main() -> None:
         object_file = object_dir / (name.removesuffix(".c") + ".o")
         compile_source(common_flags, source_file, object_file)
         library_objects.append(object_file)
-    time_object = object_dir / "leonos_lua_time.o"
-    compile_source(common_flags, port / "leonos_lua_time.c", time_object)
-    library_objects.append(time_object)
 
     library.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-shared", "-Bsymbolic", "--hash-style=sysv", "-soname", "liblua.so.5",
-        "-z", "max-page-size=0x1000", "-T", str(dynamic_linker_script),
-        "-o", str(library), *map(str, library_objects), str(abi_note), str(runtime_so),
-    ])
+    run(musl_link.shared(musl_prefix, library, library_objects, (runtime_so,), soname="liblua.so.5", flags=args.linker_flag))
     static_library.parent.mkdir(parents=True, exist_ok=True)
     if static_library.exists():
         static_library.unlink()
@@ -170,13 +171,7 @@ def main() -> None:
         objects.append(object_file)
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-nostdlib", "--gc-sections", "-pie", "--hash-style=sysv",
-        "--dynamic-linker", "/system/lib/ld-leonos.elf", "-z", "relro", "-z", "now",
-        "-z", "max-page-size=0x1000", *args.linker_flag, "-T", str(dynamic_linker_script),
-        "-o", str(output), str(dynamic_crt), str(abi_note), *map(str, objects),
-        str(runtime_so), str(library),
-    ])
+    run(musl_link.executable(musl_prefix, output, objects, (library, runtime_so), flags=args.linker_flag))
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(
         json.dumps(

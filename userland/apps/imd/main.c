@@ -84,7 +84,7 @@ static int imd_text_eq(const char *a, const char *b)
 static void imd_close_client(int slot)
 {
     if (slot < 0 || slot >= (int)IMD_MAX_CLIENTS || !clients[slot].used) return;
-    close(clients[slot].fd);
+    leonos_ipc_close(clients[slot].fd);
     for (uint32_t i = 0; i < IMD_MAX_PROVIDERS; ++i) {
         if (providers[i].used && providers[i].client_slot == slot) {
             providers[i].used = 0;
@@ -443,7 +443,7 @@ int main(void)
     memset(contexts, 0, sizeof(contexts));
     memset(users, 0, sizeof(users));
     for (uint32_t i = 0; i < IMD_MAX_CLIENTS; ++i) clients[i].fd = -1;
-    listen_fd = leonos_ipc_bind_listen(LEONOS_IPC_SOCK_INPUT_METHOD, 8);
+    listen_fd = leonos_ipc_bind_listen_mode(LEONOS_IPC_SOCK_INPUT_METHOD, 8, 0666);
     if (listen_fd < 0) {
         printf("[imd.elf] bind failed errno=%d\n", errno);
         return 1;

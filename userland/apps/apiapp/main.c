@@ -121,7 +121,7 @@ static void build_download_path(char *dst, uint32_t capacity)
     char directory[LEONOS_FS_PATH_LEN];
     uint32_t pos = 0;
     download_path_for_user(directory, sizeof(directory));
-    (void)mkdir(directory, 0);
+    (void)mkdir(directory, 0777);
     append_text(dst, &pos, capacity, directory);
     append_text(dst, &pos, capacity, "/app-");
     append_u32(dst, &pos, capacity, (uint32_t)getpid());
@@ -131,7 +131,7 @@ static void build_download_path(char *dst, uint32_t capacity)
 static void build_download_status_path(char *dst, uint32_t capacity)
 {
     uint32_t pos = 0;
-    (void)mkdir("/tmp", 0);
+    (void)mkdir("/tmp", 01777);
     dst[0] = 0;
     append_text(dst, &pos, capacity, "/tmp/api_download_");
     append_u32(dst, &pos, capacity, (uint32_t)getpid());
@@ -141,7 +141,7 @@ static void build_download_status_path(char *dst, uint32_t capacity)
 static void build_install_status_path(char *dst, uint32_t capacity)
 {
     uint32_t pos = 0;
-    (void)mkdir("/tmp", 0);
+    (void)mkdir("/tmp", 01777);
     dst[0] = 0;
     append_text(dst, &pos, capacity, "/tmp/api_install_");
     append_u32(dst, &pos, capacity, (uint32_t)getpid());
@@ -157,10 +157,10 @@ static void install_log(const char *message)
         return;
     }
     printf("[apiapp] %s\n", message);
-    (void)mkdir("/var", 0);
-    (void)mkdir("/var/log", 0);
+    (void)mkdir("/var", 0777);
+    (void)mkdir("/var/log", 0777);
     fd = open(API_INSTALL_LOG_PATH,
-              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0);
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_APPEND, 0666);
     if (fd < 0) {
         return;
     }
@@ -233,7 +233,7 @@ static int write_download_status(const char *path, char state,
     append_u32(text, &pos, sizeof(text), total);
     text[pos++] = '\n';
     text[pos] = 0;
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return -1;
     }

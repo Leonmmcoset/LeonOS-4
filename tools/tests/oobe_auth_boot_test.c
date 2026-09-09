@@ -22,6 +22,21 @@ static int stale_session_exists = 1;
 static int cleanup_error;
 static unsigned read_index;
 static int listener_attempted;
+static int database_fixture;
+
+int authd_export_accounts(const char *directory, const struct leonos_auth_record *records, unsigned count)
+{
+    assert(!strcmp(directory, "/etc") && count == 1 && records[0].user.uid == 1);
+    assert(!strcmp(records[0].user.username, "existing_admin"));
+    return 0;
+}
+
+int authd_username_valid(const char *name, unsigned capacity)
+{
+    (void)name; (void)capacity;
+    assert(0); /* No requests are accepted in this startup fixture. */
+    return 0;
+}
 
 static int test_open(const char *path, int flags, ...)
 {
@@ -32,6 +47,8 @@ static int test_open(const char *path, int flags, ...)
 static long test_read(int fd, void *buffer, unsigned long count)
 {
     assert(fd == 10);
+    if (database_fixture == 1) return 0;
+    if (database_fixture == 2) { memset(buffer, 0, count); return count; }
     if (read_index == 0) {
         assert(count == sizeof(uint32_t));
         *(uint32_t *)buffer = AUTHD_MAGIC;
@@ -39,7 +56,7 @@ static long test_read(int fd, void *buffer, unsigned long count)
         assert(count == sizeof(uint32_t));
         *(uint32_t *)buffer = 1;
     } else {
-        struct authd_record record = {.user = {.uid = 1, .role = LEONOS_AUTH_ROLE_ADMIN}};
+        struct leonos_auth_record record = {.user = {.uid = 1, .role = LEONOS_AUTH_ROLE_ADMIN}};
         assert(read_index == 2 && count == sizeof(record));
         strcpy(record.user.username, "existing_admin");
         memcpy(buffer, &record, sizeof(record));
@@ -64,8 +81,9 @@ static int test_unlink(const char *path)
     return 0;
 }
 
-int leonos_ipc_bind_listen(const char *path, int backlog)
+int leonos_ipc_bind_listen_mode(const char *path, int backlog, uint32_t mode)
 {
+    assert(mode == 0666);
     (void)path; (void)backlog;
     assert(!stale_session_exists);
     listener_attempted = 1;
@@ -90,6 +108,14 @@ int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
 int main(int argc, char **argv)
 {
     assert(argc == 2);
+    if (!strcmp(argv[1], "database-formats")) {
+        database_fixture = 1;
+        assert(authd_load() == 1 && user_count == 0);
+        database_fixture = 2;
+        assert(authd_load() == -1 && errno == EIO);
+        puts("OOBE database: legacy empty seed accepted, corrupt nonempty data rejected");
+        return 0;
+    }
     if (!strcmp(argv[1], "missing")) stale_session_exists = 0;
     else if (!strcmp(argv[1], "denied")) cleanup_error = EACCES;
     else assert(!strcmp(argv[1], "stale"));

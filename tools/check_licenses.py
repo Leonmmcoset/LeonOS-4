@@ -29,9 +29,12 @@ DEFAULT_EXCLUDED_CREDITS = ("llama2.c", "TinyLlama", "karpathy")
 SUBMODULE_LICENSES: dict[str, tuple[str, ...]] = {
     "litehtml": ("LICENSE",),
     "mbedtls": ("LICENSE",),
-    "picolibc": ("COPYING.picolibc", "COPYING", "LICENSE"),
+    "musl": ("COPYRIGHT",),
+    "mimalloc": ("LICENSE",),
     "busybox": ("LICENSE",),
     "nano": ("COPYING", "LICENSE"),
+    "vim": ("LICENSE",),
+    "ncurses": ("COPYING",),
     "pl_editor": ("LICENSE", "COPYING"),
     "tinycc": ("COPYING", "LICENSE"),
     "zlib": ("LICENSE",),
@@ -56,6 +59,7 @@ IMAGE_LICENSES: dict[str, tuple[str, ...]] = {
     "lua": ("LICENSE",),
     "cmd": ("LICENSE",),
     "nano": ("COPYING",),
+    "vim": ("LICENSE",),
     "fastfetch": ("LICENSE",),
     "sl": ("LICENSE",),
     "pleditor": ("LICENSE",),
@@ -63,7 +67,9 @@ IMAGE_LICENSES: dict[str, tuple[str, ...]] = {
 }
 
 SDK_LICENSES: dict[str, tuple[str, ...]] = {
-    "libc.a": ("THIRD_PARTY/PICOLIBC-COPYING",),
+    "libncursesw.a": ("THIRD_PARTY/NCURSES-COPYING",),
+    "libtinfow.a": ("THIRD_PARTY/NCURSES-COPYING",),
+    "libc.a": ("THIRD_PARTY/MUSL-COPYING",),
     "libz.a": ("THIRD_PARTY/ZLIB-LICENSE",),
     "libpng.a": ("THIRD_PARTY/LIBPNG-LICENSE",),
     "libmagic.a": ("THIRD_PARTY/LIBMAGIC-COPYING",),
@@ -253,6 +259,12 @@ def check_image(source: Path, category: str = "image-license") -> list[Finding]:
                                    program, expected, found or "missing", str(source),
                                    "packaged program license is present" if found else
                                    "program is present but its license file is missing"))
+        if artifact.has_prefix("usr/share/terminfo"):
+            notice = "usr/share/licenses/ncurses/COPYING"
+            found = artifact.find((notice,))
+            findings.append(result(category, "pass" if found else "fail",
+                                   "info" if found else "error", "ncurses", notice,
+                                   found or "missing", str(source), "ncurses runtime license"))
         api_notices = {"oschinpt": ("LICENSE", "ATTRIBUTION.txt")}
         for api, notices in api_notices.items():
             api_file = f"api/{api}.api"

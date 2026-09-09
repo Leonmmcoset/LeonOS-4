@@ -1,6 +1,8 @@
 #include <leonos/fs.h>
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 int main(void)
 {
@@ -15,6 +17,14 @@ int main(void)
     printf("[init.elf] pid=%d\n", getpid());
     ret = chdir("/");
     printf("[init.elf] chdir root => %d\n", ret);
+    /* Older installed images have no temporary directory. Preserve existing
+     * metadata, including an administrator's explicit mode. */
+    if (mkdir("/tmp", 01777) == 0) {
+        if (chmod("/tmp", 01777) < 0)
+            printf("[init.elf] chmod /tmp failed errno=%d\n", errno);
+    } else if (errno != EEXIST) {
+        printf("[init.elf] mkdir /tmp failed errno=%d\n", errno);
+    }
     printf("[init.elf] getcwd => %x\n", (unsigned int)(uintptr_t)getcwd(cwd, sizeof(cwd)));
     printf("[init.elf] cwd=%s\n", cwd);
     ret = leonos_stat_legacy("/system/config/leonos.conf", &st);

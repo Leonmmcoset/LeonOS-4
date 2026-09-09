@@ -122,7 +122,7 @@ static struct windowd_window *find_window(uint32_t window_id)
 static void close_client(int slot)
 {
     if (slot < 0 || slot >= (int)WINDOWD_MAX_CLIENTS || !clients[slot].used) return;
-    close(clients[slot].fd);
+    leonos_ipc_close(clients[slot].fd);
     memset(&clients[slot], 0, sizeof(clients[slot]));
     clients[slot].fd = -1;
     if (policy_slot == slot) policy_slot = -1;
@@ -595,7 +595,7 @@ int main(void)
     memset(clients, 0, sizeof(clients));
     for (uint32_t i = 0; i < WINDOWD_MAX_CLIENTS; ++i) clients[i].fd = -1;
     for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) windows[i].shm_fd = -1;
-    listen_fd = leonos_ipc_bind_listen(LEONOS_IPC_SOCK_WINDOWD, 8);
+    listen_fd = leonos_ipc_bind_listen_mode(LEONOS_IPC_SOCK_WINDOWD, 8, 0666);
     if (listen_fd < 0) {
         printf("[windowd.elf] bind failed errno=%d\n", errno);
         return 1;

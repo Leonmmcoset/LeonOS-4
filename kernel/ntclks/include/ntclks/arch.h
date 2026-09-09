@@ -13,6 +13,10 @@
 #define NTCLKS_USER_DS 0x1b
 #define NTCLKS_USER_CS 0x23
 
+/* Linux TASK_SIZE_MAX for our four-level paging configuration. A TLS base
+ * need not name a mapped page; NTCLKS_USER_TOP is not the architectural limit. */
+#define NTCLKS_USER_TLS_LIMIT ((1ULL << 47) - 4096)
+
 /**
  * @brief Initialize architecture-specific processor state at early boot.
  */
@@ -23,6 +27,8 @@ void arch_init(void);
 void arch_userland_init(void *kernel_stack_top);
 /** Initialize architecture tables on an application processor. */
 void arch_ap_init(uint32_t cpu_index, void *kernel_stack_top);
+void arch_set_user_fs(uint64_t base);
+uint64_t arch_get_user_fs(void);
 /**
  * @brief Enable x87/SSE and capture the default FPU state used for new tasks.
  */

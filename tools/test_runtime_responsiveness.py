@@ -14,7 +14,7 @@ class RuntimeResponsivenessTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-idirafter", "userland/libc/include", "-idirafter", "include",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
                 "tools/tests/wind_framebuffer_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -25,7 +25,7 @@ class RuntimeResponsivenessTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-idirafter", "userland/libc/include", "-idirafter", "include",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
                 "tools/tests/wind_surface_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -36,7 +36,7 @@ class RuntimeResponsivenessTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-Iinclude", "-Ikernel/ntclks/include",
+                "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include",
                 "tools/tests/signal_address_space_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -47,7 +47,7 @@ class RuntimeResponsivenessTests(unittest.TestCase):
             subprocess.run([
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
-                "-Iinclude", "-Ikernel/ntclks/include",
+                "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include",
                 "tools/tests/osmlayer_read_cache_test.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)

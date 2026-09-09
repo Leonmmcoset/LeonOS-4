@@ -7,6 +7,8 @@
 #include <ntclks/sched.h>
 #include <ntclks/time.h>
 #include <ntclks/usb.h>
+#include <linux/time.h>
+#include <linux/errno.h>
 
 #include "arch/x86_64/port.h"
 
@@ -256,6 +258,28 @@ void time_on_tick(void)
 uint64_t time_ticks(void)
 {
     return ticks;
+}
+
+int time_clock_get(int32_t clock, struct linux_timespec *value)
+{
+    uint64_t now = ticks;
+    switch (clock) {
+    case LINUX_CLOCK_REALTIME:
+    case LINUX_CLOCK_REALTIME_COARSE:
+        value->tv_sec = wall_clock_valid ? (int64_t)wall_unix_seconds : (int64_t)(now / NTCLKS_TICK_HZ);
+        value->tv_nsec = (int64_t)((wall_clock_valid ? wall_subticks : now % NTCLKS_TICK_HZ) *
+                                  (1000000000ULL / NTCLKS_TICK_HZ));
+        return 0;
+    case LINUX_CLOCK_MONOTONIC:
+    case LINUX_CLOCK_MONOTONIC_RAW:
+    case LINUX_CLOCK_MONOTONIC_COARSE:
+    case LINUX_CLOCK_BOOTTIME:
+        value->tv_sec = (int64_t)(now / NTCLKS_TICK_HZ);
+        value->tv_nsec = (int64_t)((now % NTCLKS_TICK_HZ) * (1000000000ULL / NTCLKS_TICK_HZ));
+        return 0;
+    default:
+        return -LINUX_EINVAL;
+    }
 }
 
 /**

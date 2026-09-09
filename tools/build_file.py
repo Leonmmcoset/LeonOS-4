@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+import musl_link
 
 
 LIBMAGIC_SOURCES = (
@@ -29,17 +30,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--port", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path, required=True)
     parser.add_argument("--leonos-include", type=Path, required=True)
     parser.add_argument("--generated-include", type=Path, required=True)
-    parser.add_argument("--linker-script", type=Path, required=True)
+
     parser.add_argument("--leonos-lib", type=Path, required=True)
-    parser.add_argument("--picolibc-lib", type=Path, required=True)
-    parser.add_argument("--dynamic-linker-script", type=Path, required=True)
+    parser.add_argument("--musl-lib", type=Path, required=True)
+
     parser.add_argument("--runtime-so", type=Path, required=True)
-    parser.add_argument("--dynamic-crt", type=Path, required=True)
-    parser.add_argument("--abi-note", type=Path, required=True)
+
+
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--static-library", type=Path, required=True)
@@ -77,29 +78,28 @@ def main() -> None:
     shutil.copyfile(port / "config.h", include_dir / "config.h")
     # ``-nostdinc`` keeps host libc headers out of the freestanding build, but
     # Clang's builtin ``stdarg.h``/``stddef.h`` are still required by the
-    # Picolibc-compatible LeonOS headers.  Add the resource include directory
+    # musl-compatible LeonOS headers.  Add the resource include directory
     # explicitly instead of relying on the host driver's implicit search path.
     resource_dir = subprocess.run(
         ["clang", "-print-resource-dir"], check=True,
         capture_output=True, text=True,
     ).stdout.strip()
     cflags = [
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
-        "-fno-stack-protector", "-fPIC", "-mno-red-zone",
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
+        "-fno-stack-protector", "-fPIC",
         "-ffunction-sections", "-fdata-sections",
         "-nostdinc", "-isystem", str(args.generated_include),
         "-isystem", str(Path(resource_dir) / "include"),
-        "-isystem", str(args.picolibc_prefix / "include"),
-        "-I", str(port / "include"),
-        "-I", str(args.leonos_include),
+        "-isystem", str(args.musl_prefix / "include"),
+        "-I", str(args.leonos_include), "-I", str(args.leonos_include / "uapi"),
         "-I", str(include_dir),
         "-I", str(patched_source),
-        # Prefer Picolibc's full POSIX headers for upstream libmagic.  The
+        # Prefer musl's full POSIX headers for upstream libmagic.  The
         # LeonOS headers remain available for our additive compatibility API
         # without shadowing standard headers such as <stdlib.h>.
         "-idirafter", str(args.leonos_libc_include),
-        "-DHAVE_CONFIG_H", "-Dstat(...)=leonos_posix_stat(__VA_ARGS__)",
-        "-Dfstat(...)=leonos_posix_fstat(__VA_ARGS__)",
+        "-DHAVE_CONFIG_H", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL",
+
         "-DLEONOS_FILE_PATHSEP_SEMICOLON",
         "-DMAGIC=\"/system/share/misc/magic.mgc\"",
     ]
@@ -124,27 +124,17 @@ def main() -> None:
 
     library = args.library.resolve()
     library.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-shared", "-Bsymbolic", "--hash-style=sysv", "-soname", "libmagic.so.1",
-        "-z", "max-page-size=0x1000", "-T", str(args.dynamic_linker_script.resolve()),
-        "-o", str(library), *map(str, library_objects), str(args.abi_note.resolve()),
-        str(args.runtime_so.resolve()),
-    ])
+    run(musl_link.shared(args.musl_prefix.resolve(), library, library_objects, (args.runtime_so.resolve(),), soname="libmagic.so.1", flags=args.linker_flag))
 
     app_objects = [
         compile_source(patched_source / "file.c", "file-main"),
         compile_source(patched_source / "getopt_long.c", "getopt-long"),
     ]
     args.output.resolve().parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-nostdlib", "--gc-sections", "-pie", "--hash-style=sysv",
-        "--dynamic-linker", "/system/lib/ld-leonos.elf", "-z", "relro", "-z", "now",
-        "-z", "max-page-size=0x1000", *args.linker_flag,
-        "-T", str(args.dynamic_linker_script.resolve()),
-        "-o", str(args.output.resolve()), str(args.dynamic_crt.resolve()),
-        str(args.abi_note.resolve()), *map(str, app_objects), str(args.runtime_so.resolve()),
-        str(args.library.resolve()),
-    ])
+    run(musl_link.executable(args.musl_prefix.resolve(), args.output.resolve(), app_objects, (
+        args.library.resolve(),
+        args.runtime_so.resolve(),
+    ), flags=args.linker_flag))
     args.stamp.resolve().parent.mkdir(parents=True, exist_ok=True)
     args.stamp.resolve().write_text("libmagic 5.48\n", encoding="ascii")
 

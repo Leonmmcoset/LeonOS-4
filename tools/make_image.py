@@ -165,8 +165,8 @@ def main() -> int:
     parser.add_argument("--raw", default="build/images/leonos4.raw")
     parser.add_argument("--esp-tree", default="build/esp")
     parser.add_argument("--root-image")
-    parser.add_argument("--root-fs", choices=("exfat", "ext2"), default="exfat",
-                        help="Runtime root filesystem; ext2 is retained for compatibility regression builds")
+    parser.add_argument("--root-fs", choices=("exfat", "ext2"), default="ext2",
+                        help="Runtime root filesystem (default: classic ext2; exFAT remains available explicitly)")
     parser.add_argument("--esp-image", default="build/images/esp.fat")
     parser.add_argument("--default-language", choices=("en", "zh"), default="en",
                         help="Language seed written into this VMDK root filesystem")

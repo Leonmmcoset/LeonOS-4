@@ -256,11 +256,12 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
         int policy_ret = osmlayer_bridge_mount_policy(&boot, &mount_policy);
         if (policy_ret == 0) {
             storage_apply_mount_policy(&mount_policy);
-            if (cmdline_has(&boot, "mode=installer") && !storage_ready()) {
+            if ((cmdline_has(&boot, "mode=installer") || cmdline_has(&boot, "mode=live")) &&
+                !storage_ready()) {
                 console_printf("[ntclks] installer mount policy did not produce a ready root, retrying handoff module\n");
                 storage_init_installer_root(&boot);
             }
-        } else if (cmdline_has(&boot, "mode=installer")) {
+        } else if (cmdline_has(&boot, "mode=installer") || cmdline_has(&boot, "mode=live")) {
             console_printf("[ntclks] middlelayer mount policy unavailable ret=%d, using installer fallback\n",
                            policy_ret);
             storage_init();

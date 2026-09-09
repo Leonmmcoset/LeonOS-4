@@ -8,7 +8,7 @@ trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
 
 compile_test() {
     "${CC:-cc}" -std=c11 -O2 -ffunction-sections -fdata-sections \
-        -I"$repo_root/include" -I"$repo_root/third_party/portablegl" \
+        -I"$repo_root/include" -I"$repo_root/include/uapi" -I"$repo_root/third_party/portablegl" \
         -I"$repo_root/userland/apps/glxgears" \
         -I"$generated_dir" \
         -idirafter "$repo_root/userland/libc/include" \

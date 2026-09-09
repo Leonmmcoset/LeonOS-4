@@ -130,9 +130,9 @@ static void run_unicode_file_test(void)
     const char *content = "你好，LeonOS 4。中文显示测试。\n";
     struct leonos_stat st;
     struct leonos_dir_entry entry;
-    int ret = mkdir(dir, 0);
+    int ret = mkdir(dir, 0777);
     printf("[uidemo.elf] unicode mkdir %s ret=%d\n", dir, ret);
-    int fd = open(path, LEONOS_O_CREAT | LEONOS_O_TRUNC | LEONOS_O_WRONLY, 0);
+    int fd = open(path, LEONOS_O_CREAT | LEONOS_O_TRUNC | LEONOS_O_WRONLY, 0666);
     printf("[uidemo.elf] unicode open-write %s fd=%d\n", path, fd);
     if (fd >= 0) {
         long wrote = write(fd, content, strlen(content));

@@ -516,7 +516,7 @@ int desktop_save_appearance_config(void)
     append_text(buf, &pos, sizeof(buf),
                 desktop_wallpaper_mode_name(desktop_wallpaper_mode));
     append_char(buf, &pos, sizeof(buf), '\n');
-    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    fd = open(path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }
@@ -571,7 +571,7 @@ int desktop_save_display_config(void)
                 desktop_boot_theme_default == LEONOS_UI_THEME_WIN95 ? "win95" : "metro");
     append_char(buf, &pos, sizeof(buf), '\n');
     fd = open(DISPLAY_CONFIG_PATH,
-              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+              LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {
         return fd;
     }

@@ -3,8 +3,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <poll.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 int leonos_ipc_connect(const char *path)
@@ -15,6 +18,7 @@ int leonos_ipc_connect(const char *path)
         errno = EINVAL;
         return -1;
     }
+    if (strlen(path) >= sizeof(address.sun_path)) { errno = ENAMETOOLONG; return -1; }
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     strncpy(address.sun_path, path, sizeof(address.sun_path) - 1u);
@@ -32,22 +36,36 @@ int leonos_ipc_connect(const char *path)
 
 int leonos_ipc_bind_listen(const char *path, int backlog)
 {
+    return leonos_ipc_bind_listen_mode(path, backlog, 0600);
+}
+
+int leonos_ipc_bind_listen_mode(const char *path, int backlog, uint32_t mode)
+{
     struct sockaddr_un address;
     int fd;
-    if (!path || !path[0]) {
+    if (!path || !path[0] || (mode & ~0777u)) {
         errno = EINVAL;
         return -1;
     }
+    if (strlen(path) >= sizeof(address.sun_path)) { errno = ENAMETOOLONG; return -1; }
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     strncpy(address.sun_path, path, sizeof(address.sun_path) - 1u);
     fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
-    if (bind(fd, (struct sockaddr *)&address,
-             (socklen_t)(sizeof(sa_family_t) + strlen(address.sun_path) + 1u)) < 0 ||
-        listen(fd, backlog > 0 ? backlog : 8) < 0) {
+    socklen_t address_length = (socklen_t)(sizeof(sa_family_t) + strlen(address.sun_path) + 1u);
+    int bound = bind(fd, (struct sockaddr *)&address, address_length);
+    if (bound < 0 && errno == EADDRINUSE) {
+        struct stat node;
+        if (stat(path, &node) == 0 && S_ISSOCK(node.st_mode) &&
+            connect(fd, (struct sockaddr *)&address, address_length) < 0 && errno == ECONNREFUSED &&
+            unlink(path) == 0) bound = bind(fd, (struct sockaddr *)&address, address_length);
+        else errno = EADDRINUSE;
+    }
+    if (bound < 0 || chmod(path, (mode_t)mode) < 0 || listen(fd, backlog > 0 ? backlog : 8) < 0) {
         int saved = errno;
         close(fd);
+        if (bound == 0) unlink(path);
         errno = saved;
         return -1;
     }
@@ -86,32 +104,10 @@ int leonos_ipc_peer_credentials(int fd, struct ucred *credentials)
     return 0;
 }
 
-static int read_exact(int fd, void *buffer, uint32_t length)
-{
-    uint8_t *dst = (uint8_t *)buffer;
-    uint32_t done = 0;
-    while (done < length) {
-        ssize_t got = recv(fd, dst + done, length - done, 0);
-        if (got < 0) {
-            if (errno == EAGAIN) return 0;
-            return -1;
-        }
-        if (got == 0) {
-            /* Service loops must release a disconnected client, not retry it. */
-            errno = ECONNRESET;
-            return -1;
-        }
-        done += (uint32_t)got;
-    }
-    return 1;
-}
-
 int leonos_ipc_send_fd(int fd, uint32_t type, const void *payload,
                        uint32_t length, int send_fd)
 {
-    /* One atomic stream write per frame: the kernel write is all-or-nothing,
-     * so the reader can never observe a torn frame header mid-stream. */
-    static uint8_t frame_buffer[LEONOS_IPC_ATOMIC_FRAME_CAP];
+    uint8_t frame_buffer[LEONOS_IPC_ATOMIC_FRAME_CAP];
     uint32_t offset = 0;
     if (length > LEONOS_IPC_ATOMIC_FRAME_CAP - sizeof(struct leonos_ipc_frame) -
                      sizeof(uint32_t)) {
@@ -133,26 +129,40 @@ int leonos_ipc_send_fd(int fd, uint32_t type, const void *payload,
             offset += length;
         }
     }
-    if (send_fd >= 0) {
+    uint32_t done = 0;
+    while (done < offset) {
         char control[CMSG_SPACE(sizeof(int))];
-        struct iovec vector = {.iov_base = frame_buffer, .iov_len = offset};
+        struct iovec vector = {.iov_base = frame_buffer + done, .iov_len = offset - done};
         struct msghdr message;
         struct cmsghdr *header;
         memset(control, 0, sizeof(control));
         memset(&message, 0, sizeof(message));
         message.msg_iov = &vector;
         message.msg_iovlen = 1;
-        message.msg_control = control;
-        message.msg_controllen = sizeof(control);
+        if (send_fd >= 0 && !done) {
+            message.msg_control = control;
+            message.msg_controllen = sizeof(control);
+        }
         header = (struct cmsghdr *)control;
         header->cmsg_len = CMSG_LEN(sizeof(int));
         header->cmsg_level = SOL_SOCKET;
         header->cmsg_type = SCM_RIGHTS;
         *(int *)CMSG_DATA(header) = send_fd;
-        if (sendmsg(fd, &message, 0) != (ssize_t)offset) return -1;
-        return 0;
+        ssize_t sent = sendmsg(fd, &message, MSG_NOSIGNAL);
+        if (sent < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN) {
+                if (!done) return -1;
+                struct pollfd ready = {.fd = fd, .events = POLLOUT};
+                int result = poll(&ready, 1, 3000);
+                if (result > 0) continue;
+                if (!result) errno = ETIMEDOUT;
+            }
+            return -1;
+        }
+        if (!sent) { errno = EPIPE; return -1; }
+        done += (uint32_t)sent;
     }
-    if (send(fd, frame_buffer, offset, 0) != (ssize_t)offset) return -1;
     return 0;
 }
 
@@ -161,68 +171,134 @@ int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
     return leonos_ipc_send_fd(fd, type, payload, length, -1);
 }
 
+struct ipc_receive_state {
+    struct ipc_receive_state *next;
+    int fd;
+    int busy;
+    int ancillary;
+    uint32_t header_bytes;
+    uint32_t body_bytes;
+    struct leonos_ipc_frame frame;
+    uint8_t *body;
+};
+
+static struct ipc_receive_state *receive_states;
+static unsigned receive_lock;
+
+static void receive_states_lock(void)
+{
+    while (__atomic_exchange_n(&receive_lock, 1, __ATOMIC_ACQUIRE)) __asm__ volatile("pause");
+}
+
+static void receive_states_unlock(void)
+{
+    __atomic_store_n(&receive_lock, 0, __ATOMIC_RELEASE);
+}
+
+static struct ipc_receive_state *receive_acquire(int fd)
+{
+    receive_states_lock();
+    struct ipc_receive_state *state = receive_states;
+    while (state && state->fd != fd) state = state->next;
+    if (state && state->busy) {
+        receive_states_unlock();
+        errno = EAGAIN;
+        return NULL;
+    }
+    if (!state) {
+        state = calloc(1, sizeof(*state));
+        if (state) {
+            state->fd = fd;
+            state->ancillary = -1;
+            state->next = receive_states;
+            receive_states = state;
+        }
+    }
+    if (state) state->busy = 1;
+    receive_states_unlock();
+    return state;
+}
+
+static void receive_release(struct ipc_receive_state *state, int retain)
+{
+    receive_states_lock();
+    if (retain) state->busy = 0;
+    else {
+        struct ipc_receive_state **p = &receive_states;
+        while (*p && *p != state) p = &(*p)->next;
+        if (*p) *p = state->next;
+    }
+    receive_states_unlock();
+    if (!retain) {
+        if (state->ancillary >= 0) close(state->ancillary);
+        free(state->body);
+        free(state);
+    }
+}
+
+static int receive_part(struct ipc_receive_state *state, void *destination,
+                         uint32_t *done, uint32_t length)
+{
+    while (*done < length) {
+        char control[CMSG_SPACE(4 * sizeof(int))];
+        struct iovec vector = {.iov_base = (uint8_t *)destination + *done, .iov_len = length - *done};
+        struct msghdr message = {.msg_iov = &vector, .msg_iovlen = 1,
+            .msg_control = control, .msg_controllen = sizeof(control)};
+        ssize_t got = recvmsg(state->fd, &message, MSG_CMSG_CLOEXEC);
+        if (got < 0) { if (errno == EINTR) continue; return -1; }
+        if (!got) { errno = ECONNRESET; return -1; }
+        *done += (uint32_t)got;
+        for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header;
+             header = CMSG_NXTHDR(&message, header)) {
+            if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS ||
+                header->cmsg_len < CMSG_LEN(0)) continue;
+            unsigned count = (header->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+            for (unsigned i = 0; i < count; ++i) {
+                int fd = ((int *)CMSG_DATA(header))[i];
+                if (state->ancillary < 0) state->ancillary = fd;
+                else close(fd);
+            }
+        }
+        if (message.msg_flags & MSG_CTRUNC) { errno = EPROTO; return -1; }
+    }
+    return 0;
+}
+
 int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
                        uint32_t *length, int *received_fd)
 {
-    struct leonos_ipc_frame frame;
-    uint32_t message_type = 0;
-    uint32_t want;
-    uint32_t done = 0;
     if (received_fd) *received_fd = -1;
     if (length) *length = 0;
-    if (read_exact(fd, &frame, sizeof(frame)) <= 0) {
-        return -1;
-    }
-    if (frame.magic != LEONOS_IPC_MAGIC || frame.version != LEONOS_IPC_VERSION ||
-        frame.length < sizeof(message_type) || frame.length > 1024u * 1024u) {
+    struct ipc_receive_state *state = receive_acquire(fd);
+    if (!state) return -1;
+    if (receive_part(state, &state->frame, &state->header_bytes, sizeof(state->frame)) < 0) goto error;
+    if (state->frame.magic != LEONOS_IPC_MAGIC || state->frame.version != LEONOS_IPC_VERSION ||
+        state->frame.length < sizeof(uint32_t) || state->frame.length > 1024u * 1024u) {
         errno = EPROTO;
-        return -1;
+        goto error;
     }
-    if (read_exact(fd, &message_type, sizeof(message_type)) <= 0) return -1;
-    want = frame.length - sizeof(message_type);
-    if (capacity < want) {
-        uint8_t sink[256];
-        while (done < want) {
-            uint32_t chunk = want - done;
-            if (chunk > sizeof(sink)) chunk = sizeof(sink);
-            if (read_exact(fd, sink, chunk) <= 0) return -1;
-            done += chunk;
-        }
-        errno = EMSGSIZE;
-        return -1;
+    if (!state->body) {
+        state->body = malloc(state->frame.length);
+        if (!state->body) goto error;
     }
-    while (done < want) {
-        uint8_t *dst = (uint8_t *)payload + done;
-        uint32_t chunk = want - done;
-        if (read_exact(fd, dst, chunk) <= 0) return -1;
-        done += chunk;
-    }
-    if (type) *type = message_type;
+    if (receive_part(state, state->body, &state->body_bytes, state->frame.length) < 0) goto error;
+    uint32_t want = state->frame.length - sizeof(uint32_t);
+    if (want > capacity) { errno = EMSGSIZE; goto error; }
+    if (want && !payload) { errno = EINVAL; goto error; }
+    if (type) memcpy(type, state->body, sizeof(*type));
+    if (want) memcpy(payload, state->body + sizeof(uint32_t), want);
     if (length) *length = want;
     if (received_fd) {
-        char control[CMSG_SPACE(sizeof(int))];
-        struct msghdr message;
-        struct cmsghdr *header;
-        ssize_t got;
-        memset(control, 0, sizeof(control));
-        memset(&message, 0, sizeof(message));
-        /* LeonOS queues SCM_RIGHTS separately from the byte stream. The
-         * frame is already consumed: receive only control data, otherwise
-         * the real receive steals the next queued frame's first byte. */
-        message.msg_control = control;
-        message.msg_controllen = sizeof(control);
-        got = recvmsg(fd, &message, MSG_PEEK);
-        if (got >= 0 && message.msg_controllen >= sizeof(struct cmsghdr)) {
-            header = (struct cmsghdr *)control;
-            if (header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS) {
-                got = recvmsg(fd, &message, 0);
-                if (got >= 0 && header->cmsg_len >= CMSG_LEN(sizeof(int))) {
-                    *received_fd = *(int *)CMSG_DATA(header);
-                }
-            }
-        }
+        *received_fd = state->ancillary;
+        state->ancillary = -1;
     }
+    receive_release(state, 0);
     return 0;
+error:;
+    int saved = errno;
+    receive_release(state, saved == EAGAIN && state->header_bytes != 0);
+    errno = saved;
+    return -1;
 }
 
 int leonos_ipc_recv(int fd, uint32_t *type, void *payload, uint32_t capacity,
@@ -233,5 +309,12 @@ int leonos_ipc_recv(int fd, uint32_t *type, void *payload, uint32_t capacity,
 
 int leonos_ipc_close(int fd)
 {
+    receive_states_lock();
+    struct ipc_receive_state *state = receive_states;
+    while (state && state->fd != fd) state = state->next;
+    if (state && !state->busy) state->busy = 1;
+    else state = NULL;
+    receive_states_unlock();
+    if (state) receive_release(state, 0);
     return fd >= 0 ? close(fd) : -1;
 }

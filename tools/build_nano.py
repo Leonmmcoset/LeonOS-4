@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+import musl_link
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,14 +51,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--port", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path, required=True)
     parser.add_argument("--leonos-include", type=Path, required=True)
-    parser.add_argument("--linker-script", type=Path, required=True)
+
     parser.add_argument("--leonos-lib", type=Path, required=True)
-    parser.add_argument("--picolibc-lib", type=Path, required=True)
-    parser.add_argument("--dynamic-crt", type=Path)
-    parser.add_argument("--abi-note", type=Path)
+    parser.add_argument("--musl-lib", type=Path, required=True)
+
+
     parser.add_argument("--dynamic", action="store_true")
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -71,21 +72,26 @@ def main() -> None:
 
     source = args.source.resolve()
     port = args.port.resolve()
-    picolibc_prefix = args.picolibc_prefix.resolve()
+    musl_prefix = args.musl_prefix.resolve()
     leonos_libc_include = args.leonos_libc_include.resolve()
     leonos_include = args.leonos_include.resolve()
-    linker_script = args.linker_script.resolve()
+
     leonos_lib = args.leonos_lib.resolve()
-    picolibc_lib = args.picolibc_lib.resolve()
+    musl_lib = args.musl_lib.resolve()
     work_dir = args.work_dir.resolve()
     output = args.output.resolve()
     stamp = args.stamp.resolve()
     required = (
-        source / "src/nano.c", source / "COPYING", port / "leonos_port.c",
+        source / "src/nano.c",
+        source / "COPYING",
         port / "include/config.h",
-        port / "include/revision.h", picolibc_prefix / "include", leonos_libc_include,
-        leonos_libc_include / "ncurses.h", leonos_include, linker_script,
-        leonos_lib, picolibc_lib,
+        port / "include/revision.h",
+        musl_prefix / "include",
+        leonos_libc_include,
+        leonos_libc_include / "ncurses.h",
+        leonos_include,
+        leonos_lib,
+        musl_lib,
     )
     for path in required:
         if not path.exists():
@@ -100,43 +106,39 @@ def main() -> None:
 
     headers = clang_resource_headers()
     common_flags = [
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
-        "-fno-stack-protector", "-fPIC", "-fPIE", "-mno-red-zone",
-        "-mgeneral-regs-only", "-ffunction-sections", "-fdata-sections", "-Wall",
-        "-Wextra", "-Wno-unused-parameter", "-D_POSIX_C_SOURCE=200809L",
-        "-D_DEFAULT_SOURCE", "-DHAVE_CONFIG_H", "-DLEONOS_USE_PICOLIBC",
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
+        "-fno-stack-protector", "-fPIC", "-fPIE",
+         "-ffunction-sections", "-fdata-sections", "-Wall",
+        "-Wextra", "-Wno-unused-parameter", "-D_POSIX_C_SOURCE=200809L", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL",
+        "-D_DEFAULT_SOURCE", "-DHAVE_CONFIG_H", "-DLEONOS_USE_MUSL",
         "-nostdinc", "-isystem", str(headers), "-I" + str(port / "include"),
-        "-I" + str(picolibc_prefix / "include"), "-I" + str(leonos_libc_include),
-        "-I" + str(leonos_include), "-I" + str(source / "src"),
+        "-I" + str(musl_prefix / "include"), "-I" + str(leonos_libc_include),
+        "-I" + str(leonos_include), "-I" + str(leonos_include / "uapi"), "-I" + str(source / "src"),
     ]
     port_flags = common_flags[:]
     nano_flags = common_flags + [
-        "-Dstat=leonos_posix_stat", "-Dfstat=leonos_posix_fstat",
-        "-Dlstat=leonos_posix_lstat",
+
+
     ]
 
     objects: list[Path] = []
     for name in NANO_SOURCES:
         source_file = source / "src" / name
+        if name == "utils.c":
+            content = source_file.read_text()
+            import re
+            content, count = re.subn(
+                r"regexec\(&search_regexp, haystack, (1|10), regmatches, REG_STARTEND\)",
+                r"leonos_nano_regex_suffix(&search_regexp, haystack, \1, regmatches)", content)
+            if count != 3:
+                raise SystemExit("nano range-search source changed")
+            source_file = work_dir / "utils.c"
+            source_file.write_text('#include "' + str(port / "regex_range.h") + '"\n' + content)
         object_file = object_dir / (name.removesuffix(".c") + ".o")
         compile_source("clang", nano_flags, source_file, object_file)
         objects.append(object_file)
-    for name in ("leonos_port.c",):
-        source_file = port / name
-        object_file = object_dir / (name.removesuffix(".c") + ".o")
-        compile_source("clang", port_flags, source_file, object_file)
-        objects.append(object_file)
-
     output.parent.mkdir(parents=True, exist_ok=True)
-    if args.dynamic and (not args.dynamic_crt or not args.abi_note):
-        raise SystemExit("dynamic Nano requires --dynamic-crt and --abi-note")
-    dynamic = ["-pie", "--hash-style=sysv", "--dynamic-linker", "/system/lib/ld-leonos.elf",
-               "-z", "relro", "-z", "now"] if args.dynamic else []
-    startup = [str(args.dynamic_crt), str(args.abi_note)] if args.dynamic else []
-    libraries = [str(leonos_lib)] if args.dynamic else [str(leonos_lib), str(picolibc_lib)]
-    run(["ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, *dynamic,
-         "-z", "max-page-size=0x1000", "-T", str(linker_script), "-o", str(output),
-         *startup, *map(str, objects), "--start-group", *libraries, "--end-group"])
+    run(musl_link.executable(musl_prefix, output, objects, (leonos_lib,), static=not args.dynamic, flags=args.linker_flag))
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(
         json.dumps(
@@ -144,8 +146,7 @@ def main() -> None:
                 "nano_commit": source_revision(source),
                 "nano_version": "9.2",
                 "port_sha256": hashlib.sha256(
-                    (port / "leonos_port.c").read_bytes()
-                    + (port / "include/config.h").read_bytes()
+                    (port / "include/config.h").read_bytes()
                     + (leonos_libc_include / "ncurses.h").read_bytes()
                 ).hexdigest(),
             },

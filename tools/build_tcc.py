@@ -3,7 +3,7 @@
 
 The upstream tree stays pristine. This script makes a build-owned source copy,
 installs an explicit LeonOS target definition layer into that copy, and stages
-an immutable Picolibc-based sysroot beside ``tcc.elf``.
+an immutable musl-based sysroot beside ``tcc.elf``.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+import musl_link
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -204,14 +205,17 @@ def patch_tinycc(source: Path, port: Path) -> None:
     end = text.index(end_marker, begin) + len(end_marker)
     replacement = """ST_FUNC void tccelf_add_crtbegin(TCCState *s1)
 {
-    /* LeonOS uses one static CRT entry point and no dynamic-loader objects. */
-    if (s1->output_type != TCC_OUTPUT_DLL)
-        tcc_add_crt(s1, \"crt0.o\");
+    if (s1->output_type != TCC_OUTPUT_DLL) {
+        tcc_add_crt(s1, "crt1.o");
+        tcc_add_crt(s1, "crti.o");
+        tcc_add_crt(s1, "mimalloc.o");
+    }
 }
 
 ST_FUNC void tccelf_add_crtend(TCCState *s1)
 {
-    (void)s1;
+    if (s1->output_type != TCC_OUTPUT_DLL)
+        tcc_add_crt(s1, "crtn.o");
 }
 #endif /* TCC_TARGET_UNIX */"""
     tccelf.write_text(text[:begin] + replacement + text[end:], encoding="utf-8", newline="\n")
@@ -221,17 +225,17 @@ ST_FUNC void tccelf_add_crtend(TCCState *s1)
         "#if defined LEONOS_TCC_TARGET\n"
         "        /*\n"
         "         * This is the LeonOS static target link specification. Archives\n"
-        "         * are rescanned as a group because the LeonOS adapter, Picolibc,\n"
+        "         * are rescanned as a group because the LeonOS adapter, musl,\n"
         "         * mbedTLS, and target runtime have recursive references. TinyCC\n"
         "         * resolves an archive only when tcc_add_library() is called, so\n"
         "         * one pass is not sufficient for all cross-archive dependencies.\n"
         "         */\n"
         "        tcc_add_support(s1, \"libleonos-tcc-rt.a\");\n"
-        "        tcc_add_library(s1, \"picolibc\");\n"
+        "        tcc_add_library(s1, \"c\");\n"
         "        tcc_add_library(s1, \"leonos\");\n"
-        "        tcc_add_library(s1, \"picolibc\");\n"
+        "        tcc_add_library(s1, \"c\");\n"
         "        tcc_add_library(s1, \"leonos\");\n"
-        "        tcc_add_library(s1, \"picolibc\");\n"
+        "        tcc_add_library(s1, \"c\");\n"
         "        tcc_add_library(s1, \"leonos\");\n"
         "#else\n"
         "        tcc_add_library(s1, \"c\");\n"
@@ -308,17 +312,17 @@ def compile_source(flags: list[str], source: Path, output: Path) -> None:
     run(["clang", *flags, "-c", str(source), "-o", str(output)])
 
 
-def copy_headers(picolibc_include: Path, sdk_include: Path, uapi_include: Path,
+def copy_headers(musl_include: Path, sdk_include: Path, uapi_include: Path,
                  tcc_source: Path, runtime_include: Path, zlib_source: Path,
                  libpng_source: Path, libpng_config: Path) -> None:
-    shutil.copytree(picolibc_include, runtime_include)
+    shutil.copytree(musl_include, runtime_include)
     for source in sorted(sdk_include.rglob("*")):
         if not source.is_file():
             continue
         relative = source.relative_to(sdk_include)
         destination = runtime_include / relative
-        # Picolibc owns the ISO C headers.  The SDK contributes LeonOS headers
-        # and compatibility-only files that Picolibc does not supply.
+        # musl owns the ISO C headers.  The SDK contributes LeonOS headers
+        # and compatibility-only files that musl does not supply.
         if destination.exists() and relative.parts[0] != "leonos":
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -329,10 +333,10 @@ def copy_headers(picolibc_include: Path, sdk_include: Path, uapi_include: Path,
     for source in sorted(uapi_include.rglob("*")):
         if not source.is_file():
             continue
-        destination = runtime_include / "linux" / source.relative_to(uapi_include)
+        destination = runtime_include / source.relative_to(uapi_include)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-    # Picolibc intentionally does not install a few compiler-owned headers
+    # musl intentionally does not install a few compiler-owned headers
     # such as stddef.h and stdarg.h.  TCC supplies these target definitions;
     # they must live in the same private sysroot as the C library headers.
     for source in sorted((tcc_source / "include").iterdir()):
@@ -359,15 +363,15 @@ def main() -> None:
     parser.add_argument("--port", type=Path, required=True)
     parser.add_argument("--sdk-include", type=Path, required=True)
     parser.add_argument("--uapi-include", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-lib", type=Path, required=True)
-    parser.add_argument("--picolibc-lib", type=Path, required=True)
+    parser.add_argument("--musl-lib", type=Path, required=True)
     parser.add_argument("--zlib-lib", type=Path, required=True)
     parser.add_argument("--libpng-lib", type=Path, required=True)
     parser.add_argument("--zlib-source", type=Path, required=True)
     parser.add_argument("--libpng-source", type=Path, required=True)
     parser.add_argument("--libpng-config", type=Path, required=True)
-    parser.add_argument("--linker-script", type=Path, required=True)
+
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -383,29 +387,40 @@ def main() -> None:
     port = args.port.resolve()
     sdk_include = args.sdk_include.resolve()
     uapi_include = args.uapi_include.resolve()
-    picolibc_prefix = args.picolibc_prefix.resolve()
+    musl_prefix = args.musl_prefix.resolve()
     leonos_lib = args.leonos_lib.resolve()
-    picolibc_lib = args.picolibc_lib.resolve()
+    musl_lib = args.musl_lib.resolve()
     zlib_lib = args.zlib_lib.resolve()
     libpng_lib = args.libpng_lib.resolve()
     zlib_source = args.zlib_source.resolve()
     libpng_source = args.libpng_source.resolve()
     libpng_config = args.libpng_config.resolve()
-    linker_script = args.linker_script.resolve()
+
     work_dir = require_within_root(args.work_dir, "TinyCC work directory")
     runtime_dir = require_within_root(args.runtime_dir, "TinyCC runtime directory")
     output = require_within_root(args.output, "TinyCC output")
     stamp = require_within_root(args.stamp, "TinyCC stamp")
-    picolibc_include = picolibc_prefix / "include"
+    musl_include = musl_prefix / "include"
     required = (
-        source / TCC_MAIN_SOURCE, source / "COPYING", source / "include/tccdefs.h",
-        port / "leonos_tcc_host_shim.c", port / "leonos_tcc_runtime.c",
+        source / TCC_MAIN_SOURCE,
+        source / "COPYING",
+        source / "include/tccdefs.h",
         port / "leonos_tcc_float_runtime.c",
-        port / "leonos_tccdefs.h", port / "README.md",
-        port / "examples/hello.c", sdk_include, uapi_include,
-        picolibc_include, leonos_lib, picolibc_lib, zlib_lib, libpng_lib,
-        zlib_source / "zlib.h", zlib_source / "zconf.h", libpng_source / "png.h",
-        libpng_source / "pngconf.h", libpng_config, linker_script,
+        port / "leonos_tccdefs.h",
+        port / "README.md",
+        port / "examples/hello.c",
+        sdk_include,
+        uapi_include,
+        musl_include,
+        leonos_lib,
+        musl_lib,
+        zlib_lib,
+        libpng_lib,
+        zlib_source / "zlib.h",
+        zlib_source / "zconf.h",
+        libpng_source / "png.h",
+        libpng_source / "pngconf.h",
+        libpng_config,
     )
     for path in required:
         if not path.exists():
@@ -421,23 +436,19 @@ def main() -> None:
 
     headers = clang_resource_headers()
     flags = [
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]), "-std=c11", "-ffreestanding",
-        "-fno-stack-protector", "-fno-pic", "-fno-pie", "-mno-red-zone",
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]), "-std=c11", "-ffreestanding",
+        "-fno-stack-protector", "-fno-pic", "-fno-pie",
         # TinyCC parses long-double literals internally.  The kernel saves
         # x87/SSE state for every user task, so its compiler process may use
         # the x86 floating-point unit even though most LeonOS apps do not.
         "-ffunction-sections", "-fdata-sections", "-Wall",
         "-Wextra", "-Wno-unused-parameter", "-DLEONOS_TCC_PORT=1",
-        "-DLEONOS_USE_PICOLIBC", "-D_POSIX_C_SOURCE=200809L", "-nostdinc",
+        "-DLEONOS_USE_MUSL", "-D_POSIX_C_SOURCE=200809L", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL", "-nostdinc",
         "-isystem", str(headers), "-I" + str(work_source),
-        "-I" + str(picolibc_include), "-I" + str(sdk_include),
+        "-I" + str(musl_include), "-I" + str(sdk_include), "-I" + str(uapi_include),
     ]
     tcc_object = object_dir / "tcc.o"
     compile_source(flags + ["-DONE_SOURCE=1"], work_source / TCC_MAIN_SOURCE, tcc_object)
-    host_shim_object = object_dir / "leonos_tcc_host_shim.o"
-    compile_source(flags, port / "leonos_tcc_host_shim.c", host_shim_object)
-    target_runtime_object = object_dir / "leonos_tcc_runtime.o"
-    compile_source(flags, port / "leonos_tcc_runtime.c", target_runtime_object)
     float_runtime_object = object_dir / "leonos_tcc_float_runtime.o"
     compile_source(flags, port / "leonos_tcc_float_runtime.c", float_runtime_object)
 
@@ -451,35 +462,27 @@ def main() -> None:
     run(["llvm-ar", "rcs", str(libtcc1), *map(str, libtcc1_objects)])
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-nostdlib", "--gc-sections", *args.linker_flag, "-z", "max-page-size=0x1000",
-        "-T", str(linker_script), "-o", str(output), str(tcc_object), str(host_shim_object),
-        str(float_runtime_object),
-        "--start-group", str(leonos_lib), str(picolibc_lib), "--end-group",
-    ])
+    run(musl_link.executable(musl_prefix, output, (tcc_object, float_runtime_object),
+                             (leonos_lib,), static=True, flags=args.linker_flag))
 
     staging_dir = runtime_dir.with_name(runtime_dir.name + ".new")
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
     (staging_dir / "lib").mkdir(parents=True)
-    copy_headers(picolibc_include, sdk_include, uapi_include, work_source,
+    copy_headers(musl_include, sdk_include, uapi_include, work_source,
                  staging_dir / "include", zlib_source, libpng_source,
                  libpng_config)
     shutil.copyfile(libtcc1, staging_dir / "lib/libtcc1.a")
     shutil.copyfile(leonos_lib, staging_dir / "lib/libleonos.a")
-    shutil.copyfile(picolibc_lib, staging_dir / "lib/libpicolibc.a")
+    shutil.copyfile(musl_lib, staging_dir / "lib/libc.a")
     shutil.copyfile(zlib_lib, staging_dir / "lib/libz.a")
     shutil.copyfile(libpng_lib, staging_dir / "lib/libpng.a")
     shutil.copyfile(object_dir / "lib_alloca.o", staging_dir / "lib/alloca.o")
     target_runtime = staging_dir / "lib/libleonos-tcc-rt.a"
-    run(["llvm-ar", "rcs", str(target_runtime), str(target_runtime_object),
-         str(float_runtime_object)])
-    # The installed crt0 deliberately remains a normal relocatable object.
-    run([
-        "clang", "-target", "x86_64-unknown-none", "-ffreestanding", "-mno-red-zone",
-        "-mgeneral-regs-only", "-c", str(ROOT / "userland/libc/src/crt0.S"),
-        "-o", str(staging_dir / "lib/crt0.o"),
-    ])
+    run(["llvm-ar", "rcs", str(target_runtime), str(float_runtime_object)])
+    for name in ("crt1.o", "crti.o", "crtn.o", "mimalloc.o"):
+        shutil.copyfile(musl_prefix / "lib" / name, staging_dir / "lib" / name)
+    shutil.copytree(musl_prefix / "share/licenses", staging_dir / "licenses")
     shutil.copyfile(source / "COPYING", staging_dir / "COPYING")
     shutil.copyfile(port / "README.md", staging_dir / "README-LEONOS.md")
     shutil.copytree(port / "examples", staging_dir / "examples")
@@ -494,9 +497,7 @@ def main() -> None:
                 "target_predefines": "leonos_tccdefs.h",
                 "runtime": runtime_manifest(runtime_dir),
                 "port_sha256": hashlib.sha256(
-                    (port / "leonos_tcc_host_shim.c").read_bytes()
-                    + (port / "leonos_tcc_runtime.c").read_bytes()
-                    + (port / "leonos_tcc_float_runtime.c").read_bytes()
+                    (port / "leonos_tcc_float_runtime.c").read_bytes()
                     + (port / "leonos_tccdefs.h").read_bytes()
                     + (port / "README.md").read_bytes()
                 ).hexdigest(),

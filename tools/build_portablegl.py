@@ -8,6 +8,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+import musl_link
 
 
 PORTABLEGL_COMMIT = "7cf39dc1741ea2be60ce3bd327f6e5337f60207f"
@@ -32,14 +33,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--port", type=Path, required=True)
-    parser.add_argument("--picolibc-prefix", type=Path, required=True)
+    parser.add_argument("--musl-prefix", type=Path, required=True)
     parser.add_argument("--leonos-libc-include", type=Path, required=True)
     parser.add_argument("--leonos-include", type=Path, required=True)
     parser.add_argument("--generated-include", type=Path, required=True)
     parser.add_argument("--autoconf", type=Path, required=True)
-    parser.add_argument("--dynamic-linker-script", type=Path, required=True)
+
     parser.add_argument("--runtime-so", type=Path, required=True)
-    parser.add_argument("--abi-note", type=Path, required=True)
+
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--static-library", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
@@ -50,20 +51,26 @@ def main() -> None:
 
     source = args.source.resolve()
     port = args.port.resolve()
-    picolibc_prefix = args.picolibc_prefix.resolve()
+    musl_prefix = args.musl_prefix.resolve()
     leonos_libc_include = args.leonos_libc_include.resolve()
     leonos_include = args.leonos_include.resolve()
     generated_include = args.generated_include.resolve()
     autoconf = args.autoconf.resolve()
-    dynamic_linker_script = args.dynamic_linker_script.resolve()
+
     runtime_so = args.runtime_so.resolve()
-    abi_note = args.abi_note.resolve()
+
     work_dir = args.work_dir.resolve()
     source_file = port / "leonos_pgl.c"
     required = (
-        source / "portablegl.h", source / "LICENSE", source_file,
-        picolibc_prefix / "include", leonos_libc_include, leonos_include,
-        generated_include, autoconf, dynamic_linker_script, runtime_so, abi_note,
+        source / "portablegl.h",
+        source / "LICENSE",
+        source_file,
+        musl_prefix / "include",
+        leonos_libc_include,
+        leonos_include,
+        generated_include,
+        autoconf,
+        runtime_so,
     )
     for path in required:
         if not path.exists():
@@ -74,13 +81,13 @@ def main() -> None:
     object_dir = work_dir / "objects"
     object_dir.mkdir(parents=True)
     flags = [
-        "-target", "x86_64-unknown-none", *(args.compile_flag or ["-O2"]),
+        "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]),
         "-std=c99", "-ffreestanding", "-fno-stack-protector", "-fPIC",
-        "-mno-red-zone", "-mno-avx", "-mno-avx2", "-ffunction-sections",
+         "-mno-avx", "-mno-avx2", "-ffunction-sections",
         "-fdata-sections", "-Wall", "-Wextra", "-Wno-unused-parameter",
-        "-DLEONOS_USE_PICOLIBC", "-D_POSIX_C_SOURCE=200809L", "-nostdinc",
-        "-isystem", str(resource_headers()), "-I" + str(picolibc_prefix / "include"),
-        "-I" + str(leonos_libc_include), "-I" + str(leonos_include),
+        "-DLEONOS_USE_MUSL", "-D_POSIX_C_SOURCE=200809L", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL", "-nostdinc",
+        "-isystem", str(resource_headers()), "-I" + str(musl_prefix / "include"),
+        "-I" + str(leonos_libc_include), "-I" + str(leonos_include), "-I" + str(leonos_include / "uapi"),
         "-I" + str(generated_include), "-I" + str(source), "-I" + str(port),
         "-include", str(autoconf),
     ]
@@ -89,12 +96,7 @@ def main() -> None:
 
     library = args.library.resolve()
     library.parent.mkdir(parents=True, exist_ok=True)
-    run([
-        "ld.lld", "-shared", "-Bsymbolic", "--hash-style=sysv", "--entry=0",
-        "-soname", "libportablegl.so.1", "-z", "max-page-size=0x1000",
-        "-T", str(dynamic_linker_script), "-o", str(library),
-        str(object_file), str(abi_note), str(runtime_so), *args.linker_flag,
-    ])
+    run(musl_link.shared(musl_prefix, library, (object_file,), (runtime_so,), soname="libportablegl.so.1", flags=args.linker_flag))
 
     static_library = args.static_library.resolve()
     static_library.parent.mkdir(parents=True, exist_ok=True)

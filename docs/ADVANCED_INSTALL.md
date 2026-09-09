@@ -254,7 +254,7 @@ fsck.ext2 /dev/disk0p2
 mount -t ext2 /dev/disk0p2 /mnt/root
 ```
 
-之后仍然执行根文件复制、`leonos-grub-installer`、`sync`、卸载和重启步骤。新安装优先推荐 exFAT；ext2 主要用于兼容现有系统或特定需求。
+之后仍然执行根文件复制、`leonos-grub-installer`、`sync`、卸载和重启步骤。新安装默认使用 ext2；exFAT 仍可按需显式选择。
 
 ## 可用工具
 

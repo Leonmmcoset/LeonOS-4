@@ -1,6 +1,7 @@
 #include <leonos/auth.h>
 #include <leonos/environment.h>
 #include <leonos/syscall.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -238,7 +239,7 @@ static int env_load_file(struct environment_list *list, const char *path)
     fd = open(path, O_RDONLY);
     if (fd < 0) {
         /* Missing configuration is equivalent to an empty layer. */
-        return fd == -2 ? 0 : fd;
+        return errno == ENOENT ? 0 : -errno;
     }
     contents = (char *)malloc(LEONOS_ENV_MAX_FILE_BYTES + 1U);
     if (!contents) {

@@ -28,8 +28,8 @@ FFVersionResult ffVersionResult = {
 const char* ffDetectLibc(FFLibcResult* result)
 {
     if (result) {
-        result->name = "Picolibc";
-        result->version = nullptr;
+        result->name = "musl";
+        result->version = "1.2.6";
     }
     return nullptr;
 }
@@ -168,14 +168,3 @@ void ffLeonOSPrintCPU(void)
     ffLeonOSPrintStatic("CPU", ffLeonOSCPUName());
 }
 
-int clock_gettime([[maybe_unused]] clockid_t clock_id, struct timespec* time)
-{
-    struct leonos_time_info info = {0};
-
-    if (!time || leonos_time_info(&info) < 0) {
-        return -1;
-    }
-    time->tv_sec = (time_t)info.unix_seconds;
-    time->tv_nsec = 0;
-    return 0;
-}

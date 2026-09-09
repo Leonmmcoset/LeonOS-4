@@ -74,7 +74,7 @@ void create_new_folder(void)
         return;
     }
     build_child_path(path, sizeof(path), name);
-    ret = mkdir(path, 0);
+    ret = mkdir(path, 0777);
     if (ret < 0) {
         set_status_error("Create folder failed ", ret);
         return;
@@ -316,7 +316,7 @@ void extract_tar_with_path(const char *tar_path)
     if (ext && text_eq(ext, ".tar")) {
         dest_dir[plen - 4U] = 0;
     }
-    if (mkdir(dest_dir, 0) < 0) {
+    if (mkdir(dest_dir, 0777) < 0) {
         struct leonos_stat st;
         if (leonos_stat_legacy(dest_dir, &st) != 0 || st.type != LEONOS_FS_TYPE_DIR) {
             set_status_code("Extract mkdir failed ", -1);
@@ -386,7 +386,7 @@ void compress_selected_to_tar(void)
         memcpy(tar_path + clen + 1U, base_name, nlen);
         memcpy(tar_path + clen + 1U + nlen, ".tar", 5U);
     }
-    tar_fd = open(tar_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0);
+    tar_fd = open(tar_path, LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (tar_fd < 0) {
         set_status(T("Cannot create tar", "无法创建tar"));
         return;
