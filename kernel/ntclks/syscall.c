@@ -4531,6 +4531,32 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         return fs_permissions_check(task, path, (uint32_t)a1, true);
     }
 
+    if (number == LINUX_SYS_READLINK || number == LINUX_SYS_READLINKAT) {
+        struct task *task = sched_current_task();
+        char path[LEONOS_FS_PATH_LEN];
+        uint64_t pathname = number == LINUX_SYS_READLINKAT ? a1 : a0;
+        uint64_t buffer = number == LINUX_SYS_READLINKAT ? a2 : a1;
+        int32_t capacity = (int32_t)(number == LINUX_SYS_READLINKAT ? a3 : a2);
+        int32_t dirfd = number == LINUX_SYS_READLINKAT ? (int32_t)a0 : LINUX_AT_FDCWD;
+        int ret;
+        if (capacity <= 0) return -LEONOS_EINVAL;
+        ret = resolve_user_path_at(task, dirfd, pathname, 0, path, NULL, false);
+        if (ret < 0) return ret;
+        char target[LEONOS_FS_PATH_LEN];
+        ret = proc_readlink(path, target, sizeof(target));
+        if (ret == -LEONOS_ENOENT) {
+            struct storage_node node;
+            int found = proc_lookup(path, &node);
+            if (found < 0) found = storage_lookup_path(path, &node);
+            return found < 0 ? storage_errno(found) : -LEONOS_EINVAL;
+        }
+        if (ret < 0) return ret;
+        if (ret > capacity) ret = capacity;
+        if (!user_range_writable(buffer, (uint32_t)ret)) return -LEONOS_EFAULT;
+        for (int i = 0; i < ret; ++i) ((char *)(uintptr_t)buffer)[i] = target[i];
+        return ret;
+    }
+
     if (number == LINUX_SYS_FCHDIR) {
         struct task *task = sched_current_task();
         struct task_file *file = task_file_for_fd(task, (int)a0);

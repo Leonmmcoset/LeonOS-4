@@ -104,27 +104,23 @@ int chmod(const char *path, mode_t mode)
 
 int link(const char *old_path, const char *new_path)
 {
-    (void)old_path;
-    (void)new_path;
-    errno = ENOSYS;
-    return -1;
+    long ret = syscall2(SYS_link, (long)old_path, (long)new_path);
+    if (ret < 0) { errno = (int)-ret; return -1; }
+    return (int)ret;
 }
 
 int symlink(const char *target, const char *link_path)
 {
-    (void)target;
-    (void)link_path;
-    errno = ENOSYS;
-    return -1;
+    long ret = syscall2(SYS_symlink, (long)target, (long)link_path);
+    if (ret < 0) { errno = (int)-ret; return -1; }
+    return (int)ret;
 }
 
 ssize_t readlink(const char *path, char *buffer, size_t length)
 {
-    (void)path;
-    (void)buffer;
-    (void)length;
-    errno = ENOSYS;
-    return -1;
+    long ret = syscall3(SYS_readlink, (long)path, (long)buffer, (long)length);
+    if (ret < 0) { errno = (int)-ret; return -1; }
+    return (ssize_t)ret;
 }
 
 int statvfs(const char *path, struct statvfs *st)

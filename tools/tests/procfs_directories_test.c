@@ -26,6 +26,7 @@ const struct leonos_system_info *ntclks_system_info(void) { return NULL; }
 
 int main(void)
 {
+    strcpy(current.path, "/programs/procsys/procsys.elf");
     struct storage_node node;
     assert(proc_lookup("/proc/42", &node) == 0 && node.type == LEONOS_FS_TYPE_DIR);
     assert(proc_lookup("/proc/self", &node) == 0 && node.type == LEONOS_FS_TYPE_DIR);
@@ -39,9 +40,16 @@ int main(void)
     contents[got] = 0;
     assert(strstr(contents, "42 (test)"));
     assert(proc_lookup("/proc/42/status", &node) == 0 && node.type == LEONOS_FS_TYPE_FILE);
-    current.euid = current.suid = 1001;
+    char link[64] = {0};
+    assert(proc_readlink("/proc/self", link, sizeof(link)) == 2);
+    assert(!memcmp(link, "42", 2));
+    memset(link, 0, sizeof(link));
+    assert(proc_readlink("/proc/42/exe", link, sizeof(link)) == 29);
+    assert(!memcmp(link, "/programs/procsys/procsys.elf", 29));
+    assert(proc_readlink("/proc/42/stat", link, sizeof(link)) == -22);
+    current.euid = current.suid = current.fsuid = 1001;
     current.as.cr3 = 4096;
-    current.gid = 4000000000U; current.egid = current.sgid = 4000000001U;
+    current.gid = 4000000000U; current.egid = current.sgid = current.fsgid = 4000000001U;
     assert(proc_read("/proc/42/status", 0, contents, sizeof(contents) - 1, &got) == 0 && got);
     contents[got] = 0;
     assert(strstr(contents, "Name:\ttest\n"));

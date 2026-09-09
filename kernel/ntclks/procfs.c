@@ -3,6 +3,7 @@
 #include <ntclks/sched.h>
 #include <ntclks/smp.h>
 #include <ntclks/storage.h>
+#include <ntclks/syscall.h>
 #include <ntclks/syscall_internal.h>
 #include <ntclks/time.h>
 #include <ntclks/version.h>
@@ -77,6 +78,10 @@ static struct task *proc_task_for_path(const char *path)
 static int proc_path_kind(const char *path, const char **file_name,
                           uint32_t *pid)
 {
+    const char *prefix = "/proc/";
+    if (!path) return 0;
+    for (uint32_t i = 0; prefix[i]; ++i)
+        if (path[i] != prefix[i]) return 0;
     const char *p = path + 6;
     const char *slash = p;
     uint32_t value = 0;
@@ -90,11 +95,11 @@ static int proc_path_kind(const char *path, const char **file_name,
         value = value * 10u + digit;
         ++p;
     }
-    if (p == slash && value) {
+    if (p == slash && value && path[6] != '0') {
         if (pid) *pid = value;
         return 2;
     }
-    if (p < slash && (uint32_t)(slash - p) == 4u &&
+    if (p == path + 6 && p < slash && (uint32_t)(slash - p) == 4u &&
         p[0] == 's' && p[1] == 'e' && p[2] == 'l' && p[3] == 'f') {
         return 3;
     }
@@ -333,6 +338,45 @@ int proc_read(const char *path, uint64_t offset, void *buffer, uint32_t length,
     }
     if (out_read) *out_read = length;
     return 0;
+}
+
+int proc_readlink(const char *path, char *buffer, uint32_t capacity)
+{
+    const char *file = NULL;
+    uint32_t pid = 0;
+    struct task *caller = sched_current_task();
+    struct task *task;
+    uint32_t length = 0;
+    if (!path || !buffer || !capacity) return -LEONOS_EINVAL;
+    int kind = proc_path_kind(path, &file, &pid);
+    if (kind != 2 && kind != 3) return -LEONOS_ENOENT;
+    if (kind == 3 && !file) {
+        char target[16] = {0};
+        if (!caller) return -LEONOS_ENOENT;
+        proc_append_u64(target, &length, sizeof(target), sched_task_tgid(caller));
+        if (length > capacity) length = capacity;
+        for (uint32_t i = 0; i < length; ++i) buffer[i] = target[i];
+        return (int)length;
+    }
+    task = kind == 3 ? caller : sched_find(pid);
+    if (!task) return -LEONOS_ENOENT;
+    if (!file || !proc_text_eq(file, "exe"))
+        return proc_lookup(path, NULL) == 0 ? -LEONOS_EINVAL : -LEONOS_ENOENT;
+    /* Match the available FSCREDS/dumpable policy. Capability namespaces and
+     * executable inode tracking still need the common ptrace/VFS machinery. */
+    if (!caller) return -LEONOS_EACCES;
+    if (sched_task_tgid(caller) != sched_task_tgid(task) && caller->euid &&
+        (caller->fsuid != task->uid || caller->fsuid != task->euid ||
+         caller->fsuid != task->suid || caller->fsgid != task->gid ||
+         caller->fsgid != task->egid || caller->fsgid != task->sgid ||
+         sched_task_mm(task)->nondumpable)) return -LEONOS_EACCES;
+    if (!task->path[0]) return -LEONOS_ENOENT;
+    while (length < capacity && task->path[length]) {
+        buffer[length] = task->path[length];
+        ++length;
+    }
+    /* readlink(2) does not append NUL and truncates at bufsiz. */
+    return (int)length;
 }
 
 int proc_readdir(const char *path, uint64_t *offset, struct leonos_dir_entry *entry)

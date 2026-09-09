@@ -86,11 +86,7 @@ int64_t syscall_security_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
 int proc_lookup(const char *path, struct storage_node *out);
 int proc_read(const char *path, uint64_t offset, void *buffer, uint32_t length,
               uint32_t *out_read);
-int proc_readdir(const char *path, uint64_t *offset,
-                 struct leonos_dir_entry *entry);
-int proc_lookup(const char *path, struct storage_node *out);
-int proc_read(const char *path, uint64_t offset, void *buffer, uint32_t length,
-              uint32_t *out_read);
+int proc_readlink(const char *path, char *buffer, uint32_t capacity);
 int proc_readdir(const char *path, uint64_t *offset,
                  struct leonos_dir_entry *entry);
 int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1,
