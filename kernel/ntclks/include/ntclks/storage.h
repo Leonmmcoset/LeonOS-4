@@ -271,7 +271,7 @@ int storage_install_list_disks(struct leonos_install_disk *disks,
  */
 int storage_install_format_esp(uint32_t disk_id);
 /**
- * @brief Formats an installer target as a GPT disk with FAT32 ESP and exFAT root.
+ * @brief Formats an installer target as a GPT disk with FAT32 ESP and ext2 root.
  * @param disk_id Installer-selected AHCI, IDE/PATA, or NVMe disk identifier.
  * @return Zero on success or a negative errno-style storage error.
  */

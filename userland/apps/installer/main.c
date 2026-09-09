@@ -877,14 +877,14 @@ static int installer_target_partitions(const char *disk_path, int fresh,
         if (ret < 0) return ret;
         root_mib = (uint32_t)((info.sector_count * info.sector_size) / (1024ULL * 1024ULL));
         /* Match main's install_write_gpt layout: a fixed 128 MiB ESP, then
-         * the exFAT root consumes the remaining usable GPT area. The extra
+         * the ext2 root consumes the remaining usable GPT area. The extra
          * 3 MiB reserve covers the primary/backup GPT and 1 MiB alignment
          * slop after the ESP. */
         if (root_mib > 256u) root_mib -= 131u; else root_mib = 64u;
-        ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_EXFAT,
+        ret = leonos_block_gpt_create(disk_path, LEONOS_BLOCK_FILESYSTEM_EXT2,
                                       root_mib, "LEONOS4_ROOT", &root);
         if (ret < 0) return ret;
-        ret = leonos_block_gpt_set_type(disk_path, root, LEONOS_BLOCK_GPT_BASIC_DATA);
+        ret = leonos_block_gpt_set_type(disk_path, root, LEONOS_BLOCK_GPT_LINUX);
         if (ret < 0) return ret;
         /* Format through the partition nodes after the GPT reread. */
         ret = leonos_block_partition_path(disk_path, esp, esp_path, esp_cap);
@@ -893,8 +893,8 @@ static int installer_target_partitions(const char *disk_path, int fresh,
         if (ret < 0) return ret;
         ret = leonos_block_format(esp_path, LEONOS_BLOCK_FILESYSTEM_FAT32, NULL);
         if (ret < 0) return ret;
-        *root_filesystem = LEONOS_BLOCK_FILESYSTEM_EXFAT;
-        return leonos_block_format(root_path, LEONOS_BLOCK_FILESYSTEM_EXFAT, NULL);
+        *root_filesystem = LEONOS_BLOCK_FILESYSTEM_EXT2;
+        return leonos_block_format(root_path, LEONOS_BLOCK_FILESYSTEM_EXT2, NULL);
     }
     ret = leonos_block_list_partitions(disk_path, parts, LEONOS_BLOCK_MAX_PARTITIONS, &count);
     printf("[installer.elf] block list partitions ret=%d count=%u disk=%s\n",
@@ -1351,8 +1351,8 @@ static void draw_confirm_page(struct leonos_ui_surface *ui)
                            install_mode == INSTALL_MODE_UPDATE
                        ? T("The FAT32 boot partition, exFAT or ext2 system files, dynamic runtime libraries, kernel debugger, and bundled docs will be refreshed. Selected program packages will be refreshed.",
                                    "FAT32 启动分区、exFAT 或 ext2 系统文件、动态运行库、内核调试模块和内置文档会刷新；已选程序包会刷新。")
-                               : T("The selected disk will be erased and formatted with a FAT32 ESP and exFAT system root.",
-                                   "所选硬盘会被清空并格式化为 FAT32 ESP 和 exFAT 系统根分区。"),
+                               : T("The selected disk will be erased and formatted with a FAT32 ESP and ext2 system root.",
+                                   "所选硬盘会被清空并格式化为 FAT32 ESP 和 ext2 系统根分区。"),
                            LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, l.content_x, l.content_y + 174,
                    install_mode == INSTALL_MODE_UPDATE
@@ -2681,7 +2681,7 @@ static void perform_install(int window_id, struct leonos_ui_surface *ui)
     copy_done_bytes = 0;
 
     show_progress(window_id, ui, 2, "Preparing target disk", "");
-    show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (exFAT or ext2), ESP: /target/boot (FAT32)");
+    show_progress(window_id, ui, 22, "Mounting target filesystems", "Root: /target (ext2 for new installs; exFAT or ext2 for updates), ESP: /target/boot (FAT32)");
     ret = installer_mount_targets(disks[selected_disk].path, 1);
     if (ret < 0) {
         finish_install(window_id, ui, ret, "Mount failed");
