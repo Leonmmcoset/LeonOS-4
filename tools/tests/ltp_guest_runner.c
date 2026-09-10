@@ -16,12 +16,12 @@ int main(void)
     setvbuf(stdout, NULL, _IONBF, 0);
     for (unsigned i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) {
         char path[128];
-        snprintf(path, sizeof(path), "/system/tests/%s.elf", tests[i]);
+        snprintf(path, sizeof(path), "/usr/lib/leonos/tests/%s.elf", tests[i]);
         printf("[ltp-musl] BEGIN %s\n", tests[i]);
         pid_t child = fork();
         if (child == 0) {
             char *args[] = {path, NULL};
-            char *env[] = {"PATH=/bin:/system/bin", "TMPDIR=/tmp", NULL};
+            char *env[] = {"PATH=/bin:/sbin:/usr/bin:/usr/sbin", "TMPDIR=/tmp", NULL};
             execve(path, args, env);
             printf("[ltp-musl] exec %s errno=%d\n", tests[i], errno);
             _exit(127);

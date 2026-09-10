@@ -28,6 +28,7 @@
 #include <ntclks/elf.h>
 #include <ntclks/kernel_debug.h>
 #include <ntclks/wait.h>
+#include <leonos/layout.h>
 
 static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
                                      uint64_t a2, uint64_t a3, uint64_t a4,
@@ -72,11 +73,9 @@ static int copy_user_string_fixed(char *dst, uint32_t cap, uint64_t user_ptr,
 #define LINUX_MAP_FIXED 0x10u
 #define LINUX_MAP_ANONYMOUS 0x20u
 #define LINUX_MAP_SUPPORTED (LINUX_MAP_PRIVATE | LINUX_MAP_FIXED | LINUX_MAP_ANONYMOUS)
-#define OOBE_DHCP_APP_PATH "/system/apps/oobe/oobe.elf"
-#define OOBE_DONE_MARKER_PATH "/system/state/oobe.done"
-#define SYSCONFDIALOG_APP_PATH "/system/apps/sysconfdialog/sysconfdialog.elf"
-#define STARTUP_DB_PATH "/system/state/startup.db"
-#define STARTUP_DENIAL_DB_PATH "/system/state/startup-denials.db"
+#define SYSCONFDIALOG_APP_PATH LEONOS_LAYOUT_LEONOS_APPS "/sysconfdialog/sysconfdialog.elf"
+#define STARTUP_DB_PATH LEONOS_PATH_STARTUP_DB
+#define STARTUP_DENIAL_DB_PATH LEONOS_PATH_STARTUP_DENIALS_DB
 #define STARTUP_DB_MAGIC 0x53545031U
 #define STARTUP_DENIAL_DB_MAGIC 0x53544431U
 #define STARTUP_DB_ENTRY_MAX 64U
@@ -161,9 +160,15 @@ static int linux_stat_from_legacy(struct linux_stat_abi *out,
     uint32_t type = st ? st->type : LEONOS_FS_TYPE_FILE;
     uint32_t mode = type == LEONOS_FS_TYPE_DIR ? 0040755u :
                     type == LEONOS_FS_TYPE_SOCKET ? LINUX_S_IFSOCK | 0777u :
-                    type == LEONOS_FS_TYPE_DEVICE ? 0020660u : 0100644u;
+                    type == LEONOS_FS_TYPE_SYMLINK ? 0120777u :
+                    type == LEONOS_FS_TYPE_DEVICE ?
+                        ((node && (node->flags & STORAGE_NODE_FLAG_DEV_BLOCK)) ? 0060660u : 0020660u) : 0100644u;
     *out = (struct linux_stat_abi){0};
-    out->st_dev = node ? (uint64_t)node->volume_id + 1 : 1;
+    out->st_dev = node && (node->flags & STORAGE_NODE_FLAG_SYSFS) ? STORAGE_SYSFS_DEVICE :
+        node && (node->flags & STORAGE_NODE_FLAG_PROC) ? STORAGE_PROCFS_DEVICE :
+        node && (node->flags & (STORAGE_NODE_FLAG_DEV_NODE | STORAGE_NODE_FLAG_DEV_DIR |
+                               STORAGE_NODE_FLAG_DEV_LINK)) ? STORAGE_DEVFS_DEVICE :
+        node ? (uint64_t)node->volume_id + 1 : 1;
     out->st_ino = linux_stat_inode(path, st);
     out->st_nlink = 1;
     out->st_mode = mode;
@@ -193,6 +198,10 @@ static void linux_statx_from_legacy(struct linux_statx *out,
     uint32_t returned = mask & available;
     *out = (struct linux_statx){0};
     out->stx_mask = returned;
+    out->stx_dev_major = (st->st_dev >> 8) & 0xfff;
+    out->stx_dev_minor = (st->st_dev & 0xff) | ((st->st_dev >> 12) & 0xffffff00);
+    out->stx_rdev_major = (st->st_rdev >> 8) & 0xfff;
+    out->stx_rdev_minor = (st->st_rdev & 0xff) | ((st->st_rdev >> 12) & 0xffffff00);
     out->stx_blksize = st->st_blksize > 0 ? (uint32_t)st->st_blksize : 4096;
     if (returned & (LINUX_STATX_TYPE | LINUX_STATX_MODE)) out->stx_mode = (uint16_t)st->st_mode;
     if (returned & LINUX_STATX_NLINK) out->stx_nlink = (uint32_t)st->st_nlink;
@@ -308,21 +317,6 @@ static int text_eq_cstr(const char *a, const char *b)
         ++i;
     }
     return a[i] == 0 && b[i] == 0;
-}
-
-/**
- * Oobe dhcp renew allowed.
- * @param task Value supplied by the caller.
- * @return The value or status produced by the operation.
- */
-static int oobe_dhcp_renew_allowed(const struct task *task)
-{
-    struct storage_node node;
-    if (!task || !text_eq_cstr(task->path, OOBE_DHCP_APP_PATH) ||
-        !storage_ready()) {
-        return 0;
-    }
-    return storage_lookup_path(OOBE_DONE_MARKER_PATH, &node) < 0;
 }
 
 /**
@@ -1090,6 +1084,132 @@ struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd)
     return NULL;
 }
 
+/**
+ * @brief Read Linux descriptor flags (FD_CLOEXEC) for any open descriptor.
+ *
+ * Linux keeps FD_CLOEXEC in the per-descriptor table entry, not in the shared
+ * open file description, so a dup()ed descriptor never observes the original's
+ * flag.  LeonOS splits descriptors across three backing tables: file entries,
+ * explicit PTY endpoints and implicit stdin/stdout/stderr streams.  Implicit
+ * streams have no task_file entry and store the flag in cloexec_stdio_mask.
+ *
+ * @param task Descriptor-table owner; the caller runs under the syscall
+ *             execution lock so the tables cannot change concurrently.
+ * @param fd Descriptor number; only the caller's low 32 bits are meaningful.
+ * @return Non-negative flag bitmask (only LEONOS_FD_CLOEXEC is defined),
+ *         or -LEONOS_EBADF when the descriptor is not open.
+ */
+static int task_fd_descriptor_flags(struct task *task, int fd)
+{
+    struct task_file *descriptor;
+    struct task_pty_fd *pty_fd;
+    if (!task || fd < 0) return -LEONOS_EBADF;
+    descriptor = task_descriptor_for_fd(task, fd);
+    if (descriptor) return (int)(descriptor->fd_flags & LEONOS_FD_CLOEXEC);
+    pty_fd = task_pty_fd_for_fd(task, fd);
+    if (pty_fd) return (int)(pty_fd->flags & LEONOS_FD_CLOEXEC);
+    /* Deferred stdio table growth: fd 0..2 exist implicitly until an explicit
+     * close or redirection marks the slot closed. */
+    if (fd < 3 &&
+        !(sched_task_fds(task)->closed_stdio_mask & (1u << (uint32_t)fd))) {
+        return (sched_task_fds(task)->cloexec_stdio_mask & (1u << (uint32_t)fd))
+                   ? LEONOS_FD_CLOEXEC : 0;
+    }
+    return -LEONOS_EBADF;
+}
+
+/**
+ * @brief Update Linux descriptor flags (FD_CLOEXEC) on exactly one descriptor.
+ *
+ * The flag is stored per descriptor, so only the addressed slot changes and
+ * dup()ed descriptors that share the same open file description keep their own
+ * state.  Implicit stdin/stdout/stderr descriptors record the flag in
+ * cloexec_stdio_mask so a later execve() really closes them instead of
+ * reporting success without saving anything.
+ *
+ * @param task Descriptor-table owner; the caller runs under the syscall
+ *             execution lock so the tables cannot change concurrently.
+ * @param fd Descriptor number; only the caller's low 32 bits are meaningful.
+ * @param flags Replacement flag bitmask; every bit outside LEONOS_FD_CLOEXEC
+ *              is ignored, matching Linux F_SETFD/do_vfs_ioctl().
+ * @return Zero on success, or -LEONOS_EBADF when the descriptor is not open.
+ */
+static int task_fd_set_descriptor_flags(struct task *task, int fd, uint32_t flags)
+{
+    struct task_file *descriptor;
+    struct task_pty_fd *pty_fd;
+    uint32_t value = flags & LEONOS_FD_CLOEXEC;
+    if (!task || fd < 0) return -LEONOS_EBADF;
+    descriptor = task_descriptor_for_fd(task, fd);
+    if (descriptor) {
+        descriptor->fd_flags = value;
+        return 0;
+    }
+    pty_fd = task_pty_fd_for_fd(task, fd);
+    if (pty_fd) {
+        pty_fd->flags = value;
+        return 0;
+    }
+    if (fd < 3 &&
+        !(sched_task_fds(task)->closed_stdio_mask & (1u << (uint32_t)fd))) {
+        if (value) sched_task_fds(task)->cloexec_stdio_mask |= 1u << (uint32_t)fd;
+        else sched_task_fds(task)->cloexec_stdio_mask &= ~(1u << (uint32_t)fd);
+        return 0;
+    }
+    return -LEONOS_EBADF;
+}
+
+/**
+ * @brief Apply Linux' ioctl() descriptor-resolution rule for O_PATH files.
+ *
+ * ioctl() resolves its descriptor with fdget(), which rejects FMODE_PATH, so
+ * every request on an open(O_PATH) descriptor fails with EBADF before any
+ * generic or device handler runs.  fcntl() uses fdget_raw() instead and keeps
+ * working on the same descriptor.
+ *
+ * @param task Descriptor-table owner; the caller runs under the syscall
+ *             execution lock.
+ * @param fd_arg Raw first syscall argument; only the low 32 bits are used.
+ * @return Zero for an open, non-O_PATH descriptor, otherwise -LEONOS_EBADF.
+ */
+static int syscall_ioctl_resolve_fd(struct task *task, uint64_t fd_arg)
+{
+    int fd = (int)(uint32_t)fd_arg;
+    if (task_fd_descriptor_flags(task, fd) < 0) return -LEONOS_EBADF;
+    struct task_file *file = task_file_for_fd(task, fd);
+    return file && (file->flags & TASK_FILE_FLAG_PATH) ? -LEONOS_EBADF : 0;
+}
+
+/**
+ * @brief Implement Linux do_vfs_ioctl() FIOCLEX/FIONCLEX for every descriptor.
+ *
+ * Linux handles these two requests in the VFS switch before any device or
+ * filesystem ->unlocked_ioctl handler, for every descriptor type that can be
+ * resolved by fdget(): regular files, directories, pipes, sockets, PTYs,
+ * device nodes and anonymous descriptors (O_PATH is rejected earlier).  The third
+ * ioctl argument is unused and must never be dereferenced, so it is not part
+ * of this interface at all.
+ *
+ * @param task Descriptor-table owner; NULL yields -LEONOS_EBADF.
+ * @param fd_arg Raw first syscall argument; only the low 32 bits name the
+ *               descriptor, matching Linux' unsigned int fd parameter.
+ * @param cmd ioctl request, already truncated to 32 bits by the dispatcher.
+ * @return Zero on success, -LEONOS_EBADF for an unopened descriptor, or
+ *         -LEONOS_ENOTTY for every other ioctl request.
+ */
+static int64_t syscall_ioctl_descriptor_flags(struct task *task, uint64_t fd_arg,
+                                              uint32_t cmd)
+{
+    int fd = (int)(uint32_t)fd_arg;
+    if (cmd == FIOCLEX) {
+        return task_fd_set_descriptor_flags(task, fd, LEONOS_FD_CLOEXEC);
+    }
+    if (cmd == FIONCLEX) {
+        return task_fd_set_descriptor_flags(task, fd, 0);
+    }
+    return -LEONOS_ENOTTY;
+}
+
 static int task_pty_fd_available(struct task *task, int fd);
 static int task_unused_fd(struct task *task, int minimum);
 
@@ -1498,7 +1618,12 @@ static int task_pty_duplicate_fd(struct task *task, int old_fd, int minimum_fd,
                     entry->status_flags = stream == 0 ? LEONOS_O_RDONLY
                                                       : LEONOS_O_WRONLY;
                 }
-                if (candidate < 3) sched_task_fds(task)->closed_stdio_mask &= ~(1u << candidate);
+                /* A fresh descriptor never inherits FD_CLOEXEC, so a reused
+                 * stdio slot must also drop the implicit close-on-exec bit. */
+                if (candidate < 3) {
+                    sched_task_fds(task)->closed_stdio_mask &= ~(1u << candidate);
+                    sched_task_fds(task)->cloexec_stdio_mask &= ~(1u << candidate);
+                }
                 return candidate;
             }
         }
@@ -1544,6 +1669,9 @@ static int task_pty_dup2_fd(struct task *task, int old_fd, int new_fd)
     *entry = retained;
     if (new_fd < 3) {
         sched_task_fds(task)->closed_stdio_mask &= ~(1u << new_fd);
+        /* dup2() clears FD_CLOEXEC on the new descriptor, including the
+         * implicit stdio slot that has no task_file entry of its own. */
+        sched_task_fds(task)->cloexec_stdio_mask &= ~(1u << new_fd);
         if (retained.endpoint == TASK_PTY_ENDPOINT_SLAVE) {
             task->pty_id = retained.pty_id;
         }
@@ -1591,7 +1719,12 @@ static int task_dup2_fd(struct task *task, int old_fd, int new_fd)
     if (new_file->used) clear_task_file(new_file);
     if (replaced_pty) task_pty_release_entry(replaced_pty);
     *new_file = retained;
-    if (new_fd < 3) sched_task_fds(task)->closed_stdio_mask &= ~(1u << new_fd);
+    if (new_fd < 3) {
+        sched_task_fds(task)->closed_stdio_mask &= ~(1u << new_fd);
+        /* dup2() clears FD_CLOEXEC on the new descriptor, including the
+         * implicit stdio slot that has no task_file entry of its own. */
+        sched_task_fds(task)->cloexec_stdio_mask &= ~(1u << new_fd);
+    }
     return new_fd;
 }
 
@@ -2727,8 +2860,9 @@ static void startup_db_load(void)
  */
 static int startup_db_save(void)
 {
-    (void)storage_mkdir("/system");
-    (void)storage_mkdir("/system/state");
+    (void)storage_mkdir("/var");
+    (void)storage_mkdir("/var/lib");
+    (void)storage_mkdir(LEONOS_LAYOUT_VAR_LIB_LEONOS);
     return storage_write_file(STARTUP_DB_PATH, &startup_db_scratch,
                               sizeof(startup_db_scratch));
 }
@@ -2758,8 +2892,9 @@ static void startup_denial_db_load(void)
  */
 static int startup_denial_db_save(void)
 {
-    (void)storage_mkdir("/system");
-    (void)storage_mkdir("/system/state");
+    (void)storage_mkdir("/var");
+    (void)storage_mkdir("/var/lib");
+    (void)storage_mkdir(LEONOS_LAYOUT_VAR_LIB_LEONOS);
     return storage_write_file(STARTUP_DENIAL_DB_PATH, &startup_denial_db_scratch,
                               sizeof(startup_denial_db_scratch));
 }
@@ -4673,9 +4808,7 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             }
             return 0;
         }
-        if (file->path[0] == '/' && file->path[1] == 'p' &&
-            file->path[2] == 'r' && file->path[3] == 'o' &&
-            file->path[4] == 'c') {
+        if (file->node.flags & STORAGE_NODE_FLAG_PROC) {
             if (file->node.type == LEONOS_FS_TYPE_DIR) {
                 struct leonos_dir_entry entry;
                 int step = proc_readdir(file->path, &file->offset, &entry);
@@ -4790,6 +4923,10 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         char path[LEONOS_FS_PATH_LEN];
         uint32_t flags = (uint32_t)(number == LINUX_SYS_OPENAT ? a2 : a1);
         uint32_t mode = (uint32_t)(number == LINUX_SYS_OPENAT ? a3 : a2);
+        /* Translate only user open flags: internal epoll allocation uses the
+         * same numeric bit as O_PATH and must retain its descriptor kind. */
+        flags = (flags & ~(uint32_t)(LINUX_O_PATH | TASK_FILE_FLAG_PATH)) |
+                ((flags & LINUX_O_PATH) ? TASK_FILE_FLAG_PATH : 0);
         if ((flags & (LEONOS_O_CREAT | LEONOS_O_DIRECTORY)) ==
             (LEONOS_O_CREAT | LEONOS_O_DIRECTORY)) return -LEONOS_EINVAL;
         uint8_t created = 0;
@@ -4865,8 +5002,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
                                             TASK_PTY_ENDPOINT_SLAVE, flags);
             }
         }
-        if (path[0] == '/' && path[1] == 'p' && path[2] == 'r' &&
-            path[3] == 'o' && path[4] == 'c' && (path[5] == 0 || path[5] == '/')) {
+        if ((!__builtin_strncmp(path,"/proc",5) && (!path[5] || path[5]=='/')) ||
+            (!__builtin_strncmp(path,"/sys",4) && (!path[4] || path[4]=='/'))) {
             struct storage_node proc_node;
             if (proc_lookup(path, &proc_node) == 0) {
                 ret = fs_permissions_check(task, path, FS_ACCESS_READ, false);
@@ -5107,22 +5244,20 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
         {
             struct task_file *file_fd = task_file_for_fd(task, (int)a0);
-            struct task_file *descriptor = task_descriptor_for_fd(task, (int)a0);
             struct task_pty_fd *pty_fd = task_pty_fd_for_fd(task, (int)a0);
-            if (!file_fd && !pty_fd && task_pty_stream_for_fd(task, (int)a0) < 0) {
-                return -LEONOS_EBADF;
-            }
+            /* Descriptor flags live in the descriptor table entry, never in
+             * the shared open file description, and use the same storage as
+             * ioctl(FIOCLEX/FIONCLEX) so the two interfaces cannot disagree.
+             * Implicit stdin/stdout/stderr descriptors are covered as well. */
             if (a1 == LEONOS_F_GETFD) {
-                return descriptor ? (int64_t)descriptor->fd_flags :
-                       (pty_fd ? (int64_t)pty_fd->flags : 0);
+                return task_fd_descriptor_flags(task, (int)a0);
             }
             if (a1 == LEONOS_F_SETFD) {
-                if (file_fd) {
-                    descriptor->fd_flags = (uint32_t)a2 & LEONOS_FD_CLOEXEC;
-                } else if (pty_fd) {
-                    pty_fd->flags = (uint32_t)a2 & LEONOS_FD_CLOEXEC;
-                }
-                return 0;
+                int ret = task_fd_set_descriptor_flags(task, (int)a0, (uint32_t)a2);
+                return ret < 0 ? ret : 0;
+            }
+            if (!file_fd && !pty_fd && task_pty_stream_for_fd(task, (int)a0) < 0) {
+                return -LEONOS_EBADF;
             }
             if (a1 == LEONOS_F_GETFL) {
                 if (file_fd) {
@@ -5189,11 +5324,11 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
             if (ret < 0) return ret;
         }
         struct storage_node proc;
-        if (path[0] && proc_lookup(path, &proc) == 0) { value.f_type = 0x9fa0; synthetic = true; }
+        if (path[0] && proc_lookup(path, &proc) == 0) { value.f_type = (proc.flags & STORAGE_NODE_FLAG_SYSFS) ? 0x62656572 : 0x9fa0; synthetic = true; }
         if (synthetic) {
             value.f_bsize = value.f_frsize = 4096;
             value.f_namelen = 255;
-            value.f_flags = LINUX_ST_VALID;
+            value.f_flags = LINUX_ST_VALID | (value.f_type == 0x62656572 ? LINUX_ST_RDONLY : 0);
         } else ret = storage_statfs(&node, &value);
         if (ret < 0) return ret;
         if (!user_range_writable(a1, sizeof(value))) return -LEONOS_EFAULT;
@@ -6161,10 +6296,8 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         struct task *task = sched_current_task();
         struct task_file *file = task_file_for_fd(task, (int)a0);
         if (file && file->kind == TASK_FILE_KIND_SIGNALFD) {
-            if ((uint32_t)a1 == FIONCLEX || (uint32_t)a1 == FIOCLEX) {
-                task_descriptor_for_fd(task, (int32_t)a0)->fd_flags = (uint32_t)a1 == FIOCLEX;
-                return 0;
-            }
+            /* FIOCLEX/FIONCLEX are handled generically before device dispatch;
+             * only signalfd-specific requests remain here. */
             if ((uint32_t)a1 == FIONBIO) {
                 int32_t nonblock;
                 if (!user_range_ok(a2, sizeof(nonblock))) return -LINUX_EFAULT;
@@ -6425,6 +6558,14 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1, 
         }
     }
 
+    if (number == LINUX_SYS_IOCTL) {
+        /* Linux reports ENOTTY when neither do_vfs_ioctl() nor the descriptor's
+         * ->unlocked_ioctl/->compat_ioctl handler understands a request, and
+         * every device backend above uses the same code.  ENOSYS would claim
+         * the ioctl syscall itself does not exist. */
+        return -LEONOS_ENOTTY;
+    }
+
     return -LEONOS_ENOSYS;
 }
 
@@ -6436,8 +6577,30 @@ static int64_t syscall_dispatch_regs(uint64_t number, uint64_t a0, uint64_t a1,
                                      uint64_t a2, uint64_t a3, uint64_t a4,
                                      uint64_t a5)
 {
-    /* Linux ioctl's cmd is unsigned int, even when libc sign-extends an int. */
-    if (number == LINUX_SYS_IOCTL) a1 = (uint32_t)a1;
+    /* Linux ioctl's fd and cmd are unsigned int on native x86-64. */
+    if (number == LINUX_SYS_IOCTL) {
+        a0 = (uint32_t)a0;
+        a1 = (uint32_t)a1;
+    }
+
+    /* ioctl() resolves its descriptor with fdget(), which rejects FMODE_PATH,
+     * so every request on an open(O_PATH) descriptor fails with EBADF before
+     * any generic or device handler runs.  fcntl() uses fdget_raw() and keeps
+     * working on the same descriptor, so this check stays ioctl-only. */
+    if (number == LINUX_SYS_IOCTL) {
+        int resolve = syscall_ioctl_resolve_fd(sched_current_task(), a0);
+        if (resolve < 0) return resolve;
+    }
+
+    /* Linux do_vfs_ioctl() resolves FIOCLEX/FIONCLEX in the generic VFS switch
+     * before any filesystem, GPU or device-specific handler, so the request
+     * works on every descriptor type and never reaches a device backend.  The
+     * third argument is ignored and therefore never validated or dereferenced. */
+    if (number == LINUX_SYS_IOCTL &&
+        ((uint32_t)a1 == FIOCLEX || (uint32_t)a1 == FIONCLEX)) {
+        return syscall_ioctl_descriptor_flags(sched_current_task(), a0,
+                                              (uint32_t)a1);
+    }
 
     if (syscall_fs_owns(number)) {
         return syscall_fs_dispatch(number, a0, a1, a2, a3, a4, a5);

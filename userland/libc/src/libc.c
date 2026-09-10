@@ -33,6 +33,7 @@
 #include <pty.h>
 #include <linux/tty.h>
 #include <unistd.h>
+#include <leonos/layout.h>
 
 
 
@@ -1645,7 +1646,7 @@ int leonos_kernel_debug_get_state(uint32_t *flags)
     int fd;
     if (!flags) return -1;
     *flags = 0;
-    fd = open("/system/state/kernel-debug", LEONOS_O_RDONLY, 0);
+    fd = open(LEONOS_PATH_KERNELDEBUG_CONTROL, LEONOS_O_RDONLY, 0);
     if (fd < 0) return 0;
     {
         long got = read(fd, buffer, sizeof(buffer) - 1u);
@@ -1664,7 +1665,7 @@ int leonos_kernel_debug_get_state(uint32_t *flags)
 
 static int leonos_kernel_debug_write(const char *text)
 {
-    int fd = open("/system/state/kernel-debug",
+    int fd = open(LEONOS_PATH_KERNELDEBUG_CONTROL,
                   LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     uint32_t len = 0;
     if (fd < 0) return fd;

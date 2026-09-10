@@ -4,6 +4,7 @@
 #include <leonos/system.h>
 
 #include <string.h>
+#include <leonos/layout.h>
 
 void ffPlatformInitImpl(FFPlatform* platform)
 {
@@ -14,7 +15,7 @@ void ffPlatformInitImpl(FFPlatform* platform)
     platform->pid = 0;
     platform->uid = 0;
     ffStrbufSetS(&platform->cwd, "/");
-    ffStrbufSetS(&platform->cacheDir, "/system/cache/");
+    ffStrbufSetS(&platform->cacheDir, "/root/.cache/fastfetch/");
     ffStrbufSetS(&platform->userShell, "LeonOS shell");
     ffStrbufSetS(&platform->hostName, "leonos");
     if (leonos_machine_identity(&identity) == 0 && identity.platform_uuid[0]) {
@@ -37,9 +38,14 @@ void ffPlatformInitImpl(FFPlatform* platform)
     } else {
         ffStrbufSetS(&platform->userName, "user");
         ffStrbufSetS(&platform->fullUserName, "user");
-        ffStrbufSetS(&platform->homeDir, "/users/");
+        ffStrbufSetS(&platform->homeDir, "/home/");
     }
     ffStrbufEnsureEndsWithC(&platform->homeDir, '/');
+    if (platform->uid != 0) {
+        ffStrbufSetS(&platform->cacheDir, platform->homeDir.chars);
+        ffStrbufEnsureEndsWithC(&platform->cacheDir, '/');
+        ffStrbufAppendS(&platform->cacheDir, ".cache/fastfetch/");
+    }
 
     if (leonos_system_info(&system_info) == 0) {
         ffStrbufSetS(&platform->sysinfo.name,

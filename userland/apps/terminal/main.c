@@ -1480,11 +1480,13 @@ int main(int argc, char **argv, char **envp)
     char *shell_argv[4];
     char shell_prompt[] = "PS1=\\w \\$ ";
     char shell_term[] = "TERM=xterm";
-    char *shell_envp[] = { shell_prompt, shell_term, 0 };
+    char terminal_program[] = "TERM_PROGRAM=LeonOS Terminal";
+    char *terminal_envp[] = { shell_term, terminal_program, 0 };
+    char *shell_envp[] = { shell_prompt, shell_term, terminal_program, 0 };
     char **command_env_owned = 0;
     char *const *command_argv;
     char *const *command_envp;
-    char *const *environment_overrides = 0;
+    char *const *environment_overrides = terminal_envp;
     const char *command_path;
     uint8_t shift_down = 0;
     uint8_t ctrl_down = 0;
@@ -1498,8 +1500,8 @@ int main(int argc, char **argv, char **envp)
         command_argv = &argv[2];
         command_envp = 0;
     } else {
-        shell_argv[0] = (char *)leonos_launch_builtin_path("busybox");
-        shell_argv[1] = "sh";
+        shell_argv[0] = "/bin/sh";
+        shell_argv[1] = 0;
         shell_argv[2] = 0;
         shell_argv[3] = 0;
         command_path = shell_argv[0];

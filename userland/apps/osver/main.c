@@ -6,10 +6,11 @@
 #include <leonos/system.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <leonos/layout.h>
 
 #define OSVER_W 720
 #define OSVER_H 460
-#define OSVER_LOGO_PATH "/system/resources/logo.png"
+#define OSVER_LOGO_PATH LEONOS_PATH_LOGO_PNG
 #define OSVER_LOGO_BOX 196U
 #define T(en, zh) leonos_i18n((en), (zh))
 

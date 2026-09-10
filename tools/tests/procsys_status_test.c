@@ -6,6 +6,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <leonos/fs.h>
+int fixture_open(const char *path, int flags, ...);
+ssize_t fixture_read(int fd, void *buffer, size_t size);
+int fixture_close(int fd);
 int fixture_readdir(int fd, struct leonos_dir_entry *entry);
 int fixture_getpwuid_r(uid_t uid, struct passwd *record, char *buffer, size_t size,
                        struct passwd **result);
@@ -37,7 +40,7 @@ int fixture_open(const char *path, int flags, ...)
 ssize_t fixture_read(int fd, void *buffer, size_t size)
 {
     assert(fd == 1);
-    const char *text = current_file == 1 ? "42 (test) 1 1 1 1 0 0 0 0 0 20 999 1 0\n" :
+    const char *text = current_file == 1 ? "42 (test) R 1 1 1 0 -1 0 0 0 0 0 17 3 0 0 20 0 1 0 123 4096 1\n" :
         "Name:\ttest\nUid:\t1001\t1001\t1001\t1001\nVmRSS:\t1234 kB\n";
     size_t length = strlen(text) - offset;
     if (length > size) length = size;
@@ -56,7 +59,7 @@ int fixture_readdir(int fd, struct leonos_dir_entry *entry)
 int fixture_getpwuid_r(uid_t uid, struct passwd *record, char *buffer, size_t size,
                        struct passwd **result)
 {
-    assert(uid == (missing_status ? 999 : 1001) && size >= 6);
+    assert(!missing_status && uid == 1001 && size >= 6);
     strcpy(buffer, "admin"); record->pw_name = buffer; *result = record;
     return 0;
 }
@@ -64,10 +67,10 @@ int main(void)
 {
     struct leonos_task_info task;
     assert(leonos_task_snapshot(&task, 1, NULL) == 1);
-    assert(task.pid == 42 && task.uid == 1001 && task.memory_kib == 1234);
+    assert(task.cpu_ticks == 20 && task.state == 1 && task.parent_pid == 1 && task.pid == 42 && task.uid == 1001 && task.memory_kib == 1234);
     assert(!strcmp(task.username, "admin") && closes == 3);
     missing_status = 1;
     assert(leonos_task_snapshot(&task, 1, NULL) == 1);
-    assert(task.uid == 999 && task.memory_kib == 0 && closes == 5);
+    assert(task.uid == UINT32_MAX && task.memory_kib == 0 && closes == 5);
     puts("PASS task snapshot: status UID/RSS, account resolution, partial reads and fd cleanup");
 }

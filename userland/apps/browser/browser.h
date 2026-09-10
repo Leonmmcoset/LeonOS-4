@@ -15,6 +15,7 @@
 #include <leonos/ui.h>
 
 #include "litehtml_core.h"
+#include <leonos/layout.h>
 
 #define BROWSER_INITIAL_W 860U
 #define BROWSER_INITIAL_H 600U
@@ -79,8 +80,8 @@
 #define BROWSER_GO_W 54U
 #define BROWSER_DEVTOOLS_MIN_H 118U
 #define BROWSER_DEVTOOLS_MAX_H 142U
-#define BROWSER_FONT_PATH "/system/fonts/times-new-roman.ttf"
-#define BROWSER_FONT_FALLBACK_PATH "/system/fonts/simsun.ttc"
+#define BROWSER_FONT_PATH LEONOS_PATH_BROWSER_FONT
+#define BROWSER_FONT_FALLBACK_PATH LEONOS_PATH_BROWSER_CJK_FONT
 #define BROWSER_USER_AGENT                                                   \
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "        \
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"

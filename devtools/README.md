@@ -77,7 +77,7 @@ make APP=examples/myapp APP_NAME=myapp
 结果是 `build/myapp.elf`。将其复制到 LeonOS 分区中的可执行位置，例如：
 
 ```text
-/programs/myapp/myapp.elf
+/usr/lib/leonos/apps/myapp/myapp.elf
 ```
 
 可由桌面、文件管理器或 `leonos_launch_argv()` 启动；需要 POSIX 启动语义时使用
@@ -113,8 +113,8 @@ LeonOS 使用现有 UI 字体渲染器；StardustUI 的字体路径配置不会�
 ### 虚拟终端应用
 
 不创建 GUI 窗口、而是需要标准输入输出渲染的应用，可在 ELF 同目录放置同名
-sidecar manifest。例如 `/programs/myapp/myapp.elf` 的标记文件是
-`/programs/myapp/myapp.app.ini`：
+sidecar manifest。例如 `/usr/lib/leonos/apps/myapp/myapp.elf` 的标记文件是
+`/usr/lib/leonos/apps/myapp/myapp.app.ini`：
 
 ```ini
 [app]
@@ -144,7 +144,7 @@ terminal=1
 `leonos/stdio.h` 提供 `puts()` 和 `printf()`。`leonos/syscall.h` 提供
 文件、进程、内存和调度相关接口。`leonos/gui.h` 与 `leonos/ui.h` 提供
 窗口、事件与软件绘制接口。文件路径使用 Unix 风格根目录，例如
-`/programs/myapp/data.txt`；可移动卷使用 `/mnt` 或 `/media` 下的挂载点。
+`/usr/lib/leonos/apps/myapp/data.txt`；可移动卷使用 `/mnt` 或 `/media` 下的挂载点。
 
 ### 窗口与鼠标控制
 
@@ -174,7 +174,7 @@ leonos_mouse_set_style(window_id, LEONOS_GUI_CURSOR_HAND);
 
 程序使用 SDK 的目标头文件与库，不能混入宿主机 libc。默认动态加载器为
 `/lib/ld-musl-x86_64.so.1`；`libc.so` 和 mimalloc 位于 `/lib`，LeonOS 扩展库
-位于 `/system/lib`。`STATIC=1` 使用同一套 ABI 的静态 CRT 和归档。
+位于 `/usr/lib/leonos`。`STATIC=1` 使用同一套 ABI 的静态 CRT 和归档。
 旧私有 ABI 应用必须从源码重建，不能仅重命名旧共享库。
 
 ### PNG 图像
@@ -189,7 +189,7 @@ LeonOS 的受限文件解码接口：
 uint32_t *pixels;
 uint32_t width;
 uint32_t height;
-if (leonos_png_decode_file("/programs/demo/image.png", &pixels, &width, &height) == 0) {
+if (leonos_png_decode_file("/usr/lib/leonos/apps/demo/image.png", &pixels, &width, &height) == 0) {
     /* pixels are 0x00RRGGBB and alpha has been composited on white. */
     leonos_png_free(pixels);
 }

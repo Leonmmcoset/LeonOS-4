@@ -81,7 +81,7 @@ DIRECT_RULES = (
         r"^\[loader\].*(?:kernel\.sys load failed|middlelayer\.sys load failed|module load failed|no readable EFI FAT volume|unable to open EFI filesystem)",
         "引导加载器无法读取核心启动组件",
         "loader 无法从 EFI 文件系统或 GRUB 模块获得 kernel.sys 或 middlelayer.sys。",
-        "检查 ESP 中的 boot/、system/kernel.sys、system/middlelayer.sys，以及 ext2 根分区和 EFI/FAT32 挂载状态。",
+        "检查 ESP 中的 boot/、leonos/kernel.sys、leonos/middlelayer.sys，以及 ext2 根分区和 EFI/FAT32 挂载状态。",
         "boot/loader/main.c:1114",
     ),
     Rule(
@@ -145,7 +145,7 @@ DIRECT_RULES = (
         r"^\[dynlinkerror\.elf\] unable to start .*: missing ",
         "动态链接库缺失",
         "静态链接的恢复程序已确认应用缺少必需共享库。",
-        "从匹配系统镜像恢复该 .so 文件到 /system/lib，或重新打包应用私有库。",
+        "从匹配系统镜像恢复该 .so 文件到 /usr/lib/leonos 或 /usr/lib，或重新打包应用私有库。",
         "userland/apps/dynlinkerror/main.c:52",
     ),
     Rule(
@@ -153,7 +153,7 @@ DIRECT_RULES = (
         r"(?:shared object not found|shared object cannot be opened|unresolved dynamic symbol|dynamic application must depend on libleonos\.so\.1)",
         "动态运行时无法解析应用依赖",
         "动态加载器拒绝或无法装载依赖库，或者无法解析应用所需符号。",
-        "检查 DT_NEEDED、库名、/system/lib 内容、ABI note 和导出符号；使用 ELF/动态链接检查器确认依赖树。",
+        "检查 DT_NEEDED、库名、/usr/lib/leonos 与 /lib 内容、ABI note 和导出符号；使用 ELF/动态链接检查器确认依赖树。",
         "userland/runtime/ld_leonos.c:692",
     ),
     Rule(

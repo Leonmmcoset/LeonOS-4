@@ -392,7 +392,7 @@ static int startup(int argc, char **argv)
         {.val = 1, .uaddr = (uintptr_t)&futex_word, .flags = FUTEX2_SIZE_U32},
     };
     CHECK(syscall(SYS_futex_requeue, futex_requeue, 0, 0, 0) == 0);
-    int readahead_fd = open("/system/tests/musl-abi-static.elf", O_RDONLY);
+    int readahead_fd = open("/usr/lib/leonos/tests/musl-abi-static.elf", O_RDONLY);
     CHECK(readahead_fd >= 0);
     CHECK(syscall(SYS_readahead, readahead_fd, 0, 4096) == 0);
     CHECK(close(readahead_fd) == 0);

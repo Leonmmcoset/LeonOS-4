@@ -9,6 +9,7 @@
 #include <leonos/boot_handoff.h>
 #include <leonos/fs.h>
 #include <leonos/permissions.h>
+#include <leonos/layout.h>
 
 #define OSMLAYER_VFS_OP_RESOLVE_PATH 1u
 #define OSMLAYER_FS_NAME_LEN 128u
@@ -95,7 +96,7 @@ struct osmlayer_account {
     uint8_t hash[32];
 };
 
-#define OSMLAYER_ACCOUNTS_PATH "/system/state/accounts.db"
+#define OSMLAYER_ACCOUNTS_PATH LEONOS_PATH_ACCOUNTS_DB
 #define OSMLAYER_ACCOUNT_DB_MAX 8192u
 
 static const struct leonos_kernel_services *osmlayer_services;
@@ -672,7 +673,7 @@ static int osmlayer_username_valid(const char *username)
  * @brief Builds the home path for an account.
  * @param home Destination buffer.
  * @param cap Capacity of `home`, including its terminator.
- * @param username Account name appended after `/users/`.
+ * @param username Account name appended after `/home/`.
  */
 static void osmlayer_home_for_user(char *home, uint32_t cap, const char *username)
 {
@@ -681,7 +682,7 @@ static void osmlayer_home_for_user(char *home, uint32_t cap, const char *usernam
         return;
     }
     home[0] = 0;
-    osmlayer_append_text(home, &pos, cap, "/users/");
+    osmlayer_append_text(home, &pos, cap, "/home/");
     osmlayer_append_text(home, &pos, cap, username);
 }
 
@@ -1441,6 +1442,51 @@ static void osmlayer_acl_add_ace(struct leonos_fs_acl *acl, uint32_t principal,
     };
 }
 
+static int osmlayer_acl_store(const char *path,
+                              const struct leonos_fs_acl *acl);
+
+/**
+ * @brief Assigns an account's home directory and its seeded subdirectories to
+ * the owning uid.  Creation happens before the new account is committed to
+ * the account database, so the synthetic ACL would otherwise select the
+ * administrator context.
+ */
+static int osmlayer_assign_home_owner(const char *username, uint32_t uid)
+{
+    char home[LEONOS_AUTH_HOME_LEN];
+    char child[LEONOS_AUTH_HOME_LEN + 16];
+    static const char *const subs[] = {"desktop", "documents", "downloads"};
+    struct leonos_fs_acl acl;
+    if (!osmlayer_username_valid(username) || uid == 0) {
+        return -22;
+    }
+    osmlayer_home_for_user(home, sizeof(home), username);
+    memset(&acl, 0, sizeof(acl));
+    acl.version = LEONOS_FS_ACL_VERSION;
+    acl.owner_uid = uid;
+    acl.flags = 0;
+    osmlayer_acl_add_ace(&acl, LEONOS_FS_ACL_PRINCIPAL_SYSTEM, 0, LEONOS_FS_PERM_FULL);
+    osmlayer_acl_add_ace(&acl, LEONOS_FS_ACL_PRINCIPAL_ADMINISTRATORS, 0,
+                         LEONOS_FS_PERM_FULL);
+    osmlayer_acl_add_ace(&acl, LEONOS_FS_ACL_PRINCIPAL_OWNER, 0, LEONOS_FS_PERM_FULL);
+    int ret = osmlayer_acl_store(home, &acl);
+    if (ret < 0) {
+        return ret;
+    }
+    for (uint32_t i = 0; i < 3; ++i) {
+        uint32_t pos = 0;
+        child[0] = 0;
+        osmlayer_append_text(child, &pos, sizeof(child), home);
+        osmlayer_append_char(child, &pos, sizeof(child), '/');
+        osmlayer_append_text(child, &pos, sizeof(child), subs[i]);
+        ret = osmlayer_acl_store(child, &acl);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    return 0;
+}
+
 /**
  * Osmlayer owner for path.
  * @param path NUL-terminated text supplied by the caller.
@@ -1497,22 +1543,25 @@ static int osmlayer_authd_home_owner(const char *path, uint32_t *owner)
  */
 static int osmlayer_path_is_system_tree(const char *path)
 {
+    /* Read-only system locations.  /var/lib/leonos and /root are deliberately
+     * absent: account databases, license state and per-user data must not be
+     * world-readable through the default ACL.  /home itself is readable and
+     * searchable, but /home/<name> ownership is synthesized per account
+     * below. */
     return osmlayer_text_eq(path, "/") ||
            osmlayer_text_eq(path, "/boot") || osmlayer_path_under(path, "/boot") ||
-           osmlayer_text_eq(path, "/docs") || osmlayer_path_under(path, "/docs") ||
-           osmlayer_text_eq(path, "/system") || osmlayer_path_under(path, "/system") ||
-           osmlayer_text_eq(path, "/programs") || osmlayer_path_under(path, "/programs") ||
            osmlayer_text_eq(path, "/install") || osmlayer_path_under(path, "/install") ||
-           osmlayer_text_eq(path, "/users") ||
            osmlayer_text_eq(path, "/home") ||
            osmlayer_text_eq(path, "/run") || osmlayer_path_under(path, "/run") ||
            osmlayer_text_eq(path, "/lib") || osmlayer_path_under(path, "/lib") ||
            osmlayer_text_eq(path, "/etc") || osmlayer_path_under(path, "/etc") ||
            osmlayer_text_eq(path, "/usr") || osmlayer_path_under(path, "/usr") ||
+           osmlayer_text_eq(path, "/opt") || osmlayer_path_under(path, "/opt") ||
            osmlayer_text_eq(path, "/bin") || osmlayer_path_under(path, "/bin") ||
            osmlayer_text_eq(path, "/sbin") || osmlayer_path_under(path, "/sbin") ||
-           osmlayer_text_eq(path, "/var") || osmlayer_path_under(path, "/var") ||
-           osmlayer_text_eq(path, "/dev") || osmlayer_path_under(path, "/dev");
+           osmlayer_text_eq(path, "/dev") || osmlayer_path_under(path, "/dev") ||
+           osmlayer_text_eq(path, "/media") || osmlayer_path_under(path, "/media") ||
+           osmlayer_text_eq(path, "/mnt") || osmlayer_path_under(path, "/mnt");
 }
 
 /**
@@ -1538,13 +1587,14 @@ static void osmlayer_acl_default_for_path(const char *path,
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_OWNER, 0, LEONOS_FS_PERM_FULL);
         return;
     }
-    if (osmlayer_text_eq(path, "/tmp") || osmlayer_path_under(path, "/tmp")) {
+    if (osmlayer_text_eq(path, "/tmp") || osmlayer_path_under(path, "/tmp") ||
+        osmlayer_text_eq(path, "/var/tmp") || osmlayer_path_under(path, "/var/tmp")) {
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0, LEONOS_FS_PERM_FULL);
         return;
     }
-    if (osmlayer_text_eq(path, "/system/config/display.conf") ||
-        osmlayer_text_eq(path, "/system/config/locale.conf") ||
-        osmlayer_text_eq(path, "/system/state/oobe.done")) {
+    if (osmlayer_text_eq(path, LEONOS_PATH_DISPLAY_CONF) ||
+        osmlayer_text_eq(path, LEONOS_PATH_LOCALE_CONF) ||
+        osmlayer_text_eq(path, LEONOS_PATH_OOBE_DONE)) {
         osmlayer_acl_add_ace(acl, LEONOS_FS_ACL_PRINCIPAL_USERS, 0,
                              LEONOS_FS_PERM_READ | LEONOS_FS_PERM_WRITE);
         return;
@@ -1739,7 +1789,10 @@ static __attribute__((noinline)) int osmlayer_posix_permissions(struct leonos_pe
     other = osmlayer_acl_to_rwx(other);
     req->value = (struct leonos_permissions){(owner << 6) | (other << 3) | other,
                                            acl.owner_uid, acl.owner_uid};
-    if (idx < 0 && osmlayer_text_eq(req->path, "/tmp")) req->value.mode = 01777;
+    if (idx < 0 && (osmlayer_text_eq(req->path, "/tmp") ||
+                    osmlayer_text_eq(req->path, "/var/tmp"))) {
+        req->value.mode = 01777;
+    }
     return 0;
 }
 
@@ -2134,8 +2187,12 @@ static int osmlayer_ensure_user_dirs(const char *username)
     if (!osmlayer_username_valid(username)) {
         return -22;
     }
-    (void)osmlayer_service_mkdir("/users");
+    (void)osmlayer_service_mkdir("/var");
+    (void)osmlayer_service_mkdir("/var/lib");
+    (void)osmlayer_service_mkdir(LEONOS_LAYOUT_VAR_LIB_LEONOS);
+    (void)osmlayer_service_mkdir("/home");
     (void)osmlayer_service_mkdir("/tmp");
+    (void)osmlayer_service_mkdir("/var/tmp");
     osmlayer_home_for_user(home, sizeof(home), username);
     ret = osmlayer_service_mkdir(home);
     if (ret < 0) {
@@ -2194,7 +2251,7 @@ static int osmlayer_system_language_is_chinese(void)
 {
     char locale[64];
     uint32_t length = 0;
-    int ret = osmlayer_service_read_file("/system/config/locale.conf",
+    int ret = osmlayer_service_read_file(LEONOS_PATH_LOCALE_CONF,
                                          locale, sizeof(locale) - 1u, &length);
     if (ret < 0 || length == 0) {
         return 0;
@@ -2225,10 +2282,14 @@ static int osmlayer_seed_desktop_shortcuts(const char *username)
         const char *name_zh;
         const char *target;
     } shortcuts[] = {
-        {"File Manager.lnk", "文件管理器.lnk", "/system/apps/fileman/fileman.elf"},
-        {"Task Manager.lnk", "任务管理器.lnk", "/system/apps/taskmgr/taskmgr.elf"},
-        {"Settings.lnk", "设置.lnk", "/system/apps/settings/settings.elf"},
-        {"Browser.lnk", "浏览器.lnk", "/programs/browser/browser.elf"},
+        {"File Manager.lnk", "文件管理器.lnk",
+         LEONOS_LAYOUT_LEONOS_APPS "/fileman/fileman.elf"},
+        {"Task Manager.lnk", "任务管理器.lnk",
+         LEONOS_LAYOUT_LEONOS_APPS "/taskmgr/taskmgr.elf"},
+        {"Settings.lnk", "设置.lnk",
+         LEONOS_LAYOUT_LEONOS_APPS "/settings/settings.elf"},
+        {"Browser.lnk", "浏览器.lnk",
+         LEONOS_LAYOUT_LEONOS_APPS "/browser/browser.elf"},
     };
     if (!osmlayer_username_valid(username)) {
         return -22;
@@ -2259,9 +2320,12 @@ static int osmlayer_auth_status(struct leonos_auth_status *status)
     if (ret < 0) {
         return ret;
     }
-    (void)osmlayer_service_mkdir("/system/state");
-    (void)osmlayer_service_mkdir("/users");
+    (void)osmlayer_service_mkdir("/var");
+    (void)osmlayer_service_mkdir("/var/lib");
+    (void)osmlayer_service_mkdir(LEONOS_LAYOUT_VAR_LIB_LEONOS);
+    (void)osmlayer_service_mkdir("/home");
     (void)osmlayer_service_mkdir("/tmp");
+    (void)osmlayer_service_mkdir("/var/tmp");
     if (status) {
         status->user_count = count;
         status->has_admin = osmlayer_account_enabled_admin_count(accounts, count) > 0 ? 1u : 0u;
@@ -2337,6 +2401,10 @@ static int osmlayer_auth_login(struct leonos_auth_login *login)
     if (ret < 0) {
         return ret;
     }
+    ret = osmlayer_assign_home_owner(accounts[index].username, accounts[index].uid);
+    if (ret < 0) {
+        return ret;
+    }
     osmlayer_fill_user_info(&login->user, &accounts[index]);
     return 0;
 }
@@ -2397,6 +2465,10 @@ static int osmlayer_auth_create(struct leonos_auth_create *create)
         return ret;
     }
     ret = osmlayer_accounts_save(accounts, count + 1u);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = osmlayer_assign_home_owner(account->username, account->uid);
     if (ret < 0) {
         return ret;
     }
@@ -2831,8 +2903,8 @@ int osmlayer_c_services_selftest(void)
 {
     char path[OSMLAYER_FS_PATH_LEN];
     struct osmlayer_vfs_resolve_path vfs = {
-        .cwd = "/system/config",
-        .input = "../apps/desktop/desktop.elf",
+        .cwd = LEONOS_LAYOUT_ETC_LEONOS,
+        .input = "../../usr/lib/leonos/apps/desktop/desktop.elf",
         .out = path,
         .capacity = sizeof(path),
         .node_kind = 0,
@@ -2840,7 +2912,7 @@ int osmlayer_c_services_selftest(void)
         .reserved = 0,
     };
     if (osmlayer_resolve_path(&vfs) < 0 ||
-        !osmlayer_text_eq(path, "/system/apps/desktop/desktop.elf")) {
+        !osmlayer_text_eq(path, LEONOS_LAYOUT_LEONOS_APPS "/desktop/desktop.elf")) {
         return 0;
     }
 

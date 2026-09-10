@@ -71,6 +71,8 @@ jobs:
             xorriso \
             mtools \
             dosfstools \
+            e2fsprogs \
+            fakeroot \
             gdisk \
             qemu-utils \
             python3 \

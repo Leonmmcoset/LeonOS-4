@@ -546,3 +546,18 @@ static uint64_t fat_sector_for_cluster(uint32_t cluster)
     return g_storage.esp_start_lba + g_storage.fat_start_sector +
            ((cluster * 4u) / g_storage.bytes_per_sector);
 }
+
+/** @brief Format an on-disk GPT GUID with the UEFI mixed-endian UUID convention. */
+static void storage_partition_guid_text(const uint8_t guid[16], char uuid[37])
+{
+    static const uint8_t order[] = {3,2,1,0,5,4,7,6,8,9,10,11,12,13,14,15};
+    static const char hex[] = "0123456789abcdef";
+    uint32_t pos = 0;
+    for (uint32_t i = 0; i < 16; ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) uuid[pos++] = '-';
+        uuid[pos++] = hex[guid[order[i]] >> 4];
+        uuid[pos++] = hex[guid[order[i]] & 15];
+    }
+    uuid[pos] = 0;
+
+}

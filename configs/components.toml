@@ -82,19 +82,6 @@ sdk = false
 api = false
 
 [[components]]
-id = "oobe"
-symbol = "APP_OOBE"
-label = "First-run setup"
-category = "System applications"
-kind = "system-app"
-default = true
-required = false
-stage = true
-entry = false
-sdk = false
-api = false
-
-[[components]]
 id = "login"
 symbol = "APP_LOGIN"
 label = "Login"
@@ -621,6 +608,19 @@ depends = ["ncurses"]
 id = "musl-gcc"
 symbol = "TOOL_MUSL_GCC"
 label = "Static musl GCC and binutils"
+category = "Developer applications"
+kind = "tool"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "python"
+symbol = "TOOL_PYTHON"
+label = "Python 3 with complete standard library"
 category = "Developer applications"
 kind = "tool"
 default = true

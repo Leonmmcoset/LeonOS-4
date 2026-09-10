@@ -6,11 +6,38 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
 from make_ext2_root import write_ext2_root
 
-
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from leonos_layout import (  # noqa: E402
+    BIN,
+    BOOT,
+    ETC,
+    ETC_LEONOS,
+    ETC_SSL_CERTS,
+    HOME,
+    LEONOS_APPS,
+    LEONOS_LIB,
+    LIB,
+    LICENSES,
+    ROOT_SYMLINKS,
+    layout_directories,
+    tool_payload_paths,
+    apply_root_symlinks,
+    command_symlink,
+    RUN_LEONOS,
+    SBIN,
+    USR,
+    USR_BIN,
+    USR_LIB,
+    USR_SBIN,
+    VAR_LIB_LEONOS,
+    VAR_TMP,
+)
 
 
 def run(cmd: list[str]) -> None:
@@ -20,35 +47,49 @@ def run(cmd: list[str]) -> None:
 
 def copy_file(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    shutil.copy2(src, dst, follow_symlinks=False)
 
 
 def copy_tree(src: Path, dst: Path) -> None:
-    if dst.exists():
-        shutil.rmtree(dst)
-    dst.mkdir(parents=True)
-    for item in src.rglob("*"):
-        rel = item.relative_to(src)
-        target = dst / rel
-        if item.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
+    """Copy a tree while preserving symlinks exactly as links."""
+    if not src.exists() and not src.is_symlink():
+        return
+    if src.is_symlink():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.unlink(missing_ok=True)
+        dst.symlink_to(os.readlink(src))
+        return
+    if dst.is_symlink() or (dst.exists() and not dst.is_dir()):
+        if dst.is_symlink() or dst.is_file():
+            dst.unlink()
         else:
-            copy_file(item, target)
+            shutil.rmtree(dst)
+    shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+
+
+def remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
 
 
 def remove_file(path: Path) -> None:
-    if path.exists():
-        path.unlink()
+    path.unlink(missing_ok=True)
 
 
 def share_identical_payload_files(stage: Path) -> None:
-    """ext2 preserves these hard links while exposing both complete trees."""
+    """ext2 preserves these hard links while exposing both complete trees.
+
+    Only regular files are deduplicated; symlinks are never replaced with
+    hard links because the usr layout contract requires real links.
+    """
     seen = {}
     for path in sorted(stage.rglob("*")):
         relative = path.relative_to(stage).as_posix()
         if relative.startswith("install/root/"):
             relative = relative.removeprefix("install/root/")
-        if not relative.startswith(("opt/", "bin/", "usr/", "share/")):
+        if not relative.startswith(("opt/", "bin/", "sbin/", "usr/")):
             continue
         if not path.is_file() or path.is_symlink():
             continue
@@ -64,22 +105,77 @@ def share_identical_payload_files(stage: Path) -> None:
             os.link(previous, path)
 
 
+def stage_runtime_payload(esp_tree: Path, stage: Path, policy_runtime: Path,
+                          userland_dir: Path, gptinit: Path,
+                          generated_icons_dir: Path,
+                          policy_apps: tuple[str, ...]) -> None:
+    """Build the writable ext2 live installer root."""
+    # Root filesystems and libc: the musl interpreter and runtime libraries
+    # are real files under /lib, matching the ELF PT_INTERP contract.
+    copy_tree(esp_tree / BIN, stage / BIN)
+    copy_tree(esp_tree / SBIN, stage / SBIN)
+    copy_tree(esp_tree / LIB, stage / LIB)
+    copy_tree(esp_tree / USR, stage / USR)
+    if (esp_tree / "opt").is_dir():
+        copy_tree(esp_tree / "opt", stage / "opt")
+    copy_tree(esp_tree / ETC, stage / ETC)
+    layout_directories(stage)
+    # Installer-only programs and policy overrides.
+    for app in ("authd", "imd", "windowd", "desktop", "installer"):
+        copy_file(userland_dir / f"{app}.elf",
+                  stage / LEONOS_APPS / app / f"{app}.elf")
+    copy_file(userland_dir / "busybox.elf", stage / BIN / "busybox")
+    copy_file(gptinit, stage / LEONOS_APPS / "gptinit" / "gptinit.elf")
+    (stage / LEONOS_APPS / "gptinit" / "manifest.ini").write_text(
+        "[app]\nid=gptinit\nname=GPT initializer\nversion=installer\n"
+        "category=Installer tools\nexec=gptinit.elf\nentry=0\nterminal=1\n"
+        "hidden=1\ncommands=gptinit\n",
+        encoding="ascii",
+    )
+    copy_file(esp_tree / LEONOS_APPS / "dynlinkerror" / "dynlinkerror.elf",
+              stage / LEONOS_APPS / "dynlinkerror" / "dynlinkerror.elf")
+    for app in policy_apps:
+        copy_file(generated_icons_dir / f"{app}.bmp",
+                  stage / LEONOS_APPS / app / f"{app}.bmp")
+    copy_file(policy_runtime, stage / LEONOS_LIB / "libleonos.so.2")
+    for app in ("authd", "imd", "windowd", "desktop", "installer", "gptinit"):
+        link, target = command_symlink(app, f"{LEONOS_APPS}/{app}/{app}.elf")
+        path = stage / link
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            raise ValueError(f"installer command conflicts with a regular file: {path}")
+        path.symlink_to(target)
+    (stage / VAR_LIB_LEONOS / "users.db").write_bytes(bytes.fromhex("3253554100000000"))
+    (stage / VAR_LIB_LEONOS / "users.db").chmod(0o600)
+    (stage / ETC / "resolv.conf").write_text("nameserver 1.1.1.1\n",
+                                              encoding="ascii")
+    layout_directories(stage)
+    apply_root_symlinks(stage)
+
+
 def stage_installed_payloads(esp_tree: Path, destination: Path) -> None:
-    """Split normal staging into ext2 root and the minimal FAT32 boot payload."""
+    """Split normal staging into ext2 root and the minimal FAT32 boot payload.
+
+    The installed root keeps real /bin, /sbin and /lib directories; there is
+    deliberately no /lib64.  The ESP gets only GRUB, the loader and the
+    /leonos boot files.
+    """
     root = destination / "install/root"
     esp = destination / "install/esp"
     copy_tree(esp_tree, root)
+    (destination / "install/components.list").write_text(
+        "".join(f"{component}\t/{path}\n" for component in ("python", "musl-gcc")
+                for path in tool_payload_paths(component)), encoding="ascii")
     shutil.rmtree(root / "EFI", ignore_errors=True)
     shutil.rmtree(root / "grub", ignore_errors=True)
     remove_file(root / "loader.elf")
-    remove_file(root / "system/kernel.sys")
-    remove_file(root / "system/middlelayer.sys")
+    shutil.rmtree(root / "leonos", ignore_errors=True)
 
     copy_file(esp_tree / "EFI/BOOT/BOOTX64.EFI", esp / "EFI/BOOT/BOOTX64.EFI")
     copy_tree(esp_tree / "grub", esp / "grub")
     copy_file(esp_tree / "loader.elf", esp / "loader.elf")
-    copy_file(esp_tree / "system/kernel.sys", esp / "system/kernel.sys")
-    copy_file(esp_tree / "system/middlelayer.sys", esp / "system/middlelayer.sys")
+    copy_tree(esp_tree / "leonos", esp / "leonos")
 
 
 def main() -> int:
@@ -88,14 +184,11 @@ def main() -> int:
     parser.add_argument("--stage", default="build/install/root")
     parser.add_argument("--esp-tree", default="build/esp")
     parser.add_argument("--installed-policy-dir", default="build/userland-installer-policy")
-    parser.add_argument("--policy-apps", nargs="*", default=("desktop", "oobe", "settings"))
+    parser.add_argument("--policy-apps", nargs="*", default=("desktop", "settings"))
     parser.add_argument("--userland-dir", default="build/userland")
     parser.add_argument("--gptinit", default="build/userland-installer/gptinit.elf")
     parser.add_argument("--policy-runtime", default="build/userland-installer-policy/libleonos.so.2")
     parser.add_argument("--generated-icons-dir", default="build/generated/app-icons")
-    # Accepted only so a build.py process started before the payload split can
-    # finish. New build graphs no longer pass this option.
-    parser.add_argument("--manifest", help=argparse.SUPPRESS)
     parser.add_argument("--size-mib", type=int, default=64)
     args = parser.parse_args()
 
@@ -120,92 +213,32 @@ def main() -> int:
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
     out.parent.mkdir(parents=True, exist_ok=True)
-    if out.exists():
-        out.unlink()
+    out.unlink(missing_ok=True)
 
-    copy_file(userland_dir / "authd.elf", stage / "system/apps/authd/authd.elf")
-    copy_file(userland_dir / "imd.elf", stage / "system/apps/imd/imd.elf")
-    copy_file(userland_dir / "windowd.elf", stage / "system/apps/windowd/windowd.elf")
-    copy_file(userland_dir / "desktop.elf", stage / "system/apps/desktop/desktop.elf")
-    copy_file(userland_dir / "installer.elf", stage / "system/apps/installer/installer.elf")
-    # Advanced installer mode enters the installer root directly through the
-    # BusyBox shell, so keep the command environment available on the ISO.
-    copy_file(userland_dir / "busybox.elf", stage / "programs/busybox/busybox.elf")
-    # Ship the selected terminal packages in both the live installer and its payload.
-    copy_tree(esp_tree / "bin", stage / "bin")
-    copy_tree(esp_tree / "usr", stage / "usr")
-    if (esp_tree / "opt").is_dir():
-        copy_tree(esp_tree / "opt", stage / "opt")
-    if (esp_tree / "programs/vim").is_dir():
-        copy_tree(esp_tree / "programs/vim", stage / "programs/vim")
-    # gptinit is installer-only and must never enter the installed root tree.
-    copy_file(gptinit, stage / "programs/gptinit/gptinit.elf")
-    (stage / "programs/gptinit/manifest.ini").write_text(
-        "[app]\nid=gptinit\nname=GPT initializer\nversion=installer\n"
-        "category=Installer tools\nexec=gptinit.elf\nentry=0\nterminal=1\n"
-        "hidden=1\ncommands=gptinit\n",
-        encoding="ascii",
-    )
-    copy_file(esp_tree / "system/apps/dynlinkerror/dynlinkerror.elf",
-              stage / "system/apps/dynlinkerror/dynlinkerror.elf")
-    copy_file(generated_icons_dir / "desktop.bmp", stage / "system/apps/desktop/desktop.bmp")
-    copy_file(generated_icons_dir / "installer.bmp", stage / "system/apps/installer/installer.bmp")
-    copy_tree(esp_tree / "system/config", stage / "system/config")
-    (stage / "system/state").mkdir(parents=True, exist_ok=True)
-    # Keep the conventional live-environment mount point available before the
-    # advanced shell starts.  Without this, the documented `mkdir /mnt/esp`
-    # and `mkdir /mnt/root` commands fail because POSIX mkdir does not create
-    # missing parents unless -p is supplied.  Keep /root available as the
-    # default HOME for the installer advanced shell as well.
-    # Installer mount targets must exist before mount(2) is called: the
-    # Linux mount ABI requires the target directory to already be present.
-    for directory in ("mnt", "tmp", "media", "root", "target"):
-        (stage / directory).mkdir(parents=True, exist_ok=True)
-    (stage / "tmp").chmod(0o1777)
-    # Both the live environment and installed payload retain case-sensitive
-    # Linux toolchain headers. The EFI boot payload remains FAT32.
-    (stage / "system/osmlayer.manifest").write_text(
-        "name=osmlayer\nabi=2\nroot=/\nfs=ext2\ngui=desktop.elf\n",
-        encoding="ascii",
-    )
-    copy_file(esp_tree / "system/fonts/leonos-metro.ttf", stage / "system/fonts/leonos-metro.ttf")
-    copy_file(esp_tree / "system/fonts/leonos-win95.ttf", stage / "system/fonts/leonos-win95.ttf")
-    copy_file(esp_tree / "system/fonts/times-new-roman.ttf", stage / "system/fonts/times-new-roman.ttf")
-    copy_file(esp_tree / "system/fonts/simsun.ttc", stage / "system/fonts/simsun.ttc")
-    copy_tree(esp_tree / "system/certs", stage / "system/certs")
-    copy_tree(esp_tree / "system/resources", stage / "system/resources")
-    copy_tree(esp_tree / "drivers", stage / "drivers")
-    copy_tree(esp_tree / "lib", stage / "lib")
-    copy_tree(esp_tree / "share/licenses", stage / "share/licenses")
-    if (esp_tree / "share/examples").is_dir():
-        copy_tree(esp_tree / "share/examples", stage / "share/examples")
-    copy_file(policy_runtime, stage / "system/lib/libleonos.so.2")
-    # Unix IPC service sockets live in /run/leonos and procfs is fixed at
-    # /proc; FAT/exFAT have no permission bits, so service-side SO_PEERCRED
-    # checks are the access-control boundary.
-    (stage / "run/leonos").mkdir(parents=True, exist_ok=True)
-    (stage / "proc").mkdir(parents=True, exist_ok=True)
-    (stage / "etc").mkdir(parents=True, exist_ok=True)
-    (stage / "etc/resolv.conf").write_text("nameserver 1.1.1.1\n", encoding="ascii")
-    (stage / "etc/machine-id").write_text("00000000000000000000000000000000\n", encoding="ascii")
-    (stage / "system/config/users.db").write_bytes(b"")
+    stage_runtime_payload(esp_tree, stage, policy_runtime, userland_dir,
+                          gptinit, generated_icons_dir,
+                          tuple(args.policy_apps))
+
+    # Installed-system root payload: the same root namespace without the
+    # live-installer-only gptinit package.
     stage_installed_payloads(esp_tree, stage)
-    (stage / "install/root/run/leonos").mkdir(parents=True, exist_ok=True)
-    (stage / "install/root/proc").mkdir(parents=True, exist_ok=True)
-    (stage / "install/root/etc").mkdir(parents=True, exist_ok=True)
-    (stage / "install/root/etc/resolv.conf").write_text("nameserver 1.1.1.1\n", encoding="ascii")
-    (stage / "install/root/etc/machine-id").write_text("00000000000000000000000000000000\n", encoding="ascii")
-    (stage / "install/root/system/config/users.db").write_bytes(b"")
-    copy_file(policy_runtime, stage / "install/root/system/lib/libleonos.so.2")
-    remove_file(stage / "install/root/etc/license.conf")
-    remove_file(stage / "install/root/etc/install.id")
     for app in args.policy_apps:
-        if app not in {"desktop", "oobe", "settings"}:
+        if app not in {"desktop", "settings"}:
             raise ValueError(f"unsupported installer policy app: {app}")
         name = f"{app}.elf"
         copy_file(installed_policy_dir / name,
-                  stage / "install/root/system/apps" / app / name)
-
+                  stage / "install/root" / LEONOS_APPS / app / name)
+    copy_file(policy_runtime,
+              stage / "install/root" / LEONOS_LIB / "libleonos.so.2")
+    remove_file(stage / "install/root/etc/license.conf")
+    remove_file(stage / "install/root/etc/install.id")
+    (stage / "install/root" / VAR_LIB_LEONOS).mkdir(parents=True, exist_ok=True)
+    (stage / "install/root" / VAR_LIB_LEONOS / "users.db").write_bytes(bytes.fromhex("3253554100000000"))
+    (stage / "install/root" / VAR_LIB_LEONOS / "users.db").chmod(0o600)
+    layout_directories(stage)
+    layout_directories(stage / "install/root")
+    apply_root_symlinks(stage)
+    apply_root_symlinks(stage / "install/root")
     share_identical_payload_files(stage)
     write_ext2_root(stage, out, args.size_mib)
     return 0

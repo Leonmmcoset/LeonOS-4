@@ -211,7 +211,7 @@ def main() -> int:
     if gcc_smoke:
         for command, delay in (
             ("musl-gcc --version", 2),
-            ("musl-gcc -static /share/examples/musl-gcc/hello.c -o /tmp/gcc-hello", 30),
+            ("musl-gcc -static /usr/share/examples/musl-gcc/hello.c -o /tmp/gcc-hello", 30),
             ("/tmp/gcc-hello", 3),
             ("ld --version", 2),
         ):
@@ -239,7 +239,7 @@ def main() -> int:
         return 0
 
     if less_smoke:
-        send_keys(sock, text_keys("less /programs/tcc/examples/hello.c") + ("ret",))
+        send_keys(sock, text_keys("less /opt/tcc/examples/hello.c") + ("ret",))
         # The pager must still own the PTY before the quit key is sent. A
         # successful launch renders the first page and waits for input.
         time.sleep(1.0)
@@ -293,7 +293,7 @@ def main() -> int:
         # System program directories are root-owned; the OOBE account compiles
         # into its writable workspace, just as a normal Linux user would.
         output_path = "/tmp/leonos-tcc-smoke"
-        send_keys(sock, text_keys(f"tcc /programs/tcc/examples/hello.c -o {output_path}") + ("ret",))
+        send_keys(sock, text_keys(f"tcc /opt/tcc/examples/hello.c -o {output_path}") + ("ret",))
         # The first full compile parses the staged musl headers from the
         # image filesystem. On a cold QEMU guest that can exceed the generic editor
         # smoke-test delay, so do not inject the executable command while the
@@ -340,7 +340,7 @@ def main() -> int:
         # Terminal and desktop have the runtime resident already.  Deleting
         # the on-disk runtime must therefore leave the desktop available to
         # display the statically linked recovery window for the next launch.
-        send_keys(sock, text_keys("rm /system/lib/libleonos.so.1") + ("ret",))
+        send_keys(sock, text_keys("rm /usr/lib/leonos/libleonos.so.1") + ("ret",))
         time.sleep(2.0)
         send_keys(sock, text_keys("nano") + ("ret",))
         time.sleep(5.0)
@@ -383,7 +383,7 @@ def main() -> int:
     if editor == "vim" and serial_log_path is not None:
         serial_text = serial_log_path.read_text(encoding="utf-8", errors="replace")
         if not any(path in serial_text for path in
-                   ("path=/bin/vim ", "path=/programs/vim/vim.elf ")):
+                   ("path=/bin/vim ", "path=/usr/bin/vim ")):
             hmp(sock, "screendump build/images/vim-launch-failed.ppm", 0.4)
             raise RuntimeError("Vim was not executed by the Terminal shell")
     if exit_only:

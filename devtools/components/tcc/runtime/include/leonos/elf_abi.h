@@ -9,10 +9,12 @@
 #define LEONOS_ELF_ABI_MAJOR 1u
 #define LEONOS_ELF_ABI_MINOR 0u
 
-#define LEONOS_ELF_INTERP_PATH "/system/lib/ld-leonos.elf"
-#define LEONOS_MUSL_INTERP_PATH "/lib/ld-musl-x86_64.so.1"
+#include <leonos/layout.h>
+
+#define LEONOS_ELF_INTERP_PATH LEONOS_PATH_OLD_NATIVE_INTERP
+#define LEONOS_MUSL_INTERP_PATH LEONOS_PATH_MUSL_INTERP
 #define LEONOS_ELF_RUNTIME_SONAME "libleonos.so.1"
-#define LEONOS_ELF_RUNTIME_PATH "/system/lib/libleonos.so.1"
+#define LEONOS_ELF_RUNTIME_PATH LEONOS_PATH_LIBLEONOS_COMPAT
 
 struct leonos_elf_abi_note {
     unsigned int major;

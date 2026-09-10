@@ -8,6 +8,10 @@
 #include <leonos/ui.h>
 #include <termios.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 #define LOGIN_MAX_W 1920
 #define LOGIN_MAX_H 1080
@@ -143,10 +147,6 @@ static int try_login(void)
         copy_text(status_text, sizeof(status_text), T("No account available", "没有可用账户"));
         return 0;
     }
-    if (!password[0]) {
-        copy_text(status_text, sizeof(status_text), T("Password required", "请输入密码"));
-        return 0;
-    }
     if (leonos_auth_login(users[selected_user].username, password, &user) == 0) {
         copy_text(status_text, sizeof(status_text), T("Signed in", "已登录"));
         return 1;
@@ -161,6 +161,7 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
                          uint8_t masked)
 {
     uint32_t length = 0;
+    int overflow = 0;
     char input;
     if (!buffer || capacity < 2U) {
         return 0;
@@ -169,7 +170,10 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
     if (prompt) {
         write(1, prompt, strlen(prompt));
     }
-    while (read(0, &input, 1) > 0) {
+    for (;;) {
+        ssize_t result = read(0, &input, 1);
+        if (result < 0 && errno == EINTR) continue;
+        if (result <= 0) break;
         if (input == '\r') {
             continue;
         }
@@ -180,6 +184,7 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
             if (masked) {
                 write(1, "\r\n", 2);
             }
+            if (overflow) { errno = EOVERFLOW; return 0; }
             return 1;
         }
         if (input == '\b' || (uint8_t)input == 127U) {
@@ -195,7 +200,7 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity,
             if (masked) {
                 write(1, "*", 1);
             }
-        }
+        } else if ((uint8_t)input >= 32U) overflow = 1;
     }
     return 0;
 }
@@ -217,7 +222,7 @@ static int tty_read_secret(const char *prompt, char *buffer, uint32_t capacity)
         return 0;
     }
     ret = tty_read_line(prompt, buffer, capacity, 1);
-    (void)tcsetattr(0, TCSANOW, &saved_termios);
+    if (tcsetattr(0, TCSANOW, &saved_termios) < 0) ret = 0;
     return ret;
 }
 
@@ -227,6 +232,16 @@ static int tty_login_main(void)
     char password_input[LEONOS_AUTH_PASSWORD_LEN];
     struct leonos_user_info user;
     puts("LeonOS login");
+    struct stat installed;
+    if (lstat("/etc/leonos/installed", &installed) < 0 && errno == ENOENT) {
+        execl("/bin/busybox", "sh", (char *)0);
+        return 1;
+    }
+    for (unsigned attempt = 0; attempt < 50; ++attempt) {
+        struct leonos_auth_status status;
+        if (leonos_auth_status(&status) == 0) break;
+        usleep(100000);
+    }
     refresh_users();
     if (!user_count) {
         puts("No enabled accounts.");
@@ -241,8 +256,13 @@ static int tty_login_main(void)
             return 1;
         }
         if (leonos_auth_login(username_input, password_input, &user) == 0) {
+            explicit_bzero(password_input, sizeof(password_input));
             puts("Login successful.");
-            return 0;
+            if (setenv("HOME", user.home, 1) < 0 || setenv("USER", user.username, 1) < 0 ||
+                setenv("LOGNAME", user.username, 1) < 0 || chdir(user.home) < 0) return 1;
+            execl("/bin/busybox", "sh", (char *)0);
+            perror("Start shell");
+            return 1;
         }
         puts("Login failed.");
     }
@@ -304,6 +324,9 @@ int main(void)
                                                           event.keycode,
                                                           event.pressed);
                 }
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_KEY_UP) {
+                (void)leonos_ui_edit_state_handle_key(&password_edit, event.keycode, 0);
             }
             if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_BUTTON && (event.buttons & 1u)) {
                 uint32_t panel_w = surface_w > 620 ? 520 : surface_w > 48 ? surface_w - 40 : surface_w;

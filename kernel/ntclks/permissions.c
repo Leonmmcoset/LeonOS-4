@@ -143,12 +143,24 @@ int fs_permissions_get(const char *path, const struct storage_node *node,
         node = &found;
     }
     if (node->flags & STORAGE_NODE_FLAG_EXT2) return storage_inode_permissions(node, value, false);
+    if (node->flags & STORAGE_NODE_FLAG_DEV_LINK) {
+        *value = (struct leonos_permissions){0777, 0, 0};
+        return 0;
+    }
     /* Synthetic nodes do not reside in a mounted data filesystem. */
     if (node->flags & (STORAGE_NODE_FLAG_DEV_NODE | STORAGE_NODE_FLAG_DEV_DIR | STORAGE_NODE_FLAG_DEV_FB0)) {
         return device_metadata(node, value, false);
     }
     if (proc_lookup(path, &found) == 0) {
-        *value = (struct leonos_permissions){node->type == LEONOS_FS_TYPE_DIR ? 0555 : 0444, 0, 0};
+        if (node->flags & STORAGE_NODE_FLAG_SYSFS) {
+            const char *base=path;
+            for(const char *p=path; *p; ++p) if(*p=='/') base=p+1;
+            uint32_t mode=node->type==LEONOS_FS_TYPE_DIR?0555:node->type==LEONOS_FS_TYPE_SYMLINK?0777:0444;
+            if (!__builtin_strcmp(base,"product_serial") || !__builtin_strcmp(base,"product_uuid") || !__builtin_strcmp(base,"board_serial") || !__builtin_strcmp(base,"config")) mode=0400;
+            *value=(struct leonos_permissions){mode,0,0}; return 0;
+        }
+        *value = (struct leonos_permissions){node->type == LEONOS_FS_TYPE_DIR ? 0555 :
+            node->type == LEONOS_FS_TYPE_SYMLINK ? 0777 : 0444, 0, 0};
         return 0;
     }
     ret = osmlayer_auth_op(LEONOS_AUTH_OP_POSIX_PERMISSIONS, &req);
@@ -162,6 +174,7 @@ static int store(const char *path, const struct storage_node *node,
     struct leonos_permissions_request req = {.action = LEONOS_PERMISSIONS_SET, .value = *value};
     if (node->flags & STORAGE_NODE_FLAG_EXT2) return storage_inode_permissions(node, &req.value, true);
     if (metadata_path(path)) return -LEONOS_EPERM;
+    if (node->flags & STORAGE_NODE_FLAG_DEV_LINK) return -LEONOS_EROFS;
     if (node->flags & (STORAGE_NODE_FLAG_DEV_NODE | STORAGE_NODE_FLAG_DEV_DIR | STORAGE_NODE_FLAG_DEV_FB0))
         return device_metadata(node, &req.value, true);
     struct storage_node proc;
@@ -264,7 +277,10 @@ int fs_permissions_resolve_flags(const struct task *task, const char *base, cons
             (!last || *input || (flags & FS_LOOKUP_FOLLOW))) {
             uint32_t got = 0, suffix = 0;
             if (++links > 40) return -LINUX_ELOOP;
-            ret = storage_readlink(out, target, sizeof(target), &got);
+            if (node.flags & STORAGE_NODE_FLAG_PROC) {
+                ret = proc_readlink(out, target, sizeof(target));
+                if (ret >= 0) { got = (uint32_t)ret; ret = 0; }
+            } else ret = storage_readlink(out, target, sizeof(target), &got);
             if (ret < 0) return ret;
             if (!got) return -LEONOS_ENOENT;
             while (input[suffix]) ++suffix;

@@ -6,10 +6,11 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <string.h>
+#include <leonos/layout.h>
 
 #define OSCHINPT_ID "oschinpt"
-#define OSCHINPT_DICT_PATH "/programs/oschinpt/pinyin_simp.dict.yaml"
-#define OSCHINPT_DICT_INDEX_PATH "/programs/oschinpt/oscp.idx"
+#define OSCHINPT_DICT_PATH LEONOS_LAYOUT_LEONOS_APPS "/oschinpt/pinyin_simp.dict.yaml"
+#define OSCHINPT_DICT_INDEX_PATH LEONOS_LAYOUT_LEONOS_APPS "/oschinpt/oscp.idx"
 #define OSCHINPT_DICT_URL "https://raw.githubusercontent.com/rime/rime-pinyin-simp/master/pinyin_simp.dict.yaml"
 #define OSCHINPT_CONFIG_NAME ".inputm.conf"
 #define OSCHINPT_LEARN_NAME ".oschinpt.learn"

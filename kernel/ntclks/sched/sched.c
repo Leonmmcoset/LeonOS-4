@@ -515,6 +515,7 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry)
     }
     task_zero(task);
     task->pid = pid;
+    task->start_uptime_ms = time_uptime_ms();
     task->parent_pid = 0;
     task->process_group = 0;
     task->process_session = 0;
@@ -575,6 +576,7 @@ uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack
     }
     task_zero(task);
     task->pid = pid;
+    task->start_uptime_ms = time_uptime_ms();
     task->parent_pid = parent_pid;
     task->parent_exit_signal = 17;
     task->process_group = task->pid;
@@ -816,6 +818,7 @@ int64_t sched_clone_current(const struct trap_frame *parent_frame, uint64_t flag
         }
     }
     child->pid = child_pid;
+    child->start_uptime_ms = time_uptime_ms();
     child->tgid = (flags & CLONE_THREAD) ? sched_task_tgid(parent) : child_pid;
     child->process_pending_signals = 0;
     child->signal_queue = (struct kernel_sigqueue){0};
@@ -1167,6 +1170,7 @@ void sched_set_running(uint32_t pid)
         if (tasks[i] == selected) {
             tasks[i]->state = TASK_RUNNING;
             tasks[i]->running_cpu = cpu;
+            tasks[i]->last_cpu = cpu;
         } else if (tasks[i]->state == TASK_RUNNING && tasks[i]->running_cpu == cpu) {
             tasks[i]->state = TASK_READY;
             tasks[i]->running_cpu = SCHED_CPU_NONE;
@@ -2182,6 +2186,7 @@ struct task *sched_select_next_user(void)
         }
         best->state = TASK_RUNNING;
         best->running_cpu = cpu;
+        best->last_cpu = cpu;
         current_pid[cpu] = best->pid;
     }
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
@@ -2220,6 +2225,7 @@ struct task *sched_reclaim_current_user(void)
     } else {
         task->state = TASK_RUNNING;
         task->running_cpu = cpu;
+        task->last_cpu = cpu;
     }
     kernel_spin_unlock_irqrestore(&scheduler_lock, flags);
     return task;

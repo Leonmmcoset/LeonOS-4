@@ -13,7 +13,7 @@ LeonOS 使用根目录的 `build.py` 作为唯一构建入口，运行环境为 
 - `run userland`：构建 libc、mbedTLS、用户程序和图标。
 - `run image-vmdk`、`run image-iso`：分别生成 VMDK 与普通 ISO。
 - 默认启用 `musl-gcc` 组件：打包 GCC 15.1.0、binutils 2.44、C/C++ 头文件和静态库，
-  支持直接运行 `musl-gcc -static /share/examples/musl-gcc/hello.c -o /tmp/hello`。
+  支持直接运行 `musl-gcc -static /usr/share/examples/musl-gcc/hello.c -o /tmp/hello`。
   `run test-musl-gcc-package` 验证宿主编译、所有命令入口及原始文件 SHA256。
   首次构建从固定 Dyne 2.2.0 发布下载并校验；可用 `LEONOS_GCC_ARCHIVE` 指定本地归档。
   离线缓存位于 `buildsystem/deps/musl-gcc/`，详情见 `userland/musl-gcc/README.md`。

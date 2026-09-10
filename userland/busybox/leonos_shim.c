@@ -18,6 +18,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <linux/syscall.h>
+#include <leonos/layout.h>
 
 extern long syscall0(long number);
 extern long syscall1(long number, long a0);
@@ -105,7 +106,7 @@ const char *leonos_shell_command_path(const char *name)
         strcmp(name, "fsck.ext2") == 0 || strcmp(name, "fsck.exfat") == 0 ||
         strcmp(name, "blkid") == 0 || strcmp(name, "lsblk") == 0 ||
         strcmp(name, "leonos-grub-installer") == 0 || strcmp(name, "sync") == 0)
-        return "/programs/busybox/busybox.elf";
+        return "/bin/busybox";
     if (leonos_app_registry_resolve(name, resolved, sizeof(resolved)) == 0)
         return resolved;
     return 0;
@@ -140,7 +141,7 @@ static int leonos_exec_busybox_applet(char *const argv[])
         exec_argv[index + 1U] = argv[index];
     }
     exec_argv[argc + 1U] = 0;
-    result = execve("/programs/busybox/busybox.elf", exec_argv, environ);
+    result = execve("/bin/busybox", exec_argv, environ);
     saved_errno = errno;
     free(exec_argv);
     errno = saved_errno;

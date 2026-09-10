@@ -134,7 +134,7 @@ class ELFLoader:
         loaded, elf = self._load_file(main_path)
         if loaded.elf_type != ET_DYN or not loaded.interp_path:
             return loaded
-        if loaded.interp_path != "/system/lib/ld-leonos.elf":
+        if loaded.interp_path != "/usr/lib/leonos/ld-leonos.elf":
             raise GuestFault(f"unsupported ELF interpreter: {loaded.interp_path}")
         interp_path = self._guest_to_host(loaded.interp_path)
         interp, _ = self._load_file(interp_path, interpreter=True)

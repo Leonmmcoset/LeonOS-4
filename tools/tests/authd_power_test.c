@@ -29,6 +29,7 @@ int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
 int main(void)
 {
     clients[0] = (struct authd_client){.used = 1, .fd = 10, .uid = 1000};
+    session_active = 1;
     user_count = 1;
     users[0].user.uid = 1000;
     struct leonos_authd_power request = {.command = RB_AUTOBOOT};

@@ -763,7 +763,7 @@ int desktop_refresh_items(void)
     if (auth_ret < 0) {
         return auth_ret;
     }
-    if (!user.uid || !user.home[0]) {
+    if (!user.home[0]) {
         return -LEONOS_EACCES;
     }
     desktop_build_child_path(desktop_folder_path, sizeof(desktop_folder_path),

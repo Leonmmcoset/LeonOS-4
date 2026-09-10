@@ -1,5 +1,15 @@
 # Build and Installer
 
+## Accounts and optional components
+
+Fresh installations create a fixed `root` account (UID/GID 0) and a chosen
+ordinary account (UID/GID 1000) in the installer. Both passwords require
+1-32 UTF-8 characters without whitespace; confirmations must match. Python
+and GCC/binutils can be selected independently. OOBE is no longer shipped.
+See [Installer Accounts and Components](INSTALLER_ACCOUNTS.md) for the current
+GUI/TTY installation and login regression commands. Older QEMU scripts below
+that assume OOBE or omit account setup need that workflow updated before use.
+
 ## Installer and window regressions
 
 After `python3 build.py run release`, run:
@@ -115,7 +125,7 @@ userland binaries. The default is `http://127.0.0.1:30301`.
 `LEONOS_LICENSE_REQUIRE` policy, writes `autoconf-installer.h` with the
 installer-installed-system policy, and writes `CONFIG_LICENSE_SERVER_URL` into
 both headers. License binaries read that compiled macro directly; there is no
-runtime `/system/config/license.conf` server override.
+runtime `/etc/leonos/license.conf` server override.
 
 ## Main outputs
 
@@ -126,15 +136,17 @@ Common build outputs:
 - `build/images/leonos4-installer.iso`
 - `build/install/root.fat`
 - `build/images/esp.fat`
-- `build/images/root.ext2` (default; exFAT remains available for explicit compatibility builds)
+- `build/images/root.ext2` (default; FAT/exFAT cannot represent the current real symlinks)
 
 The common system staging tree is:
 
 - `build/esp`
 
-It contains the installed-system loader, kernel, middlelayer, resources,
-configuration, bundled help documents under `docs/`, system application packages,
-and application packages under `programs/`.
+It contains the Alpine-shaped root tree (`bin/`, `sbin/`, `lib/`, `usr/`,
+`etc/leonos/`, `var/lib/leonos/`, `opt/`) plus the ESP-only loader, kernel and
+middlelayer under `leonos/`. Help documents live in
+`usr/share/doc/leonos/`; all application packages live in
+`usr/lib/leonos/apps/`.
 Vim and ncurses are enabled by default. `python3 build.py run vim` builds the
 unmodified static Linux musl Vim and its ncurses dependency from pinned
 submodules. Both `image-vmdk` and `installer` package Vim's runtime and the
@@ -143,8 +155,8 @@ for the standalone GRUB live desktop ISO, now using this same normal payload.
 There is no dependency on `build/musl/vim-src` or other experimental downloads.
 `python3 build.py run test-terminal-packages` checks actual Linux executables
 on the host; it does not certify the kernel's whole Linux ABI.
-The normal application set includes `oobe.elf`, `login.elf`, and `oshlp.elf`;
-the account database is intentionally not staged.
+The normal application set includes `login.elf` and `oshlp.elf`. Live media
+contains an empty AUS2 database; the installer provisions the target accounts.
 
 ## Installer packaging
 
@@ -152,8 +164,8 @@ The installer has two related payload groups:
 
 - Top-level ISO boot payload: loader, kernel, middlelayer, and installer root.
 - Installed-system root payload: a copy of `build/esp` without `EFI/`,
-  `boot/`, `system/kernel.sys`, or `system/middlelayer.sys`, stored under
-  `install/root` inside `build/install/root.fat`.
+  `grub/`, `loader.elf`, or `leonos/`, stored under `install/root` inside
+  `build/install/root.fat`.
 - Installed-system FAT32 ESP payload: the UEFI/GRUB and early loader files
   stored under `install/esp` inside `build/install/root.fat`.
 
@@ -166,9 +178,9 @@ policy-sensitive binaries built with `autoconf-installer.h`.
 `tools/make_installer_iso.py` creates `build/images/leonos4-installer.iso` and
 stages:
 
-- `boot/loader.elf`
-- `system/kernel.sys`
-- `system/middlelayer.sys`
+- `loader.elf`
+- `leonos/kernel.sys`
+- `leonos/middlelayer.sys`
 - `install/root.fat`
 
 This keeps installer boot and installed-system boot on the same matched
@@ -207,31 +219,35 @@ console PTY. Advanced mode starts a BusyBox shell in the installer root instead,
 with the LeonOS `fdisk`, `mkfs.fat`/`mkfs.fat32`, `mkfs.ext2`, `mkfs.exfat`,
 `fsck.*`, `blkid`, `lsblk`, `mount`, `umount`, `sync`, and
 `leonos-grub-installer` tools available for manual preparation. The
-installer-only `/programs/gptinit/gptinit.elf` utility initializes an empty
+installer-only `/usr/lib/leonos/apps/gptinit/gptinit.elf` utility initializes an empty
 GPT; `fdisk` can edit GPT partition type and name; `fsck.*` performs read-only
 superblock validation. It does not start the installer application or perform
 automatic partitioning.
 
 The installer runtime includes `desktop.elf`, `installer.elf`, and
-`/programs/busybox/busybox.elf`. The installed-system root payload under `/install/root/system/apps`
-and `/install/root/programs` contains the normal app set, including `login.elf`
-and `oobe.elf`, so a fresh
-install boots into license OOBE and then first-administrator creation instead
-of requiring pre-created accounts.
+`/bin/busybox`. The installed-system root payload under
+`/install/root/usr/lib/leonos/apps` contains the normal app set, including
+`login.elf`. A fresh install boots directly into login using accounts created
+on the installer's Accounts page. Copying the root payload manually does not
+provision these accounts or the installed-system marker.
 
-The policy-sensitive installed-system binaries are currently `desktop.elf`,
-`oobe.elf`, and `settings.elf`. They link a libc build that uses
+The policy-sensitive installed-system binaries are currently `desktop.elf`
+and `settings.elf`. They link a libc build that uses
 `autoconf-installer.h`, so disk files cannot turn off validation or redirect
 the license server. To build an image without license validation, change the
 corresponding source macro through Kconfig and regenerate/rebuild so the
 generated binaries contain `LEONOS_LICENSE_REQUIRE 0`.
 
-Installer update mode refreshes FAT32 ESP boot files from `/install/esp`, exFAT
-or ext2 system files from `/install/root`, selected changed or missing `programs`
-packages, and bundled docs from `/install/root/docs`. The core update replaces
-`/target/system/lib` as a unit, including `ld-leonos.elf`, `libleonos.so.1`, and
-versioned component libraries such as `libmagic.so.1`, `liblua.so.5`, and
-`sqlite.so.3`. It also copies `/target/system/kerneldebug.sys` from the payload.
+Installer update mode refreshes FAT32 ESP boot files from `/install/esp`, ext2
+system files from `/install/root`, selected changed or missing application
+packages under `/usr/lib/leonos/apps`, and bundled docs from
+`/install/root/usr/share/doc/leonos`. The core update refreshes the real
+`/bin`, `/sbin`, `/lib`, `/usr/bin`, `/usr/sbin`, `/usr/lib`, `/etc/leonos`,
+`/opt` and `/var/lib/leonos` trees without deleting unrelated target files.
+Third-party shared libraries such as `libmagic.so.1`, `liblua.so.5`, and
+`sqlite.so.3` live in `/usr/lib`; private `libleonos.so.2` lives in
+`/usr/lib/leonos`. It also copies `/usr/lib/leonos/kerneldebug.sys` from the
+payload.
 This keeps the dynamic loader, shared runtime, applications, and the built-in
 kernel debugging module on one release version. Missing runtime directories or
 the debug module on an older target are created during the update; the
@@ -241,15 +257,23 @@ Selected program packages are compared recursively and only shipped files that
 are missing or changed are copied. This includes package metadata, licenses,
 icons, headers, examples, and private runtime data; files added locally to an
 installed package are left untouched.
-Docs are merged: matching bundled `.hlp` files are overwritten, but extra
-third-party help files already present on the target `/target/docs` are kept.
-Update mode does not replace `/target/system/config` or `/target/system/state`, so local machine state such as
-`license.dat`, `accounts.db`, and `oobe.done` is preserved across an
+Docs are merged: matching bundled `.hlp` files are overwritten under
+`/target/usr/share/doc/leonos`, but extra third-party help files already
+present there are kept. Update mode does not replace `/target/etc/leonos` or
+`/target/var/lib/leonos`, so local machine state such as
+`license.dat`, `users.db`, and the installed marker is preserved across an
 installer-driven update. The machine ID is derived from detected machine
-identity at runtime instead of being stored in `/system/config/install.id`. The stable
+identity at runtime instead of being stored in `/etc/install.id`. The stable
 identity source is SMBIOS System UUID when firmware provides it, otherwise the
-boot GPT disk and ESP partition GUIDs. A fresh install formats and copies the
-staged `system/config` tree and creates `system/state` instead, so it starts the license OOBE flow again.
+boot GPT disk and ESP partition GUIDs. A fresh install copies the staged
+`etc/leonos` and `var/lib/leonos` trees, then writes the chosen accounts before
+publishing the ESP boot payload. Update supports only an existing non-usr-merge ext2 layout; old
+pre-FHS installations need a fresh install. There is no migration/archive
+stage. See `docs/ROOTFS_LAYOUT_AND_MIGRATION.md`.
+
+All ext2 image producers require `fakeroot` and `e2fsprogs`. File ownership is
+normalized to root:root inside fakeroot before mke2fs imports the payload;
+this does not change host workspace ownership.
 
 ## WSL validation commands
 

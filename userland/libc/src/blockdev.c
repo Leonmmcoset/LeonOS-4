@@ -749,6 +749,29 @@ int leonos_block_list_partitions(const char *disk_path,
     return 0;
 }
 
+int leonos_block_partition_uuid(const char *disk_path, uint32_t index, char uuid[37])
+{
+    int fd;
+    uint64_t sectors;
+    uint32_t sector_size;
+    struct block_gpt_table table;
+    if (!uuid) return -BLOCK_EINVAL;
+    int ret = block_open_info(disk_path, 0, &fd, &sectors, &sector_size);
+    if (ret < 0) return ret;
+    ret = block_gpt_load_fd(fd, sectors, &table);
+    (void)close(fd);
+    if (ret < 0) return ret;
+    if (index >= table.primary.partition_entry_count ||
+        block_guid_empty(table.entries[index].type_guid)) ret = -BLOCK_ENOENT;
+    else {
+        const uint8_t *g = table.entries[index].unique_guid;
+        snprintf(uuid, 37, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                 g[3],g[2],g[1],g[0],g[5],g[4],g[7],g[6],g[8],g[9],g[10],g[11],g[12],g[13],g[14],g[15]);
+    }
+    block_gpt_free(&table);
+    return ret;
+}
+
 static int block_gpt_update(const char *disk_path,
                             int (*update)(struct block_gpt_table *, void *), void *context)
 {

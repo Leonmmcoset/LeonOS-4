@@ -726,6 +726,17 @@ static int gpt_find_esp(void)
         console_printf("[ntclks] GPT exFAT signature not confirmed; trying Basic Data root lba=%llu\n",
                        (unsigned long long)g_storage.exfat_start_lba);
     }
+    /* Preserve the identities of the actual boot-selected extents. */
+    for (uint32_t i = 0; i < count; ++i) {
+        const struct gpt_entry *entry = (const void *)(table + (uint64_t)i * size);
+        if (!entry->first_lba) continue;
+        if (entry->first_lba == g_storage.esp_start_lba)
+            storage_memcpy(g_storage.esp_unique_guid, entry->unique_guid, 16);
+        if (entry->first_lba == g_storage.ext2_start_lba)
+            storage_memcpy(g_storage.ext2_unique_guid, entry->unique_guid, 16);
+        if (entry->first_lba == g_storage.exfat_start_lba)
+            storage_memcpy(g_storage.exfat_unique_guid, entry->unique_guid, 16);
+    }
     mm_free_pages(phys, (total_sectors + 7u) / 8u);
     return esp_found ? 0 : -2;
 }

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Create a LeonOS GPT disk with a FAT32 ESP and an exFAT runtime root."""
+"""Create a LeonOS GPT disk with a FAT32 ESP and an ext2 runtime root.
+
+The default root filesystem is ext2 because the Alpine-shaped root layout
+requires real symlinks (for example /var/run and command entries) and
+ext2 preserves them. FAT32 remains the ESP format only.
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +12,7 @@ import fcntl
 import os
 import shutil
 import struct
+import sys
 import subprocess
 import tempfile
 import uuid
@@ -16,6 +22,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from make_ext2_root import populate_ext2
+from leonos_layout import (  # noqa: E402  (tools directory is not a package)
+    ETC_LEONOS,
+    layout_directories,
+    apply_root_symlinks,
+    ESP_DISPLAY_CONF,
+    ESP_KERNEL,
+    ESP_MIDDLELAYER,
+)
 SECTOR_SIZE = 512
 ESP_FIRST_SECTOR = 2048
 GPT_HEADER_SIZE = 92
@@ -80,7 +96,7 @@ def gpt_header(current_lba: int, backup_lba: int, first_usable_lba: int,
     return bytes(header)
 
 
-def write_gpt(image: Path, partitions: list[tuple[uuid.UUID, int, int, str]]) -> None:
+def write_gpt(image: Path, partitions: list[tuple[uuid.UUID, int, int, str]]) -> list[uuid.UUID]:
     """Write a standard primary and backup GPT without host partition tools."""
     image_size = image.stat().st_size
     total_sectors = image_size // SECTOR_SIZE
@@ -94,6 +110,7 @@ def write_gpt(image: Path, partitions: list[tuple[uuid.UUID, int, int, str]]) ->
     backup_entries_lba = backup_header_lba - GPT_ENTRY_TABLE_SECTORS
     last_usable_lba = backup_entries_lba - 1
     entries = bytearray(GPT_ENTRY_TABLE_SIZE)
+    partition_uuids = [uuid.uuid4() for _ in partitions]
     for index, (type_guid, first_lba, last_lba, name) in enumerate(partitions):
         if first_lba < first_usable_lba or last_lba > last_usable_lba or first_lba > last_lba:
             raise ValueError(f"GPT partition {index + 1} is outside the usable LBA range")
@@ -102,7 +119,7 @@ def write_gpt(image: Path, partitions: list[tuple[uuid.UUID, int, int, str]]) ->
             raise ValueError(f"GPT partition {index + 1} name is too long")
         struct.pack_into(
             "<16s16sQQQ72s", entries, index * GPT_ENTRY_SIZE,
-            type_guid.bytes_le, uuid.uuid4().bytes_le, first_lba, last_lba,
+            type_guid.bytes_le, partition_uuids[index].bytes_le, first_lba, last_lba,
             0, encoded_name.ljust(72, b"\0"),
         )
 
@@ -135,38 +152,69 @@ def write_gpt(image: Path, partitions: list[tuple[uuid.UUID, int, int, str]]) ->
         stream.write(entries)
         stream.seek(backup_header_lba * SECTOR_SIZE)
         stream.write(backup_header)
+    return partition_uuids
+
+
+def write_root_fstab(root: Path, root_uuid: uuid.UUID, esp_uuid: uuid.UUID) -> None:
+    """Describe this disk's actual GPT extents; never reuse host device numbering."""
+    fstab = root / "etc/fstab"
+    if fstab.is_symlink():
+        raise ValueError("root fstab must be a regular configuration file")
+    fstab.write_text(
+        "# <source> <mountpoint> <type> <options> <dump> <pass>\n"
+        f"/dev/disk/by-partuuid/{root_uuid} / ext2 defaults 0 1\n"
+        f"/dev/disk/by-partuuid/{esp_uuid} /boot vfat defaults 0 2\n",
+        encoding="ascii",
+    )
+    fstab.chmod(0o644)
 
 
 def make_boot_tree(staging: Path, destination: Path) -> None:
-    """Stage only files GRUB and the LeonOS loader need before the root mounts."""
+    """Stage only files GRUB and the LeonOS loader need before the root mounts.
+
+    The ESP-internal namespace is /leonos; because the ESP is mounted at
+    /boot, the same files are visible as /boot/leonos at runtime.
+    """
     copy_file(staging / "EFI/BOOT/BOOTX64.EFI", destination / "EFI/BOOT/BOOTX64.EFI")
     copy_file(staging / "loader.elf", destination / "loader.elf")
-    shutil.copytree(staging / "grub", destination / "grub", dirs_exist_ok=True)
-    copy_file(staging / "system/kernel.sys", destination / "system/kernel.sys")
-    copy_file(staging / "system/middlelayer.sys", destination / "system/middlelayer.sys")
+    shutil.copytree(staging / "grub", destination / "grub", symlinks=True,
+                    dirs_exist_ok=True)
+    copy_file(staging / ESP_KERNEL.lstrip("/"), destination / ESP_KERNEL.lstrip("/"))
+    copy_file(staging / ESP_MIDDLELAYER.lstrip("/"),
+              destination / ESP_MIDDLELAYER.lstrip("/"))
+    # The loader reads the boot theme from the ESP copy before any root
+    # filesystem exists, so the generated display.conf is duplicated at its
+    # ESP-internal path.  It is generated from the same source as the root
+    # /etc/leonos/display.conf, not maintained as a second configuration.
+    display = staging / ETC_LEONOS / "display.conf"
+    if display.is_file():
+        copy_file(display, destination / ESP_DISPLAY_CONF.lstrip("/"))
 
 
 def make_root_tree(staging: Path, destination: Path, language: str) -> None:
     """Stage the normal writable root without duplicating ESP-only boot files."""
-    shutil.copytree(staging, destination, dirs_exist_ok=True)
+    # symlinks=True is required: /var/run, /bin/sh and command entries are
+    # real relative symlinks and must not be dereferenced into copies.
+    shutil.copytree(staging, destination, symlinks=True, dirs_exist_ok=True)
     shutil.rmtree(destination / "EFI", ignore_errors=True)
     shutil.rmtree(destination / "grub", ignore_errors=True)
-    for name in ("loader.elf", "kernel.sys", "middlelayer.sys"):
-        (destination / "system" / name).unlink(missing_ok=True)
+    shutil.rmtree(destination / "leonos", ignore_errors=True)
     (destination / "loader.elf").unlink(missing_ok=True)
-    locale = destination / "system/config/locale.conf"
+    layout_directories(destination)
+    apply_root_symlinks(destination)
+    locale = destination / ETC_LEONOS / "locale.conf"
     locale.parent.mkdir(parents=True, exist_ok=True)
     locale.write_text(f"lang={language}\n", encoding="utf-8")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create LeonOS 4 GPT FAT32-ESP/exFAT-root VMDK")
+    parser = argparse.ArgumentParser(description="Create LeonOS 4 GPT FAT32-ESP/ext2-root VMDK")
     parser.add_argument("--out", default="build/images/leonos4.vmdk")
     parser.add_argument("--raw", default="build/images/leonos4.raw")
     parser.add_argument("--esp-tree", default="build/esp")
     parser.add_argument("--root-image")
-    parser.add_argument("--root-fs", choices=("exfat", "ext2"), default="ext2",
-                        help="Runtime root filesystem (default: classic ext2; exFAT remains available explicitly)")
+    parser.add_argument("--root-fs", choices=("ext2",), default="ext2",
+                        help="Runtime root filesystem (classic ext2)")
     parser.add_argument("--esp-image", default="build/images/esp.fat")
     parser.add_argument("--default-language", choices=("en", "zh"), default="en",
                         help="Language seed written into this VMDK root filesystem")
@@ -205,9 +253,9 @@ def main() -> int:
             root_last = total_sectors - 2048
             if root_last <= root_first or root_last - root_first + 1 < 262144:
                 raise SystemExit("VMDK root partition is smaller than the 128 MiB minimum")
-            write_gpt(raw_temp, [
+            partition_uuids = write_gpt(raw_temp, [
                 (EFI_SYSTEM_PARTITION_GUID, ESP_FIRST_SECTOR, esp_last, "LEONOS4_ESP"),
-                (MICROSOFT_BASIC_DATA_GUID if args.root_fs == "exfat" else LINUX_FILESYSTEM_GUID,
+                (LINUX_FILESYSTEM_GUID,
                  root_first, root_last, "LEONOS4_ROOT"),
             ])
 
@@ -217,6 +265,7 @@ def main() -> int:
                 root_tree = temp / "root"
                 make_boot_tree(esp_tree, boot_tree)
                 make_root_tree(esp_tree, root_tree, args.default_language)
+                write_root_fstab(root_tree, partition_uuids[1], partition_uuids[0])
 
                 run(["truncate", "-s", str(esp_sectors * SECTOR_SIZE), str(esp_temp)])
                 run(["mkfs.fat", "-F", "32", "-s", "2", "-n", "LEONOS4ESP", str(esp_temp)])
@@ -225,23 +274,9 @@ def main() -> int:
 
                 root_bytes = (root_last - root_first + 1) * SECTOR_SIZE
                 run(["truncate", "-s", str(root_bytes), str(root_temp)])
-                if args.root_fs == "exfat":
-                    # exFAT volume labels are limited to 11 UTF-16 units;
-                    # the exact LEONOS4_ROOT identity is retained in GPT.  Do
-                    # not pass -s here: older exfatprogs releases used by
-                    # GitHub-hosted runners do not recognize that option, and
-                    # 512-byte sectors are their default.
-                    run(["mkfs.exfat", "-q", "-L", "LEONOS4ROOT", str(root_temp)])
-                    run(["python3", "tools/populate_exfat.py", "--image", str(root_temp),
-                         "--tree", str(root_tree)])
-                else:
-                    # The kernel supports the stable classic ext2 subset only. Explicitly
-                    # disable modern ext4 extensions rather than relying on host defaults.
-                    run([
-                        "mke2fs", "-q", "-t", "ext2", "-F", "-b", "4096", "-I", "128",
-                        "-O", "^has_journal,^resize_inode,^dir_index,^metadata_csum,^64bit",
-                        "-d", str(root_tree), str(root_temp),
-                    ])
+                populate_ext2(root_tree, root_temp,
+                              max(8192, sum(1 for _ in root_tree.rglob("*")) * 2))
+                run(["e2fsck", "-f", "-n", str(root_temp)])
 
             run(["dd", f"if={esp_temp}", f"of={raw_temp}", "bs=512",
                  f"seek={ESP_FIRST_SECTOR}", "conv=notrunc", "status=none"])

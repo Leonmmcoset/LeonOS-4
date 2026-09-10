@@ -5,8 +5,9 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <leonos/layout.h>
 
-#define LEONOS_ENV_GLOBAL_PATH "/system/config/environment.conf"
+#define LEONOS_ENV_GLOBAL_PATH LEONOS_PATH_ENVIRONMENT_CONF
 #define LEONOS_ENV_USER_SUFFIX "/.environment"
 
 extern char **environ;

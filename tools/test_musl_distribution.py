@@ -13,7 +13,11 @@ def validate(root: Path) -> int:
         if not path.is_file():
             continue
         assert "picolibc" not in path.name.lower(), path
-        assert path.name not in ("newlib.h", "_newlib_version.h", "ld-leonos.elf", "libleonos.so.1"), path
+        assert path.name not in ("newlib.h", "_newlib_version.h", "ld-leonos.elf"), path
+        if path.name == "libleonos.so.1":
+            # Only the bounded compatibility symlink to libleonos.so.2 is
+            # accepted; a real .so.1 binary would be a retired ABI artifact.
+            assert path.is_symlink() and path.readlink().as_posix() == "libleonos.so.2", path
         with path.open("rb") as stream:
             if stream.read(4) != b"\x7fELF":
                 continue
@@ -26,7 +30,7 @@ def validate(root: Path) -> int:
             assert (payload / interpreter.lstrip("/")).is_file(), (root, interpreter)
         for needed in re.findall(r"\(NEEDED\).*\[([^\]]+)\]", headers):
             assert any((payload / directory / needed).is_file()
-                       for directory in ("lib", "system/lib")), (path, needed)
+                       for directory in ("lib", "usr/lib", "usr/lib/leonos")), (path, needed)
         count += 1
     assert count, f"no ELF files in {root}"
     print(f"PASS {root}: {count} ELF files; musl dependency closure; no retired libc artifacts")

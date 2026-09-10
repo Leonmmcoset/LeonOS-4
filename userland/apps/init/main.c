@@ -3,6 +3,7 @@
 #include <leonos/syscall.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <leonos/layout.h>
 
 int main(void)
 {
@@ -19,17 +20,27 @@ int main(void)
     printf("[init.elf] chdir root => %d\n", ret);
     /* Older installed images have no temporary directory. Preserve existing
      * metadata, including an administrator's explicit mode. */
-    if (mkdir("/tmp", 01777) == 0) {
+    if (mkdir("/tmp", 01777) == 0 || errno == EEXIST) {
         if (chmod("/tmp", 01777) < 0)
             printf("[init.elf] chmod /tmp failed errno=%d\n", errno);
-    } else if (errno != EEXIST) {
+    } else {
         printf("[init.elf] mkdir /tmp failed errno=%d\n", errno);
+    }
+    /* /var/tmp shares /tmp's sticky writable lifecycle but persists across
+     * reboots on the current ext2 root.  Missing parents are created first. */
+    (void)mkdir("/var", 0755);
+    (void)mkdir("/var/tmp", 01777);
+    if (chmod("/var/tmp", 01777) < 0 && errno != ENOENT)
+        printf("[init.elf] chmod /var/tmp failed errno=%d\n", errno);
+    (void)mkdir("/run", 0755);
+    if (mkdir("/run/leonos", 0755) == 0 || errno == EEXIST) {
+        (void)chmod("/run/leonos", 0755);
     }
     printf("[init.elf] getcwd => %x\n", (unsigned int)(uintptr_t)getcwd(cwd, sizeof(cwd)));
     printf("[init.elf] cwd=%s\n", cwd);
-    ret = leonos_stat_legacy("/system/config/leonos.conf", &st);
+    ret = leonos_stat_legacy(LEONOS_PATH_LEONOS_CONF, &st);
     printf("[init.elf] stat leonos.conf => %d type=%d size=%d\n", ret, (int)st.type, (int)st.size);
-    ret = chdir("/system/config");
+    ret = chdir(LEONOS_LAYOUT_ETC_LEONOS);
     printf("[init.elf] chdir system config => %d\n", ret);
     printf("[init.elf] getcwd after chdir => %x\n", (unsigned int)(uintptr_t)getcwd(cwd, sizeof(cwd)));
     printf("[init.elf] cwd after chdir=%s\n", cwd);

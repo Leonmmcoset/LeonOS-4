@@ -3,7 +3,7 @@
 
 /* Generated per image. Unknown (for example, post-install) programs remain
  * visible; only build-managed packages are listed here. */
-#define START_MENU_ENTRY_POLICY_PATH "/system/config/desktop-entries.conf"
+#define START_MENU_ENTRY_POLICY_PATH LEONOS_PATH_DESKTOP_ENTRIES
 #define START_MENU_ENTRY_POLICY_BYTES 4096U
 #define START_MENU_ENTRY_POLICY_MAX 96U
 
@@ -353,7 +353,7 @@ void start_menu_load_docs(void)
     uint32_t count = 0;
     start_menu_doc_count = 0;
     start_menu_docs_loaded = 0;
-    if (leonos_list_dir("/docs", entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
+    if (leonos_list_dir(LEONOS_LAYOUT_LEONOS_DOC, entries, LEONOS_FS_MAX_ENTRIES, &count) < 0) {
         return;
     }
     for (uint32_t i = 0; i < count && start_menu_doc_count < START_MENU_MAX_DOCS; ++i) {
@@ -362,7 +362,8 @@ void start_menu_load_docs(void)
             continue;
         }
         copy_text(start_menu_doc_paths[start_menu_doc_count],
-                  sizeof(start_menu_doc_paths[start_menu_doc_count]), "/docs/");
+                  sizeof(start_menu_doc_paths[start_menu_doc_count]),
+                  LEONOS_LAYOUT_LEONOS_DOC "/");
         while (start_menu_doc_paths[start_menu_doc_count][pos]) {
             ++pos;
         }
@@ -657,7 +658,7 @@ static void start_menu_draw_header(const struct start_panel_layout *panel)
                    START_PANEL_HEADER_H, LEONOS_UI_ACTIVE_TITLE);
     leonos_ui_text(&ui, panel->x + 12U, panel->y + 7U, "LeonOS 4",
                    LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
-    if (leonos_auth_current(&user) == 0 && user.uid && user.username[0]) {
+    if (leonos_auth_current(&user) == 0 && user.username[0]) {
         session = user.username;
     }
     leonos_ui_text_clipped(&ui, panel->x + 12U, panel->y + 24U,

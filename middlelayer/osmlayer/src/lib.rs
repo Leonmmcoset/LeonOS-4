@@ -280,7 +280,7 @@ pub extern "C" fn osmlayer_rust_unicode_op(op: u32, arg: *mut core::ffi::c_void)
 // Runs smoke checks across VFS, storage, IPC, GUI, and C services; returns the number that pass.
 pub extern "C" fn osmlayer_rust_selftest() -> u32 {
     let mut passed = 0;
-    if vfs::path_is_absolute("/system/apps/desktop/desktop.elf") {
+    if vfs::path_is_absolute("/usr/lib/leonos/apps/desktop/desktop.elf") {
         passed += 1;
     }
     if storage::supports_basic_write() {

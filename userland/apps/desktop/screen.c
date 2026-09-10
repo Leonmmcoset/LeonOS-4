@@ -149,7 +149,7 @@ void desktop_poll_network_state(void)
         return;
     }
     if (!desktop_taskbar_visible || !desktop_service_network_icon ||
-        oobe_lock_active || login_lock_active || now < taskbar_network_retry_ms) return;
+        login_lock_active || now < taskbar_network_retry_ms) return;
     int descriptors[2];
     taskbar_network_retry_ms = now + 1000UL;
     if (pipe(descriptors) < 0) return;

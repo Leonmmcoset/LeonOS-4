@@ -101,7 +101,7 @@ def main() -> None:
         "-DHAVE_CONFIG_H", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL",
 
         "-DLEONOS_FILE_PATHSEP_SEMICOLON",
-        "-DMAGIC=\"/system/share/misc/magic.mgc\"",
+        "-DMAGIC=\"/usr/share/misc/magic.mgc\"",
     ]
 
     def compile_source(path: Path, name: str) -> Path:

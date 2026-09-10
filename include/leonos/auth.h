@@ -103,6 +103,8 @@ struct leonos_authz_request {
     char path[256];
 };
 
+/* Between 1 and 32 UTF-8 characters, with no whitespace. */
+int leonos_auth_password_valid(const char *password, uint32_t capacity);
 int leonos_auth_status(struct leonos_auth_status *status);
 int leonos_auth_current(struct leonos_user_info *user);
 int leonos_auth_list_users(struct leonos_user_info *users, uint32_t capacity,

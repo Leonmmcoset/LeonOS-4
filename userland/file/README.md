@@ -1,9 +1,9 @@
 # LeonOS `file` and libmagic
 
-LeonOS ships upstream `file` 5.48 at `/programs/file/file.elf` and its
-ABI-v1 shared `libmagic.so.1` at `/system/lib/libmagic.so.1`. The shell
+LeonOS ships upstream `file` 5.48 at `/usr/bin/file` and its
+ABI-v1 shared `libmagic.so.1` at `/usr/lib/libmagic.so.1`. The shell
 exposes it as the external `file` command. Its matching compiled database is loaded from
-`/system/share/misc/magic.mgc`.
+`/usr/share/misc/magic.mgc`.
 
 The port keeps the upstream magic database and format recognizers while using
 the LeonOS/musl ABI. Host-process decompression, memory mapping, and

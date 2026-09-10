@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <grp.h>
 
 #define AUTHD_FRAME_CAP 4096u
 /* Short per-call retry plus backoff: authd normally listens within the boot
@@ -43,6 +44,17 @@ static void authd_copy(char *dst, uint32_t capacity, const char *src)
     dst[i] = 0;
 }
 
+static int authd_credentials_fit(const char *name, const char *password)
+{
+    if (!name || !password) { errno = EINVAL; return 0; }
+    if (strlen(name) >= LEONOS_AUTH_USERNAME_LEN || strlen(password) >= LEONOS_AUTH_PASSWORD_LEN) {
+        errno = EOVERFLOW;
+        return 0;
+    }
+    if (!leonos_auth_password_valid(password, LEONOS_AUTH_PASSWORD_LEN)) { errno = EINVAL; return 0; }
+    return 1;
+}
+
 static int authd_wait(uint32_t expected, void *payload, uint32_t capacity,
                       uint32_t *length)
 {
@@ -52,24 +64,21 @@ static int authd_wait(uint32_t expected, void *payload, uint32_t capacity,
         uint32_t type = 0;
         uint32_t got = 0;
         if (leonos_ipc_recv(authd_fd, &type, buffer, sizeof(buffer), &got) == 0) {
+            if (type == LEONOS_AUTHD_MSG_ACK) {
+                struct leonos_authd_ack ack;
+                if (got != sizeof(ack)) { errno = EPROTO; return -1; }
+                memcpy(&ack, buffer, sizeof(ack));
+                if (ack.code < 0) { errno = ack.code >= -4095 ? -ack.code : EPROTO; return -1; }
+                if (expected != type) { errno = EPROTO; return -1; }
+            }
             if (type == expected) {
-                if (got > capacity) got = capacity;
+                if (got > capacity || (!length && got != capacity)) { errno = EPROTO; return -1; }
                 if (got) memcpy(payload, buffer, got);
                 if (length) *length = got;
                 return 0;
             }
-            if (type == LEONOS_AUTHD_MSG_ACK && got >= sizeof(struct leonos_authd_ack)) {
-                struct leonos_authd_ack ack;
-                memcpy(&ack, buffer, sizeof(ack));
-                if (expected == LEONOS_AUTHD_MSG_ACK) {
-                    if (length) *length = got;
-                    return 0;
-                }
-                errno = EACCES;
-                return -1;
-            }
         }
-        if (authd_now_ms() >= deadline) return -1;
+        if ((int32_t)(authd_now_ms() - deadline) >= 0) { errno = ETIMEDOUT; return -1; }
         (void)poll(0, 0, 2);
     }
 }
@@ -136,57 +145,6 @@ int leonos_auth_request_power(uint32_t command)
     return -1;
 }
 
-static void authd_append_u32(char *text, uint32_t *length, uint32_t capacity,
-                             uint32_t value)
-{
-    char digits[12];
-    uint32_t count = 0;
-    if (!text || !length || *length >= capacity) {
-        return;
-    }
-    if (!value) {
-        digits[count++] = '0';
-    } else {
-        while (value && count < sizeof(digits)) {
-            digits[count++] = (char)('0' + value % 10U);
-            value /= 10U;
-        }
-    }
-    while (count && *length + 1U < capacity) {
-        text[(*length)++] = digits[--count];
-    }
-}
-
-static int authd_write_session_user(const struct leonos_user_info *user)
-{
-    char text[LEONOS_AUTH_USERNAME_LEN + LEONOS_AUTH_HOME_LEN + 32U];
-    uint32_t len = 0;
-    int fd;
-    (void)mkdir("/run", 0777);
-    (void)mkdir("/run/leonos", 0777);
-    if (!user || !user->uid) {
-        (void)unlink(AUTHD_SESSION_FILE);
-        return 0;
-    }
-    authd_append_u32(text, &len, sizeof(text), user->uid);
-    if (len + 1U < sizeof(text)) text[len++] = '\n';
-    authd_append_u32(text, &len, sizeof(text), user->role);
-    if (len + 1U < sizeof(text)) text[len++] = '\n';
-    authd_copy(text + len, sizeof(text) - len, user->username);
-    len += (uint32_t)strlen(text + len);
-    if (len + 1U < sizeof(text)) text[len++] = '\n';
-    authd_copy(text + len, sizeof(text) - len, user->home);
-    len += (uint32_t)strlen(text + len);
-    if (len + 1U < sizeof(text)) text[len++] = '\n';
-    fd = open(AUTHD_SESSION_FILE, LEONOS_O_WRONLY | LEONOS_O_CREAT |
-              LEONOS_O_TRUNC, 0666);
-    if (fd < 0) return -1;
-    {
-        long wrote = write(fd, text, len);
-        close(fd);
-        return wrote == (long)len ? 0 : -1;
-    }
-}
 
 int leonos_auth_status(struct leonos_auth_status *status)
 {
@@ -236,6 +194,7 @@ int leonos_auth_login(const char *username, const char *password,
 {
     struct leonos_auth_login login;
     if (!username || !password || !user) { errno = EINVAL; return -1; }
+    if (!authd_credentials_fit(username, password)) return -1;
     memset(&login, 0, sizeof(login));
     authd_copy(login.username, sizeof(login.username), username);
     authd_copy(login.password, sizeof(login.password), password);
@@ -244,10 +203,19 @@ int leonos_auth_login(const char *username, const char *password,
                         sizeof(login)) < 0) return -1;
     memset(login.password, 0, sizeof(login.password));
     if (authd_wait(LEONOS_AUTHD_MSG_LOGIN, user, sizeof(*user), 0) < 0) return -1;
-    (void)authd_write_session_user(user);
     /* The login process itself becomes the authenticated session bootstrap.
      * Processes launched later inherit the session uid through libc spawn. */
-    if (getuid() == 0) (void)setuid(user->uid);
+    if (getuid() != 0 || setgroups(0, 0) < 0 || setgid(user->uid) < 0 || setuid(user->uid) < 0) {
+        int error = errno;
+        (void)leonos_auth_logout();
+        leonos_ipc_close(authd_fd);
+        authd_fd = -1;
+        errno = error;
+        return -1;
+    }
+    /* SO_PEERCRED was captured before dropping root; never reuse that socket. */
+    leonos_ipc_close(authd_fd);
+    authd_fd = -1;
     return 0;
 }
 
@@ -256,6 +224,7 @@ int leonos_auth_elevate_admin(const char *username, const char *password,
 {
     struct leonos_auth_login login;
     if (!username || !password || !user) { errno = EINVAL; return -1; }
+    if (!authd_credentials_fit(username, password)) return -1;
     memset(&login, 0, sizeof(login));
     authd_copy(login.username, sizeof(login.username), username);
     authd_copy(login.password, sizeof(login.password), password);
@@ -278,8 +247,8 @@ int leonos_auth_logout(void)
 {
     if (authd_open() < 0) return -1;
     if (leonos_ipc_send(authd_fd, LEONOS_AUTHD_MSG_LOGOUT, 0, 0) < 0) return -1;
-    (void)authd_write_session_user(0);
-    return 0;
+    struct leonos_authd_ack ack;
+    return authd_wait(LEONOS_AUTHD_MSG_ACK, &ack, sizeof(ack), 0);
 }
 
 int leonos_auth_create_user(const char *username, const char *password,
@@ -287,6 +256,7 @@ int leonos_auth_create_user(const char *username, const char *password,
 {
     struct leonos_authd_create create;
     if (!username || !password || !user) { errno = EINVAL; return -1; }
+    if (!authd_credentials_fit(username, password)) return -1;
     memset(&create, 0, sizeof(create));
     create.role = role;
     authd_copy(create.username, sizeof(create.username), username);
@@ -316,6 +286,8 @@ int leonos_auth_change_password(uint32_t uid, const char *old_password,
     struct leonos_authd_password password;
     struct leonos_authd_ack ack;
     if (!old_password || !new_password) { errno = EINVAL; return -1; }
+    if ((old_password[0] || geteuid() != 0) && !authd_credentials_fit("", old_password)) return -1;
+    if (!authd_credentials_fit("", new_password)) return -1;
     memset(&password, 0, sizeof(password));
     password.uid = uid;
     authd_copy(password.old_password, sizeof(password.old_password), old_password);

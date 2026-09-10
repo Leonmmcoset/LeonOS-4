@@ -13,12 +13,12 @@ tcc hello.c -o hello.elf
 The installed `examples/hello.c` provides a small end-to-end check:
 
 ```text
-tcc /programs/tcc/examples/hello.c -o /tmp/hello.elf
+tcc /opt/tcc/examples/hello.c -o /tmp/hello.elf
 /tmp/hello.elf
 ```
 
 It automatically uses the headers and static runtime in
-`/programs/tcc/`.  Generated executables use musl's `crt1.o`, `crti.o`, `crtn.o`, mimalloc,
+`/opt/tcc/`.  Generated executables use musl's `crt1.o`, `crti.o`, `crtn.o`, mimalloc,
 `libleonos.a`, the unmodified musl headers/library, and the separate
 LeonOS target runtime archive `libleonos-tcc-rt.a` plus TinyCC's compiler
 runtime `libtcc1.a`.
@@ -38,5 +38,5 @@ musl private headers during the build.
   there is no separate target-runtime POSIX emulation.
 
 Paths accepted by the compiler use Unix syntax, such as
-`/programs/demo/main.c`. For multiple `C_INCLUDE_PATH`, `CPATH` or
+`/opt/demo/main.c`. For multiple `C_INCLUDE_PATH`, `CPATH` or
 `LIBRARY_PATH` entries, use a colon (`:`), matching the target compiler configuration.

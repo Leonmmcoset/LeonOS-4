@@ -67,6 +67,10 @@ def main() -> int:
     assert shipped["vim"]["image"] and shipped["ncurses"]["image"]
     assert shipped["ncurses"]["sdk"]
     assert shipped["musl-gcc"]["build"] and shipped["musl-gcc"]["image"]
+    assert shipped["python"]["build"] and shipped["python"]["image"]
+    assert not resolve_components(components, {
+        "CONFIG_LEON_COMPONENT_TOOL_PYTHON_BUILD": "n",
+    })["python"]["image"]
     assert not resolve_components(components, {
         "CONFIG_LEON_COMPONENT_TOOL_MUSL_GCC_BUILD": "n",
     })["musl-gcc"]["image"]

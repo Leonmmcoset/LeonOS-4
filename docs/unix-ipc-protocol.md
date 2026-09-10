@@ -67,7 +67,7 @@ fd. Desktop connects with the policy handshake token
 
 ## authd (`/run/leonos/authd.sock`)
 
-authd runs uid==0 and owns `/system/config/users.db`. All mutating
+authd runs uid==0 and owns `/etc/leonos/users.db`. All mutating
 operations are gated by SO_PEERCRED: creation requires peer uid 0, updates
 require uid 0 or the same uid, and login never returns a password hash.
 
@@ -112,7 +112,7 @@ require uid 0 or the same uid, and login never returns a password hash.
 * Remaining ioctls are device-UAPI only: TTY termios/winsize, evdev, OSS,
   block BLK*, fbdev FBIO*, and `/dev/gpu` GPU commands.
 * ACL compatibility is expressed through `chmod`/`chown`; kernel-debug state
-  uses `/system/state/kernel-debug`.
+  uses `/var/lib/leonos/kernel-debug`.
 
 ## procfs (kernel, read-only)
 
@@ -153,7 +153,7 @@ never use this control socket.
 
 ## Phase 0 verification
 
-Run `/programs/ipctest/ipctest.elf` on the target. It covers blocking
+Run `/usr/lib/leonos/apps/ipctest/ipctest.elf` on the target. It covers blocking
 socketpair reads, SCM_RIGHTS passing of a `/dev/shm0` descriptor, shared mmap,
 credential syscalls, `uname`, and an AF_INET connect probe.
 

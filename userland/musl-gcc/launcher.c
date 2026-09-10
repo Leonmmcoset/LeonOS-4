@@ -14,7 +14,8 @@ int main(int argc, char **argv)
     const char *name = strrchr(argv[0], '/');
     name = name ? name + 1 : argv[0];
     if (!strncmp(name, "x86_64-linux-musl-", 18)) name += 18;
-    if (!strcmp(name, "musl-gcc") || !strcmp(name, "cc")) name = "gcc";
+    if (!strcmp(name, "musl-gcc") || !strcmp(name, "cc") ||
+        !strcmp(name, "leonos-musl-cc")) name = "gcc";
     if (!strcmp(name, "musl-g++")) name = "g++";
     ssize_t size = readlink("/proc/self/exe", root, sizeof(root) - 1);
     if (size < 0 || size >= (ssize_t)sizeof(root) - 1) {
@@ -28,9 +29,9 @@ int main(int argc, char **argv)
     bin = strrchr(root, '/');
     if (!bin || strcmp(bin, "/bin")) return 126;
     *bin = 0;
-    if (snprintf(program, sizeof(program), "%s/opt/dyne/gcc-musl/bin/x86_64-linux-musl-%s",
+    if (snprintf(program, sizeof(program), "%s/gcc-musl/bin/x86_64-linux-musl-%s",
                  root, name) >= (int)sizeof(program) ||
-        snprintf(sysroot, sizeof(sysroot), "--sysroot=%s/opt/dyne/gcc-musl/x86_64-linux-musl",
+        snprintf(sysroot, sizeof(sysroot), "--sysroot=%s/gcc-musl/x86_64-linux-musl",
                  root) >= (int)sizeof(sysroot)) return 126;
     int use_sysroot = !strcmp(name, "gcc") || !strcmp(name, "gcc-15.1.0") ||
         !strcmp(name, "g++") || !strcmp(name, "c++") || !strcmp(name, "cpp") ||

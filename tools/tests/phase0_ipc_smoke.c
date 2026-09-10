@@ -1,6 +1,6 @@
 /* Phase 0 Unix-IPC self test: blocking socketpair, SCM_RIGHTS, shm mmap,
  * uid syscalls, and a tolerant AF_INET connect probe. Run from the LeonOS
- * shell as /programs/ipctest/ipctest.elf. */
+ * shell as /usr/lib/leonos/apps/ipctest/ipctest.elf. */
 #include <errno.h>
 #include <leonos/device.h>
 #include <leonos/stdio.h>

@@ -21,12 +21,12 @@ def main():
     if stage.exists():
         shutil.rmtree(stage)
     shutil.copytree(ROOT / "build/esp", stage)
-    shutil.copy2(ROOT / "build/system/kernel.sys", stage / "system/kernel.sys")
-    shutil.copy2(ROOT / "build/system/middlelayer.sys", stage / "system/middlelayer.sys")
+    shutil.copy2(ROOT / "build/system/kernel.sys", stage / "leonos/kernel.sys")
+    shutil.copy2(ROOT / "build/system/middlelayer.sys", stage / "leonos/middlelayer.sys")
     shutil.copy2(ROOT / "build/boot/loader.elf", stage / "loader.elf")
-    if not (stage / "bin/musl-gcc").is_file():
+    if not (stage / "usr/bin/musl-gcc").is_symlink() and not (stage / "usr/bin/musl-gcc").is_file():
         raise SystemExit("gcc-probe requires the normal musl-gcc image component")
-    tests = stage / "system/tests"
+    tests = stage / "usr/lib/leonos/tests"
     tests.mkdir(parents=True, exist_ok=True)
     shutil.copy2(args.runner, tests / "gcc-probe.elf")
     config = stage / "grub/grub.cfg"

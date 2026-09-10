@@ -24,7 +24,8 @@ def read_terminal(source: Path) -> int:
 
 
 def app_path(app: str, system_apps: set[str]) -> tuple[str, str]:
-    root = "system/apps" if app in system_apps else "programs"
+    del system_apps
+    root = "usr/lib/leonos/apps"
     return root, f"{root}/{app}"
 
 
@@ -56,7 +57,7 @@ def generate(root: Path, components_path: Path, out_dir: Path,
             f"icon={icon}",
             f"entry={1 if component.entry else 0}",
             f"terminal={terminal}",
-            f"system={1 if root_name == 'system/apps' else 0}",
+            f"system={1 if component.kind == 'system-app' else 0}",
             "hidden=0",
             f"open_with={1 if component.open_with else 0}",
             f"extensions={','.join(component.extensions)}",

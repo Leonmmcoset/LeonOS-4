@@ -18,7 +18,7 @@ int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
         reply_code = ((const struct leonos_authd_ack *)payload)->code;
     } else {
         assert(length == sizeof(struct leonos_user_info));
-        assert(((const struct leonos_user_info *)payload)->uid == 1);
+        assert(((const struct leonos_user_info *)payload)->uid == 0);
     }
     return 0;
 }
@@ -27,12 +27,12 @@ int main(void)
 {
     clients[0] = (struct authd_client){.used = 1, .fd = 10, .uid = 0};
     user_count = 1;
-    users[0].user.uid = 1;
+    users[0].user.uid = 0;
     users[0].user.role = LEONOS_AUTH_ROLE_ADMIN;
-    strcpy(users[0].user.username, "admin");
-    authd_password_hash("admin", "correct-password", users[0].password_hash);
+    strcpy(users[0].user.username, "root");
+    assert(authd_set_password(&users[0], "correct-password") == 0);
     struct leonos_auth_login login = {0};
-    strcpy(login.username, "admin");
+    strcpy(login.username, "root");
     strcpy(login.password, "correct-password");
     authd_handle_elevate(0, (const uint8_t *)&login, sizeof(login));
     assert(reply_type == LEONOS_AUTHD_MSG_ELEVATE);

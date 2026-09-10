@@ -34,15 +34,21 @@ def main():
         ext2 = stream.read(2) == b"\x53\xef"
     if args.abi_probes or args.ltp:
         if ext2:
-            run("debugfs", "-w", "-R", "mkdir /system/tests", root)
+            for directory in ("/usr", "/usr/lib", "/usr/lib/leonos",
+                              "/usr/lib/leonos/tests"):
+                run("debugfs", "-w", "-R", f"mkdir {directory}", root)
         else:
-            run("mmd", "-i", root, "::/system/tests")
+            for directory in ("::/usr", "::/usr/lib", "::/usr/lib/leonos",
+                              "::/usr/lib/leonos/tests"):
+                run("mmd", "-i", root, directory)
 
     def add_probe(source):
         if ext2:
-            run("debugfs", "-w", "-R", f"write {source.resolve()} /system/tests/{source.name}", root)
+            run("debugfs", "-w", "-R",
+                f"write {source.resolve()} /usr/lib/leonos/tests/{source.name}", root)
         else:
-            run("mcopy", "-o", "-i", root, source, f"::/system/tests/{source.name}")
+            run("mcopy", "-o", "-i", root, source,
+                f"::/usr/lib/leonos/tests/{source.name}")
 
     if args.abi_probes:
         for kind in ("dynamic", "static"):

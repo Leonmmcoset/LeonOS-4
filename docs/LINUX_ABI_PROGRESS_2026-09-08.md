@@ -1,5 +1,101 @@
 # Linux ABI implementation ledger
 
+## 2026-09-10 ioctl(FIOCLEX/FIONCLEX) 通用 close-on-exec 缺口修复
+
+本轮只修复已证实的 ioctl 子命令/描述符语义缺口，不恢复 Linux ABI 扩展任务，
+也不把 ioctl 整项提升为兼容。
+
+**故障与根因**：原始静态 musl CPython 3.15 执行 `python3 /bin/hello.py` 报
+`can't open file '/bin/hello.py': [Errno 38] Function not implemented`。
+`/home/xiaobai/installer-serial.log` 第 1645 行附近给出直接证据：`nr=2 open`
+返回 fd 9，随后 `nr=16 args=9,5451,0,... result=-38`（`0x5451 = FIOCLEX`），
+再 `close(9)`、`exit_group(2)`。同一个二进制在宿主 Linux 上 `ioctl(FIOCLEX)`
+成功，说明缺口在内核：`kernel/ntclks/syscall.c` 只在 signalfd 分支处理
+`FIOCLEX`/`FIONCLEX`，普通文件走到函数末尾的 `-ENOSYS`。这不是缺失 `open`
+或整个 ioctl 入口，而是已支持入口内的子命令/描述符语义缺口。
+
+**修改**
+
+- `kernel/ntclks/syscall.c`
+  - `task_fd_descriptor_flags()` / `task_fd_set_descriptor_flags()`：FD_CLOEXEC
+    统一按描述符存放（`task_file.fd_flags`、`task_pty_fd.flags`、隐式 stdio
+    的 `cloexec_stdio_mask`），与共享 open file description 无关，dup 出的
+    其它描述符不受影响。
+  - `syscall_ioctl_descriptor_flags()`：实现 `FIOCLEX`/`FIONCLEX`，第三个参数
+    不进入接口，因此既不解引用也不校验；成功返回 0，未打开的描述符返回 `EBADF`。
+  - `syscall_dispatch_regs()` 在类别/GPU/设备分发之前处理这两个请求，覆盖
+    普通文件、目录、pipe、socket、PTY、设备节点和匿名 inode 描述符。
+  - `syscall_ioctl_resolve_fd()`：核对 O_PATH 规则——Linux `ioctl()` 走
+    `fdget()` 并拒绝 `FMODE_PATH`，所以 O_PATH 描述符上任何 ioctl 都是
+    `EBADF`，而 `fcntl()` 用 `fdget_raw()` 仍可读写 FD_CLOEXEC。由于
+    `LINUX_O_PATH` 与内部 `TASK_FILE_FLAG_EPOLL` 同值，返修后只在 `open/openat`
+    用户 flags 边界转换为 `TASK_FILE_FLAG_PATH`，保留通用分配器的内部类型位。
+    ioctl 通用入口还会验证 fd 存在性，再进入命令/设备处理。
+  - 未识别请求改为返回 Linux 通用层的 `ENOTTY`（原先统一落到 `-ENOSYS` 收尾），
+    只修正错误码，不新增设备请求实现。
+  - signalfd 分支删除私有实现并复用通用路径；`fcntl(F_GETFD/F_SETFD)` 改用
+    同一组辅助函数，隐式 stdin/stdout/stderr 的标志不再“返回成功但不保存”；
+    `dup2()` 落到 fd 0..2 时清理陈旧的 `cloexec_stdio_mask` 位。
+- `kernel/ntclks/include/ntclks/sched.h`：新增 `TASK_FILE_FLAG_PATH`。
+- `kernel/ntclks/user/userland.c`：新增仅用于诊断 ISO 的
+  `autospawn=ioctlcloexec`、`autospawn=python315` 钩子，让回归程序与未修改的
+  CPython 在无 GUI 输入时运行，并把自身 stdout 写进串口。
+- 测试与工具：`tools/tests/linux_ioctl_cloexec_test.c`（同一静态二进制在宿主
+  Linux 与来宾运行）、`tools/tests/ioctl_cloexec_table_test.c`（直接编译真实
+  `syscall.c` 的 ASan/UBSan 单测）、`tools/test_linux_ioctl_cloexec.py`
+  （`build.py test linux-ioctl-cloexec`，`--guest` 追加 ISO/QEMU 阶段）。
+  未修改 Python/musl；内核辅助函数测试改为使用内部 PATH 标志，实际 raw
+  open(O_PATH) 的 Linux 行为断言保留，并增加 epoll 和 EBADF 回归。
+
+**证据（分层）**
+
+- 宿主内核单测：`ioctl_cloexec_table_test.c` 在真实描述符表上验证设置/清除/
+  重复、dup 隔离、PTY 别名、隐式 stdio 存储与 fd 复用、无效/负/超界 fd、
+  未知命令 `ENOTTY`、fd 与 cmd 32 位截断、O_PATH `EBADF`；ASan/UBSan 通过且无泄漏。
+- 宿主 Linux 对照：静态 musl raw syscall 探针 38 组检查 0 失败 0 跳过。
+- QEMU/KVM 来宾：同一 ISO 引导 LeonOS，`[ioctl-clex] DONE checks=38
+  failures=0 skips=0`；覆盖普通文件、目录、pipe、socket、PTY、设备、memfd、
+  eventfd、signalfd、O_PATH、未知请求 `ENOTTY`、fork 继承、`CLONE_FILES` 线程
+  共享、exec 实际关闭与关闭后 fd 复用；新增 epoll 注册/等待/dup/exec、
+  无效 fd 的错误优先级和用户 open flags 不注入内部 PATH 位。
+- QEMU/KVM 来宾（autospawn）：未修改的
+  `build/python315-stdlib-test/python/bin/python3.15`（静态 musl，完整标准库）
+  执行 `python3 /bin/hello.py`，串口输出 `Hello from Python 3 on LeonOS!`、
+  `Numbers:`、`Sum: 55`、`Fibonacci:`，`name=python3.15 code=0`，
+  `nr=16 args=3,5451,... result=0`，且不再出现 `result=-38`。
+- QEMU/KVM 桌面 Terminal：`--terminal` 经 OOBE、登录、开始菜单启动 Terminal，
+  输入 `python3 /bin/hello.py`。串口确认 pid 22、PTY 1、退出 0，截图
+  `build/ioctl-cloexec/terminal-python.png` 显示完整输出和返回 shell 提示符。
+- 证据文件：`build/ioctl-cloexec/evidence.txt`、
+  `build/ioctl-cloexec/guest-serial.log`；可测试 ISO：
+  `build/ioctl-cloexec/leonos4-ioctl-cloexec.iso`（bootlog 关闭，`log=serial` +
+  `syscall-trace=/opt/python/`）。
+- VMware：未验证。
+
+**复现**
+
+```sh
+python3 build.py run kernel
+python3 build.py run userland
+python3 build.py test linux-ioctl-cloexec
+python3 tools/test_linux_ioctl_cloexec.py --guest --terminal
+```
+
+`--guest` 使用仓库固定 GRUB 模块（与 `build.py` 同源）；改用宿主 GRUB 2.14
+生成的 EFI 镜像曾在本 ISO 布局上崩溃；脚本优先使用仓库版本，仅缺失时回退宿主。
+
+**返修检查点**：最初把 O_PATH 转换放进通用 fd 分配器，误清除 epoll 类型位，
+且 ioctl 对未知命令没有先验证 fd。新增内核测试分别出现 epoll 识别断言失败
+和无效 fd EBADF 断言失败后，修复上述两处边界。原 32 项成功证据保留在
+`build/ioctl-cloexec/evidence.before-rework.txt`、`guest-serial.before-rework.log`。
+返修构建输出见 `rework-build.log`，扩展验证输出见 `rework-validation.log`
+（均在 `build/ioctl-cloexec/`）。未重新打包普通发行和安装器镜像。
+
+**未完成**：ioctl 整项仍为“有分发、未认证兼容”。其余 socket/设备/文件 ioctl
+请求、`i386`/`x32` compat ioctl、O_PATH 的其余 `FMODE_PATH` 限制
+（`read`/`write`/`fchdir` 等）、完整 LTP ioctl 用例、SMP 压力与 VMware 运行
+均未完成，不能据此提升整项状态。
+
 ## 2026-09-10：暂停 ABI 扩展并保存工作区检查点
 
 按用户要求，Linux ABI 后续扩展暂时暂停。保留当前实现和未完成清单；
@@ -657,7 +753,7 @@ atime/ctime 和父目录时间戳、跨目录 rename、mount 并发与 guest raw
   validated with native v1/v2/v3 data widths. `python3 build.py run kernel`,
   `python3 build.py run test-musl-abi` and the static/dynamic probe builds
   pass. The first 2 GiB QEMU ABI run reached Terminal and launched
-  `/programs/abittest/abittest.elf`, but the probe assumed the OOBE test
+  `/usr/lib/leonos/apps/abittest/abittest.elf`, but the probe assumed the OOBE test
   account was root and exited 1; the probe now covers both root and non-root
   paths. A fresh guest run is required before these rows can move beyond
   `implemented_pending_runtime`.
@@ -723,7 +819,7 @@ atime/ctime 和父目录时间戳、跨目录 rename、mount 并发与 guest raw
   terminfo, wide-character ncurses, Vim editing, runtime syntax and timer
   behavior.
 - A fresh `python3 build.py run test-qmp-vim` run rebuilt the current VMDK and
-  reached OOBE, desktop, Terminal/PTY, shell pipeline and `/programs/vim/vim.elf`;
+  reached OOBE, desktop, Terminal/PTY, shell pipeline and `/usr/bin/vim`;
   Vim exited with code 0 and the runner reported `0 errors`. This is QEMU
   evidence for the desktop/Vim path, not a claim that every Linux syscall is
   complete.
@@ -859,7 +955,7 @@ remains `unprocessed`; its completed subparts are recorded separately below.
   would reject a correct musl image. This is implemented pending install/update
   execution; reaching Thanks does not validate disk installation.
 - TCC first QEMU failure is preserved in `default-musl-tcc-failed.png`: a normal
-  user cannot write `/programs/tcc/examples`. The regression now compiles into
+  user cannot write `/opt/tcc/examples`. The regression now compiles into
   `/tmp` and requires the generated program's actual zero exit.
   `default-musl-tcc-after-test.log` passes; `default-musl-tcc-after-serial.log`
   records compilation and generated ELF exit 0, with `default-musl-tcc-pass.png`.

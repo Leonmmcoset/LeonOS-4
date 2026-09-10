@@ -3,6 +3,7 @@
 
 #include <leonos/blockdev.h>
 #include <stdint.h>
+#include "installer_setup.h"
 
 enum installer_tty_install_mode {
     INSTALLER_TTY_MODE_INSTALL = 0,
@@ -10,6 +11,7 @@ enum installer_tty_install_mode {
 };
 
 struct installer_tty_context {
+    struct installer_setup *setup;
     struct leonos_block_disk_info *disks;
     uint32_t *disk_count;
     int32_t *selected_disk;

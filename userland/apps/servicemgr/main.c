@@ -5,13 +5,14 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <leonos/layout.h>
 
 #define SERVICEMGR_W 780U
 #define SERVICEMGR_H 430U
 #define SERVICEMGR_ROWS 5U
-#define SERVICEMGR_CONFIG_PATH "/system/config/services.cfg"
-#define SERVICEMGR_STATE_PATH "/var/run/services.state"
-#define SERVICEMGR_COMMAND_PATH "/var/run/services.cmd"
+#define SERVICEMGR_CONFIG_PATH LEONOS_PATH_SERVICES_CFG
+#define SERVICEMGR_STATE_PATH LEONOS_PATH_SERVICES_STATE
+#define SERVICEMGR_COMMAND_PATH LEONOS_PATH_SERVICES_CMD
 #define SERVICEMGR_CONFIG_MAX 512U
 #define SERVICEMGR_STATE_MAX 1024U
 #define SERVICEMGR_ROW_Y 60U
@@ -405,7 +406,7 @@ static void write_command(const char *action, uint32_t row)
     append_text(cmd, &pos, sizeof(cmd), service_rows[row].key);
     append_char(cmd, &pos, sizeof(cmd), '\n');
     (void)mkdir("/var", 0777);
-    (void)mkdir("/var/run", 0777);
+    (void)mkdir(LEONOS_LAYOUT_RUN_LEONOS, 0755);
     fd = open(SERVICEMGR_COMMAND_PATH,
               LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0666);
     if (fd < 0) {

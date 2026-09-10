@@ -61,6 +61,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from tools import leonos_layout as layout
 from tools import musl_link
 from typing import Callable, Iterable
 
@@ -140,6 +141,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-los2w",
     "test-qmp-terminal",
     "test-terminal-packages",
+    "test-python-package",
     "test-qmp-pleditor",
     "test-qmp-tcc",
     "gcc-probe-image",
@@ -165,12 +167,16 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-uapi",
     "test-musl-abi",
     "test-musl-distribution",
+    "test-linux-rootfs",
+    "test-linux-inventory",
     "test-linux-resources",
     "test-linux-threads",
     "test-linux-socket-batches",
     "test-linux-descriptors",
+    "test-linux-ioctl-cloexec",
     "test-svga",
     "test-installer-input",
+    "test-installer-setup",
     "test-power",
     "test-oobe",
     "test-all",
@@ -186,19 +192,23 @@ MINESWEEPER_ASSETS = [
     "minesweeper-flag.bmp",
 ]
 SYSTEM_FILES = [
-    ("logo.png", "system/resources/logo.png"),
-    ("system/resources/mouse.bmp", "system/resources/mouse.bmp"),
-    ("system/resources/wallpaper-metro.bmp", "system/resources/wallpaper-metro.bmp"),
-    ("system/certs/cacert.pem", "system/certs/cacert.pem"),
-    ("third_party/doomgeneric/FREEDOOM-COPYING.txt", "system/docs/FREEDOOM-COPYING.txt"),
-    ("third_party/portablegl/LICENSE", "system/docs/PORTABLEGL-LICENSE"),
+    ("logo.png", "usr/share/leonos/resources/logo.png"),
+    ("system/resources/mouse.bmp", "usr/share/leonos/resources/mouse.bmp"),
+    ("system/resources/wallpaper-metro.bmp", "usr/share/leonos/resources/wallpaper-metro.bmp"),
+    ("system/certs/cacert.pem", "etc/ssl/certs/ca-certificates.crt"),
+    ("third_party/doomgeneric/FREEDOOM-COPYING.txt", "usr/share/doc/leonos/FREEDOOM-COPYING.txt"),
+    ("third_party/portablegl/LICENSE", "usr/share/doc/leonos/PORTABLEGL-LICENSE"),
 ]
 
 
 def runtime_app_relative(app: str, extension: str, system_apps: set[str]) -> Path:
-    """返回应用在 ESP 中的标准安装位置；目录布局变化时只改这里。"""
-    root = "system/apps" if app in system_apps else "programs"
-    return Path(root) / app / f"{app}.{extension}"
+    """返回应用在来宾 rootfs 中的标准安装位置。
+
+    所有 LeonOS 应用包现在共用 /usr/lib/leonos/apps；旧 system/apps 与
+    programs 的区分由 manifest 的 system 标志承载，不再编码进路径。
+    """
+    del system_apps
+    return Path(layout.app_exec_path(app, extension))
 
 
 def find_compiler_rt_archive(cc: str) -> Path | None:
@@ -241,7 +251,7 @@ MBEDTLS_SOURCES = [
     "aes.c", "asn1parse.c", "asn1write.c", "base64.c", "bignum.c", "cipher.c",
     "cipher_wrap.c", "constant_time.c", "ctr_drbg.c", "ecdh.c", "ecdsa.c", "ecp.c",
     "ecp_curves.c", "entropy.c", "gcm.c", "md.c", "oid.c", "pem.c", "pk.c",
-    "pkparse.c", "pk_wrap.c", "platform.c", "platform_util.c", "rsa.c",
+    "pkparse.c", "pk_wrap.c", "pkcs5.c", "platform.c", "platform_util.c", "rsa.c",
     "rsa_internal.c", "sha1.c", "sha256.c", "sha512.c", "ssl_ciphersuites.c",
     "ssl_cli.c", "ssl_msg.c", "ssl_tls.c", "x509.c", "x509_crt.c",
 ]
@@ -394,8 +404,8 @@ def user_app_sources(app: str) -> list[Path]:
                 "i_sdlmusic.c", "i_cdmus.c", "mus2mid.c",
             }
         )
-    if app == "oobe":
-        sources.extend(source for source in collect("userland/apps/browser/*.c") if source.name != "main.c")
+    if app == "installer":
+        sources.append(ROOT / "userland/apps/authd/accounts.c")
     return sorted(set(sources))
 
 
@@ -507,6 +517,35 @@ def text_action(destination: Path, text: str) -> Callable[[ActionContext], None]
         ensure_parent(context, destination, text)
 
     return action
+
+
+def remove_staging_path_within(path: Path, staging_root: Path) -> None:
+    """Remove only descendants of staging, without following parent escapes."""
+    root = staging_root.resolve()
+    candidate = Path(os.path.abspath(path))
+    if (candidate == root or not candidate.is_relative_to(root) or
+            not candidate.parent.resolve().is_relative_to(root)):
+        raise GraphError(f"refusing to remove a path outside staging: {path}")
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def copy_tree_preserving_links(source: Path, destination: Path) -> None:
+    """Copy a package tree, preserving symlinks and absolute/relative targets."""
+    if source.is_symlink():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.unlink(missing_ok=True)
+        destination.symlink_to(os.readlink(source))
+        return
+    if source.is_dir():
+        if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+            destination.unlink()
+        shutil.copytree(source, destination, symlinks=True, dirs_exist_ok=True)
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination, follow_symlinks=False)
 
 
 def add_copy(graph: BuildGraph, name: str, source: Path, destination: Path) -> Target:
@@ -647,6 +686,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     target；不要只在列表末尾追加一个没有 inputs/depends_on 的孤立节点。
     """
     graph = BuildGraph(ROOT)
+
+    def remove_staging_path(path: Path) -> None:
+        remove_staging_path_within(path, paths.staging)
     config_path = config_path or paths.kconfig
     values = parse_kconfig(config_path)
     components = load_components(ROOT / "configs/components.toml")
@@ -690,7 +732,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         return component_enabled(component_id, "api")
 
     installer_policy_apps = tuple(
-        app for app in ("desktop", "oobe", "settings") if component_enabled(app, "image")
+        app for app in ("desktop", "settings") if component_enabled(app, "image")
     )
     gptinit_source = ROOT / "userland/apps/gptinit/main.c"
     cc = os.environ.get("CC", "clang")
@@ -731,13 +773,15 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ))
     musl_archive = musl_prefix / "lib/libc.a"
     musl_stamp = musl_prefix / ".leonos-musl.json"
-    from tools.package_musl_gcc import ARCHIVE_NAME, COMMANDS as gcc_commands
+    from tools.package_musl_gcc import ARCHIVE_NAME
     gcc_archive = ROOT / "buildsystem/deps/musl-gcc" / ARCHIVE_NAME
     gcc_source = Path(os.environ["LEONOS_GCC_ARCHIVE"]).resolve() if os.environ.get("LEONOS_GCC_ARCHIVE") else None
     gcc_package = paths.out / "musl-gcc/root"
     gcc_stamp = gcc_package / ".leonos-package.json"
     graph.add(Target(name="musl-gcc", outputs=(gcc_stamp, gcc_archive,
-                         gcc_package / "opt/dyne", *(gcc_package / "bin" / name for name in gcc_commands)),
+                         gcc_package / "opt/dyne",
+                         gcc_package / "usr/share/licenses/musl-gcc",
+                         gcc_package / "usr/share/examples/musl-gcc"),
                      inputs=(ROOT / "tools/package_musl_gcc.py", ROOT / "userland/musl-gcc/launcher.c",
                              ROOT / "userland/musl-gcc/README.md", ROOT / "userland/musl-gcc/hello.c",
                              ROOT / "userland/musl-gcc/COPYING3", ROOT / "userland/musl-gcc/COPYING.RUNTIME",
@@ -747,6 +791,22 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                          *(("--source", str(gcc_source)) if gcc_source else ()))))
     graph.add(Target(name="test-musl-gcc-package", depends_on=("musl-gcc",), kind="test",
                      command=(PYTHON, "tools/test_musl_gcc_package.py", "--root", relative(gcc_package))))
+    from tools.package_python import ARCHIVE_NAME as python_archive_name, PAYLOAD_PATHS as python_payload_paths
+    python_archive = ROOT / "buildsystem/deps/python" / python_archive_name
+    python_source = Path(os.environ["LEONOS_PYTHON_ARCHIVE"]).resolve() if os.environ.get("LEONOS_PYTHON_ARCHIVE") else None
+    python_package = paths.out / "python/root"
+    python_stamp = python_package / ".leonos-package.json"
+    graph.add(Target(name="python", outputs=(python_stamp, python_archive,
+                         *(python_package / name for name in python_payload_paths)),
+                     inputs=(ROOT / "tools/package_python.py", ROOT / "tools/musl_link.py", musl_stamp,
+                             ROOT / "userland/python/launcher.c", ROOT / "userland/python/README.md",
+                             ROOT / "userland/python/hello.py", *((python_source,) if python_source else ())),
+                     depends_on=("musl",), kind="generate",
+                     command=(PYTHON, "tools/package_python.py", "--archive", str(python_archive),
+                              "--out", relative(python_package), "--musl", relative(musl_prefix),
+                              *(("--source", str(python_source)) if python_source else ()))))
+    graph.add(Target(name="test-python-package", depends_on=("python",), kind="test",
+                     command=(PYTHON, "tools/test_python_package.py", "--root", relative(python_package))))
     ncurses_prefix = paths.out / "ncurses/install/usr"
     vim_prefix = paths.out / "vim/install/usr"
     ncurses_stamp = ncurses_prefix / ".leonos-package.json"
@@ -817,6 +877,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     busybox_source_stamp = paths.out / "busybox/source-revision.txt"
     busybox_elf = paths.out / "userland/busybox.elf"
     busybox_stamp = paths.out / "userland/busybox.stamp"
+    busybox_links = paths.out / "userland/busybox.links"
     nano_source = ROOT / "third_party/nano"
     nano_port = ROOT / "userland/nano"
     nano_elf = paths.out / "userland/nano.elf"
@@ -1030,8 +1091,9 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         if component.kind not in {"system-app", "program-app"}:
             continue
         if component_enabled(component.id, "image") and not component_enabled(component.id, "entry"):
-            root = "system/apps" if component.kind == "system-app" else "programs"
-            hidden_desktop_entries.append(f"hide=/{root}/{component.id}")
+            hidden_desktop_entries.append(
+                f"hide={layout.app_package_dir_abs(component.id)}/{component.id}.elf"
+            )
     graph.add(Target(
         name="generate:desktop-entry-policy",
         outputs=(desktop_entry_policy,),
@@ -1705,7 +1767,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ))
     graph.add(Target(
         name="busybox",
-        outputs=(busybox_elf, busybox_stamp),
+        outputs=(busybox_elf, busybox_stamp, busybox_links),
         inputs=tuple([
             busybox_source_stamp,
             ROOT / "tools/build_busybox.py",
@@ -1740,6 +1802,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             relative(busybox_elf),
             "--stamp",
             relative(busybox_stamp),
+            "--links",
+            relative(busybox_links),
             *compile_option_args,
             *linker_option_args,
         ),
@@ -2182,7 +2246,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         user_targets.append("busybox")
     if component_enabled("nano"):
         user_targets.append("nano")
-    for package in ("ncurses", "vim", "musl-gcc"):
+    for package in ("ncurses", "vim", "musl-gcc", "python"):
         if component_enabled(package):
             user_targets.append(package)
     if component_enabled("fastfetch"):
@@ -2582,58 +2646,75 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     component_prune_stamp = paths.out / "generated/component-staging-prune.json"
 
     def prune_component_staging(context: ActionContext) -> None:
-        for obsolete in ("system/lib/ld-leonos.elf", "system/lib/libleonos.so.1"):
-            (paths.staging / obsolete).unlink(missing_ok=True)
-        # Remove the pre-Unix flat-layout directory left by incremental builds.
-        legacy_boot = paths.staging / "boot"
-        if legacy_boot.exists():
-            context.detail(f"remove obsolete staging directory: {relative(legacy_boot)}")
-            shutil.rmtree(legacy_boot, ignore_errors=True)
+        # Remove build-owned outputs from obsolete image layouts.
+        for obsolete in ("system/lib/ld-leonos.elf", "system/lib/libleonos.so.1",
+                         "system/kernel.sys", "system/middlelayer.sys",
+                         "usr/lib/leonos/libleonos.so.1", "etc/machine-id",
+                         "usr/lib/leonos/apps/oobe", "usr/bin/oobe"):
+            stale = paths.staging / obsolete
+            if stale.exists() or stale.is_symlink():
+                context.detail(f"remove obsolete staging path: {relative(stale)}")
+                remove_staging_path(stale)
+        # Remove pre-FHS staging names left by incremental builds.  These are
+        # only build-owned outputs; the source repository directories of the
+        # same name are untouched.
+        for legacy_dir in ("boot", "system", "programs", "drivers", "docs",
+                           "share", "lib64", "usr/lib64", "opt/busybox"):
+            stale = paths.staging / legacy_dir
+            if stale.exists() or stale.is_symlink():
+                context.detail(f"remove obsolete staging directory: {relative(stale)}")
+                remove_staging_path(stale)
+        for recreated in ("bin", "sbin", "lib"):
+            stale = paths.staging / recreated
+            if stale.exists() or stale.is_symlink():
+                context.detail(f"reset staging directory: {relative(stale)}")
+                remove_staging_path(stale)
         for component in components:
             selected = component_enabled(component.id, "image")
-            if component.kind in {"system-app", "program-app"}:
-                root = "system/apps" if component.kind == "system-app" else "programs"
-                target_dir = paths.staging / root / component.id
-            elif component.kind == "tool":
-                target_dir = paths.staging / "programs" / component.id
-            else:
+            if component.kind in {"system-app", "program-app", "package-app"}:
+                target_dir = paths.staging / layout.LEONOS_APPS / component.id
+                if not selected:
+                    if target_dir.exists():
+                        context.detail(f"remove disabled component staging: {relative(target_dir)}")
+                        remove_staging_path(target_dir)
+                    command = paths.staging / layout.USR_BIN / component.id
+                    expected = layout.relative_symlink_target(
+                        f"{layout.USR_BIN}/{component.id}", str(layout.app_exec_path(component.id)))
+                    if command.is_symlink() and os.readlink(command) == expected:
+                        remove_staging_path(command)
                 continue
-            if not selected and target_dir.exists():
-                context.detail(f"remove disabled component staging: {relative(target_dir)}")
-                shutil.rmtree(target_dir)
+            if component.kind == "tool":
+                if selected:
+                    continue
+                for name in layout.tool_payload_paths(component.id):
+                    stale = paths.staging / name
+                    if stale.exists() or stale.is_symlink():
+                        context.detail(f"remove disabled component staging: {relative(stale)}")
+                        remove_staging_path(stale)
         for component, library_name in (("file", "libmagic.so.1"), ("lua", "liblua.so.5"),
                                         ("sqlite", "sqlite.so.3"),
                                         ("portablegl", "libportablegl.so.1")):
-            library = paths.staging / "system/lib" / library_name
+            library = paths.staging / layout.USR_LIB / library_name
             keep = portablegl_image if component == "portablegl" else component_enabled(component, "image")
-            if not keep and library.exists():
+            if not keep and (library.exists() or library.is_symlink()):
                 context.detail(f"remove disabled shared library staging: {relative(library)}")
-                library.unlink()
-        for component, owned_paths in (
-            ("vim", ("bin/vim", "usr/share/vim")),
-            ("ncurses", ("usr/share/terminfo", "usr/share/licenses/ncurses",
-                         *(f"usr/bin/{name}" for name in
-                           ("tic", "toe", "tput", "tset", "infocmp", "clear", "reset",
-                            "captoinfo", "infotocap", "ncursesw6-config")))),
-        ):
-            if component_enabled(component, "image"):
-                continue
-            for name in owned_paths:
-                stale = paths.staging / name
-                if stale.is_dir():
-                    shutil.rmtree(stale)
-                else:
-                    stale.unlink(missing_ok=True)
+                remove_staging_path(library)
+        # The private runtime keeps its own library root.
+        for name in ("libleonos.so.2", "libleonos.so.1", "kerneldebug.sys",
+                     "osmlayer.manifest"):
+            stale = paths.staging / layout.LEONOS_LIB / name
+            if stale.exists() or stale.is_symlink():
+                context.detail(f"remove obsolete private payload: {relative(stale)}")
+                remove_staging_path(stale)
         for app in staged_user_apps:
             if component_enabled(app, "entry"):
                 continue
-            root = "system/apps" if app in system_apps else "programs"
-            target_dir = paths.staging / root / app
-            for filename in (f"{app}.bmp", f"{app}.app.ini"):
+            target_dir = paths.staging / layout.LEONOS_APPS / app
+            for filename in (f"{app}.bmp", f"{app}.app.ini", "manifest.ini"):
                 stale = target_dir / filename
-                if stale.exists():
+                if stale.exists() or stale.is_symlink():
                     context.detail(f"remove disabled desktop entry asset: {relative(stale)}")
-                    stale.unlink()
+                    remove_staging_path(stale)
         for component in components:
             if not component.api_stage_path:
                 continue
@@ -2656,14 +2737,45 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(
         name="staging-prune",
         outputs=(component_prune_stamp,),
-        inputs=(config_path, ROOT / "configs/components.toml"),
+        inputs=(config_path, ROOT / "configs/components.toml", ROOT / "tools/leonos_layout.py"),
         depends_on=("config-sync",),
         kind="generate",
         action=prune_component_staging,
-        action_key="staging-prune-musl-v6",
+        action_key="staging-prune-musl-v9",
     ))
     esp_names = ["staging-prune", "grub-efi"]
     esp_outputs: list[Path] = [grub_efi]
+    rootfs_seed = ROOT / "system/rootfs"
+    rootfs_stamp = paths.out / "generated/rootfs-layout.json"
+    rootfs_seed_files = tuple(sorted(p for p in rootfs_seed.rglob("*") if p.is_file()))
+    rootfs_outputs = (rootfs_stamp, *(paths.staging / p.relative_to(rootfs_seed)
+                                     for p in rootfs_seed_files),
+                      paths.staging / layout.VAR_LIB_LEONOS / "users.db")
+
+    def stage_rootfs(context: ActionContext) -> None:
+        layout.layout_directories(paths.staging)
+        for source in rootfs_seed_files:
+            destination = paths.staging / source.relative_to(rootfs_seed)
+            if destination.is_symlink():
+                raise GraphError(f"rootfs seed destination is a symlink: {destination}")
+            context.copy(source, destination)
+            destination.chmod(0o644)
+        # Live media has no accounts; installer provisions the target AUS2 DB.
+        database = paths.staging / layout.VAR_LIB_LEONOS / "users.db"
+        if database.is_symlink():
+            raise GraphError(f"rootfs account seed is a symlink: {database}")
+        database.write_bytes(bytes.fromhex("3253554100000000"))
+        database.chmod(0o600)
+        ensure_parent(context, rootfs_stamp,
+                      json.dumps(layout.ROOT_DIRECTORIES, sort_keys=True) + "\n")
+
+    graph.add(Target(name="esp:rootfs", outputs=rootfs_outputs,
+                     inputs=(*rootfs_seed_files, layout.ROOTFS_CONTRACT,
+                             ROOT / "tools/leonos_layout.py"),
+                     depends_on=("staging-prune",), kind="generate",
+                     action=stage_rootfs, action_key="rootfs-alpine-aus2-v2"))
+    esp_names.append("esp:rootfs")
+    esp_outputs.extend(rootfs_outputs)
     terminal_payload_stamp = paths.out / "generated/terminal-payload.json"
 
     def stage_terminal_packages(context: ActionContext) -> None:
@@ -2674,67 +2786,43 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             if not component_enabled(package, "image"):
                 continue
             for directory in directories:
-                destination = paths.staging / "usr" / directory
-                if destination.is_dir():
-                    shutil.rmtree(destination)
-                shutil.copytree(prefix / directory, paths.staging / "usr" / directory,
-                                dirs_exist_ok=True)
+                destination = paths.staging / layout.USR / directory
+                if directory == "bin":
+                    # /usr/bin is shared with other independent staging jobs.
+                    for source in sorted((prefix / directory).iterdir()):
+                        entry = destination / source.name
+                        remove_staging_path(entry)
+                        copy_tree_preserving_links(source, entry)
+                else:
+                    remove_staging_path(destination)
+                    copy_tree_preserving_links(prefix / directory, destination)
         if component_enabled("vim", "image"):
-            for name in ("programs/vim/vim.elf", "bin/vim"):
-                destination = paths.staging / name
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(vim_elf, destination)
-            shutil.copy2(ROOT / "third_party/vim/LICENSE", paths.staging / "programs/vim/LICENSE")
-        if component_enabled("busybox", "image"):
-            (paths.staging / "bin").mkdir(exist_ok=True)
-            shutil.copy2(busybox_elf, paths.staging / "bin/sh")
+            destination = paths.staging / layout.USR_BIN / "vim"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(vim_elf, destination)
+            license_destination = paths.staging / layout.LICENSES / "vim" / "LICENSE"
+            license_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "third_party/vim/LICENSE", license_destination)
         ensure_parent(context, terminal_payload_stamp,
                       json.dumps({name: component_enabled(name, "image")
                                   for name in ("vim", "ncurses", "busybox")}) + "\n")
-
-    terminal_inputs = tuple(stamp for name, stamp in
-                            (("vim", vim_stamp), ("ncurses", ncurses_stamp), ("busybox", busybox_elf))
-                            if component_enabled(name, "image"))
-    terminal_outputs = [terminal_payload_stamp]
-    if component_enabled("vim", "image"):
-        terminal_outputs.extend(paths.staging / name for name in
-                                ("programs/vim/vim.elf", "programs/vim/LICENSE", "bin/vim",
-                                 "usr/share/vim/vim91/defaults.vim"))
-    if component_enabled("ncurses", "image"):
-        terminal_outputs.extend(paths.staging / name for name in
-                                ("usr/share/terminfo", "usr/bin/infocmp", "usr/bin/tput",
-                                 "usr/share/licenses/ncurses/COPYING"))
-    graph.add(Target(name="esp:terminal-packages", outputs=tuple(terminal_outputs),
-                     inputs=(config_path, ROOT / "configs/components.toml", *terminal_inputs),
-                     depends_on=("staging-prune",), kind="generate",
-                     action=stage_terminal_packages, action_key="terminal-packages-v2-casefold"))
-    esp_names.append("esp:terminal-packages")
-    esp_outputs.extend(terminal_outputs)
     gcc_payload_stamp = paths.out / "generated/musl-gcc-payload.json"
 
     def stage_gcc_package(context: ActionContext) -> None:
         enabled = component_enabled("musl-gcc", "image")
-        for name in ("opt/dyne", "share/licenses/musl-gcc", "share/examples/musl-gcc",
-                     *("bin/" + n for n in gcc_commands)):
+        for name in (layout.OPT_DYNE, f"{layout.LICENSES}/musl-gcc",
+                     f"{layout.EXAMPLES}/musl-gcc"):
             destination = paths.staging / name
-            if destination.is_dir():
-                shutil.rmtree(destination)
-            else:
-                destination.unlink(missing_ok=True)
+            remove_staging_path(destination)
             if enabled:
-                source = gcc_package / name
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                if source.is_dir():
-                    shutil.copytree(source, destination)
-                else:
-                    shutil.copy2(source, destination)
+                copy_tree_preserving_links(gcc_package / name, destination)
         ensure_parent(context, gcc_payload_stamp, json.dumps({"musl-gcc": enabled}) + "\n")
 
     gcc_payload_outputs = (gcc_payload_stamp,)
     if component_enabled("musl-gcc", "image"):
-        gcc_payload_outputs += (paths.staging / "opt/dyne", paths.staging / "share/licenses/musl-gcc",
-                                paths.staging / "share/examples/musl-gcc",
-                                *(paths.staging / "bin" / name for name in gcc_commands))
+        gcc_payload_outputs += (paths.staging / layout.OPT_DYNE,
+                                paths.staging / layout.LICENSES / "musl-gcc",
+                                paths.staging / layout.EXAMPLES / "musl-gcc")
     graph.add(Target(name="esp:musl-gcc", outputs=gcc_payload_outputs,
                      inputs=(config_path, ROOT / "configs/components.toml",
                              *((gcc_stamp,) if component_enabled("musl-gcc", "image") else ())),
@@ -2742,6 +2830,27 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                      action=stage_gcc_package, action_key="musl-gcc-payload-v2"))
     esp_names.append("esp:musl-gcc")
     esp_outputs.extend(gcc_payload_outputs)
+    python_payload_stamp = paths.out / "generated/python-payload.json"
+
+    def stage_python_package(context: ActionContext) -> None:
+        enabled = component_enabled("python", "image")
+        for name in python_payload_paths:
+            destination = paths.staging / name
+            remove_staging_path(destination)
+            if enabled:
+                copy_tree_preserving_links(python_package / name, destination)
+        ensure_parent(context, python_payload_stamp, json.dumps({"python": enabled}) + "\n")
+
+    python_payload_outputs = (python_payload_stamp,)
+    if component_enabled("python", "image"):
+        python_payload_outputs += tuple(paths.staging / name for name in python_payload_paths)
+    graph.add(Target(name="esp:python", outputs=python_payload_outputs,
+                     inputs=(config_path, ROOT / "configs/components.toml",
+                             *((python_stamp,) if component_enabled("python", "image") else ())),
+                     depends_on=("esp:musl-gcc",), kind="generate",
+                     action=stage_python_package, action_key="python-payload-v2"))
+    esp_names.append("esp:python")
+    esp_outputs.extend(python_payload_outputs)
     grub_font_destination = paths.staging / "grub/fonts/leonos-unicode.pf2"
     target = add_copy(graph, "esp:grub-font", grub_font, grub_font_destination)
     esp_names.append(target.name)
@@ -2757,36 +2866,43 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ) in [
         (ROOT / "boot/grub/grub.cfg", "grub/grub.cfg"),
         (loader_elf, "loader.elf"),
-        (kernel_sys, "system/kernel.sys"),
-        (middle_sys, "system/middlelayer.sys"),
+        (kernel_sys, "leonos/kernel.sys"),
+        (middle_sys, "leonos/middlelayer.sys"),
     ]:
         destination = paths.staging / destination_rel
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
-    kerneldebug_destination = paths.staging / "system/kerneldebug.sys"
-    target = add_copy(graph, "esp:system/kerneldebug.sys", kerneldebug_sys, kerneldebug_destination)
+    kerneldebug_destination = paths.staging / layout.LEONOS_LIB / "kerneldebug.sys"
+    target = add_copy(graph, "esp:kerneldebug", kerneldebug_sys, kerneldebug_destination)
     esp_names.append(target.name)
     esp_names.append("kerneldebug-module")
     esp_outputs.append(kerneldebug_destination)
-    manifest = paths.staging / "system/osmlayer.manifest"
-    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=2\nroot=/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v5-ext2"))
+    manifest = paths.staging / layout.LEONOS_LIB / "osmlayer.manifest"
+    graph.add(Target(name="esp:manifest", outputs=(manifest,), kind="generate", action=text_action(manifest, "name=osmlayer\nabi=2\nroot=/\nfs=ext2\ngui=desktop.elf\n"), action_key="manifest-v6-ext2"))
     esp_names.append("esp:manifest")
     esp_outputs.append(manifest)
-    for source, destination_rel in ((runtime_loader, "lib/ld-musl-x86_64.so.1"),
-                                    (musl_lib, "lib/libc.so"),
-                                    (mimalloc_lib, "lib/libmimalloc.so.3"),
-                                    (runtime_so, "system/lib/libleonos.so.2")):
+    for source, destination_rel in ((runtime_loader, f"{layout.LIB}/ld-musl-x86_64.so.1"),
+                                    (musl_lib, f"{layout.LIB}/libc.so"),
+                                    (mimalloc_lib, f"{layout.LIB}/libmimalloc.so.3"),
+                                    (runtime_so, f"{layout.LEONOS_LIB}/libleonos.so.2")):
         destination = paths.staging / destination_rel
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
     for name in ("musl", "mimalloc"):
         source = musl_prefix / f"share/licenses/{name}" / ("COPYRIGHT" if name == "musl" else "LICENSE")
-        destination = paths.staging / f"share/licenses/{name}/LICENSE"
+        destination = paths.staging / layout.LICENSES / name / "LICENSE"
         target = add_copy(graph, f"esp:license:{name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    musl_search_path = paths.staging / "etc/ld-musl-x86_64.path"
+    graph.add(Target(name="esp:musl-search-path", outputs=(musl_search_path,),
+                     kind="generate", action=text_action(musl_search_path,
+                         "/lib:/usr/local/lib:/usr/lib:/usr/lib/leonos\n"),
+                     action_key="musl-search-path-fhs-v1"))
+    esp_names.append("esp:musl-search-path")
+    esp_outputs.append(musl_search_path)
     for component, source, filename in (
         ("file", libmagic_so, "libmagic.so.1"),
         ("lua", liblua_so, "liblua.so.5"),
@@ -2796,11 +2912,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         enabled = portablegl_image if component == "portablegl" else component_enabled(component, "image")
         if not enabled:
             continue
-        destination = paths.staging / "system/lib" / filename
-        target = add_copy(graph, f"esp:system/lib/{filename}", source, destination)
+        destination = paths.staging / layout.USR_LIB / filename
+        target = add_copy(graph, f"esp:lib:{filename}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
-    dynlinkerror_destination = paths.staging / "system/apps/dynlinkerror/dynlinkerror.elf"
+    dynlinkerror_destination = paths.staging / runtime_app_relative("dynlinkerror", "elf", system_apps)
     target = add_copy(graph, "esp:dynlinkerror", dynlinkerror_elf, dynlinkerror_destination)
     esp_names.append(target.name)
     esp_outputs.append(dynlinkerror_destination)
@@ -2810,39 +2926,33 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         target = add_copy(graph, f"esp:{destination_rel}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
-    ui_metro_font_destination = paths.staging / "system/fonts/leonos-metro.ttf"
-    ui_win95_font_destination = paths.staging / "system/fonts/leonos-win95.ttf"
-    browser_font_destination = paths.staging / "system/fonts/times-new-roman.ttf"
-    browser_cjk_font_destination = paths.staging / "system/fonts/simsun.ttc"
+    ui_metro_font_destination = paths.staging / layout.LEONOS_FONTS / "leonos-metro.ttf"
+    ui_win95_font_destination = paths.staging / layout.LEONOS_FONTS / "leonos-win95.ttf"
+    browser_font_destination = paths.staging / layout.LEONOS_FONTS / "times-new-roman.ttf"
+    browser_cjk_font_destination = paths.staging / layout.LEONOS_FONTS / "simsun.ttc"
 
     def sync_ui_font(context: ActionContext) -> None:
-        for legacy_dir in ("boot", "etc", "userland"):
-            context.detail(f"remove obsolete staging directory: {relative(paths.staging / legacy_dir)}")
-            shutil.rmtree(paths.staging / legacy_dir, ignore_errors=True)
         for legacy_name in ("system.psf", "cjk16.lbf", "metro-latin.lbf", "leonos.lbf", "leonos-ui.ttf"):
             context.detail(f"remove obsolete font: {relative(ui_metro_font_destination.parent / legacy_name)}")
             (ui_metro_font_destination.parent / legacy_name).unlink(missing_ok=True)
         ui_metro_font_destination.parent.mkdir(parents=True, exist_ok=True)
-        (paths.staging / "system/state").mkdir(parents=True, exist_ok=True)
-        (paths.staging / "run/leonos").mkdir(parents=True, exist_ok=True)
-        (paths.staging / "tmp").mkdir(parents=True, exist_ok=True)
-        (paths.staging / "proc").mkdir(parents=True, exist_ok=True)
-        (paths.staging / "etc").mkdir(parents=True, exist_ok=True)
-        (paths.staging / "etc/resolv.conf").write_text("nameserver 1.1.1.1\n", encoding="ascii")
-        (paths.staging / "etc/machine-id").write_text("00000000000000000000000000000000\n", encoding="ascii")
-        (paths.staging / "system/config/users.db").write_bytes(b"")
         context.copy(ui_metro_font, ui_metro_font_destination)
         context.copy(ui_win95_font, ui_win95_font_destination)
         context.copy(browser_font, browser_font_destination)
         context.copy(browser_cjk_font_source, browser_cjk_font_destination)
+        context.copy(ROOT / "system/fonts/system.psf", psf_font_destination)
 
+    psf_font_destination = paths.staging / layout.LEONOS_FONTS / "system.psf"
     target = graph.add(Target(name="esp:system-font", outputs=(ui_metro_font_destination, ui_win95_font_destination,
-                                                                 browser_font_destination, browser_cjk_font_destination),
-                              inputs=(ui_metro_font, ui_win95_font, browser_font, browser_cjk_font_source), kind="generate", action=sync_ui_font,
-                              action_key="sync-ui-font-v8"))
+                                                                 browser_font_destination, browser_cjk_font_destination,
+                                                                 psf_font_destination),
+                              inputs=(ui_metro_font, ui_win95_font, browser_font, browser_cjk_font_source,
+                                      ROOT / "system/fonts/system.psf"), kind="generate", action=sync_ui_font,
+                              action_key="sync-ui-font-v10"))
     esp_names.append(target.name)
     esp_outputs.extend((ui_metro_font_destination, ui_win95_font_destination,
-                        browser_font_destination, browser_cjk_font_destination))
+                        browser_font_destination, browser_cjk_font_destination,
+                        psf_font_destination))
     if any(component_enabled(app, "image") for app in stardustui_apps):
         for source in stardustui_theme_files:
             destination = paths.staging / "etc/stardustui/theme" / source.name
@@ -2850,17 +2960,17 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             esp_names.append(target.name)
             esp_outputs.append(destination)
     for source, icon in zip(button_icons, WINDOW_BUTTON_ICONS):
-        destination = paths.staging / "system/resources" / icon
+        destination = paths.staging / layout.LEONOS_RESOURCES / icon
         target = add_copy(graph, f"esp:window-icon:{icon}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
     for source, name in zip(minesweeper_assets, MINESWEEPER_ASSETS):
-        destination = paths.staging / "system/resources" / name
+        destination = paths.staging / layout.LEONOS_RESOURCES / name
         target = add_copy(graph, f"esp:minesweeper-asset:{name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
     for driver, source in zip(DRIVER_MODULES, driver_outputs):
-        destination = paths.staging / f"drivers/{driver}.drv"
+        destination = paths.staging / layout.LEONOS_DRIVERS / f"{driver}.drv"
         target = add_copy(graph, f"esp:driver:{driver}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
@@ -2895,111 +3005,147 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         target = add_copy(graph, "esp:asset:xiaobai", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    terminal_inputs = tuple(stamp for name, stamp in
+                            (("vim", vim_stamp), ("ncurses", ncurses_stamp), ("busybox", busybox_elf))
+                            if component_enabled(name, "image"))
+    terminal_outputs = [terminal_payload_stamp]
+    if component_enabled("vim", "image"):
+        terminal_outputs.extend(paths.staging / name for name in
+                                (f"{layout.USR_BIN}/vim", f"{layout.LICENSES}/vim/LICENSE",
+                                 f"{layout.USR_SHARE}/vim/vim91/defaults.vim"))
+    if component_enabled("ncurses", "image"):
+        terminal_outputs.extend(paths.staging / name for name in
+                                (layout.TERMINFO, f"{layout.USR_BIN}/infocmp",
+                                 f"{layout.USR_BIN}/tput",
+                                 f"{layout.LICENSES}/ncurses/COPYING"))
+    graph.add(Target(name="esp:terminal-packages", outputs=tuple(terminal_outputs),
+                     inputs=(config_path, ROOT / "configs/components.toml", *terminal_inputs),
+                     depends_on=("staging-prune",), kind="generate",
+                     action=stage_terminal_packages,
+                     action_key="terminal-packages-v4-alpine"))
+    esp_names.append("esp:terminal-packages")
+    esp_outputs.extend(terminal_outputs)
     if component_enabled("busybox", "image"):
-        busybox_destination = paths.staging / "programs/busybox/busybox.elf"
+        busybox_destination = paths.staging / layout.BIN / "busybox"
         target = add_copy(graph, "esp:busybox", busybox_elf, busybox_destination)
         esp_names.append(target.name)
         esp_outputs.append(busybox_destination)
-        for source in (
-            ROOT / "third_party/busybox/LICENSE",
-            ROOT / "userland/busybox/busybox.app.ini",
-        ):
-            destination = paths.staging / "programs/busybox" / source.name
-            target = add_copy(graph, f"esp:busybox:{source.name}", source, destination)
-            esp_names.append(target.name)
-            esp_outputs.append(destination)
+        busybox_license = paths.staging / layout.LICENSES / "busybox" / "LICENSE"
+        target = add_copy(graph, "esp:busybox:LICENSE", ROOT / "third_party/busybox/LICENSE",
+            busybox_license)
+        esp_names.append(target.name)
+        esp_outputs.append(busybox_license)
     if component_enabled("file", "image"):
-        file_destination = paths.staging / "programs/file/file.elf"
+        file_destination = paths.staging / layout.USR_BIN / "file"
         target = add_copy(graph, "esp:file", file_elf, file_destination)
         esp_names.append(target.name)
         esp_outputs.append(file_destination)
-        file_license_destination = paths.staging / "programs/file/COPYING"
+        file_license_destination = paths.staging / layout.LICENSES / "file" / "COPYING"
         target = add_copy(graph, "esp:file:COPYING", file_source / "COPYING",
-                          file_license_destination)
+            file_license_destination)
         esp_names.append(target.name)
         esp_outputs.append(file_license_destination)
-        magic_destination = paths.staging / "system/share/misc/magic.mgc"
+        magic_destination = paths.staging / layout.MISC / "magic.mgc"
         target = add_copy(graph, "esp:file:magic.mgc", magic_database, magic_destination)
         esp_names.append(target.name)
         esp_outputs.append(magic_destination)
     if component_enabled("tcc", "image"):
-        tcc_destination = paths.staging / "programs/tcc"
+        tcc_destination = paths.staging / layout.OPT_TCC
 
         def sync_tcc_runtime(context: ActionContext) -> None:
-            if tcc_destination.exists():
-                context.detail(f"replace staged TCC runtime: {relative(tcc_destination)}")
-                shutil.rmtree(tcc_destination)
+            remove_staging_path(tcc_destination)
             context.detail(
                 f"copy runtime tree: {relative(tcc_runtime_dir)} -> {relative(tcc_destination)}"
             )
-            shutil.copytree(tcc_runtime_dir, tcc_destination)
+            copy_tree_preserving_links(tcc_runtime_dir, tcc_destination)
             context.copy(tcc_elf, tcc_destination / "tcc.elf")
             context.copy(tcc_app_manifest, tcc_destination / "tcc.app.ini")
 
         target = graph.add(Target(
             name="esp:tcc",
             outputs=(tcc_destination / "tcc.elf", tcc_destination / "lib/libtcc1.a",
-                     tcc_destination / "lib/libleonos-tcc-rt.a",
-                     tcc_destination / "tcc.app.ini"),
+                tcc_destination / "lib/libleonos-tcc-rt.a",
+                tcc_destination / "tcc.app.ini"),
             inputs=(tcc_elf, tcc_stamp, tcc_app_manifest),
             depends_on=("tcc",),
             kind="generate",
             action=sync_tcc_runtime,
-            action_key="sync-tcc-runtime-v2",
+            action_key="sync-tcc-runtime-v3",
         ))
         # Replacing the runtime directory must precede its separately owned entries.
         for staged_target in graph.targets.values():
             if staged_target is not target and any(
-                    output.is_relative_to(tcc_destination) for output in staged_target.outputs):
+                output.is_relative_to(tcc_destination) for output in staged_target.outputs):
                 staged_target.depends_on += (target.name,)
         esp_names.append(target.name)
         esp_outputs.extend((tcc_destination / "tcc.elf", tcc_destination / "lib/libtcc1.a",
-                            tcc_destination / "lib/libleonos-tcc-rt.a",
-                            tcc_destination / "tcc.app.ini"))
+            tcc_destination / "lib/libleonos-tcc-rt.a",
+            tcc_destination / "tcc.app.ini"))
+        tcc_license = paths.staging / layout.LICENSES / "tcc" / "COPYING"
+        target = add_copy(graph, "esp:tcc:COPYING", ROOT / "third_party/tinycc/COPYING",
+            tcc_license)
+        esp_names.append(target.name)
+        esp_outputs.append(tcc_license)
     if component_enabled("lua", "image"):
-        lua_destination = paths.staging / "programs/lua"
-        for source in (lua_elf, lua_port / "LICENSE", lua_app_manifest):
-            destination = lua_destination / ("lua.elf" if source == lua_elf else source.name)
-            target = add_copy(graph, f"esp:lua:{destination.name}", source, destination)
-            esp_names.append(target.name)
-            esp_outputs.append(destination)
+        lua_destination = paths.staging / layout.OPT_LUA / "lua.elf"
+        target = add_copy(graph, "esp:lua:lua.elf", lua_elf, lua_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(lua_destination)
+        lua_license_destination = paths.staging / layout.LICENSES / "lua" / "LICENSE"
+        target = add_copy(graph, "esp:lua:LICENSE", lua_port / "LICENSE",
+            lua_license_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(lua_license_destination)
     if component_enabled("cmd", "image"):
-        cmd_destination = paths.staging / "programs/cmd"
-        for source in (cmd_elf, cmd_source / "LICENSE", cmd_port / "README.md"):
-            destination = cmd_destination / ("cmd.elf" if source == cmd_elf else source.name)
+        cmd_destination = paths.staging / layout.OPT_CMD / "cmd.elf"
+        target = add_copy(graph, "esp:cmd:cmd.elf", cmd_elf, cmd_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(cmd_destination)
+        for source in (cmd_source / "LICENSE", cmd_port / "README.md"):
+            destination = (paths.staging / layout.LICENSES / "cmd" / source.name
+                if source == cmd_source / "LICENSE"
+                else paths.staging / layout.OPT_CMD / source.name)
             target = add_copy(graph, f"esp:cmd:{destination.name}", source, destination)
             esp_names.append(target.name)
             esp_outputs.append(destination)
     if component_enabled("nano", "image"):
-        nano_license_destination = paths.staging / "programs/nano/COPYING"
+        nano_license_destination = paths.staging / layout.LICENSES / "nano" / "COPYING"
         target = add_copy(graph, "esp:nano:COPYING", ROOT / "third_party/nano/COPYING",
-                          nano_license_destination)
+            nano_license_destination)
         esp_names.append(target.name)
         esp_outputs.append(nano_license_destination)
     if component_enabled("fastfetch", "image"):
-        fastfetch_license_destination = paths.staging / "programs/fastfetch/LICENSE"
+        fastfetch_license_destination = paths.staging / layout.LICENSES / "fastfetch" / "LICENSE"
         target = add_copy(graph, "esp:fastfetch:LICENSE", fastfetch_source / "LICENSE",
-                          fastfetch_license_destination)
+            fastfetch_license_destination)
         esp_names.append(target.name)
         esp_outputs.append(fastfetch_license_destination)
     if component_enabled("sl", "image"):
-        sl_destination = paths.staging / "programs/sl"
-        for source in (sl_elf, sl_source / "LICENSE", sl_port / "README.md"):
-            destination = sl_destination / ("sl.elf" if source == sl_elf else source.name)
-            target = add_copy(graph, f"esp:sl:{destination.name}", source, destination)
-            esp_names.append(target.name)
-            esp_outputs.append(destination)
+        sl_destination = paths.staging / layout.USR_BIN / "sl"
+        target = add_copy(graph, "esp:sl", sl_elf, sl_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(sl_destination)
+        sl_license_destination = paths.staging / layout.LICENSES / "sl" / "LICENSE"
+        target = add_copy(graph, "esp:sl:LICENSE", sl_source / "LICENSE",
+            sl_license_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(sl_license_destination)
     if component_enabled("less", "image"):
-        less_destination = paths.staging / "programs/less"
-        for source in (less_elf, less_source / "COPYING", less_source / "LICENSE", less_port / "README.md"):
-            destination = less_destination / ("less.elf" if source == less_elf else source.name)
+        less_destination = paths.staging / layout.USR_BIN / "less"
+        target = add_copy(graph, "esp:less", less_elf, less_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(less_destination)
+        for source in (less_source / "COPYING", less_source / "LICENSE", less_port / "README.md"):
+            destination = (paths.staging / layout.LICENSES / "less" / source.name
+                if source != less_port / "README.md"
+                else paths.staging / layout.USR_SHARE / "doc/leonos/less-README.md")
             target = add_copy(graph, f"esp:less:{destination.name}", source, destination)
             esp_names.append(target.name)
             esp_outputs.append(destination)
     if component_enabled("pleditor", "image"):
-        pleditor_license_destination = paths.staging / "programs/pleditor/LICENSE"
+        pleditor_license_destination = paths.staging / layout.LICENSES / "pleditor" / "LICENSE"
         target = add_copy(graph, "esp:pleditor:LICENSE", ROOT / "third_party/pl_editor/LICENSE",
-                          pleditor_license_destination)
+            pleditor_license_destination)
         esp_names.append(target.name)
         esp_outputs.append(pleditor_license_destination)
     test_mp3 = paths.staging / "test/test.mp3"
@@ -3017,7 +3163,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             command=(PYTHON, "tools/build_api.py",
                      "--name", "Hello World", "--id", "helloworld",
                      "--version", "1.0.0", "--category", "Developer applications",
-                     "--main-exe", "helloworld.elf", "--default-path", "/programs/helloworld",
+                     "--main-exe", "helloworld.elf",
+                     "--default-path", layout.app_package_dir_abs("helloworld"),
                      "--requires-admin", "--desktop-shortcut",
                      "--file", relative(app_elfs["helloworld"]), "helloworld.elf",
                      "--output", relative(helloworld_api)),
@@ -3043,7 +3190,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "--version", "1.0.0-freedoom",
                 "--category", "Games",
                 "--main-exe", "doomlauncher.elf",
-                "--default-path", "/programs/doom",
+                "--default-path", layout.app_package_dir_abs("doom"),
                 "--commands", "doom,doomlauncher",
                 "--requires-admin",
                 "--desktop-shortcut",
@@ -3091,7 +3238,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 "--version", "1.0.0",
                 "--category", "Input methods",
                 "--main-exe", "oschinpt.elf",
-                "--default-path", "/programs/oschinpt",
+                "--default-path", layout.app_package_dir_abs("oschinpt"),
                 "--requires-admin",
                 "--input-method-id", "oschinpt",
                 "--input-method-abbreviation", "OSC",
@@ -3111,31 +3258,111 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                           oschinpt_api_destination)
         esp_names.append(target.name)
         esp_outputs.append(oschinpt_api_destination)
-    config_destination = paths.staging / "system/config/leonos.conf"
+    config_destination = paths.staging / layout.ETC_LEONOS / "leonos.conf"
     target = add_copy(graph, "esp:config", config_path, config_destination)
     esp_names.append(target.name)
     esp_outputs.append(config_destination)
     for source in collect("system/config/*"):
         if source.name == "display.conf":
             continue
-        destination = paths.staging / "system/config" / source.name
+        destination = paths.staging / layout.ETC_LEONOS / source.name
         target = add_copy(graph, f"esp:config:{source.name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
-    display_destination = paths.staging / "system/config/display.conf"
+    display_destination = paths.staging / layout.ETC_LEONOS / "display.conf"
     target = add_copy(graph, "esp:config:display.conf", generated_display_config, display_destination)
     esp_names.append(target.name)
     esp_outputs.append(display_destination)
-    entry_policy_destination = paths.staging / "system/config/desktop-entries.conf"
+    boot_display_destination = paths.staging / layout.ESP_DISPLAY_CONF.lstrip("/")
+    target = add_copy(graph, "esp:boot-display.conf", generated_display_config, boot_display_destination)
+    esp_names.append(target.name)
+    esp_outputs.append(boot_display_destination)
+    entry_policy_destination = paths.staging / layout.ETC_LEONOS / "desktop-entries.conf"
     target = add_copy(graph, "esp:config:desktop-entries.conf", desktop_entry_policy,
                       entry_policy_destination)
     esp_names.append(target.name)
     esp_outputs.append(entry_policy_destination)
     for source in collect("system/docs/*.hlp"):
-        destination = paths.staging / "docs" / source.name
+        destination = paths.staging / layout.LEONOS_DOC / source.name
         target = add_copy(graph, f"esp:doc:{source.name}", source, destination)
         esp_names.append(target.name)
         esp_outputs.append(destination)
+    # ---- standard root links and command entries ----
+    layout_stamp = paths.out / "generated/layout-links.json"
+    layout_link_map: dict[str, str] = {}
+    for link, target in layout.root_symlink_entries():
+        layout_link_map[link] = target
+    for link, target in layout.builtin_command_links(
+        lambda package: component_enabled(package, "image")):
+        layout_link_map[link] = target
+    for app in staged_user_apps:
+        link = f"{layout.USR_BIN}/{app}"
+        layout_link_map[link] = layout.relative_symlink_target(
+            link, str(layout.app_exec_path(app))
+        )
+    def stage_layout_links(context: ActionContext) -> None:
+        layout.layout_directories(paths.staging)
+        links = dict(layout_link_map)
+        if component_enabled("busybox", "image"):
+            # Generated by upstream mkll from the actual compiled config.
+            for line in busybox_links.read_text(encoding="ascii").splitlines():
+                link = line.removeprefix("/")
+                entry = Path(link)
+                if (not line.startswith("/") or entry.parent.as_posix() not in
+                        {"bin", "sbin", "usr/bin", "usr/sbin"} or entry.name in {".", "..", "busybox"}):
+                    raise GraphError(f"invalid BusyBox applet path: {line!r}")
+                if link in links:
+                    continue
+                destination = paths.staging / link
+                target = layout.relative_symlink_target(link, "bin/busybox")
+                # A separately packaged command (e.g. ncurses clear) wins.
+                if destination.exists() and not destination.is_symlink():
+                    continue
+                if destination.is_symlink() and os.readlink(destination) != target:
+                    continue
+                links[link] = target
+        if layout_stamp.is_file():
+            previous = json.loads(layout_stamp.read_text(encoding="utf-8"))
+            for link, target in previous.items():
+                destination = paths.staging / link
+                if link not in links and destination.is_symlink() and os.readlink(destination) == target:
+                    remove_staging_path(destination)
+        for link, target in sorted(links.items()):
+            destination = paths.staging / link
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.is_symlink() and os.readlink(destination) == target:
+                continue
+            if destination.exists() or destination.is_symlink():
+                context.detail(f"replace staging path with symlink: {relative(destination)}")
+                remove_staging_path(destination)
+            else:
+                context.detail(f"create staging symlink: {relative(destination)}")
+            os.symlink(target, destination)
+        ensure_parent(
+            context,
+            layout_stamp,
+            json.dumps(links, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+        )
+
+    layout_outputs = (layout_stamp, *(paths.staging / link for link in layout_link_map))
+    graph.add(Target(name="esp:layout-links", outputs=layout_outputs,
+                     inputs=(config_path, ROOT / "configs/components.toml", layout.ROOTFS_CONTRACT,
+                             *((busybox_links,) if component_enabled("busybox", "image") else ()),
+                             ROOT / "tools/leonos_layout.py"),
+                     depends_on=tuple(esp_names), kind="generate",
+                     action=stage_layout_links, action_key="layout-links-v4", always=True))
+    esp_names.append("esp:layout-links")
+    esp_outputs.extend(layout_outputs)
+    # staging-prune removes obsolete pre-FHS trees before any staging producer
+    # runs.  Producers created by add_copy() do not declare that dependency
+    # individually, so add it centrally here rather than duplicating it at
+    # dozens of call sites.
+    for staged_target in graph.targets.values():
+        if staged_target.name in {"staging-prune", "esp", "esp:layout-links", "esp:rootfs"} or staged_target.group:
+            continue
+        if any(output.is_relative_to(paths.staging) for output in staged_target.outputs):
+            if "esp:rootfs" not in staged_target.depends_on:
+                staged_target.depends_on += ("esp:rootfs",)
     graph.add(Target(name="esp", depends_on=tuple(esp_names), group=True, kind="aggregate"))
 
     # ---- 磁盘镜像、ISO、安装器和运行目标 ----
@@ -3147,12 +3374,14 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     root_ext2 = paths.images / "root.ext2"
     vmdk_language = "zh" if config_bool(values, "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH") else "en"
     graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat, root_ext2),
-                     inputs=tuple([*esp_outputs, config_path, ROOT / "tools/make_image.py", ROOT / "tools/populate_exfat.py"]),
+                     inputs=tuple([*esp_outputs, config_path, ROOT / "tools/make_image.py", ROOT / "tools/make_ext2_root.py",
+                                    layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py"]),
                      depends_on=("esp",), kind="generate", command=(PYTHON, "tools/make_image.py", "--out",
                      relative(vmdk), "--raw", relative(raw), "--esp-tree",
                      relative(paths.staging), "--esp-image", relative(esp_fat),
                      "--root-image", relative(root_ext2), "--root-fs", "ext2", "--default-language", vmdk_language,
                      "--size-mib", str(max(config_int(values, "CONFIG_IMAGE_SIZE_MIB"),
+                                           2048 if component_enabled("python", "image") else 0,
                                            1024 if component_enabled("musl-gcc", "image") else 0)))))
 
     iso = paths.images / "leonos4.iso"
@@ -3160,7 +3389,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     desktop_root = paths.out / "live/root.ext2"
     graph.add(Target(name="desktop-live-root", outputs=(desktop_root,),
                      inputs=(*esp_outputs, ROOT / "tools/make_live_root.py",
-                             ROOT / "tools/make_ext2_root.py", ROOT / "tools/make_image.py"),
+                             ROOT / "tools/make_installer_root.py",
+                             ROOT / "tools/make_ext2_root.py", layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py", ROOT / "tools/make_image.py"),
                      depends_on=("esp",), kind="generate", command=(
                          PYTHON, "tools/make_live_root.py", "--tree", relative(paths.staging),
                          "--out", relative(desktop_root))))
@@ -3186,7 +3416,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         installer_runtime_so,
         *(installer_policy_elfs.values()),
         ROOT / "tools/make_installer_root.py",
-        ROOT / "tools/make_ext2_root.py",
+        ROOT / "tools/make_ext2_root.py", layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py",
     ]), depends_on=(
         "esp",
         "installer-runtime",
@@ -3300,7 +3530,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         PYTHON, "tools/test_live_iso.py")))
     graph.add(Target(name="musl-desktop-vim-root", outputs=(live_root,),
                      inputs=(*esp_outputs,
-                             ROOT / "tools/make_live_root.py", ROOT / "tools/make_ext2_root.py", ROOT / "tools/make_image.py"),
+                             ROOT / "tools/make_live_root.py", ROOT / "tools/make_installer_root.py",
+                             ROOT / "tools/make_ext2_root.py", layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py", ROOT / "tools/make_image.py"),
                      depends_on=("esp",), kind="generate", command=(
                          PYTHON, "tools/make_live_root.py", "--tree", relative(paths.staging),
                          "--out", relative(live_root))))
@@ -3431,6 +3662,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     # ---- 主机单元测试和 QEMU 冒烟测试 ----
     graph.add(Target(name="test-oobe", kind="command", always=True,
                      command=(PYTHON, "tools/test_oobe.py")))
+    graph.add(Target(name="test-installer-setup", kind="command", always=True,
+                     command=(PYTHON, "tools/test_installer_setup.py")))
     graph.add(Target(name="test-installer-input",
                      inputs=(ROOT / "tools/test_installer_input.py",
                              ROOT / "tools/tests/blockdev_errno_test.c",
@@ -3497,10 +3730,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                      command=(PYTHON, "tools/test_storage_metadata.py")))
     graph.add(Target(name="test-storage-rename", kind="command", always=True,
                      command=(PYTHON, "tools/test_storage_rename.py")))
-    for suffix, script in (("linux-resources", "test_linux_resources.py"),
+    for suffix, script in (("linux-rootfs", "test_linux_rootfs.py"),
+                           ("linux-inventory", "test_linux_inventory.py"),
+                           ("linux-resources", "test_linux_resources.py"),
                            ("linux-socket-batches", "test_linux_socket_batches.py"),
                            ("linux-threads", "test_linux_threads.py"),
                            ("linux-descriptors", "test_linux_descriptors.py"),
+                           ("linux-ioctl-cloexec", "test_linux_ioctl_cloexec.py"),
                            ("linux-vfork-stack", "test_linux_vfork_stack.py")):
         graph.add(Target(name="test-" + suffix, kind="command", always=True,
                          command=(PYTHON, "tools/" + script)))
@@ -3626,46 +3862,46 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             if not screenshot.is_file() or screenshot.stat().st_size == 0:
                 raise BuildFailure(f"QMP {test_name} test did not produce a terminal screenshot")
         if desktop_app:
-            expected_spawns = (f"spawn path=/programs/{desktop_app}/{desktop_app}.elf",)
+            expected_spawns = (f"spawn path=/usr/lib/leonos/apps/{desktop_app}/{desktop_app}.elf",)
             expected_exits = (f"name={desktop_app}.elf",)
         elif abittest_smoke:
             expected_spawns = (
-                "spawn path=/programs/busybox/busybox.elf",
-                "spawn path=/programs/abittest/abittest.elf",
+                "spawn path=/bin/busybox",
+                "spawn path=/usr/lib/leonos/apps/abittest/abittest.elf",
             )
             expected_exits = ("name=busybox.elf", "name=abittest.elf")
         elif tcc_smoke:
             expected_spawns = (
-                "spawn path=/programs/tcc/tcc.elf",
+                "spawn path=/opt/tcc/tcc.elf",
                 "spawn path=/tmp/leonos-tcc-smoke",
             )
             expected_exits = ("name=tcc.elf", "name=leonos-tcc-smoke")
         elif fastfetch_smoke:
-            expected_spawns = ("spawn path=/programs/fastfetch/fastfetch.elf",)
+            expected_spawns = ("spawn path=/usr/lib/leonos/apps/fastfetch/fastfetch.elf",)
             expected_exits = ("name=fastfetch.elf",)
         elif sl_smoke:
-            expected_spawns = ("spawn path=/programs/sl/sl.elf",)
+            expected_spawns = ("spawn path=/usr/bin/sl",)
             expected_exits = ("name=sl.elf",)
         elif less_smoke:
-            expected_spawns = ("spawn path=/programs/less/less.elf",)
+            expected_spawns = ("spawn path=/usr/bin/less",)
             expected_exits = ("name=less.elf",)
         elif dynlinkerror_smoke:
             expected_spawns = (
-                "spawn path=/programs/nano/nano.elf",
-                "spawn path=/system/apps/dynlinkerror/dynlinkerror.elf",
+                "spawn path=/usr/lib/leonos/apps/nano/nano.elf",
+                "spawn path=/usr/lib/leonos/apps/dynlinkerror/dynlinkerror.elf",
             )
             expected_exits = ("name=nano.elf",)
         elif cmd_pipeline_smoke:
             expected_spawns = (
-                "spawn path=/programs/cmd/cmd.elf",
-                "spawn path=/programs/busybox/busybox.elf",
+                "spawn path=/opt/cmd/cmd.elf",
+                "spawn path=/bin/busybox",
             )
             expected_exits = ("name=busybox.elf",)
         elif editor == "vi":
-            expected_spawns = ("spawn path=/programs/busybox/busybox.elf",)
+            expected_spawns = ("spawn path=/bin/busybox",)
             expected_exits = ("name=busybox.elf",)
         else:
-            expected_spawns = (f"spawn path=/programs/{editor}/{editor}.elf",)
+            expected_spawns = (f"spawn path=/usr/lib/leonos/apps/{editor}/{editor}.elf",)
             expected_exits = (f"name={editor}.elf",)
         for expected_spawn in expected_spawns:
             # Desktop launchers still use the kernel's direct launcher API,
@@ -3683,7 +3919,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 serial_text,
             )
             app_pids += re.findall(
-                rf"\[ntclks\] exec pid=(\d+) path=/programs/{desktop_app}/{re.escape(app_name)}(?:\s|$)",
+                rf"\[ntclks\] exec pid=(\d+) path=/usr/lib/leonos/apps/{desktop_app}/{re.escape(app_name)}(?:\s|$)",
                 serial_text,
             )
             if not app_pids or not any(
@@ -3706,7 +3942,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                 raise BuildFailure("QMP abittest did not report all Linux ABI v1 runtime passes")
         if cmd_pipeline_smoke:
             cmd_pids = re.findall(
-                r"\[ntclks\] exec pid=(\d+) path=/programs/cmd/cmd\.elf",
+                r"\[ntclks\] exec pid=(\d+) path=/opt/cmd/cmd\.elf",
                 serial_text,
             )
             if not cmd_pids:
@@ -3727,7 +3963,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             stage_pids = [
                 pid for pid in descendants
                 if pid != cmd_pid
-                if f"[ntclks] exec pid={pid} path=/programs/busybox/busybox.elf" in serial_text
+                if f"[ntclks] exec pid={pid} path=/bin/busybox" in serial_text
             ]
             if len(stage_pids) < 2:
                 raise BuildFailure(
@@ -4423,10 +4659,11 @@ def parser() -> argparse.ArgumentParser:
     generate.add_argument("file")
     add_config_options(generate)
     test = commands.add_parser("test")
-    test.add_argument("item", choices=("license-server", "los2w", "component-config", "svga", "installer-input", "oobe",
+    test.add_argument("item", choices=("license-server", "los2w", "component-config", "svga", "installer-input", "installer-setup", "oobe",
                                        "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl", "qmp-less",
                                        "qmp-dynlinkerror", "qmp-cmd", "qmp-abittest", "qmp-stardust", "qmp-glxgears",
                                        "linux-abi-contract", "linux-memory", "linux-pty", "linux-permissions",
+                                       "linux-ioctl-cloexec", "python-package",
                                        "storage-metadata", "storage-rename", "musl-abi", "uapi", "all"))
     add_config_options(test)
     config = commands.add_parser("config")

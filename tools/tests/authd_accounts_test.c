@@ -14,11 +14,13 @@ int main(void)
     char directory[] = "/tmp/leonos-accounts-XXXXXX", path[256];
     assert(mkdtemp(directory));
     struct leonos_auth_record records[2] = {0};
-    records[0].user.uid = 1;
+    records[0].user.uid = 0;
+    records[0].user.role = LEONOS_AUTH_ROLE_ADMIN;
     strcpy(records[0].user.username, "root");
-    strcpy(records[0].user.home, "/home/root");
+    strcpy(records[0].user.home, "/root");
     memset(records[0].password_hash, 'Z', sizeof(records[0].password_hash));
-    records[1].user.uid = 70001;
+    records[1].user.uid = 1000;
+    records[1].user.role = LEONOS_AUTH_ROLE_USER;
     strcpy(records[1].user.username, "second-user");
     strcpy(records[1].user.home, "/home/second-user");
     assert(authd_export_accounts(directory, records, 2) == 0);
@@ -26,11 +28,13 @@ int main(void)
     FILE *file = fopen(path, "r");
     assert(file);
     struct passwd *user = fgetpwent(file);
-    assert(user && !strcmp(user->pw_name, "root") && user->pw_uid == 1 && user->pw_gid == 1);
-    assert(!strcmp(user->pw_passwd, "x") && !strcmp(user->pw_dir, "/home/root"));
+    assert(user && !strcmp(user->pw_name, "root") && user->pw_uid == 0 && user->pw_gid == 0);
+    assert(!strcmp(user->pw_passwd, "x") && !strcmp(user->pw_dir, "/root"));
     assert(!strcmp(user->pw_shell, "/bin/sh"));
     user = fgetpwent(file);
-    assert(user && user->pw_uid == 70001 && user->pw_gid == 70001);
+    assert(user && user->pw_uid == 65534 && !strcmp(user->pw_name, "nobody"));
+    user = fgetpwent(file);
+    assert(user && user->pw_uid == 1000 && user->pw_gid == 1000);
     assert(!fgetpwent(file));
     fclose(file);
     struct stat st;
@@ -39,10 +43,12 @@ int main(void)
     file = fopen(path, "r");
     assert(file);
     struct group *group = fgetgrent(file);
-    assert(group && group->gr_gid == 1 && !strcmp(group->gr_name, "root"));
+    assert(group && group->gr_gid == 0 && !strcmp(group->gr_name, "root"));
     assert(group->gr_mem && !group->gr_mem[0]);
     group = fgetgrent(file);
-    assert(group && group->gr_gid == 70001 && !strcmp(group->gr_name, "second-user"));
+    assert(group && group->gr_gid == 65534 && !strcmp(group->gr_name, "nobody"));
+    group = fgetgrent(file);
+    assert(group && group->gr_gid == 1000 && !strcmp(group->gr_name, "second-user"));
     assert(!fgetgrent(file));
     fclose(file);
     assert(stat(path, &st) == 0 && (st.st_mode & 0777) == 0644);
@@ -64,7 +70,7 @@ int main(void)
     /* Successful replacement removes stale records and retains public mode. */
     assert(authd_export_accounts(directory, records, 1) == 0);
     file = fopen(path, "r");
-    assert(file && fgetgrent(file) && !fgetgrent(file));
+    assert(file && fgetgrent(file) && fgetgrent(file) && !fgetgrent(file));
     fclose(file);
     assert(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/passwd", directory);

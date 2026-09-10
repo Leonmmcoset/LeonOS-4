@@ -15,6 +15,7 @@ struct disk_block_partition_range {
     uint64_t first_lba;
     uint64_t sector_count;
     uint8_t present;
+    uint8_t unique_guid[16];
 };
 
 struct disk_block_partition_cache {
@@ -96,6 +97,7 @@ static int disk_block_cache_load(uint32_t disk_id, struct install_disk_state *di
         cache->entries[i].first_lba = entries[i].first_lba;
         cache->entries[i].sector_count = entries[i].last_lba - entries[i].first_lba + 1u;
         cache->entries[i].present = 1;
+        __builtin_memcpy(cache->entries[i].unique_guid, entries[i].unique_guid, 16);
     }
     cache->valid = 1;
     return 0;
@@ -330,6 +332,23 @@ int storage_disk_block_info(uint32_t disk_id, int32_t partition_index,
     if (ret < 0) return ret;
     return disk_block_range(disk_id, disk, sector_count, partition_index,
                             out_first_lba, out_sector_count);
+}
+
+/** @brief Return a validated GPT partition UUID; caller holds the storage lock.
+ * @param disk_id Published disk index.
+ * @param partition_index Zero-based GPT slot.
+ * @param uuid Output buffer of at least 37 bytes, including NUL.
+ * @return Zero or negative errno; no UUID is fabricated for non-GPT disks.
+ */
+int storage_disk_partition_uuid(uint32_t disk_id, uint32_t partition_index, char uuid[37])
+{
+    if (!uuid || disk_id >= STORAGE_MAX_INSTALL_DISKS || partition_index >= LEONOS_DISK_MAX_PARTITIONS) return -22;
+    uint64_t first, sectors;
+    int ret = storage_disk_block_info(disk_id, (int32_t)partition_index, &first, &sectors);
+    if (ret < 0) return ret;
+    const uint8_t *guid = disk_block_partition_cache[disk_id].entries[partition_index].unique_guid;
+    storage_partition_guid_text(guid, uuid);
+    return 0;
 }
 
 int storage_disk_block_read(uint32_t disk_id, int32_t partition_index,

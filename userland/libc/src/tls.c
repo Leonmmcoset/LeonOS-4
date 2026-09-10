@@ -5,6 +5,7 @@
 #include <leonos/system.h>
 #include <leonos/syscall.h>
 #include <leonos/tls.h>
+#include <leonos/layout.h>
 
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
@@ -16,7 +17,7 @@
 
 #include <string.h>
 
-#define LEONOS_TLS_CA_BUNDLE "/system/certs/cacert.pem"
+#define LEONOS_TLS_CA_BUNDLE LEONOS_PATH_CACERT
 #define LEONOS_TLS_CA_BUNDLE_MAX (512U * 1024U)
 
 struct leonos_tls_io {

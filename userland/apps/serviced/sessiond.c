@@ -14,8 +14,9 @@
 #include <unistd.h>
 
 #include "sessiond.h"
+#include <leonos/layout.h>
 
-#define SESSIOND_DB_PATH "/system/state/startup.db"
+#define SESSIOND_DB_PATH LEONOS_PATH_STARTUP_DB
 #define SESSIOND_MAGIC 0x53533131U /* SS11 */
 #define SESSIOND_MAX_CLIENTS 16u
 #define SESSIOND_MAX_ENTRIES LEONOS_STARTUP_MAX_ENTRIES

@@ -1,3 +1,8 @@
+> 2026-09-10 ioctl(FIOCLEX/FIONCLEX) 通用描述符语义修复：普通文件不再返回
+> `-ENOSYS`。返修后宿主内核 ASan/UBSan 单测通过，宿主 Linux 与 QEMU 各 38 组通过，
+> 未修改的静态 musl CPython 3.15 `python3 /bin/hello.py` 打印完整结果并退出 0。
+> VMware 未验证；ioctl 整项仍为“有分发、未认证兼容”。见下文
+> “2026-09-10 通用 ioctl close-on-exec 修复”。
 > 2026-09-10 最新检查点：默认 userland、普通镜像、installer 和 SDK 已切换至 musl+mimalloc；Vim/ncurses 已纳入正式镜像。
 > Picolibc 源码、端口、旧运行库、私有链接参数及旧标准头文件已移除；
 > 静态 musl GCC 15.1.0/binutils 2.44 已正式纳入默认桌面 ISO、VMDK 和 installer；
@@ -31,6 +36,81 @@
 - CSV 仍覆盖 Linux v6.12 native x86-64 的 375 个编号。当前状态为：115 项 `missing_dispatch`、5 项定时器 `completed`、81 项 `routed_not_certified`、157 项 `implemented_pending_runtime`、17 项 Linux 保留/ni。新增 capability、`flock`、时间戳族、`sched_attr`、`rseq`、`futex_waitv`、symlink、sigqueue、mmsg、signalfd、process_vm、SysV 消息队列/信号量族、真实 `CLONE_VFORK`/`vfork` 生命周期和 `RLIMIT_STACK` 已有 native 分发或实现，但完整行为及运行证据仍未完成。部分调用通过定向测试，不表示整项兼容；`verification_scope` 和 `verification_evidence` 单独记录验证边界。
 
 ## 本轮实际修复与状态
+
+### 2026-09-10 通用 ioctl close-on-exec 修复（`FIOCLEX`/`FIONCLEX`）
+
+**已证实的缺口**：静态 musl CPython 3.15 执行 `python3 /bin/hello.py` 报
+`can't open file '/bin/hello.py': [Errno 38] Function not implemented`。
+串口证据（`/home/xiaobai/installer-serial.log` 第 1645 行附近）：`nr=2 open`
+返回 fd 9，紧接着 `nr=16 args=9,5451,0,... result=-38`（`0x5451` 即
+`FIOCLEX`），随后 `close(9)` 与 `exit_group(2)`；同一个二进制在宿主 Linux 上
+`ioctl(FIOCLEX)` 成功。根因是 `kernel/ntclks/syscall.c` 只在 signalfd 分支
+处理这两个请求，普通文件落到默认 `-ENOSYS`。这是已有 ioctl 入口内的子命令/
+描述符语义缺口，不是缺失 `open` 或整个 ioctl 入口。
+
+**代码修改**
+
+- `kernel/ntclks/syscall.c`：新增 `task_fd_descriptor_flags()`/
+  `task_fd_set_descriptor_flags()`，把 FD_CLOEXEC 统一存放在描述符表项
+  （`task_file.fd_flags`）、PTY 别名（`task_pty_fd.flags`）或隐式 stdio
+  （`cloexec_stdio_mask`）三处真实存储；`syscall_ioctl_descriptor_flags()`
+  实现 `FIOCLEX`/`FIONCLEX`，第三个参数根本不进入接口，因此不会被校验或解引用。
+  通用处理挂在 `syscall_dispatch_regs()` 中类别/GPU/设备分发之前，凡
+  `fdget()` 能解析的描述符（普通文件、目录、pipe、socket、PTY、设备、匿名
+  inode）都生效；无效 fd 返回 `EBADF`，其它请求不伪造成功。
+- `syscall_ioctl_resolve_fd()`：核对 O_PATH 特殊规则。Linux 的 `ioctl()`
+  用 `fdget()`，它拒绝 `FMODE_PATH`，所以 O_PATH 描述符上任何 ioctl 都是
+  `EBADF`，而 `fcntl()` 用 `fdget_raw()` 仍可读写 FD_CLOEXEC。因
+  `LINUX_O_PATH` 与内部 `TASK_FILE_FLAG_EPOLL` 数值相同，只在 `open/openat`
+  用户 flags 入口把该位翻译为 `TASK_FILE_FLAG_PATH`；通用分配器保留内部
+  epoll 类型位。所有 ioctl 在命令分发前验证 fd 存在性，无效 fd 返回 `EBADF`。
+- signalfd 分支删除重复实现，改为复用通用路径（该分支原来的
+  `task_descriptor_for_fd()->fd_flags` 写法在异常路径上还可能解引用空指针）。
+- 未识别的 ioctl 请求不再落到整个分发函数末尾的 `-ENOSYS`：Linux 通用层在
+  `do_vfs_ioctl()` 与设备 `->unlocked_ioctl` 都不认识请求时返回 `ENOTTY`，
+  现有 evdev/OSS/socket/PTY 后端也都用该错误码。只修正错误码，不新增设备实现。
+- `fcntl(F_GETFD/F_SETFD)` 改用同一组辅助函数，隐式 stdin/stdout/stderr 的
+  标志不再“返回成功但不保存”；`dup()`/`dup2()`/`dup3()`/`F_DUPFD_CLOEXEC`
+  语义保持不变，并补齐 `dup2()` 落到 fd 0..2 时清理 `cloexec_stdio_mask`
+  的陈旧位（否则复用该 fd 号会带着旧标志进入 exec）。
+- `kernel/ntclks/user/userland.c`：新增仅用于诊断 ISO 的
+  `autospawn=ioctlcloexec` 与 `autospawn=python315` 钩子，使回归程序和
+  未修改的 CPython 在无 GUI 输入的情况下运行并把自身 stdout 写进串口。
+
+**验证证据（按层次区分）**
+
+| 层次 | 内容 | 结果 |
+| --- | --- | --- |
+| 宿主内核单测 | `tools/tests/ioctl_cloexec_table_test.c` 直接编译真实 `kernel/ntclks/syscall.c`，ASan/UBSan：设置/清除/重复、dup 隔离与共享 OFD、PTY 别名、隐式 stdio 存储与 fd 复用、无效 fd/负 fd/超界 fd、未知命令 `ENOTTY`、fd 与 cmd 32 位截断、O_PATH `EBADF` | PASS，无泄漏 |
+| 宿主 Linux 对照 | `tools/tests/linux_ioctl_cloexec_test.c`（静态 musl，raw syscall）在宿主 Linux 运行，同一二进制随后进来宾 | 38 组检查，0 失败，0 跳过 |
+| QEMU/KVM 来宾 | `[ioctl-clex] DONE checks=38 failures=0 skips=0`，含原有 32 项、epoll 注册/等待/dup/exec、无效 fd 对未知及 TTY 命令返回 EBADF、open 忽略 bit 2 | PASS |
+| QEMU/KVM 来宾（Python） | 未修改 `build/python315-stdlib-test/python/bin/python3.15`（静态 musl，完整标准库）执行 `python3 /bin/hello.py`：串口出现 `Hello from Python 3 on LeonOS!`、`Numbers:`、`Sum: 55`、`Fibonacci:`，`name=python3.15 code=0`，且 `nr=16 args=3,5451,... result=0` | PASS |
+| QEMU/KVM 桌面 Terminal | OOBE、登录后通过开始菜单启动 Terminal，输入 `python3 /bin/hello.py`；PTY 1 中 pid 22 退出 0，`build/ioctl-cloexec/terminal-python.png` 显示完整结果和返回 shell | PASS |
+| 头文件/契约 | `FIOCLEX=0x5451`、`FIONCLEX=0x5450`、`FD_CLOEXEC=1` 与 Linux v6.12 一致；通用分发顺序、fcntl 共用存储、signalfd 不再私有实现由 `tools/test_linux_ioctl_cloexec.py` 断言 | PASS |
+| VMware | 未执行 | 待验证 |
+
+证据文件：`build/ioctl-cloexec/evidence.txt`（含宿主探针完整输出、来宾关键行、
+kernel.sys/探针/ISO 的 sha256）、`build/ioctl-cloexec/guest-serial.log`（串口 +
+syscall trace）、可测试 ISO `build/ioctl-cloexec/leonos4-ioctl-cloexec.iso`。
+
+**返修说明**：最初 32 项测试遗漏了 epoll，`alloc_task_fd()` 的 O_PATH 转换
+误清除了内部 EPOLL 类型位，导致 epoll 操作失败并漏释放对象；原 ioctl fd
+解析也未拒绝不存在的 fd，未知命令错误返回 ENOTTY。新增内核单测分别复现
+失败后修复；ASan/UBSan 检查 epoll 识别和关闭释放，raw 探针验证实际分发。
+修复前证据保留在 `build/ioctl-cloexec/evidence.before-rework.txt` 和
+`guest-serial.before-rework.log`，不能用其 32 项通过结论认证 epoll。
+
+**未完成与边界**
+
+- ioctl 整项**不得**标为兼容：其余 socket/设备/文件 ioctl 请求仍按各自后端
+  返回 `ENOTTY`/`EINVAL` 等，未逐项认证；本轮只修复已证实的通用子命令缺口。
+- O_PATH 只实现“ioctl `EBADF` + fcntl 可用”这一条 Linux 规则；`read`/`write`/
+  `fchdir` 等其余 FMODE_PATH 限制仍未实现，`openat2(2)` 带 `O_PATH` 仍返回
+  `EOPNOTSUPP`（Linux 接受该组合），`open()` 对 O_PATH 的构造尚未与其它
+  O_PATH 语义完全对齐。
+- `i386`/`x32` compat ioctl 不在本轮范围；`FIOCLEX`/`FIONCLEX` 之外
+  （如 `FIONBIO`、`FIOASYNC`）仍只在 signalfd/部分设备分支实现。
+- VMware 启动、完整 LTP ioctl 用例、SMP 压力下的并发描述符复用未验证。
 
 2026-09-10 修复 `clone(CLONE_VFORK)`/`vfork(58)` 生命周期和
 `getrlimit(97)`/`setrlimit(160)`/`prlimit64(302)` 的 `RLIMIT_STACK`，并支持无

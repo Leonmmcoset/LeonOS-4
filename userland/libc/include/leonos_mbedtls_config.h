@@ -41,6 +41,7 @@ int64_t leonos_mbedtls_time(int64_t *seconds);
 #define MBEDTLS_ENTROPY_C
 #define MBEDTLS_GCM_C
 #define MBEDTLS_MD_C
+#define MBEDTLS_PKCS5_C
 #define MBEDTLS_OID_C
 #define MBEDTLS_PEM_PARSE_C
 #define MBEDTLS_PK_C

@@ -29,7 +29,7 @@ int main(void)
 {
     char buffer[128];
     uint32_t length;
-    const char *path = "/system/LEONACL.SYS";
+    const char *path = "/var/lib/leonos/LEONACL.SYS";
     for (unsigned i = 0; i < 40; ++i) {
         assert(osmlayer_read_file_service(path, buffer, sizeof(buffer), &length) == 0);
         assert(length == strlen(contents) && !memcmp(buffer, contents, length));
@@ -54,7 +54,7 @@ int main(void)
     read_error = 0;
     assert(osmlayer_read_file_service(path, buffer, sizeof(buffer), &length) == 0);
     assert(reads == 5);
-    assert(osmlayer_read_file_service("/users/LEONACL.SYS", buffer,
+    assert(osmlayer_read_file_service("/home/LEONACL.SYS", buffer,
                                       sizeof(buffer), &length) == 0);
     assert(reads == 6);
     puts("Metadata cache: 40 repeated reads use one I/O; mutations and transient errors stay visible");

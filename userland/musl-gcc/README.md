@@ -29,7 +29,7 @@ source and build recipes are available at https://github.com/dyne/musl/tree/2.2.
 (including its pinned GCC/binutils/musl build inputs). GCC and binutils are GPL
 software; GCC runtime libraries carry the GCC Runtime Library Exception where
 specified upstream. Musl uses the MIT license. Additional bundled libraries
-retain their own licenses. `/share/licenses/musl-gcc/package.json` records every
+retain their own licenses. `/usr/share/licenses/musl-gcc/package.json` records every
 upstream file's SHA256 for comparison with the original archive.
 
 The case-sensitive Linux headers require ext2 in the live/installer root as

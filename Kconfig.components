@@ -393,6 +393,25 @@ config LEON_COMPONENT_TOOL_MUSL_GCC_SDK
     default n
     depends on LEON_COMPONENT_TOOL_MUSL_GCC_BUILD
 
+config LEON_COMPONENT_TOOL_PYTHON_BUILD
+    bool "Build Python 3 with complete standard library"
+    default y
+
+config LEON_COMPONENT_TOOL_PYTHON_IMAGE
+    bool "Include Python 3 with complete standard library in system images"
+    default y
+    depends on LEON_COMPONENT_TOOL_PYTHON_BUILD
+
+config LEON_COMPONENT_TOOL_PYTHON_ENTRY
+    bool "Generate a desktop entry for Python 3 with complete standard library"
+    default n
+    depends on LEON_COMPONENT_TOOL_PYTHON_BUILD
+
+config LEON_COMPONENT_TOOL_PYTHON_SDK
+    bool "Include Python 3 with complete standard library in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_TOOL_PYTHON_BUILD
+
 config LEON_COMPONENT_APP_FASTFETCH_BUILD
     bool "Build fastfetch system summary"
     default y
@@ -881,25 +900,6 @@ config LEON_COMPONENT_APP_MP3PLAY_SDK
 endmenu
 
 menu "System applications"
-
-config LEON_COMPONENT_APP_OOBE_BUILD
-    bool "Build First-run setup"
-    default y
-
-config LEON_COMPONENT_APP_OOBE_IMAGE
-    bool "Include First-run setup in system images"
-    default y
-    depends on LEON_COMPONENT_APP_OOBE_BUILD
-
-config LEON_COMPONENT_APP_OOBE_ENTRY
-    bool "Generate a desktop entry for First-run setup"
-    default n
-    depends on LEON_COMPONENT_APP_OOBE_BUILD
-
-config LEON_COMPONENT_APP_OOBE_SDK
-    bool "Include First-run setup in the developer SDK"
-    default n
-    depends on LEON_COMPONENT_APP_OOBE_BUILD
 
 config LEON_COMPONENT_APP_SERVICEMGR_BUILD
     bool "Build Service control"

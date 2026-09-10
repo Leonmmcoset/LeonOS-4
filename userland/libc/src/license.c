@@ -5,8 +5,9 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/system.h>
+#include <leonos/layout.h>
 
-#define LICENSE_PATH "/system/state/license.dat"
+#define LICENSE_PATH LEONOS_PATH_LICENSE
 #define OFFLINE_ALPHABET "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #define LOCAL_SECRET "LeonOS4 local activation"
 #define OFFLINE_SECRET "LeonOS4 offline license v1"

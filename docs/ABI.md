@@ -25,14 +25,14 @@ for layout semantics, limits, synchronization, software fallback and validation.
 
 Dynamic PIE executables use `/lib/ld-musl-x86_64.so.1`. musl supplies the
 loader and standard C/POSIX ABI; mimalloc supplies public allocation functions.
-LeonOS extensions live in `/system/lib/libleonos.so.2`. The build driver writes
-`/system/lib:/lib` as the application search path. A private LeonOS ABI note
+LeonOS extensions live in `/usr/lib/leonos/libleonos.so.2`. The build driver writes
+`/usr/lib/leonos:/lib:/usr/lib` as the application search path. A private LeonOS ABI note
 is not required for Linux ELF programs. Static binaries use musl CRT and the
 same allocator policy.
 
-Old binaries requiring `ld-leonos.elf` or `libleonos.so.1` must be rebuilt.
-Old static binaries using private stat/termios layouts also require rebuilding;
-renaming libraries cannot make their object layouts compatible.
+The old `libleonos.so.1` alias and native loader are not distributed. Native
+binaries and API packages using the retired root layout must be rebuilt for
+the current paths; there is no automatic migration of stored paths.
 
 ## Syscall subset
 
@@ -124,12 +124,12 @@ boot-enable actions, but the kernel permits it only for administrator tasks.
 
 The kernel loads unsigned ELF64 `ET_REL` files from `/drivers` after the
 root filesystem is mounted. The complete binary format, restricted kernel API,
-and persistent `/system/config/drivers.conf` policy are documented in
+and persistent `/etc/leonos/drivers.conf` policy are documented in
 [Drivers](DRIVERS.md).
 
 ## Kernel Debug Module ABI
 
-`/system/kerneldebug.sys` is a built-in-only x86_64 little-endian `ET_REL`
+`/usr/lib/leonos/kerneldebug.sys` is a built-in-only x86_64 little-endian `ET_REL`
 module. It must contain a `.note.leonos.kerneldebug` ELF note owned by
 `LEONKDBG`, type `0x4c4b4447`, ABI `1`, and the fixed entry-name hash. The
 loader accepts only PIC-free kernel sections and the `NONE`, `64`, `32`,
@@ -143,21 +143,21 @@ continue, reboot, and shutdown operations. A valid module owns the diagnostic
 session; the kernel's minimal menu is only a recovery path for a missing or
 rejected module.
 
-The one-shot marker is `/boot/system/state/kerneldebug.next`. The loader consumes
+The one-shot marker is `/boot/leonos/state/kerneldebug.next`. The loader consumes
 and deletes it before validating its contents, preventing repeated entry after
 an interrupted or malformed debug boot. The persistent activation flag is
-`/system/state/kerneldebug.enabled`.
+`/var/lib/leonos/kerneldebug.enabled`.
 
 ## Appearance ABI
 
 The runtime UI appearance is a Desktop-owned state. `Metro` is the default
 (`LEONOS_UI_THEME_METRO`); `LEONOS_UI_THEME_WIN95` restores the legacy Win95
-palette and bevelled controls. The global `/system/config/display.conf`
+palette and bevelled controls. The global `/etc/leonos/display.conf`
 `theme=` key remains the boot/default style used before a user session is
 available, including early framebuffer output and bugcheck rendering.
 
 Per-user personalization is saved separately in
-`/users/<name>/appearance.conf`. `struct leonos_appearance_state` and
+`/home/<name>/appearance.conf`. `struct leonos_appearance_state` and
 `struct leonos_appearance_request` carry the active theme, independent Metro
 and Win95 basic color scheme IDs, a wallpaper display mode, and a wallpaper BMP
 path. Wallpaper BMP decoding is bounded to 1280 x 720 and accepts
@@ -276,8 +276,8 @@ Middlelayer owns higher-level policy or semantic services that can run on top
 of those kernel facts.
 
 The file services are trusted kernel-to-middlelayer calls. They are used by the
-auth service to own `/system/state/accounts.db` and to create or repair
-`/users/<name>` home directories without exposing direct account-database
+auth service to own `/var/lib/leonos/accounts.db` and to create or repair
+`/home/<name>` home directories without exposing direct account-database
 access to ordinary user tasks.
 
 ## VFS path service
@@ -290,7 +290,7 @@ access to ordinary user tasks.
 - `node_kind`: coarse directory/file/device classification.
 
 The service resolves `cwd + input` into a normalized Unix path such as
-`/system/apps/desktop/desktop.elf`. It rejects any input containing `:`.
+`/usr/lib/leonos/apps/desktop/desktop.elf`. It rejects any input containing `:`.
 Kernel storage code calls this first and keeps a C fallback resolver for
 bootstrapping.
 
@@ -337,8 +337,8 @@ DHCP renew, DNS A lookups, ICMP ping, a compatibility fixed-buffer
 
 Runtime DHCP renew mutates the global IPv4 configuration, so
 `LEONOS_IOCTL_NET_DHCP` is restricted to administrators and trusted service
-tasks. The license OOBE has a narrow pre-login exception: `/system/apps/oobe/oobe.elf`
-may renew DHCP only while `/system/state/oobe.done` is absent. Ordinary users can still
+tasks. The license OOBE has a narrow pre-login exception: `/usr/lib/leonos/apps/oobe/oobe.elf`
+may renew DHCP only while `/var/lib/leonos/oobe.done` is absent. Ordinary users can still
 read network configuration and use DNS, HTTP, ping, and TCP client socket APIs.
 
 Socket requests use:
@@ -393,7 +393,7 @@ handler.
 
 ## PortableGL Rendering ABI
 
-`/system/lib/libportablegl.so.1` provides the PortableGL 0.101 API with the
+`/usr/lib/libportablegl.so.1` provides the PortableGL 0.101 API with the
 LeonOS ABI-v1 window wrapper declared by `leonos/pgl.h`. The wrapper manages a
 GUI window, an ABGR32 color buffer and a D24S8 depth/stencil buffer, and submits
 frames through `leonos_gui_present_window`. Contexts are single-process and
@@ -405,30 +405,30 @@ renderer usable within the current user address-space budget.
 
 The launcher library in `leonos/launch.h` owns user-facing file launch policy.
 It supports `.lnk` shortcuts, built-in program aliases, and persistent extension
-associations stored in `/system/config/fileassoc.cfg`. Settings can edit the common
+associations stored in `/etc/leonos/fileassoc.cfg`. Settings can edit the common
 associations for `.txt`, `.md`, `.html`, `.htm`, `.bmp`, `.wav`, and `.hlp`.
-The default `.hlp` handler is `/programs/oshlp/oshlp.elf`; it accepts
+The default `.hlp` handler is `/usr/lib/leonos/apps/oshlp/oshlp.elf`; it accepts
 `oshlp.elf <file.hlp> [doc.id]` and opens a Markdown page inside a LeonOS help
 container.
 
 Current companion applications:
 
 - `downloadmgr.elf`: uses the libc HTTP client and saves HTTP/HTTPS downloads to
-  the current user's `/users/<name>/downloads` directory.
+  the current user's `/home/<name>/downloads` directory.
 - `imageview.elf`: opens uncompressed 24/32-bit BMP files, supports Fit/1x/2x
   zoom, and can move to previous/next BMP siblings in the same directory.
 - `wavplay.elf`: plays 16-bit stereo PCM WAV files through the active audio
   driver, or a built-in test melody when started without a file.
-- `oshlp.elf`: opens LeonOS `.hlp` help containers from `/docs` or any path
+- `oshlp.elf`: opens LeonOS `.hlp` help containers from `/usr/share/doc/leonos` or any path
   passed by another app. The help viewer uses the current system language as its
   default but language changes inside the window are local to that process.
 - `serviced.elf`: protected background service runtime. Desktop starts it once
-  after the window server is ready. It writes `/var/run/services.state`,
-  consumes `/var/run/services.cmd`, logs to `/var/log/services.log`, and
+  after the window server is ready. It writes `/run/leonos/services.state`,
+  consumes `/run/leonos/services.cmd`, logs to `/var/log/services.log`, and
   keeps retrying DHCP while the static fallback is active.
-- `servicemgr.elf`: edits `/system/config/services.cfg`, reads the runtime state file,
+- `servicemgr.elf`: edits `/etc/leonos/services.cfg`, reads the runtime state file,
   and queues administrator start/stop/restart commands through
-  `/var/run/services.cmd`.
+  `/run/leonos/services.cmd`.
 
 The current service keys are `desktop`, `dhcp`, `network_icon`, `rtc_clock`,
 and `ntp_sync`. `desktop` is fixed on. `dhcp` controls whether kernel boot

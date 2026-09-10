@@ -98,6 +98,11 @@ static inline struct task_file *task_file_description(struct task_file *file)
 #define TASK_FILE_FLAG_EVENTFD     0x00400000u
 #define TASK_FILE_FLAG_EPOLL       0x00200000u
 #define TASK_FILE_FLAG_TIMERFD     0x00100000u
+/* Linux FMODE_PATH: the descriptor came from open(O_PATH) and therefore only
+ * holds a path reference.  The raw LINUX_O_PATH bit cannot remain in
+ * file->flags because it is numerically identical to TASK_FILE_FLAG_EPOLL, so
+ * the open path translates it into this private bit. */
+#define TASK_FILE_FLAG_PATH        0x00000004u
 
 /* Aliases of the standard streams for a process attached to a PTY. */
 struct task_pty_fd {
@@ -191,6 +196,7 @@ struct task_address_space_state {
     uint32_t references;
     uint64_t initial_stack_top;
     uint64_t initial_stack_low;
+    uint64_t arg_start, arg_end, env_start, env_end;
     /* Zero-initialized new/exec address spaces are dumpable by default. */
     bool nondumpable;
     /* Linux membarrier registration commands are process/MM scoped. */
@@ -352,6 +358,7 @@ struct task_mmsg_state {
 };
 
 struct task {
+    uint64_t start_uptime_ms;
     struct task_rlimit_state limits;
     struct task_rlimit_state *shared_limits;
     uint32_t tgid;
@@ -548,6 +555,7 @@ struct task {
     uint8_t fpu_state[512] __attribute__((aligned(16)));
     struct kernel_signal_action signal_actions[KERNEL_SIGNAL_ACTION_MAX];
     uint32_t running_cpu;
+    uint32_t last_cpu;
 };
 
 int sched_prepare_exec_current(struct task *task);

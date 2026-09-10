@@ -3,6 +3,12 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from test_installer_setup import CRYPTO
+
+AUTH_SOURCES = ["userland/apps/authd/accounts.c", "userland/libc/src/auth_password.c", *CRYPTO]
+AUTH_FLAGS = ["-Ithird_party/mbedtls/include", "-idirafter", "userland/libc/include",
+              "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+              '-DMBEDTLS_CONFIG_FILE="leonos_mbedtls_config.h"']
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -16,7 +22,7 @@ class OobeTests(unittest.TestCase):
                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
                 "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
-                "tools/tests/authd_input_test.c", "userland/apps/authd/accounts.c",
+                "tools/tests/authd_input_test.c", *AUTH_SOURCES, *AUTH_FLAGS,
                 "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
@@ -28,7 +34,7 @@ class OobeTests(unittest.TestCase):
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                 "-Iinclude", "-Iinclude/uapi",
-                "tools/tests/authd_accounts_test.c", "userland/apps/authd/accounts.c",
+                "tools/tests/authd_accounts_test.c", *AUTH_SOURCES, *AUTH_FLAGS,
                 "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)

@@ -13,8 +13,21 @@ upstream supplementary sysroot. SHA256:
 GCC/binutils use GPL-3.0-or-later; applicable GCC runtime libraries include the
 GCC Runtime Library Exception. Musl uses MIT. Bundled library notices remain
 inside `/opt/dyne`; compiler license texts and file hashes are installed under
-`/share/licenses/musl-gcc`. See `userland/musl-gcc/README.md` for source/build
+`/usr/share/licenses/musl-gcc`. See `userland/musl-gcc/README.md` for source/build
 recipe references, cache configuration and unchanged-binary verification.
+
+## Prebuilt Python Runtime
+
+The default `python` component includes the user-provided static musl CPython
+3.14.7 archive `cpython-3.14.7+20260901-x86_64-unknown-linux-musl-lto+static-full.tar.zst`.
+SHA256: `e5a76e5893c39c89ed268ad71c3d6794c3be6b7236ec613449140c57686fc17f`.
+The unmodified executable and full installation are in `/opt/python`.
+The archive's CPython and bundled dependency license texts, `PYTHON.json`, and
+package hashes are installed at `/usr/share/licenses/python`. CPython's license
+is recorded in `LICENSE.cpython.txt`; other bundled libraries retain their
+own notices. See `userland/python/README.md` for reproducible packaging and
+the static command launcher. This replaces the temporary 3.15 runtime in
+default images; it does not certify every Python module's Linux ABI usage.
 
 ## Git Submodule Inventory
 
@@ -58,7 +71,7 @@ commits are the revisions recorded by the LeonOS checkout.
 
 LeonOS builds a TLS 1.2 client profile with certificate and hostname
 verification for the shared HTTP client. The system image includes
-`/system/certs/cacert.pem`, the curl CA Extract from
+`/etc/ssl/certs/ca-certificates.crt`, the curl CA Extract from
 `https://curl.se/ca/cacert.pem`, to establish public Web PKI trust.
 
 ## musl and mimalloc
@@ -82,8 +95,8 @@ See `MUSL_MIGRATION_2026-09-08.md` for exact validation and remaining gaps.
 
 LeonOS builds StardustUI as `libstardustui.a` over its existing pixel-buffer
 window ABI and UI text renderer. The image includes the upstream Hello World,
-layout and widget-showcase examples at `/programs/stardusthello/`,
-`/programs/stardustlayout/` and `/programs/stardustshowcase/`, plus the
+layout and widget-showcase examples at `/usr/lib/leonos/apps/stardusthello/`,
+`/usr/lib/leonos/apps/stardustlayout/` and `/usr/lib/leonos/apps/stardustshowcase/`, plus the
 upstream Material 3 example themes in `/etc/stardustui/theme/`. StardustUI's
 socket API is linked but currently reports that networking is unavailable, so
 the network-dependent DuckChat example is intentionally not installed.
@@ -129,7 +142,7 @@ bounded PNG-to-LeonOS-pixel decoder for ordinary GUI applications.
 - License: SQLite public domain dedication and blessing; preserve
   `third_party/sqlite/LICENSE.md`.
 
-LeonOS installs the ABI-v1 shared library as `/system/lib/sqlite.so.3` and
+LeonOS installs the ABI-v1 shared library as `/usr/lib/sqlite.so.3` and
 packages `sqlite3.h` in the SDK. The port uses a LeonOS VFS and currently
 disables WAL, loadable extensions, and cross-process file locking.
 
@@ -140,10 +153,10 @@ disables WAL, loadable extensions, and cross-process file locking.
 - Version: `1.36.1`
 - Pinned commit: `1a64f6a20aaf6ea4dbba68bbfa8cc1ab7e5c57c4` (`1_36_1`)
 - License: GPL-2.0-only; the complete upstream `LICENSE` is staged at
-  `/programs/busybox/LICENSE` beside the executable.
+  `/usr/lib/leonos/apps/busybox/LICENSE` beside the executable.
 
 LeonOS builds a static, basic-applet BusyBox profile at
-`/programs/busybox/busybox.elf`. It includes file/text utilities such as
+`/bin/busybox`. It includes file/text utilities such as
 `ls`, `pwd`, `cat`, `echo`, `head`, `tail`, `wc`, `diff`, `less`, `mkdir`,
 `rmdir`, `cp`, `mv`, `rm`, `unlink`, `printenv`, `uname`, `sleep`, `true`,
 `false`, `nohup`, `vi`, and `printf`. The `sh` entry point is BusyBox Ash built for
@@ -172,15 +185,15 @@ its normal terminal profile retains timers and multibyte support. No LeonOS
 source patch or private syscall wrapper is applied to either upstream package.
 
 Normal images, the live installer and its installed payload contain
-`/programs/vim/vim.elf`, `/bin/vim`, `/usr/share/vim/vim91`, ncurses utilities in
-`/usr/bin`, and `/usr/share/terminfo`. Vim and these utilities are static Linux
+`/usr/bin/vim`, `/usr/share/vim/vim91`, ncurses utilities in `/usr/bin`,
+and `/usr/share/terminfo`. Vim and these utilities are static Linux
 executables. The developer and musl SDKs include upstream curses headers,
 `libncursesw.a`, `libtinfow.a`, panel/menu/form archives and terminfo data.
 Link wide-character applications with `-lncursesw -ltinfow`.
 
 The earlier internal ANSI curses implementation remains an implementation
 detail of existing LeonOS applications; its headers are not the SDK's ncurses
-interface. Licenses ship as `/programs/vim/LICENSE` and
+interface. Licenses ship as `/usr/lib/leonos/apps/vim/LICENSE` and
 `/usr/share/licenses/ncurses/COPYING`, with `THIRD_PARTY/NCURSES-COPYING` in the
 developer SDK. `build.py run test-terminal-packages` runs the actual binaries
 and library on Linux; guest validation is documented separately.
@@ -192,9 +205,9 @@ and library on Linux; guest validation is documented separately.
 - Version: `9.2`
 - Pinned commit: `8e6360d1663998c62ddd0cf934923d1f18004e3e` (`v9.2`)
 - License: GPL-3.0-or-later; the complete upstream `COPYING` is staged at
-  `/programs/nano/COPYING` beside the executable.
+  `/usr/lib/leonos/apps/nano/COPYING` beside the executable.
 
-LeonOS builds Nano at `/programs/nano/nano.elf` with a narrow ANSI curses
+LeonOS builds Nano at `/usr/lib/leonos/apps/nano/nano.elf` with a narrow ANSI curses
 compatibility layer over the GUI terminal PTY. This initial port intentionally
 uses Nano's single-buffer tiny profile: the core editor path is present, while
 external spellers/formatters, rc files, syntax coloring, help pages, mouse
@@ -209,7 +222,7 @@ still require manual GUI-terminal validation on each supported VM platform.
 - License: GNU GPL-3.0-or-later or the upstream Less License; preserve both
   `third_party/less/COPYING` and `third_party/less/LICENSE`.
 
-LeonOS installs the upstream pager at `/programs/less/less.elf`. It uses the
+LeonOS installs the upstream pager at `/usr/lib/leonos/apps/less/less.elf`. It uses the
 shared PTY, polling and POSIX regular-expression runtime through a small ANSI
 termcap adapter. Shell escapes, external editor commands, tags, user key files,
 logfile output and shell pipes are disabled for the system build.
@@ -221,10 +234,10 @@ logfile output and shell pipes are disabled for the system build.
 - Version: `0.9.28rc`
 - Pinned commit: `2ba12e83b3599ca8f5d50c179fe5138fe956f0c9` (`release_0_9_27-1440-g2ba12e83`)
 - License: LGPL-2.1-or-later; the complete upstream `COPYING` is staged at
-  `/programs/tcc/COPYING` beside the executable and runtime files.
+  `/opt/tcc/COPYING` beside the executable and runtime files.
 
 LeonOS builds TinyCC as the static, on-device x86_64 C compiler at
-`/programs/tcc/tcc.elf`. It uses the installed musl headers,
+`/opt/tcc/tcc.elf`. It uses the installed musl headers,
 `libleonos.a`, `libc.a`, musl CRT objects, the target support archive
 `libleonos-tcc-rt.a`, and TinyCC's `libtcc1.a` to produce normal static LeonOS
 ELF programs. musl headers are staged unchanged; LeonOS ABI predefines are
@@ -241,13 +254,13 @@ arbitrary user callbacks remain unavailable.
 - Version: `5.4.8`
 - Pinned commit: `6e22fedb74cf0c9b6656e9fce8b7331db847c605` (`v5.4.8`)
 - License: MIT; the LeonOS copy of the complete upstream license is staged at
-  `/programs/lua/LICENSE` beside the executable.
+  `/opt/lua/LICENSE` beside the executable.
 
-LeonOS builds Lua as the command-line interpreter at `/programs/lua/lua.elf`
-and provides its ABI-v1 C API in `/system/lib/liblua.so.5`. It uses Lua's
+LeonOS builds Lua as the command-line interpreter at `/opt/lua/lua.elf`
+and provides its ABI-v1 C API in `/usr/lib/liblua.so.5`. It uses Lua's
 portable C89 configuration with the LeonOS runtime. Dynamic C modules and
 `package.loadlib` remain unavailable. Lua scripts can be loaded from the current directory or from
-`/programs/lua/lua/`.
+`/opt/lua/lua/`.
 
 ## Lua Development Source
 
@@ -268,9 +281,9 @@ release as `third_party/lua`.
 - Upstream modified fork: `https://github.com/Leonmmcoset/pl_editor.git`
 - Pinned commit: `22fae7a1bc2362486d8bf845f0daf6ec7060a3a1`
 - License: MIT; the complete upstream `LICENSE` is staged at
-  `/programs/pleditor/LICENSE` beside the executable.
+  `/usr/lib/leonos/apps/pleditor/LICENSE` beside the executable.
 
-LeonOS builds PL Editor at `/programs/pleditor/pleditor.elf`. Its upstream
+LeonOS builds PL Editor at `/usr/lib/leonos/apps/pleditor/pleditor.elf`. Its upstream
 platform-independent editor core is kept as a submodule; the LeonOS platform
 adapter provides raw PTY input, ANSI terminal output, terminal sizing and
 multi-encoding file persistence. It is launched through Terminal and supports
@@ -285,9 +298,9 @@ extended syntax set.
 - Version: `0.1.0`
 - Pinned commit: `2290c38bc9da54db53aa56161a7204a27b388e21`
 - License: GPL-3.0-only; the complete upstream `LICENSE` is staged at
-  `/programs/cmd/LICENSE` beside the executable.
+  `/opt/cmd/LICENSE` beside the executable.
 
-LeonOS builds the interpreter at `/programs/cmd/cmd.elf`. From the BusyBox
+LeonOS builds the interpreter at `/opt/cmd/cmd.elf`. From the BusyBox
 Ash prompt, enter `cmd` to use it. The port keeps the upstream interpreter,
 built-ins, batch files, variables and redirection, and executes enabled
 BusyBox applets or supported LeonOS terminal programs through the shared COW
@@ -307,9 +320,9 @@ semantics.
 - Pinned commit: `711ccc264519cdc5073ccb26651c0a9bafc3b47a` (`FILE5_48-17-g711ccc26`)
 - License: BSD-2-Clause-style upstream license; preserve `third_party/file/COPYING`.
 
-LeonOS builds the upstream `file` command at `/programs/file/file.elf` and
-the ABI-v1 `libmagic.so.1` at `/system/lib/libmagic.so.1`. The compiled magic
-database is installed at `/system/share/misc/magic.mgc`; the port keeps the
+LeonOS builds the upstream `file` command at `/usr/lib/leonos/apps/file/file.elf` and
+the ABI-v1 `libmagic.so.1` at `/usr/lib/libmagic.so.1`. The compiled magic
+database is installed at `/usr/share/misc/magic.mgc`; the port keeps the
 upstream recognizers while adapting file access to the Linux x86-64 musl ABI.
 
 ## Fastfetch
@@ -319,9 +332,9 @@ upstream recognizers while adapting file access to the Linux x86-64 musl ABI.
 - Version: `2.67.0`
 - Pinned commit: `56da8f811068289f6352db8881418aa6e0f994e8` (`2.67.0`)
 - License: MIT; the complete upstream `LICENSE` is staged at
-  `/programs/fastfetch/LICENSE` beside the executable.
+  `/usr/lib/leonos/apps/fastfetch/LICENSE` beside the executable.
 
-LeonOS builds upstream Fastfetch at `/programs/fastfetch/fastfetch.elf`.
+LeonOS builds upstream Fastfetch at `/usr/lib/leonos/apps/fastfetch/fastfetch.elf`.
 The unmodified upstream core supplies string, format, printing, ASCII-logo
 data, size, duration, percentage, display-option and module implementations.
 The separate `userland/fastfetch` adapter obtains Title, OS, Kernel, Uptime,
@@ -338,10 +351,10 @@ modules requiring a host POSIX or Linux interface remain disabled.
 - Upstream: `https://github.com/mtoyoda/sl.git`
 - Pinned commit: `923e7d7ebc5c1f009755bdeb789ac25658ccce03`
 - License: permissive upstream license; the complete upstream `LICENSE` is
-  staged at `/programs/sl/LICENSE` beside the executable.
+  staged at `/usr/lib/leonos/apps/sl/LICENSE` beside the executable.
 
 LeonOS builds the Steam Locomotive joke command at
-`/programs/sl/sl.elf`. The upstream animation is kept intact and its curses
+`/usr/lib/leonos/apps/sl/sl.elf`. The upstream animation is kept intact and its curses
 calls are implemented by the ANSI adapter in `userland/sl`.
 
 ## minimp3
@@ -419,13 +432,20 @@ resource; the runtime ships only the generated 16x16 bitmap resource.
 - Upstream: `https://github.com/rswinkle/PortableGL.git`
 - Pinned commit: `7cf39dc1741ea2be60ce3bd327f6e5337f60207f`
 - License: MIT; the complete upstream `LICENSE` is staged at
-  `/system/docs/PORTABLEGL-LICENSE` and in the Developer SDK.
+  `/usr/share/doc/leonos/PORTABLEGL-LICENSE` and in the Developer SDK.
 
 LeonOS builds the single-header implementation as ABI-v1
-`/system/lib/libportablegl.so.1` and also exposes `libportablegl.a` and the
+`/usr/lib/libportablegl.so.1` and also exposes `libportablegl.a` and the
 `leonos/pgl.h` window wrapper in the Developer SDK. The port fixes the
 framebuffer to ABGR32 and depth/stencil to D24S8 and connects presentation to
 the LeonOS pixel-buffer window service. The system build uses PortableGL's
 small-memory profile (50,000 output vertices per draw call) to fit the current
 user address-space budget. `glxgears` is the bundled GUI smoke test; GLX/X11,
 hardware acceleration and multi-threaded contexts are not part of this port.
+
+## Rootfs network databases
+
+`system/rootfs/etc/protocols` and `services` are unmodified Debian netbase v6.4
+files, matching the SHA-512 checksums used by Alpine baselayout 3.7.2. Source:
+https://salsa.debian.org/md/netbase/-/tree/v6.4 . GPL-2 license, upstream
+copyright and source attribution ship in `/usr/share/licenses/netbase`.

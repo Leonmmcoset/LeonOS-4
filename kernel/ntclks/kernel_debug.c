@@ -25,9 +25,10 @@
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
+#include <leonos/layout.h>
 
-#define KERNEL_DEBUG_ENABLED_PATH "/system/state/kerneldebug.enabled"
-#define KERNEL_DEBUG_MODULE_PATH "/system/kerneldebug.sys"
+#define KERNEL_DEBUG_ENABLED_PATH LEONOS_PATH_KERNELDEBUG_ENABLED
+#define KERNEL_DEBUG_MODULE_PATH LEONOS_PATH_KERNELDEBUG_MODULE
 #define KERNEL_DEBUG_MARKER "LEONOS-KDBG-1\n"
 #define KERNEL_DEBUG_BENCH_ITERATIONS 1000U
 #define EI_NIDENT 16U
@@ -472,8 +473,9 @@ int kernel_debug_control(struct leonos_kernel_debug_control *control)
     case LEONOS_KERNEL_DEBUG_CONTROL_GET_STATE:
         return 0;
     case LEONOS_KERNEL_DEBUG_CONTROL_SET_ENABLED:
-        (void)storage_mkdir("/system");
-        (void)storage_mkdir("/system/state");
+        (void)storage_mkdir("/var");
+        (void)storage_mkdir("/var/lib");
+        (void)storage_mkdir(LEONOS_LAYOUT_VAR_LIB_LEONOS);
         if (control->flags & LEONOS_KERNEL_DEBUG_STATE_ENABLED) {
             ret = storage_write_file(KERNEL_DEBUG_ENABLED_PATH, "1\n", 2U);
         } else {
@@ -483,7 +485,7 @@ int kernel_debug_control(struct leonos_kernel_debug_control *control)
         break;
     case LEONOS_KERNEL_DEBUG_CONTROL_ARM_NEXT_BOOT:
         if (!enabled) return -1;
-        ret = storage_write_boot_esp_file("/boot/system/state/kerneldebug.next",
+        ret = storage_write_boot_esp_file(LEONOS_PATH_BOOT_KERNELDEBUG_MARKER,
                                           KERNEL_DEBUG_MARKER,
                                           (uint32_t)(sizeof(KERNEL_DEBUG_MARKER) - 1U));
         break;
@@ -491,7 +493,7 @@ int kernel_debug_control(struct leonos_kernel_debug_control *control)
         ret = storage_unlink(KERNEL_DEBUG_ENABLED_PATH);
         if (ret == -2) ret = 0;
         if (ret == 0) {
-            int marker_ret = storage_unlink_boot_esp_file("/boot/system/state/kerneldebug.next");
+            int marker_ret = storage_unlink_boot_esp_file(LEONOS_PATH_BOOT_KERNELDEBUG_MARKER);
             if (marker_ret < 0 && marker_ret != -2) ret = marker_ret;
         }
         break;

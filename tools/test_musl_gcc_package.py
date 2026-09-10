@@ -14,14 +14,20 @@ def verify(root: Path) -> None:
     assert manifest["archive_sha256"] == ARCHIVE_SHA256
     for name, expected in manifest["upstream_files"].items():
         assert digest(root / name) == expected, name
-    for name in COMMANDS:
-        result = subprocess.run([root / "bin" / name, "--version"], capture_output=True, timeout=30)
-        assert result.returncode == 0, (name, result.stdout, result.stderr)
+    launcher = root / "opt/dyne/bin/leonos-musl-cc"
+    assert launcher.is_file(), launcher
     with tempfile.TemporaryDirectory(prefix="leonos-gcc-package-") as directory:
         work = Path(directory)
+        bin_dir = work / "bin"
+        bin_dir.mkdir()
+        for name in COMMANDS:
+            (bin_dir / name).symlink_to(launcher)
+        for name in COMMANDS:
+            result = subprocess.run([bin_dir / name, "--version"], capture_output=True, timeout=30)
+            assert result.returncode == 0, (name, result.stdout, result.stderr)
 
         def run(name, *args):
-            return subprocess.check_output([str(root / "bin" / name), *map(str, args)], cwd=work,
+            return subprocess.check_output([str(bin_dir / name), *map(str, args)], cwd=work,
                                            stderr=subprocess.STDOUT, timeout=60)
 
         (work / "hello.c").write_text('#include <stdio.h>\nint main(void) { puts("PACKAGED_GCC_OK"); return 0; }\n')

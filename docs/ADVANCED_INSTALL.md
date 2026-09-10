@@ -2,6 +2,12 @@
 
 高级模式提供一个直接进入 BusyBox 的 TTY shell，允许手动完成分区、格式化、挂载、复制系统文件和安装启动文件。它不会启动图形安装器，也不会自动分区。
 
+当前正式安装流程在图形或 TTY 安装器中创建普通账户和固定的 `root` 账户，
+并写入安装完成标记。OOBE 已删除；本文的手动复制步骤不会创建账户，也不能
+替代完整安装。需要可登录的普通用户系统时，请使用安装向导，参见
+[安装器账户与组件](INSTALLER_ACCOUNTS.md)。新安装默认使用 ext2，文末的 ext2
+命令适用于当前格式；前文 exFAT 步骤仅供已有文件系统维护参考。
+
 ## 磁盘布局
 
 新安装推荐使用以下布局：
@@ -182,13 +188,13 @@ cp -r /install/root/. /mnt/root/
 确认核心桌面程序已经复制到目标根分区：
 
 ```sh
-ls /mnt/root/system/apps/desktop/desktop.elf
+ls /mnt/root/usr/lib/leonos/apps/desktop/desktop.elf
 ```
 
 确保状态目录存在。若目录已经存在，提示已存在可以忽略：
 
 ```sh
-mkdir /mnt/root/system/state
+mkdir /mnt/root/var/lib/leonos
 ```
 
 ## 9. 安装 GRUB 和启动文件

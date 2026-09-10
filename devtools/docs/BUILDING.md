@@ -43,7 +43,7 @@ StardustUI 的 LeonOS 后端仍然通过 `leonos_gui_*` 窗口提交像素；主
 普通 GUI 应用应安装到共享程序目录，例如：
 
 ```text
-/programs/myapp/myapp.elf
+/usr/lib/leonos/apps/myapp/myapp.elf
 ```
 
 需要标准输入输出的程序应同时安装同名 sidecar：

@@ -7,7 +7,7 @@
 LeonOS 4 镜像提供设备端 C 编译器：
 
 ```text
-/programs/tcc/tcc.elf
+/opt/tcc/tcc.elf
 ```
 
 在 Terminal 的 BusyBox shell 中，可直接使用 `tcc`：
@@ -18,8 +18,8 @@ tcc hello.c -o hello.elf
 /path/to/hello.elf
 ```
 
-它自动使用 `/programs/tcc/include/` 中的 musl 与 LeonOS 头文件，以及
-`/programs/tcc/lib/` 中的 `crt1.o`、`crti.o`、`crtn.o`、`mimalloc.o`、`libleonos.a`、`libc.a`、
+它自动使用 `/opt/tcc/include/` 中的 musl 与 LeonOS 头文件，以及
+`/opt/tcc/lib/` 中的 `crt1.o`、`crti.o`、`crtn.o`、`mimalloc.o`、`libleonos.a`、`libc.a`、
 `libz.a`、`libpng.a`、`libleonos-tcc-rt.a` 和 `libtcc1.a`，输出普通的静态
 x86_64 LeonOS ELF 文件。`libc.a` 与 musl 头文件保持上游内容；
 LeonOS ABI 预定义宏由 TCC 的目标定义层提供，不再改写 musl 私有头文件。
@@ -31,7 +31,7 @@ tcc viewer.c -lpng -lz -o viewer.elf
 ```
 
 当前不支持动态链接、共享库、PIE 或 `tcc -run`。路径应使用 Unix 风格根目录，
-例如 `/programs/demo/main.c`。如果要在 `C_INCLUDE_PATH`、`CPATH` 或
+例如 `/opt/demo/main.c`。如果要在 `C_INCLUDE_PATH`、`CPATH` 或
 `LIBRARY_PATH` 中指定多个目录，请用冒号（`:`）分隔；路径本身不带卷名前缀。
 
 标准函数由 musl 提供，信号处理程序通过原生 Linux 信号帧运行。

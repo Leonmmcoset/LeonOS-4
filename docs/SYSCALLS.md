@@ -73,7 +73,7 @@ Only the creator can use a render handle. See [SVGA3D.md](SVGA3D.md) for details
 
 ## File and Directory Calls
 
-Paths use Unix syntax such as `/system/apps/desktop/desktop.elf`. Relative
+Paths use Unix syntax such as `/usr/lib/leonos/apps/desktop/desktop.elf`. Relative
 paths are resolved against the task current directory through the middlelayer
 VFS resolver when available, with a kernel fallback. Inputs containing `:`
 are rejected.
@@ -277,7 +277,7 @@ ICMP Echo, a small DHCP client, UDP transmit/receive for DHCP/DNS, DNS A record
 lookups, a small ARP cache, active-open TCP client sockets, and a compatibility
 `HTTP/1.0` GET helper over TCP. Boot starts with the QEMU user-network fallback so
 early networking is usable, then automatically tries DHCP three times unless
-`/system/config/services.cfg` contains `dhcp=0`. If DHCP succeeds, the active config
+`/etc/leonos/services.cfg` contains `dhcp=0`. If DHCP succeeds, the active config
 switches to the lease; if it fails or is disabled, the fallback remains active:
 
 - guest IPv4: `10.0.2.15/24`
@@ -289,7 +289,7 @@ running to manually renew or recover a lease when the caller is an
 administrator. Non-admin users may read network status and use DNS/HTTP/socket
 APIs, but DHCP renew changes the global IPv4 configuration and returns
 `EPERM` unless the caller is an administrator or trusted service task. The only
-pre-login exception is `/system/apps/oobe/oobe.elf` while `/system/state/oobe.done` is
+pre-login exception is `/usr/lib/leonos/apps/oobe/oobe.elf` while `/var/lib/leonos/oobe.done` is
 absent, so the license screen can expose a narrow `Renew DHCP` recovery button.
 `netctl.elf` also queries `leonos_net_connections` and displays TCP client
 sockets in `SYN_SENT`, `ESTABLISHED`, `TIME_WAIT`, or `CLOSED`. Administrators
@@ -298,9 +298,9 @@ connections owned by their uid.
 
 `serviced.elf` now runs as a protected service task started by the desktop. It
 uses the same `leonos_net_config` and `leonos_net_dhcp_renew` wrappers to keep
-retrying DHCP in the background when `/system/config/services.cfg` has `dhcp=1` and the
+retrying DHCP in the background when `/etc/leonos/services.cfg` has `dhcp=1` and the
 kernel is still using the static fallback. It publishes status to
-`/var/run/services.state` for `servicemgr.elf`.
+`/run/leonos/services.state` for `servicemgr.elf`.
 
 `leonos_socket_tcp` returns an integer socket handle owned by the current task.
 `leonos_socket_connect` accepts a host name or IPv4 literal, resolves DNS A

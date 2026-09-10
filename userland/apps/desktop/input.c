@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #define TITLEBAR_DOUBLE_CLICK_MS 350UL
 
@@ -352,7 +353,7 @@ void open_app_window_from_msg(const struct leonos_gui_window_msg *msg)
     if (msg->type != 1) {
         return;
     }
-    if (oobe_lock_blocks_window_msg(msg) || login_lock_blocks_window_msg(msg)) {
+    if (login_lock_blocks_window_msg(msg)) {
         return;
     }
     uint8_t slot = MAX_WINDOWS;
@@ -447,194 +448,12 @@ int spawn_help_path(const char *path)
     return pid;
 }
 
-void maybe_launch_oobe(void)
-{
-    struct leonos_stat st;
-    struct leonos_auth_status auth_status;
-    /* The desktop may reach this helper through both the startup path and the
-     * login fallback path.  Once the OOBE lock owns startup, only its update
-     * routine may decide whether another instance is needed. */
-    if (oobe_lock_active) {
-        return;
-    }
-    if (leonos_stat_legacy("/system/apps/installer/installer.elf", &st) == 0 &&
-        st.type == LEONOS_FS_TYPE_FILE &&
-        leonos_stat_legacy(OOBE_APP_PATH, &st) < 0) {
-        puts("[desktop.elf] installer runtime detected; OOBE disabled");
-        return;
-    }
-    if (oobe_done_marker_exists()) {
-        puts("[desktop.elf] OOBE done; launching login");
-        maybe_launch_login();
-        return;
-    }
-    auth_status = (struct leonos_auth_status){0};
-    (void)leonos_auth_status(&auth_status);
-    puts(auth_status.has_admin
-             ? "[desktop.elf] OOBE completion marker missing; launching oobe.elf"
-             : "[desktop.elf] administrator account missing; launching oobe.elf");
-    oobe_lock_active = 1;
-    oobe_last_spawn_ms = leonos_uptime_ms();
-    {
-        int pid = spawn_program_path("oobe");
-        oobe_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
-    }
-}
-
-static int oobe_process_alive(void)
-{
-    struct leonos_task_info tasks[LEONOS_TASK_MAX];
-    uint64_t tick;
-    unsigned long now;
-    int count;
-    if (!oobe_spawn_pid) {
-        return 0;
-    }
-    count = leonos_task_snapshot(tasks, LEONOS_TASK_MAX, &tick);
-    if (count < 0) {
-        return 1;
-    }
-    for (int i = 0; i < count; ++i) {
-        if (tasks[i].pid == oobe_spawn_pid && tasks[i].state != 3) {
-            return 1;
-        }
-    }
-    /* fork/exec publication is asynchronous.  A missing task in the first
-     * snapshot is therefore still a live spawn reservation, not proof that
-     * the process exited. */
-    now = leonos_uptime_ms();
-    if (now - oobe_last_spawn_ms < OOBE_STARTUP_GRACE_MS) {
-        return 1;
-    }
-    oobe_spawn_pid = 0;
-    return 0;
-}
-
-int oobe_done_marker_exists(void)
-{
-    struct leonos_auth_status status;
-    struct leonos_license_info license;
-    status = (struct leonos_auth_status){0};
-    if (leonos_auth_status(&status) < 0 || !status.has_admin) {
-        return 0;
-    }
-    if (leonos_license_required()) {
-        license = (struct leonos_license_info){0};
-        if (leonos_license_status(&license) < 0 ||
-            license.status != LEONOS_LICENSE_STATUS_OK) {
-            return 0;
-        }
-    }
-    /* The marker is a recoverable cache; account and license state are authoritative. */
-    return 1;
-}
-
-int window_is_oobe(const struct desktop_window *w)
-{
-    return w && w->visible && text_eq(w->title, OOBE_WINDOW_TITLE) &&
-           text_eq(w->app_text, OOBE_WINDOW_TEXT);
-}
-
-int window_msg_is_oobe(const struct leonos_gui_window_msg *msg)
-{
-    return msg && text_eq(msg->title, OOBE_WINDOW_TITLE) &&
-           text_eq(msg->text, OOBE_WINDOW_TEXT);
-}
-
-int oobe_window_slot(void)
-{
-    for (uint8_t i = BUILTIN_WINDOWS; i < MAX_WINDOWS; ++i) {
-        if (window_is_oobe(&windows[i])) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-void oobe_lock_update(void)
-{
-    unsigned long now;
-    if (!oobe_lock_active) {
-        return;
-    }
-    /* Successful OOBE sign-in assigns the desktop task a session before its
-     * window teardown is observed.  That in-memory identity is authoritative
-     * and avoids re-opening OOBE while the account database write is settling. */
-    if (desktop_session_logged_in()) {
-        oobe_lock_active = 0;
-        full_redraw_pending = 1;
-        maybe_launch_login();
-        return;
-    }
-    if (oobe_done_marker_exists()) {
-        oobe_lock_active = 0;
-        full_redraw_pending = 1;
-        maybe_launch_login();
-        return;
-    }
-    if (oobe_window_slot() >= 0) {
-        return;
-    }
-    if (oobe_process_alive()) {
-        return;
-    }
-    now = leonos_uptime_ms();
-    if (now - oobe_last_spawn_ms >= OOBE_RESPAWN_MS) {
-        oobe_last_spawn_ms = now;
-        {
-            int pid = spawn_program_path("oobe");
-            oobe_spawn_pid = pid > 0 ? (uint32_t)pid : 0;
-        }
-    }
-}
-
-void oobe_lock_on_window_removed(uint8_t slot)
-{
-    if (oobe_lock_active && slot < MAX_WINDOWS && window_is_oobe(&windows[slot])) {
-        /* Let the OOBE completion writes become observable before considering
-         * a replacement.  The previous zero timestamp caused an immediate
-         * respawn on some cold-storage timings. */
-        oobe_last_spawn_ms = leonos_uptime_ms();
-    }
-}
-
-int oobe_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg)
-{
-    return oobe_lock_active && !window_msg_is_oobe(msg) &&
-           !(msg && text_eq(msg->title, "Application Page Fault"));
-}
-
-int handle_oobe_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons)
-{
-    int slot;
-    (void)x;
-    (void)y;
-    (void)buttons;
-    if (!oobe_lock_active) {
-        return 0;
-    }
-    slot = oobe_window_slot();
-    if (slot >= 0) {
-        bring_to_front((uint8_t)slot);
-    }
-    start_menu_set_open(0);
-    return 1;
-}
-
-int handle_oobe_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
-{
-    (void)x;
-    (void)y;
-    (void)wheel;
-    (void)buttons;
-    return oobe_lock_active ? 1 : 0;
-}
 
 int desktop_session_logged_in(void)
 {
     struct leonos_user_info user;
     user = (struct leonos_user_info){0};
-    return leonos_auth_current(&user) == 0 && user.uid != 0;
+    return leonos_auth_current(&user) == 0;
 }
 
 static int login_process_alive(void)
@@ -679,14 +498,12 @@ void maybe_launch_login(void)
         full_redraw_pending = 1;
         return;
     }
-    if (!oobe_done_marker_exists()) {
-        return;
-    }
+    /* Live and installer media have no installed identity. Once installed,
+     * keep the screen locked even if authd is unavailable or its DB is bad. */
+    struct stat installed;
+    if (lstat("/etc/leonos/installed", &installed) < 0 && errno == ENOENT) return;
     status = (struct leonos_auth_status){0};
-    if (leonos_auth_status(&status) < 0 || !status.has_admin) {
-        maybe_launch_oobe();
-        return;
-    }
+    (void)leonos_auth_status(&status);
     login_lock_active = 1;
     if (login_window_slot() >= 0 || login_process_alive()) {
         return;
@@ -1293,8 +1110,7 @@ void handle_mouse(uint32_t x, uint32_t y, uint8_t buttons)
         return;
     }
 
-    if ((oobe_lock_active && handle_oobe_lock_mouse(x, y, buttons)) ||
-        (login_lock_active && handle_login_lock_mouse(x, y, buttons))) {
+    if (login_lock_active && handle_login_lock_mouse(x, y, buttons)) {
         previous_buttons = buttons;
         cursor_x = x;
         cursor_y = y;
@@ -1495,8 +1311,7 @@ void handle_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons)
                        (int32_t)x, (int32_t)y, 0, wheel, buttons, 0, 0);
         return;
     }
-    if ((oobe_lock_active && handle_oobe_lock_mouse_wheel(x, y, wheel, buttons)) ||
-        (login_lock_active && handle_login_lock_mouse_wheel(x, y, wheel, buttons))) {
+    if (login_lock_active && handle_login_lock_mouse_wheel(x, y, wheel, buttons)) {
         return;
     }
     if (start_menu_handle_wheel(x, y, wheel)) {

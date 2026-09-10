@@ -32,6 +32,8 @@ void *kernel_malloc(size_t size) { return malloc(size); }
 void kernel_free(void *memory) { free(memory); }
 int proc_lookup(const char *path, struct storage_node *node)
 { (void)path; (void)node; return -2; }
+int proc_readlink(const char *path, char *out, uint32_t capacity)
+{ (void)path; (void)out; (void)capacity; return -2; }
 int storage_lookup_path(const char *path, struct storage_node *node)
 {
     struct fixture *f = find(path);

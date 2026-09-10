@@ -18,6 +18,7 @@
 #include "storage/storage_exfat.c"
 #include "storage/storage_mount.c"
 #include "storage/storage_vfs.c"
+#include "storage/storage_mounts.c"
 #include "storage/storage_permissions.c"
 #include "storage/storage_statfs.c"
 #include "storage/storage_installer.c"

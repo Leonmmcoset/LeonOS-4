@@ -30,8 +30,8 @@
 
 #define GCC "/opt/dyne/gcc-musl/bin/x86_64-linux-musl-gcc"
 #include "../../userland/apps/installer/installer_directory.h"
-#define SYSROOT "--sysroot=/opt/dyne/x86_64-linux-musl"
-#define SELF_FALLBACK "/system/tests/gcc-probe.elf"
+#define SYSROOT "--sysroot=/opt/dyne/gcc-musl/x86_64-linux-musl"
+#define SELF_FALLBACK "/usr/lib/leonos/tests/gcc-probe.elf"
 
 static char self_path[256];
 static volatile int shared_marker;
@@ -200,7 +200,7 @@ static int exec_child(void *argument)
     char marker = 'A';
     if (syscall(SYS_write, args->write_fd, &marker, 1) != 1) raw_exit(112);
     char *const argv[] = {(char *)args->self, (char *)"--vfork-exec-child", NULL};
-    char *const envp[] = {"PATH=/bin:/system/bin", NULL};
+    char *const envp[] = {"PATH=/bin:/sbin:/usr/bin:/usr/sbin", NULL};
     execve(args->self, argv, envp);
     raw_exit(111);
 }
@@ -516,7 +516,7 @@ static int stack_limit_checks(const char *self)
     if (child < 0) return 1;
     if (!child) {
         char *const argv[] = {(char *)self, (char *)"--check-stack-child", NULL};
-        char *const envp[] = {"PATH=/bin:/system/bin", NULL};
+        char *const envp[] = {"PATH=/bin:/sbin:/usr/bin:/usr/sbin", NULL};
         execve(self, argv, envp);
         _exit(4);
     }
@@ -546,7 +546,7 @@ static int run(const char *label, char *const argv[], const char *capture_path,
                 close(fd);
             }
         }
-        char *env[] = {"PATH=/opt/dyne/gcc-musl/bin:/bin:/system/bin",
+        char *env[] = {"PATH=/opt/dyne/bin:/opt/dyne/gcc-musl/bin:/bin:/sbin:/usr/bin:/usr/sbin",
                        "TMPDIR=/tmp", "LC_ALL=C", "HOME=/tmp", NULL};
         execve(argv[0], argv, env);
         printf("[gcc-probe] EXECFAIL %s errno=%d\n", label, errno);
@@ -646,15 +646,15 @@ int main(int argc, char **argv)
     int compiled;
     failed += run("version", version, NULL, NULL) != 0;
     failed += run("configuration", config, NULL, NULL) != 0;
-    char *packaged[] = {"/bin/musl-gcc", "-static", "gcc-probe.c", "-o", "gcc-packaged", NULL};
+    char *packaged[] = {"/usr/bin/musl-gcc", "-static", "gcc-probe.c", "-o", "gcc-packaged", NULL};
     char *packaged_run[] = {"/tmp/gcc-packaged", NULL};
     if (run("packaged-musl-gcc", packaged, NULL, NULL)) {
         failed++;
     } else {
         failed += run("packaged-generated", packaged_run, "/tmp/gcc-packaged.out", "GCC_GENERATED_OK") != 0;
     }
-    char *packaged_as[] = {"/bin/as", "--version", NULL};
-    char *packaged_ld[] = {"/bin/ld", "--version", NULL};
+    char *packaged_as[] = {"/usr/bin/as", "--version", NULL};
+    char *packaged_ld[] = {"/usr/bin/ld", "--version", NULL};
     failed += run("packaged-as", packaged_as, NULL, NULL) != 0;
     failed += run("packaged-ld", packaged_ld, NULL, NULL) != 0;
     failed += run("preprocess", preprocess, NULL, NULL) != 0;

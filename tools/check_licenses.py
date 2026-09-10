@@ -245,15 +245,26 @@ def check_image(source: Path, category: str = "image-license") -> list[Finding]:
                             str(source), "raw image format is opaque; mount or export it before checking")]
         findings: list[Finding] = []
         for program, licenses in IMAGE_LICENSES.items():
-            executable = f"programs/{program}/{program}.elf"
-            # tcc and fastfetch use their conventional executable names; a
-            # program directory is also enough for custom packaging layouts.
-            present = artifact.exists(executable) or artifact.has_prefix(f"programs/{program}")
+            # Accept the pre-FHS and Alpine-shaped locations for compatibility
+            # review of older media, but require the license in the current
+            # named license directory.
+            exec_candidates = (
+                f"programs/{program}/{program}.elf",
+                f"usr/lib/leonos/apps/{program}/{program}.elf",
+                f"usr/bin/{program}",
+                f"bin/{program}",
+                f"opt/{program}/{program}.elf",
+                f"opt/{program}/{program}",
+            )
+            present = any(artifact.exists(candidate) for candidate in exec_candidates) or \
+                artifact.has_prefix(f"programs/{program}") or \
+                artifact.has_prefix(f"usr/lib/leonos/apps/{program}") or \
+                artifact.has_prefix(f"opt/{program}")
             if not present:
                 # Do not flag disabled components.
                 continue
-            expected = " or ".join(f"programs/{program}/{x}" for x in licenses)
-            candidates = tuple(f"programs/{program}/{x}" for x in licenses)
+            expected = " or ".join(f"usr/share/licenses/{program}/{x}" for x in licenses)
+            candidates = tuple(f"usr/share/licenses/{program}/{x}" for x in licenses)
             found = artifact.find(candidates)
             findings.append(result(category, "pass" if found else "fail", "info" if found else "error",
                                    program, expected, found or "missing", str(source),
@@ -280,9 +291,9 @@ def check_image(source: Path, category: str = "image-license") -> list[Finding]:
                                        "API package is present but its attribution file is missing"))
         # Notices for content which is not an application directory.
         if artifact.has_any(("programs/doom/doom.elf", "programs/doom/doomgeneric.elf", "api/doom.api")):
-            found = artifact.find(("system/docs/FREEDOOM-COPYING.txt",))
+            found = artifact.find(("usr/share/doc/leonos/FREEDOOM-COPYING.txt",))
             findings.append(result(category, "pass" if found else "fail", "info" if found else "error",
-                                   "freedoom", "system/docs/FREEDOOM-COPYING.txt", found or "missing",
+                                   "freedoom", "usr/share/doc/leonos/FREEDOOM-COPYING.txt", found or "missing",
                                    str(source), "Freedoom notice is present" if found else "Freedoom content lacks its notice"))
         if not findings:
             findings.append(result(category, "warn", "warning", "image", "packaged third-party programs",
@@ -383,7 +394,7 @@ def self_test() -> int:
         (root / "userland/apps/installer").mkdir(parents=True)
         (root / "userland/apps/installer/main.c").write_text('static const char acknowledgements_en[] = "ok";\nstatic int text_eq(void);', encoding="utf-8")
         assert check_submodules(root)[0].status == "pass"
-        esp_program = root / "build/esp/programs/nano"
+        esp_program = root / "build/esp/usr/bin/nano"
         esp_program.mkdir(parents=True)
         (esp_program / "nano.elf").write_bytes(b"elf")
         assert any(f.component == "nano" and f.status == "fail" for f in check_image(root / "build/esp"))

@@ -12,7 +12,7 @@ def executable(prefix: Path, output: Path, objects, libraries=(), *, static=Fals
         command += ["-static", "--image-base=0x4000000"]
     else:
         command += ["-pie", "--hash-style=both", "--dynamic-linker",
-                    "/lib/ld-musl-x86_64.so.1", "-rpath", "/system/lib:/lib"]
+                    "/lib/ld-musl-x86_64.so.1", "-rpath", "/usr/lib/leonos:/lib:/usr/lib"]
     command += ["-o", str(output), str(lib / ("crt1.o" if static else "Scrt1.o")),
                 str(lib / "crti.o"), *map(str, objects), "-L", str(lib)]
     command += [str(lib / "mimalloc.o")] if static else ["-l:libmimalloc.so.3"]

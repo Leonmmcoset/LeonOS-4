@@ -2,6 +2,7 @@
 #define LEONOS_DESKTOP_H
 
 #include <leonos/gui.h>
+#include <leonos/layout.h>
 #include <leonos/auth.h>
 #include <leonos/fs.h>
 #include <leonos/i18n.h>
@@ -39,18 +40,18 @@
 #define CURSOR_MAX_W CURSOR_TILE_W
 #define CURSOR_MAX_H (CURSOR_TILE_H * CURSOR_STYLE_COUNT)
 #define CURSOR_BMP_MAX_BYTES (CURSOR_MAX_W * CURSOR_MAX_H * 4 + 128)
-#define CURSOR_BMP_PATH "/system/resources/mouse.bmp"
+#define CURSOR_BMP_PATH LEONOS_LAYOUT_LEONOS_RESOURCES "/mouse.bmp"
 #define DESKTOP_CURSOR_REGION_CAP 64
 #define WALLPAPER_MAX_W 1280
 #define WALLPAPER_MAX_H 720
 #define WALLPAPER_BMP_MAX_BYTES (WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4 + 128)
-#define DESKTOP_DEFAULT_WALLPAPER_PATH "/system/resources/wallpaper-metro.bmp"
+#define DESKTOP_DEFAULT_WALLPAPER_PATH LEONOS_LAYOUT_LEONOS_RESOURCES "/wallpaper-metro.bmp"
 #define WINDOW_BUTTON_ICON_W 16
 #define WINDOW_BUTTON_ICON_H 16
-#define WINDOW_BUTTON_MINIMIZE_ICON_PATH "/system/resources/window-button-minimize.bmp"
-#define WINDOW_BUTTON_MAXIMIZE_ICON_PATH "/system/resources/window-button-maximize.bmp"
-#define WINDOW_BUTTON_RESTORE_ICON_PATH "/system/resources/window-button-restore.bmp"
-#define WINDOW_BUTTON_CLOSE_ICON_PATH "/system/resources/window-button-close.bmp"
+#define WINDOW_BUTTON_MINIMIZE_ICON_PATH LEONOS_LAYOUT_LEONOS_RESOURCES "/window-button-minimize.bmp"
+#define WINDOW_BUTTON_MAXIMIZE_ICON_PATH LEONOS_LAYOUT_LEONOS_RESOURCES "/window-button-maximize.bmp"
+#define WINDOW_BUTTON_RESTORE_ICON_PATH LEONOS_LAYOUT_LEONOS_RESOURCES "/window-button-restore.bmp"
+#define WINDOW_BUTTON_CLOSE_ICON_PATH LEONOS_LAYOUT_LEONOS_RESOURCES "/window-button-close.bmp"
 #define APP_ICON_SMALL_W 16
 #define APP_ICON_SMALL_H 16
 #define APP_ICON_LARGE_W 32
@@ -60,27 +61,21 @@
 #define APP_ICON_W APP_ICON_SMALL_W
 #define APP_ICON_H APP_ICON_SMALL_H
 #define APP_ICON_BMP_MAX_BYTES (APP_ICON_MAX_W * APP_ICON_MAX_H * 4 + 128)
-#define OOBE_DONE_PATH "/system/state/oobe.done"
-#define OOBE_APP_PATH "/system/apps/oobe/oobe.elf"
-#define OOBE_WINDOW_TITLE "LeonOS Setup"
-#define OOBE_WINDOW_TEXT "First-run setup"
-#define OOBE_RESPAWN_MS 1000UL
 /* A freshly spawned task can take several scheduler ticks before it appears
  * in the task snapshot.  Keep the spawn reservation during that handoff. */
-#define OOBE_STARTUP_GRACE_MS 5000UL
-#define LOGIN_APP_PATH "/system/apps/login/login.elf"
+#define LOGIN_APP_PATH LEONOS_LAYOUT_LEONOS_APPS "/login/login.elf"
 #define LOGIN_WINDOW_TITLE "LeonOS Login"
 #define LOGIN_WINDOW_TEXT "Sign in"
 #define LOGIN_RESPAWN_MS 1000UL
 /* Login window registration is asynchronous too.  Keep its launch reservation
  * until the task becomes visible to the desktop or has had time to start. */
 #define LOGIN_STARTUP_GRACE_MS 5000UL
-#define SERVICE_DAEMON_PATH "/system/apps/serviced/serviced.elf"
-#define NETWORK_CONTROLLER_APP_PATH "/system/apps/netctl/netctl.elf"
+#define SERVICE_DAEMON_PATH LEONOS_LAYOUT_LEONOS_APPS "/serviced/serviced.elf"
+#define NETWORK_CONTROLLER_APP_PATH LEONOS_LAYOUT_LEONOS_APPS "/netctl/netctl.elf"
 #define SERVICE_DAEMON_RETRY_MS 2000UL
-#define DISPLAY_CONFIG_PATH "/system/config/display.conf"
+#define DISPLAY_CONFIG_PATH LEONOS_PATH_DISPLAY_CONF
 #define APPEARANCE_CONFIG_NAME "appearance.conf"
-#define SERVICES_CONFIG_PATH "/system/config/services.cfg"
+#define SERVICES_CONFIG_PATH LEONOS_PATH_SERVICES_CFG
 #define SERVICES_CONFIG_MAX 512U
 #define DISPLAY_CONFIRM_MS 10000UL
 #define START_MENU_W 464
@@ -329,9 +324,6 @@ extern uint8_t desktop_damage_pending;
 extern uint8_t desktop_damage_cursor_only;
 extern struct rect desktop_damage_rect;
 extern uint8_t power_confirm_action;
-extern uint8_t oobe_lock_active;
-extern unsigned long oobe_last_spawn_ms;
-extern uint32_t oobe_spawn_pid;
 extern uint8_t login_lock_active;
 extern unsigned long login_last_spawn_ms;
 extern uint32_t login_spawn_pid;
@@ -517,16 +509,6 @@ void apply_snap_mode(uint8_t id, uint8_t snap_mode);
 void open_app_window_from_msg(const struct leonos_gui_window_msg *msg);
 int spawn_program_path(const char *path);
 int spawn_help_path(const char *path);
-void maybe_launch_oobe(void);
-int oobe_done_marker_exists(void);
-int window_is_oobe(const struct desktop_window *w);
-int window_msg_is_oobe(const struct leonos_gui_window_msg *msg);
-int oobe_window_slot(void);
-void oobe_lock_update(void);
-void oobe_lock_on_window_removed(uint8_t slot);
-int oobe_lock_blocks_window_msg(const struct leonos_gui_window_msg *msg);
-int handle_oobe_lock_mouse(uint32_t x, uint32_t y, uint8_t buttons);
-int handle_oobe_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t buttons);
 void maybe_launch_login(void);
 int desktop_session_logged_in(void);
 int window_is_login(const struct desktop_window *w);

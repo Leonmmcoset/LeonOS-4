@@ -723,6 +723,7 @@ def main() -> None:
     parser.add_argument("--musl-lib", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
+    parser.add_argument("--links", type=Path, required=True)
     parser.add_argument("--compile-flag", action="append", default=[])
     parser.add_argument("--linker-flag", action="append", default=[])
     args = parser.parse_args()
@@ -812,7 +813,7 @@ def main() -> None:
     startup = " ".join("-Wl," + str(lib / name) for name in ("crt1.o", "crti.o", "mimalloc.o", "crtn.o"))
     run([
         "make", "-C", str(source_dir), f"O={output_dir}", "CC=clang", "ARCH=x86_64",
-        "CFLAGS=" + cflags, "LDFLAGS=" + ldflags, "LDLIBS=leonos c", "EXTRA_LDFLAGS=" + startup, "busybox_unstripped",
+        "CFLAGS=" + cflags, "LDFLAGS=" + ldflags, "LDLIBS=leonos c", "EXTRA_LDFLAGS=" + startup, "busybox_unstripped", "busybox.links",
     ])
 
     built = output_dir / "busybox_unstripped"
@@ -822,6 +823,11 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(built, output)
     output.chmod(0o755)
+    applets = set((output_dir / "busybox.links").read_text(encoding="ascii").splitlines())
+    if not {"/bin/sh", "/bin/ash", "/bin/false"}.issubset(applets):
+        raise SystemExit("BusyBox applet list lacks the configured rootfs shell commands")
+    args.links.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(output_dir / "busybox.links", args.links)
     args.stamp.parent.mkdir(parents=True, exist_ok=True)
     args.stamp.write_text(
         "{\n"

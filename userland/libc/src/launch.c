@@ -10,12 +10,16 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <unistd.h>
+#include <leonos/layout.h>
+#include <grp.h>
+#include <sys/stat.h>
+#include <stdlib.h>
 
-#define LEONOS_ASSOC_CONFIG_PATH "/system/config/fileassoc.cfg"
+#define LEONOS_ASSOC_CONFIG_PATH LEONOS_PATH_FILEASSOC_CFG
 #define LEONOS_ASSOC_CONFIG_MAX 1024U
 #define LEONOS_SHORTCUT_MAX_BYTES 384U
 #define LEONOS_SHORTCUT_MAX_DEPTH 8U
-#define LEONOS_TERMINAL_APP_PATH "/system/apps/terminal/terminal.elf"
+#define LEONOS_TERMINAL_APP_PATH LEONOS_LAYOUT_LEONOS_APPS "/terminal/terminal.elf"
 
 static int launch_fail(int code)
 {
@@ -145,7 +149,7 @@ static int ends_with_ignore_case(const char *text, const char *suffix)
 
 static int is_system_desktop_path(const char *path)
 {
-    return text_eq_ignore_case(path, "/system/apps/desktop/desktop.elf");
+    return text_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/desktop/desktop.elf");
 }
 
 static const char *path_basename(const char *path)
@@ -212,23 +216,24 @@ static int launch_in_terminal(char *argv[])
     return leonos_spawn_argv(terminal_argv[0], terminal_argv);
 }
 
-static void launch_apply_session_uid(void)
+static int launch_apply_session_uid(void)
 {
     char text[16] = {0};
     int fd;
-    uint32_t uid = 0;
-    if (getuid() != 0) return;
-    fd = open("/run/leonos/session-user", LEONOS_O_RDONLY, 0);
-    if (fd < 0) return;
-    (void)read(fd, text, sizeof(text) - 1u);
+    if (getuid() != 0) return 0;
+    fd = open("/run/leonos/session-user", LEONOS_O_RDONLY | O_NOFOLLOW, 0);
+    if (fd < 0) return errno == ENOENT ? 0 : -1;
+    struct stat st;
+    if (fstat(fd, &st) < 0 || st.st_uid || (st.st_mode & 0022) || !S_ISREG(st.st_mode)) {
+        close(fd); errno = EACCES; return -1;
+    }
+    ssize_t n = read(fd, text, sizeof(text) - 1u);
     close(fd);
-    for (uint32_t i = 0; text[i] >= '0' && text[i] <= '9'; ++i) {
-        uid = uid * 10u + (uint32_t)(text[i] - '0');
-    }
-    if (uid) {
-        (void)setgid(uid);
-        (void)setuid(uid);
-    }
+    char *end;
+    unsigned long uid = strtoul(text, &end, 10);
+    if (n <= 0 || end == text || *end != '\n' || uid >= 65534) { errno = EINVAL; return -1; }
+    if (setgroups(0, 0) < 0 || setgid(uid) < 0 || setuid(uid) < 0) return -1;
+    return 0;
 }
 
 int leonos_spawn_argv(const char *path, char *const argv[])
@@ -246,7 +251,7 @@ int leonos_spawn_argv(const char *path, char *const argv[])
     }
     pid = fork();
     if (pid == 0) {
-        launch_apply_session_uid();
+        if (launch_apply_session_uid() < 0) _exit(126);
         (void)execve(path, argv, envp);
         _exit(127);
     }

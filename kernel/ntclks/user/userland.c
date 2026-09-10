@@ -10,11 +10,13 @@
 #include <ntclks/pty.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
+#include <ntclks/uts.h>
 #include <ntclks/syscall.h>
 #include <ntclks/lock.h>
 #include <ntclks/smp.h>
 #include <ntclks/userland.h>
 #include <ntclks/svga.h>
+#include <leonos/layout.h>
 
 #define USER_STACK_TOP (NTCLKS_USER_TOP - 0x1000ULL)
 #define EXEC_STACK_ALIGN 16ULL
@@ -43,6 +45,12 @@ static bool autospawn_linuxabi;
 static bool autospawn_ltp;
 static bool autospawn_gcc;
 static bool autospawn_vim;
+/* Diagnostic-only hooks used by the Linux ABI regression ISOs.  They spawn a
+ * program with fixed argv on the kernel console so the serial log captures the
+ * program's own stdout, exit code and syscall trace without GUI input. */
+static bool autospawn_ioctlcloexec;
+static bool autospawn_python315;
+static bool autospawn_inventory;
 /* elf.c keeps a bounded header scratch buffer and ASLR state at file scope.
  * Serialize lazy image construction so APs cannot overwrite that state while
  * the BSP (or another AP) is mapping a different executable. */
@@ -170,7 +178,7 @@ static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
  */
 static int path_is_system_desktop(const char *path)
 {
-    return path_eq_ignore_case(path, "/system/apps/desktop/desktop.elf");
+    return path_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/desktop/desktop.elf");
 }
 
 /**
@@ -178,7 +186,7 @@ static int path_is_system_desktop(const char *path)
  */
 static int path_is_system_service_daemon(const char *path)
 {
-    return path_eq_ignore_case(path, "/system/apps/serviced/serviced.elf");
+    return path_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/serviced/serviced.elf");
 }
 
 /**
@@ -186,17 +194,17 @@ static int path_is_system_service_daemon(const char *path)
  */
 static int path_is_windowd(const char *path)
 {
-    return path_eq_ignore_case(path, "/system/apps/windowd/windowd.elf");
+    return path_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/windowd/windowd.elf");
 }
 
 static int path_is_imd(const char *path)
 {
-    return path_eq_ignore_case(path, "/system/apps/imd/imd.elf");
+    return path_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/imd/imd.elf");
 }
 
 static int path_is_authd(const char *path)
 {
-    return path_eq_ignore_case(path, "/system/apps/authd/authd.elf");
+    return path_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/authd/authd.elf");
 }
 
 /**
@@ -469,6 +477,13 @@ static int prepare_user_exec_stack(struct task *task)
         }
     }
 
+    struct task_address_space_state *mm=sched_task_mm(task);
+    mm->arg_start=task->exec_argc? strings_base+(uint64_t)(task->exec_argv[0]-task->exec_data):execfn_base+path_len+1;
+    mm->arg_end=task->exec_argc? strings_base+(uint64_t)(task->exec_argv[task->exec_argc-1]-task->exec_data)+
+        __builtin_strlen(task->exec_argv[task->exec_argc-1])+1:mm->arg_start+1;
+    mm->env_start=task->exec_envc?strings_base+(uint64_t)(task->exec_envp[0]-task->exec_data):mm->arg_end;
+    mm->env_end=task->exec_envc?strings_base+(uint64_t)(task->exec_envp[task->exec_envc-1]-task->exec_data)+
+        __builtin_strlen(task->exec_envp[task->exec_envc-1])+1:mm->env_start;
     task->frame.rsp = argc_base;
     task->frame.rdi = argc;
     task->frame.rsi = argv_base;
@@ -780,6 +795,96 @@ static void userland_enter_task(struct task *task)
 }
 
 /**
+ * @brief Empty an early-boot transient tree without following links or mounts.
+ * @param root Absolute directory on the root volume; no userspace exists yet.
+ * @return Zero or negative errno. A failure prevents stale state being reused.
+ * The path itself is the traversal stack. Directory enumeration restarts after
+ * deletion because ext2 entries can coalesce. No recursion or fixed entry cap.
+ */
+static int userland_clear_transient_tree(const char *root)
+{
+    char path[LEONOS_FS_PATH_LEN];
+    struct storage_node base;
+    uint32_t root_length = (uint32_t)__builtin_strlen(root);
+    int ret = storage_lookup_path(root, &base);
+    if (ret < 0) return ret;
+    if (base.type != LEONOS_FS_TYPE_DIR || !(base.flags & STORAGE_NODE_FLAG_EXT2))
+        return -20;
+    copy_text(path, sizeof(path), root);
+    for (;;) {
+        struct storage_node directory;
+        struct leonos_dir_entry entry;
+        uint64_t cursor = 0;
+        uint32_t length = (uint32_t)__builtin_strlen(path);
+        ret = storage_lookup_path(path, &directory);
+        if (ret < 0) return ret;
+        if (directory.volume_id != base.volume_id) return -18;
+        if (directory.type != LEONOS_FS_TYPE_DIR) return -20;
+        do {
+            ret = storage_readdir_node(&directory, &cursor, &entry);
+        } while (ret > 0 && entry.name[0] == '.' &&
+                 (!entry.name[1] || (entry.name[1] == '.' && !entry.name[2])));
+        if (ret < 0) return ret;
+        if (ret == 0) {
+            if (length == root_length) return 0;
+            ret = storage_rmdir(path);
+            if (ret < 0) return ret;
+            while (length > root_length && path[length - 1] != '/') --length;
+            path[length - 1] = 0;
+            continue;
+        }
+        uint32_t name_length = 0;
+        while (name_length < sizeof(entry.name) && entry.name[name_length]) {
+            if (entry.name[name_length] == '/') return -5;
+            ++name_length;
+        }
+        if (!name_length || name_length == sizeof(entry.name)) return -5;
+        if (length + 1 + name_length >= sizeof(path)) return -36;
+        path[length] = '/';
+        copy_text(path + length + 1, sizeof(path) - length - 1, entry.name);
+        struct storage_node child;
+        ret = storage_lookup_path(path, &child);
+        if (ret < 0) return ret;
+        if (child.volume_id != base.volume_id) return -18;
+        if (child.type == LEONOS_FS_TYPE_DIR) continue;
+        ret = storage_unlink(path); /* literal link/socket/file, never its target */
+        if (ret < 0) return ret;
+        path[length] = 0;
+    }
+}
+
+/** @brief Reset boot-scoped state before any process can open an IPC endpoint. */
+static int userland_prepare_runtime(void)
+{
+    static const struct { const char *path; uint32_t mode; } directories[] = {
+        {"/run", 0755}, {"/run/lock", 0755}, {"/run/leonos", 0755},
+        {"/dev/shm", 01777},
+    };
+    int ret = userland_clear_transient_tree("/run");
+    if (ret < 0) return ret;
+    ret = userland_clear_transient_tree("/dev/shm");
+    if (ret < 0) return ret;
+    for (uint32_t i = 0; i < sizeof(directories) / sizeof(directories[0]); ++i) {
+        struct storage_node node;
+        struct leonos_permissions mode = {directories[i].mode, 0, 0};
+        ret = storage_lookup_path(directories[i].path, &node);
+        if (ret == -2) {
+            ret = storage_mkdir(directories[i].path);
+            if (ret < 0) return ret;
+            ret = storage_lookup_path(directories[i].path, &node);
+        }
+        if (ret < 0) return ret;
+        if (node.type != LEONOS_FS_TYPE_DIR) return -20;
+        ret = storage_inode_permissions(&node, &mode, true);
+        if (ret < 0) return ret;
+    }
+    ret = linux_uts_load_hostname();
+    if (ret < 0)
+        console_printf("[ntclks] /etc/hostname load failed ret=%d; keeping default hostname\n", ret);
+    return 0;
+}
+
+/**
  * @brief Parse autospawn cmdline flags, then seed the installer desktop or the
  * normal init plus the configured desktop/TTY interface.
  */
@@ -801,6 +906,9 @@ void userland_init(const struct boot_info *boot)
     autospawn_ltp = boot && name_contains(boot->cmdline, "autospawn=ltp");
     autospawn_gcc = boot && name_contains(boot->cmdline, "autospawn=gcc");
     autospawn_vim = boot && name_contains(boot->cmdline, "autospawn=vim");
+    autospawn_ioctlcloexec = boot && name_contains(boot->cmdline, "autospawn=ioctlcloexec");
+    autospawn_python315 = boot && name_contains(boot->cmdline, "autospawn=python315");
+    autospawn_inventory = boot && name_contains(boot->cmdline, "autospawn=inventory");
     if (autospawn_hello) {
         console_printf("[ntclks] debug autospawn hello enabled\n");
     }
@@ -819,6 +927,12 @@ void userland_init(const struct boot_info *boot)
 
     if (!storage_ready()) {
         console_printf("[ntclks] no block-backed root filesystem available for userland\n");
+        kernel_idle_loop();
+    }
+
+    int runtime_ret = userland_prepare_runtime();
+    if (runtime_ret < 0) {
+        console_printf("[ntclks] runtime directory initialization failed ret=%d\n", runtime_ret);
         kernel_idle_loop();
     }
 
@@ -844,7 +958,7 @@ void userland_init(const struct boot_info *boot)
             "vim", "-u", "NONE", "-n", 0
         };
         static const char *advanced_envp[] = {
-            "PATH=/programs/busybox:/bin:/sbin:/usr/bin:/usr/sbin",
+            "PATH=" LEONOS_DEFAULT_PATH,
             "HOME=/root", "PWD=/", "PS1=\\w \\$ ",
             "TERM=xterm-256color", "COLORTERM=truecolor", 0
         };
@@ -852,26 +966,26 @@ void userland_init(const struct boot_info *boot)
         struct exec_launch vim_launch = {0};
         int32_t pty_id;
         if (autospawn_vim &&
-            build_exec_launch(&vim_launch, "/system/apps/vim/vim.elf",
+            build_exec_launch(&vim_launch, "/usr/bin/vim",
                               vim_argv, 0) < 0) {
             console_printf("[ntclks] failed to prepare Linux Vim arguments\n");
             kernel_idle_loop();
         }
         if (installer_advanced &&
-            build_exec_launch(&advanced_launch, "/programs/busybox/busybox.elf",
+            build_exec_launch(&advanced_launch, "/bin/busybox",
                               advanced_argv, advanced_envp) < 0) {
             console_printf("[ntclks] failed to prepare advanced installer shell arguments\n");
             kernel_idle_loop();
         }
         pid = autospawn_vim
-                  ? spawn_path_internal_deferred("/system/apps/vim/vim.elf",
+                  ? spawn_path_internal_deferred("/usr/bin/vim",
                                                   "vim.elf Linux binary", &vim_launch,
                                                   0, 0, 0, -1, -1, -1)
                   : installer_advanced
-                  ? spawn_path_internal_deferred("/programs/busybox/busybox.elf",
+                  ? spawn_path_internal_deferred("/bin/busybox",
                                                   "busybox.elf installer advanced", &advanced_launch,
                                                   0, 0, 0, -1, -1, -1)
-                  : spawn_path_internal_deferred("/system/apps/installer/installer.elf",
+                  : spawn_path_internal_deferred(LEONOS_LAYOUT_LEONOS_APPS "/installer/installer.elf",
                                                   "installer.elf tty", 0, 0, 0, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer TTY environment ret=%lld\n",
@@ -896,28 +1010,28 @@ void userland_init(const struct boot_info *boot)
     }
 
     if (installer_mode) {
-        pid = spawn_path_internal("/system/apps/authd/authd.elf", "authd.elf authentication",
+        pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/authd/authd.elf", "authd.elf authentication",
                                   0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer authd.elf ret=%lld\n", (long long)pid);
             kernel_idle_loop();
         }
         authd_pid = (uint32_t)pid;
-        pid = spawn_path_internal("/system/apps/imd/imd.elf", "imd.elf input method",
+        pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/imd/imd.elf", "imd.elf input method",
                                   0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer imd.elf ret=%lld\n", (long long)pid);
             kernel_idle_loop();
         }
         imd_pid = (uint32_t)pid;
-        pid = spawn_path_internal("/system/apps/windowd/windowd.elf", "windowd.elf window server",
+        pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/windowd/windowd.elf", "windowd.elf window server",
                                   0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer windowd.elf ret=%lld\n", (long long)pid);
             kernel_idle_loop();
         }
         windowd_pid = (uint32_t)pid;
-        pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf shell",
+        pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/desktop/desktop.elf", "desktop.elf shell",
                                   0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load installer desktop.elf ret=%lld\n", (long long)pid);
@@ -928,31 +1042,38 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
-    pid = spawn_path_internal("/system/apps/init/init.elf", "init.elf", 0, 0, 0, 0, -1, -1, -1);
+    pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/init/init.elf", "init.elf", 0, 0, 0, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load init.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
     }
     init_pid = (uint32_t)pid;
 
+    pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/authd/authd.elf", "authd.elf authentication",
+                              0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
+    if (pid <= 0) {
+        console_printf("[ntclks] failed to load authd.elf ret=%lld\n", (long long)pid);
+        kernel_idle_loop();
+    }
+    authd_pid = (uint32_t)pid;
+
     if (tty_mode) {
         static const char *tty_argv[] = {
-            "busybox", "sh", "-c",
-            "/system/apps/oobe/oobe.elf; /system/apps/login/login.elf; exec /programs/busybox/busybox.elf sh", 0
+            "login", 0
         };
         static const char *tty_envp[] = {
-            "PATH=/programs/busybox:/bin:/sbin:/usr/bin:/usr/sbin",
+            "PATH=" LEONOS_DEFAULT_PATH,
             "HOME=/root", "PWD=/", "PS1=\\w \\$ ",
             "TERM=xterm-256color", "COLORTERM=truecolor", 0
         };
         struct exec_launch launch = {0};
         int32_t pty_id;
-        if (build_exec_launch(&launch, "/programs/busybox/busybox.elf",
+        if (build_exec_launch(&launch, LEONOS_LAYOUT_LEONOS_APPS "/login/login.elf",
                               tty_argv, tty_envp) < 0) {
             console_printf("[ntclks] failed to prepare TTY shell arguments\n");
             kernel_idle_loop();
         }
-        pid = spawn_path_internal_deferred("/programs/busybox/busybox.elf", "busybox.elf tty",
+        pid = spawn_path_internal_deferred(LEONOS_LAYOUT_LEONOS_APPS "/login/login.elf", "login.elf tty",
                                           &launch, init_pid, 0, 0, -1, -1, -1);
         if (pid <= 0) {
             console_printf("[ntclks] failed to load busybox.elf for TTY ret=%lld\n",
@@ -973,28 +1094,21 @@ void userland_init(const struct boot_info *boot)
         return;
     }
 
-    pid = spawn_path_internal("/system/apps/authd/authd.elf", "authd.elf authentication",
-                              0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
-    if (pid <= 0) {
-        console_printf("[ntclks] failed to load authd.elf ret=%lld\n", (long long)pid);
-        kernel_idle_loop();
-    }
-    authd_pid = (uint32_t)pid;
-    pid = spawn_path_internal("/system/apps/imd/imd.elf", "imd.elf input method",
+    pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/imd/imd.elf", "imd.elf input method",
                               0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load imd.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
     }
     imd_pid = (uint32_t)pid;
-    pid = spawn_path_internal("/system/apps/windowd/windowd.elf", "windowd.elf window server",
+    pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/windowd/windowd.elf", "windowd.elf window server",
                               0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load windowd.elf ret=%lld\n", (long long)pid);
         kernel_idle_loop();
     }
     windowd_pid = (uint32_t)pid;
-    pid = spawn_path_internal("/system/apps/desktop/desktop.elf", "desktop.elf shell",
+    pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/desktop/desktop.elf", "desktop.elf shell",
                               0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
     if (pid <= 0) {
         console_printf("[ntclks] failed to load desktop.elf ret=%lld\n", (long long)pid);
@@ -1252,45 +1366,75 @@ void userland_yield_if_runnable(void)
 {
     if (autospawn_gcc && sched_current_pid() == desktop_pid) {
         autospawn_gcc = false;
-        int64_t pid = userland_spawn_path("/system/tests/gcc-probe.elf");
+        int64_t pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_TESTS "/gcc-probe.elf");
         console_printf("[ntclks] GCC probe runner pid=%lld\n", (long long)pid);
     }
     if (autospawn_ltp && sched_current_pid() == desktop_pid) {
         autospawn_ltp = false;
-        int64_t pid = userland_spawn_path("/system/tests/ltp-runner.elf");
+        int64_t pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_TESTS "/ltp-runner.elf");
         console_printf("[ntclks] LTP musl runner pid=%lld\n", (long long)pid);
     }
     if (autospawn_linuxabi && sched_current_pid() == desktop_pid) {
         autospawn_linuxabi = false;
-        int64_t dynamic_pid = userland_spawn_path("/system/tests/musl-abi-dynamic.elf");
-        int64_t static_pid = userland_spawn_path("/system/tests/musl-abi-static.elf");
+        int64_t dynamic_pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_TESTS "/musl-abi-dynamic.elf");
+        int64_t static_pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_TESTS "/musl-abi-static.elf");
         console_printf("[ntclks] musl ABI probes dynamic=%lld static=%lld\n",
                        (long long)dynamic_pid, (long long)static_pid);
     }
     if (autospawn_hello && sched_current_pid() == desktop_pid) {
         autospawn_hello = false;
-        int64_t pid = userland_spawn_path("/programs/hello/hello.elf");
+        int64_t pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_APPS "/hello/hello.elf");
         console_printf("[ntclks] debug autospawn hello pid=%lld\n", (long long)pid);
     }
     if (autospawn_uidemo && sched_current_pid() == desktop_pid) {
         autospawn_uidemo = false;
-        int64_t pid = userland_spawn_path("/programs/uidemo/uidemo.elf");
+        int64_t pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_APPS "/uidemo/uidemo.elf");
         console_printf("[ntclks] debug autospawn uidemo pid=%lld\n", (long long)pid);
     }
     if (autospawn_terminal && sched_current_pid() == desktop_pid) {
         autospawn_terminal = false;
-        int64_t pid = userland_spawn_path("/system/apps/terminal/terminal.elf");
+        int64_t pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_APPS "/terminal/terminal.elf");
         console_printf("[ntclks] debug autospawn terminal pid=%lld\n", (long long)pid);
     }
     if (autospawn_memtest && sched_current_pid() == desktop_pid) {
         autospawn_memtest = false;
-        int64_t pid = userland_spawn_path("/programs/memtest/memtest.elf");
+        int64_t pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_APPS "/memtest/memtest.elf");
         console_printf("[ntclks] debug autospawn memtest pid=%lld\n", (long long)pid);
     }
     if (autospawn_installer && sched_current_pid() == desktop_pid) {
         autospawn_installer = false;
-        int64_t pid = userland_spawn_path("/system/apps/installer/installer.elf");
+        int64_t pid = userland_spawn_path(LEONOS_LAYOUT_LEONOS_APPS "/installer/installer.elf");
         console_printf("[ntclks] installer autospawn pid=%lld\n", (long long)pid);
+    }
+    if (autospawn_inventory && sched_current_pid() == desktop_pid) {
+        autospawn_inventory = false;
+        static const char *const argv[] = {"linux-inventory", 0};
+        int64_t pid = userland_spawn_path_argv(LEONOS_LAYOUT_LEONOS_TESTS "/linux-inventory.elf", argv, 0, 0);
+        console_printf("[ntclks] Linux inventory regression pid=%lld\n", (long long)pid);
+    }
+    if (autospawn_ioctlcloexec && sched_current_pid() == desktop_pid) {
+        autospawn_ioctlcloexec = false;
+        /* Diagnostic hook: run the Linux ioctl close-on-exec regression on the
+         * kernel console so its own stdout, exit code and syscall trace land
+         * in the serial log without any GUI interaction. */
+        static const char *const probe_argv[] = {"linux-ioctl-cloexec", 0};
+        int64_t pid = userland_spawn_path_argv(LEONOS_LAYOUT_LEONOS_TESTS "/linux-ioctl-cloexec.elf",
+                                               probe_argv, 0, 0);
+        console_printf("[ntclks] ioctl CLOEXEC regression pid=%lld\n", (long long)pid);
+    }
+    if (autospawn_python315 && sched_current_pid() == desktop_pid) {
+        autospawn_python315 = false;
+        /* Diagnostic hook: the unmodified static musl CPython build with the
+         * same argv a shell passes for "python3 /bin/hello.py".  The real
+         * path is used so syscall-trace=<prefix> can select this binary. */
+        static const char *const python_argv[] = {"python3", "/bin/hello.py", 0};
+        static const char *const python_envp[] = {
+            "PATH=" LEONOS_DEFAULT_PATH,
+            "HOME=/root", "PWD=/", "TERM=xterm-256color", 0
+        };
+        int64_t pid = userland_spawn_path_argv("/opt/python/bin/python3.15", python_argv,
+                                               python_envp, 0);
+        console_printf("[ntclks] Python 3.15 script runner pid=%lld\n", (long long)pid);
     }
 }
 

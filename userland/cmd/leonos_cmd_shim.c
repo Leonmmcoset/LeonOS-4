@@ -22,6 +22,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <linux/syscall.h>
+#include <leonos/layout.h>
 
 extern long syscall2(long number, long a0, long a1);
 
@@ -118,9 +119,7 @@ int symlink(const char *target, const char *link_path)
 
 ssize_t readlink(const char *path, char *buffer, size_t length)
 {
-    long ret = syscall3(SYS_readlink, (long)path, (long)buffer, (long)length);
-    if (ret < 0) { errno = (int)-ret; return -1; }
-    return (ssize_t)ret;
+    return (ssize_t)syscall(SYS_readlink, path, buffer, length);
 }
 
 int statvfs(const char *path, struct statvfs *st)
@@ -378,7 +377,7 @@ int libcmd_find_exec(const char *name, const char *path_env, char *out, size_t o
     }
     for (index = 0; busybox_applets[index]; ++index) {
         if (command_name_equal(name, busybox_applets[index]))
-            return copy_exec_path(out, out_size, "/programs/busybox/busybox.elf");
+            return copy_exec_path(out, out_size, "/bin/busybox");
     }
     if (leonos_app_registry_resolve(name, out, out_size) == 0)
         return 0;
@@ -409,7 +408,7 @@ static int child_exec_path(const char *path, char *const argv[], char *const env
         errno = EINVAL;
         return -1;
     }
-    busybox_dispatch = strcmp(path, "/programs/busybox/busybox.elf") == 0;
+    busybox_dispatch = strcmp(path, "/bin/busybox") == 0;
 
     if (!busybox_dispatch) {
         return execve(path, argv, envp ? envp : environ);

@@ -24,7 +24,7 @@ commands=notepad
 escape the package directory. Older `<package>.app.ini` files remain accepted
 as a compatibility fallback, but new images use `manifest.ini`.
 
-The registry scans `/system/apps` and `/programs`. Shells, the desktop start
+The registry scans `/usr/lib/leonos/apps`. Shells, the desktop start
 menu, file associations, icons, GUI launch, and API installation all consume
 the same records. API packages write their manifest after extraction, so a
 newly installed application becomes discoverable without rebuilding the

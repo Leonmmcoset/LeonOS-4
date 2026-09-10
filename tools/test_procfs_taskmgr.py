@@ -45,15 +45,16 @@ class ProcfsTaskmgrTests(unittest.TestCase):
         self.assertLess(source.index("refresh_all();", init), loop)
         self.assertLess(source.index("present_taskmgr(", init), loop)
 
-    def test_forkpty_validates_child_setup_and_fork_failure(self):
-        source = (ROOT / "userland/libc/src/libc.c").read_text()
-        forkpty = source[source.index("pid_t forkpty("):]
-        self.assertIn("*master = -1;", forkpty)
-        self.assertIn("if (pid < 0)", forkpty)
-        self.assertIn("setsid() < 0", forkpty)
-        self.assertIn("dup2(sfd, 0) < 0", forkpty)
-        self.assertIn("dup2(sfd, 1) < 0", forkpty)
-        self.assertIn("dup2(sfd, 2) < 0", forkpty)
+    def test_musl_forkpty_propagates_child_setup_failure(self):
+        # forkpty now belongs to the unmodified musl provider; the removed
+        # private libc implementation is no longer the runtime under test.
+        source = (ROOT / "third_party/musl/src/misc/forkpty.c").read_text()
+        self.assertIn("if (login_tty(s))", source)
+        self.assertIn("write(p[1], &errno, sizeof errno);", source)
+        self.assertIn("waitpid(pid, &status, 0);", source)
+        self.assertIn("errno = ec;", source)
+        self.assertIn("if (pid > 0) *pm = m;", source)
+        self.assertIn("else close(m);", source)
 
     def test_pty_hangup_preserves_pending_canonical_input(self):
         source = (ROOT / "kernel/ntclks/pty.c").read_text()

@@ -39,7 +39,7 @@ static int32_t read_file(const char *path, void *buffer, uint32_t capacity,
 {
     check_stack();
     *out_length = 0;
-    if (!strcmp(path, "/system/state/accounts.db")) return -2;
+    if (!strcmp(path, LEONOS_PATH_ACCOUNTS_DB)) return -2;
     if (!strcmp(path, LEONOS_AUTH_DB_PATH)) {
         *out_length = 8 + sizeof(users_db.users[0]);
         assert(capacity >= *out_length);

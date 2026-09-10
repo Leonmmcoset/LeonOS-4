@@ -6,11 +6,12 @@
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
 #include <stdint.h>
+#include <leonos/layout.h>
 
 #define LAUNCHER_W 640U
 #define LAUNCHER_H 320U
-#define DOOM_PATH "/programs/doom/doom.elf"
-#define DEFAULT_IWAD "/programs/doom/freedoom1.wad"
+#define DOOM_PATH LEONOS_LAYOUT_LEONOS_APPS "/doom/doom.elf"
+#define DEFAULT_IWAD LEONOS_LAYOUT_LEONOS_APPS "/doom/freedoom1.wad"
 #define TASK_STATE_EXITED 3U
 #define T(en, zh) leonos_i18n((en), (zh))
 

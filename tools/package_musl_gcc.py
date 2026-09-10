@@ -65,20 +65,22 @@ def package(archive: Path, out: Path) -> None:
             headers = subprocess.check_output(["readelf", "-l", "-d", binaries / ("x86_64-linux-musl-" + name)], text=True)
             if "INTERP" in headers or "(NEEDED)" in headers:
                 raise ValueError(f"upstream command is not static: {name}")
-        (tree / "bin").mkdir()
-        launcher = tree / "bin/musl-gcc"
+        # One relocatable launcher derives the real x86_64-linux-musl-* name
+        # from argv[0].  /usr/bin command entries are relative symlinks to it,
+        # created by the staging layout step.
+        launcher_dir = tree / "opt/dyne/bin"
+        launcher_dir.mkdir(parents=True)
+        launcher = launcher_dir / "leonos-musl-cc"
         subprocess.run([str(binaries / "x86_64-linux-musl-gcc"),
                         "--sysroot=" + str(suite / "x86_64-linux-musl"), "-static", "-Os", "-s",
                         "-Wall", "-Wextra", "-Werror", str(ROOT / "userland/musl-gcc/launcher.c"),
                         "-o", str(launcher)], check=True)
-        for name in COMMANDS:
-            if name != "musl-gcc": shutil.copy2(launcher, tree / "bin" / name)
-        notices = tree / "share/licenses/musl-gcc"
+        notices = tree / "usr/share/licenses/musl-gcc"
         notices.mkdir(parents=True)
         for name in ("README.md", "COPYING3", "COPYING.RUNTIME"):
             shutil.copy2(ROOT / "userland/musl-gcc" / name, notices / name)
         shutil.copy2(ROOT / "third_party/musl/COPYRIGHT", notices / "musl-COPYRIGHT")
-        examples = tree / "share/examples/musl-gcc"
+        examples = tree / "usr/share/examples/musl-gcc"
         examples.mkdir(parents=True)
         shutil.copy2(ROOT / "userland/musl-gcc/hello.c", examples / "hello.c")
         (tree / ".leonos-package.json").write_text(json.dumps({
@@ -90,7 +92,7 @@ def package(archive: Path, out: Path) -> None:
         shutil.copy2(tree / ".leonos-package.json", notices / "package.json")
         if out.exists(): shutil.rmtree(out)
         tree.replace(out)
-    print(f"musl-gcc: packaged {len(hashes)} upstream files and {len(COMMANDS)} command aliases")
+    print(f"musl-gcc: packaged {len(hashes)} upstream files and {len(COMMANDS)} /usr/bin aliases")
 
 
 def main() -> None:

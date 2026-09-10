@@ -26,8 +26,8 @@ static int database_fixture;
 
 int authd_export_accounts(const char *directory, const struct leonos_auth_record *records, unsigned count)
 {
-    assert(!strcmp(directory, "/etc") && count == 1 && records[0].user.uid == 1);
-    assert(!strcmp(records[0].user.username, "existing_admin"));
+    assert(!strcmp(directory, "/etc") && count == 1 && records[0].user.uid == 0);
+    assert(!strcmp(records[0].user.username, "root"));
     return 0;
 }
 
@@ -38,9 +38,26 @@ int authd_username_valid(const char *name, unsigned capacity)
     return 0;
 }
 
+int authd_account_valid(const struct leonos_user_info *user)
+{
+    assert(!user->uid && user->role == LEONOS_AUTH_ROLE_ADMIN && !strcmp(user->username, "root"));
+    return 1;
+}
+
+int leonos_auth_password_valid(const char *password, uint32_t capacity)
+{ (void)password; (void)capacity; assert(0); return 0; }
+int authd_set_password(struct leonos_auth_record *record, const char *password)
+{ (void)record; (void)password; assert(0); return -1; }
+int authd_check_password(const struct leonos_auth_record *record, const char *password)
+{ (void)record; (void)password; assert(0); return 0; }
+int authd_store_database(const char *path, const struct leonos_auth_record *records, unsigned count)
+{ (void)path; (void)records; (void)count; assert(0); return -1; }
+int authd_publish_session(const char *path, const struct leonos_user_info *user)
+{ (void)path; (void)user; assert(0); return -1; }
+
 static int test_open(const char *path, int flags, ...)
 {
-    assert(!strcmp(path, "/system/config/users.db") && flags == LEONOS_O_RDONLY);
+    assert(!strcmp(path, LEONOS_PATH_USERS_DB) && flags == LEONOS_O_RDONLY);
     return 10;
 }
 
@@ -56,9 +73,10 @@ static long test_read(int fd, void *buffer, unsigned long count)
         assert(count == sizeof(uint32_t));
         *(uint32_t *)buffer = 1;
     } else {
-        struct leonos_auth_record record = {.user = {.uid = 1, .role = LEONOS_AUTH_ROLE_ADMIN}};
+        struct leonos_auth_record record = {.user = {.uid = 0, .role = LEONOS_AUTH_ROLE_ADMIN}};
         assert(read_index == 2 && count == sizeof(record));
-        strcpy(record.user.username, "existing_admin");
+        strcpy(record.user.username, "root");
+        strcpy(record.user.home, "/root");
         memcpy(buffer, &record, sizeof(record));
     }
     ++read_index;
@@ -110,10 +128,10 @@ int main(int argc, char **argv)
     assert(argc == 2);
     if (!strcmp(argv[1], "database-formats")) {
         database_fixture = 1;
-        assert(authd_load() == 1 && user_count == 0);
+        assert(authd_load() == -1 && errno == EIO && user_count == 0);
         database_fixture = 2;
         assert(authd_load() == -1 && errno == EIO);
-        puts("OOBE database: legacy empty seed accepted, corrupt nonempty data rejected");
+        puts("Account database: truncated and corrupt seeds rejected");
         return 0;
     }
     if (!strcmp(argv[1], "missing")) stale_session_exists = 0;
@@ -126,9 +144,9 @@ int main(int argc, char **argv)
         puts("OOBE reboot: session cleanup failure prevents accepting logins");
         return 0;
     }
-    assert(listener_attempted && current_uid == 0);
-    assert(user_count == 1 && users[0].user.uid == 1);
-    assert(!strcmp(users[0].user.username, "existing_admin"));
+    assert(listener_attempted && current_uid == 0 && !session_active);
+    assert(user_count == 1 && users[0].user.uid == 0);
+    assert(!strcmp(users[0].user.username, "root"));
     puts("OOBE reboot: stale session cleared before listening, existing account retained");
     return 0;
 }

@@ -30,7 +30,7 @@ After `/` is mounted, the kernel scans the direct files in `/drivers`.
 Every valid, enabled `.drv` is loaded in deterministic directory order. A
 failed module is retried once, then recorded as failed while boot continues.
 
-`/system/config/drivers.conf` is optional. It uses UTF-8 text with a `version=1` line
+`/etc/leonos/drivers.conf` is optional. It uses UTF-8 text with a `version=1` line
 and one `disabled=<file>.drv` line per module excluded from automatic startup.
 Absent entries are enabled by default.
 

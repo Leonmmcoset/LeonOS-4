@@ -33,11 +33,16 @@ static int installer_list_dir(const char *path, struct leonos_dir_entry **entrie
             capacity = next;
         }
         struct stat status;
-        if (fstatat(dirfd(dir), entry->d_name, &status, 0) < 0) { error = errno; break; }
+        if (fstatat(dirfd(dir), entry->d_name, &status, AT_SYMLINK_NOFOLLOW) < 0) {
+            error = errno;
+            break;
+        }
         struct leonos_dir_entry *out = &(*entries)[(*count)++];
         memset(out, 0, sizeof(*out));
         strcpy(out->name, entry->d_name);
-        out->type = S_ISDIR(status.st_mode) ? LEONOS_FS_TYPE_DIR :
+        /* Preserve command and lifecycle links without dereferencing them. */
+        out->type = S_ISLNK(status.st_mode) ? LEONOS_FS_TYPE_SYMLINK :
+                    S_ISDIR(status.st_mode) ? LEONOS_FS_TYPE_DIR :
                     S_ISREG(status.st_mode) ? LEONOS_FS_TYPE_FILE : LEONOS_FS_TYPE_DEVICE;
     }
     if (closedir(dir) < 0 && !error) error = errno;

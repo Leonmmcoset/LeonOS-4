@@ -7,6 +7,7 @@
 #include "doomkeys.h"
 #include "i_system.h"
 #include "m_argv.h"
+#include <leonos/layout.h>
 
 #define DOOM_KEY_QUEUE_CAP 64U
 #define DOOM_WINDOW_WIDTH DOOMGENERIC_RESX
@@ -212,7 +213,7 @@ void DG_SetWindowTitle(const char *title)
 int main(int argc, char **argv, char **envp)
 {
     static char *default_argv[] = {
-        "doom.elf", "-iwad", "/programs/doom/freedoom1.wad", 0
+        "doom.elf", "-iwad", LEONOS_LAYOUT_LEONOS_APPS "/doom/freedoom1.wad", 0
     };
     (void)envp;
     if (argc <= 1 || !argv || !argv[0]) {

@@ -217,7 +217,7 @@ static int choose_target_path(char *dst, uint32_t cap, const char *url)
     char numbered[LEONOS_FS_NAME_LEN];
     struct leonos_stat st;
     build_download_dir(dir, sizeof(dir));
-    (void)mkdir(dir, 0777);
+    (void)mkdir(dir, 0700);
     sanitize_filename(name, sizeof(name), url_filename(url));
     for (uint32_t i = 0; i < 100U; ++i) {
         if (i == 0) {

@@ -4,6 +4,7 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <leonos/layout.h>
 
 #define DEMO_W 760
 #define DEMO_H 520
@@ -74,7 +75,7 @@ static const char *const data_rows[][4] = {
     {"calc.elf", "Program", "Idle", "Keyboard input and buttons"},
     {"osver.elf", "Program", "Idle", "System version dialog"},
 };
-static char sample_path[96] = "/programs/notepad/notepad.elf";
+static char sample_path[96] = LEONOS_LAYOUT_LEONOS_APPS "/notepad/notepad.elf";
 static char sample_text[160] = "Line one\n你好，LeonOS 4。中文显示测试。\nLine three";
 static char demo_status[96] = "Click inside the top tabs to switch pages";
 static struct leonos_ui_edit_state sample_edit;

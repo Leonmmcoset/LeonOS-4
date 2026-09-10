@@ -99,7 +99,7 @@ void desktop_run(void)
     desktop_inputm_load_config();
     puts("[desktop.elf] Ring-3 desktop uses shadow framebuffer blit");
     desktop_service_daemon_update();
-    maybe_launch_oobe();
+    maybe_launch_login();
 
     unsigned long last_log = 0;
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
@@ -117,7 +117,6 @@ void desktop_run(void)
         }
         desktop_handle_display_requests();
         desktop_handle_appearance_requests();
-        oobe_lock_update();
         login_lock_update();
         desktop_update_window_animations();
 

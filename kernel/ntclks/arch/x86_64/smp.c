@@ -13,6 +13,7 @@
 #include <ntclks/paging.h>
 #include <ntclks/sched.h>
 #include <ntclks/smp.h>
+#include <ntclks/inventory.h>
 #include <ntclks/userland.h>
 
 #include "idt.h"
@@ -143,6 +144,7 @@ void smp_init(void)
     if (!cpu_count) cpu_count = 1;
     for (uint32_t i = 0; i < cpu_count; ++i) {
         if (cpus[i].apic_id == apic_bsp_id()) {
+            cpu_inventory_capture(i);
             cpus[i].online = 1;
             cpus[i].started = 1;
             break;
@@ -281,6 +283,7 @@ void smp_ap_entry(uint32_t cpu_index)
     idt_load();
     apic_enable();
     if (cpu_index < cpu_count) {
+        cpu_inventory_capture(cpu_index);
         cpus[cpu_index].online = 1;
     }
     /* The BSP creates and prepares the initial user tasks immediately after

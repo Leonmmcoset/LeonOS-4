@@ -22,7 +22,7 @@ sudo apt-get update
 sudo apt-get install -y \
   build-essential ninja-build meson clang llvm lld \
   grub-efi-amd64-bin grub-pc-bin grub-common xorriso \
-  mtools dosfstools e2fsprogs gdisk qemu-utils python3 python3-pil \
+  mtools dosfstools e2fsprogs fakeroot gdisk qemu-utils python3 python3-pil \
   git make bison flex bc pkg-config
 
 # Requires rustup; install it from https://rustup.rs when it is unavailable.
@@ -84,7 +84,7 @@ python3 build.py status <九位任务ID>
 
 ## 界面样式
 
-系统默认使用蓝色、直角、平面化的 Metro 样式。管理员可在“设置 → 显示”中切换为完整保留的 Win95 样式；选择会立即应用到 Desktop 和已打开程序，并保存到 `/system/config/display.conf` 供下次启动的登录、OOBE、安装器与内核早期画面使用。
+系统默认使用蓝色、直角、平面化的 Metro 样式。管理员可在“设置 → 显示”中切换为完整保留的 Win95 样式；选择会立即应用到 Desktop 和已打开程序，并保存到 `/etc/leonos/display.conf` 供下次启动的登录、安装器与内核早期画面使用。账户在安装器中创建，OOBE 已移除；普通用户和固定的 `root` 账户均要求 1 至 32 个字符且不含空白字符的密码。Python 与 GCC/binutils 可在安装时独立选择。
 
 ## 代码与目录结构
 

@@ -25,7 +25,7 @@ if not compiling_only:
                     str(sdk / "lib/crti.o")]
         command += ["-Wl,--image-base=0x4000000"] if static else [
             "-pie", "-Wl,--dynamic-linker=/lib/ld-musl-x86_64.so.1",
-            "-Wl,-rpath,/system/lib:/lib"]
+            "-Wl,-rpath,/usr/lib/leonos:/lib:/usr/lib"]
     command += args + ["-L" + str(sdk / "lib")]
     if static:
         command += [str(sdk / "lib/mimalloc.o"), "-Wl,--start-group", "-lleonos", "-lc",

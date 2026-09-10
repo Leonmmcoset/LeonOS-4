@@ -76,7 +76,9 @@ UEFI/GRUB
 - GUI 客户端与 `desktop.elf` 通过 GUI IPC/ioctl 通信，而不是共享窗口服务器
   的私有像素内存。应用提交自己的缓冲内容；不要把窗口服务器内部 buffer
   当作公共 ABI。
-- 路径使用 Unix 根目录格式，例如 `/system/apps/desktop/desktop.elf`。
+- 来宾运行路径使用 Unix 根目录格式，例如 `/usr/lib/leonos/apps/desktop/desktop.elf`；
+  仓库源码路径（`system/`、`drivers/`、`docs/`）是构建输入，不等于来宾路径。
+  现行 rootfs 契约见 `docs/ROOTFS_LAYOUT_AND_MIGRATION.md`。
   相对路径依赖任务当前目录；路径统一使用 Unix 根目录语义。
 
 ## 3. 公共 ABI、库和 SDK 的联动规则
@@ -127,9 +129,9 @@ UI 修改必须横向检查，而不是只改一个应用。典型关联范围�
 
 ### 主题与个性化
 
-- 用户个性化数据属于 `/users/<name>/appearance.conf`；Metro 与 Win95
+- 用户个性化数据属于 `/home/<name>/appearance.conf`；Metro 与 Win95
   的基础色配置相互独立，不能相互覆盖。
-- `/system/config/display.conf` 是尚无用户会话时的启动/默认外观，用于早期
+- `/etc/leonos/display.conf` 是尚无用户会话时的启动/默认外观，用于早期
   framebuffer、bugcheck、登录、OOBE 和安装器等场景。它不能替代每用户配置。
 - 修改个性化设置后应立即经 Desktop 发布状态并让已打开应用收到主题变化；
   不要只写文件、等下次启动才生效。

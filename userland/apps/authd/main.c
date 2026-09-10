@@ -1,5 +1,5 @@
 /* authd: LeonOS authentication daemon. Runs as uid==0 and owns
- * /system/config/users.db. SO_PEERCRED is the trust boundary for every
+ * /var/lib/leonos/users.db. SO_PEERCRED is the trust boundary for every
  * mutating request. */
 #include <errno.h>
 #include <leonos/auth.h>
@@ -13,11 +13,13 @@
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/reboot.h>
 #include "accounts.h"
+#include <leonos/layout.h>
 
 #define AUTHD_USERS_DB LEONOS_AUTH_DB_PATH
 #define AUTHD_SESSION_FILE "/run/leonos/session-user"
@@ -29,6 +31,7 @@
 static struct leonos_auth_record users[LEONOS_AUTH_MAX_USERS];
 static uint32_t user_count;
 static uint32_t current_uid;
+static int session_active;
 static int listen_fd = -1;
 
 struct authd_client {
@@ -60,31 +63,11 @@ static int authd_text_eq(const char *a, const char *b)
 
 static int authd_text_valid(const char *text, uint32_t capacity)
 {
-    if (!text || !capacity || !text[0]) return 0;
-    for (uint32_t i = 1; i < capacity; ++i) if (!text[i]) return 1;
-    return 0;
+    return leonos_auth_password_valid(text, capacity);
 }
 
-static uint64_t authd_hash_mix(uint64_t hash, const char *text)
-{
-    while (text && *text) {
-        hash ^= (uint8_t)*text++;
-        hash *= 1099511628211ULL;
-    }
-    return hash;
-}
 
-static void authd_password_hash(const char *username, const char *password,
-                                uint8_t out[AUTHD_HASH_LEN])
-{
-    uint64_t hash = 1469598103934665603ULL;
-    hash = authd_hash_mix(hash, username);
-    hash = authd_hash_mix(hash, ":");
-    hash = authd_hash_mix(hash, password);
-    for (uint32_t i = 0; i < AUTHD_HASH_LEN; ++i) {
-        out[i] = (uint8_t)(hash >> ((i % 8u) * 8u));
-    }
-}
+static int authd_save(void);
 
 static int authd_load(void)
 {
@@ -94,8 +77,6 @@ static int authd_load(void)
     uint32_t got = 0;
     if (fd < 0) return fd;
     long first = read(fd, &magic, sizeof(magic));
-    /* Older normal/installer image builders seed a zero-byte users.db. */
-    if (first == 0) { close(fd); user_count = 0; return 1; }
     if (first != sizeof(magic) ||
         read(fd, &count, sizeof(count)) != sizeof(count) ||
         magic != AUTHD_MAGIC || count > LEONOS_AUTH_MAX_USERS) {
@@ -106,6 +87,11 @@ static int authd_load(void)
     while (got < count) {
         long n = read(fd, &users[got], sizeof(users[got]));
         if (n != (long)sizeof(users[got])) { close(fd); errno = EIO; return -1; }
+        struct leonos_user_info *user = &users[got].user;
+        if (!authd_account_valid(user) ||
+            !memchr(users[got].password_hash, 0, sizeof(users[got].password_hash))) {
+            close(fd); errno = EIO; return -1;
+        }
         ++got;
     }
     close(fd);
@@ -115,24 +101,7 @@ static int authd_load(void)
 
 static int authd_save(void)
 {
-    uint32_t magic = AUTHD_MAGIC;
-    int fd = open(AUTHD_USERS_DB,
-                  LEONOS_O_WRONLY | LEONOS_O_CREAT | LEONOS_O_TRUNC, 0600);
-    if (fd < 0) return fd;
-    if (fchmod(fd, 0600) < 0) { close(fd); return -1; }
-    if (write(fd, &magic, sizeof(magic)) != (long)sizeof(magic) ||
-        write(fd, &user_count, sizeof(user_count)) != (long)sizeof(user_count)) {
-        close(fd);
-        return -1;
-    }
-    for (uint32_t i = 0; i < user_count; ++i) {
-        if (write(fd, &users[i], sizeof(users[i])) != (long)sizeof(users[i])) {
-            close(fd);
-            return -1;
-        }
-    }
-    close(fd);
-    return 0;
+    return authd_store_database(AUTHD_USERS_DB, users, user_count);
 }
 
 static struct leonos_auth_record *authd_find_uid(uint32_t uid)
@@ -165,12 +134,7 @@ static void authd_fill_status(struct leonos_auth_status *status)
 
 static int authd_verify(const struct leonos_auth_record *record, const char *password)
 {
-    uint8_t hash[AUTHD_HASH_LEN];
-    authd_password_hash(record->user.username, password, hash);
-    for (uint32_t i = 0; i < AUTHD_HASH_LEN; ++i) {
-        if (hash[i] != record->password_hash[i]) return 0;
-    }
-    return 1;
+    return authd_check_password(record, password);
 }
 
 static int authd_ensure_dir(const char *path)
@@ -215,11 +179,11 @@ static int authd_prepare_user_home(const struct leonos_user_info *user)
     memcpy(desktop_dir, user->home, home_len);
     memcpy(desktop_dir + home_len, "/desktop", 9U);
     static const char *const targets[] = {
-        "/system/apps/fileman/fileman.elf",
-        "/system/apps/terminal/terminal.elf",
-        "/system/apps/settings/settings.elf",
-        "/system/apps/run/run.elf",
-        "/system/apps/taskmgr/taskmgr.elf",
+        LEONOS_LAYOUT_LEONOS_APPS "/fileman/fileman.elf",
+        LEONOS_LAYOUT_LEONOS_APPS "/terminal/terminal.elf",
+        LEONOS_LAYOUT_LEONOS_APPS "/settings/settings.elf",
+        LEONOS_LAYOUT_LEONOS_APPS "/run/run.elf",
+        LEONOS_LAYOUT_LEONOS_APPS "/taskmgr/taskmgr.elf",
     };
     for (uint32_t i = 0; i < sizeof(targets) / sizeof(targets[0]); ++i) {
         if (leonos_launch_create_shortcut_in_dir(desktop_dir, targets[i], path, sizeof(path)) < 0 ||
@@ -241,7 +205,7 @@ static void authd_handle_login(int slot, const uint8_t *buffer, uint32_t length)
 {
     struct leonos_auth_login login;
     struct leonos_auth_record *record;
-    if (length < sizeof(login)) { authd_send_ack(slot, -1); return; }
+    if (length != sizeof(login) || clients[slot].uid != 0) { authd_send_ack(slot, -EACCES); return; }
     memcpy(&login, buffer, sizeof(login));
     if (!authd_username_valid(login.username, sizeof(login.username)) ||
         !authd_text_valid(login.password, sizeof(login.password))) {
@@ -257,7 +221,12 @@ static void authd_handle_login(int slot, const uint8_t *buffer, uint32_t length)
         return;
     }
     memset(login.password, 0, sizeof(login.password));
+    if (authd_publish_session(AUTHD_SESSION_FILE, &record->user) < 0) {
+        authd_send_ack(slot, -errno);
+        return;
+    }
     current_uid = record->user.uid;
+    session_active = 1;
     (void)leonos_ipc_send(clients[slot].fd, LEONOS_AUTHD_MSG_LOGIN,
                           &record->user, sizeof(record->user));
 }
@@ -291,13 +260,13 @@ static void authd_handle_create(int slot, const uint8_t *buffer, uint32_t length
 {
     struct leonos_authd_create create;
     struct leonos_auth_record *record;
-    uint32_t uid = 1;
-    uint8_t hash[AUTHD_HASH_LEN];
+    uint32_t uid = 1000;
     if (length < sizeof(create)) { authd_send_ack(slot, -1); return; }
     memcpy(&create, buffer, sizeof(create));
     if (!authd_username_valid(create.username, sizeof(create.username)) ||
+        !strcmp(create.username, "root") || !strcmp(create.username, "nobody") ||
         !authd_text_valid(create.password, sizeof(create.password)) ||
-        create.role > LEONOS_AUTH_ROLE_ADMIN) {
+        create.role != LEONOS_AUTH_ROLE_USER) {
         memset(create.password, 0, sizeof(create.password));
         authd_send_ack(slot, -1);
         return;
@@ -328,8 +297,11 @@ static void authd_handle_create(int slot, const uint8_t *buffer, uint32_t length
         authd_send_ack(slot, -1);
         return;
     }
-    authd_password_hash(create.username, create.password, hash);
-    memcpy(record->password_hash, hash, sizeof(hash));
+    if (authd_set_password(record, create.password) < 0) {
+        explicit_bzero(create.password, sizeof(create.password));
+        authd_send_ack(slot, -errno);
+        return;
+    }
     memset(create.password, 0, sizeof(create.password));
     ++user_count;
     if (authd_save() < 0) { --user_count; authd_send_ack(slot, -1); return; }
@@ -356,8 +328,12 @@ static void authd_handle_update(int slot, const uint8_t *buffer, uint32_t length
     }
     record = authd_find_uid(update.uid);
     if (!record) { authd_send_ack(slot, -1); return; }
+    if (!record->user.uid && (update.mask & LEONOS_AUTH_UPDATE_FLAGS) &&
+        (update.flags & LEONOS_AUTH_USER_DISABLED)) { authd_send_ack(slot, -EPERM); return; }
+    struct leonos_user_info previous = record->user;
     if (update.mask & LEONOS_AUTH_UPDATE_ROLE) {
-        if (update.role > LEONOS_AUTH_ROLE_ADMIN || clients[slot].uid != 0) {
+        if (update.role != (record->user.uid ? LEONOS_AUTH_ROLE_USER : LEONOS_AUTH_ROLE_ADMIN) ||
+            clients[slot].uid != 0) {
             authd_send_ack(slot, -1);
             return;
         }
@@ -366,7 +342,7 @@ static void authd_handle_update(int slot, const uint8_t *buffer, uint32_t length
     if (update.mask & LEONOS_AUTH_UPDATE_FLAGS) {
         record->user.flags = update.flags & LEONOS_AUTH_USER_DISABLED;
     }
-    if (authd_save() < 0) { authd_send_ack(slot, -1); return; }
+    if (authd_save() < 0) { record->user = previous; authd_send_ack(slot, -errno); return; }
     authd_send_ack(slot, 1);
 }
 
@@ -374,7 +350,6 @@ static void authd_handle_password(int slot, const uint8_t *buffer, uint32_t leng
 {
     struct leonos_authd_password password;
     struct leonos_auth_record *record;
-    uint8_t hash[AUTHD_HASH_LEN];
     if (length < sizeof(password)) { authd_send_ack(slot, -1); return; }
     memcpy(&password, buffer, sizeof(password));
     if (!authd_text_valid(password.new_password, sizeof(password.new_password)) ||
@@ -396,11 +371,23 @@ static void authd_handle_password(int slot, const uint8_t *buffer, uint32_t leng
         authd_send_ack(slot, -1);
         return;
     }
-    authd_password_hash(record->user.username, password.new_password, hash);
-    memcpy(record->password_hash, hash, sizeof(hash));
+    uint8_t previous_hash[LEONOS_AUTH_HASH_LEN];
+    memcpy(previous_hash, record->password_hash, sizeof(previous_hash));
+    if (authd_set_password(record, password.new_password) < 0) {
+        explicit_bzero(previous_hash, sizeof(previous_hash));
+        explicit_bzero(&password, sizeof(password));
+        authd_send_ack(slot, -errno);
+        return;
+    }
     memset(password.old_password, 0, sizeof(password.old_password));
     memset(password.new_password, 0, sizeof(password.new_password));
-    if (authd_save() < 0) { authd_send_ack(slot, -1); return; }
+    if (authd_save() < 0) {
+        memcpy(record->password_hash, previous_hash, sizeof(previous_hash));
+        explicit_bzero(previous_hash, sizeof(previous_hash));
+        authd_send_ack(slot, -errno);
+        return;
+    }
+    explicit_bzero(previous_hash, sizeof(previous_hash));
     authd_send_ack(slot, 1);
 }
 
@@ -411,7 +398,7 @@ static void authd_handle_power(int slot, const uint8_t *buffer, uint32_t length)
     struct leonos_auth_record *record = authd_find_uid(client->uid);
     /* Only root services or the enabled, currently logged-in console user.
      * The UID comes from SO_PEERCRED, never from the request or session file. */
-    if (client->uid && (client->uid != current_uid || !record ||
+    if (client->uid && (!session_active || client->uid != current_uid || !record ||
                        (record->user.flags & LEONOS_AUTH_USER_DISABLED))) {
         authd_send_ack(slot, -EPERM);
         return;
@@ -490,7 +477,7 @@ static void authd_handle_client(int slot)
         if (type == LEONOS_AUTHD_MSG_CURRENT) {
             struct leonos_auth_record *record;
             uint32_t uid = client->uid ? client->uid : current_uid;
-            record = authd_find_uid(uid);
+            record = (client->uid || session_active) ? authd_find_uid(uid) : 0;
             if (record) {
                 (void)leonos_ipc_send(client->fd, LEONOS_AUTHD_MSG_CURRENT,
                                       &record->user, sizeof(record->user));
@@ -500,7 +487,14 @@ static void authd_handle_client(int slot)
             continue;
         }
         if (type == LEONOS_AUTHD_MSG_LOGOUT) {
-            if (client->uid == 0 || client->uid == current_uid) current_uid = 0;
+            if (client->uid == 0 || client->uid == current_uid) {
+                if (authd_publish_session(AUTHD_SESSION_FILE, 0) < 0) {
+                    authd_send_ack(slot, -errno);
+                    continue;
+                }
+                current_uid = 0;
+                session_active = 0;
+            }
             authd_send_ack(slot, 0);
             continue;
         }
@@ -523,6 +517,8 @@ int main(void)
         printf("[authd.elf] reset session state failed errno=%d\n", errno);
         return 1;
     }
+    (void)mkdir("/run", 0755);
+    (void)mkdir("/run/leonos", 0755);
     int loaded = authd_load();
     if (loaded != 0) {
         if (loaded < 0 && errno != ENOENT) {

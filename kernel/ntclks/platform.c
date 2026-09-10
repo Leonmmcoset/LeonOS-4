@@ -78,6 +78,7 @@ struct __attribute__((packed)) smbios_header {
 };
 
 static struct leonos_machine_identity platform_identity;
+static struct platform_dmi_info platform_dmi_data;
 
 /**
  * @brief Return 1 if the two EFI GUIDs are identical.
@@ -175,7 +176,7 @@ static void append_hex2(char *dst, uint32_t *pos, uint32_t cap, uint8_t value)
 /**
  * @brief Format the 16-byte UUID as the canonical 8-4-4-4-12 string into out.
  */
-static void format_uuid_raw(const uint8_t uuid[16], char *out, uint32_t cap)
+static void format_uuid_raw(const uint8_t uuid[16], char *out, uint32_t cap, bool little_endian)
 {
     static const uint8_t order[16] = {
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
@@ -193,7 +194,8 @@ static void format_uuid_raw(const uint8_t uuid[16], char *out, uint32_t cap)
             out[pos++] = '-';
             out[pos] = 0;
         }
-        append_hex2(out, &pos, cap, uuid[order[i]]);
+        static const uint8_t le_order[16] = {3,2,1,0,5,4,7,6,8,9,10,11,12,13,14,15};
+        append_hex2(out, &pos, cap, uuid[little_endian ? le_order[i] : order[i]]);
     }
 }
 
@@ -231,39 +233,77 @@ static const uint8_t *smbios_next(const uint8_t *ptr, const uint8_t *end)
     return end;
 }
 
+/** @brief Copy an SMBIOS indexed string only within its validated structure bounds. */
+static void smbios_string(const uint8_t *record, const uint8_t *next, uint8_t index, char out[128])
+{
+    const struct smbios_header *header=(const void *)record;
+    const uint8_t *p=record+header->length;
+    if(!index) return;
+    for(uint32_t current=1;p<next && *p;++current) {
+        const uint8_t *start=p;
+        while(p<next && *p) ++p;
+        if(p==next) return;
+        if(current==index) {
+            uint32_t n=(uint32_t)(p-start); if(n>127) n=127;
+            for(uint32_t i=0;i<n;++i) out[i]=(start[i]=='\n'||start[i]=='\r')?' ':start[i];
+            out[n]=0; return;
+        }
+        ++p;
+    }
+}
+/** @brief Extract only fields actually present in a complete SMBIOS record. */
+static void smbios_fields(const uint8_t *record,const uint8_t *next)
+{
+    const struct smbios_header *header=(const void *)record;
+    static const struct { uint8_t type,offset,field; } fields[]={
+        {0,4,0},{0,5,1},{0,8,2},{1,4,3},{1,5,4},{1,6,5},{1,7,6},{1,25,8},{1,26,9},
+        {2,4,10},{2,5,11},{2,6,12},{2,7,13},{3,4,14}};
+    for(uint32_t i=0;i<sizeof(fields)/sizeof(fields[0]);++i)
+        if(header->type==fields[i].type && header->length>fields[i].offset)
+            smbios_string(record,next,record[fields[i].offset],platform_dmi_data.values[fields[i].field]);
+}
+/** @brief Return the immutable SMBIOS cache collected before userspace starts. */
+const struct platform_dmi_info *platform_dmi(void) { return &platform_dmi_data; }
+
 /**
  * @brief Walk the SMBIOS structures looking for a type-1 system UUID; record it and return 0, else -1.
  */
-static int parse_smbios_table(uint64_t table_addr, uint32_t table_len)
+static int parse_smbios_table(uint64_t table_addr, uint32_t table_len, bool little_endian)
 {
     const uint8_t *table = (const uint8_t *)(uintptr_t)table_addr;
     const uint8_t *end;
     if (!table || table_len < sizeof(struct smbios_header)) {
         return -1;
     }
+    if (table_len > 16u * 1024u * 1024u || table_addr > UINT64_MAX - table_len) return -1;
+    int found=0;
     end = table + table_len;
     for (const uint8_t *ptr = table; ptr + sizeof(struct smbios_header) <= end;) {
         const struct smbios_header *hdr = (const struct smbios_header *)ptr;
         if (hdr->length < sizeof(*hdr) || ptr + hdr->length > end) {
             break;
         }
+        const uint8_t *next=smbios_next(ptr,end);
+        if(next<=ptr || next> end || next-ptr<2 || next[-1] || next[-2]) break;
+        smbios_fields(ptr,next);
+        found=1;
         if (hdr->type == 1U && hdr->length >= 0x19U) {
             const uint8_t *uuid = ptr + 8U;
             if (uuid_valid(uuid)) {
                 format_uuid_raw(uuid, platform_identity.platform_uuid,
-                                sizeof(platform_identity.platform_uuid));
+                                sizeof(platform_identity.platform_uuid), little_endian);
                 platform_identity.flags |= LEONOS_MACHINE_IDENTITY_FLAG_PLATFORM_UUID;
                 copy_text(platform_identity.source, sizeof(platform_identity.source),
                           "smbios-system-uuid");
-                return 0;
+                copy_text(platform_dmi_data.values[7],sizeof(platform_dmi_data.values[7]),platform_identity.platform_uuid);
             }
         }
         if (hdr->type == 127U) {
             break;
         }
-        ptr = smbios_next(ptr, end);
+        ptr = next;
     }
-    return -1;
+    return found?0:-1;
 }
 
 /**
@@ -277,7 +317,7 @@ static int parse_smbios3(const void *entry)
         checksum8(smbios, smbios->length) != 0) {
         return -1;
     }
-    return parse_smbios_table(smbios->table_address, smbios->table_max_size);
+    return parse_smbios_table(smbios->table_address, smbios->table_max_size, true);
 }
 
 /**
@@ -292,7 +332,7 @@ static int parse_smbios2(const void *entry)
         !bytes_eq(smbios->intermediate_anchor, "_DMI_", 5U)) {
         return -1;
     }
-    return parse_smbios_table(smbios->table_address, smbios->table_length);
+    return parse_smbios_table(smbios->table_address, smbios->table_length, smbios->major > 2 || (smbios->major == 2 && smbios->minor >= 6));
 }
 
 /**
@@ -310,6 +350,7 @@ void platform_identity_init(const struct boot_info *boot)
     };
     struct efi_system_table *st;
     platform_identity = (struct leonos_machine_identity){0};
+    platform_dmi_data = (struct platform_dmi_info){0};
     platform_identity.version = LEONOS_MACHINE_IDENTITY_VERSION;
     copy_text(platform_identity.source, sizeof(platform_identity.source), "unavailable");
     if (!boot || !boot->efi_system_table) {
@@ -329,7 +370,7 @@ void platform_identity_init(const struct boot_info *boot)
         struct efi_configuration_table *table = &st->configuration_table[i];
         if (guid_equal(&table->vendor_guid, &smbios3_guid) &&
             parse_smbios3(table->vendor_table) == 0) {
-            console_printf("[ntclks] platform identity source=SMBIOS3 uuid=%s\n",
+            console_printf("[ntclks] platform inventory source=SMBIOS3 uuid=%s\n",
                            platform_identity.platform_uuid);
             return;
         }
@@ -338,12 +379,12 @@ void platform_identity_init(const struct boot_info *boot)
         struct efi_configuration_table *table = &st->configuration_table[i];
         if (guid_equal(&table->vendor_guid, &smbios2_guid) &&
             parse_smbios2(table->vendor_table) == 0) {
-            console_printf("[ntclks] platform identity source=SMBIOS2 uuid=%s\n",
+            console_printf("[ntclks] platform inventory source=SMBIOS2 uuid=%s\n",
                            platform_identity.platform_uuid);
             return;
         }
     }
-    console_printf("[ntclks] platform identity unavailable: no SMBIOS UUID\n");
+    console_printf("[ntclks] platform identity unavailable: no usable SMBIOS table\n");
 }
 
 /**

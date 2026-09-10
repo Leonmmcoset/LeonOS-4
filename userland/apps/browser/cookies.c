@@ -118,12 +118,14 @@ static void cookie_build_store_path(char *dst, uint32_t cap)
     if (leonos_auth_current(&user) == 0 && user.uid && user.home[0]) {
         cookie_append_path(dir, sizeof(dir), user.home,
                            BROWSER_COOKIE_STORE_DIR);
-        (void)mkdir(dir, 0777);
+        (void)mkdir(dir, 0700);
     } else {
-        (void)mkdir("/var", 0777);
-        cookie_append_path(dir, sizeof(dir), "/var",
+        (void)mkdir("/var", 0755);
+        (void)mkdir("/var/lib", 0755);
+        (void)mkdir("/var/lib/leonos", 0750);
+        cookie_append_path(dir, sizeof(dir), "/var/lib/leonos",
                            BROWSER_COOKIE_STORE_DIR);
-        (void)mkdir(dir, 0777);
+        (void)mkdir(dir, 0700);
     }
     cookie_append_path(dst, cap, dir, BROWSER_COOKIE_STORE_FILE);
 }

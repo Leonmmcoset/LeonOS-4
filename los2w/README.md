@@ -2,7 +2,7 @@
 
 `los2w` runs LeonOS 4 x86_64 ELF applications directly on Windows Python. It
 supports legacy `ET_EXEC` images and the LeonOS ABI-v1 dynamic `ET_DYN` format,
-including `/system/lib/ld-leonos.elf` and `libleonos.so.1`. A process table
+including `/usr/lib/leonos/ld-leonos.elf` and `libleonos.so.1 (compatibility symlink)`. A process table
 provides independent Unicorn address spaces, PID/PPID tracking, round-robin
 execution, guest `execve`, and `wait4` child reaping. The mapped Windows
 directory is exposed as guest `/` and shared GUI, network, and logging state
@@ -50,7 +50,7 @@ The GUI records the ten most recent ELF and root-directory choices in its host
 configuration. Use **App UI style** to start the selected application with the
 modern Metro UI or classic Win95 UI; Metro is the default and the choice is
 saved for later launches. The selected style is exposed only for the running
-guest through `/system/config/display.conf`, so the mapped image directory is not
+guest through `/etc/leonos/display.conf`, so the mapped image directory is not
 modified. Command-line launches can select the same style with
 `--ui-theme metro` or `--ui-theme win95`.
 

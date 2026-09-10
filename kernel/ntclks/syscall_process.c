@@ -13,6 +13,7 @@
 #include <ntclks/time.h>
 #include <ntclks/usercopy.h>
 #include <ntclks/version.h>
+#include <ntclks/uts.h>
 #include <ntclks/arch.h>
 #include <ntclks/smp.h>
 #include <linux/arch_prctl.h>
@@ -30,8 +31,6 @@
 #include <leonos/system.h>
 #include <stdint.h>
 
-static char linux_hostname[LEONOS_UTSNAME_LEN] = "leonos";
-static char linux_domainname[LEONOS_UTSNAME_LEN];
 
 #define LEONOS_MEMBARRIER_SUPPORTED \
     (MEMBARRIER_CMD_GLOBAL | MEMBARRIER_CMD_GLOBAL_EXPEDITED | \
@@ -691,7 +690,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
     if (number == LINUX_SYS_UNAME) {
         struct utsname info = {0};
         const struct leonos_system_info *system = ntclks_system_info();
-        if (!a0 || !user_range_ok(a0, sizeof(info))) return -LEONOS_EFAULT;
+        if (!a0 || !user_range_writable(a0, sizeof(info))) return -LEONOS_EFAULT;
         {
             uint32_t i;
             for (i = 0; i < sizeof(info.sysname) - 1u && "LeonOS"[i]; ++i) {
@@ -708,22 +707,20 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
             for (i = 0; i < sizeof(info.machine) - 1u && "x86_64"[i]; ++i) {
                 info.machine[i] = "x86_64"[i];
             }
-            for (i = 0; i < sizeof(info.nodename); ++i) info.nodename[i] = linux_hostname[i];
-            for (i = 0; i < sizeof(info.domainname); ++i) info.domainname[i] = linux_domainname[i];
+            linux_uts_names(info.nodename, info.domainname);
         }
         *(struct utsname *)(uintptr_t)a0 = info;
         return 0;
     }
     if (number == LINUX_SYS_SETHOSTNAME || number == LINUX_SYS_SETDOMAINNAME) {
         struct task *task = sched_current_task();
-        char *destination = number == LINUX_SYS_SETHOSTNAME ? linux_hostname : linux_domainname;
-        uint64_t length = a1;
-        if (!task || task->euid != 0) return -LEONOS_EPERM;
-        if (length > LEONOS_UTSNAME_LEN - 1u) return -LEONOS_EINVAL;
-        if (length && !user_range_ok(a0, length)) return -LEONOS_EFAULT;
-        __builtin_memset(destination, 0, LEONOS_UTSNAME_LEN);
-        if (length) __builtin_memcpy(destination, (const void *)(uintptr_t)a0, length);
-        return 0;
+        char captured[LEONOS_UTSNAME_LEN] = {0};
+        int32_t length = (int32_t)a1; /* native syscall takes int, not size_t */
+        if (!task || !(task->cap_effective & (1ULL << CAP_SYS_ADMIN))) return -LEONOS_EPERM;
+        if (length < 0 || length >= (int32_t)LEONOS_UTSNAME_LEN) return -LEONOS_EINVAL;
+        if (length && !user_range_ok(a0, (uint32_t)length)) return -LEONOS_EFAULT;
+        if (length) __builtin_memcpy(captured, (const void *)(uintptr_t)a0, (uint32_t)length);
+        return linux_uts_set(captured, (uint32_t)length, number == LINUX_SYS_SETDOMAINNAME);
     }
     if (number == LINUX_SYS_MEMBARRIER) {
         struct task *task = sched_current_task();

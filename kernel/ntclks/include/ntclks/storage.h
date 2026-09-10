@@ -112,6 +112,12 @@ struct storage_read_cursor {
 #define STORAGE_NODE_FLAG_DEV_NODE 0x00000040u
 #define STORAGE_NODE_FLAG_DEV_BLOCK 0x00000080u
 #define STORAGE_NODE_FLAG_PROC    0x00000100u
+#define STORAGE_NODE_FLAG_SYSFS 0x00000400u
+#define STORAGE_SYSFS_DEVICE 202u
+#define STORAGE_NODE_FLAG_DEV_LINK 0x00000200u
+/* Anonymous filesystem device numbers, also exported in proc mountinfo. */
+#define STORAGE_DEVFS_DEVICE 200u
+#define STORAGE_PROCFS_DEVICE 201u
 
 /* Device-node volume_id encoding for block devices.  The low 16 bits select
  * the physical disk; the high 16 bits contain GPT entry + 1, or zero for the
@@ -146,6 +152,8 @@ struct storage_read_cursor {
 #define STORAGE_DEV_KIND_KMSG      20u
 #define STORAGE_DEV_KIND_GPU         24u
 #define STORAGE_DEV_KIND_SHM         25u
+#define STORAGE_DEV_KIND_DISK_DIR    26u
+#define STORAGE_DEV_KIND_PARTUUID_DIR 27u
 
 struct boot_info;
 
@@ -256,6 +264,14 @@ int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
  * @brief Fill st with metadata for path; 0 on success.
  */
 int storage_stat_path(const char *path, struct leonos_stat *st);
+/** @brief Read a byte range of the current mount table, with proc-style escaping. */
+int storage_read_mounts(uint64_t offset, void *buffer, uint32_t capacity,
+                         uint32_t *out_read);
+/** @brief Read Linux mountinfo with IDs, parentage, devices and escaped paths. */
+int storage_read_mountinfo(uint64_t offset, void *buffer, uint32_t capacity,
+                           uint32_t *out_read);
+/** @brief Return a GPT UUID in a 37-byte buffer under the storage lock, or negative errno. */
+int storage_disk_partition_uuid(uint32_t disk_id, uint32_t partition_index, char uuid[37]);
 /**
  * @brief Create the directory path; 0 on success.
  */

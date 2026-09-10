@@ -11,6 +11,7 @@
 #include <leonos/stdio.h>
 #include <leonos/syscall.h>
 #include <leonos/ui.h>
+#include <leonos/layout.h>
 
 #define SETTINGS_W 720
 #define SETTINGS_H 470
@@ -24,11 +25,11 @@
 #define SETTINGS_WALLPAPER_MAX_W 1280U
 #define SETTINGS_WALLPAPER_MAX_H 720U
 #define SETTINGS_WALLPAPER_BMP_MAX_BYTES (SETTINGS_WALLPAPER_MAX_W * SETTINGS_WALLPAPER_MAX_H * 4U + 128U)
-#define SETTINGS_DEFAULT_WALLPAPER_PATH "/system/resources/wallpaper-metro.bmp"
+#define SETTINGS_DEFAULT_WALLPAPER_PATH LEONOS_PATH_WALLPAPER_BMP
 #define SETTINGS_TAB_Y 14
 #define SETTINGS_BODY_Y 44
-#define SETTINGS_SERVICES_PATH "/system/config/services.cfg"
-#define SETTINGS_SERVICES_STATE_PATH "/var/run/services.state"
+#define SETTINGS_SERVICES_PATH LEONOS_PATH_SERVICES_CFG
+#define SETTINGS_SERVICES_STATE_PATH LEONOS_PATH_SERVICES_STATE
 #define SETTINGS_SERVICES_CONFIG_MAX 512U
 #define SETTINGS_INPUTM_CONFIG_MAX 2048U
 #define SETTINGS_INPUTM_ROWS (TEXT_INPUT_MAX_PROVIDERS + 1U)
@@ -752,7 +753,7 @@ static void refresh_users(void)
     (void)leonos_auth_current(&current_user);
     if (current_user.role == LEONOS_AUTH_ROLE_ADMIN) {
         (void)leonos_auth_list_users(users, LEONOS_AUTH_MAX_USERS, 1, &count);
-    } else if (current_user.uid) {
+    } else if (current_user.username[0]) {
         users[0] = current_user;
         count = 1;
     }
@@ -766,7 +767,7 @@ static int inputm_config_path(char *path, uint32_t capacity)
 {
     uint32_t home_len;
     const char *name = ".inputm.conf";
-    if (!path || !capacity || !current_user.uid || !current_user.home[0]) {
+    if (!path || !capacity || !current_user.username[0] || !current_user.home[0]) {
         return 0;
     }
     home_len = text_len(current_user.home);
@@ -1277,7 +1278,7 @@ static void draw_personalization_page(struct leonos_ui_surface *ui)
     struct leonos_ui_dropdown_item metro_items[LEONOS_UI_COLOR_SCHEME_COUNT];
     struct leonos_ui_dropdown_item win95_items[LEONOS_UI_COLOR_SCHEME_COUNT];
     struct leonos_ui_dropdown_item wallpaper_items[LEONOS_WALLPAPER_MODE_COUNT];
-    uint32_t disabled = current_user.uid ? 0 : LEONOS_UI_BUTTON_DISABLED;
+    uint32_t disabled = current_user.username[0] ? 0 : LEONOS_UI_BUTTON_DISABLED;
     theme_items[0] = (struct leonos_ui_dropdown_item){"Metro", LEONOS_UI_THEME_METRO, 0};
     theme_items[1] = (struct leonos_ui_dropdown_item){"Win95", LEONOS_UI_THEME_WIN95, 0};
     fill_theme_color_items(metro_items);
@@ -1330,7 +1331,7 @@ static void draw_personalization_page(struct leonos_ui_surface *ui)
                    T("BMP only, up to 1280 x 720.", "仅 BMP，最大 1280 x 720。"),
                    LEONOS_UI_DARK, LEONOS_UI_WHITE);
 
-    if (!current_user.uid) {
+    if (!current_user.username[0]) {
         leonos_ui_text(ui, 44, 318,
                        T("Sign in to change personalization.", "登录后才能更改个性化设置。"),
                        LEONOS_UI_DARK, LEONOS_UI_WHITE);
@@ -1391,24 +1392,24 @@ static void draw_input_methods_page(struct leonos_ui_surface *ui)
     leonos_ui_button(ui, 510, 92, 156, LEONOS_UI_BUTTON_H,
                      selected && selected->enabled ? T("Disable", "禁用") :
                                                      T("Enable", "启用"),
-                     !selected || !current_user.uid || inputm_selected == 0 ?
+                     !selected || !current_user.username[0] || inputm_selected == 0 ?
                          LEONOS_UI_BUTTON_DISABLED : 0);
     leonos_ui_button(ui, 510, 126, 156, LEONOS_UI_BUTTON_H,
                      T("Use as default", "设为默认"),
-                     !selected || !selected->enabled || !current_user.uid ?
+                     !selected || !selected->enabled || !current_user.username[0] ?
                          LEONOS_UI_BUTTON_DISABLED : 0);
     leonos_ui_combobox(ui, 510, 160, 156,
                         selected ? inputm_startup_label(selected->startup_mode) : "-",
                         active_drop == DROP_INPUTM_STARTUP,
-                        !selected || !current_user.uid || inputm_selected == 0 ?
+                        !selected || !current_user.username[0] || inputm_selected == 0 ?
                             LEONOS_UI_BUTTON_DISABLED : 0);
     leonos_ui_button(ui, 510, 194, 74, LEONOS_UI_BUTTON_H,
                      T("Move up", "上移"),
-                     !selected || !current_user.uid || inputm_selected <= 1U ?
+                     !selected || !current_user.username[0] || inputm_selected <= 1U ?
                          LEONOS_UI_BUTTON_DISABLED : 0);
     leonos_ui_button(ui, 592, 194, 74, LEONOS_UI_BUTTON_H,
                      T("Move down", "下移"),
-                     !selected || !current_user.uid || inputm_selected == 0 ||
+                     !selected || !current_user.username[0] || inputm_selected == 0 ||
                          inputm_selected + 1U >= inputm_entry_count ?
                          LEONOS_UI_BUTTON_DISABLED : 0);
     leonos_ui_text(ui, 44, 266, T("Switch shortcut", "切换快捷键"),
@@ -1416,7 +1417,7 @@ static void draw_input_methods_page(struct leonos_ui_surface *ui)
     leonos_ui_combobox(ui, 170, 260, 180,
                         text_eq(inputm_hotkey, "alt-shift") ? "Alt + Shift" : "Win + Space",
                         active_drop == DROP_INPUTM_HOTKEY,
-                        current_user.uid ? 0 : LEONOS_UI_BUTTON_DISABLED);
+                        current_user.username[0] ? 0 : LEONOS_UI_BUTTON_DISABLED);
     leonos_ui_text(ui, 372, 266, T("Candidates", "候选框"),
                    LEONOS_UI_BLACK, LEONOS_UI_WHITE);
     leonos_ui_text(ui, 470, 266, T("System overlay", "系统覆盖层"),
@@ -1432,7 +1433,7 @@ static void draw_input_methods_page(struct leonos_ui_surface *ui)
             append_text(label, &pos, sizeof(label), base);
             append_text(label, &pos, sizeof(label), inputm_options[i].value ? ": On" : ": Off");
             leonos_ui_button(ui, 44U + i * 150U, 304, 140, LEONOS_UI_BUTTON_H,
-                             label, current_user.uid ?
+                             label, current_user.username[0] ?
                                         (inputm_options[i].value ? LEONOS_UI_BUTTON_PRESSED : 0) :
                                         LEONOS_UI_BUTTON_DISABLED);
         }
@@ -1487,22 +1488,16 @@ static void draw_users_page(struct leonos_ui_surface *ui)
     }
     if (current_user.role == LEONOS_AUTH_ROLE_ADMIN) {
         leonos_ui_button(ui, 484, 98, 104, LEONOS_UI_BUTTON_H, T("New User", "新建用户"), 0);
-        leonos_ui_button(ui, 484, 130, 104, LEONOS_UI_BUTTON_H, T("New Admin", "新建管理员"), 0);
         leonos_ui_button(ui, 484, 178, 104, LEONOS_UI_BUTTON_H,
                          users[selected_user].flags & LEONOS_AUTH_USER_DISABLED
                              ? T("Enable", "启用")
                              : T("Disable", "禁用"),
-                         user_count ? 0 : LEONOS_UI_BUTTON_DISABLED);
-        leonos_ui_button(ui, 484, 210, 104, LEONOS_UI_BUTTON_H,
-                         users[selected_user].role == LEONOS_AUTH_ROLE_ADMIN
-                             ? T("Make User", "改为用户")
-                             : T("Make Admin", "改为管理员"),
-                         user_count ? 0 : LEONOS_UI_BUTTON_DISABLED);
+                         user_count && users[selected_user].uid ? 0 : LEONOS_UI_BUTTON_DISABLED);
         leonos_ui_button(ui, 484, 258, 104, LEONOS_UI_BUTTON_H, T("Reset Pass", "重置密码"),
                          user_count ? 0 : LEONOS_UI_BUTTON_DISABLED);
     }
     leonos_ui_button(ui, 34, 324, 150, LEONOS_UI_BUTTON_H, T("Change Password", "修改密码"),
-                     current_user.uid ? 0 : LEONOS_UI_BUTTON_DISABLED);
+                     current_user.username[0] ? 0 : LEONOS_UI_BUTTON_DISABLED);
 }
 
 static void draw_assoc_page(struct leonos_ui_surface *ui)
@@ -1622,7 +1617,7 @@ static void draw_activation_page(struct leonos_ui_surface *ui)
     draw_field(ui, 202, T("Machine ID", "机器码"), info.install_id);
     draw_field(ui, 234, T("Email hash", "邮箱哈希"), info.email_hash);
     draw_field(ui, 266, T("Detail", "详情"), info.detail);
-    draw_field(ui, 298, T("License file", "许可证文件"), "/system/state/license.dat");
+    draw_field(ui, 298, T("License file", "许可证文件"), LEONOS_PATH_LICENSE);
 }
 
 static void draw_settings(struct leonos_ui_surface *ui)
@@ -1722,7 +1717,7 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
         leonos_ui_dropdown_hit(x, y, 160, 122, 190, theme_items, 2,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
         active_drop = DROP_NONE;
-        if (current_user.uid &&
+        if (current_user.username[0] &&
             (id == LEONOS_UI_THEME_METRO || id == LEONOS_UI_THEME_WIN95)) {
             appearance_state.theme = id;
             request_appearance_change(T("Theme style changed", "主题样式已更改"));
@@ -1734,7 +1729,7 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
                                LEONOS_UI_COLOR_SCHEME_COUNT,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
         active_drop = DROP_NONE;
-        if (current_user.uid && id < LEONOS_UI_COLOR_SCHEME_COUNT) {
+        if (current_user.username[0] && id < LEONOS_UI_COLOR_SCHEME_COUNT) {
             appearance_state.metro_color_scheme = id;
             request_appearance_change(T("Metro color changed", "Metro 颜色已更改"));
         }
@@ -1745,7 +1740,7 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
                                LEONOS_UI_COLOR_SCHEME_COUNT,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
         active_drop = DROP_NONE;
-        if (current_user.uid && id < LEONOS_UI_COLOR_SCHEME_COUNT) {
+        if (current_user.username[0] && id < LEONOS_UI_COLOR_SCHEME_COUNT) {
             appearance_state.win95_color_scheme = id;
             request_appearance_change(T("Win95 color changed", "Win95 颜色已更改"));
         }
@@ -1756,7 +1751,7 @@ static int handle_open_dropdown_hit(int32_t x, int32_t y)
                                LEONOS_WALLPAPER_MODE_COUNT,
                                SETTINGS_DROPDOWN_ROW_H, 1000, &id)) {
         active_drop = DROP_NONE;
-        if (current_user.uid && id < LEONOS_WALLPAPER_MODE_COUNT) {
+        if (current_user.username[0] && id < LEONOS_WALLPAPER_MODE_COUNT) {
             appearance_state.wallpaper_mode = id;
             request_appearance_change(T("Wallpaper mode changed", "壁纸显示方式已更改"));
         }
@@ -1804,7 +1799,7 @@ static void change_my_password(void)
 {
     char old_pass[LEONOS_AUTH_PASSWORD_LEN] = "";
     char new_pass[LEONOS_AUTH_PASSWORD_LEN] = "";
-    if (!current_user.uid) {
+    if (!current_user.username[0]) {
         return;
     }
     if (leonos_ui_show_password_dialog(T("Change password", "修改密码"), T("Old password", "旧密码"),
@@ -1833,26 +1828,13 @@ static void handle_users_click(int32_t x, int32_t y)
     if (current_user.role == LEONOS_AUTH_ROLE_ADMIN) {
         if (hit_rect_i(x, y, 484, 98, 104, LEONOS_UI_BUTTON_H)) {
             create_user_dialog(LEONOS_AUTH_ROLE_USER);
-        } else if (hit_rect_i(x, y, 484, 130, 104, LEONOS_UI_BUTTON_H)) {
-            create_user_dialog(LEONOS_AUTH_ROLE_ADMIN);
-        } else if (user_count && hit_rect_i(x, y, 484, 178, 104, LEONOS_UI_BUTTON_H)) {
+        } else if (user_count && users[selected_user].uid && hit_rect_i(x, y, 484, 178, 104, LEONOS_UI_BUTTON_H)) {
             uint32_t flags = users[selected_user].flags ^ LEONOS_AUTH_USER_DISABLED;
             if (leonos_auth_update_user(users[selected_user].uid, LEONOS_AUTH_UPDATE_FLAGS,
                                         users[selected_user].role, flags) == 0) {
                 copy_text(status_text, sizeof(status_text), T("User state updated", "用户状态已更新"));
             } else {
                 copy_text(status_text, sizeof(status_text), T("User state change denied", "用户状态更改被拒绝"));
-            }
-            refresh_users();
-        } else if (user_count && hit_rect_i(x, y, 484, 210, 104, LEONOS_UI_BUTTON_H)) {
-            uint32_t role = users[selected_user].role == LEONOS_AUTH_ROLE_ADMIN
-                                ? LEONOS_AUTH_ROLE_USER
-                                : LEONOS_AUTH_ROLE_ADMIN;
-            if (leonos_auth_update_user(users[selected_user].uid, LEONOS_AUTH_UPDATE_ROLE,
-                                        role, users[selected_user].flags) == 0) {
-                copy_text(status_text, sizeof(status_text), T("Role updated", "权限已更新"));
-            } else {
-                copy_text(status_text, sizeof(status_text), T("Role change denied", "权限更改被拒绝"));
             }
             refresh_users();
         } else if (user_count && hit_rect_i(x, y, 484, 258, 104, LEONOS_UI_BUTTON_H)) {
@@ -1937,7 +1919,7 @@ static void handle_personalization_click(int32_t x, int32_t y)
         return;
     }
     active_drop = DROP_NONE;
-    if (!current_user.uid) {
+    if (!current_user.username[0]) {
         copy_text(status_text, sizeof(status_text),
                   T("Sign in to change personalization.", "登录后才能更改个性化设置。"));
         return;
@@ -2093,7 +2075,7 @@ static void handle_input_methods_click(int32_t x, int32_t y)
         }
     }
     active_drop = DROP_NONE;
-    if (!current_user.uid) {
+    if (!current_user.username[0]) {
         copy_text(status_text, sizeof(status_text),
                   T("Sign in to change input methods", "登录后才能更改输入法"));
         return;

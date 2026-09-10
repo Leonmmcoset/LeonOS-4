@@ -1,0 +1,4 @@
+# Live and installer roots are supplied by the boot storage layer.
+# Disk-image creation and fresh installation replace this file with the actual
+# GPT by-partuuid sources for / (ext2) and /boot (vfat).
+# <source> <mountpoint> <type> <options> <dump> <pass>
