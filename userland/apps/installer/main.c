@@ -155,6 +155,7 @@ static uint32_t copy_done;
 static uint64_t copy_total_bytes;
 static uint64_t copy_done_bytes;
 static uint8_t install_success;
+static int reboot_error;
 static uint8_t install_running;
 static uint8_t dirty = 1;
 static uint8_t installer_tty_mode;
@@ -1382,6 +1383,12 @@ static void draw_finish_page(struct leonos_ui_surface *ui)
                    install_mode == INSTALL_MODE_UPDATE ? T("LeonOS was updated on the selected disk.", "所选硬盘上的 LeonOS 已更新。")
                                                        : T("LeonOS was installed to the selected disk.", "LeonOS 已安装到所选硬盘。"));
         leonos_ui_text(ui, l.content_x, l.content_y + 96, T("Remove the installation media, then restart.", "移除安装介质，然后重启。"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+        if (reboot_error) {
+            leonos_ui_text(ui, l.content_x, l.content_y + 130,
+                           T("Restart failed", "重启失败"), LEONOS_UI_BLACK, LEONOS_UI_WHITE);
+            leonos_ui_text_clipped(ui, l.content_x, l.content_y + 164, l.content_w,
+                                   strerror(reboot_error), LEONOS_UI_DARK, LEONOS_UI_WHITE);
+        }
     } else {
         draw_title(ui,
                    install_mode == INSTALL_MODE_UPDATE ? T("Update Failed", "更新失败")
@@ -2546,7 +2553,7 @@ static void finish_install(int window_id, struct leonos_ui_surface *ui, int ret,
         set_error_status(prefix, ret);
         progress_value = 0;
     } else {
-        printf("[installer.elf] %s completed successfully\n",
+        fprintf(stderr, "[installer.elf] %s completed successfully\n",
                install_mode == INSTALL_MODE_UPDATE ? "update" : "installation");
         install_success = 1;
         progress_value = 100;
@@ -2960,7 +2967,12 @@ static int go_primary(int window_id, struct leonos_ui_surface *ui)
         return 0;
     }
     if (page == PAGE_FINISH && install_success) {
-        leonos_system_reboot();
+        fprintf(stderr, "[installer.elf] restart requested from completion page\n");
+        if (leonos_system_reboot() < 0) {
+            reboot_error = errno;
+            fprintf(stderr, "[installer.elf] restart failed: %s\n", strerror(reboot_error));
+            dirty = 1;
+        }
         return 0;
     }
     if (page == PAGE_FINISH) {

@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define WINDOWD_MAX_CLIENTS 24u
@@ -38,6 +39,7 @@ struct windowd_client {
 struct windowd_window {
     uint32_t used;
     uint32_t announce_pending;
+    uint32_t surface_changed;
     uint32_t id;
     uint32_t owner_pid;
     uint32_t width;
@@ -173,6 +175,49 @@ static int announce_window(struct windowd_window *window)
     if (send_to_policy(LEONOS_WIN_MSG_WINDOW_NOTIFY, &message, sizeof(message)) < 0)
         return -1;
     window->announce_pending = 0;
+    return 0;
+}
+
+static void notify_present(struct windowd_window *window)
+{
+    struct leonos_gui_window_msg message;
+    if (announce_window(window) < 0) return;
+    window_msg_from_window(&message, 2u, window);
+    message.data = window->surface_changed ? LEONOS_WIN_SURFACE_REPLACED : 0;
+    if (send_to_policy(LEONOS_WIN_MSG_WINDOW_NOTIFY, &message, sizeof(message)) == 0)
+        window->surface_changed = 0;
+}
+
+static int replace_window_buffer(struct windowd_client *client,
+                                  const struct leonos_win_buffer *request, int fd)
+{
+    struct windowd_window *window = find_window(request->window_id);
+    struct stat st;
+    uint64_t bytes = (uint64_t)request->stride * request->height;
+    void *mapping;
+    if (!window || window->owner_pid != client->pid || client->role != LEONOS_WIN_ROLE_APP)
+        return -EPERM;
+    if (fd < 0 || !request->width || !request->height ||
+        request->width > LEONOS_GUI_MAX_WINDOW_WIDTH ||
+        request->height > LEONOS_GUI_MAX_WINDOW_HEIGHT ||
+        request->stride != request->width * 4u || bytes > WINDOWD_MAX_BYTES)
+        return -EINVAL;
+    if (fstat(fd, &st) < 0) return -errno;
+    if (st.st_size < 0 || (uint64_t)st.st_size < bytes) return -EINVAL;
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) return -errno;
+    mapping = mmap(0, (size_t)bytes, PROT_READ, MAP_SHARED, fd, 0);
+    if (mapping == MAP_FAILED) return -errno;
+    /* Publish only after validating and mapping the complete new frame.
+     * Existing compositor descriptors keep the previous allocation alive. */
+    if (window->mapping) munmap(window->mapping, window->bytes);
+    if (window->shm_fd >= 0) close(window->shm_fd);
+    window->mapping = mapping;
+    window->shm_fd = fd;
+    window->width = request->width;
+    window->height = request->height;
+    window->stride = request->stride;
+    window->bytes = bytes;
+    window->surface_changed = 1;
     return 0;
 }
 
@@ -358,14 +403,33 @@ static void handle_client(int slot)
     uint32_t type = 0;
     uint32_t length = 0;
     for (uint32_t budget = 0; budget < 64u; ++budget) {
+        int received_fd = -1;
         struct pollfd descriptor = {.fd = client->fd, .events = POLLIN, .revents = 0};
         if (poll(&descriptor, 1, 0) <= 0) return;
         if (leonos_ipc_recv_fd(client->fd, &type, buffer, sizeof(buffer),
-                               &length, 0) < 0) {
+                               &length, &received_fd) < 0) {
             if (errno == EAGAIN) return;
             close_client(slot);
             return;
         }
+        if (type == LEONOS_WIN_MSG_BUFFER) {
+            struct leonos_win_buffer request;
+            int result = -EINVAL;
+            if (length == sizeof(request)) {
+                memcpy(&request, buffer, sizeof(request));
+                result = replace_window_buffer(client, &request, received_fd);
+            }
+            if (result < 0) {
+                struct leonos_win_error error = {.code = result};
+                if (received_fd >= 0) close(received_fd);
+                (void)leonos_ipc_send(client->fd, LEONOS_WIN_MSG_ERROR, &error, sizeof(error));
+            } else {
+                (void)leonos_ipc_send(client->fd, LEONOS_WIN_MSG_BUFFER_ACK, &request, sizeof(request));
+                notify_present(find_window(request.window_id));
+            }
+            continue;
+        }
+        if (received_fd >= 0) close(received_fd);
         if (type == LEONOS_WIN_MSG_HELLO) {
             struct leonos_win_hello hello;
             struct leonos_win_hello_ack ack = {.version = 1};
@@ -432,14 +496,11 @@ static void handle_client(int slot)
         if (type == LEONOS_WIN_MSG_PRESENT) {
             struct leonos_win_present request;
             struct windowd_window *window;
-            struct leonos_gui_window_msg message;
             if (length < sizeof(request)) continue;
             memcpy(&request, buffer, sizeof(request));
             window = find_window(request.window_id);
             if (window && window->owner_pid == client->pid) {
-                if (announce_window(window) < 0) continue;
-                window_msg_from_window(&message, 2u, window);
-                notify_window_msg(&message);
+                notify_present(window);
             }
             continue;
         }
@@ -622,6 +683,8 @@ int main(void)
         for (uint32_t i = 0; i < WINDOWD_MAX_WINDOWS; ++i) {
             if (windows[i].used && windows[i].announce_pending)
                 (void)announce_window(&windows[i]);
+            if (windows[i].used && windows[i].surface_changed)
+                notify_present(&windows[i]);
         }
         if (fds[0].revents & POLLIN) {
             int fd;

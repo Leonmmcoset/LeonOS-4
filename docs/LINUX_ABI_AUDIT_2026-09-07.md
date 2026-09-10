@@ -518,7 +518,9 @@ gettimeofday 强制 tv 非空，Linux 允许 tv=NULL；settimeofday 仅使用秒
 
 #### B34 reboot 混淆 libc 与内核签名
 
-当前把 a0 当重启命令，属于 libc reboot(cmd) 的外部形式。Linux raw syscall 是 reboot(magic1,magic2,cmd,arg)；标准 musl 会把 magic 放在 a0，从而被当前实现判为非法命令。
+原审计实现把 a0 当重启命令，属于 libc reboot(cmd) 的外部形式。Linux raw syscall 是 reboot(magic1,magic2,cmd,arg)；标准 musl 会把 magic 放在 a0，从而被原实现判为非法命令。
+
+2026-09-10 电源按钮修复：内核已按 magic1/magic2/cmd 及 32 位参数宽度解析，校验四种 Linux magic2 值；`tools/test_power.py` 覆盖真实分发器、非法参数和权限拒绝。登录后的桌面通过 authd 的 SO_PEERCRED/当前会话校验代执行电源操作，安装器继续使用标准 musl reboot。可复现整机验证见 `docs/BUILD_AND_INSTALLER.md` 的 Power control regressions。本项仍非完整认证：当前 uid 权限策略、capability/namespace、HALT 和其他命令语义仍有缺口，不能因重启/关机按钮修复而将整个 syscall 标为完成。
 
 代码：[kernel/ntclks/syscall_process.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/syscall_process.c:329)，[include/uapi/linux/reboot.h](/home/xiaobai/Projects/Projects/LeonOS-4/include/uapi/linux/reboot.h:1)。
 

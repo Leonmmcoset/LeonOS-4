@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #define wait4 leonos_decl_wait4
+int leonos_decl_wait4(int pid, int *status, int options, void *usage);
 #include "../../userland/apps/desktop/input.c"
 #undef wait4
 

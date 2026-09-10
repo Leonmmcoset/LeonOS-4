@@ -1,4 +1,6 @@
 #include "desktop.h"
+#include <errno.h>
+#include <string.h>
 #include <unistd.h>
 
 #define TITLEBAR_DOUBLE_CLICK_MS 350UL
@@ -801,14 +803,22 @@ int handle_login_lock_mouse_wheel(uint32_t x, uint32_t y, int32_t wheel, uint8_t
 
 void desktop_reboot(void)
 {
-    printf("[desktop.elf] restart requested from Start menu\n");
-    leonos_system_reboot();
+    fprintf(stderr, "[desktop.elf] restart requested from Start menu\n");
+    if (leonos_system_reboot() < 0) {
+        const char *error = strerror(errno);
+        fprintf(stderr, "[desktop.elf] restart failed: %s\n", error);
+        desktop_show_message(leonos_i18n("Restart failed", "重启失败"), error);
+    }
 }
 
 void desktop_shutdown(void)
 {
-    printf("[desktop.elf] shutdown requested from Start menu\n");
-    leonos_system_shutdown();
+    fprintf(stderr, "[desktop.elf] shutdown requested from Start menu\n");
+    if (leonos_system_shutdown() < 0) {
+        const char *error = strerror(errno);
+        fprintf(stderr, "[desktop.elf] shutdown failed: %s\n", error);
+        desktop_show_message(leonos_i18n("Shutdown failed", "关机失败"), error);
+    }
 }
 
 void desktop_logout(void)

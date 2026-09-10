@@ -16,6 +16,7 @@ enum leonos_authd_msg {
     LEONOS_AUTHD_MSG_CREATE = 26,
     LEONOS_AUTHD_MSG_UPDATE = 27,
     LEONOS_AUTHD_MSG_CHANGE_PASSWORD = 28,
+    LEONOS_AUTHD_MSG_POWER = 29,
 };
 
 struct leonos_authd_hello {
@@ -59,5 +60,12 @@ struct leonos_authd_password {
     char old_password[LEONOS_AUTH_PASSWORD_LEN];
     char new_password[LEONOS_AUTH_PASSWORD_LEN];
 };
+
+struct leonos_authd_power {
+    uint32_t command;
+    uint32_t reserved;
+};
+
+int leonos_auth_request_power(uint32_t command);
 
 #endif

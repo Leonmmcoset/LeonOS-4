@@ -18,6 +18,12 @@ int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
     errno = EAGAIN;
     return send_result;
 }
+int leonos_ipc_send_fd(int fd, uint32_t type, const void *payload, uint32_t length, int sent_fd)
+{
+    (void)fd; (void)type; (void)payload; (void)length; (void)sent_fd;
+    assert(!"Unexpected buffer replacement in fixed-size reply test");
+    return -1;
+}
 void leonos_ui_present_for_pixels(const uint32_t *pixels, uint32_t window_id)
 { (void)pixels; (void)window_id; }
 int leonos_ipc_connect(const char *path) { (void)path; assert(0); return -1; }

@@ -171,6 +171,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-linux-descriptors",
     "test-svga",
     "test-installer-input",
+    "test-power",
     "test-oobe",
     "test-all",
 })
@@ -3432,11 +3433,17 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                      command=(PYTHON, "tools/test_oobe.py")))
     graph.add(Target(name="test-installer-input",
                      inputs=(ROOT / "tools/test_installer_input.py",
+                             ROOT / "tools/tests/blockdev_errno_test.c",
+                             ROOT / "tools/tests/window_resize_test.c",
+                             ROOT / "tools/tests/windowd_announce_test.c",
                              ROOT / "tools/tests/unix_ipc_frame_test.c",
                              ROOT / "tools/tests/wind_reply_test.c",
                              ROOT / "tools/tests/mouse_init_test.c",
                              ROOT / "drivers/mouse/mouse.c",
                              ROOT / "userland/libc/src/unix_ipc.c",
+                             ROOT / "userland/apps/windowd/main.c",
+                             ROOT / "userland/libc/src/blockdev.c",
+                             ROOT / "userland/libc/include/leonos/windowd.h",
                              ROOT / "userland/libc/src/wind.c"),
                      kind="command", command=(PYTHON, "tools/test_installer_input.py")))
     graph.add(Target(name="test-svga",
@@ -3482,6 +3489,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                      command=(PYTHON, "tools/test_linux_sysv_sem.py")))
     graph.add(Target(name="test-linux-pty", kind="command", always=True,
                      command=(PYTHON, "tools/test_linux_pty.py")))
+    graph.add(Target(name="test-power", kind="command", always=True,
+                     command=(PYTHON, "tools/test_power.py")))
     graph.add(Target(name="test-linux-permissions", kind="command", always=True,
                      command=(PYTHON, "tools/test_linux_permissions.py")))
     graph.add(Target(name="test-storage-metadata", kind="command", always=True,

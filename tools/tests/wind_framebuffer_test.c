@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdarg.h>
 #include <sys/un.h>
 
 #define mmap test_mmap
@@ -24,8 +25,12 @@ int open(const char *path, int flags, ...)
     return 42;
 }
 
-int ioctl(int fd, unsigned long request, void *arg)
+int ioctl(int fd, unsigned long request, ...)
 {
+    va_list args;
+    va_start(args, request);
+    void *arg = va_arg(args, void *);
+    va_end(args);
     assert(fd == 42);
     if (request == FBIOGET_VSCREENINFO) {
         *(struct fb_var_screeninfo *)arg = (struct fb_var_screeninfo){

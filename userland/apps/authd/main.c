@@ -16,6 +16,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/reboot.h>
 #include "accounts.h"
 
 #define AUTHD_USERS_DB LEONOS_AUTH_DB_PATH
@@ -403,6 +404,31 @@ static void authd_handle_password(int slot, const uint8_t *buffer, uint32_t leng
     authd_send_ack(slot, 1);
 }
 
+static void authd_handle_power(int slot, const uint8_t *buffer, uint32_t length)
+{
+    struct leonos_authd_power request;
+    struct authd_client *client = &clients[slot];
+    struct leonos_auth_record *record = authd_find_uid(client->uid);
+    /* Only root services or the enabled, currently logged-in console user.
+     * The UID comes from SO_PEERCRED, never from the request or session file. */
+    if (client->uid && (client->uid != current_uid || !record ||
+                       (record->user.flags & LEONOS_AUTH_USER_DISABLED))) {
+        authd_send_ack(slot, -EPERM);
+        return;
+    }
+    if (length != sizeof(request)) { authd_send_ack(slot, -EINVAL); return; }
+    memcpy(&request, buffer, sizeof(request));
+    if (request.reserved || (request.command != RB_AUTOBOOT && request.command != RB_POWER_OFF)) {
+        authd_send_ack(slot, -EINVAL);
+        return;
+    }
+    fprintf(stderr, "[authd.elf] power request uid=%u command=0x%x\n", client->uid, request.command);
+    sync();
+    int result = reboot((int)request.command);
+    int error = result < 0 ? errno : EIO;
+    authd_send_ack(slot, -error);
+}
+
 static void authd_handle_client(int slot)
 {
     struct authd_client *client = &clients[slot];
@@ -481,6 +507,7 @@ static void authd_handle_client(int slot)
         if (type == LEONOS_AUTHD_MSG_CREATE) { authd_handle_create(slot, buffer, length); continue; }
         if (type == LEONOS_AUTHD_MSG_UPDATE) { authd_handle_update(slot, buffer, length); continue; }
         if (type == LEONOS_AUTHD_MSG_CHANGE_PASSWORD) { authd_handle_password(slot, buffer, length); continue; }
+        if (type == LEONOS_AUTHD_MSG_POWER) { authd_handle_power(slot, buffer, length); continue; }
     }
 }
 

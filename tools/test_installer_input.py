@@ -8,6 +8,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class InstallerInputTests(unittest.TestCase):
+    def test_disk_enumeration_preserves_posix_errors(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-block-errors-") as tmp:
+            executable = str(Path(tmp) / "block-errors")
+            subprocess.run([
+                "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
+                "tools/tests/blockdev_errno_test.c", "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
+
+    def test_window_buffer_follows_presented_size(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-window-resize-") as tmp:
+            executable = str(Path(tmp) / "window-resize")
+            subprocess.run([
+                "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g", "-include", "string.h",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-idirafter", "userland/libc/include", "-idirafter", "include", "-Iinclude/uapi",
+                "tools/tests/window_resize_test.c", "userland/libc/src/unix_ipc.c", "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
+
     def test_window_creation_is_retried_before_present(self):
         with tempfile.TemporaryDirectory(prefix="leonos-windowd-") as tmp:
             executable = str(Path(tmp) / "windowd-announce")

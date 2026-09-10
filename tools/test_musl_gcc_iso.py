@@ -14,28 +14,6 @@ from test_installer_responsiveness import InstallerProbe
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class ScaledInstallerProbe(InstallerProbe):
-    @staticmethod
-    def visible_page(frame):
-        # The installer may use the scaled 800x600 surface on a 1920x1080 GOP.
-        x = round(frame.width * 0.30)
-        runs = []
-        start = None
-        for y in range(round(frame.height * 0.1), round(frame.height * 0.8)):
-            red, green, blue = frame.getpixel((x, y))
-            highlight = max(red, green, blue) - min(red, green, blue) < 10 and 175 < red < 245
-            if highlight and start is None:
-                start = y
-            if not highlight and start is not None:
-                if y - start >= 15:
-                    runs.append(start)
-                start = None
-        if runs:
-            scale = frame.height / 600
-            return round((runs[0] / scale - 98) / 34)
-        return None
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installer", action="store_true")
@@ -64,7 +42,7 @@ def main():
                     if process.poll() is not None: raise RuntimeError("QEMU exited before installer")
                     time.sleep(0.2)
                 time.sleep(8)
-                probe = ScaledInstallerProbe(str(qmp), out)
+                probe = InstallerProbe(str(qmp), out)
                 for expected in (1, 2, 3):
                     probe.move(probe.width - 165, probe.height - 33)
                     probe.button(True)

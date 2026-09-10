@@ -508,7 +508,7 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
     if (body_w == 0 || body_h == 0) {
         return;
     }
-    if (leonos_gui_fetch_window(windows[id].window_id, body_w, body_h,
+    if (leonos_gui_fetch_window(windows[id].window_id, APP_CLIENT_MAX_W, APP_CLIENT_MAX_H,
                                 APP_CLIENT_MAX_W,
                                 app_client_scratch, &out_w, &out_h) <= 0) {
         text_draw_i(body_x + 16, body_y + 18,
@@ -547,7 +547,9 @@ void draw_app_surface_i(uint8_t id, int body_x, int body_y,
         }
         return;
     }
-    clip = rect_clip(rect_make(body_x, body_y, (int)out_w, (int)out_h));
+    /* A resize event and the application's next frame are asynchronous. */
+    clip = rect_clip(rect_make(body_x, body_y, (int)min_u32(out_w, body_w),
+                              (int)min_u32(out_h, body_h)));
     for (int yy = 0; yy < clip.h; ++yy) {
         uint32_t src_y = (uint32_t)(clip.y - body_y + yy);
         uint32_t src_x = (uint32_t)(clip.x - body_x);

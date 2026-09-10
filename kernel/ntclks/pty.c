@@ -554,13 +554,18 @@ int64_t pty_read_input(uint32_t pty_id, char *buffer, uint32_t length)
                                            &session->input_head,
                                            &session->input_tail,
                                            buffer, length);
-        if (queued != 0 || !session->hungup) {
+        if (queued != 0 || session->hungup) {
             return queued;
         }
     }
-    /* Unix98: a slave whose master has closed drains queued data, then every
-     * subsequent read observes end-of-file. */
-    return 0;
+    /* An empty live terminal is not EOF. The syscall dispatcher parks a
+     * blocking reader on EAGAIN, or exposes it for O_NONBLOCK descriptors. */
+    if (!pty_canonical_mode(session) &&
+        session->termios.c_cc[LEONOS_PTY_CC_VMIN] == 0 &&
+        session->termios.c_cc[LEONOS_PTY_CC_VTIME] == 0) {
+        return 0;
+    }
+    return -11;
 }
 
 /**

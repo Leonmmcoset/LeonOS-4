@@ -57,6 +57,29 @@ int main(void)
     assert(pty_acquire_controlling(other, owner.pid, 0, 1) == -1);
     assert(pty_get_foreground_pgid(id, &group) == 0 && group == owner.pid);
     assert(pty_destroy(owner.pid, id) == 0 && signals == 1);
+    pty_init();
+    id = pty_create(owner.pid);
+    assert(pty_bind_console(id, owner.pid) == 0);
+    assert(pty_read_input(id, &ch, 1) == -11);
+    const uint8_t keys[] = {23, 49, 31, 20, 30, 38, 38};
+    for (unsigned i = 0; i < sizeof(keys); ++i) {
+        pty_console_key_event(keys[i], 1);
+        pty_console_key_event(keys[i], 0);
+    }
+    assert(pty_read_input(id, &ch, 1) == -11);
+    pty_console_key_event(28, 1);
+    char line[8];
+    for (unsigned i = 0; i < sizeof(line); ++i)
+        assert(pty_read_input(id, &line[i], 1) == 1);
+    assert(!memcmp(line, "install\n", sizeof(line)));
+    assert(pty_read_input(id, &ch, 1) == -11);
+    assert(pty_read_input(id, &ch, 0) == 0);
+    assert(pty_get_termios(id, &mode) == 0);
+    mode.c_lflag &= ~LINUX_ICANON;
+    mode.c_cc[LINUX_VMIN] = 0;
+    mode.c_cc[LINUX_VTIME] = 0;
+    assert(pty_set_termios(id, &mode) == 0);
+    assert(pty_read_input(id, &ch, 1) == 0);
     puts("PASS native PTY modes and controlling-session isolation");
     return 0;
 }

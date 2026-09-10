@@ -1240,7 +1240,7 @@ static void start_menu_handle_power_click(uint32_t x, uint32_t y,
             if (hit_rect(x, y, (int)left, (int)first_y, width, START_MENU_ITEM_H)) {
                 start_menu_set_open(0);
                 if (leonos_kernel_debug_arm_next_boot() == 0) {
-                    leonos_system_reboot();
+                    desktop_reboot();
                 } else {
                     desktop_show_message(leonos_i18n("Kernel debugger", "内核调试工具"),
                                          leonos_i18n("Could not arm the next debug boot.",

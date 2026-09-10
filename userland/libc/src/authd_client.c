@@ -103,6 +103,39 @@ static int authd_open(void)
     return authd_fd;
 }
 
+int leonos_auth_request_power(uint32_t command)
+{
+    struct leonos_authd_power request = {.command = command};
+    struct ucred peer;
+    int error = 0;
+    /* A fresh connection captures the current UID after login/setuid; do not
+     * reuse an authentication connection opened by the root bootstrap. */
+    int fd = leonos_ipc_connect(LEONOS_IPC_SOCK_AUTH);
+    if (fd < 0) return -1;
+    if (leonos_ipc_peer_credentials(fd, &peer) < 0) error = errno;
+    else if (peer.uid != 0) error = EPERM;
+    else if (leonos_ipc_set_nonblock(fd, 1) < 0 ||
+             leonos_ipc_send(fd, LEONOS_AUTHD_MSG_POWER, &request, sizeof(request)) < 0)
+        error = errno;
+    uint32_t deadline = authd_now_ms() + 3000u;
+    while (!error) {
+        struct leonos_authd_ack ack;
+        uint32_t type = 0, length = 0;
+        if (leonos_ipc_recv(fd, &type, &ack, sizeof(ack), &length) == 0) {
+            error = type == LEONOS_AUTHD_MSG_ACK && length == sizeof(ack) &&
+                    ack.code < 0 && ack.code >= -4095 ? -ack.code : EPROTO;
+            break;
+        }
+        if (errno != EAGAIN && errno != EINTR) { error = errno; break; }
+        if ((int32_t)(authd_now_ms() - deadline) >= 0) { error = ETIMEDOUT; break; }
+        struct pollfd wait = {.fd = fd, .events = POLLIN};
+        (void)poll(&wait, 1, 10);
+    }
+    leonos_ipc_close(fd);
+    errno = error;
+    return -1;
+}
+
 static void authd_append_u32(char *text, uint32_t *length, uint32_t capacity,
                              uint32_t value)
 {

@@ -3,6 +3,7 @@
 #include <leonos/system.h>
 
 #include <stdlib.h>
+#include <errno.h>
 
 #include "installer_tty.h"
 
@@ -17,7 +18,10 @@ static int tty_read_line(const char *prompt, char *buffer, uint32_t capacity)
     if (prompt) {
         write(1, prompt, strlen(prompt));
     }
-    while (read(0, &input, 1) > 0) {
+    for (;;) {
+        ssize_t result = read(0, &input, 1);
+        if (result < 0 && errno == EINTR) continue;
+        if (result <= 0) break;
         if (input == '\r') {
             continue;
         }
@@ -159,7 +163,7 @@ int installer_tty_main(const struct installer_tty_context *context)
     }
     if (tty_read_line("Reboot now? [Y/n]: ", input, sizeof(input)) &&
         input[0] != 'n' && input[0] != 'N') {
-        leonos_system_reboot();
+        if (leonos_system_reboot() < 0) perror("Restart failed");
     }
 
     puts("Installation finished.");
@@ -168,9 +172,9 @@ int installer_tty_main(const struct installer_tty_context *context)
             return 0;
         }
         if (tty_line_is(input, "reboot") || tty_line_is(input, "r")) {
-            leonos_system_reboot();
+            if (leonos_system_reboot() < 0) perror("Restart failed");
         } else if (tty_line_is(input, "shutdown") || tty_line_is(input, "poweroff")) {
-            leonos_system_shutdown();
+            if (leonos_system_shutdown() < 0) perror("Shutdown failed");
         } else if (tty_line_is(input, "exit") || tty_line_is(input, "q")) {
             return 0;
         } else {

@@ -2,6 +2,7 @@
 #include <leonos/environment.h>
 #include <leonos/driver.h>
 #include <leonos/auth.h>
+#include <leonos/authd.h>
 #include <leonos/audio.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>
@@ -1626,11 +1627,15 @@ static void libc_clear_secret(void *data, uint32_t len)
 
 int leonos_system_reboot(void)
 {
+    if (getuid() != 0) return leonos_auth_request_power(RB_AUTOBOOT);
+    sync();
     return reboot(RB_AUTOBOOT);
 }
 
 int leonos_system_shutdown(void)
 {
+    if (getuid() != 0) return leonos_auth_request_power(RB_POWER_OFF);
+    sync();
     return reboot(RB_POWER_OFF);
 }
 
@@ -1760,4 +1765,3 @@ int leonos_i18n_set_language(int lang)
     locale_cached = 1;
     return 0;
 }
-

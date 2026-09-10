@@ -220,7 +220,7 @@ static int block_io(int fd, uint64_t offset, void *buffer, uint32_t length, int 
     if (!buffer || (offset & (BLOCK_SECTOR_SIZE - 1u)) ||
         (length & (BLOCK_SECTOR_SIZE - 1u))) return -BLOCK_EINVAL;
     position = lseek(fd, (long)offset, 0);
-    if (position < 0) return (int)position;
+    if (position < 0) return -errno;
     while (done < length) {
         uint32_t chunk = length - done;
         long ret;
@@ -231,7 +231,10 @@ static int block_io(int fd, uint64_t offset, void *buffer, uint32_t length, int 
          * valid disk into a false EIO. */
         if (chunk > BLOCK_IO_SLICE) chunk = BLOCK_IO_SLICE;
         ret = write_mode ? write(fd, bytes + done, chunk) : read(fd, bytes + done, chunk);
-        if (ret < 0) return (int)ret;
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            return -errno;
+        }
         if (ret == 0 || (ret & (BLOCK_SECTOR_SIZE - 1u)) != 0) return -BLOCK_EIO;
         if ((uint32_t)ret > chunk) return -BLOCK_EIO;
         done += (uint32_t)ret;
@@ -261,16 +264,18 @@ static int block_open_info(const char *path, int writable, int *out_fd,
     long ret;
     if (!path || !out_fd || !out_sectors || !out_sector_size) return -BLOCK_EINVAL;
     fd = open(path, writable ? O_RDWR : O_RDONLY, 0);
-    if (fd < 0) return fd;
+    if (fd < 0) return -errno;
     ret = ioctl(fd, BLKGETSIZE64, &bytes);
     if (ret < 0) {
+        int error = errno;
         (void)close(fd);
-        return (int)ret;
+        return -error;
     }
     ret = ioctl(fd, BLKSSZGET, &sector_size);
     if (ret < 0) {
+        int error = errno;
         (void)close(fd);
-        return (int)ret;
+        return -error;
     }
     if (sector_size != BLOCK_SECTOR_SIZE || !bytes || bytes % BLOCK_SECTOR_SIZE) {
         (void)close(fd);
@@ -567,7 +572,7 @@ static int block_gpt_write_fd(int fd, struct block_gpt_table *table)
 static int block_reread(int fd)
 {
     long ret = ioctl(fd, BLKRRPART, 0);
-    return ret < 0 ? (int)ret : 0;
+    return ret < 0 ? -errno : 0;
 }
 
 int leonos_block_get_info(const char *path, struct leonos_block_disk_info *out)

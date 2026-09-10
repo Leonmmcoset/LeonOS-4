@@ -143,7 +143,8 @@ static void wind_route_frame(uint32_t type, const uint8_t *buffer, uint32_t got)
     } else if (type == LEONOS_WIN_MSG_WINDOW_NOTIFY && got >= sizeof(struct leonos_gui_window_msg)) {
         struct leonos_gui_window_msg message;
         memcpy(&message, buffer, sizeof(message));
-        if (message.type == 3u && message.window_id) {
+        if ((message.type == 3u || (message.type == 2u &&
+             message.data == LEONOS_WIN_SURFACE_REPLACED)) && message.window_id) {
             /* Release even when the notification queue is full, including
              * a surface whose first FETCH is still waiting for its reply. */
             for (uint32_t i = 0; i < WIND_MAX_WINDOWS; ++i) {
@@ -725,7 +726,51 @@ int leonos_gui_present_window(uint32_t window_id, uint32_t width, uint32_t heigh
         .window_id = window_id, .width = width, .height = height, .stride = stride};
     struct wind_window *window = wind_find_window(window_id);
     int fd = wind_app_fd >= 0 ? wind_app_fd : wind_app_ensure();
-    if (!pixels || fd < 0) return -1;
+    if (!pixels || !width || !height || stride < width ||
+        width > LEONOS_GUI_MAX_WINDOW_WIDTH || height > LEONOS_GUI_MAX_WINDOW_HEIGHT) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (fd < 0 || !window || !window->mapping) { errno = ENOENT; return -1; }
+    if (window->stride != width * 4u || window->bytes != (uint64_t)width * height * 4u) {
+        struct wind_window replacement = {.id = window_id, .fd = -1,
+            .stride = width * 4u, .bytes = (uint64_t)width * height * 4u};
+        struct leonos_win_buffer request_buffer = {
+            .window_id = window_id, .width = width, .height = height, .stride = width * 4u};
+        struct leonos_win_buffer ack;
+        uint32_t length = 0;
+        replacement.fd = open(LEONOS_DEV_SHM0, O_RDWR | O_CLOEXEC);
+        if (replacement.fd < 0) return -1;
+        if (ftruncate(replacement.fd, (off_t)replacement.bytes) < 0) goto resize_failed;
+        replacement.mapping = mmap(0, (size_t)replacement.bytes, PROT_READ | PROT_WRITE,
+                                     MAP_SHARED, replacement.fd, 0);
+        if (replacement.mapping == MAP_FAILED) {
+            replacement.mapping = 0;
+            goto resize_failed;
+        }
+        for (uint32_t row = 0; row < height; ++row)
+            memcpy((uint8_t *)replacement.mapping + (size_t)row * replacement.stride,
+                   pixels + (size_t)row * stride, (size_t)width * 4u);
+        if (leonos_ipc_send_fd(fd, LEONOS_WIN_MSG_BUFFER, &request_buffer,
+                               sizeof(request_buffer), replacement.fd) < 0 ||
+            wind_wait_type(fd, LEONOS_WIN_MSG_BUFFER_ACK, &ack, sizeof(ack), &length, 0) < 0)
+            goto resize_failed;
+        if (length != sizeof(ack) || memcmp(&ack, &request_buffer, sizeof(ack))) {
+            errno = EPROTO;
+            goto resize_failed;
+        }
+        wind_release_window(window);
+        *window = replacement;
+        (void)leonos_ui_present_for_pixels(pixels, window_id);
+        return 1;
+resize_failed:
+        {
+            int saved_errno = errno;
+            wind_release_window(&replacement);
+            errno = saved_errno;
+            return -1;
+        }
+    }
     (void)leonos_ui_present_for_pixels(pixels, window_id);
     if (window && window->mapping) {
         uint32_t copy_height = height;

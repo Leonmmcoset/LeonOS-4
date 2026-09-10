@@ -906,12 +906,21 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
     if (number == LINUX_SYS_REBOOT) {
         struct task *task = sched_current_task();
         if (!task || task->uid != 0) return -LEONOS_EPERM;
-        if (a0 != (uint64_t)RB_AUTOBOOT && a0 != (uint64_t)RB_HALT_SYSTEM &&
-            a0 != (uint64_t)RB_POWER_OFF) {
+        /* Linux reboot(int magic1, int magic2, unsigned int cmd, void *arg). */
+        uint32_t magic1 = (uint32_t)a0;
+        uint32_t magic2 = (uint32_t)a1;
+        uint32_t command = (uint32_t)a2;
+        if (magic1 != LINUX_REBOOT_MAGIC1 ||
+            (magic2 != LINUX_REBOOT_MAGIC2 && magic2 != LINUX_REBOOT_MAGIC2A &&
+             magic2 != LINUX_REBOOT_MAGIC2B && magic2 != LINUX_REBOOT_MAGIC2C))
+            return -LEONOS_EINVAL;
+        if (command != RB_AUTOBOOT && command != RB_HALT_SYSTEM &&
+            command != RB_POWER_OFF) {
             return -LEONOS_EINVAL;
         }
-        console_printf("[ntclks] reboot(2) requested by pid=%u\n", task->pid);
-        if (a0 == (uint64_t)RB_AUTOBOOT) power_reboot();
+        console_printf("[ntclks] reboot(2) requested by pid=%u command=0x%x\n",
+                       task->pid, command);
+        if (command == RB_AUTOBOOT) power_reboot();
         power_shutdown();
     }
     if (number == LINUX_SYS_GETPID) {

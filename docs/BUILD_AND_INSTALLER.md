@@ -1,5 +1,87 @@
 # Build and Installer
 
+## Installer and window regressions
+
+After `python3 build.py run release`, run:
+
+```sh
+python3 tools/test_installer_input.py
+python3 tools/test_linux_pty.py
+python3 tools/test_runtime_responsiveness.py
+python3 tools/test_terminal.py
+python3 tools/test_oobe.py
+python3 tools/test_installer_window_qemu.py installer
+python3 tools/test_installer_window_qemu.py desktop
+python3 tools/test_installer_window_qemu.py tty --install
+python3 tools/test_installer_window_qemu.py installed --disk build/ui-regressions/tty/scratch.raw
+```
+
+The QEMU checks boot the distribution ISOs using KVM, OVMF, 4 GiB RAM and two
+CPUs. Screenshots and serial logs go under `build/ui-regressions`. The TTY check
+attaches only its disposable `tty/scratch.raw` hard disk; `--install` confirms
+formatting and copying to that disk, with a 15-minute copy timeout for the full
+toolchain/runtime payload. Without it, the test cancels at confirmation. The
+`installed` case boots that disk with no ISO attached and repeats the desktop check.
+The desktop check maximizes Terminal, runs Linux Vim, restores the window, and
+maximizes File Manager and Task Manager. The installer check verifies its real
+sidebar and footer coordinates, without compensating for a cropped surface.
+These checks do not establish VMware validation.
+
+Window resizing retains the public `leonos_gui_*` API. The shared window client
+now submits a fully painted replacement segment to windowd before releasing its
+old segment, and the compositor invalidates its old mapping on replacement.
+Normal, installer, and SDK builds ship matching client/server code. Applications
+that statically embedded an older window client need relinking to gain this fix;
+the previous CREATE/PRESENT wire messages remain accepted for fixed-size frames.
+
+TTY reads now wait for a canonical line instead of reporting EOF on an empty
+live input queue. Block-device SDK helpers translate POSIX `-1`/`errno` into
+their documented negative-error return values, including missing disk probes.
+
+## Power control regressions
+
+```sh
+python3 build.py run test-power
+python3 tools/test_power_qemu.py desktop-reboot
+python3 tools/test_power_qemu.py desktop-shutdown
+python3 tools/test_power_qemu.py installer-reboot
+```
+
+The host checks execute the actual reboot dispatcher with hardware operations
+intercepted, plus desktop confirmation/error handling and authd power policy.
+The QEMU checks click the real controls and require guest-originated RESET or
+SHUTDOWN events. A reboot must reach a second kernel boot; shutdown must exit
+QEMU. The installer case performs a full GUI install on a new 2 GiB test disk,
+ejects the ISO before clicking Restart, and checks the installed ext2 system
+reaches OOBE. It refuses to overwrite an existing test disk; use a fresh
+`--output` directory for repeat installations. Logs, screenshots and event
+records are saved under `build/power-regressions`.
+
+The kernel accepts the Linux raw `reboot(magic1, magic2, cmd, arg)` argument
+order, all four Linux magic2 values, and 32-bit argument widths. Obsolete
+one-argument raw calls are rejected. The bundled unmodified musl `reboot(int)`
+wrapper therefore works without an application-specific ABI workaround.
+
+The desktop assumes the user's UID after login. Its `leonos_system_*` helpers
+send power requests over a fresh authd connection, so SO_PEERCRED reflects the
+current UID rather than a cached root bootstrap connection. The privileged
+daemon authorizes root services or the enabled current console user, accepts
+only reboot/power-off, syncs filesystems, then calls musl reboot. Other users,
+logged-out sessions, disabled accounts and invalid requests are rejected.
+The installer runs as root and uses musl reboot directly after sync. Errors
+remain visible in the desktop, GUI installer and TTY installer.
+
+This is a targeted power-control repair, not full reboot(2) certification:
+the existing kernel UID gate and remaining capability, namespace, HALT,
+CAD/RESTART2 and other command semantics remain in the ABI audit backlog.
+QEMU results do not establish VMware validation.
+
+Build 4.6.2-3490 validation: host power, OOBE, UAPI and security checks passed;
+QEMU Start-menu reboot reached a second kernel boot, and shutdown produced a
+guest-shutdown event and normal QEMU exit. Both ISOs and GCC payload integrity
+checks passed. The full GUI installation/restart test was stopped at the user's
+request before completion; its completion-page restart is not yet guest-verified.
+
 ## Source of truth
 
 `build.py` is the maintained build entry point. Component selection comes from
@@ -94,7 +176,8 @@ component set.
 
 `install/root.fat` is one Multiboot module. It is mapped directly by
 the kernel and is not copied into a second RAM buffer. The installer ISO mounts
-this FAT32 image as a writable live environment: file and directory changes are
+this ext2 image (the historical filename is retained) as a writable live
+environment: file and directory changes are
 kept in the mapped RAM image for the session and discarded on reboot; they never
 modify the ISO. The guest nevertheless
 needs enough physical memory for GRUB to load the complete module before the
