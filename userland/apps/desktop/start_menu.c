@@ -16,6 +16,8 @@
 #define START_SHORTCUT_H 42U
 #define START_SHORTCUT_GAP 4U
 #define START_LIST_TITLE_H 18U
+#define START_LIST_SCROLL_GAP 4U
+#define START_LIST_SCROLL_W 18U
 
 struct start_panel_layout {
     uint32_t x;
@@ -42,9 +44,13 @@ struct start_home_layout {
 };
 
 struct start_list_layout {
+    uint32_t x;
     uint32_t y;
+    uint32_t w;
     uint32_t h;
     uint32_t rows;
+    uint32_t scrollbar_x;
+    uint32_t scrollbar_w;
 };
 
 struct start_menu_result {
@@ -676,12 +682,22 @@ static struct start_home_layout start_menu_home_layout(const struct start_panel_
     return home;
 }
 
-static struct start_list_layout start_menu_list_layout(const struct start_panel_content *content)
+static struct start_list_layout start_menu_list_layout(const struct start_panel_layout *panel,
+                                                       const struct start_panel_content *content)
 {
     struct start_list_layout list;
+    uint32_t content_w = panel->w > START_PANEL_MARGIN * 2U
+                             ? panel->w - START_PANEL_MARGIN * 2U : 0U;
+    list.x = panel->x + START_PANEL_MARGIN;
     list.y = content->body_y + START_LIST_TITLE_H;
-    list.h = content->body_h > START_LIST_TITLE_H ? content->body_h - START_LIST_TITLE_H : 0;
-    list.rows = list.h / START_MENU_ITEM_H;
+    list.rows = content->body_h > START_LIST_TITLE_H
+                    ? (content->body_h - START_LIST_TITLE_H) / START_MENU_ITEM_H : 0U;
+    list.h = list.rows * START_MENU_ITEM_H;
+    list.scrollbar_w = content_w > START_LIST_SCROLL_W + START_LIST_SCROLL_GAP
+                           ? START_LIST_SCROLL_W : 0U;
+    list.w = list.scrollbar_w ? content_w - START_LIST_SCROLL_W - START_LIST_SCROLL_GAP
+                              : content_w;
+    list.scrollbar_x = list.x + list.w + (list.scrollbar_w ? START_LIST_SCROLL_GAP : 0U);
     return list;
 }
 
@@ -870,9 +886,10 @@ static const char *start_menu_list_title(uint8_t view)
     return leonos_i18n("All applications", "所有应用");
 }
 
-static void start_menu_normalize_list(uint8_t view, uint32_t rows)
+static void start_menu_clamp_list(uint8_t view, uint32_t rows)
 {
     uint32_t count = start_menu_result_count(view);
+    uint32_t max_scroll;
     if (!count) {
         start_menu_scroll = 0;
         start_menu_selected = 0;
@@ -885,25 +902,51 @@ static void start_menu_normalize_list(uint8_t view, uint32_t rows)
         start_menu_scroll = 0;
         return;
     }
-    if (start_menu_scroll >= count) {
-        start_menu_scroll = count - 1U;
+    max_scroll = count > rows ? count - rows : 0U;
+    if (start_menu_scroll > max_scroll) {
+        start_menu_scroll = max_scroll;
+    }
+}
+
+static void start_menu_ensure_selected_visible(uint8_t view, uint32_t rows)
+{
+    uint32_t count = start_menu_result_count(view);
+    start_menu_clamp_list(view, rows);
+    if (!count || !rows) {
+        return;
     }
     if (start_menu_selected < start_menu_scroll) {
         start_menu_scroll = start_menu_selected;
     } else if (start_menu_selected >= start_menu_scroll + rows) {
         start_menu_scroll = start_menu_selected - rows + 1U;
     }
+    start_menu_clamp_list(view, rows);
+}
+
+static void start_menu_keep_selected_in_view(uint8_t view, uint32_t rows)
+{
+    uint32_t count = start_menu_result_count(view);
+    start_menu_clamp_list(view, rows);
+    if (!count || !rows) {
+        return;
+    }
+    if (start_menu_selected < start_menu_scroll) {
+        start_menu_selected = start_menu_scroll;
+    } else if (start_menu_selected >= start_menu_scroll + rows) {
+        start_menu_selected = start_menu_scroll + rows - 1U;
+    }
+    if (start_menu_selected >= count) {
+        start_menu_selected = count - 1U;
+    }
 }
 
 static void start_menu_draw_results(const struct start_panel_layout *panel,
                                     const struct start_panel_content *content, uint8_t view)
 {
-    struct start_list_layout list = start_menu_list_layout(content);
-    uint32_t content_x = panel->x + START_PANEL_MARGIN;
-    uint32_t content_w = panel->w > START_PANEL_MARGIN * 2U ? panel->w - START_PANEL_MARGIN * 2U : 0U;
+    struct start_list_layout list = start_menu_list_layout(panel, content);
     uint32_t count = start_menu_result_count(view);
-    start_menu_normalize_list(view, list.rows);
-    leonos_ui_text(&ui, content_x, content->body_y, start_menu_list_title(view),
+    start_menu_clamp_list(view, list.rows);
+    leonos_ui_text(&ui, list.x, content->body_y, start_menu_list_title(view),
                    LEONOS_UI_DARK, LEONOS_UI_GRAY);
     if (!count) {
         const char *empty_text = leonos_i18n("Nothing found", "没有找到内容");
@@ -914,32 +957,37 @@ static void start_menu_draw_results(const struct start_panel_layout *panel,
                    !start_menu_docs_loaded) {
             empty_text = leonos_i18n("Loading documents...", "正在加载文档...");
         }
-        leonos_ui_menu_item(&ui, content_x + 5U, list.y,
-                            content_w > 10U ? content_w - 10U : 0U,
+        leonos_ui_menu_item(&ui, list.x + 5U, list.y,
+                            list.w > 10U ? list.w - 10U : 0U,
                             empty_text,
                             LEONOS_UI_MENU_DISABLED);
-        return;
+    } else {
+        for (uint32_t visible = 0; visible < list.rows; ++visible) {
+            struct start_menu_result result;
+            uint32_t index = start_menu_scroll + visible;
+            uint32_t row_y = list.y + visible * START_MENU_ITEM_H;
+            char icon_path[LEONOS_FS_PATH_LEN];
+            if (index >= count || !start_menu_result_at(view, index, &result)) {
+                break;
+            }
+            if (result.document) {
+                /* Help files use the installed help viewer's registered icon.
+                 * This keeps document UI independent of its package directory. */
+                (void)leonos_app_registry_icon("oshlp", icon_path,
+                                               sizeof(icon_path));
+            } else {
+                desktop_icon_path_for_app(result.path, icon_path, sizeof(icon_path));
+            }
+            draw_app_icon(icon_path, (int)list.x + 6, (int)row_y + 5);
+            leonos_ui_menu_item(&ui, list.x + 29U, row_y,
+                                list.w > 35U ? list.w - 35U : 0U, result.label,
+                                index == start_menu_selected ? LEONOS_UI_MENU_SELECTED : 0);
+        }
     }
-    for (uint32_t visible = 0; visible < list.rows; ++visible) {
-        struct start_menu_result result;
-        uint32_t index = start_menu_scroll + visible;
-        uint32_t row_y = list.y + visible * START_MENU_ITEM_H;
-        char icon_path[LEONOS_FS_PATH_LEN];
-        if (index >= count || !start_menu_result_at(view, index, &result)) {
-            break;
-        }
-        if (result.document) {
-            /* Help files use the installed help viewer's registered icon.
-             * This keeps document UI independent of its package directory. */
-            (void)leonos_app_registry_icon("oshlp", icon_path,
-                                           sizeof(icon_path));
-        } else {
-            desktop_icon_path_for_app(result.path, icon_path, sizeof(icon_path));
-        }
-        draw_app_icon(icon_path, (int)content_x + 6, (int)row_y + 5);
-        leonos_ui_menu_item(&ui, content_x + 29U, row_y,
-                            content_w > 35U ? content_w - 35U : 0U, result.label,
-                            index == start_menu_selected ? LEONOS_UI_MENU_SELECTED : 0);
+    if (list.scrollbar_w && list.h) {
+        leonos_ui_vscrollbar(&ui, list.scrollbar_x, list.y, list.scrollbar_w, list.h,
+                             start_menu_scroll, count, list.rows,
+                             count <= list.rows ? LEONOS_UI_SCROLLBAR_DISABLED : 0);
     }
 }
 
@@ -1090,7 +1138,7 @@ int start_menu_handle_key(uint8_t keycode, uint8_t pressed)
         uint32_t count = start_menu_result_count(view);
         panel = start_menu_panel_layout();
         content = start_menu_content_layout(&panel);
-        list = start_menu_list_layout(&content);
+        list = start_menu_list_layout(&panel, &content);
         if (keycode == LEONOS_KEY_UP && count && start_menu_selected) {
             --start_menu_selected;
         } else if (keycode == LEONOS_KEY_DOWN && count && start_menu_selected + 1U < count) {
@@ -1110,7 +1158,7 @@ int start_menu_handle_key(uint8_t keycode, uint8_t pressed)
         } else {
             goto text_input;
         }
-        start_menu_normalize_list(view, list.rows);
+        start_menu_ensure_selected_visible(view, list.rows);
         full_redraw_pending = 1;
         return 1;
     }
@@ -1256,12 +1304,16 @@ uint32_t start_menu_cursor_style(uint32_t x, uint32_t y)
     }
 
     {
-        struct start_list_layout list = start_menu_list_layout(&content);
+        struct start_list_layout list = start_menu_list_layout(&panel, &content);
         uint32_t count = start_menu_result_count(view);
         uint32_t available = count > start_menu_scroll ? count - start_menu_scroll : 0U;
         uint32_t shown = available < list.rows ? available : list.rows;
-        if (shown && hit_rect(x, y, (int)content_x, (int)list.y,
-                              content_w, shown * START_MENU_ITEM_H)) {
+        if (list.scrollbar_w && hit_rect(x, y, (int)list.scrollbar_x, (int)list.y,
+                                         list.scrollbar_w, list.h)) {
+            return count > list.rows ? LEONOS_GUI_CURSOR_HAND : LEONOS_GUI_CURSOR_NO;
+        }
+        if (shown && hit_rect(x, y, (int)list.x, (int)list.y,
+                              list.w, shown * START_MENU_ITEM_H)) {
             return LEONOS_GUI_CURSOR_HAND;
         }
     }
@@ -1419,11 +1471,20 @@ void start_menu_handle_click(uint32_t x, uint32_t y)
         return;
     }
     {
-        struct start_list_layout list = start_menu_list_layout(&content);
+        struct start_list_layout list = start_menu_list_layout(&panel, &content);
         uint32_t count = start_menu_result_count(view);
-        if (hit_rect(x, y, (int)(panel.x + START_PANEL_MARGIN), (int)list.y,
-                     panel.w > START_PANEL_MARGIN * 2U ? panel.w - START_PANEL_MARGIN * 2U : 0U,
-                     list.rows * START_MENU_ITEM_H)) {
+        start_menu_clamp_list(view, list.rows);
+        if (list.scrollbar_w &&
+            hit_rect(x, y, (int)list.scrollbar_x, (int)list.y, list.scrollbar_w, list.h)) {
+            if (leonos_ui_vscrollbar_handle_mouse(&start_menu_scroll, count, list.rows,
+                                                  list.scrollbar_x, list.y,
+                                                  list.scrollbar_w, list.h, x, y)) {
+                start_menu_keep_selected_in_view(view, list.rows);
+                full_redraw_pending = 1;
+            }
+            return;
+        }
+        if (hit_rect(x, y, (int)list.x, (int)list.y, list.w, list.h)) {
             uint32_t index = start_menu_scroll + (y - list.y) / START_MENU_ITEM_H;
             if (index < count) {
                 start_menu_selected = index;
@@ -1440,7 +1501,6 @@ int start_menu_handle_wheel(uint32_t x, uint32_t y, int32_t wheel)
     struct start_list_layout list;
     uint8_t view;
     uint32_t count;
-    uint32_t steps;
     if (!start_menu_open || start_menu_animating || wheel == 0) {
         return 0;
     }
@@ -1451,22 +1511,21 @@ int start_menu_handle_wheel(uint32_t x, uint32_t y, int32_t wheel)
     }
     panel = start_menu_panel_layout();
     content = start_menu_content_layout(&panel);
-    list = start_menu_list_layout(&content);
+    list = start_menu_list_layout(&panel, &content);
     count = start_menu_result_count(view);
-    if (!list.rows || count <= list.rows ||
-        !hit_rect(x, y, (int)(panel.x + START_PANEL_MARGIN), (int)list.y,
-                  panel.w > START_PANEL_MARGIN * 2U ? panel.w - START_PANEL_MARGIN * 2U : 0U,
-                  list.rows * START_MENU_ITEM_H)) {
+    if (!list.rows || !hit_rect(x, y, (int)list.x, (int)list.y,
+                               list.w + (list.scrollbar_w
+                                             ? START_LIST_SCROLL_GAP + list.scrollbar_w : 0U),
+                               list.h)) {
         return 0;
     }
-    steps = wheel < 0 ? (uint32_t)(-wheel) : (uint32_t)wheel;
-    if (wheel > 0) {
-        start_menu_scroll = start_menu_scroll > steps ? start_menu_scroll - steps : 0;
-    } else {
-        uint32_t max_scroll = count - list.rows;
-        start_menu_scroll = start_menu_scroll + steps < max_scroll
-                              ? start_menu_scroll + steps : max_scroll;
+    if (count <= list.rows) {
+        return 1;
     }
-    full_redraw_pending = 1;
+    start_menu_clamp_list(view, list.rows);
+    if (leonos_ui_vscrollbar_handle_wheel(&start_menu_scroll, count, list.rows, wheel)) {
+        start_menu_keep_selected_in_view(view, list.rows);
+        full_redraw_pending = 1;
+    }
     return 1;
 }
