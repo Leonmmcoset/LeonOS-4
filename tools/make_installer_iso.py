@@ -100,6 +100,7 @@ def main() -> int:
     parser.add_argument("--work-dir", default="build/install")
     parser.add_argument("--grub-efi-dir", default="/usr/lib/grub/x86_64-efi")
     parser.add_argument("--grub-config", default="boot/grub/installer.cfg")
+    parser.add_argument("--bios", action="store_true", help="Also include the BIOS GRUB boot path")
     args = parser.parse_args()
 
     out = ROOT / args.out
@@ -123,6 +124,16 @@ def main() -> int:
     create_boot_image(boot_image, boot_efi, work_dir / "efi-boot")
     stage_installer_tree(stage, boot_image, boot_efi, loader, kernel, middlelayer,
                          installer_root, grub_font, ROOT / args.grub_config)
+    if args.bios:
+        copy_file(ROOT / args.grub_config, stage / "boot/grub/grub.cfg")
+        bios_dir = Path("/usr/lib/grub/i386-pc")
+        core = work_dir / "bios-core.img"
+        run(["grub-mkimage", "-d", str(bios_dir), "-O", "i386-pc", "-p", "/boot/grub",
+             "-o", str(core), "biosdisk", "iso9660", "normal", "configfile", "multiboot2",
+             "search", "search_fs_file", "serial", "terminal", "all_video", "font", "gfxterm"])
+        # Keep the known EFI standalone image; the host grub-mkrescue EFI
+        # build may differ from the repository's validated GRUB modules.
+        (stage / "boot/grub/eltorito.img").write_bytes((bios_dir / "cdboot.img").read_bytes() + core.read_bytes())
     run([
         "xorriso",
         "-as",
@@ -133,6 +144,8 @@ def main() -> int:
         "-J",
         "-V",
         "LEONOS4INST",
+        *(("-b", "boot/grub/eltorito.img", "-no-emul-boot", "-boot-load-size", "4",
+           "-boot-info-table", "-eltorito-alt-boot") if args.bios else ()),
         "-e",
         "boot/efiboot.img",
         "-no-emul-boot",

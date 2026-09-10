@@ -14,6 +14,10 @@
 #include <leonos/auth.h>
 #include <leonos/elf_abi.h>
 #include <linux/resource.h>
+#include <linux/time.h>
+#include <linux/uio.h>
+#include <linux/capability.h>
+#include <linux/sem.h>
 
 #define SCHED_TASK_NAME_LEN 32u
 /* Initial task-table capacity; the scheduler grows beyond this value. */
@@ -64,7 +68,8 @@ struct task_file {
     uint32_t scm_gc_seen;
     uint32_t flags;
     uint32_t fd_flags;
-    uint32_t reserved;
+    uint32_t flock_type;
+    uint32_t kind;
     struct storage_node node;
     uint64_t offset;
     uint64_t aux;
@@ -73,6 +78,8 @@ struct task_file {
     struct storage_read_cursor read_cursor;
     char path[LEONOS_FS_PATH_LEN];
 };
+
+#define TASK_FILE_KIND_SIGNALFD 1u
 
 static inline struct task_file *task_file_description(struct task_file *file)
 {
@@ -266,6 +273,9 @@ struct task_credentials_state {
     uint32_t role;
     uint32_t session_id;
     uint32_t umask;
+    uint64_t cap_effective;
+    uint64_t cap_permitted;
+    uint64_t cap_inheritable;
     char username[LEONOS_AUTH_USERNAME_LEN];
     char home[LEONOS_AUTH_HOME_LEN];
     char cwd[LEONOS_FS_PATH_LEN];
@@ -298,6 +308,47 @@ struct task_rlimit_state {
     uint32_t references;
     struct linux_rlimit64 nofile;
     struct linux_rlimit64 as;
+    struct linux_rlimit64 sigpending;
+    struct linux_rlimit64 stack;
+};
+
+struct sysv_sem_array;
+struct sysv_sem_wait_list;
+struct sysv_sem_undo;
+struct sysv_sem_undo_list;
+struct task_sysv_sem_state {
+    struct task_sysv_sem_state *previous, *next;
+    struct sysv_sem_wait_list *list;
+    struct sysv_sem_array *array;
+    struct sysv_sem_undo *undo;
+    struct task *task;
+    struct linux_sembuf *ops;
+    struct linux_sembuf fast_ops[64];
+    uint64_t deadline;
+    uint32_t count, blocking, number;
+    int32_t pid, result;
+    bool alter, timed, completed;
+};
+
+struct sysv_msg_queue;
+struct sysv_message;
+struct task_sysv_msg_state {
+    struct task_sysv_msg_state *previous, *next;
+    struct sysv_msg_queue *queue;
+    struct sysv_message *message;
+    struct task *task;
+    uint64_t buffer, size;
+    int64_t type;
+    uint32_t flags, number;
+    int32_t result;
+    bool linked, completed;
+};
+
+struct task_mmsg_state {
+    uint64_t vector, timeout_pointer;
+    struct linux_timespec deadline, remaining;
+    uint32_t count, length, flags;
+    bool active, receiving;
 };
 
 struct task {
@@ -306,14 +357,25 @@ struct task {
     uint32_t tgid;
     uint64_t process_pending_signals;
     uint64_t *shared_process_pending;
+    struct kernel_sigqueue signal_queue, process_signal_queue;
+    struct kernel_sigqueue *shared_process_signal_queue;
     uint64_t alarm_deadline;
     uint64_t alarm_interval_ns;
     uint64_t alarm_last_expiry;
     struct task_address_space_state *shared_mm;
+    /* CLONE_VFORK links: the child points at its waiting parent and the
+     * parent points at the child whose exec/exit releases it.  Both fields
+     * are zero for ordinary processes and are maintained under
+     * scheduler_lock. */
+    struct task *vfork_parent;
+    struct task *vfork_child;
     struct task_fd_table_state *shared_files;
     struct task_fs_state *shared_fs;
     struct task_sighand_state *shared_sighand;
     uint64_t robust_list;
+    uint64_t rseq_area;
+    uint32_t rseq_len;
+    uint32_t rseq_sig;
     uint64_t signal_stack_base;
     uint64_t signal_stack_size;
     uint32_t signal_stack_flags;
@@ -323,6 +385,13 @@ struct task {
     int32_t nanosleep_clock;
     uint64_t sigwait_deadline;
     uint64_t sigwait_mask;
+    uint64_t signalfd_wait_mask;
+    bool signalfd_waiting;
+    void *signalfd_vectors;
+    struct iovec signalfd_fast_vectors[8];
+    uint64_t signalfd_vector_bytes;
+    uint32_t signalfd_vector_count, signalfd_read_flags;
+    uint32_t sigwait_active;
     struct task_posix_timer timers[SCHED_TASK_TIMER_MAX];
     struct kernel_wait_queue *waiting_queue;
     struct task_file *socket_receive_file;
@@ -333,11 +402,18 @@ struct task {
     uint64_t socket_receive_message;
     uint64_t socket_receive_control_capacity;
     uint32_t socket_receive_name_capacity;
+    uint32_t socket_receive_flags, socket_receive_path_length;
+    uint64_t socket_receive_name;
+    unsigned char socket_receive_path[111];
     struct task_file *syscall_file;
     int32_t syscall_fd;
     uint32_t syscall_file_number;
     uint64_t socket_io_deadline;
     bool socket_io_timed;
+    struct task_mmsg_state mmsg;
+    struct task_sysv_msg_state sysv_msg;
+    struct task_sysv_sem_state sysv_sem;
+    struct sysv_sem_undo_list *sysv_undo;
     struct task *futex_next;
     uint64_t futex_key;
     uint64_t futex_domain;
@@ -345,6 +421,11 @@ struct task {
     uint64_t futex_deadline;
     uint32_t futex_bitset;
     int32_t futex_state;
+#define SCHED_FUTEX_WAITV_MAX 128
+    uint32_t futex_waitv_count;
+    uint32_t futex_waitv_index;
+    uint64_t futex_waitv_domain[SCHED_FUTEX_WAITV_MAX];
+    uint64_t futex_waitv_key[SCHED_FUTEX_WAITV_MAX];
     union {
         struct task_process_state process;
         struct {
@@ -427,6 +508,9 @@ struct task {
             uint32_t role;
             uint32_t session_id;
             uint32_t umask;
+            uint64_t cap_effective;
+            uint64_t cap_permitted;
+            uint64_t cap_inheritable;
             char username[LEONOS_AUTH_USERNAME_LEN];
             char home[LEONOS_AUTH_HOME_LEN];
             char cwd[LEONOS_FS_PATH_LEN];
@@ -460,12 +544,14 @@ struct task {
         };
     };
     struct trap_frame frame;
+    uint64_t signal_fault_address;
     uint8_t fpu_state[512] __attribute__((aligned(16)));
     struct kernel_signal_action signal_actions[KERNEL_SIGNAL_ACTION_MAX];
     uint32_t running_cpu;
 };
 
 int sched_prepare_exec_current(struct task *task);
+void sched_signalfd_reconfigure(struct task *task);
 void sched_exec_replace_mm(struct task *task, const struct address_space *replacement);
 
 /* Inline storage is promoted on first sharing. All users of an ownership
@@ -484,6 +570,26 @@ static inline struct task_address_space_state *sched_task_mm(const struct task *
 static inline struct address_space *sched_task_as(const struct task *task)
 {
     return &sched_task_mm(task)->as;
+}
+
+/**
+ * @brief Reset shared-MM dumpability before a credential change becomes visible.
+ * @param task Task changing credentials under the execution lock.
+ * @param euid Next effective user ID.
+ * @param egid Next effective group ID.
+ * @param fsuid Next filesystem user ID.
+ * @param fsgid Next filesystem group ID.
+ * @param permitted Next permitted capability set.
+ * Linux commit_creds uses suid_dumpable, whose default is zero.
+ */
+static inline void task_credentials_prepare(struct task *task, uint32_t euid, uint32_t egid,
+                                            uint32_t fsuid, uint32_t fsgid, uint64_t permitted)
+{
+    if (task->euid != euid || task->egid != egid || task->fsuid != fsuid ||
+        task->fsgid != fsgid || (permitted & ~task->cap_permitted)) {
+        sched_task_mm(task)->nondumpable = true;
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+    }
 }
 
 static inline struct task_fd_table_state *sched_task_fds(const struct task *task)
@@ -523,9 +629,30 @@ static inline uint64_t sched_task_pending(const struct task *task)
     return task->pending_signals | *sched_task_process_pending(task);
 }
 
+static inline struct kernel_sigqueue *sched_task_process_signal_queue(struct task *task)
+{
+    return task->shared_process_signal_queue ? task->shared_process_signal_queue :
+        &task->process_signal_queue;
+}
+
 int64_t sched_clone_current(const struct trap_frame *frame, uint64_t flags,
                            uint64_t stack, uint64_t parent_tid,
                            uint64_t child_tid, uint64_t tls);
+/**
+ * @brief Native vfork(2): CLONE_VM|CLONE_VFORK|SIGCHLD through the shared
+ * clone path so the caller waits for the child's exec or final exit.
+ */
+int64_t sched_vfork_current(const struct trap_frame *frame);
+/**
+ * @brief True while task is the parent blocked in a CLONE_VFORK wait.
+ *
+ * The link is published and cleared under scheduler_lock. Scheduler selection
+ * also checks it, so an unrelated wakeup cannot return the parent to userspace.
+ */
+static inline bool sched_vfork_waiting(const struct task *task)
+{
+    return task && task->vfork_child != NULL;
+}
 void sched_exit_group(uint32_t tgid, uint64_t code);
 
 struct task_snapshot_info {
@@ -562,6 +689,13 @@ uint32_t sched_create_kernel_task(const char *name, uint64_t entry);
  */
 uint32_t sched_create_user_task(const char *name, uint64_t entry, uint64_t stack_top,
                                 uint32_t parent_pid, uint32_t flags);
+/**
+ * @brief Wake (or release) task's CLONE_VFORK child as exec/exit completes.
+ *
+ * Called on the child lifecycle paths after no further failure can occur.  The
+ * caller must not hold scheduler_lock.
+ */
+void sched_vfork_child_done(struct task *child);
 /**
  * @brief Duplicates the current user task using copy-on-write user mappings.
  * @param parent_frame Saved fork syscall frame; the child receives a copy with rax set to zero.
@@ -702,6 +836,18 @@ int sched_kill_user_task(uint32_t pid, uint64_t code);
  */
 int sched_signal_user_task(uint32_t pid, int signal_number);
 int sched_signal_user_process(uint32_t tgid, int signal_number);
+/** @brief Send to a thread group's shared queue, preserving the supplied siginfo. */
+int sched_signal_user_process_info(uint32_t tgid, int sig, const struct linux_siginfo *info);
+/** @brief Park a sigtimedwait caller, rechecking pending signals after publishing sleep. */
+void sched_signal_wait_current(uint64_t deadline);
+/** @brief Wake a blocked task pinned by the execution lock, retaining current CPU ownership. */
+void sched_wake_interruptible(struct task *task);
+/** @brief Share SEM_UNDO on CLONE_SYSVSEM; ordinary fork starts with no undo records. */
+int task_sysv_sem_clone(struct task *parent, struct task *child, uint64_t flags);
+/** @brief Apply the final owner's undo adjustments on exit and release its records. */
+void task_sysv_sem_exit(struct task *task);
+/** @brief Finish interruptible semaphore waits before a group stop. */
+void task_sysv_sem_stop(struct task *task);
 void sched_signal_job_control(uint32_t tgid, int signal_number);
 void sched_signal_discard(struct task *task, int signal_number);
 uint32_t sched_alarm_task(struct task *task, uint32_t seconds);

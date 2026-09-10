@@ -6,14 +6,31 @@
 /** @brief Returns the on-disk byte length of an ext2 inode. */
 static uint64_t ext2_inode_size(const struct ext2_inode *inode)
 {
-    return (uint64_t)inode->size_lo | ((uint64_t)inode->size_high << 32);
+    return (uint64_t)inode->size_lo |
+        ((inode->mode & EXT2_S_IFMT) == EXT2_S_IFREG ? (uint64_t)inode->size_high << 32 : 0);
 }
 
 /** @brief Writes a bounded 64-bit file size back to a classic ext2 inode. */
 static void ext2_set_inode_size(struct ext2_inode *inode, uint64_t size)
 {
     inode->size_lo = (uint32_t)size;
-    inode->size_high = (uint32_t)(size >> 32);
+    if ((inode->mode & EXT2_S_IFMT) == EXT2_S_IFREG) inode->size_high = (uint32_t)(size >> 32);
+}
+
+/** @brief Distinguishes inline symlink text from data block pointers, excluding xattrs. */
+static int ext2_fast_symlink(const struct ext2_inode *inode)
+{
+    uint32_t ea_blocks = inode->file_acl ? g_storage.ext2_block_size / 512u : 0;
+    return (inode->mode & EXT2_S_IFMT) == EXT2_S_IFLNK && inode->blocks_512 == ea_blocks;
+}
+
+/** @brief Maps the inode kind to the optional ext2 directory entry type. */
+static uint8_t ext2_dirent_type(const struct storage_node *node)
+{
+    if (node->type == LEONOS_FS_TYPE_DIR) return EXT2_FT_DIR;
+    if (node->type == LEONOS_FS_TYPE_SOCKET) return EXT2_FT_SOCK;
+    if (node->type == LEONOS_FS_TYPE_SYMLINK) return EXT2_FT_SYMLINK;
+    return EXT2_FT_REG_FILE;
 }
 
 /* A virtual AHCI device can reject a multi-sector DMA command while accepting
@@ -109,8 +126,7 @@ static int ext2_read_block(uint32_t block, void *buffer)
 static int ext2_write_block(uint32_t block, const void *buffer)
 {
     uint32_t sectors;
-    if (!buffer || !g_storage.ext2_block_size || block >= g_storage.ext2_blocks_count ||
-        g_storage.kind == STORAGE_VOLUME_RAM) {
+    if (!buffer || !g_storage.ext2_block_size || block >= g_storage.ext2_blocks_count) {
         return -30;
     }
     sectors = g_storage.ext2_block_size / SECTOR_SIZE;
@@ -223,6 +239,7 @@ static int ext2_write_inode(uint32_t number, const struct ext2_inode *in)
 static uint32_t ext2_node_type(const struct ext2_inode *inode)
 {
     if ((inode->mode & EXT2_S_IFMT) == LINUX_S_IFSOCK) return LEONOS_FS_TYPE_SOCKET;
+    if ((inode->mode & EXT2_S_IFMT) == EXT2_S_IFLNK) return LEONOS_FS_TYPE_SYMLINK;
     return (inode->mode & EXT2_S_IFMT) == EXT2_S_IFDIR ? LEONOS_FS_TYPE_DIR : LEONOS_FS_TYPE_FILE;
 }
 
@@ -248,7 +265,15 @@ static void ext2_fill_node(uint32_t ino, const struct ext2_inode *inode,
 static int ext2_get_block(struct ext2_inode *inode, uint32_t index,
                           uint8_t create, uint32_t *out_block);
 static int ext2_allocate_block(uint32_t *out_block);
+static int ext2_allocate_inode(uint8_t directory, uint32_t *out_inode);
+static int ext2_release_inode(uint32_t inode, uint8_t directory);
+static int ext2_add_dir_entry(uint32_t directory_ino, const char *name,
+                              uint32_t child_ino, uint8_t file_type);
 static int ext2_dirent_is_acl_metadata(const struct ext2_dirent *entry);
+static int ext2_write_inode_range(uint32_t inode_no, struct ext2_inode *inode,
+                                  uint64_t offset, const void *buffer, uint32_t len);
+static int ext2_destroy_inode(uint32_t inode_no, uint8_t directory);
+static int ext2_release_trailing_blocks(struct ext2_inode *inode, uint32_t keep_blocks);
 
 /** @brief Finds a named directory entry in an ext2 directory inode. */
 static int ext2_find_in_dir(uint32_t directory_ino, const char *name,
@@ -294,8 +319,6 @@ static int ext2_find_in_dir(uint32_t directory_ino, const char *name,
                 for (i = 0; i < entry->name_len; ++i) {
                     char a = entry->name[i];
                     char b = name[i];
-                    if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
-                    if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
                     if (a != b) { match = 0; break; }
                 }
                 if (match) {
@@ -365,7 +388,8 @@ static int ext2_read_node(const struct storage_node *node, uint64_t offset,
     uint32_t done = 0;
     int ret;
     if (out_read) *out_read = 0;
-    if (!node || !buffer || node->type != LEONOS_FS_TYPE_FILE) return -22;
+    if (!node || !buffer || (node->type != LEONOS_FS_TYPE_FILE &&
+                             node->type != LEONOS_FS_TYPE_SYMLINK)) return -22;
     ret = ext2_read_inode(node->first_cluster, &inode);
     if (ret < 0) {
         if (ret != -LEONOS_EAGAIN) {
@@ -376,6 +400,12 @@ static int ext2_read_node(const struct storage_node *node, uint64_t offset,
     }
     if (offset >= ext2_inode_size(&inode)) return 0;
     if (len > ext2_inode_size(&inode) - offset) len = (uint32_t)(ext2_inode_size(&inode) - offset);
+    if (ext2_fast_symlink(&inode)) {
+        if (ext2_inode_size(&inode) >= sizeof(inode.block)) return -5;
+        storage_memcpy(dst, (const uint8_t *)inode.block + offset, len);
+        if (out_read) *out_read = len;
+        return 0;
+    }
     while (done < len) {
         uint32_t logical = (uint32_t)((offset + done) / g_storage.ext2_block_size);
         uint32_t block_offset = (uint32_t)((offset + done) % g_storage.ext2_block_size);
@@ -408,6 +438,86 @@ static int ext2_read_node(const struct storage_node *node, uint64_t offset,
     }
     if (out_read) *out_read = done;
     return 0;
+}
+
+/** @brief Reads link text without a terminating NUL or following its target. */
+static int ext2_symlink_read(const struct storage_node *node, char *buffer,
+                             uint32_t capacity, uint32_t *out_len)
+{
+    struct ext2_inode inode;
+    uint32_t length;
+    int ret;
+    if (out_len) *out_len = 0;
+    if (!node || node->type != LEONOS_FS_TYPE_SYMLINK || !buffer || !capacity)
+        return -22;
+    ret = ext2_read_inode(node->first_cluster, &inode);
+    if (ret < 0) return ret;
+    length = inode.size_lo;
+    if ((inode.mode & EXT2_S_IFMT) != EXT2_S_IFLNK) return -22;
+    if (length >= g_storage.ext2_block_size ||
+        (ext2_fast_symlink(&inode) && length >= sizeof(inode.block))) return -5;
+    if (length > capacity) length = capacity;
+    if (ext2_fast_symlink(&inode)) {
+        storage_memcpy(buffer, inode.block, length);
+    } else {
+        struct storage_node data = *node;
+        uint32_t got = 0;
+        ret = ext2_read_node(&data, 0, buffer, length, &got);
+        if (ret < 0) return ret;
+        length = got;
+    }
+    if (out_len) *out_len = length;
+    return 0;
+}
+
+/** @brief Creates a fast or block-backed ext2 symlink, rolling back failed allocation. */
+static int ext2_symlink(const char *target, const char *path)
+{
+    char parent_path[LEONOS_FS_PATH_LEN], name[LEONOS_FS_NAME_LEN];
+    struct storage_node parent, existing;
+    struct ext2_inode inode;
+    uint32_t inode_no, length;
+    int ret;
+    if (!target || !path) return -22;
+    length = storage_strlen(target);
+    if (!length) return -2;
+    if (length >= g_storage.ext2_block_size) return -36;
+    ret = storage_parent_path(path, parent_path, sizeof(parent_path), name, sizeof(name));
+    if (ret < 0) return ret;
+    ret = ext2_lookup_path(parent_path, &parent);
+    if (ret < 0) return ret;
+    if (parent.type != LEONOS_FS_TYPE_DIR) return -20;
+    ret = ext2_lookup_path(path, &existing);
+    if (ret == 0) return -17;
+    if (ret != -2) return ret;
+    ret = ext2_allocate_inode(0, &inode_no);
+    if (ret < 0) return ret;
+    storage_memzero(&inode, sizeof(inode));
+    inode.mode = EXT2_S_IFLNK | 0777u;
+    inode.links_count = 1;
+    ext2_set_inode_size(&inode, length);
+    if (length < sizeof(inode.block)) {
+        storage_memcpy(inode.block, target, length + 1);
+    } else {
+        ret = ext2_write_inode_range(inode_no, &inode, 0, target, length + 1);
+        if (ret < 0) goto discard;
+        ext2_set_inode_size(&inode, length);
+    }
+    ret = ext2_write_inode(inode_no, &inode);
+    if (ret < 0) goto discard;
+    ret = ext2_add_dir_entry(parent.first_cluster, name, inode_no, EXT2_FT_SYMLINK);
+    if (ret < 0) {
+        (void)ext2_destroy_inode(inode_no, 0);
+        return ret;
+    }
+    storage_cache_invalidate();
+    return 0;
+discard:
+    if (!ext2_fast_symlink(&inode) && ext2_release_trailing_blocks(&inode, 0) < 0)
+        return ret;
+    storage_memzero(&inode, sizeof(inode));
+    if (ext2_write_inode(inode_no, &inode) == 0) (void)ext2_release_inode(inode_no, 0);
+    return ret;
 }
 
 /** @brief Allocates an ext2 data block by setting a free bit in a group bitmap. */
@@ -624,7 +734,8 @@ static int ext2_mount(void)
     uint32_t block_size;
     uint64_t groups;
     int ret;
-    if (!g_storage.ext2_start_lba || g_storage.ext2_sector_count < 8u) return -2;
+    if ((!g_storage.ext2_start_lba && g_storage.kind != STORAGE_VOLUME_RAM) ||
+        g_storage.ext2_sector_count < 8u) return -2;
     ret = storage_read_sectors(g_storage.ext2_start_lba, 8u, storage_scratch);
     if (ret < 0) return ret;
     if (super->magic != EXT2_SUPER_MAGIC || super->log_block_size > 2u ||
@@ -1301,8 +1412,10 @@ static int ext2_destroy_inode(uint32_t inode_no, uint8_t directory)
     struct ext2_inode inode;
     int ret = ext2_read_inode(inode_no, &inode);
     if (ret < 0) return ret;
-    ret = ext2_release_trailing_blocks(&inode, 0);
-    if (ret < 0) return ret;
+    if (!ext2_fast_symlink(&inode)) {
+        ret = ext2_release_trailing_blocks(&inode, 0);
+        if (ret < 0) return ret;
+    }
     storage_memzero(&inode, sizeof(inode));
     ret = ext2_write_inode(inode_no, &inode);
     if (ret < 0) return ret;
@@ -1328,9 +1441,66 @@ static int ext2_unlink(const char *path)
     if (node.type == LEONOS_FS_TYPE_DIR) return -21;
     ret = ext2_remove_dir_entry(parent.first_cluster, name, &child, 0);
     if (ret < 0) return ret;
-    ret = ext2_destroy_inode(child, 0);
+    {
+        struct ext2_inode inode;
+        ret = ext2_read_inode(child, &inode);
+        if (ret < 0) return ret;
+        if (inode.links_count > 1) {
+            --inode.links_count;
+            ret = ext2_write_inode(child, &inode);
+        } else {
+            ret = ext2_destroy_inode(child, 0);
+        }
+    }
     if (ret == 0) storage_cache_invalidate();
     return ret;
+}
+
+/**
+ * @brief Creates a second directory entry for an existing ext2 regular file.
+ *
+ * Directory references are tracked by links_count. Open inode references still
+ * need separate retention when the last directory entry is removed.
+ */
+static int ext2_link(const char *old_path, const char *new_path)
+{
+    char old_parent_path[LEONOS_FS_PATH_LEN], old_name[LEONOS_FS_NAME_LEN];
+    char new_parent_path[LEONOS_FS_PATH_LEN], new_name[LEONOS_FS_NAME_LEN];
+    struct storage_node old_parent, new_parent, node, existing;
+    struct ext2_inode inode;
+    int ret;
+    ret = storage_parent_path(old_path, old_parent_path, sizeof(old_parent_path),
+                              old_name, sizeof(old_name));
+    if (ret < 0) return ret;
+    ret = storage_parent_path(new_path, new_parent_path, sizeof(new_parent_path),
+                              new_name, sizeof(new_name));
+    if (ret < 0) return ret;
+    ret = ext2_lookup_path(old_parent_path, &old_parent);
+    if (ret < 0) return ret;
+    ret = ext2_lookup_path(new_parent_path, &new_parent);
+    if (ret < 0) return ret;
+    if (old_parent.volume_id != new_parent.volume_id) return -18;
+    ret = ext2_lookup_path(old_path, &node);
+    if (ret < 0) return ret;
+    if (node.type == LEONOS_FS_TYPE_DIR) return -31;
+    ret = ext2_lookup_path(new_path, &existing);
+    if (ret == 0) return -17;
+    if (ret != -2) return ret;
+    ret = ext2_read_inode(node.first_cluster, &inode);
+    if (ret < 0) return ret;
+    if (inode.links_count >= 32000u)
+        return -31;
+    ret = ext2_add_dir_entry(new_parent.first_cluster, new_name, node.first_cluster,
+                             ext2_dirent_type(&node));
+    if (ret < 0) return ret;
+    ++inode.links_count;
+    ret = ext2_write_inode(node.first_cluster, &inode);
+    if (ret < 0) {
+        (void)ext2_remove_dir_entry(new_parent.first_cluster, new_name, 0, 0);
+        return ret;
+    }
+    storage_cache_invalidate();
+    return 0;
 }
 
 /**
@@ -1384,7 +1554,7 @@ static int ext2_rename(const char *old_path, const char *new_path)
     if (ret < 0) return ret;
     ret = storage_parent_path(new_path, new_parent_path, sizeof(new_parent_path), new_name, sizeof(new_name));
     if (ret < 0) return ret;
-    if (!storage_text_eq_ci(old_parent_path, new_parent_path)) return -22;
+    if (!storage_text_eq(old_parent_path, new_parent_path)) return -22;
     ret = ext2_lookup_path(old_parent_path, &old_parent);
     if (ret < 0) return ret;
     ret = ext2_lookup_path(new_parent_path, &new_parent);
@@ -1400,20 +1570,19 @@ static int ext2_rename(const char *old_path, const char *new_path)
             ret = ext2_dir_is_empty(existing.first_cluster);
             if (ret <= 0) return ret < 0 ? ret : -39;
         }
-        type = node.type == LEONOS_FS_TYPE_DIR ? EXT2_FT_DIR :
-            node.type == LEONOS_FS_TYPE_SOCKET ? EXT2_FT_SOCK : EXT2_FT_REG_FILE;
+        type = ext2_dirent_type(&node);
         ret = ext2_change_dir_entry(new_parent.first_cluster, new_name, 0, 0,
                                     node.first_cluster, type);
         if (ret < 0) return ret;
         ret = ext2_remove_dir_entry(old_parent.first_cluster, old_name, &child, 0);
         if (ret < 0) {
             (void)ext2_change_dir_entry(new_parent.first_cluster, new_name, 0, 0,
-                                       existing.first_cluster, type);
+                                       existing.first_cluster, ext2_dirent_type(&existing));
             return ret;
         }
         struct ext2_inode replaced;
         ret = ext2_read_inode(existing.first_cluster, &replaced);
-        if (!ret && existing.type == LEONOS_FS_TYPE_FILE && replaced.links_count > 1) {
+        if (!ret && existing.type != LEONOS_FS_TYPE_DIR && replaced.links_count > 1) {
             --replaced.links_count;
             ret = ext2_write_inode(existing.first_cluster, &replaced);
         } else if (!ret) ret = ext2_destroy_inode(existing.first_cluster, existing.type == LEONOS_FS_TYPE_DIR);
@@ -1429,8 +1598,7 @@ static int ext2_rename(const char *old_path, const char *new_path)
         return ret;
     }
     if (ret != -2) return ret;
-    type = node.type == LEONOS_FS_TYPE_DIR ? EXT2_FT_DIR :
-        node.type == LEONOS_FS_TYPE_SOCKET ? EXT2_FT_SOCK : EXT2_FT_REG_FILE;
+    type = ext2_dirent_type(&node);
     ret = ext2_add_dir_entry(new_parent.first_cluster, new_name, node.first_cluster, type);
     if (ret < 0) return ret;
     ret = ext2_remove_dir_entry(old_parent.first_cluster, old_name, &child, 0);

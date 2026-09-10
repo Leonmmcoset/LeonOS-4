@@ -15,6 +15,11 @@ void input_evdev_release(uint32_t kind, uint64_t token, uint32_t pid)
 { (void)kind; (void)token; (void)pid; }
 uint32_t smp_current_cpu(void) { return 0; }
 void pty_reap_hungup(uint32_t id) { (void)id; }
+void kernel_spin_init(struct kernel_spinlock *lock) { lock->state = 0; }
+void kernel_spin_lock_irqsave(struct kernel_spinlock *lock, uint64_t *flags)
+{ assert(!lock->state); lock->state = 1; *flags = 0; }
+void kernel_spin_unlock_irqrestore(struct kernel_spinlock *lock, uint64_t flags)
+{ (void)flags; assert(lock->state == 1); lock->state = 0; }
 
 int main(void)
 {
@@ -24,10 +29,15 @@ int main(void)
     struct task_file *slot;
     assert(task_allocate_fd(task, 0, &slot) == 3);
     slot->offset = 123;
+    slot->kind = TASK_FILE_KIND_SIGNALFD;
+    slot->aux = 1ULL << 35;
     assert(task_duplicate_file_fd(task, 3, 100, 1) == 100);
     assert(task_dup2_fd(task, 100, 700) == 700);
     assert(task_file_for_fd(task, 100) == task_file_for_fd(task, 700));
     assert(task_file_for_fd(task, 700)->offset == 123);
+    assert(task_file_for_fd(task, 700)->kind == TASK_FILE_KIND_SIGNALFD);
+    task_file_for_fd(task, 100)->aux = 1ULL << 34;
+    assert(task_file_for_fd(task, 700)->aux == (1ULL << 34));
     assert(task_descriptor_for_fd(task, 100)->fd_flags == 1);
     assert(task_descriptor_for_fd(task, 700)->fd_flags == 0);
     assert(task_file_for_fd(task, 3)->references == 3);
@@ -40,6 +50,11 @@ int main(void)
     assert(task_dup2_fd(task, 100, 900) == 900);
     assert(task_dup2_fd(task, 999, 900) == -LEONOS_EBADF);
     assert(task_file_for_fd(task, 3)->references == 4);
+    struct task waiter = {.pid = 777, .state = TASK_BLOCKED};
+    leonos_flocks[0] = (struct leonos_flock_entry){.used = 1,
+        .type = LEONOS_FLOCK_EX, .owner = task_file_for_fd(task, 3)};
+    kernel_wait_queue_init(&leonos_flocks[0].waiters);
+    assert(kernel_wait_queue_add(&leonos_flocks[0].waiters, &waiter) == 0);
     sched_task_limits(task)->nofile.rlim_cur = 4;
     assert(task_allocate_fd(task, 0, &slot) == -LEONOS_EMFILE);
     assert(task_dup2_fd(task, 900, 900) == 900);
@@ -48,7 +63,19 @@ int main(void)
     task_discard_file_fd(task, 0);
     assert(task_allocate_fd(task, 0, &slot) == 0);
     task_discard_file_fd(task, 0);
-    for (int fd = 3; fd < 1024; ++fd) task_discard_file_fd(task, fd);
+    for (int fd = 3; fd < 1024; ++fd) {
+        task_discard_file_fd(task, fd);
+        if (fd < 900) assert(leonos_flocks[0].used && waiter.waiting_queue);
+    }
+    assert(!leonos_flocks[0].used && !waiter.waiting_queue && !leonos_flocks[0].waiters.count);
+    assert(task_allocate_fd(task, 0, &slot) == 0 && !slot->kind);
+    task_discard_file_fd(task, 0);
+    task->signalfd_vectors = kernel_malloc(9 * sizeof(struct iovec));
+    assert(task->signalfd_vectors);
+    task->signalfd_waiting = true;
+    task->signalfd_wait_mask = UINT64_MAX;
+    task_release_syscall_file(task);
+    assert(!task->signalfd_vectors && !task->signalfd_waiting && !task->signalfd_wait_mask);
     sched_task_file_release(task);
     free(task);
     puts("PASS actual fd table: growth, shared OFD, failure rollback, stdio reuse, limit lowering");

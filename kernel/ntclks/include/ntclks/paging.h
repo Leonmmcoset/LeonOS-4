@@ -7,17 +7,19 @@
 
 #include <ntclks/types.h>
 
-#define NTCLKS_USER_BASE 0x0000000000400000ULL
+#define NTCLKS_USER_BASE 0x0000000000200000ULL
 /* Keep the user interval below the kernel's low identity-map boundary.  The
- * previous 108 MiB window made large applications and mmap users collide;
- * 256 MiB leaves separate heap, mmap, file-map, and stack regions while still
- * allowing the 512 MiB legacy VM configuration to boot. */
-#define NTCLKS_USER_TOP  0x0000000010000000ULL
+ * 512 MiB window leaves separate heap, mmap, file-map, and stack regions while
+ * keeping kernel physical pages outside the low user CR3 replacement range. */
+#define NTCLKS_USER_TOP  0x0000000020000000ULL
 #define NTCLKS_USER_MMAP_BASE 0x0000000008000000ULL
 #define NTCLKS_USER_HEAP_BASE 0x0000000001000000ULL
 #define NTCLKS_USER_HEAP_LIMIT NTCLKS_USER_MMAP_BASE
 #define NTCLKS_USER_STACK_PAGES 16u
-#define NTCLKS_USER_STACK_MAX_PAGES 2048u
+/* Native user-stack growth window: 64 MiB, leaving the mmap arena below.
+ * Linux's default soft RLIMIT_STACK is 8 MiB and its hard default is
+ * RLIM_INFINITY; the window is a platform bound, not a rlimit substitute. */
+#define NTCLKS_USER_STACK_MAX_PAGES 16384u
 /* Every address space retains this supervisor-only alias of the kernel's
  * first 16 GiB physical direct map.  Kernel code that must access a boot
  * module after a user CR3 has replaced part of the low identity map uses this

@@ -187,15 +187,32 @@ static int check_node(const struct task *task, const char *path,
     return (((value.mode >> shift) & access) == access) ? 0 : -LEONOS_EACCES;
 }
 
-/* Check each directory before consuming a component. Lexical normalization
- * alone would let "private/../public" bypass private's search permission. */
-int fs_permissions_resolve(const struct task *task, const char *base, const char *input,
-                           char *out, uint32_t cap, bool real_ids)
+/**
+ * @brief Resolves a pathname with Linux link ordering and directory search checks.
+ * @param task Credentials or NULL for root.
+ * @param base Absolute starting directory for relative input.
+ * @param input Kernel pathname; a missing last component is allowed for creation.
+ * @param out Non-aliasing output buffer for the absolute path.
+ * @param cap Output buffer size including NUL.
+ * @param real_ids Whether to use real credentials.
+ * @param flags Final component policy, FS_LOOKUP_FOLLOW or FS_LOOKUP_PARENT.
+ * @return Zero or a negative errno, including ELOOP after 40 links.
+ */
+int fs_permissions_resolve_flags(const struct task *task, const char *base, const char *input,
+                                 char *out, uint32_t cap, bool real_ids, uint32_t flags)
 {
+    char pending[LEONOS_FS_PATH_LEN], target[LEONOS_FS_PATH_LEN];
+    uint32_t links = 0, input_len = 0;
     if (!input || !*input) return -LEONOS_ENOENT;
     if (!out || cap < 2) return -LEONOS_ENAMETOOLONG;
     const char *start = input[0] == '/' ? "/" : base;
     if (!start || *start != '/') return -LEONOS_EINVAL;
+    for (; input[input_len]; ++input_len) {
+        if (input_len + 1 >= sizeof(pending)) return -LEONOS_ENAMETOOLONG;
+        pending[input_len] = input[input_len];
+    }
+    pending[input_len] = 0;
+    input = pending;
     uint32_t length = 0;
     while (start[length]) {
         if (length + 1 >= cap) return -LEONOS_ENAMETOOLONG;
@@ -215,6 +232,19 @@ int fs_permissions_resolve(const struct task *task, const char *base, const char
         const char *component = input;
         while (*input && *input != '/') ++input;
         uint32_t size = (uint32_t)(input - component);
+        const char *rest = input;
+        while (*rest == '/') ++rest;
+        bool last = !*rest;
+        uint32_t parent_length = length;
+        if (last && (flags & FS_LOOKUP_PARENT)) {
+            if (size >= LEONOS_FS_NAME_LEN || length + (length > 1) + size + (*input != 0) >= cap)
+                return -LEONOS_ENAMETOOLONG;
+            if (length > 1) out[length++] = '/';
+            for (uint32_t i = 0; i < size; ++i) out[length++] = component[i];
+            if (*input) out[length++] = '/';
+            out[length] = 0;
+            return 0;
+        }
         if (size == 1 && component[0] == '.') continue;
         if (size == 2 && component[0] == '.' && component[1] == '.') {
             while (length > 1 && out[length - 1] != '/') --length;
@@ -227,8 +257,40 @@ int fs_permissions_resolve(const struct task *task, const char *base, const char
         if (length > 1) out[length++] = '/';
         for (uint32_t i = 0; i < size; ++i) out[length++] = component[i];
         out[length] = 0;
+        ret = lookup(out, &node);
+        if (ret == -LEONOS_ENOENT && last && !*input) return 0;
+        if (ret < 0) return ret;
+        if (node.type == LEONOS_FS_TYPE_SYMLINK &&
+            (!last || *input || (flags & FS_LOOKUP_FOLLOW))) {
+            uint32_t got = 0, suffix = 0;
+            if (++links > 40) return -LINUX_ELOOP;
+            ret = storage_readlink(out, target, sizeof(target), &got);
+            if (ret < 0) return ret;
+            if (!got) return -LEONOS_ENOENT;
+            while (input[suffix]) ++suffix;
+            if (got + suffix >= sizeof(pending)) return -LEONOS_ENAMETOOLONG;
+            /* Link substitution can move the overlapping suffix in either direction. */
+            if (pending + got < input) {
+                for (uint32_t i = 0; i <= suffix; ++i) pending[got + i] = input[i];
+            } else {
+                for (uint32_t i = suffix + 1; i > 0; --i) pending[got + i - 1] = input[i - 1];
+            }
+            for (uint32_t i = 0; i < got; ++i) pending[i] = target[i];
+            length = target[0] == '/' ? 1 : parent_length;
+            out[length] = 0;
+            input = pending;
+        } else if (*input && node.type != LEONOS_FS_TYPE_DIR) {
+            return -LEONOS_ENOTDIR;
+        }
     }
     return 0;
+}
+
+/** @brief Resolves a pathname following the final symlink with the caller's credentials. */
+int fs_permissions_resolve(const struct task *task, const char *base, const char *input,
+                           char *out, uint32_t cap, bool real_ids)
+{
+    return fs_permissions_resolve_flags(task, base, input, out, cap, real_ids, FS_LOOKUP_FOLLOW);
 }
 
 int fs_permissions_search(const struct task *task, const char *path, bool real_ids)
@@ -286,7 +348,8 @@ int fs_permissions_create(const struct task *task, const char *path,
 {
     struct leonos_permissions value = {mode & 07777u, task ? task->euid : 0, task ? task->egid : 0};
     if (node->type == LEONOS_FS_TYPE_SOCKET) value.mode |= LINUX_S_IFSOCK;
-    value.mode &= ~(task ? (*sched_task_umask(task)) : 0022u);
+    if (node->type == LEONOS_FS_TYPE_SYMLINK) value.mode = 0777u;
+    else value.mode &= ~(task ? (*sched_task_umask(task)) : 0022u);
     char parent[LEONOS_FS_PATH_LEN];
     int ret = copy_path(parent, path);
     if (ret < 0) return ret;
@@ -320,6 +383,7 @@ int fs_permissions_chmod(const struct task *task, const char *path,
     ret = fs_permissions_get(path, node, &value);
     if (ret < 0) return ret;
     if (task && task->euid && task->euid != value.uid) return -LEONOS_EPERM;
+    if (node->type == LEONOS_FS_TYPE_SYMLINK) return -LEONOS_EOPNOTSUPP;
     value.mode = (value.mode & LINUX_S_IFMT) | (mode & 07777u);
     if (task && task->euid && !task_in_group(task, value.gid, false)) value.mode &= ~02000u;
     return store(path, node, &value);

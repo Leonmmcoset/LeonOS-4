@@ -1870,6 +1870,85 @@ int storage_rename(const char *old_path, const char *new_path)
     return 0;
 }
 
+int storage_link(const char *old_path, const char *new_path)
+{
+    char old_resolved[LEONOS_FS_PATH_LEN];
+    char new_resolved[LEONOS_FS_PATH_LEN];
+    char old_backend_path[LEONOS_FS_PATH_LEN];
+    char new_backend_path[LEONOS_FS_PATH_LEN];
+    struct storage_volume *old_volume;
+    struct storage_volume *new_volume;
+    int ret;
+    if (!old_path || !new_path || !storage_ready()) return -22;
+    ret = storage_resolve_path("/", old_path, old_resolved, sizeof(old_resolved));
+    if (ret < 0) return ret;
+    ret = storage_resolve_path("/", new_path, new_resolved, sizeof(new_resolved));
+    if (ret < 0) return ret;
+    ret = storage_route_path(old_resolved, &old_volume, old_backend_path,
+                             sizeof(old_backend_path));
+    if (ret < 0) return ret;
+    ret = storage_route_path(new_resolved, &new_volume, new_backend_path,
+                             sizeof(new_backend_path));
+    if (ret < 0) return ret;
+    if (old_volume->volume_id != new_volume->volume_id) return -18;
+    ret = storage_select_volume(old_volume->volume_id);
+    if (ret < 0) return ret;
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_EXT2) return -95;
+    storage_begin_mutation();
+    return ext2_link(old_backend_path, new_backend_path);
+}
+
+int storage_symlink(const char *target, const char *path)
+{
+    char resolved[LEONOS_FS_PATH_LEN];
+    char backend_path[LEONOS_FS_PATH_LEN];
+    struct storage_volume *volume;
+    struct storage_volume *previous;
+    uint64_t irq_flags;
+    int ret;
+    if (!target || !path || !storage_ready()) return -22;
+    kernel_execution_lock_irqsave(&irq_flags);
+    previous = g_active_volume;
+    ret = storage_resolve_path("/", path, resolved, sizeof(resolved));
+    if (ret < 0) goto out;
+    ret = storage_route_path(resolved, &volume, backend_path, sizeof(backend_path));
+    if (ret < 0) goto out;
+    ret = storage_select_volume(volume->volume_id);
+    if (ret < 0) goto out;
+    if (g_storage.filesystem != STORAGE_FILESYSTEM_EXT2) { ret = -1; goto out; }
+    storage_begin_mutation();
+    ret = ext2_symlink(target, backend_path);
+    if (!ret) {
+        struct leonos_time_info now;
+        struct storage_node node;
+        if (time_wall_clock(&now) == 0 && ext2_lookup_path(backend_path, &node) == 0)
+            ret = storage_inode_utimensat(&node, now.unix_seconds, now.unix_seconds, true, true);
+        if (ret < 0) (void)ext2_unlink(backend_path);
+    }
+out:
+    storage_restore_volume(previous);
+    kernel_execution_unlock_irqrestore(irq_flags);
+    return ret;
+}
+
+int storage_readlink(const char *path, char *buffer, uint32_t capacity, uint32_t *out_len)
+{
+    struct storage_node node;
+    struct storage_volume *previous;
+    uint64_t irq_flags;
+    int ret;
+    if (out_len) *out_len = 0;
+    if (!path || !buffer || !capacity) return -22;
+    kernel_execution_lock_irqsave(&irq_flags);
+    previous = g_active_volume;
+    ret = storage_lookup_path_unlocked(path, &node);
+    if (!ret && node.type != LEONOS_FS_TYPE_SYMLINK) ret = -22;
+    if (!ret) ret = ext2_symlink_read(&node, buffer, capacity, out_len);
+    storage_restore_volume(previous);
+    kernel_execution_unlock_irqrestore(irq_flags);
+    return ret;
+}
+
 int storage_list_dir(const char *path, struct leonos_dir_entry *entries,
                      uint32_t capacity, uint32_t *out_count)
 {

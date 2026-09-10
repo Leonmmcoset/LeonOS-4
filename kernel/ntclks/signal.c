@@ -9,11 +9,13 @@
 #include <ntclks/arch.h>
 #include <ntclks/futex.h>
 #include <ntclks/wait.h>
+#include <ntclks/lock.h>
 #include <ntclks/syscall.h>
 #include <ntclks/syscall_internal.h>
 #include <linux/signal.h>
 #include <linux/syscall.h>
 #include <linux/time.h>
+#include <linux/errno.h>
 #include <ntclks/time.h>
 
 static struct kernel_signal_action *signal_action(struct task *task, int sig)
@@ -124,8 +126,9 @@ int kernel_signal_set_action(struct task *task, int signal_number,
     slot->flags = flags;
     slot->restorer = restorer;
     slot->reserved = 0;
-    if (handler == 1) {
-        task->ignored_signals |= 1ULL << (uint32_t)(signal_number - 1);
+    if (handler == 1 || (!handler && kernel_signal_default_ignored(signal_number))) {
+        if (handler == 1) task->ignored_signals |= 1ULL << (uint32_t)(signal_number - 1);
+        else task->ignored_signals &= ~(1ULL << (uint32_t)(signal_number - 1));
         sched_signal_discard(task, signal_number);
     } else {
         task->ignored_signals &= ~(1ULL << (uint32_t)(signal_number - 1));
@@ -134,6 +137,19 @@ int kernel_signal_set_action(struct task *task, int signal_number,
 }
 
 int kernel_signal_queue_task(struct task *task, int signal_number)
+{
+    return kernel_signal_queue_task_info(task, signal_number, NULL);
+}
+
+/**
+ * @brief Queue siginfo or apply a default action to one live user thread.
+ * @param task Target thread; its lifetime must be held by the caller.
+ * @param signal_number Linux signal number, including zero for an existence probe.
+ * @param info Native signal payload, or NULL for a kernel-generated signal.
+ * @return Zero on success, negative errno for invalid target or exhausted RT queue.
+ */
+int kernel_signal_queue_task_info(struct task *task, int signal_number,
+                                  const struct linux_siginfo *info)
 {
     struct kernel_signal_action *action;
     uint64_t bit;
@@ -146,24 +162,32 @@ int kernel_signal_queue_task(struct task *task, int signal_number)
     action = signal_action(task, signal_number);
     if (signal_number == 18) signal_default_action(task, signal_number);
     if (signal_number >= 19 && signal_number <= 22)
-        task->pending_signals &= ~(1ULL << 17);
-
-    if (signal_number != 9 && signal_number != 19 && action && action->handler == 1) {
-        task->pending_signals &= ~bit;
-        return 0;
-    }
+        sched_signal_discard(task, 18);
 
     if (signal_number != 9 && signal_number != 19 &&
-        (task->blocked_signals & bit) != 0) {
-        task->pending_signals |= bit;
+        !((task->blocked_signals | task->sigwait_mask) & bit) && action &&
+        (action->handler == 1 || (!action->handler && kernel_signal_default_ignored(signal_number)))) {
         return 0;
     }
-    if (signal_number != 9 && signal_number != 19 && action &&
-        action->handler != 0 && action->handler != 1) {
-        task->pending_signals |= bit;
-        /* A blocked task must run before the return-to-user path can install
-         * the handler frame. STOPPED tasks stay stopped until SIGCONT. */
+
+    int result = kernel_signal_enqueue(task, false, signal_number, info);
+    if (result < 0) return result;
+    if (task->signalfd_waiting && task->state == TASK_BLOCKED && !sched_vfork_waiting(task)) {
+        task->wake_tick = 0;
+        task->state = TASK_READY;
+    }
+    if (signal_number != 9 && signal_number != 19 &&
+        (task->blocked_signals & bit) && !(task->sigwait_mask & bit)) {
+        return 0;
+    }
+    if (signal_number != 9 && signal_number != 19 &&
+        ((task->sigwait_mask & bit) || (action && action->handler > 1))) {
+        /* Linux wait_for_vfork_done() uses TASK_KILLABLE: a caught or blocked
+         * non-fatal signal stays pending while the parent waits for the
+         * child's exec/exit.  The completion path wakes the parent; the
+         * normal return-to-user path then delivers the handler. */
         if (task->state == TASK_BLOCKED) {
+            if (sched_vfork_waiting(task)) return 0;
             task->wake_tick = 0;
             task->wait_window_id = 0;
             task->state = TASK_READY;
@@ -171,36 +195,19 @@ int kernel_signal_queue_task(struct task *task, int signal_number)
         return 0;
     }
 
-    task->pending_signals |= bit;
-    signal_default_action(task, signal_number);
-    task->pending_signals &= ~bit;
-    return 0;
-}
-
-static int signal_copy_to_task(struct task *task, uint64_t base,
-                                const void *source, uint64_t size)
-{
-    if (base < NTCLKS_USER_BASE || base >= NTCLKS_USER_TOP ||
-        size > NTCLKS_USER_TOP - base) return -14;
-    for (uint64_t copied = 0; copied < size;) {
-        uint64_t address = base + copied;
-        if (!address_space_user_page_writable(sched_task_as(task), address) &&
-            !address_space_handle_cow_fault(sched_task_as(task), address)) return -14;
-        uint64_t phys = address_space_user_page_phys(sched_task_as(task), address);
-        uint64_t offset = address & 4095u;
-        uint64_t take = 4096u - offset;
-        if (!phys) return -14;
-        if (take > size - copied) take = size - copied;
-        __builtin_memcpy((void *)(uintptr_t)(NTCLKS_KERNEL_DIRECT_MAP_BASE + phys + offset),
-                         (const uint8_t *)source + copied, take);
-        copied += take;
+    if (sched_vfork_waiting(task)) {
+        int fatal = kernel_signal_fatal_pending(task);
+        if (fatal) signal_default_action(task, fatal);
+        return 0;
     }
+    kernel_signal_flush(task, false, bit);
+    signal_default_action(task, signal_number);
     return 0;
 }
 
 static int signal_setup_frame(struct task *task, int sig,
                               struct kernel_signal_action *action,
-                              struct trap_frame *frame)
+                              struct trap_frame *frame, const struct linux_siginfo *info)
 {
     if (!task || !frame || !action || !action->handler ||
         action->handler == 1 || !action->restorer) return -22;
@@ -235,24 +242,33 @@ static int signal_setup_frame(struct task *task, int sig,
     user_frame.uc.mask = task->sigsuspend_active
                                 ? task->sigsuspend_saved_mask
                                 : task->blocked_signals;
-    user_frame.info.signo = sig;
-    user_frame.info.code = 0;
+    user_frame.info = *info;
     if (task->restart_syscall) {
         uint64_t nr = task->restart_syscall - 1;
         bool sleeping = nr == __NR_nanosleep || nr == __NR_clock_nanosleep;
         bool interruptible = nr == __NR_read || nr == __NR_write || nr == __NR_readv ||
+            nr == __NR_preadv || nr == __NR_preadv2 || nr == __NR_pwritev || nr == __NR_pwritev2 ||
             nr == __NR_writev || nr == __NR_recvfrom || nr == __NR_sendto ||
             nr == __NR_recvmsg || nr == __NR_sendmsg || nr == __NR_accept ||
+            nr == __NR_recvmmsg || nr == __NR_sendmmsg ||
             nr == __NR_accept4 || nr == __NR_connect || nr == __NR_futex || nr == __NR_futex_wait ||
-            nr == __NR_poll || nr == __NR_select || nr == __NR_wait4 || sleeping;
+            nr == __NR_futex_waitv || nr == __NR_poll || nr == __NR_select ||
+            nr == __NR_wait4 || nr == __NR_rt_sigtimedwait ||
+            nr == __NR_msgsnd || nr == __NR_msgrcv ||
+            nr == __NR_semop || nr == __NR_semtimedop || sleeping;
         bool restart = (action->flags & LINUX_SA_RESTART) &&
-            nr != __NR_poll && nr != __NR_select && !sleeping &&
+            nr != __NR_msgsnd && nr != __NR_msgrcv &&
+            nr != __NR_semop && nr != __NR_semtimedop &&
+            nr != __NR_poll && nr != __NR_select && nr != __NR_rt_sigtimedwait && !sleeping &&
             !(nr == __NR_futex && frame->r10) && !task->socket_io_timed;
-        uint64_t received = task_socket_cancel_receive(task);
+        uint64_t received = task->socket_receive_done;
+        bool batch = task->mmsg.active;
+        int64_t batch_result = batch ? task_socket_mmsg_interrupt(task, received) : 0;
+        received = task_socket_cancel_receive(task);
         task_release_syscall_file(task);
-        if (received || (interruptible && !restart)) {
+        if (received || (batch && batch_result != -LINUX_EINTR) || (interruptible && !restart)) {
             frame->rip += 2;
-            frame->rax = received ? received : (uint64_t)-4LL;
+            frame->rax = batch ? (uint64_t)batch_result : received ? received : (uint64_t)-4LL;
             task->poll_deadline_ticks = 0;
         }
         if (sleeping) {
@@ -261,22 +277,27 @@ static int signal_setup_frame(struct task *task, int sig,
             struct linux_timespec remaining = {(int64_t)(ticks / NTCLKS_TICK_HZ),
                 (int64_t)((ticks % NTCLKS_TICK_HZ) * (1000000000ULL / NTCLKS_TICK_HZ))};
             if (task->nanosleep_remaining &&
-                signal_copy_to_task(task, task->nanosleep_remaining, &remaining, sizeof(remaining)) < 0)
+                user_copy_to_task(task, task->nanosleep_remaining, &remaining, sizeof(remaining)) < 0)
                 frame->rax = (uint64_t)-14LL;
             task->nanosleep_deadline = task->nanosleep_remaining = 0;
         }
         if (task->waiting_queue) kernel_wait_queue_remove(task->waiting_queue, task);
         if (nr == __NR_futex || nr == __NR_futex_wait) futex_cancel_wait(task);
+        if (nr == __NR_rt_sigtimedwait) {
+            task->sigwait_deadline = task->sigwait_mask = 0;
+            task->sigwait_active = 0;
+        }
         task->restart_syscall = 0;
     }
     signal_context_save(&user_frame.uc.context, frame);
+    user_frame.uc.context.cr2 = task->signal_fault_address;
     user_frame.uc.context.oldmask = task->blocked_signals;
     user_frame.uc.context.fpstate = fpbase;
     __builtin_memcpy(fpstate, task->fpu_state, sizeof(fpstate));
     /* FXSAVE's software-reserved tail must not advertise an XSAVE extension. */
     __builtin_memset(fpstate + 464, 0, sizeof(fpstate) - 464);
-    if (signal_copy_to_task(task, fpbase, fpstate, sizeof(fpstate)) < 0 ||
-        signal_copy_to_task(task, base, &user_frame, size) < 0) return -14;
+    if (user_copy_to_task(task, fpbase, fpstate, sizeof(fpstate)) < 0 ||
+        user_copy_to_task(task, base, &user_frame, size) < 0) return -14;
     if (task->signal_stack_flags & 0x80000000u) {
         task->signal_stack_size = 0;
         task->signal_stack_base = 0;
@@ -304,46 +325,90 @@ static int signal_setup_frame(struct task *task, int sig,
     return 0;
 }
 
-int kernel_signal_deliver_pending(struct task *task, struct trap_frame *frame)
+/** @brief Dequeue and install a frame while task lifetime and dispositions are serialized. */
+static int signal_deliver_pending_locked(struct task *task, struct trap_frame *frame)
 {
     struct kernel_signal_action *action;
-    uint64_t pending;
+    struct linux_siginfo info;
     int ret;
 
     if (!task || !frame || task->kind != TASK_KIND_USER ||
         task->state == TASK_EXITED) {
         return 0;
     }
-    /* Linux dequeues thread-directed signals before the process-wide queue. */
-    for (unsigned queue = 0; queue < 2; ++queue) {
-        uint64_t *source = queue ? sched_task_process_pending(task) : &task->pending_signals;
-        pending = *source & ~task->blocked_signals & KERNEL_SIGNAL_VALID_MASK;
-        for (int sig = 1; sig < LINUX_NSIG; ++sig) {
-            uint64_t bit = 1ULL << (uint32_t)(sig - 1);
-            if ((pending & bit) == 0) continue;
-            action = signal_action(task, sig);
-            if (!action || action->handler == 0 || action->handler == 1) {
-                /* A default/ignored signal that became unblocked must be applied
-                 * on the return path instead of lingering as pending. */
-                *source &= ~bit;
-                if (queue && sig == 14) sched_alarm_rearm(task);
-                if (!action || action->handler != 1) signal_default_action(task, sig);
-                if (task->state == TASK_EXITED || task->state == TASK_STOPPED) return 0;
-                continue;
-            }
-            ret = signal_setup_frame(task, sig, action, frame);
-            if (ret < 0) return ret;
-            *source &= ~bit;
-            if (queue && sig == 14) sched_alarm_rearm(task);
-            if ((action->flags & LINUX_SA_RESETHAND) != 0) {
-                action->handler = 0;
-                action->restorer = 0;
-                task->ignored_signals &= ~bit;
-            }
-            return 1;
+    if (sched_vfork_waiting(task)) {
+        int fatal = kernel_signal_fatal_pending(task);
+        if (fatal) signal_default_action(task, fatal);
+        return 0;
+    }
+    /* signalfd_dequeue checks its queue before signal_pending after a wakeup.
+     * Our parked syscall must regain control before return-to-user delivery. */
+    if (task->restart_syscall && task->signalfd_waiting && task->syscall_file &&
+        task->syscall_file->kind == TASK_FILE_KIND_SIGNALFD &&
+        (sched_task_pending(task) & task->syscall_file->aux)) return 0;
+    /* A direct delivery or RMID result precedes signal_pending in ipc/msg.c. */
+    if (task->restart_syscall && task->sysv_msg.completed) return 0;
+    if (task->restart_syscall && task_sysv_sem_ready(task)) return 0;
+    int sig;
+    while ((sig = kernel_signal_dequeue(task, ~(task->blocked_signals | task->sigwait_mask), &info))) {
+        uint64_t bit = 1ULL << (uint32_t)(sig - 1);
+        action = signal_action(task, sig);
+        if (!action || action->handler == 0 || action->handler == 1) {
+            if (!action || action->handler != 1) signal_default_action(task, sig);
+            if (task->state == TASK_EXITED || task->state == TASK_STOPPED) return 0;
+            continue;
         }
+        ret = signal_setup_frame(task, sig, action, frame, &info);
+        if (ret < 0) {
+            /* Linux force_sigsegv(): a broken signal stack must not silently
+             * discard the signal and return to the interrupted program. */
+            struct kernel_signal_action *fault = signal_action(task, 11);
+            if (sig == 11 || fault->handler == 1 || (task->blocked_signals & (1ULL << 10)))
+                fault->handler = 0;
+            task->blocked_signals &= ~(1ULL << 10);
+            task->sigwait_mask &= ~(1ULL << 10);
+            struct linux_siginfo failure = {.signo = 11, .code = LINUX_SI_KERNEL};
+            kernel_signal_enqueue(task, false, 11, &failure);
+            continue;
+        }
+        if ((action->flags & LINUX_SA_RESETHAND) != 0) {
+            action->handler = 0;
+            action->restorer = 0;
+            task->ignored_signals &= ~bit;
+        }
+        return 1;
     }
     return 0;
+}
+
+/**
+ * @brief Serialize return-to-user delivery against sigaction, exec and exit.
+ * @param task Thread whose pending queue and destination address space are used.
+ * @param frame Saved native x86-64 user register frame to update.
+ * @return One for a handler frame, zero for no handler, or a negative stack-copy error.
+ */
+int kernel_signal_deliver_pending(struct task *task, struct trap_frame *frame)
+{
+    uint64_t flags;
+    kernel_execution_lock_irqsave(&flags);
+    int result = signal_deliver_pending_locked(task, frame);
+    kernel_execution_unlock_irqrestore(flags);
+    return result;
+}
+
+void kernel_signal_force_fault(struct task *task, int sig, int code, uint64_t address)
+{
+    uint64_t flags, bit = 1ULL << (sig - 1);
+    kernel_execution_lock_irqsave(&flags);
+    struct kernel_signal_action *action = signal_action(task, sig);
+    if (action->handler == 1 || (task->blocked_signals & bit)) action->handler = 0;
+    task->blocked_signals &= ~bit;
+    task->sigwait_mask &= ~bit;
+    task->ignored_signals &= ~bit;
+    task->signal_fault_address = address;
+    struct linux_siginfo info = {.signo = sig, .code = code, .fields.fault.address = address};
+    kernel_signal_enqueue(task, false, sig, &info);
+    kernel_execution_unlock_irqrestore(flags);
 }
 
 int64_t kernel_signal_rt_sigreturn(struct task *task, struct trap_frame *frame)
@@ -401,6 +466,7 @@ void kernel_signal_reset_handlers(struct task *task)
     task->restart_syscall = 0;
     task->nanosleep_deadline = task->nanosleep_remaining = 0;
     task->sigwait_deadline = task->sigwait_mask = 0;
+    task->sigwait_active = 0;
     for (int sig = 1; sig < LINUX_NSIG; ++sig) {
         if (sched_task_actions(task)[sig].handler != 1)
             sched_task_actions(task)[sig] = (struct kernel_signal_action){0};

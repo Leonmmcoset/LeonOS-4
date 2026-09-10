@@ -207,7 +207,7 @@ static int storage_path_cache_lookup(const char *path, struct storage_node *out)
     for (uint32_t i = 0; i < STORAGE_PATH_CACHE_ENTRIES; ++i) {
         struct storage_path_cache_entry *entry = &storage_path_cache[i];
         if (!entry->valid || entry->volume != g_active_volume ||
-            !storage_text_eq_ci(entry->path, path)) {
+            !storage_text_eq(entry->path, path)) {
             continue;
         }
         if (out) {
@@ -242,7 +242,7 @@ static int storage_dir_index_lookup(uint32_t directory_cluster, const char *name
         struct storage_dir_index_entry *entry = &storage_dir_index[i];
         if (!entry->valid || entry->volume != g_active_volume ||
             entry->directory_cluster != directory_cluster ||
-            !storage_text_eq_ci(entry->name, name)) {
+            !storage_text_eq(entry->name, name)) {
             continue;
         }
         if (out) {

@@ -43,5 +43,7 @@ int64_t syscall_futex_wait2(uint64_t address, uint64_t value, uint64_t mask,
  */
 int64_t syscall_futex_requeue2(uint64_t waiters, uint64_t flags,
                                uint64_t wake_count, uint64_t requeue_count);
+int64_t syscall_futex_waitv(uint64_t waiters, uint64_t count, uint64_t flags,
+                            uint64_t timeout, uint64_t clockid);
 
 #endif

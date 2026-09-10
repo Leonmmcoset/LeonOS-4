@@ -527,6 +527,10 @@ class ActionContext:
         )
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
+        # Preserve executable bits and read-only metadata for staged runtime
+        # files.  copyfile() alone creates every destination with the process
+        # umask, turning ELF files into 0644 and making execve return EACCES.
+        shutil.copymode(source, destination)
 
     def detail(self, text: str) -> None:
         self.runner.logger.detail(f"<{self.worker_id}> {self.target.name}: {text}")

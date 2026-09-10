@@ -28,6 +28,8 @@ struct linux_winsize {
 #define TIOCOUTQ   0x5411UL
 #define FIONREAD   0x541BUL
 #define FIONBIO    0x5421UL
+#define FIONCLEX   0x5450UL
+#define FIOCLEX    0x5451UL
 
 /* Unix98 PTY helpers. */
 #define TIOCGPTN   0x80045430UL

@@ -37,7 +37,7 @@ class RuntimeResponsivenessTests(unittest.TestCase):
                 "cc", "-std=c11", "-D_GNU_SOURCE", "-O1", "-g",
                 "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
                 "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include",
-                "tools/tests/signal_address_space_test.c", "-o", executable,
+                "tools/tests/signal_address_space_test.c", "kernel/ntclks/syscall_sysv_sem.c", "-o", executable,
             ], cwd=ROOT, check=True)
             subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
 

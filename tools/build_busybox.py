@@ -821,6 +821,7 @@ def main() -> None:
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(built, output)
+    output.chmod(0o755)
     args.stamp.parent.mkdir(parents=True, exist_ok=True)
     args.stamp.write_text(
         "{\n"

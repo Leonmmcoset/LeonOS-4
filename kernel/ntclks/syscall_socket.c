@@ -171,7 +171,7 @@ static struct unix_socket *unix_from_handle(uint32_t handle)
 }
 
 static int unix_socket_path(const void *user_addr, uint32_t user_len, char *path,
-                            uint32_t *length, char *resolved)
+                            uint32_t *length, char *resolved, uint32_t lookup_flags)
 {
     const struct sockaddr_un *address;
     uint32_t path_len;
@@ -192,7 +192,8 @@ static int unix_socket_path(const void *user_addr, uint32_t user_len, char *path
         if (i + 1 == path_len) *length = path_len + 1;
     }
     struct task *task = sched_current_task();
-    return fs_permissions_resolve(task, sched_task_cwd(task), path, resolved, LEONOS_FS_PATH_LEN, false);
+    return fs_permissions_resolve_flags(task, sched_task_cwd(task), path, resolved,
+                                         LEONOS_FS_PATH_LEN, false, lookup_flags);
 }
 
 static int unix_text_equal(const char *left, const char *right)
@@ -530,7 +531,7 @@ static int unix_read_data(struct task_file *file, void *buffer, uint32_t length,
         }
         return result;
     }
-    if (socket->state != UNIX_SOCKET_CONNECTED) return -LEONOS_ENOTSUP;
+    if (socket->state != UNIX_SOCKET_CONNECTED) return -LINUX_EINVAL;
     if (!length) return 0;
     kernel_wait_queue_remove(&socket->wait_rx, sched_current_task());
     uint32_t tail = socket->rx_tail;
@@ -599,6 +600,8 @@ uint64_t task_socket_cancel_receive(struct task *task)
     task->socket_receive_uid = task->socket_receive_gid = 65534;
     task->socket_receive_message = task->socket_receive_control_capacity = 0;
     task->socket_receive_name_capacity = 0;
+    task->socket_receive_flags = task->socket_receive_path_length = 0;
+    task->socket_receive_name = 0;
     if (file) task_file_put(file);
     return count;
 }
@@ -662,7 +665,7 @@ static int unix_packet_peer(struct unix_socket *socket, const void *address,
     }
     char path[109], resolved[LEONOS_FS_PATH_LEN];
     uint32_t path_len;
-    int result = unix_socket_path(address, length, path, &path_len, resolved);
+    int result = unix_socket_path(address, length, path, &path_len, resolved, FS_LOOKUP_FOLLOW);
     if (result < 0) return result;
     if (!path_len) return -LEONOS_EINVAL;
     if (resolved[0]) {
@@ -1032,17 +1035,19 @@ static int64_t inet_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
     return -LEONOS_ENOSYS;
 }
 
-static int unix_message_vectors(const struct msghdr *message, int writing, uint64_t *total)
+/** @brief Import native iovec lengths without faulting data pages prematurely. */
+static int unix_message_vectors(struct msghdr *message, uint64_t *total)
 {
     *total = 0;
-    if (message->msg_iovlen > 1024) return -LINUX_EMSGSIZE;
-    if (!user_range_ok((uintptr_t)message->msg_iov, message->msg_iovlen * sizeof(struct iovec)))
-        return -LEONOS_EFAULT;
+    for (uint64_t i = 0; i < message->msg_iovlen; ++i)
+        if (message->msg_iov[i].iov_len > INT64_MAX) return -LINUX_EINVAL;
     for (uint64_t i = 0; i < message->msg_iovlen; ++i) {
-        const struct iovec *v = &message->msg_iov[i];
-        if (v->iov_len > INT64_MAX - *total) return -LEONOS_EINVAL;
-        if (v->iov_len && !(writing ? user_range_writable((uintptr_t)v->iov_base, v->iov_len) :
-                           user_range_ok((uintptr_t)v->iov_base, v->iov_len))) return -LEONOS_EFAULT;
+        struct iovec *v = &message->msg_iov[i];
+        /* Linux access_ok checks the architectural range, not page presence. */
+        const uint64_t user_limit = (1ULL << 47) - 4096;
+        uint64_t address = (uintptr_t)v->iov_base;
+        if (address > user_limit || v->iov_len > user_limit - address) return -LINUX_EFAULT;
+        if (v->iov_len > 0x7ffff000ULL - *total) v->iov_len = 0x7ffff000ULL - *total;
         *total += v->iov_len;
     }
     return 0;
@@ -1115,16 +1120,15 @@ static int unix_message_rights(struct task *task, const struct msghdr *message,
 }
 
 static int unix_sendmsg(struct task *task, struct task_file *file,
-                       const struct msghdr *user_msg, uint32_t flags)
+                       struct msghdr message, uint32_t flags,
+                       bool batch, uint64_t total, struct socket_message_result *output)
 {
-    if (!user_range_ok((uintptr_t)user_msg, sizeof(*user_msg))) return -LEONOS_EFAULT;
-    struct msghdr message = *user_msg;
     struct unix_socket *socket = unix_from_file(file);
     if (!socket) return -LINUX_ENOTSOCK;
-    if (flags & ~(MSG_DONTWAIT | MSG_NOSIGNAL | MSG_MORE | MSG_EOR)) return -LINUX_EOPNOTSUPP;
-    uint64_t total;
-    int ret = unix_message_vectors(&message, 0, &total);
-    if (ret) return ret;
+    if (batch) flags |= (uint32_t)message.msg_flags & MSG_EOR;
+    if (flags & MSG_OOB) return -LINUX_EOPNOTSUPP;
+    int ret;
+    output->requested = total;
     if (socket->type != SOCK_STREAM && total > 65536) return -LINUX_EMSGSIZE;
     struct unix_rights *rights = NULL;
     struct ucred credentials;
@@ -1139,6 +1143,11 @@ static int unix_sendmsg(struct task *task, struct task_file *file,
     for (uint64_t i = 0; i < message.msg_iovlen && copied < length; ++i) {
         uint64_t n = message.msg_iov[i].iov_len;
         if (n > length - copied) n = length - copied;
+        if (n && !user_range_ok((uintptr_t)message.msg_iov[i].iov_base, n)) {
+            kernel_free(data);
+            unix_rights_free(rights);
+            return -LINUX_EFAULT;
+        }
         for (uint64_t j = 0; j < n; ++j) data[copied++] = ((uint8_t *)message.msg_iov[i].iov_base)[j];
     }
     struct unix_socket *peer = unix_from_handle(socket->peer_handle);
@@ -1184,18 +1193,15 @@ static uint64_t unix_put_credentials(struct msghdr *message, uint64_t capacity,
 }
 
 static int unix_recvmsg(struct task *task, struct task_file *file,
-                        const struct msghdr *user_msg, uint32_t flags)
+                        const struct msghdr *user_msg, struct msghdr message,
+                        uint32_t flags, uint64_t total, struct socket_message_result *output)
 {
-    if (!user_range_writable((uintptr_t)user_msg, sizeof(*user_msg))) return -LEONOS_EFAULT;
-    if (flags & ~(MSG_DONTWAIT | MSG_PEEK | MSG_TRUNC | MSG_WAITALL | MSG_CMSG_CLOEXEC)) return -LINUX_EOPNOTSUPP;
-    struct msghdr message = *user_msg;
+    if (flags & MSG_OOB) return -LINUX_EOPNOTSUPP;
     if (task->socket_receive_message == (uintptr_t)user_msg && task->socket_receive_file) {
         message.msg_controllen = task->socket_receive_control_capacity;
         message.msg_namelen = task->socket_receive_name_capacity;
     }
-    uint64_t total;
-    int ret = unix_message_vectors(&message, 1, &total);
-    if (ret) return ret;
+    int ret;
     uint64_t already = task->socket_receive_done;
     if (already > total) { task_socket_cancel_receive(task); return -LEONOS_EINVAL; }
     if (message.msg_controllen && !user_range_writable((uintptr_t)message.msg_control, message.msg_controllen))
@@ -1203,6 +1209,13 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
     if (message.msg_name && message.msg_namelen &&
         !user_range_writable((uintptr_t)message.msg_name, message.msg_namelen)) return -LEONOS_EFAULT;
     struct unix_socket *socket = unix_from_file(file);
+    if (socket && socket->type == SOCK_STREAM) {
+        /* The ring backend commits stream consumption in unix_read_data. */
+        for (uint64_t i = 0; i < message.msg_iovlen; ++i)
+            if (message.msg_iov[i].iov_len &&
+                !user_range_writable((uintptr_t)message.msg_iov[i].iov_base, message.msg_iov[i].iov_len))
+                return -LINUX_EFAULT;
+    }
     uint32_t maximum = socket && socket->type != SOCK_STREAM ? 65536 : UNIX_SOCKET_RX_CAP;
     bool passcred = socket && socket->passcred;
     uint64_t remaining = total - already;
@@ -1216,7 +1229,9 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
                                   task->socket_receive_uid, task->socket_receive_gid};
     if (ret < 0) {
         if (data) kernel_free(data);
-        return (int)unix_receive_progress(task, file, total, ret, flags, &metadata);
+        ret = (int)unix_receive_progress(task, file, total, ret, flags, &metadata);
+        if (ret < 0) return ret;
+        goto complete_message;
     }
     uint32_t copied = 0;
     uint32_t available = (uint32_t)ret < length ? (uint32_t)ret : length;
@@ -1228,6 +1243,12 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
         n -= skip;
         skip = 0;
         if (n > available - copied) n = available - copied;
+        if (n && !user_range_writable((uintptr_t)message.msg_iov[i].iov_base + offset, n)) {
+            kernel_free(data);
+            if (rights && !(flags & MSG_PEEK)) unix_rights_free(rights);
+            task_socket_cancel_receive(task);
+            return already ? (int)already : -LINUX_EFAULT;
+        }
         for (uint64_t j = 0; j < n; ++j) ((uint8_t *)message.msg_iov[i].iov_base)[offset + j] = data[copied++];
     }
     if (data) kernel_free(data);
@@ -1236,19 +1257,22 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
         task->socket_receive_message = (uintptr_t)user_msg;
         task->socket_receive_control_capacity = message.msg_controllen;
         task->socket_receive_name_capacity = message.msg_namelen;
-        if (task->socket_receive_done) {
-            message.msg_controllen = 0;
-            message.msg_namelen = 0;
-            message.msg_flags = metadata.flags;
-            /* Linux's interrupted Unix WAITALL path returns copied bytes
-             * before scm_recv_unix; control data is delivered on completion. */
-            *(struct msghdr *)(uintptr_t)user_msg = message;
+        task->socket_receive_name = (uintptr_t)message.msg_name;
+        if (!already && metadata.path_len) {
+            task->socket_receive_path_length = metadata.path_len + 2;
+            task->socket_receive_path[0] = AF_UNIX;
+            task->socket_receive_path[1] = 0;
+            __builtin_memcpy(task->socket_receive_path + 2, metadata.path, metadata.path_len);
         }
+        task->socket_receive_flags = metadata.flags | (flags & MSG_CMSG_CLOEXEC);
+        /* Header and control outputs are written only on completion, including
+         * a signal-interrupted WAITALL returning its already-copied bytes. */
         return ret;
     }
+complete_message: ;
     uint64_t capacity = message.msg_controllen;
     message.msg_controllen = 0;
-    message.msg_flags = metadata.flags;
+    message.msg_flags = metadata.flags | (flags & MSG_CMSG_CLOEXEC);
     if (message.msg_name && metadata.path_len) {
         uint32_t name_length = metadata.path_len + 2;
         uint32_t n = message.msg_namelen < name_length ? message.msg_namelen : name_length;
@@ -1282,8 +1306,83 @@ static int unix_recvmsg(struct task *task, struct task_file *file,
         if (count < rights->count) message.msg_flags |= MSG_CTRUNC;
         if (!(flags & MSG_PEEK)) unix_rights_free(rights);
     }
-    *(struct msghdr *)(uintptr_t)user_msg = message;
+    /* Match ____sys_recvmsg's output order without rewriting input pointers
+     * and padding. Header output faults occur after the receive side effects. */
+    struct msghdr *destination = (struct msghdr *)(uintptr_t)user_msg;
+    if (message.msg_name) {
+        if (!user_range_writable((uintptr_t)&destination->msg_namelen, sizeof(message.msg_namelen)))
+            return -LINUX_EFAULT;
+        __builtin_memcpy(&destination->msg_namelen, &message.msg_namelen, sizeof(message.msg_namelen));
+    }
+    if (!user_range_writable((uintptr_t)&destination->msg_flags, sizeof(message.msg_flags))) return -LINUX_EFAULT;
+    __builtin_memcpy(&destination->msg_flags, &message.msg_flags, sizeof(message.msg_flags));
+    if (!user_range_writable((uintptr_t)&destination->msg_controllen, sizeof(message.msg_controllen))) return -LINUX_EFAULT;
+    __builtin_memcpy(&destination->msg_controllen, &message.msg_controllen, sizeof(message.msg_controllen));
+    output->flags = (uint32_t)message.msg_flags;
     return ret;
+}
+
+/**
+ * @brief Preserve common single-message behavior for native message batches.
+ * @param task Current task under the execution lock.
+ * @param file Pinned open socket description.
+ * @param message User native msghdr address.
+ * @param flags Flags supplied to this message operation.
+ * @param receiving Select recvmsg instead of sendmsg.
+ * @param batch Permit per-message MSG_EOR on sendmmsg.
+ * @param result Captured input length and output flags used by batch iteration.
+ * @return Bytes processed, negative errno, or the internal blocking sentinel.
+ */
+int64_t task_socket_message(struct task *task, struct task_file *file, uint64_t message,
+                            uint32_t flags, bool receiving, bool batch,
+                            struct socket_message_result *result)
+{
+    if (flags & MSG_CMSG_COMPAT) return -LINUX_EINVAL;
+    if (!file) return -LINUX_EBADF;
+    if (!(file->flags & TASK_FILE_FLAG_SOCKET)) return -LINUX_ENOTSOCK;
+    if (!(file->flags & TASK_FILE_FLAG_SOCKET_UNIX)) return -LINUX_EOPNOTSUPP;
+    if (!user_range_ok(message, sizeof(struct msghdr))) return -LINUX_EFAULT;
+    struct msghdr imported;
+    __builtin_memcpy(&imported, (const void *)(uintptr_t)message, sizeof(imported));
+    if ((int32_t)imported.msg_namelen < 0) return -LINUX_EINVAL;
+    if (imported.msg_namelen > 128) imported.msg_namelen = 128;
+    if (!receiving && !imported.msg_namelen) imported.msg_name = NULL;
+    if (imported.msg_iovlen > 1024) return -LINUX_EMSGSIZE;
+    struct iovec fast[8], *vectors = fast;
+    uint64_t size = imported.msg_iovlen * sizeof(*vectors);
+    if (imported.msg_iovlen > 8) {
+        vectors = kernel_malloc(size);
+        if (!vectors) return -LINUX_ENOMEM;
+    }
+    int64_t status = -LINUX_EFAULT;
+    if (!size || user_range_ok((uintptr_t)imported.msg_iov, size)) {
+        if (size) __builtin_memcpy(vectors, imported.msg_iov, size);
+        imported.msg_iov = vectors;
+        uint64_t total;
+        status = unix_message_vectors(&imported, &total);
+        if (!status) status = receiving ?
+            unix_recvmsg(task, file, (const void *)(uintptr_t)message, imported, flags, total, result) :
+            unix_sendmsg(task, file, imported, flags, batch, total, result);
+    }
+    if (vectors != fast) kernel_free(vectors);
+    return status;
+}
+
+/**
+ * @brief Access the socket error retained by Linux recvmmsg after partial success.
+ * @param file Pinned socket description.
+ * @param error Positive errno to store when setting.
+ * @param setting Store instead of consuming the error.
+ * @return Previous error for reads, zero for writes or a missing socket.
+ */
+int task_socket_message_error(struct task_file *file, int error, bool setting)
+{
+    struct unix_socket *socket = unix_from_file(file);
+    if (!socket) return 0;
+    if (setting) { socket->error = error; return 0; }
+    int previous = socket->error;
+    socket->error = 0;
+    return previous;
 }
 
 static int64_t unix_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
@@ -1368,11 +1467,18 @@ static int64_t unix_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
         char path[109], resolved[LEONOS_FS_PATH_LEN];
         uint32_t length;
         if (socket->path_len) return -LEONOS_EINVAL;
-        int ret = unix_socket_path((const void *)(uintptr_t)a1, (uint32_t)a2, path, &length, resolved);
+        int ret = unix_socket_path((const void *)(uintptr_t)a1, (uint32_t)a2, path, &length, resolved, FS_LOOKUP_PARENT);
         if (ret < 0) return ret;
         if (!length) { unix_autobind(socket); return 0; }
         if (resolved[0]) {
             struct storage_node node;
+            uint32_t end = 0;
+            while (resolved[end]) ++end;
+            if (end > 1 && resolved[end - 1] == '/') {
+                resolved[end - 1] = 0;
+                ret = storage_lookup_path(resolved, &node);
+                return !ret ? -LEONOS_EADDRINUSE : ret;
+            }
             ret = fs_permissions_parent(task, resolved, false);
             if (ret < 0) return ret;
             ret = storage_create_socket(resolved, &node);
@@ -1418,7 +1524,7 @@ static int64_t unix_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
         uint32_t length;
         struct unix_socket *listener, *server;
         if (socket->state != UNIX_SOCKET_OPEN) return -LEONOS_EISCONN;
-        int ret = unix_socket_path((const void *)(uintptr_t)a1, (uint32_t)a2, path, &length, resolved);
+        int ret = unix_socket_path((const void *)(uintptr_t)a1, (uint32_t)a2, path, &length, resolved, FS_LOOKUP_FOLLOW);
         if (ret < 0) return ret;
         if (!length) return -LEONOS_EINVAL;
         if (resolved[0]) {
@@ -1599,6 +1705,9 @@ int64_t syscall_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
 {
     struct task *task;
     struct task_file *file;
+    if (number == __NR_sendmmsg || number == __NR_recvmmsg)
+        return syscall_socket_mmsg(number == __NR_recvmmsg, (int32_t)a0, a1,
+                                    (uint32_t)a2, (uint32_t)a3, a4);
     /* These are int/unsigned int arguments in the native Linux syscall
      * prototypes; pointers and size_t byte counts retain all 64 bits. */
     if (number == __NR_socket || number == __NR_socketpair) {
@@ -1619,22 +1728,13 @@ int64_t syscall_socket_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
             return inet_socket_dispatch(number, a0, a1, a2, a3, a4);
         return -LINUX_ENOTSOCK;
     }
-    if (number == __NR_sendmsg) {
+    if (number == __NR_sendmsg || number == __NR_recvmsg) {
         task = sched_current_task();
-        {
-            struct task_file *file = task_file_for_io(task, (int)a0);
-            if (!file || !(file->flags & TASK_FILE_FLAG_SOCKET_UNIX)) return -LEONOS_EBADF;
-            return unix_sendmsg(task, file, (const struct msghdr *)(uintptr_t)a1, (uint32_t)a2);
-        }
-    }
-    if (number == __NR_recvmsg) {
-        task = sched_current_task();
-        {
-            struct task_file *file = task->socket_receive_file ? task->socket_receive_file : task_file_for_io(task, (int)a0);
-            if (!file || !(file->flags & TASK_FILE_FLAG_SOCKET_UNIX)) return -LEONOS_EBADF;
-            return unix_recvmsg(task, file, (const struct msghdr *)(uintptr_t)a1,
-                                (uint32_t)a2);
-        }
+        if ((uint32_t)a2 & MSG_CMSG_COMPAT) return -LINUX_EINVAL;
+        file = number == __NR_recvmsg && task->socket_receive_file ? task->socket_receive_file :
+            task_file_for_io(task, (int32_t)a0);
+        struct socket_message_result output = {0};
+        return task_socket_message(task, file, a1, (uint32_t)a2, number == __NR_recvmsg, false, &output);
     }
     if (number == __NR_sendto) {
         struct task *task = sched_current_task();

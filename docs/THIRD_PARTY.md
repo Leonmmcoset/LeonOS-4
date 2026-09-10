@@ -3,6 +3,19 @@
 LeonOS keeps third-party source code in `third_party/` and records Git-backed
 dependencies as submodules.
 
+## Prebuilt Native Toolchain
+
+The default `musl-gcc` component packages the unchanged x86-64 archive from
+[Dyne musl 2.2.0](https://github.com/dyne/musl/releases/tag/2.2.0): GCC 15.1.0,
+binutils 2.44, musl headers/static libraries, libgcc and libstdc++, plus the
+upstream supplementary sysroot. SHA256:
+`31420e4f978e7ccbcc597ca5e18c2dcbe640ea6985ed6325112d8a171a72ece3`.
+GCC/binutils use GPL-3.0-or-later; applicable GCC runtime libraries include the
+GCC Runtime Library Exception. Musl uses MIT. Bundled library notices remain
+inside `/opt/dyne`; compiler license texts and file hashes are installed under
+`/share/licenses/musl-gcc`. See `userland/musl-gcc/README.md` for source/build
+recipe references, cache configuration and unchanged-binary verification.
+
 ## Git Submodule Inventory
 
 The following inventory covers every Git submodule declared by the root

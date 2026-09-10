@@ -29,15 +29,27 @@ def main():
     root = stage / "install/root.fat"
     base = args.base if args.base.is_file() else args.base / "install/root.fat"
     shutil.copy2(base, root)
+    with root.open("rb") as stream:
+        stream.seek(1080)
+        ext2 = stream.read(2) == b"\x53\xef"
     if args.abi_probes or args.ltp:
-        run("mmd", "-i", root, "::/system/tests")
+        if ext2:
+            run("debugfs", "-w", "-R", "mkdir /system/tests", root)
+        else:
+            run("mmd", "-i", root, "::/system/tests")
+
+    def add_probe(source):
+        if ext2:
+            run("debugfs", "-w", "-R", f"write {source.resolve()} /system/tests/{source.name}", root)
+        else:
+            run("mcopy", "-o", "-i", root, source, f"::/system/tests/{source.name}")
+
     if args.abi_probes:
         for kind in ("dynamic", "static"):
-            run("mcopy", "-o", "-i", root, args.musl / f"tests/musl-abi-{kind}.elf",
-                f"::/system/tests/musl-abi-{kind}.elf")
+            add_probe(args.musl / f"tests/musl-abi-{kind}.elf")
     if args.ltp:
         for source in sorted(args.ltp.glob("*.elf")):
-            run("mcopy", "-o", "-i", root, source, f"::/system/tests/{source.name}")
+            add_probe(source)
     print(f"Musl checkpoint root: {root}")
 
 

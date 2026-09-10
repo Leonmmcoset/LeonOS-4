@@ -74,3 +74,24 @@ int storage_inode_stat(const struct storage_node *node, struct linux_stat_abi *v
     kernel_execution_unlock_irqrestore(flags);
     return ret;
 }
+
+int storage_inode_utimensat(const struct storage_node *node, int64_t atime, int64_t mtime,
+                            bool set_atime, bool set_mtime)
+{
+    struct storage_volume *previous = NULL;
+    struct ext2_inode inode;
+    uint64_t flags;
+    int ret;
+    if (!node || !(node->flags & STORAGE_NODE_FLAG_EXT2)) return -95;
+    kernel_execution_lock_irqsave(&flags);
+    ret = storage_select_node_volume(node, &previous);
+    if (!ret) ret = ext2_read_inode(node->first_cluster, &inode);
+    if (!ret) {
+        if (set_atime) inode.atime = (uint32_t)atime;
+        if (set_mtime) inode.mtime = (uint32_t)mtime;
+        ret = ext2_write_inode(node->first_cluster, &inode);
+    }
+    storage_restore_volume(previous);
+    kernel_execution_unlock_irqrestore(flags);
+    return ret;
+}

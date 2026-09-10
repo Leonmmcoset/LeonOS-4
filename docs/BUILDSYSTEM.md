@@ -12,6 +12,15 @@ LeonOS 使用根目录的 `build.py` 作为唯一构建入口，运行环境为 
 - `run kernel`、`run loader`、`run drivers`、`run middlelayer`：分别构建内核、loader、驱动和中间层。
 - `run userland`：构建 libc、mbedTLS、用户程序和图标。
 - `run image-vmdk`、`run image-iso`：分别生成 VMDK 与普通 ISO。
+- 默认启用 `musl-gcc` 组件：打包 GCC 15.1.0、binutils 2.44、C/C++ 头文件和静态库，
+  支持直接运行 `musl-gcc -static /share/examples/musl-gcc/hello.c -o /tmp/hello`。
+  `run test-musl-gcc-package` 验证宿主编译、所有命令入口及原始文件 SHA256。
+  首次构建从固定 Dyne 2.2.0 发布下载并校验；可用 `LEONOS_GCC_ARCHIVE` 指定本地归档。
+  离线缓存位于 `buildsystem/deps/musl-gcc/`，详情见 `userland/musl-gcc/README.md`。
+- 普通 ISO 是可独立启动的桌面 Live 镜像，内含 musl、Vim、GCC；安装器同样携带
+  完整工具链。两者的内存根使用 ext2，保留大小写不同的 Linux 头文件及权限；
+  GRUB 模块仍叫 `root.fat` 以保留启动配置兼容。EFI 启动分区继续使用 FAT。
+  默认磁盘至少 1 GiB、QEMU 内存 4 GiB，实际 VMware 启动仍需单独验证。
 - `run run`、`run run-debug`、`run run-iso`：启动 QEMU。
 - `run installer`：生成安装器 ISO；`run clean` 清理可再生产物。
 - `run release`：生成 VMDK、普通 ISO、安装器 ISO 和开发 SDK；按 menuconfig

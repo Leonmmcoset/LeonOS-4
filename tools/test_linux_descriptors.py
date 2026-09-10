@@ -11,6 +11,8 @@ with tempfile.TemporaryDirectory(prefix="leonos-descriptors-") as directory:
         "clang", "-std=c11", "-g", "-O1", "-ffunction-sections", "-fdata-sections",
         "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
         "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include", "-Wl,--gc-sections",
-        "tools/tests/descriptor_table_test.c", "kernel/ntclks/sched/sched.c", "-o", binary,
+        "tools/tests/descriptor_table_test.c", "kernel/ntclks/sched/sched.c",
+        "kernel/ntclks/wait.c", "kernel/ntclks/syscall_sysv_msg.c",
+        "kernel/ntclks/syscall_sysv_sem.c", "-o", binary,
     ], cwd=ROOT, check=True)
     subprocess.run([binary], cwd=ROOT, check=True, timeout=20)

@@ -1,9 +1,20 @@
-> 2026-09-09 最新检查点：默认 userland、普通镜像、installer 和 SDK 已切换至 musl+mimalloc。
+> 2026-09-10 最新检查点：默认 userland、普通镜像、installer 和 SDK 已切换至 musl+mimalloc；Vim/ncurses 已纳入正式镜像。
 > Picolibc 源码、端口、旧运行库、私有链接参数及旧标准头文件已移除；
+> 静态 musl GCC 15.1.0/binutils 2.44 已正式纳入默认桌面 ISO、VMDK 和 installer；
+> 最终 ISO 的 QEMU Terminal 编译/执行与安装器前四页验证通过，完整落盘安装及
+> VMware 尚未验证，不能据此提升 syscall 整项状态。证据见进度清单末节。
 > `musl-only-release-build.log` 验证普通镜像、installer 与 SDK 全量构建通过。
-> 新增 getsid 后的初始静态基线为缺少分发 229 项；截至本检查点，CSV
-> 已记录 61 个新增/补齐的入口，当前缺少分发 166 项。另有两个原本误列为缺失的
-> `sync`/`syncfs` 已改为“有入口但未完整认证”；完整审计范围保持不变，不能据此计算兼容率。
+> CSV 当前缺少分发 115 项；新增入口及局部行为实现不表示整项兼容。
+> 后续严格回归修正 vfork 的备用栈继承/提前唤醒/退出顺序及缺页 SIGSEGV；
+> 旧测试接受 exit(14)，不能作为 Linux 故障信号证明。未触页共享匿名 mmap
+> 在 fork 后的共享缺口仍未修复，详见进度清单首节。
+> 预构建静态 musl GCC 15.1.0 的 `clone(CLONE_VM|CLONE_VFORK|SIGCHLD)`
+> 阻塞及 `RLIMIT_STACK` 缺失已在 2026-09-10 修复；QEMU 中 `--version/-v/-E/-c/
+> -static 链接/运行生成程序` 全部退出 0，生成 stdio 程序输出经校验，
+> `[gcc-probe] DONE failures=0`。详见进度清单“CLONE_VFORK/RLIMIT_STACK 修复
+> 与预构建 musl GCC 全链路”。这只是所测路径通过，不等于整个 clone/rlimit ABI 完整。
+> 原本误列为缺失的 `sync`/`syncfs` 已改为“有入口但未完整认证”；
+> 完整审计范围保持不变，不能据此计算兼容率。
 > `session-notify-probes-serial.log` 静态/动态各 49 组通过；包括 forkpty、会话身份、
 > SIGCHLD 通知、pthread 和 Unix socket 已有用例。Linux 6.12 参考 43 组通过。
 > 默认 Terminal/nano 已恢复；设备内 TCC 生成的 musl 程序执行退出 0；
@@ -17,9 +28,80 @@
 - 对照基线：Linux **v6.12 native x86-64**，只统计 syscall_64.tbl 中 `common` 和 `64`，排除 x32、i386 和没有编号的空洞。这是固定版本的覆盖审计，不是“当前最新 Linux”的调用数量。
 - 方法：检查真实 Ring 3 trap 分发、类别转发和实际处理函数，再与官方 Linux UAPI/实现及 musl v1.2.5 初始化路径对照。官方源码通过 `http://127.0.0.1:12334` 获取。
 - 初始报告是静态审计；截至 2026-09-09，已有源码修复、宿主测试、真实 musl 静态/动态程序和部分 LTP 的 QEMU 结果。VMware 尚未验证。逐项证据及完整剩余范围见 `docs/LINUX_ABI_PROGRESS_2026-09-08.md`。
-- CSV 仍覆盖 Linux v6.12 native x86-64 的 375 个编号。当前状态为：146 项 `missing_dispatch`、5 项定时器 `completed`、84 项 `routed_not_certified`、123 项 `implemented_pending_runtime`、17 项 Linux 保留/ni。epoll、timerfd 基础入口和 `rt_sigtimedwait` 已有实际 QEMU musl 探针证据；`epoll_pwait` 的原子信号掩码及 timerfd 的时钟调整等完整语义仍待补齐。部分调用通过定向测试，不表示整项兼容；`verification_scope` 和 `verification_evidence` 单独记录验证边界。
+- CSV 仍覆盖 Linux v6.12 native x86-64 的 375 个编号。当前状态为：115 项 `missing_dispatch`、5 项定时器 `completed`、81 项 `routed_not_certified`、157 项 `implemented_pending_runtime`、17 项 Linux 保留/ni。新增 capability、`flock`、时间戳族、`sched_attr`、`rseq`、`futex_waitv`、symlink、sigqueue、mmsg、signalfd、process_vm、SysV 消息队列/信号量族、真实 `CLONE_VFORK`/`vfork` 生命周期和 `RLIMIT_STACK` 已有 native 分发或实现，但完整行为及运行证据仍未完成。部分调用通过定向测试，不表示整项兼容；`verification_scope` 和 `verification_evidence` 单独记录验证边界。
 
 ## 本轮实际修复与状态
+
+2026-09-10 修复 `clone(CLONE_VFORK)`/`vfork(58)` 生命周期和
+`getrlimit(97)`/`setrlimit(160)`/`prlimit64(302)` 的 `RLIMIT_STACK`，并支持无
+`PT_INTERP` 的 static PIE（预构建 `as`/`ld` 所需）。`CLONE_VM` 为真实共享
+地址空间，父线程按 Linux `wait_for_vfork_done` 的 killable 语义等待子进程
+exec 提交或最终退出，exec 失败不提前唤醒；被捕获的非致命信号保持 pending，
+父退出/子异常退出/回滚/任务槽复用有显式生命周期处理。RLIMIT_STACK 默认
+`{8 MiB, RLIM_INFINITY}`，线程共享、fork 继承、exec 保留，并按
+`acct_stack_growth` 的“扩张后完整栈跨度 > rlim_cur”规则实际约束缺页，
+不再只返回固定值或接受设置不实施。预构建 GCC 15.1.0 在 QEMU/KVM 1 vCPU 和
+2 vCPU 冒烟中完成版本、预处理、编译、static 链接和生成 stdio 程序执行，
+`[gcc-probe] DONE failures=0`；宿主 raw 回归、pthread/fork/exec/wait/信号和
+RLIMIT_STACK 定向测试见 `build/host-regressions-20260910.log` 与
+`build/gcc-probe/guest-serial*.log`。clone 的 pidfd/ptrace/namespace/io/time 等
+标志和 clone3 特有字段、其余 12 个 rlimit 资源、VMware/完整 LTP/多核压力仍
+未完成；局部通过不将任一整项标为 completed。
+
+2026-09-10 增加 `semget(64)/semop(65)/semctl(66)/semtimedop(220)`：真实数组、
+原子向量/回滚、阻塞快照与唤醒顺序、权限/控制命令、SEM_UNDO/CLONE_SYSVSEM、
+退出调整、超时/EINTR 和 group stop 后不重启。x86-64 104 字节状态布局经 musl
+对照；ASan/UBSan、宿主 raw syscall、真实调度/信号帧测试及构建通过。
+namespace、procfs/sysctl、unshare、高精度定时、完整并发和 guest 验证仍未完成，
+具体证据和边界见进度清单的“SysV 信号量实现检查点”。
+
+2026-09-10 增加 `msgget(68)/msgsnd(69)/msgrcv(70)/msgctl(71)`，实现真实 SysV
+消息队列、owner/group/capability 权限、类型选择、COPY、容量和状态统计、阻塞
+快照、直接交付、SET/RMID 唤醒及信号/退出清理。内核 ASan/UBSan 与宿主 raw
+对照、信号帧/调度回归、musl 布局和内核/SDK/探针构建通过。namespace、procfs、
+sysctl、LSM、完整并发和 guest 验证仍未完成，详见进度清单的 SysV 检查点。
+
+2026-09-10 增加 `process_vm_readv(310)/process_vm_writev(311)`，按两端页表
+执行真实跨进程复制、VMA 权限/COW、远端页引用、部分结果及 REALCREDS/dumpable/
+capability 检查，并为现有凭据修改路径补充 dumpability 重置。内核页表 ASan/UBSan、
+宿主 raw syscall 对照、相关回归及内核/musl 探针构建通过。memfd 映射、共享文件
+写回、完整地址范围、namespace/LSM、并发和 guest 执行仍未完成，详见进度清单。
+
+2026-09-10 增加 `signalfd(282)/signalfd4(289)`，读取真实私有/进程信号队列。
+实现共享 mask、read/readv 的记录/故障消费语义、阻塞向量快照、唤醒与信号恢复顺序，
+接入 poll/epoll、dup、ioctl、CLOEXEC 和 native 128 字节输出布局。内核定向测试、
+宿主 raw syscall 对照、musl ABI 检查及内核/探针构建通过。匿名 inode 元数据、
+procfs、其他信号源、完整并发及 LeonOS 执行仍未完成，详见“signalfd 实现检查点”。
+
+2026-09-10 增加 `sendmmsg(307)/recvmmsg(299)`，接入实际 Unix socket 消息后端。
+实现批量进度、部分成功、短发送、WAITFORONE、timeout 写回和 SO_ERROR 延迟错误；
+修正消息头输出顺序、iovec 导入、数据报复制失败的消费行为以及信号中断返回消息数。
+跨任务 copyout 复用真实缺页处理，支持信号帧和接收结果的惰性页/COW 写入。
+内核、musl 探针构建及定向宿主测试通过；INET、完整阻塞参数快照、流式/辅助数据
+复制故障、竞争和 guest 执行仍未完成。详见进度文件的“消息批量调用实现检查点”。
+
+2026-09-10 增加 `rt_sigqueueinfo/rt_tgsigqueueinfo` 及真实 siginfo 队列，
+接入每 UID 的 RLIMIT_SIGPENDING、信号帧、sigtimedwait 和 clone/exec/exit 生命周期。
+修正分发层错误重试 EAGAIN、等待输入/输出故障及信号栈故障处理。
+宿主 raw syscall 对照、内核队列 ASan/UBSan、帧和资源限制测试、内核及 musl
+探针构建通过。POSIX timer 混合队列、其他信号源、init/ptrace/namespace 和
+多核/guest 验证仍未完成；详细范围见进度文件的“siginfo 队列实现检查点”。
+
+2026-09-10 增加 ext2 符号链接对象，接入 `symlink/symlinkat/readlink/readlinkat`，
+修正参数顺序、内联/块存储边界、路径组件展开、nofollow、目录引用计数和大小写查找。
+真实 ext2 的宿主 ASan/UBSan 测试、三个文件系统镜像的 e2fsck 检查、权限路径测试
+与内核编译通过。完整 pathname 长度、O_PATH、最终 unlink 后 fd 引用、完整权限及
+时间戳等缺口仍未完成，详细证据见进度文件的“符号链接实现检查点”。本批未启动虚拟机。
+旧 hard-link 文档将目录链接计数误作打开 fd 生命周期，已据 `ext2_unlink` 源码订正。
+
+2026-09-10 新增 `futex_waitv`（449）native x86-64 分发。实现最多 128 个 Linux
+24 字节描述符、U32/private flags、用户地址和保留字段校验、单调/实时绝对超时，
+并让一个任务同时挂在多个 futex key 上；唤醒返回触发描述符索引，支持 EAGAIN、
+EINTR、ETIMEDOUT。`python3 tools/test_linux_threads.py` 中 futex 队列、进程信号和
+CPU barrier 三项通过，`python3 build.py run kernel`、`run musl-probes`、
+`test linux-abi-contract` 和 `test uapi` 通过。完整 QEMU guest 探针尚未认证：
+标准 QMP 桌面测试在 OOBE 因物理内存耗尽反复失败，`qmp-abittest-serial.log`
+未启动 ABI 程序；重复 key、取消、requeue 交互和调度压力继续标为待验证。
 
 2026-09-09 按用户要求，将 CSV 中 5 项 `implemented_pending_validation` 定时器调用改为 `completed`（任务完成）。该状态调整未新增测试，不等同于完整 Linux ABI 已验证；原有 `partial_guest` 范围和未覆盖项保持不变。历史日志和截图已按用户要求清理，证据列中的路径仅作为历史运行记录。
 
@@ -395,7 +477,7 @@ pipe2 先创建管道再验证 flags，非法 flags 返回 EINVAL 时已产生 f
 
 #### B28 wait4 与 vfork 的语义缺口
 
-wait4 忽略第四个 rusage 指针；WCONTINUED 使用 4，而 Linux 是 8。未校验完整 options 集合。vfork 明确实现为 COW fork，没有 Linux vfork 的共享地址空间及父进程暂停语义；这属于已知实现限制，不代表所有使用 vfork 的应用都会失败。
+wait4 忽略第四个 rusage 指针；WCONTINUED 使用 4，而 Linux 是 8。未校验完整 options 集合。vfork 明确实现为 COW fork，没有 Linux vfork 的共享地址空间及父进程暂停语义；这属于已知实现限制，不代表所有使用 vfork 的应用都会失败。（2026-09-10 更新：B28 的 vfork 部分已按 Linux v6.12 真实 `CLONE_VM|CLONE_VFORK|SIGCHLD`、exec/exit 释放和父线程 killable 等待修复，QEMU 验证通过；wait4 的 rusage/options 缺口仍独立存在。）
 
 代码：[kernel/ntclks/syscall.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/syscall.c:3899)，[kernel/ntclks/sched/sched.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/sched/sched.c:1944)，[kernel/ntclks/syscall.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/syscall.c:4237)。
 
@@ -418,7 +500,7 @@ gettimeofday 强制 tv 非空，Linux 允许 tv=NULL；settimeofday 仅使用秒
 
 #### B31 getrlimit / setrlimit 资源号和限额
 
-当前把 5 当 RLIMIT_NOFILE、6 当 RLIMIT_AS；Linux x86-64 分别是 7、9，而 5/6 是 RSS/NPROC。其余资源类型返回 ENOSYS，hard limit 也没有作为可变状态完整保存。标准 libc 读取栈/文件数限制及设置地址空间限制会出错。
+当前把 5 当 RLIMIT_NOFILE、6 当 RLIMIT_AS；Linux x86-64 分别是 7、9，而 5/6 是 RSS/NPROC。其余资源类型返回 ENOSYS，hard limit 也没有作为可变状态完整保存。标准 libc 读取栈/文件数限制及设置地址空间限制会出错。（2026-09-10 更新：编号已按 Linux 修正并保存 NOFILE/AS/SIGPENDING/STACK 的 soft/hard；STACK 默认和增长约束已实现并在 QEMU 验证；其余 12 个资源仍 ENOSYS。）
 
 代码：[kernel/ntclks/syscall_process.c](/home/xiaobai/Projects/Projects/LeonOS-4/kernel/ntclks/syscall_process.c:438)。
 

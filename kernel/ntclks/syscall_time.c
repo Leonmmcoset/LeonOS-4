@@ -150,68 +150,63 @@ int64_t syscall_rt_sigtimedwait(uint64_t mask, uint64_t info, uint64_t timeout,
                                 uint64_t sigset_size)
 {
     struct task *task = sched_current_task();
-    uint64_t requested, pending;
-    if (!task || sigset_size != sizeof(uint64_t) || !user_range_ok(mask, sizeof(requested)))
-        return -LINUX_EFAULT;
-    requested = *(const uint64_t *)(uintptr_t)mask;
-    if (task->sigwait_deadline && time_ticks() >= task->sigwait_deadline) {
-        task->sigwait_deadline = task->sigwait_mask = 0;
-        return -LINUX_EAGAIN;
-    }
-    if (task->sigwait_mask) requested = task->sigwait_mask;
-    pending = sched_task_pending(task) & requested;
-    if (!pending) {
+    uint64_t requested, ticks = 0;
+    bool resuming = task && task->sigwait_active;
+    if (sigset_size != sizeof(uint64_t)) return -LINUX_EINVAL;
+    if (!task) return -LINUX_EFAULT;
+    if (!resuming) {
+        if (!user_range_ok(mask, sizeof(requested))) return -LINUX_EFAULT;
+        __builtin_memcpy(&requested, (const void *)(uintptr_t)mask, sizeof(requested));
+        requested &= ~((1ULL << 8) | (1ULL << 18));
+        task->sigwait_mask = task->sigwait_deadline = 0;
         if (timeout) {
             struct linux_timespec value;
             if (!user_range_ok(timeout, sizeof(value))) return -LINUX_EFAULT;
-            value = *(const struct linux_timespec *)(uintptr_t)timeout;
+            __builtin_memcpy(&value, (const void *)(uintptr_t)timeout, sizeof(value));
             if (value.tv_sec < 0 || value.tv_nsec < 0 || value.tv_nsec >= 1000000000LL)
                 return -LINUX_EINVAL;
-            if (value.tv_sec == 0 && value.tv_nsec == 0) return -LINUX_EAGAIN;
-            if (!task->sigwait_deadline) {
-                uint64_t seconds = (uint64_t)value.tv_sec;
-                if (seconds > UINT64_MAX / NTCLKS_TICK_HZ) return -LINUX_EINVAL;
-                uint64_t ticks = seconds * NTCLKS_TICK_HZ;
-                uint64_t ns = (uint64_t)value.tv_nsec;
-                uint64_t tick_ns = 1000000000ULL / NTCLKS_TICK_HZ;
-                ticks += ns / tick_ns + (ns % tick_ns != 0);
-                if (!ticks) return -LINUX_EAGAIN;
-                task->sigwait_deadline = time_ticks() + ticks;
-                task->sigwait_mask = requested;
-                sched_sleep_current_until(task->sigwait_deadline);
-                return KERNEL_SYSCALL_BLOCKED;
-            }
-        } else if (!task->sigwait_mask) {
-            task->sigwait_mask = requested;
-            sched_block_current();
-            return KERNEL_SYSCALL_BLOCKED;
+            /* timespec64_to_ktime saturates at KTIME_MAX on Linux. */
+            uint64_t seconds = (uint64_t)value.tv_sec;
+            uint64_t ns = seconds > INT64_MAX / 1000000000ULL ? INT64_MAX :
+                seconds * 1000000000ULL + (uint64_t)value.tv_nsec;
+            if (ns > INT64_MAX) ns = INT64_MAX;
+            const uint64_t tick_ns = 1000000000ULL / NTCLKS_TICK_HZ;
+            ticks = ns / tick_ns + (ns % tick_ns != 0);
         }
-        if (task->sigwait_deadline) {
-            sched_sleep_current_until(task->sigwait_deadline);
-            return KERNEL_SYSCALL_BLOCKED;
+    } else requested = task->sigwait_mask;
+    struct linux_siginfo result;
+    int signal = kernel_signal_dequeue(task, requested, &result);
+    if (signal) {
+        task->sigwait_deadline = task->sigwait_mask = 0;
+        task->sigwait_active = 0;
+        if (info) {
+            /* Linux copies kernel_siginfo before clearing the expansion.
+             * A fault in the latter leaves the first 48 bytes visible. */
+            if (!user_range_writable(info, 48)) return -LINUX_EFAULT;
+            __builtin_memcpy((void *)(uintptr_t)info, &result, 48);
+            if (info > UINT64_MAX - sizeof(result) ||
+                !user_range_writable(info + 48, sizeof(result) - 48)) return -LINUX_EFAULT;
+            __builtin_memset((void *)(uintptr_t)(info + 48), 0, sizeof(result) - 48);
         }
-        sched_block_current();
-        return KERNEL_SYSCALL_BLOCKED;
+        return signal;
     }
-    int signal = __builtin_ctzll(pending) + 1;
-    uint64_t bit = 1ULL << (uint32_t)(signal - 1);
-    /* SIGEV_THREAD_ID records the notification on the target thread, while
-     * process-directed timers record it on the thread-group leader.  Linux
-     * sigtimedwait must preserve SI_TIMER for either delivery form. */
-    uint64_t *timer_pending = &task->timer_pending_signals;
-    struct task *leader = sched_find(sched_task_tgid(task));
-    if (leader && (*timer_pending & bit) == 0 &&
-        (&leader->timer_pending_signals != timer_pending))
-        timer_pending = &leader->timer_pending_signals;
-    bool timer_signal = (*timer_pending & bit) != 0;
-    task->pending_signals &= ~bit;
-    *sched_task_process_pending(task) &= ~bit;
-    if (timer_signal) *timer_pending &= ~bit;
-    task->sigwait_deadline = task->sigwait_mask = 0;
-    if (info) {
-        if (!user_range_writable(info, sizeof(struct linux_siginfo))) return -LINUX_EFAULT;
-        struct linux_siginfo result = { .signo = signal, .code = timer_signal ? -2 : 0 };
-        *(struct linux_siginfo *)(uintptr_t)info = result;
+    if ((!resuming && timeout && !ticks) ||
+        (resuming && task->sigwait_deadline && time_ticks() >= task->sigwait_deadline)) {
+        task->sigwait_deadline = task->sigwait_mask = 0;
+        task->sigwait_active = 0;
+        return -LINUX_EAGAIN;
     }
-    return signal;
+    if (sched_task_pending(task) & ~task->blocked_signals & ~requested) {
+        task->sigwait_deadline = task->sigwait_mask = 0;
+        task->sigwait_active = 0;
+        return -LINUX_EINTR;
+    }
+    task->sigwait_mask = requested;
+    task->sigwait_active = 1;
+    if (!resuming && timeout) {
+        uint64_t now = time_ticks();
+        task->sigwait_deadline = ticks > UINT64_MAX - now ? UINT64_MAX : now + ticks;
+    }
+    sched_signal_wait_current(task->sigwait_deadline);
+    return KERNEL_SYSCALL_BLOCKED;
 }

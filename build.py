@@ -142,6 +142,8 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-terminal-packages",
     "test-qmp-pleditor",
     "test-qmp-tcc",
+    "gcc-probe-image",
+    "gcc-probe-runner",
     "test-qmp-fastfetch",
     "test-qmp-sl",
     "test-qmp-less",
@@ -153,6 +155,9 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-component-config",
     "test-linux-abi-contract",
     "test-linux-memory",
+    "test-linux-process-vm",
+    "test-linux-sysv-msg",
+    "test-linux-sysv-sem",
     "test-linux-pty",
     "test-linux-permissions",
     "test-storage-metadata",
@@ -162,6 +167,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-musl-distribution",
     "test-linux-resources",
     "test-linux-threads",
+    "test-linux-socket-batches",
     "test-linux-descriptors",
     "test-svga",
     "test-installer-input",
@@ -511,7 +517,7 @@ def add_copy(graph: BuildGraph, name: str, source: Path, destination: Path) -> T
             kind="generate",
             source=source,
             action=copy_action(source, destination),
-            action_key="copy-v2",
+            action_key="copy-v3-preserve-mode",
         )
     )
 
@@ -724,6 +730,22 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ))
     musl_archive = musl_prefix / "lib/libc.a"
     musl_stamp = musl_prefix / ".leonos-musl.json"
+    from tools.package_musl_gcc import ARCHIVE_NAME, COMMANDS as gcc_commands
+    gcc_archive = ROOT / "buildsystem/deps/musl-gcc" / ARCHIVE_NAME
+    gcc_source = Path(os.environ["LEONOS_GCC_ARCHIVE"]).resolve() if os.environ.get("LEONOS_GCC_ARCHIVE") else None
+    gcc_package = paths.out / "musl-gcc/root"
+    gcc_stamp = gcc_package / ".leonos-package.json"
+    graph.add(Target(name="musl-gcc", outputs=(gcc_stamp, gcc_archive,
+                         gcc_package / "opt/dyne", *(gcc_package / "bin" / name for name in gcc_commands)),
+                     inputs=(ROOT / "tools/package_musl_gcc.py", ROOT / "userland/musl-gcc/launcher.c",
+                             ROOT / "userland/musl-gcc/README.md", ROOT / "userland/musl-gcc/hello.c",
+                             ROOT / "userland/musl-gcc/COPYING3", ROOT / "userland/musl-gcc/COPYING.RUNTIME",
+                             ROOT / "third_party/musl/COPYRIGHT", *((gcc_source,) if gcc_source else ())),
+                     kind="generate", command=(PYTHON, "tools/package_musl_gcc.py",
+                         "--archive", str(gcc_archive), "--out", relative(gcc_package),
+                         *(("--source", str(gcc_source)) if gcc_source else ()))))
+    graph.add(Target(name="test-musl-gcc-package", depends_on=("musl-gcc",), kind="test",
+                     command=(PYTHON, "tools/test_musl_gcc_package.py", "--root", relative(gcc_package))))
     ncurses_prefix = paths.out / "ncurses/install/usr"
     vim_prefix = paths.out / "vim/install/usr"
     ncurses_stamp = ncurses_prefix / ".leonos-package.json"
@@ -1434,6 +1456,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             inputs=(ROOT / "tools/tests/musl_guest_test.c",
                     ROOT / "tools/tests/futex2_abi_test.c",
                     ROOT / "tools/tests/clone3_abi_test.c",
+                    ROOT / "tools/tests/symlink_abi_test.c",
+                    ROOT / "tools/tests/signal_queue_abi_test.c",
+                    ROOT / "tools/tests/socket_batch_abi_test.c",
+                    ROOT / "tools/tests/signalfd_abi_test.c",
+                    ROOT / "tools/tests/process_vm_abi_test.c",
+                    ROOT / "tools/tests/sysv_msg_abi_test.c",
+                    ROOT / "tools/tests/sysv_sem_abi_test.c",
                     ROOT / "tools/tests/prctl_abi_test.c",
                     ROOT / "tools/tests/utsname_abi_test.c",
                     ROOT / "tools/tests/membarrier_abi_test.c",
@@ -1445,6 +1474,21 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ))
     graph.add(Target(name="musl-probes", depends_on=("musl-probe:dynamic", "musl-probe:static"),
                      group=True, kind="aggregate"))
+    gcc_probe = paths.out / "gcc-probe/gcc-probe.elf"
+    graph.add(Target(name="gcc-probe-runner", outputs=(gcc_probe,), depends_on=("musl-sdk",),
+                     inputs=(ROOT / "tools/tests/gcc_guest_probe.c", ROOT / "tools/tests/vfork_linux_edges.c",
+                             ROOT / "userland/apps/installer/installer_directory.h",
+                             paths.out / "musl/leonos-musl-sdk.tar.gz"),
+                     kind="link", command=(PYTHON, relative(paths.out / "musl/sdk/bin/leonos-musl-cc"),
+                         "-O2", "-static", "tools/tests/gcc_guest_probe.c", "-o", relative(gcc_probe))))
+    if component_enabled("musl-gcc", "image"):
+        graph.add(Target(name="gcc-probe-image", outputs=(paths.out / "gcc-probe/gcc-probe.vmdk",),
+                         depends_on=("gcc-probe-runner", "esp"),
+                         inputs=(gcc_stamp, gcc_probe, kernel_sys, loader_elf, middle_sys,
+                                 ROOT / "tools/prepare_gcc_probe.py"),
+                         kind="generate", command=(PYTHON, "tools/prepare_gcc_probe.py",
+                             "--runner", str(gcc_probe),
+                             "--out", relative(paths.out / "gcc-probe"))))
     ltp_programs = ("getcwd01", "fcntl01", "fstat02", "mprotect01", "chmod01", "fchmod01", "chown01", "ltp-runner",
                     "pthread_create_1-1", "pthread_join_1-1", "pthread_mutex_lock_1-1", "pthread_cond_wait_1-1",
                     "pthread_cancel_1-1", "pthread_key_create_1-1", "pthread_barrier_wait_1-1",
@@ -2137,7 +2181,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         user_targets.append("busybox")
     if component_enabled("nano"):
         user_targets.append("nano")
-    for package in ("ncurses", "vim"):
+    for package in ("ncurses", "vim", "musl-gcc"):
         if component_enabled(package):
             user_targets.append(package)
     if component_enabled("fastfetch"):
@@ -2615,7 +2659,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         depends_on=("config-sync",),
         kind="generate",
         action=prune_component_staging,
-        action_key="staging-prune-musl-v5",
+        action_key="staging-prune-musl-v6",
     ))
     esp_names = ["staging-prune", "grub-efi"]
     esp_outputs: list[Path] = [grub_efi]
@@ -2665,6 +2709,38 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                      action=stage_terminal_packages, action_key="terminal-packages-v2-casefold"))
     esp_names.append("esp:terminal-packages")
     esp_outputs.extend(terminal_outputs)
+    gcc_payload_stamp = paths.out / "generated/musl-gcc-payload.json"
+
+    def stage_gcc_package(context: ActionContext) -> None:
+        enabled = component_enabled("musl-gcc", "image")
+        for name in ("opt/dyne", "share/licenses/musl-gcc", "share/examples/musl-gcc",
+                     *("bin/" + n for n in gcc_commands)):
+            destination = paths.staging / name
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink(missing_ok=True)
+            if enabled:
+                source = gcc_package / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if source.is_dir():
+                    shutil.copytree(source, destination)
+                else:
+                    shutil.copy2(source, destination)
+        ensure_parent(context, gcc_payload_stamp, json.dumps({"musl-gcc": enabled}) + "\n")
+
+    gcc_payload_outputs = (gcc_payload_stamp,)
+    if component_enabled("musl-gcc", "image"):
+        gcc_payload_outputs += (paths.staging / "opt/dyne", paths.staging / "share/licenses/musl-gcc",
+                                paths.staging / "share/examples/musl-gcc",
+                                *(paths.staging / "bin" / name for name in gcc_commands))
+    graph.add(Target(name="esp:musl-gcc", outputs=gcc_payload_outputs,
+                     inputs=(config_path, ROOT / "configs/components.toml",
+                             *((gcc_stamp,) if component_enabled("musl-gcc", "image") else ())),
+                     depends_on=("esp:terminal-packages",), kind="generate",
+                     action=stage_gcc_package, action_key="musl-gcc-payload-v2"))
+    esp_names.append("esp:musl-gcc")
+    esp_outputs.extend(gcc_payload_outputs)
     grub_font_destination = paths.staging / "grub/fonts/leonos-unicode.pf2"
     target = add_copy(graph, "esp:grub-font", grub_font, grub_font_destination)
     esp_names.append(target.name)
@@ -3075,28 +3151,28 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                      relative(vmdk), "--raw", relative(raw), "--esp-tree",
                      relative(paths.staging), "--esp-image", relative(esp_fat),
                      "--root-image", relative(root_ext2), "--root-fs", "ext2", "--default-language", vmdk_language,
-                     "--size-mib", str(config_int(values, "CONFIG_IMAGE_SIZE_MIB")))))
+                     "--size-mib", str(max(config_int(values, "CONFIG_IMAGE_SIZE_MIB"),
+                                           1024 if component_enabled("musl-gcc", "image") else 0)))))
 
     iso = paths.images / "leonos4.iso"
     iso_stage = paths.out / "iso"
-
-    def make_iso(context: ActionContext) -> None:
-        if iso_stage.exists():
-            context.detail(f"replace ISO staging tree: {relative(iso_stage)}")
-            shutil.rmtree(iso_stage)
-        context.detail(f"copy ESP staging tree: {relative(paths.staging)} -> {relative(iso_stage)}")
-        shutil.copytree(paths.staging, iso_stage)
-        # grub-mkrescue 的 BIOS/eltorito core.img 前缀固定为 /boot/grub，
-        # 需要提供该路径的 grub.cfg，否则 BIOS 启动会直接落入 GRUB 命令行。
-        bios_grub_dir = iso_stage / "boot/grub"
-        bios_grub_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(iso_stage / "grub/grub.cfg", bios_grub_dir / "grub.cfg")
-        context.run(("grub-mkrescue", "-o", relative(iso), relative(iso_stage)), announce=True)
-
-    graph.add(Target(name="image-iso", outputs=(iso,), inputs=tuple([
-        *esp_outputs,
-        ROOT / "boot/grub/grub.cfg",
-    ]), depends_on=("esp",), kind="generate", action=make_iso, action_key="iso-stage-v1"))
+    desktop_root = paths.out / "live/root.ext2"
+    graph.add(Target(name="desktop-live-root", outputs=(desktop_root,),
+                     inputs=(*esp_outputs, ROOT / "tools/make_live_root.py",
+                             ROOT / "tools/make_ext2_root.py", ROOT / "tools/make_image.py"),
+                     depends_on=("esp",), kind="generate", command=(
+                         PYTHON, "tools/make_live_root.py", "--tree", relative(paths.staging),
+                         "--out", relative(desktop_root))))
+    graph.add(Target(name="image-iso", outputs=(iso,), inputs=(desktop_root, loader_elf,
+                     kernel_sys, middle_sys, grub_font, ROOT / "boot/grub/live.cfg",
+                     ROOT / "boot/grub/installer_embedded.cfg", ROOT / "tools/make_installer_iso.py"),
+                     kind="generate", command=(PYTHON, "tools/make_installer_iso.py",
+                         "--out", relative(iso), "--stage", relative(iso_stage),
+                         "--boot-image", relative(paths.out / "live/efiboot.img"),
+                         "--loader", relative(loader_elf), "--kernel", relative(kernel_sys),
+                         "--middlelayer", relative(middle_sys), "--installer-root", relative(desktop_root),
+                         "--grub-font", relative(grub_font), "--work-dir", relative(paths.out / "live/work"),
+                         "--grub-efi-dir", grub_dir_arg, "--grub-config", "boot/grub/live.cfg", "--bios")))
 
     installer_root = paths.out / "install/root.fat"
     installer_stage = paths.out / "install/root"
@@ -3109,6 +3185,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         installer_runtime_so,
         *(installer_policy_elfs.values()),
         ROOT / "tools/make_installer_root.py",
+        ROOT / "tools/make_ext2_root.py",
     ]), depends_on=(
         "esp",
         "installer-runtime",
@@ -3222,7 +3299,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         PYTHON, "tools/test_live_iso.py")))
     graph.add(Target(name="musl-desktop-vim-root", outputs=(live_root,),
                      inputs=(*esp_outputs,
-                             ROOT / "tools/make_live_root.py", ROOT / "tools/make_image.py"),
+                             ROOT / "tools/make_live_root.py", ROOT / "tools/make_ext2_root.py", ROOT / "tools/make_image.py"),
                      depends_on=("esp",), kind="generate", command=(
                          PYTHON, "tools/make_live_root.py", "--tree", relative(paths.staging),
                          "--out", relative(live_root))))
@@ -3397,6 +3474,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ))
     graph.add(Target(name="test-linux-memory", kind="command", always=True,
                      command=(PYTHON, "tools/test_linux_memory.py")))
+    graph.add(Target(name="test-linux-process-vm", kind="command", always=True,
+                     command=(PYTHON, "tools/test_linux_process_vm.py")))
+    graph.add(Target(name="test-linux-sysv-msg", kind="command", always=True,
+                     command=(PYTHON, "tools/test_linux_sysv_msg.py")))
+    graph.add(Target(name="test-linux-sysv-sem", kind="command", always=True,
+                     command=(PYTHON, "tools/test_linux_sysv_sem.py")))
     graph.add(Target(name="test-linux-pty", kind="command", always=True,
                      command=(PYTHON, "tools/test_linux_pty.py")))
     graph.add(Target(name="test-linux-permissions", kind="command", always=True,
@@ -3406,8 +3489,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-storage-rename", kind="command", always=True,
                      command=(PYTHON, "tools/test_storage_rename.py")))
     for suffix, script in (("linux-resources", "test_linux_resources.py"),
+                           ("linux-socket-batches", "test_linux_socket_batches.py"),
                            ("linux-threads", "test_linux_threads.py"),
-                           ("linux-descriptors", "test_linux_descriptors.py")):
+                           ("linux-descriptors", "test_linux_descriptors.py"),
+                           ("linux-vfork-stack", "test_linux_vfork_stack.py")):
         graph.add(Target(name="test-" + suffix, kind="command", always=True,
                          command=(PYTHON, "tools/" + script)))
     graph.add(Target(name="test-musl-distribution", kind="command", always=True,
@@ -3471,6 +3556,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             "-b", str(vmdk), "-F", "vmdk", str(overlay),
         ], cwd=ROOT, check=True)
         command = list(qemu_command(paths, values, debug=True))
+        if test_name in ("vim", "abittest"):
+            for index, argument in enumerate(command[:-1]):
+                if argument == "-m":
+                    command[index + 1] = "2048M"
+                    break
         drive_file = f"file={relative(vmdk)}"
         for index, argument in enumerate(command):
             if drive_file in argument:
@@ -3646,7 +3736,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="test-qmp-terminal", inputs=(
         vmdk,
         ROOT / "tools/qmp_terminal_smoke.py",
-    ), depends_on=("image-vmdk",), kind="command", action=qmp_test, action_key="qmp-terminal-v3"))
+    ), depends_on=("image-vmdk",), kind="command",
+        action=lambda context: qmp_test(context, "vim"), action_key="qmp-terminal-vim-v1"))
     graph.add(Target(name="test-qmp-pleditor", inputs=(
         vmdk,
         ROOT / "tools/qmp_terminal_smoke.py",
@@ -3655,6 +3746,10 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         vmdk,
         ROOT / "tools/qmp_terminal_smoke.py",
     ), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "vi"), action_key="qmp-vi-v1"))
+    graph.add(Target(name="test-qmp-vim", inputs=(
+        vmdk,
+        ROOT / "tools/qmp_terminal_smoke.py",
+    ), depends_on=("image-vmdk",), kind="command", action=lambda context: qmp_test(context, "vim"), action_key="qmp-vim-v1"))
     graph.add(Target(name="test-qmp-tcc", inputs=(
         vmdk,
         ROOT / "tools/qmp_terminal_smoke.py",

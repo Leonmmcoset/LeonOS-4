@@ -69,7 +69,25 @@ struct storage_node {
 int storage_inode_permissions(const struct storage_node *node,
                               struct leonos_permissions *value, bool write);
 int storage_inode_stat(const struct storage_node *node, struct linux_stat_abi *value);
+int storage_inode_utimensat(const struct storage_node *node, int64_t atime, int64_t mtime,
+                            bool set_atime, bool set_mtime);
 int storage_create_socket(const char *path, struct storage_node *out);
+/**
+ * @brief Creates a symbolic link on the filesystem containing a resolved parent.
+ * @param target Literal link text; never resolved during creation.
+ * @param path Absolute link name with its parent already resolved and authorized.
+ * @return Zero or negative errno; serializes allocation and restores the active volume.
+ */
+int storage_symlink(const char *target, const char *path);
+/**
+ * @brief Reads literal symlink bytes while holding the storage execution lock.
+ * @param path Absolute name whose intermediate components have been resolved.
+ * @param buffer Writable kernel buffer; no NUL terminator is appended.
+ * @param capacity Positive buffer capacity in bytes.
+ * @param out_len Optional byte count, reset to zero on failure.
+ * @return Zero or negative errno, including EINVAL for a non-symlink.
+ */
+int storage_readlink(const char *path, char *buffer, uint32_t capacity, uint32_t *out_len);
 int storage_statfs(const struct storage_node *node, struct linux_statfs_abi *value);
 
 /**
@@ -261,6 +279,8 @@ int storage_rmdir(const char *path);
  * @brief Rename old_path to new_path; 0 on success.
  */
 int storage_rename(const char *old_path, const char *new_path);
+/** @brief Create a hard link to an existing regular file. */
+int storage_link(const char *old_path, const char *new_path);
 /**
  * @brief List up to capacity install disks into disks; count in out_count.
  */

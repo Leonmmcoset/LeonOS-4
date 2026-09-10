@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Pack the normal desktop payload in a bootable FAT ramdisk."""
+"""Pack the normal desktop payload in a bootable ext2 ramdisk."""
 import argparse
 from pathlib import Path
 import subprocess
 import tempfile
 
 from make_image import make_root_tree
+from make_ext2_root import write_ext2_root
 
 
 def make_live_tree(tree: Path, stage: Path) -> None:
@@ -13,8 +14,9 @@ def make_live_tree(tree: Path, stage: Path) -> None:
     make_root_tree(tree, stage, "en")
     for directory in ("bin", "tmp", "root", "proc", "dev", "run/leonos"):
         (stage / directory).mkdir(parents=True, exist_ok=True)
+    (stage / "tmp").chmod(0o1777)
     (stage / "system/osmlayer.manifest").write_text(
-        "name=osmlayer\nabi=2\nroot=/\nfs=fat32\ngui=desktop.elf\n",
+        "name=osmlayer\nabi=2\nroot=/\nfs=ext2\ngui=desktop.elf\n",
         encoding="ascii",
     )
 
@@ -44,7 +46,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="leonos-live-tree-", dir=args.out.parent) as directory:
         stage = Path(directory)
         make_live_tree(args.tree, stage)
-        write_fat_root(stage, args.out)
+        write_ext2_root(stage, args.out)
 
 
 if __name__ == "__main__":

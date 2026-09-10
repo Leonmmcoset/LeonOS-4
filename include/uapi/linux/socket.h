@@ -59,6 +59,7 @@ struct sockaddr_un {
 #define SCM_CREDENTIALS 2
 
 #define MSG_CTRUNC 0x08
+#define MSG_OOB 0x01
 #define MSG_TRUNC 0x20
 #define MSG_PEEK 0x02
 #define MSG_DONTWAIT 0x40
@@ -66,6 +67,10 @@ struct sockaddr_un {
 #define MSG_WAITALL 0x100
 #define MSG_NOSIGNAL 0x4000
 #define MSG_MORE 0x8000
+#define MSG_ERRQUEUE 0x2000
+#define MSG_WAITFORONE 0x10000
+#define MSG_BATCH 0x40000
+#define MSG_CMSG_COMPAT 0x80000000u
 #define MSG_CMSG_CLOEXEC 0x40000000
 
 #define SOCK_NONBLOCK 0x0800
@@ -92,6 +97,15 @@ struct cmsghdr {
     int32_t cmsg_level;
     int32_t cmsg_type;
 };
+
+struct mmsghdr {
+    struct msghdr msg_hdr;
+    uint32_t msg_len;
+};
+
+_Static_assert(sizeof(struct msghdr) == 56, "native x86-64 msghdr");
+_Static_assert(sizeof(struct mmsghdr) == 64, "native x86-64 mmsghdr stride");
+_Static_assert(__builtin_offsetof(struct mmsghdr, msg_len) == 56, "native msg_len offset");
 
 #define CMSG_ALIGN(len) (((len) + sizeof(uint64_t) - 1u) & ~(sizeof(uint64_t) - 1u))
 #define CMSG_SPACE(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))

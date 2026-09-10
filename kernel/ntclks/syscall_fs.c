@@ -31,6 +31,10 @@ int syscall_fs_owns(uint64_t number)
     case LINUX_SYS_FCHMODAT:
     case LINUX_SYS_FCHMODAT2:
     case LINUX_SYS_FCHOWNAT:
+    case LINUX_SYS_UTIMENSAT:
+    case LINUX_SYS_UTIME:
+    case LINUX_SYS_UTIMES:
+    case LINUX_SYS_FUTIMESAT:
     case LINUX_SYS_FACCESSAT:
     case LINUX_SYS_FACCESSAT2:
     case LINUX_SYS_LSEEK:
@@ -54,6 +58,7 @@ int syscall_fs_owns(uint64_t number)
     case LINUX_SYS_UNLINK:
     case LINUX_SYS_UNLINKAT:
     case LINUX_SYS_FCNTL:
+    case LINUX_SYS_FLOCK:
     case LINUX_SYS_MOUNT:
     case LINUX_SYS_UMOUNT2:
         return 1;

@@ -448,6 +448,13 @@ static uint64_t task_find_mmap_region(struct task *task, uint64_t len)
         return 0;
     }
     for (uint64_t start = NTCLKS_USER_MMAP_BASE; start + len <= top; start += PAGE_SIZE) {
+        /* Do not test every page-sized candidate inside the supervisor hole.
+         * A large anonymous mapping beginning at the mmap base would
+         * otherwise repeat the full page-presence scan thousands of times. */
+        if (start < NTCLKS_KERNEL_HOLE_END && start + len > NTCLKS_KERNEL_HOLE_START) {
+            start = NTCLKS_KERNEL_HOLE_END - PAGE_SIZE;
+            continue;
+        }
         if (task_user_pages_free(task, start, start + len)) {
             return start;
         }
@@ -557,6 +564,31 @@ static int task_map_anonymous_pages(struct task *task, uint64_t start, uint64_t 
     return 0;
 }
 
+/* Linux anonymous mmap reserves virtual address space first.  Physical pages
+ * are allocated by the page-fault path, so a large allocator arena does not
+ * consume RAM until the process actually touches it. */
+static int task_map_anonymous_page(struct task *task, struct task_vma *vma,
+                                   uint64_t page)
+{
+    uint64_t phys;
+    uint64_t flags = 0;
+    if (!task || !vma || !(vma->flags & TASK_VMA_FLAG_ANON) ||
+        vma->prot == LINUX_PROT_NONE) {
+        return -LEONOS_EFAULT;
+    }
+    phys = mm_alloc_page();
+    if (!phys) return -LEONOS_ENOMEM;
+    zero_phys_page(phys);
+    if (vma->prot & LINUX_PROT_WRITE) flags |= NTCLKS_PAGE_WRITABLE;
+    if (!(vma->prot & LINUX_PROT_EXEC)) flags |= NTCLKS_PAGE_NOEXEC;
+    if (vma->flags & TASK_VMA_FLAG_SHARED) flags |= NTCLKS_PAGE_SHARED;
+    if (!address_space_map_user_page(sched_task_as(task), page, phys, flags)) {
+        mm_free_page(phys);
+        return -LEONOS_ENOMEM;
+    }
+    return 0;
+}
+
 /**
  * Load file cache page.
  * @param task Value supplied by the caller.
@@ -660,14 +692,50 @@ static int task_map_file_vma_page(struct task *task, const struct task_vma *vma,
 }
 
 /**
- * Syscall handle user page fault.
- * @param fault_addr Value supplied by the caller.
- * @param error Value supplied by the caller.
- * @return The value or status produced by the operation.
+ * @brief RLIMIT_STACK/RLIMIT_AS admission for a new lowest stack page.
+ *
+ * Mirrors Linux mm/mmap.c:acct_stack_growth(): @size is the whole growable
+ * stack VMA span (top - candidate start) and the stack test is
+ * `size > rlimit(RLIMIT_STACK)`; RLIM_INFINITY disables only that test.  The
+ * address-space limit stays a cumulative virtual-memory check.
  */
-int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
+static bool task_stack_growth_allowed(const struct task *task, uint64_t page)
 {
-    struct task *task = sched_current_task();
+    if (!task || !task->stack_top || page >= task->stack_top) {
+        return false;
+    }
+    uint64_t stack_size = task->stack_top - page;
+    const struct task_address_space_state *mm = sched_task_mm(task);
+    uint64_t old_low = mm->initial_stack_low ? mm->initial_stack_low : task->stack_low;
+    if (page >= old_low) return true;
+    const struct task_rlimit_state *limits = sched_task_limits(task);
+    if (limits->stack.rlim_cur != LINUX_RLIM_INFINITY &&
+        stack_size > limits->stack.rlim_cur) {
+        return false;
+    }
+    if (page < old_low && limits->as.rlim_cur != LINUX_RLIM_INFINITY) {
+        uint64_t limit = limits->as.rlim_cur & ~(PAGE_SIZE - 1ULL);
+        uint64_t used = task_vma_total_bytes(task);
+        if (used > limit || old_low - page > limit - used) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** @brief Distinguish a missing mapping from denied access to an existing VMA. */
+int syscall_page_fault_signal_code(struct task *task, uint64_t address)
+{
+    struct task_address_space_state *mm = sched_task_mm(task);
+    uint64_t page = align_down_page(address);
+    if (task_vma_containing(task, page, page + PAGE_SIZE) ||
+        (mm->initial_stack_low && page >= mm->initial_stack_low && page < mm->initial_stack_top) ||
+        address_space_user_page_phys(sched_task_as(task), page)) return LINUX_SEGV_ACCERR;
+    return LINUX_SEGV_MAPERR;
+}
+
+int syscall_handle_task_page_fault(struct task *task, uint64_t fault_addr, uint64_t error)
+{
     if (!task || task->kind != TASK_KIND_USER) {
         return 0;
     }
@@ -681,17 +749,36 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
     if ((error & 0x3ULL) == 0x3ULL && !(error & 0x18ULL)) {
         return address_space_handle_cow_fault(sched_task_as(task), page);
     }
-    if (error & 0x9ULL) {
+    /* A user address can still report the PRESENT bit when the bootstrap
+     * address space contributes a supervisor-only 2 MiB identity PDE.  That
+     * is not a valid user mapping, but it is a recoverable first fault when a
+     * recorded anonymous or file-backed VMA owns the address: the VMA path
+     * below replaces the inherited PDE with a user PTE.  Reserved-bit faults
+     * remain fatal before any VMA handling. */
+    if (error & 0x8ULL) {
         return 0;
     }
     if (address_space_user_page_phys(sched_task_as(task), page)) {
         return 0;
     }
 
+    {
+        struct task_vma *anon = task_vma_containing(task, page, page + PAGE_SIZE);
+        if (anon && (anon->flags & TASK_VMA_FLAG_ANON)) {
+            if (anon->prot == LINUX_PROT_NONE ||
+                ((error & 0x2ULL) && !(anon->prot & LINUX_PROT_WRITE)) ||
+                ((error & 0x10ULL) && !(anon->prot & LINUX_PROT_EXEC))) {
+                return 0;
+            }
+            return task_map_anonymous_page(task, anon, page) == 0;
+        }
+    }
+
     /**
  * @brief Grow the anonymous user stack on demand. The initial image maps a
- * small working set; accesses below it consume pages down to the fixed
- * maximum and leave one unmapped guard page below the stack.
+ * small working set; accesses below it consume pages while RLIMIT_STACK
+ * permits, bounded by the native user stack window, and leave one unmapped
+ * guard page below the stack.
  *
  * A single user instruction (notably a forward-running memset) can cross
  * upward from a newly grown page into the originally unmapped gap between
@@ -707,12 +794,7 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
         uint64_t guard = task->stack_top -
                          (uint64_t)NTCLKS_USER_STACK_MAX_PAGES * PAGE_SIZE - PAGE_SIZE;
         struct task_address_space_state *mm = sched_task_mm(task);
-        uint64_t old_low = mm->initial_stack_low ? mm->initial_stack_low : task->stack_low;
-        if (page < old_low && sched_task_limits(task)->as.rlim_cur != LINUX_RLIM_INFINITY) {
-            uint64_t limit = sched_task_limits(task)->as.rlim_cur & ~(PAGE_SIZE - 1ULL);
-            uint64_t used = task_vma_total_bytes(task);
-            if (used > limit || old_low - page > limit - used) return 0;
-        }
+        if (!task_stack_growth_allowed(task, page)) return 0;
         if (page > guard && address_space_map_user_stack_page(sched_task_as(task), page)) {
             if (page < task->stack_low) {
                 task->stack_low = page;
@@ -752,6 +834,12 @@ int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
         }
         return ret == 0;
     }
+}
+
+/** @brief Resolve a user fault in the current task's address space. */
+int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error)
+{
+    return syscall_handle_task_page_fault(sched_current_task(), fault_addr, error);
 }
 
 /**
@@ -911,7 +999,11 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
     /**
  * @brief File mappings are lazy: reserve the page-table range now so a first instruction/data fault can replace the inherited kernel huge-page identity mapping even when the CPU reports the fault as present.
  */
-    if (!anonymous && !device_mapping && !address_space_prepare_user_range(sched_task_as(task), start, end)) {
+    /* Anonymous mappings are lazy too, but their first page fault must not
+     * fall through to the inherited supervisor-only 2 MiB identity mapping.
+     * Replace the low page-directory entries before publishing the VMA; this
+     * reserves page-table structure without allocating the backing pages. */
+    if (!device_mapping && !address_space_prepare_user_range(sched_task_as(task), start, end)) {
         return -LEONOS_ENOMEM;
     }
 
@@ -933,8 +1025,12 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
             }
         }
         ret = 0;
-    } else if (anonymous) {
+    } else if (anonymous && (flags & LINUX_MAP_NORESERVE) == 0 &&
+               (task->mlockall_flags & LINUX_MCL_FUTURE)) {
+        /* MCL_FUTURE promises resident pages for future mappings. */
         ret = task_map_anonymous_pages(task, start, end, page_flags);
+    } else if (anonymous) {
+        ret = 0;
     } else {
         ret = 0;
     }

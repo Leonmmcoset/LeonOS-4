@@ -40,6 +40,48 @@ def main():
                      "MEMLOCK", "AS", "LOCKS", "SIGPENDING", "MSGQUEUE", "NICE", "RTPRIO", "RTTIME"):
             checks += [f'_Static_assert(RLIMIT_{name} == LINUX_RLIMIT_{name}, "RLIMIT_{name} drift");']
         checks += ["#include <signal.h>", "#include <ucontext.h>", "#include <linux/signal.h>"]
+        checks += ["#include <sys/msg.h>", "#include <linux/msg.h>",
+                   '_Static_assert(sizeof(struct ipc_perm) == sizeof(struct linux_ipc64_perm), "IPC permission size");',
+                   '_Static_assert(sizeof(struct msqid_ds) == sizeof(struct linux_msqid64_ds), "message queue size");',
+                   '_Static_assert(sizeof(struct msginfo) == sizeof(struct linux_msginfo), "message info size");']
+        for field in ("msg_perm", "msg_stime", "msg_rtime", "msg_ctime", "msg_cbytes",
+                      "msg_qnum", "msg_qbytes", "msg_lspid", "msg_lrpid"):
+            checks += [f'_Static_assert(offsetof(struct msqid_ds, {field}) == '
+                       f'offsetof(struct linux_msqid64_ds, {field}), "{field} offset");']
+        for field in ("uid", "gid", "cuid", "cgid", "mode"):
+            checks += [f'_Static_assert(offsetof(struct ipc_perm, {field}) == '
+                       f'offsetof(struct linux_ipc64_perm, {field}), "ipc {field} offset");']
+        for name in ("IPC_PRIVATE", "IPC_CREAT", "IPC_EXCL", "IPC_NOWAIT", "IPC_RMID",
+                     "IPC_SET", "IPC_STAT", "IPC_INFO", "MSG_NOERROR", "MSG_EXCEPT",
+                     "MSG_STAT", "MSG_INFO", "MSG_STAT_ANY"):
+            checks += [f'_Static_assert({name} == LINUX_{name}, "{name} drift");']
+        # musl sys/msg.h does not publish Linux's checkpoint/restore extension.
+        checks += ['_Static_assert(LINUX_MSG_COPY == 040000, "Linux MSG_COPY encoding");']
+        checks += ["#include <sys/sem.h>", "#include <linux/sem.h>",
+                   '_Static_assert(sizeof(struct semid_ds) == sizeof(struct linux_semid64_ds), "semaphore status size");',
+                   '_Static_assert(sizeof(struct sembuf) == sizeof(struct linux_sembuf), "sembuf size");',
+                   '_Static_assert(sizeof(struct seminfo) == sizeof(struct linux_seminfo), "seminfo size");']
+        for field in ("sem_perm", "sem_otime", "sem_ctime", "sem_nsems"):
+            checks += [f'_Static_assert(offsetof(struct semid_ds, {field}) == '
+                       f'offsetof(struct linux_semid64_ds, {field}), "{field} offset");']
+        for field in ("sem_num", "sem_op", "sem_flg"):
+            checks += [f'_Static_assert(offsetof(struct sembuf, {field}) == '
+                       f'offsetof(struct linux_sembuf, {field}), "{field} offset");']
+        for name in ("SEM_UNDO", "GETPID", "GETVAL", "GETALL", "GETNCNT", "GETZCNT",
+                     "SETVAL", "SETALL", "SEM_STAT", "SEM_INFO", "SEM_STAT_ANY"):
+            checks += [f'_Static_assert({name} == LINUX_{name}, "{name} drift");']
+        checks += ["#include <sys/signalfd.h>", "#include <linux/signalfd.h>",
+                   '_Static_assert(sizeof(struct signalfd_siginfo) == sizeof(struct linux_signalfd_siginfo), "signalfd size");',
+                   '_Static_assert(SFD_NONBLOCK == LINUX_SFD_NONBLOCK && SFD_CLOEXEC == LINUX_SFD_CLOEXEC, "signalfd flags");']
+        for libc, raw in (("ssi_signo", "signo"), ("ssi_errno", "error"), ("ssi_code", "code"),
+                          ("ssi_pid", "pid"), ("ssi_uid", "uid"), ("ssi_fd", "fd"), ("ssi_tid", "tid"),
+                          ("ssi_band", "band"), ("ssi_overrun", "overrun"), ("ssi_trapno", "trapno"),
+                          ("ssi_status", "status"), ("ssi_int", "value_int"), ("ssi_ptr", "value_ptr"),
+                          ("ssi_utime", "utime"), ("ssi_stime", "stime"), ("ssi_addr", "address"),
+                          ("ssi_addr_lsb", "address_lsb"), ("ssi_syscall", "syscall"),
+                          ("ssi_call_addr", "call_address"), ("ssi_arch", "arch")):
+            checks += [f'_Static_assert(offsetof(struct signalfd_siginfo, {libc}) == '
+                       f'offsetof(struct linux_signalfd_siginfo, {raw}), "{libc} offset");']
         checks += ["#include <time.h>", "#include <sys/time.h>", "#include <linux/time.h>",
                    '_Static_assert(sizeof(struct timespec) == sizeof(struct linux_timespec), "timespec size");',
                    '_Static_assert(sizeof(struct timeval) == sizeof(struct linux_timeval), "timeval size");',
@@ -60,7 +102,10 @@ def main():
                    '_Static_assert(sizeof(siginfo_t) == sizeof(struct linux_siginfo), "siginfo size");',
                    '_Static_assert(offsetof(mcontext_t, fpregs) == offsetof(struct linux_sigcontext, fpstate), "fpstate offset");',
                    '_Static_assert(offsetof(siginfo_t, si_pid) == offsetof(struct linux_siginfo, fields.sender.pid), "sender pid offset");',
-                   '_Static_assert(offsetof(siginfo_t, si_uid) == offsetof(struct linux_siginfo, fields.sender.uid), "sender uid offset");']
+                   '_Static_assert(offsetof(siginfo_t, si_uid) == offsetof(struct linux_siginfo, fields.sender.uid), "sender uid offset");',
+                   '_Static_assert(offsetof(siginfo_t, si_value) == offsetof(struct linux_siginfo, fields.realtime.value), "queued value offset");',
+                   '_Static_assert(offsetof(siginfo_t, si_timerid) == offsetof(struct linux_siginfo, fields.timer.id), "timer id offset");',
+                   '_Static_assert(offsetof(siginfo_t, si_overrun) == offsetof(struct linux_siginfo, fields.timer.overrun), "timer overrun offset");']
         for field in ("r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rdi", "rsi",
                       "rbp", "rbx", "rdx", "rax", "rcx", "rsp", "rip"):
             checks += [f'_Static_assert(offsetof(mcontext_t, gregs) + REG_{field.upper()} * sizeof(greg_t) == '

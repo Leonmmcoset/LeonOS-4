@@ -257,6 +257,14 @@ int syscall_ipc_pipe2(uint64_t user_ptr, uint64_t flags)
 int syscall_ipc_owns(uint64_t number)
 {
     switch (number) {
+    case LINUX_SYS_MSGGET:
+    case LINUX_SYS_SEMGET:
+    case LINUX_SYS_SEMOP:
+    case LINUX_SYS_SEMCTL:
+    case LINUX_SYS_SEMTIMEDOP:
+    case LINUX_SYS_MSGSND:
+    case LINUX_SYS_MSGRCV:
+    case LINUX_SYS_MSGCTL:
     case LINUX_SYS_PIPE:
     case LINUX_SYS_PIPE2:
     case LINUX_SYS_DUP:
@@ -276,5 +284,9 @@ int64_t syscall_ipc_dispatch(uint64_t number, uint64_t a0, uint64_t a1,
                              uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5)
 {
     if (number == LINUX_SYS_PIPE2) return syscall_ipc_pipe2(a0, a1);
+    if ((number >= LINUX_SYS_SEMGET && number <= LINUX_SYS_SEMCTL) || number == LINUX_SYS_SEMTIMEDOP)
+        return syscall_sysv_sem(number, a0, a1, a2, a3);
+    if (number >= LINUX_SYS_MSGGET && number <= LINUX_SYS_MSGCTL)
+        return syscall_sysv_msg(number, a0, a1, a2, a3, a4);
     return syscall_dispatch_regs_legacy(number, a0, a1, a2, a3, a4, a5);
 }

@@ -57,4 +57,22 @@ struct clone_args {
 #define SCHED_IDLE           5
 #define SCHED_DEADLINE       6
 
+#define SCHED_ATTR_SIZE_VER0 48
+#define SCHED_ATTR_SIZE_VER1 56
+
+/* Linux x86-64 sched_attr ABI.  The first 48 bytes are the original
+ * published interface; utilization hints were appended in v5.3. */
+struct sched_attr {
+    uint32_t size;
+    uint32_t sched_policy;
+    uint64_t sched_flags;
+    int32_t sched_nice;
+    uint32_t sched_priority;
+    uint64_t sched_runtime;
+    uint64_t sched_deadline;
+    uint64_t sched_period;
+    uint32_t sched_util_min;
+    uint32_t sched_util_max;
+};
+
 #endif

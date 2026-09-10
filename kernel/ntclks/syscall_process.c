@@ -20,10 +20,12 @@
 #include <linux/utsname.h>
 #include <linux/futex.h>
 #include <linux/sched.h>
+#include <linux/rseq.h>
 #include <linux/errno.h>
 #include <linux/time.h>
 #include <leonos/signal.h>
 #include <linux/signal.h>
+#include <linux/capability.h>
 #include <leonos/auth.h>
 #include <leonos/system.h>
 #include <stdint.h>
@@ -60,7 +62,7 @@ static int64_t process_resource_limit(uint64_t number, uint64_t a0, uint64_t a1,
     }
     struct task *target = combined && (uint32_t)a0 ? sched_find((uint32_t)a0) : caller;
     if (!target) return -LINUX_ESRCH;
-    if (combined && caller != target && caller->euid &&
+    if (combined && caller != target && !(caller->cap_effective & (1ULL << CAP_SYS_RESOURCE)) &&
         (caller->uid != target->uid || caller->uid != target->euid || caller->uid != target->suid ||
          caller->gid != target->gid || caller->gid != target->egid || caller->gid != target->sgid))
         return -LINUX_EPERM;
@@ -72,8 +74,11 @@ static int64_t process_resource_limit(uint64_t number, uint64_t a0, uint64_t a1,
     struct linux_rlimit64 *stored;
     if (resource == LINUX_RLIMIT_NOFILE) stored = &limits->nofile;
     else if (resource == LINUX_RLIMIT_AS) stored = &limits->as;
+    else if (resource == LINUX_RLIMIT_SIGPENDING) stored = &limits->sigpending;
+    else if (resource == LINUX_RLIMIT_STACK) stored = &limits->stack;
     else return -LINUX_ENOSYS;
-    if (setting && next.rlim_max > stored->rlim_max && caller->euid) return -LINUX_EPERM;
+    if (setting && next.rlim_max > stored->rlim_max &&
+        !(caller->cap_effective & (1ULL << CAP_SYS_RESOURCE))) return -LINUX_EPERM;
     previous = *stored;
     if (setting) *stored = next;
     if (old_pointer || number == LINUX_SYS_GETRLIMIT) {
@@ -277,6 +282,104 @@ int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
 int64_t syscall_process_control(uint64_t number, uint64_t a0,
                                        uint64_t a1, uint64_t a2, uint64_t a3)
 {
+    if (number == LINUX_SYS_CAPGET || number == LINUX_SYS_CAPSET) {
+        struct task *task = sched_current_task();
+        struct __user_cap_header_struct header;
+        struct __user_cap_data_struct data[2] = {{0}};
+        uint32_t words;
+        uint64_t requested;
+        if (!task || !a0 || !user_range_ok(a0, sizeof(header))) return -LINUX_EFAULT;
+        header = *(const struct __user_cap_header_struct *)(uintptr_t)a0;
+        if (header.version == _LINUX_CAPABILITY_VERSION_1) words = 1;
+        else if (header.version == _LINUX_CAPABILITY_VERSION_2 ||
+                 header.version == _LINUX_CAPABILITY_VERSION_3) words = 2;
+        else {
+            if (!user_range_writable(a0, sizeof(header))) return -LINUX_EFAULT;
+            ((struct __user_cap_header_struct *)(uintptr_t)a0)->version =
+                _LINUX_CAPABILITY_VERSION_3;
+            return -LINUX_EINVAL;
+        }
+        if (header.pid && (uint32_t)header.pid != sched_task_tgid(task))
+            return -LINUX_EPERM;
+        if (!a1 || !user_range_writable(a1, words * sizeof(data[0]))) return -LINUX_EFAULT;
+        if (number == LINUX_SYS_CAPGET) {
+            data[0].effective = (uint32_t)task->cap_effective;
+            data[0].permitted = (uint32_t)task->cap_permitted;
+            data[0].inheritable = (uint32_t)task->cap_inheritable;
+            if (words == 2) {
+                data[1].effective = (uint32_t)(task->cap_effective >> 32);
+                data[1].permitted = (uint32_t)(task->cap_permitted >> 32);
+                data[1].inheritable = (uint32_t)(task->cap_inheritable >> 32);
+            }
+            for (uint32_t i = 0; i < words; ++i)
+                ((struct __user_cap_data_struct *)(uintptr_t)a1)[i] = data[i];
+            return 0;
+        }
+        if (!user_range_ok(a1, words * sizeof(data[0]))) return -LINUX_EFAULT;
+        for (uint32_t i = 0; i < words; ++i)
+            data[i] = ((const struct __user_cap_data_struct *)(uintptr_t)a1)[i];
+        requested = (uint64_t)data[0].permitted | ((uint64_t)data[1].permitted << 32);
+        uint64_t effective = (uint64_t)data[0].effective | ((uint64_t)data[1].effective << 32);
+        uint64_t inheritable = (uint64_t)data[0].inheritable | ((uint64_t)data[1].inheritable << 32);
+        const uint64_t supported = (UINT64_C(1) << (CAP_LAST_CAP + 1)) - 1;
+        if ((requested | effective | inheritable) & ~supported) return -LINUX_EINVAL;
+        if (task->euid != 0 &&
+            (requested & ~task->cap_permitted || effective & ~requested ||
+             inheritable & ~(task->cap_inheritable | task->cap_permitted)))
+            return -LINUX_EPERM;
+        task_credentials_prepare(task, task->euid, task->egid, task->fsuid, task->fsgid, requested);
+        task->cap_permitted = requested;
+        task->cap_effective = effective;
+        task->cap_inheritable = inheritable;
+        return 0;
+    }
+    if (number == LINUX_SYS_RSEQ) {
+        struct task *task = sched_current_task();
+        const uint32_t flags = (uint32_t)a2;
+        const uint32_t length = (uint32_t)a1;
+        const uint32_t signature = (uint32_t)a3;
+        if (!task) return -LINUX_ESRCH;
+        if (flags & RSEQ_FLAG_UNREGISTER) {
+            if (flags & ~RSEQ_FLAG_UNREGISTER) return -LINUX_EINVAL;
+            if (!task->rseq_area || task->rseq_area != a0 || task->rseq_len != length)
+                return -LINUX_EINVAL;
+            if (task->rseq_sig != signature) return -LINUX_EPERM;
+            if (!user_range_writable(task->rseq_area, sizeof(struct rseq)))
+                return -LINUX_EFAULT;
+            struct rseq *area = (struct rseq *)(uintptr_t)task->rseq_area;
+            area->cpu_id_start = RSEQ_CPU_ID_UNINITIALIZED;
+            area->cpu_id = RSEQ_CPU_ID_UNINITIALIZED;
+            area->node_id = 0;
+            area->mm_cid = 0;
+            task->rseq_area = 0;
+            task->rseq_len = 0;
+            task->rseq_sig = 0;
+            return 0;
+        }
+        if (flags) return -LINUX_EINVAL;
+        if (task->rseq_area) {
+            if (task->rseq_area != a0 || task->rseq_len != length)
+                return -LINUX_EINVAL;
+            if (task->rseq_sig != signature) return -LINUX_EPERM;
+            return -LINUX_EBUSY;
+        }
+        if (length < RSEQ_SIZE ||
+            (length == RSEQ_SIZE ? (a0 & (RSEQ_SIZE - 1U)) != 0 :
+                                   ((a0 & 31U) != 0 || length < sizeof(struct rseq))))
+            return -LINUX_EINVAL;
+        if (!user_range_writable(a0, length)) return -LINUX_EFAULT;
+        struct rseq *area = (struct rseq *)(uintptr_t)a0;
+        task->rseq_area = a0;
+        task->rseq_len = length;
+        task->rseq_sig = signature;
+        area->cpu_id_start = 0;
+        area->cpu_id = 0;
+        area->rseq_cs = 0;
+        area->flags = 0;
+        area->node_id = 0;
+        area->mm_cid = 0;
+        return 0;
+    }
     (void)a3;
     if (number == LINUX_SYS_GETUID) {
         struct task *task = sched_current_task();
@@ -302,6 +405,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         /* Only root may assume another identity. A non-root task may only
          * restore its real uid (the identity authd assigned before exec). */
         if (task->uid != 0 && target != task->uid) return -LEONOS_EPERM;
+        task_credentials_prepare(task, target, task->egid, target, task->fsgid, task->cap_permitted);
         task->uid = target;
         task->euid = target;
         task->suid = target;
@@ -325,6 +429,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         uint32_t target = (uint32_t)a0;
         if (!task) return -LEONOS_EPERM;
         if (task->uid != 0 && target != task->gid) return -LEONOS_EPERM;
+        task_credentials_prepare(task, task->euid, target, task->fsuid, target, task->cap_permitted);
         task->gid = target;
         task->egid = target;
         task->sgid = target;
@@ -374,12 +479,16 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         if (real != UINT32_MAX) current_real = real;
         if (effective != UINT32_MAX) current_effective = effective;
         if (number == LINUX_SYS_SETREUID) {
+            task_credentials_prepare(task, current_effective, task->egid, current_effective,
+                                      task->fsgid, task->cap_permitted);
             task->uid = current_real;
             task->euid = current_effective;
             task->fsuid = current_effective;
             if (real != UINT32_MAX || (effective != UINT32_MAX && effective != task->uid))
                 task->suid = current_effective;
         } else {
+            task_credentials_prepare(task, task->euid, current_effective, task->fsuid,
+                                      current_effective, task->cap_permitted);
             task->gid = current_real;
             task->egid = current_effective;
             task->fsgid = current_effective;
@@ -406,9 +515,13 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         for (uint32_t i = 0; i < 3; ++i)
             if (values[i] != UINT32_MAX) current[i] = values[i];
         if (number == LINUX_SYS_SETRESUID) {
+            task_credentials_prepare(task, current[1], task->egid, current[1],
+                                      task->fsgid, task->cap_permitted);
             task->uid = current[0]; task->euid = current[1]; task->suid = current[2];
             task->fsuid = current[1];
         } else {
+            task_credentials_prepare(task, task->euid, current[1], task->fsuid,
+                                      current[1], task->cap_permitted);
             task->gid = current[0]; task->egid = current[1]; task->sgid = current[2];
             task->fsgid = current[1];
         }
@@ -422,11 +535,19 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         if (number == LINUX_SYS_SETFSUID) {
             old = task->fsuid;
             if (task->euid == 0 || requested == task->uid || requested == task->euid ||
-                requested == task->suid) task->fsuid = requested;
+                requested == task->suid) {
+                task_credentials_prepare(task, task->euid, task->egid, requested,
+                                          task->fsgid, task->cap_permitted);
+                task->fsuid = requested;
+            }
         } else {
             old = task->fsgid;
             if (task->euid == 0 || requested == task->gid || requested == task->egid ||
-                requested == task->sgid) task->fsgid = requested;
+                requested == task->sgid) {
+                task_credentials_prepare(task, task->euid, task->egid, task->fsuid,
+                                          requested, task->cap_permitted);
+                task->fsgid = requested;
+            }
         }
         return old;
     }
@@ -474,6 +595,63 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         if (!user_range_writable(a1, sizeof(struct linux_timespec))) return -LEONOS_EFAULT;
         ((struct linux_timespec *)(uintptr_t)a1)->tv_sec = 0;
         ((struct linux_timespec *)(uintptr_t)a1)->tv_nsec = (int64_t)tick_ns;
+        return 0;
+    }
+    if (number == LINUX_SYS_SCHED_GETATTR) {
+        struct task *current = sched_current_task();
+        struct task *target = a0 ? sched_find((uint32_t)a0) : current;
+        struct sched_attr attr = {0};
+        uint32_t user_size = (uint32_t)a2;
+        uint32_t copy_size;
+        if (!current || !target || target->state == TASK_EXITED) return -LINUX_ESRCH;
+        if (a3 != 0) return -LEONOS_EINVAL;
+        if (user_size < SCHED_ATTR_SIZE_VER0) return -LEONOS_EINVAL;
+        if (user_size > 4096U) return -LEONOS_E2BIG;
+        if (!user_range_writable(a1, user_size)) return -LEONOS_EFAULT;
+        attr.size = sizeof(attr);
+        attr.sched_policy = SCHED_OTHER;
+        attr.sched_nice = target->priority;
+        copy_size = user_size < sizeof(attr) ? user_size : sizeof(attr);
+        for (uint32_t i = 0; i < copy_size; ++i)
+            ((uint8_t *)(uintptr_t)a1)[i] = ((const uint8_t *)&attr)[i];
+        /* Linux zero-fills forward-compatible fields when userspace passes a
+         * larger buffer. Never expose uninitialized kernel bytes. */
+        for (uint32_t i = copy_size; i < user_size; ++i)
+            ((uint8_t *)(uintptr_t)a1)[i] = 0;
+        return 0;
+    }
+    if (number == LINUX_SYS_SCHED_SETATTR) {
+        struct task *current = sched_current_task();
+        struct task *target = a0 ? sched_find((uint32_t)a0) : current;
+        struct sched_attr attr = {0};
+        uint32_t user_size = 0;
+        uint32_t copy_size;
+        if (!current || !target || target->state == TASK_EXITED) return -LINUX_ESRCH;
+        if (a2 != 0) return -LEONOS_EINVAL;
+        if (!user_range_ok(a1, SCHED_ATTR_SIZE_VER0)) return -LEONOS_EFAULT;
+        for (uint32_t i = 0; i < SCHED_ATTR_SIZE_VER0; ++i)
+            ((uint8_t *)&attr)[i] = ((const uint8_t *)(uintptr_t)a1)[i];
+        user_size = attr.size;
+        if (user_size < SCHED_ATTR_SIZE_VER0) return -LEONOS_EINVAL;
+        if (user_size > 4096U) return -LEONOS_E2BIG;
+        if (!user_range_ok(a1, user_size)) return -LEONOS_EFAULT;
+        copy_size = user_size < sizeof(attr) ? user_size : sizeof(attr);
+        for (uint32_t i = SCHED_ATTR_SIZE_VER0; i < copy_size; ++i)
+            ((uint8_t *)&attr)[i] = ((const uint8_t *)(uintptr_t)a1)[i];
+        if (attr.size < SCHED_ATTR_SIZE_VER0 || attr.size > user_size ||
+            attr.size > sizeof(attr)) return -LEONOS_E2BIG;
+        if (attr.sched_policy != SCHED_OTHER || attr.sched_flags != 0 ||
+            attr.sched_priority != 0 || attr.sched_runtime != 0 ||
+            attr.sched_deadline != 0 || attr.sched_period != 0 ||
+            attr.sched_util_min != 0 || attr.sched_util_max != 0 ||
+            attr.sched_nice < -20 || attr.sched_nice > 19) {
+            return -LEONOS_EINVAL;
+        }
+        if (current->euid && current != target &&
+            current->euid != target->uid && current->euid != target->euid) {
+            return -LEONOS_EPERM;
+        }
+        target->priority = attr.sched_nice;
         return 0;
     }
     if (number == LINUX_SYS_PERSONALITY) {
@@ -762,6 +940,10 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         int64_t result = sched_create_process_session(sched_current_pid());
         return result > 0 ? result : -LEONOS_EPERM;
     }
+    if (number == LINUX_SYS_RT_SIGQUEUEINFO)
+        return kernel_signal_queueinfo((int32_t)a0, 0, (int32_t)a1, a2, false);
+    if (number == LINUX_SYS_RT_TGSIGQUEUEINFO)
+        return kernel_signal_queueinfo((int32_t)a0, (int32_t)a1, (int32_t)a2, a3, true);
     if (number == LINUX_SYS_TKILL || number == LINUX_SYS_TGKILL) {
         int32_t tid = (int32_t)(number == LINUX_SYS_TKILL ? a0 : a1);
         int32_t sig = (int32_t)(number == LINUX_SYS_TKILL ? a1 : a2);
@@ -772,11 +954,14 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         if (!target || target->state == TASK_EXITED ||
             (number == LINUX_SYS_TGKILL && sched_task_tgid(target) != (uint32_t)a0))
             return -LINUX_ESRCH;
-        if (!sender || (sender->euid != 0 && sender->uid != target->uid &&
+        if (!sender || (sched_task_tgid(sender) != sched_task_tgid(target) &&
+            !(sender->cap_effective & (1ULL << CAP_KILL)) && sender->uid != target->uid &&
             sender->uid != target->suid && sender->euid != target->uid &&
             sender->euid != target->suid && !(sig == 18 && sender->process_session == target->process_session)))
             return -LEONOS_EPERM;
-        return sched_signal_user_task(target->pid, sig) == 0 ? 0 : -LINUX_ESRCH;
+        struct linux_siginfo info = {.signo = sig, .code = LINUX_SI_TKILL,
+            .fields.sender = {.pid = (int32_t)sched_task_tgid(sender), .uid = sender->uid}};
+        return kernel_signal_queue_task_info(target, sig, &info);
     }
     if (number == LINUX_SYS_KILL) {
         int signal_number = (int)a1;
@@ -798,10 +983,14 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         target = sched_find((uint32_t)requested_pid);
         if (!target || target->kind != TASK_KIND_USER || sched_task_tgid(target) != (uint32_t)requested_pid)
             return -LINUX_ESRCH;
-        if (current->euid != 0 && current->uid != target->uid && current->uid != target->suid &&
+        if (sched_task_tgid(current) != sched_task_tgid(target) &&
+            !(current->cap_effective & (1ULL << CAP_KILL)) &&
+            current->uid != target->uid && current->uid != target->suid &&
             current->euid != target->uid && current->euid != target->suid &&
             !(signal_number == 18 && current->process_session == target->process_session)) return -LEONOS_EPERM;
-        return sched_signal_user_process((uint32_t)requested_pid, signal_number) == 0 ? 0 : -LINUX_ESRCH;
+        struct linux_siginfo info = {.signo = signal_number, .code = LINUX_SI_USER,
+            .fields.sender = {.pid = (int32_t)sched_task_tgid(current), .uid = current->uid}};
+        return sched_signal_user_process_info((uint32_t)requested_pid, signal_number, &info);
     }
     if (number == LEONOS_SYS_NICE) {
         struct task *task = sched_current_task();

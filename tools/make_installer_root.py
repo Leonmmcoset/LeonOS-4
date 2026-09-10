@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 import shutil
 import subprocess
 from pathlib import Path
+from make_ext2_root import write_ext2_root
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +41,29 @@ def remove_file(path: Path) -> None:
         path.unlink()
 
 
+def share_identical_payload_files(stage: Path) -> None:
+    """ext2 preserves these hard links while exposing both complete trees."""
+    seen = {}
+    for path in sorted(stage.rglob("*")):
+        relative = path.relative_to(stage).as_posix()
+        if relative.startswith("install/root/"):
+            relative = relative.removeprefix("install/root/")
+        if not relative.startswith(("opt/", "bin/", "usr/", "share/")):
+            continue
+        if not path.is_file() or path.is_symlink():
+            continue
+        status = path.stat()
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").digest()
+        key = (status.st_size, status.st_mode, status.st_uid, status.st_gid, digest)
+        previous = seen.get(key)
+        if previous is None:
+            seen[key] = path
+        else:
+            path.unlink()
+            os.link(previous, path)
+
+
 def stage_installed_payloads(esp_tree: Path, destination: Path) -> None:
     """Split normal staging into ext2 root and the minimal FAT32 boot payload."""
     root = destination / "install/root"
@@ -57,7 +83,7 @@ def stage_installed_payloads(esp_tree: Path, destination: Path) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create LeonOS installer runtime FAT root")
+    parser = argparse.ArgumentParser(description="Create LeonOS installer runtime ext2 root")
     parser.add_argument("--out", default="build/install/root.fat")
     parser.add_argument("--stage", default="build/install/root")
     parser.add_argument("--esp-tree", default="build/esp")
@@ -108,6 +134,8 @@ def main() -> int:
     # Ship the selected terminal packages in both the live installer and its payload.
     copy_tree(esp_tree / "bin", stage / "bin")
     copy_tree(esp_tree / "usr", stage / "usr")
+    if (esp_tree / "opt").is_dir():
+        copy_tree(esp_tree / "opt", stage / "opt")
     if (esp_tree / "programs/vim").is_dir():
         copy_tree(esp_tree / "programs/vim", stage / "programs/vim")
     # gptinit is installer-only and must never enter the installed root tree.
@@ -133,11 +161,11 @@ def main() -> int:
     # Linux mount ABI requires the target directory to already be present.
     for directory in ("mnt", "tmp", "media", "root", "target"):
         (stage / directory).mkdir(parents=True, exist_ok=True)
-    # The installer itself runs from this FAT32 ramdisk. The staged installed
-    # The root payload carries the normal ext2 manifest; update mode also
-    # accepts an existing exFAT target.
+    (stage / "tmp").chmod(0o1777)
+    # Both the live environment and installed payload retain case-sensitive
+    # Linux toolchain headers. The EFI boot payload remains FAT32.
     (stage / "system/osmlayer.manifest").write_text(
-        "name=osmlayer\nabi=2\nroot=/\nfs=fat32\ngui=desktop.elf\n",
+        "name=osmlayer\nabi=2\nroot=/\nfs=ext2\ngui=desktop.elf\n",
         encoding="ascii",
     )
     copy_file(esp_tree / "system/fonts/leonos-metro.ttf", stage / "system/fonts/leonos-metro.ttf")
@@ -149,6 +177,8 @@ def main() -> int:
     copy_tree(esp_tree / "drivers", stage / "drivers")
     copy_tree(esp_tree / "lib", stage / "lib")
     copy_tree(esp_tree / "share/licenses", stage / "share/licenses")
+    if (esp_tree / "share/examples").is_dir():
+        copy_tree(esp_tree / "share/examples", stage / "share/examples")
     copy_file(policy_runtime, stage / "system/lib/libleonos.so.2")
     # Unix IPC service sockets live in /run/leonos and procfs is fixed at
     # /proc; FAT/exFAT have no permission bits, so service-side SO_PEERCRED
@@ -176,18 +206,8 @@ def main() -> int:
         copy_file(installed_policy_dir / name,
                   stage / "install/root/system/apps" / app / name)
 
-    payload_bytes = sum(item.stat().st_size for item in stage.rglob("*") if item.is_file())
-    required_mib = (payload_bytes + (1024 * 1024 - 1)) // (1024 * 1024)
-    required_mib += 8
-    # FAT32's root directory cannot represent both files when ncurses emits
-    # case-sensitive terminfo names. The normal staged root is copied into the
-    # installer payload once; do not duplicate it under the live root.
-    size_mib = args.size_mib if args.size_mib > required_mib else required_mib
-
-    run(["truncate", "-s", f"{size_mib}M", str(out)])
-    run(["mkfs.fat", "-F", "32", "-n", "LEONOSINST", str(out)])
-    for item in sorted(stage.iterdir()):
-        run(["mcopy", "-s", "-i", str(out), str(item), "::/"])
+    share_identical_payload_files(stage)
+    write_ext2_root(stage, out, args.size_mib)
     return 0
 
 

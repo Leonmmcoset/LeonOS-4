@@ -13,6 +13,19 @@ bool user_range_writable(uint64_t address, uint64_t length)
 
 int main(void)
 {
+    struct task_address_space_state shared = {0};
+    caller.shared_mm = &shared;
+    caller.euid = caller.fsuid = 1000;
+    caller.egid = caller.fsgid = 100;
+    caller.cap_permitted = 3;
+    task_credentials_prepare(&caller, 1000, 100, 1000, 100, 1);
+    assert(!shared.nondumpable);
+    task_credentials_prepare(&caller, 1000, 100, 1001, 100, 3);
+    assert(shared.nondumpable && !caller.address_space.nondumpable);
+    shared.nondumpable = false;
+    task_credentials_prepare(&caller, 1000, 100, 1000, 100, 7);
+    assert(shared.nondumpable);
+    caller = (struct task){0};
     caller.limits.nofile = (struct linux_rlimit64){1024,1048576};
     target = caller;
     target.shared_limits = &caller.limits;
@@ -41,5 +54,47 @@ int main(void)
     assert(process_resource_limit(LINUX_SYS_GETRLIMIT, 16, 1, 0, 0) == -LINUX_EINVAL);
     assert(process_resource_limit(LINUX_SYS_SETRLIMIT, 16, 1, 0, 0) == -LINUX_EFAULT);
     assert(process_resource_limit(LINUX_SYS_PRLIMIT64, -1, 16, 0, 1) == -LINUX_ESRCH);
-    puts("PASS native rlimit helpers: shared state, hard limits, widths, ID checks, alias and output-fault commit");
+    --target.sgid;
+    caller.limits.sigpending = (struct linux_rlimit64){128, 256};
+    value = (struct linux_rlimit64){0, 256};
+    assert(process_resource_limit(LINUX_SYS_PRLIMIT64, 7, LINUX_RLIMIT_SIGPENDING,
+        (uintptr_t)&value, (uintptr_t)&old) == 0);
+    assert(old.rlim_cur == 128 && caller.limits.sigpending.rlim_cur == 0);
+    value = (struct linux_rlimit64){128, 256};
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_SIGPENDING,
+        (uintptr_t)&value, 0, 0) == 0);
+    value.rlim_max = 257;
+    caller.euid = 0; /* A numeric root UID alone does not grant CAP_SYS_RESOURCE. */
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_SIGPENDING,
+        (uintptr_t)&value, 0, 0) == -LINUX_EPERM);
+    caller.cap_effective = 1ULL << CAP_SYS_RESOURCE;
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_SIGPENDING,
+        (uintptr_t)&value, 0, 0) == 0);
+
+    /* RLIMIT_STACK is a real process-wide limit, not a fixed query result. */
+    caller.limits.stack = (struct linux_rlimit64){8192ULL * 1024ULL, LINUX_RLIM_INFINITY};
+    value = (struct linux_rlimit64){4096ULL * 1024ULL, LINUX_RLIM_INFINITY};
+    assert(process_resource_limit(LINUX_SYS_PRLIMIT64, 7, LINUX_RLIMIT_STACK,
+        (uintptr_t)&value, (uintptr_t)&old) == 0);
+    assert(old.rlim_cur == 8192ULL * 1024ULL && old.rlim_max == LINUX_RLIM_INFINITY);
+    assert(caller.limits.stack.rlim_cur == 4096ULL * 1024ULL);
+    assert(process_resource_limit(LINUX_SYS_GETRLIMIT, LINUX_RLIMIT_STACK,
+        (uintptr_t)&old, 0, 0) == 0 && old.rlim_cur == 4096ULL * 1024ULL);
+    value = (struct linux_rlimit64){2048ULL * 1024ULL, 1024ULL * 1024ULL};
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_STACK,
+        (uintptr_t)&value, 0, 0) == -LINUX_EINVAL);
+    caller.cap_effective = 0;
+    value = (struct linux_rlimit64){1024ULL * 1024ULL, LINUX_RLIM_INFINITY};
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_STACK,
+        (uintptr_t)&value, 0, 0) == 0);
+    value = (struct linux_rlimit64){512ULL * 1024ULL, 512ULL * 1024ULL};
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_STACK,
+        (uintptr_t)&value, 0, 0) == 0);
+    caller.cap_effective = 1ULL << CAP_SYS_RESOURCE;
+    value = (struct linux_rlimit64){768ULL * 1024ULL, 768ULL * 1024ULL};
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_STACK,
+        (uintptr_t)&value, 0, 0) == 0);
+    assert(process_resource_limit(LINUX_SYS_PRLIMIT64, -1, LINUX_RLIMIT_STACK, 0, 1) == -LINUX_ESRCH);
+    assert(process_resource_limit(LINUX_SYS_GETRLIMIT, -1, 1, 0, 0) == -LINUX_EINVAL);
+    puts("PASS native rlimit helpers: shared state, hard limits, widths, ID checks, alias, stack and output-fault commit");
 }

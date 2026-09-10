@@ -79,7 +79,6 @@ int storage_statfs(const struct storage_node *node, struct linux_statfs_abi *val
         value->f_files = super.inodes_count;
         value->f_fsid[0] = storage_get_u32(super.uuid) ^ storage_get_u32(super.uuid + 8);
         value->f_fsid[1] = storage_get_u32(super.uuid + 4) ^ storage_get_u32(super.uuid + 12);
-        if (g_storage.kind == STORAGE_VOLUME_RAM) value->f_flags |= LINUX_ST_RDONLY;
         break;
     }
     case STORAGE_FILESYSTEM_ISO9660:

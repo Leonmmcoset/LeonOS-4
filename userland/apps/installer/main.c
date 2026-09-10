@@ -8,6 +8,7 @@
 #include <leonos/ui.h>
 #include "installer_sha256.h"
 #include "installer_tty.h"
+#include "installer_directory.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/mount.h>
@@ -1489,14 +1490,6 @@ static void show_copy_progress(int window_id, struct leonos_ui_surface *ui,
                   T("Copying system files", "正在复制系统文件"), detail);
 }
 
-/* Each recursive traversal retains its parent listing while descending. Keep
- * that 8 KiB listing off the small user stack. */
-static struct leonos_dir_entry *alloc_dir_entries(void)
-{
-    return (struct leonos_dir_entry *)malloc(sizeof(struct leonos_dir_entry) *
-                                             LEONOS_FS_MAX_ENTRIES);
-}
-
 /* mkdir(3) follows the POSIX convention and returns -1 on failure, while
  * installer traversal needs the native negative errno values (in particular
  * -17 for an already-existing directory).  Keep this narrow compatibility
@@ -1508,19 +1501,16 @@ static int installer_mkdir(const char *path)
     if (!path) {
         return -22;
     }
-    ret = syscall2(SYS_mkdir, (long)path, 0);
+    ret = syscall2(SYS_mkdir, (long)path, 0755);
     return ret < 0 ? (int)ret : 0;
 }
 
 static int count_files_recursive(const char *src, uint32_t *out_count)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        return -12;
-    }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         goto out;
     }
@@ -1599,14 +1589,12 @@ static int remove_path_recursive(const char *path)
     if (st.type != LEONOS_FS_TYPE_DIR) {
         return -20;
     }
-    entries = alloc_dir_entries();
-    if (!entries) {
-        return -12;
-    }
+    entries = NULL;
     for (;;) {
         uint32_t count = 0;
         uint32_t removed = 0;
-        ret = leonos_list_dir(path, entries, LEONOS_FS_MAX_ENTRIES, &count);
+        free(entries);
+        ret = installer_list_dir(path, &entries, &count);
         if (ret < 0) {
             goto out;
         }
@@ -1733,14 +1721,10 @@ static int copy_file_path(const char *src, const char *dst,
 static int copy_dir_recursive(const char *src, const char *dst,
                               int window_id, struct leonos_ui_surface *ui)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
-        return -12;
-    }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         printf("[installer.elf] list source dir %s ret=%d\n", src, ret);
         goto out;
@@ -1791,7 +1775,14 @@ static int copy_dir_recursive(const char *src, const char *dst,
             show_copy_progress(window_id, ui, dst_child);
         }
     }
-    ret = 0;
+    struct stat directory_mode;
+    if (stat(src, &directory_mode) < 0 ||
+        chown(dst, directory_mode.st_uid, directory_mode.st_gid) < 0 ||
+        chmod(dst, directory_mode.st_mode & 07777) < 0) {
+        ret = -errno;
+    } else {
+        ret = 0;
+    }
 out:
     free(entries);
     return ret;
@@ -1800,19 +1791,15 @@ out:
 static int merge_dir_recursive(const char *src, const char *dst,
                                int window_id, struct leonos_ui_surface *ui)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
-        return -12;
-    }
     ret = installer_mkdir(dst);
     if (ret < 0 && ret != -17) {
         printf("[installer.elf] mkdir merge dir %s ret=%d\n", dst, ret);
         goto out;
     }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         printf("[installer.elf] list merge source dir %s ret=%d\n", src, ret);
         goto out;
@@ -1858,13 +1845,10 @@ out:
  * mode is additive for user data and only refreshes files shipped by LeonOS. */
 static int package_has_changes(const char *src, const char *dst)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        return -12;
-    }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         goto out;
     }
@@ -1911,13 +1895,10 @@ out:
 
 static int count_changed_files_recursive(const char *src, const char *dst)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        return -12;
-    }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         goto out;
     }
@@ -1958,19 +1939,15 @@ out:
 static int copy_changed_dir_recursive(const char *src, const char *dst,
                                       int window_id, struct leonos_ui_surface *ui)
 {
-    struct leonos_dir_entry *entries = alloc_dir_entries();
+    struct leonos_dir_entry *entries = NULL;
     uint32_t count = 0;
     int ret;
-    if (!entries) {
-        printf("[installer.elf] alloc directory listing failed path=%s\n", src);
-        return -12;
-    }
     ret = installer_mkdir(dst);
     if (ret < 0 && ret != -17) {
         printf("[installer.elf] mkdir changed dir %s ret=%d\n", dst, ret);
         goto out;
     }
-    ret = leonos_list_dir(src, entries, LEONOS_FS_MAX_ENTRIES, &count);
+    ret = installer_list_dir(src, &entries, &count);
     if (ret < 0) {
         printf("[installer.elf] list changed source dir %s ret=%d\n", src, ret);
         goto out;

@@ -286,34 +286,37 @@ static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const voi
         return false;
     }
     if (!is_interpreter) {
-        if (!interp || !elf64_interp(eh, image, len, out->interp)) {
-            return false;
-        }
-        if (!out->interp[0]) {
-            return false;
-        }
-        const char *expected = legacy ? LEONOS_ELF_INTERP_PATH : LEONOS_MUSL_INTERP_PATH;
-        bool accepted = true;
-        if (!legacy && out->interp[0]) {
-            /* A Linux binary may use the native glibc interpreter. It is
-             * still loaded by the same PT_INTERP contract; the root image
-             * must provide the interpreter and its libraries. */
-            const char *linux_interp = LEONOS_GLIBC_INTERP_PATH;
-            bool musl_match = true;
-            bool glibc_match = true;
-            for (uint32_t i = 0; expected[i] || out->interp[i]; ++i) {
-                if (expected[i] != out->interp[i]) musl_match = false;
+        if (interp) {
+            if (!elf64_interp(eh, image, len, out->interp) || !out->interp[0]) {
+                return false;
             }
-            for (uint32_t i = 0; linux_interp[i] || out->interp[i]; ++i) {
-                if (linux_interp[i] != out->interp[i]) glibc_match = false;
+            const char *expected = legacy ? LEONOS_ELF_INTERP_PATH : LEONOS_MUSL_INTERP_PATH;
+            bool accepted = true;
+            if (!legacy && out->interp[0]) {
+                /* A Linux binary may use the native glibc interpreter. It is
+                 * still loaded by the same PT_INTERP contract; the root image
+                 * must provide the interpreter and its libraries. */
+                const char *linux_interp = LEONOS_GLIBC_INTERP_PATH;
+                bool musl_match = true;
+                bool glibc_match = true;
+                for (uint32_t i = 0; expected[i] || out->interp[i]; ++i) {
+                    if (expected[i] != out->interp[i]) musl_match = false;
+                }
+                for (uint32_t i = 0; linux_interp[i] || out->interp[i]; ++i) {
+                    if (linux_interp[i] != out->interp[i]) glibc_match = false;
+                }
+                accepted = musl_match || glibc_match;
+            } else {
+                for (uint32_t i = 0; expected[i] || out->interp[i]; ++i) {
+                    if (expected[i] != out->interp[i]) accepted = false;
+                }
             }
-            accepted = musl_match || glibc_match;
-        } else {
-            for (uint32_t i = 0; expected[i] || out->interp[i]; ++i) {
-                if (expected[i] != out->interp[i]) accepted = false;
-            }
+            if (!accepted) return false;
         }
-        if (!accepted) return false;
+        /* An ET_DYN image without PT_INTERP is a static PIE: Linux maps it
+         * directly with a load bias and starts at e_entry.  Keep accepting
+         * it here; a truly dynamic image that lacks its interpreter faults
+         * in userspace exactly as it would on Linux. */
     } else if (interp) {
         return false;
     }
@@ -858,6 +861,15 @@ bool elf64_map_task_image(struct task *task, const struct storage_node *node,
     main_info.entry += main_bias;
     main_info.phdr_vaddr += main_bias;
     if (!main_info.dynamic) {
+        *out = main_info;
+        return true;
+    }
+
+    if (!main_info.interp[0]) {
+        /* Static PIE: run the image entry directly.  AT_BASE remains zero via
+         * the cleared dynamic-launch state; AT_PHDR/AT_ENTRY are filled by
+         * userland_load_task_image_locked(). */
+        main_info.interpreter_entry = main_info.entry;
         *out = main_info;
         return true;
     }

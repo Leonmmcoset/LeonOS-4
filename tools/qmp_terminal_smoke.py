@@ -62,6 +62,7 @@ def main() -> int:
     skip_oobe = False
     exit_only = False
     tcc_smoke = False
+    gcc_smoke = False
     desktop_app: str | None = None
     login_password: str | None = None
     editor = "nano"
@@ -84,6 +85,9 @@ def main() -> int:
         arguments = arguments[1:]
     if arguments and arguments[0] == "--tcc":
         tcc_smoke = True
+        arguments = arguments[1:]
+    if arguments and arguments[0] == "--gcc":
+        gcc_smoke = True
         arguments = arguments[1:]
     if arguments and arguments[0] == "--fastfetch":
         fastfetch_smoke = True
@@ -201,6 +205,19 @@ def main() -> int:
     if abittest_smoke:
         send_keys(sock, text_keys("abittest") + ("ret",))
         time.sleep(8.0)
+        send(sock, {"execute": "quit"}, 0.2)
+        return 0
+
+    if gcc_smoke:
+        for command, delay in (
+            ("musl-gcc --version", 2),
+            ("musl-gcc -static /share/examples/musl-gcc/hello.c -o /tmp/gcc-hello", 30),
+            ("/tmp/gcc-hello", 3),
+            ("ld --version", 2),
+        ):
+            send_keys(sock, text_keys(command) + ("ret",))
+            time.sleep(delay)
+        hmp(sock, "screendump build/images/gcc-qmp-smoke.ppm", 0.4)
         send(sock, {"execute": "quit"}, 0.2)
         return 0
 
@@ -352,7 +369,10 @@ def main() -> int:
         "nano": "nanotest.txt",
         "pleditor": "pleditortest.txt",
         "vi": "vitest.txt",
-        "vim": "/tmp/vimtest.txt",
+        # Keep the file in the login user's writable working directory.  The
+        # image does not promise a pre-created /tmp hierarchy, and Vim must
+        # exercise its normal write/quit path rather than fail with E212.
+        "vim": "vimtest.txt",
     }[editor]
     editor_command = (f"vim -n {filename}"
                       if editor == "vim" else f"{editor} {filename}")

@@ -83,6 +83,9 @@ int main(int argc, char **argv)
     assert(!storage_statfs(&node, &fs));
     assert(fs.f_bfree == super.free_blocks_count && fs.f_ffree == super.free_inodes_count);
     assert(fs.f_files == super.inodes_count && fs.f_bsize == 1024 && fs.f_type == 0xef53);
+    g_storage.kind = STORAGE_VOLUME_RAM;
+    assert(!storage_statfs(&node, &fs) && !(fs.f_flags & LINUX_ST_RDONLY));
+    g_storage.kind = STORAGE_VOLUME_AHCI;
     assert(fs.f_bavail == fs.f_bfree - super.reserved_blocks_count && fs.f_blocks < super.blocks_count);
     read_error = -5;
     assert(storage_inode_permissions(&node, &mode, false) == -5 && !locked);

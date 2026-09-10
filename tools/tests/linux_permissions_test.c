@@ -8,10 +8,18 @@ static struct fixture {
     const char *path;
     uint32_t type;
     struct leonos_permissions value;
+    const char *target;
 } entries[] = {
     {"/", LEONOS_FS_TYPE_DIR, {0755, 0, 0}},
     {"/data", LEONOS_FS_TYPE_DIR, {0777, 100, 200}},
     {"/data/file", LEONOS_FS_TYPE_FILE, {0640, 100, 200}},
+    {"/data/dir", LEONOS_FS_TYPE_DIR, {0755, 100, 200}},
+    {"/jump", LEONOS_FS_TYPE_SYMLINK, {0777, 100, 200}, "data/dir"},
+    {"/data/link", LEONOS_FS_TYPE_SYMLINK, {0777, 100, 200}, "file"},
+    {"/absolute", LEONOS_FS_TYPE_SYMLINK, {0777, 100, 200}, "/data/link"},
+    {"/loop", LEONOS_FS_TYPE_SYMLINK, {0777, 100, 200}, "loop"},
+    {"/self", LEONOS_FS_TYPE_SYMLINK, {0777, 100, 200}, "."},
+    {"/dangling", LEONOS_FS_TYPE_SYMLINK, {0777, 100, 200}, "missing"},
 };
 
 static struct fixture *find(const char *path)
@@ -29,6 +37,16 @@ int storage_lookup_path(const char *path, struct storage_node *node)
     struct fixture *f = find(path);
     if (!f) return -2;
     *node = (struct storage_node){.type = f->type};
+    return 0;
+}
+int storage_readlink(const char *path, char *out, uint32_t capacity, uint32_t *length)
+{
+    struct fixture *f = find(path);
+    if (!f) return -2;
+    if (!f->target) return -22;
+    *length = strlen(f->target);
+    if (*length > capacity) *length = capacity;
+    memcpy(out, f->target, *length);
     return 0;
 }
 int storage_inode_permissions(const struct storage_node *node,
@@ -69,6 +87,31 @@ int main(void)
     entries[1].value.mode = 0700;
     assert(fs_permissions_check(&other, file, 4, false) == -13);
     char resolved[LEONOS_FS_PATH_LEN];
+    assert(fs_permissions_resolve(&owner, "/", "/jump/../file", resolved, sizeof(resolved), false) == 0);
+    assert(!strcmp(resolved, "/data/file"));
+    assert(fs_permissions_resolve(&owner, "/", "/absolute", resolved, sizeof(resolved), false) == 0);
+    assert(!strcmp(resolved, "/data/file"));
+    assert(fs_permissions_resolve(&other, "/", "/absolute", resolved, sizeof(resolved), false) == -13);
+    assert(fs_permissions_resolve(&owner, "/", "/loop", resolved, sizeof(resolved), false) == -40);
+    assert(fs_permissions_resolve_flags(&owner, "/", "/loop", resolved, sizeof(resolved), false, 0) == 0);
+    assert(!strcmp(resolved, "/loop"));
+    assert(fs_permissions_resolve_flags(&owner, "/", "/jump/../link", resolved, sizeof(resolved), false, 0) == 0);
+    assert(!strcmp(resolved, "/data/link"));
+    assert(fs_permissions_resolve_flags(&owner, "/", "/jump/", resolved, sizeof(resolved), false, 0) == 0);
+    assert(!strcmp(resolved, "/data/dir"));
+    assert(fs_permissions_resolve_flags(&owner, "/", "/jump/", resolved, sizeof(resolved), false, FS_LOOKUP_PARENT) == 0);
+    assert(!strcmp(resolved, "/jump/"));
+    assert(fs_permissions_resolve_flags(&owner, "/", "/dangling", resolved, sizeof(resolved), false, FS_LOOKUP_PARENT) == 0);
+    assert(!strcmp(resolved, "/dangling"));
+    assert(fs_permissions_resolve(&owner, "/", "/dangling", resolved, sizeof(resolved), false) == 0);
+    assert(!strcmp(resolved, "/missing"));
+    assert(fs_permissions_resolve(&owner, "/", "/data/file/", resolved, sizeof(resolved), false) == -20);
+    char chain[256] = "";
+    for (unsigned i = 0; i < 40; ++i) strcat(chain, "/self");
+    assert(fs_permissions_resolve(&owner, "/", chain, resolved, sizeof(resolved), false) == 0);
+    assert(!strcmp(resolved, "/"));
+    strcat(chain, "/self");
+    assert(fs_permissions_resolve(&owner, "/", chain, resolved, sizeof(resolved), false) == -40);
     assert(fs_permissions_resolve(&other, "/", "/data/../", resolved, sizeof(resolved), false) == -13);
     assert(fs_permissions_resolve(&owner, "/", "/data/../data/file", resolved, sizeof(resolved), false) == 0);
     assert(!strcmp(resolved, file));
@@ -93,6 +136,15 @@ int main(void)
     struct storage_node node = {.type = LEONOS_FS_TYPE_FILE};
     assert(fs_permissions_create(&owner, file, &node, 0666) == 0);
     assert(entries[2].value.mode == 0640 && entries[2].value.uid == 100 && entries[2].value.gid == 200);
+    struct storage_node link_node = {.type = LEONOS_FS_TYPE_SYMLINK};
+    entries[1].value = (struct leonos_permissions){02777, 100, 700};
+    assert(fs_permissions_create(&owner, "/data/link", &link_node, 0777) == 0);
+    assert(find("/data/link")->value.mode == 0777 && find("/data/link")->value.gid == 700);
+    assert(fs_permissions_chmod(&owner, "/data/link", &link_node, 0600) == -95);
+    assert(fs_permissions_chown(&root, "/data/link", &link_node, 123, 456) == 0);
+    assert(find("/data/link")->value.uid == 123 && find("/data/link")->value.mode == 0777);
+    assert(entries[2].value.uid == 100 && entries[2].value.mode == 0640);
+    entries[1].value = (struct leonos_permissions){01777, 100, 200};
     struct task elevated = owner;
     elevated.uid = 102;
     assert(fs_permissions_check(&elevated, file, 6, false) == 0);

@@ -23,6 +23,14 @@
 #define LINUX_SYS_OPEN __NR_open
 #define LINUX_SYS_CLOSE __NR_close
 #define LINUX_SYS_PIPE __NR_pipe
+#define LINUX_SYS_MSGGET __NR_msgget
+#define LINUX_SYS_SEMGET __NR_semget
+#define LINUX_SYS_SEMOP __NR_semop
+#define LINUX_SYS_SEMCTL __NR_semctl
+#define LINUX_SYS_SEMTIMEDOP __NR_semtimedop
+#define LINUX_SYS_MSGSND __NR_msgsnd
+#define LINUX_SYS_MSGRCV __NR_msgrcv
+#define LINUX_SYS_MSGCTL __NR_msgctl
 #define LINUX_SYS_SEND __NR_sendto
 #define LINUX_SYS_RECV __NR_recvfrom
 #define LINUX_SYS_SOCKET __NR_socket
@@ -57,6 +65,10 @@
 #define LINUX_SYS_FADVISE64 __NR_fadvise64
 #define LINUX_SYS_READAHEAD __NR_readahead
 #define LINUX_SYS_FALLOCATE __NR_fallocate
+#define LINUX_SYS_UTIMENSAT __NR_utimensat
+#define LINUX_SYS_UTIME __NR_utime
+#define LINUX_SYS_UTIMES __NR_utimes
+#define LINUX_SYS_FUTIMESAT __NR_futimesat
 #define LINUX_SYS_SYNC_FILE_RANGE __NR_sync_file_range
 #define LINUX_SYS_SYNC __NR_sync
 #define LINUX_SYS_SYNCFS __NR_syncfs
@@ -90,6 +102,10 @@
 #define LINUX_SYS_TIMER_DELETE __NR_timer_delete
 #define LINUX_SYS_RT_SIGTIMEDWAIT __NR_rt_sigtimedwait
 #define LINUX_SYS_EVENTFD __NR_eventfd
+#define LINUX_SYS_SIGNALFD __NR_signalfd
+#define LINUX_SYS_SIGNALFD4 __NR_signalfd4
+#define LINUX_SYS_PROCESS_VM_READV __NR_process_vm_readv
+#define LINUX_SYS_PROCESS_VM_WRITEV __NR_process_vm_writev
 #define LINUX_SYS_EVENTFD2 __NR_eventfd2
 #define LINUX_SYS_TIMERFD_CREATE __NR_timerfd_create
 #define LINUX_SYS_TIMERFD_SETTIME __NR_timerfd_settime
@@ -107,6 +123,10 @@
 #define LINUX_SYS_KILL __NR_kill
 #define LINUX_SYS_TKILL __NR_tkill
 #define LINUX_SYS_TGKILL __NR_tgkill
+#define LINUX_SYS_SENDMMSG __NR_sendmmsg
+#define LINUX_SYS_RECVMMSG __NR_recvmmsg
+#define LINUX_SYS_RT_SIGQUEUEINFO __NR_rt_sigqueueinfo
+#define LINUX_SYS_RT_TGSIGQUEUEINFO __NR_rt_tgsigqueueinfo
 #define LINUX_SYS_RT_SIGPENDING __NR_rt_sigpending
 #define LINUX_SYS_SIGALTSTACK __NR_sigaltstack
 #define LINUX_SYS_GETPPID __NR_getppid
@@ -114,6 +134,8 @@
 #define LINUX_SYS_SETSID __NR_setsid
 #define LINUX_SYS_GETPGID __NR_getpgid
 #define LINUX_SYS_GETSID __NR_getsid
+#define LINUX_SYS_CAPGET __NR_capget
+#define LINUX_SYS_CAPSET __NR_capset
 #define LINUX_SYS_GETPRIORITY __NR_getpriority
 #define LINUX_SYS_SETPRIORITY __NR_setpriority
 #define LINUX_SYS_GETRLIMIT __NR_getrlimit
@@ -151,12 +173,15 @@
 #define LINUX_SYS_SCHED_SETPARAM __NR_sched_setparam
 #define LINUX_SYS_SCHED_SETSCHEDULER __NR_sched_setscheduler
 #define LINUX_SYS_SCHED_RR_GET_INTERVAL __NR_sched_rr_get_interval
+#define LINUX_SYS_SCHED_SETATTR __NR_sched_setattr
+#define LINUX_SYS_SCHED_GETATTR __NR_sched_getattr
 #define LINUX_SYS_PERSONALITY __NR_personality
 #define LINUX_SYS_PRCTL __NR_prctl
 #define LINUX_SYS_UNAME __NR_uname
 #define LINUX_SYS_SETHOSTNAME __NR_sethostname
 #define LINUX_SYS_SETDOMAINNAME __NR_setdomainname
 #define LINUX_SYS_MEMBARRIER __NR_membarrier
+#define LINUX_SYS_RSEQ __NR_rseq
 #define LINUX_SYS_OPENAT2 __NR_openat2
 #define LINUX_SYS_MEMFD_CREATE __NR_memfd_create
 #define LINUX_SYS_GETTIMEOFDAY __NR_gettimeofday
@@ -203,6 +228,7 @@
 #define LINUX_SYS_FUTEX_WAKE __NR_futex_wake
 #define LINUX_SYS_FUTEX_WAIT __NR_futex_wait
 #define LINUX_SYS_FUTEX_REQUEUE __NR_futex_requeue
+#define LINUX_SYS_FUTEX_WAITV __NR_futex_waitv
 #define LINUX_SYS_CLOCK_GETRES __NR_clock_getres
 #define LINUX_SYS_CLOCK_NANOSLEEP __NR_clock_nanosleep
 #define LINUX_SYS_GETRANDOM __NR_getrandom
@@ -226,6 +252,7 @@
 #define LINUX_SYS_LINKAT __NR_linkat
 #define LINUX_SYS_SYMLINKAT __NR_symlinkat
 #define LINUX_SYS_FCHMODAT __NR_fchmodat
+#define LINUX_SYS_FLOCK __NR_flock
 #define LINUX_SYS_FCHOWNAT __NR_fchownat
 #define LINUX_SYS_READLINKAT __NR_readlinkat
 #define LINUX_SYS_PPOLL __NR_ppoll
@@ -249,6 +276,9 @@
 #define LEONOS_ECHILD 10
 #define LEONOS_ENOENT 2
 #define LEONOS_ENOMEM 12
+#define LEONOS_ESRCH 3
+#define LEONOS_ENFILE 23
+#define LEONOS_EWOULDBLOCK 11
 #define LEONOS_EBADF 9
 #define LEONOS_ENOTDIR 20
 #define LEONOS_EISDIR 21
@@ -287,6 +317,8 @@ struct syscall_frame {
  * @brief Set up syscall dispatch tables and register the kernel entry handlers.
  */
 void syscall_init(void);
+/** @brief Enable opt-in numeric syscall diagnostics for an executable path prefix. */
+void syscall_trace_configure(const char *cmdline);
 /**
  * @brief Dispatches process identity, groups, signals, priority, and limits.
  */
@@ -312,6 +344,8 @@ int64_t syscall_clone3(const struct trap_frame *frame, uint64_t arguments, uint6
  * @brief Resolve a user page fault at fault_addr with the given error code; 0 if handled.
  */
 int syscall_handle_user_page_fault(uint64_t fault_addr, uint64_t error);
+int syscall_handle_task_page_fault(struct task *task, uint64_t fault_addr, uint64_t error);
+int syscall_page_fault_signal_code(struct task *task, uint64_t address);
 int64_t syscall_poll(uint64_t fds_ptr, uint64_t count, int64_t timeout_ms);
 int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
                              uint64_t action_ptr, uint64_t old_action_ptr,

@@ -36,15 +36,37 @@ static void dequeue(struct task *task)
     }
 }
 
+static bool task_futex_key_matches(const struct task *task, uint64_t domain, uint64_t key)
+{
+    if (task->futex_waitv_count) {
+        for (uint32_t i = 0; i < task->futex_waitv_count; ++i)
+            if (task->futex_waitv_domain[i] == domain && task->futex_waitv_key[i] == key)
+                return true;
+        return false;
+    }
+    return task->futex_domain == domain && task->futex_key == key;
+}
+
 static uint32_t wake(uint64_t domain, uint64_t key, uint32_t count, uint32_t bitset)
 {
     uint32_t woken = 0;
     struct task **p = &waiters;
     while (*p && woken < count) {
         struct task *task = *p;
-        if (task->futex_domain != domain || task->futex_key != key ||
-            !(task->futex_bitset & bitset) ||
-            (task->futex_deadline && task->futex_deadline <= time_ticks())) {
+        bool matches = task->futex_waitv_count == 0 &&
+                       task->futex_domain == domain && task->futex_key == key &&
+                       (task->futex_bitset & bitset);
+        if (task->futex_waitv_count) {
+            for (uint32_t i = 0; i < task->futex_waitv_count; ++i) {
+                if (task->futex_waitv_domain[i] == domain &&
+                    task->futex_waitv_key[i] == key) {
+                    matches = true;
+                    task->futex_waitv_index = i;
+                    break;
+                }
+            }
+        }
+        if (!matches || (task->futex_deadline && task->futex_deadline <= time_ticks())) {
             p = &task->futex_next;
             continue;
         }
@@ -63,6 +85,7 @@ void futex_cancel_wait(struct task *task)
     kernel_spin_lock_irqsave(&futex_lock, &flags);
     dequeue(task);
     task->futex_state = 0;
+    task->futex_waitv_count = 0;
     kernel_spin_unlock_irqrestore(&futex_lock, flags);
 }
 
@@ -364,14 +387,95 @@ int64_t syscall_futex_requeue2(uint64_t waiters_ptr, uint64_t flags,
     uint32_t moved = 0;
     for (struct task *p = waiters; p && moved < (uint32_t)requeue_count;
          p = p->futex_next) {
-        if (p->futex_domain == domain1 && p->futex_key == key1) {
-            p->futex_domain = domain2;
-            p->futex_key = key2;
+        if (task_futex_key_matches(p, domain1, key1)) {
+            if (p->futex_waitv_count) {
+                for (uint32_t i = 0; i < p->futex_waitv_count; ++i) {
+                    if (p->futex_waitv_domain[i] == domain1 && p->futex_waitv_key[i] == key1) {
+                        p->futex_waitv_domain[i] = domain2;
+                        p->futex_waitv_key[i] = key2;
+                    }
+                }
+            } else {
+                p->futex_domain = domain2;
+                p->futex_key = key2;
+            }
             ++moved;
         }
     }
     kernel_spin_unlock_irqrestore(&futex_lock, irq_flags);
     return ret + (int)moved;
+}
+
+int64_t syscall_futex_waitv(uint64_t waiters_ptr, uint64_t count, uint64_t flags,
+                            uint64_t timeout, uint64_t clockid)
+{
+    struct task *task = sched_current_task();
+    struct futex_waitv entries[SCHED_FUTEX_WAITV_MAX];
+    uint64_t domains[SCHED_FUTEX_WAITV_MAX], keys[SCHED_FUTEX_WAITV_MAX];
+    uint64_t until = 0, irq_flags;
+    uint32_t operation = FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG;
+    if (!task) return -ESRCH;
+    if (flags || !count || count > SCHED_FUTEX_WAITV_MAX) return -EINVAL;
+    if (timeout && clockid != LINUX_CLOCK_MONOTONIC && clockid != LINUX_CLOCK_REALTIME)
+        return -EINVAL;
+    if (task->futex_state) {
+        kernel_spin_lock_irqsave(&futex_lock, &irq_flags);
+        int64_t result = KERNEL_SYSCALL_BLOCKED;
+        if (task->futex_state == 2) {
+            result = task->futex_waitv_count ? (int64_t)task->futex_waitv_index : 0;
+        }
+        else if (task->futex_deadline && task->futex_deadline <= time_ticks()) result = -ETIMEDOUT;
+        else if (sched_task_pending(task) & ~task->blocked_signals) result = -EINTR;
+        if (result != KERNEL_SYSCALL_BLOCKED) {
+            dequeue(task);
+            task->futex_state = 0;
+            task->futex_waitv_count = 0;
+        } else if (task->futex_deadline) sched_sleep_current_until(task->futex_deadline);
+        else sched_block_current();
+        kernel_spin_unlock_irqrestore(&futex_lock, irq_flags);
+        return result;
+    }
+    if (count > UINT64_MAX / sizeof(struct futex_waitv) ||
+        !user_range_ok(waiters_ptr, count * sizeof(struct futex_waitv))) return -EFAULT;
+    __builtin_memcpy(entries, (const void *)(uintptr_t)waiters_ptr,
+                     count * sizeof(struct futex_waitv));
+    for (uint32_t i = 0; i < count; ++i) {
+        if (entries[i].__reserved || entries[i].val > UINT32_MAX) return -EINVAL;
+        uint32_t entry_operation;
+        if (futex2_flags(entries[i].flags, &entry_operation) < 0) return -EINVAL;
+        int ret = futex_key(task, entries[i].uaddr, entry_operation, &domains[i], &keys[i]);
+        if (ret) return ret;
+    }
+    if (timeout) {
+        if (clockid == LINUX_CLOCK_REALTIME) operation |= FUTEX_CLOCK_REALTIME;
+        int ret = deadline(timeout, operation, &until);
+        if (ret) return ret;
+    }
+    kernel_spin_lock_irqsave(&futex_lock, &irq_flags);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (__atomic_load_n((uint32_t *)(uintptr_t)entries[i].uaddr, __ATOMIC_SEQ_CST) !=
+            (uint32_t)entries[i].val) {
+            kernel_spin_unlock_irqrestore(&futex_lock, irq_flags);
+            return -EAGAIN;
+        }
+    }
+    if (timeout && until <= time_ticks()) {
+        kernel_spin_unlock_irqrestore(&futex_lock, irq_flags);
+        return -ETIMEDOUT;
+    }
+    task->futex_waitv_count = (uint32_t)count;
+    task->futex_waitv_index = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        task->futex_waitv_domain[i] = domains[i];
+        task->futex_waitv_key[i] = keys[i];
+    }
+    task->futex_deadline = until;
+    task->futex_state = 1;
+    task->futex_next = waiters;
+    waiters = task;
+    if (until) sched_sleep_current_until(until); else sched_block_current();
+    kernel_spin_unlock_irqrestore(&futex_lock, irq_flags);
+    return KERNEL_SYSCALL_BLOCKED;
 }
 
 static uint32_t *task_word(struct task *task, uint64_t address)
@@ -481,6 +585,7 @@ void futex_task_exit(struct task *task)
     kernel_spin_lock_irqsave(&futex_lock, &flags);
     dequeue(task);
     task->futex_state = 0;
+    task->futex_waitv_count = 0;
     if (cleared && !(task->clear_child_tid & 3)) {
         uint64_t key = address_space_user_page_phys(sched_task_as(task), task->clear_child_tid) +
             (task->clear_child_tid & 4095);

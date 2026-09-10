@@ -189,5 +189,25 @@ int main(void)
     assert(syscall_futex_wait2(address, 0, 1, FUTEX2_SIZE_U32,
                                 (uintptr_t)ts, 0) == -ETIMEDOUT);
     assert(!waiters);
+    words[10] = 0;
+    words[11] = 0;
+    struct futex_waitv waitv[2] = {
+        {.uaddr = (uintptr_t)&words[10], .val = 0,
+         .flags = FUTEX2_SIZE_U32 | FUTEX2_PRIVATE},
+        {.uaddr = (uintptr_t)&words[11], .val = 0,
+         .flags = FUTEX2_SIZE_U32 | FUTEX2_PRIVATE},
+    };
+    current = &tasks_test[0];
+    assert(syscall_futex_waitv((uintptr_t)waitv, 0, 0, 0, LINUX_CLOCK_MONOTONIC) == -EINVAL);
+    int64_t waitv_timeout[2] = {0, 0};
+    assert(syscall_futex_waitv((uintptr_t)waitv, 2, 0, (uintptr_t)waitv_timeout,
+                               LINUX_CLOCK_MONOTONIC) == -ETIMEDOUT);
+    assert(syscall_futex_waitv((uintptr_t)waitv, 2, 0, 0, LINUX_CLOCK_MONOTONIC) == KERNEL_SYSCALL_BLOCKED);
+    current = &tasks_test[1];
+    assert(syscall_futex_wake2((uintptr_t)&words[11], 1, 1,
+                               FUTEX2_SIZE_U32 | FUTEX2_PRIVATE) == 1);
+    current = &tasks_test[0];
+    assert(syscall_futex_waitv((uintptr_t)waitv, 2, 0, 0, LINUX_CLOCK_MONOTONIC) == 1);
+    assert(!waiters);
     puts("PASS futex: queues, requeue, wake-op, signed/shift operands, access errors, realtime and saturated deadlines, robust exit");
 }

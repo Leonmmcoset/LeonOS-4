@@ -34,6 +34,12 @@ Runtime, libraries, and applications
 * GNU nano 9.2: GPL-3.0-or-later. See third_party/nano/COPYING.
 * Vim 9.1.1590: Vim License. See third_party/vim/LICENSE.
 * ncurses 6.6: MIT-style license. See third_party/ncurses/COPYING.
+* Dyne musl 2.2.0 native toolchain: GCC 15.1.0 and GNU binutils 2.44
+  (GPL-3.0-or-later), musl (MIT), and the upstream bundled static libraries.
+  GCC runtime libraries use the GCC Runtime Library Exception where applicable.
+  See userland/musl-gcc/README.md, COPYING3 and COPYING.RUNTIME; installed
+  provenance and upstream file hashes are in /share/licenses/musl-gcc/.
+  Source/build recipes: https://github.com/dyne/musl/tree/2.2.0.
 * GNU less: GNU GPL-3.0-or-later and/or the upstream Less License. See
   third_party/less/COPYING and third_party/less/LICENSE.
 * ChenPi11/cmd: GPL-3.0-only. See third_party/cmd/LICENSE.

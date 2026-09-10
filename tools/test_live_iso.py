@@ -6,6 +6,8 @@ import tempfile
 import unittest
 
 from make_live_root import make_live_tree, write_fat_root
+from make_ext2_root import write_ext2_root
+from make_installer_root import share_identical_payload_files
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,7 +47,7 @@ class LiveRootTests(unittest.TestCase):
             self.assertTrue((output / "usr/share/vim/vim91/defaults.vim").is_file())
             self.assertEqual((output / "usr/share/terminfo/x/xterm").read_bytes(), b"terminfo")
             self.assertTrue((output / "system/apps/terminal/terminal.elf").is_file())
-            self.assertIn("fs=fat32", (output / "system/osmlayer.manifest").read_text())
+            self.assertIn("fs=ext2", (output / "system/osmlayer.manifest").read_text())
             self.assertFalse((output / "EFI").exists())
             self.assertFalse((output / "system/kernel.sys").exists())
             image = work / "root.fat"
@@ -54,6 +56,29 @@ class LiveRootTests(unittest.TestCase):
             self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
             extracted = subprocess.check_output(["mtype", "-i", str(image), "::/bin/vim"])
             self.assertEqual(extracted, vim.read_bytes())
+            for name, content in (("xt_CONNMARK.h", b"upper"), ("xt_connmark.h", b"lower")):
+                header = output / "opt/dyne/include" / name
+                header.parent.mkdir(parents=True, exist_ok=True)
+                header.write_bytes(content)
+            image = work / "root.ext2"
+            installed = output / "install/root/bin/vim"
+            installed.parent.mkdir(parents=True)
+            installed.write_bytes((output / "bin/vim").read_bytes())
+            for name in ("system/config/users.db", "install/root/system/config/users.db"):
+                seed = output / name
+                seed.parent.mkdir(parents=True, exist_ok=True)
+                seed.write_bytes(b"")
+            share_identical_payload_files(output)
+            self.assertEqual(installed.stat().st_ino, (output / "bin/vim").stat().st_ino)
+            self.assertNotEqual((output / "system/config/users.db").stat().st_ino,
+                                (output / "install/root/system/config/users.db").stat().st_ino)
+            write_ext2_root(output, image)
+            stats = [subprocess.check_output(["debugfs", "-R", f"stat /{name}", image], text=True)
+                     for name in ("bin/vim", "install/root/bin/vim")]
+            self.assertEqual(stats[0].splitlines()[0], stats[1].splitlines()[0])
+            for name, content in (("xt_CONNMARK.h", b"upper"), ("xt_connmark.h", b"lower")):
+                extracted = subprocess.check_output(["debugfs", "-R", f"cat /opt/dyne/include/{name}", image])
+                self.assertEqual(extracted, content)
 
     def test_grub_loads_the_root_from_cd_not_the_first_hard_disk(self):
         config = (ROOT / "boot/grub/live.cfg").read_text()

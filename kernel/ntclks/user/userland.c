@@ -41,6 +41,7 @@ static bool autospawn_memtest;
 static bool autospawn_installer;
 static bool autospawn_linuxabi;
 static bool autospawn_ltp;
+static bool autospawn_gcc;
 static bool autospawn_vim;
 /* elf.c keeps a bounded header scratch buffer and ASLR state at file scope.
  * Serialize lazy image construction so APs cannot overwrite that state while
@@ -330,7 +331,7 @@ static int prepare_user_exec_stack(struct task *task)
     size_t path_len;
     uint64_t argv_bytes;
     uint64_t envp_bytes;
-    const uint64_t auxv_count = 14;
+    const uint64_t auxv_count = 16;
     const uint64_t auxv_bytes = auxv_count * 2 * sizeof(uint64_t);
     enum {
         AT_NULL = 0,
@@ -346,6 +347,8 @@ static int prepare_user_exec_stack(struct task *task)
         AT_EGID = 14,
         AT_SECURE = 23,
         AT_RANDOM = 25,
+        AT_RSEQ_FEATURE_SIZE = 27,
+        AT_RSEQ_ALIGN = 28,
         AT_EXECFN = 31,
     };
     uint64_t launch_base = 0;
@@ -443,6 +446,8 @@ static int prepare_user_exec_stack(struct task *task)
             AT_EGID, task->egid,
             AT_SECURE, task->uid != task->euid || task->gid != task->egid,
             AT_RANDOM, random_base,
+            AT_RSEQ_FEATURE_SIZE, 32,
+            AT_RSEQ_ALIGN, 32,
             AT_EXECFN, execfn_base,
             AT_NULL, 0,
         };
@@ -699,7 +704,7 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
              * frame before it is published to the scheduler. */
             arch_fpu_save(current->fpu_state);
             (void)kernel_signal_deliver_pending(current, frame);
-            if (!sched_capture_current_user_frame(frame)) {
+            if (current->state != TASK_EXITED && !sched_capture_current_user_frame(frame)) {
                 console_printf("[ntclks] rejected scheduler frame pid=%u rip=0x%llx cs=0x%llx\n",
                                current->pid,
                                (unsigned long long)frame->rip,
@@ -738,6 +743,11 @@ struct task *userland_schedule_from_frame(struct trap_frame *frame)
     /* A task that was woken for a pending signal never passed through the
      * live-frame path above; prepare its saved frame before entering it. */
     (void)kernel_signal_deliver_pending(next, &next->frame);
+    if (next->state == TASK_EXITED) return userland_schedule_from_frame(NULL);
+    if (next->state == TASK_STOPPED || next->state == TASK_BLOCKED) {
+        (void)sched_capture_current_user_frame(&next->frame);
+        return userland_schedule_from_frame(NULL);
+    }
     if (!userland_load_task_image(next)) {
         sched_exit(next->pid, 127);
         return userland_schedule_from_frame(NULL);
@@ -789,6 +799,7 @@ void userland_init(const struct boot_info *boot)
     autospawn_installer = boot && name_contains(boot->cmdline, "autospawn=installer");
     autospawn_linuxabi = boot && name_contains(boot->cmdline, "autospawn=linuxabi");
     autospawn_ltp = boot && name_contains(boot->cmdline, "autospawn=ltp");
+    autospawn_gcc = boot && name_contains(boot->cmdline, "autospawn=gcc");
     autospawn_vim = boot && name_contains(boot->cmdline, "autospawn=vim");
     if (autospawn_hello) {
         console_printf("[ntclks] debug autospawn hello enabled\n");
@@ -1239,6 +1250,11 @@ int64_t userland_spawn_path(const char *path)
  */
 void userland_yield_if_runnable(void)
 {
+    if (autospawn_gcc && sched_current_pid() == desktop_pid) {
+        autospawn_gcc = false;
+        int64_t pid = userland_spawn_path("/system/tests/gcc-probe.elf");
+        console_printf("[ntclks] GCC probe runner pid=%lld\n", (long long)pid);
+    }
     if (autospawn_ltp && sched_current_pid() == desktop_pid) {
         autospawn_ltp = false;
         int64_t pid = userland_spawn_path("/system/tests/ltp-runner.elf");

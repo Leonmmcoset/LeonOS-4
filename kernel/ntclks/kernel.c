@@ -235,6 +235,7 @@ static void kernel_start(uint32_t magic, uint32_t multiboot_info,
     sched_init();
     sched_create_idle_task();
     syscall_init();
+    syscall_trace_configure(boot.cmdline);
     arch_userland_init(kernel_ring0_stack + sizeof(kernel_ring0_stack));
     /* The bootstrap page tables are complete now, so SVGA BARs can be marked
      * UC before any 3D FIFO or guest-memory command is issued. */

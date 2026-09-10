@@ -6,7 +6,10 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <linux/futex.h>
+#include <linux/rseq.h>
+#include <linux/capability.h>
 #include <linux/sched.h>
+#include <linux/time.h>
 #include <limits.h>
 #include <mimalloc.h>
 #include <pthread.h>
@@ -22,6 +25,7 @@
 #include <string.h>
 #include <sys/auxv.h>
 #include <sys/eventfd.h>
+#include <sys/file.h>
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
 #include <sys/ioctl.h>
@@ -39,6 +43,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <termios.h>
+#include <utime.h>
 #include <unistd.h>
 #include <ucontext.h>
 #include <stdint.h>
@@ -71,6 +76,20 @@ static volatile sig_atomic_t timer_callback_seen;
 #include "futex2_abi_test.c"
 #define CLONE3_EMBEDDED
 #include "clone3_abi_test.c"
+#define SYMLINK_EMBEDDED
+#include "symlink_abi_test.c"
+#define SIGNAL_QUEUE_EMBEDDED
+#include "signal_queue_abi_test.c"
+#define SOCKET_BATCH_EMBEDDED
+#include "socket_batch_abi_test.c"
+#define SIGNALFD_EMBEDDED
+#include "signalfd_abi_test.c"
+#define PROCESS_VM_EMBEDDED
+#include "process_vm_abi_test.c"
+#define SYSV_MSG_EMBEDDED
+#include "sysv_msg_abi_test.c"
+#define SYSV_SEM_EMBEDDED
+#include "sysv_sem_abi_test.c"
 #define PRCTL_EMBEDDED
 #include "prctl_abi_test.c"
 #define UTSNAME_EMBEDDED
@@ -111,6 +130,23 @@ static int timer_abi(void)
         usleep(10000);
     CHECK(timer_callback_seen);
     CHECK(timer_delete(timer) == 0);
+    return 0;
+}
+
+
+static int rseq_abi(void)
+{
+    struct rseq area __attribute__((aligned(32))) = {0};
+    CHECK(syscall(SYS_rseq, &area, sizeof(area), 0, RSEQ_SIG) == 0);
+    CHECK(area.cpu_id_start == 0 && area.cpu_id == 0 && area.rseq_cs == 0);
+    CHECK(syscall(SYS_rseq, &area, sizeof(area), 0, RSEQ_SIG) == -1 && errno == EBUSY);
+    CHECK(syscall(SYS_rseq, &area, sizeof(area), 0, RSEQ_SIG ^ 1U) == -1 && errno == EPERM);
+    CHECK(syscall(SYS_rseq, &area, sizeof(area), RSEQ_FLAG_UNREGISTER, RSEQ_SIG ^ 1U) == -1 && errno == EPERM);
+    CHECK(syscall(SYS_rseq, &area, sizeof(area), RSEQ_FLAG_UNREGISTER, RSEQ_SIG) == 0);
+    CHECK(area.cpu_id_start == (uint32_t)RSEQ_CPU_ID_UNINITIALIZED &&
+          area.cpu_id == (uint32_t)RSEQ_CPU_ID_UNINITIALIZED);
+    CHECK(syscall(SYS_rseq, (void *)((uintptr_t)&area + 1), sizeof(area), 0, RSEQ_SIG) == -1 && errno == EINVAL);
+    CHECK(syscall(SYS_rseq, &area, RSEQ_SIZE - 1, 0, RSEQ_SIG) == -1 && errno == EINVAL);
     return 0;
 }
 
@@ -180,6 +216,76 @@ static int timerfd_abi(void)
     return 0;
 }
 
+static int capabilities_abi(void)
+{
+    struct __user_cap_header_struct header = {
+        .version = _LINUX_CAPABILITY_VERSION_3,
+        .pid = 0,
+    };
+    struct __user_cap_data_struct data[2] = {{0}};
+    CHECK(syscall(SYS_capget, &header, data) == 0);
+    if (data[0].permitted & (1u << CAP_CHOWN)) {
+        CHECK((data[0].effective & (1u << CAP_SETUID)) != 0);
+        uint32_t old = data[0].effective;
+        data[0].effective &= ~(1u << CAP_CHOWN);
+        CHECK(syscall(SYS_capset, &header, data) == 0);
+        __builtin_memset(data, 0, sizeof(data));
+        CHECK(syscall(SYS_capget, &header, data) == 0 && data[0].effective == (old & ~(1u << CAP_CHOWN)));
+        data[0].effective = old;
+        CHECK(syscall(SYS_capset, &header, data) == 0);
+    } else {
+        data[0].effective = 1u << CAP_CHOWN;
+        CHECK(syscall(SYS_capset, &header, data) == -1 && errno == EPERM);
+    }
+    return 0;
+}
+
+static int flock_abi(void)
+{
+    char path[64];
+    snprintf(path, sizeof(path), "/tmp/musl-flock-%ld", (long)getpid());
+    int first = open(path, O_CREAT | O_RDWR | O_TRUNC, 0600);
+    CHECK(first >= 0);
+    int second = open(path, O_RDWR);
+    CHECK(second >= 0);
+    CHECK(flock(first, LOCK_EX | LOCK_NB) == 0);
+    CHECK(flock(second, LOCK_EX | LOCK_NB) == -1 && errno == EWOULDBLOCK);
+    CHECK(flock(second, LOCK_SH | LOCK_NB) == -1 && errno == EWOULDBLOCK);
+    int duplicate = dup(first);
+    CHECK(duplicate >= 0);
+    CHECK(flock(duplicate, LOCK_UN) == 0);
+    CHECK(flock(second, LOCK_EX | LOCK_NB) == 0);
+    CHECK(close(first) == 0);
+    CHECK(flock(second, LOCK_UN) == 0);
+    CHECK(close(duplicate) == 0 && close(second) == 0);
+    CHECK(unlink(path) == 0);
+    return 0;
+}
+
+static int link_abi(void)
+{
+    char source[64], target[64];
+    snprintf(source, sizeof(source), "/tmp/musl-link-%ld", (long)getpid());
+    snprintf(target, sizeof(target), "/tmp/musl-link-%ld.hard", (long)getpid());
+    int fd = open(source, O_CREAT | O_RDWR | O_TRUNC, 0600);
+    CHECK(fd >= 0);
+    CHECK(write(fd, "link", 4) == 4);
+    CHECK(syscall(SYS_link, source, target) == 0);
+    struct stat first, second;
+    CHECK(fstat(fd, &first) == 0 && stat(target, &second) == 0);
+    CHECK(first.st_ino == second.st_ino && second.st_nlink >= 2);
+    CHECK(lseek(fd, 0, SEEK_SET) == 0);
+    char content[5] = {0};
+    CHECK(read(fd, content, 4) == 4 && !memcmp(content, "link", 4));
+    CHECK(unlink(source) == 0);
+    CHECK(stat(target, &second) == 0 && second.st_nlink == 1);
+    CHECK(lseek(fd, 0, SEEK_SET) == 0);
+    memset(content, 0, sizeof(content));
+    CHECK(read(fd, content, 4) == 4 && !memcmp(content, "link", 4));
+    CHECK(unlink(target) == 0 && close(fd) == 0);
+    return 0;
+}
+
 static int startup(int argc, char **argv)
 {
     CHECK(argc >= 1 && argv && argv[argc] == NULL);
@@ -211,6 +317,33 @@ static int startup(int argc, char **argv)
     sched_value.sched_priority = 1;
     CHECK(syscall(SYS_sched_setparam, 0, &sched_value) == -1 && errno == EINVAL);
     CHECK(syscall(SYS_sched_setscheduler, 0, SCHED_FIFO, &sched_value) == -1 && errno == EINVAL);
+    struct sched_attr sched_attr_value = {
+        .size = sizeof(struct sched_attr),
+        .sched_policy = SCHED_OTHER,
+    };
+    CHECK(syscall(SYS_sched_getattr, 0, &sched_attr_value,
+                  sizeof(sched_attr_value), 0) == 0 &&
+          sched_attr_value.size == sizeof(struct sched_attr) &&
+          sched_attr_value.sched_policy == SCHED_OTHER &&
+          sched_attr_value.sched_priority == 0 &&
+          sched_attr_value.sched_nice == 0);
+    sched_attr_value.sched_nice = 3;
+    CHECK(syscall(SYS_sched_setattr, 0, &sched_attr_value,
+                  0, 0) == 0);
+    sched_attr_value = (struct sched_attr){.size = sizeof(struct sched_attr)};
+    CHECK(syscall(SYS_sched_getattr, 0, &sched_attr_value,
+                  sizeof(sched_attr_value), 0) == 0 && sched_attr_value.sched_nice == 3);
+    sched_attr_value.size = SCHED_ATTR_SIZE_VER0;
+    sched_attr_value.sched_nice = 0;
+    CHECK(syscall(SYS_sched_setattr, 0, &sched_attr_value,
+                  0, 0) == 0);
+    CHECK(syscall(SYS_sched_getattr, 0, &sched_attr_value,
+                  SCHED_ATTR_SIZE_VER0 - 1, 0) == -1 && errno == EINVAL);
+    sched_attr_value.sched_policy = SCHED_FIFO;
+    CHECK(syscall(SYS_sched_setattr, 0, &sched_attr_value,
+                  0, 0) == -1 && errno == EINVAL);
+    sched_attr_value.sched_policy = SCHED_OTHER;
+    CHECK(syscall(SYS_sched_setattr, 0, &sched_attr_value, 1, 0) == -1 && errno == EINVAL);
     struct timespec rr_interval;
     CHECK(syscall(SYS_sched_rr_get_interval, 0, &rr_interval) == 0 &&
           rr_interval.tv_sec == 0 && rr_interval.tv_nsec > 0 && rr_interval.tv_nsec <= 1000000000L);
@@ -229,6 +362,8 @@ static int startup(int argc, char **argv)
     CHECK(memfd_abi() == 0);
     CHECK(epoll_abi() == 0);
     CHECK(timerfd_abi() == 0);
+    CHECK(flock_abi() == 0);
+    CHECK(link_abi() == 0);
     struct timespec invalid_clock = {.tv_sec = 0, .tv_nsec = 1000000000L};
     CHECK(syscall(SYS_clock_settime, CLOCK_REALTIME, &invalid_clock) == -1 && errno == EINVAL);
     CHECK(syscall(SYS_sched_getparam, 0x7fffffff, &sched_value) == -1 && errno == ESRCH);
@@ -645,6 +780,43 @@ static int permissions(void)
     CHECK(stat(path, &st) == 0 && st.st_uid == 10001 && st.st_gid == 20001);
     CHECK(close(fd) == 0 && unlink(path) == 0 && rmdir(directory) == 0);
     umask(old_mask);
+    return 0;
+}
+
+static int timestamp_syscalls(void)
+{
+    char path[64];
+    struct stat st;
+    struct linux_timespec ns[2] = {{1700000000, 0}, {1700000001, 0}};
+    struct linux_timeval us[2] = {{1700000010, 123000}, {1700000011, 456000}};
+    struct utimbuf old = {1700000020, 1700000021};
+    snprintf(path, sizeof(path), "/tmp/musl-abi-time-%ld", (long)getpid());
+    int fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 0600);
+    CHECK(fd >= 0);
+    CHECK(close(fd) == 0);
+    CHECK(syscall(SYS_utimensat, AT_FDCWD, path, ns, 0) == 0);
+    CHECK(stat(path, &st) == 0 && st.st_atim.tv_sec == ns[0].tv_sec &&
+          st.st_mtim.tv_sec == ns[1].tv_sec);
+    CHECK(syscall(SYS_utimensat, AT_FDCWD, path, NULL, 0) == 0);
+    CHECK(syscall(SYS_utimensat, AT_FDCWD, path, ns, AT_SYMLINK_NOFOLLOW | 0x4000) == -1 &&
+          errno == EINVAL);
+    CHECK(syscall(SYS_utimes, path, us) == 0);
+    CHECK(stat(path, &st) == 0 && st.st_atim.tv_sec == us[0].tv_sec &&
+          st.st_mtim.tv_sec == us[1].tv_sec);
+    CHECK(syscall(SYS_utime, path, &old) == 0);
+    CHECK(stat(path, &st) == 0 && st.st_atim.tv_sec == old.actime &&
+          st.st_mtim.tv_sec == old.modtime);
+    CHECK(syscall(SYS_utime, path, NULL) == 0);
+    int dirfd = open("/tmp", O_RDONLY | O_DIRECTORY);
+    CHECK(dirfd >= 0);
+    struct linux_timeval futimes[2] = {
+        {1700000030, 111000}, {1700000031, 222000},
+    };
+    CHECK(syscall(SYS_futimesat, dirfd, strrchr(path, '/') + 1, futimes) == 0);
+    CHECK(stat(path, &st) == 0 && st.st_atim.tv_sec == futimes[0].tv_sec &&
+          st.st_mtim.tv_sec == futimes[1].tv_sec);
+    CHECK(close(dirfd) == 0);
+    CHECK(unlink(path) == 0);
     return 0;
 }
 
@@ -2812,7 +2984,14 @@ int main(int argc, char **argv)
         {"thread_tls_control", thread_tls_control},
         {"thread_tid_registration", thread_tid_registration},
         {"thread_tid_exit", thread_tid_exit},
-        {"permissions", permissions}, {"threads", threads},
+        {"permissions", permissions}, {"timestamp_syscalls", timestamp_syscalls}, {"threads", threads},
+        {"symlink_syscalls", symlink_syscalls},
+        {"signal_queue_syscalls", signal_queue_syscalls},
+        {"socket_batch_syscalls", socket_batch_syscalls},
+        {"signalfd_syscalls", signalfd_syscalls},
+        {"process_vm_syscalls", process_vm_syscalls},
+        {"sysv_msg_syscalls", sysv_msg_syscalls},
+        {"sysv_sem_syscalls", sysv_sem_syscalls},
         {"proc_directories", proc_directories},
         {"proc_status", proc_status},
         {"rename_replacement", rename_replacement},
@@ -2830,6 +3009,8 @@ int main(int argc, char **argv)
         {"unix_vectors", unix_vectors},
         {"unix_timeouts", unix_timeouts},
         {"thread_futex_ops", thread_futex_ops},
+        {"capabilities", capabilities_abi},
+        {"rseq", rseq_abi},
         {"thread_futex2", thread_futex2},
         {"thread_clone3", thread_clone3},
         {"process_prctl", process_prctl},

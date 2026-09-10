@@ -48,6 +48,11 @@ static void futex2_signal_handler(int sig)
     if (sig == SIGUSR1) ++futex2_signals;
 }
 
+static void futex2_alarm_handler(int sig)
+{
+    if (sig == SIGALRM) ++futex2_signals;
+}
+
 static void *futex2_interrupt(void *target)
 {
     struct futex_waitv pair[2] = {
@@ -66,6 +71,17 @@ static void *futex2_interrupt(void *target)
 static int thread_futex2(void)
 {
     _Static_assert(sizeof(struct futex_waitv) == 24, "Linux futex_waitv size");
+    struct futex_waitv invalid_waitv = {
+        .uaddr = (uintptr_t)&futex2_source,
+        .val = 1,
+        .flags = FUTEX2_SIZE_U32 | FUTEX2_PRIVATE,
+    };
+    CHECK(syscall(SYS_futex_waitv, &invalid_waitv, 0, 0, NULL, CLOCK_MONOTONIC) == -1 &&
+          errno == EINVAL);
+    struct timespec waitv_past = {0, 0};
+    futex2_source = 1;
+    CHECK(syscall(SYS_futex_waitv, &invalid_waitv, 1, 0, &waitv_past, CLOCK_MONOTONIC) == -1 &&
+          errno == ETIMEDOUT);
     const unsigned invalid_flags[] = {0, 1, 3, FUTEX2_SIZE_U32 | FUTEX2_NUMA,
                                       FUTEX2_SIZE_U32 | FUTEX_CLOCK_REALTIME};
     uint32_t word = 1;
@@ -144,6 +160,32 @@ static int thread_futex2(void)
         CHECK(syscall(SYS_futex_wake, &futex2_source, UINT32_MAX, 1, futex2_private) == 0);
     }
     CHECK(sigaction(SIGUSR1, &saved, NULL) == 0);
+
+    /* futex_waitv must follow the same signal interruption contract as the
+     * single-word futex wait: EINTR without SA_RESTART and a resumed wait
+     * with SA_RESTART.  This catches omissions in the kernel restart table. */
+    struct sigaction alarm_action = {.sa_handler = futex2_alarm_handler}, alarm_saved;
+    sigemptyset(&alarm_action.sa_mask);
+    CHECK(sigaction(SIGALRM, NULL, &alarm_saved) == 0);
+    struct futex_waitv waitv = {
+        .uaddr = (uintptr_t)&futex2_source,
+        .val = 0,
+        .flags = FUTEX2_SIZE_U32 | FUTEX2_PRIVATE,
+    };
+    futex2_source = 0;
+    for (unsigned restart = 0; restart < 2; ++restart) {
+        alarm_action.sa_flags = restart ? SA_RESTART : 0;
+        CHECK(sigaction(SIGALRM, &alarm_action, NULL) == 0);
+        futex2_signals = 0;
+        alarm(1);
+        struct timespec limit = futex2_limit(2500);
+        long ret = syscall(SYS_futex_waitv, &waitv, 1, 0, &limit, CLOCK_MONOTONIC);
+        int error = errno;
+        CHECK(ret == -1 && error == (restart ? ETIMEDOUT : EINTR));
+        CHECK(futex2_signals == 1);
+    }
+    alarm(0);
+    CHECK(sigaction(SIGALRM, &alarm_saved, NULL) == 0);
     return 0;
 }
 
