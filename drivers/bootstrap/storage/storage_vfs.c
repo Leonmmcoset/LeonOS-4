@@ -305,6 +305,8 @@ static int storage_lookup_path_unlocked(const char *path, struct storage_node *o
     if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0) {
         return -22;
     }
+    if (g_devfs_enabled && !__builtin_strncmp(resolved, "/dev/pts/", 9))
+        return pty_lookup_path(resolved, out);
     if (g_devfs_enabled && storage_text_eq_ci(resolved, "/dev")) {
         if (out) {
             *out = (struct storage_node){
@@ -560,6 +562,12 @@ static int storage_read_node_cursor_unlocked(const struct storage_node *node, ui
     }
     if (!node || !buf) {
         return -22;
+    }
+    struct storage_node refreshed = *node;
+    if (node->flags & STORAGE_NODE_FLAG_EXT2) {
+        ret = storage_inode_refresh(&refreshed);
+        if (ret < 0) return ret;
+        node = &refreshed;
     }
     if (node->type == LEONOS_FS_TYPE_DEVICE && (node->flags & STORAGE_NODE_FLAG_DEV_FB0)) {
         return -21;
@@ -1519,8 +1527,19 @@ int storage_mkdir(const char *path)
     if (!storage_ready()) {
         return -2;
     }
-    if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0 ||
-        storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
+    if (storage_resolve_path("/", path, resolved, sizeof(resolved)) < 0) {
+        return -22;
+    }
+    /* A mounted directory resolves to the backend root, which has no final
+     * component to create. Test existence in the global namespace first. */
+    ret = storage_lookup_path(resolved, &existing);
+    if (ret == 0) {
+        return -17;
+    }
+    if (ret != -2) {
+        return ret;
+    }
+    if (storage_parent_path(resolved, parent, sizeof(parent), name, sizeof(name)) < 0) {
         return -22;
     }
     ret = storage_lookup_path(parent, &parent_node);
@@ -1551,13 +1570,6 @@ int storage_mkdir(const char *path)
     }
     ret = fat32_validate_name(name);
     if (ret < 0) {
-        return ret;
-    }
-    ret = storage_lookup_path(resolved, &existing);
-    if (ret == 0) {
-        return -17;
-    }
-    if (ret != -2) {
         return ret;
     }
     ret = fat32_find_free_cluster(&cluster);

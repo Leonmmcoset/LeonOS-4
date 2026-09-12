@@ -318,10 +318,17 @@ def validate_component_targets(components: tuple[Component, ...], root: Path) ->
 
     Application identifiers intentionally map to their source directories; the
     specialized target aliases in build.py (nano, PL Editor, and package-only
-    applications) still retain that same source-of-truth directory.
+    applications) still retain that same source-of-truth directory. Fastfetch
+    is a pinned binary release with a maintained packager instead of C sources.
     """
     for component in components:
         if component.kind in {"system-app", "program-app", "package-app"}:
+            if component.id == "fastfetch":
+                for name in ("tools/package_fastfetch.py", "userland/fastfetch/LICENSE",
+                             "userland/fastfetch/config.jsonc"):
+                    if not (root / name).is_file():
+                        raise ComponentError(f"fastfetch package input is missing: {name}")
+                continue
             candidates = (
                 root / "userland" / "apps" / component.id,
                 root / "userland" / component.id,

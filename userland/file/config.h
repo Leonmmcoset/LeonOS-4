@@ -21,8 +21,10 @@
 #define HAVE_REGEX_H 1
 #define HAVE_CTYPE_H 1
 
-/* LeonOS has no native symlinks, pread, or mmap-backed file loading.
- * leonos_shim.c provides the safe stat and positional-read adapters. */
+/* Use upstream's compiled-database mmap loader. The read-based loader expects
+ * one read to consume the entire database, but blocking reads may be short. */
+#define HAVE_MMAP 1
+#define HAVE_SYS_MMAN_H 1
 #define HAVE_PREAD 1
 
 /* The unsupported process/spawn plumbing is guarded with numeric #if tests. */

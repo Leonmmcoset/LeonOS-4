@@ -1,5 +1,5 @@
 #include "installer_setup.h"
-#include "../authd/accounts.h"
+#include "../../auth/standard_accounts.h"
 #include <leonos/launch.h>
 #include <leonos/layout.h>
 #include <errno.h>
@@ -59,8 +59,9 @@ invalid:
 
 int installer_setup_valid(const struct installer_setup *setup)
 {
-    if (!authd_username_valid(setup->username, sizeof(setup->username)) ||
-        !strcmp(setup->username, "root") || !strcmp(setup->username, "nobody")) return 0;
+    if (!leonos_account_name_valid(setup->username, sizeof(setup->username)) ||
+        !strcmp(setup->username, "root") || !strcmp(setup->username, "nobody") ||
+        !strcmp(setup->username, "wheel")) return 0;
     const char *passwords[] = {setup->password, setup->password_confirm,
                                setup->root_password, setup->root_password_confirm};
     for (unsigned i = 0; i < 4; ++i)
@@ -121,24 +122,21 @@ static int prepare_home(const char *target, const struct leonos_user_info *user)
 
 int installer_setup_write(const struct installer_setup *setup, const char *target)
 {
-    struct leonos_auth_record records[2] = {
-        {.user = {.uid = 0, .role = 2, .username = "root", .home = "/root"}},
-        {.user = {.uid = 1000, .role = 1}},
+    struct leonos_user_info records[2] = {
+        {.uid = 0, .role = 2, .username = "root", .home = "/root"},
+        {.uid = 1000, .role = 1},
     };
     char path[512];
     int result = -1;
     if (!installer_setup_valid(setup)) { errno = EINVAL; return -1; }
     if (strlen(target) > 256) { errno = ENAMETOOLONG; return -1; }
-    strcpy(records[1].user.username, setup->username);
-    snprintf(records[1].user.home, sizeof(records[1].user.home), "/home/%s", setup->username);
-    if (authd_set_password(&records[0], setup->root_password) < 0 ||
-        authd_set_password(&records[1], setup->password) < 0) goto out;
+    strcpy(records[1].username, setup->username);
+    snprintf(records[1].home, sizeof(records[1].home), "/home/%s", setup->username);
+    if (leonos_account_legacy_check(target) < 0) goto out;
     for (unsigned i = 0; i < 2; ++i)
-        if (prepare_home(target, &records[i].user) < 0) goto out;
-    snprintf(path, sizeof(path), "%s/etc", target);
-    if (authd_export_accounts(path, records, 2) < 0) goto out;
-    snprintf(path, sizeof(path), "%s%s", target, LEONOS_AUTH_DB_PATH);
-    if (authd_store_database(path, records, 2) < 0) goto out;
+        if (prepare_home(target, &records[i]) < 0) goto out;
+    if (leonos_account_seed(target, setup->username, setup->password,
+                            setup->root_password) < 0) goto out;
     snprintf(path, sizeof(path), "%s/etc/leonos/installed", target);
     FILE *file = fopen(path, "w");
     if (!file) goto out;

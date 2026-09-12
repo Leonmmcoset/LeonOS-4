@@ -3,9 +3,11 @@
  * Connects shells and terminal applications to their controlling sessions.
  */
 #include <ntclks/pty.h>
+#include <ntclks/input.h>
 #include <ntclks/console.h>
 #include <ntclks/framebuffer.h>
 #include <ntclks/sched.h>
+#include <ntclks/futex.h>
 #include <leonos/psf_font.h>
 
 #define PTY_MAX 8u
@@ -20,8 +22,12 @@ struct pty_session {
     uint8_t input_reported;
     uint8_t locked;
     uint32_t owner_pid;
+    uint32_t generation;
+    struct leonos_permissions permissions;
     uint32_t process_session;
     uint32_t foreground_pgid;
+    uint32_t transfer_refs;
+    uint32_t transfer_masters;
     uint8_t input[PTY_INPUT_CAP];
     uint32_t input_head;
     uint32_t input_tail;
@@ -32,13 +38,13 @@ struct pty_session {
     uint32_t output_head;
     uint32_t output_tail;
     struct leonos_pty_termios termios;
-    struct leonos_pty_winsize winsize;
+    struct linux_winsize winsize;
 };
 
 static struct pty_session sessions[PTY_MAX];
+static uint32_t next_generation;
 static uint32_t console_pty_id;
 static uint8_t console_shift_down;
-static uint8_t console_caps_lock;
 static uint8_t console_ctrl_down;
 static uint8_t console_alt_down;
 
@@ -54,6 +60,44 @@ static struct pty_session *find_session(uint32_t pty_id)
         return 0;
     }
     return &sessions[pty_id - 1];
+}
+
+int pty_get_node(uint32_t pty_id, struct storage_node *node)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session) return -2;
+    if (node) *node = (struct storage_node){
+        .type = LEONOS_FS_TYPE_DEVICE,
+        .flags = STORAGE_NODE_FLAG_PTY | STORAGE_NODE_FLAG_DEV_NODE,
+        .first_cluster = pty_id,
+        .volume_id = session->generation,
+    };
+    return 0;
+}
+
+int pty_lookup_path(const char *path, struct storage_node *node)
+{
+    const char *prefix = "/dev/pts/";
+    while (*prefix && *path == *prefix) { ++path; ++prefix; }
+    if (*prefix || *path < '1' || *path > '9') return -2;
+    uint32_t id = 0;
+    do {
+        id = id * 10 + (uint32_t)(*path++ - '0');
+        if (id > PTY_MAX) return -2;
+    } while (*path >= '0' && *path <= '9');
+    struct pty_session *session = find_session(id);
+    if (*path || !session || session->hungup) return -2;
+    return pty_get_node(id, node);
+}
+
+int pty_inode_permissions(const struct storage_node *node,
+                           struct leonos_permissions *value, bool write)
+{
+    struct pty_session *session = find_session(node->first_cluster);
+    if (!session || session->generation != node->volume_id) return -2;
+    if (write) session->permissions = *value;
+    else *value = session->permissions;
+    return 0;
 }
 
 /**
@@ -120,7 +164,6 @@ void pty_init(void)
 {
     console_pty_id = 0;
     console_shift_down = 0;
-    console_caps_lock = 0;
     console_ctrl_down = 0;
     console_alt_down = 0;
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
@@ -141,6 +184,7 @@ int pty_bind_console(uint32_t pty_id, uint32_t owner_pid)
     session->process_session = owner_pid;
     session->foreground_pgid = owner_pid;
     session->console = 1;
+    session->locked = 0;
     console_pty_id = pty_id;
     /* Publish the controlling PTY together with the session and foreground
      * group.  Callers may bind a console before the task is first scheduled,
@@ -190,7 +234,7 @@ static int console_key_to_bytes(uint8_t keycode, char *buffer, uint32_t *length)
     default: return 0;
     }
     if (ch >= 'a' && ch <= 'z') {
-        if ((console_shift_down ? 1 : 0) != (console_caps_lock ? 1 : 0)) {
+        if ((console_shift_down ? 1 : 0) != input_caps_lock_active()) {
             ch = (char)(ch - 'a' + 'A');
         }
     } else if (console_shift_down) {
@@ -223,9 +267,6 @@ void pty_console_key_event(uint8_t keycode, uint8_t pressed)
         return;
     }
     if (keycode == 58) {
-        if (pressed) {
-            console_caps_lock ^= 1;
-        }
         return;
     }
     if (keycode == 29 || keycode == 116) {
@@ -284,6 +325,11 @@ int32_t pty_create(uint32_t owner_pid)
             /* Linux devpts keeps the slave inaccessible until unlockpt(). */
             sessions[i].locked = 1;
             sessions[i].owner_pid = owner_pid;
+            const struct task *owner = sched_find(owner_pid);
+            sessions[i].permissions = (struct leonos_permissions){0600,
+                owner ? owner->fsuid : 0, owner ? owner->fsgid : 0};
+            if (!++next_generation) ++next_generation;
+            sessions[i].generation = next_generation;
             /* Opening ptmx does not acquire a controlling terminal. */
             sessions[i].process_session = 0;
             sessions[i].foreground_pgid = 0;
@@ -348,12 +394,40 @@ void pty_reap_hungup(uint32_t pty_id)
     }
 }
 
+int pty_transfer_get(uint32_t pty_id, uint32_t endpoint)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session) return -9;
+    ++session->transfer_refs;
+    if (endpoint == TASK_PTY_ENDPOINT_MASTER) ++session->transfer_masters;
+    return 0;
+}
+
+uint32_t pty_transfer_count(uint32_t pty_id, int master_only)
+{
+    struct pty_session *session = find_session(pty_id);
+    return session ? (master_only ? session->transfer_masters : session->transfer_refs) : 0;
+}
+
+void pty_transfer_put(uint32_t pty_id, uint32_t endpoint)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session) return;
+    if (session->transfer_refs) --session->transfer_refs;
+    if (endpoint == TASK_PTY_ENDPOINT_MASTER && session->transfer_masters) {
+        --session->transfer_masters;
+        if (!sched_pty_master_reference_count(pty_id))
+            (void)pty_destroy(session->owner_pid, pty_id);
+    }
+    pty_reap_hungup(pty_id);
+}
+
 /**
  * @brief Close the master side of pty_id using Unix98 hangup semantics.
  *
  * The session is not freed while slave descriptors remain open. The slave
  * keeps draining buffered input, then reports EOF/POLLHUP and rejects writes
- * with EIO. SIGHUP is delivered to the foreground process group.
+ * with EIO. SIGHUP and SIGCONT are delivered to the controlling session leader.
  */
 int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
 {
@@ -370,10 +444,16 @@ int pty_destroy(uint32_t owner_pid, uint32_t pty_id)
     pty_commit_canonical_input(session);
     session->hungup = 1;
     session->owner_pid = 0;
-    if (session->foreground_pgid) {
-        (void)sched_signal_process_group(owner_pid, session->foreground_pgid, 1);
-    }
+    uint32_t sid = session->process_session;
+    struct task *leader = sid ? sched_find(sid) : NULL;
+    if (leader) leader->tty_old_pgrp = session->foreground_pgid;
+    session->process_session = 0;
+    session->foreground_pgid = 0;
     (void)sched_hangup_user_tasks_for_pty(pty_id, owner_pid);
+    if (sid) {
+        sched_signal_user_process(sid, 1);
+        sched_signal_user_process(sid, 18);
+    }
     pty_reap_hungup(pty_id);
     return 0;
 }
@@ -478,8 +558,7 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
             input == (char)session->termios.c_cc[LEONOS_PTY_CC_VINTR]) {
             session->canonical_length = 0;
             if (session->foreground_pgid) {
-                (void)sched_signal_process_group(session->owner_pid,
-                                                 session->foreground_pgid, 2);
+                (void)sched_signal_kernel_group(session->foreground_pgid, 2);
             }
             ++written;
             continue;
@@ -488,8 +567,7 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
             input == (char)session->termios.c_cc[LEONOS_PTY_CC_VSUSP]) {
             session->canonical_length = 0;
             if (session->foreground_pgid) {
-                (void)sched_signal_process_group(session->owner_pid,
-                                                 session->foreground_pgid, 20);
+                (void)sched_signal_kernel_group(session->foreground_pgid, 20);
             }
             ++written;
             continue;
@@ -498,8 +576,7 @@ int64_t pty_write_input(uint32_t owner_pid, uint32_t pty_id, const char *buffer,
             input == (char)session->termios.c_cc[LEONOS_PTY_CC_VQUIT]) {
             session->canonical_length = 0;
             if (session->foreground_pgid) {
-                (void)sched_signal_process_group(session->owner_pid,
-                                                 session->foreground_pgid, 3);
+                (void)sched_signal_kernel_group(session->foreground_pgid, 3);
             }
             ++written;
             continue;
@@ -689,12 +766,13 @@ int pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize)
     if (!session || !winsize) {
         return -22;
     }
-    *winsize = session->winsize;
+    winsize->ws_row = session->winsize.ws_row;
+    winsize->ws_col = session->winsize.ws_col;
     return 0;
 }
 
 /**
- * @brief Update the session window size, rejecting zero dimensions; returns 0 or -22.
+ * @brief Preserve the platform row/column API and notify the foreground group.
  */
 int pty_set_winsize(uint32_t pty_id, const struct leonos_pty_winsize *winsize)
 {
@@ -702,10 +780,27 @@ int pty_set_winsize(uint32_t pty_id, const struct leonos_pty_winsize *winsize)
     if (!session || !winsize) {
         return -22;
     }
-    if (winsize->ws_row == 0 || winsize->ws_col == 0) {
-        return -22;
-    }
+    struct linux_winsize native = session->winsize;
+    native.ws_row = winsize->ws_row;
+    native.ws_col = winsize->ws_col;
+    return pty_set_linux_winsize(pty_id, &native);
+}
+
+int pty_get_linux_winsize(uint32_t pty_id, struct linux_winsize *winsize)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || !winsize) return -22;
+    *winsize = session->winsize;
+    return 0;
+}
+
+int pty_set_linux_winsize(uint32_t pty_id, const struct linux_winsize *winsize)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || !winsize) return -22;
+    if (__builtin_memcmp(&session->winsize, winsize, sizeof(*winsize)) == 0) return 0;
     session->winsize = *winsize;
+    if (session->foreground_pgid) sched_signal_kernel_group(session->foreground_pgid, 28);
     return 0;
 }
 
@@ -737,11 +832,12 @@ int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
 {
     struct pty_session *session = find_session(pty_id);
     struct task *caller = sched_find(caller_pid);
-    if (!session || !caller || !process_group || caller->pty_id != pty_id ||
-        caller->process_session != session->process_session ||
-        !sched_process_group_has_pty(process_group, pty_id)) {
-        return -22;
-    }
+    if ((int32_t)process_group < 0) return -22;
+    if (!session || !caller || caller->controlling_pty_id != pty_id ||
+        caller->process_session != session->process_session) return -25;
+    int64_t group_session = sched_process_group_session(process_group);
+    if (group_session < 0) return (int)group_session;
+    if ((uint32_t)group_session != caller->process_session) return -1;
     session->foreground_pgid = process_group;
     return 0;
 }
@@ -765,23 +861,98 @@ int pty_acquire_controlling(uint32_t pty_id, uint32_t caller_pid, int steal, int
     if (caller->process_session != leader || caller->controlling_pty_id)
         return -1;
     if (session->process_session) {
-        if (steal != 1 || caller->euid != 0) return -1;
+        if (steal != 1 || !(caller->cap_effective & (1ULL << CAP_SYS_ADMIN))) return -1;
         sched_clear_controlling_pty(pty_id);
     }
-    if (!readable && caller->euid != 0) return -1;
+    if (!readable && !(caller->cap_effective & (1ULL << CAP_SYS_ADMIN))) return -1;
     session->process_session = caller->process_session;
     session->foreground_pgid = caller->process_group;
+    struct task *process = sched_find(leader);
+    if (process) process->tty_old_pgrp = 0;
     sched_set_controlling_pty(caller_pid, pty_id);
     return 0;
 }
 
+int pty_get_session(uint32_t pty_id, uint32_t *session_id)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (!session || !session->process_session) return -25;
+    *session_id = session->process_session;
+    return 0;
+}
+
+void pty_open_controlling(uint32_t pty_id, uint32_t caller_pid, int readable)
+{
+    struct pty_session *session = find_session(pty_id);
+    if (session && !session->process_session && readable)
+        (void)pty_acquire_controlling(pty_id, caller_pid, 0, 1);
+}
+
+int pty_detach_controlling(uint32_t pty_id, uint32_t caller_pid)
+{
+    struct pty_session *session = find_session(pty_id);
+    struct task *caller = sched_find(caller_pid);
+    if (!session || !caller || caller->controlling_pty_id != pty_id) return -25;
+    uint32_t leader = caller->tgid ? caller->tgid : caller->pid;
+    if (caller->process_session == leader) {
+        uint32_t group = session->foreground_pgid;
+        sched_clear_controlling_pty(pty_id);
+        session->process_session = 0;
+        session->foreground_pgid = 0;
+        if (group) {
+            sched_signal_kernel_group(group, 1);
+            sched_signal_kernel_group(group, 18);
+        }
+    } else sched_set_controlling_pty(caller_pid, 0);
+    return 0;
+}
+
+void pty_process_session_exit(uint32_t tgid)
+{
+    struct task *leader = sched_find(tgid);
+    if (!leader || leader->process_session != tgid) return;
+    uint32_t old = leader->tty_old_pgrp;
+    leader->tty_old_pgrp = 0;
+    struct pty_session *session = find_session(leader->controlling_pty_id);
+    if (session) {
+        uint32_t foreground = session->foreground_pgid;
+        sched_clear_controlling_pty(leader->controlling_pty_id);
+        session->process_session = 0;
+        session->foreground_pgid = 0;
+        if (foreground) sched_signal_kernel_group(foreground, 1);
+    } else if (old) {
+        sched_signal_kernel_group(old, 1);
+        sched_signal_kernel_group(old, 18);
+    }
+}
+
+int64_t pty_check_change(uint32_t pty_id, uint32_t caller_pid, int signal_number)
+{
+    struct pty_session *session = find_session(pty_id);
+    struct task *caller = sched_find(caller_pid);
+    if (!session || !caller || caller->controlling_pty_id != pty_id ||
+        !session->foreground_pgid || session->foreground_pgid == caller->process_group)
+        return 0;
+    if (!signal_number) {
+        if (!(session->termios.c_lflag & LINUX_TOSTOP)) return 0;
+        signal_number = 22;
+    }
+    uint64_t bit = 1ULL << (signal_number - 1);
+    if ((caller->blocked_signals & bit) || sched_task_actions(caller)[signal_number].handler == 1)
+        return signal_number == 21 ? -5 : 0;
+    if (sched_process_group_orphaned(caller->process_group)) return -5;
+    sched_signal_kernel_group(caller->process_group, signal_number);
+    return KERNEL_SYSCALL_BLOCKED;
+}
+
 /**
- * @brief Free any PTY session owned by the exiting pid.
+ * @brief Retire legacy owners without closing a retained Unix98 master.
  */
 void pty_process_exit(uint32_t pid)
 {
     for (uint32_t i = 0; i < PTY_MAX; ++i) {
-        if (sessions[i].used && sessions[i].owner_pid == pid) {
+        if (sessions[i].used && sessions[i].owner_pid == pid &&
+            !sched_pty_master_reference_count(i + 1U)) {
             (void)pty_destroy(pid, i + 1U);
         }
     }

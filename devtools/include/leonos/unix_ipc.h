@@ -14,7 +14,6 @@
 #define LEONOS_IPC_SOCK_WINDOWD "/run/leonos/windowd.sock"
 #define LEONOS_IPC_SOCK_INPUT_METHOD "/run/leonos/input-method.sock"
 #define LEONOS_IPC_SOCK_NET "/run/leonos/net.sock"
-#define LEONOS_IPC_SOCK_AUTH "/run/leonos/authd.sock"
 #define LEONOS_IPC_SOCK_SESSION "/run/leonos/session.sock"
 #define LEONOS_IPC_SOCK_DEVICE "/run/leonos/devman.sock"
 

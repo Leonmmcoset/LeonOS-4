@@ -10,10 +10,10 @@ import shutil
 import subprocess
 import tempfile
 import time
+from package_fastfetch import BINARY_SHA256
 
 ROOT=Path(__file__).resolve().parents[1]
 WORK=ROOT/'build/linux-inventory'
-BINARY_HASH='2ef1384e8eca57e7f163851f1989286b6d2b4638170eed85465cc1ecc604d47f'
 
 def run(command,**kwargs):
     return subprocess.run([str(x) for x in command],cwd=ROOT,check=True,**kwargs)
@@ -40,9 +40,9 @@ def guest(args):
     from make_live_root import make_live_tree
     from make_ext2_root import write_ext2_root
     import test_linux_ioctl_cloexec as iso_tools
-    binary=args.binary.resolve()
+    binary=(ROOT/'build/esp/usr/bin/fastfetch').resolve()
     digest=hashlib.sha256(binary.read_bytes()).hexdigest()
-    assert digest==BINARY_HASH, f'The supplied verification binary changed: {digest}'
+    assert digest==BINARY_SHA256, f'The packaged verification binary changed: {digest}'
     compiler=ROOT/'build/musl-gcc/root/opt/dyne/gcc-musl/bin/x86_64-linux-musl-gcc'
     probe=WORK/'linux-inventory.elf'
     run([compiler,'-static','-O2','-Wall','-Wextra','tools/tests/fastfetch_guest_probe.c','-o',probe])
@@ -50,7 +50,7 @@ def guest(args):
     with tempfile.TemporaryDirectory(prefix='stage-',dir=WORK) as directory:
         stage=Path(directory)
         make_live_tree(ROOT/'build/esp',stage)
-        target=stage/'usr/bin/fastfetch-linux'; shutil.copy2(binary,target); target.chmod(0o755)
+        target=stage/'usr/bin/fastfetch'
         assert hashlib.sha256(target.read_bytes()).hexdigest()==digest
         target=stage/'usr/lib/leonos/tests/linux-inventory.elf'; target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(probe,target)
         write_ext2_root(stage,image)
@@ -78,6 +78,8 @@ def guest(args):
     text=serial.read_text(errors='replace')
     text=re.sub(r'^\[\s*\d+\.\d+\] ?', '', text, flags=re.M)
     assert '[inventory] DONE failures=0' in text, f'Guest regression failed: {serial}'
+    default_output=re.search(r'\[inventory\] BEGIN default-output\n(.*?)\n\[inventory\] END default-output',text,re.S)
+    assert default_output and ':-------:.' in default_output[1], 'default LeonOS logo missing'
     assert '00112233-4455-6677-8899-aabbccddeeff' in text, 'SMBIOS UUID endian mismatch'
     # The current kernel deliberately disables AP scheduling. Validate actual
     # admitted CPUs and managed pages, not QEMU's configured hardware capacity.
@@ -85,6 +87,10 @@ def guest(args):
     memory_match=re.search(r'\[osmlayer\] init .*memory=(\d+) KiB',text)
     assert cpu_match and memory_match, 'missing independent kernel inventory'
     enabled_cpus=int(cpu_match[1]); managed_memory=int(memory_match[1])*1024
+    kernel_match=re.search(r'\[inventory\] uname release=(\S+) version=([^\n]+)',text)
+    assert kernel_match, 'missing native uname identity'
+    assert f'Kernel: ntclks {kernel_match[1]}' in default_output[1], 'default Kernel row missing'
+    assert 'OS:' in default_output[1] and 'Memory:' in default_output[1], 'default information modules missing'
     modes={tuple(map(int,m)) for m in re.findall(r'framebuffer[^\n]*?(\d+)x(\d+)',text)}
     for label in ('console-json','terminal-json'):
         match=re.search(r'\[inventory\] BEGIN '+label+r'\n(.*?)\n\[inventory\] END '+label,text,re.S)
@@ -94,6 +100,9 @@ def guest(args):
         for name in ('OS','Host','Kernel','Uptime','CPU','Memory','Swap','Disk','Display','GPU'):
             assert 'result' in modules[name], (name,modules[name])
         assert modules['Host']['result']['name']=='Inventory-Machine', modules['Host']
+        assert modules['Kernel']['result']['name']=='ntclks', modules['Kernel']
+        assert modules['Kernel']['result']['release']==kernel_match[1], modules['Kernel']
+        assert modules['Kernel']['result']['version']==kernel_match[2], modules['Kernel']
         assert modules['CPU']['result']['cores']['online']==enabled_cpus, modules['CPU']
         assert modules['Memory']['result']['total']==managed_memory,modules['Memory']
         assert modules['GPU']['result'][0]['vendor']=='QEMU',modules['GPU']
@@ -108,7 +117,6 @@ def guest(args):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--guest',action='store_true')
-    parser.add_argument('--binary',type=Path,default=Path('/home/xiaobai/下载/fastfetch-musl'))
     parser.add_argument('--timeout',type=float,default=240)
     args=parser.parse_args(); WORK.mkdir(parents=True,exist_ok=True)
     host()

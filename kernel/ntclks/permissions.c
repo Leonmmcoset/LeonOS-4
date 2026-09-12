@@ -3,11 +3,13 @@
 #include <ntclks/syscall.h>
 #include <ntclks/syscall_internal.h>
 #include <ntclks/heap.h>
+#include <ntclks/pty.h>
+#include <linux/mount.h>
 
 bool task_in_group(const struct task *task, uint32_t gid, bool real_ids)
 {
     if (!task) return !gid;
-    uint32_t primary = real_ids ? task->gid : (task->fsgid ? task->fsgid : task->egid);
+    uint32_t primary = real_ids ? task->gid : task->fsgid;
     if (gid == primary) return true;
     const struct task_groups *groups = task->groups;
     if (groups) for (uint32_t i = 0; i < groups->count; ++i)
@@ -142,6 +144,7 @@ int fs_permissions_get(const char *path, const struct storage_node *node,
         if (ret < 0) return ret;
         node = &found;
     }
+    if (node->flags & STORAGE_NODE_FLAG_PTY) return pty_inode_permissions(node, value, false);
     if (node->flags & STORAGE_NODE_FLAG_EXT2) return storage_inode_permissions(node, value, false);
     if (node->flags & STORAGE_NODE_FLAG_DEV_LINK) {
         *value = (struct leonos_permissions){0777, 0, 0};
@@ -172,6 +175,7 @@ static int store(const char *path, const struct storage_node *node,
                  const struct leonos_permissions *value)
 {
     struct leonos_permissions_request req = {.action = LEONOS_PERMISSIONS_SET, .value = *value};
+    if (node->flags & STORAGE_NODE_FLAG_PTY) return pty_inode_permissions(node, &req.value, true);
     if (node->flags & STORAGE_NODE_FLAG_EXT2) return storage_inode_permissions(node, &req.value, true);
     if (metadata_path(path)) return -LEONOS_EPERM;
     if (node->flags & STORAGE_NODE_FLAG_DEV_LINK) return -LEONOS_EROFS;
@@ -187,17 +191,33 @@ static int check_node(const struct task *task, const char *path,
                       const struct storage_node *node, uint32_t access, bool real_ids)
 {
     if ((access & FS_ACCESS_WRITE) && metadata_path(path)) return -LEONOS_EPERM;
+    if (node->type == LEONOS_FS_TYPE_FILE && (access & FS_ACCESS_EXEC) &&
+        !(node->flags & (STORAGE_NODE_FLAG_PROC | STORAGE_NODE_FLAG_SYSFS))) {
+        uint64_t mount_flags;
+        int ret = storage_node_mount_flags(node, &mount_flags);
+        if (ret < 0) return ret;
+        if (mount_flags & MS_NOEXEC) return -LEONOS_EACCES;
+    }
     struct leonos_permissions value;
-    uint32_t uid = task ? (real_ids ? task->uid : (task->fsuid ? task->fsuid : task->euid)) : 0;
-    if (!uid && (!(access & FS_ACCESS_EXEC) || node->type == LEONOS_FS_TYPE_DIR)) return 0;
+    uint32_t uid = task ? (real_ids ? task->uid : task->fsuid) : 0;
+    uint64_t caps = !task ? UINT64_MAX : real_ids ?
+        (task->uid ? 0 : task->cap_permitted) : task->cap_effective;
     int ret = fs_permissions_get(path, node, &value);
     if (ret < 0) return ret;
-    if (!uid) {
-        if (!(access & FS_ACCESS_EXEC) || node->type == LEONOS_FS_TYPE_DIR || (value.mode & 0111u)) return 0;
-        return -LEONOS_EACCES;
-    }
     uint32_t shift = uid == value.uid ? 6 : task_in_group(task, value.gid, real_ids) ? 3 : 0;
-    return (((value.mode >> shift) & access) == access) ? 0 : -LEONOS_EACCES;
+    if (((value.mode >> shift) & access) == access) return 0;
+    if ((caps & (1ULL << CAP_DAC_OVERRIDE)) &&
+        (!(access & FS_ACCESS_EXEC) || node->type == LEONOS_FS_TYPE_DIR || (value.mode & 0111u))) return 0;
+    if ((caps & (1ULL << CAP_DAC_READ_SEARCH)) &&
+        (node->type == LEONOS_FS_TYPE_DIR ? !(access & FS_ACCESS_WRITE) : access == FS_ACCESS_READ)) return 0;
+    return -LEONOS_EACCES;
+}
+
+int fs_permissions_check_node(const struct task *task, const char *path,
+                              const struct storage_node *node, uint32_t access, bool real_ids)
+{
+    if (!path || !node) return -LEONOS_EINVAL;
+    return check_node(task, path, node, access, real_ids);
 }
 
 /**
@@ -350,19 +370,19 @@ int fs_permissions_parent(const struct task *task, const char *path, bool deleti
     for (uint32_t i = 1; parent[i]; ++i) if (parent[i] == '/') slash = i;
     parent[slash ? slash : 1] = 0;
     ret = fs_permissions_check(task, parent, FS_ACCESS_WRITE | FS_ACCESS_EXEC, false);
-    if (ret < 0 || !deleting || !task || !task->euid) return ret;
+    if (ret < 0 || !deleting || !task || (task->cap_effective & (1ULL << CAP_FOWNER))) return ret;
     struct leonos_permissions dir, file;
     ret = fs_permissions_get(parent, NULL, &dir);
-    if (ret < 0 || !(dir.mode & 01000u) || task->euid == dir.uid) return ret;
+    if (ret < 0 || !(dir.mode & 01000u) || task->fsuid == dir.uid) return ret;
     ret = fs_permissions_get(path, NULL, &file);
     if (ret < 0) return ret;
-    return task->euid == file.uid ? 0 : -LEONOS_EPERM;
+    return task->fsuid == file.uid ? 0 : -LEONOS_EPERM;
 }
 
 int fs_permissions_create(const struct task *task, const char *path,
                           const struct storage_node *node, uint32_t mode)
 {
-    struct leonos_permissions value = {mode & 07777u, task ? task->euid : 0, task ? task->egid : 0};
+    struct leonos_permissions value = {mode & 07777u, task ? task->fsuid : 0, task ? task->fsgid : 0};
     if (node->type == LEONOS_FS_TYPE_SOCKET) value.mode |= LINUX_S_IFSOCK;
     if (node->type == LEONOS_FS_TYPE_SYMLINK) value.mode = 0777u;
     else value.mode &= ~(task ? (*sched_task_umask(task)) : 0022u);
@@ -379,7 +399,8 @@ int fs_permissions_create(const struct task *task, const char *path,
         value.gid = inherited.gid;
         if (node->type == LEONOS_FS_TYPE_DIR) value.mode |= 02000u;
     }
-    if (task && task->euid && !task_in_group(task, value.gid, false) && node->type != LEONOS_FS_TYPE_DIR)
+    if (task && !(task->cap_effective & (1ULL << CAP_FSETID)) &&
+        !task_in_group(task, value.gid, false) && node->type != LEONOS_FS_TYPE_DIR)
         value.mode &= ~02000u;
     return store(path, node, &value);
 }
@@ -398,10 +419,11 @@ int fs_permissions_chmod(const struct task *task, const char *path,
     }
     ret = fs_permissions_get(path, node, &value);
     if (ret < 0) return ret;
-    if (task && task->euid && task->euid != value.uid) return -LEONOS_EPERM;
+    if (task && task->fsuid != value.uid && !(task->cap_effective & (1ULL << CAP_FOWNER))) return -LEONOS_EPERM;
     if (node->type == LEONOS_FS_TYPE_SYMLINK) return -LEONOS_EOPNOTSUPP;
     value.mode = (value.mode & LINUX_S_IFMT) | (mode & 07777u);
-    if (task && task->euid && !task_in_group(task, value.gid, false)) value.mode &= ~02000u;
+    if (task && !(task->cap_effective & (1ULL << CAP_FSETID)) &&
+        !task_in_group(task, value.gid, false)) value.mode &= ~02000u;
     return store(path, node, &value);
 }
 
@@ -420,12 +442,17 @@ int fs_permissions_chown(const struct task *task, const char *path,
     ret = fs_permissions_get(path, node, &value);
     if (ret < 0) return ret;
     bool drop_sgid = (value.mode & 02000u) &&
-                     ((value.mode & 0010u) || (task && task->euid && !task_in_group(task, value.gid, false)));
-    if (task && task->euid &&
-        (((uid != UINT32_MAX || gid != UINT32_MAX ||
-           (node->type != LEONOS_FS_TYPE_DIR && ((value.mode & 04000u) || drop_sgid))) && task->euid != value.uid) ||
-         (uid != UINT32_MAX && uid != value.uid) ||
-         (gid != UINT32_MAX && gid != value.gid && !task_in_group(task, gid, false)))) return -LEONOS_EPERM;
+        ((value.mode & 0010u) || (task && !(task->cap_effective & (1ULL << CAP_FSETID)) &&
+                                !task_in_group(task, value.gid, false)));
+    if (task) {
+        bool owner = task->fsuid == value.uid;
+        bool chown_cap = (task->cap_effective & (1ULL << CAP_CHOWN)) != 0;
+        if (uid != UINT32_MAX && (!owner || uid != value.uid) && !chown_cap) return -LEONOS_EPERM;
+        if (gid != UINT32_MAX && (!owner || (gid != value.gid && !task_in_group(task, gid, false))) &&
+            !chown_cap) return -LEONOS_EPERM;
+        if (node->type != LEONOS_FS_TYPE_DIR && ((value.mode & 04000u) || drop_sgid) &&
+            !owner && !(task->cap_effective & (1ULL << CAP_FOWNER))) return -LEONOS_EPERM;
+    }
     if (uid != UINT32_MAX) value.uid = uid;
     if (gid != UINT32_MAX) value.gid = gid;
     if (node->type != LEONOS_FS_TYPE_DIR) {

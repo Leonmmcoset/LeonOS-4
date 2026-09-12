@@ -6,6 +6,7 @@
 #define NTCLKS_ELF_H
 
 #include <ntclks/types.h>
+#include <leonos/fs.h>
 
 struct address_space;
 struct storage_node;
@@ -24,7 +25,7 @@ struct elf_image_info {
     uint64_t phdr_vaddr;
     uint64_t interpreter_entry;
     uint32_t abi_major;
-    char interp[64];
+    char interp[LEONOS_FS_PATH_LEN];
 };
 
 /**
@@ -37,11 +38,8 @@ bool elf64_probe(const void *image, size_t len, struct elf_image_info *out);
 bool elf64_load_address_space(struct address_space *as, const void *image, size_t len,
                               struct elf_image_info *out);
 /**
- * @brief Map the executable stored in node into the task's address space and report metadata.
+ * @brief Map an executable into the task; return zero or a negative errno.
  */
-bool elf64_map_task_image(struct task *task, const struct storage_node *node,
+int elf64_map_task_image(struct task *task, const struct storage_node *node,
                           struct elf_image_info *out);
-/** Fill a kernel buffer using the same entropy source used for ELF AT_RANDOM. */
-void elf64_random_fill(void *buffer, size_t length);
-
 #endif

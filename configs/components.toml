@@ -17,19 +17,6 @@ sdk = false
 api = false
 
 [[components]]
-id = "authd"
-symbol = "APP_AUTHD"
-label = "Authentication daemon"
-category = "Core services"
-kind = "system-app"
-default = true
-required = true
-stage = true
-entry = false
-sdk = false
-api = false
-
-[[components]]
 id = "imd"
 symbol = "APP_IMD"
 label = "Input method daemon"
@@ -290,6 +277,46 @@ sdk = false
 api = false
 open_with = true
 extensions = [".api"]
+
+[[components]]
+id = "sudo"
+symbol = "APP_SUDO"
+label = "sudo"
+category = "System applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+id = "su"
+symbol = "APP_SU"
+label = "su"
+category = "System applications"
+kind = "program-app"
+default = true
+required = false
+stage = true
+entry = false
+sdk = false
+api = false
+
+[[components]]
+# Fixed worker and askpass UI launched through upstream sudo.
+id = "sudod"
+symbol = "APP_SUDOD"
+label = "Privileged file-operation worker"
+category = "Core services"
+kind = "system-app"
+default = true
+required = true
+stage = true
+entry = false
+sdk = false
+api = false
 
 [[components]]
 id = "hello"

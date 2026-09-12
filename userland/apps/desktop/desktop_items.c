@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include "desktop.h"
 #include <leonos/launch_result.h>
 
@@ -759,7 +760,7 @@ int desktop_refresh_items(void)
 
     desktop_items_clear();
     user = (struct leonos_user_info){0};
-    auth_ret = leonos_auth_current(&user);
+    auth_ret = leonos_session_current(&user);
     if (auth_ret < 0) {
         return auth_ret;
     }

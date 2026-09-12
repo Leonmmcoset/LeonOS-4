@@ -999,15 +999,65 @@ static void sort_directory_entries(uint32_t count)
     }
 }
 
+/* Should this entry appear in the list? The privileged broker returns raw
+ * directory contents, so the same filters apply to both sources. */
+static int entry_passes_filters(const struct leonos_dir_entry *entry)
+{
+    if (fileman_is_recycle_dir() && text_eq(entry->name, ".leon-recycle-map")) {
+        return 0;
+    }
+    if (!fileman_show_hidden && fileman_entry_is_hidden(entry)) {
+        return 0;
+    }
+    return 1;
+}
+
+/* Present a loaded entry list and report it in the status bar. Shared by the
+ * ordinary open/readdir path and the elevated broker path so both behave
+ * identically apart from how the entries were obtained. */
+void present_directory(uint32_t count, const char *status_prefix,
+                             const char *status_suffix)
+{
+    sort_directory_entries(count);
+    entry_count = count;
+    selected_mask = 0;
+    leonos_ui_listview_state_set_count(&file_list, entry_count);
+    file_list.selected = entry_count ? 0 : -1;
+    file_list.scroll = 0;
+    context_menu_set_active(0);
+    last_click_index = -1;
+    last_click_ms = 0;
+    char buf[128];
+    uint32_t pos = 0;
+    buf[0] = 0;
+    append_text(buf, &pos, sizeof(buf), status_prefix);
+    append_dec(buf, &pos, sizeof(buf), entry_count);
+    append_text(buf, &pos, sizeof(buf), status_suffix);
+    append_text(buf, &pos, sizeof(buf), current_path);
+    set_status(buf);
+    printf("[fileman.elf] list path=%s count=%d\n", current_path, (int)count);
+}
+
 int reload_dir(void)
 {
     int fd = open(current_path, 0, 0);
     int ret = 0;
     uint32_t count = 0;
     if (fd < 0) {
+        if (permission_error(fd) &&
+            fileman_list_elevated(current_path, entries, FILEMAN_MAX_ENTRIES,
+                                  &count) == 0) {
+            /* The administrator verified; the broker enumerated the directory
+             * because this process cannot. */
+            present_directory(count, T("Elevated - items ", "已提权 - 项目 "),
+                              " in ");
+            return 0;
+        }
         entry_count = 0;
         leonos_ui_listview_state_set_count(&file_list, 0);
-        set_status_error("Open dir failed ", fd);
+        if (ret == 0) {
+            set_status_error("Open dir failed ", fd);
+        }
         printf("[fileman.elf] list path=%s open=%d\n", current_path, fd);
         return fd;
     }
@@ -1026,34 +1076,14 @@ int reload_dir(void)
         if (ret == 0) {
             break;
         }
-        if (fileman_is_recycle_dir() && text_eq(entry.name, ".leon-recycle-map")) {
-            continue;
-        }
-        if (!fileman_show_hidden && fileman_entry_is_hidden(&entry)) {
+        if (!entry_passes_filters(&entry)) {
             continue;
         }
         entries[count] = entry;
         ++count;
     }
     close(fd);
-    sort_directory_entries(count);
-    entry_count = count;
-    selected_mask = 0;
-    leonos_ui_listview_state_set_count(&file_list, entry_count);
-    file_list.selected = entry_count ? 0 : -1;
-    file_list.scroll = 0;
-    context_menu_set_active(0);
-    last_click_index = -1;
-    last_click_ms = 0;
-    char buf[96];
-    uint32_t pos = 0;
-    buf[0] = 0;
-    append_text(buf, &pos, sizeof(buf), T("Items ", "项目 "));
-    append_dec(buf, &pos, sizeof(buf), entry_count);
-    append_text(buf, &pos, sizeof(buf), " in ");
-    append_text(buf, &pos, sizeof(buf), current_path);
-    set_status(buf);
-    printf("[fileman.elf] list path=%s count=%d\n", current_path, (int)count);
+    present_directory(count, T("Items ", "项目 "), " in ");
     return 0;
 }
 
@@ -1431,10 +1461,19 @@ int navigate_to_path(const char *path)
     copy_text(target, sizeof(target), path);
     ret = chdir(target);
     if (ret < 0) {
-        copy_text(current_path, sizeof(current_path), old_path);
-        address_edit_sync_path();
-        set_status_error("Open dir failed ", ret);
-        return ret;
+        /* A protected directory is browsable only through the privileged
+         * broker, which verifies an administrator first. `chdir` itself can
+         * never succeed for this process, so verify and then adopt the path:
+         * the subsequent reload enumerates it through the broker. */
+        if (permission_error(ret) && fileman_prompt_elevation(target) == 0) {
+            ret = 0;
+        }
+        if (ret < 0) {
+            copy_text(current_path, sizeof(current_path), old_path);
+            address_edit_sync_path();
+            set_status_error("Open dir failed ", ret);
+            return ret;
+        }
     }
     copy_text(current_path, sizeof(current_path), target);
     getcwd(current_path, sizeof(current_path));

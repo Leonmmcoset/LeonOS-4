@@ -334,16 +334,21 @@ static void send_input_event(const struct leonos_input_event *event)
 
 static void pump_input_device(int fd, uint32_t type)
 {
+    static uint8_t keyboard_modifiers;
     for (uint32_t budget = 0; budget < 256u; ++budget) {
         struct input_event event;
         struct leonos_input_event out;
         long got = syscall3(SYS_read, fd, (long)&event, (long)sizeof(event));
         if (got != (long)sizeof(event)) break;
         memset(&out, 0, sizeof(out));
-        if (type == LEONOS_INPUT_KEYBOARD && event.type == EV_KEY) {
+        if (type == LEONOS_INPUT_KEYBOARD && event.type == EV_LED && event.code == LED_CAPSL) {
+            if (event.value) keyboard_modifiers |= LEONOS_INPUT_MOD_CAPS_LOCK;
+            else keyboard_modifiers &= (uint8_t)~LEONOS_INPUT_MOD_CAPS_LOCK;
+        } else if (type == LEONOS_INPUT_KEYBOARD && event.type == EV_KEY) {
             out.type = LEONOS_INPUT_KEYBOARD;
             out.keycode = (uint8_t)evdev_to_legacy_keycode(event.code);
             out.pressed = event.value ? 1 : 0;
+            out.modifiers = keyboard_modifiers;
             send_input_event(&out);
         } else if (type == LEONOS_INPUT_MOUSE) {
             if (event.type == EV_REL && event.code == REL_X) {

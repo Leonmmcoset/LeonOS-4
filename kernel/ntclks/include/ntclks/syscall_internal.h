@@ -135,6 +135,12 @@ int64_t syscall_dispatch_regs_legacy(uint64_t number, uint64_t a0, uint64_t a1,
                                      uint64_t a5);
 int task_can_allocate_fd(const struct task *task);
 struct task_pty_fd *task_pty_fd_for_fd(struct task *task, int fd);
+void task_pty_release_entry(struct task_pty_fd *entry);
+int task_pty_export_fd(struct task *task, int fd, struct task_pty_fd *out);
+int task_pty_import_fd(struct task *task, const struct task_pty_fd *source, uint32_t flags);
 void clear_task_file(struct task_file *file);
+int64_t syscall_record_lock(int fd, uint32_t command, uint64_t pointer);
+void syscall_record_locks_close(struct task *task, struct task_file *descriptor);
+void syscall_record_lock_cancel(struct task *task);
 
 #endif

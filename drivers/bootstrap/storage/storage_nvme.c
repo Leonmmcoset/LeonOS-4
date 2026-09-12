@@ -516,6 +516,14 @@ static int nvme_readwrite(struct nvme_controller *controller, uint32_t nsid,
     return ret;
 }
 
+static int nvme_flush_cache(struct nvme_controller *controller, uint32_t nsid)
+{
+    if (!controller || !controller->ready || !nsid) return -19;
+    struct nvme_command command = {0};
+    command.nsid = nsid;
+    return nvme_submit(controller, 0, &command); /* NVM Flush opcode 00h. */
+}
+
 static int nvme_namespace_usable(struct nvme_controller *controller, uint32_t nsid,
                                  uint64_t *out_sectors)
 {

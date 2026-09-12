@@ -40,7 +40,6 @@ commits are the revisions recorded by the LeonOS checkout.
 | `devtools/components/lua/upstream` | `https://github.com/lua/lua.git` | `6e22fedb74cf0c9b6656e9fce8b7331db847c605` |
 | `third_party/busybox` | `https://github.com/mirror/busybox.git` | `1a64f6a20aaf6ea4dbba68bbfa8cc1ab7e5c57c4` |
 | `third_party/cmd` | `https://github.com/ChenPi11/cmd.git` | `2290c38bc9da54db53aa56161a7204a27b388e21` |
-| `third_party/fastfetch` | `https://github.com/fastfetch-cli/fastfetch.git` | `56da8f811068289f6352db8881418aa6e0f994e8` |
 | `third_party/file` | `https://github.com/file/file.git` | `711ccc264519cdc5073ccb26651c0a9bafc3b47a` |
 | `third_party/less` | `https://github.com/gwsw/less.git` | `b8bbf4297169e20d35e1cc3e015180e8a011bcf2` |
 | `third_party/libpng` | `https://github.com/pnggroup/libpng.git` | `3061454d980de7d53608f594194cfac722721d2a` |
@@ -76,15 +75,38 @@ verification for the shared HTTP client. The system image includes
 
 ## musl and mimalloc
 
-The default userland uses unmodified musl 1.2.6 for Linux x86-64 C/POSIX,
+The default userland uses pinned musl 1.2.6 for Linux x86-64 C/POSIX,
 TLS, pthreads, startup and dynamic linking. mimalloc 3.5.1 provides application
 allocation. License texts are in `third_party/musl/COPYRIGHT` and
 `third_party/mimalloc/LICENSE` and ship in images and SDKs.
+The recorded `patches/musl/0001-enforce-password-file-lock.patch` replaces musl's
+no-op password-file lock for PAM/account writers. It is applied to an isolated
+build source, leaves the pinned submodule unchanged and is listed with its hash
+in the runtime's `.leonos-musl.json` metadata.
 `libleonos.so.2` and `libleonos.a` provide LeonOS extensions; they contain no
 replacement standard POSIX implementation. Legacy binaries must be rebuilt.
 See `MUSL_MIGRATION_2026-09-08.md` for exact validation and remaining gaps.
 
+## Authentication Dependencies
+
+Pinned official sudo 1.9.17p2, Linux-PAM 1.7.2, util-linux 2.41.6,
+libxcrypt 4.5.2, shadow-utils 4.20.2, libbsd 0.12.2 and libmd 1.2.0 are
+downloaded through the configured proxy and verified against
+`configs/auth-upstream.json`. The manifest records each official release URL,
+SHA256 and checksum source. They are built with the pinned project musl into
+`build/auth-upstream/root`, independently of host accounts. The build installs
+full upstream license notices under `usr/share/licenses/<package>` and records
+commands and platform patches in `build/auth-upstream/*-build.json`.
+
+shadow-utils supplies the upstream PAM passwd and local account tools; libbsd
+supplies its readpassphrase dependency and requires libmd. Adding these build
+dependencies does not activate standard accounts in the normal image. Exact
+licenses, component states, disabled optional integrations and runtime evidence
+are listed in [SUDOERS_PAM_UPSTREAM.md](SUDOERS_PAM_UPSTREAM.md) and
+[SUDOERS_PAM_STATUS.md](SUDOERS_PAM_STATUS.md).
+
 ## StardustUI
+
 
 - Path: `third_party/stardustui`
 - Upstream: `https://github.com/xingji-studio/StardustUI.git`
@@ -168,13 +190,18 @@ Terminal and TTY shell; it ignores `SIGHUP`, uses `/dev/null` for terminal
 stdin, and appends terminal output to `nohup.out` with the usual `$HOME`
 fallback.
 
-The profile also provides LeonOS storage applets: `fdisk` (including GPT type
-and name editing), `mkfs.fat`/`mkfs.fat32` (with `mkfs.vfat` as an alias),
-`mkfs.ext2`, `mkfs.exfat`, read-only `fsck.*`, `blkid`, `lsblk`, `mount`,
-`umount`, `sync`, and `leonos-grub-installer`. They operate on the kernel
-GPT/storage ABI using `/dev/disk0` and `/dev/disk0pN`; partition mutation and
-runtime mounts require administrator authorization and the active boot disk is
-protected.
+The production recipe exports committed upstream BusyBox sources and verifies
+them before and after building. It does not inject private applets, headers or
+`libleonos.a`. The existing musl/mimalloc runtime remains. `sync` is the upstream
+BusyBox applet. Storage commands are packaged separately: util-linux 2.41.6
+supplies fdisk/sfdisk, mount/umount, blkid, lsblk and fsck; e2fsprogs 1.47.3,
+dosfstools 4.2 and exfatprogs 1.4.3 supply filesystem tools. Fixed archives and
+checksums are in `configs/auth-upstream.json` and `configs/storage-upstream.json`;
+notices are installed in `/usr/share/licenses/<package>/`.
+`leonos-grub-installer` is a LeonOS shell helper copying an existing EFI payload,
+not upstream grub-install. See `docs/UPSTREAM_TOOLS.md` for host, image and guest
+evidence and remaining kernel compatibility gaps. Availability in an image does
+not certify every operation or filesystem feature.
 
 ## Vim and ncurses
 
@@ -327,23 +354,23 @@ upstream recognizers while adapting file access to the Linux x86-64 musl ABI.
 
 ## Fastfetch
 
-- Path: `third_party/fastfetch`
 - Upstream: `https://github.com/fastfetch-cli/fastfetch.git`
-- Version: `2.67.0`
-- Pinned commit: `56da8f811068289f6352db8881418aa6e0f994e8` (`2.67.0`)
-- License: MIT; the complete upstream `LICENSE` is staged at
-  `/usr/lib/leonos/apps/fastfetch/LICENSE` beside the executable.
+- Packaged fork: `https://github.com/VasilyZa/fastfetch`
+- Release: `https://github.com/VasilyZa/fastfetch/releases/download/2.68.1/fastfetch`
+- Packaged version: `2.68.1`, supplied native x86-64 static musl build with
+  the LeonOS logo. Binary SHA-256:
+  `25107efd56d0286059487bab17d964a6ec72275263de2ab09095a46637b06be1`.
+- The old Fastfetch submodule and LeonOS adapter have been removed.
+- License: MIT; `userland/fastfetch/LICENSE` preserves the complete upstream
+  license, matching the supplied build's source license byte for byte, staged at
+  `/usr/share/licenses/fastfetch/LICENSE`.
 
-LeonOS builds upstream Fastfetch at `/usr/lib/leonos/apps/fastfetch/fastfetch.elf`.
-The unmodified upstream core supplies string, format, printing, ASCII-logo
-data, size, duration, percentage, display-option and module implementations.
-The separate `userland/fastfetch` adapter obtains Title, OS, Kernel, Uptime,
-Processes and Memory data from the LeonOS public ABI instead of Linux `/proc`
-and `/sys`. The port also includes the upstream DateTime, Break, Colors and
-Version modules, all 527 upstream built-in ASCII logos, logo/display options,
-and restricted `--structure` selection for the modules available on LeonOS.
-JSON/config files, file or image logos, dynamic refresh, dynamic libraries and
-modules requiring a host POSIX or Linux interface remain disabled.
+`tools/package_fastfetch.py` downloads, validates and copies the release unchanged
+to `/usr/lib/leonos/apps/fastfetch/fastfetch.elf`, reached through
+`/usr/bin/fastfetch`. It reads Linux interfaces directly; no LeonOS detection
+adapter is linked. `/etc/fastfetch/config.jsonc` selects `--logo LeonOS`'s
+built-in logo through the normal configuration mechanism. See
+`userland/fastfetch/README.md` for the proxy, cache, offline input, and checks.
 
 ## sl
 

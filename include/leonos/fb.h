@@ -10,6 +10,7 @@
 
 /* /dev/fb0 hardware limits; fbdev's visible geometry is not a mode limit. */
 #define LEONOS_FBIOGET_CAPABILITIES 0x46f0UL
+#define LEONOS_FBIOUPDATE_REGION 0x46f1UL
 
 struct leonos_fb_capabilities {
     uint8_t bytes_per_pixel;

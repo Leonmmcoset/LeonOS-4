@@ -66,6 +66,19 @@ struct storage_node {
     uint64_t size;
 };
 
+struct storage_inode_ref;
+int storage_inode_get(const struct storage_node *node, struct storage_inode_ref **out);
+void storage_inode_retain(struct storage_inode_ref *reference);
+int storage_inode_put(struct storage_inode_ref *reference);
+int storage_inode_refresh(struct storage_node *node);
+int storage_node_mount_flags(const struct storage_node *node, uint64_t *flags);
+int storage_remount_path(const char *path, uint64_t flags);
+int storage_sync_volume(uint32_t volume_id);
+int storage_sync_all(void);
+int storage_write_held_node(struct storage_node *node, uint64_t offset,
+                            const void *buffer, uint32_t length, uint32_t *written);
+int storage_truncate_held_node(struct storage_node *node, uint64_t length);
+
 int storage_inode_permissions(const struct storage_node *node,
                               struct leonos_permissions *value, bool write);
 int storage_inode_stat(const struct storage_node *node, struct linux_stat_abi *value);
@@ -113,6 +126,7 @@ struct storage_read_cursor {
 #define STORAGE_NODE_FLAG_DEV_BLOCK 0x00000080u
 #define STORAGE_NODE_FLAG_PROC    0x00000100u
 #define STORAGE_NODE_FLAG_SYSFS 0x00000400u
+#define STORAGE_NODE_FLAG_PTY   0x00000800u
 #define STORAGE_SYSFS_DEVICE 202u
 #define STORAGE_NODE_FLAG_DEV_LINK 0x00000200u
 /* Anonymous filesystem device numbers, also exported in proc mountinfo. */

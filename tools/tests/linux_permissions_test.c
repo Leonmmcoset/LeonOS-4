@@ -28,6 +28,9 @@ static struct fixture *find(const char *path)
         if (!strcmp(path, entries[i].path)) return &entries[i];
     return NULL;
 }
+static uint64_t fixture_mount_flags;
+int storage_node_mount_flags(const struct storage_node *node, uint64_t *flags)
+{ (void)node; *flags = fixture_mount_flags; return 0; }
 void *kernel_malloc(size_t size) { return malloc(size); }
 void kernel_free(void *memory) { free(memory); }
 int proc_lookup(const char *path, struct storage_node *node)
@@ -54,6 +57,15 @@ int storage_readlink(const char *path, char *out, uint32_t capacity, uint32_t *l
 int storage_inode_permissions(const struct storage_node *node,
                               struct leonos_permissions *value, bool write)
 { (void)node; (void)value; (void)write; assert(0); return -95; }
+static struct leonos_permissions pty_permissions = {0600, 100, 200};
+int pty_inode_permissions(const struct storage_node *node,
+                          struct leonos_permissions *value, bool write)
+{
+    assert(node->flags & STORAGE_NODE_FLAG_PTY);
+    if (write) pty_permissions = *value;
+    else *value = pty_permissions;
+    return 0;
+}
 int osmlayer_auth_op(uint32_t op, void *data)
 {
     assert(op == LEONOS_AUTH_OP_POSIX_PERMISSIONS);
@@ -67,11 +79,57 @@ int osmlayer_auth_op(uint32_t op, void *data)
 
 int main(void)
 {
-    struct task owner = {.uid = 100, .euid = 100, .gid = 200, .egid = 200, .umask = 0027};
-    struct task group = {.uid = 101, .euid = 101, .gid = 200, .egid = 200};
-    struct task other = {.uid = 102, .euid = 102, .gid = 300, .egid = 300};
-    struct task root = {0};
+    struct task owner = {.uid = 100, .euid = 100, .fsuid = 100,
+        .gid = 200, .egid = 200, .fsgid = 200, .umask = 0027};
+    struct task group = {.uid = 101, .euid = 101, .fsuid = 101,
+        .gid = 200, .egid = 200, .fsgid = 200};
+    struct task other = {.uid = 102, .euid = 102, .fsuid = 102,
+        .gid = 300, .egid = 300, .fsgid = 300};
+    struct task root = {.cap_effective = (1ULL << (CAP_LAST_CAP + 1)) - 1,
+        .cap_permitted = (1ULL << (CAP_LAST_CAP + 1)) - 1};
+    entries[2].value.mode = 0755;
+    fixture_mount_flags = MS_NOEXEC;
+    assert(fs_permissions_check(&root, "/data/file", FS_ACCESS_EXEC, false) == -LEONOS_EACCES);
+    assert(fs_permissions_check(&root, "/data/dir", FS_ACCESS_EXEC, false) == 0);
+    fixture_mount_flags = 0;
+    entries[2].value.mode = 0640;
+    struct storage_node pty = {.type = LEONOS_FS_TYPE_DEVICE,
+        .flags = STORAGE_NODE_FLAG_PTY | STORAGE_NODE_FLAG_DEV_NODE};
+    assert(check_node(&owner, "/dev/pts/1", &pty, FS_ACCESS_READ | FS_ACCESS_WRITE, false) == 0);
+    assert(check_node(&other, "/dev/pts/1", &pty, FS_ACCESS_READ, false) == -13);
+    assert(fs_permissions_chmod(&other, "/dev/pts/1", &pty, 0666) == -1);
+    assert(fs_permissions_chown(&owner, "/dev/pts/1", &pty, 101, UINT32_MAX) == -1);
+    assert(fs_permissions_chown(&root, "/dev/pts/1", &pty, other.fsuid, other.fsgid) == 0);
+    assert(check_node(&other, "/dev/pts/1", &pty, FS_ACCESS_READ | FS_ACCESS_WRITE, false) == 0);
+    assert(check_node(&owner, "/dev/pts/1", &pty, FS_ACCESS_READ, false) == -13);
     const char *file = "/data/file";
+    /* UID/GID zero are real filesystem identities, never unset sentinels. */
+    struct task fsroot = other;
+    fsroot.fsuid = 0;
+    entries[2].value = (struct leonos_permissions){0600, 0, 0};
+    assert(fs_permissions_check(&fsroot, file, 6, false) == 0);
+    assert(fs_permissions_check(&fsroot, file, 6, true) == -13);
+    struct task fsgroup = other;
+    fsgroup.fsgid = 0;
+    entries[2].value.mode = 0040;
+    assert(fs_permissions_check(&fsgroup, file, 4, false) == 0);
+    assert(fs_permissions_check(&fsgroup, file, 4, true) == -13);
+    entries[2].value = (struct leonos_permissions){0640, 100, 200};
+    struct task dropped_root = {0};
+    assert(fs_permissions_check(&dropped_root, file, 4, false) == -13);
+    assert(fs_permissions_chmod(&dropped_root, file, NULL, 0600) == -1);
+    assert(fs_permissions_chown(&dropped_root, file, NULL, 0, 0) == -1);
+    struct task delegated = other;
+    delegated.cap_effective = 1ULL << CAP_DAC_READ_SEARCH;
+    assert(fs_permissions_check(&delegated, file, 4, false) == 0);
+    assert(fs_permissions_check(&delegated, file, 2, false) == -13);
+    assert(fs_permissions_check(&delegated, file, 4, true) == -13);
+    delegated.cap_effective = 1ULL << CAP_DAC_OVERRIDE;
+    assert(fs_permissions_check(&delegated, file, 2, false) == 0);
+    assert(fs_permissions_check(&delegated, file, 1, false) == -13);
+    struct task fsowner = other;
+    fsowner.fsuid = owner.fsuid;
+    assert(fs_permissions_chmod(&fsowner, file, NULL, 0640) == 0);
     assert(fs_permissions_check(&owner, file, 6, false) == 0);
     assert(fs_permissions_check(&group, file, 4, false) == 0);
     assert(fs_permissions_check(&group, file, 2, false) == -13);
@@ -122,6 +180,7 @@ int main(void)
     assert(fs_permissions_resolve(&owner, "/data", "./file", resolved, sizeof(resolved), false) == 0);
     struct task access_root = other;
     access_root.uid = 0;
+    access_root.cap_permitted = 1ULL << CAP_DAC_OVERRIDE;
     assert(fs_permissions_resolve(&access_root, "/", "/data/../", resolved, sizeof(resolved), true) == 0);
     assert(fs_permissions_resolve(&access_root, "/", "/data/../", resolved, sizeof(resolved), false) == -13);
     entries[1].value.mode = 01777;

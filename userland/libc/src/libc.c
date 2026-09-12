@@ -2,7 +2,7 @@
 #include <leonos/environment.h>
 #include <leonos/driver.h>
 #include <leonos/auth.h>
-#include <leonos/authd.h>
+#include <leonos/auth.h>
 #include <leonos/audio.h>
 #include <leonos/fs.h>
 #include <leonos/gui.h>

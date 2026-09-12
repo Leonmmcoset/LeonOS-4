@@ -7,6 +7,7 @@ import stat
 import sys
 import subprocess
 import tempfile
+from image_test_accounts import apply_test_home_ownership
 
 
 def populate_ext2(stage: Path, image: Path, inode_count: int) -> None:
@@ -29,6 +30,7 @@ def _populate_in_fakeroot(stage: Path, image: Path, inode_count: int) -> None:
     for directory, dirs, files in os.walk(stage, followlinks=False):
         for name in dirs + files:
             os.chown(Path(directory) / name, 0, 0, follow_symlinks=False)
+    apply_test_home_ownership(stage)
     subprocess.run(["mke2fs", "-q", "-t", "ext2", "-F", "-b", "4096", "-I", "128",
                     "-O", "none,filetype,sparse_super,large_file", "-m", "0",
                     "-E", "root_owner=0:0", "-N", str(inode_count),

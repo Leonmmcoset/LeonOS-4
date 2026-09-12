@@ -1,4 +1,5 @@
 #include "desktop.h"
+#include <stdlib.h>
 
 void init_desktop(void)
 {
@@ -101,6 +102,9 @@ void desktop_run(void)
     desktop_service_daemon_update();
     maybe_launch_login();
 
+    int profile = access("/etc/leonos/desktop-profile", F_OK) == 0;
+    unsigned long profile_start = leonos_uptime_ms();
+    unsigned long profile_frames = 0, profile_paint_ms = 0, profile_inputm_ms = 0;
     unsigned long last_log = 0;
     unsigned long last_clock_second = leonos_uptime_ms() / 1000UL;
     unsigned long last_services_refresh = leonos_uptime_ms();
@@ -159,7 +163,6 @@ void desktop_run(void)
                 handle_mouse_wheel((uint32_t)event.x, (uint32_t)event.y,
                                    event.dy, event.buttons);
             } else if (event.type == LEONOS_INPUT_KEYBOARD) {
-                leonos_ui_caps_lock_event(event.keycode, event.pressed);
                 if (desktop_handle_shortcut_input_key(event.keycode, event.pressed)) {
                     continue;
                 }
@@ -202,6 +205,8 @@ void desktop_run(void)
                 did_work = 1;
             }
         }
+        unsigned long paint_start = profile ? leonos_uptime_ms() : 0;
+        int painted = full_redraw_pending || desktop_damage_pending;
         if (full_redraw_pending) {
             redraw_all();
             did_work = 1;
@@ -214,6 +219,10 @@ void desktop_run(void)
             if (cursor_only) repaint_cursor_and_flush(damage);
             else repaint_and_flush(damage);
             did_work = 1;
+        }
+        if (profile && painted) {
+            ++profile_frames;
+            profile_paint_ms += leonos_uptime_ms() - paint_start;
         }
         int mouse_visible = leonos_gui_mouse_visible();
         if (mouse_visible != last_mouse_visible) {
@@ -287,7 +296,15 @@ void desktop_run(void)
         }
         if (now - last_inputm_refresh >= 100UL) {
             last_inputm_refresh = now;
+            unsigned long inputm_start = profile ? leonos_uptime_ms() : 0;
             desktop_inputm_refresh();
+            if (profile) profile_inputm_ms += leonos_uptime_ms() - inputm_start;
+        }
+        if (profile && now - profile_start >= 5000UL) {
+            printf("[desktop-perf] frames=%lu elapsed_ms=%lu paint_ms=%lu inputm_ms=%lu\n",
+                   profile_frames, now - profile_start, profile_paint_ms, profile_inputm_ms);
+            profile_start = now;
+            profile_frames = profile_paint_ms = profile_inputm_ms = 0;
         }
         if (now - last_log >= 5000) {
             puts("[desktop.elf] window server alive");

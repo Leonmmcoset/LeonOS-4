@@ -20,6 +20,8 @@ int fs_permissions_get(const char *path, const struct storage_node *node,
 int fs_permissions_check(const struct task *task, const char *path, uint32_t access,
                          bool real_ids);
 int fs_permissions_search(const struct task *task, const char *path, bool real_ids);
+int fs_permissions_check_node(const struct task *task, const char *path,
+                              const struct storage_node *node, uint32_t access, bool real_ids);
 int fs_permissions_resolve(const struct task *task, const char *base, const char *input,
                            char *out, uint32_t cap, bool real_ids);
 /**

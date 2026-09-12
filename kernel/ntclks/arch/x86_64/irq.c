@@ -14,6 +14,7 @@
 #include <ntclks/userland.h>
 
 #include "port.h"
+#include "keyboard_led.h"
 
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
@@ -28,6 +29,7 @@
 
 static uint8_t key_states[128];
 static uint8_t e0_prefix;
+static struct keyboard_led_command keyboard_led = {.applied = 0xff};
 static bool irq_uses_local_apic;
 static bool irq_uses_ioapic;
 
@@ -164,6 +166,12 @@ struct task *irq_dispatch(struct trap_frame *frame)
     bool from_user = frame && ((frame->cs & 3ULL) == 3ULL);
     if (vector == 0x20) {
         time_on_tick();
+        if (from_user) {
+            uint8_t byte;
+            if (keyboard_led_next(&keyboard_led, input_caps_lock_active() ? 4U : 0U,
+                                  time_uptime_us(), x86_64_inb(0x64) & 2U, &byte))
+                x86_64_outb(byte, PS2_DATA);
+        }
         irq_send_eoi(0);
         /* The BSP marks the handoff just before iretq, so a kernel-mode PIT
          * tick can still arrive in that small window.  Only a timer that
@@ -180,7 +188,9 @@ struct task *irq_dispatch(struct trap_frame *frame)
         return NULL;
     } else if (vector == 0x21) {
         uint8_t scancode = x86_64_inb(PS2_DATA);
-        if (scancode == 0xe0) {
+        if (keyboard_led_reply(&keyboard_led, scancode)) {
+            /* Controller replies must not enter the keyboard scan-code stream. */
+        } else if (scancode == 0xe0) {
             e0_prefix = 1;
         } else if (scancode != 0xe1) {
             uint8_t keycode = scancode & 0x7f;

@@ -68,7 +68,9 @@ int main(void)
     page_cache_release(text_page);
     if (page_cache_owns(prefix_page)) page_cache_release(prefix_page);
     else mm_free_page(prefix_page);
-    page_cache_invalidate_node(&prefix.file_node);
+    struct storage_node resized = prefix.file_node;
+    resized.size += 4096;
+    page_cache_invalidate_node(&resized);
     assert(!allocations);
     puts("PASS ELF segments sharing a file page: independent zero-fill and intact code cache");
 }

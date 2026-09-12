@@ -4,6 +4,8 @@
 #undef main
 #include <stdlib.h>
 #include "../../kernel/ntclks/permissions.c"
+int storage_node_mount_flags(const struct storage_node *node, uint64_t *flags)
+{ (void)node; *flags = 0; return 0; }
 void *kernel_malloc(size_t size) { return malloc(size); }
 void kernel_free(void *memory) { free(memory); }
 int storage_lookup_path(const char *path, struct storage_node *node)

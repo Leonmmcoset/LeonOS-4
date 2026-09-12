@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import tarfile
 import os
 import re
 import shutil
@@ -109,8 +111,15 @@ MINIMAL_LIBBB_OBJECTS = (
     "sysconf.o",
 )
 
-def run(command: list[str], *, cwd: Path | None = None) -> None:
-    subprocess.run(command, cwd=cwd, check=True)
+def run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
+    subprocess.run(command, cwd=cwd, env=env, check=True)
+
+
+def official_build_environment(source: Path, revision: str) -> dict[str, str]:
+    epoch = subprocess.check_output(
+        ["git", "-C", str(source), "show", "-s", "--format=%ct", revision], text=True).strip()
+    # Upstream Kconfig embeds this timestamp in BusyBox's version banner.
+    return dict(os.environ, SOURCE_DATE_EPOCH=str(int(epoch)), TZ="UTC", KCONFIG_NOTIMESTAMP="")
 
 
 def source_revision(source: Path) -> str:
@@ -146,17 +155,18 @@ def merge_static_archives(output: Path, archives: list[Path], work_dir: Path) ->
     run(["llvm-ar", "rcs", str(output), *map(str, members)])
 
 
-def source_cache_key(revision: str) -> str:
+def source_cache_key(revision: str, *, official_source: bool = False) -> str:
     digest = hashlib.sha256()
     digest.update(revision.encode("ascii"))
-    # The source copy is modified by this script and the LeonOS adapter, so
-    # an upstream revision alone cannot identify a reusable copy.
-    for path in (
-        Path(__file__),
-        ROOT / "userland/busybox/leonos_shim.c",
-        ROOT / "userland/busybox/block_storage.c",
-        ROOT / "userland/busybox/leonos.config",
-    ):
+    digest.update(b"\0official-source=" + (b"1" if official_source else b"0"))
+    # The adapted profile and pristine upstream profile must never share a
+    # cache directory: the former rewrites source files, while the latter may
+    # only consume the checked-out upstream tree.
+    profile_inputs = [Path(__file__), ROOT / "userland/busybox/leonos.config"]
+    if not official_source:
+        profile_inputs.extend((ROOT / "userland/busybox/leonos_shim.c",
+                               ROOT / "userland/busybox/block_storage.c"))
+    for path in profile_inputs:
         digest.update(path.read_bytes())
     return digest.hexdigest()
 
@@ -172,6 +182,26 @@ def cached_source(source: Path, cache_key: str) -> Path:
         copy_tree(source, cache_root / "source")
         marker.write_text(cache_key + "\n", encoding="ascii")
     return cache_root / "source"
+
+
+def official_source(source: Path, revision: str, cache: Path) -> Path:
+    """Export committed upstream bytes, never the working tree or port cache."""
+    try:
+        from .fetch_auth_upstream import verify_source_tree
+    except ImportError:
+        from fetch_auth_upstream import verify_source_tree
+    cache.mkdir(parents=True, exist_ok=True)
+    destination = cache / "source"
+    with tempfile.TemporaryDirectory(prefix="verify-", dir=cache) as directory:
+        archive = Path(directory) / "source.tar"
+        run(["git", "-C", str(source), "archive", "--format=tar", "--prefix=source/",
+             "--output=" + str(archive.resolve()), revision])
+        if not destination.exists():
+            with tarfile.open(archive) as packed:
+                packed.extractall(directory, filter="data")
+            (Path(directory) / "source").rename(destination)
+        verify_source_tree(archive, destination, False)
+    return destination
 
 
 def write_minimal_libbb_kbuild(kbuild: Path, generated: bool) -> None:
@@ -680,6 +710,11 @@ def read_fragment(path: Path) -> dict[str, str]:
     return values
 
 
+def filter_official_fragment(values: dict[str, str]) -> dict[str, str]:
+    return {key: value for key, value in values.items()
+            if not key.startswith("CONFIG_LEONOS_") and key != "CONFIG_EXTRA_LDLIBS"}
+
+
 def apply_fragment(config: Path, values: dict[str, str]) -> None:
     lines = config.read_text(encoding="utf-8").splitlines()
     seen: set[str] = set()
@@ -701,6 +736,13 @@ def apply_fragment(config: Path, values: dict[str, str]) -> None:
     config.write_text("\n".join(result) + "\n", encoding="utf-8")
 
 
+def library_search_flags(sdk_dir: Path, *, official_source: bool) -> list[str]:
+    flags = ["-L" + str(sdk_dir / "musl/lib")]
+    if not official_source:
+        flags.insert(0, "-L" + str(sdk_dir.parent / "lib"))
+    return flags
+
+
 def clang_resource_headers() -> Path:
     result = subprocess.run(
         ["clang", "-print-resource-dir"], check=True, text=True, capture_output=True
@@ -716,14 +758,15 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--musl-prefix", type=Path, required=True)
-    parser.add_argument("--leonos-libc-include", type=Path, required=True)
-    parser.add_argument("--leonos-include", type=Path, required=True)
-
-    parser.add_argument("--leonos-lib", type=Path, required=True)
+    parser.add_argument("--leonos-libc-include", type=Path)
+    parser.add_argument("--leonos-include", type=Path)
+    parser.add_argument("--leonos-lib", type=Path)
     parser.add_argument("--musl-lib", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
     parser.add_argument("--links", type=Path, required=True)
+    parser.add_argument("--official-source", action="store_true",
+                        help="build pristine upstream BusyBox source without LeonOS source patches")
     parser.add_argument("--compile-flag", action="append", default=[])
     parser.add_argument("--linker-flag", action="append", default=[])
     args = parser.parse_args()
@@ -735,29 +778,36 @@ def main() -> None:
         source / "Makefile",
         args.config,
         args.musl_prefix / "include",
-        args.leonos_libc_include,
-        args.leonos_include,
-        args.leonos_lib,
         args.musl_lib,
-        ROOT / "userland/busybox/leonos_shim.c",
-        ROOT / "userland/busybox/block_storage.c",
+        *([] if args.official_source else [
+            args.leonos_libc_include, args.leonos_include, args.leonos_lib,
+            ROOT / "userland/busybox/leonos_shim.c",
+            ROOT / "userland/busybox/block_storage.c",
+        ]),
     ]
     for path in required:
-        if not path.exists():
+        if path is None or not path.exists():
             raise SystemExit(f"required BusyBox input is missing: {path}")
 
     revision = source_revision(source)
-    source_dir = cached_source(source, source_cache_key(revision))
-    trim_libbb(source_dir)
-    patch_optional_config_macros(source_dir)
-    patch_ps_for_leonos(source_dir)
-    patch_less_for_leonos(source_dir)
-    patch_ls_colors_for_leonos(source_dir)
-    patch_nohup_for_leonos(source_dir)
-    patch_whoami_for_leonos(source_dir)
-    patch_power_applets_for_leonos(source_dir)
-    patch_ash_for_leonos(source_dir)
-    patch_lineedit_for_leonos(source_dir)
+    build_env = official_build_environment(source, revision) if args.official_source else None
+    cache_key = source_cache_key(revision, official_source=args.official_source)
+    if args.official_source:
+        cache = Path(tempfile.gettempdir()) / f"{WORK_PREFIX}official-{cache_key[:20]}"
+        source_dir = official_source(source, revision, cache)
+    else:
+        source_dir = cached_source(source, cache_key)
+    if not args.official_source:
+        trim_libbb(source_dir)
+        patch_optional_config_macros(source_dir)
+        patch_ps_for_leonos(source_dir)
+        patch_less_for_leonos(source_dir)
+        patch_ls_colors_for_leonos(source_dir)
+        patch_nohup_for_leonos(source_dir)
+        patch_whoami_for_leonos(source_dir)
+        patch_power_applets_for_leonos(source_dir)
+        patch_ash_for_leonos(source_dir)
+        patch_lineedit_for_leonos(source_dir)
     work_root = source_dir.parent
     output_dir = work_root / "output"
     sdk_dir = work_root / "sdk"
@@ -771,51 +821,65 @@ def main() -> None:
 
     # BusyBox cannot handle the repository's space-containing path in O=.
     copy_tree(args.musl_prefix, sdk_dir / "musl")
-    copy_tree(args.leonos_libc_include, sdk_dir / "leonos-libc")
-    copy_tree(args.leonos_include, sdk_dir / "include")
+    if not args.official_source:
+        copy_tree(args.leonos_libc_include, sdk_dir / "leonos-libc")
+        copy_tree(args.leonos_include, sdk_dir / "include")
 
-
-    shutil.copyfile(args.leonos_lib, lib_dir / "libleonos.a")
+    if not args.official_source:
+        shutil.copyfile(args.leonos_lib, lib_dir / "libleonos.a")
     # musl supplies libm/librt as part of libc. Use its upstream linker inputs.
     for library in (sdk_dir / "musl/lib").glob("*.a"):
         shutil.copyfile(library, lib_dir / library.name)
 
-    run(["make", "-C", str(source_dir), f"O={output_dir}", "allnoconfig"])
+    run(["make", "-C", str(source_dir), f"O={output_dir}", "allnoconfig"], env=build_env)
     generated_config = output_dir / ".config"
-    apply_fragment(generated_config, read_fragment(args.config.resolve()))
-    run(["make", "-C", str(source_dir), f"O={output_dir}", "oldconfig"], cwd=source_dir)
+    fragment = read_fragment(args.config.resolve())
+    if args.official_source:
+        # The repository config also contains private LeonOS applets.  Keep
+        # the standard BusyBox selections while omitting unknown symbols so
+        # pristine upstream sources can consume the fragment unchanged.
+        fragment = filter_official_fragment(fragment)
+    apply_fragment(generated_config, fragment)
+    run(["make", "-C", str(source_dir), f"O={output_dir}", "oldconfig"], cwd=source_dir, env=build_env)
     # scripts/gen_build_files appends generic Linux-oriented libbb helpers to
     # the generated Kbuild. Replace the generated copy after configuration as
     # well, otherwise those objects override the source-copy profile above.
-    write_minimal_libbb_kbuild(output_dir / "libbb/Kbuild", True)
+    if not args.official_source:
+        write_minimal_libbb_kbuild(output_dir / "libbb/Kbuild", True)
 
     headers = clang_resource_headers()
     cflags = " ".join([
         "-target", "x86_64-linux-musl", *(args.compile_flag or ["-O2"]), "-std=gnu11", "-ffreestanding",
-        "-D_POSIX_C_SOURCE=200809L", "-D_GNU_SOURCE", "-DLEONOS_USE_MUSL",
-        # LeonOS's native stat/fstat use a compact private structure. Keep
-        # BusyBox on the musl POSIX ABI through the port's adapter layer.
-
+        "-D_POSIX_C_SOURCE=200809L", "-D_GNU_SOURCE",
         "-fno-stack-protector", "-fno-pic", "-fno-pie",
          "-ffunction-sections", "-fdata-sections",
         "-nostdinc", "-isystem", str(headers),
         "-I" + str(sdk_dir / "musl/include"),
-        "-I" + str(sdk_dir / "leonos-libc"),
-        "-I" + str(sdk_dir / "include"), "-I" + str(sdk_dir / "include/uapi"),
+        *([] if args.official_source else [
+            "-I" + str(sdk_dir / "leonos-libc"),
+            "-I" + str(sdk_dir / "include"), "-I" + str(sdk_dir / "include/uapi"),
+        ]),
     ])
     lib = sdk_dir / "musl/lib"
     ldflags = " ".join([
         "-target", "x86_64-linux-musl", "-nostdlib", "-fuse-ld=lld",
         "-Wl,--gc-sections", "-Wl,--image-base=0x4000000",
-        "-L" + str(lib_dir),
+        *library_search_flags(sdk_dir, official_source=args.official_source),
         *["-Wl," + flag for flag in args.linker_flag],
     ])
     startup = " ".join("-Wl," + str(lib / name) for name in ("crt1.o", "crti.o", "mimalloc.o", "crtn.o"))
     run([
         "make", "-C", str(source_dir), f"O={output_dir}", "CC=clang", "ARCH=x86_64",
-        "CFLAGS=" + cflags, "LDFLAGS=" + ldflags, "LDLIBS=leonos c", "EXTRA_LDFLAGS=" + startup, "busybox_unstripped", "busybox.links",
-    ])
+        "CFLAGS=" + cflags, "LDFLAGS=" + ldflags,
+        "LDLIBS=" + ("leonos c" if not args.official_source else "c"),
+        "EXTRA_LDFLAGS=" + startup,
+        "busybox_unstripped", "busybox.links",
+    ], env=build_env)
 
+    if args.official_source:
+        # Recheck after make as well: generated files belong in O=, never in
+        # the source tree whose committed contents identify this build.
+        official_source(source, revision, source_dir.parent)
     built = output_dir / "busybox_unstripped"
     if not built.is_file():
         raise SystemExit(f"BusyBox build did not produce {built}")
@@ -829,13 +893,18 @@ def main() -> None:
     args.links.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(output_dir / "busybox.links", args.links)
     args.stamp.parent.mkdir(parents=True, exist_ok=True)
-    args.stamp.write_text(
-        "{\n"
-        f"  \"busybox_commit\": \"{revision}\",\n"
-        f"  \"config_sha256\": \"{hashlib.sha256(args.config.read_bytes()).hexdigest()}\"\n"
-        "}\n",
-        encoding="utf-8",
-    )
+    args.stamp.write_text(json.dumps({
+        "busybox_commit": revision, "official_source": args.official_source,
+        "source_directory": str(source_dir),
+        "source_date_epoch": build_env["SOURCE_DATE_EPOCH"] if build_env else None,
+        "config_sha256": hashlib.sha256(args.config.read_bytes()).hexdigest(),
+        "generated_config_sha256": hashlib.sha256(generated_config.read_bytes()).hexdigest(),
+        "cflags": cflags, "ldflags": ldflags, "startup": startup,
+        "ldlibs": "c" if args.official_source else "leonos c",
+        "applets": sorted(applets),
+        "elf_sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+        "guest_verified": False,
+    }, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

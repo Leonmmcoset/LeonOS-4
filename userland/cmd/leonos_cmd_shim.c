@@ -225,9 +225,16 @@ static const char *const busybox_applets[] = {
     "basename", "busybox", "cat", "clear", "cp", "diff", "dirname", "echo", "env",
     "false", "grep", "head", "ls", "mkdir", "mv", "printenv", "printf", "pwd",
     "rm", "rmdir", "sha256sum", "sh", "sleep", "tail", "true", "uname", "unlink", "vi", "wc",
-    "fdisk", "mkfs.fat", "mkfs.fat32", "mkfs.vfat", "mkfs.ext2", "mkfs.exfat",
-    "mount", "umount", "fsck", "fsck.fat", "fsck.fat32", "fsck.vfat", "fsck.ext2",
-    "fsck.exfat", "blkid", "lsblk", "leonos-grub-installer", "sync", NULL,
+    "sync", NULL,
+};
+
+static const char *const storage_commands[] = {
+    "/usr/sbin/fdisk", "/usr/sbin/sfdisk", "/usr/sbin/blkid", "/usr/sbin/fsck",
+    "/usr/sbin/mkfs.fat", "/usr/sbin/mkfs.fat32", "/usr/sbin/mkfs.vfat",
+    "/usr/sbin/mkfs.ext2", "/usr/sbin/mkfs.exfat", "/usr/sbin/fsck.fat",
+    "/usr/sbin/fsck.fat32", "/usr/sbin/fsck.vfat", "/usr/sbin/fsck.ext2",
+    "/usr/sbin/fsck.exfat", "/usr/sbin/leonos-grub-installer",
+    "/bin/mount", "/bin/umount", "/bin/lsblk", NULL,
 };
 
 static int job_name_equal(const char *left, const char *right)
@@ -374,6 +381,12 @@ int libcmd_find_exec(const char *name, const char *path_env, char *out, size_t o
         if (stat(name, &st) == 0 && S_ISREG(st.st_mode))
             return copy_exec_path(out, out_size, name);
         return -1;
+    }
+    /* Storage tools are independently packaged, never BusyBox applets. */
+    for (index = 0; storage_commands[index]; ++index) {
+        const char *path = storage_commands[index];
+        if (command_name_equal(name, strrchr(path, '/') + 1))
+            return copy_exec_path(out, out_size, path);
     }
     for (index = 0; busybox_applets[index]; ++index) {
         if (command_name_equal(name, busybox_applets[index]))

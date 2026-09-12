@@ -8,6 +8,7 @@
 #include <ntclks/kernel.h>
 #include <ntclks/mm.h>
 #include <ntclks/pty.h>
+#include <ntclks/random.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
 #include <ntclks/uts.h>
@@ -17,6 +18,10 @@
 #include <ntclks/userland.h>
 #include <ntclks/svga.h>
 #include <leonos/layout.h>
+#include <ntclks/permissions.h>
+#include <linux/capability.h>
+#include <linux/securebits.h>
+#include <linux/mount.h>
 
 #define USER_STACK_TOP (NTCLKS_USER_TOP - 0x1000ULL)
 #define EXEC_STACK_ALIGN 16ULL
@@ -34,7 +39,6 @@ static uint32_t init_pid;
 static uint32_t desktop_pid;
 static uint32_t windowd_pid;
 static uint32_t imd_pid;
-static uint32_t authd_pid;
 static uint32_t tty_pid;
 static bool autospawn_hello;
 static bool autospawn_uidemo;
@@ -141,21 +145,6 @@ static void copy_text(char *dst, uint32_t dst_len, const char *src)
 }
 
 /**
- * @brief Clears the virtual-memory-area metadata belonging to an old process image.
- * @param task Task whose replacement address space has no mappings represented by its VMA table.
- */
-static void clear_task_vmas(struct task *task)
-{
-    if (!task) {
-        return;
-    }
-    for (uint32_t i = 0; i < SCHED_TASK_VMA_MAX; ++i) {
-        sched_task_mm(task)->vmas[i] = (struct task_vma){0};
-    }
-    sched_task_vma_release(task);
-}
-
-/**
  * @brief Copy the final path component (after the last '/') into dst.
  */
 static void task_name_from_path(const char *path, char *dst, uint32_t dst_len)
@@ -200,11 +189,6 @@ static int path_is_windowd(const char *path)
 static int path_is_imd(const char *path)
 {
     return path_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/imd/imd.elf");
-}
-
-static int path_is_authd(const char *path)
-{
-    return path_eq_ignore_case(path, LEONOS_LAYOUT_LEONOS_APPS "/authd/authd.elf");
 }
 
 /**
@@ -325,7 +309,7 @@ static int write_user_u64(const struct address_space *as, uint64_t vaddr, uint64
 /**
  * @brief Lay out argv/envp (and the dynamic-launch record) on the task's user stack and point the initial frame at them.
  */
-static int prepare_user_exec_stack(struct task *task)
+static int prepare_user_exec_stack(struct task *task, const char *execfn)
 {
     uint64_t sp;
     uint64_t argc_base;
@@ -369,7 +353,8 @@ static int prepare_user_exec_stack(struct task *task)
         launch_base = sp;
     }
     argc = task->exec_argc ? task->exec_argc : 1;
-    path_len = __builtin_strlen(task->path);
+    if (!execfn) execfn = task->path;
+    path_len = __builtin_strlen(execfn);
     strings_base = (sp - task->exec_data_len - path_len - 2) & ~(EXEC_STACK_ALIGN - 1ULL);
     execfn_base = strings_base + task->exec_data_len;
     random_base = (strings_base - 16ULL) & ~(EXEC_STACK_ALIGN - 1ULL);
@@ -396,7 +381,7 @@ static int prepare_user_exec_stack(struct task *task)
     for (size_t i = 0; i < path_len + 2; ++i) {
         char *dst = (char *)user_ptr_for_phys(sched_task_as(task), execfn_base + i);
         if (!dst) return -12;
-        *dst = i < path_len ? task->path[i] : 0;
+        *dst = i < path_len ? execfn[i] : 0;
     }
     /* Linux supplies an empty argv[0] when execve receives an empty vector. */
     if (!task->exec_argc &&
@@ -452,7 +437,7 @@ static int prepare_user_exec_stack(struct task *task)
             AT_EUID, task->euid,
             AT_GID, task->gid,
             AT_EGID, task->egid,
-            AT_SECURE, task->uid != task->euid || task->gid != task->egid,
+            AT_SECURE, task->secure_exec || task->uid != task->euid || task->gid != task->egid,
             AT_RANDOM, random_base,
             AT_RSEQ_FEATURE_SIZE, 32,
             AT_RSEQ_ALIGN, 32,
@@ -495,15 +480,58 @@ static int prepare_user_exec_stack(struct task *task)
 /**
  * @brief Map or load the task's pending executable, set the entry frame and exec stack, and mark it started.
  */
-static bool userland_load_task_image_locked(struct task *task)
+static int userland_prepare_exec_credentials(struct task *next, const struct task *old)
+{
+    struct leonos_permissions file;
+    uint64_t mount_flags;
+    int ret = fs_permissions_get(next->path, &next->image_node, &file);
+    if (ret < 0) return ret;
+    ret = storage_node_mount_flags(&next->image_node, &mount_flags);
+    if (ret < 0) return ret;
+    /* bprm_fill_uid reads the held ELF inode under the execution/storage lock.
+     * An interpreter's set-ID bits never replace the main ELF's authority. */
+    if (!old->no_new_privs && !(mount_flags & MS_NOSUID)) {
+        if ((file.mode & 06000) && !sched_task_mm(next)->executable_inode) return -95;
+        if (file.mode & 04000) next->euid = file.uid;
+        if ((file.mode & 02010) == 02010) next->egid = file.gid;
+    }
+    /* Linux commoncap.c:cap_bprm_creds_from_file, without file capabilities. */
+    bool effective = !(old->securebits & SECBIT_NOROOT) && !next->euid;
+    bool setid = next->euid != old->uid || next->egid != old->gid;
+    uint64_t permitted = 0;
+    if (!(old->securebits & SECBIT_NOROOT) && (!next->uid || !next->euid))
+        permitted = old->cap_bset | old->cap_inheritable;
+    if (old->no_new_privs && (setid || (permitted & ~old->cap_permitted))) {
+        next->euid = next->uid;
+        next->egid = next->gid;
+        permitted &= old->cap_permitted;
+    }
+    next->suid = next->fsuid = next->euid;
+    next->sgid = next->fsgid = next->egid;
+    if (setid) next->cap_ambient = 0;
+    next->cap_permitted = permitted | next->cap_ambient;
+    next->cap_effective = effective ? next->cap_permitted : next->cap_ambient;
+    next->securebits &= ~SECBIT_KEEP_CAPS;
+    next->secure_exec = setid || (next->uid &&
+        (effective || (next->cap_permitted & ~next->cap_ambient)));
+    /* setup_new_exec resets dumpability, then commit_creds may lower it. */
+    if (old->uid != old->euid || old->gid != old->egid ||
+        old->euid != next->euid || old->egid != next->egid ||
+        old->fsuid != next->fsuid || old->fsgid != next->fsgid ||
+        (next->cap_permitted & ~old->cap_permitted))
+        sched_task_mm(next)->nondumpable = true;
+    return 0;
+}
+
+static int userland_load_task_image_locked(struct task *task, const struct task *old, const char *execfn)
 {
     struct elf_image_info loaded;
 
     if (!task) {
-        return false;
+        return -22;
     }
     if ((task->flags & TASK_FLAG_STARTED) && task->frame.rip != 0) {
-        return true;
+        return 0;
     }
     /* A started task must have a complete saved frame. Rebuilding a zero RIP
      * from the ELF entry would hide a scheduler ownership bug and lose the
@@ -511,20 +539,25 @@ static bool userland_load_task_image_locked(struct task *task)
     if ((task->flags & TASK_FLAG_STARTED) && task->entry != 0 && task->frame.rip == 0) {
         console_printf("[ntclks] refusing started task with zero RIP pid=%u entry=0x%llx\n",
                        task->pid, (unsigned long long)task->entry);
-        return false;
+        return -8;
     }
+    int entropy_result = kernel_random_fill(task->dynamic_launch.random, sizeof(task->dynamic_launch.random));
+    if (entropy_result < 0) return entropy_result;
     if (task->flags & TASK_FLAG_PENDING_LOAD) {
         if (task->image_node.type != LEONOS_FS_TYPE_FILE) {
             int ret = storage_lookup_path(task->path, &task->image_node);
             if (ret < 0 || task->image_node.type != LEONOS_FS_TYPE_FILE) {
                 console_printf("[ntclks] executable lookup failed path=%s ret=%d\n",
                                task->path, ret < 0 ? ret : -21);
-                return false;
+                return ret < 0 ? ret : -13;
             }
         }
-        if (!elf64_map_task_image(task, &task->image_node, &loaded)) {
+        int ret = storage_inode_get(&task->image_node, &sched_task_mm(task)->executable_inode);
+        if (ret < 0) return ret;
+        ret = elf64_map_task_image(task, &task->image_node, &loaded);
+        if (ret < 0) {
             console_printf("[ntclks] failed to map executable %s\n", task->name);
-            return false;
+            return ret;
         }
         task->program_break_base = loaded.program_break;
         if (!task->program_break_base) {
@@ -535,19 +568,17 @@ static bool userland_load_task_image_locked(struct task *task)
     } else if (task->image && task->image_len) {
         if (!elf64_load_address_space(sched_task_as(task), task->image, task->image_len, &loaded)) {
             console_printf("[ntclks] failed to load %s into private address space\n", task->name);
-            return false;
+            return -8;
         }
         free_image_buffer(task->image, task->image_len);
         task->image = NULL;
         task->image_len = 0;
     } else {
-        return false;
+        return -8;
     }
 
     task->entry = loaded.dynamic ? loaded.interpreter_entry : loaded.entry;
-    arch_set_user_fs(task->fs_base);
     task->exec_phnum = loaded.phnum;
-    elf64_random_fill(task->dynamic_launch.random, sizeof(task->dynamic_launch.random));
     task->dynamic_launch.main_entry = loaded.entry;
     task->dynamic_launch.main_phdr = loaded.phdr_vaddr;
     task->dynamic_launch.main_base = loaded.load_bias;
@@ -556,9 +587,14 @@ static bool userland_load_task_image_locked(struct task *task)
     task->frame.rflags = 0x202;
     task->frame.cs = NTCLKS_USER_CS;
     task->frame.ss = NTCLKS_USER_DS;
-    if (prepare_user_exec_stack(task) < 0) {
+    if (old) {
+        int ret = userland_prepare_exec_credentials(task, old);
+        if (ret < 0) return ret;
+    }
+    int ret = prepare_user_exec_stack(task, execfn);
+    if (ret < 0) {
         console_printf("[ntclks] failed to prepare argv/envp for %s\n", task->name);
-        return false;
+        return ret;
     }
     task->flags |= TASK_FLAG_STARTED;
 
@@ -566,7 +602,7 @@ static bool userland_load_task_image_locked(struct task *task)
                    task->name,
                    (unsigned long long)task->entry,
                    (unsigned long long)(*sched_task_as(task)).cr3);
-    return true;
+    return 0;
 }
 
 static bool userland_load_task_image(struct task *task)
@@ -583,7 +619,7 @@ static bool userland_load_task_image(struct task *task)
      * below safely join this transaction. */
     kernel_execution_lock_irqsave(&execution_flags);
     userland_loader_lock(&loader_flags);
-    result = userland_load_task_image_locked(task);
+    result = userland_load_task_image_locked(task, NULL, NULL) == 0;
     userland_loader_unlock(loader_flags);
     kernel_execution_unlock_irqrestore(execution_flags);
     return result;
@@ -652,7 +688,7 @@ static int64_t spawn_path_internal_ex(const char *path, const char *task_name,
          * uid, role, home, and session along with the login task. */
         flags |= TASK_FLAG_SERVICE | TASK_FLAG_WINDOW_SERVER;
     } else if (path_is_windowd(path) || path_is_imd(path) ||
-               path_is_authd(path) || path_is_system_service_daemon(path)) {
+               path_is_system_service_daemon(path)) {
         flags |= TASK_FLAG_SERVICE;
     }
     if (path_is_system_service_daemon(path) && sched_find_by_path(path)) {
@@ -1010,13 +1046,6 @@ void userland_init(const struct boot_info *boot)
     }
 
     if (installer_mode) {
-        pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/authd/authd.elf", "authd.elf authentication",
-                                  0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
-        if (pid <= 0) {
-            console_printf("[ntclks] failed to load installer authd.elf ret=%lld\n", (long long)pid);
-            kernel_idle_loop();
-        }
-        authd_pid = (uint32_t)pid;
         pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/imd/imd.elf", "imd.elf input method",
                                   0, 0, TASK_FLAG_SERVICE, 0, -1, -1, -1);
         if (pid <= 0) {
@@ -1048,14 +1077,6 @@ void userland_init(const struct boot_info *boot)
         kernel_idle_loop();
     }
     init_pid = (uint32_t)pid;
-
-    pid = spawn_path_internal(LEONOS_LAYOUT_LEONOS_APPS "/authd/authd.elf", "authd.elf authentication",
-                              0, init_pid, TASK_FLAG_SERVICE, 0, -1, -1, -1);
-    if (pid <= 0) {
-        console_printf("[ntclks] failed to load authd.elf ret=%lld\n", (long long)pid);
-        kernel_idle_loop();
-    }
-    authd_pid = (uint32_t)pid;
 
     if (tty_mode) {
         static const char *tty_argv[] = {
@@ -1125,7 +1146,7 @@ void userland_enter_first(void)
 {
     struct task *first;
     if (!init_pid && !desktop_pid && !windowd_pid && !imd_pid &&
-        !authd_pid && !tty_pid) {
+        !tty_pid) {
         console_printf("[ntclks] no Ring-3 userland loaded\n");
         kernel_idle_loop();
     }
@@ -1149,8 +1170,10 @@ void userland_process_exit(uint64_t code)
 }
 
 /**
- * @brief Replaces the calling task's user address space with a pending executable image.
- * @param path Canonical executable path already authorized by the syscall layer.
+ * @brief Prepare a replacement image and stack before committing exec.
+ * @param path Canonical name for the executable object.
+ * @param held Resolved object held stable under the execution transaction.
+ * @param execfn Original exec filename for AT_EXECFN, including fd-relative names.
  * @param argc Number of entries in argv.
  * @param argv Kernel-owned argv pointers into data.
  * @param envc Number of entries in envp.
@@ -1159,61 +1182,77 @@ void userland_process_exit(uint64_t code)
  * @param data_len Number of valid data bytes.
  * @return Zero after committing the new image, or a negative errno-style value with no change.
  */
-int userland_exec_current_path(const char *path, uint32_t argc, char *const argv[],
+int userland_exec_current_node(const char *path, const struct storage_node *held, const char *execfn,
+                               uint32_t argc, char *const argv[],
                                uint32_t envc, char *const envp[],
                                const char *data, uint32_t data_len)
 {
     struct task *task = sched_current_task();
     struct storage_node node;
-    struct address_space replacement = {0};
+    struct task *prepared = NULL;
     char task_name[SCHED_TASK_NAME_LEN];
     uint32_t preserved_flags;
     int ret;
     if (!task || task->kind != TASK_KIND_USER || !path || !path[0]) {
         return -22;
     }
-    ret = storage_lookup_path(path, &node);
+    if (task->nproc_exceeded) {
+        if (sched_user_task_count(task->uid) > sched_task_limits(task)->nproc.rlim_cur) return -11;
+        task->nproc_exceeded = false;
+    }
+    if (held) { node = *held; ret = storage_inode_refresh(&node); }
+    else ret = storage_lookup_path(path, &node);
     if (ret < 0 || node.type != LEONOS_FS_TYPE_FILE) {
-        return ret < 0 ? ret : -2;
+        return ret < 0 ? ret : -13;
     }
+    ret = fs_permissions_check_node(task, path, &node, FS_ACCESS_EXEC, false);
+    if (ret < 0) return ret;
+    if (argc > SCHED_EXEC_ARG_MAX || envc > SCHED_EXEC_ENV_MAX || data_len > SCHED_EXEC_DATA_MAX)
+        return -7;
     task_name_from_path(path, task_name, sizeof(task_name));
-    if (!task_name[0] || !address_space_create(&replacement) ||
-        !address_space_map_user_stack(&replacement, USER_STACK_TOP)) {
-        address_space_destroy(&replacement);
-        return -12;
-    }
+    prepared = kernel_malloc(sizeof(*prepared));
+    if (!prepared) return -12;
+    __builtin_memset(prepared, 0, sizeof(*prepared));
+    prepared->credentials = task->credentials;
+    prepared->limits = *sched_task_limits(task);
+    prepared->stack_top = USER_STACK_TOP;
+    prepared->stack_low = USER_STACK_TOP - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL;
+    prepared->address_space.initial_stack_top = prepared->stack_top;
+    prepared->address_space.initial_stack_low = prepared->stack_low;
+    prepared->image_node = node;
+    prepared->name = task_name;
+    prepared->flags = TASK_FLAG_PENDING_LOAD;
+    prepared->address_space.nondumpable = fs_permissions_check_node(task, path, &node, FS_ACCESS_READ, false) < 0;
+    copy_text(prepared->path, sizeof(prepared->path), path);
+    sched_copy_task_exec_params(prepared, argc, argv, envc, envp, data, data_len);
+    ret = -12;
+    if (!task_name[0] || !address_space_create(sched_task_as(prepared)) ||
+        !address_space_map_user_stack(sched_task_as(prepared), USER_STACK_TOP)) goto failed;
+
+    uint64_t loader_flags;
+    userland_loader_lock(&loader_flags);
+    ret = userland_load_task_image_locked(prepared, task, execfn);
+    userland_loader_unlock(loader_flags);
+    if (ret < 0) goto failed;
 
     ret = sched_prepare_exec_current(task);
-    if (ret < 0) {
-        address_space_destroy(&replacement);
-        return ret;
-    }
-    /* No operation after this point can fail.  Keep all old process identity,
-     * cwd, PTY association, limits, process parentage and waitability intact. */
+    if (ret < 0) goto failed;
+    /* The ELF mappings and initial stack are complete. Only now retire the
+     * old mm, close CLOEXEC descriptors and reset process execution state. */
     svga_gpu_release_owner(task->pid);
-    sched_exec_replace_mm(task, &replacement);
-    task->entry = 0;
-    task->stack_top = USER_STACK_TOP;
-    sched_task_mm(task)->initial_stack_top = USER_STACK_TOP;
-    task->stack_low = USER_STACK_TOP - (uint64_t)NTCLKS_USER_STACK_PAGES * 4096ULL;
-    sched_task_mm(task)->initial_stack_low = task->stack_low;
-    task->program_break_base = 0;
-    task->program_break = 0;
-    task->image = NULL;
-    task->image_len = 0;
-    task->image_node = node;
-    /**
- * @brief A fork child inherits its parent's VMA records. Its replacement page tables are blank, so retaining those records would make the ELF mapper reject valid PIE ranges as overlaps with the discarded image.
- */
-    clear_task_vmas(task);
+    sched_exec_replace_mm(task, sched_task_as(prepared));
+    task->address_space = prepared->address_space;
+    task->credentials = prepared->credentials;
+    task->entry = prepared->entry;
+    task->stack_top = prepared->stack_top;
+    task->stack_low = prepared->stack_low;
+    task->program_break_base = prepared->program_break_base;
+    task->program_break = prepared->program_break;
+    task->loader_state = prepared->loader_state;
+    sched_copy_task_exec_params(task, argc, argv, envc, envp, data, data_len);
     /* POSIX execve preserves ignored signals but resets caught dispositions. */
     kernel_signal_reset_handlers(task);
-    task->frame = (struct trap_frame){0};
-    task->frame.cs = NTCLKS_USER_CS;
-    task->frame.ss = NTCLKS_USER_DS;
-    task->frame.rflags = 0x202;
-    task->frame.rsp = USER_STACK_TOP;
-    task->dynamic_launch = (struct leonos_dynamic_launch){0};
+    task->frame = prepared->frame;
     /**
  * @brief exec replaces the image and its authority. A child of the desktop is never allowed to retain window-server/service privileges across exec.
  */
@@ -1221,18 +1260,23 @@ int userland_exec_current_path(const char *path, uint32_t argc, char *const argv
     if (path_is_system_service_daemon(path)) {
         preserved_flags |= TASK_FLAG_SERVICE;
     }
-    task->flags = preserved_flags | TASK_FLAG_PENDING_LOAD;
+    task->flags = preserved_flags | TASK_FLAG_STARTED;
     copy_text(task->name_storage, sizeof(task->name_storage), task_name);
     task->name = task->name_storage;
-    copy_text(task->path, sizeof(task->path), path);
-    sched_set_task_exec_params(task->pid, argc, argv, envc, envp, data, data_len);
     syscall_close_cloexec_files(task);
 
     arch_fpu_task_init(task->fpu_state);
-    console_printf("[ntclks] exec pid=%u path=%s pty=%u pending cr3=0x%llx\n",
+    arch_fpu_restore(task->fpu_state);
+    kernel_free(prepared);
+    console_printf("[ntclks] exec pid=%u path=%s pty=%u committed cr3=0x%llx\n",
                    task->pid, path, task->pty_id,
                    (unsigned long long)(*sched_task_as(task)).cr3);
     return 0;
+failed:
+    address_space_destroy(sched_task_as(prepared));
+    sched_task_vma_release(prepared);
+    kernel_free(prepared);
+    return ret;
 }
 
 /**

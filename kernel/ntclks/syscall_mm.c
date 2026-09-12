@@ -7,6 +7,7 @@
 #include <ntclks/mm.h>
 #include <ntclks/paging.h>
 #include <ntclks/page_cache.h>
+#include <linux/mount.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
 #include <ntclks/syscall.h>
@@ -147,6 +148,7 @@ static int task_vma_file_attrs_match(const struct task_vma *vma,
 static void task_vma_clear(struct task_vma *vma)
 {
     if (vma) {
+        (void)storage_inode_put(vma->inode);
         *vma = (struct task_vma){0};
     }
 }
@@ -298,6 +300,10 @@ static int task_vma_record_mapping(struct task *task, uint64_t start, uint64_t e
     if (!slot) {
         return -LEONOS_ENOMEM;
     }
+    struct storage_inode_ref *inode = NULL;
+    int ret = file_node ? storage_inode_get(file_node, &inode) : 0;
+    if (ret < 0) return ret;
+    slot->inode = inode;
     slot->used = 1;
     slot->prot = (uint32_t)prot;
     slot->max_prot = max_prot;
@@ -907,6 +913,17 @@ int64_t syscall_mm_mmap(uint64_t addr, uint64_t len, uint64_t prot,
             return -LEONOS_EBADF;
         }
         if (!file_can_read(file)) return -LEONOS_EACCES;
+        int refresh = storage_inode_refresh(&file->node);
+        if (refresh < 0) return refresh;
+        if (file->node.flags & STORAGE_NODE_FLAG_EXT2) {
+            uint64_t mount_flags;
+            int ret = storage_node_mount_flags(&file->node, &mount_flags);
+            if (ret < 0) return ret;
+            if (mount_flags & MS_NOEXEC) {
+                if (prot & LINUX_PROT_EXEC) return -LEONOS_EPERM;
+                max_prot &= ~LINUX_PROT_EXEC;
+            }
+        }
         if ((flags & LINUX_MAP_SHARED) && !file_can_write(file)) {
             max_prot &= ~LINUX_PROT_WRITE;
             if (prot & LINUX_PROT_WRITE) return -LEONOS_EACCES;
@@ -1297,6 +1314,7 @@ int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
             return -LEONOS_ENOMEM;
         }
         *left = original;
+        storage_inode_retain(left->inode);
         left->end = addr;
     }
     if (end < original.end) {
@@ -1305,6 +1323,7 @@ int64_t syscall_mm_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
             return -LEONOS_ENOMEM;
         }
         *right = original;
+        storage_inode_retain(right->inode);
         right->start = end;
         if (right->flags & TASK_VMA_FLAG_FILE) {
             right->file_offset += end - original.start;
@@ -1387,6 +1406,7 @@ int64_t syscall_mm_munmap(uint64_t addr, uint64_t len)
                 return -LEONOS_ENOMEM;
             }
             *right = original;
+            storage_inode_retain(right->inode);
             right->start = remove_end;
             if (right->flags & TASK_VMA_FLAG_FILE) {
                 right->file_offset += remove_end - original.start;

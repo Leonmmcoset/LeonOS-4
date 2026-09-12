@@ -45,7 +45,9 @@ int main(void)
         "unix_nonblock_ioctl", "proc_status"
 #endif
     };
-    int failures = 0;
+    long online = sysconf(_SC_NPROCESSORS_ONLN);
+    printf("[linux-reference] online_cpus=%ld\n", online);
+    int failures = online != 2;
     for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         pid_t child = fork();
         if (child == 0) {

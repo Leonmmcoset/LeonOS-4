@@ -18,6 +18,10 @@
 static int fail_allocation;
 void *kernel_malloc(size_t size) { return fail_allocation ? NULL : malloc(size); }
 void kernel_free(void *memory) { free(memory); }
+/* These synthetic device/O_PATH nodes have no ext2 backing in this table test. */
+int storage_inode_get(const struct storage_node *node, struct storage_inode_ref **out)
+{ assert(!(node->flags & STORAGE_NODE_FLAG_EXT2)); *out = NULL; return 0; }
+int storage_inode_put(struct storage_inode_ref *inode) { assert(!inode); return 0; }
 void task_pipe_release(struct task_file *file) { (void)file; }
 void task_socket_release(struct task_file *file) { (void)file; }
 void task_inet_release(struct task_file *file) { (void)file; }
@@ -27,6 +31,7 @@ void input_evdev_release(uint32_t kind, uint64_t token, uint32_t pid)
 { (void)kind; (void)token; (void)pid; }
 uint32_t smp_current_cpu(void) { return 0; }
 void pty_reap_hungup(uint32_t id) { (void)id; }
+void pty_transfer_put(uint32_t id, uint32_t endpoint) { (void)id; (void)endpoint; }
 void kernel_spin_init(struct kernel_spinlock *lock) { lock->state = 0; }
 void kernel_spin_lock_irqsave(struct kernel_spinlock *lock, uint64_t *flags)
 { assert(!lock->state); lock->state = 1; *flags = 0; }

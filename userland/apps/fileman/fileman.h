@@ -150,6 +150,7 @@ extern uint32_t fileman_tree_scroll;
 extern uint8_t fileman_show_hidden;
 extern uint8_t fileman_settings_open;
 extern uint8_t fileman_settings_show_hidden;
+extern char fileman_elevated_path[LEONOS_FS_PATH_LEN];
 
 struct fileman_layout current_layout(void);
 void copy_text(char *dst, uint32_t dst_len, const char *src);
@@ -198,6 +199,25 @@ void show_open_with_for_path(const char *path, uint8_t set_default_only);
 void show_open_with_selected(void);
 void show_default_program_for_selected(void);
 int reload_dir(void);
+/* Elevation for protected directories. These never prompt unless a password is
+ * actually required, and they set the status bar themselves on failure. */
+int fileman_prompt_elevation(const char *path);
+int fileman_elevation_applies(const char *path);
+/* Present an already-loaded entry list as the current directory contents.
+ * Shared so the ordinary and elevated paths behave identically. */
+void present_directory(uint32_t count, const char *status_prefix,
+                       const char *status_suffix);
+int fileman_list_elevated(const char *path, struct leonos_dir_entry *out,
+                          uint32_t capacity, uint32_t *out_count);
+int fileman_mkdir_elevated(const char *parent, const char *name,
+                           struct leonos_dir_entry *out, uint32_t capacity,
+                           uint32_t *out_count);
+int fileman_rename_elevated(const char *from, const char *to,
+                            struct leonos_dir_entry *out, uint32_t capacity,
+                            uint32_t *out_count);
+int fileman_delete_elevated(const char *path, uint8_t is_dir,
+                            struct leonos_dir_entry *out, uint32_t capacity,
+                            uint32_t *out_count);
 void fileman_settings_load(void);
 void fileman_open_settings(void);
 void fileman_cancel_settings(void);

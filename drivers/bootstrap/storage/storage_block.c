@@ -192,7 +192,8 @@ static int storage_read_device(const struct storage_volume *volume, uint64_t lba
     }
 out:
     kernel_spin_unlock(&storage_transport_lock);
-    if (ret < 0) {
+    /* Pending DMA is resumed by the syscall dispatcher, not a device error. */
+    if (ret < 0 && ret != -LEONOS_EAGAIN) {
         console_printf("[storage] device read failed volume=%u kind=%u transport=%u lba=%llu sectors=%u ret=%d\n",
                        volume->volume_id, volume->kind, volume->transport,
                        (unsigned long long)start_lba, sector_count, ret);
@@ -207,6 +208,9 @@ static int storage_write_device(const struct storage_volume *volume, uint64_t lb
     if (!volume || !buffer || !sector_count) {
         return -30;
     }
+    /* Evict before submission: an error can still leave a partially written
+     * range. Only the successful ext2 caller republishes clean cache data. */
+    ext2_cache_invalidate_range(lba, sector_count);
     if (volume->kind == STORAGE_VOLUME_RAM) {
         uint64_t offset = lba * SECTOR_SIZE;
         uint64_t bytes = (uint64_t)sector_count * SECTOR_SIZE;

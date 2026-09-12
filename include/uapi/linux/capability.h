@@ -32,6 +32,7 @@ typedef struct __user_cap_data_struct *cap_user_data_t;
 #define CAP_SETGID 6
 #define CAP_SETUID 7
 #define CAP_SETPCAP 8
+#define CAP_LINUX_IMMUTABLE 9
 #define CAP_NET_BIND_SERVICE 10
 #define CAP_NET_ADMIN 12
 #define CAP_NET_RAW 13
@@ -39,11 +40,13 @@ typedef struct __user_cap_data_struct *cap_user_data_t;
 #define CAP_SYS_CHROOT 18
 #define CAP_SYS_PTRACE 19
 #define CAP_SYS_ADMIN 21
+#define CAP_SYS_BOOT 22
 #define CAP_SYS_RESOURCE 24
 #define CAP_SYS_TIME 25
 #define CAP_MKNOD 27
 #define CAP_AUDIT_WRITE 29
 #define CAP_SETFCAP 31
+#define CAP_MAC_OVERRIDE 32
 #define CAP_LAST_CAP 40
 
 #endif

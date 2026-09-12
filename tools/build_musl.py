@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Build pinned, unmodified musl and mimalloc using the Linux x86-64 ABI."""
+"""Build pinned musl with recorded platform patches and unmodified mimalloc."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
+import tempfile
+
+from fetch_auth_upstream import verify_source_tree
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISIONS = {
@@ -35,11 +40,36 @@ def main() -> None:
         if actual != expected:
             raise SystemExit(f"{name}: expected {expected}, found {actual}")
     build_dir.mkdir(parents=True, exist_ok=True)
+    patch = ROOT / "patches/musl/0001-enforce-password-file-lock.patch"
+    patch_digest = hashlib.sha256(patch.read_bytes()).hexdigest()
+    patched_source = build_dir / "sources" / patch_digest / "musl"
+    patched_source.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="musl-patch-", dir=build_dir) as temporary:
+        temporary = Path(temporary)
+        archive = temporary / "upstream.tar"
+        with archive.open("wb") as output:
+            run(["git", "-C", str(ROOT / "third_party/musl"), "archive", REVISIONS["musl"]], stdout=output)
+        expected = temporary / "musl"
+        expected.mkdir()
+        with tarfile.open(archive) as source:
+            source.extractall(expected, filter="data")
+        run(["patch", "--batch", "--forward", "-p1", "-i", str(patch)], cwd=expected)
+        if patched_source.exists():
+            with tarfile.open(archive, "w") as packed:
+                packed.add(expected, arcname="musl")
+            verify_source_tree(archive, patched_source, False)
+        else:
+            expected.rename(patched_source)
+    stamp = prefix / ".leonos-musl.json"
+    previous = json.loads(stamp.read_text()) if stamp.exists() else {}
+    patches = [{"path": str(patch.relative_to(ROOT)), "sha256": patch_digest}]
+    if previous.get("patches") != patches and (build_dir / "Makefile").exists():
+        run(["make", "clean"], cwd=build_dir)
     # No host includes or host libc are used in the resulting runtime.
     env = {**os.environ, "CC": "clang --target=x86_64-linux-musl -fuse-ld=lld",
            "AR": "llvm-ar", "RANLIB": "llvm-ranlib", "LIBCC": "",
            "CFLAGS": "-O2 -fno-stack-protector -mno-avx"}
-    run([str(ROOT / "third_party/musl/configure"), "--target=x86_64-linux-musl",
+    run([str(patched_source / "configure"), "--target=x86_64-linux-musl",
          f"--prefix={prefix}", f"--syslibdir={prefix / 'lib'}",
          "--disable-gcc-wrapper"], cwd=build_dir, env=env)
     run(["make", f"-j{args.jobs}"], cwd=build_dir, env=env)
@@ -64,7 +94,7 @@ def main() -> None:
         destination.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "third_party" / name / filename, destination / filename)
     (prefix / ".leonos-musl.json").write_text(
-        json.dumps({"sources": REVISIONS, "target": "x86_64-linux-musl"}, indent=2) + "\n")
+        json.dumps({"sources": REVISIONS, "patches": patches, "target": "x86_64-linux-musl"}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

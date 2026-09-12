@@ -274,7 +274,6 @@ int leonos_ui_edit_state_handle_key(struct leonos_ui_edit_state *state,
         return 0;
     }
     if (keycode == LEONOS_KEY_CAPS_LOCK) {
-        leonos_ui_caps_lock_event(keycode, pressed);
         return 0;
     }
     if (!pressed) {
@@ -870,7 +869,6 @@ int leonos_ui_text_area_state_handle_key(struct leonos_ui_text_area_state *state
         return 0;
     }
     if (keycode == LEONOS_KEY_CAPS_LOCK) {
-        leonos_ui_caps_lock_event(keycode, pressed);
         return 0;
     }
     if (!pressed) {

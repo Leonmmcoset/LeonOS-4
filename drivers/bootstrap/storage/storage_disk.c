@@ -1404,7 +1404,8 @@ int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
                    disk_id, partition_index, target ? target : "(auto)",
                    filesystem_name ? filesystem_name : "auto",
                    (unsigned long long)flags);
-    if (flags != 0 || storage_filesystem_from_name(filesystem_name, &requested_filesystem) < 0) {
+    if ((flags & ~(uint64_t)(MS_NOSUID | MS_NOEXEC)) ||
+        storage_filesystem_from_name(filesystem_name, &requested_filesystem) < 0) {
         console_printf("[storage] mount invalid arguments flags=%llu fs_name=%s\n",
                        (unsigned long long)flags,
                        filesystem_name ? filesystem_name : "(null)");
@@ -1457,6 +1458,10 @@ int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
         if (target && !storage_text_eq_ci(target, mounted_path)) {
             return -16;
         }
+        uint32_t mounted_id;
+        ret = storage_disk_partition_volume_id(disk_id, partition_index, &mounted_id);
+        if (ret < 0) return ret;
+        if (g_volumes[mounted_id].mount_flags != flags) return -16;
         if (out_volume_id) {
             (void)storage_disk_partition_volume_id(disk_id, partition_index,
                                                    out_volume_id);
@@ -1493,6 +1498,7 @@ int storage_mount_block_partition(uint32_t disk_id, uint32_t partition_index,
     storage_memzero(volume, sizeof(*volume));
     volume->volume_id = (uint8_t)volume_id;
     storage_volume_from_install_disk(volume, disk);
+    volume->mount_flags = flags;
     volume->source_disk_id = disk_id;
     volume->source_partition_index = partition_index;
     if (!target || !target[0]) {
@@ -1590,6 +1596,7 @@ int storage_unmount_path(const char *target, uint32_t *out_volume_id)
     if (ret < 0) {
         return ret;
     }
+    if (storage_inode_volume_busy(volume_id)) return -16;
     target_length = storage_strlen(target);
     for (uint32_t i = STORAGE_VOLUME_TARGET_ROOT; i < STORAGE_MAX_VOLUMES; ++i) {
         const struct storage_volume *volume = &g_volumes[i];
@@ -1603,6 +1610,8 @@ int storage_unmount_path(const char *target, uint32_t *out_volume_id)
     if (ret < 0) {
         return ret;
     }
+    ret = storage_sync_volume(volume_id);
+    if (ret < 0) return ret;
     if (g_active_volume == &g_volumes[volume_id]) {
         g_active_volume = &g_volumes[STORAGE_VOLUME_ROOT];
     }

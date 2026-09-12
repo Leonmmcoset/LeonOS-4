@@ -164,11 +164,18 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-linux-permissions",
     "test-storage-metadata",
     "test-storage-rename",
+    "test-storage-mkdir-mount",
+    "test-ext2-cache",
+    "test-ext2-performance",
+    "test-ext2-write-batch",
+    "test-storage-write-batch",
+    "test-installer-copy",
     "test-uapi",
     "test-musl-abi",
     "test-musl-distribution",
     "test-linux-rootfs",
     "test-linux-inventory",
+    "test-fastfetch-package",
     "test-linux-resources",
     "test-linux-threads",
     "test-linux-socket-batches",
@@ -178,6 +185,7 @@ BUILD_NUMBER_EXEMPT_TARGETS = frozenset({
     "test-installer-input",
     "test-installer-setup",
     "test-power",
+    "test-init-power",
     "test-oobe",
     "test-all",
 })
@@ -404,8 +412,6 @@ def user_app_sources(app: str) -> list[Path]:
                 "i_sdlmusic.c", "i_cdmus.c", "mus2mid.c",
             }
         )
-    if app == "installer":
-        sources.append(ROOT / "userland/apps/authd/accounts.c")
     return sorted(set(sources))
 
 
@@ -759,7 +765,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             ".leonos-musl.json", "lib/libc.so", "lib/libc.a", "lib/libmimalloc.so.3",
             "share/licenses/musl/COPYRIGHT", "share/licenses/mimalloc/LICENSE",
             "lib/mimalloc.o", "lib/crt1.o", "lib/Scrt1.o", "lib/crti.o", "lib/crtn.o")),
-        inputs=tuple([ROOT / "tools/build_musl.py", *collect(
+        inputs=tuple([ROOT / "tools/build_musl.py", ROOT / "tools/fetch_auth_upstream.py",
+            ROOT / "patches/musl/0001-enforce-password-file-lock.patch", *collect(
             "third_party/musl/**/*.c", "third_party/musl/**/*.h", "third_party/musl/**/*.s",
             "third_party/musl/**/*.in", "third_party/musl/configure", "third_party/musl/Makefile",
             "third_party/mimalloc/src/**/*.c", "third_party/mimalloc/include/**/*.h")]),
@@ -770,6 +777,41 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(
         name="test-musl-abi", depends_on=("musl",), kind="test",
         command=(PYTHON, "tools/test_musl_abi.py", "--prefix", relative(musl_prefix)),
+    ))
+    from tools.storage_tools import (FORMATTER_COMMANDS, UTIL_LINUX_COMMANDS,
+                                     UTIL_LINUX_LIBRARIES, COMPAT_LINKS, stage_filesystems)
+    auth_root = paths.out / "auth-upstream/root"
+    auth_libraries = (auth_root / "lib/libpam.so.0", auth_root / "lib/libcrypt.so.2")
+    auth_headers = (auth_root / "usr/include/security/pam_appl.h", auth_root / "usr/include/crypt.h")
+    graph.add(Target(
+        name="auth-upstream", depends_on=("musl",), kind="command",
+        outputs=(*auth_libraries, *auth_headers, auth_root / "usr/bin/sudo",
+                 auth_root / "usr/bin/passwd", auth_root / "bin/su",
+                 *(auth_root / name for name in (*UTIL_LINUX_COMMANDS, *UTIL_LINUX_LIBRARIES)),
+                 auth_root / "usr/lib/libuuid.a", auth_root / "usr/lib/libblkid.a",
+                 auth_root / "lib/security/pam_leonos_password.so"),
+        inputs=(ROOT / "configs/auth-upstream.json", ROOT / "tools/fetch_auth_upstream.py",
+                musl_prefix / ".leonos-musl.json",
+                ROOT / "patches/linux-pam/0001-reject-unavailable-salt-entropy.patch",
+                ROOT / "patches/linux-pam/0002-use-sized-libcrypt-entry-point.patch",
+                ROOT / "patches/linux-pam/0003-limits-handle-unimplemented-resources.patch",
+                ROOT / "userland/pam/pam_leonos_password.c",
+                ROOT / "userland/libc/src/auth_password.c",
+                ROOT / "tools/build_auth_upstream.py"),
+        command=(PYTHON, "tools/build_auth_upstream.py", "linux-pam", "sudo", "util-linux", "shadow",
+                 "--work", relative(paths.out / "auth-upstream"), "--musl", relative(musl_prefix)),
+    ))
+    storage_root = paths.out / "storage-upstream/root"
+    storage_package = storage_root / ".storage-package.json"
+    graph.add(Target(
+        name="storage-upstream", depends_on=("musl", "auth-upstream"), kind="command",
+        outputs=(storage_package, *(storage_root / name for name in FORMATTER_COMMANDS)),
+        inputs=(ROOT / "configs/storage-upstream.json", ROOT / "tools/build_storage_upstream.py",
+                ROOT / "tools/fetch_auth_upstream.py", ROOT / "tools/storage_tools.py",
+                ROOT / "tools/build_auth_upstream.py", musl_prefix / ".leonos-musl.json",
+                auth_root / "usr/lib/libuuid.a", auth_root / "usr/lib/libblkid.a"),
+        command=(PYTHON, "tools/build_storage_upstream.py", "--work", relative(paths.out / "storage-upstream"),
+                 "--musl", relative(musl_prefix), "--util-root", relative(auth_root)),
     ))
     musl_archive = musl_prefix / "lib/libc.a"
     musl_stamp = musl_prefix / ".leonos-musl.json"
@@ -871,9 +913,6 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     magic_database_stamp = paths.out / "userland/magic.stamp"
     busybox_source = ROOT / "third_party/busybox"
     busybox_config = ROOT / "userland/busybox/leonos.config"
-    busybox_shim = ROOT / "userland/busybox/leonos_shim.c"
-    busybox_storage = ROOT / "userland/busybox/block_storage.c"
-    busybox_headers = collect("userland/busybox/include/**/*.h")
     busybox_source_stamp = paths.out / "busybox/source-revision.txt"
     busybox_elf = paths.out / "userland/busybox.elf"
     busybox_stamp = paths.out / "userland/busybox.stamp"
@@ -883,11 +922,13 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     nano_elf = paths.out / "userland/nano.elf"
     nano_stamp = paths.out / "userland/nano.stamp"
     nano_work_dir = paths.out / "nano-work"
-    fastfetch_source = ROOT / "third_party/fastfetch"
-    fastfetch_port = ROOT / "userland/fastfetch"
+    fastfetch_license = ROOT / "userland/fastfetch/LICENSE"
     fastfetch_elf = paths.out / "userland/fastfetch.elf"
     fastfetch_stamp = paths.out / "userland/fastfetch.stamp"
-    fastfetch_work_dir = paths.out / "fastfetch-work"
+    from tools.package_fastfetch import CACHE as fastfetch_cache
+    fastfetch_prebuilt = (Path(os.environ["LEONOS_FASTFETCH_BINARY"]).resolve()
+        if os.environ.get("LEONOS_FASTFETCH_BINARY") else
+        None)
     sl_source = ROOT / "third_party/sl"
     sl_port = ROOT / "userland/sl"
     sl_elf = paths.out / "userland/sl.elf"
@@ -994,10 +1035,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         raise GraphError("third_party/busybox is missing; initialize the BusyBox source tree")
     if not (nano_source / "src/nano.c").is_file():
         raise GraphError("third_party/nano is missing; initialize the GNU nano source tree")
-    if not (fastfetch_source / "src/fastfetch.h").is_file() or not (fastfetch_source / "LICENSE").is_file():
-        raise GraphError("third_party/fastfetch is missing; initialize the Fastfetch source tree")
-    if not (fastfetch_port / "main.c").is_file() or not (fastfetch_port / "include/fastfetch_config.h").is_file():
-        raise GraphError("the LeonOS Fastfetch port metadata is missing")
+    if not fastfetch_license.is_file():
+        raise GraphError("userland/fastfetch/LICENSE is missing")
     if not (sl_source / "sl.c").is_file() or not (sl_source / "sl.h").is_file() or not (sl_source / "LICENSE").is_file():
         raise GraphError("third_party/sl is missing; initialize the sl source tree")
     if not (ROOT / "userland/libc/include/curses.h").is_file():
@@ -1402,6 +1441,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     ))
     # musl owns POSIX and startup; libleonos contains only OS extensions.
     libc_sources = collect("userland/libc/src/*.c", "userland/libc/src/*.S")
+    libc_sources += collect("userland/auth/*.c")
     libc_sources += [ROOT / "third_party/mbedtls/library" / source for source in MBEDTLS_SOURCES]
     libc_a = paths.out / "musl/lib/libleonos.a"
     static_libc_a = libc_a
@@ -1434,7 +1474,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     musl_stamp = musl_prefix / ".leonos-musl.json"
     musl_runtime_so = runtime_so
     musl_extension_archive = libc_a
-    musl_cflags = list(cflags_user_libc)
+    musl_cflags = [cflags_user_libc[0], "-I", relative(auth_root / "usr/include"),
+                  *cflags_user_libc[1:]]
     musl_sources = list(libc_sources)
     musl_sources += [zlib_source / source for source in ZLIB_SOURCES]
     musl_sources += [libpng_source / source for source in LIBPNG_SOURCES]
@@ -1449,21 +1490,22 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             graph, paths, f"compile:musl-runtime:{relative(source)}", source, "musl-runtime",
             ([cc, "--target=x86_64-linux-musl", "-fPIC", "-Iinclude/uapi"]
              if source.suffix == ".S" else flags),
-            (autoconf, musl_stamp, libpng_config, gbk_table_header),
+            (autoconf, musl_stamp, libpng_config, gbk_table_header, *auth_headers),
             kind="assemble" if source.suffix == ".S" else "compile"))
     graph.add(Target(
         name="musl-runtime", outputs=(musl_runtime_so,),
-        inputs=tuple([*musl_objects, mimalloc_lib, musl_lib, compiler_rt_archive]),
+        inputs=tuple([*musl_objects, mimalloc_lib, musl_lib, compiler_rt_archive, *auth_libraries]),
         kind="link", command=(ld, "-shared", "--no-undefined", "--hash-style=both",
             "-soname", "libleonos.so.2", "-o", relative(musl_runtime_so),
             *map(relative, musl_objects), "-L", relative(musl_prefix / "lib"),
-            "-l:libmimalloc.so.3", "-lc",
+            "-l:libmimalloc.so.3", *map(relative, auth_libraries), "-lc",
             relative(compiler_rt_archive)),
     ))
     graph.add(Target(
         name="musl-extension-archive", outputs=(musl_extension_archive,),
-        inputs=tuple(musl_objects), kind="link",
-        command=(ar, "rcs", relative(musl_extension_archive), *map(relative, musl_objects)),
+        inputs=(*musl_objects, ROOT / "tools/rebuild_archive.py"), kind="link",
+        command=(PYTHON, "tools/rebuild_archive.py", "--ar", ar,
+                 "--output", relative(musl_extension_archive), *map(relative, musl_objects)),
     ))
     installer_objects = []
     for source in sorted(musl_sources):
@@ -1476,15 +1518,16 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         installer_objects.append(add_compile(
             graph, paths, f"compile:installer-runtime:{relative(source)}", source,
             "musl-installer-runtime", flags,
-            (installer_autoconf, musl_stamp, libpng_config, gbk_table_header),
+            (installer_autoconf, musl_stamp, libpng_config, gbk_table_header, *auth_headers),
             kind="assemble" if source.suffix == ".S" else "compile"))
     graph.add(Target(name="installer-runtime", outputs=(installer_runtime_so,),
-                     inputs=tuple([*installer_objects, musl_lib, mimalloc_lib, compiler_rt_archive]),
+                     inputs=tuple([*installer_objects, musl_lib, mimalloc_lib, compiler_rt_archive, *auth_libraries]),
                      kind="link", command=musl_link.shared(musl_prefix, installer_runtime_so,
-                         installer_objects, (compiler_rt_archive,), soname="libleonos.so.2")))
+                         installer_objects, (compiler_rt_archive, *auth_libraries), soname="libleonos.so.2")))
     graph.add(Target(name="archive:installer-libc", outputs=(installer_libc_a,),
-                     inputs=tuple(installer_objects), kind="link",
-                     command=(ar, "rcs", str(installer_libc_a), *map(str, installer_objects))))
+                     inputs=(*installer_objects, ROOT / "tools/rebuild_archive.py"), kind="link",
+                     command=(PYTHON, "tools/rebuild_archive.py", "--ar", ar,
+                              "--output", str(installer_libc_a), *map(str, installer_objects))))
     for name, dependency in (("runtime", "musl-runtime"), ("runtime-loader", "musl"),
                              ("archive:libc", "musl-extension-archive"),
                              ("archive:libc-static", "musl-extension-archive")):
@@ -1772,14 +1815,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             busybox_source_stamp,
             ROOT / "tools/build_busybox.py",
             busybox_config,
-            busybox_shim,
-            busybox_storage,
-            *busybox_headers,
-            ROOT / "tools/musl_link.py",
-            libc_a,
+            ROOT / "tools/fetch_auth_upstream.py",
+            musl_stamp,
             musl_archive,
         ]),
-        depends_on=("busybox-source-revision", "musl", "archive:libc"),
+        depends_on=("busybox-source-revision", "musl"),
         kind="compile",
         command=(
             PYTHON,
@@ -1790,12 +1830,6 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             "userland/busybox/leonos.config",
             "--musl-prefix",
             relative(musl_prefix),
-            "--leonos-libc-include",
-            "userland/libc/include",
-            "--leonos-include",
-            "include",
-            "--leonos-lib",
-            relative(libc_a),
             "--musl-lib",
             relative(musl_archive),
             "--output",
@@ -1806,6 +1840,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             relative(busybox_links),
             *compile_option_args,
             *linker_option_args,
+            "--official-source",
         ),
     ))
 
@@ -1849,50 +1884,24 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ),
     ))
 
-    fastfetch_inputs = collect(
-        "third_party/fastfetch/src/common/**/*.c", "third_party/fastfetch/src/common/**/*.h",
-        "third_party/fastfetch/src/detection/**/*.c", "third_party/fastfetch/src/detection/**/*.h",
-        "third_party/fastfetch/src/logo/**/*.c", "third_party/fastfetch/src/logo/**/*.h",
-        "third_party/fastfetch/src/logo/**/*.inc", "third_party/fastfetch/src/logo/**/*.txt",
-        "third_party/fastfetch/src/modules/**/*.c", "third_party/fastfetch/src/modules/**/*.h",
-        "third_party/fastfetch/src/fastfetch.h", "third_party/fastfetch/LICENSE",
-        "userland/fastfetch/**/*.c", "userland/fastfetch/**/*.h", "userland/fastfetch/**/*.md",
-        "tools/build_fastfetch.py", "tools/musl_link.py",
-    )
     graph.add(Target(
         name="fastfetch",
-        outputs=(fastfetch_elf, fastfetch_stamp),
-        inputs=tuple([*fastfetch_inputs, ROOT / "tools/musl_link.py", runtime_so, musl_scrt_obj, musl_crti_obj]),
-        depends_on=("runtime", "runtime-loader"),
-        kind="compile",
+        outputs=(fastfetch_elf, fastfetch_stamp, fastfetch_cache),
+        inputs=(ROOT / "tools/package_fastfetch.py", *((fastfetch_prebuilt,) if fastfetch_prebuilt else ())),
+        kind="generate",
         command=(
             PYTHON,
-            "tools/build_fastfetch.py",
-            "--source",
-            "third_party/fastfetch",
-            "--port",
-            "userland/fastfetch",
-            "--musl-prefix",
-            relative(musl_prefix),
-            "--leonos-libc-include",
-            "userland/libc/include",
-            "--leonos-include",
-            "include",
-            "--leonos-lib",
-            relative(runtime_so),
-            "--musl-lib",
-            relative(musl_archive),
-            "--work-dir",
-            relative(fastfetch_work_dir),
+            "tools/package_fastfetch.py",
+            "--cache", str(fastfetch_cache),
+            *(("--source", str(fastfetch_prebuilt)) if fastfetch_prebuilt else ()),
             "--output",
             relative(fastfetch_elf),
             "--stamp",
             relative(fastfetch_stamp),
-            "--dynamic",
-            *compile_option_args,
-            *linker_option_args,
         ),
     ))
+    graph.add(Target(name="test-fastfetch-package", depends_on=("fastfetch",), kind="test",
+                     command=(PYTHON, "tools/test_fastfetch_package.py")))
 
     sl_inputs = collect(
         "third_party/sl/sl.c", "third_party/sl/sl.h", "third_party/sl/LICENSE",
@@ -2452,6 +2461,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     component_metadata = paths.out / "generated/component-selection.json"
     sdk_inputs_list: list[Path] = [
         ROOT / "tools/package_devtools.py",
+        paths.out / "auth-upstream/linux-pam-build.json",
+        paths.out / "auth-upstream/libxcrypt-build.json",
         ROOT / "third_party/musl/COPYRIGHT",
         ROOT / "third_party/zlib/LICENSE",
         ROOT / "third_party/libpng/LICENSE",
@@ -2479,10 +2490,16 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         ROOT / "tools/musl_link.py",
         *collect("devtools/**/*"),
     ]
-    sdk_depends = ["musl", "archive:libc", "archive:zlib", "archive:libpng"]
+    sdk_depends = ["musl", "auth-upstream", "archive:libc", "archive:zlib", "archive:libpng"]
     sdk_command: list[str] = [
         PYTHON,
         "tools/package_devtools.py",
+        "--pam-root",
+        relative(paths.out / "auth-upstream/root"),
+        "--pam-build-metadata",
+        relative(paths.out / "auth-upstream/linux-pam-build.json"),
+        "--crypt-build-metadata",
+        relative(paths.out / "auth-upstream/libxcrypt-build.json"),
         "--sdk-root",
         "devtools",
         "--leonos-lib",
@@ -2682,6 +2699,11 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                         f"{layout.USR_BIN}/{component.id}", str(layout.app_exec_path(component.id)))
                     if command.is_symlink() and os.readlink(command) == expected:
                         remove_staging_path(command)
+                    for name in layout.tool_payload_paths(component.id):
+                        stale = paths.staging / name
+                        if stale.exists() or stale.is_symlink():
+                            context.detail(f"remove disabled component staging: {relative(stale)}")
+                            remove_staging_path(stale)
                 continue
             if component.kind == "tool":
                 if selected:
@@ -2749,8 +2771,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     rootfs_stamp = paths.out / "generated/rootfs-layout.json"
     rootfs_seed_files = tuple(sorted(p for p in rootfs_seed.rglob("*") if p.is_file()))
     rootfs_outputs = (rootfs_stamp, *(paths.staging / p.relative_to(rootfs_seed)
-                                     for p in rootfs_seed_files),
-                      paths.staging / layout.VAR_LIB_LEONOS / "users.db")
+                                     for p in rootfs_seed_files))
 
     def stage_rootfs(context: ActionContext) -> None:
         layout.layout_directories(paths.staging)
@@ -2758,14 +2779,22 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
             destination = paths.staging / source.relative_to(rootfs_seed)
             if destination.is_symlink():
                 raise GraphError(f"rootfs seed destination is a symlink: {destination}")
+            destination.unlink(missing_ok=True)
             context.copy(source, destination)
-            destination.chmod(0o644)
-        # Live media has no accounts; installer provisions the target AUS2 DB.
+            destination.chmod(0o600 if source.name in {"shadow", "gshadow"} else
+                              0o440 if source.name == "sudoers" else 0o644)
+        for directory in ("desktop", "documents", "downloads"):
+            skeleton = paths.staging / "etc/skel" / directory
+            skeleton.mkdir(parents=True, exist_ok=True)
+            skeleton.chmod(0o700)
+        # Retire only the known empty seed. Never overwrite populated legacy data.
         database = paths.staging / layout.VAR_LIB_LEONOS / "users.db"
         if database.is_symlink():
             raise GraphError(f"rootfs account seed is a symlink: {database}")
-        database.write_bytes(bytes.fromhex("3253554100000000"))
-        database.chmod(0o600)
+        if database.exists():
+            if database.read_bytes() != bytes.fromhex("3253554100000000"):
+                raise GraphError(f"populated legacy account database requires recovery: {database}")
+            database.unlink()
         ensure_parent(context, rootfs_stamp,
                       json.dumps(layout.ROOT_DIRECTORIES, sort_keys=True) + "\n")
 
@@ -2773,9 +2802,82 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                      inputs=(*rootfs_seed_files, layout.ROOTFS_CONTRACT,
                              ROOT / "tools/leonos_layout.py"),
                      depends_on=("staging-prune",), kind="generate",
-                     action=stage_rootfs, action_key="rootfs-alpine-aus2-v2"))
+                     action=stage_rootfs, action_key="rootfs-pam-shadow-v3"))
     esp_names.append("esp:rootfs")
     esp_outputs.extend(rootfs_outputs)
+    auth_payload_stamp = paths.out / "generated/auth-payload.json"
+    auth_payload_fdisk = paths.staging / "usr/sbin/fdisk"
+    auth_payload_tools = tuple(paths.staging / name for name in
+                               (*UTIL_LINUX_COMMANDS, *UTIL_LINUX_LIBRARIES))
+
+    def stage_auth_payload(context: ActionContext) -> None:
+        source_fdisk = auth_root / "usr/sbin/fdisk"
+        if source_fdisk.is_symlink() or not source_fdisk.is_file():
+            raise GraphError(f"upstream util-linux fdisk is missing: {source_fdisk}")
+        for name in (*UTIL_LINUX_COMMANDS, *UTIL_LINUX_LIBRARIES):
+            source = auth_root / name
+            if not source.is_file() or not source.resolve().is_relative_to(auth_root.resolve()):
+                raise GraphError(f"upstream util-linux payload is missing or escapes its root: {source}")
+        for source in auth_root.rglob("*"):
+            if source.relative_to(auth_root).parts[0] not in {"bin", "sbin", "lib", "usr"}:
+                continue
+            destination = paths.staging / source.relative_to(auth_root)
+            if destination.is_symlink() or (source.is_symlink() and destination.exists()):
+                remove_staging_path(destination)
+        for directory in ("bin", "sbin", "lib", "usr"):
+            shutil.copytree(auth_root / directory, paths.staging / directory,
+                            symlinks=True, dirs_exist_ok=True)
+        # Reviewable product policy overrides upstream example configurations.
+        for source in (auth_root / "etc").rglob("*"):
+            if source.is_file() and not (rootfs_seed / source.relative_to(auth_root)).exists():
+                destination = paths.staging / source.relative_to(auth_root)
+                if destination.is_symlink():
+                    raise GraphError(f"authentication configuration symlink: {destination}")
+                destination.unlink(missing_ok=True)
+                context.copy(source, destination)
+        for directory, mode in (("etc/sudoers.d", 0o750), ("var/lib/sudo", 0o700),
+                                ("run/sudo", 0o711), ("run/sudo/ts", 0o700)):
+            destination = paths.staging / directory
+            if destination.is_symlink():
+                raise GraphError(f"authentication directory symlink: {destination}")
+            destination.mkdir(parents=True, exist_ok=True)
+            destination.chmod(mode)
+        for obsolete in ("usr/bin/authd", "usr/lib/leonos/apps/authd"):
+            remove_staging_path(paths.staging / obsolete)
+        for name in ("usr/bin/sudo", "usr/bin/passwd", "bin/su", "sbin/unix_chkpwd"):
+            (paths.staging / name).chmod(0o4755)
+        if not auth_payload_fdisk.is_file():
+            raise GraphError(f"upstream util-linux fdisk is missing: {auth_payload_fdisk}")
+        ensure_parent(context, auth_payload_stamp, json.dumps({
+            "authority": "passwd/shadow/group/gshadow", "execution": "upstream sudo/su",
+            "manifest": json.loads((ROOT / "configs/auth-upstream.json").read_text()),
+        }, indent=2) + "\n")
+
+    graph.add(Target(name="esp:auth", outputs=(auth_payload_stamp, *auth_payload_tools),
+                     inputs=(ROOT / "configs/auth-upstream.json", *rootfs_seed_files,
+                             auth_root / "usr/sbin/fdisk"),
+                     depends_on=("auth-upstream", "esp:rootfs"), kind="generate", always=True,
+                     action=stage_auth_payload, action_key="upstream-auth-production-v1"))
+    esp_names.append("esp:auth")
+    esp_outputs.extend((auth_payload_stamp, *auth_payload_tools))
+    storage_payload_stamp = paths.out / "generated/storage-payload.json"
+    storage_payload_files = tuple(paths.staging / name for name in FORMATTER_COMMANDS)
+    boot_copy_script = paths.staging / "usr/sbin/leonos-grub-installer"
+
+    def stage_storage_payload(context: ActionContext) -> None:
+        stage_filesystems(storage_root, paths.staging)
+        source = ROOT / "userland/storage/leonos-grub-installer"
+        context.copy(source, boot_copy_script)
+        boot_copy_script.chmod(0o755)
+        ensure_parent(context, storage_payload_stamp, storage_package.read_text())
+
+    graph.add(Target(name="esp:storage", outputs=(storage_payload_stamp, boot_copy_script, *storage_payload_files),
+                     inputs=(storage_package, ROOT / "tools/storage_tools.py",
+                             ROOT / "userland/storage/leonos-grub-installer"),
+                     depends_on=("storage-upstream", "esp:rootfs"), kind="generate",
+                     action=stage_storage_payload, action_key="official-storage-v1", always=True))
+    esp_names.append("esp:storage")
+    esp_outputs.extend((storage_payload_stamp, boot_copy_script, *storage_payload_files))
     terminal_payload_stamp = paths.out / "generated/terminal-payload.json"
 
     def stage_terminal_packages(context: ActionContext) -> None:
@@ -3116,10 +3218,19 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         esp_outputs.append(nano_license_destination)
     if component_enabled("fastfetch", "image"):
         fastfetch_license_destination = paths.staging / layout.LICENSES / "fastfetch" / "LICENSE"
-        target = add_copy(graph, "esp:fastfetch:LICENSE", fastfetch_source / "LICENSE",
+        target = add_copy(graph, "esp:fastfetch:LICENSE", fastfetch_license,
             fastfetch_license_destination)
         esp_names.append(target.name)
         esp_outputs.append(fastfetch_license_destination)
+        fastfetch_config_destination = paths.staging / "etc/fastfetch/config.jsonc"
+        target = add_copy(graph, "esp:fastfetch:config", ROOT / "userland/fastfetch/config.jsonc",
+            fastfetch_config_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(fastfetch_config_destination)
+        fastfetch_manifest_destination = paths.staging / layout.LICENSES / "fastfetch" / "package.json"
+        target = add_copy(graph, "esp:fastfetch:package", fastfetch_stamp, fastfetch_manifest_destination)
+        esp_names.append(target.name)
+        esp_outputs.append(fastfetch_manifest_destination)
     if component_enabled("sl", "image"):
         sl_destination = paths.staging / layout.USR_BIN / "sl"
         target = add_copy(graph, "esp:sl", sl_elf, sl_destination)
@@ -3295,7 +3406,15 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     for link, target in layout.builtin_command_links(
         lambda package: component_enabled(package, "image")):
         layout_link_map[link] = target
+    for command in ("sudo", "sudoedit", "passwd", "su"):
+        layout_link_map.pop(f"usr/bin/{command}", None)
+    layout_link_map["usr/bin/su"] = "../../bin/su"
+    # Keep old system-tool paths usable without a second binary or BusyBox
+    # dispatch. util-linux --sbindir now installs both under /usr/sbin.
+    layout_link_map.update(COMPAT_LINKS)
     for app in staged_user_apps:
+        if app in {"sudo", "su"}:
+            continue
         link = f"{layout.USR_BIN}/{app}"
         layout_link_map[link] = layout.relative_symlink_target(
             link, str(layout.app_exec_path(app))
@@ -3350,7 +3469,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                              *((busybox_links,) if component_enabled("busybox", "image") else ()),
                              ROOT / "tools/leonos_layout.py"),
                      depends_on=tuple(esp_names), kind="generate",
-                     action=stage_layout_links, action_key="layout-links-v4", always=True))
+                     action=stage_layout_links, action_key="layout-links-v5-storage", always=True))
     esp_names.append("esp:layout-links")
     esp_outputs.extend(layout_outputs)
     # staging-prune removes obsolete pre-FHS trees before any staging producer
@@ -3372,10 +3491,12 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     raw = paths.images / "leonos4.raw"
     esp_fat = paths.images / "esp.fat"
     root_ext2 = paths.images / "root.ext2"
+    test_account_inputs = (ROOT / "tools/image_test_accounts.py",
+                           *sorted((ROOT / "system/test-accounts").glob("*")))
     vmdk_language = "zh" if config_bool(values, "CONFIG_VMDK_DEFAULT_LANGUAGE_ZH") else "en"
     graph.add(Target(name="image-vmdk", outputs=(vmdk, raw, esp_fat, root_ext2),
                      inputs=tuple([*esp_outputs, config_path, ROOT / "tools/make_image.py", ROOT / "tools/make_ext2_root.py",
-                                    layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py"]),
+                                    layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py", *test_account_inputs]),
                      depends_on=("esp",), kind="generate", command=(PYTHON, "tools/make_image.py", "--out",
                      relative(vmdk), "--raw", relative(raw), "--esp-tree",
                      relative(paths.staging), "--esp-image", relative(esp_fat),
@@ -3390,7 +3511,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     graph.add(Target(name="desktop-live-root", outputs=(desktop_root,),
                      inputs=(*esp_outputs, ROOT / "tools/make_live_root.py",
                              ROOT / "tools/make_installer_root.py",
-                             ROOT / "tools/make_ext2_root.py", layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py", ROOT / "tools/make_image.py"),
+                             ROOT / "tools/make_ext2_root.py", layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py", ROOT / "tools/make_image.py", *test_account_inputs),
                      depends_on=("esp",), kind="generate", command=(
                          PYTHON, "tools/make_live_root.py", "--tree", relative(paths.staging),
                          "--out", relative(desktop_root))))
@@ -3416,6 +3537,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         installer_runtime_so,
         *(installer_policy_elfs.values()),
         ROOT / "tools/make_installer_root.py",
+        ROOT / "tools/image_test_accounts.py",
         ROOT / "tools/make_ext2_root.py", layout.ROOTFS_CONTRACT, ROOT / "tools/leonos_layout.py",
     ]), depends_on=(
         "esp",
@@ -3499,7 +3621,7 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         checkpoint_root = stage / "install/root.fat"
         root_target = f"musl-checkpoint-root:{suffix}"
         live_apps = tuple(paths.out / f"musl/userland/{app}.elf"
-                          for app in ("authd", "imd", "windowd", "desktop", "installer"))
+                          for app in ("imd", "windowd", "desktop", "installer"))
         diagnostic_inputs = (
             tuple(paths.out / f"musl/tests/musl-abi-{mode}.elf" for mode in ("static", "dynamic"))
             if suffix == "probes" else
@@ -3571,6 +3693,8 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
         "image-iso",
     ), kind="command", command=qemu_command(paths, values, debug=True, iso=True)))
     graph.add(Target(name="installer", depends_on=("all", "installer-root", "installer-image"), group=True, kind="aggregate"))
+    graph.add(Target(name="images-iso", depends_on=("image-iso", "installer-image"),
+                     group=True, kind="aggregate"))
 
     release_dir = paths.out / "release"
     release_stamp = release_dir / ".release-stamp"
@@ -3662,6 +3786,23 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
     # ---- 主机单元测试和 QEMU 冒烟测试 ----
     graph.add(Target(name="test-oobe", kind="command", always=True,
                      command=(PYTHON, "tools/test_oobe.py")))
+    # The elevation gates are the ones a regression would turn into a privilege
+    # escalation, so they run as a first-class host target.
+    graph.add(Target(name="test-sudo-policy",
+                     inputs=(ROOT / "tools/test_sudo_policy.py",
+                             ROOT / "tools/tests/sudo_policy_test.c",
+                             ROOT / "tools/tests/authd_sudo_test.c",
+                             ROOT / "tools/tests/sudo_security_test.c",
+                             ROOT / "tools/tests/sudo_spawn_test.c",
+                             ROOT / "tools/tests/sudo_client_test.c",
+                             ROOT / "tools/tests/sudod_paths_test.c",
+                             ROOT / "tools/tests/sudo_result_test.c",
+                             ROOT / "tools/tests/sudo_password_test.c",
+                             ROOT / "tools/tests/legacy_authd/sudo_policy.h",
+                             ROOT / "tools/tests/legacy_authd/authd_sudo.c",
+                             ROOT / "tools/tests/legacy_authd/authd_sudo.h"),
+                     kind="command", always=True,
+                     command=(PYTHON, "tools/test_sudo_policy.py")))
     graph.add(Target(name="test-installer-setup", kind="command", always=True,
                      command=(PYTHON, "tools/test_installer_setup.py")))
     graph.add(Target(name="test-installer-input",
@@ -3724,12 +3865,27 @@ def build_graph(paths: BuildPaths, config_path: Path | None = None) -> BuildGrap
                      command=(PYTHON, "tools/test_linux_pty.py")))
     graph.add(Target(name="test-power", kind="command", always=True,
                      command=(PYTHON, "tools/test_power.py")))
+    graph.add(Target(name="test-init-power", kind="command", always=True,
+                     command=(PYTHON, "tools/test_init_power.py")))
     graph.add(Target(name="test-linux-permissions", kind="command", always=True,
                      command=(PYTHON, "tools/test_linux_permissions.py")))
     graph.add(Target(name="test-storage-metadata", kind="command", always=True,
                      command=(PYTHON, "tools/test_storage_metadata.py")))
     graph.add(Target(name="test-storage-rename", kind="command", always=True,
                      command=(PYTHON, "tools/test_storage_rename.py")))
+    graph.add(Target(name="test-storage-mkdir-mount", kind="command", always=True,
+                     command=(PYTHON, "tools/test_storage_mkdir_mount.py")))
+    graph.add(Target(name="test-ext2-cache", kind="command", always=True,
+                     command=(PYTHON, "tools/test_ext2_cache.py")))
+    graph.add(Target(name="test-ext2-performance", kind="command", always=True,
+                     command=(PYTHON, "tools/test_ext2_performance.py", "--output",
+                              relative(paths.out / "ext2-performance.json"))))
+    graph.add(Target(name="test-ext2-write-batch", kind="command", always=True,
+                     command=(PYTHON, "tools/test_ext2_write_batch.py")))
+    graph.add(Target(name="test-storage-write-batch", kind="command", always=True,
+                     command=(PYTHON, "tools/test_storage_write_batch.py")))
+    graph.add(Target(name="test-installer-copy", kind="command", always=True,
+                     command=(PYTHON, "tools/test_installer_copy.py")))
     for suffix, script in (("linux-rootfs", "test_linux_rootfs.py"),
                            ("linux-inventory", "test_linux_inventory.py"),
                            ("linux-resources", "test_linux_resources.py"),
@@ -4659,12 +4815,12 @@ def parser() -> argparse.ArgumentParser:
     generate.add_argument("file")
     add_config_options(generate)
     test = commands.add_parser("test")
-    test.add_argument("item", choices=("license-server", "los2w", "component-config", "svga", "installer-input", "installer-setup", "oobe",
+    test.add_argument("item", choices=("license-server", "los2w", "component-config", "svga", "installer-input", "installer-setup", "oobe", "sudo-policy",
                                        "qmp-terminal", "qmp-pleditor", "qmp-tcc", "qmp-fastfetch", "qmp-sl", "qmp-less",
                                        "qmp-dynlinkerror", "qmp-cmd", "qmp-abittest", "qmp-stardust", "qmp-glxgears",
                                        "linux-abi-contract", "linux-memory", "linux-pty", "linux-permissions",
                                        "linux-ioctl-cloexec", "python-package",
-                                       "storage-metadata", "storage-rename", "musl-abi", "uapi", "all"))
+                                       "storage-metadata", "storage-rename", "storage-mkdir-mount", "musl-abi", "uapi", "all"))
     add_config_options(test)
     config = commands.add_parser("config")
     config.add_argument("action", choices=("list", "save", "load", "reset", "import", "export"))

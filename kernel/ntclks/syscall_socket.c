@@ -10,6 +10,7 @@
 #include <ntclks/futex.h>
 #include <ntclks/time.h>
 #include <ntclks/permissions.h>
+#include <ntclks/pty.h>
 #include <leonos/fs.h>
 #include <leonos/net.h>
 #include <linux/socket.h>
@@ -34,6 +35,7 @@ struct unix_rights {
     uint64_t end;
     uint32_t count;
     struct task_file *files[UNIX_SOCKET_FD_TRANSFER_MAX];
+    struct task_pty_fd ptys[UNIX_SOCKET_FD_TRANSFER_MAX];
 };
 
 struct unix_packet {
@@ -150,6 +152,10 @@ static void unix_rights_free(struct unix_rights *rights)
 {
     if (!rights) return;
     for (uint32_t i = 0; i < rights->count; ++i) {
+        if (!rights->files[i]) {
+            task_pty_release_entry(&rights->ptys[i]);
+            continue;
+        }
         --rights->files[i]->scm_references;
         task_file_put(rights->files[i]);
     }
@@ -421,7 +427,8 @@ void task_socket_collect(void)
         s->gc_roots = s->refs;
         s->gc_mark = 0;
         for (struct unix_rights *r = s->rights; r; r = r->next)
-            for (unsigned j = 0; j < r->count; ++j) r->files[j]->scm_gc_seen = 0;
+            for (unsigned j = 0; j < r->count; ++j)
+                if (r->files[j]) r->files[j]->scm_gc_seen = 0;
     }
     /* References owned only by queued SCM files and pending accepts are
      * graph edges. Everything else is an externally reachable root. */
@@ -435,6 +442,7 @@ void task_socket_collect(void)
         for (struct unix_rights *r = s->rights; r; r = r->next) {
             for (unsigned j = 0; j < r->count; ++j) {
                 struct task_file *f = r->files[j];
+                if (!f) continue;
                 struct unix_socket *p = unix_from_file(f);
                 if (f->scm_gc_seen) continue;
                 f->scm_gc_seen = 1;
@@ -1082,10 +1090,15 @@ static int unix_message_rights(struct task *task, const struct msghdr *message,
             if (credentials->uid == UINT32_MAX || credentials->gid == UINT32_MAX) {
                 result = -LEONOS_EINVAL; break;
             }
-            if (task->euid != 0 &&
-                (credentials->pid != (int32_t)sched_task_tgid(task) ||
-                 (credentials->uid != task->uid && credentials->uid != task->euid && credentials->uid != task->suid) ||
-                 (credentials->gid != task->gid && credentials->gid != task->egid && credentials->gid != task->sgid))) {
+            /* Linux v6.12 net/core/scm.c: each forged field requires its
+             * own effective capability, including for an euid-zero sender. */
+            uint64_t capabilities = task->cap_effective;
+            if ((credentials->pid != (int32_t)sched_task_tgid(task) &&
+                 !(capabilities & (1ULL << CAP_SYS_ADMIN))) ||
+                (credentials->uid != task->uid && credentials->uid != task->euid &&
+                 credentials->uid != task->suid && !(capabilities & (1ULL << CAP_SETUID))) ||
+                (credentials->gid != task->gid && credentials->gid != task->egid &&
+                 credentials->gid != task->sgid && !(capabilities & (1ULL << CAP_SETGID)))) {
                 result = -LEONOS_EPERM; break;
             }
             if (credentials->pid <= 0 || !sched_find((uint32_t)credentials->pid)) {
@@ -1105,7 +1118,12 @@ static int unix_message_rights(struct task *task, const struct msghdr *message,
             for (unsigned j = 0; j < sizeof(fd); ++j)
                 ((uint8_t *)&fd)[j] = bytes[CMSG_LEN(0) + i * sizeof(fd) + j];
             struct task_file *source = task_file_for_fd(task, fd);
-            if (!source) { result = -LEONOS_EBADF; break; }
+            if (!source) {
+                result = task_pty_export_fd(task, fd, &rights->ptys[rights->count]);
+                if (result < 0) break;
+                rights->files[rights->count++] = NULL;
+                continue;
+            }
             struct task_file *held = task_file_get(source);
             if (!held) { result = -LEONOS_ENOMEM; break; }
             ++held->scm_references;
@@ -1288,9 +1306,12 @@ complete_message: ;
         uint32_t count = 0;
         uint64_t limit = capacity >= CMSG_LEN(0) ? (capacity - CMSG_LEN(0)) / sizeof(int) : 0;
         while (count < rights->count && count < limit) {
-            int fd = unix_clone_fd_to_task(task, rights->files[count]);
+            int fd = rights->files[count] ? unix_clone_fd_to_task(task, rights->files[count]) :
+                task_pty_import_fd(task, &rights->ptys[count],
+                                   flags & MSG_CMSG_CLOEXEC ? LEONOS_FD_CLOEXEC : 0);
             if (fd < 0) break;
-            if (flags & MSG_CMSG_CLOEXEC) task_descriptor_for_fd(task, fd)->fd_flags = LEONOS_FD_CLOEXEC;
+            if ((flags & MSG_CMSG_CLOEXEC) && rights->files[count])
+                task_descriptor_for_fd(task, fd)->fd_flags = LEONOS_FD_CLOEXEC;
             uint8_t *slot = control + CMSG_LEN(0) + count * sizeof(int);
             for (unsigned i = 0; i < sizeof(int); ++i) slot[i] = ((uint8_t *)&fd)[i];
             ++count;

@@ -49,6 +49,13 @@ static uint32_t evdev_device_index(uint32_t device_kind)
     return INPUT_EVDEV_DEVICES;
 }
 
+static uint8_t caps_lock_active;
+
+uint8_t input_caps_lock_active(void)
+{
+    return __atomic_load_n(&caps_lock_active, __ATOMIC_RELAXED);
+}
+
 static void evdev_set_key(uint16_t code, int32_t value)
 {
     if (code < KEY_CNT && value != 0) {
@@ -155,6 +162,7 @@ void input_init(void)
     tail = 0;
     evdev_next_sequence = 1;
     evdev_mouse_buttons = 0;
+    __atomic_store_n(&caps_lock_active, 0, __ATOMIC_RELAXED);
     evdev_mouse_x = 0;
     evdev_mouse_y = 0;
     evdev_next_grab_token = 1;
@@ -230,15 +238,24 @@ void input_push_mouse_wheel(int32_t x, int32_t y, int32_t wheel, uint8_t buttons
 void input_push_key(uint8_t keycode, uint8_t pressed)
 {
     uint64_t flags;
+    uint16_t code = evdev_keycode(keycode);
     struct input_raw_event event = {
         .type = INPUT_EVENT_KEYBOARD,
         .keycode = keycode,
         .pressed = pressed,
     };
     kernel_spin_lock_irqsave(&input_lock, &flags);
+    int down = (evdev_key_state[code / 8U] >> (code % 8U)) & 1U;
+    if (code == KEY_CAPSLOCK && pressed && !down) {
+        __atomic_store_n(&caps_lock_active, !caps_lock_active, __ATOMIC_RELAXED);
+    }
+    event.modifiers = caps_lock_active ? 1U : 0U;
     push_event(&event);
-    evdev_publish(STORAGE_DEV_KIND_KEYBOARD, EV_KEY, evdev_keycode(keycode),
-                  pressed ? 1 : 0);
+    /* Repeat the absolute LED state before each key so readers opening late
+     * or recovering from queue overflow cannot interpret keys with stale locks. */
+    evdev_publish(STORAGE_DEV_KIND_KEYBOARD, EV_LED, LED_CAPSL, caps_lock_active);
+    evdev_publish(STORAGE_DEV_KIND_KEYBOARD, EV_KEY, code,
+                  pressed ? (down ? 2 : 1) : 0);
     evdev_publish(STORAGE_DEV_KIND_KEYBOARD, EV_SYN, SYN_REPORT, 0);
     kernel_spin_unlock_irqrestore(&input_lock, flags);
 }
@@ -430,6 +447,9 @@ void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
     if (event_type == 0) {
         input_evdev_set_cap(bits, sizeof(bits), EV_SYN);
         input_evdev_set_cap(bits, sizeof(bits), EV_KEY);
+        if (device_kind == STORAGE_DEV_KIND_KEYBOARD) {
+            input_evdev_set_cap(bits, sizeof(bits), EV_LED);
+        }
         if (device_kind == STORAGE_DEV_KIND_MOUSE) {
             input_evdev_set_cap(bits, sizeof(bits), EV_REL);
             input_evdev_set_cap(bits, sizeof(bits), EV_ABS);
@@ -444,6 +464,8 @@ void input_evdev_capabilities(uint32_t device_kind, uint32_t event_type,
             input_evdev_set_cap(bits, sizeof(bits), BTN_RIGHT);
             input_evdev_set_cap(bits, sizeof(bits), BTN_MIDDLE);
         }
+    } else if (event_type == EV_LED && device_kind == STORAGE_DEV_KIND_KEYBOARD) {
+        input_evdev_set_cap(bits, sizeof(bits), LED_CAPSL);
     } else if (event_type == EV_REL &&
                device_kind == STORAGE_DEV_KIND_MOUSE) {
         input_evdev_set_cap(bits, sizeof(bits), REL_X);

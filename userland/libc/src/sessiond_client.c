@@ -95,7 +95,9 @@ static int session_ack_request(uint32_t type, const void *payload, uint32_t leng
 {
     if (session_open() < 0) return -1;
     if (leonos_ipc_send(session_fd, type, payload, length) < 0) return -1;
-    return session_wait(LEONOS_SESSIOND_MSG_ACK, ack, sizeof(*ack), 0);
+    if (session_wait(LEONOS_SESSIOND_MSG_ACK, ack, sizeof(*ack), 0) < 0) return -1;
+    if (ack->code < 0) { errno = EACCES; return -1; }
+    return 0;
 }
 
 int leonos_startup_request(const struct leonos_startup_command *command,
@@ -157,6 +159,9 @@ int leonos_startup_list(uint32_t uid, struct leonos_startup_entry *entries,
     if (session_wait(LEONOS_SESSIOND_MSG_LIST, buffer, sizeof(buffer), &length) < 0) return -1;
     if (length < sizeof(ack)) return -1;
     memcpy(&ack, buffer, sizeof(ack));
+    if (ack.count > capacity || (uint64_t)ack.count * sizeof(*entries) > length - sizeof(ack)) {
+        errno = EPROTO; return -1;
+    }
     if (out_count) *out_count = ack.count;
     if (entries && capacity) {
         uint32_t count = ack.count < capacity ? ack.count : capacity;

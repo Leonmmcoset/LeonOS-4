@@ -27,6 +27,7 @@
 #include <leonos/signal.h>
 #include <linux/signal.h>
 #include <linux/capability.h>
+#include <linux/securebits.h>
 #include <leonos/auth.h>
 #include <leonos/system.h>
 #include <stdint.h>
@@ -75,6 +76,10 @@ static int64_t process_resource_limit(uint64_t number, uint64_t a0, uint64_t a1,
     else if (resource == LINUX_RLIMIT_AS) stored = &limits->as;
     else if (resource == LINUX_RLIMIT_SIGPENDING) stored = &limits->sigpending;
     else if (resource == LINUX_RLIMIT_STACK) stored = &limits->stack;
+    else if (resource == LINUX_RLIMIT_NPROC) stored = &limits->nproc;
+    /* Core-file generation is unavailable, as on Linux CONFIG_COREDUMP=n.
+     * The process limit still has normal query, update and inheritance rules. */
+    else if (resource == LINUX_RLIMIT_CORE) stored = &limits->core;
     else return -LINUX_ENOSYS;
     if (setting && next.rlim_max > stored->rlim_max &&
         !(caller->cap_effective & (1ULL << CAP_SYS_RESOURCE))) return -LINUX_EPERM;
@@ -88,84 +93,38 @@ static int64_t process_resource_limit(uint64_t number, uint64_t a0, uint64_t a1,
     return 0;
 }
 
-static int process_find_account(uint32_t uid, struct leonos_user_info *user)
+/* Linux v6.12 security/commoncap.c:cap_emulate_setxuid. */
+static void process_commit_uids(struct task *task, uint32_t real, uint32_t effective,
+                                 uint32_t saved)
 {
-    struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
-    struct leonos_user_list list = {
-        .capacity = LEONOS_AUTH_MAX_USERS,
-        .users = users,
-    };
-
-    if (!uid || !user) {
-        return 0;
-    }
-    if (osmlayer_auth_op(LEONOS_AUTH_OP_LIST_USERS, &list) == 0) {
-        for (uint32_t i = 0; i < list.count && i < LEONOS_AUTH_MAX_USERS; ++i) {
-            if (users[i].uid == uid) {
-                *user = users[i];
-                return 1;
-            }
+    uint64_t permitted = task->cap_permitted;
+    uint64_t caps = task->cap_effective;
+    if (!(task->securebits & SECBIT_NO_SETUID_FIXUP)) {
+        if ((!task->uid || !task->euid || !task->suid) && real && effective && saved) {
+            if (!(task->securebits & SECBIT_KEEP_CAPS)) permitted = caps = 0;
+            task->cap_ambient = 0;
         }
+        if (!task->euid && effective) caps = 0;
+        if (task->euid && !effective) caps = permitted;
     }
+    if (task->uid != real)
+        task->nproc_exceeded = real && sched_user_task_count(real) > sched_task_limits(task)->nproc.rlim_cur;
+    task_credentials_prepare(task, effective, task->egid, effective, task->fsgid, permitted);
+    task->uid = real;
+    task->euid = task->fsuid = effective;
+    task->suid = saved;
+    task->cap_permitted = permitted;
+    task->cap_effective = caps;
+}
 
-    /* authd is the active account authority on current images. Its session
-     * handoff carries the same identity fields when the legacy middlelayer
-     * account database is absent or stale. */
-    {
-        const void *data = NULL;
-        size_t length = 0;
-        if (storage_read_file("/run/leonos/session-user", &data, &length) == 0 &&
-            data && length) {
-            const char *cursor = (const char *)data;
-            const char *end = cursor + length;
-            uint32_t values[2] = {0, 0};
-            char *text_fields[2] = {user->username, user->home};
-            uint32_t field = 0;
-            uint32_t text_len = 0;
-            int valid = 1;
-            *user = (struct leonos_user_info){0};
-            while (field < 4U && cursor < end) {
-                const char *line = cursor;
-                while (cursor < end && *cursor != '\n' && *cursor != '\r') ++cursor;
-                if (field < 2U) {
-                    uint32_t value = 0;
-                    if (line == cursor) valid = 0;
-                    while (line < cursor) {
-                        if (*line < '0' || *line > '9') { valid = 0; break; }
-                        value = value * 10U + (uint32_t)(*line - '0');
-                        ++line;
-                    }
-                    values[field] = value;
-                } else {
-                    text_len = (uint32_t)(cursor - line);
-                    if (!text_len || text_len >= (field == 2U
-                                                      ? sizeof(user->username)
-                                                      : sizeof(user->home))) {
-                        valid = 0;
-                    } else {
-                        for (uint32_t i = 0; i < text_len; ++i) {
-                            text_fields[field - 2U][i] = line[i];
-                        }
-                        text_fields[field - 2U][text_len] = 0;
-                    }
-                }
-                while (cursor < end && (*cursor == '\n' || *cursor == '\r')) ++cursor;
-                ++field;
-            }
-            if (valid && field == 4U && values[0] == uid && values[0] != 0) {
-                user->uid = values[0];
-                user->role = values[1];
-                uint32_t pages = (uint32_t)((length + 4095U) / 4096U);
-                mm_free_pages((uint64_t)(uintptr_t)data, pages);
-                return 1;
-            }
-            {
-                uint32_t pages = (uint32_t)((length + 4095U) / 4096U);
-                mm_free_pages((uint64_t)(uintptr_t)data, pages);
-            }
-        }
-    }
-    return 0;
+static void process_commit_gids(struct task *task, uint32_t real, uint32_t effective,
+                                 uint32_t saved)
+{
+    task_credentials_prepare(task, task->euid, effective, task->fsuid, effective,
+                              task->cap_permitted);
+    task->gid = real;
+    task->egid = task->fsgid = effective;
+    task->sgid = saved;
 }
 
 int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
@@ -278,6 +237,88 @@ int64_t syscall_linux_signal(uint64_t number, uint64_t signal_number,
     return -LEONOS_ENOSYS;
 }
 
+int64_t syscall_process_prctl(uint64_t option, uint64_t arg2, uint64_t arg3,
+                              uint64_t arg4, uint64_t arg5)
+{
+    struct task *task = sched_current_task();
+    if (!task) return -LINUX_ESRCH;
+    switch ((uint32_t)option) {
+    case LINUX_PR_SET_NAME: {
+        char name[16] = {0};
+        for (unsigned i = 0; i < sizeof(name) - 1; ++i) {
+            if (!user_range_ok(arg2 + i, 1)) return -LEONOS_EFAULT;
+            name[i] = *(const char *)(uintptr_t)(arg2 + i);
+            if (!name[i]) break;
+        }
+        __builtin_memset(task->name_storage, 0, sizeof(task->name_storage));
+        __builtin_memcpy(task->name_storage, name, sizeof(name));
+        task->name = task->name_storage;
+        return 0;
+    }
+    case LINUX_PR_GET_NAME:
+        if (!user_range_writable(arg2, 16)) return -LEONOS_EFAULT;
+        __builtin_memcpy((void *)(uintptr_t)arg2, task->name_storage, 16);
+        return 0;
+    case LINUX_PR_GET_DUMPABLE:
+        return !sched_task_mm(task)->nondumpable;
+    case LINUX_PR_SET_DUMPABLE:
+        if (arg2 > 1) return -LEONOS_EINVAL;
+        sched_task_mm(task)->nondumpable = !arg2;
+        return 0;
+    case LINUX_PR_SET_NO_NEW_PRIVS:
+        if (arg2 != 1 || arg3 || arg4 || arg5) return -LEONOS_EINVAL;
+        task->no_new_privs = true;
+        return 0;
+    case LINUX_PR_GET_NO_NEW_PRIVS:
+        if (arg2 || arg3 || arg4 || arg5) return -LEONOS_EINVAL;
+        return task->no_new_privs;
+    case LINUX_PR_CAPBSET_READ:
+        if (arg2 > CAP_LAST_CAP) return -LINUX_EINVAL;
+        return !!(task->cap_bset & (1ULL << arg2));
+    case LINUX_PR_CAPBSET_DROP:
+        if (!(task->cap_effective & (1ULL << CAP_SETPCAP))) return -LINUX_EPERM;
+        if (arg2 > CAP_LAST_CAP) return -LINUX_EINVAL;
+        task->cap_bset &= ~(1ULL << arg2);
+        return 0;
+    case LINUX_PR_GET_SECUREBITS:
+        return task->securebits;
+    case LINUX_PR_SET_SECUREBITS:
+        if ((((task->securebits & SECURE_ALL_LOCKS) >> 1) & (task->securebits ^ arg2)) ||
+            (task->securebits & SECURE_ALL_LOCKS & ~arg2) ||
+            (arg2 & ~(uint64_t)(SECURE_ALL_BITS | SECURE_ALL_LOCKS)) ||
+            !(task->cap_effective & (1ULL << CAP_SETPCAP))) return -LINUX_EPERM;
+        task->securebits = (uint32_t)arg2;
+        return 0;
+    case LINUX_PR_GET_KEEPCAPS:
+        return !!(task->securebits & SECBIT_KEEP_CAPS);
+    case LINUX_PR_SET_KEEPCAPS:
+        if (arg2 > 1) return -LINUX_EINVAL;
+        if (task->securebits & SECBIT_KEEP_CAPS_LOCKED) return -LINUX_EPERM;
+        if (arg2) task->securebits |= SECBIT_KEEP_CAPS;
+        else task->securebits &= ~SECBIT_KEEP_CAPS;
+        return 0;
+    case LINUX_PR_CAP_AMBIENT:
+        if (arg2 == LINUX_PR_CAP_AMBIENT_CLEAR_ALL) {
+            if (arg3 || arg4 || arg5) return -LINUX_EINVAL;
+            task->cap_ambient = 0;
+            return 0;
+        }
+        if (arg3 > CAP_LAST_CAP || arg4 || arg5) return -LINUX_EINVAL;
+        if (arg2 == LINUX_PR_CAP_AMBIENT_IS_SET) return !!(task->cap_ambient & (1ULL << arg3));
+        if (arg2 == LINUX_PR_CAP_AMBIENT_LOWER) {
+            task->cap_ambient &= ~(1ULL << arg3);
+            return 0;
+        }
+        if (arg2 != LINUX_PR_CAP_AMBIENT_RAISE) return -LINUX_EINVAL;
+        if (!(task->cap_permitted & task->cap_inheritable & (1ULL << arg3)) ||
+            (task->securebits & SECBIT_NO_CAP_AMBIENT_RAISE)) return -LINUX_EPERM;
+        task->cap_ambient |= 1ULL << arg3;
+        return 0;
+    default:
+        return -LEONOS_EINVAL;
+    }
+}
+
 int64_t syscall_process_control(uint64_t number, uint64_t a0,
                                        uint64_t a1, uint64_t a2, uint64_t a3)
 {
@@ -288,20 +329,25 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         uint32_t words;
         uint64_t requested;
         if (!task || !a0 || !user_range_ok(a0, sizeof(header))) return -LINUX_EFAULT;
-        header = *(const struct __user_cap_header_struct *)(uintptr_t)a0;
+        __builtin_memcpy(&header, (const void *)(uintptr_t)a0, sizeof(header));
         if (header.version == _LINUX_CAPABILITY_VERSION_1) words = 1;
         else if (header.version == _LINUX_CAPABILITY_VERSION_2 ||
                  header.version == _LINUX_CAPABILITY_VERSION_3) words = 2;
         else {
-            if (!user_range_writable(a0, sizeof(header))) return -LINUX_EFAULT;
-            ((struct __user_cap_header_struct *)(uintptr_t)a0)->version =
-                _LINUX_CAPABILITY_VERSION_3;
+            if (!user_range_writable(a0, sizeof(header.version))) return -LINUX_EFAULT;
+            header.version = _LINUX_CAPABILITY_VERSION_3;
+            __builtin_memcpy((void *)(uintptr_t)a0, &header.version, sizeof(header.version));
+            if (number == LINUX_SYS_CAPGET && !a1) return 0;
             return -LINUX_EINVAL;
         }
-        if (header.pid && (uint32_t)header.pid != sched_task_tgid(task))
-            return -LINUX_EPERM;
-        if (!a1 || !user_range_writable(a1, words * sizeof(data[0]))) return -LINUX_EFAULT;
         if (number == LINUX_SYS_CAPGET) {
+            if (!a1) return 0;
+            if (header.pid < 0) return -LINUX_EINVAL;
+            if (header.pid && (uint32_t)header.pid != task->pid) {
+                task = sched_find((uint32_t)header.pid);
+                if (!task) return -LINUX_ESRCH;
+            }
+            if (!user_range_writable(a1, words * sizeof(data[0]))) return -LINUX_EFAULT;
             data[0].effective = (uint32_t)task->cap_effective;
             data[0].permitted = (uint32_t)task->cap_permitted;
             data[0].inheritable = (uint32_t)task->cap_inheritable;
@@ -310,26 +356,31 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
                 data[1].permitted = (uint32_t)(task->cap_permitted >> 32);
                 data[1].inheritable = (uint32_t)(task->cap_inheritable >> 32);
             }
-            for (uint32_t i = 0; i < words; ++i)
-                ((struct __user_cap_data_struct *)(uintptr_t)a1)[i] = data[i];
+            __builtin_memcpy((void *)(uintptr_t)a1, data, words * sizeof(data[0]));
             return 0;
         }
+        if (header.pid && (uint32_t)header.pid != task->pid) return -LINUX_EPERM;
         if (!user_range_ok(a1, words * sizeof(data[0]))) return -LINUX_EFAULT;
-        for (uint32_t i = 0; i < words; ++i)
-            data[i] = ((const struct __user_cap_data_struct *)(uintptr_t)a1)[i];
+        __builtin_memcpy(data, (const void *)(uintptr_t)a1, words * sizeof(data[0]));
         requested = (uint64_t)data[0].permitted | ((uint64_t)data[1].permitted << 32);
         uint64_t effective = (uint64_t)data[0].effective | ((uint64_t)data[1].effective << 32);
         uint64_t inheritable = (uint64_t)data[0].inheritable | ((uint64_t)data[1].inheritable << 32);
         const uint64_t supported = (UINT64_C(1) << (CAP_LAST_CAP + 1)) - 1;
-        if ((requested | effective | inheritable) & ~supported) return -LINUX_EINVAL;
-        if (task->euid != 0 &&
-            (requested & ~task->cap_permitted || effective & ~requested ||
-             inheritable & ~(task->cap_inheritable | task->cap_permitted)))
+        requested &= supported;
+        effective &= supported;
+        inheritable &= supported;
+        /* Linux applies these subset checks to UID 0 too. CAP_SETPCAP only
+         * relaxes the inheritable check; it cannot restore permitted bits. */
+        if ((requested & ~task->cap_permitted) || (effective & ~requested) ||
+            (inheritable & ~(task->cap_inheritable | task->cap_bset)) ||
+            (!(task->cap_effective & (1ULL << CAP_SETPCAP)) &&
+             (inheritable & ~(task->cap_inheritable | task->cap_permitted))))
             return -LINUX_EPERM;
         task_credentials_prepare(task, task->euid, task->egid, task->fsuid, task->fsgid, requested);
         task->cap_permitted = requested;
         task->cap_effective = effective;
         task->cap_inheritable = inheritable;
+        task->cap_ambient &= requested & inheritable;
         return 0;
     }
     if (number == LINUX_SYS_RSEQ) {
@@ -398,41 +449,24 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
     }
     if (number == LINUX_SYS_SETUID) {
         struct task *task = sched_current_task();
-        struct leonos_user_info user = {0};
         uint32_t target = (uint32_t)a0;
+        if (target == UINT32_MAX) return -LEONOS_EINVAL;
         if (!task) return -LEONOS_EPERM;
-        /* Only root may assume another identity. A non-root task may only
-         * restore its real uid (the identity authd assigned before exec). */
-        if (task->uid != 0 && target != task->uid) return -LEONOS_EPERM;
-        task_credentials_prepare(task, target, task->egid, target, task->fsgid, task->cap_permitted);
-        task->uid = target;
-        task->euid = target;
-        task->suid = target;
-        task->fsuid = target;
-        if (process_find_account(target, &user)) {
-            uint32_t session_id = task->session_id;
-            struct task *parent = task->parent_pid ? sched_find(task->parent_pid) : NULL;
-            /* Login starts as a child of the desktop. Attach both to one
-             * session before later children inherit the desktop identity. */
-            if (!session_id && parent &&
-                (parent->flags & TASK_FLAG_WINDOW_SERVER)) {
-                session_id = sched_next_session_id();
-                sched_set_session_identity(parent->pid, &user, session_id);
-            }
-            sched_set_task_identity(task->pid, &user, session_id);
-        }
+        bool privileged = (task->cap_effective & (1ULL << CAP_SETUID)) != 0;
+        if (!privileged && target != task->uid && target != task->suid) return -LEONOS_EPERM;
+        process_commit_uids(task, privileged ? target : task->uid, target,
+                            privileged ? target : task->suid);
         return 0;
     }
     if (number == LINUX_SYS_SETGID) {
         struct task *task = sched_current_task();
         uint32_t target = (uint32_t)a0;
+        if (target == UINT32_MAX) return -LEONOS_EINVAL;
         if (!task) return -LEONOS_EPERM;
-        if (task->uid != 0 && target != task->gid) return -LEONOS_EPERM;
-        task_credentials_prepare(task, task->euid, target, task->fsuid, target, task->cap_permitted);
-        task->gid = target;
-        task->egid = target;
-        task->sgid = target;
-        task->fsgid = target;
+        bool privileged = (task->cap_effective & (1ULL << CAP_SETGID)) != 0;
+        if (!privileged && target != task->gid && target != task->sgid) return -LEONOS_EPERM;
+        process_commit_gids(task, privileged ? target : task->gid, target,
+                            privileged ? target : task->sgid);
         return 0;
     }
     if (number == LINUX_SYS_GETRESUID || number == LINUX_SYS_GETRESGID) {
@@ -451,9 +485,9 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
             values[1] = task->egid;
             values[2] = task->sgid;
         }
-        *(uint32_t *)(uintptr_t)a0 = values[0];
-        *(uint32_t *)(uintptr_t)a1 = values[1];
-        *(uint32_t *)(uintptr_t)a2 = values[2];
+        __builtin_memcpy((void *)(uintptr_t)a0, &values[0], sizeof(values[0]));
+        __builtin_memcpy((void *)(uintptr_t)a1, &values[1], sizeof(values[1]));
+        __builtin_memcpy((void *)(uintptr_t)a2, &values[2], sizeof(values[2]));
         return 0;
     }
     if (number == LINUX_SYS_SETREUID || number == LINUX_SYS_SETREGID) {
@@ -471,28 +505,20 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
             current_effective = task->egid;
             saved = task->sgid;
         }
+        bool privileged = (task->cap_effective & (1ULL <<
+            (number == LINUX_SYS_SETREUID ? CAP_SETUID : CAP_SETGID))) != 0;
         if (real != UINT32_MAX && real != current_real && real != current_effective &&
-            task->euid != 0) return -LEONOS_EPERM;
-        if (effective != UINT32_MAX && effective != current_real && effective != saved &&
-            task->euid != 0) return -LEONOS_EPERM;
+            !privileged) return -LEONOS_EPERM;
+        if (effective != UINT32_MAX && effective != current_real &&
+            effective != current_effective && effective != saved &&
+            !privileged) return -LEONOS_EPERM;
+        bool save = real != UINT32_MAX || (effective != UINT32_MAX && effective != current_real);
         if (real != UINT32_MAX) current_real = real;
         if (effective != UINT32_MAX) current_effective = effective;
         if (number == LINUX_SYS_SETREUID) {
-            task_credentials_prepare(task, current_effective, task->egid, current_effective,
-                                      task->fsgid, task->cap_permitted);
-            task->uid = current_real;
-            task->euid = current_effective;
-            task->fsuid = current_effective;
-            if (real != UINT32_MAX || (effective != UINT32_MAX && effective != task->uid))
-                task->suid = current_effective;
+            process_commit_uids(task, current_real, current_effective, save ? current_effective : saved);
         } else {
-            task_credentials_prepare(task, task->euid, current_effective, task->fsuid,
-                                      current_effective, task->cap_permitted);
-            task->gid = current_real;
-            task->egid = current_effective;
-            task->fsgid = current_effective;
-            if (real != UINT32_MAX || (effective != UINT32_MAX && effective != task->gid))
-                task->sgid = current_effective;
+            process_commit_gids(task, current_real, current_effective, save ? current_effective : saved);
         }
         return 0;
     }
@@ -506,7 +532,12 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         } else {
             current[0] = task->gid; current[1] = task->egid; current[2] = task->sgid;
         }
-        if (task->euid != 0) {
+        uint32_t fs = number == LINUX_SYS_SETRESUID ? task->fsuid : task->fsgid;
+        if ((values[0] == UINT32_MAX || values[0] == current[0]) &&
+            (values[1] == UINT32_MAX || (values[1] == current[1] && values[1] == fs)) &&
+            (values[2] == UINT32_MAX || values[2] == current[2])) return 0;
+        if (!(task->cap_effective & (1ULL <<
+                (number == LINUX_SYS_SETRESUID ? CAP_SETUID : CAP_SETGID)))) {
             for (uint32_t i = 0; i < 3; ++i)
                 if (values[i] != UINT32_MAX && values[i] != current[0] &&
                     values[i] != current[1] && values[i] != current[2]) return -LEONOS_EPERM;
@@ -514,15 +545,9 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         for (uint32_t i = 0; i < 3; ++i)
             if (values[i] != UINT32_MAX) current[i] = values[i];
         if (number == LINUX_SYS_SETRESUID) {
-            task_credentials_prepare(task, current[1], task->egid, current[1],
-                                      task->fsgid, task->cap_permitted);
-            task->uid = current[0]; task->euid = current[1]; task->suid = current[2];
-            task->fsuid = current[1];
+            process_commit_uids(task, current[0], current[1], current[2]);
         } else {
-            task_credentials_prepare(task, task->euid, current[1], task->fsuid,
-                                      current[1], task->cap_permitted);
-            task->gid = current[0]; task->egid = current[1]; task->sgid = current[2];
-            task->fsgid = current[1];
+            process_commit_gids(task, current[0], current[1], current[2]);
         }
         return 0;
     }
@@ -533,16 +558,24 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         if (!task) return -LINUX_ESRCH;
         if (number == LINUX_SYS_SETFSUID) {
             old = task->fsuid;
-            if (task->euid == 0 || requested == task->uid || requested == task->euid ||
-                requested == task->suid) {
+            if (requested != UINT32_MAX && ((task->cap_effective & (1ULL << CAP_SETUID)) || requested == task->uid ||
+                requested == task->euid || requested == task->suid || requested == old)) {
                 task_credentials_prepare(task, task->euid, task->egid, requested,
                                           task->fsgid, task->cap_permitted);
+                const uint64_t fs_caps = (1ULL << CAP_CHOWN) | (1ULL << CAP_MKNOD) |
+                    (1ULL << CAP_DAC_OVERRIDE) | (1ULL << CAP_DAC_READ_SEARCH) |
+                    (1ULL << CAP_FOWNER) | (1ULL << CAP_FSETID) |
+                    (1ULL << CAP_MAC_OVERRIDE) | (1ULL << CAP_LINUX_IMMUTABLE);
+                if (!(task->securebits & SECBIT_NO_SETUID_FIXUP)) {
+                    if (!old && requested) task->cap_effective &= ~fs_caps;
+                    if (old && !requested) task->cap_effective |= task->cap_permitted & fs_caps;
+                }
                 task->fsuid = requested;
             }
         } else {
             old = task->fsgid;
-            if (task->euid == 0 || requested == task->gid || requested == task->egid ||
-                requested == task->sgid) {
+            if (requested != UINT32_MAX && ((task->cap_effective & (1ULL << CAP_SETGID)) || requested == task->gid ||
+                requested == task->egid || requested == task->sgid || requested == old)) {
                 task_credentials_prepare(task, task->euid, task->egid, task->fsuid,
                                           requested, task->cap_permitted);
                 task->fsgid = requested;
@@ -660,32 +693,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         return (uint32_t)a0 == 0 ? 0 : -LEONOS_EINVAL;
     }
     if (number == LINUX_SYS_PRCTL) {
-        struct task *task = sched_current_task();
-        if (!task) return -LINUX_ESRCH;
-        if ((uint32_t)a0 == LINUX_PR_SET_NAME) {
-            char name[16] = {0};
-            for (unsigned i = 0; i < sizeof(name) - 1; ++i) {
-                if (!user_range_ok(a1 + i, 1)) return -LEONOS_EFAULT;
-                name[i] = *(const char *)(uintptr_t)(a1 + i);
-                if (!name[i]) break;
-            }
-            __builtin_memset(task->name_storage, 0, sizeof(task->name_storage));
-            __builtin_memcpy(task->name_storage, name, sizeof(name));
-            task->name = task->name_storage;
-            return 0;
-        }
-        if ((uint32_t)a0 == LINUX_PR_GET_NAME) {
-            if (!user_range_writable(a1, 16)) return -LEONOS_EFAULT;
-            __builtin_memcpy((void *)(uintptr_t)a1, task->name_storage, 16);
-            return 0;
-        }
-        if ((uint32_t)a0 == LINUX_PR_GET_DUMPABLE) return !sched_task_mm(task)->nondumpable;
-        if ((uint32_t)a0 == LINUX_PR_SET_DUMPABLE) {
-            if (a1 > 1) return -LEONOS_EINVAL;
-            sched_task_mm(task)->nondumpable = !a1;
-            return 0;
-        }
-        return -LEONOS_EINVAL;
+        return syscall_process_prctl(a0, a1, a2, a3, 0);
     }
     if (number == LINUX_SYS_UNAME) {
         struct utsname info = {0};
@@ -693,16 +701,16 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         if (!a0 || !user_range_writable(a0, sizeof(info))) return -LEONOS_EFAULT;
         {
             uint32_t i;
-            for (i = 0; i < sizeof(info.sysname) - 1u && "LeonOS"[i]; ++i) {
-                info.sysname[i] = "LeonOS"[i];
-            }
-            if (system && system->kernel_version[0]) {
+            if (system) {
+                for (i = 0; i < sizeof(info.sysname) - 1u && system->kernel_name[i]; ++i) {
+                    info.sysname[i] = system->kernel_name[i];
+                }
                 for (i = 0; i < sizeof(info.release) - 1u && system->kernel_version[i]; ++i) {
                     info.release[i] = system->kernel_version[i];
                 }
-            }
-            for (i = 0; i < sizeof(info.version) - 1u && "LeonOS 4"[i]; ++i) {
-                info.version[i] = "LeonOS 4"[i];
+                for (i = 0; i < sizeof(info.version) - 1u && system->build_time[i]; ++i) {
+                    info.version[i] = system->build_time[i];
+                }
             }
             for (i = 0; i < sizeof(info.machine) - 1u && "x86_64"[i]; ++i) {
                 info.machine[i] = "x86_64"[i];
@@ -902,7 +910,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
     }
     if (number == LINUX_SYS_REBOOT) {
         struct task *task = sched_current_task();
-        if (!task || task->uid != 0) return -LEONOS_EPERM;
+        if (!task || !(task->cap_effective & (1ULL << CAP_SYS_BOOT))) return -LEONOS_EPERM;
         /* Linux reboot(int magic1, int magic2, unsigned int cmd, void *arg). */
         uint32_t magic1 = (uint32_t)a0;
         uint32_t magic2 = (uint32_t)a1;
@@ -938,9 +946,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
         return sched_get_process_session((uint32_t)a0);
     }
     if (number == LINUX_SYS_SETPGID) {
-        int result = sched_set_process_group(sched_current_pid(), (uint32_t)a0,
-                                             (uint32_t)a1);
-        return result == 0 ? 0 : (result == -2 ? -LEONOS_ENOENT : -LEONOS_EPERM);
+        return sched_set_process_group(sched_current_pid(), (uint32_t)a0, (uint32_t)a1);
     }
     if (number == LINUX_SYS_SETSID) {
         int64_t result = sched_create_process_session(sched_current_pid());
@@ -984,7 +990,7 @@ int64_t syscall_process_control(uint64_t number, uint64_t a0,
                                          : (uint32_t)(-(int64_t)requested_pid);
             int result = sched_signal_process_group(current->pid, process_group,
                                                     signal_number);
-            return result >= 0 ? 0 : result == -2 ? -LINUX_ESRCH : -LEONOS_EPERM;
+            return result >= 0 ? 0 : result;
         }
         target = sched_find((uint32_t)requested_pid);
         if (!target || target->kind != TASK_KIND_USER || sched_task_tgid(target) != (uint32_t)requested_pid)

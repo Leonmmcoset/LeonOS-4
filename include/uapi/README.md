@@ -37,13 +37,11 @@ On FAT/exFAT, version-1 ACL records remain readable and gain explicit POSIX
 metadata on their next write. ext2 uses its native inode fields. Legacy calls
 that passed zero to O_CREAT/mkdir must be rebuilt with intentional modes;
 zero now means no permissions and is never silently converted to a permissive
-default. authd's existing AUS1 database format remains readable, including
-the old empty factory seed. Corrupt nonempty metadata is reported as an error.
-
-authd publishes `/etc/passwd` and `/etc/group` for standard libc name lookup;
-these contain no password hashes. Existing account IDs are retained, including
-an account named `root` whose numeric UID is not zero. Kernel DAC always uses
-the actual UID/GID, not the account name or desktop administrator role. See
+default. Authentication uses standard passwd/shadow/group/gshadow files and
+upstream Linux-PAM. Populated private AUS2/accounts.db stores are rejected
+before update; they are never silently converted or reset. The retired authd
+protocol is not a public ABI. The administrator is UID 0, named root.
+Kernel DAC always uses the actual UID/GID, not a desktop role. See
 `docs/POSIX_PERMISSIONS_2026-09-08.md` for usage and remaining limits.
 
 `linux/signal.h` owns native sigaction flags, the 64-bit mask, x86-64 signal

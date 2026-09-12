@@ -550,8 +550,7 @@ static int install_api_with_progress(int window_id, const char *api_path,
         install_log_result("failed to spawn install worker: ", state.worker_pid);
         return 0;
     }
-    if (leonos_auth_delegate_elevation((uint32_t)state.worker_pid) < 0 ||
-        write_download_status(state.status_path, 'A', 0, 0) < 0) {
+    if (write_download_status(state.status_path, 'A', 0, 0) < 0) {
         install_log("failed to authorize install worker");
         (void)leonos_task_kill((uint32_t)state.worker_pid);
         unlink(state.status_path);

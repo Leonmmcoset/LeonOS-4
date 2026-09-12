@@ -130,9 +130,12 @@ static int proc_fill_content(const char *path, char *buffer, uint32_t capacity)
     }
     if (proc_text_eq(path, "/proc/version")) {
         const struct leonos_system_info *info = ntclks_system_info();
-        proc_append_text(buffer, &pos, capacity, "LeonOS ");
+        if (info) proc_append_text(buffer, &pos, capacity, info->kernel_name);
+        proc_append_text(buffer, &pos, capacity, " version ");
         if (info) proc_append_text(buffer, &pos, capacity, info->kernel_version);
-        proc_append_text(buffer, &pos, capacity, " leonos\n");
+        proc_append_text(buffer, &pos, capacity, " (");
+        if (info) proc_append_text(buffer, &pos, capacity, info->build_time);
+        proc_append_text(buffer, &pos, capacity, ")\n");
         return 0;
     }
     if (proc_text_eq(path, "/proc/filesystems")) {
@@ -153,9 +156,10 @@ static int proc_fill_content(const char *path, char *buffer, uint32_t capacity)
         proc_text_eq(path, "/proc/sys/kernel/osrelease") ||
         proc_text_eq(path, "/proc/sys/kernel/version")) {
         const struct leonos_system_info *info = ntclks_system_info();
-        const char *value = proc_text_eq(path, "/proc/sys/kernel/ostype") ? "LeonOS" :
-            proc_text_eq(path, "/proc/sys/kernel/version") ? "LeonOS 4" :
-            info ? info->kernel_version : "";
+        const char *value = !info ? "" :
+            proc_text_eq(path, "/proc/sys/kernel/ostype") ? info->kernel_name :
+            proc_text_eq(path, "/proc/sys/kernel/version") ? info->build_time :
+            info->kernel_version;
         proc_append_text(buffer, &pos, capacity, value);
         proc_append_text(buffer, &pos, capacity, "\n");
         return 0;

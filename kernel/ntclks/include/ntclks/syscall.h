@@ -117,6 +117,7 @@
 #define LINUX_SYS_EPOLL_CREATE1 __NR_epoll_create1
 #define LINUX_SYS_EPOLL_PWAIT2 __NR_epoll_pwait2
 #define LINUX_SYS_EXECVE __NR_execve
+#define LINUX_SYS_EXECVEAT __NR_execveat
 #define LINUX_SYS_EXIT __NR_exit
 #define LINUX_SYS_WAIT4 __NR_wait4
 #define LINUX_SYS_WAITID __NR_waitid
@@ -324,6 +325,8 @@ void syscall_trace_configure(const char *cmdline);
  */
 int64_t syscall_process_control(uint64_t number, uint64_t a0, uint64_t a1,
                                 uint64_t a2, uint64_t a3);
+int64_t syscall_process_prctl(uint64_t option, uint64_t arg2, uint64_t arg3,
+                              uint64_t arg4, uint64_t arg5);
 /**
  * @brief Execute the syscall described by frame and return its result.
  */
@@ -368,6 +371,7 @@ int64_t syscall_mm_madvise(uint64_t addr, uint64_t len, uint64_t advice);
  * @brief Close and free every file descriptor still open in task.
  */
 void syscall_release_task_files(struct task *task);
+void syscall_record_lock_cancel(struct task *task);
 /**
  * @brief Retains shared descriptor backing objects after a task-table fork copy.
  * @param parent Source task whose descriptor entries were copied.

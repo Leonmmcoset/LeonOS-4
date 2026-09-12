@@ -12,6 +12,8 @@ static long test_read(long number, long fd, long buffer, long length);
 #undef main
 #undef syscall3
 #include "../../kernel/ntclks/input.c"
+#include "../../userland/libc/src/ui_input.c"
+#include "../../kernel/ntclks/arch/x86_64/keyboard_led.h"
 
 static uint64_t read_cursor;
 static struct leonos_input_event delivered[32];
@@ -36,8 +38,8 @@ void kernel_spin_unlock_irqrestore(struct kernel_spinlock *lock, uint64_t flags)
 
 static long test_read(long number, long fd, long buffer, long length)
 {
-    assert(number == SYS_read && fd == 10);
-    return input_evdev_read(STORAGE_DEV_KIND_MOUSE, &read_cursor,
+    assert(number == SYS_read && (fd == 10 || fd == 12));
+    return input_evdev_read(fd == 10 ? STORAGE_DEV_KIND_MOUSE : STORAGE_DEV_KIND_KEYBOARD, &read_cursor,
                             (void *)buffer, (uint32_t)length, 0);
 }
 
@@ -51,7 +53,7 @@ int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
 
 static void test_evdev_damaged_records(void)
 {
-    struct input_event events[2];
+    struct input_event events[3];
     uint64_t cursor = 0;
     input_init();
     /* Reproduce the two damaged sequence numbers from the VMware core. */
@@ -69,8 +71,9 @@ static void test_evdev_damaged_records(void)
     assert(input_evdev_available(STORAGE_DEV_KIND_KEYBOARD, cursor, 0));
     assert(input_evdev_read(STORAGE_DEV_KIND_KEYBOARD, &cursor,
                             events, sizeof(events), 0) == sizeof(events));
-    assert(events[0].type == EV_KEY && events[0].code == 30 && events[0].value == 1);
-    assert(events[1].type == EV_SYN && events[1].code == SYN_REPORT);
+    assert(events[0].type == EV_LED && events[0].code == LED_CAPSL && events[0].value == 0);
+    assert(events[1].type == EV_KEY && events[1].code == 30 && events[1].value == 1);
+    assert(events[2].type == EV_SYN && events[2].code == SYN_REPORT);
     assert(cursor == input_evdev_cursor_now());
 
     /* The scan must also terminate when every retained record is damaged. */
@@ -83,9 +86,79 @@ static void test_evdev_damaged_records(void)
     assert(cursor == input_evdev_cursor_now());
 }
 
+static void test_caps_lock_routing(void)
+{
+    char ch;
+    input_init();
+    delivered_count = 0;
+    policy_slot = 0;
+    clients[0].fd = 11;
+    input_push_key(KEY_CAPSLOCK, 1);
+    assert(input_caps_lock_active());
+    input_push_key(KEY_CAPSLOCK, 1); /* Typematic is not another lock transition. */
+    assert(input_caps_lock_active());
+    input_push_key(KEY_CAPSLOCK, 0);
+    /* A new reader/app never saw Caps Lock being pressed. */
+    read_cursor = input_evdev_cursor_now();
+    input_push_key(30, 1);
+    input_push_key(30, 0);
+    input_push_key(KEY_CAPSLOCK, 1);
+    input_push_key(KEY_CAPSLOCK, 0);
+    input_push_key(30, 1);
+    assert(!input_caps_lock_active());
+    pump_input_device(12, LEONOS_INPUT_KEYBOARD);
+    assert(delivered_count == 5);
+    assert(delivered[0].modifiers == LEONOS_INPUT_MOD_CAPS_LOCK);
+    /* Queued letters use historical state even though the lock is now off. */
+    for (unsigned i = 0; i < 2; ++i) {
+        leonos_ui_set_keyboard_modifiers(delivered[0].modifiers);
+        assert(leonos_ui_keycode_to_char_shift(30, 0, &ch) && ch == 'A');
+        assert(leonos_ui_keycode_to_char_shift(30, 1, &ch) && ch == 'a');
+        assert(leonos_ui_keycode_to_char_shift(2, 0, &ch) && ch == '1');
+        assert(leonos_ui_keycode_to_char_shift(2, 1, &ch) && ch == '!');
+    }
+    leonos_ui_set_keyboard_modifiers(delivered[4].modifiers);
+    assert(leonos_ui_keycode_to_char_shift(30, 0, &ch) && ch == 'a');
+    assert(leonos_ui_keycode_to_char_shift(30, 1, &ch) && ch == 'A');
+    _Static_assert(sizeof(struct leonos_input_event) == 24, "input wire size");
+    _Static_assert(sizeof(struct leonos_gui_app_event) == 36, "app wire size");
+    puts("Caps Lock routing passed: repeats, late readers, ordered snapshots and Shift XOR");
+    delivered_count = 0;
+}
+
+static void test_keyboard_led_protocol(void)
+{
+    struct keyboard_led_command state = {.applied = 0xff};
+    uint8_t byte;
+    assert(!keyboard_led_next(&state, 0, 0, 1, &byte));
+    assert(keyboard_led_next(&state, 0, 0, 0, &byte) && byte == 0xed);
+    assert(!keyboard_led_reply(&state, 30));
+    assert(!keyboard_led_next(&state, 4, 1, 0, &byte));
+    assert(keyboard_led_reply(&state, 0xfa));
+    assert(keyboard_led_next(&state, 4, 2, 0, &byte) && byte == 0);
+    assert(keyboard_led_reply(&state, 0xfa));
+    assert(state.applied == 0);
+    assert(keyboard_led_next(&state, 4, 3, 0, &byte) && byte == 0xed);
+    assert(keyboard_led_reply(&state, 0xfe));
+    assert(keyboard_led_next(&state, 4, 4, 0, &byte) && byte == 0xed);
+    assert(keyboard_led_reply(&state, 0xfa));
+    assert(keyboard_led_next(&state, 4, 5, 0, &byte) && byte == 4);
+    assert(keyboard_led_reply(&state, 0xfa));
+    assert(!keyboard_led_next(&state, 4, 6, 0, &byte));
+    assert(state.applied == 4);
+    assert(keyboard_led_next(&state, 0, 7, 0, &byte));
+    for (unsigned i = 1; i <= 3; ++i)
+        assert(keyboard_led_next(&state, 0, 7 + i * 100000, 0, &byte));
+    assert(!keyboard_led_next(&state, 0, 400007, 0, &byte));
+    assert(!keyboard_led_next(&state, 0, 400008, 0, &byte));
+    puts("PS/2 LEDs passed: ACK, RESEND, busy controller and bounded timeout recovery");
+}
+
 int main(void)
 {
+    test_keyboard_led_protocol();
     test_evdev_damaged_records();
+    test_caps_lock_routing();
     input_init();
     read_cursor = input_evdev_cursor_now();
     policy_slot = 0;

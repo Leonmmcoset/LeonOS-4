@@ -85,7 +85,7 @@ static struct leonos_ui_treeview_state process_tree;
 static struct leonos_startup_entry startup_entries[LEONOS_STARTUP_MAX_ENTRIES];
 static uint32_t startup_entry_count;
 static struct leonos_ui_listview_state startup_list;
-static struct leonos_user_info startup_users[LEONOS_AUTH_MAX_USERS];
+static struct leonos_user_info *startup_users;
 static uint32_t startup_user_count;
 static uint32_t startup_selected_uid;
 static uint8_t startup_user_dropdown_open;
@@ -382,19 +382,18 @@ static void refresh_startup_users(void)
     uint32_t count = 0;
     current = (struct leonos_user_info){0};
     startup_user_count = 0;
-    if (leonos_auth_current(&current) < 0 || !current.uid) {
+    if (leonos_auth_current(&current) < 0) {
         startup_selected_uid = 0;
         return;
     }
     if (current.role == LEONOS_AUTH_ROLE_ADMIN &&
-        leonos_auth_list_users(startup_users, LEONOS_AUTH_MAX_USERS, 0, &count) == 0) {
-        startup_user_count = count > LEONOS_AUTH_MAX_USERS ? LEONOS_AUTH_MAX_USERS : count;
+        leonos_auth_users_alloc(&startup_users, 0, &count) == 0) {
+        startup_user_count = count;
     } else {
+        if (!startup_users) startup_users = calloc(1, sizeof(*startup_users));
+        if (!startup_users) return;
         startup_users[0] = current;
         startup_user_count = 1;
-    }
-    if (!startup_selected_uid) {
-        startup_selected_uid = current.uid;
     }
     for (uint32_t i = 0; i < startup_user_count; ++i) {
         if (startup_users[i].uid == startup_selected_uid) {
@@ -417,7 +416,7 @@ static const char *startup_selected_username(void)
 static void refresh_startup_entries(void)
 {
     uint32_t count = 0;
-    if (!startup_selected_uid) {
+    if (!startup_user_count) {
         startup_entry_count = 0;
         return;
     }

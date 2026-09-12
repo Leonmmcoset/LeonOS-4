@@ -269,7 +269,7 @@ NCURSES_COMMANDS = (
 )
 
 _PAYLOAD_PATHS: dict[str, tuple[str, ...]] = {
-    "fastfetch": (f"{USR_BIN}/fastfetch", f"{LICENSES}/fastfetch"),
+    "fastfetch": (f"{USR_BIN}/fastfetch", f"{LICENSES}/fastfetch", "etc/fastfetch"),
     "nano": (f"{USR_BIN}/nano", f"{LICENSES}/nano"),
     "pleditor": (f"{LICENSES}/pleditor",),
     "busybox": (f"{BIN}/busybox", f"{BIN}/sh", f"{LICENSES}/busybox"),

@@ -94,12 +94,14 @@ static int ext2_read_block(uint32_t block, void *buffer)
     }
     sectors = g_storage.ext2_block_size / SECTOR_SIZE;
     lba = g_storage.ext2_start_lba + (uint64_t)block * sectors;
+    if (ext2_cache_read(lba, sectors, buffer)) return 0;
     cache_end = storage_read_cache.first_lba + storage_read_cache.sector_count;
     if (storage_read_cache.valid && storage_read_cache.volume == g_active_volume &&
         lba >= storage_read_cache.first_lba && lba + sectors <= cache_end) {
         cache_offset = (uint32_t)(lba - storage_read_cache.first_lba) * SECTOR_SIZE;
         storage_memcpy(buffer, storage_read_cache_data + cache_offset,
                        g_storage.ext2_block_size);
+        ext2_cache_store(lba, sectors, buffer);
         return 0;
     }
 
@@ -119,6 +121,7 @@ static int ext2_read_block(uint32_t block, void *buffer)
     storage_read_cache.sector_count = cache_sectors;
     storage_read_cache.valid = 1;
     storage_memcpy(buffer, storage_read_cache_data, g_storage.ext2_block_size);
+    ext2_cache_store(lba, sectors, buffer);
     return 0;
 }
 
@@ -126,12 +129,16 @@ static int ext2_read_block(uint32_t block, void *buffer)
 static int ext2_write_block(uint32_t block, const void *buffer)
 {
     uint32_t sectors;
+    uint64_t lba;
+    int ret;
     if (!buffer || !g_storage.ext2_block_size || block >= g_storage.ext2_blocks_count) {
         return -30;
     }
     sectors = g_storage.ext2_block_size / SECTOR_SIZE;
-    return storage_write_sectors(g_storage.ext2_start_lba + (uint64_t)block * sectors,
-                                 sectors, buffer);
+    lba = g_storage.ext2_start_lba + (uint64_t)block * sectors;
+    ret = storage_write_sectors(lba, sectors, buffer);
+    if (!ret) ext2_cache_store(lba, sectors, buffer);
+    return ret;
 }
 
 /** @brief Reads one group descriptor from the classic ext2 descriptor table. */
@@ -520,11 +527,35 @@ discard:
     return ret;
 }
 
+/* Search from an allocation hint, then wrap, so freed lower bits stay usable.
+ * Skip full bytes without testing each already allocated block or inode. */
+static uint32_t ext2_free_bitmap_bit(const uint8_t *bitmap, uint32_t count, uint32_t hint)
+{
+    if (hint >= count) hint = 0;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        uint32_t end = pass ? hint : count;
+        for (uint32_t bit = pass ? 0 : hint; bit < end;) {
+            if (!(bit & 7u) && bitmap[bit / 8u] == 0xffu) {
+                bit += 8u;
+                continue;
+            }
+            if (!(bitmap[bit / 8u] & (1u << (bit & 7u)))) return bit;
+            ++bit;
+        }
+    }
+    return count;
+}
+
 /** @brief Allocates an ext2 data block by setting a free bit in a group bitmap. */
 static int ext2_alloc_block(uint32_t *out_block)
 {
     uint32_t groups = g_storage.ext2_group_count;
-    for (uint32_t group_index = 0; group_index < groups; ++group_index) {
+    uint32_t hint = g_storage.ext2_next_block;
+    if (hint < g_storage.ext2_first_data_block || hint >= g_storage.ext2_blocks_count)
+        hint = g_storage.ext2_first_data_block;
+    uint32_t first_group = (hint - g_storage.ext2_first_data_block) / g_storage.ext2_blocks_per_group;
+    for (uint32_t n = 0; n < groups; ++n) {
+        uint32_t group_index = (first_group + n) % groups;
         struct ext2_group_desc group;
         uint32_t group_start = g_storage.ext2_first_data_block + group_index * g_storage.ext2_blocks_per_group;
         uint32_t group_blocks;
@@ -533,17 +564,18 @@ static int ext2_alloc_block(uint32_t *out_block)
                                g_storage.ext2_blocks_count - group_start);
         int ret = ext2_group_desc(group_index, &group);
         if (ret < 0) return ret;
+        if (!group.free_blocks_count) continue;
         ret = ext2_read_block(group.block_bitmap, storage_scratch);
         if (ret < 0) return ret;
-        for (uint32_t bit = 0; bit < group_blocks; ++bit) {
-            if ((storage_scratch[bit / 8u] & (1u << (bit & 7u))) == 0) {
-                storage_scratch[bit / 8u] |= (uint8_t)(1u << (bit & 7u));
-                ret = ext2_write_block(group.block_bitmap, storage_scratch);
-                if (ret < 0) return ret;
-                *out_block = group_start + bit;
-                storage_memzero(storage_cluster_buf, g_storage.ext2_block_size);
-                return ext2_write_block(*out_block, storage_cluster_buf);
-            }
+        uint32_t bit = ext2_free_bitmap_bit(storage_scratch, group_blocks, n ? 0 : hint - group_start);
+        if (bit < group_blocks) {
+            storage_scratch[bit / 8u] |= (uint8_t)(1u << (bit & 7u));
+            ret = ext2_write_block(group.block_bitmap, storage_scratch);
+            if (ret < 0) return ret;
+            *out_block = group_start + bit;
+            g_storage.ext2_next_block = *out_block + 1u;
+            storage_memzero(storage_cluster_buf, g_storage.ext2_block_size);
+            return ext2_write_block(*out_block, storage_cluster_buf);
         }
     }
     return -28;
@@ -567,19 +599,35 @@ static void ext2_free_block(uint32_t block)
 /** @brief Allocates a non-reserved inode from the ext2 inode bitmaps. */
 static int ext2_alloc_inode(uint32_t *out_inode)
 {
-    for (uint32_t group_index = 0; group_index < g_storage.ext2_group_count; ++group_index) {
+    uint32_t groups = g_storage.ext2_group_count;
+    uint32_t hint = g_storage.ext2_next_inode;
+    if (!hint || (hint - 1u) / g_storage.ext2_inodes_per_group >= groups) hint = 11;
+    uint32_t first_group = (hint - 1u) / g_storage.ext2_inodes_per_group;
+    for (uint32_t n = 0; n < groups; ++n) {
+        uint32_t group_index = (first_group + n) % groups;
         struct ext2_group_desc group;
         int ret = ext2_group_desc(group_index, &group);
         if (ret < 0) return ret;
+        if (!group.free_inodes_count) continue;
         ret = ext2_read_block(group.inode_bitmap, storage_scratch);
         if (ret < 0) return ret;
-        for (uint32_t bit = 0; bit < g_storage.ext2_inodes_per_group; ++bit) {
+        /* Reserved inodes must remain unavailable even on a damaged bitmap. */
+        uint8_t reserved0 = storage_scratch[0], reserved1 = storage_scratch[1];
+        if (!group_index) {
+            storage_scratch[0] = 0xffu;
+            storage_scratch[1] |= 3u;
+        }
+        uint32_t bit = ext2_free_bitmap_bit(storage_scratch, g_storage.ext2_inodes_per_group,
+                                          n ? 0 : (hint - 1u) % g_storage.ext2_inodes_per_group);
+        storage_scratch[0] = reserved0;
+        storage_scratch[1] = reserved1;
+        if (bit < g_storage.ext2_inodes_per_group) {
             uint32_t ino = group_index * g_storage.ext2_inodes_per_group + bit + 1u;
-            if (ino <= 10u || (storage_scratch[bit / 8u] & (1u << (bit & 7u)))) continue;
             storage_scratch[bit / 8u] |= (uint8_t)(1u << (bit & 7u));
             ret = ext2_write_block(group.inode_bitmap, storage_scratch);
             if (ret < 0) return ret;
             *out_inode = ino;
+            g_storage.ext2_next_inode = ino + 1u;
             return 0;
         }
     }
@@ -734,6 +782,7 @@ static int ext2_mount(void)
     uint32_t block_size;
     uint64_t groups;
     int ret;
+    ext2_cache_reset(g_active_volume);
     if ((!g_storage.ext2_start_lba && g_storage.kind != STORAGE_VOLUME_RAM) ||
         g_storage.ext2_sector_count < 8u) return -2;
     ret = storage_read_sectors(g_storage.ext2_start_lba, 8u, storage_scratch);
@@ -755,6 +804,8 @@ static int ext2_mount(void)
     g_storage.ext2_first_data_block = super->first_data_block;
     g_storage.ext2_group_count = (uint32_t)groups;
     g_storage.ext2_feature_incompat = super->feature_incompat;
+    g_storage.ext2_next_block = super->first_data_block;
+    g_storage.ext2_next_inode = 11;
     if (g_storage.ext2_inode_size < sizeof(struct ext2_inode) ||
         g_storage.ext2_inode_size > block_size || block_size % g_storage.ext2_inode_size) return -2;
     if ((uint64_t)super->blocks_count * (block_size / SECTOR_SIZE) >
@@ -786,14 +837,18 @@ static int ext2_adjust_counts(uint32_t group_index, int block_delta, int inode_d
     group.used_dirs_count = (uint16_t)(group.used_dirs_count + dir_delta);
     ret = ext2_write_group_desc(group_index, &group);
     if (ret < 0) return ret;
-    ret = storage_read_sectors(g_storage.ext2_start_lba + 2u, 2u, storage_scratch);
+    uint64_t super_lba = g_storage.ext2_start_lba + 2u;
+    ret = ext2_cache_read(super_lba, 2u, storage_scratch) ? 0 :
+        storage_read_sectors(super_lba, 2u, storage_scratch);
     if (ret < 0) return ret;
     if (super->magic != EXT2_SUPER_MAGIC ||
         (block_delta < 0 && super->free_blocks_count < (uint32_t)-block_delta) ||
         (inode_delta < 0 && super->free_inodes_count < (uint32_t)-inode_delta)) return -5;
     super->free_blocks_count = (uint32_t)((int64_t)super->free_blocks_count + block_delta);
     super->free_inodes_count = (uint32_t)((int64_t)super->free_inodes_count + inode_delta);
-    return storage_write_sectors(g_storage.ext2_start_lba + 2u, 2u, storage_scratch);
+    ret = storage_write_sectors(super_lba, 2u, storage_scratch);
+    if (!ret) ext2_cache_store(super_lba, 2u, storage_scratch);
+    return ret;
 }
 
 /**
@@ -1059,15 +1114,25 @@ static int ext2_remove_dir_entry(uint32_t directory_ino, const char *name,
  * @param len Number of bytes to write.
  * @return Zero on success, or a negative errno-style status.
  */
+#include "storage_ext2_write.c"
+
 static int ext2_write_inode_range(uint32_t inode_no, struct ext2_inode *inode,
                                   uint64_t offset, const void *buffer, uint32_t len)
 {
     const uint8_t *src = (const uint8_t *)buffer;
     uint32_t done = 0;
     uint64_t end = offset + len;
+    int inode_dirty = 0;
     int ret;
     if (!inode || (!buffer && len) || end < offset || end > 0xffffffffULL) return -28;
+    if (!len) return 0;
     while (done < len) {
+        if (!inode_dirty) {
+            uint32_t written;
+            ret = ext2_write_new_run(inode_no, inode, offset + done, src + done, len - done, &written);
+            if (ret < 0) return ret;
+            if (ret > 0) { done += written; continue; }
+        }
         uint32_t logical = (uint32_t)((offset + done) / g_storage.ext2_block_size);
         uint32_t block_offset = (uint32_t)((offset + done) % g_storage.ext2_block_size);
         uint32_t take = min_u32(g_storage.ext2_block_size - block_offset, len - done);
@@ -1081,10 +1146,11 @@ static int ext2_write_inode_range(uint32_t inode_no, struct ext2_inode *inode,
         storage_memcpy(storage_cluster_buf + block_offset, src + done, take);
         ret = ext2_write_block(block, storage_cluster_buf);
         if (ret < 0) return ret;
+        inode_dirty = 1;
         done += take;
     }
     if (end > ext2_inode_size(inode)) ext2_set_inode_size(inode, end);
-    return ext2_write_inode(inode_no, inode);
+    return inode_dirty ? ext2_write_inode(inode_no, inode) : 0;
 }
 
 /**
@@ -1187,6 +1253,19 @@ static int ext2_release_trailing_blocks(struct ext2_inode *inode, uint32_t keep_
  * @param len File byte length.
  * @return Zero on success, or a negative errno-style status.
  */
+static int ext2_remove_write_privileges(uint32_t number, struct ext2_inode *inode)
+{
+    struct task *task = sched_current_task();
+    if (!task || (task->cap_effective & (1ULL << CAP_FSETID)) ||
+        (inode->mode & EXT2_S_IFMT) != EXT2_S_IFREG) return 0;
+    uint32_t gid = inode->gid | ((uint32_t)inode->osd2[6] << 16) | ((uint32_t)inode->osd2[7] << 24);
+    uint16_t remove = 04000;
+    if ((inode->mode & 0010) || !task_in_group(task, gid, false)) remove |= 02000;
+    if (!(inode->mode & remove)) return 0;
+    inode->mode &= ~remove;
+    return ext2_write_inode(number, inode);
+}
+
 static int ext2_write_file(const char *path, const void *buffer, uint32_t len)
 {
     char parent_path[LEONOS_FS_PATH_LEN];
@@ -1206,6 +1285,8 @@ static int ext2_write_file(const char *path, const void *buffer, uint32_t len)
         if (existing.type != LEONOS_FS_TYPE_FILE) return -21;
         inode_no = existing.first_cluster;
         ret = ext2_read_inode(inode_no, &inode);
+        if (ret < 0) return ret;
+        ret = ext2_remove_write_privileges(inode_no, &inode);
         if (ret < 0) return ret;
         ret = ext2_release_trailing_blocks(&inode, 0);
         if (ret < 0) return ret;
@@ -1257,6 +1338,10 @@ static int ext2_write_node(const struct storage_node *node, uint64_t offset, con
         node->volume_id != g_storage.volume_id) return -2;
     ret = ext2_read_inode(node->first_cluster, &inode);
     if (ret < 0) return ret;
+    if (len) {
+        ret = ext2_remove_write_privileges(node->first_cluster, &inode);
+        if (ret < 0) return ret;
+    }
     ret = ext2_write_inode_range(node->first_cluster, &inode, offset, buffer, len);
     if (ret < 0) return ret;
     if (out_written) *out_written = len;
@@ -1279,6 +1364,8 @@ static int ext2_truncate_file(const struct storage_node *node, uint64_t length)
     if (!node || node->type != LEONOS_FS_TYPE_FILE ||
         node->volume_id != g_storage.volume_id) return -2;
     ret = ext2_read_inode(node->first_cluster, &inode);
+    if (ret < 0) return ret;
+    ret = ext2_remove_write_privileges(node->first_cluster, &inode);
     if (ret < 0) return ret;
     old_size = ext2_inode_size(&inode);
     if (length < old_size) {
@@ -1412,6 +1499,17 @@ static int ext2_destroy_inode(uint32_t inode_no, uint8_t directory)
     struct ext2_inode inode;
     int ret = ext2_read_inode(inode_no, &inode);
     if (ret < 0) return ret;
+    struct storage_inode_ref *held = storage_inode_find(g_storage.volume_id, inode_no);
+    if (held && held->references) {
+        inode.links_count = 0;
+        ret = ext2_write_inode(inode_no, &inode);
+        if (!ret) held->unlinked = true;
+        return ret;
+    }
+    struct storage_node cache_node = {.type = ext2_node_type(&inode),
+        .flags = STORAGE_NODE_FLAG_EXT2, .volume_id = g_storage.volume_id,
+        .first_cluster = inode_no, .size = ext2_inode_size(&inode)};
+    page_cache_invalidate_node(&cache_node);
     if (!ext2_fast_symlink(&inode)) {
         ret = ext2_release_trailing_blocks(&inode, 0);
         if (ret < 0) return ret;
@@ -1459,8 +1557,7 @@ static int ext2_unlink(const char *path)
 /**
  * @brief Creates a second directory entry for an existing ext2 regular file.
  *
- * Directory references are tracked by links_count. Open inode references still
- * need separate retention when the last directory entry is removed.
+ * Directory links and open references have independent lifetimes.
  */
 static int ext2_link(const char *old_path, const char *new_path)
 {

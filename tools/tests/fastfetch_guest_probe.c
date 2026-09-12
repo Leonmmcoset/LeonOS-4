@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/statfs.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -50,8 +51,8 @@ static void run_fastfetch(int defaults)
         if (fd < 0 || dup2(fd, 1) < 0)
             _exit(111);
         close(fd);
-        if (defaults) execl("/usr/bin/fastfetch-linux", "fastfetch", NULL);
-        execl("/usr/bin/fastfetch-linux", "fastfetch", "--format", "json", "--structure",
+        if (defaults) execl("/usr/bin/fastfetch", "fastfetch", NULL);
+        execl("/usr/bin/fastfetch", "fastfetch", "--format", "json", "--structure",
               "OS:Host:Kernel:Uptime:CPU:Memory:Swap:Disk:Display:GPU:Shell:Terminal", "--pipe", NULL);
         perror("exec Fastfetch");
         _exit(127);
@@ -65,6 +66,21 @@ int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     puts("[inventory] START");
+    struct utsname uts;
+    if (uname(&uts) == 0) {
+        const char *paths[] = {"/proc/sys/kernel/ostype", "/proc/sys/kernel/osrelease",
+                               "/proc/sys/kernel/version"};
+        const char *fields[] = {uts.sysname, uts.release, uts.version};
+        check(!strcmp(uts.sysname, "ntclks"), "uname identifies the NTCLKS kernel");
+        for (unsigned i = 0; i < 3; ++i) {
+            char actual[128], expected[128];
+            snprintf(expected, sizeof(expected), "%s\n", fields[i]);
+            check(read_file(paths[i], actual, sizeof(actual)) > 0 && !strcmp(actual, expected), paths[i]);
+        }
+        printf("[inventory] uname release=%s version=%s\n", uts.release, uts.version);
+    } else {
+        check(0, "uname");
+    }
     struct statfs fs;
     check(statfs("/sys", &fs) == 0 && (unsigned long)fs.f_type == 0x62656572 && (fs.f_flags & 1), "sysfs statfs magic");
     check(statfs("/proc", &fs) == 0 && (unsigned long)fs.f_type == 0x9fa0, "procfs statfs magic");
@@ -84,7 +100,7 @@ int main(void)
     pid_t terminal = fork();
     if (!terminal) {
         execl("/usr/lib/leonos/apps/terminal/terminal.elf", "terminal", "--run", "/bin/sh", "-c",
-              "/usr/bin/fastfetch-linux --format json --structure "
+              "/usr/bin/fastfetch --format json --structure "
               "OS:Host:Kernel:Uptime:CPU:Memory:Swap:Disk:Display:GPU:Shell:Terminal --pipe > "
               "/tmp/fastfetch-terminal.json; echo $? > /tmp/fastfetch-terminal.done",
               NULL);

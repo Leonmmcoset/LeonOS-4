@@ -10,6 +10,27 @@ static struct unix_socket peers[2];
 static struct task_file endpoints[2], passed;
 static uint64_t readonly;
 static unsigned allocations;
+static unsigned pty_holds;
+int task_pty_export_fd(struct task *task, int fd, struct task_pty_fd *out)
+{
+    (void)task;
+    if (fd != 0) return -LINUX_EBADF;
+    *out = (struct task_pty_fd){.used = 1, .pty_id = 7, .endpoint = TASK_PTY_ENDPOINT_SLAVE};
+    ++pty_holds;
+    return 0;
+}
+void task_pty_release_entry(struct task_pty_fd *entry)
+{
+    assert(entry->pty_id == 7 && entry->endpoint == TASK_PTY_ENDPOINT_SLAVE && pty_holds);
+    --pty_holds;
+    *entry = (struct task_pty_fd){0};
+}
+int task_pty_import_fd(struct task *task, const struct task_pty_fd *source, uint32_t flags)
+{
+    (void)task; (void)flags;
+    assert(source->pty_id == 7 && pty_holds);
+    return 7;
+}
 void *kernel_malloc(size_t size) { void *p = malloc(size); if (p) ++allocations; return p; }
 void kernel_free(void *p) { if (p) { assert(allocations); --allocations; free(p); } }
 struct task *sched_current_task(void) { return &current; }
@@ -165,5 +186,59 @@ int main(void)
     assert(batch(true, receives, 1, MSG_WAITALL | MSG_CMSG_CLOEXEC) == 1);
     assert(receives[0].msg_len == 3 && receives[0].msg_hdr.msg_controllen == 0);
     assert(receives[0].msg_hdr.msg_flags == MSG_CMSG_CLOEXEC && !allocations);
+    /* PTY rights use the same queue ownership as ordinary files. */
+    unsigned char pty_control[CMSG_SPACE(sizeof(int))] = {0};
+    struct cmsghdr *pty_header = (void *)pty_control;
+    *pty_header = (struct cmsghdr){.cmsg_len = CMSG_LEN(sizeof(int)),
+        .cmsg_level = SOL_SOCKET, .cmsg_type = SCM_RIGHTS};
+    int input_fd = 0;
+    memcpy(CMSG_DATA(pty_header), &input_fd, sizeof(input_fd));
+    struct msghdr pty_message = {.msg_control = pty_control, .msg_controllen = sizeof(pty_control)};
+    struct unix_rights *held = NULL;
+    struct ucred credential;
+    bool explicit;
+    assert(unix_message_rights(&current, &pty_message, &held, &credential, &explicit) == 0);
+    assert(held && held->count == 1 && !held->files[0] && pty_holds == 1);
+    unix_rights_free(held);
+    assert(!pty_holds && !allocations);
+    input_fd = 12345;
+    memcpy(CMSG_DATA(pty_header), &input_fd, sizeof(input_fd));
+    assert(unix_message_rights(&current, &pty_message, &held, &credential, &explicit) == -LINUX_EBADF);
+    assert(!held && !pty_holds && !allocations);
+    input_fd = 0;
+    memcpy(CMSG_DATA(pty_header), &input_fd, sizeof(input_fd));
+    sends[0].msg_hdr.msg_control = pty_control;
+    sends[0].msg_hdr.msg_controllen = sizeof(pty_control);
+    receives[0].msg_hdr.msg_control = control;
+    receives[0].msg_hdr.msg_controllen = sizeof(control);
+    assert(batch(false, sends, 1, MSG_NOSIGNAL) == 1 && pty_holds == 1);
+    assert(batch(true, receives, 1, MSG_DONTWAIT | MSG_CMSG_CLOEXEC) == 1);
+    int received_pty;
+    memcpy(&received_pty, CMSG_DATA((struct cmsghdr *)control), sizeof(received_pty));
+    assert(received_pty == 7 && !pty_holds && !allocations);
+    current.uid = current.euid = current.suid = 0;
+    current.gid = current.egid = current.sgid = 0;
+    const struct { uint64_t caps; struct ucred sent; int error; } credential_cases[] = {
+        {0, {10, 1234, 0}, -LINUX_EPERM},
+        {0, {10, 0, 1234}, -LINUX_EPERM},
+        {0, {1234, 0, 0}, -LINUX_EPERM},
+        {1ULL << CAP_SETUID, {10, 1234, 0}, 0},
+        {1ULL << CAP_SETGID, {10, 0, 1234}, 0},
+        {1ULL << CAP_SETUID, {10, 0, 1234}, -LINUX_EPERM},
+        {1ULL << CAP_SETGID, {10, 1234, 0}, -LINUX_EPERM},
+        {1ULL << CAP_SYS_ADMIN, {1234, 0, 0}, -LINUX_ESRCH},
+        {UINT64_MAX, {10, UINT32_MAX, 0}, -LINUX_EINVAL},
+    };
+    for (unsigned i = 0; i < sizeof(credential_cases) / sizeof(credential_cases[0]); ++i) {
+        char cmsg[CMSG_SPACE(sizeof(struct ucred))] = {0};
+        struct cmsghdr *h = (void *)cmsg;
+        *h = (struct cmsghdr){.cmsg_len = CMSG_LEN(sizeof(struct ucred)),
+            .cmsg_level = SOL_SOCKET, .cmsg_type = SCM_CREDENTIALS};
+        memcpy(CMSG_DATA(h), &credential_cases[i].sent, sizeof(struct ucred));
+        struct msghdr m = {.msg_control = cmsg, .msg_controllen = sizeof(cmsg)};
+        current.cap_effective = credential_cases[i].caps;
+        assert(unix_message_rights(&current, &m, &held, &credential, &explicit) == credential_cases[i].error);
+        assert(!held && !allocations);
+    }
     puts("PASS actual Unix mmsg: packet boundaries, WAITFORONE, blocking resume, length faults, SCM_RIGHTS references/CLOEXEC");
 }

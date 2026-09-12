@@ -8,6 +8,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class InstallerInputTests(unittest.TestCase):
+    def test_keyboard_led_ioctl(self):
+        with tempfile.TemporaryDirectory(prefix="leonos-keyboard-led-") as tmp:
+            executable = str(Path(tmp) / "led")
+            subprocess.run([
+                "clang", "-std=c11", "-O1", "-g", "-fsanitize=address,undefined",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include",
+                "tools/tests/evdev_led_test.c", "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], cwd=ROOT, check=True, timeout=10)
+
     def test_disk_enumeration_preserves_posix_errors(self):
         with tempfile.TemporaryDirectory(prefix="leonos-block-errors-") as tmp:
             executable = str(Path(tmp) / "block-errors")

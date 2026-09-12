@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+void leonos_launch_use_session(int enabled);
+
 #define LEONOS_LAUNCH_MAX_ARGS 8U
 
 #define LEONOS_LAUNCH_ERR_EMPTY -1001

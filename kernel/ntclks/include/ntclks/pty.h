@@ -7,6 +7,14 @@
 
 #include <ntclks/types.h>
 #include <leonos/pty.h>
+#include <leonos/permissions.h>
+#include <linux/tty.h>
+
+struct storage_node;
+int pty_lookup_path(const char *path, struct storage_node *node);
+int pty_get_node(uint32_t pty_id, struct storage_node *node);
+int pty_inode_permissions(const struct storage_node *node,
+                           struct leonos_permissions *value, bool write);
 
 /**
  * @brief Initialize the pseudo-terminal subsystem and its backing storage.
@@ -84,6 +92,8 @@ int pty_get_winsize(uint32_t pty_id, struct leonos_pty_winsize *winsize);
  * @brief Set pty_id's terminal window size from winsize; 0 on success.
  */
 int pty_set_winsize(uint32_t pty_id, const struct leonos_pty_winsize *winsize);
+int pty_get_linux_winsize(uint32_t pty_id, struct linux_winsize *winsize);
+int pty_set_linux_winsize(uint32_t pty_id, const struct linux_winsize *winsize);
 /**
  * @brief Reads the foreground process group of a pseudo-terminal.
  * @param pty_id PTY identifier.
@@ -109,10 +119,19 @@ int pty_set_foreground_pgid(uint32_t pty_id, uint32_t caller_pid,
  * @return Zero on success or a negative Linux errno.
  */
 int pty_acquire_controlling(uint32_t pty_id, uint32_t caller_pid, int steal, int readable);
+int pty_get_session(uint32_t pty_id, uint32_t *session_id);
+int pty_detach_controlling(uint32_t pty_id, uint32_t caller_pid);
+void pty_open_controlling(uint32_t pty_id, uint32_t caller_pid, int readable);
+/* signal_number 0 checks a write (TOSTOP), 21 a read, 22 a state change. */
+int64_t pty_check_change(uint32_t pty_id, uint32_t caller_pid, int signal_number);
+void pty_process_session_exit(uint32_t tgid);
 /**
  * @brief Reclaim a hung-up PTY session when no descriptor still references it.
  */
 void pty_reap_hungup(uint32_t pty_id);
+int pty_transfer_get(uint32_t pty_id, uint32_t endpoint);
+void pty_transfer_put(uint32_t pty_id, uint32_t endpoint);
+uint32_t pty_transfer_count(uint32_t pty_id, int master_only);
 /**
  * @brief Detach pid from any PTY it is attached to.
  */

@@ -16,8 +16,11 @@ static uintptr_t stack_used;
 static unsigned char acl_data[8192];
 static uint32_t acl_length;
 static struct leonos_auth_database users_db = {
-    .magic = LEONOS_AUTH_DB_MAGIC, .count = 1,
-    .users = {{{.uid = 1234, .username = "alice", .home = "/home/alice"}, {0}}},
+    .magic = LEONOS_AUTH_DB_MAGIC, .count = 2,
+    .users = {
+        {{.uid = 0, .role = LEONOS_AUTH_ROLE_ADMIN, .username = "root", .home = "/root"}, {0}},
+        {{.uid = 1234, .role = LEONOS_AUTH_ROLE_USER, .username = "alice", .home = "/home/alice"}, {0}},
+    },
 };
 
 static void check_stack(void)
@@ -41,7 +44,7 @@ static int32_t read_file(const char *path, void *buffer, uint32_t capacity,
     *out_length = 0;
     if (!strcmp(path, LEONOS_PATH_ACCOUNTS_DB)) return -2;
     if (!strcmp(path, LEONOS_AUTH_DB_PATH)) {
-        *out_length = 8 + sizeof(users_db.users[0]);
+        *out_length = 8 + users_db.count * sizeof(users_db.users[0]);
         assert(capacity >= *out_length);
         memcpy(buffer, &users_db, *out_length);
         return 0;
@@ -134,6 +137,12 @@ int main(void)
     strcpy(permissions.path, "/home/alice/document.txt");
     assert(osmlayer_c_auth_op(LEONOS_AUTH_OP_POSIX_PERMISSIONS, &permissions) == 0);
     assert(permissions.value.mode == 0700 && permissions.value.uid == 1234 && permissions.value.gid == 1234);
+    users_db.users[0].user.role = LEONOS_AUTH_ROLE_USER;
+    assert(osmlayer_c_auth_op(LEONOS_AUTH_OP_POSIX_PERMISSIONS, &permissions) == -5);
+    users_db.users[0].user.role = LEONOS_AUTH_ROLE_ADMIN;
+    strcpy(users_db.users[0].user.home, "/home/root");
+    assert(osmlayer_c_auth_op(LEONOS_AUTH_OP_POSIX_PERMISSIONS, &permissions) == -5);
+    strcpy(users_db.users[0].user.home, "/root");
     users_db.magic = 0;
     assert(osmlayer_c_auth_op(LEONOS_AUTH_OP_POSIX_PERMISSIONS, &permissions) == -5);
     users_db.magic = LEONOS_AUTH_DB_MAGIC;

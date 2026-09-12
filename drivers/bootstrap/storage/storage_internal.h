@@ -11,6 +11,8 @@
 #include <ntclks/syscall.h>
 #include <ntclks/time.h>
 #include <ntclks/lock.h>
+#include <ntclks/pty.h>
+#include <linux/mount.h>
 
 #define ATA_CLASS_MASS_STORAGE 0x01u
 #define ATA_SUBCLASS_SATA 0x06u
@@ -67,7 +69,7 @@
 
 #define AHCI_CMDH_PRDTL 1u
 #define AHCI_MAX_SECTORS 64u
-#define STORAGE_WRITE_MAX_SECTORS 8u
+#define STORAGE_WRITE_MAX_SECTORS AHCI_MAX_SECTORS
 /* AHCI completion is polled synchronously. Keep enough headroom for a busy
  * virtual disk: a too-short limit abandons a live command and turns the next
  * application image read into a spurious -EIO. Filesystem syscalls already
@@ -436,6 +438,7 @@ static const uint8_t basic_data_guid[16] = {
 
 struct storage_volume {
     bool ready;
+    uint64_t mount_flags;
     uint8_t volume_id;
     uint8_t kind;
     uint8_t filesystem;
@@ -485,6 +488,8 @@ struct storage_volume {
     uint32_t ext2_first_data_block;
     uint32_t ext2_group_count;
     uint32_t ext2_feature_incompat;
+    uint32_t ext2_next_block;
+    uint32_t ext2_next_inode;
     uint32_t exfat_fat_offset;
     uint32_t exfat_fat_length;
     uint32_t exfat_cluster_heap_offset;

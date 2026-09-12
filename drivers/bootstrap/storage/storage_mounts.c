@@ -1,4 +1,34 @@
 /* Read-only mount listing for /proc/mounts and /etc/mtab. */
+int storage_node_mount_flags(const struct storage_node *node, uint64_t *mount_flags)
+{
+    if (!node || !mount_flags) return -22;
+    uint64_t flags;
+    kernel_execution_lock_irqsave(&flags);
+    int ret = node->volume_id < STORAGE_MAX_VOLUMES && g_volumes[node->volume_id].ready ? 0 : -19;
+    if (!ret) *mount_flags = g_volumes[node->volume_id].mount_flags;
+    kernel_execution_unlock_irqrestore(flags);
+    return ret;
+}
+
+int storage_remount_path(const char *path, uint64_t mount_flags)
+{
+    if (!path) return -22;
+    if (mount_flags & ~(uint64_t)(MS_NOSUID | MS_NOEXEC)) return -95;
+    uint64_t flags;
+    kernel_execution_lock_irqsave(&flags);
+    int ret = -22;
+    for (uint32_t i = 0; i < STORAGE_MAX_VOLUMES; ++i) {
+        struct storage_volume *volume = &g_volumes[i];
+        if (volume->ready && storage_text_eq(volume->mount_path, path)) {
+            volume->mount_flags = mount_flags;
+            ret = 0;
+            break;
+        }
+    }
+    kernel_execution_unlock_irqrestore(flags);
+    return ret;
+}
+
 struct storage_mount_text {
     uint64_t position, offset;
     uint32_t written, capacity;
@@ -117,7 +147,14 @@ static int storage_read_mount_table(uint64_t offset, void *buffer, uint32_t capa
         } else {
             storage_copy_text(source, sizeof(source), volume->ram_base ? "ramdisk" : "rootfs");
         }
-        const char *options = volume->filesystem == STORAGE_FILESYSTEM_ISO9660 ? "ro" : "rw";
+        char options[32];
+        storage_copy_text(options, sizeof(options), volume->filesystem == STORAGE_FILESYSTEM_ISO9660 ? "ro" : "rw");
+        if (volume->mount_flags & MS_NOSUID)
+            storage_copy_text(options + 2, sizeof(options) - 2, ",nosuid");
+        if (volume->mount_flags & MS_NOEXEC) {
+            uint32_t length = storage_strlen(options);
+            storage_copy_text(options + length, sizeof(options) - length, ",noexec");
+        }
         if (mountinfo) {
             storage_mount_prefix(&text, i + 1, i + 1, volume->mount_path, options);
             storage_mount_emit(&text, filesystem);

@@ -253,7 +253,8 @@ static int signal_setup_frame(struct task *task, int sig,
             nr == __NR_recvmmsg || nr == __NR_sendmmsg ||
             nr == __NR_accept4 || nr == __NR_connect || nr == __NR_futex || nr == __NR_futex_wait ||
             nr == __NR_futex_waitv || nr == __NR_poll || nr == __NR_select ||
-            nr == __NR_wait4 || nr == __NR_rt_sigtimedwait ||
+            nr == __NR_wait4 || nr == __NR_waitid || nr == __NR_rt_sigtimedwait || nr == __NR_fcntl || nr == __NR_flock ||
+            nr == __NR_ioctl ||
             nr == __NR_msgsnd || nr == __NR_msgrcv ||
             nr == __NR_semop || nr == __NR_semtimedop || sleeping;
         bool restart = (action->flags & LINUX_SA_RESTART) &&
@@ -282,6 +283,7 @@ static int signal_setup_frame(struct task *task, int sig,
             task->nanosleep_deadline = task->nanosleep_remaining = 0;
         }
         if (task->waiting_queue) kernel_wait_queue_remove(task->waiting_queue, task);
+        syscall_record_lock_cancel(task);
         if (nr == __NR_futex || nr == __NR_futex_wait) futex_cancel_wait(task);
         if (nr == __NR_rt_sigtimedwait) {
             task->sigwait_deadline = task->sigwait_mask = 0;

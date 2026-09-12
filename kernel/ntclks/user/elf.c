@@ -7,6 +7,8 @@
 #include <ntclks/elf.h>
 #include <ntclks/mm.h>
 #include <ntclks/paging.h>
+#include <ntclks/permissions.h>
+#include <ntclks/random.h>
 #include <ntclks/sched.h>
 #include <ntclks/storage.h>
 
@@ -63,8 +65,6 @@ struct elf64_nhdr {
 };
 
 static uint8_t elf_header_scratch[ELF_HEADER_READ_BYTES];
-static uint64_t aslr_counter;
-static bool weak_entropy_reported;
 
 /**
  * @brief Round value down to the previous 4096-byte page boundary.
@@ -94,73 +94,6 @@ static uint64_t align4_up(uint64_t value)
         return 0;
     }
     return (value + 3ULL) & ~3ULL;
-}
-
-/**
- * @brief Return a random 64-bit value: RDRAND when available, else a TSC/counter mix; *strong reports whether hardware randomness was used.
- */
-static uint64_t elf64_random_u64(bool *strong)
-{
-    uint32_t eax;
-    uint32_t ebx;
-    uint32_t ecx;
-    uint32_t edx;
-    uint64_t result = 0;
-    unsigned char ok = 0;
-    uint64_t cycles;
-
-    __asm__ volatile("rdtsc" : "=a"(eax), "=d"(edx));
-    cycles = ((uint64_t)edx << 32) | eax;
-    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                     : "a"(1), "c"(0));
-    if (ecx & (1u << 30)) {
-        __asm__ volatile("rdrand %0; setc %1" : "=r"(result), "=qm"(ok));
-    }
-    if (ok) {
-        if (strong) {
-            *strong = true;
-        }
-        return result;
-    }
-    ++aslr_counter;
-    result = cycles ^ ((uint64_t)(uintptr_t)&result << 17) ^
-             ((uint64_t)sched_tick_count() << 32) ^ (aslr_counter * 0x9e3779b97f4a7c15ULL);
-    if (strong) {
-        *strong = false;
-    }
-    return result;
-}
-
-/**
- * @brief Fill a 16-byte buffer with two random u64s; log once if RDRAND is missing.
- */
-static void elf64_fill_random(uint8_t out[16])
-{
-    bool strong = false;
-    uint64_t first = elf64_random_u64(&strong);
-    uint64_t second = elf64_random_u64(NULL);
-    for (uint32_t i = 0; i < 8; ++i) {
-        out[i] = (uint8_t)(first >> (i * 8));
-        out[8 + i] = (uint8_t)(second >> (i * 8));
-    }
-    if (!strong && !weak_entropy_reported) {
-        console_printf("[ntclks] ASLR active with weak entropy (RDRAND unavailable)\n");
-        weak_entropy_reported = true;
-    }
-}
-
-void elf64_random_fill(void *buffer, size_t length)
-{
-    uint8_t *out = (uint8_t *)buffer;
-    while (out && length) {
-        uint64_t value = elf64_random_u64(NULL);
-        size_t take = length < sizeof(value) ? length : sizeof(value);
-        for (size_t i = 0; i < take; ++i) {
-            out[i] = (uint8_t)(value >> (i * 8));
-        }
-        out += take;
-        length -= take;
-    }
 }
 
 /**
@@ -236,11 +169,11 @@ static bool elf64_note_abi(const struct elf64_ehdr *eh, const void *image, size_
  * @brief Copy the PT_INTERP path string (if any) into out; returns false when absent or not NUL-terminated within the segment.
  */
 static bool elf64_interp(const struct elf64_ehdr *eh, const void *image, size_t len,
-                         char out[64])
+                         char out[LEONOS_FS_PATH_LEN])
 {
     for (uint16_t i = 0; i < eh->e_phnum; ++i) {
         const struct elf64_phdr *ph = elf64_phdr_at(eh, image, i);
-        if (ph->p_type != PT_INTERP || !ph->p_filesz || ph->p_filesz >= 64 ||
+        if (ph->p_type != PT_INTERP || !ph->p_filesz || ph->p_filesz > LEONOS_FS_PATH_LEN ||
             ph->p_offset > len || ph->p_filesz > len - ph->p_offset) {
             continue;
         }
@@ -290,28 +223,12 @@ static bool elf64_validate_dynamic_header(const struct elf64_ehdr *eh, const voi
             if (!elf64_interp(eh, image, len, out->interp) || !out->interp[0]) {
                 return false;
             }
-            const char *expected = legacy ? LEONOS_ELF_INTERP_PATH : LEONOS_MUSL_INTERP_PATH;
-            bool accepted = true;
-            if (!legacy && out->interp[0]) {
-                /* A Linux binary may use the native glibc interpreter. It is
-                 * still loaded by the same PT_INTERP contract; the root image
-                 * must provide the interpreter and its libraries. */
-                const char *linux_interp = LEONOS_GLIBC_INTERP_PATH;
-                bool musl_match = true;
-                bool glibc_match = true;
+            if (legacy) {
+                const char *expected = LEONOS_ELF_INTERP_PATH;
                 for (uint32_t i = 0; expected[i] || out->interp[i]; ++i) {
-                    if (expected[i] != out->interp[i]) musl_match = false;
-                }
-                for (uint32_t i = 0; linux_interp[i] || out->interp[i]; ++i) {
-                    if (linux_interp[i] != out->interp[i]) glibc_match = false;
-                }
-                accepted = musl_match || glibc_match;
-            } else {
-                for (uint32_t i = 0; expected[i] || out->interp[i]; ++i) {
-                    if (expected[i] != out->interp[i]) accepted = false;
+                    if (expected[i] != out->interp[i]) return false;
                 }
             }
-            if (!accepted) return false;
         }
         /* An ET_DYN image without PT_INTERP is a static PIE: Linux maps it
          * directly with a load bias and starts at e_entry.  Keep accepting
@@ -502,7 +419,7 @@ bool elf64_load_address_space(struct address_space *as, const void *image, size_
 /**
  * @brief Read the ELF header plus program headers from node into the scratch buffer and expose them via out_image/out_len.
  */
-static bool elf64_read_headers(const struct storage_node *node, const void **out_image,
+static int elf64_read_headers(const struct storage_node *node, const void **out_image,
                                size_t *out_len)
 {
     const struct elf64_ehdr *eh;
@@ -511,29 +428,28 @@ static bool elf64_read_headers(const struct storage_node *node, const void **out
     uint32_t got = 0;
     if (!node || node->type != LEONOS_FS_TYPE_FILE || node->size < sizeof(struct elf64_ehdr) ||
         !out_image || !out_len) {
-        return false;
+        return -8;
     }
-    if (storage_read_node(node, 0, elf_header_scratch, sizeof(struct elf64_ehdr), &got) < 0 ||
-        got != sizeof(struct elf64_ehdr)) {
-        return false;
-    }
+    int ret = storage_read_node(node, 0, elf_header_scratch, sizeof(struct elf64_ehdr), &got);
+    if (ret < 0) return ret;
+    if (got != sizeof(struct elf64_ehdr)) return -8;
     eh = (const struct elf64_ehdr *)elf_header_scratch;
     if (eh->e_phentsize != sizeof(struct elf64_phdr) || eh->e_phoff > node->size ||
         eh->e_phnum > (node->size - eh->e_phoff) / eh->e_phentsize) {
-        return false;
+        return -8;
     }
     header_len = eh->e_phoff + (uint64_t)eh->e_phnum * eh->e_phentsize;
     wanted = (uint32_t)(node->size < ELF_HEADER_READ_BYTES ? node->size : ELF_HEADER_READ_BYTES);
     if (header_len > wanted || header_len < sizeof(*eh)) {
-        return false;
+        return -8;
     }
     got = 0;
-    if (storage_read_node(node, 0, elf_header_scratch, wanted, &got) < 0 || got != wanted) {
-        return false;
-    }
+    ret = storage_read_node(node, 0, elf_header_scratch, wanted, &got);
+    if (ret < 0) return ret;
+    if (got != wanted) return -8;
     *out_image = elf_header_scratch;
     *out_len = wanted;
-    return true;
+    return 0;
 }
 
 /**
@@ -661,12 +577,14 @@ static uint64_t elf64_choose_bias(const struct elf_image_info *info, bool interp
     uint64_t max = interpreter ? ELF_DYN_INTERP_MAX : ELF_DYN_MAIN_MAX;
     uint64_t span;
     uint64_t base;
+    uint64_t random;
     if (!info || info->high_vaddr <= info->low_vaddr ||
         info->high_vaddr - info->low_vaddr > max - min) {
         return 0;
     }
     span = (max - min - (info->high_vaddr - info->low_vaddr)) & ~0x1fffffULL;
-    base = min + (elf64_random_u64(NULL) % (span / 0x200000ULL + 1ULL)) * 0x200000ULL;
+    if (kernel_random_fill(&random, sizeof(random)) < 0) return 0;
+    base = min + (random % (span / 0x200000ULL + 1ULL)) * 0x200000ULL;
     if (base < align_down(info->low_vaddr)) {
         return 0;
     }
@@ -676,7 +594,7 @@ static uint64_t elf64_choose_bias(const struct elf_image_info *info, bool interp
 /**
  * @brief Create lazy file-backed VMAs for every LOAD segment of image at bias, coalescing shared read-only pages of static ET_EXEC images.
  */
-static bool elf64_map_one(struct task *task, const struct storage_node *node,
+static int elf64_map_one(struct task *task, const struct storage_node *node,
                           const void *image, struct elf_image_info *info,
                           uint64_t bias, const char *image_name)
 {
@@ -687,7 +605,7 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
     if (!elf64_segments_nonoverlapping(eh, image, node->size, bias, info->dynamic)) {
         console_printf("[ntclks] ELF %s segment layout rejected bias=0x%llx\n",
                        image_name, (unsigned long long)bias);
-        return false;
+        return -8;
     }
     for (uint32_t i = 0; i < sched_task_vma_capacity(task); ++i) {
         const struct task_vma *vma = sched_task_vma_at(task, i);
@@ -704,7 +622,7 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
     if (!loads || loads > free_vmas) {
         console_printf("[ntclks] ELF %s VMA capacity rejected loads=%u free=%u\n",
                        image_name, loads, free_vmas);
-        return false;
+        return -12;
     }
     for (uint16_t i = 0; i < eh->e_phnum; ++i) {
         const struct elf64_phdr *ph = elf64_phdr_at(eh, image, i);
@@ -723,12 +641,12 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
         end = align_up(bias + ph->p_vaddr + ph->p_memsz);
         if (!end) {
             console_printf("[ntclks] ELF %s LOAD[%u] address overflow\n", image_name, i);
-            return false;
+            return -8;
         }
         page_delta = ph->p_vaddr - align_down(ph->p_vaddr);
         if (ph->p_offset < page_delta) {
             console_printf("[ntclks] ELF %s LOAD[%u] file offset rejected\n", image_name, i);
-            return false;
+            return -8;
         }
         file_offset = ph->p_offset - page_delta;
         if (!info->dynamic) {
@@ -738,19 +656,19 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
             console_printf("[ntclks] ELF %s LOAD[%u] range rejected 0x%llx-0x%llx\n",
                            image_name, i, (unsigned long long)start,
                            (unsigned long long)end);
-            return false;
+            return -8;
         }
         if (!address_space_prepare_user_range(sched_task_as(task), start, end)) {
             console_printf("[ntclks] ELF %s LOAD[%u] page table preparation failed "
                            "0x%llx-0x%llx\n",
                            image_name, i, (unsigned long long)start,
                            (unsigned long long)end);
-            return false;
+            return -12;
         }
         vma = legacy_vma ? legacy_vma : elf64_task_free_vma(task);
         if (!vma) {
             console_printf("[ntclks] ELF %s LOAD[%u] VMA capacity rejected\n", image_name, i);
-            return false;
+            return -12;
         }
         if (ph->p_flags & PF_W) {
             prot |= TASK_VMA_PROT_WRITE;
@@ -766,7 +684,7 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
                 (legacy_vma->prot | prot) & TASK_VMA_PROT_EXEC) {
                 console_printf("[ntclks] ELF %s LOAD[%u] legacy W+X page rejected\n",
                                image_name, i);
-                return false;
+                return -8;
             }
             legacy_vma->prot |= prot;
             legacy_vma->max_prot |= prot;
@@ -781,6 +699,9 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
             continue;
         }
         segment_node = *node;
+        struct storage_inode_ref *inode = NULL;
+        int hold_ret = storage_inode_get(node, &inode);
+        if (hold_ret < 0) return hold_ret;
         *vma = (struct task_vma){
             .used = 1,
             .prot = prot,
@@ -796,16 +717,17 @@ static bool elf64_map_one(struct task *task, const struct storage_node *node,
             .file_offset = file_offset,
             .file_limit = ph->p_offset + ph->p_filesz,
             .file_node = segment_node,
+            .inode = inode,
         };
     }
     info->program_break = program_break;
-    return true;
+    return 0;
 }
 
 /**
  * @brief Map the task's main ELF (and its dynamic interpreter when PIE) into the task, recording entry/PHDR/interpreter addresses and ASLR biases in out.
  */
-bool elf64_map_task_image(struct task *task, const struct storage_node *node,
+int elf64_map_task_image(struct task *task, const struct storage_node *node,
                           struct elf_image_info *out)
 {
     const void *image;
@@ -820,18 +742,20 @@ bool elf64_map_task_image(struct task *task, const struct storage_node *node,
     const struct elf64_ehdr *main_eh;
     const struct elf64_ehdr *interp_eh;
     bool entry_found = false;
+    int ret;
 
     if (!task || !node || !out) {
         console_printf("[ntclks] ELF task image request is invalid\n");
-        return false;
+        return -22;
     }
-    if (!elf64_read_headers(node, &image, &image_len)) {
+    ret = elf64_read_headers(node, &image, &image_len);
+    if (ret < 0) {
         console_printf("[ntclks] ELF main header read failed\n");
-        return false;
+        return ret;
     }
     if (!elf64_probe_image(image, image_len, node->size, false, &main_info)) {
         console_printf("[ntclks] ELF main header validation failed\n");
-        return false;
+        return -8;
     }
     main_eh = image;
     if (main_info.dynamic) {
@@ -840,7 +764,7 @@ bool elf64_map_task_image(struct task *task, const struct storage_node *node,
             main_info.phdr_vaddr > UINT64_MAX - main_bias) {
             console_printf("[ntclks] ELF main ASLR layout rejected span=0x%llx\n",
                            (unsigned long long)(main_info.high_vaddr - main_info.low_vaddr));
-            return false;
+            return -8;
         }
     }
     for (uint16_t i = 0; i < main_eh->e_phnum; ++i) {
@@ -852,17 +776,16 @@ bool elf64_map_task_image(struct task *task, const struct storage_node *node,
     }
     if (!entry_found) {
         console_printf("[ntclks] ELF main entry is outside an executable LOAD segment\n");
-        return false;
+        return -8;
     }
-    if (!elf64_map_one(task, node, image, &main_info, main_bias, "main")) {
-        return false;
-    }
+    ret = elf64_map_one(task, node, image, &main_info, main_bias, "main");
+    if (ret < 0) return ret;
     main_info.load_bias = main_bias;
     main_info.entry += main_bias;
     main_info.phdr_vaddr += main_bias;
     if (!main_info.dynamic) {
         *out = main_info;
-        return true;
+        return 0;
     }
 
     if (!main_info.interp[0]) {
@@ -871,37 +794,41 @@ bool elf64_map_task_image(struct task *task, const struct storage_node *node,
          * userland_load_task_image_locked(). */
         main_info.interpreter_entry = main_info.entry;
         *out = main_info;
-        return true;
+        return 0;
     }
 
-    if (storage_lookup_path(main_info.interp, &interp_node) < 0) {
+    ret = storage_lookup_path(main_info.interp, &interp_node);
+    if (ret < 0) {
         console_printf("[ntclks] ELF interpreter lookup failed path=%s\n", main_info.interp);
-        return false;
+        return ret;
     }
-    if (!elf64_read_headers(&interp_node, &interp_image, &interp_len)) {
+    ret = fs_permissions_check(task, main_info.interp, FS_ACCESS_EXEC, false);
+    if (ret < 0) return ret;
+    if (fs_permissions_check(task, main_info.interp, FS_ACCESS_READ, false) < 0)
+        sched_task_mm(task)->nondumpable = true;
+    ret = elf64_read_headers(&interp_node, &interp_image, &interp_len);
+    if (ret < 0) {
         console_printf("[ntclks] ELF interpreter header read failed\n");
-        return false;
+        return ret == -8 ? -80 : ret;
     }
     if (!elf64_probe_image(interp_image, interp_len, interp_node.size, true, &interp_info)) {
         console_printf("[ntclks] ELF interpreter header validation failed\n");
-        return false;
+        return -80;
     }
     if (interp_info.abi_major != main_info.abi_major) {
         console_printf("[ntclks] ELF ABI mismatch main=%u interpreter=%u\n",
                        main_info.abi_major, interp_info.abi_major);
-        return false;
+        return -80;
     }
     interp_bias = elf64_choose_bias(&interp_info, true);
     interp_eh = interp_image;
     if (!interp_bias || interp_info.entry > UINT64_MAX - interp_bias) {
         console_printf("[ntclks] ELF interpreter ASLR layout rejected span=0x%llx\n",
                        (unsigned long long)(interp_info.high_vaddr - interp_info.low_vaddr));
-        return false;
+        return -8;
     }
-    if (!elf64_map_one(task, &interp_node, interp_image, &interp_info, interp_bias,
-                        "interpreter")) {
-        return false;
-    }
+    ret = elf64_map_one(task, &interp_node, interp_image, &interp_info, interp_bias, "interpreter");
+    if (ret < 0) return ret;
     (void)interp_eh;
     task->dynamic_launch.main_base = main_info.load_bias;
     task->dynamic_launch.main_entry = main_info.entry;
@@ -909,12 +836,11 @@ bool elf64_map_task_image(struct task *task, const struct storage_node *node,
     task->dynamic_launch.interp_base = interp_bias;
     task->dynamic_launch.interp_entry = interp_info.entry + interp_bias;
     task->dynamic_launch.abi_major = main_info.abi_major;
-    elf64_fill_random(task->dynamic_launch.random);
     for (uint32_t i = 0; i + 1 < sizeof(task->dynamic_launch.main_path) && task->path[i]; ++i) {
         task->dynamic_launch.main_path[i] = task->path[i];
         task->dynamic_launch.main_path[i + 1] = 0;
     }
     main_info.interpreter_entry = interp_info.entry + interp_bias;
     *out = main_info;
-    return true;
+    return 0;
 }

@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include <leonos/fs.h>
 #include <leonos/app.h>
 #include <leonos/device.h>
@@ -9,9 +10,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <unistd.h>
 #include <leonos/layout.h>
 #include <grp.h>
+#include <pwd.h>
 #include <sys/stat.h>
 #include <stdlib.h>
 
@@ -216,48 +217,28 @@ static int launch_in_terminal(char *argv[])
     return leonos_spawn_argv(terminal_argv[0], terminal_argv);
 }
 
-static int launch_apply_session_uid(void)
-{
-    char text[16] = {0};
-    int fd;
-    if (getuid() != 0) return 0;
-    fd = open("/run/leonos/session-user", LEONOS_O_RDONLY | O_NOFOLLOW, 0);
-    if (fd < 0) return errno == ENOENT ? 0 : -1;
-    struct stat st;
-    if (fstat(fd, &st) < 0 || st.st_uid || (st.st_mode & 0022) || !S_ISREG(st.st_mode)) {
-        close(fd); errno = EACCES; return -1;
-    }
-    ssize_t n = read(fd, text, sizeof(text) - 1u);
-    close(fd);
-    char *end;
-    unsigned long uid = strtoul(text, &end, 10);
-    if (n <= 0 || end == text || *end != '\n' || uid >= 65534) { errno = EINVAL; return -1; }
-    if (setgroups(0, 0) < 0 || setgid(uid) < 0 || setuid(uid) < 0) return -1;
-    return 0;
-}
+static int launch_session;
+void leonos_launch_use_session(int enabled) { launch_session = !!enabled; }
 
 int leonos_spawn_argv(const char *path, char *const argv[])
 {
-    char **envp = 0;
-    pid_t pid;
-    int result;
-
-    if (!path || !path[0] || !argv || !argv[0]) {
+    if (!path || !path[0] || !argv || !argv[0])
         return launch_fail(LEONOS_LAUNCH_ERR_EMPTY);
-    }
-    result = leonos_environment_build(0, &envp);
-    if (result < 0) {
-        return result;
-    }
-    pid = fork();
+    pid_t pid = fork();
     if (pid == 0) {
-        if (launch_apply_session_uid() < 0) _exit(126);
-        (void)execve(path, argv, envp);
+        char **envp = NULL;
+        if (launch_session && getuid() == 0 &&
+            strcmp(path, LEONOS_LAYOUT_LEONOS_APPS "/login/login.elf")) {
+            struct stat installed;
+            int present = lstat("/etc/leonos/installed", &installed);
+            if ((present < 0 && errno != ENOENT) ||
+                (present == 0 && leonos_session_apply() < 0)) _exit(126);
+        }
+        if (leonos_environment_build(NULL, &envp) < 0) _exit(126);
+        execve(path, argv, envp);
         _exit(127);
     }
-    result = pid < 0 ? -1 : (int)pid;
-    leonos_environment_free(envp);
-    return result;
+    return pid < 0 ? -1 : (int)pid;
 }
 
 static void build_child_path(char *dst, uint32_t capacity,

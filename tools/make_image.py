@@ -24,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from make_ext2_root import populate_ext2
+from image_test_accounts import seed_test_accounts
 from leonos_layout import (  # noqa: E402  (tools directory is not a package)
     ETC_LEONOS,
     layout_directories,
@@ -205,6 +206,7 @@ def make_root_tree(staging: Path, destination: Path, language: str) -> None:
     locale = destination / ETC_LEONOS / "locale.conf"
     locale.parent.mkdir(parents=True, exist_ok=True)
     locale.write_text(f"lang={language}\n", encoding="utf-8")
+    seed_test_accounts(destination)
 
 
 def main() -> int:

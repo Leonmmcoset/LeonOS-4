@@ -1,5 +1,17 @@
 # POSIX file permissions
 
+## Source reconciliation, 2026-09-12
+
+The retired authd database was AUS2, not AUS1; its source now lives exclusively
+under `tools/tests/legacy_authd`. Standard passwd/shadow/group/gshadow files and
+Linux-PAM are now the production authority. The administrator is UID/GID 0,
+named root, with home /root. The kernel has
+saved/filesystem ID and capability fields and some handlers, but their Linux
+contracts are incomplete. In particular, the existence of these fields is not
+evidence for set-ID exec support. See `SUDOERS_PAM_STATUS.md` for the active
+implementation and verification matrix. Historical verification below does
+not certify the new sudoers/PAM scope.
+
 The three octal digits select permissions for the file owner, members of its
 group, and other users, in that order. Each digit adds read=4, write=2 and
 execute/search=1. For example, 640 means owner read/write, group read, others
@@ -15,7 +27,7 @@ chown 1001:1002 /home/alice/document.txt
 umask 027
 ```
 
-`chown` to another owner requires UID 0 under the current privilege model.
+`chown` to another owner requires effective CAP_CHOWN.
 An owner can change the group to one of its primary/supplementary groups;
 unauthorized changes return EPERM. An inaccessible directory component returns
 EACCES before `..` is folded. Changing a mode to 000 removes normal access;
@@ -29,25 +41,22 @@ it does not invalidate an already-open descriptor.
   group inheritance and sticky-directory deletion restrictions.
 - ext2 stores mode and ownership in its native inode, including high UID/GID
   bits. FAT32/exFAT persist explicit values in versioned LEONACL.SYS records.
-  Existing ACLs remain readable; explicit metadata takes precedence over
-  fallback home-directory ownership derived from the existing account database.
+  Existing ACLs remain readable. No kernel account-database lookup supplies
+  implicit home-directory ownership; native/explicit metadata is authoritative.
 - File Manager properties now show owner/group/other rwx controls, octal mode
   and numeric owner/group. Save calls the real chmod/chown API and reloads the
   actual state; denied operations are reported. BusyBox and cmd permission
   commands call the native kernel rather than success-only shims.
-- authd owns the existing AUS1 account database (0600) and publishes public
-  identity lookup files `/etc/passwd` and `/etc/group` (0644). Existing account
-  names and UIDs are preserved, and each account retains primary GID=UID.
-  A legacy account named `root` can have UID 1: its name and desktop admin role
-  do not grant UID 0. Exported files contain `x`, never password hashes.
+- `/etc/passwd` and `/etc/group` are root-owned 0644; shadow/gshadow are
+  root-owned 0600. New root is UID/GID 0 and the ordinary account is 1000.
+  Populated private account databases are explicitly refused before update.
+  Standard passwd entries contain `x`, never password hashes.
 - New names reject path separators, control characters, whitespace and colon.
   Bounded request validation rejects unterminated fields. These restrictions
   prevent path traversal and extra passwd/group records during publication.
-- Account exports are regenerated at startup and after account creation.
-  Each file is replaced using rename after writing a complete temporary file.
-  If export fails after users.db was committed, authd retains the committed
-  account and reports failure; startup retries publication. The three files
-  are not a single crash-atomic database transaction.
+- The installer uses the staged four-file transaction/recovery helper; routine
+  account changes use upstream shadow tools and PAM. Actual power-cut and
+  concurrent multi-tool acceptance remain incomplete.
 - Old binaries must be rebuilt. A zero creation mode now actually means 000;
   legacy application callers and SDK libc adapters have been migrated.
   The distribution runtime is now musl+mimalloc. Existing Picolibc binaries
@@ -66,10 +75,11 @@ metadata on FAT32/exFAT; the musl guest test covers type conflicts and empty vs
 nonempty directories. The ext2 backend test uses a real mke2fs image and checks
 results with debugfs and e2fsck, with and without the filetype feature.
 
-Known unfinished contracts remain: descriptor identity after rename/unlink,
-cross-directory rename, crash/error transaction recovery, FAT/exFAT timestamps,
-setuid/setgid execution, saved IDs/fsuid/capabilities and complete special-bit
-rules. Synthetic device metadata is volatile. The FAT/exFAT metadata format
+The earlier unfinished list is superseded by the detailed matrix in
+`SUDOERS_PAM_STATUS.md`: focused held-inode, set-ID, saved/fs-ID and capability
+probes now pass, but full concurrent lifetime, power-cut persistence and
+FAT/exFAT timestamp/special-bit contracts remain incomplete. Synthetic device
+metadata is volatile. The FAT/exFAT metadata format
 still has a 64-record per-directory limit and reports exhaustion; it must be
 extended before claiming Linux-scale directory coverage. VMware is unverified.
 

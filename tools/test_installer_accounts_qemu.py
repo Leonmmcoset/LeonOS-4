@@ -37,7 +37,11 @@ def boot(output, disk, iso=None):
                "-netdev", "user,id=net0", "-device", "e1000,netdev=net0",
                "-drive", f"file={disk},format=raw,if=ide",
                "-qmp", f"unix:{qmp},server=on,wait=off", "-no-reboot", "-no-shutdown"]
-    command += ["-cdrom", str(iso), "-boot", "d"] if iso else ["-boot", "c"]
+    # An installed disk has its own EFI loader. Give the optical device an
+    # explicit firmware priority so update tests actually boot the installer.
+    command += (["-drive", f"file={iso},format=raw,media=cdrom,if=none,id=installer-cd",
+                 "-device", "ide-cd,drive=installer-cd,bootindex=1", "-boot", "d"]
+                if iso else ["-boot", "c"])
     with (output / "qemu.log").open("w") as errors:
         process = subprocess.Popen(command, stdout=errors, stderr=errors, cwd=ROOT)
         probe = None

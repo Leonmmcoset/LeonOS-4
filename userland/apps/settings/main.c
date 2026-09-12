@@ -1,3 +1,5 @@
+#include <pwd.h>
+#include <unistd.h>
 #include <leonos/auth.h>
 #include <leonos/app.h>
 #include <leonos/fs.h>
@@ -67,7 +69,8 @@ static struct leonos_display_state display_state;
 static struct leonos_fb_capabilities framebuffer_caps;
 static struct leonos_appearance_state appearance_state;
 static struct leonos_user_info current_user;
-static struct leonos_user_info users[LEONOS_AUTH_MAX_USERS];
+static struct leonos_user_info *users;
+static uint32_t user_scroll;
 static uint32_t user_count;
 static uint32_t selected_user;
 static uint8_t active_page;
@@ -752,12 +755,14 @@ static void refresh_users(void)
     current_user = (struct leonos_user_info){0};
     (void)leonos_auth_current(&current_user);
     if (current_user.role == LEONOS_AUTH_ROLE_ADMIN) {
-        (void)leonos_auth_list_users(users, LEONOS_AUTH_MAX_USERS, 1, &count);
+        (void)leonos_auth_users_alloc(&users, 1, &count);
     } else if (current_user.username[0]) {
+        if (!users) users = calloc(1, sizeof(*users));
+        if (!users) { user_count = 0; return; }
         users[0] = current_user;
         count = 1;
     }
-    user_count = count > LEONOS_AUTH_MAX_USERS ? LEONOS_AUTH_MAX_USERS : count;
+    user_count = count;
     if (selected_user >= user_count) {
         selected_user = user_count ? user_count - 1 : 0;
     }
@@ -1474,7 +1479,8 @@ static void draw_users_page(struct leonos_ui_surface *ui)
                        : T("You can change your password.", "你可以修改自己的密码。"),
                    LEONOS_UI_DARK, LEONOS_UI_GRAY);
     leonos_ui_listview_header(ui, 34, 98, 430, cols, 3);
-    for (uint32_t i = 0; i < user_count && i < SETTINGS_USER_ROWS; ++i) {
+    for (uint32_t row = 0; user_scroll + row < user_count && row < SETTINGS_USER_ROWS; ++row) {
+        uint32_t i = user_scroll + row;
         const char *cells[3];
         copy_text(state, sizeof(state),
                   (users[i].flags & LEONOS_AUTH_USER_DISABLED)
@@ -1483,7 +1489,7 @@ static void draw_users_page(struct leonos_ui_surface *ui)
         cells[0] = users[i].username;
         cells[1] = role_label(users[i].role);
         cells[2] = state;
-        leonos_ui_listview_row(ui, 34, 126 + i * 28, 430, cols, cells, 3,
+        leonos_ui_listview_row(ui, 34, 126 + row * 28, 430, cols, cells, 3,
                                i == selected_user ? LEONOS_UI_MENU_SELECTED : 0);
     }
     if (current_user.role == LEONOS_AUTH_ROLE_ADMIN) {
@@ -1771,6 +1777,7 @@ static void create_user_dialog(uint32_t role)
     }
     if (leonos_ui_show_password_dialog(T("Create user", "创建用户"), T("Password", "密码"),
                                        pass, sizeof(pass)) <= 0) {
+        explicit_bzero(pass, sizeof(pass));
         return;
     }
     if (leonos_auth_create_user(name, pass, role, &user) == 0) {
@@ -1779,49 +1786,29 @@ static void create_user_dialog(uint32_t role)
     } else {
         copy_text(status_text, sizeof(status_text), T("Could not create user", "无法创建用户"));
     }
+    explicit_bzero(pass, sizeof(pass));
 }
 
 static void reset_password_dialog(uint32_t uid)
 {
-    char pass[LEONOS_AUTH_PASSWORD_LEN] = "";
-    if (leonos_ui_show_password_dialog(T("Reset password", "重置密码"), T("New password", "新密码"),
-                                       pass, sizeof(pass)) <= 0) {
-        return;
-    }
-    if (leonos_auth_change_password(uid, "", pass) == 0) {
-        copy_text(status_text, sizeof(status_text), T("Password reset", "密码已重置"));
-    } else {
-        copy_text(status_text, sizeof(status_text), T("Password reset failed", "重置密码失败"));
-    }
+    struct passwd *account = getpwuid(uid);
+    if (!account) return;
+    char *args[] = {"/usr/lib/leonos/apps/terminal/terminal.elf", "-e",
+                     "/usr/bin/passwd", account->pw_name, NULL};
+    if (leonos_spawn_argv(args[0], args) < 0)
+        copy_text(status_text, sizeof(status_text), T("Could not start passwd", "无法启动 passwd"));
 }
 
 static void change_my_password(void)
 {
-    char old_pass[LEONOS_AUTH_PASSWORD_LEN] = "";
-    char new_pass[LEONOS_AUTH_PASSWORD_LEN] = "";
-    if (!current_user.username[0]) {
-        return;
-    }
-    if (leonos_ui_show_password_dialog(T("Change password", "修改密码"), T("Old password", "旧密码"),
-                                       old_pass, sizeof(old_pass)) <= 0) {
-        return;
-    }
-    if (leonos_ui_show_password_dialog(T("Change password", "修改密码"), T("New password", "新密码"),
-                                       new_pass, sizeof(new_pass)) <= 0) {
-        return;
-    }
-    if (leonos_auth_change_password(current_user.uid, old_pass, new_pass) == 0) {
-        copy_text(status_text, sizeof(status_text), T("Password changed", "密码已修改"));
-    } else {
-        copy_text(status_text, sizeof(status_text), T("Password change failed", "修改密码失败"));
-    }
+    reset_password_dialog(getuid());
 }
 
 static void handle_users_click(int32_t x, int32_t y)
 {
-    for (uint32_t i = 0; i < user_count && i < SETTINGS_USER_ROWS; ++i) {
-        if (hit_rect_i(x, y, 34, 126 + (int32_t)i * 28, 430, 28)) {
-            selected_user = i;
+    for (uint32_t row = 0; user_scroll + row < user_count && row < SETTINGS_USER_ROWS; ++row) {
+        if (hit_rect_i(x, y, 34, 126 + (int32_t)row * 28, 430, 28)) {
+            selected_user = user_scroll + row;
             return;
         }
     }
@@ -2295,6 +2282,12 @@ int main(void)
                 refresh_appearance_state();
                 refresh_users();
                 refresh_ntp_runtime_state();
+                draw_settings(&ui);
+                leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
+            }
+            if (event.type == LEONOS_GUI_APP_EVENT_MOUSE_WHEEL && active_page == PAGE_USERS) {
+                if (event.dy > 0 && user_scroll) --user_scroll;
+                if (event.dy < 0 && user_scroll + SETTINGS_USER_ROWS < user_count) ++user_scroll;
                 draw_settings(&ui);
                 leonos_gui_present_window((uint32_t)window_id, SETTINGS_W, SETTINGS_H, SETTINGS_W, pixels);
             }

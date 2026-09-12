@@ -487,6 +487,36 @@ static int ahci_write_lba(struct ahci_hba_port *port, uint64_t lba, uint32_t sec
     return ahci_pending_poll();
 }
 
+static int ahci_flush_cache(struct ahci_hba_port *port)
+{
+    if (!port) return -19;
+    if (ahci_pending_command.active) {
+        int ret = ahci_pending_poll();
+        if (ret < 0) return ret;
+    }
+    if (ahci_wait_idle(port) < 0 || ahci_wait_cmd_slot(port) < 0) return -5;
+    struct ahci_cmd_header *header = &ahci_cmd_headers[0];
+    header->flags = sizeof(struct fis_reg_h2d) / sizeof(uint32_t);
+    header->prdtl = 0;
+    header->prdbc = 0;
+    struct ahci_cmd_table *table = (void *)ahci_cmd_table_buf;
+    storage_memzero(table, sizeof(ahci_cmd_table_buf));
+    struct fis_reg_h2d *fis = (void *)table->cfis;
+    fis->fis_type = FIS_TYPE_REG_H2D;
+    fis->c = 1;
+    fis->command = 0xe7; /* ATA FLUSH CACHE, non-data command. */
+    port->is = 0xffffffffu;
+    ahci_memory_barrier();
+    port->ci = 1u;
+    storage_memzero(&ahci_pending_command, sizeof(ahci_pending_command));
+    ahci_pending_command.port = port;
+    ahci_pending_command.owner_pid = sched_current_pid();
+    ahci_pending_command.start_tick = time_ticks();
+    ahci_pending_command.write = 1;
+    ahci_pending_command.active = 1;
+    return ahci_pending_poll();
+}
+
 static int ahci_read_lba_retry(struct ahci_hba_port *port, uint64_t lba,
                                uint32_t sector_count, void *buffer)
 {

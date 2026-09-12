@@ -14,7 +14,6 @@
 #define LEONOS_IPC_SOCK_WINDOWD "/run/leonos/windowd.sock"
 #define LEONOS_IPC_SOCK_INPUT_METHOD "/run/leonos/input-method.sock"
 #define LEONOS_IPC_SOCK_NET "/run/leonos/net.sock"
-#define LEONOS_IPC_SOCK_AUTH "/run/leonos/authd.sock"
 #define LEONOS_IPC_SOCK_SESSION "/run/leonos/session.sock"
 #define LEONOS_IPC_SOCK_DEVICE "/run/leonos/devman.sock"
 
@@ -35,6 +34,10 @@ int leonos_ipc_recv(int fd, uint32_t *type, void *payload, uint32_t capacity,
                     uint32_t *length);
 int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
                        uint32_t *length, int *received_fd);
+/* Requires SO_PASSCRED before receiving. Every fragment must carry exactly
+ * the expected kernel-supplied credentials; partial-frame retries preserve it. */
+int leonos_ipc_recv_cred_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
+                           uint32_t *length, int *received_fd, const struct ucred *expected);
 int leonos_ipc_set_nonblock(int fd, int enabled);
 int leonos_ipc_peer_credentials(int fd, struct ucred *credentials);
 int leonos_ipc_close(int fd);

@@ -17,6 +17,7 @@ static struct leonos_fb_capabilities hardware = {
 static size_t mapped_bytes;
 static unsigned maps, unmaps;
 static int map_failure;
+static unsigned damage_calls;
 
 int open(const char *path, int flags, ...)
 {
@@ -43,7 +44,13 @@ int ioctl(int fd, unsigned long request, ...)
         if (mode->xres == 1234) { errno = EINVAL; return -1; }
         display_width = mode->xres;
         display_height = mode->yres;
-    } else if (request != FBIOPAN_DISPLAY) {
+    } else if (request == 0x46f1UL) {
+        const uint32_t *rect = arg;
+        assert(rect[0] == 1919 && rect[1] == 1079 && rect[2] == 1 && rect[3] == 1);
+        ++damage_calls;
+    } else if (request == FBIOPAN_DISPLAY) {
+        assert(!"A one-pixel blit must not force a full-screen VMware update");
+    } else {
         /* The device capability query must carry the real VRAM limits. */
         assert(request == 0x46f0UL);
         *(struct leonos_fb_capabilities *)arg = hardware;
@@ -86,6 +93,7 @@ int main(void)
     assert(leonos_fb_blit(1919, 1079, 1, 1, 1, &pixel) == 0);
     assert(mapped_bytes == sizeof(vram) && maps == 2 && unmaps == 1);
     assert(vram[1920 * 1080 - 1] == pixel);
+    assert(damage_calls == 1);
     assert(leonos_fb_set_mode(1280, 800) == 0);
     assert(leonos_fb_pixel(0, 0) == 0 && maps == 3 && unmaps == 2);
 

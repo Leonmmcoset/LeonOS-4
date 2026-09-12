@@ -117,6 +117,9 @@ def main() -> None:
     parser.add_argument("--libmagic-source", type=Path)
     parser.add_argument("--libmagic-header", type=Path)
     parser.add_argument("--ncurses", type=Path)
+    parser.add_argument("--pam-root", type=Path)
+    parser.add_argument("--pam-build-metadata", type=Path)
+    parser.add_argument("--crypt-build-metadata", type=Path)
     parser.add_argument("--liblua-lib", type=Path)
     parser.add_argument("--liblua-so", type=Path)
     parser.add_argument("--liblua-source", type=Path)
@@ -139,6 +142,28 @@ def main() -> None:
                         metavar=("ID", "DESTINATION", "SOURCE"))
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+
+    if (args.pam_root is None) != (args.pam_build_metadata is None):
+        raise SystemExit("PAM SDK root and build metadata must be provided together")
+    if args.pam_root is not None:
+        if args.crypt_build_metadata is None:
+            raise SystemExit("PAM SDK requires the libxcrypt build metadata")
+        for required in (
+            args.pam_root / "usr/include/security/pam_appl.h",
+            args.pam_root / "usr/include/security/pam_modules.h",
+            args.pam_root / "usr/share/licenses/linux-pam/Copyright",
+            args.pam_root / "usr/share/licenses/libxcrypt/COPYING.LIB",
+            args.pam_root / "usr/share/licenses/libxcrypt/LICENSING",
+            args.pam_root / "usr/include/crypt.h",
+            args.pam_root / "lib/libcrypt.so.2",
+            args.pam_build_metadata,
+            args.crypt_build_metadata,
+            args.pam_root / "lib/pkgconfig/libcrypt.pc",
+            *(args.pam_root / "lib" / f"lib{name}.so" for name in ("pam", "pam_misc", "pamc")),
+            *(args.pam_root / "lib/pkgconfig" / f"{name}.pc" for name in ("pam", "pam_misc", "pamc")),
+        ):
+            if not required.is_file():
+                raise SystemExit(f"required PAM SDK input is missing: {required}")
 
     sdk_root = args.sdk_root.resolve()
     if not (sdk_root / "Makefile").is_file():
@@ -297,6 +322,8 @@ def main() -> None:
     for source in uapi_headers:
         public_headers[source.relative_to(args.uapi_include).as_posix()] = source
     authoritative_names = shared_posix_names | public_headers.keys()
+    if args.pam_root is not None:
+        authoritative_names |= {"crypt.h"}
     ncurses_header_names = {
         "curses.h", "ncurses.h", "ncurses_dll.h", "term.h", "term_entry.h",
         "termcap.h", "tic.h", "eti.h", "unctrl.h", "menu.h", "form.h", "panel.h",
@@ -331,9 +358,11 @@ def main() -> None:
                         "include/pnglibconf.h",
                         "include/curses.h", "include/ncurses.h",
                         "include/leonos/app.h",
+                        "include/leonos/authd.h", "include/leonos/auth_db.h",
                         "include/portablegl.h", "include/leonos/pgl.h",
                     }
                     or relative_name.startswith("include/stardustui/")
+                    or (args.pam_root is not None and relative_name.startswith("include/security/"))
                     or relative_name.startswith("share/licenses/")
                     or relative_name == "bin/leonos-musl-cc"
                 ):
@@ -368,6 +397,8 @@ def main() -> None:
             add_file(archive, f"{SDK_PREFIX}/lib/libleonos.so.2", args.runtime_so)
             for source in sorted(args.musl_lib.parent.iterdir()):
                 if source.is_file():
+                    if args.pam_root is not None and source.name in {"libcrypt.a", "libcrypt.so"}:
+                        continue
                     add_file(archive, f"{SDK_PREFIX}/lib/{source.name}", source)
             for source in sorted((args.musl_lib.parent.parent / "share/licenses").rglob("*")):
                 if source.is_file():
@@ -376,6 +407,37 @@ def main() -> None:
             add_file(archive, f"{SDK_PREFIX}/bin/leonos-musl-cc", Path("tools/leonos_musl_cc.py"))
             add_file(archive, f"{SDK_PREFIX}/lib/libz.a", args.zlib_lib)
             add_file(archive, f"{SDK_PREFIX}/lib/libpng.a", args.libpng_lib)
+            if args.pam_root is not None:
+                for source in sorted((args.pam_root / "usr/include/security").glob("*.h")):
+                    add_file(archive, f"{SDK_PREFIX}/include/security/{source.name}", source)
+                for source in sorted((args.pam_root / "lib").glob("libpam*.so*")):
+                    add_file(archive, f"{SDK_PREFIX}/lib/{source.name}", source)
+                for source in sorted((args.pam_root / "lib").glob("libcrypt*")):
+                    if source.suffix != ".la":
+                        add_file(archive, f"{SDK_PREFIX}/lib/{source.name}", source)
+                add_file(archive, f"{SDK_PREFIX}/include/crypt.h", args.pam_root / "usr/include/crypt.h")
+                for name in ("COPYING.LIB", "LICENSING"):
+                    add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBXCRYPT-{name}",
+                             args.pam_root / "usr/share/licenses/libxcrypt" / name)
+                for source in sorted((args.pam_root / "lib/pkgconfig").glob("*.pc")):
+                    if source.stem not in {"pam", "pam_misc", "pamc", "libcrypt"}:
+                        continue
+                    # The SDK has a flat, relocatable sysroot; the installed OS
+                    # deliberately keeps /lib separate from /usr/include.
+                    assignments = {"prefix": "${pcfiledir}/../..",
+                                   "libdir": "${prefix}/lib",
+                                   "includedir": "${prefix}/include"}
+                    lines = []
+                    for line in source.read_text().splitlines():
+                        key, separator, _ = line.partition("=")
+                        lines.append(f"{key}={assignments[key]}" if separator and key in assignments else line)
+                    add_text(archive, f"{SDK_PREFIX}/lib/pkgconfig/{source.name}", "\n".join(lines) + "\n")
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LINUX-PAM-COPYRIGHT",
+                         args.pam_root / "usr/share/licenses/linux-pam/Copyright")
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LINUX-PAM-BUILD.json",
+                         args.pam_build_metadata)
+                add_file(archive, f"{SDK_PREFIX}/THIRD_PARTY/LIBXCRYPT-BUILD.json",
+                         args.crypt_build_metadata)
             if include_libmagic:
                 assert args.libmagic_lib is not None
                 assert args.libmagic_so is not None

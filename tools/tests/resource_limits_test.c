@@ -26,6 +26,42 @@ int main(void)
     task_credentials_prepare(&caller, 1000, 100, 1000, 100, 7);
     assert(shared.nondumpable);
     caller = (struct task){0};
+    struct linux_rlimit64 core = {0, 0}, core_old;
+    assert(process_resource_limit(LINUX_SYS_GETRLIMIT, LINUX_RLIMIT_CORE,
+        (uintptr_t)&core_old, 0, 0) == 0);
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_CORE,
+        (uintptr_t)&core, 0, 0) == 0);
+    core.rlim_max = 1;
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_CORE,
+        (uintptr_t)&core, 0, 0) == -LINUX_EPERM);
+    caller.cap_effective = 1ULL << CAP_SYS_RESOURCE;
+    core = (struct linux_rlimit64){4096, LINUX_RLIM_INFINITY};
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_CORE,
+        (uintptr_t)&core, 0, 0) == 0);
+    target = caller;
+    target.shared_limits = &caller.limits;
+    core = (struct linux_rlimit64){2048, 4096};
+    readonly = (uintptr_t)&core_old;
+    assert(process_resource_limit(LINUX_SYS_PRLIMIT64, 7, LINUX_RLIMIT_CORE,
+        (uintptr_t)&core, readonly) == -LINUX_EFAULT);
+    readonly = 0;
+    assert(process_resource_limit(LINUX_SYS_GETRLIMIT, LINUX_RLIMIT_CORE,
+        (uintptr_t)&core_old, 0, 0) == 0);
+    assert(core_old.rlim_cur == 2048 && core_old.rlim_max == 4096);
+    core = (struct linux_rlimit64){4097, 4096};
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_CORE,
+        (uintptr_t)&core, 0, 0) == -LINUX_EINVAL);
+    caller.cap_effective = 0;
+    struct linux_rlimit64 initial_nproc;
+    assert(process_resource_limit(LINUX_SYS_GETRLIMIT, LINUX_RLIMIT_NPROC,
+        (uintptr_t)&initial_nproc, 0, 0) == 0);
+    caller.limits.nproc = (struct linux_rlimit64){2, 4};
+    initial_nproc = (struct linux_rlimit64){1, 4};
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_NPROC,
+        (uintptr_t)&initial_nproc, 0, 0) == 0 && caller.limits.nproc.rlim_cur == 1);
+    initial_nproc.rlim_max = 5;
+    assert(process_resource_limit(LINUX_SYS_SETRLIMIT, LINUX_RLIMIT_NPROC,
+        (uintptr_t)&initial_nproc, 0, 0) == -LINUX_EPERM);
     caller.limits.nofile = (struct linux_rlimit64){1024,1048576};
     target = caller;
     target.shared_limits = &caller.limits;

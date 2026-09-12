@@ -31,6 +31,25 @@ Runtime, libraries, and applications
 * SQLite 3.46.1: public-domain dedication and blessing. See
   third_party/sqlite/LICENSE.md.
 * BusyBox 1.36.1: GPL-2.0-only. See third_party/busybox/LICENSE.
+* sudo 1.9.17p2: ISC and upstream file-specific terms; see LICENSE.md.
+* Linux-PAM 1.7.2: upstream BSD/GPL alternatives and file-specific terms;
+  see Copyright and the recorded platform patch in patches/linux-pam/.
+* util-linux 2.41.6 (su/runuser and storage utilities/libraries): upstream
+  GPL/LGPL and file-specific terms;
+  see README.licensing.
+* e2fsprogs 1.47.3: upstream GPL/LGPL/BSD/MIT and file-specific terms;
+  see NOTICE. dosfstools 4.2 and exfatprogs 1.4.3: see their COPYING files
+  and individual source headers. Fixed archive references and checksums are
+  in configs/storage-upstream.json; notices are installed under
+  /usr/share/licenses/<package>/.
+* libxcrypt 4.5.2: LGPL-2.1-or-later and file-specific terms; see COPYING.LIB
+  and LICENSING.
+* shadow-utils 4.20.2: BSD-3-Clause and file-specific SPDX terms; see COPYING.
+* libbsd 0.12.2: BSD/ISC/MIT and file-specific terms; see COPYING.
+* libmd 1.2.0: BSD/ISC/Beerware/public-domain and file-specific terms;
+  see COPYING. These authentication dependencies use verified release archives
+  listed in configs/auth-upstream.json; full notices are copied into the
+  isolated staging root's /usr/share/licenses/<package>/ directory.
 * GNU nano 9.2: GPL-3.0-or-later. See third_party/nano/COPYING.
 * Vim 9.1.1590: Vim License. See third_party/vim/LICENSE.
 * ncurses 6.6: MIT-style license. See third_party/ncurses/COPYING.
@@ -45,7 +64,7 @@ Runtime, libraries, and applications
 * ChenPi11/cmd: GPL-3.0-only. See third_party/cmd/LICENSE.
 * TinyCC: LGPL-2.1-or-later. See third_party/tinycc/COPYING.
 * Lua 5.4.8: MIT. See userland/lua/LICENSE and the Lua upstream checkout.
-* Fastfetch 2.67.0: MIT. See third_party/fastfetch/LICENSE.
+* Fastfetch 2.68.1 (VasilyZa/fastfetch release): MIT. See userland/fastfetch/LICENSE.
 * file/libmagic: BSD-2-Clause-style terms. See third_party/file/COPYING.
 * StardustUI: MIT. See third_party/stardustui/LICENSE.
 * PL Editor (LeonOS fork): MIT. See third_party/pl_editor/LICENSE.

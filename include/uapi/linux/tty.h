@@ -15,6 +15,8 @@ struct linux_winsize {
 #define TIOCSCTTY  0x540eUL
 #define TIOCGPGRP  0x540fUL
 #define TIOCSPGRP  0x5410UL
+#define TIOCNOTTY  0x5422UL
+#define TIOCGSID   0x5429UL
 
 /* Linux native x86-64 ioctl encodings; TCGETS transfers 36 bytes. */
 #define TCGETS     0x5401UL

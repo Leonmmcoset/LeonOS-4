@@ -1,0 +1,10 @@
+Defaults env_reset
+Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Defaults use_pty
+Defaults timestamp_timeout=5
+Defaults logfile="/var/log/sudo.log"
+Defaults!/usr/lib/leonos/apps/sudod/sudod.elf !use_pty
+root ALL=(ALL:ALL) ALL
+# The installer adds its initial user to wheel; sudo authenticates that user.
+%wheel ALL=(ALL:ALL) ALL
+@includedir /etc/sudoers.d

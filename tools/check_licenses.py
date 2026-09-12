@@ -45,7 +45,6 @@ SUBMODULE_LICENSES: dict[str, tuple[str, ...]] = {
     "file": ("COPYING", "LICENSE"),
     "stardustui": ("LICENSE",),
     "cmd": ("LICENSE", "COPYING"),
-    "fastfetch": ("LICENSE",),
     "sl": ("LICENSE",),
     "sqlite": ("LICENSE.md", "LICENSE", "COPYING"),
     "portablegl": ("LICENSE",),

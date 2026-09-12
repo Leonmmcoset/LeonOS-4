@@ -24,7 +24,11 @@ uint32_t smp_cpu_count(void) { return 1; }
 void sched_cpu_ticks(uint64_t *busy, uint64_t *idle) { *busy = 10; *idle = 20; }
 void sched_cpu_ticks_per_cpu(uint64_t *busy, uint64_t *idle, uint32_t capacity)
 { if (capacity) sched_cpu_ticks(busy, idle); }
-const struct leonos_system_info *ntclks_system_info(void) { return NULL; }
+static const struct leonos_system_info fixture_system = {
+    .kernel_name = "ntclks", .kernel_version = "9.8.7-0123",
+    .build_time = "2026-09-11 01:02:03",
+};
+const struct leonos_system_info *ntclks_system_info(void) { return &fixture_system; }
 
 void linux_uts_names(char host[65], char domain[65])
 { strcpy(host, "fixture-host"); strcpy(domain, "(none)"); }

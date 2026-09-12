@@ -1,32 +1,62 @@
 # Fastfetch for LeonOS
 
-This is a LeonOS port of upstream [Fastfetch](https://github.com/fastfetch-cli/fastfetch)
-v2.67.0. The upstream tree is kept unmodified in `third_party/fastfetch` at
-commit `56da8f811068289f6352db8881418aa6e0f994e8` under the MIT license.
+The image ships Fastfetch 2.68.1 as a prebuilt native x86-64 static musl
+executable, with the LeonOS logo included. Its Linux detection code uses
+`uname`, `/etc/os-release`, `/proc`, and `/sys`; it does not link the LeonOS
+adapter. The former submodule and adapter build have been removed.
 
-The port compiles upstream Fastfetch string, formatting, printing, size,
-duration, percentage, display-option, ASCII-logo data, and module sources. The
-small adapter in this directory supplies platform and detection interfaces from
-the LeonOS public ABI rather than attempting to read Linux `/proc` or `/sys`.
+The packager downloads the binary from
+`https://github.com/VasilyZa/fastfetch/releases/download/2.68.1/fastfetch`
+through `http://127.0.0.1:12334`. It pins SHA-256
+`25107efd56d0286059487bab17d964a6ec72275263de2ab09095a46637b06be1`
+and caches it in
+`buildsystem/deps/fastfetch/fastfetch-2.68.1-leonos-x86_64-linux-musl`.
+Subsequent builds use the validated cache without downloading again.
+Downloads are verified before atomic publication; partial downloads and hash
+mismatches are errors. The build never falls back to an older implementation.
+`LEONOS_FASTFETCH_BINARY` can supply an offline copy with the same pinned hash.
+Updating the release requires explicitly updating the URL and pinned hash.
 
-Supported information modules are Title, Separator, OS, Kernel, CPU, Uptime,
-Processes, Memory, DateTime, Break, Colors and Version. `Shell` and `Terminal`
-are LeonOS-specific static rows. The default concise summary uses the standard
-system rows and Colors; DateTime, Break and Version remain opt-in through
-`--structure`. Use `--list-modules`, `--structure` (or `-s`), and
-`--structure-disabled` to choose their order.
+```sh
+python3 build.py run fastfetch
+python3 build.py run installer
+python3 build.py run test-fastfetch-package
+python3 tools/test_linux_inventory.py --guest
+```
 
-All 527 upstream built-in ASCII logos are included. `--logo <name>` (`-l`),
-`--logo small`, `--logo none`, `--list-logos`, and `--print-logos` work with
-the usual logo colors, dimensions, padding and left/top/right positioning. The
-default is the two-tone blue LeonOS leaf mark, rendered with ANSI-colored ASCII
-characters; it has no bitmap or image-protocol dependency. The upstream display options that affect the
-available modules are supported, including `--pipe`, `--color*`, `--separator`,
-`--key-*`, `--size-*`, `--duration-*`, `--percent-*`, and `--bar-*`.
+`/usr/bin/fastfetch` resolves to the packaged executable at
+`/usr/lib/leonos/apps/fastfetch/fastfetch.elf`. Both normal and installer image
+staging use this same payload. `/etc/fastfetch/config.jsonc` selects the built-in
+`LeonOS` logo by default. Users can override the logo with
+`fastfetch --logo LeonOS`, another upstream logo, or their own configuration.
+The component's MIT license is installed in `/usr/share/licenses/fastfetch`.
+Its `package.json` records the release URL, version, and binary hash.
 
-The CPU row reads the x86 CPUID brand string exposed by the processor (with a
-generic `x86_64 processor` fallback when the brand leaves are unavailable).
+The Kernel row reports NTCLKS metadata: `uname().sysname` is the kernel's
+`ntclks` name, `release` is the generated `4.6.2-<build>` kernel version, and
+`version` is its build time. The corresponding procfs files expose the same
+values. LeonOS distribution identity remains in `/etc/os-release` for the OS
+row. No application-side output substitution is used.
 
-Configuration files, JSON output, image/file/command logos, dynamic refresh,
-dynamic libraries, and modules requiring host POSIX or Linux interfaces remain
-intentionally disabled.
+The guest inventory test checks the binary actually staged at
+`build/esp/usr/bin/fastfetch`, including Kernel, hardware and resource JSON,
+and execution through Desktop Terminal. Passing this subset does not certify
+every upstream module or VMware behavior.
+
+Validation on 2026-09-11 (kernel build 3523):
+
+- A fresh cache downloaded and verified the pinned GitHub release through the
+  proxy. All four packaging tests and the component configuration checks passed.
+- The installer build completed with zero errors. Its installed payload and
+  normal image staging both contain the pinned binary, configuration, license,
+  and release manifest.
+- Host ASan/UBSan inventory checks and QEMU/KVM inventory checks passed. Default
+  output includes the LeonOS logo, OS and Memory rows, and
+  `Kernel: ntclks 4.6.2-3523`. Console and Desktop Terminal JSON agree with
+  `uname` and procfs; the guest reported `[inventory] DONE failures=0`.
+  QEMU configured two CPUs, but the kernel enabled only one; this is not an SMP
+  validation. Evidence is in `build/linux-inventory/`.
+- Fastfetch license packaging checks passed for both staging trees. The full
+  repository license check still reports three unrelated failures: Lua's SDK
+  upstream license lookup and the two PortableGL SDK library notices.
+- VMware was not tested.

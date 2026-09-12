@@ -121,7 +121,7 @@ def stage_runtime_payload(esp_tree: Path, stage: Path, policy_runtime: Path,
     copy_tree(esp_tree / ETC, stage / ETC)
     layout_directories(stage)
     # Installer-only programs and policy overrides.
-    for app in ("authd", "imd", "windowd", "desktop", "installer"):
+    for app in ("imd", "windowd", "desktop", "installer"):
         copy_file(userland_dir / f"{app}.elf",
                   stage / LEONOS_APPS / app / f"{app}.elf")
     copy_file(userland_dir / "busybox.elf", stage / BIN / "busybox")
@@ -138,7 +138,7 @@ def stage_runtime_payload(esp_tree: Path, stage: Path, policy_runtime: Path,
         copy_file(generated_icons_dir / f"{app}.bmp",
                   stage / LEONOS_APPS / app / f"{app}.bmp")
     copy_file(policy_runtime, stage / LEONOS_LIB / "libleonos.so.2")
-    for app in ("authd", "imd", "windowd", "desktop", "installer", "gptinit"):
+    for app in ("imd", "windowd", "desktop", "installer", "gptinit"):
         link, target = command_symlink(app, f"{LEONOS_APPS}/{app}/{app}.elf")
         path = stage / link
         if path.is_symlink():
@@ -146,8 +146,6 @@ def stage_runtime_payload(esp_tree: Path, stage: Path, policy_runtime: Path,
         elif path.exists():
             raise ValueError(f"installer command conflicts with a regular file: {path}")
         path.symlink_to(target)
-    (stage / VAR_LIB_LEONOS / "users.db").write_bytes(bytes.fromhex("3253554100000000"))
-    (stage / VAR_LIB_LEONOS / "users.db").chmod(0o600)
     (stage / ETC / "resolv.conf").write_text("nameserver 1.1.1.1\n",
                                               encoding="ascii")
     layout_directories(stage)
@@ -233,8 +231,6 @@ def main() -> int:
     remove_file(stage / "install/root/etc/license.conf")
     remove_file(stage / "install/root/etc/install.id")
     (stage / "install/root" / VAR_LIB_LEONOS).mkdir(parents=True, exist_ok=True)
-    (stage / "install/root" / VAR_LIB_LEONOS / "users.db").write_bytes(bytes.fromhex("3253554100000000"))
-    (stage / "install/root" / VAR_LIB_LEONOS / "users.db").chmod(0o600)
     layout_directories(stage)
     layout_directories(stage / "install/root")
     apply_root_symlinks(stage)

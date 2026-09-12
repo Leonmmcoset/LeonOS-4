@@ -22,7 +22,7 @@ int leonos_ipc_connect(const char *path)
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     strncpy(address.sun_path, path, sizeof(address.sun_path) - 1u);
-    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
     if (connect(fd, (struct sockaddr *)&address,
                 (socklen_t)(sizeof(sa_family_t) + strlen(address.sun_path) + 1u)) < 0) {
@@ -51,7 +51,7 @@ int leonos_ipc_bind_listen_mode(const char *path, int backlog, uint32_t mode)
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
     strncpy(address.sun_path, path, sizeof(address.sun_path) - 1u);
-    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
     socklen_t address_length = (socklen_t)(sizeof(sa_family_t) + strlen(address.sun_path) + 1u);
     int bound = bind(fd, (struct sockaddr *)&address, address_length);
@@ -74,9 +74,12 @@ int leonos_ipc_bind_listen_mode(const char *path, int backlog, uint32_t mode)
 
 int leonos_ipc_accept(int listen_fd, struct ucred *peer)
 {
-    int fd = accept(listen_fd, 0, 0);
-    if (fd >= 0 && peer) {
-        (void)leonos_ipc_peer_credentials(fd, peer);
+    int fd = accept4(listen_fd, 0, 0, SOCK_CLOEXEC);
+    if (fd >= 0 && peer && leonos_ipc_peer_credentials(fd, peer) < 0) {
+        int saved = errno;
+        close(fd);
+        errno = saved;
+        return -1;
     }
     return fd;
 }
@@ -101,6 +104,11 @@ int leonos_ipc_peer_credentials(int fd, struct ucred *credentials)
     if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, credentials, &length) < 0) {
         return -1;
     }
+    if (length != sizeof(*credentials) || credentials->pid <= 0 ||
+        credentials->uid == (uid_t)-1 || credentials->gid == (gid_t)-1) {
+        errno = EPROTO;
+        return -1;
+    }
     return 0;
 }
 
@@ -109,6 +117,7 @@ int leonos_ipc_send_fd(int fd, uint32_t type, const void *payload,
 {
     uint8_t frame_buffer[LEONOS_IPC_ATOMIC_FRAME_CAP];
     uint32_t offset = 0;
+    if (length && !payload) { errno = EINVAL; return -1; }
     if (length > LEONOS_IPC_ATOMIC_FRAME_CAP - sizeof(struct leonos_ipc_frame) -
                      sizeof(uint32_t)) {
         errno = EMSGSIZE;
@@ -152,18 +161,24 @@ int leonos_ipc_send_fd(int fd, uint32_t type, const void *payload,
         if (sent < 0) {
             if (errno == EINTR) continue;
             if (errno == EAGAIN) {
-                if (!done) return -1;
+                if (!done) goto failed;
                 struct pollfd ready = {.fd = fd, .events = POLLOUT};
                 int result = poll(&ready, 1, 3000);
                 if (result > 0) continue;
                 if (!result) errno = ETIMEDOUT;
             }
-            return -1;
+            goto failed;
         }
-        if (!sent) { errno = EPIPE; return -1; }
+        if (!sent) { errno = EPIPE; goto failed; }
         done += (uint32_t)sent;
     }
+    explicit_bzero(frame_buffer, sizeof(frame_buffer));
     return 0;
+failed:;
+    int saved = errno;
+    explicit_bzero(frame_buffer, sizeof(frame_buffer));
+    errno = saved;
+    return -1;
 }
 
 int leonos_ipc_send(int fd, uint32_t type, const void *payload, uint32_t length)
@@ -178,6 +193,8 @@ struct ipc_receive_state {
     int ancillary;
     uint32_t header_bytes;
     uint32_t body_bytes;
+    int require_credentials;
+    struct ucred expected;
     struct leonos_ipc_frame frame;
     uint8_t *body;
 };
@@ -231,6 +248,7 @@ static void receive_release(struct ipc_receive_state *state, int retain)
     receive_states_unlock();
     if (!retain) {
         if (state->ancillary >= 0) close(state->ancillary);
+        if (state->body) explicit_bzero(state->body, state->frame.length);
         free(state->body);
         free(state);
     }
@@ -240,7 +258,7 @@ static int receive_part(struct ipc_receive_state *state, void *destination,
                          uint32_t *done, uint32_t length)
 {
     while (*done < length) {
-        char control[CMSG_SPACE(4 * sizeof(int))];
+        char control[CMSG_SPACE(4 * sizeof(int)) + CMSG_SPACE(sizeof(struct ucred))];
         struct iovec vector = {.iov_base = (uint8_t *)destination + *done, .iov_len = length - *done};
         struct msghdr message = {.msg_iov = &vector, .msg_iovlen = 1,
             .msg_control = control, .msg_controllen = sizeof(control)};
@@ -248,8 +266,21 @@ static int receive_part(struct ipc_receive_state *state, void *destination,
         if (got < 0) { if (errno == EINTR) continue; return -1; }
         if (!got) { errno = ECONNRESET; return -1; }
         *done += (uint32_t)got;
+        int seen_credentials = 0, invalid_credentials = 0;
         for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header;
              header = CMSG_NXTHDR(&message, header)) {
+            if (header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_CREDENTIALS) {
+                struct ucred sender;
+                if (header->cmsg_len != CMSG_LEN(sizeof(sender))) invalid_credentials = 1;
+                else {
+                    memcpy(&sender, CMSG_DATA(header), sizeof(sender));
+                    ++seen_credentials;
+                    if (state->require_credentials &&
+                        (sender.pid != state->expected.pid || sender.uid != state->expected.uid ||
+                         sender.gid != state->expected.gid)) invalid_credentials = 1;
+                }
+                continue;
+            }
             if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS ||
                 header->cmsg_len < CMSG_LEN(0)) continue;
             unsigned count = (header->cmsg_len - CMSG_LEN(0)) / sizeof(int);
@@ -260,17 +291,30 @@ static int receive_part(struct ipc_receive_state *state, void *destination,
             }
         }
         if (message.msg_flags & MSG_CTRUNC) { errno = EPROTO; return -1; }
+        if (state->require_credentials && (seen_credentials != 1 || invalid_credentials)) {
+            errno = seen_credentials ? EPERM : EPROTO;
+            return -1;
+        }
     }
     return 0;
 }
 
-int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
-                       uint32_t *length, int *received_fd)
+static int receive_frame(int fd, uint32_t *type, void *payload, uint32_t capacity,
+                          uint32_t *length, int *received_fd, const struct ucred *expected)
 {
     if (received_fd) *received_fd = -1;
     if (length) *length = 0;
     struct ipc_receive_state *state = receive_acquire(fd);
     if (!state) return -1;
+    if (!state->header_bytes) {
+        state->require_credentials = expected != NULL;
+        if (expected) state->expected = *expected;
+    } else if (state->require_credentials != (expected != NULL) ||
+               (expected && (state->expected.pid != expected->pid || state->expected.uid != expected->uid ||
+                             state->expected.gid != expected->gid))) {
+        errno = EPROTO;
+        goto error;
+    }
     if (receive_part(state, &state->frame, &state->header_bytes, sizeof(state->frame)) < 0) goto error;
     if (state->frame.magic != LEONOS_IPC_MAGIC || state->frame.version != LEONOS_IPC_VERSION ||
         state->frame.length < sizeof(uint32_t) || state->frame.length > 1024u * 1024u) {
@@ -299,6 +343,19 @@ error:;
     receive_release(state, saved == EAGAIN && state->header_bytes != 0);
     errno = saved;
     return -1;
+}
+
+int leonos_ipc_recv_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
+                       uint32_t *length, int *received_fd)
+{
+    return receive_frame(fd, type, payload, capacity, length, received_fd, NULL);
+}
+
+int leonos_ipc_recv_cred_fd(int fd, uint32_t *type, void *payload, uint32_t capacity,
+                           uint32_t *length, int *received_fd, const struct ucred *expected)
+{
+    if (!expected) { errno = EINVAL; return -1; }
+    return receive_frame(fd, type, payload, capacity, length, received_fd, expected);
 }
 
 int leonos_ipc_recv(int fd, uint32_t *type, void *payload, uint32_t capacity,

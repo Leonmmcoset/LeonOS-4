@@ -414,7 +414,7 @@ void send_app_event_to_window(uint32_t window_id, uint32_t type,
     event.buttons = buttons;
     event.keycode = keycode;
     event.pressed = pressed;
-    event.reserved = 0;
+    event.modifiers = leonos_ui_keyboard_modifiers();
     leonos_gui_send_app_event(&event);
 }
 

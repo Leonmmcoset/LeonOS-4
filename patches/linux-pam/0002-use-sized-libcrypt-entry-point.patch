@@ -1,0 +1,154 @@
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -257,7 +257,7 @@
+   libcrypt = cc.find_library('crypt')
+ endif
+ crypt_h = cdata.get('HAVE_CRYPT_H') == 1 ? '''#include <crypt.h>''' : '''#include <unistd.h>'''
+-foreach f: ['crypt_r']
++foreach f: ['crypt_r', 'crypt_rn']
+   if cc.has_function(f, prefix: crypt_h,
+                      args: '-D_GNU_SOURCE',
+                      dependencies: libcrypt)
+diff --git a/libpam/include/pam_crypt.h b/libpam/include/pam_crypt.h
+--- /dev/null
++++ b/libpam/include/pam_crypt.h
+@@ -0,0 +1,22 @@
++#ifndef PAM_CRYPT_H
++#define PAM_CRYPT_H
++
++#include "config.h"
++#include <crypt.h>
++
++#ifdef HAVE_CRYPT_R
++static inline char *
++pam_crypt_r(const char *password, const char *setting, struct crypt_data *data)
++{
++#ifdef HAVE_CRYPT_RN
++	/* A module loaded after musl must not resolve crypt_r to libc's
++	 * smaller hash implementation. The sized libxcrypt API is distinct
++	 * and retains its NULL-on-error and caller-owned-buffer contract. */
++	return crypt_rn(password, setting, data, sizeof(*data));
++#else
++	return crypt_r(password, setting, data);
++#endif
++}
++#endif
++
++#endif
+diff --git a/modules/pam_unix/passverify.c b/modules/pam_unix/passverify.c
+--- a/modules/pam_unix/passverify.c
++++ b/modules/pam_unix/passverify.c
+@@ -29,6 +29,7 @@
+ 
+ #include "pam_cc_compat.h"
+ #include "pam_inline.h"
++#include "pam_crypt.h"
+ #include "md5.h"
+ #include "bigcrypt.h"
+ #include "passverify.h"
+@@ -153,7 +153,7 @@
+ 			struct crypt_data *cdata;
+ 			cdata = calloc(1, sizeof(*cdata));
+ 			if (cdata != NULL) {
+-				pp = x_strdup(crypt_r(p, hash, cdata));
++				pp = x_strdup(pam_crypt_r(p, hash, cdata));
+ 				pam_overwrite_object(cdata);
+ 				free(cdata);
+ 			}
+@@ -495,7 +495,7 @@
+ 	sp = NULL;
+ 	cdata = calloc(1, sizeof(*cdata));
+ 	if (cdata != NULL) {
+-		sp = crypt_r(password, salt, cdata);
++		sp = pam_crypt_r(password, salt, cdata);
+ 	}
+ #else
+ 	sp = crypt(password, salt);
+diff --git a/modules/pam_unix/bigcrypt.c b/modules/pam_unix/bigcrypt.c
+--- a/modules/pam_unix/bigcrypt.c
++++ b/modules/pam_unix/bigcrypt.c
+@@ -30,6 +30,7 @@
+ #include <stdlib.h>
+ #include <security/_pam_macros.h>
+ #include "pam_inline.h"
++#include "pam_crypt.h"
+ #ifdef HAVE_CRYPT_H
+ #include <crypt.h>
+ #endif
+@@ -101,7 +101,7 @@
+ 
+ 	/* do the first block with supplied salt */
+ #ifdef HAVE_CRYPT_R
+-	tmp_ptr = crypt_r(plaintext_ptr, salt, cdata);	/* libc crypt_r() */
++	tmp_ptr = pam_crypt_r(plaintext_ptr, salt, cdata);
+ #else
+ 	tmp_ptr = crypt(plaintext_ptr, salt);	/* libc crypt() */
+ #endif
+@@ -134,7 +134,7 @@
+ 		for (j = 2; j <= n_seg; j++) {
+ 
+ #ifdef HAVE_CRYPT_R
+-			tmp_ptr = crypt_r(plaintext_ptr, salt_ptr, cdata);
++			tmp_ptr = pam_crypt_r(plaintext_ptr, salt_ptr, cdata);
+ #else
+ 			tmp_ptr = crypt(plaintext_ptr, salt_ptr);
+ #endif
+diff --git a/modules/pam_pwhistory/opasswd.c b/modules/pam_pwhistory/opasswd.c
+--- a/modules/pam_pwhistory/opasswd.c
++++ b/modules/pam_pwhistory/opasswd.c
+@@ -67,6 +67,7 @@
+ #endif
+ #include <security/pam_modules.h>
+ #include "pam_inline.h"
++#include "pam_crypt.h"
+ 
+ #include "opasswd.h"
+ 
+@@ -129,7 +129,7 @@
+   if (!cdata)
+     return -1;
+ 
+-  outval = crypt_r (newpass, oldpass, cdata);
++  outval = pam_crypt_r (newpass, oldpass, cdata);
+ #else
+   outval = crypt (newpass, oldpass);
+ #endif
+@@ -135,7 +136,7 @@
+ #endif
+ 
+-  retval = outval != NULL && strcmp(outval, oldpass) == 0;
++  retval = outval != NULL ? strcmp(outval, oldpass) == 0 : -1;
+ 
+ #ifdef HAVE_CRYPT_R
+   pam_overwrite_object(cdata);
+   free(cdata);
+@@ -212,7 +213,7 @@
+ 	    rc = compare_password(newpass, oldpass);
+ 	    if (rc) {
+ 	      if (rc < 0)
+-	        pam_syslog (pamh, LOG_ERR, "Cannot allocate crypt data");
++	        pam_syslog (pamh, LOG_ERR, "Cannot hash password history");
+ 	      else if (debug)
+ 	        pam_syslog (pamh, LOG_DEBUG, "New password already used");
+ 
+diff --git a/modules/pam_userdb/pam_userdb.c b/modules/pam_userdb/pam_userdb.c
+--- a/modules/pam_userdb/pam_userdb.c
++++ b/modules/pam_userdb/pam_userdb.c
+@@ -41,6 +41,7 @@
+ #include <security/pam_ext.h>
+ #include <security/_pam_macros.h>
+ #include "pam_inline.h"
++#include "pam_crypt.h"
+ #include "pam_i18n.h"
+ 
+ #ifndef HAVE_GDBM_H
+@@ -291,7 +291,7 @@
+ 	      if (cdata == NULL) {
+ 	        pam_syslog(pamh, LOG_CRIT, "malloc failed: struct crypt_data");
+ 	      } else {
+-	        cryptpw = crypt_r(pass, pwhash, cdata);
++	        cryptpw = pam_crypt_r(pass, pwhash, cdata);
+ 	      }
+ #else
+ 	      cryptpw = crypt (pass, pwhash);

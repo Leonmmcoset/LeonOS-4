@@ -5,17 +5,37 @@
 #include "../../drivers/bootstrap/storage/storage_internal.h"
 
 static FILE *disk;
+static struct task *writer;
+struct task *sched_current_task(void) { return writer; }
+bool task_in_group(const struct task *task, uint32_t gid, bool real)
+{ assert(task && !real); return task->fsgid == gid; }
+uint64_t mm_alloc_pages(uint32_t pages)
+{ return (uint64_t)(uintptr_t)calloc(pages, 4096); }
 static uint64_t test_start_lba = 1;
+static uint64_t test_read_commands, test_write_commands, test_read_bytes, test_write_bytes;
+static unsigned test_fail_write_at, test_partial_write;
+static void ext2_cache_invalidate_range(uint64_t lba, uint32_t sectors);
 static int storage_read_sectors(uint64_t lba, uint32_t count, void *out)
 {
+    ++test_read_commands;
+    test_read_bytes += (uint64_t)count * 512;
     assert(lba >= test_start_lba && !fseek(disk, (lba - test_start_lba) * 512, SEEK_SET));
     return fread(out, 512, count, disk) == count ? 0 : -5;
 }
 static int storage_write_sectors(uint64_t lba, uint32_t count, const void *in)
 {
+    ++test_write_commands;
+    test_write_bytes += (uint64_t)count * 512;
+    ext2_cache_invalidate_range(lba, count);
     /* The real storage_block.c write invalidates the shared sector cache. */
     storage_read_cache.valid = 0;
     assert(lba >= test_start_lba && !fseek(disk, (lba - test_start_lba) * 512, SEEK_SET));
+    if (test_fail_write_at && !--test_fail_write_at) {
+        if (test_partial_write) {
+            assert(fwrite(in, 1, 512, disk) == 512 && !fflush(disk));
+        }
+        return -5;
+    }
     return fwrite(in, 512, count, disk) == count && !fflush(disk) ? 0 : -5;
 }
 static void storage_memzero(void *out, size_t n) { memset(out, 0, n); }
@@ -41,8 +61,78 @@ static int storage_parent_path(const char *path, char *parent, uint32_t parent_c
     return 0;
 }
 void console_printf(const char *format, ...) { (void)format; }
+void *kernel_malloc(size_t size) { return malloc(size); }
+void kernel_free(void *memory) { free(memory); }
+void kernel_execution_lock_irqsave(uint64_t *flags) { *flags = 0; }
+void kernel_execution_unlock_irqrestore(uint64_t flags) { (void)flags; }
+void page_cache_invalidate_node(const struct storage_node *node)
+{ assert(node && (node->flags & STORAGE_NODE_FLAG_EXT2)); }
+static int storage_select_node_volume(const struct storage_node *node, struct storage_volume **previous)
+{ *previous = g_active_volume; return node->volume_id == g_storage.volume_id ? 0 : -2; }
+static void storage_restore_volume(struct storage_volume *previous) { g_active_volume = previous; }
 
+#include "../../drivers/bootstrap/storage/storage_ext2_cache.c"
+#include "../../drivers/bootstrap/storage/storage_inode.c"
 #include "../../drivers/bootstrap/storage/storage_ext2.c"
+
+static void test_held_inode(void)
+{
+    struct storage_node node, replacement;
+    struct storage_inode_ref *held;
+    struct ext2_inode inode;
+    char data[4];
+    uint32_t got;
+    assert(ext2_write_file("/held-inode", "old", 3) == 0);
+    assert(ext2_lookup_path("/held-inode", &node) == 0);
+    assert(storage_inode_get(&node, &held) == 0 && held);
+    storage_inode_retain(held);
+    assert(ext2_unlink("/held-inode") == 0);
+    assert(ext2_write_file("/held-inode", "new", 3) == 0);
+    assert(ext2_lookup_path("/held-inode", &replacement) == 0 && replacement.first_cluster != node.first_cluster);
+    assert(ext2_read_inode(node.first_cluster, &inode) == 0 && !inode.links_count);
+    assert(ext2_read_node(&node, 0, data, 3, &got) == 0 && got == 3 && !memcmp(data, "old", 3));
+    assert(storage_inode_put(held) == 0 && held->references == 1);
+    assert(storage_write_held_node(&node, 0, "held", 4, &got) == 0 && got == 4);
+    assert(storage_truncate_held_node(&node, 2) == 0);
+    assert(ext2_read_node(&node, 0, data, 4, &got) == 0 && got == 2 && !memcmp(data, "he", 2));
+    assert(storage_inode_put(held) == 0);
+    assert(ext2_read_inode(node.first_cluster, &inode) == 0 && !inode.mode);
+    assert(ext2_unlink("/held-inode") == 0 && !storage_inode_refs);
+    puts("PASS production inode references: unlink retention, distinct replacement, write/truncate, final reclamation");
+}
+
+static void test_write_privileges(void)
+{
+    struct task actor = {.fsuid = 1000, .fsgid = 200};
+    struct storage_node node;
+    struct ext2_inode inode;
+    uint32_t wrote;
+    assert(ext2_write_file("/write-privileges", "a", 1) == 0);
+    assert(ext2_lookup_path("/write-privileges", &node) == 0);
+    assert(ext2_read_inode(node.first_cluster, &inode) == 0);
+    inode.mode = EXT2_S_IFREG | 06770;
+    inode.uid = 1000;
+    inode.gid = 200;
+    assert(ext2_write_inode(node.first_cluster, &inode) == 0);
+    writer = &actor;
+    assert(ext2_write_node(&node, 0, "b", 1, &wrote) == 0 && wrote == 1);
+    assert(ext2_read_inode(node.first_cluster, &inode) == 0 && !(inode.mode & 06000));
+    inode.mode = EXT2_S_IFREG | 02660;
+    assert(ext2_write_inode(node.first_cluster, &inode) == 0);
+    assert(ext2_truncate_file(&node, 0) == 0);
+    assert(ext2_read_inode(node.first_cluster, &inode) == 0 && (inode.mode & 02000));
+    actor.fsgid = 300;
+    assert(ext2_truncate_file(&node, 0) == 0);
+    assert(ext2_read_inode(node.first_cluster, &inode) == 0 && !(inode.mode & 02000));
+    actor.cap_effective = 1ULL << CAP_FSETID;
+    inode.mode = EXT2_S_IFREG | 06770;
+    assert(ext2_write_inode(node.first_cluster, &inode) == 0);
+    assert(ext2_write_file("/write-privileges", "a", 1) == 0);
+    assert(ext2_read_inode(node.first_cluster, &inode) == 0 && (inode.mode & 06000) == 06000);
+    writer = NULL;
+    assert(ext2_unlink("/write-privileges") == 0);
+    puts("PASS production ext2 write/truncate drops set-ID bits according to CAP_FSETID and group membership");
+}
 
 static void test_symlinks(void)
 {
@@ -104,6 +194,8 @@ int main(int argc, char **argv)
     g_storage.ext2_sector_count = ftell(disk) / 512;
     assert(ext2_mount() == 0);
     test_symlinks();
+    test_held_inode();
+    test_write_privileges();
     struct storage_node source, target;
     assert(ext2_lookup_path("/source", &source) == 0);
     assert(ext2_link("/source", "/source-hard") == 0);

@@ -373,6 +373,8 @@ int leonos_gui_next_event(struct leonos_input_event *event)
     if (wind_input_head == wind_input_tail) return 0;
     *event = wind_inputs[wind_input_tail];
     wind_input_tail = (wind_input_tail + 1u) % WIND_EVENT_QUEUE;
+    if (event->type == LEONOS_INPUT_KEYBOARD)
+        leonos_ui_set_keyboard_modifiers(event->modifiers);
     return 1;
 }
 
@@ -546,9 +548,10 @@ int leonos_fb_blit(uint32_t x, uint32_t y, uint32_t width, uint32_t height,
         memcpy((uint8_t *)mapping + (y + row) * info.pitch + x * 4u,
                (const uint8_t *)pixels + row * stride * 4u, (size_t)width * 4u);
     }
-    /* VMware SVGA scanout only refreshes from VRAM when the FIFO receives
-     * an update command; mmap writes alone never reach the display. */
-    (void)ioctl(wind_fb_fd(), FBIOPAN_DISPLAY, 0);
+    /* Submit only the bytes changed by this blit. FBIOPAN_DISPLAY remains
+     * available for callers that intentionally request a full refresh. */
+    uint32_t region[4] = {x, y, width, height};
+    (void)ioctl(wind_fb_fd(), LEONOS_FBIOUPDATE_REGION, region);
     return 0;
 }
 
@@ -883,6 +886,8 @@ int leonos_gui_poll_app_event(struct leonos_gui_app_event *event)
     if (wind_event_head == wind_event_tail) return 0;
     *event = wind_events[wind_event_tail];
     wind_event_tail = (wind_event_tail + 1u) % WIND_EVENT_QUEUE;
+    if (event->type == LEONOS_GUI_APP_EVENT_KEY_DOWN || event->type == LEONOS_GUI_APP_EVENT_KEY_UP)
+        leonos_ui_set_keyboard_modifiers(event->modifiers);
     return 1;
 }
 

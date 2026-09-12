@@ -13,6 +13,8 @@
 #include "installer_tty.h"
 #include "installer_directory.h"
 #include "installer_setup.h"
+#include "../../auth/standard_accounts.h"
+#include "installer_copy.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -34,7 +36,7 @@
 #define KEY_SPACE 57U
 #define KEY_UP 72U
 #define KEY_DOWN 80U
-#define COPY_BUF_SIZE (256U * 1024U)
+#define COPY_BUF_SIZE (32U * 1024U)
 #define COPY_ESP_WRITE_SLICE 4096U
 #define COPY_PRESENT_INTERVAL_MS 50U
 #define INSTALLER_EVENT_BATCH_MAX 32U
@@ -217,7 +219,7 @@ static const char acknowledgements_en[] =
     "- BusyBox 1.36.1 - GPL-2.0-only\n"
     "- ChenPi11/cmd - GPL-3.0-or-later\n"
     "- GNU less - Less License / GPL-3.0-or-later\n"
-    "- Fastfetch 2.67.0 - MIT\n"
+    "- Fastfetch 2.68.1 - MIT\n"
     "- sl - permissive upstream license\n"
     "- GNU nano 9.2 - GPL-3.0-or-later\n"
     "- TinyCC 0.9.28rc - LGPL-2.1-or-later\n"
@@ -261,7 +263,7 @@ static const char acknowledgements_zh[] =
     "- BusyBox 1.36.1 - GPL-2.0-only\n"
     "- ChenPi11/cmd - GPL-3.0-or-later\n"
     "- GNU less - Less License / GPL-3.0-or-later\n"
-    "- Fastfetch 2.67.0 - MIT\n"
+    "- Fastfetch 2.68.1 - MIT\n"
     "- sl - 上游宽松许可\n"
     "- GNU nano 9.2 - GPL-3.0-or-later\n"
     "- TinyCC 0.9.28rc - LGPL-2.1-or-later\n"
@@ -703,6 +705,14 @@ static void set_status(const char *status, const char *detail)
 {
     copy_text(status_text, sizeof(status_text), status);
     copy_text(detail_text, sizeof(detail_text), detail);
+    /* The status line is the only account of why an install or update stopped,
+     * and it lives in the GUI. Mirror it to the serial console so a failure can
+     * be diagnosed from a log instead of a screenshot: without this, a reported
+     * "mount failed ret=-22" gives no way to tell which check produced it. */
+    printf("[installer.elf] status: %s%s%s\n",
+           status ? status : "",
+           (detail && detail[0]) ? " - " : "",
+           (detail && detail[0]) ? detail : "");
 }
 
 static void set_progress_text(const char *status, const char *detail)
@@ -997,11 +1007,23 @@ static int installer_mount_targets(const char *disk_path, int fresh)
     uint32_t root_filesystem = LEONOS_BLOCK_FILESYSTEM_UNKNOWN;
     const char *root_fs_name = NULL;
     struct stat mountpoint;
+    int ret;
     /* /target belongs to the installer runtime, not the installed rootfs. */
-    if (mkdir(INSTALL_ROOT_MOUNT, 0755) < 0 && errno != EEXIST) return -errno;
-    if (lstat(INSTALL_ROOT_MOUNT, &mountpoint) < 0) return -errno;
-    if (!S_ISDIR(mountpoint.st_mode)) return -ENOTDIR;
-    int ret = installer_target_partitions(disk_path, fresh, esp_path, sizeof(esp_path),
+    if (mkdir(INSTALL_ROOT_MOUNT, 0755) < 0 && errno != EEXIST) {
+        ret = -errno;
+        printf("[installer.elf] mountpoint mkdir failed path=%s ret=%d\n", INSTALL_ROOT_MOUNT, ret);
+        return ret;
+    }
+    if (lstat(INSTALL_ROOT_MOUNT, &mountpoint) < 0) {
+        ret = -errno;
+        printf("[installer.elf] mountpoint lstat failed path=%s ret=%d\n", INSTALL_ROOT_MOUNT, ret);
+        return ret;
+    }
+    if (!S_ISDIR(mountpoint.st_mode)) {
+        printf("[installer.elf] mountpoint is not a directory path=%s\n", INSTALL_ROOT_MOUNT);
+        return -ENOTDIR;
+    }
+    ret = installer_target_partitions(disk_path, fresh, esp_path, sizeof(esp_path),
                                           root_path, sizeof(root_path),
                                           &root_filesystem);
     if (ret < 0) {
@@ -1850,7 +1872,7 @@ static int copy_file_path(const char *src, const char *dst,
     }
     show_copy_progress(window_id, ui, dst);
     for (;;) {
-        got = read(in_fd, copy_buf, sizeof(copy_buf));
+        got = installer_read_chunk(in_fd, copy_buf, sizeof(copy_buf));
         if (got < 0 && errno == EINTR) continue;
         if (got <= 0) break;
         long written = 0;
@@ -1868,7 +1890,10 @@ static int copy_file_path(const char *src, const char *dst,
             show_copy_progress(window_id, ui, dst);
             if (written < got) (void)sched_yield();
         }
-        sleep_ms(1);
+        /* read(2) may return a single 4 KiB slice. Sleeping after every short
+         * read turns each slice into a full PIT tick. Yield without a timed
+         * delay; progress painting remains throttled independently. */
+        (void)sched_yield();
     }
     if (got < 0) { error = errno; goto done; }
     if (fchown(out_fd, source.st_uid, source.st_gid) < 0 ||
@@ -3162,6 +3187,16 @@ static int sync_application_packages(int window_id, struct leonos_ui_surface *ui
 static int sync_system_payload(int window_id, struct leonos_ui_surface *ui)
 {
     int ret;
+    if (leonos_account_legacy_check(INSTALL_ROOT_MOUNT) < 0) return -errno;
+    /* Retired security entry points must not depend on optional app metadata. */
+    const char *retired[] = {
+        INSTALL_ROOT_MOUNT "/usr/bin/authd",
+        INSTALL_ROOT_MOUNT "/usr/lib/leonos/apps/authd",
+    };
+    for (uint32_t i = 0; i < sizeof(retired) / sizeof(retired[0]); ++i) {
+        ret = remove_path_recursive(retired[i]);
+        if (ret < 0) return ret;
+    }
     /* Refresh build-managed commands, libraries, resources and fonts while
      * keeping unrelated files that the administrator may have installed. */
     ret = overlay_dir_recursive(INSTALL_ROOT_PAYLOAD "/bin", INSTALL_ROOT_MOUNT "/bin",
@@ -3216,6 +3251,11 @@ static void prepare_update_target(int window_id, struct leonos_ui_surface *ui)
     ret = installer_mount_targets(disks[selected_disk].path, 0);
     if (ret < 0) {
         finish_install(window_id, ui, ret, T("Mount failed", "挂载失败"));
+        return;
+    }
+    if (leonos_account_legacy_check(INSTALL_ROOT_MOUNT) < 0) {
+        finish_install(window_id, ui, -errno,
+                       T("Legacy accounts require recovery before updating", "旧账户需完成受控迁移后再更新"));
         return;
     }
     show_progress(window_id, ui, 18,

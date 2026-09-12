@@ -13,6 +13,6 @@ with tempfile.TemporaryDirectory(prefix="leonos-descriptors-") as directory:
         "-Iinclude", "-Iinclude/uapi", "-Ikernel/ntclks/include", "-Wl,--gc-sections",
         "tools/tests/descriptor_table_test.c", "kernel/ntclks/sched/sched.c",
         "kernel/ntclks/wait.c", "kernel/ntclks/syscall_sysv_msg.c",
-        "kernel/ntclks/syscall_sysv_sem.c", "-o", binary,
+        "kernel/ntclks/syscall_sysv_sem.c", "kernel/ntclks/syscall_locks.c", "-o", binary,
     ], cwd=ROOT, check=True)
     subprocess.run([binary], cwd=ROOT, check=True, timeout=20)

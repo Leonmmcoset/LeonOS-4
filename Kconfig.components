@@ -996,6 +996,44 @@ config LEON_COMPONENT_APP_SYSCONFDIALOG_SDK
     default n
     depends on LEON_COMPONENT_APP_SYSCONFDIALOG_BUILD
 
+config LEON_COMPONENT_APP_SUDO_BUILD
+    bool "Build sudo"
+    default y
+
+config LEON_COMPONENT_APP_SUDO_IMAGE
+    bool "Include sudo in system images"
+    default y
+    depends on LEON_COMPONENT_APP_SUDO_BUILD
+
+config LEON_COMPONENT_APP_SUDO_ENTRY
+    bool "Generate a desktop entry for sudo"
+    default n
+    depends on LEON_COMPONENT_APP_SUDO_BUILD
+
+config LEON_COMPONENT_APP_SUDO_SDK
+    bool "Include sudo in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_SUDO_BUILD
+
+config LEON_COMPONENT_APP_SU_BUILD
+    bool "Build su"
+    default y
+
+config LEON_COMPONENT_APP_SU_IMAGE
+    bool "Include su in system images"
+    default y
+    depends on LEON_COMPONENT_APP_SU_BUILD
+
+config LEON_COMPONENT_APP_SU_ENTRY
+    bool "Generate a desktop entry for su"
+    default n
+    depends on LEON_COMPONENT_APP_SU_BUILD
+
+config LEON_COMPONENT_APP_SU_SDK
+    bool "Include su in the developer SDK"
+    default n
+    depends on LEON_COMPONENT_APP_SU_BUILD
+
 endmenu
 
 menu "Third-party UI"

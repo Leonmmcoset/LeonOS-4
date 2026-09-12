@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import re
+import shutil
 from pathlib import Path
 import socket
 import subprocess
@@ -22,6 +23,8 @@ def main():
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--probe-source", type=Path, default=ROOT / "tools/tests/musl_guest_test.c")
+    parser.add_argument("--probe-binary", type=Path)
+    parser.add_argument("--file", nargs=2, action="append", default=[], metavar=("SOURCE", "GUEST_PATH"))
     parser.add_argument("--case", help="Run only the named probe case")
     parser.add_argument("--log", type=Path, default=ROOT / "build/musl/linux-reference-serial.log")
     args = parser.parse_args()
@@ -46,11 +49,11 @@ def main():
     with build_log.open("w") as log:
         if not (output / ".config").exists():
             run([*make, "tinyconfig"], stdout=log, stderr=subprocess.STDOUT)
-        options = ("64BIT X86_64 PRINTK BUG ELF_CORE BINFMT_ELF MULTIUSER FUTEX POSIX_TIMERS "
+        options = ("64BIT X86_64 PRINTK BUG ELF_CORE BINFMT_ELF BINFMT_SCRIPT MULTIUSER FUTEX POSIX_TIMERS "
                    "HIGH_RES_TIMERS TTY SERIAL_8250 SERIAL_8250_CONSOLE BLK_DEV_INITRD RD_GZIP "
                    "DEVTMPFS TMPFS SHMEM PROC_FS SYSFS NET UNIX UNIX98_PTYS EPOLL EVENTFD "
                    "SIGNALFD TIMERFD FILE_LOCKING ADVISE_SYSCALLS MEMBARRIER X86_LOCAL_APIC SMP "
-                   "HYPERVISOR_GUEST PARAVIRT KVM_GUEST").split()
+                   "HYPERVISOR_GUEST PARAVIRT KVM_GUEST CROSS_MEMORY_ATTACH ACPI").split()
         run([source / "scripts/config", "--file", output / ".config",
              *(argument for name in options for argument in ("-e", name)), "-d", "WERROR"],
             stdout=log, stderr=subprocess.STDOUT)
@@ -60,10 +63,26 @@ def main():
     compiler = sdk / "bin/leonos-musl-cc"
     run([compiler, "-static", "-O2", *([f'-DREFERENCE_CASE="{args.case}"'] if args.case else []),
          ROOT / "tools/tests/linux_reference_init.c", "-o", output / "reference-init"])
-    run([compiler, "-static", "-O2", "-pthread", '-DPROBE_KIND="static"',
-         "-I", output / "headers/include", args.probe_source.resolve(), "-o", output / "probe"])
+    if args.probe_binary:
+        shutil.copy2(args.probe_binary.resolve(), output / "probe")
+    else:
+        run([compiler, "-static", "-O2", "-pthread", '-DPROBE_KIND="static"',
+             "-I", output / "headers/include", args.probe_source.resolve(), "-o", output / "probe"])
+    archive_list = (ROOT / "tools/tests/linux-reference-initramfs.list").read_text()
+    directories = {line.split()[1] for line in archive_list.splitlines() if line.startswith("dir ")}
+    for original, guest in args.file:
+        original = Path(original).resolve()
+        path = Path(guest)
+        if not path.is_absolute() or ".." in path.parts or any(c.isspace() for c in str(original) + guest):
+            parser.error(f"unsafe initramfs destination or unsupported whitespace: {guest}")
+        for parent in reversed(path.parents):
+            if str(parent) != "/" and str(parent) not in directories:
+                archive_list += f"dir {parent} 0755 0 0\n"
+                directories.add(str(parent))
+        archive_list += f"file {guest} {original} {original.stat().st_mode & 0o7777:04o} 0 0\n"
+    (output / "probe-initramfs.list").write_text(archive_list)
     with (output / "tests.cpio").open("wb") as initramfs:
-        run([output / "usr/gen_init_cpio", ROOT / "tools/tests/linux-reference-initramfs.list"], stdout=initramfs)
+        run([output / "usr/gen_init_cpio", output / "probe-initramfs.list"], stdout=initramfs)
     serial = args.log.resolve()
     serial.parent.mkdir(parents=True, exist_ok=True)
     serial.write_text("")
@@ -104,7 +123,9 @@ def main():
                         process.kill()
                         process.wait()
         print("\n".join(line for line in text.splitlines() if "[linux-reference]" in line), flush=True)
-        if not re.search(r"^\[linux-reference\] kernel=6\.12\.0$", text, re.M) or "[linux-reference] DONE failures=0" not in text:
+        if (not re.search(r"^\[linux-reference\] kernel=6\.12\.0$", text, re.M) or
+                "[linux-reference] online_cpus=2" not in text or
+                "[linux-reference] DONE failures=0" not in text):
             raise SystemExit(f"Linux reference probe failed or timed out; see {serial}")
     print(f"PASS Linux 6.12 reference; serial={serial}; build={build_log}")
 

@@ -35,6 +35,7 @@
 #define LEONOS_KEY_LEFT_ALT 56U
 #define LEONOS_KEY_SPACE 57U
 #define LEONOS_KEY_CAPS_LOCK 58U
+#define LEONOS_INPUT_MOD_CAPS_LOCK 0x01U
 #define LEONOS_KEY_HOME 71U
 #define LEONOS_KEY_UP 72U
 #define LEONOS_KEY_PAGE_UP 73U
@@ -125,6 +126,7 @@ struct leonos_input_event {
     uint8_t buttons;
     uint8_t keycode;
     uint8_t pressed;
+    uint8_t modifiers;
 };
 
 struct leonos_fb_info {
@@ -262,7 +264,7 @@ struct leonos_gui_app_event {
     uint8_t buttons;
     uint8_t keycode;
     uint8_t pressed;
-    uint8_t reserved;
+    uint8_t modifiers;
 };
 
 struct leonos_gui_wait_app_event {

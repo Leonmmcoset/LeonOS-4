@@ -58,7 +58,8 @@ python3 tools/test_power_qemu.py installer-reboot
 ```
 
 The host checks execute the actual reboot dispatcher with hardware operations
-intercepted, plus desktop confirmation/error handling and authd power policy.
+intercepted, plus desktop confirmation/error handling and the historical authd
+power policy. These older consumer tests need migration to the new sudo path.
 The QEMU checks click the real controls and require guest-originated RESET or
 SHUTDOWN events. A reboot must reach a second kernel boot; shutdown must exit
 QEMU. The installer case performs a full GUI install on a new 2 GiB test disk,
@@ -72,12 +73,12 @@ order, all four Linux magic2 values, and 32-bit argument widths. Obsolete
 one-argument raw calls are rejected. The bundled unmodified musl `reboot(int)`
 wrapper therefore works without an application-specific ABI workaround.
 
-The desktop assumes the user's UID after login. Its `leonos_system_*` helpers
-send power requests over a fresh authd connection, so SO_PEERCRED reflects the
-current UID rather than a cached root bootstrap connection. The privileged
-daemon authorizes root services or the enabled current console user, accepts
-only reboot/power-off, syncs filesystems, then calls musl reboot. Other users,
-logged-out sessions, disabled accounts and invalid requests are rejected.
+The desktop remains a privileged session launcher; its children apply the PAM
+session and drop to the authenticated identity before exec. Power helpers call
+musl reboot for a real root process; ordinary processes execute reboot/poweroff
+through official sudo and require an explicit sudoers grant. There is no authd
+power endpoint. New integration behavior has not been rerun after the user's
+2026-09-12 test pause.
 The installer runs as root and uses musl reboot directly after sync. Errors
 remain visible in the desktop, GUI installer and TTY installer.
 
@@ -155,8 +156,23 @@ for the standalone GRUB live desktop ISO, now using this same normal payload.
 There is no dependency on `build/musl/vim-src` or other experimental downloads.
 `python3 build.py run test-terminal-packages` checks actual Linux executables
 on the host; it does not certify the kernel's whole Linux ABI.
-The normal application set includes `login.elf` and `oshlp.elf`. Live media
-contains an empty AUS2 database; the installer provisions the target accounts.
+The normal application set includes `login.elf` and `oshlp.elf`. Standalone
+`image-vmdk` and ordinary `image-iso` automatically provision these public test
+accounts and require PAM login:
+
+| User | Password | Identity / sudo |
+| --- | --- | --- |
+| test | test | UID/GID 1000, wheel member; sudo authenticates with `test` |
+| root | root | UID/GID 0 |
+
+Both use the default `%wheel ALL=(ALL:ALL) ALL` policy, without NOPASSWD.
+The image-only seed is `system/test-accounts`; `/home/test` is mode 0700 and
+owned by 1000:1000 inside ext2. Shared staging stays unchanged, so the installer
+runtime and `/install/root` retain locked account seeds until the installer
+provisions the chosen passwords. No authd binary or AUS2 seed is packaged.
+`python3 tools/test_image_accounts.py` checks both tree-generation paths,
+yescrypt password matching and actual ext2 ownership in small temporary images;
+it is not a QEMU login or sudo execution test.
 
 ## Installer packaging
 
@@ -198,6 +214,227 @@ of VM RAM; a 512 MiB VM can omit the module before the loader receives control.
 If GRUB places that module over the kernel or middlelayer's fixed ELF load
 range, the Loader relocates it into EFI LoaderData before loading either image;
 the relocated range is reserved and mounted directly by the kernel.
+
+## Updating an already mounted target
+
+The update wizard mounts `/target` and `/target/boot` while scanning the existing
+installation, then prepares them again after confirmation. A VMware report from
+build 3531 showed the first mount succeeding and the second preparation failing
+with `Mount failed ret=-22`, before partition enumeration.
+
+The failing operation was `mkdir("/target", 0755)`. Storage routing translated
+the existing mountpoint to the ext2 backend's `/`; splitting that root into a
+parent and filename returned `EINVAL`. `storage_mkdir` now checks the global
+namespace first and returns `EEXIST` for existing objects, including mount roots,
+while preserving lookup failures. This follows Linux v6.12 `filename_create`
+and `do_mkdirat` in `fs/namei.c`. Installer mountpoint creation/stat failures now
+include their stage, path and error in the serial log.
+
+The earlier AHCI `ret=-11` messages in that report are pending asynchronous I/O:
+the syscall dispatcher waits and retries them, and the first mount completes.
+They do not explain the deterministic second-preparation `EINVAL`.
+
+Targeted reproduction and regression commands:
+
+```sh
+python3 build.py test storage-mkdir-mount
+python3 build.py run installer
+python3 tools/test_installer_update_qemu.py \
+  --disk build/installer-accounts-final-gui/scratch.raw \
+  --output build/installer-update-fixed
+```
+
+The host test executes the real storage VFS and ext2 code on isolated RAM-backed
+filesystem images. The QEMU script copies the supplied installed test disk and
+only modifies the copy. Use a new output directory per run. Optical boot gets
+an explicit firmware priority so the installed disk cannot bypass the installer.
+
+Build 3532 validation on 2026-09-11:
+
+- The host test failed before the fix with mounted `/target` returning `-22`,
+  then passed with `-17` under ASan/UBSan. Nested mountpoints, existing files and
+  symlinks, missing parents, volume isolation, and pending I/O are covered.
+- The unchanged build 3531 installer reproduced `Mount failed ret=-22` in QEMU
+  after program scanning (`build/installer-update-before-2/update/serial.log`).
+- The installer build completed with zero errors. The same GUI update sequence
+  on a copy of an installed build 3518 disk completed on build 3532, including
+  root payload and EFI/GRUB replacement. Log and screenshot:
+  `build/installer-update-fixed/update/serial.log` and `updated.png`.
+- Booting the updated disk without an ISO reached build 3532. Existing root and
+  ordinary passwords worked, UID/GID remained 0 and 1000 respectively, ordinary
+  access to `/root` and `/etc/passwd` was denied, and disabled Python/GCC stayed
+  absent. Reproduce this fixture's login checks with
+  `python3 tools/test_installer_accounts_qemu.py --output build/installer-update-fixed --login-only --components none`.
+- Ext2 rename/symlink and e2fsck checks, rootfs/permission regressions, and AHCI
+  completion tests passed. QEMU configured two CPUs; the kernel enabled one.
+  VMware supplied the failure evidence, but the repaired ISO is not yet
+  VMware-verified. TTY update and fresh installation were not rerun this time.
+
+## Ext2 copy performance
+
+Ext2 keeps 128 clean filesystem blocks in a bounded LRU cache (512 KiB of
+payload, 516 KiB including metadata), allocated on first use outside the fixed
+kernel image. Allocation failure falls back to uncached I/O. Writes remain
+synchronous: only successfully written data enters the cache. Device writes
+invalidate overlapping entries before submission, including raw-device aliases
+and failed writes; remounting a volume invalidates its previous entries.
+Storage's existing transaction lock serializes cache access.
+
+Block and inode allocation start from a per-volume hint, skip exhausted groups
+and full bitmap bytes, and wrap to reuse free space below the hint. Cached
+bitmaps, inode tables, indirect blocks and superblock counters eliminate
+repeated metadata reads. Installer copying uses `sched_yield()` between short
+reads instead of `sleep_ms(1)`: the 4 KiB syscall read slice otherwise incurs a
+timer tick on each iteration. GUI progress remains throttled to 50 ms. Per-file
+ownership, mode, fsync, temporary-file replacement and error handling remain
+in place.
+
+Targeted host checks:
+
+```sh
+python3 build.py run test-ext2-cache
+python3 build.py run test-ext2-performance
+python3 tools/test_ext2_performance.py --output build/ext2-performance-after.json \
+  --baseline build/ext2-performance-before.json
+python3 tools/test_storage_rename.py
+python3 tools/test_storage_mkdir_mount.py
+```
+
+The baseline JSON is captured by the same workload before the optimization;
+it is a local measurement artifact, not a required checkout file. Host tests
+compile the actual ext2 implementation with ASan/UBSan. Cache tests cover
+1/2/4 KiB blocks, allocation failure, volume isolation, raw aliases, failed
+writes, remounting and eviction. The performance workload checks an 8 MiB
+file round-trip across indirect-block boundaries and creates 256 small files;
+`e2fsck -fn` independently verifies the resulting filesystem.
+
+Measured block-I/O command counts on 2026-09-11:
+
+| Workload | Reads before | Reads after | Writes before/after |
+| --- | ---: | ---: | ---: |
+| Create an 8 MiB file | 13,288 | 1 | 12,545 |
+| Read back the 8 MiB file | 5,608 | 2,051 | 0 |
+| Create 256 files of 192 bytes | 8,480 | 12 | 2,832 |
+
+Build 3534 QEMU/KVM GUI update used the same build 3518 installed-disk input
+and q35/AHCI configuration as build 3532. Both copied 5,387 rootfs files and
+selected four application updates. From the confirmed update's second
+mount through completion, elapsed guest time fell from 445.986 s to 180.011 s
+(2.48x). The ext2 core-files stage, ending at the first ESP file, fell from
+390.411 s to 121.314 s (3.22x). Evidence is in
+`build/installer-update-fixed/update/serial.log` and
+`build/ext2-update-optimized/update/serial.log`; the disk input is copied, never
+updated in place. This is an end-to-end workload comparison, not a SATA
+bandwidth benchmark. FAT32 ESP copying still took about 56 s. Ext2 metadata
+write amplification remains; this change adds no delayed writeback and does
+not certify power-loss recovery. VMware performance has not been measured.
+
+Post-update root/ordinary login, file writes, credential and access checks
+passed. A fresh GUI install with both Python and GCC enabled also completed,
+followed by root/ordinary login and desktop Terminal validation. Its copy stage
+took 596.246 s including ESP; this larger payload has no matched pre-change
+fresh-install timing. Reproduce with:
+
+```sh
+python3 tools/test_installer_accounts_qemu.py \
+  --output build/ext2-install-optimized --components all --desktop
+```
+
+After QEMU exited, both disks' ext2 partitions were extracted and checked with
+host `e2fsck -fn`: zero errors (6,005 files on the updated disk, 18,915 on the
+fresh install). `debugfs` extraction and `cmp` verified that the installed
+113,335,392-byte Python and 29,917,624-byte GCC `cc1` matched the staged
+payload byte for byte, with matching SHA-256 values. Logs and desktop capture:
+`build/ext2-install-optimized/install/serial.log`,
+`build/ext2-install-optimized/e2fsck.log`,
+`build/ext2-install-optimized/desktop/terminal-identity.png`.
+
+The tested installer is `build/images/leonos4-installer.iso`, build 3534,
+SHA-256 `598dcdc356f76c64c39e6fe52e8bb44dcfd099ec9162cbf8d14cd165419439fd`.
+
+### Bounded write batching (build 3535)
+
+The next optimization follows the allocation principles in the local Linux
+v6.12 sources: `fs/ext2/inode.c:399` (`ext2_alloc_blocks`), `:479`
+(`ext2_alloc_branch`), `:624` (`ext2_get_blocks`),
+`fs/ext2/balloc.c:1208` (`ext2_new_blocks`), and
+`fs/buffer.c:2086` (`__block_write_begin_int`). Linux can allocate multiple
+adjacent blocks, stop mappings at indirect-leaf boundaries, and zero only the
+unwritten portions of new buffers in memory. LeonOS applies those ideas within
+its existing synchronous storage transactions; it does not implement Linux's
+page-cache writeback machinery.
+
+`storage_ext2_write.c` initializes up to 32 KiB of consecutive new blocks in one
+data write. It updates the bitmap, free counts and pointer leaf once per run,
+and publishes pointers only after initialized data has been written. Runs stop
+at occupied physical blocks, occupied logical mappings, group boundaries and
+the end of the pointer leaf. New indirect branches and existing mappings retain
+the prior path. Failed writes restore this run's metadata, including partially
+written sectors. A rollback failure is reported and retains allocations that
+may still be referenced; persistent device failure still requires a filesystem
+check. This is not a journal or a claim of power-loss atomicity.
+
+The installer collects short reads into 32 KiB buffers, yielding between them,
+and the block layer passes up to 64 sectors to AHCI. Per-sector fallback remains
+available after failed commands. ESP writes retain the 4 KiB installer slice.
+The ownership/mode/fsync/rename publication sequence remains unchanged.
+
+Compared with build 3534, the same 8 MiB creation workload dropped from 12,545
+to 1,597 write requests and from 45,083,648 to 13,028,352 written bytes. Creating
+256 small files dropped from 2,832 to 2,576 writes. Read counts did not increase.
+The measured requests here are at the ext2/block boundary; the separate block
+test verifies that an accepted 32 KiB AHCI transfer is one transport request.
+
+```sh
+python3 build.py run test-ext2-write-batch
+python3 build.py run test-storage-write-batch
+python3 build.py run test-installer-copy
+python3 tools/test_ext2_performance.py --output build/ext2-performance-round2-after.json \
+  --write-baseline build/ext2-performance-round2-before.json
+```
+
+The ASan/UBSan tests exercise 1/2/4 KiB filesystems and six write-failure
+positions, including a partial first sector; direct/single/double-indirect
+data runs; holes and overwrites; physical fragmentation; group boundaries;
+reuse of blocks containing old data; zero-length writes; and remounting.
+All 21 images pass `e2fsck -fn`. The block test checks successful batching,
+partial-command fallback, and error propagation. The installer read test
+checks short reads, EINTR, partial EOF and read failure before publication.
+
+QEMU/KVM GUI update on the same copied build 3518 disk still copied 5,387 rootfs
+files and selected four application packages. The confirmed update fell from
+180.011 s (3534) to 150.733 s (3535); the ext2 stage fell from 121.314 s to
+93.600 s. FAT32 ESP took another 54.222 s. Evidence:
+`build/ext2-update-batched/update/serial.log`. These are single-run guest-clock
+measurements with the same VM configuration; VMware performance remains
+unmeasured.
+
+The matching fresh GUI install enabled Python and GCC on both builds and
+copied 17,866 rootfs files. From the first copy-stage status through completion,
+elapsed time fell from 596.246 s to 400.007 s (32.9% less). Before the ESP stage,
+time fell from 549.071 s to 351.985 s. As individual examples, GCC `cc1` took
+8.732 s then 2.028 s, and Python `python3.14` took 31.567 s then 6.623 s;
+these use consecutive copy-start timestamps. Logs:
+`build/ext2-install-optimized/install/serial.log` and
+`build/ext2-install-batched/install/serial.log`.
+
+The installer build completed with zero errors. Updated-system root and
+ordinary-user login, file writes and permission isolation passed, and its
+extracted ext2 partition passed `e2fsck -fn`. Both update and fresh-install
+tests use q35/AHCI, 4 GiB RAM and KVM; QEMU exposes two CPUs but the kernel
+enables one. These results are not multicore storage stress certification.
+
+The fresh install also passed ordinary/root login, permission isolation,
+Python/GCC presence and desktop Terminal checks. Its extracted ext2 partition
+passed `e2fsck -fn` (18,915 files). `debugfs` extraction followed by `cmp` and
+SHA-256 comparison verified the 113 MB Python and 30 MB GCC `cc1` against the
+installation source, byte for byte. Evidence:
+`build/ext2-install-batched/e2fsck.log`, `readback-sha256.log`,
+`build/ext2-install-batched/desktop/terminal-identity.png`,
+and `build/ext2-install-batched.log`.
+
+Tested ISO: `build/images/leonos4-installer.iso`, build 3535,
+SHA-256 `75ad1453ecceb14fe3bdf6351146e3143a40f3a9c21ac7cb4d70191b29cbafc0`.
 
 For VirtualBox installation tests, attach the target VDI through a SATA/AHCI,
 NVMe, or legacy PIIX4 IDE controller. NVMe namespaces use synchronous polling
@@ -261,7 +498,7 @@ Docs are merged: matching bundled `.hlp` files are overwritten under
 `/target/usr/share/doc/leonos`, but extra third-party help files already
 present there are kept. Update mode does not replace `/target/etc/leonos` or
 `/target/var/lib/leonos`, so local machine state such as
-`license.dat`, `users.db`, and the installed marker is preserved across an
+`license.dat` and the installed marker is preserved across an
 installer-driven update. The machine ID is derived from detected machine
 identity at runtime instead of being stored in `/etc/install.id`. The stable
 identity source is SMBIOS System UUID when firmware provides it, otherwise the
@@ -269,7 +506,9 @@ boot GPT disk and ESP partition GUIDs. A fresh install copies the staged
 `etc/leonos` and `var/lib/leonos` trees, then writes the chosen accounts before
 publishing the ESP boot payload. Update supports only an existing non-usr-merge ext2 layout; old
 pre-FHS installations need a fresh install. There is no migration/archive
-stage. See `docs/ROOTFS_LAYOUT_AND_MIGRATION.md`.
+stage. Populated legacy private account databases are rejected before overlay;
+standard account and policy files are preserved. See
+`docs/ROOTFS_LAYOUT_AND_MIGRATION.md` and `docs/SUDO_AND_ELEVATION.md`.
 
 All ext2 image producers require `fakeroot` and `e2fsprogs`. File ownership is
 normalized to root:root inside fakeroot before mke2fs imports the payload;

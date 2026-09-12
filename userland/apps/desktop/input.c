@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include "desktop.h"
 #include <errno.h>
 #include <string.h>
@@ -453,7 +454,7 @@ int desktop_session_logged_in(void)
 {
     struct leonos_user_info user;
     user = (struct leonos_user_info){0};
-    return leonos_auth_current(&user) == 0;
+    return leonos_session_current(&user) == 0;
 }
 
 static int login_process_alive(void)
@@ -499,7 +500,7 @@ void maybe_launch_login(void)
         return;
     }
     /* Live and installer media have no installed identity. Once installed,
-     * keep the screen locked even if authd is unavailable or its DB is bad. */
+     * keep the screen locked even if account lookup or PAM initialization fails. */
     struct stat installed;
     if (lstat("/etc/leonos/installed", &installed) < 0 && errno == ENOENT) return;
     status = (struct leonos_auth_status){0};

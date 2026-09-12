@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include "desktop.h"
 #include <string.h>
 
@@ -658,7 +659,7 @@ static void start_menu_draw_header(const struct start_panel_layout *panel)
                    START_PANEL_HEADER_H, LEONOS_UI_ACTIVE_TITLE);
     leonos_ui_text(&ui, panel->x + 12U, panel->y + 7U, "LeonOS 4",
                    LEONOS_UI_WHITE, LEONOS_UI_ACTIVE_TITLE);
-    if (leonos_auth_current(&user) == 0 && user.username[0]) {
+    if (leonos_session_current(&user) == 0 && user.username[0]) {
         session = user.username;
     }
     leonos_ui_text_clipped(&ui, panel->x + 12U, panel->y + 24U,

@@ -76,6 +76,14 @@ int main(void)
     cpu_inventory_capture(0);
     char value[16384];
     struct storage_node node;
+    read_value("/proc/sys/kernel/ostype", value, sizeof(value));
+    assert(!strcmp(value, "ntclks\n"));
+    read_value("/proc/sys/kernel/osrelease", value, sizeof(value));
+    assert(!strcmp(value, "9.8.7-0123\n"));
+    read_value("/proc/sys/kernel/version", value, sizeof(value));
+    assert(!strcmp(value, "2026-09-11 01:02:03\n"));
+    read_value("/proc/version", value, sizeof(value));
+    assert(!strcmp(value, "ntclks version 9.8.7-0123 (2026-09-11 01:02:03)\n"));
     read_value("/proc/cpuinfo", value, sizeof(value));
     assert(strstr(value, "processor\t: 0\n") && strstr(value, "model name\t:") &&
            strstr(value, "cpu cores\t: 1\n"));

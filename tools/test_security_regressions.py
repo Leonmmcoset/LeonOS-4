@@ -4,13 +4,20 @@
 Strict mode asserts the new invariants:
 * no private service-request ioctl family remains in kernel source;
 * windowd/authd/netmand use SO_PEERCRED as their peer trust boundary;
-* setuid and reboot(2) retain the uid==0 gate in kernel syscall handlers.
+* production credential tests enforce capabilities for setuid and reboot(2);
+* every privileged authd message is served by a *_from_peer handler, and each
+  of those takes its caller identity from the accept-time SO_PEERCRED slot
+  rather than from the request payload. authd additionally validates the kernel
+  credentials on every frame fragment; stable PID lifetime binding is pending.
+
+Source lint alone does not establish ABI or authentication compatibility.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -58,13 +65,61 @@ def missing_peercred() -> list[str]:
     return missing
 
 
-def missing_root_gates() -> list[str]:
+def credential_regressions() -> list[str]:
+    # Linux kernel/sys.c and kernel/reboot.c use separate capabilities. The
+    # historical source-string assertion required incorrect real-UID gates.
+    result = subprocess.run([sys.executable, "tools/test_linux_capabilities.py"],
+                            cwd=ROOT, capture_output=True, text=True, timeout=60)
+    if result.returncode:
+        return ["production credential regression failed: " + (result.stdout + result.stderr)[-4000:]]
+    return []
+
+
+SUDO_PRIVILEGED_MESSAGES = (
+    "LEONOS_AUTHD_MSG_RUN",
+    "LEONOS_AUTHD_MSG_WAIT",
+    "LEONOS_AUTHD_MSG_SUDO_KILL",
+    "LEONOS_AUTHD_MSG_SUDO_CHECK",
+    "LEONOS_AUTHD_MSG_SUDO_VERIFY",
+    "LEONOS_AUTHD_MSG_FILEOP",
+)
+
+
+def missing_from_peer_handlers() -> list[str]:
+    """Every privileged message must be dispatched to a *_from_peer handler.
+
+    The handler naming is the audit hook: it forces the caller identity to be an
+    explicit parameter that the daemon fills from SO_PEERCRED, so a new message
+    cannot quietly serve itself from request fields.
+    """
     missing = []
-    process = read("kernel/ntclks/syscall_process.c")
-    if "if (task->uid != 0 && target != task->uid) return -LEONOS_EPERM;" not in process:
-        missing.append("kernel/ntclks/syscall_process.c: setuid 非特权目标门")
-    if "if (!task || task->uid != 0) return -LEONOS_EPERM;" not in process:
-        missing.append("kernel/ntclks/syscall_process.c: reboot uid==0 门")
+    dispatch = read("userland/apps/authd/main.c")
+    for message in SUDO_PRIVILEGED_MESSAGES:
+        marker = f"type == {message}"
+        if marker not in dispatch:
+            missing.append(f"userland/apps/authd/main.c: {message} 未分发")
+            continue
+        call = "_from_peer("
+        if call not in dispatch:
+            missing.append(f"userland/apps/authd/main.c: {message} 未交给 *_from_peer 处理")
+    return missing
+
+
+def missing_from_peer_identity() -> list[str]:
+    """A *_from_peer handler must consume the peer uid, not a payload field."""
+    missing = []
+    source = read("userland/apps/authd/authd_sudo.c")
+    text = read("userland/apps/authd/main.c")
+    if "requester_uid" not in source:
+        missing.append("userland/apps/authd/authd_sudo.c: 处理函数未接收 requester_uid")
+    # The daemon must pass the accept-time slot uid into every privileged call.
+    for message in SUDO_PRIVILEGED_MESSAGES:
+        if message in ("LEONOS_AUTHD_MSG_RUN", "LEONOS_AUTHD_MSG_WAIT",
+                       "LEONOS_AUTHD_MSG_SUDO_KILL", "LEONOS_AUTHD_MSG_SUDO_CHECK",
+                       "LEONOS_AUTHD_MSG_SUDO_VERIFY", "LEONOS_AUTHD_MSG_FILEOP"):
+            if "client->uid" not in text:
+                missing.append("userland/apps/authd/main.c: 分发未使用 SO_PEERCRED 记录的 client->uid")
+                break
     return missing
 
 
@@ -76,8 +131,9 @@ def main() -> int:
 
     violations = kernel_violations()
     peercred = missing_peercred()
-    gates = missing_root_gates()
-    failures = violations + peercred + gates
+    gates = credential_regressions()
+    from_peer = missing_from_peer_handlers() + missing_from_peer_identity()
+    failures = violations + peercred + gates + from_peer
 
     if args.json:
         import json
@@ -86,7 +142,8 @@ def main() -> int:
             "strict": args.strict,
             "kernel_private_ioctl_violations": violations,
             "missing_so_peercred": peercred,
-            "missing_root_gates": gates,
+            "credential_regression_failures": gates,
+            "missing_from_peer_handlers": from_peer,
         }, indent=2))
     else:
         print("LeonOS 4 Unix-IPC 安全回归源码检测")
@@ -96,10 +153,13 @@ def main() -> int:
         print(f"SO_PEERCRED 缺失: {len(peercred)}")
         for item in peercred:
             print(f"  FAIL {item}")
-        print(f"uid==0 权限门缺失: {len(gates)}")
+        print(f"凭据/capability 行为回归失败: {len(gates)}")
         for item in gates:
             print(f"  FAIL {item}")
-        print("strict ABI security check " + ("passed" if not failures else "failed"))
+        print(f"提权消息 SO_PEERCRED 处理缺失: {len(from_peer)}")
+        for item in from_peer:
+            print(f"  FAIL {item}")
+        print("source lint and focused credential check " + ("passed" if not failures else "failed"))
 
     return 1 if args.strict and failures else 0
 

@@ -1,3 +1,4 @@
+#include <leonos/pam_session.h>
 #include "desktop.h"
 
 uint32_t fb_w(void)
@@ -411,7 +412,7 @@ static int desktop_appearance_config_path(char *path, uint32_t path_len)
     }
     path[0] = 0;
     user = (struct leonos_user_info){0};
-    if (leonos_auth_current(&user) < 0 || !user.home[0]) {
+    if (leonos_session_current(&user) < 0 || !user.home[0]) {
         return 0;
     }
     append_text(path, &pos, path_len, user.home);

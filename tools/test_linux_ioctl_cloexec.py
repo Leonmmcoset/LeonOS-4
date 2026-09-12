@@ -116,6 +116,7 @@ def test_kernel_descriptor_table(directory: Path) -> None:
         "kernel/ntclks/wait.c",
         "kernel/ntclks/syscall_sysv_msg.c",
         "kernel/ntclks/syscall_sysv_sem.c",
+        "kernel/ntclks/syscall_locks.c",
     ]
     run([
         "clang", "-std=c11", "-g", "-O1", "-ffunction-sections", "-fdata-sections",
